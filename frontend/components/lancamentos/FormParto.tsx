@@ -4,7 +4,7 @@ import { Baby, BookOpen, ExternalLink, X } from "lucide-react";
 import { criarMovimentacao, criarParto, encerrarGestacao, previewCriteriosLote, registrarColostragem, sugestaoLoteEvento, fetchTransferenciaLoteAutomatica, LoteSugeridoEvento } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { TabBar } from "@/components/ui";
-import { Campo, inputStyle, nota } from "@/components/lancamentos/comumForms";
+import { Campo, codigoGrupo, inputStyle, nota } from "@/components/lancamentos/comumForms";
 import { SelectAnimal, CATEGORIAS_ANIMAIS } from "@/components/lancamentos/_shared";
 import { PopupAborto } from "@/components/lancamentos/PopupAborto";
 import { Modal } from "@/components/Modal";
@@ -172,12 +172,28 @@ export function FormParto({ animais, lotes, onSalvo }: { animais: AnimalRow[]; l
     return diff / 60;
   })();
 
-  // Fila de confirmações de troca de lote pendentes (mãe + cria(s)) — um
-  // pop-up de cada vez, no estilo `Modal`, em vez de sobrepor vários ou usar
-  // window.confirm nativo. `rotuloAnimal` é só o texto ("a vaca", "o
-  // bezerro", "a bezerra") usado na pergunta.
+  // Confirmações de troca de lote pendentes (mãe + cria(s)) — UMA janela só,
+  // com um seletor de lote por animal (em vez da fila de pop-ups "Sim/Não"
+  // um de cada vez que existia antes, pedido explícito do usuário). `codigo`
+  // de cada `<option>` vem de `codigoGrupo` sobre o rótulo do lote — mesmo
+  // esquema de 2 dígitos usado em todo o app para casar rótulo↔código.
+  // `rotuloAnimal` é só o texto ("a vaca", "o bezerro", "a bezerra") usado no
+  // rótulo da pergunta.
   type PendenciaLote = { numero: string; rotuloAnimal: string; loteSugerido: LoteSugeridoEvento; motivo: string };
   const [filaLotes, setFilaLotes] = useState<PendenciaLote[]>([]);
+  // Escolha de cada animal na janela: código do lote, ou "" = "não
+  // movimentar" (mantém no lote atual). Começa em cada sugestão do backend,
+  // mas o usuário pode trocar por qualquer lote ou por "não movimentar"
+  // antes de confirmar.
+  const [escolhasLote, setEscolhasLote] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!filaLotes.length) return;
+    setEscolhasLote(Object.fromEntries(filaLotes.map((p) => [p.numero, p.loteSugerido.codigo])));
+  }, [filaLotes]);
+  const opcoesLote = useMemo(
+    () => lotes.map((l) => ({ codigo: codigoGrupo(l), rotulo: l })).filter((o): o is { codigo: string; rotulo: string } => !!o.codigo),
+    [lotes]
+  );
   const [movendoLote, setMovendoLote] = useState(false);
   // Configurações > Parâmetros > "transferir para o lote sugerido
   // automaticamente" — quando ligado, mãe e cria(s) são movidas sozinhas
@@ -209,31 +225,38 @@ export function FormParto({ animais, lotes, onSalvo }: { animais: AnimalRow[]; l
     }
   }
 
-  // Confirma o topo da fila: move de fato e SÓ reporta sucesso se a resposta
-  // do backend confirmar que o animal foi realmente movido (`movidos` >= 1 e
-  // o número não está em `nao_encontrados`) — não basta o request não ter
-  // dado erro.
-  async function confirmarTopoFila() {
-    const pend = filaLotes[0];
-    if (!pend) return;
+  // Confirma a janela inteira de uma vez: move só quem tem um lote escolhido
+  // (não "" = não movimentar) — SÓ reporta sucesso se a resposta do backend
+  // confirmar que o animal foi realmente movido (`movidos` >= 1 e o número
+  // não está em `nao_encontrados`), não basta o request não ter dado erro.
+  async function confirmarLotes() {
+    const pendentes = filaLotes;
     setMovendoLote(true);
-    try {
-      const r = await criarMovimentacao({ data_movimento: dataParto, motivo: pend.motivo, lote_destino_codigo: pend.loteSugerido.codigo, animais: [pend.numero], origem: "sugestao_confirmada" });
-      const moveuDeFato = (r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(pend.numero);
-      if (moveuDeFato) {
-        setSucesso((s) => `${s ? `${s} ` : ""}${pend.numero} movido(a) para o lote ${pend.loteSugerido.rotulo}.`);
-      } else {
-        setErro((e) => `${e ? `${e} ` : ""}Não foi possível confirmar a movimentação de ${pend.numero} para o lote ${pend.loteSugerido.rotulo}.`);
+    const movidos: string[] = []; const falhas: string[] = [];
+    for (const pend of pendentes) {
+      const codigo = escolhasLote[pend.numero];
+      if (!codigo) continue; // "não movimentar" — mantém no lote atual
+      const rotulo = opcoesLote.find((o) => o.codigo === codigo)?.rotulo || codigo;
+      try {
+        const r = await criarMovimentacao({ data_movimento: dataParto, motivo: pend.motivo, lote_destino_codigo: codigo, animais: [pend.numero], origem: "sugestao_confirmada" });
+        const moveuDeFato = (r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(pend.numero);
+        if (moveuDeFato) movidos.push(`${pend.numero} → ${rotulo}`);
+        else falhas.push(`Não foi possível confirmar a movimentação de ${pend.numero} para o lote ${rotulo}.`);
+      } catch (e: any) {
+        falhas.push(`Erro ao mover ${pend.numero}: ${e?.message || "erro desconhecido"}.`);
       }
-    } catch (e: any) {
-      setErro((prev) => `${prev ? `${prev} ` : ""}Erro ao mover ${pend.numero}: ${e?.message || "erro desconhecido"}.`);
-    } finally {
-      setMovendoLote(false);
-      setFilaLotes((f) => f.slice(1));
     }
+    if (movidos.length) setSucesso((s) => `${s ? `${s} ` : ""}Movido(s): ${movidos.join(", ")}.`);
+    if (falhas.length) setErro((e) => `${e ? `${e} ` : ""}${falhas.join(" ")}`);
+    setMovendoLote(false);
+    setFilaLotes([]);
+    setEscolhasLote({});
   }
-  function cancelarTopoFila() {
-    setFilaLotes((f) => f.slice(1));
+  // Fechar a janela sem confirmar equivale a "não movimentar" ninguém — nada
+  // foi gravado ainda nesse ponto, então não há o que desfazer.
+  function fecharJanelaLotes() {
+    setFilaLotes([]);
+    setEscolhasLote({});
   }
 
   // Lançamento em lote (batch): aloca a cria automaticamente, sem
@@ -793,19 +816,27 @@ export function FormParto({ animais, lotes, onSalvo }: { animais: AnimalRow[]; l
       )}
 
       {filaLotes.length > 0 && (
-        <Modal title="Confirmar troca de lote" onClose={cancelarTopoFila} width="420px" zIndex={95}>
-          <p style={{ fontSize: "0.9rem", marginBottom: "1rem" }}>
-            Mover {filaLotes[0].rotuloAnimal} Nº <strong>{filaLotes[0].numero}</strong> para o lote{" "}
-            <strong>{filaLotes[0].loteSugerido.rotulo}</strong>?
+        <Modal title="Movimentação de lote" onClose={fecharJanelaLotes} width="460px" zIndex={95}>
+          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+            Escolha o lote de destino de cada animal, ou deixe em "Não movimentar" para manter no lote atual.
           </p>
-          {filaLotes.length > 1 && (
-            <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.8rem" }}>
-              Há mais {filaLotes.length - 1} confirmação(ões) de lote na fila após esta.
-            </p>
-          )}
+          <div className="space-y-3 mb-4">
+            {filaLotes.map((pend) => (
+              <Campo key={pend.numero} label={`Deseja movimentar ${pend.rotuloAnimal} Nº ${pend.numero} para qual lote?`}>
+                <select
+                  style={inputStyle}
+                  value={escolhasLote[pend.numero] ?? ""}
+                  onChange={(e) => setEscolhasLote((p) => ({ ...p, [pend.numero]: e.target.value }))}
+                >
+                  <option value="">Não movimentar</option>
+                  {opcoesLote.map((o) => <option key={o.codigo} value={o.codigo}>{o.rotulo}</option>)}
+                </select>
+              </Campo>
+            ))}
+          </div>
           <div className="flex items-center justify-end gap-2">
-            <button className="btn-ghost" onClick={cancelarTopoFila} disabled={movendoLote}>Cancelar</button>
-            <button className="btn-primary" onClick={confirmarTopoFila} disabled={movendoLote}>
+            <button className="btn-ghost" onClick={fecharJanelaLotes} disabled={movendoLote}>Cancelar</button>
+            <button className="btn-primary" onClick={confirmarLotes} disabled={movendoLote}>
               {movendoLote ? "Movendo…" : "Confirmar"}
             </button>
           </div>

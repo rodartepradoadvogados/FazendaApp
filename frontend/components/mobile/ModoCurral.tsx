@@ -58,6 +58,11 @@ const TIPOS_COMPLEXOS = new Set([
   "cronograma_sanitario_animal", "cronograma_sanitario_modo", "cronograma_sanitario_urgente", "cronograma_sanitario_aplicar",
   "bst_aplicacao", "sugestao_movimentacao", "colostragem_pendente", "igg_pendente",
   "evento_sanitario", "calendario_sanitario", "aplicacao_agendada",
+  // Diária de diarista: 3 decisões (Confirmar/Meia diária/Não teve), não um
+  // check único — o check simples marcaria "realizado" sem perguntar nada,
+  // silenciosamente virando "dia cheio" sem o usuário escolher (ver o cartão
+  // completo em app/app/page.tsx::renderCartao e decidirDiaria).
+  "diaria_trabalho",
 ]);
 function ehSimples(e: Evento): boolean {
   return !e.tipo || !TIPOS_COMPLEXOS.has(e.tipo);

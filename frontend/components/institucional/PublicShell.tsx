@@ -39,7 +39,11 @@ export function PublicHeader({ variant = "institucional" }: { variant?: "login" 
             (#recursos/#simulador) que existiam só na Hero antiga do login;
             redesign T7 ("Login enxuto", mockup 1h) tirou essas seções de lá
             (viram a landing pública — T8, ainda não construída). */}
-        <Link href="/news" style={{ ...linkStyle, color: "#C9A44C" }} className="login-nav-link">Milk News</Link>
+        {/* Antes #C9A44C — um terceiro tom de dourado inventado, que não batia
+            nem com --dourado (#B9831F) nem com --dourado-light (#E0A63C).
+            Trocado pelo token --dourado (mais escuro/sóbrio que --dourado-light,
+            pedido do dono do produto). */}
+        <Link href="/news" style={{ ...linkStyle, color: "var(--dourado)" }} className="login-nav-link">Milk News</Link>
         {variant === "institucional" && (
           <Link href="/login" className="btn-primary" style={{ fontSize: "0.82rem", padding: "0.4rem 0.9rem" }}>Entrar</Link>
         )}
@@ -58,7 +62,17 @@ export function PublicFooter() {
 
 export function PublicPage({ variant = "institucional", children }: { variant?: "login" | "institucional"; children: React.ReactNode }) {
   return (
-    <div style={{ ...marcaVars, minHeight: "100vh", background: "linear-gradient(180deg, #14385A 0%, #0E2A47 45%, #081A2C 100%)" }}>
+    // Fundo marinho institucional — não segue --vinho/--dourado do :root porque
+    // esses tokens são o "vinho" bordô por padrão (só viram marinho quando o
+    // visitante tem data-paleta="azul" salvo, e um visitante deslogado nunca
+    // tem essa preferência). Por isso os hex ficam fixos aqui, mas não são
+    // inventados: são os MESMOS já cadastrados em app/globals.css para
+    // data-paleta="azul" (--vinho:#0B2038 / --vinho-dark:#071A2E), a variante
+    // de mesa do marinho que o cabeçalho do app móvel usa (--mob-vinho/
+    // --mob-vinho-fixo). Antes o degradê tinha um terceiro tom no topo
+    // (#14385A) mais claro/saturado que nenhum token do sistema usa — lido
+    // como "azul infantil" pelo dono do produto — removido.
+    <div style={{ ...marcaVars, minHeight: "100vh", background: "linear-gradient(180deg, #0B2038 0%, #071A2E 100%)" }}>
       <PublicHeader variant={variant} />
       {children}
       <PublicFooter />

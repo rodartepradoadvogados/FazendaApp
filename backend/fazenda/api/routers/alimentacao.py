@@ -7,6 +7,7 @@ estoque (opção A: o sistema recalcula quantos dias se passaram desde a
 """
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
@@ -21,7 +22,8 @@ from fazenda.database import get_session
 from fazenda.models import (
     AlimentacaoEstado, Alimento, AlimentoNutricional, AnaliseBromatologica, Animal, CategoriaAlimento,
     ConsumoAlimento, ConsumoSobra, CurvaABC, Dieta, DietaItemProgramado, DietaLancamento, DietaRegistroReal,
-    Estoque, IngredienteMS, LancamentoItem, Lote, MovimentoEstoque, Sanidade, Usuario,
+    DietaSimulacaoItem, Estoque, IngredienteMS, LancamentoItem, Lote, MovimentoEstoque, Sanidade,
+    TabelaNutricionalProduto, Usuario,
 )
 from fazenda.rules.alimentacao import calcular_consumo, calcular_necessidade_mensal, resolver_kg_por_unidade, _codigo_grupo
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
@@ -47,16 +49,61 @@ ALIMENTOS_PADRAO = [
 
 
 def _dietas_e_animais(session: Session, fazenda_id: int | None) -> tuple[list[dict], list[dict]]:
-    query_dieta = select(Dieta)
+    """Funde as duas fontes de plano de dieta por lote — achado ao investigar
+    por que uma dieta lançada em "Lançar nova dieta" não aparecia em Plano
+    por Lote / Necessidade mensal / baixa automática: essas telas sempre
+    leram só `Dieta` (linha congelada do DIETA.csv importado uma vez),
+    nunca `DietaLancamento`/`DietaItemProgramado` (a tela de lançamento
+    "de verdade", com histórico e reconstrução por lote).
+
+    Por lote, a fonte é EXCLUSIVA, nunca somada: um lote com dieta ATIVA
+    lançada na tela nova usa só ela (senão o plano novo somaria com o
+    import antigo e dobraria o consumo/baixa); um lote sem lançamento
+    nenhum na tela nova continua lendo só `Dieta`, como sempre — zero
+    mudança de comportamento pra quem nunca usou "Lançar nova dieta"."""
     query_animal = select(Animal).where(Animal.ativo == True)  # noqa: E712
     if fazenda_id is not None:
-        query_dieta = query_dieta.where(Dieta.fazenda_id == fazenda_id)
         query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
-    dietas = [d.model_dump() for d in session.exec(query_dieta).all()]
     animais = [
         a.model_dump() for a in session.exec(query_animal).all()
         if not a.eh_semen and a.sexo != "M"
     ]
+
+    query_ativas = select(DietaLancamento).where(DietaLancamento.data_efetivo_encerramento == None)  # noqa: E711
+    if fazenda_id is not None:
+        query_ativas = query_ativas.where(DietaLancamento.fazenda_id == fazenda_id)
+    ativas = session.exec(query_ativas).all()
+    lotes_com_lancamento = {d.lote for d in ativas}
+
+    dietas: list[dict] = []
+    n_animais_por_lote: dict[int, int] = {}
+    for dieta in ativas:
+        if dieta.lote not in n_animais_por_lote:
+            n_animais_por_lote[dieta.lote] = len(_animais_do_lote(session, dieta.lote, fazenda_id))
+        n = n_animais_por_lote[dieta.lote]
+        query_itens = select(DietaItemProgramado).where(DietaItemProgramado.dieta_lancamento_id == dieta.id)
+        if fazenda_id is not None:
+            query_itens = query_itens.where(DietaItemProgramado.fazenda_id == fazenda_id)
+        for it in session.exec(query_itens).all():
+            qtd_fisica = _quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct)
+            base_efetiva = _base_efetiva(it.base_quantidade, dieta.base_quantidade)
+            _, por_cabeca = _totais_item(qtd_fisica, base_efetiva, n)
+            # Sem `categoria` (None) de propósito: `_remapear_lote_pela_categoria`
+            # só remapeia lote congelado de import antigo — `dieta.lote` aqui já
+            # é o lote atual escolhido na tela, não precisa de remapeamento.
+            dietas.append({
+                "lote": dieta.lote, "categoria": None, "ingrediente": it.alimento,
+                "quantidade": por_cabeca, "unidade": it.unidade,
+            })
+
+    query_dieta = select(Dieta)
+    if fazenda_id is not None:
+        query_dieta = query_dieta.where(Dieta.fazenda_id == fazenda_id)
+    for d in session.exec(query_dieta).all():
+        if d.lote in lotes_com_lancamento:
+            continue
+        dietas.append(d.model_dump())
+
     return dietas, animais
 
 
@@ -86,6 +133,24 @@ def _estoque_por_alimento(session: Session, fazenda_id: int | None) -> tuple[dic
             continue
         chave = alimento.nome.strip().lower()
         por_alimento.setdefault(chave, []).append(e.model_dump())
+    # Move o item preferido (`Alimento.estoque_preferido_id`, Fase P1) para o
+    # INÍCIO da lista de candidatos — nunca remove os outros. Todo call site
+    # que pega `candidatos[0]` (`_dar_baixa_automatica`, `_resolver_estoque_item`,
+    # `calcular_necessidade_mensal`) passa a usar a escolha deliberada sem
+    # precisar mudar uma linha. Sem preferência (o padrão, None), a ordem
+    # continua EXATAMENTE a da query acima — ver TestEscolhaArbitrariaDeCandidato
+    # (T11) em tests/test_migracao_alimento.py, que trava esse comportamento.
+    for alimento in alimentos.values():
+        if alimento.estoque_preferido_id is None:
+            continue
+        candidatos = por_alimento.get(alimento.nome.strip().lower())
+        if not candidatos:
+            continue
+        for i, c in enumerate(candidatos):
+            if c["id"] == alimento.estoque_preferido_id:
+                if i != 0:
+                    candidatos.insert(0, candidatos.pop(i))
+                break
     cadastrados = {a.nome.strip().lower() for a in alimentos.values()}
     return por_alimento, cadastrados
 
@@ -97,6 +162,31 @@ def _obter_estado_alimentacao(session: Session, fazenda_id: int | None) -> Alime
     else:
         query = query.where(AlimentacaoEstado.fazenda_id.is_(None))  # type: ignore[union-attr]
     return session.exec(query).first()
+
+
+def _consumo_total_modo_automatica(por_lote: list[dict], lotes_cadastro: list[dict]) -> list[dict]:
+    """Re-agrega `calcular_consumo(...)["por_lote"]` por ingrediente, só para
+    os lotes cujo `Lote.modo_baixa_estoque == "automatica"` — mesma soma que
+    `calcular_consumo` já faz para `consumo_total`, mas escopada aos lotes que
+    de fato pediram a baixa dia-a-dia pelo plano (ver proposta aceita pelo
+    proprietário: "automática"/"consumo real"/"sem baixa" por lote).
+
+    Lote sem cadastro (dado legado — ver comentário equivalente em
+    `lancar_consumo` sobre `permitir_fora_da_dieta`/`permitir_sem_estoque`)
+    cai no padrão restritivo "consumo_real", ou seja, NÃO entra aqui: ausência
+    de cadastro nunca é motivo pra afrouxar uma checagem de segurança, e aqui
+    a checagem é "não debita estoque sem o lote ter pedido explicitamente"."""
+    modo_por_codigo = {l["codigo"]: (l.get("modo_baixa_estoque") or "consumo_real") for l in lotes_cadastro if l.get("codigo")}
+    consumo_total: dict[str, dict] = {}
+    for info in por_lote:
+        modo = modo_por_codigo.get(f"{info['lote']:02d}", "consumo_real")
+        if modo != "automatica":
+            continue
+        for item in info["itens"]:
+            chave = item["ingrediente"]
+            acc = consumo_total.setdefault(chave, {"ingrediente": chave, "unidade": item["unidade"], "consumo_dia": 0.0})
+            acc["consumo_dia"] = round(acc["consumo_dia"] + item["consumo_dia"], 2)
+    return sorted(consumo_total.values(), key=lambda x: -x["consumo_dia"])
 
 
 def _dar_baixa_automatica(session: Session, fazenda_id: int | None) -> dict:
@@ -143,7 +233,12 @@ def _dar_baixa_automatica(session: Session, fazenda_id: int | None) -> dict:
         return {"dias_deduzidos": 0, "ultima_data_deducao": atualizado.ultima_data_deducao.isoformat()}
 
     dietas, animais = _dietas_e_animais(session, fazenda_id)
-    consumo_total = calcular_consumo(dietas, animais, _lotes_cadastro(session, fazenda_id))["consumo_total"]
+    lotes_cadastro = _lotes_cadastro(session, fazenda_id)
+    por_lote = calcular_consumo(dietas, animais, lotes_cadastro)["por_lote"]
+    # Só os lotes em modo "automatica" entram na baixa por dias decorridos —
+    # "consumo_real" (padrão) e "sem_baixa" só são tocados (ou nunca são,
+    # respectivamente) pelo lançamento manual em `lancar_consumo`.
+    consumo_total = _consumo_total_modo_automatica(por_lote, lotes_cadastro)
     estoque_por_alimento, _ = _estoque_por_alimento(session, fazenda_id)
 
     itens_baixados = []
@@ -356,38 +451,50 @@ _ALIMENTOS_PADRAO_CATEGORIA: list[tuple[str, str, str | None]] = [
 
 
 def seed_alimentos(session: Session, fazenda_id: int | None = None) -> None:
-    """Idempotente — só cria o que ainda não existe (nunca sobrescreve edição
-    manual). Chamado no startup (ver `main.py`), sempre com `fazenda_id=1`:
-    a lista `_ALIMENTOS_PADRAO_CATEGORIA` é histórica/grandfathered — nomes de
-    produtos comerciais específicos já usados por essa fazenda."""
+    """Chamado no startup (ver `main.py`), sempre com `fazenda_id=1`: a lista
+    `_ALIMENTOS_PADRAO_CATEGORIA` é histórica/grandfathered — nomes de
+    produtos comerciais específicos já usados por essa fazenda.
+
+    (bug real corrigido, relato do usuário 01/09/2026: "excluí esses alimentos
+    várias vezes e eles sempre voltam") Igual ao que já tinha sido corrigido em
+    `_seed_categorias_alimento`/`_seed_subcategorias_concentrado` acima: a
+    versão antiga checava nome a nome (`if nome in existentes: continue`) e
+    rodava a CADA restart do servidor — apagar "Corte 21" de propósito só
+    durava até o próximo deploy, porque o nome já não estava mais em
+    `existentes` e o seed o recriava do zero. Bônus: a comparação por string
+    exata também nunca reconhecia "Ração Pré-parto" (seed) como igual a
+    "Ração Pré-Parto" (já cadastrado pelo usuário, com vínculo de estoque) —
+    diferença de maiúscula bastava para duplicar o registro. Agora só semeia
+    quando a fazenda está com ZERO alimentos (primeira vez de verdade);
+    depois disso, apagar um alimento padrão é definitivo, como em qualquer
+    cadastro editável."""
     _seed_categorias_alimento(session, fazenda_id=fazenda_id)
     _seed_subcategorias_concentrado(session, fazenda_id=fazenda_id)
-    categoria_query = select(CategoriaAlimento)
     alimento_query = select(Alimento)
+    if fazenda_id is not None:
+        alimento_query = alimento_query.where(Alimento.fazenda_id == fazenda_id)
+    if session.exec(alimento_query).first() is not None:
+        return
+    categoria_query = select(CategoriaAlimento)
     estoque_query = select(Estoque)
     if fazenda_id is not None:
         categoria_query = categoria_query.where(CategoriaAlimento.fazenda_id == fazenda_id)
-        alimento_query = alimento_query.where(Alimento.fazenda_id == fazenda_id)
         estoque_query = estoque_query.where(Estoque.fazenda_id == fazenda_id)
     categorias = {c.nome: c.id for c in session.exec(categoria_query).all()}
-    existentes = {a.nome for a in session.exec(alimento_query).all()}
     estoque_por_nome = {e.nome.strip().lower(): e for e in session.exec(estoque_query).all()}
-    novos_com_vinculo = []
-    for nome, categoria_nome, nome_estoque in _ALIMENTOS_PADRAO_CATEGORIA:
-        if nome in existentes:
-            continue
-        alimento = Alimento(nome=nome, categoria_alimento_id=categorias.get(categoria_nome), fazenda_id=fazenda_id)
-        novos_com_vinculo.append((alimento, nome_estoque or nome))
-    if novos_com_vinculo:
-        session.add_all([a for a, _ in novos_com_vinculo])
-        session.commit()
-        for alimento, nome_estoque in novos_com_vinculo:
-            session.refresh(alimento)
-            item = estoque_por_nome.get(nome_estoque.strip().lower())
-            if item and item.alimento_id is None:
-                item.alimento_id = alimento.id
-                session.add(item)
-        session.commit()
+    novos_com_vinculo = [
+        (Alimento(nome=nome, categoria_alimento_id=categorias.get(categoria_nome), fazenda_id=fazenda_id), nome_estoque or nome)
+        for nome, categoria_nome, nome_estoque in _ALIMENTOS_PADRAO_CATEGORIA
+    ]
+    session.add_all([a for a, _ in novos_com_vinculo])
+    session.commit()
+    for alimento, nome_estoque in novos_com_vinculo:
+        session.refresh(alimento)
+        item = estoque_por_nome.get(nome_estoque.strip().lower())
+        if item and item.alimento_id is None:
+            item.alimento_id = alimento.id
+            session.add(item)
+    session.commit()
 
 
 @router.get("/categorias")
@@ -594,15 +701,107 @@ def excluir_alimento(
     alimento_id: int, session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    """(bug real corrigido, relato do usuário 01/09/2026: "Failed to fetch"
+    ao excluir) `Alimento.id` é referenciado por FK opcional em outras 6
+    tabelas além de `Estoque` (histórico de dieta programada/consumida,
+    análise bromatológica, tabela nutricional, biblioteca nutricional da
+    Formulação de Dietas e item de simulação) — SQLite (usado nos testes)
+    não valida FK por padrão, então o `session.delete()` sempre passava por
+    aqui sem erro; o Postgres de produção rejeita a exclusão com uma
+    violação de integridade sempre que o Alimento ainda está referenciado
+    por qualquer uma delas, e a exceção não tratada aparecia no navegador
+    como "Failed to fetch". Cada linha referenciada perde só o vínculo
+    (nome/valores continuam intactos, gravados como texto/snapshot à parte
+    em todas elas) — nenhuma perde dado histórico."""
     alimento = session.get(Alimento, alimento_id)
     if not alimento or (fazenda_id is not None and alimento.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Alimento não encontrado")
-    for e in session.exec(select(Estoque).where(Estoque.alimento_id == alimento_id)).all():
-        e.alimento_id = None
-        session.add(e)
+    for modelo in (
+        Estoque, DietaItemProgramado, ConsumoAlimento, AnaliseBromatologica,
+        TabelaNutricionalProduto, AlimentoNutricional, DietaSimulacaoItem,
+    ):
+        for row in session.exec(select(modelo).where(modelo.alimento_id == alimento_id)).all():
+            row.alimento_id = None
+            session.add(row)
+    # Flush explícito ANTES do delete — garante que os UPDATEs (desvincular)
+    # cheguem ao banco antes do DELETE do Alimento em si. Sem isso, nada
+    # garante a ordem entre um DELETE avulso e UPDATEs pendentes na mesma
+    # sessão (ver o mesmo cuidado em exclusoes.py::_excluir_alvos_em_ordem,
+    # achado idêntico no animal 1291 no mesmo dia).
+    session.flush()
     session.delete(alimento)
     session.commit()
     return {"ok": True}
+
+
+class EstoquePreferidoIn(BaseModel):
+    # None limpa a preferência (volta a ordem arbitrária de hoje).
+    estoque_id: int | None = None
+
+
+@router.put("/alimentos/{alimento_id}/estoque-preferido")
+def atualizar_estoque_preferido(
+    alimento_id: int, dados: EstoquePreferidoIn,
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    """Fase P1 do refactor Alimento/Estoque — escolhe QUAL item de Estoque
+    vinculado a este Alimento recebe a baixa automática/consumo manual
+    quando há 2+ candidatos (ver `Alimento.estoque_preferido_id` e
+    `_estoque_por_alimento`). O item escolhido precisa já estar vinculado a
+    ESTE alimento (`Estoque.alimento_id == alimento_id`) — escolher um
+    candidato que nem é candidato não faz sentido, daí o 400 (e não 404: o
+    alimento existe, o problema é a combinação)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    alimento = session.get(Alimento, alimento_id)
+    if not alimento or (fazenda_id is not None and alimento.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Alimento não encontrado")
+    if dados.estoque_id is not None:
+        query = select(Estoque).where(Estoque.id == dados.estoque_id, Estoque.alimento_id == alimento_id)
+        if fazenda_id is not None:
+            query = query.where(Estoque.fazenda_id == fazenda_id)
+        if not session.exec(query).first():
+            raise HTTPException(
+                status_code=400,
+                detail="O item de estoque informado não está vinculado a este alimento",
+            )
+    alimento.estoque_preferido_id = dados.estoque_id
+    alimento.atualizado_em = datetime.utcnow()
+    session.add(alimento)
+    session.commit()
+    return _serializar_alimento(session, alimento, fazenda_id)
+
+
+class EstoqueCategoriaIn(BaseModel):
+    # None desvincula (o item volta a depender só da categoria indireta via
+    # Alimento, quando houver).
+    categoria_alimento_id: int | None = None
+
+
+@router.put("/estoque/{estoque_id}/categoria")
+def atualizar_categoria_estoque(
+    estoque_id: int, dados: EstoqueCategoriaIn,
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    """Fase P1 do refactor Alimento/Estoque — vincula um item de Estoque
+    DIRETO a uma CategoriaAlimento (`Estoque.categoria_alimento_id`), sem
+    precisar passar pelo cadastro de Alimento (a única via até aqui — ver
+    seção `produtos_sem_categoria` do relatório de conferência). Puramente
+    aditivo: não mexe em `Estoque.categoria` (texto livre) nem na
+    categorização indireta via `Alimento.categoria_alimento_id`, que
+    continua valendo do mesmo jeito para quem não usar este endpoint."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    item = session.get(Estoque, estoque_id)
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
+    if dados.categoria_alimento_id is not None:
+        cat = session.get(CategoriaAlimento, dados.categoria_alimento_id)
+        if not cat or (fazenda_id is not None and cat.fazenda_id != fazenda_id):
+            raise HTTPException(status_code=404, detail="Categoria de alimento não encontrada")
+    item.categoria_alimento_id = dados.categoria_alimento_id
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item.model_dump()
 
 
 # ---------------------------------------------------------------------------
@@ -740,8 +939,14 @@ def relatorio_migracao(
     ]
 
     # ── 3) produtos que são alimento mas não têm classificação ──
+    # Aditivo (Fase P1): um item com `categoria_alimento_id` PRÓPRIO (ver
+    # `Estoque.categoria_alimento_id`) já tem categoria por si só, mesmo sem
+    # nenhum vínculo de Alimento — qualquer um dos dois caminhos (direto ou
+    # indireto via Alimento) satisfaz "tem categoria", então sai desta lista.
     produtos_sem_categoria = []
     for e in estoques:
+        if e.categoria_alimento_id is not None:
+            continue
         if e.alimento_id is not None:
             alimento = alimentos_por_id.get(e.alimento_id)
             if alimento is not None and alimento.categoria_alimento_id is None:
@@ -773,6 +978,11 @@ def relatorio_migracao(
         {
             "alimento_id": aid,
             "alimento_nome": alimentos_por_id[aid].nome if aid in alimentos_por_id else None,
+            # Fase P1: qual dos candidatos (se algum) já foi escolhido
+            # deliberadamente como o item preferido — ver
+            # `Alimento.estoque_preferido_id` e PUT
+            # /alimentacao/alimentos/{alimento_id}/estoque-preferido.
+            "estoque_preferido_id": alimentos_por_id[aid].estoque_preferido_id if aid in alimentos_por_id else None,
             "produtos": [
                 {"id": e.id, "nome": e.nome, "quantidade": e.quantidade, "unidade": e.unidade}
                 for e in estoque_por_alimento_id[aid]
@@ -784,9 +994,12 @@ def relatorio_migracao(
 
     # ── 5) Alimento.nome != Estoque.nome do produto vinculado ──
     contagem_laudos_por_nome_exato: dict[str, int] = {}
+    contagem_laudos_por_alimento_id: dict[int, int] = {}
     for a in analises:
         if a.alimento:
             contagem_laudos_por_nome_exato[a.alimento] = contagem_laudos_por_nome_exato.get(a.alimento, 0) + 1
+        if a.alimento_id is not None:
+            contagem_laudos_por_alimento_id[a.alimento_id] = contagem_laudos_por_alimento_id.get(a.alimento_id, 0) + 1
     divergencia_nome = []
     for e in estoques:
         if e.alimento_id is None:
@@ -796,10 +1009,17 @@ def relatorio_migracao(
             divergencia_nome.append({
                 "alimento_id": alimento.id, "alimento_nome": alimento.nome,
                 "estoque_id": e.id, "estoque_nome": e.nome,
-                # Crítico: AnaliseBromatologica.alimento_id nunca é preenchido hoje —
-                # o vínculo real é por igualdade exata de string com o nome ATUAL do
-                # alimento. Renomear custaria exatamente esta quantidade de laudos.
+                # Histórico: até a Fase P1, AnaliseBromatologica.alimento_id nunca
+                # era preenchido — o vínculo real era só por igualdade exata de
+                # string com o nome ATUAL do alimento. Renomear custaria exatamente
+                # esta quantidade de laudos. Mantido como está (a API agora escreve
+                # `alimento_id` na criação e um backfill cobriu os já existentes,
+                # mas nomes podem ter divergido de novo desde então).
                 "quantidade_laudos_pelo_nome_atual": contagem_laudos_por_nome_exato.get(alimento.nome, 0),
+                # Fase P1: quantos laudos já estão ligados por id (imunes a um
+                # futuro rename) — quanto maior, menor o risco que a linha acima
+                # descreve. Informativo apenas; não muda nenhuma resolução.
+                "quantidade_laudos_pelo_id": contagem_laudos_por_alimento_id.get(alimento.id, 0),
             })
 
     # ── 6) Dieta.ingrediente que a cascata de resolução de hoje não resolve ──
@@ -989,11 +1209,18 @@ def obter_tabela_nutricional(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     produtos, nutrientes_ordem, por_produto = _tabela_nutricional_montada(session, fazenda_id)
     linhas = [[nutriente] + [por_produto.get(p.id, {}).get(nutriente, "") for p in produtos] for nutriente in nutrientes_ordem]
-    return {"alimentos": [p.nome for p in produtos], "produto_ids": [p.id for p in produtos], "linhas": linhas}
+    return {
+        "alimentos": [p.nome for p in produtos], "produto_ids": [p.id for p in produtos],
+        "estoque_ids": [p.estoque_id for p in produtos], "linhas": linhas,
+    }
 
 
 class TabelaNutricionalProdutoIn(BaseModel):
-    nome: str
+    nome: str = ""
+    # Produto do cadastro fechado de Estoque (finalidade Ração/Alimento) —
+    # quando informado, `nome` é derivado do Estoque se não vier preenchido;
+    # None = texto livre (flag "outro produto" na tela).
+    estoque_id: int | None = None
 
 
 @router.post("/tabela-nutricional/produtos", status_code=201)
@@ -1002,6 +1229,16 @@ def criar_produto_tabela_nutricional(
 ) -> dict:
     from fazenda.models import TabelaNutricionalProduto
     nome = dados.nome.strip()
+    if dados.estoque_id is not None:
+        produto_estoque = session.get(Estoque, dados.estoque_id)
+        if not produto_estoque or (fazenda_id is not None and produto_estoque.fazenda_id != fazenda_id):
+            raise HTTPException(status_code=404, detail="Produto de estoque não encontrado")
+        nome = nome or produto_estoque.nome
+        query_dup_estoque = select(TabelaNutricionalProduto).where(TabelaNutricionalProduto.estoque_id == dados.estoque_id)
+        if fazenda_id is not None:
+            query_dup_estoque = query_dup_estoque.where(TabelaNutricionalProduto.fazenda_id == fazenda_id)
+        if session.exec(query_dup_estoque).first():
+            raise HTTPException(status_code=409, detail=f'O produto "{produto_estoque.nome}" já está na tabela nutricional')
     if not nome:
         raise HTTPException(status_code=400, detail="Nome do produto é obrigatório")
     query_dup = select(TabelaNutricionalProduto).where(TabelaNutricionalProduto.nome == nome)
@@ -1012,7 +1249,9 @@ def criar_produto_tabela_nutricional(
     if session.exec(query_dup).first():
         raise HTTPException(status_code=409, detail=f'Já existe um produto chamado "{nome}" na tabela nutricional')
     maior_ordem = session.exec(query_ordem).first()
-    produto = TabelaNutricionalProduto(nome=nome, ordem=(maior_ordem.ordem + 1) if maior_ordem else 0, fazenda_id=fazenda_id)
+    produto = TabelaNutricionalProduto(
+        nome=nome, ordem=(maior_ordem.ordem + 1) if maior_ordem else 0, fazenda_id=fazenda_id, estoque_id=dados.estoque_id,
+    )
     session.add(produto)
     session.commit()
     session.refresh(produto)
@@ -1020,10 +1259,16 @@ def criar_produto_tabela_nutricional(
 
 
 @router.put("/tabela-nutricional/produtos/{produto_id}")
-def renomear_produto_tabela_nutricional(produto_id: int, dados: TabelaNutricionalProdutoIn, session: Session = Depends(get_session)) -> dict:
+def renomear_produto_tabela_nutricional(
+    produto_id: int, dados: TabelaNutricionalProdutoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     from fazenda.models import TabelaNutricionalProduto
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     produto = session.get(TabelaNutricionalProduto, produto_id)
-    if not produto:
+    # BUG DE SEGURANÇA CORRIGIDO: sem esta checagem, qualquer usuário podia
+    # renomear o produto de tabela nutricional de outra fazenda.
+    if not produto or (fazenda_id is not None and produto.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Produto não encontrado")
     nome = dados.nome.strip()
     if not nome:
@@ -1036,16 +1281,89 @@ def renomear_produto_tabela_nutricional(produto_id: int, dados: TabelaNutriciona
 
 
 @router.delete("/tabela-nutricional/produtos/{produto_id}")
-def excluir_produto_tabela_nutricional(produto_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_produto_tabela_nutricional(
+    produto_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     from fazenda.models import TabelaNutricionalProduto, TabelaNutricionalValor
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     produto = session.get(TabelaNutricionalProduto, produto_id)
-    if not produto:
+    # BUG DE SEGURANÇA CORRIGIDO: sem esta checagem, qualquer usuário podia
+    # excluir permanentemente o produto de tabela nutricional de outra
+    # fazenda.
+    if not produto or (fazenda_id is not None and produto.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Produto não encontrado")
     for v in session.exec(select(TabelaNutricionalValor).where(TabelaNutricionalValor.produto_id == produto_id)).all():
         session.delete(v)
     session.delete(produto)
     session.commit()
     return {"excluido": True, "id": produto_id}
+
+
+@router.post("/tabela-nutricional/produtos/{produto_id}/gerar-composicao")
+def gerar_composicao_de_tabela_nutricional(
+    produto_id: int, categoria_nasem: str | None = None,
+    fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+) -> dict:
+    """Usa os valores já digitados na Tabela Nutricional deste produto (texto
+    livre, unidades mistas) para preencher/atualizar a composição dele na
+    Biblioteca de Referência (AlimentoNutricional) — em vez de deixar a
+    importação de dieta cair sempre no template genérico da categoria.
+
+    Requer o produto já vinculado a um item de Estoque (que por sua vez
+    aponta pra um Alimento) — é essa cadeia que decide em qual `alimento_id`/
+    `estoque_id` a composição gerada é gravada. Ver
+    `fazenda.rules.tabela_nutricional.compor_alimento_nutricional_de_tabela`
+    pra regra de conversão de unidade."""
+    from fazenda.models import TabelaNutricionalValor
+    from fazenda.rules.tabela_nutricional import compor_alimento_nutricional_de_tabela
+
+    produto = session.get(TabelaNutricionalProduto, produto_id)
+    if not produto or (produto.fazenda_id is not None and produto.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+
+    alimento_id = produto.alimento_id
+    if alimento_id is None and produto.estoque_id is not None:
+        produto_estoque = session.get(Estoque, produto.estoque_id)
+        alimento_id = produto_estoque.alimento_id if produto_estoque else None
+    if alimento_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Vincule este produto a um item de Estoque (que aponte pra um Alimento) antes de gerar a composição",
+        )
+
+    valores = session.exec(select(TabelaNutricionalValor).where(TabelaNutricionalValor.produto_id == produto_id)).all()
+    nutriente_valores = {v.nutriente: v.valor for v in valores}
+    convertidos, nao_convertidos = compor_alimento_nutricional_de_tabela(nutriente_valores)
+    if not convertidos:
+        raise HTTPException(status_code=400, detail="Nenhum valor desta tabela nutricional pôde ser convertido em composição")
+
+    query_existente = select(AlimentoNutricional).where(
+        AlimentoNutricional.alimento_id == alimento_id, AlimentoNutricional.estoque_id == produto.estoque_id,
+        AlimentoNutricional.fazenda_id == fazenda_id,
+    )
+    item = session.exec(query_existente).first()
+    criado = item is None
+    if item is None:
+        item = AlimentoNutricional(
+            alimento_id=alimento_id, estoque_id=produto.estoque_id, fazenda_id=fazenda_id,
+            nome=produto.nome, categoria_nasem=categoria_nasem or "Outros", usuario_id=user.id,
+        )
+    for campo, valor in convertidos.items():
+        setattr(item, campo, valor)
+    item.fonte = "Tabela nutricional (rótulo do produto)"
+    extras = json.loads(item.extras_json) if item.extras_json else {}
+    extras.update(nao_convertidos)
+    item.extras_json = json.dumps(extras) if extras else None
+    item.atualizado_em = datetime.utcnow()
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return {
+        "criado": criado, "alimento_nutricional_id": item.id,
+        "convertidos": convertidos, "nao_convertidos": nao_convertidos,
+    }
 
 
 class ValorTabelaNutricionalIn(BaseModel):
@@ -1206,6 +1524,12 @@ async def importar_tabela_nutricional(
 class AnaliseBromatologicaIn(BaseModel):
     data: date
     alimento: str
+    # Fase P1 do refactor Alimento/Estoque — vínculo explícito com o cadastro
+    # de Alimento. Quando omitido, `criar_analise_bromatologica` tenta
+    # resolver sozinho por igualdade exata de nome (ver docstring do
+    # endpoint); passar aqui é só para quando o usuário já escolheu o
+    # Alimento num seletor, em vez de digitar o nome livre.
+    alimento_id: int | None = None
     ms_pct: float | None = None
     pb_pct: float | None = None
     fdn_pct: float | None = None
@@ -1242,10 +1566,37 @@ def criar_analise_bromatologica(
     dados: AnaliseBromatologicaIn, fazenda_id: int = Depends(get_fazenda_id_escrita),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
 ) -> dict:
+    """Grava um laudo. Gap 1 da Fase P1 (ver relatório de conferência §
+    divergência de nome): até aqui `AnaliseBromatologica.alimento_id` nunca
+    era escrito, e o vínculo real com o Alimento era só por igualdade exata
+    de string — renomear o Alimento "perdia" o laudo em silêncio (ver
+    `/formulacao/alimentos/{id}/resolver`, que já prioriza `alimento_id`
+    quando presente). Se `dados.alimento_id` vier explícito (usuário
+    escolheu num seletor), valida que pertence a esta fazenda e usa direto;
+    senão, tenta resolver sozinho por nome exato — melhor esforço, não
+    bloqueia a criação do laudo se não achar."""
     from fazenda.models import AnaliseBromatologica
     if not dados.alimento.strip():
         raise HTTPException(status_code=400, detail="Alimento é obrigatório")
-    registro = AnaliseBromatologica(**dados.model_dump(), usuario_id=user.id, fazenda_id=fazenda_id)
+
+    alimento_id = dados.alimento_id
+    if alimento_id is not None:
+        query = select(Alimento).where(Alimento.id == alimento_id)
+        if fazenda_id is not None:
+            query = query.where(Alimento.fazenda_id == fazenda_id)
+        if not session.exec(query).first():
+            raise HTTPException(status_code=404, detail="Alimento não encontrado")
+    else:
+        query = select(Alimento).where(Alimento.nome == dados.alimento)
+        if fazenda_id is not None:
+            query = query.where(Alimento.fazenda_id == fazenda_id)
+        encontrado = session.exec(query).first()
+        alimento_id = encontrado.id if encontrado else None
+
+    registro = AnaliseBromatologica(
+        **dados.model_dump(exclude={"alimento_id"}), alimento_id=alimento_id,
+        usuario_id=user.id, fazenda_id=fazenda_id,
+    )
     session.add(registro)
     session.commit()
     session.refresh(registro)
@@ -1258,6 +1609,9 @@ class ItemProgramadoIn(BaseModel):
     unidade: str
     base: str | None = None       # "MN" (matéria natural) | "MS" (matéria seca)
     ms_pct: float | None = None   # % de matéria seca do alimento
+    # Override por item de `DietaLancamento.base_quantidade` — "total" ou
+    # "animal"; None (padrão) herda a base da dieta. Ver `_base_efetiva`.
+    base_quantidade: str | None = None
 
 
 def _quantidade_fisica(quantidade: float, unidade: str | None, base: str | None, ms_pct: float | None) -> float:
@@ -1393,11 +1747,7 @@ def contexto_dieta(
                 round(ativa.leite_bezerros_kg_dia / n, 2) if ativa.leite_bezerros_kg_dia and n else None
             ),
             "itens": [
-                {
-                    "alimento": it.alimento, "unidade": it.unidade,
-                    "total_dia": round(_quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct), 2),
-                    "por_cabeca": round(_quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct) / n, 3) if n else None,
-                }
+                _linha_item_dieta(it, ativa.base_quantidade, n)
                 for it in itens
             ],
         }
@@ -1429,7 +1779,9 @@ def apresentacao_dieta(
     cabeça, total/dia, total/trato; e o somatório de kg no vagão do lote."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     dieta = session.get(DietaLancamento, dieta_id)
-    if not dieta:
+    # BUG DE SEGURANÇA CORRIGIDO: o cabeçalho da dieta (lote, datas) de outra
+    # fazenda vazava mesmo com os itens já corretamente filtrados abaixo.
+    if not dieta or (fazenda_id is not None and dieta.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Dieta não encontrada")
     n = len(_animais_do_lote(session, dieta.lote, fazenda_id))
     query_lote = select(Lote).where(Lote.codigo == f"{dieta.lote:02d}")
@@ -1443,15 +1795,17 @@ def apresentacao_dieta(
     linhas = []
     total_dia = 0.0
     for it in itens:
-        td = _quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct)  # total físico (MN) do lote/dia
-        linhas.append({
-            "alimento": it.alimento, "unidade": it.unidade,
-            "total_dia": round(td, 2),
-            "por_cabeca": round(td / n, 3) if n else None,
-            "total_trato": round(td / NUM_TRATOS, 2),
-        })
-        if (it.unidade or "").lower() in ("kg", "g"):
-            total_dia += td
+        # Total do lote/dia deste item, respeitando a base EFETIVA (override
+        # do item, senão a da dieta) — não o valor de `it.quantidade` cru, que
+        # só é o total do lote quando a base é "total" (ver `_linha_item_dieta`
+        # e `_totais_item`; era aqui que a conta ficava errada por um fator do
+        # tamanho do lote quando a dieta era lançada "por animal").
+        linha = _linha_item_dieta(it, dieta.base_quantidade, n)
+        total_lote_item = linha["total_dia"]
+        linha["total_trato"] = round(total_lote_item / NUM_TRATOS, 2) if total_lote_item is not None else None
+        linhas.append(linha)
+        if (it.unidade or "").lower() in ("kg", "g") and total_lote_item is not None:
+            total_dia += total_lote_item
     return {
         "lote": dieta.lote, "nome": lote_cad.nome if lote_cad else None, "qtd_animais": n,
         "data_abertura": dieta.data_abertura.isoformat(),
@@ -1468,9 +1822,16 @@ class EncerrarDietaIn(BaseModel):
 
 
 @router.put("/dietas/{dieta_id}/encerrar")
-def encerrar_dieta(dieta_id: int, dados: EncerrarDietaIn, session: Session = Depends(get_session)) -> dict:
+def encerrar_dieta(
+    dieta_id: int, dados: EncerrarDietaIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     dieta = session.get(DietaLancamento, dieta_id)
-    if not dieta:
+    # BUG DE SEGURANÇA CORRIGIDO: sem esta checagem, qualquer usuário
+    # autenticado podia encerrar a dieta ATIVA de outra fazenda só
+    # adivinhando dieta_id.
+    if not dieta or (fazenda_id is not None and dieta.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Dieta não encontrada")
     if dieta.data_efetivo_encerramento is not None:
         raise HTTPException(status_code=400, detail="Esta dieta já está encerrada")
@@ -1492,7 +1853,9 @@ def registrar_real(
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
 ) -> dict:
     dieta = session.get(DietaLancamento, dieta_id)
-    if not dieta:
+    # BUG DE SEGURANÇA CORRIGIDO: sem esta checagem, qualquer usuário podia
+    # anexar registros de "consumo real" à dieta de outra fazenda.
+    if not dieta or (fazenda_id is not None and dieta.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Dieta não encontrada")
     if not dados.itens:
         raise HTTPException(status_code=400, detail="Informe ao menos um alimento oferecido")
@@ -1512,7 +1875,7 @@ def comparativo_dieta(
     """Programado × real por alimento — soma total real e média por dia distinto registrado."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     dieta = session.get(DietaLancamento, dieta_id)
-    if not dieta:
+    if not dieta or (fazenda_id is not None and dieta.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Dieta não encontrada")
     query_prog = select(DietaItemProgramado).where(DietaItemProgramado.dieta_lancamento_id == dieta_id)
     query_reais = select(DietaRegistroReal).where(DietaRegistroReal.dieta_lancamento_id == dieta_id)
@@ -1583,17 +1946,53 @@ def _item_da_dieta(itens: list[DietaItemProgramado], alimento: str, alimento_id:
     return None
 
 
+def _base_efetiva(item_base: str | None, dieta_base: str | None) -> str:
+    """Resolve qual base ("total" ou "animal") vale para UM item: o override
+    do próprio item, se informado, senão a base da dieta, senão "total" — o
+    legado de todo lançamento anterior a este override existir. Nunca ler
+    `DietaItemProgramado.quantidade` sem passar antes por aqui: é o que
+    permite misturar bases dentro da mesma dieta (silagem em total do lote,
+    concentrado por cabeça) sem quebrar quem nunca usou a base por item."""
+    return item_base or dieta_base or "total"
+
+
 def _por_cabeca(qtd_fisica: float, base_quantidade: str | None, n_animais: int) -> float | None:
-    """Quantidade por cabeça de um item programado, respeitando
-    `DietaLancamento.base_quantidade` — a causa mais provável de dobrar a
-    conta (ver spec da sessão): quando a dieta já foi lançada "por animal", o
+    """Quantidade por cabeça de um item programado, dada a base EFETIVA já
+    resolvida (ver `_base_efetiva`) — a causa mais provável de dobrar a conta
+    (ver spec da sessão): quando o item já foi lançado "por animal", o
     `quantidade` do item JÁ É por cabeça (não dividir de novo); quando foi
-    lançada "total" (padrão), é o total do lote e só vira por-cabeça dividindo
+    lançado "total" (padrão), é o total do lote e só vira por-cabeça dividindo
     pelo efetivo atual. `None` quando não há efetivo para dividir — melhor não
     responder do que inventar um valor com denominador zero."""
     if base_quantidade == "animal":
         return qtd_fisica
     return qtd_fisica / n_animais if n_animais else None
+
+
+def _totais_item(qtd_fisica: float, base_efetiva: str, n_animais: int) -> tuple[float | None, float | None]:
+    """Retorna (total_lote_dia, por_cabeca_dia) de um item a partir da sua
+    quantidade física já convertida (MN) e da base EFETIVA (ver
+    `_base_efetiva`) — um dos dois vem direto do valor lançado, o outro é
+    derivado multiplicando/dividindo por `n_animais`. `None` no lado derivado
+    quando não há efetivo para multiplicar/dividir."""
+    if base_efetiva == "animal":
+        return (qtd_fisica * n_animais if n_animais else None), qtd_fisica
+    return qtd_fisica, (qtd_fisica / n_animais if n_animais else None)
+
+
+def _linha_item_dieta(it: DietaItemProgramado, dieta_base_quantidade: str | None, n_animais: int) -> dict:
+    """Um item de dieta pronto pra exibição (total/dia + por cabeça/dia), já
+    resolvendo a base EFETIVA (override do item, senão da dieta, senão
+    "total") — usado por `contexto_dieta` e `apresentacao_dieta` para nunca
+    tratar `it.quantidade` como total do lote sem checar a base."""
+    qtd_fisica = _quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct)
+    base_efetiva = _base_efetiva(it.base_quantidade, dieta_base_quantidade)
+    total_dia, por_cabeca = _totais_item(qtd_fisica, base_efetiva, n_animais)
+    return {
+        "alimento": it.alimento, "unidade": it.unidade,
+        "total_dia": round(total_dia, 2) if total_dia is not None else None,
+        "por_cabeca": round(por_cabeca, 3) if por_cabeca is not None else None,
+    }
 
 
 def _resolver_estoque_item(
@@ -1661,7 +2060,8 @@ def dieta_do_lote_consumo(
     linhas = []
     for it in itens:
         qtd_fisica = _quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct)
-        por_cabeca = _por_cabeca(qtd_fisica, dieta.base_quantidade, n)
+        base_efetiva = _base_efetiva(it.base_quantidade, dieta.base_quantidade)
+        por_cabeca = _por_cabeca(qtd_fisica, base_efetiva, n)
         linhas.append({
             "alimento": it.alimento, "alimento_id": it.alimento_id,
             "quantidade": it.quantidade, "unidade": it.unidade,
@@ -1766,6 +2166,11 @@ def lancar_consumo(
     # uma checagem de segurança.
     permitir_fora_da_dieta = bool(lote_cad.permitir_fora_da_dieta) if lote_cad else False
     permitir_sem_estoque = bool(lote_cad.permitir_sem_estoque) if lote_cad else False
+    # Mesma postura: sem cadastro, cai no padrão "consumo_real" — o único
+    # modo em que este endpoint sempre debitou estoque, então um lote legado
+    # continua se comportando exatamente como antes desta coluna existir.
+    modo_baixa_estoque = (lote_cad.modo_baixa_estoque if lote_cad else None) or "consumo_real"
+    deduzir_estoque = modo_baixa_estoque == "consumo_real"
 
     dieta = _dieta_ativa_do_lote(session, dados.lote, fazenda_id)
     itens_dieta = _itens_dieta_lancamento(session, dieta.id, fazenda_id) if dieta else []
@@ -1785,10 +2190,12 @@ def lancar_consumo(
 
         if dados.origem == "animais" and item_dieta is not None:
             # Recalculado no servidor — não confia no valor que o front
-            # mandou. É exatamente aqui que a conta dobra se `base_quantidade`
-            # for ignorado (ver docstring de `_por_cabeca`).
+            # mandou. É exatamente aqui que a conta dobra se a base EFETIVA
+            # (override do item, senão a da dieta) for ignorada (ver docstring
+            # de `_por_cabeca`).
             qtd_fisica = _quantidade_fisica(item_dieta.quantidade, item_dieta.unidade, item_dieta.base, item_dieta.ms_pct)
-            por_cabeca = _por_cabeca(qtd_fisica, dieta.base_quantidade if dieta else None, n_animais)
+            base_efetiva = _base_efetiva(item_dieta.base_quantidade, dieta.base_quantidade if dieta else None)
+            por_cabeca = _por_cabeca(qtd_fisica, base_efetiva, n_animais)
             if por_cabeca is None:
                 raise HTTPException(
                     status_code=400,
@@ -1817,15 +2224,21 @@ def lancar_consumo(
             alimento=item_in.alimento, alimento_id=item_in.alimento_id,
             quantidade=quantidade, unidade=unidade, num_animais=dados.num_animais,
             origem=dados.origem, fora_da_dieta=fora_da_dieta, usuario_id=user.id,
+            baixou_estoque=deduzir_estoque,
         )
         session.add(registro)
         session.flush()  # gera o id antes do movimento de estoque (origem_id rastreável — B7)
-        avisos.extend(estoque_baixa.baixar(
-            session, item=estoque_item, quantidade=quantidade, unidade=unidade, data=dados.data,
-            fazenda_id=fazenda_id,
-            observacao=f"Consumo diário — lote {dados.lote:02d}, {item_in.alimento}",
-            usuario_id=user.id, origem_tipo="consumo_alimento", origem_id=registro.id, produto=item_in.alimento,
-        ))
+        # "automatica"/"sem_baixa" registram o consumo (sobra/histórico
+        # continuam funcionando) mas NÃO tocam o Estoque aqui — "automatica"
+        # já é debitada pelo mecanismo de dias decorridos (`_dar_baixa_automatica`)
+        # e dobraria a baixa; "sem_baixa" é só plano/receita, por decisão do lote.
+        if deduzir_estoque:
+            avisos.extend(estoque_baixa.baixar(
+                session, item=estoque_item, quantidade=quantidade, unidade=unidade, data=dados.data,
+                fazenda_id=fazenda_id,
+                observacao=f"Consumo diário — lote {dados.lote:02d}, {item_in.alimento}",
+                usuario_id=user.id, origem_tipo="consumo_alimento", origem_id=registro.id, produto=item_in.alimento,
+            ))
 
     session.commit()
     return {"ok": True, "avisos": avisos}
@@ -1838,19 +2251,27 @@ def excluir_consumo(
 ) -> dict:
     """B9: exclui um lançamento de consumo e devolve o produto ao estoque
     pelo mesmo motor — o estorno espelha a baixa, não uma baixa negativa
-    inventada na mão."""
+    inventada na mão.
+
+    Só devolve quando `baixou_estoque` é True: um registro lançado com o lote
+    em modo "automatica"/"sem_baixa" nunca tocou o Estoque, então devolver
+    aqui inventaria estoque que nunca saiu. Olha o FLAG DO REGISTRO, não o
+    modo ATUAL do lote — o modo pode ter mudado depois do lançamento, e o
+    estorno tem de espelhar o que aconteceu quando o consumo foi lançado."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     registro = session.get(ConsumoAlimento, consumo_id)
     if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Lançamento de consumo não encontrado")
-    estoque_por_alimento, _ = _estoque_por_alimento(session, fazenda_id)
-    estoque_item = _resolver_estoque_item(session, fazenda_id, registro.alimento, estoque_por_alimento)
-    avisos = estoque_baixa.devolver(
-        session, item=estoque_item, quantidade=registro.quantidade, unidade=registro.unidade,
-        data=registro.data, fazenda_id=fazenda_id,
-        observacao=f"Exclusão do consumo diário — lote {registro.lote:02d}, {registro.alimento}",
-        usuario_id=user.id, origem_tipo="consumo_alimento", origem_id=registro.id, produto=registro.alimento,
-    )
+    avisos: list[str] = []
+    if registro.baixou_estoque:
+        estoque_por_alimento, _ = _estoque_por_alimento(session, fazenda_id)
+        estoque_item = _resolver_estoque_item(session, fazenda_id, registro.alimento, estoque_por_alimento)
+        avisos = estoque_baixa.devolver(
+            session, item=estoque_item, quantidade=registro.quantidade, unidade=registro.unidade,
+            data=registro.data, fazenda_id=fazenda_id,
+            observacao=f"Exclusão do consumo diário — lote {registro.lote:02d}, {registro.alimento}",
+            usuario_id=user.id, origem_tipo="consumo_alimento", origem_id=registro.id, produto=registro.alimento,
+        )
     session.delete(registro)
     session.commit()
     return {"ok": True, "avisos": avisos}

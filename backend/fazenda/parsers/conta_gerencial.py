@@ -24,6 +24,32 @@ from fazenda.parsers.utils import iter_csv_rows, parse_date, parse_float
 from fazenda.rules.centro_custo import mapear_centro_custo
 
 
+def _parse_parcela(valor: str) -> tuple[int, int]:
+    """Converte a coluna "Parcela" do Ideagri — formato "N de M" (ex.: "1 de
+    3") — em (parcela_num, parcela_total).
+
+    Sem essa conversão a linha nascia com os dois campos em None (o modelo
+    ContaGerencial não tem default nenhum para eles) e o Financeiro mostrava
+    "(null/1)"/"(null/2)"/... no lugar do número da parcela — ver
+    `frontend/app/financeiro/page.tsx`, coluna "Nº lanç." da tabela de
+    Lançamentos, que faz `(${r.parcela_num}/${r.parcela_total})` sem checar
+    se parcela_num veio preenchido.
+
+    Qualquer valor vazio ou fora do formato esperado vira (1, 1) — mesmo
+    padrão usado em todo o resto do código para "lançamento sem
+    parcelamento" (ver criar_lancamento, compra/venda de animal e sêmen,
+    RH, comissão, etc.), nunca None."""
+    partes = (valor or "").strip().lower().split(" de ")
+    if len(partes) == 2:
+        try:
+            num, total = int(partes[0].strip()), int(partes[1].strip())
+            if num >= 1 and total >= 1:
+                return num, total
+        except ValueError:
+            pass
+    return 1, 1
+
+
 def parse_conta_gerencial(content: bytes) -> list[ContaGerencial]:
     contas: list[ContaGerencial] = []
 
@@ -47,6 +73,8 @@ def parse_conta_gerencial(content: bytes) -> list[ContaGerencial]:
             tipo_raw = (row.get("TIPO", "") or "").strip()
             tipo = "receita" if tipo_raw == "1" else ("despesa" if tipo_raw == "2" else None)
 
+        parcela_num, parcela_total = _parse_parcela(row.get("Parcela", ""))
+
         conta = ContaGerencial(
             codigo_conta=codigo or None,
             descricao=row.get("Descrição", row.get("Descricao", "")) or None,
@@ -56,6 +84,8 @@ def parse_conta_gerencial(content: bytes) -> list[ContaGerencial]:
             data_emissao=parse_date(row.get("DATAEMISSAO", "")),
             fornecedor_cliente=row.get("Fornecedor / cliente", "") or None,
             numero_nota=row.get("Nº da nota", row.get("No da nota", "")) or None,
+            parcela_num=parcela_num,
+            parcela_total=parcela_total,
             valor_total=parse_float(row.get("Valor total da parcela", "")),
             valor_pago=parse_float(row.get("Valor pago receb.", "")),
             centro_custo=mapear_centro_custo(row.get("Centro de custo", "") or None),

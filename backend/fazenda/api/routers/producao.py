@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import calendar
 import re
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 
@@ -15,7 +16,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.api.routers.lotes import _codigo_do_grupo, _mesmo_codigo, coletar_dados_criterios
-from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
+from fazenda.auth import exigir_admin, exigir_admin_ou_dono, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, ContaGerencial, ControleLeiteiro, Dieta, DietaLancamento, EntregaLeiteMensal,
@@ -35,7 +36,8 @@ from fazenda.rules.equivalente_maduro import (
 )
 from fazenda.rules.gestation import calcular_parto_provavel
 from fazenda.rules import lactacao as regras_lactacao
-from fazenda.rules.ordem_parto_historica import PartoRef, ordem_parto_na_data
+from fazenda.rules.lactacao import inducao_concluida
+from fazenda.rules.ordem_parto_historica import PartoRef, ordem_parto_na_data, ordem_parto_pelo_atalho_atual
 from fazenda.rules.producao_305 import PontoControle, Producao305, producao_305_dias
 from fazenda.rules.lote_criterios import _contexto_animal, _dias_pos_parto, animal_atende_criterios, lote_tem_criterio
 from fazenda.rules.parto import eh_parto_produtivo
@@ -1452,6 +1454,10 @@ class SecagemIn(BaseModel):
     # resposta for sim): grava no histórico da secagem mesmo quando a
     # resposta é "não", sem gerar pendência nenhuma na Agenda nesse caso.
     vacina_pre_parto: bool | None = None
+    # Resposta explícita a "esta vaca já consta como seca — substituir a data
+    # da secagem anterior ou cancelar este lançamento?" (ver popup no front):
+    # id da Secagem que o usuário escolheu SUBSTITUIR em vez de duplicar.
+    substituir_secagem_id: int | None = None
 
 
 @router.post("/secagem")
@@ -1463,6 +1469,49 @@ def registrar_secagem(
         raise HTTPException(status_code=400, detail=f"Motivo inválido (aceitos: {', '.join(MOTIVOS_SECAGEM)})")
     if dados.escore_condicao_corporal is not None and not (1 <= dados.escore_condicao_corporal <= 5):
         raise HTTPException(status_code=400, detail="Escore de condição corporal deve ser entre 1 e 5")
+
+    # A secagem só faz sentido para quem tem lactação aberta na data — sem
+    # esta trava, uma segunda secagem lançada para quem já constava seca
+    # (ex.: lote errado, digitação errada) entrava em silêncio e fechava a
+    # lactação DENOVO, cedo demais, sem avisar ninguém (caso relatado: 04/07
+    # secado em lote por engano, lactação fechada 16 dias antes da secagem
+    # real de 20-25/07). Pede confirmação explícita: substituir a data da
+    # secagem que já fechou esta lactação, ou cancelar o lançamento.
+    if regras_lactacao.lactacao_aberta(
+        session, numero_matriz=dados.numero_matriz, data=dados.data_secagem, fazenda_id=fazenda_id,
+    ) is None and dados.substituir_secagem_id is None:
+        query_anterior = select(Secagem).where(Secagem.numero_matriz == dados.numero_matriz)
+        if fazenda_id is not None:
+            query_anterior = query_anterior.where(Secagem.fazenda_id == fazenda_id)
+        secagem_anterior = session.exec(query_anterior.order_by(Secagem.data_secagem.desc())).first()
+        quando = dados.data_secagem.strftime("%d/%m/%Y")
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "erro": "sem_lactacao_aberta",
+                "msg": f"{dados.numero_matriz} já consta como seca — não há lactação aberta em {quando}.",
+                "secagem_anterior": (
+                    {
+                        "id": secagem_anterior.id,
+                        "data_secagem": secagem_anterior.data_secagem.isoformat(),
+                        "motivo": secagem_anterior.motivo,
+                    }
+                    if secagem_anterior is not None else None
+                ),
+            },
+        )
+
+    if dados.substituir_secagem_id is not None:
+        antiga = session.get(Secagem, dados.substituir_secagem_id)
+        if antiga is not None and antiga.numero_matriz == dados.numero_matriz and (
+            fazenda_id is None or antiga.fazenda_id == fazenda_id
+        ):
+            # Desfaz o fechamento que a secagem antiga causou por engano —
+            # senão a lactação continuaria fechada na data errada mesmo
+            # depois de a secagem certa ser lançada mais adiante.
+            regras_lactacao.reabrir_lactacao_fechada_por_secagem(session, secagem_id=antiga.id, fazenda_id=fazenda_id)
+            session.delete(antiga)
+            session.flush()
 
     secagem = Secagem(
         fazenda_id=fazenda_id,
@@ -1868,6 +1917,74 @@ def listar_inducao_lactacao_ativos(
     return ativos
 
 
+class ConfirmarInducaoLactacaoIn(BaseModel):
+    entrou_em_lactacao: bool
+    data_inicio: date | None = None  # override da data sugerida (última etapa) — ver inducao_concluida
+
+
+@router.post("/inducao-lactacao/{lancamento_id}/{numero_matriz}/confirmar")
+def confirmar_inducao_lactacao(
+    lancamento_id: int, numero_matriz: str, dados: ConfirmarInducaoLactacaoIn,
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Resposta ao card "Confirmar início de lactação" da Agenda (ver bloco
+    `eventos_confirmar_lactacao_inducao` em agenda.py) — a matriz terminou
+    todas as etapas de um protocolo de indução de lactação em lote
+    (`ProtocoloInducaoLancamento`/`ProtocoloInducaoAplicacao`) sem que isso
+    tivesse aberto a `Lactacao` dela (era o gap: o modelo e
+    `abrir_lactacao(origem="inducao")` já existiam prontos, mas nenhum call
+    site os usava — ver `fazenda.rules.lactacao.ORIGEM_INDUCAO`).
+
+    "Não" não grava nada aqui de propósito — não existe (nem foi criado) um
+    campo próprio de resposta por animal, ao contrário de
+    `ProtocoloSanitarioLancamento.curada`: o mesmo mecanismo genérico
+    `EventoRealizado` que já tira ~15 outros tipos de pendência da Agenda
+    (ex.: "descartar pendência" sanitária, sem resposta persistida nenhuma)
+    é suficiente para o card sumir depois de respondido — o frontend chama
+    este endpoint e, em seguida, sempre `POST /agenda/realizados` (mesmo
+    padrão de `confirmarCura`/`descartarPendencia`, reversível de graça pelo
+    "Desfazer" genérico de qualquer pendência)."""
+    lancamento = session.get(ProtocoloInducaoLancamento, lancamento_id)
+    if not lancamento or (fazenda_id is not None and lancamento.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Lançamento de protocolo de indução não encontrado")
+
+    if not dados.entrou_em_lactacao:
+        return {"entrou_em_lactacao": False, "lactacao_id": None}
+
+    query_aplicacoes = (
+        select(ProtocoloInducaoAplicacao)
+        .where(ProtocoloInducaoAplicacao.lancamento_id == lancamento_id)
+        .where(ProtocoloInducaoAplicacao.numero_matriz == numero_matriz)
+    )
+    aplicacoes = session.exec(query_aplicacoes).all()
+    if not aplicacoes:
+        raise HTTPException(
+            status_code=404,
+            detail="Nenhuma etapa de indução encontrada para esta matriz neste lançamento",
+        )
+
+    _, data_sugerida = inducao_concluida(aplicacoes)
+    data_inicio = dados.data_inicio or data_sugerida
+    if data_inicio is None:
+        raise HTTPException(status_code=400, detail="Informe a data de início da lactação")
+
+    # Mesma dupla de chamadas do endpoint de parto (reproducao.py::
+    # registrar_parto) e na mesma ordem: abre a lactação e só depois
+    # ressincroniza o campo congelado `Animal.del_dias` (que precisa da
+    # lactação já aberta para calcular o DEL ao vivo corretamente).
+    lactacao = regras_lactacao.abrir_lactacao(
+        session, numero_matriz=numero_matriz, data_inicio=data_inicio,
+        origem=regras_lactacao.ORIGEM_INDUCAO, fazenda_id=fazenda_id,
+        usuario_id=_usuario_id_seguro(user),
+    )
+    regras_lactacao.sincronizar_del_do_animal(
+        session, numero_matriz=numero_matriz, fazenda_id=fazenda_id,
+    )
+    session.commit()
+    return {"entrou_em_lactacao": True, "lactacao_id": lactacao.id}
+
+
 # ---------------------------------------------------------------------------
 # Relatório de BST (Produção) — histórico de aplicações (Sanidade) achatado
 # para os filtros/gestão. A elegibilidade do dia (aptas/excluídas/nunca
@@ -1878,11 +1995,21 @@ MARCADORES_BST_PRODUCAO = re.compile(r"\b(lactotropi[nm]|boostin|bst|somatotropi
 
 
 @router.get("/relatorio-bst")
-def relatorio_bst(session: Session = Depends(get_session)) -> dict:
+def relatorio_bst(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Histórico de aplicações de BST, achatado com lote/categoria do animal na hora."""
-    animais_por_numero = {a.numero: a for a in session.exec(select(Animal)).all()}
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_animais = select(Animal)
+    query_sanidade = select(Sanidade)
+    # BUG DE SEGURANÇA CORRIGIDO: sem estes filtros, esta rota agregava
+    # aplicações de BST e animais de TODAS as fazendas do sistema.
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+        query_sanidade = query_sanidade.where(Sanidade.fazenda_id == fazenda_id)
+    animais_por_numero = {a.numero: a for a in session.exec(query_animais).all()}
     aplicacoes = [
-        s for s in session.exec(select(Sanidade)).all()
+        s for s in session.exec(query_sanidade).all()
         if s.atividade == "BST" or MARCADORES_BST_PRODUCAO.search(s.produto or "")
     ]
     registros = []
@@ -1904,9 +2031,41 @@ class AjustarProximaAplicacaoBstIn(BaseModel):
     modo: str  # "intervalo" | "referencia"
 
 
+def _linha_parametro_visivel(session: Session, chave: str, fazenda_id: int | None) -> ParametroFazenda | None:
+    """Mesmo padrão clone-on-write de fazenda.api.routers.parametros —
+    prefere a linha fazenda-específica e cai no padrão global (fazenda_id
+    NULL) só para leitura."""
+    if fazenda_id is not None:
+        especifica = session.exec(
+            select(ParametroFazenda).where(ParametroFazenda.chave == chave, ParametroFazenda.fazenda_id == fazenda_id)
+        ).first()
+        if especifica is not None:
+            return especifica
+    return session.exec(
+        select(ParametroFazenda).where(ParametroFazenda.chave == chave, ParametroFazenda.fazenda_id.is_(None))
+    ).first()
+
+
+def _gravar_parametro_da_fazenda(session: Session, linha: ParametroFazenda, fazenda_id: int | None, novo_valor: str) -> None:
+    """Grava `novo_valor` na linha certa: se `linha` encontrada é a global
+    (fazenda_id None) mas o chamador tem fazenda própria, CLONA para essa
+    fazenda em vez de editar o padrão global (mesmo padrão de
+    parametros.py::atualizar_parametro) — nunca deixa uma fazenda-cliente
+    sobrescrever o intervalo de BST visto por todas as outras."""
+    if fazenda_id is not None and linha.fazenda_id is None:
+        linha = ParametroFazenda(
+            chave=linha.chave, fazenda_id=fazenda_id, grupo=linha.grupo, label=linha.label,
+            valor=linha.valor, tipo=linha.tipo, unidade=linha.unidade,
+        )
+    linha.valor = novo_valor
+    linha.atualizado_em = datetime.utcnow()
+    session.add(linha)
+
+
 @router.post("/bst/ajustar-proxima-aplicacao")
 def ajustar_proxima_aplicacao_bst(
     dados: AjustarProximaAplicacaoBstIn, session: Session = Depends(get_session), _: Usuario = Depends(exigir_admin),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Corrige manualmente a data da próxima aplicação de BST (é uma decisão
     de rebanho inteiro, não por animal — mesma lógica de `proxima_visita_bst`
@@ -1918,9 +2077,19 @@ def ajustar_proxima_aplicacao_bst(
     lido por agenda.py)."""
     from fazenda.rules.parametros import intervalo_bst
 
+    # Mesma âncora usada em GET /agenda/ (ver `sanidades_bst_rotina` em
+    # agenda.py): só a rotina de BST do rebanho (atividade == "BST") conta
+    # como "última aplicação registrada" — doses de indução de lactação ou
+    # avulsas não têm o condão de mudar o intervalo/próxima data da rotina,
+    # mesmo usando um produto BST.
+    # BUG DE SEGURANÇA CORRIGIDO: a agregação abaixo não filtrava por
+    # fazenda_id (misturava datas de BST de todas as fazendas), e as duas
+    # leituras/escritas de ParametroFazenda pegavam a primeira linha com
+    # aquela chave em QUALQUER fazenda — um admin de uma fazenda-cliente
+    # podia sobrescrever o parâmetro de outro tenant ou o padrão global.
     aplicacoes = [
-        s for s in session.exec(select(Sanidade)).all()
-        if s.atividade == "BST" or MARCADORES_BST_PRODUCAO.search(s.produto or "")
+        s for s in session.exec(select(Sanidade).where(Sanidade.fazenda_id == fazenda_id)).all()
+        if s.atividade == "BST"
     ]
     datas_bst = [s.data_aplicacao for s in aplicacoes if s.data_aplicacao]
     intervalo_atual = intervalo_bst()
@@ -1939,31 +2108,25 @@ def ajustar_proxima_aplicacao_bst(
             marcador += timedelta(days=intervalo_atual)
             ciclos += 1
         novo_intervalo = max(1, round((dados.nova_data - ancora).days / ciclos))
-        linha_intervalo = session.exec(select(ParametroFazenda).where(ParametroFazenda.chave == "intervalo_bst")).first()
+        linha_intervalo = _linha_parametro_visivel(session, "intervalo_bst", fazenda_id)
         if not linha_intervalo:
             raise HTTPException(status_code=500, detail="Parâmetro 'intervalo_bst' não encontrado.")
-        linha_intervalo.valor = str(novo_intervalo)
-        linha_intervalo.atualizado_em = datetime.utcnow()
-        session.add(linha_intervalo)
+        _gravar_parametro_da_fazenda(session, linha_intervalo, fazenda_id, str(novo_intervalo))
         # O novo intervalo já reproduz a data escolhida a partir da última
         # aplicação real — qualquer ajuste manual de referência anterior fica
         # obsoleto.
-        linha_ancora = session.exec(select(ParametroFazenda).where(ParametroFazenda.chave == "bst_ajuste_ancora_data")).first()
+        linha_ancora = _linha_parametro_visivel(session, "bst_ajuste_ancora_data", fazenda_id)
         if linha_ancora and linha_ancora.valor:
-            linha_ancora.valor = ""
-            linha_ancora.atualizado_em = datetime.utcnow()
-            session.add(linha_ancora)
+            _gravar_parametro_da_fazenda(session, linha_ancora, fazenda_id, "")
         session.commit()
         return {"ok": True, "novo_intervalo": novo_intervalo, "proxima_visita_bst": dados.nova_data.isoformat()}
 
     if dados.modo == "referencia":
         nova_ancora = dados.nova_data - timedelta(days=intervalo_atual)
-        linha_ancora = session.exec(select(ParametroFazenda).where(ParametroFazenda.chave == "bst_ajuste_ancora_data")).first()
+        linha_ancora = _linha_parametro_visivel(session, "bst_ajuste_ancora_data", fazenda_id)
         if not linha_ancora:
             raise HTTPException(status_code=500, detail="Parâmetro 'bst_ajuste_ancora_data' não encontrado.")
-        linha_ancora.valor = nova_ancora.isoformat()
-        linha_ancora.atualizado_em = datetime.utcnow()
-        session.add(linha_ancora)
+        _gravar_parametro_da_fazenda(session, linha_ancora, fazenda_id, nova_ancora.isoformat())
         session.commit()
         return {"ok": True, "intervalo_bst": intervalo_atual, "proxima_visita_bst": dados.nova_data.isoformat()}
 
@@ -2175,29 +2338,305 @@ def equivalente_maduro_do_animal(
     return linha
 
 
-@router.get("/ordem-parto/relatorio")
-def relatorio_ordem_parto(
+# ---------------------------------------------------------------------------
+# Reconstrução de Parto.ordem_parto — a FONTE do dado, não o derivado em
+# ControleLeiteiro (ver seção seguinte). Ver fazenda/rules/parto.py para o
+# "porquê" completo: o histórico importado do Ideagri traz `ordem_parto` numa
+# convenção diferente da deste app (planilha usa base 0 — "0" para a 1ª cria
+# —, aqui é base 1), e a versão antiga de `proxima_ordem_parto` confiava no
+# `max()` do que já estava gravado, propagando esse erro para todo parto
+# lançado depois pelo app. `proxima_ordem_parto` já foi corrigida para nunca
+# mais confiar em `ordem_parto` armazenado (sempre conta os produtivos do
+# zero) — mas isso só protege PARTOS NOVOS. O dado já gravado (import antigo)
+# continua errado até alguém rodar esta reconstrução.
+#
+# IMPORTANTE — ordem de execução: rode ESTA ferramenta ANTES da de Controles
+# (seção seguinte). A de Controles lê `Parto.ordem_parto` como fonte de
+# verdade (`ordem_parto_na_data`) — uma vez os Partos corrigidos, a
+# reconstrução de Controles volta a mostrar os números certos na próxima vez
+# que rodar, sem precisar de nenhuma mudança nela.
+#
+# Mesmo padrão report-first das demais ferramentas desta seção: GET
+# .../divergencias nunca escreve nada; POST .../reconstruir só grava com
+# `confirmar: true` explícito.
+# ---------------------------------------------------------------------------
+def _levantar_ordem_parto_partos(session: Session, fazenda_id: int | None, exemplos: int) -> dict:
+    """Para cada matriz, ordena os partos dela cronologicamente (data do
+    parto; em empate ou parto sem data, o `id` de criação como desempate
+    estável) e atribui 1, 2, 3... só aos produtivos (`eh_parto_produtivo`,
+    já com a exceção do aborto que abriu lactação) — os demais (aborto sem
+    lactação) ficam com `ordem_parto=None`. Compara com o que está gravado
+    hoje e reporta as divergências, sem gravar nada."""
+    q_partos = select(Parto)
+    if fazenda_id is not None:
+        q_partos = q_partos.where(Parto.fazenda_id == fazenda_id)
+    partos = session.exec(q_partos).all()
+
+    por_animal: dict[str, list[Parto]] = defaultdict(list)
+    for p in partos:
+        por_animal[p.numero_matriz].append(p)
+
+    muda = 0
+    vira_desconhecido = 0
+    amostra = []
+    for numero, ps in por_animal.items():
+        ordenados = sorted(ps, key=lambda p: (p.data_parto is None, p.data_parto or date.min, p.id or 0))
+        contador = 0
+        for p in ordenados:
+            if eh_parto_produtivo(p):
+                contador += 1
+                correta = contador
+            else:
+                correta = None
+            if p.ordem_parto == correta:
+                continue
+            muda += 1
+            if correta is None:
+                vira_desconhecido += 1
+            if len(amostra) < exemplos:
+                amostra.append((numero, p.data_parto, p.ordem_parto, correta))
+
+    datas_p = [p.data_parto for p in partos if p.data_parto]
+    return {
+        "partos": len(partos),
+        "matrizes_com_parto": len(por_animal),
+        "muda": muda,
+        "vira_desconhecido": vira_desconhecido,
+        "amostra": amostra,
+        "periodo_partos": (min(datas_p), max(datas_p)) if datas_p else None,
+    }
+
+
+def _gravar_ordem_parto_partos(session: Session, fazenda_id: int | None) -> int:
+    """Grava a contagem cronológica calculada acima em `Parto.ordem_parto` —
+    mesma lógica de `_levantar_ordem_parto_partos`, sem o relatório."""
+    q_partos = select(Parto)
+    if fazenda_id is not None:
+        q_partos = q_partos.where(Parto.fazenda_id == fazenda_id)
+    partos = session.exec(q_partos).all()
+
+    por_animal: dict[str, list[Parto]] = defaultdict(list)
+    for p in partos:
+        por_animal[p.numero_matriz].append(p)
+
+    n = 0
+    for ps in por_animal.values():
+        ordenados = sorted(ps, key=lambda p: (p.data_parto is None, p.data_parto or date.min, p.id or 0))
+        contador = 0
+        for p in ordenados:
+            if eh_parto_produtivo(p):
+                contador += 1
+                correta = contador
+            else:
+                correta = None
+            if p.ordem_parto != correta:
+                p.ordem_parto = correta
+                session.add(p)
+                n += 1
+    session.commit()
+    return n
+
+
+@router.get("/ordem-parto/partos/divergencias")
+def divergencias_ordem_parto_partos(
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    """Versão HTTP, somente leitura, de `scripts/reconstruir_ordem_parto.py
-    levantar()` — existe porque este ambiente de desenvolvimento não alcança
-    o Postgres de produção diretamente (mesmo bloqueio de rede que atinge o
-    Milknews), então o script de linha de comando não roda daqui. Esta rota
-    deixa o mesmo relatório acessível de qualquer lugar que já fale com a API
-    (inclusive o próprio navegador do dono da fazenda).
-
-    NÃO grava nada — é o mesmo levantamento que decide, por comparação, quais
-    `ControleLeiteiro.ordem_parto` mudariam se a reconstrução fosse aplicada.
-    A gravação em si continua exigindo o script com `--gravar`, rodado por
-    alguém olhando o relatório antes — ver o próprio script para o porquê."""
-    # Import local, de propósito: mantém o script como fonte única do
-    # levantamento (nada duplicado aqui), e evita import de `scripts.*` no
-    # carregamento do módulo do router — só paga esse custo quem chama a rota.
-    from scripts.reconstruir_ordem_parto import levantar
-
+    """Relatório somente leitura: quantos `Parto.ordem_parto` mudariam se a
+    contagem cronológica (POST .../partos/reconstruir) fosse aplicada. NÃO
+    grava nada — ver nota no topo desta seção sobre rodar esta ferramenta
+    ANTES da de Controles, logo abaixo."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    r = levantar(session, fazenda_id, exemplos=40)
+    r = _levantar_ordem_parto_partos(session, fazenda_id, exemplos=40)
+    return {
+        "partos": r["partos"],
+        "matrizes_com_parto": r["matrizes_com_parto"],
+        "muda": r["muda"],
+        "vira_desconhecido": r["vira_desconhecido"],
+        "periodo_partos": [d.isoformat() for d in r["periodo_partos"]] if r["periodo_partos"] else None,
+        "amostra": [
+            {
+                "numero_matriz": numero,
+                "data_parto": data.isoformat() if data else None,
+                "ordem_hoje": hoje,
+                "ordem_correta": correta,
+            }
+            for numero, data, hoje, correta in r["amostra"]
+        ],
+    }
+
+
+class ReconstruirOrdemPartoPartosIn(BaseModel):
+    confirmar: bool = False
+
+
+@router.post("/ordem-parto/partos/reconstruir")
+def reconstruir_ordem_parto_partos(
+    dados: ReconstruirOrdemPartoPartosIn,
+    session: Session = Depends(get_session),
+    _: Usuario = Depends(exigir_admin_ou_dono),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Grava a ordem de parto correta em `Parto` — contagem cronológica dos
+    partos produtivos de cada matriz, do zero, ignorando qualquer valor já
+    gravado (importado ou não). Restrito a administrador/dono, escopado à
+    fazenda de quem chama.
+
+    Sem `confirmar: true` é NO-OP de propósito, com 400 explicando o porquê
+    — mesma trava report-first da ferramenta de Controles."""
+    if not dados.confirmar:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                'Nada foi gravado. Confira o relatório em GET /producao/ordem-parto/partos/divergencias '
+                'e, se estiver de acordo, chame esta rota de novo com {"confirmar": true}.'
+            ),
+        )
+    n = _gravar_ordem_parto_partos(session, fazenda_id)
+    return {"gravados": n}
+
+
+# ---------------------------------------------------------------------------
+# Reconstrução de ControleLeiteiro.ordem_parto — ver rules/ordem_parto_historica.py
+# para o "porquê" completo do problema. O campo nunca é gravado por nenhuma
+# das quatro vias de entrada do controle leiteiro; a tela caía num atalho (a
+# contagem TOTAL de partos do animal, aplicada a todo o histórico dele).
+#
+# As duas rotas abaixo são a versão HTTP, autenticada e escopada por
+# fazenda_id, do script de linha de comando `scripts/reconstruir_ordem_parto.py`
+# (mantido de pé, inalterado, para quem tiver acesso direto ao banco) — mesmo
+# padrão report-first dele: GET .../divergencias nunca escreve nada, e só
+# GRAVA com confirmação explícita em POST .../reconstruir (ver docstring do
+# script para o porquê de não ser migração automática).
+#
+# `levantar`/`gravar` são PORTADOS aqui, não importados do script: o script
+# faz `sys.path.insert` e resolve a própria engine a partir de
+# `fazenda.database.engine` no escopo do módulo — desenhado para uma
+# invocação avulsa de CLI, não para import de dentro do processo do servidor
+# já rodando. A lógica é a mesma, linha a linha; só a fonte da Session muda
+# (aqui vem da injeção de dependência do FastAPI, como todo outro endpoint
+# deste router) — ver scripts/reconstruir_ordem_parto.py::levantar/gravar
+# para o original.
+# ---------------------------------------------------------------------------
+def _meses_ate_o_parto(inicio: date | None, fim: date | None) -> int | None:
+    """Idade em meses inteiros — mesmo cálculo de
+    scripts/reconstruir_ordem_parto.py::_meses (aproximação por 30,44 dias
+    seria pior: o padrão de idade ao parto é lido em meses de calendário)."""
+    if inicio is None or fim is None:
+        return None
+    m = (fim.year - inicio.year) * 12 + (fim.month - inicio.month)
+    if fim.day < inicio.day:
+        m -= 1
+    return m if m >= 0 else None
+
+
+def _faixa_idade_ao_parto(m: int | None) -> str:
+    if m is None:
+        return "sem idade"
+    for lim in (24, 30, 36, 48, 60, 72, 86):
+        if m < lim:
+            return f"< {lim}"
+    return ">= 86"
+
+
+def _levantar_ordem_parto(session: Session, fazenda_id: int | None, exemplos: int) -> dict:
+    """Mesma lógica de scripts/reconstruir_ordem_parto.py::levantar — ver
+    nota acima do porquê de portar em vez de importar."""
+    q_partos = select(Parto)
+    q_cl = select(ControleLeiteiro)
+    q_an = select(Animal)
+    if fazenda_id is not None:
+        q_partos = q_partos.where(Parto.fazenda_id == fazenda_id)
+        q_cl = q_cl.where(ControleLeiteiro.fazenda_id == fazenda_id)
+        q_an = q_an.where(Animal.fazenda_id == fazenda_id)
+
+    partos = session.exec(q_partos).all()
+    controles = session.exec(q_cl).all()
+    nascimento = {a.numero: getattr(a, "data_nasc", None) for a in session.exec(q_an).all()}
+
+    por_animal: dict[str, list[PartoRef]] = defaultdict(list)
+    for p in partos:
+        por_animal[p.numero_matriz].append(PartoRef(p.data_parto, p.ordem_parto))
+
+    # Lactações por ordem de parto — o denominador de cada classe do fator.
+    lactacoes_por_ordem = Counter(p.ordem_parto for p in partos if p.ordem_parto is not None)
+
+    # Idade ao parto: é assim que o padrão internacional define maturidade
+    # (faixa de 61 a 86 meses, por raça), não pelo número da cria.
+    idades = Counter()
+    for p in partos:
+        idades[_faixa_idade_ao_parto(_meses_ate_o_parto(nascimento.get(p.numero_matriz), p.data_parto))] += 1
+
+    muda = 0
+    vira_desconhecido = 0
+    amostra = []
+    for c in controles:
+        ps = por_animal.get(c.numero_matriz, [])
+        hoje = c.ordem_parto or ordem_parto_pelo_atalho_atual(ps)
+        correta = ordem_parto_na_data(ps, c.data_controle)
+        if correta == hoje:
+            continue
+        muda += 1
+        if correta is None:
+            vira_desconhecido += 1
+        if len(amostra) < exemplos:
+            amostra.append((c.numero_matriz, c.data_controle, hoje, correta))
+
+    datas_p = [p.data_parto for p in partos if p.data_parto]
+    datas_c = [c.data_controle for c in controles if c.data_controle]
+    return {
+        "partos": len(partos),
+        "controles": len(controles),
+        "animais_com_parto": len(por_animal),
+        "lactacoes_por_ordem": dict(sorted(lactacoes_por_ordem.items())),
+        "idade_ao_parto": dict(idades),
+        "muda": muda,
+        "vira_desconhecido": vira_desconhecido,
+        "amostra": amostra,
+        "periodo_partos": (min(datas_p), max(datas_p)) if datas_p else None,
+        "periodo_controles": (min(datas_c), max(datas_c)) if datas_c else None,
+    }
+
+
+def _gravar_ordem_parto(session: Session, fazenda_id: int | None) -> int:
+    """Mesma lógica de scripts/reconstruir_ordem_parto.py::gravar. Só grava
+    quando `ordem_parto_na_data` devolve resposta NÃO-None e diferente do que
+    já está gravado — nunca inventa, nunca zera um valor existente a troco de
+    palpite (deixar nulo é melhor que gravar o palpite que a tela já dava:
+    nulo é honesto, o palpite parece dado)."""
+    q_partos = select(Parto)
+    q_cl = select(ControleLeiteiro)
+    if fazenda_id is not None:
+        q_partos = q_partos.where(Parto.fazenda_id == fazenda_id)
+        q_cl = q_cl.where(ControleLeiteiro.fazenda_id == fazenda_id)
+    por_animal: dict[str, list[PartoRef]] = defaultdict(list)
+    for p in session.exec(q_partos).all():
+        por_animal[p.numero_matriz].append(PartoRef(p.data_parto, p.ordem_parto))
+
+    n = 0
+    for c in session.exec(q_cl).all():
+        correta = ordem_parto_na_data(por_animal.get(c.numero_matriz, []), c.data_controle)
+        if correta is not None and c.ordem_parto != correta:
+            c.ordem_parto = correta
+            session.add(c)
+            n += 1
+    session.commit()
+    return n
+
+
+@router.get("/ordem-parto/divergencias")
+def divergencias_ordem_parto(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Relatório somente leitura: quantos `ControleLeiteiro.ordem_parto`
+    mudariam se a reconstrução (POST .../reconstruir) fosse aplicada, e
+    quantos, entre esses, virariam "sem ordem" (não dá para saber — controle
+    anterior ao primeiro parto conhecido, ou parto sem ordem gravada) em vez
+    de um número que hoje não corresponde a nada. Traz também uma amostra de
+    casos concretos. NÃO grava nada — ver nota no topo desta seção."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    r = _levantar_ordem_parto(session, fazenda_id, exemplos=40)
     return {
         "partos": r["partos"],
         "controles": r["controles"],
@@ -2218,6 +2657,169 @@ def relatorio_ordem_parto(
             for numero, data, hoje, correta in r["amostra"]
         ],
     }
+
+
+class ReconstruirOrdemPartoIn(BaseModel):
+    confirmar: bool = False
+
+
+@router.post("/ordem-parto/reconstruir")
+def reconstruir_ordem_parto(
+    dados: ReconstruirOrdemPartoIn,
+    session: Session = Depends(get_session),
+    _: Usuario = Depends(exigir_admin_ou_dono),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Grava a ordem de parto correta em `ControleLeiteiro` — mesmo efeito de
+    `scripts/reconstruir_ordem_parto.py --gravar`, restrito a administrador e
+    escopado à fazenda de quem chama.
+
+    Sem `confirmar: true` é NO-OP de propósito, com 400 explicando o porquê:
+    mesma trava do script (report-first — ver a docstring dele). Reescrita de
+    dado histórico merece alguém olhando o relatório (GET .../divergencias)
+    antes de aplicar."""
+    if not dados.confirmar:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                'Nada foi gravado. Confira o relatório em GET /producao/ordem-parto/divergencias '
+                'e, se estiver de acordo, chame esta rota de novo com {"confirmar": true}.'
+            ),
+        )
+    n = _gravar_ordem_parto(session, fazenda_id)
+    return {"gravados": n}
+
+
+# ---------------------------------------------------------------------------
+# Reconstrução de ControleLeiteiro.del_no_controle — mesmo problema estrutural
+# do ordem_parto acima, causa diferente. Até a correção em `_gravar_controles`
+# (ver comentário lá), este campo era copiado de `animal.del_dias` — o DEL AO
+# VIVO do animal no momento do LANÇAMENTO, não o DEL da lactação na DATA do
+# controle. `animal.del_dias` só é resincronizado em eventos pontuais (parto/
+# aborto/indução, ou upload de GERAL.csv); fora isso fica parado no último
+# valor. Resultado: todo controle lançado no mesmo intervalo "parado" herdava
+# o MESMO del_no_controle, não importa a data real de cada um — um caso real
+# tinha dois controles 13 dias distantes com DEL idêntico (21 e 21), quando o
+# real era 42 e 55.
+#
+# A gravação de controles novos já está corrigida; isto aqui é só o backfill
+# do histórico gravado antes da correção — mesmo padrão report-first do
+# ordem_parto: GET .../divergencias nunca escreve, só POST .../reconstruir
+# com {"confirmar": true} grava.
+# ---------------------------------------------------------------------------
+def _levantar_del_controle(session: Session, fazenda_id: int | None, exemplos: int) -> dict:
+    """Para cada `ControleLeiteiro`, recalcula o DEL a partir da lactação que
+    estava aberta na `data_controle` dele (`Lactacao.data_inicio`), e compara
+    com o que está gravado. Sem lactação aberta naquela data (dado incoerente
+    — controle sem parto/aborto que o justifique), a correta vira `None`
+    ("sem lactação"), nunca um palpite. NÃO grava nada."""
+    q_cl = select(ControleLeiteiro)
+    if fazenda_id is not None:
+        q_cl = q_cl.where(ControleLeiteiro.fazenda_id == fazenda_id)
+    controles = session.exec(q_cl).all()
+
+    muda = 0
+    sem_lactacao = 0
+    amostra = []
+    for c in controles:
+        lactacao = regras_lactacao.lactacao_aberta(
+            session, numero_matriz=c.numero_matriz, data=c.data_controle, fazenda_id=fazenda_id,
+        )
+        correta = (c.data_controle - lactacao.data_inicio).days if lactacao else None
+        if correta == c.del_no_controle:
+            continue
+        muda += 1
+        if correta is None:
+            sem_lactacao += 1
+        if len(amostra) < exemplos:
+            amostra.append((c.numero_matriz, c.data_controle, c.del_no_controle, correta))
+
+    datas_c = [c.data_controle for c in controles if c.data_controle]
+    return {
+        "controles": len(controles),
+        "muda": muda,
+        "sem_lactacao": sem_lactacao,
+        "amostra": amostra,
+        "periodo_controles": (min(datas_c), max(datas_c)) if datas_c else None,
+    }
+
+
+def _gravar_del_controle(session: Session, fazenda_id: int | None) -> int:
+    """Grava o DEL recalculado — mesma lógica de `_levantar_del_controle`, sem
+    o relatório. Só grava quando a lactação aberta na data existe (`correta`
+    não-None) e difere do que já está — mesma filosofia do ordem_parto: nunca
+    zera um valor existente a troco de palpite."""
+    q_cl = select(ControleLeiteiro)
+    if fazenda_id is not None:
+        q_cl = q_cl.where(ControleLeiteiro.fazenda_id == fazenda_id)
+
+    n = 0
+    for c in session.exec(q_cl).all():
+        lactacao = regras_lactacao.lactacao_aberta(
+            session, numero_matriz=c.numero_matriz, data=c.data_controle, fazenda_id=fazenda_id,
+        )
+        correta = (c.data_controle - lactacao.data_inicio).days if lactacao else None
+        if correta is not None and c.del_no_controle != correta:
+            c.del_no_controle = correta
+            session.add(c)
+            n += 1
+    session.commit()
+    return n
+
+
+@router.get("/del-controle/divergencias")
+def divergencias_del_controle(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Relatório somente leitura: quantos `ControleLeiteiro.del_no_controle`
+    mudariam se o recálculo (POST .../reconstruir) fosse aplicado. NÃO grava
+    nada — ver nota no topo desta seção."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    r = _levantar_del_controle(session, fazenda_id, exemplos=40)
+    return {
+        "controles": r["controles"],
+        "muda": r["muda"],
+        "sem_lactacao": r["sem_lactacao"],
+        "periodo_controles": [d.isoformat() for d in r["periodo_controles"]] if r["periodo_controles"] else None,
+        "amostra": [
+            {
+                "numero_matriz": numero,
+                "data_controle": data.isoformat() if data else None,
+                "del_hoje": hoje,
+                "del_correto": correta,
+            }
+            for numero, data, hoje, correta in r["amostra"]
+        ],
+    }
+
+
+class ReconstruirDelControleIn(BaseModel):
+    confirmar: bool = False
+
+
+@router.post("/del-controle/reconstruir")
+def reconstruir_del_controle(
+    dados: ReconstruirDelControleIn,
+    session: Session = Depends(get_session),
+    _: Usuario = Depends(exigir_admin_ou_dono),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Grava o DEL recalculado em `ControleLeiteiro.del_no_controle` —
+    restrito a administrador/dono, escopado à fazenda de quem chama.
+
+    Sem `confirmar: true` é NO-OP de propósito, com 400 explicando o porquê —
+    mesma trava report-first do ordem_parto (ver GET .../divergencias)."""
+    if not dados.confirmar:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                'Nada foi gravado. Confira o relatório em GET /producao/del-controle/divergencias '
+                'e, se estiver de acordo, chame esta rota de novo com {"confirmar": true}.'
+            ),
+        )
+    n = _gravar_del_controle(session, fazenda_id)
+    return {"gravados": n}
 
 
 # Calculadora avulsa — não persiste nada, mesmo padrão de

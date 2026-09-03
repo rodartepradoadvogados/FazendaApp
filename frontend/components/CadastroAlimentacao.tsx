@@ -21,7 +21,7 @@ import {
   type ContextoDieta, type ApresentacaoDieta,
   fetchCategoriasAlimento, criarCategoriaAlimento, atualizarCategoriaAlimento, excluirCategoriaAlimento, type CategoriaAlimento,
   fetchAlimentos, criarAlimento, atualizarAlimento, excluirAlimento, type Alimento,
-  fetchRelatorioMigracaoAlimentacao, type RelatorioMigracao,
+  fetchRelatorioMigracaoAlimentacao, atualizarEstoquePreferidoAlimento, atualizarCategoriaAlimentoEstoque, type RelatorioMigracao,
 } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { casaBusca } from "@/lib/busca";
@@ -40,17 +40,34 @@ const NUM_TRATOS = 2;
 const UNIDADES = ["kg", "g", "L", "ml", "unidade", "dose", "saca 30kg", "saca 60kg"];
 
 type LoteRow = { codigo: string; nome?: string | null; rotulo?: string; qtd_animais?: number };
-type ItemForm = { alimento: string; quantidade: string; unidade: string; base: string; ms_pct: number | null };
+// `baseQuantidade` aqui é o OVERRIDE por item ("total"/"animal"); null/undefined
+// = herda a base do lote (`LoteForm.baseQuantidade`) — mesma semântica do
+// backend (`DietaItemProgramado.base_quantidade`, ver `_base_efetiva`).
+type ItemForm = { alimento: string; quantidade: string; unidade: string; base: string; ms_pct: number | null; baseQuantidade?: "total" | "animal" | null };
 type LoteForm = { responsavel: string; dataAbertura: string; dataPrevista: string; baseQuantidade: string; leiteBezerros: string; leitePorBezerroLDia: string; itens: ItemForm[] };
 
 const hoje = () => new Date().toISOString().slice(0, 10);
-const itemVazio = (): ItemForm => ({ alimento: "", quantidade: "", unidade: "kg", base: "MN", ms_pct: null });
+const itemVazio = (): ItemForm => ({ alimento: "", quantidade: "", unidade: "kg", base: "MN", ms_pct: null, baseQuantidade: null });
 // Quantidade física (matéria natural) a oferecer — converte de MS para MN
 // usando o %MS do ingrediente; só se aplica a kg/g (mesma regra do backend).
 function quantidadeFisica(it: ItemForm): number {
   const q = Number(it.quantidade) || 0;
   if (it.base === "MS" && it.ms_pct && ["kg", "g"].includes(it.unidade)) return q / (it.ms_pct / 100);
   return q;
+}
+// Base EFETIVA de um item: o override do próprio item, senão a do lote —
+// espelha `_base_efetiva` do backend (fazenda/api/routers/alimentacao.py),
+// pra o preview ao vivo do formulário nunca discordar do que o servidor vai
+// calcular ao salvar.
+function baseEfetivaItem(it: ItemForm, baseLote: string): "total" | "animal" {
+  return it.baseQuantidade || (baseLote as "total" | "animal") || "total";
+}
+// (total_lote_dia, por_cabeca_dia) de um item, dado o físico (MN) já
+// convertido e sua base efetiva — espelha `_totais_item` do backend: um dos
+// dois vem direto do valor lançado, o outro é derivado por `nAnimais`.
+function totaisItem(qFisica: number, baseEfetiva: "total" | "animal", nAnimais: number): [number | null, number | null] {
+  if (baseEfetiva === "animal") return [nAnimais ? qFisica * nAnimais : null, qFisica];
+  return [qFisica, nAnimais ? qFisica / nAnimais : null];
 }
 const formVazio = (): LoteForm => ({ responsavel: "Alexandre Scarpa (consultor)", dataAbertura: hoje(), dataPrevista: "", baseQuantidade: "total", leiteBezerros: "", leitePorBezerroLDia: "", itens: [itemVazio()] });
 
@@ -768,11 +785,71 @@ function TabelaItensFantasma({ itens }: { itens: RelatorioMigracao["fantasmas_im
   );
 }
 
-function TabelaProdutosSemCategoria({ itens }: { itens: RelatorioMigracao["produtos_sem_categoria"] }) {
+// Mesmo agrupamento raiz→filhas de `CategoriasAlimentoTab`/`AlimentosTab`
+// (categoria_pai_id), aqui achatado num só <select> por linha da tabela — a
+// subcategoria some indentada (↳) logo abaixo da raiz, em vez dos dois
+// selects encadeados do formulário de Alimento (que não cabem numa célula).
+function opcoesCategoriaHierarquicas(categorias: CategoriaAlimento[]) {
+  const raizes = categorias.filter((c) => c.categoria_pai_id == null).sort((a, b) => a.nome.localeCompare(b.nome));
+  const filhasDe = (paiId: number) => categorias.filter((c) => c.categoria_pai_id === paiId).sort((a, b) => a.nome.localeCompare(b.nome));
+  const opcoes: React.ReactNode[] = [];
+  raizes.forEach((raiz) => {
+    opcoes.push(<option key={raiz.id} value={raiz.id}>{raiz.nome}</option>);
+    filhasDe(raiz.id).forEach((filha) => {
+      opcoes.push(<option key={filha.id} value={filha.id}>{"  ↳ " + filha.nome}</option>);
+    });
+  });
+  return opcoes;
+}
+
+// Fase P1 — ação nova desta linha: liga o item de Estoque direto a uma
+// CategoriaAlimento (PUT /alimentacao/estoque/{id}/categoria), sem precisar
+// cadastrar/editar um Alimento no meio. Ao salvar com sucesso a linha some da
+// lista (avisa `onCategorizado`) — o motivo "sem categoria" deixou de valer,
+// então mantê-la aqui com o picker preenchido ficaria contradizendo a própria
+// coluna "Motivo".
+function CategoriaEstoquePicker({ item, categorias, onCategorizado }: {
+  item: RelatorioMigracao["produtos_sem_categoria"][number];
+  categorias: CategoriaAlimento[];
+  onCategorizado: (estoqueId: number, estoqueNome: string, categoriaNome: string) => void;
+}) {
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const escolher = async (valor: string) => {
+    if (!valor) return;
+    const categoriaId = Number(valor);
+    setSalvando(true); setErro(null);
+    try {
+      await atualizarCategoriaAlimentoEstoque(item.id, categoriaId);
+      const nomeCategoria = categorias.find((c) => c.id === categoriaId)?.nome || "";
+      onCategorizado(item.id, item.nome, nomeCategoria);
+    } catch (e: any) {
+      setErro(e.message || "Erro ao salvar a categoria");
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <div>
+      <select style={{ ...input, maxWidth: "17rem" }} value="" disabled={salvando} onChange={(e) => escolher(e.target.value)}>
+        <option value="">{salvando ? "Salvando…" : "Selecionar categoria…"}</option>
+        {opcoesCategoriaHierarquicas(categorias)}
+      </select>
+      {erro && <p style={{ fontSize: "0.72rem", color: "var(--red)", marginTop: "0.2rem" }}>{erro}</p>}
+    </div>
+  );
+}
+
+function TabelaProdutosSemCategoria({ itens, categorias, onCategorizado }: {
+  itens: RelatorioMigracao["produtos_sem_categoria"];
+  categorias: CategoriaAlimento[];
+  onCategorizado: (estoqueId: number, estoqueNome: string, categoriaNome: string) => void;
+}) {
   return (
     <div className="overflow-x-auto">
       <table className="fazenda-table">
-        <thead><tr><th>Nome</th><th style={{ textAlign: "right" }}>Qtd.</th><th>Unid.</th><th>Finalidade</th><th>Motivo</th></tr></thead>
+        <thead><tr><th>Nome</th><th style={{ textAlign: "right" }}>Qtd.</th><th>Unid.</th><th>Finalidade</th><th>Motivo</th><th>Categorizar agora</th></tr></thead>
         <tbody>
           {itens.map((it) => (
             <tr key={it.id}>
@@ -781,6 +858,7 @@ function TabelaProdutosSemCategoria({ itens }: { itens: RelatorioMigracao["produ
               <td style={{ fontSize: "0.78rem" }}>{it.unidade || "—"}</td>
               <td style={{ fontSize: "0.78rem" }}>{it.finalidade || "—"}</td>
               <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{it.motivo}</td>
+              <td><CategoriaEstoquePicker item={it} categorias={categorias} onCategorizado={onCategorizado} /></td>
             </tr>
           ))}
         </tbody>
@@ -789,11 +867,68 @@ function TabelaProdutosSemCategoria({ itens }: { itens: RelatorioMigracao["produ
   );
 }
 
-function TabelaDesmembramentos({ itens }: { itens: RelatorioMigracao["desmembramentos"] }) {
+// Fase P1 — ação nova desta linha: escolhe qual `produtos[]` recebe a baixa
+// automática/consumo manual (PUT /alimentacao/alimentos/{id}/estoque-preferido).
+// Hoje, sem escolha, o backend usa o primeiro item vinculado, numa ordem
+// arbitrária que pode mudar sozinha conforme o vínculo é reordenado — este
+// picker troca essa arbitrariedade por uma decisão explícita da fazenda, que
+// só muda quando alguém mudar aqui de novo.
+function ItemPreferidoPicker({ item, onAtualizado }: {
+  item: RelatorioMigracao["desmembramentos"][number];
+  onAtualizado: (alimentoId: number, estoquePreferidoId: number | null) => void;
+}) {
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const escolher = async (valor: string) => {
+    const novoId = valor === "" ? null : Number(valor);
+    setSalvando(true); setErro(null);
+    try {
+      await atualizarEstoquePreferidoAlimento(item.alimento_id, novoId);
+      onAtualizado(item.alimento_id, novoId);
+    } catch (e: any) {
+      setErro(e.message || "Erro ao salvar o item preferido");
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <div>
+      <label style={{ ...lbl, marginBottom: "0.15rem" }}>Item preferido para a baixa automática</label>
+      <select style={{ ...input, maxWidth: "20rem" }} value={item.estoque_preferido_id ?? ""} disabled={salvando} onChange={(e) => escolher(e.target.value)}>
+        <option value="">nenhum escolhido — usa a ordem arbitrária de hoje</option>
+        {item.produtos.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+      </select>
+      <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>
+        Sem uma escolha aqui, o sistema usa o primeiro item vinculado — uma ordem que pode mudar sozinha. Escolher fixa
+        deliberadamente qual item recebe a baixa/consumo, até você trocar de novo.
+      </p>
+      {salvando && <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>Salvando…</p>}
+      {!salvando && erro && <p style={{ fontSize: "0.72rem", color: "var(--red)", marginTop: "0.2rem" }}>{erro}</p>}
+      {!salvando && !erro && item.estoque_preferido_id != null && (
+        <p style={{ fontSize: "0.72rem", color: "var(--green-light)", marginTop: "0.2rem", display: "flex", alignItems: "center", gap: "0.25rem" }}>
+          <CheckCircle2 size={12} /> Escolha salva.
+        </p>
+      )}
+      {item.tem_alimento_nutricional && (
+        <p style={{ fontSize: "0.7rem", color: "var(--amber, #c99a2e)", marginTop: "0.3rem" }}>
+          Este alimento tem composição nutricional cadastrada (AlimentoNutricional) — no desmembramento futuro, só um
+          produto poderá herdá-la; escolher o preferido aqui já deixa claro qual.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function TabelaDesmembramentos({ itens, onAtualizado }: {
+  itens: RelatorioMigracao["desmembramentos"];
+  onAtualizado: (alimentoId: number, estoquePreferidoId: number | null) => void;
+}) {
   return (
     <div className="overflow-x-auto">
       <table className="fazenda-table">
-        <thead><tr><th>Alimento</th><th>Produtos de Estoque vinculados</th><th>Tem composição (AlimentoNutricional)</th></tr></thead>
+        <thead><tr><th>Alimento</th><th>Produtos de Estoque vinculados</th><th>Baixa automática</th></tr></thead>
         <tbody>
           {itens.map((it) => (
             <tr key={it.alimento_id}>
@@ -801,10 +936,8 @@ function TabelaDesmembramentos({ itens }: { itens: RelatorioMigracao["desmembram
               <td style={{ fontSize: "0.78rem" }}>
                 {it.produtos.map((p) => `${p.nome} (${num(p.quantidade)} ${p.unidade || ""})`).join(" · ")}
               </td>
-              <td style={{ fontSize: "0.78rem" }}>
-                {it.tem_alimento_nutricional
-                  ? <span style={{ color: "var(--amber, #c99a2e)" }}>Sim — só um produto poderá herdar a composição ao desmembrar</span>
-                  : <span style={{ color: "var(--text-muted)" }}>Não</span>}
+              <td style={{ minWidth: "18rem" }}>
+                <ItemPreferidoPicker item={it} onAtualizado={onAtualizado} />
               </td>
             </tr>
           ))}
@@ -814,11 +947,20 @@ function TabelaDesmembramentos({ itens }: { itens: RelatorioMigracao["desmembram
   );
 }
 
+// Só informativo (sem picker/ação) — a divergência de nome em si não tem
+// mecanismo de resolução nesta fase; as duas contagens só deixam claro o
+// risco de um futuro rename: "pelo nome" é o quanto quebraria HOJE (vínculo
+// por igualdade exata de string), "por id" é o quanto já está imune a isso
+// (vínculo direto, sobrevive a renomear o Alimento).
 function TabelaDivergenciaNome({ itens }: { itens: RelatorioMigracao["divergencia_nome"] }) {
   return (
     <div className="overflow-x-auto">
       <table className="fazenda-table">
-        <thead><tr><th>Nome do Alimento (atual)</th><th>Nome no item de Estoque</th><th style={{ textAlign: "right" }}>Laudos pelo nome atual</th></tr></thead>
+        <thead><tr>
+          <th>Nome do Alimento (atual)</th><th>Nome no item de Estoque</th>
+          <th style={{ textAlign: "right" }}>Laudos presos ao nome atual</th>
+          <th style={{ textAlign: "right" }}>Laudos já seguros (vínculo por id)</th>
+        </tr></thead>
         <tbody>
           {itens.map((it) => (
             <tr key={`${it.alimento_id}-${it.estoque_id}`}>
@@ -827,6 +969,11 @@ function TabelaDivergenciaNome({ itens }: { itens: RelatorioMigracao["divergenci
               <td style={{ textAlign: "right", fontSize: "0.78rem" }}>
                 {it.quantidade_laudos_pelo_nome_atual > 0
                   ? <span style={{ color: "var(--amber, #c99a2e)", fontWeight: 700 }}>{it.quantidade_laudos_pelo_nome_atual}</span>
+                  : 0}
+              </td>
+              <td style={{ textAlign: "right", fontSize: "0.78rem" }}>
+                {it.quantidade_laudos_pelo_id > 0
+                  ? <span style={{ color: "var(--green-light)", fontWeight: 700 }}>{it.quantidade_laudos_pelo_id}</span>
                   : 0}
               </td>
             </tr>
@@ -887,8 +1034,10 @@ function TabelaRmca({ itens }: { itens: RelatorioMigracao["rmca"]["so_pela_conta
 
 function ConferenciaMigracaoTab() {
   const [dados, setDados] = useState<RelatorioMigracao | null>(null);
+  const [categorias, setCategorias] = useState<CategoriaAlimento[]>([]);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
+  const [ultimaCategorizacao, setUltimaCategorizacao] = useState<string | null>(null);
 
   useEffect(() => {
     setCarregando(true);
@@ -896,7 +1045,21 @@ function ConferenciaMigracaoTab() {
       .then(setDados)
       .catch((e: any) => setErro(e.message || "Erro ao carregar o relatório"))
       .finally(() => setCarregando(false));
+    fetchCategoriasAlimento().then(setCategorias).catch(() => {});
   }, []);
+
+  // Atualiza o estado local após cada ação de Fase P1 — nunca refaz o
+  // fetch inteiro do relatório, só reflete o que acabou de ser salvo.
+  const atualizarPreferido = (alimentoId: number, estoquePreferidoId: number | null) => {
+    setDados((d) => d && {
+      ...d,
+      desmembramentos: d.desmembramentos.map((it) => it.alimento_id === alimentoId ? { ...it, estoque_preferido_id: estoquePreferidoId } : it),
+    });
+  };
+  const marcarCategorizado = (estoqueId: number, estoqueNome: string, categoriaNome: string) => {
+    setUltimaCategorizacao(`"${estoqueNome}" foi categorizado como "${categoriaNome}" e saiu desta lista.`);
+    setDados((d) => d && { ...d, produtos_sem_categoria: d.produtos_sem_categoria.filter((p) => p.id !== estoqueId) });
+  };
 
   return (
     <div>
@@ -906,9 +1069,11 @@ function ConferenciaMigracaoTab() {
       }}>
         <SearchCheck size={16} style={{ flexShrink: 0, marginTop: "0.1rem", color: "var(--accent-icon)" }} />
         <div>
-          <strong>Este relatório não altera nada. É um retrato dos dados para conferência.</strong>
+          <strong>Este relatório é, na maior parte, um retrato dos dados para conferência — quase nada aqui altera algo.</strong>
           <div style={{ color: "var(--text-muted)", marginTop: "0.15rem" }}>
-            Nenhum item é mesclado, renomeado ou excluído aqui — as ações vêm numa fase futura, depois que você conferir este retrato.
+            Nenhum item é mesclado, renomeado ou excluído aqui. Duas seções abaixo ("Alimentos com mais de um produto" e
+            "Produtos de alimento sem categoria") deixam você escolher um item preferido ou uma categoria diretamente — o
+            resto continua somente leitura, com as demais ações vindo numa fase futura.
           </div>
         </div>
       </div>
@@ -941,27 +1106,32 @@ function ConferenciaMigracaoTab() {
           <SecaoRecolhivel
             titulo="Produtos de alimento sem categoria" icon={Tag}
             defaultAberta={dados.produtos_sem_categoria.length > 0} badge={String(dados.produtos_sem_categoria.length)}
-            descricao="Itens que são alimento (por vínculo ou pela finalidade), mas sem classificação completa hoje."
+            descricao='Itens que são alimento (por vínculo ou pela finalidade), mas sem classificação completa hoje — escolha a categoria direto na coluna "Categorizar agora", sem precisar passar pelo cadastro de Alimento.'
           >
+            {ultimaCategorizacao && (
+              <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.7rem", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                <CheckCircle2 size={14} /> {ultimaCategorizacao}
+              </p>
+            )}
             {dados.produtos_sem_categoria.length
-              ? <TabelaProdutosSemCategoria itens={dados.produtos_sem_categoria} />
+              ? <TabelaProdutosSemCategoria itens={dados.produtos_sem_categoria} categorias={categorias} onCategorizado={marcarCategorizado} />
               : <VazioPositivo texto="Nenhuma ocorrência — todo produto de alimento está classificado." />}
           </SecaoRecolhivel>
 
           <SecaoRecolhivel
             titulo="Alimentos com mais de um produto (desmembramento futuro)" icon={GitMerge}
             defaultAberta={dados.desmembramentos.length > 0} badge={String(dados.desmembramentos.length)}
-            descricao="Um Alimento com 2+ itens de Estoque vinculados — quando a camada Alimento sair da interface, cada produto vira uma linha independente."
+            descricao='Um Alimento com 2+ itens de Estoque vinculados — hoje o sistema escolhe sozinho, em ordem arbitrária, qual deles recebe a baixa automática/consumo; a coluna "Baixa automática" deixa você tornar essa escolha deliberada. Quando a camada Alimento sair da interface, cada produto também vira uma linha independente.'
           >
             {dados.desmembramentos.length
-              ? <TabelaDesmembramentos itens={dados.desmembramentos} />
+              ? <TabelaDesmembramentos itens={dados.desmembramentos} onAtualizado={atualizarPreferido} />
               : <VazioPositivo texto="Nenhuma ocorrência — nenhum Alimento tem mais de um produto vinculado." />}
           </SecaoRecolhivel>
 
           <SecaoRecolhivel
             titulo="Nome do Alimento diverge do produto de Estoque" icon={FlaskConical}
             defaultAberta={dados.divergencia_nome.length > 0} badge={String(dados.divergencia_nome.length)}
-            descricao="Análises bromatológicas se ligam ao alimento por igualdade EXATA de string com o nome atual — renomear custaria os laudos contados aqui."
+            descricao='Análises bromatológicas podem se ligar ao alimento por igualdade EXATA de string com o nome (quebra ao renomear) ou por vínculo direto de id (sobrevive a um rename). Quanto maior "presos ao nome atual", mais arriscado renomear; quanto maior "já seguros por id", mais seguro.'
           >
             {dados.divergencia_nome.length
               ? <TabelaDivergenciaNome itens={dados.divergencia_nome} />
@@ -1029,6 +1199,9 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+  // Por padrão só oferece produto de estoque com saldo positivo — evita
+  // lançar dieta com um item que já zerou. Marcar liga a exceção.
+  const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
   const { nomes: nomesResponsaveis } = usePessoasAtivas();
   // Popup "importar dieta formulada" (Formulação de Dietas) — qual lote está
   // com o popup aberto, ou null se nenhum.
@@ -1039,6 +1212,19 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
     fetchMateriaSeca().then((itens) => setMsPorAlimento(Object.fromEntries(itens.map((i) => [i.nome, i.ms_pct])))).catch(() => {});
     fetchEstoque().then((d) => setEstoqueItens(d.itens || [])).catch(() => {});
   }, []);
+
+  // Produtos de estoque elegíveis para dieta: finalidade de alimentação/
+  // nutrição (não só o valor literal "Ração/Alimento" — cobre variações como
+  // "Nutrição" cadastradas pela própria fazenda, mesmo critério de
+  // `_finalidade_indica_alimento` no backend) e, por padrão, saldo positivo.
+  const itensDietaPicker = useMemo(() => {
+    const termosNutricao = ["aliment", "nutri", "racao"];
+    return estoqueItens.filter((it) => {
+      const finalidadeOk = it.finalidade == null || termosNutricao.some((t) => casaBusca(it.finalidade, t));
+      if (!finalidadeOk) return false;
+      return incluirSemEstoque || Number(it.quantidade ?? 0) > 0;
+    });
+  }, [estoqueItens, incluirSemEstoque]);
 
   const loteNum = (l: LoteRow) => Number(l.codigo.slice(0, 2));
 
@@ -1097,7 +1283,7 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
             lote: ln, responsavel: f.responsavel || undefined, data_abertura: f.dataAbertura, base_quantidade: f.baseQuantidade,
             leite_bezerros_kg_dia: f.leiteBezerros ? Number(f.leiteBezerros) : null,
             data_prevista_encerramento: f.dataPrevista || undefined,
-            itens: itensValidos.map((it) => ({ alimento: it.alimento, quantidade: Number(it.quantidade), unidade: it.unidade, base: it.base, ms_pct: it.ms_pct })),
+            itens: itensValidos.map((it) => ({ alimento: it.alimento, quantidade: Number(it.quantidade), unidade: it.unidade, base: it.base, ms_pct: it.ms_pct, base_quantidade: it.baseQuantidade || null })),
             encerrar_anterior: encerrar,
           });
           salvos.push(ln);
@@ -1127,6 +1313,11 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
         por trato ({NUM_TRATOS} tratos/dia) e o total de kg no vagão. Ao final, um único botão salva todos os lotes.
       </p>
 
+      <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.8rem", cursor: "pointer" }}>
+        <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => setIncluirSemEstoque(e.target.checked)} />
+        Incluir produtos sem estoque na lista de seleção
+      </label>
+
       <div className="space-y-2">
         {lotes.map((l) => {
           const ln = loteNum(l);
@@ -1134,7 +1325,13 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
           const ctx = contextos[ln];
           const f = forms[ln];
           const nAnimais = ctx?.qtd_animais ?? l.qtd_animais ?? 0;
-          const vagaoKg = f ? f.itens.reduce((s, it) => (["kg", "g"].includes(it.unidade) ? s + quantidadeFisica(it) : s), 0) : 0;
+          // Total do lote de cada item na SUA PRÓPRIA base (não a do lote
+          // uniformemente) — mesmo cálculo de `apresentacao_dieta` no backend.
+          const vagaoKg = f ? f.itens.reduce((s, it) => {
+            if (!["kg", "g"].includes(it.unidade)) return s;
+            const [totalLote] = totaisItem(quantidadeFisica(it), baseEfetivaItem(it, f.baseQuantidade), nAnimais);
+            return s + (totalLote ?? 0);
+          }, 0) : 0;
           const preenchido = lotesPreenchidos.includes(ln);
           return (
             <div key={l.codigo} style={{ border: "1px solid " + (preenchido ? "var(--dourado)" : "var(--border)"), borderRadius: 10, overflow: "hidden" }}>
@@ -1224,8 +1421,12 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
                       {(f?.itens || []).map((it, idx) => {
                         const qLancado = Number(it.quantidade) || 0;
                         const qFisica = quantidadeFisica(it);
-                        const porCab = nAnimais ? qFisica / nAnimais : null;
-                        const porTrato = qFisica / NUM_TRATOS;
+                        // Base EFETIVA deste item (override próprio, senão a do
+                        // lote) — mesma resolução do backend (`_base_efetiva`),
+                        // pra o preview ao vivo nunca discordar do que é salvo.
+                        const baseEfetiva = baseEfetivaItem(it, f?.baseQuantidade || "total");
+                        const [totalLoteDia, porCab] = totaisItem(qFisica, baseEfetiva, nAnimais);
+                        const porTrato = totalLoteDia != null ? totalLoteDia / NUM_TRATOS : null;
                         const msConhecido = it.alimento in msPorAlimento;
                         const semMsCadastrado = it.base === "MS" && msConhecido && !msPorAlimento[it.alimento];
                         return (
@@ -1234,16 +1435,22 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
                               <div style={{ gridColumn: "1 / -1" }}>
                                 <label style={lbl}>Produto {idx + 1}</label>
                                 <EstoquePicker
-                                  itens={estoqueItens}
+                                  itens={itensDietaPicker}
                                   value={it.alimento}
                                   onChange={(v) => patchItem(ln, idx, { alimento: v, ms_pct: msPorAlimento[v] ?? null })}
-                                  finalidades={["Ração/Alimento"]}
-                                  somenteVinculadosAlimento
+                                  todasFinalidades
                                   placeholder="Selecionar silagem/alimento…"
                                 />
                               </div>
                               <div>
-                                <label style={lbl}>{f?.baseQuantidade === "animal" ? "Quantidade por animal/dia" : "Quantidade total/dia (lote)"}</label>
+                                <div className="flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.3rem" }}>
+                                  <label style={lbl}>{baseEfetiva === "animal" ? "Quantidade por animal/dia" : "Quantidade total/dia (lote)"}</label>
+                                  <BaseQuantidadeItemToggle
+                                    value={it.baseQuantidade ?? null}
+                                    padrao={f?.baseQuantidade === "animal" ? "animal" : "total"}
+                                    onChange={(v) => patchItem(ln, idx, { baseQuantidade: v })}
+                                  />
+                                </div>
                                 <input type="number" inputMode="decimal" style={input} value={it.quantidade} onChange={(e) => patchItem(ln, idx, { quantidade: e.target.value })} />
                               </div>
                               <div>
@@ -1261,8 +1468,8 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
                             {/* Cálculo automático enquanto edita — já convertido para o físico
                                 (matéria natural) quando lançado em base MS. */}
                             <div className="flex items-center gap-4 mt-2" style={{ flexWrap: "wrap", fontSize: "0.76rem" }}>
-                              <span style={{ color: "var(--green-light)", fontWeight: 700 }}>{num(porTrato)} {it.unidade}/trato</span>
-                              <span style={{ color: "var(--amber)", fontWeight: 600 }}>{num(qFisica)} {it.unidade}/dia</span>
+                              <span style={{ color: "var(--green-light)", fontWeight: 700 }}>{porTrato != null ? `${num(porTrato)} ${it.unidade}/trato` : `— ${it.unidade}/trato`}</span>
+                              <span style={{ color: "var(--amber)", fontWeight: 600 }}>{totalLoteDia != null ? `${num(totalLoteDia)} ${it.unidade}/dia` : `— ${it.unidade}/dia`}</span>
                               <span style={{ color: "var(--text-muted)" }}>{porCab != null ? `${num(porCab, 3)} ${it.unidade}/cab` : "—/cab"}</span>
                               {it.base === "MS" && it.ms_pct && qFisica !== qLancado && (
                                 <span style={{ color: "var(--text-muted)" }}>({num(qLancado)} {it.unidade} MS a {num(it.ms_pct, 1)}% MS)</span>
@@ -1314,6 +1521,41 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
           {salvando ? "Salvando…" : `Salvar ${lotesPreenchidos.length || ""} ${lotesPreenchidos.length === 1 ? "dieta" : "dietas"}`.trim()}
         </button>
       </div>
+    </div>
+  );
+}
+
+// Pílula por item pra escolher a base da quantidade ("Lote"/"Cabeça"),
+// independente do dropdown do lote — mesmo padrão visual das pílulas já
+// usadas nesta tela (abas e contadores, var(--pill-active-*)), só compacto o
+// bastante pra caber ao lado do rótulo da quantidade em cada produto.
+// "Padrão" (sem override, `value === null`) sempre reflete visualmente a
+// base do lote no momento (`padrao`), sem fixar o item numa base ao trocar
+// o dropdown do lote depois.
+function BaseQuantidadeItemToggle({
+  value, padrao, onChange,
+}: { value: "total" | "animal" | null; padrao: "total" | "animal"; onChange: (v: "total" | "animal" | null) => void }) {
+  const opcoes: { id: "total" | "animal" | null; label: string }[] = [
+    { id: null, label: padrao === "animal" ? "Padrão (cabeça)" : "Padrão (lote)" },
+    { id: "total", label: "Lote" },
+    { id: "animal", label: "Cabeça" },
+  ];
+  return (
+    <div className="flex items-center gap-1" style={{ flexWrap: "wrap" }}>
+      {opcoes.map((o) => {
+        const ativo = value === o.id;
+        return (
+          <button type="button" key={String(o.id)} onClick={() => onChange(o.id)}
+            title="Base da quantidade deste produto — herda do lote por padrão, ou pode ser lançado à parte por total do lote/dia ou por cabeça/dia."
+            style={{
+              fontSize: "0.64rem", padding: "0.1rem 0.45rem", borderRadius: 999, cursor: "pointer",
+              border: "1px solid " + (ativo ? "var(--pill-active-border)" : "var(--border)"),
+              background: ativo ? "var(--pill-active-bg)" : "transparent",
+              color: ativo ? "var(--pill-active-fg)" : "var(--text-muted)",
+              fontWeight: ativo ? 700 : 500,
+            }}>{o.label}</button>
+        );
+      })}
     </div>
   );
 }

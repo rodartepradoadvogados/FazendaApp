@@ -68,13 +68,22 @@ class AlimentoNutricional(SQLModel, table=True):
     checagem (não bloqueante) de que as frações somam 100%."""
 
     __tablename__ = "alimento_nutricional"
-    __table_args__ = (UniqueConstraint("alimento_id", "fazenda_id", name="uq_alimento_nutricional_alimento_fazenda"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "alimento_id", "estoque_id", "fazenda_id", name="uq_alimento_nutricional_alimento_estoque_fazenda"
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     # Optional DE PROPÓSITO (não retrocompatibilidade) — None = biblioteca
     # mestre CowData, global. Ver docstring da classe.
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     alimento_id: Optional[int] = Field(default=None, foreign_key="alimento.id", index=True)
+    # Preenchido quando esta linha de composição é específica de um produto
+    # comercial de Estoque (ex.: "Concentrado X" da marca Y), não da família
+    # Alimento inteira — nulo = entrada em nível de família (comportamento
+    # histórico, antes da Fase 2 de importação por produto).
+    estoque_id: Optional[int] = Field(default=None, foreign_key="estoque.id", index=True)
     # Preenchido só quando esta linha é a cópia-por-fazenda de um item da
     # biblioteca mestre (edição ou ocultação) — nulo tanto na própria linha
     # mestre quanto num item 100% próprio da fazenda (nunca existiu na mestre).
@@ -354,6 +363,12 @@ class DietaSimulacaoItem(SQLModel, table=True):
     alimento_id: Optional[int] = Field(default=None, foreign_key="alimento.id")
     alimento_nutricional_id: Optional[int] = Field(default=None, foreign_key="alimento_nutricional.id")
     analise_bromatologica_id: Optional[int] = Field(default=None, foreign_key="analise_bromatologica.id")
+    # Produto de Estoque específico escolhido na importação (ex.: "Concentrado
+    # X" dentro da família Concentrado Protéico) — None = item importado no
+    # nível de família, ou linha manual. Denormalizado (produto_nome) para o
+    # snapshot da simulação sobreviver à exclusão/renomeação do item de Estoque.
+    estoque_id: Optional[int] = Field(default=None, foreign_key="estoque.id")
+    produto_nome: Optional[str] = None
     nome: str
     # "biblioteca" | "bromatologica" | "template" | "manual"
     origem: str = "manual"

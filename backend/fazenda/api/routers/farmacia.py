@@ -11,16 +11,20 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
 from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
-from fazenda.models import Doenca, Estoque, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo
+from fazenda.models import (
+    Doenca, Estoque, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque, ParametroMinimoFarmacia, PrincipioAtivo,
+)
 from fazenda.rules.auditoria import fazenda_id_seguro
+from fazenda.rules.validacao import link_http_seguro
 from fazenda.rules.busca import normalizar_busca
 from fazenda.rules.carencia import carencia_dict
 from fazenda.rules.farmacia import resumo_principios
+from fazenda.rules.farmacia_multi_principio import checar_e_desvincular_exclusao_principio
 from fazenda.rules.visibilidade import visivel
 
 router = APIRouter(prefix="/farmacia", tags=["farmacia"])
@@ -100,6 +104,71 @@ def atualizar_principio(
     return pa.model_dump()
 
 
+@router.delete("/principios/{principio_id}")
+def excluir_principio(
+    principio_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Exclui um princípio ativo checando impacto nas 7 tabelas que hoje têm
+    FK pra ele — mesma regra de `POST /exclusoes/impacto` (tipo=
+    principio_ativo), extraída pra rules/farmacia_multi_principio.py."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    pa = session.get(PrincipioAtivo, principio_id)
+    if not pa or (fazenda_id is not None and pa.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Princípio ativo não encontrado")
+    impacto, alvos = checar_e_desvincular_exclusao_principio(session, pa)
+    for obj in alvos:
+        session.delete(obj)
+    session.commit()
+    return {"excluido": True, "impacto": impacto}
+
+
+class EstoqueMinimoIn(BaseModel):
+    estoque_minimo_base: float
+
+
+@router.put("/principios/{principio_id}/estoque-minimo")
+def definir_estoque_minimo_base(
+    principio_id: int, dados: EstoqueMinimoIn, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Define o estoque mínimo de UM princípio ativo, em `unidade_base` (ml/L/
+    g/unidade) — pedido do usuário (31/08/2026): "estoque mínimo... tem que
+    ser em unidade de medida, e não em pacotes/frascos". Um princípio de
+    cada vez, ação deliberada — nunca em lote, nunca automática (ver
+    docstring de ParametroMinimoFarmacia).
+
+    Grava numa tabela À PARTE do princípio (nunca no próprio `PrincipioAtivo`,
+    que pode ser um registro GLOBAL do catálogo padrão CowData e nunca é
+    clonado) — por isso funciona também para princípios globais que esta
+    fazenda usa, sem afetar o mínimo de nenhuma outra fazenda-cliente."""
+    if dados.estoque_minimo_base < 0:
+        raise HTTPException(status_code=400, detail="Estoque mínimo não pode ser negativo")
+    pa = session.exec(visivel(select(PrincipioAtivo).where(PrincipioAtivo.id == principio_id), PrincipioAtivo, fazenda_id)).first()
+    if not pa:
+        raise HTTPException(status_code=404, detail="Princípio ativo não encontrado")
+    if not pa.unidade_base:
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{pa.nome}' ainda não tem unidade de medida (unidade_base) cadastrada — defina-a antes do mínimo.",
+        )
+    existente = session.exec(
+        select(ParametroMinimoFarmacia).where(
+            ParametroMinimoFarmacia.fazenda_id == fazenda_id, ParametroMinimoFarmacia.principio_ativo_id == principio_id,
+        )
+    ).first()
+    if existente:
+        existente.estoque_minimo_base = dados.estoque_minimo_base
+        existente.atualizado_em = datetime.utcnow()
+        session.add(existente)
+    else:
+        session.add(ParametroMinimoFarmacia(
+            fazenda_id=fazenda_id, principio_ativo_id=principio_id, estoque_minimo_base=dados.estoque_minimo_base,
+        ))
+    session.commit()
+    resumo = next((r for r in resumo_principios(session, fazenda_id) if r["id"] == principio_id), None)
+    return resumo or {"ok": True}
+
+
 class MarcaIn(BaseModel):
     principio_ativo_id: int
     nome_comercial: str
@@ -120,6 +189,13 @@ class MarcaIn(BaseModel):
     proibido_lactacao: bool | None = None
     alerta_gestacao: bool | None = None
     alerta: str | None = None
+
+    # BUG DE SEGURANÇA CORRIGIDO: link_bula vira <a href> no frontend — sem
+    # validar o esquema, um valor "javascript:..." executava no clique.
+    @field_validator("link_bula")
+    @classmethod
+    def _validar_link_bula(cls, v: str | None) -> str | None:
+        return link_http_seguro(v)
 
 
 @router.post("/medicamentos", status_code=201)

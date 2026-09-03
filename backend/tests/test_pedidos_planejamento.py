@@ -1,8 +1,11 @@
 """
 Testes de Pedidos e Planejamento (Orçamento + Planejamento financeiro):
 - Pedido isolado não gera lançamento nem movimento de estoque.
-- Vínculo de lançamento financeiro a um Pedido atualiza status/valor_atendido.
-- Vínculo de entrada de estoque a um item de Pedido atualiza quantidade_atendida.
+- Vínculo de lançamento financeiro a um Pedido atualiza valor_atendido, mas
+  NÃO o status — status só é calculado a partir de entrega física (ver
+  fazenda.rules.pedido_status e test_pedido_entrega.py).
+- Vínculo de entrada de estoque a um item de Pedido atualiza
+  quantidade_atendida, mas também não mexe no status, pelo mesmo motivo.
 - Orçamento: CRUD + comparativo orçado x realizado.
 - Planejamento financeiro: cenários + itens + projeção.
 - Importar orçamento/planejamento para Pedido.
@@ -105,6 +108,16 @@ class TestRastreio:
         assert detalhe["enviado"] is True
         assert detalhe["codigo_rastreio"] == "BR123456789BR"
 
+    def test_link_rastreio_rejeita_esquema_nao_http(self, client):
+        """Achado P3 #3 da auditoria de segurança: link_rastreio vira
+        <a href> no frontend — um esquema como javascript: executaria no
+        clique em vez de navegar."""
+        pedido_id = _criar_pedido(client).json()["id"]
+        r = client.put(f"/pedidos/{pedido_id}/rastreio", json={
+            "enviado": True, "link_rastreio": "javascript:alert(document.cookie)",
+        })
+        assert r.status_code == 422
+
     def test_marcar_nao_enviado_limpa_codigo_e_link(self, client):
         pedido_id = _criar_pedido(client).json()["id"]
         client.put(f"/pedidos/{pedido_id}/rastreio", json={
@@ -119,7 +132,7 @@ class TestRastreio:
 
 
 class TestVinculoFinanceiro:
-    def test_lancamento_vinculado_atualiza_status_e_valor_atendido(self, client):
+    def test_lancamento_vinculado_atualiza_valor_atendido_mas_nao_o_status(self, client):
         pedido_id = _criar_pedido(client).json()["id"]
 
         r = client.post("/financeiro/lancamentos", json={
@@ -131,11 +144,14 @@ class TestVinculoFinanceiro:
         assert r.status_code == 201
 
         detalhe = client.get(f"/pedidos/{pedido_id}").json()
-        assert detalhe["status"] == "atendido"
+        # Lançamento é 100% do valor estimado, mas status continua "aberto":
+        # dinheiro lançado não decide status, só entrega física decide (ver
+        # PUT /pedidos/{id}/itens/{item_id}/entrega).
+        assert detalhe["status"] == "aberto"
         assert len(detalhe["lancamentos"]) == 1
         assert detalhe["itens"][0]["valor_atendido"] == 1000.0
 
-    def test_lancamento_parcial_marca_status_intermediario(self, client):
+    def test_lancamento_parcial_nao_afeta_status(self, client):
         pedido_id = _criar_pedido(client).json()["id"]
 
         client.post("/financeiro/lancamentos", json={
@@ -145,7 +161,8 @@ class TestVinculoFinanceiro:
             "pedido_id": pedido_id,
         })
         detalhe = client.get(f"/pedidos/{pedido_id}").json()
-        assert detalhe["status"] == "parcialmente_atendido"
+        assert detalhe["status"] == "aberto"
+        assert detalhe["itens"][0]["valor_atendido"] == 400.0
 
     def test_lancamento_sem_pedido_id_nao_afeta_pedido(self, client):
         pedido_id = _criar_pedido(client).json()["id"]
@@ -184,6 +201,9 @@ class TestVinculoEstoque:
         detalhe = client.get(f"/pedidos/{pedido_id}").json()
         assert detalhe["itens"][0]["quantidade_atendida"] == 30
         assert len(detalhe["movimentos_estoque"]) == 1
+        # Movimento de estoque vinculado é informativo — não decide status
+        # (só entrega física decide, ver PUT .../itens/{id}/entrega).
+        assert detalhe["status"] == "aberto"
 
     def test_saida_com_pedido_item_id_nao_atualiza(self, client):
         # Saída não faz sentido "atender" um pedido de compra — só entrada conta.

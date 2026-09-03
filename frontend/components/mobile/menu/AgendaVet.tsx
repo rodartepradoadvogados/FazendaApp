@@ -15,6 +15,7 @@ import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao } from "@/components/Ordenavel";
 import { SeletorOrdenacao, type CampoOrdenacao } from "@/components/mobile/SeletorOrdenacao";
 import { FiltroAgendaReprodutiva } from "@/components/mobile/menu/FiltroAgendaReprodutiva";
+import { CardsAgendaReprodutivaMobile } from "@/components/mobile/menu/CardsAgendaReprodutivaMobile";
 
 // Campos ordenáveis das listas da Agenda — nem toda lista preenche todos
 // (ex.: só as "inseminadas" têm dias_inseminada), mas useOrdenacao já joga os
@@ -172,10 +173,15 @@ export default function AgendaVet({ onVoltar }: { onVoltar: () => void }) {
         </div>
       )}
 
-      {/* Busca por parâmetro (situação/período/categoria) — mesma capacidade
-          dos cards configuráveis do site, num formulário simples que devolve
-          uma lista; independente das 10 listas fixas abaixo, então não
-          depende de `dados` ter carregado. */}
+      {/* Cards 100% configuráveis (situação/período/categoria/lote), salvos e
+          reaproveitáveis — a MESMA capacidade dos cards do site (#570/#591 só
+          tinham trazido a busca avulsa abaixo, sem permitir salvar um card).
+          Independente das 10 listas fixas abaixo, então não depende de
+          `dados` ter carregado. */}
+      <CardsAgendaReprodutivaMobile onFichaAberta={setFichaAberta} />
+
+      {/* Busca avulsa por parâmetro — para uma pergunta pontual que não vale
+          a pena salvar como card. */}
       <FiltroAgendaReprodutiva onFichaAberta={setFichaAberta} />
 
       {carregando && !dados ? (

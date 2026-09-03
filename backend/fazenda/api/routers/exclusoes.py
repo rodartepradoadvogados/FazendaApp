@@ -17,14 +17,17 @@ from sqlmodel import Session, select
 from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.rules import estoque_baixa
+from fazenda.rules import lactacao as regras_lactacao
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.exclusao_tipos import REGISTRO
 from fazenda.rules.exclusao_tipos._base import _br, _contem, _dentro_periodo
+from fazenda.rules.farmacia_multi_principio import checar_e_desvincular_exclusao_principio
 from fazenda.rules.vale_item import eh_item_de_vale
 from fazenda.models import (
     AgendaManual,
     Animal,
     CalendarioSanitario,
+    ColostragemBezerra,
     ComissaoCorretagem,
     CompraAnimal,
     CompraSemen,
@@ -36,6 +39,7 @@ from fazenda.models import (
     EventoSanitario,
     FolhaPagamento,
     Fornecedor,
+    FotoCampo,
     Lactacao,
     LancamentoItem,
     Lote,
@@ -502,10 +506,47 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         animal = session.exec(query_animal).first()
         if not animal:
             raise HTTPException(status_code=404, detail="Animal não encontrado")
-        servicos = session.exec(select(Servico).where(Servico.numero_matriz == id_)).all()
-        partos = session.exec(select(Parto).where(Parto.numero_matriz == id_)).all()
-        controles = session.exec(select(ControleLeiteiro).where(ControleLeiteiro.numero_matriz == id_)).all()
-        sanidades = session.exec(select(Sanidade).where(Sanidade.numero_matriz == id_)).all()
+        # BUG DE SEGURANÇA CORRIGIDO: números de animal são pequenos e podem
+        # coincidir entre fazendas-cliente diferentes — sem o filtro de
+        # fazenda_id abaixo, excluir o animal "X" da própria fazenda também
+        # apagava o histórico reprodutivo/produtivo/sanitário do animal "X"
+        # de OUTRA fazenda, se os números coincidissem.
+        query_servicos = select(Servico).where(Servico.numero_matriz == id_)
+        query_partos = select(Parto).where(Parto.numero_matriz == id_)
+        query_controles = select(ControleLeiteiro).where(ControleLeiteiro.numero_matriz == id_)
+        query_sanidades = select(Sanidade).where(Sanidade.numero_matriz == id_)
+        if fazenda_id is not None:
+            query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
+            query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
+            query_controles = query_controles.where(ControleLeiteiro.fazenda_id == fazenda_id)
+            query_sanidades = query_sanidades.where(Sanidade.fazenda_id == fazenda_id)
+        servicos = session.exec(query_servicos).all()
+        partos = session.exec(query_partos).all()
+        controles = session.exec(query_controles).all()
+        sanidades = session.exec(query_sanidades).all()
+        # ColostragemBezerra, Lactacao e FotoCampo têm FK de verdade pra
+        # animal.id (ao contrário dos quatro acima, que só casam por
+        # numero_matriz em texto solto) — sem incluí-los aqui, excluir o
+        # animal violava essa FK no Postgres de produção e o commit
+        # explodia num 500 que, por sair da exceção não tratada do
+        # FastAPI, sai sem cabeçalho CORS: o navegador não mostra o erro
+        # de verdade, só "Failed to fetch" (achado real, 01/09/2026 — o
+        # SQLite dos testes não pega isso porque não aplica FK por padrão).
+        # Casa por animal_id OU pelo número em texto, pra pegar também
+        # registros antigos de antes do FK existir.
+        colostragens = session.exec(
+            select(ColostragemBezerra).where(
+                (ColostragemBezerra.animal_id == animal.id) | (ColostragemBezerra.numero_animal == id_)
+            )
+        ).all()
+        lactacoes = session.exec(
+            select(Lactacao).where((Lactacao.animal_id == animal.id) | (Lactacao.numero_matriz == id_))
+        ).all()
+        fotos = session.exec(
+            select(FotoCampo).where(
+                (FotoCampo.animal_id == animal.id) | (FotoCampo.identificacao_animal == id_)
+            )
+        ).all()
         impacto = [f"Ficha do animal {id_}"]
         if servicos:
             impacto.append(f"{len(servicos)} serviço(s) de IA/cobertura")
@@ -515,7 +556,13 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             impacto.append(f"{len(controles)} registro(s) de controle leiteiro")
         if sanidades:
             impacto.append(f"{len(sanidades)} aplicação(ões) de sanidade")
-        return impacto, [animal, *servicos, *partos, *controles, *sanidades]
+        if colostragens:
+            impacto.append(f"{len(colostragens)} registro(s) de colostragem/IgG")
+        if lactacoes:
+            impacto.append(f"{len(lactacoes)} lactação(ões)")
+        if fotos:
+            impacto.append(f"{len(fotos)} foto(s) do campo")
+        return impacto, [animal, *servicos, *partos, *controles, *sanidades, *colostragens, *lactacoes, *fotos]
 
     if tipo == "servico":
         s = session.get(Servico, int(id_))
@@ -534,12 +581,13 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         # registrar_parto) sem guardar o parto_id — mesma heurística por
         # matriz/data/prefixo do texto já usada acima para o mirror de
         # Sanidade dos protocolos.
-        agendas = session.exec(
-            select(AgendaManual).where(
-                AgendaManual.numero_animal == p.numero_matriz, AgendaManual.data_evento == p.data_parto,
-                AgendaManual.descricao.startswith(f"Retenção de placenta — vaca {p.numero_matriz}"),
-            )
-        ).all()
+        query_agendas = select(AgendaManual).where(
+            AgendaManual.numero_animal == p.numero_matriz, AgendaManual.data_evento == p.data_parto,
+            AgendaManual.descricao.startswith(f"Retenção de placenta — vaca {p.numero_matriz}"),
+        )
+        if fazenda_id is not None:
+            query_agendas = query_agendas.where(AgendaManual.fazenda_id == fazenda_id)
+        agendas = session.exec(query_agendas).all()
         if agendas:
             impacto.append(f"{len(agendas)} pendência(s) de retenção de placenta na Agenda")
             alvos.extend(agendas)
@@ -558,12 +606,20 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             cria = session.exec(query_cria).first()
             if cria is None:
                 continue
+            # Mesmo cuidado de fazenda_id do bloco "animal" acima — sem ele,
+            # um registro de OUTRA fazenda com o mesmo número da cria faria
+            # esta cria parecer "com histórico" e nunca ser considerada órfã.
+            def _existe(model, campo):
+                q = select(model).where(campo == numero_cria)
+                if fazenda_id is not None:
+                    q = q.where(model.fazenda_id == fazenda_id)
+                return session.exec(q).first()
             tem_outros_registros = any([
-                session.exec(select(Servico).where(Servico.numero_matriz == numero_cria)).first(),
-                session.exec(select(Parto).where(Parto.numero_matriz == numero_cria)).first(),
-                session.exec(select(ControleLeiteiro).where(ControleLeiteiro.numero_matriz == numero_cria)).first(),
-                session.exec(select(Sanidade).where(Sanidade.numero_matriz == numero_cria)).first(),
-                session.exec(select(PesagemCorporal).where(PesagemCorporal.numero_matriz == numero_cria)).first(),
+                _existe(Servico, Servico.numero_matriz),
+                _existe(Parto, Parto.numero_matriz),
+                _existe(ControleLeiteiro, ControleLeiteiro.numero_matriz),
+                _existe(Sanidade, Sanidade.numero_matriz),
+                _existe(PesagemCorporal, PesagemCorporal.numero_matriz),
             ])
             if not tem_outros_registros:
                 crias_orfas.append(cria)
@@ -847,17 +903,15 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         return [f"Pessoa {pessoa.nome}"], [pessoa]
 
     if tipo == "principio_ativo":
+        # Checagem de impacto nas 7 tabelas que hoje têm FK pra
+        # principio_ativo.id (achado numa varredura, 31/08/2026 — antes só
+        # CalendarioSanitario era checado, e as outras 6 ficavam órfãs em
+        # silêncio) — extraída pra rules/farmacia_multi_principio.py porque
+        # `DELETE /farmacia/principios/{id}` usa exatamente a mesma regra.
         pa = session.get(PrincipioAtivo, int(id_))
         if not pa or (fazenda_id is not None and pa.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Princípio ativo não encontrado")
-        vinculados = session.exec(select(CalendarioSanitario).where(CalendarioSanitario.principio_ativo_id == pa.id)).all()
-        impacto = [f"Princípio ativo {pa.nome}"]
-        if vinculados:
-            impacto.append(f"{len(vinculados)} regra(s) do calendário sanitário perderão esse vínculo")
-            for regra in vinculados:
-                regra.principio_ativo_id = None
-                session.add(regra)
-        return impacto, [pa]
+        return checar_e_desvincular_exclusao_principio(session, pa)
 
     if tipo == "doenca":
         doenca = session.get(Doenca, int(id_))
@@ -1075,6 +1129,26 @@ def _remover_lactacao_dos_partos_excluidos(session: Session, alvos: list, fazend
             session.delete(lact)
 
 
+def _reabrir_lactacao_das_secagens_excluidas(session: Session, alvos: list, fazenda_id: int | None) -> None:
+    """A secagem é o evento que FECHA a lactação (ver rules/lactacao.py) —
+    excluir a secagem tem que desfazer esse fechamento também, senão a
+    lactação continua "fechada" para sempre por um evento que não existe
+    mais, e todo controle leiteiro lançado depois passa a ser recusado (ou,
+    pior, o relatório de correção de DEL passa a reportá-lo como "sem
+    lactação" — caso relatado: secagem lançada em lote por engano em
+    04/07/2026, fechando a lactação de vacas que na verdade só secaram
+    semanas depois).
+
+    Mesmo espírito de `_remover_lactacao_dos_partos_excluidos`, mas para
+    `Secagem`: usa `reabrir_lactacao_fechada_por_secagem`, que já sabe achar
+    a lactação certa pelo `secagem_id` e não faz nada quando esta secagem
+    não tinha fechado nenhuma (lançada para quem já constava seco)."""
+    secagens_excluidas = [obj for obj in alvos if isinstance(obj, Secagem)]
+    for s in secagens_excluidas:
+        if s.id is not None:
+            regras_lactacao.reabrir_lactacao_fechada_por_secagem(session, secagem_id=s.id, fazenda_id=fazenda_id)
+
+
 def _reajustar_del_dias_apos_excluir_parto(session: Session, alvos: list, fazenda_id: int | None) -> None:
     """`registrar_parto` zera `Animal.del_dias` da mãe no instante do parto
     (congelado dali em diante, só voltando a bater com a realidade no próximo
@@ -1151,18 +1225,46 @@ def _estornar_estoque_dos_alvos(session: Session, alvos: list, fazenda_id: int |
             if mov.movimento == "Entrada de compra":
                 # A baixa original SOMOU ao estoque (compra financeira) — o
                 # estorno precisa SUBTRAIR a mesma quantidade, não devolver.
+                # `lote_id` (Fase G, 01/09/2026): quando a compra original
+                # abriu um lote, o estorno tira exatamente dele.
                 avisos.extend(estoque_baixa.movimentar(
                     session, item=item, quantidade=mov.quantidade, unidade=mov.unidade, data=date.today(),
                     fazenda_id=fazenda_id, movimento="Saída de ajuste", observacao=observacao, sinal=-1,
                     origem_tipo=f"estorno_{tipo_exclusao}", origem_id=obj.id, produto=mov.nome_item,
+                    lote_id=mov.lote_id,
                 ))
             else:
                 avisos.extend(estoque_baixa.devolver(
                     session, item=item, quantidade=mov.quantidade, unidade=mov.unidade, data=date.today(),
                     fazenda_id=fazenda_id, observacao=observacao,
                     origem_tipo=f"estorno_{tipo_exclusao}", origem_id=obj.id, produto=mov.nome_item,
+                    lote_id=mov.lote_id,
                 ))
     return avisos
+
+
+def _excluir_alvos_em_ordem(session: Session, alvos: list) -> None:
+    """Apaga cada objeto de `alvos` com um flush logo em seguida, na ordem
+    INVERSA à que `_alvos()` devolve (que é sempre [raiz, *dependentes] — ex.:
+    [animal, *servicos, ...] ou [lancamento, *aplicações, ...]) — assim os
+    dependentes saem do banco antes da raiz.
+
+    Sem isto, `session.delete(a); session.delete(b); session.commit()`
+    deixa o SQLAlchemy livre pra emitir os DELETEs em QUALQUER ordem entre
+    mappers diferentes — ele só respeita dependência de FK automaticamente
+    quando existe um `relationship()` ORM declarado entre as classes, e este
+    código nunca declara (é todo baseado em `select()` avulso). Resultado
+    real, batido em teste (SQLite com PRAGMA foreign_keys=ON, que reproduz o
+    Postgres de produção): excluir um animal com `Servico.animal_id`
+    preenchido gerava `DELETE FROM animal` ANTES de `DELETE FROM servico` —
+    violação de FK, commit falha com uma exceção não tratada, e como esse
+    500 sai fora do CORSMiddleware (a exceção nunca passa pelo `send`
+    dele — quem responde é o ServerErrorMiddleware, que fica por fora), o
+    navegador nunca chega a ler o erro de verdade: só um "Failed to fetch"
+    sem pista nenhuma (achado real, animal 1291, 01/09/2026)."""
+    for obj in reversed(alvos):
+        session.delete(obj)
+        session.flush()
 
 
 class ExclusaoIn(BaseModel):
@@ -1195,13 +1297,23 @@ def confirmar(
         _restaurar_ult_ocorrencia_dos_alvos(session, alvos, fazenda_id)
         _reverter_perda_prenhez_causada_pelos_alvos(session, alvos, fazenda_id)
         _remover_lactacao_dos_partos_excluidos(session, alvos, fazenda_id)
+        _reabrir_lactacao_das_secagens_excluidas(session, alvos, fazenda_id)
         _reajustar_del_dias_apos_excluir_parto(session, alvos, fazenda_id)
         avisos = _estornar_estoque_dos_alvos(session, alvos, fazenda_id, dados.tipo)
-        for obj in alvos:
-            session.delete(obj)
+        _excluir_alvos_em_ordem(session, alvos)
         session.commit()
         return {"status": "excluido", "itens": itens, "avisos": avisos}
 
+    # `_alvos()` pode ter side effects de reversão (ex.: saldo de estoque em
+    # `estoque.py::_alvos_movimento_estoque`, "A descartar" em
+    # `sanidade.py::_alvos_exame_resultado`) escritos na sessão via
+    # `session.add(...)` — pensados pra rodar só quando a exclusão acontece
+    # de fato (aqui mesmo, no ramo admin acima, ou em `aprovar_pendente`, que
+    # chama `_alvos()` de novo na hora de aprovar). Uma mera SOLICITAÇÃO não
+    # pode carregar esses efeitos: descarta com rollback antes de gravar a
+    # `SolicitacaoExclusao` — sem isso, `session.commit()` logo abaixo
+    # persistiria a reversão junto, como se já tivesse sido aprovada.
+    session.rollback()
     solicitacao = SolicitacaoExclusao(
         tipo=dados.tipo,
         id_alvo=dados.id,
@@ -1245,10 +1357,10 @@ def aprovar_pendente(
     _restaurar_ult_ocorrencia_dos_alvos(session, alvos, fazenda_id)
     _reverter_perda_prenhez_causada_pelos_alvos(session, alvos, fazenda_id)
     _remover_lactacao_dos_partos_excluidos(session, alvos, fazenda_id)
+    _reabrir_lactacao_das_secagens_excluidas(session, alvos, fazenda_id)
     _reajustar_del_dias_apos_excluir_parto(session, alvos, fazenda_id)
     avisos = _estornar_estoque_dos_alvos(session, alvos, fazenda_id, sol.tipo)
-    for obj in alvos:
-        session.delete(obj)
+    _excluir_alvos_em_ordem(session, alvos)
     sol.status = "aprovada"
     sol.decidido_por = user.username
     sol.decidido_em = datetime.utcnow()

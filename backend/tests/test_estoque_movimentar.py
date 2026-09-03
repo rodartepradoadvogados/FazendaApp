@@ -94,6 +94,93 @@ class TestMovimentarEstoque:
         assert r.json()["movimentos"][0]["nome_item"] == "Borgal 50ml"
 
 
+class TestConversaoDeUnidade:
+    """Um item cadastrado numa unidade "grande" (Tonelada, Saca...) tem sua
+    embalagem descrita por unidade_embalagem/medida_embalagem/
+    quantidade_embalagem — mas até este fix, `_criar_movimento_estoque`
+    ignorava essa conversão e somava/subtraía a quantidade informada CRUA em
+    `Estoque.quantidade`, não importa a unidade escolhida no formulário.
+    Reportado com um item real em Tonelada: uma entrada de "196 kg" virou
+    +196 no saldo em TONELADA (erro de 1000x)."""
+
+    def _item_tonelada(self, client):
+        client.post("/estoque/", json={
+            "nome": "Caroço de algodão", "categoria": "Alim. Animal: Concentrados",
+            "unidade": "Tonelada (ton)", "quantidade": 40,
+            "unidade_embalagem": "Tonelada (ton)", "medida_embalagem": "kg/ton", "quantidade_embalagem": 1000,
+        })
+
+    def test_entrada_em_kg_converte_para_a_unidade_do_item(self, client):
+        self._item_tonelada(client)
+        r = client.post("/estoque/movimentar", json={
+            "nome": "Caroço de algodão", "movimento": "Entrada de ajuste", "quantidade": 196, "unidade": "kg",
+            "data_movimento": "2026-08-29",
+        })
+        assert r.status_code == 200
+        # 196 kg / 1000 kg-por-tonelada = 0,196 tonelada — não +196.
+        assert r.json()["quantidade"] == pytest.approx(40.196)
+
+    def test_saida_em_kg_converte_para_a_unidade_do_item(self, client):
+        self._item_tonelada(client)
+        r = client.post("/estoque/movimentar", json={
+            "nome": "Caroço de algodão", "movimento": "Saída de ajuste", "quantidade": 140, "unidade": "kg",
+            "data_movimento": "2026-08-29",
+        })
+        assert r.status_code == 200
+        assert r.json()["quantidade"] == pytest.approx(39.86)
+
+    def test_historico_grava_na_unidade_do_item_nao_na_unidade_digitada(self, client):
+        # `_item_tonelada` já cria um movimento "Saldo inicial" automático
+        # (mesma data de hoje) — filtra pelo "Entrada de ajuste" que criamos
+        # aqui de propósito, em vez de assumir que é o primeiro da lista.
+        self._item_tonelada(client)
+        client.post("/estoque/movimentar", json={
+            "nome": "Caroço de algodão", "movimento": "Entrada de ajuste", "quantidade": 196, "unidade": "kg",
+            "data_movimento": "2026-08-29",
+        })
+        movimentos = client.get("/estoque/movimentos").json()["movimentos"]
+        mov = next(m for m in movimentos if m["movimento"] == "Entrada de ajuste")
+        assert mov["unidade"] == "Tonelada (ton)"
+        assert mov["quantidade"] == pytest.approx(0.196)
+
+    def test_mesma_unidade_nao_sofre_nenhuma_conversao(self, client):
+        self._item_tonelada(client)
+        r = client.post("/estoque/movimentar", json={
+            "nome": "Caroço de algodão", "movimento": "Entrada de ajuste", "quantidade": 2, "unidade": "Tonelada (ton)",
+            "data_movimento": "2026-08-29",
+        })
+        assert r.json()["quantidade"] == pytest.approx(42)
+
+    def test_sem_unidade_informada_mantem_comportamento_antigo(self, client):
+        self._item_tonelada(client)
+        r = client.post("/estoque/movimentar", json={
+            "nome": "Caroço de algodão", "movimento": "Entrada de ajuste", "quantidade": 5,
+            "data_movimento": "2026-08-29",
+        })
+        assert r.json()["quantidade"] == pytest.approx(45)
+
+    def test_unidade_incompativel_sem_conversao_conhecida_rejeitada(self, client):
+        self._item_tonelada(client)
+        r = client.post("/estoque/movimentar", json={
+            "nome": "Caroço de algodão", "movimento": "Entrada de ajuste", "quantidade": 5, "unidade": "L",
+            "data_movimento": "2026-08-29",
+        })
+        assert r.status_code == 400
+        assert "Tonelada" in r.json()["detail"]
+
+    def test_saca_continua_convertendo_como_antes(self, client):
+        client.post("/estoque/", json={
+            "nome": "Ração Saca", "unidade": "Saca 30kg", "quantidade": 10,
+            "unidade_embalagem": "Saca", "medida_embalagem": "kg/saca", "quantidade_embalagem": 30,
+        })
+        r = client.post("/estoque/movimentar", json={
+            "nome": "Ração Saca", "movimento": "Saída de ajuste", "quantidade": 90, "unidade": "kg",
+            "data_movimento": "2026-08-29",
+        })
+        assert r.status_code == 200
+        assert r.json()["quantidade"] == pytest.approx(7)  # 10 sacas - 90kg/30 = 3 sacas = 7
+
+
 class TestCriarItemEstoque:
     def test_cria_item_com_campos_completos(self, client):
         r = client.post("/estoque/", json={

@@ -11,8 +11,10 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.auth import EMAIL_DONO, hash_senha
+from fazenda.auth import EMAIL_DONO, EMAILS_DONO_EQUIVALENTE, hash_senha
 from fazenda.models import Fazenda, Pessoa, Usuario, UsuarioFazenda
+
+EMAIL_SOCIO = next(e for e in EMAILS_DONO_EQUIVALENTE if e != EMAIL_DONO)
 
 
 @pytest.fixture
@@ -160,6 +162,45 @@ def test_editar_usuario_reseta_senha_e_papel(client):
 
     r = c.post("/auth/login", json={"username": "joao.a", "senha": "novaSenha"})
     assert r.status_code == 200
+
+
+def test_criar_usuario_com_email_dono_equivalente_e_rejeitado(client):
+    """Bug de segurança corrigido: esta rota é gated só por
+    exigir_area_painel_cowdata("cadastros") (área de baixo privilégio, não
+    exigir_dono) — sem esta trava, um operador do CowData com acesso a
+    "cadastros" conseguia criar um usuário de uma fazenda-cliente com o
+    e-mail dono-equivalente e depois escalar privilégio via
+    PUT /auth/preferencias digitando o mesmo e-mail (== self-service, sem
+    nenhuma trava de admin/duplicidade nesse segundo passo)."""
+    c, engine, fa_id, fb_id, pessoa_a_id, pessoa_b_id = client
+    token = _login(c)
+    r = c.post(
+        f"/painel-cowdata/usuarios/{fa_id}",
+        json={"pessoa_id": pessoa_a_id, "username": "joao.a", "senha": "senha123", "papel": "operador", "email": EMAIL_SOCIO},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 403
+    with Session(engine) as s:
+        assert s.exec(select(Usuario).where(Usuario.username == "joao.a")).first() is None
+
+
+def test_editar_usuario_com_email_dono_equivalente_e_rejeitado(client):
+    c, engine, fa_id, fb_id, pessoa_a_id, pessoa_b_id = client
+    token = _login(c)
+    r = c.post(
+        f"/painel-cowdata/usuarios/{fa_id}",
+        json={"pessoa_id": pessoa_a_id, "username": "joao.a", "senha": "senha123", "papel": "operador"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    usuario_id = r.json()["id"]
+    r = c.put(
+        f"/painel-cowdata/usuarios/{fa_id}/{usuario_id}",
+        json={"email": EMAIL_SOCIO},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 403
+    with Session(engine) as s:
+        assert s.get(Usuario, usuario_id).email is None
 
 
 def test_editar_usuario_de_outra_fazenda_e_rejeitado(client):

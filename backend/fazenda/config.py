@@ -6,7 +6,6 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./fazenda.db"
-    secret_key: str = "change-me"
     environment: str = "development"
 
     # Robô do Telegram (intake de documentos financeiros). Vazio = desligado.
@@ -43,6 +42,11 @@ class Settings(BaseSettings):
     bb_developer_application_key: str = ""
     bb_ambiente: str = "sandbox"            # "sandbox" ou "producao"
     bb_pix_chave: str = ""                  # chave PIX recebedora cadastrada no BB
+    # Segredo do webhook de cobrança BB, cadastrado igual nos dois lados (BB e
+    # aqui) — o Portal Developers BB não embute segredo próprio no payload,
+    # então esse valor vai na própria URL do webhook (/cobranca/webhook/bb/{secret}).
+    # Vazio = webhook rejeita tudo (ver cobranca_webhook_bb).
+    bb_webhook_secret: str = ""
 
     # Cobrança da assinatura CowData via Asaas (boleto mensal + Pix Automático/
     # recorrente + QR Code Pix dinâmico avulso para o desconto semestral) —

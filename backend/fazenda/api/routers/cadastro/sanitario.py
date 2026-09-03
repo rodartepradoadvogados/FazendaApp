@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_fazenda_atual_id
+from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     AgendamentoPesagem, CalendarioSanitario, Doenca, EventoSanitario, ExameDefinicao, Lote, PrincipioAtivo,
@@ -291,7 +291,9 @@ def configurar_calendario_sanitario_padrao(session: Session) -> None:
     session.commit()
 
 
-_listar_principios, _criar_principio, _atualizar_principio, _ = _crud_nome_ativo(PrincipioAtivo, com_fazenda=True)
+_listar_principios, _criar_principio, _atualizar_principio, _ = _crud_nome_ativo(
+    PrincipioAtivo, com_fazenda=True, global_compartilhado=True,
+)
 router.get("/principios-ativos")(_listar_principios)
 router.post("/principios-ativos")(_criar_principio)
 router.put("/principios-ativos/{item_id}")(_atualizar_principio)
@@ -308,7 +310,9 @@ def restaurar_catalogo_principios(session: Session = Depends(get_session)) -> di
     total = len(session.exec(select(PrincipioAtivo)).all())
     return {"criados": total - antes, "total": total}
 
-_listar_doencas, _criar_doenca, _atualizar_doenca, _ = _crud_nome_ativo(Doenca, com_fazenda=True)
+_listar_doencas, _criar_doenca, _atualizar_doenca, _ = _crud_nome_ativo(
+    Doenca, com_fazenda=True, global_compartilhado=True,
+)
 router.get("/doencas")(_listar_doencas)
 router.post("/doencas")(_criar_doenca)
 router.put("/doencas/{item_id}")(_atualizar_doenca)
@@ -355,9 +359,8 @@ def _valida_pesagem(dados: AgendamentoPesagemIn) -> None:
 
 @router.post("/agendamentos-pesagem", status_code=201)
 def criar_agendamento_pesagem(
-    dados: AgendamentoPesagemIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: AgendamentoPesagemIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     _valida_pesagem(dados)
     obj = AgendamentoPesagem(**{**dados.model_dump(), "nome": dados.nome.strip()}, fazenda_id=fazenda_id)
     session.add(obj)
@@ -507,9 +510,8 @@ def listar_eventos_sanitarios(
 
 @router.post("/eventos-sanitarios")
 def criar_evento_sanitario(
-    dados: EventoSanitarioIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: EventoSanitarioIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
@@ -603,9 +605,8 @@ def listar_exames(
 
 @router.post("/exames")
 def criar_exame(
-    dados: ExameDefinicaoIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: ExameDefinicaoIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")

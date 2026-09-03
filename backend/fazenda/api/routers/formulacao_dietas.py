@@ -21,7 +21,7 @@ from fazenda.database import get_session
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.models import (
     Alimento, AlimentoNutricional, AnaliseBromatologica, Animal, DietaSimulacao, DietaSimulacaoItem,
-    PesagemCorporal, Secagem, Usuario,
+    Estoque, PesagemCorporal, Secagem, Usuario,
 )
 from fazenda.models.formulacao import CAMPOS_CNCPS_FRACIONAMENTO
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
@@ -89,6 +89,12 @@ class IngredienteIn(BaseModel):
     alimento_id: int | None = None
     alimento_nutricional_id: int | None = None
     analise_bromatologica_id: int | None = None
+    # Produto de Estoque específico escolhido na importação (dentro da
+    # família `alimento_id`) — None = importação em nível de família, ou
+    # linha manual. `produto_nome` é o rótulo denormalizado da coluna
+    # "Produto" da grade, sobrevive à exclusão do item de Estoque.
+    estoque_id: int | None = None
+    produto_nome: str | None = None
     campos_editados: list[str] | None = None
 
     ms_pct: float | None = None
@@ -169,6 +175,9 @@ class AplicarIn(BaseModel):
 
 class AlimentoNutricionalIn(BaseModel):
     alimento_id: int | None = None
+    # Produto de Estoque específico desta entrada de composição — None =
+    # entrada em nível de família (comportamento histórico).
+    estoque_id: int | None = None
     nome: str
     categoria_nasem: str
     conc_pct: float = 0.0
@@ -349,6 +358,7 @@ def _item_publico(item: DietaSimulacaoItem) -> dict:
     return {
         "id": item.id, "ordem": item.ordem, "alimento_id": item.alimento_id,
         "alimento_nutricional_id": item.alimento_nutricional_id, "analise_bromatologica_id": item.analise_bromatologica_id,
+        "estoque_id": item.estoque_id, "produto_nome": item.produto_nome,
         "nome": item.nome, "origem": item.origem, "proporcao_ms_pct": item.proporcao_ms_pct,
         "categoria_nasem": item.categoria_nasem, "conc_pct": item.conc_pct, "ms_pct": item.ms_pct,
         "custo_kg_mn": item.custo_kg_mn, "campos_editados": json.loads(item.campos_editados_json or "[]"),
@@ -424,7 +434,8 @@ def salvar_simulacao(
             # item órfão, mesmo a simulação-pai já tendo fazenda_id certo.
             fazenda_id=sim.fazenda_id, simulacao_id=simulacao_id, ordem=ordem,
             alimento_id=item_in.alimento_id, alimento_nutricional_id=item_in.alimento_nutricional_id,
-            analise_bromatologica_id=item_in.analise_bromatologica_id, nome=item_in.nome, origem=item_in.origem,
+            analise_bromatologica_id=item_in.analise_bromatologica_id, estoque_id=item_in.estoque_id,
+            produto_nome=item_in.produto_nome, nome=item_in.nome, origem=item_in.origem,
             proporcao_ms_pct=item_in.proporcao_ms_pct, categoria_nasem=item_in.categoria_nasem, conc_pct=item_in.conc_pct,
             ms_pct=item_in.ms_pct, custo_kg_mn=item_in.custo_kg_mn,
             valores_json=json.dumps({campo: getattr(item_in, campo) for campo in CAMPOS_NUTRICIONAIS}),
@@ -482,6 +493,7 @@ def duplicar_simulacao(
         session.add(DietaSimulacaoItem(
             fazenda_id=nova.fazenda_id, simulacao_id=nova.id, ordem=item.ordem, alimento_id=item.alimento_id,
             alimento_nutricional_id=item.alimento_nutricional_id, analise_bromatologica_id=item.analise_bromatologica_id,
+            estoque_id=item.estoque_id, produto_nome=item.produto_nome,
             nome=item.nome, origem=item.origem, proporcao_ms_pct=item.proporcao_ms_pct, categoria_nasem=item.categoria_nasem,
             conc_pct=item.conc_pct, ms_pct=item.ms_pct, custo_kg_mn=item.custo_kg_mn,
             valores_json=item.valores_json, campos_editados_json=item.campos_editados_json,
@@ -570,7 +582,7 @@ def _nutricional_publico(a: AlimentoNutricional) -> dict:
         valores.update(json.loads(a.extras_json))
     eh_mestre = a.fazenda_id is None
     return {
-        "id": a.id, "alimento_id": a.alimento_id, "nome": a.nome, "categoria_nasem": a.categoria_nasem,
+        "id": a.id, "alimento_id": a.alimento_id, "estoque_id": a.estoque_id, "nome": a.nome, "categoria_nasem": a.categoria_nasem,
         "conc_pct": a.conc_pct, "fonte": a.fonte, "observacao": a.observacao, "ativo": a.ativo,
         "inclusao_min_pct": a.inclusao_min_pct, "inclusao_max_pct": a.inclusao_max_pct,
         # eh_mestre: item da biblioteca padrão CowData, ainda não copiado por
@@ -601,6 +613,7 @@ def listar_alimentos_nutricionais(
         # critério de qualquer outra busca textual do sistema (rules/busca.py).
         biblioteca = [a for a in biblioteca if casa_busca(busca, a.nome)]
     com_composicao = {a.alimento_id for a in biblioteca if a.alimento_id}
+    com_composicao_produto = {(a.alimento_id, a.estoque_id) for a in biblioteca if a.alimento_id and a.estoque_id}
 
     query_alimento = select(Alimento).where(Alimento.ativo == True)  # noqa: E712
     if fazenda_id is not None:
@@ -609,10 +622,29 @@ def listar_alimentos_nutricionais(
     if busca:
         cadastrados = [a for a in cadastrados if casa_busca(busca, a.nome)]
 
+    # Produtos de Estoque vinculados a cada Alimento (Fase 2 — "escolha o
+    # produto" dentro da família, ao importar). Uma consulta única, agrupada
+    # em memória, em vez de N+1 por alimento.
+    query_estoque = select(Estoque).where(Estoque.alimento_id.in_([a.id for a in cadastrados]), Estoque.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query_estoque = query_estoque.where(Estoque.fazenda_id == fazenda_id)
+    produtos_por_alimento: dict[int, list] = {}
+    for produto in session.exec(query_estoque).all() if cadastrados else []:
+        produtos_por_alimento.setdefault(produto.alimento_id, []).append(produto)
+
     return {
         "biblioteca": [_nutricional_publico(a) for a in sorted(biblioteca, key=lambda a: a.nome)],
         "cadastrados": [
-            {"id": a.id, "nome": a.nome, "sem_composicao": a.id not in com_composicao}
+            {
+                "id": a.id, "nome": a.nome, "sem_composicao": a.id not in com_composicao,
+                "estoque_vinculado": [
+                    {
+                        "id": produto.id, "nome": produto.nome,
+                        "sem_composicao": (a.id, produto.id) not in com_composicao_produto,
+                    }
+                    for produto in sorted(produtos_por_alimento.get(a.id, []), key=lambda p: p.nome)
+                ],
+            }
             for a in sorted(cadastrados, key=lambda a: a.nome)
         ],
     }
@@ -641,7 +673,7 @@ def criar_alimento_nutricional(
     campos_cncps = {c: dados.valores.get(c) for c in CAMPOS_CNCPS_FRACIONAMENTO}
     extras = {k: v for k, v in dados.valores.items() if k not in CAMPOS_NUTRICIONAIS and k not in CAMPOS_CNCPS_FRACIONAMENTO}
     item = AlimentoNutricional(
-        alimento_id=dados.alimento_id, nome=dados.nome.strip(), categoria_nasem=dados.categoria_nasem, conc_pct=dados.conc_pct,
+        alimento_id=dados.alimento_id, estoque_id=dados.estoque_id, nome=dados.nome.strip(), categoria_nasem=dados.categoria_nasem, conc_pct=dados.conc_pct,
         fonte=dados.fonte, observacao=dados.observacao, fazenda_id=fazenda_id, usuario_id=user.id,
         inclusao_min_pct=dados.inclusao_min_pct, inclusao_max_pct=dados.inclusao_max_pct,
         campos_editados_json=json.dumps(dados.campos_editados) if dados.campos_editados else None,
@@ -674,6 +706,7 @@ def atualizar_alimento_nutricional(
     item.nome, item.categoria_nasem, item.conc_pct = dados.nome.strip() or item.nome, dados.categoria_nasem, dados.conc_pct
     item.fonte, item.observacao = dados.fonte, dados.observacao
     item.alimento_id = dados.alimento_id
+    item.estoque_id = dados.estoque_id
     item.inclusao_min_pct, item.inclusao_max_pct = dados.inclusao_min_pct, dados.inclusao_max_pct
     for campo in CAMPOS_NUTRICIONAIS:
         setattr(item, campo, dados.valores.get(campo))
@@ -734,24 +767,52 @@ async def importar_biblioteca(
 
 @router.get("/alimentos/{alimento_id}/resolver")
 def resolver_alimento(
-    alimento_id: int, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    alimento_id: int, estoque_id: int | None = None,
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
 ) -> dict:
     """Resolve em cascata biblioteca → análise bromatológica mais recente →
-    template por categoria (ver Etapa 1, "Importar do cadastro")."""
+    template por categoria (ver Etapa 1, "Importar do cadastro").
+
+    Com `estoque_id` informado (produto específico escolhido no popup de
+    importação — Fase 2), tenta primeiro a composição exata daquele produto
+    (`alimento_id` + `estoque_id`) antes de cair para a composição em nível
+    de família (`estoque_id=None`), preservando o comportamento de sempre
+    quando nenhum produto específico foi escolhido."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     alimento = session.get(Alimento, alimento_id)
     if not alimento or (fazenda_id is not None and alimento.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Alimento não encontrado")
 
-    query_nutri = select(AlimentoNutricional).where(AlimentoNutricional.alimento_id == alimento_id, AlimentoNutricional.ativo == True)  # noqa: E712
-    if fazenda_id is not None:
-        query_nutri = query_nutri.where(AlimentoNutricional.fazenda_id == fazenda_id)
-    entrada_biblioteca = session.exec(query_nutri).first()
+    produto_nome = None
+    if estoque_id is not None:
+        produto = session.get(Estoque, estoque_id)
+        if produto and (fazenda_id is None or produto.fazenda_id == fazenda_id):
+            produto_nome = produto.nome
+
+    entrada_biblioteca = None
+    if estoque_id is not None:
+        query_produto = select(AlimentoNutricional).where(
+            AlimentoNutricional.alimento_id == alimento_id, AlimentoNutricional.estoque_id == estoque_id,
+            AlimentoNutricional.ativo == True,  # noqa: E712
+        )
+        if fazenda_id is not None:
+            query_produto = query_produto.where(AlimentoNutricional.fazenda_id == fazenda_id)
+        entrada_biblioteca = session.exec(query_produto).first()
+
+    if entrada_biblioteca is None:
+        query_nutri = select(AlimentoNutricional).where(
+            AlimentoNutricional.alimento_id == alimento_id, AlimentoNutricional.estoque_id == None,  # noqa: E711
+            AlimentoNutricional.ativo == True,  # noqa: E712
+        )
+        if fazenda_id is not None:
+            query_nutri = query_nutri.where(AlimentoNutricional.fazenda_id == fazenda_id)
+        entrada_biblioteca = session.exec(query_nutri).first()
     if entrada_biblioteca:
         pub = _nutricional_publico(entrada_biblioteca)
         return {
             "nome": alimento.nome, "categoria_nasem": entrada_biblioteca.categoria_nasem, "conc_pct": entrada_biblioteca.conc_pct,
             "origem": "biblioteca", "alimento_nutricional_id": entrada_biblioteca.id, "analise_bromatologica_id": None,
+            "estoque_id": estoque_id, "produto_nome": produto_nome,
             "inclusao_min_pct": entrada_biblioteca.inclusao_min_pct, "inclusao_max_pct": entrada_biblioteca.inclusao_max_pct,
             "valores": pub["valores"],
         }
@@ -777,12 +838,14 @@ def resolver_alimento(
         return {
             "nome": alimento.nome, "categoria_nasem": "Outros", "conc_pct": 0.0, "origem": "bromatologica",
             "alimento_nutricional_id": None, "analise_bromatologica_id": laudo.id,
+            "estoque_id": estoque_id, "produto_nome": produto_nome,
             "inclusao_min_pct": None, "inclusao_max_pct": None, "valores": valores,
         }
 
     return {
         "nome": alimento.nome, "categoria_nasem": "Outros", "conc_pct": 0.0, "origem": "template",
         "alimento_nutricional_id": None, "analise_bromatologica_id": None,
+        "estoque_id": estoque_id, "produto_nome": produto_nome,
         "inclusao_min_pct": None, "inclusao_max_pct": None, "valores": template_por_categoria("Outros"),
     }
 

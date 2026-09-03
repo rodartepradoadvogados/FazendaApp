@@ -238,6 +238,11 @@ export type ItemGrade = {
   alimento_id?: number | null;
   alimento_nutricional_id?: number | null;
   analise_bromatologica_id?: number | null;
+  // Produto de Estoque específico escolhido na importação (dentro da
+  // família `alimento_id`) — null = importação em nível de família, ou
+  // linha manual. `produto_nome` é o rótulo da coluna "Produto" da grade.
+  estoque_id?: number | null;
+  produto_nome?: string | null;
   campos_editados?: string[] | null;
   // Faixa típica de inclusão na dieta (% da MS TOTAL da dieta), puxada da
   // biblioteca junto com o teor de MS — só orientação visual pro
@@ -251,7 +256,7 @@ export function itemGradeVazio(categoria: CategoriaNasem = "Outros"): ItemGrade 
   const item: ItemGrade = {
     nome: "", categoria_nasem: categoria, conc_pct: categoria === "Forragem" || categoria === "Pastagem" ? 0 : 100,
     proporcao_ms_pct: 0, origem: "manual", alimento_id: null, alimento_nutricional_id: null,
-    analise_bromatologica_id: null, campos_editados: [],
+    analise_bromatologica_id: null, estoque_id: null, produto_nome: null, campos_editados: [],
   };
   for (const campo of CAMPOS_NUTRICIONAIS) item[campo] = null;
   return item;
@@ -460,7 +465,14 @@ export type EntradaBiblioteca = {
     & Record<string, number | null | undefined>;
 };
 
-export type AlimentoCadastradoResumo = { id: number; nome: string; sem_composicao: boolean };
+// Produto de Estoque vinculado a um Alimento (família) — Fase 2 do popup de
+// importação: dentro de "Concentrado Protéico" a fazenda pode ter vários
+// produtos comerciais reais, cada um com sua própria composição cadastrada.
+export type ProdutoVinculadoResumo = { id: number; nome: string; sem_composicao: boolean };
+
+export type AlimentoCadastradoResumo = {
+  id: number; nome: string; sem_composicao: boolean; estoque_vinculado: ProdutoVinculadoResumo[];
+};
 
 export type ListarAlimentosResponse = { biblioteca: EntradaBiblioteca[]; cadastrados: AlimentoCadastradoResumo[] };
 
@@ -474,12 +486,14 @@ export async function listarAlimentos(busca?: string): Promise<ListarAlimentosRe
 export type ResolverAlimentoResponse = {
   nome: string; categoria_nasem: string; conc_pct: number; origem: "biblioteca" | "bromatologica" | "template";
   alimento_nutricional_id: number | null; analise_bromatologica_id: number | null;
+  estoque_id?: number | null; produto_nome?: string | null;
   inclusao_min_pct: number | null; inclusao_max_pct: number | null;
   valores: { [K in CampoNutricional]?: number | null };
 };
 
-export async function resolverAlimento(alimentoId: number): Promise<ResolverAlimentoResponse> {
-  const res = await authFetch(`${API}/formulacao/alimentos/${alimentoId}/resolver`);
+export async function resolverAlimento(alimentoId: number, estoqueId?: number | null): Promise<ResolverAlimentoResponse> {
+  const qs = estoqueId != null ? `?estoque_id=${estoqueId}` : "";
+  const res = await authFetch(`${API}/formulacao/alimentos/${alimentoId}/resolver${qs}`);
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao resolver o alimento"); }
   return res.json();
 }
@@ -569,6 +583,8 @@ export function itemGradeDeResolucao(alimentoId: number, r: ResolverAlimentoResp
   item.alimento_id = alimentoId;
   item.alimento_nutricional_id = r.alimento_nutricional_id;
   item.analise_bromatologica_id = r.analise_bromatologica_id;
+  item.estoque_id = r.estoque_id ?? null;
+  item.produto_nome = r.produto_nome ?? null;
   item.inclusao_min_pct = r.inclusao_min_pct;
   item.inclusao_max_pct = r.inclusao_max_pct;
   for (const campo of CAMPOS_NUTRICIONAIS) item[campo] = r.valores[campo] ?? null;

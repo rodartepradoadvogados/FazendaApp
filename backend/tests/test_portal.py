@@ -324,7 +324,7 @@ class TestExportar:
         app, engine = ambiente
         from fazenda.api.routers import portal as portal_router
         chamadas = []
-        monkeypatch.setattr(portal_router, "_executar_exportacao", lambda itens, email: chamadas.append((itens, email)))
+        monkeypatch.setattr(portal_router, "_executar_exportacao", lambda itens, email, fazenda_id: chamadas.append((itens, email, fazenda_id)))
         admin = _client_como(app, engine, "admin-teste")
         r = admin.post("/portal/exportar", json={"itens": [
             {"chave": "animal_ficha"}, {"chave": "dre", "data_inicio": "2026-01-01", "data_fim": "2026-01-31"},
@@ -332,7 +332,7 @@ class TestExportar:
         assert r.status_code == 200
         assert "admin@fazenda.com" in r.json()["mensagem"]
         assert len(chamadas) == 1
-        itens, email = chamadas[0]
+        itens, email, _fazenda_id = chamadas[0]
         assert email == "admin@fazenda.com"
         assert {i["chave"] for i in itens} == {"animal_ficha", "dre"}
 
@@ -360,6 +360,7 @@ class TestExportar:
                 {"chave": "financeiro_lancamentos", "data_inicio": date(2026, 1, 1), "data_fim": date(2026, 1, 31)},
             ],
             "admin@fazenda.com",
+            None,
         )
 
         assert capturado["destinatario"] == "admin@fazenda.com"

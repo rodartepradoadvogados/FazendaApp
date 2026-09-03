@@ -72,7 +72,7 @@ export function FormAjusteSaldoEstoque({ estoque, onSalvo }: { estoque: EstoqueI
     <>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Produto" full>
-          <EstoquePicker itens={itensEstocaveis} value={produto} onChange={setProduto} placeholder="Buscar item…" incluirNaoEstocaveis={false} />
+          <EstoquePicker itens={itensEstocaveis} value={produto} onChange={setProduto} placeholder="Buscar item…" todasFinalidades incluirNaoEstocaveis={false} />
         </Campo>
         {item && (
           <>
@@ -88,7 +88,16 @@ export function FormAjusteSaldoEstoque({ estoque, onSalvo }: { estoque: EstoqueI
             </Campo>
             <Campo label="Unidade">
               <select style={inputStyle} value={unidade || item.unidade || "unidade"} onChange={(e) => setUnidade(e.target.value)}>
-                {UNIDADES.map((u) => <option key={u}>{u}</option>)}
+                {/* A unidade DE VERDADE do item (livre, cadastrada em Configurações > Estoque —
+                    "Tonelada (ton)", "Bag" etc.) pode não estar na lista fixa UNIDADES abaixo
+                    (pensada só para unidade de APLICAÇÃO de medicamento). Sem isto, o <select>
+                    controlado não achava a option certa e mostrava a primeira da lista ("ml")
+                    como se estivesse selecionada — o usuário achava que tinha escolhido a
+                    unidade do item quando na verdade estava "ml", e o ajuste ou vinha rejeitado
+                    (após a correção do backend) ou, antes dela, corrompia o saldo. */}
+                {[item.unidade, ...UNIDADES.filter((u) => u !== item.unidade)].filter(Boolean).map((u) => (
+                  <option key={u} value={u as string}>{u}</option>
+                ))}
               </select>
             </Campo>
             <Campo label="Data do ajuste"><input type="date" style={inputStyle} value={dataMov} onChange={(e) => setDataMov(e.target.value)} /></Campo>

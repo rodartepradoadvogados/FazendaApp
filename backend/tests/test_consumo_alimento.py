@@ -124,6 +124,25 @@ class TestDietaDoLote:
         r = c.get("/alimentacao/consumo/dieta-do-lote?lote=99")
         assert r.status_code == 404
 
+    def test_item_com_override_por_cabeca_ignora_a_base_da_dieta(self, client):
+        """Dieta "total/dia" (padrão), mas um item específico foi lançado com
+        override "animal" — o `por_cabeca` desse item usa a SUA base, não a
+        da dieta (2 animais, item com 5kg/cabeça/dia → por_cabeca = 5, não
+        5/2 = 2.5)."""
+        c, engine, _ = client
+        dieta_id = _seed_lote_1(engine)
+        with Session(engine) as s:
+            s.add(DietaItemProgramado(
+                fazenda_id=1, dieta_lancamento_id=dieta_id, alimento="Concentrado",
+                quantidade=5.0, unidade="kg", base_quantidade="animal",
+            ))
+            s.commit()
+
+        corpo = c.get("/alimentacao/consumo/dieta-do-lote?lote=1").json()
+        por_alimento = {it["alimento"]: it for it in corpo["itens"]}
+        assert por_alimento["Silagem"]["por_cabeca"] == 20.0  # herda "total": 40/2
+        assert por_alimento["Concentrado"]["por_cabeca"] == 5.0  # override "animal": já é por cabeça
+
 
 class TestLancamentoConsumo:
     """B1/B2/B4/B7/B8 — lançar consumo, ver o acumulado do dia, dar baixa e
@@ -179,6 +198,31 @@ class TestLancamentoConsumo:
         with Session(engine) as s:
             estoque = s.exec(select(Estoque).where(Estoque.nome == "Concentrado")).first()
             assert estoque.quantidade == 985.0  # 1000 - (5/cabeça * 3 animais = 15)
+
+    def test_lancamento_por_animais_respeita_override_do_item_dentro_de_dieta_total(self, client):
+        """Mesma dieta "total/dia" de `_seed_lote_1`, mas o item lançado com
+        consumo "por animal" tem override próprio "animal" (3kg/cabeça) — a
+        baixa de estoque tem que usar a base do ITEM (3 * num_animais), não a
+        da dieta (que dividiria de novo e dobraria o erro do outro lado)."""
+        c, engine, _ = client
+        dieta_id = _seed_lote_1(engine)
+        with Session(engine) as s:
+            s.add(DietaItemProgramado(
+                fazenda_id=1, dieta_lancamento_id=dieta_id, alimento="Concentrado",
+                quantidade=3.0, unidade="kg", base_quantidade="animal",
+            ))
+            s.add(Estoque(nome="Concentrado", fazenda_id=1, quantidade=500.0, unidade="kg"))
+            s.commit()
+
+        r = c.post("/alimentacao/consumo", json={
+            "lote": 1, "data": HOJE.isoformat(), "num_animais": 2, "origem": "animais",
+            "itens": [{"alimento": "Concentrado", "quantidade": 1, "unidade": "kg"}],
+        })
+        assert r.status_code == 201, r.text
+
+        with Session(engine) as s:
+            estoque = s.exec(select(Estoque).where(Estoque.nome == "Concentrado")).first()
+            assert estoque.quantidade == 494.0  # 500 - (3/cabeça * 2 animais = 6)
 
     def test_lancamentos_do_mesmo_dia_somam(self, client):
         c, engine, _ = client

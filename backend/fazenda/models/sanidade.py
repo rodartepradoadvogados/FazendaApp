@@ -127,6 +127,42 @@ class PrincipioAtivo(SQLModel, table=True):
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
+class ParametroMinimoFarmacia(SQLModel, table=True):
+    """Estoque mínimo de um princípio ativo, em `unidade_base` (ml/L/g/
+    unidade) — NUNCA por contagem de frascos/pacotes. Pedido do usuário
+    (31/08/2026): "estoque mínimo... tem que ser em unidade de medida. Ex.:
+    Sincrogest — 3 pacotes de 10 + 2 pacotes de 5 — mínimo: 12 unidades, e
+    não pacotes."
+
+    Vive numa tabela À PARTE de `PrincipioAtivo` — nunca escreve no próprio
+    princípio — por dois motivos: (1) `PrincipioAtivo` pode ser um registro
+    GLOBAL (`fazenda_id=None`, catálogo padrão CowData, ver
+    painel_cowdata_farmacia.py) compartilhado por várias fazendas-cliente, e
+    um valor de mínimo é sempre uma decisão de UMA fazenda (o consumo de
+    Meloxicam da fazenda A não tem nada a ver com o mínimo ideal da fazenda
+    B); (2) `PrincipioAtivo` documentadamente NUNCA é clonado por fazenda
+    (ao contrário de Doença/MedicamentoComercial) — é a âncora fixa de
+    `Estoque.principio_ativo_id`, então esta tabela evita precisar quebrar
+    essa invariante só para guardar um número.
+
+    Sem uma linha aqui para um princípio, `rules.farmacia.resumo_principios`
+    continua usando a regra ANTIGA (mínimo em número de apresentações,
+    `PrincipioAtivo.estoque_minimo_apresentacoes`) — nenhuma conversão
+    automática acontece; cada fazenda concilia o próprio mínimo, um
+    princípio de cada vez, pelo Painel de Conciliação (Configurações >
+    Cadastro > Farmácia > Estoque mínimo)."""
+
+    __tablename__ = "parametro_minimo_farmacia"
+    __table_args__ = (UniqueConstraint("fazenda_id", "principio_ativo_id", name="uq_minimo_fazenda_principio"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: int = Field(foreign_key="fazenda.id", index=True)
+    principio_ativo_id: int = Field(foreign_key="principio_ativo.id", index=True)
+    estoque_minimo_base: float
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 class MedicamentoComercial(SQLModel, table=True):
     """Marca comercial + laboratório de um princípio ativo (tabela filha). Ex.:
     Maxicam 2%/Ourofino → Meloxicam. Catálogo relacional; um item de estoque
@@ -167,6 +203,14 @@ class MedicamentoComercial(SQLModel, table=True):
     proibido_lactacao: Optional[bool] = None      # não usar em vaca em ordenha
     alerta_gestacao: Optional[bool] = None        # risco de aborto (corticoide, PGF2α)
     alerta: Optional[str] = None                  # texto livre de alerta clínico
+
+    # "Categoria" do medicamento (antimicrobiano, anti-inflamatório,
+    # antibiótico... — ver lib/api.ts::CLASSIFICACOES_MEDICAMENTO) — hoje só
+    # existia no cadastro de item de estoque do tenant; pedido do usuário
+    # (01/09/2026) de trazer o mesmo campo pro cadastro central do Painel
+    # CowData, compatibilizando os dois. Espelhado em `Estoque.
+    # classificacao_medicamento` pelo fan-out.
+    classificacao_medicamento: Optional[str] = None
 
     # Linha global que esta é cópia de — preenchido só quando a fazenda
     # personaliza o padrão (ver POST /farmacia/indicacoes/{id}/personalizar).
@@ -224,6 +268,142 @@ class IndicacaoTerapeutica(SQLModel, table=True):
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     nota: Optional[str] = None  # ressalva clínica ("só com corpo lúteo", etc.)
     origem_id: Optional[int] = Field(default=None, foreign_key="indicacao_terapeutica.id", index=True)
+
+
+class MedicamentoPrincipioAtivo(SQLModel, table=True):
+    """Vínculo N-para-N entre marca comercial e princípio ativo — generaliza
+    `MedicamentoComercial.principio_ativo_id` (escalar, obrigatório, mantido
+    como o "princípio principal" por compatibilidade com todo o código que já
+    lê só ele) para o caso de medicamento combinado (mais de uma molécula na
+    mesma bula — ex.: associação antibiótico + anti-inflamatório). Mesmo
+    padrão de `IndicacaoTerapeutica` (fazenda_id entra na unique pelo mesmo
+    motivo: clonagem por fazenda ao personalizar um medicamento do catálogo)."""
+
+    __tablename__ = "medicamento_principio_ativo"
+    __table_args__ = (
+        UniqueConstraint("medicamento_comercial_id", "principio_ativo_id", "fazenda_id", name="uq_medicamento_principio_fazenda"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    medicamento_comercial_id: int = Field(foreign_key="medicamento_comercial.id", index=True)
+    principio_ativo_id: int = Field(foreign_key="principio_ativo.id", index=True)
+    # Espelha (e mantém sincronizado com) MedicamentoComercial.principio_ativo_id
+    # — exatamente 1 linha por medicamento tem principal=True.
+    principal: bool = False
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    origem_id: Optional[int] = Field(default=None, foreign_key="medicamento_principio_ativo.id", index=True)
+
+
+class Laboratorio(SQLModel, table=True):
+    """Catálogo de laboratórios/fabricantes de medicamento — Configurações
+    (Painel CowData) > Farmácia > Cadastrar > Laboratórios. Mesmo padrão
+    "nome + ativo" global/por-fazenda de CategoriaEstoque (models/estoque.py).
+    `MedicamentoComercial.laboratorio`/`Estoque.laboratorio` continuam texto
+    livre (pedido do usuário, 01/09/2026: "puxe o padrão do que já há
+    cadastrado no painel CowData") — este catálogo só alimenta o seletor,
+    não substitui o dado já gravado."""
+
+    __tablename__ = "laboratorio"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_laboratorio_nome_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome: str = Field(index=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CategoriaMedicamento(SQLModel, table=True):
+    """"Categoria (medicamento)" — antimicrobiano, anti-inflamatório,
+    antibiótico... (a classificação médica que o usuário chama de
+    "categoria", para não confundir com `CategoriaEstoque`, a lista geral de
+    Administrativo/Alim. Animal/Sêmen/etc. — ver Estoque.categoria). Nasce
+    semeada com os 7 valores hoje fixos em lib/api.ts::CLASSIFICACOES_MEDICAMENTO
+    (seed em rules/farmacia.py::seed_farmacia), mas o Painel CowData pode
+    cadastrar mais. Cumulativo (um medicamento pode ter mais de uma) — ver
+    `MedicamentoCategoria`/`EstoqueCategoriaMedicamento`."""
+
+    __tablename__ = "categoria_medicamento"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_categoria_medicamento_nome_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome: str = Field(index=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ClassificacaoMedicamento(SQLModel, table=True):
+    """"Classificação do medicamento" — eixo novo e independente de
+    Categoria (medicamento), pedido do usuário (01/09/2026) como item 2.4 da
+    hierarquia da Farmácia. Nasce vazio: o Painel CowData cadastra os valores
+    que quiser (ex.: controlado, genérico, uso interno/externo). Cumulativo,
+    mesmo padrão de CategoriaMedicamento."""
+
+    __tablename__ = "classificacao_medicamento_cad"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_classificacao_medicamento_cad_nome_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome: str = Field(index=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class MedicamentoCategoria(SQLModel, table=True):
+    """Vínculo N-para-N entre marca comercial e CategoriaMedicamento —
+    cumulativo (sem "principal": ao contrário de princípio ativo, não há
+    hierarquia entre categorias, só a lista completa). O primeiro valor
+    escolhido é espelhado em `MedicamentoComercial.classificacao_medicamento`
+    (mantido por compatibilidade com quem já lê só o escalar)."""
+
+    __tablename__ = "medicamento_categoria"
+    __table_args__ = (UniqueConstraint("medicamento_comercial_id", "categoria_medicamento_id", name="uq_medicamento_categoria"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    medicamento_comercial_id: int = Field(foreign_key="medicamento_comercial.id", index=True)
+    categoria_medicamento_id: int = Field(foreign_key="categoria_medicamento.id", index=True)
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class MedicamentoClassificacao(SQLModel, table=True):
+    """Vínculo N-para-N entre marca comercial e ClassificacaoMedicamento —
+    mesmo espírito de MedicamentoCategoria, sem espelho escalar (eixo novo,
+    sem leitor pré-existente)."""
+
+    __tablename__ = "medicamento_classificacao"
+    __table_args__ = (UniqueConstraint("medicamento_comercial_id", "classificacao_medicamento_id", name="uq_medicamento_classificacao"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    medicamento_comercial_id: int = Field(foreign_key="medicamento_comercial.id", index=True)
+    classificacao_medicamento_id: int = Field(foreign_key="classificacao_medicamento_cad.id", index=True)
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class EstoqueCategoriaMedicamento(SQLModel, table=True):
+    """Espelho de MedicamentoCategoria no lado do item de Estoque do
+    tenant — propagado pelo fan-out, editável depois pelo tenant."""
+
+    __tablename__ = "estoque_categoria_medicamento"
+    __table_args__ = (UniqueConstraint("estoque_id", "categoria_medicamento_id", name="uq_estoque_categoria_medicamento"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    estoque_id: int = Field(foreign_key="estoque.id", index=True)
+    categoria_medicamento_id: int = Field(foreign_key="categoria_medicamento.id", index=True)
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class EstoqueClassificacaoMedicamento(SQLModel, table=True):
+    """Espelho de MedicamentoClassificacao no lado do item de Estoque do tenant."""
+
+    __tablename__ = "estoque_classificacao_medicamento"
+    __table_args__ = (UniqueConstraint("estoque_id", "classificacao_medicamento_id", name="uq_estoque_classificacao_medicamento"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    estoque_id: int = Field(foreign_key="estoque.id", index=True)
+    classificacao_medicamento_id: int = Field(foreign_key="classificacao_medicamento_cad.id", index=True)
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
 class ExameDefinicao(SQLModel, table=True):
@@ -517,10 +697,65 @@ class ProtocoloSanitarioEtapa(SQLModel, table=True):
     # guarda o critério; o medicamento real é escolhido no lançamento).
     criterio_tipo: str = Field(default="medicamento")
     produto: str  # nome do medicamento OU o valor do critério (princípio/classificação)
+    # Onda "Protocolo à Mostra" — dose FIXA (padrão, é o legado inteiro) ou
+    # POR PESO VIVO, ver fazenda.rules.dose_protocolo. Nos dois modos
+    # `dosagem` é o número e `unidade` é só a unidade de medida ("mL", "UI")
+    # — o que muda é a LEITURA: "fixa" usa `dosagem` pronta; "por_peso" lê
+    # `dosagem` como a dose A CADA `dose_referencia_kg` de peso vivo do
+    # animal (ex.: dosagem=2, dose_referencia_kg=15 → "2 mL a cada 15 kg"),
+    # calculada em rules.dose_protocolo.calcular_dose. Mesmo par de campos
+    # (dose_padrao/dose_referencia_kg) já usado em MedicamentoComercial —
+    # nome igual, mesmo conceito, para não duplicar vocabulário.
+    #
+    # Todo registro pré-existente nasceu "fixa" com a referência de peso
+    # embutida como TEXTO dentro do próprio `unidade` (ex.: "ml / 15kg PV")
+    # — nunca calculada. Ver ADR em rules/dose_protocolo.py e o backfill em
+    # POST /cadastro/protocolos-sanitarios/dose-migrar (report-first).
+    modo_dose: str = Field(default="fixa")  # "fixa" | "por_peso"
     dosagem: float
     unidade: str
+    dose_referencia_kg: Optional[float] = None  # só quando modo_dose == "por_peso"
     via: Optional[str] = None
     observacao: Optional[str] = None  # nota livre (ex.: "Se necessário", "10ml por orelha")
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+class ProtocoloSanitarioLote(SQLModel, table=True):
+    """O "cabeçalho" de um lançamento de protocolo sanitário em lote — junta os
+    ProtocoloSanitarioLancamento (um por animal) criados na MESMA chamada de
+    POST /sanidade/protocolos/lancamentos, no mesmo formato/campos que
+    ProtocoloIatfLancamento/ProtocoloInducaoLancamento/etc. usam (nome_protocolo
+    já com data, responsavel/observacao, ativo/encerrado_em/encerrado_motivo)
+    — é o que permite ao Sanitário entrar em `_ORIGENS_COM_ACAO`
+    (central_protocolos.py) e ganhar a mesma grade dia×animal, com
+    marcar/desfazer/cancelar/encerrar, que IATF/Indução/Customizado/Lida já
+    tinham. Antes deste modelo, cada ProtocoloSanitarioLancamento era uma
+    linha solta sem cabeçalho — a Central AGRUPAVA por (protocolo_id,
+    data_inicio) só para exibir, sem estado próprio (ver histórico de
+    `_linhas_sanitario`); esse agrupamento por coincidência de data confundia
+    lançamentos de fato distintos que caíssem no mesmo dia. `lote_id` agora é
+    a fonte de verdade do agrupamento, carimbada no momento do lançamento.
+
+    Migração e3ad0b2a1c47 cria esta tabela e faz o backfill do histórico: cada
+    ProtocoloSanitarioLancamento existente (não tinha cabeçalho) vira um
+    "lote de 1" — decisão deliberadamente conservadora, sem tentar adivinhar
+    quais lançamentos antigos "deveriam" ter sido um lote só por coincidirem
+    na mesma data (ver docstring da migração)."""
+
+    __tablename__ = "protocolo_sanitario_lote"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    protocolo_id: int = Field(foreign_key="protocolo_sanitario.id")
+    nome_protocolo: str
+    data_inicio: date
+    responsavel: Optional[str] = None
+    observacao: Optional[str] = None
+    # Ver ProtocoloIatfLancamento.encerrado_em / .ativo — mesma semântica.
+    encerrado_em: Optional[date] = Field(default=None)
+    encerrado_motivo: Optional[str] = None
+    ativo: bool = Field(default=True, index=True)
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
@@ -533,6 +768,11 @@ class ProtocoloSanitarioLancamento(SQLModel, table=True):
     protocolo_id: int = Field(foreign_key="protocolo_sanitario.id")
     numero_matriz: str = Field(index=True)
     data_inicio: date
+    # Cabeçalho do lote (ver ProtocoloSanitarioLote) — nullable só porque o
+    # histórico pré-existente à migração e3ad0b2a1c47 é preenchido em lotes
+    # de 1 pela própria migração; todo lançamento novo sempre grava este
+    # campo (ver sanidade.lancar_protocolo).
+    lote_id: Optional[int] = Field(default=None, foreign_key="protocolo_sanitario_lote.id", index=True)
     responsavel: Optional[str] = None
     observacao: Optional[str] = None
     # Campos específicos de mastite — só usados quando o protocolo é de mastite.
@@ -564,6 +804,19 @@ class ProtocoloSanitarioAplicacao(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     lancamento_id: int = Field(foreign_key="protocolo_sanitario_lancamento.id")
     etapa_id: int = Field(foreign_key="protocolo_sanitario_etapa.id")
+    # `dia` e `numero_matriz` são DENORMALIZADOS de ProtocoloSanitarioEtapa.dia
+    # e ProtocoloSanitarioLancamento.numero_matriz, gravados uma vez no
+    # lançamento (ver sanidade.lancar_protocolo). Só existem para dar a esta
+    # tabela o MESMO formato de ProtocoloIatfAplicacao/ProtocoloInducaoAplicacao/
+    # ProtocoloCustomizadoAplicacao/LidaAplicacao — todo o código genérico da
+    # Central de Protocolos (central_protocolos.py: detalhe, dar_baixa,
+    # desfazer_aplicacao, cancelar) lê `.dia` e `.numero_matriz` direto da
+    # aplicação, sem saber que Sanitário tem uma camada extra por animal
+    # (ProtocoloSanitarioLancamento) que os outros não têm. Nullable só pelo
+    # histórico pré-migração e3ad0b2a1c47 (que faz o backfill); lançamento
+    # novo sempre preenche os dois.
+    dia: Optional[int] = Field(default=None, index=True)
+    numero_matriz: Optional[str] = Field(default=None, index=True)
     data_prevista: date
     # Medicamento escolhido no lançamento quando a etapa foi cadastrada por
     # princípio ativo/classificação (None = usa o produto da própria etapa).

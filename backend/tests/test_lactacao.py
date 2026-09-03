@@ -100,6 +100,30 @@ def test_proxima_ordem_sem_ordem_gravada_usa_contagem():
     assert proxima_ordem_parto(partos) == 4
 
 
+def test_proxima_ordem_nunca_confia_no_max_gravado():
+    """Regressão do bug real relatado pelo usuário (matriz 432 e outras): o
+    1º parto veio da importação de planilha do Ideagri com `ordem_parto=0`
+    (a planilha usa convenção base 0 — 0 = 1ª cria —, diferente da deste app,
+    que é base 1). A versão ANTIGA de `proxima_ordem_parto` fazia
+    `max(ordens) + 1` sobre os produtivos: com `ordens=[0]`, devolvia
+    `max([0]) + 1 = 1` para o SEGUNDO parto — o mesmo número do primeiro,
+    errado. A versão corrigida NUNCA olha o valor gravado: conta os
+    produtivos do zero, sempre, e por isso devolve `2`, o certo,
+    independente de o histórico trazer `ordem_parto=0`, `5` ou qualquer outra
+    coisa."""
+    partos = [{"tipo_parto": "Parto normal", "ordem_parto": 0}]   # 1º parto "importado", ordem errada
+    assert proxima_ordem_parto(partos) == 2   # não 1 — é aqui que o bug antigo propagava o erro
+
+
+def test_abriu_lactacao_no_aborto_conta_como_produtivo():
+    """Aborto COM abertura de lactação é produtivo (pedido explícito do
+    usuário) — funcionalmente equivalente a uma cria para fins de ordem de
+    parto. Aborto SEM abertura de lactação continua fora da contagem."""
+    assert eh_parto_produtivo({"tipo_parto": "Aborto", "abriu_lactacao": True})
+    assert not eh_parto_produtivo({"tipo_parto": "Aborto", "abriu_lactacao": False})
+    assert not eh_parto_produtivo({"tipo_parto": "Aborto"})           # campo ausente = False
+
+
 # ---------------------------------------------------------------------------
 # lactacao_aberta / del_vivo
 # ---------------------------------------------------------------------------
@@ -314,7 +338,12 @@ def test_listagem_de_animais_expoe_em_lactacao(client, engine):
 def test_aborto_cria_parto_lactacao_e_perda_de_prenhez(client, engine):
     """(c) do plano — o caso da matriz 14 do relatório, ponta a ponta, com
     data RETROATIVA para provar que o DEL sai do evento e não do dia do
-    lançamento."""
+    lançamento.
+
+    Aborto COM abertura de lactação é produtivo (pedido explícito do
+    usuário, 27/08/2026): a vaca entrou em lactação de verdade, o que conta
+    como uma cria para fins de ordem de parto — ver
+    `fazenda.rules.parto.eh_parto_produtivo`."""
     data_aborto = HOJE - timedelta(days=25)
     _add(
         engine,
@@ -331,7 +360,7 @@ def test_aborto_cria_parto_lactacao_e_perda_de_prenhez(client, engine):
     })
     assert r.status_code == 200
     corpo = r.json()
-    assert corpo["ordem_parto"] is None          # aborto não avança a ordem de parto
+    assert corpo["ordem_parto"] == 1              # aborto COM lactação avança a ordem de parto
     assert corpo["lactacao_aberta"] is True
     assert corpo["del_dias"] == 25               # data REAL do evento, não o dia do lançamento
     assert corpo["sugerir_lote"] is True
@@ -339,7 +368,8 @@ def test_aborto_cria_parto_lactacao_e_perda_de_prenhez(client, engine):
     with Session(engine) as s:
         parto = s.exec(select(Parto)).one()
         assert parto.tipo_parto == TIPO_PARTO_ABORTO
-        assert parto.ordem_parto is None
+        assert parto.ordem_parto == 1
+        assert parto.abriu_lactacao is True
         assert parto.data_parto == data_aborto
 
         lact = s.exec(select(Lactacao)).one()
@@ -358,6 +388,56 @@ def test_aborto_cria_parto_lactacao_e_perda_de_prenhez(client, engine):
         assert s.exec(select(Animal).where(Animal.numero == "14")).one().del_dias == 25
 
 
+def test_aborto_reescreve_categoria_de_gestante_para_vazia(client, engine):
+    """Caso relatado da novilha "14" (segunda rodada): mesmo com o Parto
+    criado, a Lactacao aberta e o DEL sincronizado, `Animal.categoria_completa/
+    categoria_abrev` continuavam dizendo "Novilha gestante" — campos escritos
+    só pelo GERAL.csv, nunca por este endpoint. Só troca a palavra "gestante"
+    por "vazia", preservando o resto do texto do Ideagri."""
+    _add(engine, Animal(
+        numero="14", sexo="F", ativo=True,
+        categoria_completa="Novilha gestante", categoria_abrev="Novilha gestante",
+    ))
+    r = client.post("/reproducao/encerramento-gestacao", json={
+        "numero_matriz": "14", "data": HOJE.isoformat(), "tipo": "aborto", "abrir_lactacao": True,
+    })
+    assert r.status_code == 200
+    with Session(engine) as s:
+        animal = s.exec(select(Animal).where(Animal.numero == "14")).one()
+        assert animal.categoria_completa == "Novilha vazia"
+        assert animal.categoria_abrev == "Novilha vazia"
+
+
+def test_categoria_sem_a_palavra_gestante_fica_intacta(client, engine):
+    """Texto que já não diz "gestante" (ex.: veio de um GERAL.csv mais
+    recente, ou é de uma vaca que já tinha outro estado) não é mexido — a
+    troca é conservadora de propósito, só a palavra exata."""
+    _add(engine, Animal(
+        numero="16", sexo="F", ativo=True,
+        categoria_completa="Vaca em lactação", categoria_abrev="Vaca",
+    ))
+    r = client.post("/reproducao/encerramento-gestacao", json={
+        "numero_matriz": "16", "data": HOJE.isoformat(), "tipo": "aborto", "abrir_lactacao": False,
+    })
+    assert r.status_code == 200
+    with Session(engine) as s:
+        animal = s.exec(select(Animal).where(Animal.numero == "16")).one()
+        assert animal.categoria_completa == "Vaca em lactação"
+        assert animal.categoria_abrev == "Vaca"
+
+
+def test_parto_normal_tambem_reescreve_categoria_de_gestante_para_vazia(client, engine):
+    """Não é exclusivo do aborto: qualquer encerramento de gestação apaga a
+    palavra "gestante" do texto congelado — ela deixou de ser verdade."""
+    _add(engine, Animal(numero="17", sexo="F", ativo=True, categoria_completa="Vaca gestante"))
+    r = client.post("/reproducao/encerramento-gestacao", json={
+        "numero_matriz": "17", "data": HOJE.isoformat(), "tipo": "parto", "crias": [],
+    })
+    assert r.status_code == 200
+    with Session(engine) as s:
+        assert s.exec(select(Animal).where(Animal.numero == "17")).one().categoria_completa == "Vaca vazia"
+
+
 def test_aborto_sem_abrir_lactacao_ainda_cria_o_parto(client, engine):
     """Responder "não" no popup registra o aborto do mesmo jeito — é o `Parto`
     que tira a matriz do estado "gestante" na Ficha."""
@@ -367,8 +447,12 @@ def test_aborto_sem_abrir_lactacao_ainda_cria_o_parto(client, engine):
     })
     assert r.status_code == 200
     assert r.json()["lactacao_aberta"] is False
+    assert r.json()["ordem_parto"] is None        # sem lactação, aborto continua fora da contagem
     with Session(engine) as s:
-        assert s.exec(select(Parto)).one().tipo_parto == TIPO_PARTO_ABORTO
+        parto = s.exec(select(Parto)).one()
+        assert parto.tipo_parto == TIPO_PARTO_ABORTO
+        assert parto.ordem_parto is None
+        assert parto.abriu_lactacao is False
         assert s.exec(select(Lactacao)).first() is None
 
 
@@ -389,6 +473,82 @@ def test_encerramento_tipo_parto_nao_carimba_perda_de_prenhez(client, engine):
     assert r.json()["crias_criadas"] == ["16A"]
     with Session(engine) as s:
         assert s.exec(select(Servico)).one().data_perda_prenhez is None
+
+
+# ---------------------------------------------------------------------------
+# Regressão do bug real relatado pelo usuário — matriz com 1º parto vindo da
+# importação do Ideagri (ordem_parto=0, convenção base 0 da planilha) e 2º
+# parto lançado ao vivo pelo app.
+# ---------------------------------------------------------------------------
+def test_matriz_432_parto_importado_com_ordem_zero_nao_contamina_o_proximo(client, engine):
+    """Simula exatamente o cenário relatado: o 1º parto foi inserido como um
+    import faria (`Parto.ordem_parto=0`, direto no banco, sem passar pelo
+    endpoint). O 2º parto é lançado ao vivo via
+    POST /reproducao/encerramento-gestacao (tipo="parto") e precisa sair com
+    `ordem_parto=2` — não `1`, que é o que a versão antiga do bug (confiando
+    em `max(ordem gravada) + 1`) devolvia."""
+    _add(
+        engine,
+        Animal(numero="432", sexo="F", ativo=True, data_nasc=HOJE - timedelta(days=1200)),
+        Parto(numero_matriz="432", data_parto=HOJE - timedelta(days=300), ordem_parto=0, tipo_parto="Parto normal"),
+    )
+    r = client.post("/reproducao/encerramento-gestacao", json={
+        "numero_matriz": "432", "data": HOJE.isoformat(), "tipo": "parto",
+        "crias": [{"numero": "432A", "sexo": "F", "nasceu_viva": True}],
+    })
+    assert r.status_code == 200
+    assert r.json()["ordem_parto"] == 2   # não 1 — é aqui que o bug antigo propagava o erro
+
+    with Session(engine) as s:
+        ordens = sorted(
+            p.ordem_parto for p in s.exec(select(Parto).where(Parto.numero_matriz == "432")).all()
+        )
+        # O 1º parto (importado) continua gravado como 0 — dado histórico sujo,
+        # corrigido pela ferramenta administrativa de reconstrução (ver
+        # test_ordem_parto_partos_reconstrucao.py), não retroativamente aqui.
+        assert ordens == [0, 2]
+
+
+def test_aborto_com_lactacao_depois_parto_de_verdade_ordem_correta(client, engine):
+    """Aborto COM abertura de lactação conta como 1ª cria; o parto de verdade
+    que vem depois é a 2ª — não a 1ª, que seria o resultado se o aborto
+    continuasse fora da contagem."""
+    _add(engine, Animal(numero="700", sexo="F", ativo=True))
+    r1 = client.post("/reproducao/encerramento-gestacao", json={
+        "numero_matriz": "700", "data": (HOJE - timedelta(days=200)).isoformat(), "tipo": "aborto",
+        "abrir_lactacao": True, "motivo": "aborto",
+    })
+    assert r1.json()["ordem_parto"] == 1
+
+    r2 = client.post("/reproducao/encerramento-gestacao", json={
+        "numero_matriz": "700", "data": HOJE.isoformat(), "tipo": "parto",
+        "crias": [{"numero": "700A", "sexo": "F", "nasceu_viva": True}],
+    })
+    assert r2.status_code == 200
+    assert r2.json()["ordem_parto"] == 2
+
+    with Session(engine) as s:
+        partos = sorted(s.exec(select(Parto).where(Parto.numero_matriz == "700")).all(), key=lambda p: p.data_parto)
+        assert [p.ordem_parto for p in partos] == [1, 2]
+        assert partos[0].abriu_lactacao is True
+        assert partos[1].abriu_lactacao is False
+
+
+def test_aborto_sem_lactacao_depois_parto_de_verdade_fica_fora_da_contagem(client, engine):
+    """Contraste com o teste acima: aborto SEM abertura de lactação não
+    conta — o parto de verdade que vem depois é a 1ª cria."""
+    _add(engine, Animal(numero="701", sexo="F", ativo=True))
+    r1 = client.post("/reproducao/encerramento-gestacao", json={
+        "numero_matriz": "701", "data": (HOJE - timedelta(days=200)).isoformat(), "tipo": "aborto",
+        "abrir_lactacao": False, "motivo": "aborto",
+    })
+    assert r1.json()["ordem_parto"] is None
+
+    r2 = client.post("/reproducao/encerramento-gestacao", json={
+        "numero_matriz": "701", "data": HOJE.isoformat(), "tipo": "parto",
+        "crias": [{"numero": "701A", "sexo": "F", "nasceu_viva": True}],
+    })
+    assert r2.json()["ordem_parto"] == 1
 
 
 def test_parto_normal_tambem_abre_lactacao(client, engine):
@@ -420,3 +580,89 @@ def test_secagem_pelo_endpoint_fecha_a_lactacao(client, engine):
     with Session(engine) as s:
         assert s.exec(select(Lactacao)).one().data_fim == HOJE
         assert regras.lactacao_aberta(s, numero_matriz="18", data=HOJE) is None
+
+
+def test_segunda_secagem_sem_lactacao_aberta_e_recusada_com_409(client, engine):
+    """Caso relatado: secagem lançada em lote por engano em 04/07 fechou a
+    lactação de vacas que na verdade só secariam semanas depois — e o
+    sistema deixou lançar uma "segunda secagem" mais tarde sem avisar nada.
+    Agora recusa com 409 e devolve a secagem que já fechou a lactação, pra a
+    tela oferecer "substituir ou cancelar"."""
+    _add(engine, Animal(numero="429", sexo="F", ativo=True))
+    with Session(engine) as s:
+        regras.abrir_lactacao(s, numero_matriz="429", data_inicio=HOJE - timedelta(days=295), origem=regras.ORIGEM_PARTO)
+        s.commit()
+    data_errada = (HOJE - timedelta(days=26)).isoformat()
+    r1 = client.post("/producao/secagem", json={
+        "numero_matriz": "429", "data_secagem": data_errada, "motivo": "rotina", "produtos": [],
+    })
+    assert r1.status_code == 200
+
+    data_certa = (HOJE - timedelta(days=10)).isoformat()
+    r2 = client.post("/producao/secagem", json={
+        "numero_matriz": "429", "data_secagem": data_certa, "motivo": "rotina", "produtos": [],
+    })
+    assert r2.status_code == 409
+    detalhe = r2.json()["detail"]
+    assert detalhe["erro"] == "sem_lactacao_aberta"
+    assert detalhe["secagem_anterior"]["data_secagem"] == data_errada
+
+    with Session(engine) as s:
+        # A segunda tentativa não criou NADA — nem uma segunda Secagem.
+        assert len(s.exec(select(Secagem)).all()) == 1
+
+
+def test_substituir_secagem_reabre_a_lactacao_e_fecha_na_data_nova(client, engine):
+    _add(engine, Animal(numero="430", sexo="F", ativo=True))
+    with Session(engine) as s:
+        regras.abrir_lactacao(s, numero_matriz="430", data_inicio=HOJE - timedelta(days=295), origem=regras.ORIGEM_PARTO)
+        s.commit()
+    data_errada = (HOJE - timedelta(days=26)).isoformat()
+    r1 = client.post("/producao/secagem", json={
+        "numero_matriz": "430", "data_secagem": data_errada, "motivo": "rotina", "produtos": [],
+    })
+    assert r1.status_code == 200
+    with Session(engine) as s:
+        secagem_errada_id = s.exec(select(Secagem)).one().id
+
+    data_certa = (HOJE - timedelta(days=10)).isoformat()
+    r2 = client.post("/producao/secagem", json={
+        "numero_matriz": "430", "data_secagem": data_certa, "motivo": "rotina", "produtos": [],
+        "substituir_secagem_id": secagem_errada_id,
+    })
+    assert r2.status_code == 200, r2.text
+
+    with Session(engine) as s:
+        secagens = s.exec(select(Secagem)).all()
+        assert len(secagens) == 1  # a errada foi substituída, não duplicada
+        assert secagens[0].data_secagem.isoformat() == data_certa
+        lact = s.exec(select(Lactacao)).one()
+        assert lact.data_fim.isoformat() == data_certa
+        assert lact.secagem_id == secagens[0].id
+
+
+def test_excluir_secagem_reabre_a_lactacao_que_ela_fechou(client, engine):
+    """Mesmo cuidado que excluir um Parto já tem
+    (`_remover_lactacao_dos_partos_excluidos`) — excluir a Secagem também
+    precisa desfazer o fechamento que ela causou."""
+    _add(engine, Animal(numero="431", sexo="F", ativo=True))
+    with Session(engine) as s:
+        regras.abrir_lactacao(s, numero_matriz="431", data_inicio=HOJE - timedelta(days=295), origem=regras.ORIGEM_PARTO)
+        s.commit()
+    r = client.post("/producao/secagem", json={
+        "numero_matriz": "431", "data_secagem": HOJE.isoformat(), "motivo": "rotina", "produtos": [],
+    })
+    assert r.status_code == 200
+    with Session(engine) as s:
+        secagem_id = s.exec(select(Secagem)).one().id
+        assert s.exec(select(Lactacao)).one().data_fim == HOJE
+
+    r2 = client.post("/exclusoes/confirmar", json={"tipo": "secagem", "id": str(secagem_id)})
+    assert r2.status_code == 200, r2.text
+
+    with Session(engine) as s:
+        assert s.exec(select(Secagem)).first() is None
+        lact = s.exec(select(Lactacao)).one()
+        assert lact.data_fim is None
+        assert lact.secagem_id is None
+        assert regras.lactacao_aberta(s, numero_matriz="431", data=HOJE) is not None

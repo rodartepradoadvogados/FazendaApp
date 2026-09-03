@@ -217,6 +217,22 @@ class PlanoContaGerencial(SQLModel, table=True):
     # popup de vínculo sanitário/reprodutivo em FormFinanceiro.
     pede_vinculo_sanitario_reprodutivo: Optional[bool] = None
 
+    # Em qual das 15 linhas da DRE Gerencial em cascata esta conta se
+    # classifica (ver fazenda.rules.dre.LINHAS_DRE_VALIDAS) — None = ainda
+    # não classificada (aparece em GET /financeiro/dre/conferencia) OU herda
+    # a linha do ancestral mais próximo que tiver uma (código por prefixo,
+    # ver fazenda.rules.dre.resolver_linha_dre). Gravado só por PUT
+    # /financeiro/plano-contas/{codigo}/linha-dre (admin), nunca pelo
+    # POST/PUT genérico de plano de contas — ver ADR no router.
+    #
+    # Um valor especial, "NAO_ENTRA_NA_DRE", existe para conta que
+    # LEGITIMAMENTE fica fora do resultado (ex.: principal de financiamento,
+    # transferência entre contas, aporte de sócio) — ver o ADR grande no
+    # topo de fazenda/rules/dre.py sobre por que principal de financiamento
+    # NUNCA é despesa (só o juros é) e por isso nunca pode cair na linha de
+    # depreciação nem em nenhuma outra linha de despesa.
+    linha_dre: Optional[str] = None
+
 
 # ---------------------------------------------------------------------------
 # Conta corrente (Configurações > Parâmetros financeiros) — antes era uma
@@ -458,8 +474,18 @@ class PedidoItem(SQLModel, table=True):
     valor_unitario_estimado: Optional[float] = None
     valor_total_estimado: float
     # Quanto desse item já foi coberto por lançamentos/movimentos vinculados.
+    # Dirige o status ATUAL do Pedido (ver pedidos.py::atualizar_status_por_*)
+    # — dinheiro lançado ou estoque baixado, não entrega física.
     quantidade_atendida: float = 0
     valor_atendido: float = 0
+    # Quanto desse item já foi CONFIRMADO como fisicamente entregue — só
+    # escrito por uma ação explícita de "marcar entrega" (ainda não
+    # implementada), nunca por lançamento financeiro nem movimento de
+    # estoque. Paralelo e independente de quantidade_atendida/valor_atendido
+    # de propósito: é a base do novo cálculo de status em
+    # fazenda.rules.pedido_status.calcular_status_pedido, que nenhum router
+    # ainda chama (ver comentário da migração f1a2b3c4d5e6).
+    quantidade_entregue: float = 0
 
 
 CATEGORIAS_PEDIDO_ANEXO = ["Orçamento", "Ordem de serviço", "Outro documento"]
@@ -499,18 +525,55 @@ class Patrimonio(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     # Piloto conservador de multi-fazenda (Fase 3D) — ver PlanoContaGerencial.fazenda_id acima.
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    # Código do bem, "PAT-0001", sequencial POR FAZENDA (Onda 2). É o
+    # identificador que a pessoa usa para falar do bem ("baixa o PAT-0007"):
+    # `nome` se repete ("Trator") e `id` é número de banco, que muda se o
+    # dado for reimportado. Opcional porque todo o legado nasceu sem ele —
+    # ver o backfill em POST /patrimonio/codigos-gerar.
+    codigo: Optional[str] = Field(default=None, index=True)
     tipo: Optional[str] = None
     nome: str
     numero: Optional[str] = None
     atividade_cultura: Optional[str] = None
     data_imobilizacao: Optional[date] = None
     metodo_depreciacao: Optional[str] = None
-    vida_util: Optional[str] = None  # texto livre (ex.: "7 Anos")
+    vida_util: Optional[str] = None  # texto livre LEGADO (ex.: "7 Anos") — ver abaixo
+    # Vida útil ESTRUTURADA (Onda 2), preenchida pelos steppers do
+    # formulário. Tem precedência sobre o texto livre acima em
+    # rules.patrimonio.vida_util_em_anos — o texto continua existindo só
+    # para reler o que foi importado antes desta onda, e foi a origem do
+    # erro de 12x da Onda 1 ("10 anos e 6 meses" lido como 0,83 ano).
+    vida_util_anos: Optional[int] = None
+    vida_util_meses: Optional[int] = None
     valor_residual: Optional[float] = None
     quantidade: Optional[float] = None
     unidade: Optional[str] = None
     valor_total: Optional[float] = None
+    # False (padrão) preserva o comportamento histórico: valor_total JÁ é o
+    # valor do lote inteiro. True = valor_total é o valor de UMA unidade, e a
+    # base de qualquer cálculo (depreciação, valor de mercado inicial, KPIs)
+    # passa a ser valor_total * quantidade — ver rules.patrimonio.
+    # valor_base_aquisicao, a ÚNICA função que deve ler estes dois campos
+    # juntos (nenhum outro ponto deve ler valor_total cru).
+    valor_por_unidade: bool = False
+    # --- Baixa (Onda 2) --------------------------------------------------
+    # `data_baixa` sozinha dizia QUANDO o bem saiu, nunca POR QUÊ nem POR
+    # QUANTO — e sem o valor recebido não há como apurar ganho/perda de
+    # capital, que é resultado do exercício e vai para a linha OUTRAS
+    # RECEITAS E DESPESAS da DRE. Ver rules.patrimonio.resultado_baixa.
     data_baixa: Optional[date] = None
+    motivo_baixa: Optional[str] = None  # rules.patrimonio.MOTIVOS_BAIXA_VALIDOS
+    valor_baixa: Optional[float] = None  # valor recebido; só nos motivos com venda
+    # --- Parâmetros dos métodos acelerados / por uso (Onda 2) -------------
+    # Multiplicador do saldo decrescente; None = FATOR_SALDO_DECRESCENTE_PADRAO (2,
+    # "em dobro"). Só lido quando metodo_depreciacao = SALDO_DECRESCENTE.
+    fator_saldo_decrescente: Optional[float] = None
+    # Só lidos quando metodo_depreciacao = UNIDADES_PRODUZIDAS: o total que o
+    # bem produz na vida inteira e quanto já foi consumido. Preenchidos à mão
+    # — o sistema não rastreia horímetro (ver ADR em rules/patrimonio.py).
+    unidades_vida_util_total: Optional[float] = None
+    unidades_consumidas: Optional[float] = None
+    unidade_uso: Optional[str] = None  # "horas", "km", "fardos"...
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
     # True (padrão) = deprecia normalmente (calcular_depreciacao). False =

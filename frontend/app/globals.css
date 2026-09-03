@@ -128,18 +128,19 @@
   --fin-pagamento-bg: rgba(46, 125, 82, 0.20);
 }
 
-/* ── Tema CLARO — redesign "Cooperativa" (Direção B): fundo creme no lugar
-   do cinza frio, painéis brancos ── */
+/* ── Tema CLARO — branco neutro (sem viés bege/creme), painéis brancos ──
+   Trocado do creme original (Direção B) a pedido explícito do usuário —
+   mesma estrutura de tokens, só a base neutra deixou de ter viés amarelo. */
 :root[data-theme="claro"] {
   color-scheme: light;
-  --bg:          #F5F1E8;
+  --bg:          #F1F1EF;
   --surface:     #FFFFFF;
-  --surface-2:   #FAF7F0;
-  --border:      #E3DCCD;
+  --surface-2:   #E9E9E6;
+  --border:      #DBDBD7;
   /* Borda mais forte — contorno de campo, botão secundário, moldura de
      tabela. Só existe no claro/misto; no escuro, todo uso cai no fallback
      var(--border-strong, var(--border)). */
-  --border-strong: #D3C9B4;
+  --border-strong: #C7C7C2;
   --text:        #1E1B18;
   --text-muted:  #6E665C;
   --card-header-bg: var(--surface);
@@ -162,9 +163,10 @@
   /* Contorno do grupo de sub-abas aberto — vinho no claro (fundo branco). */
   --sidebar-subnav-outline: var(--vinho);
   --sidebar-subnav-outline-bg: rgba(94, 26, 46, 0.06);
-  /* Fundo da faixa de sub-abas — palha na paleta vinho (padrão); a paleta
-     verde troca para cinza claro (ver bloco data-paleta="verde" abaixo). */
-  --sidebar-subnav-bg: #F1E8CE;
+  /* Fundo da faixa de sub-abas — cinza neutro na paleta vinho (padrão),
+     mesmo tom de --surface-2; a paleta verde usa um cinza levemente
+     azulado próprio (ver bloco data-paleta="verde" abaixo). */
+  --sidebar-subnav-bg: #E9E9E6;
   /* No claro, a aba ativa vira vinho sólido com texto dourado-claro (alto
      contraste); os ícones de seção usam o vinho para se lerem sobre o branco. */
   --pill-active-bg: var(--vinho);
@@ -185,11 +187,11 @@
 /* ── Tema MISTO — conteúdo claro, barra lateral vinho sólido ── */
 :root[data-theme="misto"] {
   color-scheme: light;
-  --bg:          #F5F1E8;
+  --bg:          #F1F1EF;
   --surface:     #FFFFFF;
-  --surface-2:   #FAF7F0;
-  --border:      #E3DCCD;
-  --border-strong: #D3C9B4;
+  --surface-2:   #E9E9E6;
+  --border:      #DBDBD7;
+  --border-strong: #C7C7C2;
   --text:        #1E1B18;
   --text-muted:  #6E665C;
   --card-header-bg: var(--surface);
@@ -925,6 +927,22 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-vinho-fixo: #0E2A47;
   --mob-verde-fixo: #047857;
 
+  /* Card de SEÇÃO do Menu (.mob-secao-card, nível 1 — a categoria/grupo) vs.
+     .mob-card comum (nível 2 — os itens dentro dela, ou os cartões de
+     qualquer sub-tela aberta a partir do Menu, ambos "sub-cards que abrem só
+     ao clicar"): sem tokens próprios os dois caem no mesmo --mob-surface/
+     --mob-border e ficam indistinguíveis (relato do usuário — "tudo
+     misturado"). Claro: tom levemente mais escuro que o branco do .mob-card
+     (mesmo --mob-surface-2 já usado para o 2º tom de .mob-card-b, mas aqui
+     como identidade fixa da seção, não alternância). Escuro: mantém a
+     mesma superfície (nada de tingir sem cor de categoria) e ganha um
+     contorno dourado — a marca "neutra" já usada pelos itens sem --cat-*
+     (Portal, Protocolos, seção "App") — 2px para não sumir no OLED.
+     Seções com `cor` (SecaoRetratil) continuam sobrepostas por .mob-tint,
+     que já resolve a mesma distinção com a cor da categoria. */
+  --mob-secao-bg:     var(--mob-surface-2);
+  --mob-secao-border: var(--mob-border);
+
   --r-app: 0px;                    /* cantos retos institucionais — pílulas usam 999px, círculos 50% */
   --mob-aco:            #416180;   /* azul-aço — filete de estado "normal" na Agenda */
   --mob-nav-inativa:    #62707E;
@@ -966,6 +984,11 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-vinho-fixo: #1B3A5C;
   --mob-verde-fixo: #00E08C;
 
+  /* Ver comentário no bloco claro (.mob) — mesma superfície do .mob-card
+     comum (sem tingir à toa), diferenciada por um contorno dourado. */
+  --mob-secao-bg:     var(--mob-surface);
+  --mob-secao-border: var(--mob-dourado-2);
+
   --mob-aco:         #5B85A8;
   --mob-nav-inativa: #8A96A4;
   --mob-nav-agenda:  #7FB6DC;
@@ -996,13 +1019,14 @@ html, body { max-width: 100%; overflow-x: hidden; }
    filete de estado (data-estado) à esquerda, que é exclusivo da Agenda.
    Combinado com .mob-tint (abaixo) quando a seção tem cor de categoria. */
 .mob-secao-card {
-  background: var(--mob-surface);
-  border: 1px solid var(--mob-border);
+  background: var(--mob-secao-bg);
+  border: 1px solid var(--mob-secao-border);
   border-radius: var(--r-app);
   box-shadow: var(--mob-sombra);
   margin-bottom: 0.7rem;
   overflow: hidden;
 }
+:root[data-theme="escuro"] .mob-secao-card { border-width: 2px; }
 
 /* Alternância de cor dos cartões em sequência (Agenda, Ficha do animal;
    Rebanho > Animais via .mob-linha): .mob-card-a = 1º, 3º, 5º... fica no

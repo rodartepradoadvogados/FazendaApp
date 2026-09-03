@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.api.routers.recria import _parametros_estado_vivo
-from fazenda.auth import get_fazenda_atual_id
+from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import Animal, CategoriaManejo, Lote, Parto, PesagemCorporal, Sanidade, Secagem, Servico
 from fazenda.rules.auditoria import fazenda_id_seguro
@@ -92,6 +92,12 @@ class LoteIn(BaseModel):
     # aplicação para ligá-las — só editando o banco à mão.
     permitir_fora_da_dieta: bool = False
     permitir_sem_estoque: bool = False
+    # Como a dieta deste lote afeta o Estoque — "automatica" (baixa dia a dia
+    # pelo plano), "consumo_real" (só baixa quando alguém lança o consumo de
+    # verdade) ou "sem_baixa" (a dieta é só plano/receita). Nasce
+    # "consumo_real" (padrão restritivo/compatível — ver Lote.modo_baixa_estoque)
+    # e, como as duas flags acima, precisa ser editável por aqui.
+    modo_baixa_estoque: str = "consumo_real"
 
 
 def _validar_faixas(dados: LoteIn) -> None:
@@ -172,6 +178,7 @@ def _aplicar_campos(lote: Lote, dados: LoteIn) -> None:
     lote.ativo = dados.ativo
     lote.permitir_fora_da_dieta = dados.permitir_fora_da_dieta
     lote.permitir_sem_estoque = dados.permitir_sem_estoque
+    lote.modo_baixa_estoque = dados.modo_baixa_estoque
 
 
 @router.get("/")
@@ -212,9 +219,8 @@ def listar_lotes(
 
 @router.post("/")
 def criar_lote(
-    dados: LoteIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    dados: LoteIn, fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     _validar_faixas(dados)
     _validar_flags_unicos(session, dados, lote_id=None, fazenda_id=fazenda_id)
     codigo = _normalizar_codigo(dados.codigo)

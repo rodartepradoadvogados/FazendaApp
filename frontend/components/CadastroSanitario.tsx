@@ -12,6 +12,7 @@ import {
   fetchServicosCadastro,
   type ProtocoloEtapa, type EventoSanitarioPayload, type ExameDefinicaoPayload,
   type EtapaInducaoLactacao, type ProtocoloInducaoLactacaoCadastro, type ProtocoloInducaoLactacaoPayload,
+  formatarDoseEtapa,
 } from "@/lib/api";
 import { exportarExcel } from "@/lib/export";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -20,6 +21,7 @@ import { VIAS_APLICACAO } from "@/lib/constants";
 import { CLASSIFICACOES_MEDICAMENTO } from "@/lib/api";
 import { normalizarBusca as normalizar } from "@/lib/busca";
 import { WizardProtocolo, type PassoWizard } from "@/components/protocolos/WizardProtocolo";
+import { Modal } from "@/components/Modal";
 
 const CRITERIOS: [string, string][] = [
   ["medicamento", "Medicamento"],
@@ -107,6 +109,10 @@ export function CadastroProtocolosSanitarios() {
   const inputImportRef = useRef<HTMLInputElement>(null);
   const [excluindo, setExcluindo] = useState<number | null>(null);
   const [erroExclusao, setErroExclusao] = useState<string | null>(null);
+  // Prévia somente-leitura do cronograma — antes só existia no passo 4
+  // ("Revisão") do assistente de edição, obrigando a clicar Editar e navegar
+  // 3 passos só para conferir produto/dose/via de um protocolo já pronto.
+  const [verCronograma, setVerCronograma] = useState<Protocolo | null>(null);
 
   const carregar = () => fetchProtocolosSanitarios().then(setItens).catch((e) => setError(e.message));
   useEffect(() => {
@@ -220,6 +226,7 @@ export function CadastroProtocolosSanitarios() {
   const ordProtocolos = useOrdenacao(filtrados);
 
   return (
+    <>
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
         <div className="card">
@@ -284,7 +291,10 @@ export function CadastroProtocolosSanitarios() {
                       <td style={{ fontSize: "0.78rem" }}>{p.eh_mastite ? "Sim" : "—"}</td>
                       <td style={{ fontSize: "0.78rem" }}>{p.etapas.map((e) => `D${e.dia - (p.dia_inicial ?? 0)}`).join(", ")}</td>
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => setVerCronograma(p)} title="Ver produto, dose e via de cada etapa, sem entrar em edição">
+                          <Search size={13} /> Ver cronograma
+                        </button>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", marginLeft: "0.4rem" }} onClick={() => abrirEdicao(p)}>
                           <Pencil size={13} /> Editar
                         </button>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", color: "var(--red)", marginLeft: "0.4rem" }}
@@ -317,6 +327,28 @@ export function CadastroProtocolosSanitarios() {
         )}
       </div>
     </div>
+    {verCronograma && (
+      <Modal title={`Cronograma — ${verCronograma.nome}`} onClose={() => setVerCronograma(null)} width="640px">
+        <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+          Prévia somente-leitura, para conferir produto, dose e via de cada etapa antes de lançar. Para alterar, feche e use Editar.
+        </p>
+        <table className="fazenda-table">
+          <thead><tr><th>Dia</th><th>Produto</th><th>Dose</th><th>Via</th></tr></thead>
+          <tbody>
+            {verCronograma.etapas.map((e, idx) => (
+              <tr key={idx}>
+                <td>D{e.dia - (verCronograma.dia_inicial ?? 0)}</td>
+                <td>{e.produto || "—"}</td>
+                <td>{formatarDoseEtapa(e)}</td>
+                <td>{e.via || "—"}</td>
+              </tr>
+            ))}
+            {!verCronograma.etapas.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)" }}>Nenhuma etapa cadastrada.</td></tr>}
+          </tbody>
+        </table>
+      </Modal>
+    )}
+    </>
   );
 }
 
@@ -411,7 +443,8 @@ function FormProtocolo({ form, setForm, doencas, estoque, principios, onSalvar, 
                     </select>
                   )}
                 </div>
-                <div><label style={labelStyle}>Dosagem</label><input type="number" inputMode="decimal" style={inputStyle} value={e.dosagem} onChange={(ev) => atualizarEtapa(idx, { dosagem: Number(ev.target.value) })} /></div>
+                <div><label style={labelStyle}>Dosagem{(e.modo_dose === "por_peso") && <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> (a cada X kg)</span>}</label>
+                  <input type="number" inputMode="decimal" style={inputStyle} value={e.dosagem} onChange={(ev) => atualizarEtapa(idx, { dosagem: Number(ev.target.value) })} /></div>
                 <div><label style={labelStyle}>Unidade</label>
                   {(() => {
                     const un = unidadesCompat(estoque.find((it) => it.nome === e.produto)?.unidade);
@@ -428,6 +461,38 @@ function FormProtocolo({ form, setForm, doencas, estoque, principios, onSalvar, 
                   <select style={inputStyle} value={e.via || ""} onChange={(ev) => atualizarEtapa(idx, { via: ev.target.value })}>
                     <option value="">—</option>{VIAS_APLICACAO.map((v) => <option key={v}>{v}</option>)}
                   </select></div>
+                <div>
+                  <label style={labelStyle}>Como calcular a dose</label>
+                  <div className="flex gap-1">
+                    <button type="button"
+                      className={(e.modo_dose || "fixa") === "fixa" ? "btn-primary" : "btn-secondary"}
+                      style={{ fontSize: "0.7rem", padding: "0.3rem 0.5rem", flex: 1 }}
+                      onClick={() => atualizarEtapa(idx, { modo_dose: "fixa", dose_referencia_kg: null })}
+                      title="Sempre a mesma dose, qualquer que seja o peso do animal">
+                      Dose fixa
+                    </button>
+                    <button type="button"
+                      className={e.modo_dose === "por_peso" ? "btn-primary" : "btn-secondary"}
+                      style={{ fontSize: "0.7rem", padding: "0.3rem 0.5rem", flex: 1 }}
+                      onClick={() => atualizarEtapa(idx, { modo_dose: "por_peso" })}
+                      title="Calcula pelo peso do animal no lançamento — usa o último peso registrado, um peso lançado na hora, ou dose manual">
+                      Por peso vivo
+                    </button>
+                  </div>
+                </div>
+                {e.modo_dose === "por_peso" && (
+                  <div>
+                    <label style={labelStyle}>A cada quantos kg de peso vivo</label>
+                    <input type="number" inputMode="decimal" style={inputStyle} value={e.dose_referencia_kg ?? ""}
+                      onChange={(ev) => atualizarEtapa(idx, { dose_referencia_kg: ev.target.value ? Number(ev.target.value) : null })}
+                      placeholder="ex.: 15" />
+                    <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", margin: "0.2rem 0 0" }}>
+                      {e.dosagem > 0 && e.dose_referencia_kg
+                        ? `"${formatarDoseEtapa(e)}" — no lançamento, cada animal recebe sua própria dose calculada pelo peso.`
+                        : "Preencha dosagem e o peso de referência para ver a fórmula."}
+                    </p>
+                  </div>
+                )}
                 <div className="flex items-end gap-1">
                   <div style={{ flex: 1 }}><label style={labelStyle}>Observação</label>
                     <input style={inputStyle} value={e.observacao || ""} onChange={(ev) => atualizarEtapa(idx, { observacao: ev.target.value })} placeholder="ex.: Se necessário" /></div>
@@ -458,7 +523,7 @@ function FormProtocolo({ form, setForm, doencas, estoque, principios, onSalvar, 
             <thead><tr><th>Dia</th><th>Produto</th><th>Dosagem</th><th>Via</th></tr></thead>
             <tbody>
               {f.etapas.map((e, idx) => (
-                <tr key={idx}><td>D{e.dia}</td><td>{e.produto || "—"}</td><td>{e.dosagem} {e.unidade}</td><td>{e.via || "—"}</td></tr>
+                <tr key={idx}><td>D{e.dia}</td><td>{e.produto || "—"}</td><td>{formatarDoseEtapa(e)}</td><td>{e.via || "—"}</td></tr>
               ))}
             </tbody>
           </table>

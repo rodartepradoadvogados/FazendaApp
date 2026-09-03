@@ -12,6 +12,15 @@ function fmtKg(v: number | null): string {
   return v == null ? "—" : `${v.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} kg`;
 }
 
+// Número da cria (o filhote, não a ordem de parto da mãe) — itálico "sem
+// dados" tanto pra quando não há número nenhum (natimorto/aborto) quanto
+// pra "S/N" (pariu mas não numerou): as duas são igualmente "não sei o
+// número", não vale a pena distinguir na tela. Mesmo padrão de FichaAnimal.tsx.
+function renderCria(valor: string | null | undefined) {
+  if (!valor || valor === "S/N") return <em>sem dados</em>;
+  return valor;
+}
+
 export function SecaoResumo({ ficha }: { ficha: Ficha }) {
   const a = ficha.animal;
   const proximoAlt = criarAlternador();
@@ -36,6 +45,7 @@ export function SecaoResumo({ ficha }: { ficha: Ficha }) {
           <ParDado label="Ordem de parto" valor={maisRecente ? `${maisRecente.ordem_parto}ª cria` : "—"} />
           <ParDado label="Dias de gestação" valor={ficha.precisao_parto?.dias_gestacao ?? "—"} />
           <ParDado label="Previsão de parto" valor={ficha.previsao_parto ? formatDate(ficha.previsao_parto) : "—"} />
+          <ParDado label="Última cria" valor={renderCria(ficha.ultima_cria)} />
         </Grade>
       </MobCard>
 
@@ -64,6 +74,7 @@ export function SecaoResumo({ ficha }: { ficha: Ficha }) {
                 <ParDado label="305 dias" valor={<>{fmtKg(l.producao_305_dias_kg)}{l.producao_305_dias_kg != null && l.producao_305_dias_estimada && <span style={{ fontSize: "0.68rem", color: "var(--mob-muted)", fontWeight: 500 }}> (estim.)</span>}</>} />
                 <ParDado label="Tentativas p/ emprenhar" valor={l.tentativas_emprenhar ?? "—"} />
                 <ParDado label="DEL na concepção" valor={l.del_concepcao ?? "—"} />
+                <ParDado label="Cria" valor={renderCria(l.cria)} />
               </Grade>
             </MobCard>
           ))}

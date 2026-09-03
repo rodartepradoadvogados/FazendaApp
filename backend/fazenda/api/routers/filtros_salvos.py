@@ -20,10 +20,9 @@ from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import FiltroSalvo, Usuario
-from fazenda.rules.auditoria import fazenda_id_seguro
 
 router = APIRouter(prefix="/filtros-salvos", tags=["filtros-salvos"])
 
@@ -58,7 +57,7 @@ class FiltroSalvoIn(BaseModel):
 @router.post("", status_code=201)
 def criar_filtro_salvo(
     dados: FiltroSalvoIn, user: Usuario = Depends(get_current_user), session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     if not dados.tela.strip():
         raise HTTPException(400, "Tela obrigatória")
@@ -67,7 +66,7 @@ def criar_filtro_salvo(
 
     filtro = FiltroSalvo(
         usuario_id=user.id,
-        fazenda_id=fazenda_id_seguro(fazenda_id),
+        fazenda_id=fazenda_id,
         tela=dados.tela.strip(),
         nome=dados.nome.strip(),
         filtros=json.dumps(dados.filtros),

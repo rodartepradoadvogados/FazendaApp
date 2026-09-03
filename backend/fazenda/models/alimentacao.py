@@ -65,6 +65,17 @@ class Alimento(SQLModel, table=True):
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Fase P1 do refactor Alimento/Estoque — quando este Alimento tem 2+
+    # itens de Estoque vinculados (`Estoque.alimento_id`), toda resolução por
+    # nome (`_estoque_por_alimento`, usada pela baixa automática diária, pelo
+    # lançamento manual de consumo e pela necessidade mensal) hoje pega o
+    # primeiro candidato que a query devolve, em ordem arbitrária — ver
+    # TestEscolhaArbitrariaDeCandidato (T11) em tests/test_migracao_alimento.py.
+    # Este campo deixa a fazenda ESCOLHER deliberadamente qual item recebe a
+    # baixa (ver PUT /alimentacao/alimentos/{alimento_id}/estoque-preferido);
+    # NULL preserva a ordem arbitrária de hoje exatamente como está — nenhum
+    # comportamento muda pra quem não usar o mecanismo novo.
+    estoque_preferido_id: Optional[int] = Field(default=None, foreign_key="estoque.id")
 
 
 class Dieta(SQLModel, table=True):
@@ -103,6 +114,8 @@ class DietaLancamento(SQLModel, table=True):
     observacao: Optional[str] = None
     # Como as quantidades dos itens foram informadas: "total" do lote/dia (padrão)
     # ou "animal" (por cabeça/dia — o total é multiplicado pelo nº de animais).
+    # Serve de PADRÃO da dieta — cada item pode sobrescrever isso individualmente
+    # em `DietaItemProgramado.base_quantidade` (ver lá).
     base_quantidade: Optional[str] = None
     # Leite destinado aos bezerros nesta dieta (kg/dia do lote) — alimenta o
     # relatório Controle × Entregue (consumo de bezerros). Preenchido pelo
@@ -138,6 +151,12 @@ class DietaItemProgramado(SQLModel, table=True):
     # entre as duas bases quando informado.
     base: Optional[str] = None
     ms_pct: Optional[float] = None
+    # Sobrescreve, só para este item, o `DietaLancamento.base_quantidade` da
+    # dieta ("total" ou "animal") — permite misturar bases no mesmo lançamento
+    # (ex.: silagem em total do lote e concentrado em por-cabeça). `None`
+    # (padrão) significa "usa o valor da dieta" — retrocompatível com todo
+    # item lançado antes desta coluna existir.
+    base_quantidade: Optional[str] = None
 
 
 class IngredienteMS(SQLModel, table=True):
@@ -168,6 +187,10 @@ class TabelaNutricionalProduto(SQLModel, table=True):
     # Vínculo opcional com o cadastro de Alimento — quando presente, a tela de
     # cadastro do Alimento pode oferecer "cadastrar tabela nutricional" direto.
     alimento_id: Optional[int] = Field(default=None, foreign_key="alimento.id")
+    # Vínculo opcional com o item de Estoque que este produto representa —
+    # quando presente, o "nome" veio do cadastro fechado de produtos de
+    # alimentação (Estoque com finalidade Ração/Alimento) em vez de texto livre.
+    estoque_id: Optional[int] = Field(default=None, foreign_key="estoque.id", index=True)
 
 
 class TabelaNutricionalValor(SQLModel, table=True):
@@ -299,6 +322,17 @@ class ConsumoAlimento(SQLModel, table=True):
     # flag `permitir_fora_da_dieta`. Marcado para o relatório poder separar o
     # que foi exceção do que foi plano.
     fora_da_dieta: bool = False
+    # Se ESTE registro de fato debitou o Estoque (`estoque_baixa.baixar`) ao
+    # ser criado — depende do `Lote.modo_baixa_estoque` NO MOMENTO do
+    # lançamento ("consumo_real" debita, "automatica"/"sem_baixa" não, pra não
+    # dobrar a baixa que a Alimentação já faz sozinha por dia decorrido).
+    # Nasce True porque toda linha existente ANTES deste campo debitou estoque
+    # incondicionalmente (era o único comportamento que existia). Guardado no
+    # registro, não recalculado do modo ATUAL do lote, porque o modo pode
+    # mudar depois — a exclusão (`excluir_consumo`) tem de saber se estorna
+    # olhando pro que aconteceu quando o lançamento foi feito, não pro que o
+    # lote é hoje.
+    baixou_estoque: bool = True
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 

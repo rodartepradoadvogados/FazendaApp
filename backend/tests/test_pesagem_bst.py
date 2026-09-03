@@ -120,9 +120,12 @@ class TestAgendaPesagem:
 
 class TestBstUltimaAplicacao:
     def test_bst_12_dias_apos_ultima_aplicacao(self, client):
-        # Aplica BST em duas datas; a próxima visita = mais recente + 12 dias.
-        client_session_add(client, Sanidade(numero_matriz="200", data_aplicacao=date(2026, 7, 1), produto="Lactotropin 500"))
-        client_session_add(client, Sanidade(numero_matriz="200", data_aplicacao=date(2026, 7, 5), produto="Boostin"))
+        # Aplica BST de ROTINA (atividade="BST") em duas datas; a próxima
+        # visita = mais recente + 12 dias. (atividade="BST" é o que
+        # diferencia a rotina de indução de lactação/avulso — ver
+        # test_bst_ancora_rotina.py.)
+        client_session_add(client, Sanidade(numero_matriz="200", data_aplicacao=date(2026, 7, 1), produto="Lactotropin 500", atividade="BST"))
+        client_session_add(client, Sanidade(numero_matriz="200", data_aplicacao=date(2026, 7, 5), produto="Boostin", atividade="BST"))
         r = client.get("/agenda/", params={"data": "2026-07-06"})
         assert r.json()["proxima_visita_bst"] == "2026-07-17"  # 05/07 + 12
 

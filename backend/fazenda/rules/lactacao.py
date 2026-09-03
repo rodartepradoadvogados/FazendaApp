@@ -33,8 +33,12 @@ um inteiro com 0 como sentinela.
 ## Quem abre e quem fecha
 
 Abre: `POST /reproducao/encerramento-gestacao` (parto, aborto ou natimorto,
-com a data REAL do evento — retroativa quando for o caso) e o backfill dos
-partos que já existiam no banco. Fecha: `POST /producao/secagem`.
+com a data REAL do evento — retroativa quando for o caso), o backfill dos
+partos que já existiam no banco, e `POST /producao/inducao-lactacao/
+{lancamento_id}/{numero_matriz}/confirmar` (resposta ao card "Confirmar
+início de lactação" da Agenda, quando um protocolo de indução de lactação em
+lote termina todas as etapas de uma matriz — ver `inducao_concluida` abaixo e
+`ORIGEM_INDUCAO`). Fecha: `POST /producao/secagem`.
 
 Nada aqui dá commit — as funções recebem a `Session` do chamador e fazem
 parte da transação dele (o endpoint de encerramento de gestação grava
@@ -42,9 +46,11 @@ parte da transação dele (o endpoint de encerramento de gestação grava
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from typing import Any
 
+from sqlalchemy import inspect as sa_inspect
 from sqlmodel import Session, select
 
 from fazenda.models import Animal, Lactacao, Parto, Secagem
@@ -67,6 +73,31 @@ def _escopo(query, modelo, fazenda_id: int | None):
     if fazenda_id is not None:
         query = query.where(modelo.fazenda_id == fazenda_id)
     return query
+
+
+# ---------------------------------------------------------------------------
+# Indução de lactação — apoio ao card "Confirmar início de lactação" da Agenda
+# ---------------------------------------------------------------------------
+def inducao_concluida(aplicacoes: list) -> tuple[bool, date | None]:
+    """Recebe as `ProtocoloInducaoAplicacao` de UMA MATRIZ dentro de UM
+    `ProtocoloInducaoLancamento` e devolve `(concluida, data_sugerida)`.
+
+    Diferente de `fazenda.rules.cura_protocolo.protocolo_terminado` — que
+    olha só as aplicações do ÚLTIMO DIA porque lá o lançamento é de UM
+    animal só — aqui a lista já chega filtrada por animal (o lançamento de
+    indução é em LOTE, várias matrizes por `ProtocoloInducaoLancamento`, ver
+    `ProtocoloInducaoAplicacao`). "Concluída" é então TODAS as etapas DESSE
+    animal estarem `realizada=True`, não só as do último dia dele.
+
+    `data_sugerida` é a data real da última etapa (`data_realizacao`, quando
+    já lançada) ou a `data_prevista` dela quando não houver — o ponto de
+    partida editável da lactação mostrado no card da Agenda (ver
+    `fazenda.api.routers.agenda` e `POST /producao/inducao-lactacao/
+    {lancamento_id}/{numero_matriz}/confirmar`)."""
+    if not aplicacoes or not all(a.realizada for a in aplicacoes):
+        return False, None
+    ultima = max(aplicacoes, key=lambda a: a.dia)
+    return True, (ultima.data_realizacao or ultima.data_prevista)
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +285,32 @@ def fechar_lactacao_por_secagem(
     return lact
 
 
+def reabrir_lactacao_fechada_por_secagem(
+    session: Session, *, secagem_id: int, fazenda_id: int | None = None,
+) -> Lactacao | None:
+    """Desfaz o fechamento que ESTA secagem causou — devolve a `Lactacao` que
+    ela tinha fechado (`data_fim = None`, `secagem_id = None`), ou `None`
+    quando esta secagem não fechou nenhuma (lançada para quem já constava
+    seco; não é erro, só não há o que reabrir).
+
+    Usada em dois lugares: ao EXCLUIR a secagem (ver
+    `api/routers/exclusoes.py`) e ao SUBSTITUIR a data de uma secagem lançada
+    errada (ver `POST /producao/secagem`, campo `substituir_secagem_id`) —
+    nos dois casos o evento real não aconteceu (ou não naquela data), e a
+    lactação que ele fechou por engano precisa voltar a ficar aberta antes de
+    prosseguir. Não dá commit."""
+    query = select(Lactacao).where(Lactacao.secagem_id == secagem_id)
+    if fazenda_id is not None:
+        query = query.where(Lactacao.fazenda_id == fazenda_id)
+    lact = session.exec(query).first()
+    if lact is None:
+        return None
+    lact.data_fim = None
+    lact.secagem_id = None
+    session.add(lact)
+    return lact
+
+
 # ---------------------------------------------------------------------------
 # Backfill — reconstrói o histórico de lactações a partir do que já existe
 # ---------------------------------------------------------------------------
@@ -277,8 +334,24 @@ def backfill_lactacoes(session: Session, *, fazenda_id: int | None = None) -> di
 
     Não dá commit — quem chama decide quando (a migração Alembic commita a
     transação dela).
+
+    `Parto.abriu_lactacao` (ver `fazenda.rules.parto`) só existe a partir da
+    migração `3bd371891acd`, mas esta função também é chamada por UMA
+    migração ANTERIOR na cadeia (`c1a2b3d4e5f6_lactacao.py`, que reconstrói
+    o histórico de lactações a partir dos partos já gravados) — um
+    `alembic upgrade` do ZERO replaya essa chamada ANTES de a coluna existir
+    fisicamente na tabela. `select(Parto)` lista TODAS as colunas mapeadas
+    pela classe Python ATUAL, então confere o schema de verdade primeiro:
+    sem isso, todo `alembic upgrade` do zero quebraria ao re-executar aquela
+    migração antiga assim que `Parto` ganhasse qualquer coluna nova.
     """
-    partos = [p for p in session.exec(_escopo(select(Parto), Parto, fazenda_id)).all()
+    tem_abriu_lactacao = "abriu_lactacao" in {
+        c["name"] for c in sa_inspect(session.get_bind()).get_columns("parto")
+    }
+    query_partos = select(Parto) if tem_abriu_lactacao else select(
+        Parto.id, Parto.numero_matriz, Parto.data_parto, Parto.tipo_parto, Parto.animal_id, Parto.fazenda_id,
+    )
+    partos = [p for p in session.exec(_escopo(query_partos, Parto, fazenda_id)).all()
               if p.data_parto and eh_parto_produtivo(p)]
     secagens = session.exec(_escopo(select(Secagem), Secagem, fazenda_id)).all()
 
@@ -351,3 +424,39 @@ def sincronizar_del_do_animal(
     animal.atualizado_em = datetime.utcnow()
     session.add(animal)
     return del_atual
+
+
+def sincronizar_categoria_do_animal(
+    session: Session, *, numero_matriz: str, fazenda_id: int | None = None,
+) -> tuple[str | None, str | None]:
+    """Troca a palavra "gestante" por "vazia" em `Animal.categoria_completa`/
+    `categoria_abrev`, no momento em que uma gestação termina (parto, aborto
+    ou natimorto) — sem isso, os dois campos (escritos só pelo upload do
+    GERAL.csv) continuam dizendo "gestante" indefinidamente depois de um
+    aborto, mesmo com o `Parto` lançado, a lactação aberta e controle
+    leiteiro em andamento (caso relatado: novilha "14", abortou 30/07/2026,
+    categoria seguiu "Novilha gestante").
+
+    Só troca a PALAVRA "gestante" — preserva o resto do texto do Ideagri que
+    não temos como reconstruir aqui (ex.: "Vaca gestante 3ª lact." vira "Vaca
+    vazia 3ª lact.", não um texto genérico inventado). Textos que não têm a
+    palavra ficam intocados, mesmo critério conservador de `_categoria_ao_vivo`
+    (`api/routers/animais.py`) — que resolve a transição "novilha" -> "vaca"
+    mas nunca tratou esta ("gestante" -> "vazia").
+
+    Não dá commit."""
+    query = _escopo(select(Animal).where(Animal.numero == numero_matriz), Animal, fazenda_id)
+    animal = session.exec(query).first()
+    if animal is None:
+        return None, None
+
+    def _tira_gestante(texto: str | None) -> str | None:
+        if not texto or "gestante" not in texto.lower():
+            return texto
+        return re.sub("gestante", "vazia", texto, flags=re.IGNORECASE)
+
+    animal.categoria_completa = _tira_gestante(animal.categoria_completa)
+    animal.categoria_abrev = _tira_gestante(animal.categoria_abrev)
+    animal.atualizado_em = datetime.utcnow()
+    session.add(animal)
+    return animal.categoria_completa, animal.categoria_abrev

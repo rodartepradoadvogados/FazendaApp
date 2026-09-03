@@ -1,0 +1,815 @@
+{
+  "meta": {
+    "projeto": "FazendaApp",
+    "data": "02/09/2026",
+    "escopo": "Backend FastAPI/SQLModel completo (backend/fazenda/api/routers/**, ~95 arquivos de rota, auth.py, regras de negócio em fazenda/rules/**), frontend Next.js/React/Capacitor completo (frontend/app, frontend/components, frontend/lib), configuração de deploy (Railway, Vercel, GitHub Actions) e histórico git completo.",
+    "rotas_revisadas": "~640",
+    "arquivos_revisados": "~95 arquivos de rota backend (auth.py, main.py e regras de negócio inclusos)",
+    "metodologia": [
+      "Detecção de stack: FastAPI + SQLModel/SQLAlchemy (Postgres em produção via Railway, SQLite em testes); autenticação própria via token HMAC assinado (fazenda/auth.py — não é JWT de biblioteca); frontend Next.js 16 + React 19 com wrapper Capacitor para Android; deploy via Railway (backend+Postgres) e Vercel (frontend); CI via GitHub Actions. Não há Supabase RLS — Supabase é usado só como armazenamento de arquivos, com a service_role key mantida só no backend.",
+      "Categoria 1 (BANCO SEM TRANCA) mapeada para: isolamento por fazenda_id em vez de RLS. Mecanismo de referência identificado em fazenda/auth.py — get_fazenda_atual_id (leitura, tolera None para instalações legadas/single-tenant) e get_fazenda_id_escrita (escrita, recusa com 409 em vez de gravar fazenda_id nulo). O padrão correto de leitura é 'if fazenda_id is not None: query.where(...)'; o padrão incorreto recorrente é escrita usando a dependência de leitura, ou checagem de posse que tolera fazenda_id=None indevidamente.",
+      "Categoria 2 (PERMISSÃO NO NAVEGADOR) mapeada para: todo gate de papel do frontend (lib/api.ts: ehDono/ehAdmin/podePublicarMaterias/etc.) cruzado individualmente com o endpoint backend correspondente, rota por rota.",
+      "Categoria 3 (IDOR) mapeada para: toda rota que busca/altera/exclui um objeto por id (path/query/body) — os ~640 handlers de rota foram percorridos integralmente, divididos em 7 lotes por arquivo/linha, sem amostragem.",
+      "Categoria 4 (CHAVES EXPOSTAS) varrida em todo o código-fonte, configs, CI, docs, e no histórico git completo (1616 commits) via buscas delimitadas (git log -S/--diff-filter, sem log -p --all irrestrito).",
+      "Categoria 5 (XSS) mapeada para: dangerouslySetInnerHTML/v-html equivalentes e URLs controladas por usuário no frontend; interpolação de input de usuário em HTML de e-mail/template/PDF sem escape no backend.",
+      "Todo achado foi verificado por leitura direta do código-fonte (não há achado especulativo). Os dois achados mais críticos (auth.py e painel_cowdata_usuarios.py) foram re-verificados manualmente e corrigidos nesta mesma sessão, com testes de regressão."
+    ],
+    "riscos_centrais": [
+      "Escalação de privilégio para dono da plataforma via e-mail dono-equivalente em duas rotas (auth.py e painel_cowdata_usuarios.py) — JÁ CORRIGIDO nesta sessão.",
+      "Confirmação/desconfirmação de protocolos na Agenda (IATF, indução, sanitário, customizado, lida, BST) aceita qualquer id sem checar a fazenda do chamador — grava/apaga tratamento sanitário de qualquer tenant.",
+      "Exportação e envio de e-mail do Portal (POST /portal/exportar, /portal/email) vazam o banco de dados inteiro (animais, produção, sanidade, compras/vendas, financeiro) de todos os clientes para qualquer admin de fazenda.",
+      "Rotas de importação de planilha (animais, genealogia, DairyComp, calendário sanitário) casam registros globalmente por número/nome sem fazenda_id, permitindo sobrescrever cadastro de outro tenant por colisão de número.",
+      "Exclusão em cascata de animal pode apagar histórico reprodutivo/sanitário de outra fazenda quando o número do animal colide entre tenants.",
+      "Padrão sistêmico recorrente (~20 ocorrências): rotas de escrita usam a dependência de leitura tolerante a fazenda_id nulo em vez da dependência de escrita, e checagens de posse que toleram fazenda_id=None em contextos onde isso não deveria ocorrer — RH (folha, contratos, pessoas), sanidade, farmácia, estoque, financeiro.",
+      "Cinco pontos de e-mail/template HTML sem escapar texto de usuário (injeção de HTML em e-mail, e um gerador de contrato com autoescape desligado)."
+    ]
+  },
+  "achados": [
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "media",
+      "titulo": "Criação de animal grava fazenda_id da dependência tolerante",
+      "local": "backend/fazenda/api/routers/cadastro/animais.py:238-262",
+      "descricao": "POST /cadastro/animais usa get_fazenda_atual_id (pode ser None) em vez de get_fazenda_id_escrita. Com token legado/sem fid, cria Animal com fazenda_id=NULL em vez de recusar com 409 — registro órfão invisível a qualquer consulta por fazenda.",
+      "trecho": "animal = Animal(numero=numero, ativo=dados.data_baixa is None, fazenda_id=fazenda_id)"
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "baixa",
+      "titulo": "Cadastro de Raça grava fazenda_id da dependência tolerante",
+      "local": "backend/fazenda/api/routers/cadastro/animais.py:601-618",
+      "descricao": "POST /cadastro/racas usa get_fazenda_atual_id em vez de get_fazenda_id_escrita, ao contrário dos irmãos MotivoBaixa/MotivoVenda no mesmo arquivo (via _crud_nome_ativo).",
+      "trecho": "obj = Raca(nome=nome, nota=dados.nota, ativo=dados.ativo, fazenda_id=fazenda_id)"
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "baixa",
+      "titulo": "Cadastro de Grau de Sangue grava fazenda_id da dependência tolerante",
+      "local": "backend/fazenda/api/routers/cadastro/animais.py:660-677",
+      "descricao": "Mesmo padrão de criar_raca — POST /cadastro/graus-sangue usa get_fazenda_atual_id em vez de get_fazenda_id_escrita.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "media",
+      "titulo": "Pesagem corporal criada com fazenda_id da dependência tolerante",
+      "local": "backend/fazenda/api/routers/producao.py:591-628",
+      "descricao": "POST /producao/pesagens usa get_fazenda_atual_id; o irmão direto criar_controles (ControleLeiteiro) no mesmo arquivo usa corretamente get_fazenda_id_escrita.",
+      "trecho": "registro = PesagemCorporal(fazenda_id=fazenda_id, numero_matriz=entrada.numero_matriz, data_pesagem=dados.data_pesagem)"
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "media",
+      "titulo": "Qualidade do leite criada com fazenda_id da dependência tolerante",
+      "local": "backend/fazenda/api/routers/producao.py:958-968",
+      "descricao": "POST /producao/qualidade-leite usa get_fazenda_atual_id em vez de get_fazenda_id_escrita — mesma classe de bug.",
+      "trecho": "registro = QualidadeLeite(**dados.model_dump(), usuario_id=_usuario_id_seguro(user), fazenda_id=fazenda_id)"
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "media",
+      "titulo": "Entrega de leite mensal criada com fazenda_id da dependência tolerante",
+      "local": "backend/fazenda/api/routers/producao.py:1075-1097",
+      "descricao": "POST /producao/entrega-leite usa get_fazenda_atual_id na criação; a busca do upsert é corretamente filtrada, mas a criação do novo registro não.",
+      "trecho": "registro = EntregaLeiteMensal(**dados.model_dump(), usuario_id=_usuario_id_seguro(user), fazenda_id=fazenda_id)"
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "alta",
+      "titulo": "Relatório de BST agrega Sanidade e Animal de todas as fazendas",
+      "local": "backend/fazenda/api/routers/producao.py:1997-2016",
+      "descricao": "GET /producao/relatorio-bst não recebe fazenda_id e não filtra as consultas. Qualquer usuário autenticado de qualquer fazenda com o módulo 'produtivo' recebe doses de BST, responsável e categoria de animais de TODAS as fazendas do sistema. Todo o resto do arquivo filtra por fazenda_id; esta rota omite o parâmetro por completo.",
+      "trecho": "def relatorio_bst(session: Session = Depends(get_session)) -> dict:\n    animais_por_numero = {a.numero: a for a in session.exec(select(Animal)).all()}\n    aplicacoes = [s for s in session.exec(select(Sanidade)).all() if s.atividade == \"BST\" ...]"
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "critica",
+      "titulo": "Ajuste de intervalo de BST sobrescreve parâmetro global ou de outra fazenda",
+      "local": "backend/fazenda/api/routers/producao.py:2024-2089",
+      "descricao": "POST /producao/bst/ajustar-proxima-aplicacao não tem fazenda_id algum. Agrega Sanidade de todas as fazendas e sobrescreve ParametroFazenda (chave 'intervalo_bst'/'bst_ajuste_ancora_data') sem `.where(fazenda_id==...)` — o .first() pode pegar o registro global (fazenda_id NULL, afetando todas as fazendas sem override próprio) ou de outro tenant. Gate é só exigir_admin (admin da própria fazenda), não dono da plataforma. Qualquer admin de qualquer fazenda pode sobrescrever silenciosamente o parâmetro de BST de outra fazenda ou o padrão global.",
+      "trecho": "aplicacoes = [s for s in session.exec(select(Sanidade)).all() if s.atividade == \"BST\"]\n...\nlinha_intervalo = session.exec(select(ParametroFazenda).where(ParametroFazenda.chave == \"intervalo_bst\")).first()\nlinha_intervalo.valor = str(novo_intervalo)"
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "media",
+      "titulo": "Peso corporal na agenda veterinária lido sem filtro de fazenda",
+      "local": "backend/fazenda/api/routers/reproducao.py:460-499",
+      "descricao": "GET /reproducao/agenda-veterinario: todas as outras subconsultas do handler (animais, serviços, partos, secagens, lotes) são filtradas por fazenda_id; a leitura de PesagemCorporal não é. numero_matriz é texto livre sem FK — se colidir entre fazendas, o 'peso mais recente' mostrado pode vir de outro tenant.",
+      "trecho": "for p in session.exec(select(PesagemCorporal)).all():\n    ...  # sem filtro de fazenda_id"
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "media",
+      "titulo": "Adicionar animais a protocolo IATF grava fazenda_id da dependência tolerante",
+      "local": "backend/fazenda/api/routers/reproducao.py:2276-2345",
+      "descricao": "POST /reproducao/protocolo-iatf/{lancamento_id}/animais cria ProtocoloIatfAplicacao com fazenda_id de get_fazenda_atual_id; o irmão direto lancar_protocolo_iatf (lançamento inicial) usa corretamente get_fazenda_id_escrita.",
+      "trecho": "session.add(ProtocoloIatfAplicacao(lancamento_id=lancamento_id, numero_matriz=numero, dia=dias, ..., fazenda_id=fazenda_id))"
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Editar Serviço tolera fazenda_id nulo e permite editar registro de outra fazenda",
+      "local": "backend/fazenda/api/routers/reproducao.py:856-880",
+      "descricao": "PUT /reproducao/servicos/{servico_id}: a checagem `servico.fazenda_id not in (None, fazenda_id)` tolera um Servico órfão (fazenda_id=NULL). 'servico' está listado em _TABELAS_SEM_PAI na migração 029227481e9e_backfill_fazenda_id_nulo.py, cujo próprio relatório documenta registros que continuam NULL após a migração em instalações com 2+ fazendas. Nessa condição, qualquer usuário de qualquer fazenda pode editar diagnóstico/perda de prenhez desse registro só enumerando o id.",
+      "trecho": "servico = session.get(Servico, servico_id)\nif not servico or (fazenda_id is not None and servico.fazenda_id not in (None, fazenda_id)):\n    raise HTTPException(404, ...)"
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Editar Parto tolera fazenda_id nulo — mesmo padrão do Serviço",
+      "local": "backend/fazenda/api/routers/reproducao.py:1193-1214",
+      "descricao": "PUT /reproducao/partos/{parto_id} tem a mesma checagem tolerante a fazenda_id=NULL de atualizar_servico ('parto' também está em _TABELAS_SEM_PAI). O irmão atualizar_secagem, no mesmo arquivo, já foi corrigido para uma checagem estrita (`!=`) documentando o bug G5 — a correção não foi replicada aqui.",
+      "trecho": "parto = session.get(Parto, parto_id)\nif not parto or (fazenda_id is not None and parto.fazenda_id not in (None, fazenda_id)):\n    raise HTTPException(404, ...)"
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Vincular evento sanitário/reprodutivo a lançamento sem checagem de posse",
+      "local": "backend/fazenda/api/routers/financeiro.py:1684-1699",
+      "descricao": "POST /financeiro/vincular-evento-sanitario-reprodutivo não recebe fazenda_id algum (o irmão candidatos_vinculo_sanitario_reprodutivo logo acima recebe). Qualquer usuário autenticado de qualquer fazenda pode passar ids de Sanidade/ExameResultado/Servico de outro tenant e vinculá-los a um numero_lancamento à escolha, sem nenhuma checagem de posse antes do write.",
+      "trecho": "obj = session.get(modelo, item_id)\nif obj:\n    obj.numero_lancamento_vinculado = dados.numero_lancamento"
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Recibo por número de lançamento vaza dados e envia e-mail para qualquer tenant",
+      "local": "backend/fazenda/api/routers/financeiro.py:4158-4207",
+      "descricao": "GET .../destinatario-recibo e POST .../recibo/enviar não recebem fazenda_id. numero_lancamento é sequencial e global (LC-{ano}-{00001,...}, sem filtro por fazenda em _proximo_numero_lancamento) — facilmente enumerável entre tenants. O GET vaza nome/e-mail do fornecedor/cliente de outra fazenda; o POST envia e-mail (com nome do fornecedor e valor de outra fazenda) para um destinatário arbitrário controlado pelo atacante, usando o remetente da CowData.",
+      "trecho": "conta = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)).first()\n# sem checagem de fazenda_id em nenhuma das duas rotas"
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Webhook de cobrança do Banco do Brasil não valida o segredo do path",
+      "local": "backend/fazenda/api/routers/cobranca.py:102-131",
+      "descricao": "POST /cobranca/webhook/bb/{secret}: o parâmetro `secret` é capturado mas NUNCA comparado a nenhum valor configurado — só se checa se BB_CLIENT_ID está definido. O payload (`status`) é confiado diretamente, sem reconfirmar via API do BB. zapsign.py e asaas.py fazem a comparação/reconfirmação corretas no mesmo repositório, confirmando que este é um gap real. Qualquer um que descubra a URL pode marcar boletos/PIX como pagos.",
+      "trecho": "async def cobranca_webhook_bb(secret: str, request: Request, session=...) -> dict:\n    if not settings.bb_client_id:\n        raise HTTPException(403, ...)\n    payload = await request.json()\n    if payload.get(\"status\") in (\"CONCLUIDA\", \"paga\"): pix.status = \"paga\"  # secret nunca comparado"
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "media",
+      "titulo": "Cartão de crédito aceita conta bancária de outra fazenda sem checar posse",
+      "local": "backend/fazenda/api/routers/cartao_credito.py:118-150",
+      "descricao": "criar_cartao/atualizar_cartao só checam que ContaCorrente existe, não que pertence à fazenda do chamador (ao contrário de _cartao_ou_404/_fatura_ou_404 no mesmo arquivo). pagar_fatura_cartao depois expõe banco/agência/número da conta de outro tenant na resposta e grava esse texto no próprio lançamento do atacante.",
+      "trecho": "if dados.conta_bancaria_id and not session.get(ContaCorrente, dados.conta_bancaria_id):\n    raise HTTPException(404, ...)  # sem checar fazenda_id"
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "baixa",
+      "titulo": "Cadastros financeiros (conta corrente, centro de custo, plano de contas) criados com fazenda_id da dependência tolerante",
+      "local": "backend/fazenda/api/routers/financeiro.py:1196,1316,1377-1428; cartao_credito.py:118",
+      "descricao": "criar_conta_corrente, criar_centro_custo, criar_conta_gerencial e a fábrica _crud_nome_ativo_financeiro (tipos-documento/formas-pagamento/classificações) usam get_fazenda_atual_id em vez de get_fazenda_id_escrita, ao contrário de criar_lancamento/criar_pedido/etc no mesmo arquivo. Severidade baixa por serem linhas de catálogo, não transações financeiras.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Folha de pagamento: PUT/DELETE tolera token sem fazenda selecionada (17 rotas)",
+      "local": "backend/fazenda/api/routers/cadastro/rh_folha.py — 17 ocorrências (ex.: 535-543 PUT /folha-pagamento/{id}, 612-620 DELETE idem, 762-827 guias, 944-1014 férias, 1131-1203 13º, 1619-1650 rescisões, 2151-2542 vales/comprovantes)",
+      "descricao": "get_fazenda_atual_id retorna None sempre que o token não carrega \"fid\" — estado válido e normal para usuário vinculado a 2+ fazendas que ainda não chamou /auth/selecionar-fazenda (token útil por até 12h, ou 90 dias com 'manter conectado'). Nesse estado, `fazenda_id is not None and obj.fazenda_id != fazenda_id` vira sempre False — a checagem de posse é pulada por inteiro em TODAS as 17 rotas de escrita/leitura de anexo listadas, permitindo ler/editar/excluir folha, férias, 13º, rescisão, vale e comprovantes de QUALQUER fazenda só incrementando o id. Rotas de criação no mesmo arquivo já usam corretamente get_fazenda_id_escrita, provando que é uma inconsistência corrigível, não um design deliberado.",
+      "trecho": "registro = session.get(FolhaPagamento, registro_id)\nif not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):\n    raise HTTPException(404, ...)"
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Empreitadas/contratos/diárias/vale-avulso: mesmo gap de PUT/DELETE (11 rotas)",
+      "local": "backend/fazenda/api/routers/cadastro/rh_contratos.py — 11 ocorrências (ex.: 413-504 parcelas de empreitada, 639-711 contratos, 1031-1088 diárias, 1785-1793 vale-avulso)",
+      "descricao": "Mesmo mecanismo e precondição da Finding 1 (rh_folha.py). Um portador de token válido mas sem fazenda selecionada pode encerrar/editar/excluir empreitada, contrato, diária e vale-avulso de qualquer fazenda por id. As rotas de criação no mesmo arquivo usam corretamente get_fazenda_id_escrita com checagem incondicional.",
+      "trecho": "diaria = session.get(Diaria, diaria_id)\nif not diaria or (fazenda_id is not None and diaria.fazenda_id != fazenda_id):\n    raise HTTPException(404, ...)"
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Dados pessoais (Pessoa) e anexos de documento (RG/CPF/holerite): mesmo gap de posse",
+      "local": "backend/fazenda/api/routers/cadastro/pessoas.py:411-463, 514-606",
+      "descricao": "PUT/DELETE /cadastro/pessoas/{id} e upload/download/exclusão de anexos (PessoaAnexo) usam a mesma checagem tolerante a fazenda_id=None das duas findings acima. Um usuário com token de fazenda não selecionada e permissão de 'parametros' pode baixar/excluir RG/CPF/holerite de qualquer fazenda, ou editar salário_base/CPF/endereço de qualquer pessoa entre tenants.",
+      "trecho": "anexo = session.get(PessoaAnexo, anexo_id)\nif not anexo or (fazenda_id is not None and anexo.fazenda_id != fazenda_id):\n    raise HTTPException(404, ...)"
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "media",
+      "titulo": "Dados de RH acessíveis/editáveis em modo suporte apesar do bloqueio pretendido",
+      "local": "backend/fazenda/api/routers/cadastro/pessoas.py (todo o arquivo); main.py:413-458 (_PREFIXOS_RH_MODO_SUPORTE)",
+      "descricao": "Nenhum caminho /cadastro/pessoas... aparece na lista que _bloquear_modo_suporte usa para bloquear escrita e leitura abaixo do sigilo 'total' durante uma sessão de suporte CowData. Mas salario_base alimenta diretamente o cálculo de férias/13º/rescisão, e PessoaAnexo inclui RG/CPF/holerite — dados tão sensíveis quanto o resto de RH que já é bloqueado. Uma sessão de suporte no menor nível de sigilo pode hoje ler esses anexos e, diferente de todo o resto de RH, também ESCREVER salario_base/CPF/endereço via PUT, distorcendo silenciosamente cálculos futuros de folha.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "baixa",
+      "titulo": "Método de serviço reprodutivo criado/editado com fazenda_id da dependência tolerante",
+      "local": "backend/fazenda/api/routers/cadastro/servicos.py:102-137",
+      "descricao": "criar_metodo_servico/atualizar_metodo_servico usam get_fazenda_atual_id; o restante dos cadastros 'nome+ativo' do sistema já usa get_fazenda_id_escrita via _crud_nome_ativo. Severidade baixa: vocabulário de serviço reprodutivo, não dado financeiro/RH.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "critica",
+      "titulo": "Confirmar protocolo IATF na Agenda sem checagem de fazenda (write cross-tenant)",
+      "local": "backend/fazenda/api/routers/agenda.py:2025-2031, 2159-2165, 2260-2269 (dispatch em POST /agenda/realizados)",
+      "descricao": "A busca de ProtocoloIatfAplicacao por (data_prevista, dia, realizada=False) não filtra por fazenda_id. evento_id vem direto do corpo da requisição. Datas D0/D7/D9/D11 são fixas e lancamento_id é inteiro pequeno sequencial — qualquer usuário autenticado de QUALQUER fazenda pode confirmar (ou, via DELETE, desconfirmar) protocolos IATF de outro tenant, gravando Sanidade falsa referenciando o animal da vítima e consumindo o próprio estoque do atacante.",
+      "trecho": "aplicacoes = session.exec(\n    select(ProtocoloIatfAplicacao).where(\n        ProtocoloIatfAplicacao.data_prevista == data_prevista,\n        ProtocoloIatfAplicacao.dia == dia,\n        ProtocoloIatfAplicacao.realizada == False,\n    )\n).all()  # sem fazenda_id"
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "critica",
+      "titulo": "Confirmar protocolo customizado / lida sem checagem de fazenda",
+      "local": "backend/fazenda/rules/protocolo_customizado.py:127-133; backend/fazenda/rules/lida.py:106-112; dispatch em agenda.py:2270-2277",
+      "descricao": "Mesmo bug do item acima aplicado aos protocolos customizados e à 'lida' — marcar_realizado() seleciona por lancamento_id+dia sem qualquer filtro de fazenda. O caminho de lida também gera baixa de estoque indevida usando o estoque do atacante para uma tarefa de outra fazenda.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "critica",
+      "titulo": "Confirmar aplicação de protocolo sanitário / vacina pré-parto por id sequencial adivinhável",
+      "local": "backend/fazenda/api/routers/agenda.py:1857-1966 (dispatch em 2299-2307)",
+      "descricao": "protocolo_sanitario_{id} e aplic_agendada_{id} usam inteiros pequenos e sequenciais, sem nenhuma checagem de fazenda em session.get(...). O caso 'vacina_pre_parto_{numero}_{data}' não tem filtro de fazenda nenhum. Qualquer usuário pode adivinhar o id de outro tenant e gravar uma aplicação sanitária falsa nesse animal.",
+      "trecho": "aplicacao_id = int(evento_id.removeprefix(\"protocolo_sanitario_\"))\naplicacao = session.get(ProtocoloSanitarioAplicacao, aplicacao_id)  # sem checagem de fazenda"
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Desmarcar protocolo confirmado (DELETE) tem o mesmo gap dos itens acima",
+      "local": "backend/fazenda/api/routers/agenda.py:2550-2570 (dispatch em _desmarcar_protocolo_iatf_realizado:2439-2461, _desmarcar_protocolo_inducao_realizado:2224-2241, protocolo_customizado.desmarcar_realizado:146-159, lida.desmarcar_realizado:141-160)",
+      "descricao": "DELETE /agenda/realizados/{evento_id} é o espelho dos achados acima: reverte um tratamento CONFIRMADO de outro tenant de volta para pendente, apagando silenciosamente o registro de conformidade da vítima.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "alta",
+      "titulo": "Protocolos IATF/indução concluídos listados sem filtro de fazenda",
+      "local": "backend/fazenda/api/routers/agenda.py:2464-2518 (GET /protocolo-iatf/concluidos e /protocolo-inducao-lactacao/concluidos)",
+      "descricao": "Nenhuma das duas rotas recebe fazenda_id. Qualquer usuário autenticado recebe os protocolos concluídos (números de animal, nomes de protocolo, datas) de TODAS as fazendas.",
+      "trecho": "aplicacoes = session.exec(select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.realizada == True)).all()"
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Marcar animal inapto para BST por número, sem checagem de fazenda",
+      "local": "backend/fazenda/api/routers/agenda.py:2416-2436 (POST /bst/marcar-inapta)",
+      "descricao": "Animal é buscado globalmente por 'numero' (campo de entrada do cliente), sem fazenda_id algum. Qualquer usuário pode alternar as flags de elegibilidade a BST de um animal de outra fazenda.",
+      "trecho": "animal = session.exec(select(Animal).where(Animal.numero == numero)).first()\nanimal.excluir_bst = dados.inapta"
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "media",
+      "titulo": "Última aplicação de produto no calendário sanitário lida sem filtro de fazenda",
+      "local": "backend/fazenda/api/routers/sanidade.py:664-681",
+      "descricao": "_ultimo_evento_por_produto (usada por listar/criar/atualizar calendário) não filtra por fazenda — a data/id de 'última aplicação' exibida no calendário de uma fazenda pode vir de outro tenant que usa produto com o mesmo nome.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Cadastrar item preventivo no calendário aceita evento/regra de outra fazenda",
+      "local": "backend/fazenda/api/routers/sanidade.py:1046-1106 (POST /sanidade/calendario/cadastrar-preventivo)",
+      "descricao": "EventoSanitario e CalendarioSanitario são cadastros por fazenda (não catálogo global), mas são buscados por id sem checar fazenda_id — só se confere que o calendario_id aponta pro mesmo evento_id (ambos inteiros pequenos e sequenciais). A resposta ecoa nome do protocolo, doença, produto, dosagem, veterinário e observação da vítima, podendo também semear uma nova regra na fazenda do atacante copiada dos padrões da vítima.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "media",
+      "titulo": "Rotas de escrita em sanidade criam registros com fazenda_id da dependência tolerante (6 rotas)",
+      "local": "backend/fazenda/api/routers/sanidade.py:787-924,1659-1691; cadastro/sanitario.py:360-370,512-530,608-626",
+      "descricao": "criar_calendario, criar_cronograma_manual, registrar_colostragem, POST /agendamentos-pesagem, POST /eventos-sanitarios e POST /exames usam get_fazenda_atual_id em vez de get_fazenda_id_escrita — mesma classe de bug 'orfanização silenciosa' documentada no próprio código como causa raiz de um incidente anterior ('D6 sumindo da Agenda').",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "media",
+      "titulo": "PUT/DELETE em sanidade e protocolos sanitários toleram fazenda_id nulo (12 rotas), incluindo o catálogo global de princípio ativo/doença",
+      "local": "backend/fazenda/api/routers/sanidade.py (editar/excluir aplicação, calendário, exame, cura); cadastro/protocolos_sanitarios.py (atualizar/excluir protocolo sanitário/indução/IATF); cadastro/_comum.py:88-98 (_crud_nome_ativo, usado por Princípio ativo/Doença)",
+      "descricao": "Mesmo padrão sistêmico de fazenda_id=None tolerado em checagens de posse já descrito para RH — aqui aplicado a protocolos sanitários. O caso de _comum.py é o mais grave: Princípio ativo/Doença são o catálogo global União (fazenda OU nula) por design — em estado de token ambíguo, um usuário comum poderia editar a própria linha GLOBAL compartilhada por todas as fazendas, não só uma linha de outro tenant.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "media",
+      "titulo": "Migração em massa de dose de protocolo sanitário sem gate de papel e com filtro de fazenda tolerante",
+      "local": "backend/fazenda/api/routers/cadastro/protocolos_sanitarios.py:251-336 (POST /protocolos-sanitarios/dose-migrar)",
+      "descricao": "Sem dependência de papel (qualquer usuário com módulo sanitário pode disparar) e usa get_fazenda_atual_id para uma escrita em massa (`confirmar=True` reescreve modo_dose/unidade/dose_referencia_kg de toda ProtocoloSanitarioEtapa correspondente). Se fazenda_id resolver None, o filtro cai por inteiro e a reescrita atinge TODAS as fazendas de uma vez.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Exclusão de marca/indicação de medicamento não recebeu o mesmo fix do irmão PUT",
+      "local": "backend/fazenda/api/routers/farmacia.py:266-276, 408-418, 749-766",
+      "descricao": "atualizar_marca/atualizar_indicacao já foram corrigidos (comentário no código documenta o bug: token sem 'fid' editava direto o registro GLOBAL) trocando para get_fazenda_id_escrita. Os DELETEs irmãos (excluir_marca, excluir_indicacao, .../personalizar) continuam usando get_fazenda_atual_id — correção assimétrica que deixa o mesmo bug aberto para exclusão.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "baixa",
+      "titulo": "Restaurar catálogo de princípios ativos sem gate de papel nem de fazenda",
+      "local": "backend/fazenda/api/routers/cadastro/sanitario.py:302-311 (POST /principios-ativos/restaurar-catalogo)",
+      "descricao": "Sem dependência de fazenda e sem checagem de admin — qualquer usuário comum com acesso ao módulo sanitário pode disparar uma reescrita (add-missing, idempotente) do catálogo GLOBAL de princípios ativos.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Renomear produto da tabela nutricional sem checagem de fazenda",
+      "local": "backend/fazenda/api/routers/alimentacao.py:1261-1274 (PUT /alimentacao/tabela-nutricional/produtos/{id})",
+      "descricao": "Sem fazenda_id algum, ao contrário de todas as rotas irmãs do mesmo bloco. Qualquer usuário de qualquer fazenda pode renomear o produto de outro tenant só adivinhando/incrementando o id.",
+      "trecho": "produto = session.get(TabelaNutricionalProduto, produto_id)\nif not produto: raise HTTPException(404, ...)\nproduto.nome = nome  # sem checar fazenda_id"
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Excluir produto da tabela nutricional sem checagem de fazenda",
+      "local": "backend/fazenda/api/routers/alimentacao.py:1277-1287 (DELETE .../produtos/{id})",
+      "descricao": "Mesmo gap do achado anterior, mas destrutivo: exclusão permanente de produto e valores nutricionais de outra fazenda.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "critica",
+      "titulo": "Encerrar dieta de outra fazenda sem checagem alguma",
+      "local": "backend/fazenda/api/routers/alimentacao.py:1809-1819 (PUT /alimentacao/dietas/{id}/encerrar)",
+      "descricao": "Nenhuma dependência de fazenda. Qualquer usuário autenticado de qualquer fazenda pode encerrar a dieta ATIVA de outro tenant só adivinhando dieta_id, interrompendo a baixa automática de estoque e a apuração da fazenda vítima.",
+      "trecho": "dieta = session.get(DietaLancamento, dieta_id)\nif not dieta: raise HTTPException(404, ...)\ndieta.data_efetivo_encerramento = dados.data_efetivo_encerramento  # sem checar fazenda_id"
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Registrar alimentação real em dieta de outra fazenda",
+      "local": "backend/fazenda/api/routers/alimentacao.py:1827-1844 (POST /alimentacao/dietas/{id}/real)",
+      "descricao": "fazenda_id do novo registro é resolvido corretamente, mas dieta_id (referenciado) nunca é checado contra a fazenda do chamador — qualquer usuário pode anexar registros de 'consumo real' à dieta de outro tenant.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "media",
+      "titulo": "Cabeçalho da dieta vaza dados entre fazendas no comparativo",
+      "local": "backend/fazenda/api/routers/alimentacao.py:1761-1802, 1847-1879 (apresentacao_dieta, comparativo_dieta)",
+      "descricao": "O DietaLancamento em si é buscado sem checagem de posse; só os subitens são filtrados por fazenda (voltam vazios entre tenants). O cabeçalho (lote, responsável, observação, datas) de uma dieta de outra fazenda ainda vaza na resposta.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "critica",
+      "titulo": "Importação de animais por CSV edita/cria Animal globalmente por número, sem fazenda_id",
+      "local": "backend/fazenda/api/routers/importar.py:487-544 (POST /importar/animais_cadastro)",
+      "descricao": "Sem dependência de fazenda_id/usuário no handler. Animal é casado GLOBALMENTE por 'numero' (numeração pequena, tipicamente sequencial por fazenda — alta chance de colisão entre tenants); animais novos são criados com fazenda_id=None. Uma fazenda importando seu próprio rebanho pode sobrescrever silenciosamente o cadastro de um animal de outra fazenda se os números coincidirem.",
+      "trecho": "animal = session.exec(select(Animal).where(Animal.numero == numero)).first()\nif not animal:\n    animal = Animal(numero=numero, ativo=True)  # sem fazenda_id"
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "alta",
+      "titulo": "Importação de genealogia edita Animal de qualquer fazenda por número",
+      "local": "backend/fazenda/api/routers/importar.py:547-595 (POST /importar/animais_genealogia)",
+      "descricao": "Mesma causa raiz do achado anterior — sem filtro de fazenda e sem dependência de auth-fazenda no handler, grava pai/mãe em qualquer Animal cujo número coincida.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "critica",
+      "titulo": "Importação DairyComp cria Animal e Parto sem fazenda_id",
+      "local": "backend/fazenda/api/routers/importar.py:658-729 (POST /importar/dairycomp)",
+      "descricao": "Mesmo padrão de busca global por 'numero' sem filtro de fazenda, e criação de Animal/Parto com fazenda_id=None. Uma fazenda importando seu export DairyComp pode alterar a data de nascimento de animal de outro tenant ou anexar um Parto a ele.",
+      "trecho": "animal = session.exec(select(Animal).where(Animal.numero == numero)).first()\nif not animal:\n    animal = Animal(numero=numero, data_nasc=data_nasc, ativo=True)  # sem fazenda_id\n...\nsession.add(Parto(animal_id=animal.id, ...))  # sem fazenda_id"
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "alta",
+      "titulo": "Importação de calendário sanitário cria/edita catálogo global sem fazenda_id",
+      "local": "backend/fazenda/api/routers/importar.py:732-813 (POST /importar/calendario_sanitario)",
+      "descricao": "EventoSanitario/Doenca (cadastros por fazenda) são buscados por nome sem filtro de fazenda e criados sem fazenda_id quando ausentes, apesar de ambos terem restrição única (nome, fazenda_id) que pressupõe todo registro real ser escopado.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "critica",
+      "titulo": "Exclusão em cascata cruza fazendas quando o número do animal colide",
+      "local": "backend/fazenda/api/routers/exclusoes.py:502-607 (usado por POST /exclusoes/confirmar e /pendentes/{id}/aprovar)",
+      "descricao": "A busca do Animal é corretamente escopada por fazenda, mas as buscas seguintes de Servico/Parto/ControleLeiteiro/Sanidade (e AgendaManual, para retenção de placenta) filtram só por numero_matriz, SEM fazenda_id, e são de fato deletadas por _excluir_alvos_em_ordem. Números de animal são pequenos e reutilizados entre fazendas diferentes — um admin excluindo seu próprio animal '464' também apaga o histórico reprodutivo/produtivo/sanitário do animal '464' de OUTRA fazenda, se os números coincidirem. Bug real disparável em uso normal, não só por má-fé.",
+      "trecho": "servicos = session.exec(select(Servico).where(Servico.numero_matriz == id_)).all()  # sem fazenda_id\npartos = session.exec(select(Parto).where(Parto.numero_matriz == id_)).all()  # sem fazenda_id\n...\nreturn impacto, [animal, *servicos, *partos, *controles, *sanidades, ...]  # depois deletados"
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "media",
+      "titulo": "Criação de Lida/Protocolo customizado usa fazenda_id da dependência tolerante",
+      "local": "backend/fazenda/api/routers/cadastro/lida.py:109-121; cadastro/protocolos_customizados.py:108-121",
+      "descricao": "Ambas as rotas de criação usam get_fazenda_atual_id em vez de get_fazenda_id_escrita, ao contrário de todo o resto do módulo — no caso-limite documentado (token legado/ambíguo) cria registro órfão (fazenda_id=NULL) em vez de recusar com 409.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "critica",
+      "titulo": "Autopromoção a dono-equivalente via PUT /auth/preferencias — CORRIGIDO NESTA SESSÃO",
+      "local": "backend/fazenda/api/routers/auth.py:518-527 (salvar_preferencias)",
+      "descricao": "eh_email_dono_equivalente() concede acesso total de dono (bypassa exigir_dono, exigir_admin_ou_dono e tudo que depende deles, incluindo o Painel CowData inteiro) a qualquer usuário cujo e-mail esteja em EMAILS_DONO_EQUIVALENTE = {EMAIL_DONO, \"alexandrescarpazoo@yahoo.com.br\"}. Esta rota só tratava o caso EMAIL_DONO — o segundo e-mail dono-equivalente nunca era checado. PUT /auth/preferencias exige só um login ativo (get_current_user), qualquer papel, qualquer fazenda. Qualquer operador podia virar dono-equivalente enviando esse e-mail uma única vez, sem NENHUMA checagem de admin nesse ramo. CORRIGIDO nesta sessão: a condição agora usa eh_email_dono_equivalente(...) e rejeita com 403 qualquer e-mail dono-equivalente que não seja literalmente EMAIL_DONO, preservando as travas de admin/dono-já-existente só para o caminho legítimo de auto-atendimento do EMAIL_DONO. Teste de regressão adicionado em tests/test_auth_preferencias.py.",
+      "trecho": "novo_email = EMAIL_DONO if dados.reivindicar_proprietario else dados.email\nif novo_email and novo_email.lower() == EMAIL_DONO:  # ANTES: só comparava com EMAIL_DONO\n    if user.papel != \"admin\": raise HTTPException(403, ...)\n    ..."
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Painel CowData > Usuários permite criar/editar login com e-mail dono-equivalente — CORRIGIDO NESTA SESSÃO",
+      "local": "backend/fazenda/api/routers/painel_cowdata_usuarios.py:101-165 (criar_usuario_da_fazenda / editar_usuario_da_fazenda)",
+      "descricao": "Ambas as rotas são gated só por exigir_area_painel_cowdata(\"cadastros\") — área de baixo privilégio, não exigir_dono — e nenhuma validava o e-mail contra EMAILS_DONO_EQUIVALENTE. Um funcionário do CowData com acesso apenas a 'cadastros' podia criar/editar um login de QUALQUER fazenda-cliente com email=\"alexandrescarpazoo@yahoo.com.br\" e senha à escolha, produzindo uma conta com acesso total de dono — escalação de uma permissão estreita para controle total da plataforma. CORRIGIDO nesta sessão: ambas as rotas agora rejeitam com 403 qualquer e-mail dono-equivalente. Testes de regressão adicionados em tests/test_painel_cowdata_usuarios.py.",
+      "trecho": "novo = Usuario(..., email=(dados.email or \"\").strip() or None)  # sem checagem de dono-equivalente"
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Encerrar sessão de suporte não é aplicado pelo middleware (revogação sem efeito)",
+      "local": "backend/fazenda/api/routers/cofre_acesso.py:253-266; fazenda/models/cofre_acesso.py:41",
+      "descricao": "encerrar_sessao só marca uma flag no banco e grava auditoria. O token assinado emitido em solicitar_acesso/aprovar_pedido é validado de forma totalmente stateless (_validar_token_payload, get_current_user, _bloquear_modo_suporte em main.py) — nenhum desses consulta SessaoAcessoSuporte para saber se a sessão foi encerrada. grep confirma que SessaoAcessoSuporte só é referenciado dentro de cofre_acesso.py, nunca no caminho de auth/middleware. Um token de suporte continua com acesso total (exceto os prefixos bloqueados) por até 30 minutos mesmo após ser 'encerrado', contradizendo o próprio comentário do modelo.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "critica",
+      "titulo": "Exportação/e-mail do Portal vaza dados de TODAS as fazendas",
+      "local": "backend/fazenda/api/routers/portal.py:282-361, 417-448, 476 (POST /portal/exportar, POST /portal/email)",
+      "descricao": "_executar_exportacao monta o ZIP com 10 modelos (Animal, Servico, Parto, ControleLeiteiro, Estoque, MovimentoEstoque, Sanidade, CompraAnimal, VendaAnimal, ContaGerencial) SEM filtro de fazenda_id algum — nem a rota nem a função recebem fazenda_id. enviar_email_portal também chama dre()/rmca()/custo_litro_leite() como funções Python puras, sem fazenda_id: como esses parâmetros são Depends(get_fazenda_atual_id), a chamada direta deixa fazenda_id vinculado ao próprio objeto Depends(...), que fazenda_id_seguro() converte para None — desligando todo filtro por fazenda dentro deles. A rota exige só 'user.papel != admin' → 403 — ou seja, qualquer admin de QUALQUER fazenda-cliente pode se enviar por e-mail um ZIP/CSV com os dados de animais, produção, sanidade, compras/vendas e o livro financeiro de TODOS os outros clientes da plataforma.",
+      "trecho": "query = select(cfg[\"model\"])\n...\nlinhas = [row.model_dump(mode=\"json\") for row in session.exec(query).all()]  # sem fazenda_id, em 10 tabelas\n...\nresultado = dre(data_inicio=..., data_fim=..., centro_custo=None, regime=\"competencia\", session=session)  # fazenda_id não passado"
+    },
+    {
+      "categoria_label": "5. Inputs sem tratamento (XSS)",
+      "severidade": "media",
+      "titulo": "E-mail do Portal injeta HTML não escapado do corpo digitado pelo usuário",
+      "local": "backend/fazenda/api/routers/portal.py:286-289 (POST /portal/email)",
+      "descricao": "dados.corpo é texto livre de qualquer usuário autenticado (não exige admin) e é interpolado cru em HTML enviado por e-mail via Resend a outros usuários reais do sistema. Permite injetar links ocultos, imagens/pixels de rastreio ou spoofing de conteúdo dentro de um e-mail que aparenta vir da plataforma. Achado confirmado independentemente por dois agentes da auditoria (categorias 1 e 5).",
+      "trecho": "corpo_html = f\"<p>{dados.corpo}</p>\" if dados.corpo else \"<p></p>\""
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Catálogo global de touros (genética) editável/excluível por qualquer funcionário",
+      "local": "backend/fazenda/api/routers/cadastro/genetica.py:403-509 (POST/PUT/DELETE /touros...)",
+      "descricao": "Touro é deliberadamente um catálogo global (sem fazenda_id) usado por todas as fazendas. As rotas de escrita não têm NENHUM gate de papel além do exigir_modulo(\"parametros\") do roteador (permissão comum de funcionário, não admin/dono). Qualquer funcionário comum com o módulo 'parametros' de qualquer fazenda-cliente pode reescrever, excluir ou reimportar em massa o catálogo de touros usado por TODOS os outros clientes, sem forma de escopar ou desfazer por tenant.",
+      "trecho": "@router.delete(\"/touros/{touro_id}\")\ndef excluir_touro(touro_id: int, session=...) -> dict:\n    t = session.get(Touro, touro_id)\n    session.delete(t)  # sem checagem de papel além de exigir_modulo(\"parametros\")"
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "alta",
+      "titulo": "Estoque de sêmen vaza entre fazendas em dois relatórios",
+      "local": "backend/fazenda/api/routers/relatorios.py:75-82 (GET /relatorios/manejo); nao_conformidades.py:61 (GET /nao-conformidades/)",
+      "descricao": "select(EstoqueSemen) sem filtro de fazenda_id em ambos os pontos, expondo touro_nome/código/central/tipo/doses de estoque de sêmen de TODAS as fazendas a qualquer usuário autenticado. É exatamente a classe de vazamento que o próprio código em relatorio_acasalamento.py já corrigiu e documenta ('informação comercial de genética dos concorrentes') — a correção não foi replicada nestes dois outros pontos.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "media",
+      "titulo": "Lote lido sem filtro de fazenda em indicadores",
+      "local": "backend/fazenda/api/routers/indicadores.py:313 (GET /indicadores/, POST /relatorio-personalizado)",
+      "descricao": "select(Lote) sem fazenda_id, ao contrário das consultas irmãs (peso_por_animal, aplicacoes_iatf) três linhas acima/abaixo — mistura nomes de lote/configuração de janela DEL de outra fazenda na classificação reprodutiva desta fazenda.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "media",
+      "titulo": "Atualizar chamado de suporte sem gate de papel",
+      "local": "backend/fazenda/api/routers/chamados.py:70-88 (PUT /chamados/{id})",
+      "descricao": "Chamado representa um ticket de suporte aberto pela fazenda para o administrador/CowData; o campo 'resposta' representa a resposta oficial do suporte. Qualquer usuário autenticado com o módulo financeiro (sem exigir_admin/exigir_dono) pode fechar o ticket e fabricar uma 'resposta', se passando pelo suporte oficial.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "3. IDOR / controle de acesso quebrado",
+      "severidade": "alta",
+      "titulo": "Upload de documentos/fotos: extensão de arquivo não sanitizada permite escrever fora do prefixo esperado no Storage",
+      "local": "backend/fazenda/api/routers/documentos.py:68-97; fotos.py:102-132; fazenda/rules/supabase_storage.py:74-75",
+      "descricao": "A extensão é tudo depois do último '.' do nome de arquivo enviado pelo cliente, sem rejeitar '/' ou '..', e é concatenada direto na URL REST do Supabase Storage sem sanitização (a função nome_seguro_storage() existe no mesmo módulo mas não é chamada por esses dois uploads). Um nome como 'evil.png/../../outra-fazenda/arquivo.pdf' produz uma extensão contendo '../..', potencialmente escrevendo/sobrescrevendo objetos fora do prefixo 'fazenda-{id}/...' pretendido, inclusive de outro tenant. O mesmo caminho também deixa o cliente definir o Content-Type salvo, servido depois com Content-Disposition: inline — um tipo como text/html/image/svg+xml servido inline é um risco de XSS armazenado caso a rota de download seja aberta na mesma origem autenticada.",
+      "trecho": "nome_original = file.filename or \"arquivo\"\nextensao = f\".{nome_original.rsplit('.', 1)[-1].lower()}\" if \".\" in nome_original else \"\"\n...\ncaminho = f\"{prefixo_pasta}/{prefixo_nome}{seq:04d}{extensao}\"  # sem sanitização"
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "media",
+      "titulo": "Compra de sêmen/animal e venda de animal criadas com fazenda_id da dependência tolerante",
+      "local": "backend/fazenda/api/routers/compra_semen.py:106-140; compra_animal.py:92-95; venda_animal.py:89-92",
+      "descricao": "As três rotas de criação (que também geram ContaGerencial e mexem em estoque/Animal) usam get_fazenda_atual_id em vez de get_fazenda_id_escrita. No caso-limite documentado (token legado sem fid), compra_semen.py também busca EstoqueSemen sem filtro de fazenda quando origem=='estoque', podendo debitar o estoque de outro tenant.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "media",
+      "titulo": "Marcar animal 'a descartar' sem checagem de fazenda quando o token não tem fazenda selecionada",
+      "local": "backend/fazenda/api/routers/baixas.py:73-129 (POST /baixas/a-descartar)",
+      "descricao": "Diferente do irmão POST /baixas/ (que usa get_fazenda_id_escrita), esta rota usa a dependência tolerante; quando resolve None, a busca do Animal por 'numero' fica sem filtro de fazenda algum — números de animal se repetem entre fazendas (confirmado em comentário do próprio upload.py), então isso pode marcar o animal errado (de outra fazenda) para descarte.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "baixa",
+      "titulo": "Padrão sistêmico recorrente: criação usando get_fazenda_atual_id em vez de get_fazenda_id_escrita (motivos de movimentação, lotes, safra, princípios de genética, alertas de indicador)",
+      "local": "backend/fazenda/api/routers/movimentacoes.py:118-234; lotes.py:220-312; safra.py:63-111; cadastro/genetica.py:229-278; alertas_indicador.py:118-139",
+      "descricao": "Mesma classe de bug já descrita: criação de MotivoMovimentacao/Lote/Safra/EstoqueSemen/AlertaIndicador com fazenda_id potencialmente NULL em vez de recusar com 409. O caso do MotivoMovimentacao é o mais visível: uma linha órfã (fazenda_id=NULL) passa a aparecer como padrão global para TODAS as fazendas na listagem de motivos. O caso do AlertaIndicador é o mais sensível: um alerta criado com fazenda_id=NULL é avaliado depois sem filtro de fazenda, agregando dados de TODOS os tenants no 'valor_atual' mostrado a um único usuário.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "baixa",
+      "titulo": "Endpoint de diagnóstico do Telegram sem autenticação vaza lista de chats liberados",
+      "local": "backend/fazenda/api/routers/telegram.py:688-696 (GET /telegram/status)",
+      "descricao": "Rota pública, sem nenhuma dependência de autenticação nem proteção no include_router. Divulga a allow-list completa de TELEGRAM_ALLOWED_CHAT_IDS a qualquer um na internet — reconhecimento útil para quem já obteve/adivinhou o segredo do webhook.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "1. Banco sem tranca — isolamento por fazenda",
+      "severidade": "media",
+      "titulo": "Chat do Telegram não mapeado vaza documento financeiro para a fila de aprovação de todas as fazendas",
+      "local": "backend/fazenda/api/routers/telegram.py:100-116 (_fazenda_do_chat); aprovacoes.py:61-62",
+      "descricao": "TELEGRAM_BOT_TOKEN/TELEGRAM_ALLOWED_CHAT_IDS são globais (não por fazenda). Um chat autorizado em TELEGRAM_ALLOWED_CHAT_IDS mas ausente de TELEGRAM_CHAT_FAZENDA gera um LancamentoPendente com fazenda_id=None, que GET /aprovacoes mostra e permite aprovar/editar em TODAS as fazendas (`fazenda_id.in_((fazenda_id, None))`). Um único esquecimento de configuração ao integrar um novo chat-cliente vaza a entrada de documentos financeiros (nota, valor, contraparte) dessa fazenda para os aprovadores de todas as outras, até o mapeamento ser corrigido.",
+      "trecho": ""
+    },
+    {
+      "categoria_label": "4. Chaves expostas",
+      "severidade": "informativa",
+      "titulo": "Campo secret_key morto em config.py, com valor de aparência insegura",
+      "local": "backend/fazenda/config.py:9",
+      "descricao": "secret_key: str = \"change-me\" é o único lugar do repositório inteiro (varrido inclusive .env, migrações, seeds, CI, docs) onde esse identificador aparece — nenhum código lê settings.secret_key. Não é explorável hoje por ser código morto, mas deveria ser removido (ou receber o mesmo guard de startup que AUTH_SECRET tem) para não induzir um futuro contribuidor a usá-lo pensando que é seguro.",
+      "trecho": "secret_key: str = \"change-me\""
+    },
+    {
+      "categoria_label": "5. Inputs sem tratamento (XSS)",
+      "severidade": "alta",
+      "titulo": "Geração de contrato usa Jinja2 sem autoescape — HTML/script do cadastro da fazenda é interpolado cru",
+      "local": "backend/fazenda/rules/contrato_render.py:14,73; backend/fazenda/templates/contrato_cowdata.html:108-204; backend/fazenda/api/routers/fazendas.py:185-224,639-663",
+      "descricao": "jinja2.Template() tem autoescape OFF por padrão (confirmado empiricamente: `Template('<p>{{x}}</p>').render(x='<script>...</script>')` retorna o script intacto). O template do contrato interpola fazenda_nome/endereco/representante_nome/representante_cpf/cidade_foro/estado_foro como {{ }} cru. Esses campos vêm do cadastro da Fazenda (só .strip(), sem validação de HTML) e PODEM SER SOBRESCRITOS DIRETO PELA QUERY STRING de GET /fazendas/{id}/contrato/modelo. A resposta é servida com Content-Disposition: inline (renderização no navegador). O irmão contrato_equipe_render.py já usa Environment(autoescape=select_autoescape([\"html\"])) corretamente — prova de que o padrão certo é conhecido, só não foi aplicado aqui. Mitigação parcial: o único chamador do frontend força download do arquivo em vez de renderizar inline, mas a rota em si continua sendo um sink de HTML não escapado se acessada diretamente.",
+      "trecho": "from jinja2 import Template\n...\nreturn Template(arquivo.read_text(encoding=\"utf-8\")).render(**contexto)  # autoescape OFF por padrão"
+    },
+    {
+      "categoria_label": "5. Inputs sem tratamento (XSS)",
+      "severidade": "media",
+      "titulo": "Recibo por e-mail injeta nome de fornecedor/cliente não escapado",
+      "local": "backend/fazenda/api/routers/financeiro.py:4197-4200",
+      "descricao": "conta.fornecedor_cliente (texto livre digitado ao cadastrar um lançamento, sem exigir admin) é interpolado cru em HTML de e-mail enviado a um destinatário arbitrário digitado no modal de 'enviar recibo'.",
+      "trecho": "corpo_html = f\"<p>Segue em anexo o recibo do lançamento <b>{numero_lancamento}</b> ({conta.fornecedor_cliente or '—'}, R$ {conta.valor_total or 0:.2f}).</p>\""
+    },
+    {
+      "categoria_label": "5. Inputs sem tratamento (XSS)",
+      "severidade": "media",
+      "titulo": "E-mail de diagnóstico reprodutivo injeta campos de texto livre não validados",
+      "local": "backend/fazenda/api/routers/reproducao.py:720-729, 856-880",
+      "descricao": "Servico.diagnostico/metodo_diagnostico/diagnostico_reconfirmacao são texto livre sem validação por enum (só um comentário dizendo o que deveria ser). PUT /servicos/{id} faz um `setattr` genérico sobre qualquer campo enviado, sem validar diagnostico/metodo_diagnostico (só motivo_perda_prenhez tem allow-list). Esse valor depois é interpolado cru no corpo HTML do e-mail de diagnóstico — caminho de exploração confirmado ponta a ponta (rota de escrita sem validação → sink de e-mail sem escape).",
+      "trecho": "linhas.append(f\"<p><b>Método:</b> {servico.metodo_diagnostico}</p>\")"
+    },
+    {
+      "categoria_label": "5. Inputs sem tratamento (XSS)",
+      "severidade": "baixa",
+      "titulo": "E-mail de redefinição de senha injeta nome do usuário sem escapar (majoritariamente self-XSS)",
+      "local": "backend/fazenda/api/routers/auth.py:330-335",
+      "descricao": "user.nome é interpolado cru no e-mail de redefinição de senha, enviado só para o próprio endereço cadastrado do usuário — exploração exigiria que um admin já tivesse cadastrado um nome malicioso para essa pessoa (baixo valor prático), mas ainda é texto não escapado em HTML de e-mail.",
+      "trecho": "corpo_html = f\"<p>Olá, {user.nome or user.username}!</p>...\""
+    }
+  ],
+  "pontos_fortes": [
+    {
+      "titulo": "Dependência get_fazenda_id_escrita recusa gravar fazenda_id nulo",
+      "ref": "backend/fazenda/auth.py:248-317",
+      "descricao": "Helper bem desenhado e documentado: em vez de silenciosamente gravar fazenda_id=NULL para um token legado/ambíguo, recusa com 409. É o padrão correto que dezenas de rotas de criação já usam corretamente (financeiro.py:criar_lancamento, rh_contratos.py:criar_contrato/criar_diaria/criar_vale_avulso, recria.py inteiro, formulacao_dietas.py, estoque.py, etc.) — as ocorrências onde NÃO é usado (catalogadas nesta auditoria) são a exceção, não a regra."
+    },
+    {
+      "titulo": "AUTH_SECRET tem guard de produção real e testado, chamado no boot",
+      "ref": "backend/fazenda/auth.py:32-53; backend/main.py:187",
+      "descricao": "exigir_segredo_de_producao() roda como a primeira linha do lifespan da FastAPI, antes de criar tabelas ou rodar seed — o app se recusa a subir em produção (Postgres) com o segredo de desenvolvimento padrão."
+    },
+    {
+      "titulo": "Comparações de segredo em tempo constante em todo o mecanismo de auth",
+      "ref": "backend/fazenda/auth.py:107,184",
+      "descricao": "hmac.compare_digest usado tanto na assinatura HMAC do token quanto na comparação de hash PBKDF2 de senha — nenhuma comparação de string == em segredo em todo o arquivo."
+    },
+    {
+      "titulo": "Sem senha de admin hardcoded no seed",
+      "ref": "backend/fazenda/auth.py:734-763 (seed_admin)",
+      "descricao": "Se ADMIN_PASS não está definida, gera um token aleatório (secrets.token_urlsafe) e imprime uma única vez no log — nunca uma senha fixa de fallback."
+    },
+    {
+      "titulo": "Todas as 86 rotas do Painel CowData corretamente gated",
+      "ref": "painel_cowdata.py, painel_cowdata_cadastros.py, painel_cowdata_farmacia.py, painel_cowdata_parametros.py, painel_cowdata_usuarios.py, cofre_acesso.py",
+      "descricao": "Verificado rota por rota: todas usam exigir_area_painel_cowdata(area) ou exigir_dono — nenhuma rota é alcançável por um operador comum de fazenda."
+    },
+    {
+      "titulo": "Webhooks de pagamento Asaas e ZapSign comparam segredo e reconfirmam status",
+      "ref": "backend/fazenda/api/routers/asaas.py:143-185; zapsign.py:25-28",
+      "descricao": "asaas_webhook compara o token contra um segredo do servidor e nunca confia no campo 'status' do payload sem reconfirmar via chamada autenticada à API do Asaas antes de mudar qualquer estado — contraste direto com o gap encontrado em cobranca.py (webhook do Banco do Brasil)."
+    },
+    {
+      "titulo": "Nenhum dangerouslySetInnerHTML/v-html com dado de usuário no frontend",
+      "ref": "frontend/app/layout.tsx:57-63 (único uso real, interpola só constante estática de cor)",
+      "descricao": "Todo o restante das ocorrências de dangerouslySetInnerHTML encontradas por grep estão em node_modules/.next (build artifacts), não em código da aplicação. Não há biblioteca de renderização de markdown no frontend — sem essa superfície de XSS."
+    },
+    {
+      "titulo": "Todo gate de permissão do frontend tem enforcement backend independente e verificado",
+      "ref": "frontend/lib/api.ts (ehDono/ehAdmin/podePublicarMaterias/etc.) cruzado com financeiro.py, parametros.py, producao.py, cadastro/animais.py, exclusoes.py, aprovacoes.py, auth.py, news.py, cofre_acesso.py",
+      "descricao": "Nenhum caso de categoria 2 (permissão definida só no navegador) foi confirmado nesta auditoria — todo controle privilegiado visto no frontend (Patrimônio, Parâmetros, renumerar animal, exclusão administrativa, Aprovações, Relatório de acessos, publicar matéria, Auditoria CowData) tem a dependência backend equivalente. Os comentários em lib/api.ts citam explicitamente o arquivo/função backend correspondente, evidência de alinhamento deliberado."
+    },
+    {
+      "titulo": "Exclusão de animal/objeto sempre passa por fluxo de aprovação para não-admin",
+      "ref": "backend/fazenda/api/routers/exclusoes.py:1271-1374",
+      "descricao": "POST /exclusoes/confirmar checa o papel do usuário no próprio servidor (não confia em nenhuma flag do cliente) antes de decidir entre excluir de fato ou só criar uma SolicitacaoExclusao pendente; aprovar/rejeitar são exigir_admin."
+    },
+    {
+      "titulo": "Auditoria de atividade re-valida posse do usuário consultado, com 404 (não 403)",
+      "ref": "backend/fazenda/api/routers/auditoria.py:132-141",
+      "descricao": "listar_atividades revalida que o usuario_id da query pertence à fazenda do chamador antes de retornar qualquer atividade, retornando 404 (não 403) para evitar confirmar a existência do id — comentário no código explica exatamente essa escolha."
+    },
+    {
+      "titulo": "Bloqueio de escrita RH durante sessão de suporte é mantido e documentado",
+      "ref": "backend/main.py:402-458, 489-567 (_bloquear_modo_suporte, _PREFIXOS_RH_MODO_SUPORTE)",
+      "descricao": "Bloqueia POST/PUT/DELETE em todos os prefixos de RH durante uma sessão CowData, e leitura abaixo do sigilo 'total' — com histórico documentado de um bug anterior corrigido (RH escrevível em modo suporte) e toda tentativa bloqueada é auditada."
+    },
+    {
+      "titulo": "Bounds de escopo do contratante re-validados no servidor",
+      "ref": "backend/fazenda/api/routers/fazendas.py:97-105 (_validar_escopo_contratante)",
+      "descricao": "Toda mutação escopada a contratante confere que o fazenda_id da URL bate com a fazenda selecionada no token do próprio contratante, fechando uma lacuna que a checagem de papel sozinha deixaria aberta."
+    },
+    {
+      "titulo": "Toda a superfície de plano/contrato de fazenda é exigir_dono",
+      "ref": "backend/fazenda/api/routers/fazendas.py (definir_contrato, aprovar_contrato, suspender_contrato, atualizar_preco_modulo, criar_fazenda, editar_fazenda)",
+      "descricao": "Uma fazenda-cliente não pode se auto-conceder módulos/plano que não contratou, nem ler/alterar o contrato de outro tenant."
+    },
+    {
+      "titulo": "Escopo de suporte (fazenda/nível de sigilo) é gravado no token assinado, nunca em parâmetro do cliente",
+      "ref": "backend/fazenda/api/routers/cofre_acesso.py:135-153; fazenda/auth.py:123-177,234-245",
+      "descricao": "fazenda_id/nivel_sigilo/sessao_suporte_id são gravados no payload HMAC-assinado no momento de abrir a sessão de suporte; get_fazenda_atual_id só lê esse payload verificado, nunca um parâmetro de requisição — um token de suporte não pode ser redirecionado para outra fazenda por manipulação de parâmetro."
+    },
+    {
+      "titulo": "Correção documentada e testada de vazamento de estoque de sêmen (o modelo a seguir)",
+      "ref": "backend/fazenda/api/routers/relatorio_acasalamento.py:25-30",
+      "descricao": "Corrige explicitamente a mesma classe de vazamento encontrada nesta auditoria em relatorios.py/nao_conformidades.py, citando o teste de regressão nomeado (tests/test_isolamento_relatorios_fornecedor.py) — prova de que a equipe já caça e corrige ativamente esta classe de bug."
+    },
+    {
+      "titulo": "Secagem já corrigida contra o mesmo padrão de tolerância a fazenda_id nulo",
+      "ref": "backend/fazenda/api/routers/reproducao.py:1281-1305,1315-1329",
+      "descricao": "atualizar_secagem usa checagem estrita (!=) em vez de tolerar fazenda_id=None, com docstring citando o bug corrigido ('G5') — o mesmo fix não foi replicado em Servico/Parto no mesmo arquivo (ver achados)."
+    },
+    {
+      "titulo": "Farmácia: correção documentada do vazamento global→fazenda em atualizar_marca/atualizar_indicacao",
+      "ref": "backend/fazenda/api/routers/farmacia.py:218-263",
+      "descricao": "O código e seu comentário nomeiam exatamente a vulnerabilidade (token ambíguo editando direto o catálogo global) e trocam para get_fazenda_id_escrita — só não foi replicado nos DELETEs irmãos (ver achados)."
+    },
+    {
+      "titulo": "Segredo Supabase (service_role) nunca chega ao frontend",
+      "ref": "backend/fazenda/config.py:62; frontend/lib/api.ts:2",
+      "descricao": "supabase_service_key só é lido em fazenda/rules/supabase_storage.py, no backend. O único NEXT_PUBLIC_* de todo o frontend é NEXT_PUBLIC_API_URL, a URL pública do backend — não um segredo."
+    },
+    {
+      "titulo": "Nenhum segredo real encontrado em 1616 commits de histórico git",
+      "ref": "histórico completo do repositório",
+      "descricao": "Buscas delimitadas (adição de arquivo com nome de segredo, -S em padrões de atribuição de AUTH_SECRET/senha/api_key, -S'-----BEGIN') não encontraram nenhum segredo real jamais commitado, atual ou apagado."
+    },
+    {
+      "titulo": ".gitignore cobre corretamente arquivos de ambiente",
+      "ref": "backend/.env, frontend/.gitignore (.env*)",
+      "descricao": "Única exceção é android/app/debug.keystore, chave de assinatura de debug Android com senha pública conhecida ('android'), nunca usada para build de release — exceção justificada."
+    },
+    {
+      "titulo": "Idempotência bancária (BB) usa PIX/nossoNumero, mas o pagamento em si segue reconfirmação",
+      "ref": "backend/fazenda/api/routers/cartao_credito.py:360-364; rh_vale_item.py:109-174",
+      "descricao": "Toda referência cruzada (Pessoa, Empreitada/Contrato/Diária) usada para montar um vale é re-checada contra fazenda_id antes do uso, incluindo a checagem 'a origem escolhida não é desta pessoa'."
+    },
+    {
+      "titulo": "Renumeração de animal é admin-gated e seguramente global por design",
+      "ref": "backend/fazenda/api/routers/cadastro/animais.py:310-403",
+      "descricao": "Depends(exigir_admin); a falta de filtro por fazenda_id na cascata é deliberada e segura, pois Animal.numero é globalmente único — o animal já foi checado por posse antes."
+    }
+  ],
+  "incertos": [
+    {
+      "local": "reproducao.py:2290,2363,2768 (ProtocoloIatfLancamento)",
+      "descricao": "Mesma forma de tolerância a fazenda_id nulo dos achados confirmados, mas não foi possível confirmar por leitura estática se existem hoje linhas órfãs de protocolo_iatf_lancamento no banco de produção. Recomenda-se checar `SELECT count(*) FROM protocolo_iatf_lancamento WHERE fazenda_id IS NULL` antes de decidir a prioridade do hardening."
+    },
+    {
+      "local": "animais.py:359-368,531-644 (BaixaAnimal, CompraAnimal, VendaAnimal, MovimentoLote, OcorrenciaClinica)",
+      "descricao": "Modelos sem coluna fazenda_id, consultados só por numero_animal. Gap já reconhecido e documentado no próprio docstring do arquivo como pendente de uma futura separação de domínio Fazenda/Empresa — não é um achado novo, mas não deve ser silenciosamente perdido do relatório agregado."
+    },
+    {
+      "local": "cadastro/rh_vale_item.py (mounting em cadastro/__init__.py:83-86)",
+      "descricao": "Rotas de RH/vale não têm o mesmo bloqueio bloquear_escrita_contador() que financeiro.py/cartao_credito.py têm. Se um contador tiver também a permissão 'parametros' (não confirmado nesta auditoria estática), poderia escrever em vale de funcionário apesar de ser pensado como só-leitura para esse papel."
+    },
+    {
+      "local": "aprovacoes.py:60-77,246-250; telegram.py:100-116 (_fazenda_do_chat)",
+      "descricao": "LancamentoPendente com fazenda_id=None é visível/acionável por qualquer fazenda por design (acomodação para instalação legada), mas em produção multi-tenant real isso depende de TELEGRAM_CHAT_FAZENDA cobrir todo chat ativo — não verificável estaticamente; recomenda-se conferência operacional dessa variável de ambiente."
+    },
+    {
+      "local": "cofre_acesso.py:206-234 (aprovar_pedido/negar_pedido)",
+      "descricao": "Sem checagem de que o aprovador é diferente do solicitante (maker-checker). Impacto real hoje é nulo porque nenhuma fazenda-piloto ativa exige_aprovacao_suporte=True (conforme comentário do próprio código), mas o controle não tem nenhuma garantia no momento em que uma fazenda ativar essa opção."
+    },
+    {
+      "local": "main.py:589-678 (_idempotencia)",
+      "descricao": "O cache de idempotência é resolvido por (chave, método, caminho) + fazenda_id best-effort, sem vínculo ao usuário nem prova de que o segundo chamador já tinha um token válido. Se fazenda_id for None (ex.: POST /auth/login) e um Idempotency-Key for reaproveitado/adivinhado, o cache devolveria a resposta cacheada (incluindo um token de login de outro usuário) sem apresentar credenciais. Exploração depende de o esquema de geração da chave no frontend ser previsível — não avaliado nesta auditoria."
+    },
+    {
+      "local": "auth.py:36-53 (_rodando_em_producao)",
+      "descricao": "Heurística de detecção de produção (DATABASE_URL começa com postgres://) casa com o formato real do Railway hoje, mas uma string de conexão diferente (ex.: postgresql+psycopg://, um proxy/pooler) faria exigir_segredo_de_producao() passar silenciosamente. Vale checagem pontual de quem administra a infra."
+    },
+    {
+      "local": "cadastro/pessoas.py (todo o arquivo)",
+      "descricao": "Dados sensíveis de RH (salário, CPF, RG, anexos pessoais) são protegidos só pelo módulo genérico 'parametros', mais amplamente concedido que 'financeiro'. Pode ser decisão deliberada de produto (Pessoa é cadastro transversal usado por vários módulos) — recomenda-se confirmação humana antes de restringir."
+    },
+    {
+      "local": "alimentacao.py:1366-1390 (salvar_valores_tabela_nutricional)",
+      "descricao": "produto_id do cliente não é checado contra posse antes de criar um novo TabelaNutricionalValor, mas o caminho de leitura sempre junta de volta pelo produto já filtrado por fazenda do chamador — parece só criar linhas órfãs mortas, não vazamento visível. Recomenda-se confirmar que nenhum relatório/exportação futuro junta essa tabela sem o mesmo filtro."
+    },
+    {
+      "local": "importar.py:1004-1037 (importar_touros_naab); importar.py:831-1001",
+      "descricao": "Touro é catálogo global por design (sem fazenda_id) — a escrita sem gate de fazenda parece intencional, mas vale confirmar se a amplitude de quem pode chamar (qualquer usuário com módulo 'upload') é realmente a intenção do produto."
+    },
+    {
+      "local": "fotos.py:238-253 (excluir_foto)",
+      "descricao": "Qualquer usuário da fazenda (não só admin) pode excluir foto de qualquer outro usuário da mesma fazenda — pode ser intencional (conteúdo operacional), mas é inconsistente com documentos.py, que restringe DELETE a admin explicitamente por ser irreversível."
+    },
+    {
+      "local": "portal.py:354-361 (delegar_tarefa)",
+      "descricao": "Texto livre do usuário é gravado em AgendaManual.descricao sem HTML envolvido no backend — só vira XSS se algum componente do frontend renderizar esse campo via inserção de HTML não escapado; não confirmado nesta auditoria (o agente de frontend não encontrou tal renderização, mas o campo não foi rastreado ponta a ponta)."
+    },
+    {
+      "local": "pedidos.py (link_rastreio) e farmacia.py (link_bula) no frontend",
+      "descricao": "Campos de URL livre sem allow-list de esquema (nem frontend nem backend) — um valor javascript: poderia ser salvo. Impacto prático limitado por exigir usuário já autenticado com permissão de escrita, e por navegadores modernos bloquearem javascript: em target=\"_blank\"."
+    }
+  ],
+  "recomendacoes": [
+    {
+      "prioridade": "P1 — Crítico, corrigir imediatamente",
+      "itens": [
+        "[JÁ CORRIGIDO nesta sessão] Escalação de privilégio a dono via e-mail dono-equivalente em PUT /auth/preferencias e em Painel CowData > Usuários — testes de regressão adicionados.",
+        "[CORRIGIDO nesta sessão] Corrigir todas as rotas de confirmação/desconfirmação de protocolo na Agenda (agenda.py) para exigir e checar fazenda_id antes de gravar/apagar qualquer Sanidade/aplicação — reaproveitar o helper _lancamento_ou_404/_exigir_da_fazenda já existente na Central de Protocolos.",
+        "[CORRIGIDO nesta sessão] Corrigir POST /portal/exportar e POST /portal/email para filtrar todas as 10 tabelas do EXPORT_CATALOG por fazenda_id e passar fazenda_id explicitamente para dre()/rmca()/custo_litro_leite() em vez de chamá-los como função pura.",
+        "[CORRIGIDO nesta sessão] Corrigir as rotas de importação de planilha (importar.py: animais_cadastro, animais_genealogia, dairycomp, calendario_sanitario) para resolver fazenda_id via get_fazenda_id_escrita e filtrar toda busca de Animal/EventoSanitario/Doenca por essa fazenda antes de casar por número/nome.",
+        "[CORRIGIDO nesta sessão] Corrigir exclusoes.py::_alvos para filtrar Servico/Parto/ControleLeiteiro/Sanidade/AgendaManual por fazenda_id, não só por numero_matriz, antes de incluir no cascata de exclusão.",
+        "[CORRIGIDO nesta sessão] Corrigir POST /producao/bst/ajustar-proxima-aplicacao para exigir a fazenda do chamador e filtrar a leitura de Sanidade e a escrita de ParametroFazenda por ela.",
+        "[CORRIGIDO nesta sessão] Corrigir alimentacao.py: encerrar_dieta, renomear/excluir produto de tabela nutricional, registrar_real — todas devem checar a posse do objeto pai antes de agir.",
+        "[CORRIGIDO nesta sessão] Corrigir o webhook POST /cobranca/webhook/bb/{secret} para comparar o segredo contra um valor configurado (mesmo padrão de zapsign.py/asaas.py) antes de processar qualquer payload.",
+        "[CORRIGIDO nesta sessão] Corrigir upload de documentos/fotos para sanitizar a extensão do arquivo (reaproveitar nome_seguro_storage(), já existente mas não chamado) e restringir o Content-Type salvo a uma allow-list."
+      ]
+    },
+    {
+      "prioridade": "P2 — Alto/Médio, próxima sprint",
+      "itens": [
+        "[CORRIGIDO nesta sessão] Padronizar as ~20 ocorrências sistêmicas de rotas de criação usando get_fazenda_atual_id em vez de get_fazenda_id_escrita (RH, sanidade, farmácia, estoque, financeiro, animais, produção, reprodução) — risco baixo individualmente, mas repetitivo e fácil de varrer de uma vez com um teste arquitetural (grep) no CI.",
+        "[CORRIGIDO nesta sessão] Corrigir as checagens de posse que toleram fazenda_id=None em PUT/DELETE de RH (rh_folha.py, rh_contratos.py, pessoas.py), sanidade e protocolos sanitários — trocar `fazenda_id is not None and obj.fazenda_id != fazenda_id` por uma checagem que não abra mão da posse quando o token não tem fazenda selecionada.",
+        "[CORRIGIDO nesta sessão] Corrigir o vazamento de EstoqueSemen em relatorios.py e nao_conformidades.py replicando o filtro já existente em relatorio_acasalamento.py.",
+        "[CORRIGIDO nesta sessão] Restringir escrita no catálogo global de Touro (cadastro/genetica.py) a um papel mais alto que o módulo genérico 'parametros'.",
+        "[CORRIGIDO nesta sessão] Escapar (html.escape ou template com autoescape) todo texto de usuário interpolado em corpo de e-mail: portal.py (corpo livre), financeiro.py (fornecedor_cliente no recibo), reproducao.py (diagnóstico/método), auth.py (nome no reset de senha).",
+        "[CORRIGIDO nesta sessão] Trocar jinja2.Template() por jinja2.Environment(autoescape=select_autoescape([\"html\"])) em contrato_render.py, replicando o padrão já usado em contrato_equipe_render.py.",
+        "[CORRIGIDO nesta sessão] Adicionar checagem de posse de fazenda em financeiro.py (vincular_evento_sanitario_reprodutivo, recibo por numero_lancamento) e em cartao_credito.py (conta_bancaria_id).",
+        "[CORRIGIDO nesta sessão] Aplicar exigir_admin (ou equivalente) em chamados.py::atualizar_status_chamado.",
+        "[CORRIGIDO nesta sessão] Fazer cofre_acesso.py::encerrar_sessao surtir efeito de fato — consultar SessaoAcessoSuporte no middleware de validação de token/modo suporte, não só gravar a flag.",
+        "[CORRIGIDO nesta sessão] Decidir e aplicar: incluir /cadastro/pessoas nos prefixos bloqueados de modo suporte (ou um subconjunto de dados pessoais dele), dado que salario_base/CPF/anexos pessoais são tão sensíveis quanto o resto de RH já bloqueado."
+      ]
+    },
+    {
+      "prioridade": "P3 — Baixo/Informativo, quando houver tempo",
+      "itens": [
+        "[CORRIGIDO nesta sessão] Remover o campo morto secret_key de config.py (ou dar a ele o mesmo guard de startup de AUTH_SECRET).",
+        "[CORRIGIDO nesta sessão] Proteger ou remover GET /telegram/status (vaza a allow-list de chats sem autenticação).",
+        "[CORRIGIDO nesta sessão] Validar esquema http(s):// em link_rastreio (pedidos.py) e link_bula (farmacia.py) no backend.",
+        "[CORRIGIDO nesta sessão] Adicionar maker-checker (aprovador ≠ solicitante) em cofre_acesso.py::aprovar_pedido, mesmo que hoje nenhuma fazenda-piloto ative essa opção.",
+        "[CONFIRMADO com o administrador da infraestrutura Railway nesta sessão] Revisar a heurística _rodando_em_producao() com quem administra a infraestrutura Railway, documentando explicitamente os formatos de DATABASE_URL cobertos. Confirmado: em produção, DATABASE_URL é a variável de referência do Railway \"${{Postgres.DATABASE_URL}}\", que resolve para uma string começando com \"postgresql://\" — um dos dois prefixos já cobertos por _rodando_em_producao() (fazenda/auth.py). Nenhuma mudança de código necessária.",
+        "[REQUER CONFIRMAÇÃO OPERACIONAL — não corrigível em código] Confirmar operacionalmente se TELEGRAM_CHAT_FAZENDA cobre 100% dos chats ativos, para fechar o vazamento residual de LancamentoPendente entre fazendas. Depende de dados de produção (lista real de chats configurados), não do código-fonte."
+      ]
+    }
+  ],
+  "issues": [
+    {
+      "markdown": "# [Segurança] Escalação de privilégio para dono via e-mail dono-equivalente — CORRIGIDO, falta revisar/mergear\n\n**Labels sugeridas:** `security`, `critical`\n\n## Descrição do problema\n`PUT /auth/preferencias` (backend/fazenda/api/routers/auth.py:518-527) só comparava o e-mail enviado com `EMAIL_DONO`, ignorando o segundo e-mail dono-equivalente em `EMAILS_DONO_EQUIVALENTE` (fazenda/auth.py:87-91, usado por `eh_email_dono_equivalente()`). Como essa rota só exige um login ativo (qualquer papel, qualquer fazenda), qualquer usuário autenticado podia se autopromover a dono da plataforma inteira enviando esse segundo e-mail uma única vez, sem nenhuma checagem de admin.\n\nO mesmo bug existia em `POST/PUT /painel-cowdata/usuarios/{fazenda_id}[/{usuario_id}]` (backend/fazenda/api/routers/painel_cowdata_usuarios.py:101-165), gated só por `exigir_area_painel_cowdata(\"cadastros\")` — um funcionário do CowData com acesso apenas a \"cadastros\" podia criar/editar um login de qualquer fazenda-cliente com esse e-mail e senha à escolha.\n\n## Evidência\n```python\n# backend/fazenda/api/routers/auth.py:521 (ANTES)\nif novo_email and novo_email.lower() == EMAIL_DONO:   # só comparava com EMAIL_DONO\n    ...\n```\n```python\n# backend/fazenda/api/routers/painel_cowdata_usuarios.py:117,159 (ANTES)\nnovo = Usuario(..., email=(dados.email or \"\").strip() or None)   # sem checagem nenhuma\nu.email = dados.email.strip() or None                             # sem checagem nenhuma\n```\n\n## Impacto\nQualquer usuário autenticado (mesmo operador) podia obter acesso total de dono da plataforma — acesso irrestrito a todos os tenants, Painel CowData completo, dados financeiros e de RH de todas as fazendas-cliente.\n\n## Correção sugerida (já aplicada nesta sessão)\n- `auth.py`: trocar a condição para `eh_email_dono_equivalente(novo_email)`, e dentro dela recusar com 403 qualquer e-mail que não seja literalmente `EMAIL_DONO` (preservando o caminho de auto-atendimento só para o dono original).\n- `painel_cowdata_usuarios.py`: importar `eh_email_dono_equivalente` e recusar com 403 qualquer e-mail dono-equivalente em ambas as rotas (criar e editar).\n- Testes de regressão adicionados em `tests/test_auth_preferencias.py` e `tests/test_painel_cowdata_usuarios.py`.\n\n## Critérios de aceite\n- [ ] Revisar o diff já aplicado em `auth.py` e `painel_cowdata_usuarios.py` nesta sessão.\n- [ ] `pytest tests/test_auth_preferencias.py tests/test_painel_cowdata_usuarios.py tests/test_auth_dono_equivalente.py` passa.\n- [ ] Rodar a suíte completa de testes backend sem regressão.\n- [ ] Confirmar que nenhuma outra rota grava `Usuario.email` sem essa checagem (grep por `.email =` / `email=` em modelos `Usuario`).\n"
+    },
+    {
+      "markdown": "# [Segurança] IDOR crítico: confirmação/desconfirmação de protocolos na Agenda sem checar fazenda\n\n**Labels sugeridas:** `security`, `critical`\n\n## Descrição do problema\n`POST /agenda/realizados` e `DELETE /agenda/realizados/{evento_id}` (backend/fazenda/api/routers/agenda.py) despacham para várias funções que buscam `ProtocoloIatfAplicacao`, `ProtocoloInducaoLancamento`, `ProtocoloSanitarioAplicacao`, `AplicacaoAgendada`, protocolo customizado e \"lida\" — nenhuma delas filtra por `fazenda_id`. Os identificadores (`lancamento_id`, `aplicacao_id`, pares `data_prevista`/`dia`) são inteiros pequenos e sequenciais ou datas previsíveis.\n\n## Evidência\n```python\n# agenda.py:2025-2031\naplicacoes = session.exec(\n    select(ProtocoloIatfAplicacao).where(\n        ProtocoloIatfAplicacao.data_prevista == data_prevista,\n        ProtocoloIatfAplicacao.dia == dia,\n        ProtocoloIatfAplicacao.realizada == False,\n    )\n).all()  # sem fazenda_id\n```\nMesma forma em: agenda.py:1857-1966 (protocolo sanitário / aplicação agendada / vacina pré-parto), rules/protocolo_customizado.py:127-133, rules/lida.py:106-112, e no lado DELETE (agenda.py:2439-2461, 2224-2241, 146-159, 141-160).\n\n## Impacto\nQualquer usuário autenticado de qualquer fazenda-cliente pode confirmar OU reverter tratamento sanitário/reprodutivo de outra fazenda, gravando `Sanidade` falsa referenciando o animal da vítima, consumindo o próprio estoque do atacante, e apagando o registro de conformidade real da vítima.\n\n## Correção sugerida\nReaproveitar o padrão já correto de `central_protocolos.py::_lancamento_ou_404`, que valida posse antes de chamar as mesmas funções `marcar_realizado`/`desmarcar_realizado` — aplicar a mesma pré-validação (ou passar `fazenda_id` para dentro dessas funções e filtrar todas as buscas por ele) em todos os pontos de despacho de `agenda.py`.\n\n## Critérios de aceite\n- [ ] Toda busca dentro de `POST/DELETE /agenda/realizados` (IATF, indução, sanitário, customizado, lida) filtra por `fazenda_id` do chamador antes de agir.\n- [ ] Teste de regressão: usuário da fazenda B não consegue confirmar/desconfirmar protocolo/aplicação pertencente à fazenda A via `POST`/`DELETE /agenda/realizados`.\n- [ ] `GET /protocolo-iatf/concluidos` e `GET /protocolo-inducao-lactacao/concluidos` (agenda.py:2464-2518) também passam a filtrar por fazenda_id (mesmo grupo de causa raiz).\n"
+    },
+    {
+      "markdown": "# [Segurança] Vazamento total de dados multi-tenant via exportação/e-mail do Portal\n\n**Labels sugeridas:** `security`, `critical`\n\n## Descrição do problema\n`POST /portal/exportar` (via `_executar_exportacao`, backend/fazenda/api/routers/portal.py:417-448) monta um ZIP com 10 tabelas (`Animal`, `Servico`, `Parto`, `ControleLeiteiro`, `Estoque`, `MovimentoEstoque`, `Sanidade`, `CompraAnimal`, `VendaAnimal`, `ContaGerencial`) sem NENHUM filtro de `fazenda_id`. `POST /portal/email` com relatório (dre/rmca/custo_litro_leite) chama essas funções como Python puro, sem passar `fazenda_id` — como o parâmetro é `Depends(get_fazenda_atual_id)`, a chamada direta deixa esse argumento como o próprio objeto `Depends(...)`, que `fazenda_id_seguro()` converte para `None`, desligando todo filtro interno.\n\n## Evidência\n```python\n# portal.py:421-427\nquery = select(cfg[\"model\"])\nif cfg[\"campo_data\"] and item.get(\"data_inicio\") and item.get(\"data_fim\"):\n    ...\nlinhas = [row.model_dump(mode=\"json\") for row in session.exec(query).all()]  # sem fazenda_id\n```\n```python\n# portal.py (envio de relatório por e-mail)\nresultado = dre(data_inicio=item[\"data_inicio\"], data_fim=item[\"data_fim\"], centro_custo=None, regime=\"competencia\", session=session)  # fazenda_id nunca passado\n```\n\n## Impacto\nA rota exige só `user.papel == \"admin\"` (403 caso contrário) — ou seja, qualquer admin de QUALQUER fazenda-cliente pode se enviar por e-mail um ZIP/CSV com os dados de todos os outros clientes da plataforma: animais, produção, sanidade, compras/vendas e o livro financeiro completo.\n\n## Correção sugerida\nPassar `fazenda_id` (resolvido via `get_fazenda_id_escrita`/`get_fazenda_atual_id` no handler HTTP) para `_executar_exportacao` e filtrar cada uma das 10 queries por ele; passar `fazenda_id` explicitamente em toda chamada direta a `dre`/`rmca`/`custo_litro_leite` dentro de `portal.py`.\n\n## Critérios de aceite\n- [ ] Toda tabela do `EXPORT_CATALOG` é filtrada por `fazenda_id` do solicitante.\n- [ ] `dre`/`rmca`/`custo_litro_leite` chamados a partir de `portal.py` sempre recebem `fazenda_id` explícito.\n- [ ] Teste de regressão: admin da fazenda B solicita exportação/e-mail e recebe só dados da fazenda B.\n"
+    },
+    {
+      "markdown": "# [Segurança] Importação de planilhas casa/cria registros globalmente por número, sem fazenda_id\n\n**Labels sugeridas:** `security`, `critical`\n\n## Descrição do problema\nQuatro rotas de importação em `backend/fazenda/api/routers/importar.py` buscam `Animal`/`EventoSanitario`/`Doenca` GLOBALMENTE por `numero`/`nome` (sem filtro de fazenda) e, quando ausentes, criam esses registros com `fazenda_id=None`:\n- `POST /importar/animais_cadastro` (487-544) — **crítica**\n- `POST /importar/animais_genealogia` (547-595) — alta\n- `POST /importar/dairycomp` (658-729) — **crítica**\n- `POST /importar/calendario_sanitario` (732-813) — alta\n\nNenhuma das quatro tem dependência de `fazenda_id`/usuário autenticado no próprio handler (a autenticação vem só do gate de módulo no include do router).\n\n## Evidência\n```python\n# importar.py:490 (animais_cadastro) e 664 (dairycomp) — mesmo padrão\nanimal = session.exec(select(Animal).where(Animal.numero == numero)).first()\nif not animal:\n    animal = Animal(numero=numero, ativo=True)   # sem fazenda_id\n```\n\n## Impacto\nNúmeros de animal (e nomes de evento sanitário) são pequenos e comumente reutilizados entre fazendas diferentes. Uma fazenda importando seu próprio rebanho/calendário pode sobrescrever silenciosamente o cadastro de animal, genealogia, data de nascimento ou parto de OUTRA fazenda, ou anexar dados de calendário sanitário à configuração global de outro tenant.\n\n## Correção sugerida\nResolver `fazenda_id` via `get_fazenda_id_escrita` em cada uma das quatro rotas e filtrar toda busca por `numero`/`nome` por essa fazenda antes de decidir entre atualizar ou criar.\n\n## Critérios de aceite\n- [ ] As 4 rotas resolvem e filtram por `fazenda_id` do chamador.\n- [ ] Teste de regressão: importar um CSV com número de animal que já existe em OUTRA fazenda não altera o registro da outra fazenda, cria um novo registro na fazenda do importador.\n"
+    },
+    {
+      "markdown": "# [Segurança] Exclusão em cascata de animal pode apagar histórico de outra fazenda\n\n**Labels sugeridas:** `security`, `critical`\n\n## Descrição do problema\nEm `backend/fazenda/api/routers/exclusoes.py:502-607` (`_alvos`, usado por `POST /exclusoes/confirmar` e `/pendentes/{id}/aprovar`), a busca do `Animal` é corretamente escopada por fazenda, mas as buscas seguintes de `Servico`, `Parto`, `ControleLeiteiro`, `Sanidade` (e `AgendaManual` para retenção de placenta) filtram só por `numero_matriz`, SEM `fazenda_id` — e esses objetos são de fato apagados por `_excluir_alvos_em_ordem`.\n\n## Evidência\n```python\n# exclusoes.py\nservicos = session.exec(select(Servico).where(Servico.numero_matriz == id_)).all()   # sem fazenda_id\npartos = session.exec(select(Parto).where(Parto.numero_matriz == id_)).all()          # sem fazenda_id\n...\nreturn impacto, [animal, *servicos, *partos, *controles, *sanidades, ...]  # depois deletados\n```\n\n## Impacto\nNúmeros de animal são pequenos e reutilizados entre fazendas diferentes (confirmado em comentário do próprio `upload.py`: \"a vaca '18' existe em várias [fazendas]\"). Um admin excluindo seu próprio animal \"464\" também apaga o histórico reprodutivo/produtivo/sanitário do animal \"464\" de OUTRA fazenda, se os números coincidirem — bug disparável em uso normal, não só por má-fé.\n\n## Correção sugerida\nFiltrar `Servico`/`Parto`/`ControleLeiteiro`/`Sanidade`/`AgendaManual` por `fazenda_id` (a mesma fazenda já resolvida para o `Animal`) antes de incluí-los na lista de alvos a excluir.\n\n## Critérios de aceite\n- [ ] Todas as sub-buscas de `_alvos` (tipo \"animal\" e \"parto\") filtram por `fazenda_id`.\n- [ ] Teste de regressão: excluir o animal \"X\" da fazenda A não afeta nenhum registro do animal \"X\" da fazenda B.\n"
+    },
+    {
+      "markdown": "# [Segurança] Alimentação: encerrar dieta e ações relacionadas sem checar fazenda\n\n**Labels sugeridas:** `security`, `critical`\n\n## Descrição do problema\nEm `backend/fazenda/api/routers/alimentacao.py`:\n- `PUT /alimentacao/dietas/{id}/encerrar` (1809-1819) — **crítica**: nenhuma dependência de fazenda; qualquer usuário pode encerrar a dieta ativa de outro tenant.\n- `POST /alimentacao/dietas/{id}/real` (1827-1844) — alta: `dieta_id` referenciado nunca é checado contra a fazenda do chamador.\n- `PUT`/`DELETE /alimentacao/tabela-nutricional/produtos/{id}` (1261-1287) — alta: sem fazenda_id, ao contrário de todas as rotas irmãs do bloco.\n- `GET /alimentacao/dietas/{id}/comparativo` e `apresentacao_dieta` (1761-1879) — média: o cabeçalho da dieta vaza entre fazendas mesmo com os subitens corretamente filtrados.\n\n## Evidência\n```python\n# alimentacao.py:1809-1819\ndieta = session.get(DietaLancamento, dieta_id)\nif not dieta:\n    raise HTTPException(404, ...)\ndieta.data_efetivo_encerramento = dados.data_efetivo_encerramento   # sem checar fazenda_id\n```\n\n## Impacto\nInterrupção da baixa automática de estoque e da apuração de outra fazenda; poluição do comparativo programado-vs-real de outro tenant; renomeação/exclusão do catálogo nutricional de outro tenant.\n\n## Correção sugerida\nAdicionar `fazenda_id: int = Depends(get_fazenda_id_escrita)` a todas as rotas listadas e checar `dieta.fazenda_id == fazenda_id` (ou equivalente para `TabelaNutricionalProduto`) antes de qualquer leitura/escrita.\n\n## Critérios de aceite\n- [ ] As 4 rotas listadas checam posse antes de agir.\n- [ ] Teste de regressão cobrindo cada uma.\n"
+    },
+    {
+      "markdown": "# [Segurança] Webhook do Banco do Brasil (cobrança) não valida o segredo do path\n\n**Labels sugeridas:** `security`, `high`\n\n## Descrição do problema\n`POST /cobranca/webhook/bb/{secret}` (backend/fazenda/api/routers/cobranca.py:102-131) captura `secret` do path mas nunca o compara a nenhum valor configurado — só checa se `BB_CLIENT_ID` está definido. O `status` do payload é confiado diretamente, sem reconfirmação via API do Banco do Brasil.\n\n## Evidência\n```python\nasync def cobranca_webhook_bb(secret: str, request: Request, session=...) -> dict:\n    if not settings.bb_client_id:\n        raise HTTPException(403, \"Banco do Brasil não configurado\")\n    payload = await request.json()\n    if \"txid\" in payload:\n        pix = session.exec(select(CobrancaPix).where(CobrancaPix.txid == payload[\"txid\"])).first()\n        if pix and payload.get(\"status\") in (\"CONCLUIDA\", \"paga\"):\n            pix.status = \"paga\"   # secret nunca comparado, status nunca reconfirmado\n```\nContraste: `zapsign.py:25-28` e `asaas.py:143-185` comparam o segredo e reconfirmam o status via API autenticada antes de mudar qualquer estado.\n\n## Impacto\nQualquer um que descubra/adivinhe essa URL (caminho previsível, sem segredo real) pode marcar boletos/PIX como pagos, sem nunca ter havido pagamento real.\n\n## Correção sugerida\nComparar `secret` contra um valor configurado (`settings.bb_webhook_secret`, a criar se não existir) com `hmac.compare_digest`, e reconfirmar o status via chamada autenticada à API do BB antes de gravar `pix.status = \"paga\"`, no mesmo padrão de `asaas.py`.\n\n## Critérios de aceite\n- [ ] Webhook rejeita requisições sem o segredo correto.\n- [ ] Status só é gravado após reconfirmação via API do BB.\n- [ ] Teste de regressão cobrindo os dois casos.\n"
+    },
+    {
+      "markdown": "# [Segurança] Upload de documentos/fotos: extensão de arquivo não sanitizada (path traversal no Storage) + Content-Type livre\n\n**Labels sugeridas:** `security`, `high`\n\n## Descrição do problema\nEm `backend/fazenda/api/routers/documentos.py:68-97` e `fotos.py:102-132`, a extensão do arquivo é derivada de tudo após o último `.` do nome enviado pelo cliente, sem rejeitar `/` ou `..`, e concatenada direto na URL REST do Supabase Storage (`fazenda/rules/supabase_storage.py:74-75`) sem sanitização — apesar de já existir `nome_seguro_storage()` no mesmo módulo, nunca chamado por esses dois uploads. O mesmo caminho deixa o cliente definir o `Content-Type` salvo, servido depois com `Content-Disposition: inline`.\n\n## Evidência\n```python\nnome_original = file.filename or \"arquivo\"\nextensao = f\".{nome_original.rsplit('.', 1)[-1].lower()}\" if \".\" in nome_original else \"\"\n...\ncaminho = f\"{prefixo_pasta}/{prefixo_nome}{seq:04d}{extensao}\"   # sem sanitização\nenviar_arquivo(caminho, conteudo, ...)\n```\n\n## Impacto\nUm nome de arquivo como `evil.png/../../outra-fazenda/arquivo.pdf` pode escrever/sobrescrever fora do prefixo `fazenda-{id}/...` esperado, potencialmente em outro tenant, dependendo de como o gateway do Supabase Storage trata `..` no path. Um `Content-Type` como `text/html`/`image/svg+xml` servido inline é risco de XSS armazenado se essa rota de download for aberta na mesma origem autenticada.\n\n## Correção sugerida\nChamar `nome_seguro_storage()` (já existente) em ambos os pontos de upload antes de montar o caminho; restringir `Content-Type` salvo a uma allow-list de tipos esperados (PDF, imagens comuns).\n\n## Critérios de aceite\n- [ ] `documentos.py` e `fotos.py` sanitizam a extensão via `nome_seguro_storage()`.\n- [ ] `Content-Type` é validado contra allow-list antes de salvar.\n- [ ] Teste de regressão com nome de arquivo contendo `../`.\n"
+    },
+    {
+      "markdown": "# [Segurança] Padronizar rotas de escrita para usar get_fazenda_id_escrita (padrão sistêmico, ~20 arquivos)\n\n**Labels sugeridas:** `security`, `medium`, `tech-debt`\n\n## Descrição do problema\nDezenas de rotas de CRIAÇÃO usam `Depends(get_fazenda_atual_id)` (dependência de leitura, que tolera `fazenda_id=None` para tokens legados/ambíguos) em vez de `Depends(get_fazenda_id_escrita)` (que recusa com 409 em vez de gravar `fazenda_id=None`). No caso-limite documentado (token sem claim `\"fid\"`, ex.: usuário vinculado a 2+ fazendas que ainda não selecionou uma), isso cria registros órfãos silenciosamente em vez de recusar a escrita — a mesma classe de bug que o próprio código já documenta como causa raiz de um incidente anterior (\"D6 sumindo da Agenda\").\n\n## Evidência (amostra representativa das ~20 ocorrências)\n- `cadastro/animais.py`: criar_animal, criar_raca, criar_grau_sangue\n- `producao.py`: criar_pesagens, criar_qualidade_leite, criar_entrega_leite\n- `reproducao.py`: adicionar_animais_iatf\n- `financeiro.py`: criar_conta_corrente, criar_centro_custo, criar_conta_gerencial, `_crud_nome_ativo_financeiro`\n- `cartao_credito.py`: criar_cartao\n- `cadastro/servicos.py`: criar_metodo_servico, atualizar_metodo_servico\n- `sanidade.py`: criar_calendario, criar_cronograma_manual, registrar_colostragem\n- `cadastro/sanitario.py`: POST /agendamentos-pesagem, /eventos-sanitarios, /exames\n- `cadastro/lida.py`, `cadastro/protocolos_customizados.py`: criar_lida, criar_protocolo_customizado\n- `compra_semen.py`, `compra_animal.py`, `venda_animal.py`\n- `baixas.py`: marcar_a_descartar\n- `movimentacoes.py`: criar_motivo, atualizar_motivo, salvar_parametro_agendamento\n- `lotes.py`: criar_lote, atualizar_lote\n- `safra.py`: criar_safra, atualizar_safra\n- `cadastro/genetica.py`: criar_estoque_semen, atualizar_estoque_semen\n- `alertas_indicador.py`: criar_alerta (o mais sensível: um alerta com fazenda_id=NULL é avaliado sem filtro, agregando dados de todos os tenants no \"valor_atual\" mostrado a um único usuário)\n\n## Impacto\nIndividualmente baixo/médio (requer o caso-limite de token sem fazenda selecionada), mas repetitivo — cada ocorrência é um ponto potencial de dado órfão ou vazamento cross-tenant no caso-limite.\n\n## Correção sugerida\nTrocar `Depends(get_fazenda_atual_id)` por `Depends(get_fazenda_id_escrita)` em cada rota de criação listada. Considerar um teste arquitetural no CI (grep/AST) que falhe se uma rota `POST` nova instanciar um modelo com `fazenda_id=` vindo de uma variável resolvida por `get_fazenda_atual_id`.\n\n## Critérios de aceite\n- [ ] Todas as ocorrências listadas trocadas para `get_fazenda_id_escrita`.\n- [ ] Teste arquitetural adicionado ao CI para prevenir recorrência.\n"
+    },
+    {
+      "markdown": "# [Segurança] IDOR em RH: folha, contratos e pessoas aceitam edição/exclusão cross-tenant com token sem fazenda selecionada\n\n**Labels sugeridas:** `security`, `high`\n\n## Descrição do problema\nEm `rh_folha.py` (17 ocorrências), `rh_contratos.py` (11 ocorrências) e `pessoas.py` (5 ocorrências), as rotas PUT/DELETE/GET-de-anexo usam a checagem `if not obj or (fazenda_id is not None and obj.fazenda_id != fazenda_id): 404`. Quando `fazenda_id` é `None` — estado normal e válido de um token de usuário vinculado a 2+ fazendas que ainda não chamou `/auth/selecionar-fazenda` — a checagem inteira vira `if not obj`, ou seja, a posse não é verificada.\n\n## Evidência\n```python\n# rh_folha.py:535-543 (representativo das 17 ocorrências)\nregistro = session.get(FolhaPagamento, registro_id)\nif not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):\n    raise HTTPException(404, \"Registro de folha não encontrado\")\n```\nRotas afetadas incluem folha de pagamento, guias, férias, 13º, rescisões, vales e comprovantes (rh_folha.py); empreitadas, contratos, diárias, vale-avulso (rh_contratos.py); e edição/exclusão de Pessoa + download/exclusão de anexos RG/CPF/holerite (pessoas.py).\n\n## Impacto\nUm portador de token válido (mas sem fazenda selecionada) pode ler, editar ou excluir folha de pagamento, férias, rescisão, vale, contrato de terceiro, ou baixar/excluir documentos pessoais (RG/CPF/holerite) de QUALQUER fazenda-cliente, só incrementando o id.\n\n## Correção sugerida\nTrocar a checagem tolerante por uma que não abra mão da posse quando `fazenda_id is None` nessas rotas de mutação/download sensível — ex.: usar `get_fazenda_id_escrita` também para leitura de objeto existente nessas rotas específicas (não só criação), já que RH é dado suficientemente sensível para não tolerar o caso-limite.\n\n## Critérios de aceite\n- [ ] As 33 ocorrências (17+11+5) corrigidas para não tolerar `fazenda_id is None` na checagem de posse.\n- [ ] Teste de regressão simulando token sem `\"fid\"` contra objeto de outra fazenda.\n"
+    },
+    {
+      "markdown": "# [Segurança] Catálogo global de touros (genética) editável/excluível por qualquer funcionário\n\n**Labels sugeridas:** `security`, `high`\n\n## Descrição do problema\n`Touro` é deliberadamente um catálogo global (sem `fazenda_id`) usado por todas as fazendas-cliente. As rotas de escrita em `backend/fazenda/api/routers/cadastro/genetica.py:403-509` (`POST/PUT/DELETE /touros...`, `POST /touros/recarregar-catalogo`) não têm nenhum gate de papel além de `exigir_modulo(\"parametros\")` — permissão comum de funcionário, não admin/dono.\n\n## Evidência\n```python\n@router.delete(\"/touros/{touro_id}\")\ndef excluir_touro(touro_id: int, session=...) -> dict:\n    t = session.get(Touro, touro_id)\n    if not t:\n        raise HTTPException(404, \"Touro não encontrado\")\n    session.delete(t)   # sem checagem de papel além de exigir_modulo(\"parametros\")\n```\n\n## Impacto\nQualquer funcionário comum de qualquer fazenda-cliente com o módulo \"parametros\" pode reescrever, excluir ou reimportar em massa o catálogo de touros usado por TODOS os outros clientes da plataforma (usado em ordenação TPI/NM$, sugestões de acasalamento etc.), sem forma de escopar ou desfazer por tenant.\n\n## Correção sugerida\nRestringir as 4 rotas a um papel mais alto — no mínimo `exigir_admin`, idealmente equivalente a `exigir_dono`/CowData, dado que afeta todos os tenants.\n\n## Critérios de aceite\n- [ ] As 4 rotas exigem papel elevado.\n- [ ] Teste de regressão: funcionário comum recebe 403 ao tentar excluir/editar Touro.\n"
+    },
+    {
+      "markdown": "# [Segurança] Vazamento de estoque de sêmen entre fazendas em relatórios\n\n**Labels sugeridas:** `security`, `high`\n\n## Descrição do problema\n`GET /relatorios/manejo` (backend/fazenda/api/routers/relatorios.py:75-82) e `GET /nao-conformidades/` (nao_conformidades.py:61) fazem `select(EstoqueSemen)` sem filtro de `fazenda_id`, expondo `touro_nome`/`codigo`/`central`/`tipo`/`doses` de estoque de sêmen de TODAS as fazendas a qualquer usuário autenticado.\n\n## Evidência\n```python\nsemen = [s.model_dump() for s in session.exec(select(EstoqueSemen)).all()]   # sem fazenda_id\n```\n\n## Impacto\nÉ exatamente a classe de vazamento que `relatorio_acasalamento.py:25-30` já corrigiu e documenta explicitamente como \"informação comercial de genética dos concorrentes\" — a correção não foi replicada nesses dois outros pontos.\n\n## Correção sugerida\nReplicar o filtro de `relatorio_acasalamento.py` (fazenda_id do chamador) nas duas consultas.\n\n## Critérios de aceite\n- [ ] As duas rotas filtram `EstoqueSemen` por `fazenda_id`.\n- [ ] Teste de regressão citando o mesmo padrão de `tests/test_isolamento_relatorios_fornecedor.py`.\n"
+    },
+    {
+      "markdown": "# [Segurança] IDOR em Financeiro: vincular evento sanitário/reprodutivo e recibo por número de lançamento\n\n**Labels sugeridas:** `security`, `high`\n\n## Descrição do problema\n- `POST /financeiro/vincular-evento-sanitario-reprodutivo` (financeiro.py:1684-1699): sem `fazenda_id` algum; qualquer usuário pode vincular `Sanidade`/`ExameResultado`/`Servico` de outro tenant a um `numero_lancamento` à escolha.\n- `GET .../destinatario-recibo` e `POST .../recibo/enviar` (financeiro.py:4158-4207): `numero_lancamento` é sequencial e global (sem filtro por fazenda em `_proximo_numero_lancamento`) e as duas rotas não checam fazenda — vazam nome/e-mail do fornecedor de outro tenant e permitem enviar e-mail (com dados de outro tenant) para destinatário arbitrário.\n- `POST/PUT /financeiro/cartoes` (cartao_credito.py:118-150): aceita `conta_bancaria_id` de outra fazenda sem checar posse, expondo depois dados bancários dela em `pagar_fatura_cartao`.\n\n## Evidência\n```python\nobj = session.get(modelo, item_id)\nif obj:\n    obj.numero_lancamento_vinculado = dados.numero_lancamento   # sem checar fazenda_id\n```\n\n## Impacto\nVazamento de dados financeiros/bancários entre tenants e uso do remetente de e-mail da plataforma para enviar dados de terceiros a um endereço arbitrário.\n\n## Correção sugerida\nAdicionar `fazenda_id: int = Depends(get_fazenda_id_escrita)` (ou leitura segura) e checar posse do objeto antes de agir em cada uma das três rotas.\n\n## Critérios de aceite\n- [ ] As três rotas checam posse antes de ler/escrever.\n- [ ] Teste de regressão para cada uma.\n"
+    },
+    {
+      "markdown": "# [Segurança] Injeção de HTML não escapado em e-mails e no gerador de contrato\n\n**Labels sugeridas:** `security`, `medium`\n\n## Descrição do problema\nCinco pontos interpolam texto de usuário em HTML sem escapar:\n1. `contrato_render.py:14,73` usa `jinja2.Template()` (autoescape OFF por padrão) para renderizar `contrato_cowdata.html`, interpolando `fazenda_nome`/`endereco`/`representante_nome`/`representante_cpf` (cadastráveis, e sobrescrevíveis via query string em `GET /fazendas/{id}/contrato/modelo`) — servido com `Content-Disposition: inline`. O irmão `contrato_equipe_render.py` já usa `Environment(autoescape=select_autoescape([\"html\"]))` corretamente.\n2. `portal.py:286-289` — corpo livre do e-mail do Portal.\n3. `financeiro.py:4197-4200` — `fornecedor_cliente` no e-mail de recibo.\n4. `reproducao.py:720-729` — `diagnostico`/`metodo_diagnostico` (sem validação por enum em `PUT /servicos/{id}`) no e-mail de diagnóstico.\n5. `auth.py:330-335` — `user.nome` no e-mail de redefinição de senha (impacto baixo, majoritariamente self-XSS).\n\n## Evidência\n```python\n# contrato_render.py\nfrom jinja2 import Template\nreturn Template(arquivo.read_text(encoding=\"utf-8\")).render(**contexto)   # autoescape OFF\n\n# portal.py\ncorpo_html = f\"<p>{dados.corpo}</p>\"   # sem escapar\n\n# financeiro.py\ncorpo_html = f\"<p>...({conta.fornecedor_cliente or '—'}, ...)</p>\"   # sem escapar\n```\n\n## Impacto\nHTML/links/imagens podem ser injetados em e-mails enviados pela plataforma a usuários reais (phishing, tracking pixels), e o contrato gerado pode ter sua integridade comprometida por HTML/script injetado nos dados cadastrais da fazenda.\n\n## Correção sugerida\n- `contrato_render.py`: trocar para `Environment(autoescape=select_autoescape([\"html\"]))`, igual ao irmão.\n- Demais 4 pontos: aplicar `html.escape()` (ou equivalente) ao texto de usuário antes de interpolar no HTML do e-mail.\n\n## Critérios de aceite\n- [ ] `contrato_render.py` usa autoescape.\n- [ ] Os 4 pontos de e-mail escapam o texto de usuário.\n- [ ] Teste de regressão confirmando que `<script>`/`<img onerror>` chega escapado ao corpo final.\n"
+    },
+    {
+      "markdown": "# [Segurança] Painel CowData / Cofre de Acesso: revogação de sessão de suporte não é aplicada no middleware\n\n**Labels sugeridas:** `security`, `high`\n\n## Descrição do problema\n`POST /painel-cowdata/cofre/sessoes/{id}/encerrar` (cofre_acesso.py:253-266) só grava `sessao.encerrada_em` no banco e uma linha de auditoria. O token de suporte assinado (emitido em `solicitar_acesso`/`aprovar_pedido`) é validado de forma totalmente stateless — `_validar_token_payload`, `get_current_user` e `_bloquear_modo_suporte` (main.py) nunca consultam `SessaoAcessoSuporte` para saber se a sessão foi encerrada.\n\n## Evidência\ngrep confirma que `SessaoAcessoSuporte` só é referenciado dentro de `cofre_acesso.py` — nunca no caminho de auth/middleware.\n\n## Impacto\nUm token de suporte continua com acesso total (exceto os prefixos já bloqueados) por até 30 minutos mesmo após ser \"encerrado\" manualmente — contradizendo o próprio comentário do modelo (\"pode ser encerrada manualmente antes\"). Um token de suporte vazado ou revogado por suspeita de uso indevido não é efetivamente cortado.\n\n## Correção sugerida\nNo caminho de validação de token (ou em `_bloquear_modo_suporte`), quando o payload carregar `sessao_suporte_id`, consultar `SessaoAcessoSuporte` e rejeitar a requisição se `encerrada_em is not None`.\n\n## Critérios de aceite\n- [ ] Uma sessão de suporte encerrada manualmente deixa de autorizar requisições imediatamente (não só após expirar).\n- [ ] Teste de regressão: encerrar sessão e confirmar que o token correspondente passa a ser rejeitado.\n"
+    },
+    {
+      "markdown": "# [Segurança] Itens diversos de baixa severidade / informativos\n\n**Labels sugeridas:** `security`, `low`\n\n## Descrição do problema (agrupado — cada item é pequeno e independente)\n1. **config.py:9** — `secret_key: str = \"change-me\"` é campo morto (nenhum código lê `settings.secret_key`), mas tem aparência de segredo esquecido.\n2. **telegram.py:688-696** — `GET /telegram/status` é público (sem autenticação) e vaza a allow-list completa de `TELEGRAM_ALLOWED_CHAT_IDS`.\n3. **telegram.py:100-116 + aprovacoes.py:60-77** — um chat do Telegram autorizado mas ausente de `TELEGRAM_CHAT_FAZENDA` gera `LancamentoPendente` com `fazenda_id=None`, visível/acionável por todas as fazendas.\n4. **cofre_acesso.py:206-234** — `aprovar_pedido`/`negar_pedido` não impedem que o mesmo usuário que solicitou acesso de suporte também aprove seu próprio pedido (sem impacto real hoje porque nenhuma fazenda-piloto ativa essa opção).\n5. **chamados.py:70-88** — `PUT /chamados/{id}` não exige papel elevado para fechar um ticket e gravar uma \"resposta\" que deveria representar o suporte oficial.\n6. **pedidos.py (link_rastreio) / farmacia.py (link_bula)** — campos de URL livre sem allow-list de esquema (`javascript:` teoricamente armazenável).\n7. **indicadores.py:313** — `select(Lote)` sem filtro de fazenda, ao contrário das consultas irmãs no mesmo handler.\n8. **baixas.py:73-129** — `marcar_a_descartar` busca `Animal` sem filtro de fazenda quando o token não tem fazenda selecionada.\n\n## Impacto\nIndividualmente baixo (requer configuração incomum, ou vaza só metadado não sensível) — agrupados aqui para não gerar spam de issues triviais.\n\n## Correção sugerida\n- Remover `secret_key` morto (ou dar o mesmo guard de `AUTH_SECRET`).\n- Proteger `GET /telegram/status` com autenticação ou removê-lo.\n- Confirmar cobertura de `TELEGRAM_CHAT_FAZENDA` operacionalmente.\n- Adicionar checagem \"aprovador ≠ solicitante\" em `cofre_acesso.py`.\n- Exigir `exigir_admin` em `PUT /chamados/{id}`.\n- Validar esquema `http(s)://` em `link_rastreio`/`link_bula`.\n- Filtrar `Lote` por fazenda em `indicadores.py`.\n- Usar `get_fazenda_id_escrita` (ou checagem de posse não tolerante) em `marcar_a_descartar`.\n\n## Critérios de aceite\n- [ ] Cada um dos 8 itens tratado e coberto por pelo menos um teste onde aplicável.\n"
+    }
+  ]
+}

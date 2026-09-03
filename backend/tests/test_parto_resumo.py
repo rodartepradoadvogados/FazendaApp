@@ -3,13 +3,27 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from fazenda.rules.parto import eh_natimorto
 from fazenda.rules.parto_resumo import resumo_por_parto
 
 HOJE = date(2026, 8, 22)
 
 
-def _parto(d: date) -> dict:
-    return {"data_parto": d}
+def _parto(
+    d: date,
+    *,
+    tipo_parto: str | None = "Parto normal",
+    numero_cria_1: str | None = None,
+    numero_cria_2: str | None = None,
+    gemelar: bool | None = None,
+) -> dict:
+    return {
+        "data_parto": d,
+        "tipo_parto": tipo_parto,
+        "numero_cria_1": numero_cria_1,
+        "numero_cria_2": numero_cria_2,
+        "gemelar": gemelar,
+    }
 
 
 def _controle(d: date, kg: float) -> dict:
@@ -155,3 +169,75 @@ class TestReproducaoNaLactacao:
         r = resumo_por_parto([_parto(p1), _parto(p2)], [], [], servicos, hoje=HOJE)
         assert r[0]["tentativas_emprenhar"] is None
         assert r[0]["del_concepcao"] is None
+
+
+class TestEhNatimorto:
+    def test_reconhece_natimorto(self):
+        assert eh_natimorto({"tipo_parto": "Natimorto"}) is True
+
+    def test_ignora_caixa_e_acento(self):
+        assert eh_natimorto({"tipo_parto": "  NATIMORTO  "}) is True
+
+    def test_parto_normal_nao_e_natimorto(self):
+        assert eh_natimorto({"tipo_parto": "Parto normal"}) is False
+
+    def test_aborto_nao_e_natimorto(self):
+        assert eh_natimorto({"tipo_parto": "Aborto"}) is False
+
+    def test_sem_tipo_parto_nao_e_natimorto(self):
+        assert eh_natimorto({"tipo_parto": None}) is False
+
+
+class TestCriaDoParto:
+    """Campo `cria` de `resumo_por_parto` — número da cria daquele parto
+    específico (não só do último). Aborto nunca aparece aqui: já é filtrado
+    antes de `resumo_por_parto` receber a lista (ver `eh_parto_produtivo`,
+    aplicado pelo chamador em `animais.py`), então não há cenário de aborto
+    a testar nesta função."""
+
+    def test_parto_normal_com_cria_numerada(self):
+        p1 = date(2025, 1, 1)
+        r = resumo_por_parto([_parto(p1, numero_cria_1="1234")], [], [], [], hoje=HOJE)
+        assert r[0]["cria"] == "1234"
+
+    def test_parto_normal_sem_numero_lancado_mostra_sn(self):
+        p1 = date(2025, 1, 1)
+        r = resumo_por_parto([_parto(p1, numero_cria_1=None)], [], [], [], hoje=HOJE)
+        assert r[0]["cria"] == "S/N"
+
+    def test_natimorto_fica_vazio_mesmo_sem_numero(self):
+        p1 = date(2025, 1, 1)
+        r = resumo_por_parto([_parto(p1, tipo_parto="Natimorto")], [], [], [], hoje=HOJE)
+        assert r[0]["cria"] == ""
+
+    def test_natimorto_fica_vazio_mesmo_com_numero_lancado_por_engano(self):
+        p1 = date(2025, 1, 1)
+        r = resumo_por_parto(
+            [_parto(p1, tipo_parto="Natimorto", numero_cria_1="9999")], [], [], [], hoje=HOJE,
+        )
+        assert r[0]["cria"] == ""
+
+    def test_gemelar_com_as_duas_crias_numeradas(self):
+        p1 = date(2025, 1, 1)
+        r = resumo_por_parto(
+            [_parto(p1, gemelar=True, numero_cria_1="111", numero_cria_2="222")], [], [], [], hoje=HOJE,
+        )
+        assert r[0]["cria"] == "111 / 222"
+
+    def test_gemelar_com_uma_cria_numerada_e_outra_nao(self):
+        p1 = date(2025, 1, 1)
+        r = resumo_por_parto(
+            [_parto(p1, gemelar=True, numero_cria_1="111", numero_cria_2=None)], [], [], [], hoje=HOJE,
+        )
+        assert r[0]["cria"] == "111 / S/N"
+
+    def test_ultimo_item_da_lista_e_o_ultimo_parto_para_ultima_cria(self):
+        """`ultima_cria` da Ficha (em animais.py) é derivado do último item
+        desta lista — aqui confirmamos que o último item corresponde mesmo ao
+        parto mais recente, já que a lista preserva a ordem de entrada
+        (mais antigo primeiro)."""
+        p1, p2 = date(2024, 1, 1), date(2025, 1, 1)
+        r = resumo_por_parto(
+            [_parto(p1, numero_cria_1="111"), _parto(p2, numero_cria_1="222")], [], [], [], hoje=HOJE,
+        )
+        assert r[-1]["cria"] == "222"

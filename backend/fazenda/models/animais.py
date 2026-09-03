@@ -151,6 +151,17 @@ class Lote(SQLModel, table=True):
     permitir_fora_da_dieta: bool = False
     permitir_sem_estoque: bool = False
 
+    # ---- Como a dieta deste lote afeta o Estoque (proposta aceita pelo
+    # proprietário: "automática pela dieta" / "pelo consumo real" / "sem
+    # baixa"). Valores válidos: "automatica" (baixa dia a dia pelo PLANO —
+    # `_dar_baixa_automatica`), "consumo_real" (só baixa quando alguém lança
+    # o consumo de verdade em "Consumo diário e sobra" — `lancar_consumo`) ou
+    # "sem_baixa" (a dieta é só plano/receita, nunca mexe em estoque).
+    # "consumo_real" nasce padrão porque é o ÚNICO mecanismo que já funciona
+    # hoje de ponta a ponta — todo lote existente antes desta coluna continua
+    # se comportando exatamente como antes.
+    modo_baixa_estoque: str = "consumo_real"
+
     # ---- Critérios de seleção de animais (cumulativos/E lógico) — usados na
     # prévia de "quantos animais atendem" e, na sequência, nas sugestões
     # automáticas de movimentação entre lotes. Cada campo None = não filtra.
@@ -285,6 +296,11 @@ class Raca(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
+    # Nota didática curta (ex.: "Zebuína indiana, referência mundial em
+    # leite entre as raças zebuínas — a base leiteira do Girolando.") — mostrada
+    # como subtítulo no seletor da ficha do animal, para quem não conhece a
+    # raça de cor não precisar sair da tela para pesquisar.
+    nota: Optional[str] = None
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
@@ -305,6 +321,10 @@ class GrauSangue(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
+    # Nota didática curta explicando a sigla/fração (ex.: "PO = Puro de
+    # Origem — animal registrado, sem cruzamento.") — mesma finalidade da
+    # nota de Raça, acima.
+    nota: Optional[str] = None
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     fracao_holandes: Optional[float] = None
     ativo: bool = True

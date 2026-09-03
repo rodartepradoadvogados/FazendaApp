@@ -44,7 +44,16 @@ router = APIRouter()
 # validação de tipos passou a consultar a tabela TipoPessoa (ver
 # seed_tipos_pessoa/_validar_tipos), que é editável em tempo de execução pelo
 # botão "+" do Cadastro de Pessoas.
-TIPOS_PESSOA = ["Funcionário", "Veterinário", "Zootecnista", "Diarista", "Prestador de serviços", "Inseminador"]
+TIPOS_PESSOA = [
+    "Funcionário", "Veterinário", "Zootecnista", "Diarista", "Prestador de serviços", "Inseminador",
+    # Administrador/Contador (ago/2026): não são cargo de RH no sentido usual,
+    # mas entram no mesmo vocabulário de TipoPessoa para poder marcar quem
+    # exerce esse papel na fazenda — usePessoasAtivas (frontend) usa isso para
+    # decidir quem aparece nas listas de "Responsável" de um lançamento
+    # (só entra quem tiver ao menos um papel funcional: Funcionário,
+    # Veterinário, Zootecnista, Administrador ou Contador).
+    "Administrador", "Contador",
+]
 
 # "Empreiteiro" já nasce cadastrado — usado pelo módulo de Empreita (Financeiro
 # > Ações > Folha de Pagamento).
@@ -79,6 +88,7 @@ def seed_pessoa_robo_milknews(session: Session, fazenda_id: int | None = None) -
     de sistema a essa identidade, como qualquer outra pessoa (get-or-create;
     roda sempre, ao contrário de seed_pessoas, que só semeia tabela vazia)."""
     seed_tipos_pessoa(session, fazenda_id=fazenda_id)
+    seed_tipos_papel_administrativo(session, fazenda_id=fazenda_id)
     query_pessoa = select(Pessoa).where(Pessoa.nome == NOME_PESSOA_ROBO_MILKNEWS)
     if fazenda_id is not None:
         query_pessoa = query_pessoa.where(Pessoa.fazenda_id == fazenda_id)
@@ -118,18 +128,79 @@ def seed_tipos_pessoa(session: Session, fazenda_id: int | None = None) -> None:
     session.commit()
 
 
+def _seed_tipos_get_or_create(session: Session, nomes: list[str], fazenda_id: int | None = None) -> None:
+    """Get-or-create para uma lista de nomes de TipoPessoa — roda SEMPRE,
+    nunca gated por SeedFlag (ao contrário de seed_tipos_pessoa). Base comum
+    de seed_tipo_geral e seed_tipos_papel_administrativo: qualquer tipo que
+    precise existir em toda fazenda, inclusive nas que já passaram pelo seed
+    original antes desse tipo ser criado, usa este helper em vez de entrar
+    em SEED_TIPOS_PESSOA (que só é aplicada uma vez por fazenda)."""
+    algum_criado = False
+    for nome in nomes:
+        query = select(TipoPessoa).where(TipoPessoa.nome == nome)
+        if fazenda_id is not None:
+            query = query.where(TipoPessoa.fazenda_id == fazenda_id)
+        if not session.exec(query).first():
+            session.add(TipoPessoa(nome=nome, fazenda_id=fazenda_id))
+            algum_criado = True
+    if algum_criado:
+        session.commit()
+
+
 def seed_tipo_geral(session: Session, fazenda_id: int | None = None) -> None:
     """Garante a existência do tipo "Geral" para a `fazenda_id` informada —
     usado para liberar acesso a Portal > Comunicação > Delegar tarefa (#515) a
     pessoas sem um papel técnico específico. Get-or-create (roda sempre, como
     seed_pessoa_robo_milknews), ao contrário de seed_tipos_pessoa, que só
     semeia uma vez por fazenda."""
-    query = select(TipoPessoa).where(TipoPessoa.nome == "Geral")
+    _seed_tipos_get_or_create(session, ["Geral"], fazenda_id=fazenda_id)
+
+
+# Administrador/Contador entraram em TIPOS_PESSOA em ago/2026 (ver comentário
+# acima) — mas seed_tipos_pessoa só semeia os tipos padrão de uma fazenda UMA
+# VEZ (SeedFlag). Toda fazenda cujo seed já tinha rodado antes dessa data
+# nunca ganhou essas duas linhas em TipoPessoa e passou a receber "Tipo
+# inválido" ao tentar marcar alguém como Administrador/Contador — mesmo
+# problema que seed_tipo_geral já resolve para "Geral" (#515).
+TIPOS_PAPEL_ADMINISTRATIVO_BACKFILL = ["Administrador", "Contador"]
+
+
+def seed_tipos_papel_administrativo(session: Session, fazenda_id: int | None = None) -> None:
+    """Garante a existência de "Administrador"/"Contador" para a `fazenda_id`
+    informada — get-or-create, roda SEMPRE (mesmo padrão de seed_tipo_geral),
+    ao contrário de seed_tipos_pessoa. Backfill transparente para fazendas
+    antigas que nunca receberam esses dois tipos (ver comentário acima de
+    TIPOS_PAPEL_ADMINISTRATIVO_BACKFILL) — sem precisar de migração de dados
+    nem script manual: a primeira chamada a qualquer rota que já semeava tipo
+    de pessoa (_validar_tipos, listar_tipos_pessoa, provisionamento de
+    fazenda nova) resolve sozinha."""
+    _seed_tipos_get_or_create(session, TIPOS_PAPEL_ADMINISTRATIVO_BACKFILL, fazenda_id=fazenda_id)
+
+
+def backfill_tipos_orfaos(session: Session, fazenda_id: int | None = None) -> None:
+    """Get-or-create de qualquer valor de `Pessoa.tipo` (CSV) que já existe
+    em produção para esta fazenda mas nunca virou uma linha `TipoPessoa`
+    correspondente — dado legado de antes da validação estrita (import, SQL
+    manual, ou um tipo que existia e foi removido/renomeado depois de já
+    gravado em alguém). Caso real: "Sócio" gravado em Pessoa.tipo sem NUNCA
+    ter sido um TipoPessoa desta fazenda — qualquer tentativa de salvar essa
+    pessoa de novo (mesmo editando um campo sem relação nenhuma com tipo)
+    falhava com "Tipo inválido", porque o formulário reenvia os tipos atuais
+    dela junto, e um deles já não validava mais. Diferente do backfill de
+    Administrador/Contador acima (que cria um tipo NOVO que ninguém ainda
+    usa, para o checkbox existir) — este cura o inverso: um tipo que já está
+    em uso mas nunca foi cadastrado como válido."""
+    query = select(Pessoa)
     if fazenda_id is not None:
-        query = query.where(TipoPessoa.fazenda_id == fazenda_id)
-    if not session.exec(query).first():
-        session.add(TipoPessoa(nome="Geral", fazenda_id=fazenda_id))
-        session.commit()
+        query = query.where(Pessoa.fazenda_id == fazenda_id)
+    nomes_em_uso = {
+        nome.strip()
+        for p in session.exec(query).all()
+        for nome in (p.tipo or "").split(",")
+        if nome.strip()
+    }
+    if nomes_em_uso:
+        _seed_tipos_get_or_create(session, sorted(nomes_em_uso), fazenda_id=fazenda_id)
 
 
 
@@ -224,8 +295,17 @@ def _validar_tipos(session: Session, tipos: list[str], fazenda_id: int | None = 
     (cadastrável via botão "+" no Cadastro de Pessoas), não mais de uma
     lista fixa, escopados pela fazenda atual. Autossemeia se a fazenda ainda
     não tiver nenhum tipo (ex.: banco de teste isolado que não passou pelo
-    seed do lifespan)."""
+    seed do lifespan). Também backfilla Administrador/Contador (ver
+    seed_tipos_papel_administrativo) — sem isso, uma fazenda cujo
+    seed_tipos_pessoa já rodou antes de ago/2026 (SeedFlag já marcada) nunca
+    ganharia esses dois tipos e ficaria travada em "Tipo inválido" para
+    sempre, mesmo autossemeando. E cura tipos órfãos já em uso (ver
+    backfill_tipos_orfaos) — ex.: "Sócio", gravado em produção sem nunca ter
+    sido um TipoPessoa válido, travava até reeditar a própria pessoa que já
+    tinha esse tipo."""
     seed_tipos_pessoa(session, fazenda_id=fazenda_id)
+    seed_tipos_papel_administrativo(session, fazenda_id=fazenda_id)
+    backfill_tipos_orfaos(session, fazenda_id=fazenda_id)
     query = select(TipoPessoa).where(TipoPessoa.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query = query.where(TipoPessoa.fazenda_id == fazenda_id)
@@ -246,6 +326,8 @@ def listar_tipos_pessoa(
 ) -> list[dict]:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     seed_tipos_pessoa(session, fazenda_id=fazenda_id)
+    seed_tipos_papel_administrativo(session, fazenda_id=fazenda_id)
+    backfill_tipos_orfaos(session, fazenda_id=fazenda_id)
     query = select(TipoPessoa)
     if fazenda_id is not None:
         query = query.where(TipoPessoa.fazenda_id == fazenda_id)
@@ -255,9 +337,8 @@ def listar_tipos_pessoa(
 @router.post("/pessoas/tipos")
 def criar_tipo_pessoa(
     dados: TipoPessoaIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
@@ -280,7 +361,7 @@ def atualizar_tipo_pessoa(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     obj = session.get(TipoPessoa, tipo_id)
-    if not obj or (fazenda_id is not None and obj.fazenda_id != fazenda_id):
+    if not obj or (obj.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Tipo não encontrado")
     nome = dados.nome.strip()
     if not nome:
@@ -310,9 +391,9 @@ def listar_pessoas(
 
 @router.post("/pessoas")
 def criar_pessoa(
-    dados: PessoaIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: PessoaIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    tipo_csv = _validar_tipos(session, dados.tipos, fazenda_id=fazenda_id_seguro(fazenda_id))
+    tipo_csv = _validar_tipos(session, dados.tipos, fazenda_id=fazenda_id)
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
     telefones = _normalizar_lista_contato(dados.telefones)
@@ -333,7 +414,7 @@ def atualizar_pessoa(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     p = session.get(Pessoa, pessoa_id)
-    if not p or (fazenda_id is not None and p.fazenda_id != fazenda_id):
+    if not p or (p.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     tipo_csv = _validar_tipos(session, dados.tipos, fazenda_id=fazenda_id)
     for campo, valor in dados.model_dump(exclude={"tipos", "telefones", "emails"}).items():
@@ -377,7 +458,7 @@ def excluir_pessoa(
     excluir_item_estoque em estoque.py)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     p = session.get(Pessoa, pessoa_id)
-    if not p or (fazenda_id is not None and p.fazenda_id != fazenda_id):
+    if not p or (p.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     vinculos = []
     for modelo, rotulo in _TABELAS_COM_PESSOA_ID:
@@ -434,15 +515,14 @@ async def anexar_arquivo_pessoa(
     pessoa_id: int, file: UploadFile, categoria: str = Form(...),
     data_validade: Optional[date] = Form(None),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Anexa um documento (RG, CPF, contrato, holerite, comprovante...) a uma
     pessoa já cadastrada. Se `data_validade` for informada, a Agenda passa a
     alertar antes do vencimento — hoje só para "Contrato de trabalho por
     prazo determinado" (ver fazenda/rules/agenda_engine.py)."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, pessoa_id)
-    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
+    if not pessoa or (pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if categoria not in CATEGORIAS_PESSOA_ANEXO:
         raise HTTPException(status_code=400, detail=f"categoria deve ser uma de: {', '.join(CATEGORIAS_PESSOA_ANEXO)}")
@@ -483,7 +563,7 @@ def listar_anexos_pessoa(
 ) -> list[dict]:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, pessoa_id)
-    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
+    if not pessoa or (pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     anexos = session.exec(select(PessoaAnexo).where(PessoaAnexo.pessoa_id == pessoa_id)).all()
     return [
@@ -501,7 +581,7 @@ def baixar_anexo_pessoa(
 ) -> Response:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     anexo = session.get(PessoaAnexo, anexo_id)
-    if not anexo or (fazenda_id is not None and anexo.fazenda_id != fazenda_id):
+    if not anexo or (anexo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Anexo não encontrado")
     try:
         conteudo = baixar_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
@@ -520,7 +600,7 @@ def excluir_anexo_pessoa(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     anexo = session.get(PessoaAnexo, anexo_id)
-    if not anexo or (fazenda_id is not None and anexo.fazenda_id != fazenda_id):
+    if not anexo or (anexo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Anexo não encontrado")
     if anexo.caminho_storage:
         try:

@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Users, AlertTriangle, UserPlus, Check, Pencil, X, Newspaper, UserSquare2 } from "lucide-react";
 import Link from "next/link";
-import { fetchUsuarios, criarUsuario, atualizarUsuario, getUsuario, ehDono, fetchPessoas } from "@/lib/api";
+import { fetchUsuarios, criarUsuario, atualizarUsuario, getUsuario, ehDono, ehAdmin, fetchPessoas } from "@/lib/api";
 import { RelatorioAcessos, AuditoriaAtividade } from "@/components/AuditoriaAcessoView";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
@@ -199,8 +199,11 @@ export default function UsuariosPage() {
         </div>
       </div>
 
-      {ehDono() && <div className="mt-4"><RelatorioAcessos defaultAberta={false} /></div>}
-      {ehDono() && <div className="mt-4"><AuditoriaAtividade defaultAberta={false} /></div>}
+      {/* Dono-equivalente OU administrador da fazenda atual — ampliado de
+          "só dono" a pedido explícito do usuário (mesmo critério do backend,
+          ver exigir_admin_ou_dono em fazenda/auth.py). */}
+      {(ehDono() || ehAdmin()) && <div className="mt-4"><RelatorioAcessos defaultAberta={false} /></div>}
+      {(ehDono() || ehAdmin()) && <div className="mt-4"><AuditoriaAtividade defaultAberta={false} /></div>}
 
       {editando && (
         <EditarUsuarioModal

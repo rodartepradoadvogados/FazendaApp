@@ -23,7 +23,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import Usuario, exigir_admin, get_fazenda_atual_id
+from fazenda.auth import Usuario, exigir_admin, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import ParametroManualFazenda, SugestaoManualFazenda
 from fazenda.rules.auditoria import fazenda_id_seguro
@@ -107,11 +107,11 @@ def listar_sugestoes_manual(
 @router.post("/sugestoes")
 def criar_sugestao_manual(
     dados: SugestaoManualFazendaIn, session: Session = Depends(get_session),
-    _: Usuario = Depends(exigir_admin), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: Usuario = Depends(exigir_admin), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     if not dados.texto.strip():
         raise HTTPException(status_code=400, detail="Informe o texto da sugestão")
-    s = SugestaoManualFazenda(**dados.model_dump(), fazenda_id=fazenda_id_seguro(fazenda_id))
+    s = SugestaoManualFazenda(**dados.model_dump(), fazenda_id=fazenda_id)
     session.add(s)
     session.commit()
     session.refresh(s)

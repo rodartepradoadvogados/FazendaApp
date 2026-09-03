@@ -19,7 +19,7 @@ from fazenda.models import (
     Doenca, Estoque, EventoRealizado,
     EventoSanitario, ExameDefinicao, ExameResultado, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque,
     Parto, Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
-    ProtocoloSanitarioLancamento, QualidadeLeite, Sanidade, Usuario,
+    ProtocoloSanitarioLancamento, ProtocoloSanitarioLote, QualidadeLeite, Sanidade, Usuario,
 )
 from fazenda.api.routers.baixas import ADescartarIn, marcar_a_descartar
 from fazenda.api.routers.cadastro import GATILHOS_EVENTO
@@ -34,6 +34,7 @@ from fazenda.rules.estoque_baixa import (
 )
 from fazenda.rules.eventos_sanitarios import ROTULOS_GATILHO, _datas_gatilho
 from fazenda.rules.farmacia import resumo_principios
+from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 from fazenda.rules.parto import eh_parto_produtivo
 from fazenda.rules.unidades import unidades_compativeis
 from fazenda.rules.visibilidade import visivel
@@ -211,6 +212,10 @@ class ItemAplicacaoIn(BaseModel):
     # apresentação (marca/tamanho) do mesmo princípio no estoque, o front manda
     # o id do item escolhido para abater do recipiente certo.
     estoque_id: int | None = None
+    # "Qual lote/frasco de compra?" (Fase G, 01/09/2026) — dentro do MESMO
+    # item de estoque escolhido acima, quando há mais de um lote em aberto.
+    # Sem isso, a baixa cai em FIFO automático (lote mais antigo primeiro).
+    lote_id: int | None = None
 
 
 class AplicacaoIn(BaseModel):
@@ -328,7 +333,7 @@ def registrar_aplicacao(
                 session, item=estoque_item, quantidade=item.quantidade, unidade=item.unidade, data=dados.data_aplicacao,
                 fazenda_id=fazenda_id, observacao=f"Aplicação em {numero} — Sanidade",
                 usuario_id=usuario_id_seguro(user), origem_tipo="sanidade", origem_id=sanidade.id,
-                produto=item.produto,
+                produto=item.produto, lote_id=item.lote_id,
             ))
 
     session.commit()
@@ -338,7 +343,7 @@ def registrar_aplicacao(
 def _ajustar_estoque_por_aplicacao(
     session: Session, produto: str | None, dose: float | None, unidade: str | None,
     fazenda_id: int | None, sinal: int, observacao: str, origem_id: int | None = None,
-    estoque_id: int | None = None,
+    estoque_id: int | None = None, lote_id: int | None = None,
 ) -> list[str]:
     """Devolve (sinal=+1) ou baixa (sinal=-1) `dose` de `produto` no estoque —
     usado para estornar/reaplicar a baixa quando uma aplicação é editada ou
@@ -351,7 +356,9 @@ def _ajustar_estoque_por_aplicacao(
     usou — sem ele, `_resolver_item_estoque` cai no fallback por nome e, se
     houver mais de um frasco cadastrado com o mesmo produto (comum em
     Farmácia — lotes/validades diferentes), pode devolver/rebaixar num frasco
-    diferente do que a aplicação de fato consumiu."""
+    diferente do que a aplicação de fato consumiu. `lote_id` (Fase G,
+    01/09/2026) é o mesmo princípio, um nível abaixo: o lote/frasco de compra
+    específico que a baixa original consumiu dentro desse item."""
     if not produto or dose is None or not unidade:
         return []
     estoque_item = _resolver_item_estoque(session, fazenda_id=fazenda_id, produto=produto, estoque_id=estoque_id)
@@ -359,13 +366,13 @@ def _ajustar_estoque_por_aplicacao(
     return fn(
         session, item=estoque_item, quantidade=dose, unidade=unidade, data=date.today(),
         fazenda_id=fazenda_id, observacao=observacao, origem_tipo="sanidade", origem_id=origem_id,
-        produto=produto,
+        produto=produto, lote_id=lote_id,
     )
 
 
-def _frasco_da_ultima_aplicacao(session: Session, sanidade_id: int) -> int | None:
-    """`estoque_id` do frasco que a baixa mais recente desta Sanidade de fato
-    usou (lido do próprio rastro em MovimentoEstoque, que `estoque_baixa.
+def _frasco_da_ultima_aplicacao(session: Session, sanidade_id: int) -> tuple[int | None, int | None]:
+    """(`estoque_id`, `lote_id`) que a baixa mais recente desta Sanidade de
+    fato usou (lido do próprio rastro em MovimentoEstoque, que `estoque_baixa.
     movimentar` grava — ver a nota em `_ajustar_estoque_por_aplicacao`).
     "Mais recente" porque uma aplicação pode já ter sido editada antes: cada
     edição grava um novo par estorno/rebaixa com o mesmo origem_id."""
@@ -375,7 +382,7 @@ def _frasco_da_ultima_aplicacao(session: Session, sanidade_id: int) -> int | Non
             MovimentoEstoque.movimento == "Aplicação",
         ).order_by(MovimentoEstoque.id.desc())
     ).first()
-    return mov.estoque_id if mov else None
+    return (mov.estoque_id, mov.lote_id) if mov else (None, None)
 
 
 class EditarAplicacaoIn(BaseModel):
@@ -404,7 +411,7 @@ def editar_aplicacao(
     fecha o desvio óbvio de chamar o endpoint direto sem passar pela tela."""
     s = session.get(Sanidade, aplicacao_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
+    if not s or (s.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Aplicação não encontrada")
 
     campos = dados.model_dump(exclude_unset=True)
@@ -428,10 +435,11 @@ def editar_aplicacao(
     mexe_estoque = any(c in campos for c in ("produto", "dose", "unidade"))
     if mexe_estoque:
         produto_antigo = s.produto
-        estoque_id_antigo = _frasco_da_ultima_aplicacao(session, s.id)
+        estoque_id_antigo, lote_id_antigo = _frasco_da_ultima_aplicacao(session, s.id)
         _ajustar_estoque_por_aplicacao(
             session, produto_antigo, s.dose, s.unidade, fazenda_id, +1,
             f"Estorno por edição da aplicação #{s.id} — Sanidade", origem_id=s.id, estoque_id=estoque_id_antigo,
+            lote_id=lote_id_antigo,
         )
 
     for campo, valor in campos.items():
@@ -446,9 +454,11 @@ def editar_aplicacao(
         # válido pro produto novo, resolve por nome mesmo (comportamento de
         # sempre).
         estoque_id_novo = estoque_id_antigo if s.produto == produto_antigo else None
+        lote_id_novo = lote_id_antigo if s.produto == produto_antigo else None
         avisos.extend(_ajustar_estoque_por_aplicacao(
             session, s.produto, s.dose, s.unidade, fazenda_id, -1,
             f"Aplicação editada #{s.id} — Sanidade", origem_id=s.id, estoque_id=estoque_id_novo,
+            lote_id=lote_id_novo,
         ))
 
     session.commit()
@@ -472,12 +482,13 @@ def excluir_aplicacao(
     _ajustar_estoque_por_aplicacao."""
     s = session.get(Sanidade, aplicacao_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
+    if not s or (s.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Aplicação não encontrada")
+    estoque_id_excluida, lote_id_excluida = _frasco_da_ultima_aplicacao(session, s.id)
     _ajustar_estoque_por_aplicacao(
         session, s.produto, s.dose, s.unidade, fazenda_id, +1,
         f"Estorno por exclusão da aplicação #{s.id} — Sanidade", origem_id=s.id,
-        estoque_id=_frasco_da_ultima_aplicacao(session, s.id),
+        estoque_id=estoque_id_excluida, lote_id=lote_id_excluida,
     )
     session.delete(s)
     session.commit()
@@ -498,7 +509,7 @@ def marcar_cura_aplicacao(
     (não um protocolo multi-dia). Alimenta o relatório Taxa de cura."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     s = session.get(Sanidade, aplicacao_id)
-    if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
+    if not s or (s.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Aplicação não encontrada")
     s.curada = dados.curada
     session.add(s)
@@ -775,7 +786,7 @@ def _marcar_calendario_realizado(session: Session, c: CalendarioSanitario) -> No
 
 @router.post("/calendario")
 def criar_calendario(
-    dados: CalendarioSanitarioIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: CalendarioSanitarioIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     _validar_calendario(dados, session)
     c = CalendarioSanitario(**dados.model_dump(exclude={"realizado"}), fazenda_id=fazenda_id)
@@ -801,7 +812,7 @@ def atualizar_calendario(
 ) -> dict:
     c = session.get(CalendarioSanitario, calendario_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
+    if not c or (c.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
     _validar_calendario(dados, session)
     for campo, valor in dados.model_dump(exclude={"realizado"}).items():
@@ -823,7 +834,7 @@ def excluir_calendario(
     """Exclui uma regra do calendário sanitário (e suas ocorrências somem da Agenda)."""
     c = session.get(CalendarioSanitario, calendario_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
+    if not c or (c.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
     session.delete(c)
     session.commit()
@@ -902,7 +913,7 @@ def criar_cronograma_manual(
     uma regra existente com usa_cronograma=True — nunca um cronograma solto."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     calendario = session.get(CalendarioSanitario, dados.calendario_sanitario_id)
-    if not calendario or (fazenda_id is not None and calendario.fazenda_id != fazenda_id):
+    if not calendario or (calendario.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
     if not calendario.usa_cronograma:
         raise HTTPException(status_code=400, detail="Esta regra não está marcada para usar cronograma sanitário — ative em Regras cadastradas antes de criar um cronograma.")
@@ -1179,7 +1190,8 @@ def listar_resultados_exame(
 ) -> list[dict]:
     """Relatório de resultados de exames (positivo/negativo/indefinido ou
     numérico) lançados via calendário sanitário preventivo — ver
-    cadastrar_preventivo. Só leitura, para acompanhamento."""
+    cadastrar_preventivo. Editar/excluir um resultado individual são as
+    rotas abaixo (PUT/DELETE via /exclusoes)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     query = select(ExameResultado).order_by(ExameResultado.data_exame.desc(), ExameResultado.id.desc())
     if fazenda_id is not None:
@@ -1199,6 +1211,63 @@ def listar_resultados_exame(
         d["evento_sanitario_nome"] = eventos.get(r.evento_sanitario_id)
         saida.append(d)
     return saida
+
+
+class EditarResultadoExameIn(BaseModel):
+    data_exame: date | None = None
+    resultado: str | None = None
+    valor_numerico: float | None = None
+    veterinario: str | None = None
+    observacao: str | None = None
+
+
+@router.put("/exames/resultados/{resultado_id}")
+def editar_resultado_exame(
+    resultado_id: int, dados: EditarResultadoExameIn,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Corrige o diagnóstico/valor de um exame preventivo já lançado — antes
+    desta rota, o relatório era só leitura e o único jeito de corrigir um
+    resultado errado era apagar e relançar manualmente o calendário inteiro.
+    Se o resultado mudar de/para "positivo", ajusta "A descartar" do animal
+    do mesmo jeito que o lançamento original faz (ver cadastrar_preventivo)
+    — nunca deixa a marcação automática dessincronizada do diagnóstico que a
+    gerou."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    r = session.get(ExameResultado, resultado_id)
+    if not r or (r.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Resultado de exame não encontrado")
+
+    campos = dados.model_dump(exclude_unset=True)
+    if campos.get("resultado") is not None and campos["resultado"] not in RESULTADOS_EXAME:
+        raise HTTPException(status_code=400, detail=f"Resultado inválido (use: {', '.join(RESULTADOS_EXAME)})")
+
+    resultado_anterior = r.resultado
+    for campo, valor in campos.items():
+        setattr(r, campo, valor)
+    if "valor_numerico" in campos or "resultado" in campos:
+        exame_def = session.get(ExameDefinicao, r.exame_definicao_id) if r.exame_definicao_id else None
+        r.banda = _banda_numerica(exame_def, r.valor_numerico) if r.valor_numerico is not None else None
+    session.add(r)
+    session.commit()
+
+    if r.resultado != resultado_anterior and (r.resultado == "positivo" or resultado_anterior == "positivo"):
+        ev = session.get(EventoSanitario, r.evento_sanitario_id)
+        marcar_a_descartar(
+            ADescartarIn(
+                animais=[r.numero_matriz],
+                descartar=(r.resultado == "positivo"),
+                observacao=f"Exame {ev.nome}: positivo" if ev and r.resultado == "positivo" else None,
+            ),
+            session=session,
+            fazenda_id=fazenda_id,
+        )
+
+    session.refresh(r)
+    eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
+    d = r.model_dump()
+    d["evento_sanitario_nome"] = eventos.get(r.evento_sanitario_id)
+    return d
 
 
 # ---------------------------------------------------------------------------
@@ -1342,10 +1411,30 @@ def lancar_protocolo(
     lancamentos_criados = []
     avisos: list[str] = []
     pulados: list[str] = []
+    # Cabeçalho do lote (ProtocoloSanitarioLote) — criado uma única vez para
+    # esta chamada, na hora do primeiro animal de fato novo (uma chamada só
+    # com animais já lançados — puro retry — não deve deixar um lote vazio
+    # para trás). É o que dá ao Sanitário a mesma grade dia×animal com
+    # marcar/desfazer/cancelar/encerrar que as outras 4 famílias já têm na
+    # Central de Protocolos (ver ProtocoloSanitarioLote e central_protocolos.py).
+    lote: ProtocoloSanitarioLote | None = None
+    dia_final_etapas = max(e.dia for e in etapas)
     for numero in numeros:
         if numero in numeros_existentes:
             pulados.append(numero)
             continue
+        if lote is None:
+            lote = ProtocoloSanitarioLote(
+                protocolo_id=dados.protocolo_id,
+                nome_protocolo=gerar_nome_lancamento(
+                    protocolo.nome, dados.data_inicio, protocolo.dia_inicial, dia_final_etapas,
+                ),
+                data_inicio=dados.data_inicio, responsavel=dados.responsavel, observacao=dados.observacao,
+                usuario_id=usuario_id_seguro(user), fazenda_id=fazenda_id,
+            )
+            session.add(lote)
+            session.commit()
+            session.refresh(lote)
         del_no_caso = None
         ccs_ultima = None
         recidiva = None
@@ -1381,6 +1470,7 @@ def lancar_protocolo(
                         break
         lancamento = ProtocoloSanitarioLancamento(
             protocolo_id=dados.protocolo_id, numero_matriz=numero, data_inicio=dados.data_inicio,
+            lote_id=lote.id,
             responsavel=dados.responsavel, observacao=dados.observacao,
             classificacao_mastite=dados.classificacao_mastite,
             grau_mastite=dados.grau_mastite, agente=dados.agente,
@@ -1397,6 +1487,7 @@ def lancar_protocolo(
             data_prevista = dados.data_inicio + timedelta(days=etapa.dia - protocolo.dia_inicial)
             session.add(ProtocoloSanitarioAplicacao(
                 lancamento_id=lancamento.id, etapa_id=etapa.id, data_prevista=data_prevista,
+                dia=etapa.dia, numero_matriz=numero,
                 produto=produto_por_etapa.get(etapa.id), fazenda_id=fazenda_id,
             ))
         session.commit()
@@ -1460,7 +1551,7 @@ class MarcarCuraIn(BaseModel):
 def _marcar_cura_protocolo(lancamento_id: int, curada: bool, session: Session, fazenda_id: int | None) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     lanc = session.get(ProtocoloSanitarioLancamento, lancamento_id)
-    if not lanc or (fazenda_id is not None and lanc.fazenda_id != fazenda_id):
+    if not lanc or (lanc.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Lançamento de protocolo sanitário não encontrado")
     lanc.curada = curada
     session.add(lanc)
@@ -1570,11 +1661,10 @@ def registrar_colostragem(
     dados: ColostragemIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Grava (ou atualiza) o registro de colostragem/teste de sangue de uma
     cria — uma linha por animal, chamada pela calculadora de Parto/nascimento."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     query_animal = select(Animal).where(Animal.numero == dados.numero_animal)
     if fazenda_id is not None:
         query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)

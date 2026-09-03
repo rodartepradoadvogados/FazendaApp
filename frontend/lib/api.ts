@@ -57,7 +57,10 @@ export function mensagemErroApi(detail: unknown): string | null {
  * `catch (e) { setErro(e.message) }` não muda em nada.
  */
 /** O formato do `detail` que as travas devolvem no 409. */
-type DetalheBloqueio = { motivo?: string | null; confirmavel?: boolean };
+type DetalheBloqueio = {
+  motivo?: string | null; confirmavel?: boolean; erro?: string | null;
+  secagem_anterior?: { id: number; data_secagem: string; motivo: string } | null;
+};
 
 export class ErroApi extends Error {
   status: number;
@@ -79,6 +82,13 @@ export class ErroApi extends Error {
   /** True quando reenviar com `forcar: true` destrava (bloqueio limítrofe, não erro grave). */
   get confirmavel(): boolean {
     return !!this.bloqueio?.confirmavel;
+  }
+  /** A secagem que já fechou a lactação, quando o bloqueio é
+   * "sem_lactacao_aberta" no lançamento de Secagem (ver `POST
+   * /producao/secagem`) — a tela usa isto pra oferecer "substituir a data
+   * desta secagem" em vez de só mostrar a mensagem de erro. */
+  get secagemAnterior(): { id: number; data_secagem: string; motivo: string } | null {
+    return this.bloqueio?.erro === "sem_lactacao_aberta" ? (this.bloqueio?.secagem_anterior ?? null) : null;
   }
 }
 
@@ -1089,6 +1099,22 @@ function netError(e: unknown): Error {
   return e instanceof Error ? e : new Error(String(e));
 }
 
+// Mesma origem de erro que netError (TypeError = "Failed to fetch"), mas para
+// chamadas de processamento pesado (OCR de documento, leitura de XML) onde a
+// causa típica é o proxy/gateway derrubando a conexão por demora, não a API
+// estar de fato fora do ar — a mensagem genérica de netError ("verifique se o
+// backend está no ar / CORS") é enganosa aqui e assustava o usuário mesmo com
+// o salvamento manual funcionando normalmente em seguida.
+function netErrorProcessamento(e: unknown, oQue: string): Error {
+  if (e instanceof TypeError) {
+    return new Error(
+      `A leitura automática ${oQue} demorou demais e a conexão caiu no meio do caminho. ` +
+        `Nada foi lançado por causa disso — pode preencher os campos manualmente ou tentar de novo.`
+    );
+  }
+  return e instanceof Error ? e : new Error(String(e));
+}
+
 // Verifica se o backend responde. Usado pelo indicador de status.
 export async function checkHealth(): Promise<boolean> {
   try {
@@ -1109,7 +1135,14 @@ export async function fetchAgenda(data?: string, dias?: number) {
   return res.json();
 }
 
-export type MedicamentoIatf = { produto: string; estoque_id?: number | null; dose?: number | null; unidade?: string | null; via?: string | null };
+export type MedicamentoIatf = {
+  produto: string; estoque_id?: number | null;
+  // "de qual lote/frasco de COMPRA?" (Fase G) — só usado hoje pelo protocolo
+  // Sanitário na Central (ver DetalheCentralProtocolo.dias[].hormonios[].opcoes[].lotes);
+  // IATF/Indução ainda ignoram este campo no backend.
+  lote_id?: number | null;
+  dose?: number | null; unidade?: string | null; via?: string | null;
+};
 // Cronograma sanitário (ver fazenda/rules/cronograma_sanitario.py) + overrides
 // de aplicação agendada — cada campo só é lido pelo prefixo de evento_id
 // correspondente no backend (agenda.py::RealizadoIn), ignorado nos demais.
@@ -2062,6 +2095,20 @@ export async function fetchGuiasFolhaEncargo(): Promise<GuiaFolhaEncargo[]> {
   if (!res.ok) throw new Error(`Guias de FGTS/DCTF error: ${res.status}`);
   return res.json();
 }
+export async function atualizarGuiaFolhaEncargo(
+  guiaId: number, dados: GuiaFolhaEncargoDados,
+): Promise<GuiaFolhaEncargo & { conta_id: number | null }> {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/guias/${guiaId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar guia de FGTS/DCTF"); }
+  return res.json();
+}
+export async function excluirGuiaFolhaEncargo(guiaId: number) {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/guias/${guiaId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir guia de FGTS/DCTF"); }
+  return res.json();
+}
 
 // ── Folha de pagamento unificada (funcionário + empreita + contrato + diária + férias/13º) ──
 export type LinhaFolhaUnificada = {
@@ -2287,7 +2334,7 @@ export async function registrarPagamentoDiaria(diariaId: number, dados: {
   data_pagamento: string; valor: number; observacao?: string;
   // Conta bancária de onde sai o pagamento — OPCIONAL (ver _resolver_conta_corrente no backend).
   conta_corrente_id?: number | null;
-}) {
+}): Promise<{ numero_lancamento_gerado: string } & Record<string, any>> {
   const res = await authFetch(`${API}/cadastro/diarias/${diariaId}/pagamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -2687,6 +2734,22 @@ export async function atualizarAnimalFicha(numero: string, dados: Record<string,
   return res.json();
 }
 
+// Corrige o número/brinco de um animal (01/09/2026) — só admin do tenant
+// (backend: Depends(exigir_admin)); a Ficha do Animal reforça isso com um
+// cadeado que precisa ser destravado antes de mostrar o campo.
+export async function renumerarAnimal(numeroAtual: string, novoNumero: string) {
+  const res = await authFetch(`${API}/cadastro/animais/${numeroAtual}/renumerar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ novo_numero: novoNumero }),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(mensagemErroApi(d.detail) || "Erro ao renumerar animal");
+    err.status = res.status;
+    throw err;
+  }
+  return res.json() as Promise<{ numero_antigo: string; numero_novo: string; tabelas_afetadas: string[] }>;
+}
+
 // Fêmeas da fazenda com pelo menos 1 parto registrado — matrizes possíveis
 // para a sugestão/autocomplete do campo "Número da mãe" na ficha do animal
 // (CadastroAnimalForm). O backend valida a compatibilidade de verdade ao
@@ -3009,14 +3072,14 @@ export async function fetchRacas() {
   if (!res.ok) throw new Error(`Raças error: ${res.status}`);
   return res.json();
 }
-export async function criarRaca(dados: { nome: string; ativo?: boolean }) {
+export async function criarRaca(dados: { nome: string; nota?: string | null; ativo?: boolean }) {
   const res = await authFetch(`${API}/cadastro/racas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar raça"); }
   return res.json();
 }
-export async function atualizarRaca(id: number, dados: { nome: string; ativo: boolean }) {
+export async function atualizarRaca(id: number, dados: { nome: string; nota?: string | null; ativo: boolean }) {
   const res = await authFetch(`${API}/cadastro/racas/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -3099,20 +3162,34 @@ export const criarUnidadeMedidaEmbalagemEstoque = apiUnidadesMedidaEmbalagemEsto
 export const atualizarUnidadeMedidaEmbalagemEstoque = apiUnidadesMedidaEmbalagemEstoque.atualizar;
 export const excluirUnidadeMedidaEmbalagemEstoque = apiUnidadesMedidaEmbalagemEstoque.excluir;
 
+// Laboratório / Categoria (medicamento) / Classificação do medicamento —
+// catálogos globais cadastrados no Painel CowData, visíveis automaticamente
+// aqui (ver rules/visibilidade.py::visivel(), global_compartilhado=True em
+// _crud_nome_ativo). Sem `excluir`: só o Painel CowData cria/edita a linha
+// global; o tenant só consome no seletor.
+const apiLaboratorios = criarApiCadastroSimples("laboratorios", "Laboratório");
+export const fetchLaboratoriosCadastro = apiLaboratorios.fetch;
+
+const apiCategoriasMedicamento = criarApiCadastroSimples("categorias-medicamento", "Categoria (medicamento)");
+export const fetchCategoriasMedicamentoCadastro = apiCategoriasMedicamento.fetch;
+
+const apiClassificacoesMedicamento = criarApiCadastroSimples("classificacoes-medicamento", "Classificação do medicamento");
+export const fetchClassificacoesMedicamentoCadastro = apiClassificacoesMedicamento.fetch;
+
 // ── Graus de sangue (Configurações > Cadastro) ──
 export async function fetchGrausSangue() {
   const res = await authFetch(`${API}/cadastro/graus-sangue`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Graus de sangue error: ${res.status}`);
   return res.json();
 }
-export async function criarGrauSangue(dados: { nome: string; fracao_holandes?: number | null; ativo?: boolean }) {
+export async function criarGrauSangue(dados: { nome: string; fracao_holandes?: number | null; nota?: string | null; ativo?: boolean }) {
   const res = await authFetch(`${API}/cadastro/graus-sangue`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar grau de sangue"); }
   return res.json();
 }
-export async function atualizarGrauSangue(id: number, dados: { nome: string; fracao_holandes?: number | null; ativo: boolean }) {
+export async function atualizarGrauSangue(id: number, dados: { nome: string; fracao_holandes?: number | null; nota?: string | null; ativo: boolean }) {
   const res = await authFetch(`${API}/cadastro/graus-sangue/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -3448,7 +3525,7 @@ export async function fetchUnidadesCompativeis(produto: string) {
 
 export async function criarAplicacaoSanidade(dados: {
   data_aplicacao: string; animais: string[]; responsavel?: string; observacao?: string;
-  itens: { produto: string; via?: string; quantidade: number; unidade: string; estoque_id?: number | null }[];
+  itens: { produto: string; via?: string; quantidade: number; unidade: string; estoque_id?: number | null; lote_id?: number | null }[];
   aplicado?: boolean;
 }) {
   const res = await authFetch(`${API}/sanidade/aplicacoes`, {
@@ -3480,6 +3557,22 @@ export async function marcarCuraAplicacao(id: number, curada: boolean) {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ curada }),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao marcar cura"); }
+  return res.json();
+}
+
+export async function confirmarLactacaoInducao(
+  lancamentoId: number, numeroMatriz: string, entrouEmLactacao: boolean, dataInicio?: string,
+) {
+  // Resposta ao card "Confirmar início de lactação" da Agenda (indução de
+  // lactação concluída sem lactação aberta — ver agenda.py::
+  // eventos_confirmar_lactacao_inducao). "Não" não grava nada no backend
+  // além do ack; quem tira o card da Agenda é sempre o
+  // marcarEventoRealizado chamado em seguida pelo handler, igual à cura.
+  const res = await authFetch(`${API}/producao/inducao-lactacao/${lancamentoId}/${encodeURIComponent(numeroMatriz)}/confirmar`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ entrou_em_lactacao: entrouEmLactacao, data_inicio: dataInicio || undefined }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao confirmar início de lactação"); }
   return res.json();
 }
 
@@ -3642,6 +3735,16 @@ export async function fetchResultadosExame(filtros?: { eventoSanitarioId?: numbe
   if (!res.ok) throw new Error(`Resultados de exame error: ${res.status}`);
   return res.json() as Promise<ExameResultado[]>;
 }
+export async function atualizarResultadoExame(id: number, dados: {
+  data_exame?: string; resultado?: "positivo" | "negativo" | "indefinido" | null;
+  valor_numerico?: number | null; veterinario?: string | null; observacao?: string | null;
+}) {
+  const res = await authFetch(`${API}/sanidade/exames/resultados/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar resultado do exame"); }
+  return res.json() as Promise<ExameResultado>;
+}
 
 // Classificações de medicamento (para cadastrar/protocolar por classificação).
 export const CLASSIFICACOES_MEDICAMENTO = ["Antimicrobiano", "Anti-inflamatório", "Antibiótico", "Antiparasitário", "Vacina", "Hormônio", "Outro"];
@@ -3716,7 +3819,32 @@ export async function excluirAgendamentoPesagem(id: number) {
 // ── Protocolo sanitário (cadastro + lançamento) ──
 // criterio_tipo: "medicamento" (produto = item de estoque), "principio_ativo"
 // ou "classificacao" (produto = o valor do critério; medicamento escolhido no lançamento).
-export type ProtocoloEtapa = { dia: number; criterio_tipo?: string; produto: string; dosagem: number; unidade: string; via?: string | null; observacao?: string | null };
+export type ProtocoloEtapa = {
+  dia: number; criterio_tipo?: string; produto: string; dosagem: number; unidade: string;
+  via?: string | null; observacao?: string | null;
+  // Onda "Protocolo à Mostra" — "fixa" (padrão, é o legado inteiro): `dosagem`
+  // é a dose pronta. "por_peso": `dosagem` é a dose A CADA `dose_referencia_kg`
+  // de peso vivo do animal — ver rules.dose_protocolo no backend.
+  modo_dose?: "fixa" | "por_peso"; dose_referencia_kg?: number | null;
+};
+
+/** "2 mL" (fixa) ou "2 mL a cada 15 kg PV" (por peso) — a mesma fórmula
+ * sempre exibida como texto, nunca escondida atrás de um número calculado
+ * sozinho. Usada em toda tela que lista etapas de protocolo sanitário
+ * (cadastro, lançamento, Central de Protocolos, Agenda). */
+export function formatarDoseEtapa(e: Pick<ProtocoloEtapa, "dosagem" | "unidade" | "modo_dose" | "dose_referencia_kg">): string {
+  if (e.modo_dose === "por_peso" && e.dose_referencia_kg) {
+    return `${e.dosagem}${e.unidade ? ` ${e.unidade}` : ""} a cada ${e.dose_referencia_kg}kg PV`;
+  }
+  return `${e.dosagem}${e.unidade ? ` ${e.unidade}` : ""}`;
+}
+
+/** Dose calculada para um animal de `pesoKg`, quando a etapa é "por_peso".
+ * null quando a etapa é dose fixa (nada a calcular) ou falta o peso. */
+export function calcularDoseEtapa(e: Pick<ProtocoloEtapa, "dosagem" | "modo_dose" | "dose_referencia_kg">, pesoKg: number | null | undefined): number | null {
+  if (e.modo_dose !== "por_peso" || !e.dose_referencia_kg || !pesoKg) return null;
+  return Math.round((e.dosagem * (pesoKg / e.dose_referencia_kg)) * 10) / 10;
+}
 export async function fetchProtocolosSanitarios() {
   const res = await authFetch(`${API}/cadastro/protocolos-sanitarios`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Protocolos sanitários error: ${res.status}`);
@@ -4056,10 +4184,17 @@ export type RelatorioMigracaoDesmembramento = {
   alimento_id: number; alimento_nome: string | null;
   produtos: { id: number; nome: string; quantidade: number | null; unidade: string | null }[];
   tem_alimento_nutricional: boolean;
+  // Fase P1: qual dos `produtos` acima (se algum) já foi escolhido
+  // deliberadamente como o item que recebe a baixa automática — null significa
+  // que ninguém escolheu ainda, e o sistema segue na ordem arbitrária de hoje.
+  estoque_preferido_id: number | null;
 };
 export type RelatorioMigracaoDivergenciaNome = {
   alimento_id: number; alimento_nome: string; estoque_id: number; estoque_nome: string;
   quantidade_laudos_pelo_nome_atual: number;
+  // Fase P1: quantos desses laudos já estão ligados por id (imunes a um
+  // futuro rename do Alimento) — informativo, não muda nenhuma resolução.
+  quantidade_laudos_pelo_id: number;
 };
 export type RelatorioMigracaoIngredienteNaoResolvivel = {
   ingrediente: string; classificacao: "resolve_0" | "ambiguo"; motivo: string;
@@ -4083,6 +4218,30 @@ export async function fetchRelatorioMigracaoAlimentacao(): Promise<RelatorioMigr
   return res.json();
 }
 
+// Fase P1 — as duas únicas ações que a aba "Conferência" ganha (o resto da
+// aba continua somente leitura): escolher qual item de Estoque recebe a
+// baixa automática de um Alimento com 2+ candidatos, e ligar um item de
+// Estoque direto a uma CategoriaAlimento, sem precisar de um Alimento no meio.
+export async function atualizarEstoquePreferidoAlimento(alimentoId: number, estoqueId: number | null): Promise<Alimento> {
+  const res = await authFetch(`${API}/alimentacao/alimentos/${alimentoId}/estoque-preferido`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ estoque_id: estoqueId }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao definir o item preferido"); }
+  return res.json();
+}
+// Nome diferente de `atualizarCategoriaEstoque` (acima, Cadastro > Estoque >
+// Categoria — texto livre, sem relação nenhuma) DE PROPÓSITO: esta aqui grava
+// `Estoque.categoria_alimento_id`, o vínculo novo da Fase P1 com o cadastro de
+// CategoriaAlimento (o mesmo de Configurações > Cadastro > Alimentação >
+// Categorias) — duas colunas, dois conceitos, dois endpoints diferentes.
+export async function atualizarCategoriaAlimentoEstoque(estoqueId: number, categoriaAlimentoId: number | null) {
+  const res = await authFetch(`${API}/alimentacao/estoque/${estoqueId}/categoria`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ categoria_alimento_id: categoriaAlimentoId }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao definir a categoria do item de estoque"); }
+  return res.json();
+}
+
 // ── Lançamento de dieta (Lançamentos > Alimentação) ──
 export async function fetchAlimentosPadrao() {
   const res = await authFetch(`${API}/alimentacao/alimentos-padrao`, { cache: "no-store" });
@@ -4092,13 +4251,22 @@ export async function fetchAlimentosPadrao() {
 export async function fetchTabelaNutricional() {
   const res = await authFetch(`${API}/alimentacao/tabela-nutricional`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Tabela nutricional error: ${res.status}`);
-  return res.json() as Promise<{ alimentos: string[]; produto_ids: number[]; linhas: string[][] }>;
+  return res.json() as Promise<{ alimentos: string[]; produto_ids: number[]; estoque_ids: (number | null)[]; linhas: string[][] }>;
 }
-export async function criarProdutoTabelaNutricional(nome: string) {
+export async function criarProdutoTabelaNutricional(dados: { nome?: string; estoque_id?: number }) {
   const res = await authFetch(`${API}/alimentacao/tabela-nutricional/produtos`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }),
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar produto"); }
+  return res.json();
+}
+export type GerarComposicaoResposta = {
+  criado: boolean; alimento_nutricional_id: number;
+  convertidos: Record<string, number>; nao_convertidos: Record<string, string>;
+};
+export async function gerarComposicaoDeTabelaNutricional(produtoId: number): Promise<GerarComposicaoResposta> {
+  const res = await authFetch(`${API}/alimentacao/tabela-nutricional/produtos/${produtoId}/gerar-composicao`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao gerar composição"); }
   return res.json();
 }
 export async function renomearProdutoTabelaNutricional(id: number, nome: string) {
@@ -4179,7 +4347,7 @@ export async function criarAnaliseBromatologica(dados: {
 export async function criarDieta(dados: {
   lote: number; responsavel?: string; data_abertura: string; data_prevista_encerramento?: string; observacao?: string;
   base_quantidade?: string; leite_bezerros_kg_dia?: number | null;
-  itens: { alimento: string; quantidade: number; unidade: string; base?: string; ms_pct?: number | null }[]; encerrar_anterior?: boolean;
+  itens: { alimento: string; quantidade: number; unidade: string; base?: string; ms_pct?: number | null; base_quantidade?: string | null }[]; encerrar_anterior?: boolean;
 }) {
   const res = await authFetch(`${API}/alimentacao/dietas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -4193,7 +4361,10 @@ export type ContextoDieta = {
   ultima_dieta: {
     data_abertura: string; data_prevista_encerramento: string | null; responsavel: string | null;
     base_quantidade: string | null; leite_bezerros_kg_dia: number | null; leite_por_bezerro_kg_dia: number | null;
-    itens: { alimento: string; unidade: string; total_dia: number; por_cabeca: number | null }[];
+    // `total_dia` só é `null` no caso extremo de um item com override
+    // "por cabeça" num lote sem nenhum animal ativo (não há efetivo para
+    // multiplicar e chegar no total do lote) — ver `_totais_item` no backend.
+    itens: { alimento: string; unidade: string; total_dia: number | null; por_cabeca: number | null }[];
   } | null;
 };
 export async function fetchContextoDieta(lote: number) {
@@ -4204,7 +4375,10 @@ export async function fetchContextoDieta(lote: number) {
 export type ApresentacaoDieta = {
   lote: number; nome: string | null; qtd_animais: number; data_abertura: string; data_prevista_encerramento: string | null;
   num_tratos: number; vagao_kg_dia: number; vagao_kg_trato: number;
-  itens: { alimento: string; unidade: string; total_dia: number; por_cabeca: number | null; total_trato: number }[];
+  // `total_dia`/`total_trato` só ficam `null` no caso extremo de um item com
+  // override "por cabeça" num lote sem nenhum animal ativo — ver
+  // `_totais_item` no backend.
+  itens: { alimento: string; unidade: string; total_dia: number | null; por_cabeca: number | null; total_trato: number | null }[];
 };
 export async function fetchApresentacaoDieta(id: number) {
   const res = await authFetch(`${API}/alimentacao/dietas/${id}/apresentacao`, { cache: "no-store" });
@@ -4244,10 +4418,19 @@ export type PrincipioFarmacia = {
   id: number; nome: string; ativo: boolean; categoria: string | null; categoria_software: string | null;
   uso_principal: string | null; justificativa: string | null;
   eh_biologico: boolean; doenca_id: number | null; unidade_base: string | null; unidade_apresentacao: string | null;
-  estoque_minimo_apresentacoes: number; total_base: number | null; total_apresentacoes: number;
+  estoque_minimo_apresentacoes: number; estoque_minimo_base: number | null; minimo_modo: "base" | "apresentacoes";
+  precisa_reconciliar_minimo: boolean;
+  total_base: number | null; total_apresentacoes: number;
   qtd_marcas_estoque: number; abaixo_minimo: boolean; precisa_inicializar: boolean; itens: ApresentacaoFarmacia[];
 };
 export type MarcaComercial = { id: number; principio_ativo_id: number; nome_comercial: string; laboratorio: string | null; ativo: boolean };
+export async function definirEstoqueMinimoFarmacia(principioId: number, estoqueMinimoBase: number) {
+  const res = await authFetch(`${API}/farmacia/principios/${principioId}/estoque-minimo`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ estoque_minimo_base: estoqueMinimoBase }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao definir estoque mínimo"); }
+  return res.json() as Promise<PrincipioFarmacia>;
+}
 export async function fetchFarmaciaPrincipios() {
   const res = await authFetch(`${API}/farmacia/principios`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Farmácia error: ${res.status}`);
@@ -4292,12 +4475,63 @@ export async function fetchApresentacoesFarmacia(params: { principio_ativo_id?: 
   if (!res.ok) throw new Error(`Apresentações error: ${res.status}`);
   return res.json() as Promise<ApresentacaoFarmacia[]>;
 }
+// Lotes/frascos de compra (Fase G, 01/09/2026) — pedido do usuário:
+// "registrar/comprar um medicamento escolhendo um tamanho de frasco/
+// embalagem específico com sua própria dosagem, rastrear múltiplos lotes de
+// tamanhos diferentes do mesmo medicamento em estoque, e — ao aplicar —
+// escolher explicitamente de qual frasco/lote a dose saiu, ou, se nenhum for
+// escolhido, baixar automaticamente do lote mais antigo primeiro (FIFO)."
+export type LoteEstoque = {
+  id: number; estoque_id: number; numero_lote: string | null; data_compra: string;
+  quantidade_comprada: number; quantidade_restante: number; valor_unitario: number | null;
+  observacao: string | null; ativo: boolean;
+};
+export async function fetchLotesEstoque(estoqueId: number) {
+  const res = await authFetch(`${API}/estoque/${estoqueId}/lotes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Lotes error: ${res.status}`);
+  return res.json() as Promise<LoteEstoque[]>;
+}
+export async function abrirLoteEstoque(estoqueId: number, dados: {
+  quantidade: number; data_compra: string; valor_unitario?: number | null; numero_lote?: string | null; observacao?: string | null;
+}) {
+  const res = await authFetch(`${API}/estoque/${estoqueId}/lotes`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao abrir lote"); }
+  return res.json() as Promise<LoteEstoque & { avisos: string[] }>;
+}
+
 export async function inicializarEstoqueFarmacia(estoqueId: number, dados: { quantidade: number; data?: string; observacao?: string }) {
   const res = await authFetch(`${API}/farmacia/estoque/${estoqueId}/inicializar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao inicializar estoque"); }
   return res.json();
+}
+
+// Mesclagem de itens de Estoque (01/09/2026) — "o tenant alinhar com o
+// padrão CowData sem perder histórico/estoque": junta um item digitado pela
+// fazenda com o item-fantasma que o fan-out do Painel CowData criou (ou
+// dois itens duplicados quaisquer do mesmo princípio ativo), preservando
+// MovimentoEstoque, lotes/frascos abertos e saldo físico do(s) perdedor(es)
+// — ver POST /estoque/{sobrevivente_id}/mesclar.
+export type SugestaoMesclagem = {
+  principio_ativo_id: number; principio_ativo_nome: string; sobrevivente_sugerido_id: number;
+  itens: { id: number; nome: string; quantidade: number | null; medicamento_comercial_id?: number | null }[];
+};
+export async function fetchSugestoesMesclagem() {
+  const res = await authFetch(`${API}/estoque/sugestoes-mesclagem`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Sugestões de mesclagem error: ${res.status}`);
+  return res.json() as Promise<SugestaoMesclagem[]>;
+}
+export async function mesclarItensEstoque(sobreviventeId: number, perdedorIds: number[]) {
+  const res = await authFetch(`${API}/estoque/${sobreviventeId}/mesclar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ perdedor_ids: perdedorIds }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao mesclar itens"); }
+  return res.json() as Promise<{
+    sobrevivente: Record<string, any>; mesclados: number; estoque_transferido: number; alinhou_padrao_cowdata: boolean;
+  }>;
 }
 
 // ── Indicações terapêuticas (substituto inteligente: princípio ↔ doença ↔ prioridade) ──
@@ -4396,6 +4630,156 @@ export async function atualizarVinculoIndicacao(id: number, dados: { prioridade:
   }>;
 }
 
+// ── Painel CowData > Farmácia — cadastro CENTRAL do catálogo padrão
+// (categoria/doença, princípio ativo, medicamento) que fica visível a TODAS
+// as fazendas-cliente (catálogo global) e, no caso de medicamento, também
+// gera automaticamente o item de Estoque em cada uma (inativo/não-estocável,
+// pra o tenant ativar se quiser) — ver backend/fazenda/api/routers/
+// painel_cowdata_farmacia.py.
+export type CategoriaFarmaciaCowData = {
+  id: number; nome: string; tipo: string; descricao: string | null; ativo: boolean; fazenda_id: number | null;
+};
+export type PrincipioFarmaciaCowData = Record<string, any> & { id: number; nome: string };
+export type MedicamentoFarmaciaCowData = Record<string, any> & {
+  id: number; nome_comercial: string; principio_ativo_ids: number[]; doenca_ids: number[];
+  fan_out_fazendas: number; fan_out_total_fazendas: number;
+};
+
+export async function fetchCategoriasFarmaciaCowData() {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/categorias`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Categorias error: ${res.status}`);
+  return res.json() as Promise<CategoriaFarmaciaCowData[]>;
+}
+export async function criarCategoriaFarmaciaCowData(dados: { nome: string; tipo: string; descricao?: string | null; ativo?: boolean }) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/categorias`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar categoria"); }
+  return res.json() as Promise<CategoriaFarmaciaCowData>;
+}
+export async function atualizarCategoriaFarmaciaCowData(id: number, dados: { nome: string; tipo: string; descricao?: string | null; ativo?: boolean }) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/categorias/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar categoria"); }
+  return res.json() as Promise<CategoriaFarmaciaCowData>;
+}
+export async function fetchPrincipiosFarmaciaCowData() {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/principios`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Princípios error: ${res.status}`);
+  return res.json() as Promise<PrincipioFarmaciaCowData[]>;
+}
+export async function criarPrincipioFarmaciaCowData(dados: { nome: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/principios`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar princípio ativo"); }
+  return res.json() as Promise<PrincipioFarmaciaCowData>;
+}
+export async function atualizarPrincipioFarmaciaCowData(id: number, dados: Record<string, any>) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/principios/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar princípio ativo"); }
+  return res.json() as Promise<PrincipioFarmaciaCowData>;
+}
+export async function excluirPrincipioFarmaciaCowData(id: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/principios/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir princípio ativo"); }
+  return res.json() as Promise<{ excluido: boolean; impacto: string[] }>;
+}
+export async function fetchMedicamentosFarmaciaCowData() {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Medicamentos error: ${res.status}`);
+  return res.json() as Promise<MedicamentoFarmaciaCowData[]>;
+}
+export async function fetchMedicamentoGlobalDetalhe(id: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos/${id}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Detalhe do medicamento error: ${res.status}`); }
+  return res.json() as Promise<Record<string, any>>;
+}
+export async function criarMedicamentoFarmaciaCowData(dados: Record<string, any>) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar medicamento"); }
+  return res.json() as Promise<MedicamentoFarmaciaCowData & { fan_out: { criados: number; ja_existiam: number } }>;
+}
+export async function atualizarMedicamentoFarmaciaCowData(id: number, dados: Record<string, any>) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar medicamento"); }
+  return res.json() as Promise<MedicamentoFarmaciaCowData>;
+}
+export async function refazerFanoutMedicamentoFarmaciaCowData(id: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos/${id}/fanout`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao propagar medicamento"); }
+  return res.json() as Promise<{ criados: number; ja_existiam: number }>;
+}
+
+// Laboratório / Categoria (medicamento) / Classificação do medicamento —
+// cadastro central no Painel CowData (mesmo padrão "nome + ativo" de
+// Princípios ativos acima, ver painel_cowdata_farmacia.py::_crud_catalogo_global).
+function criarApiCatalogoFarmaciaCowData(rota: string, rotulo: string) {
+  return {
+    fetch: async (): Promise<ItemCadastroSimples[]> => {
+      const res = await authFetch(`${API}/painel-cowdata/farmacia/${rota}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`${rotulo} error: ${res.status}`);
+      return res.json();
+    },
+    criar: async (dados: { nome: string; ativo?: boolean }): Promise<ItemCadastroSimples> => {
+      const res = await authFetch(`${API}/painel-cowdata/farmacia/${rota}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro ao criar ${rotulo.toLowerCase()}`); }
+      return res.json();
+    },
+    atualizar: async (id: number, dados: { nome: string; ativo: boolean }): Promise<ItemCadastroSimples> => {
+      const res = await authFetch(`${API}/painel-cowdata/farmacia/${rota}/${id}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro ao atualizar ${rotulo.toLowerCase()}`); }
+      return res.json();
+    },
+  };
+}
+
+const apiLaboratoriosFarmaciaCowData = criarApiCatalogoFarmaciaCowData("laboratorios", "Laboratório");
+export const fetchLaboratoriosFarmaciaCowData = apiLaboratoriosFarmaciaCowData.fetch;
+export const criarLaboratorioFarmaciaCowData = apiLaboratoriosFarmaciaCowData.criar;
+export const atualizarLaboratorioFarmaciaCowData = apiLaboratoriosFarmaciaCowData.atualizar;
+
+const apiCategoriasMedicamentoFarmaciaCowData = criarApiCatalogoFarmaciaCowData("categorias-medicamento", "Categoria (medicamento)");
+export const fetchCategoriasMedicamentoFarmaciaCowData = apiCategoriasMedicamentoFarmaciaCowData.fetch;
+export const criarCategoriaMedicamentoFarmaciaCowData = apiCategoriasMedicamentoFarmaciaCowData.criar;
+export const atualizarCategoriaMedicamentoFarmaciaCowData = apiCategoriasMedicamentoFarmaciaCowData.atualizar;
+
+const apiClassificacoesMedicamentoFarmaciaCowData = criarApiCatalogoFarmaciaCowData("classificacoes-medicamento", "Classificação do medicamento");
+export const fetchClassificacoesMedicamentoFarmaciaCowData = apiClassificacoesMedicamentoFarmaciaCowData.fetch;
+export const criarClassificacaoMedicamentoFarmaciaCowData = apiClassificacoesMedicamentoFarmaciaCowData.criar;
+export const atualizarClassificacaoMedicamentoFarmaciaCowData = apiClassificacoesMedicamentoFarmaciaCowData.atualizar;
+
+// Substitutivos (Fase E, 01/09/2026) — tabela dinâmica de cruzamento: 1º
+// nível filtra medicamentos por um eixo/item; 2º nível ranqueia os
+// substitutos de um medicamento pivô por atributos clínicos coincidentes.
+export type EixoFiltroSubstitutivos = "doenca" | "principio" | "categoria" | "classificacao" | "laboratorio";
+export type MedicamentoSubstituto = MedicamentoFarmaciaCowData & {
+  pontuacao_substituto: number;
+  coincidencias: { principio_ativo_ids: number[]; doenca_ids: number[]; categoria_medicamento_ids: number[]; classificacao_medicamento_ids: number[] };
+};
+
+export async function fetchSubstitutivosPorFiltro(eixo: EixoFiltroSubstitutivos, valorId: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/substitutivos?eixo=${eixo}&valor_id=${valorId}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Substitutivos error: ${res.status}`);
+  return res.json() as Promise<MedicamentoFarmaciaCowData[]>;
+}
+export async function fetchSubstitutivosDeMedicamento(medicamentoId: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos/${medicamentoId}/substitutivos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Substitutivos error: ${res.status}`);
+  return res.json() as Promise<MedicamentoSubstituto[]>;
+}
+
 export async function fetchProducao() {
   const res = await authFetch(`${API}/producao/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Produção error: ${res.status}`);
@@ -4405,6 +4789,105 @@ export async function fetchProducao() {
 export async function fetchControles() {
   const res = await authFetch(`${API}/producao/controles`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Controles error: ${res.status}`);
+  return res.json();
+}
+
+// Reconstrução de Parto.ordem_parto — a FONTE do dado (não o derivado em
+// ControleLeiteiro, logo abaixo). Ver fazenda/api/routers/producao.py (seção
+// "Reconstrução de Parto.ordem_parto") e rules/parto.py para o porquê
+// completo. Rode esta ANTES da de Controles: aquela lê Parto.ordem_parto
+// como fonte de verdade. GET nunca grava nada; POST só grava com
+// `confirmar: true` explícito.
+export type AmostraDivergenciaOrdemPartoPartos = {
+  numero_matriz: string;
+  data_parto: string | null;
+  ordem_hoje: number | null;
+  ordem_correta: number | null;
+};
+export type DivergenciasOrdemPartoPartos = {
+  partos: number;
+  matrizes_com_parto: number;
+  muda: number;
+  vira_desconhecido: number;
+  periodo_partos: [string, string] | null;
+  amostra: AmostraDivergenciaOrdemPartoPartos[];
+};
+export async function fetchDivergenciasOrdemPartoPartos(): Promise<DivergenciasOrdemPartoPartos> {
+  const res = await authFetch(`${API}/producao/ordem-parto/partos/divergencias`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao levantar as divergências de ordem de parto"); }
+  return res.json();
+}
+export async function reconstruirOrdemPartoPartos(confirmar: boolean): Promise<{ gravados: number }> {
+  const res = await authFetch(`${API}/producao/ordem-parto/partos/reconstruir`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmar }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao reconstruir a ordem de parto"); }
+  return res.json();
+}
+
+// Reconstrução de ControleLeiteiro.ordem_parto — ferramenta de correção de
+// dados histórica, ver fazenda/api/routers/producao.py (seção "Reconstrução
+// de ControleLeiteiro.ordem_parto") e rules/ordem_parto_historica.py para o
+// porquê completo. GET nunca grava nada; POST só grava com
+// `confirmar: true` explícito.
+export type AmostraDivergenciaOrdemParto = {
+  numero_matriz: string;
+  data_controle: string | null;
+  ordem_hoje: number | null;
+  ordem_correta: number | null;
+};
+export type DivergenciasOrdemParto = {
+  partos: number;
+  controles: number;
+  animais_com_parto: number;
+  lactacoes_por_ordem: Record<string, number>;
+  idade_ao_parto: Record<string, number>;
+  muda: number;
+  vira_desconhecido: number;
+  periodo_partos: [string, string] | null;
+  periodo_controles: [string, string] | null;
+  amostra: AmostraDivergenciaOrdemParto[];
+};
+export async function fetchDivergenciasOrdemParto(): Promise<DivergenciasOrdemParto> {
+  const res = await authFetch(`${API}/producao/ordem-parto/divergencias`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao levantar as divergências de ordem de parto"); }
+  return res.json();
+}
+export async function reconstruirOrdemParto(confirmar: boolean): Promise<{ gravados: number }> {
+  const res = await authFetch(`${API}/producao/ordem-parto/reconstruir`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmar }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao reconstruir a ordem de parto"); }
+  return res.json();
+}
+
+// Reconstrução de ControleLeiteiro.del_no_controle — mesmo padrão report-first
+// da ordem de parto acima, ver fazenda/api/routers/producao.py (seção
+// "Reconstrução de ControleLeiteiro.del_no_controle"). GET nunca grava nada;
+// POST só grava com `confirmar: true` explícito.
+export type AmostraDivergenciaDelControle = {
+  numero_matriz: string;
+  data_controle: string | null;
+  del_hoje: number | null;
+  del_correto: number | null;
+};
+export type DivergenciasDelControle = {
+  controles: number;
+  muda: number;
+  sem_lactacao: number;
+  periodo_controles: [string, string] | null;
+  amostra: AmostraDivergenciaDelControle[];
+};
+export async function fetchDivergenciasDelControle(): Promise<DivergenciasDelControle> {
+  const res = await authFetch(`${API}/producao/del-controle/divergencias`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao levantar as divergências de DEL"); }
+  return res.json();
+}
+export async function reconstruirDelControle(confirmar: boolean): Promise<{ gravados: number }> {
+  const res = await authFetch(`${API}/producao/del-controle/reconstruir`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmar }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao reconstruir o DEL dos controles"); }
   return res.json();
 }
 
@@ -4705,11 +5188,16 @@ export async function criarSecagem(dados: {
   vacinas_pre_parto?: string[];
   vacina_pre_parto_aplicada_agora?: boolean;
   vacina_pre_parto?: boolean | null;
+  // Resposta a "esta vaca já consta como seca — substituir ou cancelar?"
+  // (ver `ErroApi.secagemAnterior` abaixo): id da secagem a substituir.
+  substituir_secagem_id?: number;
 }) {
   const res = await authFetch(`${API}/producao/secagem`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar secagem"); }
+  // `erroDaResposta` preserva o `detail` para a tela oferecer "substituir a
+  // secagem anterior ou cancelar" em vez de só mostrar a mensagem de erro.
+  if (!res.ok) throw await erroDaResposta(res, "Erro ao lançar secagem");
   return res.json();
 }
 export type LoteSugeridoEvento = { codigo: string; nome: string; rotulo: string };
@@ -4811,6 +5299,10 @@ export type CelulaProtocolo = {
 export type OpcaoMedicamento = {
   estoque_id: number | null; nome: string; marca: string | null; saldo: number | null;
   unidade: string | null; estoque_inicializado: boolean; sem_estoque: boolean;
+  // "de qual lote/frasco de COMPRA?" (Fase G) — só vem preenchido para
+  // origem === "sanitario" hoje (ver central_protocolos.py::detalhe), e só
+  // quando o frasco (estoque_id) tem algum lote aberto com saldo.
+  lotes?: { id: number; numero_lote: string | null; data_compra: string; quantidade_restante: number }[];
 };
 export type HormonioProtocolo = {
   produto: string; dose: number | null; unidade: string | null; via: string | null;
@@ -4822,8 +5314,9 @@ export type DetalheCentralProtocolo = {
   ativo: boolean; etapas_total: number; etapas_realizadas: number; etapas_atrasadas: number;
   dias: {
     dia: number; rotulo: string; data_prevista: string; descricao: string | null; total: number; realizadas: number;
-    // Vem preenchido para origem === "iatf" ou "inducao" — o "qual
-    // medicamento/frasco?" que a Agenda já pergunta, agora também na Central.
+    // Vem preenchido para origem === "iatf", "inducao" ou "sanitario" — o
+    // "qual medicamento/frasco?" que a Agenda já pergunta, agora também na
+    // Central (Sanitário ganhou também o "de qual lote?", ver OpcaoMedicamento.lotes).
     hormonios?: HormonioProtocolo[];
   }[];
   animais: { numero_matriz: string; celulas: CelulaProtocolo[] }[];
@@ -5018,10 +5511,130 @@ export async function fetchPatrimonio() {
 export type PatrimonioPayload = {
   nome: string; tipo?: string | null; numero?: string | null; atividade_cultura?: string | null;
   data_imobilizacao?: string | null; quantidade?: number | null; unidade?: string | null;
-  valor_total?: number | null; depreciavel?: boolean; metodo_depreciacao?: string | null;
+  valor_total?: number | null; valor_por_unidade?: boolean; depreciavel?: boolean;
+  metodo_depreciacao?: string | null;
   vida_util?: string | null; valor_residual?: number | null; valor_mercado_atual?: number | null;
   atualizacao_valor_mercado_frequencia_meses?: number | null;
+  // Onda 2 — vida útil estruturada (substitui o texto livre `vida_util`) e
+  // parâmetros dos métodos acelerado / por uso.
+  vida_util_anos?: number | null; vida_util_meses?: number | null;
+  fator_saldo_decrescente?: number | null;
+  unidades_vida_util_total?: number | null; unidades_consumidas?: number | null;
+  unidade_uso?: string | null;
 };
+
+// --- Onda 2: listas fechadas, código PAT e baixa ----------------------------
+export type OpcoesPatrimonio = {
+  tipos: string[];
+  unidades: string[];
+  metodos: { valor: string; rotulo: string; ajuda: string }[];
+  motivos_baixa: { valor: string; rotulo: string; tem_valor_venda: boolean }[];
+};
+
+export async function fetchOpcoesPatrimonio(): Promise<OpcoesPatrimonio> {
+  const res = await authFetch(`${API}/financeiro/patrimonio/opcoes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Opções de patrimônio: ${res.status}`);
+  return res.json();
+}
+
+/** confirmar=false devolve só a prévia (nada é gravado) — report-first. */
+export async function gerarCodigosPatrimonio(confirmar = false) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/codigos-gerar?confirmar=${confirmar}`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao gerar códigos"); }
+  return res.json();
+}
+
+export async function baixarPatrimonio(itemId: number, dados: {
+  data_baixa: string; motivo: string; valor_recebido?: number | null; observacao?: string | null;
+}) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/baixa`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao baixar o bem"); }
+  return res.json();
+}
+
+export async function estornarBaixaPatrimonio(itemId: number) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/estornar-baixa`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao estornar a baixa"); }
+  return res.json();
+}
+
+// --- Onda 3b: DRE Gerencial em cascata --------------------------------------
+export type LinhaDre = {
+  chave: string; rotulo: string; operador: string; eh_subtotal: boolean;
+  valor: number; contas?: { codigo: string | null; nome: string | null; valor: number }[];
+};
+
+export type ContaDre = { codigo: string | null; nome: string | null; valor: number };
+
+export type DreResposta = {
+  periodo: { inicio: string; fim: string };
+  regime: string; centro_custo: string | null;
+  receitas_total: number; despesas_total: number; resultado: number;
+  cascata: LinhaDre[];
+  nao_classificado: { total: number; contas: ContaDre[] };
+  fora_da_dre: { total: number; contas: ContaDre[] };
+  depreciacao_periodo: { total: number; inconsistencias: string[] };
+};
+
+export async function fetchDreCascata(params: {
+  data_inicio: string; data_fim: string; regime?: string; centro_custo?: string | null;
+}) {
+  const q = new URLSearchParams({
+    data_inicio: params.data_inicio, data_fim: params.data_fim,
+    regime: params.regime || "competencia",
+  });
+  if (params.centro_custo) q.set("centro_custo", params.centro_custo);
+  const res = await authFetch(`${API}/financeiro/dre?${q}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`DRE: ${res.status}`);
+  return res.json() as Promise<DreResposta>;
+}
+
+export async function fetchDreConferencia(params: { data_inicio: string; data_fim: string; regime?: string }) {
+  const q = new URLSearchParams({
+    data_inicio: params.data_inicio, data_fim: params.data_fim,
+    regime: params.regime || "competencia",
+  });
+  const res = await authFetch(`${API}/financeiro/dre/conferencia?${q}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Conferência da DRE: ${res.status}`);
+  return res.json();
+}
+
+export async function classificarContaDre(codigo: string, linhaDre: string | null) {
+  const res = await authFetch(`${API}/financeiro/plano-contas/${encodeURIComponent(codigo)}/linha-dre`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ linha_dre: linhaDre }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao classificar a conta"); }
+  return res.json();
+}
+
+// --- Onda 4: Caixa Real ------------------------------------------------------
+export type CaixaReal = {
+  saldo_inicial: number; saldo_final: number; total_entradas: number; total_saidas: number;
+  variacao: number; fundo_reserva: number; folga_minima: number; dias: number;
+  primeiro_dia_negativo: string | null; primeiro_dia_abaixo_da_reserva: string | null;
+  compromissos_sem_vencimento: number;
+  contas: { id: number; nome: string; saldo: number }[];
+  serie: {
+    data: string; entradas: number; saidas: number; saldo: number;
+    itens: { descricao: string | null; valor: number; tipo: string; vencido: boolean; data_original: string }[];
+  }[];
+};
+
+export async function fetchCaixaReal(dias?: number): Promise<CaixaReal> {
+  const q = dias ? `?dias=${dias}` : "";
+  const res = await authFetch(`${API}/financeiro/caixa-real${q}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Caixa Real: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchFundoReservaSugerido(mesesHistorico = 6) {
+  const res = await authFetch(`${API}/financeiro/caixa-real/fundo-reserva-sugerido?meses_historico=${mesesHistorico}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Fundo de reserva sugerido: ${res.status}`);
+  return res.json();
+}
 
 export async function criarPatrimonio(dados: PatrimonioPayload) {
   const res = await authFetch(`${API}/financeiro/patrimonio`, {
@@ -5196,15 +5809,6 @@ export type ContextoFornecedor = {
 export async function fetchContextoFornecedor(nome: string, tipo: "despesa" | "receita" = "despesa"): Promise<ContextoFornecedor> {
   const res = await authFetch(`${API}/financeiro/contexto-fornecedor?nome=${encodeURIComponent(nome)}&tipo=${tipo}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Contexto do fornecedor error: ${res.status}`);
-  return res.json();
-}
-
-// Link pro painel do Supabase (Table Editor) — botão em Relatórios
-// financeiros; backend bloqueia consultor (ver fazenda.auth.exigir_nao_consultor).
-// url: null quando o Supabase não está configurado.
-export async function fetchSupabaseDashboardUrl(): Promise<{ url: string | null }> {
-  const res = await authFetch(`${API}/financeiro/supabase-dashboard-url`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Link do Supabase error: ${res.status}`);
   return res.json();
 }
 
@@ -5438,23 +6042,34 @@ export async function atualizarClassificacao(id: number, dados: { nome: string; 
 }
 
 export async function criarLancamentoFinanceiro(dados: any) {
-  // Mesma chave nas duas tentativas: se a 1ª chegou a gravar no servidor mas
-  // a resposta se perdeu no caminho de volta (o "Failed to fetch" que
-  // aparece com o lançamento já salvo), o backend reconhece a chave repetida
-  // e devolve o mesmo lançamento em vez de duplicar (ver Idempotency-Key).
+  // Mesma chave em todas as tentativas: se uma delas chegou a gravar no
+  // servidor mas a resposta se perdeu no caminho de volta (o "Failed to
+  // fetch" que aparece com o lançamento já salvo — relato real de usuário em
+  // conexão rural instável), o backend reconhece a chave repetida e devolve
+  // o mesmo lançamento em vez de duplicar (ver Idempotency-Key). Uma única
+  // retentativa IMEDIATA cai no mesmo blackout de poucos segundos que
+  // derrubou a 1ª — até 2 retentativas, com uma pequena pausa entre elas,
+  // dão tempo da conexão se recuperar antes de desistir e mostrar erro pro
+  // usuário como se nada tivesse sido salvo.
   const chave = gerarChaveIdempotencia();
   const post = () => authFetch(`${API}/financeiro/lancamentos`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": chave },
     body: JSON.stringify(dados),
   });
-  let res: Response;
-  try {
-    res = await post();
-  } catch (e) {
-    if (!(e instanceof TypeError)) throw netError(e);
-    res = await post().catch((e2) => { throw netError(e2); }); // 1 nova tentativa, mesma chave
+  let res: Response | undefined;
+  let ultimoErro: unknown;
+  for (let tentativa = 0; tentativa < 3; tentativa++) {
+    try {
+      res = await post();
+      break;
+    } catch (e) {
+      if (!(e instanceof TypeError)) throw netError(e);
+      ultimoErro = e;
+      if (tentativa < 2) await new Promise((r) => setTimeout(r, 600 * (tentativa + 1)));
+    }
   }
+  if (!res) throw netError(ultimoErro);
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
     // Preserva `detail`/`status` (padrão `criarVale`) — o 409 de "estourou 40%
@@ -5621,11 +6236,26 @@ export async function marcarPagoFinanceiro(id: number, dados: {
   // PUT /financeiro/lancamentos/{id}/pagar.
   parcelas_diferenca?: { data_vencimento: string; valor: number }[];
 }) {
-  const res = await authFetch(`${API}/financeiro/lancamentos/${id}/pagar`, {
+  // Mesma chave nas duas tentativas: se a 1ª chegou a gravar a baixa no
+  // servidor mas a resposta se perdeu no caminho de volta (o "Failed to
+  // fetch" que aparece em "Ações > Pagamento" com o lançamento já baixado —
+  // conexão rural instável costuma cair bem no meio do PUT), o middleware de
+  // idempotência (main.py::_idempotencia) reconhece a chave repetida e
+  // devolve a mesma resposta em vez de baixar de novo. Mesmo padrão de
+  // criarLancamentoFinanceiro, acima.
+  const chave = gerarChaveIdempotencia();
+  const pagar = () => authFetch(`${API}/financeiro/lancamentos/${id}/pagar`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json", "Idempotency-Key": gerarChaveIdempotencia() },
+    headers: { "Content-Type": "application/json", "Idempotency-Key": chave },
     body: JSON.stringify(dados),
   });
+  let res: Response;
+  try {
+    res = await pagar();
+  } catch (e) {
+    if (!(e instanceof TypeError)) throw netError(e);
+    res = await pagar().catch((e2) => { throw netError(e2); }); // 1 nova tentativa, mesma chave
+  }
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa"); }
   return res.json();
 }
@@ -5748,17 +6378,37 @@ export async function criarFornecedorApelido(nomeBruto: string, nomeCanonico: st
 }
 
 export async function importarXmlFinanceiro(xml: string) {
-  const res = await authFetch(`${API}/financeiro/importar-xml`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ xml }),
-  });
+  let res: Response;
+  try {
+    res = await authFetch(`${API}/financeiro/importar-xml`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ xml }),
+    });
+  } catch (e) {
+    throw netErrorProcessamento(e, "do XML"); // "Failed to fetch" cru vira uma mensagem acionável, sem alarme falso de "backend fora do ar".
+  }
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao ler o XML"); }
   return res.json();
 }
 
+// Leitura automática (OCR) de PDF/JPEG/PNG — pode demorar bastante num
+// documento com várias páginas (ver comentário em run_in_threadpool no
+// backend); se a conexão cair no meio (proxy/gateway derrubando por
+// demora, Wi-Fi instável etc.), `fetch` lança um TypeError cru ("Failed to
+// fetch") — sem o try/catch abaixo, essa falha de REDE ficava indistinguível
+// de qualquer outro erro de NEGÓCIO (documento ilegível, tipo não
+// suportado...) pro usuário, que via só o texto bruto do navegador.
+// `netErrorProcessamento` traduz isso numa mensagem clara sem o alarme falso
+// de "backend fora do ar/CORS" do netError genérico — aqui a causa típica é
+// só o gateway cortando por demora, não a API estar de fato indisponível.
 export async function lerDocumentoFinanceiro(file: File) {
   const form = new FormData();
   form.append("file", file);
-  const res = await authFetch(`${API}/financeiro/ler-documento`, { method: "POST", body: form });
+  let res: Response;
+  try {
+    res = await authFetch(`${API}/financeiro/ler-documento`, { method: "POST", body: form });
+  } catch (e) {
+    throw netErrorProcessamento(e, "do documento");
+  }
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao ler o documento"); }
   return res.json();
 }
@@ -5778,12 +6428,29 @@ export async function anexarArquivoLancamento(
   numeroLancamento: string, file: File, categoria?: string | null,
   numeroDocumento?: string | null, dataDocumento?: string | null,
 ): Promise<AnexoLancamento> {
-  const form = new FormData();
-  form.append("file", file);
-  if (categoria) form.append("categoria", categoria);
-  if (numeroDocumento) form.append("numero_documento", numeroDocumento);
-  if (dataDocumento) form.append("data_documento", dataDocumento);
-  const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/anexos`, { method: "POST", body: form });
+  // Mesma chave nas duas tentativas: upload de foto/comprovante é o request
+  // mais exposto a "Failed to fetch" com sucesso no servidor (arquivo maior,
+  // conexão rural instável derruba no meio da volta da resposta) — mesmo
+  // padrão de criarLancamentoFinanceiro/marcarPagoFinanceiro, acima. A key
+  // vai por fora do FormData (o middleware de idempotência só olha o header).
+  const chave = gerarChaveIdempotencia();
+  const enviar = () => {
+    const form = new FormData();
+    form.append("file", file);
+    if (categoria) form.append("categoria", categoria);
+    if (numeroDocumento) form.append("numero_documento", numeroDocumento);
+    if (dataDocumento) form.append("data_documento", dataDocumento);
+    return authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/anexos`, {
+      method: "POST", headers: { "Idempotency-Key": chave }, body: form,
+    });
+  };
+  let res: Response;
+  try {
+    res = await enviar();
+  } catch (e) {
+    if (!(e instanceof TypeError)) throw netError(e);
+    res = await enviar().catch((e2) => { throw netError(e2); }); // 1 nova tentativa, mesma chave
+  }
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o arquivo"); }
   return res.json();
 }
@@ -5802,12 +6469,28 @@ export async function anexarArquivoLancamentoPorId(
   lancamentoId: number, file: File, categoria?: string | null,
   numeroDocumento?: string | null, dataDocumento?: string | null,
 ): Promise<AnexoLancamento> {
-  const form = new FormData();
-  form.append("file", file);
-  if (categoria) form.append("categoria", categoria);
-  if (numeroDocumento) form.append("numero_documento", numeroDocumento);
-  if (dataDocumento) form.append("data_documento", dataDocumento);
-  const res = await authFetch(`${API}/financeiro/lancamentos/por-id/${lancamentoId}/anexos`, { method: "POST", body: form });
+  // Usado pelo comprovante em "Ações > Pagamento" (PagamentoIndividualView) —
+  // mesma chave nas duas tentativas, mesmo motivo de anexarArquivoLancamento
+  // acima: foto de comprovante em conexão rural instável é o caso mais
+  // exposto a "Failed to fetch" com o upload já salvo no servidor.
+  const chave = gerarChaveIdempotencia();
+  const enviar = () => {
+    const form = new FormData();
+    form.append("file", file);
+    if (categoria) form.append("categoria", categoria);
+    if (numeroDocumento) form.append("numero_documento", numeroDocumento);
+    if (dataDocumento) form.append("data_documento", dataDocumento);
+    return authFetch(`${API}/financeiro/lancamentos/por-id/${lancamentoId}/anexos`, {
+      method: "POST", headers: { "Idempotency-Key": chave }, body: form,
+    });
+  };
+  let res: Response;
+  try {
+    res = await enviar();
+  } catch (e) {
+    if (!(e instanceof TypeError)) throw netError(e);
+    res = await enviar().catch((e2) => { throw netError(e2); }); // 1 nova tentativa, mesma chave
+  }
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o arquivo"); }
   return res.json();
 }
@@ -6090,6 +6773,21 @@ export async function atualizarRastreioPedido(id: number, dados: { enviado: bool
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar rastreio do pedido"); }
+  return res.json();
+}
+// Marca quanto de um item do pedido já foi FISICAMENTE entregue — valor
+// ABSOLUTO novo do item (substitui, não soma). O status do pedido volta
+// recalculado (nunca mais escolhido à mão) e, se faltar algo para fechar a
+// ponta financeira, `pendencias` traz o que falta (ver marcar_entrega_item_pedido).
+export type EntregaItemPedidoResultado = {
+  id: number; status: string; pendencias: string[]; avisos_estoque: string[];
+  item: { id: number; quantidade_entregue: number };
+};
+export async function marcarEntregaItemPedido(pedidoId: number, itemId: number, quantidadeEntregue: number): Promise<EntregaItemPedidoResultado> {
+  const res = await authFetch(`${API}/pedidos/${pedidoId}/itens/${itemId}/entrega`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ quantidade_entregue: quantidadeEntregue }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao marcar entrega do item"); }
   return res.json();
 }
 

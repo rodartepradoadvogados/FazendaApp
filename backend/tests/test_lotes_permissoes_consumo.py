@@ -122,3 +122,34 @@ class TestPermissoesDeConsumoDoLote:
         assert depois["permitir_fora_da_dieta"] is False, (
             "payload sem o campo deve cair no padrão restritivo, nunca manter ou ligar a exceção"
         )
+
+
+class TestModoBaixaEstoqueDoLote:
+    """Mesmo buraco que `TestPermissoesDeConsumoDoLote` fechou, agora para
+    `modo_baixa_estoque` — o campo tem de estar em `LoteIn` E em
+    `_aplicar_campos`, senão a API aceita o JSON e descarta em silêncio."""
+
+    def test_nasce_consumo_real(self, client):
+        lote = _criar(client)
+        assert lote["modo_baixa_estoque"] == "consumo_real"
+
+    def test_criar_ja_escolhendo_automatica(self, client):
+        lote = _criar(client, modo_baixa_estoque="automatica")
+        assert lote["modo_baixa_estoque"] == "automatica"
+
+    def test_editar_muda_e_persiste(self, client):
+        lote = _criar(client)
+        r = client.put(f"/lotes/{lote['id']}", json={
+            "codigo": "07", "nome": "Transição", "modo_baixa_estoque": "sem_baixa",
+        })
+        assert r.status_code == 200, r.text
+        depois = next(l for l in client.get("/lotes/").json() if l["id"] == lote["id"])
+        assert depois["modo_baixa_estoque"] == "sem_baixa", "a edição não persistiu — payload ignorado?"
+
+    def test_omitir_o_campo_no_payload_cai_no_padrao_restritivo(self, client):
+        """Cliente antigo, que não conhece o campo novo, não pode manter um
+        lote em "automatica" sem querer."""
+        lote = _criar(client, modo_baixa_estoque="automatica")
+        client.put(f"/lotes/{lote['id']}", json={"codigo": "07", "nome": "Transição"})
+        depois = next(l for l in client.get("/lotes/").json() if l["id"] == lote["id"])
+        assert depois["modo_baixa_estoque"] == "consumo_real"

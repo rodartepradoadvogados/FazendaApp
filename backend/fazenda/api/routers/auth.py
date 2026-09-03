@@ -5,6 +5,7 @@ Endpoints: POST /auth/login · GET /auth/me · GET/POST /auth/usuarios
 """
 from __future__ import annotations
 
+import html
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -15,8 +16,8 @@ from datetime import datetime, timedelta
 
 from fazenda.auth import (
     DESBLOQUEIO_VALIDADE_S, EMAIL_DONO, MODULOS, criar_token, criar_token_desbloqueio, eh_consultor_cowdata,
-    eh_email_dono_equivalente, eh_membro_equipe_cowdata, exigir_dono, get_current_user, get_fazenda_atual_id,
-    get_suporte_do_token, hash_senha, token_manter_conectado, verificar_senha,
+    eh_email_dono_equivalente, eh_membro_equipe_cowdata, exigir_admin_ou_dono, exigir_dono, get_current_user,
+    get_fazenda_atual_id, get_suporte_do_token, hash_senha, token_manter_conectado, verificar_senha,
 )
 from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
 from fazenda.config import settings
@@ -331,9 +332,14 @@ def esqueci_senha_enviar(dados: EsqueciSenhaEnviarIn, session: Session = Depends
     session.add(user)
     session.commit()
     link = f"{settings.frontend_base_url}/redefinir-senha?token={user.reset_senha_token}"
+    # BUG DE SEGURANÇA CORRIGIDO: nome/username são texto livre no cadastro
+    # (ver _validar_pessoa_ou_nome) — sem escape, um valor tipo
+    # "<img src=x onerror=...>" executava no cliente de e-mail.
+    nome_seguro = html.escape(user.nome or user.username)
+    username_seguro = html.escape(user.username)
     corpo_html = f"""
-        <p>Olá, {user.nome or user.username}!</p>
-        <p>Recebemos um pedido para redefinir a senha do seu login <strong>{user.username}</strong> no sistema da fazenda.</p>
+        <p>Olá, {nome_seguro}!</p>
+        <p>Recebemos um pedido para redefinir a senha do seu login <strong>{username_seguro}</strong> no sistema da fazenda.</p>
         <p><a href="{link}">Clique aqui para definir uma nova senha</a></p>
         <p>Esse link vale por 1 hora. Se você não pediu essa redefinição, pode ignorar este e-mail.</p>
     """
@@ -402,12 +408,26 @@ def listar_usuarios(
 
 
 @router.get("/usuarios/acessos")
-def listar_acessos(_: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> list[dict]:
-    """Relatório de últimos acessos — restrito ao proprietário (ver exigir_dono).
-    Traz os 3 logins mais recentes de cada usuário (histórico completo em
-    LoginAcesso; Usuario.ultimo_login guarda só o mais recente, mantido por
-    compatibilidade com o resto do sistema)."""
-    usuarios = session.exec(select(Usuario)).all()
+def listar_acessos(
+    _: Usuario = Depends(exigir_admin_ou_dono),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session),
+) -> list[dict]:
+    """Relatório de últimos acessos — dono-equivalente OU administrador da
+    fazenda atual (ver exigir_admin_ou_dono; pedido explícito do usuário
+    ago/2026, ampliando o que antes era só `exigir_dono`).
+
+    Escopado à fazenda ATUAL, mesmo padrão e mesmo motivo de `listar_usuarios`
+    acima: sem o filtro, um administrador de UMA fazenda-cliente veria o
+    histórico de login de TODAS as outras (bug de vazamento entre clientes,
+    não só de UX) — `exigir_dono` sozinho nunca precisou disso porque só o
+    proprietário da plataforma passava por aqui; `exigir_admin_ou_dono` abre
+    a um público bem maior (qualquer administrador de qualquer fazenda-cliente),
+    então o filtro deixa de ser opcional."""
+    query = select(Usuario)
+    if fazenda_id is not None:
+        query = query.join(Pessoa, Pessoa.id == Usuario.pessoa_id).where(Pessoa.fazenda_id == fazenda_id)
+    usuarios = session.exec(query).all()
     resultado = []
     for u in sorted(usuarios, key=lambda u: (u.ultimo_login is None, u.ultimo_login or datetime.min), reverse=True):
         ultimos = session.exec(
@@ -504,7 +524,18 @@ def salvar_preferencias(dados: PreferenciasIn, user: Usuario = Depends(get_curre
     novo_email = EMAIL_DONO if dados.reivindicar_proprietario else dados.email
     if novo_email is not None:
         novo_email = novo_email.strip() or None
-        if novo_email and novo_email.lower() == EMAIL_DONO:
+        if novo_email and eh_email_dono_equivalente(novo_email):
+            # BUG DE SEGURANÇA CORRIGIDO: a checagem antiga comparava só com
+            # EMAIL_DONO (`== EMAIL_DONO`), não com o conjunto completo
+            # EMAILS_DONO_EQUIVALENTE — qualquer usuário autenticado, de
+            # qualquer papel, conseguia virar dono-equivalente só enviando o
+            # OUTRO e-mail da lista (nunca o literal EMAIL_DONO), pulando as
+            # duas travas abaixo por inteiro. Auto-atendimento continua
+            # existindo só para EMAIL_DONO (via reivindicar_proprietario ou
+            # digitando o valor certo) — o(s) outro(s) e-mail(is)
+            # equivalente(s) nunca são atribuíveis por aqui.
+            if novo_email.lower() != EMAIL_DONO:
+                raise HTTPException(status_code=403, detail="Este e-mail não pode ser definido por aqui.")
             if user.papel != "admin":
                 raise HTTPException(status_code=403, detail="Somente um administrador pode assumir o e-mail do proprietário")
             dono_atual = session.exec(select(Usuario).where(Usuario.email == EMAIL_DONO)).first()

@@ -84,17 +84,13 @@ def test_outro_admin_qualquer_continua_eh_dono_false(client):
 
 
 def test_socio_acessa_rota_exigir_dono(client):
-    """exigir_dono-gated (relatório de Acessos — mesmo endpoint já coberto
-    por test_auth_acessos.py para EMAIL_DONO sozinho). Painel CowData usa a
-    mesma dependência (exigir_dono), então fica coberto pela mesma checagem —
-    seu 500 sem a Fazenda interna da CowData provisionada é um pré-requisito
-    de dados à parte, não de autorização."""
+    """`GET /auth/usuarios/acessos` migrou de exigir_dono puro para
+    exigir_admin_ou_dono (ver test_auth_acessos.py e test_auditoria.py para
+    a cobertura completa dessa rota) — o sócio dono-equivalente continua
+    passando de qualquer forma, então este teste permanece válido. Painel
+    CowData usa exigir_dono (não exigir_admin_ou_dono) e fica coberto pela
+    mesma checagem — seu 500 sem a Fazenda interna da CowData provisionada é
+    um pré-requisito de dados à parte, não de autorização."""
     token = _login(client, "socio")
     r = client.get("/auth/usuarios/acessos", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
-
-
-def test_outro_admin_nao_acessa_rota_exigir_dono(client):
-    token = _login(client, "outro-admin")
-    r = client.get("/auth/usuarios/acessos", headers={"Authorization": f"Bearer {token}"})
-    assert r.status_code == 403

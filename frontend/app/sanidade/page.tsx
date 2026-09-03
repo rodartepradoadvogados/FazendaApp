@@ -1,12 +1,12 @@
 "use client";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks, Percent, Route, History, FlaskConical } from "lucide-react";
+import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks, Percent, Route, History, FlaskConical, BookOpen } from "lucide-react";
 import {
   fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, confirmarExclusao, excluirCalendarioSanitario, ehAdmin, formatDate, today, fetchTaxaCura, type CasoTaxaCura, marcarCuraAplicacao, marcarCuraProtocolo,
   fetchCronogramasSanitarios, criarCronogramaSanitario,
   fetchCalendarioVisao, type JanelaCalendario, type JanelaCalendarioEvento,
   fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
-  fetchResultadosExame, type ExameResultado,
+  fetchResultadosExame, atualizarResultadoExame, type ExameResultado,
   fetchMedicamentos,
   fetchRastreabilidadeSanitaria, type LinhaRastreabilidadeSanitaria,
 } from "@/lib/api";
@@ -22,6 +22,7 @@ import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import type { AnimalRow } from "@/components/AnimalModal";
 import { HistoricoPreventivoView } from "@/components/sanidade/HistoricoPreventivoView";
+import CatalogoFarmaciaConsulta from "@/components/sanidade/CatalogoFarmaciaConsulta";
 import RemediosPorDoenca from "@/components/RemediosPorDoenca";
 import { casaBusca } from "@/lib/busca";
 
@@ -225,15 +226,22 @@ const COR_RESULTADO_EXAME: Record<string, string> = { positivo: "var(--red)", ne
 /**
  * Relatório de resultados de exames preventivos (tuberculose, brucelose etc.)
  * lançados em Lançamentos > Sanitário > Preventivo — diagnóstico
- * (positivo/negativo/indefinido) ou valor numérico + banda. Só leitura.
+ * (positivo/negativo/indefinido) ou valor numérico + banda. Editar/excluir
+ * seguem o mesmo fluxo auditado usado no resto de Sanidade: qualquer usuário
+ * pode pedir a exclusão, admin exclui na hora (ver excluir() abaixo).
  */
 function RelatorioResultadosExameView({ eventos }: { eventos: EventoPrev[] }) {
+  const admin = ehAdmin();
   const [eventoId, setEventoId] = useState("");
   const [resultadoFiltro, setResultadoFiltro] = useState("");
   const [dataDe, setDataDe] = useState("");
   const [dataAte, setDataAte] = useState("");
   const [linhas, setLinhas] = useState<ExameResultado[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [avisoExclusao, setAvisoExclusao] = useState<string | null>(null);
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editVals, setEditVals] = useState({ data: "", resultado: "", valorNumerico: "", veterinario: "", observacao: "" });
+  const [ocupado, setOcupado] = useState<number | null>(null);
 
   const eventosExame = useMemo(() => eventos.filter((e) => e.categoria_preventiva === "exame"), [eventos]);
 
@@ -250,14 +258,63 @@ function RelatorioResultadosExameView({ eventos }: { eventos: EventoPrev[] }) {
     return Array.from(mapa.entries()).sort((a, b) => b[0].localeCompare(a[0]));
   }, [linhas]);
 
-  useEffect(() => {
+  const carregar = () =>
     fetchResultadosExame({
       eventoSanitarioId: eventoId ? Number(eventoId) : undefined,
       resultado: resultadoFiltro || undefined,
       dataDe: dataDe || undefined,
       dataAte: dataAte || undefined,
     }).then(setLinhas).catch((e) => setErro(e.message));
-  }, [eventoId, resultadoFiltro, dataDe, dataAte]);
+
+  useEffect(() => { carregar(); }, [eventoId, resultadoFiltro, dataDe, dataAte]);
+
+  const iniciarEdicao = (l: ExameResultado) => {
+    setEditId(l.id);
+    setEditVals({
+      data: l.data_exame ?? "", resultado: l.resultado ?? "",
+      valorNumerico: l.valor_numerico == null ? "" : String(l.valor_numerico),
+      veterinario: l.veterinario ?? "", observacao: l.observacao ?? "",
+    });
+    setErro(null);
+  };
+
+  const salvarEdicao = async (l: ExameResultado) => {
+    setOcupado(l.id); setErro(null);
+    try {
+      await atualizarResultadoExame(l.id, {
+        data_exame: editVals.data || undefined,
+        resultado: (editVals.resultado || null) as ExameResultado["resultado"],
+        valor_numerico: editVals.valorNumerico.trim() === "" ? null : Number(editVals.valorNumerico),
+        veterinario: editVals.veterinario.trim() || null,
+        observacao: editVals.observacao.trim() || null,
+      });
+      setEditId(null);
+      await carregar();
+    } catch (e: any) { setErro(e.message); }
+    finally { setOcupado(null); }
+  };
+
+  // Mesmo fluxo central e auditado de exclusão (POST /exclusoes/confirmar)
+  // usado pelas outras telas de Sanidade — admin exclui na hora (e a marcação
+  // "A descartar" causada por um diagnóstico positivo é desfeita
+  // automaticamente, ver rules/exclusao_tipos/sanidade.py), operador vira uma
+  // solicitação pendente de aprovação.
+  const excluir = async (l: ExameResultado) => {
+    const msg = admin
+      ? `Excluir o exame de ${l.numero_matriz} em ${formatDate(l.data_exame)}? Isso não pode ser desfeito.`
+      : `Solicitar a exclusão do exame de ${l.numero_matriz} em ${formatDate(l.data_exame)}? Um administrador precisa aprovar antes de ser excluído de fato.`;
+    if (!window.confirm(msg)) return;
+    setOcupado(l.id); setErro(null); setAvisoExclusao(null);
+    try {
+      const r = await confirmarExclusao("exame_resultado", String(l.id));
+      if (r.status === "excluido") {
+        await carregar();
+      } else {
+        setAvisoExclusao("Solicitação de exclusão enviada — aguardando aprovação de um administrador.");
+      }
+    } catch (e: any) { setErro(e.message); }
+    finally { setOcupado(null); }
+  };
 
   return (
     <div className="card">
@@ -266,6 +323,7 @@ function RelatorioResultadosExameView({ eventos }: { eventos: EventoPrev[] }) {
         Diagnóstico (positivo/negativo/indefinido) ou valor numérico lançado em cada exame preventivo — positivo marca
         automaticamente "A descartar"; negativo é informativo (liberada); indefinido marca para repetir o exame.
       </p>
+      {avisoExclusao && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{avisoExclusao}</p>}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
         <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Exame</label>
           <select style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
@@ -315,20 +373,71 @@ function RelatorioResultadosExameView({ eventos }: { eventos: EventoPrev[] }) {
                   >
                     <div className="overflow-x-auto">
                       <table className="fazenda-table">
-                        <thead><tr><th>Nº</th><th>Resultado</th><th>Veterinário</th></tr></thead>
+                        <thead><tr><th>Nº</th><th>Resultado</th><th>Veterinário</th><th>Ações</th></tr></thead>
                         <tbody>
                           {itensTipo.map((l) => (
-                            <tr key={l.id}>
-                              <td style={{ fontWeight: 700 }}>{l.numero_matriz}</td>
-                              <td style={{ fontSize: "0.78rem" }}>
-                                {l.resultado ? (
-                                  <span style={{ fontWeight: 700, color: COR_RESULTADO_EXAME[l.resultado] }}>{LABEL_RESULTADO_EXAME[l.resultado]}</span>
-                                ) : l.valor_numerico != null ? (
-                                  <>{l.valor_numerico}{l.banda ? ` (${l.banda === "abaixo" ? "abaixo da faixa" : l.banda === "acima" ? "acima da faixa" : "dentro da faixa"})` : ""}</>
-                                ) : "—"}
-                              </td>
-                              <td style={{ fontSize: "0.78rem" }}>{l.veterinario || "—"}</td>
-                            </tr>
+                            <Fragment key={l.id}>
+                              <tr>
+                                <td style={{ fontWeight: 700 }}>{l.numero_matriz}</td>
+                                <td style={{ fontSize: "0.78rem" }}>
+                                  {l.resultado ? (
+                                    <span style={{ fontWeight: 700, color: COR_RESULTADO_EXAME[l.resultado] }}>{LABEL_RESULTADO_EXAME[l.resultado]}</span>
+                                  ) : l.valor_numerico != null ? (
+                                    <>{l.valor_numerico}{l.banda ? ` (${l.banda === "abaixo" ? "abaixo da faixa" : l.banda === "acima" ? "acima da faixa" : "dentro da faixa"})` : ""}</>
+                                  ) : "—"}
+                                </td>
+                                <td style={{ fontSize: "0.78rem" }}>{l.veterinario || "—"}</td>
+                                <td>
+                                  <div className="flex items-center gap-1">
+                                    <button className="btn-ghost" style={{ padding: "0.2rem 0.4rem" }} title="Editar"
+                                      disabled={ocupado === l.id} onClick={() => (editId === l.id ? setEditId(null) : iniciarEdicao(l))}>
+                                      <Pencil size={13} />
+                                    </button>
+                                    <button className="btn-ghost" style={{ padding: "0.2rem 0.4rem", color: "var(--red)" }} title="Excluir"
+                                      disabled={ocupado === l.id} onClick={() => excluir(l)}>
+                                      <Trash2 size={13} />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                              {editId === l.id && (
+                                <tr>
+                                  <td colSpan={4}>
+                                    <div className="grid grid-cols-2 md:grid-cols-5 gap-2 items-end" style={{ padding: "0.5rem 0" }}>
+                                      <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Data</label>
+                                        <input type="date" style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.4rem", fontSize: "0.78rem", width: "100%" }}
+                                          value={editVals.data} onChange={(e) => setEditVals((v) => ({ ...v, data: e.target.value }))} /></div>
+                                      <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Resultado</label>
+                                        <select style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.4rem", fontSize: "0.78rem", width: "100%" }}
+                                          value={editVals.resultado} onChange={(e) => setEditVals((v) => ({ ...v, resultado: e.target.value }))}>
+                                          <option value="">—</option>
+                                          <option value="positivo">Positivo</option>
+                                          <option value="negativo">Negativo</option>
+                                          <option value="indefinido">Indefinido</option>
+                                        </select></div>
+                                      <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Valor numérico</label>
+                                        <input type="number" style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.4rem", fontSize: "0.78rem", width: "100%" }}
+                                          value={editVals.valorNumerico} onChange={(e) => setEditVals((v) => ({ ...v, valorNumerico: e.target.value }))} /></div>
+                                      <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Veterinário</label>
+                                        <input style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.4rem", fontSize: "0.78rem", width: "100%" }}
+                                          value={editVals.veterinario} onChange={(e) => setEditVals((v) => ({ ...v, veterinario: e.target.value }))} /></div>
+                                      <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Observação</label>
+                                        <input style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.4rem", fontSize: "0.78rem", width: "100%" }}
+                                          value={editVals.observacao} onChange={(e) => setEditVals((v) => ({ ...v, observacao: e.target.value }))} /></div>
+                                    </div>
+                                    {erro && <p style={{ color: "var(--red)", fontSize: "0.76rem", marginBottom: "0.4rem" }}>{erro}</p>}
+                                    <div className="flex items-center gap-2" style={{ paddingBottom: "0.5rem" }}>
+                                      <button className="btn-primary" style={{ fontSize: "0.74rem" }} onClick={() => salvarEdicao(l)} disabled={ocupado === l.id}>
+                                        <Check size={13} /> {ocupado === l.id ? "Salvando…" : "Salvar"}
+                                      </button>
+                                      <button className="btn-ghost" style={{ fontSize: "0.74rem" }} onClick={() => setEditId(null)}>
+                                        <X size={13} /> Cancelar
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
                           ))}
                         </tbody>
                       </table>
@@ -2025,11 +2134,12 @@ function RastreabilidadeSanitariaView() {
   );
 }
 
-type AbaSanidade = "curativa" | "preventiva" | "rastreabilidade";
+type AbaSanidade = "curativa" | "preventiva" | "rastreabilidade" | "catalogo";
 const ABAS_SANIDADE = [
   { id: "curativa", label: "Curativa", icon: HeartPulse, title: "Tratamentos curativos: aplicações, doença/motivo e protocolos" },
   { id: "preventiva", label: "Preventiva", icon: Shield, title: "Manejo preventivo: aplicações e calendário sanitário" },
   { id: "rastreabilidade", label: "Rastreabilidade", icon: Route, title: "Rastreabilidade sanitária/GTA: linha do tempo por animal ou por GTA" },
+  { id: "catalogo", label: "Catálogo", icon: BookOpen, title: "Catálogo de farmácia mantido pelo Painel CowData — indicações, princípios ativos e marcas, com bula e carência (somente consulta)" },
 ] as const satisfies readonly { id: AbaSanidade; label: string; icon: any; title: string }[];
 
 type AbaCurativa = "curativo" | "doenca" | "remedios" | "protocolos" | "taxa_cura";
@@ -2113,6 +2223,7 @@ export default function SanidadePage() {
         </>
       )}
       {aba === "rastreabilidade" && <RastreabilidadeSanitariaView />}
+      {aba === "catalogo" && <CatalogoFarmaciaConsulta />}
     </div>
   );
 }

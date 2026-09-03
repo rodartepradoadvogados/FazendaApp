@@ -7,7 +7,7 @@ import {
   atualizarParcelaEmpreitada, atualizarParcelaContrato,
   fetchVales, criarVale, atualizarVale, atualizarParcelaVale, excluirParcelaVale, excluirVale, ehAdmin, formatBRL,
   fetchValesAvulsos, atualizarValeAvulso, excluirValeAvulso,
-  lancarGuiaFolhaEncargo, fetchGuiasFolhaEncargo, type GuiaFolhaEncargo,
+  lancarGuiaFolhaEncargo, fetchGuiasFolhaEncargo, atualizarGuiaFolhaEncargo, excluirGuiaFolhaEncargo, type GuiaFolhaEncargo,
   lerDocumentoFinanceiro, anexarArquivoLancamento, formatDate,
   fetchContasCorrentes, type ContaCorrenteCadastro,
   anexarComprovanteVale, listarComprovantesVale, excluirComprovanteVale, urlComprovanteVale,
@@ -274,6 +274,21 @@ export default function FolhaPagamentoView() {
   } | null>(null);
 
   const [guias, setGuias] = useState<GuiaFolhaEncargo[] | null>(null);
+  // Edição/exclusão de guia de FGTS/DCTF já lançada — mesmo padrão de
+  // editingValeId/excluindoValeId, sem parcelas (a guia é um registro só).
+  const [editingGuiaId, setEditingGuiaId] = useState<number | null>(null);
+  const [editGuiaTipo, setEditGuiaTipo] = useState<"fgts" | "dctf">("fgts");
+  const [editGuiaCompetencia, setEditGuiaCompetencia] = useState("");
+  const [editGuiaCodigoReceita, setEditGuiaCodigoReceita] = useState("");
+  const [editGuiaValorPrincipal, setEditGuiaValorPrincipal] = useState("");
+  const [editGuiaValorMulta, setEditGuiaValorMulta] = useState("");
+  const [editGuiaValorJuros, setEditGuiaValorJuros] = useState("");
+  const [editGuiaDataVencimento, setEditGuiaDataVencimento] = useState("");
+  const [editGuiaLinhaDigitavel, setEditGuiaLinhaDigitavel] = useState("");
+  const [editGuiaMsg, setEditGuiaMsg] = useState<string | null>(null);
+  const [editGuiaSalvando, setEditGuiaSalvando] = useState(false);
+  const [excluindoGuiaId, setExcluindoGuiaId] = useState<number | null>(null);
+  const [excluirGuiaErro, setExcluirGuiaErro] = useState<string | null>(null);
   const carregar = () => fetchFolhaPagamento().then(setRegs).catch((e) => setError(e.message));
   const carregarUnificada = () => fetchFolhaPagamentoUnificada().then(setUnificada).catch((e) => setErroUnificada(e.message));
   const carregarVales = () => fetchVales().then(setVales).catch(() => {});
@@ -512,6 +527,63 @@ export default function FolhaPagamentoView() {
       setExcluindoValeId(null);
     }
   }
+
+  // Edição/exclusão de guia de FGTS/DCTF já lançada — mesmo padrão de
+  // iniciarEdicaoVale/salvarEdicaoVale/excluirValeHandler acima.
+  function iniciarEdicaoGuia(g: GuiaFolhaEncargo) {
+    setEditingGuiaId(g.id);
+    setEditGuiaTipo(g.tipo);
+    setEditGuiaCompetencia(g.competencia);
+    setEditGuiaCodigoReceita(g.codigo_receita || "");
+    setEditGuiaValorPrincipal(String(g.valor_principal));
+    setEditGuiaValorMulta(String(g.valor_multa || 0));
+    setEditGuiaValorJuros(String(g.valor_juros || 0));
+    setEditGuiaDataVencimento(g.data_vencimento);
+    setEditGuiaLinhaDigitavel(g.linha_digitavel || "");
+    setEditGuiaMsg(null);
+  }
+
+  async function salvarEdicaoGuia(guiaId: number) {
+    setEditGuiaMsg(null);
+    if (!editGuiaCompetencia) { setEditGuiaMsg("Informe a competência."); return; }
+    if (!editGuiaValorPrincipal || parseFloat(editGuiaValorPrincipal) < 0) { setEditGuiaMsg("Informe o valor principal."); return; }
+    if (!editGuiaDataVencimento) { setEditGuiaMsg("Informe o vencimento."); return; }
+    setEditGuiaSalvando(true);
+    try {
+      await atualizarGuiaFolhaEncargo(guiaId, {
+        tipo: editGuiaTipo, competencia: editGuiaCompetencia,
+        codigo_receita: editGuiaTipo === "dctf" ? (editGuiaCodigoReceita || undefined) : undefined,
+        valor_principal: parseFloat(editGuiaValorPrincipal),
+        valor_multa: parseFloat(editGuiaValorMulta) || 0,
+        valor_juros: parseFloat(editGuiaValorJuros) || 0,
+        data_vencimento: editGuiaDataVencimento,
+        linha_digitavel: editGuiaLinhaDigitavel || undefined,
+      });
+      setEditingGuiaId(null);
+      carregarGuias(); carregarUnificada();
+    } catch (e: any) {
+      setEditGuiaMsg(e.message || "Erro ao editar guia");
+    } finally {
+      setEditGuiaSalvando(false);
+    }
+  }
+
+  async function excluirGuiaHandler(g: GuiaFolhaEncargo) {
+    if (!window.confirm(`Excluir a guia de ${g.tipo === "fgts" ? "FGTS" : "DCTF"} de ${mesCompLabel(g.competencia)}? A conta a pagar vinculada também será excluída.`)) return;
+    setExcluirGuiaErro(null);
+    setExcluindoGuiaId(g.id);
+    try {
+      await excluirGuiaFolhaEncargo(g.id);
+      if (editingGuiaId === g.id) setEditingGuiaId(null);
+      carregarGuias(); carregarUnificada();
+    } catch (e: any) {
+      setExcluirGuiaErro(e.message || "Erro ao excluir guia");
+    } finally {
+      setExcluindoGuiaId(null);
+    }
+  }
+
+  const ordGuias = useOrdenacao(guias ?? []);
 
   const valesAvulsosFiltrados = useMemo(() => (valesAvulsos || []).filter((v: any) =>
     (!fValeDe || v.data_pagamento >= fValeDe) &&
@@ -1328,15 +1400,28 @@ export default function FolhaPagamentoView() {
       {/* Relatório de guias de FGTS/DCTF já lançadas — dados estruturados
           (não só o PDF anexado), para acompanhar competência a competência. */}
       <SecaoRecolhivel titulo="Guias de FGTS/DCTF lançadas" icon={Filter} defaultAberta={false} descricao="Competência, valores e origem (manual ou leitura automática) de cada guia">
+        {excluirGuiaErro && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{excluirGuiaErro}</p>}
         {!guias || !guias.length ? (
           <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma guia lançada ainda.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="fazenda-table">
-              <thead><tr><th>Tipo</th><th>Competência</th><th>Cód. receita</th><th style={{ textAlign: "right" }}>Principal</th><th style={{ textAlign: "right" }}>Multa</th><th style={{ textAlign: "right" }}>Juros</th><th style={{ textAlign: "right" }}>Total</th><th>Vencimento</th><th>Origem</th></tr></thead>
+              <thead><tr>
+                <ThOrdenavel label="Tipo" campo="tipo" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <ThOrdenavel label="Competência" campo="competencia" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <ThOrdenavel label="Cód. receita" campo="codigo_receita" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <ThOrdenavel label="Principal" campo="valor_principal" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
+                <ThOrdenavel label="Multa" campo="valor_multa" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
+                <ThOrdenavel label="Juros" campo="valor_juros" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
+                <ThOrdenavel label="Total" campo="valor_total" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
+                <ThOrdenavel label="Vencimento" campo="data_vencimento" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <ThOrdenavel label="Origem" campo="origem" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <th>Ações</th>
+              </tr></thead>
               <tbody>
-                {guias.map((g) => (
-                  <tr key={g.id}>
+                {ordGuias.linhasOrdenadas.map((g) => (
+                  <Fragment key={g.id}>
+                  <tr>
                     <td>{g.tipo === "fgts" ? "FGTS" : "DCTF"}</td>
                     <td>{mesCompLabel(g.competencia)}</td>
                     <td>{g.codigo_receita || "—"}</td>
@@ -1346,7 +1431,59 @@ export default function FolhaPagamentoView() {
                     <td style={{ textAlign: "right", fontWeight: 700 }}>{formatBRL(g.valor_total)}</td>
                     <td>{formatDate(g.data_vencimento)}</td>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{g.origem === "leitura_automatica" ? "Leitura automática" : "Manual"}</td>
+                    <td>
+                      <span className="flex items-center gap-2">
+                        <button className="btn-ghost" title="Editar esta guia" style={{ fontSize: "0.72rem" }}
+                          onClick={() => (editingGuiaId === g.id ? setEditingGuiaId(null) : iniciarEdicaoGuia(g))}>
+                          <Pencil size={13} />
+                        </button>
+                        <button className="btn-ghost" title="Excluir esta guia" style={{ fontSize: "0.72rem", color: "var(--red)" }}
+                          disabled={excluindoGuiaId === g.id}
+                          onClick={() => excluirGuiaHandler(g)}>
+                          <Trash2 size={13} />
+                        </button>
+                      </span>
+                    </td>
                   </tr>
+                  {editingGuiaId === g.id && (
+                    <tr>
+                      <td colSpan={10} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                          <div><label style={labelStyleLote}>Tipo</label>
+                            <select style={selStyleLote} value={editGuiaTipo} onChange={(e) => setEditGuiaTipo(e.target.value as "fgts" | "dctf")}>
+                              <option value="fgts">FGTS</option>
+                              <option value="dctf">DCTF</option>
+                            </select></div>
+                          <div><label style={labelStyleLote}>Competência (mês)</label>
+                            <input type="month" style={selStyleLote} value={editGuiaCompetencia} onChange={(e) => setEditGuiaCompetencia(e.target.value)} /></div>
+                          {editGuiaTipo === "dctf" && (
+                            <div><label style={labelStyleLote}>Código da receita</label>
+                              <input style={selStyleLote} value={editGuiaCodigoReceita} onChange={(e) => setEditGuiaCodigoReceita(e.target.value)} /></div>
+                          )}
+                          <div><label style={labelStyleLote}>Vencimento</label>
+                            <input type="date" style={selStyleLote} value={editGuiaDataVencimento} onChange={(e) => setEditGuiaDataVencimento(e.target.value)} /></div>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                          <div><label style={labelStyleLote}>Valor principal (R$)</label>
+                            <CampoMoeda style={selStyleLote} value={Number(editGuiaValorPrincipal) || 0} onChange={(v) => setEditGuiaValorPrincipal(v ? String(v) : "")} /></div>
+                          <div><label style={labelStyleLote}>Multa (R$)</label>
+                            <CampoMoeda style={selStyleLote} value={Number(editGuiaValorMulta) || 0} onChange={(v) => setEditGuiaValorMulta(v ? String(v) : "")} /></div>
+                          <div><label style={labelStyleLote}>Juros (R$)</label>
+                            <CampoMoeda style={selStyleLote} value={Number(editGuiaValorJuros) || 0} onChange={(v) => setEditGuiaValorJuros(v ? String(v) : "")} /></div>
+                          <div><label style={labelStyleLote}>Linha digitável</label>
+                            <input style={selStyleLote} value={editGuiaLinhaDigitavel} onChange={(e) => setEditGuiaLinhaDigitavel(e.target.value)} /></div>
+                        </div>
+                        {editGuiaMsg && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{editGuiaMsg}</p>}
+                        <div style={{ display: "flex", gap: "0.5rem" }}>
+                          <button className="btn-primary" disabled={editGuiaSalvando} onClick={() => salvarEdicaoGuia(g.id)}>
+                            <Check size={14} /> {editGuiaSalvando ? "Salvando…" : "Salvar"}
+                          </button>
+                          <button className="btn-ghost" onClick={() => setEditingGuiaId(null)}>Cancelar</button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -1837,6 +1974,10 @@ function ValeFuncionarioSection({
   const [contaCorrenteId, setContaCorrenteId] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
+  // Id do vale recém-lançado — só existe DEPOIS de salvo (a rota de
+  // comprovante é ancorada no id do vale), por isso o anexo aparece aqui
+  // embaixo da mensagem de sucesso, não junto dos campos do formulário.
+  const [valeRecemCriadoId, setValeRecemCriadoId] = useState<number | null>(null);
 
   async function lancar(confirmar = false) {
     setMsg(null);
@@ -1848,13 +1989,14 @@ function ValeFuncionarioSection({
     }
     setSalvando(true);
     try {
-      await criarVale({
+      const vale = await criarVale({
         pessoa_id: Number(pessoaId), valor_total: parseFloat(valorTotal), forma_pagamento: formaPagamento,
         data_pagamento: dataPagamento, parcelas: Number(parcelas), competencia_inicio: competenciaInicio,
         observacao: observacao || undefined, numero_documento_pagamento: numeroDocumentoPagamento || undefined,
         conta_corrente_id: contaObrigatoriaVale(formaPagamento) && contaCorrenteId ? Number(contaCorrenteId) : undefined,
         confirmar,
       });
+      setValeRecemCriadoId(vale.id);
       setMsg({ tipo: "sucesso", texto: "Vale lançado — o desconto aparecerá na expansão da folha de cada competência afetada." });
       setPessoaId(""); setValorTotal(""); setParcelas("1"); setObservacao(""); setNumeroDocumentoPagamento(""); setContaCorrenteId("");
       onLancado();
@@ -1921,6 +2063,10 @@ function ValeFuncionarioSection({
       <button className="btn-primary" title="Lançar o vale" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={() => lancar(false)} disabled={salvando}>
         <Check size={14} /> {salvando ? "Salvando…" : "Lançar vale"}
       </button>
+      {/* Só existe depois de salvo (a rota de comprovante é ancorada no id
+          do vale) — mesmo componente/mecanismo de anexo já usado na
+          listagem de vales abaixo (ver ComprovanteVale). */}
+      {valeRecemCriadoId != null && <ComprovanteVale tipo="funcionario" valeId={valeRecemCriadoId} />}
     </div>
   );
 }

@@ -9,10 +9,14 @@ Isto é ADICIONAL — não substitui os relatórios específicos de cada domíni
 (Histórico de Ciclos IATF em Reprodução, Protocolos Sanitários em Sanidade,
 Relatório de Rastreabilidade Sanitária), que continuam nos mesmos lugares.
 
-Sanitário é o único dos quatro sem um "cabeçalho de lote" (cada
-ProtocoloSanitarioLancamento é por animal) — aqui ele é agrupado por
-(protocolo_id, data_inicio) só para efeito de exibição, sem alterar o
-modelo de dados.
+As 5 famílias têm cabeçalho de lote e ação completa (marcar, desfazer,
+cancelar, encerrar) pela Central. Sanitário é a única com uma camada extra
+entre o cabeçalho (ProtocoloSanitarioLote) e a aplicação: um
+ProtocoloSanitarioLancamento POR ANIMAL (as outras 4 já têm `numero_matriz`
+direto na aplicação) — por isso alguns pontos (`_linhas_sanitario`,
+`_aplicacoes_do_lancamento`, `desfazer_aplicacao`, `cancelar`) têm um passo a
+mais para essa família específica, em vez de reaproveitar o dict genérico
+`{origem: modelo}` das outras.
 """
 from __future__ import annotations
 
@@ -31,7 +35,8 @@ from fazenda.models import (
     ProtocoloCustomizado, ProtocoloCustomizadoAplicacao, ProtocoloCustomizadoLancamento,
     ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLactacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
-    ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioLancamento,
+    ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
+    ProtocoloSanitarioLancamento, ProtocoloSanitarioLote,
     Usuario,
 )
 from fazenda.ordenacao import chave_numero
@@ -46,6 +51,7 @@ from fazenda.api.routers.agenda import (
     _marcar_protocolo_inducao_realizado,
     _marcar_protocolo_custom_realizado,
     _marcar_lida_realizado,
+    _baixar_protocolo_sanitario,
     PREFIXO_PROTOCOLO_CUSTOM,
 )
 
@@ -221,42 +227,46 @@ def _linhas_lida(session: Session, fazenda_id: int | None) -> list[dict]:
 
 
 def _linhas_sanitario(session: Session, fazenda_id: int | None) -> list[dict]:
-    query = _filtro_fazenda(select(ProtocoloSanitarioLancamento), ProtocoloSanitarioLancamento.fazenda_id, fazenda_id)
-    lancamentos = session.exec(query).all()
-    if not lancamentos:
+    """Mesmo formato de `_linhas_iatf`/`_linhas_inducao` — só precisa de um
+    passo extra porque o Sanitário tem uma camada a mais entre o cabeçalho
+    (ProtocoloSanitarioLote) e a aplicação: um ProtocoloSanitarioLancamento
+    POR ANIMAL, que as outras 3 famílias não têm (a aplicação delas já
+    carrega `numero_matriz` direto)."""
+    query = _filtro_fazenda(select(ProtocoloSanitarioLote), ProtocoloSanitarioLote.fazenda_id, fazenda_id)
+    lotes = session.exec(query).all()
+    if not lotes:
         return []
-    protocolos = {p.id: p for p in session.exec(select(ProtocoloSanitario)).all()}
-    ids = [l.id for l in lancamentos]
-    aplicacoes = session.exec(
-        select(ProtocoloSanitarioAplicacao).where(ProtocoloSanitarioAplicacao.lancamento_id.in_(ids))
+    lote_ids = [lo.id for lo in lotes]
+    lancamentos = session.exec(
+        select(ProtocoloSanitarioLancamento).where(ProtocoloSanitarioLancamento.lote_id.in_(lote_ids))
     ).all()
-    por_lanc: dict[int, list[ProtocoloSanitarioAplicacao]] = defaultdict(list)
-    for a in aplicacoes:
-        por_lanc[a.lancamento_id].append(a)
+    lancamento_ids = [l.id for l in lancamentos]
+    aplicacoes = session.exec(
+        select(ProtocoloSanitarioAplicacao).where(ProtocoloSanitarioAplicacao.lancamento_id.in_(lancamento_ids))
+    ).all()
 
-    # Agrupa por (protocolo_id, data_inicio) — cada ProtocoloSanitarioLancamento
-    # é por animal; aqui vira uma única linha "lote", só para exibição.
-    grupos: dict[tuple[int, date], list[ProtocoloSanitarioLancamento]] = defaultdict(list)
+    animais_por_lote: dict[int, set[str]] = defaultdict(set)
     for l in lancamentos:
-        grupos[(l.protocolo_id, l.data_inicio)].append(l)
+        if l.lote_id is not None:
+            animais_por_lote[l.lote_id].add(l.numero_matriz)
+    lancamento_para_lote = {l.id: l.lote_id for l in lancamentos}
+    aps_por_lote: dict[int, list[ProtocoloSanitarioAplicacao]] = defaultdict(list)
+    for a in aplicacoes:
+        lote_id = lancamento_para_lote.get(a.lancamento_id)
+        if lote_id is not None:
+            aps_por_lote[lote_id].append(a)
 
     linhas = []
-    for (protocolo_id, data_inicio), grupo in grupos.items():
-        molde = protocolos.get(protocolo_id)
-        nome_base = molde.nome if molde else "Protocolo Sanitário"
-        aps_grupo: list[ProtocoloSanitarioAplicacao] = []
-        for l in grupo:
-            aps_grupo.extend(por_lanc.get(l.id, []))
-        datas = [a.data_prevista for a in aps_grupo]
-        dia_inicial = molde.dia_inicial if molde else 0
-        dias_previstos = [(d - data_inicio).days + dia_inicial for d in datas] if datas else [dia_inicial]
-        dia_final = max(dias_previstos) if dias_previstos else dia_inicial
-        nome = gerar_nome_lancamento(nome_base, data_inicio, dia_inicial, dia_final)
+    for lo in lotes:
+        aps = aps_por_lote.get(lo.id, [])
+        datas = [a.data_prevista for a in aps]
         linhas.append(_linha(
-            tipo="sanitario", origem="sanitario", origem_id=grupo[0].id, nome=nome,
-            data_inicio=data_inicio, data_fim=max(datas) if datas else data_inicio,
-            etapas_total=len(aps_grupo), etapas_realizadas=sum(1 for a in aps_grupo if a.realizada),
-            animais=len({l.numero_matriz for l in grupo}),
+            tipo="sanitario", origem="sanitario", origem_id=lo.id, nome=lo.nome_protocolo,
+            data_inicio=lo.data_inicio, data_fim=max(datas) if datas else lo.data_inicio,
+            etapas_total=len(aps), etapas_realizadas=sum(1 for a in aps if a.realizada),
+            animais=len(animais_por_lote.get(lo.id, set())),
+            ativo=lo.ativo,
+            encerrado_em=lo.encerrado_em, encerrado_motivo=lo.encerrado_motivo,
         ))
     return linhas
 
@@ -319,11 +329,13 @@ def historico(
 # baixa (inclusive retroativa, com a data REAL da aplicação) e encerrar o que
 # acabou antes do fim.
 
-# Origens com cabeçalho de lote próprio. Sanitário fica de fora de propósito:
-# cada ProtocoloSanitarioLancamento é POR ANIMAL, e na Central ele já aparece
-# agrupado só para exibição — dar baixa nele exigiria decidir o que fazer com
-# o grupo inteiro, o que é outra discussão. Segue pela Agenda, como sempre.
-_ORIGENS_COM_ACAO = ("iatf", "inducao", "customizado", "lida")
+# Origens com cabeçalho de lote próprio — todas as 5 famílias, desde que
+# Sanitário ganhou o seu (ProtocoloSanitarioLote). Cada uma tem baixa/desfazer/
+# cancelar pela Central; Sanitário precisa de um passo extra em alguns pontos
+# (`_aplicacoes_do_lancamento`, `desfazer_aplicacao`, `cancelar`) por causa da
+# camada extra ProtocoloSanitarioLancamento (um por animal) que as outras não
+# têm — ver comentário em `_linhas_sanitario`.
+_ORIGENS_COM_ACAO = ("iatf", "inducao", "customizado", "lida", "sanitario")
 
 
 class BaixaProtocoloIn(BaseModel):
@@ -357,18 +369,33 @@ class DesfazerAplicacaoIn(BaseModel):
     numero_matriz: str
 
 
+def _frasco_da_ultima_baixa_protocolo(session: Session, origem_tipo: str, origem_id: int) -> tuple[int | None, int | None]:
+    """(`estoque_id`, `lote_id`) que a baixa mais recente desta origem/id de
+    fato usou — lido do próprio rastro em MovimentoEstoque (mesmo padrão de
+    `sanidade.py::_frasco_da_ultima_aplicacao`), pra devolver o estorno no
+    MESMO frasco/lote que a baixa consumiu, nunca em outro escolhido por
+    acaso pelo FIFO/nome na hora de desfazer."""
+    mov = session.exec(
+        select(MovimentoEstoque).where(
+            MovimentoEstoque.origem_tipo == origem_tipo, MovimentoEstoque.origem_id == origem_id,
+            MovimentoEstoque.movimento == "Aplicação",
+        ).order_by(MovimentoEstoque.id.desc())
+    ).first()
+    return (mov.estoque_id, mov.lote_id) if mov else (None, None)
+
+
 def _lancamento_ou_404(session: Session, origem: str, origem_id: int, fazenda_id: int | None):
     if origem not in _ORIGENS_COM_ACAO:
         raise HTTPException(
             status_code=400,
-            detail="Só protocolos de IATF, indução, customizado e lida têm baixa pela Central — "
-                   "o sanitário é lançado por animal e se resolve pela Agenda.",
+            detail="Só protocolos de IATF, indução, customizado, lida e sanitário têm baixa pela Central.",
         )
     modelo = {
         "iatf": ProtocoloIatfLancamento,
         "inducao": ProtocoloInducaoLancamento,
         "customizado": ProtocoloCustomizadoLancamento,
         "lida": LidaLancamento,
+        "sanitario": ProtocoloSanitarioLote,
     }[origem]
     lancamento = session.get(modelo, origem_id)
     # Estrito desde o PR claude/fazenda-id-raiz (ver `_filtro_fazenda` acima)
@@ -381,6 +408,20 @@ def _lancamento_ou_404(session: Session, origem: str, origem_id: int, fazenda_id
 
 
 def _aplicacoes_do_lancamento(session: Session, origem: str, origem_id: int) -> list:
+    if origem == "sanitario":
+        # `origem_id` aqui é o ProtocoloSanitarioLote.id, não o
+        # ProtocoloSanitarioLancamento.id — precisa resolver os lançamentos
+        # (um por animal) do lote antes de buscar as aplicações deles. Como
+        # ProtocoloSanitarioAplicacao já carrega `.dia`/`.numero_matriz`
+        # (denormalizados, ver o modelo), o resto do código genérico abaixo
+        # (detalhe, dar_baixa, desfazer_aplicacao, cancelar) não precisa saber
+        # dessa camada extra.
+        lancamento_ids = session.exec(
+            select(ProtocoloSanitarioLancamento.id).where(ProtocoloSanitarioLancamento.lote_id == origem_id)
+        ).all()
+        return list(session.exec(
+            select(ProtocoloSanitarioAplicacao).where(ProtocoloSanitarioAplicacao.lancamento_id.in_(lancamento_ids))
+        ).all())
     modelo = {
         "iatf": ProtocoloIatfAplicacao,
         "inducao": ProtocoloInducaoAplicacao,
@@ -406,8 +447,17 @@ def detalhe(
 
     # `dia` do customizado e da lida é absoluto (pode começar em D1); os
     # outros já são relativos ao D0. O rótulo sempre sai relativo ao início
-    # do cronograma.
-    base = getattr(lancamento, "dia_inicial", 0) if origem in ("customizado", "lida") else 0
+    # do cronograma. Sanitário também é absoluto (D0 ou D1 conforme o molde
+    # ProtocoloSanitario cadastrado), mas o `dia_inicial` mora no MOLDE, não
+    # no lote (ProtocoloSanitarioLote não repete esse campo, igual à Indução
+    # — ver `_dia_inicial_lancamento`).
+    if origem in ("customizado", "lida"):
+        base = getattr(lancamento, "dia_inicial", 0)
+    elif origem == "sanitario":
+        molde = session.get(ProtocoloSanitario, lancamento.protocolo_id)
+        base = molde.dia_inicial if molde else 0
+    else:
+        base = 0
 
     dias: dict[int, dict] = {}
     for a in aps:
@@ -473,6 +523,48 @@ def detalhe(
                 }
                 for m in medicamentos_por_dia.get(d["dia"], [])
             ]
+    elif origem == "sanitario":
+        # Sanitário: um único produto por dia (a etapa do molde cadastrado) —
+        # diferente de IATF/Indução, que podem ter vários hormônios no mesmo
+        # dia. `ProtocoloSanitarioAplicacao.produto` pode ter fixado o
+        # medicamento no lançamento (etapa por princípio ativo/classificação,
+        # ver ProtocoloLancamentoIn.escolhas_medicamento); senão usa o produto
+        # já cadastrado na própria etapa. Como o produto vale pro dia inteiro
+        # (todo animal daquele dia usa a mesma etapa), uma aplicação
+        # qualquer do dia já basta pra descobrir etapa/produto.
+        etapa_por_dia: dict[int, ProtocoloSanitarioEtapa] = {}
+        produto_por_dia: dict[int, str] = {}
+        for a in aps:
+            if a.dia in etapa_por_dia:
+                continue
+            etapa = session.get(ProtocoloSanitarioEtapa, a.etapa_id)
+            if etapa:
+                etapa_por_dia[a.dia] = etapa
+                produto_por_dia[a.dia] = a.produto or etapa.produto
+        for d in dias.values():
+            etapa = etapa_por_dia.get(d["dia"])
+            if not etapa:
+                d["hormonios"] = []
+                continue
+            produto = produto_por_dia[d["dia"]]
+            opcoes = estoque_baixa.opcoes_medicamento(
+                session, fazenda_id=fazenda_id, produto=produto, incluir_sem_estoque=incluir_sem_estoque,
+            )[1]
+            # "de qual lote/frasco de COMPRA?" (Fase G) — um nível abaixo do
+            # frasco (estoque_id), mesmo seletor de 2 níveis que a aplicação
+            # avulsa de Sanidade já tem (ver FormSanidade.tsx). Só listado
+            # quando o frasco tem lote aberto — item sem lote nenhum não
+            # ganha essa chave, e o frontend trata como "sem escolha de lote".
+            for op in opcoes:
+                if op.get("estoque_id"):
+                    op["lotes"] = [
+                        {
+                            "id": l.id, "numero_lote": l.numero_lote,
+                            "data_compra": l.data_compra, "quantidade_restante": l.quantidade_restante,
+                        }
+                        for l in estoque_baixa.lotes_disponiveis(session, estoque_id=op["estoque_id"])
+                    ]
+            d["hormonios"] = [{"produto": produto, "dose": etapa.dosagem, "unidade": etapa.unidade, "via": etapa.via, "opcoes": opcoes}]
 
     total = len(aps)
     feitas = sum(1 for a in aps if a.realizada)
@@ -525,6 +617,9 @@ def _dia_inicial_lancamento(session: Session, origem: str, lancamento) -> int:
         return 0
     if origem == "inducao":
         molde = session.get(ProtocoloInducaoLactacao, lancamento.protocolo_id)
+        return molde.dia_inicial if molde else 0
+    if origem == "sanitario":
+        molde = session.get(ProtocoloSanitario, lancamento.protocolo_id)
         return molde.dia_inicial if molde else 0
     return lancamento.dia_inicial
 
@@ -584,6 +679,16 @@ def editar_lancamento(
             for ap in aps:
                 ap.data_prevista = ap.data_prevista + delta
                 session.add(ap)
+            if origem == "sanitario":
+                # Camada extra que só o Sanitário tem: cada animal do lote
+                # também guarda seu próprio `data_inicio`
+                # (ProtocoloSanitarioLancamento) — sem este ajuste, ficaria
+                # dessincronizado do `data_inicio` do lote recém-atualizado.
+                for l in session.exec(
+                    select(ProtocoloSanitarioLancamento).where(ProtocoloSanitarioLancamento.lote_id == origem_id)
+                ).all():
+                    l.data_inicio = l.data_inicio + delta
+                    session.add(l)
             setattr(lancamento, campo_data, nova_data)
 
             # Regrava nome_protocolo com gerar_nome_lancamento SOMENTE se o
@@ -665,10 +770,36 @@ def dar_baixa(
             session, f"lida_{origem_id}_{dados.dia}",
             dados.animais, data_realizacao=dados.data_realizacao, fazenda_id=fazenda_id, usuario_id=usuario_id,
         )
+    elif origem == "sanitario":
+        # Sem `_marcar_protocolo_sanitario_realizado` próprio: cada aplicação
+        # sanitária já é confirmável uma a uma pela Agenda
+        # (`_baixar_protocolo_sanitario`, chaveada por `protocolo_sanitario_{id}`)
+        # — aqui só filtra as do dia/lote pedido (e do subconjunto de animais,
+        # se veio) e chama a mesma função uma vez por aplicação pendente,
+        # repassando a data retroativa.
+        # "De qual frasco/lote?" (Fase G, 01/09/2026): um só par
+        # estoque_id/lote_id pro dia inteiro — a etapa sanitária tem um único
+        # produto por dia, então não há por que pedir a escolha por animal
+        # (mesmo espírito de `medicamentos[0]` valendo pro grupo inteiro no
+        # IATF). Sem escolha, cai no comportamento de sempre: resolve pelo
+        # nome do produto e baixa em FIFO.
+        escolha = dados.medicamentos[0] if dados.medicamentos else None
+        avisos = []
+        pendentes = [
+            a for a in _aplicacoes_do_lancamento(session, origem, origem_id)
+            if a.dia == dados.dia and not a.realizada and (not dados.animais or a.numero_matriz in dados.animais)
+        ]
+        for ap in pendentes:
+            avisos.extend(_baixar_protocolo_sanitario(
+                session, f"protocolo_sanitario_{ap.id}", fazenda_id=fazenda_id, usuario_id=usuario_id,
+                data_realizacao=dados.data_realizacao,
+                estoque_id=escolha.estoque_id if escolha else None,
+                lote_id=escolha.lote_id if escolha else None,
+            ))
     else:
         _marcar_protocolo_custom_realizado(
             session, f"{PREFIXO_PROTOCOLO_CUSTOM}{origem_id}_{dados.dia}",
-            dados.animais, data_realizacao=dados.data_realizacao,
+            dados.animais, data_realizacao=dados.data_realizacao, fazenda_id=fazenda_id,
         )
         avisos = []
     return {"ok": True, "avisos": avisos}
@@ -701,19 +832,30 @@ def desfazer_aplicacao(
     usuario_id = usuario_id_seguro(user)
     lancamento = _lancamento_ou_404(session, origem, origem_id, fazenda_id)
 
-    modelo = {
-        "iatf": ProtocoloIatfAplicacao,
-        "inducao": ProtocoloInducaoAplicacao,
-        "customizado": ProtocoloCustomizadoAplicacao,
-        "lida": LidaAplicacao,
-    }[origem]
-    aplicacao = session.exec(
-        select(modelo).where(
-            modelo.lancamento_id == origem_id,
-            modelo.dia == dados.dia,
-            modelo.numero_matriz == dados.numero_matriz,
+    if origem == "sanitario":
+        # `_aplicacoes_do_lancamento` já resolve a camada extra (lote ->
+        # lançamentos por animal -> aplicações) e devolve objetos com
+        # `.dia`/`.numero_matriz` reais — dá pra filtrar em Python em vez de
+        # repetir a query de 2 passos aqui.
+        aplicacao = next(
+            (a for a in _aplicacoes_do_lancamento(session, origem, origem_id)
+             if a.dia == dados.dia and a.numero_matriz == dados.numero_matriz),
+            None,
         )
-    ).first()
+    else:
+        modelo = {
+            "iatf": ProtocoloIatfAplicacao,
+            "inducao": ProtocoloInducaoAplicacao,
+            "customizado": ProtocoloCustomizadoAplicacao,
+            "lida": LidaAplicacao,
+        }[origem]
+        aplicacao = session.exec(
+            select(modelo).where(
+                modelo.lancamento_id == origem_id,
+                modelo.dia == dados.dia,
+                modelo.numero_matriz == dados.numero_matriz,
+            )
+        ).first()
     if aplicacao is None:
         raise HTTPException(status_code=404, detail="Aplicação não encontrada para este animal/dia.")
     if not aplicacao.realizada:
@@ -724,7 +866,30 @@ def desfazer_aplicacao(
     session.add(aplicacao)
 
     avisos: list[str] = []
-    if origem == "iatf":
+    if origem == "sanitario":
+        etapa = session.get(ProtocoloSanitarioEtapa, aplicacao.etapa_id)
+        if etapa and etapa.dosagem:
+            produto = aplicacao.produto or etapa.produto
+            # Devolve no MESMO frasco/lote que a baixa original consumiu —
+            # lido de volta do rastro em MovimentoEstoque (ver
+            # `_frasco_da_ultima_baixa_protocolo`), nunca resolvido de novo
+            # só pelo nome (que cairia no frasco "errado" se houver mais de
+            # um do mesmo produto, mesmo bug que A-13 já corrigiu em Sanidade).
+            estoque_id_usado, lote_id_usado = _frasco_da_ultima_baixa_protocolo(
+                session, "protocolo_sanitario", aplicacao.id,
+            )
+            item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=produto, estoque_id=estoque_id_usado)
+            avisos.extend(estoque_baixa.devolver(
+                session, item=item, quantidade=etapa.dosagem, unidade=etapa.unidade, data=date.today(),
+                fazenda_id=fazenda_id, usuario_id=usuario_id, produto=produto,
+                observacao=f"Estorno — aplicação desfeita: {dados.numero_matriz}, D{dados.dia}",
+                # Mesma convenção de origem_tipo/origem_id que
+                # `_baixar_protocolo_sanitario` usa ao dar a baixa original —
+                # rastreada por APLICAÇÃO, não pelo lote (ver
+                # ProtocoloSanitarioAplicacao no modelo e exclusoes.py).
+                origem_tipo="protocolo_sanitario", origem_id=aplicacao.id, lote_id=lote_id_usado,
+            ))
+    elif origem == "iatf":
         hoje = date.today()
         for h in session.exec(
             select(ProtocoloIatfHormonio).where(
@@ -821,13 +986,28 @@ def cancelar(
 
     # Estorna cada saída de estoque desta origem. Só as SAÍDAS: uma devolução
     # anterior (entrada) não pode ser estornada de novo, ou o saldo inflaria.
+    #
+    # Sanitário é o único caso em que o rastro em MovimentoEstoque não usa
+    # (origem_tipo=origem, origem_id=origem_id) — `_baixar_protocolo_sanitario`
+    # grava origem_tipo="protocolo_sanitario" com origem_id = APLICAÇÃO (não o
+    # lote), mesma convenção que exclusoes.py já usa para essa família. Por
+    # isso o filtro é por uma LISTA de origem_id (uma aplicação por
+    # animal/dia), não um valor só.
     avisos: list[str] = []
     hoje = date.today()
-    query_mov = select(MovimentoEstoque).where(
-        MovimentoEstoque.origem_tipo == origem,
-        MovimentoEstoque.origem_id == origem_id,
-        MovimentoEstoque.movimento == "Aplicação",
-    )
+    if origem == "sanitario":
+        aplicacao_ids = [a.id for a in _aplicacoes_do_lancamento(session, origem, origem_id)]
+        query_mov = select(MovimentoEstoque).where(
+            MovimentoEstoque.origem_tipo == "protocolo_sanitario",
+            MovimentoEstoque.origem_id.in_(aplicacao_ids),
+            MovimentoEstoque.movimento == "Aplicação",
+        )
+    else:
+        query_mov = select(MovimentoEstoque).where(
+            MovimentoEstoque.origem_tipo == origem,
+            MovimentoEstoque.origem_id == origem_id,
+            MovimentoEstoque.movimento == "Aplicação",
+        )
     query_mov = _filtro_fazenda(query_mov, MovimentoEstoque.fazenda_id, fazenda_id)
     for mov in session.exec(query_mov).all():
         item = session.get(Estoque, mov.estoque_id) if mov.estoque_id else None
@@ -837,7 +1017,7 @@ def cancelar(
             session, item=item, quantidade=mov.quantidade, unidade=mov.unidade, data=hoje,
             fazenda_id=fazenda_id, usuario_id=usuario_id, produto=mov.nome_item,
             observacao=f"Estorno — protocolo cancelado ({lancamento.nome_protocolo})",
-            origem_tipo=origem, origem_id=origem_id,
+            origem_tipo=mov.origem_tipo, origem_id=mov.origem_id, lote_id=mov.lote_id,
         ))
 
     # `ativo=False` é o que marca "cancelado" nas três famílias — `_linha` já

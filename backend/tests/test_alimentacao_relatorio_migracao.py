@@ -226,6 +226,25 @@ class TestProdutosSemCategoria:
         assert r.status_code == 200
         assert r.json()["produtos_sem_categoria"] == []
 
+    def test_categoria_direta_no_estoque_tambem_exclui_da_lista(self, client):
+        """Fase P1, Gap 2 — `Estoque.categoria_alimento_id` satisfaz "tem
+        categoria" por si só, mesmo sem NENHUM vínculo de Alimento (o
+        caminho que até aqui era obrigatório)."""
+        c, engine = client
+        with Session(engine) as s:
+            cat = CategoriaAlimento(nome="Concentrado")
+            s.add(cat)
+            s.commit()
+            s.refresh(cat)
+            s.add(Estoque(
+                nome="Ração avulsa categorizada", quantidade=5.0, finalidade="Nutrição animal",
+                alimento_id=None, categoria_alimento_id=cat.id,
+            ))
+            s.commit()
+        r = c.get("/alimentacao/migracao/relatorio")
+        assert r.status_code == 200
+        assert r.json()["produtos_sem_categoria"] == []
+
 
 class TestDesmembramentos:
     def test_alimento_com_dois_produtos_aparece_com_flag_nutricional(self, client):
@@ -246,6 +265,32 @@ class TestDesmembramentos:
         assert linhas[0]["alimento_nome"] == "Silagem de milho"
         assert len(linhas[0]["produtos"]) == 2
         assert linhas[0]["tem_alimento_nutricional"] is True
+        assert linhas[0]["estoque_preferido_id"] is None  # ninguém escolheu ainda (Fase P1)
+
+    def test_mostra_o_estoque_preferido_quando_ja_escolhido(self, client):
+        """Fase P1, Gap 3 — a escolha feita via PUT
+        /alimentacao/alimentos/{id}/estoque-preferido aparece no relatório."""
+        c, engine = client
+        with Session(engine) as s:
+            a = Alimento(nome="Núcleo proteico")
+            s.add(a)
+            s.commit()
+            s.refresh(a)
+            e_a = Estoque(nome="Núcleo proteico - Fornecedor A", quantidade=100.0, alimento_id=a.id)
+            e_b = Estoque(nome="Núcleo proteico - Fornecedor B", quantidade=200.0, alimento_id=a.id)
+            s.add(e_a)
+            s.add(e_b)
+            s.commit()
+            s.refresh(e_b)
+            estoque_preferido_id = e_b.id
+            a.estoque_preferido_id = estoque_preferido_id
+            s.add(a)
+            s.commit()
+        r = c.get("/alimentacao/migracao/relatorio")
+        assert r.status_code == 200
+        linhas = r.json()["desmembramentos"]
+        assert len(linhas) == 1
+        assert linhas[0]["estoque_preferido_id"] == estoque_preferido_id
 
     def test_alimento_com_um_unico_produto_nao_entra(self, client):
         c, engine = client
@@ -281,6 +326,26 @@ class TestDivergenciaNome:
         assert linhas[0]["alimento_nome"] == "Silagem de Milho"
         assert linhas[0]["estoque_nome"] == "SILAGEM MILHO SILO 2"
         assert linhas[0]["quantidade_laudos_pelo_nome_atual"] == 2
+        assert linhas[0]["quantidade_laudos_pelo_id"] == 0  # Fase P1 — nenhum laudo ligado por id ainda
+
+    def test_quantidade_laudos_pelo_id_reflete_o_vinculo_da_fase_p1(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            a = Alimento(nome="Silagem de Milho")
+            s.add(a)
+            s.commit()
+            s.refresh(a)
+            s.add(Estoque(nome="SILAGEM MILHO SILO 2", quantidade=100.0, alimento_id=a.id))
+            # Um laudo ligado por id (imune a rename) e outro só por nome.
+            s.add(AnaliseBromatologica(data=date(2026, 1, 1), alimento="Silagem de Milho", alimento_id=a.id))
+            s.add(AnaliseBromatologica(data=date(2026, 2, 1), alimento="Silagem de Milho"))
+            s.commit()
+        r = c.get("/alimentacao/migracao/relatorio")
+        assert r.status_code == 200
+        linhas = r.json()["divergencia_nome"]
+        assert len(linhas) == 1
+        assert linhas[0]["quantidade_laudos_pelo_nome_atual"] == 2
+        assert linhas[0]["quantidade_laudos_pelo_id"] == 1
 
     def test_nomes_iguais_nao_entra(self, client):
         c, engine = client

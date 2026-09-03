@@ -26,6 +26,7 @@ type Lote = {
   novilhas_inseminadas: boolean | null; novilhas_gestantes: boolean | null;
   categoria_manejo_ids: string | null; excluir_da_sugestao: boolean; ativo: boolean;
   permitir_fora_da_dieta: boolean; permitir_sem_estoque: boolean;
+  modo_baixa_estoque: string;
 };
 
 type Form = {
@@ -41,6 +42,7 @@ type Form = {
   excluir_da_sugestao: boolean;
   permitir_fora_da_dieta: boolean;
   permitir_sem_estoque: boolean;
+  modo_baixa_estoque: string;
 };
 
 const formVazio: Form = {
@@ -52,6 +54,7 @@ const formVazio: Form = {
   novilhas_inseminadas: false, novilhas_gestantes: false, categoria_manejo_ids: [],
   excluir_da_sugestao: false,
   permitir_fora_da_dieta: false, permitir_sem_estoque: false,
+  modo_baixa_estoque: "consumo_real",
 };
 
 const inputStyle: React.CSSProperties = {
@@ -88,6 +91,7 @@ function paraPayload(form: Form, ativo: boolean = true) {
     excluir_da_sugestao: form.excluir_da_sugestao,
     permitir_fora_da_dieta: form.permitir_fora_da_dieta,
     permitir_sem_estoque: form.permitir_sem_estoque,
+    modo_baixa_estoque: form.modo_baixa_estoque,
     ativo,
   };
 }
@@ -113,6 +117,7 @@ function payloadDoLote(l: Lote, overrides: Partial<ReturnType<typeof paraPayload
     excluir_da_sugestao: l.excluir_da_sugestao,
     permitir_fora_da_dieta: l.permitir_fora_da_dieta,
     permitir_sem_estoque: l.permitir_sem_estoque,
+    modo_baixa_estoque: l.modo_baixa_estoque,
     ativo: l.ativo,
     ...overrides,
   };
@@ -169,6 +174,7 @@ export default function CadastroLotes() {
       excluir_da_sugestao: !!l.excluir_da_sugestao,
       permitir_fora_da_dieta: !!l.permitir_fora_da_dieta,
       permitir_sem_estoque: !!l.permitir_sem_estoque,
+      modo_baixa_estoque: l.modo_baixa_estoque || "consumo_real",
     });
     setEditando(l.id);
     setMsg(null);
@@ -519,6 +525,39 @@ function FormLote({ form, setForm, onSalvar, onCancelar, salvando, msg, categori
           <input type="checkbox" checked={form.permitir_sem_estoque} onChange={(e) => setForm({ ...form, permitir_sem_estoque: e.target.checked })} />
           Permitir alimento sem estoque no consumo diário
         </label>
+      </div>
+
+      {/* Como a dieta deste lote afeta o Estoque (proposta aceita pelo
+          proprietário). "Pelo consumo real" nasce padrão porque é o ÚNICO
+          mecanismo que já funciona hoje de ponta a ponta — todo lote que
+          nunca mexeu nisso continua se comportando exatamente como antes. */}
+      <div className="mb-3">
+        <label style={labelStyle}>Como a dieta deste lote afeta o Estoque</label>
+        <div className="flex items-center gap-1" style={{ flexWrap: "wrap", marginTop: "0.2rem" }}>
+          {([
+            { id: "automatica", label: "Automática pela dieta",
+              title: "O sistema desconta o Estoque sozinho, dia a dia, pela quantidade prevista no plano da dieta — sem depender de ninguém lançar consumo." },
+            { id: "consumo_real", label: "Pelo consumo real (recomendado)",
+              title: "Só desconta o Estoque quando alguém lança o consumo de verdade em \"Consumo diário e sobra\" — o único mecanismo que já funciona hoje de ponta a ponta." },
+            { id: "sem_baixa", label: "Sem baixa",
+              title: "A dieta é só um plano/receita — nunca desconta o Estoque deste lote, nem pela dieta nem pelo consumo lançado." },
+          ] as const).map((o) => {
+            const ativo = form.modo_baixa_estoque === o.id;
+            return (
+              <button type="button" key={o.id} title={o.title}
+                onClick={() => setForm({ ...form, modo_baixa_estoque: o.id })}
+                style={{
+                  fontSize: "0.75rem", padding: "0.3rem 0.65rem", borderRadius: 999, cursor: "pointer",
+                  border: "1px solid " + (ativo ? "var(--pill-active-border)" : "var(--border)"),
+                  background: ativo ? "var(--pill-active-bg)" : "transparent",
+                  color: ativo ? "var(--pill-active-fg)" : "var(--text-muted)",
+                  fontWeight: ativo ? 700 : 500,
+                }}>
+                {o.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="mb-3">

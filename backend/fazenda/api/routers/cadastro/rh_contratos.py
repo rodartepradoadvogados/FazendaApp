@@ -309,7 +309,7 @@ def criar_empreitada(
     fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     pessoa = session.get(Pessoa, dados.pessoa_id)
-    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
+    if not pessoa or (pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if dados.tipo_pagamento not in TIPOS_PAGAMENTO_EMPREITADA:
         raise HTTPException(status_code=400, detail="Tipo de pagamento inválido")
@@ -368,7 +368,7 @@ def concluir_etapa_empreitada(
     análise/pagamento.
     """
     etapa = session.get(EmpreitadaEtapa, etapa_id)
-    if not etapa or etapa.empreitada_id != empreitada_id or (fazenda_id is not None and etapa.fazenda_id != fazenda_id):
+    if not etapa or etapa.empreitada_id != empreitada_id or (etapa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Etapa não encontrada")
     if etapa.concluida:
         raise HTTPException(status_code=400, detail="Etapa já concluída")
@@ -417,7 +417,7 @@ def excluir_parcela_empreitada(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     parcela = session.get(EmpreitadaParcela, parcela_id)
-    if not parcela or (fazenda_id is not None and parcela.fazenda_id != fazenda_id):
+    if not parcela or (parcela.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Parcela de empreitada não encontrada")
     if parcela.numero_lancamento_gerado and _numeros_pagos(session, [parcela.numero_lancamento_gerado]):
         raise HTTPException(status_code=400, detail="Parcela já paga não pode ser excluída aqui — exclua em Lançamentos > Excluir lançamento.")
@@ -475,7 +475,7 @@ def atualizar_parcela_empreitada(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     parcela = session.get(EmpreitadaParcela, parcela_id)
-    if not parcela or (fazenda_id is not None and parcela.fazenda_id != fazenda_id):
+    if not parcela or (parcela.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Parcela de empreitada não encontrada")
     if dados.valor <= 0:
         raise HTTPException(status_code=400, detail="Valor da parcela deve ser positivo")
@@ -500,7 +500,7 @@ def redistribuir_parcelas_empreitada(
     uma única parcela, redistribui o saldo entre as próximas)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     empreitada = session.get(Empreitada, empreitada_id)
-    if not empreitada or (fazenda_id is not None and empreitada.fazenda_id != fazenda_id):
+    if not empreitada or (empreitada.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Empreitada não encontrada")
     parcelas = session.exec(
         select(EmpreitadaParcela).where(EmpreitadaParcela.empreitada_id == empreitada_id).order_by(EmpreitadaParcela.data_vencimento)
@@ -575,7 +575,7 @@ def criar_contrato(
     fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     pessoa = session.get(Pessoa, dados.pessoa_id)
-    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
+    if not pessoa or (pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if dados.forma_pagamento is not None and dados.forma_pagamento not in FORMAS_PAGAMENTO_CONTRATO:
         raise HTTPException(status_code=400, detail="Forma de pagamento inválida")
@@ -643,7 +643,7 @@ def encerrar_contrato(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     contrato = session.get(Contrato, contrato_id)
-    if not contrato or (fazenda_id is not None and contrato.fazenda_id != fazenda_id):
+    if not contrato or (contrato.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Contrato não encontrado")
     contrato.status = "encerrado"
     session.add(contrato)
@@ -663,7 +663,7 @@ def excluir_parcela_contrato(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     parcela = session.get(ContratoParcela, parcela_id)
-    if not parcela or (fazenda_id is not None and parcela.fazenda_id != fazenda_id):
+    if not parcela or (parcela.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Parcela de contrato não encontrada")
     if parcela.numero_lancamento_gerado and _numeros_pagos(session, [parcela.numero_lancamento_gerado]):
         raise HTTPException(status_code=400, detail="Parcela já paga não pode ser excluída aqui — exclua em Lançamentos > Excluir lançamento.")
@@ -685,7 +685,7 @@ def atualizar_parcela_contrato(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     parcela = session.get(ContratoParcela, parcela_id)
-    if not parcela or (fazenda_id is not None and parcela.fazenda_id != fazenda_id):
+    if not parcela or (parcela.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Parcela de contrato não encontrada")
     if dados.valor <= 0:
         raise HTTPException(status_code=400, detail="Valor da parcela deve ser positivo")
@@ -707,7 +707,7 @@ def redistribuir_parcelas_contrato(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     contrato = session.get(Contrato, contrato_id)
-    if not contrato or (fazenda_id is not None and contrato.fazenda_id != fazenda_id):
+    if not contrato or (contrato.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Contrato não encontrado")
     parcelas = session.exec(
         select(ContratoParcela).where(ContratoParcela.contrato_id == contrato_id).order_by(ContratoParcela.data_vencimento)
@@ -857,7 +857,7 @@ def _ultima_folga_diaria(session: Session, diaria_id: int, antes_de: date) -> da
 
 def _diaria_ou_404(session: Session, diaria_id: int, fazenda_id: int | None) -> Diaria:
     diaria = session.get(Diaria, diaria_id)
-    if not diaria or (fazenda_id is not None and diaria.fazenda_id != fazenda_id):
+    if not diaria or (diaria.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Diária não encontrada")
     return diaria
 
@@ -1002,7 +1002,7 @@ def criar_diaria(
     fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     pessoa = session.get(Pessoa, dados.pessoa_id)
-    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
+    if not pessoa or (pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if dados.valor_diaria <= 0:
         raise HTTPException(status_code=400, detail="Valor da diária deve ser positivo")
@@ -1035,7 +1035,7 @@ def editar_diaria(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     diaria = session.get(Diaria, diaria_id)
-    if not diaria or (fazenda_id is not None and diaria.fazenda_id != fazenda_id):
+    if not diaria or (diaria.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Diária não encontrada")
     if dados.ajuste_numero_diarias is not None and dados.ajuste_numero_diarias < 0:
         raise HTTPException(status_code=400, detail="Número de diárias não pode ser negativo")
@@ -1084,7 +1084,7 @@ def responder_auditoria_diaria(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     auditoria = session.get(DiariaAuditoria, auditoria_id)
-    if not auditoria or (fazenda_id is not None and auditoria.fazenda_id != fazenda_id):
+    if not auditoria or (auditoria.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Auditoria não encontrada")
     dias_no_periodo = (auditoria.periodo_fim - auditoria.periodo_inicio).days + 1
     if not (0 <= dados.dias_trabalhados <= dias_no_periodo):
@@ -1105,7 +1105,7 @@ def registrar_pagamento_diaria(
     fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     diaria = session.get(Diaria, diaria_id)
-    if not diaria or (fazenda_id is not None and diaria.fazenda_id != fazenda_id):
+    if not diaria or (diaria.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Diária não encontrada")
     if dados.valor <= 0:
         raise HTTPException(status_code=400, detail="Valor do pagamento deve ser positivo")
@@ -1135,7 +1135,11 @@ def registrar_pagamento_diaria(
         fazenda_id=fazenda_id,
     ))
     session.commit()
-    return _resumo_diaria(session, diaria, pessoa.nome)
+    # `numero_lancamento_gerado` no topo (fora do resumo) — é o que a tela
+    # usa pra anexar o comprovante logo em seguida via o mecanismo genérico
+    # POST /financeiro/lancamentos/{numero_lancamento}/anexos, sem precisar
+    # adivinhar qual dos pagamentos da lista é o que acabou de ser criado.
+    return {**_resumo_diaria(session, diaria, pessoa.nome), "numero_lancamento_gerado": numero_lancamento}
 
 
 # ---------------------------------------------------------------------------
@@ -1538,7 +1542,7 @@ def _origem_vale_avulso(session: Session, origem_tipo: str, origem_id: int, faze
         origem = session.get(Contrato, origem_id)
     else:
         origem = session.get(Diaria, origem_id)
-    if not origem or (fazenda_id is not None and origem.fazenda_id != fazenda_id):
+    if not origem or (origem.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail=f"{origem_tipo.capitalize()} não encontrado(a)")
     return origem
 
@@ -1555,7 +1559,7 @@ def _validar_conta_vale_avulso(
     if not conta_corrente_id:
         raise HTTPException(status_code=400, detail="Selecione a conta bancária de onde sai o vale.")
     conta = session.get(ContaCorrente, conta_corrente_id)
-    if not conta or (fazenda_id is not None and conta.fazenda_id != fazenda_id):
+    if not conta or (conta.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Conta bancária não encontrada")
     return conta
 
@@ -1711,7 +1715,7 @@ def atualizar_vale_avulso(
     fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     vale = session.get(ValeAvulso, vale_id)
-    if not vale or (fazenda_id is not None and vale.fazenda_id != fazenda_id):
+    if not vale or (vale.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Vale não encontrado")
     if dados.origem_tipo not in ORIGENS_VALE_AVULSO:
         raise HTTPException(status_code=400, detail="Tipo de origem inválido")
@@ -1785,7 +1789,7 @@ def excluir_vale_avulso(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     vale = session.get(ValeAvulso, vale_id)
-    if not vale or (fazenda_id is not None and vale.fazenda_id != fazenda_id):
+    if not vale or (vale.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Vale não encontrado")
     _reverter_vale_avulso(session, vale_id)
     # Remove também o lançamento (ContaGerencial) gerado para a saída de

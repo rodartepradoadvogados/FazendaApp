@@ -563,6 +563,85 @@ class TestTipoPessoa:
         assert "Funcionário" in nomes
         assert "Empreiteiro" in nomes
 
+    def test_administrador_e_contador_estao_seedados(self, client):
+        # Administrador/Contador (ago/2026) — adicionados a TIPOS_PESSOA para
+        # que usePessoasAtivas (frontend) tenha um tipo cadastrável que
+        # qualifique alguém como "Responsável" sem precisar ser
+        # Funcionário/Veterinário/Zootecnista (ver regra no frontend).
+        c, engine = client
+        nomes = {t["nome"] for t in c.get("/cadastro/pessoas/tipos").json()}
+        assert "Administrador" in nomes
+        assert "Contador" in nomes
+
+    def test_seed_tipos_pessoa_continua_idempotente_com_administrador_e_contador(self, client):
+        # seed_tipos_pessoa roda uma vez por fazenda (SeedFlag) — chamar a
+        # rota de listagem várias vezes (ela auto-semeia via
+        # seed_tipos_pessoa) não pode duplicar nenhum tipo, incluindo os dois
+        # novos.
+        c, engine = client
+        c.get("/cadastro/pessoas/tipos")
+        c.get("/cadastro/pessoas/tipos")
+        r = c.get("/cadastro/pessoas/tipos")
+        nomes = [t["nome"] for t in r.json()]
+        assert nomes.count("Administrador") == 1
+        assert nomes.count("Contador") == 1
+        assert len(nomes) == len(set(nomes))
+
+    def test_cria_pessoa_administrador_e_contador(self, client):
+        c, engine = client
+        r = c.post("/cadastro/pessoas", json={"nome": "Dona Rosa", "tipos": ["Administrador"]})
+        assert r.status_code == 200
+        assert r.json()["tipos"] == ["Administrador"]
+        r = c.post("/cadastro/pessoas", json={"nome": "Seu Nelson", "tipos": ["Contador"]})
+        assert r.status_code == 200
+        assert r.json()["tipos"] == ["Contador"]
+
+    def test_validar_tipos_backfill_administrador_contador_fazenda_antiga(self):
+        # Reproduz o bug relatado em produção: uma fazenda cujo
+        # seed_tipos_pessoa já rodou ANTES de Administrador/Contador
+        # existirem em TIPOS_PESSOA (ago/2026) tem o SeedFlag
+        # "tipos_pessoa_v1_fazenda_1" já marcado, mas nunca ganhou essas
+        # duas linhas em TipoPessoa — chamar seed_tipos_pessoa de novo não
+        # adianta nada, porque a flag já existe e a função retorna sem
+        # fazer nada. Sem o backfill (seed_tipos_papel_administrativo),
+        # _validar_tipos(["Administrador"]) falha com "Tipo inválido" para
+        # sempre nessa fazenda, mesmo autossemeando a cada chamada.
+        from fazenda.api.routers.cadastro.pessoas import _validar_tipos
+        from fazenda.models import SeedFlag, TipoPessoa
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as s:
+            s.add(SeedFlag(chave="tipos_pessoa_v1_fazenda_1"))
+            s.add(TipoPessoa(nome="Funcionário", fazenda_id=1))
+            s.add(TipoPessoa(nome="Geral", fazenda_id=1))
+            s.commit()
+
+        with Session(engine) as s:
+            nomes = {t.nome for t in s.exec(select(TipoPessoa)).all()}
+            assert "Administrador" not in nomes  # fazenda "antiga" simulada
+
+            # Antes da correção este raise era exatamente o bug relatado em
+            # produção: "Tipo inválido" mesmo a fazenda tendo passado pelo
+            # seed. Depois da correção (seed_tipos_papel_administrativo
+            # chamada dentro de _validar_tipos), o backfill acontece na
+            # hora e a chamada funciona normalmente.
+            resultado = _validar_tipos(s, ["Administrador"], fazenda_id=1)
+            assert resultado == "Administrador"
+
+        with Session(engine) as s:
+            # Backfill não duplica nem mexe no que já existia.
+            nomes_finais = [t.nome for t in s.exec(
+                select(TipoPessoa).where(TipoPessoa.fazenda_id == 1)
+            ).all()]
+            assert nomes_finais.count("Administrador") == 1
+            assert nomes_finais.count("Contador") == 1
+            assert nomes_finais.count("Funcionário") == 1
+            assert nomes_finais.count("Geral") == 1
+
+            # E o Contador do mesmo backfill também passa a validar.
+            assert _validar_tipos(s, ["Contador"], fazenda_id=1) == "Contador"
+
     def test_cria_novo_tipo_e_usa_na_pessoa(self, client):
         c, engine = client
         r = c.post("/cadastro/pessoas/tipos", json={"nome": "Consultor"})
@@ -583,6 +662,73 @@ class TestTipoPessoa:
         r = c.put(f"/cadastro/pessoas/tipos/{tipo_id}", json={"nome": "Estagiário", "ativo": False})
         assert r.status_code == 200
         assert r.json()["ativo"] is False
+
+
+class TestBackfillTiposOrfaos:
+    """Caso real de produção: "Sócio" gravado em `Pessoa.tipo` sem NUNCA ter
+    sido um `TipoPessoa` cadastrado desta fazenda (dado legado de antes da
+    validação estrita). Diferente do backfill de Administrador/Contador
+    (cria um tipo novo que ninguém ainda usa) — aqui o tipo já ESTÁ em uso,
+    só nunca foi registrado. Sem a correção, reeditar essa MESMA pessoa (o
+    formulário reenvia os tipos atuais dela) falhava com "Tipo inválido",
+    mesmo sem tentar adicionar nada de novo — o próprio "Sócio" já gravado
+    reprovava a validação."""
+
+    def test_validar_tipos_aceita_tipo_orfao_ja_em_uso(self):
+        from fazenda.api.routers.cadastro.pessoas import _validar_tipos
+        from fazenda.models import Pessoa, SeedFlag, TipoPessoa
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as s:
+            s.add(SeedFlag(chave="tipos_pessoa_v1_fazenda_1"))
+            s.add(TipoPessoa(nome="Funcionário", fazenda_id=1))
+            # "Sócio" nunca foi um TipoPessoa desta fazenda, mas já está
+            # gravado numa pessoa real (dado legado).
+            s.add(Pessoa(nome="Jairo", tipo="Sócio", fazenda_id=1))
+            s.commit()
+
+        with Session(engine) as s:
+            nomes = {t.nome for t in s.exec(select(TipoPessoa).where(TipoPessoa.fazenda_id == 1)).all()}
+            assert "Sócio" not in nomes  # órfão: em uso, mas não cadastrado
+
+            # Reeditar a mesma pessoa (reenviando "Sócio" + acrescentando
+            # "Administrador") não pode mais falhar por causa do próprio
+            # tipo que ela já tinha.
+            resultado = _validar_tipos(s, ["Sócio", "Administrador"], fazenda_id=1)
+            assert resultado == "Sócio,Administrador"
+
+        with Session(engine) as s:
+            nomes_finais = [t.nome for t in s.exec(select(TipoPessoa).where(TipoPessoa.fazenda_id == 1)).all()]
+            assert nomes_finais.count("Sócio") == 1  # backfillado, sem duplicar
+
+    def test_listar_tipos_pessoa_expoe_tipo_orfao_como_opcao(self, client):
+        # Depois do backfill, "Sócio" também aparece na lista que alimenta os
+        # checkboxes do frontend — não fica só validando "por baixo dos panos".
+        c, engine = client
+        with Session(engine) as s:
+            from fazenda.models import Pessoa
+            s.add(Pessoa(nome="Jairo", tipo="Sócio"))
+            s.commit()
+
+        nomes = {t["nome"] for t in c.get("/cadastro/pessoas/tipos").json()}
+        assert "Sócio" in nomes
+
+    def test_backfill_nao_duplica_tipo_ja_cadastrado(self):
+        from fazenda.api.routers.cadastro.pessoas import backfill_tipos_orfaos
+        from fazenda.models import Pessoa, TipoPessoa
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as s:
+            s.add(TipoPessoa(nome="Sócio", fazenda_id=1))
+            s.add(Pessoa(nome="Jairo", tipo="Sócio", fazenda_id=1))
+            s.commit()
+            backfill_tipos_orfaos(s, fazenda_id=1)
+
+        with Session(engine) as s:
+            nomes = [t.nome for t in s.exec(select(TipoPessoa).where(TipoPessoa.fazenda_id == 1)).all()]
+            assert nomes.count("Sócio") == 1
 
 
 class TestProporcionalAdmissao:
@@ -1284,6 +1430,30 @@ class TestCadastroSanitario:
         r = c.post("/cadastro/principios-ativos", json={"nome": "Doramectina"})
         assert r.status_code == 200
         assert "Doramectina" in [p["nome"] for p in c.get("/cadastro/principios-ativos").json()]
+
+    def test_principio_e_doenca_globais_do_painel_cowdata_aparecem_na_fazenda(self, client):
+        """Pedido do usuário (01/09/2026): "cadastrei o princípio ativo
+        Tulatromicina [no Painel CowData], e ele não aparece para seleção no
+        tenant. Todo princípio ativo cadastrado no CowData deve virar
+        padrão." Causa raiz: /cadastro/principios-ativos (e /cadastro/doencas)
+        filtravam fazenda_id == própria, excluindo as linhas globais
+        (fazenda_id nulo) do Painel CowData — corrigido com
+        `global_compartilhado=True` (união via rules.visibilidade.visivel())."""
+        c, engine = client
+        from fazenda.api.routers.cadastro.sanitario import _listar_doencas, _listar_principios
+        from fazenda.models import Doenca, PrincipioAtivo
+        with Session(engine) as s:
+            s.add(PrincipioAtivo(nome="Tulatromicina", fazenda_id=None))  # cadastrado no Painel CowData
+            s.add(PrincipioAtivo(nome="Só desta fazenda", fazenda_id=99))  # de OUTRA fazenda — não pode vazar
+            s.add(Doenca(nome="Mastite Global", tipo="doenca", fazenda_id=None))
+            s.commit()
+
+            nomes_pa = [p["nome"] for p in _listar_principios(session=s, fazenda_id=7)]
+            assert "Tulatromicina" in nomes_pa
+            assert "Só desta fazenda" not in nomes_pa
+
+            nomes_doenca = [d["nome"] for d in _listar_doencas(session=s, fazenda_id=7)]
+            assert "Mastite Global" in nomes_doenca
 
 
 class TestMotivoBaixa:

@@ -45,6 +45,13 @@ export default function ConfiguracoesPage() {
     // Logo abaixo de Aprovações, só para o contratante-administrador (quem
     // contratou o plano) — pedido explícito do usuário.
     if (ehContratanteAdministrador()) abas.push({ id: "auditoria-cowdata", label: "Auditoria CowData", icon: ShieldCheck, title: "Acessos de suporte da CowData a esta fazenda, e compromissos de confiança/LGPD" });
+    // A aba "Ordem de Parto" (reconstrução de Parto.ordem_parto e do derivado
+    // em ControleLeiteiro) era uma ferramenta PONTUAL de correção do dado
+    // histórico importado do Ideagri — rodou, corrigiu 107 registros e saiu de
+    // cena em 27/08/2026. Os endpoints do backend continuam de pé (ver
+    // producao.py, seções de reconstrução de ordem de parto) caso uma nova
+    // importação legada volte a exigir a correção; para reativar a tela, basta
+    // devolver esta aba e os dois componentes de View.
     // Sempre disponível — mesmo para quem não tem nenhum outro módulo liberado.
     abas.push({ id: "aparencia", label: "Aparência", icon: Palette, title: "Tema e paleta de cores — preferência pessoal" });
     setAbasVisiveis(abas);

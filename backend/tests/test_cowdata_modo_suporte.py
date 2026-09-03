@@ -183,6 +183,35 @@ def test_modo_suporte_nao_bloqueia_leitura(client):
     assert r.status_code == 200
 
 
+def test_modo_suporte_bloqueia_mesclagem_de_estoque(client):
+    """POST .../mesclar tem que dar 403 mesmo /estoque NÃO estando nos
+    prefixos sensíveis — bloqueio é por SUFIXO exato de rota (ver
+    main.py::_bloquear_modo_suporte), pra não abrir uma mesclagem
+    irreversível de dados do cliente numa sessão de suporte."""
+    token = _token_suporte(client)
+    r = client.post("/estoque/1/mesclar", json={"perdedor_ids": [2]}, headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 403
+    assert "modo suporte" in r.json()["detail"].lower()
+
+
+def test_modo_suporte_nao_bloqueia_edicao_normal_de_estoque(client):
+    """A trava do endpoint de mesclagem não pode virar um bloqueio geral de
+    /estoque — edição normal de item continua liberada em modo suporte,
+    exatamente como antes desta mudança."""
+    token = _token_suporte(client)
+    r = client.put("/estoque/999999", json={"nome": "Item de teste"}, headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 404  # rota respondeu de verdade (item não existe) — não foi bloqueada pelo middleware
+
+
+def test_modo_suporte_permite_restaurar_padrao(client):
+    """restaurar-padrao é a ÚNICA escrita em Estoque que só existe em modo
+    suporte — o middleware não pode bloqueá-la (a rota em si que decide,
+    via `exigir_sessao_suporte`)."""
+    token = _token_suporte(client)
+    r = client.post("/estoque/999999/restaurar-padrao", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 404  # rota respondeu de verdade (item não existe) — não foi bloqueada pelo middleware
+
+
 def test_modo_suporte_consegue_encerrar_a_propria_sessao(client):
     """A própria rota de encerrar sessão do Cofre não pode ficar bloqueada
     pelo middleware — senão quem entra em modo suporte fica preso até expirar."""
@@ -200,6 +229,35 @@ def test_modo_suporte_consegue_encerrar_a_propria_sessao(client):
     r = client.post(f"/painel-cowdata/cofre/sessoes/{sessao_id}/encerrar", headers={"Authorization": f"Bearer {token_suporte}"})
     assert r.status_code == 200
     assert r.json()["encerrada_em"] is not None
+
+
+def test_encerrar_sessao_corta_acesso_de_fato(client):
+    """BUG DE SEGURANÇA CORRIGIDO: antes desta correção, o token de modo
+    suporte continuava valendo normalmente depois de POST .../encerrar (só a
+    flag encerrada_em era gravada, nada revalidava o token contra o banco) —
+    quem estava com o token em mãos continuava acessando a fazenda até o
+    JWT expirar sozinho. Agora, qualquer requisição com esse token depois do
+    encerramento deve ser recusada."""
+    login = client.post("/auth/login", json={"username": "dono", "senha": "123"}).json()
+    fid = _fazenda_id(client)
+    pedido = client.post(
+        "/painel-cowdata/cofre/pedidos",
+        json={"fazenda_id": fid, "motivo": "Diagnosticar erro relatado", "assunto_chamado": "Erro relatado pelo cliente"},
+        headers={"Authorization": f"Bearer {login['token']}"},
+    ).json()
+    token_suporte = pedido["token"]
+    sessoes = client.get("/painel-cowdata/cofre/sessoes-ativas", headers={"Authorization": f"Bearer {login['token']}"}).json()
+    sessao_id = next(s["id"] for s in sessoes if s["fazenda_id"] == fid)
+
+    # Antes de encerrar, o token de suporte acessa normalmente.
+    r_antes = client.get("/painel-cowdata/cofre/motivos", headers={"Authorization": f"Bearer {token_suporte}"})
+    assert r_antes.status_code == 200
+
+    r_encerra = client.post(f"/painel-cowdata/cofre/sessoes/{sessao_id}/encerrar", headers={"Authorization": f"Bearer {token_suporte}"})
+    assert r_encerra.status_code == 200
+
+    r_depois = client.get("/painel-cowdata/cofre/motivos", headers={"Authorization": f"Bearer {token_suporte}"})
+    assert r_depois.status_code == 403
 
 
 def test_pedido_exige_assunto_chamado(client):
@@ -513,3 +571,35 @@ def test_get_permitido_nao_gera_linha_de_auditoria(client):
     token_dono = _token_dono(client)
     acoes = client.get("/painel-cowdata/cofre/acoes", headers={"Authorization": f"Bearer {token_dono}"}).json()
     assert not any(a["metodo"] == "GET" and a["caminho"] == "/rebanho-rota-generica-qualquer" for a in acoes)
+
+
+def test_solicitante_nao_pode_aprovar_o_proprio_pedido(client):
+    """Maker-checker (achado P3 #4 da auditoria de segurança): quando a
+    fazenda exige aprovação (exige_aprovacao_suporte=True), quem pediu o
+    acesso não pode ser também quem aprova — mesmo tendo a área "cofre"
+    liberada, ver docstring de aprovar_pedido em cofre_acesso.py. Um
+    dono-equivalente diferente consegue aprovar normalmente."""
+    fid = _fazenda_id(client)
+    token_dono = _token_dono(client)
+    r = client.put(f"/fazendas/{fid}", json={"exige_aprovacao_suporte": True}, headers={"Authorization": f"Bearer {token_dono}"})
+    assert r.status_code == 200
+
+    r = client.post(
+        "/painel-cowdata/cofre/pedidos",
+        json={"fazenda_id": fid, "motivo": "Configurar parâmetros da fazenda", "assunto_chamado": "Teste maker-checker"},
+        headers={"Authorization": f"Bearer {token_dono}"},
+    )
+    assert r.status_code == 200
+    pedido = r.json()
+    assert pedido["status"] == "aguardando_aprovacao"
+    assert "token" not in pedido
+    pedido_id = pedido["id"]
+
+    r = client.post(f"/painel-cowdata/cofre/pedidos/{pedido_id}/aprovar", headers={"Authorization": f"Bearer {token_dono}"})
+    assert r.status_code == 403
+    assert "não pode aprovar" in r.json()["detail"].lower()
+
+    login_outro = client.post("/auth/login", json={"username": "dono-sem-vinculo", "senha": "123"}).json()
+    r = client.post(f"/painel-cowdata/cofre/pedidos/{pedido_id}/aprovar", headers={"Authorization": f"Bearer {login_outro['token']}"})
+    assert r.status_code == 200
+    assert r.json()["status"] == "aprovado"

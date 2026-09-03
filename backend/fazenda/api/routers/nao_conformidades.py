@@ -163,7 +163,12 @@ def relatorio_nao_conformidades(
     if tem_modulo(user, "reproducao"):
         animais, servicos, partos, secagens = _dados_manejo(session, fazenda_id)
         aplicacoes_iatf, peso_por_animal = _dados_estado_vivo(session, fazenda_id)
-        semen = [s.model_dump() for s in session.exec(select(EstoqueSemen)).all()]
+        # BUG DE SEGURANÇA CORRIGIDO: mesmo vazamento de relatorios.py — sem
+        # filtro, trazia o estoque de sêmen de todas as fazendas.
+        query_semen = select(EstoqueSemen)
+        if fazenda_id is not None:
+            query_semen = query_semen.where(EstoqueSemen.fazenda_id == fazenda_id)
+        semen = [s.model_dump() for s in session.exec(query_semen).all()]
         manejo = rg.relatorios_manejo(animais, servicos, partos, semen, hoje, secagens=secagens,
                                        aplicacoes_iatf=aplicacoes_iatf, peso_por_animal=peso_por_animal)
         for chave_lista, label in (

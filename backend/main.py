@@ -8,7 +8,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from fazenda.auth import (
@@ -60,6 +59,7 @@ from fazenda.api.routers import (
     onboarding,
     painel_cowdata,
     painel_cowdata_cadastros,
+    painel_cowdata_farmacia,
     painel_cowdata_parametros,
     painel_cowdata_usuarios,
     parametros,
@@ -101,7 +101,8 @@ from fazenda.api.routers.cadastro import (
     seed_servicos, seed_semen_categorias,
     seed_estoque_semen_inicial, configurar_calendario_sanitario_padrao, atualizar_estoque_semen_202607,
     seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico, seed_protocolos_sanitarios_curativos, seed_racas_grau_sangue,
-    sindicar_conta_gerencial_estoque, seed_tipos_pessoa, seed_tipo_geral, seed_inducao_lactacao_ativos1_d0,
+    sindicar_conta_gerencial_estoque, seed_tipos_pessoa, seed_tipo_geral, seed_tipos_papel_administrativo,
+    seed_inducao_lactacao_ativos1_d0,
     seed_cadastros_estoque,
 )
 from fazenda.api.routers.estoque import (
@@ -219,6 +220,10 @@ async def lifespan(app: FastAPI):
         # "Geral" libera Portal > Comunicação > Delegar tarefa (#515) a quem não
         # tem um papel técnico específico (Veterinário/Zootecnista) nem é admin.
         seed_tipo_geral(session, fazenda_id=1)
+        # Backfill de Administrador/Contador (ago/2026) — cobre a fazenda #1
+        # do piloto legado mesmo que o seed original já tenha rodado antes
+        # desses dois tipos existirem (ver seed_tipos_papel_administrativo).
+        seed_tipos_papel_administrativo(session, fazenda_id=1)
         seed_pessoas(session)
         # Identidade de cadastro para o robô de automação (Telegram/MilkNews) —
         # permite vincular um usuário de sistema a essa pessoa, como qualquer outra.
@@ -419,6 +424,10 @@ _PREFIXOS_RH_MODO_SUPORTE = (
     "/cadastro/empreitadas",
     "/cadastro/contratos",
     "/cadastro/diarias",
+    # BUG DE SEGURANÇA CORRIGIDO: /cadastro/pessoas guarda salario_base, CPF e
+    # anexos de documentos pessoais (RG, holerite, contrato...) — tão
+    # sensível quanto o resto do RH acima, mas tinha ficado de fora da lista.
+    "/cadastro/pessoas",
 )
 
 # Prefixos de rota tratados como "dados sensíveis" em modo suporte (ver
@@ -514,6 +523,34 @@ async def _bloquear_modo_suporte(request, call_next):
             # do cliente" — não teria sentido poluir a auditoria dele com o
             # próprio encerramento do acesso.
             eh_encerramento = path.startswith("/painel-cowdata/cofre/sessoes/") and path.endswith("/encerrar")
+
+            # BUG DE SEGURANÇA CORRIGIDO: POST .../sessoes/{id}/encerrar só
+            # gravava sessao.encerrada_em no banco — o token JWT já emitido
+            # continuava validando normalmente (a claim "suporte" não é
+            # reconferida aqui contra o banco) até a própria expiração do
+            # JWT. Ou seja, "encerrar" pelo Painel CowData não cortava o
+            # acesso de fato. Agora, toda vez que o token carrega "ssid",
+            # confere no banco se a sessão ainda está ativa (não encerrada,
+            # não expirada) antes de deixar a requisição passar.
+            ssid = dados.get("ssid")
+            if ssid is not None:
+                from datetime import datetime as _datetime
+
+                from fazenda.models.cofre_acesso import SessaoAcessoSuporte
+
+                with _sessao_idempotencia(request) as _sessao_bd:
+                    sessao_atual = _sessao_bd.get(SessaoAcessoSuporte, ssid)
+                sessao_valida = (
+                    sessao_atual is not None
+                    and sessao_atual.encerrada_em is None
+                    and sessao_atual.expira_em > _datetime.utcnow()
+                )
+                if not sessao_valida:
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": "Esta sessão de suporte foi encerrada ou expirou. Abra uma nova sessão no Painel CowData."},
+                    )
+
             mensagem_bloqueio: str | None = None
 
             if request.method == "GET":
@@ -529,7 +566,18 @@ async def _bloquear_modo_suporte(request, call_next):
                         "Para consultar isso, é preciso uma sessão com nível de sigilo mais alto."
                     )
             else:
-                bloquear = request.method == "DELETE" or (
+                # Mesclagem de Estoque (POST .../mesclar) é bloqueada por
+                # SUFIXO exato de rota, nunca acrescentando "/estoque" à
+                # lista de prefixos acima — isso bloquearia também toda
+                # edição legítima de Estoque em modo suporte (ex.: corrigir
+                # cadastro a pedido do cliente). "Restaurar padrão" (o
+                # oposto — reverter uma personalização ao padrão CowData) é
+                # deliberadamente PERMITIDO aqui: é a única ação de escrita
+                # em Estoque que só EXISTE em modo suporte (ver
+                # `fazenda.auth.exigir_sessao_suporte`), então não faz
+                # sentido também bloqueá-la neste middleware.
+                eh_mesclagem_estoque = request.method == "POST" and path.rstrip("/").endswith("/mesclar")
+                bloquear = request.method == "DELETE" or eh_mesclagem_estoque or (
                     request.method in ("POST", "PUT", "PATCH")
                     and any(path.startswith(p) for p in _PREFIXOS_SENSIVEIS_MODO_SUPORTE)
                 )
@@ -642,6 +690,14 @@ async def _idempotencia(request, call_next):
         texto = None  # resposta binária (ex.: PDF) — fora do que este cache assume; segue sem gravar
 
     if texto is not None:
+        # Best-effort: a resposta original já reflete um pedido processado com
+        # SUCESSO (o commit de verdade, da rota, já aconteceu) — gravar o
+        # cache de idempotência é só uma otimização por cima disso. Um
+        # `except IntegrityError` sozinho aqui deixava escapar qualquer OUTRO
+        # erro (ex.: uma conexão soltando com o Postgres em produção) direto
+        # pra fora do middleware, derrubando a resposta inteira — o navegador
+        # via "Failed to fetch" mesmo com o lançamento já salvo (bug real,
+        # relatado em 01/09/2026 no pagamento de Contas a Pagar).
         try:
             with _sessao_idempotencia(request) as session:
                 session.add(IdempotenciaChave(
@@ -649,8 +705,8 @@ async def _idempotencia(request, call_next):
                     status_code=response.status_code, resposta_json=texto,
                 ))
                 session.commit()
-        except IntegrityError:
-            pass  # corrida rara entre duas tentativas concorrentes com a mesma chave — a primeira grava, esta é descartada
+        except Exception:
+            pass
 
     return Response(content=corpo, status_code=response.status_code, media_type=response.headers.get("content-type"))
 
@@ -672,6 +728,10 @@ app.include_router(painel_cowdata_parametros.router)
 # Usuários de UMA fazenda-cliente por vez, sem entrar via modo suporte —
 # mesmo padrão exigir_area_painel_cowdata("cadastros").
 app.include_router(painel_cowdata_usuarios.router)
+# Farmácia padrão CowData (categorias/princípios ativos/medicamentos) —
+# catálogo global + fan-out de Estoque para toda fazenda-cliente, mesmo
+# padrão exigir_area_painel_cowdata("farmacia").
+app.include_router(painel_cowdata_farmacia.router)
 # Cofre de acesso: mesmo padrão exigir_dono — ver fazenda/api/routers/cofre_acesso.py.
 app.include_router(cofre_acesso.router)
 

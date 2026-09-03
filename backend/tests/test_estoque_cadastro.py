@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import Estoque, MovimentoEstoque
+from fazenda.models import CategoriaMedicamento, Estoque, EstoqueCategoriaMedicamento, MovimentoEstoque
 
 
 @pytest.fixture
@@ -67,6 +67,60 @@ class TestCriarItemEstoque:
         c, _ = client
         r = c.post("/estoque/", json={"nome": "Ração Y", "unidade": "kg"})
         assert r.json()["gera_patrimonio"] is False
+
+    def test_carencia_leite_carne_lactacao_e_laboratorio_sao_salvos(self, client):
+        """Achado (01/09/2026): o modelo/migração/tela ganharam carência
+        leite/carne, "proibido em lactação" e laboratório, mas o endpoint de
+        cadastro (`EstoqueIn`) nunca declarou esses campos — o valor digitado
+        no formulário era silenciosamente descartado. Cobre o cadastro via
+        API de verdade (não direto no banco)."""
+        c, engine = client
+        r = c.post("/estoque/", json={
+            "nome": "Draxxin KP", "finalidade": "Medicamento", "unidade": "ml",
+            "carencia_leite_dias": 0, "carencia_carne_dias": 18, "proibido_lactacao": True,
+            "laboratorio": "Zoetis",
+        })
+        assert r.status_code == 201, r.text
+        corpo = r.json()
+        assert corpo["carencia_carne_dias"] == 18
+        assert corpo["proibido_lactacao"] is True
+        assert corpo["laboratorio"] == "Zoetis"
+        with Session(engine) as s:
+            item = s.get(Estoque, corpo["id"])
+            assert item.carencia_carne_dias == 18
+            assert item.proibido_lactacao is True
+            assert item.laboratorio == "Zoetis"
+
+    def test_categoria_medicamento_cumulativa_via_api(self, client):
+        """Pedido do usuário (01/09/2026): categoria (medicamento) cumulativa
+        no cadastro de item de estoque do tenant, via API de verdade."""
+        c, engine = client
+        with Session(engine) as s:
+            cat1 = CategoriaMedicamento(nome="Antibiótico", fazenda_id=None)
+            cat2 = CategoriaMedicamento(nome="Anti-inflamatório", fazenda_id=None)
+            s.add(cat1); s.add(cat2)
+            s.commit(); s.refresh(cat1); s.refresh(cat2)
+            cat1_id, cat2_id = cat1.id, cat2.id
+
+        r = c.post("/estoque/", json={
+            "nome": "Maxicam 2%", "finalidade": "Medicamento", "unidade": "ml",
+            "categoria_medicamento_ids": [cat1_id, cat2_id],
+        })
+        assert r.status_code == 201, r.text
+        item_id = r.json()["id"]
+
+        with Session(engine) as s:
+            vinculos = {
+                v.categoria_medicamento_id
+                for v in s.exec(select(EstoqueCategoriaMedicamento).where(EstoqueCategoriaMedicamento.estoque_id == item_id)).all()
+            }
+            assert vinculos == {cat1_id, cat2_id}
+            item = s.get(Estoque, item_id)
+            assert item.classificacao_medicamento == "Antibiótico"  # espelho da 1ª categoria
+
+        r_listar = c.get("/estoque/")
+        linha = next(i for i in r_listar.json()["itens"] if i["id"] == item_id)
+        assert set(linha["categoria_medicamento_ids"]) == {cat1_id, cat2_id}
 
 
 class TestSaldoInicialGeraEntrada:

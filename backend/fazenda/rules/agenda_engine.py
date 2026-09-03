@@ -151,6 +151,7 @@ class AgendaEngine:
         lotes: list[dict] | None = None,
         secagens: list[dict] | None = None,
         pedidos_documentos_vencendo: list[dict] | None = None,
+        pedidos_entrega_prevista: list[dict] | None = None,
         pessoas_documentos_vencendo: list[dict] | None = None,
         inducoes_cio: list[dict] | None = None,
         # Entram para o estado reprodutivo AO VIVO decidir candidatas a IATF e
@@ -193,6 +194,13 @@ class AgendaEngine:
                 serviço) com `data_validade`, já filtrados em agenda.py para
                 pedidos "aberto"/"parcialmente_atendido" — dispara alerta 2
                 dias antes do vencimento (ver PedidoAnexo/PUT /pedidos/{id}/anexos).
+            pedidos_entrega_prevista: Pedidos "aberto"/"parcialmente_atendido"
+                com `data_prevista` de entrega, já filtrados em agenda.py —
+                dispara lembrete "já chegou?" sem piso nem teto de data (mesmo
+                racional do Pré-parto/Secagem abaixo): fica visível antes E
+                depois de `data_prevista`, até a entrega ser de fato marcada
+                em PedidoItem.quantidade_entregue (ver PUT
+                /pedidos/{id}/itens/{item_id}/entrega).
             pessoas_documentos_vencendo: Anexos de Pessoa da categoria
                 "Contrato de trabalho por prazo determinado" com
                 `data_validade`, já filtrados em agenda.py para pessoa ativa —
@@ -745,6 +753,32 @@ class AgendaEngine:
                 observacao=doc.get("fornecedor_cliente"),
                 ref=doc.get("numero_pedido"),
                 link=f"/pedidos?id={doc.get('pedido_id')}" if doc.get("pedido_id") else None,
+            ))
+
+        # 5c-bis. PEDIDOS — entrega prevista, "já chegou?" (persistente, mesmo
+        # racional do Pré-parto/Secagem acima: sem piso nem teto de data). Não
+        # é a mesma coisa que o bloco 5c acima (documento vencendo, com janela
+        # de 2 dias) — aqui não há prazo-limite, é conferência física: o
+        # alerta usa a própria `data_prevista` (sem reancorar em hoje) para
+        # que o front classifique sozinho em "Atrasados" quando ela passa, e
+        # só some quando o pedido some da lista (entrega marcada em
+        # PedidoItem.quantidade_entregue muda o status calculado — ver
+        # pedido_status.py — ou pedido cancelado), nunca pela data ter passado.
+        for pedido in (pedidos_entrega_prevista or []):
+            data_prevista = pedido.get("data_prevista")
+            if not data_prevista:
+                continue
+            numero_pedido = pedido.get("numero_pedido", "")
+            eventos.append(AgendaItem(
+                data=data_prevista,
+                categoria="Gestão/Financeiro",
+                descricao=(
+                    f"Pedido {numero_pedido} — entrega prevista para "
+                    f"{data_prevista.strftime('%d/%m/%Y')}. Já foi entregue? Marque a entrega no pedido."
+                ),
+                observacao=pedido.get("fornecedor_cliente"),
+                ref=numero_pedido,
+                link=f"/pedidos?id={pedido.get('pedido_id')}" if pedido.get("pedido_id") else None,
             ))
 
         # 5d. PESSOAS — contrato de trabalho por prazo determinado vencendo

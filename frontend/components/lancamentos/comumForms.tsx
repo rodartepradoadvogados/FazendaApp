@@ -10,6 +10,10 @@ export type EstoqueItem = {
   estoque_minimo?: number | null; classificacao_medicamento?: string | null; principio_ativo?: string | null;
   finalidade?: string | null; conta_gerencial_despesa_padrao?: string | null; conta_gerencial_receita_padrao?: string | null;
   estoque_semen_id?: number | null; tipo_semen?: string | null;
+  // "Não usar em vaca em lactação" (ver Estoque.proibido_lactacao) — usado só
+  // para o aviso não-bloqueante no lançamento de aplicação sanitária, nunca
+  // impede salvar (ver FormSanidade.tsx).
+  proibido_lactacao?: boolean | null;
 };
 
 export const inputStyle: React.CSSProperties = {
@@ -60,8 +64,16 @@ export function unidadesCompativeis(unidadeEstoque: string | null | undefined): 
   return grupo || [unidadeEstoque];
 }
 
-export type ItemSanidade = { produto: string; via: string; quantidade: string; unidade: string; estoque_id?: number | null; definirPor: "medicamento" | "principio_ativo" | "doenca"; criterio: string };
-export const itemSanidadeVazio = (): ItemSanidade => ({ produto: "", via: "", quantidade: "", unidade: "", estoque_id: null, definirPor: "medicamento", criterio: "" });
+export type ItemSanidade = {
+  produto: string; via: string; quantidade: string; unidade: string; estoque_id?: number | null;
+  // "De qual frasco de COMPRA?" (Fase G, 01/09/2026) — não confundir com
+  // "lote de animais" (modo/lotesSel em FormSanidade.tsx): este é o lote de
+  // compra de medicamento (LoteEstoque), um nível abaixo de estoque_id.
+  // null/undefined = deixa o backend escolher por FIFO (mais antigo primeiro).
+  lote_id?: number | null;
+  definirPor: "medicamento" | "principio_ativo" | "doenca"; criterio: string;
+};
+export const itemSanidadeVazio = (): ItemSanidade => ({ produto: "", via: "", quantidade: "", unidade: "", estoque_id: null, lote_id: null, definirPor: "medicamento", criterio: "" });
 
 // Mesmo esquema de código de 2 dígitos usado em fazenda.rules.alimentacao._codigo_grupo,
 // para expandir lote(s) selecionado(s) no número de matrículas correspondente.
