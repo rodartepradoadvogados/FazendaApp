@@ -212,6 +212,10 @@ from .documentos import (
 from .fotos import (
     FotoCampo,
 )
+from .fotos_news import (
+    PastaFotoNews,
+    FotoNews,
+)
 from .alerta_indicador import (
     AlertaIndicador,
 )
@@ -274,6 +278,8 @@ __all__ = [
     "DocumentoArquivado",
     "Chamado",
     "FotoCampo",
+    "PastaFotoNews",
+    "FotoNews",
     "AlertaIndicador",
     "OnboardingUsuario",
     "FiltroSalvo",

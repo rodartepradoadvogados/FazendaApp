@@ -400,6 +400,9 @@ def importar_noticias_manual(
         payload = {
             "fonte_nome": nome, "manchete": manchete, "resumo": resumo_txt,
             "link": link, "data_publicacao": item.data_publicacao,
+            # Vazio por padrão — preenchido na tela de aprovação, escolhendo
+            # uma foto do banco (ver /fotos-news) antes de aprovar.
+            "imagem": None,
         }
         session.add(LancamentoPendente(
             tipo="noticia_manual", payload=json.dumps(payload),
@@ -445,7 +448,11 @@ def criar_noticia_a_partir_de_pendente(dados: dict, session: Session) -> dict:
         except ValueError:
             pass
 
-    noticia = NoticiaNews(fonte_id=fonte.id, manchete=manchete, resumo=dados.get("resumo"), link=link, data_publicacao=data_publicacao)
+    imagem = (dados.get("imagem") or "").strip() or None
+    noticia = NoticiaNews(
+        fonte_id=fonte.id, manchete=manchete, resumo=dados.get("resumo"), link=link,
+        data_publicacao=data_publicacao, imagem=imagem,
+    )
     session.add(noticia)
     session.commit()
     session.refresh(noticia)

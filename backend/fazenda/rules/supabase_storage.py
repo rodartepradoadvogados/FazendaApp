@@ -52,6 +52,14 @@ def habilitado() -> bool:
     return bool(settings.supabase_url and settings.supabase_service_key)
 
 
+def url_publica(caminho: str, *, bucket: str) -> str:
+    """URL pública direta de um arquivo num bucket PÚBLICO (hoje só
+    settings.supabase_bucket_news_fotos — ver garantir_buckets) — usada como
+    valor literal de NoticiaNews.imagem, renderizado em <img src> sem login
+    (a página pública do blog não pode chamar um endpoint autenticado)."""
+    return f"{settings.supabase_url.rstrip('/')}/storage/v1/object/public/{bucket}/{caminho}"
+
+
 def _exigir_config(bucket: str | None) -> tuple[str, str, str]:
     if not habilitado():
         raise RuntimeError(
@@ -123,7 +131,12 @@ def garantir_buckets() -> None:
         return
     url = settings.supabase_url.rstrip("/")
     service_key = settings.supabase_service_key
-    for bucket in {settings.supabase_bucket, settings.supabase_bucket_fotos, settings.supabase_bucket_financeiro}:
+    buckets_publicos = {settings.supabase_bucket_news_fotos}
+    buckets = {
+        settings.supabase_bucket, settings.supabase_bucket_fotos, settings.supabase_bucket_financeiro,
+        settings.supabase_bucket_news_fotos,
+    }
+    for bucket in buckets:
         try:
             resp = httpx.get(f"{url}/storage/v1/bucket/{bucket}", headers=_headers(service_key), timeout=15)
             if resp.status_code == 200:
@@ -131,7 +144,7 @@ def garantir_buckets() -> None:
             resp = httpx.post(
                 f"{url}/storage/v1/bucket",
                 headers=_headers(service_key, "application/json"),
-                json={"id": bucket, "name": bucket, "public": False},
+                json={"id": bucket, "name": bucket, "public": bucket in buckets_publicos},
                 timeout=15,
             )
             if resp.status_code >= 300:
