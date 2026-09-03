@@ -1,7 +1,7 @@
 """banco de fotos do milknews (pasta_foto_news, foto_news)
 
-Revision ID: b7c8d9e0f1a2
-Revises: e4e7f4108c13
+Revision ID: b83734c5b8b1
+Revises: d3f8a1c96e02
 Create Date: 2026-09-03 00:00:00.000000
 
 """
@@ -13,8 +13,8 @@ import sqlmodel
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'b7c8d9e0f1a2'
-down_revision: Union[str, Sequence[str], None] = 'e4e7f4108c13'
+revision: str = 'b83734c5b8b1'
+down_revision: Union[str, Sequence[str], None] = 'd3f8a1c96e02'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
