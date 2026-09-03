@@ -27,6 +27,7 @@ def _configurar_supabase(monkeypatch):
     monkeypatch.setattr(settings, "supabase_bucket", "documentos-fiscais")
     monkeypatch.setattr(settings, "supabase_bucket_fotos", "fotos-campo")
     monkeypatch.setattr(settings, "supabase_bucket_financeiro", "anexos-financeiro")
+    monkeypatch.setattr(settings, "supabase_bucket_news_fotos", "fotos-news-banco")
 
 
 class TestNomeSeguroStorage:
@@ -76,7 +77,7 @@ def test_bucket_ausente_e_criado(monkeypatch):
     monkeypatch.setattr(httpx, "get", lambda *a, **k: _RespostaFalsa(404, "Bucket not found"))
     monkeypatch.setattr(httpx, "post", post_fake)
     storage.garantir_buckets()
-    assert set(criados) == {"documentos-fiscais", "fotos-campo", "anexos-financeiro"}
+    assert set(criados) == {"documentos-fiscais", "fotos-campo", "anexos-financeiro", "fotos-news-banco"}
 
 
 def test_falha_de_rede_nao_lanca(monkeypatch):
