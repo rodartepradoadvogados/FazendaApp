@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     # receber) — bucket próprio, mesma conta/chave de serviço do Supabase, ver
     # fazenda/api/routers/financeiro.py (anexos de LancamentoAnexo).
     supabase_bucket_financeiro: str = "anexos-financeiro"
+    # Banco de fotos do Milknews (blog News) — usado para ilustrar as matérias
+    # na aba de aprovação/News, ver fazenda/api/routers/fotos_news.py. Único
+    # bucket PÚBLICO do sistema (os outros três acima são privados): a página
+    # pública do blog (GET /news, sem login) renderiza `<img src={imagem}>`
+    # direto com a URL pública do Supabase Storage, sem passar pelo backend.
+    supabase_bucket_news_fotos: str = "fotos-news-banco"
 
     # Push do app Android NATIVO (Capacitor) via Firebase Cloud Messaging —
     # canal irmão do Web Push (VAPID, acima em fazenda/api/routers/push.py):

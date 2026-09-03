@@ -46,6 +46,7 @@ from fazenda.api.routers import (
     financeiro,
     formulacao_dietas,
     fotos,
+    fotos_news,
     importar,
     indicadores,
     lida,
@@ -886,6 +887,10 @@ app.include_router(aprovacoes.router)
 # exigir_pode_publicar) — por isso este router NÃO leva o _protegido global,
 # nem a trava de contrato (o blog é compartilhado entre todas as fazendas).
 app.include_router(news.router)
+# Banco de fotos do Milknews: cada rota já exige exigir_pode_publicar
+# internamente (mesma permissão de News acima) — global, sem trava de
+# fazenda_id/contrato, igual ao router de News que ele ilustra.
+app.include_router(fotos_news.router)
 # Assistente Claude (protótipo): aberto a qualquer usuário logado — já
 # restrito à fazenda #1 (FAZENDA_ID_PILOTO, ver assistente.py), então a trava
 # de contrato aqui é redundante hoje, mas evita reabrir um buraco se essa

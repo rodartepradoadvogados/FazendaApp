@@ -7480,6 +7480,54 @@ export async function excluirFotoCampo(id: number): Promise<void> {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir foto"); }
 }
 
+// ── Banco de fotos do Milknews (blog News) ──
+// Ver backend/fazenda/api/routers/fotos_news.py — bucket PÚBLICO do Supabase
+// Storage; `url` já vem pronta para uso direto em <img src>, sem autenticação
+// (a página pública do blog lê sem login). Gerido na aba Aprovações.
+export type PastaFotoNews = { id: number; nome: string; criado_em: string; quantidade_fotos: number };
+export type FotoNews = {
+  id: number; pasta_id: number | null; nome_arquivo: string; mime_type: string;
+  tamanho_bytes: number; tags: string | null; criado_em: string; url: string;
+};
+
+export async function fetchPastasFotosNews(): Promise<PastaFotoNews[]> {
+  const res = await authFetch(`${API}/fotos-news/pastas`);
+  if (!res.ok) throw new Error("Erro ao listar pastas do banco de fotos");
+  return res.json();
+}
+export async function criarPastaFotosNews(nome: string): Promise<PastaFotoNews> {
+  const res = await authFetch(`${API}/fotos-news/pastas`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar pasta"); }
+  return res.json();
+}
+export async function excluirPastaFotosNews(id: number): Promise<void> {
+  const res = await authFetch(`${API}/fotos-news/pastas/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir pasta"); }
+}
+export async function fetchFotosNews(pastaId?: number | null): Promise<FotoNews[]> {
+  const qs = pastaId === null ? "?sem_pasta=true" : pastaId != null ? `?pasta_id=${pastaId}` : "";
+  const res = await authFetch(`${API}/fotos-news${qs}`);
+  if (!res.ok) throw new Error("Erro ao listar fotos do banco");
+  return res.json();
+}
+export async function enviarFotoNews(file: File, pastaId?: number | null, tags?: string): Promise<FotoNews> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const params = new URLSearchParams();
+  if (pastaId != null) params.set("pasta_id", String(pastaId));
+  if (tags) params.set("tags", tags);
+  const qs = params.toString();
+  const res = await authFetch(`${API}/fotos-news/upload${qs ? `?${qs}` : ""}`, { method: "POST", body: fd });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao enviar foto"); }
+  return res.json();
+}
+export async function excluirFotoNews(id: number): Promise<void> {
+  const res = await authFetch(`${API}/fotos-news/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir foto"); }
+}
+
 // ── Cadeado do Painel do Contador ──
 // Reautenticação por senha que destrava, por 15 minutos, lançamentos
 // extraordinários, recálculo de juros e abertura de chamado — ver

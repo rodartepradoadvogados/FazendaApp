@@ -205,6 +205,10 @@ FLUXOS: dict[str, dict] = {
             C("resumo", "Resumo", "texto", obrigatorio=False),
             C("link", "Link", "texto", obrigatorio=False),
             C("data_publicacao", "Data de publicação", "texto", obrigatorio=False),
+            # URL da foto escolhida no banco de fotos do Milknews (aba
+            # Aprovações) — não é perguntado em conversa, só editado ali via
+            # o seletor de fotos (ver frontend/components/AprovacoesView.tsx).
+            C("imagem", "Imagem", "texto", obrigatorio=False),
         ],
     },
 }
