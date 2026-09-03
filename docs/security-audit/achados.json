@@ -757,7 +757,7 @@
         "[CORRIGIDO nesta sessão] Proteger ou remover GET /telegram/status (vaza a allow-list de chats sem autenticação).",
         "[CORRIGIDO nesta sessão] Validar esquema http(s):// em link_rastreio (pedidos.py) e link_bula (farmacia.py) no backend.",
         "[CORRIGIDO nesta sessão] Adicionar maker-checker (aprovador ≠ solicitante) em cofre_acesso.py::aprovar_pedido, mesmo que hoje nenhuma fazenda-piloto ative essa opção.",
-        "[REQUER REVISÃO OPERACIONAL — não corrigível em código] Revisar a heurística _rodando_em_producao() com quem administra a infraestrutura Railway, documentando explicitamente os formatos de DATABASE_URL cobertos. A função (fazenda/auth.py) já checa DATABASE_URL iniciando com \"postgres://\"/\"postgresql://\" e FAZENDA_TESTING não setado; falta confirmação humana de que esses são os únicos formatos que o Railway usa hoje/no futuro.",
+        "[CONFIRMADO com o administrador da infraestrutura Railway nesta sessão] Revisar a heurística _rodando_em_producao() com quem administra a infraestrutura Railway, documentando explicitamente os formatos de DATABASE_URL cobertos. Confirmado: em produção, DATABASE_URL é a variável de referência do Railway \"${{Postgres.DATABASE_URL}}\", que resolve para uma string começando com \"postgresql://\" — um dos dois prefixos já cobertos por _rodando_em_producao() (fazenda/auth.py). Nenhuma mudança de código necessária.",
         "[REQUER CONFIRMAÇÃO OPERACIONAL — não corrigível em código] Confirmar operacionalmente se TELEGRAM_CHAT_FAZENDA cobre 100% dos chats ativos, para fechar o vazamento residual de LancamentoPendente entre fazendas. Depende de dados de produção (lista real de chats configurados), não do código-fonte."
       ]
     }
