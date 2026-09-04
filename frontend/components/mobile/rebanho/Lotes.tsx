@@ -84,7 +84,11 @@ function Composicao() {
     <div>
       {porLote.map(([lote, lista]) => (
         <details key={lote} style={{ marginBottom: "0.7rem" }}>
-          <summary className="mob-tint" style={{ ["--tint-cor" as any]: corLote(lote), cursor: "pointer", fontWeight: 700, fontSize: "0.95rem", padding: "0.85rem 1rem", border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", listStyle: "none", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "var(--mob-sombra)" }}>
+          {/* `border` inline sobrepõe qualquer regra de classe (inclusive
+              border-left do .mob-tint) — por isso o filete de categoria vem
+              explícito aqui em `borderLeft`, depois do `border` no mesmo
+              objeto de estilo, para vencer o lado esquerdo sem duplicar CSS. */}
+          <summary className="mob-tint" style={{ ["--tint-cor" as any]: corLote(lote), cursor: "pointer", fontWeight: 700, fontSize: "0.95rem", padding: "0.85rem 1rem", background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderLeft: `4px solid ${corLote(lote)}`, borderRadius: "var(--r-app)", listStyle: "none", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "var(--mob-sombra)" }}>
             <span>{lote}</span>
             <span style={{ fontSize: "0.78rem", color: "var(--mob-muted)", fontWeight: 700 }}>{lista.length} animal(is)</span>
           </summary>
