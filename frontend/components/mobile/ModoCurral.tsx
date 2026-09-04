@@ -27,7 +27,7 @@
 // pendência que exige esses passos aparece aqui do mesmo jeito (nada
 // escondido), só que o toque nela leva para a Agenda completa em vez de um
 // check direto — ver `ehSimples`, abaixo.
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { Sun, Check, ChevronRight, Heart, Milk, ShieldPlus, ListChecks, CheckCircle2 } from "lucide-react";
@@ -76,6 +76,93 @@ function tituloEvento(e: Evento): string {
 
 type TelaRapida = "reprodutivo" | "producao" | "sanidade" | null;
 
+function reduzirMovimento(): boolean {
+  return typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+}
+
+/** Um card da lista de "Fazer agora" — tap no check sempre funciona; em
+ * cards `simples` (que têm o check), deslizar o card inteiro faz a mesma
+ * coisa: pra direita conclui, pra esquerda só tira da vista por agora (ver
+ * `ocultarPorAgora`, no componente pai — não é uma decisão salva em lugar
+ * nenhum). O deslocamento é aplicado direto no DOM (`front.style.transform`)
+ * em vez de guardar `dx` em estado — um `setState` por pixel arrastado
+ * recriaria a lista inteira a cada frame do gesto. */
+function CardCurral({ e, simples, atrasado, cor, Icon, transicao, onConcluir, onOcultar }: {
+  e: Evento; simples: boolean; atrasado: boolean; cor: string; Icon: any;
+  transicao?: "concluindo" | "saindo-d" | "saindo-e";
+  onConcluir: () => void; onOcultar: () => void;
+}) {
+  const frontRef = useRef<HTMLDivElement | null>(null);
+  const bgDRef = useRef<HTMLDivElement | null>(null);
+  const bgERef = useRef<HTMLDivElement | null>(null);
+  const arrasto = useRef<{ inicioX: number; largura: number } | null>(null);
+
+  function aoPressionar(ev: ReactPointerEvent<HTMLDivElement>) {
+    if (!simples || transicao || reduzirMovimento()) return;
+    const front = frontRef.current;
+    if (!front) return;
+    arrasto.current = { inicioX: ev.clientX, largura: front.offsetWidth };
+    front.setPointerCapture(ev.pointerId);
+    front.style.transition = "none";
+  }
+  function aoMover(ev: ReactPointerEvent<HTMLDivElement>) {
+    const front = frontRef.current;
+    if (!arrasto.current || !front) return;
+    const dx = ev.clientX - arrasto.current.inicioX;
+    front.style.transform = `translateX(${dx}px)`;
+    if (bgDRef.current) bgDRef.current.style.opacity = String(Math.min(1, Math.max(0, dx) / 90));
+    if (bgERef.current) bgERef.current.style.opacity = String(Math.min(1, Math.max(0, -dx) / 90));
+  }
+  function aoSoltar(ev: ReactPointerEvent<HTMLDivElement>) {
+    const front = frontRef.current;
+    const estado = arrasto.current;
+    if (!estado || !front) return;
+    arrasto.current = null;
+    const dx = ev.clientX - estado.inicioX;
+    const limiar = estado.largura * 0.32;
+    front.style.transition = "transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2)";
+    if (dx > limiar) { front.style.transform = "translateX(140%)"; onConcluir(); }
+    else if (dx < -limiar) { front.style.transform = "translateX(-140%)"; onOcultar(); }
+    else {
+      front.style.transform = "translateX(0)";
+      if (bgDRef.current) bgDRef.current.style.opacity = "0";
+      if (bgERef.current) bgERef.current.style.opacity = "0";
+    }
+  }
+
+  return (
+    <div className={"linha-colapsavel" + (transicao === "saindo-d" || transicao === "saindo-e" ? " linha-saindo" : "")}>
+      <div style={{ position: "relative" }}>
+        {simples && <div ref={bgDRef} className="curral-swipe-fundo curral-swipe-fundo-d" aria-hidden="true"><Check size={26} /></div>}
+        {simples && <div ref={bgERef} className="curral-swipe-fundo curral-swipe-fundo-e" aria-hidden="true">Depois</div>}
+        <div
+          ref={frontRef}
+          className={"curral-card" + (simples ? " curral-swipe-front" : "") + (transicao === "concluindo" ? " flash-sucesso" : "")}
+          style={{ borderLeftColor: atrasado ? "var(--mob-vermelho)" : cor }}
+          onPointerDown={aoPressionar} onPointerMove={aoMover} onPointerUp={aoSoltar} onPointerCancel={aoSoltar}
+        >
+          <span className="curral-card-icone" style={{ background: `color-mix(in srgb, ${cor} 18%, transparent)`, color: cor }}>
+            <Icon size={26} />
+          </span>
+          <span className="curral-card-texto">
+            <span className="curral-card-titulo">{tituloEvento(e)}</span>
+            <span className="curral-card-sub">{e.descricao !== tituloEvento(e) ? e.descricao : (atrasado ? "Atrasado" : "Hoje")}</span>
+          </span>
+          {simples ? (
+            <button type="button" className="curral-check" aria-label={`Concluir: ${tituloEvento(e)}`} onClick={onConcluir}>
+              <Check size={30} strokeWidth={3} />
+            </button>
+          ) : (
+            <Link href="/app" className="curral-abrir" aria-label="Abrir na Agenda completa" title="Precisa de mais informação — abrir na Agenda completa">
+              <ChevronRight size={26} />
+            </Link>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ModoCurral({ onVoltar }: { onVoltar: () => void }) {
   const online = useOnline();
   const hoje = today();
@@ -100,23 +187,55 @@ export function ModoCurral({ onVoltar }: { onVoltar: () => void }) {
 
   const animais = useCache<Animal[]>("animais", () => fetchAnimais() as Promise<Animal[]>, []);
 
+  // Deslizar pra concluir/ocultar (04/09/2026) — `feitos` continua sendo o que
+  // de fato tira o evento da lista (persistido/tentando persistir no
+  // servidor, ver `concluir`); `ocultos` é só local e não persiste nada — é o
+  // "pular por agora" de quem deslizou pra esquerda, some da sub-tela até ela
+  // ser remontada. `transicoes` só existe pra segurar o item na tela um
+  // instante a mais, tocando o flash verde/colapso, antes de cair em
+  // `feitos`/`ocultos` de verdade.
+  const [ocultos, setOcultos] = useState<Set<string>>(new Set());
+  const [transicoes, setTransicoes] = useState<Record<string, "concluindo" | "saindo-d" | "saindo-e">>({});
+  const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>[]>>({});
+  useEffect(() => () => { Object.values(timersRef.current).flat().forEach(clearTimeout); }, []);
+
   const pendentesHoje = useMemo(() => {
-    const evs = (agenda?.eventos || []).filter((e) => e.data <= hoje && !feitos.has(e.id));
+    const evs = (agenda?.eventos || []).filter((e) => e.data <= hoje && !feitos.has(e.id) && !ocultos.has(e.id));
     // Atrasadas primeiro, hoje depois — mesmo critério da Agenda completa.
     return evs.sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0));
-  }, [agenda, hoje, feitos]);
+  }, [agenda, hoje, feitos, ocultos]);
   const temAtrasado = useMemo(() => pendentesHoje.some((e) => e.data < hoje), [pendentesHoje, hoje]);
+
+  function limparTransicao(id: string) {
+    (timersRef.current[id] || []).forEach(clearTimeout);
+    delete timersRef.current[id];
+    setTransicoes((p) => { const n = { ...p }; delete n[id]; return n; });
+  }
 
   async function concluir(e: Evento) {
     setErro(null);
-    setFeitos((p) => new Set(p).add(e.id));
+    setTransicoes((p) => ({ ...p, [e.id]: "concluindo" }));
+    try { navigator.vibrate?.(20); } catch { /* sem suporte — segue sem vibrar */ }
+    timersRef.current[e.id] = [
+      setTimeout(() => setTransicoes((p) => ({ ...p, [e.id]: "saindo-d" })), 300),
+      setTimeout(() => { setFeitos((p) => new Set(p).add(e.id)); limparTransicao(e.id); }, 560),
+    ];
     try {
       await enviarOuEnfileirar("/agenda/realizados", { evento_id: e.id }, `Concluir: ${tituloEvento(e)}`, "POST");
-      try { navigator.vibrate?.(20); } catch { /* sem suporte — segue sem vibrar */ }
     } catch (err) {
-      setFeitos((p) => { const n = new Set(p); n.delete(e.id); return n; });
+      limparTransicao(e.id);
       setErro(err instanceof Error ? err.message : "Não foi possível salvar.");
     }
+  }
+
+  // Não chama o backend — "pular" aqui é só deixar de olhar pra isso agora
+  // (ver comentário de `ocultos` acima), não uma decisão registrada em lugar
+  // nenhum. Reaparece na próxima vez que "Fazer agora" for aberto do zero.
+  function ocultarPorAgora(id: string) {
+    setTransicoes((p) => ({ ...p, [id]: "saindo-e" }));
+    timersRef.current[id] = [
+      setTimeout(() => { setOcultos((p) => new Set(p).add(id)); limparTransicao(id); }, 260),
+    ];
   }
 
   // ── Fazer agora: sub-tela com a lista de pendências de hoje ─────────────
@@ -133,32 +252,14 @@ export function ModoCurral({ onVoltar }: { onVoltar: () => void }) {
           </div>
         )}
         <div style={{ display: "grid", gap: "0.7rem" }}>
-          {pendentesHoje.map((e) => {
-            const simples = ehSimples(e);
-            const atrasado = e.data < hoje;
-            const cor = corCategoria(e.categoria);
-            const Icon = iconeCategoria(e.categoria);
-            return (
-              <div key={e.id} className="curral-card" style={{ borderLeftColor: atrasado ? "var(--mob-vermelho)" : cor }}>
-                <span className="curral-card-icone" style={{ background: `color-mix(in srgb, ${cor} 18%, transparent)`, color: cor }}>
-                  <Icon size={26} />
-                </span>
-                <span className="curral-card-texto">
-                  <span className="curral-card-titulo">{tituloEvento(e)}</span>
-                  <span className="curral-card-sub">{e.descricao !== tituloEvento(e) ? e.descricao : (atrasado ? "Atrasado" : "Hoje")}</span>
-                </span>
-                {simples ? (
-                  <button type="button" className="curral-check" aria-label={`Concluir: ${tituloEvento(e)}`} onClick={() => concluir(e)}>
-                    <Check size={30} strokeWidth={3} />
-                  </button>
-                ) : (
-                  <Link href="/app" className="curral-abrir" aria-label="Abrir na Agenda completa" title="Precisa de mais informação — abrir na Agenda completa">
-                    <ChevronRight size={26} />
-                  </Link>
-                )}
-              </div>
-            );
-          })}
+          {pendentesHoje.map((e) => (
+            <CardCurral
+              key={e.id} e={e} simples={ehSimples(e)} atrasado={e.data < hoje}
+              cor={corCategoria(e.categoria)} Icon={iconeCategoria(e.categoria)}
+              transicao={transicoes[e.id]}
+              onConcluir={() => concluir(e)} onOcultar={() => ocultarPorAgora(e.id)}
+            />
+          ))}
         </div>
       </div>
     );

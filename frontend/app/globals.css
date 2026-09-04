@@ -752,6 +752,62 @@ textarea:focus-visible, [tabindex]:focus-visible {
   .pulse-dot { animation: none; }
 }
 
+/* ── Microinterações (04/09/2026) — vocabulário comum de movimento ──────────
+   Duração por escala do elemento: 120-180ms pra feedback imediato (check,
+   validação), 200-280ms pra elementos entrando/saindo (linha, popup),
+   300-360ms pra painéis grandes (gaveta, folha inferior). Sempre com
+   `prefers-reduced-motion` coberto — ver bloco no fim desta seção. */
+
+/* Traço de "check" se desenhando — usar num <path> de <svg> com
+   stroke-dasharray igual ao comprimento do traço (medir com getTotalLength()
+   ou aproximar; 20 cobre um check simples de ~24x24 com folga). Alternar a
+   classe `.check-marcado` no elemento pai risca o traço. */
+.check-tracado {
+  stroke-dasharray: 20; stroke-dashoffset: 20;
+  transition: stroke-dashoffset 0.18s ease-out;
+}
+.check-marcado .check-tracado { stroke-dashoffset: 0; }
+
+/* Flash verde breve no fundo de uma linha ao confirmar uma ação (marcar como
+   feito) — pisca e volta ao normal sozinho, não fica "pintado". */
+@keyframes flash-sucesso {
+  0% { background-color: transparent; }
+  30% { background-color: color-mix(in srgb, var(--green, var(--mob-verde, #0b7a4b)) 28%, transparent); }
+  100% { background-color: transparent; }
+}
+.flash-sucesso { animation: flash-sucesso 0.6s ease-out; }
+
+/* Colapso de linha de lista — o "sumir desaparecendo" que recolhe o espaço
+   em vez de deixar buraco. Envolver o conteúdo real da linha num wrapper com
+   esta classe; alternar `.linha-saindo` anima a saída (senão os vizinhos
+   pulam pro lugar instantaneamente); `.linha-entrando`, removida um quadro
+   depois de montada, anima a entrada. Técnica: grid-template-rows 1fr→0fr —
+   não depende de medir altura em JS. */
+.linha-colapsavel {
+  display: grid; grid-template-rows: 1fr;
+  transition: grid-template-rows 0.24s ease-in, opacity 0.2s ease-in, margin 0.24s ease-in;
+}
+.linha-colapsavel > * { overflow: hidden; min-height: 0; }
+.linha-colapsavel.linha-saindo { grid-template-rows: 0fr; opacity: 0; margin-block: 0 !important; }
+.linha-colapsavel.linha-entrando { opacity: 0; transform: translateY(8px); }
+.linha-colapsavel:not(.linha-entrando) { transition: grid-template-rows 0.24s ease-in, opacity 0.2s ease-in, margin 0.24s ease-in, transform 0.22s ease-out; transform: translateY(0); }
+
+/* Popup central (ver components/Modal.tsx) — fundo escurece, caixa entra com
+   escala+fade e uma pitada de mola; saída é o inverso, mais rápido. */
+@keyframes popup-fundo-entra { from { opacity: 0; } to { opacity: 1; } }
+@keyframes popup-caixa-entra { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: scale(1); } }
+.popup-fundo { animation: popup-fundo-entra 0.2s ease-out; }
+.popup-fundo.popup-saindo { animation: popup-fundo-entra 0.16s ease-in reverse; }
+.popup-caixa { animation: popup-caixa-entra 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+.popup-caixa.popup-saindo { animation: popup-caixa-entra 0.16s ease-in reverse; }
+
+@media (prefers-reduced-motion: reduce) {
+  .check-tracado { transition: none; }
+  .flash-sucesso { animation: none; }
+  .linha-colapsavel, .linha-colapsavel.linha-entrando, .linha-colapsavel:not(.linha-entrando) { transition: none; transform: none; }
+  .popup-fundo, .popup-fundo.popup-saindo, .popup-caixa, .popup-caixa.popup-saindo { animation: none; }
+}
+
 /* Gaveta lateral de lançamento (ver components/lancamentos/GavetaLancamento.tsx)
    — desliza mudando `right`, nunca `transform`: um ancestral com transform cria
    um novo bloco de posicionamento e os pickers/popups internos (AnimalPickerModal,
@@ -1305,6 +1361,25 @@ html, body { max-width: 100%; overflow-x: hidden; }
   width: 72px; height: 72px; border-radius: 50%; flex-shrink: 0;
   border: 2px solid var(--mob-border); background: var(--mob-surface-2); color: var(--mob-text);
   display: flex; align-items: center; justify-content: center; text-decoration: none;
+}
+
+/* Deslizar para concluir/ocultar (04/09/2026) — cada linha vira um wrapper
+   .linha-colapsavel (ver globals.css acima) que segura o fundo revelado
+   (verde à direita = concluir, vermelho à esquerda = ocultar por agora) atrás
+   do .curral-card, que desliza por cima seguindo o dedo. */
+.curral-swipe-fundo {
+  position: absolute; inset: 0; border-radius: var(--r-app);
+  display: flex; align-items: center; padding: 0 1.1rem;
+  font-weight: 800; color: #fff; opacity: 0;
+}
+.curral-swipe-fundo-d { background: var(--mob-verde); justify-content: flex-start; }
+.curral-swipe-fundo-e { background: var(--mob-vermelho); justify-content: flex-end; }
+.curral-card.curral-swipe-front {
+  position: relative; z-index: 1; touch-action: pan-y; will-change: transform;
+  transition: transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2), background-color 0.28s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .curral-card.curral-swipe-front { transition: background-color 0.28s ease-out; }
 }
 /* "Fazer agora" — quadrado grande e único (maior que qualquer outro bloco
    desta tela) que ABRE a lista de pendências de hoje numa sub-tela, em vez

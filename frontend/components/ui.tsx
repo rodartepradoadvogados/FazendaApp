@@ -266,6 +266,7 @@ export function TabBar<T extends string>({
               background: ativo ? "var(--pill-active-bg)" : "transparent",
               color: ativo ? "var(--pill-active-fg)" : "var(--text-muted)",
               fontWeight: ativo ? 700 : 500,
+              transition: "background 0.15s ease, border-color 0.15s ease, color 0.15s ease",
             }}
           >
             {Icon && <Icon size={14} />} {aba.label}
