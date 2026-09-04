@@ -315,6 +315,10 @@ def listar_apresentacoes(
             "saldo": it.quantidade or 0, "unidade": it.unidade,
             "volume_por_apresentacao": it.volume_por_apresentacao, "volume_unidade": it.volume_unidade,
             "estoque_inicializado": it.estoque_inicializado is not False,
+            # Unidade de medida ATUAL do item (ex.: "ml/frasco") — usado só
+            # pra rotular o seletor "de qual lote?" com a unidade certa,
+            # nunca um valor fixo (ver ApresentacaoEmbalagemEstoque).
+            "medida_embalagem": it.medida_embalagem,
         }
         for it in itens
     ]

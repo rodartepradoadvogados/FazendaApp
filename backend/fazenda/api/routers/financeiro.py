@@ -19,9 +19,9 @@ from fazenda.auth import exigir_admin, exigir_nao_consultor, get_current_user, g
 from fazenda.database import get_session
 from fastapi.responses import Response
 from fazenda.models import (
-    CentroCusto, ClassificacaoLancamento, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, ExameDefinicao, ExameResultado, Fazenda, FormaPagamentoCadastro, Fornecedor,
+    ApresentacaoEmbalagemEstoque, CentroCusto, ClassificacaoLancamento, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, ExameDefinicao, ExameResultado, Fazenda, FormaPagamentoCadastro, Fornecedor,
     FornecedorClienteApelido,
-    LancamentoAnexo, LancamentoItem, LancamentoRecorrente, ManutencaoPatrimonio, MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, Sanidade,
+    LancamentoAnexo, LancamentoItem, LancamentoRecorrente, LoteEstoque, ManutencaoPatrimonio, MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, Sanidade,
     SeedFlag, Servico, TipoDocumento, TransferenciaContas, Usuario, ValeAvulso, ValeFuncionario,
 )
 from fazenda.rules import estoque_baixa
@@ -303,6 +303,13 @@ class ItemIn(BaseModel):
     # salvar, gera o vale de verdade e o item sai dos relatórios gerenciais.
     # None (padrão) = item normal da fazenda.
     vale: Optional[ValeItemNovoIn] = None
+    # Qual embalagem cadastrada (ApresentacaoEmbalagemEstoque) esta compra
+    # representa — pedido do usuário (04/09/2026): "quero comprar um Agrovet
+    # de 50ml e um Agrovet de 100ml, sem cadastrar 2 produtos". Quando
+    # informado, `quantidade` acima é o número de EMBALAGENS compradas (ex.:
+    # 6 frascos), e a entrada abre um lote de compra em vez de só somar no
+    # agregado — ver o loop de entrada automática abaixo.
+    apresentacao_id: Optional[int] = None
 
 
 class PatrimonioIn(BaseModel):
@@ -3001,6 +3008,29 @@ def criar_lancamento(
             estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=item_in.produto)
             if estoque_item is not None and estoque_item.estocavel is False:
                 continue
+            # Compra de uma embalagem cadastrada (ApresentacaoEmbalagemEstoque)
+            # — a quantidade digitada é o Nº DE EMBALAGENS, convertido aqui
+            # pro total na unidade de estoque do item, e a entrada abre um
+            # lote rastreável em vez de só somar no agregado (mesma conta que
+            # POST /estoque/{id}/lotes já faz — ver routers/estoque.py).
+            embalagem = None
+            if item_in.apresentacao_id is not None and estoque_item is not None:
+                embalagem = session.get(ApresentacaoEmbalagemEstoque, item_in.apresentacao_id)
+                if embalagem is not None and embalagem.estoque_id != estoque_item.id:
+                    embalagem = None
+            if embalagem is not None:
+                _, avisos_lote = estoque_baixa.abrir_lote(
+                    session, item=estoque_item, quantidade=item_in.quantidade * embalagem.quantidade,
+                    data_compra=data_movimento, fazenda_id=fazenda_id, valor_unitario=item_in.valor_unitario,
+                    observacao=f"Entrada por compra — lançamento {numero_lancamento}",
+                    usuario_id=usuario_id, apresentacao_id=embalagem.id,
+                    # origem_tipo/origem_id: sem isso, editar a quantidade
+                    # deste item depois (ver "quantidade" in enviados abaixo)
+                    # não encontraria este movimento pra corrigir o estoque.
+                    origem_tipo="compra_financeiro", origem_id=item_criado.id,
+                )
+                avisos_estoque += avisos_lote
+                continue
             avisos_estoque += estoque_baixa.movimentar(
                 session, item=estoque_item, quantidade=item_in.quantidade,
                 unidade=estoque_item.unidade if estoque_item else None,
@@ -3516,6 +3546,22 @@ def editar_lancamento(
                             MovimentoEstoque.origem_id == item.id,
                         )
                     ).first()
+                    # Entrada original comprada por embalagem (ver criar_lancamento
+                    # acima): `quantidade_antiga`/`registro.quantidade` aqui são o
+                    # Nº DE EMBALAGENS, não a quantidade na unidade de estoque —
+                    # reaplicar direto multiplicaria/dividiria errado. Mais seguro
+                    # recusar a correção automática do que aplicar conta errada
+                    # (ver aviso ao usuário sobre "atenção às conexões" de unidade).
+                    lote_origem = session.get(LoteEstoque, entrada_existente.lote_id) if entrada_existente and entrada_existente.lote_id else None
+                    if lote_origem is not None and lote_origem.apresentacao_id is not None:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                'Este item foi comprado por embalagem (ex.: "6 frascos de 100ml") — '
+                                'para corrigir a quantidade, ajuste o lote em Configurações > Cadastro > '
+                                'Itens de estoque > editar item > Lotes de compra, em vez de editar aqui.'
+                            ),
+                        )
                     if entrada_existente is not None:
                         estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=item.produto)
                         unidade_item = estoque_item.unidade if estoque_item else entrada_existente.unidade

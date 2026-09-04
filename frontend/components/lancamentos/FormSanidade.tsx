@@ -377,11 +377,18 @@ export function FormSanidade({ animais, lotes, estoque, produtos, onSalvo }: { a
                   </label>
                   <select style={inputStyle} value={item.lote_id ?? ""} onChange={(e) => atualizarItem(idx, { lote_id: e.target.value ? Number(e.target.value) : null })}>
                     <option value="">Automático (lote mais antigo primeiro)</option>
-                    {lotesPorItem[idx].map((l) => (
-                      <option key={l.id} value={l.id}>
-                        {l.numero_lote ? `Lote ${l.numero_lote}` : `Comprado em ${l.data_compra}`} — sobram {l.quantidade_restante}
-                      </option>
-                    ))}
+                    {lotesPorItem[idx].map((l) => {
+                      // "Frasco de 100" (a unidade — ml, dose... — é a que
+                      // estiver de fato cadastrada em medida_embalagem do
+                      // item; nunca um valor fixo assumido aqui).
+                      const medida = frascosPorItem[idx]?.find((f) => f.estoque_id === item.estoque_id)?.medida_embalagem;
+                      const tamanho = l.apresentacao_quantidade != null ? `Frasco de ${l.apresentacao_quantidade}${medida ? ` ${medida}` : ""} — ` : "";
+                      return (
+                        <option key={l.id} value={l.id}>
+                          {tamanho}{l.numero_lote ? `Lote ${l.numero_lote}` : `Comprado em ${l.data_compra}`} — sobram {l.quantidade_restante}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
               )}

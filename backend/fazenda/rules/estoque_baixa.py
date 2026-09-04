@@ -257,14 +257,20 @@ def lotes_disponiveis(session: Session, *, estoque_id: int) -> list[LoteEstoque]
 def abrir_lote(
     session: Session, *, item: Estoque, quantidade: float, data_compra: date, fazenda_id: int | None,
     valor_unitario: float | None = None, numero_lote: str | None = None, observacao: str | None = None,
-    usuario_id: int | None = None,
+    usuario_id: int | None = None, apresentacao_id: int | None = None,
+    origem_tipo: str | None = None, origem_id: int | None = None,
 ) -> tuple[LoteEstoque, list[str]]:
     """Compra/entrada que abre um lote NOVO (pedido do usuário, 01/09/2026:
     "registrar/comprar um medicamento escolhendo um tamanho de frasco/
     embalagem específico") — em vez de só somar em `Estoque.quantidade`, cria
     a linha em `LoteEstoque` (saldo próprio, consumido por FIFO depois) e
     ainda mantém o agregado em sincronia via `movimentar` (sinal=+1,
-    `lote_id` do lote recém-criado), pelo mesmo caminho atômico de sempre."""
+    `lote_id` do lote recém-criado), pelo mesmo caminho atômico de sempre.
+
+    `apresentacao_id` (04/09/2026): de qual tamanho de embalagem cadastrado
+    (`ApresentacaoEmbalagemEstoque`) este lote veio — quem chama já resolveu
+    `quantidade` pra unidade de estoque do item (ver
+    routers/estoque.py::abrir_lote_estoque), esta função só grava o vínculo."""
     # `quantidade_restante` nasce em 0 — é o próprio `movimentar(sinal=+1,
     # lote_id=...)` logo abaixo quem soma `quantidade` nele (via
     # `_aplicar_em_lotes`), pelo mesmo caminho atômico de qualquer outra
@@ -272,7 +278,7 @@ def abrir_lote(
     lote = LoteEstoque(
         fazenda_id=fazenda_id, estoque_id=item.id, numero_lote=numero_lote, data_compra=data_compra,
         quantidade_comprada=quantidade, quantidade_restante=0, valor_unitario=valor_unitario,
-        observacao=observacao,
+        observacao=observacao, apresentacao_id=apresentacao_id,
     )
     session.add(lote)
     session.flush()
@@ -280,7 +286,7 @@ def abrir_lote(
     avisos = movimentar(
         session, item=item, quantidade=quantidade, unidade=item.unidade, data=data_compra, fazenda_id=fazenda_id,
         movimento="Entrada de compra", observacao=observacao or (f"Novo lote {numero_lote}" if numero_lote else "Novo lote"),
-        usuario_id=usuario_id, sinal=+1, lote_id=lote.id,
+        usuario_id=usuario_id, sinal=+1, lote_id=lote.id, origem_tipo=origem_tipo, origem_id=origem_id,
     )
     return lote, avisos
 

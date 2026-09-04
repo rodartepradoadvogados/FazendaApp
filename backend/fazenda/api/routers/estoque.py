@@ -14,10 +14,10 @@ from sqlmodel import Session, select
 from fazenda.auth import exigir_sessao_suporte, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    Alimento, AlimentoNutricional, CategoriaMedicamento, CompraSemen, DietaSimulacaoItem, Estoque,
-    EstoqueAliasMesclado, EstoqueCategoriaMedicamento, EstoqueClassificacaoMedicamento, EstoquePrincipioAtivo,
-    EstoqueSemen, Fornecedor, LoteEstoque, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo, SeedFlag,
-    TabelaNutricionalProduto, Usuario,
+    Alimento, AlimentoNutricional, ApresentacaoEmbalagemEstoque, CategoriaMedicamento, CompraSemen,
+    DietaSimulacaoItem, Estoque, EstoqueAliasMesclado, EstoqueCategoriaMedicamento, EstoqueClassificacaoMedicamento,
+    EstoquePrincipioAtivo, EstoqueSemen, Fornecedor, LoteEstoque, MedicamentoComercial, MovimentoEstoque,
+    PrincipioAtivo, SeedFlag, TabelaNutricionalProduto, Usuario,
 )
 from fazenda.rules.alimentacao import resolver_kg_por_unidade
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
@@ -809,6 +809,68 @@ def restaurar_padrao_cowdata(
 
 
 # ---------------------------------------------------------------------------
+# Embalagens (04/09/2026) — pedido do usuário: "eu quero comprar um Agrovet
+# de 50ml e um Agrovet de 100ml, não preciso ter que cadastrar 2 produtos".
+# Cada linha é só um NÚMERO (quantidade) — nunca guarda unidade própria: a
+# unidade de cada embalagem é sempre `Estoque.medida_embalagem` do item,
+# lida ao vivo (ver docstring de ApresentacaoEmbalagemEstoque). Puramente
+# aditivo: um item sem nenhuma embalagem cadastrada continua se comportando
+# exatamente como antes.
+# ---------------------------------------------------------------------------
+class EmbalagemEstoqueIn(BaseModel):
+    quantidade: float
+
+
+@router.get("/{item_id}/embalagens")
+def listar_embalagens_estoque(
+    item_id: int, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    item = session.get(Estoque, item_id)
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
+    embalagens = session.exec(
+        select(ApresentacaoEmbalagemEstoque)
+        .where(ApresentacaoEmbalagemEstoque.estoque_id == item_id)
+        .order_by(ApresentacaoEmbalagemEstoque.quantidade)
+    ).all()
+    return [e.model_dump() for e in embalagens]
+
+
+@router.post("/{item_id}/embalagens", status_code=201)
+def criar_embalagem_estoque(
+    item_id: int, dados: EmbalagemEstoqueIn, fazenda_id: int = Depends(get_fazenda_id_escrita),
+    session: Session = Depends(get_session),
+) -> dict:
+    item = session.get(Estoque, item_id)
+    if not item or item.fazenda_id != fazenda_id:
+        raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
+    if dados.quantidade <= 0:
+        raise HTTPException(status_code=400, detail="Quantidade da embalagem deve ser maior que zero")
+    embalagem = ApresentacaoEmbalagemEstoque(fazenda_id=fazenda_id, estoque_id=item_id, quantidade=dados.quantidade)
+    session.add(embalagem)
+    session.commit()
+    session.refresh(embalagem)
+    return embalagem.model_dump()
+
+
+@router.delete("/{item_id}/embalagens/{embalagem_id}")
+def remover_embalagem_estoque(
+    item_id: int, embalagem_id: int, fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
+) -> dict:
+    """Desativa (nunca apaga) — lotes de compra já abertos com esta embalagem
+    continuam mostrando o tamanho de onde vieram; só some das opções para
+    novas compras."""
+    embalagem = session.get(ApresentacaoEmbalagemEstoque, embalagem_id)
+    if not embalagem or embalagem.estoque_id != item_id or embalagem.fazenda_id != fazenda_id:
+        raise HTTPException(status_code=404, detail="Embalagem não encontrada")
+    embalagem.ativa = False
+    session.add(embalagem)
+    session.commit()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # Lotes/frascos (Fase G, 01/09/2026) — pedido do usuário: "registrar/comprar
 # um medicamento escolhendo um tamanho de frasco/embalagem específico com sua
 # própria dosagem, rastrear múltiplos lotes de tamanhos diferentes do mesmo
@@ -824,6 +886,14 @@ class LoteEstoqueIn(BaseModel):
     valor_unitario: float | None = None
     numero_lote: str | None = None
     observacao: str | None = None
+    # Qual embalagem cadastrada (ver ApresentacaoEmbalagemEstoque) este lote
+    # representa — opcional, e só faz sentido quando o item tem embalagens
+    # cadastradas. Quando informado, `quantidade` acima é o número de
+    # EMBALAGENS compradas (ex.: 6 frascos) — o total gravado no lote é
+    # `quantidade * apresentacao.quantidade` (ex.: 6 × 100ml = 600ml),
+    # sempre na unidade de estoque do item (`Estoque.unidade`), a mesma
+    # conta que `resolver_kg_por_unidade` já faz hoje para Alimentação.
+    apresentacao_id: int | None = None
 
 
 @router.get("/{item_id}/lotes")
@@ -837,7 +907,17 @@ def listar_lotes_estoque(
     lotes = session.exec(
         select(LoteEstoque).where(LoteEstoque.estoque_id == item_id).order_by(LoteEstoque.data_compra, LoteEstoque.id)
     ).all()
-    return [l.model_dump() for l in lotes]
+    # `apresentacao_quantidade` é resolvida ao vivo (nunca copiada pro lote)
+    # — se a embalagem for editada/desativada depois, o lote antigo continua
+    # mostrando o número certo, só não a lista de opções pra lotes novos.
+    apresentacao_ids = {l.apresentacao_id for l in lotes if l.apresentacao_id}
+    apresentacoes = {}
+    if apresentacao_ids:
+        apresentacoes = {
+            a.id: a.quantidade
+            for a in session.exec(select(ApresentacaoEmbalagemEstoque).where(ApresentacaoEmbalagemEstoque.id.in_(apresentacao_ids))).all()
+        }
+    return [{**l.model_dump(), "apresentacao_quantidade": apresentacoes.get(l.apresentacao_id)} for l in lotes]
 
 
 @router.post("/{item_id}/lotes", status_code=201)
@@ -850,10 +930,16 @@ def abrir_lote_estoque(
         raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
     if dados.quantidade <= 0:
         raise HTTPException(status_code=400, detail="Quantidade do lote deve ser maior que zero")
+    quantidade_total = dados.quantidade
+    if dados.apresentacao_id is not None:
+        embalagem = session.get(ApresentacaoEmbalagemEstoque, dados.apresentacao_id)
+        if not embalagem or embalagem.estoque_id != item_id or embalagem.fazenda_id != fazenda_id:
+            raise HTTPException(status_code=404, detail="Embalagem não encontrada para este item")
+        quantidade_total = dados.quantidade * embalagem.quantidade
     lote, avisos = abrir_lote(
-        session, item=item, quantidade=dados.quantidade, data_compra=dados.data_compra, fazenda_id=fazenda_id,
+        session, item=item, quantidade=quantidade_total, data_compra=dados.data_compra, fazenda_id=fazenda_id,
         valor_unitario=dados.valor_unitario, numero_lote=dados.numero_lote, observacao=dados.observacao,
-        usuario_id=user.id,
+        usuario_id=user.id, apresentacao_id=dados.apresentacao_id,
     )
     session.commit()
     session.refresh(lote)
@@ -1066,7 +1152,31 @@ def listar_movimentos(
         query = query.where(MovimentoEstoque.fazenda_id == fazenda_id)
     movs = session.exec(query.order_by(MovimentoEstoque.data_movimento.desc())).all()
     nomes = mapa_usuarios(session, {m.usuario_id for m in movs})
-    movimentos = [{**m.model_dump(), "usuario_nome": nomes.get(m.usuario_id)} for m in movs]
+    # Rótulo de embalagem (ex.: "Frasco de 100 ml") por movimento, quando o
+    # movimento aconteceu num lote com tamanho cadastrado — mostrado como
+    # coluna extra no Mapa de Entradas/Saídas (04/09/2026). Nunca assume
+    # unidade fixa: usa a medida_embalagem ATUAL do item de cada lote.
+    lote_ids = {m.lote_id for m in movs if m.lote_id}
+    embalagem_por_lote: dict[int, str] = {}
+    if lote_ids:
+        lotes = session.exec(select(LoteEstoque).where(LoteEstoque.id.in_(lote_ids))).all()
+        apresentacao_ids = {l.apresentacao_id for l in lotes if l.apresentacao_id}
+        estoque_ids_lotes = {l.estoque_id for l in lotes}
+        apresentacoes = {
+            a.id: a.quantidade
+            for a in session.exec(select(ApresentacaoEmbalagemEstoque).where(ApresentacaoEmbalagemEstoque.id.in_(apresentacao_ids))).all()
+        } if apresentacao_ids else {}
+        medidas_por_item = {
+            e.id: e.medida_embalagem for e in session.exec(select(Estoque).where(Estoque.id.in_(estoque_ids_lotes))).all()
+        } if estoque_ids_lotes else {}
+        for l in lotes:
+            if l.apresentacao_id and l.apresentacao_id in apresentacoes:
+                medida = medidas_por_item.get(l.estoque_id) or ""
+                embalagem_por_lote[l.id] = f"{apresentacoes[l.apresentacao_id]:g} {medida}".strip()
+    movimentos = [
+        {**m.model_dump(), "usuario_nome": nomes.get(m.usuario_id), "embalagem": embalagem_por_lote.get(m.lote_id)}
+        for m in movs
+    ]
     return {"movimentos": movimentos, "total": len(movs)}
 
 
