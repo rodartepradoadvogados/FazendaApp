@@ -4,14 +4,15 @@
 // correspondente (via callback do pai); os demais quadros abrem uma lista de
 // animais por trás do número, só com os campos pertinentes ao indicador
 // (nunca Raça, nunca Nome ao lado de Número).
-import { useState } from "react";
-import { ChevronRight, Fence, Baby, Syringe, CalendarClock, HeartCrack, CheckCircle2, AlertTriangle, CalendarDays, Repeat, Droplet, Milk, FileDown } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ChevronRight, Fence, Baby, Syringe, CalendarClock, HeartCrack, CheckCircle2, AlertTriangle, CalendarDays, Repeat, Droplet, Milk, FileDown, Share2 } from "lucide-react";
 import { MobTitulo, MobVoltar } from "@/components/mobile/ui";
 import { CowIcon } from "@/components/CowIcon";
 import { fetchIndicadores, fetchAnimais, fetchRelatoriosManejo, fetchEstadosReprodutivos, formatDate, type EstadosReprodutivos, type EstadoReprodutivoAnimal, type IndicadoresProducao, type AnimalProducaoAoVivo, type ReproducaoCategoria } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
 import { FichaDetalhe } from "@/components/mobile/rebanho/Ficha";
-import { exportarPDF, type ColunaExport } from "@/lib/export";
+import { exportarPDF, type ColunaExport, type ModoEntregaExport } from "@/lib/export";
+import { ehApp } from "@/lib/nativo";
 import { producaoDe, origemDe } from "@/lib/producaoAnimal";
 
 type IndicadoresResp = {
@@ -135,6 +136,10 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
   const [drill, setDrill] = useState<Drill | null>(null);
   const [numeroAberto, setNumeroAberto] = useState<string | null>(null);
   const [exportando, setExportando] = useState(false);
+  // "Compartilhar" (folha nativa do Android) só faz sentido dentro do app —
+  // no navegador é idêntico a "Exportar PDF" (mesmo <a download>).
+  const [mostrarCompartilhar, setMostrarCompartilhar] = useState(false);
+  useEffect(() => { ehApp().then(setMostrarCompartilhar); }, []);
 
   const animais = animaisReq.dados || [];
   const porNumero = new Map(animais.map((a) => [a.numero, a]));
@@ -454,23 +459,44 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
               <p style={{ fontSize: "0.8rem", color: "var(--mob-muted)" }}>
                 Total: {total} animal(is)
               </p>
-              <button
-                type="button"
-                disabled={exportando}
-                onClick={async () => {
-                  setExportando(true);
-                  try { await exportarPDF(DRILL_TITULO[drill], colunasExport, linhasExport, `rebanho_${drill}`); }
-                  catch { /* erro já mostrado ao usuário dentro de exportarPDF (lib/export.ts) */ }
-                  finally { setExportando(false); }
-                }}
-                style={{
-                  display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.76rem", fontWeight: 700,
-                  padding: "0.35rem 0.65rem", borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)",
-                  background: "var(--mob-surface)", color: "var(--mob-dourado-2)", opacity: exportando ? 0.6 : 1,
-                }}
-              >
-                <FileDown size={14} /> {exportando ? "Gerando…" : "Exportar PDF"}
-              </button>
+              <div style={{ display: "flex", gap: "0.4rem" }}>
+                <button
+                  type="button"
+                  disabled={exportando}
+                  onClick={async () => {
+                    setExportando(true);
+                    try { await exportarPDF(DRILL_TITULO[drill], colunasExport, linhasExport, `rebanho_${drill}`, "baixar" as ModoEntregaExport); }
+                    catch { /* erro já mostrado ao usuário dentro de exportarPDF (lib/export.ts) */ }
+                    finally { setExportando(false); }
+                  }}
+                  style={{
+                    display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.76rem", fontWeight: 700,
+                    padding: "0.35rem 0.65rem", borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)",
+                    background: "var(--mob-surface)", color: "var(--mob-dourado-2)", opacity: exportando ? 0.6 : 1,
+                  }}
+                >
+                  <FileDown size={14} /> {exportando ? "Gerando…" : "Exportar PDF"}
+                </button>
+                {mostrarCompartilhar && (
+                  <button
+                    type="button"
+                    disabled={exportando}
+                    onClick={async () => {
+                      setExportando(true);
+                      try { await exportarPDF(DRILL_TITULO[drill], colunasExport, linhasExport, `rebanho_${drill}`, "compartilhar"); }
+                      catch { /* erro já mostrado ao usuário dentro de exportarPDF (lib/export.ts) */ }
+                      finally { setExportando(false); }
+                    }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.76rem", fontWeight: 700,
+                      padding: "0.35rem 0.65rem", borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)",
+                      background: "var(--mob-surface)", color: "var(--mob-dourado-2)", opacity: exportando ? 0.6 : 1,
+                    }}
+                  >
+                    <Share2 size={14} /> Compartilhar
+                  </button>
+                )}
+              </div>
             </div>
             {linhas}
             {drill === "producao" && temProducaoCongelada && (

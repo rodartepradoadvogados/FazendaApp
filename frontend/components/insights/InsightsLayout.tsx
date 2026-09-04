@@ -25,7 +25,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ArrowLeft, FileSpreadsheet, FileText, Loader2, ChevronDown } from "lucide-react";
+import { ArrowLeft, FileSpreadsheet, FileText, Loader2, ChevronDown, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
@@ -150,6 +150,22 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
   const [temConfiguracoes, setTemConfiguracoes] = useState(false);
   const [podeNews, setPodeNews] = useState(false);
 
+  // Rail de sub-navegação recolhível com 1 clique — mesmo padrão/tecla de
+  // localStorage do menu lateral principal do site (ver Sidebar.tsx
+  // ::alternarRecolhida), mas com chave própria: este rail é local a este
+  // portal, não deve herdar nem sobrescrever a preferência do menu principal.
+  const [railRecolhida, setRailRecolhida] = useState(false);
+  useEffect(() => {
+    try { setRailRecolhida(localStorage.getItem("insights-rail-recolhida") === "1"); } catch { /* ignore */ }
+  }, []);
+  function alternarRailRecolhida() {
+    setRailRecolhida((atual) => {
+      const proximo = !atual;
+      try { localStorage.setItem("insights-rail-recolhida", proximo ? "1" : "0"); } catch { /* ignore */ }
+      return proximo;
+    });
+  }
+
   useEffect(() => {
     setFazendaNome(getFazendaAtual()?.nome || "Jairo Nasser");
     setAdmin(ehAdmin());
@@ -232,13 +248,24 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
       <div style={{ display: "flex", alignItems: "stretch", flex: 1, minHeight: 0 }}>
         {subNav && (
           <aside style={{
-            width: "15rem", flexShrink: 0, padding: "1rem 0.8rem",
+            width: railRecolhida ? "3.2rem" : "15rem", flexShrink: 0, padding: railRecolhida ? "1rem 0.4rem" : "1rem 0.8rem",
             background: "var(--sidebar-bg)", borderRight: "1px solid var(--sidebar-border)",
-            height: "100%", overflowY: "auto",
+            height: "100%", overflowY: "auto", overflowX: "hidden",
+            transition: "width 0.2s, padding 0.2s",
           }}>
+            <button type="button" onClick={alternarRailRecolhida}
+              aria-label={railRecolhida ? "Expandir menu" : "Recolher menu"}
+              title={railRecolhida ? "Expandir menu" : "Recolher menu"}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: railRecolhida ? "center" : "flex-end",
+                width: "100%", padding: "0.3rem", marginBottom: "0.5rem", background: "none", border: "none",
+                borderRadius: "var(--r-sm)", color: "var(--sidebar-muted)", cursor: "pointer",
+              }}>
+              {railRecolhida ? <ChevronsRight size={14} /> : <ChevronsLeft size={14} />}
+            </button>
             <SubNavTree nodes={subNav.tree} activeId={subNav.activeId} onSelect={subNav.onSelect}
               raiz={subNav.tree} pathname={path} paginaLabel={rotuloDaPagina(path)}
-              recolhidos={new Set()} onToggleRecolhido={() => {}} />
+              recolhidos={new Set()} onToggleRecolhido={() => {}} recolhida={railRecolhida} />
           </aside>
         )}
         <main style={{ flex: 1, minWidth: 0, padding: "1.4rem", height: "100%", overflowY: "auto" }}>{children}</main>

@@ -2853,12 +2853,13 @@ export async function fetchManualFazenda() {
   if (!res.ok) throw new Error(`Manual da Fazenda error: ${res.status}`);
   return res.json() as Promise<ManualFazenda>;
 }
-export async function baixarPdfManualFazenda() {
+export async function baixarPdfManualFazenda(modo: "baixar" | "compartilhar" = "baixar") {
   const res = await authFetch(`${API}/manual-fazenda/pdf`);
   if (!res.ok) throw new Error(`Erro ao gerar PDF do Manual da Fazenda: ${res.status}`);
   const blob = await res.blob();
-  const { baixarArquivo } = await import("./nativo");
-  await baixarArquivo(blob, "manual_da_fazenda.pdf");
+  const { baixarArquivo, salvarArquivo } = await import("./nativo");
+  if (modo === "compartilhar") await baixarArquivo(blob, "manual_da_fazenda.pdf");
+  else await salvarArquivo(blob, "manual_da_fazenda.pdf");
 }
 export async function fetchParametrosManualFazenda() {
   const res = await authFetch(`${API}/manual-fazenda/parametros`, { cache: "no-store" });

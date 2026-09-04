@@ -5,9 +5,10 @@
 // Crescimento compara o peso real com a faixa-alvo. "Registrar caso" é o
 // lançamento rápido que alimenta tudo.
 import { useEffect, useMemo, useState } from "react";
-import { Baby, Activity, TrendingUp, PlusCircle, Trash2, AlertTriangle, Heart, Wheat, Download } from "lucide-react";
+import { Baby, Activity, TrendingUp, PlusCircle, Trash2, AlertTriangle, Heart, Wheat, Download, Share2 } from "lucide-react";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
-import { exportarFichaPDF, type SecaoFicha } from "@/lib/export";
+import { exportarFichaPDF, type SecaoFicha, type ModoEntregaExport } from "@/lib/export";
+import { ehApp } from "@/lib/nativo";
 import { UploadPlanilha } from "@/components/UploadPlanilha";
 import { SecaoRecolhivel } from "@/components/ui";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
@@ -47,11 +48,15 @@ export default function RecriaPage() {
   const [aba, setAba] = useState<Aba>("saude");
   const [gerando, setGerando] = useState(false);
   const [erroDossie, setErroDossie] = useState<string | null>(null);
+  // "Compartilhar" (folha nativa do Android) só faz sentido dentro do app —
+  // no navegador é idêntico a "Exportar Dossiê" (mesmo <a download>).
+  const [mostrarCompartilhar, setMostrarCompartilhar] = useState(false);
+  useEffect(() => { ehApp().then(setMostrarCompartilhar); }, []);
 
   const subNavTree: SubNavNode[] = useMemo(() => ABAS.map((a) => ({ id: a.id, label: a.label, icon: a.icon })), []);
   useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba, onSelect: (id: string) => setAba(id as Aba) }), [subNavTree, aba]));
 
-  async function exportarDossie() {
+  async function exportarDossie(modo: ModoEntregaExport) {
     setGerando(true); setErroDossie(null);
     try {
       const d = await fetchRecriaDossie();
@@ -69,6 +74,7 @@ export default function RecriaPage() {
         `Bezerras e novilhas · gerado em ${new Date(d.gerado_em + "T00:00:00").toLocaleDateString("pt-BR")}`,
         secoes,
         "dossie_recria",
+        modo,
       );
     } catch (e: any) {
       setErroDossie(e.message || "Não foi possível gerar o dossiê.");
@@ -84,10 +90,18 @@ export default function RecriaPage() {
             Acompanhamento de bezerras e novilhas: em que idade cada doença mais aparece (o <strong>ponto crítico</strong>), a incidência por fase e o crescimento em peso.
           </p>
         </div>
-        <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", whiteSpace: "nowrap" }}
-          onClick={exportarDossie} disabled={gerando} title="Gerar o Dossiê Zootécnico completo (saúde, crescimento e reprodução) em PDF">
-          <Download size={14} /> {gerando ? "Gerando…" : "Exportar Dossiê (PDF)"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", whiteSpace: "nowrap" }}
+            onClick={() => exportarDossie("baixar")} disabled={gerando} title="Gerar o Dossiê Zootécnico completo (saúde, crescimento e reprodução) em PDF">
+            <Download size={14} /> {gerando ? "Gerando…" : "Exportar Dossiê (PDF)"}
+          </button>
+          {mostrarCompartilhar && (
+            <button className="btn-ghost" style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", whiteSpace: "nowrap" }}
+              onClick={() => exportarDossie("compartilhar")} disabled={gerando} title="Compartilhar o Dossiê Zootécnico">
+              <Share2 size={14} /> Compartilhar
+            </button>
+          )}
+        </div>
       </div>
       {erroDossie && <div className="alert-critico mb-3" style={{ fontSize: "0.82rem" }}><AlertTriangle size={16} /><span>{erroDossie}</span></div>}
       <div style={{ marginTop: "1rem" }}>

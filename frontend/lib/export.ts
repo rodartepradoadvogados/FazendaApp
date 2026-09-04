@@ -2,7 +2,18 @@
 // no padrão visual CowData (ver public/brand/cowdata-mark.svg e o mockup de
 // relatório aprovado), usado em todas as exportações do sistema.
 import { getUsuario } from "./api";
-import { baixarArquivo } from "./nativo";
+import { baixarArquivo, salvarArquivo } from "./nativo";
+
+// "baixar" (padrão) só salva o arquivo, sem abrir nada — "compartilhar" abre
+// a folha nativa de compartilhar (ver lib/nativo.ts). Pedido explícito do
+// usuário para separar os dois: antes "Exportar" sempre ia direto pra folha
+// de compartilhar dentro do app, sem opção de só baixar.
+export type ModoEntregaExport = "baixar" | "compartilhar";
+
+async function entregarArquivo(blob: Blob, nomeArquivo: string, modo: ModoEntregaExport): Promise<void> {
+  if (modo === "compartilhar") await baixarArquivo(blob, nomeArquivo);
+  else await salvarArquivo(blob, nomeArquivo);
+}
 
 const NOME_FAZENDA = "Fazenda Estreito Ponte de Pedra";
 
@@ -158,6 +169,7 @@ export async function exportarExcel(
   colunas: ColunaExport[],
   linhas: Record<string, unknown>[],
   nomeArquivoBase: string,
+  modo: ModoEntregaExport = "baixar",
 ) {
   return comAlertaDeErro(async () => {
   const ExcelJS = (await import("exceljs")).default;
@@ -203,7 +215,7 @@ export async function exportarExcel(
 
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-  await baixarArquivo(blob, `${nomeArquivoBase}_${dataHoje()}.xlsx`);
+  await entregarArquivo(blob, `${nomeArquivoBase}_${dataHoje()}.xlsx`, modo);
   });
 }
 
@@ -212,6 +224,7 @@ export async function exportarPDF(
   colunas: ColunaExport[],
   linhas: Record<string, unknown>[],
   nomeArquivoBase: string,
+  modo: ModoEntregaExport = "baixar",
 ) {
   return comAlertaDeErro(async () => {
   const { default: jsPDF } = await import("jspdf");
@@ -232,7 +245,7 @@ export async function exportarPDF(
     didDrawPage: cabecalho,
   });
 
-  await baixarArquivo(doc.output("blob"), `${nomeArquivoBase}_${dataHoje()}.pdf`);
+  await entregarArquivo(doc.output("blob"), `${nomeArquivoBase}_${dataHoje()}.pdf`, modo);
   });
 }
 
@@ -249,6 +262,7 @@ export async function exportarMultiExcel(
   tituloGeral: string,
   secoes: SecaoFicha[],
   nomeArquivoBase: string,
+  modo: ModoEntregaExport = "baixar",
 ) {
   return comAlertaDeErro(async () => {
   const ExcelJS = (await import("exceljs")).default;
@@ -310,7 +324,7 @@ export async function exportarMultiExcel(
 
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-  await baixarArquivo(blob, `${nomeArquivoBase}_${dataHoje()}.xlsx`);
+  await entregarArquivo(blob, `${nomeArquivoBase}_${dataHoje()}.xlsx`, modo);
   });
 }
 
@@ -328,6 +342,7 @@ export async function exportarFichaPDF(
   subtitulo: string,
   secoes: SecaoFicha[],
   nomeArquivoBase: string,
+  modo: ModoEntregaExport = "baixar",
 ) {
   return comAlertaDeErro(async () => {
   const { default: jsPDF } = await import("jspdf");
@@ -377,7 +392,7 @@ export async function exportarFichaPDF(
     doc.text("Nenhum lançamento encontrado para este animal.", 14, 40);
   }
 
-  await baixarArquivo(doc.output("blob"), `${nomeArquivoBase}_${dataHoje()}.pdf`);
+  await entregarArquivo(doc.output("blob"), `${nomeArquivoBase}_${dataHoje()}.pdf`, modo);
   });
 }
 
