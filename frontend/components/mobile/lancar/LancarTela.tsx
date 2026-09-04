@@ -150,12 +150,20 @@ export function LancarTela() {
         {montado && (podeModulo("financeiro") || podeModulo("estoque")) && (
           <>
             <div className="mob-secao" style={{ marginTop: 0 }}>Administrativo</div>
+            {/* Itens entram em cascata (--i escalona o atraso, ver
+                .mob-item-cascata em globals.css) — o "índice de posição" é
+                fixo por slot (Financeiro=0, Estoque=1) mesmo que um dos dois
+                não apareça, então a ordem visual nunca inverte o efeito. */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.7rem", marginBottom: "1.1rem" }}>
               {montado && podeModulo("financeiro") && (
-                <MobBloco icone={<Landmark size={22} />} label="Financeiro" onClick={() => { setTipoFinanceiroInicial(undefined); setMaisOpcoes(false); setTela("financeiro"); }} />
+                <div className="mob-item-cascata" style={{ "--i": 0 } as React.CSSProperties}>
+                  <MobBloco icone={<Landmark size={22} />} label="Financeiro" onClick={() => { setTipoFinanceiroInicial(undefined); setMaisOpcoes(false); setTela("financeiro"); }} />
+                </div>
               )}
               {montado && podeModulo("estoque") && (
-                <MobBloco icone={<Boxes size={22} />} label="Balanço de estoque" onClick={() => { setMaisOpcoes(false); setTela("estoque"); }} />
+                <div className="mob-item-cascata" style={{ "--i": 1 } as React.CSSProperties}>
+                  <MobBloco icone={<Boxes size={22} />} label="Balanço de estoque" onClick={() => { setMaisOpcoes(false); setTela("estoque"); }} />
+                </div>
               )}
             </div>
           </>
@@ -170,8 +178,12 @@ export function LancarTela() {
           border: "1px solid color-mix(in srgb, var(--mob-vermelho) 35%, transparent)",
           background: "color-mix(in srgb, var(--mob-vermelho) 6%, transparent)",
         }}>
-          <MobBloco icone={<Skull size={22} />} label="Baixar animal" cor="var(--mob-vermelho)" onClick={() => { setMaisOpcoes(false); setTela("baixar"); }} />
-          <MobBloco icone={<Trash2 size={22} />} label="Excluir lançamento" cor="var(--mob-vermelho)" onClick={() => { setMaisOpcoes(false); setTela("exclusao"); }} />
+          <div className="mob-item-cascata" style={{ "--i": 2 } as React.CSSProperties}>
+            <MobBloco icone={<Skull size={22} />} label="Baixar animal" cor="var(--mob-vermelho)" onClick={() => { setMaisOpcoes(false); setTela("baixar"); }} />
+          </div>
+          <div className="mob-item-cascata" style={{ "--i": 3 } as React.CSSProperties}>
+            <MobBloco icone={<Trash2 size={22} />} label="Excluir lançamento" cor="var(--mob-vermelho)" onClick={() => { setMaisOpcoes(false); setTela("exclusao"); }} />
+          </div>
         </div>
       </MobGaveta>
     </div>
