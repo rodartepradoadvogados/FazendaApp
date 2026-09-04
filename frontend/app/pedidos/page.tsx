@@ -67,10 +67,45 @@ export default function PedidosPage() {
   const [expandido, setExpandido] = useState<number | null>(null);
   const [editando, setEditando] = useState<PedidoRow | "novo" | null>(null);
 
-  const recarregar = () => fetchPedidos({
+  // Pedido cujo status acabou de mudar (via "marcar entrega" de item ou
+  // cancelamento) e some da lista por causa do filtro de status ativo —
+  // fica sendo mostrado colapsando (.linha-colapsavel) por cima da lista já
+  // sincronizada em vez de sumir na hora. `flashId` é o caso mais comum: o
+  // pedido continua na lista, só pisca (.flash-sucesso) confirmando a
+  // mudança. Ver `sincronizarAposMudanca`, chamada no lugar de `recarregar`
+  // depois de qualquer ação que altere o status de UM pedido específico.
+  const [saindoId, setSaindoId] = useState<number | null>(null);
+  const [flashId, setFlashId] = useState<number | null>(null);
+
+  const buscarPedidos = () => fetchPedidos({
     tipo: tipoFiltro || undefined, status: statusFiltro || undefined, fornecedor_cliente: fornecedorFiltro || undefined,
     data_inicio: dataInicio || undefined, data_fim: dataFim || undefined,
-  }).then(setPedidos).catch((e) => setErro(e.message));
+  });
+  const recarregar = () => buscarPedidos().then(setPedidos).catch((e) => setErro(e.message));
+
+  async function sincronizarAposMudanca(id: number) {
+    const linhaAntes = (pedidos ?? []).find((p) => p.id === id);
+    let novos: PedidoRow[];
+    try { novos = await buscarPedidos(); } catch (e: any) { setErro(e.message); return; }
+    const aindaAparece = novos.some((p) => p.id === id);
+    if (linhaAntes && !aindaAparece && statusFiltro) {
+      // O pedido saiu do filtro de status atual — mantém a lista antiga (com
+      // ele ainda dentro) por um instante pra dar tempo do colapso rodar,
+      // só então troca pela lista nova (sem ele).
+      setSaindoId(id);
+      setTimeout(() => {
+        setPedidos(novos);
+        setSaindoId((atual) => (atual === id ? null : atual));
+      }, 260);
+    } else {
+      setPedidos(novos);
+      const novaLinha = novos.find((p) => p.id === id);
+      if (linhaAntes && novaLinha && novaLinha.status !== linhaAntes.status) {
+        setFlashId(id);
+        setTimeout(() => setFlashId((atual) => (atual === id ? null : atual)), 650);
+      }
+    }
+  }
 
   useEffect(() => { recarregar(); }, [tipoFiltro, statusFiltro, fornecedorFiltro, dataInicio, dataFim]);
   useEffect(() => {
@@ -88,7 +123,7 @@ export default function PedidosPage() {
 
   async function mudarStatus(id: number, status: string) {
     await atualizarStatusPedido(id, status);
-    recarregar();
+    sincronizarAposMudanca(id);
   }
 
   const totalEstimado = (pedidos ?? []).reduce((a, p) => a + p.valor_total_estimado, 0);
@@ -176,10 +211,14 @@ export default function PedidosPage() {
             </thead>
             <tbody>
               {ord.linhasOrdenadas.map((p) => (
-                <PedidoLinha key={p.id} pedido={p}
-                  expandido={expandido === p.id} onToggle={() => setExpandido(expandido === p.id ? null : p.id)}
-                  onEditar={() => setEditando(p)} onExcluir={() => excluir(p.id)} onMudarStatus={(s) => mudarStatus(p.id, s)}
-                  onAtualizado={recarregar} nomesResponsaveis={nomesResponsaveis} />
+                saindoId === p.id ? (
+                  <LinhaPedidoSaindo key={p.id} pedido={p} />
+                ) : (
+                  <PedidoLinha key={p.id} pedido={p} destacado={flashId === p.id}
+                    expandido={expandido === p.id} onToggle={() => setExpandido(expandido === p.id ? null : p.id)}
+                    onEditar={() => setEditando(p)} onExcluir={() => excluir(p.id)} onMudarStatus={(s) => mudarStatus(p.id, s)}
+                    onAtualizado={() => sincronizarAposMudanca(p.id)} nomesResponsaveis={nomesResponsaveis} />
+                )
               ))}
               {pedidos && !pedidos.length && <tr><td colSpan={10} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1.5rem" }}>Nenhum pedido encontrado.</td></tr>}
             </tbody>
@@ -199,8 +238,32 @@ export default function PedidosPage() {
   );
 }
 
-function PedidoLinha({ pedido, expandido, onToggle, onEditar, onExcluir, onMudarStatus, onAtualizado, nomesResponsaveis }: {
-  pedido: PedidoRow; expandido: boolean; onToggle: () => void; onEditar: () => void; onExcluir: () => void; onMudarStatus: (s: string) => void;
+// Representação colapsada de um pedido que acabou de sair do filtro de
+// status ativo — some não instantaneamente, mas encolhendo (ver
+// `.linha-colapsavel` em globals.css). Monta "aberta" e só no quadro
+// seguinte ganha `.linha-saindo`, pra o navegador ter de onde animar.
+function LinhaPedidoSaindo({ pedido }: { pedido: PedidoRow }) {
+  const [saindo, setSaindo] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setSaindo(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return (
+    <tr>
+      <td colSpan={10} style={{ padding: 0 }}>
+        <div className={`linha-colapsavel${saindo ? " linha-saindo" : ""}`}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.6rem", padding: "0.55rem 1.1rem", fontSize: "0.8rem" }}>
+            <span style={{ fontWeight: 600 }}>{pedido.numero_pedido} — {pedido.fornecedor_cliente || "—"}</span>
+            <Badge status={pedido.status} />
+          </div>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function PedidoLinha({ pedido, destacado, expandido, onToggle, onEditar, onExcluir, onMudarStatus, onAtualizado, nomesResponsaveis }: {
+  pedido: PedidoRow; destacado?: boolean; expandido: boolean; onToggle: () => void; onEditar: () => void; onExcluir: () => void; onMudarStatus: (s: string) => void;
   onAtualizado: () => void; nomesResponsaveis: string[];
 }) {
   const [detalhe, setDetalhe] = useState<{ lancamentos: any[]; movimentos_estoque: any[] } | null>(null);
@@ -247,7 +310,7 @@ function PedidoLinha({ pedido, expandido, onToggle, onEditar, onExcluir, onMudar
 
   return (
     <>
-      <tr className="row-clickable" onClick={onToggle} style={{ cursor: "pointer" }}>
+      <tr className={`row-clickable${destacado ? " flash-sucesso" : ""}`} onClick={onToggle} style={{ cursor: "pointer" }}>
         <td style={{ width: 24 }}>{expandido ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
         <td style={{ fontSize: "0.82rem", fontWeight: 600 }}>{pedido.numero_pedido}</td>
         <td style={{ fontSize: "0.78rem", color: pedido.tipo === "venda" ? "var(--green-light)" : "var(--red)" }}>{pedido.tipo === "venda" ? "Venda" : "Compra"}</td>
