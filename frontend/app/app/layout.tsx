@@ -30,11 +30,35 @@ const ABAS = [
   { href: "/app/menu", label: "Menu", cor: "var(--mob-nav-menu)" },
 ];
 
+// Índice da aba a que `caminho` pertence (-1 se não for nenhuma das 4 — ex.:
+// /app/curral, aberto pelo link "Modo Curral" dentro de Lançar, não é aba).
+function indiceAba(caminho: string): number {
+  return ABAS.findIndex(({ href }) => (href === "/app" ? caminho === "/app" : caminho.startsWith(href)));
+}
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const router = useRouter();
   const pathRef = useRef(path);
   pathRef.current = path;
+
+  // Direção da troca de aba (para o conteúdo deslizar do lado certo — ver
+  // .mob-troca-aba em globals.css): comparamos a aba do caminho ANTERIOR com
+  // a do caminho atual durante a própria renderização (padrão documentado do
+  // React para "guardar informação do render anterior" com useRef, sem
+  // useEffect — dispensável aqui e evitaria só o primeiro quadro do slide).
+  // Troca dentro da MESMA aba (ex.: abrir a ficha de um animal em Rebanho)
+  // não desliza — só transições entre as 4 abas da barra.
+  const caminhoAnteriorRef = useRef(path);
+  const direcaoRef = useRef<"direita" | "esquerda" | null>(null);
+  if (caminhoAnteriorRef.current !== path) {
+    const abaAnterior = indiceAba(caminhoAnteriorRef.current);
+    const abaAtual = indiceAba(path);
+    direcaoRef.current = abaAnterior === -1 || abaAtual === -1 || abaAnterior === abaAtual
+      ? null
+      : abaAtual > abaAnterior ? "direita" : "esquerda";
+    caminhoAnteriorRef.current = path;
+  }
   // Ping real ao servidor (não só a rádio do aparelho, que pode dizer
   // "conectado" mesmo com nosso servidor inalcançável — ver lib/offline.ts).
   const online = useConectividadeReal();
@@ -196,10 +220,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       {/* Espaçador da altura do cabeçalho fixo — evita que o conteúdo comece por baixo dele. */}
       <div aria-hidden="true" style={{ height: alturaHeader }} />
 
-      {/* Conteúdo da aba */}
+      {/* Conteúdo da aba — chaveado pelo caminho para remontar (e disparar de
+          novo a animação de entrada) a cada navegação; a classe de direção só
+          entra quando a troca foi de fato entre duas das 4 abas da barra. */}
       <main className="mob-conteudo">
         <InstalarApp />
-        {children}
+        <div key={path} className={direcaoRef.current ? `mob-troca-aba ${direcaoRef.current}` : undefined}>
+          {children}
+        </div>
       </main>
 
       {/* Navegação inferior (zona do polegar) */}

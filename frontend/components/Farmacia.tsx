@@ -917,6 +917,11 @@ function CardIndicacao({ ind, onMudou, contextoGlobal, somenteLeitura }: {
   ind: IndicacaoCatalogo; onMudou: () => void; contextoGlobal?: boolean; somenteLeitura?: boolean;
 }) {
   const [aberto, setAberto] = useState(false);
+  // Mantém o conteúdo montado depois do 1º "abrir" (em vez de desmontar junto
+  // com `aberto`) só pra permitir a animação de colapso rodar — cartões nunca
+  // abertos continuam sem custo nenhum de montagem.
+  const [jaAbriuUmaVez, setJaAbriuUmaVez] = useState(false);
+  useEffect(() => { if (aberto) setJaAbriuUmaVez(true); }, [aberto]);
   const [processando, setProcessando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [avisoPersonalizacao, setAvisoPersonalizacao] = useState(false);
@@ -997,17 +1002,19 @@ function CardIndicacao({ ind, onMudou, contextoGlobal, somenteLeitura }: {
         </p>
       )}
 
-      {aberto && (
-        <div style={{ padding: "0.85rem" }}>
-          {ind.principios.length === 0 ? (
-            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Nenhum princípio ativo indicado ainda para esta indicação.</p>
-          ) : (
-            <div className="space-y-3">
-              {ind.principios.map((p) => (
-                <PrincipioBloco key={p.id} p={p} indicacaoPersonalizada={ind.personalizada} onMudou={onMudouFilho} contextoGlobal={contextoGlobal} somenteLeitura={somenteLeitura} />
-              ))}
-            </div>
-          )}
+      {jaAbriuUmaVez && (
+        <div className={`painel-expansivel${aberto ? " painel-expansivel-aberto" : ""}`}>
+          <div style={{ padding: "0.85rem" }}>
+            {ind.principios.length === 0 ? (
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Nenhum princípio ativo indicado ainda para esta indicação.</p>
+            ) : (
+              <div className="space-y-3">
+                {ind.principios.map((p) => (
+                  <PrincipioBloco key={p.id} p={p} indicacaoPersonalizada={ind.personalizada} onMudou={onMudouFilho} contextoGlobal={contextoGlobal} somenteLeitura={somenteLeitura} />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

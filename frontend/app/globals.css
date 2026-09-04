@@ -752,6 +752,90 @@ textarea:focus-visible, [tabindex]:focus-visible {
   .pulse-dot { animation: none; }
 }
 
+/* ── Microinterações (04/09/2026) — vocabulário comum de movimento ──────────
+   Duração por escala do elemento: 120-180ms pra feedback imediato (check,
+   validação), 200-280ms pra elementos entrando/saindo (linha, popup),
+   300-360ms pra painéis grandes (gaveta, folha inferior). Sempre com
+   `prefers-reduced-motion` coberto — ver bloco no fim desta seção. */
+
+/* Traço de "check" se desenhando — usar num <path> de <svg> com
+   stroke-dasharray igual ao comprimento do traço (medir com getTotalLength()
+   ou aproximar; 20 cobre um check simples de ~24x24 com folga). Alternar a
+   classe `.check-marcado` no elemento pai risca o traço. */
+.check-tracado {
+  stroke-dasharray: 20; stroke-dashoffset: 20;
+  transition: stroke-dashoffset 0.18s ease-out;
+}
+.check-marcado .check-tracado { stroke-dashoffset: 0; }
+
+/* Flash verde breve no fundo de uma linha ao confirmar uma ação (marcar como
+   feito) — pisca e volta ao normal sozinho, não fica "pintado". */
+@keyframes flash-sucesso {
+  0% { background-color: transparent; }
+  30% { background-color: color-mix(in srgb, var(--green, var(--mob-verde, #0b7a4b)) 28%, transparent); }
+  100% { background-color: transparent; }
+}
+.flash-sucesso { animation: flash-sucesso 0.6s ease-out; }
+
+/* Colapso de linha de lista — o "sumir desaparecendo" que recolhe o espaço
+   em vez de deixar buraco. Envolver o conteúdo real da linha num wrapper com
+   esta classe; alternar `.linha-saindo` anima a saída (senão os vizinhos
+   pulam pro lugar instantaneamente); `.linha-entrando`, removida um quadro
+   depois de montada, anima a entrada. Técnica: grid-template-rows 1fr→0fr —
+   não depende de medir altura em JS. */
+.linha-colapsavel {
+  display: grid; grid-template-rows: 1fr;
+  transition: grid-template-rows 0.24s ease-in, opacity 0.2s ease-in, margin 0.24s ease-in;
+}
+.linha-colapsavel > * { overflow: hidden; min-height: 0; }
+.linha-colapsavel.linha-saindo { grid-template-rows: 0fr; opacity: 0; margin-block: 0 !important; }
+.linha-colapsavel.linha-entrando { opacity: 0; transform: translateY(8px); }
+.linha-colapsavel:not(.linha-entrando) { transition: grid-template-rows 0.24s ease-in, opacity 0.2s ease-in, margin 0.24s ease-in, transform 0.22s ease-out; transform: translateY(0); }
+
+/* Painel expansível inline (05/09/2026) — mesmo truque de grid-template-rows
+   do colapso de linha acima, mas usado ao contrário: telas como Farmácia e
+   Pessoas mostram o formulário de edição/cadastro dentro do próprio fluxo
+   (sem gaveta lateral, sem modal) — hoje aparece/some instantaneamente.
+   Por padrão fechado (0fr); ganha `.painel-expansivel-aberto` quando o
+   formulário deve aparecer. */
+.painel-expansivel {
+  display: grid; grid-template-rows: 0fr;
+  transition: grid-template-rows 0.26s ease-out, opacity 0.22s ease-out;
+  opacity: 0;
+}
+.painel-expansivel > * { overflow: hidden; min-height: 0; }
+.painel-expansivel.painel-expansivel-aberto { grid-template-rows: 1fr; opacity: 1; }
+
+/* Popup central (ver components/Modal.tsx) — fundo escurece, caixa entra com
+   escala+fade e uma pitada de mola; saída é o inverso, mais rápido. */
+@keyframes popup-fundo-entra { from { opacity: 0; } to { opacity: 1; } }
+@keyframes popup-caixa-entra { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: scale(1); } }
+.popup-fundo { animation: popup-fundo-entra 0.2s ease-out; }
+.popup-fundo.popup-saindo { animation: popup-fundo-entra 0.16s ease-in reverse; }
+.popup-caixa { animation: popup-caixa-entra 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+.popup-caixa.popup-saindo { animation: popup-caixa-entra 0.16s ease-in reverse; }
+
+/* Toast (ver components/Toast.tsx) — desliza+aparece vindo do topo, some
+   sozinho depois de um tempo ou ao ser fechado. Fica ABAIXO da faixa fixa de
+   News/Tema/Sino (mesma folga de segurança do .notification-panel acima). */
+.toast-container {
+  position: fixed; z-index: 150; display: flex; flex-direction: column; gap: 0.5rem;
+  top: calc(env(safe-area-inset-top, 0px) + 4rem + var(--suporte-banner-h, 0px));
+  left: 50%; transform: translateX(-50%); align-items: center;
+}
+@keyframes toast-entra { from { opacity: 0; transform: translateY(-14px); } to { opacity: 1; transform: translateY(0); } }
+.toast-item { animation: toast-entra 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+.toast-item.toast-saindo { animation: toast-entra 0.18s ease-in reverse; }
+
+@media (prefers-reduced-motion: reduce) {
+  .check-tracado { transition: none; }
+  .flash-sucesso { animation: none; }
+  .linha-colapsavel, .linha-colapsavel.linha-entrando, .linha-colapsavel:not(.linha-entrando) { transition: none; transform: none; }
+  .painel-expansivel { transition: none; }
+  .popup-fundo, .popup-fundo.popup-saindo, .popup-caixa, .popup-caixa.popup-saindo { animation: none; }
+  .toast-item, .toast-item.toast-saindo { animation: none; }
+}
+
 /* Gaveta lateral de lançamento (ver components/lancamentos/GavetaLancamento.tsx)
    — desliza mudando `right`, nunca `transform`: um ancestral com transform cria
    um novo bloco de posicionamento e os pickers/popups internos (AnimalPickerModal,
@@ -1057,16 +1141,19 @@ html, body { max-width: 100%; overflow-x: hidden; }
   border: 2px solid var(--mob-acao);
 }
 
-/* Tinta genérica por categoria (Rebanho > Lotes: Composição/Indicadores) —
-   mesmo tratamento do .mob-card-vet acima, mas com a cor vinda de
-   --tint-cor (setada inline por lote/situação reprodutiva) em vez de fixa. */
+/* Tinta genérica por categoria (Menu > seções; Rebanho > Lotes: Composição/
+   Indicadores) — cor vinda de --tint-cor (setada inline por categoria/lote/
+   situação reprodutiva).
+   "Selo sólido + espinha" (04/09/2026, redesenho pedido pelo usuário —
+   relato de "tudo pintado da mesma cor, meio infantil"): o preenchimento de
+   fundo a 14%/32% no cartão INTEIRO foi trocado por só um filete de 4px na
+   borda esquerda — a cor continua identificando a categoria, mas mora num
+   traço fino, não numa lavagem grande de pastel atrás do texto. Só toca
+   border-left (nunca `border`/`background` inteiros) de propósito: quem usa
+   esta classe (.mob-secao-card, .mob-card via MobCard) já tem seu próprio
+   fundo/borda neutros — este filete só se soma por cima, nunca substitui. */
 .mob-tint {
-  background: color-mix(in srgb, var(--tint-cor, var(--mob-muted)) 14%, var(--mob-surface));
-  border-color: color-mix(in srgb, var(--tint-cor, var(--mob-muted)) 32%, var(--mob-border));
-}
-:root[data-theme="escuro"] .mob-tint {
-  background: var(--mob-surface);
-  border: 2px solid var(--tint-cor, var(--mob-muted));
+  border-left: 4px solid var(--tint-cor, var(--mob-muted));
 }
 
 /* Inputs grandes (dedo no campo, fonte ≥16px para o iPhone não dar zoom). */
@@ -1129,6 +1216,55 @@ html, body { max-width: 100%; overflow-x: hidden; }
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.28);
 }
 .mob-nav a .mob-nav-icone.mob-nav-lancar { background: var(--mob-nav-lancar); color: #fff; }
+
+/* ── Microinterações de navegação e ações rápidas (04/09/2026) ──────────────
+   Troca de aba na barra inferior (.mob-conteudo > .mob-troca-aba, aplicada em
+   app/app/layout.tsx): o conteúdo novo desliza no sentido de quem entrou —
+   veio de uma aba à direita? entra deslizando da direita; à esquerda? da
+   esquerda. Evitamos `transform` de propósito (mesmo motivo documentado acima
+   em .gaveta-lancamento-painel): esta div envolve a TELA inteira da aba, que
+   pode conter modais/pickers position:fixed (AnimalPickerModal, Modal…) — um
+   ancestral com `transform` os prenderia dentro da largura da tela em vez da
+   viewport inteira. `margin-left` desloca sem criar esse bloco de
+   posicionamento novo. */
+@keyframes mob-troca-aba-direita { from { margin-left: 28px; opacity: 0.4; } to { margin-left: 0; opacity: 1; } }
+@keyframes mob-troca-aba-esquerda { from { margin-left: -28px; opacity: 0.4; } to { margin-left: 0; opacity: 1; } }
+.mob-troca-aba.direita { animation: mob-troca-aba-direita 0.22s ease-out; }
+.mob-troca-aba.esquerda { animation: mob-troca-aba-esquerda 0.22s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .mob-troca-aba.direita, .mob-troca-aba.esquerda { animation: none; }
+}
+
+/* Cascata de itens dentro de um menu que acabou de abrir (ex.: os blocos de
+   "Mais opções" do Lançamento Rápido) — cada item usa a variável --i (índice)
+   para escalonar o atraso. Leaf-level (um botão), sem risco de esconder
+   modal fixo por baixo, então aqui `transform: translateY` é seguro — mesmo
+   padrão de .animate-in acima, só que mais rápido/escalonado. */
+@keyframes mob-item-cascata { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.mob-item-cascata {
+  /* display:block + width:100% — sem isto o <div> teria virado um item de
+     grid "encolhido" ao conteúdo, diferente do <button> direto que ele
+     substituiu (que a grade esticava por padrão). */
+  display: block; width: 100%;
+  animation: mob-item-cascata 0.18s ease-out both;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mob-item-cascata { animation: none; }
+}
+
+/* Folha inferior (MobGaveta, components/mobile/ui.tsx) — hoje já abre
+   ancorada embaixo (flex + align-items:flex-end + cantos superiores
+   arredondados), só faltava a entrada animada. Desliza via `bottom` (não
+   `transform`, mesmo cuidado de .gaveta-lancamento-painel — a gaveta é
+   reaproveitada por telas que podem crescer com formulários próprios amanhã)
+   partindo de bem abaixo da viewport; o scrim ganha overflow:hidden só para
+   não deixar a folha "vazar" um instante durante o `bottom: -100vh` inicial. */
+.folha-inferior-painel { animation: folha-inferior-entra 0.24s ease-out; }
+@keyframes folha-inferior-entra { from { bottom: -100vh; } to { bottom: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .folha-inferior-painel { animation: none; }
+}
 
 /* Botões-bloco do Lançamento Rápido (fat finger). */
 .mob-bloco {
@@ -1305,6 +1441,25 @@ html, body { max-width: 100%; overflow-x: hidden; }
   width: 72px; height: 72px; border-radius: 50%; flex-shrink: 0;
   border: 2px solid var(--mob-border); background: var(--mob-surface-2); color: var(--mob-text);
   display: flex; align-items: center; justify-content: center; text-decoration: none;
+}
+
+/* Deslizar para concluir/ocultar (04/09/2026) — cada linha vira um wrapper
+   .linha-colapsavel (ver globals.css acima) que segura o fundo revelado
+   (verde à direita = concluir, vermelho à esquerda = ocultar por agora) atrás
+   do .curral-card, que desliza por cima seguindo o dedo. */
+.curral-swipe-fundo {
+  position: absolute; inset: 0; border-radius: var(--r-app);
+  display: flex; align-items: center; padding: 0 1.1rem;
+  font-weight: 800; color: #fff; opacity: 0;
+}
+.curral-swipe-fundo-d { background: var(--mob-verde); justify-content: flex-start; }
+.curral-swipe-fundo-e { background: var(--mob-vermelho); justify-content: flex-end; }
+.curral-card.curral-swipe-front {
+  position: relative; z-index: 1; touch-action: pan-y; will-change: transform;
+  transition: transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2), background-color 0.28s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .curral-card.curral-swipe-front { transition: background-color 0.28s ease-out; }
 }
 /* "Fazer agora" — quadrado grande e único (maior que qualquer outro bloco
    desta tela) que ABRE a lista de pendências de hoje numa sub-tela, em vez

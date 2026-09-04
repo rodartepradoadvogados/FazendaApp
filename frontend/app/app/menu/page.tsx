@@ -212,10 +212,15 @@ function LinhaMenu({ icone, titulo, subtitulo, cor, onClick }: {
         background: "transparent", border: "none", borderTop: "1px solid var(--mob-border)",
         color: "var(--mob-text)", textAlign: "left", cursor: "pointer",
       }}>
+      {/* "Selo sólido + espinha" (04/09/2026): o card da SEÇÃO (SecaoRetratil,
+          abaixo) já leva a cor cheia no próprio selo — aqui, no item de
+          dentro, o círculo fica neutro (cinza sutil, sempre a mesma
+          intensidade em qualquer categoria) e só o ÍCONE herda a cor, pra não
+          repetir o mesmo tingimento do card em cada linha de novo. */}
       <span style={{
         width: 40, height: 40, borderRadius: "50%", flexShrink: 0,
         display: "flex", alignItems: "center", justifyContent: "center",
-        background: `color-mix(in srgb, ${corIcone} 16%, transparent)`, color: corIcone,
+        background: "color-mix(in srgb, var(--mob-text) 7%, transparent)", color: corIcone,
       }}>
         {icone}
       </span>
@@ -249,12 +254,16 @@ const SECOES_PADRAO_COLAPSADAS = ["protocolos-restrito", "reproducao", "sanidade
  *  CHAVE_SECOES_COLAPSADAS).
  *
  *  Quando `cor`/`icone` são passados (grupos de GRUPOS, que já carregam
- *  iconeSecao), o cabeçalho ganha um círculo de ícone de 52px na cor da
- *  categoria, a contagem de itens no lugar do rótulo em caixa alta, e o card
- *  inteiro reaproveita `.mob-tint` (mesma técnica já usada em Rebanho >
- *  Lotes) para o fundo/borda tingidos — sem inventar paleta nova. Seções sem
- *  cor própria (Módulos, Administração, App) continuam no cabeçalho neutro
- *  de sempre. */
+ *  iconeSecao), o cabeçalho ganha um selo de ícone de 52px com a cor CHEIA da
+ *  categoria (fundo sólido, ícone branco — não mais um "banho" translúcido no
+ *  cartão inteiro) e a contagem de itens no lugar do rótulo em caixa alta; o
+ *  card reaproveita `.mob-tint` (mesma técnica de Rebanho > Lotes) só para o
+ *  filete de 4px na borda esquerda — fundo/borda do card continuam neutros
+ *  ("Selo sólido + espinha", 04/09/2026 — banho de cor a 14% no cartão
+ *  inteiro lia como pastel/infantil no claro e não diferenciava o card da
+ *  seção dos itens de dentro, que usavam a mesma técnica). Seções sem cor
+ *  própria (Módulos, Administração, App) continuam no cabeçalho neutro de
+ *  sempre. */
 function SecaoRetratil({ chave, titulo, colapsada, onAlternar, children, cor, icone, contagem }: {
   chave: string; titulo: string; colapsada: boolean; onAlternar: (chave: string) => void; children: React.ReactNode;
   cor?: string; icone?: React.ReactNode; contagem?: number;
@@ -276,7 +285,7 @@ function SecaoRetratil({ chave, titulo, colapsada, onAlternar, children, cor, ic
             <span style={{
               width: 52, height: 52, borderRadius: "50%", flexShrink: 0,
               display: "flex", alignItems: "center", justifyContent: "center",
-              background: `color-mix(in srgb, ${cor} 20%, transparent)`, color: cor,
+              background: cor, color: "#fff",
             }}>
               {icone}
             </span>

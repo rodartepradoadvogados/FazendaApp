@@ -207,9 +207,14 @@ export function MobGaveta({ aberto, titulo, onFechar, children }: { aberto: bool
   if (!aberto) return null;
   return (
     <div role="presentation" onClick={onFechar}
-      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 210, display: "flex", alignItems: "flex-end" }}>
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 210, overflow: "hidden" }}>
+      {/* .folha-inferior-painel (ver globals.css) anima a entrada deslizando
+          de baixo via `bottom` — por isso o posicionamento explícito aqui,
+          em vez de contar com o alignItems:flex-end do scrim como antes. */}
       <div role="dialog" aria-modal="true" aria-label={titulo} onClick={(e) => e.stopPropagation()}
+        className="folha-inferior-painel"
         style={{
+          position: "fixed", left: 0, right: 0, bottom: 0,
           width: "100%", maxHeight: "80vh", overflowY: "auto",
           background: "var(--mob-surface)", borderRadius: "1.1rem 1.1rem 0 0",
           padding: "0.9rem 1rem calc(1.2rem + env(safe-area-inset-bottom))",
