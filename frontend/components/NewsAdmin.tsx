@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Newspaper, AlertTriangle, Plus, Trash2, X, Check, Link as LinkIcon, CalendarDays, ShieldCheck, ClipboardCheck, Pencil, Ban } from "lucide-react";
+import { Newspaper, AlertTriangle, Plus, Trash2, X, Check, Link as LinkIcon, CalendarDays, ShieldCheck, ClipboardCheck, Pencil, Ban, Image as ImageIcon, ImageOff, FolderOpen } from "lucide-react";
 import {
   fetchTodasMaterias, criarMateriaBlog, atualizarMateriaBlog, excluirMateriaBlog, revisarPublicacaoFinal, podePublicarMaterias,
   fetchNotaCapa, atualizarNotaCapa, type NoticiaNews,
 } from "@/lib/api";
 import { imagemMateria } from "@/lib/newsVisual";
+import { BancoFotosNews } from "@/components/BancoFotosNews";
 
 const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
@@ -53,8 +54,16 @@ export default function NewsAdmin() {
   const [editManchete, setEditManchete] = useState("");
   const [editCorpo, setEditCorpo] = useState("");
   const [editFontes, setEditFontes] = useState<string[]>([""]);
+  const [editImagem, setEditImagem] = useState("");
   const [editSalvando, setEditSalvando] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+
+  // Banco de fotos do Milknews (mesmo banco/API de AprovacoesView.tsx —
+  // ver PR "Banco de fotos do Milknews na aba de Aprovações"): `bancoAberto`
+  // é a gestão pura (botão no cabeçalho da aba); `pickerImagemPara` é o
+  // seletor aberto para escolher a ilustração de UMA matéria em edição.
+  const [bancoAberto, setBancoAberto] = useState(false);
+  const [pickerImagemPara, setPickerImagemPara] = useState<number | null>(null);
 
   const podePublicar = podePublicarMaterias();
 
@@ -134,6 +143,7 @@ export default function NewsAdmin() {
     setEditManchete(n.manchete);
     setEditCorpo(n.materia || n.resumo || "");
     setEditFontes(n.fontes && n.fontes.length ? n.fontes : [""]);
+    setEditImagem(n.imagem || "");
     setEditError(null);
   };
 
@@ -147,6 +157,7 @@ export default function NewsAdmin() {
         materia: n.materia != null ? editCorpo.trim() : undefined,
         resumo: n.materia == null ? editCorpo.trim() : undefined,
         fontes: editFontes.map((f) => f.trim()).filter(Boolean),
+        imagem: editImagem.trim(),
       });
       setEditandoId(null);
       setMsg(`Matéria "${editManchete.trim()}" atualizada.`);
@@ -309,11 +320,19 @@ export default function NewsAdmin() {
 
       {aba === "revisao" && (
         <>
-          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "1rem" }}>
-            Toda matéria publicada — pelo robô agendado, por você ou por outra pessoa autorizada — cai aqui até alguém
-            confirmar a revisão de publicação definitiva; só depois disso ela aparece em "Matérias publicadas" e na
-            página pública. Confira as fontes/hiperlinks antes de confirmar. Essa etapa é sempre humana: o robô nunca a realiza.
-          </p>
+          <div className="flex items-start justify-between gap-3 flex-wrap" style={{ marginBottom: "1rem" }}>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", flex: 1, minWidth: "260px" }}>
+              Toda matéria publicada — pelo robô agendado, por você ou por outra pessoa autorizada — cai aqui até alguém
+              confirmar a revisão de publicação definitiva; só depois disso ela aparece em "Matérias publicadas" e na
+              página pública. Confira as fontes/hiperlinks antes de confirmar. Essa etapa é sempre humana: o robô nunca a realiza.
+            </p>
+            <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem", flexShrink: 0 }} onClick={() => setBancoAberto(true)}
+              title="Gerenciar o banco de fotos do Milknews (pastas, enviar, excluir)">
+              <FolderOpen size={13} /> Banco de fotos
+            </button>
+          </div>
+
+          {bancoAberto && <BancoFotosNews onClose={() => setBancoAberto(false)} />}
 
           {!materias && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
@@ -359,6 +378,34 @@ export default function NewsAdmin() {
                             <Plus size={13} /> Adicionar fonte
                           </button>
                         </div>
+                        <div>
+                          <label style={lbl}>Foto de ilustração — opcional (sem foto, entra o fundo temático padrão)</label>
+                          <div className="flex items-center gap-3">
+                            <div style={{ width: 96, height: 72, borderRadius: "var(--r-sm)", overflow: "hidden", background: "var(--surface-2)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              {editImagem ? (
+                                <img src={editImagem} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                              ) : (
+                                <ImageOff size={18} style={{ color: "var(--text-muted)", opacity: 0.6 }} />
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setPickerImagemPara(n.id)}>
+                                <ImageIcon size={13} /> Escolher do banco de fotos
+                              </button>
+                              {editImagem && (
+                                <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setEditImagem("")}>
+                                  <X size={13} /> Remover foto
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          {pickerImagemPara === n.id && (
+                            <BancoFotosNews
+                              onClose={() => setPickerImagemPara(null)}
+                              onSelecionar={(url) => { setEditImagem(url); setPickerImagemPara(null); }}
+                            />
+                          )}
+                        </div>
                         {editError && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{editError}</p>}
                         <div className="flex items-center gap-2">
                           <button type="button" className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }}
@@ -370,7 +417,15 @@ export default function NewsAdmin() {
                       </div>
                     ) : (
                       <div className="flex items-start justify-between gap-3 flex-wrap">
-                        <div>
+                        <div className="flex items-start gap-3" style={{ minWidth: 0 }}>
+                          <div style={{ width: 72, height: 54, borderRadius: "var(--r-sm)", overflow: "hidden", background: "var(--surface-2)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }} title={n.imagem ? "Foto escolhida" : "Sem foto — usa o fundo temático padrão"}>
+                          {n.imagem ? (
+                            <img src={n.imagem} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          ) : (
+                            <ImageOff size={16} style={{ color: "var(--text-muted)", opacity: 0.6 }} />
+                          )}
+                          </div>
+                          <div style={{ minWidth: 0 }}>
                           <p style={{ fontWeight: 700, fontSize: "0.9rem" }}>{n.manchete}</p>
                           {(n.materia || n.resumo) && (
                             <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginTop: "0.25rem", whiteSpace: "pre-wrap" }}>
@@ -390,6 +445,7 @@ export default function NewsAdmin() {
                             {!(n.fontes || []).length && (
                               <span style={{ color: "var(--text-muted)", fontSize: "0.72rem", fontStyle: "italic" }}>Sem fontes/hiperlinks de referência informados.</span>
                             )}
+                          </div>
                           </div>
                         </div>
                         <div className="flex items-center gap-2 flex-wrap" style={{ flexShrink: 0 }}>
