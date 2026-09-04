@@ -34,10 +34,16 @@ SECRET = os.environ.get("AUTH_SECRET", SECRET_DEV)
 
 
 def _rodando_em_producao() -> bool:
-    """Produção = tem banco Postgres configurado e não é execução de teste.
-    O Railway injeta DATABASE_URL; local/teste usa SQLite ou FAZENDA_TESTING."""
+    """Produção = ambiente Railway chamado "production". RAILWAY_ENVIRONMENT_NAME
+    é injetada automaticamente pelo Railway em todo serviço — é a fonte direta,
+    em vez de deduzir pelo tipo de banco configurado. Só cai no heurístico antigo
+    (Postgres configurado) se essa variável não existir (deploy fora do Railway),
+    pra nunca afrouxar a proteção que já existia."""
     if os.environ.get("FAZENDA_TESTING"):
         return False
+    ambiente_railway = os.environ.get("RAILWAY_ENVIRONMENT_NAME")
+    if ambiente_railway is not None:
+        return ambiente_railway == "production"
     return os.environ.get("DATABASE_URL", "").startswith(("postgres://", "postgresql://"))
 
 
