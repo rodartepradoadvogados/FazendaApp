@@ -792,6 +792,20 @@ textarea:focus-visible, [tabindex]:focus-visible {
 .linha-colapsavel.linha-entrando { opacity: 0; transform: translateY(8px); }
 .linha-colapsavel:not(.linha-entrando) { transition: grid-template-rows 0.24s ease-in, opacity 0.2s ease-in, margin 0.24s ease-in, transform 0.22s ease-out; transform: translateY(0); }
 
+/* Painel expansível inline (05/09/2026) — mesmo truque de grid-template-rows
+   do colapso de linha acima, mas usado ao contrário: telas como Farmácia e
+   Pessoas mostram o formulário de edição/cadastro dentro do próprio fluxo
+   (sem gaveta lateral, sem modal) — hoje aparece/some instantaneamente.
+   Por padrão fechado (0fr); ganha `.painel-expansivel-aberto` quando o
+   formulário deve aparecer. */
+.painel-expansivel {
+  display: grid; grid-template-rows: 0fr;
+  transition: grid-template-rows 0.26s ease-out, opacity 0.22s ease-out;
+  opacity: 0;
+}
+.painel-expansivel > * { overflow: hidden; min-height: 0; }
+.painel-expansivel.painel-expansivel-aberto { grid-template-rows: 1fr; opacity: 1; }
+
 /* Popup central (ver components/Modal.tsx) — fundo escurece, caixa entra com
    escala+fade e uma pitada de mola; saída é o inverso, mais rápido. */
 @keyframes popup-fundo-entra { from { opacity: 0; } to { opacity: 1; } }
@@ -817,6 +831,7 @@ textarea:focus-visible, [tabindex]:focus-visible {
   .check-tracado { transition: none; }
   .flash-sucesso { animation: none; }
   .linha-colapsavel, .linha-colapsavel.linha-entrando, .linha-colapsavel:not(.linha-entrando) { transition: none; transform: none; }
+  .painel-expansivel { transition: none; }
   .popup-fundo, .popup-fundo.popup-saindo, .popup-caixa, .popup-caixa.popup-saindo { animation: none; }
   .toast-item, .toast-item.toast-saindo { animation: none; }
 }

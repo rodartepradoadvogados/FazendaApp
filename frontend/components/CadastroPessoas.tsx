@@ -68,6 +68,17 @@ export default function CadastroPessoas() {
   const [msg, setMsg] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
   const [novoTipoAberto, setNovoTipoAberto] = useState(false);
+  // Entrada animada do formulário inline (05/09/2026) — mesma técnica do
+  // duplo requestAnimationFrame já usada em NovoItemEstoque.tsx: monta
+  // fechado (.painel-expansivel) e só then liga `.painel-expansivel-aberto`,
+  // pra CSS ter um estado inicial real de onde fazer a transição. Saída
+  // continua instantânea (formulário raramente fica aberto tempo suficiente
+  // pra a falta de animação de saída incomodar aqui).
+  const [entradaConcluida, setEntradaConcluida] = useState(false);
+  const animarEntrada = () => {
+    setEntradaConcluida(false);
+    requestAnimationFrame(() => requestAnimationFrame(() => setEntradaConcluida(true)));
+  };
 
   // Documentos (RG, CPF, contratos, holerite, comprovantes...) — mesmo
   // padrão staged/existente do anexo de Pedido (frontend/app/pedidos/
@@ -80,7 +91,7 @@ export default function CadastroPessoas() {
   const carregarTipos = () => fetchTiposPessoa().then(setTipos).catch(() => {});
   useEffect(() => { carregar(); carregarTipos(); }, []);
 
-  const abrirNovo = () => { setForm(formVazio); setEditando("novo"); setMsg(null); setAnexosStaged([]); setAnexosExistentes([]); };
+  const abrirNovo = () => { setForm(formVazio); setEditando("novo"); setMsg(null); setAnexosStaged([]); setAnexosExistentes([]); animarEntrada(); };
   const abrirEdicao = (p: Pessoa) => {
     setForm({
       nome: p.nome, tipos: p.tipos.length ? p.tipos : ["Funcionário"], telefones: p.telefones ?? [], emails: p.emails ?? [],
@@ -93,6 +104,7 @@ export default function CadastroPessoas() {
     setEditando(p.id); setMsg(null);
     setAnexosStaged([]);
     listarAnexosPessoa(p.id).then(setAnexosExistentes).catch(() => setAnexosExistentes([]));
+    animarEntrada();
   };
   const cancelar = () => { setEditando(null); setMsg(null); setAnexosStaged([]); setAnexosExistentes([]); };
 
@@ -174,10 +186,12 @@ export default function CadastroPessoas() {
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {editando === "novo" && (
-        <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-          tipos={tipos} onNovoTipo={() => setNovoTipoAberto(true)}
-          anexosStaged={anexosStaged} setAnexosStaged={setAnexosStaged}
-          anexosExistentes={anexosExistentes} onExcluirAnexoExistente={excluirAnexoExistente} />
+        <div className={`painel-expansivel${entradaConcluida ? " painel-expansivel-aberto" : ""}`}>
+          <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
+            tipos={tipos} onNovoTipo={() => setNovoTipoAberto(true)}
+            anexosStaged={anexosStaged} setAnexosStaged={setAnexosStaged}
+            anexosExistentes={anexosExistentes} onExcluirAnexoExistente={excluirAnexoExistente} />
+        </div>
       )}
 
       {itens && (
@@ -218,10 +232,12 @@ export default function CadastroPessoas() {
                   </tr>
                   {editando === p.id && (
                     <tr><td colSpan={5} style={{ padding: 0 }}>
-                      <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-                        tipos={tipos} onNovoTipo={() => setNovoTipoAberto(true)}
-                        anexosStaged={anexosStaged} setAnexosStaged={setAnexosStaged}
-                        anexosExistentes={anexosExistentes} onExcluirAnexoExistente={excluirAnexoExistente} />
+                      <div className={`painel-expansivel${entradaConcluida ? " painel-expansivel-aberto" : ""}`}>
+                        <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
+                          tipos={tipos} onNovoTipo={() => setNovoTipoAberto(true)}
+                          anexosStaged={anexosStaged} setAnexosStaged={setAnexosStaged}
+                          anexosExistentes={anexosExistentes} onExcluirAnexoExistente={excluirAnexoExistente} />
+                      </div>
                     </td></tr>
                   )}
                 </Fragment>
