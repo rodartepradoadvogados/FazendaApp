@@ -96,7 +96,7 @@ type Lanc = {
   patrimonio_id?: number | null;
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "caixa_real", label: "Caixa Real", icon: TrendingUp, desc: "Projeção de liquidez: quanto tem hoje e como o saldo evolui com os compromissos já lançados" },
@@ -117,8 +117,18 @@ const CONTAS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "pagas", label: "Contas pagas", icon: CheckCircle2, desc: "Despesas já quitadas" },
   { id: "recebidas", label: "Contas recebidas", icon: CheckCircle2, desc: "Receitas já recebidas" },
   { id: "folha_relatorio", label: "Folha de Pagamento", icon: Users, desc: "Relatório da folha — pagos e a vencer, com exportação" },
-  { id: "extrato", label: "Todas", icon: Receipt, desc: "Todos os lançamentos, com ou sem baixa" },
+  // id PRÓPRIO ("todas_contas"), distinto do "extrato" de Relatórios > Extrato
+  // completo — mesma tela/mesmo destino visual (ver EXTRATO_IDS abaixo), mas
+  // um id diferente evita reintroduzir o bug de destaque duplicado (clicar em
+  // "Extrato completo" acendendo "Contas > Todas" por engano) que motivou
+  // tirar esta aba da árvore antes. Ver comentário em `subNavTree`.
+  { id: "todas_contas", label: "Todas", icon: Receipt, desc: "Todos os lançamentos, com ou sem baixa" },
 ];
+// "extrato" (Relatórios > Extrato completo) e "todas_contas" (Contas > Todas)
+// são o MESMO destino/tela — só o id da árvore de navegação é diferente
+// (ver acima). Toda decisão de CONTEÚDO (não de navegação) que hoje testa
+// `rel === "extrato"` precisa também aceitar "todas_contas".
+const EXTRATO_IDS = new Set<Rel>(["extrato", "todas_contas"]);
 const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "pagamento", label: "Pagamento", icon: Wallet, desc: "Lançar/quitar uma nota de despesa" },
   { id: "recebimento", label: "Recebimento", icon: Wallet, desc: "Lançar/quitar uma nota de receita" },
@@ -130,7 +140,11 @@ const PLANEJAMENTO: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "orcamento", label: "Orçamento", icon: Target, desc: "Planilha orçamentária por conta gerencial/centro de custo/mês, comparada ao realizado" },
   { id: "planejamento_financeiro", label: "Planejamento financeiro", icon: TrendingUp, desc: "Cenários (otimista/realista/pessimista) com projeção de fluxo de caixa" },
 ];
-const CONTAS_IDS = new Set(CONTAS.map((c) => c.id));
+// Inclui "extrato" mesmo não estando mais em CONTAS — Relatórios > Extrato
+// completo precisa continuar se comportando como uma view de "Contas" (sem
+// período padrão implícito, filtros de tipo, etc.), igual já era antes de
+// "todas_contas" virar um id próprio.
+const CONTAS_IDS = new Set<Rel>([...CONTAS.map((c) => c.id), "extrato"]);
 const brk = (v: number) => `R$${(v / 1000).toFixed(0)}k`;
 const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", color: "var(--text)", fontSize: "0.8rem" };
 const fmtMes = (m: string) => m?.slice(2) ?? "";
@@ -344,14 +358,7 @@ export default function FinanceiroPage() {
   // Árvore de sub-navegação — a Sidebar desenha isto no lugar da lista de
   // módulos enquanto Financeiro estiver aberto (mesmo padrão de Lançamentos).
   const subNavTree: SubNavNode[] = useMemo(() => [
-    // "extrato" fica de fora daqui de propósito: é o mesmo destino de
-    // "Extrato completo" em Relatórios (mesmo id, mesma tela) — listado nas
-    // duas árvores, o rail sempre resolvia o caminho ativo para "Contas"
-    // (primeira árvore a bater o id), fazendo "Extrato completo" abrir
-    // marcado como se fosse "Contas > Todas". Preservado só uma vez evita a
-    // ambiguidade sem duplicar nenhuma lógica de filtro (CONTAS/CONTAS_IDS
-    // continuam intactos, usados em todo o resto do arquivo).
-    { id: "contas-grupo", label: "Contas", icon: Wallet, children: CONTAS.filter((r) => r.id !== "extrato").map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
+    { id: "contas-grupo", label: "Contas", icon: Wallet, children: CONTAS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "acoes-grupo", label: "Ações", icon: Layers, children: ACOES.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "relatorios-grupo", label: "Relatórios", icon: FileText, children: RELATORIOS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "planejamento-grupo", label: "Planejamento", icon: Compass, children: PLANEJAMENTO.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
@@ -3785,11 +3792,11 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, o
     }
   };
   const hoje = new Date().toISOString().slice(0, 10);
-  const rotuloContraparte = rel === "a_receber" || rel === "recebidas" ? "Cliente" : rel === "extrato" ? "Fornecedor/Cliente" : "Fornecedor";
+  const rotuloContraparte = rel === "a_receber" || rel === "recebidas" ? "Cliente" : EXTRATO_IDS.has(rel) ? "Fornecedor/Cliente" : "Fornecedor";
   // Tipo desta aba (para a árvore de conta gerencial). Extrato mistura os dois.
   const tiposConta: ("despesa" | "receita")[] =
     rel === "a_receber" || rel === "recebidas" ? ["receita"]
-    : rel === "extrato" ? ["despesa", "receita"] : ["despesa"];
+    : EXTRATO_IDS.has(rel) ? ["despesa", "receita"] : ["despesa"];
 
   // Filtros próprios da lista (além do período/centro globais, já filtrados
   // pelo período único de Contas antes de chegar em `itens`): produto/serviço,
@@ -3818,7 +3825,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, o
     (!fContraparte || r.fornecedor === fContraparte) &&
     casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""}`, fDocumento) &&
     casaContaGerencial(r, fConta) &&
-    (rel !== "extrato" || !fTipo || r.tipo === fTipo)
+    (!EXTRATO_IDS.has(rel) || !fTipo || r.tipo === fTipo)
   ), [itens, fProduto, fContraparte, fDocumento, fConta, fTipo, rel]);
 
   const { ordenados, sortKey, sortDir, ordenar } = useOrdenacao(filtradosLocal, {
@@ -3855,7 +3862,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, o
             <select style={selStyleLote} value={fContraparte} onChange={(e) => setFContraparte(e.target.value)}>
               <option value="">Todos</option>{opcoesContraparte.map((f) => <option key={f} value={f}>{f}</option>)}
             </select></div>
-          {rel === "extrato" && (
+          {EXTRATO_IDS.has(rel) && (
             <div><label style={labelStyleLote}>Tipo</label>
               <select style={selStyleLote} value={fTipo} onChange={(e) => setFTipo(e.target.value as any)}>
                 <option value="">Receitas e despesas</option><option value="receita">Só receitas</option><option value="despesa">Só despesas</option>
@@ -3868,14 +3875,14 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, o
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
         <KPI v={String(filtradosLocal.length)} l="Lançamentos" />
-        <KPI v={formatBRL(total)} l={emAberto ? "Valor em aberto" : "Valor total"} c={rel === "a_pagar" || rel === "pagas" ? "var(--red)" : rel === "extrato" ? undefined : "var(--green-light)"} />
-        {!emAberto && rel !== "extrato" && <KPI v={formatBRL(totalPago)} l="Valor pago/recebido" c="var(--dourado-light)" />}
-        {!emAberto && rel !== "extrato" && <KPI v={formatBRL(totalDesconto)} l="Desconto/acréscimo" c={totalDesconto <= 0 ? "var(--green-light)" : "var(--amber)"} />}
+        <KPI v={formatBRL(total)} l={emAberto ? "Valor em aberto" : "Valor total"} c={rel === "a_pagar" || rel === "pagas" ? "var(--red)" : EXTRATO_IDS.has(rel) ? undefined : "var(--green-light)"} />
+        {!emAberto && !EXTRATO_IDS.has(rel) && <KPI v={formatBRL(totalPago)} l="Valor pago/recebido" c="var(--dourado-light)" />}
+        {!emAberto && !EXTRATO_IDS.has(rel) && <KPI v={formatBRL(totalDesconto)} l="Desconto/acréscimo" c={totalDesconto <= 0 ? "var(--green-light)" : "var(--amber)"} />}
       </div>
       <div className="card">
         <div className="card-header mb-3 flex items-center justify-between">
           <span>Lançamentos</span>
-          <ExportarBotoes titulo={CONTAS.find((c) => c.id === rel)?.label || "Lançamentos"} nomeArquivoBase={`financeiro_${rel}`}
+          <ExportarBotoes titulo={CONTAS.find((c) => c.id === rel)?.label || RELATORIOS.find((r) => r.id === rel)?.label || "Lançamentos"} nomeArquivoBase={`financeiro_${rel}`}
             colunas={COLUNAS_LANCAMENTOS}
             linhas={ordenados.map((r) => ({ ...r, data: formatDate((emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || ""), documento: `${r.tipo_documento ? `${r.tipo_documento} ` : ""}${r.numero_documento || ""}`, comprovante_txt: r.tem_comprovante ? "Sim" : "" }))} />
         </div>
@@ -4692,7 +4699,9 @@ function DreCascataView({ dataInicio, dataFim }: { dataInicio: string; dataFim: 
             <KPI v={formatBRL(depreciacao.total)} l="Depreciação, amortização e exaustão" c="var(--amber)" />
             {depreciacao.inconsistencias.length > 0 && (
               <ul style={{ marginTop: "0.75rem", fontSize: "0.72rem", color: "var(--amber)" }}>
-                {depreciacao.inconsistencias.slice(0, 5).map((m, i) => <li key={i}>• {m}</li>)}
+                {depreciacao.inconsistencias.slice(0, 5).map((m, i) => (
+                  <li key={i}>• {m.item}{m.numero ? ` (Nº ${m.numero})` : ""}: {m.motivo}</li>
+                ))}
               </ul>
             )}
           </div>
