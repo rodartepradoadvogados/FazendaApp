@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, Plus, Settings, Trash2, X } from "lucide-rea
 import { fetchAgendaReprodutivaCard, fetchLotes, type CardAgendaReprodutivaConfig, type ItemCardAgendaReprodutiva, type SituacaoCard } from "@/lib/api";
 import { GrupoLotePicker } from "@/components/GrupoLotePicker";
 
-type CardDef = { id: string; nome: string; config: CardAgendaReprodutivaConfig };
+export type CardDef = { id: string; nome: string; config: CardAgendaReprodutivaConfig };
 
 const CHAVE_STORAGE = "agendaReprodutivaCardsV1";
 
@@ -26,7 +26,7 @@ const EIXO_DIAS_POR_SITUACAO: Record<SituacaoCard, string | null> = {
   a_descartar: null,
 };
 
-function cardsPadrao(): CardDef[] {
+export function cardsPadrao(): CardDef[] {
   const base = (situacao: SituacaoCard, periodos: [number, number][] = []): CardAgendaReprodutivaConfig => ({
     categoria: "todas", lotes: [], situacao, periodos, somente_atrasadas: false, exceto_atrasadas: false,
   });
@@ -42,7 +42,7 @@ function cardsPadrao(): CardDef[] {
   ];
 }
 
-function carregarCards(): CardDef[] {
+export function carregarCards(): CardDef[] {
   if (typeof window === "undefined") return cardsPadrao();
   try {
     const bruto = window.localStorage.getItem(CHAVE_STORAGE);
@@ -284,6 +284,45 @@ export function useCardsAgendaReprodutivaConfiguraveis(dataRef?: string) {
 }
 
 export type CardsAgendaReprodutivaConfiguraveisState = ReturnType<typeof useCardsAgendaReprodutivaConfiguraveis>;
+
+/** Leitura simples dos cards configuráveis — mesma origem (localStorage,
+ * `carregarCards`) e mesma busca de itens (`fetchAgendaReprodutivaCard`) do
+ * hook acima, mas sem os estados de edição/criação de card nem o controle de
+ * "tabela aberta": para telas que só precisam oferecer os cards já
+ * configurados pelo usuário como opção de seleção (ex.: FormDiagnostico —
+ * "Agenda do veterinário" — ver #comunicação entre Insights e Lançamentos).
+ * Busca os itens de TODOS os cards de uma vez (não só ao abrir), porque aqui
+ * o que importa é a lista de matrizes de cada card, não a tabela de detalhe.
+ * `habilitado=false` evita a chamada ao backend enquanto a aba não estiver
+ * em uso (mesmo padrão do fetchAgendaVeterinario sob demanda ao lado). */
+export function useCardsAgendaReprodutivaLeitura(dataRef?: string, habilitado: boolean = true) {
+  const [cards] = useState<CardDef[]>(carregarCards);
+  const [itensPorCard, setItensPorCard] = useState<Record<string, ItemCardAgendaReprodutiva[]>>({});
+  const [carregando, setCarregando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!habilitado || cards.length === 0) return;
+    let cancelado = false;
+    setCarregando(true);
+    setErro(null);
+    Promise.all(cards.map((c) =>
+      fetchAgendaReprodutivaCard(c.config, dataRef).then((r) => [c.id, r.itens] as const).catch(() => [c.id, null] as const),
+    )).then((pares) => {
+      if (cancelado) return;
+      const novo: Record<string, ItemCardAgendaReprodutiva[]> = {};
+      let algumErro = false;
+      for (const [id, itens] of pares) { if (itens === null) algumErro = true; else novo[id] = itens; }
+      setItensPorCard(novo);
+      if (algumErro) setErro("Alguns cards não puderam ser calculados agora.");
+      setCarregando(false);
+    });
+    return () => { cancelado = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataRef, habilitado]);
+
+  return { cards, itensPorCard, carregando, erro };
+}
 
 /** Grade de chips clicáveis dos cards configuráveis + painéis de criar/editar
  * card. Fica perto do topo da página (onde a grade sempre viveu). A tabela
