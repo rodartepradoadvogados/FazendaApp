@@ -270,7 +270,13 @@
   --dourado:     #2E7D52;
   --dourado-light: #4ADE80;
   --sidebar-subnav-bg: #E4E7EB;
-  --sidebar-subnav-muted: var(--chumbo);
+  /* --sidebar-subnav-muted NÃO é redefinido aqui (era var(--chumbo), texto
+     escuro pensado para o fundo claro de --sidebar-subnav-bg — mas esse
+     token nunca chegou a ser aplicado em nenhum componente; o rail usa
+     var(--sidebar-bg), que aqui é o verde escuro acima). Herda
+     --sidebar-muted (translúcido claro), a mesma cor que já funciona bem
+     no misto padrão (vinho) sobre fundo escuro — antes ficava cinza-chumbo
+     em cima de verde escuro, quase ilegível. */
 }
 
 /* ── PALETA "Azul" — mesma dimensão independente do tema descrita acima na
@@ -314,7 +320,9 @@
   --dourado:     #B9831F;
   --dourado-light: #E0A63C;
   --sidebar-subnav-bg: #EDE7D8;
-  --sidebar-subnav-muted: var(--chumbo);
+  /* --sidebar-subnav-muted NÃO é redefinido aqui — mesmo motivo do bloco
+     misto+verde acima: herda --sidebar-muted (translúcido claro), legível
+     sobre o marinho escuro real da barra (var(--sidebar-bg)). */
 }
 
 /* ── Tailwind custom colors via CSS vars ── */

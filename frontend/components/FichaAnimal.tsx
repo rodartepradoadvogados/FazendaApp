@@ -1,12 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
-import { FileText, AlertTriangle, Download, Pencil, Save, X, Lock, Unlock } from "lucide-react";
+import { FileText, AlertTriangle, Download, Share2, Pencil, Save, X, Lock, Unlock } from "lucide-react";
 import {
   fetchAnimais, fetchFichaAnimal, formatDate, atualizarAnimalFicha, registrarColostragem, fetchCategoriaSugerida,
   verificarMaeParto, type VerificacaoMaeParto, fetchEquivalenteMaduroDoAnimal, type TrioEquivalenteMaduro,
   fetchRacas, fetchGrausSangue, ehAdmin, renumerarAnimal,
 } from "@/lib/api";
-import { exportarFichaPDF, SecaoFicha, ColunaExport } from "@/lib/export";
+import { exportarFichaPDF, SecaoFicha, ColunaExport, type ModoEntregaExport } from "@/lib/export";
+import { ehApp } from "@/lib/nativo";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { ListaFechadaPicker, type OpcaoListaFechada } from "@/components/ListaFechadaPicker";
@@ -634,6 +635,11 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
   const [ficha, setFicha] = useState<Ficha | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
+  const [exportando, setExportando] = useState(false);
+  // "Compartilhar" (folha nativa do Android) só faz sentido dentro do app —
+  // no navegador é idêntico a "Exportar PDF" (mesmo <a download>).
+  const [mostrarCompartilhar, setMostrarCompartilhar] = useState(false);
+  useEffect(() => { ehApp().then(setMostrarCompartilhar); }, []);
   // Edição inline: cadastro do animal e colostragem/IgG.
   const [editAnimal, setEditAnimal] = useState(false);
   const [formAnimal, setFormAnimal] = useState<Record<string, any>>({});
@@ -806,8 +812,9 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
     finally { setSalvando(false); }
   }
 
-  async function exportarPDF() {
+  async function exportarPDF(modo: ModoEntregaExport) {
     if (!ficha) return;
+    setExportando(true);
     // Ordem fixa dos 4 primeiros blocos do PDF exportado — a mesma sequência
     // em que o usuário lê a ficha na tela (identificação → previsão de parto
     // em aberto → histórico de partos → resumo por lactação) — só depois vem
@@ -835,9 +842,12 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
         `${ficha.animal.nome ? `${ficha.animal.nome} — ` : ""}${ficha.animal.categoria_abrev || ""} · Lote ${ficha.animal.grupo_primario || "—"}`,
         secoes,
         `ficha_animal_${numero}`,
+        modo,
       );
     } catch {
       // erro já mostrado ao usuário dentro de exportarFichaPDF (lib/export.ts)
+    } finally {
+      setExportando(false);
     }
   }
 
@@ -909,9 +919,14 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
               </span>
               <div className="flex items-center gap-2">
                 {!editAnimal && <button className="btn-ghost" style={btnEdit} onClick={abrirEditAnimal}><Pencil size={13} /> Editar cadastro</button>}
-                <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={exportarPDF}>
+                <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={() => exportarPDF("baixar")} disabled={exportando}>
                   <Download size={13} /> Exportar PDF
                 </button>
+                {mostrarCompartilhar && (
+                  <button className="btn-ghost" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={() => exportarPDF("compartilhar")} disabled={exportando}>
+                    <Share2 size={13} /> Compartilhar
+                  </button>
+                )}
               </div>
             </div>
             {cadeadoNumeroAberto && (

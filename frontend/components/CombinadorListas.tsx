@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { Combine, RefreshCw } from "lucide-react";
-import { fetchRelatoriosManejo, fetchAgenda, fetchRelatorioBst } from "@/lib/api";
+import { fetchRelatoriosManejo, fetchAgenda, fetchRelatorioBst, fetchEstadosReprodutivos } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
@@ -35,6 +35,7 @@ export default function CombinadorListas() {
   const [manejo, setManejo] = useState<any>(null);
   const [agenda, setAgenda] = useState<any>(null);
   const [bst, setBst] = useState<any>(null);
+  const [estadosReprodutivos, setEstadosReprodutivos] = useState<any>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [selecionadas, setSelecionadas] = useState<string[]>([]);
@@ -42,15 +43,15 @@ export default function CombinadorListas() {
 
   const carregar = () => {
     setCarregando(true); setErro(null);
-    Promise.all([fetchRelatoriosManejo(), fetchAgenda(), fetchRelatorioBst()])
-      .then(([m, a, b]) => { setManejo(m); setAgenda(a); setBst(b); })
+    Promise.all([fetchRelatoriosManejo(), fetchAgenda(), fetchRelatorioBst(), fetchEstadosReprodutivos()])
+      .then(([m, a, b, er]) => { setManejo(m); setAgenda(a); setBst(b); setEstadosReprodutivos(er); })
       .catch((e) => setErro(e.message))
       .finally(() => setCarregando(false));
   };
   useEffect(() => { carregar(); }, []);
 
   const listas: Lista[] = useMemo(() => {
-    if (!manejo && !agenda && !bst) return [];
+    if (!manejo && !agenda && !bst && !estadosReprodutivos) return [];
     const deManejo = (chave: string, rotulo: string, campo: keyof any) =>
       ({ chave, rotulo, grupo: "Listas de trabalho", itens: (manejo?.[campo] || []).map((r: any) => ({ id: String(r.numero), extra: r.grupo })) });
     const saida: Lista[] = manejo ? [
@@ -63,6 +64,16 @@ export default function CombinadorListas() {
       deManejo("secagem", "Secagem — próximas (até 60 dias)", "secagem"),
       deManejo("previsao_partos", "Previsão de partos (gestantes reconfirmadas)", "previsao_partos"),
     ] : [];
+    if (estadosReprodutivos) {
+      saida.push({
+        chave: "atrasadas",
+        rotulo: "Atrasadas — passaram do prazo máximo para o 1º serviço",
+        grupo: "Listas de trabalho",
+        itens: (estadosReprodutivos.animais || [])
+          .filter((a: any) => a.estado === "atrasada")
+          .map((a: any) => ({ id: String(a.numero), extra: a.lote || a.categoria })),
+      });
+    }
     if (agenda) {
       saida.push(
         { chave: "bst_aptas", rotulo: "BST — aptas à aplicação", grupo: "BST", itens: (agenda.bst_elegiveis || []).map((r: any) => ({ id: String(r.numero_matriz), extra: r.grupo })) },
@@ -76,7 +87,7 @@ export default function CombinadorListas() {
       saida.push({ chave: "bst_aplicados", rotulo: "BST — já aplicadas (histórico)", grupo: "BST", itens: Array.from(porAnimal, ([id, extra]) => ({ id, extra })) });
     }
     return saida;
-  }, [manejo, agenda, bst]);
+  }, [manejo, agenda, bst, estadosReprodutivos]);
 
   const gruposComEcho = useMemo(() => {
     const g: Record<string, Lista[]> = {};

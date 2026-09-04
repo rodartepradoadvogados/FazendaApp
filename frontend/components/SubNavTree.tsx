@@ -63,10 +63,15 @@ export { normalizarBusca };
 
 // Árvore de sub-navegação genérica (N níveis) — usada pelo rail esquerdo dos
 // portais "Insights"/"Administração" (ver components/insights/InsightsLayout.tsx).
-export function SubNavTree({ nodes, activeId, onSelect, raiz, pathname, paginaLabel, depth = 0, recolhidos, onToggleRecolhido }: {
+export function SubNavTree({ nodes, activeId, onSelect, raiz, pathname, paginaLabel, depth = 0, recolhidos, onToggleRecolhido, recolhida = false }: {
   nodes: SubNavNode[]; activeId: string; onSelect: (id: string) => void;
   raiz: SubNavNode[]; pathname: string; paginaLabel: string; depth?: number;
   recolhidos: Set<string>; onToggleRecolhido: (id: string) => void;
+  // Rail INTEIRO recolhido (ícone só, ver InsightsLayout.tsx) — diferente de
+  // `recolhidos`, que é por-nó (seta ao lado de cada grupo). Quando true, só
+  // os ícones de primeiro nível aparecem, sem nenhum filho expandido — não
+  // faz sentido mostrar uma árvore de 2-3 níveis num rail de ~3rem de largura.
+  recolhida?: boolean;
 }) {
   const caminho = new Set(caminhoAte(nodes, activeId) ?? []);
   return (
@@ -92,11 +97,11 @@ export function SubNavTree({ nodes, activeId, onSelect, raiz, pathname, paginaLa
             } : undefined}>
             <SubNavItem node={n} depth={depth} ativo={ativo} temFilhos={temFilhos} activeId={activeId}
               onSelect={onSelect} raiz={raiz} pathname={pathname} paginaLabel={paginaLabel}
-              recolhido={recolhidoManualmente} onToggleRecolhido={() => onToggleRecolhido(n.id)} />
-            {temFilhos && ativo && !recolhidoManualmente && (
+              recolhido={recolhidoManualmente} onToggleRecolhido={() => onToggleRecolhido(n.id)} recolhida={recolhida} />
+            {temFilhos && ativo && !recolhidoManualmente && !recolhida && (
               <SubNavTree nodes={n.children!} activeId={activeId} onSelect={onSelect}
                 raiz={raiz} pathname={pathname} paginaLabel={paginaLabel} depth={depth + 1}
-                recolhidos={recolhidos} onToggleRecolhido={onToggleRecolhido} />
+                recolhidos={recolhidos} onToggleRecolhido={onToggleRecolhido} recolhida={recolhida} />
             )}
           </div>
         );
@@ -108,9 +113,10 @@ export function SubNavTree({ nodes, activeId, onSelect, raiz, pathname, paginaLa
 // Um item da sub-navegação: clique simples troca de sub-aba dentro da página
 // atual (como sempre); duplo clique abre a mesma sub-aba numa aba nova (ver
 // TabsShell/abrirNovaAba), já direto no lugar certo via "?sub=" na URL.
-function SubNavItem({ node, depth, ativo, temFilhos, activeId, onSelect, raiz, pathname, paginaLabel, recolhido, onToggleRecolhido }: {
+function SubNavItem({ node, depth, ativo, temFilhos, activeId, onSelect, raiz, pathname, paginaLabel, recolhido, onToggleRecolhido, recolhida }: {
   node: SubNavNode; depth: number; ativo: boolean; temFilhos: boolean; activeId: string; onSelect: (id: string) => void;
   raiz: SubNavNode[]; pathname: string; paginaLabel: string; recolhido: boolean; onToggleRecolhido: () => void;
+  recolhida: boolean;
 }) {
   const Icon = node.icon;
   const aoClicar = useCliqueOuDuploClique(
@@ -125,20 +131,24 @@ function SubNavItem({ node, depth, ativo, temFilhos, activeId, onSelect, raiz, p
   );
   // A seta de recolher/expandir só faz sentido enquanto o submenu está
   // aberto (ativo) e tem itens — clicar nela some/mostra só os itens dele,
-  // sem navegar e sem afetar outros submenus.
-  const mostrarSeta = temFilhos && ativo;
+  // sem navegar e sem afetar outros submenus. Some também quando o rail
+  // INTEIRO está recolhido (ícone só) — não há espaço nem árvore expandida
+  // pra recolher ali.
+  const mostrarSeta = temFilhos && ativo && !recolhida;
   return (
     <div style={{ display: "flex", alignItems: "stretch", gap: "2px" }}>
-      <button onClick={aoClicar}
+      <button onClick={aoClicar} title={recolhida ? node.label : undefined}
         style={{
-          flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: depth ? "0.5rem" : "0.6rem",
-          padding: depth ? "0.4rem 0.6rem" : "0.55rem 0.7rem", borderRadius: "var(--r-sm)", cursor: "pointer", textAlign: "left",
+          flex: 1, minWidth: 0, display: "flex", alignItems: "center",
+          justifyContent: recolhida ? "center" : "flex-start", gap: depth ? "0.5rem" : "0.6rem",
+          padding: recolhida ? "0.55rem 0.2rem" : depth ? "0.4rem 0.6rem" : "0.55rem 0.7rem",
+          borderRadius: "var(--r-sm)", cursor: "pointer", textAlign: "left",
           border: "1px solid " + (ativo ? "var(--sidebar-active-border)" : "transparent"),
           background: ativo ? "var(--sidebar-active-bg)" : "transparent",
           color: ativo ? "var(--sidebar-active-fg)" : "var(--sidebar-subnav-muted, var(--sidebar-muted))",
           fontSize: "10px", fontWeight: ativo ? 700 : 500,
         }}>
-        <Icon size={depth ? 13 : 16} /> {node.label}
+        <Icon size={depth ? 13 : 16} /> {!recolhida && node.label}
       </button>
       {mostrarSeta && (
         <button

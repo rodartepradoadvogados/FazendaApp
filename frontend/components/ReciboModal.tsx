@@ -1,10 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Mail, Save, X } from "lucide-react";
+import { Mail, Save, Share2, X } from "lucide-react";
 import { Modal } from "@/components/Modal";
 import { fetchDestinatarioRecibo, enviarReciboEmail } from "@/lib/api";
 import { gerarReciboPDF, type LancamentoRecibo } from "@/lib/export";
-import { baixarArquivo } from "@/lib/nativo";
+import { baixarArquivo, ehApp, salvarArquivo } from "@/lib/nativo";
 
 const inputStyle: React.CSSProperties = {
   padding: "0.5rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)",
@@ -19,8 +19,14 @@ export function ReciboModal({ lanc, onClose }: { lanc: LancamentoRecibo; onClose
   const [destinatario, setDestinatario] = useState("");
   const [carregandoDestinatario, setCarregandoDestinatario] = useState(true);
   const [enviando, setEnviando] = useState(false);
+  const [compartilhando, setCompartilhando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+  // "Compartilhar" (folha nativa do Android) só faz sentido dentro do app —
+  // no navegador é idêntico a "Salvar" (mesmo <a download>), então nem
+  // aparece lá (ver lib/nativo.ts::baixarArquivo vs salvarArquivo).
+  const [mostrarCompartilhar, setMostrarCompartilhar] = useState(false);
+  useEffect(() => { ehApp().then(setMostrarCompartilhar); }, []);
 
   useEffect(() => {
     let ativo = true;
@@ -35,9 +41,22 @@ export function ReciboModal({ lanc, onClose }: { lanc: LancamentoRecibo; onClose
     setErro(null);
     try {
       const doc = await gerarReciboPDF(lanc);
-      await baixarArquivo(doc.output("blob"), `recibo_${lanc.numero_lancamento || "lancamento"}.pdf`);
+      await salvarArquivo(doc.output("blob"), `recibo_${lanc.numero_lancamento || "lancamento"}.pdf`);
     } catch (e: any) {
       setErro(e.message || "Erro ao salvar o recibo");
+    }
+  }
+
+  async function compartilhar() {
+    setErro(null);
+    setCompartilhando(true);
+    try {
+      const doc = await gerarReciboPDF(lanc);
+      await baixarArquivo(doc.output("blob"), `recibo_${lanc.numero_lancamento || "lancamento"}.pdf`);
+    } catch (e: any) {
+      setErro(e.message || "Erro ao compartilhar o recibo");
+    } finally {
+      setCompartilhando(false);
     }
   }
 
@@ -83,6 +102,11 @@ export function ReciboModal({ lanc, onClose }: { lanc: LancamentoRecibo; onClose
         <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end", marginTop: "0.4rem" }}>
           <button className="btn-ghost" onClick={onClose}><X size={14} /> Cancelar</button>
           <button className="btn-ghost" onClick={salvar}><Save size={14} /> Salvar</button>
+          {mostrarCompartilhar && (
+            <button className="btn-ghost" onClick={compartilhar} disabled={compartilhando}>
+              <Share2 size={14} /> {compartilhando ? "Abrindo…" : "Compartilhar"}
+            </button>
+          )}
           <button className="btn-primary" onClick={enviar} disabled={enviando}>
             <Mail size={14} /> {enviando ? "Enviando…" : "Enviar"}
           </button>
