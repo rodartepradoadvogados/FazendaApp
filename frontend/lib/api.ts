@@ -1115,6 +1115,27 @@ function netErrorProcessamento(e: unknown, oQue: string): Error {
   return e instanceof Error ? e : new Error(String(e));
 }
 
+// Reexecuta uma chamada que falhou por "Failed to fetch" (TypeError — sem
+// resposta nenhuma do servidor, não um erro de negócio 4xx/5xx) até
+// `tentativas` vezes, com pausa crescente entre elas. Extraído do padrão já
+// usado em criarLancamentoFinanceiro/marcarPagoFinanceiro para não repetir a
+// mesma lacuna de proteção numa função nova — essa assimetria (só algumas
+// telas de Financeiro toleram uma queda momentânea de conexão) já foi
+// reportada 3x pelo usuário (agentes #174/#192 e o relato de 04/09/2026).
+async function fetchComRetry(fazer: () => Promise<Response>, tentativas = 3): Promise<Response> {
+  let ultimoErro: unknown;
+  for (let tentativa = 0; tentativa < tentativas; tentativa++) {
+    try {
+      return await fazer();
+    } catch (e) {
+      if (!(e instanceof TypeError)) throw netError(e);
+      ultimoErro = e;
+      if (tentativa < tentativas - 1) await new Promise((r) => setTimeout(r, 600 * (tentativa + 1)));
+    }
+  }
+  throw netError(ultimoErro);
+}
+
 // Verifica se o backend responde. Usado pelo indicador de status.
 export async function checkHealth(): Promise<boolean> {
   try {
@@ -5625,7 +5646,7 @@ export type DreResposta = {
   cascata: LinhaDre[];
   nao_classificado: { total: number; contas: ContaDre[] };
   fora_da_dre: { total: number; contas: ContaDre[] };
-  depreciacao_periodo: { total: number; inconsistencias: string[] };
+  depreciacao_periodo: { total: number; inconsistencias: { item: string; numero: string | null; motivo: string }[] };
 };
 
 export async function fetchDreCascata(params: {
@@ -5712,9 +5733,9 @@ export async function atualizarValorMercadoPatrimonio(itemId: number, valorMerca
 }
 
 export async function vincularLancamentoPatrimonio(numeroLancamento: string, patrimonioId: number | null) {
-  const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/patrimonio`, {
+  const res = await fetchComRetry(() => authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/patrimonio`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ patrimonio_id: patrimonioId }),
-  });
+  }));
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao vincular patrimônio"); }
   return res.json();
 }
@@ -6175,9 +6196,13 @@ export async function fetchOpcoesValeItem(pessoaId: number): Promise<ValeItemOpc
 }
 
 export async function marcarItemComoVale(itemId: number, dados: ValeItemIn): Promise<ValeItemResultado> {
-  const res = await authFetch(`${API}/cadastro/vale-item/${itemId}`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
-  });
+  // Mesma chave em todas as tentativas — sem isto, uma resposta perdida no
+  // caminho de volta faria a 2ª tentativa bater no 409 "item já gerou um
+  // vale" mesmo com o vale já criado com sucesso na 1ª (ver Idempotency-Key).
+  const chave = gerarChaveIdempotencia();
+  const res = await fetchComRetry(() => authFetch(`${API}/cadastro/vale-item/${itemId}`, {
+    method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": chave }, body: JSON.stringify(dados),
+  }));
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
     // Preserva `detail`/`status` (mesmo padrão de `criarVale`) — o 409 de
@@ -6192,7 +6217,7 @@ export async function marcarItemComoVale(itemId: number, dados: ValeItemIn): Pro
 }
 
 export async function desmarcarItemComoVale(itemId: number, excluirVale: boolean) {
-  const res = await authFetch(`${API}/cadastro/vale-item/${itemId}?excluir_vale=${excluirVale ? "true" : "false"}`, { method: "DELETE" });
+  const res = await fetchComRetry(() => authFetch(`${API}/cadastro/vale-item/${itemId}?excluir_vale=${excluirVale ? "true" : "false"}`, { method: "DELETE" }));
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
     const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao desmarcar vale");
@@ -6286,26 +6311,19 @@ export async function marcarPagoFinanceiro(id: number, dados: {
   // PUT /financeiro/lancamentos/{id}/pagar.
   parcelas_diferenca?: { data_vencimento: string; valor: number }[];
 }) {
-  // Mesma chave nas duas tentativas: se a 1ª chegou a gravar a baixa no
-  // servidor mas a resposta se perdeu no caminho de volta (o "Failed to
+  // Mesma chave em todas as tentativas: se uma delas chegou a gravar a baixa
+  // no servidor mas a resposta se perdeu no caminho de volta (o "Failed to
   // fetch" que aparece em "Ações > Pagamento" com o lançamento já baixado —
   // conexão rural instável costuma cair bem no meio do PUT), o middleware de
   // idempotência (main.py::_idempotencia) reconhece a chave repetida e
   // devolve a mesma resposta em vez de baixar de novo. Mesmo padrão de
   // criarLancamentoFinanceiro, acima.
   const chave = gerarChaveIdempotencia();
-  const pagar = () => authFetch(`${API}/financeiro/lancamentos/${id}/pagar`, {
+  const res = await fetchComRetry(() => authFetch(`${API}/financeiro/lancamentos/${id}/pagar`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", "Idempotency-Key": chave },
     body: JSON.stringify(dados),
-  });
-  let res: Response;
-  try {
-    res = await pagar();
-  } catch (e) {
-    if (!(e instanceof TypeError)) throw netError(e);
-    res = await pagar().catch((e2) => { throw netError(e2); }); // 1 nova tentativa, mesma chave
-  }
+  }));
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa"); }
   return res.json();
 }
@@ -6314,9 +6332,12 @@ export async function criarBaixaLote(dados: {
   lancamento_ids: number[]; data_pagamento: string; conta_bancaria?: string;
   forma_pagamento?: string; data_vencimento_cartao?: string; numero_documento_pagamento?: string;
 }) {
-  const res = await authFetch(`${API}/financeiro/lancamentos/baixa-lote`, {
-    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
-  });
+  // Mesma chave em todas as tentativas — mesmo padrão de marcarPagoFinanceiro
+  // (a versão individual desta mesma operação), que já tinha essa proteção.
+  const chave = gerarChaveIdempotencia();
+  const res = await fetchComRetry(() => authFetch(`${API}/financeiro/lancamentos/baixa-lote`, {
+    method: "PUT", headers: { "Content-Type": "application/json", "Idempotency-Key": chave }, body: JSON.stringify(dados),
+  }));
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa em lote"); }
   return res.json();
 }
@@ -6333,9 +6354,10 @@ export type BaixaLoteItem = {
   parcelas_diferenca?: { data_vencimento: string; valor: number }[];
 };
 export async function criarBaixaLoteDetalhada(itens: BaixaLoteItem[]) {
-  const res = await authFetch(`${API}/financeiro/lancamentos/baixa-lote-detalhada`, {
-    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itens }),
-  });
+  const chave = gerarChaveIdempotencia();
+  const res = await fetchComRetry(() => authFetch(`${API}/financeiro/lancamentos/baixa-lote-detalhada`, {
+    method: "PUT", headers: { "Content-Type": "application/json", "Idempotency-Key": chave }, body: JSON.stringify({ itens }),
+  }));
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa em lote"); }
   return res.json();
 }
@@ -6349,9 +6371,15 @@ export async function atualizarLancamentoFinanceiro(id: number, dados: {
   quantidade?: number | null; valor_unitario?: number | null; valor_total?: number | null;
   desconto_acrescimo?: number | null; responsavel?: string | null; produto?: string | null;
 }) {
-  const res = await authFetch(`${API}/financeiro/lancamentos/${id}`, {
+  // Sem retentativa nenhuma até aqui — era a única gravação de Financeiro
+  // que mostrava "Sem conexão com a API" (netError) numa queda momentânea de
+  // conexão mesmo quando o PUT tinha ido e voltado direitinho no navegador
+  // (relato de 04/09/2026: "quando salvo lançamentos financeiros, sempre dá
+  // esse aviso, mas continua salvando"). PUT substitui os mesmos campos
+  // sempre — repetir não duplica nada, então não precisa de Idempotency-Key.
+  const res = await fetchComRetry(() => authFetch(`${API}/financeiro/lancamentos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
-  });
+  }));
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar o lançamento"); }
   return res.json();
 }
@@ -6363,9 +6391,10 @@ export async function atualizarLancamentoFinanceiro(id: number, dados: {
 // quantidade > 0 e ainda sem entrada registrada, o backend também dá baixa
 // (entrada) retroativa — ver PUT /financeiro/itens/{id}/vincular-produto.
 export async function vincularProdutoItem(itemId: number, produto: string) {
-  const res = await authFetch(`${API}/financeiro/itens/${itemId}/vincular-produto`, {
-    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ produto }),
-  });
+  const chave = gerarChaveIdempotencia();
+  const res = await fetchComRetry(() => authFetch(`${API}/financeiro/itens/${itemId}/vincular-produto`, {
+    method: "PUT", headers: { "Content-Type": "application/json", "Idempotency-Key": chave }, body: JSON.stringify({ produto }),
+  }));
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao associar o produto/serviço"); }
   return res.json() as Promise<{ id: number; produto: string; avisos_estoque: string[] }>;
 }
@@ -6380,9 +6409,10 @@ export type EstornoLancamentoOut = Record<string, any> & {
   estornado: true; parcelas_diferenca_removidas: number; avisos: string[];
 };
 export async function estornarPagamentoLancamento(id: number, dados: EstornoLancamentoIn = {}): Promise<EstornoLancamentoOut> {
-  const res = await authFetch(`${API}/financeiro/lancamentos/${id}/estornar`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
-  });
+  const chave = gerarChaveIdempotencia();
+  const res = await fetchComRetry(() => authFetch(`${API}/financeiro/lancamentos/${id}/estornar`, {
+    method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": chave }, body: JSON.stringify(dados),
+  }));
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
     const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao estornar pagamento");
@@ -6554,11 +6584,20 @@ export async function anexarArquivoLancamentoPorId(
 export async function anexarComprovanteEmLote(
   lancamentoIds: number[], files: File[], categoria?: string | null,
 ): Promise<{ anexados: number; arquivos: string[]; nome_arquivo: string | null; anexo_ids: number[]; numeros_lancamento: string[] }> {
-  const form = new FormData();
-  files.forEach((f) => form.append("file", f));
-  form.append("lancamento_ids", lancamentoIds.join(","));
-  if (categoria) form.append("categoria", categoria);
-  const res = await authFetch(`${API}/financeiro/lancamentos/anexos-lote`, { method: "POST", body: form });
+  // Mesma chave em todas as tentativas — mesmo padrão de anexarArquivoLancamento:
+  // upload de comprovante é o request mais exposto a "Failed to fetch" com o
+  // arquivo já salvo (conexão rural instável, arquivo maior demora mais).
+  const chave = gerarChaveIdempotencia();
+  const enviar = () => {
+    const form = new FormData();
+    files.forEach((f) => form.append("file", f));
+    form.append("lancamento_ids", lancamentoIds.join(","));
+    if (categoria) form.append("categoria", categoria);
+    return authFetch(`${API}/financeiro/lancamentos/anexos-lote`, {
+      method: "POST", headers: { "Idempotency-Key": chave }, body: form,
+    });
+  };
+  const res = await fetchComRetry(enviar);
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o comprovante do lote"); }
   return res.json();
 }
