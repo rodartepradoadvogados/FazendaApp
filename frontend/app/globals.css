@@ -801,11 +801,24 @@ textarea:focus-visible, [tabindex]:focus-visible {
 .popup-caixa { animation: popup-caixa-entra 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
 .popup-caixa.popup-saindo { animation: popup-caixa-entra 0.16s ease-in reverse; }
 
+/* Toast (ver components/Toast.tsx) — desliza+aparece vindo do topo, some
+   sozinho depois de um tempo ou ao ser fechado. Fica ABAIXO da faixa fixa de
+   News/Tema/Sino (mesma folga de segurança do .notification-panel acima). */
+.toast-container {
+  position: fixed; z-index: 150; display: flex; flex-direction: column; gap: 0.5rem;
+  top: calc(env(safe-area-inset-top, 0px) + 4rem + var(--suporte-banner-h, 0px));
+  left: 50%; transform: translateX(-50%); align-items: center;
+}
+@keyframes toast-entra { from { opacity: 0; transform: translateY(-14px); } to { opacity: 1; transform: translateY(0); } }
+.toast-item { animation: toast-entra 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+.toast-item.toast-saindo { animation: toast-entra 0.18s ease-in reverse; }
+
 @media (prefers-reduced-motion: reduce) {
   .check-tracado { transition: none; }
   .flash-sucesso { animation: none; }
   .linha-colapsavel, .linha-colapsavel.linha-entrando, .linha-colapsavel:not(.linha-entrando) { transition: none; transform: none; }
   .popup-fundo, .popup-fundo.popup-saindo, .popup-caixa, .popup-caixa.popup-saindo { animation: none; }
+  .toast-item, .toast-item.toast-saindo { animation: none; }
 }
 
 /* Gaveta lateral de lançamento (ver components/lancamentos/GavetaLancamento.tsx)

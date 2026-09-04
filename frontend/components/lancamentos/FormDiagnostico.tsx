@@ -7,6 +7,7 @@ import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { useCardsAgendaReprodutivaLeitura } from "@/components/CardsAgendaReprodutivaConfiguraveis";
+import { useToast } from "@/components/Toast";
 import { TabBar } from "@/components/ui";
 import { Campo, inputStyle, codigoGrupo } from "@/components/lancamentos/comumForms";
 import { PopupVinculoFinanceiro, type OrigemPopupVinculo } from "@/components/lancamentos/PopupVinculoFinanceiro";
@@ -43,6 +44,7 @@ function resumoUltimoDiagnostico(s: any): string {
 
 export function FormDiagnostico({ animais, ultServico, onSalvo }: { animais: AnimalRow[]; ultServico: Record<string, string>; onSalvo?: () => void }) {
   const { porNumero, rotuloDe } = useEstadosReprodutivos();
+  const toast = useToast();
   // Lista as matrizes servidas (inseminadas ou prenhes a reconfirmar) — estado ao vivo.
   // Enquanto o estado ao vivo não chegou (ou a requisição falhou) cai no texto do
   // CSV: melhor um filtro desatualizado do que um formulário sem nenhum animal.
@@ -235,13 +237,15 @@ export function FormDiagnostico({ animais, ultServico, onSalvo }: { animais: Ani
           setErro(`Nenhum diagnóstico salvo. Falharam: ${falhados.join(", ")} — tente novamente.`);
         }
       } else {
-        setSucesso(
-          abortos.length
-            ? `${abortos.length} animal(is) já tinham prenhez confirmada duas vezes (toque + retoque) — lançamento registrado como aborto (perda de prenhez): ${abortos.join(", ")}.`
-            : resultado === "retoque"
-            ? `Diagnóstico salvo para ${salvos.length} animal(is). Entraram na agenda para retoque.`
-            : `Diagnóstico salvo para ${salvos.length} animal(is).`
-        );
+        const msg = abortos.length
+          ? `${abortos.length} animal(is) já tinham prenhez confirmada duas vezes (toque + retoque) — lançamento registrado como aborto (perda de prenhez): ${abortos.join(", ")}.`
+          : resultado === "retoque"
+          ? `Diagnóstico salvo para ${salvos.length} animal(is). Entraram na agenda para retoque.`
+          : `Diagnóstico salvo para ${salvos.length} animal(is).`;
+        setSucesso(msg);
+        // Confirmação flutuante, além do texto que fica na tela (`sucesso`
+        // acima) — some sozinha, não exige ler/fechar nada pra continuar.
+        toast(salvos.length > 1 ? `Diagnóstico salvo para ${salvos.length} animais.` : "Diagnóstico salvo.");
         setSelecionados(new Set()); setLotesSelecionados([]); setCategoriasAgenda([]); setCardsSelecionados([]); setData(""); setMetodo(""); setResultado("");
         onSalvo?.();
       }

@@ -203,6 +203,13 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
   const [novaEmbalagemQtd, setNovaEmbalagemQtd] = useState("");
   const [salvandoEmbalagem, setSalvandoEmbalagem] = useState(false);
   const [erroEmbalagem, setErroEmbalagem] = useState<string | null>(null);
+  // Entrar/sair da lista (04/09/2026) — `entrandoId` liga por 1 quadro a
+  // classe que faz a linha nova subir suave (ver .linha-colapsavel em
+  // globals.css); `saindoEmbalagem` faz a mesma linha recolher antes de sumir
+  // de vez, só DEPOIS que o servidor confirmou a remoção (mesma ordem seguro-
+  // primeiro que já existia — a animação não muda quando o estado é gravado).
+  const [entrandoId, setEntrandoId] = useState<number | null>(null);
+  const [saindoEmbalagem, setSaindoEmbalagem] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     fetchFornecedores().then(setFornecedores).catch(() => {});
@@ -333,6 +340,8 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
       const criada = await criarEmbalagemEstoque(editando.id, quantidade);
       setEmbalagens((e) => [...e, criada].sort((a, b) => a.quantidade - b.quantidade));
       setNovaEmbalagemQtd("");
+      setEntrandoId(criada.id);
+      requestAnimationFrame(() => requestAnimationFrame(() => setEntrandoId((cur) => (cur === criada.id ? null : cur))));
     } catch (e: any) {
       setErroEmbalagem(e.message || "Erro ao cadastrar embalagem");
     } finally {
@@ -345,7 +354,11 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
     setErroEmbalagem(null);
     try {
       await removerEmbalagemEstoque(editando.id, id);
-      setEmbalagens((e) => e.filter((x) => x.id !== id));
+      setSaindoEmbalagem((s) => new Set(s).add(id));
+      setTimeout(() => {
+        setEmbalagens((e) => e.filter((x) => x.id !== id));
+        setSaindoEmbalagem((s) => { const n = new Set(s); n.delete(id); return n; });
+      }, 260);
     } catch (e: any) {
       setErroEmbalagem(e.message || "Erro ao remover embalagem");
     }
@@ -699,17 +712,19 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
             ) : (
               <div style={{ display: "grid", gap: "0.4rem", maxWidth: 460, marginTop: "0.25rem" }}>
                 {embalagens.map((emb) => (
-                  <div key={emb.id} className="flex items-center gap-2">
-                    <input style={{ ...inputStyle, width: 100 }} value={emb.quantidade} disabled />
-                    {/* A unidade mostrada aqui é SEMPRE a que estiver de fato em
-                        "Unidade de medida" acima — nunca um valor fixo tipo "ml"
-                        ou "frasco" (pedido explícito do usuário, 04/09/2026). */}
-                    <span style={{ ...inputStyle, background: "var(--surface)", color: "var(--text-muted)", flex: 1 }}>
-                      {form.medida_embalagem || "defina a Unidade de medida acima"}
-                    </span>
-                    <button type="button" className="btn-ghost" style={{ padding: "0.3rem" }} title="Remover" onClick={() => removerEmbalagem(emb.id)}>
-                      <X size={14} />
-                    </button>
+                  <div key={emb.id} className={"linha-colapsavel" + (saindoEmbalagem.has(emb.id) ? " linha-saindo" : "") + (entrandoId === emb.id ? " linha-entrando" : "")}>
+                    <div className="flex items-center gap-2">
+                      <input style={{ ...inputStyle, width: 100 }} value={emb.quantidade} disabled />
+                      {/* A unidade mostrada aqui é SEMPRE a que estiver de fato em
+                          "Unidade de medida" acima — nunca um valor fixo tipo "ml"
+                          ou "frasco" (pedido explícito do usuário, 04/09/2026). */}
+                      <span style={{ ...inputStyle, background: "var(--surface)", color: "var(--text-muted)", flex: 1 }}>
+                        {form.medida_embalagem || "defina a Unidade de medida acima"}
+                      </span>
+                      <button type="button" className="btn-ghost" style={{ padding: "0.3rem" }} title="Remover" onClick={() => removerEmbalagem(emb.id)}>
+                        <X size={14} />
+                      </button>
+                    </div>
                   </div>
                 ))}
                 <div className="flex items-center gap-2">
