@@ -198,6 +198,47 @@ class LoteEstoque(SQLModel, table=True):
     observacao: Optional[str] = None
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    # De qual tamanho de embalagem (ApresentacaoEmbalagemEstoque) este lote
+    # veio — pedido do usuário (04/09/2026): comprar "Agrovet frasco de
+    # 100ml" sem precisar de um item de Estoque à parte pra cada tamanho.
+    # None = lote sem embalagem específica associada (comportamento de
+    # sempre — item sem nenhuma embalagem cadastrada, ou lote aberto antes
+    # desta feature existir).
+    apresentacao_id: Optional[int] = Field(default=None, foreign_key="apresentacao_embalagem_estoque.id", index=True)
+
+
+class ApresentacaoEmbalagemEstoque(SQLModel, table=True):
+    """Um tamanho de embalagem cadastrado para UM item de Estoque (Medicamento)
+    — pedido do usuário (04/09/2026): "eu quero comprar um Agrovet de 50ml e
+    um Agrovet de 100ml, não preciso ter que cadastrar 2 produtos". Antes
+    disso, cada tamanho de frasco de um medicamento precisava ser um item de
+    `Estoque` inteiro à parte (mesmo `principio_ativo_id`, cadastros
+    duplicados) — esta tabela deixa um ÚNICO item de Estoque ter N tamanhos.
+
+    Só guarda o NÚMERO (`quantidade`) — ex.: 50, 100 — nunca uma unidade
+    própria: a unidade é sempre `Estoque.medida_embalagem` do item PAI, lida
+    ao vivo sempre que a embalagem é exibida (nunca copiada pra cá). Isso é
+    proposital — o usuário pediu explicitamente cuidado para não "puxar
+    automaticamente" um valor fixo tipo "ml" ou "frasco": a única unidade que
+    conta é a que estiver de fato cadastrada em `medida_embalagem` para
+    aquele item, seja ela qual for (ml/frasco, L/galão, dose/seringa...). Se
+    o item mudar `medida_embalagem` depois, todas as suas embalagens já
+    cadastradas refletem a mudança automaticamente, sem precisar reeditar
+    cada uma (não há cópia pra ficar desatualizada).
+
+    `LoteEstoque.apresentacao_id` (opcional) marca de qual destes tamanhos
+    veio cada lote de compra — ver rules/estoque_baixa.py. Puramente
+    aditivo: um item sem nenhuma embalagem cadastrada continua se
+    comportando exatamente como antes (compra/baixa direto no agregado)."""
+
+    __tablename__ = "apresentacao_embalagem_estoque"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    estoque_id: int = Field(foreign_key="estoque.id", index=True)
+    quantidade: float
+    ativa: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
 class EstoqueAliasMesclado(SQLModel, table=True):

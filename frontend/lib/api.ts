@@ -3166,10 +3166,15 @@ export const excluirUnidadeMedidaEmbalagemEstoque = apiUnidadesMedidaEmbalagemEs
 // Laboratório / Categoria (medicamento) / Classificação do medicamento —
 // catálogos globais cadastrados no Painel CowData, visíveis automaticamente
 // aqui (ver rules/visibilidade.py::visivel(), global_compartilhado=True em
-// _crud_nome_ativo). Sem `excluir`: só o Painel CowData cria/edita a linha
-// global; o tenant só consome no seletor.
+// _crud_nome_ativo). `criar` aqui sempre grava com o fazenda_id da PRÓPRIA
+// fazenda (get_fazenda_id_escrita, nunca nulo) — pedido do usuário
+// (04/09/2026): "Laboratório, com botão de + novo, que, se lançado na
+// fazenda, não vai para o painel CowData". Sem `excluir`/`atualizar`
+// expostos: o tenant só cria as PRÓPRIAS linhas novas, nunca edita/apaga a
+// linha global (isso é papel exclusivo do Painel CowData).
 const apiLaboratorios = criarApiCadastroSimples("laboratorios", "Laboratório");
 export const fetchLaboratoriosCadastro = apiLaboratorios.fetch;
+export const criarLaboratorioCadastro = apiLaboratorios.criar;
 
 const apiCategoriasMedicamento = criarApiCadastroSimples("categorias-medicamento", "Categoria (medicamento)");
 export const fetchCategoriasMedicamentoCadastro = apiCategoriasMedicamento.fetch;
@@ -4059,6 +4064,9 @@ export async function movimentarEstoque(dados: {
 export type MovimentoEstoqueRow = {
   id: number; nome_item: string; movimento: string; quantidade: number; unidade?: string | null;
   data_movimento: string; observacao?: string | null; usuario_nome?: string | null;
+  // Rótulo pronto (ex.: "100 ml/frasco") de qual embalagem este movimento
+  // afetou, quando o lote tinha um tamanho cadastrado — null nos demais casos.
+  embalagem?: string | null;
 };
 export async function fetchMovimentosEstoque(): Promise<{ movimentos: MovimentoEstoqueRow[]; total: number }> {
   const res = await authFetch(`${API}/estoque/movimentos`, { cache: "no-store" });
@@ -4414,6 +4422,14 @@ export type ApresentacaoFarmacia = {
   estoque_id: number; nome: string; marca: string | null; medicamento_comercial_id: number | null;
   saldo: number; unidade: string | null; volume_por_apresentacao: number | null; volume_unidade: string | null;
   apresentacoes: number | null; estoque_inicializado: boolean;
+  // Unidade de medida ATUAL do item (ex.: "ml/frasco") — ver
+  // ApresentacaoEmbalagemEstoque no backend. Nunca assumir "ml"/"frasco":
+  // sempre exibir este valor tal como veio, seja lá qual for.
+  medida_embalagem?: string | null;
+  // Composição por embalagem — só presente (não-vazio) quando o item usa o
+  // cadastro novo de "Unidade (embalagem)" com lotes em aberto vinculados a
+  // um tamanho. Cada linha = um lote de compra ainda com saldo.
+  lotes_embalagem?: { apresentacao_quantidade: number | null; quantidade_restante: number }[];
 };
 export type PrincipioFarmacia = {
   id: number; nome: string; ativo: boolean; categoria: string | null; categoria_software: string | null;
@@ -4486,6 +4502,12 @@ export type LoteEstoque = {
   id: number; estoque_id: number; numero_lote: string | null; data_compra: string;
   quantidade_comprada: number; quantidade_restante: number; valor_unitario: number | null;
   observacao: string | null; ativo: boolean;
+  // De qual embalagem cadastrada (ApresentacaoEmbalagemEstoque) este lote
+  // veio — `apresentacao_quantidade` é resolvida ao vivo pelo backend
+  // (nunca copiada), sempre um NÚMERO puro: mostrar ao lado dele a unidade
+  // de medida ATUAL do item (`Estoque.medida_embalagem`), nunca um valor
+  // fixo tipo "ml" ou "frasco" — ver ApresentacaoEmbalagemEstoque no backend.
+  apresentacao_id: number | null; apresentacao_quantidade: number | null;
 };
 export async function fetchLotesEstoque(estoqueId: number) {
   const res = await authFetch(`${API}/estoque/${estoqueId}/lotes`, { cache: "no-store" });
@@ -4493,13 +4515,40 @@ export async function fetchLotesEstoque(estoqueId: number) {
   return res.json() as Promise<LoteEstoque[]>;
 }
 export async function abrirLoteEstoque(estoqueId: number, dados: {
-  quantidade: number; data_compra: string; valor_unitario?: number | null; numero_lote?: string | null; observacao?: string | null;
+  quantidade: number; data_compra: string; valor_unitario?: number | null; numero_lote?: string | null;
+  observacao?: string | null; apresentacao_id?: number | null;
 }) {
   const res = await authFetch(`${API}/estoque/${estoqueId}/lotes`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao abrir lote"); }
   return res.json() as Promise<LoteEstoque & { avisos: string[] }>;
+}
+
+// Embalagens (tamanhos de frasco/pacote) cadastráveis por item de Estoque —
+// pedido do usuário (04/09/2026): comprar "Agrovet frasco de 100ml" ou
+// "Agrovet frasco de 50ml" sem precisar de um item de Estoque à parte pra
+// cada tamanho. Só o número (`quantidade`) é cadastrado aqui — a unidade é
+// sempre `Estoque.medida_embalagem` do item, nunca duplicada nesta tabela.
+export type ApresentacaoEmbalagemEstoque = {
+  id: number; estoque_id: number; quantidade: number; ativa: boolean;
+};
+export async function fetchEmbalagensEstoque(estoqueId: number) {
+  const res = await authFetch(`${API}/estoque/${estoqueId}/embalagens`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Embalagens error: ${res.status}`);
+  return res.json() as Promise<ApresentacaoEmbalagemEstoque[]>;
+}
+export async function criarEmbalagemEstoque(estoqueId: number, quantidade: number) {
+  const res = await authFetch(`${API}/estoque/${estoqueId}/embalagens`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ quantidade }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar embalagem"); }
+  return res.json() as Promise<ApresentacaoEmbalagemEstoque>;
+}
+export async function removerEmbalagemEstoque(estoqueId: number, embalagemId: number) {
+  const res = await authFetch(`${API}/estoque/${estoqueId}/embalagens/${embalagemId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao remover embalagem"); }
+  return res.json();
 }
 
 export async function inicializarEstoqueFarmacia(estoqueId: number, dados: { quantidade: number; data?: string; observacao?: string }) {

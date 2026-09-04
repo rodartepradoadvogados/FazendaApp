@@ -19,7 +19,10 @@ import unicodedata
 
 from sqlmodel import Session, select
 
-from fazenda.models import Doenca, Estoque, IndicacaoTerapeutica, MedicamentoComercial, ParametroMinimoFarmacia, PrincipioAtivo, SeedFlag
+from fazenda.models import (
+    ApresentacaoEmbalagemEstoque, Doenca, Estoque, IndicacaoTerapeutica, LoteEstoque, MedicamentoComercial,
+    ParametroMinimoFarmacia, PrincipioAtivo, SeedFlag,
+)
 from fazenda.rules.farmacia_indicacoes_seed import INDICACOES, MARCAS
 from fazenda.rules.farmacia_seed import PRINCIPIOS
 from fazenda.rules.visibilidade import visivel
@@ -529,6 +532,34 @@ def resumo_principios(session: Session, fazenda_id: int | None = None) -> list[d
         if it.principio_ativo_id is not None:
             por_pa.setdefault(it.principio_ativo_id, []).append(it)
 
+    # Composição por embalagem (04/09/2026) — pedido do usuário: "no inventário
+    # de estoque... precisa constar quanto há, mostrando, por exemplo: total:
+    # 130ml, sendo: 80ml de um frasco de 100ml e 50ml de um frasco de 50ml".
+    # Uma única query pra todos os itens desta fazenda, em vez de uma por
+    # princípio — os lotes/embalagens de um item só existem quando ele usa o
+    # cadastro novo de "Unidade (embalagem)" (ver ApresentacaoEmbalagemEstoque);
+    # item sem nenhum lote aberto com apresentacao_id simplesmente não aparece
+    # aqui, e a composição cai no comportamento de sempre (só a lista de itens).
+    estoque_ids = [it.id for it in itens]
+    lotes_abertos_por_item: dict[int, list[LoteEstoque]] = {}
+    apresentacao_quantidade: dict[int, float] = {}
+    if estoque_ids:
+        todos_lotes = session.exec(
+            select(LoteEstoque).where(
+                LoteEstoque.estoque_id.in_(estoque_ids),
+                LoteEstoque.quantidade_restante > 0,
+                LoteEstoque.apresentacao_id.is_not(None),
+            )
+        ).all()
+        for l in todos_lotes:
+            lotes_abertos_por_item.setdefault(l.estoque_id, []).append(l)
+        apresentacao_ids = {l.apresentacao_id for l in todos_lotes}
+        if apresentacao_ids:
+            apresentacao_quantidade = {
+                a.id: a.quantidade
+                for a in session.exec(select(ApresentacaoEmbalagemEstoque).where(ApresentacaoEmbalagemEstoque.id.in_(apresentacao_ids))).all()
+            }
+
     # Mínimo em unidade de medida, por fazenda — pedido do usuário (31/08/2026):
     # "estoque mínimo... tem que ser em unidade de medida, e não em pacotes/
     # frascos". Vive em tabela à parte (nunca em PrincipioAtivo, que pode ser
@@ -570,6 +601,13 @@ def resumo_principios(session: Session, fazenda_id: int | None = None) -> list[d
                 "volume_por_apresentacao": it.volume_por_apresentacao, "volume_unidade": it.volume_unidade,
                 "apresentacoes": round(apres, 2) if apres is not None else None,
                 "estoque_inicializado": it.estoque_inicializado is not False,
+                # Unidade de medida ATUAL do item (ex.: "ml/frasco") — nunca um
+                # valor fixo (ver ApresentacaoEmbalagemEstoque).
+                "medida_embalagem": it.medida_embalagem,
+                "lotes_embalagem": [
+                    {"apresentacao_quantidade": apresentacao_quantidade.get(l.apresentacao_id), "quantidade_restante": l.quantidade_restante}
+                    for l in lotes_abertos_por_item.get(it.id, [])
+                ],
             })
         minimo_base = minimos_base.get(pa.id)
         if minimo_base is not None and base_ok:

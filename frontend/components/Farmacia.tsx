@@ -24,7 +24,7 @@ import {
   fetchClassificacoesMedicamentoFarmaciaCowData, fetchLaboratoriosFarmaciaCowData,
   fetchCategoriasFarmaciaCowData, fetchSubstitutivosPorFiltro, fetchSubstitutivosDeMedicamento,
   fetchSugestoesMesclagem, mesclarItensEstoque, fetchEstoque, type SugestaoMesclagem,
-  fetchMedicamentoGlobalDetalhe, atualizarMedicamentoFarmaciaCowData,
+  fetchMedicamentoGlobalDetalhe, atualizarMedicamentoFarmaciaCowData, fetchMedicamentosFarmaciaCowData,
   type IndicacaoCatalogo, type PrincipioIndicacaoCatalogo, type MarcaIndicacaoCatalogo, type PrincipioFarmacia,
   type EixoFiltroSubstitutivos, type MedicamentoFarmaciaCowData, type MedicamentoSubstituto,
 } from "@/lib/api";
@@ -71,7 +71,12 @@ const SECAO2_ABAS_CATALOGO = [
 const SECAO3_ABAS_CATALOGO = [
   { chave: "substitutivos", label: "Substitutivos", icone: GitCompareArrows },
 ] as const;
-type Secao2AbaCatalogo = (typeof SECAO2_ABAS_CATALOGO)[number]["chave"] | (typeof SECAO3_ABAS_CATALOGO)[number]["chave"];
+// "indicacoes" é o valor interno da Seção 1 (browse por doença/manejo,
+// CardIndicacao) — não é um botão da Seção 2, é o que os botões da Seção 1
+// selecionam. Antes do bug-fix de 04/09/2026, Seção 1 escrevia o MESMO valor
+// que o botão "Medicamentos" da Seção 2 ("medicamentos"), então clicar em
+// Medicamentos não trocava nada — o card continuava mostrando indicações.
+type Secao2AbaCatalogo = "indicacoes" | (typeof SECAO2_ABAS_CATALOGO)[number]["chave"] | (typeof SECAO3_ABAS_CATALOGO)[number]["chave"];
 
 // Eixos disponíveis pro 1º filtro de Substitutivos — Seção 1 (indicação) +
 // os catálogos "nome + ativo" da Seção 2 (Medicamentos fica de fora: não faz
@@ -559,6 +564,68 @@ function GrupoMesclagem({ s, onMudou }: { s: SugestaoMesclagem; onMudou: () => v
   );
 }
 
+// Seção 2 › Medicamentos (Catálogo) — lista plana de medicamentos, igual à
+// que já existe em Cadastrar › Medicamentos (FarmaciaCadastroCentral.tsx,
+// AbaMedicamentos), só que somente-leitura (sem cadastro/propagação, que
+// continuam exclusivos de Cadastrar). Corrige o bug relatado: antes disso,
+// clicar em "Medicamentos" na Seção 2 caía no mesmo branch da Seção 1
+// (browse por indicação, CardIndicacao) — nunca renderizava um medicamento.
+function ListaMedicamentosCatalogo() {
+  const [lista, setLista] = useState<MedicamentoFarmaciaCowData[] | null>(null);
+  const [principios, setPrincipios] = useState<{ id: number; nome: string }[]>([]);
+  const [categorias, setCategorias] = useState<{ id: number; nome: string }[]>([]);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    Promise.all([fetchMedicamentosFarmaciaCowData(), fetchPrincipiosFarmaciaCowData(), fetchCategoriasFarmaciaCowData()])
+      .then(([m, p, c]) => { setLista(m); setPrincipios(p); setCategorias(c); })
+      .catch((e: any) => setErro(e.message));
+  }, []);
+
+  const nomesPrincipios = useMemo(() => new Map(principios.map((p) => [p.id, p.nome])), [principios]);
+  const nomesCategorias = useMemo(() => new Map(categorias.map((c) => [c.id, c.nome])), [categorias]);
+
+  return (
+    <div>
+      <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "0.8rem", maxWidth: "62ch" }}>
+        Todos os medicamentos cadastrados no Painel CowData, com princípio(s) ativo(s) e indicações — mesma lista de
+        Cadastrar › Medicamentos. Para cadastrar ou propagar, use Cadastrar.
+      </p>
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{erro}</p>}
+      {!lista ? (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
+      ) : lista.length === 0 ? (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum medicamento cadastrado ainda.</p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+          {lista.map((m) => (
+            <div key={m.id} style={{
+              display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.7rem",
+              borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", flexWrap: "wrap",
+            }}>
+              <strong style={{ fontSize: "0.85rem" }}>{m.nome_comercial}</strong>
+              <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                {m.principio_ativo_ids.map((id) => nomesPrincipios.get(id) || id).join(" + ")}
+              </span>
+              {m.doenca_ids.length > 0 && (
+                <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                  · {m.doenca_ids.map((id) => nomesCategorias.get(id) || id).join(", ")}
+                </span>
+              )}
+              <span style={{
+                fontSize: "0.72rem", marginLeft: "auto",
+                color: m.fan_out_fazendas >= m.fan_out_total_fazendas ? "var(--green-light)" : "var(--amber)",
+              }}>
+                em {m.fan_out_fazendas}/{m.fan_out_total_fazendas} fazenda(s)
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function CatalogoFarmacia({ contextoGlobal, somenteLeitura }: { contextoGlobal?: boolean; somenteLeitura?: boolean } = {}) {
   const [catalogo, setCatalogo] = useState<IndicacaoCatalogo[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -569,8 +636,9 @@ export function CatalogoFarmacia({ contextoGlobal, somenteLeitura }: { contextoG
   const [msgRestaurar, setMsgRestaurar] = useState<string | null>(null);
   // Seção 2 — só existe dentro do Painel CowData (contextoGlobal); a
   // fazenda continua vendo só o browse por indicação (Fase F vai extrair
-  // isso pra Sanidade, somente leitura).
-  const [secao2, setSecao2] = useState<Secao2AbaCatalogo>("medicamentos");
+  // isso pra Sanidade, somente leitura). Começa em "indicacoes" (Seção 1),
+  // não em "medicamentos" (Seção 2) — são branches de renderização distintos.
+  const [secao2, setSecao2] = useState<Secao2AbaCatalogo>("indicacoes");
 
   const carregar = () => fetchIndicacoesCatalogo().then(setCatalogo).catch((e) => setErro(e.message));
   useEffect(() => { carregar(); }, []);
@@ -608,8 +676,8 @@ export function CatalogoFarmacia({ contextoGlobal, somenteLeitura }: { contextoG
           <p style={secaoLabelStyle}>Seção 1 — Indicações</p>
           <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
             {SECAO1_ABAS_CATALOGO.map(([id, label]) => (
-              <AbaBotaoCatalogo key={id || "todas"} ativo={secao2 === "medicamentos" && tipoFiltro === id}
-                onClick={() => { setTipoFiltro(id); setSecao2("medicamentos"); }}>{label}</AbaBotaoCatalogo>
+              <AbaBotaoCatalogo key={id || "todas"} ativo={secao2 === "indicacoes" && tipoFiltro === id}
+                onClick={() => { setTipoFiltro(id); setSecao2("indicacoes"); }}>{label}</AbaBotaoCatalogo>
             ))}
           </div>
           <p style={secaoLabelStyle}>Seção 2 — Catálogo de farmácia</p>
@@ -627,7 +695,7 @@ export function CatalogoFarmacia({ contextoGlobal, somenteLeitura }: { contextoG
         </>
       )}
 
-      {(!contextoGlobal || secao2 === "medicamentos") ? (
+      {(!contextoGlobal || secao2 === "indicacoes") ? (
         <>
           <div className="flex items-center justify-between gap-2 mb-2" style={{ flexWrap: "wrap" }}>
             <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", flex: "1 1 320px", margin: 0 }}>
@@ -685,6 +753,8 @@ export function CatalogoFarmacia({ contextoGlobal, somenteLeitura }: { contextoG
             </div>
           )}
         </>
+      ) : secao2 === "medicamentos" ? (
+        <ListaMedicamentosCatalogo />
       ) : secao2 === "principios" ? (
         <CatalogoLeituraSimples
           descricao="Lista fechada de princípios ativos — a mesma usada ao cadastrar um medicamento, tanto no Painel CowData quanto em cada fazenda."
@@ -821,6 +891,21 @@ function LinhaEstoqueMinimo({ p, onMudou }: { p: PrincipioFarmacia; onMudou: () 
       {p.itens.length > 0 && (
         <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", margin: "0.35rem 0 0" }}>
           {p.itens.map((it) => `${it.nome} (${num(it.saldo)} ${it.unidade || ""})`).join(" + ")}
+        </p>
+      )}
+      {/* Composição por embalagem — só aparece pra item que já usa o cadastro
+          de "Unidade (embalagem)" com lote(s) em aberto vinculados a um
+          tamanho (ver ApresentacaoEmbalagemEstoque). A unidade mostrada é
+          sempre a medida_embalagem ATUAL do próprio item, nunca fixa. */}
+      {p.itens.some((it) => (it.lotes_embalagem?.length ?? 0) > 0) && (
+        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", margin: "0.2rem 0 0" }}>
+          {p.itens.flatMap((it) =>
+            (it.lotes_embalagem || []).map((l, i) =>
+              l.apresentacao_quantidade != null
+                ? `${l.quantidade_restante} ${it.medida_embalagem || ""} de um frasco de ${l.apresentacao_quantidade}${it.medida_embalagem ? ` ${it.medida_embalagem}` : ""}`
+                : null
+            ).filter(Boolean)
+          ).join(" + ")}
         </p>
       )}
       {erro && <p style={{ color: "var(--red)", fontSize: "0.72rem", margin: "0.35rem 0 0" }}>{erro}</p>}

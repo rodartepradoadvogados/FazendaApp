@@ -26,7 +26,8 @@ const COLUNAS_ESTOQUE = [
 const COLUNAS_MOVIMENTOS = [
   { header: "Data", key: "data_movimento" }, { header: "Item", key: "nome_item" },
   { header: "Movimento", key: "movimento" }, { header: "Quantidade", key: "quantidade" },
-  { header: "Unidade", key: "unidade" }, { header: "Observação", key: "observacao" },
+  { header: "Unidade", key: "unidade" }, { header: "Embalagem", key: "embalagem" },
+  { header: "Observação", key: "observacao" },
 ];
 
 const COLUNAS_POR_PRODUTO = [
@@ -471,6 +472,7 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
                   <ThOrdenavel label="Item" campo="nome_item" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
                   <ThOrdenavel label="Movimento" campo="movimento" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
                   <ThOrdenavel label="Qtd" campo="quantidade" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <th>Embalagem</th>
                   <th>Observação</th>
                   {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
                   <th style={{ textAlign: "right" }}>Ações</th>
@@ -487,6 +489,7 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
                       <td style={{ fontWeight: 600, fontSize: "0.82rem" }}>{m.nome_item}</td>
                       <td style={{ fontSize: "0.78rem" }}>{m.movimento}</td>
                       <td style={{ textAlign: "right" }}>{m.quantidade} {m.unidade || ""}</td>
+                      <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.embalagem || "—"}</td>
                       <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.observacao || "—"}</td>
                       {admin && <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.usuario_nome ?? "—"}</td>}
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
