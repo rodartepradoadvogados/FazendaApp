@@ -12,7 +12,8 @@ from sqlmodel import Session, select
 
 from fazenda.auth import (
     bloquear_escrita_contador, exigir_admin_ou_consultor_fazenda, exigir_contrato_ativo, exigir_modulo,
-    exigir_modulo_contratado, exigir_modulo_qualquer, exigir_segredo_de_producao, get_current_user, seed_admin,
+    exigir_fazenda_selecionada, exigir_modulo_contratado, exigir_modulo_qualquer, exigir_segredo_de_producao,
+    get_current_user, seed_admin,
     seed_email_dono_backfill, seed_email_dono_correcao_202607c, seed_permissao_publicar_dono,
 )
 from fazenda.database import create_db_and_tables, engine, get_session
@@ -428,7 +429,13 @@ _PREFIXOS_RH_MODO_SUPORTE = (
 # abaixo — escrita nesses domínios continua proibida em modo suporte mesmo
 # para quem enxerga tudo, porque a trava aqui é "ação destrutiva/financeira
 # não é coisa de sessão de suporte", não "confiança").
-_PREFIXOS_SENSIVEIS_MODO_SUPORTE = ("/financeiro", "/planejamento", "/chamados", "/cobranca", "/asaas") + _PREFIXOS_RH_MODO_SUPORTE
+# "/upload" entra aqui (auditoria F-A-05) porque POST /upload/{tipo} não é
+# "mandar um arquivo": os _upsert_* de upload.py APAGAM o conjunto inteiro do
+# escopo antes de inserir o CSV (plano de contas gerenciais, curva ABC,
+# rebanho, estoque, patrimônio...). É a ação mais destrutiva do sistema, e
+# estava passando batido em modo suporte — exatamente o tipo de coisa que
+# "sessão de suporte não faz", em qualquer nível de sigilo.
+_PREFIXOS_SENSIVEIS_MODO_SUPORTE = ("/financeiro", "/planejamento", "/chamados", "/cobranca", "/asaas", "/upload") + _PREFIXOS_RH_MODO_SUPORTE
 
 # Nível de sigilo por conta (#132) — quais grupos de prefixo ficam bloqueados
 # também para LEITURA (GET) em modo suporte, abaixo do nível carimbado no
@@ -731,6 +738,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Cabeçalho de resposta que o JS precisa conseguir ler: sem expose_headers
+    # o navegador esconde do fetch() qualquer header fora da lista segura por
+    # padrão. É o que permite ao frontend distinguir o 409 de "sua sessão não
+    # tem fazenda selecionada" (ver fazenda/auth.py::exigir_fazenda_selecionada)
+    # dos outros 409 de negócio e levar o usuário à tela de escolha de conta.
+    expose_headers=["X-Fazenda-Nao-Selecionada"],
 )
 
 # Auth (aberto) + rotas de dados (exigem login).
@@ -762,7 +775,17 @@ app.include_router(cofre_acesso.router)
 # fazenda/rules/replicacao_fazenda.py para a rotina destrutiva de verdade.
 app.include_router(painel_cowdata_sincronizacao.router)
 
-_protegido = [Depends(get_current_user)]
+# TRAVA DE TENANT (auditoria F-A-01/F-B-01/F-B-02/F-A-03): a requisição só
+# entra numa rota de fazenda se o token disser EM QUAL fazenda ela acontece.
+# Sem isso, um token sem "fid" faz todo o `if fazenda_id is not None: ...where
+# (fazenda_id == ...)` do sistema virar no-op e o isolamento entre clientes
+# desliga inteiro — ver fazenda/auth.py::exigir_fazenda_selecionada, que
+# explica os 3 jeitos reais de obter um token assim e por que nenhum deles
+# tem o que fazer dentro de uma fazenda. Vem em TODO router de tenant abaixo;
+# de propósito NÃO está nos routers do Painel CowData/auth/fazendas montados
+# mais acima, que operam sem fazenda selecionada por definição.
+_fazenda_selecionada = [Depends(exigir_fazenda_selecionada())]
+_protegido = [Depends(get_current_user)] + _fazenda_selecionada
 # Trava por PLANO CONTRATADO (fazenda/tenant) — soma-se à permissão por
 # usuário (exigir_modulo/exigir_modulo_qualquer) já usada abaixo. Token sem
 # "fid" (legado) pula a checagem, como o resto do piloto de multi-fazenda —
@@ -773,9 +796,15 @@ app.include_router(animais.router, dependencies=_protegido + [Depends(exigir_mod
 # Upload/Importar CSV e áreas transversais (Agenda, Indicadores, Parâmetros)
 # não pertencem a um módulo comercial específico — exigem só que a fazenda
 # tenha ALGUM contrato ativo (Rebanho é obrigatório em todo plano).
-app.include_router(upload.router, dependencies=_protegido + _contrato_ativo)
+# FURO CORRIGIDO (auditoria F-A-05): faltava exigir_modulo("upload") — o
+# módulo existe (fazenda/auth.py::MODULOS) e o router irmão logo abaixo
+# (importar.router) sempre o exigiu. Sem ele, um operador com permissoes=
+# "capa" podia POST /upload/plano_conta_gerencial e substituir o plano de
+# contas inteiro da fazenda, porque cada _upsert_* de upload.py apaga tudo
+# antes de inserir. A assimetria entre os dois routers irmãos era o bug.
+app.include_router(upload.router, dependencies=[Depends(exigir_modulo("upload"))] + _contrato_ativo + _fazenda_selecionada)
 # Importar dados (Configurações) reaproveita a mesma permissão do Upload CSV.
-app.include_router(importar.router, dependencies=[Depends(exigir_modulo("upload"))] + _contrato_ativo)
+app.include_router(importar.router, dependencies=[Depends(exigir_modulo("upload"))] + _contrato_ativo + _fazenda_selecionada)
 app.include_router(agenda.router, dependencies=_protegido + _contrato_ativo)
 # Protocolos customizados: lançar/listar ativos/cancelar exige só acesso
 # normal ao sistema (mesma regra da Agenda) — editar o MOLDE do protocolo
@@ -797,18 +826,18 @@ app.include_router(filtros_salvos.router, dependencies=_protegido)
 # Contador) já tem permissoes=["financeiro"] pelo cadastro normal do usuário
 # — sem essa trava adicional, ele conseguiria escrever em qualquer endpoint
 # destes 4 routers, não só ler (ver fazenda/auth.py::bloquear_escrita_contador).
-app.include_router(financeiro.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
-app.include_router(cartao_credito.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
-app.include_router(relatorio_custo_hectare.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
-app.include_router(relatorio_custo_producao.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
-app.include_router(relatorio_custo_safra.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
+app.include_router(financeiro.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
+app.include_router(cartao_credito.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
+app.include_router(relatorio_custo_hectare.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
+app.include_router(relatorio_custo_producao.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
+app.include_router(relatorio_custo_safra.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 # Planejamento (Orçamento/Planejamento financeiro) é uma sub-aba de Financeiro
 # na permissão do usuário, mas um módulo comercial PRÓPRIO no contrato (Silver
 # não inclui, Gold/Diamond incluem — "financeiro completo"). Pedidos também é
 # módulo próprio (não mexe em Estoque/Financeiro sozinho — só quando um
 # lançamento/movimento é vinculado a ele).
-app.include_router(planejamento.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("planejamento")), Depends(bloquear_escrita_contador())])
-app.include_router(pedidos.router, dependencies=[Depends(exigir_modulo("pedidos")), Depends(exigir_modulo_contratado("pedidos"))])
+app.include_router(planejamento.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("planejamento")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
+app.include_router(pedidos.router, dependencies=[Depends(exigir_modulo("pedidos")), Depends(exigir_modulo_contratado("pedidos"))] + _fazenda_selecionada)
 # Arquivo fiscal-contábil (Documentos) — SEM bloquear_escrita_contador: o
 # contador pode arquivar documentos livremente (decisão do usuário), só a
 # escrita em Financeiro/Planejamento/Chamados fica atrás do cadeado. Este
@@ -817,7 +846,7 @@ app.include_router(pedidos.router, dependencies=[Depends(exigir_modulo("pedidos"
 # administrador que a Central de Documentos precisa (ver abaixo) é sobre a
 # TELA DE CONSULTA unificada, decidida dentro de central_documentos.py, não
 # aqui — apertar aqui quebraria o upload do contador.
-app.include_router(documentos.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro"))])
+app.include_router(documentos.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro"))] + _fazenda_selecionada)
 # Central de Documentos (Administração) — busca unificada e só-leitura sobre
 # documentos.router (fiscal, admin-only) + anexos de lançamento (financeiro,
 # quem tem o módulo) — cada tier de acesso é decidido DENTRO do endpoint
@@ -826,7 +855,7 @@ app.include_router(documentos.router, dependencies=[Depends(exigir_modulo("finan
 app.include_router(central_documentos.router, dependencies=_protegido + _contrato_ativo)
 # Chamados (suporte) — mesmo padrão de financeiro: contador só escreve
 # (abrir chamado) com o cadeado destravado.
-app.include_router(chamados.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
+app.include_router(chamados.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 app.include_router(indicadores.router, dependencies=_protegido + _contrato_ativo)
 # Alertas de indicador — preferência pessoal do usuário (config de "avise-me
 # se X passar de Y"), sem gate de módulo contratado.
@@ -844,12 +873,12 @@ app.include_router(alimentacao.router, dependencies=_protegido + [Depends(exigir
 # ROTA_MODULO — ver fazenda/auth.py::exigir_admin_ou_consultor_fazenda.
 app.include_router(
     formulacao_dietas.router,
-    dependencies=[Depends(exigir_admin_ou_consultor_fazenda()), Depends(exigir_modulo_contratado("formulacao_dietas"))],
+    dependencies=[Depends(exigir_admin_ou_consultor_fazenda()), Depends(exigir_modulo_contratado("formulacao_dietas"))] + _fazenda_selecionada,
 )
 app.include_router(producao.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("produtivo"))])
 app.include_router(reproducao.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("reprodutivo"))])
 app.include_router(relatorio_acasalamento.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("reprodutivo"))])
-app.include_router(relatorios.router, dependencies=[Depends(exigir_modulo("reproducao")), Depends(exigir_modulo_contratado("reprodutivo"))])
+app.include_router(relatorios.router, dependencies=[Depends(exigir_modulo("reproducao")), Depends(exigir_modulo_contratado("reprodutivo"))] + _fazenda_selecionada)
 app.include_router(estoque.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("estoque"))])
 app.include_router(farmacia.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("sanitario"))])
 app.include_router(sanidade.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("sanitario"))])
@@ -860,20 +889,20 @@ app.include_router(recria.router, dependencies=_protegido + [Depends(exigir_modu
 # cadastro.router é um cadastro-base amplo (fornecedores, pessoas, tipos,
 # serviços, farmácia...) usado por vários módulos comerciais ao mesmo tempo —
 # fica com a trava transversal (contrato ativo), não um módulo específico.
-app.include_router(lotes.router, dependencies=[Depends(exigir_modulo("parametros")), Depends(exigir_modulo_contratado("rebanho"))])
-app.include_router(safra.router, dependencies=[Depends(exigir_modulo("parametros")), Depends(exigir_modulo_contratado("agricultura"))])
-app.include_router(cadastro.router, dependencies=[Depends(exigir_modulo("parametros"))] + _contrato_ativo)
+app.include_router(lotes.router, dependencies=[Depends(exigir_modulo("parametros")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
+app.include_router(safra.router, dependencies=[Depends(exigir_modulo("parametros")), Depends(exigir_modulo_contratado("agricultura"))] + _fazenda_selecionada)
+app.include_router(cadastro.router, dependencies=[Depends(exigir_modulo("parametros"))] + _contrato_ativo + _fazenda_selecionada)
 # Leitura do banco de touros: Rebanho > Touros também consulta este catálogo
 # (módulo "rebanho"), então aceita "parametros" OU "rebanho" — só a listagem,
 # não o cadastro/edição (que fica no router acima, exigindo "parametros").
-app.include_router(cadastro.router_touros_leitura, dependencies=[Depends(exigir_modulo_qualquer("parametros", "rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
-app.include_router(movimentacoes.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
-app.include_router(baixas.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
-app.include_router(compra_animal.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
-app.include_router(compra_semen.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
-app.include_router(venda_animal.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
-app.include_router(relatorio_compra_venda_animal.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
-app.include_router(relatorio_compra_semen.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
+app.include_router(cadastro.router_touros_leitura, dependencies=[Depends(exigir_modulo_qualquer("parametros", "rebanho")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
+app.include_router(movimentacoes.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
+app.include_router(baixas.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
+app.include_router(compra_animal.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
+app.include_router(compra_semen.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
+app.include_router(venda_animal.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
+app.include_router(relatorio_compra_venda_animal.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
+app.include_router(relatorio_compra_semen.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
 # Exclusões: qualquer usuário logado pode buscar/solicitar; excluir de fato,
 # aprovar e rejeitar são restritos a administradores (gate por rota, dentro
 # do próprio router — ver exclusoes.py).

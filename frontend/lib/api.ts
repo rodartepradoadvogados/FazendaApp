@@ -1213,7 +1213,9 @@ async function salvarPreferencias(dados: { paleta?: "vinho" | "verde" | "azul"; 
   return usuario;
 }
 
-// fetch com token; redireciona ao login se a sessão cair (401).
+// fetch com token; redireciona ao login se a sessão cair (401), e à tela de
+// escolha de conta se a sessão não disser em qual fazenda ela está (409 com o
+// cabeçalho X-Fazenda-Nao-Selecionada).
 // Exportado para a fila offline do app móvel (lib/offline.ts) reutilizar.
 export function authFetch(url: string, opts: RequestInit = {}): Promise<Response> {
   const token = getToken();
@@ -1222,6 +1224,21 @@ export function authFetch(url: string, opts: RequestInit = {}): Promise<Response
   return fetch(url, { ...opts, headers, cache: "no-store" }).then((res) => {
     if (res.status === 401 && typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
       logout();
+    }
+    // A trava de tenant do backend (fazenda/auth.py::exigir_fazenda_selecionada)
+    // recusa qualquer rota de fazenda quando o token não diz em qual fazenda a
+    // requisição acontece. Quem cai aqui é sobretudo quem já estava logado com
+    // um token antigo, de antes do multi-fazenda: para essa pessoa o certo é
+    // escolher a conta, não ver um erro. Só o cabeçalho identifica esta recusa
+    // — 409 sozinho é status de negócio em várias outras rotas. A sessão NÃO é
+    // descartada (ao contrário do 401): o login continua válido, só falta
+    // escolher onde entrar.
+    if (
+      res.status === 409 && res.headers.get("X-Fazenda-Nao-Selecionada") &&
+      typeof window !== "undefined" &&
+      !location.pathname.startsWith("/escolher-conta") && !location.pathname.startsWith("/login")
+    ) {
+      location.href = "/escolher-conta";
     }
     return res;
   });
