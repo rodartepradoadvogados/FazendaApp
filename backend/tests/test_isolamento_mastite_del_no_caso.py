@@ -68,11 +68,15 @@ def test_lancamento_mastite_usa_del_dias_da_propria_fazenda(client):
             for modulo in MODULOS_COMERCIAIS:
                 s.add(ContratoFazendaModulo(fazenda_id=fid, modulo=modulo, preco=0.0, ativo=True))
 
-        protocolo = ProtocoloSanitario(nome="Mastite clínica", eh_mastite=True, dia_inicial=1)
+        # O protocolo é DADO DA FAZENDA (uq nome+fazenda_id, listagem filtrada
+        # por fazenda_id) — nunca catálogo global. `lancar_protocolo` recusa
+        # com 404 o protocolo de outra fazenda, então o desta fazenda tem que
+        # nascer carimbado com ela, como a rota de cadastro faz.
+        protocolo = ProtocoloSanitario(nome="Mastite clínica", eh_mastite=True, dia_inicial=1, fazenda_id=2)
         s.add(protocolo)
         s.commit()
         s.refresh(protocolo)
-        s.add(ProtocoloSanitarioEtapa(protocolo_id=protocolo.id, dia=1, produto="Mastite Injetável", dosagem=10.0, unidade="ml", via="Intramamária"))
+        s.add(ProtocoloSanitarioEtapa(protocolo_id=protocolo.id, fazenda_id=2, dia=1, produto="Mastite Injetável", dosagem=10.0, unidade="ml", via="Intramamária"))
         s.commit()
 
         # Mesmo numero "500" nas duas fazendas, DEL bem diferente entre elas.
