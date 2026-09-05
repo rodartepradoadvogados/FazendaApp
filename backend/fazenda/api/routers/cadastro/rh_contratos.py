@@ -753,6 +753,10 @@ class DiariaPagamentoIn(BaseModel):
     # Conta bancária de onde sai o pagamento — OPCIONAL (ver
     # _resolver_conta_corrente em rh_folha.py).
     conta_corrente_id: int | None = None
+    # Confirmação de pagamento acima do saldo devedor (total apurado menos o
+    # que já foi pago menos os vales já adiantados). Ver
+    # `registrar_pagamento_diaria`.
+    confirmar_excedente: bool = False
 
 
 def _dias_confirmados_diaria(session: Session, diaria_id: int, ate: date | None = None) -> tuple[int, date | None]:
@@ -1109,8 +1113,39 @@ def registrar_pagamento_diaria(
         raise HTTPException(status_code=404, detail="Diária não encontrada")
     if dados.valor <= 0:
         raise HTTPException(status_code=400, detail="Valor do pagamento deve ser positivo")
-    conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
     pessoa = session.get(Pessoa, diaria.pessoa_id)
+
+    # Pagar mais do que se deve não pode acontecer em silêncio. O saldo
+    # devedor (`_resumo_diaria`) já desconta os pagamentos anteriores E os
+    # vales avulsos já adiantados — e era exatamente esse desconto que o
+    # endpoint ignorava: quem digitava o total das diárias esquecendo o
+    # adiantamento pagava a mesma diária duas vezes, sem um aviso.
+    #
+    # Continua sendo POSSÍVEL pagar a mais (adiantar o mês seguinte, acertar
+    # uma diferença combinada), só que com confirmação explícita — mesmo
+    # mecanismo de `confirmar_periodo_pago` em `salvar_dias_diaria` logo
+    # abaixo: 409 com os números na mão para a tela poder perguntar.
+    resumo_antes = _resumo_diaria(session, diaria, pessoa.nome if pessoa else "—")
+    saldo_devedor = resumo_antes["saldo_devedor"]
+    excedente = round(dados.valor - saldo_devedor, 2)
+    if excedente > 0 and not dados.confirmar_excedente:
+        raise HTTPException(status_code=409, detail={
+            "mensagem": (
+                f"O pagamento de R$ {dados.valor:.2f} é maior que o saldo devedor desta diária "
+                f"(R$ {saldo_devedor:.2f} = R$ {resumo_antes['total_ate_hoje']:.2f} apurados "
+                f"− R$ {resumo_antes['valor_pago']:.2f} já pagos "
+                f"− R$ {resumo_antes['valor_vale']:.2f} de vale já adiantado). "
+                f"Sobram R$ {excedente:.2f} pagos a mais. Confirme se quiser pagar assim mesmo."
+            ),
+            "saldo_devedor": saldo_devedor,
+            "valor_informado": round(dados.valor, 2),
+            "excedente": excedente,
+            "total_ate_hoje": resumo_antes["total_ate_hoje"],
+            "valor_pago": resumo_antes["valor_pago"],
+            "valor_vale": resumo_antes["valor_vale"],
+        })
+
+    conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
     numero_lancamento = _proximo_numero_lancamento(session, dados.data_pagamento.year)
     session.add(DiariaPagamento(
         diaria_id=diaria_id, data_pagamento=dados.data_pagamento, valor=dados.valor,
@@ -1344,6 +1379,13 @@ class ValeAvulsoIn(BaseModel):
     acao: str | None = None
     valores_itens: dict[int, float] | None = None
     confirmar: bool = False
+    # Confirmação de um risco DIFERENTE de `confirmar` (que só trata "o valor
+    # mudou"): o vale ser maior que o saldo pendente do alvo, ou seja, sair
+    # dinheiro do caixa sem parcela/etapa para abater. Flag própria de
+    # propósito — confirmar a mudança de valor não pode valer como
+    # confirmação de um aviso que o usuário nunca viu. Ver
+    # `_exigir_confirmacao_vale_acima_do_pendente`.
+    confirmar_excedente: bool = False
 
 
 def _info_parcelas_vale_avulso(session: Session, vale: ValeAvulso) -> dict:
@@ -1352,7 +1394,13 @@ def _info_parcelas_vale_avulso(session: Session, vale: ValeAvulso) -> dict:
     ValeAvulsoAbatimento) — só se aplica a empreitada/contrato; diária não
     tem parcela agendada, então volta sempre vazio."""
     if vale.origem_tipo == "diaria":
-        return {"total_parcelas_origem": None, "parcelas_referenciadas": []}
+        # Diária não abate parcela nenhuma (o vale entra como `valor_vale` no
+        # saldo devedor, ver `_resumo_diaria`) — "abatido x não abatido" não
+        # se aplica, então vai None em vez de 0 para não parecer sobra.
+        return {
+            "total_parcelas_origem": None, "parcelas_referenciadas": [],
+            "valor_abatido": None, "valor_nao_abatido": None,
+        }
     if vale.origem_tipo == "empreitada":
         empreitada = session.get(Empreitada, vale.origem_id)
         if empreitada and empreitada.tipo_pagamento == "por_etapa":
@@ -1377,7 +1425,17 @@ def _info_parcelas_vale_avulso(session: Session, vale: ValeAvulso) -> dict:
         {"numero_parcela": posicao.get(ab.item_id), "valor_abatido": ab.valor_abatido}
         for ab in abatimentos if ab.item_tipo == item_tipo
     ]
-    return {"total_parcelas_origem": len(todos), "parcelas_referenciadas": referenciadas}
+    # `valor_nao_abatido` é a sobra de um vale maior que o saldo pendente do
+    # alvo (ver `_exigir_confirmacao_vale_acima_do_pendente`): dinheiro que
+    # saiu do caixa e não reduziu parcela nenhuma. Antes ele simplesmente
+    # sumia; expor aqui é o que faz a sobra confirmada continuar visível no
+    # relatório de vales em vez de virar um furo silencioso.
+    valor_abatido = round(sum(r["valor_abatido"] for r in referenciadas), 2)
+    return {
+        "total_parcelas_origem": len(todos), "parcelas_referenciadas": referenciadas,
+        "valor_abatido": valor_abatido,
+        "valor_nao_abatido": round(vale.valor - valor_abatido, 2),
+    }
 
 
 def _listar_vales_avulsos(session: Session, origem_tipo: str, origem_id: int) -> list[dict]:
@@ -1435,6 +1493,165 @@ def _sincronizar_conta_do_item(session: Session, item) -> None:
             session.add(conta)
 
 
+def _conta_paga_do_item(session: Session, item) -> ContaGerencial | None:
+    """Lançamento (ContaGerencial) da parcela/etapa que JÁ foi baixado, ou
+    None. É o espelho exato do ponto cego de `_sincronizar_conta_do_item`
+    acima: conta com `valor_pago` preenchido é a única que ele se recusa a
+    atualizar — logo, é exatamente onde mexer no valor da parcela quebra a
+    igualdade entre o que o sistema diz que se deve e o que já foi pago."""
+    numero = getattr(item, "numero_lancamento_gerado", None)
+    if not numero:
+        return None
+    conta = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero)).first()
+    return conta if conta is not None and conta.valor_pago is not None else None
+
+
+def _bloquear_reversao_de_abatimento_pago(session: Session, vale_avulso_id: int) -> None:
+    """
+    Recusa desfazer o abatimento de um vale que já caiu numa parcela/etapa
+    PAGA.
+
+    Por que travar em vez de "consertar por baixo": `_reverter_vale_avulso`
+    devolve o valor abatido à parcela, mas `_sincronizar_conta_do_item` só
+    atualiza contas ainda em aberto. Numa parcela já quitada o resultado é
+    uma parcela de R$ 2.000 contra um lançamento pago de R$ 1.500 — uma
+    dívida de R$ 500 que nasce no banco e que ninguém vai cobrar de
+    ninguém. Ajustar a conta paga também não serve: o dinheiro JÁ SAIU do
+    caixa; quem tem que decidir o que fazer com isso é a pessoa, não o
+    endpoint.
+
+    Mesmo tratamento (e mesmo motivo) do vale de funcionário, que bloqueia
+    com 400 quando a competência do vale já está paga — ver
+    `_vale_competencia_paga` em rh_folha.py. E mesma regra que a exclusão de
+    Empreitada/Contrato já aplicava em `rules/exclusao_tipos/pessoal.py`
+    ("parcela paga → 400 mandando estornar a baixa"): a regra já existia no
+    sistema, só não valia para editar/excluir o vale em si. A diferença é que
+    lá o bloqueio olha TODAS as parcelas do alvo, e aqui só as que ESTE vale
+    abateu — pagar uma parcela que o vale não tocou não tem por que impedir
+    o estorno dele.
+
+    A mensagem aponta o lançamento exato a estornar (POST
+    /financeiro/lancamentos/{id}/estornar, o botão "Estornar" em Contas a
+    Pagar), para a operação ficar possível depois do estorno, e só depois dele.
+    """
+    abatimentos = session.exec(
+        select(ValeAvulsoAbatimento).where(ValeAvulsoAbatimento.vale_avulso_id == vale_avulso_id)
+    ).all()
+    for ab in abatimentos:
+        Modelo = _modelo_item_vale_avulso(ab.item_tipo)
+        item = session.get(Modelo, ab.item_id)
+        if item is None:
+            continue
+        conta = _conta_paga_do_item(session, item)
+        if conta is not None:
+            rotulo = "etapa" if ab.item_tipo == "empreitada_etapa" else "parcela"
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Este vale de R$ {round(ab.valor_abatido, 2):.2f} já foi abatido de uma {rotulo} "
+                    f"que JÁ FOI PAGA (lançamento {conta.numero_lancamento}, "
+                    f"baixado em {conta.data_pagamento} por R$ {conta.valor_pago:.2f}). "
+                    f"Editar ou excluir o vale agora devolveria o valor à {rotulo} sem devolver o "
+                    "dinheiro que já saiu do caixa, criando uma dívida que ninguém vai cobrar. "
+                    f"Estorne o pagamento do lançamento {conta.numero_lancamento} em Contas a Pagar "
+                    "e refaça a operação."
+                ),
+            )
+
+
+def _saldo_pendente_do_alvo(
+    session: Session, origem_tipo: str, origem_id: int, vale_avulso_id: int | None = None,
+) -> float | None:
+    """
+    Total ainda em aberto (soma das parcelas/etapas pendentes) do alvo de um
+    vale avulso — quanto de fato existe para abater. `None` quando a pergunta
+    não se aplica: diária não tem parcela agendada (o vale só soma ao saldo
+    devedor, ver `_resumo_diaria`) e alvo sem nenhum item também não tem
+    saldo a comparar.
+
+    `vale_avulso_id` é para a EDIÇÃO: o PUT reverte o vale antes de reaplicar,
+    então o pendente relevante é o de DEPOIS da reversão — o que está em
+    aberto hoje mais o que este vale devolverá às parcelas/etapas que ainda
+    estão pendentes. Calculado por aritmética justamente para a checagem
+    poder acontecer ANTES de qualquer escrita (um 409 no meio do
+    reverter/reaplicar deixaria o vale sem abatimento nenhum).
+    """
+    if origem_tipo == "diaria":
+        return None
+    item_tipo, itens = _itens_pendentes_vale_avulso(session, origem_tipo, origem_id)
+    if not item_tipo or not itens:
+        return None if not item_tipo else 0.0
+    total = round(sum(i.valor for i in itens), 2)
+    if vale_avulso_id is not None:
+        ids_pendentes = {i.id for i in itens}
+        devolvido = sum(
+            ab.valor_abatido for ab in session.exec(
+                select(ValeAvulsoAbatimento).where(ValeAvulsoAbatimento.vale_avulso_id == vale_avulso_id)
+            ).all()
+            if ab.item_tipo == item_tipo and ab.item_id in ids_pendentes
+        )
+        total = round(total + devolvido, 2)
+    return total
+
+
+def _exigir_confirmacao_vale_acima_do_pendente(
+    session: Session, origem_tipo: str, origem_id: int, valor: float, confirmado: bool,
+    vale_avulso_id: int | None = None,
+) -> None:
+    """
+    Vale maior que o saldo pendente do alvo: pede confirmação explícita (409)
+    em vez de engolir a sobra.
+
+    REGRA ESCOLHIDA e por quê: `_aplicar_vale_avulso` consome as parcelas
+    pendentes até acabar o valor e simplesmente ABANDONA o `restante` — nem
+    erro, nem aviso — enquanto `_sincronizar_conta_vale_avulso` lança a saída
+    de caixa pelo valor CHEIO. Adiantar R$ 5.000 num contrato com R$ 3.000
+    pendentes tirava R$ 5.000 do caixa e abatia R$ 3.000: R$ 2.000 sumiam do
+    controle.
+
+    Não recusamos de vez porque adiantar acima do pendente é legítimo com
+    frequência (empreitada por etapa cujas próximas etapas ainda nem foram
+    cadastradas, contrato que vai ser prorrogado, adiantamento de fim de ano).
+    Também não registramos a sobra em silêncio: silêncio é exatamente o bug.
+    Então seguimos o precedente do próprio módulo — 409 + flag de confirmação,
+    como `confirmar_periodo_pago` em `salvar_dias_diaria` e o `confirmar` de
+    `atualizar_vale_avulso` — dizendo QUANTO é o pendente e QUANTO vai sobrar.
+    Confirmado, o vale passa e a sobra deixa de ser invisível: aparece como
+    `valor_nao_abatido` no relatório de vales (ver
+    `_info_parcelas_vale_avulso`).
+    """
+    if confirmado:
+        return
+    pendente = _saldo_pendente_do_alvo(session, origem_tipo, origem_id, vale_avulso_id)
+    if pendente is None:
+        return
+    excedente = round(round(valor, 2) - pendente, 2)
+    if excedente <= 0:
+        return
+    alvo = "deste contrato" if origem_tipo == "contrato" else "desta empreitada"
+    # Pendente zero é o caso do contrato sem frequência definida (nenhuma
+    # parcela agendada) e o da empreitada com tudo já concluído/pago: aí o
+    # vale inteiro é sobra, e dizer "maior que R$ 0,00" confundiria mais do
+    # que explicaria.
+    pendente_zerado = pendente <= 0
+    raise HTTPException(status_code=409, detail={
+        "mensagem": (
+            (
+                f"Não há parcela/etapa em aberto {alvo} para abater este vale de "
+                f"R$ {round(valor, 2):.2f} — o valor inteiro sairá do caixa sem reduzir nada. "
+                if pendente_zerado else
+                f"O vale de R$ {round(valor, 2):.2f} é maior que o saldo pendente {alvo} "
+                f"(R$ {pendente:.2f}). Só R$ {pendente:.2f} serão abatidos das parcelas/etapas "
+                f"em aberto; os outros R$ {excedente:.2f} sairão do caixa sem nada para abater. "
+            )
+            + "Confirme se quiser lançar assim mesmo."
+        ),
+        "saldo_pendente": pendente,
+        "valor_informado": round(valor, 2),
+        "excedente": excedente,
+    })
+
+
 def _aplicar_vale_avulso(
     session: Session, vale_avulso_id: int, origem_tipo: str, origem_id: int, valor: float,
     fazenda_id: int | None = None,
@@ -1462,6 +1679,19 @@ def _aplicar_vale_avulso(
     if not item_tipo:
         return
 
+    # Sobre o `restante` que pode sobrar deste laço (vale maior que o total
+    # pendente): NÃO é tratado aqui de propósito. Quem decide é
+    # `_exigir_confirmacao_vale_acima_do_pendente`, chamado pelos endpoints
+    # ANTES de qualquer escrita — chegar até aqui já significa "usuário viu
+    # quanto ia sobrar e confirmou". A sobra fica visível como
+    # `valor_nao_abatido` no relatório de vales.
+    #
+    # CONHECIDO, fora do escopo desta correção: `min(item.valor, restante)`
+    # pode zerar a parcela/etapa, e a ContaGerencial dela fica valendo
+    # R$ 0,00 — viva em Contas a Pagar e na Agenda. Apagá-la aqui não serve:
+    # a linha precisa sobreviver para `_reverter_vale_avulso` ter onde
+    # devolver o valor. A correção certa é as listagens ignorarem conta
+    # zerada (routers/financeiro.py e routers/agenda.py), fora deste arquivo.
     for item in itens:
         if restante <= 0:
             break
@@ -1511,7 +1741,15 @@ def _redistribuir_itens_pendentes_livre(session: Session, itens: list, valores: 
 def _reverter_vale_avulso(session: Session, vale_avulso_id: int) -> None:
     """Desfaz o efeito de `_aplicar_vale_avulso`: devolve a cada item exatamente
     o valor que foi abatido dele (registrado em ValeAvulsoAbatimento), na
-    ordem inversa em que foi abatido, e sincroniza a ContaGerencial vinculada."""
+    ordem inversa em que foi abatido, e sincroniza a ContaGerencial vinculada.
+
+    Recusa-se a agir quando algum desses itens já foi PAGO — ver
+    `_bloquear_reversao_de_abatimento_pago`. A trava mora aqui dentro (e não
+    só nos endpoints) porque esta função é a única que mexe no valor da
+    parcela sem passar pela tela: qualquer chamador novo herda a proteção sem
+    precisar lembrar dela. Como ela levanta ANTES de qualquer escrita, o
+    reverter continua sendo tudo-ou-nada."""
+    _bloquear_reversao_de_abatimento_pago(session, vale_avulso_id)
     abatimentos = session.exec(
         select(ValeAvulsoAbatimento).where(ValeAvulsoAbatimento.vale_avulso_id == vale_avulso_id).order_by(ValeAvulsoAbatimento.id.desc())
     ).all()
@@ -1657,6 +1895,13 @@ def criar_vale_avulso(
         raise HTTPException(status_code=400, detail="Forma de pagamento inválida")
     origem = _origem_vale_avulso(session, dados.origem_tipo, dados.origem_id, fazenda_id)
     conta = _validar_conta_vale_avulso(session, dados.forma_pagamento, dados.conta_corrente_id, fazenda_id)
+    # Antes de gravar qualquer coisa: vale maior que o pendente precisa de
+    # confirmação (senão a sobra sai do caixa e some do controle). A checagem
+    # vem ANTES do `session.add(vale)` de propósito — um 409 depois dele
+    # deixaria um vale órfão gravado, sem abatimento e sem lançamento.
+    _exigir_confirmacao_vale_acima_do_pendente(
+        session, dados.origem_tipo, dados.origem_id, dados.valor, dados.confirmar_excedente,
+    )
     pessoa = session.get(Pessoa, origem.pessoa_id)
 
     vale = ValeAvulso(
@@ -1733,6 +1978,12 @@ def atualizar_vale_avulso(
         raise HTTPException(status_code=400, detail="Não é possível trocar a origem (Empreitada/Contrato/Diária) de um vale já lançado")
     conta = _validar_conta_vale_avulso(session, dados.forma_pagamento, dados.conta_corrente_id, fazenda_id)
 
+    # Duas travas antes de QUALQUER escrita — este endpoint reverte e reaplica
+    # o abatimento, então recusar no meio do caminho deixaria o vale sem
+    # abatimento nenhum.
+    # 1) parcela/etapa já paga: nem com confirmação (ver a função).
+    _bloquear_reversao_de_abatimento_pago(session, vale_id)
+
     diferenca = round(dados.valor - vale.valor, 2)
     if diferenca != 0 and not dados.confirmar:
         raise HTTPException(status_code=409, detail={
@@ -1741,6 +1992,14 @@ def atualizar_vale_avulso(
             "valor_informado": dados.valor,
             "diferenca": diferenca,
         })
+
+    # 2) novo valor acima do pendente. O pendente considerado é o de DEPOIS da
+    # reversão (o abatimento atual volta para as parcelas), por isso o
+    # `vale_avulso_id` — ver `_saldo_pendente_do_alvo`.
+    _exigir_confirmacao_vale_acima_do_pendente(
+        session, dados.origem_tipo, dados.origem_id, dados.valor, dados.confirmar_excedente,
+        vale_avulso_id=vale_id,
+    )
 
     _reverter_vale_avulso(session, vale_id)
     session.commit()
