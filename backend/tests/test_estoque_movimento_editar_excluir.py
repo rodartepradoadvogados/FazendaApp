@@ -59,7 +59,14 @@ def client(monkeypatch):
 
     main.app.dependency_overrides[get_current_user] = lambda: _FakeAdmin()
     main.app.dependency_overrides[exigir_admin] = lambda: _FakeAdmin()
-    main.app.dependency_overrides[get_fazenda_atual_id] = lambda: None
+    # A sessão do teste PRECISA dizer em qual fazenda ela trabalha: com a
+    # tabela `fazenda` populada (acima), `exigir_fazenda_selecionada`
+    # (fazenda/auth.py, montada em todo router de tenant em main.py) recusa
+    # com 409 qualquer requisição sem fazenda no token. O `lambda: None`
+    # que estava aqui simulava o token legado "sem fid", que antes só
+    # desligava o filtro de tenant e hoje nem entra na rota — quem quer
+    # testar OUTRA fazenda usa `_como_fazenda(2)`.
+    main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 1
 
     with TestClient(main.app) as c:
         yield c, engine
@@ -96,10 +103,10 @@ class TestPutMovimentoEstoque:
     def test_editar_quantidade_ajusta_saldo_pelo_delta(self, client):
         c, engine = client
         with _sessao(engine) as s:
-            s.add(Estoque(id=1, nome="Ração", quantidade=100, unidade="kg"))
+            s.add(Estoque(id=1, nome="Ração", quantidade=100, unidade="kg", fazenda_id=1))
             s.add(MovimentoEstoque(
                 id=1, nome_item="Ração", movimento="Entrada de ajuste", quantidade=10,
-                unidade="kg", data_movimento=date(2026, 1, 1), estoque_id=1,
+                unidade="kg", data_movimento=date(2026, 1, 1), estoque_id=1, fazenda_id=1,
             ))
             s.commit()
 
@@ -120,10 +127,10 @@ class TestPutMovimentoEstoque:
     def test_editar_saida_ajusta_saldo_pelo_delta_com_sinal_invertido(self, client):
         c, engine = client
         with _sessao(engine) as s:
-            s.add(Estoque(id=1, nome="Ração", quantidade=100, unidade="kg"))
+            s.add(Estoque(id=1, nome="Ração", quantidade=100, unidade="kg", fazenda_id=1))
             s.add(MovimentoEstoque(
                 id=1, nome_item="Ração", movimento="Saída de ajuste", quantidade=10,
-                unidade="kg", data_movimento=date(2026, 1, 1), estoque_id=1,
+                unidade="kg", data_movimento=date(2026, 1, 1), estoque_id=1, fazenda_id=1,
             ))
             s.commit()
 
@@ -137,10 +144,10 @@ class TestPutMovimentoEstoque:
     def test_editar_movimento_origem_lancamento_da_400(self, client):
         c, engine = client
         with _sessao(engine) as s:
-            s.add(Estoque(id=1, nome="Vacina X", quantidade=50))
+            s.add(Estoque(id=1, nome="Vacina X", quantidade=50, fazenda_id=1))
             s.add(MovimentoEstoque(
                 id=1, nome_item="Vacina X", movimento="Aplicação", quantidade=1,
-                data_movimento=date(2026, 1, 1), estoque_id=1, origem_tipo="sanidade", origem_id=99,
+                data_movimento=date(2026, 1, 1), estoque_id=1, fazenda_id=1, origem_tipo="sanidade", origem_id=99,
             ))
             s.commit()
 
@@ -153,10 +160,10 @@ class TestPutMovimentoEstoque:
     def test_editar_movimento_com_pedido_item_da_400(self, client):
         c, engine = client
         with _sessao(engine) as s:
-            s.add(Estoque(id=1, nome="Cal", quantidade=10))
+            s.add(Estoque(id=1, nome="Cal", quantidade=10, fazenda_id=1))
             s.add(MovimentoEstoque(
                 id=1, nome_item="Cal", movimento="Entrada de ajuste", quantidade=1,
-                data_movimento=date(2026, 1, 1), estoque_id=1, pedido_item_id=7,
+                data_movimento=date(2026, 1, 1), estoque_id=1, fazenda_id=1, pedido_item_id=7,
             ))
             s.commit()
 
@@ -167,10 +174,10 @@ class TestPutMovimentoEstoque:
     def test_editar_quantidade_zero_da_400(self, client):
         c, engine = client
         with _sessao(engine) as s:
-            s.add(Estoque(id=1, nome="Cal", quantidade=10))
+            s.add(Estoque(id=1, nome="Cal", quantidade=10, fazenda_id=1))
             s.add(MovimentoEstoque(
                 id=1, nome_item="Cal", movimento="Entrada de ajuste", quantidade=1,
-                data_movimento=date(2026, 1, 1), estoque_id=1,
+                data_movimento=date(2026, 1, 1), estoque_id=1, fazenda_id=1,
             ))
             s.commit()
 
@@ -199,11 +206,11 @@ class TestPutMovimentoEstoque:
     def test_editar_saida_de_semen_espelha_em_estoque_semen(self, client):
         c, engine = client
         with _sessao(engine) as s:
-            s.add(EstoqueSemen(id=1, touro_nome="Touro A", naab="000A", doses=20))
-            s.add(Estoque(id=1, nome="Sêmen Touro A", quantidade=20, estoque_semen_id=1))
+            s.add(EstoqueSemen(id=1, touro_nome="Touro A", naab="000A", doses=20, fazenda_id=1))
+            s.add(Estoque(id=1, nome="Sêmen Touro A", quantidade=20, estoque_semen_id=1, fazenda_id=1))
             s.add(MovimentoEstoque(
                 id=1, nome_item="Sêmen Touro A", movimento="Aplicação", quantidade=2,
-                data_movimento=date(2026, 1, 1), estoque_id=1,
+                data_movimento=date(2026, 1, 1), estoque_id=1, fazenda_id=1,
             ))
             s.commit()
 
@@ -226,10 +233,10 @@ class TestExcluirMovimentoEstoqueViaMotorGenerico:
     def test_excluir_devolve_o_saldo_exato(self, client):
         c, engine = client
         with _sessao(engine) as s:
-            s.add(Estoque(id=1, nome="Ração", quantidade=100, unidade="kg"))
+            s.add(Estoque(id=1, nome="Ração", quantidade=100, unidade="kg", fazenda_id=1))
             s.add(MovimentoEstoque(
                 id=1, nome_item="Ração", movimento="Saída de ajuste", quantidade=15,
-                unidade="kg", data_movimento=date(2026, 1, 1), estoque_id=1,
+                unidade="kg", data_movimento=date(2026, 1, 1), estoque_id=1, fazenda_id=1,
             ))
             s.commit()
 
@@ -246,11 +253,11 @@ class TestExcluirMovimentoEstoqueViaMotorGenerico:
     def test_excluir_saida_de_semen_devolve_doses(self, client):
         c, engine = client
         with _sessao(engine) as s:
-            s.add(EstoqueSemen(id=1, touro_nome="Touro A", naab="000A", doses=10))
-            s.add(Estoque(id=1, nome="Sêmen Touro A", quantidade=10, estoque_semen_id=1))
+            s.add(EstoqueSemen(id=1, touro_nome="Touro A", naab="000A", doses=10, fazenda_id=1))
+            s.add(Estoque(id=1, nome="Sêmen Touro A", quantidade=10, estoque_semen_id=1, fazenda_id=1))
             s.add(MovimentoEstoque(
                 id=1, nome_item="Sêmen Touro A", movimento="Aplicação", quantidade=4,
-                data_movimento=date(2026, 1, 1), estoque_id=1,
+                data_movimento=date(2026, 1, 1), estoque_id=1, fazenda_id=1,
             ))
             s.commit()
 
@@ -263,10 +270,10 @@ class TestExcluirMovimentoEstoqueViaMotorGenerico:
     def test_excluir_movimento_com_origem_tipo_da_400_no_impacto(self, client):
         c, engine = client
         with _sessao(engine) as s:
-            s.add(Estoque(id=1, nome="Vacina X", quantidade=50))
+            s.add(Estoque(id=1, nome="Vacina X", quantidade=50, fazenda_id=1))
             s.add(MovimentoEstoque(
                 id=1, nome_item="Vacina X", movimento="Aplicação", quantidade=1,
-                data_movimento=date(2026, 1, 1), estoque_id=1, origem_tipo="sanidade", origem_id=99,
+                data_movimento=date(2026, 1, 1), estoque_id=1, fazenda_id=1, origem_tipo="sanidade", origem_id=99,
             ))
             s.commit()
 
@@ -280,10 +287,10 @@ class TestExcluirMovimentoEstoqueViaMotorGenerico:
     def test_excluir_movimento_com_pedido_item_da_400(self, client):
         c, engine = client
         with _sessao(engine) as s:
-            s.add(Estoque(id=1, nome="Cal", quantidade=10))
+            s.add(Estoque(id=1, nome="Cal", quantidade=10, fazenda_id=1))
             s.add(MovimentoEstoque(
                 id=1, nome_item="Cal", movimento="Entrada de ajuste", quantidade=1,
-                data_movimento=date(2026, 1, 1), estoque_id=1, pedido_item_id=7,
+                data_movimento=date(2026, 1, 1), estoque_id=1, fazenda_id=1, pedido_item_id=7,
             ))
             s.commit()
 
@@ -311,10 +318,10 @@ class TestExcluirMovimentoEstoqueViaMotorGenerico:
     def test_previa_de_impacto_nao_altera_nada(self, client):
         c, engine = client
         with _sessao(engine) as s:
-            s.add(Estoque(id=1, nome="Ração", quantidade=100, unidade="kg"))
+            s.add(Estoque(id=1, nome="Ração", quantidade=100, unidade="kg", fazenda_id=1))
             s.add(MovimentoEstoque(
                 id=1, nome_item="Ração", movimento="Saída de ajuste", quantidade=15,
-                unidade="kg", data_movimento=date(2026, 1, 1), estoque_id=1,
+                unidade="kg", data_movimento=date(2026, 1, 1), estoque_id=1, fazenda_id=1,
             ))
             s.commit()
 
@@ -347,10 +354,10 @@ class TestExcluirMovimentoEstoqueViaMotorGenerico:
         de um comportamento pré-existente do motor compartilhado."""
         c, engine = client
         with _sessao(engine) as s:
-            s.add(Estoque(id=1, nome="Ração", quantidade=100, unidade="kg"))
+            s.add(Estoque(id=1, nome="Ração", quantidade=100, unidade="kg", fazenda_id=1))
             s.add(MovimentoEstoque(
                 id=1, nome_item="Ração", movimento="Saída de ajuste", quantidade=15,
-                unidade="kg", data_movimento=date(2026, 1, 1), estoque_id=1,
+                unidade="kg", data_movimento=date(2026, 1, 1), estoque_id=1, fazenda_id=1,
             ))
             s.commit()
 

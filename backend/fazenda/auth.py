@@ -684,6 +684,87 @@ def exigir_contrato_ativo():
     return _dep
 
 
+def multifazenda_provisionado(session: Session) -> bool:
+    """Este ambiente tem multi-fazenda de fato em uso? (= a tabela `fazenda`
+    tem pelo menos uma linha). É a linha divisória usada por
+    `resolver_fazenda_id_escrita`, por `exigir_fazenda_selecionada` e pelas
+    rotas que precisam recusar um token sem fazenda por conta própria: com
+    zero fazendas não há tenant a isolar (instalação anterior à migração
+    f1a2b3c4d5e6, e a maior parte da suíte de testes); com qualquer fazenda
+    cadastrada — todo ambiente de produção — a falta de fazenda no token
+    deixa de ser "legado tolerado" e passa a ser recusa."""
+    return session.exec(select(Fazenda.id).limit(1)).first() is not None
+
+
+def exigir_fazenda_selecionada():
+    """Dependência de router: RECUSA qualquer requisição cujo token não diga
+    em que fazenda ela acontece.
+
+    É a trava que faltava para a causa raiz da auditoria (F-A-01, F-B-01,
+    F-B-02, F-A-03). O sistema inteiro isola tenant pelo padrão tolerante
+    `if fazenda_id is not None: query = query.where(Modelo.fazenda_id == ...)`
+    — herdado do piloto de multi-fazenda, quando havia uma fazenda só e
+    "sem fid" queria dizer "antes da migração". Com mais de uma fazenda-
+    cliente no banco, esse `if` inverte de sentido: um token SEM "fid" não
+    restringe nada, ele DESLIGA o isolamento em toda rota que segue o padrão
+    — leitura e escrita, em todos os módulos ao mesmo tempo.
+
+    Corrigir rota por rota seria interminável e frágil (são centenas de
+    consultas, e cada rota nova nasceria com o mesmo risco). A trava certa é
+    na porta: se a requisição vai mexer em dado de fazenda, o token tem que
+    dizer QUAL fazenda. Não dizendo, ela não entra — e aí não importa quantas
+    consultas lá dentro seguem o padrão tolerante.
+
+    Três formas de um token chegar sem "fid", todas reais (ver
+    routers/auth.py::login):
+      1. usuário com 2+ fazendas que não chamou /auth/selecionar-fazenda;
+      2. membro da Equipe CowData (o login sempre oferece a escolha a ele);
+      3. token legado/"manter conectado" emitido antes do multi-fazenda.
+    Nenhuma delas tem por que operar dentro de uma fazenda: (1) e (3) só
+    precisam escolher a fazenda, (2) tem que entrar pelo Cofre de acesso —
+    que é justamente o controle de suporte (motivo, protocolo, expiração,
+    auditoria, nível de sigilo) que o login normal contornava, porque o token
+    saía sem "fid" E sem "suporte" e o bloqueio de modo suporte (main.py) só
+    olha a claim "suporte". A sessão de suporte legítima continua passando
+    aqui: o token do Cofre carimba o `fid` da fazenda visitada
+    (routers/cofre_acesso.py).
+
+    A escape hatch é a mesma — e pela mesma razão — de
+    `resolver_fazenda_id_escrita`: se a tabela `fazenda` está VAZIA, o
+    multi-fazenda não está provisionado neste ambiente e não há tenant a
+    isolar (é o caso da suíte de testes que não monta cenário multi-fazenda,
+    e o de qualquer instalação anterior à migração f1a2b3c4d5e6). Havendo
+    QUALQUER fazenda cadastrada — todo ambiente de produção —, recusa.
+
+    Deliberadamente NÃO resolve sozinha a fazenda do usuário de vínculo único
+    (como `resolver_fazenda_id_escrita` faz na escrita). Resolver aqui não
+    consertaria nada: o endpoint continuaria lendo `None` do token via
+    `get_fazenda_atual_id` e as consultas continuariam sem filtro. Ou o token
+    diz a fazenda, ou a requisição não entra."""
+    def _dep(
+        fazenda_id: int | None = Depends(get_fazenda_atual_id),
+        session: Session = Depends(get_session),
+    ) -> None:
+        if fazenda_id is not None:
+            return
+        if not multifazenda_provisionado(session):
+            return
+        raise HTTPException(
+            status_code=409,
+            detail="Sua sessão não tem uma fazenda selecionada. Saia e entre novamente para "
+                   "escolher em qual fazenda deseja trabalhar.",
+            # 409 já é usado como status de negócio em várias rotas (conflito
+            # de sincronização, lançamento duplicado...), então o frontend não
+            # pode reagir ao status sozinho. Este cabeçalho é a marca que
+            # distingue ESTA recusa das outras: authFetch (lib/api.ts) a
+            # reconhece e manda o usuário para /escolher-conta em vez de
+            # mostrar um erro cru. Precisa estar em expose_headers do CORS
+            # (main.py) para o JS conseguir lê-lo.
+            headers={"X-Fazenda-Nao-Selecionada": "1"},
+        )
+    return _dep
+
+
 def fazenda_tem_modulo_contratado(session: Session, fazenda_id: int | None, modulo: str) -> bool:
     """A FAZENDA (não o usuário) tem este módulo comercial contratado e
     ativo? Mesma regra usada por `exigir_modulo_contratado` (dependência de

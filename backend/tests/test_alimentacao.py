@@ -16,6 +16,8 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
+from fazenda.models import ContratoFazenda, ContratoFazendaModulo
+from fazenda.models.planos import MODULOS_COMERCIAIS
 from fazenda.models import (
     AlimentacaoEstado, Alimento, AlimentoNutricional, AnaliseBromatologica, Animal, CategoriaAlimento,
     ConsumoAlimento, ControleLeiteiro, Dieta, DietaItemProgramado, DietaLancamento, DietaSimulacao,
@@ -1278,7 +1280,7 @@ class TestExcluirAlimentoReferenciadoEmOutrasTabelas:
                 yield session
 
         import main
-        from fazenda.auth import get_current_user
+        from fazenda.auth import get_current_user, get_fazenda_atual_id
 
         class _FakeUser:
             id = 1
@@ -1288,6 +1290,12 @@ class TestExcluirAlimentoReferenciadoEmOutrasTabelas:
 
         main.app.dependency_overrides[database.get_session] = _get_session_override
         main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+        # O teste cria uma Fazenda (id=1) só para as FKs fecharem — mas
+        # `exigir_fazenda_selecionada` (main.py) recusa toda rota de fazenda
+        # quando existe fazenda cadastrada e a sessão não diz em qual delas
+        # está. Selecionar a fazenda aqui é o que o app faz de verdade; o
+        # assunto deste teste é a cascata de exclusão, não o isolamento.
+        main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 1
         with TestClient(main.app) as c:
             yield c, engine
         main.app.dependency_overrides.clear()
@@ -1295,8 +1303,17 @@ class TestExcluirAlimentoReferenciadoEmOutrasTabelas:
     def test_exclui_com_referencia_em_todas_as_tabelas(self, client_fk):
         c, engine = client_fk
         with Session(engine) as s:
+            # Fazenda + contrato: com a fazenda selecionada (ver fixture), as
+            # travas de contrato/módulo passam a valer — antes elas eram
+            # puladas junto com o filtro de tenant, pela mesma tolerância a
+            # "sem fazenda" que a auditoria fechou.
             s.add(Fazenda(id=1, nome="Fazenda teste"))
-            alimento = Alimento(nome="Teste FK")
+            s.add(ContratoFazenda(fazenda_id=1, status="ativo"))
+            for _modulo in MODULOS_COMERCIAIS:
+                s.add(ContratoFazendaModulo(fazenda_id=1, modulo=_modulo, preco=0.0, ativo=True))
+            s.commit()  # esta fixture liga PRAGMA foreign_keys=ON: a fazenda
+                        # precisa existir antes das linhas que apontam pra ela.
+            alimento = Alimento(nome="Teste FK", fazenda_id=1)
             s.add(alimento)
             s.commit()
             s.refresh(alimento)
@@ -1357,7 +1374,7 @@ class TestExcluirEstoqueReferenciadoEmOutrasTabelas:
                 yield session
 
         import main
-        from fazenda.auth import get_current_user
+        from fazenda.auth import get_current_user, get_fazenda_atual_id
 
         class _FakeUser:
             id = 1
@@ -1367,6 +1384,12 @@ class TestExcluirEstoqueReferenciadoEmOutrasTabelas:
 
         main.app.dependency_overrides[database.get_session] = _get_session_override
         main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+        # O teste cria uma Fazenda (id=1) só para as FKs fecharem — mas
+        # `exigir_fazenda_selecionada` (main.py) recusa toda rota de fazenda
+        # quando existe fazenda cadastrada e a sessão não diz em qual delas
+        # está. Selecionar a fazenda aqui é o que o app faz de verdade; o
+        # assunto deste teste é a cascata de exclusão, não o isolamento.
+        main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 1
         with TestClient(main.app) as c:
             yield c, engine
         main.app.dependency_overrides.clear()
@@ -1374,8 +1397,17 @@ class TestExcluirEstoqueReferenciadoEmOutrasTabelas:
     def test_exclui_com_referencia_em_todas_as_tabelas(self, client_fk):
         c, engine = client_fk
         with Session(engine) as s:
+            # Fazenda + contrato: com a fazenda selecionada (ver fixture), as
+            # travas de contrato/módulo passam a valer — antes elas eram
+            # puladas junto com o filtro de tenant, pela mesma tolerância a
+            # "sem fazenda" que a auditoria fechou.
             s.add(Fazenda(id=1, nome="Fazenda teste"))
-            item = Estoque(nome="Produto FK", finalidade="Ração/Alimento")
+            s.add(ContratoFazenda(fazenda_id=1, status="ativo"))
+            for _modulo in MODULOS_COMERCIAIS:
+                s.add(ContratoFazendaModulo(fazenda_id=1, modulo=_modulo, preco=0.0, ativo=True))
+            s.commit()  # esta fixture liga PRAGMA foreign_keys=ON: a fazenda
+                        # precisa existir antes das linhas que apontam pra ela.
+            item = Estoque(nome="Produto FK", finalidade="Ração/Alimento", fazenda_id=1)
             s.add(item)
             s.commit()
             s.refresh(item)

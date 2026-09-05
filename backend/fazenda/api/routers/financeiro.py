@@ -1015,7 +1015,18 @@ def opcoes(session: Session = Depends(get_session), fazenda_id: int | None = Dep
         [{"codigo": c.codigo, "nome": c.nome} for c in plano if _eh_folha(c.codigo)],
         key=lambda x: x["codigo"],
     )
-    contas = session.exec(select(ContaGerencial)).all()
+    # FURO CORRIGIDO (auditoria F-B-03): este `select` e o de LancamentoItem
+    # logo abaixo eram os DOIS ÚNICOS sem filtro de fazenda no endpoint —
+    # todos os outros seletores daqui já filtravam. Deles saem as chaves
+    # "fornecedores", "produtos" e parte de "centros_custo" do retorno, ou
+    # seja: a carteira de fornecedores/clientes e o catálogo de produtos
+    # comprados de TODA fazenda-cliente iam para o autocomplete de qualquer
+    # usuário com o módulo financeiro — inteligência comercial do vizinho,
+    # com token normal, sem depender de token legado.
+    query_contas = select(ContaGerencial)
+    if fazenda_id is not None:
+        query_contas = query_contas.where(ContaGerencial.fazenda_id == fazenda_id)
+    contas = session.exec(query_contas).all()
     # União com os valores já lançados como texto livre (antes do cadastro
     # formal existir) — nada que já foi usado deixa de aparecer no filtro.
     query_centros = select(CentroCusto).where(CentroCusto.ativo == True)
@@ -1029,7 +1040,10 @@ def opcoes(session: Session = Depends(get_session), fazenda_id: int | None = Dep
     # NÃO aplicar sem_itens_de_vale aqui — é datalist de nomes de produto já
     # usados (autocomplete); excluir os itens de vale só empobreceria as
     # sugestões, sem nenhum ganho gerencial (ver rules/vale_item.py).
-    produtos = sorted({it.produto for it in session.exec(select(LancamentoItem)).all() if it.produto})
+    query_produtos = select(LancamentoItem)
+    if fazenda_id is not None:
+        query_produtos = query_produtos.where(LancamentoItem.fazenda_id == fazenda_id)
+    produtos = sorted({it.produto for it in session.exec(query_produtos).all() if it.produto})
     query_contas_correntes = select(ContaCorrente).where(ContaCorrente.ativo == True)
     if fazenda_id is not None:
         query_contas_correntes = query_contas_correntes.where(ContaCorrente.fazenda_id == fazenda_id)

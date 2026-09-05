@@ -99,11 +99,28 @@ class TestCatalogoGlobalMaisDaPropriaFazenda:
         assert nomes == {"Global", "Da fazenda 2"}, rota
 
     @pytest.mark.parametrize("rota,_", ROTAS_GLOBAIS)
-    def test_token_legado_sem_fazenda_ve_tudo(self, client, rota, _):
+    def test_sessao_sem_fazenda_e_recusada(self, client, rota, _):
+        """A auditoria encontrou este teste afirmando o próprio furo.
+
+        Ele nasceu no piloto de multi-fazenda, quando havia uma fazenda só e
+        "token sem fid" queria dizer "emitido antes da migração" — a regra
+        era não ter retroatividade: sessão antiga continuava vendo tudo. Com
+        mais de um cliente no mesmo banco, "vê tudo" deixou de ser
+        compatibilidade e virou vazamento entre clientes (F-A-01/F-B-01/
+        F-B-02): o `if fazenda_id is not None:` de centenas de consultas
+        simplesmente não filtra.
+
+        A regra agora é a oposta, e vale na porta: se a requisição mexe em
+        dado de fazenda, o token tem que dizer QUAL fazenda — não dizendo,
+        não entra (fazenda/auth.py::exigir_fazenda_selecionada). Este teste
+        passou a guardar a recusa."""
         c = client
         _como_fazenda(None)
-        nomes = {i["nome"] for i in c.get(f"/cadastro/{rota}").json()}
-        assert nomes == {"Global", "Da fazenda 1", "Da fazenda 2"}, rota
+        r = c.get(f"/cadastro/{rota}")
+        assert r.status_code == 409, (
+            f"/cadastro/{rota} devolveu o catálogo das duas fazendas para uma sessão sem fazenda "
+            f"selecionada: {r.status_code} {r.text[:200]}"
+        )
 
 
 class TestCriacaoNuncaNasceGlobal:

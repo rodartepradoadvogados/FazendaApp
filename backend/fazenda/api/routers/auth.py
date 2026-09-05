@@ -17,7 +17,8 @@ from datetime import datetime, timedelta
 from fazenda.auth import (
     DESBLOQUEIO_VALIDADE_S, EMAIL_DONO, MODULOS, criar_token, criar_token_desbloqueio, eh_consultor_cowdata,
     eh_email_dono_equivalente, eh_membro_equipe_cowdata, exigir_admin_ou_dono, exigir_dono, get_current_user,
-    get_fazenda_atual_id, get_suporte_do_token, hash_senha, token_manter_conectado, verificar_senha,
+    get_fazenda_atual_id, get_suporte_do_token, hash_senha, multifazenda_provisionado, token_manter_conectado,
+    verificar_senha,
 )
 from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
 from fazenda.config import settings
@@ -483,7 +484,12 @@ def listar_usuarios(
     QUALQUER cliente da plataforma na lista da direita (bug real encontrado
     em produção). Token sem fazenda selecionada (legado) mantém o
     comportamento antigo, sem filtro — mesmo "sem retroatividade" do resto
-    do piloto de multi-fazenda."""
+    do piloto de multi-fazenda — mas só enquanto não houver fazenda nenhuma
+    cadastrada; havendo, o "sem retroatividade" viraria justamente o furo
+    que a linha acima descreve, então a rota recusa (mesma regra de
+    /usuarios/acessos logo abaixo)."""
+    if fazenda_id is None and multifazenda_provisionado(session):
+        raise HTTPException(status_code=400, detail="Nenhuma fazenda selecionada")
     query = select(Usuario)
     if fazenda_id is not None:
         query = query.join(Pessoa, Pessoa.id == Usuario.pessoa_id).where(Pessoa.fazenda_id == fazenda_id)
@@ -507,6 +513,17 @@ def listar_acessos(
     proprietário da plataforma passava por aqui; `exigir_admin_ou_dono` abre
     a um público bem maior (qualquer administrador de qualquer fazenda-cliente),
     então o filtro deixa de ser opcional."""
+    # FURO CORRIGIDO (auditoria F-A-02): o filtro por fazenda era condicional
+    # (`if fazenda_id is not None`), então um token SEM fazenda selecionada
+    # devolvia o banco inteiro — username (que é o identificador de login),
+    # papel e telemetria de acesso de todos os clientes da plataforma, para
+    # qualquer administrador de qualquer fazenda. Esta rota vive em
+    # auth.router, que de propósito NÃO passa por exigir_fazenda_selecionada
+    # (é onde mora o login), então a recusa é feita aqui, com a mesma regra
+    # (ver fazenda/auth.py::multifazenda_provisionado) e o mesmo precedente
+    # de cofre_acesso.py::listar_auditoria_da_fazenda.
+    if fazenda_id is None and multifazenda_provisionado(session):
+        raise HTTPException(status_code=400, detail="Nenhuma fazenda selecionada")
     query = select(Usuario)
     if fazenda_id is not None:
         query = query.join(Pessoa, Pessoa.id == Usuario.pessoa_id).where(Pessoa.fazenda_id == fazenda_id)

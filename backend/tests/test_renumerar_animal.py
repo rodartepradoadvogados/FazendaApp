@@ -22,6 +22,14 @@ from fazenda.models import (
 from fazenda.models.planos import ContratoFazenda
 
 
+def _como_fazenda(fazenda_id: int | None):
+    """Simula uma sessão já com fazenda selecionada (token com "fid") —
+    mesmo padrão de tests/test_seguranca_p1_multitenant.py."""
+    import main
+    from fazenda.auth import get_fazenda_atual_id
+    main.app.dependency_overrides[get_fazenda_atual_id] = lambda: fazenda_id
+
+
 @pytest.fixture
 def client():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -32,6 +40,11 @@ def client():
         s.commit()
         s.refresh(fa)
         fa_id = fa.id
+        # Contrato ativo da Fazenda A: com a fazenda selecionada (logo abaixo)
+        # a trava de contrato do `cadastro.router` deixa de ser pulada e
+        # recusaria a renumeração com 403 — ver main.py::_contrato_ativo.
+        s.add(ContratoFazenda(fazenda_id=fa_id, status="ativo"))
+        s.commit()
 
     def _get_session_override():
         with Session(engine) as session:
@@ -39,6 +52,11 @@ def client():
 
     import main
     main.app.dependency_overrides[database.get_session] = _get_session_override
+    # A trava de tenant (fazenda/auth.py::exigir_fazenda_selecionada) recusa
+    # com 409, antes de entrar na rota, toda requisição que não diga em qual
+    # fazenda acontece — e este banco tem fazenda cadastrada. Toda a suíte
+    # roda, então, como o app real roda: sessão com a Fazenda A selecionada.
+    _como_fazenda(fa_id)
 
     with TestClient(main.app) as c:
         yield c, engine, fa_id
@@ -150,14 +168,6 @@ def test_renumerar_animal_inexistente_404(client):
     assert r.status_code == 404
 
 
-def _como_fazenda(fazenda_id: int | None):
-    """Simula uma sessão já com fazenda selecionada (token com "fid") —
-    mesmo padrão de tests/test_seguranca_p1_multitenant.py."""
-    import main
-    from fazenda.auth import get_fazenda_atual_id
-    main.app.dependency_overrides[get_fazenda_atual_id] = lambda: fazenda_id
-
-
 def test_renumerar_nao_atravessa_fazenda_furo_confirmado(client):
     """FURO CONFIRMADO (achado da tarefa "sandbox/replicação Fazenda ->
     Fazenda"): `animal.numero` deixou de ser único no banco inteiro
@@ -180,8 +190,8 @@ def test_renumerar_nao_atravessa_fazenda_furo_confirmado(client):
         s.refresh(fb)
         fb_id = fb.id
         # `cadastro.router` (dono da rota de renumerar) exige contrato ativo
-        # quando há fazenda selecionada — ver main.py::_contrato_ativo.
-        s.add(ContratoFazenda(fazenda_id=fa_id, status="ativo"))
+        # quando há fazenda selecionada — ver main.py::_contrato_ativo. O da
+        # Fazenda A já vem da fixture (é único por fazenda).
         s.add(ContratoFazenda(fazenda_id=fb_id, status="ativo"))
         s.commit()
 

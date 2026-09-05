@@ -6,10 +6,9 @@ Percorre TODOS os modelos com coluna `fazenda_id` (`fazenda.models`, ~147
 tabelas) e falha se QUALQUER linha ficar nula depois de um fluxo normal de
 criação — sem exceções de tabela, com UMA única exceção de FORMA de contagem
 (ver `_ALIMENTO_NUTRICIONAL_TOLERA_NULO_LEGITIMO` abaixo). Exercita um
-usuário com token SEM "fid" (o cenário exato da causa raiz #1: token
-legado/sessão "manter conectado" que nunca deslogou) vinculado a uma ÚNICA
-fazenda real via UsuarioFazenda, passando por um recorte representativo dos
-domínios tocados no Passo 1 — reprodutivo (protocolo IATF), sanitário
+usuário vinculado a uma ÚNICA fazenda real via UsuarioFazenda, com a fazenda
+SELECIONADA na sessão, passando por um recorte representativo dos domínios
+tocados no Passo 1 — reprodutivo (protocolo IATF), sanitário
 (cadastro + lançamento de protocolo), produtivo (indução de lactação),
 financeiro (lançamento) e Formulação de Dietas (biblioteca de alimentos +
 simulação — Passo 2, ver PR claude/biblioteca-fracoes-cncps). Tabelas fora
@@ -18,12 +17,24 @@ checagem "zero NULL" continua válida pra elas por vacuidade, e cresce
 sozinha conforme mais fluxos forem cobertos por outros testes que reusem
 este mesmo `client` (ver fixture).
 
-Não precisa de ContratoFazenda/ContratoFazendaModulo: com o token sem "fid",
-`exigir_contrato_ativo`/`exigir_modulo_contratado` (fazenda.auth) recebem
-`fazenda_id=None` de `get_fazenda_atual_id` e pulam a checagem inteira (é o
-"SEM RETROATIVIDADE" documentado nessas dependências) — só
-`get_fazenda_id_escrita`, usado dentro de cada endpoint de escrita, resolve
-de verdade a partir do vínculo do usuário.
+A sessão tem fazenda selecionada porque é a única forma de CHEGAR nas rotas:
+a trava de tenant (fazenda/auth.py::exigir_fazenda_selecionada, montada em
+todo router de fazenda em main.py) recusa com 409, antes do endpoint, toda
+requisição sem "fid" quando existe qualquer fazenda cadastrada — e este banco
+tem a Fazenda Sentinela. Antes desta trava a varredura rodava com token SEM
+"fid" (cenário da causa raiz #1: sessão legada/"manter conectado"), cobrindo o
+ramo do vínculo único de `resolver_fazenda_id_escrita`; esse ramo deixou de
+ser alcançável por HTTP — quem prova a recusa na porta agora é
+tests/test_trava_fazenda_selecionada.py. O que esta sentinela garante segue
+igual e é o que dá nome ao arquivo: nenhuma escrita de nenhum módulo deixa
+`fazenda_id` nulo, pois todo endpoint continua carimbando via
+`get_fazenda_id_escrita` (agora pelo "fid" da sessão, ramo 1 do resolvedor).
+
+Selecionar a fazenda liga também as travas comerciais que o `fazenda_id=None`
+pulava ("SEM RETROATIVIDADE" documentado em `exigir_contrato_ativo`/
+`exigir_modulo_contratado`) — daí o contrato ativo e TODOS os módulos
+contratados semeados na fixture, sem os quais o recorte de módulos abaixo
+tomaria 403.
 """
 from __future__ import annotations
 
@@ -36,7 +47,18 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.auth import EMAIL_DONO
-from fazenda.models import Animal, Fazenda, Pessoa, Usuario, UsuarioFazenda
+from fazenda.models import (
+    Animal, ContratoFazenda, ContratoFazendaModulo, Fazenda, Pessoa, Usuario, UsuarioFazenda,
+)
+from fazenda.models.planos import MODULOS_COMERCIAIS
+
+
+def _como_fazenda(fazenda_id: int | None):
+    """Sessão com (ou sem) fazenda selecionada — o equivalente, no teste, ao
+    "fid" do token que a trava de tenant exige."""
+    import main
+    from fazenda.auth import get_fazenda_atual_id
+    main.app.dependency_overrides[get_fazenda_atual_id] = lambda: fazenda_id
 
 
 @pytest.fixture
@@ -53,6 +75,11 @@ def client():
 
     with Session(engine) as s:
         s.add(Fazenda(id=1, nome="Fazenda Sentinela", ativa=True))
+        # Contrato ativo + todos os módulos: com a fazenda selecionada (ver
+        # docstring do arquivo) as travas comerciais deixam de ser puladas.
+        s.add(ContratoFazenda(fazenda_id=1, status="ativo"))
+        for modulo in MODULOS_COMERCIAIS:
+            s.add(ContratoFazendaModulo(fazenda_id=1, modulo=modulo, preco=0.0, ativo=True))
         usuario = Usuario(username="funcionario_campo", senha_hash="x", papel="admin", ativo=True)
         s.add(usuario)
         s.commit()
@@ -68,8 +95,9 @@ def client():
             return s.get(Usuario, usuario_id)
 
     main.app.dependency_overrides[get_current_user] = _usuario_do_token
-    # De propósito: NÃO sobrescreve get_fazenda_atual_id — a implementação
-    # real roda, sem header Authorization, devolvendo None (token sem "fid").
+    # Sessão com a Fazenda Sentinela selecionada — sem isso a trava de tenant
+    # recusa toda rota de fazenda com 409 e a varredura não sai do lugar.
+    _como_fazenda(1)
 
     with TestClient(main.app) as c:
         yield c, engine
@@ -400,7 +428,14 @@ class TestSentinelaFazendaIdNuncaNulo:
 
     def test_usuario_sem_nenhuma_fazenda_vinculada_e_recusado_no_lancamento(self, client):
         """Causa raiz #2 do PR: usuário sem NENHUM vínculo de fazenda e sem
-        "fid" no token — recusa com 409 em vez de gravar fazenda_id nulo."""
+        "fid" no token — recusa com 409 em vez de gravar fazenda_id nulo.
+
+        A recusa continua sendo 409, mas hoje vem mais cedo: a trava de tenant
+        barra a requisição sem "fid" na porta do router (ver docstring do
+        arquivo), antes de `resolver_fazenda_id_escrita` ter chance de recusar
+        por conta própria. Por isso a sessão volta explicitamente a NÃO ter
+        fazenda selecionada aqui — é esse o cenário sob teste, e ele segue
+        recusado; o que mudou é só quem recusa."""
         c, engine = client
         with Session(engine) as s:
             # E-mail dono-equivalente só para destravar a permissão PRÓPRIA
@@ -422,6 +457,7 @@ class TestSentinelaFazendaIdNuncaNulo:
 
         override_original = main.app.dependency_overrides[get_current_user]
         main.app.dependency_overrides[get_current_user] = _usuario_sem_fazenda
+        _como_fazenda(None)
         try:
             r = c.post("/reproducao/protocolo-iatf", json={"animais": ["999"], "data_d0": date.today().isoformat()})
             assert r.status_code == 409, r.text
@@ -437,3 +473,4 @@ class TestSentinelaFazendaIdNuncaNulo:
             assert r.status_code == 409, r.text
         finally:
             main.app.dependency_overrides[get_current_user] = override_original
+            _como_fazenda(1)
