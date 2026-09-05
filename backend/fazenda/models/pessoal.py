@@ -434,7 +434,13 @@ class ValeAvulsoAbatimento(SQLModel, table=True):
     pendente, para permitir reverter o efeito exatamente (editar/excluir o
     vale) sem depender de recalcular a partir do zero — ao contrário do vale
     de funcionário (que tem `ValeParcela` recomputável), aqui o abatimento é
-    uma mutação direta no valor da parcela/etapa/conta gerencial."""
+    uma mutação direta no valor da parcela/etapa/conta gerencial.
+
+    `fazenda_id`: espelha `ValeAvulso.fazenda_id` do pai (backfill por join)
+    — sem ela, o motor de replicação Fazenda -> Fazenda (que descobre o que
+    copiar por `fazenda_id` presente na tabela) não enxergava este registro
+    e a Fazenda Teste ficava com o vale copiado mas sem o abatimento já
+    aplicado nele."""
 
     __tablename__ = "vale_avulso_abatimento"
 
@@ -444,6 +450,7 @@ class ValeAvulsoAbatimento(SQLModel, table=True):
     item_id: int
     valor_abatido: float
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 # ---------------------------------------------------------------------------

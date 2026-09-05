@@ -357,15 +357,15 @@ def ficha_animal(
     produção, sanidade, movimentação de lote, compra/baixa e agenda. Serve
     tanto a tela de consulta quanto a exportação em PDF (por maior que fique).
 
-    Isolamento por fazenda: a busca do animal e as tabelas que já têm
-    `fazenda_id` (Servico, Parto, ColostragemBezerra, ProtocoloIatfAplicacao,
-    Sanidade, ProtocoloSanitarioLancamento, ExameResultado) são filtradas
-    abaixo. MovimentoLote, ControleLeiteiro, PesagemCorporal, QualidadeLeite,
-    Secagem, AgendaManual, BaixaAnimal, CompraAnimal, VendaAnimal e
-    OcorrenciaClinica AINDA NÃO têm a coluna — ficam sem filtro até os
-    domínios Lote/Produção/Recria/Sistema serem migrados (ver proposta de
-    separação fazenda/empresa, Parte 1.6) — não são um esquecimento, é uma
-    lacuna conhecida e documentada.
+    Isolamento por fazenda: toda tabela referenciada aqui por numero/
+    numero_matriz/numero_animal (texto, sem FK real — ver `_TABELAS_NUMERO_ANIMAL`
+    em cadastro/animais.py) é filtrada abaixo por `fazenda_id`, quando
+    resolvido. Isto passou a ser obrigatório (não só desejável) a partir de
+    `animal.numero` deixar de ser único no banco inteiro (migração
+    c24befa94c1b: unicidade composta `(fazenda_id, numero)`, feita para
+    permitir a Fazenda Teste replicar uma fazenda real com os MESMOS
+    números) — duas fazendas podem hoje ter, cada uma, um animal "100", e sem
+    o filtro esta ficha misturaria o histórico de ambas.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     query_animal = select(Animal).where(Animal.numero == numero)
@@ -527,10 +527,14 @@ def ficha_animal(
     aplicacoes_iatf = session.exec(query_protocolos_iatf.order_by(ProtocoloIatfAplicacao.data_prevista)).all()
     protocolos_iatf = _agrupar_protocolos_iatf(session, aplicacoes_iatf)
 
-    # MovimentoLote ainda não tem fazenda_id — ver nota no docstring da função.
-    movimentos_lote = session.exec(
-        select(MovimentoLote).where(MovimentoLote.numero_matriz == numero).order_by(MovimentoLote.data_movimento)
-    ).all()
+    # FURO DE MULTI-TENANT CORRIGIDO: MovimentoLote já tem fazenda_id (o
+    # comentário antigo dizia o contrário — ficou desatualizado); sem o
+    # filtro, numero colidindo com outra fazenda misturava movimentação de
+    # lote alheia na ficha.
+    query_movimentos_lote = select(MovimentoLote).where(MovimentoLote.numero_matriz == numero)
+    if fazenda_id is not None:
+        query_movimentos_lote = query_movimentos_lote.where(MovimentoLote.fazenda_id == fazenda_id)
+    movimentos_lote = session.exec(query_movimentos_lote.order_by(MovimentoLote.data_movimento)).all()
 
     query_colostragem = select(ColostragemBezerra).where(ColostragemBezerra.numero_animal == numero)
     if fazenda_id is not None:
@@ -629,19 +633,30 @@ def ficha_animal(
         if e.numero_animal and numero in [n.strip() for n in e.numero_animal.split(",")]
     ]
 
-    baixa = session.exec(select(BaixaAnimal).where(BaixaAnimal.numero_animal == numero)).first()
+    # FURO DE MULTI-TENANT CORRIGIDO: BaixaAnimal/CompraAnimal/VendaAnimal/
+    # OcorrenciaClinica já têm fazenda_id — sem filtrar, um numero colidindo
+    # com outra fazenda misturava baixa/compra/venda/ocorrência clínica
+    # ALHEIA na ficha (inclusive GTA e valor de compra/venda de terceiros).
+    query_baixa = select(BaixaAnimal).where(BaixaAnimal.numero_animal == numero)
+    query_compras = select(CompraAnimal).where(CompraAnimal.numero_animal == numero)
+    query_vendas = select(VendaAnimal).where(VendaAnimal.numero_animal == numero)
+    query_ocorrencias = select(OcorrenciaClinica).where(OcorrenciaClinica.numero_matriz == numero)
+    if fazenda_id is not None:
+        query_baixa = query_baixa.where(BaixaAnimal.fazenda_id == fazenda_id)
+        query_compras = query_compras.where(CompraAnimal.fazenda_id == fazenda_id)
+        query_vendas = query_vendas.where(VendaAnimal.fazenda_id == fazenda_id)
+        query_ocorrencias = query_ocorrencias.where(OcorrenciaClinica.fazenda_id == fazenda_id)
+    baixa = session.exec(query_baixa).first()
     # Rastreabilidade sanitária/GTA: TODAS as compras e vendas do animal (não só
     # a primeira) — um animal pode ter mais de uma GTA ao longo da vida (ex.:
     # comprado e, mais tarde, revendido). `compra` é mantido por compatibilidade
     # (primeira compra registrada); `compras`/`vendas` trazem a lista completa.
-    compras = session.exec(select(CompraAnimal).where(CompraAnimal.numero_animal == numero).order_by(CompraAnimal.data_compra)).all()
-    vendas = session.exec(select(VendaAnimal).where(VendaAnimal.numero_animal == numero).order_by(VendaAnimal.data_venda)).all()
+    compras = session.exec(query_compras.order_by(CompraAnimal.data_compra)).all()
+    vendas = session.exec(query_vendas.order_by(VendaAnimal.data_venda)).all()
     compra = compras[0] if compras else None
     gtas = sorted({c.gta for c in compras if c.gta} | {v.gta for v in vendas if v.gta})
 
-    ocorrencias_clinicas = session.exec(
-        select(OcorrenciaClinica).where(OcorrenciaClinica.numero_matriz == numero).order_by(OcorrenciaClinica.data_ocorrencia)
-    ).all()
+    ocorrencias_clinicas = session.exec(query_ocorrencias.order_by(OcorrenciaClinica.data_ocorrencia)).all()
 
     query_eventos_sanitarios = select(EventoSanitario)
     if fazenda_id is not None:

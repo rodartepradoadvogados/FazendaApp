@@ -240,3 +240,31 @@ class TestFerramentas:
             resultado = _tool_consultar_estoque(s)
         assert resultado["qtd_abaixo_do_minimo"] == 1
         assert resultado["abaixo_do_minimo"][0]["nome"] == "Ração"
+
+
+class TestFerramentasIsolamentoFazenda:
+    """FURO DE MULTI-TENANT CORRIGIDO: `_tool_listar_lotes`/
+    `_tool_consultar_lote` liam `Lote` (e `_tool_consultar_indicadores` lia
+    `PesagemCorporal`) sem filtrar fazenda_id, com um comentário afirmando
+    (incorretamente, desde a Fase 4A) que essas tabelas "ainda não têm
+    fazenda_id" — o Assistente de uma fazenda via lotes/pesos de OUTRA."""
+
+    def test_listar_lotes_nao_mistura_fazendas(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Lote(codigo="09", nome="Lote da fazenda 1", fazenda_id=1))
+            s.add(Lote(codigo="09", nome="Lote da fazenda 2", fazenda_id=2))
+            s.commit()
+            resultado_f1 = _tool_listar_lotes(s, fazenda_id=1)
+            resultado_f2 = _tool_listar_lotes(s, fazenda_id=2)
+        assert resultado_f1["lotes"][0]["nome"] == "Lote da fazenda 1"
+        assert resultado_f2["lotes"][0]["nome"] == "Lote da fazenda 2"
+
+    def test_consultar_lote_nao_mistura_fazendas(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Lote(codigo="09", nome="Lote da fazenda 1", fazenda_id=1))
+            s.add(Lote(codigo="09", nome="Lote da fazenda 2", fazenda_id=2))
+            s.commit()
+            resultado_f2 = _tool_consultar_lote(s, "9", fazenda_id=2)
+        assert resultado_f2["nome"] == "Lote da fazenda 2"

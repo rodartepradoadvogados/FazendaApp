@@ -65,13 +65,19 @@ def _touro_pai(session: Session, reprodutor: str | None) -> Touro | None:
     return next((t for t in session.exec(select(Touro)).all() if (t.nome or "").strip().lower() == nome_norm), None)
 
 
-def _servico_concepcao(session: Session, numero_matriz: str, data_parto: date) -> Servico | None:
+def _servico_concepcao(
+    session: Session, numero_matriz: str, data_parto: date, fazenda_id: int | None = None,
+) -> Servico | None:
     """Serviço mais provável a ter gerado a gestação — o último serviço com
     reprodutor informado dentro da janela de gestação bovina (~260-295 dias
     antes do parto). Mesma janela usada na ficha do animal (fazenda.api.routers.animais)."""
-    servicos = session.exec(
-        select(Servico).where(Servico.numero_matriz == numero_matriz).order_by(Servico.data_servico)
-    ).all()
+    # FURO DE MULTI-TENANT CORRIGIDO: sem o filtro de fazenda_id, uma
+    # colisão de numero_matriz com outra fazenda podia puxar o serviço/touro
+    # ALHEIO e calcular a raça/grau de sangue da cria com o pai errado.
+    query_servico_concepcao = select(Servico).where(Servico.numero_matriz == numero_matriz)
+    if fazenda_id is not None:
+        query_servico_concepcao = query_servico_concepcao.where(Servico.fazenda_id == fazenda_id)
+    servicos = session.exec(query_servico_concepcao.order_by(Servico.data_servico)).all()
     candidatos = [
         s for s in servicos
         if s.data_servico and s.reprodutor
@@ -80,7 +86,9 @@ def _servico_concepcao(session: Session, numero_matriz: str, data_parto: date) -
     return candidatos[-1] if candidatos else None
 
 
-def calcular_grau_sangue_cria(session: Session, mae: Animal, data_parto: date) -> tuple[str | None, str | None]:
+def calcular_grau_sangue_cria(
+    session: Session, mae: Animal, data_parto: date, fazenda_id: int | None = None,
+) -> tuple[str | None, str | None]:
     """Retorna (raca, grau_sangue) sugeridos para a cria, ou (mae.raca, None)
     quando não é possível calcular (falta grau de sangue/raça da mãe ou do
     pai identificável)."""
@@ -88,7 +96,7 @@ def calcular_grau_sangue_cria(session: Session, mae: Animal, data_parto: date) -
     if frac_mae is None:
         return mae.raca, None
 
-    servico = _servico_concepcao(session, mae.numero, data_parto)
+    servico = _servico_concepcao(session, mae.numero, data_parto, fazenda_id)
     if not servico or not servico.reprodutor:
         return mae.raca, None
 
@@ -99,7 +107,13 @@ def calcular_grau_sangue_cria(session: Session, mae: Animal, data_parto: date) -
 
     media = (frac_mae + frac_pai) / 2
 
-    graus_calculaveis = [g for g in session.exec(select(GrauSangue)).all() if g.fracao_holandes is not None]
+    # Catálogo de GrauSangue também é escopado por fazenda (cadastrável, ver
+    # fazenda/models/animais.py::GrauSangue) — sem o filtro, o nome do grau
+    # mais próximo podia vir do cadastro de OUTRA fazenda.
+    query_graus = select(GrauSangue)
+    if fazenda_id is not None:
+        query_graus = query_graus.where(GrauSangue.fazenda_id == fazenda_id)
+    graus_calculaveis = [g for g in session.exec(query_graus).all() if g.fracao_holandes is not None]
     if not graus_calculaveis:
         return mae.raca, None
     mais_proximo = min(graus_calculaveis, key=lambda g: abs(g.fracao_holandes - media))

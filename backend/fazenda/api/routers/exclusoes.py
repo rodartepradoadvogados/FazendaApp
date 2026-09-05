@@ -12,6 +12,7 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import and_, or_
 from sqlmodel import Session, select
 
 from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
@@ -534,19 +535,32 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         # SQLite dos testes não pega isso porque não aplica FK por padrão).
         # Casa por animal_id OU pelo número em texto, pra pegar também
         # registros antigos de antes do FK existir.
-        colostragens = session.exec(
-            select(ColostragemBezerra).where(
-                (ColostragemBezerra.animal_id == animal.id) | (ColostragemBezerra.numero_animal == id_)
+        #
+        # BUG DE SEGURANÇA CORRIGIDO: o lado "por número em texto" do OR não
+        # tinha filtro de fazenda_id nenhum — com numero deixando de ser
+        # único globalmente (ver Animal.numero), excluir o animal "100" desta
+        # fazenda apagava também a colostragem/lactação/foto de campo órfã
+        # (sem animal_id preenchido) do animal "100" de OUTRA fazenda. O lado
+        # "por animal_id" não precisa do filtro — já é a FK do animal certo.
+        # Sem fazenda_id resolvido (token legado), mantém o OR puro por
+        # numero — mesmo comportamento tolerante do resto do projeto (ver
+        # `fazenda_id_seguro`/`get_fazenda_atual_id`).
+        def _por_animal_ou_numero_escopado(coluna_animal_id, coluna_numero_texto, coluna_fazenda_id):
+            condicao_numero = (
+                coluna_numero_texto == id_ if fazenda_id is None
+                else and_(coluna_numero_texto == id_, coluna_fazenda_id == fazenda_id)
             )
-        ).all()
-        lactacoes = session.exec(
-            select(Lactacao).where((Lactacao.animal_id == animal.id) | (Lactacao.numero_matriz == id_))
-        ).all()
-        fotos = session.exec(
-            select(FotoCampo).where(
-                (FotoCampo.animal_id == animal.id) | (FotoCampo.identificacao_animal == id_)
-            )
-        ).all()
+            return or_(coluna_animal_id == animal.id, condicao_numero)
+
+        colostragens = session.exec(select(ColostragemBezerra).where(_por_animal_ou_numero_escopado(
+            ColostragemBezerra.animal_id, ColostragemBezerra.numero_animal, ColostragemBezerra.fazenda_id,
+        ))).all()
+        lactacoes = session.exec(select(Lactacao).where(_por_animal_ou_numero_escopado(
+            Lactacao.animal_id, Lactacao.numero_matriz, Lactacao.fazenda_id,
+        ))).all()
+        fotos = session.exec(select(FotoCampo).where(_por_animal_ou_numero_escopado(
+            FotoCampo.animal_id, FotoCampo.identificacao_animal, FotoCampo.fazenda_id,
+        ))).all()
         impacto = [f"Ficha do animal {id_}"]
         if servicos:
             impacto.append(f"{len(servicos)} serviço(s) de IA/cobertura")
@@ -656,12 +670,18 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             select(Sanidade).where(Sanidade.protocolo_sanitario_lancamento_id == lancamento.id)
         ).all()
         if not sanidades:
-            candidatas = session.exec(
-                select(Sanidade).where(
-                    Sanidade.numero_matriz == lancamento.numero_matriz,
-                    Sanidade.data_aplicacao >= lancamento.data_inicio,
-                )
-            ).all()
+            # BUG DE SEGURANÇA CORRIGIDO: a heurística por numero_matriz+data
+            # não filtrava fazenda — usa `lancamento.fazenda_id` (já
+            # validado acima contra o fazenda_id do pedido) em vez do
+            # parâmetro solto, pra nunca arrastar Sanidade de outra fazenda
+            # com o mesmo numero_matriz para dentro desta exclusão.
+            query_candidatas = select(Sanidade).where(
+                Sanidade.numero_matriz == lancamento.numero_matriz,
+                Sanidade.data_aplicacao >= lancamento.data_inicio,
+            )
+            if lancamento.fazenda_id is not None:
+                query_candidatas = query_candidatas.where(Sanidade.fazenda_id == lancamento.fazenda_id)
+            candidatas = session.exec(query_candidatas).all()
             sanidades = [s for s in candidatas if (s.obs or "").startswith("Protocolo sanitário — D")]
         protocolo = session.get(ProtocoloSanitario, lancamento.protocolo_id)
         impacto = [f"Lançamento do protocolo {protocolo.nome if protocolo else '—'} em {lancamento.numero_matriz} ({_br(lancamento.data_inicio)})"]

@@ -1238,6 +1238,8 @@ def verificar_mae_parto(
     mae = session.exec(query_mae).first()
 
     query_animal = select(Animal).where(Animal.numero == animal_numero) if animal_numero else None
+    if query_animal is not None and fazenda_id is not None:
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
     animal = session.exec(query_animal).first() if query_animal is not None else None
     nascimento = animal.data_nasc if animal else None
 
@@ -1427,7 +1429,7 @@ def _gravar_parto_e_crias(
             query_cria_existente = query_cria_existente.where(Animal.fazenda_id == fazenda_id)
         if session.exec(query_cria_existente).first():
             continue  # já cadastrada — não sobrescreve
-        raca_cria, grau_sangue_cria = calcular_grau_sangue_cria(session, mae, data_parto)
+        raca_cria, grau_sangue_cria = calcular_grau_sangue_cria(session, mae, data_parto, fazenda_id)
         # Todo animal que nasce entra automaticamente na categoria "bezerra/o
         # mamando" — o próximo upload do GERAL.csv (Ideagri) pode atualizar
         # depois, mas a cria não deve ficar sem categoria até lá.

@@ -66,5 +66,11 @@ def aplicar_identidade_padrao(
 
     if principio_ids:
         definir_principios_estoque(session, item, principio_ids)
-    definir_tags(session, EstoqueCategoriaMedicamento, "estoque_id", item.id, "categoria_medicamento_id", categoria_ids)
-    definir_tags(session, EstoqueClassificacaoMedicamento, "estoque_id", item.id, "classificacao_medicamento_id", classificacao_ids)
+    definir_tags(
+        session, EstoqueCategoriaMedicamento, "estoque_id", item.id, "categoria_medicamento_id",
+        categoria_ids, fazenda_id=item.fazenda_id,
+    )
+    definir_tags(
+        session, EstoqueClassificacaoMedicamento, "estoque_id", item.id, "classificacao_medicamento_id",
+        classificacao_ids, fazenda_id=item.fazenda_id,
+    )

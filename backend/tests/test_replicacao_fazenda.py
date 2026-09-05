@@ -17,8 +17,13 @@ from fastapi import HTTPException
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from fazenda.models import Animal, Fazenda, Lactacao, Parto
-from fazenda.models.sanidade import Doenca, PrincipioAtivo
+from fazenda.models import Animal, Estoque, Fazenda, Lactacao, Parto, Pessoa
+from fazenda.models.estoque import EstoquePrincipioAtivo
+from fazenda.models.pessoal import ValeAvulso, ValeAvulsoAbatimento
+from fazenda.models.sanidade import (
+    CategoriaMedicamento, Doenca, EstoqueCategoriaMedicamento, MedicamentoCategoria, MedicamentoComercial,
+    PrincipioAtivo,
+)
 from fazenda.rules.replicacao_fazenda import (
     SincronizacaoInvalidaError, sincronizar_fazenda_teste_destrutivo,
 )
@@ -106,6 +111,88 @@ def test_catalogo_global_nao_e_duplicado(engine):
         assert len(total_doencas) == 1  # continua só a global, nenhuma cópia criada
         assert total_doencas[0].id == ids["doenca_global_id"]
         assert total_doencas[0].fazenda_id is None
+
+
+def test_juncoes_farmacia_vale_sao_replicadas(engine):
+    """As 6 tabelas de junção que ganharam `fazenda_id` (estoque_principio_
+    ativo, medicamento_categoria, medicamento_classificacao,
+    estoque_categoria_medicamento, estoque_classificacao_medicamento,
+    vale_avulso_abatimento) tinham ficado de fora da descoberta dinâmica do
+    motor de replicação (que procura `fazenda_id` na tabela) — sem elas, o
+    item de estoque/vale chegava ao sandbox sem o vínculo. Cobre: (a) o
+    vínculo de tenant (estoque_principio_ativo) é copiado e remapeado; (b) o
+    vínculo do medicamento GLOBAL (medicamento_categoria com fazenda_id=None)
+    continua global, NUNCA duplicado; (c) o abatimento de vale é copiado."""
+    with Session(engine) as s:
+        origem = Fazenda(id=1, nome="Jairo Nasser", eh_teste=False)
+        destino = Fazenda(id=2, nome="Fazenda Teste", eh_teste=True)
+        s.add_all([origem, destino])
+        s.commit()
+
+        pa = PrincipioAtivo(nome="Meloxicam", fazenda_id=None)
+        s.add(pa)
+        s.commit()
+        s.refresh(pa)
+
+        item = Estoque(nome="Maxicam", fazenda_id=1)
+        s.add(item)
+        s.commit()
+        s.refresh(item)
+        s.add(EstoquePrincipioAtivo(estoque_id=item.id, principio_ativo_id=pa.id, principal=True, fazenda_id=1))
+
+        # Medicamento GLOBAL (catálogo do dono do SaaS) com categoria também
+        # global (fazenda_id=None) — não pode ser duplicado por fazenda nenhuma.
+        med_global = MedicamentoComercial(principio_ativo_id=pa.id, nome_comercial="Maxicam 2%", fazenda_id=None)
+        s.add(med_global)
+        s.commit()
+        s.refresh(med_global)
+        cat = CategoriaMedicamento(nome="Anti-inflamatório", fazenda_id=None)
+        s.add(cat)
+        s.commit()
+        s.refresh(cat)
+        s.add(MedicamentoCategoria(medicamento_comercial_id=med_global.id, categoria_medicamento_id=cat.id, fazenda_id=None))
+        s.add(EstoqueCategoriaMedicamento(estoque_id=item.id, categoria_medicamento_id=cat.id, fazenda_id=1))
+
+        pessoa = Pessoa(nome="Fulano", tipo="Empreiteiro", fazenda_id=1)
+        s.add(pessoa)
+        s.commit()
+        s.refresh(pessoa)
+        vale = ValeAvulso(
+            origem_tipo="empreitada", origem_id=1, pessoa_id=pessoa.id, valor=100.0,
+            forma_pagamento="dinheiro", data_pagamento=date(2026, 1, 1), fazenda_id=1,
+        )
+        s.add(vale)
+        s.commit()
+        s.refresh(vale)
+        s.add(ValeAvulsoAbatimento(
+            vale_avulso_id=vale.id, item_tipo="empreitada_parcela", item_id=1, valor_abatido=50.0, fazenda_id=1,
+        ))
+        s.commit()
+        pa_id = pa.id
+
+    with Session(engine) as s:
+        resultado = sincronizar_fazenda_teste_destrutivo(s, origem_id=1, destino_id=2)
+        s.commit()
+    assert not any("estoque_principio_ativo" in a or "categoria_medicamento" in a for a in resultado.avisos)
+
+    with Session(engine) as s:
+        item_novo = s.exec(select(Estoque).where(Estoque.fazenda_id == 2)).one()
+        vinculo_pa = s.exec(select(EstoquePrincipioAtivo).where(EstoquePrincipioAtivo.fazenda_id == 2)).one()
+        assert vinculo_pa.estoque_id == item_novo.id
+        assert vinculo_pa.principio_ativo_id == pa_id  # catálogo global — mesma linha, não duplicada
+
+        # A categoria do medicamento GLOBAL continua ÚNICA (fazenda_id=None) —
+        # a sincronização não pode ter criado uma cópia dela por fazenda.
+        vinculos_medicamento_categoria = s.exec(select(MedicamentoCategoria)).all()
+        assert len(vinculos_medicamento_categoria) == 1
+        assert vinculos_medicamento_categoria[0].fazenda_id is None
+
+        vinculo_estoque_categoria = s.exec(select(EstoqueCategoriaMedicamento).where(EstoqueCategoriaMedicamento.fazenda_id == 2)).one()
+        assert vinculo_estoque_categoria.estoque_id == item_novo.id
+
+        vale_novo = s.exec(select(ValeAvulso).where(ValeAvulso.fazenda_id == 2)).one()
+        abatimento_novo = s.exec(select(ValeAvulsoAbatimento).where(ValeAvulsoAbatimento.fazenda_id == 2)).one()
+        assert abatimento_novo.vale_avulso_id == vale_novo.id
 
 
 def test_recusa_quando_destino_nao_e_teste(engine):

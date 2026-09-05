@@ -145,8 +145,14 @@ class EstoquePrincipioAtivo(SQLModel, table=True):
     """Vínculo N-para-N entre item de Estoque (do tenant) e princípio ativo —
     generaliza `Estoque.principio_ativo_id` (escalar, mantido como o
     "princípio principal" por compatibilidade) para medicamento combinado.
-    Sem `fazenda_id` próprio: sempre herda a fazenda do `Estoque` referenciado
-    (que já é dado por-tenant, ao contrário do catálogo global de Farmácia)."""
+
+    `fazenda_id` (migração 697b23118c3c, feita junto com o motor de
+    replicação Fazenda -> Fazenda): sempre igual ao
+    `Estoque.fazenda_id` referenciado (herdado no backfill, nunca dado
+    independente) — sem ele, `replicacao_fazenda.py` (que descobre o que
+    copiar procurando `fazenda_id` na tabela) não enxergava este vínculo e a
+    Fazenda Teste ficava com o item de estoque copiado mas sem
+    princípio(s) ativo(s), diferença silenciosa entre sandbox e produção."""
 
     __tablename__ = "estoque_principio_ativo"
     __table_args__ = (UniqueConstraint("estoque_id", "principio_ativo_id", name="uq_estoque_principio"),)
@@ -158,6 +164,7 @@ class EstoquePrincipioAtivo(SQLModel, table=True):
     # 1 linha por item tem principal=True.
     principal: bool = False
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class LoteEstoque(SQLModel, table=True):

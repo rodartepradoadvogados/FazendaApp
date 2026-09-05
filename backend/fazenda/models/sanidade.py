@@ -356,7 +356,17 @@ class MedicamentoCategoria(SQLModel, table=True):
     cumulativo (sem "principal": ao contrário de princípio ativo, não há
     hierarquia entre categorias, só a lista completa). O primeiro valor
     escolhido é espelhado em `MedicamentoComercial.classificacao_medicamento`
-    (mantido por compatibilidade com quem já lê só o escalar)."""
+    (mantido por compatibilidade com quem já lê só o escalar).
+
+    `fazenda_id`: espelha `MedicamentoComercial.fazenda_id` do pai (backfill
+    por join, nunca dado independente) — inclusive quando NULO: um vínculo de
+    medicamento GLOBAL (catálogo do dono do SaaS, ver
+    fazenda/rules/visibilidade.py) tem que continuar global, senão ele
+    passaria a "pertencer" à primeira fazenda que o backfill encontrasse e
+    sumiria do catálogo global de todas as outras. Sem esta coluna, o motor
+    de replicação (que descobre o que copiar por `fazenda_id` presente na
+    tabela) não via este vínculo e a Fazenda Teste ficava com o medicamento
+    copiado mas sem categoria(s)."""
 
     __tablename__ = "medicamento_categoria"
     __table_args__ = (UniqueConstraint("medicamento_comercial_id", "categoria_medicamento_id", name="uq_medicamento_categoria"),)
@@ -365,12 +375,15 @@ class MedicamentoCategoria(SQLModel, table=True):
     medicamento_comercial_id: int = Field(foreign_key="medicamento_comercial.id", index=True)
     categoria_medicamento_id: int = Field(foreign_key="categoria_medicamento.id", index=True)
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class MedicamentoClassificacao(SQLModel, table=True):
     """Vínculo N-para-N entre marca comercial e ClassificacaoMedicamento —
     mesmo espírito de MedicamentoCategoria, sem espelho escalar (eixo novo,
-    sem leitor pré-existente)."""
+    sem leitor pré-existente). `fazenda_id`: mesma regra de espelhar o pai
+    (`MedicamentoComercial.fazenda_id`), inclusive nulo para medicamento
+    GLOBAL — ver docstring de `MedicamentoCategoria` acima."""
 
     __tablename__ = "medicamento_classificacao"
     __table_args__ = (UniqueConstraint("medicamento_comercial_id", "classificacao_medicamento_id", name="uq_medicamento_classificacao"),)
@@ -379,11 +392,17 @@ class MedicamentoClassificacao(SQLModel, table=True):
     medicamento_comercial_id: int = Field(foreign_key="medicamento_comercial.id", index=True)
     classificacao_medicamento_id: int = Field(foreign_key="classificacao_medicamento_cad.id", index=True)
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class EstoqueCategoriaMedicamento(SQLModel, table=True):
     """Espelho de MedicamentoCategoria no lado do item de Estoque do
-    tenant — propagado pelo fan-out, editável depois pelo tenant."""
+    tenant — propagado pelo fan-out, editável depois pelo tenant.
+
+    `fazenda_id`: ao contrário do espelho em MedicamentoCategoria, aqui o pai
+    (`Estoque`) é sempre dado do tenant (nunca catálogo global) — espelha
+    `Estoque.fazenda_id` no backfill. Mesma razão de existir: sem ela, a
+    replicação Fazenda -> Fazenda não enxergava este vínculo."""
 
     __tablename__ = "estoque_categoria_medicamento"
     __table_args__ = (UniqueConstraint("estoque_id", "categoria_medicamento_id", name="uq_estoque_categoria_medicamento"),)
@@ -392,10 +411,14 @@ class EstoqueCategoriaMedicamento(SQLModel, table=True):
     estoque_id: int = Field(foreign_key="estoque.id", index=True)
     categoria_medicamento_id: int = Field(foreign_key="categoria_medicamento.id", index=True)
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class EstoqueClassificacaoMedicamento(SQLModel, table=True):
-    """Espelho de MedicamentoClassificacao no lado do item de Estoque do tenant."""
+    """Espelho de MedicamentoClassificacao no lado do item de Estoque do
+    tenant. `fazenda_id`: mesma regra de EstoqueCategoriaMedicamento acima
+    (espelha `Estoque.fazenda_id`, sempre de tenant, nunca nulo por origem
+    global)."""
 
     __tablename__ = "estoque_classificacao_medicamento"
     __table_args__ = (UniqueConstraint("estoque_id", "classificacao_medicamento_id", name="uq_estoque_classificacao_medicamento"),)
@@ -404,6 +427,7 @@ class EstoqueClassificacaoMedicamento(SQLModel, table=True):
     estoque_id: int = Field(foreign_key="estoque.id", index=True)
     classificacao_medicamento_id: int = Field(foreign_key="classificacao_medicamento_cad.id", index=True)
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class ExameDefinicao(SQLModel, table=True):

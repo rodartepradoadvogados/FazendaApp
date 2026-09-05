@@ -31,8 +31,14 @@ from fazenda.rules.visibilidade import visivel
 def _sincronizar_tags_estoque(session: Session, item: Estoque, categoria_ids: list[int], classificacao_ids: list[int]) -> None:
     """Mesma lógica de _sincronizar_tags_medicamento (painel_cowdata_farmacia.py),
     do lado do item de Estoque do tenant — ver rules/farmacia_tags.py."""
-    definir_tags(session, EstoqueCategoriaMedicamento, "estoque_id", item.id, "categoria_medicamento_id", categoria_ids)
-    definir_tags(session, EstoqueClassificacaoMedicamento, "estoque_id", item.id, "classificacao_medicamento_id", classificacao_ids)
+    definir_tags(
+        session, EstoqueCategoriaMedicamento, "estoque_id", item.id, "categoria_medicamento_id",
+        categoria_ids, fazenda_id=item.fazenda_id,
+    )
+    definir_tags(
+        session, EstoqueClassificacaoMedicamento, "estoque_id", item.id, "classificacao_medicamento_id",
+        classificacao_ids, fazenda_id=item.fazenda_id,
+    )
     if categoria_ids:
         primeira = session.get(CategoriaMedicamento, categoria_ids[0])
         item.classificacao_medicamento = primeira.nome if primeira else item.classificacao_medicamento

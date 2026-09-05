@@ -34,7 +34,7 @@ from fazenda.models import (
     EventoRealizado, EventoSanitario, Fornecedor, LancamentoItem, Parto, Sanidade, Usuario,
 )
 from fazenda.parsers.utils import iter_csv_rows, parse_date, parse_float, parse_int
-from fazenda.rules.auditoria import fazenda_id_seguro
+from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 from fazenda.rules.eventos_sanitarios import _datas_gatilho
 
@@ -511,13 +511,13 @@ async def importar_animais_cadastro(
             select(Animal).where(Animal.numero == numero, Animal.fazenda_id == fazenda_id)
         ).first()
         if not animal:
-            # `Animal.numero` é único no banco inteiro (não só por fazenda) —
-            # se o número já existe em OUTRA fazenda, criar aqui violaria
-            # essa restrição; melhor um erro claro do que deixar a exceção
-            # de integridade estourar a importação inteira.
-            if session.exec(select(Animal).where(Animal.numero == numero)).first():
-                erros.append(f"Linha {i}: já existe um animal com o número {numero} cadastrado em outra fazenda — escolha outro número.")
-                continue
+            # `Animal.numero` passou a ser único só POR FAZENDA (ver migração
+            # c24befa94c1b) — duas fazendas diferentes podem legitimamente ter
+            # cada uma o seu animal "100" (é justamente o caso da Fazenda
+            # Teste, cópia da fazenda real com os mesmos números). Por isso
+            # NÃO existe mais aqui a checagem de "número já usado em outra
+            # fazenda": ela vinha de quando a unicidade era global e hoje
+            # bloquearia uma importação legítima.
             animal = Animal(numero=numero, ativo=True, fazenda_id=fazenda_id)
             criados += 1
         else:
@@ -730,9 +730,9 @@ async def importar_dairycomp(
             select(Animal).where(Animal.numero == numero, Animal.fazenda_id == fazenda_id)
         ).first()
         if not animal:
-            if session.exec(select(Animal).where(Animal.numero == numero)).first():
-                erros.append(f"Linha {i}: já existe um animal com o número {numero} cadastrado em outra fazenda — pulado.")
-                continue
+            # Mesma observação de importar_animais_cadastro acima: numero é
+            # único só por fazenda desde c24befa94c1b, então coincidir com o
+            # número de outra fazenda não é mais motivo para recusar.
             animal = Animal(numero=numero, data_nasc=data_nasc, ativo=True, fazenda_id=fazenda_id)
             session.add(animal)
             session.commit()
@@ -1022,11 +1022,19 @@ async def importar_baixas_pendencias_agenda(
                 if len(numeros) != 1:
                     raise ValueError("informe exatamente 1 numero_animal para tipo aplicacao_agendada")
                 numero = numeros[0]
+                # BUG DE SEGURANÇA CORRIGIDO: sem o filtro de fazenda_id, uma
+                # colisão de numero_matriz com outra fazenda (numero deixou
+                # de ser único globalmente — ver Animal.numero) podia pegar a
+                # AplicacaoAgendada PENDENTE DE OUTRA FAZENDA e, pior, o
+                # `_baixar_aplicacao_agendada` abaixo era chamado sem
+                # `fazenda_id` (ficava None por default) — perdia até a
+                # trava de segurança que a própria função já tem.
                 ag = session.exec(
                     select(AplicacaoAgendada).where(
                         AplicacaoAgendada.numero_matriz == numero,
                         AplicacaoAgendada.data == data_pendencia,
                         AplicacaoAgendada.aplicado == False,  # noqa: E712
+                        AplicacaoAgendada.fazenda_id == fazenda_id,
                     )
                 ).first()
                 if not ag:
@@ -1034,7 +1042,10 @@ async def importar_baixas_pendencias_agenda(
                 eid = f"aplic_agendada_{ag.id}"
                 novo = _dispensar(eid)
                 if novo:
-                    _baixar_aplicacao_agendada(session, eid, produto, dose, unidade, via)
+                    _baixar_aplicacao_agendada(
+                        session, eid, produto, dose, unidade, via,
+                        fazenda_id=fazenda_id, usuario_id=usuario_id_seguro(user),
+                    )
                     criados += 1
                     dispensados += 1
 
