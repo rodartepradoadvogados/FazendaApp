@@ -13,12 +13,14 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.auth import criar_token, get_current_user, hash_senha
+from fazenda.auth import criar_token, get_current_user, get_fazenda_atual_id, hash_senha
 from fazenda.models import (
-    Alimento, CategoriaMedicamento, Estoque, EstoqueAliasMesclado, EstoqueCategoriaMedicamento, Fazenda, LoteEstoque,
-    MedicamentoCategoria, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo, Usuario,
+    Alimento, CategoriaMedicamento, ContratoFazenda, ContratoFazendaModulo, Estoque, EstoqueAliasMesclado,
+    EstoqueCategoriaMedicamento, Fazenda, LoteEstoque, MedicamentoCategoria, MedicamentoComercial, MovimentoEstoque,
+    PrincipioAtivo, Usuario,
 )
 from fazenda.models.cofre_acesso import PedidoAcessoSuporte, SessaoAcessoSuporte
+from fazenda.models.planos import MODULOS_COMERCIAIS
 
 
 @pytest.fixture
@@ -33,6 +35,18 @@ def client():
         s.refresh(fa)
         s.refresh(fb)
         fa_id, fb_id = fa.id, fb.id
+
+        # Selecionar a fazenda (override de get_fazenda_atual_id, mais
+        # abaixo) faz valer as travas de tenant que antes ficavam de fora
+        # justamente por não haver fazenda na sessão: além do filtro por
+        # fazenda_id nas consultas, o router de Estoque exige contrato ativo
+        # E o módulo comercial contratado (exigir_modulo_contratado("estoque")
+        # em main.py). Sem estas linhas o teste passa a receber 403.
+        for fid in (fa_id, fb_id):
+            s.add(ContratoFazenda(fazenda_id=fid, status="ativo"))
+            for modulo in MODULOS_COMERCIAIS:
+                s.add(ContratoFazendaModulo(fazenda_id=fid, modulo=modulo, preco=0.0, ativo=True))
+        s.commit()
 
         usuario = Usuario(username="dono", nome="Jairo", senha_hash=hash_senha("123"), papel="admin", email="dono@x.com")
         s.add(usuario)
@@ -69,6 +83,14 @@ def client():
     import main
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    # Fazenda A é a fazenda "de trabalho" desta suíte — é o equivalente, no
+    # teste, ao "fid" que o login carimba no token. Havendo fazenda
+    # cadastrada (as duas acima), `exigir_fazenda_selecionada`
+    # (fazenda/auth.py, montada em todo router de tenant em main.py) recusa
+    # com 409 a requisição que não disser em qual fazenda ela acontece —
+    # antes desta trava a suíte inteira rodava "sem fazenda", o que também
+    # desligava o isolamento entre A e B que ela quer justamente exercitar.
+    main.app.dependency_overrides[get_fazenda_atual_id] = lambda: fa_id
 
     with TestClient(main.app) as c:
         yield c, engine, fa_id, fb_id, usuario_id
@@ -225,6 +247,15 @@ def test_mescla_alinha_item_com_padrao_cowdata(client):
 
 
 def test_mescla_bloqueia_itens_de_fazendas_diferentes(client):
+    """Item da fazenda B nunca é mesclado numa sessão da fazenda A.
+
+    A recusa hoje vem UMA CAMADA ANTES do que quando este teste foi escrito:
+    com a fazenda selecionada na sessão (ver a fixture), o próprio filtro de
+    tenant não enxerga o perdedor de outra fazenda e devolve 404 "não
+    encontrado" — a guarda de mesma-fazenda lá dentro (400) só seria
+    alcançada por uma sessão sem fazenda nenhuma, que
+    `exigir_fazenda_selecionada` não deixa mais entrar. O que importa é o
+    mesmo de sempre: nada mesclou, e o item da fazenda B ficou intacto."""
     c, engine, fa_id, fb_id, usuario_id = client
     with Session(engine) as s:
         sobrevivente = Estoque(nome="Item A", fazenda_id=fa_id)
@@ -236,7 +267,12 @@ def test_mescla_bloqueia_itens_de_fazendas_diferentes(client):
         sob_id, perd_id = sobrevivente.id, perdedor.id
 
     r = c.post(f"/estoque/{sob_id}/mesclar", json={"perdedor_ids": [perd_id]})
-    assert r.status_code == 400
+    assert r.status_code == 404
+
+    with Session(engine) as s:
+        perdedor_depois = s.get(Estoque, perd_id)
+        assert perdedor_depois.ativo is not False  # nada foi inativado na fazenda B
+        assert s.exec(select(EstoqueAliasMesclado)).first() is None  # nenhuma mesclagem registrada
 
 
 def test_sugestoes_mesclagem_agrupa_por_principio_ativo(client):
