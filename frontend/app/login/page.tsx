@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { LogIn, Loader2, Eye, EyeOff, X, ShieldCheck, Building2 } from "lucide-react";
+import { LogIn, Loader2, Eye, EyeOff, X, ShieldCheck, Building2, FlaskConical } from "lucide-react";
 import { login, selecionarFazenda, verificarLoginParaResetSenha, enviarResetSenha, ehContador, type FazendaAtual } from "@/lib/api";
 import { ehAppOuPwa } from "@/lib/nativo";
 import { LoginWatermark } from "@/components/LoginWatermark";
@@ -256,15 +256,41 @@ function Hero() {
               </p>
               <div className="space-y-2">
                 {fazendasParaEscolher.map((f) => (
+                  // Fazenda Teste (f.eh_teste) precisa ser inconfundível JÁ
+                  // nesta lista, não só depois de entrar (onde já existe a
+                  // tarja vermelha permanente, ver FazendaTesteBanner.tsx) —
+                  // com 3 opções na tela (fazenda real + Fazenda Teste +
+                  // Painel CowData), clicar na errada e achar que está no
+                  // sistema real é o risco novo. Mesma cor (var(--red)) e
+                  // mesmo ícone (FlaskConical) da tarja, pra quem já viu uma
+                  // reconhecer a outra — nenhuma cor nova inventada aqui.
                   <button key={f.id} type="button" disabled={escolhendoFazenda} onClick={() => escolherFazenda(f)}
-                    className="btn-ghost" style={{ width: "100%", justifyContent: "flex-start", gap: "0.6rem", border: "1px solid var(--border)", padding: "0.7rem 0.9rem" }}>
+                    className="btn-ghost" style={{
+                      width: "100%", justifyContent: "flex-start", gap: "0.6rem", padding: "0.7rem 0.9rem",
+                      border: f.eh_teste ? "1px solid var(--red)" : "1px solid var(--border)",
+                      background: f.eh_teste ? "color-mix(in srgb, var(--red) 12%, transparent)" : undefined,
+                    }}>
                     {f.cowdata
-                      ? <ShieldCheck size={16} style={{ color: "var(--dourado-light)" }} />
-                      : <Building2 size={16} style={{ color: "var(--dourado-light)" }} />}
-                    <span style={{ textAlign: "left" }}>
-                      <strong style={{ display: "block" }}>{f.nome}</strong>
+                      ? <ShieldCheck size={16} style={{ color: "var(--dourado-light)", flexShrink: 0 }} />
+                      : f.eh_teste
+                      ? <FlaskConical size={16} style={{ color: "var(--red)", flexShrink: 0 }} />
+                      : <Building2 size={16} style={{ color: "var(--dourado-light)", flexShrink: 0 }} />}
+                    <span style={{ textAlign: "left", minWidth: 0 }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
+                        <strong>{f.nome}</strong>
+                        {f.eh_teste && (
+                          <span style={{
+                            fontSize: "0.65rem", fontWeight: 700, color: "var(--red)", border: "1px solid var(--red)",
+                            borderRadius: "var(--r-sm)", padding: "0.05rem 0.4rem", letterSpacing: "0.02em", whiteSpace: "nowrap",
+                          }}>
+                            AMBIENTE DE TESTE
+                          </span>
+                        )}
+                      </span>
                       {f.cowdata
                         ? <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Administração da CowData — acesso de suporte às fazendas-clientes</span>
+                        : f.eh_teste
+                        ? <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Cópia-sandbox para testar sem afetar dados reais</span>
                         : (f.cidade || f.uf) && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{[f.cidade, f.uf].filter(Boolean).join(" · ")}</span>}
                     </span>
                   </button>
