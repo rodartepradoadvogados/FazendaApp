@@ -25,7 +25,7 @@ import {
   LineChart,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { checkHealth, getUsuario, getFazendaAtual, logout, podeModulo, ehAdmin, ehDono, podeFormularDietas, ROTA_MODULO } from "@/lib/api";
+import { checkHealth, getUsuario, getFazendaAtual, podeModulo, ehAdmin, ehDono, podeFormularDietas, ROTA_MODULO } from "@/lib/api";
 import { LogOut, UserCircle } from "lucide-react";
 import { CowIcon } from "@/components/CowIcon";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
@@ -427,6 +427,7 @@ export function Sidebar() {
 }
 
 function UsuarioLogado() {
+  const router = useRouter();
   const [nome, setNome] = useState<string | null>(null);
   useEffect(() => { const u = getUsuario(); setNome(u?.nome || u?.username || null); }, []);
   if (!nome) return null;
@@ -435,10 +436,16 @@ function UsuarioLogado() {
       <div className="flex items-center justify-center gap-1.5 mb-1" style={{ color: "var(--sidebar-fg)" }}>
         <UserCircle size={13} /> {nome}
       </div>
-      <button onClick={logout} title="Encerra a sessão — a próxima pessoa faz login com o próprio usuário"
+      {/* Leva pra tela-eixo de escolha de conta (ver components/
+          EscolherConta.tsx) — NÃO desconecta por si só; "Sair da conta" é
+          um botão à parte, discreto, dentro daquela tela. Trocar de conta é
+          o que se faz todo dia (o dono entre fazendas, o suporte entre
+          fazenda-cliente e Painel CowData); sair é raro, o peso visual aqui
+          segue esse uso. */}
+      <button onClick={() => router.push("/escolher-conta")} title="Trocar para outra fazenda ou o Painel CowData, sem sair da conta"
         className="flex items-center justify-center gap-1.5 mx-auto"
         style={{ background: "none", border: "1px solid var(--sidebar-border)", borderRadius: "var(--r-sm)", padding: "0.2rem 0.55rem", color: "var(--sidebar-muted)", cursor: "pointer" }}>
-        <LogOut size={12} /> Sair / trocar de usuário
+        <LogOut size={12} /> Trocar de conta
       </button>
     </div>
   );

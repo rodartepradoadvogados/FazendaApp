@@ -180,11 +180,27 @@ def atualizar_meta_estoque(
     item_id: int, dados: EstoqueMetaIn, session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     item = session.get(Estoque, item_id)
     if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
-    if dados.fornecedor_id is not None and not session.get(Fornecedor, dados.fornecedor_id):
-        raise HTTPException(status_code=400, detail="Fornecedor não encontrado")
+    # BUG DE SEGURANÇA CORRIGIDO: `session.get(...)` só confere que o id EXISTE,
+    # não que é DA FAZENDA de quem está editando — um item da fazenda A podia
+    # ser gravado apontando fornecedor_id/estoque_semen_id de outra fazenda
+    # (Fornecedor e EstoqueSemen são dado da fazenda, nunca catálogo global —
+    # ver `atualizar_fornecedor` acima, que já faz a checagem certa). O caso
+    # do `estoque_semen_id` era o mais grave: toda movimentação normal do item
+    # (ver `estoque.py::_criar_movimento_estoque`/editar movimento) soma/subtrai
+    # doses direto no EstoqueSemen apontado, sem checar tenant de novo — deixar
+    # passar aqui dava escrita persistente no estoque de sêmen de outro cliente.
+    if dados.fornecedor_id is not None:
+        fornecedor = session.get(Fornecedor, dados.fornecedor_id)
+        if not fornecedor or (fazenda_id is not None and fornecedor.fazenda_id != fazenda_id):
+            raise HTTPException(status_code=400, detail="Fornecedor não encontrado")
+    if dados.estoque_semen_id is not None:
+        touro = session.get(EstoqueSemen, dados.estoque_semen_id)
+        if not touro or (fazenda_id is not None and touro.fazenda_id != fazenda_id):
+            raise HTTPException(status_code=400, detail="Estoque de sêmen não encontrado")
     item.unidade_embalagem = dados.unidade_embalagem
     item.medida_embalagem = dados.medida_embalagem
     item.quantidade_embalagem = dados.quantidade_embalagem

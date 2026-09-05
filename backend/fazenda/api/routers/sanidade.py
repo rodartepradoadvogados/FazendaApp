@@ -941,6 +941,7 @@ def relatorio_eventos_vida(
     data_inicio: str = "",
     data_fim: str = "",
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
     Relatório "quais animais entrarão em determinado calendário sanitário" —
@@ -952,11 +953,20 @@ def relatorio_eventos_vida(
     do cadastro) ou um `gatilho` avulso (exploração livre, sem precisar
     cadastrar o evento sanitário antes).
     """
+    # BUG DE SEGURANÇA CORRIGIDO: a rota inteira rodava sem NENHUM filtro de
+    # fazenda — nem o `evento_sanitario_id` (per-tenant, uq (nome, fazenda_id))
+    # comparava posse, nem o Animal.numero == chave nem `_datas_gatilho`
+    # recebiam fazenda_id (ficava None por posição, desligando o `_da_fazenda`
+    # interno). Resultado: qualquer cliente lia o rebanho e o calendário de
+    # manejo de TODAS as fazendas do SaaS. Mesmo padrão tolerante do resto do
+    # projeto — token sem fazenda resolvida (Painel CowData) continua sem
+    # filtro, deliberadamente.
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome_evento = None
     sexo_alvo = None
     if evento_sanitario_id is not None:
         ev = session.get(EventoSanitario, evento_sanitario_id)
-        if not ev:
+        if not ev or (fazenda_id is not None and ev.fazenda_id != fazenda_id):
             raise HTTPException(status_code=400, detail="Evento sanitário não encontrado")
         if ev.tipo_agendamento != "evento" or not ev.gatilho:
             raise HTTPException(status_code=400, detail="Este evento sanitário não está agendado por evento de vida")
@@ -966,10 +976,13 @@ def relatorio_eventos_vida(
     if not gatilho or gatilho not in GATILHOS_EVENTO:
         raise HTTPException(status_code=400, detail=f"Gatilho inválido (use: {', '.join(GATILHOS_EVENTO)})")
 
-    animais = {a.numero: a for a in session.exec(select(Animal)).all()}
+    query_animais = select(Animal)
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+    animais = {a.numero: a for a in session.exec(query_animais).all()}
     hoje = date.today()
     linhas = []
-    for numero, quando in _datas_gatilho(session, gatilho, gatilho_lote, gatilho_idade_meses, 0, sexo_alvo):
+    for numero, quando in _datas_gatilho(session, gatilho, gatilho_lote, gatilho_idade_meses, 0, sexo_alvo, fazenda_id):
         if data_inicio and quando.isoformat() < data_inicio:
             continue
         if data_fim and quando.isoformat() > data_fim:
@@ -1050,8 +1063,13 @@ def cadastrar_preventivo(
     user: Usuario = Depends(get_current_user),
     fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
+    # BUG DE SEGURANÇA CORRIGIDO: nem o evento sanitário nem a regra do
+    # calendário (ambos per-tenant, uq (nome, fazenda_id)) comparavam posse —
+    # um id sequencial de outra fazenda vazava o cadastro sanitário alheio
+    # inteiro (produto/dose/via/doença) na resposta, e uma regra nova nascia
+    # apontando pro evento_sanitario_id de outro cliente.
     ev = session.get(EventoSanitario, dados.evento_sanitario_id)
-    if not ev:
+    if not ev or ev.fazenda_id != fazenda_id:
         raise HTTPException(status_code=400, detail="Evento sanitário não encontrado")
     if dados.frequencia_unidade not in FREQUENCIAS:
         raise HTTPException(status_code=400, detail=f"Frequência inválida (use: {', '.join(FREQUENCIAS)})")
@@ -1102,7 +1120,11 @@ def cadastrar_preventivo(
     # pendência original na Agenda nunca sumir.
     if dados.calendario_id is not None:
         regra = session.get(CalendarioSanitario, dados.calendario_id)
-        if not regra or regra.evento_sanitario_id != ev.id:
+        # A checagem original só comparava `regra.evento_sanitario_id == ev.id`
+        # — coerência entre os dois objetos, nunca posse. Como `ev` já é da
+        # própria fazenda (checado acima), a regra alheia (mesmo evento_id,
+        # outra fazenda_id) passava e voltava serializada inteira na resposta.
+        if not regra or regra.evento_sanitario_id != ev.id or regra.fazenda_id != fazenda_id:
             raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
     else:
         regra = None
@@ -1338,8 +1360,12 @@ def lancar_protocolo(
     dados: ProtocoloLancamentoIn, response: Response, session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
+    # BUG DE SEGURANÇA CORRIGIDO: ProtocoloSanitario é per-tenant (uq (nome,
+    # fazenda_id)) e o id é sequencial — sem comparar posse, um cliente lançava
+    # (e via aplicado/baixado) o molde terapêutico de outro cliente (produtos,
+    # doses), com o nome dele denormalizado no lançamento e ecoado na resposta.
     protocolo = session.get(ProtocoloSanitario, dados.protocolo_id)
-    if not protocolo:
+    if not protocolo or protocolo.fazenda_id != fazenda_id:
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
     etapas = session.exec(
         select(ProtocoloSanitarioEtapa).where(ProtocoloSanitarioEtapa.protocolo_id == dados.protocolo_id).order_by(ProtocoloSanitarioEtapa.dia)
@@ -1458,13 +1484,17 @@ def lancar_protocolo(
             tetos_novos = set(dados.tetos_afetados)
             if tetos_novos:
                 limite = dados.data_inicio - timedelta(days=DIAS_RECIDIVA_MASTITE)
-                anteriores = session.exec(
-                    select(ProtocoloSanitarioLancamento).where(
-                        ProtocoloSanitarioLancamento.numero_matriz == numero,
-                        ProtocoloSanitarioLancamento.data_inicio >= limite,
-                        ProtocoloSanitarioLancamento.data_inicio < dados.data_inicio,
-                    )
-                ).all()
+                # BUG DE SEGURANÇA CORRIGIDO: sem o filtro de fazenda_id, uma
+                # colisão de numero_matriz com outra fazenda vazava data e
+                # tetos de um caso de mastite ALHEIO no aviso de recidiva.
+                query_anteriores = select(ProtocoloSanitarioLancamento).where(
+                    ProtocoloSanitarioLancamento.numero_matriz == numero,
+                    ProtocoloSanitarioLancamento.data_inicio >= limite,
+                    ProtocoloSanitarioLancamento.data_inicio < dados.data_inicio,
+                )
+                if fazenda_id is not None:
+                    query_anteriores = query_anteriores.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
+                anteriores = session.exec(query_anteriores).all()
                 for ant in anteriores:
                     tetos_ant = set((ant.tetos_afetados or "").split(",")) if ant.tetos_afetados else set()
                     if tetos_novos & tetos_ant:

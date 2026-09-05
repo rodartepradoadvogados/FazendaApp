@@ -28,6 +28,7 @@ from fazenda.rules.validacao import link_http_seguro
 from fazenda.rules.centro_custo import mapear_centro_custo
 from fazenda.rules.pedido_status import STATUS_CANCELADO, calcular_status_pedido
 from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo, nome_seguro_storage
+from fazenda.rules.visibilidade import visivel
 
 router = APIRouter(prefix="/pedidos", tags=["pedidos"])
 
@@ -117,11 +118,29 @@ def atualizar_status_por_movimento_estoque(session: Session, pedido_item_id: int
 
 
 @router.get("/opcoes")
-def opcoes(session: Session = Depends(get_session)) -> dict:
+def opcoes(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Listas para os seletores do formulário de Pedido — mesmo padrão de
-    `GET /financeiro/opcoes`, reaproveitando os cadastros já existentes."""
-    fornecedores = session.exec(select(Fornecedor).where(Fornecedor.ativo == True)).all()
-    servicos = session.exec(select(ServicoCadastro).where(ServicoCadastro.ativo == True)).all()
+    `GET /financeiro/opcoes`, reaproveitando os cadastros já existentes.
+
+    BUG DE SEGURANÇA CORRIGIDO: a rota não recebia `fazenda_id` e as duas
+    consultas abaixo não filtravam tenant — a lista de fornecedores/clientes/
+    serviços saía com o cadastro de TODAS as fazendas-cliente do SaaS
+    misturado (vazamento de relação comercial: quem compra/vende de quem).
+    Fornecedor é dado DA FAZENDA (nunca nasce com fazenda_id nulo — filtro
+    estrito, mesmo padrão de `listar_fornecedores` em cadastro/estoque.py).
+    ServicoCadastro é CATÁLOGO (semeado global com fazenda_id nulo em
+    cadastro/servicos.py::seed_servicos, mais o que cada fazenda cria por
+    cima) — usa `visivel()` (ver rules/visibilidade.py), não filtro estrito,
+    senão os serviços padrão do sistema sumiriam do seletor para todo mundo."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_fornecedores = select(Fornecedor).where(Fornecedor.ativo == True)
+    if fazenda_id is not None:
+        query_fornecedores = query_fornecedores.where(Fornecedor.fazenda_id == fazenda_id)
+    fornecedores = session.exec(query_fornecedores).all()
+    query_servicos = visivel(select(ServicoCadastro).where(ServicoCadastro.ativo == True), ServicoCadastro, fazenda_id)
+    servicos = session.exec(query_servicos).all()
     return {
         "fornecedores": sorted({f.nome for f in fornecedores if f.tipo in ("fornecedor", "fabricante")}),
         "clientes": sorted({f.nome for f in fornecedores if f.tipo == "cliente"}),

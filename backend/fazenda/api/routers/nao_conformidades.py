@@ -148,7 +148,15 @@ def relatorio_nao_conformidades(
                 "sublabel": "Mês corrente", "valor": litro["custo_por_litro"], "unidade": "R$/L",
                 "rota": "/financeiro", "rota_label": "Ver no Financeiro",
             })
-        hectare = custo_por_hectare(data_inicio=ini_mes, data_fim=hoje, centro_custo=None, session=session)
+        # BUG DE SEGURANÇA CORRIGIDO: faltava passar `fazenda_id` aqui (as duas
+        # chamadas vizinhas, `calcular_rmca_view` e `custo_litro_leite` acima,
+        # já passam). `custo_por_hectare` é uma rota FastAPI cujo parâmetro tem
+        # default `Depends(get_fazenda_atual_id)` — chamada direto como função
+        # Python, sem o argumento, o parâmetro recebe o objeto `Depends(...)`
+        # em vez de um int, e `fazenda_id_seguro()` (relatorio_custo_hectare.py)
+        # o converte em None — desligando o filtro por tenant e somando a
+        # ContaGerencial de TODAS as fazendas no R$/ha exibido aqui.
+        hectare = custo_por_hectare(data_inicio=ini_mes, data_fim=hoje, centro_custo=None, session=session, fazenda_id=fazenda_id)
         if hectare.get("custo_por_hectare") is not None:
             sem_meta.append({
                 "chave": "custo_hectare", "dominio": "financeiro", "label": "Custo por hectare",

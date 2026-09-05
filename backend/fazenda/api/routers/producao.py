@@ -1387,9 +1387,21 @@ def _lote_das_secas(session: Session, numero_matriz: str, fazenda_id: int | None
 
 
 @router.get("/secagem-info")
-def info_secagem(numero_matriz: str, session: Session = Depends(get_session)) -> dict:
+def info_secagem(
+    numero_matriz: str, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """DEL atual, data prevista de secagem e o lote sugerido para a vaca secar."""
-    animal = session.exec(select(Animal).where(Animal.numero == numero_matriz)).first()
+    # BUG DE SEGURANÇA CORRIGIDO: a rota inteira rodava sem filtro de fazenda —
+    # como numero_matriz não é mais único globalmente (ver Animal.numero),
+    # varrer os números virava um oráculo determinístico que devolvia DEL,
+    # lote atual, data prevista de secagem e dias de gestação do animal de
+    # QUALQUER fazenda-cliente.
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_animal = select(Animal).where(Animal.numero == numero_matriz)
+    if fazenda_id is not None:
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+    animal = session.exec(query_animal).first()
     if not animal:
         raise HTTPException(status_code=404, detail="Animal não encontrado")
 
@@ -1398,8 +1410,13 @@ def info_secagem(numero_matriz: str, session: Session = Depends(get_session)) ->
     # sem diagnóstico ainda, ou de uma perda de prenhez já registrada; ver
     # fazenda.rules.perda_prenhez).
     from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
-    servicos_da_vaca = session.exec(select(Servico).where(Servico.numero_matriz == numero_matriz)).all()
-    partos_da_vaca = session.exec(select(Parto).where(Parto.numero_matriz == numero_matriz)).all()
+    query_servicos = select(Servico).where(Servico.numero_matriz == numero_matriz)
+    query_partos_vaca = select(Parto).where(Parto.numero_matriz == numero_matriz)
+    if fazenda_id is not None:
+        query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
+        query_partos_vaca = query_partos_vaca.where(Parto.fazenda_id == fazenda_id)
+    servicos_da_vaca = session.exec(query_servicos).all()
+    partos_da_vaca = session.exec(query_partos_vaca).all()
     ultimo_servico = servicos_positivos_vigentes(servicos_da_vaca, partos_da_vaca).get(numero_matriz)
 
     data_prevista = None
@@ -1419,9 +1436,10 @@ def info_secagem(numero_matriz: str, session: Session = Depends(get_session)) ->
     # DEL ao vivo — o campo animal.del_dias só é atualizado no próximo upload
     # do GERAL.csv (fica parado entre uploads); aqui calculamos a partir do
     # último parto, igual à lógica já usada no relatório de Controle leiteiro.
-    ultimo_parto = session.exec(
-        select(Parto).where(Parto.numero_matriz == numero_matriz).order_by(Parto.data_parto.desc())
-    ).first()
+    query_ultimo_parto = select(Parto).where(Parto.numero_matriz == numero_matriz)
+    if fazenda_id is not None:
+        query_ultimo_parto = query_ultimo_parto.where(Parto.fazenda_id == fazenda_id)
+    ultimo_parto = session.exec(query_ultimo_parto.order_by(Parto.data_parto.desc())).first()
     del_atual = (date.today() - ultimo_parto.data_parto).days if ultimo_parto else animal.del_dias
 
     return {
@@ -1432,7 +1450,7 @@ def info_secagem(numero_matriz: str, session: Session = Depends(get_session)) ->
         "deve_secar": deve_secar,
         "motivo_exclusao": motivo_exclusao,
         "dias_gestacao": dias_gestacao,
-        "lote_sugerido": _lote_das_secas(session, numero_matriz=numero_matriz),
+        "lote_sugerido": _lote_das_secas(session, numero_matriz=numero_matriz, fazenda_id=fazenda_id),
     }
 
 
@@ -1731,12 +1749,21 @@ def _observacao_manejo_dia(etapas: list[ProtocoloInducaoLactacaoEtapa]) -> str |
 
 
 @router.get("/protocolos-inducao-lactacao")
-def listar_protocolos_inducao_producao(session: Session = Depends(get_session)) -> list[dict]:
+def listar_protocolos_inducao_producao(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     """Protocolos ativos disponíveis para lançamento (o cadastro/edição vive em
     Configurações > Cadastro > Protocolo de indução de lactação)."""
-    protocolos = session.exec(
-        select(ProtocoloInducaoLactacao).where(ProtocoloInducaoLactacao.ativo == True).order_by(ProtocoloInducaoLactacao.nome)  # noqa: E712
-    ).all()
+    # BUG DE SEGURANÇA CORRIGIDO: ProtocoloInducaoLactacao é per-tenant (uq
+    # (nome, fazenda_id) — models/sanidade.py) e o cadastro equivalente
+    # (cadastro/protocolos_sanitarios.py) já filtra por fazenda_id; esta cópia
+    # da listagem, usada na tela de lançamento, não filtrava e devolvia o
+    # protocolo hormonal (produtos/doses/etapas) de TODAS as fazendas.
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(ProtocoloInducaoLactacao).where(ProtocoloInducaoLactacao.ativo == True).order_by(ProtocoloInducaoLactacao.nome)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(ProtocoloInducaoLactacao.fazenda_id == fazenda_id)
+    protocolos = session.exec(query).all()
     out = []
     for p in protocolos:
         etapas = session.exec(
@@ -1762,8 +1789,11 @@ def lancar_inducao_lactacao(
     dados: LancarInducaoLactacaoIn, response: Response, session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
+    # BUG DE SEGURANÇA CORRIGIDO: sem comparar posse, um cliente lançava (e
+    # copiava nome/etapas para o próprio histórico) o molde hormonal
+    # cadastrado por outro cliente — o id é sequencial e o objeto é per-tenant.
     protocolo = session.get(ProtocoloInducaoLactacao, dados.protocolo_id)
-    if not protocolo:
+    if not protocolo or protocolo.fazenda_id != fazenda_id:
         raise HTTPException(status_code=404, detail="Protocolo de indução de lactação não encontrado")
     etapas = session.exec(
         select(ProtocoloInducaoLactacaoEtapa)
