@@ -60,6 +60,19 @@ class Fazenda(SQLModel, table=True):
     # acesso (Painel CowData → solicitar acesso a esta fazenda).
     exige_aprovacao_suporte: bool = False
 
+    # Marca a fazenda-sandbox de testes (hoje a única linha com True é
+    # "Fazenda Teste", id=2) — espelha eh_empresa_cowdata acima, mas pro
+    # outro extremo: em vez de "não é fazenda-cliente", este flag diz "é
+    # DESTINO seguro para receber uma cópia destrutiva de outra fazenda".
+    # Ver fazenda/rules/replicacao_fazenda.py::sincronizar_fazenda_teste,
+    # que RECUSA (409) qualquer destino sem este flag — é a trava dura que
+    # impede a rotina de sobrescrever a fazenda-cliente real por engano.
+    # NOTA (motor de replicação): este campo está sendo adicionado por outra
+    # frente de trabalho via migração Alembic própria; aqui ele só existe no
+    # modelo (sem migração) para permitir escrever/testar a rotina de
+    # sincronização contra o campo definitivo.
+    eh_teste: bool = False
+
 
 class EmpresaOperadora(SQLModel, table=True):
     """A empresa de software que opera esta instalação — distinta de cada
