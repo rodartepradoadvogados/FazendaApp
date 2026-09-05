@@ -134,9 +134,19 @@ def enviar_mensagem(
     if not dados.destinatarios_usuario_id:
         raise HTTPException(400, "Selecione ao menos um destinatário")
 
+    # BUG DE SEGURANÇA CORRIGIDO: só conferia que o usuário EXISTIA
+    # (`session.get(Usuario, dest_id)`), não que ele era da MESMA fazenda de
+    # quem está enviando — dava pra mandar mensagem (com pedido de retorno)
+    # pra qualquer id de usuário de OUTRA fazenda, que caía direto na caixa
+    # de entrada dele (`mensagens_pendentes` só olha destinatario_usuario_id,
+    # sem fazenda_id). Mesma lista de `listar_destinatarios` acima (o "@" já
+    # usa `usuarios_da_fazenda`) — só quem já aparece nesse seletor pode ser
+    # destinatário de fato.
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    ids_validos = {u.id for u in usuarios_da_fazenda(session, fazenda_id)}
     criadas = []
     for dest_id in dados.destinatarios_usuario_id:
-        if not session.get(Usuario, dest_id):
+        if not session.get(Usuario, dest_id) or dest_id not in ids_validos:
             raise HTTPException(404, f"Usuário {dest_id} não encontrado")
         m = PortalMensagem(
             tipo="mensagem",
@@ -145,7 +155,7 @@ def enviar_mensagem(
             aba=dados.aba,
             corpo=dados.corpo.strip(),
             pede_retorno=dados.pede_retorno,
-            fazenda_id=fazenda_id_seguro(fazenda_id),
+            fazenda_id=fazenda_id,
         )
         session.add(m)
         criadas.append(m)
@@ -354,11 +364,17 @@ def delegar_tarefa(
         raise HTTPException(400, "Selecione ao menos um destinatário")
 
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    # BUG DE SEGURANÇA CORRIGIDO: mesmo furo de `enviar_mensagem` acima — só
+    # conferia existência do usuário, não a fazenda dele. Aqui era ainda mais
+    # sensível: além da PortalMensagem cross-tenant, criava uma AgendaManual
+    # "de graça" (com o nome real do delegante) na fazenda de quem delegou,
+    # citando um destinatário de outra fazenda.
+    ids_validos = {u.id for u in usuarios_da_fazenda(session, fazenda_id)}
     data_evento = dados.data_evento or date.today()
     criadas = []
     for dest_id in dados.destinatarios_usuario_id:
         destinatario = session.get(Usuario, dest_id)
-        if not destinatario:
+        if not destinatario or dest_id not in ids_validos:
             raise HTTPException(404, f"Usuário {dest_id} não encontrado")
 
         evento = AgendaManual(
