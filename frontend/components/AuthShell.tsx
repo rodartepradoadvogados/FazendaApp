@@ -12,6 +12,7 @@ import { SectionBackground } from "@/components/SectionBackground";
 import { NewsShell } from "@/components/news/NewsShell";
 import { SubNavTabs } from "@/components/SubNavTabs";
 import { SuporteBanner } from "@/components/SuporteBanner";
+import { FazendaTesteBanner } from "@/components/FazendaTesteBanner";
 
 // Rotas públicas: acessíveis sem login, sem redirecionar para /login.
 // News é o blog da fazenda — leitura livre para qualquer visitante; /sobre/*
@@ -185,25 +186,29 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   }
 
   // Painel CowData: casca própria (PainelCowDataLayout), nunca a Sidebar da
-  // fazenda — ver comentário no topo deste componente. Sem SuporteBanner
-  // aqui: modo suporte é "estar dentro de uma fazenda-cliente como se fosse
-  // o admin dela" — o Painel CowData é a base da própria CowData, não faz
-  // sentido a faixa aparecer nele (quem quer ver sessões ativas usa a
-  // própria tela de Suporte, ver painel-cowdata/cofre/page.tsx).
+  // fazenda — ver comentário no topo deste componente. Sem SuporteBanner nem
+  // FazendaTesteBanner aqui: modo suporte é "estar dentro de uma
+  // fazenda-cliente como se fosse o admin dela" e "eh_teste" é um atributo
+  // da FAZENDA atual — o Painel CowData é a base da própria CowData, sem
+  // fazenda-cliente selecionada, não faz sentido nenhuma das duas tarjas
+  // aparecer nele (quem quer ver sessões ativas usa a própria tela de
+  // Suporte, ver painel-cowdata/cofre/page.tsx).
   if (ehPainelCowData) return <>{children}</>;
 
   // Todas as demais cascas logadas (app móvel, Painel do Contador, portais
   // Insights e Dietas, e a casca padrão da fazenda montada abaixo) recebem a
-  // faixa de suporte quando ativa — pedido explícito do usuário: antes ela
-  // só existia dentro da casca padrão, e sumia ao entrar em Insights e
+  // faixa de suporte quando ativa e a tarja de Fazenda Teste quando a fazenda
+  // atual é o sandbox — pedido explícito do usuário: antes a de suporte só
+  // existia dentro da casca padrão, e sumia ao entrar em Insights e
   // Administração ou Formulação de Dietas (cascas próprias, que nem
-  // chegavam a este ponto do componente). SuporteBanner é `position: fixed`
-  // e mede a própria altura para publicar --suporte-banner-h (ver
-  // SuporteBanner.tsx) — todo elemento fixo no topo do resto do app
-  // (.site-top-actions, barra mobile da Sidebar, cabeçalho do app móvel)
-  // soma essa variável ao próprio "top" para nunca ficar por baixo dela;
-  // o restante do conteúdo (fluxo normal) desce sozinho via padding-top no
-  // <body> (ver globals.css).
+  // chegavam a este ponto do componente); a de Fazenda Teste nasce já
+  // cobrindo todas elas de uma vez. Ambas são `position: fixed` e medem a
+  // própria altura para publicar --suporte-banner-h/--fazenda-teste-banner-h
+  // (ver SuporteBanner.tsx/FazendaTesteBanner.tsx) — todo elemento fixo no
+  // topo do resto do app (.site-top-actions, barra mobile da Sidebar,
+  // cabeçalho do app móvel) soma as duas variáveis ao próprio "top" para
+  // nunca ficar por baixo delas; o restante do conteúdo (fluxo normal) desce
+  // sozinho via padding-top no <body> (ver globals.css).
   let conteudo: React.ReactNode;
 
   // App móvel: o layout de /app cuida de cabeçalho e navegação inferior.
@@ -259,6 +264,14 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
 
   return (
     <>
+      {/* Ordem importa: FazendaTesteBanner fica por cima (top:0, z-index
+          maior) — "em que ambiente eu estou" é mais fundamental e nunca muda
+          durante a sessão, então empilha ANTES da de suporte, que é
+          temporária e some ao encerrar. SuporteBanner já soma
+          --fazenda-teste-banner-h no próprio `top` para descer pra baixo
+          dela quando as duas coexistirem (ver comentário no topo de cada
+          arquivo). */}
+      <FazendaTesteBanner />
       <SuporteBanner />
       {conteudo}
     </>

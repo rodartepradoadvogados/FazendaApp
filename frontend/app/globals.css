@@ -40,6 +40,16 @@
      conjunto --cat-* (Produção não tinha um até então) sem introduzir uma
      cor nova à identidade. */
   --cat-producao:    #1E6FA8;
+
+  /* Soma das tarjas fixas do topo (SuporteBanner.tsx + FazendaTesteBanner.tsx)
+     — cada uma publica só a PRÓPRIA altura (0px quando ausente) via JS em
+     --suporte-banner-h/--fazenda-teste-banner-h (ver os dois componentes);
+     todo elemento que precisa descer pra não ficar por baixo delas (body,
+     .site-top-actions, barra mobile da Sidebar, cabeçalho do app móvel,
+     TabsShell, InsightsLayout...) soma este único token em vez de repetir o
+     calc(...+...) em cada arquivo — um 3º banner fixo no futuro só precisa
+     entrar nesta soma, sem tocar em mais nada. */
+  --faixas-topo-h: calc(var(--suporte-banner-h, 0px) + var(--fazenda-teste-banner-h, 0px));
 }
 
 /* ── Design system tokens ──
@@ -382,12 +392,13 @@ body {
   background-color: var(--bg);
   color: var(--text);
   font-family: var(--font-body);
-  /* Empurra TODA a tela (conteúdo em fluxo normal) para baixo da faixa
-     vermelha de sessão de suporte (ver SuporteBanner.tsx), que é
-     position:fixed e por isso não reserva espaço sozinha. A variável é
-     publicada pelo próprio SuporteBanner via JS (mede a altura real, que
-     varia com quebra de linha) e some (0px) fora do modo suporte. */
-  padding-top: var(--suporte-banner-h, 0px);
+  /* Empurra TODA a tela (conteúdo em fluxo normal) para baixo das tarjas
+     fixas do topo (sessão de suporte e/ou Fazenda Teste — ver
+     SuporteBanner.tsx/FazendaTesteBanner.tsx), que são position:fixed e por
+     isso não reservam espaço sozinhas. --faixas-topo-h soma as duas alturas
+     publicadas via JS (cada uma mede a própria, que varia com quebra de
+     linha) e some (0px) quando nenhuma das duas está ativa. */
+  padding-top: var(--faixas-topo-h, 0px);
 }
 
 h1, h2, h3, h4, .card-header, .kpi-value {
@@ -820,7 +831,7 @@ textarea:focus-visible, [tabindex]:focus-visible {
    News/Tema/Sino (mesma folga de segurança do .notification-panel acima). */
 .toast-container {
   position: fixed; z-index: 150; display: flex; flex-direction: column; gap: 0.5rem;
-  top: calc(env(safe-area-inset-top, 0px) + 4rem + var(--suporte-banner-h, 0px));
+  top: calc(env(safe-area-inset-top, 0px) + 4rem + var(--faixas-topo-h, 0px));
   left: 50%; transform: translateX(-50%); align-items: center;
 }
 @keyframes toast-entra { from { opacity: 0; transform: translateY(-14px); } to { opacity: 1; transform: translateY(0); } }
@@ -916,19 +927,19 @@ html, body { max-width: 100%; overflow-x: hidden; }
    própria faixa de segurança do topo, ver Sidebar.tsx) em vez de sobrepor o
    logotipo. */
 /* Substitui a utilitária md:h-screen (100vh fixo) da casca padrão da fazenda
-   (ver AuthShell.tsx): com a faixa de suporte somando padding-top no <body>,
-   um filho de 100vh sem desconto ficaria mais alto que a viewport visível e
-   o rodapé (md:overflow-hidden) cortaria ~a altura da faixa. Só entra a
-   partir do breakpoint md, mesmo threshold do md:h-screen que substitui. */
+   (ver AuthShell.tsx): com as tarjas fixas do topo somando padding-top no
+   <body>, um filho de 100vh sem desconto ficaria mais alto que a viewport
+   visível e o rodapé (md:overflow-hidden) cortaria ~a altura delas. Só entra
+   a partir do breakpoint md, mesmo threshold do md:h-screen que substitui. */
 @media (min-width: 768px) {
   .farm-shell-h {
-    height: calc(100vh - var(--suporte-banner-h, 0px));
+    height: calc(100vh - var(--faixas-topo-h, 0px));
   }
 }
 
 .site-top-actions {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 1rem + var(--suporte-banner-h, 0px));
+  top: calc(env(safe-area-inset-top, 0px) + 1rem + var(--faixas-topo-h, 0px));
   right: calc(env(safe-area-inset-right, 0px) + 1.25rem);
   z-index: 60;
   display: inline-flex;
@@ -938,7 +949,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
 }
 @media (max-width: 767px) {
   .site-top-actions {
-    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 0.5rem + var(--suporte-banner-h, 0px));
+    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 0.5rem + var(--faixas-topo-h, 0px));
     right: calc(env(safe-area-inset-right, 0px) + 0.6rem);
   }
 }
@@ -965,16 +976,20 @@ html, body { max-width: 100%; overflow-x: hidden; }
 }
 
 /* Painel do sino (NotificationBell) — mesma lógica de segurança de topo do
-   .site-top-actions, mas com offset maior (abre ABAIXO da faixa de botões). */
+   .site-top-actions, mas com offset maior (abre ABAIXO da faixa de botões).
+   Somava tudo MENOS as tarjas fixas: com a faixa de suporte (rara, só durante
+   um atendimento) o painel só encostava nela de vez em quando e ninguém
+   reclamou; a tarja de Fazenda Teste é PERMANENTE, então o mesmo vão passaria
+   a esconder o topo do painel o tempo todo naquela fazenda. */
 .notification-panel {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 4rem);
+  top: calc(env(safe-area-inset-top, 0px) + 4rem + var(--faixas-topo-h, 0px));
   right: calc(env(safe-area-inset-right, 0px) + 1.25rem);
   z-index: 61;
 }
 @media (max-width: 767px) {
   .notification-panel {
-    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 3.2rem);
+    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 3.2rem + var(--faixas-topo-h, 0px));
     right: calc(env(safe-area-inset-right, 0px) + 0.6rem);
   }
 }

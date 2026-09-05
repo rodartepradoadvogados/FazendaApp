@@ -187,7 +187,7 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
   });
 
   return (
-    <div style={{ height: "calc(100vh - var(--suporte-banner-h, 0px))", display: "flex", flexDirection: "column", background: "var(--bg)" }}>
+    <div style={{ height: "calc(100vh - var(--faixas-topo-h, 0px))", display: "flex", flexDirection: "column", background: "var(--bg)" }}>
       <header style={{ flexShrink: 0, background: "linear-gradient(135deg, #0E2A47, #0A1F36)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap", padding: "0.9rem 1.4rem" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.7rem" }}>
