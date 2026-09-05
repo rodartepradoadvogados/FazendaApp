@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from fazenda.auth import exigir_modulo, exigir_modulo_contratado
+from fazenda.auth import bloquear_escrita_contador, exigir_modulo, exigir_modulo_contratado
 
 from . import (
     animais,
@@ -80,7 +80,24 @@ router.include_router(servicos.router)
 # mas sem `exigir_modulo` aqui o backend deixava passar: um operador com
 # "parametros" e sem "financeiro" conseguia ler/editar folha, rescisão, vale
 # e pagamento de diária/empreita chamando a API direto).
-_exige_financeiro = [Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro"))]
+#
+# BUG DE SEGURANÇA CORRIGIDO: faltava `bloquear_escrita_contador()` aqui.
+# O vínculo `contador` (Painel do Contador, ver
+# fazenda/models/multitenant.py::UsuarioFazenda) é documentado como
+# "só enxerga Financeiro, sempre em modo leitura/exportação" — mas o Painel
+# do Contador só funciona com os módulos 'parametros'+'financeiro' (a mesma
+# combinação exigida acima para RH/Folha), então na prática todo contador
+# tinha acesso de ESCRITA às rotas de folha/rescisão/vale/diária/contrato de
+# trabalho: nada aqui checava o vínculo `contador`, diferente de
+# financeiro.router/cartao_credito.router/etc. em main.py, que já aplicam
+# `Depends(bloquear_escrita_contador())` no próprio include_router. Mesma
+# trava, mesmo lugar (dependência de router, não de endpoint individual) —
+# sem inventar mecanismo novo.
+_exige_financeiro = [
+    Depends(exigir_modulo("financeiro")),
+    Depends(exigir_modulo_contratado("financeiro")),
+    Depends(bloquear_escrita_contador()),
+]
 router.include_router(rh_folha.router, dependencies=_exige_financeiro)
 router.include_router(rh_contratos.router, dependencies=_exige_financeiro)
 router.include_router(rh_vale_item.router, dependencies=_exige_financeiro)
