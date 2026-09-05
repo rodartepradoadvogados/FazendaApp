@@ -120,7 +120,7 @@ export function FiltroAgendaReprodutiva({ onFichaAberta }: { onFichaAberta: (num
   }
 
   return (
-    <details className="mob-card mob-card-vet" style={{ padding: "0.4rem 0.9rem", marginBottom: "0.6rem" }}>
+    <details className="mob-card" style={{ padding: "0.4rem 0.9rem", marginBottom: "0.6rem" }}>
       <summary style={{ display: "flex", alignItems: "center", gap: "0.6rem", cursor: "pointer", padding: "0.55rem 0", fontWeight: 700, fontSize: "0.95rem", listStyle: "none" }}>
         <Search size={17} />
         <span style={{ flex: 1, minWidth: 0 }}>Buscar por parâmetro</span>
