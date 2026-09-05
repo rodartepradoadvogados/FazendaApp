@@ -22,7 +22,8 @@ from fazenda.models import (
 from fazenda.rules.alimentacao import resolver_kg_por_unidade
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.estoque_baixa import abrir_lote, carencia_para_item, incrementar_quantidade_atomico, resolver_marca_comercial
-from fazenda.rules.farmacia_multi_principio import definir_principios_estoque, principios_do_estoque, principios_do_medicamento
+from fazenda.rules.farmacia_identidade_padrao import aplicar_identidade_padrao
+from fazenda.rules.farmacia_multi_principio import definir_principios_estoque, principios_do_estoque
 from fazenda.rules.farmacia_tags import definir_tags, tags_de
 from fazenda.rules.visibilidade import visivel
 
@@ -780,8 +781,12 @@ def restaurar_padrao_cowdata(
     catálogo global tem HOJE — pedido explícito do usuário: só via sessão de
     suporte CowData (nunca o próprio tenant sozinho), pra reverter uma
     personalização feita por engano. Nunca toca ativo/estocavel/quantidade/
-    valor/histórico — só a IDENTIDADE do item (nome, finalidade, categoria,
-    classificação, princípio(s), laboratório)."""
+    valor/histórico — só a IDENTIDADE do item (nome, finalidade, categoria/
+    classificação — escalar E tags cumulativas —, princípio(s), laboratório,
+    carência/lactação). Antes gravava "Medicamentos" no campo errado
+    (classificacao_medicamento em vez de categoria) e nunca propagava tags
+    de categoria/classificação nem carência/lactação — corrigido reusando
+    o mesmo helper do fan-out (rules/farmacia_identidade_padrao.py)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     item = session.get(Estoque, item_id)
     if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
@@ -792,17 +797,7 @@ def restaurar_padrao_cowdata(
     if not medicamento:
         raise HTTPException(status_code=404, detail="Medicamento padrão CowData não encontrado")
 
-    principio_ids = principios_do_medicamento(session, medicamento.id)
-    principal = session.get(PrincipioAtivo, principio_ids[0]) if principio_ids else None
-    item.nome = medicamento.nome_comercial
-    item.finalidade = "Medicamento"
-    item.classificacao_medicamento = "Medicamentos"
-    item.laboratorio = medicamento.laboratorio
-    item.principio_ativo_id = principio_ids[0] if principio_ids else None
-    item.principio_ativo = principal.nome if principal else None
-    session.add(item)
-    if principio_ids:
-        definir_principios_estoque(session, item, principio_ids)
+    aplicar_identidade_padrao(session, item, medicamento, renomear=True)
     session.commit()
     session.refresh(item)
     return item.model_dump()

@@ -4851,6 +4851,47 @@ export async function fetchSubstitutivosDeMedicamento(medicamentoId: number) {
   return res.json() as Promise<MedicamentoSubstituto[]>;
 }
 
+// Diagnóstico (proposta validada em artefato, 04/09/2026) — audita, fazenda
+// por fazenda, se o catálogo central chegou direito no estoque do tenant.
+// Ver docstring da seção em painel_cowdata_farmacia.py.
+export type ItemDiagnosticoCasado = {
+  estoque_id: number; nome: string; medicamento_comercial_id: number; nome_comercial_central: string | null;
+  principio_ativo: string | null; categoria: string | null; classificacao_medicamento: string | null;
+};
+export type ItemDiagnosticoOrfao = {
+  estoque_id: number; nome: string; principio_ativo: string | null; categoria: string | null;
+  classificacao_medicamento: string | null; ativo: boolean;
+};
+export type ItemDiagnosticoAusente = MedicamentoFarmaciaCowData & { estoque_id: null };
+export type DiagnosticoFarmacia = {
+  fazenda_id: number; casados: ItemDiagnosticoCasado[]; orfaos: ItemDiagnosticoOrfao[]; ausentes: ItemDiagnosticoAusente[];
+};
+
+export async function fetchFazendasFarmaciaCowData() {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/fazendas`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Fazendas error: ${res.status}`);
+  return res.json() as Promise<{ id: number; nome: string }[]>;
+}
+export async function fetchDiagnosticoFarmaciaCowData(fazendaId: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/diagnostico?fazenda_id=${fazendaId}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Diagnóstico error: ${res.status}`); }
+  return res.json() as Promise<DiagnosticoFarmacia>;
+}
+export async function vincularDiagnosticoFarmaciaCowData(dados: { fazenda_id: number; estoque_id: number; medicamento_comercial_id: number }) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/diagnostico/vincular`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao vincular ao catálogo central"); }
+  return res.json() as Promise<Record<string, any>>;
+}
+export async function ativarDiagnosticoFarmaciaCowData(dados: { fazenda_id: number; medicamento_comercial_id: number }) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/diagnostico/ativar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar item de estoque"); }
+  return res.json() as Promise<Record<string, any>>;
+}
+
 export async function fetchProducao() {
   const res = await authFetch(`${API}/producao/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Produção error: ${res.status}`);

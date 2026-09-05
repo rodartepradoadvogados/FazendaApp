@@ -39,6 +39,15 @@ const SITUACOES: { valor: SituacaoCard; rotulo: string }[] = [
   { valor: "a_descartar", rotulo: "A descartar" },
 ];
 
+// Cor por situação (05/09/2026, "selo sólido + espinha") — mesmo vocabulário
+// de cor das 10 listas fixas de AgendaVet.tsx e de Rebanho > Lotes, pra um
+// card configurado pelo usuário (ex.: "Vazias do Lote 3") pintar igual à
+// lista fixa equivalente, não uma cor à parte.
+const COR_SITUACAO: Record<SituacaoCard, string> = {
+  pev: "var(--mob-amarelo)", inseminada: "var(--mob-dourado)", gestante: "var(--mob-azul)",
+  vazia: "var(--mob-verde)", vazia_atrasada: "var(--mob-vinho)", a_descartar: "var(--mob-laranja)",
+};
+
 const EIXO_DIAS_POR_SITUACAO: Record<SituacaoCard, string | null> = {
   pev: "dias desde o parto",
   inseminada: "dias desde a última inseminação",
@@ -205,12 +214,16 @@ export function CardsAgendaReprodutivaMobile({ onFichaAberta }: { onFichaAberta:
         const n = contagens[c.id];
         const aberto = abertos.has(c.id);
         const itens = itensAbertos[c.id] ?? [];
+        const cor = COR_SITUACAO[c.config.situacao];
         return (
-          <details key={c.id} className="mob-card mob-card-vet" style={{ padding: "0.4rem 0.9rem", marginBottom: "0.6rem" }}
+          <details key={c.id} className="mob-card mob-tint" style={{ ["--tint-cor" as any]: cor, padding: "0.4rem 0.9rem", marginBottom: "0.6rem" }}
             open={aberto} onToggle={(e) => { if ((e.target as HTMLDetailsElement).open !== aberto) toggle(c.id); }}>
             <summary style={{ display: "flex", alignItems: "center", gap: "0.6rem", cursor: "pointer", padding: "0.55rem 0", listStyle: "none" }}>
               <span style={{ flex: 1, minWidth: 0, fontWeight: 700, fontSize: "0.95rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                <span style={{ fontSize: "0.78rem", fontWeight: 800, padding: "0.15rem 0.55rem", borderRadius: 999, background: "var(--mob-surface-2)", border: "1px solid var(--mob-border)", color: "var(--mob-muted)", marginRight: "0.5rem" }}>
+                <span style={{
+                  fontSize: "0.78rem", fontWeight: 800, padding: "0.15rem 0.55rem", borderRadius: 999, marginRight: "0.5rem",
+                  color: cor, background: `color-mix(in srgb, ${cor} 16%, transparent)`, border: `1px solid color-mix(in srgb, ${cor} 40%, transparent)`,
+                }}>
                   {n ?? "…"}
                 </span>
                 {c.nome}

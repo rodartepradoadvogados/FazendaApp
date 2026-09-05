@@ -39,13 +39,13 @@ from sqlmodel import Session, select
 from fazenda.auth import exigir_area_painel_cowdata
 from fazenda.database import get_session
 from fazenda.models import (
-    CategoriaMedicamento, ClassificacaoMedicamento, Doenca, Estoque, EstoqueCategoriaMedicamento,
-    EstoqueClassificacaoMedicamento, Fazenda, IndicacaoTerapeutica, Laboratorio, MedicamentoCategoria,
-    MedicamentoClassificacao, MedicamentoComercial, MedicamentoPrincipioAtivo, PrincipioAtivo, Usuario,
+    CategoriaMedicamento, ClassificacaoMedicamento, Doenca, Estoque, Fazenda, IndicacaoTerapeutica,
+    Laboratorio, MedicamentoCategoria, MedicamentoClassificacao, MedicamentoComercial,
+    MedicamentoPrincipioAtivo, PrincipioAtivo, Usuario,
 )
+from fazenda.rules.farmacia_identidade_padrao import aplicar_identidade_padrao
 from fazenda.rules.farmacia_multi_principio import (
-    checar_e_desvincular_exclusao_principio, definir_principios_estoque, definir_principios_medicamento,
-    principios_do_medicamento,
+    checar_e_desvincular_exclusao_principio, definir_principios_medicamento, principios_do_medicamento,
 )
 from fazenda.rules.farmacia_tags import definir_tags, tags_de
 
@@ -357,39 +357,37 @@ def detalhar_medicamento_global(
     return _montar_medicamento_dict(session, medicamento)
 
 
+def _criar_item_fanout(session: Session, medicamento: MedicamentoComercial, fazenda_id: int) -> Estoque | None:
+    """Get-or-create idempotente de UM item de Estoque, em UMA fazenda, pro
+    medicamento padrão informado — núcleo do fan-out em massa (abaixo) e da
+    ativação avulsa (Diagnóstico > "Ausente", só 1 fazenda de cada vez).
+    NUNCA sobrescreve um item já existente com o mesmo nome (pode ser dado
+    real do tenant) — devolve None nesse caso, pra quem chama contar."""
+    existente = session.exec(
+        select(Estoque).where(Estoque.nome == medicamento.nome_comercial, Estoque.fazenda_id == fazenda_id)
+    ).first()
+    if existente:
+        return None
+    item = Estoque(nome=medicamento.nome_comercial, fazenda_id=fazenda_id, ativo=False, estocavel=False)
+    aplicar_identidade_padrao(session, item, medicamento, renomear=False)
+    return item
+
+
 def _fan_out_medicamento(session: Session, medicamento: MedicamentoComercial, principio_ids: list[int]) -> dict:
     """Cria (get-or-create, idempotente) o item de Estoque correspondente em
     toda fazenda-cliente ativa — pedido: "automaticamente, fazer parte do
     estoque de todos os tenants, já com finalidade medicamento e princípio
     ativo automaticamente preenchido e classificação (medicamentos), mas não
-    marcados como ativos e não marcados como estocáveis". NUNCA sobrescreve
-    um item já existente com o mesmo nome (pode ser dado real do tenant)."""
-    principal = session.get(PrincipioAtivo, principio_ids[0])
-    categoria_ids = tags_de(session, MedicamentoCategoria, "medicamento_comercial_id", medicamento.id, "categoria_medicamento_id")
-    classificacao_ids = tags_de(session, MedicamentoClassificacao, "medicamento_comercial_id", medicamento.id, "classificacao_medicamento_id")
+    marcados como ativos e não marcados como estocáveis". `principio_ids` foi
+    mantido no assinatura por compatibilidade com quem já chama esta função,
+    mas não é mais usado — a identidade completa vem do medicamento mesmo
+    (ver aplicar_identidade_padrao), sempre lida ao vivo do banco."""
     criados = ja_existiam = 0
     for fazenda in _fazendas_cliente_ativas(session):
-        existente = session.exec(
-            select(Estoque).where(Estoque.nome == medicamento.nome_comercial, Estoque.fazenda_id == fazenda.id)
-        ).first()
-        if existente:
+        if _criar_item_fanout(session, medicamento, fazenda.id) is None:
             ja_existiam += 1
-            continue
-        item = Estoque(
-            nome=medicamento.nome_comercial, fazenda_id=fazenda.id, finalidade="Medicamento",
-            categoria="Medicamentos", classificacao_medicamento=medicamento.classificacao_medicamento,
-            principio_ativo=principal.nome if principal else None,
-            principio_ativo_id=principio_ids[0], medicamento_comercial_id=medicamento.id,
-            laboratorio=medicamento.laboratorio, carencia_dias=medicamento.carencia_leite_dias,
-            carencia_leite_dias=medicamento.carencia_leite_dias, carencia_carne_dias=medicamento.carencia_carne_dias,
-            proibido_lactacao=medicamento.proibido_lactacao, ativo=False, estocavel=False,
-        )
-        session.add(item)
-        session.flush()  # precisa do item.id antes de gravar a junção
-        definir_principios_estoque(session, item, principio_ids)
-        definir_tags(session, EstoqueCategoriaMedicamento, "estoque_id", item.id, "categoria_medicamento_id", categoria_ids)
-        definir_tags(session, EstoqueClassificacaoMedicamento, "estoque_id", item.id, "classificacao_medicamento_id", classificacao_ids)
-        criados += 1
+        else:
+            criados += 1
     return {"criados": criados, "ja_existiam": ja_existiam}
 
 
@@ -471,6 +469,146 @@ def reexecutar_fanout(
     resultado = _fan_out_medicamento(session, medicamento, principio_ids)
     session.commit()
     return resultado
+
+
+@router.get("/fazendas")
+def listar_fazendas_farmacia(_: Usuario = _dep, session: Session = Depends(get_session)) -> list[dict]:
+    """Fazendas-cliente ativas — alimenta o seletor da tela de Diagnóstico
+    (abaixo). Espelha /painel-cowdata/cadastros/fazendas, só que sob a
+    permissão de área "farmacia" em vez de "cadastros"."""
+    return [{"id": f.id, "nome": f.nome} for f in _fazendas_cliente_ativas(session)]
+
+
+# ---------------------------------------------------------------------------
+# Diagnóstico (proposta validada em artefato, 04/09/2026) — audita, fazenda
+# por fazenda, se o catálogo central chegou direito no estoque do tenant.
+# Três estados:
+#   Casado   — Estoque.medicamento_comercial_id aponta pra um medicamento
+#              central de verdade (fan-out funcionou).
+#   Órfão    — item de Estoque com finalidade "Medicamento" nesta fazenda,
+#              sem vínculo nenhum com o central. Nasceu antes do medicamento
+#              central existir (ou com nome levemente diferente), então o
+#              fan-out (que casa por nome exato) nunca conseguiu ligar os
+#              dois — caso real reportado: Draxxin KP, Tulatromicina.
+#   Ausente  — medicamento central sem NENHUM item de Estoque nesta fazenda
+#              — normalmente porque ela foi ativada/reativada depois do
+#              fan-out original rodar (fan-out só roda no momento da criação/
+#              edição do medicamento, nunca fica "escutando" fazenda nova).
+# ---------------------------------------------------------------------------
+def _fazenda_cliente_ou_404(session: Session, fazenda_id: int) -> Fazenda:
+    fazenda = session.get(Fazenda, fazenda_id)
+    if not fazenda or fazenda.eh_empresa_cowdata or not fazenda.ativa:
+        raise HTTPException(status_code=404, detail="Fazenda-cliente ativa não encontrada")
+    return fazenda
+
+
+@router.get("/diagnostico")
+def diagnostico_farmacia(
+    fazenda_id: int, _: Usuario = _dep, session: Session = Depends(get_session),
+) -> dict:
+    _fazenda_cliente_ou_404(session, fazenda_id)
+
+    itens_fazenda = session.exec(select(Estoque).where(Estoque.fazenda_id == fazenda_id)).all()
+    casados = []
+    for item in itens_fazenda:
+        if item.medicamento_comercial_id is None:
+            continue
+        medicamento = session.get(MedicamentoComercial, item.medicamento_comercial_id)
+        casados.append({
+            "estoque_id": item.id, "nome": item.nome,
+            "medicamento_comercial_id": item.medicamento_comercial_id,
+            "nome_comercial_central": medicamento.nome_comercial if medicamento else None,
+            "principio_ativo": item.principio_ativo, "categoria": item.categoria,
+            "classificacao_medicamento": item.classificacao_medicamento,
+        })
+
+    orfaos = [
+        {
+            "estoque_id": item.id, "nome": item.nome,
+            "principio_ativo": item.principio_ativo, "categoria": item.categoria,
+            "classificacao_medicamento": item.classificacao_medicamento, "ativo": item.ativo,
+        }
+        for item in itens_fazenda
+        if item.finalidade == "Medicamento" and item.medicamento_comercial_id is None
+    ]
+
+    medicamentos_globais = session.exec(
+        select(MedicamentoComercial).where(MedicamentoComercial.fazenda_id.is_(None), MedicamentoComercial.ativo == True)  # noqa: E712
+        .order_by(MedicamentoComercial.nome_comercial)
+    ).all()
+    ids_presentes_na_fazenda = set(session.exec(
+        select(Estoque.medicamento_comercial_id).where(
+            Estoque.fazenda_id == fazenda_id, Estoque.medicamento_comercial_id.is_not(None),
+        )
+    ).all())
+    ausentes = [
+        {**_montar_medicamento_dict(session, m), "estoque_id": None}
+        for m in medicamentos_globais if m.id not in ids_presentes_na_fazenda
+    ]
+
+    return {"fazenda_id": fazenda_id, "casados": casados, "orfaos": orfaos, "ausentes": ausentes}
+
+
+class VincularDiagnosticoIn(BaseModel):
+    fazenda_id: int
+    estoque_id: int
+    medicamento_comercial_id: int
+
+
+@router.post("/diagnostico/vincular")
+def vincular_item_ao_catalogo(
+    dados: VincularDiagnosticoIn, _: Usuario = _dep, session: Session = Depends(get_session),
+) -> dict:
+    """Resolve um 'Órfão': liga um item de Estoque já existente (nome mantido
+    — pode ser diferente do nome comercial central, ex. "Tulatromicina 100mg
+    (genérico)" ligado a "Tulatromicina Injetável") ao medicamento central
+    escolhido, adotando princípio(s)/categoria/classificação/carência/
+    laboratório. Se dois itens da fazenda representam o MESMO produto físico
+    (duplicado de verdade), o caminho é mesclar (POST /estoque/{id}/mesclar),
+    não vincular — esta ação não apaga nem funde nada."""
+    _fazenda_cliente_ou_404(session, dados.fazenda_id)
+    item = session.get(Estoque, dados.estoque_id)
+    if not item or item.fazenda_id != dados.fazenda_id:
+        raise HTTPException(status_code=404, detail="Item de estoque não encontrado nesta fazenda")
+    if item.medicamento_comercial_id is not None:
+        raise HTTPException(status_code=400, detail="Este item já está vinculado ao catálogo central")
+    medicamento = session.get(MedicamentoComercial, dados.medicamento_comercial_id)
+    if not medicamento or medicamento.fazenda_id is not None:
+        raise HTTPException(status_code=404, detail="Medicamento global não encontrado")
+
+    aplicar_identidade_padrao(session, item, medicamento, renomear=False)
+    session.commit()
+    session.refresh(item)
+    return item.model_dump()
+
+
+class AtivarDiagnosticoIn(BaseModel):
+    fazenda_id: int
+    medicamento_comercial_id: int
+
+
+@router.post("/diagnostico/ativar", status_code=201)
+def ativar_medicamento_em_fazenda(
+    dados: AtivarDiagnosticoIn, _: Usuario = _dep, session: Session = Depends(get_session),
+) -> dict:
+    """Resolve um 'Ausente': cria nesta fazenda o item de Estoque que o
+    fan-out em massa não alcançou (mesma regra idempotente do fan-out — não
+    ativo, não estocável, quem quiser usar de verdade ativa/personaliza
+    depois)."""
+    _fazenda_cliente_ou_404(session, dados.fazenda_id)
+    medicamento = session.get(MedicamentoComercial, dados.medicamento_comercial_id)
+    if not medicamento or medicamento.fazenda_id is not None:
+        raise HTTPException(status_code=404, detail="Medicamento global não encontrado")
+    item = _criar_item_fanout(session, medicamento, dados.fazenda_id)
+    if item is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Já existe um item de estoque chamado '{medicamento.nome_comercial}' nesta fazenda — "
+                   "se for o mesmo produto sem vínculo, use 'Vincular ao catálogo central' em vez desta ação.",
+        )
+    session.commit()
+    session.refresh(item)
+    return item.model_dump()
 
 
 # ---------------------------------------------------------------------------
