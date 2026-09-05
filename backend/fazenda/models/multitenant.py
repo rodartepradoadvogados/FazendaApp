@@ -44,9 +44,11 @@ class Fazenda(SQLModel, table=True):
     # produção (ex.: "Fazenda Teste") — distinta de `eh_empresa_cowdata`
     # (aquela é a fazenda "lógica" da própria CowData; esta é uma fazenda de
     # verdade no cadastro, só que não é cliente). Serve de trava dura pra
-    # rotina de replicação de dados (só grava em fazenda com eh_teste=True —
-    # ver rotina de replicação de outra frente do retrofit) e, no futuro,
-    # exclui a fazenda de cobrança/métricas/alertas.
+    # rotina de replicação: fazenda/rules/replicacao_fazenda.py RECUSA com
+    # 409 qualquer destino sem este flag — é o que impede a sincronização de
+    # sobrescrever a fazenda-cliente real por engano, e por isso a trava mora
+    # aqui no dado, não na disciplina de quem clica. No futuro, também exclui
+    # a fazenda de cobrança/métricas/alertas.
     eh_teste: bool = False
 
     # Dados jurídicos da fazenda-cliente — usados pelo contrato-modelo
@@ -71,18 +73,6 @@ class Fazenda(SQLModel, table=True):
 
     # Marca a fazenda-sandbox de testes (hoje a única linha com True é
     # "Fazenda Teste", id=2) — espelha eh_empresa_cowdata acima, mas pro
-    # outro extremo: em vez de "não é fazenda-cliente", este flag diz "é
-    # DESTINO seguro para receber uma cópia destrutiva de outra fazenda".
-    # Ver fazenda/rules/replicacao_fazenda.py::sincronizar_fazenda_teste,
-    # que RECUSA (409) qualquer destino sem este flag — é a trava dura que
-    # impede a rotina de sobrescrever a fazenda-cliente real por engano.
-    # NOTA (motor de replicação): este campo está sendo adicionado por outra
-    # frente de trabalho via migração Alembic própria; aqui ele só existe no
-    # modelo (sem migração) para permitir escrever/testar a rotina de
-    # sincronização contra o campo definitivo.
-    eh_teste: bool = False
-
-
 class EmpresaOperadora(SQLModel, table=True):
     """A empresa de software que opera esta instalação — distinta de cada
     `Fazenda` (cliente/tenant) e distinta da fazenda do próprio dono do
