@@ -120,6 +120,20 @@ def _calcular_encargo_projetado(valor_bruto: float, percentual: Optional[float],
     return None
 
 
+def _liquido_folha(
+    valor_bruto: float, descontos: float, valor_inss: float, valor_ir: float, valor_vale: float,
+) -> float:
+    """
+    Fórmula ÚNICA do líquido da folha: bruto − descontos de folha − INSS − IR −
+    vale. Existe como função porque a fórmula estava escrita à mão em quatro
+    lugares deste módulo e uma delas (a geração por recorrência) tinha esquecido
+    as retenções — toda competência gerada automaticamente nascia com o líquido
+    inflado no banco e na conta a pagar. Com um só lugar, essa divergência não
+    volta a acontecer silenciosamente.
+    """
+    return round(valor_bruto - descontos - valor_inss - valor_ir - valor_vale, 2)
+
+
 def _data_vencimento_folha(competencia: str, dia_vencimento: Optional[int]) -> date:
     """Vencimento da folha: dia 5 (ou o dia escolhido) do mês SEGUINTE ao mês
     trabalhado — a competência é sempre o mês trabalhado; o pagamento cai no
@@ -276,6 +290,23 @@ def _remover_folha_duplicada(session: Session, fazenda_id: int | None) -> None:
         session.commit()
 
 
+def _rotulo_conta_do_modelo(session: Session, modelo: FolhaPagamento) -> str | None:
+    """
+    Rótulo da conta bancária do lançamento-modelo, para preencher
+    `ContaGerencial.conta_bancaria` nas competências geradas pela recorrência.
+    Ao contrário de `_resolver_conta_corrente` (usado nos endpoints), NUNCA
+    levanta HTTPException: isto roda dentro de uma rotina "lazy pull" chamada
+    pela listagem, e uma conta apagada depois do lançamento não pode derrubar a
+    tela de folha inteira — nesse caso a conta a pagar só nasce sem o rótulo.
+    """
+    if not modelo.conta_corrente_id:
+        return None
+    conta = session.get(ContaCorrente, modelo.conta_corrente_id)
+    if not conta or (conta.fazenda_id != modelo.fazenda_id):
+        return None
+    return rotulo_conta_corrente(conta)
+
+
 def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> None:
     """
     Para cada lançamento de folha marcado como recorrente (o "modelo"), gera
@@ -311,14 +342,31 @@ def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> 
                 descontos = round(modelo.descontos, 2)
                 valor_vale = _valor_vale(session, modelo.pessoa_id, competencia)
                 _marcar_vale_aplicado(session, modelo.pessoa_id, competencia)
-                valor_liquido = round(modelo.valor_bruto - descontos - valor_vale, 2)
+                # Retenções do modelo: a competência gerada é a MESMA folha do
+                # mês seguinte, então INSS/IR seguem junto — sem eles, o líquido
+                # (e a conta a pagar) nasciam inflados e a retenção sumia do
+                # banco, não só da tela. Idem FGTS/DCTF (base da consolidação em
+                # `gerar-guias`), conta bancária (o que os relatórios gerenciais
+                # filtram) e dia de vencimento.
+                valor_inss = round(modelo.valor_inss, 2)
+                valor_ir = round(modelo.valor_ir, 2)
+                valor_liquido = _liquido_folha(
+                    modelo.valor_bruto, descontos, valor_inss, valor_ir, valor_vale,
+                )
                 numero_lancamento = _proximo_numero_lancamento(session, ano)
                 nova = FolhaPagamento(
                     pessoa_id=modelo.pessoa_id, competencia=competencia, valor_bruto=modelo.valor_bruto,
-                    descontos=descontos, valor_vale=valor_vale, valor_liquido=valor_liquido, status="pendente",
+                    descontos=descontos,
+                    percentual_inss=modelo.percentual_inss, valor_inss=valor_inss,
+                    percentual_ir=modelo.percentual_ir, valor_ir=valor_ir,
+                    valor_vale=valor_vale, valor_liquido=valor_liquido, status="pendente",
+                    percentual_fgts=modelo.percentual_fgts, valor_fgts=modelo.valor_fgts,
+                    percentual_dctf=modelo.percentual_dctf, valor_dctf=modelo.valor_dctf,
                     observacao=modelo.observacao, origem_recorrencia_id=modelo.id,
                     numero_lancamento_gerado=numero_lancamento,
                     centro_custo=modelo.centro_custo,
+                    conta_corrente_id=modelo.conta_corrente_id,
+                    dia_vencimento=modelo.dia_vencimento,
                     fazenda_id=fazenda_id,
                 )
                 session.add(nova)
@@ -333,10 +381,125 @@ def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> 
                     valor_total=valor_liquido,
                     parcela_num=1, parcela_total=1,
                     tipo="despesa", origem="auto",
+                    conta_bancaria=_rotulo_conta_do_modelo(session, modelo),
                     fazenda_id=fazenda_id,
                 ))
                 session.commit()
             competencia = _competencia_seguinte(competencia)
+
+
+def _corrigir_folha_gerada_sem_retencao(session: Session, fazenda_id: int | None = None) -> None:
+    """
+    Self-heal das competências que a recorrência JÁ gerou erradas (sem INSS/IR
+    e com o líquido inflado), no mesmo espírito de `_remover_folha_duplicada` e
+    `_remover_folha_pos_rescisao`.
+
+    POR QUE reprocessar, e não só consertar a geração daqui pra frente: o erro
+    está gravado no banco — no `valor_liquido` da folha e no `valor_total` da
+    conta a pagar, que é o número que o dono efetivamente paga. Corrigir só a
+    geração deixaria todas as competências já criadas mostrando (e cobrando) o
+    valor errado para sempre, sem nenhum caminho de correção além de reeditar
+    mês a mês na mão. Como a conta a pagar ainda está em aberto, ajustar agora
+    corrige o futuro pagamento em vez de reescrever o passado.
+
+    LIMITE DE SEGURANÇA — nunca toca em folha `status == "pago"` nem em conta a
+    pagar com `valor_pago` preenchido: aí o dinheiro já saiu e mexer no líquido
+    seria reescrever histórico financeiro. Uma folha paga com o líquido inflado
+    fica exatamente como está (ver relato ao dono).
+
+    Só age sobre a assinatura EXATA do bug, para não sobrescrever decisão de
+    quem editou o lançamento à mão:
+      1. a folha foi gerada pela recorrência (`origem_recorrencia_id`) e o
+         modelo ainda existe;
+      2. bruto e descontos continuam idênticos aos do modelo (linha intocada);
+      3. as retenções da linha estão todas zeradas e o modelo tem retenção;
+      4. o líquido gravado bate com a fórmula buggada (bruto − descontos − vale),
+         isto é, nunca teve retenção descontada.
+    Resta um caso ambíguo assumido: uma folha pendente em que o usuário zerou
+    deliberadamente o INSS/IR de um mês, mantendo o modelo com retenção, é
+    indistinguível de uma folha nascida do bug e volta a seguir o modelo. Não
+    há como separar os dois no dado gravado, e a intenção registrada na
+    recorrência é a melhor referência disponível.
+    """
+    query = select(FolhaPagamento).where(
+        FolhaPagamento.status != "pago",
+        FolhaPagamento.origem_recorrencia_id != None,  # noqa: E711
+    )
+    if fazenda_id is not None:
+        query = query.where(FolhaPagamento.fazenda_id == fazenda_id)
+
+    houve_mudanca = False
+    for registro in session.exec(query).all():
+        modelo = session.get(FolhaPagamento, registro.origem_recorrencia_id)
+        if not modelo or modelo.id == registro.id:
+            continue
+        # (2) linha ainda idêntica ao modelo no que o usuário poderia ter mexido.
+        if abs(registro.valor_bruto - modelo.valor_bruto) > 0.001:
+            continue
+        if abs(registro.descontos - modelo.descontos) > 0.001:
+            continue
+        # A conta a pagar já quitada trava a correção mesmo com a folha ainda
+        # "pendente" (baixa feita direto no Financeiro) — o dinheiro já saiu.
+        conta = None
+        if registro.numero_lancamento_gerado:
+            conta = session.exec(
+                select(ContaGerencial).where(
+                    ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado
+                )
+            ).first()
+            if conta and conta.valor_pago is not None:
+                continue
+
+        mudou = False
+        # Campos que a geração simplesmente não copiava e que nascem vazios:
+        # completa só quando ainda estão vazios (nunca sobrescreve escolha do
+        # usuário) — não mexem no líquido, mas alimentam a consolidação de
+        # guias (FGTS/DCTF) e o filtro por conta dos relatórios gerenciais.
+        for campo in ("percentual_fgts", "valor_fgts", "percentual_dctf", "valor_dctf",
+                      "conta_corrente_id", "dia_vencimento"):
+            if getattr(registro, campo) is None and getattr(modelo, campo) is not None:
+                setattr(registro, campo, getattr(modelo, campo))
+                mudou = True
+        if conta and conta.conta_bancaria is None:
+            rotulo = _rotulo_conta_do_modelo(session, modelo)
+            if rotulo:
+                conta.conta_bancaria = rotulo
+                session.add(conta)
+                mudou = True
+
+        # (3) e (4): a assinatura do líquido sem retenção nenhuma.
+        sem_retencao_na_linha = not (
+            registro.valor_inss or registro.valor_ir or registro.percentual_inss or registro.percentual_ir
+        )
+        modelo_tem_retencao = bool(modelo.valor_inss or modelo.valor_ir)
+        liquido_buggado = _liquido_folha(
+            registro.valor_bruto, registro.descontos, 0.0, 0.0, registro.valor_vale or 0.0,
+        )
+        if (
+            sem_retencao_na_linha
+            and modelo_tem_retencao
+            and abs(registro.valor_liquido - liquido_buggado) <= 0.001
+        ):
+            registro.percentual_inss = modelo.percentual_inss
+            registro.valor_inss = round(modelo.valor_inss, 2)
+            registro.percentual_ir = modelo.percentual_ir
+            registro.valor_ir = round(modelo.valor_ir, 2)
+            valor_vale = _valor_vale(session, registro.pessoa_id, registro.competencia)
+            registro.valor_vale = valor_vale
+            registro.valor_liquido = _liquido_folha(
+                registro.valor_bruto, registro.descontos, registro.valor_inss, registro.valor_ir, valor_vale,
+            )
+            if conta:
+                conta.valor_total = registro.valor_liquido
+                session.add(conta)
+            mudou = True
+
+        if mudou:
+            session.add(registro)
+            houve_mudanca = True
+
+    if houve_mudanca:
+        session.commit()
 
 
 def _detalhe_folha(session: Session, registro: FolhaPagamento) -> list[dict]:
@@ -355,10 +518,22 @@ def _detalhe_folha(session: Session, registro: FolhaPagamento) -> list[dict]:
         key=lambda p: (p.vale_id, p.id or 0),
     )
     detalhe = [{"label": "Salário bruto", "valor": registro.valor_bruto}]
-    if registro.percentual_inss:
-        detalhe.append({"label": f"INSS ({registro.percentual_inss:g}%)", "valor": -registro.valor_inss})
-    if registro.percentual_ir:
-        detalhe.append({"label": f"IR ({registro.percentual_ir:g}%)", "valor": -registro.valor_ir})
+    # A linha existe quando existe VALOR retido — nunca pelo percentual. O
+    # percentual é só a referência de como o valor foi obtido, e o formulário
+    # permite digitar o valor direto (campo `inssManual`), gravando
+    # `valor_inss=300, percentual_inss=0`: testar o percentual fazia o líquido
+    # cair sem nenhum desconto aparecer na discriminação — o recibo não fechava.
+    # O caminho inverso (percentual preenchido e valor zero) não retém nada, e
+    # por isso também não vira linha. Não se deduz percentual a partir do valor:
+    # sem base declarada pelo usuário, qualquer percentual aqui seria inventado.
+    for rotulo, valor, percentual in (
+        ("INSS", registro.valor_inss, registro.percentual_inss),
+        ("IR", registro.valor_ir, registro.percentual_ir),
+    ):
+        if not valor:
+            continue
+        referencia = f" ({percentual:g}%)" if percentual else ""
+        detalhe.append({"label": f"{rotulo}{referencia}", "valor": -valor})
     # Uma linha por parcela de vale, com o valor REAL da parcela (descontos de
     # vale). Numera a parcela na sequência do PRÓPRIO vale (k/n, ex.: 1/2, 2/2),
     # ordenando todas as parcelas do vale por competência — não só as deste mês.
@@ -385,6 +560,7 @@ def listar_folha_pagamento(
     _remover_folha_duplicada(session, fazenda_id)
     _remover_folha_pos_rescisao(session, fazenda_id)
     _gerar_folha_recorrente(session, fazenda_id)
+    _corrigir_folha_gerada_sem_retencao(session, fazenda_id)
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
     query = select(FolhaPagamento)
     if fazenda_id is not None:
@@ -401,8 +577,8 @@ def listar_folha_pagamento(
         vv = _valor_vale(session, registro.pessoa_id, registro.competencia)
         if abs(vv - (registro.valor_vale or 0)) > 0.001:
             registro.valor_vale = vv
-            registro.valor_liquido = round(
-                registro.valor_bruto - registro.descontos - registro.valor_inss - registro.valor_ir - vv, 2
+            registro.valor_liquido = _liquido_folha(
+                registro.valor_bruto, registro.descontos, registro.valor_inss, registro.valor_ir, vv,
             )
             _marcar_vale_aplicado(session, registro.pessoa_id, registro.competencia)
             session.add(registro)
@@ -484,7 +660,7 @@ def criar_folha_pagamento(
     _marcar_vale_aplicado(session, dados.pessoa_id, dados.competencia)
     valor_inss = round(dados.valor_inss, 2)
     valor_ir = round(dados.valor_ir, 2)
-    valor_liquido = round(dados.valor_bruto - descontos - valor_inss - valor_ir - valor_vale, 2)
+    valor_liquido = _liquido_folha(dados.valor_bruto, descontos, valor_inss, valor_ir, valor_vale)
     if valor_liquido <= 0:
         raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
     valor_fgts = _calcular_encargo_projetado(dados.valor_bruto, dados.percentual_fgts, dados.valor_fgts)
@@ -553,7 +729,7 @@ def atualizar_folha_pagamento(
     descontos = round(dados.descontos, 2)  # "descontos de folha" manuais, sem vale
     valor_vale = _valor_vale(session, dados.pessoa_id, dados.competencia)
     _marcar_vale_aplicado(session, dados.pessoa_id, dados.competencia)
-    valor_liquido = round(dados.valor_bruto - descontos - valor_inss - valor_ir - valor_vale, 2)
+    valor_liquido = _liquido_folha(dados.valor_bruto, descontos, valor_inss, valor_ir, valor_vale)
     if valor_liquido <= 0:
         raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
     if dados.recorrente and not (dados.dia_vencimento and 1 <= dados.dia_vencimento <= 28):
