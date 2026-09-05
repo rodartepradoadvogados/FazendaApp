@@ -62,7 +62,15 @@ def client(monkeypatch):
             data_evento=date(2026, 1, 1),
         ))
         # Farmácia (Fase 4A) — PrincipioAtivo/MedicamentoComercial da fazenda #1.
-        pa = PrincipioAtivo(nome="Meloxicam", fazenda_id=1)
+        # NOME PROPOSITALMENTE INVENTADO: o catálogo global da CowData
+        # (rules/farmacia_seed.py) semeia princípios reais — "Meloxicam" entre
+        # eles — com fazenda_id nulo, e linha global é visível a TODA fazenda
+        # por definição (ver rules/visibilidade.py). Usando um nome real, o
+        # teste passava ou falhava conforme a semeadura tivesse rodado antes,
+        # e o que ele reprovava era o catálogo global funcionando, não um
+        # vazamento. Com um nome que só pode existir aqui, a asserção volta a
+        # medir o que interessa: a linha DA FAZENDA 1 não aparece para a 2.
+        pa = PrincipioAtivo(nome="Zzmeloxitest-F1", fazenda_id=1)
         s.add(pa)
         s.commit()
         s.refresh(pa)
@@ -178,11 +186,11 @@ class TestIsolamentoEntreFazendas:
         r = c.get("/farmacia/principios")
         assert r.status_code == 200
         nomes = {item["nome"] for item in r.json()}
-        assert "Meloxicam" not in nomes
+        assert "Zzmeloxitest-F1" not in nomes
         _como_fazenda(1)
         r = c.get("/farmacia/principios")
         nomes = {item["nome"] for item in r.json()}
-        assert "Meloxicam" in nomes
+        assert "Zzmeloxitest-F1" in nomes
 
     def test_tipos_metodos_servico_isolados(self, client):
         """Fase 4A — vocabulário de Serviço/Inseminação (TipoServicoReprodutivo/
