@@ -186,6 +186,10 @@ def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None, session:
         )
     return {
         "id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf,
+        # Fazenda de demonstração/sandbox (ver Fazenda.eh_teste) — o
+        # frontend usa isto pra desenhar a tarja de teste, nunca escondida
+        # por trás de um campo ausente (default False, igual ao model).
+        "eh_teste": f.eh_teste,
         "vinculo_contador": bool(vinculo and vinculo.contador),
         "vinculo_consultor": bool(vinculo and vinculo.consultor),
         "vinculo_contratante": bool(vinculo and vinculo.contratante),

@@ -19,6 +19,15 @@ class Animal(SQLModel, table=True):
     """Foto atual de cada animal — alimentado pelo GERAL.csv."""
 
     __tablename__ = "animal"
+    # Unicidade de `numero` é POR FAZENDA, não global (ver migração
+    # animal_numero_unico_por_fazenda) — duas fazendas diferentes têm cada
+    # uma, legitimamente, uma vaca "100". `numero` sozinho continua indexado
+    # (não único) logo abaixo, porque boa parte do código ainda busca só por
+    # ele, sem filtrar fazenda (ver relatório da "fundação" multi-tenant,
+    # PR desta migração — auditoria completa dos pontos que assumem `numero`
+    # como identificador global; não corrigidos aqui, fora de escopo desta
+    # frente).
+    __table_args__ = (UniqueConstraint("numero", "fazenda_id", name="uq_animal_numero_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
     # Piloto conservador de multi-fazenda (ver fazenda/models/multitenant.py):
@@ -27,7 +36,7 @@ class Animal(SQLModel, table=True):
     # o endpoint de listagem (GET /animais) e o de cadastro (POST .../animais)
     # o consideram por enquanto.
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
-    numero: str = Field(index=True, unique=True)
+    numero: str = Field(index=True)
     data_nasc: Optional[date] = None
     idade_meses: Optional[float] = None
     grupo_primario: Optional[str] = None
