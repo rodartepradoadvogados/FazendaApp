@@ -102,7 +102,10 @@ def definir_principios_estoque(session: Session, item: Estoque, principio_ids: l
     for pa_id in ids_unicos:
         v = existentes_por_pa.pop(pa_id, None)
         if v is None:
-            v = EstoquePrincipioAtivo(estoque_id=item.id, principio_ativo_id=pa_id, principal=(pa_id == ids_unicos[0]))
+            v = EstoquePrincipioAtivo(
+                estoque_id=item.id, principio_ativo_id=pa_id, principal=(pa_id == ids_unicos[0]),
+                fazenda_id=item.fazenda_id,
+            )
         else:
             v.principal = (pa_id == ids_unicos[0])
         session.add(v)

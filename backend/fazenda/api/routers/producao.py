@@ -559,7 +559,9 @@ class PesagensIn(BaseModel):
     entradas: list[PesoIn]
 
 
-def _fase_transicao(session: Session, animal: "Animal | None", data_pesagem: date) -> str | None:
+def _fase_transicao(
+    session: Session, animal: "Animal | None", data_pesagem: date, fazenda_id: int | None = None,
+) -> str | None:
     """Classifica a vaca na data da pesagem para os pesos de transição:
     pré-parto (<=30 dias do parto previsto), vaca seca (31-60 dias antes) ou
     pós-parto (recém-parida). Fora disso (ou recria), retorna None."""
@@ -575,8 +577,18 @@ def _fase_transicao(session: Session, animal: "Animal | None", data_pesagem: dat
     # qualquer) — sem isso, uma vaca reinseminada sem diagnóstico ainda, ou
     # com a prenhez já perdida, continuava classificada por um diagnóstico
     # antigo que não vale mais (ver fazenda.rules.perda_prenhez).
-    servicos_da_vaca = session.exec(select(Servico).where(Servico.numero_matriz == animal.numero)).all()
-    partos_da_vaca = session.exec(select(Parto).where(Parto.numero_matriz == animal.numero)).all()
+    #
+    # FURO DE MULTI-TENANT CORRIGIDO: sem o filtro de fazenda_id, um
+    # numero_matriz colidindo com outra fazenda (numero deixou de ser único
+    # globalmente) podia puxar serviço/parto de um animal ALHEIO e gravar a
+    # fase de transição errada na pesagem.
+    query_servicos_fase = select(Servico).where(Servico.numero_matriz == animal.numero)
+    query_partos_fase = select(Parto).where(Parto.numero_matriz == animal.numero)
+    if fazenda_id is not None:
+        query_servicos_fase = query_servicos_fase.where(Servico.fazenda_id == fazenda_id)
+        query_partos_fase = query_partos_fase.where(Parto.fazenda_id == fazenda_id)
+    servicos_da_vaca = session.exec(query_servicos_fase).all()
+    partos_da_vaca = session.exec(query_partos_fase).all()
     ultimo_pos = servicos_positivos_vigentes(servicos_da_vaca, partos_da_vaca).get(animal.numero)
     if ultimo_pos and ultimo_pos.data_servico:
         parto_provavel = calcular_parto_provavel(ultimo_pos.data_servico, animal.raca).data_parto_provavel
@@ -620,7 +632,7 @@ def criar_pesagens(
         registro.del_dias = animal.del_dias if animal else None
         registro.idade_meses = animal.idade_meses if animal else None
         registro.grupo_primario = animal.grupo_primario if animal else None
-        registro.fase = _fase_transicao(session, animal, dados.data_pesagem)
+        registro.fase = _fase_transicao(session, animal, dados.data_pesagem, fazenda_id)
         registro.usuario_id = usuario_id
         session.add(registro)
         criados.append(registro)
@@ -705,7 +717,7 @@ def atualizar_pesagem(
         if fazenda_id is not None:
             animal_query = animal_query.where(Animal.fazenda_id == fazenda_id)
         animal = session.exec(animal_query).first()
-        pesagem.fase = _fase_transicao(session, animal, pesagem.data_pesagem)
+        pesagem.fase = _fase_transicao(session, animal, pesagem.data_pesagem, fazenda_id)
 
     pesagem.atualizado_em = datetime.utcnow()
     session.add(pesagem)

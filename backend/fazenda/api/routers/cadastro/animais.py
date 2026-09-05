@@ -18,10 +18,10 @@ from fazenda.auth import exigir_admin, get_fazenda_atual_id, get_fazenda_id_escr
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, Animal, AplicacaoAgendada, BaixaAnimal, ColostragemBezerra, CompraAnimal, ControleLeiteiro,
-    CronogramaSanitarioAnimal, ExameResultado, GrauSangue, Lactacao, LidaAplicacao, MotivoBaixa, MotivoVenda,
-    MovimentoLote, OcorrenciaClinica, Parto, PesagemCorporal, ProtocoloCustomizadoAplicacao, ProtocoloIatfAplicacao,
-    ProtocoloInducaoAplicacao, ProtocoloSanitarioAplicacao, ProtocoloSanitarioLancamento, QualidadeLeite, Raca,
-    Sanidade, Secagem, SeedFlag, Servico, Usuario, VendaAnimal,
+    CronogramaSanitarioAnimal, ExameResultado, FotoCampo, GrauSangue, Lactacao, LidaAplicacao, MotivoBaixa,
+    MotivoVenda, MovimentoLote, OcorrenciaClinica, Parto, PesagemCorporal, ProtocoloCustomizadoAplicacao,
+    ProtocoloIatfAplicacao, ProtocoloInducaoAplicacao, ProtocoloSanitarioAplicacao, ProtocoloSanitarioLancamento,
+    QualidadeLeite, Raca, Sanidade, Secagem, SeedFlag, Servico, Usuario, VendaAnimal,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
 
@@ -308,9 +308,22 @@ def atualizar_ficha_animal(
 # ---------------------------------------------------------------------------
 
 # (modelo, campo) — toda tabela que guarda o número do animal por TEXTO
-# (sem FK pra Animal.id). `Animal.numero` é único globalmente (não só por
-# fazenda, ver `Animal.numero: ... unique=True`), então não precisa filtrar
-# por fazenda_id aqui: o valor antigo só pode pertencer a ESTE animal.
+# (sem FK pra Animal.id).
+#
+# FURO DE MULTI-TENANT CORRIGIDO (01/09/2026, migração c24befa94c1b):
+# `Animal.numero` ERA único globalmente e o comentário original desta lista
+# dizia, por isso, que não precisava filtrar por fazenda_id — "o valor antigo
+# só pode pertencer a ESTE animal". Isso deixou de ser verdade no instante em
+# que a unicidade virou composta (fazenda_id, numero): a Fazenda Teste é uma
+# cópia completa de uma fazenda real, COM OS MESMOS NÚMEROS — então hoje
+# podem existir dois animais "100", cada um em sua fazenda, cada um com seu
+# próprio histórico nestas mesmas tabelas. Renumerar o "100" da fazenda real
+# sem filtrar por fazenda_id reescreveria também o histórico do "100" do
+# sandbox (e vice-versa): escrita cruzada entre clientes diferentes. Por
+# isso `_renumerar_em_cascata` abaixo agora recebe `fazenda_id` e o aplica em
+# TODA consulta desta lista — inclusive `FotoCampo.identificacao_animal`,
+# que faltava aqui (achado ao auditar todas as tabelas com coluna
+# numero_matriz/numero_animal, não só esta).
 _TABELAS_NUMERO_ANIMAL: list[tuple[type, str]] = [
     (MovimentoLote, "numero_matriz"), (BaixaAnimal, "numero_animal"), (CompraAnimal, "numero_animal"),
     (VendaAnimal, "numero_animal"), (ControleLeiteiro, "numero_matriz"), (PesagemCorporal, "numero_matriz"),
@@ -321,18 +334,32 @@ _TABELAS_NUMERO_ANIMAL: list[tuple[type, str]] = [
     (ProtocoloSanitarioLancamento, "numero_matriz"), (ProtocoloSanitarioAplicacao, "numero_matriz"),
     (ProtocoloInducaoAplicacao, "numero_matriz"), (OcorrenciaClinica, "numero_matriz"),
     (ProtocoloCustomizadoAplicacao, "numero_matriz"), (LidaAplicacao, "numero_matriz"),
+    (FotoCampo, "identificacao_animal"),
     # Genealogia — mãe/cria referenciados em texto livre por OUTRO animal.
     (Animal, "mae_numero"), (Parto, "numero_cria_1"), (Parto, "numero_cria_2"),
 ]
 
 
-def _renumerar_em_cascata(session: Session, numero_antigo: str, numero_novo: str) -> list[str]:
+def _renumerar_em_cascata(
+    session: Session, numero_antigo: str, numero_novo: str, fazenda_id: int | None,
+) -> list[str]:
     """Troca `numero_antigo` -> `numero_novo` em toda tabela que o referencia
     por texto — ver `_TABELAS_NUMERO_ANIMAL`. Devolve os nomes das tabelas
-    que de fato tinham alguma linha pra trocar (só informativo)."""
+    que de fato tinham alguma linha pra trocar (só informativo).
+
+    `fazenda_id` é OBRIGATÓRIO escopar aqui (ver comentário de
+    `_TABELAS_NUMERO_ANIMAL` acima): sem ele, dois animais de mesmo número em
+    fazendas diferentes teriam seus históricos trocados um pelo outro. Segue
+    o mesmo piloto tolerante do resto do projeto — `fazenda_id is None`
+    (token legado, sem fazenda resolvida) não filtra, igual a antes desta
+    correção; só passa a filtrar quando o pedido já tem fazenda resolvida
+    (que é o caso normal desta rota, protegida por `exigir_admin`)."""
     tabelas_afetadas: list[str] = []
     for modelo, campo in _TABELAS_NUMERO_ANIMAL:
-        linhas = session.exec(select(modelo).where(getattr(modelo, campo) == numero_antigo)).all()
+        query = select(modelo).where(getattr(modelo, campo) == numero_antigo)
+        if fazenda_id is not None:
+            query = query.where(modelo.fazenda_id == fazenda_id)
+        linhas = session.exec(query).all()
         for linha in linhas:
             setattr(linha, campo, numero_novo)
             session.add(linha)
@@ -342,8 +369,11 @@ def _renumerar_em_cascata(session: Session, numero_antigo: str, numero_novo: str
     # AgendaManual.numero_animal é uma lista CSV de números (evento pode
     # estar vinculado a mais de um animal) — não dá pra trocar com um
     # UPDATE de texto direto (um "12" dentro de "112,120" bateria errado);
-    # reescreve token a token.
-    for evento in session.exec(select(AgendaManual).where(AgendaManual.numero_animal.is_not(None))).all():
+    # reescreve token a token. Mesmo escopo de fazenda_id do laço acima.
+    query_agenda = select(AgendaManual).where(AgendaManual.numero_animal.is_not(None))
+    if fazenda_id is not None:
+        query_agenda = query_agenda.where(AgendaManual.fazenda_id == fazenda_id)
+    for evento in session.exec(query_agenda).all():
         tokens = [t.strip() for t in (evento.numero_animal or "").split(",")]
         if numero_antigo in tokens:
             evento.numero_animal = ",".join(numero_novo if t == numero_antigo else t for t in tokens)
@@ -387,7 +417,7 @@ def renumerar_animal(
     if session.exec(query_conflito).first():
         raise HTTPException(status_code=400, detail=f"Já existe um animal com o número {numero_novo}")
 
-    tabelas_afetadas = _renumerar_em_cascata(session, numero, numero_novo)
+    tabelas_afetadas = _renumerar_em_cascata(session, numero, numero_novo, fazenda_id)
     animal.numero = numero_novo
     animal.atualizado_em = datetime.utcnow()
     session.add(animal)

@@ -61,6 +61,7 @@ from fazenda.api.routers import (
     painel_cowdata_cadastros,
     painel_cowdata_farmacia,
     painel_cowdata_parametros,
+    painel_cowdata_sincronizacao,
     painel_cowdata_usuarios,
     parametros,
     pedidos,
@@ -756,6 +757,10 @@ app.include_router(painel_cowdata_usuarios.router)
 app.include_router(painel_cowdata_farmacia.router)
 # Cofre de acesso: mesmo padrão exigir_dono — ver fazenda/api/routers/cofre_acesso.py.
 app.include_router(cofre_acesso.router)
+# Sincronizar sandbox (Fazenda de Teste = cópia da fazenda-cliente real) —
+# mesmo padrão exigir_area_painel_cowdata("fazendas"). Ver
+# fazenda/rules/replicacao_fazenda.py para a rotina destrutiva de verdade.
+app.include_router(painel_cowdata_sincronizacao.router)
 
 _protegido = [Depends(get_current_user)]
 # Trava por PLANO CONTRATADO (fazenda/tenant) — soma-se à permissão por

@@ -27,9 +27,10 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import (
-    Animal, CalendarioSanitario, CentroCusto, ContaCorrente, ContratoFazenda, ContratoFazendaModulo, Doenca,
-    EventoSanitario, Fazenda, MedicamentoComercial, MetodoServicoReprodutivo, Pessoa, PrincipioAtivo,
-    TipoServicoReprodutivo, UsuarioFazenda,
+    Animal, BaixaAnimal, CalendarioSanitario, CentroCusto, CompraAnimal, ContaCorrente, ContratoFazenda,
+    ContratoFazendaModulo, Doenca, EventoSanitario, Fazenda, MedicamentoComercial, MetodoServicoReprodutivo,
+    MovimentoLote, OcorrenciaClinica, Pessoa, PrincipioAtivo, TipoServicoReprodutivo, UsuarioFazenda,
+    VendaAnimal,
 )
 from fazenda.models.planos import MODULOS_COMERCIAIS
 
@@ -204,6 +205,45 @@ class TestIsolamentoEntreFazendas:
         _como_fazenda(1)
         assert c.get("/animais/9001").status_code == 200
         assert c.get("/animais/9001/ficha").status_code == 200
+
+    def test_ficha_animal_nao_mistura_historico_de_numero_colidente(self, client):
+        """FURO DE MULTI-TENANT CORRIGIDO: `animal.numero` deixou de ser
+        único no banco inteiro (migração c24befa94c1b — unicidade composta
+        (fazenda_id, numero), feita para permitir a Fazenda Teste replicar
+        uma fazenda real com os MESMOS números) — duas fazendas podem ter
+        cada uma um animal "9500". A ficha de UM deles não pode mostrar
+        MovimentoLote/BaixaAnimal/CompraAnimal/VendaAnimal/OcorrenciaClinica
+        do OUTRO (essas 5 tabelas já têm fazenda_id, mas a ficha não
+        filtrava por ele antes desta correção)."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="9500", sexo="F", ativo=True, fazenda_id=1, nome="Fazenda 1"))
+            s.add(Animal(numero="9500", sexo="F", ativo=True, fazenda_id=2, nome="Fazenda 2"))
+            s.add(MovimentoLote(
+                numero_matriz="9500", data_movimento=date(2026, 1, 1),
+                lote_origem="01", lote_destino="02", fazenda_id=1,
+            ))
+            s.add(BaixaAnimal(numero_animal="9500", data_baixa=date(2026, 1, 1), tipo_baixa="morte", motivo="morte", fazenda_id=1))
+            s.add(CompraAnimal(
+                numero_animal="9500", vendedor="Fulano", valor=1000.0, tipo_valor="por_animal",
+                data_compra=date(2026, 1, 1), fazenda_id=1,
+            ))
+            s.add(VendaAnimal(
+                numero_animal="9500", comprador="Beltrano", valor=2000.0, tipo_valor="por_animal",
+                data_venda=date(2026, 1, 1), fazenda_id=1,
+            ))
+            s.add(OcorrenciaClinica(numero_matriz="9500", doenca="Diarreia", data_ocorrencia=date(2026, 1, 1), fazenda_id=1))
+            s.commit()
+
+        _como_fazenda(2)
+        r = c.get("/animais/9500/ficha")
+        assert r.status_code == 200, r.text
+        corpo = r.json()
+        assert corpo["movimentos_lote"] == []
+        assert corpo["baixa"] is None
+        assert corpo["compras"] == []
+        assert corpo["vendas"] == []
+        assert corpo["ocorrencias_clinicas"] == []
 
 
 class TestProvisionamentoFazendaNova:

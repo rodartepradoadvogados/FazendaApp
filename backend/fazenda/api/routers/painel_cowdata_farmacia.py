@@ -297,8 +297,14 @@ def _sincronizar_tags_medicamento(session: Session, medicamento: MedicamentoCome
     medicamento e espelha a 1ª categoria escolhida no campo escalar legado
     `classificacao_medicamento` — mesmo espírito do "principal" de
     multi-princípio, sem impor ordem de importância às demais."""
-    definir_tags(session, MedicamentoCategoria, "medicamento_comercial_id", medicamento.id, "categoria_medicamento_id", categoria_ids)
-    definir_tags(session, MedicamentoClassificacao, "medicamento_comercial_id", medicamento.id, "classificacao_medicamento_id", classificacao_ids)
+    definir_tags(
+        session, MedicamentoCategoria, "medicamento_comercial_id", medicamento.id, "categoria_medicamento_id",
+        categoria_ids, fazenda_id=medicamento.fazenda_id,
+    )
+    definir_tags(
+        session, MedicamentoClassificacao, "medicamento_comercial_id", medicamento.id, "classificacao_medicamento_id",
+        classificacao_ids, fazenda_id=medicamento.fazenda_id,
+    )
     if categoria_ids:
         primeira = session.get(CategoriaMedicamento, categoria_ids[0])
         medicamento.classificacao_medicamento = primeira.nome if primeira else medicamento.classificacao_medicamento

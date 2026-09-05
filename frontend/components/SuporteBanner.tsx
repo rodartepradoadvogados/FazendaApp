@@ -75,7 +75,12 @@ export function SuporteBanner() {
 
   return (
     <div ref={ref} style={{
-      position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, background: VERMELHO, color: "#FCEBEB",
+      // top soma --fazenda-teste-banner-h (0px quando ausente): a tarja de
+      // Fazenda Teste (FazendaTesteBanner.tsx) é mais fundamental — "em que
+      // ambiente eu estou" nunca muda durante a sessão — e por isso fica por
+      // cima quando as duas coexistem (ex.: suporte entrando justamente na
+      // Fazenda Teste), esta desce pra baixo dela em vez de sobrepor.
+      position: "fixed", top: "var(--fazenda-teste-banner-h, 0px)", left: 0, right: 0, zIndex: 100, background: VERMELHO, color: "#FCEBEB",
       padding: "0.6rem 1rem", display: "flex", flexDirection: "column", gap: "0.4rem",
       minHeight: "3.6rem", justifyContent: "center", boxShadow: "0 2px 6px rgba(0,0,0,0.35)",
     }}>

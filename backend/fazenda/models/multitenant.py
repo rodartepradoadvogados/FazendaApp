@@ -40,6 +40,17 @@ class Fazenda(SQLModel, table=True):
     # de fazendas-clientes (catálogo, MRR, FazendasAdmin) filtra por isto.
     eh_empresa_cowdata: bool = False
 
+    # Marca fazenda de demonstração/sandbox que vive no MESMO banco de
+    # produção (ex.: "Fazenda Teste") — distinta de `eh_empresa_cowdata`
+    # (aquela é a fazenda "lógica" da própria CowData; esta é uma fazenda de
+    # verdade no cadastro, só que não é cliente). Serve de trava dura pra
+    # rotina de replicação: fazenda/rules/replicacao_fazenda.py RECUSA com
+    # 409 qualquer destino sem este flag — é o que impede a sincronização de
+    # sobrescrever a fazenda-cliente real por engano, e por isso a trava mora
+    # aqui no dado, não na disciplina de quem clica. No futuro, também exclui
+    # a fazenda de cobrança/métricas/alertas.
+    eh_teste: bool = False
+
     # Dados jurídicos da fazenda-cliente — usados pelo contrato-modelo
     # (fazenda/rules/contrato_render.py) e pela cobrança (Asaas/ZapSign) como
     # padrão, sem precisar redigitar toda vez. Todos opcionais/aditivos.
@@ -60,7 +71,8 @@ class Fazenda(SQLModel, table=True):
     # acesso (Painel CowData → solicitar acesso a esta fazenda).
     exige_aprovacao_suporte: bool = False
 
-
+    # Marca a fazenda-sandbox de testes (hoje a única linha com True é
+    # "Fazenda Teste", id=2) — espelha eh_empresa_cowdata acima, mas pro
 class EmpresaOperadora(SQLModel, table=True):
     """A empresa de software que opera esta instalação — distinta de cada
     `Fazenda` (cliente/tenant) e distinta da fazenda do próprio dono do

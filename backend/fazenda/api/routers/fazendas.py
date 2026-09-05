@@ -48,6 +48,9 @@ def _publico(f: Fazenda) -> dict:
         "tipo_documento": f.tipo_documento, "documento": f.documento, "endereco": f.endereco, "cep": f.cep,
         "representante_nome": f.representante_nome, "representante_cpf": f.representante_cpf,
         "exige_aprovacao_suporte": f.exige_aprovacao_suporte,
+        # Fazenda de demonstração/sandbox (ver Fazenda.eh_teste) — exposto
+        # aqui pro admin (painel de Fazendas) poder ver/alternar a flag.
+        "eh_teste": f.eh_teste,
     }
 
 
@@ -122,6 +125,7 @@ class FazendaEditarIn(BaseModel):
     representante_nome: str | None = None
     representante_cpf: str | None = None
     exige_aprovacao_suporte: bool | None = None
+    eh_teste: bool | None = None
 
 
 class VincularUsuarioIn(BaseModel):
@@ -221,6 +225,8 @@ def editar_fazenda(
         fazenda.representante_cpf = dados.representante_cpf.strip() or None
     if dados.exige_aprovacao_suporte is not None:
         fazenda.exige_aprovacao_suporte = dados.exige_aprovacao_suporte
+    if dados.eh_teste is not None:
+        fazenda.eh_teste = dados.eh_teste
     session.add(fazenda)
     session.commit()
     session.refresh(fazenda)

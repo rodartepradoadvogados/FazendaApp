@@ -86,6 +86,63 @@ class TestSeedIdempotente:
         assert nomes == {"Farmácia 1", "Depósito", "Botijão 1"}
 
 
+class TestLocalArmazenamentoEDadoDaFazendaNuncaCatalogo:
+    """Local de Armazenamento NÃO virou catálogo global (ao contrário das
+    outras 5 listas, ver test_estoque_cadastro_visibilidade_global.py) — é
+    texto livre já digitado em Estoque/EstoqueSemen, então nasce com o MESMO
+    fazenda_id do item de origem, nunca nulo/global."""
+
+    @staticmethod
+    def _com_contrato_ativo(s, fazenda_id: int) -> None:
+        from fazenda.models import ContratoFazenda, ContratoFazendaModulo
+        from fazenda.models.planos import MODULOS_COMERCIAIS
+        s.add(ContratoFazenda(fazenda_id=fazenda_id, status="ativo"))
+        for modulo in MODULOS_COMERCIAIS:
+            s.add(ContratoFazendaModulo(fazenda_id=fazenda_id, modulo=modulo, preco=0.0, ativo=True))
+
+    def test_local_de_uma_fazenda_nao_vaza_pra_outra(self, client):
+        c, engine = client
+        from fazenda.models import Fazenda
+        with Session(engine) as s:
+            s.add(Fazenda(id=1, nome="Fazenda 1"))
+            s.add(Fazenda(id=2, nome="Fazenda 2"))
+            self._com_contrato_ativo(s, 1)
+            self._com_contrato_ativo(s, 2)
+            s.add(Estoque(nome="Borgal", local_armazenamento="Farmácia 1", fazenda_id=1))
+            s.add(Estoque(nome="Ração", local_armazenamento="Depósito 2", fazenda_id=2))
+            s.commit()
+            seed_cadastros_estoque(s)
+
+        import main
+        from fazenda.auth import get_fazenda_atual_id
+
+        main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 1
+        nomes_f1 = {i["nome"] for i in c.get("/cadastro/locais-armazenamento").json()}
+        assert nomes_f1 == {"Farmácia 1"}
+
+        main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 2
+        nomes_f2 = {i["nome"] for i in c.get("/cadastro/locais-armazenamento").json()}
+        assert nomes_f2 == {"Depósito 2"}
+
+    def test_mesmo_nome_em_fazendas_diferentes_nao_duplica_ao_rodar_de_novo(self, client):
+        c, engine = client
+        from fazenda.models import Fazenda
+        with Session(engine) as s:
+            s.add(Fazenda(id=1, nome="Fazenda 1"))
+            s.add(Fazenda(id=2, nome="Fazenda 2"))
+            s.add(Estoque(nome="Borgal", local_armazenamento="Almoxarifado", fazenda_id=1))
+            s.add(Estoque(nome="Ração", local_armazenamento="Almoxarifado", fazenda_id=2))
+            s.commit()
+            seed_cadastros_estoque(s)
+            seed_cadastros_estoque(s)
+
+            from fazenda.models import LocalArmazenamento
+            from sqlmodel import select
+            locais = s.exec(select(LocalArmazenamento).where(LocalArmazenamento.nome == "Almoxarifado")).all()
+            assert {l.fazenda_id for l in locais} == {1, 2}
+            assert len(locais) == 2, "não deveria duplicar ao rodar o seed de novo"
+
+
 class TestCrudGenerico:
     @pytest.mark.parametrize("rota", [e[0] for e in ENDPOINTS])
     def test_cria_edita_e_lista(self, client, rota):

@@ -230,6 +230,55 @@ class TestAplicacaoAgendada:
         assert len(d["erros"]) == 1
 
 
+class TestAplicacaoAgendadaIsolamentoFazenda:
+    """FURO DE SEGURANÇA CORRIGIDO: a query que resolve a AplicacaoAgendada
+    pendente não filtrava fazenda_id, e a chamada a
+    `_baixar_aplicacao_agendada` nem repassava `fazenda_id`/`usuario_id` (o
+    que também perdia a trava de segurança já existente DENTRO dela) —
+    numero_matriz deixou de ser único globalmente (migração
+    c24befa94c1b), então uma pendência da fazenda 2 podia ser confirmada por
+    engano a partir de um CSV importado pela fazenda 1."""
+
+    def test_nao_confirma_pendencia_de_outra_fazenda(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            from fazenda.models import ContratoFazenda, Fazenda
+            s.add(Fazenda(id=1, nome="Fazenda 1"))
+            s.add(Fazenda(id=2, nome="Fazenda 2"))
+            s.add(ContratoFazenda(fazenda_id=1, status="ativo"))
+            s.add(ContratoFazenda(fazenda_id=2, status="ativo"))
+            # Mesma matriz "490", mesma data — uma pendência em CADA fazenda.
+            s.add(AplicacaoAgendada(
+                numero_matriz="490", data=date(2026, 2, 1), produto="Lactotropin",
+                dose=500, unidade="mg", aplicado=False, fazenda_id=1,
+            ))
+            s.add(AplicacaoAgendada(
+                numero_matriz="490", data=date(2026, 2, 1), produto="Lactotropin",
+                dose=500, unidade="mg", aplicado=False, fazenda_id=2,
+            ))
+            s.commit()
+
+        import main
+        from fazenda.auth import get_fazenda_atual_id
+        main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 1
+
+        d = _upload(c, [["aplicacao_agendada", "", "490", "01/02/2026", "", "", "", "", "", ""]])
+        assert d["criados"] == 1
+        assert not d["erros"]
+
+        with Session(engine) as s:
+            ag1 = s.exec(select(AplicacaoAgendada).where(AplicacaoAgendada.fazenda_id == 1)).first()
+            ag2 = s.exec(select(AplicacaoAgendada).where(AplicacaoAgendada.fazenda_id == 2)).first()
+            assert ag1.aplicado is True, "a pendência da fazenda 1 (quem importou) devia ter sido confirmada"
+            assert ag2.aplicado is False, "a pendência da fazenda 2 não pode ser tocada pela importação da fazenda 1"
+
+            sanidades = s.exec(select(Sanidade).where(Sanidade.numero_matriz == "490")).all()
+            assert len(sanidades) == 1
+            assert sanidades[0].fazenda_id == 1, "a Sanidade gerada tem que ficar na fazenda de quem importou, nunca órfã (fazenda_id=None)"
+
+        main.app.dependency_overrides.pop(get_fazenda_atual_id, None)
+
+
 class TestDataDeCorte:
     def test_pendencia_igual_ou_apos_corte_e_ignorada(self, client):
         c, engine = client

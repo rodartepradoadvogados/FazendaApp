@@ -19,6 +19,7 @@ from fazenda.auth import get_current_user
 from fazenda.models import (
     AgendaManual, Animal, ControleLeiteiro, Fazenda, MovimentoLote, Parto, Sanidade,
 )
+from fazenda.models.planos import ContratoFazenda
 
 
 @pytest.fixture
@@ -147,3 +148,87 @@ def test_renumerar_animal_inexistente_404(client):
     _logar_como("admin")
     r = c.post("/cadastro/animais/999/renumerar", json={"novo_numero": "1000"})
     assert r.status_code == 404
+
+
+def _como_fazenda(fazenda_id: int | None):
+    """Simula uma sessão já com fazenda selecionada (token com "fid") —
+    mesmo padrão de tests/test_seguranca_p1_multitenant.py."""
+    import main
+    from fazenda.auth import get_fazenda_atual_id
+    main.app.dependency_overrides[get_fazenda_atual_id] = lambda: fazenda_id
+
+
+def test_renumerar_nao_atravessa_fazenda_furo_confirmado(client):
+    """FURO CONFIRMADO (achado da tarefa "sandbox/replicação Fazenda ->
+    Fazenda"): `animal.numero` deixou de ser único no banco inteiro
+    (migração c24befa94c1b — unicidade composta (fazenda_id, numero), feita
+    para permitir a Fazenda Teste copiar uma fazenda real com os MESMOS
+    números) — duas fazendas podem hoje ter, cada uma, um animal "100" com
+    histórico PRÓPRIO. `_renumerar_em_cascata` (cadastro/animais.py)
+    resolvia as linhas de histórico só por `numero_matriz/numero_animal ==
+    numero_antigo`, SEM filtrar fazenda_id — renumerar o "100" da fazenda A
+    reescrevia também o histórico do "100" da fazenda B.
+
+    Este teste tem que FALHAR antes da correção (fazenda_id propagado para
+    dentro de `_renumerar_em_cascata`) e PASSAR depois — ver relatório da
+    tarefa."""
+    c, engine, fa_id = client
+    with Session(engine) as s:
+        fb = Fazenda(nome="Fazenda B", ativa=True)
+        s.add(fb)
+        s.commit()
+        s.refresh(fb)
+        fb_id = fb.id
+        # `cadastro.router` (dono da rota de renumerar) exige contrato ativo
+        # quando há fazenda selecionada — ver main.py::_contrato_ativo.
+        s.add(ContratoFazenda(fazenda_id=fa_id, status="ativo"))
+        s.add(ContratoFazenda(fazenda_id=fb_id, status="ativo"))
+        s.commit()
+
+        # Cada fazenda tem seu PRÓPRIO animal "100", com histórico PRÓPRIO —
+        # cenário real desde que a unicidade de numero passou a ser
+        # (fazenda_id, numero), não mais global.
+        s.add(Animal(numero="100", fazenda_id=fa_id, nome="Vaca da Fazenda A"))
+        s.add(Animal(numero="100", fazenda_id=fb_id, nome="Vaca da Fazenda B"))
+        s.commit()
+
+        s.add(ControleLeiteiro(numero_matriz="100", data_controle=date(2026, 1, 1), fazenda_id=fa_id))
+        s.add(Sanidade(numero_matriz="100", data_aplicacao=date(2026, 1, 2), produto="Vacina A", fazenda_id=fa_id))
+        s.add(MovimentoLote(numero_matriz="100", data_movimento=date(2026, 1, 3), lote_origem="01", lote_destino="02", fazenda_id=fa_id))
+        s.add(AgendaManual(descricao="Evento A", data_evento=date(2026, 1, 4), numero_animal="100", fazenda_id=fa_id))
+
+        s.add(ControleLeiteiro(numero_matriz="100", data_controle=date(2026, 2, 1), fazenda_id=fb_id))
+        s.add(Sanidade(numero_matriz="100", data_aplicacao=date(2026, 2, 2), produto="Vacina B", fazenda_id=fb_id))
+        s.add(MovimentoLote(numero_matriz="100", data_movimento=date(2026, 2, 3), lote_origem="03", lote_destino="04", fazenda_id=fb_id))
+        s.add(AgendaManual(descricao="Evento B", data_evento=date(2026, 2, 4), numero_animal="100", fazenda_id=fb_id))
+        s.commit()
+
+    _logar_como("admin")
+    _como_fazenda(fa_id)
+
+    r = c.post("/cadastro/animais/100/renumerar", json={"novo_numero": "9100"})
+    assert r.status_code == 200, r.text
+
+    with Session(engine) as s:
+        # Fazenda A: renumerado de fato, histórico cascateado.
+        assert s.exec(select(Animal).where(Animal.numero == "100", Animal.fazenda_id == fa_id)).first() is None
+        renumerado_a = s.exec(select(Animal).where(Animal.numero == "9100", Animal.fazenda_id == fa_id)).first()
+        assert renumerado_a is not None and renumerado_a.nome == "Vaca da Fazenda A"
+        assert s.exec(select(ControleLeiteiro).where(ControleLeiteiro.numero_matriz == "9100", ControleLeiteiro.fazenda_id == fa_id)).first() is not None
+        assert s.exec(select(Sanidade).where(Sanidade.numero_matriz == "9100", Sanidade.fazenda_id == fa_id)).first() is not None
+        assert s.exec(select(MovimentoLote).where(MovimentoLote.numero_matriz == "9100", MovimentoLote.fazenda_id == fa_id)).first() is not None
+        evento_a = s.exec(select(AgendaManual).where(AgendaManual.fazenda_id == fa_id)).first()
+        assert evento_a.numero_animal == "9100"
+
+        # Fazenda B: NADA pode ter mudado — nem o animal, nem o histórico.
+        animal_b = s.exec(select(Animal).where(Animal.numero == "100", Animal.fazenda_id == fb_id)).first()
+        assert animal_b is not None and animal_b.nome == "Vaca da Fazenda B"
+        assert s.exec(select(Animal).where(Animal.numero == "9100", Animal.fazenda_id == fb_id)).first() is None
+        assert s.exec(select(ControleLeiteiro).where(ControleLeiteiro.numero_matriz == "100", ControleLeiteiro.fazenda_id == fb_id)).first() is not None
+        assert s.exec(select(ControleLeiteiro).where(ControleLeiteiro.numero_matriz == "9100", ControleLeiteiro.fazenda_id == fb_id)).first() is None
+        assert s.exec(select(Sanidade).where(Sanidade.numero_matriz == "100", Sanidade.fazenda_id == fb_id)).first() is not None
+        assert s.exec(select(Sanidade).where(Sanidade.numero_matriz == "9100", Sanidade.fazenda_id == fb_id)).first() is None
+        assert s.exec(select(MovimentoLote).where(MovimentoLote.numero_matriz == "100", MovimentoLote.fazenda_id == fb_id)).first() is not None
+        assert s.exec(select(MovimentoLote).where(MovimentoLote.numero_matriz == "9100", MovimentoLote.fazenda_id == fb_id)).first() is None
+        evento_b = s.exec(select(AgendaManual).where(AgendaManual.fazenda_id == fb_id)).first()
+        assert evento_b.numero_animal == "100"

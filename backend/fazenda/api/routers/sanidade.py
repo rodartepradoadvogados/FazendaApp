@@ -1439,7 +1439,14 @@ def lancar_protocolo(
         ccs_ultima = None
         recidiva = None
         if protocolo.eh_mastite:
-            animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+            # FURO DE MULTI-TENANT CORRIGIDO: sem o filtro de fazenda_id, uma
+            # colisão de numero com outra fazenda (numero deixou de ser único
+            # globalmente — ver Animal.numero) gravava o DEL de um animal
+            # ALHEIO como snapshot do caso de mastite deste lançamento.
+            query_animal_mastite = select(Animal).where(Animal.numero == numero)
+            if fazenda_id is not None:
+                query_animal_mastite = query_animal_mastite.where(Animal.fazenda_id == fazenda_id)
+            animal = session.exec(query_animal_mastite).first()
             del_no_caso = animal.del_dias if animal else None
             # Última CCS do animal (ou do tanque, na falta) — snapshot do caso.
             query_ccs = select(QualidadeLeite).where(QualidadeLeite.numero_matriz == numero, QualidadeLeite.ccs != None)  # noqa: E711
@@ -1524,14 +1531,16 @@ def contexto_mastite(
     """DEL atual, última CCS e último CMT do animal — preenchidos automaticamente
     ao abrir um caso de mastite."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+    query_animal = select(Animal).where(Animal.numero == numero)
     query_ccs = select(QualidadeLeite).where(QualidadeLeite.numero_matriz == numero, QualidadeLeite.ccs != None)  # noqa: E711
     query_caso = select(ProtocoloSanitarioLancamento).where(
         ProtocoloSanitarioLancamento.numero_matriz == numero, ProtocoloSanitarioLancamento.resultado_cmt != None  # noqa: E711
     )
     if fazenda_id is not None:
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
         query_ccs = query_ccs.where(QualidadeLeite.fazenda_id == fazenda_id)
         query_caso = query_caso.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
+    animal = session.exec(query_animal).first()
     ult_ccs = session.exec(query_ccs.order_by(QualidadeLeite.data_coleta.desc())).first()
     ult_caso = session.exec(query_caso.order_by(ProtocoloSanitarioLancamento.data_inicio.desc())).first()
     return {

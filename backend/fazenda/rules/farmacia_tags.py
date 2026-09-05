@@ -16,11 +16,22 @@ from __future__ import annotations
 from sqlmodel import Session, select
 
 
-def definir_tags(session: Session, junction_model, dono_campo: str, dono_id: int, tag_campo: str, tag_ids: list[int]) -> None:
+def definir_tags(
+    session: Session, junction_model, dono_campo: str, dono_id: int, tag_campo: str, tag_ids: list[int],
+    fazenda_id: int | None = None,
+) -> None:
     """Substitui as tags ligadas a `dono_id` (medicamento ou item de estoque)
     pela lista informada — idempotente, nunca duplica, remove o que não foi
     citado desta vez. Lista vazia é permitida (categoria/classificação são
-    opcionais, ao contrário de princípio ativo)."""
+    opcionais, ao contrário de princípio ativo).
+
+    `fazenda_id`: sempre o mesmo do DONO (`medicamento.fazenda_id` ou
+    `item.fazenda_id`, resolvido pelo chamador) — inclusive `None`, quando o
+    dono é um medicamento GLOBAL do catálogo (ver fazenda/rules/
+    visibilidade.py). Gravado na linha nova para que o motor de replicação
+    Fazenda -> Fazenda enxergue este vínculo (descobre o que copiar por
+    `fazenda_id` presente na tabela) e para poder restringir a leitura por
+    fazenda quando isso passar a ser necessário."""
     ids_unicos = list(dict.fromkeys(tag_ids))
     existentes = session.exec(
         select(junction_model).where(getattr(junction_model, dono_campo) == dono_id)
@@ -29,7 +40,7 @@ def definir_tags(session: Session, junction_model, dono_campo: str, dono_id: int
     for tid in ids_unicos:
         if existentes_por_tag.pop(tid, None) is not None:
             continue
-        session.add(junction_model(**{dono_campo: dono_id, tag_campo: tid}))
+        session.add(junction_model(**{dono_campo: dono_id, tag_campo: tid, "fazenda_id": fazenda_id}))
     for sobra in existentes_por_tag.values():
         session.delete(sobra)
 

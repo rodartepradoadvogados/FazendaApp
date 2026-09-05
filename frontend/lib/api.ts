@@ -133,10 +133,27 @@ export type FazendaAtual = {
   // esconder o que a fazenda não comprou. `undefined` (resposta antiga em
   // cache) não filtra nada; lista vazia É uma restrição de verdade.
   modulos_contratados?: string[];
+  // Fazenda-sandbox (ex.: "Fazenda Teste", cópia da fazenda real Jairo
+  // Nasser — ver ehFazendaTeste() abaixo e FazendaTesteBanner.tsx). Ausente
+  // em respostas antigas do backend (rollout em andamento noutra frente) —
+  // tratado como `false`, nunca como "não sei": mostrar a tarja errado por
+  // padrão seria pior que não mostrar, mas o inverso (deixar de mostrar
+  // numa fazenda de teste de verdade) é o risco que este campo existe pra
+  // evitar, então o dia em que o backend passar a mandá-lo, a tarja aparece
+  // sozinha sem precisar tocar neste arquivo de novo.
+  eh_teste?: boolean;
 };
 export function getFazendaAtual(): FazendaAtual | null {
   if (typeof window === "undefined") return null;
   try { return JSON.parse(localStorage.getItem("fazenda_atual") || "null"); } catch { return null; }
+}
+// A fazenda ATUAL (não uma fazenda qualquer da lista) é o sandbox de testes?
+// Único ponto de leitura de `eh_teste` — FazendaTesteBanner.tsx e qualquer
+// outra tela que precise saber usam esta função, nunca o campo cru, para o
+// default "ausente = false" (ver comentário em FazendaAtual acima) valer em
+// todo lugar de uma vez só.
+export function ehFazendaTeste(): boolean {
+  return getFazendaAtual()?.eh_teste === true;
 }
 export function logout() {
   if (typeof window !== "undefined") {
@@ -795,6 +812,11 @@ export type PedidoAcessoSuporte = {
   // carimbado nesse token, calculado a partir de PermissaoEquipeCowData de
   // quem pediu.
   token?: string; sessao_id?: number; sessao_expira_em?: string; nivel_sigilo?: NivelSigiloEquipeCowData;
+  // Entrar em modo suporte também pode cair numa fazenda de teste (ex.:
+  // suporte testando algo na Fazenda Teste) — propagado para FazendaAtual em
+  // entrarComoSuporte() abaixo, mesma regra de "ausente = false" do campo em
+  // FazendaAtual.
+  eh_teste?: boolean;
 };
 export type SessaoAcessoSuporte = {
   id: number; protocolo: string | null; fazenda_id: number; fazenda_nome: string; usuario_id: number; membro_nome: string | null;
@@ -870,7 +892,7 @@ export async function entrarComoSuporte(
     throw new Error("Pedido enviado, mas aguardando aprovação — essa fazenda exige aprovação prévia de acesso de suporte.");
   }
   localStorage.setItem("token", pedido.token);
-  const fazendaAtual: FazendaAtual = { id: pedido.fazenda_id, nome: pedido.fazenda_nome, modulos_contratados: pedido.modulos_contratados };
+  const fazendaAtual: FazendaAtual = { id: pedido.fazenda_id, nome: pedido.fazenda_nome, modulos_contratados: pedido.modulos_contratados, eh_teste: pedido.eh_teste };
   localStorage.setItem("fazenda_atual", JSON.stringify(fazendaAtual));
   const membroNome = getUsuario()?.nome || getUsuario()?.username || "Equipe CowData";
   localStorage.setItem("modo_suporte", JSON.stringify({
@@ -887,6 +909,50 @@ export async function encerrarModoSuporte(): Promise<void> {
   limparModoSuporte();
 }
 export const encerrarSessaoCofre = (id: number): Promise<SessaoAcessoSuporte> => _pcSend(`/cofre/sessoes/${id}/encerrar`, "POST");
+
+// Piloto de fazenda-sandbox (ago/2026): "Fazenda Teste" é uma cópia completa
+// da fazenda real Jairo Nasser para a equipe testar com dado realista. A
+// sincronização é DESTRUTIVA no destino — apaga tudo da Fazenda Teste e
+// recopia da origem — por isso o resultado devolve o tamanho da cópia
+// (tabelas/linhas/duração) para a tela poder mostrar prova concreta do que
+// aconteceu, não só um "ok" mudo. `origem_id` fixo em 1 (Jairo Nasser): hoje
+// existe uma única fazenda real alimentando o sandbox — se um dia houver
+// mais de uma origem possível, isto vira parâmetro da tela em vez de
+// constante aqui.
+export const ORIGEM_SINCRONIZACAO_FAZENDA_TESTE_ID = 1;
+export type ResultadoSincronizacaoFazendaTeste = {
+  status: "ok"; origem: string; destino: string; tabelas: number; linhas_copiadas: number; duracao_s: number; avisos: string[];
+};
+export async function sincronizarFazendaTeste(destinoId: number): Promise<ResultadoSincronizacaoFazendaTeste> {
+  let res: Response;
+  try {
+    res = await authFetch(`${API}/painel-cowdata/fazendas/${destinoId}/sincronizar`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ origem_id: ORIGEM_SINCRONIZACAO_FAZENDA_TESTE_ID }),
+    });
+  } catch (e) {
+    // TypeError = "Failed to fetch": aqui SIM é queda de conexão de verdade —
+    // a cópia leva dezenas de segundos, tempo real de sobra pra um
+    // proxy/gateway derrubar a conexão no meio do caminho (ver netError). Os
+    // dois `if` abaixo (409/403) tratam respostas HTTP de verdade, nunca
+    // devem reaproveitar esta mensagem de "sem conexão" — é exatamente o
+    // engano que este trecho existe para não repetir (ver pedido do usuário).
+    throw netError(e);
+  }
+  if (res.status === 409) {
+    // Trava do backend: só se sincroniza POR CIMA de uma fazenda marcada como
+    // teste — nunca sobrescrever sem querer uma fazenda real.
+    throw await erroDaResposta(res, "Esta fazenda não é uma fazenda de teste — a sincronização só pode ter uma fazenda de teste como destino.");
+  }
+  if (res.status === 403) {
+    throw await erroDaResposta(res, "Sem permissão de administrador CowData para sincronizar fazendas.");
+  }
+  if (!res.ok) {
+    throw await erroDaResposta(res, `Falha ao sincronizar (HTTP ${res.status}).`);
+  }
+  return res.json();
+}
 
 // Contrato-modelo CowData ("Baixar contrato") e assinatura eletrônica via
 // ZapSign ("Assinar contrato") — ver fazenda/rules/contrato_render.py e

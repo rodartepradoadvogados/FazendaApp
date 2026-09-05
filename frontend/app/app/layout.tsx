@@ -157,7 +157,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="mob">
       {/* Cabeçalho marinho institucional — FIXO no topo (não some ao rolar no celular). */}
-      <header ref={headerRef} style={{ background: "var(--mob-header)", color: "var(--mob-header-fg)", padding: "calc(0.9rem + env(safe-area-inset-top)) 1.1rem 0.9rem", borderRadius: "var(--r-app)", position: "fixed", top: "var(--suporte-banner-h, 0px)", left: 0, right: 0, zIndex: 40 }}>
+      <header ref={headerRef} style={{ background: "var(--mob-header)", color: "var(--mob-header-fg)", padding: "calc(0.9rem + env(safe-area-inset-top)) 1.1rem 0.9rem", borderRadius: "var(--r-app)", position: "fixed", top: "var(--faixas-topo-h, 0px)", left: 0, right: 0, zIndex: 40 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 560, margin: "0 auto" }}>
           <div>
             <p style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>

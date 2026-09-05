@@ -16,7 +16,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import Animal, ContratoFazenda, ContratoFazendaModulo, Fazenda, PesagemCorporal
+from fazenda.models import Animal, ContratoFazenda, ContratoFazendaModulo, Fazenda, Parto, PesagemCorporal, Servico
 
 
 @pytest.fixture
@@ -326,3 +326,42 @@ class TestIsolamentoPesagem:
 
         r = c.post("/exclusoes/impacto", json={"tipo": "pesagem_corporal", "id": str(pid)})
         assert r.status_code == 404
+
+
+class TestFaseTransicaoNaoAtravessaFazenda:
+    """FURO DE MULTI-TENANT CORRIGIDO: `_fase_transicao` buscava Servico/
+    Parto da matriz só por `numero_matriz`, sem filtrar fazenda_id — com
+    `animal.numero` deixando de ser único globalmente (migração
+    c24befa94c1b), uma pesagem da fazenda 2 podia calcular a fase de
+    transição a partir do serviço/parto de um animal ALHEIO da fazenda 1
+    com o mesmo número."""
+
+    def test_editar_data_da_pesagem_calcula_fase_com_dado_da_propria_fazenda(self, client):
+        c, engine = client
+        _seed_fazenda_produtivo(engine, 1)
+        _seed_fazenda_produtivo(engine, 2)
+        with _sessao(engine) as s:
+            # Fazenda 1: matriz "500" com parto recente -> pré-parto/vaca seca
+            # não se aplica (sem serviço vigente aqui, só ruído).
+            s.add(Animal(numero="500", fazenda_id=1, del_dias=None))
+            s.add(Servico(
+                numero_matriz="500", data_servico=date(2025, 6, 1), tipo="IA", tipo_servico="IA",
+                diagnostico="POSITIVO", fazenda_id=1,
+            ))
+
+            # Fazenda 2: matriz "500" SEM nenhum serviço/parto -> fase tem
+            # que sair None (não pré-parto/vaca seca "herdado" da fazenda 1).
+            s.add(Animal(numero="500", fazenda_id=2, del_dias=None))
+            p = PesagemCorporal(numero_matriz="500", data_pesagem=date(2026, 1, 1), peso_kg=500.0, fazenda_id=2)
+            s.add(p)
+            s.commit()
+            s.refresh(p)
+            pid = p.id
+
+        _como_fazenda(2)
+        r = c.put(f"/producao/pesagens/{pid}", json={"data_pesagem": "2026-02-01"})
+        assert r.status_code == 200, r.text
+        assert r.json()["fase"] is None, (
+            "a fase de transição da pesagem da fazenda 2 não pode vir do serviço/diagnóstico "
+            "de um animal de mesmo número em OUTRA fazenda"
+        )

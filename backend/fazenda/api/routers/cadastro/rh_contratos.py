@@ -1435,7 +1435,10 @@ def _sincronizar_conta_do_item(session: Session, item) -> None:
             session.add(conta)
 
 
-def _aplicar_vale_avulso(session: Session, vale_avulso_id: int, origem_tipo: str, origem_id: int, valor: float) -> None:
+def _aplicar_vale_avulso(
+    session: Session, vale_avulso_id: int, origem_tipo: str, origem_id: int, valor: float,
+    fazenda_id: int | None = None,
+) -> None:
     """
     Abate `valor` da(s) próxima(s) parcela(s)/etapa(s) PENDENTE(S), na ordem em
     que vencem — mesmo efeito do vale de funcionário (reduzir o valor líquido
@@ -1469,7 +1472,10 @@ def _aplicar_vale_avulso(session: Session, vale_avulso_id: int, origem_tipo: str
         restante = round(restante - abatido, 2)
         session.add(item)
         _sincronizar_conta_do_item(session, item)
-        session.add(ValeAvulsoAbatimento(vale_avulso_id=vale_avulso_id, item_tipo=item_tipo, item_id=item.id, valor_abatido=abatido))
+        session.add(ValeAvulsoAbatimento(
+            vale_avulso_id=vale_avulso_id, item_tipo=item_tipo, item_id=item.id, valor_abatido=abatido,
+            fazenda_id=fazenda_id,
+        ))
 
 
 def _redistribuir_itens_pendentes_igual(session: Session, itens: list) -> None:
@@ -1663,7 +1669,7 @@ def criar_vale_avulso(
     session.commit()
     session.refresh(vale)
 
-    _aplicar_vale_avulso(session, vale.id, dados.origem_tipo, dados.origem_id, dados.valor)
+    _aplicar_vale_avulso(session, vale.id, dados.origem_tipo, dados.origem_id, dados.valor, fazenda_id=vale.fazenda_id)
     # Gera (quando aplicável) o lançamento que faltava no extrato para a
     # saída de caixa do vale — ver `_sincronizar_conta_vale_avulso`.
     _sincronizar_conta_vale_avulso(session, vale, pessoa.nome if pessoa else "—", conta, fazenda_id)
@@ -1747,7 +1753,7 @@ def atualizar_vale_avulso(
     session.add(vale)
     session.commit()
 
-    _aplicar_vale_avulso(session, vale_id, dados.origem_tipo, dados.origem_id, dados.valor)
+    _aplicar_vale_avulso(session, vale_id, dados.origem_tipo, dados.origem_id, dados.valor, fazenda_id=vale.fazenda_id)
     pessoa = session.get(Pessoa, vale.pessoa_id)
     # Mantém o lançamento gerado (ContaGerencial) da saída de caixa do vale
     # em sincronia com a edição — cria/atualiza/remove conforme a mudança.
