@@ -27,7 +27,7 @@ import json
 import logging
 import os
 from datetime import date, datetime
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -86,6 +86,65 @@ def chave_publica() -> dict:
     return {"chave_publica": VAPID_PUBLIC_KEY}
 
 
+# ---------------------------------------------------------------------------
+# BUG DE SEGURANÇA CORRIGIDO (CWE-918, SSRF): `endpoint` chegava como texto
+# livre do cliente, era gravado sem checagem alguma (só "não vazio") e depois
+# ia direto para `webpush(subscription_info={"endpoint": sub.endpoint, ...})`
+# (ver _enviar_web_push abaixo) — o pywebpush instalado faz
+# `self.mod_or_session.post(endpoint, ...)` sem validar esquema/host. Como o
+# disparo (notificar_push_para_itens) roda dentro do próprio GET
+# /notificacoes/ do usuário logado, QUALQUER usuário autenticado (o papel
+# mais baixo do SaaS) conseguia transformar o backend em proxy para
+# 169.254.169.254 (metadata da cloud), 127.0.0.1 e a rede interna do Railway
+# (ex.: o próprio Postgres) — bastava cadastrar esse "endpoint" malicioso.
+#
+# A correção NÃO tenta validar o texto da URL (checar esquema/IP no momento
+# do cadastro não protege contra um host público cujo DNS resolve depois
+# para um endereço interno — "DNS rebinding" — nem contra um redirect que só
+# aparece na hora do POST de verdade, depois de qualquer validação). Em vez
+# disso, restringimos a um allowlist FECHADO dos hosts que os fabricantes de
+# navegador usam para entregar Web Push — é um conjunto pequeno e conhecido
+# (Chrome/Edge/Android via FCM, Firefox via Mozilla, Safari via Apple, Edge
+# legado/Windows via WNS): nenhum deles está sob controle do atacante, então
+# não importa se o DNS "rebindar" ou se a resposta redirecionar — a URL
+# cadastrada já não teria passado na checagem de host.
+#
+# O QUE ISTO NÃO COBRE: se um destes 4 provedores um dia for comprometido ou
+# passar a redirecionar internamente para algo malicioso, o allowlist não
+# pegaria — mas isso está fora do modelo de ameaça de "usuário autenticado
+# comum do SaaS" que este achado cobre.
+# ---------------------------------------------------------------------------
+_PUSH_HOSTS_EXATOS = {
+    "fcm.googleapis.com",                  # Chrome, Edge (Chromium), navegadores Android
+    "updates.push.services.mozilla.com",   # Firefox
+    "web.push.apple.com",                  # Safari (macOS/iOS)
+    "notify.windows.com",                  # Edge legado / WNS
+}
+_PUSH_HOSTS_SUFIXOS = (
+    ".notify.windows.com",  # WNS usa subdomínios regionais, ex.: wns2-par3p.notify.windows.com
+)
+
+
+def _endpoint_de_push_valido(endpoint: str) -> bool:
+    """True só se `endpoint` apontar para um dos serviços de entrega de Web
+    Push conhecidos (ver comentário acima). Exige HTTPS (Web Push nunca usa
+    outro esquema em produção) e compara o HOST — nunca faz `requests`/DNS
+    aqui, de propósito: qualquer resolução feita agora poderia divergir da
+    resolução feita depois, na hora real do POST (TOCTOU)."""
+    try:
+        partes = urlparse(endpoint)
+    except ValueError:
+        return False
+    if partes.scheme != "https":
+        return False
+    host = (partes.hostname or "").lower()
+    if not host:
+        return False
+    if host in _PUSH_HOSTS_EXATOS:
+        return True
+    return any(host.endswith(sufixo) for sufixo in _PUSH_HOSTS_SUFIXOS)
+
+
 class PushSubscriptionIn(BaseModel):
     endpoint: str
     keys: dict
@@ -104,6 +163,15 @@ def subscribe(
     auth = (dados.keys or {}).get("auth")
     if not dados.endpoint or not p256dh or not auth:
         raise HTTPException(status_code=422, detail="Subscription incompleta (endpoint/p256dh/auth)")
+    # Ver bloco de comentário de _endpoint_de_push_valido acima: fecha o SSRF
+    # (CWE-918) recusando qualquer endpoint que não seja um serviço de
+    # entrega de Web Push conhecido, ANTES de gravar no banco — é o único
+    # lugar por onde este campo entra no sistema.
+    if not _endpoint_de_push_valido(dados.endpoint):
+        raise HTTPException(
+            status_code=422,
+            detail="Endpoint de push não reconhecido — só são aceitos os serviços de entrega dos navegadores suportados",
+        )
 
     existente = session.exec(
         select(PushSubscription).where(
