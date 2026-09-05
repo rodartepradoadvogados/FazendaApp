@@ -169,7 +169,7 @@ export function logout() {
       limparSessaoNativa();
     }).catch(() => {});
     localStorage.removeItem("token"); localStorage.removeItem("usuario"); localStorage.removeItem("fazenda_atual");
-    localStorage.removeItem("manter_conectado"); localStorage.removeItem("modo_suporte");
+    localStorage.removeItem("manter_conectado"); localStorage.removeItem("modo_suporte"); localStorage.removeItem("conta_ativa");
     location.href = "/login";
   }
 }
@@ -393,6 +393,15 @@ export async function login(username: string, senha: string, manterConectado = f
   localStorage.setItem("usuario", JSON.stringify(data.usuario));
   if (data.fazenda_atual) localStorage.setItem("fazenda_atual", JSON.stringify(data.fazenda_atual));
   else localStorage.removeItem("fazenda_atual");
+  // "conta_ativa" (ver getContaAtivaId, abaixo) alimenta a tela-eixo de
+  // troca de conta (EscolherConta.tsx) — só sabe marcar "Você está aqui" em
+  // cima de uma escolha de verdade já feita. Login com auto-seleção (0 ou 1
+  // fazenda vinculada, sem a opção Painel CowData) já conta como escolha
+  // feita; quando o login devolve selecao_fazenda_necessaria, ainda não há
+  // nada pra marcar até a escolha de verdade (ver selecionarFazenda/
+  // entrarPainelCowData, mais abaixo).
+  if (data.fazenda_atual) localStorage.setItem("conta_ativa", String(data.fazenda_atual.id));
+  else localStorage.removeItem("conta_ativa");
   // Login de verdade encerra qualquer marcador de modo suporte de uma sessão
   // anterior — nunca deve sobreviver a um novo login.
   localStorage.removeItem("modo_suporte");
@@ -405,7 +414,7 @@ export async function login(username: string, senha: string, manterConectado = f
   // faz nada. Best-effort, sem aguardar: não pode atrasar o login.
   if (manterConectado) {
     import("@/lib/nativo")
-      .then(({ salvarSessaoNativa }) => salvarSessaoNativa(data.token, data.usuario, data.fazenda_atual || null))
+      .then(({ salvarSessaoNativa }) => salvarSessaoNativa(data.token, data.usuario, data.fazenda_atual || null, data.fazenda_atual ? String(data.fazenda_atual.id) : null))
       .catch(() => {});
   }
   // Paleta salva no cadastro do usuário tem prioridade sobre o que já estava no navegador.
@@ -429,13 +438,15 @@ export async function selecionarFazenda(fazendaId: number): Promise<FazendaAtual
   const data = await res.json();
   localStorage.setItem("token", data.token);
   localStorage.setItem("fazenda_atual", JSON.stringify(data.fazenda_atual));
+  // Ver comentário em login() — esta É a escolha de verdade que faltava.
+  localStorage.setItem("conta_ativa", String(data.fazenda_atual.id));
   // Escolher a fazenda DIRETO (administrador) nunca carrega modo suporte.
   localStorage.removeItem("modo_suporte");
   // Mantém a cópia nativa sincronizada com o token novo (o backend reemite o
   // token ao trocar de fazenda) — mesma lógica de login(), ver lib/nativo.ts.
   if (manterConectadoAtivo()) {
     import("@/lib/nativo")
-      .then(({ salvarSessaoNativa }) => salvarSessaoNativa(data.token, getUsuario(), data.fazenda_atual))
+      .then(({ salvarSessaoNativa }) => salvarSessaoNativa(data.token, getUsuario(), data.fazenda_atual, String(data.fazenda_atual.id)))
       .catch(() => {});
   }
   return data.fazenda_atual;
@@ -445,6 +456,70 @@ export async function fetchMinhasFazendas(): Promise<FazendaAtual[]> {
   const res = await authFetch(`${API}/fazendas/minhas`);
   if (!res.ok) throw new Error(`Fazendas error: ${res.status}`);
   return res.json();
+}
+
+// ── Tela-eixo de troca de conta (ver components/EscolherConta.tsx e
+// app/escolher-conta/page.tsx) ──
+
+// Conta ativa neste aparelho AGORA — gravada a cada escolha de verdade (ver
+// login/selecionarFazenda/entrarPainelCowData, acima e abaixo): 0 = Painel
+// CowData, id>0 = a fazenda, null = nenhuma escolha feita ainda (janela
+// entre o login e a tela de escolha, quando há mais de um acesso). Único
+// ponto de leitura — EscolherConta.tsx usa isto pra saber qual opção
+// mostrar esmaecida com "Você está aqui"; sem essa marcação a pessoa clica
+// na própria conta achando que trocou, e nada acontece.
+export function getContaAtivaId(): number | null {
+  if (typeof window === "undefined") return null;
+  const v = localStorage.getItem("conta_ativa");
+  return v == null ? null : Number(v);
+}
+
+// Mesma lista (e o MESMO critério) que POST /auth/login devolve em
+// "fazendas_disponiveis" — só que chamável a qualquer momento depois do
+// login (ver GET /auth/contas-disponiveis no backend). Devolve a lista
+// mesmo com 0 ou 1 opção: quem decide se vale a pena perguntar (> 1) é
+// quem chama (AuthShell só pergunta sozinho ao abrir o app quando há
+// escolha de verdade; o menu "Trocar de conta" pergunta sempre).
+export async function fetchContasDisponiveis(): Promise<FazendaAtual[]> {
+  const res = await authFetch(`${API}/auth/contas-disponiveis`);
+  if (!res.ok) throw new Error(`Contas disponíveis error: ${res.status}`);
+  const data = await res.json();
+  return data.opcoes as FazendaAtual[];
+}
+
+// Reemite o token do usuário SEM a claim "fid" — o formato que o Painel
+// CowData espera (ver backend/fazenda/auth.py::get_fazenda_atual_id).
+// Necessário quando quem JÁ entrou numa fazenda (token com fid) pede para
+// trocar para o Painel CowData: diferente da entrada logo após o login
+// (onde o token que POST /auth/login emitiu já não tem fid, ver
+// app/login/page.tsx), o token atual aqui tem fid gravado e não serve
+// (ver POST /auth/entrar-painel-cowdata no backend — RESTRITO a
+// dono-equivalente/Equipe CowData; nunca confiar só na UI escondendo a
+// opção, o 403 de lá é a trava de verdade).
+export async function entrarPainelCowData(): Promise<void> {
+  const res = await authFetch(`${API}/auth/entrar-painel-cowdata`, { method: "POST" });
+  if (!res.ok) throw await erroDaResposta(res, "Não foi possível entrar no Painel CowData");
+  const data = await res.json();
+  localStorage.setItem("token", data.token);
+  // Painel CowData nunca tem fazenda selecionada (token sem fid, ver acima).
+  localStorage.removeItem("fazenda_atual");
+  localStorage.setItem("conta_ativa", "0");
+  localStorage.removeItem("modo_suporte");
+  if (manterConectadoAtivo()) {
+    import("@/lib/nativo")
+      .then(({ salvarSessaoNativa }) => salvarSessaoNativa(data.token, getUsuario(), null, "0"))
+      .catch(() => {});
+  }
+}
+
+// Ação de escolha na tela-eixo (EscolherConta.tsx / app/escolher-conta) —
+// único ponto que sabe a diferença entre "escolheu uma fazenda de verdade"
+// (POST /auth/selecionar-fazenda) e "escolheu o Painel CowData" (token sem
+// fid, ver entrarPainelCowData acima); quem chama só decide para onde
+// navegar depois.
+export async function escolherConta(opcao: FazendaAtual): Promise<void> {
+  if (opcao.cowdata) { await entrarPainelCowData(); return; }
+  await selecionarFazenda(opcao.id);
 }
 
 // ── Planos comerciais e contrato por fazenda (Fase 2A, dono only) ──

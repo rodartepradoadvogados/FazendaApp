@@ -22,7 +22,7 @@ import {
   Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Monitor, WifiOff,
   Milk, FlaskConical, Droplet, Droplets, Scale, ListChecks, ChevronRight, ChevronDown, Sun,
 } from "lucide-react";
-import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ehOperadorRestrito, ROTA_MODULO } from "@/lib/api";
+import { getUsuario, podeModulo, ehAdmin, ehDono, ehOperadorRestrito, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, descartarPendente, lerCache } from "@/lib/offline";
 import { MobTitulo, MobVoltar, MobConfirmModal } from "@/components/mobile/ui";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
@@ -332,7 +332,6 @@ export default function Pagina() {
     return window.location.hash === "#calendario-sanitario" ? "calendario" : null;
   });
   const fila = usePendentes();
-  const [confirmarSair, setConfirmarSair] = useState(false);
   const [confirmarDescartarId, setConfirmarDescartarId] = useState<string | null>(null);
 
   function alternarSecao(chave: string) {
@@ -541,7 +540,15 @@ export default function Pagina() {
             mostra a navegação normal do site, em "modo desktop" espremido na
             tela do celular — aceitável para uso ocasional/administrativo. */}
         <LinhaMenu icone={<Monitor size={20} />} titulo="Site completo" subtitulo="Abrir a versão completa do site" cor="var(--mob-azul)" onClick={() => router.push("/")} />
-        <LinhaMenu icone={<LogOut size={20} />} titulo="Sair / trocar de usuário" subtitulo="Encerrar a sessão neste aparelho" cor="var(--mob-vermelho)" onClick={() => setConfirmarSair(true)} />
+        {/* Leva pra tela-eixo de escolha de conta (ver components/
+            EscolherConta.tsx) — NÃO desconecta por si só; "Sair da conta" é
+            um botão à parte, discreto, dentro daquela tela (mesmo padrão do
+            site, ver Sidebar.tsx). Trocar de conta é o que se faz todo dia
+            (o dono entre fazendas, o suporte entre fazenda-cliente e Painel
+            CowData); sair é raro — por isso não é mais este item, e o ícone
+            deixa de ser vermelho (alarme, coerente com "sair" de verdade)
+            e volta ao dourado neutro dos outros itens desta seção. */}
+        <LinhaMenu icone={<LogOut size={20} />} titulo="Trocar de conta" subtitulo="Outra fazenda, o Painel CowData, ou sair" cor="var(--mob-dourado)" onClick={() => router.push("/escolher-conta")} />
       </SecaoRetratil>
 
       {/* Rodapé */}
@@ -559,19 +566,6 @@ export default function Pagina() {
           onConfirmar={() => { descartarPendente(confirmarDescartarId); setConfirmarDescartarId(null); }}
         >
           Este lançamento ainda não foi enviado ao servidor. Descartar apaga o registro para sempre — não é possível desfazer.
-        </MobConfirmModal>
-      )}
-
-      {/* Sair — também destrutivo o bastante (encerra a sessão no aparelho)
-          para pedir confirmação antes de agir. */}
-      {confirmarSair && (
-        <MobConfirmModal
-          titulo="Sair do app?"
-          textoConfirmar="Sair"
-          onCancelar={() => setConfirmarSair(false)}
-          onConfirmar={() => logout()}
-        >
-          Você vai precisar entrar de novo para continuar usando o app neste aparelho.
         </MobConfirmModal>
       )}
     </div>
