@@ -976,16 +976,20 @@ html, body { max-width: 100%; overflow-x: hidden; }
 }
 
 /* Painel do sino (NotificationBell) — mesma lógica de segurança de topo do
-   .site-top-actions, mas com offset maior (abre ABAIXO da faixa de botões). */
+   .site-top-actions, mas com offset maior (abre ABAIXO da faixa de botões).
+   Somava tudo MENOS as tarjas fixas: com a faixa de suporte (rara, só durante
+   um atendimento) o painel só encostava nela de vez em quando e ninguém
+   reclamou; a tarja de Fazenda Teste é PERMANENTE, então o mesmo vão passaria
+   a esconder o topo do painel o tempo todo naquela fazenda. */
 .notification-panel {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 4rem);
+  top: calc(env(safe-area-inset-top, 0px) + 4rem + var(--faixas-topo-h, 0px));
   right: calc(env(safe-area-inset-right, 0px) + 1.25rem);
   z-index: 61;
 }
 @media (max-width: 767px) {
   .notification-panel {
-    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 3.2rem);
+    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 3.2rem + var(--faixas-topo-h, 0px));
     right: calc(env(safe-area-inset-right, 0px) + 0.6rem);
   }
 }
