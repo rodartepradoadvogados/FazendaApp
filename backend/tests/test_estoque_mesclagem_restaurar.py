@@ -16,7 +16,7 @@ import fazenda.database as database
 from fazenda.auth import criar_token, get_current_user, hash_senha
 from fazenda.models import (
     Alimento, CategoriaMedicamento, Estoque, EstoqueAliasMesclado, EstoqueCategoriaMedicamento, Fazenda, LoteEstoque,
-    MedicamentoComercial, MovimentoEstoque, PrincipioAtivo, Usuario,
+    MedicamentoCategoria, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo, Usuario,
 )
 from fazenda.models.cofre_acesso import PedidoAcessoSuporte, SessaoAcessoSuporte
 
@@ -281,10 +281,20 @@ def test_restaurar_padrao_funciona_em_sessao_suporte(client):
         s.add(pa)
         s.commit()
         s.refresh(pa)
-        medicamento = MedicamentoComercial(nome_comercial="Maxicam 2%", principio_ativo_id=pa.id, laboratorio="Ourofino", fazenda_id=None)
+        cat = CategoriaMedicamento(nome="Anti-inflamatório", fazenda_id=None)
+        s.add(cat)
+        s.commit()
+        s.refresh(cat)
+        cat_id = cat.id
+        medicamento = MedicamentoComercial(
+            nome_comercial="Maxicam 2%", principio_ativo_id=pa.id, laboratorio="Ourofino", fazenda_id=None,
+            classificacao_medicamento="Anti-inflamatório", carencia_leite_dias=4, carencia_carne_dias=15, proibido_lactacao=True,
+        )
         s.add(medicamento)
         s.commit()
         s.refresh(medicamento)
+        s.add(MedicamentoCategoria(medicamento_comercial_id=medicamento.id, categoria_medicamento_id=cat.id))
+        s.commit()
 
         item = Estoque(
             nome="Maxicam 2% (personalizado)", fazenda_id=fa_id, medicamento_comercial_id=medicamento.id,
@@ -301,3 +311,15 @@ def test_restaurar_padrao_funciona_em_sessao_suporte(client):
     corpo = r.json()
     assert corpo["nome"] == "Maxicam 2%"
     assert corpo["ativo"] is True  # nunca toca em ativo/estocavel/quantidade
+    # Bug real corrigido (05/09/2026): gravava "Medicamentos" no campo errado
+    # (classificacao_medicamento) e nunca propagava tags/carência/lactação.
+    assert corpo["categoria"] == "Medicamentos"
+    assert corpo["classificacao_medicamento"] == "Anti-inflamatório"
+    assert corpo["carencia_leite_dias"] == 4
+    assert corpo["carencia_carne_dias"] == 15
+    assert corpo["proibido_lactacao"] is True
+    with Session(engine) as s:
+        vinculo = s.exec(
+            select(EstoqueCategoriaMedicamento).where(EstoqueCategoriaMedicamento.estoque_id == item_id)
+        ).first()
+        assert vinculo is not None and vinculo.categoria_medicamento_id == cat_id

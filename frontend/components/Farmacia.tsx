@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Search, Lock, Pencil, ChevronDown, ChevronRight, AlertTriangle, Ban, ExternalLink, RotateCcw, Check, X,
-  Beaker, Building2, Pill, Syringe, Tags, GitCompareArrows,
+  Beaker, Building2, Pill, Syringe, Tags, GitCompareArrows, Stethoscope, Link2, PlusCircle,
 } from "lucide-react";
 import {
   fetchIndicacoesCatalogo, personalizarIndicacao,
@@ -25,6 +25,8 @@ import {
   fetchCategoriasFarmaciaCowData, fetchSubstitutivosPorFiltro, fetchSubstitutivosDeMedicamento,
   fetchSugestoesMesclagem, mesclarItensEstoque, fetchEstoque, type SugestaoMesclagem,
   fetchMedicamentoGlobalDetalhe, atualizarMedicamentoFarmaciaCowData, fetchMedicamentosFarmaciaCowData,
+  fetchFazendasFarmaciaCowData, fetchDiagnosticoFarmaciaCowData, vincularDiagnosticoFarmaciaCowData,
+  ativarDiagnosticoFarmaciaCowData, type DiagnosticoFarmacia, type ItemDiagnosticoOrfao,
   type IndicacaoCatalogo, type PrincipioIndicacaoCatalogo, type MarcaIndicacaoCatalogo, type PrincipioFarmacia,
   type EixoFiltroSubstitutivos, type MedicamentoFarmaciaCowData, type MedicamentoSubstituto,
 } from "@/lib/api";
@@ -66,10 +68,13 @@ const SECAO2_ABAS_CATALOGO = [
   { chave: "classificacoesMedicamento", label: "Classificação do medicamento", icone: Beaker },
   { chave: "laboratorios", label: "Laboratórios", icone: Building2 },
 ] as const;
-// Seção 3 — só existe em Catálogo (Fase E, 01/09/2026): tabela dinâmica de
-// cruzamento de medicamentos por atributos clínicos coincidentes.
+// Seção 3 — só existe em Catálogo: Substitutivos (Fase E, 01/09/2026, tabela
+// dinâmica de cruzamento por atributos clínicos) e Diagnóstico (05/09/2026,
+// proposta validada em artefato — audita fazenda por fazenda se o catálogo
+// central chegou direito no estoque do tenant).
 const SECAO3_ABAS_CATALOGO = [
   { chave: "substitutivos", label: "Substitutivos", icone: GitCompareArrows },
+  { chave: "diagnostico", label: "Diagnóstico", icone: Stethoscope },
 ] as const;
 // "indicacoes" é o valor interno da Seção 1 (browse por doença/manejo,
 // CardIndicacao) — não é um botão da Seção 2, é o que os botões da Seção 1
@@ -282,6 +287,199 @@ function CardSubstituto({ s }: { s: MedicamentoSubstituto }) {
         </span>
       </div>
       <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", margin: "0.3rem 0 0" }}>{partes.join(" · ")}</p>
+    </div>
+  );
+}
+
+// Diagnóstico (proposta validada em artefato, 04/09/2026) — audita, fazenda
+// por fazenda, se o catálogo central chegou direito no estoque do tenant.
+// Ver docstring da seção correspondente em painel_cowdata_farmacia.py.
+function DiagnosticoView() {
+  const [fazendas, setFazendas] = useState<{ id: number; nome: string }[] | null>(null);
+  const [fazendaId, setFazendaId] = useState<number | "">("");
+  const [dados, setDados] = useState<DiagnosticoFarmacia | null>(null);
+  const [aba, setAba] = useState<"casados" | "orfaos" | "ausentes">("casados");
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => { fetchFazendasFarmaciaCowData().then(setFazendas).catch((e: any) => setErro(e.message)); }, []);
+
+  const carregar = (fid: number) => {
+    setDados(null); setErro(null);
+    fetchDiagnosticoFarmaciaCowData(fid).then(setDados).catch((e: any) => setErro(e.message));
+  };
+  useEffect(() => { if (fazendaId !== "") carregar(Number(fazendaId)); }, [fazendaId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const recarregar = () => { if (fazendaId !== "") carregar(Number(fazendaId)); };
+
+  return (
+    <div>
+      <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "0.9rem", maxWidth: "68ch" }}>
+        Confere, fazenda por fazenda, se o catálogo central chegou direito no estoque do tenant:{" "}
+        <strong style={{ color: "var(--text)" }}>Casado</strong> (vinculado certinho ao catálogo central),{" "}
+        <strong style={{ color: "var(--text)" }}>Órfão</strong> (item da fazenda sem ligação com o central —
+        geralmente nasceu antes do medicamento existir, ou com nome levemente diferente) e{" "}
+        <strong style={{ color: "var(--text)" }}>Ausente</strong> (existe no central, nunca chegou nesta fazenda).
+      </p>
+
+      <div style={{ marginBottom: "1rem" }}>
+        <label style={labelStyle}>Fazenda</label>
+        <select style={{ ...input, width: 260, display: "block" }} value={fazendaId} disabled={!fazendas}
+          onChange={(e) => setFazendaId(e.target.value ? Number(e.target.value) : "")}>
+          <option value="">{fazendas ? "Selecione…" : "Carregando…"}</option>
+          {(fazendas || []).map((f) => <option key={f.id} value={f.id}>{f.nome}</option>)}
+        </select>
+      </div>
+
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{erro}</p>}
+
+      {fazendaId !== "" && (
+        !dados ? <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p> : (
+          <>
+            <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: "1rem" }}>
+              {([
+                ["casados", `Casado (${dados.casados.length})`, "var(--green-light)"],
+                ["orfaos", `Órfão (${dados.orfaos.length})`, "var(--red)"],
+                ["ausentes", `Ausente (${dados.ausentes.length})`, "var(--amber)"],
+              ] as const).map(([chave, label, cor]) => (
+                <button key={chave} onClick={() => setAba(chave)} style={{
+                  fontSize: "0.8rem", padding: "0.4rem 0.85rem", borderRadius: 999, cursor: "pointer", fontWeight: aba === chave ? 700 : 500,
+                  display: "inline-flex", alignItems: "center", gap: "0.4rem",
+                  border: "1px solid " + (aba === chave ? cor : "var(--border)"),
+                  background: aba === chave ? "var(--surface-2)" : "transparent",
+                  color: aba === chave ? "var(--text)" : "var(--text-muted)",
+                }}>
+                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: cor }} /> {label}
+                </button>
+              ))}
+            </div>
+
+            {aba === "casados" ? (
+              dados.casados.length === 0 ? (
+                <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nada casado ainda nesta fazenda.</p>
+              ) : (
+                <div className="space-y-2">
+                  {dados.casados.map((it) => (
+                    <div key={it.estoque_id} style={{
+                      border: "1px solid var(--border)", borderRadius: 8, background: "var(--surface-2)", padding: "0.6rem 0.8rem",
+                      display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.6rem", flexWrap: "wrap",
+                    }}>
+                      <div>
+                        <strong style={{ fontSize: "0.85rem" }}>{it.nome}</strong>
+                        <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", margin: "0.2rem 0 0" }}>
+                          {it.principio_ativo || "—"} · {it.categoria || "—"}{it.classificacao_medicamento ? ` · ${it.classificacao_medicamento}` : ""}
+                        </p>
+                      </div>
+                      <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--green-light)" }}>
+                        vinculado a {it.nome_comercial_central}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : aba === "orfaos" ? (
+              dados.orfaos.length === 0 ? (
+                <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum item órfão nesta fazenda.</p>
+              ) : (
+                <div className="space-y-2">
+                  {dados.orfaos.map((it) => (
+                    <ItemOrfaoLinha key={it.estoque_id} item={it} fazendaId={Number(fazendaId)} onVinculado={recarregar} />
+                  ))}
+                </div>
+              )
+            ) : dados.ausentes.length === 0 ? (
+              <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nada ausente — todo o catálogo central já chegou nesta fazenda.</p>
+            ) : (
+              <div className="space-y-2">
+                {dados.ausentes.map((m) => (
+                  <ItemAusenteLinha key={m.id} medicamento={m} fazendaId={Number(fazendaId)} onAtivado={recarregar} />
+                ))}
+              </div>
+            )}
+          </>
+        )
+      )}
+    </div>
+  );
+}
+
+function ItemOrfaoLinha({ item, fazendaId, onVinculado }: {
+  item: ItemDiagnosticoOrfao; fazendaId: number; onVinculado: () => void;
+}) {
+  const [medicamentos, setMedicamentos] = useState<MedicamentoFarmaciaCowData[] | null>(null);
+  const [medicamentoId, setMedicamentoId] = useState<number | "">("");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => { fetchMedicamentosFarmaciaCowData().then(setMedicamentos).catch(() => {}); }, []);
+
+  const vincular = async () => {
+    if (medicamentoId === "") return;
+    setSalvando(true); setErro(null);
+    try {
+      await vincularDiagnosticoFarmaciaCowData({ fazenda_id: fazendaId, estoque_id: item.estoque_id, medicamento_comercial_id: Number(medicamentoId) });
+      onVinculado();
+    } catch (e: any) { setErro(e.message || "Erro ao vincular"); }
+    finally { setSalvando(false); }
+  };
+
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 8, background: "var(--surface-2)", padding: "0.65rem 0.8rem" }}>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <strong style={{ fontSize: "0.85rem" }}>{item.nome}</strong>
+          <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", margin: "0.2rem 0 0" }}>
+            {item.principio_ativo || "sem princípio ativo"} · {item.categoria || "sem categoria"}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select style={{ ...input, width: 220 }} value={medicamentoId} disabled={!medicamentos || salvando}
+            onChange={(e) => setMedicamentoId(e.target.value ? Number(e.target.value) : "")}>
+            <option value="">{medicamentos ? "Ligar a…" : "Carregando…"}</option>
+            {(medicamentos || []).map((m) => <option key={m.id} value={m.id}>{m.nome_comercial}</option>)}
+          </select>
+          <button className="btn-primary" style={{ fontSize: "0.76rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}
+            onClick={vincular} disabled={medicamentoId === "" || salvando}>
+            <Link2 size={13} /> {salvando ? "Vinculando…" : "Vincular ao catálogo central"}
+          </button>
+        </div>
+      </div>
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.78rem", marginTop: "0.4rem" }}>{erro}</p>}
+    </div>
+  );
+}
+
+function ItemAusenteLinha({ medicamento, fazendaId, onAtivado }: {
+  medicamento: MedicamentoFarmaciaCowData; fazendaId: number; onAtivado: () => void;
+}) {
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const ativar = async () => {
+    setSalvando(true); setErro(null);
+    try {
+      await ativarDiagnosticoFarmaciaCowData({ fazenda_id: fazendaId, medicamento_comercial_id: medicamento.id });
+      onAtivado();
+    } catch (e: any) { setErro(e.message || "Erro ao criar item de estoque"); }
+    finally { setSalvando(false); }
+  };
+
+  return (
+    <div style={{
+      border: "1px solid var(--border)", borderRadius: 8, background: "var(--surface-2)", padding: "0.65rem 0.8rem",
+      display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.6rem", flexWrap: "wrap",
+    }}>
+      <div>
+        <strong style={{ fontSize: "0.85rem" }}>{medicamento.nome_comercial}</strong>
+        <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", margin: "0.2rem 0 0" }}>
+          Presente em {medicamento.fan_out_fazendas} de {medicamento.fan_out_total_fazendas} fazendas ativas
+        </p>
+      </div>
+      <div>
+        <button className="btn-primary" style={{ fontSize: "0.76rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}
+          onClick={ativar} disabled={salvando}>
+          <PlusCircle size={13} /> {salvando ? "Criando…" : "Criar item de estoque aqui"}
+        </button>
+        {erro && <p style={{ color: "var(--red)", fontSize: "0.78rem", marginTop: "0.3rem" }}>{erro}</p>}
+      </div>
     </div>
   );
 }
@@ -771,8 +969,10 @@ export function CatalogoFarmacia({ contextoGlobal, somenteLeitura }: { contextoG
         <CatalogoLeituraSimples
           descricao="Laboratório — fabricante do medicamento, usado tanto aqui quanto no cadastro de item de estoque de cada fazenda."
           fetch={fetchLaboratoriosFarmaciaCowData} />
-      ) : (
+      ) : secao2 === "substitutivos" ? (
         <SubstitutivosView />
+      ) : (
+        <DiagnosticoView />
       )}
     </div>
   );
