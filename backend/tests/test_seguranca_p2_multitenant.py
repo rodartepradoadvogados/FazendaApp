@@ -92,8 +92,28 @@ class TestOwnershipNaoToleraFazendaIdNulo:
     batem (inclusive um dos lados None e o outro não)."""
 
     def test_chamador_sem_fazenda_nao_edita_pessoa_de_fazenda_especifica(self, client):
+        # A recusa continua sendo o ponto do teste, mas agora vem ANTES da
+        # checagem de posse: a trava de tenant (fazenda/auth.py::
+        # exigir_fazenda_selecionada) barra na porta do router, com 409, toda
+        # requisição sem fazenda no token quando existe fazenda cadastrada —
+        # este chamador nem chega mais ao `PUT` que o achado 2 endurecia.
+        # Recusa mais cedo e mais forte, não mais fraca: o 404 de posse virou
+        # inalcançável por este caminho, então o que se afirma aqui é o 409 —
+        # e, abaixo, que a pessoa da Fazenda A segue intocada.
         c, engine = client
         _como_fazenda(None)
+        r = c.put("/cadastro/pessoas/1", json={"nome": "Nome Trocado", "tipos": ["Funcionário"]})
+        assert r.status_code == 409
+        with Session(engine) as s:
+            assert s.get(Pessoa, 1).nome == "Funcionário da Fazenda A"
+
+    def test_chamador_de_outra_fazenda_nao_edita_pessoa_da_fazenda_a(self, client):
+        """A comparação de posse em si (achado 2) — como a trava de tenant
+        tornou o caso "chamador sem fazenda" inalcançável na rota, é este
+        cenário (chamador COM fazenda, dado de OUTRA) que continua exercitando
+        `obj.fazenda_id != fazenda_id` de verdade."""
+        c, engine = client
+        _como_fazenda(2)
         r = c.put("/cadastro/pessoas/1", json={"nome": "Nome Trocado", "tipos": ["Funcionário"]})
         assert r.status_code == 404
         with Session(engine) as s:
@@ -140,6 +160,11 @@ class TestCatalogoTouroExigeAdmin:
             permissoes = "parametros"
 
         main.app.dependency_overrides[get_current_user] = lambda: _Operador()
+        # Fazenda selecionada de propósito: o que este teste garante é a
+        # trava de PAPEL no catálogo global, e sem "fid" a trava de tenant
+        # (exigir_fazenda_selecionada) recusaria antes com 409 — o operador
+        # seria barrado por ser uma sessão sem fazenda, não por ser operador.
+        _como_fazenda(1)
         r = c.post("/cadastro/touros", json={"naab": "007HO99999", "nome": "Touro Invasor"})
         assert r.status_code == 403
         with Session(engine) as s:
