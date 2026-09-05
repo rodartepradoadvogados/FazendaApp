@@ -147,7 +147,15 @@ class TestNaoAdivinha:
         conn.commit()
         conn.close()
 
-        saida = _rodar_alembic(banco_pre_migracao, "upgrade", "head")
+        # Sobe só até ESTA migração (029227481e9e), não até head: a migração
+        # animal_numero_unico_por_fazenda (bem mais à frente na cadeia, ver
+        # PR da "fundação" multi-tenant) passou a EXIGIR que nenhum animal
+        # fique com fazenda_id nulo antes de trocar a unicidade de `numero`
+        # pra (fazenda_id, numero) — e recusa (de propósito) rodar
+        # `alembic upgrade head` com o órfão que este teste cria adivinhado.
+        # O que este teste cobre é o comportamento DESTA migração
+        # especificamente (não adivinha), não a cadeia inteira.
+        saida = _rodar_alembic(banco_pre_migracao, "upgrade", "029227481e9e")
 
         conn = sqlite3.connect(banco_pre_migracao)
         fazenda_id = conn.execute("SELECT fazenda_id FROM animal WHERE id = 1").fetchone()[0]

@@ -40,6 +40,15 @@ class Fazenda(SQLModel, table=True):
     # de fazendas-clientes (catálogo, MRR, FazendasAdmin) filtra por isto.
     eh_empresa_cowdata: bool = False
 
+    # Marca fazenda de demonstração/sandbox que vive no MESMO banco de
+    # produção (ex.: "Fazenda Teste") — distinta de `eh_empresa_cowdata`
+    # (aquela é a fazenda "lógica" da própria CowData; esta é uma fazenda de
+    # verdade no cadastro, só que não é cliente). Serve de trava dura pra
+    # rotina de replicação de dados (só grava em fazenda com eh_teste=True —
+    # ver rotina de replicação de outra frente do retrofit) e, no futuro,
+    # exclui a fazenda de cobrança/métricas/alertas.
+    eh_teste: bool = False
+
     # Dados jurídicos da fazenda-cliente — usados pelo contrato-modelo
     # (fazenda/rules/contrato_render.py) e pela cobrança (Asaas/ZapSign) como
     # padrão, sem precisar redigitar toda vez. Todos opcionais/aditivos.
