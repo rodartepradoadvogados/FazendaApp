@@ -89,19 +89,31 @@ def _derivar_do_pai(conn, tabela: str, coluna_fk: str, tabela_pai: str) -> int:
 
 def upgrade() -> None:
     conn = op.get_bind()
-    tabelas_existentes = set(sa.inspect(conn).get_table_names())
+    insp = sa.inspect(conn)
+    tabelas_existentes = set(insp.get_table_names())
 
     por_pai: dict[str, int] = {}
     for tabela, coluna_fk, tabela_pai in _TABELAS:
-        # Coluna aditiva (nullable, com índice) — mesmo padrão já usado em
-        # dezenas de migrações do retrofit multi-tenant (ver f7a8b9c0d1e2,
-        # f4a5b6c7d8e9, etc.). Sem constraint UNIQUE nova: nenhuma destas
-        # tabelas precisa disso (o vínculo em si já é único por
-        # (dono, tag) na constraint existente, sem fazenda_id).
-        op.add_column(tabela, sa.Column('fazenda_id', sa.Integer(), nullable=True))
-        op.create_index(op.f(f'ix_{tabela}_fazenda_id'), tabela, ['fazenda_id'], unique=False)
+        # A tabela pode não existir ainda (banco parcial) e a coluna pode já
+        # existir (banco criado pelo metadata dos modelos, sem passar por
+        # migração — cenário real neste projeto, ver
+        # 4ede0ee68b09_cria_tabelas_sem_migracao e o teste-sentinela
+        # test_migracao_e_idempotente_em_banco_que_ja_tem_as_tabelas). Sem
+        # estas duas guardas o `alembic upgrade head` morre com "duplicate
+        # column name". Mesmo padrão de 6aec9b930e1a.
+        if tabela not in tabelas_existentes:
+            continue
+        colunas = {c['name'] for c in insp.get_columns(tabela)}
+        if 'fazenda_id' not in colunas:
+            # Coluna aditiva (nullable, com índice) — mesmo padrão já usado em
+            # dezenas de migrações do retrofit multi-tenant (ver f7a8b9c0d1e2,
+            # f4a5b6c7d8e9, etc.). Sem constraint UNIQUE nova: nenhuma destas
+            # tabelas precisa disso (o vínculo em si já é único por
+            # (dono, tag) na constraint existente, sem fazenda_id).
+            op.add_column(tabela, sa.Column('fazenda_id', sa.Integer(), nullable=True))
+            op.create_index(op.f(f'ix_{tabela}_fazenda_id'), tabela, ['fazenda_id'], unique=False)
 
-        if tabela in tabelas_existentes and tabela_pai in tabelas_existentes:
+        if tabela_pai in tabelas_existentes:
             por_pai[tabela] = _derivar_do_pai(conn, tabela, coluna_fk, tabela_pai)
 
     total = sum(por_pai.values())

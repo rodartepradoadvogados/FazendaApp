@@ -36,7 +36,7 @@ def engine():
     return eng
 
 
-def test_animal_numero_unique_global_nao_quebra_a_copia(engine):
+def test_animal_numero_e_copiado_fiel_com_unicidade_por_fazenda(engine):
     with Session(engine) as s:
         s.add(Animal(numero="777", fazenda_id=1, sexo="F"))
         s.commit()
@@ -50,8 +50,16 @@ def test_animal_numero_unique_global_nao_quebra_a_copia(engine):
         original = s.exec(select(Animal).where(Animal.fazenda_id == 1)).one()
         copia = s.exec(select(Animal).where(Animal.fazenda_id == 2)).one()
         assert original.numero == "777"          # origem intocada
-        assert copia.numero != original.numero    # mutado pra não colidir com a global unique de hoje
-        assert "777" in copia.numero               # mas rastreável até o número original
+        # A cópia mantém o MESMO número. Enquanto `animal.numero` era único no
+        # banco inteiro, a rotina precisava mutar o valor para a cópia caber —
+        # e o sandbox ficava com um rebanho de números falsos, diferente da
+        # fazenda que ele deveria espelhar. Com a unicidade composta
+        # (fazenda_id, numero) da migração c24befa94c1b, a desambiguação
+        # genérica de `_colunas_para_desambiguar` deixa de valer para esta
+        # coluna sozinha (a restrição passou a incluir fazenda_id) e o número
+        # é copiado fiel. É o comportamento que faz o sandbox servir para
+        # testar: a vaca 777 do teste é a vaca 777 da produção.
+        assert copia.numero == original.numero
 
 
 def test_autorreferencia_categoria_alimento(engine):
