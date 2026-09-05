@@ -20,6 +20,11 @@ import { ehApp, ehAppOuPwa } from "@/lib/nativo";
 import { temAreaPainelCowData, ehDono, type AreaPainelCowData } from "@/lib/api";
 import { consumirVeioDaAdministracao } from "@/lib/portalAdministracao";
 import { PainelCowDataTemaProvider, usePainelCowDataTema, type TemaPainelCowData } from "@/lib/painelCowDataTema";
+import FazendasMobile from "@/components/painel-cowdata/mobile/FazendasMobile";
+import CadastrosMobile from "@/components/painel-cowdata/mobile/CadastrosMobile";
+import UsuariosMobile from "@/components/painel-cowdata/mobile/UsuariosMobile";
+import ParametrosMobile from "@/components/painel-cowdata/mobile/ParametrosMobile";
+import CofreMobile from "@/components/painel-cowdata/mobile/CofreMobile";
 
 // Só estas 3 áreas têm a permissão de verdade aplicada nas rotas do backend
 // hoje (ver exigir_area_painel_cowdata em painel_cowdata.py/cofre_acesso.py)
@@ -270,14 +275,32 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
   } as CSSProperties;
 
   if (appMode) {
-    // Estas 2 rotas trazem a própria tela cheia (cabeçalho incluso) — ver
-    // InicioMobilePainelCowData/CockpitMobile. As demais ainda são as telas
-    // do site (Fazendas, Usuários, Financeiro CowData etc. — cadastros
-    // completos demais pra reconstruir aqui de uma vez); só ganham uma barra
-    // mínima de volta, no lugar da gaveta lateral, pra nunca ficarem sem
-    // navegação nenhuma dentro do app.
+    // Estas rotas trazem a própria tela cheia mobile-nativa (cabeçalho
+    // incluso) — ver InicioMobilePainelCowData/CockpitMobile e as 5 telas
+    // abaixo (estudo /design aprovado 05/09/2026: lista → detalhe em
+    // acordeão / grade de catálogos / farm-picker / seções + "aplicar em" /
+    // abas — ver ComumMobile.tsx). As demais telas (Assinaturas, Financeiro,
+    // Equipe, Produto, Confiança, Touros, Farmácia, News) ainda são as do
+    // site — cadastros completos demais pra reconstruir aqui de uma vez;
+    // só ganham uma barra mínima de volta, no lugar da gaveta lateral, pra
+    // nunca ficarem sem navegação nenhuma dentro do app.
     if (path === "/painel-cowdata" || path === "/painel-cowdata/cockpit") {
       return <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }}>{children}</div>;
+    }
+    if (path.startsWith("/painel-cowdata/fazendas")) {
+      return <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }}><FazendasMobile /></div>;
+    }
+    if (path.startsWith("/painel-cowdata/cadastros")) {
+      return <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }}><CadastrosMobile /></div>;
+    }
+    if (path.startsWith("/painel-cowdata/usuarios")) {
+      return <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }}><UsuariosMobile /></div>;
+    }
+    if (path.startsWith("/painel-cowdata/parametros")) {
+      return <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }}><ParametrosMobile /></div>;
+    }
+    if (path.startsWith("/painel-cowdata/cofre")) {
+      return <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }}><CofreMobile /></div>;
     }
     const itemAtual = GRUPOS.flatMap((g) => g.itens).find((i) => i.href !== "/painel-cowdata" && path.startsWith(i.href));
     return (
