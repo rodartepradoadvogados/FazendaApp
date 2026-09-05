@@ -130,9 +130,49 @@ def _eventos_inducao(resposta_json: dict) -> list[dict]:
 
 
 class TestReproduzSintomaOriginal:
-    def test_inducao_lancada_sem_fid_nasce_com_fazenda_id_e_aparece_na_agenda_estrita(self, client_multi):
-        engine, client_sem_fid, client_com_fid, usuario_id = client_multi
+    def test_sessao_sem_fid_nao_entra_mais_em_rota_de_fazenda(self, client_multi):
+        """O contrato mudou desde que este arquivo foi escrito.
+
+        Quando ele nasceu, a resposta ao token sem "fid" era RESOLVER a
+        fazenda pelo vínculo único do usuário na hora de ESCREVER (ver
+        resolver_fazenda_id_escrita), para o funcionário de campo com o
+        celular logado há meses não precisar sair e entrar. O registro
+        nascia atribuído e o D6 voltava à Agenda — que é o que a versão
+        anterior deste teste media.
+
+        A auditoria mostrou o outro lado da mesma sessão: resolver na
+        escrita não conserta a LEITURA. O endpoint continua lendo `None` de
+        `get_fazenda_atual_id`, e aí o `if fazenda_id is not None:` de
+        centenas de consultas simplesmente não filtra — o mesmo funcionário
+        enxerga rebanho, produção, financeiro e estoque de todas as
+        fazendas-clientes (F-A-01/F-B-01/F-B-02). Não dá pra resolver na
+        porta e injetar o valor lá dentro, então a escolha passou a ser:
+        ou o token diz a fazenda, ou a requisição não entra
+        (exigir_fazenda_selecionada). O preço é um login a mais para quem
+        estiver com sessão antiga — e o frontend leva essa pessoa direto à
+        tela de escolha de conta, sem descartar a sessão.
+
+        `resolver_fazenda_id_escrita` continua onde está, agora como
+        segunda linha (só alcançável em ambiente sem fazenda nenhuma
+        cadastrada) — é ela que garante que nenhum registro nasça órfão.
+        """
+        _engine, client_sem_fid, _client_com_fid, _usuario_id = client_multi
         c = client_sem_fid()
+        r = c.post("/cadastro/protocolos-inducao-lactacao", json={
+            "nome": "Indução padrão",
+            "etapas": [{"dia": 0, "tipo": "manejo", "produto": "Iniciar ordenha"}],
+        })
+        assert r.status_code == 409, (
+            "sessão sem fazenda selecionada precisa ser recusada na porta: enquanto ela entra, "
+            f"toda consulta lá dentro roda sem filtro de fazenda. Resposta: {r.status_code} {r.text[:200]}"
+        )
+
+    def test_inducao_nasce_com_fazenda_id_e_aparece_na_agenda_estrita(self, client_multi):
+        """A regressão que originou o arquivo (etapa D6 sumindo da Agenda),
+        agora pelo caminho que o sistema de fato usa: sessão com a fazenda
+        escolhida."""
+        engine, _client_sem_fid, client_com_fid, _usuario_id = client_multi
+        c = client_com_fid(1)
         pid = _criar_molde_inducao(c)
 
         r = c.post("/producao/inducao-lactacao", json={
@@ -146,7 +186,7 @@ class TestReproduzSintomaOriginal:
         # 1) O registro NASCE com fazenda_id preenchido — não fica órfão.
         with Session(engine) as s:
             lanc = s.get(ProtocoloInducaoLancamento, lancamento_id)
-            assert lanc.fazenda_id == 1, "deveria ter resolvido pelo único vínculo do usuário (UsuarioFazenda)"
+            assert lanc.fazenda_id == 1, "o lançamento tem que nascer atribuído à fazenda da sessão, nunca órfão"
             aps = s.exec(
                 select(ProtocoloInducaoAplicacao).where(ProtocoloInducaoAplicacao.lancamento_id == lancamento_id)
             ).all()
