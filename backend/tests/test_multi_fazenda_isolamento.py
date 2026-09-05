@@ -168,13 +168,26 @@ class TestIsolamentoEntreFazendas:
         r = c.get("/cadastro/pessoas")
         assert "Leomir Bonfim" in {item["nome"] for item in r.json()}
 
-    def test_sem_fazenda_no_token_ve_tudo_como_antes(self, client):
-        """Token emitido antes do piloto (sem 'fid') — comportamento idêntico
-        ao de sempre, sem filtro nenhum."""
+    def test_sessao_sem_fazenda_e_recusada(self, client):
+        """A auditoria encontrou este teste afirmando o próprio furo — o
+        docstring antigo dizia, com todas as letras, "sem filtro nenhum".
+
+        Era a regra do piloto de multi-fazenda: com uma fazenda só, "token
+        sem fid" queria dizer "emitido antes da migração", e não havia
+        retroatividade. Com mais de um cliente no mesmo banco, "sem filtro
+        nenhum" deixou de ser compatibilidade e virou vazamento entre
+        clientes (F-A-01/F-B-01/F-B-02).
+
+        Agora a regra é a oposta e vale na porta: ou o token diz em qual
+        fazenda a requisição acontece, ou ela não entra (fazenda/auth.py::
+        exigir_fazenda_selecionada)."""
         c, engine = client
         _como_fazenda(None)
         r = c.get("/financeiro/contas-correntes")
-        assert "Banco do Brasil" in {item["banco"] for item in r.json()}
+        assert r.status_code == 409, (
+            f"as contas correntes das duas fazendas saíram juntas para uma sessão sem fazenda "
+            f"selecionada: {r.status_code} {r.text[:200]}"
+        )
 
     def test_farmacia_principios_isolado(self, client):
         """Fase 4A — Farmácia (/farmacia/principios) não vazava princípios

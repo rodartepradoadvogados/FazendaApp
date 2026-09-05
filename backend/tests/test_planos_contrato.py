@@ -101,12 +101,21 @@ class TestTravaDeContrato:
         assert c.get("/financeiro/opcoes").status_code == 200
         assert c.get("/estoque/").status_code == 200
 
-    def test_sem_fazenda_no_token_pula_a_trava(self, client):
-        """Token emitido antes do piloto (sem 'fid') — comportamento idêntico
-        ao de sempre, sem checagem de contrato nenhuma."""
+    def test_sessao_sem_fazenda_e_recusada_antes_da_trava_de_contrato(self, client):
+        """Este era o outro lado da mesma tolerância, e a auditoria o citou
+        nominalmente: com `fazenda_id` nulo, `exigir_modulo_contratado`
+        retornava cedo — a fazenda sem contrato passava. Não era só o filtro
+        de dados que a sessão sem fazenda desligava; era também a trava
+        comercial.
+
+        Agora nem chega lá: a requisição é recusada antes, por não dizer em
+        qual fazenda acontece (fazenda/auth.py::exigir_fazenda_selecionada).
+        A trava de contrato continua existindo e é exercitada pelos testes
+        abaixo, com a fazenda devidamente selecionada."""
         c, engine = client
         _como_fazenda(None)
-        assert c.get("/reproducao/servicos").status_code == 200
+        r = c.get("/reproducao/servicos")
+        assert r.status_code == 409, f"{r.status_code} {r.text[:200]}"
 
     def test_definir_contrato_standard_e_aprovar_libera_so_os_modulos_do_plano(self, client):
         c, engine = client

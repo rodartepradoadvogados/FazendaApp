@@ -80,7 +80,14 @@ def test_editar_numa_fazenda_nao_muda_o_valor_visto_por_outra(client):
     assert _item(r.json(), "pev_dias")["valor"] == 70
 
 
-def test_get_sem_fazenda_no_token_mostra_so_o_padrao_global(client):
+def test_sessao_sem_fazenda_e_recusada(client):
+    """Antes esta rota atendia a sessão sem fazenda devolvendo o padrão
+    global — comportamento do piloto de multi-fazenda, quando "sem fid"
+    queria dizer "token antigo". A auditoria mostrou que essa tolerância é a
+    mesma que, nas outras centenas de consultas do sistema, desliga o filtro
+    por fazenda inteiro (F-A-01/F-B-01/F-B-02). A regra passou a valer na
+    porta, igual para todas as rotas de fazenda: ou o token diz em qual
+    fazenda a requisição acontece, ou ela não entra."""
     c, engine = client
     token = _login(c)
     headers = {"Authorization": f"Bearer {token}"}
@@ -90,7 +97,7 @@ def test_get_sem_fazenda_no_token_mostra_so_o_padrao_global(client):
 
     _com_fazenda(None)
     r = c.get("/parametros/", headers=headers)
-    assert _item(r.json(), "pev_dias")["valor"] == 45
+    assert r.status_code == 409, f"{r.status_code} {r.text[:200]}"
 
 
 def test_get_nao_duplica_item_quando_fazenda_personalizou(client):
