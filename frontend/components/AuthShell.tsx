@@ -1,7 +1,10 @@
 "use client";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { getToken, podeModulo, ehDono, ehAdmin, ehContador, ehMembroEquipeCowData, podeFormularDietas, ROTA_MODULO } from "@/lib/api";
+import {
+  getToken, podeModulo, ehDono, ehAdmin, ehContador, ehMembroEquipeCowData, podeFormularDietas, fetchContasDisponiveis,
+  ROTA_MODULO,
+} from "@/lib/api";
 import { iniciarMonitorInatividade } from "@/lib/idle";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -111,8 +114,12 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     // e os administradores da fazenda também podem visitar /contador (mesma
     // tela que o contador externo vê, acessível pela aba "Painel do Contador"
     // em Administração), mas não ficam presos lá — só quem tem o vínculo de
-    // contador é redirecionado automaticamente.
-    if (ehContador() && !ehPainelContador) { router.replace("/contador"); return; }
+    // contador é redirecionado automaticamente. Exceto /escolher-conta: um
+    // contador vinculado a mais de uma fazenda (raro, mas possível) pode
+    // estar ali JUSTAMENTE para trocar para a outra — sem essa exceção, o
+    // `fazenda_atual` (ainda) marcado como contador da fazenda anterior
+    // bloquearia a própria troca antes dela acontecer.
+    if (ehContador() && !ehPainelContador && path !== "/escolher-conta") { router.replace("/contador"); return; }
     if (ehPainelContador && !ehContador() && !ehDono() && !ehAdmin()) { router.replace(destinoRaiz); return; }
     // Bloqueia páginas sem permissão (ex.: operador sem financeiro).
     const mod = ROTA_MODULO[path];
@@ -127,6 +134,79 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     if (mod && mod !== "capa" && !podeModulo(mod)) { router.replace(destinoRaiz); return; }
     setEstado("logado");
   }, [path, router, ehApp, ehPainelCowData, ehPainelContador, hidratado, destinoRaiz]);
+
+  // Ref sempre atualizada com o path atual — o gatilho de "abrir o app"
+  // abaixo dispara de um evento assíncrono (appStateChange/visibilitychange,
+  // ver registrarAoAbrirApp) que não pode depender do `path` capturado no
+  // fechamento do efeito no momento em que ele foi registrado (senão, ao
+  // reabrir o app numa tela diferente da que estava aberta quando o
+  // listener foi criado, o "next" da troca de conta apontaria pro lugar
+  // errado).
+  const pathRef = useRef(path);
+  useEffect(() => { pathRef.current = path; }, [path]);
+
+  // Pergunta "trocar de conta" a cada ABERTURA do app — nunca em navegação
+  // interna (ver lib/nativo.ts::registrarAoAbrirApp, que só dispara no
+  // sinal do próprio SO/navegador de troca de foco, jamais numa navegação
+  // client-side dentro da SPA). Só dentro da casca mobile (app nativo/PWA
+  // instalado): no site o mesmo convite só aparece ao entrar (login) e ao
+  // pedir para trocar ("Trocar de conta" no menu, ver Sidebar.tsx) — pedido
+  // explícito do dono do produto, nunca sozinho a cada foco de aba no
+  // navegador comum.
+  //
+  // Depende só de `dentroDoApp` (Capacitor.isNativePlatform()/PWA
+  // standalone, ver lib/nativo.ts::ehAppOuPwa) — NUNCA de `ehApp` (que é
+  // só `path.startsWith("/app")`): quem está dentro do app e navega para
+  // uma rota "de site" (ex.: Financeiro, aberto pela Sidebar dentro da
+  // mesma WebView) continua tão "dentro do app" quanto estava — `ehApp`
+  // viraria false nessa hora e, se estivesse nas dependências abaixo,
+  // dispararia este efeito de novo por causa da NAVEGAÇÃO, não de uma
+  // abertura de verdade. `dentroDoApp` não muda com a rota, só com o
+  // ambiente de execução — é o sinal certo aqui.
+  //
+  // Deliberadamente um efeito PRÓPRIO, independente do de permissões acima:
+  // ele não bloqueia a renderização normal (evita amarrar uma checagem de
+  // rede a toda a lógica síncrona de permissão) — só navega para
+  // /escolher-conta DEPOIS, se descobrir que há mais de uma conta. O custo
+  // é uma eventual piscada de conteúdo antes do redirecionamento; o
+  // benefício é não arriscar travar a abertura do app numa chamada de
+  // rede que pode falhar (ver catch abaixo — falha de rede nunca deve
+  // impedir o uso do app, só deixar de perguntar desta vez).
+  useEffect(() => {
+    if (!hidratado) return;
+    if (!dentroDoApp) return; // site (fora do app/PWA): não pergunta sozinho ao focar
+
+    let cancelado = false;
+    const perguntarSeTrocaDeConta = async () => {
+      if (cancelado || !getToken()) return;
+      const atual = pathRef.current;
+      // Já estamos na própria tela de escolha, ou ainda nem logamos — nada
+      // a fazer (login cuida do próprio caso via selecao_fazenda_necessaria).
+      if (atual === "/escolher-conta" || atual === "/login") return;
+      try {
+        const opcoes = await fetchContasDisponiveis();
+        // Só vale a pena perguntar quando há de fato mais de 1 opção — um
+        // funcionário de fazenda única nunca deve ver esta tela sozinha
+        // (regra de produto: "um acesso só entra direto, sem tela").
+        if (!cancelado && opcoes.length > 1) {
+          const destino = `${window.location.pathname}${window.location.search}`;
+          router.push(`/escolher-conta?next=${encodeURIComponent(destino)}`);
+        }
+      } catch {
+        // Rede indisponível/instável (uso rural comum, ver comentário sobre
+        // CapacitorHttp em capacitor.config.ts) — segue sem perguntar desta
+        // vez, nunca trava a abertura do app por causa disto.
+      }
+    };
+
+    perguntarSeTrocaDeConta(); // cobre a abertura fria (1º mount deste componente)
+    const limpezaPromise = import("@/lib/nativo").then(({ registrarAoAbrirApp }) => registrarAoAbrirApp(perguntarSeTrocaDeConta));
+
+    return () => {
+      cancelado = true;
+      limpezaPromise.then((limpar) => limpar()).catch(() => {});
+    };
+  }, [hidratado, dentroDoApp, router]);
 
   // Desloga sozinho após 15 min sem interação (mouse/teclado/toque/rolagem) —
   // segurança dos dados da fazenda e controle de acessos do proprietário.
@@ -194,6 +274,12 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // aparecer nele (quem quer ver sessões ativas usa a própria tela de
   // Suporte, ver painel-cowdata/cofre/page.tsx).
   if (ehPainelCowData) return <>{children}</>;
+
+  // Tela-eixo de troca de conta (/escolher-conta, ver components/
+  // EscolherConta.tsx): casca própria e mínima, igual no site e no app —
+  // nem a Sidebar da fazenda nem a barra do app móvel fazem sentido antes
+  // de saber em qual conta a pessoa está entrando.
+  if (path === "/escolher-conta") return <>{children}</>;
 
   // Todas as demais cascas logadas (app móvel, Painel do Contador, portais
   // Insights e Dietas, e a casca padrão da fazenda montada abaixo) recebem a

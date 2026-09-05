@@ -203,6 +203,31 @@ def _vinculo(session: Session, usuario_id: int, fazenda_id: int) -> UsuarioFazen
     ).first()
 
 
+def _opcoes_de_conta(session: Session, user: Usuario) -> tuple[list[Fazenda], bool, list[dict]]:
+    """Único lugar que decide QUAIS contas um usuário pode escolher — usado
+    tanto por POST /auth/login (no instante da autenticação) quanto por
+    GET /auth/contas-disponiveis (a qualquer momento depois, ver "Trocar de
+    conta" no menu e a pergunta a cada abertura do app). Extraído para cá
+    porque as duas rotas têm que enxergar EXATAMENTE a mesma lista sempre —
+    duas cópias do mesmo critério (dono-equivalente/Equipe CowData +
+    fazendas vinculadas) são duas chances de um dia divergirem uma da outra.
+
+    Devolve (fazendas, mostrar_opcao_cowdata, opcoes) — login() ainda
+    precisa de `fazendas`/`mostrar_opcao_cowdata` à parte para decidir a
+    auto-seleção (só ele faz isso; contas-disponiveis não auto-seleciona
+    nada, só lista)."""
+    fazendas = _fazendas_vinculadas(session, user.id)
+    eh_admin_cowdata = eh_email_dono_equivalente(user.email) and len(fazendas) >= 1
+    eh_membro_cowdata = not eh_email_dono_equivalente(user.email) and eh_membro_equipe_cowdata(session, user)
+    mostrar_opcao_cowdata = eh_admin_cowdata or eh_membro_cowdata
+    opcoes = [_fazenda_publica(f, session=session) for f in fazendas]
+    if mostrar_opcao_cowdata:
+        # Sentinela id=0 (fazendas de verdade começam em 1) — ver comentário
+        # equivalente em login(), abaixo.
+        opcoes.append({"id": 0, "nome": "Painel CowData", "cowdata": True})
+    return fazendas, mostrar_opcao_cowdata, opcoes
+
+
 @router.post("/login")
 def login(dados: LoginIn, session: Session = Depends(get_session)) -> dict:
     user = session.exec(select(Usuario).where(Usuario.username == dados.username)).first()
@@ -226,16 +251,10 @@ def login(dados: LoginIn, session: Session = Depends(get_session)) -> dict:
     # CowData — sem isso (dono-equivalente sem nenhum UsuarioFazenda gravado,
     # só o bypass por e-mail) mantém o comportamento de sempre, pra nunca
     # arriscar travar quem só tinha esse acesso indireto.
-    fazendas = _fazendas_vinculadas(session, user.id)
-    eh_admin_cowdata = eh_email_dono_equivalente(user.email) and len(fazendas) >= 1
-    # Membro da Equipe CowData com login próprio (ago/2026, ver
-    # eh_membro_equipe_cowdata) — mesma tela de escolha do dono, mas SEM a
-    # trava "len(fazendas) >= 1": ao contrário do dono (que sempre tem o
-    # bypass por e-mail como rede de segurança), um membro comum da equipe
-    # pode legitimamente não ter NENHUMA fazenda vinculada e mesmo assim
-    # precisa cair no Painel CowData, não ficar sem destino nenhum.
-    eh_membro_cowdata = not eh_email_dono_equivalente(user.email) and eh_membro_equipe_cowdata(session, user)
-    mostrar_opcao_cowdata = eh_admin_cowdata or eh_membro_cowdata
+    # Membro da Equipe CowData com login próprio (ago/2026): mesma tela de
+    # escolha do dono, mas sem exigir nenhuma fazenda vinculada — ver
+    # docstring de _opcoes_de_conta.
+    fazendas, mostrar_opcao_cowdata, opcoes = _opcoes_de_conta(session, user)
     fazenda_auto = fazendas[0] if (len(fazendas) == 1 and not mostrar_opcao_cowdata) else None
     resposta = {
         "token": criar_token(user.username, fazenda_id=fazenda_auto.id if fazenda_auto else None, manter_conectado=dados.manter_conectado),
@@ -244,14 +263,14 @@ def login(dados: LoginIn, session: Session = Depends(get_session)) -> dict:
     if fazenda_auto:
         resposta["fazenda_atual"] = _fazenda_publica(fazenda_auto, _vinculo(session, user.id, fazenda_auto.id), session)
     if len(fazendas) > 1 or mostrar_opcao_cowdata:
+        # O frontend reconhece a entrada sintética "Painel CowData" (id=0)
+        # pelo campo "cowdata" e, ao escolher, só navega pro Painel usando o
+        # token já emitido acima (fid=None), sem chamar /auth/selecionar-
+        # fazenda (essa "fazenda" não existe) — ver POST /auth/entrar-
+        # painel-cowdata para o caso de reentrar nela DEPOIS de já ter
+        # escolhido uma fazenda (token com fid), que este bypass aqui não
+        # cobre.
         resposta["selecao_fazenda_necessaria"] = True
-        opcoes = [_fazenda_publica(f, session=session) for f in fazendas]
-        if mostrar_opcao_cowdata:
-            # Sentinela id=0 (fazendas de verdade começam em 1) — o frontend
-            # reconhece pelo campo "cowdata" e, ao escolher, só navega pro
-            # Painel CowData usando o token já emitido acima (fid=None), sem
-            # chamar /auth/selecionar-fazenda (essa "fazenda" não existe).
-            opcoes.append({"id": 0, "nome": "Painel CowData", "cowdata": True})
         resposta["fazendas_disponiveis"] = opcoes
     return resposta
 
@@ -298,6 +317,66 @@ def selecionar_fazenda(
         "token": criar_token(user.username, fazenda_id=fazenda.id, manter_conectado=manter_conectado),
         "fazenda_atual": _fazenda_publica(fazenda, vinculo, session),
     }
+
+
+@router.get("/contas-disponiveis")
+def contas_disponiveis(user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> dict:
+    """Mesma lista (e o MESMO critério, ver _opcoes_de_conta) que POST
+    /auth/login devolve em "fazendas_disponiveis" — só que chamável a
+    qualquer momento depois do login, não só no instante dele. Alimenta a
+    tela-eixo "Trocar de conta" (frontend: /escolher-conta), tanto quando o
+    app pergunta sozinho a cada abertura (só faz sentido perguntar se há
+    mais de 1 opção — decisão do FRONTEND, ver comentário abaixo) quanto
+    quando a pessoa pede pra trocar pelo menu.
+
+    Devolve a lista mesmo com 0 ou 1 opção — de propósito: esta rota só
+    LISTA, nunca decide "vale a pena perguntar" (isso é regra de produto,
+    não de dado, e já mora no frontend em dois lugares com critérios
+    ligeiramente diferentes — abrir o app exige >1 opção; o menu "Trocar de
+    conta" está sempre disponível, mesmo para quem só tem uma conta).
+    Replicar aqui a regra "só quando > 1" duplicaria a decisão — e uma
+    cópia a mais é só mais uma chance de divergir da outra."""
+    _, _, opcoes = _opcoes_de_conta(session, user)
+    return {"opcoes": opcoes}
+
+
+@router.post("/entrar-painel-cowdata")
+def entrar_painel_cowdata(
+    user: Usuario = Depends(get_current_user), session: Session = Depends(get_session),
+    manter_conectado: bool = Depends(token_manter_conectado),
+) -> dict:
+    """Reemite o token do usuário SEM a claim "fid" — o formato de token que
+    o Painel CowData espera (ver get_fazenda_atual_id/criar_token).
+
+    Por que este endpoint precisa existir: ao ESCOLHER "Painel CowData" no
+    instante do login, o frontend não chama nada — só navega usando o
+    token que POST /auth/login já emitiu (que nunca tem "fid" quando a
+    opção Painel CowData aparece, ver login() acima). Mas quem já ENTROU
+    numa fazenda antes (token COM "fid" gravado) e depois pede para trocar
+    para o Painel CowData pelo meio da sessão (ver "Trocar de conta") tem
+    um token que não serve — precisa de um novo, sem "fid", e é isso que
+    esta rota emite.
+
+    RESTRIÇÃO DE SEGURANÇA — NÃO RELAXAR: um token sem "fid" desliga o
+    filtro por fazenda em várias rotas ainda não migradas para
+    get_fazenda_id_escrita (achado de uma auditoria de segurança em
+    andamento, ver docs/security-audit/achados.json — token sem fazenda
+    selecionada tolera leitura/escrita cross-tenant em várias rotas). Por
+    isso esta rota só emite esse tipo de token para quem já tinha o
+    critério que hoje decide se a opção "Painel CowData" aparece no login
+    (dono-equivalente OU membro da Equipe CowData) — nunca para um usuário
+    comum, mesmo autenticado: alargar esse caminho para qualquer um seria
+    abrir, por uma porta nova, exatamente o buraco que a auditoria
+    encontrou. Ver test_entrar_painel_cowdata.py::
+    test_usuario_comum_recebe_403.
+
+    Preserva a validade longa do "Manter conectado", igual a
+    selecionar_fazenda acima — trocar de conta no meio de uma sessão longa
+    não pode jogar quem marcou a opção de volta pras 12h padrão."""
+    pode_entrar = eh_email_dono_equivalente(user.email) or eh_membro_equipe_cowdata(session, user)
+    if not pode_entrar:
+        raise HTTPException(status_code=403, detail="Acesso restrito à administração da CowData")
+    return {"token": criar_token(user.username, fazenda_id=None, manter_conectado=manter_conectado)}
 
 
 class EsqueciSenhaVerificarIn(BaseModel):
