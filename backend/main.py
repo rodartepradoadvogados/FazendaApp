@@ -367,16 +367,6 @@ ALLOWED_ORIGINS = [
 # incluindo os deploys de branch: <projeto>-git-<hash>-<time>.vercel.app).
 _VERCEL_PREVIEW_REGEX = r"^https://fazenda-?app[a-z0-9-]*\.vercel\.app$"
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=_VERCEL_PREVIEW_REGEX,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
 @app.middleware("http")
 async def _carimbar_fazenda_atual(request, call_next):
     """Carimba a fazenda do token no contexto do request, para
@@ -709,6 +699,38 @@ async def _idempotencia(request, call_next):
             pass
 
     return Response(content=corpo, status_code=response.status_code, media_type=response.headers.get("content-type"))
+
+
+# CORS PRECISA ser o middleware registrado por ÚLTIMO aqui (add_middleware
+# embrulha os que já existem — o último registrado vira o mais EXTERNO da
+# pilha, o mais próximo do cliente). Bug real relatado pelo usuário
+# (05/09/2026): "Sem conexão com a API" em TODA baixa do Financeiro, mesmo
+# com o backend respondendo 200 OK em 100% das tentativas (confirmado nos
+# logs de produção do Railway) — porque o CORS estava registrado ANTES dos
+# middlewares acima e por isso ficava mais INTERNO que eles. `_idempotencia`
+# (o mais externo, antes desta correção) reconstrói a resposta com
+# `Response(content=..., status_code=..., media_type=...)` — tanto ao gravar
+# uma resposta nova no cache quanto ao devolver um cache-hit — e esse objeto
+# novo não carrega os headers `Access-Control-Allow-*` que o CORSMiddleware,
+# por estar mais para dentro, já tinha acrescentado. Sem esses headers, o
+# navegador trata qualquer resposta 2xx de um POST/PUT/PATCH com
+# `Idempotency-Key` (todo lançamento/baixa do Financeiro manda esse header)
+# como falha de CORS — `fetch()` rejeita com `TypeError: Failed to fetch`,
+# e o frontend traduz isso para "Sem conexão com a API" (ver `netError` em
+# lib/api.ts) mesmo com o lançamento já salvo. Registrando o CORS por
+# último, ele vira a camada mais externa de todas e garante que TUDO que sai
+# — inclusive respostas encurtadas por outros middlewares (ex.: o bloqueio
+# de modo suporte, que também retornava direto sem passar pelo CORS) —
+# sempre passa pela injeção dos headers de CORS. Ver
+# tests/test_idempotencia.py::TestIdempotenciaMantemCorsHeaders.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=_VERCEL_PREVIEW_REGEX,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Auth (aberto) + rotas de dados (exigem login).
 app.include_router(auth.router)

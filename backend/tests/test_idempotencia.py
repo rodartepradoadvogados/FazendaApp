@@ -183,3 +183,48 @@ class TestIdempotenciaFinanceiro:
         assert r2.status_code == 200
         assert r2.json() == r1.json()
         assert _contar(engine, ContaGerencial) == 1
+
+
+class TestIdempotenciaMantemCorsHeaders:
+    """Bug real relatado pelo usuário (05/09/2026): "Sem conexão com a API"
+    em TODA baixa do Financeiro, mesmo com o backend respondendo 200 OK em
+    100% das tentativas (confirmado nos logs de produção do Railway — nenhum
+    5xx, todas as chamadas HTTP retornam 200). A causa não era rede
+    instável: o middleware `_idempotencia` reconstrói a resposta (tanto ao
+    gravar o cache de uma resposta nova quanto ao devolver um cache-hit) com
+    `Response(content=..., status_code=..., media_type=...)` — um objeto
+    novo, sem os headers da resposta original. Como esse middleware é
+    registrado por último (vira o mais EXTERNO da pilha — quem `add_middleware`
+    insere por último embrulha os demais), a resposta que ele reconstrói é a
+    que sai de verdade para o cliente, sem os headers `Access-Control-Allow-*`
+    que o CORSMiddleware (registrado antes, portanto mais interno) já tinha
+    acrescentado. Sem esses headers, o navegador trata TODA resposta 2xx de
+    um POST/PUT/PATCH com `Idempotency-Key` como falha de CORS — `fetch()`
+    rejeita com `TypeError: Failed to fetch`, e o frontend traduz isso para
+    "Sem conexão com a API" (ver `netError` em lib/api.ts), mesmo com o
+    servidor tendo processado e respondido 200 OK. Corrigido registrando o
+    CORSMiddleware por ÚLTIMO (torna-se o mais externo de todos, garantindo
+    que TUDO que sai — inclusive respostas encurtadas por outros middlewares,
+    como o bloqueio de modo suporte — sempre passa pela injeção de CORS)."""
+
+    def test_resposta_nova_com_idempotency_key_mantem_cors(self, client):
+        c, _ = client
+        r = c.post(
+            CAMINHO, json={"data": "2026-07-01", "alimento": "Silagem"},
+            headers={"Idempotency-Key": "cors-nova-1", "Origin": "http://localhost:3000"},
+        )
+        assert r.status_code == 201, r.text
+        assert r.headers.get("access-control-allow-origin") == "http://localhost:3000"
+
+    def test_resposta_em_cache_hit_mantem_cors(self, client):
+        c, _ = client
+        corpo = {"data": "2026-07-01", "alimento": "Silagem"}
+        r1 = c.post(CAMINHO, json=corpo, headers={"Idempotency-Key": "cors-cache-1", "Origin": "http://localhost:3000"})
+        assert r1.status_code == 201, r1.text
+        assert r1.headers.get("access-control-allow-origin") == "http://localhost:3000"
+
+        # Segunda chamada, mesma chave — cai no caminho de cache-hit (devolve
+        # direto, sem chamar a rota de novo) e precisa manter o mesmo header.
+        r2 = c.post(CAMINHO, json=corpo, headers={"Idempotency-Key": "cors-cache-1", "Origin": "http://localhost:3000"})
+        assert r2.status_code == 201
+        assert r2.headers.get("access-control-allow-origin") == "http://localhost:3000"
