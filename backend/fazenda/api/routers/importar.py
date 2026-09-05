@@ -896,13 +896,27 @@ async def importar_baixas_pendencias_agenda(
     criados, dispensados, erros = 0, 0, []
 
     def _ja_realizado(eid: str) -> bool:
-        return session.exec(select(EventoRealizado).where(EventoRealizado.evento_id == eid)).first() is not None
+        # `fazenda_id` gravado abaixo (não mais None) — filtra por ele também
+        # aqui: o par (evento_id, fazenda_id) é a chave real (uq em
+        # models/sistema.py::EventoRealizado), não só evento_id.
+        query = select(EventoRealizado).where(EventoRealizado.evento_id == eid)
+        if fazenda_id is not None:
+            query = query.where(EventoRealizado.fazenda_id == fazenda_id)
+        return session.exec(query).first() is not None
 
     def _dispensar(eid: str) -> bool:
         """Marca o evento como realizado; False se já estava (evita duplicar Sanidade)."""
         if _ja_realizado(eid):
             return False
-        session.add(EventoRealizado(evento_id=eid))
+        # BUG DE SEGURANÇA CORRIGIDO: gravava sem `fazenda_id` (None); como
+        # agenda.py lê EventoRealizado com `fazenda_id.in_((fazenda_id, None))`
+        # (a linha NULL "dispensa para todo mundo"), um `eid` que a cadeia
+        # acima resolvesse para a REGRA de outra fazenda dispensava a
+        # pendência dela na Agenda dela — sem ela ter feito nada. Combinado
+        # com o filtro de fazenda_id nas duas seleções abaixo, `eid` agora só
+        # pode se referir a uma regra da PRÓPRIA fazenda, e fica gravado como
+        # tal.
+        session.add(EventoRealizado(evento_id=eid, fazenda_id=fazenda_id))
         session.flush()
         return True
 
@@ -929,7 +943,17 @@ async def importar_baixas_pendencias_agenda(
             if tipo == "evento_sanitario":
                 if not nome_evento:
                     raise ValueError("nome_evento é obrigatório para tipo evento_sanitario")
-                ev = session.exec(select(EventoSanitario).where(EventoSanitario.nome == nome_evento)).first()
+                # BUG DE SEGURANÇA CORRIGIDO: faltava o filtro por fazenda_id
+                # (uq real é (nome, fazenda_id) — models/sanidade.py — e cada
+                # fazenda cria seu próprio "Vermífugo"/"Brucelose B19" com o
+                # mesmo nome do catálogo semeado). Sem o filtro, um nome_evento
+                # que também existisse em OUTRA fazenda podia resolver o
+                # EventoSanitario dela — produto/dose padrão e regras de
+                # gatilho alheios entrando no lançamento local.
+                query_ev = select(EventoSanitario).where(EventoSanitario.nome == nome_evento)
+                if fazenda_id is not None:
+                    query_ev = query_ev.where(EventoSanitario.fazenda_id == fazenda_id)
+                ev = session.exec(query_ev).first()
                 if not ev:
                     raise ValueError(f'evento sanitário "{nome_evento}" não encontrado')
 
@@ -937,7 +961,14 @@ async def importar_baixas_pendencias_agenda(
                     if len(numeros) != 1:
                         raise ValueError("este evento é por gatilho (por animal) — informe exatamente 1 numero_animal")
                     numero = numeros[0]
-                    candidatos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, ev.offset_dias or 0, ev.sexo_alvo)
+                    # `fazenda_id` explícito (antes ficava None por posição —
+                    # mesmo defeito do F-C-01): sem ele, a validação do
+                    # gatilho considerava animal/secagem/parto/etc. de
+                    # QUALQUER fazenda, não só da própria.
+                    candidatos = _datas_gatilho(
+                        session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, ev.offset_dias or 0, ev.sexo_alvo,
+                        fazenda_id=fazenda_id,
+                    )
                     if not any(n == numero and d == data_pendencia for n, d in candidatos):
                         raise ValueError(f"nenhuma ocorrência do gatilho deste evento para a matriz {numero} em {data_pendencia.isoformat()}")
                     eid = f"evento_sanitario_{ev.id}__{numero}__{data_pendencia.isoformat()}"
@@ -981,11 +1012,23 @@ async def importar_baixas_pendencias_agenda(
             elif tipo == "calendario_sanitario":
                 if not nome_evento:
                     raise ValueError("nome_evento é obrigatório para tipo calendario_sanitario")
-                regras = session.exec(
+                # BUG DE SEGURANÇA CORRIGIDO: mesma omissão do ramo
+                # `evento_sanitario` acima — o JOIN casava regras de
+                # CalendarioSanitario de QUALQUER fazenda que tivesse um
+                # EventoSanitario com esse nome. `_dispensar` abaixo usa o id
+                # da regra encontrada (`c.id`) no `eid` — resolver a regra
+                # errada dispensava a pendência de OUTRA fazenda na Agenda
+                # dela (ver rules/eventos_sanitarios.py e agenda.py, mesmo
+                # padrão de filtro estrito por fazenda_id usado nesses dois
+                # arquivos para CalendarioSanitario).
+                query_regras = (
                     select(CalendarioSanitario)
                     .join(EventoSanitario, CalendarioSanitario.evento_sanitario_id == EventoSanitario.id)
                     .where(EventoSanitario.nome == nome_evento, CalendarioSanitario.ativo == True)  # noqa: E712
-                ).all()
+                )
+                if fazenda_id is not None:
+                    query_regras = query_regras.where(CalendarioSanitario.fazenda_id == fazenda_id)
+                regras = session.exec(query_regras).all()
                 validas = [c for c in regras if _ocorrencia_valida(c.data_evento, c.frequencia_valor, c.frequencia_unidade, data_pendencia)]
                 if not validas:
                     raise ValueError(f'nenhuma regra do calendário sanitário "{nome_evento}" tem ocorrência em {data_pendencia.isoformat()}')
