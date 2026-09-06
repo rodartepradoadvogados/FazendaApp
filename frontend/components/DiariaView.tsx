@@ -73,9 +73,13 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
   const [pessoas, setPessoas] = useState<Pessoa[]>([]);
   const [itens, setItens] = useState<Diaria[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Por padrão o Controle de Diárias só mostra quem ainda está fazendo
-  // diárias — mesmo padrão "mostrar inativos" já usado em Usuários.
-  const [mostrarFinalizadas, setMostrarFinalizadas] = useState(false);
+  // Nasce MARCADO. Era desmarcado ("só quem ainda está fazendo diárias",
+  // padrão de "mostrar inativos" de Usuários), e é justamente aí que a
+  // dívida sumia: um período encerrado devendo saía da tela e ninguém mais
+  // olhava para ele. Como o encerramento passou a emitir conta a pagar, os
+  // encerrados são exatamente as linhas que ainda custam dinheiro — e são
+  // eles que alimentam o cartão "Cobrado, em aberto" logo abaixo.
+  const [mostrarFinalizadas, setMostrarFinalizadas] = useState(true);
   const [encerrandoId, setEncerrandoId] = useState<number | null>(null);
 
   const [pessoaId, setPessoaId] = useState("");
@@ -738,6 +742,12 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
               {totais.pessoasComCredito} diarista(s) — crédito da fazenda, não abate o que se deve a outra pessoa
             </div>
           </div>
+          {!mostrarFinalizadas && (
+            <p style={{ gridColumn: "1 / -1", fontSize: "0.72rem", color: "var(--amber)", margin: 0 }}>
+              Estes totais contam só as diárias listadas abaixo. Com &quot;Incluir finalizadas&quot; desmarcado, os períodos já
+              encerrados — inclusive os que têm conta a pagar em aberto — ficam de fora.
+            </p>
+          )}
         </div>
       )}
 
