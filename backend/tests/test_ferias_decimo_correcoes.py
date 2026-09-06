@@ -256,7 +256,7 @@ class TestDecimoTerceiroEmDobro:
 class TestRemoverFolhaPosRescisaoIsolada:
     def test_rescisao_de_uma_fazenda_nao_apaga_folha_pendente_de_outra(self, client):
         """O furo: `_remover_folha_pos_rescisao` filtrava com o padrão
-        tolerante `if fazenda_id is not None` e `_rescisao_fechada_antes_de`
+        tolerante `if fazenda_id is not None` e `_rescisao_fechada_encerra_competencia`
         consultava as rescisões SEM filtro nenhum de fazenda. Aqui as duas
         pessoas têm o MESMO pessoa_id? não — mas a rotina varria a tabela
         inteira, então a folha pendente da fazenda 2 entrava no loop da

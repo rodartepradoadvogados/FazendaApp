@@ -3,7 +3,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Pencil, Trash2, Printer, X } from "lucide-react";
 import {
   simularRescisao, fetchRescisoesFuncionario, criarSimulacaoRescisao, atualizarSimulacaoRescisao,
-  excluirSimulacaoRescisao, fecharRescisao, formatBRL, fetchContasCorrentes,
+  excluirSimulacaoRescisao, fecharRescisao, formatBRL, fetchContasCorrentes, fetchPessoas,
   type TipoRescisao, type CalculoRescisao, type RegistroRescisaoFuncionario,
   type RescisaoSimulacaoDados, type FormaLancamentoRescisao, type ContaCorrenteCadastro,
 } from "@/lib/api";
@@ -21,6 +21,26 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
  * visível com as rescisões simuladas/fechadas, incluindo o histórico legado
  * pré-migração (somente leitura). Sem envio ao eSocial (fora de escopo —
  * inviável sem certificado digital/infraestrutura própria).
+ *
+ * ONDE ESTA TELA MORA — e por que NÃO volta para dentro de Férias/13º:
+ * até #547 esta tela era a 3ª sub-aba de `FeriasDecimoTerceiroView`. O
+ * motivo era de CÁLCULO, não de navegação: `calcular_rescisao` reaproveita
+ * `calcular_ferias` e `calcular_decimo_terceiro` (backend/fazenda/rules/
+ * folha_rh.py). Só que essa conveniência, ao virar menu, INVERTEU a
+ * hierarquia: no código a rescisão é o CONSUMIDOR (o nível de cima, que
+ * chama os dois), e no menu ela aparecia como terceira aba dentro de duas
+ * das suas próprias parcelas. Juridicamente a inversão é ainda mais clara —
+ * a rescisão abrange no mínimo 11 verbas que não são 13º nem férias (saldo
+ * de salário, aviso prévio, multa de 40%/20% do FGTS, arts. 479/480 CLT,
+ * Súmula 314 do TST, estabilidades, multas dos arts. 467 e 477) e dispara
+ * 10 obrigações acessórias; sem o evento S-2299 do eSocial não há guia de
+ * FGTS, baixa na CTPS nem seguro-desemprego.
+ * O reaproveitamento de cálculo vive no BACKEND e continua valendo onde
+ * quer que a tela fique — não há dívida técnica pedindo o contrário. Por
+ * isso a Rescisão é hoje um chip PRÓPRIO do seletor de categoria da Folha
+ * (ver FolhaPagamentoView.tsx), irmão de Funcionário/Empreita/Contrato/
+ * Diária/Férias-13º, e este componente é autossuficiente: busca as próprias
+ * pessoas, sem depender de um pai que já tivesse a lista carregada.
  */
 type Pessoa = { id: number; nome: string; tipos: string[]; salario_base?: number | null; data_admissao?: string | null };
 
@@ -64,7 +84,13 @@ function paraNumero(v: string): number {
   return isNaN(n) ? 0 : n;
 }
 
-export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: Pessoa[]; onPessoaInativada?: () => void }) {
+export default function RescisaoView() {
+  // A lista de pessoas é DESTA tela desde que a rescisão virou chip próprio:
+  // antes ela descia como prop de `FeriasDecimoTerceiroView` (que a buscava
+  // 1x no mount) e por isso precisava do callback `onPessoaInativada` para
+  // não ficar desatualizada depois de um fechamento com "marcar como
+  // inativo". Agora o refresh acontece aqui mesmo, em `carregarPessoas()`.
+  const [pessoas, setPessoas] = useState<Pessoa[]>([]);
   const [itens, setItens] = useState<RegistroRescisaoFuncionario[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -115,7 +141,15 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
   const [reciboLinha, setReciboLinha] = useState<LancamentoRecibo | null>(null);
 
   const carregar = () => fetchRescisoesFuncionario().then(setItens).catch((e) => setError(e.message));
-  useEffect(() => { carregar(); fetchContasCorrentes().then(setContasCorrentes).catch(() => {}); }, []);
+  // Mesma busca (sem filtro de `ativo`) que `FeriasDecimoTerceiroView` fazia
+  // e repassava por prop — o dropdown de "nova rescisão" continua listando
+  // exatamente as mesmas pessoas de antes.
+  const carregarPessoas = () => fetchPessoas().then(setPessoas).catch(() => {});
+  useEffect(() => {
+    carregar();
+    carregarPessoas();
+    fetchContasCorrentes().then(setContasCorrentes).catch(() => {});
+  }, []);
 
   const ordRescisoes = useOrdenacao(itens ?? []);
 
@@ -261,11 +295,13 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
       });
       resetTudo();
       carregar();
-      // Sem isto, a lista `pessoas` do componente pai (buscada 1x no mount)
-      // continua mostrando o funcionário como ativo em qualquer dropdown
-      // desta página até um F5 — mesmo com o backend já tendo gravado
-      // ativo=False (ver comentário em FeriasDecimoTerceiroView.tsx).
-      if (marcouInativo) onPessoaInativada?.();
+      // Sem isto, a lista `pessoas` (buscada 1x no mount) continua mostrando
+      // o funcionário como ativo no dropdown de nova rescisão até um F5 —
+      // mesmo com o backend já tendo gravado ativo=False (confirmado em
+      // backend/tests/test_rescisao_fluxo.py). Os dropdowns de Férias/13º
+      // não precisam mais de aviso: aquela tela é irmã desta no seletor de
+      // categoria e remonta (refazendo o fetch) ao ser escolhida.
+      if (marcouInativo) carregarPessoas();
     } catch (e: any) {
       setFecharMsg(e.message || "Erro ao fechar rescisão");
     } finally {
