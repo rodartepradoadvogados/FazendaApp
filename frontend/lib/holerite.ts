@@ -1,136 +1,38 @@
-// Holerite — o documento de uma pessoa numa competência, montado UMA VEZ e
-// consumido pelas duas telas de folha e pela impressão.
+// Holerite — impressão do documento de uma pessoa numa competência.
 //
-// Por que existe: até aqui a tela de Ações renderizava a discriminação de um
-// jeito (lista "rótulo → valor") e o PDF montava outra coisa a partir da mesma
-// lista ("Item | Valor", em duas colunas) — duas construções para o mesmo
-// documento, que podiam divergir sem ninguém notar. E a tela de Contas não
-// montava nada: era a mesma tabela sem o clique.
+// As REGRAS do documento (o que entra no corpo, qual selo leva, se pode ser
+// emitido) moram em lib/holeriteRegras.ts, sem nenhum import de runtime, para
+// poderem ser testadas fora do navegador; aqui fica só o que precisa formatar
+// dinheiro e gerar arquivo — e o re-export, para as telas importarem de um
+// lugar só.
 //
-// Agora as três saídas leem daqui. As quatro colunas são as do recibo de papel
-// da fazenda — Descrição · Referência · Vencimentos · Descontos —, sem a
-// primeira coluna do papel (`Cod.`, rubrica do sistema da contabilidade, que
-// não existe em tabela nenhuma deste projeto: numerar as linhas seria inventar
-// um código que ninguém consegue conferir contra nada).
-import {
-  formatBRL, type BasesHolerite, type LinhaFolhaUnificada, type LinhaHolerite,
-  type OrigemRetencao, type OrigemVale, type TotaisHolerite,
-} from "./api";
+// Por que este módulo existe: a tela de Ações renderizava a discriminação de
+// um jeito (lista "rótulo → valor") e o PDF montava outra coisa a partir da
+// mesma lista ("Item | Valor", em duas colunas) — duas construções para o
+// mesmo documento, que podiam divergir sem ninguém notar. E a tela de Contas
+// não montava nada: era a mesma tabela sem o clique. Agora as três saídas leem
+// daqui.
+//
+// As quatro colunas são as do recibo de papel da fazenda — Descrição ·
+// Referência · Vencimentos · Descontos —, sem a primeira coluna do papel
+// (`Cod.`, rubrica do sistema da contabilidade, que não existe em tabela
+// nenhuma deste projeto: numerar as linhas seria inventar um código que
+// ninguém consegue conferir contra nada).
+import { formatBRL } from "./api";
 import { exportarFichaPDF, exportarMultiExcel, type SecaoFicha } from "./export";
+import { linhasDoCorpo, podeEmitir, type Holerite } from "./holeriteRegras";
 
-const MESES = [
-  "janeiro", "fevereiro", "março", "abril", "maio", "junho",
-  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
-];
-
-/** "2026-07" → "Julho / 2026" (título do documento, não abreviação de tabela). */
-export function competenciaExtenso(competencia: string): string {
-  const [ano, mes] = (competencia || "").split("-");
-  const i = parseInt(mes, 10) - 1;
-  if (i < 0 || i > 11) return competencia || "—";
-  const nome = MESES[i];
-  return `${nome[0].toUpperCase()}${nome.slice(1)} / ${ano}`;
-}
-
-export function dataBR(iso?: string | null): string {
-  if (!iso) return "—";
-  const [a, m, d] = iso.slice(0, 10).split("-");
-  return d && m && a ? `${d}/${m}/${a}` : iso;
-}
-
-export const FORMA_PAGAMENTO_VALE: Record<string, string> = {
-  dinheiro: "Dinheiro",
-  pix: "Pix",
-  transferencia: "Transferência",
-  desconto_integral_folha: "Desconto integral em folha",
-};
-
-export type Holerite = {
-  chave: string;
-  pessoaId: number;
-  pessoaNome: string;
-  competencia: string;
-  competenciaLabel: string;
-  linhas: LinhaHolerite[];
-  totais: TotaisHolerite;
-  bases: BasesHolerite | null;
-  status: "pendente" | "pago";
-  dataVencimento: string | null;
-  dataPagamento: string | null;
-  numeroLancamento: string | null;
-  observacao: string | null;
-  /** Espécie do documento: só funcionário tem composição bruto→retenções→
-   *  vale→líquido; férias/13º são recibos com referência própria. */
-  especie: "holerite" | "recibo";
-  vencido: boolean;
-};
-
-/** Só as linhas que aparecem nas colunas — o líquido é rodapé, não linha. */
-export function linhasDoCorpo(linhas: LinhaHolerite[]): LinhaHolerite[] {
-  return linhas.filter((l) => l.tipo !== "liquido");
-}
-
-export function ehOrigemVale(origem: LinhaHolerite["origem"]): origem is OrigemVale {
-  return !!origem && origem.tipo === "vale";
-}
-
-export function ehOrigemRetencao(origem: LinhaHolerite["origem"]): origem is OrigemRetencao {
-  return !!origem && origem.tipo === "retencao";
-}
+export * from "./holeriteRegras";
 
 /**
- * Converte uma linha do ledger unificado no documento. Devolve null para os
- * tipos que não têm discriminação (empreita, contrato, diária): eles têm
- * recibo de valor único, não holerite — forçá-los no formato de colunas fixas
- * produziria um documento vazio em quatro dos cinco tipos.
- */
-export function holeriteDaLinha(l: LinhaFolhaUnificada): Holerite | null {
-  if (!l.detalhe || !l.detalhe.length || !l.totais) return null;
-  const competencia = l.competencia || (l.data_vencimento || "").slice(0, 7);
-  return {
-    chave: `${l.tipo}-${l.origem_subtipo}-${l.origem_id}`,
-    pessoaId: l.pessoa_id,
-    pessoaNome: l.pessoa_nome,
-    competencia,
-    competenciaLabel: l.tipo === "funcionario" ? competenciaExtenso(competencia) : l.descricao,
-    linhas: l.detalhe,
-    totais: l.totais,
-    bases: l.bases || null,
-    status: l.status,
-    dataVencimento: l.data_vencimento,
-    dataPagamento: l.data_pagamento,
-    numeroLancamento: l.numero_lancamento_gerado ?? null,
-    observacao: l.observacao ?? null,
-    especie: l.tipo === "funcionario" ? "holerite" : "recibo",
-    vencido: l.vencido,
-  };
-}
-
-/** Selo do documento, no canto do cabeçalho. "Não emitido" é deliberado: um
- *  recibo cujos descontos passam os vencimentos não é um recibo. */
-export function seloDocumento(h: Holerite): { texto: string; cor: string; fundo: string } {
-  if (h.totais.liquido_negativo) {
-    return { texto: "NÃO EMITIDO", cor: "var(--red)", fundo: "color-mix(in srgb, var(--red) 12%, transparent)" };
-  }
-  if (h.status === "pago") {
-    return { texto: "PAGO", cor: "var(--green-light)", fundo: "color-mix(in srgb, var(--green) 16%, transparent)" };
-  }
-  if (h.vencido) {
-    return { texto: "VENCIDO", cor: "var(--red)", fundo: "color-mix(in srgb, var(--red) 12%, transparent)" };
-  }
-  return { texto: "PRÉVIA", cor: "var(--text-muted)", fundo: "var(--surface-2)" };
-}
-
-/**
- * Motivo pelo qual a impressão está bloqueada, ou null quando pode imprimir.
- * A regra é do documento, não da tela: enquanto os descontos passarem os
- * vencimentos, o que existe é um excedente, e um papel que diz que o
- * funcionário deve dinheiro à fazenda não é um comprovante de pagamento.
+ * Motivo pelo qual a impressão está bloqueada, ou null quando pode imprimir —
+ * a frase pronta para a tela, a partir da regra de `podeEmitir`.
  */
 export function bloqueioDeImpressao(h: Holerite): string | null {
-  if (!h.totais.liquido_negativo) return null;
+  const veredito = podeEmitir(h);
+  if (veredito.ok) return null;
   return (
-    `Os descontos excedem os vencimentos em ${formatBRL(h.totais.excedente)} — ` +
+    `Os descontos excedem os vencimentos em ${formatBRL(veredito.excedente)} — ` +
     "ajuste as parcelas de vale antes de emitir o recibo."
   );
 }
