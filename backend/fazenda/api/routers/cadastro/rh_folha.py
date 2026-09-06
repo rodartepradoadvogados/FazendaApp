@@ -9,6 +9,7 @@ Extraído do antigo `cadastro.py` monolítico.
 from __future__ import annotations
 
 import calendar
+import json
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -606,6 +607,110 @@ def _contexto_discriminacao(
     }
 
 
+# ---------------------------------------------------------------------------
+# Congelamento da discriminação no pagamento (C7)
+#
+# O DEFEITO QUE ISTO FECHA. `_detalhe_folha` recalculava o recibo A CADA
+# LEITURA, consultando `ValeParcela` ao vivo — inclusive para folha já paga.
+# Só que o `valor_liquido` do pagamento ficou GRAVADO em `FolhaPagamento`, e o
+# self-heal (`_corrigir_folha_gerada_sem_retencao`, e o de `valor_vale` na
+# listagem) pula folha paga DE PROPÓSITO, para não reescrever dinheiro que já
+# saiu. Os dois números chegavam então por caminhos diferentes e divergiam:
+# editar um vale, quitá-lo, estorná-lo ou remanejar a parcela para outra
+# competência DEPOIS de a folha ser paga fazia o holerite impresso hoje deixar
+# de ser o recibo do que foi efetivamente pago. Num documento trabalhista isso
+# é grave — o holerite é prova, não um relatório que se refaz.
+#
+# O DESENHO é o mesmo que a diária já usava (`encerrar_diaria`/`reabrir_diaria`
+# em rh_contratos.py): no fechamento grava-se a FOTOGRAFIA, a leitura passa a
+# ler a fotografia em vez de recalcular, e descongelar exige um ato explícito
+# — aqui o estorno do pagamento (`estornar_pagamento_folha`), nunca em
+# silêncio. Folha NÃO paga continua 100% ao vivo, com todos os self-heals.
+# ---------------------------------------------------------------------------
+def _discriminacao_congelada(registro: FolhaPagamento) -> list[dict] | None:
+    """
+    As linhas congeladas desta folha, ou None quando ela ainda é calculada ao
+    vivo (folha não paga, paga antes desta feature — ver a migração
+    b2f7c1a83d59 — ou pagamento estornado).
+
+    JSON inválido cai em None de propósito: um caractere corrompido na coluna
+    não pode derrubar a tela inteira de folha; a folha volta ao cálculo ao
+    vivo, que é o comportamento que sempre existiu.
+    """
+    if not registro.discriminacao_congelada or registro.discriminacao_congelada_em is None:
+        return None
+    try:
+        linhas = json.loads(registro.discriminacao_congelada)
+    except (ValueError, TypeError):
+        return None
+    return linhas if isinstance(linhas, list) else None
+
+
+def _congelar_discriminacao(session: Session, registro: FolhaPagamento) -> None:
+    """
+    Grava no pagamento a discriminação que gerou aquele líquido. Chamada no
+    ÚNICO momento em que a folha passa a valer como recibo: quando ela vira
+    `status == "pago"` (no POST que já nasce paga e no PUT que a marca paga).
+
+    Nunca sobrescreve uma fotografia existente — congelar duas vezes a mesma
+    folha pegaria o mundo de HOJE, que é exatamente o que não pode entrar num
+    recibo já emitido.
+    """
+    if registro.discriminacao_congelada_em is not None:
+        return
+    registro.discriminacao_congelada = json.dumps(
+        _detalhe_folha(session, registro), ensure_ascii=False,
+    )
+    registro.discriminacao_congelada_em = datetime.utcnow()
+    session.add(registro)
+
+
+def _descongelar_discriminacao(registro: FolhaPagamento) -> None:
+    """Devolve a folha ao cálculo ao vivo. Só o estorno do pagamento chama —
+    ver `estornar_pagamento_folha` (e `reabrir_diaria`, o mesmo padrão)."""
+    registro.discriminacao_congelada = None
+    registro.discriminacao_congelada_em = None
+
+
+def _folha_resposta(registro: FolhaPagamento) -> dict:
+    """
+    O `model_dump()` da folha SEM o JSON da fotografia — a tela já recebe as
+    mesmas linhas em `detalhe`, e mandar o blob junto dobraria o tamanho da
+    listagem inteira sem acrescentar nada. No lugar dele vai só o fato que a
+    tela precisa saber para rotular o documento: este recibo está congelado
+    (e desde quando).
+    """
+    dados = registro.model_dump()
+    dados.pop("discriminacao_congelada", None)
+    congelado_em = dados.pop("discriminacao_congelada_em", None)
+    dados["recibo_congelado"] = congelado_em is not None
+    dados["recibo_congelado_em"] = congelado_em
+    return dados
+
+
+def _conta_da_folha(
+    session: Session, registro: FolhaPagamento, fazenda_id: int | None,
+) -> ContaGerencial | None:
+    """
+    A conta a pagar emitida por esta folha, se existir.
+
+    Filtro de fazenda INCONDICIONAL (`== fazenda_id`, que em None vira
+    `IS NULL`) na PRÓPRIA consulta — nunca o padrão tolerante
+    `if fazenda_id is not None: query = query.where(...)`, erradicado na Onda 1
+    de segurança: quem chama isto (`estornar_pagamento_folha`) reescreve baixa
+    de lançamento financeiro, e um token legado sem a claim de fazenda não pode
+    alcançar a conta de outro tenant.
+    """
+    if not registro.numero_lancamento_gerado:
+        return None
+    return session.exec(
+        select(ContaGerencial).where(
+            ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado,
+            ContaGerencial.fazenda_id == fazenda_id,
+        )
+    ).first()
+
+
 def _detalhe_folha(
     session: Session, registro: FolhaPagamento, contexto: dict | None = None,
     pessoa: Pessoa | None = None,
@@ -627,7 +732,16 @@ def _detalhe_folha(
     `label`/`valor` continuam exatamente como eram: são o contrato antigo
     (recibo em PDF, expansão da tela de Ações, testes de fechamento do
     líquido) e nada nele mudou de forma.
+
+    FOLHA PAGA NÃO PASSA POR AQUI (C7): a discriminação dela foi congelada no
+    pagamento e é lida de volta tal como estava. Recalcular ao vivo era o que
+    fazia o recibo de uma folha paga deixar de bater com o líquido que foi
+    pago quando o vale mudava depois — ver o bloco de congelamento acima.
     """
+    congelada = _discriminacao_congelada(registro)
+    if congelada is not None:
+        return congelada
+
     ctx = contexto if contexto is not None else _contexto_discriminacao(session, [registro])
     parcelas_vale = ctx["parcelas_por_pessoa_competencia"].get((registro.pessoa_id, registro.competencia), [])
 
@@ -766,7 +880,7 @@ def listar_folha_pagamento(
     for r in registros:
         detalhe = _detalhe_folha(session, r, contexto=contexto, pessoa=pessoas_obj.get(r.pessoa_id))
         saida.append({
-            **r.model_dump(),
+            **_folha_resposta(r),
             "pessoa_nome": pessoas.get(r.pessoa_id, "—"),
             "data_vencimento": venc_por_numero.get(r.numero_lancamento_gerado),
             "detalhe": detalhe,
@@ -865,7 +979,14 @@ def criar_folha_pagamento(
     ))
     session.commit()
     session.refresh(registro)
-    return registro.model_dump()
+    # Folha que já NASCE paga é recibo desde o primeiro instante: congela a
+    # discriminação agora (ver `_congelar_discriminacao`). Depois do commit,
+    # porque a fotografia tem de ser a do lançamento efetivamente gravado.
+    if registro.status == "pago":
+        _congelar_discriminacao(session, registro)
+        session.commit()
+        session.refresh(registro)
+    return _folha_resposta(registro)
 
 
 @router.put("/folha-pagamento/{registro_id}")
@@ -940,9 +1061,63 @@ def atualizar_folha_pagamento(
                 conta.valor_pago = valor_liquido
             session.add(conta)
 
+    # A folha acabou de virar recibo (o botão "Marcar como pago" cai aqui, e o
+    # endpoint recusa editar folha já paga — então esta é sempre a transição
+    # pendente → pago). Congela ANTES do commit, com os valores finais já
+    # atribuídos ao registro: é esta discriminação que gerou o líquido pago.
+    if registro.status == "pago":
+        _congelar_discriminacao(session, registro)
+
     session.commit()
     session.refresh(registro)
-    return registro.model_dump()
+    return _folha_resposta(registro)
+
+
+@router.post("/folha-pagamento/{registro_id}/estornar")
+def estornar_pagamento_folha(
+    registro_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """
+    Estorna o pagamento da folha: desfaz a baixa da conta a pagar, devolve o
+    lançamento a "pendente" e DESCONGELA a discriminação — a folha volta a ser
+    calculada ao vivo, com todos os self-heals de vale valendo de novo.
+
+    Por que este endpoint precisa existir: a partir do C7 a folha paga guarda a
+    fotografia do recibo (ver `_congelar_discriminacao`). Sem uma porta de
+    saída explícita, corrigir um pagamento errado exigiria mexer no banco à
+    mão — e descongelar em silêncio, no meio de outra operação, recriaria
+    exatamente a divergência que o congelamento existe para impedir. É o mesmo
+    par de `encerrar_diaria`/`reabrir_diaria`: congela no fechamento,
+    descongela só por um ato do usuário que diz "este pagamento não vale".
+
+    Depois do estorno a folha volta a ser editável e excluível pelo fluxo
+    normal (o PUT e o DELETE recusam folha paga), e um novo pagamento congela
+    uma fotografia NOVA — a do mundo daquele momento.
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    registro = session.get(FolhaPagamento, registro_id)
+    if not registro or (registro.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Registro de folha não encontrado")
+    if registro.status != "pago":
+        raise HTTPException(
+            status_code=400,
+            detail="Esta folha não está paga — não há pagamento a estornar.",
+        )
+
+    conta = _conta_da_folha(session, registro, fazenda_id)
+    if conta is not None:
+        conta.data_pagamento = None
+        conta.valor_pago = None
+        session.add(conta)
+
+    registro.status = "pendente"
+    registro.data_pagamento = None
+    _descongelar_discriminacao(registro)
+    session.add(registro)
+    session.commit()
+    session.refresh(registro)
+    return _folha_resposta(registro)
 
 
 @router.delete("/folha-pagamento/{registro_id}")

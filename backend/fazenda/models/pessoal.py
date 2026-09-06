@@ -204,6 +204,30 @@ class FolhaPagamento(SQLModel, table=True):
     # ContaGerencial.conta_bancaria (o que os relatórios gerenciais filtram) e
     # permite a um formulário de edição pré-selecionar a conta já escolhida.
     conta_corrente_id: Optional[int] = Field(default=None, foreign_key="conta_corrente.id")
+
+    # ── Discriminação congelada no pagamento (ver `_congelar_discriminacao` e
+    #    `estornar_pagamento_folha` em routers/cadastro/rh_folha.py) ──
+    # O RECIBO da folha era montado de novo A CADA LEITURA (`_detalhe_folha`
+    # consultava `ValeParcela` ao vivo), inclusive para folha JÁ PAGA — mas o
+    # `valor_liquido` acima ficou GRAVADO no pagamento e o self-heal
+    # (`_corrigir_folha_gerada_sem_retencao`) não toca em folha paga, de
+    # propósito. Os dois números chegavam por caminhos diferentes: bastava
+    # editar/quitar/estornar um vale, ou remanejar a parcela para outra
+    # competência, DEPOIS do pagamento, para o holerite impresso hoje deixar
+    # de ser o recibo do que foi efetivamente pago. Num documento trabalhista
+    # isso é grave — o holerite é prova.
+    # A partir do pagamento, a discriminação que gerou aquele líquido é
+    # gravada aqui (JSON com as linhas no formato de `holerite.linha`, mesmo
+    # padrão de `Pessoa.telefones`) e passa a ser a FONTE DA VERDADE do recibo
+    # daquela folha. Folha não paga continua sendo calculada ao vivo.
+    # Mesmo desenho da fotografia de `Diaria.encerramento_*`: congelar no
+    # fechamento e só descongelar por um ato explícito — aqui, o estorno do
+    # pagamento (`POST /folha-pagamento/{id}/estornar`), nunca em silêncio.
+    discriminacao_congelada: Optional[str] = None
+    # Marco que separa os dois mundos (o papel de `Diaria.data_encerramento`):
+    # NULL numa folha "paga" = pagamento anterior a esta feature ou já
+    # estornado, e aí o recibo volta a ser calculado ao vivo, como sempre foi.
+    discriminacao_congelada_em: Optional[datetime] = None
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
