@@ -40,6 +40,14 @@ export function mensagemErroApi(detail: unknown): string | null {
   if (detail && typeof detail === "object" && "msg" in (detail as any)) {
     return String((detail as any).msg);
   }
+  // Os 409 de confirmação do módulo de RH (vale acima do pendente, pagamento
+  // de diária acima do saldo devedor) mandam o texto em `mensagem`, junto dos
+  // números que o aviso precisa mostrar. Sem esta linha o aviso caía no
+  // genérico "Erro ao lançar vale" — a trava funcionava e a pessoa não
+  // entendia por quê.
+  if (detail && typeof detail === "object" && "mensagem" in (detail as any)) {
+    return String((detail as any).mensagem);
+  }
   return null;
 }
 
@@ -2509,10 +2517,17 @@ export async function atualizarDiaria(diariaId: number, dados: { data_inicio: st
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar diária"); }
   return res.json();
 }
+/** Pagar acima do saldo devedor da diária responde 409 com {mensagem,
+ * saldo_devedor, excedente, total_ate_hoje, valor_pago, valor_vale} — pagar a
+ * mais continua permitido (acerto final, gorjeta, arredondamento), mas nunca
+ * em silêncio: reenviar com `confirmar_excedente: true` depois de mostrar o
+ * aviso. Sem isso o operador que digita o total esquecendo o adiantamento
+ * paga duas vezes sem nenhum sinal. */
 export async function registrarPagamentoDiaria(diariaId: number, dados: {
   data_pagamento: string; valor: number; observacao?: string;
   // Conta bancária de onde sai o pagamento — OPCIONAL (ver _resolver_conta_corrente no backend).
   conta_corrente_id?: number | null;
+  confirmar_excedente?: boolean;
 }): Promise<{ numero_lancamento_gerado: string } & Record<string, any>> {
   const res = await authFetch(`${API}/cadastro/diarias/${diariaId}/pagamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -2840,12 +2855,19 @@ export function urlComprovanteVale(anexoId: number): string {
   return `${API}/cadastro/vales/comprovante/${anexoId}`;
 }
 
+/** Vale maior que o saldo pendente do alvo responde 409 com {mensagem,
+ * saldo_pendente, excedente} — adiantar acima do pendente é legítimo (etapa
+ * ainda não cadastrada, contrato a prorrogar, contrato sem frequência
+ * definida, que não tem parcela nenhuma), então não se recusa: avisa-se e,
+ * com `confirmar_excedente: true`, a sobra fica gravada como valor não
+ * abatido em vez de sumir do controle. */
 export async function criarValeAvulso(dados: {
   origem_tipo: "empreitada" | "contrato" | "diaria"; origem_id: number; valor: number;
   forma_pagamento: string; data_pagamento: string; observacao?: string;
   // Conta bancária de onde sai o vale — obrigatória quando a forma de pagamento
   // implica saída de caixa agora (dinheiro/pix/transferência); ver _validar_conta_vale_avulso.
   conta_corrente_id?: number;
+  confirmar_excedente?: boolean;
 }) {
   const res = await authFetch(`${API}/cadastro/vale-avulso`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
