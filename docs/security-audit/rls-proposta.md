@@ -143,14 +143,22 @@ justamente a exceção que não se quer deixar de pé.
 
 Então a sequência é uma dependência, não uma escolha:
 
-1. **Contar** os órfãos em produção (consulta de leitura já preparada).
-2. **Recuperar ou marcar** o que for recuperável; decidir explicitamente o que
-   fica inacessível. **Decisão do dono, com o número na mão.**
-3. **Criar o role de aplicação** e trocar a `DATABASE_URL`.
-4. **Ativar** a política, primeiro no Staging (banco próprio), depois em
+1. **Contar** os órfãos em produção (`orfaos-railway.sql`).
+2. **Triar**: quantos desses dá para recuperar sem adivinhar
+   (`orfaos-triagem.sql`). A migração `029227481e9e` já fixou a estratégia
+   certa — derivar do pai, senão fazenda única, senão não adivinhar — mas a
+   lista de pais dela é escrita à mão; a triagem tira a relação filha→pai do
+   catálogo do banco, então nenhuma FK fica de fora por esquecimento. Ela
+   também responde se a estratégia "fazenda única" ainda vale: deixa de valer
+   no dia em que entra a segunda fazenda-cliente.
+3. **Recuperar ou marcar** — o backfill determinístico do que tem pai, e
+   decisão explícita sobre o que sobrar. **Decisão do dono, com os dois
+   números na mão: quantos são, e quantos não têm saída.**
+4. **Criar o role de aplicação** e trocar a `DATABASE_URL`.
+5. **Ativar** a política, primeiro no Staging (banco próprio), depois em
    produção.
 
-Pular do 1 para o 4 transforma cada órfão em perda de dado silenciosa.
+Pular direto para o 5 transforma cada órfão em perda de dado silenciosa.
 
 ## 6. Um furo que o RLS sozinho NÃO fecha: chave estrangeira
 
@@ -237,6 +245,7 @@ deploy, sozinha, sem ninguém decidir nada. Vira migração no dia da decisão.
 | | |
 |---|---|
 | Número de órfãos em produção | consulta pronta, aguardando execução |
+| Quantos deles dá para recuperar sem adivinhar | consulta de triagem pronta (`orfaos-triagem.sql`) |
 | Usuário do banco é superusuário? | consulta pronta (seção 3) |
 | Criar role de aplicação e trocar DATABASE_URL | decisão de infraestrutura do dono |
 | O que fazer com cada bloco de órfão | decisão do dono, depois da contagem |
