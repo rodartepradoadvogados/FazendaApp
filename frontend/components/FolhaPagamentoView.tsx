@@ -33,6 +33,8 @@ import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { BarraCompetencia } from "@/components/BarraCompetencia";
 import { EquacaoFolha, OutrosPagamentosDoMes } from "@/components/EquacaoFolha";
 import { ExcecoesFolha } from "@/components/ExcecoesFolha";
+import { LinhaTempoPessoa } from "@/components/LinhaTempoPessoa";
+import { type ValeDaLinhaTempo } from "@/lib/linhaTempoPessoa";
 import {
   equacaoDoMes, excecoesDoMes, competenciasDoMes, mesDaLinha, mesInicial, mesesDoLedger,
   resumoOutrosTipos, situacaoDoMes, type Excecao,
@@ -65,13 +67,24 @@ const selStyleLote: React.CSSProperties = {
   border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", width: "100%",
 };
 const labelStyleLote: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
+// Nome clicável na tabela — o mesmo sinal de "isto abre algo" que as colunas
+// de desconto desta tela já usam (sublinhado pontilhado), e não uma classe de
+// link nova: o projeto não tem nenhuma, e inventar uma aqui criaria um estilo
+// de link que só existe nesta tabela.
+const nomeClicavel: React.CSSProperties = {
+  background: "none", border: "none", padding: 0, font: "inherit", color: "inherit",
+  cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: "0.2em",
+};
 
 /*
  * Folha de pagamento — lançamento e acompanhamento por pessoa/competência.
  * Pessoas (funcionário, veterinário, diarista etc.) vêm do cadastro em
  * Configurações > Cadastro > Pessoas; aqui só lançamos e damos baixa.
  */
-type PessoaFolha = { id: number; nome: string; tipos: string[] };
+// `data_admissao` já vem em `GET /cadastro/pessoas` (o serializador devolve a
+// Pessoa inteira) e é o que a ficha da pessoa escreve como vínculo — o
+// cadastro não precisou ganhar campo nenhum para a linha do tempo existir.
+type PessoaFolha = { id: number; nome: string; tipos: string[]; data_admissao?: string | null };
 type RegistroFolha = {
   id: number; pessoa_id: number; pessoa_nome: string; competencia: string;
   valor_bruto: number; descontos: number;
@@ -159,6 +172,9 @@ export default function FolhaPagamentoView() {
   // Folha apontada pelo painel de exceções — pisca em dourado ("é esta, aqui")
   // e volta ao normal sozinha, sem virar destaque permanente.
   const [folhaDestacada, setFolhaDestacada] = useState<number | null>(null);
+  // Ficha da pessoa (linha do tempo) — abre pelo clique NO NOME, não na linha:
+  // a linha continua abrindo o recibo da competência, que é o trabalho do mês.
+  const [fichaPessoaId, setFichaPessoaId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editPessoaId, setEditPessoaId] = useState("");
   const [editCompetencia, setEditCompetencia] = useState("");
@@ -1223,7 +1239,13 @@ export default function FolhaPagamentoView() {
                       <td style={{ fontWeight: 600, fontSize: "0.82rem", whiteSpace: "nowrap" }}>
                         {(() => { const d = l.data_pagamento || l.data_vencimento; return d ? mesCompLabel(d.slice(0, 7)) : "—"; })()}
                       </td>
-                      <td style={{ fontSize: "0.82rem" }}>{l.pessoa_nome}</td>
+                      <td style={{ fontSize: "0.82rem" }}>
+                        <button type="button" style={nomeClicavel}
+                          title={`Ver a linha do tempo de ${l.pessoa_nome} — pagamentos, vales e parcelas em ordem`}
+                          onClick={() => setFichaPessoaId(l.pessoa_id)}>
+                          {l.pessoa_nome}
+                        </button>
+                      </td>
                       <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>—</td>
                       <td style={{ fontSize: "0.78rem" }}>{l.data_vencimento ? l.data_vencimento.split("-").reverse().join("/") : "—"}{l.vencido && " ⚠"}</td>
                       <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(l.valor)}</td>
@@ -1312,7 +1334,15 @@ export default function FolhaPagamentoView() {
                         </span>
                       </td>
                       <td style={{ fontSize: "0.82rem" }}>
-                        {r.pessoa_nome}
+                        {/* O NOME abre a linha do tempo da pessoa; o resto da
+                            linha continua abrindo o recibo da competência. São
+                            duas perguntas diferentes ("quanto sai agora" e "de
+                            onde veio isto") e cada uma tem o próprio alvo. */}
+                        <button type="button" style={nomeClicavel}
+                          title={`Ver a linha do tempo de ${r.pessoa_nome} — folhas, vales e parcelas em ordem`}
+                          onClick={(e) => { e.stopPropagation(); setFichaPessoaId(r.pessoa_id); }}>
+                          {r.pessoa_nome}
+                        </button>
                         {(r.recorrente || r.origem_recorrencia_id) && (
                           <span title={r.recorrente ? "Modelo recorrente — gera Contas a Pagar todo mês" : "Gerado automaticamente pela recorrência"} style={{ marginLeft: "0.4rem", display: "inline-flex", verticalAlign: "middle", color: "var(--dourado-light)" }}>
                             <RefreshCw size={12} />
@@ -1984,6 +2014,23 @@ export default function FolhaPagamentoView() {
         </Modal>
       )}
       {reciboLinha && <ReciboModal lanc={reciboLinha} onClose={() => setReciboLinha(null)} />}
+
+      {/* A ficha da pessoa lê o ledger INTEIRO (`unificada`), não o mês
+          filtrado: a pergunta que ela responde é justamente a que atravessa
+          competências — a parcela 3/13 de setembro nasceu de um vale de
+          março, e o vale de março não está no mês em tela. */}
+      {fichaPessoaId != null && (() => {
+        const p = pessoas.find((x) => x.id === fichaPessoaId);
+        return (
+          <LinhaTempoPessoa
+            pessoa={p || { id: fichaPessoaId, nome: "—", tipos: [] }}
+            linhas={unificada || []}
+            vales={(vales || []) as ValeDaLinhaTempo[]}
+            ano={(mesEmTela || new Date().toISOString().slice(0, 7)).slice(0, 4)}
+            onFechar={() => setFichaPessoaId(null)}
+          />
+        );
+      })()}
       {resultadoDivergencia && (
         <ModalResultadoDivergenciaVale
           valorPago={resultadoDivergencia.valorPago}
