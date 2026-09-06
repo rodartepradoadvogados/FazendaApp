@@ -8,6 +8,19 @@ python-dotenv>=1.0
 pydantic>=2.11
 pydantic-settings>=2.7
 pytest>=8.3
+# Paraleliza a suite: `-n auto --dist loadfile`. A suite inteira (4825 testes)
+# leva ~100 minutos em serie e fechou em 43 com 4 workers — a diferenca entre
+# esperar a tarde e esperar o cafe, para quem roda os testes antes de commitar.
+#
+# Use SEMPRE com `--dist loadfile` (por arquivo), nunca com o padrao `load`
+# (por teste): varios arquivos desta suite montam o proprio engine SQLite no
+# nivel do modulo e os fixtures sao de escopo de modulo. Por arquivo, cada
+# worker fica dono do modulo inteiro — o isolamento que a suite ja assume.
+#
+# A CI ainda NAO usa: cinco testes so passam por vizinhanca (estado global
+# deixado por outro arquivo) e caem quando os arquivos vao para workers
+# diferentes. Ver o comentario do job backend-tests em .github/workflows/ci.yml.
+pytest-xdist>=3.6
 httpx>=0.28
 aiosqlite>=0.20
 psycopg2-binary>=2.9
