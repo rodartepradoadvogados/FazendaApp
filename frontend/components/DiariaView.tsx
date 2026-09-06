@@ -1,10 +1,10 @@
 "use client";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, DollarSign, Pencil, Check, X, Trash2, Receipt, CalendarCheck2, CalendarClock, Ban } from "lucide-react";
+import { Plus, DollarSign, Pencil, Check, X, Trash2, Receipt, CalendarCheck2, CalendarClock, Ban, RotateCcw } from "lucide-react";
 import {
   fetchPessoas, fetchDiarias, criarDiaria, atualizarDiaria, registrarPagamentoDiaria, formatBRL,
   fetchParametroDiariaPadrao, salvarParametroDiariaPadrao, responderAuditoriaDiaria, ParametroDiariaPadrao, ehAdmin,
-  confirmarExclusao, fetchContasCorrentes, type ContaCorrenteCadastro, encerrarDiaria,
+  confirmarExclusao, fetchContasCorrentes, type ContaCorrenteCadastro, encerrarDiaria, reabrirDiaria,
   fetchDiasDiaria, salvarDiasDiaria, type DiasDiariaResposta, anexarArquivoLancamento,
 } from "@/lib/api";
 import { SecaoRecolhivel } from "@/components/ui";
@@ -34,7 +34,28 @@ type Diaria = {
   dias_meia_diaria: number;
   ultima_folga: string | null;
   pago_ate: string | null;
+  // Encerramento do período (ver rh_contratos.py::encerrar_diaria). Encerrar
+  // devendo passa a EMITIR uma conta a pagar de verdade — antes a dívida
+  // ficava só aqui e sumia do radar financeiro (nem Agenda, nem Contas a
+  // Pagar), ainda por cima com a linha fora da listagem padrão.
+  data_encerramento: string | null;
+  // `periodo_congelado` = fechado pelo fluxo novo: o apurado para de ser
+  // recalculado e vem da fotografia gravada no fechamento. Diária encerrada
+  // ANTES desta feature vem false (sem retroatividade).
+  periodo_congelado: boolean;
+  cobranca: {
+    numero_lancamento: string; valor: number; data_vencimento: string;
+    valor_pago: number | null; data_pagamento: string | null; status: "pago" | "em_aberto";
+  } | null;
 };
+
+// Dia 1º do mês seguinte — mesmo vencimento-padrão que o backend usa para a
+// etapa de empreitada concluída (`_competencia_seguinte`).
+function primeiroDiaDoMesSeguinte(): string {
+  const hoje = new Date();
+  const proximo = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 1);
+  return `${proximo.getFullYear()}-${String(proximo.getMonth() + 1).padStart(2, "0")}-01`;
+}
 
 const DIAS_SEMANA = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 
@@ -129,16 +150,64 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
     fetchContasCorrentes().then(setContasCorrentes).catch(() => {});
   }, []);
 
-  async function encerrarDiariaClick(d: Diaria) {
-    if (!window.confirm(`Marcar a diária de ${d.pessoa_nome} como finalizada? Ela sai do Controle de Diárias (a menos que "Incluir finalizadas" esteja marcado) e para de gerar cobrança na Agenda.`)) return;
+  // ── Encerrar e cobrar ───────────────────────────────────────────────────
+  // Era um window.confirm que só marcava a diária como finalizada. O
+  // problema: encerrar devendo não gerava conta a pagar nenhuma, e a linha
+  // ainda sumia da listagem padrão — a dívida deixava de existir para quem
+  // olha a Agenda ou o Contas a Pagar. Agora é um passo consciente, com o
+  // apurado na frente, o último dia trabalhado (obrigatório, senão o
+  // contador não para) e o vencimento da cobrança.
+  const [encerrandoDiaria, setEncerrandoDiaria] = useState<Diaria | null>(null);
+  const [encerrarUltimoDia, setEncerrarUltimoDia] = useState("");
+  const [encerrarVencimento, setEncerrarVencimento] = useState("");
+  const [encerrarErro, setEncerrarErro] = useState<string | null>(null);
+  const [reabrindoId, setReabrindoId] = useState<number | null>(null);
+
+  function abrirEncerramento(d: Diaria) {
+    setEncerrandoDiaria(d);
+    setEncerrarUltimoDia(d.data_fim || new Date().toISOString().slice(0, 10));
+    setEncerrarVencimento(primeiroDiaDoMesSeguinte());
+    setEncerrarErro(null);
+  }
+
+  async function confirmarEncerramento() {
+    const d = encerrandoDiaria;
+    if (!d) return;
+    if (!encerrarUltimoDia) { setEncerrarErro("Informe o último dia trabalhado."); return; }
+    if (d.saldo_devedor > 0 && !encerrarVencimento) { setEncerrarErro("Informe o vencimento da conta a pagar."); return; }
     setEncerrandoId(d.id);
+    setEncerrarErro(null);
     try {
-      await encerrarDiaria(d.id);
+      await encerrarDiaria(d.id, {
+        data_encerramento: encerrarUltimoDia,
+        data_vencimento: d.saldo_devedor > 0 ? encerrarVencimento : undefined,
+      });
+      setEncerrandoDiaria(null);
       carregar();
     } catch (e: any) {
-      setErroExclusao(e.message || "Erro ao encerrar diária");
+      setEncerrarErro(e.message || "Erro ao encerrar diária");
     } finally {
       setEncerrandoId(null);
+    }
+  }
+
+  // Reabrir apaga a cobrança emitida e descongela o apurado. O backend
+  // recusa (400) quando a conta já foi paga — a mensagem dele já explica que
+  // o caminho é estornar a baixa no Financeiro.
+  async function reabrirPeriodo(d: Diaria) {
+    const aviso = d.cobranca
+      ? `Reabrir o período de ${d.pessoa_nome}? A conta a pagar ${d.cobranca.numero_lancamento} (${formatBRL(d.cobranca.valor)}) será apagada e o apurado volta a correr.`
+      : `Reabrir o período de ${d.pessoa_nome}? O apurado volta a correr a partir do último dia trabalhado.`;
+    if (!window.confirm(aviso)) return;
+    setErroExclusao(null);
+    setReabrindoId(d.id);
+    try {
+      await reabrirDiaria(d.id);
+      carregar();
+    } catch (e: any) {
+      setErroExclusao(e.message || "Erro ao reabrir diária");
+    } finally {
+      setReabrindoId(null);
     }
   }
 
@@ -444,6 +513,30 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
   const ordAuditorias = useOrdenacao(auditoriasPendentes);
   const ordDiarias = useOrdenacao(itens ?? []);
 
+  // Os três números que respondem "quanto a fazenda deve", separados porque
+  // significam coisas diferentes: o que ainda nem virou cobrança, o que já
+  // foi cobrado e está esperando pagamento, e o que foi pago A MAIS. O
+  // crédito fica em caixa própria de propósito — dinheiro pago a mais para
+  // uma pessoa não abate o que se deve a outra, e somar tudo numa linha só
+  // esconderia as duas informações.
+  const totais = useMemo(() => {
+    const lista = itens ?? [];
+    let aCobrar = 0, pessoasACobrar = 0, cobradoEmAberto = 0, contasEmAberto = 0, credito = 0, pessoasComCredito = 0;
+    for (const d of lista) {
+      if (d.cobranca && d.cobranca.status === "em_aberto") {
+        cobradoEmAberto += d.cobranca.valor - (d.cobranca.valor_pago ?? 0);
+        contasEmAberto += 1;
+      } else if (d.saldo_devedor > 0) {
+        aCobrar += d.saldo_devedor;
+        pessoasACobrar += 1;
+      } else if (d.saldo_devedor < 0) {
+        credito += -d.saldo_devedor;
+        pessoasComCredito += 1;
+      }
+    }
+    return { aCobrar, pessoasACobrar, cobradoEmAberto, contasEmAberto, credito, pessoasComCredito };
+  }, [itens]);
+
   if (error) return <div className="alert-critico"><span>Sem dados: {error}.</span></div>;
 
   return (
@@ -616,6 +709,38 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
         </div>
       )}
 
+      {itens && itens.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
+          <div className="card" style={{ borderLeft: "3px solid var(--dourado)", padding: "0.85rem 1rem" }}>
+            <div style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-muted)" }}>
+              A pagar — ainda não cobrado
+            </div>
+            <div style={{ fontSize: "1.35rem", fontWeight: 700, marginTop: "0.15rem" }}>{formatBRL(totais.aCobrar)}</div>
+            <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+              {totais.pessoasACobrar} diarista(s) com saldo em aberto
+            </div>
+          </div>
+          <div className="card" style={{ borderLeft: "3px solid var(--amber)", padding: "0.85rem 1rem" }}>
+            <div style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-muted)" }}>
+              Cobrado, em aberto
+            </div>
+            <div style={{ fontSize: "1.35rem", fontWeight: 700, marginTop: "0.15rem", color: "var(--amber)" }}>{formatBRL(totais.cobradoEmAberto)}</div>
+            <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+              {totais.contasEmAberto} conta(s) a pagar emitida(s)
+            </div>
+          </div>
+          <div className="card" style={{ borderLeft: "3px solid var(--red)", padding: "0.85rem 1rem" }}>
+            <div style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--red)" }}>
+              Pago a mais
+            </div>
+            <div style={{ fontSize: "1.35rem", fontWeight: 700, marginTop: "0.15rem", color: "var(--red)" }}>{formatBRL(totais.credito)}</div>
+            <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+              {totais.pessoasComCredito} diarista(s) — crédito da fazenda, não abate o que se deve a outra pessoa
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="card mt-4">
         <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
           <span>Controle de diárias</span>
@@ -657,6 +782,25 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
                       {d.status === "encerrado" && (
                         <span style={{ marginLeft: "0.4rem", fontSize: "0.68rem", fontWeight: 700, color: "var(--text-muted)", border: "1px solid var(--border)", borderRadius: "999px", padding: "0.05rem 0.45rem" }}>
                           Finalizada
+                        </span>
+                      )}
+                      {/* De onde está a dívida: enquanto não há cobrança
+                          emitida, ela só existe aqui — que era exatamente o
+                          problema. Com a conta emitida, o selo aponta o
+                          lançamento que a Agenda e o Contas a Pagar mostram. */}
+                      {d.cobranca && (
+                        <span title={`Conta a pagar ${d.cobranca.numero_lancamento} — vence em ${fmtDataBR(d.cobranca.data_vencimento)}`}
+                          style={{
+                            marginLeft: "0.4rem", fontSize: "0.68rem", fontWeight: 700, borderRadius: "999px", padding: "0.05rem 0.45rem",
+                            color: d.cobranca.status === "pago" ? "var(--green-light)" : "var(--amber)",
+                            border: `1px solid ${d.cobranca.status === "pago" ? "var(--green-light)" : "var(--amber)"}`,
+                          }}>
+                          {d.cobranca.status === "pago" ? "Cobrança paga" : `Cobrado — ${d.cobranca.numero_lancamento}`}
+                        </span>
+                      )}
+                      {d.periodo_congelado && !d.cobranca && (
+                        <span style={{ marginLeft: "0.4rem", fontSize: "0.68rem", fontWeight: 700, color: "var(--green-light)", border: "1px solid var(--green-light)", borderRadius: "999px", padding: "0.05rem 0.45rem" }}>
+                          Quitada no fechamento
                         </span>
                       )}
                     </td>
@@ -706,9 +850,16 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
                         )}
                         {d.status !== "encerrado" && (
                           <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
-                            title="Marcar como finalizada — some do Controle de Diárias e para de cobrar na Agenda"
-                            disabled={encerrandoId === d.id} onClick={() => encerrarDiariaClick(d)}>
-                            <Ban size={13} /> Encerrar
+                            title="Fechar o período: para o contador, congela o apurado e emite a conta a pagar do que ainda se deve"
+                            disabled={encerrandoId === d.id} onClick={() => abrirEncerramento(d)}>
+                            <Ban size={13} /> {d.saldo_devedor > 0 ? "Encerrar e cobrar" : "Encerrar"}
+                          </button>
+                        )}
+                        {d.periodo_congelado && (
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                            title="Reabrir o período — apaga a cobrança em aberto e descongela o apurado (recusado se a conta já foi paga)"
+                            disabled={reabrindoId === d.id} onClick={() => reabrirPeriodo(d)}>
+                            <RotateCcw size={13} /> {reabrindoId === d.id ? "Reabrindo…" : "Reabrir"}
                           </button>
                         )}
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} title="Excluir diária"
@@ -875,6 +1026,86 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
               </div>
             </div>
           )}
+        </Modal>
+      )}
+
+      {/* Encerrar e cobrar — o apurado na frente, o último dia trabalhado
+          (obrigatório: sem ele o contador não para e o período "encerrado"
+          segue somando diária todo dia, invisível) e o vencimento da conta
+          que vai nascer. */}
+      {encerrandoDiaria && (
+        <Modal title={`Encerrar e cobrar — ${encerrandoDiaria.pessoa_nome}`} onClose={() => setEncerrandoDiaria(null)} width="560px">
+          <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+            Confira o que foi apurado antes de fechar. Depois de encerrado, o valor deste período para de mudar.
+          </p>
+          <table className="fazenda-table" style={{ fontSize: "0.8rem", marginBottom: "0.9rem" }}>
+            <tbody>
+              <tr>
+                <td>Diárias apuradas</td>
+                <td style={{ color: "var(--text-muted)" }}>
+                  {encerrandoDiaria.numero_diarias} × {formatBRL(encerrandoDiaria.valor_diaria)}
+                </td>
+                <td style={{ textAlign: "right" }}>{formatBRL(encerrandoDiaria.total_ate_hoje)}</td>
+              </tr>
+              <tr>
+                <td>Já pago</td>
+                <td style={{ color: "var(--text-muted)" }}>{encerrandoDiaria.pagamentos?.length ?? 0} pagamento(s)</td>
+                <td style={{ textAlign: "right" }}>− {formatBRL(encerrandoDiaria.valor_pago)}</td>
+              </tr>
+              <tr>
+                <td>Vales adiantados</td>
+                <td style={{ color: "var(--text-muted)" }}>{encerrandoDiaria.vales?.length ?? 0} vale(s)</td>
+                <td style={{ textAlign: "right" }}>− {formatBRL(encerrandoDiaria.valor_vale)}</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 700 }}>A fazenda deve</td>
+                <td style={{ color: "var(--text-muted)" }}>valor congelado no fechamento</td>
+                <td style={{ textAlign: "right", fontWeight: 700, color: encerrandoDiaria.saldo_devedor > 0 ? "var(--amber)" : "var(--green-light)" }}>
+                  {formatBRL(encerrandoDiaria.saldo_devedor)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label style={lbl}>Último dia trabalhado</label>
+              <input type="date" style={inputSm} value={encerrarUltimoDia} onChange={(e) => setEncerrarUltimoDia(e.target.value)} />
+            </div>
+            {encerrandoDiaria.saldo_devedor > 0 && (
+              <div>
+                <label style={lbl}>Vencimento da conta a pagar</label>
+                <input type="date" style={inputSm} value={encerrarVencimento} onChange={(e) => setEncerrarVencimento(e.target.value)} />
+              </div>
+            )}
+          </div>
+
+          <ul style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: "0.9rem 0 0", paddingLeft: "1.1rem", lineHeight: 1.55 }}>
+            {encerrandoDiaria.saldo_devedor > 0 ? (
+              <>
+                <li>Nasce uma conta a pagar de <strong>{formatBRL(encerrandoDiaria.saldo_devedor)}</strong>, em aberto.</li>
+                <li>Ela aparece na Agenda e em Contas a pagar como qualquer despesa da fazenda.</li>
+                <li>Quando você baixar essa conta no Financeiro, o pagamento volta para cá e o saldo zera.</li>
+              </>
+            ) : (
+              <li>Não há saldo devedor: nenhuma conta a pagar é criada (uma conta de R$ 0,00 seria invisível na Agenda e ficaria pendurada para sempre).</li>
+            )}
+            <li>O apurado para de crescer, e corrigir dias/pagamentos passa a exigir reabrir o período.</li>
+          </ul>
+
+          {encerrarErro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.7rem" }}>{encerrarErro}</p>}
+
+          <div className="flex items-center gap-2" style={{ marginTop: "1rem" }}>
+            <button className="btn-primary" style={{ fontSize: "0.8rem" }}
+              disabled={encerrandoId === encerrandoDiaria.id} onClick={confirmarEncerramento}>
+              {encerrandoId === encerrandoDiaria.id
+                ? "Encerrando…"
+                : encerrandoDiaria.saldo_devedor > 0
+                  ? `Encerrar e emitir conta de ${formatBRL(encerrandoDiaria.saldo_devedor)}`
+                  : "Encerrar período"}
+            </button>
+            <button className="btn-ghost" style={{ fontSize: "0.8rem" }} onClick={() => setEncerrandoDiaria(null)}>Cancelar</button>
+          </div>
         </Modal>
       )}
     </div>
