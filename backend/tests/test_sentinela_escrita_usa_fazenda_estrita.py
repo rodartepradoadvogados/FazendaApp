@@ -46,6 +46,12 @@ _VERBOS_DE_ESCRITA = {"post", "put", "patch", "delete"}
 # Dívida congelada em 06/09/2026. NÃO ACRESCENTE LINHAS AQUI para fazer um
 # teste passar: se a sua rota nova apareceu, ela precisa de
 # `get_fazenda_id_escrita`, não de uma isenção.
+#
+# A segunda trava já se pagou antes mesmo deste arquivo entrar na main: a
+# lista foi gerada quando `fotos.py::enviar_foto` e `::excluir_foto` ainda
+# usavam a dependência tolerante, e o PR #711 corrigiu as duas enquanto este
+# PR esperava CI. Ao trazer a main, `test_a_divida_congelada_nao_tem_entrada_morta`
+# apontou as duas entradas mortas em vez de deixá-las apodrecendo aqui.
 _DIVIDA_CONHECIDA: set[tuple[str, str]] = {
     ("agenda.py", "desmarcar_realizado"),
     ("alimentacao.py", "atualizar_alimento"),
@@ -174,8 +180,6 @@ _DIVIDA_CONHECIDA: set[tuple[str, str]] = {
     ("formulacao_dietas.py", "duplicar_simulacao"),
     ("formulacao_dietas.py", "excluir_simulacao"),
     ("formulacao_dietas.py", "salvar_simulacao"),
-    ("fotos.py", "enviar_foto"),
-    ("fotos.py", "excluir_foto"),
     ("indicadores.py", "relatorio_personalizado"),
     ("lotes.py", "atualizar_lote"),
     ("lotes.py", "preview_criterios"),
