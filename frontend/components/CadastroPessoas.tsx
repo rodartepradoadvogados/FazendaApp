@@ -73,6 +73,12 @@ export default function CadastroPessoas() {
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
+  // Inativos ficam ESCONDIDOS por padrão. Antes a lista trazia todo mundo com
+  // um "(inativo)" cinza ao lado do nome, e quem desativava alguém continuava
+  // vendo a pessoa ali para sempre — daí a vontade de "excluir" um cadastro
+  // que o sistema (e a lei trabalhista) precisa guardar. Esconder é o que a
+  // pessoa quer dizer com "sumir da lista"; o registro continua inteiro.
+  const [mostrarInativos, setMostrarInativos] = useState(false);
   const [novoTipoAberto, setNovoTipoAberto] = useState(false);
   // Entrada animada do formulário inline (05/09/2026) — mesma técnica do
   // duplo requestAnimationFrame já usada em NovoItemEstoque.tsx: monta
@@ -177,8 +183,10 @@ export default function CadastroPessoas() {
 
   const termoBusca = normalizar(busca.trim());
   const filtrados = (itens ?? []).filter((p) =>
-    !termoBusca || normalizar(`${p.nome} ${p.tipos.join(" ")} ${(p.telefones ?? []).join(" ")} ${(p.emails ?? []).join(" ")}`).includes(termoBusca)
+    (mostrarInativos || p.ativo) &&
+    (!termoBusca || normalizar(`${p.nome} ${p.tipos.join(" ")} ${(p.telefones ?? []).join(" ")} ${(p.emails ?? []).join(" ")}`).includes(termoBusca))
   );
+  const inativosOcultos = (itens ?? []).filter((p) => !p.ativo).length;
 
   // Colunas derivadas (nome do 1º tipo/telefone/email) só para permitir
   // ordenar por clique no cabeçalho — telefones/emails viram lista na tela.
@@ -222,6 +230,15 @@ export default function CadastroPessoas() {
             <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
             <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar pessoa…" title="Buscar por nome, tipo, telefone ou email" />
           </div>
+          {inativosOcultos > 0 && (
+            <label style={{
+              display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.8rem",
+              fontSize: "0.8rem", color: "var(--text-muted)", cursor: "pointer",
+            }}>
+              <input type="checkbox" checked={mostrarInativos} onChange={(e) => setMostrarInativos(e.target.checked)} />
+              Mostrar inativos ({inativosOcultos})
+            </label>
+          )}
           <div className="overflow-x-auto">
           <table className="fazenda-table">
             <thead>
@@ -265,7 +282,13 @@ export default function CadastroPessoas() {
                 </Fragment>
               ))}
               {!itens.length && !editando && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma pessoa cadastrada ainda.</td></tr>}
-              {!!itens.length && !filtrados.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
+              {!!itens.length && !filtrados.length && (
+                <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
+                  {termoBusca
+                    ? <>Nenhum resultado para “{busca}”{!mostrarInativos && inativosOcultos > 0 && " entre as pessoas ativas — marque “Mostrar inativos” para procurar também nelas"}.</>
+                    : "Nenhuma pessoa ativa. Marque “Mostrar inativos” para ver as desativadas."}
+                </td></tr>
+              )}
             </tbody>
           </table>
           </div>
