@@ -426,7 +426,15 @@ class TestLedgerUnificadoLevaODiscriminado:
             l for l in c.get("/cadastro/folha-pagamento-unificada").json()
             if l["origem_subtipo"] == "decimo_terceiro" and l["pessoa_id"] == pessoa_id
         )
-        assert linha["detalhe"][0]["referencia"] == "8/12 avos de 2026 · 1ª parcela"
+        # A 1ª parcela é adiantamento de até 50% do 13º (Lei 4.749/1965, art.
+        # 2º), então o bruto da linha é R$ 1.066,67 e não o 13º cheio de
+        # R$ 2.133,33 — a referência precisa dizer sobre qual integral o
+        # adiantamento foi tirado, senão o recibo mostra uma metade sem
+        # avisar que é metade.
+        assert linha["detalhe"][0]["referencia"] == (
+            "8/12 avos de 2026 · 1ª parcela · adiantamento sobre 13º integral de R$ 2.133,33"
+        )
+        assert linha["detalhe"][0]["provento"] == 1066.67
 
 
 # ---------------------------------------------------------------------------

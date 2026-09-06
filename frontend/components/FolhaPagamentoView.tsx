@@ -27,9 +27,15 @@ import { ModalDivididoDocumento } from "@/components/ModalDivididoDocumento";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { AvisoSalvo } from "@/components/AvisoSalvo";
 import { Dropzone } from "@/components/Dropzone";
-import { SecaoRecolhivel, Indicador } from "@/components/ui";
+import { SecaoRecolhivel } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
+import { BarraCompetencia } from "@/components/BarraCompetencia";
+import { EquacaoFolha, OutrosPagamentosDoMes } from "@/components/EquacaoFolha";
+import {
+  equacaoDoMes, excecoesDoMes, competenciasDoMes, mesDaLinha, mesInicial, mesesDoLedger,
+  resumoOutrosTipos, situacaoDoMes,
+} from "@/lib/folhaCompetencia";
 import EmpreitadaView from "@/components/EmpreitadaView";
 import ContratoView from "@/components/ContratoView";
 import DiariaView from "@/components/DiariaView";
@@ -52,10 +58,6 @@ const mesCompLabel = (comp: string) => {
   const idx = parseInt(m, 10) - 1;
   return idx >= 0 && idx < 12 ? `${MESES_ABREV[idx]}/${a}` : (comp || "");
 };
-
-function KPI({ v, l, c }: { v: string; l: string; c?: string }) {
-  return <Indicador categoria="financeiro" valor={v} rotulo={l} cor={c || "var(--dourado-light)"} />;
-}
 
 const selStyleLote: React.CSSProperties = {
   fontSize: "0.82rem", background: "var(--surface-2)", color: "var(--text)",
@@ -187,6 +189,13 @@ export default function FolhaPagamentoView() {
   const [fUniVencAte, setFUniVencAte] = useState("");
   const [fUniStatus, setFUniStatus] = useState<"" | "pendente" | "pago">("");
   const [fUniPessoa, setFUniPessoa] = useState("");
+  // O MÊS em tela — o objeto desta tela, e não mais um filtro entre outros.
+  // `null` = "todos os meses" (o comportamento antigo, que continua a um
+  // clique). Nasce indefinido e é resolvido quando o ledger chega, porque a
+  // escolha depende do que existe: mês corrente se ele tiver lançamento,
+  // senão o mês mais recente que tiver — abrir a tela vazia por decreto seria
+  // pior do que o estado de hoje, em que pelo menos tudo aparece.
+  const [mesFolha, setMesFolha] = useState<string | null | undefined>(undefined);
   // Deriva o filtro de tipo do seletor de categoria do topo — não é mais um
   // controle à parte, senão o usuário tinha 2 lugares pra "escolher a
   // categoria" que podiam divergir (o motivo de "não funcionar de verdade").
@@ -370,13 +379,31 @@ export default function FolhaPagamentoView() {
     }
   }
 
+  // O mês em tela é DERIVADO, não inicializado por efeito: enquanto o usuário
+  // não escolher um mês (`mesFolha === undefined`), vale o que `mesInicial`
+  // decide a partir do ledger que chegou. Guardar isso com um `setState`
+  // dentro de `useEffect` daria uma renderização em cascata — e um quadro
+  // inteiro em que a tela mostra "todos os meses" antes de assentar no mês.
+  const mesesComLancamento = useMemo(() => mesesDoLedger(unificada || []), [unificada]);
+  const mesEmTela = mesFolha === undefined
+    ? (unificada ? mesInicial(unificada, new Date().toISOString().slice(0, 7)) : null)
+    : mesFolha;
+
   const unificadaFiltrada = useMemo(() => (unificada || []).filter((l) =>
+    (!mesEmTela || mesDaLinha(l) === mesEmTela) &&
     (!fUniVencDe || (l.data_vencimento || "") >= fUniVencDe) &&
     (!fUniVencAte || (l.data_vencimento || "") <= fUniVencAte) &&
     (!fUniStatus || l.status === fUniStatus) &&
     (!fUniPessoa || String(l.pessoa_id) === fUniPessoa) &&
     (!tipoUnificado || l.tipo === tipoUnificado)
-  ), [unificada, fUniVencDe, fUniVencAte, fUniStatus, fUniPessoa, tipoUnificado]);
+  ), [unificada, mesEmTela, fUniVencDe, fUniVencAte, fUniStatus, fUniPessoa, tipoUnificado]);
+  // A equação, o resumo dos outros tipos e as exceções saem TODOS da mesma
+  // lista já filtrada — nenhum deles recalcula o recorte por conta própria.
+  const equacao = useMemo(() => equacaoDoMes(unificadaFiltrada), [unificadaFiltrada]);
+  const outrosTipos = useMemo(() => resumoOutrosTipos(unificadaFiltrada), [unificadaFiltrada]);
+  const excecoes = useMemo(() => excecoesDoMes(unificadaFiltrada), [unificadaFiltrada]);
+  const situacaoMes = useMemo(() => situacaoDoMes(unificadaFiltrada, excecoes), [unificadaFiltrada, excecoes]);
+  const competenciasEmTela = useMemo(() => competenciasDoMes(unificadaFiltrada), [unificadaFiltrada]);
   const { linhasOrdenadas: unificadaOrdenada, coluna: uniColuna, dir: uniDir, ordenar: uniOrdenar } = useOrdenacao(unificadaFiltrada);
   const somaUnificadaFiltrada = unificadaFiltrada.reduce((a, l) => a + l.valor, 0);
   // Uma folha em que os descontos passam os vencimentos tem líquido NEGATIVO —
@@ -1060,27 +1087,29 @@ export default function FolhaPagamentoView() {
         Consultar
       </div>
 
-      {/* KPIs da folha de pagamento unificada (funcionário + empreita + contrato + diária + férias/13º), refletindo os filtros abaixo */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-        <KPI v={String(unificadaFiltrada.length)} l="Lançamentos" />
-        <KPI v={formatBRL(somaUniPendente)} l="Pendente" c="var(--amber)" />
-        <KPI v={formatBRL(somaUniPago)} l="Pago" c="var(--green-light)" />
-        {uniBloqueadas.length > 0 && (
-          <KPI v={formatBRL(somaUniBloqueada)} l={`Fora da conta (${uniBloqueadas.length})`} c="var(--red)" />
-        )}
-      </div>
-      {uniBloqueadas.length > 0 && (
-        <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "-0.75rem", marginBottom: "1rem" }}>
-          Não somado em “Pendente”: {uniBloqueadas.length === 1 ? "1 folha" : `${uniBloqueadas.length} folhas`} em que
-          os descontos passam os vencimentos. Enquanto isso durar, o recibo não pode ser emitido — abra a linha para ver
-          qual parcela de vale ultrapassa.
-        </p>
-      )}
+      {/* A barra do MÊS e a faixa da EQUAÇÃO, no lugar dos três KPIs soltos
+          (Lançamentos/Pendente/Pago) que não formavam conta nenhuma: sem
+          identidade a conferir, um total errado não tinha como saltar aos
+          olhos. Nada do que os KPIs diziam se perde — pendente e pago viram a
+          nota de situação da faixa e os cartões de "Também vence neste mês", e
+          "Fora da conta" continua fora de toda soma, agora ao lado da conta
+          que ele não integra. */}
+      <BarraCompetencia
+        mes={mesEmTela}
+        mesesComLancamento={mesesComLancamento}
+        competencias={competenciasEmTela}
+        situacao={situacaoMes}
+        quantidade={unificadaFiltrada.length}
+        onMes={setMesFolha}
+      />
+      <EquacaoFolha eq={equacao} />
+      <OutrosPagamentosDoMes resumo={outrosTipos} />
 
       {/* Filtro da folha de pagamento unificada — a categoria já vem do
-          seletor do topo; aqui só os filtros complementares. */}
+          seletor do topo e o MÊS vem da barra; aqui só os complementares, que
+          estreitam DENTRO do mês escolhido (nunca o contradizem). */}
       <div className="card mb-3">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar a folha de pagamento</div>
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar dentro do mês</div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div><label style={labelStyleLote}>Vencimento — de</label>
             <input type="date" style={selStyleLote} value={fUniVencDe} onChange={(e) => setFUniVencDe(e.target.value)} /></div>
@@ -1101,7 +1130,13 @@ export default function FolhaPagamentoView() {
           da SecaoRecolhivel abaixo (não dá pra aninhar um <button> dentro do
           <button> do cabeçalho), mas visualmente bem ao lado um do outro. */}
       <div className="flex items-center justify-between gap-2 mb-2" style={{ flexWrap: "wrap" }}>
-        <span style={{ fontSize: "0.78rem", fontWeight: 700, whiteSpace: "nowrap" }}>Total filtrado: {formatBRL(somaUnificadaFiltrada)}</span>
+        <span style={{ fontSize: "0.78rem", fontWeight: 700, whiteSpace: "nowrap" }}>
+          Total filtrado: {formatBRL(somaUnificadaFiltrada)}
+          <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>
+            {" "}· {formatBRL(somaUniPendente)} a pagar · {formatBRL(somaUniPago)} pago
+            {uniBloqueadas.length > 0 ? ` · ${formatBRL(somaUniBloqueada)} fora da conta` : ""}
+          </span>
+        </span>
         <span style={{ position: "relative" }}>
           <button className="btn-ghost" type="button" title="Imprimir o holerite de todos os funcionários que estão passando pelo filtro atual (ex.: um mês específico)"
             style={{ fontSize: "0.75rem" }} disabled={!funcionariosFolhaFiltrados.length}

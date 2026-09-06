@@ -385,3 +385,48 @@ export function excecoesDoMes(linhas: LinhaFolhaUnificada[]): Excecao[] {
   const peso = (g: GravidadeExcecao) => (g === "bloqueia" ? 0 : 1);
   return excecoes.sort((a, b) => peso(a.gravidade) - peso(b.gravidade) || b.valor - a.valor);
 }
+
+// ── A situação do mês ─────────────────────────────────────────────────────
+
+export type SituacaoMes = {
+  estado: "vazio" | "bloqueado" | "aberto" | "pago";
+  texto: string;
+  detalhe: string;
+};
+
+/**
+ * O selo da barra do topo — derivado, nunca lido do banco: NÃO EXISTE
+ * fechamento de competência em `FolhaPagamento` (nenhum campo marca um mês
+ * como fechado). Por isso o selo diz o que é verificável — o que falta pagar
+ * e o que está errado — e nunca "Fechada", que seria afirmar um estado que o
+ * sistema não guarda.
+ */
+export function situacaoDoMes(
+  linhas: LinhaFolhaUnificada[], excecoes: Excecao[],
+): SituacaoMes {
+  if (!linhas.length) {
+    return { estado: "vazio", texto: "Nada lançado neste mês", detalhe: "Nenhum lançamento de folha cai neste mês." };
+  }
+  const bloqueios = excecoes.filter((e) => e.gravidade === "bloqueia").length;
+  if (bloqueios) {
+    return {
+      estado: "bloqueado",
+      texto: `${bloqueios} ${bloqueios === 1 ? "erro impede" : "erros impedem"} o fechamento`,
+      detalhe: "Enquanto durar, a folha envolvida fica fora do total a pagar e o recibo não pode ser emitido.",
+    };
+  }
+  const pendentes = linhas.filter((l) => l.status !== "pago").length;
+  const conferir = excecoes.length;
+  if (!pendentes) {
+    return {
+      estado: "pago",
+      texto: conferir ? `Tudo pago — ${conferir} a conferir` : "Tudo pago",
+      detalhe: "Todos os lançamentos deste mês têm baixa registrada.",
+    };
+  }
+  return {
+    estado: "aberto",
+    texto: `Em aberto — ${linhas.length - pendentes} de ${linhas.length} pagos`,
+    detalhe: `${pendentes} ${pendentes === 1 ? "lançamento ainda não teve" : "lançamentos ainda não tiveram"} baixa registrada.`,
+  };
+}

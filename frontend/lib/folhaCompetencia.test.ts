@@ -16,7 +16,7 @@ import type { LinhaFolhaUnificada, LinhaHolerite } from "./api.ts";
 import {
   competenciasDoMes, equacaoDoMes, excecoesDoMes, mesDaLinha, mesDoIntervalo,
   mesInicial, mesesDoLedger, passoMes, primeiroDiaDoMes, resumoOutrosTipos,
-  ultimoDiaDoMes,
+  situacaoDoMes, ultimoDiaDoMes,
 } from "./folhaCompetencia.ts";
 
 function linha(over: Partial<LinhaHolerite>): LinhaHolerite {
@@ -289,4 +289,29 @@ test("o que bloqueia vem antes do que é só conferência, e o maior valor prime
     }),
   ]);
   assert.deepEqual(exc.map((e) => e.gravidade), ["bloqueia", "conferir"]);
+});
+
+// ── A situação do mês ─────────────────────────────────────────────────────
+
+test("mês sem lançamento não é 'fechado', é vazio — o sistema não guarda fechamento", () => {
+  assert.equal(situacaoDoMes([], []).estado, "vazio");
+});
+
+test("erro que bloqueia domina o selo, mesmo com tudo pago", () => {
+  const estourada = folha({
+    origem_id: 9, status: "pago", data_pagamento: "2026-09-05",
+    detalhe: [
+      linha({ tipo: "bruto", descricao: "Salário", provento: 3200 }),
+      linha({ tipo: "vale", descricao: "Vale", desconto: 4880.54 }),
+    ],
+  });
+  const s = situacaoDoMes([estourada], excecoesDoMes([estourada]));
+  assert.equal(s.estado, "bloqueado");
+});
+
+test("tudo pago e sem exceção é o estado verde; com pendência, 'em aberto'", () => {
+  const paga = folha({ status: "pago", data_pagamento: "2026-09-05" });
+  assert.equal(situacaoDoMes([paga], []).estado, "pago");
+  assert.equal(situacaoDoMes([paga, folha({ origem_id: 2 })], []).estado, "aberto");
+  assert.match(situacaoDoMes([paga, folha({ origem_id: 2 })], []).texto, /1 de 2 pagos/);
 });

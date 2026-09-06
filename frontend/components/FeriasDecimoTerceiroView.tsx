@@ -314,7 +314,13 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]
       return;
     }
     const meses = parseInt(mesesTrabalhados, 10) || 0;
-    setValorCalculado(Math.round((pessoaSelecionada.salario_base / 12) * meses * 100) / 100);
+    const integral = Math.round((pessoaSelecionada.salario_base / 12) * meses * 100) / 100;
+    // A 1ª parcela é ADIANTAMENTO de até 50% do 13º (Lei 4.749/1965, art. 2º).
+    // Esta tela sugeria o 13º cheio para as três parcelas, batendo com o
+    // servidor, que também gravava cheio — era o 13º pago em dobro. O
+    // servidor agora divide de verdade (e desconta o que já foi lançado no
+    // ano), então o sugerido aqui é só uma estimativa da mesma regra.
+    setValorCalculado(parcela === "primeira" ? Math.round(integral * 50) / 100 : integral);
   }
 
   async function salvar() {
@@ -376,7 +382,9 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]
           </div>
           <div>
             <label style={lbl}>Parcela</label>
-            <select style={inputSm} value={parcela} onChange={(e) => setParcela(e.target.value)}>
+            {/* Limpa o sugerido: trocar a parcela muda o valor (a 1ª é
+                adiantamento de 50%), e o número velho ficava na tela. */}
+            <select style={inputSm} value={parcela} onChange={(e) => { setParcela(e.target.value); setValorCalculado(null); }}>
               <option value="unica">Única</option>
               <option value="primeira">1ª parcela</option>
               <option value="segunda">2ª parcela</option>
@@ -406,7 +414,9 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]
           <div className="card mt-2" style={{ padding: "0.6rem 0.8rem", fontSize: "0.8rem" }}>
             Valor bruto sugerido: <strong style={{ color: "var(--dourado-light)" }}>{formatBRL(valorCalculado)}</strong>
             <div style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: "0.2rem" }}>
-              INSS/IR (se houver) são informados na edição — o servidor recalcula o bruto ao lançar.
+              {parcela === "primeira"
+                ? "Adiantamento de 50% do 13º (Lei 4.749/1965) — sem INSS/IR, que incidem só na 2ª parcela."
+                : "INSS/IR (se houver) são informados na edição — o servidor recalcula o bruto ao lançar, descontando o que já foi lançado no ano."}
             </div>
           </div>
         )}
