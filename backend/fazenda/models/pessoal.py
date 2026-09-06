@@ -232,11 +232,30 @@ class FeriasFuncionario(SQLModel, table=True):
     # Dias "vendidos" (abono pecuniário, art. 143 CLT — até 1/3 de dias_direito),
     # opcional — 0 quando a pessoa goza integralmente os dias.
     abono_pecuniario_dias: int = 0
+    # Snapshot do salário usado no cálculo — MESMO motivo de
+    # `RescisaoFuncionario.salario_base`, que já fazia certo. Sem ele, o PUT
+    # (usado pelo botão "Marcar como pago") recalculava tudo a partir do
+    # `Pessoa.salario_base` de HOJE: férias lançadas a R$ 2.666,67 em janeiro
+    # viravam R$ 4.000 em março só porque o salário subiu no meio, e a conta
+    # a pagar era sobrescrita em silêncio. Nulo só em registro anterior à
+    # migração e0b7c3a91d24 que não pôde ser reconstituído.
+    salario_base: Optional[float] = None
     valor_ferias: float
     valor_terco_constitucional: float
+    # Abono pecuniário (dias vendidos + o respectivo 1/3). ERA CALCULADO E
+    # JOGADO FORA: entrava em `valor_total` mas não era gravado, então com
+    # abono `valor_ferias + valor_terco_constitucional != valor_total` no
+    # banco e o valor não era reconstituível a partir das colunas.
+    valor_abono: float = 0.0
     valor_total: float
     data_pagamento: Optional[date] = None
-    status: str = "pendente"  # pendente | pago
+    # pendente | pago | cancelado_rescisao — o último é posto pelo servidor
+    # ao FECHAR uma rescisão que absorve estas férias (ver `rescisao_id`);
+    # nunca aceito na entrada dos endpoints.
+    status: str = "pendente"
+    # Rescisão que cancelou este lançamento — o registro NUNCA é apagado,
+    # para o cancelamento ser rastreável e reversível.
+    rescisao_id: Optional[int] = Field(default=None, foreign_key="rescisao_funcionario.id")
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
@@ -263,12 +282,24 @@ class DecimoTerceiro(SQLModel, table=True):
     ano: int
     parcela: str = "unica"  # unica | primeira | segunda
     meses_trabalhados: int  # 1 a 12 — proporcional ao ano de admissão/desligamento
+    # Snapshot do salário usado no cálculo — ver FeriasFuncionario.salario_base.
+    salario_base: Optional[float] = None
+    # 13º INTEGRAL do ano (salario_base / 12 × meses). `valor_bruto` é o que
+    # se paga NESTA parcela: até 50% do integral na 1ª (adiantamento, Lei
+    # 4.749/1965, art. 2º) e o SALDO na 2ª/única. Antes as duas colunas eram
+    # a mesma coisa — `valor_bruto` guardava sempre o integral, e lançar 1ª +
+    # 2ª parcela pagava o 13º duas vezes.
+    valor_integral: Optional[float] = None
     valor_bruto: float
     valor_inss: float = 0.0
     valor_ir: float = 0.0
     valor_liquido: float
     data_pagamento: Optional[date] = None
-    status: str = "pendente"  # pendente | pago
+    # pendente | pago | cancelado_rescisao — ver FeriasFuncionario.status.
+    status: str = "pendente"
+    # Rescisão que cancelou este lançamento (o 13º proporcional já está
+    # dentro das verbas rescisórias) — ver FeriasFuncionario.rescisao_id.
+    rescisao_id: Optional[int] = Field(default=None, foreign_key="rescisao_funcionario.id")
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")

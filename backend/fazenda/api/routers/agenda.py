@@ -1763,6 +1763,33 @@ def _exigir_da_fazenda(registro, fazenda_id: int | None, rotulo: str):
     return registro
 
 
+def _buscar_da_fazenda(session: Session, modelo, registro_id: int, fazenda_id: int | None):
+    """Carrega UM registro por id JÁ FILTRANDO por fazenda na própria consulta,
+    em vez de `session.get()` seguido de um `if` sobre o objeto carregado.
+
+    A diferença não é estética. O `if` de antes era
+    `registro.fazenda_id not in (None, fazenda_id)`, que tolerava
+    `fazenda_id=NULL` no registro: um ProtocoloSanitarioAplicacao órfão (a
+    própria migração 029227481e9e_backfill_fazenda_id_nulo documenta que
+    sobram linhas NULL em instalação com 2+ fazendas) era confirmável por
+    QUALQUER fazenda-cliente, gravando Sanidade e baixando estoque em cima
+    dele. Filtrando na consulta, "de outra fazenda" e "sem fazenda" caem os
+    dois no mesmo lugar: não encontrado.
+
+    `fazenda_id is None` só acontece em ambiente onde o multi-fazenda NÃO
+    está provisionado (tabela `fazenda` vazia — suíte de testes e instalação
+    anterior à migração f1a2b3c4d5e6). Havendo qualquer fazenda cadastrada, a
+    trava de porta (fazenda/auth.py::exigir_fazenda_selecionada, montada no
+    router da Agenda em main.py) recusa a requisição antes de chegar aqui, e
+    `get_fazenda_id_escrita` nunca devolve None. O caso está tratado
+    explicitamente, não por omissão: sem tenant cadastrado não há tenant a
+    isolar."""
+    query = select(modelo).where(modelo.id == registro_id)
+    if fazenda_id is not None:
+        query = query.where(modelo.fazenda_id == fazenda_id)
+    return session.exec(query).first()
+
+
 def _decidir_cronograma_animal(
     session: Session, evento_id: str, incluir: bool | None, fazenda_id: int | None = None
 ) -> None:
@@ -1855,12 +1882,19 @@ def _baixar_protocolo_sanitario(
     (mesmo comportamento de sempre).
     """
     aplicacao_id = int(evento_id.removeprefix("protocolo_sanitario_"))
-    aplicacao = session.get(ProtocoloSanitarioAplicacao, aplicacao_id)
     # BUG DE SEGURANÇA CORRIGIDO: `aplicacao_id` é um inteiro pequeno e
-    # sequencial vindo do evento_id — sem esta checagem, qualquer
-    # fazenda-cliente podia confirmar (e gravar Sanidade/dar baixa de
-    # estoque para) uma aplicação sanitária de outro tenant.
-    if not aplicacao or aplicacao.realizada or (fazenda_id is not None and aplicacao.fazenda_id not in (None, fazenda_id)):
+    # sequencial vindo do `evento_id` (texto livre no corpo do POST
+    # /agenda/realizados) — sem filtrar por fazenda, a fazenda B chutava
+    # "protocolo_sanitario_7" e confirmava a aplicação da fazenda A,
+    # gravando uma Sanidade falsa no animal da vítima e consumindo o
+    # PRÓPRIO estoque para isso.
+    #
+    # A carga é filtrada na consulta (ver _buscar_da_fazenda): a checagem
+    # anterior era um `if` pós-`session.get` que tolerava
+    # `aplicacao.fazenda_id is None`, deixando os registros órfãos da
+    # migração de backfill abertos para qualquer tenant.
+    aplicacao = _buscar_da_fazenda(session, ProtocoloSanitarioAplicacao, aplicacao_id, fazenda_id)
+    if not aplicacao or aplicacao.realizada:
         return []
     etapa = session.get(ProtocoloSanitarioEtapa, aplicacao.etapa_id)
     lancamento = session.get(ProtocoloSanitarioLancamento, aplicacao.lancamento_id)
@@ -1905,11 +1939,14 @@ def _baixar_aplicacao_agendada(
     usuário pode ajustar o que foi de fato aplicado antes de confirmar; sem
     eles, usa os valores gravados na hora do agendamento."""
     aid = int(evento_id.removeprefix("aplic_agendada_"))
-    ag = session.get(AplicacaoAgendada, aid)
-    # BUG DE SEGURANÇA CORRIGIDO: `aid` é um inteiro pequeno e sequencial —
-    # sem esta checagem, qualquer fazenda-cliente podia confirmar a
-    # aplicação agendada de outro tenant.
-    if not ag or ag.aplicado or (fazenda_id is not None and ag.fazenda_id not in (None, fazenda_id)):
+    # BUG DE SEGURANÇA CORRIGIDO: mesmo cenário de _baixar_protocolo_sanitario
+    # — `aid` é um inteiro pequeno e sequencial vindo do corpo da requisição.
+    # A fazenda B chutava "aplic_agendada_12" e dava por aplicada a vacina
+    # programada de um animal da fazenda A. Carga filtrada na consulta; a
+    # checagem anterior (`ag.fazenda_id not in (None, fazenda_id)`) deixava
+    # passar toda AplicacaoAgendada órfã (fazenda_id NULL).
+    ag = _buscar_da_fazenda(session, AplicacaoAgendada, aid, fazenda_id)
+    if not ag or ag.aplicado:
         return []
     hoje = date.today()
     produto_final = produto or ag.produto

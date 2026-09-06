@@ -1261,15 +1261,29 @@ def relatorio_controle_entrega(
     preco_medio_kg = round(receita / entrega_kg, 4) if (receita and entrega_kg) else None
 
     # ── Bezerros: leite/dia da dieta lançada (fallback: dieta CSV) × dias ──
+    # BUG DE SEGURANÇA CORRIGIDO: estas três consultas eram as ÚNICAS do
+    # handler sem filtro de fazenda (todas as de cima — controle leiteiro,
+    # entrega, conta gerencial — já filtravam). O resultado é que o "leite dos
+    # bezerros" somava as dietas ativas de TODAS as fazendas-clientes, e o
+    # fallback rodava o cálculo de consumo sobre a dieta e o rebanho INTEIRO
+    # do sistema. É a mesma classe do achado do GET /producao/relatorio-bst:
+    # rota agregadora que devolve para um tenant um número calculado com dado
+    # de outro (e desloca o balanço "não entregue"/"equipe" da fazenda toda).
+    query_dieta_lanc = select(DietaLancamento).where(DietaLancamento.data_efetivo_encerramento == None)  # noqa: E711
+    query_dieta_csv = select(Dieta)
+    query_animais_ativos = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query_dieta_lanc = query_dieta_lanc.where(DietaLancamento.fazenda_id == fazenda_id)
+        query_dieta_csv = query_dieta_csv.where(Dieta.fazenda_id == fazenda_id)
+        query_animais_ativos = query_animais_ativos.where(Animal.fazenda_id == fazenda_id)
     leite_dia_bezerros = sum(
-        d.leite_bezerros_kg_dia or 0.0
-        for d in session.exec(select(DietaLancamento).where(DietaLancamento.data_efetivo_encerramento == None)).all()  # noqa: E711
+        d.leite_bezerros_kg_dia or 0.0 for d in session.exec(query_dieta_lanc).all()
     )
     fonte_bezerros = "dieta_lancada"
     if leite_dia_bezerros <= 0:
-        dietas = [d.model_dump() for d in session.exec(select(Dieta)).all()]
+        dietas = [d.model_dump() for d in session.exec(query_dieta_csv).all()]
         animais = [
-            a.model_dump() for a in session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
+            a.model_dump() for a in session.exec(query_animais_ativos).all()
             if not a.eh_semen
         ]
         consumo = calcular_consumo(dietas, animais)

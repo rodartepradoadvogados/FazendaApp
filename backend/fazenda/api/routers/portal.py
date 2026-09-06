@@ -20,7 +20,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id, multifazenda_provisionado
 from fazenda.database import engine, get_session
 from fazenda.models import (
     AgendaManual, Animal, CompraAnimal, ContaGerencial, ControleLeiteiro, MovimentoEstoque, Estoque,
@@ -70,6 +70,35 @@ def usuarios_da_fazenda(session: Session, fazenda_id: int | None) -> list[Usuari
             .distinct()
         ).all()
     return [u for u in usuarios if u.username != "robo-milknews"]
+
+
+def _fazenda_obrigatoria(session: Session, fazenda_id: int | None) -> int | None:
+    """A fazenda de quem está exportando/enviando relatório — ou 409.
+
+    As duas rotas que usam isto (`POST /portal/exportar` e o anexo de
+    `POST /portal/email`) são as únicas do sistema que despacham dado de
+    fazenda para FORA dele, por e-mail, em lote. Por isso elas não confiam só
+    no `exigir_fazenda_selecionada` do include_router (main.py): repetem a
+    checagem aqui, na própria função, onde ela não some se alguém remontar o
+    router amanhã. `_executar_exportacao` ainda por cima roda DEPOIS da
+    resposta, numa BackgroundTask com sessão própria — quanto mais perto do
+    ponto de leitura a trava estiver, melhor.
+
+    A escape hatch é a mesma — e pela mesma razão — de
+    `exigir_fazenda_selecionada`/`resolver_fazenda_id_escrita`: com a tabela
+    `fazenda` VAZIA o multi-fazenda não está provisionado neste ambiente e não
+    há tenant a isolar (instalação anterior à migração f1a2b3c4d5e6 e boa
+    parte da suíte de testes). Havendo QUALQUER fazenda cadastrada — todo
+    ambiente de produção — sem fazenda no token não se exporta nada."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if fazenda_id is None and multifazenda_provisionado(session):
+        raise HTTPException(
+            status_code=409,
+            detail="Sua sessão não tem uma fazenda selecionada. Saia e entre novamente para escolher "
+                   "em qual fazenda deseja trabalhar antes de exportar ou enviar relatórios.",
+            headers={"X-Fazenda-Nao-Selecionada": "1"},
+        )
+    return fazenda_id
 
 
 def _serializar(m: PortalMensagem, session: Session) -> dict:
@@ -317,6 +346,12 @@ def enviar_email_portal(
         # parâmetro ficava com o próprio objeto Depends(...), que
         # fazenda_id_seguro() convertia para None, desligando todo filtro por
         # fazenda dentro delas. Passar fazenda_id explícito fecha o vazamento.
+        #
+        # Só que passar `None` explícito desliga o filtro do mesmo jeito (lá
+        # dentro o padrão é o tolerante `if fazenda_id is not None`), e este
+        # anexo sai do sistema por e-mail. Então aqui não existe caminho
+        # "sem fazenda": ou a sessão diz qual é, ou não há relatório.
+        fazenda_id = _fazenda_obrigatoria(session, fazenda_id)
         if dados.relatorio == "dre":
             resultado = dre(data_inicio=dados.data_inicio, data_fim=dados.data_fim, centro_custo=None, regime="competencia", session=session, fazenda_id=fazenda_id)
         elif dados.relatorio == "rmca":

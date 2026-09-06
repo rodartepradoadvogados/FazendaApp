@@ -28,11 +28,21 @@ from fazenda.rules import holerite
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
 
-from .rh_folha import _competencia_seguinte, _resolver_conta_corrente, listar_folha_pagamento
+from .rh_folha import (
+    STATUS_CANCELADO_RESCISAO,
+    _competencia_seguinte,
+    _resolver_conta_corrente,
+    listar_folha_pagamento,
+)
 
 router = APIRouter()
 
 PARCELA_DECIMO_ROTULO = {"unica": "parcela única", "primeira": "1ª parcela", "segunda": "2ª parcela"}
+
+
+def _brl(valor: float) -> str:
+    """R$ 1.234,56 — formatação usada só nas referências dos recibos daqui."""
+    return "R$ " + f"{valor:,.2f}".replace(",", "\x00").replace(".", ",").replace("\x00", ".")
 
 
 def _detalhe_ferias(f: FeriasFuncionario) -> list[dict]:
@@ -60,8 +70,11 @@ def _detalhe_ferias(f: FeriasFuncionario) -> list[dict]:
         ))
     # O abono pecuniário (dias vendidos, art. 143 CLT) está embutido em
     # valor_total pelo cálculo; só vira linha quando de fato houve venda de
-    # dias — senão seria um zero decorativo num documento.
-    abono = round(f.valor_total - f.valor_ferias - f.valor_terco_constitucional, 2)
+    # dias — senão seria um zero decorativo num documento. Desde a migração
+    # e0b7c3a91d24 o valor é PERSISTIDO em `valor_abono` (antes era calculado
+    # e jogado fora); a subtração fica só como fallback para registro antigo
+    # cuja coluna não pôde ser reconstituída.
+    abono = f.valor_abono if f.valor_abono else round(f.valor_total - f.valor_ferias - f.valor_terco_constitucional, 2)
     if f.abono_pecuniario_dias and abs(abono) > 0.001:
         linhas.append(holerite.linha(
             "abono", "Abono pecuniário", abono, "Abono pecuniário",
@@ -79,9 +92,22 @@ def _detalhe_decimo_terceiro(d: DecimoTerceiro) -> list[dict]:
     referência da retenção diz "valor informado" em vez de inventar um
     percentual a partir do valor (mesma regra do INSS/IR da folha).
     """
+    # A referência diz de onde saiu o valor DESTA parcela: quando ela é só
+    # uma fatia do 13º do ano (1ª parcela = adiantamento de até 50%; 2ª = o
+    # saldo), o integral e o já adiantado aparecem no texto — sem isso o
+    # recibo mostrava uma metade sem dizer que era metade.
+    referencia = f"{d.meses_trabalhados}/12 avos de {d.ano} · {PARCELA_DECIMO_ROTULO.get(d.parcela, d.parcela)}"
+    integral = d.valor_integral or d.valor_bruto
+    if abs(integral - d.valor_bruto) > 0.001:
+        if d.parcela == "primeira":
+            referencia += f" · adiantamento sobre 13º integral de {_brl(integral)}"
+        else:
+            referencia += (
+                f" · 13º integral {_brl(integral)} − adiantamento {_brl(round(integral - d.valor_bruto, 2))}"
+            )
     linhas = [holerite.linha(
         "bruto", "13º salário bruto", d.valor_bruto, "13º salário",
-        f"{d.meses_trabalhados}/12 avos de {d.ano} · {PARCELA_DECIMO_ROTULO.get(d.parcela, d.parcela)}",
+        referencia,
         provento=round(d.valor_bruto, 2),
     )]
     for tipo, rotulo, valor in (("inss", "INSS", d.valor_inss), ("ir", "IR", d.valor_ir)):
@@ -291,6 +317,10 @@ def listar_folha_pagamento_unificada(
     for f in ferias:
         conta = contas_ferias_decimo.get(f.numero_lancamento_gerado)
         pago = bool(conta and conta.valor_pago is not None)
+        # Cancelado pela rescisão é um terceiro estado, não "pendente": o
+        # registro fica visível (nada é apagado) mas não é mais uma conta a
+        # pagar — o valor foi para dentro das verbas rescisórias.
+        cancelado = f.status == STATUS_CANCELADO_RESCISAO
         detalhe = _detalhe_ferias(f)
         linhas.append({
             "tipo": "ferias_decimo", "origem_id": f.id, "origem_subtipo": "ferias",
@@ -299,7 +329,7 @@ def listar_folha_pagamento_unificada(
             "valor": f.valor_total,
             "data_vencimento": conta.data_vencimento if conta else None,
             "data_pagamento": conta.data_pagamento if conta else f.data_pagamento,
-            "status": "pago" if pago else "pendente",
+            "status": "pago" if pago else (STATUS_CANCELADO_RESCISAO if cancelado else "pendente"),
             "pode_excluir": not pago,
             "detalhe": detalhe,
             "totais": holerite.totais_holerite(detalhe),
@@ -309,6 +339,7 @@ def listar_folha_pagamento_unificada(
     for d in decimos:
         conta = contas_ferias_decimo.get(d.numero_lancamento_gerado)
         pago = bool(conta and conta.valor_pago is not None)
+        cancelado = d.status == STATUS_CANCELADO_RESCISAO  # ver comentário acima
         detalhe = _detalhe_decimo_terceiro(d)
         linhas.append({
             "tipo": "ferias_decimo", "origem_id": d.id, "origem_subtipo": "decimo_terceiro",
@@ -317,7 +348,7 @@ def listar_folha_pagamento_unificada(
             "valor": d.valor_liquido,
             "data_vencimento": conta.data_vencimento if conta else None,
             "data_pagamento": conta.data_pagamento if conta else d.data_pagamento,
-            "status": "pago" if pago else "pendente",
+            "status": "pago" if pago else (STATUS_CANCELADO_RESCISAO if cancelado else "pendente"),
             "pode_excluir": not pago,
             "detalhe": detalhe,
             "totais": holerite.totais_holerite(detalhe),

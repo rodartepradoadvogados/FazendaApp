@@ -644,7 +644,21 @@ def _vincular_estoque_ao_alimento(session: Session, alimento_id: int, estoque_id
             e.alimento_id = None
             session.add(e)
     for eid in estoque_ids:
-        item = session.get(Estoque, eid)
+        # BUG DE SEGURANÇA CORRIGIDO: `estoque_ids` vem CRU do corpo do POST/PUT
+        # /alimentacao/alimentos e `Estoque.id` é um inteiro pequeno e
+        # sequencial. Com o `session.get(Estoque, eid)` de antes, sem nenhuma
+        # checagem de posse, bastava a fazenda B cadastrar um alimento
+        # qualquer informando os ids de estoque da fazenda A: cada item da
+        # vítima passava a apontar (`Estoque.alimento_id`) para o alimento do
+        # atacante — o vínculo era ROUBADO do alimento legítimo da fazenda A
+        # (ver o laço logo acima, que é justamente o que "rouba"), quebrando a
+        # baixa automática de dieta e o consumo dela em silêncio. Filtro na
+        # própria consulta, não num `if` depois: item de outra fazenda
+        # simplesmente não é encontrado.
+        query_item = select(Estoque).where(Estoque.id == eid)
+        if fazenda_id is not None:
+            query_item = query_item.where(Estoque.fazenda_id == fazenda_id)
+        item = session.exec(query_item).first()
         if item and item.alimento_id != alimento_id:
             item.alimento_id = alimento_id
             session.add(item)
@@ -1319,8 +1333,19 @@ def gerar_composicao_de_tabela_nutricional(
     from fazenda.models import TabelaNutricionalValor
     from fazenda.rules.tabela_nutricional import compor_alimento_nutricional_de_tabela
 
-    produto = session.get(TabelaNutricionalProduto, produto_id)
-    if not produto or (produto.fazenda_id is not None and produto.fazenda_id != fazenda_id):
+    # BUG DE SEGURANÇA CORRIGIDO: a checagem anterior
+    # (`produto.fazenda_id is not None and produto.fazenda_id != fazenda_id`)
+    # era tolerante ao contrário — deixava passar todo TabelaNutricionalProduto
+    # órfão (fazenda_id NULL, que a migração de backfill documenta existirem):
+    # qualquer fazenda gerava composição em cima do produto de ninguém e
+    # gravava AlimentoNutricional no próprio acervo a partir dele. `produto_id`
+    # é sequencial e vem na URL. Filtro na consulta: de outra fazenda, ou sem
+    # fazenda, dá 404 igual.
+    query_produto = select(TabelaNutricionalProduto).where(TabelaNutricionalProduto.id == produto_id)
+    if fazenda_id is not None:
+        query_produto = query_produto.where(TabelaNutricionalProduto.fazenda_id == fazenda_id)
+    produto = session.exec(query_produto).first()
+    if not produto:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
 
     alimento_id = produto.alimento_id

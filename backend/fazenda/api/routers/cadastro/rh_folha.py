@@ -9,7 +9,7 @@ Extraído do antigo `cadastro.py` monolítico.
 from __future__ import annotations
 
 import calendar
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
@@ -27,7 +27,14 @@ from fazenda.api.routers.financeiro import TAMANHO_MAXIMO_ANEXO, _proximo_numero
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
 from fazenda.rules import holerite
-from fazenda.rules.folha_rh import calcular_decimo_terceiro, calcular_ferias, calcular_rescisao
+from fazenda.rules.folha_rh import (
+    PARCELAS_DECIMO_TERCEIRO,
+    calcular_decimo_terceiro,
+    calcular_ferias,
+    calcular_rescisao,
+    retencoes_permitidas_decimo_terceiro,
+    valor_parcela_decimo_terceiro,
+)
 from fazenda.rules.parametros import (
     dias_ferias_padrao,
     percentual_estimado_fgts_mensal,
@@ -211,19 +218,28 @@ def _marcar_vale_aplicado(session: Session, pessoa_id: int, competencia: str) ->
         session.add(p)
 
 
-def _rescisao_fechada_antes_de(session: Session, pessoa_id: int, competencia: str) -> bool:
+def _rescisao_fechada_antes_de(
+    session: Session, pessoa_id: int, competencia: str, fazenda_id: int | None
+) -> bool:
     """
     True quando a pessoa já tem uma rescisão FECHADA (a simulação sozinha não
     conta — ver fluxo simulacao → fechada) com `data_desligamento` anterior ao
     início de `competencia`. Usada para nunca gerar/aceitar folha de um mês em
     que a pessoa já não trabalhava mais (bug: rescisão lançada em agosto não
     impedia a folha de setembro em diante).
+
+    `fazenda_id` é OBRIGATÓRIO e o filtro é INCONDICIONAL (`== fazenda_id`,
+    que em None vira `IS NULL`): esta função decide o que
+    `_remover_folha_pos_rescisao` APAGA, e a versão antiga consultava
+    `RescisaoFuncionario` sem filtro nenhum de fazenda — a rescisão de uma
+    fazenda respondia pela folha de outra.
     """
     ano, mes = (int(x) for x in competencia.split("-"))
     inicio_competencia = date(ano, mes, 1)
     rescisao = session.exec(
         select(RescisaoFuncionario).where(
             RescisaoFuncionario.pessoa_id == pessoa_id,
+            RescisaoFuncionario.fazenda_id == fazenda_id,
             RescisaoFuncionario.status == "fechada",
             RescisaoFuncionario.data_desligamento < inicio_competencia,
         )
@@ -233,16 +249,34 @@ def _rescisao_fechada_antes_de(session: Session, pessoa_id: int, competencia: st
 
 def _remover_folha_pos_rescisao(session: Session, fazenda_id: int | None) -> None:
     """
-    Self-heal: remove (com a conta a pagar vinculada, se ainda não paga)
-    qualquer folha PENDENTE de uma competência posterior à rescisão fechada da
-    pessoa — cobre o caso de a folha já ter sido gerada (recorrência ou
-    lançamento manual) ANTES de a rescisão ser lançada/fechada no sistema.
-    Nunca mexe em folha já paga."""
-    query = select(FolhaPagamento).where(FolhaPagamento.status != "pago")
-    if fazenda_id is not None:
-        query = query.where(FolhaPagamento.fazenda_id == fazenda_id)
+    Remove (com a conta a pagar vinculada, se ainda não paga) qualquer folha
+    PENDENTE de uma competência posterior à rescisão fechada da pessoa —
+    cobre o caso de a folha já ter sido gerada (recorrência ou lançamento
+    manual) ANTES de a rescisão ser lançada/fechada no sistema. Nunca mexe em
+    folha já paga.
+
+    DUAS CORREÇÕES DE SEGURANÇA aqui, porque esta é a única rotina do módulo
+    que DESTRÓI dado:
+
+    1. O filtro de fazenda era o padrão tolerante `if fazenda_id is not None`
+       — com um token legado (sem a claim `fid`, ex.: sessão "manter
+       conectado" emitida antes do multi-fazenda) `fazenda_id` chegava None,
+       a cláusula sumia e o loop varria e apagava a folha pendente de TODAS
+       as fazendas. Agora o `where` é incondicional: com um id filtra por ele,
+       com None vira `IS NULL` e alcança só o dado legado sem fazenda — nunca
+       o das outras.
+    2. Deixou de ser chamada de dentro do `GET /folha-pagamento`. Um GET não
+       pode apagar nada; a rotina agora roda no POST que cria o fato novo
+       (`/rescisoes/{id}/fechar`), que é onde a informação "esta pessoa saiu"
+       nasce. A geração recorrente já parava sozinha na rescisão fechada
+       (ver `_gerar_folha_recorrente`), então nada volta a sujar a base.
+    """
+    query = select(FolhaPagamento).where(
+        FolhaPagamento.status != "pago",
+        FolhaPagamento.fazenda_id == fazenda_id,
+    )
     for registro in session.exec(query).all():
-        if not _rescisao_fechada_antes_de(session, registro.pessoa_id, registro.competencia):
+        if not _rescisao_fechada_antes_de(session, registro.pessoa_id, registro.competencia, fazenda_id):
             continue
         if registro.numero_lancamento_gerado:
             conta = session.exec(
@@ -260,10 +294,16 @@ def _remover_folha_duplicada(session: Session, fazenda_id: int | None) -> None:
     competência) que a falta de idempotência em `criar_folha_pagamento`
     deixava acumular — mantém o pago (se houver) ou o mais recente, e remove
     o(s) outro(s) junto com a conta a pagar vinculada (se ainda não paga).
-    Nunca exclui um lançamento já pago."""
-    query = select(FolhaPagamento)
-    if fazenda_id is not None:
-        query = query.where(FolhaPagamento.fazenda_id == fazenda_id)
+    Nunca exclui um lançamento já pago.
+
+    Filtro de fazenda INCONDICIONAL pelo mesmo motivo de
+    `_remover_folha_pos_rescisao`: é uma rotina que apaga, e o padrão
+    tolerante `if fazenda_id is not None` deixava um token legado varrer as
+    outras fazendas. (Esta continua rodando na listagem, ao contrário da
+    outra: ela só desempata duplicatas DENTRO da própria pessoa/competência,
+    o gatilho é a leitura da tela e não existe outro momento em que a
+    duplicata legada apareça.)"""
+    query = select(FolhaPagamento).where(FolhaPagamento.fazenda_id == fazenda_id)
     por_chave: dict[tuple[int, str], list[FolhaPagamento]] = {}
     for registro in session.exec(query).all():
         por_chave.setdefault((registro.pessoa_id, registro.competencia), []).append(registro)
@@ -320,9 +360,14 @@ def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> 
     também estariam bloqueadas, então a geração deste modelo pode parar aí.
     """
     competencia_atual = date.today().strftime("%Y-%m")
-    query = select(FolhaPagamento).where(FolhaPagamento.recorrente == True)  # noqa: E712
-    if fazenda_id is not None:
-        query = query.where(FolhaPagamento.fazenda_id == fazenda_id)
+    # Filtro de fazenda incondicional (`== fazenda_id`, que em None vira
+    # `IS NULL`): esta rotina CRIA folha e conta a pagar, e o padrão tolerante
+    # `if fazenda_id is not None` fazia um token legado gerar em cima do
+    # dado das outras fazendas.
+    query = select(FolhaPagamento).where(
+        FolhaPagamento.recorrente == True,  # noqa: E712
+        FolhaPagamento.fazenda_id == fazenda_id,
+    )
     modelos = session.exec(query).all()
     for modelo in modelos:
         pessoa = session.get(Pessoa, modelo.pessoa_id)
@@ -330,7 +375,7 @@ def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> 
             continue
         competencia = _competencia_seguinte(modelo.competencia)
         while competencia <= competencia_atual:
-            if _rescisao_fechada_antes_de(session, modelo.pessoa_id, competencia):
+            if _rescisao_fechada_antes_de(session, modelo.pessoa_id, competencia, fazenda_id):
                 break
             existe = session.exec(
                 select(FolhaPagamento).where(
@@ -422,12 +467,14 @@ def _corrigir_folha_gerada_sem_retencao(session: Session, fazenda_id: int | None
     há como separar os dois no dado gravado, e a intenção registrada na
     recorrência é a melhor referência disponível.
     """
+    # Filtro de fazenda incondicional — ver `_remover_folha_pos_rescisao`:
+    # esta rotina REESCREVE valor de folha e de conta a pagar, então não pode
+    # depender do padrão tolerante `if fazenda_id is not None`.
     query = select(FolhaPagamento).where(
         FolhaPagamento.status != "pago",
         FolhaPagamento.origem_recorrencia_id != None,  # noqa: E711
+        FolhaPagamento.fazenda_id == fazenda_id,
     )
-    if fazenda_id is not None:
-        query = query.where(FolhaPagamento.fazenda_id == fazenda_id)
 
     houve_mudanca = False
     for registro in session.exec(query).all():
@@ -654,7 +701,9 @@ def listar_folha_pagamento(
 ) -> list[dict]:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     _remover_folha_duplicada(session, fazenda_id)
-    _remover_folha_pos_rescisao(session, fazenda_id)
+    # `_remover_folha_pos_rescisao` NÃO é chamada aqui de propósito: um GET
+    # não pode apagar dado. Ela roda em `fechar_rescisao`, no momento em que
+    # o desligamento passa a existir no sistema (ver a docstring dela).
     _gerar_folha_recorrente(session, fazenda_id)
     _corrigir_folha_gerada_sem_retencao(session, fazenda_id)
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
@@ -745,7 +794,7 @@ def criar_folha_pagamento(
         raise HTTPException(status_code=400, detail="Status inválido")
     if dados.recorrente and not (dados.dia_vencimento and 1 <= dados.dia_vencimento <= 28):
         raise HTTPException(status_code=400, detail="Informe o dia de vencimento (1 a 28) para lançamentos recorrentes")
-    if _rescisao_fechada_antes_de(session, dados.pessoa_id, dados.competencia):
+    if _rescisao_fechada_antes_de(session, dados.pessoa_id, dados.competencia, fazenda_id):
         raise HTTPException(
             status_code=400,
             detail="Esta pessoa tem rescisão fechada anterior a esta competência — não é possível lançar folha.",
@@ -1127,6 +1176,13 @@ def excluir_guia_folha_encargo(
 # opcional) e lançamento em Contas a Pagar. Sem envio ao eSocial (fora de
 # escopo) — só o controle interno do que a fazenda já paga hoje.
 # ---------------------------------------------------------------------------
+# Status posto pelo SERVIDOR em férias/13º absorvidos por uma rescisão
+# fechada (ver `_cancelar_ferias_decimo_da_rescisao`). Nunca aceito na
+# entrada dos endpoints: `_validar_ferias`/`_validar_decimo_terceiro` só
+# admitem "pendente" e "pago".
+STATUS_CANCELADO_RESCISAO = "cancelado_rescisao"
+
+
 class FeriasIn(BaseModel):
     pessoa_id: int
     periodo_aquisitivo_inicio: date
@@ -1154,6 +1210,38 @@ def _validar_ferias(dados: FeriasIn) -> None:
     # Abono pecuniário (art. 143 CLT) — no máximo 1/3 dos dias de direito.
     if dados.abono_pecuniario_dias < 0 or dados.abono_pecuniario_dias > dados.dias_direito // 3:
         raise HTTPException(status_code=400, detail=f"Abono pecuniário não pode exceder {dados.dias_direito // 3} dias (1/3 dos dias de direito)")
+    # A SOMA. As duas checagens acima eram feitas em separado e nunca somadas:
+    # 30 dias gozados + 10 dias vendidos passava nas duas e pagava 40 dias de
+    # férias sobre um direito de 30 (R$ 5.333,33 em vez de R$ 4.000 para um
+    # salário de R$ 3.000). Os dias vendidos SAEM dos dias de direito — o
+    # empregado goza 20 e vende 10, nunca goza 30 e vende mais 10 (art. 143
+    # CLT: a conversão é "de 1/3 do período de férias a que tiver direito").
+    if dados.dias_gozados + dados.abono_pecuniario_dias > dados.dias_direito:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Dias gozados ({dados.dias_gozados}) + abono pecuniário ({dados.abono_pecuniario_dias}) "
+                f"somam {dados.dias_gozados + dados.abono_pecuniario_dias} dias e não podem exceder os "
+                f"{dados.dias_direito} dias de direito — os dias vendidos saem do mesmo período (art. 143 CLT)."
+            ),
+        )
+
+
+def _vencimento_ferias(data_inicio_gozo: date, data_pagamento: date | None) -> date:
+    """
+    Vencimento da conta a pagar das férias. O art. 145 da CLT manda pagar
+    "até 2 (dois) dias antes do início do respectivo período" — a versão
+    antiga usava `data_fim_gozo`, jogando o vencimento (e o alerta da Agenda)
+    para ~30 dias DEPOIS do prazo legal: em férias de 01/07 a 30/07 o dinheiro
+    aparecia como devido em 30/07, um mês depois de ter de sair.
+
+    Não implementamos nenhuma dobra por atraso: a Súmula 450 do TST foi
+    declarada inconstitucional pelo STF (ADPF 501) e cancelada pela Resolução
+    TST nº 225/2025 — pagar fora do prazo do art. 145 hoje é só infração
+    administrativa. (A dobra do art. 137, por gozo depois do período
+    concessivo, é outra coisa e não é modelada aqui.)
+    """
+    return data_pagamento or (data_inicio_gozo - timedelta(days=2))
 
 
 @router.get("/ferias")
@@ -1188,8 +1276,11 @@ def criar_ferias(
     _validar_ferias(dados)
     conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
 
+    # Snapshot do salário no momento do lançamento — daqui pra frente é ELE
+    # que manda no recálculo (ver o PUT), não o Pessoa.salario_base de hoje.
+    salario_base = pessoa.salario_base
     calculo = calcular_ferias(
-        pessoa.salario_base, dados.dias_gozados, dados.abono_pecuniario_dias, percentual_terco_constitucional_ferias(),
+        salario_base, dados.dias_gozados, dados.abono_pecuniario_dias, percentual_terco_constitucional_ferias(),
     )
     numero_lancamento = _proximo_numero_lancamento(session, dados.data_fim_gozo.year)
 
@@ -1199,7 +1290,9 @@ def criar_ferias(
         dias_direito=dados.dias_direito, dias_gozados=dados.dias_gozados,
         data_inicio_gozo=dados.data_inicio_gozo, data_fim_gozo=dados.data_fim_gozo,
         abono_pecuniario_dias=dados.abono_pecuniario_dias,
+        salario_base=salario_base,
         valor_ferias=calculo["valor_ferias"], valor_terco_constitucional=calculo["valor_terco_constitucional"],
+        valor_abono=calculo["valor_abono"],
         valor_total=calculo["valor_total"],
         data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
         numero_lancamento_gerado=numero_lancamento, centro_custo=dados.centro_custo,
@@ -1210,8 +1303,10 @@ def criar_ferias(
     session.add(ContaGerencial(
         numero_lancamento=numero_lancamento,
         descricao=f"Férias — {pessoa.nome} ({dados.data_inicio_gozo.isoformat()} a {dados.data_fim_gozo.isoformat()})",
-        data_vencimento=dados.data_pagamento or dados.data_fim_gozo,
-        data_competencia=dados.data_fim_gozo,
+        # Vencimento e competência ancorados no INÍCIO do gozo (art. 145 CLT),
+        # não no fim — ver `_vencimento_ferias`.
+        data_vencimento=_vencimento_ferias(dados.data_inicio_gozo, dados.data_pagamento),
+        data_competencia=dados.data_inicio_gozo,
         fornecedor_cliente=pessoa.nome,
         tipo_documento="Férias",
         centro_custo=dados.centro_custo,
@@ -1239,6 +1334,11 @@ def atualizar_ferias(
         raise HTTPException(status_code=404, detail="Registro de férias não encontrado")
     if registro.status == "pago":
         raise HTTPException(status_code=400, detail="Férias já pagas não podem ser editadas.")
+    if registro.status == STATUS_CANCELADO_RESCISAO:
+        raise HTTPException(
+            status_code=400,
+            detail="Estas férias foram canceladas pela rescisão da pessoa — o valor já está nas verbas rescisórias.",
+        )
     pessoa = session.get(Pessoa, dados.pessoa_id)
     if not pessoa or (pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
@@ -1247,9 +1347,22 @@ def atualizar_ferias(
     _validar_ferias(dados)
     conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
 
+    # O RECÁLCULO USA O SNAPSHOT, não o salário de hoje. O botão "Marcar como
+    # pago" da tela manda um PUT completo, e a versão antiga recalculava tudo
+    # a partir de `pessoa.salario_base`: férias lançadas em janeiro por
+    # R$ 2.666,67 (salário R$ 2.000) viravam R$ 4.000 em março se o salário
+    # tivesse subido para R$ 3.000 no cadastro — e a conta a pagar era
+    # sobrescrita sem aviso nenhum. O snapshot só é renovado quando o
+    # lançamento passa a ser de OUTRA pessoa (aí o salário antigo não diz
+    # respeito a ninguém) ou quando o registro é anterior à migração
+    # e0b7c3a91d24 e não tem snapshot.
+    salario_base = registro.salario_base
+    if salario_base is None or dados.pessoa_id != registro.pessoa_id:
+        salario_base = pessoa.salario_base
     calculo = calcular_ferias(
-        pessoa.salario_base, dados.dias_gozados, dados.abono_pecuniario_dias, percentual_terco_constitucional_ferias(),
+        salario_base, dados.dias_gozados, dados.abono_pecuniario_dias, percentual_terco_constitucional_ferias(),
     )
+    registro.salario_base = salario_base
     registro.pessoa_id = dados.pessoa_id
     registro.periodo_aquisitivo_inicio = dados.periodo_aquisitivo_inicio
     registro.periodo_aquisitivo_fim = dados.periodo_aquisitivo_fim
@@ -1260,6 +1373,7 @@ def atualizar_ferias(
     registro.abono_pecuniario_dias = dados.abono_pecuniario_dias
     registro.valor_ferias = calculo["valor_ferias"]
     registro.valor_terco_constitucional = calculo["valor_terco_constitucional"]
+    registro.valor_abono = calculo["valor_abono"]
     registro.valor_total = calculo["valor_total"]
     registro.data_pagamento = dados.data_pagamento
     registro.status = dados.status
@@ -1275,8 +1389,8 @@ def atualizar_ferias(
         if conta and conta.valor_pago is None:
             conta.descricao = f"Férias — {pessoa.nome} ({dados.data_inicio_gozo.isoformat()} a {dados.data_fim_gozo.isoformat()})"
             conta.fornecedor_cliente = pessoa.nome
-            conta.data_vencimento = dados.data_pagamento or dados.data_fim_gozo
-            conta.data_competencia = dados.data_fim_gozo
+            conta.data_vencimento = _vencimento_ferias(dados.data_inicio_gozo, dados.data_pagamento)
+            conta.data_competencia = dados.data_inicio_gozo
             conta.centro_custo = dados.centro_custo
             conta.valor_total = calculo["valor_total"]
             conta.conta_bancaria = rotulo_conta_corrente(conta_corrente) if conta_corrente else None
@@ -1331,8 +1445,6 @@ class DecimoTerceiroIn(BaseModel):
     conta_corrente_id: int | None = None
 
 
-PARCELAS_DECIMO_TERCEIRO = ("unica", "primeira", "segunda")
-
 
 def _validar_decimo_terceiro(dados: DecimoTerceiroIn) -> None:
     if dados.status not in ("pendente", "pago"):
@@ -1341,6 +1453,60 @@ def _validar_decimo_terceiro(dados: DecimoTerceiroIn) -> None:
         raise HTTPException(status_code=400, detail="Parcela inválida")
     if dados.meses_trabalhados < 1 or dados.meses_trabalhados > 12:
         raise HTTPException(status_code=400, detail="Meses trabalhados deve estar entre 1 e 12")
+    # INSS e IRRF incidem SÓ na 2ª parcela, sobre o 13º integral (Lei
+    # 8.212/1991, art. 28, §7º; Dec. 3.048/1999, art. 214, §6º; Lei
+    # 7.713/1988, art. 26). A 1ª é adiantamento pago CHEIO — descontar nela é
+    # erro clássico de folha, e o formulário aceitava sem reclamar.
+    if not retencoes_permitidas_decimo_terceiro(dados.parcela) and (dados.valor_inss or dados.valor_ir):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "A 1ª parcela do 13º é adiantamento e é paga sem retenção: INSS e IRRF incidem só na "
+                "2ª parcela, sobre o 13º integral (Lei 4.749/1965 e Lei 8.212/1991, art. 28, §7º)."
+            ),
+        )
+
+
+ROTULO_PARCELA_DECIMO = {"unica": "parcela única", "primeira": "1ª parcela", "segunda": "2ª parcela"}
+
+
+def _detalhe_decimo_terceiro_esgotado(parcela: str, ano: int, valor_integral: float, ja_lancado: float) -> str:
+    """Mensagem do 400 quando não sobra nada a pagar nesta parcela — diz a
+    conta inteira, para o usuário não ficar adivinhando por que o lançamento
+    foi recusado."""
+    if parcela == "primeira":
+        limite = "50% do 13º (adiantamento, Lei 4.749/1965, art. 2º)"
+    else:
+        limite = "o 13º integral"
+    return (
+        f"Nada a lançar nesta {ROTULO_PARCELA_DECIMO.get(parcela, parcela)}: o 13º de {ano} é de "
+        f"R$ {valor_integral:.2f} e já há R$ {ja_lancado:.2f} lançado(s) para esta pessoa no ano — "
+        f"o limite desta parcela é {limite}. Exclua ou ajuste a parcela já lançada antes de lançar outra."
+    )
+
+
+def _decimo_terceiro_ja_lancado(
+    session: Session, pessoa_id: int, ano: int, fazenda_id: int | None, ignorar_id: int | None = None
+) -> float:
+    """
+    Soma do BRUTO das outras parcelas de 13º já lançadas para a mesma pessoa
+    no mesmo ano — é o que impede a soma das parcelas de ultrapassar o 13º
+    devido (ver `valor_parcela_decimo_terceiro`). Ignora o que foi cancelado
+    por rescisão, que justamente deixou de ser devido por aqui.
+
+    Filtro de fazenda incondicional (nunca `if fazenda_id is not None`): sem
+    ele, a 1ª parcela lançada em outra fazenda entraria na conta desta.
+    """
+    query = select(DecimoTerceiro).where(
+        DecimoTerceiro.pessoa_id == pessoa_id,
+        DecimoTerceiro.ano == ano,
+        DecimoTerceiro.fazenda_id == fazenda_id,
+        DecimoTerceiro.status != STATUS_CANCELADO_RESCISAO,
+    )
+    return round(
+        sum(r.valor_bruto for r in session.exec(query).all() if r.id != ignorar_id),
+        2,
+    )
 
 
 @router.get("/decimo-terceiro")
@@ -1375,7 +1541,20 @@ def criar_decimo_terceiro(
     _validar_decimo_terceiro(dados)
     conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
 
-    valor_bruto = calcular_decimo_terceiro(pessoa.salario_base, dados.meses_trabalhados)
+    # Snapshot do salário (ver criar_ferias) + divisão em parcelas. ANTES:
+    # `valor_bruto = calcular_decimo_terceiro(...)` — o 13º CHEIO — era
+    # gravado igual para "unica", "primeira" e "segunda", e a parcela só
+    # trocava o rótulo e o vencimento. Lançar 1ª + 2ª de um salário de
+    # R$ 3.000 punha R$ 6.000 em Contas a Pagar.
+    salario_base = pessoa.salario_base
+    valor_integral = calcular_decimo_terceiro(salario_base, dados.meses_trabalhados)
+    ja_lancado = _decimo_terceiro_ja_lancado(session, dados.pessoa_id, dados.ano, fazenda_id)
+    valor_bruto = valor_parcela_decimo_terceiro(valor_integral, dados.parcela, ja_lancado)
+    if valor_bruto <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=_detalhe_decimo_terceiro_esgotado(dados.parcela, dados.ano, valor_integral, ja_lancado),
+        )
     valor_inss = round(dados.valor_inss, 2)
     valor_ir = round(dados.valor_ir, 2)
     valor_liquido = round(valor_bruto - valor_inss - valor_ir, 2)
@@ -1387,6 +1566,7 @@ def criar_decimo_terceiro(
 
     registro = DecimoTerceiro(
         pessoa_id=dados.pessoa_id, ano=dados.ano, parcela=dados.parcela, meses_trabalhados=dados.meses_trabalhados,
+        salario_base=salario_base, valor_integral=valor_integral,
         valor_bruto=valor_bruto, valor_inss=valor_inss, valor_ir=valor_ir, valor_liquido=valor_liquido,
         data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
         numero_lancamento_gerado=numero_lancamento, centro_custo=dados.centro_custo,
@@ -1426,6 +1606,11 @@ def atualizar_decimo_terceiro(
         raise HTTPException(status_code=404, detail="Registro de 13º salário não encontrado")
     if registro.status == "pago":
         raise HTTPException(status_code=400, detail="13º salário já pago não pode ser editado.")
+    if registro.status == STATUS_CANCELADO_RESCISAO:
+        raise HTTPException(
+            status_code=400,
+            detail="Este 13º foi cancelado pela rescisão da pessoa — o proporcional já está nas verbas rescisórias.",
+        )
     pessoa = session.get(Pessoa, dados.pessoa_id)
     if not pessoa or (pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
@@ -1434,7 +1619,23 @@ def atualizar_decimo_terceiro(
     _validar_decimo_terceiro(dados)
     conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
 
-    valor_bruto = calcular_decimo_terceiro(pessoa.salario_base, dados.meses_trabalhados)
+    # Recálculo pelo SNAPSHOT, não pelo salário de hoje (ver atualizar_ferias
+    # — o botão "Marcar como pago" passa por aqui), e com a mesma divisão em
+    # parcelas do POST, descontando o que as OUTRAS parcelas do ano já
+    # levaram (`ignorar_id` tira este próprio registro da soma).
+    salario_base = registro.salario_base
+    if salario_base is None or dados.pessoa_id != registro.pessoa_id:
+        salario_base = pessoa.salario_base
+    valor_integral = calcular_decimo_terceiro(salario_base, dados.meses_trabalhados)
+    ja_lancado = _decimo_terceiro_ja_lancado(
+        session, dados.pessoa_id, dados.ano, fazenda_id, ignorar_id=registro.id,
+    )
+    valor_bruto = valor_parcela_decimo_terceiro(valor_integral, dados.parcela, ja_lancado)
+    if valor_bruto <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=_detalhe_decimo_terceiro_esgotado(dados.parcela, dados.ano, valor_integral, ja_lancado),
+        )
     valor_inss = round(dados.valor_inss, 2)
     valor_ir = round(dados.valor_ir, 2)
     valor_liquido = round(valor_bruto - valor_inss - valor_ir, 2)
@@ -1445,6 +1646,8 @@ def atualizar_decimo_terceiro(
     registro.ano = dados.ano
     registro.parcela = dados.parcela
     registro.meses_trabalhados = dados.meses_trabalhados
+    registro.salario_base = salario_base
+    registro.valor_integral = valor_integral
     registro.valor_bruto = valor_bruto
     registro.valor_inss = valor_inss
     registro.valor_ir = valor_ir
@@ -1943,6 +2146,90 @@ def excluir_rescisao_simulacao(
     return {"ok": True}
 
 
+def _cancelar_conta_pendente(session: Session, numero_lancamento: str | None, fazenda_id: int | None) -> None:
+    """Remove a conta a pagar de um lançamento cancelado, desde que ainda não
+    tenha sido paga — mesma regra e mesmo cuidado de `excluir_ferias`/
+    `excluir_decimo_terceiro`. Conta já paga fica onde está: aí o dinheiro
+    saiu e apagar seria reescrever histórico financeiro."""
+    if not numero_lancamento:
+        return
+    conta = session.exec(
+        select(ContaGerencial).where(
+            ContaGerencial.numero_lancamento == numero_lancamento,
+            ContaGerencial.fazenda_id == fazenda_id,
+        )
+    ).first()
+    if conta and conta.valor_pago is None:
+        session.delete(conta)
+
+
+def _cancelar_ferias_decimo_da_rescisao(
+    session: Session, rescisao: RescisaoFuncionario, fazenda_id: int | None
+) -> list[dict]:
+    """
+    Cancela os lançamentos de férias/13º PENDENTES que a rescisão absorve —
+    era um pagamento em duplicidade real: o 13º de 2026 lançado em novembro
+    (conta a pagar de R$ 3.000 vencendo 20/12, ainda pendente) continuava lá
+    depois de a rescisão de 10/12 ser fechada JÁ INCLUINDO o 13º proporcional
+    de 12 meses. Duas contas a pagar do mesmo 13º, e nada as relacionava.
+
+    O que entra no cancelamento, e só isto:
+    - 13º do ANO do desligamento — é exatamente o que a verba
+      `decimo_terceiro_proporcional` da rescisão paga. 13º de anos anteriores
+      ainda em aberto é dívida velha, que a rescisão não cobre e não some.
+    - férias cujo gozo AINDA NÃO TERMINOU na data do desligamento
+      (`data_fim_gozo > data_desligamento`) — férias que a pessoa não vai
+      mais gozar. As férias vencidas/proporcionais da rescisão são verbas
+      próprias (`dias_ferias_vencidas` + a proporcional calculada). Um
+      período já gozado e não pago continua sendo dívida real e fica intacto.
+
+    NADA É APAGADO: o registro fica no banco com `status`
+    "cancelado_rescisao" e `rescisao_id` apontando para a rescisão que o
+    cancelou — é o que torna o cancelamento explícito na tela, auditável e
+    reversível (basta devolver o status e relançar a conta). Só a CONTA A
+    PAGAR pendente some, porque é ela que geraria o pagamento em dobro; conta
+    já paga nunca é tocada, e por isso um lançamento já pago também não é
+    cancelado.
+    """
+    cancelados: list[dict] = []
+
+    query_decimo = select(DecimoTerceiro).where(
+        DecimoTerceiro.pessoa_id == rescisao.pessoa_id,
+        DecimoTerceiro.fazenda_id == fazenda_id,
+        DecimoTerceiro.ano == rescisao.data_desligamento.year,
+        DecimoTerceiro.status == "pendente",
+    )
+    for d in session.exec(query_decimo).all():
+        _cancelar_conta_pendente(session, d.numero_lancamento_gerado, fazenda_id)
+        d.status = STATUS_CANCELADO_RESCISAO
+        d.rescisao_id = rescisao.id
+        session.add(d)
+        cancelados.append({
+            "tipo": "decimo_terceiro", "id": d.id, "valor": d.valor_liquido,
+            "descricao": f"13º salário {d.ano} ({ROTULO_PARCELA_DECIMO.get(d.parcela, d.parcela)})",
+        })
+
+    query_ferias = select(FeriasFuncionario).where(
+        FeriasFuncionario.pessoa_id == rescisao.pessoa_id,
+        FeriasFuncionario.fazenda_id == fazenda_id,
+        FeriasFuncionario.status == "pendente",
+        FeriasFuncionario.data_fim_gozo > rescisao.data_desligamento,
+    )
+    for f in session.exec(query_ferias).all():
+        _cancelar_conta_pendente(session, f.numero_lancamento_gerado, fazenda_id)
+        f.status = STATUS_CANCELADO_RESCISAO
+        f.rescisao_id = rescisao.id
+        session.add(f)
+        cancelados.append({
+            "tipo": "ferias", "id": f.id, "valor": f.valor_total,
+            "descricao": (
+                f"Férias {f.data_inicio_gozo.strftime('%d/%m/%Y')} a {f.data_fim_gozo.strftime('%d/%m/%Y')}"
+            ),
+        })
+
+    return cancelados
+
+
 @router.post("/rescisoes/{registro_id}/fechar")
 def fechar_rescisao(
     registro_id: int, dados: RescisaoFecharIn, session: Session = Depends(get_session),
@@ -2036,9 +2323,24 @@ def fechar_rescisao(
         session.add(pessoa)
         registro.inativou_pessoa = True
     session.add(registro)
+    session.flush()  # o registro precisa ter id antes de ser referenciado abaixo
+
+    # O fechamento é o momento em que "esta pessoa saiu" passa a existir no
+    # sistema — é aqui que os pagamentos futuros que a rescisão absorve são
+    # encerrados, e não numa varredura dentro de um GET (ver
+    # `_remover_folha_pos_rescisao`).
+    cancelados = _cancelar_ferias_decimo_da_rescisao(session, registro, fazenda_id)
     session.commit()
+    _remover_folha_pos_rescisao(session, fazenda_id)
     session.refresh(registro)
-    return {**registro.model_dump(), "pessoa_nome": pessoa.nome, "detalhe": _detalhe_rescisao(registro)}
+    return {
+        **registro.model_dump(),
+        "pessoa_nome": pessoa.nome,
+        "detalhe": _detalhe_rescisao(registro),
+        # Explícito na resposta para a tela poder dizer o que foi encerrado
+        # junto, em vez de o lançamento sumir sem explicação.
+        "lancamentos_cancelados": cancelados,
+    }
 
 
 # ---------------------------------------------------------------------------
