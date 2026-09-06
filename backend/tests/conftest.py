@@ -18,6 +18,10 @@ mesma proteção individualmente.
 """
 import os
 import tempfile
+import weakref
+
+import sqlalchemy
+import sqlmodel
 
 # ── Faxina dos bancos temporários ────────────────────────────────────────────
 #
@@ -54,6 +58,85 @@ def pytest_sessionfinish(session, exitstatus):
                 os.unlink(alvo)
             except OSError:
                 pass  # já apagado, nunca criado, ou em uso — nada a fazer
+
+
+# ── Faxina dos engines ───────────────────────────────────────────────────────
+#
+# A suíte inteira num processo só NÃO CABE na memória de um runner do GitHub
+# (16 GB). Medido em 06/09/2026 numa máquina com a mesma RAM: pico de 13,6 GB
+# e o processo morto pelo OOM killer (exit 137); no CI o job morre antes,
+# sempre por volta de 30% dos testes, com exit 143 ("The runner has received a
+# shutdown signal") — que parece teste quebrado e não é, porque não há um
+# único F antes.
+#
+# A causa não é o volume de testes, é que ninguém fecha o engine: 277 arquivos
+# chamam `create_engine` e apenas UM chamava `dispose()`. Cada engine mantém
+# um connection pool vivo até o fim do PROCESSO — e, nos testes que usam
+# `StaticPool` com "sqlite://", a conexão única segura o banco em memória
+# inteiro. São ~276 pools (e bancos) acumulando enquanto a sessão do pytest
+# durar.
+#
+# O wrapper abaixo anota cada engine criado e `pytest_runtest_teardown` o
+# descarta ao fim do teste que o criou. É seguro descartar no teardown porque
+# nenhuma fixture da suíte tem escopo maior que `function` e nenhum módulo
+# cria engine fora de fixture (conferido: 0 e 0) — ou seja, nenhum engine é
+# reusado entre testes.
+#
+# A lista guarda WEAKREF de propósito: uma referência forte manteria vivo
+# justamente o objeto que se quer liberar, trocando um vazamento por outro.
+_ENGINES_DO_TESTE: list = []
+
+
+def _rastrear_engine(engine):
+    _ENGINES_DO_TESTE.append(weakref.ref(engine))
+    return engine
+
+
+def _patch_create_engine(modulo) -> None:
+    """Embrulha `create_engine` do módulo, se ele tiver um.
+
+    Os dois pontos importam: os testes escrevem tanto `from sqlmodel import
+    create_engine` quanto `from sqlalchemy import create_engine`, e o `from`
+    copia a referência no import do módulo de teste. Este conftest.py roda
+    antes da coleta (garantia do pytest para conftest.py na raiz), então os
+    módulos de teste já importam a versão embrulhada.
+    """
+    original = getattr(modulo, "create_engine", None)
+    if original is None or getattr(original, "_cowdata_rastreado", False):
+        return
+
+    def _wrapper(*args, **kwargs):
+        return _rastrear_engine(original(*args, **kwargs))
+
+    _wrapper._cowdata_rastreado = True  # evita embrulhar duas vezes
+    modulo.create_engine = _wrapper
+
+
+_patch_create_engine(sqlalchemy)
+_patch_create_engine(sqlmodel)
+
+
+def pytest_runtest_teardown(item, nextitem):
+    """Fecha o pool de todo engine criado durante o teste que acabou.
+
+    `dispose()` não invalida o engine — só devolve o pool e fecha as conexões
+    —, mas num engine `StaticPool`/"sqlite://" ele descarta o banco em
+    memória junto. É exatamente o que se quer AQUI, no teardown: o teste já
+    terminou e ninguém mais vai ler aquele banco. Por isso este hook não pode
+    virar `pytest_runtest_setup` nem rodar entre asserts.
+
+    Erros são engolidos um a um: uma falha ao descartar um engine não pode
+    derrubar o teste que acabou de passar.
+    """
+    for ref in _ENGINES_DO_TESTE:
+        engine = ref()
+        if engine is None:
+            continue  # já coletado pelo GC — nada a fazer
+        try:
+            engine.dispose()
+        except Exception:
+            pass
+    _ENGINES_DO_TESTE.clear()
 
 
 os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.mktemp(suffix='.db')}"
