@@ -732,12 +732,16 @@ export const fetchConsultoresCowData = (): Promise<ConsultorCowData[]> => _pcGet
 
 // Login + permissões de um membro no próprio Painel CowData (ago/2026) —
 // ver AREAS_PAINEL_COWDATA no backend. Restrito ao dono (não ao membro logado).
-export const AREAS_PAINEL_COWDATA = ["cockpit", "assinaturas", "fazendas", "financeiro", "equipe", "produto", "cofre", "confianca", "cadastros"] as const;
+export const AREAS_PAINEL_COWDATA = ["cockpit", "assinaturas", "fazendas", "financeiro", "equipe", "produto", "cofre", "confianca", "cadastros", "farmacia"] as const;
 export type AreaPainelCowData = typeof AREAS_PAINEL_COWDATA[number];
 export const LABEL_AREA_PAINEL_COWDATA: Record<AreaPainelCowData, string> = {
   cockpit: "Cockpit", assinaturas: "Assinaturas", fazendas: "Fazendas", financeiro: "Financeiro",
   equipe: "Equipe", produto: "Produtos e robôs", cofre: "Cofre de acesso (Suporte)", confianca: "Confiança e LGPD",
   cadastros: "Cadastros globais",
+  // "farmacia" existe em AREAS_PAINEL_COWDATA (backend) desde que
+  // painel_cowdata_farmacia.py nasceu, mas faltava aqui — sem ela o dono não
+  // tinha como conceder a área e todo membro batia em 403 na Farmácia.
+  farmacia: "Farmácia CowData",
 };
 // Nível de sigilo (#132) — quanto de uma fazenda-cliente este membro enxerga
 // numa sessão de suporte (Cofre de acesso), eixo à parte de "áreas" (o que
@@ -762,6 +766,12 @@ export type UsuarioEquipeCowData = {
   pode_suspender_assinatura: boolean; pode_acessar_fazendas: boolean; pode_alterar_cadastro: boolean;
   pode_modificar_suspender_plano: boolean; pode_emitir_auditar_contratos: boolean; pode_emitir_cobrancas: boolean;
   pode_vincular_usuarios: boolean; pode_cadastrar_usuarios: boolean;
+  // Sete permissões de EDIÇÃO no próprio Painel CowData (set/2026) — ver
+  // PERMISSOES_EDICAO_PAINEL_COWDATA no backend. Consulta continua vindo da
+  // área; estas só liberam a escrita.
+  pode_editar_cadastros_globais: boolean; pode_editar_touros_naab: boolean; pode_editar_farmacia: boolean;
+  pode_consultar_usuarios: boolean; pode_editar_usuarios: boolean; pode_controlar_acesso_usuarios: boolean;
+  pode_editar_news: boolean;
 };
 export type UsuarioEquipeCowDataIn = {
   username: string; email: string; senha?: string | null; ativo?: boolean; areas: string[];
@@ -769,7 +779,44 @@ export type UsuarioEquipeCowDataIn = {
   pode_suspender_assinatura?: boolean; pode_acessar_fazendas?: boolean; pode_alterar_cadastro?: boolean;
   pode_modificar_suspender_plano?: boolean; pode_emitir_auditar_contratos?: boolean; pode_emitir_cobrancas?: boolean;
   pode_vincular_usuarios?: boolean; pode_cadastrar_usuarios?: boolean;
+  pode_editar_cadastros_globais?: boolean; pode_editar_touros_naab?: boolean; pode_editar_farmacia?: boolean;
+  pode_consultar_usuarios?: boolean; pode_editar_usuarios?: boolean; pode_controlar_acesso_usuarios?: boolean;
+  pode_editar_news?: boolean;
 };
+// As sete permissões de EDIÇÃO no Painel CowData, na ordem em que o dono as
+// pediu. `livre` marca aquelas cujo CONSULTAR não depende de permissão
+// nenhuma — a tela precisa dizer isso em voz alta para ninguém achar que
+// desmarcar a caixa esconde a informação.
+export type CampoPermissaoEdicaoCowData =
+  | "pode_editar_cadastros_globais" | "pode_editar_touros_naab" | "pode_editar_farmacia"
+  | "pode_consultar_usuarios" | "pode_editar_usuarios" | "pode_controlar_acesso_usuarios"
+  | "pode_editar_news";
+export const PERMISSOES_EDICAO_PAINEL_COWDATA: {
+  campo: CampoPermissaoEdicaoCowData; rotulo: string; ajuda: string; consultaLivre: boolean;
+}[] = [
+  { campo: "pode_editar_cadastros_globais", rotulo: "Pode editar cadastros globais?",
+    ajuda: "Aplicar, renomear e desativar motivos, raças, grau de sangue, unidades de estoque e tipos/métodos reprodutivos nas fazendas-cliente.",
+    consultaLivre: true },
+  { campo: "pode_editar_touros_naab", rotulo: "Pode editar touros NAAB?",
+    ajuda: "Cadastrar, editar, excluir, recarregar o catálogo padrão e importar a planilha do fornecedor. O catálogo é o mesmo para todas as fazendas.",
+    consultaLivre: true },
+  { campo: "pode_editar_farmacia", rotulo: "Pode editar a Farmácia CowData?",
+    ajuda: "Criar e alterar categorias, princípios ativos e medicamentos do catálogo central, e propagá-los para as fazendas-cliente.",
+    consultaLivre: true },
+  { campo: "pode_consultar_usuarios", rotulo: "Pode consultar usuários das fazendas-cliente?",
+    ajuda: "Ver a lista de pessoas e de logins de cada fazenda-cliente na tela Usuários.",
+    consultaLivre: false },
+  { campo: "pode_editar_usuarios", rotulo: "Pode editar usuários das fazendas-cliente?",
+    ajuda: "Criar um login e alterar login/e-mail de quem já existe.",
+    consultaLivre: false },
+  { campo: "pode_controlar_acesso_usuarios", rotulo: "Pode controlar o acesso desses usuários?",
+    ajuda: "Definir senha, papel, permissões de módulo e situação (ativo/inativo) — é o que decide quem entra e até onde vai. Vale também na criação do login.",
+    consultaLivre: false },
+  { campo: "pode_editar_news", rotulo: "Pode editar News?",
+    ajuda: "Publicar, editar, excluir e revisar matérias do blog, e gerenciar as fotos delas.",
+    consultaLivre: false },
+];
+
 export const fetchUsuarioEquipeCowData = (pessoaId: number): Promise<UsuarioEquipeCowData | null> => _pcGet(`/equipe/pessoas/${pessoaId}/usuario`);
 export const criarUsuarioEquipeCowData = (pessoaId: number, d: UsuarioEquipeCowDataIn): Promise<UsuarioEquipeCowData> =>
   _pcSend(`/equipe/pessoas/${pessoaId}/usuario`, "POST", d);
@@ -7638,12 +7685,25 @@ export type Touro = {
   dados_extra?: string | null; // JSON [[rótulo, valor], ...] — demais dados da planilha do fornecedor
 };
 export type TouroIn = Omit<Touro, "id" | "atualizado_em" | "dados_extra"> & { dados_extra?: [string, string][] | null };
+// LEITURA do catálogo NAAB pela fazenda — não mudou, e é ela que alimenta
+// listagem/busca, prova média, estudo de touros, inseminação (inclusive com
+// touro fora do estoque), sugestão de acasalamento, ficha do animal e compra
+// de sêmen.
 export const fetchTouros = (): Promise<Touro[]> => _rGet(`/cadastro/touros`);
-export const fetchCamposPlanilhaTouros = (): Promise<string[]> => _rGet(`/cadastro/touros/campos-planilha`);
-export const criarTouro = (d: TouroIn): Promise<Touro> => _rSend(`/cadastro/touros`, "POST", d);
-export const atualizarTouro = (id: number, d: TouroIn): Promise<Touro> => _rSend(`/cadastro/touros/${id}`, "PUT", d);
-export const excluirTouro = (id: number) => _rSend(`/cadastro/touros/${id}`, "DELETE");
-export const recarregarCatalogoTouros = (): Promise<{ touros_antes: number; touros_depois: number }> => _rSend(`/cadastro/touros/recarregar-catalogo`, "POST");
+
+// MANUTENÇÃO do catálogo — só no Painel CowData (set/2026). O catálogo é
+// GLOBAL (um `Touro` só, sem fazenda_id, lido por todas as fazendas-cliente):
+// as rotas de escrita saíram de /cadastro/touros, onde o administrador de
+// qualquer fazenda-cliente reescrevia o catálogo de todas, e hoje exigem a
+// permissão "editar touros NAAB" do cadastro de equipe. Ver
+// backend/fazenda/api/routers/painel_cowdata_touros.py.
+export const fetchTourosCowData = (): Promise<Touro[]> => _pcGet(`/touros`);
+export const fetchCamposPlanilhaTourosCowData = (): Promise<string[]> => _pcGet(`/touros/campos-planilha`);
+export const criarTouroCowData = (d: TouroIn): Promise<Touro> => _pcSend(`/touros`, "POST", d);
+export const atualizarTouroCowData = (id: number, d: TouroIn): Promise<Touro> => _pcSend(`/touros/${id}`, "PUT", d);
+export const excluirTouroCowData = (id: number) => _pcSend(`/touros/${id}`, "DELETE");
+export const recarregarCatalogoTourosCowData = (): Promise<{ touros_antes: number; touros_depois: number }> =>
+  _pcSend(`/touros/recarregar-catalogo`, "POST");
 
 export type ProvaMediaCampos = Record<
   "leite_kg" | "gordura_kg" | "gordura_pct" | "proteina_kg" | "proteina_pct" | "tpi" | "nm_dolar"
