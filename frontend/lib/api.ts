@@ -2287,15 +2287,56 @@ export type OrigemRetencao = {
   confere: boolean | null;
   diferenca: number | null;
 };
+/** A compra (parcela de lançamento financeiro) que um desconto está abatendo —
+ *  o que a janela sobreposta de consulta de contas devolve e o que viaja junto
+ *  da linha do recibo. */
+export type CompraDoDesconto = {
+  conta_id: number;
+  numero_lancamento: string | null;
+  descricao: string | null;
+  fornecedor_cliente: string | null;
+  numero_nota: string | null;
+  tipo_documento: string | null;
+  centro_custo: string | null;
+  data_emissao: string | null;
+  data_vencimento: string | null;
+  data_pagamento: string | null;
+  valor_total: number;
+  valor_pago: number | null;
+  parcela_num: number | null;
+  parcela_total: number | null;
+};
+/** Origem de uma rubrica acrescentada ao holerite (vencimento ou desconto).
+ *  O enquadramento vem CONGELADO do servidor — a tela nunca decide natureza
+ *  nem incidência, só mostra o que foi gravado no lançamento. */
+export type OrigemRubrica = {
+  tipo: "rubrica";
+  rubrica_id: number;
+  codigo: string;
+  rotulo: string;
+  especie: "vencimento" | "desconto";
+  descricao: string | null;
+  natureza: "salarial" | "indenizatoria";
+  incide_inss: boolean;
+  incide_irrf: boolean;
+  incide_fgts: boolean;
+  incorpora_base: boolean;
+  /** "2026-08" no aumento na folha (a partir de quando vira salário-base);
+   *  null em todas as demais. */
+  competencia_incorporacao: string | null;
+  fundamento: string | null;
+  compra: CompraDoDesconto | null;
+};
 export type LinhaHolerite = {
   label: string;
   valor: number;
-  tipo: "bruto" | "inss" | "ir" | "vale" | "outros" | "liquido" | "ferias" | "terco" | "abono";
+  tipo: "bruto" | "inss" | "ir" | "vale" | "outros" | "liquido" | "ferias" | "terco" | "abono"
+    | "vencimento_extra" | "desconto_extra";
   descricao: string;
   referencia: string;
   provento: number | null;
   desconto: number | null;
-  origem: OrigemVale | OrigemRetencao | null;
+  origem: OrigemVale | OrigemRetencao | OrigemRubrica | null;
 };
 export type TotaisHolerite = {
   total_proventos: number;
@@ -2310,8 +2351,12 @@ export type BasesHolerite = {
   /** Sempre `FolhaPagamento.valor_bruto`, NUNCA `Pessoa.salario_base` (valor
    *  vivo: reimprimir 2024 mostraria o salário de hoje). */
   salario_base: number;
+  /** Base das retenções = salário + rubricas SALARIAIS (bonificação, guelta,
+   *  aumento). Reembolso e indenização não entram: são indenizatórios. */
   base_inss: number | null;
   base_ir: number | null;
+  /** Quanto das bases veio de rubrica salarial — 0 na folha comum. */
+  rubricas_tributaveis?: number;
   fgts_projetado: number | null;
   percentual_fgts: number | null;
   dctf_projetado: number | null;
@@ -2440,6 +2485,86 @@ export type LinhaFolhaUnificada = {
 export async function fetchFolhaPagamentoUnificada(): Promise<LinhaFolhaUnificada[]> {
   const res = await authFetch(`${API}/cadastro/folha-pagamento-unificada`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Folha de pagamento (unificada) error: ${res.status}`);
+  return res.json();
+}
+
+// ── Rubricas do holerite (vencimentos e descontos acrescentados) ──
+// O enquadramento trabalhista (natureza salarial × indenizatória e as
+// incidências de INSS/IRRF/FGTS) é decidido no SERVIDOR a partir do código —
+// a tela manda o código e exibe a consequência, nunca a define. Ver
+// backend/fazenda/rules/rubrica_folha.py.
+export type RubricaCatalogoItem = {
+  codigo: string;
+  rotulo: string;
+  fundamento: string;
+  natureza?: "salarial" | "indenizatoria";
+  incide_inss?: boolean;
+  incide_irrf?: boolean;
+  incide_fgts?: boolean;
+  incorpora_base?: boolean;
+  exige_compra?: boolean;
+};
+export type CatalogoRubricas = { vencimentos: RubricaCatalogoItem[]; descontos: RubricaCatalogoItem[] };
+export type RubricaFolha = {
+  id: number;
+  folha_id: number;
+  pessoa_id: number;
+  competencia: string;
+  especie: "vencimento" | "desconto";
+  codigo: string;
+  descricao: string | null;
+  valor: number;
+  natureza: "salarial" | "indenizatoria";
+  incide_inss: boolean;
+  incide_irrf: boolean;
+  incide_fgts: boolean;
+  incorpora_base: boolean;
+  conta_gerencial_id: number | null;
+  numero_lancamento: string | null;
+  rotulo: string;
+  referencia: string;
+  compra: CompraDoDesconto | null;
+};
+export type RubricaFolhaDados = {
+  especie: "vencimento" | "desconto";
+  codigo: string;
+  valor: number;
+  descricao?: string | null;
+  conta_gerencial_id?: number | null;
+};
+export async function fetchCatalogoRubricas(): Promise<CatalogoRubricas> {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/rubricas/catalogo`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Catálogo de rubricas error: ${res.status}`);
+  return res.json();
+}
+export async function fetchComprasParaDesconto(busca?: string): Promise<CompraDoDesconto[]> {
+  const qs = busca ? `?busca=${encodeURIComponent(busca)}` : "";
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/rubricas/compras${qs}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Consulta de contas error: ${res.status}`);
+  return res.json();
+}
+export async function fetchRubricasFolha(folhaId: number): Promise<RubricaFolha[]> {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/${folhaId}/rubricas`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Rubricas da folha error: ${res.status}`);
+  return res.json();
+}
+export async function criarRubricaFolha(folhaId: number, dados: RubricaFolhaDados) {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/${folhaId}/rubricas`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao acrescentar a rubrica"); }
+  return res.json();
+}
+export async function atualizarRubricaFolha(rubricaId: number, dados: { valor: number; descricao?: string | null }) {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/rubricas/${rubricaId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar a rubrica"); }
+  return res.json();
+}
+export async function excluirRubricaFolha(rubricaId: number) {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/rubricas/${rubricaId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir a rubrica"); }
   return res.json();
 }
 export async function excluirParcelaEmpreitada(id: number) {

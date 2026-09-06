@@ -31,6 +31,7 @@ from . import (
     protocolos_sanitarios,
     rh_contratos,
     rh_folha,
+    rh_folha_rubricas,
     rh_vale_acoes,
     rh_vale_item,
     sanitario,
@@ -101,6 +102,12 @@ _exige_financeiro = [
 ]
 router.include_router(rh_folha.router, dependencies=_exige_financeiro)
 router.include_router(rh_contratos.router, dependencies=_exige_financeiro)
+# Rubricas do holerite — vencimentos e descontos acrescentados a uma
+# competência (ver rh_folha_rubricas.py). Montado DEPOIS de rh_folha
+# porque os dois moram sob /folha-pagamento: nenhum caminho colide (aqui
+# todos têm três segmentos, /folha-pagamento/{id}/rubricas e
+# /folha-pagamento/rubricas/...), e a ordem deixa isso explícito.
+router.include_router(rh_folha_rubricas.router, dependencies=_exige_financeiro)
 router.include_router(rh_vale_item.router, dependencies=_exige_financeiro)
 # Ações do dono sobre um vale já lançado (reparcelar/abater/desconsiderar/
 # cancelar) — montado DEPOIS de rh_folha de propósito: ambos moram sob

@@ -163,6 +163,22 @@ class FolhaPagamento(SQLModel, table=True):
     # passa a ser só os "descontos de folha" manuais). Computado sempre a partir
     # da SOMA das ValeParcela da competência, para ser idempotente.
     valor_vale: float = 0.0
+    # Rubricas avulsas do holerite — vencimentos e descontos que o dono
+    # acrescenta linha a linha (ver models/folha_rubrica.py). As DUAS colunas
+    # são cache do que as linhas de `FolhaRubrica` somam, mantidas na mesma
+    # transação que grava a rubrica, e existem por um motivo cada:
+    # - `valor_rubricas` (vencimentos − descontos, pode ser negativo) é o que
+    #   permite a fórmula do líquido continuar num lugar só (`_liquido_folha`),
+    #   que é função PURA e não tem sessão para reconsultar as rubricas. Sem
+    #   ela, todo self-heal que recalcula o líquido (o do vale na listagem, o
+    #   de `_corrigir_folha_gerada_sem_retencao`) apagaria em silêncio o
+    #   acréscimo que o dono lançou.
+    # - `valor_rubricas_tributaveis` é quanto as rubricas SALARIAIS somam à
+    #   base das retenções — reembolso e indenização não entram (natureza
+    #   indenizatória). É o que faz o rodapé do holerite mostrar a base sobre
+    #   a qual o INSS foi de fato calculado, em vez do salário puro.
+    valor_rubricas: float = 0.0
+    valor_rubricas_tributaveis: float = 0.0
     valor_liquido: float
     data_pagamento: Optional[date] = None
     status: str = "pendente"  # pendente | pago

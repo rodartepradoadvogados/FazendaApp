@@ -3,9 +3,10 @@ import { useEffect, useState } from "react";
 import { ExternalLink, Printer } from "lucide-react";
 import { formatBRL, type LinhaHolerite } from "@/lib/api";
 import {
-  FORMA_PAGAMENTO_VALE, bloqueioDeImpressao, dataBR, ehOrigemRetencao, ehOrigemVale,
+  FORMA_PAGAMENTO_VALE, bloqueioDeImpressao, dataBR, ehOrigemRetencao, ehOrigemRubrica, ehOrigemVale,
   imprimirHolerite, linhasDoCorpo, seloDocumento, type Holerite as DocHolerite,
 } from "@/lib/holerite";
+import { RubricasHolerite } from "@/components/RubricasHolerite";
 
 /*
  * O documento — as quatro colunas do recibo de papel da fazenda:
@@ -87,6 +88,36 @@ function CartaoOrigem({ linha }: { linha: LinhaHolerite }) {
         ? <span style={{ color: "var(--text-muted)" }}>sem saída de caixa</span>
         : (origem.numero_lancamento_gerado || "—"),
     });
+  } else if (ehOrigemRubrica(origem)) {
+    // O enquadramento por extenso — é ele que explica por que esta linha
+    // mexeu (ou não mexeu) no INSS logo acima, e o fundamento legal fica à
+    // vista para o dono conferir com a contabilidade.
+    titulo = `${origem.rotulo} — ${formatBRL(linha.provento || linha.desconto || 0)}`;
+    sub = origem.especie === "vencimento" ? "vencimento acrescentado" : "desconto acrescentado";
+    if (origem.especie === "vencimento") {
+      campos.push({
+        rotulo: "Natureza",
+        valor: origem.natureza === "salarial" ? "Salarial" : "Indenizatória",
+      });
+      campos.push({
+        rotulo: "Incidências",
+        valor: origem.incide_inss
+          ? "INSS, IRRF e FGTS"
+          : <span style={{ color: "var(--text-muted)" }}>nenhuma</span>,
+      });
+      if (origem.incorpora_base && origem.competencia_incorporacao) {
+        campos.push({ rotulo: "Vira salário-base em", valor: origem.competencia_incorporacao });
+      }
+    }
+    if (origem.compra) {
+      const co = origem.compra;
+      campos.push({ rotulo: "Compra", valor: co.descricao || "—" });
+      campos.push({ rotulo: "Fornecedor", valor: co.fornecedor_cliente || "—" });
+      campos.push({ rotulo: "Nota", valor: co.numero_nota || "—" });
+      campos.push({ rotulo: "Valor da compra", valor: formatBRL(co.valor_total) });
+      campos.push({ rotulo: "No extrato", valor: co.numero_lancamento || "—" });
+    }
+    if (origem.fundamento) campos.push({ rotulo: "Fundamento", valor: origem.fundamento });
   } else if (ehOrigemRetencao(origem)) {
     titulo = `Retenção de ${linha.descricao} — ${formatBRL(linha.desconto || 0)}`;
     if (origem.percentual == null) {
@@ -136,13 +167,21 @@ function CartaoOrigem({ linha }: { linha: LinhaHolerite }) {
 }
 
 export function Holerite({
-  documento, compacto = false, cabecalho = true, acoes = true,
+  documento, compacto = false, cabecalho = true, acoes = true, edicao = false, onMudou,
 }: {
   documento: DocHolerite;
   /** Prévia dentro da linha da tabela (tela de Ações) — sem a folha de papel. */
   compacto?: boolean;
   cabecalho?: boolean;
   acoes?: boolean;
+  /** Mostra o painel de vencimentos/descontos acrescentados abaixo do
+   *  documento (Contas > Holerites e recibos). Fica desligado por padrão para
+   *  a prévia compacta da tela de Ações continuar sendo só leitura. */
+  edicao?: boolean;
+  /** Chamado quando uma rubrica é acrescentada, corrigida ou removida: o
+   *  documento inteiro é remontado no SERVIDOR (líquido, bases, retenções e
+   *  linhas), então quem exibe recarrega o ledger em vez de recalcular. */
+  onMudou?: () => void;
 }) {
   // A linha aberta pertence a UM documento: guardamos a chave junto do estado
   // e zeramos durante a renderização quando o documento muda (padrão de
@@ -358,6 +397,20 @@ export function Holerite({
           </p>
         )}
       </div>
+
+      {/* Só o holerite de FUNCIONÁRIO tem rubricas: férias e 13º são recibos
+          de composição própria (dias gozados, avos), e o servidor recusaria
+          uma linha avulsa neles. */}
+      {edicao && !compacto && documento.folhaId != null && (
+        <RubricasHolerite
+          key={documento.folhaId}
+          folhaId={documento.folhaId}
+          bloqueio={documento.status === "pago"
+            ? "Esta folha já foi paga e o recibo está congelado — estorne o pagamento para acrescentar ou corrigir vencimentos e descontos."
+            : null}
+          onMudou={onMudou}
+        />
+      )}
 
       {!linhaAberta && corpo.some((l) => !!l.origem) && (
         <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>

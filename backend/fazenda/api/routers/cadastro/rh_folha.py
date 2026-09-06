@@ -27,7 +27,7 @@ from fazenda.models import (
 from fazenda.api.routers.financeiro import TAMANHO_MAXIMO_ANEXO, _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
-from fazenda.rules import holerite
+from fazenda.rules import holerite, rubrica_folha
 from fazenda.rules.folha_rh import (
     PARCELAS_DECIMO_TERCEIRO,
     calcular_decimo_terceiro,
@@ -131,16 +131,24 @@ def _calcular_encargo_projetado(valor_bruto: float, percentual: Optional[float],
 
 def _liquido_folha(
     valor_bruto: float, descontos: float, valor_inss: float, valor_ir: float, valor_vale: float,
+    valor_rubricas: float = 0.0,
 ) -> float:
     """
-    Fórmula ÚNICA do líquido da folha: bruto − descontos de folha − INSS − IR −
-    vale. Existe como função porque a fórmula estava escrita à mão em quatro
-    lugares deste módulo e uma delas (a geração por recorrência) tinha esquecido
-    as retenções — toda competência gerada automaticamente nascia com o líquido
-    inflado no banco e na conta a pagar. Com um só lugar, essa divergência não
-    volta a acontecer silenciosamente.
+    Fórmula ÚNICA do líquido da folha: bruto + rubricas − descontos de folha −
+    INSS − IR − vale. Existe como função porque a fórmula estava escrita à mão
+    em quatro lugares deste módulo e uma delas (a geração por recorrência)
+    tinha esquecido as retenções — toda competência gerada automaticamente
+    nascia com o líquido inflado no banco e na conta a pagar. Com um só lugar,
+    essa divergência não volta a acontecer silenciosamente.
+
+    `valor_rubricas` é o efeito LÍQUIDO das rubricas avulsas do holerite
+    (vencimentos acrescentados − descontos acrescentados; ver
+    `FolhaPagamento.valor_rubricas` e `rules/rubrica_folha.py`) e pode ser
+    negativo. Entra com valor padrão 0.0 porque folha recém-criada não tem
+    rubrica nenhuma — mas todo recálculo de folha JÁ EXISTENTE precisa passá-lo,
+    senão o self-heal apaga em silêncio a bonificação que o dono lançou.
     """
-    return round(valor_bruto - descontos - valor_inss - valor_ir - valor_vale, 2)
+    return round(valor_bruto + valor_rubricas - descontos - valor_inss - valor_ir - valor_vale, 2)
 
 
 def _data_vencimento_folha(competencia: str, dia_vencimento: Optional[int]) -> date:
@@ -455,17 +463,44 @@ def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> 
                 # filtram) e dia de vencimento.
                 valor_inss = round(modelo.valor_inss, 2)
                 valor_ir = round(modelo.valor_ir, 2)
+                valor_fgts = modelo.valor_fgts
+                # AUMENTO NA FOLHA INCORPORADO (ver rules/rubrica_folha.py).
+                # O modelo de recorrência é uma fotografia do salário do mês em
+                # que ele foi criado — um aumento concedido depois ficava só na
+                # competência em que foi lançado (como linha de vencimento) e o
+                # mês seguinte voltava ao salário antigo, que é exatamente o que
+                # o art. 468 da CLT não permite. A base do mês gerado é, então,
+                # o bruto do modelo MAIS os aumentos concedidos daí até aqui.
+                # É derivado das rubricas, nunca copiado: excluir o aumento
+                # desfaz a incorporação sozinho, sem migração de dado.
+                aumento = rubrica_folha.aumento_incorporado(
+                    session, modelo.pessoa_id, modelo.competencia, competencia, fazenda_id,
+                )
+                valor_bruto = round(modelo.valor_bruto + aumento, 2)
+                if aumento:
+                    # Base maior, retenção maior: copiar o VALOR retido do
+                    # modelo deixaria o INSS/IR/FGTS do mês novo calculado
+                    # sobre o salário velho. Só recalcula o que tem percentual
+                    # gravado — sem percentual não há base declarada, e deduzir
+                    # uma seria inventar o número (mesma regra do holerite).
+                    recalculadas = rubrica_folha.retencoes_recalculadas(
+                        valor_bruto, modelo.percentual_inss, modelo.percentual_ir,
+                        modelo.percentual_fgts, [],
+                    )
+                    valor_inss = recalculadas.get("valor_inss", valor_inss)
+                    valor_ir = recalculadas.get("valor_ir", valor_ir)
+                    valor_fgts = recalculadas.get("valor_fgts", valor_fgts)
                 valor_liquido = _liquido_folha(
-                    modelo.valor_bruto, descontos, valor_inss, valor_ir, valor_vale,
+                    valor_bruto, descontos, valor_inss, valor_ir, valor_vale,
                 )
                 numero_lancamento = _proximo_numero_lancamento(session, ano)
                 nova = FolhaPagamento(
-                    pessoa_id=modelo.pessoa_id, competencia=competencia, valor_bruto=modelo.valor_bruto,
+                    pessoa_id=modelo.pessoa_id, competencia=competencia, valor_bruto=valor_bruto,
                     descontos=descontos,
                     percentual_inss=modelo.percentual_inss, valor_inss=valor_inss,
                     percentual_ir=modelo.percentual_ir, valor_ir=valor_ir,
                     valor_vale=valor_vale, valor_liquido=valor_liquido, status="pendente",
-                    percentual_fgts=modelo.percentual_fgts, valor_fgts=modelo.valor_fgts,
+                    percentual_fgts=modelo.percentual_fgts, valor_fgts=valor_fgts,
                     percentual_dctf=modelo.percentual_dctf, valor_dctf=modelo.valor_dctf,
                     observacao=modelo.observacao, origem_recorrencia_id=modelo.id,
                     numero_lancamento_gerado=numero_lancamento,
@@ -581,6 +616,7 @@ def _corrigir_folha_gerada_sem_retencao(session: Session, fazenda_id: int | None
         modelo_tem_retencao = bool(modelo.valor_inss or modelo.valor_ir)
         liquido_buggado = _liquido_folha(
             registro.valor_bruto, registro.descontos, 0.0, 0.0, registro.valor_vale or 0.0,
+            registro.valor_rubricas,
         )
         if (
             sem_retencao_na_linha
@@ -595,6 +631,7 @@ def _corrigir_folha_gerada_sem_retencao(session: Session, fazenda_id: int | None
             registro.valor_vale = valor_vale
             registro.valor_liquido = _liquido_folha(
                 registro.valor_bruto, registro.descontos, registro.valor_inss, registro.valor_ir, valor_vale,
+                registro.valor_rubricas,
             )
             if conta:
                 conta.valor_total = registro.valor_liquido
@@ -630,7 +667,10 @@ def _contexto_discriminacao(
     """
     pessoa_ids = {r.pessoa_id for r in registros if r.pessoa_id}
     if not pessoa_ids:
-        return {"parcelas_por_pessoa_competencia": {}, "irmas_por_vale": {}, "vales": {}, "origens": {}}
+        return {
+            "parcelas_por_pessoa_competencia": {}, "irmas_por_vale": {}, "vales": {}, "origens": {},
+            "rubricas": {}, "compras_rubricas": {},
+        }
 
     parcelas = session.exec(select(ValeParcela).where(ValeParcela.pessoa_id.in_(pessoa_ids))).all()
     irmas_por_vale: dict[int, list[ValeParcela]] = {}
@@ -663,11 +703,19 @@ def _contexto_discriminacao(
         for v in (session.exec(select(ValeFuncionario).where(ValeFuncionario.id.in_(vale_ids))).all() if vale_ids else [])
     }
     origens = origens_lancamento_por_vale(session, vale_ids, "vale_funcionario_id") if vale_ids else {}
+    # Rubricas avulsas do holerite (vencimentos/descontos acrescentados) e as
+    # compras que os descontos de compra apontam — duas consultas para a
+    # listagem inteira, pelo mesmo motivo das parcelas acima. Escopo: só as
+    # folhas recebidas, que já vieram filtradas por fazenda.
+    rubricas = rubrica_folha.rubricas_por_folha(session, registros)
+    todas_rubricas = [r for lista in rubricas.values() for r in lista]
     return {
         "parcelas_por_pessoa_competencia": por_pessoa_competencia,
         "irmas_por_vale": irmas_por_vale,
         "vales": vales,
         "origens": origens,
+        "rubricas": rubricas,
+        "compras_rubricas": rubrica_folha.compras_das_rubricas(session, todas_rubricas),
     }
 
 
@@ -808,6 +856,13 @@ def _detalhe_folha(
 
     ctx = contexto if contexto is not None else _contexto_discriminacao(session, [registro])
     parcelas_vale = ctx["parcelas_por_pessoa_competencia"].get((registro.pessoa_id, registro.competencia), [])
+    rubricas = ctx.get("rubricas", {}).get(registro.id, [])
+    # BASE das retenções ≠ salário bruto quando há rubrica SALARIAL lançada
+    # (bonificação, guelta, aumento): o INSS foi calculado sobre bruto + elas.
+    # Reembolso e indenização ficam fora, por serem indenizatórios — é
+    # justamente esta distinção que faz a referência "9% sobre R$ 3.500,00"
+    # bater com o valor retido em vez de acusar "valor ajustado à mão".
+    base_retencao = round(registro.valor_bruto + (registro.valor_rubricas_tributaveis or 0.0), 2)
 
     if pessoa is None:
         pessoa = session.get(Pessoa, registro.pessoa_id)
@@ -835,7 +890,7 @@ def _detalhe_folha(
         if not valor:
             continue
         sufixo = f" ({percentual:g}%)" if percentual else ""
-        referencia, origem = holerite.referencia_retencao(valor, percentual, registro.valor_bruto)
+        referencia, origem = holerite.referencia_retencao(valor, percentual, base_retencao)
         detalhe.append(holerite.linha(
             tipo, f"{rotulo}{sufixo}", -valor, rotulo, referencia,
             desconto=round(valor, 2), origem=origem,
@@ -867,6 +922,12 @@ def _detalhe_folha(
             "Valor único, sem detalhamento gravado",
             desconto=round(registro.descontos, 2),
         ))
+    # Rubricas avulsas do holerite (ver rh_folha_rubricas.py e
+    # rules/rubrica_folha.py): vencimentos primeiro, descontos depois, cada um
+    # com a referência que declara o regime tributário adotado ou a compra que
+    # está sendo abatida. Entram DEPOIS das linhas fixas e ANTES do líquido —
+    # o líquido continua sendo o rodapé, nunca uma linha do corpo.
+    detalhe.extend(rubrica_folha.linhas_de_rubricas(rubricas, ctx.get("compras_rubricas", {})))
     detalhe.append(holerite.linha(
         "liquido", "Valor líquido", registro.valor_liquido, "Líquido", "",
     ))
@@ -902,6 +963,7 @@ def listar_folha_pagamento(
             registro.valor_vale = vv
             registro.valor_liquido = _liquido_folha(
                 registro.valor_bruto, registro.descontos, registro.valor_inss, registro.valor_ir, vv,
+                registro.valor_rubricas,
             )
             _marcar_vale_aplicado(session, registro.pessoa_id, registro.competencia)
             session.add(registro)
@@ -1078,7 +1140,13 @@ def atualizar_folha_pagamento(
     descontos = round(dados.descontos, 2)  # "descontos de folha" manuais, sem vale
     valor_vale = _valor_vale(session, dados.pessoa_id, dados.competencia)
     _marcar_vale_aplicado(session, dados.pessoa_id, dados.competencia)
-    valor_liquido = _liquido_folha(dados.valor_bruto, descontos, valor_inss, valor_ir, valor_vale)
+    # `registro.valor_rubricas` entra aqui porque esta folha JÁ EXISTE e pode
+    # ter rubricas lançadas (ver rh_folha_rubricas.py): sem ele, salvar a
+    # edição do bruto apagava do líquido — e da conta a pagar — a bonificação
+    # ou o reembolso que o dono já tinha acrescentado ao holerite.
+    valor_liquido = _liquido_folha(
+        dados.valor_bruto, descontos, valor_inss, valor_ir, valor_vale, registro.valor_rubricas,
+    )
     if valor_liquido <= 0:
         raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
     if dados.recorrente and not (dados.dia_vencimento and 1 <= dados.dia_vencimento <= 28):
