@@ -181,6 +181,23 @@ class TestDecimoTerceiroEmDobro:
         assert r.status_code == 400, r.text
         assert "já há" in r.json()["detail"]
 
+    def test_centavo_impar_do_adiantamento_sobra_para_a_segunda_parcela(self, client):
+        """13º de R$ 2.133,33 (salário 3.200, 8 avos) não divide em dois
+        iguais. Como a 2ª parcela é o SALDO (integral − adiantamento) e não
+        outra metade calculada à parte, a soma fecha no centavo."""
+        c, engine = client
+        pessoa_id = _criar_pessoa(engine, salario_base=3200.0)
+        r1 = c.post("/cadastro/decimo-terceiro", json={
+            "pessoa_id": pessoa_id, "ano": 2026, "parcela": "primeira", "meses_trabalhados": 8,
+        })
+        r2 = c.post("/cadastro/decimo-terceiro", json={
+            "pessoa_id": pessoa_id, "ano": 2026, "parcela": "segunda", "meses_trabalhados": 8,
+        })
+        assert r1.status_code == 200 and r2.status_code == 200
+        assert r1.json()["valor_bruto"] == 1066.66
+        assert r2.json()["valor_bruto"] == 1066.67
+        assert round(r1.json()["valor_bruto"] + r2.json()["valor_bruto"], 2) == 2133.33
+
     def test_ano_seguinte_nao_e_afetado_pelo_ano_anterior(self, client):
         c, engine = client
         pessoa_id = _criar_pessoa(engine, salario_base=3000.0)

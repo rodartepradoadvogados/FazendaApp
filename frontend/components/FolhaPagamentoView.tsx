@@ -32,9 +32,10 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { BarraCompetencia } from "@/components/BarraCompetencia";
 import { EquacaoFolha, OutrosPagamentosDoMes } from "@/components/EquacaoFolha";
+import { ExcecoesFolha } from "@/components/ExcecoesFolha";
 import {
   equacaoDoMes, excecoesDoMes, competenciasDoMes, mesDaLinha, mesInicial, mesesDoLedger,
-  resumoOutrosTipos, situacaoDoMes,
+  resumoOutrosTipos, situacaoDoMes, type Excecao,
 } from "@/lib/folhaCompetencia";
 import EmpreitadaView from "@/components/EmpreitadaView";
 import ContratoView from "@/components/ContratoView";
@@ -155,6 +156,9 @@ export default function FolhaPagamentoView() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   // Expansão focada de um desconto (folha ou vale) numa linha específica.
   const [expandDesc, setExpandDesc] = useState<{ id: number; tipo: "folha" | "vale" } | null>(null);
+  // Folha apontada pelo painel de exceções — pisca em dourado ("é esta, aqui")
+  // e volta ao normal sozinha, sem virar destaque permanente.
+  const [folhaDestacada, setFolhaDestacada] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editPessoaId, setEditPessoaId] = useState("");
   const [editCompetencia, setEditCompetencia] = useState("");
@@ -350,6 +354,35 @@ export default function FolhaPagamentoView() {
   const [editLinhaValor, setEditLinhaValor] = useState("");
   const [editLinhaMsg, setEditLinhaMsg] = useState<string | null>(null);
   const [salvandoLinha, setSalvandoLinha] = useState(false);
+
+  /**
+   * O que a ação de uma exceção faz: abre a folha envolvida com a
+   * discriminação à vista e rola até ela, piscando a linha. O painel não
+   * conserta nada por conta própria — apontar o lançamento é o serviço, e
+   * quem decide o que fazer com ele continua sendo o dono. Quando a exceção
+   * não tem folha (vencidos que são só empreita/contrato/diária), rola até a
+   * tabela, que é onde estão os lançamentos em questão.
+   */
+  function irParaExcecao(excecao: Excecao) {
+    const reduzMovimento = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const alvo = excecao.folhaIds[0];
+    if (alvo == null) {
+      document.getElementById("folha-tabela")?.scrollIntoView({ behavior: reduzMovimento ? "auto" : "smooth", block: "start" });
+      return;
+    }
+    setExpandedId(alvo);
+    setFolhaDestacada(alvo);
+    // A linha pode estar fora da tela e a expansão ainda não ter sido pintada
+    // — rolar no quadro seguinte, com a altura final já valendo.
+    requestAnimationFrame(() => {
+      document.getElementById(`folha-linha-${alvo}`)?.scrollIntoView({
+        behavior: reduzMovimento ? "auto" : "smooth", block: "center",
+      });
+    });
+    // O pisco é de 0,6s (.flash-localizado); tirar a classe depois disso é o
+    // que permite piscar de novo se o usuário clicar na mesma exceção.
+    window.setTimeout(() => setFolhaDestacada(null), 900);
+  }
 
   function podeEditarLinha(l: LinhaFolhaUnificada) {
     return l.status !== "pago" && l.origem_subtipo === "parcela" && (l.tipo === "empreita" || l.tipo === "contrato");
@@ -1103,6 +1136,7 @@ export default function FolhaPagamentoView() {
         onMes={setMesFolha}
       />
       <EquacaoFolha eq={equacao} />
+      <ExcecoesFolha excecoes={excecoes} onResolver={irParaExcecao} />
       <OutrosPagamentosDoMes resumo={outrosTipos} />
 
       {/* Filtro da folha de pagamento unificada — a categoria já vem do
@@ -1160,7 +1194,7 @@ export default function FolhaPagamentoView() {
         descricao="Todos os lançamentos — funcionário, empreita, contrato, diária e férias/13º. Clique numa folha para abrir o recibo."
       >
         {erroUnificada ? <div className="alert-critico"><span>Sem dados: {erroUnificada}.</span></div> : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" id="folha-tabela">
           <table className="fazenda-table">
             <thead><tr>
               <ThOrdenavel label="Tipo" campo="tipo" coluna={uniColuna} dir={uniDir} ordenar={uniOrdenar} />
@@ -1265,7 +1299,9 @@ export default function FolhaPagamentoView() {
                 const documento = holeriteDoRegistro(r);
                 return (
                   <Fragment key={chave}>
-                    <tr className="row-clickable" title="Clique para ver a discriminação deste lançamento de folha" onClick={() => setExpandedId(expandido ? null : r.id)}
+                    <tr id={`folha-linha-${r.id}`}
+                      className={`row-clickable${folhaDestacada === r.id ? " flash-localizado" : ""}`}
+                      title="Clique para ver a discriminação deste lançamento de folha" onClick={() => setExpandedId(expandido ? null : r.id)}
                       style={l.vencido ? { background: VENCIDO_BG } : undefined}>
                       <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{LABEL_TIPO.funcionario}</td>
                       <td style={{ fontWeight: 600, fontSize: "0.82rem", whiteSpace: "nowrap" }}

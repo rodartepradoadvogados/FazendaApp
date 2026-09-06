@@ -434,7 +434,10 @@ class TestLedgerUnificadoLevaODiscriminado:
         assert linha["detalhe"][0]["referencia"] == (
             "8/12 avos de 2026 · 1ª parcela · adiantamento sobre 13º integral de R$ 2.133,33"
         )
-        assert linha["detalhe"][0]["provento"] == 1066.67
+        # 2133,33 / 2 = 1066,665 -> 1066,66 no arredondamento; o centavo
+        # sobra para a 2ª parcela, que é o SALDO (integral - adiantamento),
+        # então a soma das duas fecha exatamente em 2133,33.
+        assert linha["detalhe"][0]["provento"] == 1066.66
 
 
 # ---------------------------------------------------------------------------
