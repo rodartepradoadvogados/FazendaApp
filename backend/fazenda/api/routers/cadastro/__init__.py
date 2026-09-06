@@ -31,6 +31,7 @@ from . import (
     protocolos_sanitarios,
     rh_contratos,
     rh_folha,
+    rh_vale_acoes,
     rh_vale_item,
     sanitario,
     servicos,
@@ -101,6 +102,12 @@ _exige_financeiro = [
 router.include_router(rh_folha.router, dependencies=_exige_financeiro)
 router.include_router(rh_contratos.router, dependencies=_exige_financeiro)
 router.include_router(rh_vale_item.router, dependencies=_exige_financeiro)
+# Ações do dono sobre um vale já lançado (reparcelar/abater/desconsiderar/
+# cancelar) — montado DEPOIS de rh_folha de propósito: ambos moram sob
+# /cadastro/vales/{id}, e o router que chega primeiro é o que resolve as
+# rotas que ele declara. Nenhum caminho colide (aqui só /vales/{id}/acoes),
+# mas a ordem deixa isso explícito.
+router.include_router(rh_vale_acoes.router, dependencies=_exige_financeiro)
 
 __all__ = [
     "router",

@@ -147,6 +147,73 @@ def origens_lancamento_por_vale(session: Session, vale_ids: set[int] | list[int]
     return resultado
 
 
+# ── Divisão de um item entre "vale da pessoa" e "despesa da fazenda" ────────
+def dividir_item_de_lancamento(
+    session: Session, item: LancamentoItem, valor_que_fica: float, *, sufixo_descricao: str,
+) -> LancamentoItem:
+    """Parte `item` em dois: ele mesmo encolhe para `valor_que_fica` e nasce
+    um GÊMEO com o resto, na mesma nota, sem nenhum vínculo de vale.
+
+    Existe porque "metade disto é vale" não cabe numa flag no item. A camada
+    A de exclusão gerencial (`sem_itens_de_vale`) é um WHERE que tira a LINHA
+    inteira, e a camada B rateia o `valor_total` da linha inteira pelas
+    parcelas — as duas somam `LancamentoItem.valor_total` cru depois de
+    filtrar. Uma coluna "quanto deste item é vale" obrigaria todo somatório
+    gerencial do sistema (DRE, RMCA, custo/litro, custo por hectare,
+    orçado × realizado) a aprender a subtrair uma fração; duas linhas, cada
+    uma inteiramente de um lado, mantêm todos eles corretos sem tocar em
+    nenhum. Foi por isso que o dono descreveu o caso como "o lançamento se
+    divide".
+
+    O gêmeo herda conta gerencial, centro de custo, produto e tipo do
+    original — é a mesma compra —, e `quantidade` é rateada na proporção do
+    valor (2/3 da ração são 2/3 dos quilos). `valor_total` NÃO é recalculado
+    de quantidade × valor_unitario de propósito: com preço unitário quebrado
+    os dois pedaços não fechariam a soma da nota, e a nota tem de fechar.
+
+    Não commita — quem chama decide quando (o item ainda vai receber o
+    vínculo do vale)."""
+    valor_original = round(item.valor_total or 0, 2)
+    valor_que_fica = round(valor_que_fica, 2)
+    resto = round(valor_original - valor_que_fica, 2)
+    if resto <= 0:
+        raise ValueError("A divisão do item precisa deixar um resto positivo para a fazenda")
+
+    fracao_resto = resto / valor_original if valor_original else 0.0
+    quantidade_resto = round(item.quantidade * fracao_resto, 4) if item.quantidade else None
+
+    gemeo = LancamentoItem(
+        fazenda_id=item.fazenda_id,
+        numero_lancamento=item.numero_lancamento,
+        tipo=item.tipo,
+        data_competencia=item.data_competencia,
+        codigo_conta_gerencial=item.codigo_conta_gerencial,
+        nome_conta_gerencial=item.nome_conta_gerencial,
+        centro_custo=item.centro_custo,
+        produto=item.produto,
+        tipo_item=item.tipo_item,
+        descricao=" — ".join(x for x in ((item.descricao or "").strip(), sufixo_descricao) if x),
+        quantidade=quantidade_resto,
+        valor_unitario=item.valor_unitario,
+        valor_total=resto,
+    )
+    session.add(gemeo)
+
+    item.valor_total = valor_que_fica
+    if item.quantidade:
+        item.quantidade = round(item.quantidade - (quantidade_resto or 0), 4)
+    session.add(item)
+    return gemeo
+
+
+def itens_do_vale(session: Session, vale_funcionario_id: int) -> list[LancamentoItem]:
+    """Os itens de nota que geraram este vale de funcionário (na prática 0 ou
+    1 — só o checkbox "é vale?" cria o vínculo, e ele é por item)."""
+    return list(session.exec(
+        select(LancamentoItem).where(LancamentoItem.vale_funcionario_id == vale_funcionario_id)
+    ).all())
+
+
 # ── Vínculo item ↔ vale ──────────────────────────────────────────────────────
 def limpar_vinculo_de_itens(
     session: Session, *, vale_funcionario_id: int | None = None, vale_avulso_id: int | None = None,

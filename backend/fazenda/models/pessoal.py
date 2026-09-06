@@ -436,6 +436,24 @@ class ValeFuncionario(SQLModel, table=True):
     # vale — mesmo padrão de FolhaPagamento.numero_lancamento_gerado — para
     # o extrato mostrar a saída de caixa que hoje falta (ver criar_vale).
     numero_lancamento_gerado: Optional[str] = None
+    # ── Ações do dono sobre um vale JÁ lançado (Folha de Pagamento > vale >
+    # Ações — ver fazenda/api/routers/cadastro/rh_vale_acoes.py) ────────────
+    # "ativo" | "cancelado". Cancelar NÃO apaga o vale (diferente de
+    # DELETE /vales, que é "isto nunca deveria ter existido"): o dinheiro
+    # saiu de verdade e o histórico continua valendo — o que muda é que o
+    # saldo pendente deixa de ser cobrança do funcionário e passa a ser
+    # despesa assumida pela fazenda. Por isso é coluna de estado, não
+    # exclusão.
+    status: str = Field(default="ativo", index=True)
+    # Acumuladores das ações, PARA O HISTÓRICO — `valor_total` nunca muda
+    # (é o valor efetivamente adiantado à pessoa, mesma regra que
+    # `editar_parcela_vale` já seguia): `valor_abatido` é o que o
+    # funcionário devolveu/o dono perdoou, `valor_assumido_fazenda` é o que
+    # deixou de ser cobrado dele porque a fazenda assumiu (desconsiderar o
+    # mês / cancelar o vale). Sem eles, a soma das parcelas divergiria do
+    # valor pago sem dizer POR QUE divergiu.
+    valor_abatido: float = 0.0
+    valor_assumido_fazenda: float = 0.0
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
@@ -452,6 +470,16 @@ class ValeParcela(SQLModel, table=True):
     competencia: str = Field(index=True)  # "AAAA-MM"
     valor: float
     aplicada: bool = False  # já foi somada aos descontos de algum lançamento de folha?
+    # Parcela que o dono mandou DESCONSIDERAR neste mês (ou que foi varrida
+    # junto com o cancelamento do vale): continua existindo — a competência,
+    # o valor e o motivo são o registro de que aquele mês foi perdoado —, mas
+    # NÃO é descontada do funcionário: `_valor_vale` (rh_folha.py) ignora
+    # estas parcelas, e o valor correspondente vira despesa da fazenda no
+    # Financeiro. Apagar a parcela seria mais simples e é justamente o que
+    # não serve: sem ela o holerite do mês não teria como explicar por que o
+    # desconto sumiu.
+    assumida_pela_fazenda: bool = False
+    motivo_assuncao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 

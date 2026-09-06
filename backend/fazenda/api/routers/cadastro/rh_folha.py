@@ -189,16 +189,25 @@ def proporcional_admissao(
 
 def _valor_vale(session: Session, pessoa_id: int, competencia: str) -> float:
     """
-    Soma o valor de TODAS as parcelas de vale da pessoa nesta competência —
+    Soma o valor das parcelas de vale COBRÁVEIS da pessoa nesta competência —
     esse é o "desconto de vale" da folha (coluna separada dos "descontos de
     folha" manuais). Uma parcela pertence a exatamente uma competência e a
     pessoa tem no máximo uma folha por competência, então somar todas é
     correto e idempotente (não acumula em recomputações sucessivas).
+
+    Parcela `assumida_pela_fazenda` fica DE FORA: é o mês que o dono mandou
+    desconsiderar (ou o saldo de um vale cancelado). Ela continua existindo
+    para o histórico — o holerite precisa poder dizer por que o desconto
+    sumiu —, mas o funcionário não é descontado por ela; o valor virou
+    despesa da fazenda no Financeiro (ver rh_vale_acoes.py). Este é o ÚNICO
+    ponto que decide "quanto de vale entra na folha", e por isso a regra mora
+    aqui e não espalhada nos chamadores.
     """
     parcelas = session.exec(
         select(ValeParcela).where(
             ValeParcela.pessoa_id == pessoa_id,
             ValeParcela.competencia == competencia,
+            ValeParcela.assumida_pela_fazenda == False,  # noqa: E712
         )
     ).all()
     return round(sum(p.valor for p in parcelas), 2)
@@ -636,6 +645,12 @@ def _contexto_discriminacao(
     competencias = {(r.pessoa_id, r.competencia) for r in registros}
     por_pessoa_competencia: dict[tuple[int, str], list[ValeParcela]] = {}
     for p in parcelas:
+        # Parcela assumida pela fazenda não vira linha de DESCONTO no
+        # holerite — ela não foi descontada de ninguém (ver `_valor_vale`).
+        # Continua em `irmas_por_vale` acima, porque a numeração "3 de 13"
+        # é a posição na sequência do vale e não muda por causa disso.
+        if p.assumida_pela_fazenda:
+            continue
         chave = (p.pessoa_id, p.competencia)
         if chave in competencias:
             por_pessoa_competencia.setdefault(chave, []).append(p)
@@ -2629,21 +2644,60 @@ def _reconciliar_vale_competencias(session: Session, pessoa_id: int, competencia
                 session.add(conta)
 
 
-def _vale_competencia_paga(session: Session, pessoa_id: int, competencias: list[str]) -> str | None:
+def _vale_competencia_paga(
+    session: Session, pessoa_id: int, competencias: list[str], fazenda_id: int | None,
+) -> str | None:
     """Retorna a primeira competência, entre as informadas, cuja folha já
-    esteja paga — usado para bloquear edição/exclusão de um vale já
-    absorvido por um pagamento que já saiu."""
+    esteja paga — a trava que impede um vale de mexer num holerite que já
+    virou recibo (ver o bloco de congelamento da discriminação, acima).
+
+    Filtro de fazenda INCONDICIONAL (`== fazenda_id`, que em None vira
+    `IS NULL`) dentro da própria consulta, mesmo padrão de `_conta_da_folha`:
+    fosse tolerante (`if fazenda_id is not None`), uma folha paga sem
+    fazenda — as linhas órfãs que a migração de backfill assume existir —
+    poderia travar ou liberar vale de qualquer tenant.
+
+    Ordem das competências importa: quem chama passa a lista já ordenada e a
+    mensagem de erro cita a PRIMEIRA competência paga encontrada, que é a que
+    o dono precisa estornar primeiro."""
     for competencia in competencias:
         folha = session.exec(
             select(FolhaPagamento).where(
                 FolhaPagamento.pessoa_id == pessoa_id,
                 FolhaPagamento.competencia == competencia,
                 FolhaPagamento.status == "pago",
+                FolhaPagamento.fazenda_id == fazenda_id,
             )
         ).first()
         if folha:
             return competencia
     return None
+
+
+def _exigir_competencias_nao_pagas(
+    session: Session, pessoa_id: int, competencias: list[str], fazenda_id: int | None, verbo: str,
+) -> None:
+    """Recusa (400) quando alguma das competências de destino do vale já teve
+    a folha PAGA.
+
+    As duas portas que isto fecha, e que ficaram abertas desde que o vale
+    existe: `criar_vale` nunca olhou a competência de destino (dava para
+    lançar um vale novo em cima de um mês já pago), e `atualizar_vale` só
+    olhava as competências ANTIGAS do vale (dava para mover um vale de um mês
+    em aberto PARA um mês já pago). Nos dois casos a folha paga é imutável de
+    propósito — a discriminação dela foi congelada no pagamento —, então a
+    parcela nova entrava no banco, aparecia no relatório de vales, e o
+    holerite daquele mês passava a mentir: cobrava um desconto que não foi
+    descontado do dinheiro que saiu."""
+    paga = _vale_competencia_paga(session, pessoa_id, competencias, fazenda_id)
+    if paga:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"A folha de {paga} desta pessoa já foi paga — não é possível {verbo} um vale nessa "
+                f"competência. Estorne o pagamento da folha de {paga} ou escolha uma competência em aberto."
+            ),
+        )
 
 
 def _validar_conta_vale(
@@ -2781,6 +2835,9 @@ def criar_vale(
     conta = _validar_conta_vale(session, dados.forma_pagamento, dados.conta_corrente_id, fazenda_id)
 
     competencias = _competencias_do_vale(dados.competencia_inicio, dados.parcelas)
+    # Nenhuma das competências de destino pode ter folha já paga — ver
+    # `_exigir_competencias_nao_pagas` para o holerite que passava a mentir.
+    _exigir_competencias_nao_pagas(session, dados.pessoa_id, competencias, fazenda_id, "lançar")
     valor_parcela = round(dados.valor_total / dados.parcelas, 2)
     # a última parcela absorve o arredondamento, para a soma bater com valor_total
     valores_parcela = [valor_parcela] * (dados.parcelas - 1)
@@ -2795,8 +2852,14 @@ def criar_vale(
     limite = round(pessoa.salario_base * 0.4, 2)
     competencias_excedidas = []
     for competencia, valor in zip(competencias, valores_parcela):
+        # Parcela assumida pela fazenda não é desconto do funcionário, então
+        # não ocupa o teto de 40% do salário dele (ver `_valor_vale`).
         ja_lancado = session.exec(
-            select(ValeParcela).where(ValeParcela.pessoa_id == dados.pessoa_id, ValeParcela.competencia == competencia)
+            select(ValeParcela).where(
+                ValeParcela.pessoa_id == dados.pessoa_id,
+                ValeParcela.competencia == competencia,
+                ValeParcela.assumida_pela_fazenda == False,  # noqa: E712
+            )
         ).all()
         total_competencia = round(sum(p.valor for p in ja_lancado) + valor, 2)
         if total_competencia > limite:
@@ -2870,8 +2933,26 @@ def atualizar_vale(
 
     pessoa_id_antigo = vale.pessoa_id
     parcelas_atuais = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()
+    # PUT /vales apaga TODAS as parcelas e recria com split igual — o que
+    # apagaria junto a marca de "mês desconsiderado"/"vale cancelado" e o
+    # valor que a fazenda já assumiu no Financeiro por causa dela, sem
+    # desfazer nada lá. Vale que passou por uma ação do dono só se mexe pelas
+    # próprias ações (ver rh_vale_acoes.py).
+    if vale.status == "cancelado":
+        raise HTTPException(
+            status_code=400,
+            detail="Este vale foi cancelado — o saldo já virou despesa da fazenda e ele não pode mais ser editado.",
+        )
+    if any(p.assumida_pela_fazenda for p in parcelas_atuais):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Este vale tem mês desconsiderado (valor já assumido pela fazenda) — use as ações do vale "
+                "(reparcelar/abater) em vez de reescrevê-lo por inteiro."
+            ),
+        )
     competencias_atuais = [p.competencia for p in parcelas_atuais]
-    competencia_paga = _vale_competencia_paga(session, pessoa_id_antigo, competencias_atuais)
+    competencia_paga = _vale_competencia_paga(session, pessoa_id_antigo, competencias_atuais, fazenda_id)
     if competencia_paga:
         raise HTTPException(
             status_code=400,
@@ -2879,6 +2960,12 @@ def atualizar_vale(
         )
 
     competencias_novas = _competencias_do_vale(dados.competencia_inicio, dados.parcelas)
+    # A checagem acima olha só o DESTINO ANTIGO do vale. Faltava esta: mudar
+    # competencia_inicio/parcelas (ou a pessoa) para um mês cuja folha já foi
+    # paga movia a parcela para dentro de um holerite fechado — que não podia
+    # mais absorvê-la. Ver `_exigir_competencias_nao_pagas`.
+    _exigir_competencias_nao_pagas(session, dados.pessoa_id, competencias_novas, fazenda_id, "mover")
+
     valor_parcela = round(dados.valor_total / dados.parcelas, 2)
     valores_parcela = [valor_parcela] * (dados.parcelas - 1)
     valores_parcela.append(round(dados.valor_total - valor_parcela * (dados.parcelas - 1), 2))
@@ -2892,6 +2979,7 @@ def atualizar_vale(
                 ValeParcela.pessoa_id == dados.pessoa_id,
                 ValeParcela.competencia == competencia,
                 ValeParcela.vale_id != vale_id,
+                ValeParcela.assumida_pela_fazenda == False,  # noqa: E712
             )
         ).all()
         total_competencia = round(sum(p.valor for p in ja_lancado) + valor, 2)
@@ -2986,7 +3074,7 @@ def editar_parcela_vale(
     if dados.valor < 0:
         raise HTTPException(status_code=400, detail="Valor da parcela não pode ser negativo")
 
-    competencia_paga = _vale_competencia_paga(session, vale.pessoa_id, [parcela.competencia])
+    competencia_paga = _vale_competencia_paga(session, vale.pessoa_id, [parcela.competencia], fazenda_id)
     if competencia_paga:
         raise HTTPException(
             status_code=400,
@@ -3000,7 +3088,7 @@ def editar_parcela_vale(
     outras_pendentes = [
         p for p in todas_parcelas
         if p.id != parcela_id and p.competencia > parcela.competencia
-        and not _vale_competencia_paga(session, vale.pessoa_id, [p.competencia])
+        and not _vale_competencia_paga(session, vale.pessoa_id, [p.competencia], fazenda_id)
     ]
     diferenca = round(dados.valor - parcela.valor, 2)
 
@@ -3116,7 +3204,7 @@ def excluir_parcela_vale(
     if not parcela or parcela.vale_id != vale_id:
         raise HTTPException(status_code=404, detail="Parcela não encontrada")
 
-    competencia_paga = _vale_competencia_paga(session, vale.pessoa_id, [parcela.competencia])
+    competencia_paga = _vale_competencia_paga(session, vale.pessoa_id, [parcela.competencia], fazenda_id)
     if competencia_paga:
         raise HTTPException(
             status_code=400,
@@ -3135,7 +3223,7 @@ def excluir_parcela_vale(
     outras_pendentes = [
         p for p in todas_parcelas
         if p.id != parcela_id and p.competencia > parcela.competencia
-        and not _vale_competencia_paga(session, vale.pessoa_id, [p.competencia])
+        and not _vale_competencia_paga(session, vale.pessoa_id, [p.competencia], fazenda_id)
     ]
 
     if not confirmar:
@@ -3197,8 +3285,22 @@ def excluir_vale(
         raise HTTPException(status_code=404, detail="Vale não encontrado")
     pessoa_id = vale.pessoa_id
     parcelas = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()
+    # Vale que já sofreu "desconsiderar o mês"/"cancelar" não pode ser
+    # apagado: o valor assumido já virou despesa da fazenda no Financeiro
+    # (item de nota devolvido aos relatórios, ou lançamento reclassificado —
+    # ver rh_vale_acoes.py::_assumir_no_financeiro), e apagar o vale aqui
+    # apagaria junto o lançamento de caixa que sustenta aquela despesa,
+    # sem desfazer nada do outro lado.
+    if vale.status == "cancelado" or any(p.assumida_pela_fazenda for p in parcelas):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Este vale já teve valor assumido pela fazenda (mês desconsiderado ou vale cancelado) — "
+                "a despesa correspondente já está no Financeiro e o vale não pode mais ser excluído."
+            ),
+        )
     competencias = [p.competencia for p in parcelas]
-    competencia_paga = _vale_competencia_paga(session, pessoa_id, competencias)
+    competencia_paga = _vale_competencia_paga(session, pessoa_id, competencias, fazenda_id)
     if competencia_paga:
         raise HTTPException(
             status_code=400,

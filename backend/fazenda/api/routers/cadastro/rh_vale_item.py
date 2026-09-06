@@ -33,7 +33,7 @@ from fazenda.models import (
     ContaGerencial, Contrato, Diaria, Empreitada, LancamentoItem, Pessoa, Usuario, ValeParcela,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
-from fazenda.rules.vale_item import eh_item_de_vale
+from fazenda.rules.vale_item import dividir_item_de_lancamento, eh_item_de_vale
 
 from .rh_contratos import (
     ORIGENS_VALE_AVULSO,
@@ -44,7 +44,13 @@ from .rh_contratos import (
     criar_vale_avulso,
     excluir_vale_avulso,
 )
-from .rh_folha import ValeIn, _competencias_do_vale, criar_vale, excluir_vale as excluir_vale_funcionario
+from .rh_folha import (
+    ValeIn,
+    _competencias_do_vale,
+    _exigir_competencias_nao_pagas,
+    criar_vale,
+    excluir_vale as excluir_vale_funcionario,
+)
 
 router = APIRouter()
 
@@ -78,6 +84,19 @@ def _rotulo_origem(origem_tipo: str, origem) -> str:
 class ValeItemIn(BaseModel):
     pessoa_id: int
     modo: str  # "folha" | "avulso" — obrigatório
+    # Quanto DO ITEM é vale. O caso que criou este campo, na palavra do dono:
+    # "Tenho cachorros e o funcionário também, daí 2/3 do preço da ração de
+    # cachorro que eu marco como vale de funcionário é do funcionário, vale,
+    # e 1/3 eu que pago." Até aqui o checkbox era tudo-ou-nada e a única
+    # saída era digitar duas linhas de item na nota, na mão, com a conta
+    # gerencial e o centro de custo repetidos.
+    # "integral" (padrão, comportamento de sempre) | "parcial".
+    abrangencia: str = "integral"
+    # Sendo parcial, EXATAMENTE UM dos dois: percentual do item (0 < x < 100)
+    # ou valor em reais (0 < x < valor do item). Os dois juntos, ou nenhum,
+    # são erro — não há regra de desempate que não fosse chute.
+    percentual: float | None = None
+    valor: float | None = None
     # modo == "folha"
     parcelas: int = 1
     competencia_inicio: str | None = None  # "AAAA-MM"; None => mês da data do vale
@@ -86,6 +105,52 @@ class ValeItemIn(BaseModel):
     origem_id: int | None = None
     observacao: str | None = None
     confirmar: bool = False  # repassa o "confirmar" do 409 de 40% do salário
+
+
+def valor_vale_do_item(valor_item: float, dados: ValeItemIn) -> float:
+    """Quanto do item é vale do funcionário — o item inteiro (padrão) ou a
+    fatia informada em percentual/valor. Sempre arredondado a 2 casas, e
+    sempre menor que o item quando é parcial: o RESTO é o que vira despesa
+    normal da fazenda (decisão textual do dono), e um resto zero não seria
+    "parcial" coisa nenhuma, seria integral com passos a mais.
+
+    Função pura (sem I/O) para o mesmo número ser calculado no validar (antes
+    de gravar qualquer coisa) e no aplicar — se cada um fizesse sua conta, o
+    limite de 40% do salário seria checado sobre um valor e o vale nasceria
+    com outro."""
+    valor_item = round(valor_item, 2)
+    if dados.abrangencia == "integral":
+        return valor_item
+    if dados.abrangencia != "parcial":
+        raise HTTPException(status_code=400, detail="Abrangência do vale inválida: use 'integral' ou 'parcial'.")
+
+    informados = [x for x in (dados.percentual, dados.valor) if x is not None]
+    if len(informados) != 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Vale parcial: informe o percentual OU o valor da parte do funcionário — um dos dois, não os dois.",
+        )
+    if dados.percentual is not None:
+        if not (0 < dados.percentual < 100):
+            raise HTTPException(
+                status_code=400,
+                detail="O percentual do vale precisa ficar entre 0 e 100 (100% é vale integral).",
+            )
+        valor_vale = round(valor_item * dados.percentual / 100, 2)
+    else:
+        valor_vale = round(dados.valor, 2)
+
+    if valor_vale <= 0:
+        raise HTTPException(status_code=400, detail="A parte do funcionário precisa ser maior que zero.")
+    if valor_vale >= valor_item:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"A parte do funcionário (R$ {_fmt_brl(valor_vale)}) precisa ser menor que o valor do item "
+                f"(R$ {_fmt_brl(valor_item)}) — para o item inteiro, use vale integral."
+            ),
+        )
+    return valor_vale
 
 
 def _resolver_data_pagamento_vale(item: LancamentoItem, session: Session) -> date:
@@ -119,6 +184,10 @@ def validar_vale_item(
         raise HTTPException(status_code=400, detail="Valor do vale deve ser positivo")
     if dados.modo not in ("folha", "avulso"):
         raise HTTPException(status_code=400, detail="Modo de vale inválido")
+    # Vale parcial: daqui para baixo tudo (limite de 40%, parcelas, valor do
+    # vale gerado) é sobre a FATIA DO FUNCIONÁRIO, nunca sobre o item inteiro
+    # — o resto é despesa da fazenda e nunca foi dele.
+    valor_vale = valor_vale_do_item(item_valor, dados)
 
     if dados.modo == "folha":
         if dados.parcelas < 1:
@@ -130,15 +199,23 @@ def validar_vale_item(
             )
         competencia_inicio = dados.competencia_inicio or item_data.strftime("%Y-%m")
         competencias = _competencias_do_vale(competencia_inicio, dados.parcelas)
-        valor_parcela = round(item_valor / dados.parcelas, 2)
+        # Mesma trava de `criar_vale`, aplicada aqui porque este caminho
+        # valida ANTES de gravar a nota inteira: um vale de item lançado numa
+        # competência com folha já paga entraria num holerite fechado.
+        _exigir_competencias_nao_pagas(session, dados.pessoa_id, competencias, fazenda_id, "lançar")
+        valor_parcela = round(valor_vale / dados.parcelas, 2)
         valores_parcela = [valor_parcela] * (dados.parcelas - 1)
-        valores_parcela.append(round(item_valor - valor_parcela * (dados.parcelas - 1), 2))
+        valores_parcela.append(round(valor_vale - valor_parcela * (dados.parcelas - 1), 2))
 
         limite = round(pessoa.salario_base * 0.4, 2)
         competencias_excedidas = []
         for competencia, valor in zip(competencias, valores_parcela):
             ja_lancado = session.exec(
-                select(ValeParcela).where(ValeParcela.pessoa_id == dados.pessoa_id, ValeParcela.competencia == competencia)
+                select(ValeParcela).where(
+                    ValeParcela.pessoa_id == dados.pessoa_id,
+                    ValeParcela.competencia == competencia,
+                    ValeParcela.assumida_pela_fazenda == False,  # noqa: E712
+                )
             ).all()
             total_competencia = round(sum(p.valor for p in ja_lancado) + valor, 2)
             if total_competencia > limite:
@@ -152,7 +229,10 @@ def validar_vale_item(
                 ),
                 "competencias_excedidas": competencias_excedidas,
             })
-        return {"pessoa": pessoa, "modo": "folha", "competencia_inicio": competencia_inicio}
+        return {
+            "pessoa": pessoa, "modo": "folha", "competencia_inicio": competencia_inicio,
+            "valor_vale": valor_vale,
+        }
 
     # modo == "avulso"
     if not dados.origem_tipo or not dados.origem_id:
@@ -171,7 +251,10 @@ def validar_vale_item(
             status_code=400,
             detail="Esta empreitada/contrato/diária já foi encerrada — escolha outra origem.",
         )
-    return {"pessoa": pessoa, "modo": "avulso", "origem": origem, "origem_label": _rotulo_origem(dados.origem_tipo, origem)}
+    return {
+        "pessoa": pessoa, "modo": "avulso", "origem": origem, "valor_vale": valor_vale,
+        "origem_label": _rotulo_origem(dados.origem_tipo, origem),
+    }
 
 
 def aplicar_vale_item(
@@ -185,6 +268,27 @@ def aplicar_vale_item(
     item (vale_funcionario_id ou vale_avulso_id) e commita."""
     data_pagamento = _resolver_data_pagamento_vale(item, session)
     observacao = dados.observacao or f"Vale gerado do item '{item.produto}' da nota {item.numero_lancamento}"
+
+    # Vale PARCIAL: o item se divide antes de qualquer outra coisa (decisão
+    # textual do dono sobre o resto — "Vira despesa normal da fazenda"). A
+    # linha original encolhe para a fatia do funcionário e é ELA que recebe o
+    # vínculo do vale; o gêmeo com o resto fica sem vínculo nenhum e volta a
+    # ser despesa comum, com a mesma conta gerencial e o mesmo centro de
+    # custo que a nota já tinha. Divide-se a linha, e não uma coluna "quanto
+    # deste item é vale", porque toda soma gerencial do sistema filtra o item
+    # inteiro — ver `dividir_item_de_lancamento` em rules/vale_item.py.
+    valor_vale = valor_vale_do_item(item.valor_total, dados)
+    item_fazenda = None
+    if valor_vale < round(item.valor_total, 2):
+        item_fazenda = dividir_item_de_lancamento(
+            session, item, valor_vale, sufixo_descricao="parte da fazenda",
+        )
+        session.commit()
+        session.refresh(item)
+        session.refresh(item_fazenda)
+    parte_fazenda = {
+        "item_id": item_fazenda.id, "valor": item_fazenda.valor_total, "quantidade": item_fazenda.quantidade,
+    } if item_fazenda is not None else None
 
     if dados.modo == "folha":
         competencia_inicio = dados.competencia_inicio or data_pagamento.strftime("%Y-%m")
@@ -206,7 +310,10 @@ def aplicar_vale_item(
         session.add(item)
         session.commit()
         session.refresh(item)
-        return {"vale_tipo": "funcionario", "vale_id": vale_id, "competencia_inicio": competencia_inicio, "resultado": resultado}
+        return {
+            "vale_tipo": "funcionario", "vale_id": vale_id, "competencia_inicio": competencia_inicio,
+            "valor_vale": item.valor_total, "parte_fazenda": parte_fazenda, "resultado": resultado,
+        }
 
     origem = session.get(
         {"empreitada": Empreitada, "contrato": Contrato, "diaria": Diaria}[dados.origem_tipo], dados.origem_id,
@@ -228,6 +335,7 @@ def aplicar_vale_item(
     session.refresh(item)
     return {
         "vale_tipo": "avulso", "vale_id": vale_id,
+        "valor_vale": item.valor_total, "parte_fazenda": parte_fazenda,
         "origem_label": _rotulo_origem(dados.origem_tipo, origem) if origem else None,
         "resultado": resultado,
     }
@@ -369,6 +477,9 @@ def marcar_item_como_vale(
     resultado = aplicar_vale_item(session, item, dados, user, fazenda_id)
 
     pessoa = contexto["pessoa"]
+    # `item.valor_total` já é a FATIA DO FUNCIONÁRIO aqui: num vale parcial o
+    # item foi encolhido por `aplicar_vale_item` e o resto virou item próprio.
+    parte_fazenda = resultado.get("parte_fazenda")
     if dados.modo == "folha":
         parcela_txt = "parcela" if dados.parcelas == 1 else "parcelas"
         resumo = (
@@ -377,6 +488,8 @@ def marcar_item_como_vale(
         )
     else:
         resumo = f"Vale de R$ {_fmt_brl(item.valor_total)} para {pessoa.nome} — abatido de {contexto['origem_label']}"
+    if parte_fazenda:
+        resumo += f" · R$ {_fmt_brl(parte_fazenda['valor'])} ficaram como despesa da fazenda"
 
     return {
         "item_id": item.id,
@@ -384,6 +497,7 @@ def marcar_item_como_vale(
         "vale_tipo": resultado["vale_tipo"],
         "vale_id": resultado["vale_id"],
         "valor": item.valor_total,
+        "parte_fazenda": parte_fazenda,
         "data_pagamento": data_pagamento.isoformat(),
         "pessoa_id": pessoa.id,
         "pessoa_nome": pessoa.nome,

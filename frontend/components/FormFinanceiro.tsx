@@ -1018,6 +1018,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           // são de UI (ver checkbox acima e ValeItemModal), não vão no payload.
           vale: i.vale ? {
             pessoa_id: i.vale.pessoa_id, modo: i.vale.modo,
+            // Vale parcial: vai SÓ o critério escolhido (percentual ou
+            // valor) — o servidor recusa os dois juntos de propósito.
+            abrangencia: i.vale.abrangencia || "integral",
+            percentual: i.vale.percentual ?? null, valor: i.vale.valor ?? null,
             parcelas: i.vale.parcelas, competencia_inicio: i.vale.competencia_inicio || null,
             origem_tipo: i.vale.origem_tipo || null, origem_id: i.vale.origem_id || null,
             observacao: i.vale.observacao || null, confirmar: i.vale.confirmar || false,

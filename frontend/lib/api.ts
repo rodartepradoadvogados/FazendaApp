@@ -2545,6 +2545,68 @@ export async function atualizarParcelaVale(valeId: number, parcelaId: number, da
   }
   return res.json();
 }
+// ── Ações do dono sobre um vale já lançado (Folha > vale > Ações) ──
+// As quatro decisões que existiam na cabeça do dono e não existiam na tela:
+// reparcelar o saldo, abater um valor, desconsiderar o vale de UM mês e
+// cancelar o vale inteiro. As duas últimas mexem TAMBÉM no Financeiro (o
+// valor deixa de ser cobrança da pessoa e vira despesa da fazenda), e é por
+// isso que a resposta traz `financeiro` — a tela precisa poder dizer o que
+// aconteceu do outro lado. Ver backend/.../cadastro/rh_vale_acoes.py.
+export type ValeAcao = "reparcelar" | "abater" | "desconsiderar_mes" | "cancelar";
+export type ValeAcaoIn = {
+  acao: ValeAcao;
+  parcelas?: number;              // reparcelar
+  competencia_inicio?: string;    // reparcelar (padrão: 1ª competência pendente)
+  valor?: number;                 // abater
+  conta_corrente_id?: number;     // abater: conta que RECEBEU a devolução (opcional)
+  competencia?: string;           // desconsiderar_mes
+  motivo?: string;
+};
+export type ValeAcaoContexto = {
+  vale_id: number;
+  status: "ativo" | "cancelado";
+  valor_total: number;
+  valor_abatido: number;
+  valor_assumido_fazenda: number;
+  saldo_pendente: number;
+  parcelas: {
+    id: number; competencia: string; valor: number;
+    assumida_pela_fazenda: boolean; motivo_assuncao: string | null;
+    pendente: boolean; competencia_paga: boolean;
+  }[];
+  acoes_disponiveis: ValeAcao[];
+};
+export type ValeAcaoResultado = {
+  acao: ValeAcao;
+  resumo: string;
+  vale: ValeAcaoContexto;
+  financeiro?: { natureza: "item_de_nota" | "lancamento_proprio" | "sem_lastro"; numero_lancamento: string | null };
+  [chave: string]: any;
+};
+
+export async function fetchAcoesVale(valeId: number): Promise<ValeAcaoContexto> {
+  const res = await authFetch(`${API}/cadastro/vales/${valeId}/acoes`, { cache: "no-store" });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(mensagemErroApi(d.detail) || "Erro ao buscar as ações do vale");
+  }
+  return res.json();
+}
+
+export async function executarAcaoVale(valeId: number, dados: ValeAcaoIn): Promise<ValeAcaoResultado> {
+  const res = await authFetch(`${API}/cadastro/vales/${valeId}/acoes`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao executar a ação do vale");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
 /** G15 — exclui UMA parcela do vale (não o vale inteiro; para isso já existe
  * `excluirVale`). 400 se a parcela já caiu em folha paga, ou se for a única
  * parcela do vale (exclua o vale inteiro nesse caso). Sem `confirmar`, a API
@@ -6533,6 +6595,14 @@ export type ValeItemOpcoes = {
 export type ValeItemIn = {
   pessoa_id: number;
   modo: "folha" | "avulso";
+  // Quanto DO ITEM é vale: "integral" (o item inteiro, comportamento de
+  // sempre) ou "parcial" — e aí exatamente um entre `percentual` e `valor`.
+  // O caso do dono: 2/3 da ração de cachorro são do funcionário, 1/3 é dele;
+  // a sobra vira despesa normal da fazenda, na mesma conta gerencial e no
+  // mesmo centro de custo (o backend divide o item em duas linhas).
+  abrangencia?: "integral" | "parcial";
+  percentual?: number | null;
+  valor?: number | null;
   parcelas?: number;
   competencia_inicio?: string | null;
   origem_tipo?: "empreitada" | "contrato" | "diaria" | null;
@@ -6543,6 +6613,8 @@ export type ValeItemIn = {
 export type ValeItemResultado = {
   item_id: number; numero_lancamento: string; vale_tipo: "funcionario" | "avulso";
   vale_id: number; valor: number; data_pagamento: string;
+  // Preenchido só no vale parcial: a linha gêmea que ficou com a fazenda.
+  parte_fazenda: { item_id: number; valor: number; quantidade: number | null } | null;
   pessoa_id: number; pessoa_nome: string; resumo: string;
 };
 
