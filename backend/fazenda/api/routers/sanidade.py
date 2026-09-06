@@ -960,13 +960,22 @@ class NovoCronogramaIn(BaseModel):
 
 @router.post("/cronogramas")
 def criar_cronograma_manual(
-    dados: NovoCronogramaIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: NovoCronogramaIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Cria (ou devolve, se já existir) o cronograma em aberto de uma regra —
     para o card Cronogramas > "Novo cronograma", quando o usuário quer
     adiantar o 1º ciclo sem esperar a Agenda criar sozinha. Sempre vinculado a
     uma regra existente com usa_cronograma=True — nunca um cronograma solto."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
+    # BUG DE SEGURANÇA CORRIGIDO (achado 31): esta era a última das seis
+    # rotas de escrita de sanidade ainda na dependência TOLERANTE; as outras
+    # cinco (criar_calendario, registrar_colostragem, POST
+    # /agendamentos-pesagem, /eventos-sanitarios e /exames) já migraram.
+    # A checagem de posse do calendário abaixo é estrita e sempre foi, mas não
+    # cobria o caso "token sem fid + regra órfã": os dois lados caíam em None,
+    # o `!=` dava falso e `cronograma_aberto` gravava um CronogramaSanitario
+    # também órfão — mais uma linha invisível na Agenda de todo mundo, que é
+    # exatamente o incidente do "D6 sumindo". Recusar na porta com 409 é mais
+    # barato que caçar o órfão depois.
     calendario = session.get(CalendarioSanitario, dados.calendario_sanitario_id)
     if not calendario or (calendario.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")

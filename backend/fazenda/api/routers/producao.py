@@ -603,11 +603,21 @@ def _fase_transicao(
 @router.post("/pesagens")
 def criar_pesagens(
     dados: PesagensIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Registra a pesagem corporal do dia para uma ou várias vacas de uma vez."""
+    # BUG DE SEGURANÇA CORRIGIDO (achado 4): esta rota usava
+    # `get_fazenda_atual_id` + `fazenda_id_seguro`, a dependência TOLERANTE —
+    # o irmão direto `criar_controles` (ControleLeiteiro), 400 linhas acima,
+    # já usava `get_fazenda_id_escrita`. Com token sem "fid", `fazenda_id`
+    # caía para None e a pesagem nascia com `fazenda_id=NULL`: órfã, invisível
+    # a toda consulta filtrada por fazenda (é a causa raiz documentada do "D6
+    # sumindo da Agenda"). Pior aqui do que em outros lugares porque o peso é
+    # o que decide novilha apta/inapta, e o casamento é por `numero_matriz`,
+    # texto livre sem FK que colide entre fazendas desde a migração
+    # c24befa94c1b (Animal.numero deixou de ser único globalmente). Agora
+    # `get_fazenda_id_escrita` recusa com 409 em vez de gravar órfão.
     usuario_id = _usuario_id_seguro(user)
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     criados = []
     for entrada in dados.entradas:
         if not entrada.peso_kg:
@@ -970,9 +980,14 @@ def excluir_faixa_bonificacao_qualidade(
 @router.post("/qualidade-leite", status_code=201)
 def criar_qualidade_leite(
     dados: QualidadeLeiteIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
+    # BUG DE SEGURANÇA CORRIGIDO (achado 5): mesma orfanização silenciosa do
+    # POST /pesagens acima — e `qualidade_leite` é a tabela onde o problema
+    # DEIXOU RASTRO: existem linhas com `fazenda_id` nulo criadas DEPOIS da
+    # migração 029227481e9e, que deveria ter zerado o estoque de órfãos. Sem
+    # tenant gravado, o resultado de CCS/CBT de um cliente não aparece na tela
+    # de nenhum — o dado some do dono e fica pendurado no banco.
     registro = QualidadeLeite(**dados.model_dump(), usuario_id=_usuario_id_seguro(user), fazenda_id=fazenda_id)
     session.add(registro)
     session.commit()
@@ -1087,9 +1102,15 @@ def listar_entrega_leite(
 @router.post("/entrega-leite", status_code=201)
 def criar_entrega_leite(
     dados: EntregaLeiteMensalIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
+    # BUG DE SEGURANÇA CORRIGIDO (achado 6): a BUSCA do upsert já era filtrada
+    # por fazenda, mas a CRIAÇÃO do registro novo gravava o `fazenda_id`
+    # tolerante. O resultado era o pior dos dois mundos: com token sem "fid" o
+    # `where` sumia, o upsert encontrava a entrega de OUTRA fazenda na mesma
+    # competência e sobrescrevia litros/unidade dela; não encontrando, criava
+    # uma entrega órfã. Como a competência é "AAAA-MM", a colisão entre
+    # clientes é o caso normal — todo mundo fecha o mesmo mês.
     existente_query = select(EntregaLeiteMensal).where(EntregaLeiteMensal.competencia == dados.competencia)
     if fazenda_id is not None:
         existente_query = existente_query.where(EntregaLeiteMensal.fazenda_id == fazenda_id)

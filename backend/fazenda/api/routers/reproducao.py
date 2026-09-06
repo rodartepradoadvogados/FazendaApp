@@ -901,6 +901,59 @@ class ServicoEditIn(BaseModel):
     motivo_perda_prenhez: str | None = None
 
 
+# Vocabulário fechado do diagnóstico de gestação. Ele SEMPRE existiu, mas só
+# como comentário em models/reprodutivo.py ("POSITIVO | NEGATIVO | INDEFINIDO"
+# e "Palpação | Ultrassom | Cio de repasse") — nunca como validação (achado 65
+# da auditoria): o PUT /servicos/{id} faz `setattr` genérico sobre tudo que
+# chega e só `motivo_perda_prenhez` tinha allow-list.
+#
+# O corpo do e-mail de diagnóstico já escapa o valor (`html.escape`, mais
+# acima), então o XSS está fechado no SINK; isto fecha a ORIGEM. E o dano
+# maior nem era o e-mail: `diagnostico` é lido como enum por
+# rules/estado_reprodutivo.py, agenda_engine.py, perda_prenhez.py,
+# reproducao_analise.py e iatf.py, todos comparando com "POSITIVO"/"NEGATIVO"
+# em caixa alta. Qualquer outro texto gravado aqui não é rejeitado por
+# ninguém: a vaca simplesmente deixa de casar com qualquer estado e some das
+# listas de reprodução sem erro nenhum na tela.
+DIAGNOSTICOS_VALIDOS = ("POSITIVO", "NEGATIVO", "INDEFINIDO")
+METODOS_DIAGNOSTICO_VALIDOS = ("Palpação", "Ultrassom", "Cio de repasse")
+
+
+def _normalizar_escolha(valor: str, opcoes: tuple[str, ...]) -> str | None:
+    """Casa `valor` com uma das `opcoes` ignorando caixa, acento e espaço em
+    volta, e devolve a opção NA FORMA CANÔNICA (ou None se não casar).
+
+    Normaliza em vez de comparar cru porque as telas antigas mandam
+    "positivo", "Palpacao" e "ULTRASSOM" — recusar isso quebraria o
+    lançamento sem fechar furo nenhum. Gravar a forma canônica é o que
+    importa: as regras de reprodução comparam com "POSITIVO" em caixa alta."""
+    import unicodedata
+
+    def chave(t: str) -> str:
+        sem_acento = unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode()
+        return sem_acento.strip().casefold()
+
+    procurado = chave(valor)
+    for opcao in opcoes:
+        if chave(opcao) == procurado:
+            return opcao
+    return None
+
+
+def _exigir_metodo_diagnostico(metodo: str | None) -> str | None:
+    """Método na forma canônica, ou 400. `None`/vazio segue válido — o método
+    é opcional no lançamento (nem todo diagnóstico registra como foi feito)."""
+    if not (metodo or "").strip():
+        return None
+    canonico = _normalizar_escolha(metodo, METODOS_DIAGNOSTICO_VALIDOS)
+    if canonico is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Método de diagnóstico inválido — use um de: {', '.join(METODOS_DIAGNOSTICO_VALIDOS)}",
+        )
+    return canonico
+
+
 @router.put("/servicos/{servico_id}")
 def atualizar_servico(
     servico_id: int,
@@ -924,6 +977,22 @@ def atualizar_servico(
     if "motivo_perda_prenhez" in campos and campos["motivo_perda_prenhez"] is not None \
             and campos["motivo_perda_prenhez"] not in MOTIVOS_PERDA_PRENHEZ_VALIDOS:
         raise HTTPException(status_code=400, detail="Motivo de perda de prenhez inválido")
+    # Allow-list de diagnóstico/método (achado 65 — ver DIAGNOSTICOS_VALIDOS).
+    # `None` continua passando: apagar o diagnóstico é uma edição legítima
+    # (reabrir o serviço), o que não pode é gravar texto que ninguém lê.
+    for campo, opcoes, rotulo in (
+        ("diagnostico", DIAGNOSTICOS_VALIDOS, "Diagnóstico"),
+        ("metodo_diagnostico", METODOS_DIAGNOSTICO_VALIDOS, "Método de diagnóstico"),
+    ):
+        if campos.get(campo) is None:
+            continue
+        canonico = _normalizar_escolha(campos[campo], opcoes)
+        if canonico is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{rotulo} inválido — use um de: {', '.join(opcoes)}",
+            )
+        campos[campo] = canonico
     for campo, valor in campos.items():
         setattr(servico, campo, valor)
     session.add(servico)
@@ -1091,7 +1160,10 @@ def registrar_diagnostico(
         servico.retoque = False
     else:
         servico.data_diagnostico = dados.data_diagnostico
-        servico.metodo_diagnostico = dados.metodo
+        # Mesma allow-list do PUT /servicos/{id} (achado 65): `dados.metodo` é
+        # texto livre e cai no mesmo campo, então validar só lá deixaria a
+        # porta da frente aberta. O `resultado` logo abaixo já era fechado.
+        servico.metodo_diagnostico = _exigir_metodo_diagnostico(dados.metodo)
         if dados.resultado == "retoque":
             servico.diagnostico = "POSITIVO"
             servico.retoque = True
