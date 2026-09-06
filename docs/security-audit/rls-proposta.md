@@ -132,33 +132,90 @@ saber de fazenda nenhuma, e quem conhece o `fazenda_id` é
 `auth.py::get_fazenda_atual_id()`, que só lê o token (não toca o banco, então
 não há dependência circular). São as duas peças a costurar.
 
-## 5. A ordem obrigatória — e por que ela não é preferência
+## 5. A ordem — aprovada pelo dono em 06/09/2026
 
-Ligar RLS numa base que ainda tem órfãos não "esconde" esses registros: torna
-cada um **inalcançável por qualquer caminho da aplicação, inclusive o de
-recuperação**. Depois da política ativa, a própria migração de backfill (a
-`029227481e9e`, que preenche `fazenda_id` nulo) deixa de enxergar o que
-precisa consertar — a menos que rode como owner ou com `BYPASSRLS`, que é
-justamente a exceção que não se quer deixar de pé.
+**O que foi aprovado é a ORDEM, não a execução.** Cada etapa abaixo continua
+precisando de decisão própria antes de rodar: nenhuma delas está autorizada
+por este documento.
 
-Então a sequência é uma dependência, não uma escolha:
+O RLS não é a primeira etapa, e essa é a mudança em relação ao que estava
+escrito aqui antes. Duas travas mais baratas vêm na frente, entregam a maior
+parte do benefício, e **nenhuma delas mexe em infraestrutura** — enquanto o
+RLS exige trocar o usuário do banco, mudar como a aplicação abre sessão, e
+não perdoa erro em nenhum dos dois.
 
-1. **Contar** os órfãos em produção (`orfaos-railway.sql`).
-2. **Triar**: quantos desses dá para recuperar sem adivinhar
-   (`orfaos-triagem.sql`). A migração `029227481e9e` já fixou a estratégia
-   certa — derivar do pai, senão fazenda única, senão não adivinhar — mas a
-   lista de pais dela é escrita à mão; a triagem tira a relação filha→pai do
-   catálogo do banco, então nenhuma FK fica de fora por esquecimento. Ela
-   também responde se a estratégia "fazenda única" ainda vale: deixa de valer
-   no dia em que entra a segunda fazenda-cliente.
-3. **Recuperar ou marcar** — o backfill determinístico do que tem pai, e
-   decisão explícita sobre o que sobrar. **Decisão do dono, com os dois
-   números na mão: quantos são, e quantos não têm saída.**
-4. **Criar o role de aplicação** e trocar a `DATABASE_URL`.
-5. **Ativar** a política, primeiro no Staging (banco próprio), depois em
-   produção.
+### 1. Contar os órfãos (`orfaos-railway.sql`)
 
-Pular direto para o 5 transforma cada órfão em perda de dado silenciosa.
+Somente leitura. Responde "quantos são".
+
+### 2. Triar (`orfaos-triagem.sql`)
+
+Somente leitura, e é ela que decide o tamanho do trabalho: **quantos dá para
+recuperar sem adivinhar**. Mil órfãos todos com um pai que sabe a fazenda são
+um `UPDATE` determinístico; cinquenta sem pai nenhum são cinquenta decisões,
+uma a uma.
+
+A migração `029227481e9e` já fixou a estratégia certa — derivar do pai, senão
+fazenda única, senão não adivinhar —, mas a lista de pais dela é escrita à
+mão; a triagem tira a relação filha→pai do catálogo do banco, então nenhuma
+FK fica de fora por esquecimento. Ela também responde se a estratégia
+"fazenda única" ainda vale: deixa de valer no dia em que entra a segunda
+fazenda-cliente.
+
+### 3. Recuperar ou marcar
+
+O backfill determinístico do que tem pai, e decisão explícita sobre o que
+sobrar. **Decisão do dono, com os dois números na mão.**
+
+### 4. `fazenda_id` deixa de aceitar nulo
+
+`ALTER TABLE ... ALTER COLUMN fazenda_id SET NOT NULL` nas **156** tabelas que
+aceitam NULL sem ter direito (as 14 de catálogo global ficam de fora, porque
+ali o NULL é o que faz o catálogo ser de todos).
+
+É a trava com melhor retorno pelo custo de todo este documento:
+
+- **É trava de banco de verdade**, não convenção de código. Nenhuma rota, nem
+  a mais distraída, consegue criar registro sem dono a partir daí.
+- **Mata a família inteira de "órfão passa por qualquer fazenda"** na origem.
+  O padrão tolerante `if registro.fazenda_id not in (None, fazenda_id)`, que
+  a auditoria vem fechando rota a rota, deixa de ter caso a tratar: não
+  existe mais registro com `fazenda_id` nulo para ser tolerado.
+- **Não exige trocar usuário do banco nem tocar em `get_session`.** É uma
+  migração Alembic comum.
+- **É pré-requisito do RLS de qualquer forma** — a política de dado da
+  fazenda nega toda linha com `fazenda_id` nulo, então essas linhas
+  precisariam sumir antes, de um jeito ou de outro.
+
+Só pode vir depois da etapa 3: a migração falha se ainda houver uma linha
+nula, e é assim que tem que ser — falhar na migração é infinitamente melhor
+que falhar em produção.
+
+### 5. As 161 chaves estrangeiras compostas
+
+`FOREIGN KEY (filho_id, fazenda_id) REFERENCES pai(id, fazenda_id)`, com a
+`UNIQUE (id, fazenda_id)` correspondente em cada uma das **61** tabelas pai.
+
+Fecha os dois problemas da seção 6: a referência cruzada entre fazendas, e o
+oráculo de existência. Também não depende de RLS nem de infraestrutura.
+
+### 6. RLS, por último
+
+Só aqui entram as três exigências que nenhuma etapa anterior tem: role de
+aplicação sem superusuário, `DATABASE_URL` trocada, e a aplicação emitindo
+`SET LOCAL app.fazenda_id` por requisição. Primeiro no Staging (banco
+próprio), depois em produção.
+
+---
+
+**Por que a ordem é dependência e não preferência.** Ligar RLS numa base que
+ainda tem órfãos não "esconde" esses registros: torna cada um **inalcançável
+por qualquer caminho da aplicação, inclusive o de recuperação**. Depois da
+política ativa, a própria migração de backfill (`029227481e9e`) deixa de
+enxergar o que precisa consertar — a menos que rode como owner ou com
+`BYPASSRLS`, que é justamente a exceção que não se quer deixar de pé.
+
+Pular direto para o 6 transforma cada órfão em perda de dado silenciosa.
 
 ## 6. Um furo que o RLS sozinho NÃO fecha: chave estrangeira
 
@@ -249,5 +306,6 @@ deploy, sozinha, sem ninguém decidir nada. Vira migração no dia da decisão.
 | Usuário do banco é superusuário? | consulta pronta (seção 3) |
 | Criar role de aplicação e trocar DATABASE_URL | decisão de infraestrutura do dono |
 | O que fazer com cada bloco de órfão | decisão do dono, depois da contagem |
-| Fazer as 161 FKs compostas junto, ou em etapa própria? | decisão do dono (seção 6) |
+| Etapa 4 (`NOT NULL`): autorizar a migração | depois da etapa 3 |
+| Etapa 5 (161 FKs compostas): autorizar | independente do RLS |
 | Custo de desempenho da política | medir no Staging, com volume real |
