@@ -4248,10 +4248,29 @@ def destinatario_recibo(
     nome = (conta.fornecedor_cliente or "").strip()
     if not nome:
         return {"nome": None, "email": None}
+    # RESÍDUO DO ACHADO 13 CORRIGIDO: o lançamento já passou a ser filtrado
+    # por fazenda acima, mas a resolução do e-mail continuava buscando o
+    # cadastro SÓ PELO NOME, em toda a tabela. `fornecedor_cliente` é texto
+    # livre, e nome de fornecedor se repete entre clientes por natureza (a
+    # mesma cooperativa, a mesma revenda de insumo, o mesmo veterinário
+    # atendem várias fazendas da região — e homônimo de funcionário também
+    # existe). Com dois cadastros de mesmo nome em fazendas diferentes, o
+    # `.first()` devolvia o de QUALQUER uma: a fazenda 1 abria o modal de
+    # recibo do próprio lançamento e recebia de volta o e-mail cadastrado
+    # pela fazenda 2 — que é o destinatário sugerido do envio logo em
+    # seguida (`POST .../recibo/enviar`), ou seja, dado da vítima saindo
+    # como destino do recibo de outro. Mesma classe do casamento por
+    # `animal.numero`, que desde a migração c24befa94c1b também não é mais
+    # único entre fazendas.
+    query_pessoa = select(Pessoa).where(Pessoa.nome == nome)
+    query_fornecedor = select(Fornecedor).where(Fornecedor.nome == nome)
+    if fazenda_id is not None:
+        query_pessoa = query_pessoa.where(Pessoa.fazenda_id == fazenda_id)
+        query_fornecedor = query_fornecedor.where(Fornecedor.fazenda_id == fazenda_id)
     if conta.tipo_documento == "Folha de pagamento":
-        pessoa = session.exec(select(Pessoa).where(Pessoa.nome == nome)).first()
+        pessoa = session.exec(query_pessoa).first()
         return {"nome": nome, "email": pessoa.email if pessoa else None}
-    fornecedor = session.exec(select(Fornecedor).where(Fornecedor.nome == nome)).first()
+    fornecedor = session.exec(query_fornecedor).first()
     return {"nome": nome, "email": fornecedor.email if fornecedor else None}
 
 
