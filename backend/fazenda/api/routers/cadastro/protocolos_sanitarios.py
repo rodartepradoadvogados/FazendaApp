@@ -16,12 +16,12 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
+from fazenda.auth import exigir_admin_ou_dono, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     Doenca, MedicamentoComercial, PrincipioAtivo, ProtocoloIatf, ProtocoloIatfEtapa, ProtocoloIatfLancamento,
     ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa, ProtocoloInducaoLancamento, ProtocoloSanitario,
-    ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, SeedFlag,
+    ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, SeedFlag, Usuario,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.dose_protocolo import MODOS_DOSE_VALIDOS, interpretar_unidade_legada
@@ -251,7 +251,8 @@ class ItemMigracaoDose(BaseModel):
 @router.post("/protocolos-sanitarios/dose-migrar")
 def migrar_dose_protocolos_sanitarios(
     confirmar: bool = False, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+    _: Usuario = Depends(exigir_admin_ou_dono),
 ) -> dict:
     """Backfill report-first (mesmo padrão de /patrimonio/depreciavel-corrigir
     e das reconstruções de ordem_parto): separa a referência de peso vivo que
@@ -268,9 +269,22 @@ def migrar_dose_protocolos_sanitarios(
     juntos até este backfill existir. Produto sem bula confiável (ex.: Aliv V,
     que está com `dose_referencia_kg=None` no catálogo — ver o alerta
     "REVISAR CATÁLOGO" nele) usa o número que já estava escrito no texto da
-    própria etapa, sem inventar nada."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
+    própria etapa, sem inventar nada.
 
+    BUG DE SEGURANÇA CORRIGIDO (achado 33), duas coisas de uma vez:
+
+    1. Não havia gate de papel algum — qualquer usuário com o módulo
+       sanitário liberado podia disparar `confirmar=true`, que reescreve
+       `modo_dose`/`unidade`/`dose_referencia_kg` de toda etapa que casar. É
+       uma reescrita irreversível de posologia (a dose que a pessoa vai
+       aplicar na vaca), não um relatório. Agora exige `exigir_admin_ou_dono`,
+       o mesmo gate das outras reconstruções em massa do sistema
+       (producao.py::reconstruir_ordem_parto e as irmãs).
+    2. Usava a dependência TOLERANTE para uma escrita em massa. O `if
+       fazenda_id is not None` logo abaixo é o padrão tolerante do sistema:
+       com `fazenda_id` resolvendo None o `where` inteiro sumia e a varredura
+       passava a colher — e reescrever — a etapa de TODAS as fazendas de uma
+       vez. `get_fazenda_id_escrita` recusa com 409 antes de chegar aqui."""
     query = select(ProtocoloSanitarioEtapa, ProtocoloSanitario.nome).join(
         ProtocoloSanitario, ProtocoloSanitario.id == ProtocoloSanitarioEtapa.protocolo_id
     ).where(ProtocoloSanitarioEtapa.modo_dose == "fixa")

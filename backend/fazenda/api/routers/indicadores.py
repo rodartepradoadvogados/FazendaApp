@@ -310,7 +310,18 @@ def _contexto_calculo(
             ultima_data[p.numero_matriz] = p.data_pesagem
             peso_por_animal[p.numero_matriz] = p.peso_kg
 
-    lotes = [l.model_dump() for l in session.exec(select(Lote)).all()]
+    # BUG DE SEGURANÇA CORRIGIDO (achado 54): esta era a única das três
+    # consultas desta função sem filtro de fazenda — `PesagemCorporal` acima e
+    # `ProtocoloIatfAplicacao` abaixo sempre filtraram. O Lote carrega o nome
+    # e a janela de DEL que classificam a vaca na Capa e no relatório
+    # personalizado: sem o filtro, a lista trazia os lotes de TODOS os
+    # tenants, e como o casamento com o animal é por `grupo_primario` (texto
+    # livre, e "Lactação"/"Secas"/"Novilhas" é o vocabulário de todo mundo), a
+    # janela de DEL da fazenda vizinha reclassificava o rebanho daqui.
+    query_lotes = select(Lote)
+    if fazenda_id is not None:
+        query_lotes = query_lotes.where(Lote.fazenda_id == fazenda_id)
+    lotes = [l.model_dump() for l in session.exec(query_lotes).all()]
     # Aplicações de IATF entram para o estado reprodutivo ao vivo enxergar
     # "em protocolo" — sem elas, a Capa classificaria como apta uma vaca que
     # o Rebanho mostra em protocolo, criando divergência entre as telas.

@@ -161,6 +161,32 @@ def criar_principio_global(
     return pa.model_dump()
 
 
+@router.post("/principios/restaurar-catalogo")
+def restaurar_catalogo_principios(_: Usuario = _dep_edicao, session: Session = Depends(get_session)) -> dict:
+    """(Re)semeia o catálogo base de princípios ativos (documento base da
+    farmácia) — add-missing e idempotente: só cria os que faltam e não
+    sobrescreve edições. Útil quando o banco foi criado antes do catálogo
+    completo existir.
+
+    MOVIDA DE `cadastro/sanitario.py` (achado 35 da auditoria). Lá ela era
+    `POST /cadastro/principios-ativos/restaurar-catalogo`, sem dependência de
+    fazenda e SEM GATE DE PAPEL NENHUM: qualquer usuário de qualquer fazenda
+    com o módulo sanitário liberado reescrevia o catálogo global que todas as
+    fazendas-cliente enxergam por `rules.visibilidade.visivel()`.
+
+    O lugar dela é aqui, e não um `exigir_admin` lá: `seed_farmacia` grava
+    `PrincipioAtivo` com `fazenda_id=None`, o que é dado da CowData, não da
+    fazenda. É a mesma correção estrutural que o catálogo de touros NAAB já
+    recebeu (PR #702). O gate passa a ser o das outras escritas do catálogo
+    global desta tela — área "farmacia" + `pode_editar_farmacia`."""
+    from fazenda.rules.farmacia import seed_farmacia
+
+    antes = len(session.exec(select(PrincipioAtivo)).all())
+    seed_farmacia(session)
+    total = len(session.exec(select(PrincipioAtivo)).all())
+    return {"criados": total - antes, "total": total}
+
+
 @router.put("/principios/{principio_id}")
 def atualizar_principio_global(
     principio_id: int, dados: PrincipioGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
