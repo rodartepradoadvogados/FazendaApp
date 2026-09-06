@@ -135,10 +135,19 @@ jobs:
       # so a sua fatia dos modulos, entao o paralelismo tambem e o que faz o
       # consumo caber na maquina — nao e otimizacao, e requisito.
       #
-      # `--dist loadfile` (e nao o padrao `load`) NAO e detalhe: os fixtures
-      # sao de escopo de modulo e varios arquivos montam o proprio engine
-      # SQLite no nivel do modulo. Por arquivo, cada worker fica dono do modulo
-      # inteiro, que e o isolamento que a suite ja assume.
+      # Sobre `--dist loadfile` (por arquivo) em vez do padrao `load` (por
+      # teste): e o que foi MEDIDO, e fica. A justificativa que estava escrita
+      # aqui antes — "os fixtures sao de escopo de modulo e varios arquivos
+      # montam o proprio engine no nivel do modulo" — era FALSA, conferido em
+      # 06/09/2026: a suite tem ZERO fixtures de escopo module/session e ZERO
+      # engines criados fora de fixture. Cada teste monta e desmonta o proprio
+      # banco, entao `load` tambem funcionaria.
+      #
+      # O motivo real de manter `loadfile` e mais simples: manter os testes de
+      # um arquivo no mesmo worker reduz repeticao de setup caro (montar schema
+      # + TestClient) e foi a configuracao sob a qual os 16m36s e o consumo de
+      # memoria por worker foram medidos. Trocar para `load` exigiria medir de
+      # novo, sem ganho conhecido.
       #
       # O timeout existe porque sem ele um job travado consome o teto de 6h do
       # GitHub antes de alguem perceber. 60 minutos e folga larga sobre a

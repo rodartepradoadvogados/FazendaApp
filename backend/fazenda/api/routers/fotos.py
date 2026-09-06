@@ -10,6 +10,7 @@ contratado específico — qualquer fazenda com contrato ativo pode usar.
 """
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
@@ -29,6 +30,8 @@ from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, exclu
 _CONTENT_TYPES_PERMITIDOS_FOTO = {"image/png", "image/jpeg", "image/webp", "image/gif"}
 
 router = APIRouter(prefix="/fotos", tags=["fotos"])
+
+logger = logging.getLogger(__name__)
 
 TAMANHO_MAXIMO_FOTO = 15 * 1024 * 1024  # 15 MB — igual ao arquivo fiscal-contábil
 
@@ -94,12 +97,48 @@ def _criar_avisos_portal(
 
 
 def _proximo_caminho(session: Session, fazenda_id: int | None, hoje: date, extensao: str) -> str:
+    """fazenda-X/2026-09-06_0001.jpg — sequencial por dia.
+
+    BUG CORRIGIDO (mesmo defeito do anexo de Pessoa, relatado pelo dono em
+    06/09/2026 e corrigido em `cadastro/pessoas.py::_caminho_anexo_pessoa`,
+    depois em pedidos.py e financeiro.py) — só que AQUI ele é GARANTIDO, não
+    eventual, como no Arquivo fiscal (documentos.py::_proximo_caminho): a
+    sequência vinha da CONTAGEM de fotos vivas do dia, e o nome no Storage é
+    DETERMINÍSTICO (data + sequência, sem o nome do arquivo enviado). Nos
+    outros módulos a colisão dependia de o usuário repetir o nome do arquivo;
+    aqui basta ter 0001 e 0002 no mesmo dia: excluir a 0001 derruba a
+    contagem para 1 e a próxima foto nasce 0002 — exatamente o caminho da que
+    continua na galeria. O envio usa `x-upsert`, então o arquivo da 0002 é
+    sobrescrito em silêncio e as DUAS linhas do banco passam a apontar para o
+    mesmo objeto: a foto antiga passa a exibir a imagem nova, excluir uma
+    apaga o arquivo das duas, e a outra fica travada para sempre (o Storage
+    responde 404 na exclusão, o endpoint devolvia 400 e a linha nunca saía da
+    galeria). No app móvel, em que o peão manda várias fotos do mesmo assunto
+    no mesmo dia, isso acontece na PRIMEIRA exclusão.
+
+    Agora a sequência sai do MAIOR número já usado nos caminhos daquele dia
+    (não da contagem): número devolvido por uma exclusão nunca é reemitido
+    enquanto sobrar qualquer foto, então duas fotos vivas jamais dividem o
+    mesmo caminho.
+    """
     prefixo_pasta = f"fazenda-{fazenda_id if fazenda_id is not None else 'geral'}"
     prefixo_nome = f"{hoje.isoformat()}_"
     existentes = session.exec(
         select(FotoCampo).where(FotoCampo.fazenda_id == fazenda_id)
     ).all()
-    seq = 1 + sum(1 for f in existentes if f.caminho_storage.split("/")[-1].startswith(prefixo_nome))
+    maior = 0
+    vivas_do_dia = 0
+    for f in existentes:
+        nome = (f.caminho_storage or "").split("/")[-1]
+        if not nome.startswith(prefixo_nome):
+            continue
+        vivas_do_dia += 1
+        # "2026-09-06_0003.jpg" -> 3. Caminho antigo/fora do padrão não entra
+        # na conta (o `vivas_do_dia` cobre esse caso, como antes).
+        numero = nome[len(prefixo_nome):].split(".", 1)[0]
+        if numero.isdigit():
+            maior = max(maior, int(numero))
+    seq = 1 + max(maior, vivas_do_dia)
     return f"{prefixo_pasta}/{prefixo_nome}{seq:04d}{extensao}"
 
 
@@ -251,10 +290,41 @@ def excluir_foto(
     foto = session.get(FotoCampo, foto_id)
     if not foto or (fazenda_id is not None and foto.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Foto não encontrada")
-    try:
-        excluir_arquivo(foto.caminho_storage, bucket=settings.supabase_bucket_fotos)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    # As fotos enviadas ANTES da correção de `_proximo_caminho` podem dividir
+    # o mesmo caminho com outra foto viva. Apagar o objeto nesse caso
+    # derrubaria o download da irmã que fica — só remove do bucket quando
+    # ninguém mais aponta para lá.
+    # O recorte por fazenda entra NA PRÓPRIA consulta (nunca num `if` em
+    # volta dela): sem multi-fazenda provisionado vira `fazenda_id IS NULL`,
+    # que é exatamente o conjunto de linhas desse ambiente. Foto de outra
+    # fazenda não é "irmã" de ninguém aqui.
+    compartilhado = session.exec(
+        select(FotoCampo).where(
+            FotoCampo.fazenda_id == fazenda_id,
+            FotoCampo.caminho_storage == foto.caminho_storage,
+            FotoCampo.id != foto.id,
+        )
+    ).first()
+    if not compartilhado:
+        try:
+            excluir_arquivo(foto.caminho_storage, bucket=settings.supabase_bucket_fotos)
+        except RuntimeError as exc:
+            # BUG CORRIGIDO (mesmo defeito do anexo de Pessoa, relatado pelo
+            # dono em 06/09/2026): a falha do Storage virava 400 e ABORTAVA a
+            # exclusão da linha. Arquivo que já não está lá (apagado à mão no
+            # painel do Supabase, caminho sobrescrito pelo bug de sequência
+            # acima, upload interrompido pela fila offline do app) devolve
+            # 404 no delete — e a foto passava a ser IMPOSSÍVEL de tirar da
+            # galeria: toda tentativa repetia o mesmo 400, para sempre,
+            # porque a causa era justamente o arquivo não existir mais. A
+            # linha do banco é o que o usuário enxerga e é ela que tem que
+            # sair; no pior caso sobra um objeto órfão no bucket (invisível,
+            # sem nenhuma linha apontando), muito melhor que uma foto
+            # fantasma presa na galeria.
+            logger.warning(
+                "Foto %s: linha excluída mesmo com falha ao apagar o arquivo no Storage (%s): %s",
+                foto.id, foto.caminho_storage, exc,
+            )
     session.delete(foto)
     session.commit()
     return {"excluido": True}
