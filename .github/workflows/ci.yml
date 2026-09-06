@@ -5,6 +5,16 @@ on:
   push:
     branches: [main]
 
+# Sem isto, cada push novo abre mais uma execucao e as anteriores do MESMO
+# branch continuam rodando ate o fim. Em 06/09/2026 a fila chegou a quatro
+# execucoes simultaneas de ~100 minutos cada, o limite de gasto da conta
+# estourou e o runner de um PR foi morto aos 30% da suite — o log fecha com
+# "The runner has received a shutdown signal", que parece teste quebrado e
+# nao e. Uma execucao por branch: a nova cancela a anterior.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Guarda contra a quebra de deploy mais recorrente do projeto: dois PRs
   # paralelos criam migracoes irmas, o historico fica com duas cabecas e
@@ -70,6 +80,24 @@ jobs:
   backend-tests:
     name: Suite de testes do backend
     runs-on: ubuntu-latest
+    # So no PR, nao no `push: main`. Hoje a suite roda DUAS vezes por mudanca:
+    # uma no PR e outra no merge em main — o mesmo codigo, o mesmo resultado,
+    # o dobro do minuto pago. O evento `pull_request` ja testa o MERGE do PR
+    # com a base (nao o branch cru), entao a segunda execucao so acrescenta
+    # informacao quando a base andou entre o check e o merge — a mesma janela
+    # que "Require branches to be up to date" fecharia e que exige GitHub Pro
+    # (ver o comentario do job alembic-auto-fix abaixo).
+    #
+    # Isto nao e economia de estilo: em 06/09/2026 o teto de gasto da conta foi
+    # atingido tres vezes e TODA execucao morreu no meio com exit 143 ("The
+    # runner has received a shutdown signal") — que parece teste quebrado e nao
+    # e. O trabalho das tres sessoes ficou travado sem nenhum teste vermelho de
+    # verdade. Metade das execucoes eram estas, redundantes.
+    #
+    # O que continua rodando no push em main: `alembic-heads` (12 segundos, e o
+    # gatilho do auto-fix de cabecas concorrentes) e `nomes-indefinidos` (0,2
+    # segundo). O caro sai; a guarda barata fica.
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -78,8 +106,43 @@ jobs:
           cache: "pip"
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r backend/requirements.txt
+      # POR QUE AINDA EM SERIE, e nao com pytest-xdist (`-n auto`).
+      #
+      # O ganho seria grande: 4825 testes levam ~100 minutos em serie no runner
+      # e a suite inteira fechou em 43 minutos com 4 workers aqui. A dependencia
+      # (pytest-xdist) esta no requirements.txt justamente para isso.
+      #
+      # O que impede: rodada de 06/09/2026 com `-n auto --dist loadfile` deu
+      # 5 falhas que passam em serie (`--lf` logo depois: 5 passed). Ou seja,
+      # nao e o paralelismo que quebra o codigo — sao cinco testes que so
+      # passam porque OUTRO ARQUIVO de teste rodou antes deles no mesmo
+      # processo e deixou estado global pronto:
+      #
+      #   test_agenda_confirmar_lactacao_inducao.py
+      #   test_farmacia_indicacoes.py
+      #   test_repro_secagem_divergencia.py
+      #   test_sentinela_criacao_usa_fazenda_id_escrita.py
+      #   test_isolamento_mastite_del_no_caso.py
+      #
+      # E a mesma doenca ja diagnosticada em test_executar_exportacao_filtra_
+      # por_fazenda: modulos que fazem `from fazenda.database import engine` no
+      # topo guardam a REFERENCIA do engine global no import, e o monkeypatch da
+      # fixture reaponta o nome dentro de fazenda.database sem encostar nessa
+      # copia. Em serie, um vizinho popula o banco global e o teste passa; em
+      # workers separados, cada um so tem o subconjunto de arquivos que lhe
+      # coube. Verde por vizinhanca e verde falso: esses cinco nao estao
+      # medindo o que dizem medir HOJE, rodando em serie.
+      #
+      # Ligar o `-n auto` antes de consertar os cinco deixaria a CI vermelha
+      # por defeito de teste, que e exatamente o que este trabalho esta
+      # tentando tirar do caminho. Consertar os cinco e a proxima entrega; o
+      # `-n auto` entra junto com ela, medido de novo.
+      #
+      # O timeout existe porque sem ele um job travado consome o teto de 6h do
+      # GitHub antes de alguem perceber. 150 minutos e ~1,5x a medicao em serie.
       - name: Rodar pytest
         working-directory: backend
+        timeout-minutes: 150
         run: python -m pytest tests/ -q
 
   # Mitigacao pra janela documentada acima: "Require branches to be up to
