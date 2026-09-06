@@ -70,6 +70,15 @@ _PERMITIDAS: dict[tuple[str, str], str] = {
 }
 
 
+# `async def` é FUNÇÃO DIFERENTE para o ast: `ast.AsyncFunctionDef` não é
+# subclasse de `ast.FunctionDef`. Até set/2026 esta sentinela só olhava a
+# segunda — 39 das 265 rotas POST do sistema (15%) passavam por baixo da rede
+# em silêncio, exatamente as que fazem upload/webhook/importação. O verde delas
+# não vinha de estarem certas: vinha de nunca terem sido olhadas.
+_Rota = ast.FunctionDef | ast.AsyncFunctionDef
+_TIPOS_ROTA = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+
 def _nome_dependencia(default: ast.expr) -> str | None:
     """Se `default` for `Depends(algo)`, devolve o nome de `algo`; senão None."""
     if not (isinstance(default, ast.Call) and isinstance(default.func, ast.Name) and default.func.id == "Depends"):
@@ -79,14 +88,14 @@ def _nome_dependencia(default: ast.expr) -> str | None:
     return None
 
 
-def _eh_rota_post(func: ast.FunctionDef) -> bool:
+def _eh_rota_post(func: _Rota) -> bool:
     for dec in func.decorator_list:
         if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr == "post":
             return True
     return False
 
 
-def _usa_fazenda_atual_id_tolerante(func: ast.FunctionDef) -> bool:
+def _usa_fazenda_atual_id_tolerante(func: _Rota) -> bool:
     args = func.args
     defaults_por_arg = list(zip(args.args[len(args.args) - len(args.defaults):], args.defaults))
     defaults_por_arg += list(zip(args.kwonlyargs, args.kw_defaults or []))
@@ -96,7 +105,7 @@ def _usa_fazenda_atual_id_tolerante(func: ast.FunctionDef) -> bool:
     return False
 
 
-def _cria_linha_nova(func: ast.FunctionDef) -> bool:
+def _cria_linha_nova(func: _Rota) -> bool:
     """`session.add(Model(...))` (constrói e persiste um objeto NOVO) conta;
     `session.add(variavel_ja_existente)` (reanexar um objeto obtido via
     session.get/exec — padrão comum de update) não conta. `add_all([...])`
@@ -114,6 +123,12 @@ def _cria_linha_nova(func: ast.FunctionDef) -> bool:
 
 def test_rota_post_que_cria_linha_usa_fazenda_id_escrita():
     violacoes = []
+    # Contador de não-vacuidade: sem ele, esta sentinela passa VERDE se um dia
+    # `_DIR_ROUTERS` apontar para o lugar errado (pasta movida/renomeada), se o
+    # `rglob` não achar nada, ou se um refactor trocar a forma do decorador —
+    # zero rota examinada, zero violação, tudo azul. A asserção no fim exige que
+    # ela tenha REALMENTE olhado a família de rotas que promete cobrir.
+    rotas_post_examinadas = 0
     for arquivo in sorted(_DIR_ROUTERS.rglob("*.py")):
         caminho_relativo = arquivo.relative_to(_DIR_ROUTERS).as_posix()
         if "painel_cowdata" in caminho_relativo:
@@ -122,8 +137,9 @@ def test_rota_post_que_cria_linha_usa_fazenda_id_escrita():
             continue
         arvore = ast.parse(arquivo.read_text(encoding="utf-8"), filename=str(arquivo))
         for node in ast.walk(arvore):
-            if not isinstance(node, ast.FunctionDef) or not _eh_rota_post(node):
+            if not isinstance(node, _TIPOS_ROTA) or not _eh_rota_post(node):
                 continue
+            rotas_post_examinadas += 1
             if not _usa_fazenda_atual_id_tolerante(node):
                 continue
             if not _cria_linha_nova(node):
@@ -132,6 +148,15 @@ def test_rota_post_que_cria_linha_usa_fazenda_id_escrita():
             if chave in _PERMITIDAS:
                 continue
             violacoes.append(f"{caminho_relativo}:{node.lineno} {node.name}()")
+
+    # Piso deliberadamente folgado (o sistema tem ~265 rotas POST hoje): não é
+    # para travar contagem, é para acusar "não examinei nada" e "de repente
+    # examinei um punhado".
+    assert rotas_post_examinadas > 150, (
+        f"a varredura examinou só {rotas_post_examinadas} rotas POST em {_DIR_ROUTERS} — "
+        "esta sentinela está passando por não ter olhado nada, não por estar tudo certo. "
+        "Confira o caminho de _DIR_ROUTERS e a heurística de _eh_rota_post."
+    )
 
     assert not violacoes, (
         "Rota(s) POST que criam linha nova usando a dependência TOLERANTE "

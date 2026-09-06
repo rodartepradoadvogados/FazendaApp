@@ -279,6 +279,12 @@ class ValeItemNovoIn(BaseModel):
     importam de financeiro.py — ver §0.8)."""
     pessoa_id: int
     modo: str  # "folha" | "avulso"
+    # "integral" (o item inteiro é vale, comportamento de sempre) | "parcial"
+    # (só uma fatia é do funcionário; o resto vira despesa normal da fazenda)
+    # — ver ValeItemIn/valor_vale_do_item em rh_vale_item.py.
+    abrangencia: str = "integral"
+    percentual: Optional[float] = None
+    valor: Optional[float] = None
     parcelas: int = 1
     competencia_inicio: Optional[str] = None
     origem_tipo: Optional[str] = None
@@ -2970,27 +2976,44 @@ def criar_lancamento(
     # criar_vale/criar_vale_avulso e grava o vínculo no item (ver
     # fazenda/api/routers/cadastro/rh_vale_item.py).
     vales_criados: list[dict] = []
+    # Vale PARCIAL divide o item em dois (fatia do funcionário + despesa da
+    # fazenda). Guarda-se aqui a quantidade que ficou com a fazenda, por
+    # posição na lista de itens, porque o laço de entrada no estoque abaixo
+    # itera `zip(dados.itens, itens_criados)` e não enxerga o gêmeo criado
+    # pela divisão — sem isso, a parte da fazenda (a ração dos cachorros DA
+    # FAZENDA) nunca daria entrada no estoque.
+    parte_fazenda_por_indice: dict[int, dict] = {}
     if itens_com_vale:
         from fazenda.api.routers.cadastro.rh_vale_item import aplicar_vale_item
         try:
-            for item_in, item_criado in zip(dados.itens, itens_criados):
+            for indice, (item_in, item_criado) in enumerate(zip(dados.itens, itens_criados)):
                 if not item_in.vale:
                     continue
                 pessoa_vale = session.get(Pessoa, item_in.vale.pessoa_id)
                 resultado = aplicar_vale_item(session, item_criado, item_in.vale, user, fazenda_id)
+                parte_fazenda = resultado.get("parte_fazenda")
+                if parte_fazenda:
+                    parte_fazenda_por_indice[indice] = parte_fazenda
                 vales_criados.append({
                     "item_id": item_criado.id,
                     "vale_tipo": resultado["vale_tipo"],
                     "vale_id": resultado["vale_id"],
                     "pessoa_nome": pessoa_vale.nome if pessoa_vale else None,
                     "valor": item_criado.valor_total,
+                    "parte_fazenda": parte_fazenda,
                 })
         except HTTPException:
             # Corrida rara (passou em validar_vale_item mas falhou de
             # verdade ao aplicar — ex.: 40% do salário estourado por outro
             # vale lançado nesse meio-tempo). A nota já foi commitada acima
             # — desfaz por completo em vez de deixar uma nota "meio vale".
-            for it in itens_criados:
+            # Os gêmeos criados por um vale PARCIAL já aplicado antes da
+            # falha não estão em `itens_criados` (nasceram da divisão do
+            # item, ver rules/vale_item.py), e sem esta varredura por
+            # numero_lancamento sobrariam itens órfãos de uma nota apagada.
+            for it in session.exec(
+                select(LancamentoItem).where(LancamentoItem.numero_lancamento == numero_lancamento)
+            ).all():
                 session.delete(it)
             for c in criados:
                 session.delete(c)
@@ -3013,11 +3036,21 @@ def criar_lancamento(
     if dados.tipo == "despesa" and dados.pedido_id is None:
         data_movimento = dados.data_emissao or data_competencia or date.today()
         usuario_id = user.id if isinstance(user, Usuario) else None
-        for item_in, item_criado in zip(dados.itens, itens_criados):
+        for indice, (item_in, item_criado) in enumerate(zip(dados.itens, itens_criados)):
+            quantidade_entrada = item_in.quantidade
+            item_estoque_id = item_criado.id
             if item_in.vale:
-                # Ração do cachorro do funcionário não é estoque da fazenda.
-                continue
-            if item_in.tipo_item != "produto" or not item_in.quantidade or item_in.quantidade <= 0:
+                # Ração do cachorro do funcionário não é estoque da fazenda —
+                # mas a fração que ficou com a FAZENDA num vale parcial é, e
+                # entra pela quantidade proporcional a ela. A origem do
+                # movimento é o item GÊMEO (o da fazenda), não o do vale:
+                # é a quantidade dele que uma edição futura vai corrigir.
+                parte_fazenda = parte_fazenda_por_indice.get(indice)
+                if not parte_fazenda or not parte_fazenda.get("quantidade"):
+                    continue
+                quantidade_entrada = parte_fazenda["quantidade"]
+                item_estoque_id = parte_fazenda["item_id"]
+            if item_in.tipo_item != "produto" or not quantidade_entrada or quantidade_entrada <= 0:
                 continue
             estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=item_in.produto)
             if estoque_item is not None and estoque_item.estocavel is False:
@@ -3034,23 +3067,23 @@ def criar_lancamento(
                     embalagem = None
             if embalagem is not None:
                 _, avisos_lote = estoque_baixa.abrir_lote(
-                    session, item=estoque_item, quantidade=item_in.quantidade * embalagem.quantidade,
+                    session, item=estoque_item, quantidade=quantidade_entrada * embalagem.quantidade,
                     data_compra=data_movimento, fazenda_id=fazenda_id, valor_unitario=item_in.valor_unitario,
                     observacao=f"Entrada por compra — lançamento {numero_lancamento}",
                     usuario_id=usuario_id, apresentacao_id=embalagem.id,
                     # origem_tipo/origem_id: sem isso, editar a quantidade
                     # deste item depois (ver "quantidade" in enviados abaixo)
                     # não encontraria este movimento pra corrigir o estoque.
-                    origem_tipo="compra_financeiro", origem_id=item_criado.id,
+                    origem_tipo="compra_financeiro", origem_id=item_estoque_id,
                 )
                 avisos_estoque += avisos_lote
                 continue
             avisos_estoque += estoque_baixa.movimentar(
-                session, item=estoque_item, quantidade=item_in.quantidade,
+                session, item=estoque_item, quantidade=quantidade_entrada,
                 unidade=estoque_item.unidade if estoque_item else None,
                 data=data_movimento, fazenda_id=fazenda_id, movimento="Entrada de compra",
                 observacao=f"Entrada por compra — lançamento {numero_lancamento}",
-                usuario_id=usuario_id, origem_tipo="compra_financeiro", origem_id=item_criado.id, sinal=+1,
+                usuario_id=usuario_id, origem_tipo="compra_financeiro", origem_id=item_estoque_id, sinal=+1,
                 produto=item_in.produto,
             )
         session.commit()

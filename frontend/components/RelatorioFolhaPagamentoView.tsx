@@ -9,7 +9,8 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { Holerite } from "@/components/Holerite";
 import {
-  competenciaExtenso, holeriteDaLinha, imprimirHolerites, type Holerite as DocHolerite,
+  competenciaExtenso, filtrarPorSituacao, holeriteDaLinha, imprimirHolerites,
+  type Holerite as DocHolerite, type SituacaoPagamento,
 } from "@/lib/holerite";
 import type { ColunaExport } from "@/lib/export";
 
@@ -17,6 +18,15 @@ const LABEL_TIPO: Record<string, string> = {
   funcionario: "Funcionário", empreita: "Empreita", contrato: "Contrato", diaria: "Diária", ferias_decimo: "Férias / 13º",
 };
 const VENCIDO_BG = "rgba(94, 26, 46, 0.18)";
+
+// "A pagar" é tudo o que ainda não foi pago, vencido ou não: a pergunta aqui
+// é de caixa. O atraso continua sendo dito pelo selo VENCIDO do documento e
+// pelo destaque da linha na tabela — soma-se a este filtro, não o fatia.
+const SITUACOES: { id: SituacaoPagamento; label: string; dica: string }[] = [
+  { id: "pagos", label: "Pagos", dica: "Só os recibos cujo pagamento já saiu" },
+  { id: "a_pagar", label: "A pagar", dica: "Tudo o que ainda não foi pago, vencido ou não" },
+  { id: "todos", label: "Todos", dica: "Pagos e a pagar, juntos" },
+];
 
 const selStyle: React.CSSProperties = {
   fontSize: "0.82rem", background: "var(--surface-2)", color: "var(--text)",
@@ -61,7 +71,10 @@ export default function RelatorioFolhaPagamentoView() {
   const [aba, setAba] = useState<"documentos" | "lancamentos">("documentos");
   const [vencDe, setVencDe] = useState("");
   const [vencAte, setVencAte] = useState("");
-  const [status, setStatus] = useState<"" | "pendente" | "pago">("");
+  // Situação do pagamento — a categoria de filtro que o dono pediu por nome
+  // (pagos · a pagar · todos). Nasce em "todos" para a tela continuar abrindo
+  // com tudo à vista, como sempre abriu.
+  const [situacao, setSituacao] = useState<SituacaoPagamento>("todos");
   const [pessoaId, setPessoaId] = useState("");
   const [tipo, setTipo] = useState<"" | "funcionario" | "empreita" | "contrato" | "diaria" | "ferias_decimo">("");
   const [busca, setBusca] = useState("");
@@ -74,13 +87,12 @@ export default function RelatorioFolhaPagamentoView() {
     fetchPessoas().then(setPessoas).catch(() => {});
   }, []);
 
-  const filtradas = useMemo(() => (linhas || []).filter((l) =>
+  const filtradas = useMemo(() => filtrarPorSituacao((linhas || []).filter((l) =>
     (!vencDe || (l.data_vencimento || "") >= vencDe) &&
     (!vencAte || (l.data_vencimento || "") <= vencAte) &&
-    (!status || l.status === status) &&
     (!pessoaId || String(l.pessoa_id) === pessoaId) &&
     (!tipo || l.tipo === tipo)
-  ), [linhas, vencDe, vencAte, status, pessoaId, tipo]);
+  ), situacao), [linhas, vencDe, vencAte, situacao, pessoaId, tipo]);
 
   const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(filtradas);
 
@@ -162,17 +174,40 @@ export default function RelatorioFolhaPagamentoView() {
         </p>
       )}
 
+      {/* Categoria própria, acima das demais: é a primeira pergunta que o dono
+          faz na tela ("o que já paguei / o que ainda devo"), e ela vale para
+          as duas abas. Substitui o antigo select "Status", que tinha
+          exatamente este predicado sob outro rótulo — dois controles com a
+          mesma regra podiam se contradizer e esvaziar a tela sem explicação
+          (ver `filtrarPorSituacao` em lib/holeriteRegras.ts). */}
+      <div className="card mb-4">
+        <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+          <span style={{ ...labelStyle, marginRight: "0.2rem" }}>Situação do pagamento</span>
+          {SITUACOES.map((s) => (
+            <button
+              key={s.id} type="button" className="btn-ghost"
+              title={s.dica}
+              onClick={() => setSituacao(s.id)}
+              style={{
+                fontSize: "0.76rem",
+                borderColor: situacao === s.id ? "var(--dourado)" : undefined,
+                color: situacao === s.id ? "var(--dourado-light)" : undefined,
+                fontWeight: situacao === s.id ? 700 : undefined,
+                background: situacao === s.id
+                  ? "color-mix(in srgb, var(--dourado-light) 12%, transparent)" : undefined,
+              }}
+            >{s.label}</button>
+          ))}
+        </div>
+      </div>
+
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar</div>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 items-end">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
           <div><label style={labelStyle}>Vencimento de</label>
             <input type="date" style={selStyle} value={vencDe} onChange={(e) => setVencDe(e.target.value)} /></div>
           <div><label style={labelStyle}>Vencimento até</label>
             <input type="date" style={selStyle} value={vencAte} onChange={(e) => setVencAte(e.target.value)} /></div>
-          <div><label style={labelStyle}>Status</label>
-            <select style={selStyle} value={status} onChange={(e) => setStatus(e.target.value as typeof status)}>
-              <option value="">Todos</option><option value="pendente">A vencer</option><option value="pago">Pago</option>
-            </select></div>
           <div><label style={labelStyle}>Pessoa</label>
             <select style={selStyle} value={pessoaId} onChange={(e) => setPessoaId(e.target.value)}>
               <option value="">Todas</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
@@ -286,7 +321,17 @@ export default function RelatorioFolhaPagamentoView() {
           {/* O documento — já renderizado, sem clique nenhum. */}
           <div className="md:col-span-2">
             {documentoAtual
-              ? <Holerite documento={documentoAtual} />
+              ? (
+                <Holerite
+                  documento={documentoAtual}
+                  edicao
+                  // O servidor remonta o documento inteiro (líquido, bases,
+                  // retenções e linhas) a cada rubrica lançada: a tela relê o
+                  // ledger em vez de tentar recalcular por conta — foi assim
+                  // que as duas telas de folha divergiram antes.
+                  onMudou={() => { fetchFolhaPagamentoUnificada().then(setLinhas).catch(() => {}); }}
+                />
+              )
               : (
                 <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
                   Nenhum recibo para mostrar com os filtros atuais.

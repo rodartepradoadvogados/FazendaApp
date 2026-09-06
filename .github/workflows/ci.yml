@@ -7,10 +7,13 @@ on:
 
 # Sem isto, cada push novo abre mais uma execucao e as anteriores do MESMO
 # branch continuam rodando ate o fim. Em 06/09/2026 a fila chegou a quatro
-# execucoes simultaneas de ~100 minutos cada, o limite de gasto da conta
-# estourou e o runner de um PR foi morto aos 30% da suite — o log fecha com
-# "The runner has received a shutdown signal", que parece teste quebrado e
-# nao e. Uma execucao por branch: a nova cancela a anterior.
+# execucoes simultaneas de ~100 minutos cada e o limite de gasto da conta
+# estourou. Uma execucao por branch: a nova cancela a anterior.
+#
+# (Registro honesto: na primeira leitura eu atribui a esse estouro de gasto os
+# "shutdown signal" que matavam a suite no meio. Era outra coisa — memoria do
+# runner; ver o comentario do passo `Rodar pytest`. Este bloco continua valendo
+# pelo motivo proprio dele: nao pagar por execucao que ja foi superada.)
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -89,10 +92,10 @@ jobs:
     # (ver o comentario do job alembic-auto-fix abaixo).
     #
     # Isto nao e economia de estilo: em 06/09/2026 o teto de gasto da conta foi
-    # atingido tres vezes e TODA execucao morreu no meio com exit 143 ("The
-    # runner has received a shutdown signal") — que parece teste quebrado e nao
-    # e. O trabalho das tres sessoes ficou travado sem nenhum teste vermelho de
-    # verdade. Metade das execucoes eram estas, redundantes.
+    # atingido tres vezes, e metade das execucoes que o consumiram eram estas,
+    # redundantes. (A morte das execucoes NO MEIO da suite tinha outra causa,
+    # de memoria — ver o passo `Rodar pytest`. Sao dois problemas distintos que
+    # aconteceram no mesmo dia e se pareciam.)
     #
     # O que continua rodando no push em main: `alembic-heads` (12 segundos, e o
     # gatilho do auto-fix de cabecas concorrentes) e `nomes-indefinidos` (0,2
@@ -106,44 +109,45 @@ jobs:
           cache: "pip"
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r backend/requirements.txt
-      # POR QUE AINDA EM SERIE, e nao com pytest-xdist (`-n auto`).
+      # A suite roda em PARALELO, e isso deixou de ser so questao de velocidade.
       #
-      # O ganho seria grande: 4825 testes levam ~100 minutos em serie no runner
-      # e a suite inteira fechou em 43 minutos com 4 workers aqui. A dependencia
-      # (pytest-xdist) esta no requirements.txt justamente para isso.
+      # Diagnostico de 06/09/2026. Toda execucao morria por volta dos 31% da
+      # suite com "The runner has received a shutdown signal" e exit 143, com
+      # todos os testes passando ate ali — o que parece teste quebrado e nao e.
+      # Nao era teto de gasto (aconteceu com saldo liberado e sem execucao
+      # concorrente) nem teto de tempo: execucoes de 28, 31, 32 e 35 minutos
+      # morreram todas no MESMO ponto da suite. Percentual fixo com tempo
+      # variavel e assinatura de MEMORIA.
       #
-      # O que impede: rodada de 06/09/2026 com `-n auto --dist loadfile` deu
-      # 5 falhas que passam em serie (`--lf` logo depois: 5 passed). Ou seja,
-      # nao e o paralelismo que quebra o codigo — sao cinco testes que so
-      # passam porque OUTRO ARQUIVO de teste rodou antes deles no mesmo
-      # processo e deixou estado global pronto:
+      # A causa: `fastapi.dependencies.models` memoriza cada callable de
+      # dependencia em caches `@lru_cache(maxsize=4096)` que guardam referencia
+      # FORTE. Quase todo arquivo de teste registra uma closure NOVA em
+      # `app.dependency_overrides[get_session]`, e essa closure segura a engine
+      # do teste, com conexao SQLite aberta. Os caches so descartam no 4.097o
+      # callable distinto — e a suite tem 4.9k testes. Medido em test_cadastro
+      # (140 testes): 969 MB e 132 engines vivas antes da faxina; 465 MB e 2
+      # engines depois. Em serie, o processo unico passava dos 7 GB do runner
+      # (repositorio privado no plano gratuito) e era morto. Esta maquina tem
+      # 15 GB, e por isso a suite fechava aqui e morria la.
       #
-      #   test_agenda_confirmar_lactacao_inducao.py
-      #   test_farmacia_indicacoes.py
-      #   test_repro_secagem_divergencia.py
-      #   test_sentinela_criacao_usa_fazenda_id_escrita.py
-      #   test_isolamento_mastite_del_no_caso.py
+      # A faxina esta em tests/conftest.py. Com ela, 4 workers fecharam a suite
+      # em 16m36s contra 43m12s antes, sem worker derrubado. Cada worker segura
+      # so a sua fatia dos modulos, entao o paralelismo tambem e o que faz o
+      # consumo caber na maquina — nao e otimizacao, e requisito.
       #
-      # E a mesma doenca ja diagnosticada em test_executar_exportacao_filtra_
-      # por_fazenda: modulos que fazem `from fazenda.database import engine` no
-      # topo guardam a REFERENCIA do engine global no import, e o monkeypatch da
-      # fixture reaponta o nome dentro de fazenda.database sem encostar nessa
-      # copia. Em serie, um vizinho popula o banco global e o teste passa; em
-      # workers separados, cada um so tem o subconjunto de arquivos que lhe
-      # coube. Verde por vizinhanca e verde falso: esses cinco nao estao
-      # medindo o que dizem medir HOJE, rodando em serie.
-      #
-      # Ligar o `-n auto` antes de consertar os cinco deixaria a CI vermelha
-      # por defeito de teste, que e exatamente o que este trabalho esta
-      # tentando tirar do caminho. Consertar os cinco e a proxima entrega; o
-      # `-n auto` entra junto com ela, medido de novo.
+      # `--dist loadfile` (e nao o padrao `load`) NAO e detalhe: os fixtures
+      # sao de escopo de modulo e varios arquivos montam o proprio engine
+      # SQLite no nivel do modulo. Por arquivo, cada worker fica dono do modulo
+      # inteiro, que e o isolamento que a suite ja assume.
       #
       # O timeout existe porque sem ele um job travado consome o teto de 6h do
-      # GitHub antes de alguem perceber. 150 minutos e ~1,5x a medicao em serie.
+      # GitHub antes de alguem perceber. 60 minutos e folga larga sobre a
+      # medicao, porque o runner tem menos nucleos que esta maquina e `-n auto`
+      # abrira menos workers la.
       - name: Rodar pytest
         working-directory: backend
-        timeout-minutes: 150
-        run: python -m pytest tests/ -q
+        timeout-minutes: 60
+        run: python -m pytest tests/ -q -n auto --dist loadfile
 
   # Mitigacao pra janela documentada acima: "Require branches to be up to
   # date before merging" fecharia o buraco de verdade, mas exige GitHub Pro
