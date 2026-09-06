@@ -18,7 +18,7 @@ from fastapi.responses import Response
 from sqlmodel import Session, select
 
 from fazenda.api.routers.portal import usuarios_da_fazenda
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.config import settings
 from fazenda.database import get_session
 from fazenda.models import Animal, FotoCampo, PortalMensagem, Usuario
@@ -153,9 +153,13 @@ async def enviar_foto(
     destinatarios_usuario_id: str | None = Form(None),
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    # Escrita usa o resolvedor ESTRITO, não o tolerante: com
+    # `get_fazenda_atual_id`, um token sem "fid" gravava a foto com
+    # `fazenda_id` nulo — órfã, e órfã passa por qualquer fazenda no padrão
+    # `if fazenda_id is not None` espalhado pelo sistema. Mesmo defeito que o
+    # PR #703 fechou em cartao_credito.py::criar_cartao.
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     conteudo = await file.read()
     if len(conteudo) > TAMANHO_MAXIMO_FOTO:
         raise HTTPException(status_code=400, detail="Foto maior que 15 MB — não é possível enviar")
@@ -189,10 +193,16 @@ async def enviar_foto(
 
     animal_id = None
     if tipo_assunto == "animal" and identificacao_animal:
-        query = select(Animal).where(Animal.numero == identificacao_animal)
-        if fazenda_id is not None:
-            query = query.where(Animal.fazenda_id == fazenda_id)
-        animal = session.exec(query).first()
+        # O recorte entra NA CONSULTA, sem `if` em volta: `animal.numero`
+        # deixou de ser único globalmente na migração c24befa94c1b, então
+        # "0042" existe em várias fazendas ao mesmo tempo e sem a cláusula a
+        # foto era vinculada ao animal de OUTRA fazenda com o mesmo número.
+        animal = session.exec(
+            select(Animal).where(
+                Animal.numero == identificacao_animal,
+                Animal.fazenda_id == fazenda_id,
+            )
+        ).first()
         animal_id = animal.id if animal else None
 
     foto = FotoCampo(
@@ -262,6 +272,30 @@ def listar_fotos(
     ]
 
 
+def _foto_da_fazenda(session: Session, foto_id: int, fazenda_id: int | None) -> FotoCampo | None:
+    """Carrega UMA foto por id JÁ FILTRANDO por fazenda na própria consulta,
+    em vez de `session.get()` seguido de um `if` sobre o objeto carregado
+    (mesmo padrão de agenda.py::_buscar_da_fazenda).
+
+    A checagem anterior era `if fazenda_id is not None and foto.fazenda_id !=
+    fazenda_id`: com `fazenda_id` nulo — token sem "fid" — ela não comparava
+    nada e QUALQUER foto de QUALQUER fazenda era baixada ou excluída pelo id.
+    Hoje a trava de porta (auth.py::exigir_fazenda_selecionada, montada no
+    router em main.py) recusa esse token antes de chegar aqui, então o furo
+    não está aberto em produção; mas a guarda da rota não pode depender
+    disso — é a mesma defesa em profundidade aplicada no PR #703.
+
+    Filtrando na consulta, "de outra fazenda" e "sem fazenda" caem os dois no
+    mesmo lugar: não encontrado. E `fazenda_id is None` só acontece onde o
+    multi-fazenda não está provisionado (tabela `fazenda` vazia — suíte de
+    testes e instalação anterior à f1a2b3c4d5e6), onde vira
+    `fazenda_id IS NULL`, que é exatamente o conjunto de linhas daquele
+    ambiente."""
+    return session.exec(
+        select(FotoCampo).where(FotoCampo.id == foto_id, FotoCampo.fazenda_id == fazenda_id)
+    ).first()
+
+
 @router.get("/{foto_id}/arquivo")
 def baixar_foto(
     foto_id: int, session: Session = Depends(get_session),
@@ -271,8 +305,9 @@ def baixar_foto(
     navegador nunca vê a URL do Supabase, só este endpoint (mesmo padrão de
     fazenda/api/routers/documentos.py::baixar_documento)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    foto = session.get(FotoCampo, foto_id)
-    if not foto or (fazenda_id is not None and foto.fazenda_id != fazenda_id):
+    # 404, nunca 403: 403 confirmaria ao atacante que a foto existe.
+    foto = _foto_da_fazenda(session, foto_id, fazenda_id)
+    if not foto:
         raise HTTPException(status_code=404, detail="Foto não encontrada")
     try:
         conteudo = baixar_arquivo(foto.caminho_storage, bucket=settings.supabase_bucket_fotos)
@@ -284,11 +319,11 @@ def baixar_foto(
 @router.delete("/{foto_id}")
 def excluir_foto(
     foto_id: int, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    # Exclusão é escrita: resolvedor estrito, como no upload acima.
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
-    foto = session.get(FotoCampo, foto_id)
-    if not foto or (fazenda_id is not None and foto.fazenda_id != fazenda_id):
+    foto = _foto_da_fazenda(session, foto_id, fazenda_id)
+    if not foto:
         raise HTTPException(status_code=404, detail="Foto não encontrada")
     # As fotos enviadas ANTES da correção de `_proximo_caminho` podem dividir
     # o mesmo caminho com outra foto viva. Apagar o objeto nesse caso
