@@ -298,6 +298,17 @@ class TestNaoReaparecerAposResposta:
         _concluir_etapas(engine, lancamento_id, ["333"])
 
         chave = f"confirmar_lactacao_inducao_{lancamento_id}_333"
+
+        # CONTROLE POSITIVO — sem isto, a asserção final (`== []`) passa de
+        # graça: um card que NUNCA aparecesse (bloco da agenda quebrado, matriz
+        # errada, lançamento não criado) também some depois de respondido. O
+        # teste diz "não reaparece DEPOIS da resposta", então tem que provar
+        # primeiro que ele estava lá ANTES dela.
+        antes = _eventos_confirmar(_agenda(c))
+        assert [e["id"] for e in antes] == [chave], (
+            f"o card de confirmação deveria estar pendente antes da resposta: {antes}"
+        )
+
         r = c.post(
             f"/producao/inducao-lactacao/{lancamento_id}/333/confirmar",
             json={"entrou_em_lactacao": entrou_em_lactacao},
