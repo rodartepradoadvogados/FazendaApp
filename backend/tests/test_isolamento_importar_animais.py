@@ -37,7 +37,8 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from fazenda.auth import criar_token, hash_senha
 from fazenda.models import (
-    Animal, ContratoFazenda, ContratoFazendaModulo, Fazenda, Parto, Usuario, UsuarioFazenda,
+    Animal, ContratoFazenda, ContratoFazendaModulo, Dieta, Estoque, Fazenda, Parto, QualidadeLeite,
+    Usuario, UsuarioFazenda,
 )
 from fazenda.models.planos import MODULOS_COMERCIAIS
 
@@ -223,3 +224,56 @@ class TestImportarDairycompNaoAtravessaFazenda:
         with Session(engine) as s:
             assert len(s.exec(select(Parto).where(Parto.fazenda_id == 1)).all()) == 1
             assert len(s.exec(select(Parto).where(Parto.fazenda_id == 2)).all()) == 1
+
+
+class TestOutrasImportacoesNaoNascemOrfas:
+    """Mesma classe de problema dos achados 40/42 — "dado que nasce sem dono
+    é dado que aparece em todas as fazendas" — em duas rotas do mesmo router
+    que a auditoria não listou nominalmente."""
+
+    def test_qualidade_leite_importada_nasce_carimbada(self, client):
+        """`importar_qualidade_leite` chamava `criar_qualidade_leite(dados,
+        session)` POSICIONALMENTE: `user` e `fazenda_id` ficavam com o objeto
+        `Depends(...)` não resolvido, `fazenda_id_seguro()` os convertia para
+        None e todo registro importado nascia órfão — visível em qualquer
+        consulta tolerante, ou seja, em todas as fazendas."""
+        c, engine = client
+        conteudo = _csv("numero_matriz;data_coleta;ccs;cbt\n500;05/07/2026;181;11\n")
+        r = c.post(
+            "/importar/qualidade_leite",
+            files={"file": ("ql.csv", conteudo, "text/csv")},
+            headers=_cabecalho(2),
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["criados"] == 1, r.json()
+
+        with Session(engine) as s:
+            registros = s.exec(select(QualidadeLeite)).all()
+            assert len(registros) == 1
+            assert registros[0].fazenda_id == 2, (
+                f"a coleta importada nasceu com fazenda_id={registros[0].fazenda_id} — "
+                "registro órfão aparece na fazenda 1 também"
+            )
+
+    def test_backfill_nao_cadastra_ingrediente_de_dieta_de_outra_fazenda(self, client):
+        """`POST /importar/backfill` varre os dados já lançados e cadastra os
+        itens de estoque citados neles. `Dieta.ingrediente` era a única fonte
+        lida SEM filtro de fazenda: o nome do ingrediente da fazenda 1 (que
+        pode ser um produto/fórmula que ela não quer expor) virava item de
+        estoque cadastrado dentro da fazenda 2."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Dieta(ingrediente="Núcleo secreto da Fazenda 1", fazenda_id=1))
+            s.add(Dieta(ingrediente="Silagem de milho", fazenda_id=2))
+            s.commit()
+
+        r = c.post("/importar/backfill", headers=_cabecalho(2))
+        assert r.status_code == 200, r.text
+        assert "Silagem de milho" in r.json()["estoque_criados"]
+        assert "Núcleo secreto da Fazenda 1" not in r.json()["estoque_criados"], (
+            "o backfill da fazenda 2 cadastrou um ingrediente da dieta da fazenda 1"
+        )
+
+        with Session(engine) as s:
+            nomes = {e.nome for e in s.exec(select(Estoque)).all()}
+            assert "Núcleo secreto da Fazenda 1" not in nomes
