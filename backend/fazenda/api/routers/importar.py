@@ -618,7 +618,10 @@ async def importar_animais_genealogia(
 
 
 @router.post("/qualidade_leite")
-async def importar_qualidade_leite(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+async def importar_qualidade_leite(
+    file: UploadFile, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
     """Histórico de qualidade do leite — uma linha por coleta (tanque quando
     numero_matriz vem vazio, ou de uma vaca específica)."""
     content = await file.read()
@@ -671,7 +674,15 @@ async def importar_qualidade_leite(file: UploadFile, session: Session = Depends(
             lactose_pct=parse_float(get(row_norm, "lactose_pct")),
             nul=parse_float(get(row_norm, "nul")),
         )
-        criar_qualidade_leite(dados, session)
+        # BUG DE SEGURANÇA CORRIGIDO: `criar_qualidade_leite` é rota FastAPI
+        # (`user`/`fazenda_id` são `Depends(...)`); chamada POSICIONALMENTE,
+        # como estava aqui, esses dois parâmetros ficavam com o próprio objeto
+        # `Depends(...)` e `_usuario_id_seguro`/`fazenda_id_seguro` os
+        # convertiam para None — toda coleta importada nascia órfã, sem dono e
+        # sem autor. Registro sem fazenda_id aparece em TODA consulta do
+        # padrão tolerante do sistema, ou seja, dentro de todas as fazendas.
+        # Mesmo bug (e mesma correção por keyword) de `importar_pesagem`.
+        criar_qualidade_leite(dados, session=session, user=user, fazenda_id=fazenda_id)
         criados += 1
 
     return {"categoria": "qualidade_leite", "criados": criados, "erros": erros}
@@ -1151,11 +1162,17 @@ def backfill_fornecedores_e_estoque(
     que ainda não existem — idempotente, seguro de rodar quantas vezes quiser.
     Não sobrescreve nada que já existe, só preenche o que falta.
     """
-    fornecedor_query = select(Fornecedor.nome)
-    conta_query = select(ContaGerencial.fornecedor_cliente)
-    if fazenda_id is not None:
-        fornecedor_query = fornecedor_query.where(Fornecedor.fazenda_id == fazenda_id)
-        conta_query = conta_query.where(ContaGerencial.fazenda_id == fazenda_id)
+    # Os filtros abaixo são INCONDICIONAIS de propósito. O padrão tolerante
+    # (`if fazenda_id is not None: query = query.where(...)`) não restringe
+    # quando fazenda_id é None — ele DESLIGA o isolamento, e aqui isso
+    # significa a fazenda 2 varrer os lançamentos/dietas/aplicações da
+    # fazenda 1 e materializar os nomes de produto dela como cadastro de
+    # estoque dentro da 2. `get_fazenda_id_escrita` só devolve None em
+    # ambiente sem multi-fazenda provisionado (tabela `fazenda` vazia — ver
+    # `resolver_fazenda_id_escrita`), e aí `== None` vira `IS NULL`, que é
+    # exatamente o conjunto de linhas desse ambiente.
+    fornecedor_query = select(Fornecedor.nome).where(Fornecedor.fazenda_id == fazenda_id)
+    conta_query = select(ContaGerencial.fornecedor_cliente).where(ContaGerencial.fazenda_id == fazenda_id)
     fornecedores_existentes = set(session.exec(fornecedor_query).all())
     nomes_conta = {c.strip() for c in session.exec(conta_query).all() if c and c.strip()}
     fornecedores_criados = []
@@ -1164,18 +1181,18 @@ def backfill_fornecedores_e_estoque(
         session.add(f)
         fornecedores_criados.append(nome)
 
-    estoque_query = select(Estoque.nome)
-    curva_query = select(CurvaABC.produto)
+    estoque_query = select(Estoque.nome).where(Estoque.fazenda_id == fazenda_id)
+    curva_query = select(CurvaABC.produto).where(CurvaABC.fazenda_id == fazenda_id)
     # NÃO aplicar sem_itens_de_vale aqui — são candidatos a cadastro de
     # estoque a partir de nomes de produto já usados; excluir os itens de
     # vale só empobreceria a lista de sugestões (ver rules/vale_item.py).
-    lancamento_query = select(LancamentoItem.produto)
-    sanidade_query = select(Sanidade.produto)
-    if fazenda_id is not None:
-        estoque_query = estoque_query.where(Estoque.fazenda_id == fazenda_id)
-        curva_query = curva_query.where(CurvaABC.fazenda_id == fazenda_id)
-        lancamento_query = lancamento_query.where(LancamentoItem.fazenda_id == fazenda_id)
-        sanidade_query = sanidade_query.where(Sanidade.fazenda_id == fazenda_id)
+    lancamento_query = select(LancamentoItem.produto).where(LancamentoItem.fazenda_id == fazenda_id)
+    sanidade_query = select(Sanidade.produto).where(Sanidade.fazenda_id == fazenda_id)
+    # BUG DE SEGURANÇA CORRIGIDO: esta era a ÚNICA das quatro fontes lida sem
+    # nenhum filtro de fazenda — o ingrediente da dieta da fazenda 1 (que pode
+    # ser a fórmula/produto que ela não quer expor) virava item de estoque
+    # cadastrado dentro da fazenda 2, só por rodar o backfill.
+    dieta_query = select(Dieta.ingrediente).where(Dieta.fazenda_id == fazenda_id)
     estoque_existente = set(session.exec(estoque_query).all())
     candidatos_estoque: set[str] = set()
     for produto in session.exec(curva_query).all():
@@ -1184,7 +1201,7 @@ def backfill_fornecedores_e_estoque(
     for produto in session.exec(lancamento_query).all():
         if produto and produto.strip():
             candidatos_estoque.add(produto.strip())
-    for ingrediente in session.exec(select(Dieta.ingrediente)).all():
+    for ingrediente in session.exec(dieta_query).all():
         if ingrediente and ingrediente.strip():
             candidatos_estoque.add(ingrediente.strip())
     for produto in session.exec(sanidade_query).all():

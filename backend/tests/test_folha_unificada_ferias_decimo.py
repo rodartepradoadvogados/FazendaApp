@@ -68,7 +68,11 @@ class TestFolhaUnificadaFeriasDecimo:
         linha = next(l for l in uni.json() if l["tipo"] == "ferias_decimo" and l["origem_subtipo"] == "ferias")
         assert linha["pessoa_id"] == pessoa_id
         assert linha["status"] == "pendente"
-        assert linha["data_vencimento"] == "2026-07-30"  # vencimento default = data_fim_gozo
+        # Vencimento default = 2 dias ANTES do início do gozo (art. 145 CLT).
+        # Era `data_fim_gozo` (30/07), ou seja, a conta a pagar e o alerta da
+        # Agenda apareciam um mês depois da data em que o dinheiro tinha de
+        # sair.
+        assert linha["data_vencimento"] == "2026-06-29"
 
     def test_decimo_terceiro_entra_no_ledger_unificado(self, client):
         c, engine = client

@@ -53,9 +53,62 @@ def calcular_ferias(
 
 
 def calcular_decimo_terceiro(salario_base: float, meses_trabalhados: int) -> float:
-    """Valor bruto do 13º salário, proporcional aos meses trabalhados no ano
-    (1 a 12) — `salario_base / 12 * meses_trabalhados`."""
+    """Valor INTEGRAL do 13º salário do ano, proporcional aos meses
+    trabalhados (1 a 12) — `salario_base / 12 * meses_trabalhados`. É o
+    total devido no ano, NÃO o valor de uma parcela: para dividir o 13º em
+    1ª/2ª parcela use `valor_parcela_decimo_terceiro` sobre este resultado."""
     return round(salario_base / 12 * meses_trabalhados, 2)
+
+
+PARCELAS_DECIMO_TERCEIRO = ("unica", "primeira", "segunda")
+
+# Lei 4.749/1965, art. 2º, caput: o adiantamento (1ª parcela) é "metade do
+# salário recebido pelo respectivo empregado no mês anterior" — na prática,
+# até 50% do 13º devido.
+PERCENTUAL_ADIANTAMENTO_DECIMO_TERCEIRO = 0.5
+
+
+def valor_parcela_decimo_terceiro(
+    valor_integral: float,
+    parcela: str,
+    ja_lancado: float = 0.0,
+    percentual_adiantamento: float = PERCENTUAL_ADIANTAMENTO_DECIMO_TERCEIRO,
+) -> float:
+    """
+    Quanto ainda se deve pagar NESTA parcela do 13º, dado o 13º integral do
+    ano e o quanto já foi lançado para a mesma pessoa no mesmo ano.
+
+    ERA O BUG MAIS CARO DO MÓDULO: `calcular_decimo_terceiro` devolve o 13º
+    CHEIO e era gravado igualzinho para `unica`, `primeira` e `segunda` — o
+    campo `parcela` só mudava o rótulo e a data de vencimento. Lançar a 1ª e
+    depois a 2ª parcela de um salário de R$ 3.000 punha R$ 6.000 em Contas a
+    Pagar para um 13º de R$ 3.000.
+
+    Regra legal aplicada (Lei 4.749/1965, arts. 1º e 2º):
+    - `primeira` é ADIANTAMENTO de ATÉ 50% do 13º devido;
+    - `segunda` (e `unica`) é o acerto: 13º integral MENOS o que já foi
+      adiantado — as retenções (INSS/IRRF) entram só aqui, e por fora deste
+      cálculo, que devolve sempre o BRUTO da parcela.
+
+    `ja_lancado` é a soma do bruto das outras parcelas do mesmo ano da mesma
+    pessoa. Com ele, a soma das parcelas NUNCA ultrapassa o 13º devido, seja
+    qual for a ordem em que forem lançadas (inclusive "única" depois de uma
+    1ª parcela, que vira o saldo). Devolve 0.0 quando o ano já foi
+    integralmente lançado — quem chama deve recusar o lançamento.
+    """
+    if parcela not in PARCELAS_DECIMO_TERCEIRO:
+        raise ValueError(f"parcela inválida: {parcela!r} (esperado uma de {PARCELAS_DECIMO_TERCEIRO})")
+    teto = valor_integral * percentual_adiantamento if parcela == "primeira" else valor_integral
+    return round(max(min(teto, valor_integral) - ja_lancado, 0.0), 2)
+
+
+def retencoes_permitidas_decimo_terceiro(parcela: str) -> bool:
+    """False para a 1ª parcela: o adiantamento é pago CHEIO — INSS e IRRF
+    incidem só na 2ª parcela, sobre o 13º integral (Lei 8.212/1991, art. 28,
+    §7º; Dec. 3.048/1999, art. 214, §6º; Lei 7.713/1988, art. 26). O FGTS
+    incide nas duas, mas é encargo do empregador e não sai do valor pago ao
+    empregado, então não entra aqui."""
+    return parcela != "primeira"
 
 
 # ---------------------------------------------------------------------------

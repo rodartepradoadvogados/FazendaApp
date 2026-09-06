@@ -501,9 +501,10 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         return REGISTRO[tipo].alvos(id_=id_, session=session, fazenda_id=fazenda_id)
 
     if tipo == "animal":
-        query_animal = select(Animal).where(Animal.numero == id_)
-        if fazenda_id is not None:
-            query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+        # Escopo incondicional (ver o bloco de comentário logo abaixo): animal
+        # de outra fazenda tem que dar 404 — nunca 403, que confirmaria ao
+        # atacante que aquele número existe do outro lado.
+        query_animal = select(Animal).where(Animal.numero == id_, Animal.fazenda_id == fazenda_id)
         animal = session.exec(query_animal).first()
         if not animal:
             raise HTTPException(status_code=404, detail="Animal não encontrado")
@@ -511,16 +512,27 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         # coincidir entre fazendas-cliente diferentes — sem o filtro de
         # fazenda_id abaixo, excluir o animal "X" da própria fazenda também
         # apagava o histórico reprodutivo/produtivo/sanitário do animal "X"
-        # de OUTRA fazenda, se os números coincidissem.
-        query_servicos = select(Servico).where(Servico.numero_matriz == id_)
-        query_partos = select(Parto).where(Parto.numero_matriz == id_)
-        query_controles = select(ControleLeiteiro).where(ControleLeiteiro.numero_matriz == id_)
-        query_sanidades = select(Sanidade).where(Sanidade.numero_matriz == id_)
-        if fazenda_id is not None:
-            query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
-            query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
-            query_controles = query_controles.where(ControleLeiteiro.fazenda_id == fazenda_id)
-            query_sanidades = query_sanidades.where(Sanidade.fazenda_id == fazenda_id)
+        # de OUTRA fazenda, se os números coincidissem. Estes quatro conjuntos
+        # vão direto para `_excluir_alvos_em_ordem`: aqui não se lê dado
+        # demais, se APAGA dado demais, e isso não tem volta.
+        #
+        # O filtro é INCONDICIONAL de propósito. O padrão tolerante
+        # (`if fazenda_id is not None: query = query.where(...)`) é a causa
+        # raiz de toda esta família de achados: com fazenda_id None ele não
+        # restringe, ele DESLIGA o isolamento — numa rotina destrutiva, o
+        # modo de falha é apagar o histórico de todos os tenants de uma vez.
+        # Sem multi-fazenda provisionado (tabela `fazenda` vazia) isto vira
+        # `fazenda_id IS NULL`, que é exatamente o conjunto de linhas desse
+        # ambiente; num banco com fazendas, um token sem "fid" nem chega aqui
+        # (ver auth.py::exigir_fazenda_selecionada, no include_router).
+        query_servicos = select(Servico).where(
+            Servico.numero_matriz == id_, Servico.fazenda_id == fazenda_id)
+        query_partos = select(Parto).where(
+            Parto.numero_matriz == id_, Parto.fazenda_id == fazenda_id)
+        query_controles = select(ControleLeiteiro).where(
+            ControleLeiteiro.numero_matriz == id_, ControleLeiteiro.fazenda_id == fazenda_id)
+        query_sanidades = select(Sanidade).where(
+            Sanidade.numero_matriz == id_, Sanidade.fazenda_id == fazenda_id)
         servicos = session.exec(query_servicos).all()
         partos = session.exec(query_partos).all()
         controles = session.exec(query_controles).all()
@@ -542,15 +554,14 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         # fazenda apagava também a colostragem/lactação/foto de campo órfã
         # (sem animal_id preenchido) do animal "100" de OUTRA fazenda. O lado
         # "por animal_id" não precisa do filtro — já é a FK do animal certo.
-        # Sem fazenda_id resolvido (token legado), mantém o OR puro por
-        # numero — mesmo comportamento tolerante do resto do projeto (ver
-        # `fazenda_id_seguro`/`get_fazenda_atual_id`).
+        # O escopo do lado "por número" também é incondicional, pelo mesmo
+        # motivo do bloco acima: sem multi-fazenda provisionado ele vira
+        # `fazenda_id IS NULL`, que casa exatamente as linhas desse ambiente.
         def _por_animal_ou_numero_escopado(coluna_animal_id, coluna_numero_texto, coluna_fazenda_id):
-            condicao_numero = (
-                coluna_numero_texto == id_ if fazenda_id is None
-                else and_(coluna_numero_texto == id_, coluna_fazenda_id == fazenda_id)
+            return or_(
+                coluna_animal_id == animal.id,
+                and_(coluna_numero_texto == id_, coluna_fazenda_id == fazenda_id),
             )
-            return or_(coluna_animal_id == animal.id, condicao_numero)
 
         colostragens = session.exec(select(ColostragemBezerra).where(_por_animal_ou_numero_escopado(
             ColostragemBezerra.animal_id, ColostragemBezerra.numero_animal, ColostragemBezerra.fazenda_id,
@@ -595,12 +606,15 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         # registrar_parto) sem guardar o parto_id — mesma heurística por
         # matriz/data/prefixo do texto já usada acima para o mirror de
         # Sanidade dos protocolos.
+        # Escopo incondicional (mesmo motivo do bloco "animal"): a pendência é
+        # achada por HEURÍSTICA DE TEXTO, sem id nenhum, então basta o número
+        # da vaca e a data do parto coincidirem para a agenda de outra fazenda
+        # entrar na lista do que vai ser apagado.
         query_agendas = select(AgendaManual).where(
             AgendaManual.numero_animal == p.numero_matriz, AgendaManual.data_evento == p.data_parto,
             AgendaManual.descricao.startswith(f"Retenção de placenta — vaca {p.numero_matriz}"),
+            AgendaManual.fazenda_id == fazenda_id,
         )
-        if fazenda_id is not None:
-            query_agendas = query_agendas.where(AgendaManual.fazenda_id == fazenda_id)
         agendas = session.exec(query_agendas).all()
         if agendas:
             impacto.append(f"{len(agendas)} pendência(s) de retenção de placenta na Agenda")
@@ -614,20 +628,21 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         numeros_crias = [n for n in (p.numero_cria_1, p.numero_cria_2) if n]
         crias_orfas = []
         for numero_cria in numeros_crias:
-            query_cria = select(Animal).where(Animal.numero == numero_cria)
-            if fazenda_id is not None:
-                query_cria = query_cria.where(Animal.fazenda_id == fazenda_id)
+            query_cria = select(Animal).where(
+                Animal.numero == numero_cria, Animal.fazenda_id == fazenda_id)
             cria = session.exec(query_cria).first()
             if cria is None:
                 continue
             # Mesmo cuidado de fazenda_id do bloco "animal" acima — sem ele,
             # um registro de OUTRA fazenda com o mesmo número da cria faria
-            # esta cria parecer "com histórico" e nunca ser considerada órfã.
+            # esta cria parecer "com histórico" e nunca ser considerada órfã
+            # (aqui o padrão tolerante erra para o lado de apagar de MENOS, e
+            # ainda assim é um vazamento: revela que a outra fazenda tem esse
+            # número). Também incondicional, pela mesma razão do resto.
             def _existe(model, campo):
-                q = select(model).where(campo == numero_cria)
-                if fazenda_id is not None:
-                    q = q.where(model.fazenda_id == fazenda_id)
-                return session.exec(q).first()
+                return session.exec(
+                    select(model).where(campo == numero_cria, model.fazenda_id == fazenda_id)
+                ).first()
             tem_outros_registros = any([
                 _existe(Servico, Servico.numero_matriz),
                 _existe(Parto, Parto.numero_matriz),

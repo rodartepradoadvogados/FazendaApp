@@ -501,6 +501,32 @@ def excluir_pessoa(
 # ---------------------------------------------------------------------------
 TAMANHO_MAXIMO_ANEXO_PESSOA = 15 * 1024 * 1024  # 15 MB — mesmo limite de Pedido/Lançamento.
 
+# FURO CORRIGIDO (varredura set/2026): o `mime_type` gravado era o
+# `file.content_type` que o CLIENTE manda, sem nenhuma allow-list, e
+# baixar_anexo_pessoa devolve o arquivo com esse mesmo tipo e
+# `Content-Disposition: inline` — o navegador RENDERIZA. Bastava anexar um
+# "rg.html"/"cpf.svg" declarado como text/html ou image/svg+xml a uma pessoa
+# para ter script executando na origem autenticada do próprio sistema, com o
+# token de quem abrisse o anexo (XSS armazenado). É o mesmo achado 55 da
+# auditoria, já fechado em documentos.py e fotos.py com esta mesma
+# allow-list — só não tinha sido replicado no anexo de PESSOA, que é
+# justamente onde ficam RG, CPF, carteira de trabalho e holerite.
+# Tipo fora da lista não é recusado (quebraria anexo legítimo de formato
+# exótico): vira application/octet-stream, que o navegador baixa em vez de
+# renderizar.
+_CONTENT_TYPES_PERMITIDOS_ANEXO_PESSOA = {
+    "application/pdf", "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "image/png", "image/jpeg", "image/webp", "image/gif",
+    "application/octet-stream",
+}
+
+
+def _content_type_seguro_anexo(content_type: str | None) -> str:
+    return content_type if content_type in _CONTENT_TYPES_PERMITIDOS_ANEXO_PESSOA else "application/octet-stream"
+
 
 def _caminho_anexo_pessoa(session: Session, fazenda_id: int | None, pessoa_id: int, nome_arquivo: str) -> str:
     """fazenda-X/pessoas/{pessoa_id}/0001_nome.ext — sequencial dentro da pessoa."""
@@ -531,14 +557,15 @@ async def anexar_arquivo_pessoa(
         raise HTTPException(status_code=400, detail="Arquivo maior que 15 MB — não é possível anexar")
     nome_arquivo = file.filename or "arquivo"
     caminho = _caminho_anexo_pessoa(session, fazenda_id, pessoa_id, nome_arquivo)
+    content_type = _content_type_seguro_anexo(file.content_type)
     try:
-        enviar_arquivo(caminho, conteudo, file.content_type or "application/octet-stream", bucket=settings.supabase_bucket_financeiro)
+        enviar_arquivo(caminho, conteudo, content_type, bucket=settings.supabase_bucket_financeiro)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     anexo = PessoaAnexo(
         pessoa_id=pessoa_id,
         nome_arquivo=nome_arquivo,
-        mime_type=file.content_type or "application/octet-stream",
+        mime_type=content_type,
         tamanho_bytes=len(conteudo),
         categoria=categoria,
         data_validade=data_validade,
@@ -587,8 +614,12 @@ def baixar_anexo_pessoa(
         conteudo = baixar_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    # A allow-list é aplicada TAMBÉM na saída, não só no upload: os anexos
+    # gravados ANTES da correção continuam no banco com o mime_type que o
+    # cliente escolheu — um "text/html" já armazenado voltaria a ser
+    # renderizado inline se aqui confiássemos na coluna.
     return Response(
-        content=conteudo, media_type=anexo.mime_type,
+        content=conteudo, media_type=_content_type_seguro_anexo(anexo.mime_type),
         headers={"Content-Disposition": f'inline; filename="{anexo.nome_arquivo}"'},
     )
 
@@ -613,11 +644,35 @@ def excluir_anexo_pessoa(
 
 
 @router.get("/pessoas/inseminadores")
-def listar_inseminadores(session: Session = Depends(get_session)) -> list[str]:
+def listar_inseminadores(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[str]:
     """Nomes das pessoas cadastradas com o tipo Inseminador (ativas) — usado
     para alimentar os filtros de inseminador em Análise reprodutiva/
-    Indicadores/Relatórios, mesmo antes de qualquer serviço lançado."""
-    pessoas = session.exec(select(Pessoa).where(Pessoa.ativo == True)).all()  # noqa: E712
+    Indicadores/Relatórios, mesmo antes de qualquer serviço lançado.
+
+    FURO CORRIGIDO (varredura set/2026): esta consulta era a ÚNICA de
+    `pessoas.py` sem nenhum recorte por fazenda — varria a tabela Pessoa
+    inteira. Qualquer usuário autenticado de qualquer fazenda-cliente abria
+    o filtro de inseminador de Análise reprodutiva e via, numa lista, o nome
+    dos inseminadores de TODAS as outras fazendas da plataforma (dado
+    pessoal de funcionário de concorrente, e mapa de quem trabalha onde).
+    O filtro agora é parte da consulta: pessoa de outra fazenda e pessoa
+    órfã (`fazenda_id` NULL, resíduo real do backfill 029227481e9e) caem as
+    duas fora — órfã não é "de todo mundo".
+
+    `fazenda_id is None` só acontece onde o multi-fazenda não está
+    provisionado (tabela `fazenda` vazia: suíte de testes e instalação
+    anterior à migração f1a2b3c4d5e6); havendo qualquer fazenda cadastrada,
+    a trava de porta (exigir_fazenda_selecionada, montada no router de
+    cadastro em main.py) recusa antes de chegar aqui. Tratado
+    explicitamente, não por omissão."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Pessoa).where(Pessoa.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(Pessoa.fazenda_id == fazenda_id)
+    pessoas = session.exec(query).all()
     return sorted({p.nome for p in pessoas if "Inseminador" in (p.tipo or "").split(",")})
 
 

@@ -27,9 +27,18 @@ import { ModalDivididoDocumento } from "@/components/ModalDivididoDocumento";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { AvisoSalvo } from "@/components/AvisoSalvo";
 import { Dropzone } from "@/components/Dropzone";
-import { SecaoRecolhivel, Indicador } from "@/components/ui";
+import { SecaoRecolhivel } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
+import { BarraCompetencia } from "@/components/BarraCompetencia";
+import { EquacaoFolha, OutrosPagamentosDoMes } from "@/components/EquacaoFolha";
+import { ExcecoesFolha } from "@/components/ExcecoesFolha";
+import { LinhaTempoPessoa } from "@/components/LinhaTempoPessoa";
+import { type ValeDaLinhaTempo } from "@/lib/linhaTempoPessoa";
+import {
+  equacaoDoMes, excecoesDoMes, competenciasDoMes, mesDaLinha, mesInicial, mesesDoLedger,
+  resumoOutrosTipos, situacaoDoMes, type Excecao,
+} from "@/lib/folhaCompetencia";
 import EmpreitadaView from "@/components/EmpreitadaView";
 import ContratoView from "@/components/ContratoView";
 import DiariaView from "@/components/DiariaView";
@@ -53,22 +62,29 @@ const mesCompLabel = (comp: string) => {
   return idx >= 0 && idx < 12 ? `${MESES_ABREV[idx]}/${a}` : (comp || "");
 };
 
-function KPI({ v, l, c }: { v: string; l: string; c?: string }) {
-  return <Indicador categoria="financeiro" valor={v} rotulo={l} cor={c || "var(--dourado-light)"} />;
-}
-
 const selStyleLote: React.CSSProperties = {
   fontSize: "0.82rem", background: "var(--surface-2)", color: "var(--text)",
   border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", width: "100%",
 };
 const labelStyleLote: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
+// Nome clicável na tabela — o mesmo sinal de "isto abre algo" que as colunas
+// de desconto desta tela já usam (sublinhado pontilhado), e não uma classe de
+// link nova: o projeto não tem nenhuma, e inventar uma aqui criaria um estilo
+// de link que só existe nesta tabela.
+const nomeClicavel: React.CSSProperties = {
+  background: "none", border: "none", padding: 0, font: "inherit", color: "inherit",
+  cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: "0.2em",
+};
 
 /*
  * Folha de pagamento — lançamento e acompanhamento por pessoa/competência.
  * Pessoas (funcionário, veterinário, diarista etc.) vêm do cadastro em
  * Configurações > Cadastro > Pessoas; aqui só lançamos e damos baixa.
  */
-type PessoaFolha = { id: number; nome: string; tipos: string[] };
+// `data_admissao` já vem em `GET /cadastro/pessoas` (o serializador devolve a
+// Pessoa inteira) e é o que a ficha da pessoa escreve como vínculo — o
+// cadastro não precisou ganhar campo nenhum para a linha do tempo existir.
+type PessoaFolha = { id: number; nome: string; tipos: string[]; data_admissao?: string | null };
 type RegistroFolha = {
   id: number; pessoa_id: number; pessoa_nome: string; competencia: string;
   valor_bruto: number; descontos: number;
@@ -153,6 +169,12 @@ export default function FolhaPagamentoView() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   // Expansão focada de um desconto (folha ou vale) numa linha específica.
   const [expandDesc, setExpandDesc] = useState<{ id: number; tipo: "folha" | "vale" } | null>(null);
+  // Folha apontada pelo painel de exceções — pisca em dourado ("é esta, aqui")
+  // e volta ao normal sozinha, sem virar destaque permanente.
+  const [folhaDestacada, setFolhaDestacada] = useState<number | null>(null);
+  // Ficha da pessoa (linha do tempo) — abre pelo clique NO NOME, não na linha:
+  // a linha continua abrindo o recibo da competência, que é o trabalho do mês.
+  const [fichaPessoaId, setFichaPessoaId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editPessoaId, setEditPessoaId] = useState("");
   const [editCompetencia, setEditCompetencia] = useState("");
@@ -187,6 +209,13 @@ export default function FolhaPagamentoView() {
   const [fUniVencAte, setFUniVencAte] = useState("");
   const [fUniStatus, setFUniStatus] = useState<"" | "pendente" | "pago">("");
   const [fUniPessoa, setFUniPessoa] = useState("");
+  // O MÊS em tela — o objeto desta tela, e não mais um filtro entre outros.
+  // `null` = "todos os meses" (o comportamento antigo, que continua a um
+  // clique). Nasce indefinido e é resolvido quando o ledger chega, porque a
+  // escolha depende do que existe: mês corrente se ele tiver lançamento,
+  // senão o mês mais recente que tiver — abrir a tela vazia por decreto seria
+  // pior do que o estado de hoje, em que pelo menos tudo aparece.
+  const [mesFolha, setMesFolha] = useState<string | null | undefined>(undefined);
   // Deriva o filtro de tipo do seletor de categoria do topo — não é mais um
   // controle à parte, senão o usuário tinha 2 lugares pra "escolher a
   // categoria" que podiam divergir (o motivo de "não funcionar de verdade").
@@ -342,6 +371,35 @@ export default function FolhaPagamentoView() {
   const [editLinhaMsg, setEditLinhaMsg] = useState<string | null>(null);
   const [salvandoLinha, setSalvandoLinha] = useState(false);
 
+  /**
+   * O que a ação de uma exceção faz: abre a folha envolvida com a
+   * discriminação à vista e rola até ela, piscando a linha. O painel não
+   * conserta nada por conta própria — apontar o lançamento é o serviço, e
+   * quem decide o que fazer com ele continua sendo o dono. Quando a exceção
+   * não tem folha (vencidos que são só empreita/contrato/diária), rola até a
+   * tabela, que é onde estão os lançamentos em questão.
+   */
+  function irParaExcecao(excecao: Excecao) {
+    const reduzMovimento = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const alvo = excecao.folhaIds[0];
+    if (alvo == null) {
+      document.getElementById("folha-tabela")?.scrollIntoView({ behavior: reduzMovimento ? "auto" : "smooth", block: "start" });
+      return;
+    }
+    setExpandedId(alvo);
+    setFolhaDestacada(alvo);
+    // A linha pode estar fora da tela e a expansão ainda não ter sido pintada
+    // — rolar no quadro seguinte, com a altura final já valendo.
+    requestAnimationFrame(() => {
+      document.getElementById(`folha-linha-${alvo}`)?.scrollIntoView({
+        behavior: reduzMovimento ? "auto" : "smooth", block: "center",
+      });
+    });
+    // O pisco é de 0,6s (.flash-localizado); tirar a classe depois disso é o
+    // que permite piscar de novo se o usuário clicar na mesma exceção.
+    window.setTimeout(() => setFolhaDestacada(null), 900);
+  }
+
   function podeEditarLinha(l: LinhaFolhaUnificada) {
     return l.status !== "pago" && l.origem_subtipo === "parcela" && (l.tipo === "empreita" || l.tipo === "contrato");
   }
@@ -370,13 +428,31 @@ export default function FolhaPagamentoView() {
     }
   }
 
+  // O mês em tela é DERIVADO, não inicializado por efeito: enquanto o usuário
+  // não escolher um mês (`mesFolha === undefined`), vale o que `mesInicial`
+  // decide a partir do ledger que chegou. Guardar isso com um `setState`
+  // dentro de `useEffect` daria uma renderização em cascata — e um quadro
+  // inteiro em que a tela mostra "todos os meses" antes de assentar no mês.
+  const mesesComLancamento = useMemo(() => mesesDoLedger(unificada || []), [unificada]);
+  const mesEmTela = mesFolha === undefined
+    ? (unificada ? mesInicial(unificada, new Date().toISOString().slice(0, 7)) : null)
+    : mesFolha;
+
   const unificadaFiltrada = useMemo(() => (unificada || []).filter((l) =>
+    (!mesEmTela || mesDaLinha(l) === mesEmTela) &&
     (!fUniVencDe || (l.data_vencimento || "") >= fUniVencDe) &&
     (!fUniVencAte || (l.data_vencimento || "") <= fUniVencAte) &&
     (!fUniStatus || l.status === fUniStatus) &&
     (!fUniPessoa || String(l.pessoa_id) === fUniPessoa) &&
     (!tipoUnificado || l.tipo === tipoUnificado)
-  ), [unificada, fUniVencDe, fUniVencAte, fUniStatus, fUniPessoa, tipoUnificado]);
+  ), [unificada, mesEmTela, fUniVencDe, fUniVencAte, fUniStatus, fUniPessoa, tipoUnificado]);
+  // A equação, o resumo dos outros tipos e as exceções saem TODOS da mesma
+  // lista já filtrada — nenhum deles recalcula o recorte por conta própria.
+  const equacao = useMemo(() => equacaoDoMes(unificadaFiltrada), [unificadaFiltrada]);
+  const outrosTipos = useMemo(() => resumoOutrosTipos(unificadaFiltrada), [unificadaFiltrada]);
+  const excecoes = useMemo(() => excecoesDoMes(unificadaFiltrada), [unificadaFiltrada]);
+  const situacaoMes = useMemo(() => situacaoDoMes(unificadaFiltrada, excecoes), [unificadaFiltrada, excecoes]);
+  const competenciasEmTela = useMemo(() => competenciasDoMes(unificadaFiltrada), [unificadaFiltrada]);
   const { linhasOrdenadas: unificadaOrdenada, coluna: uniColuna, dir: uniDir, ordenar: uniOrdenar } = useOrdenacao(unificadaFiltrada);
   const somaUnificadaFiltrada = unificadaFiltrada.reduce((a, l) => a + l.valor, 0);
   // Uma folha em que os descontos passam os vencimentos tem líquido NEGATIVO —
@@ -1060,27 +1136,30 @@ export default function FolhaPagamentoView() {
         Consultar
       </div>
 
-      {/* KPIs da folha de pagamento unificada (funcionário + empreita + contrato + diária + férias/13º), refletindo os filtros abaixo */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-        <KPI v={String(unificadaFiltrada.length)} l="Lançamentos" />
-        <KPI v={formatBRL(somaUniPendente)} l="Pendente" c="var(--amber)" />
-        <KPI v={formatBRL(somaUniPago)} l="Pago" c="var(--green-light)" />
-        {uniBloqueadas.length > 0 && (
-          <KPI v={formatBRL(somaUniBloqueada)} l={`Fora da conta (${uniBloqueadas.length})`} c="var(--red)" />
-        )}
-      </div>
-      {uniBloqueadas.length > 0 && (
-        <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "-0.75rem", marginBottom: "1rem" }}>
-          Não somado em “Pendente”: {uniBloqueadas.length === 1 ? "1 folha" : `${uniBloqueadas.length} folhas`} em que
-          os descontos passam os vencimentos. Enquanto isso durar, o recibo não pode ser emitido — abra a linha para ver
-          qual parcela de vale ultrapassa.
-        </p>
-      )}
+      {/* A barra do MÊS e a faixa da EQUAÇÃO, no lugar dos três KPIs soltos
+          (Lançamentos/Pendente/Pago) que não formavam conta nenhuma: sem
+          identidade a conferir, um total errado não tinha como saltar aos
+          olhos. Nada do que os KPIs diziam se perde — pendente e pago viram a
+          nota de situação da faixa e os cartões de "Também vence neste mês", e
+          "Fora da conta" continua fora de toda soma, agora ao lado da conta
+          que ele não integra. */}
+      <BarraCompetencia
+        mes={mesEmTela}
+        mesesComLancamento={mesesComLancamento}
+        competencias={competenciasEmTela}
+        situacao={situacaoMes}
+        quantidade={unificadaFiltrada.length}
+        onMes={setMesFolha}
+      />
+      <EquacaoFolha eq={equacao} />
+      <ExcecoesFolha excecoes={excecoes} onResolver={irParaExcecao} />
+      <OutrosPagamentosDoMes resumo={outrosTipos} />
 
       {/* Filtro da folha de pagamento unificada — a categoria já vem do
-          seletor do topo; aqui só os filtros complementares. */}
+          seletor do topo e o MÊS vem da barra; aqui só os complementares, que
+          estreitam DENTRO do mês escolhido (nunca o contradizem). */}
       <div className="card mb-3">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar a folha de pagamento</div>
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar dentro do mês</div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div><label style={labelStyleLote}>Vencimento — de</label>
             <input type="date" style={selStyleLote} value={fUniVencDe} onChange={(e) => setFUniVencDe(e.target.value)} /></div>
@@ -1101,7 +1180,13 @@ export default function FolhaPagamentoView() {
           da SecaoRecolhivel abaixo (não dá pra aninhar um <button> dentro do
           <button> do cabeçalho), mas visualmente bem ao lado um do outro. */}
       <div className="flex items-center justify-between gap-2 mb-2" style={{ flexWrap: "wrap" }}>
-        <span style={{ fontSize: "0.78rem", fontWeight: 700, whiteSpace: "nowrap" }}>Total filtrado: {formatBRL(somaUnificadaFiltrada)}</span>
+        <span style={{ fontSize: "0.78rem", fontWeight: 700, whiteSpace: "nowrap" }}>
+          Total filtrado: {formatBRL(somaUnificadaFiltrada)}
+          <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>
+            {" "}· {formatBRL(somaUniPendente)} a pagar · {formatBRL(somaUniPago)} pago
+            {uniBloqueadas.length > 0 ? ` · ${formatBRL(somaUniBloqueada)} fora da conta` : ""}
+          </span>
+        </span>
         <span style={{ position: "relative" }}>
           <button className="btn-ghost" type="button" title="Imprimir o holerite de todos os funcionários que estão passando pelo filtro atual (ex.: um mês específico)"
             style={{ fontSize: "0.75rem" }} disabled={!funcionariosFolhaFiltrados.length}
@@ -1125,7 +1210,7 @@ export default function FolhaPagamentoView() {
         descricao="Todos os lançamentos — funcionário, empreita, contrato, diária e férias/13º. Clique numa folha para abrir o recibo."
       >
         {erroUnificada ? <div className="alert-critico"><span>Sem dados: {erroUnificada}.</span></div> : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" id="folha-tabela">
           <table className="fazenda-table">
             <thead><tr>
               <ThOrdenavel label="Tipo" campo="tipo" coluna={uniColuna} dir={uniDir} ordenar={uniOrdenar} />
@@ -1154,7 +1239,13 @@ export default function FolhaPagamentoView() {
                       <td style={{ fontWeight: 600, fontSize: "0.82rem", whiteSpace: "nowrap" }}>
                         {(() => { const d = l.data_pagamento || l.data_vencimento; return d ? mesCompLabel(d.slice(0, 7)) : "—"; })()}
                       </td>
-                      <td style={{ fontSize: "0.82rem" }}>{l.pessoa_nome}</td>
+                      <td style={{ fontSize: "0.82rem" }}>
+                        <button type="button" style={nomeClicavel}
+                          title={`Ver a linha do tempo de ${l.pessoa_nome} — pagamentos, vales e parcelas em ordem`}
+                          onClick={() => setFichaPessoaId(l.pessoa_id)}>
+                          {l.pessoa_nome}
+                        </button>
+                      </td>
                       <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>—</td>
                       <td style={{ fontSize: "0.78rem" }}>{l.data_vencimento ? l.data_vencimento.split("-").reverse().join("/") : "—"}{l.vencido && " ⚠"}</td>
                       <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(l.valor)}</td>
@@ -1230,7 +1321,9 @@ export default function FolhaPagamentoView() {
                 const documento = holeriteDoRegistro(r);
                 return (
                   <Fragment key={chave}>
-                    <tr className="row-clickable" title="Clique para ver a discriminação deste lançamento de folha" onClick={() => setExpandedId(expandido ? null : r.id)}
+                    <tr id={`folha-linha-${r.id}`}
+                      className={`row-clickable${folhaDestacada === r.id ? " flash-localizado" : ""}`}
+                      title="Clique para ver a discriminação deste lançamento de folha" onClick={() => setExpandedId(expandido ? null : r.id)}
                       style={l.vencido ? { background: VENCIDO_BG } : undefined}>
                       <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{LABEL_TIPO.funcionario}</td>
                       <td style={{ fontWeight: 600, fontSize: "0.82rem", whiteSpace: "nowrap" }}
@@ -1241,7 +1334,15 @@ export default function FolhaPagamentoView() {
                         </span>
                       </td>
                       <td style={{ fontSize: "0.82rem" }}>
-                        {r.pessoa_nome}
+                        {/* O NOME abre a linha do tempo da pessoa; o resto da
+                            linha continua abrindo o recibo da competência. São
+                            duas perguntas diferentes ("quanto sai agora" e "de
+                            onde veio isto") e cada uma tem o próprio alvo. */}
+                        <button type="button" style={nomeClicavel}
+                          title={`Ver a linha do tempo de ${r.pessoa_nome} — folhas, vales e parcelas em ordem`}
+                          onClick={(e) => { e.stopPropagation(); setFichaPessoaId(r.pessoa_id); }}>
+                          {r.pessoa_nome}
+                        </button>
                         {(r.recorrente || r.origem_recorrencia_id) && (
                           <span title={r.recorrente ? "Modelo recorrente — gera Contas a Pagar todo mês" : "Gerado automaticamente pela recorrência"} style={{ marginLeft: "0.4rem", display: "inline-flex", verticalAlign: "middle", color: "var(--dourado-light)" }}>
                             <RefreshCw size={12} />
@@ -1913,6 +2014,23 @@ export default function FolhaPagamentoView() {
         </Modal>
       )}
       {reciboLinha && <ReciboModal lanc={reciboLinha} onClose={() => setReciboLinha(null)} />}
+
+      {/* A ficha da pessoa lê o ledger INTEIRO (`unificada`), não o mês
+          filtrado: a pergunta que ela responde é justamente a que atravessa
+          competências — a parcela 3/13 de setembro nasceu de um vale de
+          março, e o vale de março não está no mês em tela. */}
+      {fichaPessoaId != null && (() => {
+        const p = pessoas.find((x) => x.id === fichaPessoaId);
+        return (
+          <LinhaTempoPessoa
+            pessoa={p || { id: fichaPessoaId, nome: "—", tipos: [] }}
+            linhas={unificada || []}
+            vales={(vales || []) as ValeDaLinhaTempo[]}
+            ano={(mesEmTela || new Date().toISOString().slice(0, 7)).slice(0, 4)}
+            onFechar={() => setFichaPessoaId(null)}
+          />
+        );
+      })()}
       {resultadoDivergencia && (
         <ModalResultadoDivergenciaVale
           valorPago={resultadoDivergencia.valorPago}

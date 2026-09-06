@@ -63,6 +63,42 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/reproducao", tags=["reproducao"])
 
 
+def _buscar_da_fazenda(session: Session, modelo, registro_id: int | None, fazenda_id: int | None):
+    """Carrega UM registro por id JÁ FILTRANDO por fazenda na própria consulta,
+    em vez de `session.get()` seguido de um `if` sobre o objeto carregado.
+
+    A diferença não é estética. O `if` que estava em quase todas as rotas
+    daqui era `registro.fazenda_id not in (None, fazenda_id)`, que TOLERAVA
+    `fazenda_id=NULL` no registro. `servico`, `parto`, `secagem`, `sanidade` e
+    `protocolo_iatf_lancamento` sobrevivem nulos justamente em instalação com
+    2+ fazendas — é o que o relatório da migração
+    029227481e9e_backfill_fazenda_id_nulo imprime como pendente quando não há
+    pai de onde derivar nem fazenda única para atribuir. Enquanto a tolerância
+    existia, um Servico órfão tinha diagnóstico/perda de prenhez editáveis por
+    QUALQUER fazenda-cliente, só enumerando o id. Filtrando na consulta, "de
+    outra fazenda" e "sem fazenda" caem os dois no mesmo lugar: não
+    encontrado. 404, nunca 403 — responder 403 já confirmaria que o id existe.
+
+    `fazenda_id is None` só acontece em ambiente onde o multi-fazenda NÃO está
+    provisionado (tabela `fazenda` vazia — suíte de testes e instalação
+    anterior à migração f1a2b3c4d5e6). Havendo qualquer fazenda cadastrada, a
+    trava de porta (fazenda/auth.py::exigir_fazenda_selecionada, montada no
+    router de Reprodução em main.py) recusa a requisição antes de chegar aqui.
+    O caso está tratado explicitamente, não por omissão: sem tenant cadastrado
+    não há tenant a isolar.
+
+    Cópia deliberada de api/routers/agenda.py::_buscar_da_fazenda — o mesmo
+    desenho, aplicado aos registros deste router (o helper ainda não tem um
+    módulo compartilhado; quando tiver, os dois saem daqui juntos).
+    """
+    if registro_id is None:
+        return None
+    query = select(modelo).where(modelo.id == registro_id)
+    if fazenda_id is not None:
+        query = query.where(modelo.fazenda_id == fazenda_id)
+    return session.exec(query).first()
+
+
 # ---------------------------------------------------------------------------
 # Trava de aptidão para serviço reprodutivo (ver fazenda/rules/aptidao.py)
 #
@@ -491,9 +527,17 @@ def agenda_veterinario(
         if not atual or (s.data_servico and (not atual.get("data_servico") or s.data_servico > atual["data_servico"])):
             servico_por_animal[s.numero_matriz] = s.model_dump()
 
+    # A pesagem era a ÚNICA subconsulta do roteiro sem filtro de fazenda
+    # (achado 9 da auditoria). `numero_matriz` é texto livre sem FK e
+    # `animal.numero` não é mais único entre fazendas (migração c24befa94c1b):
+    # a vaca "500" da outra fazenda entregava o peso dela para o roteiro
+    # daqui — e o peso é o que decide novilha apta/inapta.
+    query_pesagens = select(PesagemCorporal)
+    if fazenda_id is not None:
+        query_pesagens = query_pesagens.where(PesagemCorporal.fazenda_id == fazenda_id)
     peso_por_animal: dict[str, float] = {}
     ultima_data: dict[str, date] = {}
-    for p in session.exec(select(PesagemCorporal)).all():
+    for p in session.exec(query_pesagens).all():
         atual = ultima_data.get(p.numero_matriz)
         if not atual or p.data_pesagem > atual:
             ultima_data[p.numero_matriz] = p.data_pesagem
@@ -782,7 +826,7 @@ def listar_servicos_analise(
     servicos = [s.model_dump() for s in session.exec(query).all()]
     registros = analisar_servicos(servicos)
     nomes = mapa_usuarios(session, {r["usuario_id"] for r in registros})
-    tipo_por_touro = _mapa_tipo_semen_por_touro(session)
+    tipo_por_touro = _mapa_tipo_semen_por_touro(session, fazenda_id)
     data_d0_por_servico = _mapa_data_d0_por_servico(session, fazenda_id)
     for r in registros:
         r["usuario_nome"] = nomes.get(r.pop("usuario_id"))
@@ -865,8 +909,12 @@ def atualizar_servico(
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    servico = session.get(Servico, servico_id)
-    if not servico or (fazenda_id is not None and servico.fazenda_id not in (None, fazenda_id)):
+    # Carga filtrada na consulta (ver _buscar_da_fazenda): a checagem antiga
+    # tolerava `servico.fazenda_id is None`, e o Servico órfão continua
+    # existindo em instalação com 2+ fazendas ('servico' está em
+    # _TABELAS_SEM_PAI na migração de backfill).
+    servico = _buscar_da_fazenda(session, Servico, servico_id, fazenda_id)
+    if not servico:
         raise HTTPException(status_code=404, detail="Serviço não encontrado")
     campos = dados.model_dump(exclude_unset=True)
     # "nao_informado" só entra aqui (não em MOTIVOS_PERDA_PRENHEZ, a lista de
@@ -1207,8 +1255,10 @@ def atualizar_parto(
     pela Ficha do Animal (ver /animais/{numero} e verificar_mae_parto abaixo,
     que cruza a mãe informada na ficha com os partos dela)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    parto = session.get(Parto, parto_id)
-    if not parto or (fazenda_id is not None and parto.fazenda_id not in (None, fazenda_id)):
+    # Mesmo caso do atualizar_servico — 'parto' também está em
+    # _TABELAS_SEM_PAI na migração de backfill (ver _buscar_da_fazenda).
+    parto = _buscar_da_fazenda(session, Parto, parto_id, fazenda_id)
+    if not parto:
         raise HTTPException(status_code=404, detail="Parto não encontrado")
     for campo, valor in dados.model_dump(exclude_unset=True).items():
         setattr(parto, campo, valor)
@@ -1324,8 +1374,8 @@ def atualizar_secagem(
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    secagem = session.get(Secagem, secagem_id)
-    if not secagem or (fazenda_id is not None and secagem.fazenda_id != fazenda_id):
+    secagem = _buscar_da_fazenda(session, Secagem, secagem_id, fazenda_id)
+    if not secagem:
         raise HTTPException(status_code=404, detail="Secagem não encontrada")
     for campo, valor in dados.model_dump(exclude_unset=True).items():
         setattr(secagem, campo, valor)
@@ -1773,8 +1823,8 @@ def lancar_protocolo_iatf(
 
     nome_base = "Protocolo IATF"
     if dados.protocolo_id is not None:
-        molde = session.get(ProtocoloIatf, dados.protocolo_id)
-        if not molde or (fazenda_id is not None and molde.fazenda_id != fazenda_id):
+        molde = _buscar_da_fazenda(session, ProtocoloIatf, dados.protocolo_id, fazenda_id)
+        if not molde:
             raise HTTPException(status_code=404, detail="Protocolo IATF cadastrado não encontrado")
         nome_base = molde.nome
 
@@ -2291,8 +2341,14 @@ def adicionar_animais_iatf(
     hora). Reaproveita a MESMA data de D0 e os mesmos hormônios por dia; ignora
     animais que já estão no protocolo.
     """
-    lancamento = session.get(ProtocoloIatfLancamento, lancamento_id)
-    if not lancamento or (fazenda_id is not None and lancamento.fazenda_id not in (None, fazenda_id)):
+    # Filtro na consulta (ver _buscar_da_fazenda): um lançamento IATF sem
+    # molde (protocolo_id nulo) não tem pai de onde a migração de backfill
+    # derive a fazenda, então ele continua órfão em instalação com 2+
+    # fazendas — e a checagem tolerante deixava qualquer tenant despejar
+    # animais dentro dele (fechando serviços em aberto das matrizes de
+    # quebra, ver fechar_servicos_abertos_por_reinseminacao abaixo).
+    lancamento = _buscar_da_fazenda(session, ProtocoloIatfLancamento, lancamento_id, fazenda_id)
+    if not lancamento:
         raise HTTPException(status_code=404, detail="Protocolo IATF não encontrado")
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
@@ -2364,8 +2420,8 @@ def remover_animal_iatf(
     estoque/Sanidade), desmarque "Realizado" na Agenda primeiro.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    lancamento = session.get(ProtocoloIatfLancamento, lancamento_id)
-    if not lancamento or (fazenda_id is not None and lancamento.fazenda_id not in (None, fazenda_id)):
+    lancamento = _buscar_da_fazenda(session, ProtocoloIatfLancamento, lancamento_id, fazenda_id)
+    if not lancamento:
         raise HTTPException(status_code=404, detail="Protocolo IATF não encontrado")
 
     aplicacoes = session.exec(
@@ -2387,12 +2443,20 @@ def remover_animal_iatf(
     return {"removido": True, "lancamento_id": lancamento_id, "numero_matriz": numero_matriz}
 
 
-def _mapa_tipo_semen_por_touro(session: Session) -> dict[str, str]:
+def _mapa_tipo_semen_por_touro(session: Session, fazenda_id: int | None = None) -> dict[str, str]:
     """touro_nome (minúsculo) -> tipo (convencional/sexado/fazenda) do Estoque
     de Sêmen — usado para completar o tipo_semen de serviços antigos que não
-    gravaram a modalidade no momento da inseminação."""
+    gravaram a modalidade no momento da inseminação.
+
+    Filtrado por fazenda, igual à baixa de dose (_baixar_dose_semen): sem
+    isso, o mapa era montado com o Estoque de Sêmen de TODAS as fazendas e a
+    tela de análise completava o tipo do serviço com a modalidade cadastrada
+    por outro tenant para um touro de mesmo nome."""
     mapa: dict[str, str] = {}
-    for e in session.exec(select(EstoqueSemen)).all():
+    query = select(EstoqueSemen)
+    if fazenda_id is not None:
+        query = query.where(EstoqueSemen.fazenda_id == fazenda_id)
+    for e in session.exec(query).all():
         if e.touro_nome:
             mapa.setdefault(e.touro_nome.strip().lower(), e.tipo or "convencional")
     return mapa
@@ -2683,7 +2747,13 @@ def _animal_tem_protocolo_pendente(
     if not ap:
         return None
     lanc_ids = {a.lancamento_id for a in ap}
-    lancs = [l for l in (session.get(ProtocoloIatfLancamento, lid) for lid in lanc_ids) if l]
+    # Os lançamentos também são carregados filtrando por fazenda: as
+    # aplicações acima já são as da fazenda, mas uma delas apontando para um
+    # lançamento órfão/alheio (resíduo do backfill) traria o nome do
+    # protocolo de outro tenant para dentro dos serviços gravados aqui.
+    lancs = [
+        l for l in (_buscar_da_fazenda(session, ProtocoloIatfLancamento, lid, fazenda_id) for lid in lanc_ids) if l
+    ]
     return max(lancs, key=lambda l: l.data_d0, default=None) if lancs else None
 
 
@@ -2769,9 +2839,14 @@ def registrar_servico_lote(
     )
 
     tipo_servico = "Monta natural" if dados.tipo == "monta_natural" else "IA"
-    lanc_escolhido = session.get(ProtocoloIatfLancamento, dados.protocolo_lancamento_id) if dados.protocolo_lancamento_id else None
-    if lanc_escolhido and fazenda_id is not None and lanc_escolhido.fazenda_id not in (None, fazenda_id):
-        lanc_escolhido = None
+    # `protocolo_lancamento_id` vem do corpo da requisição: carga filtrada por
+    # fazenda (ver _buscar_da_fazenda), em vez do `session.get` + checagem
+    # tolerante a NULL de antes — vincular o serviço a um lançamento alheio
+    # ou órfão carimbava o nome do protocolo de outra fazenda nos serviços
+    # gravados aqui e confirmava a etapa de inseminação lá.
+    lanc_escolhido = _buscar_da_fazenda(
+        session, ProtocoloIatfLancamento, dados.protocolo_lancamento_id, fazenda_id,
+    )
 
     criados, incompativeis = 0, []
     servicos_criados: list[Servico] = []
@@ -2930,11 +3005,8 @@ def excluir_inducao_cio(
     lancamento_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    sanidade = session.get(Sanidade, lancamento_id)
-    if (
-        not sanidade or sanidade.atividade != ATIVIDADE_INDUCAO_CIO
-        or (fazenda_id is not None and sanidade.fazenda_id != fazenda_id)
-    ):
+    sanidade = _buscar_da_fazenda(session, Sanidade, lancamento_id, fazenda_id)
+    if not sanidade or sanidade.atividade != ATIVIDADE_INDUCAO_CIO:
         raise HTTPException(status_code=404, detail="Lançamento de indução de cio não encontrado")
     session.delete(sanidade)
     session.commit()

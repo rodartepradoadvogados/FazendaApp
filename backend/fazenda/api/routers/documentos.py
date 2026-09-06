@@ -50,6 +50,33 @@ _ABREV_CATEGORIA = {
 }
 
 
+def _buscar_documento_da_fazenda(session: Session, documento_id: int, fazenda_id: int | None) -> DocumentoArquivado | None:
+    """Carrega UM documento por id JÁ FILTRANDO por fazenda na consulta, em
+    vez de `session.get()` + `if` sobre o objeto carregado (mesmo helper e
+    mesmo motivo de agenda.py::_buscar_da_fazenda).
+
+    O `if` de antes era `fazenda_id is not None and documento.fazenda_id !=
+    fazenda_id` — o padrão tolerante da auditoria: um token sem "fid"
+    desligava o recorte e devolvia/apagava documento fiscal (IRPF, matrícula,
+    contrato) de QUALQUER fazenda só chutando um id sequencial. Hoje a trava
+    de porta (exigir_fazenda_selecionada, montada neste router em main.py)
+    recusa esse token antes, mas o `if` continuava sendo a segunda linha de
+    defesa apontando para o lado errado. Filtrando na consulta, "de outra
+    fazenda" e "sem fazenda" (órfão do backfill 029227481e9e) caem os dois
+    no mesmo lugar: não encontrado — 404, nunca 403, porque um 403 já
+    confirmaria ao atacante que aquele id existe.
+
+    `fazenda_id is None` só acontece onde o multi-fazenda não está
+    provisionado (tabela `fazenda` vazia — suíte de testes e instalação
+    anterior à f1a2b3c4d5e6): sem tenant cadastrado não há tenant a isolar,
+    e o comportamento é o de sempre. Tratado explicitamente, não por
+    omissão."""
+    query = select(DocumentoArquivado).where(DocumentoArquivado.id == documento_id)
+    if fazenda_id is not None:
+        query = query.where(DocumentoArquivado.fazenda_id == fazenda_id)
+    return session.exec(query).first()
+
+
 def _slug(texto: str) -> str:
     """'Inscrição estadual' -> 'inscricao_estadual' — usado no caminho de pastas."""
     sem_acento = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
@@ -198,15 +225,20 @@ def baixar_documento(
     navegador nunca vê a URL do Supabase, só este endpoint (sensação de que
     o arquivo está dentro do próprio site)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    documento = session.get(DocumentoArquivado, documento_id)
-    if not documento or (fazenda_id is not None and documento.fazenda_id != fazenda_id):
+    documento = _buscar_documento_da_fazenda(session, documento_id, fazenda_id)
+    if not documento:
         raise HTTPException(status_code=404, detail="Documento não encontrado")
     try:
         conteudo = baixar_arquivo(documento.caminho_storage)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    # A allow-list de content_type vale TAMBÉM na saída: os documentos
+    # enviados antes da correção continuam gravados com o mime_type que o
+    # cliente escolheu, e um "text/html" já armazenado voltaria a ser
+    # renderizado inline se aqui confiássemos na coluna.
+    media_type = documento.mime_type if documento.mime_type in _CONTENT_TYPES_PERMITIDOS else "application/octet-stream"
     return Response(
-        content=conteudo, media_type=documento.mime_type,
+        content=conteudo, media_type=media_type,
         headers={"Content-Disposition": f'inline; filename="{documento.nome_original}"'},
     )
 
@@ -222,8 +254,8 @@ def excluir_documento(
     # contador precisa fazer livremente, ver comentário em main.py). Por isso
     # só a exclusão fica restrita a admin, sem travar o resto do router.
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    documento = session.get(DocumentoArquivado, documento_id)
-    if not documento or (fazenda_id is not None and documento.fazenda_id != fazenda_id):
+    documento = _buscar_documento_da_fazenda(session, documento_id, fazenda_id)
+    if not documento:
         raise HTTPException(status_code=404, detail="Documento não encontrado")
     try:
         excluir_arquivo(documento.caminho_storage)
