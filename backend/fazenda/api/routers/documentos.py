@@ -12,6 +12,7 @@ fazenda/auth.py::bloquear_escrita_contador).
 """
 from __future__ import annotations
 
+import logging
 import unicodedata
 from datetime import date, datetime
 
@@ -26,6 +27,8 @@ from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo, nome_seguro_storage
 
 router = APIRouter(prefix="/documentos", tags=["documentos"])
+
+logger = logging.getLogger(__name__)
 
 TAMANHO_MAXIMO_DOCUMENTO = 15 * 1024 * 1024  # 15 MB — igual ao anexo de lançamento
 
@@ -92,6 +95,30 @@ def _abreviar_categoria(categoria: str) -> str:
 
 
 def _proximo_caminho(session: Session, fazenda_id: int | None, categoria: str, hoje: date, extensao: str) -> str:
+    """fazenda-X/nota_fiscal/2026-09-06_NF_0001.pdf — sequencial por dia e
+    categoria.
+
+    BUG CORRIGIDO (mesmo defeito do anexo de Pessoa, relatado pelo dono em
+    06/09/2026 e corrigido em `cadastro/pessoas.py::_caminho_anexo_pessoa`,
+    depois em pedidos.py e financeiro.py) — só que AQUI ele é GARANTIDO, não
+    eventual: a sequência vinha da CONTAGEM de documentos vivos do dia, e o
+    nome no Storage é DETERMINÍSTICO (data + abreviação da categoria +
+    sequência, sem o nome do arquivo enviado). Nos outros módulos a colisão
+    dependia de o usuário repetir o nome do arquivo; nesta tela basta ter
+    0001 e 0002 arquivados no mesmo dia e categoria: excluir o 0001 derruba a
+    contagem para 1 e o upload seguinte nasce 0002 — exatamente o caminho do
+    documento que continua na tela. O envio usa `x-upsert`, então o arquivo
+    do 0002 é sobrescrito em silêncio e as DUAS linhas do banco passam a
+    apontar para o mesmo objeto: o download do documento antigo devolve o
+    arquivo novo, excluir um apaga o arquivo dos dois, e o outro fica travado
+    para sempre (o Storage responde 404 na exclusão, o endpoint devolvia 400
+    e a linha nunca saía da tela).
+
+    Agora a sequência sai do MAIOR número já usado nos caminhos daquele dia e
+    categoria (não da contagem): número devolvido por uma exclusão nunca é
+    reemitido enquanto sobrar qualquer documento, então dois documentos vivos
+    jamais dividem o mesmo caminho.
+    """
     prefixo_pasta = f"fazenda-{fazenda_id if fazenda_id is not None else 'geral'}/{_slug(categoria)}"
     abrev = _abreviar_categoria(categoria)
     prefixo_nome = f"{hoje.isoformat()}_{abrev}_"
@@ -101,7 +128,19 @@ def _proximo_caminho(session: Session, fazenda_id: int | None, categoria: str, h
             DocumentoArquivado.categoria == categoria,
         )
     ).all()
-    seq = 1 + sum(1 for d in existentes if d.caminho_storage.split("/")[-1].startswith(prefixo_nome))
+    maior = 0
+    vivos_do_dia = 0
+    for d in existentes:
+        nome = (d.caminho_storage or "").split("/")[-1]
+        if not nome.startswith(prefixo_nome):
+            continue
+        vivos_do_dia += 1
+        # "2026-09-06_NF_0003.pdf" -> 3. Caminho antigo/fora do padrão não
+        # entra na conta (o `vivos_do_dia` cobre esse caso, como antes).
+        numero = nome[len(prefixo_nome):].split(".", 1)[0]
+        if numero.isdigit():
+            maior = max(maior, int(numero))
+    seq = 1 + max(maior, vivos_do_dia)
     return f"{prefixo_pasta}/{prefixo_nome}{seq:04d}{extensao}"
 
 
@@ -257,10 +296,41 @@ def excluir_documento(
     documento = _buscar_documento_da_fazenda(session, documento_id, fazenda_id)
     if not documento:
         raise HTTPException(status_code=404, detail="Documento não encontrado")
-    try:
-        excluir_arquivo(documento.caminho_storage)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    # Os documentos arquivados ANTES da correção de `_proximo_caminho` podem
+    # dividir o mesmo caminho com outro documento vivo. Apagar o objeto nesse
+    # caso derrubaria o download do irmão que fica — só remove do bucket
+    # quando ninguém mais aponta para lá.
+    # O recorte por fazenda entra NA PRÓPRIA consulta (nunca num `if` em
+    # volta dela): sem multi-fazenda provisionado vira `fazenda_id IS NULL`,
+    # que é exatamente o conjunto de linhas desse ambiente. Documento de
+    # outra fazenda não é "irmão" de ninguém aqui.
+    compartilhado = session.exec(
+        select(DocumentoArquivado).where(
+            DocumentoArquivado.fazenda_id == fazenda_id,
+            DocumentoArquivado.caminho_storage == documento.caminho_storage,
+            DocumentoArquivado.id != documento.id,
+        )
+    ).first()
+    if not compartilhado:
+        try:
+            excluir_arquivo(documento.caminho_storage)
+        except RuntimeError as exc:
+            # BUG CORRIGIDO (mesmo defeito do anexo de Pessoa, relatado pelo
+            # dono em 06/09/2026): a falha do Storage virava 400 e ABORTAVA a
+            # exclusão da linha. Arquivo que já não está lá (apagado à mão no
+            # painel do Supabase, caminho sobrescrito pelo bug de sequência
+            # acima, upload que falhou no meio) devolve 404 no delete — e o
+            # documento passava a ser IMPOSSÍVEL de tirar da tela: toda
+            # tentativa repetia o mesmo 400, para sempre, porque a causa era
+            # justamente o arquivo não existir mais. A linha do banco é o que
+            # o dono enxerga e é ela que tem que sair; no pior caso sobra um
+            # objeto órfão no bucket (invisível, sem nenhuma linha
+            # apontando), muito melhor que um documento fantasma preso no
+            # Arquivo.
+            logger.warning(
+                "Documento %s (%s): linha excluída mesmo com falha ao apagar o arquivo no Storage (%s): %s",
+                documento.id, documento.categoria, documento.caminho_storage, exc,
+            )
     session.delete(documento)
     session.commit()
     return {"excluido": True}
