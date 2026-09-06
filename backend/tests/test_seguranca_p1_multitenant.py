@@ -231,6 +231,13 @@ class TestPortalExportacaoIsolada:
         c, engine = client
         from fazenda.api.routers.portal import _executar_exportacao
 
+        # Serviço da PRÓPRIA fazenda B, criado aqui e não na fixture (que é
+        # compartilhada por todos os testes deste arquivo): é o controle
+        # positivo do assert lá embaixo.
+        with Session(engine) as s:
+            s.add(Servico(numero_matriz="7001", data_servico=date(2026, 5, 4), tipo="IA", fazenda_id=2))
+            s.commit()
+
         capturado = {}
 
         def _fake_enviar_email(destinatario, assunto, corpo, anexo_nome, anexo_bytes):
@@ -238,17 +245,45 @@ class TestPortalExportacaoIsolada:
 
         import fazenda.api.routers.portal as portal_mod
         original = portal_mod.enviar_email
+        # O engine TAMBÉM precisa ser trocado AQUI, no módulo portal, e não só
+        # em `fazenda.database` (o que a fixture faz). `portal.py` importa
+        # `from fazenda.database import engine` no topo, então guarda a
+        # REFERÊNCIA do engine global do import — `monkeypatch.setattr(
+        # database, "engine", ...)` reaponta o nome em `fazenda.database` e
+        # não encosta na cópia que o portal já tem. `_executar_exportacao`
+        # roda fora do ciclo de request (BackgroundTask com sessão própria),
+        # então não passa por `Depends(get_session)` e é essa cópia que ele usa.
+        #
+        # Sem esta linha o teste era falso nos DOIS sentidos, e as duas formas
+        # já aconteceram:
+        #  - rodando sozinho, a exportação lia o banco global VAZIO; o ZIP saía
+        #    sem linha nenhuma e o `"9006" not in conteudo` passava por
+        #    ausência de dado, não por isolamento — verde sem testar nada;
+        #  - rodando junto com os outros arquivos, esse mesmo banco global já
+        #    tinha sido populado por outro teste, o "9006" aparecia e a falha
+        #    apontava para um furo de isolamento que não existe (a consulta de
+        #    `_executar_exportacao` filtra por fazenda incondicionalmente).
+        original_engine = portal_mod.engine
+        portal_mod.engine = engine
         portal_mod.enviar_email = _fake_enviar_email
         try:
             _executar_exportacao([{"chave": "reprodutivo_servicos"}], "destino@example.com", 2)
         finally:
             portal_mod.enviar_email = original
+            portal_mod.engine = original_engine
 
         import io
         import zipfile
         zf = zipfile.ZipFile(io.BytesIO(capturado["zip_bytes"]))
         conteudo = zf.read("reprodutivo_servicos.csv").decode("utf-8-sig")
         assert "9006" not in conteudo, "exportação da fazenda B não pode conter o serviço da fazenda A"
+        # CONTROLE POSITIVO: sem ele, uma exportação que devolvesse SEMPRE um
+        # CSV vazio passaria neste teste — foi exatamente assim que ele passou
+        # durante todo o tempo em que lia o banco errado (ver o comentário do
+        # engine acima). A fazenda B tem que continuar exportando o que é dela.
+        assert "7001" in conteudo, (
+            "a exportação da fazenda B perdeu o próprio serviço dela — filtrar não é bloquear tudo"
+        )
 
 
 class TestWebhookBbExigeSegredo:
