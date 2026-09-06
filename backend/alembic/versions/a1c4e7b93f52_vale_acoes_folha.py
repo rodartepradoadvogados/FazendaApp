@@ -43,26 +43,46 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Upgrade schema."""
-    op.add_column(
-        'vale_funcionario',
-        sa.Column('status', sa.String(), nullable=False, server_default='ativo'),
-    )
-    op.create_index('ix_vale_funcionario_status', 'vale_funcionario', ['status'])
-    op.add_column(
-        'vale_funcionario',
-        sa.Column('valor_abatido', sa.Float(), nullable=False, server_default='0'),
-    )
-    op.add_column(
-        'vale_funcionario',
-        sa.Column('valor_assumido_fazenda', sa.Float(), nullable=False, server_default='0'),
-    )
+    """Upgrade schema.
 
-    op.add_column(
-        'vale_parcela',
-        sa.Column('assumida_pela_fazenda', sa.Boolean(), nullable=False, server_default=sa.false()),
-    )
-    op.add_column('vale_parcela', sa.Column('motivo_assuncao', sa.String(), nullable=True))
+    Idempotente (`has_column`), pelo mesmo motivo da migração 4ede0ee68b09:
+    `database.py` chama `SQLModel.metadata.create_all` na subida da aplicação.
+    Se a app subir antes de o `alembic upgrade head` terminar — o que acontece
+    em deploy — as colunas novas já existem e um `add_column` cru aborta o
+    upgrade INTEIRO, deixando a API fora do ar.
+    """
+    conn = op.get_bind()
+    insp = sa.inspect(conn)
+
+    colunas_vale = {c['name'] for c in insp.get_columns('vale_funcionario')}
+    if 'status' not in colunas_vale:
+        op.add_column(
+            'vale_funcionario',
+            sa.Column('status', sa.String(), nullable=False, server_default='ativo'),
+        )
+    if 'ix_vale_funcionario_status' not in {
+        i['name'] for i in insp.get_indexes('vale_funcionario')
+    }:
+        op.create_index('ix_vale_funcionario_status', 'vale_funcionario', ['status'])
+    if 'valor_abatido' not in colunas_vale:
+        op.add_column(
+            'vale_funcionario',
+            sa.Column('valor_abatido', sa.Float(), nullable=False, server_default='0'),
+        )
+    if 'valor_assumido_fazenda' not in colunas_vale:
+        op.add_column(
+            'vale_funcionario',
+            sa.Column('valor_assumido_fazenda', sa.Float(), nullable=False, server_default='0'),
+        )
+
+    colunas_parcela = {c['name'] for c in insp.get_columns('vale_parcela')}
+    if 'assumida_pela_fazenda' not in colunas_parcela:
+        op.add_column(
+            'vale_parcela',
+            sa.Column('assumida_pela_fazenda', sa.Boolean(), nullable=False, server_default=sa.false()),
+        )
+    if 'motivo_assuncao' not in colunas_parcela:
+        op.add_column('vale_parcela', sa.Column('motivo_assuncao', sa.String(), nullable=True))
 
 
 def downgrade() -> None:
