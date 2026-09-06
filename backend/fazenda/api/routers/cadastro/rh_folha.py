@@ -26,6 +26,7 @@ from fazenda.models import (
 from fazenda.api.routers.financeiro import TAMANHO_MAXIMO_ANEXO, _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
+from fazenda.rules import holerite
 from fazenda.rules.folha_rh import calcular_decimo_terceiro, calcular_ferias, calcular_rescisao
 from fazenda.rules.parametros import (
     dias_ferias_padrao,
@@ -502,22 +503,98 @@ def _corrigir_folha_gerada_sem_retencao(session: Session, fazenda_id: int | None
         session.commit()
 
 
-def _detalhe_folha(session: Session, registro: FolhaPagamento) -> list[dict]:
+def _contexto_discriminacao(
+    session: Session, registros: list[FolhaPagamento],
+) -> dict:
     """
-    Discriminação completa do lançamento — bruto, INSS, IR, cada parcela de
-    vale aplicada nesta competência e o líquido. É essa lista que vira a
-    expansão da linha da folha no frontend (em vez da antiga lista de vales
-    solta abaixo do lançamento de vale).
+    Carrega DE UMA VEZ tudo o que a discriminação de várias folhas precisa —
+    parcelas de vale, os vales de origem e a nota fiscal que gerou cada vale.
+
+    Existe por dois motivos. O primeiro é desempenho: `_detalhe_folha` fazia
+    uma consulta de parcelas por folha e, dentro dela, mais uma consulta de
+    "parcelas irmãs" por parcela — N×M consultas só para numerar "3 de 13" numa
+    listagem que já é chamada em toda abertura da tela.
+
+    O segundo é isolamento entre fazendas, e é o que importa mais: o escopo
+    aqui é o conjunto de `pessoa_id` das folhas recebidas, que já vieram
+    filtradas por `fazenda_id` na listagem. Nenhuma parcela de vale de outra
+    fazenda alcança este dicionário, porque nenhuma pessoa de outra fazenda
+    entra na cláusula IN — e não existe caminho tolerante ("se veio fazenda,
+    filtra") por onde um vazamento passe.
     """
-    parcelas_vale = sorted(
-        session.exec(
-            select(ValeParcela).where(
-                ValeParcela.pessoa_id == registro.pessoa_id, ValeParcela.competencia == registro.competencia
-            )
-        ).all(),
-        key=lambda p: (p.vale_id, p.id or 0),
-    )
-    detalhe = [{"label": "Salário bruto", "valor": registro.valor_bruto}]
+    pessoa_ids = {r.pessoa_id for r in registros if r.pessoa_id}
+    if not pessoa_ids:
+        return {"parcelas_por_pessoa_competencia": {}, "irmas_por_vale": {}, "vales": {}, "origens": {}}
+
+    parcelas = session.exec(select(ValeParcela).where(ValeParcela.pessoa_id.in_(pessoa_ids))).all()
+    irmas_por_vale: dict[int, list[ValeParcela]] = {}
+    for p in parcelas:
+        irmas_por_vale.setdefault(p.vale_id, []).append(p)
+    for lista in irmas_por_vale.values():
+        lista.sort(key=lambda x: (x.competencia, x.id or 0))
+
+    # Só as parcelas das competências efetivamente lançadas entram no índice de
+    # linhas — as demais servem apenas para numerar "k de n" na sequência
+    # completa do vale.
+    competencias = {(r.pessoa_id, r.competencia) for r in registros}
+    por_pessoa_competencia: dict[tuple[int, str], list[ValeParcela]] = {}
+    for p in parcelas:
+        chave = (p.pessoa_id, p.competencia)
+        if chave in competencias:
+            por_pessoa_competencia.setdefault(chave, []).append(p)
+    for lista in por_pessoa_competencia.values():
+        lista.sort(key=lambda x: (x.vale_id, x.id or 0))
+
+    vale_ids = {p.vale_id for p in parcelas}
+    vales = {
+        v.id: v
+        for v in (session.exec(select(ValeFuncionario).where(ValeFuncionario.id.in_(vale_ids))).all() if vale_ids else [])
+    }
+    origens = origens_lancamento_por_vale(session, vale_ids, "vale_funcionario_id") if vale_ids else {}
+    return {
+        "parcelas_por_pessoa_competencia": por_pessoa_competencia,
+        "irmas_por_vale": irmas_por_vale,
+        "vales": vales,
+        "origens": origens,
+    }
+
+
+def _detalhe_folha(
+    session: Session, registro: FolhaPagamento, contexto: dict | None = None,
+    pessoa: Pessoa | None = None,
+) -> list[dict]:
+    """
+    Discriminação completa do lançamento nas QUATRO colunas do holerite de
+    papel — Descrição · Referência · Vencimentos · Descontos — mais o líquido.
+
+    A mudança que importa em relação à versão anterior: cada linha carrega
+    agora a REFERÊNCIA (de onde o valor veio: "7,78% sobre R$ 2.000,00",
+    "Parcela 3 de 13 · vale de 12/03/2026") e, quando é desconto de vale, a
+    ORIGEM com o `vale_id` — data em que o dinheiro saiu, forma de pagamento,
+    observação, nº do lançamento no extrato e a nota fiscal quando o vale
+    nasceu de um item de nota. Antes disso tudo era jogado fora e sobravam N
+    linhas escritas só "Vale", que a tela tentava reconhecer por regex no
+    rótulo em português — sem nenhum jeito de desempatar dois vales com
+    parcela de mesmo valor no mesmo mês.
+
+    `label`/`valor` continuam exatamente como eram: são o contrato antigo
+    (recibo em PDF, expansão da tela de Ações, testes de fechamento do
+    líquido) e nada nele mudou de forma.
+    """
+    ctx = contexto if contexto is not None else _contexto_discriminacao(session, [registro])
+    parcelas_vale = ctx["parcelas_por_pessoa_competencia"].get((registro.pessoa_id, registro.competencia), [])
+
+    if pessoa is None:
+        pessoa = session.get(Pessoa, registro.pessoa_id)
+    ano, mes = (int(x) for x in registro.competencia.split("-"))
+    dias_mes = calendar.monthrange(ano, mes)[1]
+
+    detalhe = [holerite.linha(
+        "bruto", "Salário bruto", registro.valor_bruto,
+        "Salário",
+        holerite.referencia_bruto(pessoa.data_admissao if pessoa else None, registro.competencia, dias_mes),
+        provento=round(registro.valor_bruto, 2),
+    )]
     # A linha existe quando existe VALOR retido — nunca pelo percentual. O
     # percentual é só a referência de como o valor foi obtido, e o formulário
     # permite digitar o valor direto (campo `inssManual`), gravando
@@ -526,29 +603,48 @@ def _detalhe_folha(session: Session, registro: FolhaPagamento) -> list[dict]:
     # O caminho inverso (percentual preenchido e valor zero) não retém nada, e
     # por isso também não vira linha. Não se deduz percentual a partir do valor:
     # sem base declarada pelo usuário, qualquer percentual aqui seria inventado.
-    for rotulo, valor, percentual in (
-        ("INSS", registro.valor_inss, registro.percentual_inss),
-        ("IR", registro.valor_ir, registro.percentual_ir),
+    for tipo, rotulo, valor, percentual in (
+        ("inss", "INSS", registro.valor_inss, registro.percentual_inss),
+        ("ir", "IR", registro.valor_ir, registro.percentual_ir),
     ):
         if not valor:
             continue
-        referencia = f" ({percentual:g}%)" if percentual else ""
-        detalhe.append({"label": f"{rotulo}{referencia}", "valor": -valor})
+        sufixo = f" ({percentual:g}%)" if percentual else ""
+        referencia, origem = holerite.referencia_retencao(valor, percentual, registro.valor_bruto)
+        detalhe.append(holerite.linha(
+            tipo, f"{rotulo}{sufixo}", -valor, rotulo, referencia,
+            desconto=round(valor, 2), origem=origem,
+        ))
     # Uma linha por parcela de vale, com o valor REAL da parcela (descontos de
     # vale). Numera a parcela na sequência do PRÓPRIO vale (k/n, ex.: 1/2, 2/2),
     # ordenando todas as parcelas do vale por competência — não só as deste mês.
     for p in parcelas_vale:
-        irmas = sorted(
-            session.exec(select(ValeParcela).where(ValeParcela.vale_id == p.vale_id)).all(),
-            key=lambda x: (x.competencia, x.id or 0),
-        )
+        irmas = ctx["irmas_por_vale"].get(p.vale_id, [p])
         n = len(irmas)
         k = next((i + 1 for i, x in enumerate(irmas) if x.id == p.id), 1)
-        detalhe.append({"label": f"Vale (parcela {k}/{n})", "valor": -p.valor})
+        vale = ctx["vales"].get(p.vale_id)
+        origem_lancamento = ctx["origens"].get(p.vale_id)
+        detalhe.append(holerite.linha(
+            "vale", f"Vale (parcela {k}/{n})", -p.valor,
+            holerite.descricao_vale(vale.observacao if vale else None, origem_lancamento),
+            holerite.referencia_vale(k, n, vale.data_pagamento if vale else None),
+            desconto=round(p.valor, 2),
+            origem=holerite.origem_vale(vale, p, k, n, origem_lancamento) if vale else None,
+        ))
     # "Descontos de folha" manuais — vêm de registro.descontos, SEM misturar vale.
     if abs(registro.descontos) > 0.001:
-        detalhe.append({"label": "Outros descontos", "valor": -registro.descontos})
-    detalhe.append({"label": "Valor líquido", "valor": registro.valor_liquido})
+        detalhe.append(holerite.linha(
+            "outros", "Outros descontos", -registro.descontos,
+            "Outros descontos",
+            # C4: `FolhaPagamento.descontos` é um float solto — não existe
+            # modelo filho, FK nem observação estruturada para itemizar. Dizer
+            # isso é mais honesto que deixar a única célula vazia do documento.
+            "Valor único, sem detalhamento gravado",
+            desconto=round(registro.descontos, 2),
+        ))
+    detalhe.append(holerite.linha(
+        "liquido", "Valor líquido", registro.valor_liquido, "Líquido", "",
+    ))
     return detalhe
 
 
@@ -608,16 +704,31 @@ def listar_folha_pagamento(
 
     nomes_usuarios = mapa_usuarios(session, {r.usuario_id for r in registros})
 
-    return [
-        {
+    # Uma única carga de parcelas/vales/notas para TODAS as folhas da resposta
+    # (ver `_contexto_discriminacao`) — antes era uma consulta por folha mais
+    # uma por parcela só para numerar "3 de 13".
+    contexto = _contexto_discriminacao(session, registros)
+    pessoas_obj = {
+        p.id: p
+        for p in session.exec(select(Pessoa).where(Pessoa.id.in_({r.pessoa_id for r in registros}))).all()
+    } if registros else {}
+
+    saida = []
+    for r in registros:
+        detalhe = _detalhe_folha(session, r, contexto=contexto, pessoa=pessoas_obj.get(r.pessoa_id))
+        saida.append({
             **r.model_dump(),
             "pessoa_nome": pessoas.get(r.pessoa_id, "—"),
             "data_vencimento": venc_por_numero.get(r.numero_lancamento_gerado),
-            "detalhe": _detalhe_folha(session, r),
+            "detalhe": detalhe,
+            # Totais das duas colunas + líquido e a flag de recibo impossível
+            # (descontos maiores que vencimentos), calculados no servidor para
+            # as duas telas de folha lerem exatamente o mesmo número.
+            "totais": holerite.totais_holerite(detalhe),
+            "bases": holerite.bases_holerite(r),
             "usuario_nome": nomes_usuarios.get(r.usuario_id),
-        }
-        for r in registros
-    ]
+        })
+    return saida
 
 
 @router.post("/folha-pagamento")

@@ -482,7 +482,23 @@ class Empreitada(SQLModel, table=True):
 
 class EmpreitadaParcela(SQLModel, table=True):
     """Parcela de pagamento de uma empreitada com frequência fixa — mesmo
-    padrão de parcelamento editável do lançamento financeiro."""
+    padrão de parcelamento editável do lançamento financeiro.
+
+    `numero`/`numero_total` = "parcela k de n", CONGELADOS na criação. Antes
+    não existiam: a tela numerava pela posição na lista ordenada por
+    vencimento, então excluir a parcela 3 de 5 fazia a 4 virar "3" e todo
+    recibo já impresso ("vale referente à parcela 3 de 5") passava a apontar
+    para outra parcela. Com o número gravado, a exclusão deixa o buraco
+    honesto (1, 2, 4, 5 de 5) e nada é renumerado.
+
+    `valor_contratado` = o BRUTO acordado nesta parcela; `valor` = o que
+    sobra a pagar depois dos vales adiantados (ver `_aplicar_vale_avulso`).
+    Precisa ser um campo PERSISTIDO, não reconstruído: a tentação é dizer
+    que `bruto = valor + Σ ValeAvulsoAbatimento`, e isso QUEBRA — a
+    redistribuição (`_redistribuir_parcelas_pendentes` /
+    `_redistribuir_itens_pendentes_*`) reescreve `valor` sem tocar em
+    nenhum `ValeAvulsoAbatimento`, então depois dela a soma não fecha mais.
+    Por isso a redistribuição nunca reescreve este campo."""
 
     __tablename__ = "empreitada_parcela"
 
@@ -490,6 +506,9 @@ class EmpreitadaParcela(SQLModel, table=True):
     empreitada_id: int = Field(foreign_key="empreitada.id")
     data_vencimento: date
     valor: float
+    numero: Optional[int] = None
+    numero_total: Optional[int] = None
+    valor_contratado: Optional[float] = None
     numero_lancamento_gerado: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
@@ -543,7 +562,10 @@ class Contrato(SQLModel, table=True):
 
 class ContratoParcela(SQLModel, table=True):
     """Parcela de pagamento de um contrato com frequência fixa — mesmo padrão
-    de parcelamento editável do lançamento financeiro."""
+    de parcelamento editável do lançamento financeiro.
+
+    `numero`/`numero_total`/`valor_contratado`: mesma semântica (e mesmo
+    motivo) de EmpreitadaParcela acima — ver o docstring de lá."""
 
     __tablename__ = "contrato_parcela"
 
@@ -551,6 +573,9 @@ class ContratoParcela(SQLModel, table=True):
     contrato_id: int = Field(foreign_key="contrato.id")
     data_vencimento: date
     valor: float
+    numero: Optional[int] = None
+    numero_total: Optional[int] = None
+    valor_contratado: Optional[float] = None
     numero_lancamento_gerado: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
@@ -585,6 +610,31 @@ class Diaria(SQLModel, table=True):
     # quantidade/valor totais mesmo antes de ela chegar.
     data_fim: Optional[date] = None
     status: str = "ativo"  # ativo | encerrado
+    # ── Encerramento do período (ver `encerrar_diaria`/`reabrir_diaria`) ──
+    # `data_encerramento` é o ÚLTIMO DIA TRABALHADO informado no fechamento
+    # (e copiado para `data_fim`, que é quem faz o contador parar). Ele
+    # também é o marco que diz se este encerramento é dos novos: NULL numa
+    # diária com status "encerrado" = fechamento antigo, de antes desta
+    # feature, que continua 100% na regra de sempre (`_resumo_diaria`
+    # recalcula tudo) — sem retroatividade.
+    data_encerramento: Optional[date] = None
+    # Conta a pagar emitida no encerramento (receita canônica do projeto:
+    # `_proximo_numero_lancamento` + ContaGerencial tipo="despesa"/
+    # origem="auto" — o mesmo que `concluir_etapa_empreitada` faz). É o elo
+    # que faltava: sem ele o saldo devedor de um período encerrado ficava
+    # registrado só aqui e NUNCA aparecia na Agenda nem em Contas a Pagar.
+    numero_lancamento_gerado: Optional[str] = None
+    # Fotografia congelada no fechamento. Existe porque o resumo era todo
+    # recalculado a cada leitura: uma auditoria respondida depois, um dia
+    # corrigido no calendário ou um vale novo mudavam sozinhos o valor de um
+    # período já FECHADO — e portanto divergiam da conta a pagar já emitida,
+    # que ninguém reescreve. A partir do encerramento, `_resumo_diaria` LÊ
+    # estes números em vez de recalcular.
+    encerramento_numero_diarias: Optional[float] = None
+    encerramento_total_apurado: Optional[float] = None
+    encerramento_valor_pago: Optional[float] = None
+    encerramento_valor_vale: Optional[float] = None
+    encerramento_saldo_devedor: Optional[float] = None
     # Correção manual do contador de diárias (botão de editar no controle) —
     # substitui, a partir de `ajuste_numero_diarias_em`, a contagem dia a dia
     # que viria de `data_inicio`/auditorias. Ver _resumo_diaria.

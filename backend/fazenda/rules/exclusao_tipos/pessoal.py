@@ -325,6 +325,28 @@ def _alvos_diaria(id_, session, fazenda_id=None) -> tuple[list[str], list]:
                    f"caixa já pago(s) (R$ {total_vale:,.2f}). Veja o Relatório de vales avulsos antes de excluir.",
         )
 
+    # Conta a pagar emitida no encerramento do período (ver
+    # `rh_contratos.encerrar_diaria`). Se já foi paga, excluir a diária é
+    # recusado pelo mesmo motivo dos pagamentos acima — o dinheiro saiu do
+    # caixa e a diária é o único registro do trabalho que ele pagou. Se
+    # ainda está em aberto, ela vai junto: deixá-la para trás encheria o
+    # Contas a Pagar de uma cobrança órfã, sem nada que explique de onde veio.
+    conta_encerramento = None
+    if diaria.numero_lancamento_gerado:
+        conta_encerramento = session.exec(
+            select(ContaGerencial).where(
+                ContaGerencial.numero_lancamento == diaria.numero_lancamento_gerado,
+                ContaGerencial.fazenda_id == diaria.fazenda_id,
+            )
+        ).first()
+    if conta_encerramento is not None and conta_encerramento.valor_pago is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Não é possível excluir esta diária: a conta a pagar do encerramento "
+                   f"({conta_encerramento.numero_lancamento}, R$ {conta_encerramento.valor_pago:,.2f}) já foi paga. "
+                   "Estorne a baixa em Financeiro › Lançamentos antes de excluir.",
+        )
+
     auditorias = session.exec(select(DiariaAuditoria).where(DiariaAuditoria.diaria_id == diaria.id)).all()
     dias_calendario = session.exec(select(DiariaDia).where(DiariaDia.diaria_id == diaria.id)).all()
 
@@ -341,6 +363,9 @@ def _alvos_diaria(id_, session, fazenda_id=None) -> tuple[list[str], list]:
     # ValeAvulsoAbatimento — _aplicar_vale_avulso retorna cedo para "diaria")
     # junto.
     objetos: list = [diaria, *auditorias, *dias_calendario]
+    if conta_encerramento is not None:
+        impacto.append(f"conta a pagar do encerramento ({conta_encerramento.numero_lancamento})")
+        objetos.append(conta_encerramento)
     for vale in vales:
         limpar_vinculo_de_itens(session, vale_avulso_id=vale.id)
         objetos.append(vale)
