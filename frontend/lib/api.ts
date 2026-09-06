@@ -3978,8 +3978,15 @@ const _principiosAtivos = _crudNomeAtivo("principios-ativos", "Princípio ativo"
 export const fetchPrincipiosAtivos = _principiosAtivos.listar;
 export const criarPrincipioAtivo = _principiosAtivos.criar;
 export const atualizarPrincipioAtivo = _principiosAtivos.atualizar;
+// Escrita no catálogo GLOBAL de princípios ativos: a rota mudou de
+// /cadastro/... para /painel-cowdata/farmacia/... (achado 35 da auditoria).
+// Lá ela não tinha gate de papel nenhum e qualquer usuário de qualquer
+// fazenda com o módulo sanitário reescrevia o catálogo que todas as
+// fazendas-cliente enxergam. O botão que chama isto só é renderizado no
+// Painel CowData (Farmacia.tsx, ramo `!somenteLeitura`), então a tela do
+// tenant não perdeu nada.
 export async function restaurarCatalogoPrincipios(): Promise<{ criados: number; total: number }> {
-  const res = await authFetch(`${API}/cadastro/principios-ativos/restaurar-catalogo`, { method: "POST" });
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/principios/restaurar-catalogo`, { method: "POST" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao restaurar catálogo"); }
   return res.json();
 }

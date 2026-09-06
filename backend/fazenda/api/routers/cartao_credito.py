@@ -118,9 +118,17 @@ def detalhe_cartao(
 @router.post("/cartoes", status_code=201)
 def criar_cartao(
     dados: CartaoCreditoIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
+    # BUG DE SEGURANÇA CORRIGIDO (achado 17): a criação gravava pela
+    # dependência TOLERANTE, ao contrário de criar_lancamento/criar_pedido e
+    # dos cadastros financeiros irmãos (conta corrente, centro de custo, plano
+    # de contas), que já usam a estrita. Um cartão com `fazenda_id=NULL` é
+    # pior que um catálogo órfão: a fatura, o lançamento e a conta bancária
+    # vinculada pendurados nele passam a não pertencer a fazenda nenhuma, e a
+    # checagem de posse da ContaCorrente logo abaixo perde o efeito — com
+    # `fazenda_id` None, o `if fazenda_id is not None` cai e qualquer conta
+    # bancária serve, inclusive a de outro tenant.
     _validar_cartao(dados)
     if dados.conta_bancaria_id:
         # BUG DE SEGURANÇA CORRIGIDO: sem o filtro de fazenda_id, um cartão

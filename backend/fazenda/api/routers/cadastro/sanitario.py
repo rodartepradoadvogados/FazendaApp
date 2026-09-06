@@ -299,16 +299,23 @@ router.post("/principios-ativos")(_criar_principio)
 router.put("/principios-ativos/{item_id}")(_atualizar_principio)
 
 
-@router.post("/principios-ativos/restaurar-catalogo")
-def restaurar_catalogo_principios(session: Session = Depends(get_session)) -> dict:
-    """(Re)semeia o catálogo base de princípios ativos (documento base da farmácia)
-    — add-missing e idempotente: só cria os que faltam e não sobrescreve edições.
-    Útil quando o banco foi criado antes do catálogo completo existir."""
-    from fazenda.rules.farmacia import seed_farmacia
-    antes = len(session.exec(select(PrincipioAtivo)).all())
-    seed_farmacia(session)
-    total = len(session.exec(select(PrincipioAtivo)).all())
-    return {"criados": total - antes, "total": total}
+# BUG DE SEGURANÇA CORRIGIDO (achado 35): aqui existia
+# `POST /principios-ativos/restaurar-catalogo`, SEM dependência de fazenda e
+# SEM gate de papel — qualquer usuário com o módulo sanitário disparava uma
+# reescrita (add-missing) do catálogo GLOBAL de princípios ativos, que é
+# compartilhado por todas as fazendas-cliente.
+#
+# Não bastava acrescentar um `exigir_admin` aqui: o catálogo global não é
+# dado da fazenda, é dado da CowData, e escrever nele a partir de um router
+# do TENANT é o mesmo erro estrutural que o catálogo de touros NAAB já teve
+# (escrita removida do lado da fazenda no PR #702). A rota foi movida para
+# `painel_cowdata_farmacia.py`, junto das outras escritas do catálogo global,
+# com o gate que elas já usam (área "farmacia" + `pode_editar_farmacia`).
+#
+# Ninguém do lado da fazenda perdeu função: o botão que a chamava só é
+# renderizado no Painel CowData (Farmacia.tsx só o mostra quando
+# `!somenteLeitura`, e a tela do tenant monta o componente com
+# `somenteLeitura`).
 
 _listar_doencas, _criar_doenca, _atualizar_doenca, _ = _crud_nome_ativo(
     Doenca, com_fazenda=True, global_compartilhado=True,
