@@ -1,7 +1,10 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Dna, Trash2, Search, RefreshCw, Plus, Pencil, ChevronDown, ChevronRight, X } from "lucide-react";
-import { fetchTouros, criarTouro, atualizarTouro, excluirTouro, recarregarCatalogoTouros, type Touro, type TouroIn } from "@/lib/api";
+import {
+  fetchTouros, fetchTourosCowData, criarTouroCowData, atualizarTouroCowData, excluirTouroCowData,
+  recarregarCatalogoTourosCowData, type Touro, type TouroIn,
+} from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { casaBusca } from "@/lib/busca";
 
@@ -156,7 +159,25 @@ export function FormTouro({ inicial, onSalvar, onCancelar }: { inicial: TouroIn;
   );
 }
 
-export default function CadastroTouros() {
+// O catálogo NAAB é GLOBAL: um `Touro` só (sem fazenda_id) lido por todas as
+// fazendas-cliente. Por isso esta mesma tela tem dois modos:
+//
+//   "fazenda" (padrão) — SOMENTE LEITURA. A fazenda consulta, busca, ordena e
+//     abre os dados da planilha; quem edita o catálogo de todo mundo não pode
+//     ser o administrador de uma fazenda-cliente. Os botões de cadastrar,
+//     editar, excluir e recarregar simplesmente não existem aqui — e o
+//     backend também não tem mais as rotas (ver cadastro/genetica.py).
+//
+//   "painel" — Painel CowData. Lê e escreve pelas rotas /painel-cowdata/
+//     touros, sob a permissão "editar touros NAAB" do cadastro de equipe.
+//     Precisa ler por lá também: um membro da Equipe CowData não tem fazenda
+//     selecionada no token e nem conseguiria chamar a rota da fazenda.
+//
+// Esconder o botão é só metade: quem protege é a rota. Os dois lados, sempre.
+export type ContextoCadastroTouros = "fazenda" | "painel";
+
+export default function CadastroTouros({ contexto = "fazenda" }: { contexto?: ContextoCadastroTouros } = {}) {
+  const podeEditar = contexto === "painel";
   const [touros, setTouros] = useState<Touro[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
@@ -170,7 +191,7 @@ export default function CadastroTouros() {
     setRecarregando(true);
     setErro(""); setInfo("");
     try {
-      const r = await recarregarCatalogoTouros();
+      const r = await recarregarCatalogoTourosCowData();
       await carregar();
       setInfo(`Catálogo padrão recarregado: ${r.touros_depois} touro(s) no banco (eram ${r.touros_antes}).`);
     } catch (e: any) {
@@ -184,14 +205,14 @@ export default function CadastroTouros() {
     setCarregando(true);
     setErro("");
     try {
-      setTouros(await fetchTouros());
+      setTouros(await (podeEditar ? fetchTourosCowData() : fetchTouros()));
     } catch (e: any) {
       setErro(e.message || "Falha ao carregar touros");
     } finally {
       setCarregando(false);
     }
   }
-  useEffect(() => { carregar(); }, []);
+  useEffect(() => { carregar(); }, [contexto]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const filtrados = useMemo(
     () => touros.filter((t) => casaBusca(`${t.naab || ""} ${t.nome || ""} ${t.central || ""} ${t.raca || ""}`, busca)),
@@ -203,7 +224,7 @@ export default function CadastroTouros() {
     if (!t.id) return;
     if (!confirm(`Excluir o touro ${t.naab}${t.nome ? " — " + t.nome : ""}?`)) return;
     try {
-      await excluirTouro(t.id);
+      await excluirTouroCowData(t.id);
       setTouros((prev) => prev.filter((x) => x.id !== t.id));
     } catch (e: any) {
       setErro(e.message || "Falha ao excluir");
@@ -212,10 +233,10 @@ export default function CadastroTouros() {
 
   async function salvar(d: TouroIn) {
     if (editando && editando !== "novo" && editando.id) {
-      const atualizado = await atualizarTouro(editando.id, d);
+      const atualizado = await atualizarTouroCowData(editando.id, d);
       setTouros((prev) => prev.map((t) => (t.id === atualizado.id ? atualizado : t)));
     } else {
-      const criado = await criarTouro(d);
+      const criado = await criarTouroCowData(d);
       setTouros((prev) => [...prev, criado]);
     }
     setEditando(null);
@@ -230,19 +251,22 @@ export default function CadastroTouros() {
         <div>
           <h2 className="text-lg font-bold flex items-center gap-2"><Dna size={18} style={{ color: "var(--dourado)" }} /> Touros (NAAB)</h2>
           <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>
-            Banco de touros — importado do catálogo do fornecedor (Configurações › Importar dados › Touros (NAAB)) e também cadastrável
-            manualmente aqui. Só o código NAAB e o nome são obrigatórios; todo o resto é opcional.
+            {podeEditar
+              ? "Banco de touros da CowData — o MESMO catálogo para todas as fazendas-cliente. Cadastre manualmente aqui ou importe a planilha do fornecedor. Só o código NAAB e o nome são obrigatórios; todo o resto é opcional."
+              : "Banco de touros — consulta do catálogo NAAB usado na prova média, no estudo de touros, na inseminação e na sugestão de acasalamento. O catálogo é o mesmo para todas as fazendas e é mantido pela CowData; para incluir ou corrigir um touro, fale com o suporte."}
           </p>
         </div>
-        <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-          <button onClick={recarregarCatalogo} disabled={recarregando} className="btn-secondary" title="Reimporta o catálogo padrão empacotado no servidor (upsert por NAAB — não apaga touros existentes). Use se o catálogo não aparecer."
-            style={{ display: "flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}>
-            <RefreshCw size={15} /> {recarregando ? "Recarregando..." : "Recarregar catálogo padrão"}
-          </button>
-          <button onClick={() => setEditando("novo")} className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}>
-            <Plus size={15} /> Novo touro
-          </button>
-        </div>
+        {podeEditar && (
+          <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+            <button onClick={recarregarCatalogo} disabled={recarregando} className="btn-secondary" title="Reimporta o catálogo padrão empacotado no servidor (upsert por NAAB — não apaga touros existentes). Use se o catálogo não aparecer."
+              style={{ display: "flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}>
+              <RefreshCw size={15} /> {recarregando ? "Recarregando..." : "Recarregar catálogo padrão"}
+            </button>
+            <button onClick={() => setEditando("novo")} className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}>
+              <Plus size={15} /> Novo touro
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
@@ -263,7 +287,9 @@ export default function CadastroTouros() {
         <p style={{ color: "var(--text-muted)" }}>Carregando...</p>
       ) : filtrados.length === 0 ? (
         <p style={{ color: "var(--text-muted)", fontSize: "0.88rem" }}>
-          Nenhum touro cadastrado ainda. Importe o catálogo em Configurações › Importar dados › Touros (NAAB), ou clique em "Novo touro".
+          {podeEditar
+            ? "Nenhum touro cadastrado ainda. Importe a planilha do fornecedor ou clique em \"Novo touro\"."
+            : "Nenhum touro no catálogo NAAB ainda. O catálogo é mantido pela CowData — fale com o suporte."}
         </p>
       ) : (
         <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: "var(--r-sm)" }}>
@@ -283,7 +309,7 @@ export default function CadastroTouros() {
                 <ThOrdenavel label="Fert. filhas" campo="fertilidade_filhas" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
                 <ThOrdenavel label="Fac. parto" campo="facilidade_parto" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
                 <th style={th}>Fonte / rodada</th>
-                <th style={th}></th>
+                {podeEditar && <th style={th}></th>}
               </tr>
             </thead>
             <tbody>
@@ -313,20 +339,22 @@ export default function CadastroTouros() {
                       <td style={{ ...td, textAlign: "right" }}>{fmt(t.fertilidade_filhas, 1)}</td>
                       <td style={{ ...td, textAlign: "right" }}>{fmt(t.facilidade_parto, 1)}</td>
                       <td style={{ ...td, fontSize: "0.74rem", color: "var(--text-muted)" }}>{[t.fonte, t.rodada_prova].filter(Boolean).join(" · ") || "—"}</td>
-                      <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
-                        <button onClick={() => setEditando(t)} title="Editar touro"
-                          style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted)", marginRight: "0.5rem" }}>
-                          <Pencil size={15} />
-                        </button>
-                        <button onClick={() => remover(t)} title="Excluir touro"
-                          style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted)" }}>
-                          <Trash2 size={15} />
-                        </button>
-                      </td>
+                      {podeEditar && (
+                        <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
+                          <button onClick={() => setEditando(t)} title="Editar touro"
+                            style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted)", marginRight: "0.5rem" }}>
+                            <Pencil size={15} />
+                          </button>
+                          <button onClick={() => remover(t)} title="Excluir touro"
+                            style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted)" }}>
+                            <Trash2 size={15} />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                     {aberto && (
                       <tr>
-                        <td colSpan={14} style={{ padding: "0.6rem 1rem 0.9rem 2.2rem", borderBottom: "1px solid var(--border)", background: "var(--surface)" }}>
+                        <td colSpan={podeEditar ? 14 : 13} style={{ padding: "0.6rem 1rem 0.9rem 2.2rem", borderBottom: "1px solid var(--border)", background: "var(--surface)" }}>
                           <p style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.4rem" }}>
                             Todos os dados da planilha do fornecedor
                           </p>
@@ -349,7 +377,7 @@ export default function CadastroTouros() {
         </div>
       )}
 
-      {editando && (
+      {podeEditar && editando && (
         <FormTouro
           inicial={editando === "novo" ? CAMPO_VAZIO : { ...editando, nome: editando.nome || "", dados_extra: parseDadosExtra(editando.dados_extra) }}
           onSalvar={salvar}

@@ -36,7 +36,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_area_painel_cowdata
+from fazenda.auth import exigir_area_painel_cowdata, exigir_permissao_painel_cowdata
 from fazenda.database import get_session
 from fazenda.models import (
     CategoriaMedicamento, ClassificacaoMedicamento, Doenca, Estoque, Fazenda, IndicacaoTerapeutica,
@@ -52,6 +52,14 @@ from fazenda.rules.farmacia_tags import definir_tags, tags_de
 router = APIRouter(prefix="/painel-cowdata/farmacia", tags=["painel-cowdata-farmacia"])
 
 _dep = Depends(exigir_area_painel_cowdata("farmacia"))
+# CONSULTA x EDIÇÃO (set/2026). A área "farmacia" dava as duas coisas de uma
+# vez; o dono pediu a separação — "edição de Farmácia: consulta, todos
+# podem". `_dep` (só a área) continua nas rotas de leitura; `_dep_edicao`
+# (área + `pode_editar_farmacia`) vai em tudo que escreve no catálogo global
+# ou faz fan-out de Estoque para as fazendas-cliente. A permissão é camada A
+# MAIS: sem a área, `exigir_permissao_painel_cowdata` recusa antes mesmo de
+# olhar a permissão.
+_dep_edicao = Depends(exigir_permissao_painel_cowdata("farmacia", "pode_editar_farmacia"))
 
 
 def _fazendas_cliente_ativas(session: Session) -> list[Fazenda]:
@@ -79,7 +87,7 @@ def listar_categorias_globais(_: Usuario = _dep, session: Session = Depends(get_
 
 @router.post("/categorias", status_code=201)
 def criar_categoria_global(
-    dados: CategoriaIn, _: Usuario = _dep, session: Session = Depends(get_session),
+    dados: CategoriaIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
 ) -> dict:
     nome = dados.nome.strip()
     if not nome:
@@ -97,7 +105,7 @@ def criar_categoria_global(
 
 @router.put("/categorias/{doenca_id}")
 def atualizar_categoria_global(
-    doenca_id: int, dados: CategoriaIn, _: Usuario = _dep, session: Session = Depends(get_session),
+    doenca_id: int, dados: CategoriaIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
 ) -> dict:
     doenca = session.get(Doenca, doenca_id)
     if not doenca or doenca.fazenda_id is not None:
@@ -139,7 +147,7 @@ def listar_principios_globais(_: Usuario = _dep, session: Session = Depends(get_
 
 @router.post("/principios", status_code=201)
 def criar_principio_global(
-    dados: PrincipioGlobalIn, _: Usuario = _dep, session: Session = Depends(get_session),
+    dados: PrincipioGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
 ) -> dict:
     nome = dados.nome.strip()
     if not nome:
@@ -155,7 +163,7 @@ def criar_principio_global(
 
 @router.put("/principios/{principio_id}")
 def atualizar_principio_global(
-    principio_id: int, dados: PrincipioGlobalIn, _: Usuario = _dep, session: Session = Depends(get_session),
+    principio_id: int, dados: PrincipioGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
 ) -> dict:
     pa = session.get(PrincipioAtivo, principio_id)
     if not pa or pa.fazenda_id is not None:
@@ -173,7 +181,7 @@ def atualizar_principio_global(
 
 @router.delete("/principios/{principio_id}")
 def excluir_principio_global(
-    principio_id: int, _: Usuario = _dep, session: Session = Depends(get_session),
+    principio_id: int, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
 ) -> dict:
     pa = session.get(PrincipioAtivo, principio_id)
     if not pa or pa.fazenda_id is not None:
@@ -206,7 +214,7 @@ def _crud_catalogo_global(model, router: APIRouter, prefixo: str):
         return [i.model_dump() for i in itens]
 
     @router.post(f"/{prefixo}", status_code=201)
-    def criar(dados: NomeAtivoGlobalIn, _: Usuario = _dep, session: Session = Depends(get_session)) -> dict:
+    def criar(dados: NomeAtivoGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session)) -> dict:
         nome = dados.nome.strip()
         if not nome:
             raise HTTPException(status_code=400, detail="Nome é obrigatório")
@@ -219,7 +227,7 @@ def _crud_catalogo_global(model, router: APIRouter, prefixo: str):
         return obj.model_dump()
 
     @router.put(f"/{prefixo}/{{item_id}}")
-    def atualizar(item_id: int, dados: NomeAtivoGlobalIn, _: Usuario = _dep, session: Session = Depends(get_session)) -> dict:
+    def atualizar(item_id: int, dados: NomeAtivoGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session)) -> dict:
         obj = session.get(model, item_id)
         if not obj or obj.fazenda_id is not None:
             raise HTTPException(status_code=404, detail="Registro global não encontrado")
@@ -399,7 +407,7 @@ def _fan_out_medicamento(session: Session, medicamento: MedicamentoComercial, pr
 
 @router.post("/medicamentos", status_code=201)
 def criar_medicamento_global(
-    dados: MedicamentoGlobalIn, _: Usuario = _dep, session: Session = Depends(get_session),
+    dados: MedicamentoGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
 ) -> dict:
     nome = dados.nome_comercial.strip()
     if not nome:
@@ -432,7 +440,7 @@ def criar_medicamento_global(
 
 @router.put("/medicamentos/{medicamento_id}")
 def atualizar_medicamento_global(
-    medicamento_id: int, dados: MedicamentoGlobalIn, _: Usuario = _dep, session: Session = Depends(get_session),
+    medicamento_id: int, dados: MedicamentoGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
 ) -> dict:
     """Edita a bula/princípios/doenças do medicamento PADRÃO — NÃO propaga
     automaticamente para os itens de Estoque já fanned-out (cada fazenda que
@@ -462,7 +470,7 @@ def atualizar_medicamento_global(
 
 @router.post("/medicamentos/{medicamento_id}/fanout")
 def reexecutar_fanout(
-    medicamento_id: int, _: Usuario = _dep, session: Session = Depends(get_session),
+    medicamento_id: int, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
 ) -> dict:
     """Roda o fan-out de novo — pra preencher fazendas novas (cadastradas
     depois do medicamento) ou nunca alcançadas por algum motivo. Idempotente
@@ -563,7 +571,7 @@ class VincularDiagnosticoIn(BaseModel):
 
 @router.post("/diagnostico/vincular")
 def vincular_item_ao_catalogo(
-    dados: VincularDiagnosticoIn, _: Usuario = _dep, session: Session = Depends(get_session),
+    dados: VincularDiagnosticoIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
 ) -> dict:
     """Resolve um 'Órfão': liga um item de Estoque já existente (nome mantido
     — pode ser diferente do nome comercial central, ex. "Tulatromicina 100mg
@@ -595,7 +603,7 @@ class AtivarDiagnosticoIn(BaseModel):
 
 @router.post("/diagnostico/ativar", status_code=201)
 def ativar_medicamento_em_fazenda(
-    dados: AtivarDiagnosticoIn, _: Usuario = _dep, session: Session = Depends(get_session),
+    dados: AtivarDiagnosticoIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
 ) -> dict:
     """Resolve um 'Ausente': cria nesta fazenda o item de Estoque que o
     fan-out em massa não alcançou (mesma regra idempotente do fan-out — não

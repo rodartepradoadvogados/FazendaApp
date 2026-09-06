@@ -2,12 +2,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Dna, Search, Warehouse, FlaskConical, Database, Pencil, Trash2, X } from "lucide-react";
 import {
-  fetchEstoqueSemen, fetchTouros, fetchAnimais, atualizarEstoqueSemen, atualizarTouro, excluirEstoqueSemen,
+  fetchEstoqueSemen, fetchTouros, fetchAnimais, atualizarEstoqueSemen, excluirEstoqueSemen,
   fetchProvaMediaSemen, fetchProvaAoVivoSemen, type Touro, type TouroIn, type ProvaMediaSemen, type ProvaMediaCampos,
   type ProvaAoVivoSemen,
 } from "@/lib/api";
 import type { AnimalRow } from "./AnimalModal";
-import { CAMPOS_NUMERICOS, parseDadosExtra, FormTouro, CAMPO_VAZIO } from "./CadastroTouros";
+import { CAMPOS_NUMERICOS, parseDadosExtra } from "./CadastroTouros";
 import { TouroDetalheModal } from "./TouroDetalheModal";
 import { useOrdenacao, ThOrdenavel } from "./Ordenavel";
 import { usePaginacao, Paginacao } from "./Paginacao";
@@ -112,7 +112,6 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
   const [machos, setMachos] = useState<MachoAnimal[]>([]);
   const [detalhe, setDetalhe] = useState<{ titulo: string; campos: [string, string][] } | null>(null);
   const [editEstoque, setEditEstoque] = useState<EstoqueSemenItem | null>(null);
-  const [editNaab, setEditNaab] = useState<Touro | null>(null);
   const [provaMedia, setProvaMedia] = useState<ProvaMediaSemen | null>(null);
   const [provaErro, setProvaErro] = useState<string | null>(null);
   // Prova ao vivo (mesmos indicadores genéticos do catálogo, ponderados
@@ -268,12 +267,14 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
     setEditEstoque(null);
   };
 
-  const salvarEdicaoNaab = async (d: TouroIn) => {
-    if (!editNaab?.id) return;
-    const atualizado = await atualizarTouro(editNaab.id, d);
-    setNaab((prev) => (prev ?? []).map((t) => (t.id === atualizado.id ? atualizado : t)));
-    setEditNaab(null);
-  };
+  // EDIÇÃO DO CATÁLOGO NAAB: SAIU DAQUI (set/2026). Havia um lápis nesta
+  // tabela que chamava PUT /cadastro/touros/{id} — só que `Touro` é catálogo
+  // GLOBAL (sem fazenda_id, o mesmo para todas as fazendas-cliente), então
+  // editar aqui mudava a prova do touro para todo mundo. A manutenção do
+  // catálogo passou a ser exclusiva do Painel CowData (Touros Naab), sob a
+  // permissão "editar touros NAAB"; as rotas de escrita da fazenda deixaram
+  // de existir. Esta tela continua fazendo tudo que fazia com touro: filtrar,
+  // buscar, ver a ficha completa, prova média e prova ao vivo.
 
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 
@@ -406,7 +407,6 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
                       <ThOrdenavel label="Raça" campo="raca" coluna={ordNaab.coluna} dir={ordNaab.dir} ordenar={ordNaab.ordenar} />
                       <ThOrdenavel label="TPI" campo="tpi" coluna={ordNaab.coluna} dir={ordNaab.dir} ordenar={ordNaab.ordenar} alinhar="right" />
                       <ThOrdenavel label="Leite (kg)" campo="leite_kg" coluna={ordNaab.coluna} dir={ordNaab.dir} ordenar={ordNaab.ordenar} alinhar="right" />
-                      <th></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -418,15 +418,9 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
                         <td style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{t.raca || "—"}</td>
                         <td style={{ textAlign: "right", fontWeight: 600, color: "var(--dourado-light)" }}>{fmt(t.tpi)}</td>
                         <td style={{ textAlign: "right" }}>{fmt(t.leite_kg)}</td>
-                        <td style={{ textAlign: "right" }}>
-                          <button onClick={(ev) => { ev.stopPropagation(); setEditNaab(t); }} title="Editar touro"
-                            style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted)" }}>
-                            <Pencil size={14} />
-                          </button>
-                        </td>
                       </tr>
                     ))}
-                    {!naabFiltrado.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", textAlign: "center" }}>Nenhum touro do catálogo NAAB encontrado.</td></tr>}
+                    {!naabFiltrado.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", textAlign: "center" }}>Nenhum touro do catálogo NAAB encontrado.</td></tr>}
                   </tbody>
                 </table>
               )}
@@ -587,13 +581,6 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
         <FormEstoqueSemenEdit inicial={editEstoque} onSalvar={salvarEdicaoEstoque} onCancelar={() => setEditEstoque(null)} />
       )}
 
-      {editNaab && (
-        <FormTouro
-          inicial={{ ...CAMPO_VAZIO, ...editNaab, nome: editNaab.nome || "", dados_extra: parseDadosExtra(editNaab.dados_extra) }}
-          onSalvar={salvarEdicaoNaab}
-          onCancelar={() => setEditNaab(null)}
-        />
-      )}
     </div>
   );
 }

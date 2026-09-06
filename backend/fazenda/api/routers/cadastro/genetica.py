@@ -8,7 +8,6 @@ Extraído do antigo `cadastro.py` monolítico.
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from typing import Optional
 
@@ -16,10 +15,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_admin, get_fazenda_atual_id, get_fazenda_id_escrita
+from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.api.routers.estoque import sincronizar_item_estoque_semen
-from fazenda.models import EstoqueSemen, SeedFlag, Servico, Touro, Usuario
+from fazenda.models import EstoqueSemen, SeedFlag, Servico, Touro
 from fazenda.parsers.utils import parse_date
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.parametros import minimos_semen_por_tipo
@@ -425,120 +424,26 @@ def listar_touros(session: Session = Depends(get_session)) -> list[dict]:
     touros.sort(key=lambda t: (-(t.tpi if t.tpi is not None else -1e9), (t.nome or t.naab)))
     return [t.model_dump() for t in touros]
 
-
-@router.post("/touros/recarregar-catalogo")
-def recarregar_catalogo_touros(session: Session = Depends(get_session), _admin: Usuario = Depends(exigir_admin)) -> dict:
-    """Reimporta o catálogo NAAB completo empacotado no servidor (upsert por
-    NAAB — nunca apaga touros existentes). Serve de botão de autoatendimento
-    caso a carga automática na inicialização não tenha rodado por algum
-    motivo (ex.: banco criado antes deste recurso existir)."""
-    from fazenda.rules.touros import bootstrap_touros_naab
-    antes = len(session.exec(select(Touro)).all())
-    bootstrap_touros_naab(session, forcar=True)
-    depois = len(session.exec(select(Touro)).all())
-    return {"touros_antes": antes, "touros_depois": depois}
-
-
-@router.get("/touros/campos-planilha")
-def campos_planilha_touros() -> list[str]:
-    """Rótulos originais das colunas do catálogo completo (Alta Genetics),
-    para o cadastro manual oferecer "preencher com os campos da planilha"
-    sem o usuário ter que lembrar/digitar cada nome."""
-    from fazenda.rules.touros import CURADOS_POR_CABECALHO
-    return [cabecalho for _campo, cabecalho, _num in CURADOS_POR_CABECALHO if _campo != "naab"]
-
-
-class TouroIn(BaseModel):
-    naab: str
-    nome: str
-    nome_completo: Optional[str] = None
-    raca: Optional[str] = None
-    central: Optional[str] = None
-    leite_kg: Optional[float] = None
-    gordura_kg: Optional[float] = None
-    gordura_pct: Optional[float] = None
-    proteina_kg: Optional[float] = None
-    proteina_pct: Optional[float] = None
-    tpi: Optional[float] = None
-    nm_dolar: Optional[float] = None
-    tipo_composto: Optional[float] = None
-    ubere_composto: Optional[float] = None
-    pernas_composto: Optional[float] = None
-    ccs_score: Optional[float] = None
-    fertilidade_filhas: Optional[float] = None
-    facilidade_parto: Optional[float] = None
-    fonte: Optional[str] = None
-    rodada_prova: Optional[str] = None
-    observacao: Optional[str] = None
-    dados_extra: Optional[list[list[str]]] = None  # [[rótulo, valor], ...] — demais dados da planilha
-
-
-@router.post("/touros")
-def criar_touro(dados: TouroIn, session: Session = Depends(get_session), _admin: Usuario = Depends(exigir_admin)) -> dict:
-    """Cadastro manual de um touro. Só o código NAAB e o nome são
-    obrigatórios — todo o resto (inclusive campos extras da planilha do
-    fornecedor) é opcional.
-
-    BUG DE SEGURANÇA CORRIGIDO: este catálogo é GLOBAL (Touro não tem
-    fazenda_id, é compartilhado por todas as fazendas) mas a rota só era
-    protegida pelo módulo genérico "parametros" — qualquer usuário
-    (inclusive operador) de qualquer fazenda com esse módulo contratado
-    podia criar/editar/apagar touros vistos por todo mundo. Agora exige
-    admin da fazenda que está fazendo a chamada."""
-    naab = dados.naab.strip().upper()
-    if not naab:
-        raise HTTPException(status_code=400, detail="Informe o código NAAB")
-    if not dados.nome.strip():
-        raise HTTPException(status_code=400, detail="Informe o nome do touro")
-    if session.exec(select(Touro).where(Touro.naab == naab)).first():
-        raise HTTPException(status_code=400, detail=f"Já existe um touro cadastrado com o NAAB {naab}")
-    from fazenda.rules.naab import central_por_codigo_naab
-
-    campos = dados.model_dump(exclude={"naab", "dados_extra"})
-    touro = Touro(naab=naab, **campos)
-    if not touro.central:
-        touro.central = central_por_codigo_naab(naab)
-    if dados.dados_extra:
-        touro.dados_extra = json.dumps(dados.dados_extra, ensure_ascii=False)
-    session.add(touro)
-    session.commit()
-    session.refresh(touro)
-    return touro.model_dump()
-
-
-@router.put("/touros/{touro_id}")
-def atualizar_touro(touro_id: int, dados: TouroIn, session: Session = Depends(get_session), _admin: Usuario = Depends(exigir_admin)) -> dict:
-    t = session.get(Touro, touro_id)
-    if not t:
-        raise HTTPException(status_code=404, detail="Touro não encontrado")
-    naab = dados.naab.strip().upper()
-    if not naab:
-        raise HTTPException(status_code=400, detail="Informe o código NAAB")
-    if not dados.nome.strip():
-        raise HTTPException(status_code=400, detail="Informe o nome do touro")
-    outro = session.exec(select(Touro).where(Touro.naab == naab)).first()
-    if outro and outro.id != touro_id:
-        raise HTTPException(status_code=400, detail=f"Já existe outro touro cadastrado com o NAAB {naab}")
-    for campo, valor in dados.model_dump(exclude={"dados_extra"}).items():
-        setattr(t, campo, valor)
-    t.naab = naab
-    if dados.dados_extra is not None:
-        t.dados_extra = json.dumps(dados.dados_extra, ensure_ascii=False) if dados.dados_extra else None
-    from datetime import datetime
-    t.atualizado_em = datetime.utcnow()
-    session.add(t)
-    session.commit()
-    session.refresh(t)
-    return t.model_dump()
-
-
-@router.delete("/touros/{touro_id}")
-def excluir_touro(touro_id: int, session: Session = Depends(get_session), _admin: Usuario = Depends(exigir_admin)) -> dict:
-    t = session.get(Touro, touro_id)
-    if not t:
-        raise HTTPException(status_code=404, detail="Touro não encontrado")
-    session.delete(t)
-    session.commit()
-    return {"excluido": True}
-
-
+# ── MANUTENÇÃO DO CATÁLOGO: SAIU DAQUI (furo de segurança, set/2026) ────────
+# `POST/PUT/DELETE /cadastro/touros`, `POST /cadastro/touros/recarregar-
+# catalogo` e `GET /cadastro/touros/campos-planilha` moraram aqui até
+# set/2026 e agora vivem em fazenda/api/routers/painel_cowdata_touros.py,
+# sob a permissão "editar touros NAAB" do cadastro de equipe do Painel
+# CowData.
+#
+# O QUE ESTAVA ERRADO. `Touro` é catálogo GLOBAL — não tem `fazenda_id`, é
+# uma tabela só, lida por todas as fazendas-cliente. As rotas de escrita,
+# porém, estavam montadas no router da fazenda e protegidas por
+# `exigir_admin`, que é a proteção certa para o dado de UMA fazenda: o
+# administrador de qualquer fazenda-cliente podia reescrever ou apagar o
+# catálogo que todas as outras usavam. Elas foram REMOVIDAS em vez de
+# passarem a recusar — uma rota que só recusa continua montada e volta a
+# abrir sozinha se alguém trocar a dependência dela por engano.
+#
+# A LEITURA NÃO MUDOU: `GET /cadastro/touros` (router_touros_leitura, acima)
+# continua igual, e com ela tudo que a fazenda faz com touro — listagem e
+# busca, prova média (`/estoque-semen/prova-media`), prova ao vivo/estudo de
+# touros (`/estoque-semen/prova-ao-vivo`), seleção na inseminação inclusive
+# de touro fora do estoque, sugestão de acasalamento
+# (relatorio_acasalamento.py), grau de sangue/genética (rules/genetica.py),
+# ficha do animal (animais.py) e compra de sêmen (compra_semen.py).

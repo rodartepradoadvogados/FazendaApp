@@ -6,6 +6,7 @@ Extraído do antigo `cadastro.py` monolítico.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date
 from typing import Optional
 
@@ -34,9 +35,12 @@ from fazenda.models import (
     Usuario,
     ValeAvulso,
     ValeFuncionario,
+    ValeParcela,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo, nome_seguro_storage
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -433,17 +437,42 @@ def atualizar_pessoa(
 # Usuario.pessoa_id e CronogramaSanitario.veterinario_pessoa_id também são
 # FK para pessoa.id, então entram na mesma varredura (o 2º é checado à
 # parte abaixo por ter nome de coluna diferente de "pessoa_id").
+#
+# Cada linha é (modelo, singular, plural, status_que_NÃO_bloqueiam).
+#
+# 1. SINGULAR/PLURAL EXPLÍCITOS — antes a mensagem montava o plural sozinha
+#    grudando um "s" no rótulo, e com isso o motivo da recusa chegava na tela
+#    como "2 fériass" / "3 folha de pagamentos". A mensagem é a única coisa
+#    que o usuário tem para decidir entre desativar a pessoa ou desfazer o
+#    vínculo — ela precisa estar legível.
+#
+# 2. STATUS QUE NÃO BLOQUEIAM — férias e 13º NUNCA são apagados quando uma
+#    rescisão os absorve: o servidor só carimba status="cancelado_rescisao"
+#    (ver FeriasFuncionario.status/rescisao_id em models/pessoal.py), de
+#    propósito, para o cancelamento ser rastreável e reversível. A varredura
+#    aqui contava esses registros como vínculo vivo, então bastava a pessoa
+#    ter tido férias ou 13º cancelados por uma rescisão para ela virar
+#    não-excluível para sempre — por causa de um lançamento que já não vale
+#    mais nada. Registro cancelado não é vínculo.
 _TABELAS_COM_PESSOA_ID = [
-    (Usuario, "login de usuário"),
-    (FolhaPagamento, "folha de pagamento"),
-    (FeriasFuncionario, "férias"),
-    (DecimoTerceiro, "13º salário"),
-    (RescisaoFuncionario, "rescisão"),
-    (ValeFuncionario, "vale"),
-    (ValeAvulso, "vale avulso"),
-    (Empreitada, "empreitada"),
-    (Contrato, "contrato"),
-    (Diaria, "diária"),
+    (Usuario, "login de usuário", "logins de usuário", ()),
+    (FolhaPagamento, "folha de pagamento", "folhas de pagamento", ()),
+    (FeriasFuncionario, "férias", "períodos de férias", ("cancelado_rescisao",)),
+    (DecimoTerceiro, "lançamento de 13º salário", "lançamentos de 13º salário", ("cancelado_rescisao",)),
+    (RescisaoFuncionario, "rescisão", "rescisões", ()),
+    (ValeFuncionario, "vale", "vales", ()),
+    (ValeAvulso, "vale avulso", "vales avulsos", ()),
+    (Empreitada, "empreitada", "empreitadas", ()),
+    (Contrato, "contrato", "contratos", ()),
+    (Diaria, "diária", "diárias", ()),
+    # ValeParcela.pessoa_id é FK para pessoa.id e tinha ficado de fora desta
+    # lista. No SQLite da suíte isso passa batido (FK não é verificada por
+    # padrão), mas no Postgres de produção o `session.delete(p)` estoura
+    # ForeignKeyViolation e a tela recebe um 500 com texto de banco — o
+    # oposto de "diga ao usuário o que está vinculado". Na prática a parcela
+    # sempre vem junto do ValeFuncionario (que já bloqueia acima), então isto
+    # só aparece sozinho no caso órfão — e é justamente esse que dava 500.
+    (ValeParcela, "parcela de vale", "parcelas de vale", ()),
 ]
 
 
@@ -455,27 +484,40 @@ def excluir_pessoa(
     vinculado (login de usuário, folha/férias/13º/rescisão/vale, empreitada,
     contrato, diária ou cronograma sanitário como veterinário agendado), 409
     caso contrário, orientando a desativar em vez de excluir (mesmo padrão de
-    excluir_item_estoque em estoque.py)."""
+    excluir_item_estoque em estoque.py).
+
+    Férias e 13º com status "cancelado_rescisao" NÃO contam como vínculo —
+    ver o comentário de _TABELAS_COM_PESSOA_ID. E o 409 nomeia cada vínculo
+    (quantidade + o que é), porque é a única informação que o usuário tem
+    para escolher entre desativar a pessoa e desfazer o vínculo."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     p = session.get(Pessoa, pessoa_id)
     if not p or (p.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     vinculos = []
-    for modelo, rotulo in _TABELAS_COM_PESSOA_ID:
-        total = len(session.exec(select(modelo).where(modelo.pessoa_id == pessoa_id)).all())
+    for modelo, singular, plural, status_ignorados in _TABELAS_COM_PESSOA_ID:
+        registros = session.exec(select(modelo).where(modelo.pessoa_id == pessoa_id)).all()
+        if status_ignorados:
+            registros = [r for r in registros if getattr(r, "status", None) not in status_ignorados]
+        total = len(registros)
         if total:
-            vinculos.append(f"{total} {rotulo}" + ("s" if total > 1 else ""))
-    total_cronogramas_vet = len(
-        session.exec(select(CronogramaSanitario).where(CronogramaSanitario.veterinario_pessoa_id == pessoa_id)).all()
-    )
-    if total_cronogramas_vet:
-        vinculos.append(f"{total_cronogramas_vet} cronograma(s) sanitário(s) como veterinário agendado")
+            vinculos.append(f"{total} {singular if total == 1 else plural}")
+    cronogramas_vet = session.exec(
+        select(CronogramaSanitario).where(CronogramaSanitario.veterinario_pessoa_id == pessoa_id)
+    ).all()
+    if cronogramas_vet:
+        total = len(cronogramas_vet)
+        vinculos.append(
+            f"{total} {'cronograma sanitário' if total == 1 else 'cronogramas sanitários'} como veterinário agendado"
+        )
     if vinculos:
         raise HTTPException(
             status_code=409,
             detail=(
-                f'Não é possível excluir "{p.nome}" — há vínculo(s) com: {", ".join(vinculos)}. '
-                'Desative a pessoa (campo "Ativo") em vez de excluir.'
+                f'"{p.nome}" não pode ser excluída porque ainda tem lançamento vinculado: '
+                f'{", ".join(vinculos)}. Excluir a pessoa apagaria a referência desses lançamentos. '
+                'Ou desative a pessoa (desmarque "Ativo" ao editar) — ela some das listas e o histórico '
+                'fica de pé —, ou exclua antes os lançamentos acima.'
             ),
         )
     # Documento anexado não bloqueia a exclusão (diferente dos vínculos acima)
@@ -529,10 +571,36 @@ def _content_type_seguro_anexo(content_type: str | None) -> str:
 
 
 def _caminho_anexo_pessoa(session: Session, fazenda_id: int | None, pessoa_id: int, nome_arquivo: str) -> str:
-    """fazenda-X/pessoas/{pessoa_id}/0001_nome.ext — sequencial dentro da pessoa."""
+    """fazenda-X/pessoas/{pessoa_id}/0001_nome.ext — sequencial dentro da pessoa.
+
+    BUG CORRIGIDO (relato do dono, 06/09/2026 — "não consigo excluir
+    documento"): a sequência vinha de `1 + len(existentes)`, ou seja, da
+    CONTAGEM de anexos vivos. Excluir um documento faz a contagem cair, então
+    o próximo upload reaproveita um número que já está em uso; se o nome do
+    arquivo também se repetir — que é a regra, não a exceção, no fluxo real
+    "anexei o RG errado, apago e anexo o certo" — o caminho gerado é
+    IDÊNTICO ao de um anexo que ainda existe. O envio usa `x-upsert`, então o
+    arquivo antigo é sobrescrito em silêncio e as DUAS linhas do banco passam
+    a apontar para o mesmo objeto no Storage. A partir daí, excluir uma
+    apaga o arquivo das duas, e a outra fica travada para sempre: o Storage
+    responde 404 na exclusão, o endpoint devolvia 400 e a linha nunca saía
+    da tela.
+
+    Agora a sequência sai do MAIOR número já usado nos caminhos da pessoa
+    (não da contagem): número devolvido por uma exclusão nunca é reemitido
+    enquanto sobrar qualquer anexo, então dois anexos vivos jamais dividem o
+    mesmo caminho.
+    """
     pasta = f"fazenda-{fazenda_id if fazenda_id is not None else 'geral'}/pessoas/{pessoa_id}"
     existentes = session.exec(select(PessoaAnexo).where(PessoaAnexo.pessoa_id == pessoa_id)).all()
-    seq = 1 + len(existentes)
+    maior = 0
+    for a in existentes:
+        # "…/pessoas/7/0003_rg.pdf" -> 3. Caminho antigo/fora do padrão (ou
+        # nulo) simplesmente não entra na conta.
+        prefixo = (a.caminho_storage or "").rsplit("/", 1)[-1].split("_", 1)[0]
+        if prefixo.isdigit():
+            maior = max(maior, int(prefixo))
+    seq = 1 + max(maior, len(existentes))
     return f"{pasta}/{seq:04d}_{nome_seguro_storage(nome_arquivo)}"
 
 
@@ -629,15 +697,53 @@ def excluir_anexo_pessoa(
     anexo_id: int, session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    """Remove o documento anexado à pessoa.
+
+    BUG CORRIGIDO (relato do dono, 06/09/2026): qualquer falha do Supabase
+    Storage ao apagar o arquivo virava 400 e ABORTAVA a exclusão da linha no
+    banco. Arquivo que já não está lá (apagado à mão no painel do Supabase,
+    caminho duplicado por causa do bug de sequência em
+    `_caminho_anexo_pessoa`, upload que falhou no meio) devolve 404 no
+    delete — e o documento passava a ser IMPOSSÍVEL de tirar da tela: toda
+    tentativa repetia o mesmo 400, para sempre, porque a causa era
+    justamente o arquivo não existir mais.
+
+    A linha do banco é o que o usuário enxerga e é ela que tem que sair. O
+    arquivo no bucket é o subproduto: se a remoção dele falhar, no pior caso
+    sobra um objeto órfão no Storage (invisível, sem nenhuma linha
+    apontando), que é infinitamente melhor que um documento fantasma preso
+    no cadastro. É exatamente o que a cascata de `excluir_pessoa` logo acima
+    já fazia (`except RuntimeError: pass`) — a incoerência entre as duas era
+    o bug.
+    """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     anexo = session.get(PessoaAnexo, anexo_id)
     if not anexo or (anexo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Anexo não encontrado")
     if anexo.caminho_storage:
-        try:
-            excluir_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+        # Anexos gravados ANTES da correção de `_caminho_anexo_pessoa` podem
+        # dividir o mesmo caminho com outro anexo vivo. Apagar o objeto
+        # nesse caso derrubaria o download do irmão que fica — só remove do
+        # bucket quando ninguém mais aponta para lá.
+        # O recorte por fazenda entra NA PRÓPRIA consulta (nunca num `if`
+        # em volta dela): sem multi-fazenda provisionado vira
+        # `fazenda_id IS NULL`, que é exatamente o conjunto de linhas desse
+        # ambiente. Anexo de outra fazenda não é "irmão" de ninguém aqui.
+        compartilhado = session.exec(
+            select(PessoaAnexo).where(
+                PessoaAnexo.fazenda_id == fazenda_id,
+                PessoaAnexo.caminho_storage == anexo.caminho_storage,
+                PessoaAnexo.id != anexo.id,
+            )
+        ).first()
+        if not compartilhado:
+            try:
+                excluir_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
+            except RuntimeError as exc:
+                logger.warning(
+                    "Anexo %s da pessoa %s: linha excluída mesmo com falha ao apagar o arquivo no Storage (%s): %s",
+                    anexo.id, anexo.pessoa_id, anexo.caminho_storage, exc,
+                )
     session.delete(anexo)
     session.commit()
     return {"excluido": True}

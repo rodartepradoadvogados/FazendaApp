@@ -389,18 +389,25 @@ def _gerar_auditorias_diarias(session: Session) -> None:
             session.commit()
 
 
+# Texto do lembrete trimestral. Reescrito em set/2026: o catálogo NAAB é
+# GLOBAL (um `Touro` só, lido por todas as fazendas-cliente) e sua
+# manutenção passou a ser exclusiva do Painel CowData — a fazenda consulta,
+# mas não importa nem edita mais (ver painel_cowdata_touros.py). O passo a
+# passo antigo mandava para Configurações › Importar dados › 'Touros —
+# catálogo NAAB', tela que não existe mais do lado da fazenda; deixá-lo
+# seria mandar o cliente para um caminho sem saída.
 _INSTRUCOES_TOUROS = (
-    "Passo a passo para atualizar o banco de touros (provas NAAB):\n"
-    "1) Entre no site do seu fornecedor de sêmen (ABS BullSearch, Alta, Select Sires, CRV...) "
-    "e filtre/selecione os touros que você usa.\n"
-    "2) Exporte a lista em Excel (.xlsx) ou CSV — geralmente há um botão 'Exportar'.\n"
-    "3) Aqui no sistema: Configurações › Importar dados › 'Touros — catálogo NAAB'.\n"
-    "4) Escolha o arquivo, informe a Central (ex.: Select Sires) e a Rodada da prova "
-    "(ex.: Abr/2026) e clique em Enviar.\n"
-    "5) Pronto: o banco de touros atualiza (nome, produção, TPI/NM$, tipo e saúde) e passa a "
-    "aparecer na ficha do pai de cada animal.\n"
-    "Obs.: as provas oficiais (CDCB) saem em abril, agosto e dezembro — são essas as importações "
-    "que trazem números novos."
+    "Lembrete trimestral: as provas oficiais (CDCB) saem em abril, agosto e dezembro — "
+    "é quando o banco de touros (NAAB) ganha números novos.\n"
+    "O catálogo de touros é mantido pela CowData e é o mesmo para todas as fazendas, "
+    "então a atualização não é feita aqui dentro: nós subimos a rodada nova e ela aparece "
+    "automaticamente para você.\n"
+    "O que fazer: confira em Rebanho › Touros se os touros que você usa já estão com a "
+    "rodada mais recente. Se faltar algum touro do seu fornecedor (ABS BullSearch, Alta, "
+    "Select Sires, CRV...), fale com o suporte informando o código NAAB — a gente inclui "
+    "no catálogo.\n"
+    "As provas alimentam a prova média do seu estoque de sêmen, o estudo de touros e a "
+    "sugestão de acasalamento; nada disso mudou."
 )
 
 

@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_area_painel_cowdata
+from fazenda.auth import exigir_area_painel_cowdata, exigir_permissao_painel_cowdata
 from fazenda.database import get_session
 from fazenda.models import (
     Fazenda, GrauSangue, MetodoServicoReprodutivo, MotivoBaixa, MotivoMovimentacao, Raca, TipoServicoReprodutivo, Usuario,
@@ -34,6 +34,16 @@ from fazenda.models.estoque import (
 )
 
 router = APIRouter(prefix="/painel-cowdata/cadastros", tags=["painel-cowdata-cadastros"])
+
+# CONSULTA x EDIÇÃO (set/2026). Até aqui a área "cadastros" dava as duas
+# coisas de uma vez: quem via a tela também aplicava/renomeava/desativava em
+# todas as fazendas-cliente. O dono pediu explicitamente a separação —
+# "edição de cadastros globais: consulta, todos podem" —, então a leitura
+# continua só com a área e as quatro rotas de escrita passam a exigir também
+# `pode_editar_cadastros_globais` do cadastro de equipe. A permissão é camada
+# A MAIS: `exigir_permissao_painel_cowdata` checa a área ANTES da permissão,
+# nunca no lugar dela.
+_dep_edicao = Depends(exigir_permissao_painel_cowdata("cadastros", "pode_editar_cadastros_globais"))
 
 # categoria (chave usada pelo frontend) -> Model. Todas seguem o mesmo
 # formato (nome + fazenda_id + ativo); "grau_sangue" tem o campo extra
@@ -145,7 +155,7 @@ class AplicarMetodoIn(BaseModel):
 @router.post("/metodo_servico/aplicar")
 def aplicar_metodo(
     dados: AplicarMetodoIn,
-    _: Usuario = Depends(exigir_area_painel_cowdata("cadastros")), session: Session = Depends(get_session),
+    _: Usuario = _dep_edicao, session: Session = Depends(get_session),
 ) -> dict:
     nome = dados.nome.strip()
     tipo_nome = dados.tipo_nome.strip()
@@ -214,7 +224,7 @@ class AplicarIn(BaseModel):
 @router.post("/{categoria}/aplicar")
 def aplicar_item(
     categoria: str, dados: AplicarIn,
-    _: Usuario = Depends(exigir_area_painel_cowdata("cadastros")), session: Session = Depends(get_session),
+    _: Usuario = _dep_edicao, session: Session = Depends(get_session),
 ) -> dict:
     """Cria (ou reativa, se existia desativado) este item nas fazendas
     alvo — todas por padrão, ou só as selecionadas. Nunca duplica: se já
@@ -260,7 +270,7 @@ class RenomearIn(BaseModel):
 @router.put("/{categoria}/renomear")
 def renomear_item(
     categoria: str, dados: RenomearIn,
-    _: Usuario = Depends(exigir_area_painel_cowdata("cadastros")), session: Session = Depends(get_session),
+    _: Usuario = _dep_edicao, session: Session = Depends(get_session),
 ) -> dict:
     modelo = _model(categoria)
     novo_nome = dados.novo_nome.strip()
@@ -292,7 +302,7 @@ class DesativarIn(BaseModel):
 @router.post("/{categoria}/desativar")
 def desativar_item(
     categoria: str, dados: DesativarIn,
-    _: Usuario = Depends(exigir_area_painel_cowdata("cadastros")), session: Session = Depends(get_session),
+    _: Usuario = _dep_edicao, session: Session = Depends(get_session),
 ) -> dict:
     modelo = _model(categoria)
     alvo = _fazendas_alvo(session, dados.fazenda_ids)

@@ -26,12 +26,17 @@ import UsuariosMobile from "@/components/painel-cowdata/mobile/UsuariosMobile";
 import ParametrosMobile from "@/components/painel-cowdata/mobile/ParametrosMobile";
 import CofreMobile from "@/components/painel-cowdata/mobile/CofreMobile";
 
-// Só estas 3 áreas têm a permissão de verdade aplicada nas rotas do backend
+// Só estas áreas têm a permissão de verdade aplicada nas rotas do backend
 // hoje (ver exigir_area_painel_cowdata em painel_cowdata.py/cofre_acesso.py)
 // — as demais ficam fora do menu de quem não é dono, mesmo que a área
 // esteja marcada no cadastro dele, pra nunca mostrar um item que ainda
 // devolve 403 nas rotas de verdade.
-const AREAS_ENFORCADAS: AreaPainelCowData[] = ["equipe", "financeiro", "cofre", "cadastros"];
+// "farmacia" entrou em set/2026: painel_cowdata_farmacia.py sempre exigiu
+// essa área, mas o item de menu apontava para "cadastros" e a área nem
+// aparecia no formulário de equipe (lib/api.ts) — quem tinha "cadastros"
+// via o item e tomava 403 na primeira chamada. Agora o menu, o formulário e
+// a rota falam da mesma área.
+const AREAS_ENFORCADAS: AreaPainelCowData[] = ["equipe", "financeiro", "cofre", "cadastros", "farmacia"];
 
 // `area` casa com AREAS_PAINEL_COWDATA (backend) — dono vê tudo; um membro
 // da Equipe CowData com login próprio (ver lib/api.ts::temAreaPainelCowData)
@@ -73,14 +78,15 @@ export const GRUPOS: { titulo: string; itens: { href: string; label: string; ico
       // fazendas-cliente de uma vez, ou só às selecionadas — ver
       // painel-cowdata/cadastros/page.tsx.
       { href: "/painel-cowdata/cadastros", label: "Cadastros globais", icon: ListChecks, area: "cadastros" },
-      // Catálogo de touros — mesma tela/rotas do Cadastro > Touros de
-      // qualquer fazenda (Touro não tem fazenda_id: é global por natureza,
-      // não precisa de mecânica de "aplicar em fazendas" nenhuma).
+      // Catálogo de touros — `Touro` não tem fazenda_id: é global por
+      // natureza, e desde set/2026 esta é a ÚNICA tela onde ele se edita (a
+      // fazenda só consulta). Ver painel_cowdata_touros.py; a escrita exige,
+      // além da área, a permissão "editar touros NAAB".
       { href: "/painel-cowdata/touros", label: "Touros Naab", icon: Dna, area: "cadastros" },
       // Catálogo global de indicações/princípios/marcas da Farmácia — mesmo
       // componente da sub-aba Farmácia dos Cadastros da fazenda, chamado sem
       // fazenda selecionada (ver app/painel-cowdata/farmacia/page.tsx).
-      { href: "/painel-cowdata/farmacia", label: "Farmácia", icon: Pill, area: "cadastros" },
+      { href: "/painel-cowdata/farmacia", label: "Farmácia", icon: Pill, area: "farmacia" },
       // Diferente dos itens acima, este NUNCA "aplica em várias fazendas de
       // uma vez" — login é sempre de uma fazenda só, escolhida explicitamente
       // (ver app/painel-cowdata/usuarios/page.tsx).

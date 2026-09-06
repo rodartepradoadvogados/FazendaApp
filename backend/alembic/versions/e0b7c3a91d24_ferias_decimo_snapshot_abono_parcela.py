@@ -99,15 +99,23 @@ def upgrade() -> None:
 
     # Férias — salário reconstituído pela inversão de `calcular_ferias` e
     # abono pela diferença que já estava implícita no total gravado.
+    #
+    # O `CAST(... AS numeric)` nos três ROUND abaixo NÃO é enfeite: o
+    # PostgreSQL só tem `round(numeric, integer)` — `round(double precision,
+    # integer)` não existe, e as colunas aqui são FLOAT. Sem o cast, o deploy
+    # em produção morre em "function round(double precision, integer) does
+    # not exist" e a aplicação nem sobe. O SQLite da suíte aceita as duas
+    # formas, então este erro passou por todos os testes: é o motivo de a
+    # verificação de migração precisar rodar em Postgres, não só em SQLite.
     conexao.execute(sa.text(
         "UPDATE ferias_funcionario SET salario_base = "
-        "ROUND(valor_ferias * 30.0 / dias_gozados, 2) "
+        "ROUND(CAST(valor_ferias * 30.0 / dias_gozados AS numeric), 2) "
         "WHERE salario_base IS NULL AND dias_gozados IS NOT NULL AND dias_gozados > 0"
     ))
     conexao.execute(sa.text(
-        "UPDATE ferias_funcionario SET valor_abono = ROUND("
+        "UPDATE ferias_funcionario SET valor_abono = ROUND(CAST("
         "COALESCE(valor_total, 0) - COALESCE(valor_ferias, 0) "
-        "- COALESCE(valor_terco_constitucional, 0), 2) "
+        "- COALESCE(valor_terco_constitucional, 0) AS numeric), 2) "
         "WHERE valor_abono IS NULL"
     ))
     # Ruído de arredondamento das somas antigas não vira "abono de 1 centavo".
@@ -124,7 +132,7 @@ def upgrade() -> None:
     ))
     conexao.execute(sa.text(
         "UPDATE decimo_terceiro SET salario_base = "
-        "ROUND(valor_bruto * 12.0 / meses_trabalhados, 2) "
+        "ROUND(CAST(valor_bruto * 12.0 / meses_trabalhados AS numeric), 2) "
         "WHERE salario_base IS NULL AND meses_trabalhados IS NOT NULL AND meses_trabalhados > 0"
     ))
 

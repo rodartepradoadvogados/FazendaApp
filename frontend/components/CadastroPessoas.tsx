@@ -62,6 +62,12 @@ export default function CadastroPessoas() {
   const [tipos, setTipos] = useState<{ id: number; nome: string; ativo: boolean }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [erroExclusao, setErroExclusao] = useState<string | null>(null);
+  // O aviso de recusa mora no topo do card, mas o botão "Excluir" que o
+  // dispara fica na LINHA da pessoa — numa lista com dezenas de nomes, a
+  // explicação do backend ("há vínculo com 2 vales…") aparecia acima da
+  // dobra e o clique parecia não ter feito nada. A recusa só cumpre o papel
+  // se for lida, então o aviso se traz para a vista quando surge.
+  const alertaExclusaoRef = useRef<HTMLDivElement | null>(null);
   const [editando, setEditando] = useState<number | "novo" | null>(null);
   const [form, setForm] = useState<Form>(formVazio);
   const [salvando, setSalvando] = useState(false);
@@ -86,12 +92,17 @@ export default function CadastroPessoas() {
   // pessoa é salva (uma pessoa nova ainda não tem id).
   const [anexosStaged, setAnexosStaged] = useState<AnexoStagedPessoa[]>([]);
   const [anexosExistentes, setAnexosExistentes] = useState<AnexoPessoa[]>([]);
+  // Erro de exclusão de DOCUMENTO — separado de `msg` (que fica lá embaixo,
+  // junto dos botões Salvar/Cancelar): o "X" do documento fica no topo do
+  // formulário, e num cadastro preenchido a resposta aparecia fora da tela.
+  // Aqui o aviso nasce ao lado da própria lista de documentos.
+  const [erroAnexo, setErroAnexo] = useState<string | null>(null);
 
   const carregar = () => fetchPessoas().then(setItens).catch((e) => setError(e.message));
   const carregarTipos = () => fetchTiposPessoa().then(setTipos).catch(() => {});
   useEffect(() => { carregar(); carregarTipos(); }, []);
 
-  const abrirNovo = () => { setForm(formVazio); setEditando("novo"); setMsg(null); setAnexosStaged([]); setAnexosExistentes([]); animarEntrada(); };
+  const abrirNovo = () => { setForm(formVazio); setEditando("novo"); setMsg(null); setErroAnexo(null); setAnexosStaged([]); setAnexosExistentes([]); animarEntrada(); };
   const abrirEdicao = (p: Pessoa) => {
     setForm({
       nome: p.nome, tipos: p.tipos.length ? p.tipos : ["Funcionário"], telefones: p.telefones ?? [], emails: p.emails ?? [],
@@ -101,16 +112,22 @@ export default function CadastroPessoas() {
       enderecoRua: p.endereco_rua ?? "", enderecoNumero: p.endereco_numero ?? "", enderecoBairro: p.endereco_bairro ?? "",
       enderecoCidade: p.endereco_cidade ?? "", enderecoUf: p.endereco_uf ?? "",
     });
-    setEditando(p.id); setMsg(null);
+    setEditando(p.id); setMsg(null); setErroAnexo(null);
     setAnexosStaged([]);
     listarAnexosPessoa(p.id).then(setAnexosExistentes).catch(() => setAnexosExistentes([]));
     animarEntrada();
   };
-  const cancelar = () => { setEditando(null); setMsg(null); setAnexosStaged([]); setAnexosExistentes([]); };
+  const cancelar = () => { setEditando(null); setMsg(null); setErroAnexo(null); setAnexosStaged([]); setAnexosExistentes([]); };
 
   async function excluirAnexoExistente(id: number) {
     if (!window.confirm("Excluir este documento?")) return;
-    try { await excluirAnexoPessoa(id); setAnexosExistentes((arr) => arr.filter((a) => a.id !== id)); } catch (e: any) { setMsg(e.message); }
+    setErroAnexo(null);
+    try {
+      await excluirAnexoPessoa(id);
+      setAnexosExistentes((arr) => arr.filter((a) => a.id !== id));
+    } catch (e: any) {
+      setErroAnexo(e.message || "Não foi possível excluir o documento.");
+    }
   }
 
   // Exclusão de fato (não só desativar) — bloqueada pelo backend com 409
@@ -125,6 +142,9 @@ export default function CadastroPessoas() {
       await carregar();
     } catch (e: any) {
       setErroExclusao(e.message || "Erro ao excluir");
+      // Depois do render, não durante: o alerta só existe no DOM quando
+      // `erroExclusao` já está no estado.
+      requestAnimationFrame(() => alertaExclusaoRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }));
     }
   };
 
@@ -182,7 +202,9 @@ export default function CadastroPessoas() {
       </p>
 
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
-      {erroExclusao && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>{erroExclusao}</span></div>}
+      {erroExclusao && (
+        <div ref={alertaExclusaoRef} className="alert-critico mb-3"><AlertTriangle size={18} /><span>{erroExclusao}</span></div>
+      )}
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {editando === "novo" && (
@@ -190,7 +212,7 @@ export default function CadastroPessoas() {
           <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
             tipos={tipos} onNovoTipo={() => setNovoTipoAberto(true)}
             anexosStaged={anexosStaged} setAnexosStaged={setAnexosStaged}
-            anexosExistentes={anexosExistentes} onExcluirAnexoExistente={excluirAnexoExistente} />
+            anexosExistentes={anexosExistentes} onExcluirAnexoExistente={excluirAnexoExistente} erroAnexo={erroAnexo} />
         </div>
       )}
 
@@ -236,7 +258,7 @@ export default function CadastroPessoas() {
                         <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
                           tipos={tipos} onNovoTipo={() => setNovoTipoAberto(true)}
                           anexosStaged={anexosStaged} setAnexosStaged={setAnexosStaged}
-                          anexosExistentes={anexosExistentes} onExcluirAnexoExistente={excluirAnexoExistente} />
+                          anexosExistentes={anexosExistentes} onExcluirAnexoExistente={excluirAnexoExistente} erroAnexo={erroAnexo} />
                       </div>
                     </td></tr>
                   )}
@@ -332,12 +354,12 @@ function ListaContatoInput({ label, valores, onChange, mask, placeholder }: {
 
 function FormItem({
   form, setForm, onSalvar, onCancelar, salvando, msg, tipos, onNovoTipo,
-  anexosStaged, setAnexosStaged, anexosExistentes, onExcluirAnexoExistente,
+  anexosStaged, setAnexosStaged, anexosExistentes, onExcluirAnexoExistente, erroAnexo,
 }: {
   form: Form; setForm: (f: Form) => void; onSalvar: () => void; onCancelar: () => void; salvando: boolean; msg: string | null;
   tipos: { id: number; nome: string; ativo: boolean }[]; onNovoTipo: () => void;
   anexosStaged: AnexoStagedPessoa[]; setAnexosStaged: (fn: (arr: AnexoStagedPessoa[]) => AnexoStagedPessoa[]) => void;
-  anexosExistentes: AnexoPessoa[]; onExcluirAnexoExistente: (id: number) => void;
+  anexosExistentes: AnexoPessoa[]; onExcluirAnexoExistente: (id: number) => void; erroAnexo: string | null;
 }) {
   const toggleTipo = (t: string) =>
     setForm({ ...form, tipos: form.tipos.includes(t) ? form.tipos.filter((x) => x !== t) : [...form.tipos, t] });
@@ -435,6 +457,9 @@ function FormItem({
               </li>
             ))}
           </ul>
+        )}
+        {erroAnexo && (
+          <p style={{ color: "var(--red)", fontSize: "0.78rem", marginBottom: "0.5rem" }}>{erroAnexo}</p>
         )}
         <div
           onDrop={(e) => { e.preventDefault(); adicionarAnexosStaged(Array.from(e.dataTransfer.files || [])); }}

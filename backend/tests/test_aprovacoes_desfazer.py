@@ -42,6 +42,10 @@ def client():
         username = "teste"
         permissoes = ""
         pode_publicar_materias_blog = True
+        # `exigir_pode_publicar` passou a olhar se o usuário é da Equipe
+        # CowData (pessoa_id -> Pessoa -> Fazenda.eh_empresa_cowdata) para
+        # cobrar também a permissão "Editar News" — este falso não é.
+        pessoa_id = None
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeAdmin()
@@ -73,6 +77,10 @@ def client_sem_permissao_noticia():
         username = "teste"
         permissoes = ""
         pode_publicar_materias_blog = False
+        # `exigir_pode_publicar` passou a olhar se o usuário é da Equipe
+        # CowData (pessoa_id -> Pessoa -> Fazenda.eh_empresa_cowdata) para
+        # cobrar também a permissão "Editar News" — este falso não é.
+        pessoa_id = None
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeAdminSemNoticia()
@@ -102,6 +110,10 @@ def client_fazenda():
         username = "teste"
         permissoes = ""
         pode_publicar_materias_blog = True
+        # `exigir_pode_publicar` passou a olhar se o usuário é da Equipe
+        # CowData (pessoa_id -> Pessoa -> Fazenda.eh_empresa_cowdata) para
+        # cobrar também a permissão "Editar News" — este falso não é.
+        pessoa_id = None
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeAdmin()

@@ -118,7 +118,16 @@ def ambiente(monkeypatch):
         s.refresh(usuario_socio)
         s.refresh(usuario_comum)
         s.refresh(atendente)
-        s.add(PermissaoEquipeCowData(usuario_id=atendente.id, areas="cadastros"))
+        # As três permissões de usuários (set/2026) vêm LIGADAS de propósito:
+        # o que está em julgamento aqui é a trava contra escalada de
+        # privilégio, e ela tem de barrar o atendente MESMO quando ele tem
+        # toda a permissão que a tela oferece. Sem isso, os testes de 403
+        # abaixo passariam pelo motivo errado (permissão nova faltando) e
+        # deixariam de vigiar a trava que realmente importa.
+        s.add(PermissaoEquipeCowData(
+            usuario_id=atendente.id, areas="cadastros",
+            pode_consultar_usuarios=True, pode_editar_usuarios=True, pode_controlar_acesso_usuarios=True,
+        ))
 
         # --- Inseminadores (dado pessoal de funcionário) -------------------
         s.add(Pessoa(nome="Inseminador da Alvo", tipo="Funcionário,Inseminador", ativo=True, fazenda_id=1))
