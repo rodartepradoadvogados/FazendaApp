@@ -145,13 +145,37 @@ class EditarUsuarioFazenda(BaseModel):
 @router.put("/{fazenda_id}/{usuario_id}")
 def editar_usuario_da_fazenda(
     fazenda_id: int, usuario_id: int, dados: EditarUsuarioFazenda,
-    _: Usuario = Depends(exigir_area_painel_cowdata("cadastros")), session: Session = Depends(get_session),
+    ator: Usuario = Depends(exigir_area_painel_cowdata("cadastros")), session: Session = Depends(get_session),
 ) -> dict:
     _fazenda_cliente(session, fazenda_id)
     u = session.get(Usuario, usuario_id)
     pessoa = session.get(Pessoa, u.pessoa_id) if u and u.pessoa_id else None
     if not u or not pessoa or pessoa.fazenda_id != fazenda_id:
         raise HTTPException(status_code=404, detail="Usuário não encontrado nesta fazenda")
+    # BUG DE SEGURANÇA CORRIGIDO (escalada de privilégio): a trava de e-mail
+    # logo abaixo só impedia ATRIBUIR um e-mail dono-equivalente a um login
+    # comum — nada impedia de EDITAR um login que JÁ é dono-equivalente. E
+    # essa conta existe dentro de fazenda-cliente: o sócio (ver
+    # EMAILS_DONO_EQUIVALENTE em fazenda/auth.py) é uma Pessoa da fazenda,
+    # com login próprio, e portanto aparece nesta rota como qualquer outro
+    # usuário dela.
+    #
+    # Cenário concreto: um funcionário do CowData com SÓ a área "cadastros"
+    # (área de baixo privilégio — não passa por exigir_dono) chamava
+    # PUT /painel-cowdata/usuarios/{fazenda}/{id_do_socio} com
+    # {"senha": "escolhida por ele"} e passava a poder entrar como
+    # dono-equivalente: Painel CowData inteiro, todas as fazendas-clientes,
+    # cofre de acesso, financeiro. O mesmo valia para trocar o `username`
+    # (sequestrar o login) ou desativar a conta do dono (`ativo: false`).
+    #
+    # A rota equivalente que pode mexer numa conta dessas é
+    # PUT /auth/usuarios, gated por exigir_dono — quem é dono-equivalente
+    # continua passando aqui também, para não perder a própria tela.
+    if eh_email_dono_equivalente(u.email) and not eh_email_dono_equivalente(ator.email):
+        raise HTTPException(
+            status_code=403,
+            detail="Este login tem acesso equivalente ao do proprietário e não pode ser alterado por aqui.",
+        )
     if dados.username is not None and dados.username != u.username:
         if session.exec(select(Usuario).where(Usuario.username == dados.username)).first():
             raise HTTPException(status_code=400, detail="Já existe um usuário com esse login")
