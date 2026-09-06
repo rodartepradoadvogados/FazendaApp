@@ -10,13 +10,26 @@ import {
 import { SecaoRecolhivel } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import RescisaoView from "@/components/RescisaoView";
 
 /*
  * Férias e 13º salário — controle DENTRO do app (cálculo, lançamento e
  * acompanhamento). Sem envio ao eSocial (fora de escopo — inviável sem
  * certificado digital/infraestrutura própria); aqui só organiza o que a
  * fazenda já paga hoje.
+ *
+ * NÃO REMONTE A RESCISÃO AQUI DENTRO. Ela já foi a 3ª sub-aba desta tela
+ * (#547) porque `calcular_rescisao` reaproveita `calcular_ferias` e
+ * `calcular_decimo_terceiro` no backend — conveniência de cálculo que virou
+ * arquitetura de informação e, ao virar menu, inverteu a hierarquia: no
+ * código a rescisão é quem CHAMA férias e 13º (o nível de cima), e no menu
+ * ela aparecia como aba dentro de duas das suas próprias parcelas. A
+ * rescisão abrange no mínimo 11 verbas que não são 13º nem férias (saldo de
+ * salário, aviso prévio, multa de FGTS, arts. 479/480 CLT, Súmula 314,
+ * estabilidades, arts. 467 e 477) e dispara obrigações acessórias próprias
+ * (S-2299 do eSocial, guia de FGTS, baixa na CTPS, seguro-desemprego) — não
+ * é um caso particular de férias/13º. Hoje ela é um chip irmão no seletor
+ * de categoria da Folha (ver FolhaPagamentoView.tsx e RescisaoView.tsx). O
+ * reaproveitamento de cálculo continua no backend e não pede nada daqui.
  */
 type Pessoa = { id: number; nome: string; tipos: string[]; salario_base?: number | null; data_admissao?: string | null };
 
@@ -488,36 +501,36 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]
 }
 
 // ---------------------------------------------------------------------------
-// Componente principal — chaveado internamente entre Férias, 13º salário e
-// Rescisão.
+// Componente principal — chaveado internamente entre Férias e 13º salário.
+// (Duas sub-abas, não três: a Rescisão saiu daqui — ver o cabeçalho.)
 // ---------------------------------------------------------------------------
 export default function FeriasDecimoTerceiroView() {
   const [pessoas, setPessoas] = useState<Pessoa[]>([]);
-  const [subaba, setSubaba] = useState<"ferias" | "decimo" | "rescisao">("ferias");
+  const [subaba, setSubaba] = useState<"ferias" | "decimo">("ferias");
   // Contas correntes (id + rótulo) — para o seletor opcional "Conta bancária"
-  // de Férias/13º/Rescisão, mesmo padrão do Vale de funcionário: carregado
-  // uma vez aqui e repassado às 3 sub-seções.
+  // de Férias/13º, mesmo padrão do Vale de funcionário: carregado uma vez
+  // aqui e repassado às 2 sub-seções.
   const [contasCorrentes, setContasCorrentes] = useState<ContaCorrenteCadastro[]>([]);
 
-  const carregarPessoas = () => fetchPessoas().then(setPessoas).catch(() => {});
-  useEffect(() => { carregarPessoas(); fetchContasCorrentes().then(setContasCorrentes).catch(() => {}); }, []);
+  // Roda a cada montagem — e esta tela remonta toda vez que o chip "Férias /
+  // 13º" é escolhido no seletor de categoria da Folha. É o que mantém os
+  // dropdowns em dia depois de uma rescisão fechada com "marcar como
+  // inativo" na tela irmã (Pessoa.ativo=False no banco, confirmado em
+  // backend/tests/test_rescisao_fluxo.py), sem precisar de callback entre as
+  // duas telas como era quando a rescisão morava aqui dentro.
+  useEffect(() => {
+    fetchPessoas().then(setPessoas).catch(() => {});
+    fetchContasCorrentes().then(setContasCorrentes).catch(() => {});
+  }, []);
 
   return (
     <div>
       <div className="flex items-center gap-2 mb-4" style={{ flexWrap: "wrap" }}>
         <button className={subaba === "ferias" ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.8rem" }} onClick={() => setSubaba("ferias")}>Férias</button>
         <button className={subaba === "decimo" ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.8rem" }} onClick={() => setSubaba("decimo")}>13º salário</button>
-        <button className={subaba === "rescisao" ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.8rem" }} onClick={() => setSubaba("rescisao")}>Rescisão</button>
       </div>
       {subaba === "ferias" && <FeriasSection pessoas={pessoas} contasCorrentes={contasCorrentes} />}
       {subaba === "decimo" && <DecimoTerceiroSection pessoas={pessoas} contasCorrentes={contasCorrentes} />}
-      {/* onPessoaInativada: fechar rescisão com "marcar como inativo" muda
-          Pessoa.ativo no banco (confirmado em backend/tests/test_rescisao_fluxo.py),
-          mas esta lista `pessoas` só era buscada 1x no mount — sem isso, o
-          funcionário recém-inativado continuava aparecendo como ativo em
-          qualquer dropdown desta página (Férias/13º/nova Rescisão) até um
-          F5, dando a falsa impressão de que a caixinha não fez nada. */}
-      {subaba === "rescisao" && <RescisaoView pessoas={pessoas} onPessoaInativada={carregarPessoas} />}
     </div>
   );
 }
