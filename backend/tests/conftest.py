@@ -192,11 +192,11 @@ def pytest_runtest_teardown(item, nextitem):
 # inteiro. São ~276 pools (e bancos) acumulando enquanto a sessão do pytest
 # durar.
 #
-# O wrapper abaixo anota cada engine criado e `pytest_runtest_teardown` o
-# descarta ao fim do teste que o criou. É seguro descartar no teardown porque
-# nenhuma fixture da suíte tem escopo maior que `function` e nenhum módulo
-# cria engine fora de fixture (conferido: 0 e 0) — ou seja, nenhum engine é
-# reusado entre testes.
+# O wrapper abaixo anota cada engine criado e `pytest_runtest_logfinish` o
+# descarta ao fim do teste que o criou. É seguro descartar ali porque nenhuma
+# fixture da suíte tem escopo maior que `function` e nenhum módulo cria engine
+# fora de fixture (conferido: 0 e 0) — ou seja, nenhum engine é reusado entre
+# testes.
 #
 # A lista guarda WEAKREF de propósito: uma referência forte manteria vivo
 # justamente o objeto que se quer liberar, trocando um vazamento por outro.
@@ -232,14 +232,34 @@ _patch_create_engine(sqlalchemy)
 _patch_create_engine(sqlmodel)
 
 
-def pytest_runtest_teardown(item, nextitem):
+def pytest_runtest_logfinish(nodeid, location):
     """Fecha o pool de todo engine criado durante o teste que acabou.
 
     `dispose()` não invalida o engine — só devolve o pool e fecha as conexões
-    —, mas num engine `StaticPool`/"sqlite://" ele descarta o banco em
-    memória junto. É exatamente o que se quer AQUI, no teardown: o teste já
-    terminou e ninguém mais vai ler aquele banco. Por isso este hook não pode
-    virar `pytest_runtest_setup` nem rodar entre asserts.
+    —, mas num engine `StaticPool`/"sqlite://" ele descarta o BANCO EM MEMÓRIA
+    junto, porque ali o banco vive dentro da conexão única do pool.
+
+    Daí o hook ser `logfinish` e NÃO `pytest_runtest_teardown`, que foi como
+    isto nasceu e quebrou 17 testes com
+    `sqlite3.ProgrammingError: Cannot operate on a closed database`. São dois
+    motivos independentes, e cada um sozinho já obrigaria a troca:
+
+    1. ORDEM. `pytest_runtest_teardown` dispara no COMEÇO da fase de teardown,
+       antes de os finalizers das fixtures rodarem. A fixture típica da suíte é
+       `with Session(engine) as s: yield s`, e o `Session.close()` do `with`
+       acontece DEPOIS do yield — ou seja, depois daquele hook. Descartar ali
+       destruía o banco e o close seguinte estourava.
+
+    2. NOME. Este arquivo JÁ TEM um `pytest_runtest_teardown` (o que limpa os
+       lru_cache de dependência do FastAPI, mais acima). Duas funções com o
+       mesmo nome no mesmo módulo não são dois hooks: a segunda APAGA a
+       primeira, em silêncio e sem erro nenhum. Enquanto este hook se chamou
+       `pytest_runtest_teardown`, a limpeza de cache do FastAPI simplesmente
+       não rodava.
+
+    `pytest_runtest_logfinish` roda quando o item terminou por inteiro — setup,
+    chamada, teardown e fixtures finalizadas —, que é o único momento em que
+    ninguém mais vai tocar naquele banco.
 
     Erros são engolidos um a um: uma falha ao descartar um engine não pode
     derrubar o teste que acabou de passar.
