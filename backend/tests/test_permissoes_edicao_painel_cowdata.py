@@ -295,6 +295,22 @@ def test_touros_edita_com_permissao(ambiente):
         assert s.get(Touro, ids["touro"]) is None
 
 
+def test_touros_a_importacao_da_planilha_segue_a_mesma_permissao(ambiente):
+    """Importar a planilha do fornecedor é upsert no catálogo global — a
+    mesma escrita, pela outra porta —, então usa a mesma permissão."""
+    c, engine, ids = ambiente
+    arquivo = {"file": ("catalogo.csv", b"naab,nome,tpi\n007HO44444,Importado,2500\n", "text/csv")}
+    assert c.post("/painel-cowdata/touros/importar", files=arquivo, headers=_cab_membro()).status_code == 403
+    with Session(engine) as s:
+        assert s.exec(select(Touro).where(Touro.naab == "007HO44444")).first() is None
+
+    _liberar(engine, pode_editar_touros_naab=True)
+    r = c.post("/painel-cowdata/touros/importar", files=arquivo, headers=_cab_membro())
+    assert r.status_code == 200, r.text
+    with Session(engine) as s:
+        assert s.exec(select(Touro).where(Touro.naab == "007HO44444")).first() is not None
+
+
 # ---------------------------------------------------------------------------
 # 2b) O catálogo global saiu do alcance da fazenda-cliente
 # ---------------------------------------------------------------------------

@@ -7705,6 +7705,21 @@ export const excluirTouroCowData = (id: number) => _pcSend(`/touros/${id}`, "DEL
 export const recarregarCatalogoTourosCowData = (): Promise<{ touros_antes: number; touros_depois: number }> =>
   _pcSend(`/touros/recarregar-catalogo`, "POST");
 
+// Importar a planilha do fornecedor (Excel ou CSV do ABS BullSearch, Alta,
+// Select Sires...). Era `POST /importar/touros_naab`, dentro do Importar
+// dados da fazenda: o mesmo upsert no catálogo global protegido só pela
+// permissão de Upload da fazenda. Multipart, por isso não passa pelo
+// _pcSend (que manda JSON).
+export async function importarPlanilhaTourosCowData(file: File, fonte: string, rodada: string) {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("fonte", fonte);
+  form.append("rodada", rodada);
+  const res = await authFetch(`${API}/painel-cowdata/touros/importar`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar o catálogo"); }
+  return res.json() as Promise<{ categoria: string; criados?: number; atualizados?: number; erros?: string[] }>;
+}
+
 export type ProvaMediaCampos = Record<
   "leite_kg" | "gordura_kg" | "gordura_pct" | "proteina_kg" | "proteina_pct" | "tpi" | "nm_dolar"
   | "tipo_composto" | "ubere_composto" | "pernas_composto" | "ccs_score" | "fertilidade_filhas" | "facilidade_parto",

@@ -1,9 +1,9 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Dna, Trash2, Search, RefreshCw, Plus, Pencil, ChevronDown, ChevronRight, X } from "lucide-react";
+import { Dna, Trash2, Search, RefreshCw, Plus, Pencil, ChevronDown, ChevronRight, X, Upload } from "lucide-react";
 import {
   fetchTouros, fetchTourosCowData, criarTouroCowData, atualizarTouroCowData, excluirTouroCowData,
-  recarregarCatalogoTourosCowData, type Touro, type TouroIn,
+  recarregarCatalogoTourosCowData, importarPlanilhaTourosCowData, type Touro, type TouroIn,
 } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { casaBusca } from "@/lib/busca";
@@ -186,6 +186,32 @@ export default function CadastroTouros({ contexto = "fazenda" }: { contexto?: Co
   const [expandido, setExpandido] = useState<number | null>(null);
   const [editando, setEditando] = useState<Touro | "novo" | null>(null);
   const [recarregando, setRecarregando] = useState(false);
+  // Importar a planilha do fornecedor — saiu de Configurações › Importar
+  // dados da fazenda junto com o resto da manutenção do catálogo (ver o
+  // comentário do componente). Sem esta caixa aqui, atualizar a rodada de
+  // provas deixaria de ter caminho em qualquer lugar do sistema.
+  const [fonteImport, setFonteImport] = useState("");
+  const [rodadaImport, setRodadaImport] = useState("");
+  const [importando, setImportando] = useState(false);
+
+  async function importarPlanilha(file: File) {
+    setImportando(true);
+    setErro(""); setInfo("");
+    try {
+      const r = await importarPlanilhaTourosCowData(file, fonteImport.trim(), rodadaImport.trim());
+      await carregar();
+      const partes = [
+        r.criados != null ? `${r.criados} touro(s) novo(s)` : null,
+        r.atualizados != null ? `${r.atualizados} atualizado(s)` : null,
+      ].filter(Boolean);
+      setInfo(`Planilha importada${partes.length ? `: ${partes.join(", ")}` : ""}.`);
+      if (r.erros?.length) setErro(r.erros.slice(0, 5).join(" · "));
+    } catch (e: any) {
+      setErro(e.message || "Falha ao importar a planilha");
+    } finally {
+      setImportando(false);
+    }
+  }
 
   async function recarregarCatalogo() {
     setRecarregando(true);
@@ -268,6 +294,29 @@ export default function CadastroTouros({ contexto = "fazenda" }: { contexto?: Co
           </div>
         )}
       </div>
+
+      {podeEditar && (
+        <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.7rem 0.9rem", marginBottom: "0.9rem", background: "var(--surface)" }}>
+          <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--dourado)", marginBottom: "0.2rem" }}>
+            Importar a planilha do fornecedor
+          </p>
+          <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+            Excel (.xlsx) ou CSV exportado do ABS BullSearch, Alta, Select Sires, CRV... Upsert por código NAAB —
+            nunca apaga touro existente. Vale para TODAS as fazendas-cliente de uma vez.
+          </p>
+          <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+            <input value={fonteImport} onChange={(e) => setFonteImport(e.target.value)} placeholder="Central / fonte (ex.: Alta Genetics)"
+              style={{ flex: "1 1 12rem", padding: "0.4rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: "0.82rem" }} />
+            <input value={rodadaImport} onChange={(e) => setRodadaImport(e.target.value)} placeholder="Rodada da prova (ex.: Ago/2026)"
+              style={{ flex: "1 1 12rem", padding: "0.4rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: "0.82rem" }} />
+            <label className="btn-secondary" style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", cursor: importando ? "wait" : "pointer", whiteSpace: "nowrap" }}>
+              <Upload size={15} /> {importando ? "Importando..." : "Escolher arquivo"}
+              <input type="file" accept=".csv,.xlsx,.xlsm" disabled={importando} style={{ display: "none" }}
+                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) importarPlanilha(f); }} />
+            </label>
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: "1 1 16rem", maxWidth: "22rem" }}>
