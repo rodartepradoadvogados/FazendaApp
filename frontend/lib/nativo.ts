@@ -312,6 +312,27 @@ export async function limparSessaoNativa(): Promise<void> {
  *  Retorna a função de limpeza. Fora do app nativo/PWA (site comum, onde
  *  esta pergunta não se repete sozinha — ver AuthShell.tsx) não registra
  *  nada e devolve um no-op. */
+/** O app de campo (/app) é para CELULAR — esta é a regra única que decide
+ * quem cai nele.
+ *
+ * `ehAppOuPwa()` sozinho não serve: `display-mode: standalone` não tem relação
+ * nenhuma com tamanho de tela, então um atalho instalado no notebook responde
+ * "sim" igual a um celular. Era por isso que instalar o PWA no computador
+ * abria o app de campo, e a pessoa tinha que ir no menu e pedir "site
+ * completo" toda vez.
+ *
+ * App nativo (Capacitor) é sempre celular ou tablet, então entra direto. PWA
+ * instalado só entra se a tela também for pequena. Navegador comum (aba) nunca
+ * entra — quem quiser o app de campo no desktop navega para /app na mão.
+ *
+ * A regra nasceu em app/painel-cowdata/layout.tsx (01/09/2026) e valia só
+ * lá; aqui ela é o comportamento do produto inteiro. */
+export async function ehAppDeCampo(): Promise<boolean> {
+  if (await ehApp()) return true;
+  if (typeof window === "undefined") return false;
+  return (await ehAppOuPwa()) && window.matchMedia("(max-width: 767px)").matches;
+}
+
 export async function registrarAoAbrirApp(callback: () => void): Promise<() => void> {
   if (await ehApp()) {
     const { App } = await import("@capacitor/app");

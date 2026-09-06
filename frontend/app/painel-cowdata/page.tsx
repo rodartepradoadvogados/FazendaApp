@@ -9,7 +9,7 @@ import {
 import { usePainelCowDataCor } from "@/lib/painelCowDataTema";
 import { registrarLeituraKpisCowData, calcularTendencia, type PontoHistoricoKpisCowData } from "@/lib/painelCowDataHistorico";
 import { Sparkline, SetaTendencia } from "@/components/painel-cowdata/KpiTendencia";
-import { ehAppOuPwa } from "@/lib/nativo";
+import { ehAppDeCampo } from "@/lib/nativo";
 import InicioMobilePainelCowData from "@/components/painel-cowdata/mobile/InicioMobilePainelCowData";
 
 // Ordem de exibição do rodapé "Base de fazendas por plano" — nomes batem com
@@ -53,8 +53,13 @@ export default function CockpitCowData() {
   // O Cockpit de verdade continua existindo, só que numa tela própria
   // (app/painel-cowdata/cockpit/page.tsx) — este componente aqui não muda
   // em nada pro site.
+  // `ehAppDeCampo()`, não `ehAppOuPwa()`: o PWA instalado no notebook também
+  // é "standalone" e caía nesta versão mobile com o monitor inteiro — a
+  // mesma regra (e a mesma correção) do layout, que decide a casca. As duas
+  // decisões precisam usar o MESMO critério, senão a casca é de desktop e o
+  // conteúdo é de celular.
   const [appMode, setAppMode] = useState(false);
-  useEffect(() => { ehAppOuPwa().then(setAppMode); }, []);
+  useEffect(() => { ehAppDeCampo().then(setAppMode); }, []);
   const [resumo, setResumo] = useState<ResumoCowData | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [historico, setHistorico] = useState<PontoHistoricoKpisCowData[]>([]);
