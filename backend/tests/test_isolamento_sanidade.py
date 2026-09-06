@@ -112,6 +112,17 @@ def client(monkeypatch):
         )
         s.add(estoque_f2)
 
+        # Evento sanitário PRÓPRIO da fazenda #2 — o cadastro é por fazenda
+        # (a listagem em cadastro/sanitario.py filtra por `fazenda_id ==`), e
+        # desde a correção do furo em `_validar_calendario` uma regra de
+        # calendário só pode apontar para um evento da própria fazenda.
+        # Antes, o teste de "criar regra fica na fazenda do criador" usava o
+        # evento da fazenda #1 por conveniência — o que é exatamente o
+        # ataque (a resposta do POST devolve nome/categoria/serviço
+        # financeiro do evento apontado, ver `_serializar`).
+        ev_f2 = EventoSanitario(nome="Vermífugo", fazenda_id=2)
+        s.add(ev_f2)
+
         s.commit()
         s.refresh(cal)
         s.refresh(sanidade)
@@ -121,9 +132,11 @@ def client(monkeypatch):
         s.refresh(agendamento)
         s.refresh(exame_resultado)
         s.refresh(estoque_f2)
+        s.refresh(ev_f2)
 
         ids = {
             "evento_sanitario_id": ev.id,
+            "evento_sanitario_f2_id": ev_f2.id,
             "calendario_id": cal.id,
             "sanidade_id": sanidade.id,
             "doenca_id": doenca.id,
@@ -223,7 +236,8 @@ class TestCalendarioMutacaoIsolada:
         c, engine, ids = client
         _como_fazenda(2)
         body = {
-            "evento_sanitario_id": ids["evento_sanitario_id"],
+            # Evento da PRÓPRIA fazenda 2 — ver o comentário no fixture.
+            "evento_sanitario_id": ids["evento_sanitario_f2_id"],
             "frequencia_valor": 6,
             "frequencia_unidade": "meses",
             "data_evento": "2026-02-01",

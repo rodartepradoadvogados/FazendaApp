@@ -661,15 +661,25 @@ def _nomes(session: Session) -> tuple[dict[int, str], dict[int, str], dict[int, 
     return eventos, doencas, principios, categorias, servicos_financeiro
 
 
-def _ultimo_evento_por_produto(session: Session) -> dict[str, dict]:
+def _ultimo_evento_por_produto(session: Session, fazenda_id: int | None) -> dict[str, dict]:
     """Data (isoformat) e id da aplicação Sanidade (natureza=preventivo) mais
     recente por produto (chave em minúsculo) — usado para achar "o último
     evento já lançado" de uma regra do calendário sanitário, no popup de
-    Aplicações (ver GET /sanidade/calendario, campos ultimo_evento_data/id)."""
+    Aplicações (ver GET /sanidade/calendario, campos ultimo_evento_data/id).
+
+    BUG DE SEGURANÇA CORRIGIDO (achado 28): a consulta varria `Sanidade` de
+    TODAS as fazendas e o casamento é por NOME DE PRODUTO — texto livre com
+    vocabulário compartilhado ("Ivomec", "Bovigold", "Cálcio"), então a
+    colisão entre clientes é o caso normal, não a exceção. O resultado
+    entregava a cada tenant a DATA da última aplicação daquele produto na
+    fazenda vizinha (dado de manejo/sanidade dela) e, junto, o `id` da linha
+    Sanidade alheia em `ultimo_evento_id` — id de outro tenant servido de
+    bandeja para a próxima rota que aceitasse um id."""
     mapa: dict[str, dict] = {}
-    registros = session.exec(
-        select(Sanidade).where(Sanidade.natureza == "preventivo", Sanidade.data_aplicacao.is_not(None))
-    ).all()
+    query = select(Sanidade).where(Sanidade.natureza == "preventivo", Sanidade.data_aplicacao.is_not(None))
+    if fazenda_id is not None:
+        query = query.where(Sanidade.fazenda_id == fazenda_id)
+    registros = session.exec(query).all()
     for r in registros:
         chave = (r.produto or "").strip().lower()
         if not chave:
@@ -716,7 +726,7 @@ def listar_calendario(
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
-    ultimos = _ultimo_evento_por_produto(session)
+    ultimos = _ultimo_evento_por_produto(session, fazenda_id)
     query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
@@ -757,13 +767,58 @@ class CalendarioSanitarioIn(BaseModel):
     realizado: bool = False
 
 
-def _validar_calendario(dados: CalendarioSanitarioIn, session: Session) -> None:
-    if not session.get(EventoSanitario, dados.evento_sanitario_id):
+def _validar_calendario(dados: CalendarioSanitarioIn, session: Session, fazenda_id: int | None) -> None:
+    """FURO NOVO CORRIGIDO (varredura de hoje) — mesma família do achado 29,
+    que só foi fechado em `cadastrar_preventivo`.
+
+    Os três ids abaixo vêm do CORPO da requisição e eram validados só por
+    EXISTÊNCIA: `session.get(...)` e pronto. `EventoSanitario` é cadastro
+    POR FAZENDA (a listagem em cadastro/sanitario.py filtra por
+    `fazenda_id ==`), e os ids são inteiros pequenos e sequenciais. A
+    fazenda 2 criava/editava uma regra de calendário dela apontando para o
+    `evento_sanitario_id` da fazenda 1 — e a própria resposta de
+    POST/PUT /sanidade/calendario devolvia `evento_sanitario_nome`,
+    `categoria_preventiva` e `servico_financeiro` daquele evento alheio
+    (ver `_serializar`), que é como o vazamento se materializava sem a
+    atacante nunca tocar numa rota da vítima. Pior: a regra ficava
+    permanentemente apontada para um cadastro de outro cliente, então toda
+    projeção de agenda e todo relatório da fazenda 2 passava a exibir o
+    nome do protocolo da fazenda 1.
+
+    Evento sanitário: `==` estrito — não existe evento "de todo mundo", e o
+    NULL (linha órfã do seed legado de cadastro/sanitario.py, e da migração
+    029227481e9e) tem que cair no mesmo 400 que o de outra fazenda; era
+    justamente a tolerância a NULL que deixava o registro de ninguém ser de
+    qualquer um.
+
+    Doença e princípio ativo: `visivel()` — esses DOIS são catálogo, nascem
+    globais (`fazenda_id` nulo) semeados igual para todo produtor. Aqui o
+    `==` estrito seria o bug oposto (a fazenda com `fid` no token não
+    conseguiria usar nenhuma doença padrão); o que `visivel()` recusa é
+    exatamente o que precisa recusar: a linha de OUTRA fazenda.
+
+    `fazenda_id is None` só em ambiente sem multi-fazenda provisionado
+    (tabela `fazenda` vazia) — ali não há tenant a isolar, e a trava de
+    porta (auth.py::exigir_fazenda_selecionada) já recusou antes em
+    qualquer instalação real. Tratado explicitamente, não por omissão."""
+    ev = session.get(EventoSanitario, dados.evento_sanitario_id)
+    if not ev or (fazenda_id is not None and ev.fazenda_id != fazenda_id):
         raise HTTPException(status_code=400, detail="Evento sanitário não encontrado")
-    if dados.doenca_id is not None and not session.get(Doenca, dados.doenca_id):
-        raise HTTPException(status_code=400, detail="Doença não encontrada")
-    if dados.principio_ativo_id is not None and not session.get(PrincipioAtivo, dados.principio_ativo_id):
-        raise HTTPException(status_code=400, detail="Princípio ativo não encontrado")
+    if dados.doenca_id is not None:
+        doenca = session.exec(
+            visivel(select(Doenca).where(Doenca.id == dados.doenca_id), Doenca, fazenda_id)
+        ).first()
+        if not doenca:
+            raise HTTPException(status_code=400, detail="Doença não encontrada")
+    if dados.principio_ativo_id is not None:
+        pa = session.exec(
+            visivel(
+                select(PrincipioAtivo).where(PrincipioAtivo.id == dados.principio_ativo_id),
+                PrincipioAtivo, fazenda_id,
+            )
+        ).first()
+        if not pa:
+            raise HTTPException(status_code=400, detail="Princípio ativo não encontrado")
     if dados.frequencia_unidade not in FREQUENCIAS:
         raise HTTPException(status_code=400, detail=f"Frequência inválida (use: {', '.join(FREQUENCIAS)})")
     if dados.frequencia_valor <= 0:
@@ -788,7 +843,7 @@ def _marcar_calendario_realizado(session: Session, c: CalendarioSanitario) -> No
 def criar_calendario(
     dados: CalendarioSanitarioIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    _validar_calendario(dados, session)
+    _validar_calendario(dados, session, fazenda_id)
     c = CalendarioSanitario(**dados.model_dump(exclude={"realizado"}), fazenda_id=fazenda_id)
     session.add(c)
     session.commit()
@@ -801,7 +856,7 @@ def criar_calendario(
     if dados.realizado:
         _marcar_calendario_realizado(session, c)
     eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
-    ultimos = _ultimo_evento_por_produto(session)
+    ultimos = _ultimo_evento_por_produto(session, fazenda_id)
     return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro)
 
 
@@ -814,7 +869,7 @@ def atualizar_calendario(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     if not c or (c.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
-    _validar_calendario(dados, session)
+    _validar_calendario(dados, session, fazenda_id)
     for campo, valor in dados.model_dump(exclude={"realizado"}).items():
         setattr(c, campo, valor)
     session.add(c)
@@ -823,7 +878,7 @@ def atualizar_calendario(
     if dados.realizado:
         _marcar_calendario_realizado(session, c)
     eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
-    ultimos = _ultimo_evento_por_produto(session)
+    ultimos = _ultimo_evento_por_produto(session, fazenda_id)
     return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro)
 
 
