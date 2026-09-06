@@ -13,8 +13,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { LinhaFolhaUnificada, LinhaHolerite } from "./api.ts";
 import {
-  competenciaExtenso, dataBR, ehOrigemRetencao, ehOrigemVale, holeriteDaLinha,
-  linhasDoCorpo, podeEmitir, seloDocumento,
+  competenciaExtenso, dataBR, ehOrigemRetencao, ehOrigemRubrica, ehOrigemVale, filtrarPorSituacao,
+  holeriteDaLinha, linhasDoCorpo, podeEmitir, seloDocumento,
 } from "./holeriteRegras.ts";
 
 function linha(over: Partial<LinhaHolerite>): LinhaHolerite {
@@ -151,4 +151,51 @@ test("a origem do desconto é reconhecida por tipo, não por texto do rótulo", 
 test("competência ausente cai para o mês do vencimento em vez de ficar vazia", () => {
   const doc = holeriteDaLinha(ledger({ competencia: undefined, data_vencimento: "2026-08-05" }))!;
   assert.equal(doc.competencia, "2026-08");
+});
+
+test("o filtro de situação separa pagos, a pagar e todos", () => {
+  // A categoria que o dono pediu por nome. "A pagar" é tudo o que ainda não
+  // foi pago — vencido inclusive: a pergunta ali é de caixa, e o atraso
+  // continua sendo dito pelo selo VENCIDO de cada linha.
+  const linhas = [
+    { status: "pago" as const, id: 1 },
+    { status: "pendente" as const, id: 2 },
+    { status: "pendente" as const, id: 3 },
+  ];
+  assert.deepEqual(filtrarPorSituacao(linhas, "todos").map((l) => l.id), [1, 2, 3]);
+  assert.deepEqual(filtrarPorSituacao(linhas, "pagos").map((l) => l.id), [1]);
+  assert.deepEqual(filtrarPorSituacao(linhas, "a_pagar").map((l) => l.id), [2, 3]);
+});
+
+test("só o holerite de funcionário carrega a folha que pode receber rubrica", () => {
+  // Férias/13º são recibo de composição própria: abrir neles o formulário de
+  // vencimento/desconto ofereceria uma ação que o servidor recusaria.
+  assert.equal(holeriteDaLinha(ledger())!.folhaId, 7);
+  assert.equal(
+    holeriteDaLinha(ledger({ tipo: "ferias_decimo", origem_subtipo: "ferias" }))!.folhaId,
+    null,
+  );
+});
+
+test("a rubrica acrescentada é reconhecida por tipo de origem, com o enquadramento", () => {
+  const doc = holeriteDaLinha(ledger({
+    detalhe: [
+      linha({ tipo: "bruto", descricao: "Salário", referencia: "Mensal", provento: 3200 }),
+      linha({
+        tipo: "vencimento_extra", descricao: "Reembolso de despesa — diesel",
+        referencia: "natureza indenizatória · sem incidência de INSS, IRRF e FGTS",
+        provento: 400,
+        origem: {
+          tipo: "rubrica", rubrica_id: 5, codigo: "reembolso", rotulo: "Reembolso de despesa",
+          especie: "vencimento", descricao: "diesel", natureza: "indenizatoria",
+          incide_inss: false, incide_irrf: false, incide_fgts: false, incorpora_base: false,
+          competencia_incorporacao: null, fundamento: "CLT, art. 457, §2º", compra: null,
+        },
+      }),
+    ],
+  }))!;
+  const rubrica = doc.linhas.find((l) => l.tipo === "vencimento_extra")!;
+  assert.ok(ehOrigemRubrica(rubrica.origem));
+  assert.ok(!ehOrigemVale(rubrica.origem));
+  assert.equal(ehOrigemRubrica(rubrica.origem) && rubrica.origem.natureza, "indenizatoria");
 });

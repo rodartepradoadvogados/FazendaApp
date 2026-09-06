@@ -37,7 +37,9 @@ from datetime import date
 
 # Ordem FIXA das linhas — requisito de documento: dois meses seguidos
 # precisam ser comparáveis linha a linha.
-ORDEM_TIPOS = ("bruto", "inss", "ir", "vale", "outros", "liquido")
+ORDEM_TIPOS = (
+    "bruto", "inss", "ir", "vale", "outros", "vencimento_extra", "desconto_extra", "liquido",
+)
 
 # Tolerância da conferência "percentual × bruto bate com o valor retido?".
 # Um centavo: o valor nasce de `arredonda2(bruto × percentual/100)` no
@@ -215,10 +217,20 @@ def bases_holerite(registro) -> dict:
     """
     tem_inss = bool(registro.percentual_inss and registro.valor_inss)
     tem_ir = bool(registro.percentual_ir and registro.valor_ir)
+    # A base NÃO é o salário quando há rubrica salarial lançada: bonificação,
+    # guelta e aumento entram nela; reembolso e indenização não (ver
+    # rules/rubrica_folha.py). Mostrar o salário puro aqui faria o dono
+    # conferir "9% sobre R$ 3.200,00" contra um valor retido que foi calculado
+    # sobre R$ 3.700,00 e concluir que o sistema errou.
+    acrescimo = round(registro.valor_rubricas_tributaveis or 0.0, 2)
+    base = round(registro.valor_bruto + acrescimo, 2)
     return {
         "salario_base": round(registro.valor_bruto, 2),
-        "base_inss": round(registro.valor_bruto, 2) if tem_inss else None,
-        "base_ir": round(registro.valor_bruto, 2) if tem_ir else None,
+        "base_inss": base if tem_inss else None,
+        "base_ir": base if tem_ir else None,
+        # Quanto das bases veio de rubrica salarial — 0.0 na folha comum, e é
+        # o que a tela usa para explicar a diferença entre salário e base.
+        "rubricas_tributaveis": acrescimo,
         "fgts_projetado": round(registro.valor_fgts, 2) if registro.valor_fgts else None,
         "percentual_fgts": registro.percentual_fgts or None,
         "dctf_projetado": round(registro.valor_dctf, 2) if registro.valor_dctf else None,

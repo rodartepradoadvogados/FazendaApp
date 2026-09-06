@@ -8,7 +8,8 @@
 // `lib/holerite.ts` fica só com o que precisa formatar dinheiro e gerar
 // arquivo. Ver lib/holeriteRegras.test.ts.
 import type {
-  BasesHolerite, LinhaFolhaUnificada, LinhaHolerite, OrigemRetencao, OrigemVale, TotaisHolerite,
+  BasesHolerite, LinhaFolhaUnificada, LinhaHolerite, OrigemRetencao, OrigemRubrica, OrigemVale,
+  TotaisHolerite,
 } from "./api";
 
 const MESES = [
@@ -44,6 +45,11 @@ export const FORMA_PAGAMENTO_VALE: Record<string, string> = {
 export type Holerite = {
   chave: string;
   pessoaId: number;
+  /** Id da `FolhaPagamento` — só o holerite de funcionário tem rubricas
+   *  editáveis; férias/13º são recibos de composição própria, e por isso o
+   *  campo é null neles (a tela esconde os botões em vez de abrir um
+   *  formulário que o servidor recusaria). */
+  folhaId: number | null;
   pessoaNome: string;
   competencia: string;
   competenciaLabel: string;
@@ -74,6 +80,33 @@ export function ehOrigemRetencao(origem: LinhaHolerite["origem"]): origem is Ori
   return !!origem && origem.tipo === "retencao";
 }
 
+export function ehOrigemRubrica(origem: LinhaHolerite["origem"]): origem is OrigemRubrica {
+  return !!origem && origem.tipo === "rubrica";
+}
+
+/**
+ * Filtro de SITUAÇÃO DO PAGAMENTO — "pagos", "a pagar" ou "todos".
+ *
+ * É a categoria que o dono pediu por nome, e ela substitui o antigo select
+ * "Status" (que tinha exatamente este predicado sob outro rótulo). Dois
+ * controles com a mesma regra podiam se contradizer — escolher "Pago" num e
+ * "A vencer" no outro esvaziava a tela sem explicar por quê.
+ *
+ * "A pagar" é TUDO o que ainda não foi pago, vencido ou não: a pergunta do
+ * dono aqui é de caixa ("o que ainda devo?"), e o atraso continua sendo dito
+ * pelo selo VENCIDO em cada linha e pelo destaque da tabela — informação que
+ * se soma a esta, em vez de fatiá-la em duas listas.
+ */
+export type SituacaoPagamento = "todos" | "pagos" | "a_pagar";
+
+export function filtrarPorSituacao<T extends { status: "pendente" | "pago" }>(
+  linhas: T[], situacao: SituacaoPagamento,
+): T[] {
+  if (situacao === "pagos") return linhas.filter((l) => l.status === "pago");
+  if (situacao === "a_pagar") return linhas.filter((l) => l.status !== "pago");
+  return linhas;
+}
+
 /**
  * Converte uma linha do ledger unificado no documento. Devolve null para os
  * tipos que não têm discriminação (empreita, contrato, diária): eles têm
@@ -86,6 +119,7 @@ export function holeriteDaLinha(l: LinhaFolhaUnificada): Holerite | null {
   return {
     chave: `${l.tipo}-${l.origem_subtipo}-${l.origem_id}`,
     pessoaId: l.pessoa_id,
+    folhaId: l.tipo === "funcionario" && l.origem_subtipo === "folha" ? l.origem_id : null,
     pessoaNome: l.pessoa_nome,
     competencia,
     competenciaLabel: l.tipo === "funcionario" ? competenciaExtenso(competencia) : l.descricao,

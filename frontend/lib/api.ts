@@ -2287,15 +2287,56 @@ export type OrigemRetencao = {
   confere: boolean | null;
   diferenca: number | null;
 };
+/** A compra (parcela de lançamento financeiro) que um desconto está abatendo —
+ *  o que a janela sobreposta de consulta de contas devolve e o que viaja junto
+ *  da linha do recibo. */
+export type CompraDoDesconto = {
+  conta_id: number;
+  numero_lancamento: string | null;
+  descricao: string | null;
+  fornecedor_cliente: string | null;
+  numero_nota: string | null;
+  tipo_documento: string | null;
+  centro_custo: string | null;
+  data_emissao: string | null;
+  data_vencimento: string | null;
+  data_pagamento: string | null;
+  valor_total: number;
+  valor_pago: number | null;
+  parcela_num: number | null;
+  parcela_total: number | null;
+};
+/** Origem de uma rubrica acrescentada ao holerite (vencimento ou desconto).
+ *  O enquadramento vem CONGELADO do servidor — a tela nunca decide natureza
+ *  nem incidência, só mostra o que foi gravado no lançamento. */
+export type OrigemRubrica = {
+  tipo: "rubrica";
+  rubrica_id: number;
+  codigo: string;
+  rotulo: string;
+  especie: "vencimento" | "desconto";
+  descricao: string | null;
+  natureza: "salarial" | "indenizatoria";
+  incide_inss: boolean;
+  incide_irrf: boolean;
+  incide_fgts: boolean;
+  incorpora_base: boolean;
+  /** "2026-08" no aumento na folha (a partir de quando vira salário-base);
+   *  null em todas as demais. */
+  competencia_incorporacao: string | null;
+  fundamento: string | null;
+  compra: CompraDoDesconto | null;
+};
 export type LinhaHolerite = {
   label: string;
   valor: number;
-  tipo: "bruto" | "inss" | "ir" | "vale" | "outros" | "liquido" | "ferias" | "terco" | "abono";
+  tipo: "bruto" | "inss" | "ir" | "vale" | "outros" | "liquido" | "ferias" | "terco" | "abono"
+    | "vencimento_extra" | "desconto_extra";
   descricao: string;
   referencia: string;
   provento: number | null;
   desconto: number | null;
-  origem: OrigemVale | OrigemRetencao | null;
+  origem: OrigemVale | OrigemRetencao | OrigemRubrica | null;
 };
 export type TotaisHolerite = {
   total_proventos: number;
@@ -2310,8 +2351,12 @@ export type BasesHolerite = {
   /** Sempre `FolhaPagamento.valor_bruto`, NUNCA `Pessoa.salario_base` (valor
    *  vivo: reimprimir 2024 mostraria o salário de hoje). */
   salario_base: number;
+  /** Base das retenções = salário + rubricas SALARIAIS (bonificação, guelta,
+   *  aumento). Reembolso e indenização não entram: são indenizatórios. */
   base_inss: number | null;
   base_ir: number | null;
+  /** Quanto das bases veio de rubrica salarial — 0 na folha comum. */
+  rubricas_tributaveis?: number;
   fgts_projetado: number | null;
   percentual_fgts: number | null;
   dctf_projetado: number | null;
@@ -2442,6 +2487,86 @@ export async function fetchFolhaPagamentoUnificada(): Promise<LinhaFolhaUnificad
   if (!res.ok) throw new Error(`Folha de pagamento (unificada) error: ${res.status}`);
   return res.json();
 }
+
+// ── Rubricas do holerite (vencimentos e descontos acrescentados) ──
+// O enquadramento trabalhista (natureza salarial × indenizatória e as
+// incidências de INSS/IRRF/FGTS) é decidido no SERVIDOR a partir do código —
+// a tela manda o código e exibe a consequência, nunca a define. Ver
+// backend/fazenda/rules/rubrica_folha.py.
+export type RubricaCatalogoItem = {
+  codigo: string;
+  rotulo: string;
+  fundamento: string;
+  natureza?: "salarial" | "indenizatoria";
+  incide_inss?: boolean;
+  incide_irrf?: boolean;
+  incide_fgts?: boolean;
+  incorpora_base?: boolean;
+  exige_compra?: boolean;
+};
+export type CatalogoRubricas = { vencimentos: RubricaCatalogoItem[]; descontos: RubricaCatalogoItem[] };
+export type RubricaFolha = {
+  id: number;
+  folha_id: number;
+  pessoa_id: number;
+  competencia: string;
+  especie: "vencimento" | "desconto";
+  codigo: string;
+  descricao: string | null;
+  valor: number;
+  natureza: "salarial" | "indenizatoria";
+  incide_inss: boolean;
+  incide_irrf: boolean;
+  incide_fgts: boolean;
+  incorpora_base: boolean;
+  conta_gerencial_id: number | null;
+  numero_lancamento: string | null;
+  rotulo: string;
+  referencia: string;
+  compra: CompraDoDesconto | null;
+};
+export type RubricaFolhaDados = {
+  especie: "vencimento" | "desconto";
+  codigo: string;
+  valor: number;
+  descricao?: string | null;
+  conta_gerencial_id?: number | null;
+};
+export async function fetchCatalogoRubricas(): Promise<CatalogoRubricas> {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/rubricas/catalogo`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Catálogo de rubricas error: ${res.status}`);
+  return res.json();
+}
+export async function fetchComprasParaDesconto(busca?: string): Promise<CompraDoDesconto[]> {
+  const qs = busca ? `?busca=${encodeURIComponent(busca)}` : "";
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/rubricas/compras${qs}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Consulta de contas error: ${res.status}`);
+  return res.json();
+}
+export async function fetchRubricasFolha(folhaId: number): Promise<RubricaFolha[]> {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/${folhaId}/rubricas`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Rubricas da folha error: ${res.status}`);
+  return res.json();
+}
+export async function criarRubricaFolha(folhaId: number, dados: RubricaFolhaDados) {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/${folhaId}/rubricas`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao acrescentar a rubrica"); }
+  return res.json();
+}
+export async function atualizarRubricaFolha(rubricaId: number, dados: { valor: number; descricao?: string | null }) {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/rubricas/${rubricaId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar a rubrica"); }
+  return res.json();
+}
+export async function excluirRubricaFolha(rubricaId: number) {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/rubricas/${rubricaId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir a rubrica"); }
+  return res.json();
+}
 export async function excluirParcelaEmpreitada(id: number) {
   const res = await authFetch(`${API}/cadastro/empreitadas/parcelas/${id}`, { method: "DELETE" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir parcela de empreitada"); }
@@ -2545,6 +2670,68 @@ export async function atualizarParcelaVale(valeId: number, parcelaId: number, da
   }
   return res.json();
 }
+// ── Ações do dono sobre um vale já lançado (Folha > vale > Ações) ──
+// As quatro decisões que existiam na cabeça do dono e não existiam na tela:
+// reparcelar o saldo, abater um valor, desconsiderar o vale de UM mês e
+// cancelar o vale inteiro. As duas últimas mexem TAMBÉM no Financeiro (o
+// valor deixa de ser cobrança da pessoa e vira despesa da fazenda), e é por
+// isso que a resposta traz `financeiro` — a tela precisa poder dizer o que
+// aconteceu do outro lado. Ver backend/.../cadastro/rh_vale_acoes.py.
+export type ValeAcao = "reparcelar" | "abater" | "desconsiderar_mes" | "cancelar";
+export type ValeAcaoIn = {
+  acao: ValeAcao;
+  parcelas?: number;              // reparcelar
+  competencia_inicio?: string;    // reparcelar (padrão: 1ª competência pendente)
+  valor?: number;                 // abater
+  conta_corrente_id?: number;     // abater: conta que RECEBEU a devolução (opcional)
+  competencia?: string;           // desconsiderar_mes
+  motivo?: string;
+};
+export type ValeAcaoContexto = {
+  vale_id: number;
+  status: "ativo" | "cancelado";
+  valor_total: number;
+  valor_abatido: number;
+  valor_assumido_fazenda: number;
+  saldo_pendente: number;
+  parcelas: {
+    id: number; competencia: string; valor: number;
+    assumida_pela_fazenda: boolean; motivo_assuncao: string | null;
+    pendente: boolean; competencia_paga: boolean;
+  }[];
+  acoes_disponiveis: ValeAcao[];
+};
+export type ValeAcaoResultado = {
+  acao: ValeAcao;
+  resumo: string;
+  vale: ValeAcaoContexto;
+  financeiro?: { natureza: "item_de_nota" | "lancamento_proprio" | "sem_lastro"; numero_lancamento: string | null };
+  [chave: string]: any;
+};
+
+export async function fetchAcoesVale(valeId: number): Promise<ValeAcaoContexto> {
+  const res = await authFetch(`${API}/cadastro/vales/${valeId}/acoes`, { cache: "no-store" });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(mensagemErroApi(d.detail) || "Erro ao buscar as ações do vale");
+  }
+  return res.json();
+}
+
+export async function executarAcaoVale(valeId: number, dados: ValeAcaoIn): Promise<ValeAcaoResultado> {
+  const res = await authFetch(`${API}/cadastro/vales/${valeId}/acoes`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao executar a ação do vale");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
 /** G15 — exclui UMA parcela do vale (não o vale inteiro; para isso já existe
  * `excluirVale`). 400 se a parcela já caiu em folha paga, ou se for a única
  * parcela do vale (exclua o vale inteiro nesse caso). Sem `confirmar`, a API
@@ -6540,6 +6727,14 @@ export type ValeItemOpcoes = {
 export type ValeItemIn = {
   pessoa_id: number;
   modo: "folha" | "avulso";
+  // Quanto DO ITEM é vale: "integral" (o item inteiro, comportamento de
+  // sempre) ou "parcial" — e aí exatamente um entre `percentual` e `valor`.
+  // O caso do dono: 2/3 da ração de cachorro são do funcionário, 1/3 é dele;
+  // a sobra vira despesa normal da fazenda, na mesma conta gerencial e no
+  // mesmo centro de custo (o backend divide o item em duas linhas).
+  abrangencia?: "integral" | "parcial";
+  percentual?: number | null;
+  valor?: number | null;
   parcelas?: number;
   competencia_inicio?: string | null;
   origem_tipo?: "empreitada" | "contrato" | "diaria" | null;
@@ -6550,6 +6745,8 @@ export type ValeItemIn = {
 export type ValeItemResultado = {
   item_id: number; numero_lancamento: string; vale_tipo: "funcionario" | "avulso";
   vale_id: number; valor: number; data_pagamento: string;
+  // Preenchido só no vale parcial: a linha gêmea que ficou com a fazenda.
+  parte_fazenda: { item_id: number; valor: number; quantidade: number | null } | null;
   pessoa_id: number; pessoa_nome: string; resumo: string;
 };
 

@@ -27,7 +27,7 @@ from fazenda.models import (
 from fazenda.api.routers.financeiro import TAMANHO_MAXIMO_ANEXO, _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
-from fazenda.rules import holerite
+from fazenda.rules import holerite, rubrica_folha
 from fazenda.rules.folha_rh import (
     PARCELAS_DECIMO_TERCEIRO,
     calcular_decimo_terceiro,
@@ -131,16 +131,24 @@ def _calcular_encargo_projetado(valor_bruto: float, percentual: Optional[float],
 
 def _liquido_folha(
     valor_bruto: float, descontos: float, valor_inss: float, valor_ir: float, valor_vale: float,
+    valor_rubricas: float = 0.0,
 ) -> float:
     """
-    Fórmula ÚNICA do líquido da folha: bruto − descontos de folha − INSS − IR −
-    vale. Existe como função porque a fórmula estava escrita à mão em quatro
-    lugares deste módulo e uma delas (a geração por recorrência) tinha esquecido
-    as retenções — toda competência gerada automaticamente nascia com o líquido
-    inflado no banco e na conta a pagar. Com um só lugar, essa divergência não
-    volta a acontecer silenciosamente.
+    Fórmula ÚNICA do líquido da folha: bruto + rubricas − descontos de folha −
+    INSS − IR − vale. Existe como função porque a fórmula estava escrita à mão
+    em quatro lugares deste módulo e uma delas (a geração por recorrência)
+    tinha esquecido as retenções — toda competência gerada automaticamente
+    nascia com o líquido inflado no banco e na conta a pagar. Com um só lugar,
+    essa divergência não volta a acontecer silenciosamente.
+
+    `valor_rubricas` é o efeito LÍQUIDO das rubricas avulsas do holerite
+    (vencimentos acrescentados − descontos acrescentados; ver
+    `FolhaPagamento.valor_rubricas` e `rules/rubrica_folha.py`) e pode ser
+    negativo. Entra com valor padrão 0.0 porque folha recém-criada não tem
+    rubrica nenhuma — mas todo recálculo de folha JÁ EXISTENTE precisa passá-lo,
+    senão o self-heal apaga em silêncio a bonificação que o dono lançou.
     """
-    return round(valor_bruto - descontos - valor_inss - valor_ir - valor_vale, 2)
+    return round(valor_bruto + valor_rubricas - descontos - valor_inss - valor_ir - valor_vale, 2)
 
 
 def _data_vencimento_folha(competencia: str, dia_vencimento: Optional[int]) -> date:
@@ -189,16 +197,25 @@ def proporcional_admissao(
 
 def _valor_vale(session: Session, pessoa_id: int, competencia: str) -> float:
     """
-    Soma o valor de TODAS as parcelas de vale da pessoa nesta competência —
+    Soma o valor das parcelas de vale COBRÁVEIS da pessoa nesta competência —
     esse é o "desconto de vale" da folha (coluna separada dos "descontos de
     folha" manuais). Uma parcela pertence a exatamente uma competência e a
     pessoa tem no máximo uma folha por competência, então somar todas é
     correto e idempotente (não acumula em recomputações sucessivas).
+
+    Parcela `assumida_pela_fazenda` fica DE FORA: é o mês que o dono mandou
+    desconsiderar (ou o saldo de um vale cancelado). Ela continua existindo
+    para o histórico — o holerite precisa poder dizer por que o desconto
+    sumiu —, mas o funcionário não é descontado por ela; o valor virou
+    despesa da fazenda no Financeiro (ver rh_vale_acoes.py). Este é o ÚNICO
+    ponto que decide "quanto de vale entra na folha", e por isso a regra mora
+    aqui e não espalhada nos chamadores.
     """
     parcelas = session.exec(
         select(ValeParcela).where(
             ValeParcela.pessoa_id == pessoa_id,
             ValeParcela.competencia == competencia,
+            ValeParcela.assumida_pela_fazenda == False,  # noqa: E712
         )
     ).all()
     return round(sum(p.valor for p in parcelas), 2)
@@ -446,17 +463,44 @@ def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> 
                 # filtram) e dia de vencimento.
                 valor_inss = round(modelo.valor_inss, 2)
                 valor_ir = round(modelo.valor_ir, 2)
+                valor_fgts = modelo.valor_fgts
+                # AUMENTO NA FOLHA INCORPORADO (ver rules/rubrica_folha.py).
+                # O modelo de recorrência é uma fotografia do salário do mês em
+                # que ele foi criado — um aumento concedido depois ficava só na
+                # competência em que foi lançado (como linha de vencimento) e o
+                # mês seguinte voltava ao salário antigo, que é exatamente o que
+                # o art. 468 da CLT não permite. A base do mês gerado é, então,
+                # o bruto do modelo MAIS os aumentos concedidos daí até aqui.
+                # É derivado das rubricas, nunca copiado: excluir o aumento
+                # desfaz a incorporação sozinho, sem migração de dado.
+                aumento = rubrica_folha.aumento_incorporado(
+                    session, modelo.pessoa_id, modelo.competencia, competencia, fazenda_id,
+                )
+                valor_bruto = round(modelo.valor_bruto + aumento, 2)
+                if aumento:
+                    # Base maior, retenção maior: copiar o VALOR retido do
+                    # modelo deixaria o INSS/IR/FGTS do mês novo calculado
+                    # sobre o salário velho. Só recalcula o que tem percentual
+                    # gravado — sem percentual não há base declarada, e deduzir
+                    # uma seria inventar o número (mesma regra do holerite).
+                    recalculadas = rubrica_folha.retencoes_recalculadas(
+                        valor_bruto, modelo.percentual_inss, modelo.percentual_ir,
+                        modelo.percentual_fgts, [],
+                    )
+                    valor_inss = recalculadas.get("valor_inss", valor_inss)
+                    valor_ir = recalculadas.get("valor_ir", valor_ir)
+                    valor_fgts = recalculadas.get("valor_fgts", valor_fgts)
                 valor_liquido = _liquido_folha(
-                    modelo.valor_bruto, descontos, valor_inss, valor_ir, valor_vale,
+                    valor_bruto, descontos, valor_inss, valor_ir, valor_vale,
                 )
                 numero_lancamento = _proximo_numero_lancamento(session, ano)
                 nova = FolhaPagamento(
-                    pessoa_id=modelo.pessoa_id, competencia=competencia, valor_bruto=modelo.valor_bruto,
+                    pessoa_id=modelo.pessoa_id, competencia=competencia, valor_bruto=valor_bruto,
                     descontos=descontos,
                     percentual_inss=modelo.percentual_inss, valor_inss=valor_inss,
                     percentual_ir=modelo.percentual_ir, valor_ir=valor_ir,
                     valor_vale=valor_vale, valor_liquido=valor_liquido, status="pendente",
-                    percentual_fgts=modelo.percentual_fgts, valor_fgts=modelo.valor_fgts,
+                    percentual_fgts=modelo.percentual_fgts, valor_fgts=valor_fgts,
                     percentual_dctf=modelo.percentual_dctf, valor_dctf=modelo.valor_dctf,
                     observacao=modelo.observacao, origem_recorrencia_id=modelo.id,
                     numero_lancamento_gerado=numero_lancamento,
@@ -572,6 +616,7 @@ def _corrigir_folha_gerada_sem_retencao(session: Session, fazenda_id: int | None
         modelo_tem_retencao = bool(modelo.valor_inss or modelo.valor_ir)
         liquido_buggado = _liquido_folha(
             registro.valor_bruto, registro.descontos, 0.0, 0.0, registro.valor_vale or 0.0,
+            registro.valor_rubricas,
         )
         if (
             sem_retencao_na_linha
@@ -586,6 +631,7 @@ def _corrigir_folha_gerada_sem_retencao(session: Session, fazenda_id: int | None
             registro.valor_vale = valor_vale
             registro.valor_liquido = _liquido_folha(
                 registro.valor_bruto, registro.descontos, registro.valor_inss, registro.valor_ir, valor_vale,
+                registro.valor_rubricas,
             )
             if conta:
                 conta.valor_total = registro.valor_liquido
@@ -621,7 +667,10 @@ def _contexto_discriminacao(
     """
     pessoa_ids = {r.pessoa_id for r in registros if r.pessoa_id}
     if not pessoa_ids:
-        return {"parcelas_por_pessoa_competencia": {}, "irmas_por_vale": {}, "vales": {}, "origens": {}}
+        return {
+            "parcelas_por_pessoa_competencia": {}, "irmas_por_vale": {}, "vales": {}, "origens": {},
+            "rubricas": {}, "compras_rubricas": {},
+        }
 
     parcelas = session.exec(select(ValeParcela).where(ValeParcela.pessoa_id.in_(pessoa_ids))).all()
     irmas_por_vale: dict[int, list[ValeParcela]] = {}
@@ -636,6 +685,12 @@ def _contexto_discriminacao(
     competencias = {(r.pessoa_id, r.competencia) for r in registros}
     por_pessoa_competencia: dict[tuple[int, str], list[ValeParcela]] = {}
     for p in parcelas:
+        # Parcela assumida pela fazenda não vira linha de DESCONTO no
+        # holerite — ela não foi descontada de ninguém (ver `_valor_vale`).
+        # Continua em `irmas_por_vale` acima, porque a numeração "3 de 13"
+        # é a posição na sequência do vale e não muda por causa disso.
+        if p.assumida_pela_fazenda:
+            continue
         chave = (p.pessoa_id, p.competencia)
         if chave in competencias:
             por_pessoa_competencia.setdefault(chave, []).append(p)
@@ -648,11 +703,19 @@ def _contexto_discriminacao(
         for v in (session.exec(select(ValeFuncionario).where(ValeFuncionario.id.in_(vale_ids))).all() if vale_ids else [])
     }
     origens = origens_lancamento_por_vale(session, vale_ids, "vale_funcionario_id") if vale_ids else {}
+    # Rubricas avulsas do holerite (vencimentos/descontos acrescentados) e as
+    # compras que os descontos de compra apontam — duas consultas para a
+    # listagem inteira, pelo mesmo motivo das parcelas acima. Escopo: só as
+    # folhas recebidas, que já vieram filtradas por fazenda.
+    rubricas = rubrica_folha.rubricas_por_folha(session, registros)
+    todas_rubricas = [r for lista in rubricas.values() for r in lista]
     return {
         "parcelas_por_pessoa_competencia": por_pessoa_competencia,
         "irmas_por_vale": irmas_por_vale,
         "vales": vales,
         "origens": origens,
+        "rubricas": rubricas,
+        "compras_rubricas": rubrica_folha.compras_das_rubricas(session, todas_rubricas),
     }
 
 
@@ -793,6 +856,13 @@ def _detalhe_folha(
 
     ctx = contexto if contexto is not None else _contexto_discriminacao(session, [registro])
     parcelas_vale = ctx["parcelas_por_pessoa_competencia"].get((registro.pessoa_id, registro.competencia), [])
+    rubricas = ctx.get("rubricas", {}).get(registro.id, [])
+    # BASE das retenções ≠ salário bruto quando há rubrica SALARIAL lançada
+    # (bonificação, guelta, aumento): o INSS foi calculado sobre bruto + elas.
+    # Reembolso e indenização ficam fora, por serem indenizatórios — é
+    # justamente esta distinção que faz a referência "9% sobre R$ 3.500,00"
+    # bater com o valor retido em vez de acusar "valor ajustado à mão".
+    base_retencao = round(registro.valor_bruto + (registro.valor_rubricas_tributaveis or 0.0), 2)
 
     if pessoa is None:
         pessoa = session.get(Pessoa, registro.pessoa_id)
@@ -820,7 +890,7 @@ def _detalhe_folha(
         if not valor:
             continue
         sufixo = f" ({percentual:g}%)" if percentual else ""
-        referencia, origem = holerite.referencia_retencao(valor, percentual, registro.valor_bruto)
+        referencia, origem = holerite.referencia_retencao(valor, percentual, base_retencao)
         detalhe.append(holerite.linha(
             tipo, f"{rotulo}{sufixo}", -valor, rotulo, referencia,
             desconto=round(valor, 2), origem=origem,
@@ -852,6 +922,12 @@ def _detalhe_folha(
             "Valor único, sem detalhamento gravado",
             desconto=round(registro.descontos, 2),
         ))
+    # Rubricas avulsas do holerite (ver rh_folha_rubricas.py e
+    # rules/rubrica_folha.py): vencimentos primeiro, descontos depois, cada um
+    # com a referência que declara o regime tributário adotado ou a compra que
+    # está sendo abatida. Entram DEPOIS das linhas fixas e ANTES do líquido —
+    # o líquido continua sendo o rodapé, nunca uma linha do corpo.
+    detalhe.extend(rubrica_folha.linhas_de_rubricas(rubricas, ctx.get("compras_rubricas", {})))
     detalhe.append(holerite.linha(
         "liquido", "Valor líquido", registro.valor_liquido, "Líquido", "",
     ))
@@ -887,6 +963,7 @@ def listar_folha_pagamento(
             registro.valor_vale = vv
             registro.valor_liquido = _liquido_folha(
                 registro.valor_bruto, registro.descontos, registro.valor_inss, registro.valor_ir, vv,
+                registro.valor_rubricas,
             )
             _marcar_vale_aplicado(session, registro.pessoa_id, registro.competencia)
             session.add(registro)
@@ -1063,7 +1140,13 @@ def atualizar_folha_pagamento(
     descontos = round(dados.descontos, 2)  # "descontos de folha" manuais, sem vale
     valor_vale = _valor_vale(session, dados.pessoa_id, dados.competencia)
     _marcar_vale_aplicado(session, dados.pessoa_id, dados.competencia)
-    valor_liquido = _liquido_folha(dados.valor_bruto, descontos, valor_inss, valor_ir, valor_vale)
+    # `registro.valor_rubricas` entra aqui porque esta folha JÁ EXISTE e pode
+    # ter rubricas lançadas (ver rh_folha_rubricas.py): sem ele, salvar a
+    # edição do bruto apagava do líquido — e da conta a pagar — a bonificação
+    # ou o reembolso que o dono já tinha acrescentado ao holerite.
+    valor_liquido = _liquido_folha(
+        dados.valor_bruto, descontos, valor_inss, valor_ir, valor_vale, registro.valor_rubricas,
+    )
     if valor_liquido <= 0:
         raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
     if dados.recorrente and not (dados.dia_vencimento and 1 <= dados.dia_vencimento <= 28):
@@ -2629,21 +2712,60 @@ def _reconciliar_vale_competencias(session: Session, pessoa_id: int, competencia
                 session.add(conta)
 
 
-def _vale_competencia_paga(session: Session, pessoa_id: int, competencias: list[str]) -> str | None:
+def _vale_competencia_paga(
+    session: Session, pessoa_id: int, competencias: list[str], fazenda_id: int | None,
+) -> str | None:
     """Retorna a primeira competência, entre as informadas, cuja folha já
-    esteja paga — usado para bloquear edição/exclusão de um vale já
-    absorvido por um pagamento que já saiu."""
+    esteja paga — a trava que impede um vale de mexer num holerite que já
+    virou recibo (ver o bloco de congelamento da discriminação, acima).
+
+    Filtro de fazenda INCONDICIONAL (`== fazenda_id`, que em None vira
+    `IS NULL`) dentro da própria consulta, mesmo padrão de `_conta_da_folha`:
+    fosse tolerante (`if fazenda_id is not None`), uma folha paga sem
+    fazenda — as linhas órfãs que a migração de backfill assume existir —
+    poderia travar ou liberar vale de qualquer tenant.
+
+    Ordem das competências importa: quem chama passa a lista já ordenada e a
+    mensagem de erro cita a PRIMEIRA competência paga encontrada, que é a que
+    o dono precisa estornar primeiro."""
     for competencia in competencias:
         folha = session.exec(
             select(FolhaPagamento).where(
                 FolhaPagamento.pessoa_id == pessoa_id,
                 FolhaPagamento.competencia == competencia,
                 FolhaPagamento.status == "pago",
+                FolhaPagamento.fazenda_id == fazenda_id,
             )
         ).first()
         if folha:
             return competencia
     return None
+
+
+def _exigir_competencias_nao_pagas(
+    session: Session, pessoa_id: int, competencias: list[str], fazenda_id: int | None, verbo: str,
+) -> None:
+    """Recusa (400) quando alguma das competências de destino do vale já teve
+    a folha PAGA.
+
+    As duas portas que isto fecha, e que ficaram abertas desde que o vale
+    existe: `criar_vale` nunca olhou a competência de destino (dava para
+    lançar um vale novo em cima de um mês já pago), e `atualizar_vale` só
+    olhava as competências ANTIGAS do vale (dava para mover um vale de um mês
+    em aberto PARA um mês já pago). Nos dois casos a folha paga é imutável de
+    propósito — a discriminação dela foi congelada no pagamento —, então a
+    parcela nova entrava no banco, aparecia no relatório de vales, e o
+    holerite daquele mês passava a mentir: cobrava um desconto que não foi
+    descontado do dinheiro que saiu."""
+    paga = _vale_competencia_paga(session, pessoa_id, competencias, fazenda_id)
+    if paga:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"A folha de {paga} desta pessoa já foi paga — não é possível {verbo} um vale nessa "
+                f"competência. Estorne o pagamento da folha de {paga} ou escolha uma competência em aberto."
+            ),
+        )
 
 
 def _validar_conta_vale(
@@ -2781,6 +2903,9 @@ def criar_vale(
     conta = _validar_conta_vale(session, dados.forma_pagamento, dados.conta_corrente_id, fazenda_id)
 
     competencias = _competencias_do_vale(dados.competencia_inicio, dados.parcelas)
+    # Nenhuma das competências de destino pode ter folha já paga — ver
+    # `_exigir_competencias_nao_pagas` para o holerite que passava a mentir.
+    _exigir_competencias_nao_pagas(session, dados.pessoa_id, competencias, fazenda_id, "lançar")
     valor_parcela = round(dados.valor_total / dados.parcelas, 2)
     # a última parcela absorve o arredondamento, para a soma bater com valor_total
     valores_parcela = [valor_parcela] * (dados.parcelas - 1)
@@ -2795,8 +2920,14 @@ def criar_vale(
     limite = round(pessoa.salario_base * 0.4, 2)
     competencias_excedidas = []
     for competencia, valor in zip(competencias, valores_parcela):
+        # Parcela assumida pela fazenda não é desconto do funcionário, então
+        # não ocupa o teto de 40% do salário dele (ver `_valor_vale`).
         ja_lancado = session.exec(
-            select(ValeParcela).where(ValeParcela.pessoa_id == dados.pessoa_id, ValeParcela.competencia == competencia)
+            select(ValeParcela).where(
+                ValeParcela.pessoa_id == dados.pessoa_id,
+                ValeParcela.competencia == competencia,
+                ValeParcela.assumida_pela_fazenda == False,  # noqa: E712
+            )
         ).all()
         total_competencia = round(sum(p.valor for p in ja_lancado) + valor, 2)
         if total_competencia > limite:
@@ -2870,8 +3001,26 @@ def atualizar_vale(
 
     pessoa_id_antigo = vale.pessoa_id
     parcelas_atuais = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()
+    # PUT /vales apaga TODAS as parcelas e recria com split igual — o que
+    # apagaria junto a marca de "mês desconsiderado"/"vale cancelado" e o
+    # valor que a fazenda já assumiu no Financeiro por causa dela, sem
+    # desfazer nada lá. Vale que passou por uma ação do dono só se mexe pelas
+    # próprias ações (ver rh_vale_acoes.py).
+    if vale.status == "cancelado":
+        raise HTTPException(
+            status_code=400,
+            detail="Este vale foi cancelado — o saldo já virou despesa da fazenda e ele não pode mais ser editado.",
+        )
+    if any(p.assumida_pela_fazenda for p in parcelas_atuais):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Este vale tem mês desconsiderado (valor já assumido pela fazenda) — use as ações do vale "
+                "(reparcelar/abater) em vez de reescrevê-lo por inteiro."
+            ),
+        )
     competencias_atuais = [p.competencia for p in parcelas_atuais]
-    competencia_paga = _vale_competencia_paga(session, pessoa_id_antigo, competencias_atuais)
+    competencia_paga = _vale_competencia_paga(session, pessoa_id_antigo, competencias_atuais, fazenda_id)
     if competencia_paga:
         raise HTTPException(
             status_code=400,
@@ -2879,6 +3028,12 @@ def atualizar_vale(
         )
 
     competencias_novas = _competencias_do_vale(dados.competencia_inicio, dados.parcelas)
+    # A checagem acima olha só o DESTINO ANTIGO do vale. Faltava esta: mudar
+    # competencia_inicio/parcelas (ou a pessoa) para um mês cuja folha já foi
+    # paga movia a parcela para dentro de um holerite fechado — que não podia
+    # mais absorvê-la. Ver `_exigir_competencias_nao_pagas`.
+    _exigir_competencias_nao_pagas(session, dados.pessoa_id, competencias_novas, fazenda_id, "mover")
+
     valor_parcela = round(dados.valor_total / dados.parcelas, 2)
     valores_parcela = [valor_parcela] * (dados.parcelas - 1)
     valores_parcela.append(round(dados.valor_total - valor_parcela * (dados.parcelas - 1), 2))
@@ -2892,6 +3047,7 @@ def atualizar_vale(
                 ValeParcela.pessoa_id == dados.pessoa_id,
                 ValeParcela.competencia == competencia,
                 ValeParcela.vale_id != vale_id,
+                ValeParcela.assumida_pela_fazenda == False,  # noqa: E712
             )
         ).all()
         total_competencia = round(sum(p.valor for p in ja_lancado) + valor, 2)
@@ -2986,7 +3142,7 @@ def editar_parcela_vale(
     if dados.valor < 0:
         raise HTTPException(status_code=400, detail="Valor da parcela não pode ser negativo")
 
-    competencia_paga = _vale_competencia_paga(session, vale.pessoa_id, [parcela.competencia])
+    competencia_paga = _vale_competencia_paga(session, vale.pessoa_id, [parcela.competencia], fazenda_id)
     if competencia_paga:
         raise HTTPException(
             status_code=400,
@@ -3000,7 +3156,7 @@ def editar_parcela_vale(
     outras_pendentes = [
         p for p in todas_parcelas
         if p.id != parcela_id and p.competencia > parcela.competencia
-        and not _vale_competencia_paga(session, vale.pessoa_id, [p.competencia])
+        and not _vale_competencia_paga(session, vale.pessoa_id, [p.competencia], fazenda_id)
     ]
     diferenca = round(dados.valor - parcela.valor, 2)
 
@@ -3116,7 +3272,7 @@ def excluir_parcela_vale(
     if not parcela or parcela.vale_id != vale_id:
         raise HTTPException(status_code=404, detail="Parcela não encontrada")
 
-    competencia_paga = _vale_competencia_paga(session, vale.pessoa_id, [parcela.competencia])
+    competencia_paga = _vale_competencia_paga(session, vale.pessoa_id, [parcela.competencia], fazenda_id)
     if competencia_paga:
         raise HTTPException(
             status_code=400,
@@ -3135,7 +3291,7 @@ def excluir_parcela_vale(
     outras_pendentes = [
         p for p in todas_parcelas
         if p.id != parcela_id and p.competencia > parcela.competencia
-        and not _vale_competencia_paga(session, vale.pessoa_id, [p.competencia])
+        and not _vale_competencia_paga(session, vale.pessoa_id, [p.competencia], fazenda_id)
     ]
 
     if not confirmar:
@@ -3197,8 +3353,22 @@ def excluir_vale(
         raise HTTPException(status_code=404, detail="Vale não encontrado")
     pessoa_id = vale.pessoa_id
     parcelas = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()
+    # Vale que já sofreu "desconsiderar o mês"/"cancelar" não pode ser
+    # apagado: o valor assumido já virou despesa da fazenda no Financeiro
+    # (item de nota devolvido aos relatórios, ou lançamento reclassificado —
+    # ver rh_vale_acoes.py::_assumir_no_financeiro), e apagar o vale aqui
+    # apagaria junto o lançamento de caixa que sustenta aquela despesa,
+    # sem desfazer nada do outro lado.
+    if vale.status == "cancelado" or any(p.assumida_pela_fazenda for p in parcelas):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Este vale já teve valor assumido pela fazenda (mês desconsiderado ou vale cancelado) — "
+                "a despesa correspondente já está no Financeiro e o vale não pode mais ser excluído."
+            ),
+        )
     competencias = [p.competencia for p in parcelas]
-    competencia_paga = _vale_competencia_paga(session, pessoa_id, competencias)
+    competencia_paga = _vale_competencia_paga(session, pessoa_id, competencias, fazenda_id)
     if competencia_paga:
         raise HTTPException(
             status_code=400,

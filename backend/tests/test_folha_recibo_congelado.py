@@ -11,14 +11,20 @@ competência DEPOIS do pagamento para o holerite impresso hoje deixar de ser o
 recibo do que foi efetivamente pago. Num documento trabalhista isso é grave —
 o holerite é prova.
 
-Os dois caminhos que produzem a divergência sem nenhum truque (os dois são
-usados aqui, porque são os que existem de verdade na tela):
- 1. `POST /cadastro/vales` numa competência cuja folha já está paga — não há
-    guarda nenhuma nesse caminho (as guardas de `_vale_competencia_paga` só
-    cobrem editar/excluir vale e parcela);
- 2. `PUT /cadastro/vales/{id}` movendo `competencia_inicio` para dentro de uma
-    competência paga — a guarda olha as competências ATUAIS do vale, não as
-    novas.
+Os dois caminhos que produziam a divergência pela API — `POST /cadastro/vales`
+numa competência já paga e `PUT /cadastro/vales/{id}` movendo o vale PARA uma
+competência já paga — foram FECHADOS depois deste arquivo nascer: os dois
+agora respondem 400 dizendo qual competência está paga (ver
+`_exigir_competencias_nao_pagas` em rh_folha.py, e
+tests/test_vale_competencia_paga.py, que é onde essa recusa é testada).
+
+Este arquivo continua existindo porque o congelamento é a ÚLTIMA linha de
+defesa, não a primeira: a fotografia protege o recibo de qualquer parcela que
+apareça na competência paga por um caminho que não passa por aqueles dois
+endpoints — importação, correção direta em banco, migração, um endpoint
+futuro que esqueça a guarda. É exatamente assim que a divergência é injetada
+nos testes abaixo (`_injetar_vale_direto_no_banco`): sem passar pela API, para
+provar que o recibo não se mexe nem quando o dado aparece do nada.
 
 A CORREÇÃO: ao ser paga, a folha congela a discriminação que gerou aquele
 líquido (`FolhaPagamento.discriminacao_congelada`), e o recibo passa a ser lido
@@ -38,7 +44,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import fazenda.database as database
 from fazenda.models import (
     ContaCorrente, ContaGerencial, ContratoFazenda, ContratoFazendaModulo, Fazenda, FolhaPagamento,
-    Pessoa,
+    Pessoa, ValeFuncionario, ValeParcela,
 )
 
 
@@ -113,6 +119,35 @@ def _lancar_vale(c, pessoa_id: int, competencia: str, valor: float, conta_id: in
     return resposta.json()
 
 
+def _injetar_vale_direto_no_banco(
+    engine, pessoa_id: int, competencia: str, valor: float, observacao: str = "farmácia",
+    fazenda_id: int | None = None,
+) -> int:
+    """Cria vale + parcela DIRETO no banco, sem passar pela API.
+
+    É de propósito: `POST /cadastro/vales` hoje recusa (400) uma competência
+    com folha paga, e é isso que o teste de guarda cobre. O que se mede aqui é
+    outra coisa — que, mesmo que uma parcela apareça na competência paga por
+    fora (importação, correção manual, endpoint futuro sem a guarda), o recibo
+    congelado não se mexe. Se este helper voltasse a chamar a API, o teste
+    passaria a medir a guarda e deixaria o congelamento sem cobertura."""
+    with Session(engine) as s:
+        vale = ValeFuncionario(
+            pessoa_id=pessoa_id, valor_total=valor, forma_pagamento="pix",
+            data_pagamento=date(2026, 6, 10), parcelas=1, competencia_inicio=competencia,
+            observacao=observacao, fazenda_id=fazenda_id,
+        )
+        s.add(vale)
+        s.commit()
+        s.refresh(vale)
+        s.add(ValeParcela(
+            vale_id=vale.id, pessoa_id=pessoa_id, competencia=competencia, valor=valor,
+            fazenda_id=fazenda_id,
+        ))
+        s.commit()
+        return vale.id
+
+
 def _pagar_folha(c, pessoa_id: int, competencia: str, valor_bruto: float = 3200.0) -> dict:
     resposta = c.post("/cadastro/folha-pagamento", json={
         "pessoa_id": pessoa_id, "competencia": competencia, "valor_bruto": valor_bruto,
@@ -142,8 +177,9 @@ class TestReciboDaFolhaPagaNaoSeMexe:
         antes = _folha(c, pessoa_id, "2026-07")
         assert len(_linhas_de_vale(antes)) == 1
 
-        # O fato novo: mais um vale na MESMA competência, depois do pagamento.
-        _lancar_vale(c, pessoa_id, "2026-07", 500.0, conta_id, observacao="farmácia")
+        # O fato novo: mais uma parcela na MESMA competência, depois do
+        # pagamento, aparecendo por fora da API (ver o helper).
+        _injetar_vale_direto_no_banco(engine, pessoa_id, "2026-07", 500.0)
 
         depois = _folha(c, pessoa_id, "2026-07")
         assert len(_linhas_de_vale(depois)) == 1, "o vale novo não pode entrar num recibo já pago"
@@ -160,16 +196,17 @@ class TestReciboDaFolhaPagaNaoSeMexe:
 
         _lancar_vale(c, pessoa_id, "2026-07", 400.0, conta_id)
         _pagar_folha(c, pessoa_id, "2026-07")
-        _lancar_vale(c, pessoa_id, "2026-07", 500.0, conta_id, observacao="farmácia")
+        _injetar_vale_direto_no_banco(engine, pessoa_id, "2026-07", 500.0)
 
         folha = _folha(c, pessoa_id, "2026-07")
         assert abs(folha["totais"]["liquido"] - folha["valor_liquido"]) <= 0.01
         assert folha["detalhe"][-1]["valor"] == folha["valor_liquido"]
 
     def test_parcela_remanejada_para_a_competencia_paga_nao_altera_o_recibo(self, client):
-        """O outro caminho real: o vale existia em 2026-08 (aberta) e foi
-        movido para 2026-07 (paga). A guarda de `_vale_competencia_paga` olha
-        as competências ATUAIS do vale, então o PUT passa."""
+        """O outro caminho que existia: o vale nasceu em 2026-08 (aberta) e
+        era movido para 2026-07 (paga) pelo PUT, porque a guarda olhava só as
+        competências ATUAIS do vale. Hoje o PUT recusa — e, mesmo que a
+        parcela chegue lá por fora, o recibo congelado não se mexe."""
         c, engine = client
         pessoa_id = _pessoa(engine)
         conta_id = _conta_corrente(engine)
@@ -184,8 +221,11 @@ class TestReciboDaFolhaPagaNaoSeMexe:
             "data_pagamento": "2026-06-10", "parcelas": 1, "competencia_inicio": "2026-07",
             "conta_corrente_id": conta_id, "observacao": "mercado",
         })
-        assert resposta.status_code == 200, resposta.text
+        assert resposta.status_code == 400, resposta.text
+        assert "2026-07" in resposta.json()["detail"]
 
+        # Mesma parcela chegando por fora da API: o recibo continua o mesmo.
+        _injetar_vale_direto_no_banco(engine, pessoa_id, "2026-07", 300.0, observacao="mercado")
         depois = _folha(c, pessoa_id, "2026-07")
         assert _linhas_de_vale(depois) == []
         assert depois["detalhe"] == antes["detalhe"]
@@ -201,7 +241,7 @@ class TestReciboDaFolhaPagaNaoSeMexe:
         paga = _pagar_folha(c, pessoa_id, "2026-07")
         numero = paga["numero_lancamento_gerado"]
 
-        _lancar_vale(c, pessoa_id, "2026-07", 500.0, conta_id, observacao="farmácia")
+        _injetar_vale_direto_no_banco(engine, pessoa_id, "2026-07", 500.0)
         _folha(c, pessoa_id, "2026-07")  # a listagem é onde os self-heals rodam
 
         with Session(engine) as s:
@@ -236,7 +276,7 @@ class TestReciboDaFolhaPagaNaoSeMexe:
         assert resposta.json()["valor_liquido"] == 3000.0
 
         antes = _folha(c, pessoa_id, "2026-07")
-        _lancar_vale(c, pessoa_id, "2026-07", 700.0, conta_id, observacao="farmácia")
+        _injetar_vale_direto_no_banco(engine, pessoa_id, "2026-07", 700.0)
         depois = _folha(c, pessoa_id, "2026-07")
         assert depois["detalhe"] == antes["detalhe"]
         assert depois["totais"]["liquido"] == 3000.0
@@ -312,7 +352,7 @@ class TestEstornoDescongela:
 
         _lancar_vale(c, pessoa_id, "2026-07", 400.0, conta_id)
         paga = _pagar_folha(c, pessoa_id, "2026-07")
-        _lancar_vale(c, pessoa_id, "2026-07", 500.0, conta_id, observacao="farmácia")
+        _injetar_vale_direto_no_banco(engine, pessoa_id, "2026-07", 500.0)
         assert len(_linhas_de_vale(_folha(c, pessoa_id, "2026-07"))) == 1
 
         resposta = c.post(f"/cadastro/folha-pagamento/{paga['id']}/estornar")
@@ -369,7 +409,7 @@ class TestEstornoDescongela:
 
         _lancar_vale(c, pessoa_id, "2026-07", 400.0, conta_id)
         paga = _pagar_folha(c, pessoa_id, "2026-07")
-        _lancar_vale(c, pessoa_id, "2026-07", 500.0, conta_id, observacao="farmácia")
+        _injetar_vale_direto_no_banco(engine, pessoa_id, "2026-07", 500.0)
         c.post(f"/cadastro/folha-pagamento/{paga['id']}/estornar")
         _folha(c, pessoa_id, "2026-07")
 
@@ -385,7 +425,7 @@ class TestEstornoDescongela:
         assert folha["totais"]["liquido"] == 2300.0
 
         # E a nova fotografia também não se mexe mais.
-        _lancar_vale(c, pessoa_id, "2026-07", 100.0, conta_id, observacao="posto")
+        _injetar_vale_direto_no_banco(engine, pessoa_id, "2026-07", 100.0, observacao="posto")
         assert _folha(c, pessoa_id, "2026-07")["detalhe"] == folha["detalhe"]
 
 

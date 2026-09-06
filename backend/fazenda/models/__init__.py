@@ -100,6 +100,9 @@ from .estoque import (
 from .agricultura import (
     Safra,
 )
+from .folha_rubrica import (
+    FolhaRubrica,
+)
 from .pessoal import (
     TipoPessoa,
     Pessoa,
@@ -383,6 +386,7 @@ __all__ = [
     "PessoaAnexo",
     "CATEGORIAS_PESSOA_ANEXO",
     "FolhaPagamento",
+    "FolhaRubrica",
     "FeriasFuncionario",
     "DecimoTerceiro",
     "RescisaoFuncionario",

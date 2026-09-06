@@ -14,6 +14,7 @@ import {
   type LinhaHolerite, type TotaisHolerite, type BasesHolerite,
 } from "@/lib/api";
 import { ModalDivergenciaVale, ModalResultadoDivergenciaVale, ModalConfirmarDivergenciaTotal } from "@/components/ModalDivergenciaVale";
+import AcoesValeModal from "@/components/AcoesValeModal";
 import { Modal } from "@/components/Modal";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { ReciboModal } from "@/components/ReciboModal";
@@ -174,6 +175,13 @@ export default function FolhaPagamentoView() {
   // contrário — ver o cabeçalho de RescisaoView.tsx.
   const [categoria, setCategoria] = useState<"todos" | "funcionario" | "empreita" | "contrato" | "diarias" | "ferias_decimo" | "rescisao">("todos");
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  // Ações do dono sobre um vale que aparece na folha (reparcelar o saldo,
+  // abater, desconsiderar o mês, cancelar) — abertas do painel "Descontos de
+  // vale" da própria competência, que é onde o dono vê o desconto e decide.
+  // Guarda a competência junto porque "desconsiderar o vale neste mês" é
+  // sobre a linha de onde o modal foi aberto, não sobre um mês a escolher.
+  const [acoesVale, setAcoesVale] = useState<{ valeId: number; pessoaNome: string; competencia: string } | null>(null);
+
   // Expansão focada de um desconto (folha ou vale) numa linha específica.
   const [expandDesc, setExpandDesc] = useState<{ id: number; tipo: "folha" | "vale" } | null>(null);
   // Folha apontada pelo painel de exceções — pisca em dourado ("é esta, aqui")
@@ -1464,6 +1472,20 @@ export default function FolhaPagamentoView() {
                                       <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{d.referencia}</div>
                                     </td>
                                     <td style={{ textAlign: "right", color: "var(--amber)", verticalAlign: "top" }}>− {formatBRL(d.desconto || 0)}</td>
+                                    <td style={{ textAlign: "right", verticalAlign: "top", paddingLeft: "0.5rem" }}>
+                                      {/* O vale só é editável enquanto a folha não virou recibo:
+                                          folha paga tem a discriminação congelada e nenhuma ação
+                                          pode reescrevê-la (o backend recusa do mesmo jeito). */}
+                                      {r.status !== "pago" && d.origem && "vale_id" in d.origem && (
+                                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                                          title="Reparcelar o saldo, abater um valor, desconsiderar este mês ou cancelar o vale"
+                                          onClick={() => setAcoesVale({
+                                            valeId: (d.origem as any).vale_id, pessoaNome: r.pessoa_nome, competencia: r.competencia,
+                                          })}>
+                                          <Pencil size={12} /> Ações
+                                        </button>
+                                      )}
+                                    </td>
                                   </tr>
                                 ))
                               )}
@@ -1999,6 +2021,23 @@ export default function FolhaPagamentoView() {
           salvando={editValeAvulsoSalvando}
           onCancelar={() => setDivergenciaValeAvulso(null)}
           onConfirmar={(acao) => salvarEdicaoValeAvulso(divergenciaValeAvulso.v, acao)}
+        />
+      )}
+      {acoesVale && (
+        <AcoesValeModal
+          valeId={acoesVale.valeId}
+          pessoaNome={acoesVale.pessoaNome}
+          competencia={acoesVale.competencia}
+          contasCorrentes={contasCorrentes}
+          onFeito={() => {
+            // Recarrega tudo o que a ação pode ter mexido: a folha (o
+            // desconto do mês muda), o relatório de vales (saldo/parcelas) e
+            // a visão unificada. "Desconsiderar"/"cancelar" mexem também no
+            // Financeiro, mas essa tela não mostra o extrato.
+            setAcoesVale(null);
+            carregar(); carregarUnificada(); carregarVales();
+          }}
+          onFechar={() => setAcoesVale(null)}
         />
       )}
       {excluindoParcela && (

@@ -21,6 +21,14 @@ const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted
 export type ValeItemDados = {
   pessoa_id: number; pessoa_nome: string;
   modo: "folha" | "avulso";
+  // Quanto DO ITEM é vale — "integral" (o item inteiro) ou "parcial", e aí
+  // exatamente um entre `percentual` e `valor`. O caso que criou isto, na
+  // palavra do dono: "2/3 do preço da ração de cachorro é do funcionário,
+  // vale, e 1/3 eu que pago". A sobra vira despesa normal da fazenda — o
+  // backend divide o item em duas linhas, com a mesma conta gerencial e o
+  // mesmo centro de custo (ver rules/vale_item.py::dividir_item_de_lancamento).
+  abrangencia?: "integral" | "parcial";
+  percentual?: number; valor?: number;
   parcelas: number; competencia_inicio: string;
   origem_tipo?: "empreitada" | "contrato" | "diaria";
   origem_id?: number; origem_label?: string;
@@ -76,6 +84,25 @@ export default function ValeItemModal({
     inicial?.modo === "folha" && inicial.competencia_inicio ? inicial.competencia_inicio : (dataItem || "").slice(0, 7),
   );
   const [observacao, setObservacao] = useState(inicial?.observacao || "");
+  // Integral × parcial. O padrão é "integral" para a esmagadora maioria dos
+  // itens continuar sendo um clique só — parcial é a exceção declarada.
+  const [abrangencia, setAbrangencia] = useState<"integral" | "parcial">(inicial?.abrangencia || "integral");
+  const [criterio, setCriterio] = useState<"percentual" | "valor">(inicial?.valor != null ? "valor" : "percentual");
+  const [percentual, setPercentual] = useState<string>(inicial?.percentual != null ? String(inicial.percentual) : "");
+  const [valorParcial, setValorParcial] = useState<string>(inicial?.valor != null ? String(inicial.valor) : "");
+
+  // Prévia do rateio, calculada na tela com a MESMA conta do servidor
+  // (`valor_vale_do_item`): sem ela o dono digita "66,67%" sem saber quanto
+  // sobra para a fazenda, e é justamente a sobra que ele quer conferir.
+  const previa = useMemo(() => {
+    if (abrangencia === "integral") return null;
+    const bruto = criterio === "percentual"
+      ? (Number(percentual) > 0 ? Math.round(valorItem * Number(percentual)) / 100 : NaN)
+      : Number(valorParcial);
+    const doFuncionario = Math.round((bruto + Number.EPSILON) * 100) / 100;
+    if (!Number.isFinite(doFuncionario) || doFuncionario <= 0 || doFuncionario >= valorItem) return null;
+    return { doFuncionario, daFazenda: Math.round((valorItem - doFuncionario) * 100) / 100 };
+  }, [abrangencia, criterio, percentual, valorParcial, valorItem]);
 
   const [erro, setErro] = useState<string | null>(null);
   const [erro409, setErro409] = useState<{ mensagem: string; competencias_excedidas: { competencia: string; total: number }[] } | null>(null);
@@ -129,12 +156,25 @@ export default function ValeItemModal({
     if (!opcoes || opcoes.bloqueio) return;
     if (!forma) { setErro("Selecione a forma de desconto."); return; }
     if (forma === "folha" && (!parcelas || Number(parcelas) < 1)) { setErro("Informe ao menos 1 parcela."); return; }
+    if (abrangencia === "parcial" && !previa) {
+      setErro(
+        criterio === "percentual"
+          ? "Informe um percentual entre 0 e 100 (100% é vale integral)."
+          : `Informe um valor maior que zero e menor que ${formatBRL(valorItem)} (o item inteiro é vale integral).`,
+      );
+      return;
+    }
 
     const origemEscolhida = forma !== "folha" ? forma.split(":") : null;
     const formaLabel = formaOpcoes.find((o) => o.value === forma)?.label;
     const dados: ValeItemDados = {
       pessoa_id: pessoaId, pessoa_nome: pessoaSelecionada.nome,
       modo,
+      abrangencia,
+      // Só o critério escolhido vai no payload: o servidor recusa (400) se os
+      // dois vierem juntos, porque não há desempate que não fosse chute.
+      percentual: abrangencia === "parcial" && criterio === "percentual" ? Number(percentual) : undefined,
+      valor: abrangencia === "parcial" && criterio === "valor" ? Number(valorParcial) : undefined,
       parcelas: modo === "folha" ? Number(parcelas) || 1 : 1,
       competencia_inicio: modo === "folha" ? (competenciaInicio || (dataItem || "").slice(0, 7)) : "",
       origem_tipo: origemEscolhida ? (origemEscolhida[1] as ValeItemDados["origem_tipo"]) : undefined,
@@ -217,6 +257,47 @@ export default function ValeItemModal({
               </select>
             )}
           </div>
+
+          <div>
+            <label style={lbl}>Quanto deste item é vale?</label>
+            <div className="flex items-center gap-4" style={{ fontSize: "0.82rem" }}>
+              <label className="flex items-center gap-1">
+                <input type="radio" checked={abrangencia === "integral"} onChange={() => setAbrangencia("integral")} />
+                Integral ({formatBRL(valorItem)})
+              </label>
+              <label className="flex items-center gap-1">
+                <input type="radio" checked={abrangencia === "parcial"} onChange={() => setAbrangencia("parcial")} />
+                Parcial
+              </label>
+            </div>
+          </div>
+
+          {abrangencia === "parcial" && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label style={lbl}>Informar por</label>
+                <select style={inputStyle} value={criterio} onChange={(e) => setCriterio(e.target.value as "percentual" | "valor")}>
+                  <option value="percentual">Percentual do item</option>
+                  <option value="valor">Valor em reais</option>
+                </select>
+              </div>
+              <div>
+                <label style={lbl}>{criterio === "percentual" ? "% do funcionário" : "R$ do funcionário"}</label>
+                {criterio === "percentual" ? (
+                  <input type="number" min={0} max={100} step="0.01" style={inputStyle}
+                    value={percentual} onChange={(e) => setPercentual(e.target.value)} />
+                ) : (
+                  <input type="number" min={0} step="0.01" style={inputStyle}
+                    value={valorParcial} onChange={(e) => setValorParcial(e.target.value)} />
+                )}
+              </div>
+              <p style={{ gridColumn: "1 / -1", fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                {previa
+                  ? `Vale do funcionário: ${formatBRL(previa.doFuncionario)} · Despesa da fazenda: ${formatBRL(previa.daFazenda)} (mesma conta gerencial e centro de custo do item).`
+                  : "O restante vira despesa normal da fazenda, na mesma conta gerencial e no mesmo centro de custo do item."}
+              </p>
+            </div>
+          )}
 
           {forma === "folha" && (
             <div className="grid grid-cols-2 gap-3">

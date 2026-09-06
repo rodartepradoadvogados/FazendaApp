@@ -3231,6 +3231,10 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   async function marcarVale(item: ItemLancEditar, dados: ValeItemDados) {
     await marcarItemComoVale(item.id, {
       pessoa_id: dados.pessoa_id, modo: dados.modo, parcelas: dados.parcelas,
+      // Vale parcial (só uma fatia do item é do funcionário): o backend
+      // divide o item em duas linhas e a sobra vira despesa da fazenda.
+      abrangencia: dados.abrangencia || "integral",
+      percentual: dados.percentual ?? null, valor: dados.valor ?? null,
       competencia_inicio: dados.competencia_inicio || undefined,
       origem_tipo: dados.origem_tipo, origem_id: dados.origem_id,
       observacao: dados.observacao, confirmar: dados.confirmar,
