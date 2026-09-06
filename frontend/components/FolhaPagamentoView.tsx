@@ -43,9 +43,13 @@ import EmpreitadaView from "@/components/EmpreitadaView";
 import ContratoView from "@/components/ContratoView";
 import DiariaView from "@/components/DiariaView";
 import FeriasDecimoTerceiroView from "@/components/FeriasDecimoTerceiroView";
+import RescisaoView from "@/components/RescisaoView";
 
 const LABEL_TIPO: Record<string, string> = {
   funcionario: "Funcionário", empreita: "Empreita", contrato: "Contrato", diaria: "Diária", ferias_decimo: "Férias / 13º",
+  // "rescisao" é rótulo só de CHIP por enquanto: o ledger unificado ainda não
+  // emite linhas desse tipo (ver a nota do bloco "Consultar" mais abaixo).
+  rescisao: "Rescisão",
 };
 // Acentos emprestados da paleta CowData (navy+dourado+verde+vermelho do
 // painel do dono do software) — usados só nos 3 cards de "Lançar" desta
@@ -165,7 +169,10 @@ export default function FolhaPagamentoView() {
   // Seletor único de categoria — antes era uma TabBar que só navegava entre
   // telas (sem filtrar nada); agora governa TANTO o que aparece em "Lançar"
   // quanto o filtro de "Consultar" logo abaixo (ver `tipoUnificado`).
-  const [categoria, setCategoria] = useState<"todos" | "funcionario" | "empreita" | "contrato" | "diarias" | "ferias_decimo">("todos");
+  // "rescisao" é chip IRMÃO dos demais, não sub-aba de "ferias_decimo": a
+  // rescisão é quem consome férias e 13º (no backend e na lei), não o
+  // contrário — ver o cabeçalho de RescisaoView.tsx.
+  const [categoria, setCategoria] = useState<"todos" | "funcionario" | "empreita" | "contrato" | "diarias" | "ferias_decimo" | "rescisao">("todos");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   // Expansão focada de um desconto (folha ou vale) numa linha específica.
   const [expandDesc, setExpandDesc] = useState<{ id: number; tipo: "folha" | "vale" } | null>(null);
@@ -228,11 +235,17 @@ export default function FolhaPagamentoView() {
   // e app/agenda/page.tsx) — abre direto na sub-aba Diária e, se veio um id,
   // já abre o calendário "Dias trabalhados" daquela diarista, sem o usuário
   // ter que caçar a linha na tabela de Controle de diárias.
+  // A rescisão entra na MESMA lista: ?ir=folha&categoria=rescisao é o endereço
+  // próprio dela — antes não havia como linkar a tela, porque ela era uma
+  // sub-aba interna de "ferias_decimo" e o único endereço possível parava no
+  // card errado (Férias/13º), com a Rescisão a mais um clique não linkável.
+  // Continua sendo `window.location.search` (e não useSearchParams) de
+  // propósito: é o padrão já usado aqui e não exige fronteira de Suspense.
   const [deepLinkDiaria, setDeepLinkDiaria] = useState<{ id: number; modo: "ultimo_periodo" | "completo" } | null>(null);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const cat = params.get("categoria");
-    if (cat && ["todos", "funcionario", "empreita", "contrato", "diarias", "ferias_decimo"].includes(cat)) {
+    if (cat && ["todos", "funcionario", "empreita", "contrato", "diarias", "ferias_decimo", "rescisao"].includes(cat)) {
       setCategoria(cat as typeof categoria);
     }
     const diariaId = params.get("diaria");
@@ -1011,9 +1024,12 @@ export default function FolhaPagamentoView() {
     <div>
       {/* Seletor único de categoria — troca o que "Lançar" mostra E filtra
           "Consultar" logo abaixo. "Todos" é a 1ª opção (item aprovado da
-          proposta): antes não existia nenhuma visão que juntasse as 5. */}
+          proposta): antes não existia nenhuma visão que juntasse as 5.
+          "Rescisão" é o 7º chip e fecha a lista: é uma categoria de
+          fechamento de folha por direito próprio, não uma aba escondida
+          dentro de "Férias / 13º" (ver RescisaoView.tsx). */}
       <div className="flex items-center gap-2 mb-4" style={{ flexWrap: "wrap" }}>
-        {(["todos", "funcionario", "empreita", "contrato", "diarias", "ferias_decimo"] as const).map((cat) => (
+        {(["todos", "funcionario", "empreita", "contrato", "diarias", "ferias_decimo", "rescisao"] as const).map((cat) => (
           <button key={cat} type="button" onClick={() => setCategoria(cat)}
             style={{ fontSize: "0.82rem", fontWeight: 600, padding: "0.45rem 0.9rem", borderRadius: "999px",
               border: `1px solid ${categoria === cat ? "var(--dourado)" : "var(--border)"}`,
@@ -1032,6 +1048,9 @@ export default function FolhaPagamentoView() {
       {categoria === "contrato" && <ContratoView />}
       {categoria === "diarias" && <DiariaView deepLinkDiariaId={deepLinkDiaria?.id} deepLinkModo={deepLinkDiaria?.modo} />}
       {categoria === "ferias_decimo" && <FeriasDecimoTerceiroView />}
+      {/* Sem props: RescisaoView busca as próprias pessoas desde que deixou
+          de ser sub-aba de Férias/13º (que lhe emprestava a lista). */}
+      {categoria === "rescisao" && <RescisaoView />}
 
       {mostraFormasGerais && (error ? <div className="alert-critico"><span>Sem dados: {error}.</span></div> : <>
       <AvisoSalvo texto={msg?.tipo === "sucesso" ? msg.texto : null} />
@@ -1135,6 +1154,24 @@ export default function FolhaPagamentoView() {
       <div className="flex items-center gap-2 mb-2 mt-4" style={{ fontSize: "0.74rem", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, color: "var(--text-muted)" }}>
         Consultar
       </div>
+
+      {/* O bloco "Consultar" é o ledger unificado (`fetchFolhaPagamentoUnificada`),
+          que o backend monta com CINCO tipos: funcionario, empreita, contrato,
+          diaria e ferias_decimo. Rescisão não é um deles. Sob o chip Rescisão,
+          `tipoUnificado` seria "rescisao" e a barra do mês, a equação e a
+          tabela apareceriam TODAS zeradas — dizendo "não há rescisão nenhuma",
+          o que é falso: elas estão logo acima, na tabela da própria tela de
+          Rescisão (etapa 4, "acompanhar"). Melhor não mostrar do que mostrar
+          um zero mentiroso. Quando o ledger passar a emitir o 6º tipo, é só
+          apagar esta condição e o aviso. */}
+      {categoria === "rescisao" ? (
+        <div className="card mb-3" style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+          As rescisões simuladas e fechadas estão na tabela acima, nesta mesma tela.
+          A conta a pagar gerada ao fechar uma rescisão aparece em{" "}
+          <strong style={{ color: "var(--text)" }}>Contas a pagar</strong> — o ledger unificado
+          da folha ainda não inclui rescisão.
+        </div>
+      ) : (<>
 
       {/* A barra do MÊS e a faixa da EQUAÇÃO, no lugar dos três KPIs soltos
           (Lançamentos/Pendente/Pago) que não formavam conta nenhuma: sem
@@ -1924,6 +1961,8 @@ export default function FolhaPagamentoView() {
           </table>
         </div>
       </SecaoRecolhivel>
+      </>)}
+      {/* ↑ fim do bloco "Consultar" (oculto sob o chip Rescisão) */}
 
       {divergenciaParcela && (
         <ModalDivergenciaVale

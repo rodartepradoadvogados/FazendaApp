@@ -257,3 +257,145 @@ def test_listagem_normaliza_duplicata_ja_existente_no_banco(client):
         assert s.exec(
             select(ContaGerencial).where(ContaGerencial.numero_lancamento == "LC-0002")
         ).first() is not None
+
+
+# ---------------------------------------------------------------------------
+# Bug 3 — folha do MÊS DO DESLIGAMENTO gerada por cima da rescisão
+#
+# Caso real reportado em set/2026 (Jorbeson Nunes e Valéria Bonfim): rescisão
+# "Dispensa sem justa causa" com desligamento em 05/08/2026, status FECHADA e
+# já quitada — e mesmo assim a aba Folha de Pagamento mostrava uma folha
+# PENDENTE de competência 2026-08, salário CHEIO, vencendo 05/09/2026.
+#
+# A rescisão já paga `saldo_salario` (ver rules/folha_rh.py::calcular_rescisao)
+# = salario_base / 30 × dias trabalhados no mês do desligamento. Gerar também a
+# folha desse mesmo mês é pagar o mês duas vezes.
+# ---------------------------------------------------------------------------
+def test_folha_do_mes_do_desligamento_nao_e_gerada(client, monkeypatch):
+    """A competência do PRÓPRIO mês do desligamento não pode ser gerada: o
+    saldo de salário daqueles dias já está dentro da rescisão."""
+    c, engine = client
+    pessoa_id = _criar_pessoa(engine, nome="Jorbeson Nunes", salario_base=3393.0)
+
+    r = c.post("/cadastro/folha-pagamento", json={
+        "pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 3393.0,
+        "recorrente": True, "dia_vencimento": 5,
+    })
+    assert r.status_code == 200, r.text
+
+    _fechar_rescisao(c, pessoa_id, date(2026, 8, 5))
+
+    monkeypatch.setattr(rh_folha, "date", _FakeDate)
+    monkeypatch.setattr(_FakeDate, "_hoje", date(2026, 9, 6))
+
+    r = c.get("/cadastro/folha-pagamento")
+    assert r.status_code == 200, r.text
+    competencias = {f["competencia"] for f in r.json() if f["pessoa_id"] == pessoa_id}
+    assert "2026-07" in competencias  # o mês inteiro trabalhado continua devido
+    assert "2026-08" not in competencias, "folha do mês do desligamento duplica o saldo de salário da rescisão"
+    assert "2026-09" not in competencias
+
+
+def test_folha_do_mes_do_desligamento_ja_gerada_e_removida_no_fechamento(client):
+    """Ordem cronológica do caso de produção: a folha de agosto já existia
+    quando a rescisão de 05/08 foi fechada. O fechamento tem que limpá-la
+    (junto com a conta a pagar não paga)."""
+    c, engine = client
+    pessoa_id = _criar_pessoa(engine, nome="Valéria Bonfim", salario_base=3393.0)
+
+    r = c.post("/cadastro/folha-pagamento", json={
+        "pessoa_id": pessoa_id, "competencia": "2026-08", "valor_bruto": 3393.0,
+    })
+    assert r.status_code == 200, r.text
+    numero_lancamento = r.json()["numero_lancamento_gerado"]
+
+    _fechar_rescisao(c, pessoa_id, date(2026, 8, 5))
+
+    with Session(engine) as s:
+        assert s.exec(select(FolhaPagamento).where(FolhaPagamento.competencia == "2026-08")).first() is None
+        assert s.exec(
+            select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)
+        ).first() is None
+
+
+def test_lancar_folha_do_mes_do_desligamento_e_bloqueado(client):
+    """Defesa em profundidade: o lançamento MANUAL do mês do desligamento
+    também é recusado."""
+    c, engine = client
+    pessoa_id = _criar_pessoa(engine)
+    _fechar_rescisao(c, pessoa_id, date(2026, 8, 5))
+
+    r = c.post("/cadastro/folha-pagamento", json={
+        "pessoa_id": pessoa_id, "competencia": "2026-08", "valor_bruto": 3000.0,
+    })
+    assert r.status_code == 400, r.text
+
+
+def test_folha_paga_do_mes_do_desligamento_nunca_e_apagada(client):
+    """Se a folha do mês do desligamento JÁ FOI PAGA, o dinheiro saiu — o
+    fechamento não reescreve histórico financeiro, só deixa de gerar o que
+    ainda não existe."""
+    c, engine = client
+    pessoa_id = _criar_pessoa(engine)
+
+    r = c.post("/cadastro/folha-pagamento", json={
+        "pessoa_id": pessoa_id, "competencia": "2026-08", "valor_bruto": 3000.0,
+        "status": "pago", "data_pagamento": "2026-09-05",
+    })
+    assert r.status_code == 200, r.text
+
+    _fechar_rescisao(c, pessoa_id, date(2026, 8, 5))
+
+    r = c.get("/cadastro/folha-pagamento")
+    competencias = {f["competencia"] for f in r.json() if f["pessoa_id"] == pessoa_id}
+    assert "2026-08" in competencias
+
+
+# ---------------------------------------------------------------------------
+# O que NÃO pode quebrar: readmissão
+# ---------------------------------------------------------------------------
+def test_readmissao_depois_da_rescisao_volta_a_gerar_folha(client, monkeypatch):
+    """Pessoa desligada em 05/08 e READMITIDA em 01/11 (nova `data_admissao`,
+    posterior ao desligamento) volta a receber folha a partir do mês da
+    readmissão — a rescisão antiga não pode calar a pessoa para sempre. Os
+    meses entre o desligamento e a readmissão continuam bloqueados."""
+    c, engine = client
+    pessoa_id = _criar_pessoa(engine)
+
+    r = c.post("/cadastro/folha-pagamento", json={
+        "pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 3000.0,
+        "recorrente": True, "dia_vencimento": 5,
+    })
+    assert r.status_code == 200, r.text
+    _fechar_rescisao(c, pessoa_id, date(2026, 8, 5))
+
+    # Readmissão: o cadastro da pessoa passa a ter admissão posterior à saída.
+    with Session(engine) as s:
+        pessoa = s.get(Pessoa, pessoa_id)
+        pessoa.data_admissao = date(2026, 11, 1)
+        pessoa.ativo = True
+        s.add(pessoa)
+        s.commit()
+
+    # Lançamento manual da folha do mês da readmissão é aceito de novo...
+    r = c.post("/cadastro/folha-pagamento", json={
+        "pessoa_id": pessoa_id, "competencia": "2026-11", "valor_bruto": 3000.0,
+        "recorrente": True, "dia_vencimento": 5,
+    })
+    assert r.status_code == 200, r.text
+
+    # ...e os meses em que a pessoa estava fora continuam recusados.
+    r = c.post("/cadastro/folha-pagamento", json={
+        "pessoa_id": pessoa_id, "competencia": "2026-09", "valor_bruto": 3000.0,
+    })
+    assert r.status_code == 400, r.text
+
+    # A recorrência do novo vínculo volta a rodar normalmente.
+    monkeypatch.setattr(rh_folha, "date", _FakeDate)
+    monkeypatch.setattr(_FakeDate, "_hoje", date(2026, 12, 20))
+    r = c.get("/cadastro/folha-pagamento")
+    assert r.status_code == 200, r.text
+    competencias = {f["competencia"] for f in r.json() if f["pessoa_id"] == pessoa_id}
+    assert "2026-12" in competencias
+    assert "2026-09" not in competencias
+    assert "2026-10" not in competencias

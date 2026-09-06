@@ -219,42 +219,85 @@ def _marcar_vale_aplicado(session: Session, pessoa_id: int, competencia: str) ->
         session.add(p)
 
 
-def _rescisao_fechada_antes_de(
+def _rescisao_fechada_encerra_competencia(
     session: Session, pessoa_id: int, competencia: str, fazenda_id: int | None
 ) -> bool:
     """
     True quando a pessoa já tem uma rescisão FECHADA (a simulação sozinha não
-    conta — ver fluxo simulacao → fechada) com `data_desligamento` anterior ao
-    início de `competencia`. Usada para nunca gerar/aceitar folha de um mês em
-    que a pessoa já não trabalhava mais (bug: rescisão lançada em agosto não
-    impedia a folha de setembro em diante).
+    conta — ver fluxo simulacao → fechada) que ENCERRA `competencia`: o
+    desligamento caiu DENTRO do mês da competência ou antes dele. Usada para
+    nunca gerar/aceitar folha de um mês que a rescisão já pagou ou que a
+    pessoa não trabalhou.
 
-    `fazenda_id` é OBRIGATÓRIO e o filtro é INCONDICIONAL (`== fazenda_id`,
-    que em None vira `IS NULL`): esta função decide o que
+    PAGAMENTO EM DUPLICIDADE CORRIGIDO AQUI (caso real de set/2026 — Jorbeson
+    e Valéria, desligamento 05/08/2026, rescisão fechada e quitada, e mesmo
+    assim uma folha PENDENTE de competência 2026-08 com salário CHEIO):
+    a comparação era `data_desligamento < inicio_competencia` (o dia 1º do
+    mês), então o PRÓPRIO mês do desligamento passava batido — 05/08 não é
+    anterior a 01/08. Só setembro em diante era bloqueado.
+
+    E o mês do desligamento não pode ser gerado, porque a rescisão já paga
+    esses dias: `calcular_rescisao` (rules/folha_rh.py) inclui no total a
+    verba `saldo_salario` = salario_base / 30 × dias trabalhados no mês do
+    desligamento. Folha cheia do mesmo mês + saldo de salário da rescisão =
+    o mês pago duas vezes. A decisão explícita é: o mês do desligamento NÃO
+    gera folha, o saldo daqueles dias está na rescisão.
+
+    Agora a comparação é contra o ÚLTIMO dia da competência
+    (`data_desligamento <= fim_competencia`), que é o mesmo que dizer
+    "desligou antes do início da competência SEGUINTE".
+
+    READMISSÃO: uma rescisão fechada não pode calar a pessoa para sempre. Se
+    o cadastro da pessoa passou a ter `data_admissao` POSTERIOR ao último
+    desligamento (novo vínculo), a competência volta a ser válida a partir do
+    mês dessa readmissão — os meses entre a saída e a volta continuam
+    bloqueados. Sem `data_admissao` (ou com ela anterior ao desligamento) a
+    resposta é a conservadora: bloqueia.
+
+    `fazenda_id` é OBRIGATÓRIO e os filtros são INCONDICIONAIS (`==
+    fazenda_id`, que em None vira `IS NULL`): esta função decide o que
     `_remover_folha_pos_rescisao` APAGA, e a versão antiga consultava
     `RescisaoFuncionario` sem filtro nenhum de fazenda — a rescisão de uma
     fazenda respondia pela folha de outra.
     """
     ano, mes = (int(x) for x in competencia.split("-"))
-    inicio_competencia = date(ano, mes, 1)
-    rescisao = session.exec(
+    fim_competencia = date(ano, mes, calendar.monthrange(ano, mes)[1])
+    rescisoes = session.exec(
         select(RescisaoFuncionario).where(
             RescisaoFuncionario.pessoa_id == pessoa_id,
             RescisaoFuncionario.fazenda_id == fazenda_id,
             RescisaoFuncionario.status == "fechada",
-            RescisaoFuncionario.data_desligamento < inicio_competencia,
+            RescisaoFuncionario.data_desligamento <= fim_competencia,
         )
+    ).all()
+    if not rescisoes:
+        return False
+
+    # Vale o desligamento MAIS RECENTE: com mais de uma rescisão fechada na
+    # ficha (readmitido e desligado de novo), é o último que diz se a pessoa
+    # estava fora nesta competência.
+    ultimo_desligamento = max(r.data_desligamento for r in rescisoes)
+    # `select ... where fazenda_id == fazenda_id` em vez de `session.get`: a
+    # data de admissão passa a decidir se uma folha é gerada, então a leitura
+    # tem que ser tão isolada por fazenda quanto a da rescisão acima.
+    pessoa = session.exec(
+        select(Pessoa).where(Pessoa.id == pessoa_id, Pessoa.fazenda_id == fazenda_id)
     ).first()
-    return rescisao is not None
+    readmissao = pessoa.data_admissao if pessoa else None
+    if readmissao and ultimo_desligamento < readmissao <= fim_competencia:
+        return False
+    return True
 
 
 def _remover_folha_pos_rescisao(session: Session, fazenda_id: int | None) -> None:
     """
     Remove (com a conta a pagar vinculada, se ainda não paga) qualquer folha
-    PENDENTE de uma competência posterior à rescisão fechada da pessoa —
-    cobre o caso de a folha já ter sido gerada (recorrência ou lançamento
-    manual) ANTES de a rescisão ser lançada/fechada no sistema. Nunca mexe em
-    folha já paga.
+    PENDENTE de uma competência que a rescisão fechada da pessoa já encerra —
+    o mês do desligamento inclusive, cujo saldo de salário a rescisão paga
+    (ver `_rescisao_fechada_encerra_competencia`). Cobre o caso de a folha já
+    ter sido gerada (recorrência ou lançamento manual) ANTES de a rescisão ser
+    lançada/fechada no sistema. Nunca mexe em folha já paga: aí o dinheiro
+    saiu e apagar seria reescrever histórico financeiro.
 
     DUAS CORREÇÕES DE SEGURANÇA aqui, porque esta é a única rotina do módulo
     que DESTRÓI dado:
@@ -277,7 +320,7 @@ def _remover_folha_pos_rescisao(session: Session, fazenda_id: int | None) -> Non
         FolhaPagamento.fazenda_id == fazenda_id,
     )
     for registro in session.exec(query).all():
-        if not _rescisao_fechada_antes_de(session, registro.pessoa_id, registro.competencia, fazenda_id):
+        if not _rescisao_fechada_encerra_competencia(session, registro.pessoa_id, registro.competencia, fazenda_id):
             continue
         if registro.numero_lancamento_gerado:
             conta = session.exec(
@@ -356,9 +399,15 @@ def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> 
     — tanto o registro de acompanhamento (FolhaPagamento) quanto a conta a
     pagar correspondente (ContaGerencial) — sem exigir relançamento manual
     todo mês. Mesmo padrão "lazy pull" da baixa automática de Alimentação.
-    Para de gerar a partir da competência em que a pessoa já tem rescisão
-    fechada (ver _rescisao_fechada_antes_de) — todas as competências seguintes
-    também estariam bloqueadas, então a geração deste modelo pode parar aí.
+    Para de gerar na primeira competência encerrada por rescisão fechada —
+    o MÊS DO DESLIGAMENTO inclusive, porque o saldo de salário daqueles dias
+    já está dentro da rescisão (ver
+    `_rescisao_fechada_encerra_competencia`).
+
+    O `break` encerra ESTE modelo de recorrência de vez, e é de propósito:
+    uma readmissão é contrato novo (salário novo, vencimento novo), e volta a
+    gerar folha pelo lançamento recorrente novo que o usuário cria — não
+    ressuscitando o modelo do vínculo antigo meses depois.
     """
     competencia_atual = date.today().strftime("%Y-%m")
     # Filtro de fazenda incondicional (`== fazenda_id`, que em None vira
@@ -376,7 +425,7 @@ def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> 
             continue
         competencia = _competencia_seguinte(modelo.competencia)
         while competencia <= competencia_atual:
-            if _rescisao_fechada_antes_de(session, modelo.pessoa_id, competencia, fazenda_id):
+            if _rescisao_fechada_encerra_competencia(session, modelo.pessoa_id, competencia, fazenda_id):
                 break
             existe = session.exec(
                 select(FolhaPagamento).where(
@@ -908,10 +957,14 @@ def criar_folha_pagamento(
         raise HTTPException(status_code=400, detail="Status inválido")
     if dados.recorrente and not (dados.dia_vencimento and 1 <= dados.dia_vencimento <= 28):
         raise HTTPException(status_code=400, detail="Informe o dia de vencimento (1 a 28) para lançamentos recorrentes")
-    if _rescisao_fechada_antes_de(session, dados.pessoa_id, dados.competencia, fazenda_id):
+    if _rescisao_fechada_encerra_competencia(session, dados.pessoa_id, dados.competencia, fazenda_id):
         raise HTTPException(
             status_code=400,
-            detail="Esta pessoa tem rescisão fechada anterior a esta competência — não é possível lançar folha.",
+            detail=(
+                "Esta pessoa tem rescisão fechada que já encerra esta competência "
+                "— não é possível lançar folha. No mês do desligamento, o saldo de "
+                "salário já é pago pela própria rescisão."
+            ),
         )
     # Idempotência: nunca mais de uma folha por pessoa/competência (ver
     # comentário de _valor_vale) — sem esta checagem, a mesma pessoa acabava
