@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import calendar
 import html
+import logging
 from datetime import date, datetime
 from typing import Optional
 
@@ -56,6 +57,8 @@ from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, exclu
 from fazenda.config import settings
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
+
+logger = logging.getLogger(__name__)
 
 # "Comprovante" e "Orçamento" (pra planejamento ou pedido) entraram junto com
 # a Central de Documentos — antes só existiam via "Boleto"/"Ordem de
@@ -3928,12 +3931,41 @@ TAMANHO_MAXIMO_ANEXO = 15 * 1024 * 1024  # 15 MB
 
 def _caminho_anexo_lancamento(session: Session, fazenda_id: int | None, numero_lancamento: str, nome_arquivo: str) -> str:
     """fazenda-X/numero_lancamento/0001_nome.ext — sequencial dentro do
-    lançamento, mesmo espírito de _proximo_caminho em routers/documentos.py."""
+    lançamento, mesmo espírito de _proximo_caminho em routers/documentos.py.
+
+    BUG CORRIGIDO (mesmo defeito do anexo de Pessoa, relatado pelo dono em
+    06/09/2026 e corrigido em `cadastro/pessoas.py::_caminho_anexo_pessoa`;
+    este módulo tinha a cópia): a sequência vinha de `1 + len(existentes)`,
+    ou seja, da CONTAGEM de anexos vivos. Excluir um anexo faz a contagem
+    cair, então o próximo upload reaproveita um número que já está em uso; se
+    o nome do arquivo também se repetir — que é a regra, não a exceção, no
+    fluxo real "anexei o boleto errado, apago e anexo o certo" — o caminho
+    gerado é IDÊNTICO ao de um anexo que ainda existe. O envio usa
+    `x-upsert`, então o arquivo antigo é sobrescrito em silêncio e as DUAS
+    linhas do banco passam a apontar para o mesmo objeto no Storage. A partir
+    daí, excluir uma apaga o arquivo das duas, e o download da outra passa a
+    devolver 400 — inclusive a exclusão dela, que ficava travada para sempre.
+
+    Agora a sequência sai do MAIOR número já usado nos caminhos do lançamento
+    (não da contagem): número devolvido por uma exclusão nunca é reemitido
+    enquanto sobrar qualquer anexo, então dois anexos vivos jamais dividem o
+    mesmo caminho. O comprovante em lote continua compartilhando caminho de
+    propósito (ver anexar_comprovante_em_lote) — lá o mesmo arquivo é UM só
+    objeto referenciado por várias linhas, o que é o oposto de duas linhas
+    diferentes caírem em cima do mesmo objeto por acidente.
+    """
     pasta = f"fazenda-{fazenda_id if fazenda_id is not None else 'geral'}/{numero_lancamento}"
     existentes = session.exec(
         select(LancamentoAnexo).where(LancamentoAnexo.numero_lancamento == numero_lancamento)
     ).all()
-    seq = 1 + len(existentes)
+    maior = 0
+    for a in existentes:
+        # "…/LAN-2026-0007/0003_boleto.pdf" -> 3. Caminho antigo/fora do
+        # padrão (ou nulo, do formato legado em `conteudo`) não entra na conta.
+        prefixo = (a.caminho_storage or "").rsplit("/", 1)[-1].split("_", 1)[0]
+        if prefixo.isdigit():
+            maior = max(maior, int(prefixo))
+    seq = 1 + max(maior, len(existentes))
     return f"{pasta}/{seq:04d}_{nome_seguro_storage(nome_arquivo)}"
 
 
@@ -4201,12 +4233,19 @@ def excluir_anexo(
     if anexo.caminho_storage:
         # Um comprovante de pagamento em lote é UM arquivo no Storage
         # referenciado por várias linhas (ver anexar_comprovante_em_lote), uma
-        # por lançamento da remessa. Apagar o objeto ao excluir a primeira
-        # linha deixaria as outras apontando para o vazio — o download delas
-        # passaria a falhar. Só remove do Storage quando esta é a última
-        # referência; caso contrário, some apenas o vínculo deste lançamento.
+        # por lançamento da remessa; e os anexos gravados ANTES da correção de
+        # `_caminho_anexo_lancamento` podem dividir caminho por acidente.
+        # Apagar o objeto ao excluir a primeira linha deixaria as outras
+        # apontando para o vazio — o download delas passaria a falhar. Só
+        # remove do Storage quando esta é a última referência; caso contrário,
+        # some apenas o vínculo deste lançamento.
+        # O recorte por fazenda entra NA PRÓPRIA consulta (nunca num `if` em
+        # volta dela): sem multi-fazenda provisionado vira `fazenda_id IS
+        # NULL`, que é exatamente o conjunto de linhas desse ambiente. Anexo
+        # de outra fazenda não é "irmão" de ninguém aqui.
         outras = session.exec(
             select(LancamentoAnexo).where(
+                LancamentoAnexo.fazenda_id == fazenda_id,
                 LancamentoAnexo.caminho_storage == anexo.caminho_storage,
                 LancamentoAnexo.id != anexo.id,
             )
@@ -4215,7 +4254,22 @@ def excluir_anexo(
             try:
                 excluir_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
             except RuntimeError as exc:
-                raise HTTPException(status_code=400, detail=str(exc))
+                # BUG CORRIGIDO (mesmo defeito do anexo de Pessoa, relatado
+                # pelo dono em 06/09/2026): a falha do Storage virava 400 e
+                # ABORTAVA a exclusão da linha. Arquivo que já não está lá
+                # (apagado à mão no painel do Supabase, caminho duplicado pelo
+                # bug de sequência acima, upload que falhou no meio) devolve
+                # 404 no delete — e o anexo passava a ser IMPOSSÍVEL de tirar
+                # da tela: toda tentativa repetia o mesmo 400, para sempre,
+                # porque a causa era justamente o arquivo não existir mais.
+                # A linha do banco é o que o usuário enxerga e é ela que tem
+                # que sair; no pior caso sobra um objeto órfão no bucket
+                # (invisível, sem nenhuma linha apontando), muito melhor que
+                # um documento fantasma preso no lançamento.
+                logger.warning(
+                    "Anexo %s do lançamento %s: linha excluída mesmo com falha ao apagar o arquivo no Storage (%s): %s",
+                    anexo.id, anexo.numero_lancamento, anexo.caminho_storage, exc,
+                )
     session.delete(anexo)
     session.commit()
     return {"excluido": True}
