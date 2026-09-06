@@ -11,12 +11,18 @@ import {
   lerDocumentoFinanceiro, anexarArquivoLancamento, formatDate,
   fetchContasCorrentes, type ContaCorrenteCadastro,
   anexarComprovanteVale, listarComprovantesVale, excluirComprovanteVale, urlComprovanteVale,
+  type LinhaHolerite, type TotaisHolerite, type BasesHolerite,
 } from "@/lib/api";
 import { ModalDivergenciaVale, ModalResultadoDivergenciaVale, ModalConfirmarDivergenciaTotal } from "@/components/ModalDivergenciaVale";
 import { Modal } from "@/components/Modal";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { ReciboModal } from "@/components/ReciboModal";
-import { exportarFichaPDF, exportarMultiExcel, type SecaoFicha, type LancamentoRecibo } from "@/lib/export";
+import { type LancamentoRecibo } from "@/lib/export";
+import { Holerite } from "@/components/Holerite";
+import {
+  competenciaExtenso, holeriteDaLinha, imprimirHolerite, imprimirHolerites,
+  type Holerite as DocHolerite,
+} from "@/lib/holerite";
 import { ModalDivididoDocumento } from "@/components/ModalDivididoDocumento";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { AvisoSalvo } from "@/components/AvisoSalvo";
@@ -76,7 +82,12 @@ type RegistroFolha = {
   recorrente: boolean; dia_vencimento: number | null;
   conta_corrente_id?: number | null;
   origem_recorrencia_id: number | null; numero_lancamento_gerado: string | null;
-  detalhe: { label: string; valor: number }[];
+  // Cada linha traz agora descrição, REFERÊNCIA (de onde o valor veio) e,
+  // quando é desconto de vale, a origem com o `vale_id` — o que substitui o
+  // `/vale/i.test(label)` que a tela usava para adivinhar "o que é vale".
+  detalhe: LinhaHolerite[];
+  totais: TotaisHolerite;
+  bases: BasesHolerite;
   usuario_nome?: string | null;
 };
 
@@ -368,7 +379,14 @@ export default function FolhaPagamentoView() {
   ), [unificada, fUniVencDe, fUniVencAte, fUniStatus, fUniPessoa, tipoUnificado]);
   const { linhasOrdenadas: unificadaOrdenada, coluna: uniColuna, dir: uniDir, ordenar: uniOrdenar } = useOrdenacao(unificadaFiltrada);
   const somaUnificadaFiltrada = unificadaFiltrada.reduce((a, l) => a + l.valor, 0);
-  const somaUniPendente = unificadaFiltrada.filter((l) => l.status === "pendente").reduce((a, l) => a + l.valor, 0);
+  // Uma folha em que os descontos passam os vencimentos tem líquido NEGATIVO —
+  // e, somada aqui, REDUZIA o total a pagar do mês: o erro se disfarçava de
+  // bom número. Sai da soma e vira um número próprio, em valor absoluto.
+  const uniBloqueadas = unificadaFiltrada.filter((l) => l.valor < 0);
+  const somaUniBloqueada = uniBloqueadas.reduce((a, l) => a + Math.abs(l.valor), 0);
+  const somaUniPendente = unificadaFiltrada
+    .filter((l) => l.status === "pendente" && l.valor >= 0)
+    .reduce((a, l) => a + l.valor, 0);
   const somaUniPago = unificadaFiltrada.filter((l) => l.status === "pago").reduce((a, l) => a + l.valor, 0);
 
   const valesFiltrados = useMemo(() => (vales || []).filter((v: any) =>
@@ -821,33 +839,44 @@ export default function FolhaPagamentoView() {
     return m;
   }, [regs]);
 
+  // O documento de um lançamento de folha — o MESMO objeto que a tela de
+  // Contas renderiza e que a impressão consome, montado uma vez só. É aqui
+  // que a expansão da linha deixa de ser uma lista "rótulo → valor" e passa a
+  // ser o recibo de quatro colunas, com cada desconto clicável até a origem.
+  function holeriteDoRegistro(r: RegistroFolha): DocHolerite | null {
+    return holeriteDaLinha({
+      tipo: "funcionario", origem_id: r.id, origem_subtipo: "folha",
+      pessoa_id: r.pessoa_id, pessoa_nome: r.pessoa_nome,
+      descricao: `Folha — ${r.competencia}`,
+      valor: r.valor_liquido,
+      data_vencimento: r.data_vencimento ?? null,
+      data_pagamento: r.data_pagamento,
+      status: r.status === "pago" ? "pago" : "pendente",
+      pode_excluir: r.status !== "pago",
+      vencido: false,
+      detalhe: r.detalhe, totais: r.totais, bases: r.bases,
+      competencia: r.competencia,
+      numero_lancamento_gerado: r.numero_lancamento_gerado,
+      observacao: r.observacao,
+    });
+  }
+
   // Imprimir holerite — em PDF (identidade visual de relatórios) ou Excel.
-  // Base comum: monta 1 seção por funcionário (usada tanto pelo botão por
-  // linha — 1 funcionário só — quanto pelo botão de lote "do mês filtrado").
   const [imprimindoHoleriteChave, setImprimindoHoleriteChave] = useState<string | null>(null);
   const [imprimindoHoleriteMes, setImprimindoHoleriteMes] = useState(false);
   const [holeriteExportando, setHoleriteExportando] = useState(false);
 
-  async function gerarHolerites(lista: RegistroFolha[], subtitulo: string, base: string, formato: "pdf" | "excel") {
-    const secoes: SecaoFicha[] = lista.map((x) => ({
-      titulo: x.pessoa_nome,
-      colunas: [{ header: "Item", key: "item" }, { header: "Valor", key: "valor" }],
-      linhas: x.detalhe.map((d) => ({ item: d.label, valor: formatBRL(d.valor) })),
-    }));
-    if (formato === "pdf") {
-      await exportarFichaPDF("Holerite — Folha de pagamento", subtitulo, secoes, base);
-    } else {
-      await exportarMultiExcel("Holerite — Folha de pagamento", secoes, base);
-    }
-  }
-
-  // Botão POR LINHA — imprime o holerite só daquele funcionário (antes,
-  // apesar de ficar dentro da linha, ele juntava todo mundo da competência).
+  // Botão POR LINHA — imprime o holerite só daquele funcionário, nas MESMAS
+  // quatro colunas da tela (Descrição · Referência · Vencimentos · Descontos).
+  // Antes o PDF era montado à parte, em duas colunas "Item | Valor": a
+  // referência não tinha onde entrar e o dono recebia sete linhas escritas
+  // "Vale" também no papel. Agora tela, PDF e Excel leem de lib/holerite.
   async function imprimirHoleriteLinha(r: RegistroFolha, formato: "pdf" | "excel") {
+    const documento = holeriteDoRegistro(r);
+    if (!documento) return;
     setHoleriteExportando(true);
     try {
-      const base = `holerite_${r.pessoa_nome.replace(/\s+/g, "_")}_${r.competencia}`;
-      await gerarHolerites([r], mesCompLabel(r.competencia), base, formato);
+      await imprimirHolerite(documento, formato);
     } catch {
       // erro já mostrado ao usuário dentro de exportarFichaPDF/exportarMultiExcel (lib/export.ts)
     } finally {
@@ -877,10 +906,17 @@ export default function FolhaPagamentoView() {
     try {
       const competencias = Array.from(new Set(funcionariosFolhaFiltrados.map((x) => x.competencia))).sort();
       const subtitulo = competencias.length === 1
-        ? mesCompLabel(competencias[0])
+        ? competenciaExtenso(competencias[0])
         : `${competencias.map(mesCompLabel).join(", ")} — filtro atual`;
       const base = `holerites_${competencias.length === 1 ? competencias[0] : "filtro"}`;
-      await gerarHolerites(funcionariosFolhaFiltrados, subtitulo, base, formato);
+      // Folha em que os descontos passam os vencimentos fica FORA do lote: um
+      // papel dizendo que o funcionário deve dinheiro não é comprovante de
+      // pagamento (ver `bloqueioDeImpressao`).
+      const documentos = funcionariosFolhaFiltrados
+        .map(holeriteDoRegistro)
+        .filter((d): d is DocHolerite => !!d && !d.totais.liquido_negativo);
+      if (!documentos.length) return;
+      await imprimirHolerites(documentos, subtitulo, base, formato);
     } catch {
       // erro já mostrado ao usuário dentro de exportarFichaPDF/exportarMultiExcel (lib/export.ts)
     } finally {
@@ -1025,11 +1061,21 @@ export default function FolhaPagamentoView() {
       </div>
 
       {/* KPIs da folha de pagamento unificada (funcionário + empreita + contrato + diária + férias/13º), refletindo os filtros abaixo */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
         <KPI v={String(unificadaFiltrada.length)} l="Lançamentos" />
         <KPI v={formatBRL(somaUniPendente)} l="Pendente" c="var(--amber)" />
         <KPI v={formatBRL(somaUniPago)} l="Pago" c="var(--green-light)" />
+        {uniBloqueadas.length > 0 && (
+          <KPI v={formatBRL(somaUniBloqueada)} l={`Fora da conta (${uniBloqueadas.length})`} c="var(--red)" />
+        )}
       </div>
+      {uniBloqueadas.length > 0 && (
+        <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "-0.75rem", marginBottom: "1rem" }}>
+          Não somado em “Pendente”: {uniBloqueadas.length === 1 ? "1 folha" : `${uniBloqueadas.length} folhas`} em que
+          os descontos passam os vencimentos. Enquanto isso durar, o recibo não pode ser emitido — abra a linha para ver
+          qual parcela de vale ultrapassa.
+        </p>
+      )}
 
       {/* Filtro da folha de pagamento unificada — a categoria já vem do
           seletor do topo; aqui só os filtros complementares. */}
@@ -1075,8 +1121,8 @@ export default function FolhaPagamentoView() {
       {/* Folha de pagamento — funcionário, empreita, contrato, diária e férias/13º num único ledger;
           recolhida por padrão, expande ao clicar no cabeçalho. Prioriza pendências (destacando as vencidas em vinho). */}
       <SecaoRecolhivel
-        titulo="Folha de pagamento" icon={Filter} defaultAberta={false}
-        descricao="Clique para ver todos os lançamentos — funcionário, empreita, contrato, diária e férias/13º"
+        titulo="Folha de pagamento" icon={Filter} defaultAberta
+        descricao="Todos os lançamentos — funcionário, empreita, contrato, diária e férias/13º. Clique numa folha para abrir o recibo."
       >
         {erroUnificada ? <div className="alert-critico"><span>Sem dados: {erroUnificada}.</span></div> : (
         <div className="overflow-x-auto">
@@ -1176,7 +1222,12 @@ export default function FolhaPagamentoView() {
                 const descFolha = arredonda2(r.descontos + r.valor_inss + r.valor_ir);
                 const descVale = arredonda2(r.valor_vale || 0);
                 const descAberto = expandDesc && expandDesc.id === r.id;
-                const valeLinhas = r.detalhe.filter((d) => /vale/i.test(d.label));
+                // Era `r.detalhe.filter((d) => /vale/i.test(d.label))`: a tela
+                // descobria "o que é vale" por regex no rótulo em português,
+                // porque o servidor mandava só texto. Agora a linha declara o
+                // próprio tipo e carrega o vale de origem.
+                const valeLinhas = r.detalhe.filter((d) => d.tipo === "vale");
+                const documento = holeriteDoRegistro(r);
                 return (
                   <Fragment key={chave}>
                     <tr className="row-clickable" title="Clique para ver a discriminação deste lançamento de folha" onClick={() => setExpandedId(expandido ? null : r.id)}
@@ -1250,21 +1301,31 @@ export default function FolhaPagamentoView() {
                           <table style={{ width: "100%", maxWidth: 460, fontSize: "0.78rem" }}>
                             <tbody>
                               {expandDesc!.tipo === "folha" ? (
-                                [
-                                  { label: "Outros descontos", valor: r.descontos },
-                                  { label: `INSS${r.percentual_inss ? ` (${r.percentual_inss}%)` : ""}`, valor: r.valor_inss },
-                                  { label: `IR${r.percentual_ir ? ` (${r.percentual_ir}%)` : ""}`, valor: r.valor_ir },
-                                ].filter((d) => d.valor).map((d, i) => (
+                                // Lido do MESMO discriminado do recibo — este
+                                // painel e o holerite ao lado montavam a lista
+                                // por conta própria e podiam discordar sobre
+                                // uma retenção digitada sem percentual.
+                                r.detalhe.filter((d) => ["inss", "ir", "outros"].includes(d.tipo)).map((d, i) => (
                                   <tr key={i}>
-                                    <td style={{ padding: "0.15rem 0.5rem 0.15rem 0" }}>{d.label}</td>
-                                    <td style={{ textAlign: "right", color: "var(--red)" }}>− {formatBRL(d.valor)}</td>
+                                    <td style={{ padding: "0.15rem 0.5rem 0.15rem 0" }}>
+                                      {d.descricao}
+                                      <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{d.referencia}</div>
+                                    </td>
+                                    <td style={{ textAlign: "right", color: "var(--red)", verticalAlign: "top" }}>− {formatBRL(d.desconto || 0)}</td>
                                   </tr>
                                 ))
                               ) : (
+                                // Uma linha por parcela, com a REFERÊNCIA que
+                                // desempata: "Parcela 3 de 13 · vale de
+                                // 12/03/2026" no lugar de N linhas idênticas
+                                // escritas "Vale".
                                 valeLinhas.map((d, i) => (
                                   <tr key={i}>
-                                    <td style={{ padding: "0.15rem 0.5rem 0.15rem 0" }}>{d.label}</td>
-                                    <td style={{ textAlign: "right", color: "var(--amber)" }}>{formatBRL(d.valor)}</td>
+                                    <td style={{ padding: "0.15rem 0.5rem 0.15rem 0" }}>
+                                      {d.descricao}
+                                      <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{d.referencia}</div>
+                                    </td>
+                                    <td style={{ textAlign: "right", color: "var(--amber)", verticalAlign: "top" }}>− {formatBRL(d.desconto || 0)}</td>
                                   </tr>
                                 ))
                               )}
@@ -1289,17 +1350,13 @@ export default function FolhaPagamentoView() {
                     {expandido && !editando && (
                       <tr><td colSpan={admin ? 12 : 11}>
                         <div style={{ padding: "0.6rem 0" }} onClick={(e) => e.stopPropagation()}>
-                          <table style={{ width: "100%", maxWidth: 420, fontSize: "0.78rem" }}>
-                            <tbody>
-                              {r.detalhe.map((d, i) => (
-                                <tr key={i}>
-                                  <td style={{ padding: "0.15rem 0.5rem 0.15rem 0", fontWeight: d.label === "Valor líquido" ? 700 : 400 }}>{d.label}</td>
-                                  <td style={{ textAlign: "right", fontWeight: d.label === "Valor líquido" ? 700 : 400, color: d.valor < 0 ? "var(--red)" : undefined }}>{formatBRL(d.valor)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                          {r.observacao && <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Obs.: {r.observacao}</p>}
+                          {/* A prévia do recibo, na própria linha: as quatro
+                              colunas do papel, e cada desconto clicável até a
+                              origem. Antes era uma lista "rótulo → valor" em
+                              que sete parcelas de vale saíam idênticas. */}
+                          {documento
+                            ? <Holerite documento={documento} compacto cabecalho={false} />
+                            : <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Sem discriminação para esta competência.</p>}
                           {r.status !== "pago" ? (
                             <button className="btn-ghost mt-2" title="Editar este lançamento de folha (enquanto não estiver pago)" style={{ fontSize: "0.75rem" }} onClick={() => iniciarEdicao(r)}>
                               <Pencil size={12} /> Editar lançamento

@@ -116,7 +116,11 @@ const CONTAS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "a_receber", label: "Contas a receber", icon: Clock, desc: "Receitas em aberto (sem data de recebimento)" },
   { id: "pagas", label: "Contas pagas", icon: CheckCircle2, desc: "Despesas já quitadas" },
   { id: "recebidas", label: "Contas recebidas", icon: CheckCircle2, desc: "Receitas já recebidas" },
-  { id: "folha_relatorio", label: "Folha de Pagamento", icon: Users, desc: "Relatório da folha — pagos e a vencer, com exportação" },
+  // Os dois itens de menu se chamavam "Folha de Pagamento" e o segundo continha
+  // o primeiro — daí a confusão de qual abrir. Cada um passa a dizer o trabalho
+  // que faz: aqui se CONSULTA e IMPRIME o documento; em Ações se FECHA o mês.
+  // (O id não muda: navegação salva e links profundos continuam valendo.)
+  { id: "folha_relatorio", label: "Holerites e recibos", icon: Users, desc: "O recibo de cada pessoa, linha a linha — com impressão individual e em lote" },
   // id PRÓPRIO ("todas_contas"), distinto do "extrato" de Relatórios > Extrato
   // completo — mesma tela/mesmo destino visual (ver EXTRATO_IDS abaixo), mas
   // um id diferente evita reintroduzir o bug de destaque duplicado (clicar em
@@ -133,7 +137,7 @@ const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "pagamento", label: "Pagamento", icon: Wallet, desc: "Lançar/quitar uma nota de despesa" },
   { id: "recebimento", label: "Recebimento", icon: Wallet, desc: "Lançar/quitar uma nota de receita" },
   { id: "lote", label: "Pagamento/recebimento em lote", icon: Layers, desc: "Dar baixa em várias notas de uma vez" },
-  { id: "folha", label: "Folha de pagamento", icon: Users, desc: "Lançamento e acompanhamento da folha" },
+  { id: "folha", label: "Fechamento da folha", icon: Users, desc: "Lançar, conferir e pagar a folha do mês — para só consultar/imprimir, use Contas > Holerites e recibos" },
   { id: "recorrentes", label: "Lançamentos recorrentes", icon: Repeat, desc: "Contas que se repetem todo mês (energia, internet, aluguel...) — cadastre uma vez, gere só com o valor do período" },
 ];
 const PLANEJAMENTO: { id: Rel; label: string; icon: any; desc: string }[] = [

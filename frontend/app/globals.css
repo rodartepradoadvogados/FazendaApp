@@ -788,6 +788,19 @@ textarea:focus-visible, [tabindex]:focus-visible {
 }
 .flash-sucesso { animation: flash-sucesso 0.6s ease-out; }
 
+/* Gêmeo dourado do flash acima, para LOCALIZAR — "é este, aqui". Usado quando
+   a origem de um desconto aparece a partir do clique na linha do holerite: a
+   resposta é momentânea (o usuário já está olhando), então precisa ser um
+   pisco e não um destaque permanente. É a única animação da folha que carrega
+   informação que nada mais na tela carrega — ela é o desempate que antes
+   terminava em palpite. */
+@keyframes flash-localizado {
+  0% { background-color: transparent; }
+  30% { background-color: color-mix(in srgb, var(--dourado-light, #E0A63C) 26%, transparent); }
+  100% { background-color: transparent; }
+}
+.flash-localizado { animation: flash-localizado 0.6s ease-out; }
+
 /* Colapso de linha de lista — o "sumir desaparecendo" que recolhe o espaço
    em vez de deixar buraco. Envolver o conteúdo real da linha num wrapper com
    esta classe; alternar `.linha-saindo` anima a saída (senão os vizinhos
@@ -841,6 +854,7 @@ textarea:focus-visible, [tabindex]:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .check-tracado { transition: none; }
   .flash-sucesso { animation: none; }
+  .flash-localizado { animation: none; }
   .linha-colapsavel, .linha-colapsavel.linha-entrando, .linha-colapsavel:not(.linha-entrando) { transition: none; transform: none; }
   .painel-expansivel { transition: none; }
   .popup-fundo, .popup-fundo.popup-saindo, .popup-caixa, .popup-caixa.popup-saindo { animation: none; }
