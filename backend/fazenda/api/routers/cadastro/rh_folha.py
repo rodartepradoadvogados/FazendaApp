@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import calendar
 import json
+import logging
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -47,6 +48,8 @@ from fazenda.config import settings
 FORMAS_PAGAMENTO_VALE = ["dinheiro", "pix", "transferencia", "desconto_integral_folha"]
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 def _resolver_conta_corrente(
@@ -3429,10 +3432,39 @@ def _resolver_vale_comprovante(session: Session, tipo: str, vale_id: int, fazend
 def _caminho_comprovante_vale(session: Session, fazenda_id: int | None, tipo: str, vale_id: int, coluna, nome_arquivo: str) -> str:
     """fazenda-X/vales/{tipo}/{vale_id}/0001_nome.ext — mesmo espírito
     sequencial de `_caminho_anexo_lancamento` (financeiro.py), sem depender
-    de `numero_lancamento` (que aqui pode nem existir)."""
+    de `numero_lancamento` (que aqui pode nem existir).
+
+    BUG CORRIGIDO (mesmo defeito do anexo de Pessoa, relatado pelo dono em
+    06/09/2026 e corrigido em `cadastro/pessoas.py::_caminho_anexo_pessoa`,
+    depois em pedidos.py e financeiro.py; este módulo tinha a cópia): a
+    sequência vinha de `1 + len(existentes)`, ou seja, da CONTAGEM de
+    comprovantes vivos. Excluir um comprovante faz a contagem cair, então o
+    próximo upload reaproveita um número que já está em uso; se o nome do
+    arquivo também se repetir — que é a regra, não a exceção, no fluxo real
+    "anexei o comprovante errado, apago e anexo o certo", em que o segundo
+    envio traz o mesmo nome gerado pelo banco (comprovante.pdf, pix.pdf) — o
+    caminho gerado é IDÊNTICO ao de um comprovante que ainda existe. O envio
+    usa `x-upsert`, então o arquivo antigo é sobrescrito em silêncio e as
+    DUAS linhas do banco passam a apontar para o mesmo objeto no Storage. A
+    partir daí, excluir uma apaga o arquivo das duas, e a outra fica travada
+    para sempre: o Storage responde 404 na exclusão, o endpoint devolvia 400
+    e a linha nunca saía da tela.
+
+    Agora a sequência sai do MAIOR número já usado nos caminhos do vale (não
+    da contagem): número devolvido por uma exclusão nunca é reemitido
+    enquanto sobrar qualquer comprovante, então dois comprovantes vivos
+    jamais dividem o mesmo caminho.
+    """
     pasta = f"fazenda-{fazenda_id if fazenda_id is not None else 'geral'}/vales/{tipo}/{vale_id}"
     existentes = session.exec(select(LancamentoAnexo).where(coluna == vale_id)).all()
-    seq = 1 + len(existentes)
+    maior = 0
+    for a in existentes:
+        # "…/vales/funcionario/7/0003_pix.pdf" -> 3. Caminho antigo/fora do
+        # padrão (ou nulo) simplesmente não entra na conta.
+        prefixo = (a.caminho_storage or "").rsplit("/", 1)[-1].split("_", 1)[0]
+        if prefixo.isdigit():
+            maior = max(maior, int(prefixo))
+    seq = 1 + max(maior, len(existentes))
     return f"{pasta}/{seq:04d}_{nome_seguro_storage(nome_arquivo)}"
 
 
@@ -3524,13 +3556,53 @@ def excluir_comprovante_vale(
     anexo_id: int, session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    """Remove o comprovante anexado ao vale.
+
+    BUG CORRIGIDO (mesmo defeito do anexo de Pessoa, relatado pelo dono em
+    06/09/2026; este módulo tinha a cópia): qualquer falha do Supabase
+    Storage ao apagar o arquivo virava 400 e ABORTAVA a exclusão da linha no
+    banco. Arquivo que já não está lá (apagado à mão no painel do Supabase,
+    caminho duplicado por causa do bug de sequência em
+    `_caminho_comprovante_vale`, upload que falhou no meio) devolve 404 no
+    delete — e o comprovante passava a ser IMPOSSÍVEL de tirar da tela: toda
+    tentativa repetia o mesmo 400, para sempre, porque a causa era
+    justamente o arquivo não existir mais.
+
+    A linha do banco é o que o usuário enxerga e é ela que tem que sair. O
+    arquivo no bucket é o subproduto: se a remoção dele falhar, no pior caso
+    sobra um objeto órfão no Storage (invisível, sem nenhuma linha
+    apontando), que é infinitamente melhor que um comprovante fantasma preso
+    no vale.
+    """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     anexo = _anexo_comprovante_vale(session, anexo_id, fazenda_id)
     if anexo.caminho_storage:
-        try:
-            excluir_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+        # Os comprovantes gravados ANTES da correção de
+        # `_caminho_comprovante_vale` podem dividir o mesmo caminho com outro
+        # anexo vivo. Apagar o objeto nesse caso derrubaria o download do
+        # irmão que fica — só remove do bucket quando ninguém mais aponta
+        # para lá. A busca é em LancamentoAnexo inteiro (não só nos
+        # comprovantes de vale) porque o comprovante em lote do Financeiro
+        # também referencia um arquivo só a partir de várias linhas.
+        # O recorte por fazenda entra NA PRÓPRIA consulta (nunca num `if` em
+        # volta dela): sem multi-fazenda provisionado vira `fazenda_id IS
+        # NULL`, que é exatamente o conjunto de linhas desse ambiente. Anexo
+        # de outra fazenda não é "irmão" de ninguém aqui.
+        compartilhado = session.exec(
+            select(LancamentoAnexo).where(
+                LancamentoAnexo.fazenda_id == fazenda_id,
+                LancamentoAnexo.caminho_storage == anexo.caminho_storage,
+                LancamentoAnexo.id != anexo.id,
+            )
+        ).first()
+        if not compartilhado:
+            try:
+                excluir_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
+            except RuntimeError as exc:
+                logger.warning(
+                    "Comprovante %s do vale (funcionario=%s, avulso=%s): linha excluída mesmo com falha ao apagar o arquivo no Storage (%s): %s",
+                    anexo.id, anexo.vale_funcionario_id, anexo.vale_avulso_id, anexo.caminho_storage, exc,
+                )
     session.delete(anexo)
     session.commit()
     return {"excluido": True}
