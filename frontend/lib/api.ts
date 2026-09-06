@@ -40,6 +40,14 @@ export function mensagemErroApi(detail: unknown): string | null {
   if (detail && typeof detail === "object" && "msg" in (detail as any)) {
     return String((detail as any).msg);
   }
+  // Os 409 de confirmação do módulo de RH (vale acima do pendente, pagamento
+  // de diária acima do saldo devedor) mandam o texto em `mensagem`, junto dos
+  // números que o aviso precisa mostrar. Sem esta linha o aviso caía no
+  // genérico "Erro ao lançar vale" — a trava funcionava e a pessoa não
+  // entendia por quê.
+  if (detail && typeof detail === "object" && "mensagem" in (detail as any)) {
+    return String((detail as any).mensagem);
+  }
   return null;
 }
 
@@ -2194,6 +2202,74 @@ export async function fetchProporcionalAdmissao(pessoaId: number, competencia: s
   return res.json();
 }
 
+// ── Discriminação do holerite (as 4 colunas do recibo de papel) ──
+// Cada linha do discriminado passa a dizer DE ONDE o valor veio: a coluna
+// `referencia` ("7,78% sobre R$ 2.000,00", "Parcela 3 de 13 · vale de
+// 12/03/2026") e, quando é desconto de vale, a `origem` com o `vale_id` — o
+// que substitui o antigo `/vale/i.test(label)` (regex no rótulo em português,
+// que nunca teve como desempatar dois vales de mesmo valor no mesmo mês).
+// `label`/`valor` continuam sendo o texto e o valor com sinal de antes.
+export type OrigemVale = {
+  tipo: "vale";
+  vale_id: number;
+  parcela_id: number | null;
+  parcela: number;
+  parcelas_total: number;
+  valor_total: number;
+  data_pagamento: string | null;
+  forma_pagamento: string;
+  observacao: string | null;
+  numero_documento_pagamento: string | null;
+  numero_lancamento_gerado: string | null;
+  /** true quando forma_pagamento === "desconto_integral_folha": não houve
+   *  saída de caixa, então NÃO existe lançamento no extrato — por desenho. */
+  sem_saida_de_caixa: boolean;
+  origem_lancamento: {
+    item_id: number | null; numero_lancamento: string | null; produto: string | null;
+    valor_item: number | null; fornecedor_cliente: string | null;
+    numero_documento: string | null; data_emissao: string | null;
+  } | null;
+  aplicada: boolean;
+};
+export type OrigemRetencao = {
+  tipo: "retencao";
+  percentual: number | null;
+  base: number | null;
+  /** null quando não há percentual gravado — sem base declarada, conferir
+   *  seria inventar o percentual a partir do valor. */
+  confere: boolean | null;
+  diferenca: number | null;
+};
+export type LinhaHolerite = {
+  label: string;
+  valor: number;
+  tipo: "bruto" | "inss" | "ir" | "vale" | "outros" | "liquido" | "ferias" | "terco" | "abono";
+  descricao: string;
+  referencia: string;
+  provento: number | null;
+  desconto: number | null;
+  origem: OrigemVale | OrigemRetencao | null;
+};
+export type TotaisHolerite = {
+  total_proventos: number;
+  total_descontos: number;
+  liquido: number;
+  /** Descontos maiores que vencimentos: não é um líquido válido, é um
+   *  excedente — e um recibo assim não pode ser emitido. */
+  liquido_negativo: boolean;
+  excedente: number;
+};
+export type BasesHolerite = {
+  /** Sempre `FolhaPagamento.valor_bruto`, NUNCA `Pessoa.salario_base` (valor
+   *  vivo: reimprimir 2024 mostraria o salário de hoje). */
+  salario_base: number;
+  base_inss: number | null;
+  base_ir: number | null;
+  fgts_projetado: number | null;
+  percentual_fgts: number | null;
+  dctf_projetado: number | null;
+};
+
 // ── Folha de pagamento (Configurações > Cadastro / Financeiro) ──
 export async function fetchFolhaPagamento() {
   const res = await authFetch(`${API}/cadastro/folha-pagamento`, { cache: "no-store" });
@@ -2303,6 +2379,16 @@ export type LinhaFolhaUnificada = {
   status: "pendente" | "pago";
   pode_excluir: boolean;
   vencido: boolean;
+  /** Discriminado do documento — presente em funcionário (holerite completo) e
+   *  em férias/13º (recibo com referência própria). O ledger já calculava isso
+   *  e descartava ao montar a linha: era por isso que a tela de Contas não
+   *  tinha o que mostrar ao clicar num nome. */
+  detalhe?: LinhaHolerite[];
+  totais?: TotaisHolerite;
+  bases?: BasesHolerite;
+  competencia?: string;
+  numero_lancamento_gerado?: string | null;
+  observacao?: string | null;
 };
 export async function fetchFolhaPagamentoUnificada(): Promise<LinhaFolhaUnificada[]> {
   const res = await authFetch(`${API}/cadastro/folha-pagamento-unificada`, { cache: "no-store" });
@@ -2486,9 +2572,26 @@ export async function fetchDiarias(incluirFinalizadas = false) {
   if (!res.ok) throw new Error(`Diárias error: ${res.status}`);
   return res.json();
 }
-export async function encerrarDiaria(id: number) {
-  const res = await authFetch(`${API}/cadastro/diarias/${id}/encerrar`, { method: "PUT" });
+/** Encerra o período e, havendo saldo devedor, EMITE a conta a pagar (que
+ * cai sozinha na Agenda e em Contas a Pagar). `data_encerramento` é o último
+ * dia trabalhado — sem ele o contador não parava e o período "encerrado"
+ * seguia somando diária todo dia, invisível. O corpo é opcional no backend
+ * por compatibilidade, mas a tela sempre manda a data. */
+export async function encerrarDiaria(id: number, dados?: {
+  data_encerramento?: string; data_vencimento?: string; emitir_conta?: boolean;
+}) {
+  const res = await authFetch(`${API}/cadastro/diarias/${id}/encerrar`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados ?? {}),
+  });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao encerrar diária"); }
+  return res.json();
+}
+/** Desfaz o encerramento: apaga a cobrança em aberto e descongela o
+ * apurado. Recusado (400) se a conta emitida já foi paga — nesse caso o
+ * caminho é estornar a baixa em Financeiro › Lançamentos. */
+export async function reabrirDiaria(id: number) {
+  const res = await authFetch(`${API}/cadastro/diarias/${id}/reabrir`, { method: "PUT" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao reabrir diária"); }
   return res.json();
 }
 export async function criarDiaria(dados: {
@@ -2509,10 +2612,17 @@ export async function atualizarDiaria(diariaId: number, dados: { data_inicio: st
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar diária"); }
   return res.json();
 }
+/** Pagar acima do saldo devedor da diária responde 409 com {mensagem,
+ * saldo_devedor, excedente, total_ate_hoje, valor_pago, valor_vale} — pagar a
+ * mais continua permitido (acerto final, gorjeta, arredondamento), mas nunca
+ * em silêncio: reenviar com `confirmar_excedente: true` depois de mostrar o
+ * aviso. Sem isso o operador que digita o total esquecendo o adiantamento
+ * paga duas vezes sem nenhum sinal. */
 export async function registrarPagamentoDiaria(diariaId: number, dados: {
   data_pagamento: string; valor: number; observacao?: string;
   // Conta bancária de onde sai o pagamento — OPCIONAL (ver _resolver_conta_corrente no backend).
   conta_corrente_id?: number | null;
+  confirmar_excedente?: boolean;
 }): Promise<{ numero_lancamento_gerado: string } & Record<string, any>> {
   const res = await authFetch(`${API}/cadastro/diarias/${diariaId}/pagamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -2840,12 +2950,19 @@ export function urlComprovanteVale(anexoId: number): string {
   return `${API}/cadastro/vales/comprovante/${anexoId}`;
 }
 
+/** Vale maior que o saldo pendente do alvo responde 409 com {mensagem,
+ * saldo_pendente, excedente} — adiantar acima do pendente é legítimo (etapa
+ * ainda não cadastrada, contrato a prorrogar, contrato sem frequência
+ * definida, que não tem parcela nenhuma), então não se recusa: avisa-se e,
+ * com `confirmar_excedente: true`, a sobra fica gravada como valor não
+ * abatido em vez de sumir do controle. */
 export async function criarValeAvulso(dados: {
   origem_tipo: "empreitada" | "contrato" | "diaria"; origem_id: number; valor: number;
   forma_pagamento: string; data_pagamento: string; observacao?: string;
   // Conta bancária de onde sai o vale — obrigatória quando a forma de pagamento
   // implica saída de caixa agora (dinheiro/pix/transferência); ver _validar_conta_vale_avulso.
   conta_corrente_id?: number;
+  confirmar_excedente?: boolean;
 }) {
   const res = await authFetch(`${API}/cadastro/vale-avulso`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

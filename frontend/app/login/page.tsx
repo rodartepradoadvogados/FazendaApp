@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { LogIn, Loader2, Eye, EyeOff, X } from "lucide-react";
 import { login, verificarLoginParaResetSenha, enviarResetSenha, ehContador } from "@/lib/api";
-import { ehAppOuPwa } from "@/lib/nativo";
+import { ehAppDeCampo, ehAppOuPwa } from "@/lib/nativo";
 import { LoginWatermark } from "@/components/LoginWatermark";
 import { PublicPage } from "@/components/institucional/PublicShell";
 import { CowDataMark } from "@/components/brand/CowDataMark";
@@ -131,7 +131,7 @@ function Hero() {
     // (casca mobile) — nunca o site desktop completo (ver capacitor.config.ts
     // e app/manifest.ts). Só o botão proposital "Site completo" do Menu do
     // app deve levar ao "/" de verdade.
-    router.replace((await ehAppOuPwa()) ? "/app" : "/");
+    router.replace((await ehAppDeCampo()) ? "/app" : "/");
   };
 
   const entrar = async (e: React.FormEvent) => {

@@ -24,12 +24,76 @@ from fazenda.models import (
     Pessoa, Usuario, ValeAvulso, ValeAvulsoAbatimento,
 )
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento, rotulo_conta_corrente
+from fazenda.rules import holerite
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
 
 from .rh_folha import _competencia_seguinte, _resolver_conta_corrente, listar_folha_pagamento
 
 router = APIRouter()
+
+PARCELA_DECIMO_ROTULO = {"unica": "parcela única", "primeira": "1ª parcela", "segunda": "2ª parcela"}
+
+
+def _detalhe_ferias(f: FeriasFuncionario) -> list[dict]:
+    """
+    Discriminação do recibo de férias nas mesmas quatro colunas do holerite.
+    A REFERÊNCIA aqui não precisa ser inventada: dias gozados, dias de direito
+    e período aquisitivo já estão gravados no modelo — é o mesmo padrão de
+    `RescisaoFuncionario`, que guarda os metadados junto do valor e por isso é
+    o único documento do sistema que já saía completo.
+    """
+    aquisitivo = (
+        f"aquisitivo {f.periodo_aquisitivo_inicio.strftime('%d/%m/%Y')}"
+        f" a {f.periodo_aquisitivo_fim.strftime('%d/%m/%Y')}"
+    )
+    linhas = [holerite.linha(
+        "ferias", "Férias", f.valor_ferias, "Férias",
+        f"{f.dias_gozados} de {f.dias_direito} dias · {aquisitivo}",
+        provento=round(f.valor_ferias, 2),
+    )]
+    if f.valor_terco_constitucional:
+        linhas.append(holerite.linha(
+            "terco", "1/3 constitucional", f.valor_terco_constitucional,
+            "1/3 constitucional", f"sobre {f.dias_gozados} dias de férias",
+            provento=round(f.valor_terco_constitucional, 2),
+        ))
+    # O abono pecuniário (dias vendidos, art. 143 CLT) está embutido em
+    # valor_total pelo cálculo; só vira linha quando de fato houve venda de
+    # dias — senão seria um zero decorativo num documento.
+    abono = round(f.valor_total - f.valor_ferias - f.valor_terco_constitucional, 2)
+    if f.abono_pecuniario_dias and abs(abono) > 0.001:
+        linhas.append(holerite.linha(
+            "abono", "Abono pecuniário", abono, "Abono pecuniário",
+            f"{f.abono_pecuniario_dias} dias vendidos (art. 143 CLT), com 1/3",
+            provento=abono,
+        ))
+    linhas.append(holerite.linha("liquido", "Valor total", f.valor_total, "Total", ""))
+    return linhas
+
+
+def _detalhe_decimo_terceiro(d: DecimoTerceiro) -> list[dict]:
+    """
+    Discriminação do recibo de 13º. Ressalva assumida: o modelo guarda
+    `valor_inss`/`valor_ir` mas NÃO guarda os percentuais deles — então a
+    referência da retenção diz "valor informado" em vez de inventar um
+    percentual a partir do valor (mesma regra do INSS/IR da folha).
+    """
+    linhas = [holerite.linha(
+        "bruto", "13º salário bruto", d.valor_bruto, "13º salário",
+        f"{d.meses_trabalhados}/12 avos de {d.ano} · {PARCELA_DECIMO_ROTULO.get(d.parcela, d.parcela)}",
+        provento=round(d.valor_bruto, 2),
+    )]
+    for tipo, rotulo, valor in (("inss", "INSS", d.valor_inss), ("ir", "IR", d.valor_ir)):
+        if not valor:
+            continue
+        linhas.append(holerite.linha(
+            tipo, rotulo, -valor, rotulo, "Valor informado, sem percentual",
+            desconto=round(valor, 2),
+        ))
+    linhas.append(holerite.linha("liquido", "Valor líquido", d.valor_liquido, "Líquido", ""))
+    return linhas
+
 
 @router.get("/folha-pagamento-unificada")
 def listar_folha_pagamento_unificada(
@@ -57,6 +121,17 @@ def listar_folha_pagamento_unificada(
             "data_pagamento": r["data_pagamento"],
             "status": r["status"],
             "pode_excluir": r["status"] == "pendente",
+            # O discriminado JÁ era calculado aqui e descartado ao montar este
+            # dict — por isso a tela de Contas nunca teve o que mostrar ao
+            # clicar num nome e virou "a mesma tabela sem o clique". Passa a
+            # viajar junto, com a competência e o nº do lançamento que ligam a
+            # linha ao extrato.
+            "competencia": r["competencia"],
+            "detalhe": r["detalhe"],
+            "totais": r["totais"],
+            "bases": r["bases"],
+            "numero_lancamento_gerado": r["numero_lancamento_gerado"],
+            "observacao": r["observacao"],
         })
 
     query_empreitadas = select(Empreitada)
@@ -144,6 +219,41 @@ def listar_folha_pagamento_unificada(
         query_diarias = query_diarias.where(Diaria.fazenda_id == fazenda_id)
         query_pagamentos_diaria = query_pagamentos_diaria.where(DiariaPagamento.fazenda_id == fazenda_id)
     diarias = {d.id: d for d in session.exec(query_diarias).all()}
+
+    # Conta a pagar emitida no encerramento do período de uma diarista (ver
+    # `encerrar_diaria`) — é uma pendência de RH como qualquer outra e
+    # precisava aparecer neste ledger; sem ela, o único lugar do módulo RH
+    # que mostrava diária eram os pagamentos JÁ feitos, ou seja, exatamente o
+    # que não corre risco de ser esquecido.
+    numeros_encerramento = [d.numero_lancamento_gerado for d in diarias.values() if d.numero_lancamento_gerado]
+    contas_encerramento = {
+        c.numero_lancamento: c
+        for c in session.exec(
+            select(ContaGerencial).where(
+                ContaGerencial.numero_lancamento.in_(numeros_encerramento),
+                ContaGerencial.fazenda_id == fazenda_id,
+            )
+        ).all()
+    } if numeros_encerramento else {}
+    for d in diarias.values():
+        conta = contas_encerramento.get(d.numero_lancamento_gerado)
+        if conta is None:
+            continue
+        pago = conta.valor_pago is not None
+        linhas.append({
+            "tipo": "diaria", "origem_id": d.id, "origem_subtipo": "encerramento",
+            "pessoa_id": d.pessoa_id, "pessoa_nome": pessoas.get(d.pessoa_id, "—"),
+            "descricao": conta.descricao or "Diária — acerto do período",
+            "valor": conta.valor_total,
+            "data_vencimento": conta.data_vencimento,
+            "data_pagamento": conta.data_pagamento,
+            "status": "pago" if pago else "pendente",
+            # Excluir por aqui removeria a conta e deixaria a diária
+            # apontando para um lançamento que não existe mais — o caminho
+            # é reabrir o período (que apaga a cobrança junto).
+            "pode_excluir": False,
+        })
+
     for pg in session.exec(query_pagamentos_diaria).all():
         d = diarias.get(pg.diaria_id)
         if not d:
@@ -181,6 +291,7 @@ def listar_folha_pagamento_unificada(
     for f in ferias:
         conta = contas_ferias_decimo.get(f.numero_lancamento_gerado)
         pago = bool(conta and conta.valor_pago is not None)
+        detalhe = _detalhe_ferias(f)
         linhas.append({
             "tipo": "ferias_decimo", "origem_id": f.id, "origem_subtipo": "ferias",
             "pessoa_id": f.pessoa_id, "pessoa_nome": pessoas.get(f.pessoa_id, "—"),
@@ -190,10 +301,15 @@ def listar_folha_pagamento_unificada(
             "data_pagamento": conta.data_pagamento if conta else f.data_pagamento,
             "status": "pago" if pago else "pendente",
             "pode_excluir": not pago,
+            "detalhe": detalhe,
+            "totais": holerite.totais_holerite(detalhe),
+            "numero_lancamento_gerado": f.numero_lancamento_gerado,
+            "observacao": f.observacao,
         })
     for d in decimos:
         conta = contas_ferias_decimo.get(d.numero_lancamento_gerado)
         pago = bool(conta and conta.valor_pago is not None)
+        detalhe = _detalhe_decimo_terceiro(d)
         linhas.append({
             "tipo": "ferias_decimo", "origem_id": d.id, "origem_subtipo": "decimo_terceiro",
             "pessoa_id": d.pessoa_id, "pessoa_nome": pessoas.get(d.pessoa_id, "—"),
@@ -203,6 +319,10 @@ def listar_folha_pagamento_unificada(
             "data_pagamento": conta.data_pagamento if conta else d.data_pagamento,
             "status": "pago" if pago else "pendente",
             "pode_excluir": not pago,
+            "detalhe": detalhe,
+            "totais": holerite.totais_holerite(detalhe),
+            "numero_lancamento_gerado": d.numero_lancamento_gerado,
+            "observacao": d.observacao,
         })
 
     hoje = date.today()
@@ -265,6 +385,35 @@ class EmpreitadaIn(BaseModel):
     centro_custo: str = "Pecuária Leiteira"
 
 
+def _abatimentos_de_vale_por_item(
+    session: Session, item_tipo: str, item_ids: list[int], fazenda_id: int | None,
+) -> dict[int, float]:
+    """Quanto de vale avulso já foi abatido de cada parcela/etapa
+    (`ValeAvulsoAbatimento`), por item.
+
+    Serve para a tela mostrar SEPARADAMENTE o bruto contratado e o desconto
+    que virou o valor a pagar. Antes só existia o líquido: quando o
+    empreiteiro dizia "mas a parcela era R$ 2.000", não havia nada na tela
+    que explicasse o R$ 1.500 — a diferença tinha que ser deduzida abrindo o
+    relatório de vales.
+
+    Filtra por `fazenda_id` sem o `if fazenda_id is not None` tolerante que
+    o resto deste arquivo ainda usa: consulta nova não repete furo antigo."""
+    if not item_ids:
+        return {}
+    linhas = session.exec(
+        select(ValeAvulsoAbatimento).where(
+            ValeAvulsoAbatimento.item_tipo == item_tipo,
+            ValeAvulsoAbatimento.item_id.in_(item_ids),
+            ValeAvulsoAbatimento.fazenda_id == fazenda_id,
+        )
+    ).all()
+    total: dict[int, float] = {}
+    for ab in linhas:
+        total[ab.item_id] = round(total.get(ab.item_id, 0.0) + ab.valor_abatido, 2)
+    return total
+
+
 def _serializar_empreitada(session: Session, e: Empreitada) -> dict:
     parcelas = session.exec(
         select(EmpreitadaParcela).where(EmpreitadaParcela.empreitada_id == e.id).order_by(EmpreitadaParcela.data_vencimento)
@@ -277,13 +426,29 @@ def _serializar_empreitada(session: Session, e: Empreitada) -> dict:
     if numeros:
         contas = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros))).all()
         pagos = {c.numero_lancamento for c in contas if c.valor_pago is not None}
+    abatido_parcela = _abatimentos_de_vale_por_item(session, "empreitada_parcela", [p.id for p in parcelas], e.fazenda_id)
+    abatido_etapa = _abatimentos_de_vale_por_item(session, "empreitada_etapa", [et.id for et in etapas], e.fazenda_id)
     return {
         **e.model_dump(),
+        # `valor_contratado` sai CRU (pode vir None em parcela anterior à
+        # migração d4a1f6c2b9e7 criada fora da API): a tela mostra "—" em vez
+        # de repetir o líquido no lugar do bruto — inventar um "contratado"
+        # igual ao "a pagar" é exatamente o tipo de número que a pessoa
+        # acredita e que não é verdade.
         "parcelas": [
-            {**p.model_dump(), "status": "pago" if p.numero_lancamento_gerado in pagos else "pendente"} for p in parcelas
+            {
+                **p.model_dump(),
+                "status": "pago" if p.numero_lancamento_gerado in pagos else "pendente",
+                "valor_abatido_vales": abatido_parcela.get(p.id, 0.0),
+            }
+            for p in parcelas
         ],
         "etapas": [
-            {**et.model_dump(), "status_pagamento": "pago" if et.numero_lancamento_gerado in pagos else "pendente"}
+            {
+                **et.model_dump(),
+                "status_pagamento": "pago" if et.numero_lancamento_gerado in pagos else "pendente",
+                "valor_abatido_vales": abatido_etapa.get(et.id, 0.0),
+            }
             for et in etapas
         ],
         "vales": _listar_vales_avulsos(session, "empreitada", e.id),
@@ -328,10 +493,17 @@ def criar_empreitada(
     session.refresh(empreitada)
 
     if dados.tipo_pagamento in FORMAS_PAGAMENTO_PARCELA:
-        for parcela in dados.parcelas:
+        # `numero`/`numero_total` nascem aqui e nunca mais mudam — nem quando
+        # uma parcela é excluída (a numeração fica com buraco de propósito:
+        # renumerar quebraria toda referência já impressa em recibo). E
+        # `valor_contratado` guarda o bruto acordado agora, antes de qualquer
+        # vale abater `valor`.
+        total_parcelas = len(dados.parcelas)
+        for i, parcela in enumerate(dados.parcelas, start=1):
             numero_lancamento = _proximo_numero_lancamento(session, parcela.data_vencimento.year)
             session.add(EmpreitadaParcela(
                 empreitada_id=empreitada.id, data_vencimento=parcela.data_vencimento, valor=parcela.valor,
+                numero=i, numero_total=total_parcelas, valor_contratado=parcela.valor,
                 numero_lancamento_gerado=numero_lancamento, fazenda_id=fazenda_id,
             ))
             session.add(ContaGerencial(
@@ -451,10 +623,31 @@ def _sincronizar_conta_parcela(session: Session, numero_lancamento: str | None, 
         session.add(conta)
 
 
+def _reajustar_valor_contratado(session: Session, parcela, item_tipo: str) -> None:
+    """Recoloca o bruto contratado no lugar depois de uma EDIÇÃO MANUAL da
+    parcela (`PUT .../parcelas/{id}`): o que a tela edita é o valor A PAGAR,
+    então o bruto vira esse valor mais o que já foi adiantado em vale.
+    Renegociar a parcela para R$ 1.800 com R$ 500 de vale já abatido
+    significa que o acordo passou a ser R$ 2.300 bruto — e é isso que a
+    coluna "Contratado" precisa dizer.
+
+    A REDISTRIBUIÇÃO não chama esta função de propósito (ver
+    `_redistribuir_parcelas_pendentes` logo abaixo)."""
+    abatido = _abatimentos_de_vale_por_item(session, item_tipo, [parcela.id], parcela.fazenda_id).get(parcela.id, 0.0)
+    parcela.valor_contratado = round(parcela.valor + abatido, 2)
+
+
 def _redistribuir_parcelas_pendentes(session: Session, pendentes: list) -> None:
     """Redivide igualmente o total das parcelas pendentes informadas (mantendo
     as datas de vencimento de cada uma), ajustando o arredondamento na
-    última para o somatório bater exatamente com o total original."""
+    última para o somatório bater exatamente com o total original.
+
+    NÃO toca em `valor_contratado`: redistribuir é remanejar entre parcelas o
+    que já foi contratado, não renegociar o contrato. É por isso, aliás, que
+    `valor_contratado` teve que virar coluna: quem tentasse reconstruir o
+    bruto como `valor + Σ abatimentos` acertaria antes da redistribuição e
+    erraria depois dela, porque ela reescreve `valor` sem tocar em nenhum
+    `ValeAvulsoAbatimento`."""
     if len(pendentes) < 2:
         raise HTTPException(status_code=400, detail="É preciso ao menos 2 parcelas pendentes para redistribuir.")
     total = round(sum(p.valor for p in pendentes), 2)
@@ -483,6 +676,7 @@ def atualizar_parcela_empreitada(
         raise HTTPException(status_code=400, detail="Parcela já paga não pode ser editada aqui — edite em Lançamentos > Financeiro.")
     parcela.data_vencimento = dados.data_vencimento
     parcela.valor = dados.valor
+    _reajustar_valor_contratado(session, parcela, "empreitada_parcela")
     session.add(parcela)
     _sincronizar_conta_parcela(session, parcela.numero_lancamento_gerado, dados.data_vencimento, dados.valor)
     session.commit()
@@ -547,10 +741,18 @@ def _serializar_contrato(session: Session, c: Contrato) -> dict:
     if numeros:
         contas = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros))).all()
         pagos = {conta.numero_lancamento for conta in contas if conta.valor_pago is not None}
+    abatido = _abatimentos_de_vale_por_item(session, "contrato_parcela", [p.id for p in parcelas], c.fazenda_id)
     return {
         **c.model_dump(),
+        # Bruto contratado e desconto de vale separados — ver o comentário em
+        # `_serializar_empreitada`.
         "parcelas": [
-            {**p.model_dump(), "status": "pago" if p.numero_lancamento_gerado in pagos else "pendente"} for p in parcelas
+            {
+                **p.model_dump(),
+                "status": "pago" if p.numero_lancamento_gerado in pagos else "pendente",
+                "valor_abatido_vales": abatido.get(p.id, 0.0),
+            }
+            for p in parcelas
         ],
         "vales": _listar_vales_avulsos(session, "contrato", c.id),
     }
@@ -592,10 +794,14 @@ def criar_contrato(
     session.refresh(contrato)
 
     if dados.forma_pagamento:
-        for parcela in dados.parcelas:
+        # Mesma regra de `criar_empreitada`: k de n congelados na criação e
+        # bruto contratado guardado antes de qualquer vale.
+        total_parcelas = len(dados.parcelas)
+        for i, parcela in enumerate(dados.parcelas, start=1):
             numero_lancamento = _proximo_numero_lancamento(session, parcela.data_vencimento.year)
             session.add(ContratoParcela(
                 contrato_id=contrato.id, data_vencimento=parcela.data_vencimento, valor=parcela.valor,
+                numero=i, numero_total=total_parcelas, valor_contratado=parcela.valor,
                 numero_lancamento_gerado=numero_lancamento, fazenda_id=fazenda_id,
             ))
             session.add(ContaGerencial(
@@ -693,6 +899,7 @@ def atualizar_parcela_contrato(
         raise HTTPException(status_code=400, detail="Parcela já paga não pode ser editada aqui — edite em Lançamentos > Financeiro.")
     parcela.data_vencimento = dados.data_vencimento
     parcela.valor = dados.valor
+    _reajustar_valor_contratado(session, parcela, "contrato_parcela")
     session.add(parcela)
     _sincronizar_conta_parcela(session, parcela.numero_lancamento_gerado, dados.data_vencimento, dados.valor)
     session.commit()
@@ -753,6 +960,10 @@ class DiariaPagamentoIn(BaseModel):
     # Conta bancária de onde sai o pagamento — OPCIONAL (ver
     # _resolver_conta_corrente em rh_folha.py).
     conta_corrente_id: int | None = None
+    # Confirmação de pagamento acima do saldo devedor (total apurado menos o
+    # que já foi pago menos os vales já adiantados). Ver
+    # `registrar_pagamento_diaria`.
+    confirmar_excedente: bool = False
 
 
 def _dias_confirmados_diaria(session: Session, diaria_id: int, ate: date | None = None) -> tuple[int, date | None]:
@@ -862,6 +1073,75 @@ def _diaria_ou_404(session: Session, diaria_id: int, fazenda_id: int | None) -> 
     return diaria
 
 
+def _periodo_congelado(d: Diaria) -> bool:
+    """Este período já foi FECHADO pelo fluxo novo de encerramento?
+
+    `status == "encerrado"` sozinho não basta: diária encerrada antes desta
+    feature não tem fotografia nenhuma guardada (ver a migração
+    d4a1f6c2b9e7), e para ela o comportamento continua sendo o de sempre —
+    recalcular tudo. `data_encerramento` é o marco que separa os dois
+    mundos."""
+    return d.status == "encerrado" and d.data_encerramento is not None
+
+
+def _conta_do_encerramento(session: Session, d: Diaria) -> ContaGerencial | None:
+    """A conta a pagar emitida no encerramento desta diária, se existir.
+
+    É por aqui que a RECONCILIAÇÃO acontece: quem baixa a conta é o
+    Financeiro (`PUT /financeiro/lancamentos/{id}/pagar`), que não sabe nada
+    de diária. Em vez de pendurar um gancho lá dentro, o resumo lê o estado
+    do próprio lançamento — a conta É a fonte da verdade sobre ter sido paga
+    ou não, e assim não existe cópia para ficar desatualizada. Sem isso,
+    pagar a conta no Financeiro deixava a diária eternamente devendo."""
+    if not d.numero_lancamento_gerado:
+        return None
+    return session.exec(
+        select(ContaGerencial).where(
+            ContaGerencial.numero_lancamento == d.numero_lancamento_gerado,
+            ContaGerencial.fazenda_id == d.fazenda_id,
+        )
+    ).first()
+
+
+def _resumo_cobranca_diaria(session: Session, d: Diaria) -> dict | None:
+    """Bloco `cobranca` do resumo — o que a tela precisa para dizer "cobrado,
+    em aberto" ou "cobrado e pago", e para saber se ainda dá para reabrir."""
+    conta = _conta_do_encerramento(session, d)
+    if conta is None:
+        return None
+    pago = conta.valor_pago is not None
+    return {
+        "numero_lancamento": conta.numero_lancamento,
+        "valor": conta.valor_total,
+        "data_vencimento": conta.data_vencimento,
+        "valor_pago": conta.valor_pago,
+        "data_pagamento": conta.data_pagamento,
+        "status": "pago" if pago else "em_aberto",
+    }
+
+
+def _exigir_periodo_aberto(session: Session, d: Diaria, acao: str) -> None:
+    """Recusa qualquer escrita que mexeria no apurado de um período já
+    congelado (dias trabalhados, datas/ajuste manual, pagamento avulso).
+
+    Deixar passar seria pior do que recusar: a escrita seria aceita e não
+    mudaria NADA no que a tela mostra (o resumo lê a fotografia) nem no valor
+    já cobrado — trabalho silenciosamente perdido. Quem precisa corrigir de
+    verdade reabre o período, o que apaga a cobrança e devolve o controle."""
+    if not _periodo_congelado(d):
+        return
+    conta = _conta_do_encerramento(session, d)
+    onde = f" A cobrança emitida é o lançamento {conta.numero_lancamento}." if conta is not None else ""
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"O período desta diária foi encerrado em {d.data_encerramento.strftime('%d/%m/%Y')} e está congelado, "
+            f"então {acao} não teria efeito nenhum no valor já apurado.{onde} "
+            "Reabra o período (botão Reabrir) para poder alterá-lo."
+        ),
+    )
+
+
 def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
     # "Hoje" nunca passa da data de fim — depois que a diária encerra, o
     # contador para de correr (sem isso, teria que ser marcada como
@@ -910,6 +1190,33 @@ def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
         .where(DiariaAuditoria.diaria_id == d.id, DiariaAuditoria.dias_trabalhados.is_(None))
         .order_by(DiariaAuditoria.periodo_fim)
     ).all()
+    saldo_devedor = round(total_ate_hoje - valor_pago - valor_vale, 2)
+    cobranca = _resumo_cobranca_diaria(session, d)
+
+    # ── PERÍODO CONGELADO ────────────────────────────────────────────────
+    # Tudo acima foi RECALCULADO como se o período ainda estivesse correndo.
+    # Para uma diária já encerrada pelo fluxo novo isso é errado: a conta a
+    # pagar emitida no fechamento guarda um valor que ninguém reescreve, e um
+    # vale lançado depois, uma auditoria respondida atrasada ou um dia
+    # corrigido no calendário faziam o resumo divergir dela sozinhos — a tela
+    # dizia um número, o Contas a Pagar dizia outro. A partir daqui o resumo
+    # LÊ a fotografia gravada no encerramento em vez de recalcular.
+    #
+    # A única coisa que continua viva é o pagamento da conta emitida
+    # (reconciliação): baixar a conta no Financeiro abate o saldo aqui.
+    if _periodo_congelado(d):
+        numero_diarias = d.encerramento_numero_diarias if d.encerramento_numero_diarias is not None else numero_diarias
+        total_ate_hoje = d.encerramento_total_apurado if d.encerramento_total_apurado is not None else total_ate_hoje
+        valor_vale = d.encerramento_valor_vale if d.encerramento_valor_vale is not None else valor_vale
+        valor_pago_congelado = d.encerramento_valor_pago if d.encerramento_valor_pago is not None else valor_pago
+        saldo_congelado = (
+            d.encerramento_saldo_devedor if d.encerramento_saldo_devedor is not None
+            else round(total_ate_hoje - valor_pago_congelado - valor_vale, 2)
+        )
+        pago_na_cobranca = (cobranca or {}).get("valor_pago") or 0.0
+        valor_pago = round(valor_pago_congelado + pago_na_cobranca, 2)
+        saldo_devedor = round(saldo_congelado - pago_na_cobranca, 2)
+
     return {
         **d.model_dump(),
         "pessoa_nome": pessoa_nome,
@@ -917,7 +1224,7 @@ def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
         "total_ate_hoje": total_ate_hoje,
         "valor_pago": valor_pago,
         "valor_vale": valor_vale,
-        "saldo_devedor": round(total_ate_hoje - valor_pago - valor_vale, 2),
+        "saldo_devedor": saldo_devedor,
         "pagamentos": [p.model_dump() for p in pagamentos],
         "vales": vales,
         "auditorias_pendentes": [a.model_dump() for a in auditorias_pendentes],
@@ -925,6 +1232,10 @@ def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
         "dias_meia_diaria": dias_meia_diaria,
         "ultima_folga": _ultima_folga_diaria(session, d.id, hoje_ou_fim),
         "pago_ate": pagamentos[-1].data_pagamento if pagamentos else None,
+        # Conta a pagar emitida no encerramento (None enquanto o período está
+        # aberto, ou quando ele fechou já quitado — ver `encerrar_diaria`).
+        "cobranca": cobranca,
+        "periodo_congelado": _periodo_congelado(d),
     }
 
 
@@ -1037,6 +1348,7 @@ def editar_diaria(
     diaria = session.get(Diaria, diaria_id)
     if not diaria or (diaria.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Diária não encontrada")
+    _exigir_periodo_aberto(session, diaria, "mudar as datas ou o número de diárias")
     if dados.ajuste_numero_diarias is not None and dados.ajuste_numero_diarias < 0:
         raise HTTPException(status_code=400, detail="Número de diárias não pode ser negativo")
     diaria.data_inicio = dados.data_inicio
@@ -1054,18 +1366,168 @@ def editar_diaria(
     return _resumo_diaria(session, diaria, pessoa.nome)
 
 
+class DiariaEncerrarIn(BaseModel):
+    """Corpo OPCIONAL de `PUT /diarias/{id}/encerrar` — opcional porque a
+    chamada sem corpo nenhum já existia e continua valendo (o frontend antigo
+    e os testes de listagem passam por ela)."""
+    # Último dia trabalhado. Sem ele o contador não parava: a diária ficava
+    # "encerrada" e seguia somando uma diária por dia, invisível, porque a
+    # linha sai da listagem padrão. Quando não vem, cai na melhor data
+    # disponível (a `data_fim` já cadastrada, ou hoje).
+    data_encerramento: date | None = None
+    # Vencimento da conta a pagar emitida — padrão: dia 1º do mês seguinte,
+    # exatamente como `concluir_etapa_empreitada` faz com a etapa concluída.
+    data_vencimento: date | None = None
+    # Escape para fechar o período SEM cobrar (acerto feito por fora, por
+    # exemplo). O período congela do mesmo jeito; só não nasce lançamento.
+    emitir_conta: bool = True
+
+
 @router.put("/diarias/{diaria_id}/encerrar")
 def encerrar_diaria(
+    diaria_id: int, dados: DiariaEncerrarIn | None = None, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """
+    Encerra o período da diarista: para o contador, CONGELA o apurado e, se
+    ainda houver saldo devedor, EMITE a conta a pagar correspondente.
+
+    O buraco que isto fecha: encerrar um período devendo dinheiro não gerava
+    lançamento nenhum. O trabalho ficava registrado aqui e sumia do radar
+    financeiro — nem Agenda, nem Contas a Pagar — porque a linha ainda sai da
+    listagem padrão de diárias (`incluir_finalizadas`). Ninguém via mais.
+
+    A emissão segue a receita canônica do projeto, a mesma de
+    `concluir_etapa_empreitada` logo acima: `_proximo_numero_lancamento`,
+    número gravado na própria origem (`Diaria.numero_lancamento_gerado`) e uma
+    `ContaGerencial` com tipo="despesa"/origem="auto". Agenda e Contas a Pagar
+    não precisaram de UMA linha de mudança: os dois já pegam qualquer conta
+    com `valor_pago < valor_total` (ver `AgendaEngine.calcular` e
+    `financeiro.contas_a_pagar`). O que faltava era só emitir.
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    diaria = _diaria_ou_404(session, diaria_id, fazenda_id)
+    if _periodo_congelado(diaria):
+        raise HTTPException(status_code=400, detail="Este período já foi encerrado. Reabra antes de encerrar de novo.")
+    dados = dados or DiariaEncerrarIn()
+    hoje = date.today()
+
+    ultimo_dia = dados.data_encerramento or diaria.data_fim or hoje
+    if ultimo_dia < diaria.data_inicio:
+        raise HTTPException(
+            status_code=400,
+            detail="O último dia trabalhado não pode ser anterior ao início da diária.",
+        )
+
+    # `data_fim` é quem faz `_resumo_diaria` parar de contar; gravar as duas
+    # mantém o comportamento de sempre para quem já usava data de fim, e faz
+    # o encerramento sem data informada também parar o contador.
+    diaria.data_fim = ultimo_dia
+    diaria.data_encerramento = ultimo_dia
+
+    pessoa = session.get(Pessoa, diaria.pessoa_id)
+    nome_pessoa = pessoa.nome if pessoa else "—"
+    # Resumo apurado com o contador JÁ parado no último dia trabalhado — é
+    # esta fotografia que vira a conta a pagar e o congelamento.
+    resumo = _resumo_diaria(session, diaria, nome_pessoa)
+    saldo = resumo["saldo_devedor"]
+
+    diaria.encerramento_numero_diarias = resumo["numero_diarias"]
+    diaria.encerramento_total_apurado = resumo["total_ate_hoje"]
+    diaria.encerramento_valor_pago = resumo["valor_pago"]
+    diaria.encerramento_valor_vale = resumo["valor_vale"]
+    diaria.encerramento_saldo_devedor = saldo
+    diaria.status = "encerrado"
+
+    # Saldo zerado (ou negativo, quando se pagou a mais) não vira conta
+    # nenhuma: uma conta a pagar de R$ 0,00 é invisível na Agenda e em Contas
+    # a Pagar (as duas exigem `valor_pago < valor_total`) e ficaria pendurada
+    # para sempre sem ninguém conseguir baixá-la.
+    if dados.emitir_conta and saldo > 0:
+        if dados.data_vencimento:
+            vencimento = dados.data_vencimento
+        else:
+            proximo = _competencia_seguinte(hoje.strftime("%Y-%m"))
+            ano, mes = (int(x) for x in proximo.split("-"))
+            vencimento = date(ano, mes, 1)
+        numero_lancamento = _proximo_numero_lancamento(session, vencimento.year)
+        diaria.numero_lancamento_gerado = numero_lancamento
+        session.add(ContaGerencial(
+            numero_lancamento=numero_lancamento,
+            descricao=(
+                f"Diária — {nome_pessoa} "
+                f"({diaria.data_inicio.strftime('%d/%m/%Y')} a {ultimo_dia.strftime('%d/%m/%Y')})"
+            ),
+            data_vencimento=vencimento,
+            data_competencia=vencimento.replace(day=1),
+            fornecedor_cliente=nome_pessoa,
+            # NÃO é "Diária": esse tipo_documento está em
+            # `TIPOS_DOCUMENTO_BAIXA_ESPELHADA` (routers/financeiro.py), que
+            # recusa estorno porque lá o lançamento nasce JÁ PAGO, espelhando
+            # uma baixa feita no RH. Este aqui é o oposto — nasce EM ABERTO
+            # para ser pago no Financeiro —, e precisa poder ser estornado:
+            # é o próprio caminho que a reabertura do período manda seguir.
+            tipo_documento="Acerto de diária",
+            centro_custo=diaria.centro_custo,
+            valor_total=saldo,
+            parcela_num=1, parcela_total=1,
+            tipo="despesa", origem="auto",
+            fazenda_id=diaria.fazenda_id,
+        ))
+
+    session.add(diaria)
+    session.commit()
+    session.refresh(diaria)
+    return _resumo_diaria(session, diaria, nome_pessoa)
+
+
+@router.put("/diarias/{diaria_id}/reabrir")
+def reabrir_diaria(
     diaria_id: int, session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    """Marca a diária como finalizada — some do Controle de Diárias por
-    padrão (ver `incluir_finalizadas` em `listar_diarias`) e para de gerar
-    card "diária de hoje"/auditoria periódica na Agenda (que já filtram por
-    `status == "ativo"`, ver routers/agenda.py)."""
+    """
+    Desfaz o encerramento: apaga a cobrança emitida (se ainda em aberto),
+    descongela o apurado e devolve a diária ao estado anterior.
+
+    A trava: se a conta já foi PAGA, reabrir é recusado. Descongelar por cima
+    de dinheiro que já saiu do caixa recriaria a divergência que o
+    congelamento existe para evitar — o apurado voltaria a correr e a conta
+    paga continuaria valendo o que valia. Quem quiser reabrir mesmo assim
+    estorna a baixa no Financeiro primeiro (por isso o lançamento nasce com
+    `tipo_documento` estornável — ver `encerrar_diaria`).
+    """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     diaria = _diaria_ou_404(session, diaria_id, fazenda_id)
-    diaria.status = "encerrado"
+    if not _periodo_congelado(diaria):
+        raise HTTPException(status_code=400, detail="Esta diária não está com o período encerrado.")
+
+    conta = _conta_do_encerramento(session, diaria)
+    if conta is not None and conta.valor_pago is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"A conta a pagar deste encerramento ({conta.numero_lancamento}) já foi paga em "
+                f"{conta.data_pagamento.strftime('%d/%m/%Y') if conta.data_pagamento else '—'}. "
+                "Estorne a baixa em Financeiro › Lançamentos antes de reabrir o período."
+            ),
+        )
+    if conta is not None:
+        session.delete(conta)
+
+    # `data_fim` volta a ficar vazia só quando foi este encerramento que a
+    # preencheu — uma data de fim que já existia antes (cadastrada no
+    # lançamento da diária) é do usuário, não nossa para apagar.
+    if diaria.data_fim == diaria.data_encerramento:
+        diaria.data_fim = None
+    diaria.data_encerramento = None
+    diaria.numero_lancamento_gerado = None
+    diaria.encerramento_numero_diarias = None
+    diaria.encerramento_total_apurado = None
+    diaria.encerramento_valor_pago = None
+    diaria.encerramento_valor_vale = None
+    diaria.encerramento_saldo_devedor = None
+    diaria.status = "ativo"
     session.add(diaria)
     session.commit()
     session.refresh(diaria)
@@ -1109,8 +1571,43 @@ def registrar_pagamento_diaria(
         raise HTTPException(status_code=404, detail="Diária não encontrada")
     if dados.valor <= 0:
         raise HTTPException(status_code=400, detail="Valor do pagamento deve ser positivo")
-    conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
+    # Período encerrado tem a dívida em Contas a Pagar, não aqui: pagar por
+    # este caminho criaria um segundo pagamento para a mesma dívida, e a
+    # conta emitida continuaria em aberto cobrando de novo.
+    _exigir_periodo_aberto(session, diaria, "registrar um pagamento por aqui")
     pessoa = session.get(Pessoa, diaria.pessoa_id)
+
+    # Pagar mais do que se deve não pode acontecer em silêncio. O saldo
+    # devedor (`_resumo_diaria`) já desconta os pagamentos anteriores E os
+    # vales avulsos já adiantados — e era exatamente esse desconto que o
+    # endpoint ignorava: quem digitava o total das diárias esquecendo o
+    # adiantamento pagava a mesma diária duas vezes, sem um aviso.
+    #
+    # Continua sendo POSSÍVEL pagar a mais (adiantar o mês seguinte, acertar
+    # uma diferença combinada), só que com confirmação explícita — mesmo
+    # mecanismo de `confirmar_periodo_pago` em `salvar_dias_diaria` logo
+    # abaixo: 409 com os números na mão para a tela poder perguntar.
+    resumo_antes = _resumo_diaria(session, diaria, pessoa.nome if pessoa else "—")
+    saldo_devedor = resumo_antes["saldo_devedor"]
+    excedente = round(dados.valor - saldo_devedor, 2)
+    if excedente > 0 and not dados.confirmar_excedente:
+        raise HTTPException(status_code=409, detail={
+            "mensagem": (
+                f"O pagamento de R$ {dados.valor:.2f} é maior que o saldo devedor desta diária "
+                f"(R$ {saldo_devedor:.2f} = R$ {resumo_antes['total_ate_hoje']:.2f} apurados "
+                f"− R$ {resumo_antes['valor_pago']:.2f} já pagos "
+                f"− R$ {resumo_antes['valor_vale']:.2f} de vale já adiantado). "
+                f"Sobram R$ {excedente:.2f} pagos a mais. Confirme se quiser pagar assim mesmo."
+            ),
+            "saldo_devedor": saldo_devedor,
+            "valor_informado": round(dados.valor, 2),
+            "excedente": excedente,
+            "total_ate_hoje": resumo_antes["total_ate_hoje"],
+            "valor_pago": resumo_antes["valor_pago"],
+            "valor_vale": resumo_antes["valor_vale"],
+        })
+
+    conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
     numero_lancamento = _proximo_numero_lancamento(session, dados.data_pagamento.year)
     session.add(DiariaPagamento(
         diaria_id=diaria_id, data_pagamento=dados.data_pagamento, valor=dados.valor,
@@ -1235,6 +1732,7 @@ def salvar_dias_diaria(
     """Substitui (replace, não merge) o estado dos dias no período informado
     — o cliente sempre manda o estado corrigido inteiro da janela visível."""
     diaria = _diaria_ou_404(session, diaria_id, fazenda_id)
+    _exigir_periodo_aberto(session, diaria, "corrigir os dias trabalhados")
     pessoa = session.get(Pessoa, diaria.pessoa_id)
     if dados.periodo_inicio > dados.periodo_fim:
         raise HTTPException(status_code=400, detail="Período inválido: início não pode ser depois do fim")
@@ -1344,6 +1842,13 @@ class ValeAvulsoIn(BaseModel):
     acao: str | None = None
     valores_itens: dict[int, float] | None = None
     confirmar: bool = False
+    # Confirmação de um risco DIFERENTE de `confirmar` (que só trata "o valor
+    # mudou"): o vale ser maior que o saldo pendente do alvo, ou seja, sair
+    # dinheiro do caixa sem parcela/etapa para abater. Flag própria de
+    # propósito — confirmar a mudança de valor não pode valer como
+    # confirmação de um aviso que o usuário nunca viu. Ver
+    # `_exigir_confirmacao_vale_acima_do_pendente`.
+    confirmar_excedente: bool = False
 
 
 def _info_parcelas_vale_avulso(session: Session, vale: ValeAvulso) -> dict:
@@ -1352,7 +1857,13 @@ def _info_parcelas_vale_avulso(session: Session, vale: ValeAvulso) -> dict:
     ValeAvulsoAbatimento) — só se aplica a empreitada/contrato; diária não
     tem parcela agendada, então volta sempre vazio."""
     if vale.origem_tipo == "diaria":
-        return {"total_parcelas_origem": None, "parcelas_referenciadas": []}
+        # Diária não abate parcela nenhuma (o vale entra como `valor_vale` no
+        # saldo devedor, ver `_resumo_diaria`) — "abatido x não abatido" não
+        # se aplica, então vai None em vez de 0 para não parecer sobra.
+        return {
+            "total_parcelas_origem": None, "parcelas_referenciadas": [],
+            "valor_abatido": None, "valor_nao_abatido": None,
+        }
     if vale.origem_tipo == "empreitada":
         empreitada = session.get(Empreitada, vale.origem_id)
         if empreitada and empreitada.tipo_pagamento == "por_etapa":
@@ -1377,7 +1888,17 @@ def _info_parcelas_vale_avulso(session: Session, vale: ValeAvulso) -> dict:
         {"numero_parcela": posicao.get(ab.item_id), "valor_abatido": ab.valor_abatido}
         for ab in abatimentos if ab.item_tipo == item_tipo
     ]
-    return {"total_parcelas_origem": len(todos), "parcelas_referenciadas": referenciadas}
+    # `valor_nao_abatido` é a sobra de um vale maior que o saldo pendente do
+    # alvo (ver `_exigir_confirmacao_vale_acima_do_pendente`): dinheiro que
+    # saiu do caixa e não reduziu parcela nenhuma. Antes ele simplesmente
+    # sumia; expor aqui é o que faz a sobra confirmada continuar visível no
+    # relatório de vales em vez de virar um furo silencioso.
+    valor_abatido = round(sum(r["valor_abatido"] for r in referenciadas), 2)
+    return {
+        "total_parcelas_origem": len(todos), "parcelas_referenciadas": referenciadas,
+        "valor_abatido": valor_abatido,
+        "valor_nao_abatido": round(vale.valor - valor_abatido, 2),
+    }
 
 
 def _listar_vales_avulsos(session: Session, origem_tipo: str, origem_id: int) -> list[dict]:
@@ -1435,6 +1956,165 @@ def _sincronizar_conta_do_item(session: Session, item) -> None:
             session.add(conta)
 
 
+def _conta_paga_do_item(session: Session, item) -> ContaGerencial | None:
+    """Lançamento (ContaGerencial) da parcela/etapa que JÁ foi baixado, ou
+    None. É o espelho exato do ponto cego de `_sincronizar_conta_do_item`
+    acima: conta com `valor_pago` preenchido é a única que ele se recusa a
+    atualizar — logo, é exatamente onde mexer no valor da parcela quebra a
+    igualdade entre o que o sistema diz que se deve e o que já foi pago."""
+    numero = getattr(item, "numero_lancamento_gerado", None)
+    if not numero:
+        return None
+    conta = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero)).first()
+    return conta if conta is not None and conta.valor_pago is not None else None
+
+
+def _bloquear_reversao_de_abatimento_pago(session: Session, vale_avulso_id: int) -> None:
+    """
+    Recusa desfazer o abatimento de um vale que já caiu numa parcela/etapa
+    PAGA.
+
+    Por que travar em vez de "consertar por baixo": `_reverter_vale_avulso`
+    devolve o valor abatido à parcela, mas `_sincronizar_conta_do_item` só
+    atualiza contas ainda em aberto. Numa parcela já quitada o resultado é
+    uma parcela de R$ 2.000 contra um lançamento pago de R$ 1.500 — uma
+    dívida de R$ 500 que nasce no banco e que ninguém vai cobrar de
+    ninguém. Ajustar a conta paga também não serve: o dinheiro JÁ SAIU do
+    caixa; quem tem que decidir o que fazer com isso é a pessoa, não o
+    endpoint.
+
+    Mesmo tratamento (e mesmo motivo) do vale de funcionário, que bloqueia
+    com 400 quando a competência do vale já está paga — ver
+    `_vale_competencia_paga` em rh_folha.py. E mesma regra que a exclusão de
+    Empreitada/Contrato já aplicava em `rules/exclusao_tipos/pessoal.py`
+    ("parcela paga → 400 mandando estornar a baixa"): a regra já existia no
+    sistema, só não valia para editar/excluir o vale em si. A diferença é que
+    lá o bloqueio olha TODAS as parcelas do alvo, e aqui só as que ESTE vale
+    abateu — pagar uma parcela que o vale não tocou não tem por que impedir
+    o estorno dele.
+
+    A mensagem aponta o lançamento exato a estornar (POST
+    /financeiro/lancamentos/{id}/estornar, o botão "Estornar" em Contas a
+    Pagar), para a operação ficar possível depois do estorno, e só depois dele.
+    """
+    abatimentos = session.exec(
+        select(ValeAvulsoAbatimento).where(ValeAvulsoAbatimento.vale_avulso_id == vale_avulso_id)
+    ).all()
+    for ab in abatimentos:
+        Modelo = _modelo_item_vale_avulso(ab.item_tipo)
+        item = session.get(Modelo, ab.item_id)
+        if item is None:
+            continue
+        conta = _conta_paga_do_item(session, item)
+        if conta is not None:
+            rotulo = "etapa" if ab.item_tipo == "empreitada_etapa" else "parcela"
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Este vale de R$ {round(ab.valor_abatido, 2):.2f} já foi abatido de uma {rotulo} "
+                    f"que JÁ FOI PAGA (lançamento {conta.numero_lancamento}, "
+                    f"baixado em {conta.data_pagamento} por R$ {conta.valor_pago:.2f}). "
+                    f"Editar ou excluir o vale agora devolveria o valor à {rotulo} sem devolver o "
+                    "dinheiro que já saiu do caixa, criando uma dívida que ninguém vai cobrar. "
+                    f"Estorne o pagamento do lançamento {conta.numero_lancamento} em Contas a Pagar "
+                    "e refaça a operação."
+                ),
+            )
+
+
+def _saldo_pendente_do_alvo(
+    session: Session, origem_tipo: str, origem_id: int, vale_avulso_id: int | None = None,
+) -> float | None:
+    """
+    Total ainda em aberto (soma das parcelas/etapas pendentes) do alvo de um
+    vale avulso — quanto de fato existe para abater. `None` quando a pergunta
+    não se aplica: diária não tem parcela agendada (o vale só soma ao saldo
+    devedor, ver `_resumo_diaria`) e alvo sem nenhum item também não tem
+    saldo a comparar.
+
+    `vale_avulso_id` é para a EDIÇÃO: o PUT reverte o vale antes de reaplicar,
+    então o pendente relevante é o de DEPOIS da reversão — o que está em
+    aberto hoje mais o que este vale devolverá às parcelas/etapas que ainda
+    estão pendentes. Calculado por aritmética justamente para a checagem
+    poder acontecer ANTES de qualquer escrita (um 409 no meio do
+    reverter/reaplicar deixaria o vale sem abatimento nenhum).
+    """
+    if origem_tipo == "diaria":
+        return None
+    item_tipo, itens = _itens_pendentes_vale_avulso(session, origem_tipo, origem_id)
+    if not item_tipo or not itens:
+        return None if not item_tipo else 0.0
+    total = round(sum(i.valor for i in itens), 2)
+    if vale_avulso_id is not None:
+        ids_pendentes = {i.id for i in itens}
+        devolvido = sum(
+            ab.valor_abatido for ab in session.exec(
+                select(ValeAvulsoAbatimento).where(ValeAvulsoAbatimento.vale_avulso_id == vale_avulso_id)
+            ).all()
+            if ab.item_tipo == item_tipo and ab.item_id in ids_pendentes
+        )
+        total = round(total + devolvido, 2)
+    return total
+
+
+def _exigir_confirmacao_vale_acima_do_pendente(
+    session: Session, origem_tipo: str, origem_id: int, valor: float, confirmado: bool,
+    vale_avulso_id: int | None = None,
+) -> None:
+    """
+    Vale maior que o saldo pendente do alvo: pede confirmação explícita (409)
+    em vez de engolir a sobra.
+
+    REGRA ESCOLHIDA e por quê: `_aplicar_vale_avulso` consome as parcelas
+    pendentes até acabar o valor e simplesmente ABANDONA o `restante` — nem
+    erro, nem aviso — enquanto `_sincronizar_conta_vale_avulso` lança a saída
+    de caixa pelo valor CHEIO. Adiantar R$ 5.000 num contrato com R$ 3.000
+    pendentes tirava R$ 5.000 do caixa e abatia R$ 3.000: R$ 2.000 sumiam do
+    controle.
+
+    Não recusamos de vez porque adiantar acima do pendente é legítimo com
+    frequência (empreitada por etapa cujas próximas etapas ainda nem foram
+    cadastradas, contrato que vai ser prorrogado, adiantamento de fim de ano).
+    Também não registramos a sobra em silêncio: silêncio é exatamente o bug.
+    Então seguimos o precedente do próprio módulo — 409 + flag de confirmação,
+    como `confirmar_periodo_pago` em `salvar_dias_diaria` e o `confirmar` de
+    `atualizar_vale_avulso` — dizendo QUANTO é o pendente e QUANTO vai sobrar.
+    Confirmado, o vale passa e a sobra deixa de ser invisível: aparece como
+    `valor_nao_abatido` no relatório de vales (ver
+    `_info_parcelas_vale_avulso`).
+    """
+    if confirmado:
+        return
+    pendente = _saldo_pendente_do_alvo(session, origem_tipo, origem_id, vale_avulso_id)
+    if pendente is None:
+        return
+    excedente = round(round(valor, 2) - pendente, 2)
+    if excedente <= 0:
+        return
+    alvo = "deste contrato" if origem_tipo == "contrato" else "desta empreitada"
+    # Pendente zero é o caso do contrato sem frequência definida (nenhuma
+    # parcela agendada) e o da empreitada com tudo já concluído/pago: aí o
+    # vale inteiro é sobra, e dizer "maior que R$ 0,00" confundiria mais do
+    # que explicaria.
+    pendente_zerado = pendente <= 0
+    raise HTTPException(status_code=409, detail={
+        "mensagem": (
+            (
+                f"Não há parcela/etapa em aberto {alvo} para abater este vale de "
+                f"R$ {round(valor, 2):.2f} — o valor inteiro sairá do caixa sem reduzir nada. "
+                if pendente_zerado else
+                f"O vale de R$ {round(valor, 2):.2f} é maior que o saldo pendente {alvo} "
+                f"(R$ {pendente:.2f}). Só R$ {pendente:.2f} serão abatidos das parcelas/etapas "
+                f"em aberto; os outros R$ {excedente:.2f} sairão do caixa sem nada para abater. "
+            )
+            + "Confirme se quiser lançar assim mesmo."
+        ),
+        "saldo_pendente": pendente,
+        "valor_informado": round(valor, 2),
+        "excedente": excedente,
+    })
+
+
 def _aplicar_vale_avulso(
     session: Session, vale_avulso_id: int, origem_tipo: str, origem_id: int, valor: float,
     fazenda_id: int | None = None,
@@ -1462,6 +2142,19 @@ def _aplicar_vale_avulso(
     if not item_tipo:
         return
 
+    # Sobre o `restante` que pode sobrar deste laço (vale maior que o total
+    # pendente): NÃO é tratado aqui de propósito. Quem decide é
+    # `_exigir_confirmacao_vale_acima_do_pendente`, chamado pelos endpoints
+    # ANTES de qualquer escrita — chegar até aqui já significa "usuário viu
+    # quanto ia sobrar e confirmou". A sobra fica visível como
+    # `valor_nao_abatido` no relatório de vales.
+    #
+    # CONHECIDO, fora do escopo desta correção: `min(item.valor, restante)`
+    # pode zerar a parcela/etapa, e a ContaGerencial dela fica valendo
+    # R$ 0,00 — viva em Contas a Pagar e na Agenda. Apagá-la aqui não serve:
+    # a linha precisa sobreviver para `_reverter_vale_avulso` ter onde
+    # devolver o valor. A correção certa é as listagens ignorarem conta
+    # zerada (routers/financeiro.py e routers/agenda.py), fora deste arquivo.
     for item in itens:
         if restante <= 0:
             break
@@ -1481,7 +2174,8 @@ def _aplicar_vale_avulso(
 def _redistribuir_itens_pendentes_igual(session: Session, itens: list) -> None:
     """Como `_redistribuir_parcelas_pendentes` (empreitada/contrato), mas sem
     tocar `data_vencimento` — serve tanto para parcela quanto para etapa
-    (EmpreitadaEtapa não tem data de vencimento própria)."""
+    (EmpreitadaEtapa não tem data de vencimento própria). Também não mexe em
+    `valor_contratado`, pelo mesmo motivo explicado lá."""
     if len(itens) < 2:
         raise HTTPException(status_code=400, detail="É preciso ao menos 2 parcelas/etapas pendentes para redistribuir.")
     total = round(sum(i.valor for i in itens), 2)
@@ -1511,7 +2205,15 @@ def _redistribuir_itens_pendentes_livre(session: Session, itens: list, valores: 
 def _reverter_vale_avulso(session: Session, vale_avulso_id: int) -> None:
     """Desfaz o efeito de `_aplicar_vale_avulso`: devolve a cada item exatamente
     o valor que foi abatido dele (registrado em ValeAvulsoAbatimento), na
-    ordem inversa em que foi abatido, e sincroniza a ContaGerencial vinculada."""
+    ordem inversa em que foi abatido, e sincroniza a ContaGerencial vinculada.
+
+    Recusa-se a agir quando algum desses itens já foi PAGO — ver
+    `_bloquear_reversao_de_abatimento_pago`. A trava mora aqui dentro (e não
+    só nos endpoints) porque esta função é a única que mexe no valor da
+    parcela sem passar pela tela: qualquer chamador novo herda a proteção sem
+    precisar lembrar dela. Como ela levanta ANTES de qualquer escrita, o
+    reverter continua sendo tudo-ou-nada."""
+    _bloquear_reversao_de_abatimento_pago(session, vale_avulso_id)
     abatimentos = session.exec(
         select(ValeAvulsoAbatimento).where(ValeAvulsoAbatimento.vale_avulso_id == vale_avulso_id).order_by(ValeAvulsoAbatimento.id.desc())
     ).all()
@@ -1657,6 +2359,13 @@ def criar_vale_avulso(
         raise HTTPException(status_code=400, detail="Forma de pagamento inválida")
     origem = _origem_vale_avulso(session, dados.origem_tipo, dados.origem_id, fazenda_id)
     conta = _validar_conta_vale_avulso(session, dados.forma_pagamento, dados.conta_corrente_id, fazenda_id)
+    # Antes de gravar qualquer coisa: vale maior que o pendente precisa de
+    # confirmação (senão a sobra sai do caixa e some do controle). A checagem
+    # vem ANTES do `session.add(vale)` de propósito — um 409 depois dele
+    # deixaria um vale órfão gravado, sem abatimento e sem lançamento.
+    _exigir_confirmacao_vale_acima_do_pendente(
+        session, dados.origem_tipo, dados.origem_id, dados.valor, dados.confirmar_excedente,
+    )
     pessoa = session.get(Pessoa, origem.pessoa_id)
 
     vale = ValeAvulso(
@@ -1733,6 +2442,12 @@ def atualizar_vale_avulso(
         raise HTTPException(status_code=400, detail="Não é possível trocar a origem (Empreitada/Contrato/Diária) de um vale já lançado")
     conta = _validar_conta_vale_avulso(session, dados.forma_pagamento, dados.conta_corrente_id, fazenda_id)
 
+    # Duas travas antes de QUALQUER escrita — este endpoint reverte e reaplica
+    # o abatimento, então recusar no meio do caminho deixaria o vale sem
+    # abatimento nenhum.
+    # 1) parcela/etapa já paga: nem com confirmação (ver a função).
+    _bloquear_reversao_de_abatimento_pago(session, vale_id)
+
     diferenca = round(dados.valor - vale.valor, 2)
     if diferenca != 0 and not dados.confirmar:
         raise HTTPException(status_code=409, detail={
@@ -1741,6 +2456,14 @@ def atualizar_vale_avulso(
             "valor_informado": dados.valor,
             "diferenca": diferenca,
         })
+
+    # 2) novo valor acima do pendente. O pendente considerado é o de DEPOIS da
+    # reversão (o abatimento atual volta para as parcelas), por isso o
+    # `vale_avulso_id` — ver `_saldo_pendente_do_alvo`.
+    _exigir_confirmacao_vale_acima_do_pendente(
+        session, dados.origem_tipo, dados.origem_id, dados.valor, dados.confirmar_excedente,
+        vale_avulso_id=vale_id,
+    )
 
     _reverter_vale_avulso(session, vale_id)
     session.commit()

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Target, RefreshCw, Skull, Newspaper, Search, CheckCircle2, ArrowRight, Plus } from "lucide-react";
 import {
   fetchIndicadores, fetchAgenda, fetchProducao, fetchResultadoMesRecente, fetchEstoque, fetchAnimais, fetchBaixas, formatBRL,
@@ -16,6 +17,7 @@ import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ManualFazendaButton } from "@/components/ManualFazendaModal";
 import { LandingPublica } from "@/components/landing/LandingPublica";
+import { ehAppDeCampo } from "@/lib/nativo";
 
 const SIT_CORES: Record<string, string> = {
   Prenhes: "var(--green-light)", Inseminadas: "var(--dourado-light)",
@@ -485,5 +487,18 @@ function Capa() {
 // de auth: reaproveita o mesmo helper que o próprio AuthShell usa, sem
 // contexto/hook novo.
 export default function Home() {
+  // O manifesto do PWA abre em "/" (ver app/manifest.ts) — o padrão do
+  // aplicativo instalado passou a ser o SITE COMPLETO, porque instalar no
+  // notebook e cair na casca de celular era o comportamento errado.
+  // Aparelho de campo (app nativo, ou PWA instalado numa tela pequena) segue
+  // para /app aqui, na abertura, em vez de o manifesto decidir isso por todo
+  // mundo. Site aberto no navegador do celular NÃO entra aqui: continua
+  // sendo o site, como sempre foi (ver lib/nativo.ts::ehAppDeCampo).
+  const router = useRouter();
+  useEffect(() => {
+    if (!getToken()) return;
+    ehAppDeCampo().then((campo) => { if (campo) router.replace("/app"); });
+  }, [router]);
+
   return getToken() ? <Capa /> : <LandingPublica />;
 }

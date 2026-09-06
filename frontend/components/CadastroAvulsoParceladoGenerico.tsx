@@ -17,7 +17,21 @@ import ValeAvulsoSection from "@/components/ValeAvulsoSection";
 import { lbl, inputSm } from "@/components/estiloCampoAvulso";
 import { CampoMoeda } from "@/components/CampoMoeda";
 
-export type ParcelaAvulsa = { id: number; data_vencimento: string; valor: number; status: string; numero_lancamento_gerado?: string | null };
+export type ParcelaAvulsa = {
+  id: number; data_vencimento: string; valor: number; status: string; numero_lancamento_gerado?: string | null;
+  // "Parcela k de n" congelado na criação (ver models/pessoal.py::
+  // EmpreitadaParcela). Antes a tela numerava pela posição na lista, então
+  // excluir a parcela 3 de 5 fazia a 4 virar "3" — e o recibo já impresso
+  // passava a apontar para outra parcela. Nulo em parcela criada fora da API.
+  numero?: number | null;
+  numero_total?: number | null;
+  // Bruto acordado (`valor_contratado`) e quanto de vale já foi abatido dele
+  // — o `valor` é o líquido a pagar. Sem os dois na mesma linha, a diferença
+  // entre "a parcela era R$ 2.000" e "a pagar R$ 1.500" só saía abrindo o
+  // relatório de vales.
+  valor_contratado?: number | null;
+  valor_abatido_vales?: number | null;
+};
 export type ValeItemAvulso = { id: number; valor: number; forma_pagamento: string; data_pagamento: string; observacao: string | null };
 export type ItemAvulso = {
   id: number; pessoa_id: number; pessoa_nome: string; descricao: string; valor_total: number;
@@ -269,12 +283,31 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
                   </button>
                 )}
                 <table className="fazenda-table" style={{ fontSize: "0.78rem", marginTop: "0.5rem" }}>
-                  <thead><tr><th>Vencimento</th><th>Valor</th><th>Status</th>{onEditarParcela && <th>Ações</th>}</tr></thead>
+                  <thead>
+                    <tr>
+                      <th>Parcela</th><th>Vencimento</th><th>Contratado</th><th>Vale abatido</th><th>A pagar</th><th>Status</th>
+                      {onEditarParcela && <th>Ações</th>}
+                    </tr>
+                  </thead>
                   <tbody>
                     {item.parcelas.map((p) => (
                       <Fragment key={p.id}>
                         <tr>
-                          <td>{p.data_vencimento}</td><td>{formatBRL(p.valor)}</td><td>{p.status}</td>
+                          {/* Buraco na numeração (1, 2, 4, 5 de 5) é a
+                              informação honesta: a parcela 3 foi excluída e
+                              o número dela não é reaproveitado. */}
+                          <td>{p.numero != null ? `${p.numero}${p.numero_total ? ` de ${p.numero_total}` : ""}` : "—"}</td>
+                          <td>{p.data_vencimento}</td>
+                          {/* "—" quando o bruto é desconhecido (parcela
+                              anterior à migração criada fora da API): repetir
+                              o líquido aqui seria dizer que o contratado é
+                              outro número, sem ser. */}
+                          <td>{p.valor_contratado != null ? formatBRL(p.valor_contratado) : "—"}</td>
+                          <td style={{ color: p.valor_abatido_vales ? "var(--amber)" : "var(--text-muted)" }}>
+                            {p.valor_abatido_vales ? `− ${formatBRL(p.valor_abatido_vales)}` : "—"}
+                          </td>
+                          <td style={{ fontWeight: 700 }}>{formatBRL(p.valor)}</td>
+                          <td>{p.status}</td>
                           {onEditarParcela && (
                             <td>
                               {p.status !== "pago" && (
@@ -288,7 +321,7 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
                         </tr>
                         {editandoParcelaId === p.id && (
                           <tr>
-                            <td colSpan={onEditarParcela ? 4 : 3} style={{ background: "var(--surface-2)", padding: "0.6rem" }}>
+                            <td colSpan={onEditarParcela ? 7 : 6} style={{ background: "var(--surface-2)", padding: "0.6rem" }}>
                               <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-2">
                                 <div><label style={lbl}>Vencimento</label>
                                   <input type="date" style={inputSm} value={editParcelaData} onChange={(e) => setEditParcelaData(e.target.value)} /></div>
@@ -308,6 +341,29 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
                       </Fragment>
                     ))}
                   </tbody>
+                  {/* Rodapé somado: é aqui que a conta fecha na frente do
+                      empreiteiro — contratado menos vales abatidos dá o a
+                      pagar, sem ninguém precisar deduzir a diferença. */}
+                  <tfoot>
+                    <tr style={{ fontWeight: 700 }}>
+                      <td>Total</td>
+                      <td></td>
+                      <td>
+                        {item.parcelas.every((p) => p.valor_contratado == null)
+                          ? "—"
+                          : formatBRL(item.parcelas.reduce((soma, p) => soma + (p.valor_contratado ?? p.valor), 0))}
+                      </td>
+                      <td style={{ color: "var(--amber)" }}>
+                        {(() => {
+                          const abatido = item.parcelas.reduce((soma, p) => soma + (p.valor_abatido_vales ?? 0), 0);
+                          return abatido ? `− ${formatBRL(abatido)}` : "—";
+                        })()}
+                      </td>
+                      <td>{formatBRL(item.parcelas.reduce((soma, p) => soma + p.valor, 0))}</td>
+                      <td></td>
+                      {onEditarParcela && <td></td>}
+                    </tr>
+                  </tfoot>
                 </table>
               </>
             )}

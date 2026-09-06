@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
-import { ehApp, ehAppOuPwa } from "@/lib/nativo";
+import { ehAppDeCampo } from "@/lib/nativo";
 import { temAreaPainelCowData, ehDono, type AreaPainelCowData } from "@/lib/api";
 import { consumirVeioDaAdministracao } from "@/lib/portalAdministracao";
 import { PainelCowDataTemaProvider, usePainelCowDataTema, type TemaPainelCowData } from "@/lib/painelCowDataTema";
@@ -170,7 +170,7 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
   // Chegou aqui pelo item "Painel CowData" do Menu do app (ver
   // app/app/menu/page.tsx) — "voltar à fazenda" precisa cair no /app, nunca
   // no site desktop completo (mesma regra do AuthShell::destinoRaiz). Cobre
-  // app nativo E PWA instalado (ver lib/nativo.ts::ehAppOuPwa).
+  // app nativo E PWA instalado em tela pequena (lib/nativo.ts::ehAppDeCampo).
   // "Voltar" tem 3 destinos possíveis: veio do portal Administração (voltar
   // para lá, não para a Capa — ver lib/portalAdministracao.ts), app/PWA
   // nativo (voltar para o Menu do app), ou nenhum dos dois (voltar para a
@@ -183,7 +183,7 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
       setVoltarLabel("Voltar à Administração");
       return;
     }
-    ehAppOuPwa().then((app) => { if (app) setVoltarHref("/app"); });
+    ehAppDeCampo().then((app) => { if (app) setVoltarHref("/app"); });
   }, []);
 
   const gruposVisiveis = gruposVisiveisPainelCowData();
@@ -201,14 +201,16 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
   // instalado só entra na casca mobile se a tela também for pequena — do
   // contrário cai no layout clássico (barra lateral) mais abaixo, exatamente
   // como pedido: "em tela de computador, notebook, no modo que já era".
+  //
+  // Essa regra, que nasceu aqui, virou `lib/nativo.ts::ehAppDeCampo()` em
+  // 06/09/2026 e hoje vale no sistema inteiro (AuthShell, login, escolha de
+  // conta e a abertura do PWA em app/page.tsx). O matchMedia continua abaixo
+  // só para REAVALIAR quando a janela muda de tamanho — quem responde a
+  // pergunta é ehAppDeCampo().
   const [appMode, setAppMode] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px)");
-    const avaliar = async () => {
-      if (await ehApp()) { setAppMode(true); return; }
-      const instalado = await ehAppOuPwa();
-      setAppMode(instalado && mq.matches);
-    };
+    const avaliar = async () => setAppMode(await ehAppDeCampo());
     avaliar();
     mq.addEventListener("change", avaliar);
     return () => mq.removeEventListener("change", avaliar);

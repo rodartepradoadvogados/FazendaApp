@@ -30,7 +30,7 @@ import { EscolherConta } from "@/components/EscolherConta";
 import {
   ehContador, escolherConta, fetchContasDisponiveis, getContaAtivaId, logout, type FazendaAtual,
 } from "@/lib/api";
-import { ehAppOuPwa } from "@/lib/nativo";
+import { ehAppDeCampo } from "@/lib/nativo";
 
 function Conteudo() {
   const router = useRouter();
@@ -52,7 +52,7 @@ function Conteudo() {
     // do login, ver app/login/page.tsx::irParaDestino).
     if (ehContador()) { router.replace("/contador"); return; }
     if (next && next.startsWith("/")) { router.replace(next); return; }
-    router.replace((await ehAppOuPwa()) ? "/app" : "/");
+    router.replace((await ehAppDeCampo()) ? "/app" : "/");
   };
 
   const aoEscolher = async (opcao: FazendaAtual) => {

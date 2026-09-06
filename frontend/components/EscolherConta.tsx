@@ -18,10 +18,15 @@ export function EscolherConta({
   opcoes: FazendaAtual[];
   // Conta ativa NESTE APARELHO agora — 0 = Painel CowData, id>0 = a
   // fazenda, null/undefined = nenhuma escolhida ainda (ex.: entre o login
-  // e esta tela, quando há mais de um acesso). Só essa opção fica
-  // esmaecida, com "Você está aqui" e SEM seta — sem isso, a pessoa clica
-  // na própria conta achando que trocou, e nada acontece (um "bug fantasma"
-  // só visível depois, quando ela percebe que continua no lugar de sempre).
+  // e esta tela, quando há mais de um acesso).
+  //
+  // Ela é MARCADA, nunca desabilitada. A primeira versão desta tela a
+  // bloqueava, com o raciocínio de que clicar na própria conta seria um
+  // clique sem efeito — mas o verbo estava errado: quem chega aqui vindo do
+  // sistema não quer TROCAR para a conta em que já está, quer CONTINUAR
+  // nela. Bloqueada, a tela obrigava a pessoa a entrar numa fazenda
+  // qualquer só para voltar de onde saiu — o oposto do que a marca
+  // prometia. Agora o rótulo é "Continuar aqui" e o clique leva ao destino.
   contaAtualId?: number | null;
   carregando: boolean;
   erro: string | null;
@@ -56,13 +61,13 @@ export function EscolherConta({
           // precisar checar `.cowdata` também.
           const aqui = contaAtualId != null && f.id === contaAtualId;
           return (
-            <button key={f.cowdata ? "cowdata" : f.id} type="button" disabled={carregando || aqui}
-              onClick={() => !aqui && onEscolher(f)}
+            <button key={f.cowdata ? "cowdata" : f.id} type="button" disabled={carregando}
+              onClick={() => onEscolher(f)}
               className="btn-ghost" style={{
                 width: "100%", justifyContent: "flex-start", alignItems: "center", gap: "0.6rem", padding: "0.7rem 0.9rem",
                 border: f.eh_teste ? "1px solid var(--red)" : "1px solid var(--border)",
                 background: f.eh_teste ? "color-mix(in srgb, var(--red) 12%, transparent)" : undefined,
-                opacity: aqui ? 0.55 : 1, cursor: aqui ? "default" : "pointer",
+                cursor: "pointer",
               }}>
               {f.cowdata
                 ? <ShieldCheck size={16} style={{ color: "var(--dourado-light)", flexShrink: 0 }} />
@@ -87,9 +92,15 @@ export function EscolherConta({
                   ? <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Cópia-sandbox para testar sem afetar dados reais</span>
                   : (f.cidade || f.uf) && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{[f.cidade, f.uf].filter(Boolean).join(" · ")}</span>}
               </span>
-              {aqui
-                ? <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", whiteSpace: "nowrap" }}>Você está aqui</span>
-                : <ChevronRight size={16} style={{ color: "var(--text-muted)", flexShrink: 0 }} />}
+              {aqui && (
+                <span style={{
+                  fontSize: "0.68rem", fontWeight: 700, color: "var(--dourado-light)", whiteSpace: "nowrap",
+                  border: "1px solid var(--dourado-light)", borderRadius: "var(--r-sm)", padding: "0.05rem 0.4rem",
+                }}>
+                  CONTINUAR AQUI
+                </span>
+              )}
+              <ChevronRight size={16} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
             </button>
           );
         })}

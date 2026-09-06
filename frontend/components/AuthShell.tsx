@@ -3,9 +3,9 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   getToken, podeModulo, ehDono, ehAdmin, ehContador, ehMembroEquipeCowData, podeFormularDietas, fetchContasDisponiveis,
-  ROTA_MODULO,
+  getContaAtivaId, ROTA_MODULO,
 } from "@/lib/api";
-import { iniciarMonitorInatividade } from "@/lib/idle";
+import { iniciarMonitorInatividade, marcarPresenca, msDesdeUltimaPresenca, LIMITE_INATIVIDADE_MS } from "@/lib/idle";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
@@ -44,15 +44,19 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // login — só um "trinco" pra não checar duas vezes (localStorage já
   // populado na 1ª passada não precisa de nova tentativa nas seguintes).
   const [hidratado, setHidratado] = useState(false);
-  // Estamos dentro do app nativo (Capacitor) OU do PWA instalado? Detecção
-  // única (ver lib/nativo.ts::ehAppOuPwa) — usada só para destinoRaiz abaixo.
-  // Path-based (ehApp) não bastava: um push pode abrir uma rota fora de /app
-  // (/financeiro, /estoque etc. — ver lib/nativo.ts::rotaDoApp) e, se a
-  // permissão falhar logo em seguida, o bounce caía no "/" desktop mesmo
-  // rodando dentro do app/PWA.
+  // Estamos num APARELHO DE CAMPO — app nativo (Capacitor) ou PWA instalado
+  // numa tela pequena? Detecção única (ver lib/nativo.ts::ehAppDeCampo) —
+  // usada só para destinoRaiz abaixo. Path-based (ehApp) não bastava: um push
+  // pode abrir uma rota fora de /app (/financeiro, /estoque etc. — ver
+  // lib/nativo.ts::rotaDoApp) e, se a permissão falhar logo em seguida, o
+  // bounce caía no "/" desktop mesmo rodando dentro do app.
+  // Era `ehAppOuPwa()`, que dá true também para o PWA instalado no NOTEBOOK
+  // (display-mode: standalone não tem relação com tamanho de tela) — quem
+  // instalou o atalho no computador era jogado na casca de celular a cada
+  // bounce. Mesma correção já feita no Painel CowData.
   const [dentroDoApp, setDentroDoApp] = useState(false);
   useEffect(() => {
-    import("@/lib/nativo").then(({ ehAppOuPwa }) => ehAppOuPwa()).then(setDentroDoApp).catch(() => {});
+    import("@/lib/nativo").then(({ ehAppDeCampo }) => ehAppDeCampo()).then(setDentroDoApp).catch(() => {});
   }, []);
 
   // O app móvel (/app) tem casca própria (barra inferior, sem sidebar).
@@ -183,6 +187,24 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
       // Já estamos na própria tela de escolha, ou ainda nem logamos — nada
       // a fazer (login cuida do próprio caso via selecao_fazenda_necessaria).
       if (atual === "/escolher-conta" || atual === "/login") return;
+
+      // Só repergunta depois de uma AUSÊNCIA DE VERDADE. Antes disto, o
+      // gatilho era "o app voltou ao primeiro plano" — e isso acontece ao
+      // trocar de aba, atender o telefone, ou abrir e fechar o app de novo em
+      // dois segundos. O resultado prático era ter que escolher a fazenda a
+      // cada volta, para depois seguir exatamente para onde já se estava:
+      // uma pergunta cuja resposta certa é sempre a mesma não é uma pergunta,
+      // é um pedágio.
+      //
+      // 15 minutos é o mesmo limite do logout por inatividade (lib/idle.ts) —
+      // a fronteira que o produto já usa para dizer "esta pessoa saiu de
+      // perto". Já ter uma conta escolhida é a outra metade: sem ela, ainda
+      // não há contexto nenhum e perguntar é o certo, tenha passado o tempo
+      // que for. `null` (nenhuma marca ainda) cai no mesmo caso.
+      const foraHa = msDesdeUltimaPresenca();
+      const jaTemConta = getContaAtivaId() != null;
+      if (jaTemConta && foraHa != null && foraHa < LIMITE_INATIVIDADE_MS) return;
+
       try {
         const opcoes = await fetchContasDisponiveis();
         // Só vale a pena perguntar quando há de fato mais de 1 opção — um
@@ -200,10 +222,27 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     };
 
     perguntarSeTrocaDeConta(); // cobre a abertura fria (1º mount deste componente)
-    const limpezaPromise = import("@/lib/nativo").then(({ registrarAoAbrirApp }) => registrarAoAbrirApp(perguntarSeTrocaDeConta));
+
+    // A marca de presença é mantida por CONTA PRÓPRIA, sem depender do monitor
+    // de inatividade (que desiste quando "manter conectado" está marcado — ver
+    // lib/idle.ts). Regravada enquanto o app está à vista e uma última vez ao
+    // ir para segundo plano, para que o cálculo do tempo fora seja o tempo
+    // fora de verdade, e não o tempo desde a última vez que o monitor rodou.
+    marcarPresenca();
+    const carimbar = () => { if (typeof document === "undefined" || document.visibilityState === "visible") marcarPresenca(); };
+    const carimbarAoSair = () => { if (typeof document !== "undefined" && document.visibilityState === "hidden") marcarPresenca(); };
+    const intervalo = window.setInterval(carimbar, 60 * 1000);
+    document.addEventListener("visibilitychange", carimbarAoSair);
+
+    // Ordem importa: a pergunta lê a marca ANTES de qualquer recarimbo, senão
+    // o próprio retorno zeraria o tempo fora e a checagem nunca dispararia.
+    const aoVoltar = () => { perguntarSeTrocaDeConta().finally(carimbar); };
+    const limpezaPromise = import("@/lib/nativo").then(({ registrarAoAbrirApp }) => registrarAoAbrirApp(aoVoltar));
 
     return () => {
       cancelado = true;
+      window.clearInterval(intervalo);
+      document.removeEventListener("visibilitychange", carimbarAoSair);
       limpezaPromise.then((limpar) => limpar()).catch(() => {});
     };
   }, [hidratado, dentroDoApp, router]);
