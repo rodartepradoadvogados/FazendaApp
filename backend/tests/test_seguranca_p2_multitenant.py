@@ -144,7 +144,16 @@ class TestEstoqueSemenNaoVazaEntreFazendas:
 class TestCatalogoTouroExigeAdmin:
     """Item 4: o catálogo global de Touro (sem fazenda_id, compartilhado por
     todas as fazendas) só era protegido pelo módulo genérico "parametros" —
-    qualquer operador podia alterar o catálogo visto por todo mundo."""
+    qualquer operador podia alterar o catálogo visto por todo mundo.
+
+    Em set/2026 a correção foi além do papel: a manutenção do catálogo SAIU
+    do lado da fazenda (`exigir_admin` protege bem o dado de UMA fazenda, e
+    este não é de uma) e passou a viver só no Painel CowData, sob a
+    permissão "editar touros NAAB" — ver painel_cowdata_touros.py. Por isso
+    a rota não existe mais aqui e a recusa deixou de ser 403 (papel errado)
+    para ser 404/405 (rota inexistente), que é a garantia mais forte: não há
+    o que gatear errado. O teste passou a aceitar as duas famílias de
+    recusa e, principalmente, a checar que o touro NÃO foi criado."""
 
     def test_operador_nao_cria_touro_no_catalogo_global(self, client):
         c, engine = client
@@ -166,7 +175,7 @@ class TestCatalogoTouroExigeAdmin:
         # seria barrado por ser uma sessão sem fazenda, não por ser operador.
         _como_fazenda(1)
         r = c.post("/cadastro/touros", json={"naab": "007HO99999", "nome": "Touro Invasor"})
-        assert r.status_code == 403
+        assert r.status_code in (403, 404, 405), r.text
         with Session(engine) as s:
             assert s.exec(select(Touro).where(Touro.naab == "007HO99999")).first() is None
 

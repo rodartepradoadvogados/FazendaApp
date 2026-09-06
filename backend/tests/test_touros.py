@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
+from fazenda.auth import EMAIL_DONO
 from fazenda.models import Touro
 from fazenda.rules.touros import eh_planilha_rica, importar_touros_planilha_rica
 
@@ -155,6 +156,12 @@ def client():
         papel = "admin"
         ativo = True
         username = "teste"
+        # A manutenção do catálogo mudou para o Painel CowData (set/2026) e
+        # é gateada por área/permissão de Equipe CowData, com bypass do
+        # dono-equivalente pelo E-MAIL — por isso o usuário falso desta
+        # suíte precisa ter `email`. Ver painel_cowdata_touros.py.
+        email = EMAIL_DONO
+        pessoa_id = None
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
@@ -166,9 +173,13 @@ def client():
 
 
 class TestCadastroManual:
+    """Cadastro manual do catálogo — mora no Painel CowData desde set/2026
+    (era POST/PUT/DELETE /cadastro/touros, do lado da fazenda). A LEITURA
+    continua em GET /cadastro/touros e é conferida abaixo."""
+
     def test_criar_touro_so_com_naab_e_nome(self, client):
         c, _engine = client
-        resp = c.post("/cadastro/touros", json={"naab": "007HO33333", "nome": "Manual"})
+        resp = c.post("/painel-cowdata/touros", json={"naab": "007HO33333", "nome": "Manual"})
         assert resp.status_code == 200, resp.text
         corpo = resp.json()
         assert corpo["naab"] == "007HO33333"
@@ -177,12 +188,12 @@ class TestCadastroManual:
 
     def test_criar_touro_sem_nome_falha(self, client):
         c, _engine = client
-        resp = c.post("/cadastro/touros", json={"naab": "007HO44444", "nome": "  "})
+        resp = c.post("/painel-cowdata/touros", json={"naab": "007HO44444", "nome": "  "})
         assert resp.status_code == 400
 
     def test_criar_touro_com_dados_extra(self, client):
         c, _engine = client
-        resp = c.post("/cadastro/touros", json={
+        resp = c.post("/painel-cowdata/touros", json={
             "naab": "007HO55555", "nome": "ComExtra", "tpi": 3100,
             "dados_extra": [["Feed Saved", "24"], ["EFI", "12.3"]],
         })
@@ -192,22 +203,22 @@ class TestCadastroManual:
 
     def test_naab_duplicado_falha(self, client):
         c, _engine = client
-        c.post("/cadastro/touros", json={"naab": "007HO66666", "nome": "A"})
-        resp = c.post("/cadastro/touros", json={"naab": "007HO66666", "nome": "B"})
+        c.post("/painel-cowdata/touros", json={"naab": "007HO66666", "nome": "A"})
+        resp = c.post("/painel-cowdata/touros", json={"naab": "007HO66666", "nome": "B"})
         assert resp.status_code == 400
 
     def test_atualizar_touro(self, client):
         c, _engine = client
-        criado = c.post("/cadastro/touros", json={"naab": "007HO77777", "nome": "Original"}).json()
-        resp = c.put(f"/cadastro/touros/{criado['id']}", json={"naab": "007HO77777", "nome": "Editado", "tpi": 2900})
+        criado = c.post("/painel-cowdata/touros", json={"naab": "007HO77777", "nome": "Original"}).json()
+        resp = c.put(f"/painel-cowdata/touros/{criado['id']}", json={"naab": "007HO77777", "nome": "Editado", "tpi": 2900})
         assert resp.status_code == 200, resp.text
         assert resp.json()["nome"] == "Editado"
         assert resp.json()["tpi"] == 2900
 
     def test_excluir_touro(self, client):
         c, _engine = client
-        criado = c.post("/cadastro/touros", json={"naab": "007HO88888", "nome": "ParaExcluir"}).json()
-        resp = c.delete(f"/cadastro/touros/{criado['id']}")
+        criado = c.post("/painel-cowdata/touros", json={"naab": "007HO88888", "nome": "ParaExcluir"}).json()
+        resp = c.delete(f"/painel-cowdata/touros/{criado['id']}")
         assert resp.status_code == 200
         assert c.get("/cadastro/touros").status_code == 200
         naabs = [t["naab"] for t in c.get("/cadastro/touros").json()]
@@ -215,7 +226,7 @@ class TestCadastroManual:
 
     def test_campos_planilha_lista_rotulos_conhecidos(self, client):
         c, _engine = client
-        resp = c.get("/cadastro/touros/campos-planilha")
+        resp = c.get("/painel-cowdata/touros/campos-planilha")
         assert resp.status_code == 200
         rotulos = resp.json()
         assert "TPI" in rotulos
@@ -232,7 +243,7 @@ class TestCadastroManual:
             session.commit()
 
         monkeypatch.setattr("fazenda.rules.touros.bootstrap_touros_naab", _fake_bootstrap)
-        resp = c.post("/cadastro/touros/recarregar-catalogo")
+        resp = c.post("/painel-cowdata/touros/recarregar-catalogo")
         assert resp.status_code == 200, resp.text
         corpo = resp.json()
         assert corpo["touros_depois"] == corpo["touros_antes"] + 1

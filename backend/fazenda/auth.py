@@ -22,7 +22,9 @@ from fazenda.database import get_session
 from fazenda.models import (
     ContratoFazenda, ContratoFazendaModulo, Fazenda, Pessoa, SeedFlag, Usuario, UsuarioFazenda,
 )
-from fazenda.models.equipe_cowdata_acesso import NIVEL_SIGILO_PADRAO, PermissaoEquipeCowData
+from fazenda.models.equipe_cowdata_acesso import (
+    CAMPOS_PERMISSAO_EDICAO_PAINEL_COWDATA, NIVEL_SIGILO_PADRAO, PermissaoEquipeCowData,
+)
 
 # Segredo que assina TODO token de sessão. O valor abaixo é público (está no
 # repositório) e serve só para desenvolvimento/teste — quem o conhece consegue
@@ -460,6 +462,58 @@ def exigir_area_painel_cowdata(area: str):
     return _dep
 
 
+def tem_permissao_painel_cowdata(session: Session, user: Usuario, permissao: str) -> bool:
+    """Este usuário tem UMA das sete permissões de EDIÇÃO do Painel CowData
+    (ver PERMISSOES_EDICAO_PAINEL_COWDATA em
+    fazenda/models/equipe_cowdata_acesso.py)?
+
+    Dono-equivalente sempre sim — mesmo bypass de
+    `exigir_area_painel_cowdata`: o dono nunca teve linha em
+    PermissaoEquipeCowData nem precisa ter. Qualquer outro sem linha gravada
+    (ou com a permissão desligada) é NÃO — nunca abrir acesso por omissão,
+    que é a decisão explícita da migração ("ninguém ganha nada").
+
+    Usado como função (e não só como dependência) porque uma das rotas
+    precisa checar a permissão no MEIO do handler, dependendo dos campos que
+    o corpo do pedido tenta mexer — ver painel_cowdata_usuarios.py."""
+    if permissao not in CAMPOS_PERMISSAO_EDICAO_PAINEL_COWDATA:
+        raise ValueError(f"Permissão desconhecida do Painel CowData: {permissao}")
+    if eh_email_dono_equivalente(user.email):
+        return True
+    perm = _permissao_equipe_cowdata(session, user.id)
+    return bool(perm and getattr(perm, permissao, False))
+
+
+def exigir_permissao_painel_cowdata(area: str, permissao: str):
+    """Fábrica de dependência para as rotas de ESCRITA do Painel CowData:
+    exige a ÁREA (eixo "areas", que responde "ele VÊ esta parte do painel?")
+    E a permissão booleana de edição (eixo "o que ele pode FAZER").
+
+    As duas, sempre — nunca uma OU outra. A permissão nova é uma camada A
+    MAIS por cima da checagem de área que já existia, e não um caminho
+    alternativo que a contorne: sem a área, nem chega a olhar a permissão.
+
+    É isso que dá a assimetria pedida pelo dono (set/2026): a rota de
+    LEITURA continua só com `exigir_area_painel_cowdata(area)` — consulta é
+    livre para quem tem a área —, e só a de escrita passa por aqui."""
+
+    def _dep(user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> Usuario:
+        if eh_email_dono_equivalente(user.email):
+            return user
+        perm = _permissao_equipe_cowdata(session, user.id)
+        if not perm or area not in (perm.areas or "").split(","):
+            raise HTTPException(status_code=403, detail="Sem permissão para esta área do Painel CowData")
+        if not getattr(perm, permissao, False):
+            raise HTTPException(
+                status_code=403,
+                detail="Sem permissão para editar aqui — a consulta continua liberada. "
+                       "Peça ao proprietário para marcar esta permissão no cadastro de equipe.",
+            )
+        return user
+
+    return _dep
+
+
 def exigir_contratante_ou_dono(
     user: Usuario = Depends(get_current_user),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -482,12 +536,29 @@ def exigir_contratante_ou_dono(
     return user
 
 
-def exigir_pode_publicar(user: Usuario = Depends(get_current_user)) -> Usuario:
+def exigir_pode_publicar(
+    user: Usuario = Depends(get_current_user), session: Session = Depends(get_session),
+) -> Usuario:
     """Permissão específica para publicar/gerenciar matérias do blog (News) e
     confirmar a revisão de publicação definitiva. Independente de papel/admin
-    — igual exigir_dono, um admin comum não passa por aqui sem a flag."""
+    — igual exigir_dono, um admin comum não passa por aqui sem a flag.
+
+    "Edição de News" (set/2026) entra aqui como camada A MAIS, nunca como
+    caminho alternativo: para um MEMBRO DA EQUIPE COWDATA a flag antiga
+    (`Usuario.pode_publicar_materias_blog`) continua sendo exigida e, além
+    dela, agora também `pode_editar_news` do cadastro de equipe. Quem não é
+    da Equipe CowData (usuário de fazenda-cliente com a flag) não muda em
+    nada — o gate dele continua sendo só a flag.
+
+    Quem cadastra o login da equipe marca uma coisa só na tela (Painel
+    CowData > Equipe > "Editar News"): a rota que grava a permissão espelha
+    a marcação na flag do Usuario (ver painel_cowdata.py::
+    _aplicar_permissao_news), justamente para que o "E" acima não vire uma
+    armadilha em que a caixa está marcada e mesmo assim não funciona."""
     if not user.pode_publicar_materias_blog:
         raise HTTPException(status_code=403, detail="Sem permissão para publicar matérias no blog")
+    if eh_membro_equipe_cowdata(session, user) and not tem_permissao_painel_cowdata(session, user, "pode_editar_news"):
+        raise HTTPException(status_code=403, detail="Sem permissão para editar News no Painel CowData")
     return user
 
 

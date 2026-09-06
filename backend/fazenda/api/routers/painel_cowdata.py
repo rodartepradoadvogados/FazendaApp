@@ -26,12 +26,13 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_area_painel_cowdata, exigir_dono, hash_senha
+from fazenda.auth import eh_email_dono_equivalente, exigir_area_painel_cowdata, exigir_dono, hash_senha
 from fazenda.database import get_session
 from fazenda.models import CobrancaAsaas, Fazenda, FolhaPagamento, Pessoa, SeedFlag, TipoPessoa, Usuario
 from fazenda.models.cowdata_interno import LancamentoCowData
 from fazenda.models.equipe_cowdata_acesso import (
-    AREAS_PAINEL_COWDATA, NIVEIS_SIGILO_EQUIPE_COWDATA, NIVEL_SIGILO_PADRAO, PermissaoEquipeCowData,
+    AREAS_PAINEL_COWDATA, CAMPOS_PERMISSAO_EDICAO_PAINEL_COWDATA, NIVEIS_SIGILO_EQUIPE_COWDATA,
+    NIVEL_SIGILO_PADRAO, PermissaoEquipeCowData,
 )
 from fazenda.models.multitenant import EmpresaOperadora
 from fazenda.rules.contrato_equipe_render import nome_arquivo_contrato, render_contrato_equipe
@@ -367,6 +368,17 @@ class UsuarioEquipeCowDataIn(BaseModel):
     pode_emitir_cobrancas: bool = False
     pode_vincular_usuarios: bool = False
     pode_cadastrar_usuarios: bool = False
+    # As sete permissões de EDIÇÃO dentro do próprio Painel CowData
+    # (set/2026, ver PERMISSOES_EDICAO_PAINEL_COWDATA). Default False em
+    # todas, como o resto: um client desatualizado que não mandar os campos
+    # nunca abre acesso — só fecha.
+    pode_editar_cadastros_globais: bool = False
+    pode_editar_touros_naab: bool = False
+    pode_editar_farmacia: bool = False
+    pode_consultar_usuarios: bool = False
+    pode_editar_usuarios: bool = False
+    pode_controlar_acesso_usuarios: bool = False
+    pode_editar_news: bool = False
 
 
 def _validar_areas(areas: list[str]) -> None:
@@ -393,6 +405,7 @@ def _usuario_equipe_publico(usuario: Usuario, perm: PermissaoEquipeCowData) -> d
         "pode_emitir_cobrancas": perm.pode_emitir_cobrancas,
         "pode_vincular_usuarios": perm.pode_vincular_usuarios,
         "pode_cadastrar_usuarios": perm.pode_cadastrar_usuarios,
+        **{campo: getattr(perm, campo) for campo in CAMPOS_PERMISSAO_EDICAO_PAINEL_COWDATA},
     }
 
 
@@ -416,6 +429,35 @@ def _aplicar_subpermissoes(perm: PermissaoEquipeCowData, dados: UsuarioEquipeCow
         perm.pode_emitir_cobrancas = False
         perm.pode_vincular_usuarios = False
         perm.pode_cadastrar_usuarios = False
+    # As SETE permissões de edição do próprio Painel CowData ficam FORA do
+    # `if` acima de propósito: `pode_acessar_fazendas` é o portão de entrar
+    # na fazenda-cliente, e estas sete são sobre o painel interno — pendurar
+    # uma coisa na outra criaria uma dependência que o dono não pediu (ex.:
+    # um editor de News teria de "poder acessar fazendas" para publicar).
+    for campo in CAMPOS_PERMISSAO_EDICAO_PAINEL_COWDATA:
+        setattr(perm, campo, getattr(dados, campo))
+
+
+def _aplicar_permissao_news(usuario: Usuario, dados: UsuarioEquipeCowDataIn) -> None:
+    """Espelha "Editar News" na flag `Usuario.pode_publicar_materias_blog`.
+
+    O gate real das rotas de matéria é `fazenda.auth.exigir_pode_publicar`,
+    que para um membro da Equipe CowData exige a flag antiga E a permissão
+    nova (camada a mais, nunca caminho alternativo). Se a tela de equipe só
+    gravasse a permissão, a caixa "Editar News" ficaria marcada e mesmo
+    assim daria 403 pela flag desligada — uma armadilha. Como esta rota é
+    `exigir_dono`, quem marca a caixa é o proprietário, o mesmo que
+    concederia a flag à mão.
+
+    Exceção: um login DONO-EQUIVALENTE nunca tem a flag apagada por aqui.
+    `exigir_pode_publicar` cobra a flag de todo mundo, inclusive do dono (é
+    ela que `seed_permissao_publicar_dono` concede), então desmarcar a caixa
+    ao editar a própria ficha tiraria do proprietário o acesso ao blog —
+    e não é isso que "desmarcar uma permissão de equipe" quer dizer.
+    """
+    if eh_email_dono_equivalente(usuario.email) and not dados.pode_editar_news:
+        return
+    usuario.pode_publicar_materias_blog = dados.pode_editar_news
 
 
 @router.get("/equipe/pessoas/{pessoa_id}/usuario")
@@ -453,6 +495,7 @@ def criar_usuario_equipe(
         username=dados.username, nome=pessoa.nome, email=dados.email,
         senha_hash=hash_senha(dados.senha), papel="operador", pessoa_id=pessoa.id, ativo=dados.ativo,
     )
+    _aplicar_permissao_news(usuario, dados)
     session.add(usuario)
     session.commit()
     session.refresh(usuario)
@@ -484,6 +527,7 @@ def editar_usuario_equipe(
     usuario.ativo = dados.ativo
     if dados.senha and dados.senha.strip():
         usuario.senha_hash = hash_senha(dados.senha)
+    _aplicar_permissao_news(usuario, dados)
     session.add(usuario)
 
     perm = _permissao_equipe_cowdata_ou_vazia(session, usuario.id)

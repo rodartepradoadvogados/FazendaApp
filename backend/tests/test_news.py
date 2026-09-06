@@ -39,6 +39,10 @@ def client():
         username = "admin_teste"
         email = EMAIL_DONO  # dono sempre passa em exigir_pode_publicar também
         pode_publicar_materias_blog = True
+        # `exigir_pode_publicar` passou a olhar se o usuário é da Equipe
+        # CowData (pessoa_id -> Pessoa -> Fazenda.eh_empresa_cowdata) para
+        # cobrar também a permissão "Editar News" — este falso não é.
+        pessoa_id = None
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeAdmin()
@@ -70,6 +74,10 @@ def client_admin_sem_permissao_publicar():
         username = "admin_sem_permissao"
         email = "admin_comum@example.com"  # não é EMAIL_DONO — exigir_dono bloqueia
         pode_publicar_materias_blog = False
+        # `exigir_pode_publicar` passou a olhar se o usuário é da Equipe
+        # CowData (pessoa_id -> Pessoa -> Fazenda.eh_empresa_cowdata) para
+        # cobrar também a permissão "Editar News" — este falso não é.
+        pessoa_id = None
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeAdminSemPermissao()
@@ -100,6 +108,10 @@ def client_operador():
         username = "operador_teste"
         email = "operador@example.com"
         pode_publicar_materias_blog = False
+        # `exigir_pode_publicar` passou a olhar se o usuário é da Equipe
+        # CowData (pessoa_id -> Pessoa -> Fazenda.eh_empresa_cowdata) para
+        # cobrar também a permissão "Editar News" — este falso não é.
+        pessoa_id = None
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeOperador()
@@ -497,6 +509,10 @@ class TestAprovarNoticiaManual:
             username = "admin_sem_permissao"
             email = "admin_comum@example.com"
             pode_publicar_materias_blog = False
+            # `exigir_pode_publicar` passou a olhar se o usuário é da Equipe
+            # CowData (pessoa_id -> Pessoa -> Fazenda.eh_empresa_cowdata) para
+            # cobrar também a permissão "Editar News" — este falso não é.
+            pessoa_id = None
 
         main.app.dependency_overrides[get_current_user] = lambda: _FakeAdminSemPermissao()
         assert c.post(f"/aprovacoes/{pend_id}/aprovar").status_code == 403
@@ -523,6 +539,10 @@ class TestAprovarNoticiaManual:
             username = "publicador_designado"
             email = "publicador@example.com"  # não é EMAIL_DONO
             pode_publicar_materias_blog = True
+            # `exigir_pode_publicar` passou a olhar se o usuário é da Equipe
+            # CowData (pessoa_id -> Pessoa -> Fazenda.eh_empresa_cowdata) para
+            # cobrar também a permissão "Editar News" — este falso não é.
+            pessoa_id = None
 
         main.app.dependency_overrides[get_current_user] = lambda: _FakePublicadorDesignado()
         r = c.post(f"/aprovacoes/{pend_id}/aprovar")

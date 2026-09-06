@@ -12,7 +12,6 @@ listamos seus modelos para aparecerem lado a lado na mesma tela.
 """
 from __future__ import annotations
 
-import io
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
@@ -148,21 +147,6 @@ CATEGORIAS_NOVAS = {
         ],
         "exemplo": ["evento_sanitario", "Brucelose B19", "464", "10/04/2026", "Vacina B19", "2", "ml", "Subcutânea", "Carlos", ""],
         "precisa_data_corte": True,
-    },
-    "touros_naab": {
-        "label": "Touros — catálogo NAAB/provas do fornecedor (Excel ou CSV)",
-        "colunas": [
-            "NAAB (código)", "Nome", "Raça", "Central", "Leite", "Gordura kg", "Gordura %", "Proteína kg",
-            "Proteína %", "TPI", "NM$", "Tipo (PTAT)", "Úbere (UDC)", "Pernas (FLC)", "CCS (SCS)",
-            "Fertilidade (DPR)", "Facilidade de parto",
-        ],
-        "colunas_csv": [
-            "naab", "nome", "raca", "central", "leite", "gordura_kg", "gordura", "proteina_kg", "proteina",
-            "tpi", "nm", "tipo", "ubere", "pernas", "ccs", "dpr", "facilidade de parto",
-        ],
-        "exemplo": ["7HO16011", "FRAZZLED", "Holandês", "Select Sires", "800", "45", "0.03", "35", "0.02",
-                    "2850", "780", "2.10", "1.80", "1.20", "2.85", "1.5", "6.2"],
-        "aceita_excel": True,
     },
 }
 
@@ -1115,40 +1099,23 @@ async def importar_baixas_pendencias_agenda(
     return {"categoria": "baixas_pendencias_agenda", "criados": criados, "dispensados": dispensados, "erros": erros}
 
 
-@router.post("/touros_naab")
-async def importar_touros_naab(
-    file: UploadFile,
-    fonte: str = Form(""),
-    rodada: str = Form(""),
-    session: Session = Depends(get_session),
-) -> dict:
-    """
-    Catálogo genético de touros (provas do fornecedor / NAAB-CDCB). Aceita o
-    Excel (.xlsx) ou CSV exportado do ABS BullSearch, Alta, Select Sires etc.
-
-    Catálogos completos (dezenas de colunas de provas, ex.: exportação da
-    Alta Genetics) são lidos por posição de coluna, preservando TODOS os
-    dados por touro; CSVs simples continuam usando o casamento por apelidos.
-    Upsert por código NAAB; nunca apaga touros existentes.
-    """
-    from fazenda.rules.touros import eh_planilha_rica, importar_touros, importar_touros_planilha_rica, ler_planilha
-    content = await file.read()
-    nome = (file.filename or "").lower()
-    try:
-        if nome.endswith((".xlsx", ".xlsm")):
-            import openpyxl
-            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-            cabecalhos = next(wb.active.iter_rows(values_only=True), [])
-            if eh_planilha_rica(list(cabecalhos)):
-                resultado = importar_touros_planilha_rica(session, content, fonte.strip() or None, rodada.strip() or None)
-                return {"categoria": "touros_naab", **resultado}
-        linhas = ler_planilha(content, file.filename)
-    except HTTPException:
-        raise
-    except Exception as e:  # noqa: BLE001 — arquivo ilegível vira erro amigável
-        raise HTTPException(status_code=400, detail=f"Não consegui ler o arquivo: {e}")
-    resultado = importar_touros(session, linhas, fonte.strip() or None, rodada.strip() or None)
-    return {"categoria": "touros_naab", **resultado}
+# ── CATÁLOGO DE TOUROS NAAB: SAIU DAQUI (furo de segurança, set/2026) ──────
+# `POST /importar/touros_naab` (e a categoria "touros_naab" do catálogo de
+# modelos acima) viviam aqui e agora vivem em
+# fazenda/api/routers/painel_cowdata_touros.py::importar_touros_naab_painel,
+# sob a permissão "editar touros NAAB" do cadastro de equipe do Painel
+# CowData.
+#
+# O QUE ESTAVA ERRADO. `Touro` é catálogo GLOBAL (sem `fazenda_id`, uma
+# tabela só lida por todas as fazendas-cliente), mas esta rota era protegida
+# apenas por `exigir_modulo("upload")` — a mesma trava dos importadores de
+# dado da PRÓPRIA fazenda, onde ela é suficiente. Na prática, qualquer
+# fazenda-cliente com o módulo Upload subia uma planilha e reescrevia por
+# upsert (nome, provas, TPI/NM$, rodada) o catálogo que todas as outras
+# consultam. Mesmo furo, e mesma correção, das rotas de
+# POST/PUT/DELETE /cadastro/touros — ver cadastro/genetica.py.
+#
+# A LEITURA da fazenda não mudou: `GET /cadastro/touros` continua igual.
 
 
 @router.post("/backfill")

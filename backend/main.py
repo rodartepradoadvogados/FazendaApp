@@ -63,6 +63,7 @@ from fazenda.api.routers import (
     painel_cowdata_farmacia,
     painel_cowdata_parametros,
     painel_cowdata_sincronizacao,
+    painel_cowdata_touros,
     painel_cowdata_usuarios,
     parametros,
     pedidos,
@@ -768,6 +769,13 @@ app.include_router(painel_cowdata_usuarios.router)
 # catálogo global + fan-out de Estoque para toda fazenda-cliente, mesmo
 # padrão exigir_area_painel_cowdata("farmacia").
 app.include_router(painel_cowdata_farmacia.router)
+# Catálogo GLOBAL de touros NAAB (`Touro`, sem fazenda_id): a manutenção
+# (criar/editar/excluir/recarregar/importar planilha) mora só aqui, sob a
+# permissão "editar touros NAAB" do cadastro de equipe — antes morava no
+# router de cadastro da fazenda sob `exigir_admin`, e o administrador de
+# qualquer fazenda-cliente reescrevia o catálogo de todas. A LEITURA da
+# fazenda não mudou de lugar (cadastro.router_touros_leitura, mais abaixo).
+app.include_router(painel_cowdata_touros.router)
 # Cofre de acesso: mesmo padrão exigir_dono — ver fazenda/api/routers/cofre_acesso.py.
 app.include_router(cofre_acesso.router)
 # Sincronizar sandbox (Fazenda de Teste = cópia da fazenda-cliente real) —
