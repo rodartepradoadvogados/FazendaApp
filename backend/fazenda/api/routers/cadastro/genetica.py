@@ -171,6 +171,33 @@ def atualizar_estoque_semen_202607(session: Session, fazenda_id: int | None = No
     session.commit()
 
 
+def _buscar_semen_da_fazenda(session: Session, item_id: int, fazenda_id: int | None) -> EstoqueSemen | None:
+    """Carrega UM item de estoque de sêmen por id JÁ FILTRANDO por fazenda na
+    própria consulta (mesmo helper e mesmo motivo de
+    agenda.py::_buscar_da_fazenda).
+
+    Antes era `session.get()` seguido de
+    `if fazenda_id is not None and item.fazenda_id != fazenda_id` — o padrão
+    tolerante que a auditoria aponta como causa raiz: o recorte por fazenda
+    dependia de o token trazer "fid", e um token sem ele DESLIGAVA o
+    isolamento em vez de restringi-lo. Aqui isso valia edição e EXCLUSÃO do
+    inventário de sêmen alheio (doses, valor unitário, canecas — informação
+    comercial de genética de concorrente, a mesma que o achado 52 já tratou
+    do lado da leitura). Filtrando na consulta, "de outra fazenda" e "sem
+    fazenda" (órfão do backfill 029227481e9e) caem no mesmo não encontrado.
+
+    `fazenda_id is None` só acontece onde o multi-fazenda não está
+    provisionado (tabela `fazenda` vazia — suíte de testes e instalação
+    anterior à f1a2b3c4d5e6); em qualquer ambiente com fazenda cadastrada a
+    trava de porta (exigir_fazenda_selecionada, montada no router de cadastro
+    em main.py) já recusou a requisição antes. Tratado explicitamente, não
+    por omissão."""
+    query = select(EstoqueSemen).where(EstoqueSemen.id == item_id)
+    if fazenda_id is not None:
+        query = query.where(EstoqueSemen.fazenda_id == fazenda_id)
+    return session.exec(query).first()
+
+
 class EstoqueSemenIn(BaseModel):
     touro_nome: str
     codigo: str | None = None
@@ -258,8 +285,8 @@ def atualizar_estoque_semen(
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    item = session.get(EstoqueSemen, item_id)
-    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+    item = _buscar_semen_da_fazenda(session, item_id, fazenda_id)
+    if not item:
         raise HTTPException(status_code=404, detail="Registro de sêmen não encontrado")
     if dados.tipo not in TIPOS_SEMEN:
         raise HTTPException(status_code=400, detail=f"Tipo inválido (aceitos: {', '.join(TIPOS_SEMEN)})")
@@ -283,8 +310,8 @@ def excluir_estoque_semen(
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    item = session.get(EstoqueSemen, item_id)
-    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+    item = _buscar_semen_da_fazenda(session, item_id, fazenda_id)
+    if not item:
         raise HTTPException(status_code=404, detail="Registro de sêmen não encontrado")
     session.delete(item)
     session.commit()
