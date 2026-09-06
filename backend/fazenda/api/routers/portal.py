@@ -364,10 +364,20 @@ def enviar_email_portal(
         anexo_bytes = csv_texto.encode("utf-8-sig")
         corpo_html += f"<p>Relatório {RELATORIOS_DISPONIVEIS[dados.relatorio]} em anexo (período {dados.data_inicio.isoformat()} a {dados.data_fim.isoformat()}).</p>"
 
+    # BUG DE SEGURANÇA CORRIGIDO: mesmo furo que `enviar_mensagem` e
+    # `delegar_tarefa` já tinham fechado, e que esta rota — a única das três
+    # que manda o dado para FORA do sistema — continuava com aberto: só
+    # conferia que o usuário EXISTIA, não que era da MESMA fazenda de quem
+    # está enviando. Cenário concreto: o admin da fazenda 2 escolhe o id de um
+    # funcionário da fazenda 1 e dispara para o e-mail pessoal dele a DRE da
+    # fazenda 2 — o relatório sai do tenant — ou um texto livre qualquer, que
+    # chega com a cara de comunicação oficial da plataforma. Mesma lista do
+    # seletor "@" (`listar_destinatarios`): só quem já aparece lá pode receber.
+    ids_validos = {u.id for u in usuarios_da_fazenda(session, fazenda_id_seguro(fazenda_id))}
     enviados = 0
     for dest_id in dados.destinatarios_usuario_id:
         destinatario = session.get(Usuario, dest_id)
-        if not destinatario:
+        if not destinatario or dest_id not in ids_validos:
             raise HTTPException(404, f"Usuário {dest_id} não encontrado")
         if not destinatario.email:
             raise HTTPException(400, f"Usuário {destinatario.nome or destinatario.username} não tem e-mail cadastrado")
@@ -492,8 +502,17 @@ def _executar_exportacao(itens: list[dict], destinatario_email: str, fazenda_id:
                     # de qualquer fazenda-cliente exportava o banco inteiro
                     # (animais, produção, sanidade, compras/vendas,
                     # financeiro) de TODOS os outros clientes da plataforma.
-                    if fazenda_id is not None:
-                        query = query.where(cfg["model"].fazenda_id == fazenda_id)
+                    #
+                    # O filtro é INCONDICIONAL de propósito. O padrão tolerante
+                    # (`if fazenda_id is not None: ...where(...)`) é o que criou
+                    # o furo em primeiro lugar: com fazenda_id None ele não
+                    # restringe, ele DESLIGA o isolamento — e aqui isso vira um
+                    # ZIP com o banco de todos os clientes saindo por e-mail.
+                    # Com fazenda_id None (ambiente sem multi-fazenda
+                    # provisionado, ver `_fazenda_obrigatoria`) isto vira
+                    # `fazenda_id IS NULL`, que é exatamente o conjunto de
+                    # linhas desse ambiente — nunca as de outro tenant.
+                    query = query.where(cfg["model"].fazenda_id == fazenda_id)
                     linhas = [row.model_dump(mode="json") for row in session.exec(query).all()]
                     zf.writestr(f"{chave}.csv", _linhas_para_csv(linhas).encode("utf-8-sig"))
                 elif chave in RELATORIOS_DISPONIVEIS and item.get("data_inicio") and item.get("data_fim"):
@@ -548,6 +567,7 @@ class ExportarIn(BaseModel):
 def solicitar_exportacao(
     dados: ExportarIn, background_tasks: BackgroundTasks, user: Usuario = Depends(get_current_user),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session),
 ) -> dict:
     if user.papel != "admin":
         raise HTTPException(403, "Só o administrador tem acesso à exportação")
@@ -561,6 +581,10 @@ def solicitar_exportacao(
         if item.chave not in chaves_validas:
             raise HTTPException(400, f"Item inválido: {item.chave}")
 
+    # A fazenda é resolvida (e exigida) AQUI, ainda dentro do request, e viaja
+    # como argumento para a BackgroundTask — que roda depois da resposta, com
+    # sessão própria e sem nenhum contexto de autenticação para consultar.
+    fazenda_id = _fazenda_obrigatoria(session, fazenda_id)
     itens = [item.model_dump() for item in dados.itens]
     background_tasks.add_task(_executar_exportacao, itens, user.email, fazenda_id)
     return {"mensagem": f"Em breve o resultado será enviado para {user.email}."}
