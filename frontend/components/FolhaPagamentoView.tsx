@@ -12,7 +12,7 @@ import {
   lerDocumentoFinanceiro, anexarArquivoLancamento, formatDate,
   fetchContasCorrentes, type ContaCorrenteCadastro,
   anexarComprovanteVale, listarComprovantesVale, excluirComprovanteVale, urlComprovanteVale,
-  type LinhaHolerite, type TotaisHolerite, type BasesHolerite,
+  type LinhaHolerite, type LinhaValeAssumido, type TotaisHolerite, type BasesHolerite,
 } from "@/lib/api";
 import { ModalDivergenciaVale, ModalResultadoDivergenciaVale, ModalConfirmarDivergenciaTotal } from "@/components/ModalDivergenciaVale";
 import AcoesValeModal from "@/components/AcoesValeModal";
@@ -239,6 +239,13 @@ type RegistroFolha = {
   // quando é desconto de vale, a origem com o `vale_id` — o que substitui o
   // `/vale/i.test(label)` que a tela usava para adivinhar "o que é vale".
   detalhe: LinhaHolerite[];
+  // Parcelas que a FAZENDA assumiu naquela competência — campo à parte de
+  // `detalhe` porque não são desconto de ninguém e não podem entrar em soma
+  // nenhuma (nem no total do mês, nem no líquido, nem no holerite impresso).
+  // Vêm para o painel poder explicar por que o desconto sumiu e para o botão
+  // "Ações" continuar existindo no mês desconsiderado — sem elas a ação de
+  // desfazer ficava sem porta de entrada.
+  vale_assumido?: LinhaValeAssumido[];
   totais: TotaisHolerite;
   bases: BasesHolerite;
   usuario_nome?: string | null;
@@ -1698,6 +1705,13 @@ export default function FolhaPagamentoView() {
                 // porque o servidor mandava só texto. Agora a linha declara o
                 // próprio tipo e carrega o vale de origem.
                 const valeLinhas = r.detalhe.filter((d) => d.tipo === "vale");
+                // As parcelas que a fazenda assumiu naquele mês. Vêm em campo
+                // PRÓPRIO (nunca em `r.detalhe`), então `descVale` e todos os
+                // totais do mês seguem sem elas — aqui elas só explicam o
+                // desconto que sumiu e devolvem o botão "Ações" à competência
+                // desconsiderada, que era onde a volta atrás ficava sem porta.
+                const valeAssumido = r.vale_assumido || [];
+                const temPainelVale = descVale > 0 || valeAssumido.length > 0;
                 const documento = holeriteDoRegistro(r);
                 return (
                   <Fragment key={chave}>
@@ -1738,8 +1752,17 @@ export default function FolhaPagamentoView() {
                         onClick={(e) => { e.stopPropagation(); setExpandDesc(descAberto && expandDesc!.tipo === "folha" ? null : { id: r.id, tipo: "folha" }); }}>
                         {formatBRL(descFolha)}
                       </td>
-                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: descVale ? "var(--amber)" : "var(--text-muted)", cursor: "pointer", textDecoration: descVale ? "underline dotted" : undefined }}
-                        title="Clique para ver as parcelas de vale descontadas nesta folha"
+                      {/* O VALOR aqui é só o que foi efetivamente descontado
+                          (`valor_vale`, que ignora a parcela assumida). O que
+                          muda com a parcela assumida é a porta: sem o pontilhado
+                          a célula zerada não parecia clicável, e era ali dentro
+                          que morava o único acesso ao desfazer. */}
+                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: descVale ? "var(--amber)" : "var(--text-muted)", cursor: "pointer", textDecoration: temPainelVale ? "underline dotted" : undefined }}
+                        title={descVale
+                          ? "Clique para ver as parcelas de vale descontadas nesta folha"
+                          : valeAssumido.length
+                            ? "Nada foi descontado: a fazenda assumiu a parcela de vale deste mês. Clique para ver o motivo e desfazer."
+                            : "Clique para ver as parcelas de vale descontadas nesta folha"}
                         onClick={(e) => { e.stopPropagation(); setExpandDesc(descAberto && expandDesc!.tipo === "vale" ? null : { id: r.id, tipo: "vale" }); }}>
                         {formatBRL(descVale)}
                       </td>
@@ -1815,11 +1838,12 @@ export default function FolhaPagamentoView() {
                                   </tr>
                                 ))
                               ) : (
-                                // Uma linha por parcela, com a REFERÊNCIA que
-                                // desempata: "Parcela 3 de 13 · vale de
-                                // 12/03/2026" no lugar de N linhas idênticas
-                                // escritas "Vale".
-                                valeLinhas.map((d, i) => (
+                                <>
+                                {/* Uma linha por parcela, com a REFERÊNCIA que
+                                    desempata: "Parcela 3 de 13 · vale de
+                                    12/03/2026" no lugar de N linhas idênticas
+                                    escritas "Vale". */}
+                                {valeLinhas.map((d, i) => (
                                   <tr key={i}>
                                     <td style={{ padding: "0.15rem 0.5rem 0.15rem 0" }}>
                                       {d.descricao}
@@ -1841,10 +1865,45 @@ export default function FolhaPagamentoView() {
                                       )}
                                     </td>
                                   </tr>
-                                ))
+                                ))}
+                                {/* As parcelas que a FAZENDA assumiu. Não são
+                                    desconto — o valor vai riscado e em cinza, sem
+                                    o sinal de menos, justamente para não ser lido
+                                    como cobrança —, e nenhuma soma da tela as
+                                    enxerga: elas nem chegam em `r.detalhe`. Estão
+                                    aqui por dois motivos: dizer POR QUE o desconto
+                                    do mês sumiu, e devolver o botão "Ações" ao mês
+                                    desconsiderado, que é a única porta para voltar
+                                    a descontá-lo. */}
+                                {valeAssumido.map((d, i) => (
+                                  <tr key={`assumido-${i}`}>
+                                    <td style={{ padding: "0.15rem 0.5rem 0.15rem 0" }}>
+                                      {d.descricao}
+                                      <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                                        {d.referencia} · assumida pela fazenda{d.motivo ? ` — ${d.motivo}` : ""}
+                                      </div>
+                                    </td>
+                                    <td style={{ textAlign: "right", color: "var(--text-muted)", verticalAlign: "top", textDecoration: "line-through" }}
+                                      title="A fazenda assumiu este valor: ele não foi descontado do funcionário e não entra em desconto nenhum desta folha.">
+                                      {formatBRL(d.valor_assumido)}
+                                    </td>
+                                    <td style={{ textAlign: "right", verticalAlign: "top", paddingLeft: "0.5rem" }}>
+                                      {r.status !== "pago" && d.origem && "vale_id" in d.origem && (
+                                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                                          title="Voltar a descontar este mês, reparcelar o saldo, abater um valor ou cancelar o vale"
+                                          onClick={() => setAcoesVale({
+                                            valeId: (d.origem as any).vale_id, pessoaNome: r.pessoa_nome, competencia: r.competencia,
+                                          })}>
+                                          <Pencil size={12} /> Ações
+                                        </button>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))}
+                                </>
                               )}
                               {expandDesc!.tipo === "folha" && descFolha === 0 && <tr><td style={{ color: "var(--text-muted)" }}>Sem descontos de folha nesta competência.</td></tr>}
-                              {expandDesc!.tipo === "vale" && !valeLinhas.length && <tr><td style={{ color: "var(--text-muted)" }}>Sem parcelas de vale nesta competência.</td></tr>}
+                              {expandDesc!.tipo === "vale" && !valeLinhas.length && !valeAssumido.length && <tr><td style={{ color: "var(--text-muted)" }}>Sem parcelas de vale nesta competência.</td></tr>}
                             </tbody>
                           </table>
                         </div>

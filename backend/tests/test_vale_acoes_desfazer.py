@@ -561,3 +561,107 @@ class TestIsolamentoEntreFazendas:
         for headers in (_cab("admin1", 1), _cab("admin2", 2)):
             resposta = _acao(c, orfao_id, {"acao": "estornar_abatimento"}, headers=headers)
             assert resposta.status_code == 404, resposta.text
+
+
+# ===========================================================================
+# F) A porta de entrada do desfazer: o mês desconsiderado na folha
+#
+# O DEFEITO QUE ESTE BLOCO FECHA. Desconsiderar o mês tira a parcela dos
+# descontos da folha — e isso está certo, ela não foi descontada de ninguém
+# (`_valor_vale`). Só que o botão "Ações" da tela mora DENTRO do painel
+# "Descontos de vale", montado a partir de `detalhe`: sumindo a linha, sumia o
+# botão, e `reverter_desconsideracao` — a ação criada justamente para desfazer
+# aquele estado — ficava sem porta de entrada naquela competência. O dono
+# desconsiderou 2026-08 por engano e não tinha por onde voltar.
+#
+# A saída é um campo SEPARADO (`vale_assumido`), nunca uma marca dentro de
+# `detalhe`: `detalhe` é somado em vários lugares (totais do holerite, equação
+# do mês, verbas do pop-up de pagamento, PDF e Excel), e um único somatório que
+# esquecesse de pular a marca voltaria a cobrar do funcionário o que a fazenda
+# pagou. É essa separação que os testes abaixo travam.
+# ===========================================================================
+class TestParcelaAssumidaNaFolha:
+    def test_o_mes_desconsiderado_volta_a_tela_como_linha_informativa(self, ambiente):
+        c, engine = ambiente
+        vale = _criar_vale(c)  # 900,00 em 3x de 300,00 a partir de 2026-07
+        _criar_folha(c, competencia="2026-07")
+        _acao(c, vale["id"], {"acao": "desconsiderar_mes", "competencia": "2026-07", "motivo": "trator"})
+
+        folha = _folha(c, "2026-07")
+        # O desconto sumiu do recibo, como tem de sumir.
+        assert folha["valor_vale"] == 0.0
+        assert [d for d in folha["detalhe"] if d["tipo"] == "vale"] == []
+
+        # E a explicação aparece no campo informativo, com o vale_id que o
+        # botão "Ações" usa para abrir o modal do desfazer.
+        assumido = folha["vale_assumido"]
+        assert len(assumido) == 1
+        assert assumido[0]["valor_assumido"] == 300.0
+        assert assumido[0]["motivo"] == "trator"
+        assert assumido[0]["competencia"] == "2026-07"
+        assert assumido[0]["origem"]["vale_id"] == vale["id"]
+        # A numeração é a da sequência COMPLETA do vale (a assumida continua
+        # sendo a 1ª de 3), não a das parcelas que sobraram descontáveis.
+        assert assumido[0]["referencia"].startswith("Parcela 1 de 3")
+
+    def test_a_parcela_assumida_nao_entra_em_soma_nenhuma(self, ambiente):
+        """A prova de que a linha informativa é inerte: ela não está em
+        `detalhe`, o líquido e os totais não se mexem, e — o cinto e as
+        suspensórios — somar `detalhe + vale_assumido` por engano daria
+        exatamente os mesmos totais, porque a linha nasce com provento,
+        desconto e valor zerados."""
+        from fazenda.rules import holerite
+
+        c, engine = ambiente
+        vale = _criar_vale(c)
+        _criar_folha(c, competencia="2026-07")
+        _acao(c, vale["id"], {"acao": "desconsiderar_mes", "competencia": "2026-07"})
+
+        folha = _folha(c, "2026-07")
+        assert folha["valor_vale"] == 0.0
+        assert folha["valor_liquido"] == 3000.0
+        assert folha["totais"]["total_descontos"] == 0.0
+        assert folha["totais"]["liquido"] == 3000.0
+        # Não vazou para dentro do recibo.
+        assert [d for d in folha["detalhe"] if d["tipo"] == "vale_assumido"] == []
+        # E é inerte mesmo se alguém, um dia, concatenar as duas listas.
+        assert holerite.totais_holerite(folha["detalhe"] + folha["vale_assumido"]) == folha["totais"]
+        for linha in folha["vale_assumido"]:
+            assert linha["provento"] is None and linha["desconto"] is None and linha["valor"] == 0.0
+
+    def test_pela_linha_informativa_o_dono_chega_no_desfazer_e_ele_funciona(self, ambiente):
+        """O caminho inteiro do dono: desconsiderou por engano, encontra a
+        linha na folha do mês, abre as ações pelo `vale_id` que ela carrega e
+        volta a descontar — e aí a linha informativa some sozinha."""
+        c, engine = ambiente
+        vale = _criar_vale(c)
+        _criar_folha(c, competencia="2026-07")
+        _acao(c, vale["id"], {"acao": "desconsiderar_mes", "competencia": "2026-07"})
+
+        assumido = _folha(c, "2026-07")["vale_assumido"][0]
+        contexto = _contexto(c, assumido["origem"]["vale_id"]).json()
+        assert "reverter_desconsideracao" in contexto["acoes_disponiveis"]
+        assert assumido["competencia"] in contexto["competencias_revertiveis"]
+
+        resposta = _acao(c, assumido["origem"]["vale_id"], {
+            "acao": "reverter_desconsideracao", "competencia": assumido["competencia"],
+        })
+        assert resposta.status_code == 200, resposta.text
+
+        folha = _folha(c, "2026-07")
+        assert folha["vale_assumido"] == []
+        assert folha["valor_vale"] == 300.0
+        assert [d["desconto"] for d in folha["detalhe"] if d["tipo"] == "vale"] == [300.0]
+
+    def test_vale_cancelado_tambem_explica_o_desconto_que_sumiu(self, ambiente):
+        """Cancelar varre o saldo inteiro para a fazenda — o mês em aberto
+        também precisa dizer por que deixou de descontar."""
+        c, engine = ambiente
+        vale = _criar_vale(c)
+        _criar_folha(c, competencia="2026-07")
+        _acao(c, vale["id"], {"acao": "cancelar", "motivo": "acerto de contas"})
+
+        folha = _folha(c, "2026-07")
+        assert folha["valor_vale"] == 0.0
+        assert folha["valor_liquido"] == 3000.0
+        assert [l["motivo"] for l in folha["vale_assumido"]] == ["acerto de contas"]

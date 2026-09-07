@@ -36,6 +36,10 @@ const TONS: Record<TomEvento, string> = {
   estourada: "var(--red)",
   vale: "var(--dourado-light)",
   parcela: "var(--vinho-light, var(--vinho))",
+  // Assumida pela fazenda não é desconto: sai do vinho das parcelas e ganha o
+  // âmbar que o resto do sistema já usa para "a fazenda assumiu esta conta"
+  // (ver AcoesValeModal e a coluna de vale da folha).
+  assumida: "var(--amber)",
 };
 
 const GRADE = "5.5rem 1rem minmax(0, 1fr) 6.5rem 7rem";
