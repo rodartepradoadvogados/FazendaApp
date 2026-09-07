@@ -96,6 +96,32 @@ export function previaEstorno(contexto: ValeAcaoContexto, valorDigitado: string)
   };
 }
 
+/**
+ * O MÊS que "Desconsiderar o vale" vai marcar quando o painel de ações é
+ * aberto fora de uma folha.
+ *
+ * Existe porque o menu de ações passou a ter duas portas. Aberto pelo painel
+ * "Descontos de vale" de uma folha, o mês é o daquela linha
+ * (`competenciaDaLinha`) — a decisão é sobre aquele holerite. Aberto pelo card
+ * "Vales de funcionário" (Ações > Fechamento da folha), a linha é o VALE
+ * INTEIRO e não existe mês nenhum implícito; escolher um por conta própria
+ * poderia cair num mês já pago e o dono levaria um 400 sem entender.
+ *
+ * A escolha então sai do CONTEXTO DO SERVIDOR, que é quem sabe: a primeira
+ * parcela ainda `pendente` (nem paga em folha, nem assumida pela fazenda) —
+ * exatamente o critério que `_acao_desconsiderar_mes` aceita. Sem nenhuma
+ * pendente (vale todo descontado, assumido ou cancelado), cai na primeira
+ * parcela só para a tela ter o que escrever no rótulo; o servidor recusa com
+ * a explicação certa, que é melhor do que a tela inventar uma.
+ */
+export function competenciaAlvoDoVale(
+  contexto: ValeAcaoContexto, competenciaDaLinha?: string,
+): string {
+  if (competenciaDaLinha) return competenciaDaLinha;
+  const pendente = contexto.parcelas.find((p) => p.pendente);
+  return pendente?.competencia || contexto.parcelas[0]?.competencia || "";
+}
+
 /** Quanto volta a ser descontado do funcionário ao reverter a desconsideração
  *  de um mês — a soma das parcelas assumidas daquela competência. */
 export function valorDaReversao(contexto: ValeAcaoContexto, competencia: string): number {

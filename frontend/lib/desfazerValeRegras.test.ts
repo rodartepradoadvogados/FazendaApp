@@ -10,7 +10,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { ValeAcaoContexto } from "./api.ts";
-import { previaEstorno, reescalarParcelas, valorDaReversao } from "./desfazerValeRegras.ts";
+import {
+  competenciaAlvoDoVale, previaEstorno, reescalarParcelas, valorDaReversao,
+} from "./desfazerValeRegras.ts";
 
 type Parcela = ValeAcaoContexto["parcelas"][number];
 
@@ -111,4 +113,59 @@ test("o valor da reversão é o das parcelas assumidas daquele mês, não do val
   });
   assert.equal(valorDaReversao(ctx, "2026-07"), 300);
   assert.equal(valorDaReversao(ctx, "2026-09"), 0, "mês não assumido não tem o que reverter");
+});
+
+// ── Qual mês "Desconsiderar" marca quando o menu é aberto pelo card de vales ──
+// O menu de ações passou a ter duas portas: o painel de descontos de uma folha
+// (onde o mês é o daquela linha) e o card "Vales de funcionário" (onde a linha
+// é o vale inteiro e não há mês implícito). A segunda porta é a que faltava —
+// era ela que o dono foi procurar —, e a escolha do mês ali não pode ser um
+// palpite da tela: tem de ser o mês que o servidor aceitaria.
+
+test("aberto pela folha, o mês é o daquela linha — mesmo que já esteja pago", () => {
+  // A competência da linha manda porque a decisão é sobre AQUELE holerite; se
+  // o mês não puder receber a ação, quem recusa (com a explicação certa) é o
+  // servidor — a tela não desvia para outro mês por conta própria.
+  const ctx = contexto({
+    parcelas: [
+      parcela({ id: 1, competencia: "2026-07", valor: 300, pendente: false, competencia_paga: true }),
+      parcela({ id: 2, competencia: "2026-08", valor: 300 }),
+    ],
+  });
+  assert.equal(competenciaAlvoDoVale(ctx, "2026-07"), "2026-07");
+});
+
+test("aberto pelo card de vales, o mês é a primeira parcela PENDENTE", () => {
+  // Julho já caiu em folha paga e agosto foi assumido pela fazenda: nenhum dos
+  // dois aceita "desconsiderar". O alvo é setembro.
+  const ctx = contexto({
+    parcelas: [
+      parcela({ id: 1, competencia: "2026-07", valor: 300, pendente: false, competencia_paga: true }),
+      parcela({
+        id: 2, competencia: "2026-08", valor: 300, pendente: false,
+        assumida_pela_fazenda: true, motivo_assuncao: "trator",
+      }),
+      parcela({ id: 3, competencia: "2026-09", valor: 300 }),
+    ],
+  });
+  assert.equal(competenciaAlvoDoVale(ctx), "2026-09");
+});
+
+test("sem parcela pendente, cai na primeira parcela e deixa a recusa com o servidor", () => {
+  // Vale inteiro descontado/assumido: não há mês a oferecer. A tela escreve o
+  // primeiro só para ter rótulo; inventar um mês "livre" seria pior — o dono
+  // confirmaria achando que ia funcionar.
+  const ctx = contexto({
+    parcelas: [
+      parcela({ id: 1, competencia: "2026-07", valor: 300, pendente: false, assumida_pela_fazenda: true }),
+      parcela({ id: 2, competencia: "2026-08", valor: 300, pendente: false, assumida_pela_fazenda: true }),
+    ],
+  });
+  assert.equal(competenciaAlvoDoVale(ctx), "2026-07");
+});
+
+test("vale sem parcela nenhuma não quebra a tela", () => {
+  // Abater o saldo inteiro apaga as parcelas (parcela de R$ 0,00 é ruído no
+  // holerite) — e o card de vales continua mostrando o vale, com o botão.
+  assert.equal(competenciaAlvoDoVale(contexto({ parcelas: [] })), "");
 });

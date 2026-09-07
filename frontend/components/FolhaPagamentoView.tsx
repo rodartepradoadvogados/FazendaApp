@@ -331,7 +331,11 @@ export default function FolhaPagamentoView() {
   // vale" da própria competência, que é onde o dono vê o desconto e decide.
   // Guarda a competência junto porque "desconsiderar o vale neste mês" é
   // sobre a linha de onde o modal foi aberto, não sobre um mês a escolher.
-  const [acoesVale, setAcoesVale] = useState<{ valeId: number; pessoaNome: string; competencia: string } | null>(null);
+  // `competencia` é OPCIONAL: quando o modal é aberto pelo painel de descontos
+  // de uma folha, o mês é o daquela linha; quando é aberto pelo card "Vales de
+  // funcionário", a linha é do vale inteiro e quem escolhe o mês é o contexto
+  // do servidor (ver AcoesValeModal).
+  const [acoesVale, setAcoesVale] = useState<{ valeId: number; pessoaNome: string; competencia?: string } | null>(null);
 
   // Expansão da linha que NÃO é de funcionário (empreita, contrato, diária,
   // férias/13º) — a folha de funcionário já tinha a sua em `expandedId`.
@@ -1149,6 +1153,12 @@ export default function FolhaPagamentoView() {
       pode_excluir: r.status !== "pago",
       vencido: false,
       detalhe: r.detalhe, totais: r.totais, bases: r.bases,
+      // A explicação do mês assumido viaja junto para o documento (fora de
+      // `detalhe`, como sempre): a prévia do recibo aqui e a tela de Contas
+      // mostram o mesmo papel, e um explicar o desconto sumido enquanto o
+      // outro cala seria a mesma divergência que `lib/holerite.ts` existe
+      // para não deixar acontecer.
+      vale_assumido: r.vale_assumido,
       competencia: r.competencia,
       numero_lancamento_gerado: r.numero_lancamento_gerado,
       observacao: r.observacao,
@@ -2198,11 +2208,29 @@ export default function FolhaPagamentoView() {
                       : "Lançamento avulso"}
                   </td>
                   <td>
-                    <button className="btn-ghost" title="Excluir este vale" style={{ fontSize: "0.72rem", color: "var(--red)" }}
-                      disabled={excluindoValeId === v.id}
-                      onClick={(e) => { e.stopPropagation(); excluirValeHandler(v); }}>
-                      <Trash2 size={13} />
-                    </button>
+                    <span className="flex items-center gap-1">
+                      {/* O MESMO menu de ações do painel "Descontos de vale"
+                          da folha — mesmo modal, mesmas regras, nenhuma
+                          duplicada. Ele só existia lá dentro, e é AQUI que o
+                          dono procura o vale: este card é a lista dos vales.
+                          Sem competência fixa de propósito — a linha é do
+                          vale inteiro, não de um mês, então quem escolhe o mês
+                          alvo é o contexto do servidor (a 1ª competência ainda
+                          pendente; ver AcoesValeModal). É também a única porta
+                          de um vale CANCELADO e a de um mês desconsiderado que
+                          não tem folha lançada: nos dois casos não existe
+                          painel de descontos nenhum para abrigar o botão. */}
+                      <button className="btn-ghost" title="Ações do vale — reparcelar, abater, desconsiderar um mês, cancelar (e desfazer)"
+                        style={{ fontSize: "0.72rem" }}
+                        onClick={(e) => { e.stopPropagation(); setAcoesVale({ valeId: v.id, pessoaNome: v.pessoa_nome }); }}>
+                        <Pencil size={13} /> Ações
+                      </button>
+                      <button className="btn-ghost" title="Excluir este vale" style={{ fontSize: "0.72rem", color: "var(--red)" }}
+                        disabled={excluindoValeId === v.id}
+                        onClick={(e) => { e.stopPropagation(); excluirValeHandler(v); }}>
+                        <Trash2 size={13} />
+                      </button>
+                    </span>
                   </td>
                 </tr>
                 {expandedValeId === v.id && (

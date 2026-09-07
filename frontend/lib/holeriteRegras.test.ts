@@ -211,3 +211,53 @@ test("férias absorvidas por rescisão têm rótulo próprio — não são \"Pen
   assert.equal(rotuloStatusLinha("cancelado_rescisao").texto, "Na rescisão");
   assert.notEqual(rotuloStatusLinha("cancelado_rescisao").texto, rotuloStatusLinha("pendente").texto);
 });
+
+// ── O mês que a FAZENDA assumiu, na tela de consulta (Contas > Holerites e
+// recibos) ─────────────────────────────────────────────────────────────────
+// Antes, `vale_assumido` existia só na resposta do fechamento da folha: quem
+// abria o holerite em Contas via o desconto de vale sumir do mês sem uma
+// palavra de explicação, e aquela tela não tem painel de ações onde procurar.
+// Agora a explicação viaja até o documento — e continua INERTE: fora de
+// `linhas`, fora de `linhasDoCorpo` e fora de todo total.
+function assumido(over: Partial<any> = {}) {
+  return {
+    label: "Vale (parcela 1/3) — assumido pela fazenda", valor: 0, tipo: "vale_assumido",
+    descricao: "Vale — mercado", referencia: "Parcela 1 de 3 · vale de 12/03/2026",
+    provento: null, desconto: null, origem: null,
+    valor_assumido: 300, motivo: "trator", competencia: "2026-07", ...over,
+  };
+}
+
+test("o mês assumido pela fazenda chega ao documento — e fora do corpo", () => {
+  const doc = holeriteDaLinha(ledger({ vale_assumido: [assumido()] as any }))!;
+  assert.equal(doc.valeAssumido.length, 1);
+  assert.equal(doc.valeAssumido[0].valor_assumido, 300);
+  assert.equal(doc.valeAssumido[0].motivo, "trator");
+  // O corpo do documento (o que vira coluna, PDF e Excel) não a enxerga.
+  const corpo = linhasDoCorpo(doc.linhas);
+  assert.ok(!corpo.some((l) => (l as any).tipo === "vale_assumido"));
+  assert.equal(corpo.length, 2);
+});
+
+test("a linha assumida não move um centavo de nenhum total", () => {
+  // A prova de inércia: os totais do documento com e sem a linha informativa
+  // são idênticos, e a linha nasce neutra (provento/desconto nulos, valor 0),
+  // para que nem um `linhas + valeAssumido` escrito por engano no futuro
+  // volte a cobrar do funcionário o que a fazenda pagou.
+  const sem = holeriteDaLinha(ledger())!;
+  const com = holeriteDaLinha(ledger({ vale_assumido: [assumido()] as any }))!;
+  assert.deepEqual(com.totais, sem.totais);
+  assert.equal(com.valeAssumido[0].provento, null);
+  assert.equal(com.valeAssumido[0].desconto, null);
+  assert.equal(com.valeAssumido[0].valor, 0);
+  // Somar o corpo à mão dá o mesmo total de descontos declarado pelo servidor.
+  const descontos = linhasDoCorpo(com.linhas).reduce((a, l) => a + (l.desconto || 0), 0);
+  assert.equal(descontos, com.totais.total_descontos);
+});
+
+test("documento sem mês assumido tem a lista vazia, nunca undefined", () => {
+  // A tela faz `documento.valeAssumido.length` direto; um undefined vindo de
+  // um ledger antigo (ou de férias/13º, que não têm vale) quebraria a
+  // renderização inteira do recibo.
+  assert.deepEqual(holeriteDaLinha(ledger())!.valeAssumido, []);
+});

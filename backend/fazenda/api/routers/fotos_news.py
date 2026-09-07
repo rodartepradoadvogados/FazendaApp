@@ -16,6 +16,7 @@ dentro da aba de Aprovações, que já é restrita.
 """
 from __future__ import annotations
 
+import logging
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
@@ -28,6 +29,8 @@ from fazenda.models import FotoNews, PastaFotoNews, Usuario
 from fazenda.rules.supabase_storage import enviar_arquivo, excluir_arquivo, nome_seguro_storage, url_publica
 
 router = APIRouter(prefix="/fotos-news", tags=["fotos-news"])
+
+logger = logging.getLogger(__name__)
 
 TAMANHO_MAXIMO_FOTO = 15 * 1024 * 1024  # 15 MB — igual às outras fotos do sistema
 
@@ -135,10 +138,34 @@ def excluir_foto(
     foto = session.get(FotoNews, foto_id)
     if not foto:
         raise HTTPException(status_code=404, detail="Foto não encontrada")
+    # Ordem: arquivo PRIMEIRO, linha depois — e a falha do Storage nunca
+    # aborta a exclusão da linha (mesma correção já feita em
+    # documentos.py::excluir_documento e fotos.py::excluir_foto, relato do
+    # dono em 06/09/2026). Antes, o RuntimeError virava 400 ANTES do
+    # `session.delete`: arquivo que já não estava lá (apagado à mão no painel
+    # do Supabase, upload que falhou no meio) devolve 404 no delete e a foto
+    # ficava IMPOSSÍVEL de tirar do banco de fotos — toda tentativa repetia o
+    # mesmo 400, para sempre, porque a causa era justamente o arquivo não
+    # existir mais.
+    #
+    # Por que o arquivo antes da linha: se o objeto sumir e o commit falhar
+    # logo depois, a linha continua no banco e a PRÓXIMA tentativa termina o
+    # serviço — o Storage responde 404, que agora é tolerado, e a linha sai.
+    # Na ordem inversa (commit primeiro) um erro no Storage deixaria um
+    # objeto órfão sem nenhuma linha apontando para ele, ou seja, sem
+    # ninguém para tentar de novo.
+    #
+    # No pior caso sobra esse órfão invisível no bucket — muito melhor que
+    # uma foto fantasma travada na tela de Aprovações. Se a matéria do blog
+    # já usa a URL desta foto, a imagem quebra na página pública tanto faz a
+    # ordem: quem exclui do banco de fotos está pedindo justamente isso.
     try:
         excluir_arquivo(foto.caminho_storage, bucket=settings.supabase_bucket_news_fotos)
     except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        logger.warning(
+            "Foto News %s (%s): linha excluída mesmo com falha ao apagar o arquivo no Storage: %s",
+            foto.id, foto.caminho_storage, exc,
+        )
     session.delete(foto)
     session.commit()
     return {"excluido": True}

@@ -496,6 +496,33 @@ class ValeParcela(SQLModel, table=True):
     # desconto sumiu.
     assumida_pela_fazenda: bool = False
     motivo_assuncao: Optional[str] = None
+    # ── O QUE A ASSUNÇÃO FEZ, gravado NO ATO (ver `_assumir_no_financeiro` e
+    # `_registrar_assuncao`, em rh_vale_acoes.py) ──────────────────────────
+    # Sem estas duas colunas, desfazer a assunção era um chute: um vale sem
+    # item vinculado HOJE e sem lançamento próprio pode ser "sem lastro"
+    # (nada foi tocado no Financeiro, nada a desfazer) ou "item de nota cujo
+    # vínculo foi SOLTO na assunção" — `limpar_vinculo_de_itens` não deixa
+    # marca, e os dois ficam com exatamente a mesma cara depois. Errar o
+    # palpite conta a mesma despesa duas vezes (o item volta a ser gasto da
+    # fazenda no gerencial E o funcionário volta a ser descontado pelo mesmo
+    # dinheiro), então `reverter_desconsideracao` recusava os dois casos.
+    #
+    # `natureza_assuncao`: "item_de_nota" | "lancamento_proprio" |
+    # "sem_lastro" — os mesmos valores que `_assumir_no_financeiro` devolve.
+    # NULL significa "natureza desconhecida" (parcela assumida antes desta
+    # coluna existir) e CONTINUA caindo na recusa por ambiguidade: não se
+    # inventa natureza para o passado.
+    natureza_assuncao: Optional[str] = None
+    # JSON com o resto do que a assunção fez, para poder ser desfeita com
+    # precisão: qual ação assumiu esta parcela (`acao`: "desconsiderar_mes" |
+    # "cancelar" | "pagamento_folha" — é ela que faz `reverter_cancelamento`
+    # devolver SÓ o que o cancelamento varreu, deixando de pé um mês que já
+    # havia sido desconsiderado antes), o nº do lançamento envolvido, se ele
+    # foi reclassificado e quais itens de nota foram divididos. Coluna de
+    # texto (não relacional) pelo mesmo motivo de
+    # `FolhaPagamento.discriminacao_congelada`: é uma fotografia do ato, não
+    # um vínculo vivo a manter em sincronia.
+    assuncao_detalhe: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 

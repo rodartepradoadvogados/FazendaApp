@@ -8,8 +8,8 @@
 // `lib/holerite.ts` fica só com o que precisa formatar dinheiro e gerar
 // arquivo. Ver lib/holeriteRegras.test.ts.
 import type {
-  BasesHolerite, LinhaFolhaUnificada, LinhaHolerite, OrigemRetencao, OrigemRubrica, OrigemVale,
-  TotaisHolerite,
+  BasesHolerite, LinhaFolhaUnificada, LinhaHolerite, LinhaValeAssumido, OrigemRetencao, OrigemRubrica,
+  OrigemVale, TotaisHolerite,
 } from "./api";
 
 const MESES = [
@@ -54,6 +54,11 @@ export type Holerite = {
   competencia: string;
   competenciaLabel: string;
   linhas: LinhaHolerite[];
+  /** As parcelas de vale assumidas pela fazenda naquele mês — fora de
+   *  `linhas` de propósito. `linhasDoCorpo` (e daí os totais, o PDF e o
+   *  Excel) nunca as vê: elas só explicam, no rodapé do documento, por que o
+   *  desconto de vale sumiu. Ver `linha_vale_assumido` no backend. */
+  valeAssumido: LinhaValeAssumido[];
   totais: TotaisHolerite;
   bases: BasesHolerite | null;
   status: LinhaFolhaUnificada["status"];
@@ -124,6 +129,7 @@ export function holeriteDaLinha(l: LinhaFolhaUnificada): Holerite | null {
     competencia,
     competenciaLabel: l.tipo === "funcionario" ? competenciaExtenso(competencia) : l.descricao,
     linhas: l.detalhe,
+    valeAssumido: l.vale_assumido || [],
     totais: l.totais,
     bases: l.bases || null,
     status: l.status,
