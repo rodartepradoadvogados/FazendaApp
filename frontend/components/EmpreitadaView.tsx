@@ -11,6 +11,7 @@ import {
   atualizarParcelaEmpreitada, redistribuirParcelasEmpreitada, confirmarExclusao, ehAdmin,
   anexarArquivoPessoa,
 } from "@/lib/api";
+import { type ModoSecaoCategoria } from "@/components/ui";
 import CadastroAvulsoParceladoGenerico, { type ParcelaAvulsa, type ValeItemAvulso } from "@/components/CadastroAvulsoParceladoGenerico";
 import { inputSm } from "@/components/estiloCampoAvulso";
 import { CampoMoeda } from "@/components/CampoMoeda";
@@ -42,7 +43,7 @@ const FORMAS_DATA_UNICA = ["inicio_empreita", "fim_empreita"];
 type EtapaForm = { nome: string; valor: string };
 const etapaFormVazia: EtapaForm[] = [{ nome: "", valor: "" }];
 
-export default function EmpreitadaView() {
+export default function EmpreitadaView({ mostrar = "tudo" }: { mostrar?: ModoSecaoCategoria }) {
   const [pessoas, setPessoas] = useState<Pessoa[]>([]);
   const [itens, setItens] = useState<Empreitada[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -101,6 +102,7 @@ export default function EmpreitadaView() {
 
   return (
     <CadastroAvulsoParceladoGenerico<Empreitada>
+      mostrar={mostrar}
       itens={itens} error={error} recarregar={carregar}
       pessoas={empreiteiros} labelPessoa="Empreiteiro" placeholderDescricao="Ex.: Roçagem geral, construção de cerca…"
       msgSelecionePessoa="Selecione o empreiteiro." msgDescricaoObrigatoria="Informe a descrição da empreita."

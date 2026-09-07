@@ -7,7 +7,7 @@ import {
   fetchContasCorrentes,
   formatBRL, type RegistroFerias, type RegistroDecimoTerceiro, type ContaCorrenteCadastro,
 } from "@/lib/api";
-import { SecaoRecolhivel } from "@/components/ui";
+import { SecaoRecolhivel, type ModoSecaoCategoria } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
@@ -51,7 +51,7 @@ function StatusBadge({ status }: { status: string }) {
 // ---------------------------------------------------------------------------
 // Sub-seção: Férias
 // ---------------------------------------------------------------------------
-function FeriasSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contasCorrentes: ContaCorrenteCadastro[] }) {
+function FeriasSection({ pessoas, contasCorrentes, mostrar }: { pessoas: Pessoa[]; contasCorrentes: ContaCorrenteCadastro[]; mostrar: ModoSecaoCategoria }) {
   const [itens, setItens] = useState<RegistroFerias[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -147,6 +147,7 @@ function FeriasSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contas
 
   return (
     <div>
+      {mostrar !== "listar" && (
       <SecaoRecolhivel titulo="Nova férias" icon={Plus} defaultAberta={false} descricao="Período aquisitivo, dias a gozar e abono pecuniário opcional">
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
           <div>
@@ -216,7 +217,9 @@ function FeriasSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contas
           {salvando ? "Salvando…" : "Lançar férias"}
         </button>
       </SecaoRecolhivel>
+      )}
 
+      {mostrar !== "lancar" && (
       <div className="card mt-4">
         <div className="card-header mb-3">Férias lançadas</div>
         {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
@@ -259,6 +262,7 @@ function FeriasSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contas
           </div>
         )}
       </div>
+      )}
 
       {pagandoId !== null && (
         <Modal title="Registrar pagamento de férias" onClose={() => setPagandoId(null)} width="380px">
@@ -280,7 +284,7 @@ function FeriasSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contas
 // ---------------------------------------------------------------------------
 // Sub-seção: 13º salário
 // ---------------------------------------------------------------------------
-function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contasCorrentes: ContaCorrenteCadastro[] }) {
+function DecimoTerceiroSection({ pessoas, contasCorrentes, mostrar }: { pessoas: Pessoa[]; contasCorrentes: ContaCorrenteCadastro[]; mostrar: ModoSecaoCategoria }) {
   const [itens, setItens] = useState<RegistroDecimoTerceiro[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -380,6 +384,7 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]
 
   return (
     <div>
+      {mostrar !== "listar" && (
       <SecaoRecolhivel titulo="Novo 13º salário" icon={Plus} defaultAberta={false} descricao="Proporcional aos meses trabalhados no ano">
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
           <div>
@@ -439,7 +444,9 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]
           {salvando ? "Salvando…" : "Lançar 13º salário"}
         </button>
       </SecaoRecolhivel>
+      )}
 
+      {mostrar !== "lancar" && (
       <div className="card mt-4">
         <div className="card-header mb-3">13º salário lançado</div>
         {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
@@ -482,6 +489,7 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]
           </div>
         )}
       </div>
+      )}
 
       {pagandoId !== null && (
         <Modal title="Registrar pagamento de 13º salário" onClose={() => setPagandoId(null)} width="380px">
@@ -504,7 +512,7 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]
 // Componente principal — chaveado internamente entre Férias e 13º salário.
 // (Duas sub-abas, não três: a Rescisão saiu daqui — ver o cabeçalho.)
 // ---------------------------------------------------------------------------
-export default function FeriasDecimoTerceiroView() {
+export default function FeriasDecimoTerceiroView({ mostrar = "tudo" }: { mostrar?: ModoSecaoCategoria } = {}) {
   const [pessoas, setPessoas] = useState<Pessoa[]>([]);
   const [subaba, setSubaba] = useState<"ferias" | "decimo">("ferias");
   // Contas correntes (id + rótulo) — para o seletor opcional "Conta bancária"
@@ -529,8 +537,8 @@ export default function FeriasDecimoTerceiroView() {
         <button className={subaba === "ferias" ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.8rem" }} onClick={() => setSubaba("ferias")}>Férias</button>
         <button className={subaba === "decimo" ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.8rem" }} onClick={() => setSubaba("decimo")}>13º salário</button>
       </div>
-      {subaba === "ferias" && <FeriasSection pessoas={pessoas} contasCorrentes={contasCorrentes} />}
-      {subaba === "decimo" && <DecimoTerceiroSection pessoas={pessoas} contasCorrentes={contasCorrentes} />}
+      {subaba === "ferias" && <FeriasSection pessoas={pessoas} contasCorrentes={contasCorrentes} mostrar={mostrar} />}
+      {subaba === "decimo" && <DecimoTerceiroSection pessoas={pessoas} contasCorrentes={contasCorrentes} mostrar={mostrar} />}
     </div>
   );
 }

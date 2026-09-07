@@ -278,6 +278,20 @@ export function TabBar<T extends string>({
 }
 
 /**
+ * Que METADE de uma tela de categoria (empreita, contrato, diária, férias/13º,
+ * rescisão) deve aparecer.
+ *
+ * A tela de Fechamento da folha passou a ter três cards no topo — Consultar ·
+ * Lançar · Resolver antes de fechar — e cada tela de categoria tem as duas
+ * coisas dentro: o formulário/assistente ("lançar") e a listagem do que já foi
+ * lançado, com as ações sobre cada item ("listar"). Sem este corte, escolher
+ * "Lançar" continuaria mostrando a listagem inteira embaixo e o card não
+ * significaria nada. "tudo" é o comportamento antigo, para quem monta a tela
+ * fora desse contexto.
+ */
+export type ModoSecaoCategoria = "tudo" | "lancar" | "listar";
+
+/**
  * SecaoRecolhivel — cartão com cabeçalho clicável que expande/recolhe o conteúdo.
  * Útil para agrupar blocos densos e deixar a tela mais limpa por padrão.
  */
@@ -285,6 +299,8 @@ export function SecaoRecolhivel({
   titulo,
   icon: Icon,
   defaultAberta = false,
+  aberta: abertaControlada,
+  onAlternar,
   badge,
   descricao,
   children,
@@ -292,16 +308,23 @@ export function SecaoRecolhivel({
   titulo: string;
   icon?: any;
   defaultAberta?: boolean;
+  /** Modo CONTROLADO: quem chama manda o estado e recebe o clique. Existe
+   *  porque o painel de exceções da folha precisa ABRIR o card certo antes de
+   *  rolar até a linha — com o estado só aqui dentro, "Ver a folha" rolava
+   *  para um elemento que ainda não estava montado e não achava nada. */
+  aberta?: boolean;
+  onAlternar?: () => void;
   badge?: React.ReactNode;
   descricao?: string;
   children: React.ReactNode;
 }) {
-  const [aberta, setAberta] = useState(defaultAberta);
+  const [abertaLocal, setAbertaLocal] = useState(defaultAberta);
+  const aberta = abertaControlada ?? abertaLocal;
 
   return (
     <div className="card mb-4">
       <button
-        onClick={() => setAberta((a) => !a)}
+        onClick={() => (onAlternar ? onAlternar() : setAbertaLocal((a) => !a))}
         title={descricao || (aberta ? "Clique para recolher" : "Clique para expandir")}
         style={{
           width: "100%",

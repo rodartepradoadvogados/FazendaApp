@@ -10,6 +10,7 @@ import {
 import { ReciboModal } from "@/components/ReciboModal";
 import { exportarFichaPDF, exportarMultiExcel, type SecaoFicha, type LancamentoRecibo } from "@/lib/export";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { type ModoSecaoCategoria } from "@/components/ui";
 
 /*
  * Rescisão contratual (CLT) — saldo de salário, aviso prévio, férias
@@ -84,7 +85,7 @@ function paraNumero(v: string): number {
   return isNaN(n) ? 0 : n;
 }
 
-export default function RescisaoView() {
+export default function RescisaoView({ mostrar = "tudo" }: { mostrar?: ModoSecaoCategoria } = {}) {
   // A lista de pessoas é DESTA tela desde que a rescisão virou chip próprio:
   // antes ela descia como prop de `FeriasDecimoTerceiroView` (que a buscava
   // 1x no mount) e por isso precisava do callback `onPessoaInativada` para
@@ -374,6 +375,7 @@ export default function RescisaoView() {
 
   return (
     <div>
+      {mostrar !== "listar" && (
       <div className="card mb-4">
         <div className="flex items-center justify-between mb-3" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
           <div className="card-header">
@@ -577,7 +579,9 @@ export default function RescisaoView() {
           </div>
         )}
       </div>
+      )}
 
+      {mostrar !== "lancar" && (
       <div className="card">
         <div className="card-header mb-3">Rescisões</div>
         {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
@@ -692,6 +696,7 @@ export default function RescisaoView() {
           </div>
         )}
       </div>
+      )}
 
       {reciboLinha && <ReciboModal lanc={reciboLinha} onClose={() => setReciboLinha(null)} />}
     </div>
