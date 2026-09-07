@@ -130,7 +130,7 @@ def _tabelas_existentes(conn) -> set[str]:
     return set(sa.inspect(conn).get_table_names())
 
 
-def _guardar_checkpoint(conn, tabela: str, existentes: set[str]) -> None:
+def _guardar_checkpoint(conn, tabela: str, existentes: set[str]) -> bool:
     """Copia as órfãs de `tabela` para a tabela de checkpoint, se ainda não houver uma.
 
     `CREATE TABLE ... AS SELECT *` funciona igual em PostgreSQL e SQLite e
@@ -142,15 +142,28 @@ def _guardar_checkpoint(conn, tabela: str, existentes: set[str]) -> None:
     sobra nenhuma órfã, e recriar o checkpoint o substituiria por uma tabela
     VAZIA — destruindo justamente o ponto de retorno. O primeiro checkpoint é
     o que vale.
+
+    Sem órfã, nenhum checkpoint é criado — e isso não é economia, é correção.
+    Um banco montado só pelo Alembic (ambiente novo, restauração) chega aqui
+    com a fazenda semeada e ZERO órfãs; criar 13 tabelas vazias ali deixaria
+    no schema tabelas que não guardam nada e que nenhum model declara. A
+    sentinela `test_migracao_tabelas_faltantes.py` exige que o schema depois
+    de `upgrade head` seja exatamente o dos models, e é ela quem pegou isso.
     """
     if f"{_CKPT}{tabela}" in existentes:
-        return
+        return False
+    orfas = conn.execute(
+        sa.text(f"SELECT count(*) FROM {tabela} WHERE fazenda_id IS NULL")  # noqa: S608 — nome vem das listas literais
+    ).scalar()
+    if not orfas:
+        return False
     conn.execute(
         sa.text(  # noqa: S608 — nome vem das listas literais deste módulo
             f"CREATE TABLE {_CKPT}{tabela} AS "
             f"SELECT * FROM {tabela} WHERE fazenda_id IS NULL"
         )
     )
+    return True
 
 
 def _fazenda_cliente_unica(conn) -> int | None:
@@ -197,10 +210,9 @@ def upgrade() -> None:
         for tabela in _APAGAR_RESIDUO_DE_MIGRACAO + _APAGAR_LIXO_TECNICO + _ATRIBUIR
         if tabela in existentes
     ]
-    for tabela in afetadas:
-        _guardar_checkpoint(conn, tabela, existentes)
+    guardadas = [t for t in afetadas if _guardar_checkpoint(conn, t, existentes)]
     print(
-        f"[backfill órfãos] checkpoint guardado em {len(afetadas)} tabela(s) "
+        f"[backfill órfãos] checkpoint guardado em {len(guardadas)} tabela(s) "
         f"`{_CKPT}*` — o downgrade volta por elas."
     )
 

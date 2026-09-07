@@ -311,6 +311,32 @@ def test_o_checkpoint_guarda_as_orfas_antes_de_alterar(mig):
         assert [tuple(linha) for linha in guardadas] == [(2, "Nota Fiscal"), (3, "Recibo")]
 
 
+def test_tabela_sem_orfa_nao_ganha_checkpoint(mig):
+    """Regressão da falha que a sentinela `test_migracao_tabelas_faltantes.py`
+    pegou: num banco montado só pelo Alembic (ambiente novo, restauração), a
+    fazenda vem semeada e não há órfã nenhuma — e a versão anterior criava as
+    13 tabelas `ckpt_*` vazias assim mesmo, deixando no schema tabelas que
+    nenhum model declara. Checkpoint vazio não é ponto de retorno de nada."""
+    engine = create_engine("sqlite://")
+    with engine.begin() as conn:
+        for comando in _ESQUEMA_MINIMO:
+            conn.execute(text(comando))
+        # uma fazenda-cliente única, e nenhuma órfã em tabela nenhuma
+        conn.execute(text("INSERT INTO fazenda VALUES (1, 'Jairo Nasser', 0, 0)"))
+        conn.execute(text("INSERT INTO tipo_documento VALUES (1, 'Nota Fiscal', 1)"))
+        mig.op = _OpFalso(conn)
+
+        mig.upgrade()
+
+        criadas = [
+            linha[0]
+            for linha in conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'ckpt_%'")
+            )
+        ]
+    assert criadas == [], "sem órfã não pode sobrar tabela de checkpoint no schema"
+
+
 def test_reaplicar_o_upgrade_nao_destroi_o_checkpoint(mig):
     """A armadilha: depois da primeira passada não sobra órfã nenhuma. Se o
     upgrade recriasse o checkpoint, ele o substituiria por uma tabela VAZIA e
