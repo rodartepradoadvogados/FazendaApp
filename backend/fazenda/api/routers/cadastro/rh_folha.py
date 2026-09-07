@@ -1035,27 +1035,68 @@ def _folha_resposta(registro: FolhaPagamento) -> dict:
     return dados
 
 
-def _conta_da_folha(
-    session: Session, registro: FolhaPagamento, fazenda_id: int | None,
+def _conta_do_numero(
+    session: Session, numero_lancamento: str | None, fazenda_id: int | None,
 ) -> ContaGerencial | None:
     """
-    A conta a pagar emitida por esta folha, se existir.
+    A conta a pagar de um número de lançamento gerado pelo RH (folha, guia de
+    FGTS/DCTF, férias, 13º), se existir. Ponto ÚNICO dessa busca no módulo:
+    todo mundo que precisa decidir "esta conta já foi baixada?" antes de
+    editar ou apagar passa por aqui, para a regra e o recorte de fazenda não
+    voltarem a divergir de rotina para rotina.
 
     Filtro de fazenda INCONDICIONAL (`== fazenda_id`, que em None vira
     `IS NULL`) na PRÓPRIA consulta — nunca o padrão tolerante
     `if fazenda_id is not None: query = query.where(...)`, erradicado na Onda 1
-    de segurança: quem chama isto (`estornar_pagamento_folha`) reescreve baixa
-    de lançamento financeiro, e um token legado sem a claim de fazenda não pode
-    alcançar a conta de outro tenant.
+    de segurança: quem chama isto reescreve ou apaga baixa de lançamento
+    financeiro, e um token legado sem a claim de fazenda não pode alcançar a
+    conta de outro tenant.
     """
-    if not registro.numero_lancamento_gerado:
+    if not numero_lancamento:
         return None
     return session.exec(
         select(ContaGerencial).where(
-            ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado,
+            ContaGerencial.numero_lancamento == numero_lancamento,
             ContaGerencial.fazenda_id == fazenda_id,
         )
     ).first()
+
+
+def _conta_da_folha(
+    session: Session, registro: FolhaPagamento, fazenda_id: int | None,
+) -> ContaGerencial | None:
+    """A conta a pagar emitida por esta folha, se existir (ver
+    `_conta_do_numero` para o porquê do recorte de fazenda na consulta)."""
+    return _conta_do_numero(session, registro.numero_lancamento_gerado, fazenda_id)
+
+
+def _exigir_conta_nao_paga(conta: ContaGerencial | None, de_que: str, o_que: str) -> None:
+    """
+    Recusa a exclusão quando a conta a pagar vinculada JÁ FOI BAIXADA no
+    Financeiro.
+
+    O `status` do recibo (folha/férias/13º: "pendente" ou "pago") e a BAIXA da
+    conta a pagar podem discordar: o recibo segue "pendente" no RH e alguém dá
+    baixa no lançamento direto no Financeiro (Contas a pagar), que é um fluxo
+    normal. Quem só olhava `registro.status` apagava a ContaGerencial sem ver
+    `valor_pago` — e com ela sumia do extrato um pagamento que ACONTECEU:
+    dinheiro que saiu do caixa desaparecendo do histórico. Mesma regra e mesmo
+    tom de `excluir_guia_folha_encargo`, `_cancelar_conta_pendente` e
+    `reabrir_periodo_diaria`: conta já paga fica onde está; quem quiser
+    desfazer o pagamento faz isso em Lançamentos, onde a exclusão é explícita
+    e auditada.
+    """
+    if conta is None or conta.valor_pago is None:
+        return
+    quando = f" em {conta.data_pagamento.strftime('%d/%m/%Y')}" if conta.data_pagamento else ""
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"A conta a pagar {de_que} ({conta.numero_lancamento}) já foi baixada no Financeiro"
+            f"{quando} — excluir {o_que} apagaria esse pagamento do extrato. Estorne o pagamento "
+            f"(ou exclua o lançamento em Lançamentos > Excluir lançamento) antes de excluir {o_que}."
+        ),
+    )
 
 
 def _detalhe_folha(
@@ -1569,23 +1610,9 @@ def excluir_folha_pagamento(
     if registro.status == "pago":
         raise HTTPException(status_code=400, detail="Lançamento de folha já pago não pode ser excluído aqui — exclua em Lançamentos > Excluir lançamento.")
     conta = _conta_da_folha(session, registro, fazenda_id)
-    # O `status` da folha e a BAIXA da conta a pagar podem discordar: a folha
-    # segue "pendente" no RH e alguém dá baixa no lançamento direto no
-    # Financeiro (Contas a pagar), que é um fluxo normal. Excluir a folha
-    # apagava a ContaGerencial sem olhar `valor_pago` — e com ela sumia do
-    # extrato um pagamento que ACONTECEU. Mesma regra e mesma mensagem de
-    # `excluir_guia_folha_encargo` e de `_cancelar_conta_pendente`: conta já
-    # paga fica onde está; quem quiser desfazer o pagamento faz isso em
-    # Lançamentos, onde a exclusão é explícita e auditada.
-    if conta is not None and conta.valor_pago is not None:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "A conta a pagar desta folha já foi baixada no Financeiro — excluir a folha apagaria "
-                "esse pagamento do extrato. Estorne o pagamento (ou exclua o lançamento em "
-                "Lançamentos > Excluir lançamento) antes de excluir a folha."
-            ),
-        )
+    # `registro.status` não basta: a folha pendente no RH pode ter a conta a
+    # pagar já baixada no Financeiro (ver `_exigir_conta_nao_paga`).
+    _exigir_conta_nao_paga(conta, "desta folha", "a folha")
     if conta is not None:
         session.delete(conta)
     session.delete(registro)
@@ -1713,12 +1740,16 @@ def listar_guias_folha_encargo(
     return [g.model_dump() for g in session.exec(query).all()]
 
 
-def _conta_da_guia(session: Session, guia: GuiaFolhaEncargo) -> ContaGerencial | None:
-    if not guia.numero_lancamento:
-        return None
-    return session.exec(
-        select(ContaGerencial).where(ContaGerencial.numero_lancamento == guia.numero_lancamento)
-    ).first()
+def _conta_da_guia(
+    session: Session, guia: GuiaFolhaEncargo, fazenda_id: int | None,
+) -> ContaGerencial | None:
+    """A conta a pagar da guia de FGTS/DCTF, se existir.
+
+    Passou a buscar pelo par (numero_lancamento, fazenda) e não só pelo
+    número: quem chama isto EDITA ou APAGA lançamento financeiro, e busca sem
+    recorte de fazenda é o mesmo tipo de furo já fechado em
+    `_reconciliar_vale_competencias`. Ver `_conta_do_numero`."""
+    return _conta_do_numero(session, guia.numero_lancamento, fazenda_id)
 
 
 @router.put("/folha-pagamento/guias/{guia_id}")
@@ -1735,7 +1766,7 @@ def atualizar_guia_folha_encargo(
     guia = session.get(GuiaFolhaEncargo, guia_id)
     if not guia or (guia.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Guia de FGTS/DCTF não encontrada")
-    conta = _conta_da_guia(session, guia)
+    conta = _conta_da_guia(session, guia, fazenda_id)
     if conta and conta.valor_pago is not None:
         raise HTTPException(status_code=400, detail="Guia já paga não pode ser editada.")
     if dados.tipo not in ("fgts", "dctf"):
@@ -1787,7 +1818,7 @@ def excluir_guia_folha_encargo(
     guia = session.get(GuiaFolhaEncargo, guia_id)
     if not guia or (guia.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Guia de FGTS/DCTF não encontrada")
-    conta = _conta_da_guia(session, guia)
+    conta = _conta_da_guia(session, guia, fazenda_id)
     if conta and conta.valor_pago is not None:
         raise HTTPException(status_code=400, detail="Guia já paga não pode ser excluída aqui — exclua em Lançamentos > Excluir lançamento.")
     if conta:
@@ -2041,12 +2072,14 @@ def excluir_ferias(
         raise HTTPException(status_code=404, detail="Registro de férias não encontrado")
     if registro.status == "pago":
         raise HTTPException(status_code=400, detail="Férias já pagas não podem ser excluídas aqui — exclua em Lançamentos > Excluir lançamento.")
-    if registro.numero_lancamento_gerado:
-        conta = session.exec(
-            select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado)
-        ).first()
-        if conta:
-            session.delete(conta)
+    # O `status` do recibo de férias e a baixa da conta a pagar podem
+    # discordar (recibo "pendente" + baixa feita direto no Financeiro):
+    # apagar a conta nesse caso levava embora um pagamento real do extrato.
+    # Mesma regra da folha e da guia de FGTS/DCTF — ver `_exigir_conta_nao_paga`.
+    conta = _conta_do_numero(session, registro.numero_lancamento_gerado, fazenda_id)
+    _exigir_conta_nao_paga(conta, "destas férias", "as férias")
+    if conta is not None:
+        session.delete(conta)
     session.delete(registro)
     session.commit()
     return {"ok": True}
@@ -2319,12 +2352,13 @@ def excluir_decimo_terceiro(
         raise HTTPException(status_code=404, detail="Registro de 13º salário não encontrado")
     if registro.status == "pago":
         raise HTTPException(status_code=400, detail="13º salário já pago não pode ser excluído aqui — exclua em Lançamentos > Excluir lançamento.")
-    if registro.numero_lancamento_gerado:
-        conta = session.exec(
-            select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado)
-        ).first()
-        if conta:
-            session.delete(conta)
+    # Mesmo furo das férias e da folha: o 13º pode estar "pendente" no RH com
+    # a conta a pagar já baixada no Financeiro, e apagá-la sumiria com o
+    # pagamento do extrato — ver `_exigir_conta_nao_paga`.
+    conta = _conta_do_numero(session, registro.numero_lancamento_gerado, fazenda_id)
+    _exigir_conta_nao_paga(conta, "deste 13º salário", "o 13º salário")
+    if conta is not None:
+        session.delete(conta)
     session.delete(registro)
     session.commit()
     return {"ok": True}
@@ -2874,14 +2908,7 @@ def _cancelar_conta_pendente(session: Session, numero_lancamento: str | None, fa
     tenha sido paga — mesma regra e mesmo cuidado de `excluir_ferias`/
     `excluir_decimo_terceiro`. Conta já paga fica onde está: aí o dinheiro
     saiu e apagar seria reescrever histórico financeiro."""
-    if not numero_lancamento:
-        return
-    conta = session.exec(
-        select(ContaGerencial).where(
-            ContaGerencial.numero_lancamento == numero_lancamento,
-            ContaGerencial.fazenda_id == fazenda_id,
-        )
-    ).first()
+    conta = _conta_do_numero(session, numero_lancamento, fazenda_id)
     if conta and conta.valor_pago is None:
         session.delete(conta)
 
