@@ -354,7 +354,7 @@ que falhar em produção.
 `FOREIGN KEY (filho_id, fazenda_id) REFERENCES pai(id, fazenda_id)`, com a
 `UNIQUE (id, fazenda_id)` correspondente em cada uma das **61** tabelas pai.
 
-Fecha os dois problemas da seção 8: a referência cruzada entre fazendas, e o
+Fecha os dois problemas da seção 9: a referência cruzada entre fazendas, e o
 oráculo de existência. Também não depende de RLS nem de infraestrutura.
 
 ### 6. RLS, por último
@@ -487,11 +487,102 @@ Três naturezas diferentes, e só a primeira é resolvida com "setar o contexto"
 
 Para (3) a pergunta não é "como setar contexto", é **como conceder leitura sem
 recorte sem abrir um `BYPASSRLS` de propósito geral**. Um role com `BYPASSRLS`
-que a aplicação possa assumir anula o RLS pelo caminho mais curto. As opções
-merecem análise própria antes da ativação — não estão resolvidas aqui, e é por
-isso que esta seção existe.
+que a aplicação possa assumir anula o RLS pelo caminho mais curto. A seção 8
+mede as saídas e fecha esse item.
 
-## 8. Um furo que o RLS sozinho NÃO fecha: chave estrangeira
+## 8. A leitura sem recorte, medida e resolvida
+
+Item deixado em aberto pela seção 7. Antes das saídas, um achado que muda a
+gravidade do problema.
+
+### O backup não falharia — ele mentiria
+
+`rules/backup.py::gerar_backup_zip` faz um `SELECT` por tabela do schema.
+**RLS não dá erro: devolve vazio** (medido — `app sem contexto` retornou 0
+linhas, sem exceção). E `executar_backup_se_necessario` só grava
+`sucesso=False` quando há **exceção**:
+
+```python
+try:
+    zip_bytes = gerar_backup_zip(session)
+    enviar_email(...)
+    session.add(BackupAutomatico(sucesso=True))
+except Exception as exc:
+    session.add(BackupAutomatico(sucesso=False, erro=...))
+```
+
+Sem exceção, o caminho feliz roda inteiro: ZIP com um CSV por tabela contendo
+só o cabeçalho, e-mail enviado ao dono, `sucesso=True` gravado — e, por causa
+do `INTERVALO_DIAS = 7`, a próxima tentativa só em uma semana. O
+`except Exception: pass` do loop de `main.py` nem chega a ser o problema aqui:
+não existe exceção nenhuma para ele engolir.
+
+### As quatro saídas, medidas
+
+Cenário: tabela `sanidade` com 3 linhas (fazenda 1, fazenda 2, catálogo
+global), RLS ligado, política estrita para `cowdata_app`. O roteiro completo
+está em `docs/security-audit/rls-experimento-leitura-sem-recorte.sql` e roda
+inteiro num `psql` só, contra um Postgres descartável.
+
+| Quem lê | Vê as 3 linhas? | Tabela nova sem política | Escreve sem recorte? |
+|---|---|---|---|
+| `cowdata_app` (com contexto da fazenda 1) | não — 1 linha | contida | não (`INSERT` na fazenda 2 → erro de política) |
+| dono das tabelas, **com** `FORCE` | **não — 0 linhas** | 0 linhas | — |
+| dono das tabelas, **sem** `FORCE` | **sim — 3** | **sim** | sim |
+| role com política `FOR SELECT ... USING (true)` | sim — 3 | **não — 0 linhas** | não (`UPDATE 0`, `DELETE 0`, `INSERT` → erro) |
+| role com `BYPASSRLS` | sim — 3 | sim | **sim, sem nenhum limite** |
+
+Duas linhas dessa tabela decidem:
+
+**A política dedicada de leitura contém a escrita, mas cria um backup
+incompleto em silêncio.** Foi medido: criei uma tabela nova com RLS ligado e
+esqueci a política do role de backup — ele passou a ler **0 linhas ali**, sem
+erro. É o mesmo modo de falha que se está tentando evitar, agora dependendo de
+alguém lembrar de criar uma política por tabela nova, para sempre.
+
+**`BYPASSRLS` cobre tabela nova, mas dá escrita irrestrita** — e um role que a
+aplicação pode assumir devolve o RLS de presente a quem executar código na API.
+
+### O `FORCE` contra o próprio dono é teatro
+
+Sobra a terceira linha: **dono das tabelas, sem `FORCE`**. Abrir mão do
+`FORCE` parece perder proteção, e não perde, porque:
+
+1. O `FORCE` só muda o comportamento **do dono das tabelas**. A aplicação, por
+   desenho do passo 0, não é dona — para ela nada muda.
+2. O dono pode remover o `FORCE` com um comando. Medido:
+   `ALTER TABLE ... NO FORCE ROW LEVEL SECURITY` → aceito, e as 3 linhas
+   voltam a aparecer. Um `FORCE` que quem ele restringe pode desligar sozinho
+   não restringe ninguém.
+
+O `FORCE` valeria se o dono fosse a aplicação — e o passo 0 existe justamente
+para que não seja.
+
+### O desenho recomendado
+
+**RLS ligado, sem `FORCE`; backup e seeds pela conexão de dono** — a mesma
+`DATABASE_URL_MIGRACAO` da seção 6, sem nenhum role `BYPASSRLS` no sistema e
+sem política por tabela para manter. Medido nesse desenho: o dono lê as 4
+linhas e insere catálogo global sem obstáculo; a aplicação na fazenda 1 segue
+vendo 1 linha e leva erro de política ao tentar gravar na fazenda 2.
+
+O que ele **não** resolve, dito na cara: no desenho (a) da seção 6 a
+credencial de dono fica no ambiente da API, e quem executar código lá dentro
+lê o banco inteiro por essa conexão. É o mesmo trade-off já registrado na
+seção 6 — este item não acrescenta risco novo, e ele desaparece no desenho
+(b), com backup e migração como passos de deploy próprios.
+
+### A guarda que o backup precisa, em qualquer desenho
+
+Independente de RLS: um backup que sai vazio tem que falhar alto. Basta
+`gerar_backup_zip` devolver também a contagem de linhas e
+`executar_backup_se_necessario` gravar `sucesso=False` quando o total for
+zero. Sem isso, qualquer erro futuro de permissão volta a produzir backup de
+cabeçalho com carimbo de sucesso. **Não é mudança de RLS — é dívida de hoje**,
+e vale fazer antes, independente da decisão maior.
+
+
+## 9. Um furo que o RLS sozinho NÃO fecha: chave estrangeira
 
 Este não estava na conta e apareceu ao testar o esquema real. A verificação
 de chave estrangeira do PostgreSQL roda POR BAIXO da política — ela enxerga
@@ -539,7 +630,7 @@ porte comparável ao do RLS em si, e precisa entrar na conta antes da decisão
 — não é detalhe de acabamento. Sem ele, o RLS entrega isolamento de leitura
 mas deixa de pé tanto a referência cruzada quanto o oráculo de existência.
 
-## 9. O que foi provado, e como reproduzir
+## 10. O que foi provado, e como reproduzir
 
 Oito ataques contra um PostgreSQL 16 real, conectado como role de aplicação:
 
@@ -555,7 +646,10 @@ Oito ataques contra um PostgreSQL 16 real, conectado como role de aplicação:
 | `SET` sem `LOCAL`, depois requisição na mesma conexão | contexto **vazou** para a requisição seguinte |
 
 O roteiro completo está em `docs/security-audit/rls-experimento.sql` e roda
-inteiro num `psql` só, contra um Postgres descartável.
+inteiro num `psql` só, contra um Postgres descartável. O segundo experimento —
+quem consegue ler o banco inteiro, da seção 8 — está em
+`docs/security-audit/rls-experimento-leitura-sem-recorte.sql`, no mesmo
+formato.
 
 O DDL parametrizado da ativação está em
 `docs/security-audit/rls-migracao-proposta.sql`. Ele percorre o catálogo do
@@ -563,25 +657,35 @@ banco em vez de uma lista escrita à mão, para que tabela nova com
 `fazenda_id` entre sozinha em vez de ficar de fora em silêncio. Rodado
 contra o esquema real deste repositório (206 tabelas criadas por
 `SQLModel.metadata.create_all` num Postgres local): **185 políticas criadas,
-14 de catálogo global e 171 de dado da fazenda, nenhuma tabela multi-tenant
-de fora.**
+18 de catálogo global e 167 de dado da fazenda, nenhuma tabela multi-tenant
+de fora, e nenhuma delas com `FORCE`** (conferido em `pg_class`:
+`relrowsecurity` em 185, `relforcerowsecurity` em 0 — ver seção 8).
 
 Ele é um `.sql` avulso e **não** uma revisão Alembic de propósito:
 `database.py::_aplicar_alembic()` roda `upgrade head` no boot da API, então
 uma revisão em `alembic/versions/` seria aplicada em produção no próximo
 deploy, sozinha, sem ninguém decidir nada. Vira migração no dia da decisão.
 
-## 10. O que falta para decidir
+## 11. O que falta para decidir
+
+### Fechado desde a primeira versão
 
 | | |
 |---|---|
 | Número de órfãos em produção | **MEDIDO em 06/09/2026: 183 linhas, em 16 tabelas** |
+| Quantos dá para recuperar sem adivinhar | **TRIADO: 45 restantes, em 13 tabelas** (seção 5) |
+| O que fazer com cada bloco de órfão | **DECIDIDO com o dono: 38 atribuir, 6 apagar, 1 deixar** |
+| Risco da seção 7: leitura sem recorte para backup e seeds | **RESOLVIDO na seção 8: RLS sem `FORCE`, pela conexão de dono** |
+
+### Ainda na mesa
+
+| | |
+|---|---|
+| Migração de backfill dos 45 órfãos (PR #717) | pronta e testada — **mergear aplica em produção no próximo deploy** |
 | Risco da seção 6: (a) duas URLs ou (b) migração fora do boot | decisão do dono |
-| Risco da seção 7: como dar leitura sem recorte ao backup e aos seeds | **em aberto — bloqueia a ativação** |
-| Quantos deles dá para recuperar sem adivinhar | consulta de triagem pronta (`orfaos-triagem.sql`) |
 | Usuário do banco é superusuário? | consulta pronta (seção 3) |
 | Criar role de aplicação e trocar DATABASE_URL | decisão de infraestrutura do dono |
-| O que fazer com cada bloco de órfão | decisão do dono, depois da contagem |
-| Etapa 4 (`NOT NULL`): autorizar a migração | depois da etapa 3 |
+| Etapa 4 (`NOT NULL`): autorizar a migração | depois do backfill |
 | Etapa 5 (161 FKs compostas): autorizar | independente do RLS |
+| Guarda do backup vazio (seção 8, fim) | dívida de hoje, independe da decisão de RLS |
 | Custo de desempenho da política | medir no Staging, com volume real |

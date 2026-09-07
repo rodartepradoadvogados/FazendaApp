@@ -19,8 +19,8 @@
 
 -- ---------------------------------------------------------------------
 -- PASSO 0 — o role da aplicação. Sem superusuário, e as tabelas NÃO são
--- dele. Superusuário ignora RLS mesmo com FORCE (medido); dono de tabela é
--- contido por FORCE, mas mantê-lo fora da posse é a defesa mais simples.
+-- dele. Superusuário ignora RLS mesmo com FORCE (medido); manter a aplicação
+-- fora da posse das tabelas é a defesa que de fato sustenta a política.
 -- A senha entra por variável de ambiente no momento de rodar, nunca aqui.
 -- ---------------------------------------------------------------------
 -- CREATE ROLE cowdata_app LOGIN PASSWORD :'senha_do_app';
@@ -92,7 +92,11 @@ BEGIN
         END IF;
 
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t.table_name);
-        EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t.table_name);
+        -- Sem FORCE, de propósito: o FORCE só alcança o dono das tabelas, e o dono
+        -- pode removê-lo sozinho (medido, seção 8 da proposta) — não restringe
+        -- ninguém. Deixá-lo de fora é o que dá ao backup automático e aos seeds do
+        -- boot a leitura sem recorte de que precisam, pela conexão de dono, sem
+        -- criar nenhum role BYPASSRLS.
         EXECUTE format('DROP POLICY IF EXISTS isolamento_fazenda ON %I', t.table_name);
         EXECUTE format(
             'CREATE POLICY isolamento_fazenda ON %I USING (%s) WITH CHECK (fazenda_id = %s)',
