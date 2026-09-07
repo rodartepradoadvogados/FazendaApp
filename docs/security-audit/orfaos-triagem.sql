@@ -72,7 +72,8 @@ WITH catalogo_global(table_name) AS (VALUES
     ('categoria_estoque'),('finalidade_estoque'),('unidade_estoque'),('unidade_embalagem_estoque'),
     ('unidade_medida_embalagem_estoque'),('laboratorio'),('categoria_medicamento'),
     ('classificacao_medicamento_cad'),('servico_cadastro'),('parametro_fazenda'),
-    ('medicamento_principio_ativo'),('alimento_nutricional')
+    ('medicamento_principio_ativo'),('alimento_nutricional'),
+    ('medicamento_categoria'),('medicamento_classificacao')
 ),
 multitenant AS (
     SELECT DISTINCT table_name
@@ -133,7 +134,8 @@ WITH catalogo_global(table_name) AS (VALUES
     ('categoria_estoque'),('finalidade_estoque'),('unidade_estoque'),('unidade_embalagem_estoque'),
     ('unidade_medida_embalagem_estoque'),('laboratorio'),('categoria_medicamento'),
     ('classificacao_medicamento_cad'),('servico_cadastro'),('parametro_fazenda'),
-    ('medicamento_principio_ativo'),('alimento_nutricional')
+    ('medicamento_principio_ativo'),('alimento_nutricional'),
+    ('medicamento_categoria'),('medicamento_classificacao')
 ),
 multitenant AS (
     SELECT DISTINCT table_name FROM information_schema.columns

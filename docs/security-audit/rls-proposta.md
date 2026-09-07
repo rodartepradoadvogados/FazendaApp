@@ -40,8 +40,8 @@ Medido em `backend/fazenda/models.py`:
 | Tabelas com coluna `fazenda_id` | **185** |
 | Aceitam NULL | **170** |
 | Já são `NOT NULL` | **15** |
-| Catálogo global legítimo | **16** |
-| **Aceitam NULL sem ter direito** | **154** |
+| Catálogo global legítimo | **18** |
+| **Aceitam NULL sem ter direito** | **152** |
 
 O `fazenda_id` nulo significa duas coisas incompatíveis no mesmo esquema:
 
@@ -224,15 +224,94 @@ migração de backfill"*.
 **E nenhum deles tem pai que saiba a fazenda.** Com `fazendas_reais = 2`, os
 46 são decisão do dono, um a um — mas 46 é uma lista que cabe numa conversa.
 
+### A triagem, rodada: os 46 viraram 45, e a decisão são três, não 46
+
+Rodada a consulta detalhada em produção, com a conferência de uso da sandbox,
+cada uma das 14 tabelas com órfão foi classificada pelo que ELA É — não pela
+data, que não discrimina nada aqui (a sandbox nasceu 33 horas depois da
+fazenda real; quase todo dado do sistema é posterior a ela).
+
+**As três fazendas, medidas:** `Jairo Nasser` (id 1, real), `Fazenda Teste`
+(id 2, `eh_teste = true`) e `CowData (empresa)` (id 3, o painel). **Uma única
+fazenda-cliente real.**
+
+E a sandbox está **praticamente vazia**: zero linhas em 11 das 14 tabelas com
+órfão. Ela mal foi usada, então os órfãos não vieram dela — que era o único
+risco de atribuí-los à fazenda 1.
+
+#### A — não é órfão, é catálogo global: não tocar (1 linha)
+
+`medicamento_categoria`. O modelo **avisa explicitamente** contra o que
+pareceria óbvio fazer:
+
+> *"inclusive quando NULO: um vínculo de medicamento GLOBAL tem que continuar
+> global, senão ele passaria a 'pertencer' à primeira fazenda que o backfill
+> encontrasse e sumiria do catálogo global de todas as outras."*
+
+A varredura sistemática (tabelas de ligação cujos pais são TODOS catálogo, com
+a semântica confirmada no modelo) achou também `medicamento_classificacao`,
+com a mesma regra. Ela não tem órfão hoje, **mas precisa entrar na lista do
+DDL assim mesmo** — com política estrita, os vínculos globais dela sumiriam.
+
+**Lista de catálogo global: 16 → 18 tabelas.**
+
+#### B — resíduo de migração: apagar (4 linhas)
+
+`meta_recria`, `parametro_manual_fazenda`, `parametro_sugestao_movimentacao`,
+`parametro_diaria_padrao`, 1 cada. O modelo do primeiro explica todos:
+
+> *"Era uma linha única (id=1) — passa a ser uma linha por fazenda."*
+
+A órfã é a linha antiga, de quando o parâmetro era global. E a fazenda 1 **já
+tem a sua** nas quatro. Atribuir aqui seria **pior que não fazer nada**:
+criaria duplicata numa tabela cujo contrato é "uma linha por fazenda,
+get-or-create".
+
+#### C — lixo técnico: apagar (2 linhas)
+
+`idempotencia_chave`. Cache da fila offline, *"curto prazo, minutos a poucas
+horas até reconectar"*. A fazenda 1 tem 392 linhas vivas; essas 2 são resto.
+
+#### D — dado real da fazenda 1: atribuir (38 linhas)
+
+`conta_gerencial` (12), `tipo_documento` (9), `lancamento_anexo` (8),
+`local_armazenamento` (4), `lancamento_item` (3), `calendario_sanitario` (1),
+`classificacao_lancamento` (1), `cronograma_sanitario` (1).
+
+A fazenda 1 tem volume grande nas mesmas tabelas (928, 17, 95, 7, 208, 13, 7)
+e a sandbox tem zero em todas. `cronograma_sanitario` e `calendario_sanitario`
+vão juntas: a órfã do cronograma é a única linha da tabela e depende da órfã
+do calendário — são o mesmo evento.
+
+#### Risco a conferir antes da migração
+
+`tipo_documento`, `local_armazenamento` e `classificacao_lancamento` têm
+`UNIQUE (nome, fazenda_id)`. Se alguma órfã tiver o mesmo nome de uma linha da
+fazenda 1, o `UPDATE` **falha** por violação de unicidade — o que é o
+comportamento certo, mas é melhor saber antes e decidir entre atribuir ou
+apagar a duplicata.
+
+**Balanço: 45 linhas a mexer — 38 atribuir, 6 apagar, 1 deixar em paz.**
+
 **E o dado que muda a etapa 3: `fazendas_reais = 2`** (3 no total, uma delas a
 fazenda lógica da CowData). A migração `029227481e9e` tem três estratégias, e
 a segunda é *"se a instalação tem exatamente UMA fazenda real, atribui essa"*.
 Com duas fazendas-cliente, **essa estratégia deixou de valer**.
 
-Sobram duas saídas para cada órfão: ou ele tem um pai que sabe a fazenda — e
-aí é `UPDATE` determinístico —, ou vira decisão do dono, registro por
-registro. Não há terceira: atribuir por chute a uma das duas fazendas é
-exatamente o que a migração se recusa a fazer, e com razão.
+**Só que esse número está errado, e o erro é da consulta — e da migração.**
+A consulta contou como "real" tudo que não é o painel CowData, então a
+**sandbox entrou na conta**. São 1 real + 1 sandbox + 1 painel.
+
+E a migração `029227481e9e` tem exatamente o mesmo defeito: decide com
+`WHERE eh_empresa_cowdata IS NOT TRUE` e **ignora `eh_teste`**. Foi por isso
+que ela enxergou "duas fazendas", desistiu de atribuir, e deixou os órfãos
+parados.
+
+A flag de sandbox é levada a sério em outro ponto do sistema —
+`rules/replicacao_fazenda.py` **recusa com 409** qualquer destino que não a
+tenha, justamente para não sobrescrever a fazenda-cliente real por engano. A
+migração de backfill simplesmente não a conhece. **Corrigir isso é uma linha**,
+e faz a migração enxergar o que de fato existe: uma fazenda-cliente real.
 
 É por isso que a consulta de triagem (`orfaos-triagem.sql`) deixou de ser
 "bom saber" e passou a ser o que dimensiona a etapa 3.

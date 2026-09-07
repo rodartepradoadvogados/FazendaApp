@@ -61,7 +61,12 @@ DECLARE
         -- as duas achadas ao conferir a contagem de produção (copy-on-write,
         -- não `visivel()`): sem elas, a política ESTRITA esconderia as linhas
         -- mestre do catálogo e quebraria a Farmácia e a biblioteca de alimentos.
-        'medicamento_principio_ativo', 'alimento_nutricional'
+        'medicamento_principio_ativo', 'alimento_nutricional',
+        -- Ligações N-N do catálogo: o modelo AVISA que o NULL nelas espelha o
+        -- NULL do pai e tem que continuar global — "senão ele passaria a
+        -- pertencer à primeira fazenda que o backfill encontrasse e sumiria
+        -- do catálogo global de todas as outras".
+        'medicamento_categoria', 'medicamento_classificacao'
     ];
     ctx constant text := 'NULLIF(current_setting(''app.fazenda_id'', true), '''')::int';
     leitura text;
