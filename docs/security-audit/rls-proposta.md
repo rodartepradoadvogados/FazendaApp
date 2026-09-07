@@ -175,6 +175,19 @@ tabelas com `fazenda_id`):
 As 486 do catálogo são o esperado e não são problema: ali o NULL quer dizer
 "é de todo produtor".
 
+**E o dado que muda a etapa 3: `fazendas_reais = 2`** (3 no total, uma delas a
+fazenda lógica da CowData). A migração `029227481e9e` tem três estratégias, e
+a segunda é *"se a instalação tem exatamente UMA fazenda real, atribui essa"*.
+Com duas fazendas-cliente, **essa estratégia deixou de valer**.
+
+Sobram duas saídas para cada órfão: ou ele tem um pai que sabe a fazenda — e
+aí é `UPDATE` determinístico —, ou vira decisão do dono, registro por
+registro. Não há terceira: atribuir por chute a uma das duas fazendas é
+exatamente o que a migração se recusa a fazer, e com razão.
+
+É por isso que a consulta de triagem (`orfaos-triagem.sql`) deixou de ser
+"bom saber" e passou a ser o que dimensiona a etapa 3.
+
 **183 órfãos, concentrados em 16 tabelas, é um número pequeno e tratável** —
 muda a natureza da etapa 3. Não é um mutirão de limpeza: é uma migração de
 backfill com uma lista curta, e o que sobrar cabe numa conversa de minutos.
