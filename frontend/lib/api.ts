@@ -2772,6 +2772,34 @@ export async function atualizarVale(valeId: number, dados: {
   }
   return res.json();
 }
+/** O que a tela precisa mostrar ANTES de perguntar "excluir este vale?".
+ *
+ * EXCLUIR ≠ CANCELAR (a distinção que originou esta prévia): excluir é para o
+ * vale que NUNCA DEVERIA TER EXISTIDO — apaga o vale E a saída de caixa que
+ * ele criou no Financeiro. Para o vale que aconteceu e só não vai mais ser
+ * cobrado, a porta é a ação "Cancelar o vale" (painel de ações do vale), que
+ * mantém a saída de caixa e tem desfazer.
+ *
+ * `confirmacao` e `alternativa` vêm PRONTAS do backend de propósito: o número
+ * do lançamento (LC-...), o valor e a data da baixa vivem só no Financeiro —
+ * montar essa frase no front seria inventar texto com dados que ele não tem.
+ * `impedimento` preenchido = o backend vai recusar (400); mostre o motivo em
+ * vez de perguntar. */
+export type PreviaExclusaoVale = {
+  pode_excluir: boolean;
+  impedimento: string | null;
+  lancamento: {
+    numero_lancamento: string | null; valor: number | null;
+    data_pagamento: string | null; conta_bancaria: string | null; descricao: string | null;
+  } | null;
+  confirmacao: string;
+  alternativa: string;
+};
+export async function previaExclusaoVale(valeId: number): Promise<PreviaExclusaoVale> {
+  const res = await authFetch(`${API}/cadastro/vales/${valeId}/exclusao`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao conferir o vale"); }
+  return res.json();
+}
 export async function excluirVale(valeId: number) {
   const res = await authFetch(`${API}/cadastro/vales/${valeId}`, { method: "DELETE" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir vale"); }
@@ -3402,6 +3430,14 @@ export async function atualizarValeAvulso(valeId: number, dados: {
     err.status = res.status;
     throw err;
   }
+  return res.json();
+}
+/** Prévia da exclusão do vale avulso — mesma ideia (e mesmo formato) de
+ * `previaExclusaoVale`. Aqui a alternativa é editar o vale: "cancelar o
+ * vale" é ação do vale de FUNCIONÁRIO, não existe para o avulso. */
+export async function previaExclusaoValeAvulso(valeId: number): Promise<PreviaExclusaoVale> {
+  const res = await authFetch(`${API}/cadastro/vale-avulso/${valeId}/exclusao`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao conferir o vale"); }
   return res.json();
 }
 export async function excluirValeAvulso(valeId: number) {

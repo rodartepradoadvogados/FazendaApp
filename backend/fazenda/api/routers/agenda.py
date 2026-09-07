@@ -19,7 +19,7 @@ from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, ConsumoAlimento,
     ConsumoSobra, ContaGerencial,
     CronogramaSanitario, CronogramaSanitarioAnimal, DietaLancamento, Diaria,
-    DiariaAuditoria, DiariaDia, Empreitada, EmpreitadaEtapa, Estoque, EstoqueSemen, EventoRealizado, Lote, MedicamentoComercial, ParametroSugestaoMovimentacao, Parto,
+    DiariaAuditoria, DiariaDia, Empreitada, EmpreitadaEtapa, Estoque, EstoqueSemen, EventoRealizado, Lote, MedicamentoComercial, Parto,
     PesagemCorporal, Patrimonio, Pedido, PedidoAnexo, Pessoa, PessoaAnexo, PortalMensagem, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
@@ -27,6 +27,12 @@ from fazenda.models import (
     Secagem, SeedFlag, Servico,
 )
 from fazenda.api.routers.lotes import coletar_dados_criterios
+# Leitura pura (nunca get-or-create) do parâmetro de agendamento das
+# sugestões de movimentação — mora junto da rota que a tela de Parâmetros
+# usa para GRAVAR, para que ler e gravar não possam divergir de novo. Este
+# módulo já importa de outros três routers (lotes, portal, reproducao), então
+# não vale mover a função para `rules/` só por causa deste import.
+from fazenda.api.routers.movimentacoes import ler_parametro_sugestao_movimentacao
 from fazenda.api.routers.portal import usuarios_da_fazenda
 from fazenda.api.routers.reproducao import ATIVIDADE_INDUCAO_CIO
 from fazenda.ordenacao import chave_numero
@@ -1340,7 +1346,25 @@ def calcular_agenda(
     # manualmente), uma eventual nova sugestão a partir do novo lote é tratada
     # como uma pendência nova, mesmo que o animal já tenha dispensado uma
     # sugestão antes a partir do lote anterior.
-    parametro_movimentacao = session.get(ParametroSugestaoMovimentacao, 1) or ParametroSugestaoMovimentacao(id=1)
+    #
+    # A Agenda passou a ENXERGAR o que a tela de Parâmetros configura — antes
+    # não enxergava. Isto é a correção de um bug silencioso, não uma
+    # refatoração: a leitura era `session.get(ParametroSugestaoMovimentacao, 1)`,
+    # ou seja, pela CHAVE PRIMÁRIA id = 1, sem recorte de fazenda nenhum. É o
+    # desenho antigo de linha única global, que ficou para trás quando o
+    # parâmetro virou uma linha por fazenda; a tela grava por fazenda (ver
+    # `movimentacoes._parametro_sugestao_movimentacao`), então o dono
+    # configurava num lugar e a Agenda lia outro. Pior: com a linha órfã de
+    # id 1 apagada pelo backfill por fazenda, o `get` devolvia None e a Agenda
+    # caía no objeto de fábrica do `or`, ignorando a configuração — mudando na
+    # prática QUANDO a sugestão aparece (na data em que o animal passa a
+    # atender outro lote × só no dia fixo da semana escolhido).
+    #
+    # Leitura PURA de propósito: a Agenda roda a cada carregamento de tela e
+    # não pode criar linha nem commitar (o get-or-create da tela faria a
+    # primeira visita de um tenant novo gravar o parâmetro sozinha). Sem linha
+    # cadastrada, vem o padrão em memória e nada é escrito no banco.
+    parametro_movimentacao = ler_parametro_sugestao_movimentacao(session, fazenda_id)
     eventos_movimentacao = []
     mostra_hoje = (
         parametro_movimentacao.modo == "dia_fixo_semana" and data.weekday() == parametro_movimentacao.dia_semana

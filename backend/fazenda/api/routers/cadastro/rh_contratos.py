@@ -20,8 +20,8 @@ from fazenda.auth import get_current_user, exigir_admin, get_fazenda_atual_id, g
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, ContaCorrente, ContaGerencial, Contrato, ContratoParcela, DecimoTerceiro, Diaria, DiariaAuditoria,
-    DiariaDia, DiariaPagamento, Empreitada, EmpreitadaEtapa, EmpreitadaParcela, FeriasFuncionario, ParametroDiariaPadrao,
-    Pessoa, Usuario, ValeAvulso, ValeAvulsoAbatimento,
+    DiariaDia, DiariaPagamento, Empreitada, EmpreitadaEtapa, EmpreitadaParcela, FeriasFuncionario, LancamentoAnexo,
+    ParametroDiariaPadrao, Pessoa, Usuario, ValeAvulso, ValeAvulsoAbatimento,
 )
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules import holerite
@@ -29,8 +29,12 @@ from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
 
 from .rh_folha import (
+    ALTERNATIVA_VALE_AVULSO,
     STATUS_CANCELADO_RESCISAO,
     _competencia_seguinte,
+    _conta_do_numero,
+    _impedimento_excluir_vale,
+    _previa_exclusao_vale,
     _resolver_conta_corrente,
     listar_folha_pagamento,
 )
@@ -2555,25 +2559,83 @@ def atualizar_vale_avulso(
     return {"vale": vale.model_dump(), "origem": resultado}
 
 
+def _impedimento_excluir_vale_avulso(
+    session: Session, vale: ValeAvulso, conta: ContaGerencial | None,
+) -> str | None:
+    """TODOS os motivos para recusar a exclusão de um vale avulso, em um
+    lugar só — mesma função para a prévia da tela e para o DELETE, pelo mesmo
+    motivo do vale de funcionário (ver `_impedimento_excluir_vale_funcionario`
+    em rh_folha.py).
+
+    A primeira trava não é escrita aqui: ela já mora dentro de
+    `_bloquear_reversao_de_abatimento_pago` (parcela/etapa que este vale
+    abateu e que JÁ FOI PAGA). Chamamos a mesma função e transformamos a
+    recusa dela em texto, em vez de reescrever a regra — duas cópias
+    divergiriam no primeiro ajuste."""
+    try:
+        _bloquear_reversao_de_abatimento_pago(session, vale.id)
+    except HTTPException as exc:
+        return exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+    return _impedimento_excluir_vale(
+        session, conta, vale.valor, LancamentoAnexo.vale_avulso_id, vale.id, ALTERNATIVA_VALE_AVULSO,
+    )
+
+
+@router.get("/vale-avulso/{vale_id}/exclusao")
+def previa_exclusao_vale_avulso(
+    vale_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Espelho de `previa_exclusao_vale` (rh_folha.py) para o vale avulso: o
+    que a tela mostra antes de perguntar "excluir?". A alternativa aqui é
+    outra de propósito — vale avulso não tem a ação "Cancelar o vale" (ela é
+    do vale de funcionário, em rh_vale_acoes.py); o que existe é editar o
+    valor do vale."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    vale = session.get(ValeAvulso, vale_id)
+    if not vale or (vale.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Vale não encontrado")
+    pessoa = session.exec(
+        select(Pessoa).where(Pessoa.id == vale.pessoa_id, Pessoa.fazenda_id == fazenda_id)
+    ).first()
+    conta = _conta_do_numero(session, vale.numero_lancamento_gerado, fazenda_id)
+    return _previa_exclusao_vale(
+        conta=conta,
+        impedimento=_impedimento_excluir_vale_avulso(session, vale, conta),
+        titulo=f"Excluir o vale de {pessoa.nome if pessoa else 'contratado'} de R$ {vale.valor:.2f}?",
+        efeito="O valor abatido da(s) parcela(s)/etapa(s) pendente(s) será revertido.",
+        alternativa=ALTERNATIVA_VALE_AVULSO,
+    )
+
+
 @router.delete("/vale-avulso/{vale_id}")
 def excluir_vale_avulso(
     vale_id: int, session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    """Apaga o vale avulso que NUNCA DEVERIA TER EXISTIDO e, com ele, a saída
+    de caixa que ele criou — ver o bloco EXCLUIR ≠ CANCELAR em rh_folha.py
+    sobre por que a conta já paga do vale PODE ser apagada aqui (ela nasce
+    paga por desenho) e quando a exclusão passa a ser recusada."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     vale = session.get(ValeAvulso, vale_id)
     if not vale or (vale.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Vale não encontrado")
+    # A conta agora vem por `_conta_do_numero`, que recorta a fazenda DENTRO
+    # da consulta — antes a busca era só por `numero_lancamento` e podia
+    # alcançar lançamento de outra fazenda. E a recusa vem ANTES de
+    # `_reverter_vale_avulso`, que já escreve nas parcelas/etapas: recusar
+    # no meio deixaria o abatimento desfeito com o vale ainda de pé.
+    conta = _conta_do_numero(session, vale.numero_lancamento_gerado, fazenda_id)
+    impedimento = _impedimento_excluir_vale_avulso(session, vale, conta)
+    if impedimento:
+        raise HTTPException(status_code=400, detail=impedimento)
     _reverter_vale_avulso(session, vale_id)
     # Remove também o lançamento (ContaGerencial) gerado para a saída de
     # caixa do vale — sem isso, excluir o vale deixaria um lançamento órfão
     # no extrato, sem vale nenhum por trás dele.
-    if vale.numero_lancamento_gerado:
-        conta_gerada = session.exec(
-            select(ContaGerencial).where(ContaGerencial.numero_lancamento == vale.numero_lancamento_gerado)
-        ).first()
-        if conta_gerada:
-            session.delete(conta_gerada)
+    if conta is not None:
+        session.delete(conta)
     # Zera o vínculo em qualquer LancamentoItem que apontava para este vale
     # (caminho inverso: usuário excluiu o vale direto no Relatório de vales,
     # não pelo checkbox do item) — sem isso ficaria FK pendurada e o item
