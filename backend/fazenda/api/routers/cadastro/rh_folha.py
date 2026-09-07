@@ -22,9 +22,9 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    ContaCorrente, ContaGerencial, DecimoTerceiro, FeriasFuncionario, FolhaPagamento, FolhaRubrica,
-    GuiaFolhaEncargo, LancamentoAnexo, Pessoa, RescisaoFuncionario, Usuario, ValeAvulso, ValeFuncionario,
-    ValeParcela,
+    ContaCorrente, ContaGerencial, DecimoTerceiro, DocumentoArquivado, FeriasFuncionario, FolhaPagamento,
+    FolhaRubrica, GuiaFolhaEncargo, LancamentoAnexo, Pessoa, RescisaoFuncionario, Usuario, ValeAvulso,
+    ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.financeiro import TAMANHO_MAXIMO_ANEXO, _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
@@ -3513,6 +3513,207 @@ def _sincronizar_conta_vale(
         ))
 
 
+# ---------------------------------------------------------------------------
+# EXCLUIR ≠ CANCELAR — a distinção que este bloco escreve no código, porque
+# confundir as duas foi o que originou esta correção.
+#
+# EXCLUIR (DELETE /vales, DELETE /vale-avulso) é para o lançamento que NUNCA
+# DEVERIA TER EXISTIDO: valor errado, pessoa errada, vale digitado duas
+# vezes. Apaga o vale, as parcelas e a saída de caixa que ele criou no
+# Financeiro — porque aquele dinheiro não saiu daquele jeito. É a única porta
+# para "lancei errado", e por isso ela CONTINUA ABERTA mesmo com a conta
+# baixada: diferente da folha, das férias, do 13º e das guias de FGTS/DCTF
+# (ver `_exigir_conta_nao_paga`), a conta do vale JÁ NASCE PAGA por desenho —
+# o vale é entregue no ato (ver `_sincronizar_conta_vale`). Aplicar aqui a
+# mesma trava daquelas quatro tornaria excluir um vale impossível PARA
+# SEMPRE, e o dono ficaria preso com o erro de digitação no banco.
+#
+# CANCELAR (ação "cancelar", em rh_vale_acoes.py) é para o vale que
+# ACONTECEU e só não vai mais ser cobrado do funcionário: o dinheiro saiu de
+# verdade, a saída de caixa FICA no extrato, o saldo vira despesa da fazenda
+# — e há desfazer ("reverter_cancelamento"). Quem quer perdoar um vale e
+# clica na lixeira apaga do extrato uma saída de caixa que existiu.
+#
+# O ERRO DO CÓDIGO ANTERIOR NÃO ERA APAGAR A CONTA JUNTO — era apagar EM
+# SILÊNCIO. Daqui em diante:
+#   (1) a tela recebe, ANTES de perguntar, o que vai junto e por qual
+#       lançamento (`_previa_exclusao_vale`), em vez de inventar um texto
+#       genérico com dados que ela não tem; e
+#   (2) a exclusão é RECUSADA (400) quando há trabalho humano investido
+#       naquele lançamento (`_impedimento_excluir_vale`) — nesse caso a
+#       mensagem manda cancelar o vale, ou acertar no Financeiro.
+# ---------------------------------------------------------------------------
+# Frase única do "não era isto que você queria" — a diferença entre as duas
+# portas dita em UMA linha, no diálogo de exclusão e em toda recusa. Uma
+# constante e não uma literal solta em cada lugar: era exatamente a lição do
+# vale de funcionário; o vale avulso tem a sua (não existe "cancelar" lá).
+ALTERNATIVA_CANCELAR_VALE = (
+    'Se o vale ACONTECEU e só não vai mais ser cobrado, não exclua: use a ação "Cancelar o vale" '
+    "— ela mantém a saída de caixa no extrato, avisa o Financeiro (o saldo vira despesa da "
+    "fazenda) e pode ser desfeita depois."
+)
+ALTERNATIVA_VALE_AVULSO = (
+    "Se o vale ACONTECEU e só o valor está errado, edite o vale em vez de excluir — excluir é "
+    "para o vale que nunca deveria ter sido lançado."
+)
+
+
+def _saida_de_caixa_do_vale(conta: ContaGerencial | None) -> dict | None:
+    """Os números da saída de caixa que a exclusão leva junto, para a TELA
+    poder nomeá-la. `None` quando o vale não move caixa (desconto integral na
+    folha / no próximo pagamento — ver `_sincronizar_conta_vale`)."""
+    if conta is None:
+        return None
+    valor = conta.valor_pago if conta.valor_pago is not None else conta.valor_total
+    return {
+        "numero_lancamento": conta.numero_lancamento,
+        "valor": round(valor, 2) if valor is not None else None,
+        "data_pagamento": conta.data_pagamento.isoformat() if conta.data_pagamento else None,
+        "conta_bancaria": conta.conta_bancaria,
+        "descricao": conta.descricao,
+    }
+
+
+def _frase_saida_de_caixa(conta: ContaGerencial | None) -> str:
+    """A mesma informação em uma frase pronta — o diálogo da tela é um
+    `confirm` de texto, e montar a frase aqui é o que impede o front de
+    descrever o lançamento com dados que ele não tem (o número, a data e a
+    conta bancária da baixa vivem só no Financeiro)."""
+    if conta is None:
+        return (
+            "Este vale não tem saída de caixa no Financeiro (é descontado integralmente do "
+            "pagamento), então nada será apagado do extrato."
+        )
+    valor = conta.valor_pago if conta.valor_pago is not None else (conta.valor_total or 0)
+    quando = f" em {conta.data_pagamento.strftime('%d/%m/%Y')}" if conta.data_pagamento else ""
+    onde = f", {conta.conta_bancaria}" if conta.conta_bancaria else ""
+    return (
+        f"A saída de caixa {conta.numero_lancamento} (R$ {valor:.2f}{quando}{onde}) será APAGADA "
+        "do extrato do Financeiro junto com o vale."
+    )
+
+
+def _comprovantes_do_vale(session: Session, coluna_comprovante, vale_id: int) -> list[LancamentoAnexo]:
+    """Comprovantes anexados AO VALE (rotas /vales/{tipo}/{id}/comprovante).
+
+    Sem filtro de fazenda na consulta — e isto NÃO é o padrão tolerante
+    proibido: a âncora é `vale_id`, um id que quem chama já resolveu com
+    `== fazenda_id`, e `coluna_comprovante` é FK para ele, então nenhuma
+    linha de outro tenant alcança este resultado. Repetir o recorte aqui só
+    criaria o risco inverso — NÃO enxergar um anexo antigo (fazenda_id nulo)
+    e deixar o arquivo órfão ao apagar o vale."""
+    return list(session.exec(select(LancamentoAnexo).where(coluna_comprovante == vale_id)).all())
+
+
+def _impedimento_excluir_vale(
+    session: Session, conta: ContaGerencial | None, valor_vale: float,
+    coluna_comprovante, vale_id: int, alternativa: str,
+) -> str | None:
+    """
+    O motivo, em palavras, para NÃO deixar excluir este vale — ou None.
+
+    O CRITÉRIO: excluir é para o lançamento que nunca existiu de verdade.
+    Quando alguém já INVESTIU TRABALHO naquele lançamento — conferiu,
+    guardou o documento, acertou o valor contra o extrato do banco —, o
+    lançamento existe de verdade e apagá-lo destruiria em silêncio o trabalho
+    de quem fez. Aí a porta certa é outra (cancelar, ou acertar no
+    Financeiro), e é isso que a mensagem diz.
+
+    OS SINAIS, e por que são estes:
+
+    1. COMPROVANTE ANEXADO AO VALE. É o mais claro dos três: alguém abriu o
+       vale, conferiu o pagamento e guardou o PDF/foto do pix. Além do
+       trabalho, o vínculo é FK (`LancamentoAnexo.vale_funcionario_id` /
+       `vale_avulso_id`): apagar o vale deixava a linha do anexo apontando
+       para um vale que não existe mais — e o arquivo, inalcançável no
+       Storage.
+
+    2. ANEXO OU DOCUMENTO ARQUIVADO NO LANÇAMENTO. Mesma natureza, do lado
+       do Financeiro: anexo de lançamento (`LancamentoAnexo.numero_lancamento`)
+       ou documento da Central de Documentos (`DocumentoArquivado.
+       numero_lancamento`) preso a esta saída de caixa. Ambos ficariam
+       órfãos, apontando para um LC- que sumiu do extrato.
+
+    3. VALOR DIVERGENTE ENTRE A CONTA E O VALE. A sincronização reescreve
+       `valor_total` E `valor_pago` com o valor do vale em toda criação e
+       edição (ver `_sincronizar_conta_vale`), e nada mais no sistema mexe
+       neles: divergência aqui é acerto manual em Lançamentos — alguém
+       bateu o extrato do banco contra o sistema. Apagar apagaria o acerto.
+
+    O QUE FICOU DE FORA, DE PROPÓSITO (e por quê):
+    - `descricao` e `conta_bancaria` divergentes: os dois DERIVAM de dados
+      que mudam sozinhos (o nome da pessoa, o rótulo da conta corrente
+      renomeada em Parâmetros). Usá-los como sinal travaria a exclusão de
+      vales em que ninguém tocou — falso positivo que fecharia a porta para
+      sempre, que é justamente o que não pode acontecer aqui.
+    - `codigo_conta` preenchido (classificação no plano de contas): é
+      trabalho humano de verdade, mas é trabalho de LOTE — a conferência da
+      DRE classifica tudo que está sem conta de uma vez. Bloquear por ele
+      travaria, na prática, todo vale de uma fazenda que mantém a DRE em
+      dia; o remédio seria pior que a doença.
+    """
+    comprovantes = _comprovantes_do_vale(session, coluna_comprovante, vale_id)
+    if comprovantes:
+        nomes = ", ".join(sorted(a.nome_arquivo for a in comprovantes)[:3])
+        return (
+            f"Este vale tem comprovante anexado ({nomes}) — alguém já conferiu este pagamento e "
+            f"guardou o documento dele, então ele aconteceu de verdade. {alternativa} Se o "
+            "comprovante foi anexado por engano, exclua o comprovante primeiro; aí o vale volta a "
+            "poder ser excluído."
+        )
+    if conta is None:
+        return None
+
+    numero = conta.numero_lancamento
+    anexos = session.exec(
+        select(LancamentoAnexo).where(LancamentoAnexo.numero_lancamento == numero)
+    ).all()
+    documentos = session.exec(
+        select(DocumentoArquivado).where(DocumentoArquivado.numero_lancamento == numero)
+    ).all()
+    if anexos or documentos:
+        quantos = len(anexos) + len(documentos)
+        return (
+            f"A saída de caixa deste vale ({numero}) tem {quantos} documento(s) anexado(s) no "
+            "Financeiro — excluir o vale apagaria o lançamento e deixaria esses documentos sem "
+            f"lançamento nenhum por trás. {alternativa} Se os documentos não são deste vale, "
+            "remova-os em Lançamentos antes de excluir."
+        )
+
+    divergentes = [
+        v for v in (conta.valor_total, conta.valor_pago)
+        if v is not None and round(v, 2) != round(valor_vale, 2)
+    ]
+    if divergentes:
+        return (
+            f"A saída de caixa deste vale ({numero}) foi ajustada à mão no Financeiro: o lançamento "
+            f"está com R$ {round(divergentes[0], 2):.2f} e o vale, com R$ {round(valor_vale, 2):.2f}. "
+            "Excluir o vale apagaria esse acerto sem deixar rastro — resolva a divergência em "
+            f"Financeiro > Lançamentos antes. {alternativa}"
+        )
+    return None
+
+
+def _previa_exclusao_vale(
+    *, conta: ContaGerencial | None, impedimento: str | None, titulo: str, efeito: str,
+    alternativa: str,
+) -> dict:
+    """O que a tela precisa para o diálogo de exclusão: se dá para excluir,
+    por que não, e — quando dá — a frase que nomeia o que vai junto.
+
+    `impedimento` vem pronto de quem chama (`_impedimento_excluir_vale_...`),
+    que é a MESMA função usada pelo DELETE: a tela nunca oferece uma exclusão
+    que o backend vai negar, nem nega uma que ele aceitaria. O DELETE confere
+    tudo de novo na hora — esta prévia informa, nunca autoriza."""
+    return {
+        "pode_excluir": impedimento is None,
+        "impedimento": impedimento,
+        "lancamento": _saida_de_caixa_do_vale(conta),
+        "confirmacao": f"{titulo} {_frase_saida_de_caixa(conta)} {efeito}",
+        "alternativa": alternativa,
+    }
+
+
 @router.get("/vales")
 def listar_vales(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -3987,17 +4188,14 @@ def excluir_parcela_vale(
     }
 
 
-@router.delete("/vales/{vale_id}")
-def excluir_vale(
-    vale_id: int, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
-) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
-    vale = session.get(ValeFuncionario, vale_id)
-    if not vale or (vale.fazenda_id != fazenda_id):
-        raise HTTPException(status_code=404, detail="Vale não encontrado")
-    pessoa_id = vale.pessoa_id
-    parcelas = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()
+def _impedimento_excluir_vale_funcionario(
+    session: Session, vale: ValeFuncionario, parcelas: list[ValeParcela],
+    conta: ContaGerencial | None, fazenda_id: int | None,
+) -> str | None:
+    """TODOS os motivos para recusar a exclusão de um vale de funcionário, em
+    um lugar só — usado pela prévia da tela e pelo próprio DELETE, para os
+    dois nunca discordarem (o dono não pode confirmar uma exclusão e só
+    então descobrir que ela era proibida)."""
     # Vale que já sofreu "desconsiderar o mês"/"cancelar" não pode ser
     # apagado: o valor assumido já virou despesa da fazenda no Financeiro
     # (item de nota devolvido aos relatórios, ou lançamento reclassificado —
@@ -4005,29 +4203,83 @@ def excluir_vale(
     # apagaria junto o lançamento de caixa que sustenta aquela despesa,
     # sem desfazer nada do outro lado.
     if vale.status == "cancelado" or any(p.assumida_pela_fazenda for p in parcelas):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Este vale já teve valor assumido pela fazenda (mês desconsiderado ou vale cancelado) — "
-                "a despesa correspondente já está no Financeiro e o vale não pode mais ser excluído."
-            ),
+        return (
+            "Este vale já teve valor assumido pela fazenda (mês desconsiderado ou vale cancelado) — "
+            "a despesa correspondente já está no Financeiro e o vale não pode mais ser excluído."
         )
-    competencias = [p.competencia for p in parcelas]
-    competencia_paga = _vale_competencia_paga(session, pessoa_id, competencias, fazenda_id)
+    # Parcela que já caiu em folha PAGA: o desconto foi feito de verdade e o
+    # holerite daquele mês é recibo — apagar o vale faria o holerite mentir.
+    competencia_paga = _vale_competencia_paga(
+        session, vale.pessoa_id, [p.competencia for p in parcelas], fazenda_id,
+    )
     if competencia_paga:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Vale já aplicado na folha paga de {competencia_paga} não pode ser excluído.",
-        )
+        return f"Vale já aplicado na folha paga de {competencia_paga} não pode ser excluído."
+    # E, por último, o trabalho humano investido na saída de caixa — ver o
+    # bloco EXCLUIR ≠ CANCELAR e `_impedimento_excluir_vale`.
+    return _impedimento_excluir_vale(
+        session, conta, vale.valor_total, LancamentoAnexo.vale_funcionario_id, vale.id,
+        ALTERNATIVA_CANCELAR_VALE,
+    )
+
+
+@router.get("/vales/{vale_id}/exclusao")
+def previa_exclusao_vale(
+    vale_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """O que a tela mostra ANTES de perguntar "excluir?": o lançamento de
+    caixa que vai junto (nomeado, com valor e data), o motivo de recusa
+    quando há um, e a linha que ensina a porta certa quando a intenção era
+    perdoar o vale, não apagá-lo. Ver o bloco EXCLUIR ≠ CANCELAR."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    vale = session.get(ValeFuncionario, vale_id)
+    if not vale or (vale.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Vale não encontrado")
+    pessoa = session.exec(
+        select(Pessoa).where(Pessoa.id == vale.pessoa_id, Pessoa.fazenda_id == fazenda_id)
+    ).first()
+    parcelas = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()
+    conta = _conta_do_numero(session, vale.numero_lancamento_gerado, fazenda_id)
+    return _previa_exclusao_vale(
+        conta=conta,
+        impedimento=_impedimento_excluir_vale_funcionario(session, vale, parcelas, conta, fazenda_id),
+        titulo=f"Excluir o vale de {pessoa.nome if pessoa else 'funcionário'} de R$ {vale.valor_total:.2f}?",
+        efeito="Os descontos já refletidos em folhas ainda não pagas serão revertidos.",
+        alternativa=ALTERNATIVA_CANCELAR_VALE,
+    )
+
+
+@router.delete("/vales/{vale_id}")
+def excluir_vale(
+    vale_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Apaga o vale que NUNCA DEVERIA TER EXISTIDO (valor errado, pessoa
+    errada, duplicado) e, com ele, a saída de caixa que ele criou. Apagar a
+    conta JÁ PAGA é deliberado aqui — e só aqui: ver o bloco
+    EXCLUIR ≠ CANCELAR sobre por que a trava de `_exigir_conta_nao_paga`
+    (folha/férias/13º/guias) não vale para o vale, e por que a porta do vale
+    que aconteceu mas não será mais cobrado é a ação "Cancelar o vale"."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    vale = session.get(ValeFuncionario, vale_id)
+    if not vale or (vale.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Vale não encontrado")
+    pessoa_id = vale.pessoa_id
+    parcelas = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()
+    # A conta agora vem por `_conta_do_numero`, que recorta a fazenda DENTRO
+    # da consulta. Antes a busca era só por `numero_lancamento`: bastava um
+    # número repetido entre tenants (ou um token legado sem a claim de
+    # fazenda) para esta exclusão apagar lançamento de OUTRA fazenda.
+    conta = _conta_do_numero(session, vale.numero_lancamento_gerado, fazenda_id)
+    impedimento = _impedimento_excluir_vale_funcionario(session, vale, parcelas, conta, fazenda_id)
+    if impedimento:
+        raise HTTPException(status_code=400, detail=impedimento)
+    competencias = [p.competencia for p in parcelas]
     # Remove também o lançamento (ContaGerencial) gerado para a saída de
     # caixa do vale — sem isso, excluir o vale deixaria um lançamento órfão
     # no extrato, sem vale nenhum por trás dele.
-    if vale.numero_lancamento_gerado:
-        conta_gerada = session.exec(
-            select(ContaGerencial).where(ContaGerencial.numero_lancamento == vale.numero_lancamento_gerado)
-        ).first()
-        if conta_gerada:
-            session.delete(conta_gerada)
+    if conta is not None:
+        session.delete(conta)
     for p in parcelas:
         session.delete(p)
     # Zera o vínculo em qualquer LancamentoItem que apontava para este vale

@@ -7,7 +7,8 @@ import {
   fetchFolhaPagamentoUnificada, excluirParcelaEmpreitada, excluirParcelaContrato, type LinhaFolhaUnificada,
   atualizarParcelaEmpreitada, atualizarParcelaContrato,
   fetchVales, criarVale, atualizarVale, atualizarParcelaVale, excluirParcelaVale, excluirVale, ehAdmin, formatBRL,
-  fetchValesAvulsos, atualizarValeAvulso, excluirValeAvulso,
+  fetchValesAvulsos, atualizarValeAvulso, excluirValeAvulso, previaExclusaoVale, previaExclusaoValeAvulso,
+  type PreviaExclusaoVale,
   lancarGuiaFolhaEncargo, fetchGuiasFolhaEncargo, atualizarGuiaFolhaEncargo, excluirGuiaFolhaEncargo, type GuiaFolhaEncargo,
   lerDocumentoFinanceiro, anexarArquivoLancamento, formatDate,
   fetchContasCorrentes, type ContaCorrenteCadastro,
@@ -832,10 +833,36 @@ export default function FolhaPagamentoView() {
     }
   }
 
+  // EXCLUIR ≠ CANCELAR. Excluir é para o vale que NUNCA DEVERIA TER EXISTIDO
+  // (valor errado, pessoa errada, duplicado): apaga o vale E a saída de caixa
+  // que ele criou no Financeiro. Para o vale que aconteceu e só não vai mais
+  // ser cobrado do funcionário, a porta é "Cancelar o vale" (painel de ações),
+  // que mantém a saída de caixa no extrato e pode ser desfeita. Por isso o
+  // diálogo pergunta com o lançamento NOMEADO (LC-..., valor e data) e diz, em
+  // uma linha, qual é a outra porta — os dois textos vêm do backend, que é
+  // quem sabe qual lançamento existe e o que ele tem dentro.
   async function excluirValeHandler(v: any) {
-    if (!window.confirm("Excluir este vale? Os descontos já refletidos em folhas ainda não pagas serão revertidos.")) return;
     setExcluirValeErro(null);
+    // O botão já fica travado durante a CONSULTA da prévia, não só durante a
+    // exclusão: sem isso, dois cliques seguidos abrem dois diálogos.
     setExcluindoValeId(v.id);
+    let previa: PreviaExclusaoVale;
+    try {
+      previa = await previaExclusaoVale(v.id);
+    } catch (e: any) {
+      setExcluirValeErro(e.message || "Erro ao conferir o vale");
+      setExcluindoValeId(null);
+      return;
+    }
+    // Recusa do backend (comprovante anexado, folha paga, valor acertado à
+    // mão no Financeiro...): mostra o motivo em vez de perguntar algo que já
+    // se sabe que vai dar erro.
+    if (!previa.pode_excluir) {
+      setExcluirValeErro(previa.impedimento || "Este vale não pode ser excluído.");
+      setExcluindoValeId(null);
+      return;
+    }
+    if (!window.confirm(`${previa.confirmacao}\n\n${previa.alternativa}`)) { setExcluindoValeId(null); return; }
     try {
       await excluirVale(v.id);
       if (expandedValeId === v.id) setExpandedValeId(null);
@@ -954,10 +981,27 @@ export default function FolhaPagamentoView() {
     }
   }
 
+  // Mesmo desenho do vale de funcionário acima (ver o comentário lá): o
+  // diálogo nomeia a saída de caixa que vai junto e diz qual é a alternativa
+  // — aqui, editar o vale, porque "cancelar o vale" é ação do vale de
+  // funcionário e não existe para o avulso.
   async function excluirValeAvulsoHandler(v: any) {
-    if (!window.confirm("Excluir este vale? O valor abatido da(s) parcela(s)/etapa(s) pendente(s) será revertido.")) return;
     setExcluirValeAvulsoErro(null);
     setExcluindoValeAvulsoId(v.id);
+    let previa: PreviaExclusaoVale;
+    try {
+      previa = await previaExclusaoValeAvulso(v.id);
+    } catch (e: any) {
+      setExcluirValeAvulsoErro(e.message || "Erro ao conferir o vale");
+      setExcluindoValeAvulsoId(null);
+      return;
+    }
+    if (!previa.pode_excluir) {
+      setExcluirValeAvulsoErro(previa.impedimento || "Este vale não pode ser excluído.");
+      setExcluindoValeAvulsoId(null);
+      return;
+    }
+    if (!window.confirm(`${previa.confirmacao}\n\n${previa.alternativa}`)) { setExcluindoValeAvulsoId(null); return; }
     try {
       await excluirValeAvulso(v.id);
       if (expandedValeAvulsoId === v.id) setExpandedValeAvulsoId(null);
