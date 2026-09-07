@@ -143,8 +143,19 @@ class TestIdempotencia:
         _rodar_alembic(banco_pre_migracao, "upgrade", "head")
 
         assert COLUNAS_NOVAS <= set(_colunas(banco_pre_migracao))
-        saida = _rodar_alembic(banco_pre_migracao, "current")
-        assert REVISAO in saida, f"a revisão tinha de ficar aplicada. Saída: {saida}"
+        # `alembic current` mostra a revisão CORRENTE, que é a cabeça do
+        # projeto — não esta. A primeira versão deste teste comparava a saída
+        # com REVISAO e passou a falhar assim que a migração seguinte entrou
+        # (c3e91b47da28, do vale-alimentação): ele amarrava "a minha revisão"
+        # a "a última do projeto", e quebraria de novo a cada migração nova.
+        #
+        # O que se quer provar aqui é que o upgrade CHEGOU ATÉ O FIM com as
+        # colunas já criadas — ou seja, que esta revisão ficou aplicada, não
+        # que ela é a última. `history -r` lista as revisões já aplicadas.
+        aplicadas = _rodar_alembic(banco_pre_migracao, "history", "-r", "base:current")
+        assert REVISAO in aplicadas, (
+            f"a revisão tinha de ficar aplicada. Aplicadas: {aplicadas}"
+        )
 
 
 class TestDowngrade:
