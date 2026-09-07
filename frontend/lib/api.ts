@@ -2730,14 +2730,19 @@ export async function atualizarParcelaVale(valeId: number, parcelaId: number, da
 // valor deixa de ser cobrança da pessoa e vira despesa da fazenda), e é por
 // isso que a resposta traz `financeiro` — a tela precisa poder dizer o que
 // aconteceu do outro lado. Ver backend/.../cadastro/rh_vale_acoes.py.
-export type ValeAcao = "reparcelar" | "abater" | "desconsiderar_mes" | "cancelar";
+export type ValeAcao =
+  | "reparcelar" | "abater" | "desconsiderar_mes" | "cancelar"
+  // As duas voltas atrás (rh_vale_acoes.py): desfazem um abatimento lançado
+  // por engano e um mês desconsiderado. Só aparecem em `acoes_disponiveis`
+  // quando o servidor diz que são possíveis NESTE vale — ver AcoesValeModal.
+  | "estornar_abatimento" | "reverter_desconsideracao";
 export type ValeAcaoIn = {
   acao: ValeAcao;
   parcelas?: number;              // reparcelar
   competencia_inicio?: string;    // reparcelar (padrão: 1ª competência pendente)
-  valor?: number;                 // abater
+  valor?: number;                 // abater; estornar_abatimento (opcional: tudo)
   conta_corrente_id?: number;     // abater: conta que RECEBEU a devolução (opcional)
-  competencia?: string;           // desconsiderar_mes
+  competencia?: string;           // desconsiderar_mes; reverter_desconsideracao (obrigatória)
   motivo?: string;
 };
 export type ValeAcaoContexto = {
@@ -2753,6 +2758,10 @@ export type ValeAcaoContexto = {
     pendente: boolean; competencia_paga: boolean;
   }[];
   acoes_disponiveis: ValeAcao[];
+  /** Competências assumidas pela fazenda que ainda dá para voltar a descontar
+   *  (folha em aberto) — o seletor de `reverter_desconsideracao` sai daqui, e
+   *  não de uma dedução da tela, para não discordar da recusa do POST. */
+  competencias_revertiveis: string[];
 };
 export type ValeAcaoResultado = {
   acao: ValeAcao;

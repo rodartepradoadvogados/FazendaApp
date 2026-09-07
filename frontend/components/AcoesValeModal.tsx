@@ -5,6 +5,7 @@ import {
   fetchAcoesVale, executarAcaoVale, formatBRL,
   type ValeAcao, type ValeAcaoContexto, type ValeAcaoResultado,
 } from "@/lib/api";
+import { previaEstorno, valorDaReversao } from "@/lib/desfazerValeRegras";
 import { Modal } from "@/components/Modal";
 
 const inputStyle: React.CSSProperties = {
@@ -14,12 +15,21 @@ const inputStyle: React.CSSProperties = {
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 
 /**
- * As quatro ações do dono sobre um vale que aparece na folha — as mesmas
- * quatro do backend (`POST /cadastro/vales/{id}/acoes`), nem uma a mais:
- * reparcelar o saldo, abater um valor, desconsiderar o vale DAQUELE mês e
- * cancelar o vale inteiro.
+ * As ações do dono sobre um vale que aparece na folha — as mesmas do backend
+ * (`POST /cadastro/vales/{id}/acoes`), nem uma a mais: reparcelar o saldo,
+ * abater um valor, desconsiderar o vale DAQUELE mês, cancelar o vale inteiro,
+ * e as duas voltas atrás — estornar um abatimento lançado por engano e voltar
+ * a descontar um mês desconsiderado.
  *
- * As duas últimas dizem, na própria tela, o que acontece do outro lado — o
+ * AS DUAS VOLTAS SÓ APARECEM QUANDO O SERVIDOR DIZ QUE SÃO POSSÍVEIS
+ * (`acoes_disponiveis`): estornar exige abatimento lançado e parcela pendente
+ * onde devolver o valor; reverter exige mês assumido com folha em aberto E um
+ * lado do Financeiro que tenha volta segura (assunção que partiu um item de
+ * nota não tem — ver `_desfazer_assuncao_no_financeiro`). Oferecer uma opção
+ * que vai voltar 400 é pior que não oferecer: o dono clica achando que tem
+ * saída e continua sem saber o que fazer.
+ *
+ * Desconsiderar e cancelar dizem, na própria tela, o que acontece do outro lado — o
  * valor deixa de ser cobrança do funcionário e vira despesa da fazenda. Isso
  * não é enfeite: é a decisão que o dono tomou em palavras ("faz a conta
  * passar a ser da fazenda... e comunicar com o financeiro completo") e quem
@@ -48,6 +58,11 @@ export default function AcoesValeModal({
   const [parcelas, setParcelas] = useState("2");
   const [competenciaInicio, setCompetenciaInicio] = useState("");
   const [valor, setValor] = useState("");
+  // Estado próprio do estorno (não reaproveita `valor`, do abatimento): os
+  // dois campos convivem na mesma tela e trocar de ação não pode carregar um
+  // número que era de outra conta.
+  const [valorEstorno, setValorEstorno] = useState("");
+  const [competenciaReverter, setCompetenciaReverter] = useState("");
   const [contaCorrenteId, setContaCorrenteId] = useState("");
   const [motivo, setMotivo] = useState("");
   const [erro, setErro] = useState<string | null>(null);
@@ -56,12 +71,23 @@ export default function AcoesValeModal({
   useEffect(() => {
     setCarregando(true);
     fetchAcoesVale(valeId)
-      .then(setContexto)
+      .then((ctx) => {
+        setContexto(ctx);
+        // Campos das voltas atrás já preenchidos com o caso inteiro — desfazer
+        // um clique errado não pode exigir que o dono refaça a conta de
+        // cabeça (o valor abatido, e o mês assumido, são o que ele quer
+        // desfazer por completo).
+        setValorEstorno(ctx.valor_abatido > 0 ? String(ctx.valor_abatido) : "");
+        setCompetenciaReverter(ctx.competencias_revertiveis[0] || "");
+      })
       .catch((e: any) => setErro(e.message || "Erro ao carregar o vale"))
       .finally(() => setCarregando(false));
   }, [valeId]);
 
   const saldo = contexto?.saldo_pendente ?? 0;
+  const previa = contexto ? previaEstorno(contexto, valorEstorno) : null;
+  const valorRevertido = contexto ? valorDaReversao(contexto, competenciaReverter) : 0;
+  const pode = (a: ValeAcao) => !!contexto?.acoes_disponiveis.includes(a);
 
   async function confirmar() {
     setErro(null);
@@ -76,6 +102,12 @@ export default function AcoesValeModal({
         if (contaCorrenteId) corpo.conta_corrente_id = Number(contaCorrenteId);
       } else if (acao === "desconsiderar_mes") {
         corpo.competencia = competencia;
+      } else if (acao === "estornar_abatimento") {
+        // Em branco = o abatimento inteiro, que é o padrão do servidor —
+        // mandar 0 seria pedir um estorno de nada e levar 400.
+        if (valorEstorno.trim() !== "") corpo.valor = Number(valorEstorno) || 0;
+      } else if (acao === "reverter_desconsideracao") {
+        corpo.competencia = competenciaReverter;
       }
       const resultado = await executarAcaoVale(valeId, corpo);
       onFeito(resultado);
@@ -115,6 +147,12 @@ export default function AcoesValeModal({
                   <option value="abater">Lançar desconto/abatimento</option>
                   <option value="desconsiderar_mes">Desconsiderar o vale em {competencia}</option>
                   <option value="cancelar">Cancelar o vale inteiro</option>
+                  {pode("estornar_abatimento") && (
+                    <option value="estornar_abatimento">Estornar o abatimento lançado</option>
+                  )}
+                  {pode("reverter_desconsideracao") && (
+                    <option value="reverter_desconsideracao">Voltar a descontar o mês desconsiderado</option>
+                  )}
                 </select>
               </div>
 
@@ -154,6 +192,59 @@ export default function AcoesValeModal({
                     O abatimento é rateado entre as parcelas pendentes, sem mudar o prazo. Com a conta informada,
                     entra também um recebimento no caixa — senão o dinheiro devolvido não apareceria em lugar nenhum.
                   </p>
+                </div>
+              )}
+
+              {acao === "estornar_abatimento" && previa && (
+                <div className="space-y-2">
+                  <div>
+                    <label style={lbl}>Valor a estornar (R$)</label>
+                    <input type="number" min={0} step="0.01" style={inputStyle} value={valorEstorno}
+                      onChange={(e) => setValorEstorno(e.target.value)} />
+                  </div>
+                  {/* O efeito EXATO antes de confirmar. Foi confirmar sem ver o
+                      número que criou o problema que este estorno desfaz. */}
+                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                    Volta ao saldo a descontar {formatBRL(previa.valor)} — o saldo passa de{" "}
+                    {formatBRL(previa.saldoAtual)} para {formatBRL(previa.saldoNovo)}, rateado entre as
+                    parcelas pendentes na mesma proporção de hoje:
+                    <table style={{ width: "100%", marginTop: "0.3rem" }}>
+                      <tbody>
+                        {previa.linhas.map((l) => (
+                          <tr key={l.competencia}>
+                            <td style={{ padding: "0.05rem 0.5rem 0.05rem 0" }}>{l.competencia}</td>
+                            <td style={{ textAlign: "right" }}>{formatBRL(l.de)}</td>
+                            <td style={{ paddingLeft: "0.5rem", color: "var(--text)" }}>→ {formatBRL(l.para)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{ fontSize: "0.75rem", color: "var(--amber)" }}>
+                    Se o abatimento foi lançado com devolução em conta bancária, aquele recebimento continua
+                    no Financeiro e precisa ser excluído à mão — o vale não guarda qual lançamento é o dele.
+                  </div>
+                  {previa.impedimento && (
+                    <div style={{ fontSize: "0.75rem", color: "var(--red)" }}>{previa.impedimento}</div>
+                  )}
+                </div>
+              )}
+
+              {acao === "reverter_desconsideracao" && (
+                <div className="space-y-2">
+                  <div>
+                    <label style={lbl}>Mês que volta a ser descontado</label>
+                    <select style={inputStyle} value={competenciaReverter}
+                      onChange={(e) => setCompetenciaReverter(e.target.value)}>
+                      {contexto.competencias_revertiveis.map((comp) => (
+                        <option key={comp} value={comp}>{comp}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                    {formatBRL(valorRevertido)} deixam de ser despesa da fazenda e voltam a ser descontados de{" "}
+                    {pessoaNome} em {competenciaReverter}. O lançamento do vale no Financeiro volta a ser vale.
+                  </div>
                 </div>
               )}
 

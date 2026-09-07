@@ -2788,6 +2788,21 @@ def _validar_conta_vale(
     return conta
 
 
+# Rótulo e descrição do lançamento espelho do vale, em constante/função porque
+# há DOIS lados que precisam do mesmo texto: quem cria o lançamento (aqui) e
+# quem o restaura depois de a fazenda ter assumido e o dono ter voltado atrás
+# (`reverter_desconsideracao`, em rh_vale_acoes.py). Fossem duas literais
+# soltas, a volta escreveria um rótulo parecido-mas-diferente e o lançamento
+# deixaria de ser reconhecido como baixa espelhada de vale
+# (TIPOS_DOCUMENTO_BAIXA_ESPELHADA, em financeiro.py) — o Financeiro voltaria
+# a deixar estornar/editar à mão um lançamento que pertence ao RH.
+TIPO_DOCUMENTO_VALE = "Vale de funcionário"
+
+
+def descricao_conta_vale(pessoa_nome: str, competencia_inicio: str) -> str:
+    return f"Vale — {pessoa_nome} ({competencia_inicio})"
+
+
 def _sincronizar_conta_vale(
     session: Session, vale: ValeFuncionario, pessoa: Pessoa, conta: Optional[ContaCorrente],
     numero_documento_pagamento: Optional[str], fazenda_id: Optional[int],
@@ -2828,7 +2843,7 @@ def _sincronizar_conta_vale(
         return
 
     ano, mes = (int(x) for x in vale.competencia_inicio.split("-"))
-    descricao = f"Vale — {pessoa.nome} ({vale.competencia_inicio})"
+    descricao = descricao_conta_vale(pessoa.nome, vale.competencia_inicio)
     if conta_existente:
         conta_existente.descricao = descricao
         conta_existente.fornecedor_cliente = pessoa.nome
@@ -2851,7 +2866,7 @@ def _sincronizar_conta_vale(
             data_vencimento=vale.data_pagamento,
             data_competencia=date(ano, mes, 1),
             fornecedor_cliente=pessoa.nome,
-            tipo_documento="Vale de funcionário",
+            tipo_documento=TIPO_DOCUMENTO_VALE,
             centro_custo="Pecuária Leiteira",
             valor_total=vale.valor_total,
             parcela_num=1, parcela_total=1,

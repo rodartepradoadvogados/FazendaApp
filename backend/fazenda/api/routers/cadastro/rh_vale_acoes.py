@@ -16,6 +16,30 @@ serve para o que o dono faz no dia a dia, que são quatro decisões distintas:
  4. cancelar         — o vale inteiro deixa de ser cobrança do funcionário;
                        mesmo destino de (3) quanto ao Financeiro.
 
+E, porque ERRAR DE AÇÃO é o que acontece de verdade (o dono quis
+"desconsiderar o mês — a fazenda assume" e clicou em "lançar abatimento"),
+duas voltas atrás — as únicas duas ações deste módulo que DESFAZEM:
+
+ 5. estornar_abatimento    — devolve ao saldo a descontar o que (2) tirou:
+                             inverso exato de `abater`, mesmo rateio
+                             proporcional, para abater(X) + estornar(X)
+                             devolver as parcelas ao centavo original.
+ 6. reverter_desconsideracao — o mês volta a ser descontado do funcionário.
+
+POR QUE ESTAS DUAS EXISTEM. Sem elas o dono ficava preso: editar o vale
+inteiro (`PUT /vales`) é recusado quando qualquer competência do vale já está
+em folha paga, e abatimento negativo é recusado por desenho (aumentaria a
+dívida do funcionário sem registro nenhum de POR QUE aumentou). Não havia
+terceira porta — o erro ficava no banco para sempre.
+
+O QUE ELAS NÃO DESFAZEM, de propósito: nada no Financeiro que possa ter sido
+mexido por fora desde então. `estornar_abatimento` não apaga a entrada de
+caixa da devolução (não há vínculo persistido entre o vale e aquele
+lançamento — adivinhar qual é apagaria dinheiro certo de outra pessoa), e
+`reverter_desconsideracao` RECUSA quando a assunção mexeu num item de nota
+(ver `_desfazer_assuncao_no_financeiro`). As duas dizem em palavras o que
+sobra para a mão do dono, em vez de fingir que fizeram.
+
 A DECISÃO DO DONO, LITERAL, sobre (3) e (4): "Desconsiderar o vale faz a
 conta passar a ser da fazenda, apenas fazendo aquele valor ser assumido pela
 fazenda e comunicar com o financeiro completo." É isso que
@@ -50,21 +74,35 @@ from fazenda.api.routers.financeiro import _proximo_numero_lancamento, rotulo_co
 from fazenda.rules.vale_item import dividir_item_de_lancamento, itens_do_vale, limpar_vinculo_de_itens
 
 from .rh_folha import (
+    TIPO_DOCUMENTO_VALE,
     _competencias_do_vale,
     _exigir_competencias_nao_pagas,
     _reconciliar_vale_competencias,
     _vale_competencia_paga,
+    descricao_conta_vale,
 )
 
 router = APIRouter()
 
-ACOES_VALE = ("reparcelar", "abater", "desconsiderar_mes", "cancelar")
+ACOES_VALE = (
+    "reparcelar", "abater", "desconsiderar_mes", "cancelar",
+    # As duas voltas atrás — ver o cabeçalho do módulo.
+    "estornar_abatimento", "reverter_desconsideracao",
+)
 
 # Rótulo do lançamento de vale no extrato depois que a fazenda assume a conta
 # — deixa de ser "Vale de funcionário" (tipo de baixa espelhada, ver
 # TIPOS_DOCUMENTO_BAIXA_ESPELHADA em financeiro.py) e passa a ser um
 # documento comum, estornável/editável como qualquer despesa da fazenda.
 TIPO_DOCUMENTO_ASSUMIDO = "Recibo"
+
+# Forma de pagamento em que NADA sai do caixa quando o vale é lançado (o
+# efeito é só a folha futura descontar): é a forma fixada no servidor para o
+# vale que nasce de um item de nota (`rh_vale_item.py`) E a de um vale
+# lançado à mão sem lastro nenhum. Ela é justamente a fronteira da AMBIGUIDADE
+# que faz `reverter_desconsideracao` recusar — ver
+# `_desfazer_assuncao_no_financeiro`.
+FORMA_SEM_SAIDA_DE_CAIXA = "desconto_integral_folha"
 
 
 def _fmt_brl(valor: float | None) -> str:
@@ -117,6 +155,31 @@ def _split_valores(total: float, partes: int) -> list[float]:
     valores = [base] * (partes - 1)
     valores.append(round(total - base * (partes - 1), 2))
     return valores
+
+
+def _reescalar_parcelas(pendentes: list[ValeParcela], saldo: float, saldo_novo: float) -> list[float]:
+    """Redistribui `saldo_novo` entre as parcelas pendentes PROPORCIONALMENTE
+    ao peso que cada uma tem hoje, com a ÚLTIMA absorvendo o arredondamento.
+
+    Uma função só, usada pelo abatimento e pelo estorno dele, porque é a
+    mesma conta nos dois sentidos — e é essa identidade que faz abater(X)
+    seguido de estornar(X) devolver as parcelas ao valor original, ao
+    centavo: o estorno reescala pelos pesos que o abatimento acabou de
+    escrever, então a ida e a volta multiplicam pela mesma razão invertida.
+    Duas cópias da conta divergiriam no primeiro arredondamento.
+
+    Distribui o saldo NOVO (em vez de ratear a diferença) para a soma das
+    parcelas fechar exatamente com o saldo, sem sobra a acertar depois."""
+    novos: list[float] = []
+    acumulado = 0.0
+    for i, p in enumerate(pendentes):
+        if i < len(pendentes) - 1:
+            valor_novo = round(saldo_novo * p.valor / saldo, 2)
+        else:
+            valor_novo = round(saldo_novo - acumulado, 2)
+        acumulado = round(acumulado + valor_novo, 2)
+        novos.append(max(valor_novo, 0.0))
+    return novos
 
 
 def _assumir_no_financeiro(
@@ -197,6 +260,105 @@ def _assumir_no_financeiro(
     return {"natureza": "sem_lastro", "numero_lancamento": None}
 
 
+def _motivo_reversao_impossivel(
+    session: Session, vale: ValeFuncionario, fazenda_id: int | None,
+) -> str | None:
+    """Por que a assunção deste vale NÃO pode ser desfeita no Financeiro — ou
+    None, quando pode. Não escreve nada: serve tanto para a recusa (400) da
+    ação quanto para a tela nem oferecer a ação.
+
+    `_assumir_no_financeiro` tem três naturezas e só uma delas é reversível
+    com segurança. O sistema NÃO persiste hoje qual delas aconteceu (nenhuma
+    coluna guarda isso), então a natureza é reconhecida pelo estado atual do
+    vale — e onde o estado atual não distingue, a resposta é recusar:
+
+    a) item de nota ainda vinculado: a assunção partiu o item em dois
+       (`dividir_item_de_lancamento`) e o gêmeo pode ter sido editado desde
+       então — juntar os dois de volta às cegas corromperia a nota, que é o
+       documento fiscal. Recusa, dizendo qual lançamento acertar à mão.
+    b) lançamento próprio (`numero_lancamento_gerado`): reversível — é só
+       devolver o tipo de documento e a descrição de vale.
+    c) sem lastro: nada foi tocado no Financeiro, nada a desfazer.
+
+    A AMBIGUIDADE, e por que ela recusa: um vale sem item vinculado HOJE e sem
+    lançamento próprio pode ser (c) — vale lançado à mão, sem saída de caixa —
+    ou (a) já consumado, o vale que nasceu de item de nota e teve o vínculo
+    SOLTO na assunção (`limpar_vinculo_de_itens`), que não deixa marca
+    nenhuma. Os dois têm exatamente a mesma cara. Chutar (c) no caso (a)
+    contaria a despesa duas vezes: o item voltaria a ser gasto da fazenda no
+    gerencial E o funcionário voltaria a ser descontado pelo mesmo dinheiro.
+    Como as duas origens compartilham a forma de pagamento sem saída de caixa,
+    é ela que marca a fronteira da recusa."""
+    itens = itens_do_vale(session, vale.id)
+    if itens:
+        numeros = sorted({it.numero_lancamento for it in itens if it.numero_lancamento})
+        ids = ", ".join(str(it.id) for it in itens)
+        onde = f"lançamento {'/'.join(numeros)}" if numeros else "nota de origem"
+        return (
+            f"Este vale nasceu de um item de nota ({onde}, item {ids}), e assumir o valor mexeu nesse "
+            "item — ele foi partido em dois (a parte da fazenda virou uma linha separada) ou teve o "
+            "vínculo com o vale solto. Desfazer isso automaticamente corromperia a nota se a linha já "
+            f"tiver sido editada desde então, então a volta é à mão: no Financeiro, acerte o {onde} "
+            "(junte as duas linhas de volta numa só) e depois lance o vale novamente para o mês."
+        )
+    if vale.numero_lancamento_gerado:
+        return None
+    if vale.forma_pagamento == FORMA_SEM_SAIDA_DE_CAIXA:
+        return (
+            "Não dá para saber com segurança o que a assunção fez no Financeiro deste vale: ele não tem "
+            "lançamento próprio, e um vale assim ou nunca teve lastro nenhum (nada a desfazer) ou nasceu "
+            "de um item de nota cujo vínculo foi solto na assunção — os dois ficam idênticos depois. "
+            "Reverter no escuro poderia contar a mesma despesa duas vezes (o item como gasto da fazenda "
+            "e o desconto do funcionário). Confira a origem do vale no relatório de vales: se ele veio de "
+            "uma nota, acerte o item lá e lance o vale de novo; se não veio, o desconto pode ser "
+            "recriado lançando um vale novo para o mês."
+        )
+    return None
+
+
+def _desfazer_assuncao_no_financeiro(
+    session: Session, vale: ValeFuncionario, pessoa: Pessoa, fazenda_id: int | None,
+) -> dict:
+    """Inverso de `_assumir_no_financeiro` para o único caso em que existe
+    inverso seguro: o lançamento próprio reclassificado volta a ser o espelho
+    do vale (tipo de documento e descrição vindos de `_sincronizar_conta_vale`,
+    via as constantes de rh_folha.py — nunca texto reescrito aqui, senão o
+    Financeiro deixaria de reconhecer a baixa espelhada).
+
+    Recusa antes de escrever qualquer coisa nos casos que não têm volta
+    segura (ver `_motivo_reversao_impossivel`)."""
+    impedimento = _motivo_reversao_impossivel(session, vale, fazenda_id)
+    if impedimento:
+        raise HTTPException(status_code=400, detail=impedimento)
+
+    if not vale.numero_lancamento_gerado:
+        return {"natureza": "sem_lastro", "numero_lancamento": None, "reclassificado": False}
+
+    conta = session.exec(
+        select(ContaGerencial).where(
+            ContaGerencial.numero_lancamento == vale.numero_lancamento_gerado,
+            ContaGerencial.fazenda_id == fazenda_id,
+        )
+    ).first()
+    # Só volta atrás o que foi reclassificado pela assunção. Numa assunção
+    # PARCIAL o rótulo nunca chegou a mudar (o vale seguia vivo), e mexer nele
+    # aqui inventaria uma alteração que ninguém pediu.
+    if conta is not None and conta.tipo_documento == TIPO_DOCUMENTO_ASSUMIDO:
+        conta.tipo_documento = TIPO_DOCUMENTO_VALE
+        conta.descricao = descricao_conta_vale(pessoa.nome, vale.competencia_inicio)
+        session.add(conta)
+        return {
+            "natureza": "lancamento_proprio",
+            "numero_lancamento": conta.numero_lancamento,
+            "reclassificado": True,
+        }
+    return {
+        "natureza": "lancamento_proprio",
+        "numero_lancamento": vale.numero_lancamento_gerado,
+        "reclassificado": False,
+    }
+
+
 def _lancar_devolucao_de_vale(
     session: Session, vale: ValeFuncionario, pessoa: Pessoa, valor: float,
     conta_corrente_id: int, fazenda_id: int | None,
@@ -238,18 +400,62 @@ def _lancar_devolucao_de_vale(
 
 
 class ValeAcaoIn(BaseModel):
-    acao: str  # reparcelar | abater | desconsiderar_mes | cancelar
+    # reparcelar | abater | desconsiderar_mes | cancelar |
+    # estornar_abatimento | reverter_desconsideracao
+    acao: str
     # reparcelar
     parcelas: int | None = None
     competencia_inicio: str | None = None  # "AAAA-MM"; None => a 1ª competência ainda pendente
-    # abater
+    # abater; e estornar_abatimento, em que `valor` é OPCIONAL — sem ele, o
+    # estorno é do abatimento inteiro (o caso do dono, que quer desfazer o
+    # clique errado por completo, não fazer conta de cabeça).
     valor: float | None = None
     # Conta bancária que RECEBEU a devolução, quando o funcionário devolveu em
     # dinheiro — opcional (ver `_lancar_devolucao_de_vale`).
     conta_corrente_id: int | None = None
-    # desconsiderar_mes
+    # desconsiderar_mes; e reverter_desconsideracao, em que é OBRIGATÓRIA (não
+    # há padrão razoável: o vale pode ter vários meses assumidos, e escolher
+    # um por conta própria mexeria no mês errado).
     competencia: str | None = None  # "AAAA-MM"
     motivo: str | None = None
+
+
+def _competencias_revertiveis(
+    session: Session, vale: ValeFuncionario, parcelas: list[ValeParcela], fazenda_id: int | None,
+) -> list[str]:
+    """As competências assumidas pela fazenda que ainda dá para voltar a
+    descontar: assumidas E com a folha em aberto. Folha paga não entra —
+    reverter ali reescreveria um recibo já congelado."""
+    return sorted({
+        p.competencia for p in parcelas
+        if p.assumida_pela_fazenda
+        and not _vale_competencia_paga(session, vale.pessoa_id, [p.competencia], fazenda_id)
+    })
+
+
+def _acoes_disponiveis(
+    session: Session, vale: ValeFuncionario, parcelas: list[ValeParcela],
+    pendentes: list[ValeParcela], fazenda_id: int | None,
+) -> list[str]:
+    """O que a TELA pode oferecer para este vale, agora.
+
+    As duas ações de desfazer entram condicionadas porque oferecer uma delas
+    quando ela vai dar 400 é pior que não oferecer: o dono clica achando que
+    tem saída, leva o erro e continua sem saber o que fazer. As quatro
+    originais continuam sempre disponíveis (cada uma explica sua própria
+    recusa com o motivo concreto — saldo zerado, competência paga)."""
+    if vale.status == "cancelado":
+        return []
+    acoes = ["reparcelar", "abater", "desconsiderar_mes", "cancelar"]
+    # Estornar exige o que devolver E onde devolver: sem parcela pendente não
+    # há parcela para o valor voltar (o estorno não inventa parcela nova).
+    if round(vale.valor_abatido, 2) > 0 and pendentes:
+        acoes.append("estornar_abatimento")
+    if _competencias_revertiveis(session, vale, parcelas, fazenda_id) and not _motivo_reversao_impossivel(
+        session, vale, fazenda_id
+    ):
+        acoes.append("reverter_desconsideracao")
+    return acoes
 
 
 def _contexto_vale(session: Session, vale: ValeFuncionario, fazenda_id: int | None) -> dict:
@@ -272,7 +478,11 @@ def _contexto_vale(session: Session, vale: ValeFuncionario, fazenda_id: int | No
             }
             for p in parcelas
         ],
-        "acoes_disponiveis": [] if vale.status == "cancelado" else list(ACOES_VALE),
+        "acoes_disponiveis": _acoes_disponiveis(session, vale, parcelas, pendentes, fazenda_id),
+        # As competências que `reverter_desconsideracao` aceita — a tela
+        # monta o seletor com esta lista em vez de deduzir das parcelas, para
+        # não discordar da recusa que o POST daria.
+        "competencias_revertiveis": _competencias_revertiveis(session, vale, parcelas, fazenda_id),
     }
 
 
@@ -293,14 +503,18 @@ def executar_acao_vale(
     vale_id: int, dados: ValeAcaoIn, session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    """As quatro ações do dono sobre um vale já lançado (ver o cabeçalho do
-    módulo). Todas reconciliam a folha das competências afetadas pelo mesmo
-    caminho já usado por criar/editar/excluir vale
-    (`_reconciliar_vale_competencias`) — nunca reescrevendo folha paga."""
+    """As ações do dono sobre um vale já lançado — as quatro decisões e as
+    duas voltas atrás (ver o cabeçalho do módulo). Todas reconciliam a folha
+    das competências afetadas pelo mesmo caminho já usado por
+    criar/editar/excluir vale (`_reconciliar_vale_competencias`) — nunca
+    reescrevendo folha paga."""
     if dados.acao not in ACOES_VALE:
         raise HTTPException(
             status_code=400,
-            detail="Ação inválida. Use: reparcelar, abater, desconsiderar_mes ou cancelar.",
+            detail=(
+                "Ação inválida. Use: reparcelar, abater, desconsiderar_mes, cancelar, "
+                "estornar_abatimento ou reverter_desconsideracao."
+            ),
         )
     vale = _vale_da_fazenda(session, vale_id, fazenda_id)
     pessoa = session.exec(
@@ -325,6 +539,10 @@ def executar_acao_vale(
         resultado = _acao_abater(session, vale, pessoa, pendentes, saldo, dados, fazenda_id)
     elif dados.acao == "desconsiderar_mes":
         resultado = _acao_desconsiderar_mes(session, vale, pessoa, parcelas, dados, motivo, fazenda_id)
+    elif dados.acao == "estornar_abatimento":
+        resultado = _acao_estornar_abatimento(session, vale, pendentes, saldo, dados, fazenda_id)
+    elif dados.acao == "reverter_desconsideracao":
+        resultado = _acao_reverter_desconsideracao(session, vale, pessoa, parcelas, dados, fazenda_id)
     else:
         resultado = _acao_cancelar(session, vale, pessoa, parcelas, pendentes, saldo, motivo, fazenda_id)
 
@@ -407,21 +625,10 @@ def _acao_abater(
             ),
         )
 
-    # Distribui o saldo NOVO (em vez de distribuir o abatimento) — assim a
-    # soma das parcelas fecha exatamente com o saldo restante, sem sobra de
-    # arredondamento a acertar depois.
-    saldo_novo = round(saldo - valor, 2)
     # Proporcional ao peso de cada parcela, não igualitário: parcela que já
-    # era menor continua menor. A última absorve o arredondamento.
-    novos: list[float] = []
-    acumulado = 0.0
-    for i, p in enumerate(pendentes):
-        if i < len(pendentes) - 1:
-            valor_novo = round(saldo_novo * p.valor / saldo, 2)
-        else:
-            valor_novo = round(saldo_novo - acumulado, 2)
-        acumulado = round(acumulado + valor_novo, 2)
-        novos.append(max(valor_novo, 0.0))
+    # era menor continua menor (ver `_reescalar_parcelas`).
+    saldo_novo = round(saldo - valor, 2)
+    novos = _reescalar_parcelas(pendentes, saldo, saldo_novo)
 
     competencias = [p.competencia for p in pendentes]
     for p, novo in zip(pendentes, novos):
@@ -541,5 +748,136 @@ def _acao_cancelar(
         "resumo": (
             f"Vale cancelado — R$ {_fmt_brl(saldo)} deixam de ser cobrados de {pessoa.nome} e viraram "
             "despesa da fazenda."
+        ),
+    }
+
+
+def _acao_estornar_abatimento(
+    session: Session, vale: ValeFuncionario, pendentes: list[ValeParcela], saldo: float,
+    dados: ValeAcaoIn, fazenda_id: int | None,
+) -> dict:
+    """Desfaz um abatimento: o valor volta a ser dívida do funcionário.
+
+    O caso real que fez esta ação existir: o dono queria "desconsiderar o vale
+    do mês — a fazenda assume" e clicou em "lançar desconto/abatimento". As
+    duas fazem o valor sumir da cobrança, mas por caminhos opostos (uma vira
+    despesa da fazenda no Financeiro, a outra é perdão/devolução), e não havia
+    volta: `PUT /vales` é recusado quando alguma competência do vale já está em
+    folha paga, e abatimento negativo é recusado por desenho.
+
+    É o INVERSO EXATO de `_acao_abater` — mesmo rateio proporcional, mesma
+    última parcela absorvendo o arredondamento (`_reescalar_parcelas`), para
+    abater(X) seguido de estornar(X) devolver as parcelas ao centavo original.
+    A exceção é a parcela que o abatimento tiver ZERADO: ela foi apagada (era
+    ruído no holerite) e o estorno não a ressuscita — o valor volta rateado
+    entre as que sobraram."""
+    if round(vale.valor_abatido, 2) <= 0:
+        raise HTTPException(status_code=400, detail="Este vale não tem abatimento a estornar.")
+    disponivel = round(vale.valor_abatido, 2)
+    # Sem valor informado, estorna o abatimento inteiro: é o que desfaz o
+    # clique errado por completo, sem o dono ter de refazer a conta.
+    valor = round(dados.valor if dados.valor is not None else disponivel, 2)
+    if valor <= 0:
+        raise HTTPException(status_code=400, detail="O valor do estorno deve ser positivo.")
+    if valor > disponivel:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"O estorno de R$ {_fmt_brl(valor)} é maior que o abatimento já lançado neste vale — "
+                f"há R$ {_fmt_brl(disponivel)} disponíveis para estorno."
+            ),
+        )
+    if not pendentes or saldo <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Este vale não tem parcela pendente onde devolver o valor estornado — todas já foram "
+                "descontadas em folha paga ou assumidas pela fazenda. Reparcele o vale para o valor "
+                "voltar a ter uma competência em aberto (se ainda houver saldo) ou lance um vale novo "
+                "pelo valor a recobrar: o estorno não cria parcela por conta própria, porque escolher "
+                "sozinho em que mês cobrar seria decidir no lugar do dono."
+            ),
+        )
+
+    saldo_novo = round(saldo + valor, 2)
+    novos = _reescalar_parcelas(pendentes, saldo, saldo_novo)
+    competencias = [p.competencia for p in pendentes]
+    for p, novo in zip(pendentes, novos):
+        p.valor = novo
+        session.add(p)
+    vale.valor_abatido = round(disponivel - valor, 2)
+    session.add(vale)
+    session.flush()
+
+    _reconciliar_vale_competencias(session, vale.pessoa_id, sorted(set(competencias)))
+    return {
+        "acao": "estornar_abatimento",
+        "valor_estornado": valor,
+        "saldo_apos": saldo_novo,
+        "abatimento_restante": vale.valor_abatido,
+        "resumo": (
+            f"Estorno de R$ {_fmt_brl(valor)} — o saldo do vale voltou para R$ {_fmt_brl(saldo_novo)}. "
+            "Se aquele abatimento foi lançado com devolução em conta bancária, o recebimento continua "
+            "no Financeiro e precisa ser excluído à mão: o vale não guarda qual lançamento é o dele, e "
+            "apagar um chutado tiraria dinheiro certo do extrato."
+        ),
+    }
+
+
+def _acao_reverter_desconsideracao(
+    session: Session, vale: ValeFuncionario, pessoa: Pessoa, parcelas: list[ValeParcela],
+    dados: ValeAcaoIn, fazenda_id: int | None,
+) -> dict:
+    """Desfaz um "desconsiderar o vale em AAAA-MM": o funcionário volta a ser
+    descontado naquele mês e o valor deixa de ser despesa da fazenda.
+
+    A parcela não é recriada — ela nunca foi apagada, só marcada (ver
+    `ValeParcela.assumida_pela_fazenda`), então reverter é tirar a marca. O
+    lado do Financeiro é o difícil e está em `_desfazer_assuncao_no_financeiro`:
+    ele recusa (400) tudo o que não tem inverso seguro, ANTES de qualquer
+    escrita aqui, porque metade da volta seria pior que nenhuma."""
+    competencia = (dados.competencia or "").strip()
+    if not competencia:
+        raise HTTPException(
+            status_code=400, detail="Informe a competência (AAAA-MM) que volta a ser descontada.",
+        )
+    alvo = [p for p in parcelas if p.competencia == competencia and p.assumida_pela_fazenda]
+    if not alvo:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Este vale não tem parcela assumida pela fazenda em {competencia} para reverter.",
+        )
+    # Mesma trava de `_acao_desconsiderar_mes`, pelo mesmo motivo e em sentido
+    # contrário: voltar a descontar num mês já pago cobraria do funcionário um
+    # desconto que o recibo daquele mês não tem.
+    _exigir_competencias_nao_pagas(session, vale.pessoa_id, [competencia], fazenda_id, "voltar a descontar")
+
+    financeiro = _desfazer_assuncao_no_financeiro(session, vale, pessoa, fazenda_id)
+
+    valor = round(sum(p.valor for p in alvo), 2)
+    for p in alvo:
+        p.assumida_pela_fazenda = False
+        p.motivo_assuncao = None
+        session.add(p)
+    # `max(..., 0)`: o acumulador é histórico e não pode ficar negativo se o
+    # mesmo mês tiver sido assumido por caminhos diferentes (o pop-up de pagar
+    # a folha também assume parcelas — ver rh_folha_pagar.py).
+    vale.valor_assumido_fazenda = round(max(vale.valor_assumido_fazenda - valor, 0.0), 2)
+    session.add(vale)
+    session.flush()
+
+    _reconciliar_vale_competencias(session, vale.pessoa_id, [competencia])
+    volta_do_lancamento = (
+        f" O lançamento {financeiro['numero_lancamento']} voltou a ser vale no Financeiro."
+        if financeiro.get("reclassificado") else ""
+    )
+    return {
+        "acao": "reverter_desconsideracao",
+        "competencia": competencia,
+        "valor_revertido": valor,
+        "financeiro": financeiro,
+        "resumo": (
+            f"{pessoa.nome} volta a ser descontado em {competencia}: R$ {_fmt_brl(valor)} deixaram de "
+            f"ser despesa assumida pela fazenda e voltaram a ser cobrança do vale.{volta_do_lancamento}"
         ),
     }
