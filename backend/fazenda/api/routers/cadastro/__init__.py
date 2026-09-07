@@ -31,6 +31,7 @@ from . import (
     protocolos_sanitarios,
     rh_contratos,
     rh_folha,
+    rh_folha_pagar,
     rh_folha_rubricas,
     rh_vale_acoes,
     rh_vale_item,
@@ -108,6 +109,11 @@ router.include_router(rh_contratos.router, dependencies=_exige_financeiro)
 # todos têm três segmentos, /folha-pagamento/{id}/rubricas e
 # /folha-pagamento/rubricas/...), e a ordem deixa isso explícito.
 router.include_router(rh_folha_rubricas.router, dependencies=_exige_financeiro)
+# Pagar a folha lançando valor distinto numa verba, com a decisão sobre a
+# diferença (ver rh_folha_pagar.py). Montado DEPOIS de rh_folha pelo mesmo
+# motivo das rubricas: os dois moram sob /folha-pagamento/{id} e nenhum
+# caminho colide (aqui só /folha-pagamento/{id}/pagar).
+router.include_router(rh_folha_pagar.router, dependencies=_exige_financeiro)
 router.include_router(rh_vale_item.router, dependencies=_exige_financeiro)
 # Ações do dono sobre um vale já lançado (reparcelar/abater/desconsiderar/
 # cancelar) — montado DEPOIS de rh_folha de propósito: ambos moram sob
