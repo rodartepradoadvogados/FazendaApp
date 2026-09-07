@@ -753,6 +753,7 @@ export default function FolhaPagamentoView() {
   async function salvarParcela(
     vale: any, parcela: any, acao?: "conceder" | "redistribuir_igual" | "redistribuir_livre",
     valoresItens?: Record<number, number>, confirmarDivergenciaTotal?: boolean,
+    confirmarTeto?: boolean,
   ) {
     const valor = parseFloat(editParcelaValor);
     if (isNaN(valor) || valor < 0) { setParcelaErro("Informe um valor válido."); return; }
@@ -762,6 +763,7 @@ export default function FolhaPagamentoView() {
       const resultado = await atualizarParcelaVale(vale.id, parcela.id, {
         valor, acao, valores_parcelas: valoresItens, confirmar: !!acao,
         confirmar_divergencia_total: !!confirmarDivergenciaTotal,
+        confirmar_teto: !!confirmarTeto,
       });
       setEditandoParcela(null);
       setDivergenciaParcela(null);
@@ -774,7 +776,17 @@ export default function FolhaPagamentoView() {
       // Duas divergências distintas, cada uma com seu próprio popup:
       // 1) valor_vale/valor_lancado — total final (redistribuir_livre) ≠ valor pago no vale.
       // 2) valor_calculado/valor_informado — o valor desta parcela ≠ o que estava calculado.
-      if (e.status === 409 && e.detail?.valor_vale !== undefined) {
+      // 3) o teto de 40% do salário na competência — o aviso que faltava nesta
+      // porta: editar uma parcela para o valor cheio concentrava num mês só um
+      // desconto acima do limite legal, em silêncio. Confirmável, como nas
+      // outras portas do vale (criar/editar o vale inteiro).
+      if (e.status === 409 && e.detail?.competencias_excedidas) {
+        const lista = e.detail.competencias_excedidas.map((c: any) => `${c.competencia} (R$ ${c.total.toFixed(2)})`).join(", ");
+        if (window.confirm(`${e.detail.mensagem}\n\nCompetências afetadas: ${lista}\n\nDeseja salvar mesmo assim?`)) {
+          await salvarParcela(vale, parcela, acao, valoresItens, confirmarDivergenciaTotal, true);
+          return;
+        }
+      } else if (e.status === 409 && e.detail?.valor_vale !== undefined) {
         setDivergenciaTotalParcela({
           vale, parcela, valoresItens: valoresItens || {}, valorVale: e.detail.valor_vale, valorLancado: e.detail.valor_lancado,
         });

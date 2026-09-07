@@ -37,6 +37,7 @@ from fazenda.models import (
     ValeFuncionario,
     ValeParcela,
 )
+from fazenda.rules import vale_alimentacao
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo, nome_seguro_storage
 
@@ -237,6 +238,46 @@ class PessoaIn(BaseModel):
     endereco_bairro: str | None = None
     endereco_cidade: str | None = None
     endereco_uf: str | None = None
+    # ── Vale-alimentação (set/2026) — ver models/pessoal.py e
+    # rules/vale_alimentacao.py. É CONFIGURAÇÃO do vínculo: a folha lê estes
+    # quatro campos e gera a linha do holerite sozinha, sem ninguém lançar
+    # rubrica mês a mês. Todos opcionais — cadastro que não mexer neles
+    # continua exatamente como estava.
+    vale_alimentacao: bool = False
+    vale_alimentacao_valor: float | None = None
+    vale_alimentacao_periodicidade: str | None = None  # "diario" | "mensal"
+    vale_alimentacao_regime: str | None = None  # "antecipado" | "vencido"
+
+
+def _validar_vale_alimentacao(dados: PessoaIn) -> None:
+    """
+    Recusa configuração de vale-alimentação que a folha não conseguiria
+    executar — e recusa AQUI, no cadastro, porque é aqui que o usuário está
+    olhando. As regras normalizam valor desconhecido para o padrão
+    conservador (`periodicidade_valida`/`regime_valido`) para nunca derrubar a
+    geração da folha; isso é a rede de segurança do dado já gravado, não
+    licença para aceitar lixo novo por esta porta.
+
+    Só vale quando o benefício está LIGADO: desligado, os outros três campos
+    não significam nada e não há o que validar.
+    """
+    if not dados.vale_alimentacao:
+        return
+    if not dados.vale_alimentacao_valor or dados.vale_alimentacao_valor <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Informe o valor-base do vale-alimentação (maior que zero) ou desmarque o benefício.",
+        )
+    if dados.vale_alimentacao_periodicidade not in vale_alimentacao.PERIODICIDADES:
+        raise HTTPException(
+            status_code=400,
+            detail="Escolha se o vale-alimentação é diário ou mensal.",
+        )
+    if dados.vale_alimentacao_regime not in vale_alimentacao.REGIMES:
+        raise HTTPException(
+            status_code=400,
+            detail="Escolha se o vale-alimentação é pago antecipado ou vencido.",
+        )
 
 
 def _exigir_campos_obrigatorios(dados: PessoaIn) -> None:
@@ -400,6 +441,7 @@ def criar_pessoa(
     tipo_csv = _validar_tipos(session, dados.tipos, fazenda_id=fazenda_id)
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    _validar_vale_alimentacao(dados)
     telefones = _normalizar_lista_contato(dados.telefones)
     emails = _normalizar_lista_contato(dados.emails)
     campos = dados.model_dump(exclude={"tipos", "telefones", "emails"})
@@ -421,6 +463,7 @@ def atualizar_pessoa(
     if not p or (p.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     tipo_csv = _validar_tipos(session, dados.tipos, fazenda_id=fazenda_id)
+    _validar_vale_alimentacao(dados)
     for campo, valor in dados.model_dump(exclude={"tipos", "telefones", "emails"}).items():
         setattr(p, campo, valor)
     p.tipo = tipo_csv

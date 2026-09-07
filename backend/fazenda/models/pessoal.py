@@ -99,6 +99,43 @@ class Pessoa(SQLModel, table=True):
     subtipo_pj: Optional[str] = None  # "MEI" | "ME" | "EPP" | "Outros" — só quando tipo_vinculo="pj"
     pagamento_mensal: Optional[float] = None
 
+    # ── Vale-alimentação (set/2026) — CONFIGURAÇÃO, não rubrica avulsa ──
+    #
+    # POR QUE MORA NO CADASTRO E NÃO NO CATÁLOGO DE RUBRICAS. O vale-
+    # alimentação não é lançado mês a mês como uma bonificação: ele é uma
+    # condição do vínculo ("tem ou não tem, quanto, diário ou mensal,
+    # antecipado ou vencido"). Decisão do dono, nas palavras dele: "não
+    # precisa de uma rubrica para vale alimentação, só precisa de ter como
+    # cadastrar se vai ter ou não e o valor-base... o resto é padrão". A folha
+    # lê estes quatro campos e GERA a linha do holerite sozinha (ver
+    # `rules/vale_alimentacao.py` e `_sincronizar_vale_alimentacao`).
+    #
+    # ENQUADRAMENTO ASSUMIDO — leia antes de mexer. O sistema trata o
+    # benefício pelo PADRÃO DO PAT: indenizatório, fora das bases de INSS,
+    # IRRF e FGTS (CLT, art. 457, §2º; Lei 14.442/2022, que passou a exigir o
+    # pagamento em ticket/cartão de uso exclusivo em alimentação). NÃO existe
+    # campo de forma de pagamento, e a ausência é decisão do dono, não
+    # descuido: ele determinou que "o resto é padrão". A RESSALVA que fica
+    # registrada para o próximo leitor é esta — vale-alimentação pago EM
+    # DINHEIRO tem natureza SALARIAL e integraria as bases de INSS, IRRF e
+    # FGTS. Quem pagar em dinheiro está com a base subdeclarada por este
+    # sistema; o caminho, se um dia isso acontecer, é acrescentar a forma de
+    # pagamento aqui e um segundo verbete salarial ao catálogo — nunca
+    # reinterpretar o verbete indenizatório de hoje, que já estará congelado
+    # em holerites emitidos (ver models/folha_rubrica.py).
+    #
+    # As quatro colunas nascem nulas/falsas: ninguém que já está cadastrado
+    # passa a ter vale-alimentação por causa desta migração.
+    vale_alimentacao: bool = False
+    vale_alimentacao_valor: Optional[float] = None  # valor-base, em reais
+    vale_alimentacao_periodicidade: Optional[str] = None  # "diario" | "mensal"
+    # "antecipado" | "vencido" — o eixo de COMPETÊNCIA. Vencido: o VA da
+    # competência sai na folha da própria competência. Antecipado: o VA de uma
+    # competência é pago junto com a folha da competência ANTERIOR (palavras do
+    # dono: "se pago antecipado ou vencido, para fins de competência"). Ver
+    # `rules/vale_alimentacao.py::competencia_do_beneficio`.
+    vale_alimentacao_regime: Optional[str] = None
+
 
 # ---------------------------------------------------------------------------
 # Documentos anexados à Pessoa — RG, CPF, carteira de trabalho, contratos,

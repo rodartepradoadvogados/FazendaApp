@@ -6,6 +6,7 @@ import {
   excluirSimulacaoRescisao, fecharRescisao, formatBRL, fetchContasCorrentes, fetchPessoas,
   type TipoRescisao, type CalculoRescisao, type RegistroRescisaoFuncionario,
   type RescisaoSimulacaoDados, type FormaLancamentoRescisao, type ContaCorrenteCadastro,
+  type SaldoValeEmAberto,
 } from "@/lib/api";
 import { ReciboModal } from "@/components/ReciboModal";
 import { exportarFichaPDF, exportarMultiExcel, type SecaoFicha, type LancamentoRecibo } from "@/lib/export";
@@ -122,6 +123,14 @@ export default function RescisaoView({ mostrar = "tudo" }: { mostrar?: ModoSecao
   const [valorInss, setValorInss] = useState("0");
   const [valorIr, setValorIr] = useState("0");
   const [valorValeEmAberto, setValorValeEmAberto] = useState("0");
+  /* O saldo de vale REAL da pessoa, vindo do servidor — o número que a tela
+   * não tinha. "Vale em aberto" era digitado à mão e nascia em zero: uma
+   * rescisão real foi fechada com R$ 0,00 nesse campo e deixou R$ 6.485,00 de
+   * vale de pé, em competências que nunca mais teriam folha para descontar.
+   * Aqui ele é PRÉ-PREENCHIDO com o saldo e continua editável (o dono pode
+   * ter acertado parte por fora) — mas o fechamento recusa enquanto sobrar
+   * saldo não endereçado, porque rescisão fechada não reabre. */
+  const [saldoVale, setSaldoVale] = useState<SaldoValeEmAberto | null>(null);
   const [salvando, setSalvando] = useState(false);
 
   // Etapa 3 — fechamento.
@@ -160,6 +169,7 @@ export default function RescisaoView({ mostrar = "tudo" }: { mostrar?: ModoSecao
     setValorSaldoSalario(""); setValorAvisoPrevio(""); setValorFeriasVencidas("");
     setValorFeriasProporcionais(""); setValorDecimoTerceiroProporcional(""); setValorMultaFgts("");
     setValorInss("0"); setValorIr("0"); setValorValeEmAberto("0");
+    setSaldoVale(null);
     setContexto(null);
   }
 
@@ -198,7 +208,10 @@ export default function RescisaoView({ mostrar = "tudo" }: { mostrar?: ModoSecao
       setValorFeriasProporcionais(String(resultado.ferias_proporcionais.valor_total));
       setValorDecimoTerceiroProporcional(String(resultado.decimo_terceiro_proporcional.valor));
       setValorMultaFgts(String(resultado.fgts.multa));
-      setValorInss("0"); setValorIr("0"); setValorValeEmAberto("0");
+      setValorInss("0"); setValorIr("0");
+      // Pré-preenchido com o saldo real (e não mais com zero fixo) — editável.
+      setSaldoVale(resultado.vale_em_aberto ?? null);
+      setValorValeEmAberto(String(resultado.vale_em_aberto?.total ?? 0));
       setRascunhoId(null);
       setEtapa("editar");
     } catch (e: any) {
@@ -237,6 +250,7 @@ export default function RescisaoView({ mostrar = "tudo" }: { mostrar?: ModoSecao
         ? await criarSimulacaoRescisao(montarDadosSimulacao())
         : await atualizarSimulacaoRescisao(rascunhoId, montarDadosSimulacao());
       setRascunhoId(r.id);
+      if (r.vale_em_aberto !== undefined) setSaldoVale(r.vale_em_aberto);
       setMsg({ tipo: "sucesso", texto: "Simulação salva." });
       carregar();
     } catch (e: any) {
@@ -264,6 +278,7 @@ export default function RescisaoView({ mostrar = "tudo" }: { mostrar?: ModoSecao
     setValorInss(String(r.valor_inss ?? 0));
     setValorIr(String(r.valor_ir ?? 0));
     setValorValeEmAberto(String(r.valor_vale_em_aberto ?? 0));
+    setSaldoVale(r.vale_em_aberto ?? null);
     setContexto({
       diasSaldoSalario: r.dias_saldo_salario, diasAvisoPrevio: r.dias_aviso_previo,
       diasAvisoPrevioIndenizados: r.dias_aviso_previo_indenizados, avisoDevido: r.valor_aviso_previo > 0,
@@ -482,10 +497,22 @@ export default function RescisaoView({ mostrar = "tudo" }: { mostrar?: ModoSecao
                   <input type="number" step="0.01" min="0" style={inputSm} value={valorIr} onChange={(e) => setValorIr(e.target.value)} />
                 </div>
                 <div>
-                  <label style={lbl}>Vale em aberto</label>
+                  <label style={lbl}>
+                    Vale em aberto
+                    {saldoVale ? ` (saldo cobrável: ${formatBRL(saldoVale.total)})` : ""}
+                  </label>
                   <input type="number" step="0.01" min="0" style={inputSm} value={valorValeEmAberto} onChange={(e) => setValorValeEmAberto(e.target.value)} />
                 </div>
               </div>
+              {saldoVale && saldoVale.total > 0 && (
+                <div style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: "0.5rem" }}>
+                  Parcelas de vale ainda a descontar: {saldoVale.competencias.map((c) => `${c.competencia} (${formatBRL(c.valor)})`).join(", ")}.
+                  {" "}O que for descontado aqui BAIXA essas parcelas no fechamento. O que sobrar impede o
+                  fechamento — depois de fechada a rescisão não há mais folha para descontar e ela não reabre:
+                  resolva a sobra em Folha de Pagamento &gt; vale &gt; Ações (abater, desconsiderar o mês ou
+                  cancelar o vale, que faz a fazenda assumir).
+                </div>
+              )}
             </div>
 
             <div className="card" style={{ padding: "0.6rem 0.8rem" }}>

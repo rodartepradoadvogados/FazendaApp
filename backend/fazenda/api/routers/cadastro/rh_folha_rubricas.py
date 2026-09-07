@@ -5,9 +5,11 @@ descontos que o dono acrescenta ao recibo de uma competência.
 POR QUE UM MÓDULO PRÓPRIO, e não mais funções dentro de rh_folha.py: o que
 entra aqui é um domínio novo (verba trabalhista com enquadramento tributário
 próprio, ver `fazenda/rules/rubrica_folha.py`) e o arquivo de folha já passa
-de 3.300 linhas. rh_folha.py recebe só o mínimo indispensável — a linha entrar
-no discriminado, o líquido considerar a rubrica e a recorrência incorporar o
-aumento —, tudo o mais é daqui.
+de 3.300 linhas. rh_folha.py recebe só o que ele mesmo precisa executar — a
+linha entrar no discriminado, o líquido considerar a rubrica, a recorrência
+incorporar o aumento e, desde o vale-alimentação, GERAR a rubrica que vem do
+cadastro (por isso `_recalcular_folha` mora lá agora, e é importada daqui) —,
+tudo o mais é daqui.
 
 O QUE ESTE MÓDULO NÃO DEIXA ACONTECER, e é a razão de existirem tantas
 recusas explícitas abaixo:
@@ -41,7 +43,10 @@ from fazenda.models import ContaGerencial, FolhaPagamento, FolhaRubrica, Pessoa,
 from fazenda.rules import rubrica_folha
 from fazenda.rules.auditoria import fazenda_id_seguro
 
-from .rh_folha import _liquido_folha, _valor_vale
+# `_recalcular_folha` mora em rh_folha.py desde que o vale-alimentação
+# passou a gerar rubrica a partir do cadastro (a geração acontece lá, na
+# criação da folha e na recorrência) — continua sendo UMA função só.
+from .rh_folha import _recalcular_folha
 
 router = APIRouter()
 
@@ -156,8 +161,35 @@ def _validar_entrada(dados: RubricaFolhaIn) -> dict:
     verbete = catalogo.get(dados.codigo)
     if not verbete:
         raise HTTPException(status_code=400, detail="Rubrica desconhecida para esta espécie")
+    _exigir_rubrica_de_lancamento_manual(dados.codigo, dados.especie)
     _validar_valor(dados.valor)
     return verbete
+
+
+MENSAGEM_VERBA_DO_CADASTRO = (
+    "O vale-alimentação não é lançado no holerite: ele vem do cadastro do funcionário "
+    "(Administração > Configurações > Cadastro > Pessoas > Editar > Vale-alimentação), onde "
+    "se define se tem, o valor-base, se é diário ou mensal e se é antecipado ou vencido. "
+    "A folha gera a linha sozinha nas competências ainda não pagas."
+)
+
+
+def _exigir_rubrica_de_lancamento_manual(codigo: str, especie: str) -> None:
+    """
+    Recusa mexer À MÃO na linha que o CADASTRO gera (hoje, o vale-alimentação).
+
+    POR QUE RECUSAR EM VEZ DE DEIXAR PASSAR. A linha é uma projeção do
+    cadastro: `_sincronizar_vale_alimentacao` a repõe igual na próxima leitura
+    da folha. Um POST/PUT/DELETE aceito aqui viraria uma edição que desaparece
+    sozinha — pior que uma recusa, porque o usuário acredita ter mudado algo.
+    A recusa diz onde é o lugar certo.
+
+    NÃO alcança o pop-up de pagamento: lá a verba é CONTRATUAL (cadeado, com
+    confirmação) e a folha vira paga e congelada no mesmo ato, então não há
+    sincronização posterior para desfazer a decisão daquele mês.
+    """
+    if rubrica_folha.gerado_por_cadastro(codigo, especie):
+        raise HTTPException(status_code=400, detail=MENSAGEM_VERBA_DO_CADASTRO)
 
 
 def _validar_valor(valor: float) -> None:
@@ -169,52 +201,6 @@ def _validar_valor(valor: float) -> None:
     """
     if valor is None or valor <= 0:
         raise HTTPException(status_code=400, detail="Informe um valor maior que zero")
-
-
-def _recalcular_folha(session: Session, folha: FolhaPagamento) -> list[FolhaRubrica]:
-    """
-    Reprocessa a folha depois de qualquer mudança nas rubricas: as duas somas
-    em cache, as retenções sobre a base corrigida, o líquido e a conta a pagar.
-
-    Ordem importa e é a do holerite de papel: primeiro a base (bruto + as
-    rubricas SALARIAIS), depois as retenções sobre ela, e só então o líquido —
-    do qual saem os descontos, que nunca entraram em base nenhuma.
-    """
-    rubricas = session.exec(select(FolhaRubrica).where(FolhaRubrica.folha_id == folha.id)).all()
-    folha.valor_rubricas = rubrica_folha.valor_liquido_das_rubricas(rubricas)
-    folha.valor_rubricas_tributaveis = rubrica_folha.base_tributavel_das_rubricas(rubricas)
-
-    for campo, valor in rubrica_folha.retencoes_recalculadas(
-        folha.valor_bruto, folha.percentual_inss, folha.percentual_ir, folha.percentual_fgts, rubricas,
-    ).items():
-        setattr(folha, campo, valor)
-
-    # O vale vem sempre da SOMA das parcelas da competência (função de
-    # rh_folha.py, não recopiada aqui): recalcular o líquido a partir de um
-    # `valor_vale` desatualizado no registro é como a folha já nascia inflada
-    # antes do self-heal da listagem.
-    folha.valor_vale = _valor_vale(session, folha.pessoa_id, folha.competencia)
-    folha.valor_liquido = _liquido_folha(
-        folha.valor_bruto, folha.descontos, folha.valor_inss, folha.valor_ir, folha.valor_vale,
-        folha.valor_rubricas,
-    )
-    session.add(folha)
-
-    # A conta a pagar é o número que o dono efetivamente paga: sem isto, o
-    # holerite mostraria a bonificação e o banco pagaria o valor antigo.
-    # Conta já BAIXADA não é tocada (não se reescreve pagamento feito) — e ela
-    # só existiria aqui numa folha paga, que `_exigir_folha_aberta` já barrou.
-    if folha.numero_lancamento_gerado:
-        conta = session.exec(
-            select(ContaGerencial).where(
-                ContaGerencial.numero_lancamento == folha.numero_lancamento_gerado,
-                ContaGerencial.fazenda_id == folha.fazenda_id,
-            )
-        ).first()
-        if conta and conta.valor_pago is None:
-            conta.valor_total = folha.valor_liquido
-            session.add(conta)
-    return list(rubricas)
 
 
 def _propagar_aumento(
@@ -429,6 +415,7 @@ def atualizar_rubrica_folha(
     rubrica = _rubrica_da_fazenda(session, rubrica_id, fazenda_id)
     folha = _folha_da_fazenda(session, rubrica.folha_id, fazenda_id)
     _exigir_folha_aberta(folha)
+    _exigir_rubrica_de_lancamento_manual(rubrica.codigo, rubrica.especie)
     _validar_valor(dados.valor)
 
     # A DIFERENÇA é o que se propaga quando a rubrica é o aumento: corrigir de
@@ -469,6 +456,7 @@ def excluir_rubrica_folha(
     rubrica = _rubrica_da_fazenda(session, rubrica_id, fazenda_id)
     folha = _folha_da_fazenda(session, rubrica.folha_id, fazenda_id)
     _exigir_folha_aberta(folha)
+    _exigir_rubrica_de_lancamento_manual(rubrica.codigo, rubrica.especie)
 
     incorporava = rubrica.incorpora_base
     valor = rubrica.valor

@@ -22,13 +22,14 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    ContaCorrente, ContaGerencial, DecimoTerceiro, FeriasFuncionario, FolhaPagamento, GuiaFolhaEncargo,
-    LancamentoAnexo, Pessoa, RescisaoFuncionario, Usuario, ValeAvulso, ValeFuncionario, ValeParcela,
+    ContaCorrente, ContaGerencial, DecimoTerceiro, FeriasFuncionario, FolhaPagamento, FolhaRubrica,
+    GuiaFolhaEncargo, LancamentoAnexo, Pessoa, RescisaoFuncionario, Usuario, ValeAvulso, ValeFuncionario,
+    ValeParcela,
 )
 from fazenda.api.routers.financeiro import TAMANHO_MAXIMO_ANEXO, _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
-from fazenda.rules import holerite, rubrica_folha
+from fazenda.rules import holerite, rubrica_folha, vale_alimentacao
 from fazenda.rules.folha_rh import (
     PARCELAS_DECIMO_TERCEIRO,
     calcular_decimo_terceiro,
@@ -237,6 +238,217 @@ def _marcar_vale_aplicado(session: Session, pessoa_id: int, competencia: str) ->
     for p in pendentes:
         p.aplicada = True
         session.add(p)
+
+
+def _recalcular_folha(session: Session, folha: FolhaPagamento) -> list[FolhaRubrica]:
+    """
+    Reprocessa a folha depois de qualquer mudança nas rubricas: as duas somas
+    em cache, as retenções sobre a base corrigida, o líquido e a conta a pagar.
+
+    Ordem importa e é a do holerite de papel: primeiro a base (bruto + as
+    rubricas SALARIAIS), depois as retenções sobre ela, e só então o líquido —
+    do qual saem os descontos, que nunca entraram em base nenhuma.
+
+    MOROU EM `rh_folha_rubricas.py` ATÉ AQUI, e mudou de casa quando o
+    vale-alimentação passou a gerar rubrica a partir do cadastro: a geração
+    acontece neste módulo (na criação da folha, na recorrência e no self-heal
+    da listagem) e `rh_folha_rubricas` já importa deste arquivo — importar de
+    volta seria um ciclo. Continua sendo UMA função só: `rh_folha_rubricas` e
+    `rh_folha_pagar` a importam daqui, para não existirem duas fórmulas de
+    líquido no sistema (o defeito que `_liquido_folha` fechou).
+    """
+    rubricas = session.exec(select(FolhaRubrica).where(FolhaRubrica.folha_id == folha.id)).all()
+    folha.valor_rubricas = rubrica_folha.valor_liquido_das_rubricas(rubricas)
+    folha.valor_rubricas_tributaveis = rubrica_folha.base_tributavel_das_rubricas(rubricas)
+
+    for campo, valor in rubrica_folha.retencoes_recalculadas(
+        folha.valor_bruto, folha.percentual_inss, folha.percentual_ir, folha.percentual_fgts, rubricas,
+    ).items():
+        setattr(folha, campo, valor)
+
+    # O vale vem sempre da SOMA das parcelas da competência: recalcular o
+    # líquido a partir de um `valor_vale` desatualizado no registro é como a
+    # folha já nascia inflada antes do self-heal da listagem.
+    folha.valor_vale = _valor_vale(session, folha.pessoa_id, folha.competencia)
+    folha.valor_liquido = _liquido_folha(
+        folha.valor_bruto, folha.descontos, folha.valor_inss, folha.valor_ir, folha.valor_vale,
+        folha.valor_rubricas,
+    )
+    session.add(folha)
+
+    # A conta a pagar é o número que o dono efetivamente paga: sem isto, o
+    # holerite mostraria a bonificação e o banco pagaria o valor antigo.
+    # Conta já BAIXADA não é tocada (não se reescreve pagamento feito) — e ela
+    # só existiria aqui numa folha paga, que os chamadores já barram.
+    if folha.numero_lancamento_gerado:
+        conta = session.exec(
+            select(ContaGerencial).where(
+                ContaGerencial.numero_lancamento == folha.numero_lancamento_gerado,
+                ContaGerencial.fazenda_id == folha.fazenda_id,
+            )
+        ).first()
+        if conta and conta.valor_pago is None:
+            conta.valor_total = folha.valor_liquido
+            session.add(conta)
+    return list(rubricas)
+
+
+# ---------------------------------------------------------------------------
+# Vale-alimentação — a verba que a folha gera a partir do CADASTRO da pessoa
+#
+# O dono recusou a ideia de uma rubrica lançada mês a mês e pediu o oposto:
+# "não precisa de uma rubrica para vale alimentação, só precisa de ter como
+# cadastrar se vai ter ou não e o valor-base, se diário ou mensal, se pago
+# antecipado ou vencido, para fins de competência, e o valor. O resto é
+# padrão." As regras (quanto, de que competência, com que contagem de dias)
+# são puras e moram em `rules/vale_alimentacao.py`; aqui fica só a gravação.
+#
+# POR QUE A LINHA É UMA `FolhaRubrica` COMUM, e não um campo novo na folha:
+# porque assim ela já entra no líquido (`valor_rubricas`), no discriminado, no
+# holerite impresso, no pop-up de pagamento e no congelamento do recibo, sem
+# nenhum caminho paralelo que cada uma dessas telas teria de aprender. O que a
+# distingue é a ORIGEM: quem manda no valor é o cadastro, e é por isso que os
+# endpoints de rubrica recusam criar/editar/excluir esta linha na mão.
+# ---------------------------------------------------------------------------
+def _pessoa_da_folha(session: Session, folha: FolhaPagamento) -> Pessoa | None:
+    """
+    A pessoa da folha, com o filtro de fazenda DENTRO da consulta e
+    INCONDICIONAL (`== folha.fazenda_id`, que em None vira `IS NULL`).
+
+    Nunca `session.get(Pessoa, ...)` cru aqui: o que sai desta função vira
+    dinheiro gravado no holerite de alguém, e o padrão tolerante
+    ("se veio fazenda, filtra") é exatamente o que deixaria a configuração de
+    vale-alimentação de um inquilino gerar verba na folha de outro.
+    """
+    return session.exec(
+        select(Pessoa).where(Pessoa.id == folha.pessoa_id, Pessoa.fazenda_id == folha.fazenda_id)
+    ).first()
+
+
+def _sincronizar_vale_alimentacao(
+    session: Session, folha: FolhaPagamento, pessoa: Pessoa | None = None,
+    *, recem_criada: bool = False,
+) -> bool:
+    """
+    Põe a linha de vale-alimentação desta folha igual ao que o CADASTRO diz —
+    criando, corrigindo ou removendo. Devolve True quando mexeu em algo (o
+    chamador então roda `_recalcular_folha`), False quando já estava certo.
+
+    FOLHA PAGA NÃO É TOCADA, e a recusa é a primeira coisa que a função faz:
+    a discriminação dela foi congelada no pagamento porque o holerite é PROVA.
+    Ligar o vale-alimentação hoje acrescenta a verba nas competências ainda
+    abertas e não reescreve um centavo de nenhum mês já pago; DESLIGAR também
+    não apaga a verba de um recibo já emitido.
+
+    `recem_criada` é a ÚNICA exceção, e ela não abre a porta que a regra
+    fecha: o lançamento que já NASCE pago (`POST /folha-pagamento` com
+    `status="pago"`) é gravado e congelado dentro da mesma requisição, e entre
+    o INSERT e o congelamento ele ainda não é recibo de nada — não existe
+    dinheiro anterior a preservar ali. Sem esta exceção, quem lança a folha já
+    paga ficaria com um holerite sem a verba que o funcionário recebeu.
+    Nenhum outro chamador passa a marca: a folha paga que veio do banco
+    (listagem, recorrência) continua intocável, e a que já tem fotografia é
+    recusada mesmo com a marca ligada.
+
+    NÃO COMMITA: quem chama decide a transação, porque a linha, o líquido e a
+    conta a pagar têm de cair juntos se algo falhar no meio (mesmo motivo do
+    `flush` em `criar_rubrica_folha`).
+    """
+    if folha.discriminacao_congelada_em is not None:
+        return False
+    if folha.status == "pago" and not recem_criada:
+        return False
+    if pessoa is not None and pessoa.fazenda_id != folha.fazenda_id:
+        # Objeto vindo de um mapa de outra consulta: só é aceito se for MESMO
+        # da fazenda da folha. Divergiu, refaz a busca filtrada.
+        pessoa = None
+    if pessoa is None:
+        pessoa = _pessoa_da_folha(session, folha)
+    if pessoa is None:
+        return False
+
+    calculo = vale_alimentacao.calcular(pessoa, folha.competencia)
+    existente = session.exec(
+        select(FolhaRubrica).where(
+            FolhaRubrica.folha_id == folha.id,
+            FolhaRubrica.codigo == vale_alimentacao.CODIGO,
+        )
+    ).first()
+
+    if calculo is None:
+        # Benefício desligado (ou sem valor-base): a linha sai do holerite das
+        # competências abertas. Só as pagas guardam o que foi pago.
+        if existente is None:
+            return False
+        session.delete(existente)
+        session.flush()
+        return True
+
+    verbete = rubrica_folha.CATALOGO_VENCIMENTOS[vale_alimentacao.CODIGO]
+    descricao = vale_alimentacao.descricao(calculo)
+    valor = calculo["valor"]
+
+    if existente is not None:
+        # `competencia`/`pessoa_id` são redundantes com a folha por desenho
+        # (ver models/folha_rubrica.py) — e o PUT de folha permite trocar as
+        # duas coisas num lançamento ainda aberto. Realinhar aqui é o que
+        # impede a linha de continuar afirmando um mês ou um funcionário que a
+        # folha já não tem.
+        alinhada = (
+            existente.competencia == folha.competencia and existente.pessoa_id == folha.pessoa_id
+        )
+        if (
+            alinhada
+            and abs(existente.valor - valor) <= 0.001
+            and (existente.descricao or "") == descricao
+        ):
+            return False
+        # O valor-base mudou no cadastro (ou o mês mudou de tamanho): a linha
+        # da competência ABERTA acompanha. É o mesmo princípio do self-heal do
+        # vale na listagem — o holerite não pago mostra o que será pago.
+        existente.competencia = folha.competencia
+        existente.pessoa_id = folha.pessoa_id
+        existente.valor = valor
+        existente.descricao = descricao
+        session.add(existente)
+        session.flush()
+        return True
+
+    session.add(FolhaRubrica(
+        fazenda_id=folha.fazenda_id,
+        folha_id=folha.id,
+        pessoa_id=folha.pessoa_id,
+        competencia=folha.competencia,
+        especie=rubrica_folha.ESPECIE_VENCIMENTO,
+        codigo=vale_alimentacao.CODIGO,
+        descricao=descricao,
+        valor=valor,
+        # Enquadramento COPIADO do catálogo, igual à rubrica lançada à mão: o
+        # recibo já emitido não muda de conteúdo se a lei mudar depois.
+        natureza=verbete["natureza"],
+        incide_inss=bool(verbete["incide_inss"]),
+        incide_irrf=bool(verbete["incide_irrf"]),
+        incide_fgts=bool(verbete["incide_fgts"]),
+        incorpora_base=bool(verbete["incorpora_base"]),
+        # `usuario_id` fica nulo: ninguém lançou esta linha — ela veio do
+        # cadastro. Carimbar quem abriu a tela seria atribuir a uma pessoa um
+        # lançamento que ela não fez.
+    ))
+    session.flush()
+    return True
+
+
+def _aplicar_vale_alimentacao(
+    session: Session, folha: FolhaPagamento, pessoa: Pessoa | None = None,
+    *, recem_criada: bool = False,
+) -> bool:
+    """Sincroniza a linha e, se ela mudou, refaz bases/retenções/líquido e a
+    conta a pagar. É o par que todo chamador precisa — separado só para o
+    self-heal da listagem poder saber se houve mudança a commitar."""
+    if not _sincronizar_vale_alimentacao(session, folha, pessoa, recem_criada=recem_criada):
+        return False
+    _recalcular_folha(session, folha)
+    return True
 
 
 def _rescisao_fechada_encerra_competencia(
@@ -528,6 +740,14 @@ def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> 
                     fazenda_id=fazenda_id,
                 ))
                 session.commit()
+                # Vale-alimentação do cadastro: a competência gerada nasce com
+                # a verba, e não só a partir da primeira vez que alguém abrir a
+                # listagem. Depois do commit, porque a rubrica precisa do id da
+                # folha; e o recálculo daqui é o que deixa a CONTA A PAGAR já
+                # nascer com o valor certo — é ela que o dono paga.
+                session.refresh(nova)
+                if _aplicar_vale_alimentacao(session, nova, pessoa):
+                    session.commit()
             competencia = _competencia_seguinte(competencia)
 
 
@@ -1029,6 +1249,14 @@ def listar_folha_pagamento(
                     conta.valor_total = registro.valor_liquido
                     session.add(conta)
             houve_mudanca = True
+        # Vale-alimentação: mesma ideia do self-heal acima, e pelo mesmo
+        # motivo. Ligar o benefício (ou corrigir o valor-base) no cadastro tem
+        # de aparecer nas competências AINDA ABERTAS sem o dono ter de reabrir
+        # e salvar cada folha — e não pode aparecer nas pagas, que a própria
+        # `_sincronizar_vale_alimentacao` recusa. Roda DEPOIS do bloco do vale
+        # para não pular o `_marcar_vale_aplicado` dele.
+        if _aplicar_vale_alimentacao(session, registro):
+            houve_mudanca = True
     if houve_mudanca:
         session.commit()
         # O commit expira os objetos já carregados; recarrega para o model_dump.
@@ -1119,7 +1347,17 @@ def criar_folha_pagamento(
     _marcar_vale_aplicado(session, dados.pessoa_id, dados.competencia)
     valor_inss = round(dados.valor_inss, 2)
     valor_ir = round(dados.valor_ir, 2)
-    valor_liquido = _liquido_folha(dados.valor_bruto, descontos, valor_inss, valor_ir, valor_vale)
+    # O vale-alimentação do cadastro entra JÁ no líquido que vai ser gravado e
+    # na conta a pagar que nasce logo abaixo. Não dá para deixar só para o
+    # `_aplicar_vale_alimentacao` de depois do commit: numa folha que já nasce
+    # PAGA a conta nasce com `valor_pago` preenchido, e conta baixada não é
+    # reescrita por ninguém (nem deve ser) — ela ficaria pagando o líquido sem
+    # a verba enquanto o holerite mostraria a verba.
+    calculo_va = vale_alimentacao.calcular(pessoa, dados.competencia)
+    valor_liquido = _liquido_folha(
+        dados.valor_bruto, descontos, valor_inss, valor_ir, valor_vale,
+        calculo_va["valor"] if calculo_va else 0.0,
+    )
     if valor_liquido <= 0:
         raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
     valor_fgts = _calcular_encargo_projetado(dados.valor_bruto, dados.percentual_fgts, dados.valor_fgts)
@@ -1164,6 +1402,14 @@ def criar_folha_pagamento(
     ))
     session.commit()
     session.refresh(registro)
+    # A LINHA do vale-alimentação (o valor dela já entrou no líquido acima).
+    # Só é criada agora porque a rubrica precisa do id da folha — e entra
+    # ANTES do congelamento abaixo, senão uma folha que já nasce paga viraria
+    # um recibo sem a verba que o funcionário recebeu. `recem_criada` é o que
+    # permite isso na folha já paga; ver `_sincronizar_vale_alimentacao`.
+    if _aplicar_vale_alimentacao(session, registro, pessoa, recem_criada=True):
+        session.commit()
+        session.refresh(registro)
     # Folha que já NASCE paga é recibo desde o primeiro instante: congela a
     # discriminação agora (ver `_congelar_discriminacao`). Depois do commit,
     # porque a fotografia tem de ser a do lançamento efetivamente gravado.
@@ -1322,12 +1568,26 @@ def excluir_folha_pagamento(
         raise HTTPException(status_code=404, detail="Registro de folha não encontrado")
     if registro.status == "pago":
         raise HTTPException(status_code=400, detail="Lançamento de folha já pago não pode ser excluído aqui — exclua em Lançamentos > Excluir lançamento.")
-    if registro.numero_lancamento_gerado:
-        conta = session.exec(
-            select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado)
-        ).first()
-        if conta:
-            session.delete(conta)
+    conta = _conta_da_folha(session, registro, fazenda_id)
+    # O `status` da folha e a BAIXA da conta a pagar podem discordar: a folha
+    # segue "pendente" no RH e alguém dá baixa no lançamento direto no
+    # Financeiro (Contas a pagar), que é um fluxo normal. Excluir a folha
+    # apagava a ContaGerencial sem olhar `valor_pago` — e com ela sumia do
+    # extrato um pagamento que ACONTECEU. Mesma regra e mesma mensagem de
+    # `excluir_guia_folha_encargo` e de `_cancelar_conta_pendente`: conta já
+    # paga fica onde está; quem quiser desfazer o pagamento faz isso em
+    # Lançamentos, onde a exclusão é explícita e auditada.
+    if conta is not None and conta.valor_pago is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "A conta a pagar desta folha já foi baixada no Financeiro — excluir a folha apagaria "
+                "esse pagamento do extrato. Estorne o pagamento (ou exclua o lançamento em "
+                "Lançamentos > Excluir lançamento) antes de excluir a folha."
+            ),
+        )
+    if conta is not None:
+        session.delete(conta)
     session.delete(registro)
     session.commit()
     return {"ok": True}
@@ -2119,6 +2379,76 @@ def _validar_rescisao(dados: RescisaoIn, pessoa: Pessoa) -> None:
         raise HTTPException(status_code=400, detail=f"Dias de férias vencidas deve estar entre 0 e {limite_ferias_vencidas}")
 
 
+# ── O SALDO DE VALE QUE A RESCISÃO PRECISA VER ──────────────────────────────
+#
+# O CASO QUE CUSTOU DINHEIRO (Jorbeson Nunes, pessoa 3, fazenda 1): a rescisão
+# dele foi fechada com "Vale em aberto = R$ 0,00" e a fazenda pagou o líquido
+# cheio, R$ 13.369,15. Ele continuou com SETE parcelas de vale abertas,
+# somando R$ 6.485,00, em competências que nunca vão existir — não há mais
+# folha para descontar. R$ 6.485,00 que a fazenda desembolsou e não tem mais
+# como recuperar, sem que ninguém tenha sido avisado em momento nenhum: o
+# campo `valor_vale_em_aberto` era digitado à mão, nascia em zero na tela e,
+# mesmo preenchido, só reduzia o valor a pagar — não baixava parcela nenhuma.
+#
+# Esta função é a metade "mostrar": o número real, com as competências, para a
+# tela pré-preencher o campo. A outra metade ("resolver o saldo no
+# fechamento") está em `fechar_rescisao`.
+def _saldo_vale_em_aberto(session: Session, pessoa_id: int, fazenda_id: int | None) -> dict:
+    """
+    Quanto de vale ainda é COBRÁVEL desta pessoa, e em que competências.
+
+    Cobrável é a mesma definição que a folha usa para descontar, e por isso as
+    três condições são as de `_valor_vale` + `_parcelas_pendentes`:
+      - parcela NÃO `assumida_pela_fazenda` — o mês que o dono já mandou
+        desconsiderar (ou o saldo de um vale cancelado) não é dívida de
+        ninguém; já virou despesa da fazenda no Financeiro;
+      - de vale que não está `cancelado` — mesma razão, para o vale inteiro;
+      - em competência SEM folha paga — o que já caiu num holerite pago foi
+        descontado de verdade e não se cobra de novo.
+
+    MULTI-FAZENDA: o recorte é a `pessoa_id`, que quem chama SEMPRE resolveu
+    com o filtro de fazenda dentro da consulta (`_pessoa_para_rescisao`,
+    `_calcular_rescisao_pessoa`, `fechar_rescisao`) — uma rescisão de outra
+    fazenda nunca chega aqui com o id de uma pessoa desta. Repetir
+    `ValeParcela.fazenda_id == fazenda_id` seria pior, não melhor: a parcela
+    órfã (fazenda_id nulo do backfill) da própria pessoa sairia da conta, e o
+    saldo ficaria MENOR que o real — justamente o erro que custou os
+    R$ 6.485,00. É o mesmo raciocínio, e pelo mesmo motivo, de `_valor_vale` e
+    de `_parcela_da_folha` (rh_folha_pagar.py). `fazenda_id` continua sendo
+    usado para o que ele de fato recorta: a folha paga.
+    """
+    parcelas = session.exec(
+        select(ValeParcela).where(
+            ValeParcela.pessoa_id == pessoa_id,
+            ValeParcela.assumida_pela_fazenda == False,  # noqa: E712
+        )
+    ).all()
+    if not parcelas:
+        return {"total": 0.0, "competencias": [], "parcela_ids": []}
+
+    vales = {
+        v.id: v for v in session.exec(
+            select(ValeFuncionario).where(ValeFuncionario.id.in_({p.vale_id for p in parcelas}))
+        ).all()
+    }
+    cobraveis = [
+        p for p in parcelas
+        if (vales.get(p.vale_id) is not None and vales[p.vale_id].status != "cancelado")
+        and not _vale_competencia_paga(session, pessoa_id, [p.competencia], fazenda_id)
+    ]
+
+    por_competencia: dict[str, float] = {}
+    for p in cobraveis:
+        por_competencia[p.competencia] = round(por_competencia.get(p.competencia, 0.0) + p.valor, 2)
+    return {
+        "total": round(sum(p.valor for p in cobraveis), 2),
+        "competencias": [
+            {"competencia": c, "valor": por_competencia[c]} for c in sorted(por_competencia)
+        ],
+        "parcela_ids": sorted(p.id for p in cobraveis if p.id is not None),
+    }
+
+
 def _calcular_rescisao_pessoa(dados: RescisaoIn, session: Session, fazenda_id: int | None = None) -> tuple[Pessoa, dict]:
     pessoa = session.get(Pessoa, dados.pessoa_id)
     if not pessoa or (pessoa.fazenda_id != fazenda_id):
@@ -2150,9 +2480,20 @@ def simular_rescisao(
     """Só calcula e devolve o detalhamento das verbas — não gera lançamento
     financeiro nem grava nada (usado pela tela para o usuário conferir os
     números antes de lançar a simulação persistida em
-    `POST /cadastro/rescisoes`)."""
-    pessoa, calculo = _calcular_rescisao_pessoa(dados, session, fazenda_id_seguro(fazenda_id))
-    return {**calculo, "pessoa_id": pessoa.id, "pessoa_nome": pessoa.nome}
+    `POST /cadastro/rescisoes`).
+
+    `vale_em_aberto` vem junto porque é aqui que a tela monta a rescisão: sem
+    o número real na mão do dono, o campo "Vale em aberto" nascia em zero e
+    era assim que ficava — foi o que deixou R$ 6.485,00 de vale de pé numa
+    rescisão fechada (ver `_saldo_vale_em_aberto`). A tela pré-preenche o
+    campo com ele e mostra as competências; o valor continua EDITÁVEL, porque
+    o dono pode ter acertado parte por fora."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    pessoa, calculo = _calcular_rescisao_pessoa(dados, session, fazenda_id)
+    return {
+        **calculo, "pessoa_id": pessoa.id, "pessoa_nome": pessoa.nome,
+        "vale_em_aberto": _saldo_vale_em_aberto(session, pessoa.id, fazenda_id),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2400,6 +2741,14 @@ def listar_rescisoes(
             "pessoa_nome": pessoas.get(r.pessoa_id, "—"),
             "usuario_nome": nomes_usuarios.get(r.usuario_id),
             "detalhe": _detalhe_rescisao(r),
+            # Só nas SIMULAÇÕES: a tela abre um rascunho da listagem para
+            # editar/fechar, e é aí que o saldo de vale precisa estar à vista.
+            # Numa rescisão já fechada o saldo foi baixado no fechamento (e o
+            # que sobrasse teria impedido o fechamento), então calcular de novo
+            # só gastaria consulta para dizer zero.
+            "vale_em_aberto": (
+                _saldo_vale_em_aberto(session, r.pessoa_id, fazenda_id) if r.status == "simulacao" else None
+            ),
             "legado": False,
         }
         for r in registros
@@ -2469,7 +2818,12 @@ def criar_rescisao_simulacao(
     session.add(registro)
     session.commit()
     session.refresh(registro)
-    return {**registro.model_dump(), "pessoa_nome": pessoa.nome, "detalhe": _detalhe_rescisao(registro)}
+    return {
+        **registro.model_dump(), "pessoa_nome": pessoa.nome, "detalhe": _detalhe_rescisao(registro),
+        # O saldo real de vale acompanha o rascunho: é ele que o fechamento vai
+        # exigir que esteja endereçado, então a tela precisa mostrá-lo desde já.
+        "vale_em_aberto": _saldo_vale_em_aberto(session, registro.pessoa_id, fazenda_id),
+    }
 
 
 @router.put("/rescisoes/{registro_id}")
@@ -2492,7 +2846,10 @@ def atualizar_rescisao_simulacao(
     session.add(registro)
     session.commit()
     session.refresh(registro)
-    return {**registro.model_dump(), "pessoa_nome": pessoa.nome, "detalhe": _detalhe_rescisao(registro)}
+    return {
+        **registro.model_dump(), "pessoa_nome": pessoa.nome, "detalhe": _detalhe_rescisao(registro),
+        "vale_em_aberto": _saldo_vale_em_aberto(session, registro.pessoa_id, fazenda_id),
+    }
 
 
 @router.delete("/rescisoes/{registro_id}")
@@ -2618,6 +2975,53 @@ def fechar_rescisao(
     pessoa = session.get(Pessoa, registro.pessoa_id)
     if not pessoa or (pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+
+    # ── O VALE TEM DE ESTAR ENDEREÇADO ANTES DE FECHAR ─────────────────────
+    #
+    # O caso: a rescisão do Jorbeson Nunes (pessoa 3, fazenda 1) foi fechada
+    # com "Vale em aberto = R$ 0,00", a fazenda pagou o líquido cheio
+    # (R$ 13.369,15), e ele ficou com 7 parcelas somando R$ 6.485,00 em
+    # competências que nunca vão existir — não há mais folha para descontar.
+    # Ninguém foi avisado. Este bloco é a trava que faltava, e ela é ANTES do
+    # fechamento porque rescisão fechada NÃO REABRE (é regra desta casa, e não
+    # muda aqui): depois não haveria conserto pela tela.
+    #
+    # POR QUE TRAVAR EM VEZ DE CANCELAR O VALE SOZINHO. Decidir por conta
+    # própria o destino de R$ 6.485,00 de outra pessoa não é papel do sistema
+    # — "a fazenda assume" é uma decisão de dono, com efeito no Financeiro
+    # (o valor vira despesa dela) e sem volta automática em todos os casos.
+    # Avisar e travar é. A saída está escrita na própria mensagem: descontar o
+    # saldo na rescisão, ou resolvê-lo antes nas Ações do vale (abater,
+    # desconsiderar o mês, cancelar o vale).
+    saldo_vale = _saldo_vale_em_aberto(session, registro.pessoa_id, fazenda_id)
+    vale_descontado = round(registro.valor_vale_em_aberto, 2)
+    competencias_saldo = ", ".join(
+        f"{c['competencia']} (R$ {c['valor']:.2f})" for c in saldo_vale["competencias"]
+    )
+    if vale_descontado > round(saldo_vale["total"] + 0.005, 2):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"O desconto de vale desta rescisão (R$ {vale_descontado:.2f}) é maior que o saldo de "
+                f"vale ainda cobrável de {pessoa.nome} (R$ {saldo_vale['total']:.2f}). Descontar mais do "
+                "que se tem a receber cobraria duas vezes o mesmo dinheiro — corrija o campo "
+                "\"Vale em aberto\" na simulação."
+            ),
+        )
+    sobra_vale = round(saldo_vale["total"] - vale_descontado, 2)
+    if sobra_vale > 0.005:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{pessoa.nome} ainda tem R$ {sobra_vale:.2f} de vale em aberto que esta rescisão não "
+                f"endereça (saldo cobrável de R$ {saldo_vale['total']:.2f} em {competencias_saldo}; "
+                f"descontado na rescisão: R$ {vale_descontado:.2f}). Depois de fechada a rescisão não há "
+                "mais folha para descontar e ela não reabre — então decida agora: aumente o campo "
+                "\"Vale em aberto\" para descontar o saldo do que ele tem a receber, ou resolva o vale "
+                "antes em Folha de Pagamento > vale > Ações (abater, desconsiderar o mês ou cancelar o "
+                "vale, que faz a fazenda assumir o valor)."
+            ),
+        )
     conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
     conta_bancaria = rotulo_conta_corrente(conta_corrente) if conta_corrente else None
 
@@ -2696,6 +3100,16 @@ def fechar_rescisao(
     # encerrados, e não numa varredura dentro de um GET (ver
     # `_remover_folha_pos_rescisao`).
     cancelados = _cancelar_ferias_decimo_da_rescisao(session, registro, fazenda_id)
+
+    # O que foi descontado em `valor_vale_em_aberto` BAIXA as parcelas
+    # correspondentes. Sem isto o mesmo dinheiro é cobrado duas vezes: uma no
+    # líquido reduzido da rescisão, outra nas parcelas que continuariam de pé
+    # no relatório de vales. Import aqui dentro, e não no topo, porque
+    # `rh_vale_acoes` importa deste módulo — no topo seria ciclo; o abatimento
+    # é reusado de lá justamente para não existir um terceiro caminho.
+    from .rh_vale_acoes import abater_saldo_na_rescisao
+    vales_baixados = abater_saldo_na_rescisao(session, pessoa, vale_descontado, fazenda_id)
+
     session.commit()
     _remover_folha_pos_rescisao(session, fazenda_id)
     session.refresh(registro)
@@ -2706,6 +3120,10 @@ def fechar_rescisao(
         # Explícito na resposta para a tela poder dizer o que foi encerrado
         # junto, em vez de o lançamento sumir sem explicação.
         "lancamentos_cancelados": cancelados,
+        # Idem para o vale: quanto foi baixado de cada um pelo desconto da
+        # rescisão. O saldo que sobrasse não chegaria aqui — a trava acima
+        # recusa o fechamento enquanto houver vale não endereçado.
+        "vales_baixados": vales_baixados,
     }
 
 
@@ -2741,7 +3159,19 @@ def _competencias_do_vale(competencia_inicio: str, parcelas: int) -> list[str]:
 def _reconciliar_vale_competencias(session: Session, pessoa_id: int, competencias: list[str]) -> None:
     """Recomputa valor_vale/valor_liquido da folha (não paga) e sincroniza a
     conta a pagar vinculada (não paga), para cada competência afetada por uma
-    alteração (criação/edição/exclusão) de vale."""
+    alteração (criação/edição/exclusão) de vale.
+
+    O LÍQUIDO SAI DE `_liquido_folha`, NUNCA DA FÓRMULA COPIADA À MÃO. Esta
+    função tinha a conta reescrita aqui dentro e ela ESQUECIA
+    `valor_rubricas` — o efeito líquido das rubricas avulsas do holerite
+    (bonificação, gueltas, reembolso, vale-alimentação, desconto avulso).
+    Como TODA ação de vale passa por aqui (criar, editar, excluir, reparcelar,
+    abater, desconsiderar, cancelar e as três voltas atrás), lançar um vale
+    depois de uma bonificação apagava a bonificação do líquido gravado E da
+    conta a pagar, em silêncio: o holerite continuava mostrando a linha, e o
+    banco pagava o valor sem ela. É exatamente o defeito que `_liquido_folha`
+    foi criada para não deixar voltar — e voltou, porque esta cópia ficou
+    para trás."""
     for competencia in competencias:
         folha = session.exec(
             select(FolhaPagamento).where(
@@ -2753,14 +3183,22 @@ def _reconciliar_vale_competencias(session: Session, pessoa_id: int, competencia
         if not folha:
             continue
         folha.valor_vale = _valor_vale(session, pessoa_id, competencia)
-        folha.valor_liquido = round(
-            folha.valor_bruto - folha.descontos - folha.valor_inss - folha.valor_ir - folha.valor_vale, 2
+        folha.valor_liquido = _liquido_folha(
+            folha.valor_bruto, folha.descontos, folha.valor_inss, folha.valor_ir, folha.valor_vale,
+            folha.valor_rubricas,
         )
         _marcar_vale_aplicado(session, pessoa_id, competencia)
         session.add(folha)
         if folha.numero_lancamento_gerado:
+            # Filtro de fazenda DENTRO da consulta, mesmo padrão de
+            # `_recalcular_folha`: o número do lançamento é sequencial por ano
+            # e não é chave global, então sem o recorte esta busca poderia
+            # alcançar a conta a pagar de outro inquilino.
             conta = session.exec(
-                select(ContaGerencial).where(ContaGerencial.numero_lancamento == folha.numero_lancamento_gerado)
+                select(ContaGerencial).where(
+                    ContaGerencial.numero_lancamento == folha.numero_lancamento_gerado,
+                    ContaGerencial.fazenda_id == folha.fazenda_id,
+                )
             ).first()
             if conta and conta.valor_pago is None:
                 conta.valor_total = folha.valor_liquido
@@ -2821,6 +3259,122 @@ def _exigir_competencias_nao_pagas(
                 f"competência. Estorne o pagamento da folha de {paga} ou escolha uma competência em aberto."
             ),
         )
+
+
+# ── O TETO DE 40% DO SALÁRIO, EM UM LUGAR SÓ ────────────────────────────────
+#
+# O CASO QUE OBRIGOU A UNIFICAÇÃO (Jorbeson Nunes, pessoa 3, fazenda 1): a
+# folha dele de 2026-08 fechava com líquido NEGATIVO (−R$ 866,50) — quase
+# R$ 4.000 de vale numa competência só, contra R$ 3.393,00 de bruto, quando o
+# teto de 40% do salário seria R$ 1.357,20. Ninguém foi avisado em nenhum
+# momento, porque a conferência existia em DUAS das cinco portas que mexem no
+# valor das parcelas (`criar_vale` e `atualizar_vale`) e em nenhuma das outras
+# três (`editar_parcela_vale`, `_acao_reparcelar`, `_decisao_reparcelar`). Por
+# elas dava para concentrar o saldo inteiro num mês, muito acima do teto, em
+# silêncio absoluto.
+#
+# A REGRA CONTINUA SENDO UM AVISO CONFIRMÁVEL, não uma proibição: o dono pode
+# ter motivo (um acerto combinado, um mês de saída). O que ele não pode é não
+# ser avisado. Por isso as cinco portas devolvem o MESMO 409 com o mesmo
+# `confirmar` — reenviar com `confirmar: true` passa.
+#
+# POR QUE UMA FUNÇÃO SÓ: a conta estava escrita à mão duas vezes (nas duas
+# portas que conferiam), e uma terceira, quarta e quinta cópia seria a receita
+# para as cinco divergirem no primeiro ajuste. Aqui mora a régua inteira: o
+# limite, o que entra no total da competência e a forma da resposta.
+TETO_VALE_SALARIO = 0.4
+
+
+def _competencias_acima_do_teto_vale(
+    session: Session, pessoa_id: int, salario_base: float,
+    novos_valores: list[tuple[str, float]],
+    *, parcela_ids_substituidas: frozenset[int] | set[int] = frozenset(),
+) -> tuple[float, list[dict]]:
+    """
+    Quais competências ficariam acima do teto de 40% do salário, e o limite.
+
+    `novos_valores` são os pares (competência, valor) que PASSARÃO a existir
+    depois da operação — a criação de um vale parcelado, a reescrita de uma
+    parcela, o novo cronograma de um reparcelamento. Valores da mesma
+    competência são somados entre si, porque uma competência pode receber mais
+    de uma parcela do mesmo vale (é o que `_decisao_desconsiderar` faz ao
+    partir o mês em cobrado + assumido).
+
+    `parcela_ids_substituidas` são as parcelas que a operação vai APAGAR ou
+    REESCREVER — elas saem do "já lançado" para não serem contadas duas vezes
+    (é o que `atualizar_vale` fazia com `ValeParcela.vale_id != vale_id`, só
+    que por id, que também serve para quem mexe em parcelas avulsas).
+
+    O total comparado com o limite é a soma de TODAS as parcelas de vale
+    daquela pessoa naquela competência — não só as do vale que está sendo
+    mexido: o teto é do funcionário, não do documento. Parcela
+    `assumida_pela_fazenda` fica DE FORA, pela mesma razão de `_valor_vale`:
+    ela não é descontada de ninguém, então não ocupa o teto de desconto dele.
+    """
+    limite = round(salario_base * TETO_VALE_SALARIO, 2)
+    por_competencia: dict[str, float] = {}
+    for competencia, valor in novos_valores:
+        por_competencia[competencia] = round(por_competencia.get(competencia, 0.0) + round(valor, 2), 2)
+
+    excedidas: list[dict] = []
+    for competencia in sorted(por_competencia):
+        ja_lancado = session.exec(
+            select(ValeParcela).where(
+                ValeParcela.pessoa_id == pessoa_id,
+                ValeParcela.competencia == competencia,
+                ValeParcela.assumida_pela_fazenda == False,  # noqa: E712
+            )
+        ).all()
+        total_competencia = round(
+            sum(p.valor for p in ja_lancado if p.id not in parcela_ids_substituidas)
+            + por_competencia[competencia],
+            2,
+        )
+        if total_competencia > limite:
+            excedidas.append({"competencia": competencia, "total": total_competencia, "limite": limite})
+    return limite, excedidas
+
+
+def _exigir_teto_vale(
+    session: Session, pessoa_id: int, salario_base: float | None,
+    novos_valores: list[tuple[str, float]], *, confirmar: bool, verbo: str,
+    parcela_ids_substituidas: frozenset[int] | set[int] = frozenset(),
+) -> None:
+    """
+    Recusa com 409 + `confirmar` quando a operação deixaria alguma competência
+    acima do teto de 40% — a MESMA porta de saída nas cinco portas do vale.
+
+    A mensagem diz QUAL competência estourou, QUANTO ficaria e qual é o
+    limite, porque "ultrapassa 40%" sem os números não diz ao dono o que ele
+    precisa mudar; `competencias_excedidas` traz o mesmo, estruturado, para a
+    tela montar a confirmação (é o payload que ValeItemModal/FolhaPagamentoView
+    já leem).
+
+    SALÁRIO BASE AUSENTE NÃO TRAVA a operação, e isso é deliberado: as duas
+    portas de CRIAÇÃO (`criar_vale`/`atualizar_vale`) já exigem o salário
+    cadastrado antes de chegar aqui — é lá que o cadastro incompleto tem de
+    ser resolvido. Nas outras três (editar parcela, reparcelar, reparcelar no
+    ato do pagamento) o vale JÁ existe, e recusar por causa de um campo do
+    cadastro impediria o dono de consertar justamente o vale que ele quer
+    ajustar. Sem salário não há teto calculável — segue sem aviso, como era.
+    """
+    if not salario_base:
+        return
+    limite, excedidas = _competencias_acima_do_teto_vale(
+        session, pessoa_id, salario_base, novos_valores,
+        parcela_ids_substituidas=parcela_ids_substituidas,
+    )
+    if not excedidas or confirmar:
+        return
+    detalhe = "; ".join(f"{c['competencia']}: R$ {c['total']:.2f}" for c in excedidas)
+    raise HTTPException(status_code=409, detail={
+        "mensagem": (
+            f"O desconto de vale ultrapassa 40% do salário (limite de R$ {limite:.2f}) em "
+            f"{len(excedidas)} competência(s) — {detalhe}. Confirme para {verbo} mesmo assim."
+        ),
+        "competencias_excedidas": excedidas,
+        "limite": limite,
+    })
 
 
 def _validar_conta_vale(
@@ -2987,30 +3541,12 @@ def criar_vale(
             detail="Cadastre o salário base da pessoa (Configurações > Cadastro > Pessoas) antes de lançar um vale.",
         )
 
-    limite = round(pessoa.salario_base * 0.4, 2)
-    competencias_excedidas = []
-    for competencia, valor in zip(competencias, valores_parcela):
-        # Parcela assumida pela fazenda não é desconto do funcionário, então
-        # não ocupa o teto de 40% do salário dele (ver `_valor_vale`).
-        ja_lancado = session.exec(
-            select(ValeParcela).where(
-                ValeParcela.pessoa_id == dados.pessoa_id,
-                ValeParcela.competencia == competencia,
-                ValeParcela.assumida_pela_fazenda == False,  # noqa: E712
-            )
-        ).all()
-        total_competencia = round(sum(p.valor for p in ja_lancado) + valor, 2)
-        if total_competencia > limite:
-            competencias_excedidas.append({"competencia": competencia, "total": total_competencia, "limite": limite})
-
-    if competencias_excedidas and not dados.confirmar:
-        raise HTTPException(status_code=409, detail={
-            "mensagem": (
-                f"O desconto de vale ultrapassa 40% do salário (limite de R$ {limite:.2f}) em "
-                f"{len(competencias_excedidas)} competência(s). Confirme para lançar mesmo assim."
-            ),
-            "competencias_excedidas": competencias_excedidas,
-        })
+    # Teto de 40% do salário — a MESMA conferência das outras quatro portas
+    # que mexem no valor das parcelas (ver `_exigir_teto_vale`).
+    _exigir_teto_vale(
+        session, dados.pessoa_id, pessoa.salario_base, list(zip(competencias, valores_parcela)),
+        confirmar=dados.confirmar, verbo="lançar",
+    )
 
     vale = ValeFuncionario(
         pessoa_id=dados.pessoa_id, valor_total=dados.valor_total, forma_pagamento=dados.forma_pagamento,
@@ -3108,30 +3644,14 @@ def atualizar_vale(
     valores_parcela = [valor_parcela] * (dados.parcelas - 1)
     valores_parcela.append(round(dados.valor_total - valor_parcela * (dados.parcelas - 1), 2))
 
-    limite = round(pessoa.salario_base * 0.4, 2)
-    competencias_excedidas = []
-    for competencia, valor in zip(competencias_novas, valores_parcela):
-        # exclui as parcelas do próprio vale (serão substituídas) do total já lançado nessa competência
-        ja_lancado = session.exec(
-            select(ValeParcela).where(
-                ValeParcela.pessoa_id == dados.pessoa_id,
-                ValeParcela.competencia == competencia,
-                ValeParcela.vale_id != vale_id,
-                ValeParcela.assumida_pela_fazenda == False,  # noqa: E712
-            )
-        ).all()
-        total_competencia = round(sum(p.valor for p in ja_lancado) + valor, 2)
-        if total_competencia > limite:
-            competencias_excedidas.append({"competencia": competencia, "total": total_competencia, "limite": limite})
-
-    if competencias_excedidas and not dados.confirmar:
-        raise HTTPException(status_code=409, detail={
-            "mensagem": (
-                f"O desconto de vale ultrapassa 40% do salário (limite de R$ {limite:.2f}) em "
-                f"{len(competencias_excedidas)} competência(s). Confirme para salvar mesmo assim."
-            ),
-            "competencias_excedidas": competencias_excedidas,
-        })
+    # Teto de 40% do salário — mesma função das outras quatro portas. As
+    # parcelas atuais do vale saem do "já lançado" (`parcela_ids_substituidas`)
+    # porque este PUT as apaga e recria: contá-las somaria o vale a si mesmo.
+    _exigir_teto_vale(
+        session, dados.pessoa_id, pessoa.salario_base, list(zip(competencias_novas, valores_parcela)),
+        confirmar=dados.confirmar, verbo="salvar",
+        parcela_ids_substituidas={p.id for p in parcelas_atuais},
+    )
 
     vale.pessoa_id = dados.pessoa_id
     vale.valor_total = dados.valor_total
@@ -3189,6 +3709,13 @@ class ValeParcelaEditIn(BaseModel):
     # valor efetivamente pago no vale (vale.valor_total) — sem isso, a
     # divergência vira um 409 pedindo confirmação antes de salvar.
     confirmar_divergencia_total: bool = False
+    # Confirma prosseguir mesmo concentrando, em alguma competência, mais de
+    # 40% do salário em desconto de vale (ver `_exigir_teto_vale`). CAMPO
+    # PRÓPRIO, e não o `confirmar` acima: aquele confirma que o valor digitado
+    # diverge do calculado — reusá-lo faria quem confirma a divergência
+    # confirmar junto, sem ver, o estouro do teto legal. São dois avisos
+    # diferentes e cada um tem de ser respondido por quem o leu.
+    confirmar_teto: bool = False
 
 
 @router.put("/vales/{vale_id}/parcelas/{parcela_id}")
@@ -3239,6 +3766,11 @@ def editar_parcela_vale(
             "parcelas_pendentes_restantes": len(outras_pendentes),
         })
 
+    # Os valores que as parcelas PASSARÃO a ter (parcela_id -> valor), montados
+    # antes de gravar qualquer coisa: é sobre eles que o teto de 40% é
+    # conferido, e um 409 de teto tem de acontecer com o banco intacto.
+    planejados: dict[int, float] = {parcela_id: round(dados.valor, 2)}
+
     if diferenca != 0:
         if dados.acao == "conceder":
             pass  # só essa parcela muda
@@ -3253,8 +3785,7 @@ def editar_parcela_vale(
             for i, p in enumerate(outras_pendentes):
                 novo = valor_base if i < len(outras_pendentes) - 1 else round(restante, 2)
                 restante = round(restante - novo, 2)
-                p.valor = novo
-                session.add(p)
+                planejados[p.id] = novo
         elif dados.acao == "redistribuir_livre":
             if not outras_pendentes:
                 raise HTTPException(status_code=400, detail="Não há parcelas pendentes para redistribuir — escolha conceder.")
@@ -3288,13 +3819,30 @@ def editar_parcela_vale(
                 })
 
             for p in outras_pendentes:
-                p.valor = round(dados.valores_parcelas[p.id], 2)
-                session.add(p)
+                planejados[p.id] = round(dados.valores_parcelas[p.id], 2)
         else:
             raise HTTPException(status_code=400, detail="Informe a ação: redistribuir_igual, redistribuir_livre ou conceder.")
 
-    parcela.valor = dados.valor
-    session.add(parcela)
+    # Teto de 40% do salário — a terceira das cinco portas. Era a mais fácil de
+    # usar para concentrar o saldo inteiro num mês: bastava editar uma parcela
+    # para o valor cheio e conceder. Confere o CRONOGRAMA INTEIRO que a edição
+    # produz (a parcela editada mais as redistribuídas), não só a parcela
+    # tocada, porque redistribuir empurra valor para os meses seguintes.
+    competencia_por_id = {p.id: p.competencia for p in todas_parcelas}
+    pessoa_do_vale = session.exec(
+        select(Pessoa).where(Pessoa.id == vale.pessoa_id, Pessoa.fazenda_id == fazenda_id)
+    ).first()
+    _exigir_teto_vale(
+        session, vale.pessoa_id, pessoa_do_vale.salario_base if pessoa_do_vale else None,
+        [(competencia_por_id[pid], valor) for pid, valor in planejados.items()],
+        confirmar=dados.confirmar_teto, verbo="salvar",
+        parcela_ids_substituidas=set(planejados),
+    )
+
+    parcelas_por_id = {p.id: p for p in todas_parcelas}
+    for pid, valor in planejados.items():
+        parcelas_por_id[pid].valor = valor
+        session.add(parcelas_por_id[pid])
     session.commit()
 
     todas_parcelas = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()
