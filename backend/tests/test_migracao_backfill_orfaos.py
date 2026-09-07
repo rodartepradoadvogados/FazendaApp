@@ -191,8 +191,162 @@ def test_o_sql_de_duplicata_roda_em_sqlite(mig):
     )
 
 
-def test_downgrade_existe_e_nao_faz_nada(mig):
-    """Reverter de verdade se faz por backup. O downgrade existe para o
-    Alembic não quebrar, e não desfaz — devolver `fazenda_id = NULL` só
-    recriaria o problema."""
-    assert mig.downgrade() is None
+# ---------------------------------------------------------------------------
+# O ciclo completo: upgrade e volta. É a garantia de regressão que o dono
+# pediu antes de autorizar o merge, e ela só vale se for exercitada.
+# ---------------------------------------------------------------------------
+
+_ESQUEMA_MINIMO = [
+    "CREATE TABLE fazenda (id INTEGER PRIMARY KEY, nome TEXT,"
+    " eh_empresa_cowdata BOOLEAN, eh_teste BOOLEAN)",
+    "CREATE TABLE tipo_documento (id INTEGER PRIMARY KEY, nome TEXT, fazenda_id INTEGER)",
+    "CREATE TABLE conta_gerencial (id INTEGER PRIMARY KEY, descricao TEXT, fazenda_id INTEGER)",
+    "CREATE TABLE calendario_sanitario (id INTEGER PRIMARY KEY, titulo TEXT, fazenda_id INTEGER)",
+    "CREATE TABLE cronograma_sanitario (id INTEGER PRIMARY KEY, calendario_id INTEGER,"
+    " fazenda_id INTEGER, FOREIGN KEY (calendario_id) REFERENCES calendario_sanitario (id))",
+    "CREATE TABLE meta_recria (id INTEGER PRIMARY KEY, valor INTEGER, fazenda_id INTEGER)",
+    "CREATE TABLE idempotencia_chave (id INTEGER PRIMARY KEY, chave TEXT, fazenda_id INTEGER)",
+]
+
+_DADO_INICIAL = [
+    # as 3 fazendas de produção: a real, a sandbox e a da própria CowData
+    "INSERT INTO fazenda VALUES (1, 'Jairo Nasser', 0, 0), (2, 'Teste', 0, 1), (3, 'CowData', 1, 0)",
+    # nome único: a órfã 'Nota Fiscal' colide com a da fazenda; 'Recibo' não
+    "INSERT INTO tipo_documento VALUES (1, 'Nota Fiscal', 1), (2, 'Nota Fiscal', NULL),"
+    " (3, 'Recibo', NULL)",
+    "INSERT INTO conta_gerencial VALUES (1, 'Custeio', NULL)",
+    "INSERT INTO calendario_sanitario VALUES (1, 'Vacinação', NULL)",
+    "INSERT INTO cronograma_sanitario VALUES (1, 1, NULL)",
+    # resíduo: a fazenda já tem a dela, a órfã é a linha antiga
+    "INSERT INTO meta_recria VALUES (1, 100, NULL), (2, 200, 1)",
+    "INSERT INTO idempotencia_chave VALUES (1, 'abc', NULL)",
+]
+
+_TABELAS_DE_DADO = [
+    "tipo_documento", "conta_gerencial", "calendario_sanitario",
+    "cronograma_sanitario", "meta_recria", "idempotencia_chave",
+]
+
+
+def _retrato(conn) -> dict:
+    """Estado de todas as tabelas de dado, para comparar antes e depois."""
+    retrato = {}
+    for tabela in _TABELAS_DE_DADO:
+        linhas = conn.execute(text(f"SELECT * FROM {tabela} ORDER BY id")).fetchall()
+        retrato[tabela] = [tuple(linha) for linha in linhas]
+    return retrato
+
+
+def _banco_de_producao():
+    engine = create_engine("sqlite://")
+    with engine.begin() as conn:
+        for comando in _ESQUEMA_MINIMO + _DADO_INICIAL:
+            conn.execute(text(comando))
+    return engine
+
+
+class _OpFalso:
+    """`op.get_bind()` fora do Alembic: devolve a conexão do teste."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def get_bind(self):
+        return self._conn
+
+
+def test_ciclo_completo_upgrade_e_downgrade(mig):
+    """Roda a migração de verdade e desfaz de verdade: o banco tem que voltar
+    ao estado exato de antes, linha por linha.
+
+    É a única prova de que o checkpoint que o dono pediu funciona. Sem ela, o
+    `downgrade` seria só uma promessa escrita na docstring."""
+    engine = _banco_de_producao()
+    with engine.begin() as conn:
+        mig.op = _OpFalso(conn)
+        antes = _retrato(conn)
+
+        mig.upgrade()
+        depois = _retrato(conn)
+
+        # a órfã duplicada de nome saiu; a outra foi atribuída
+        assert depois["tipo_documento"] == [(1, "Nota Fiscal", 1), (3, "Recibo", 1)]
+        # resíduo e cache: apagados
+        assert depois["meta_recria"] == [(2, 200, 1)]
+        assert depois["idempotencia_chave"] == []
+        # dado real: atribuído, pai e filho na mesma fazenda
+        assert depois["conta_gerencial"] == [(1, "Custeio", 1)]
+        assert depois["calendario_sanitario"] == [(1, "Vacinação", 1)]
+        assert depois["cronograma_sanitario"] == [(1, 1, 1)]
+
+        mig.downgrade()
+        voltou = _retrato(conn)
+
+    assert voltou == antes, (
+        "o downgrade tinha que devolver o banco ao estado exato de antes — "
+        "é isso que torna o merge reversível"
+    )
+
+
+def test_o_checkpoint_guarda_as_orfas_antes_de_alterar(mig):
+    """As tabelas de checkpoint têm que existir depois do upgrade, com a cópia
+    das órfãs — é por elas que o downgrade volta."""
+    engine = _banco_de_producao()
+    with engine.begin() as conn:
+        mig.op = _OpFalso(conn)
+        mig.upgrade()
+
+        nomes = {
+            linha[0]
+            for linha in conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'ckpt_%'")
+            )
+        }
+        assert nomes == {f"{mig._CKPT}{t}" for t in _TABELAS_DE_DADO}
+
+        # as três órfãs de tipo_documento (a duplicada inclusive) estão lá
+        guardadas = conn.execute(
+            text(f"SELECT id, nome FROM {mig._CKPT}tipo_documento ORDER BY id")
+        ).fetchall()
+        assert [tuple(linha) for linha in guardadas] == [(2, "Nota Fiscal"), (3, "Recibo")]
+
+
+def test_reaplicar_o_upgrade_nao_destroi_o_checkpoint(mig):
+    """A armadilha: depois da primeira passada não sobra órfã nenhuma. Se o
+    upgrade recriasse o checkpoint, ele o substituiria por uma tabela VAZIA e
+    o ponto de retorno sumiria — sem erro, em silêncio."""
+    engine = _banco_de_producao()
+    with engine.begin() as conn:
+        mig.op = _OpFalso(conn)
+        antes = _retrato(conn)
+
+        mig.upgrade()
+        mig.upgrade()  # reaplicação
+
+        guardadas = conn.execute(
+            text(f"SELECT count(*) FROM {mig._CKPT}tipo_documento")
+        ).scalar()
+        assert guardadas == 2, "o checkpoint da primeira passada tinha que ser preservado"
+
+        mig.downgrade()
+        assert _retrato(conn) == antes
+
+
+def test_sem_fazenda_cliente_o_downgrade_nao_tem_o_que_desfazer(mig):
+    """Num banco sem fazenda-cliente única (a suíte, por exemplo), o upgrade
+    não altera nada e não cria checkpoint — o downgrade tem que ser inofensivo,
+    não explodir por falta das tabelas `ckpt_*`."""
+    engine = create_engine("sqlite://")
+    with engine.begin() as conn:
+        for comando in _ESQUEMA_MINIMO + _DADO_INICIAL:
+            conn.execute(text(comando))
+        # duas fazendas-cliente: a migração se recusa a adivinhar
+        conn.execute(text("INSERT INTO fazenda VALUES (4, 'Outra', 0, 0)"))
+        mig.op = _OpFalso(conn)
+        antes = _retrato(conn)
+
+        mig.upgrade()
+        assert _retrato(conn) == antes
+
+        mig.downgrade()
+        assert _retrato(conn) == antes

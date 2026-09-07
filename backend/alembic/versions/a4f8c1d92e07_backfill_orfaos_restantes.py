@@ -50,6 +50,14 @@ COLISÃO DE NOME: três tabelas do grupo D têm UNIQUE (nome, fazenda_id). Se um
 constraint. Em vez de abortar a migração inteira, a órfã duplicada é APAGADA
 (a linha da fazenda já é aquele mesmo cadastro) e o fato entra no relatório.
 
+REVERSÍVEL, a pedido do dono: antes de tocar em qualquer linha, a migração
+copia TODAS as órfãs de cada tabela afetada para uma tabela de checkpoint
+(`ckpt_a4f8c1d92e07_<tabela>`, criada com `CREATE TABLE ... AS SELECT *`, que
+preserva os tipos nativos em vez de serializar para texto). O `downgrade()`
+reinsere as apagadas e devolve `fazenda_id = NULL` às atribuídas, pelo id.
+As tabelas de checkpoint ficam no banco depois do upgrade, de propósito: são
+elas o ponto de retorno, e ocupam algumas dezenas de linhas.
+
 IDEMPOTENTE: roda de novo sem efeito — todo comando é condicionado a
 `fazenda_id IS NULL`, e depois da primeira passada não sobra nenhuma.
 
@@ -113,8 +121,36 @@ _COM_NOME_UNICO: list[str] = [
 ]
 
 
+# Prefixo das tabelas de checkpoint. Uma por tabela afetada, com a cópia das
+# órfãs ANTES da alteração — é por elas que o `downgrade()` volta atrás.
+_CKPT = "ckpt_a4f8c1d92e07_"
+
+
 def _tabelas_existentes(conn) -> set[str]:
     return set(sa.inspect(conn).get_table_names())
+
+
+def _guardar_checkpoint(conn, tabela: str, existentes: set[str]) -> None:
+    """Copia as órfãs de `tabela` para a tabela de checkpoint, se ainda não houver uma.
+
+    `CREATE TABLE ... AS SELECT *` funciona igual em PostgreSQL e SQLite e
+    preserva os tipos das colunas — inclusive binário e data —, o que uma
+    serialização para JSON não faria.
+
+    O `IF NOT EXISTS` implícito (a checagem em `existentes`) é deliberado e
+    importante: se esta migração for reaplicada depois de já ter rodado, não
+    sobra nenhuma órfã, e recriar o checkpoint o substituiria por uma tabela
+    VAZIA — destruindo justamente o ponto de retorno. O primeiro checkpoint é
+    o que vale.
+    """
+    if f"{_CKPT}{tabela}" in existentes:
+        return
+    conn.execute(
+        sa.text(  # noqa: S608 — nome vem das listas literais deste módulo
+            f"CREATE TABLE {_CKPT}{tabela} AS "
+            f"SELECT * FROM {tabela} WHERE fazenda_id IS NULL"
+        )
+    )
 
 
 def _fazenda_cliente_unica(conn) -> int | None:
@@ -153,6 +189,20 @@ def upgrade() -> None:
         return
 
     print(f"[backfill órfãos] fazenda-cliente única: id={fazenda_id}")
+
+    # Checkpoint ANTES de qualquer alteração, para todas as tabelas que serão
+    # tocadas — é o que torna o downgrade possível.
+    afetadas = [
+        tabela
+        for tabela in _APAGAR_RESIDUO_DE_MIGRACAO + _APAGAR_LIXO_TECNICO + _ATRIBUIR
+        if tabela in existentes
+    ]
+    for tabela in afetadas:
+        _guardar_checkpoint(conn, tabela, existentes)
+    print(
+        f"[backfill órfãos] checkpoint guardado em {len(afetadas)} tabela(s) "
+        f"`{_CKPT}*` — o downgrade volta por elas."
+    )
 
     apagadas: dict[str, int] = {}
     for tabela in _APAGAR_RESIDUO_DE_MIGRACAO + _APAGAR_LIXO_TECNICO:
@@ -219,11 +269,68 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Sem volta, e de propósito.
+    """Volta o dado ao estado anterior, pelas tabelas de checkpoint.
 
-    O que foi apagado era resíduo e cache, e o que foi atribuído perdeu a
-    informação de que um dia foi nulo — devolver `fazenda_id = NULL` não
-    restauraria estado nenhum, só recriaria o problema que esta migração
-    fechou. Reverter de verdade se faz por backup, não por downgrade.
+    Para cada tabela afetada, na ordem inversa da do upgrade (o filho antes do
+    pai não pode ser reinserido, então o pai vem primeiro na volta também):
+
+      1. reinsere as linhas do checkpoint que não estão mais lá — as apagadas
+         por resíduo, por cache e por nome já existente na fazenda;
+      2. devolve `fazenda_id = NULL` às que continuam lá — as atribuídas.
+
+    O passo 2 é o que fecha o caso das três tabelas com nome único, onde parte
+    das órfãs foi apagada e parte atribuída: o checkpoint tem as duas, e cada
+    uma cai no passo que lhe cabe.
+
+    Se não houver checkpoint (a migração rodou num banco sem fazenda-cliente
+    única e não alterou nada), não há o que desfazer.
     """
-    pass
+    conn = op.get_bind()
+    existentes = _tabelas_existentes(conn)
+
+    restauradas: dict[str, int] = {}
+    desatribuidas: dict[str, int] = {}
+    # Pai antes de filho: `calendario_sanitario` antes de `cronograma_sanitario`,
+    # a mesma razão da ordem em `_ATRIBUIR`.
+    for tabela in _ATRIBUIR + _APAGAR_RESIDUO_DE_MIGRACAO + _APAGAR_LIXO_TECNICO:
+        ckpt = f"{_CKPT}{tabela}"
+        if ckpt not in existentes or tabela not in existentes:
+            continue
+
+        # Colunas listadas explicitamente, e só as que existem nos dois lados:
+        # se o esquema tiver mudado entre o upgrade e o downgrade, o INSERT
+        # ainda funciona em vez de errar por posição de coluna.
+        cols_ckpt = [c["name"] for c in sa.inspect(conn).get_columns(ckpt)]
+        cols_tab = {c["name"] for c in sa.inspect(conn).get_columns(tabela)}
+        cols = [c for c in cols_ckpt if c in cols_tab]
+        lista = ", ".join(cols)
+
+        n = conn.execute(
+            sa.text(  # noqa: S608 — nomes vêm das listas literais deste módulo
+                f"INSERT INTO {tabela} ({lista}) SELECT {lista} FROM {ckpt} "
+                f"WHERE id NOT IN (SELECT id FROM {tabela})"
+            )
+        ).rowcount
+        if n:
+            restauradas[tabela] = n
+
+        n = conn.execute(
+            sa.text(  # noqa: S608 — idem
+                f"UPDATE {tabela} SET fazenda_id = NULL "
+                f"WHERE id IN (SELECT id FROM {ckpt}) AND fazenda_id IS NOT NULL"
+            )
+        ).rowcount
+        if n:
+            desatribuidas[tabela] = n
+
+        conn.execute(sa.text(f"DROP TABLE {ckpt}"))  # noqa: S608 — idem
+
+    print(
+        f"[backfill órfãos] downgrade: {sum(restauradas.values())} linha(s) "
+        f"reinserida(s), {sum(desatribuidas.values())} devolvida(s) a fazenda_id NULL."
+    )
+    for tabela in sorted(set(restauradas) | set(desatribuidas)):
+        print(
+            f"  - {tabela}: {restauradas.get(tabela, 0)} reinserida(s), "
+            f"{desatribuidas.get(tabela, 0)} desatribuída(s)"
+        )
