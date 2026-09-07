@@ -56,7 +56,7 @@ export type Holerite = {
   linhas: LinhaHolerite[];
   totais: TotaisHolerite;
   bases: BasesHolerite | null;
-  status: "pendente" | "pago";
+  status: LinhaFolhaUnificada["status"];
   dataVencimento: string | null;
   dataPagamento: string | null;
   numeroLancamento: string | null;
@@ -99,7 +99,7 @@ export function ehOrigemRubrica(origem: LinhaHolerite["origem"]): origem is Orig
  */
 export type SituacaoPagamento = "todos" | "pagos" | "a_pagar";
 
-export function filtrarPorSituacao<T extends { status: "pendente" | "pago" }>(
+export function filtrarPorSituacao<T extends { status: string }>(
   linhas: T[], situacao: SituacaoPagamento,
 ): T[] {
   if (situacao === "pagos") return linhas.filter((l) => l.status === "pago");
@@ -134,6 +134,30 @@ export function holeriteDaLinha(l: LinhaFolhaUnificada): Holerite | null {
     especie: l.tipo === "funcionario" ? "holerite" : "recibo",
     vencido: l.vencido,
   };
+}
+
+/**
+ * O rótulo do status de UMA linha do ledger — três estados, não dois.
+ *
+ * A tabela renderizava `status === "pago" ? "Pago" : "Pendente"`, e com isso
+ * as férias e o 13º ABSORVIDOS por uma rescisão (status
+ * "cancelado_rescisao", ver rh_contratos.py) apareciam escritos "Pendente":
+ * a tela cobrava de novo um valor que já saiu dentro das verbas rescisórias.
+ * O registro continua visível de propósito — nada é apagado —, mas com o
+ * nome do que ele é.
+ */
+export function rotuloStatusLinha(status: string): { texto: string; cor: string; titulo: string } {
+  if (status === "pago") {
+    return { texto: "Pago", cor: "var(--green-light)", titulo: "Pagamento já realizado" };
+  }
+  if (status === "cancelado_rescisao") {
+    return {
+      texto: "Na rescisão",
+      cor: "var(--text-muted)",
+      titulo: "Absorvido pelas verbas rescisórias — não é mais uma conta a pagar por fora",
+    };
+  }
+  return { texto: "Pendente", cor: "var(--amber)", titulo: "Ainda não pago" };
 }
 
 /** Selo do documento, no canto do cabeçalho. "Não emitido" é deliberado: um

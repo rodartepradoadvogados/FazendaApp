@@ -2398,6 +2398,20 @@ export async function excluirFolhaPagamento(id: number) {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir lançamento de folha"); }
   return res.json();
 }
+/**
+ * Estorna o pagamento de uma folha — desfaz a baixa da conta a pagar,
+ * devolve o lançamento a "pendente" e DESCONGELA a discriminação.
+ *
+ * A rota existe desde o C7, mas nenhuma tela a chamava: o holerite mandava o
+ * usuário "estornar o pagamento para acrescentar ou corrigir vencimentos e
+ * descontos" e não havia botão nenhum para isso — o caminho era mexer no
+ * banco à mão.
+ */
+export async function estornarPagamentoFolha(id: number) {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/${id}/estornar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao estornar o pagamento da folha"); }
+  return res.json();
+}
 
 // ── Guia de FGTS/DCTF — lançamento manual ou por leitura automática (ver
 // POST /financeiro/ler-documento, tipo_documento "guia_fgts"/"guia_dctf")
@@ -2468,7 +2482,12 @@ export type LinhaFolhaUnificada = {
   valor: number;
   data_vencimento: string | null;
   data_pagamento: string | null;
-  status: "pendente" | "pago";
+  /** O tipo dizia só "pendente | pago" e o servidor sempre pôde mandar um
+   *  TERCEIRO estado: férias e 13º absorvidos por uma rescisão saem com
+   *  "cancelado_rescisao" (ver STATUS_CANCELADO_RESCISAO em rh_folha.py). A
+   *  tela lia isso como "não é pago, logo é pendente" e cobrava de novo, na
+   *  tabela, um valor que já foi pago dentro das verbas rescisórias. */
+  status: "pendente" | "pago" | "cancelado_rescisao";
   pode_excluir: boolean;
   vencido: boolean;
   /** Discriminado do documento — presente em funcionário (holerite completo) e
