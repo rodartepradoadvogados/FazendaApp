@@ -57,7 +57,11 @@ DECLARE
         'unidade_estoque', 'unidade_embalagem_estoque',
         'unidade_medida_embalagem_estoque', 'laboratorio',
         'categoria_medicamento', 'classificacao_medicamento_cad',
-        'servico_cadastro', 'parametro_fazenda'
+        'servico_cadastro', 'parametro_fazenda',
+        -- as duas achadas ao conferir a contagem de produção (copy-on-write,
+        -- não `visivel()`): sem elas, a política ESTRITA esconderia as linhas
+        -- mestre do catálogo e quebraria a Farmácia e a biblioteca de alimentos.
+        'medicamento_principio_ativo', 'alimento_nutricional'
     ];
     ctx constant text := 'NULLIF(current_setting(''app.fazenda_id'', true), '''')::int';
     leitura text;

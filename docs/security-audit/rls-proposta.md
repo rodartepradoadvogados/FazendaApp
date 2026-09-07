@@ -40,8 +40,8 @@ Medido em `backend/fazenda/models.py`:
 | Tabelas com coluna `fazenda_id` | **185** |
 | Aceitam NULL | **170** |
 | Já são `NOT NULL` | **15** |
-| Catálogo global legítimo | **14** |
-| **Aceitam NULL sem ter direito** | **156** |
+| Catálogo global legítimo | **16** |
+| **Aceitam NULL sem ter direito** | **154** |
 
 O `fazenda_id` nulo significa duas coisas incompatíveis no mesmo esquema:
 
@@ -172,8 +172,57 @@ tabelas com `fazenda_id`):
 | Catálogo global (NULL legítimo) | 14 | 12 | **486** |
 | **Órfãos (NULL sem direito)** | 171 | **16** | **183** |
 
+*(números da consulta como ela foi rodada, com a lista de 14; a correção vem logo abaixo)*
+
 As 486 do catálogo são o esperado e não são problema: ali o NULL quer dizer
 "é de todo produtor".
+
+### A contagem revelou um erro na lista de catálogo — e ele era grave
+
+Rodada a triagem, **nenhum dos 183 órfãos era recuperável pelo pai**. Isso não
+fazia sentido, e ao investigar apareceu o motivo: **137 dos 183 não são órfãos.
+São catálogo global, e a lista das 14 tabelas estava incompleta.**
+
+| Tabela | Linhas | O que é de verdade |
+|---|---|---|
+| `medicamento_principio_ativo` | **125** | ligação N-N do catálogo. O próprio modelo diz: *"mesmo padrão de `IndicacaoTerapeutica` — clonagem por fazenda ao personalizar um medicamento do catálogo"*. E `indicacao_terapeutica` **está** na lista. |
+| `alimento_nutricional` | **12** | *"Biblioteca MESTRE CowData + cópia por fazenda (copy-on-write): `fazenda_id=None` marca uma linha da biblioteca mestre, global, igual para todas as fazendas"* |
+
+**Por que escaparam:** a lista original saiu de duas fontes — os `visivel()`
+explícitos e a fábrica `_crud_nome_ativo(..., global_compartilhado=True)`.
+Essas duas tabelas usam um **terceiro** mecanismo de catálogo, o
+copy-on-write por coluna de origem (`origem_id`, `origem_mestre_id`), que a
+varredura não cobria.
+
+**Por que isso era pior que uma contagem errada.** Se o DDL parametrizado
+tivesse rodado com a lista de 14, `medicamento_principio_ativo` receberia a
+política **estrita** — e as 125 ligações do catálogo global ficariam
+invisíveis para **todas** as fazendas. A Farmácia quebraria: medicamento
+combinado perderia os princípios ativos. O mesmo valeria para a biblioteca de
+alimentos. A ativação teria derrubado duas telas, e o erro só apareceria
+depois, em produção.
+
+O erro foi encontrado porque a contagem foi rodada **antes** de qualquer
+ativação, e porque o resultado `recuperaveis_pelo_pai = 0` era estranho o
+bastante para exigir explicação em vez de aceitação.
+
+**Lista corrigida: 16 tabelas de catálogo global.** Os arquivos
+`rls-migracao-proposta.sql` e `orfaos-triagem.sql` foram atualizados.
+
+**Números corrigidos:**
+
+| | Antes (lista de 14) | Corrigido (lista de 16) |
+|---|---|---|
+| Catálogo global | 486 linhas | **623 linhas** |
+| **Órfãos de verdade** | 183 linhas | **46 linhas** |
+
+Os 46 restantes são dado legado, não catálogo: `conta_gerencial` (12),
+`tipo_documento` (9), `lancamento_anexo` (8) e mais 17 linhas espalhadas — os
+modelos dizem, nas três, *"nulo para todo lançamento já existente antes da
+migração de backfill"*.
+
+**E nenhum deles tem pai que saiba a fazenda.** Com `fazendas_reais = 2`, os
+46 são decisão do dono, um a um — mas 46 é uma lista que cabe numa conversa.
 
 **E o dado que muda a etapa 3: `fazendas_reais = 2`** (3 no total, uma delas a
 fazenda lógica da CowData). A migração `029227481e9e` tem três estratégias, e
