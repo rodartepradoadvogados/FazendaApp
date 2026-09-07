@@ -38,11 +38,19 @@ export type ValeDaLinhaTempo = {
   forma_pagamento: string;
   observacao: string | null;
   numero_lancamento_gerado: string | null;
-  parcelas_detalhe?: { id: number; competencia: string; valor: number; aplicada: boolean }[];
+  /** `assumida_pela_fazenda` e `motivo_assuncao` JÁ vinham no `model_dump()`
+   *  de cada parcela em `GET /cadastro/vales` — o que faltava era a linha do
+   *  tempo olhar para eles: sem esse terceiro estado, a parcela que a fazenda
+   *  assumiu caía no ramo de `aplicada` e era escrita como "descontada na
+   *  folha de ago/2026", que é o oposto do que aconteceu. */
+  parcelas_detalhe?: {
+    id: number; competencia: string; valor: number; aplicada: boolean;
+    assumida_pela_fazenda?: boolean; motivo_assuncao?: string | null;
+  }[];
   origem_lancamento?: { numero_documento: string | null; produto: string | null; fornecedor_cliente: string | null } | null;
 };
 
-export type TomEvento = "pago" | "aberto" | "vencido" | "estourada" | "vale" | "parcela";
+export type TomEvento = "pago" | "aberto" | "vencido" | "estourada" | "vale" | "parcela" | "assumida";
 
 export type EventoPessoa = {
   id: string;
@@ -56,8 +64,11 @@ export type EventoPessoa = {
   tom: TomEvento;
   valor: number;
   /** `recebe` entra para a pessoa; `desconta` sai da folha dela; `tira` é o
-   *  vale em si (dinheiro que ela já pegou e vai devolver em parcelas). */
-  sentido: "recebe" | "desconta" | "tira";
+   *  vale em si (dinheiro que ela já pegou e vai devolver em parcelas);
+   *  `assumida` é a parcela que a FAZENDA pagou no lugar dela — não saiu do
+   *  salário de ninguém, então não pode ser escrita com o menos vermelho de
+   *  um desconto (a tela lê o sinal daqui). */
+  sentido: "recebe" | "desconta" | "tira" | "assumida";
 };
 
 const MESES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
@@ -170,6 +181,13 @@ export function eventosDaPessoa(
     });
     parcelas.forEach((p, i) => {
       const dataFolha = dataPorCompetencia.get(p.competencia);
+      // TRÊS estados, não dois. A parcela assumida pela fazenda tem
+      // `aplicada = true` (a folha daquele mês passou por ela e a marcou),
+      // então o ramo antigo a escrevia "descontada na folha de ago/2026" —
+      // e o funcionário não foi descontado de nada: quem pagou foi a
+      // fazenda. O estado assumido é testado ANTES de `aplicada` justamente
+      // porque os dois convivem na mesma parcela.
+      const assumida = !!p.assumida_pela_fazenda;
       eventos.push({
         id: `parcela-${p.id}`,
         grupo: `vale-${vale.id}`,
@@ -177,13 +195,16 @@ export function eventosDaPessoa(
         titulo: total > 1
           ? `Parcela ${i + 1}/${total} — ${descricaoVale(vale)}`
           : `Parcela única — ${descricaoVale(vale)}`,
-        sub: p.aplicada
-          ? `descontada na folha de ${mesAbrev(p.competencia)}`
-          : `prevista para a competência ${mesAbrev(p.competencia)} · ainda não descontada`,
-        selo: p.aplicada ? "Parcela" : "A descontar",
-        tom: "parcela",
+        sub: assumida
+          ? `assumida pela fazenda em ${mesAbrev(p.competencia)} · não foi descontada`
+            + (p.motivo_assuncao ? ` · ${p.motivo_assuncao}` : "")
+          : p.aplicada
+            ? `descontada na folha de ${mesAbrev(p.competencia)}`
+            : `prevista para a competência ${mesAbrev(p.competencia)} · ainda não descontada`,
+        selo: assumida ? "Assumida" : p.aplicada ? "Parcela" : "A descontar",
+        tom: assumida ? "assumida" : "parcela",
         valor: p.valor,
-        sentido: "desconta",
+        sentido: assumida ? "assumida" : "desconta",
       });
     });
   }
@@ -223,6 +244,12 @@ export function resumoDaPessoa(
   for (const vale of vales) {
     if (vale.pessoa_id !== pessoaId) continue;
     for (const p of vale.parcelas_detalhe || []) {
+      // Parcela assumida pela fazenda não é dívida da pessoa, e sai da conta
+      // ANTES de `aplicada` ser consultada. Hoje o desconsiderar acaba
+      // marcando `aplicada` de tabela, e por isso o saldo já vinha certo — por
+      // acidente. Escrever a regra aqui é o que impede o acidente de virar
+      // erro no dia em que a marca não for gravada.
+      if (p.assumida_pela_fazenda) continue;
       if (!p.aplicada) { saldoValesAberto += p.valor; parcelasAberto += 1; }
     }
     if ((vale.data_pagamento || "").startsWith(ano)) {
@@ -267,20 +294,32 @@ export function notaDoGrupo(
   const vale = vales.find((v) => v.id === id);
   if (!vale) return null;
   const parcelas = vale.parcelas_detalhe || [];
-  const aplicadas = parcelas.filter((p) => p.aplicada);
-  const abertas = parcelas.filter((p) => !p.aplicada);
+  // TRÊS categorias que não se misturam, e nenhuma parcela em duas delas: a
+  // assumida sai da conta primeiro, porque ela chega aqui com `aplicada`
+  // marcado e antes era contada como descontada — o rodapé dizia "3 de 13 já
+  // foram descontadas" incluindo um mês que a fazenda pagou. Ela também não
+  // "falta": não há nada a cobrar por ela.
+  const assumidas = parcelas.filter((p) => p.assumida_pela_fazenda);
+  const descontadas = parcelas.filter((p) => !p.assumida_pela_fazenda && p.aplicada);
+  const abertas = parcelas.filter((p) => !p.assumida_pela_fazenda && !p.aplicada);
   const saldo = arredonda2(abertas.reduce((a, p) => a + p.valor, 0));
+  const assumido = arredonda2(assumidas.reduce((a, p) => a + p.valor, 0));
   const proximas = abertas.map((p) => mesAbrev(p.competencia));
+  const mesesAssumidos = assumidas.map((p) => mesAbrev(p.competencia));
   return {
     titulo: `${descricaoVale(vale)} de ${brl(vale.valor_total)} — ${parcelas.length} ${parcelas.length === 1 ? "parcela acesa" : "parcelas acesas"} acima`,
     texto: [
       `Tirado em ${dataBR(vale.data_pagamento)}.`,
-      aplicadas.length
-        ? `${aplicadas.length} de ${parcelas.length} já ${aplicadas.length === 1 ? "foi descontada" : "foram descontadas"}.`
+      descontadas.length
+        ? `${descontadas.length} de ${parcelas.length} já ${descontadas.length === 1 ? "foi descontada" : "foram descontadas"}.`
         : "Nenhuma parcela foi descontada ainda.",
+      assumidas.length
+        ? `A fazenda assumiu ${assumidas.length} (${brl(assumido)}), em ${mesesAssumidos.join(", ")} — `
+          + `${assumidas.length === 1 ? "esse mês não foi descontado" : "esses meses não foram descontados"} do funcionário.`
+        : "",
       abertas.length
         ? `Faltam ${abertas.length} (${brl(saldo)} a descontar), em ${proximas.join(", ")}.`
         : "Não há saldo a descontar.",
-    ].join(" "),
+    ].filter(Boolean).join(" "),
   };
 }

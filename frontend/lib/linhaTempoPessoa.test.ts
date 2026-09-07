@@ -159,3 +159,67 @@ test("a nota do grupo conta o que já saiu, o que falta e em que meses", () => {
   assert.match(nota.texto, /Faltam 1 \(R\$ 985\.00 a descontar\), em ago\/2026/);
   assert.equal(notaDoGrupo([vale()], "vale-999", brl), null);
 });
+
+// ---------------------------------------------------------------------------
+// O TERCEIRO ESTADO da parcela: assumida pela fazenda
+//
+// O CASO REAL. O dono desconsiderou a parcela de 2026-08 (R$ 985,00, a
+// fazenda assumiu) e a linha do tempo escreveu "descontada na folha de
+// ago/2026", com selo "Parcela", e o rodapé do vale contou "3 de 13 já foram
+// descontadas". Nada disso aconteceu: o funcionário não foi descontado, quem
+// pagou foi a fazenda. A armadilha é que a parcela assumida chega com
+// `aplicada` marcado — a folha do mês passa por ela e marca —, então o ramo
+// de "já descontada" a engolia sem nenhuma pista.
+// ---------------------------------------------------------------------------
+/** O vale do caso do dono: a parcela de agosto desconsiderada. */
+function valeComAssumida(): ValeDaLinhaTempo {
+  return vale({
+    parcelas_detalhe: [
+      { id: 1, competencia: "2026-06", valor: 985, aplicada: true },
+      // Assumida E `aplicada`: é exatamente assim que ela fica no banco.
+      { id: 2, competencia: "2026-07", valor: 985, aplicada: true, assumida_pela_fazenda: true, motivo_assuncao: "trator quebrado" },
+      { id: 3, competencia: "2026-08", valor: 985, aplicada: false },
+    ],
+  });
+}
+
+test("parcela assumida pela fazenda não é 'descontada' — selo, texto e sinal próprios", () => {
+  const eventos = eventosDaPessoa([folha()], [valeComAssumida()], 3, brl);
+  const assumida = eventos.find((e) => e.id === "parcela-2")!;
+  assert.equal(assumida.selo, "Assumida");
+  assert.match(assumida.sub, /assumida pela fazenda em jul\/2026/);
+  assert.match(assumida.sub, /não foi descontada/);
+  // O motivo que o dono escreveu vai junto — é o que explica a decisão.
+  assert.match(assumida.sub, /trator quebrado/);
+  assert.equal(assumida.tom, "assumida");
+  // `sentido` é o que faz a tela escrever "− R$ 985,00" em vermelho: não saiu
+  // do salário de ninguém, então não pode ser um desconto.
+  assert.equal(assumida.sentido, "assumida");
+  // E as outras duas continuam como eram.
+  assert.equal(eventos.find((e) => e.id === "parcela-1")!.selo, "Parcela");
+  assert.equal(eventos.find((e) => e.id === "parcela-3")!.selo, "A descontar");
+});
+
+test("o rodapé do vale conta as três categorias sem confundi-las", () => {
+  const nota = notaDoGrupo([valeComAssumida()], "vale-12", brl)!;
+  // Descontadas: só a de junho. A de julho NÃO entra aqui (era o "3 de 13").
+  assert.match(nota.texto, /1 de 3 já foi descontada/);
+  assert.match(nota.texto, /A fazenda assumiu 1 \(R\$ 985\.00\), em jul\/2026 — esse mês não foi descontado do funcionário/);
+  // E a assumida também não "falta": o que falta é só agosto.
+  assert.match(nota.texto, /Faltam 1 \(R\$ 985\.00 a descontar\), em ago\/2026/);
+  assert.doesNotMatch(nota.texto, /jul\/2026 *\./);
+});
+
+test("a assumida não vira saldo a descontar nem quando a folha ainda não a marcou", () => {
+  // `aplicada: false` de propósito: hoje o desconsiderar acaba marcando, e o
+  // saldo vinha certo por acidente. A regra tem de ser o assumido, não a marca.
+  const v = vale({
+    parcelas_detalhe: [
+      { id: 1, competencia: "2026-07", valor: 985, aplicada: false, assumida_pela_fazenda: true },
+      { id: 2, competencia: "2026-08", valor: 985, aplicada: false },
+    ],
+  });
+  const r = resumoDaPessoa([], [v], 3, "2026");
+  assert.equal(r.saldoValesAberto, 985);
+  assert.equal(r.parcelasAberto, 1);
+});

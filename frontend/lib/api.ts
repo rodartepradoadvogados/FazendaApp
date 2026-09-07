@@ -2338,6 +2338,21 @@ export type LinhaHolerite = {
   desconto: number | null;
   origem: OrigemVale | OrigemRetencao | OrigemRubrica | null;
 };
+/**
+ * Parcela de vale que a FAZENDA assumiu (mês desconsiderado ou vale
+ * cancelado). Chega num campo SEPARADO de `detalhe` — nunca dentro dele —
+ * porque não é desconto de ninguém e não pode entrar em soma nenhuma; existe
+ * só para o painel de vale explicar por que o desconto sumiu daquele mês e
+ * continuar oferecendo o botão "Ações", que é a porta para desfazer.
+ * `provento`/`desconto`/`valor` vêm neutros do servidor pelo mesmo motivo: o
+ * valor real está em `valor_assumido`.
+ */
+export type LinhaValeAssumido = Omit<LinhaHolerite, "tipo"> & {
+  tipo: "vale_assumido";
+  valor_assumido: number;
+  motivo: string | null;
+  competencia: string;
+};
 export type TotaisHolerite = {
   total_proventos: number;
   total_descontos: number;

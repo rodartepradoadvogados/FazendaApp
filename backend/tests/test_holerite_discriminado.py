@@ -522,6 +522,11 @@ class TestIsolamentoEntreFazendas:
 
             contexto = _contexto_discriminacao(s, [minha_folha])
             assert contexto["parcelas_por_pessoa_competencia"] == {}
+            # O índice das parcelas ASSUMIDAS pela fazenda (a linha informativa
+            # do mês desconsiderado) tem o mesmo escopo, e por isso a mesma
+            # trava: ele nasce da mesma varredura, e uma parcela da vizinha não
+            # pode entrar nele nem como explicação.
+            assert contexto["assumidas_por_pessoa_competencia"] == {}
             assert vale_vizinho_id not in contexto["vales"]
 
         detalhe = _linhas(c, minha_pessoa_id, "2026-07")

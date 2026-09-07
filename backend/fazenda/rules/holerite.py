@@ -199,6 +199,50 @@ def origem_vale(vale, parcela, k: int, n: int, origem_lancamento: dict | None) -
     }
 
 
+def linha_vale_assumido(vale, parcela, k: int, n: int, origem_lancamento: dict | None) -> dict:
+    """
+    A linha INFORMATIVA da parcela que a fazenda assumiu — o mês que o dono
+    mandou desconsiderar (ou o saldo de um vale cancelado).
+
+    POR QUE ELA EXISTE, e por que FORA de `detalhe`. Essa parcela não é
+    desconto de ninguém (`_valor_vale` a ignora), então ela não pode aparecer
+    entre os descontos do holerite: entrar ali a somaria no total de
+    descontos, no líquido e no recibo impresso. Só que, sumindo por completo,
+    ela levava junto o painel "Descontos de vale" daquela competência — e com
+    ele o botão "Ações", que é a ÚNICA porta para `reverter_desconsideracao`.
+    O dono desconsiderava por engano e ficava sem como voltar atrás naquele
+    mês.
+
+    A saída foi um campo SEPARADO na resposta da folha (`vale_assumido`), e
+    não uma marca dentro de `detalhe`: `detalhe` é somado em vários lugares
+    (`totais_holerite` aqui, `equacaoDoMes` e `verbasPagaveis` no frontend, e
+    daí o PDF e o Excel do holerite), e cada um teria de aprender a pular a
+    linha nova — um esquecimento e o holerite passa a cobrar do
+    funcionário um valor que a fazenda pagou.
+
+    Mesmo assim a linha nasce NEUTRA por dentro — `provento`/`desconto` em
+    None e `valor` zero —, para que nem um `detalhe + vale_assumido` escrito
+    por engano no futuro mova um centavo de qualquer total. O valor real vai
+    em `valor_assumido`, que nenhum somatório do sistema conhece.
+    """
+    return {
+        "label": f"Vale (parcela {k}/{n}) — assumido pela fazenda",
+        "valor": 0.0,
+        "tipo": "vale_assumido",
+        "descricao": descricao_vale(vale.observacao, origem_lancamento),
+        "referencia": referencia_vale(k, n, vale.data_pagamento),
+        "provento": None,
+        "desconto": None,
+        "origem": origem_vale(vale, parcela, k, n, origem_lancamento),
+        # O que esta linha acrescenta ao contrato da linha comum: quanto a
+        # fazenda assumiu, por quê, e em que mês — o texto que explica ao dono
+        # por que o desconto sumiu do holerite.
+        "valor_assumido": round(parcela.valor, 2),
+        "motivo": parcela.motivo_assuncao,
+        "competencia": parcela.competencia,
+    }
+
+
 def bases_holerite(registro) -> dict:
     """
     O rodapé HONESTO do holerite: só o que o banco sustenta.

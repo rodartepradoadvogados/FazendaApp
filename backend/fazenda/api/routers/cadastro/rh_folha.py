@@ -671,7 +671,8 @@ def _contexto_discriminacao(
     pessoa_ids = {r.pessoa_id for r in registros if r.pessoa_id}
     if not pessoa_ids:
         return {
-            "parcelas_por_pessoa_competencia": {}, "irmas_por_vale": {}, "vales": {}, "origens": {},
+            "parcelas_por_pessoa_competencia": {}, "assumidas_por_pessoa_competencia": {},
+            "irmas_por_vale": {}, "vales": {}, "origens": {},
             "rubricas": {}, "compras_rubricas": {},
         }
 
@@ -687,17 +688,27 @@ def _contexto_discriminacao(
     # completa do vale.
     competencias = {(r.pessoa_id, r.competencia) for r in registros}
     por_pessoa_competencia: dict[tuple[int, str], list[ValeParcela]] = {}
+    assumidas_por_pessoa_competencia: dict[tuple[int, str], list[ValeParcela]] = {}
     for p in parcelas:
+        chave = (p.pessoa_id, p.competencia)
+        if chave not in competencias:
+            continue
         # Parcela assumida pela fazenda não vira linha de DESCONTO no
         # holerite — ela não foi descontada de ninguém (ver `_valor_vale`).
         # Continua em `irmas_por_vale` acima, porque a numeração "3 de 13"
         # é a posição na sequência do vale e não muda por causa disso.
+        #
+        # Ela vai para um índice SEPARADO (e não para `por_pessoa_competencia`
+        # com uma marca) porque é `por_pessoa_competencia` que vira `detalhe`,
+        # e `detalhe` é somado em vários lugares: qualquer somatório que
+        # esquecesse de pular a marca voltaria a cobrar do funcionário o valor
+        # que a fazenda assumiu. Este índice alimenta só a linha informativa
+        # (ver `_vale_assumido_folha` e `holerite.linha_vale_assumido`).
         if p.assumida_pela_fazenda:
-            continue
-        chave = (p.pessoa_id, p.competencia)
-        if chave in competencias:
+            assumidas_por_pessoa_competencia.setdefault(chave, []).append(p)
+        else:
             por_pessoa_competencia.setdefault(chave, []).append(p)
-    for lista in por_pessoa_competencia.values():
+    for lista in (*por_pessoa_competencia.values(), *assumidas_por_pessoa_competencia.values()):
         lista.sort(key=lambda x: (x.vale_id, x.id or 0))
 
     vale_ids = {p.vale_id for p in parcelas}
@@ -714,6 +725,7 @@ def _contexto_discriminacao(
     todas_rubricas = [r for lista in rubricas.values() for r in lista]
     return {
         "parcelas_por_pessoa_competencia": por_pessoa_competencia,
+        "assumidas_por_pessoa_competencia": assumidas_por_pessoa_competencia,
         "irmas_por_vale": irmas_por_vale,
         "vales": vales,
         "origens": origens,
@@ -937,6 +949,43 @@ def _detalhe_folha(
     return detalhe
 
 
+def _vale_assumido_folha(
+    session: Session, registro: FolhaPagamento, contexto: dict | None = None,
+) -> list[dict]:
+    """
+    As parcelas de vale desta competência que a FAZENDA assumiu — o mês que o
+    dono mandou desconsiderar, ou o saldo varrido por um cancelamento.
+
+    Campo à parte de `detalhe`, NUNCA dentro dele: essas parcelas não foram
+    descontadas de ninguém (`_valor_vale` as ignora), e `detalhe` é a lista
+    que vira total de descontos, líquido, holerite impresso e verbas do
+    pop-up de pagamento. O motivo de elas voltarem a viajar até a tela é
+    outro: enquanto sumiam por completo, sumia junto o painel "Descontos de
+    vale" daquele mês — e com ele o botão "Ações", única porta para desfazer
+    a desconsideração (`reverter_desconsideracao` em rh_vale_acoes.py). O
+    dono errava o clique e ficava sem volta naquela competência.
+
+    Calculado SEMPRE ao vivo, inclusive em folha paga: aqui não há recibo a
+    congelar (nenhum valor destas linhas entra em conta nenhuma), e assumir/
+    reverter já é recusado em folha paga na origem, pela trava de
+    `_exigir_competencias_nao_pagas`.
+    """
+    ctx = contexto if contexto is not None else _contexto_discriminacao(session, [registro])
+    linhas: list[dict] = []
+    for p in ctx["assumidas_por_pessoa_competencia"].get((registro.pessoa_id, registro.competencia), []):
+        vale = ctx["vales"].get(p.vale_id)
+        if not vale:
+            continue
+        # "k de n" é a posição na sequência COMPLETA do vale (inclui as
+        # assumidas), a mesma numeração das linhas de desconto — senão a
+        # parcela assumida de agosto seria "2/12" no painel e "3/13" no vale.
+        irmas = ctx["irmas_por_vale"].get(p.vale_id, [p])
+        n = len(irmas)
+        k = next((i + 1 for i, x in enumerate(irmas) if x.id == p.id), 1)
+        linhas.append(holerite.linha_vale_assumido(vale, p, k, n, ctx["origens"].get(p.vale_id)))
+    return linhas
+
+
 @router.get("/folha-pagamento")
 def listar_folha_pagamento(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id)
@@ -1013,6 +1062,9 @@ def listar_folha_pagamento(
             "pessoa_nome": pessoas.get(r.pessoa_id, "—"),
             "data_vencimento": venc_por_numero.get(r.numero_lancamento_gerado),
             "detalhe": detalhe,
+            # Parcelas assumidas pela fazenda — informativas, FORA de
+            # `detalhe` e de `totais` de propósito (ver `_vale_assumido_folha`).
+            "vale_assumido": _vale_assumido_folha(session, r, contexto=contexto),
             # Totais das duas colunas + líquido e a flag de recibo impossível
             # (descontos maiores que vencimentos), calculados no servidor para
             # as duas telas de folha lerem exatamente o mesmo número.
