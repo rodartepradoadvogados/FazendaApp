@@ -60,7 +60,7 @@ que a tela usa (`frontend/lib/pagamentoFolhaRegras.ts`). Aqui só se confere.
 O QUE CADA ALTERAÇÃO GRAVA, e por que não há um caminho novo para nenhuma:
 
   rubrica     → o valor da própria `FolhaRubrica`, e `_recalcular_folha` (de
-                rh_folha_rubricas.py) refaz bases, retenções e líquido. É o
+                rh_folha.py) refaz bases, retenções e líquido. É o
                 mesmo caminho do PUT /rubricas/{id}; quando a rubrica é o
                 "aumento na folha", `_propagar_aumento` corre igual.
   salário     → NÃO reescreve `FolhaPagamento.valor_bruto`. O aumento vira uma
@@ -110,7 +110,8 @@ from .rh_folha import (
     _reconciliar_vale_competencias,
     _valor_vale,
 )
-from .rh_folha_rubricas import _propagar_aumento, _recalcular_folha
+from .rh_folha import _recalcular_folha
+from .rh_folha_rubricas import _propagar_aumento
 from .rh_vale_acoes import (
     ACAO_PAGAMENTO_FOLHA,
     ValeAcaoIn,
@@ -686,12 +687,17 @@ def _conferir_rubricas(
         # Zerar não é "editar para zero" — é excluir a linha, e isso se faz
         # em "Editar lançamento", com a linha sumindo do recibo.
         if novo <= 0:
+            # A saída indicada depende de QUEM manda no valor: a verba gerada
+            # pelo cadastro (vale-alimentação) não tem linha para excluir — a
+            # exclusão dela é desmarcar o benefício no cadastro do funcionário.
+            saida = (
+                "Para tirar a verba do holerite, desmarque o benefício no cadastro do funcionário."
+                if rubrica_folha.gerado_por_cadastro(rubrica.codigo, rubrica.especie)
+                else "Para tirar a verba do holerite, exclua a linha antes de pagar."
+            )
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    f"Informe um valor maior que zero para “{rubrica_folha.rotulo_rubrica(rubrica)}”. "
-                    "Para tirar a verba do holerite, exclua a linha antes de pagar."
-                ),
+                detail=f"Informe um valor maior que zero para “{rubrica_folha.rotulo_rubrica(rubrica)}”. {saida}",
             )
         _exigir_confirmacao(
             verba_pagamento.classe_da_rubrica(rubrica.codigo, rubrica.especie), pedido.confirmado,

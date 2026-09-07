@@ -49,12 +49,26 @@ com a contabilidade dele):
   não vencimento, e porque o fundamento dela é outro (art. 4º, parágrafo
   único, da mesma lei).
 
-VALE-ALIMENTAÇÃO NÃO ENTRA, e a ausência é deliberada: a natureza dele depende
-da FORMA de pagamento — pago em ticket/cartão dentro do PAT é indenizatório
-(CLT, art. 457, §2º, e Lei 14.442/2022), pago em DINHEIRO é salarial e integra
-as bases. O modelo não tem onde gravar a forma de pagamento de uma rubrica, e
-escolher um dos dois enquadramentos por padrão poria a base de INSS/IRRF/FGTS
-errada em metade dos casos — ver o relatório do PR.
+- `vale_alimentacao` — INDENIZATÓRIA, e é o único verbete do catálogo que
+  NINGUÉM LANÇA À MÃO: ele é GERADO pela folha a partir da configuração do
+  funcionário (`Pessoa.vale_alimentacao*`, ver `rules/vale_alimentacao.py`).
+  Está aqui, e não numa lista paralela, porque é isto que dá a ele rótulo,
+  fundamento, classe de edição e uma linha no holerite — sem inventar um
+  segundo caminho de verba. `gerado_por_cadastro` é o que faz os endpoints de
+  rubrica recusarem criar/editar/excluir esta linha na mão: quem manda é o
+  cadastro, e a folha refaz a linha sozinha.
+
+  ENQUADRAMENTO E A RESSALVA QUE FICA REGISTRADA. Adota-se o PADRÃO DO PAT —
+  ticket/cartão de uso exclusivo em alimentação: indenizatório, fora das bases
+  de INSS, IRRF e FGTS (CLT, art. 457, §2º; Lei 14.442/2022). Este catálogo
+  chegou a NÃO ter vale-alimentação exatamente porque a natureza dele depende
+  da FORMA de pagamento: pago em DINHEIRO ele é SALARIAL e integra as três
+  bases. O dono decidiu que não há campo de forma de pagamento ("o resto é
+  padrão"), então o sistema assume o PAT — não é descuido, é escolha, e ela
+  está errada para quem pagar em dinheiro. Se um dia for preciso cobrir esse
+  caso, o caminho é um CÓDIGO NOVO salarial mais o campo da forma no cadastro,
+  nunca reinterpretar este verbete: ele já estará congelado em holerites
+  emitidos (ver models/folha_rubrica.py).
 
 O QUE ESTE MÓDULO NÃO FAZ: não calcula a tabela progressiva do IRRF nem as
 faixas do INSS. O projeto inteiro trabalha com percentual informado pelo
@@ -155,11 +169,10 @@ CATALOGO_VENCIMENTOS: dict[str, dict] = {
         # A lei do vale-transporte é EXPRESSA: não tem natureza salarial, não
         # se incorpora à remuneração "para quaisquer efeitos" e não é base de
         # contribuição previdenciária nem de FGTS. É o enquadramento menos
-        # ambíguo do catálogo inteiro — por isso ele entra, e o
-        # vale-alimentação não (ver o relatório do PR): a natureza do
-        # auxílio-alimentação depende da FORMA de pagamento (ticket/cartão do
-        # PAT × dinheiro, Lei 14.442/2022), e o modelo não tem onde gravar
-        # essa forma. Adivinhar poria a base de INSS/IRRF/FGTS errada.
+        # ambíguo do catálogo inteiro. (O vale-alimentação, que por um tempo
+        # ficou de fora justamente por não ter enquadramento único, entrou
+        # depois por outro caminho — gerado pelo cadastro e no padrão do PAT;
+        # ver a docstring do módulo.)
         "natureza": NATUREZA_INDENIZATORIA,
         "incide_inss": False,
         "incide_irrf": False,
@@ -168,6 +181,31 @@ CATALOGO_VENCIMENTOS: dict[str, dict] = {
         # Quantos dias de deslocamento houve no mês é medição, não promessa.
         "alteracao": ALTERACAO_LIVRE,
         "fundamento": "Vale-transporte, sem natureza salarial — Lei 7.418/85, art. 2º",
+    },
+    "vale_alimentacao": {
+        "rotulo": "Vale-alimentação",
+        # Padrão do PAT — ver a docstring do módulo e a ressalva do dinheiro.
+        "natureza": NATUREZA_INDENIZATORIA,
+        "incide_inss": False,
+        "incide_irrf": False,
+        "incide_fgts": False,
+        "incorpora_base": False,
+        # CONTRATUAL, e a justificativa não é a natureza (vale-transporte é
+        # indenizatório e é livre): é a ORIGEM do número. O valor desta linha
+        # não é medido no mês por ninguém — ele é DERIVADO do que está no
+        # cadastro do funcionário (valor-base, diário/mensal, antecipado/
+        # vencido). Mudá-lo no ato do pagamento é pagar benefício diferente do
+        # combinado naquele mês: cabe, mas com o aviso do cadeado, e vale "daquele
+        # momento em diante" só para aquele holerite — o mês seguinte volta a
+        # sair do cadastro. Quem quer mudar o benefício muda o CADASTRO.
+        "alteracao": ALTERACAO_CONTRATUAL,
+        # A marca que tira este código do formulário de lançamento manual e faz
+        # os endpoints de rubrica recusarem POST/PUT/DELETE nele.
+        "gerado_por_cadastro": True,
+        "fundamento": (
+            "Auxílio-alimentação do PAT, sem natureza salarial — CLT, art. 457, §2º; "
+            "Lei 14.442/2022 (pago em dinheiro seria salarial)"
+        ),
     },
     "indenizacao": {
         "rotulo": "Indenização",
@@ -231,13 +269,41 @@ CATALOGO_DESCONTOS: dict[str, dict] = {
 }
 
 
+def gerado_por_cadastro(codigo: str, especie: str = ESPECIE_VENCIMENTO) -> bool:
+    """
+    True para o verbete cuja linha é GERADA pela folha a partir do cadastro da
+    pessoa, e não lançada à mão — hoje só o `vale_alimentacao`.
+
+    É a régua de três lugares ao mesmo tempo: some do formulário
+    (`catalogo_publico`), é recusado nos endpoints de rubrica (criar/editar/
+    excluir) e não recebe o texto livre do usuário colado no rótulo
+    (`rotulo_rubrica`). Uma marca só, para os três não divergirem.
+    """
+    catalogo = CATALOGO_VENCIMENTOS if especie == ESPECIE_VENCIMENTO else CATALOGO_DESCONTOS
+    return bool(catalogo.get(codigo, {}).get("gerado_por_cadastro"))
+
+
 def catalogo_publico() -> dict:
-    """O catálogo como a tela consome — a lista de escolhas do formulário, já
-    com o enquadramento, para o usuário LER a consequência antes de lançar (e
-    não descobrir depois, no valor retido)."""
+    """
+    O catálogo como a tela consome — a lista de escolhas do FORMULÁRIO de
+    lançamento, já com o enquadramento, para o usuário LER a consequência
+    antes de lançar (e não descobrir depois, no valor retido).
+
+    Os verbetes gerados pelo cadastro ficam DE FORA: oferecer
+    "Vale-alimentação" num <select> que o servidor recusaria seria convidar o
+    dono a um erro. Ele continua no catálogo interno (é de lá que a linha do
+    holerite tira rótulo, fundamento e classe de edição) — só não é uma
+    escolha de lançamento manual.
+    """
     return {
-        "vencimentos": [{"codigo": codigo, **dados} for codigo, dados in CATALOGO_VENCIMENTOS.items()],
-        "descontos": [{"codigo": codigo, **dados} for codigo, dados in CATALOGO_DESCONTOS.items()],
+        "vencimentos": [
+            {"codigo": codigo, **dados} for codigo, dados in CATALOGO_VENCIMENTOS.items()
+            if not dados.get("gerado_por_cadastro")
+        ],
+        "descontos": [
+            {"codigo": codigo, **dados} for codigo, dados in CATALOGO_DESCONTOS.items()
+            if not dados.get("gerado_por_cadastro")
+        ],
     }
 
 
@@ -278,6 +344,13 @@ def rotulo_rubrica(rubrica: FolhaRubrica) -> str:
     catalogo = CATALOGO_VENCIMENTOS if rubrica.especie == ESPECIE_VENCIMENTO else CATALOGO_DESCONTOS
     rotulo = catalogo.get(rubrica.codigo, {}).get("rotulo", rubrica.codigo)
     extra = (rubrica.descricao or "").strip()
+    if gerado_por_cadastro(rubrica.codigo, rubrica.especie):
+        # Numa rubrica gerada pelo cadastro não existe "texto livre do
+        # usuário": a `descricao` é a COMPOSIÇÃO do valor ("Diário · R$ 25,00
+        # × 31 dias · competência 08/2026"), que é explicação e vai para a
+        # coluna Referência (ver `referencia_rubrica`). Colada aqui, ela
+        # empurraria a conta inteira para a coluna Descrição do papel.
+        return rotulo
     return f"{rotulo} — {extra}" if extra else rotulo
 
 
@@ -294,6 +367,14 @@ def referencia_rubrica(rubrica: FolhaRubrica, compra: dict | None = None) -> str
     if rubrica.especie == ESPECIE_VENCIMENTO:
         natureza = "natureza salarial" if rubrica.natureza == NATUREZA_SALARIAL else "natureza indenizatória"
         texto = f"{natureza} · {_tributos_da_rubrica(rubrica)}"
+        extra = (rubrica.descricao or "").strip()
+        if extra and gerado_por_cadastro(rubrica.codigo, rubrica.especie):
+            # A conta que produziu o valor vem PRIMEIRO: num holerite, o que o
+            # dono confere na Referência do vale-alimentação é "R$ 25,00 × 31
+            # dias da competência 08/2026", não o regime tributário — que
+            # continua escrito logo depois, porque nenhuma linha deste
+            # documento declara valor sem declarar o regime.
+            texto = f"{extra} · {texto}"
         if rubrica.incorpora_base:
             # O aumento é a única rubrica cujo efeito não acaba no mês: dizer
             # em QUAL competência ele vira salário-base é o que evita o dono

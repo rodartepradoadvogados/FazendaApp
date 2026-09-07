@@ -4,6 +4,7 @@ import { Users, Plus, Pencil, Trash2, AlertTriangle, Check, X, Search, FileText,
 import {
   fetchPessoas, criarPessoa, atualizarPessoa, excluirPessoa, fetchTiposPessoa, criarTipoPessoa,
   CATEGORIAS_PESSOA_ANEXO, anexarArquivoPessoa, listarAnexosPessoa, excluirAnexoPessoa, urlAnexoPessoa, type AnexoPessoa,
+  type PeriodicidadeValeAlimentacao, type RegimeValeAlimentacao,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { maskTelefone, maskCpfCnpj, maskCep } from "@/lib/masks";
@@ -18,18 +19,32 @@ type Pessoa = {
   rg: string | null; data_nascimento: string | null; genero: string | null; estado_civil: string | null;
   endereco_rua: string | null; endereco_numero: string | null; endereco_bairro: string | null;
   endereco_cidade: string | null; endereco_uf: string | null;
+  vale_alimentacao: boolean;
+  vale_alimentacao_valor: number | null;
+  vale_alimentacao_periodicidade: PeriodicidadeValeAlimentacao | null;
+  vale_alimentacao_regime: RegimeValeAlimentacao | null;
 };
 type Form = {
   nome: string; tipos: string[]; telefones: string[]; emails: string[]; cpfCnpj: string; cep: string; observacoes: string; ativo: boolean;
   salarioBase: string; dataAdmissao: string;
   rg: string; dataNascimento: string; genero: string; estadoCivil: string;
   enderecoRua: string; enderecoNumero: string; enderecoBairro: string; enderecoCidade: string; enderecoUf: string;
+  // Vale-alimentação: CONFIGURAÇÃO do vínculo, não rubrica lançada mês a mês.
+  // A folha lê estes quatro e gera a linha do holerite sozinha (ver
+  // backend/fazenda/rules/vale_alimentacao.py).
+  valeAlimentacao: boolean; valeAlimentacaoValor: string;
+  valeAlimentacaoPeriodicidade: PeriodicidadeValeAlimentacao;
+  valeAlimentacaoRegime: RegimeValeAlimentacao;
 };
 type AnexoStagedPessoa = { file: File; categoria: string; data_validade: string };
 const formVazio: Form = {
   nome: "", tipos: ["Funcionário"], telefones: [], emails: [], cpfCnpj: "", cep: "", observacoes: "", ativo: true, salarioBase: "", dataAdmissao: "",
   rg: "", dataNascimento: "", genero: "", estadoCivil: "",
   enderecoRua: "", enderecoNumero: "", enderecoBairro: "", enderecoCidade: "", enderecoUf: "",
+  // Nasce desligado e nos padrões conservadores do servidor ("mensal" não
+  // multiplica por dias, "vencido" não desloca o benefício para outro mês).
+  valeAlimentacao: false, valeAlimentacaoValor: "",
+  valeAlimentacaoPeriodicidade: "mensal", valeAlimentacaoRegime: "vencido",
 };
 
 // Obrigatórios para cadastrar (decisão jul/2026): nome, CPF e endereço
@@ -54,6 +69,14 @@ function paraPayload(f: Form) {
     rg: s(f.rg), data_nascimento: s(f.dataNascimento), genero: s(f.genero), estado_civil: s(f.estadoCivil),
     endereco_rua: s(f.enderecoRua), endereco_numero: s(f.enderecoNumero), endereco_bairro: s(f.enderecoBairro),
     endereco_cidade: s(f.enderecoCidade), endereco_uf: s(f.enderecoUf),
+    // Com o benefício DESLIGADO os outros três não vão: mandar valor/
+    // periodicidade de um vale-alimentação desmarcado deixaria no cadastro um
+    // resto de configuração que a próxima pessoa leria como "está ligado".
+    vale_alimentacao: f.valeAlimentacao,
+    vale_alimentacao_valor: f.valeAlimentacao && f.valeAlimentacaoValor.trim() !== ""
+      ? parseFloat(f.valeAlimentacaoValor) : undefined,
+    vale_alimentacao_periodicidade: f.valeAlimentacao ? f.valeAlimentacaoPeriodicidade : undefined,
+    vale_alimentacao_regime: f.valeAlimentacao ? f.valeAlimentacaoRegime : undefined,
   };
 }
 
@@ -117,6 +140,10 @@ export default function CadastroPessoas() {
       rg: p.rg ?? "", dataNascimento: p.data_nascimento ?? "", genero: p.genero ?? "", estadoCivil: p.estado_civil ?? "",
       enderecoRua: p.endereco_rua ?? "", enderecoNumero: p.endereco_numero ?? "", enderecoBairro: p.endereco_bairro ?? "",
       enderecoCidade: p.endereco_cidade ?? "", enderecoUf: p.endereco_uf ?? "",
+      valeAlimentacao: !!p.vale_alimentacao,
+      valeAlimentacaoValor: p.vale_alimentacao_valor != null ? String(p.vale_alimentacao_valor) : "",
+      valeAlimentacaoPeriodicidade: p.vale_alimentacao_periodicidade ?? "mensal",
+      valeAlimentacaoRegime: p.vale_alimentacao_regime ?? "vencido",
     });
     setEditando(p.id); setMsg(null); setErroAnexo(null);
     setAnexosStaged([]);
@@ -455,6 +482,39 @@ function FormItem({
             title="Usada para calcular a folha proporcional do 1º mês de trabalho" /></div>
         <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
           <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativo</label></div>
+        {/* Vale-alimentação — CONFIGURAÇÃO do vínculo, não rubrica lançada mês
+            a mês: marcado aqui, a folha passa a gerar a verba sozinha em toda
+            competência ainda não paga (ver rules/vale_alimentacao.py). Os três
+            campos que dependem dele só aparecem quando está ligado — desligado
+            eles não significam nada e só ocupariam a tela. */}
+        <div className="flex items-end" style={{ gridColumn: "1 / -1" }}>
+          <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+            <input type="checkbox" checked={form.valeAlimentacao}
+              onChange={(e) => setForm({ ...form, valeAlimentacao: e.target.checked })} /> Tem vale-alimentação</label></div>
+        {form.valeAlimentacao && <>
+          <div><label style={labelStyle}>Valor-base do vale-alimentação (R$)</label>
+            <CampoMoeda style={inputStyle} value={Number(form.valeAlimentacaoValor) || 0}
+              onChange={(v) => setForm({ ...form, valeAlimentacaoValor: v ? String(v) : "" })} /></div>
+          <div><label style={labelStyle}>Diário ou mensal</label>
+            <select style={inputStyle} value={form.valeAlimentacaoPeriodicidade}
+              onChange={(e) => setForm({ ...form, valeAlimentacaoPeriodicidade: e.target.value as PeriodicidadeValeAlimentacao })}
+              title="Diário multiplica o valor-base pelos dias da competência (a mesma contagem que a folha já usa no salário); mensal é o valor cheio">
+              <option value="mensal">Mensal (valor cheio)</option>
+              <option value="diario">Diário (valor × dias da competência)</option>
+            </select></div>
+          <div><label style={labelStyle}>Pagamento</label>
+            <select style={inputStyle} value={form.valeAlimentacaoRegime}
+              onChange={(e) => setForm({ ...form, valeAlimentacaoRegime: e.target.value as RegimeValeAlimentacao })}
+              title="Para fins de competência: vencido sai na folha da própria competência; antecipado sai na folha da competência anterior">
+              <option value="vencido">Vencido (na folha da própria competência)</option>
+              <option value="antecipado">Antecipado (na folha da competência anterior)</option>
+            </select></div>
+          <p style={{ gridColumn: "1 / -1", fontSize: "0.68rem", color: "var(--text-muted)", margin: 0 }}>
+            A folha inclui o vale-alimentação sozinha no holerite das competências ainda não pagas — não é preciso
+            lançar nada mês a mês. Enquadramento adotado: auxílio-alimentação do PAT, sem natureza salarial e fora
+            das bases de INSS, IRRF e FGTS.
+          </p>
+        </>}
         <div style={{ gridColumn: "1 / -1" }}><label style={labelStyle}>Observações</label>
           <textarea style={{ ...inputStyle, minHeight: "2.4rem" }} value={form.observacoes} onChange={(e) => setForm({ ...form, observacoes: e.target.value })} /></div>
       </div>

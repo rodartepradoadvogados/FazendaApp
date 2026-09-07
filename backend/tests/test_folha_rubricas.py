@@ -143,7 +143,7 @@ class TestCatalogoTrabalhista:
         catalogo = rubrica_folha.CATALOGO_VENCIMENTOS
         assert set(catalogo) == {
             "bonificacao_produtividade", "aumento_folha", "gueltas", "vale_transporte",
-            "indenizacao", "reembolso",
+            "vale_alimentacao", "indenizacao", "reembolso",
         }
         salariais = {"bonificacao_produtividade", "aumento_folha", "gueltas"}
         for codigo, dados in catalogo.items():
@@ -200,7 +200,15 @@ class TestCatalogoTrabalhista:
         r = c.get("/cadastro/folha-pagamento/rubricas/catalogo", headers=_cab(1))
         assert r.status_code == 200, r.text
         corpo = r.json()
-        assert {v["codigo"] for v in corpo["vencimentos"]} == set(rubrica_folha.CATALOGO_VENCIMENTOS)
+        # O endpoint serve o formulário de LANÇAMENTO manual, e por isso ele
+        # não é o catálogo inteiro: o `vale_alimentacao` é gerado a partir do
+        # cadastro do funcionário e fica de fora do <select> (oferecer uma
+        # escolha que o servidor recusaria seria convidar ao erro).
+        assert {v["codigo"] for v in corpo["vencimentos"]} == {
+            codigo for codigo, dados in rubrica_folha.CATALOGO_VENCIMENTOS.items()
+            if not dados.get("gerado_por_cadastro")
+        }
+        assert "vale_alimentacao" not in {v["codigo"] for v in corpo["vencimentos"]}
         assert {d["codigo"] for d in corpo["descontos"]} == {
             "desconto_valor", "desconto_compra", "desconto_vale_transporte",
         }

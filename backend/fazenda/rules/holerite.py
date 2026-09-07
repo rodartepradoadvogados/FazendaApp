@@ -33,6 +33,7 @@ Funções puras (sem I/O): quem chama carrega os objetos e passa. Ver
 """
 from __future__ import annotations
 
+import calendar
 from datetime import date
 
 # Ordem FIXA das linhas — requisito de documento: dois meses seguidos
@@ -98,14 +99,46 @@ def linha(
     }
 
 
+def dias_da_competencia(competencia: str, data_admissao: date | None) -> tuple[int, int]:
+    """
+    (dias contados, dias do mês) de uma competência — a ÚNICA contagem de dias
+    que a folha deste sistema conhece.
+
+    Ela já existia escrita duas vezes, com a mesma fórmula: em
+    `_proporcional_admissao` (que sugere o valor proporcional do 1º mês) e
+    logo abaixo, em `referencia_bruto` (que escreve esse fato no recibo).
+    Passa a existir uma vez só porque agora tem um terceiro chamador — o
+    vale-alimentação diário, que multiplica o valor-base pelos dias da
+    competência (ver `rules/vale_alimentacao.py`). Três cópias da mesma
+    fórmula é como um mês de 28 dias vira 30 em um dos lugares e ninguém nota.
+
+    A REGRA, e o que ela deliberadamente NÃO é:
+    - fora do mês de admissão, são os dias CORRIDOS do mês (28/29/30/31), e
+      não dias úteis: o sistema não tem calendário de jornada nem registro de
+      faltas para quem está na folha (`DiariaDia` é do diarista, que não entra
+      em folha de pagamento). Inventar um "dia útil" aqui seria inventar uma
+      contagem que o banco não sustenta;
+    - no mês de admissão, são os dias a partir da admissão, inclusive — a
+      mesma proporcionalidade que a folha já aplica ao salário.
+    """
+    ano, mes = (int(x) for x in competencia.split("-"))
+    dias_mes = calendar.monthrange(ano, mes)[1]
+    if data_admissao and data_admissao.strftime("%Y-%m") == competencia:
+        return dias_mes - data_admissao.day + 1, dias_mes
+    return dias_mes, dias_mes
+
+
 def referencia_bruto(data_admissao: date | None, competencia: str, dias_mes: int | None) -> str:
     """
     Referência da linha de salário. NUNCA escreve "30 Dias" (o divisor usado
     não está gravado em lugar nenhum); no mês de admissão escreve o fato que o
     cadastro sustenta — a data de admissão e quantos dias do mês ela deixou.
+
+    `dias_mes` continua na assinatura (o chamador já o tem em mãos) mas quem
+    conta é `dias_da_competencia`: uma contagem só para o sistema inteiro.
     """
     if data_admissao and data_admissao.strftime("%Y-%m") == competencia and dias_mes:
-        trabalhados = dias_mes - data_admissao.day + 1
+        trabalhados, _ = dias_da_competencia(competencia, data_admissao)
         return f"Admissão em {data_admissao.strftime('%d/%m')} · {trabalhados} de {dias_mes} dias do mês"
     return "Mensal"
 

@@ -2155,11 +2155,22 @@ export async function fetchPessoas() {
   if (!res.ok) throw new Error(`Pessoas error: ${res.status}`);
   return res.json();
 }
+/** Periodicidade e regime do vale-alimentação — ver
+ *  `backend/fazenda/rules/vale_alimentacao.py`. "antecipado" significa que o
+ *  VA de uma competência sai na folha da competência ANTERIOR. */
+export type PeriodicidadeValeAlimentacao = "diario" | "mensal";
+export type RegimeValeAlimentacao = "antecipado" | "vencido";
 type PessoaDados = {
   nome: string; tipos: string[]; telefones?: string[]; emails?: string[]; cpf_cnpj?: string; cep?: string;
   observacoes?: string; ativo?: boolean; salario_base?: number; data_admissao?: string;
   rg?: string; data_nascimento?: string; genero?: string; estado_civil?: string;
   endereco_rua?: string; endereco_numero?: string; endereco_bairro?: string; endereco_cidade?: string; endereco_uf?: string;
+  /** Configuração do vale-alimentação: a folha gera a linha do holerite a
+   *  partir daqui, não de uma rubrica lançada mês a mês. */
+  vale_alimentacao?: boolean;
+  vale_alimentacao_valor?: number;
+  vale_alimentacao_periodicidade?: PeriodicidadeValeAlimentacao;
+  vale_alimentacao_regime?: RegimeValeAlimentacao;
 };
 export async function criarPessoa(dados: PessoaDados) {
   const res = await authFetch(`${API}/cadastro/pessoas`, {

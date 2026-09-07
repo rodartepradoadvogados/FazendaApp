@@ -22,13 +22,14 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    ContaCorrente, ContaGerencial, DecimoTerceiro, FeriasFuncionario, FolhaPagamento, GuiaFolhaEncargo,
-    LancamentoAnexo, Pessoa, RescisaoFuncionario, Usuario, ValeAvulso, ValeFuncionario, ValeParcela,
+    ContaCorrente, ContaGerencial, DecimoTerceiro, FeriasFuncionario, FolhaPagamento, FolhaRubrica,
+    GuiaFolhaEncargo, LancamentoAnexo, Pessoa, RescisaoFuncionario, Usuario, ValeAvulso, ValeFuncionario,
+    ValeParcela,
 )
 from fazenda.api.routers.financeiro import TAMANHO_MAXIMO_ANEXO, _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
-from fazenda.rules import holerite, rubrica_folha
+from fazenda.rules import holerite, rubrica_folha, vale_alimentacao
 from fazenda.rules.folha_rh import (
     PARCELAS_DECIMO_TERCEIRO,
     calcular_decimo_terceiro,
@@ -237,6 +238,217 @@ def _marcar_vale_aplicado(session: Session, pessoa_id: int, competencia: str) ->
     for p in pendentes:
         p.aplicada = True
         session.add(p)
+
+
+def _recalcular_folha(session: Session, folha: FolhaPagamento) -> list[FolhaRubrica]:
+    """
+    Reprocessa a folha depois de qualquer mudança nas rubricas: as duas somas
+    em cache, as retenções sobre a base corrigida, o líquido e a conta a pagar.
+
+    Ordem importa e é a do holerite de papel: primeiro a base (bruto + as
+    rubricas SALARIAIS), depois as retenções sobre ela, e só então o líquido —
+    do qual saem os descontos, que nunca entraram em base nenhuma.
+
+    MOROU EM `rh_folha_rubricas.py` ATÉ AQUI, e mudou de casa quando o
+    vale-alimentação passou a gerar rubrica a partir do cadastro: a geração
+    acontece neste módulo (na criação da folha, na recorrência e no self-heal
+    da listagem) e `rh_folha_rubricas` já importa deste arquivo — importar de
+    volta seria um ciclo. Continua sendo UMA função só: `rh_folha_rubricas` e
+    `rh_folha_pagar` a importam daqui, para não existirem duas fórmulas de
+    líquido no sistema (o defeito que `_liquido_folha` fechou).
+    """
+    rubricas = session.exec(select(FolhaRubrica).where(FolhaRubrica.folha_id == folha.id)).all()
+    folha.valor_rubricas = rubrica_folha.valor_liquido_das_rubricas(rubricas)
+    folha.valor_rubricas_tributaveis = rubrica_folha.base_tributavel_das_rubricas(rubricas)
+
+    for campo, valor in rubrica_folha.retencoes_recalculadas(
+        folha.valor_bruto, folha.percentual_inss, folha.percentual_ir, folha.percentual_fgts, rubricas,
+    ).items():
+        setattr(folha, campo, valor)
+
+    # O vale vem sempre da SOMA das parcelas da competência: recalcular o
+    # líquido a partir de um `valor_vale` desatualizado no registro é como a
+    # folha já nascia inflada antes do self-heal da listagem.
+    folha.valor_vale = _valor_vale(session, folha.pessoa_id, folha.competencia)
+    folha.valor_liquido = _liquido_folha(
+        folha.valor_bruto, folha.descontos, folha.valor_inss, folha.valor_ir, folha.valor_vale,
+        folha.valor_rubricas,
+    )
+    session.add(folha)
+
+    # A conta a pagar é o número que o dono efetivamente paga: sem isto, o
+    # holerite mostraria a bonificação e o banco pagaria o valor antigo.
+    # Conta já BAIXADA não é tocada (não se reescreve pagamento feito) — e ela
+    # só existiria aqui numa folha paga, que os chamadores já barram.
+    if folha.numero_lancamento_gerado:
+        conta = session.exec(
+            select(ContaGerencial).where(
+                ContaGerencial.numero_lancamento == folha.numero_lancamento_gerado,
+                ContaGerencial.fazenda_id == folha.fazenda_id,
+            )
+        ).first()
+        if conta and conta.valor_pago is None:
+            conta.valor_total = folha.valor_liquido
+            session.add(conta)
+    return list(rubricas)
+
+
+# ---------------------------------------------------------------------------
+# Vale-alimentação — a verba que a folha gera a partir do CADASTRO da pessoa
+#
+# O dono recusou a ideia de uma rubrica lançada mês a mês e pediu o oposto:
+# "não precisa de uma rubrica para vale alimentação, só precisa de ter como
+# cadastrar se vai ter ou não e o valor-base, se diário ou mensal, se pago
+# antecipado ou vencido, para fins de competência, e o valor. O resto é
+# padrão." As regras (quanto, de que competência, com que contagem de dias)
+# são puras e moram em `rules/vale_alimentacao.py`; aqui fica só a gravação.
+#
+# POR QUE A LINHA É UMA `FolhaRubrica` COMUM, e não um campo novo na folha:
+# porque assim ela já entra no líquido (`valor_rubricas`), no discriminado, no
+# holerite impresso, no pop-up de pagamento e no congelamento do recibo, sem
+# nenhum caminho paralelo que cada uma dessas telas teria de aprender. O que a
+# distingue é a ORIGEM: quem manda no valor é o cadastro, e é por isso que os
+# endpoints de rubrica recusam criar/editar/excluir esta linha na mão.
+# ---------------------------------------------------------------------------
+def _pessoa_da_folha(session: Session, folha: FolhaPagamento) -> Pessoa | None:
+    """
+    A pessoa da folha, com o filtro de fazenda DENTRO da consulta e
+    INCONDICIONAL (`== folha.fazenda_id`, que em None vira `IS NULL`).
+
+    Nunca `session.get(Pessoa, ...)` cru aqui: o que sai desta função vira
+    dinheiro gravado no holerite de alguém, e o padrão tolerante
+    ("se veio fazenda, filtra") é exatamente o que deixaria a configuração de
+    vale-alimentação de um inquilino gerar verba na folha de outro.
+    """
+    return session.exec(
+        select(Pessoa).where(Pessoa.id == folha.pessoa_id, Pessoa.fazenda_id == folha.fazenda_id)
+    ).first()
+
+
+def _sincronizar_vale_alimentacao(
+    session: Session, folha: FolhaPagamento, pessoa: Pessoa | None = None,
+    *, recem_criada: bool = False,
+) -> bool:
+    """
+    Põe a linha de vale-alimentação desta folha igual ao que o CADASTRO diz —
+    criando, corrigindo ou removendo. Devolve True quando mexeu em algo (o
+    chamador então roda `_recalcular_folha`), False quando já estava certo.
+
+    FOLHA PAGA NÃO É TOCADA, e a recusa é a primeira coisa que a função faz:
+    a discriminação dela foi congelada no pagamento porque o holerite é PROVA.
+    Ligar o vale-alimentação hoje acrescenta a verba nas competências ainda
+    abertas e não reescreve um centavo de nenhum mês já pago; DESLIGAR também
+    não apaga a verba de um recibo já emitido.
+
+    `recem_criada` é a ÚNICA exceção, e ela não abre a porta que a regra
+    fecha: o lançamento que já NASCE pago (`POST /folha-pagamento` com
+    `status="pago"`) é gravado e congelado dentro da mesma requisição, e entre
+    o INSERT e o congelamento ele ainda não é recibo de nada — não existe
+    dinheiro anterior a preservar ali. Sem esta exceção, quem lança a folha já
+    paga ficaria com um holerite sem a verba que o funcionário recebeu.
+    Nenhum outro chamador passa a marca: a folha paga que veio do banco
+    (listagem, recorrência) continua intocável, e a que já tem fotografia é
+    recusada mesmo com a marca ligada.
+
+    NÃO COMMITA: quem chama decide a transação, porque a linha, o líquido e a
+    conta a pagar têm de cair juntos se algo falhar no meio (mesmo motivo do
+    `flush` em `criar_rubrica_folha`).
+    """
+    if folha.discriminacao_congelada_em is not None:
+        return False
+    if folha.status == "pago" and not recem_criada:
+        return False
+    if pessoa is not None and pessoa.fazenda_id != folha.fazenda_id:
+        # Objeto vindo de um mapa de outra consulta: só é aceito se for MESMO
+        # da fazenda da folha. Divergiu, refaz a busca filtrada.
+        pessoa = None
+    if pessoa is None:
+        pessoa = _pessoa_da_folha(session, folha)
+    if pessoa is None:
+        return False
+
+    calculo = vale_alimentacao.calcular(pessoa, folha.competencia)
+    existente = session.exec(
+        select(FolhaRubrica).where(
+            FolhaRubrica.folha_id == folha.id,
+            FolhaRubrica.codigo == vale_alimentacao.CODIGO,
+        )
+    ).first()
+
+    if calculo is None:
+        # Benefício desligado (ou sem valor-base): a linha sai do holerite das
+        # competências abertas. Só as pagas guardam o que foi pago.
+        if existente is None:
+            return False
+        session.delete(existente)
+        session.flush()
+        return True
+
+    verbete = rubrica_folha.CATALOGO_VENCIMENTOS[vale_alimentacao.CODIGO]
+    descricao = vale_alimentacao.descricao(calculo)
+    valor = calculo["valor"]
+
+    if existente is not None:
+        # `competencia`/`pessoa_id` são redundantes com a folha por desenho
+        # (ver models/folha_rubrica.py) — e o PUT de folha permite trocar as
+        # duas coisas num lançamento ainda aberto. Realinhar aqui é o que
+        # impede a linha de continuar afirmando um mês ou um funcionário que a
+        # folha já não tem.
+        alinhada = (
+            existente.competencia == folha.competencia and existente.pessoa_id == folha.pessoa_id
+        )
+        if (
+            alinhada
+            and abs(existente.valor - valor) <= 0.001
+            and (existente.descricao or "") == descricao
+        ):
+            return False
+        # O valor-base mudou no cadastro (ou o mês mudou de tamanho): a linha
+        # da competência ABERTA acompanha. É o mesmo princípio do self-heal do
+        # vale na listagem — o holerite não pago mostra o que será pago.
+        existente.competencia = folha.competencia
+        existente.pessoa_id = folha.pessoa_id
+        existente.valor = valor
+        existente.descricao = descricao
+        session.add(existente)
+        session.flush()
+        return True
+
+    session.add(FolhaRubrica(
+        fazenda_id=folha.fazenda_id,
+        folha_id=folha.id,
+        pessoa_id=folha.pessoa_id,
+        competencia=folha.competencia,
+        especie=rubrica_folha.ESPECIE_VENCIMENTO,
+        codigo=vale_alimentacao.CODIGO,
+        descricao=descricao,
+        valor=valor,
+        # Enquadramento COPIADO do catálogo, igual à rubrica lançada à mão: o
+        # recibo já emitido não muda de conteúdo se a lei mudar depois.
+        natureza=verbete["natureza"],
+        incide_inss=bool(verbete["incide_inss"]),
+        incide_irrf=bool(verbete["incide_irrf"]),
+        incide_fgts=bool(verbete["incide_fgts"]),
+        incorpora_base=bool(verbete["incorpora_base"]),
+        # `usuario_id` fica nulo: ninguém lançou esta linha — ela veio do
+        # cadastro. Carimbar quem abriu a tela seria atribuir a uma pessoa um
+        # lançamento que ela não fez.
+    ))
+    session.flush()
+    return True
+
+
+def _aplicar_vale_alimentacao(
+    session: Session, folha: FolhaPagamento, pessoa: Pessoa | None = None,
+    *, recem_criada: bool = False,
+) -> bool:
+    """Sincroniza a linha e, se ela mudou, refaz bases/retenções/líquido e a
+    conta a pagar. É o par que todo chamador precisa — separado só para o
+    self-heal da listagem poder saber se houve mudança a commitar."""
+    if not _sincronizar_vale_alimentacao(session, folha, pessoa, recem_criada=recem_criada):
+        return False
+    _recalcular_folha(session, folha)
+    return True
 
 
 def _rescisao_fechada_encerra_competencia(
@@ -528,6 +740,14 @@ def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> 
                     fazenda_id=fazenda_id,
                 ))
                 session.commit()
+                # Vale-alimentação do cadastro: a competência gerada nasce com
+                # a verba, e não só a partir da primeira vez que alguém abrir a
+                # listagem. Depois do commit, porque a rubrica precisa do id da
+                # folha; e o recálculo daqui é o que deixa a CONTA A PAGAR já
+                # nascer com o valor certo — é ela que o dono paga.
+                session.refresh(nova)
+                if _aplicar_vale_alimentacao(session, nova, pessoa):
+                    session.commit()
             competencia = _competencia_seguinte(competencia)
 
 
@@ -1029,6 +1249,14 @@ def listar_folha_pagamento(
                     conta.valor_total = registro.valor_liquido
                     session.add(conta)
             houve_mudanca = True
+        # Vale-alimentação: mesma ideia do self-heal acima, e pelo mesmo
+        # motivo. Ligar o benefício (ou corrigir o valor-base) no cadastro tem
+        # de aparecer nas competências AINDA ABERTAS sem o dono ter de reabrir
+        # e salvar cada folha — e não pode aparecer nas pagas, que a própria
+        # `_sincronizar_vale_alimentacao` recusa. Roda DEPOIS do bloco do vale
+        # para não pular o `_marcar_vale_aplicado` dele.
+        if _aplicar_vale_alimentacao(session, registro):
+            houve_mudanca = True
     if houve_mudanca:
         session.commit()
         # O commit expira os objetos já carregados; recarrega para o model_dump.
@@ -1119,7 +1347,17 @@ def criar_folha_pagamento(
     _marcar_vale_aplicado(session, dados.pessoa_id, dados.competencia)
     valor_inss = round(dados.valor_inss, 2)
     valor_ir = round(dados.valor_ir, 2)
-    valor_liquido = _liquido_folha(dados.valor_bruto, descontos, valor_inss, valor_ir, valor_vale)
+    # O vale-alimentação do cadastro entra JÁ no líquido que vai ser gravado e
+    # na conta a pagar que nasce logo abaixo. Não dá para deixar só para o
+    # `_aplicar_vale_alimentacao` de depois do commit: numa folha que já nasce
+    # PAGA a conta nasce com `valor_pago` preenchido, e conta baixada não é
+    # reescrita por ninguém (nem deve ser) — ela ficaria pagando o líquido sem
+    # a verba enquanto o holerite mostraria a verba.
+    calculo_va = vale_alimentacao.calcular(pessoa, dados.competencia)
+    valor_liquido = _liquido_folha(
+        dados.valor_bruto, descontos, valor_inss, valor_ir, valor_vale,
+        calculo_va["valor"] if calculo_va else 0.0,
+    )
     if valor_liquido <= 0:
         raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
     valor_fgts = _calcular_encargo_projetado(dados.valor_bruto, dados.percentual_fgts, dados.valor_fgts)
@@ -1164,6 +1402,14 @@ def criar_folha_pagamento(
     ))
     session.commit()
     session.refresh(registro)
+    # A LINHA do vale-alimentação (o valor dela já entrou no líquido acima).
+    # Só é criada agora porque a rubrica precisa do id da folha — e entra
+    # ANTES do congelamento abaixo, senão uma folha que já nasce paga viraria
+    # um recibo sem a verba que o funcionário recebeu. `recem_criada` é o que
+    # permite isso na folha já paga; ver `_sincronizar_vale_alimentacao`.
+    if _aplicar_vale_alimentacao(session, registro, pessoa, recem_criada=True):
+        session.commit()
+        session.refresh(registro)
     # Folha que já NASCE paga é recibo desde o primeiro instante: congela a
     # discriminação agora (ver `_congelar_discriminacao`). Depois do commit,
     # porque a fotografia tem de ser a do lançamento efetivamente gravado.
