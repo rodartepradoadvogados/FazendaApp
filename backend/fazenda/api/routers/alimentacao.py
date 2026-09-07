@@ -1849,14 +1849,27 @@ class EncerrarDietaIn(BaseModel):
 @router.put("/dietas/{dieta_id}/encerrar")
 def encerrar_dieta(
     dieta_id: int, dados: EncerrarDietaIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    # Escrita usa o resolvedor ESTRITO: `get_fazenda_atual_id` devolve None
+    # com token sem "fid", e aí a checagem de posse abaixo deixava de
+    # comparar qualquer coisa.
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
-    dieta = session.get(DietaLancamento, dieta_id)
-    # BUG DE SEGURANÇA CORRIGIDO: sem esta checagem, qualquer usuário
-    # autenticado podia encerrar a dieta ATIVA de outra fazenda só
-    # adivinhando dieta_id.
-    if not dieta or (fazenda_id is not None and dieta.fazenda_id != fazenda_id):
+    # BUG DE SEGURANÇA CORRIGIDO: sem o recorte por fazenda, qualquer usuário
+    # autenticado encerrava a dieta ATIVA de outra fazenda só adivinhando o
+    # dieta_id — interrompendo a baixa automática de estoque e a apuração da
+    # vítima.
+    #
+    # O recorte entra NA CONSULTA (padrão agenda.py::_buscar_da_fazenda), não
+    # num `if` sobre o objeto já carregado: assim "de outra fazenda" e "sem
+    # fazenda" caem os dois em não encontrado. 404 e nunca 403 — 403
+    # confirmaria ao atacante que aquela dieta existe.
+    dieta = session.exec(
+        select(DietaLancamento).where(
+            DietaLancamento.id == dieta_id,
+            DietaLancamento.fazenda_id == fazenda_id,
+        )
+    ).first()
+    if not dieta:
         raise HTTPException(status_code=404, detail="Dieta não encontrada")
     if dieta.data_efetivo_encerramento is not None:
         raise HTTPException(status_code=400, detail="Esta dieta já está encerrada")
