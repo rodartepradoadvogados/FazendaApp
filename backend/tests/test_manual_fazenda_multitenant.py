@@ -116,6 +116,28 @@ class TestSelecaoDeFazendas:
         with Session(engine) as s:
             assert mf.fazendas_do_envio_semanal(s) == [None]
 
+    def test_fazenda_desativada_nao_recebe_mais(self, engine):
+        """Cliente que saiu (fazenda `ativa = False`) sai do envio semanal — a
+        linha continua no cadastro pelo histórico, mas o PDF não pode mais
+        chegar no e-mail dele. A fazenda ativa ao lado é a contraprova de que
+        o filtro novo não derrubou quem ainda é cliente."""
+        with Session(engine) as s:
+            ativa = _fazenda(s, "Fazenda Ativa")
+            desativada = _fazenda(s, "Ex-cliente", ativa=False)
+            assert mf.fazendas_do_envio_semanal(s) == [ativa]
+            assert desativada not in mf.fazendas_do_envio_semanal(s)
+
+    def test_fazenda_desativada_com_envio_ligado_nao_dispara(self, engine, envios):
+        """Mesmo com o parâmetro semanal ligado e admin vinculado, a fazenda
+        desativada não manda nada — é o cenário real de quem saiu no meio do
+        mês com o envio ainda marcado."""
+        with Session(engine) as s:
+            desativada = _fazenda(s, "Ex-cliente", ativa=False)
+            _admin(s, "admin_ex", "ex@exemplo.com", desativada)
+            _liga_envio(s, desativada)
+            assert mf.enviar_manual_semanal_todas_fazendas(s, agora=SEGUNDA_7H) == []
+        assert envios == []
+
     def test_so_sandbox_e_cowdata_nao_sobra_ninguem(self, engine):
         """Banco provisionado mas sem nenhuma fazenda-cliente NÃO pode cair no
         comportamento global — devolve lista vazia, não [None]."""

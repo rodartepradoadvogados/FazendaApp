@@ -374,12 +374,17 @@ def enviar_manual_semanal_se_necessario(session: Session, fazenda_id: int | None
 def fazendas_do_envio_semanal(session: Session) -> list[int | None]:
     """As fazendas alvo do envio semanal do Manual — uma entrada por envio.
 
-    Só fazendas-CLIENTE. Descarta as duas que não são cliente, mesmo critério
-    de `_fazenda_cliente_unica()` na migração a4f8c1d92e07:
+    Só fazendas-CLIENTE ATIVAS. Descarta as duas que não são cliente, mesmo
+    critério de `_fazenda_cliente_unica()` na migração a4f8c1d92e07:
       • `eh_empresa_cowdata` — a fazenda "lógica" da própria CowData;
       • `eh_teste` — a sandbox de demonstração, que vive no MESMO banco de
         produção. A sandbox não pode disparar e-mail para ninguém: e-mail sai
         do sistema e não volta atrás.
+    E descarta também a fazenda DESATIVADA (`ativa = False`): cliente que saiu
+    continua com a linha no cadastro (o histórico não é apagado) e, se o
+    parâmetro dele tiver ficado ligado, seguia recebendo o PDF semanal por
+    e-mail toda segunda — dado da fazenda saindo do sistema para quem já não é
+    mais cliente, sem desfazer. Desativar a fazenda tem que calar o envio.
 
     Instalação de FAZENDA ÚNICA (tabela `fazenda` vazia — ambiente anterior ao
     multi-fazenda, e a suíte de testes que não monta o cenário) devolve
@@ -392,7 +397,11 @@ def fazendas_do_envio_semanal(session: Session) -> list[int | None]:
         return [None]
     return list(session.exec(
         select(Fazenda.id)
-        .where(Fazenda.eh_empresa_cowdata == False, Fazenda.eh_teste == False)  # noqa: E712
+        .where(
+            Fazenda.eh_empresa_cowdata == False,  # noqa: E712
+            Fazenda.eh_teste == False,  # noqa: E712
+            Fazenda.ativa == True,  # noqa: E712
+        )
         .order_by(Fazenda.id)
     ).all())
 
