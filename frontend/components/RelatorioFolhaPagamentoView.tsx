@@ -9,7 +9,7 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { Holerite } from "@/components/Holerite";
 import {
-  competenciaExtenso, filtrarPorSituacao, holeriteDaLinha, imprimirHolerites,
+  competenciaExtenso, filtrarPorSituacao, holeriteDaLinha, imprimirHolerites, rotuloStatusLinha,
   type Holerite as DocHolerite, type SituacaoPagamento,
 } from "@/lib/holerite";
 import type { ColunaExport } from "@/lib/export";
@@ -130,7 +130,9 @@ export default function RelatorioFolhaPagamentoView() {
     vencimentoFmt: l.data_vencimento ? formatDate(l.data_vencimento) : "—",
     valorFmt: formatBRL(l.valor),
     pagamentoFmt: l.data_pagamento ? formatDate(l.data_pagamento) : "—",
-    statusLabel: l.status === "pago" ? "Pago" : (l.vencido ? "Vencido" : "A vencer"),
+    statusLabel: l.status === "pago" ? "Pago"
+      : l.status === "cancelado_rescisao" ? "Na rescisão"
+      : (l.vencido ? "Vencido" : "A vencer"),
   })), [linhasOrdenadas]);
 
   // Lote: só o que pode ser emitido. Documento com desconto maior que
@@ -159,6 +161,22 @@ export default function RelatorioFolhaPagamentoView() {
 
   return (
     <div>
+      {/* As duas telas de folha diziam o que fazem só no texto do menu, que
+          some assim que se entra. Aqui o papel é dito na própria tela, com o
+          caminho para a outra: esta CONSULTA e IMPRIME; em Ações se lança, se
+          corrigem as rubricas e se paga. */}
+      <div className="card mb-4" style={{ borderLeft: "3px solid var(--dourado)" }}>
+        <div className="flex items-baseline gap-2" style={{ flexWrap: "wrap" }}>
+          <strong style={{ fontSize: "0.85rem" }}>Esta tela é só consulta.</strong>
+          <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+            O recibo de cada pessoa, para conferir e imprimir — nada aqui altera a folha.
+            Para lançar, acrescentar vencimento/desconto, marcar como pago ou estornar, use{" "}
+            <a href="/financeiro?ir=folha" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}
+              title="Abrir Ações > Fechamento da folha">Ações › Fechamento da folha</a>.
+          </span>
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
         <KPI v={String(filtradas.length)} l="Lançamentos" />
         <KPI v={formatBRL(somaPendente)} l="A vencer" c="var(--amber)" />
@@ -322,15 +340,12 @@ export default function RelatorioFolhaPagamentoView() {
           <div className="md:col-span-2">
             {documentoAtual
               ? (
-                <Holerite
-                  documento={documentoAtual}
-                  edicao
-                  // O servidor remonta o documento inteiro (líquido, bases,
-                  // retenções e linhas) a cada rubrica lançada: a tela relê o
-                  // ledger em vez de tentar recalcular por conta — foi assim
-                  // que as duas telas de folha divergiram antes.
-                  onMudou={() => { fetchFolhaPagamentoUnificada().then(setLinhas).catch(() => {}); }}
-                />
+                // Sem o painel de rubricas: ACRESCENTAR vencimento/desconto é
+                // ato de fechamento, e mudou para a tela de Ações junto com os
+                // demais (ver RubricasHolerite em FolhaPagamentoView.tsx).
+                // Deixá-lo aqui era o que fazia esta tela "só de consulta" ser
+                // o único lugar de onde se podia mexer no holerite.
+                <Holerite documento={documentoAtual} />
               )
               : (
                 <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
@@ -379,6 +394,8 @@ export default function RelatorioFolhaPagamentoView() {
                       <td style={{ fontSize: "0.78rem" }}>{l.data_pagamento ? formatDate(l.data_pagamento) : "—"}</td>
                       <td style={{ fontSize: "0.78rem" }}>
                         {l.status === "pago" ? <span style={{ color: "var(--green-light)" }}>Pago</span>
+                          : l.status === "cancelado_rescisao"
+                            ? <span style={{ color: "var(--text-muted)" }} title={rotuloStatusLinha(l.status).titulo}>Na rescisão</span>
                           : l.vencido ? <span style={{ color: "var(--red)" }}>Vencido</span>
                           : <span style={{ color: "var(--text-muted)" }}>A vencer</span>}
                       </td>

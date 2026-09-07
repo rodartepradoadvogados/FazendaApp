@@ -354,7 +354,10 @@ export default function FinanceiroPage() {
     // lida pelo próprio FolhaPagamentoView a partir de categoria/diaria/
     // calendario, ver useEffect lá).
     else if (ir === "folha") setRel("folha");
-    else if (ir && ["pagas", "recebidas", "extrato"].includes(ir)) setRel(ir as Rel);
+    // "folha_relatorio" entra na lista porque as duas telas de folha agora se
+    // apontam uma à outra na própria interface (só consulta × onde se fecha),
+    // e o link precisa de um endereço.
+    else if (ir && ["pagas", "recebidas", "extrato", "todas_contas", "folha_relatorio"].includes(ir)) setRel(ir as Rel);
     const ref = qs.get("ref");
     if (ref) setNotaAlvoRef(ref);
   }, []);
@@ -705,7 +708,12 @@ export default function FinanceiroPage() {
       <div className="mb-4 flex items-start justify-between gap-3" style={{ flexWrap: "wrap" }}>
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 size={22} style={{ color: "var(--dourado)" }} /> Controle Financeiro</h1>
-          <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Escolha o relatório, o período e o centro de custo — indicadores, consolidado e gráfico.</p>
+          {/* A tela de folha traz o próprio texto de papel logo abaixo (é ela
+              que precisa dizer "aqui se fecha" × "lá só se consulta"); repetir
+              a frase de relatório em cima dele confundia as duas coisas. */}
+          {rel !== "folha" && (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Escolha o relatório, o período e o centro de custo — indicadores, consolidado e gráfico.</p>
+          )}
         </div>
       </div>
 
@@ -776,7 +784,13 @@ export default function FinanceiroPage() {
               {filtrosCard}
             </div>
             <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto" }}>
+              {/* `documentoInicial`: quando se chega aqui por um link
+                  "?ir=extrato&ref=LC-…" (o "No extrato" do holerite, a Agenda,
+                  o sino), o nº já entra no filtro de documento — sem isso o
+                  link abria a lista inteira e o usuário tinha que digitar o
+                  número que acabou de clicar. */}
               <TabelaContas key={rel} rel={rel} itens={filtrados} planoContas={planoContas}
+                documentoInicial={EXTRATO_IDS.has(rel) ? notaAlvoRef : null}
                 onTratar={(l) => { setRel(l.tipo === "receita" ? "recebimento" : "pagamento"); setNotaAlvoRef(l.numero_lancamento || l.numero_documento || null); }}
                 onEditar={(l) => setEditando(l)}
                 onRecibo={(l) => setRecibo({ ...l, reparcelamento: reparcelamentoDoRecibo(l) })}
@@ -3767,7 +3781,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   );
 }
 
-function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, onEstornado }: { rel: Rel; itens: Lanc[]; planoContas: ContaPlano[]; onTratar: (l: Lanc) => void; onEditar: (l: Lanc) => void; onRecibo: (l: Lanc) => void; onEstornado: () => void }) {
+function TabelaContas({ rel, itens, planoContas, documentoInicial, onTratar, onEditar, onRecibo, onEstornado }: { rel: Rel; itens: Lanc[]; planoContas: ContaPlano[]; documentoInicial?: string | null; onTratar: (l: Lanc) => void; onEditar: (l: Lanc) => void; onRecibo: (l: Lanc) => void; onEstornado: () => void }) {
   const admin = ehAdmin();
   const emAberto = rel === "a_pagar" || rel === "a_receber";
 
@@ -3812,7 +3826,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, o
   // Todos client-side.
   const [fProduto, setFProduto] = useState("");
   const [fContraparte, setFContraparte] = useState("");
-  const [fDocumento, setFDocumento] = useState("");
+  const [fDocumento, setFDocumento] = useState(documentoInicial || "");
   const [fConta, setFConta] = useState("");
   const [fContaNome, setFContaNome] = useState("");
   const [fTipo, setFTipo] = useState<"" | "receita" | "despesa">("");
