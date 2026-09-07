@@ -164,6 +164,23 @@ fazenda-cliente.
 
 ### 3. Recuperar ou marcar
 
+**Etapas 1 e 2, medidas em produção em 06/09/2026** (banco `railway`, 185
+tabelas com `fazenda_id`):
+
+| | Tabelas | Com nulos | Linhas |
+|---|---|---|---|
+| Catálogo global (NULL legítimo) | 14 | 12 | **486** |
+| **Órfãos (NULL sem direito)** | 171 | **16** | **183** |
+
+As 486 do catálogo são o esperado e não são problema: ali o NULL quer dizer
+"é de todo produtor".
+
+**183 órfãos, concentrados em 16 tabelas, é um número pequeno e tratável** —
+muda a natureza da etapa 3. Não é um mutirão de limpeza: é uma migração de
+backfill com uma lista curta, e o que sobrar cabe numa conversa de minutos.
+Falta rodar a triagem (`orfaos-triagem.sql`) para saber quantos desses 183
+têm um pai que sabe a fazenda e podem ser reatribuídos sem adivinhar.
+
 O backfill determinístico do que tem pai, e decisão explícita sobre o que
 sobrar. **Decisão do dono, com os dois números na mão.**
 
@@ -196,7 +213,7 @@ que falhar em produção.
 `FOREIGN KEY (filho_id, fazenda_id) REFERENCES pai(id, fazenda_id)`, com a
 `UNIQUE (id, fazenda_id)` correspondente em cada uma das **61** tabelas pai.
 
-Fecha os dois problemas da seção 6: a referência cruzada entre fazendas, e o
+Fecha os dois problemas da seção 8: a referência cruzada entre fazendas, e o
 oráculo de existência. Também não depende de RLS nem de infraestrutura.
 
 ### 6. RLS, por último
@@ -217,7 +234,123 @@ enxergar o que precisa consertar — a menos que rode como owner ou com
 
 Pular direto para o 6 transforma cada órfão em perda de dado silenciosa.
 
-## 6. Um furo que o RLS sozinho NÃO fecha: chave estrangeira
+## 6. O boot da API para de subir (achado ao revisar a proposta)
+
+`main.py::lifespan` chama `create_db_and_tables()` **no boot**, e ela faz mais
+do que aplicar migração:
+
+| No boot | O que exige |
+|---|---|
+| `_aplicar_alembic()` → `upgrade head` | DDL |
+| `SQLModel.metadata.create_all(engine)` | DDL |
+| `_migrar_colunas()` → `ALTER TABLE ADD COLUMN` | DDL |
+| `_migrar_tipos_bigint()` → `ALTER TABLE ALTER COLUMN TYPE` | DDL |
+| `_inativar_animais_semen()` | UPDATE de dados |
+| ~50 seeds (`seed_admin`, `seed_parametros`, …) | INSERT/UPDATE, **sem contexto de fazenda** |
+
+O passo 0 desta proposta cria `cowdata_app` deliberadamente **sem ser dono das
+tabelas**, e é isso mesmo que se quer. Mas `ALTER TABLE` e `CREATE` exigem
+ownership.
+
+**Consequência:** no dia em que a `DATABASE_URL` apontar para `cowdata_app`,
+não é uma requisição que falha — **é a subida da API**. O sistema fica fora do
+ar até alguém descobrir que o role não pode alterar tabela. E os seeds, que
+rodam sem `app.fazenda_id`, seriam negados pela própria política.
+
+### Por que dar ownership ao role da aplicação NÃO é saída
+
+Medido: **o dono de uma tabela pode desligar a política dela**.
+
+```
+SET ROLE app_dono;
+ALTER TABLE t NO FORCE ROW LEVEL SECURITY;   -- aceito
+SELECT count(*) FROM t;                       -- 2 linhas: vê tudo
+ALTER TABLE t DISABLE ROW LEVEL SECURITY;    -- aceito
+```
+
+E depois do `DISABLE`, a tabela fica aberta **para todos os roles**, não só
+para o dono. Ownership não é "um pouco de permissão a mais": é a permissão de
+revogar a proteção. Isso descarta o `GRANT` seletivo de ownership por tabela.
+
+### As duas saídas reais
+
+**(a) Duas URLs.** `DATABASE_URL_MIGRACAO` (role dono) usada só por
+`create_db_and_tables()`; `DATABASE_URL` (role de aplicação) para o
+`get_session()` das requisições. Mantém o boot idempotente que já funciona
+hoje, e é a mudança menor.
+
+**(b) Tirar a migração do boot.** Vira passo próprio do deploy, e a credencial
+de dono nunca entra no ambiente de runtime da API.
+
+**(b) é o desenho correto**; **(a) é o transitório aceitável**, e a diferença
+entre as duas é uma só: em (a) a credencial de dono fica no ambiente do
+serviço da API, então quem executar código lá dentro pode desligar a política.
+
+Sobre esse risco, o registro honesto: **o RLS aqui protege contra BUG, não
+contra invasor com execução de código na API**. Quem executa código no
+processo já tem a sessão do banco aberta e o token de qualquer usuário que
+passar; o RLS nunca foi desenhado para esse adversário. A credencial de dono
+no ambiente reduz uma defesa que já não existia — não é motivo para descartar
+(a), mas precisa estar escrito, não escondido.
+
+**Recomendação:** ir de (a) na primeira ativação, com a `DATABASE_URL_MIGRACAO`
+em variável separada e escopo mínimo, e migrar para (b) quando o Railway
+tiver um passo de deploy próprio configurado. Decisão do dono.
+
+## 7. As rotinas de fundo ficariam cegas — e em silêncio
+
+Sob RLS, quem não seta `app.fazenda_id` não enxerga nada: é o comportamento
+seguro por omissão da seção 4, e aqui ele vira o problema. Levantei **todos**
+os caminhos que abrem sessão fora do ciclo de requisição:
+
+| Onde | O que faz | Frequência |
+|---|---|---|
+| `main.py::_loop_backup_automatico` | backup automático | **a cada 30 min** |
+| `main.py::_loop_despacho_push` | push pendente + agenda do dia | **a cada 30 min** |
+| `main.py::_loop_manual_fazenda_semanal` | manual semanal | **a cada 30 min** |
+| `main.py::lifespan` | ~50 seeds | todo boot |
+| `portal.py::_executar_exportacao` | ZIP + e-mail, em BackgroundTask | por pedido |
+| `push.py::enviar_push` | sessão própria quando não recebe uma | por alerta |
+| `rules/parametros.py` | leitura de parâmetro | por chamada |
+| `database.py` (3×) | rotinas do boot | todo boot |
+
+**Os três loops de `main.py` são o pior caso, e não pelo motivo óbvio.** Eles
+são multi-fazenda por natureza (fazem backup de todas, despacham push para
+todos os usuários), rodam sozinhos a cada 30 minutos — e cada um está dentro
+de:
+
+```python
+except Exception:
+    pass  # nunca deixa essa tarefa de fundo derrubar o resto da aplicação
+```
+
+Esse `pass` existe por um bom motivo e não deve sair. Mas ele significa que,
+sob RLS, uma negação de política **não apareceria nem no log**. O backup
+automático passaria a gravar backup vazio, a cada 30 minutos, em silêncio — e
+backup vazio é pior que backup nenhum, porque dá falsa segurança até o dia em
+que for preciso restaurar.
+
+### O que cada caminho precisa
+
+Três naturezas diferentes, e só a primeira é resolvida com "setar o contexto":
+
+1. **Por fazenda, conhecida** — `_executar_exportacao` já recebe `fazenda_id`
+   como parâmetro (foi assim que o achado 49 foi fechado). Basta emitir
+   `SET LOCAL app.fazenda_id` na sessão que ela abre.
+2. **Por fazenda, em laço** — os loops de push e do manual semanal operam
+   sobre várias fazendas. Podem passar a iterar as fazendas e abrir uma
+   transação por fazenda, com o contexto setado em cada uma. É mais código,
+   mas é o desenho honesto: a rotina passa a dizer de quem é cada operação.
+3. **Legitimamente sem recorte** — backup automático e os seeds do boot
+   precisam ver o banco inteiro por definição.
+
+Para (3) a pergunta não é "como setar contexto", é **como conceder leitura sem
+recorte sem abrir um `BYPASSRLS` de propósito geral**. Um role com `BYPASSRLS`
+que a aplicação possa assumir anula o RLS pelo caminho mais curto. As opções
+merecem análise própria antes da ativação — não estão resolvidas aqui, e é por
+isso que esta seção existe.
+
+## 8. Um furo que o RLS sozinho NÃO fecha: chave estrangeira
 
 Este não estava na conta e apareceu ao testar o esquema real. A verificação
 de chave estrangeira do PostgreSQL roda POR BAIXO da política — ela enxerga
@@ -265,7 +398,7 @@ porte comparável ao do RLS em si, e precisa entrar na conta antes da decisão
 — não é detalhe de acabamento. Sem ele, o RLS entrega isolamento de leitura
 mas deixa de pé tanto a referência cruzada quanto o oráculo de existência.
 
-## 7. O que foi provado, e como reproduzir
+## 9. O que foi provado, e como reproduzir
 
 Oito ataques contra um PostgreSQL 16 real, conectado como role de aplicação:
 
@@ -297,11 +430,13 @@ Ele é um `.sql` avulso e **não** uma revisão Alembic de propósito:
 uma revisão em `alembic/versions/` seria aplicada em produção no próximo
 deploy, sozinha, sem ninguém decidir nada. Vira migração no dia da decisão.
 
-## 8. O que falta para decidir
+## 10. O que falta para decidir
 
 | | |
 |---|---|
-| Número de órfãos em produção | consulta pronta, aguardando execução |
+| Número de órfãos em produção | **MEDIDO em 06/09/2026: 183 linhas, em 16 tabelas** |
+| Risco da seção 6: (a) duas URLs ou (b) migração fora do boot | decisão do dono |
+| Risco da seção 7: como dar leitura sem recorte ao backup e aos seeds | **em aberto — bloqueia a ativação** |
 | Quantos deles dá para recuperar sem adivinhar | consulta de triagem pronta (`orfaos-triagem.sql`) |
 | Usuário do banco é superusuário? | consulta pronta (seção 3) |
 | Criar role de aplicação e trocar DATABASE_URL | decisão de infraestrutura do dono |
