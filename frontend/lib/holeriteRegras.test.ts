@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import type { LinhaFolhaUnificada, LinhaHolerite } from "./api.ts";
 import {
   competenciaExtenso, dataBR, ehOrigemRetencao, ehOrigemRubrica, ehOrigemVale, filtrarPorSituacao,
-  holeriteDaLinha, linhasDoCorpo, podeEmitir, seloDocumento,
+  holeriteDaLinha, linhasDoCorpo, podeEmitir, rotuloStatusLinha, seloDocumento,
 } from "./holeriteRegras.ts";
 
 function linha(over: Partial<LinhaHolerite>): LinhaHolerite {
@@ -198,4 +198,16 @@ test("a rubrica acrescentada é reconhecida por tipo de origem, com o enquadrame
   assert.ok(ehOrigemRubrica(rubrica.origem));
   assert.ok(!ehOrigemVale(rubrica.origem));
   assert.equal(ehOrigemRubrica(rubrica.origem) && rubrica.origem.natureza, "indenizatoria");
+});
+
+test("férias absorvidas por rescisão têm rótulo próprio — não são \"Pendente\"", () => {
+  // O ledger renderizava `status === "pago" ? "Pago" : "Pendente"`, e o
+  // servidor sempre pôde mandar um terceiro estado: férias e 13º consumidos
+  // por uma rescisão saem com "cancelado_rescisao" (rh_folha.py). Escritos
+  // "Pendente", eles cobravam de novo um valor que já saiu dentro das verbas
+  // rescisórias.
+  assert.equal(rotuloStatusLinha("pago").texto, "Pago");
+  assert.equal(rotuloStatusLinha("pendente").texto, "Pendente");
+  assert.equal(rotuloStatusLinha("cancelado_rescisao").texto, "Na rescisão");
+  assert.notEqual(rotuloStatusLinha("cancelado_rescisao").texto, rotuloStatusLinha("pendente").texto);
 });

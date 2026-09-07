@@ -19,8 +19,8 @@
 
 -- ---------------------------------------------------------------------
 -- PASSO 0 — o role da aplicação. Sem superusuário, e as tabelas NÃO são
--- dele. Superusuário ignora RLS mesmo com FORCE (medido); dono de tabela é
--- contido por FORCE, mas mantê-lo fora da posse é a defesa mais simples.
+-- dele. Superusuário ignora RLS mesmo com FORCE (medido); manter a aplicação
+-- fora da posse das tabelas é a defesa que de fato sustenta a política.
 -- A senha entra por variável de ambiente no momento de rodar, nunca aqui.
 -- ---------------------------------------------------------------------
 -- CREATE ROLE cowdata_app LOGIN PASSWORD :'senha_do_app';
@@ -57,7 +57,16 @@ DECLARE
         'unidade_estoque', 'unidade_embalagem_estoque',
         'unidade_medida_embalagem_estoque', 'laboratorio',
         'categoria_medicamento', 'classificacao_medicamento_cad',
-        'servico_cadastro', 'parametro_fazenda'
+        'servico_cadastro', 'parametro_fazenda',
+        -- as duas achadas ao conferir a contagem de produção (copy-on-write,
+        -- não `visivel()`): sem elas, a política ESTRITA esconderia as linhas
+        -- mestre do catálogo e quebraria a Farmácia e a biblioteca de alimentos.
+        'medicamento_principio_ativo', 'alimento_nutricional',
+        -- Ligações N-N do catálogo: o modelo AVISA que o NULL nelas espelha o
+        -- NULL do pai e tem que continuar global — "senão ele passaria a
+        -- pertencer à primeira fazenda que o backfill encontrasse e sumiria
+        -- do catálogo global de todas as outras".
+        'medicamento_categoria', 'medicamento_classificacao'
     ];
     ctx constant text := 'NULLIF(current_setting(''app.fazenda_id'', true), '''')::int';
     leitura text;
@@ -83,7 +92,11 @@ BEGIN
         END IF;
 
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t.table_name);
-        EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t.table_name);
+        -- Sem FORCE, de propósito: o FORCE só alcança o dono das tabelas, e o dono
+        -- pode removê-lo sozinho (medido, seção 8 da proposta) — não restringe
+        -- ninguém. Deixá-lo de fora é o que dá ao backup automático e aos seeds do
+        -- boot a leitura sem recorte de que precisam, pela conexão de dono, sem
+        -- criar nenhum role BYPASSRLS.
         EXECUTE format('DROP POLICY IF EXISTS isolamento_fazenda ON %I', t.table_name);
         EXECUTE format(
             'CREATE POLICY isolamento_fazenda ON %I USING (%s) WITH CHECK (fazenda_id = %s)',

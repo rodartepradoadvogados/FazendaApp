@@ -7,7 +7,7 @@ import {
   confirmarExclusao, fetchContasCorrentes, type ContaCorrenteCadastro, encerrarDiaria, reabrirDiaria,
   fetchDiasDiaria, salvarDiasDiaria, type DiasDiariaResposta, anexarArquivoLancamento,
 } from "@/lib/api";
-import { SecaoRecolhivel } from "@/components/ui";
+import { SecaoRecolhivel, type ModoSecaoCategoria } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import ValeAvulsoSection from "@/components/ValeAvulsoSection";
 import CalendarioDiasTrabalhados from "@/components/CalendarioDiasTrabalhados";
@@ -64,11 +64,13 @@ function fmtDataBR(iso: string | null): string {
   return iso.split("-").reverse().join("/");
 }
 
-export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
+export default function DiariaView({ deepLinkDiariaId, deepLinkModo, mostrar = "tudo" }: {
   // Vem do card "diária de hoje" da Agenda, via FolhaPagamentoView — abre o
   // calendário "Dias trabalhados" já na diarista certa, sem o usuário caçar
   // a linha na tabela (ver comentário em FolhaPagamentoView.tsx).
   deepLinkDiariaId?: number; deepLinkModo?: "ultimo_periodo" | "completo";
+  /** Formulários, listagem, ou os dois — ver ModoSecaoCategoria. */
+  mostrar?: ModoSecaoCategoria;
 } = {}) {
   const [pessoas, setPessoas] = useState<Pessoa[]>([]);
   const [itens, setItens] = useState<Diaria[] | null>(null);
@@ -543,8 +545,12 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
 
   if (error) return <div className="alert-critico"><span>Sem dados: {error}.</span></div>;
 
+  const mostraLancar = mostrar !== "listar";
+  const mostraListagem = mostrar !== "lancar";
+
   return (
     <div>
+      {mostraLancar && (<>
       <SecaoRecolhivel titulo="Novo diarista" icon={Plus} defaultAberta={false} descricao="Valor da diária e data de início da contagem">
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
           <div>
@@ -676,7 +682,9 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
           onLancado={carregar}
         />
       </SecaoRecolhivel>
+      </>)}
 
+      {mostraListagem && (<>
       {itens && itens.some((d) => d.auditorias_pendentes?.length) && (
         <div className="card mt-4" style={{ borderLeft: "3px solid var(--amber)" }}>
           <div className="card-header mb-3">Auditorias de diária pendentes</div>
@@ -949,6 +957,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
           </div>
         )}
       </div>
+      </>)}
 
       {pagandoId !== null && (
         <Modal title="Registrar pagamento de diária" onClose={() => setPagandoId(null)} width="380px">

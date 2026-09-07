@@ -1589,7 +1589,11 @@ def calcular_agenda(
                     "numero_animal": None, "observacao": f"Etapa paga: {etapa.nome}",
                     "fonte": "auto", "cor": "var(--dourado)", "ref": None,
                     "tipo": "empreitada_penultima_etapa", "empreitada_id": emp.id,
-                    "link": "/financeiro?ir=folha&categoria=empreitada",
+                    # `empreita`, não `empreitada`: o chip da tela de folha se
+                    # chama "empreita" e o valor desconhecido caía em silêncio
+                    # no chip "Todos" — o link abria a tela certa e a categoria
+                    # errada (ver o useEffect de FolhaPagamentoView.tsx).
+                    "link": "/financeiro?ir=folha&categoria=empreita",
                 })
 
     # Só mostra o que o usuário tem permissão de ver — se falta acesso a um

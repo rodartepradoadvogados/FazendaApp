@@ -11,7 +11,7 @@
 import { Fragment, useState } from "react";
 import { Plus, Pencil, Shuffle } from "lucide-react";
 import { formatBRL } from "@/lib/api";
-import { SecaoRecolhivel } from "@/components/ui";
+import { SecaoRecolhivel, type ModoSecaoCategoria } from "@/components/ui";
 import { ParcelamentoEditor, type Parcela } from "@/components/ParcelamentoEditor";
 import ValeAvulsoSection from "@/components/ValeAvulsoSection";
 import { lbl, inputSm } from "@/components/estiloCampoAvulso";
@@ -48,7 +48,7 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
   tituloNovo, descricaoNovo, labelSalvar, salvar,
   tituloVale, descricaoVale, valeOrigemTipo, valeStatusExcluido,
   tituloListagem, textoVazioListagem, statusLabel = (s: string) => s, acaoItem, renderItemExtra,
-  onEditarParcela, onRedistribuirParcelas,
+  onEditarParcela, onRedistribuirParcelas, mostrar = "tudo",
 }: {
   itens: T[] | null;
   error: string | null;
@@ -98,6 +98,8 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
   onEditarParcela?: (parcelaId: number, dados: { data_vencimento: string; valor: number }) => Promise<any>;
   /** Redivide igualmente o valor pendente entre as parcelas ainda não pagas do item. */
   onRedistribuirParcelas?: (itemId: number) => Promise<any>;
+  /** Formulários, listagem, ou os dois — ver ModoSecaoCategoria. */
+  mostrar?: ModoSecaoCategoria;
 }) {
   const [pessoaId, setPessoaId] = useState("");
   const [descricao, setDescricao] = useState("");
@@ -190,8 +192,12 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
 
   if (error) return <div className="alert-critico"><span>Sem dados: {error}.</span></div>;
 
+  const mostraLancar = mostrar !== "listar";
+  const mostraListagem = mostrar !== "lancar";
+
   return (
     <div>
+      {mostraLancar && (<>
       <SecaoRecolhivel titulo={tituloNovo} icon={Plus} defaultAberta={false} descricao={descricaoNovo}>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
           <div>
@@ -256,7 +262,9 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
           onLancado={recarregar}
         />
       </SecaoRecolhivel>
+      </>)}
 
+      {mostraListagem && (
       <div className="card mt-4">
         <div className="card-header mb-3">{tituloListagem}</div>
         {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
@@ -381,6 +389,7 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 }
