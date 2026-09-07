@@ -6,7 +6,6 @@ import {
   FORMA_PAGAMENTO_VALE, bloqueioDeImpressao, dataBR, ehOrigemRetencao, ehOrigemRubrica, ehOrigemVale,
   imprimirHolerite, linhasDoCorpo, seloDocumento, type Holerite as DocHolerite,
 } from "@/lib/holerite";
-import { RubricasHolerite } from "@/components/RubricasHolerite";
 
 /*
  * O documento — as quatro colunas do recibo de papel da fazenda:
@@ -48,6 +47,30 @@ function Celula({ children, alinhar, cor, forte }: {
   );
 }
 
+/**
+ * "No extrato" — o número do lançamento vira o CAMINHO até ele.
+ *
+ * O componente existia e ninguém o chamava: o cartão de origem escrevia o
+ * número como texto solto, e quem quisesse conferir o lançamento tinha que
+ * decorá-lo, sair do holerite, abrir o extrato e digitar de novo. O destino é
+ * o mesmo endereço que a Agenda e o sino de notificações já usam
+ * (`/financeiro?ir=…&ref=…`), agora apontando para o extrato completo, que é
+ * onde um lançamento já pago aparece.
+ */
+export function LinkExtrato({ numero }: { numero: string | null }) {
+  if (!numero) return <span style={{ color: "var(--text-muted)" }}>—</span>;
+  return (
+    <a
+      href={`/financeiro?ir=extrato&ref=${encodeURIComponent(numero)}`}
+      className="flex items-center gap-1"
+      style={{ fontSize: "0.8rem", color: "var(--dourado-light)" }}
+      title={`Abrir o lançamento ${numero} no extrato completo`}
+    >
+      <ExternalLink size={11} /> {numero}
+    </a>
+  );
+}
+
 /** O cartão de origem — o que o clique numa linha abre. Um por vez. */
 function CartaoOrigem({ linha }: { linha: LinhaHolerite }) {
   // Monta fechado e abre no quadro seguinte, para o CSS ter um estado inicial
@@ -86,7 +109,7 @@ function CartaoOrigem({ linha }: { linha: LinhaHolerite }) {
       // ausência do link — sem inventar um lançamento que não existe.
       valor: origem.sem_saida_de_caixa
         ? <span style={{ color: "var(--text-muted)" }}>sem saída de caixa</span>
-        : (origem.numero_lancamento_gerado || "—"),
+        : <LinkExtrato numero={origem.numero_lancamento_gerado || null} />,
     });
   } else if (ehOrigemRubrica(origem)) {
     // O enquadramento por extenso — é ele que explica por que esta linha
@@ -115,7 +138,7 @@ function CartaoOrigem({ linha }: { linha: LinhaHolerite }) {
       campos.push({ rotulo: "Fornecedor", valor: co.fornecedor_cliente || "—" });
       campos.push({ rotulo: "Nota", valor: co.numero_nota || "—" });
       campos.push({ rotulo: "Valor da compra", valor: formatBRL(co.valor_total) });
-      campos.push({ rotulo: "No extrato", valor: co.numero_lancamento || "—" });
+      campos.push({ rotulo: "No extrato", valor: <LinkExtrato numero={co.numero_lancamento || null} /> });
     }
     if (origem.fundamento) campos.push({ rotulo: "Fundamento", valor: origem.fundamento });
   } else if (ehOrigemRetencao(origem)) {
@@ -167,21 +190,13 @@ function CartaoOrigem({ linha }: { linha: LinhaHolerite }) {
 }
 
 export function Holerite({
-  documento, compacto = false, cabecalho = true, acoes = true, edicao = false, onMudou,
+  documento, compacto = false, cabecalho = true, acoes = true,
 }: {
   documento: DocHolerite;
   /** Prévia dentro da linha da tabela (tela de Ações) — sem a folha de papel. */
   compacto?: boolean;
   cabecalho?: boolean;
   acoes?: boolean;
-  /** Mostra o painel de vencimentos/descontos acrescentados abaixo do
-   *  documento (Contas > Holerites e recibos). Fica desligado por padrão para
-   *  a prévia compacta da tela de Ações continuar sendo só leitura. */
-  edicao?: boolean;
-  /** Chamado quando uma rubrica é acrescentada, corrigida ou removida: o
-   *  documento inteiro é remontado no SERVIDOR (líquido, bases, retenções e
-   *  linhas), então quem exibe recarrega o ledger em vez de recalcular. */
-  onMudou?: () => void;
 }) {
   // A linha aberta pertence a UM documento: guardamos a chave junto do estado
   // e zeramos durante a renderização quando o documento muda (padrão de
@@ -398,19 +413,11 @@ export function Holerite({
         )}
       </div>
 
-      {/* Só o holerite de FUNCIONÁRIO tem rubricas: férias e 13º são recibos
-          de composição própria (dias gozados, avos), e o servidor recusaria
-          uma linha avulsa neles. */}
-      {edicao && !compacto && documento.folhaId != null && (
-        <RubricasHolerite
-          key={documento.folhaId}
-          folhaId={documento.folhaId}
-          bloqueio={documento.status === "pago"
-            ? "Esta folha já foi paga e o recibo está congelado — estorne o pagamento para acrescentar ou corrigir vencimentos e descontos."
-            : null}
-          onMudou={onMudou}
-        />
-      )}
+      {/* O painel de rubricas NÃO mora mais aqui. Ele é o único jeito de
+          acrescentar vencimento/desconto a um holerite, e por isso passou a
+          viver na tela onde se FECHA a folha (Ações > Fechamento da folha),
+          composto ao lado do documento — ver FolhaPagamentoView.tsx. Em
+          Contas > Holerites e recibos o documento é só leitura. */}
 
       {!linhaAberta && corpo.some((l) => !!l.origem) && (
         <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>
@@ -418,15 +425,5 @@ export function Holerite({
         </p>
       )}
     </div>
-  );
-}
-
-/** Link "ver no extrato" reutilizável — some quando não houve saída de caixa. */
-export function LinkExtrato({ numero }: { numero: string | null }) {
-  if (!numero) return null;
-  return (
-    <span className="flex items-center gap-1" style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>
-      <ExternalLink size={11} /> {numero}
-    </span>
   );
 }

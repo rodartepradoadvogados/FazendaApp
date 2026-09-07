@@ -1,8 +1,9 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Plus, Paperclip, Check, ChevronDown, ChevronRight, RefreshCw, Filter, Pencil, Trash2, Printer } from "lucide-react";
+import { Plus, Paperclip, Check, ChevronDown, ChevronRight, RefreshCw, Filter, Pencil, Trash2, Printer, History, Search, RotateCcw } from "lucide-react";
 import {
   fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, excluirFolhaPagamento,
+  estornarPagamentoFolha,
   fetchFolhaPagamentoUnificada, excluirParcelaEmpreitada, excluirParcelaContrato, type LinhaFolhaUnificada,
   atualizarParcelaEmpreitada, atualizarParcelaContrato,
   fetchVales, criarVale, atualizarVale, atualizarParcelaVale, excluirParcelaVale, excluirVale, ehAdmin, formatBRL,
@@ -19,16 +20,17 @@ import { Modal } from "@/components/Modal";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { ReciboModal } from "@/components/ReciboModal";
 import { type LancamentoRecibo } from "@/lib/export";
-import { Holerite } from "@/components/Holerite";
+import { Holerite, LinkExtrato } from "@/components/Holerite";
 import {
-  competenciaExtenso, holeriteDaLinha, imprimirHolerite, imprimirHolerites,
-  type Holerite as DocHolerite,
+  competenciaExtenso, filtrarPorSituacao, holeriteDaLinha, imprimirHolerite, imprimirHolerites,
+  rotuloStatusLinha, type Holerite as DocHolerite, type SituacaoPagamento,
 } from "@/lib/holerite";
 import { ModalDivididoDocumento } from "@/components/ModalDivididoDocumento";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { AvisoSalvo } from "@/components/AvisoSalvo";
 import { Dropzone } from "@/components/Dropzone";
 import { SecaoRecolhivel } from "@/components/ui";
+import { RubricasHolerite } from "@/components/RubricasHolerite";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { BarraCompetencia } from "@/components/BarraCompetencia";
@@ -48,10 +50,116 @@ import RescisaoView from "@/components/RescisaoView";
 
 const LABEL_TIPO: Record<string, string> = {
   funcionario: "Funcionário", empreita: "Empreita", contrato: "Contrato", diaria: "Diária", ferias_decimo: "Férias / 13º",
-  // "rescisao" é rótulo só de CHIP por enquanto: o ledger unificado ainda não
-  // emite linhas desse tipo (ver a nota do bloco "Consultar" mais abaixo).
+  // "rescisao" é rótulo só de CHIP: o ledger unificado ainda não emite linhas
+  // desse tipo — é por isso que a categoria declara `tipoLedger: null` abaixo.
   rescisao: "Rescisão",
 };
+
+type CategoriaFolha =
+  | "todos" | "funcionario" | "empreita" | "contrato" | "diarias" | "ferias_decimo" | "rescisao";
+
+/**
+ * O QUE EXISTE EM CADA CATEGORIA — a tabela que governa a tela inteira.
+ *
+ * Antes, o único recorte era `mostraFormasGerais` (categoria "todos" ou
+ * "funcionario"), e ele escondia só os três formulários de lançar. Tudo o
+ * resto continuava na tela: sob Empreita, Contrato e Diária apareciam as
+ * "Guias de FGTS/DCTF lançadas" e o "Relatório de vales e descontos" de
+ * FUNCIONÁRIO — FGTS é encargo de CLT e empreiteiro não é CLT. Era a
+ * reclamação do dono, e a causa não era um `if` esquecido: era não haver
+ * lugar nenhum onde a pergunta "isto existe nesta categoria?" fosse
+ * respondida uma vez só.
+ *
+ * Agora ela é respondida aqui, em dados. Cada bloco da tela lê um campo desta
+ * tabela; nenhum bloco decide por conta própria se aparece. Acrescentar uma
+ * categoria (ou dar FGTS a alguma delas) é editar esta tabela, não caçar
+ * condições espalhadas pela renderização.
+ */
+type CapacidadesCategoria = {
+  rotulo: string;
+  /** Tipo correspondente no ledger unificado. `""` = todos os tipos;
+   *  `null` = a categoria NÃO tem linha no ledger (rescisão) e por isso não
+   *  tem mês, equação, exceções nem tabela — ver `RescisaoView`. */
+  tipoLedger: string | null;
+  /** Formulário "Nova folha" + holerite + rubricas — só CLT. */
+  folhaFuncionario: boolean;
+  /** Guias de FGTS/DCTF (lançar e listar) — encargo de CLT, só funcionário. */
+  guias: boolean;
+  /** Vale de FUNCIONÁRIO: parcelado, descontado na folha da competência. */
+  valeFuncionario: boolean;
+  /** Vale AVULSO: abatido da próxima parcela/etapa de empreita/contrato/diária. */
+  valeAvulso: boolean;
+  /** Tela própria da categoria (formulário + listagem), quando existe. */
+  telaPropria: "empreita" | "contrato" | "diarias" | "ferias_decimo" | "rescisao" | null;
+};
+
+const CATEGORIAS: Record<CategoriaFolha, CapacidadesCategoria> = {
+  todos: {
+    rotulo: "Todos", tipoLedger: "",
+    folhaFuncionario: true, guias: true, valeFuncionario: true, valeAvulso: true, telaPropria: null,
+  },
+  funcionario: {
+    rotulo: "Funcionário", tipoLedger: "funcionario",
+    folhaFuncionario: true, guias: true, valeFuncionario: true, valeAvulso: false, telaPropria: null,
+  },
+  empreita: {
+    rotulo: "Empreita", tipoLedger: "empreita",
+    folhaFuncionario: false, guias: false, valeFuncionario: false, valeAvulso: true, telaPropria: "empreita",
+  },
+  contrato: {
+    rotulo: "Contrato", tipoLedger: "contrato",
+    folhaFuncionario: false, guias: false, valeFuncionario: false, valeAvulso: true, telaPropria: "contrato",
+  },
+  diarias: {
+    rotulo: "Diária", tipoLedger: "diaria",
+    folhaFuncionario: false, guias: false, valeFuncionario: false, valeAvulso: true, telaPropria: "diarias",
+  },
+  ferias_decimo: {
+    rotulo: "Férias / 13º", tipoLedger: "ferias_decimo",
+    folhaFuncionario: false, guias: false, valeFuncionario: false, valeAvulso: false, telaPropria: "ferias_decimo",
+  },
+  // A rescisão é a única sem ledger: o endpoint unificado monta CINCO tipos e
+  // ela não é um deles. Antes, o chip dela apagava meia tela (barra do mês,
+  // equação e tabela sumiam por uma condição solta); agora a ausência é
+  // DECLARADA, e a tela dela é montada com o que lhe cabe — nada some, nada
+  // aparece zerado mentindo que "não há rescisão nenhuma".
+  rescisao: {
+    rotulo: "Rescisão", tipoLedger: null,
+    folhaFuncionario: false, guias: false, valeFuncionario: false, valeAvulso: false, telaPropria: "rescisao",
+  },
+};
+
+const ORDEM_CATEGORIAS: CategoriaFolha[] = [
+  "todos", "funcionario", "empreita", "contrato", "diarias", "ferias_decimo", "rescisao",
+];
+
+// Aliases de URL: a Agenda linkava `categoria=empreitada` (o nome da tabela no
+// banco) e o chip se chama `empreita` — o valor desconhecido caía em silêncio
+// no chip "Todos". O link foi corrigido na Agenda; o alias fica para os
+// eventos/notificações que já estavam gravados com o nome antigo.
+const ALIAS_CATEGORIA: Record<string, CategoriaFolha> = { empreitada: "empreita", diaria: "diarias" };
+
+// O MESMO filtro de "Contas > Holerites e recibos", com os mesmos rótulos:
+// era o único lugar em que ele existia, e quem fecha o mês é quem mais
+// precisa dele. Substitui o select "Status" (pendente/pago), que tinha
+// exatamente este predicado sob outro nome — ver `filtrarPorSituacao`.
+const SITUACOES: { id: SituacaoPagamento; label: string; dica: string }[] = [
+  { id: "pagos", label: "Pagos", dica: "Só o que já foi pago" },
+  { id: "a_pagar", label: "A pagar", dica: "Tudo o que ainda não foi pago, vencido ou não" },
+  { id: "todos", label: "Todos", dica: "Pagos e a pagar, juntos" },
+];
+
+/** Os três cards do topo — o que a tela está fazendo agora. */
+type CardFolha = "consultar" | "lancar" | "resolver";
+
+// Cada card do topo, seu papel e o que ele conta. O número é a resposta curta
+// da pergunta do card, não enfeite: quanto há no mês, quantas formas de lançar
+// existem NESTA categoria, quantas pendências travam o fechamento.
+const CARDS: { id: CardFolha; titulo: string; descricao: string }[] = [
+  { id: "consultar", titulo: "Consultar", descricao: "o que já está lançado no mês" },
+  { id: "lancar", titulo: "Lançar", descricao: "formas de lançamento desta categoria" },
+  { id: "resolver", titulo: "Resolver antes de fechar", descricao: "pendências que travam o fechamento" },
+];
 // Acentos emprestados da paleta CowData (navy+dourado+verde+vermelho do
 // painel do dono do software) — usados só nos 3 cards de "Lançar" desta
 // tela, não como fundo/base (que continua o tema normal da fazenda).
@@ -76,15 +184,38 @@ const labelStyleLote: React.CSSProperties = { fontSize: "0.7rem", color: "var(--
 // de desconto desta tela já usam (sublinhado pontilhado), e não uma classe de
 // link nova: o projeto não tem nenhuma, e inventar uma aqui criaria um estilo
 // de link que só existe nesta tabela.
+// O que o clique no nome ABRE mudou: era a linha do tempo da pessoa, e passou
+// a ser o discriminado do lançamento (é o gesto do desenho aprovado). A linha
+// do tempo não perdeu a porta — ganhou um botão próprio na coluna de ações,
+// com ícone de histórico; ela continua sendo a ÚNICA maneira de chegar a
+// LinhaTempoPessoa em todo o sistema.
 const nomeClicavel: React.CSSProperties = {
   background: "none", border: "none", padding: 0, font: "inherit", color: "inherit",
   cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: "0.2em",
 };
 
 /*
- * Folha de pagamento — lançamento e acompanhamento por pessoa/competência.
+ * Financeiro > Ações > Fechamento da folha — AQUI SE FECHA O MÊS.
+ *
  * Pessoas (funcionário, veterinário, diarista etc.) vêm do cadastro em
- * Configurações > Cadastro > Pessoas; aqui só lançamos e damos baixa.
+ * Configurações > Cadastro > Pessoas; aqui se lança, se confere, se
+ * acrescenta verba ao holerite e se dá baixa. A tela irmã, Contas >
+ * Holerites e recibos, é SÓ CONSULTA — e as duas dizem isso na própria
+ * interface, porque no menu a frase some assim que se entra.
+ *
+ * A TELA TEM TRÊS NÍVEIS, nesta ordem:
+ *
+ *   1. os três CARDS do topo — Consultar · Lançar · Resolver antes de fechar
+ *      — que dizem o que a tela está fazendo agora;
+ *   2. os CHIPS de categoria, que dizem sobre o quê;
+ *   3. a faixa de FILTROS (que some inteira sob "Lançar": não se filtra o que
+ *      ainda não existe) e, abaixo, o conteúdo em cards de grupo — cada card
+ *      abre os lançamentos, e o clique no NOME abre o discriminado.
+ *
+ * A regra que governa tudo isso é uma só e mora em `CATEGORIAS`, acima: só
+ * aparece o que compete à categoria escolhida. Antes, o único recorte era
+ * `mostraFormasGerais` — e por isso as guias de FGTS e o relatório de vales
+ * de FUNCIONÁRIO continuavam na tela sob Empreita, Contrato e Diária.
  */
 // `data_admissao` já vem em `GET /cadastro/pessoas` (o serializador devolve a
 // Pessoa inteira) e é o que a ficha da pessoa escreve como vínculo — o
@@ -173,7 +304,17 @@ export default function FolhaPagamentoView() {
   // "rescisao" é chip IRMÃO dos demais, não sub-aba de "ferias_decimo": a
   // rescisão é quem consome férias e 13º (no backend e na lei), não o
   // contrário — ver o cabeçalho de RescisaoView.tsx.
-  const [categoria, setCategoria] = useState<"todos" | "funcionario" | "empreita" | "contrato" | "diarias" | "ferias_decimo" | "rescisao">("todos");
+  const [categoria, setCategoria] = useState<CategoriaFolha>("todos");
+  // O card do topo é o MODO da tela: consultar o mês, lançar, ou resolver o
+  // que trava o fechamento. Nasce em "consultar" porque a primeira pergunta
+  // de quem abre a tela é "como está o mês", não "o que eu lanço".
+  const [cardAtivo, setCardAtivo] = useState<CardFolha>("consultar");
+  // Cards de grupo do conteúdo — CONTROLADOS aqui (e não pelo estado interno
+  // de cada SecaoRecolhivel) porque "Ver a folha", no painel de exceções,
+  // precisa ABRIR o card certo antes de rolar até a linha: com dois níveis de
+  // recolhimento, a linha alvo pode estar dentro de um card fechado, e o
+  // `getElementById` não acha elemento que não está montado.
+  const [gruposAbertos, setGruposAbertos] = useState<Record<string, boolean>>({});
   const [expandedId, setExpandedId] = useState<number | null>(null);
   // Ações do dono sobre um vale que aparece na folha (reparcelar o saldo,
   // abater, desconsiderar o mês, cancelar) — abertas do painel "Descontos de
@@ -181,6 +322,14 @@ export default function FolhaPagamentoView() {
   // Guarda a competência junto porque "desconsiderar o vale neste mês" é
   // sobre a linha de onde o modal foi aberto, não sobre um mês a escolher.
   const [acoesVale, setAcoesVale] = useState<{ valeId: number; pessoaNome: string; competencia: string } | null>(null);
+
+  // Expansão da linha que NÃO é de funcionário (empreita, contrato, diária,
+  // férias/13º) — a folha de funcionário já tinha a sua em `expandedId`.
+  // Existe porque o clique no NOME passou a significar "abre o discriminado"
+  // em toda a tabela, e essas linhas não tinham expansão nenhuma: férias e
+  // 13º chegam do servidor com `detalhe` (o recibo inteiro) e a tela o jogava
+  // fora.
+  const [expandidaChave, setExpandidaChave] = useState<string | null>(null);
 
   // Expansão focada de um desconto (folha ou vale) numa linha específica.
   const [expandDesc, setExpandDesc] = useState<{ id: number; tipo: "folha" | "vale" } | null>(null);
@@ -222,8 +371,14 @@ export default function FolhaPagamentoView() {
   const [erroUnificada, setErroUnificada] = useState<string | null>(null);
   const [fUniVencDe, setFUniVencDe] = useState("");
   const [fUniVencAte, setFUniVencAte] = useState("");
-  const [fUniStatus, setFUniStatus] = useState<"" | "pendente" | "pago">("");
+  // "Pagos · A pagar · Todos" no lugar do antigo select "Status" (pendente/
+  // pago): é o mesmo predicado sob o rótulo que o dono usa, e é o MESMO
+  // controle da tela de Contas — ver `filtrarPorSituacao` em lib/holeriteRegras.
+  const [situacao, setSituacao] = useState<SituacaoPagamento>("todos");
   const [fUniPessoa, setFUniPessoa] = useState("");
+  // Busca livre por pessoa — existia só em Contas > Holerites e recibos
+  // ("Buscar pessoa…"), e quem fecha o mês é quem mais precisa dela.
+  const [buscaPessoa, setBuscaPessoa] = useState("");
   // O MÊS em tela — o objeto desta tela, e não mais um filtro entre outros.
   // `null` = "todos os meses" (o comportamento antigo, que continua a um
   // clique). Nasce indefinido e é resolvido quando o ledger chega, porque a
@@ -234,7 +389,11 @@ export default function FolhaPagamentoView() {
   // Deriva o filtro de tipo do seletor de categoria do topo — não é mais um
   // controle à parte, senão o usuário tinha 2 lugares pra "escolher a
   // categoria" que podiam divergir (o motivo de "não funcionar de verdade").
-  const tipoUnificado = categoria === "todos" ? "" : categoria === "diarias" ? "diaria" : categoria;
+  const capacidades = CATEGORIAS[categoria];
+  // `null` = a categoria não tem ledger (rescisão): não há mês, equação,
+  // exceções nem tabela a montar, e a tela dela é outra.
+  const temLedger = capacidades.tipoLedger !== null;
+  const tipoUnificado = capacidades.tipoLedger ?? "";
   const [excluindoChave, setExcluindoChave] = useState<string | null>(null);
   const [excluirErro, setExcluirErro] = useState<string | null>(null);
 
@@ -253,8 +412,9 @@ export default function FolhaPagamentoView() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const cat = params.get("categoria");
-    if (cat && ["todos", "funcionario", "empreita", "contrato", "diarias", "ferias_decimo", "rescisao"].includes(cat)) {
-      setCategoria(cat as typeof categoria);
+    const catNormalizada = cat ? (ALIAS_CATEGORIA[cat] ?? cat) : null;
+    if (catNormalizada && catNormalizada in CATEGORIAS) {
+      setCategoria(catNormalizada as CategoriaFolha);
     }
     const diariaId = params.get("diaria");
     if (diariaId && !Number.isNaN(Number(diariaId))) {
@@ -392,6 +552,14 @@ export default function FolhaPagamentoView() {
   const [editLinhaMsg, setEditLinhaMsg] = useState<string | null>(null);
   const [salvandoLinha, setSalvandoLinha] = useState(false);
 
+  // ── Cards de grupo (o 1º nível de recolhimento do conteúdo) ─────────────
+  // Só o ledger nasce aberto: é o que responde "como está o mês". Guias e
+  // vales são conferência, e abrem quando o dono pergunta por eles.
+  const GRUPO_LEDGER = "ledger";
+  const PADRAO_ABERTO: Record<string, boolean> = { [GRUPO_LEDGER]: true };
+  const grupoAberto = (id: string) => gruposAbertos[id] ?? PADRAO_ABERTO[id] ?? false;
+  const alternarGrupo = (id: string) => setGruposAbertos((g) => ({ ...g, [id]: !grupoAberto(id) }));
+
   /**
    * O que a ação de uma exceção faz: abre a folha envolvida com a
    * discriminação à vista e rola até ela, piscando a linha. O painel não
@@ -399,26 +567,33 @@ export default function FolhaPagamentoView() {
    * quem decide o que fazer com ele continua sendo o dono. Quando a exceção
    * não tem folha (vencidos que são só empreita/contrato/diária), rola até a
    * tabela, que é onde estão os lançamentos em questão.
+   *
+   * ABRIR ANTES DE ROLAR é obrigatório desde que a tela ganhou dois níveis de
+   * recolhimento: o painel de exceções mora no card "Resolver antes de
+   * fechar" e a linha alvo mora dentro do card do ledger, que pode estar
+   * fechado — e o `getElementById` não acha o que não está montado. Por isso
+   * a função troca o card do topo, abre o grupo, expande a linha e só então
+   * rola, dois quadros depois (um para o React pintar o card novo, outro para
+   * a expansão da linha entrar na altura final).
    */
   function irParaExcecao(excecao: Excecao) {
     const reduzMovimento = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    setCardAtivo("consultar");
+    setGruposAbertos((g) => ({ ...g, [GRUPO_LEDGER]: true }));
     const alvo = excecao.folhaIds[0];
-    if (alvo == null) {
-      document.getElementById("folha-tabela")?.scrollIntoView({ behavior: reduzMovimento ? "auto" : "smooth", block: "start" });
-      return;
+    if (alvo != null) {
+      setExpandedId(alvo);
+      setFolhaDestacada(alvo);
     }
-    setExpandedId(alvo);
-    setFolhaDestacada(alvo);
-    // A linha pode estar fora da tela e a expansão ainda não ter sido pintada
-    // — rolar no quadro seguinte, com a altura final já valendo.
-    requestAnimationFrame(() => {
-      document.getElementById(`folha-linha-${alvo}`)?.scrollIntoView({
-        behavior: reduzMovimento ? "auto" : "smooth", block: "center",
+    const seletor = alvo == null ? "folha-tabela" : `folha-linha-${alvo}`;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      document.getElementById(seletor)?.scrollIntoView({
+        behavior: reduzMovimento ? "auto" : "smooth", block: alvo == null ? "start" : "center",
       });
-    });
+    }));
     // O pisco é de 0,6s (.flash-localizado); tirar a classe depois disso é o
     // que permite piscar de novo se o usuário clicar na mesma exceção.
-    window.setTimeout(() => setFolhaDestacada(null), 900);
+    if (alvo != null) window.setTimeout(() => setFolhaDestacada(null), 900);
   }
 
   function podeEditarLinha(l: LinhaFolhaUnificada) {
@@ -459,14 +634,17 @@ export default function FolhaPagamentoView() {
     ? (unificada ? mesInicial(unificada, new Date().toISOString().slice(0, 7)) : null)
     : mesFolha;
 
-  const unificadaFiltrada = useMemo(() => (unificada || []).filter((l) =>
-    (!mesEmTela || mesDaLinha(l) === mesEmTela) &&
-    (!fUniVencDe || (l.data_vencimento || "") >= fUniVencDe) &&
-    (!fUniVencAte || (l.data_vencimento || "") <= fUniVencAte) &&
-    (!fUniStatus || l.status === fUniStatus) &&
-    (!fUniPessoa || String(l.pessoa_id) === fUniPessoa) &&
-    (!tipoUnificado || l.tipo === tipoUnificado)
-  ), [unificada, mesEmTela, fUniVencDe, fUniVencAte, fUniStatus, fUniPessoa, tipoUnificado]);
+  const unificadaFiltrada = useMemo(() => {
+    const alvo = buscaPessoa.trim().toLowerCase();
+    return filtrarPorSituacao((unificada || []).filter((l) =>
+      (!mesEmTela || mesDaLinha(l) === mesEmTela) &&
+      (!fUniVencDe || (l.data_vencimento || "") >= fUniVencDe) &&
+      (!fUniVencAte || (l.data_vencimento || "") <= fUniVencAte) &&
+      (!fUniPessoa || String(l.pessoa_id) === fUniPessoa) &&
+      (!alvo || l.pessoa_nome.toLowerCase().includes(alvo)) &&
+      (!tipoUnificado || l.tipo === tipoUnificado)
+    ), situacao);
+  }, [unificada, mesEmTela, fUniVencDe, fUniVencAte, situacao, fUniPessoa, buscaPessoa, tipoUnificado]);
   // A equação, o resumo dos outros tipos e as exceções saem TODOS da mesma
   // lista já filtrada — nenhum deles recalcula o recorte por conta própria.
   const equacao = useMemo(() => equacaoDoMes(unificadaFiltrada), [unificadaFiltrada]);
@@ -861,6 +1039,35 @@ export default function FolhaPagamentoView() {
     }
   }
 
+  /**
+   * Estornar o pagamento — a porta de saída que faltava.
+   *
+   * `POST /cadastro/folha-pagamento/{id}/estornar` existe desde o C7 e nenhuma
+   * tela o chamava: o holerite mandava o usuário "estornar o pagamento para
+   * acrescentar ou corrigir vencimentos e descontos" e não havia botão nenhum.
+   * Só admin: o estorno desfaz a baixa da conta a pagar e DESCONGELA a
+   * discriminação de um recibo já emitido.
+   */
+  const [estornandoId, setEstornandoId] = useState<number | null>(null);
+  const [estornoErro, setEstornoErro] = useState<string | null>(null);
+  async function estornarFolha(r: RegistroFolha) {
+    if (!window.confirm(
+      `Estornar o pagamento da folha de ${r.pessoa_nome} (${mesCompLabel(r.competencia)})?\n\n`
+      + "A baixa da conta a pagar é desfeita, o lançamento volta a \"pendente\" e o recibo "
+      + "volta a ser calculado ao vivo — podendo mudar se houver vale ou rubrica pendente.",
+    )) return;
+    setEstornoErro(null);
+    setEstornandoId(r.id);
+    try {
+      await estornarPagamentoFolha(r.id);
+      carregar(); carregarUnificada();
+    } catch (e: any) {
+      setEstornoErro(e.message || "Erro ao estornar o pagamento da folha");
+    } finally {
+      setEstornandoId(null);
+    }
+  }
+
   function iniciarEdicao(r: RegistroFolha) {
     setEditingId(r.id);
     setExpandedId(r.id);
@@ -1026,42 +1233,162 @@ export default function FolhaPagamentoView() {
   // ReciboModal já usado no financeiro.
   const [reciboLinha, setReciboLinha] = useState<LancamentoRecibo | null>(null);
 
-  const mostraFormasGerais = categoria === "todos" || categoria === "funcionario";
+  // Quantas formas de lançar existem NESTA categoria — o número do card
+  // "Lançar". A tela própria da categoria (empreita, contrato, diária,
+  // férias/13º, rescisão) conta como uma.
+  const formasDeLancar =
+    (capacidades.folhaFuncionario ? 1 : 0) + (capacidades.valeFuncionario ? 1 : 0)
+    + (capacidades.guias ? 1 : 0) + (capacidades.telaPropria ? 1 : 0);
+  // A tela própria da categoria, montada com a metade que o card pede: os
+  // formulários sob "Lançar", a listagem (e as ações sobre cada item) sob
+  // "Consultar". Sem esse corte, escolher "Lançar" continuaria despejando a
+  // listagem inteira embaixo do formulário e o card não significaria nada.
+  const telaDaCategoria = (mostrar: "lancar" | "listar") => {
+    switch (capacidades.telaPropria) {
+      case "empreita": return <EmpreitadaView mostrar={mostrar} />;
+      case "contrato": return <ContratoView mostrar={mostrar} />;
+      case "diarias": return <DiariaView mostrar={mostrar} deepLinkDiariaId={deepLinkDiaria?.id} deepLinkModo={deepLinkDiaria?.modo} />;
+      case "ferias_decimo": return <FeriasDecimoTerceiroView mostrar={mostrar} />;
+      // Sem props de pessoa: RescisaoView busca as próprias desde que deixou
+      // de ser sub-aba de Férias/13º (que lhe emprestava a lista).
+      case "rescisao": return <RescisaoView mostrar={mostrar} />;
+      default: return null;
+    }
+  };
 
   return (
     <div>
-      {/* Seletor único de categoria — troca o que "Lançar" mostra E filtra
-          "Consultar" logo abaixo. "Todos" é a 1ª opção (item aprovado da
-          proposta): antes não existia nenhuma visão que juntasse as 5.
-          "Rescisão" é o 7º chip e fecha a lista: é uma categoria de
-          fechamento de folha por direito próprio, não uma aba escondida
-          dentro de "Férias / 13º" (ver RescisaoView.tsx). */}
+      {/* O título "Controle Financeiro" é o <h1> da própria página
+          (app/financeiro/page.tsx) — repeti-lo aqui daria dois títulos iguais
+          empilhados. O que falta abaixo dele é o papel DESTA tela. */}
+      {/* O papel da tela, dito na própria tela. As duas telas de folha diziam
+          o que fazem só no texto do menu, que some assim que se entra — e o
+          dono acabava lançando de um lado e conferindo do outro sem saber
+          qual era qual. */}
+      <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", margin: "0 0 1rem" }}>
+        <strong style={{ color: "var(--text)" }}>Aqui se fecha a folha</strong> — lançar, conferir,
+        acrescentar vencimento/desconto e pagar. Para só consultar e imprimir o recibo, use{" "}
+        <a href="/financeiro?ir=folha_relatorio" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}
+          title="Abrir Contas > Holerites e recibos (só consulta)">Contas › Holerites e recibos</a>.
+      </p>
+
+      {/* Os três cards — o MODO da tela. Acento por borda esquerda, como o
+          resto da casa; o card ativo troca o fundo, não só a borda. */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+        {CARDS.map((c) => {
+          const ativo = cardAtivo === c.id;
+          const numero = c.id === "consultar"
+            ? (temLedger ? formatBRL(somaUnificadaFiltrada) : "—")
+            : c.id === "lancar" ? String(formasDeLancar)
+            : (temLedger ? String(excecoes.length) : "—");
+          return (
+            <button key={c.id} type="button" aria-pressed={ativo} onClick={() => setCardAtivo(c.id)}
+              title={c.descricao}
+              style={{
+                textAlign: "left", cursor: "pointer", font: "inherit",
+                background: ativo ? "color-mix(in srgb, var(--dourado-light) 12%, var(--surface))" : "var(--surface)",
+                border: "1px solid var(--border)",
+                borderLeft: `4px solid ${ativo ? "var(--dourado)" : "var(--border)"}`,
+                borderRadius: "var(--r-sm)", padding: "0.7rem 1rem",
+                display: "flex", flexDirection: "column", gap: "0.1rem",
+              }}>
+              <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text)" }}>{c.titulo}</span>
+              <span style={{ fontSize: "1.15rem", fontWeight: 800, fontVariantNumeric: "tabular-nums", color: ativo ? "var(--dourado-light)" : "var(--text)" }}>
+                {numero}
+              </span>
+              <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{c.descricao}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Seletor de categoria — governa TUDO o que aparece abaixo, via a
+          tabela CATEGORIAS: o que se pode lançar, o que se consulta e o que
+          sequer existe naquela categoria (empreiteiro não tem FGTS). */}
       <div className="flex items-center gap-2 mb-4" style={{ flexWrap: "wrap" }}>
-        {(["todos", "funcionario", "empreita", "contrato", "diarias", "ferias_decimo", "rescisao"] as const).map((cat) => (
-          <button key={cat} type="button" onClick={() => setCategoria(cat)}
+        {ORDEM_CATEGORIAS.map((cat) => (
+          <button key={cat} type="button" aria-pressed={categoria === cat} onClick={() => setCategoria(cat)}
+            title={`Ver só ${CATEGORIAS[cat].rotulo.toLowerCase()}`}
             style={{ fontSize: "0.82rem", fontWeight: 600, padding: "0.45rem 0.9rem", borderRadius: "999px",
               border: `1px solid ${categoria === cat ? "var(--dourado)" : "var(--border)"}`,
               background: categoria === cat ? "var(--dourado)" : "var(--surface)",
               color: categoria === cat ? "var(--vinho-dark, #0A1F36)" : "var(--text-muted)", cursor: "pointer" }}>
-            {cat === "todos" ? "Todos" : LABEL_TIPO[cat === "diarias" ? "diaria" : cat]}
+            {CATEGORIAS[cat].rotulo}
           </button>
         ))}
       </div>
 
-      <div className="flex items-center gap-2 mb-2" style={{ fontSize: "0.74rem", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, color: "var(--text-muted)" }}>
-        Lançar
-      </div>
-
-      {categoria === "empreita" && <EmpreitadaView />}
-      {categoria === "contrato" && <ContratoView />}
-      {categoria === "diarias" && <DiariaView deepLinkDiariaId={deepLinkDiaria?.id} deepLinkModo={deepLinkDiaria?.modo} />}
-      {categoria === "ferias_decimo" && <FeriasDecimoTerceiroView />}
-      {/* Sem props: RescisaoView busca as próprias pessoas desde que deixou
-          de ser sub-aba de Férias/13º (que lhe emprestava a lista). */}
-      {categoria === "rescisao" && <RescisaoView />}
-
-      {mostraFormasGerais && (error ? <div className="alert-critico"><span>Sem dados: {error}.</span></div> : <>
+      {error && <div className="alert-critico mb-3"><span>Sem dados: {error}.</span></div>}
       <AvisoSalvo texto={msg?.tipo === "sucesso" ? msg.texto : null} />
+
+      {/* ── FAIXA DE FILTROS ────────────────────────────────────────────────
+          Some INTEIRA sob o card "Lançar": não se filtra o que ainda não
+          existe. E não aparece na rescisão, que não tem ledger a filtrar. */}
+      {cardAtivo !== "lancar" && temLedger && (<>
+        {/* O MÊS é o primeiro filtro, e é um objeto próprio (não dois campos
+            de data soltos): é ele que define "o mês que se está fechando". A
+            equação que confere esse mês fica no card Consultar, junto do que
+            ela soma. */}
+        <BarraCompetencia
+          mes={mesEmTela}
+          mesesComLancamento={mesesComLancamento}
+          competencias={competenciasEmTela}
+          situacao={situacaoMes}
+          quantidade={unificadaFiltrada.length}
+          onMes={setMesFolha}
+        />
+        <div className="card mb-3">
+          <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar dentro do mês</div>
+          <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+            <span style={{ ...labelStyleLote, marginRight: "0.2rem" }}>Situação do pagamento</span>
+            {SITUACOES.map((sit) => (
+              <button key={sit.id} type="button" className="btn-ghost" title={sit.dica}
+                aria-pressed={situacao === sit.id} onClick={() => setSituacao(sit.id)}
+                style={{
+                  fontSize: "0.76rem",
+                  borderColor: situacao === sit.id ? "var(--dourado)" : undefined,
+                  color: situacao === sit.id ? "var(--dourado-light)" : undefined,
+                  fontWeight: situacao === sit.id ? 700 : undefined,
+                  background: situacao === sit.id ? "color-mix(in srgb, var(--dourado-light) 12%, transparent)" : undefined,
+                }}>{sit.label}</button>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div><label style={labelStyleLote}>Vencimento — de</label>
+              <input type="date" style={selStyleLote} value={fUniVencDe} onChange={(e) => setFUniVencDe(e.target.value)} /></div>
+            <div><label style={labelStyleLote}>Vencimento — até</label>
+              <input type="date" style={selStyleLote} value={fUniVencAte} onChange={(e) => setFUniVencAte(e.target.value)} /></div>
+            <div><label style={labelStyleLote}>Pessoa</label>
+              <select style={selStyleLote} value={fUniPessoa} onChange={(e) => setFUniPessoa(e.target.value)}>
+                <option value="">Todos</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+              </select></div>
+            <div><label style={labelStyleLote}>Buscar pessoa…</label>
+              <div style={{ position: "relative" }}>
+                <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
+                <input style={{ ...selStyleLote, paddingLeft: "1.6rem" }} value={buscaPessoa}
+                  onChange={(e) => setBuscaPessoa(e.target.value)} placeholder="parte do nome" /></div></div>
+          </div>
+        </div>
+      </>)}
+
+      {/* ── CARD "RESOLVER ANTES DE FECHAR" ───────────────────────────────── */}
+      {cardAtivo === "resolver" && (temLedger ? (
+        <ExcecoesFolha excecoes={excecoes} onResolver={irParaExcecao} />
+      ) : (
+        <div className="card mb-3" style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+          A rescisão não entra no ledger unificado do mês — não há pendência de fechamento a apontar aqui.
+          O que a rescisão gera é uma conta a pagar, que aparece em{" "}
+          <strong style={{ color: "var(--text)" }}>Contas a pagar</strong>.
+        </div>
+      ))}
+
+      {/* ── CARD "LANÇAR" ──────────────────────────────────────────────────
+          Os três formulários gerais (folha, vale, guia) lado a lado, no mesmo
+          formato, cores e acentos de sempre — e, quando a categoria tem tela
+          própria, ela entra aqui com os formulários dela. */}
+      {cardAtivo === "lancar" && (<>
+      {capacidades.telaPropria && telaDaCategoria("lancar")}
+      {(capacidades.folhaFuncionario || capacidades.valeFuncionario || capacidades.guias) && (<>
       {anexarAberto && (
         <ModalDivididoDocumento title="Anexar comprovante — leitura automática (despesa)" onClose={() => { setAnexarAberto(false); setArquivoPreview(null); }} arquivo={arquivoPreview}>
           <FormFinanceiro tipo="despesa" responsaveis={nomesResponsaveis} onArquivoParaLeitura={setArquivoPreview}
@@ -1069,7 +1396,9 @@ export default function FolhaPagamentoView() {
         </ModalDivididoDocumento>
       )}
 
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-start">
       {/* 1) Novo lançamento de folha — acento dourado */}
+      {capacidades.folhaFuncionario && (
       <div style={{ borderLeft: `4px solid ${COR_LANCAR.folha}`, borderRadius: "var(--r-sm)", marginBottom: "0.9rem" }}>
       <SecaoRecolhivel titulo="Nova folha — Funcionário" icon={Plus} defaultAberta={false} descricao="Lance a folha de uma pessoa em uma competência">
         <div className="mb-3" style={{ textAlign: "right" }}>
@@ -1139,16 +1468,22 @@ export default function FolhaPagamentoView() {
         </button>
       </SecaoRecolhivel>
       </div>
+      )}
 
       {/* 2) Vale de funcionário — acento verde */}
+      {capacidades.valeFuncionario && (
       <div style={{ borderLeft: `4px solid ${COR_LANCAR.vale}`, borderRadius: "var(--r-sm)", marginBottom: "0.9rem" }}>
       <SecaoRecolhivel titulo="Novo vale" icon={Plus} defaultAberta={false} descricao="Adiantamento pago à parte, descontado da folha">
         <ValeFuncionarioSection pessoas={pessoas} contasCorrentes={contasCorrentes} onLancado={() => { carregar(); carregarUnificada(); carregarVales(); }} />
       </SecaoRecolhivel>
       </div>
+      )}
 
       {/* 3) Lançar guia de FGTS/DCTF — acento vermelho — manual ou por leitura
-          automática do PDF/foto da guia real. */}
+          automática do PDF/foto da guia real. Só sob Funcionário e Todos:
+          FGTS/DCTF são encargos de CLT, e o empreiteiro não é CLT (decisão do
+          dono, e a razão de a guia sumir das outras categorias). */}
+      {capacidades.guias && (
       <div style={{ borderLeft: `4px solid ${COR_LANCAR.guia}`, borderRadius: "var(--r-sm)", marginBottom: "0.9rem" }}>
       <SecaoRecolhivel
         titulo="Lançar guia de FGTS/DCTF" icon={Plus} defaultAberta={false}
@@ -1157,69 +1492,39 @@ export default function FolhaPagamentoView() {
         <LancarGuiaFgtsDctfSection onLancado={() => { carregarUnificada(); carregarGuias(); }} />
       </SecaoRecolhivel>
       </div>
+      )}
+      </div>
+      {categoria === "todos" && (
+        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+          Empreita, contrato, diária, férias/13º e rescisão têm formulário próprio — escolha a categoria acima
+          para lançar cada uma delas.
+        </p>
+      )}
+      </>)}
       </>)}
 
-      <div className="flex items-center gap-2 mb-2 mt-4" style={{ fontSize: "0.74rem", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, color: "var(--text-muted)" }}>
-        Consultar
-      </div>
-
-      {/* O bloco "Consultar" é o ledger unificado (`fetchFolhaPagamentoUnificada`),
-          que o backend monta com CINCO tipos: funcionario, empreita, contrato,
-          diaria e ferias_decimo. Rescisão não é um deles. Sob o chip Rescisão,
-          `tipoUnificado` seria "rescisao" e a barra do mês, a equação e a
-          tabela apareceriam TODAS zeradas — dizendo "não há rescisão nenhuma",
-          o que é falso: elas estão logo acima, na tabela da própria tela de
-          Rescisão (etapa 4, "acompanhar"). Melhor não mostrar do que mostrar
-          um zero mentiroso. Quando o ledger passar a emitir o 6º tipo, é só
-          apagar esta condição e o aviso. */}
-      {categoria === "rescisao" ? (
+      {/* ── CARD "CONSULTAR" ───────────────────────────────────────────────
+          O ledger unificado é montado pelo backend com CINCO tipos —
+          funcionario, empreita, contrato, diaria, ferias_decimo. A rescisão
+          não é um deles, e é por isso que ela tem TELA PRÓPRIA: mostrar a
+          barra do mês, a equação e a tabela zeradas diria "não há rescisão
+          nenhuma", o que é falso — elas estão na tabela da própria tela de
+          Rescisão. Quando o ledger passar a emitir o 6º tipo, é só dar um
+          `tipoLedger` à categoria em CATEGORIAS. */}
+      {cardAtivo === "consultar" && (!temLedger ? (<>
+        {telaDaCategoria("listar")}
         <div className="card mb-3" style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-          As rescisões simuladas e fechadas estão na tabela acima, nesta mesma tela.
           A conta a pagar gerada ao fechar uma rescisão aparece em{" "}
           <strong style={{ color: "var(--text)" }}>Contas a pagar</strong> — o ledger unificado
-          da folha ainda não inclui rescisão.
+          da folha ainda não inclui rescisão, e por isso ela não entra na equação do mês acima.
         </div>
-      ) : (<>
+      </>) : (<>
 
-      {/* A barra do MÊS e a faixa da EQUAÇÃO, no lugar dos três KPIs soltos
-          (Lançamentos/Pendente/Pago) que não formavam conta nenhuma: sem
-          identidade a conferir, um total errado não tinha como saltar aos
-          olhos. Nada do que os KPIs diziam se perde — pendente e pago viram a
-          nota de situação da faixa e os cartões de "Também vence neste mês", e
-          "Fora da conta" continua fora de toda soma, agora ao lado da conta
-          que ele não integra. */}
-      <BarraCompetencia
-        mes={mesEmTela}
-        mesesComLancamento={mesesComLancamento}
-        competencias={competenciasEmTela}
-        situacao={situacaoMes}
-        quantidade={unificadaFiltrada.length}
-        onMes={setMesFolha}
-      />
+      {/* A EQUAÇÃO do mês no lugar dos três KPIs soltos (Lançamentos/
+          Pendente/Pago) que não formavam conta nenhuma: sem identidade a
+          conferir, um total errado não tinha como saltar aos olhos. */}
       <EquacaoFolha eq={equacao} />
-      <ExcecoesFolha excecoes={excecoes} onResolver={irParaExcecao} />
       <OutrosPagamentosDoMes resumo={outrosTipos} />
-
-      {/* Filtro da folha de pagamento unificada — a categoria já vem do
-          seletor do topo e o MÊS vem da barra; aqui só os complementares, que
-          estreitam DENTRO do mês escolhido (nunca o contradizem). */}
-      <div className="card mb-3">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar dentro do mês</div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div><label style={labelStyleLote}>Vencimento — de</label>
-            <input type="date" style={selStyleLote} value={fUniVencDe} onChange={(e) => setFUniVencDe(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Vencimento — até</label>
-            <input type="date" style={selStyleLote} value={fUniVencAte} onChange={(e) => setFUniVencAte(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Status</label>
-            <select style={selStyleLote} value={fUniStatus} onChange={(e) => setFUniStatus(e.target.value as any)}>
-              <option value="">Todos</option><option value="pendente">Pendente</option><option value="pago">Pago</option>
-            </select></div>
-          <div><label style={labelStyleLote}>Pessoa</label>
-            <select style={selStyleLote} value={fUniPessoa} onChange={(e) => setFUniPessoa(e.target.value)}>
-              <option value="">Todos</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
-            </select></div>
-        </div>
-      </div>
 
       {/* Total filtrado + ação em lote de holerites — fora do cabeçalho clicável
           da SecaoRecolhivel abaixo (não dá pra aninhar um <button> dentro do
@@ -1232,6 +1537,7 @@ export default function FolhaPagamentoView() {
             {uniBloqueadas.length > 0 ? ` · ${formatBRL(somaUniBloqueada)} fora da conta` : ""}
           </span>
         </span>
+        {capacidades.folhaFuncionario && (
         <span style={{ position: "relative" }}>
           <button className="btn-ghost" type="button" title="Imprimir o holerite de todos os funcionários que estão passando pelo filtro atual (ex.: um mês específico)"
             style={{ fontSize: "0.75rem" }} disabled={!funcionariosFolhaFiltrados.length}
@@ -1246,13 +1552,19 @@ export default function FolhaPagamentoView() {
             </span>
           )}
         </span>
+        )}
       </div>
 
       {/* Folha de pagamento — funcionário, empreita, contrato, diária e férias/13º num único ledger;
           recolhida por padrão, expande ao clicar no cabeçalho. Prioriza pendências (destacando as vencidas em vinho). */}
       <SecaoRecolhivel
-        titulo="Folha de pagamento" icon={Filter} defaultAberta
-        descricao="Todos os lançamentos — funcionário, empreita, contrato, diária e férias/13º. Clique numa folha para abrir o recibo."
+        titulo={categoria === "todos" ? "Folha de pagamento" : `${capacidades.rotulo} — lançamentos do mês`}
+        icon={Filter}
+        aberta={grupoAberto(GRUPO_LEDGER)} onAlternar={() => alternarGrupo(GRUPO_LEDGER)}
+        badge={<span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>
+          {unificadaFiltrada.length} {unificadaFiltrada.length === 1 ? "lançamento" : "lançamentos"} · {formatBRL(somaUnificadaFiltrada)}
+        </span>}
+        descricao="Clique no nome da pessoa para abrir o discriminado do lançamento."
       >
         {erroUnificada ? <div className="alert-critico"><span>Sem dados: {erroUnificada}.</span></div> : (
         <div className="overflow-x-auto" id="folha-tabela">
@@ -1277,17 +1589,23 @@ export default function FolhaPagamentoView() {
                 if (l.tipo !== "funcionario") {
                   const editavel = podeEditarLinha(l);
                   const editandoLinha = editingLinhaChave === chave;
+                  const aberta = expandidaChave === chave;
+                  const docLinha = holeriteDaLinha(l);
+                  const statusLinha = rotuloStatusLinha(l.status);
                   return (
                     <Fragment key={chave}>
                     <tr style={l.vencido ? { background: VENCIDO_BG } : undefined}>
                       <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{LABEL_TIPO[l.tipo]}</td>
                       <td style={{ fontWeight: 600, fontSize: "0.82rem", whiteSpace: "nowrap" }}>
-                        {(() => { const d = l.data_pagamento || l.data_vencimento; return d ? mesCompLabel(d.slice(0, 7)) : "—"; })()}
+                        <span className="flex items-center gap-1">
+                          {aberta ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                          {(() => { const d = l.data_pagamento || l.data_vencimento; return d ? mesCompLabel(d.slice(0, 7)) : "—"; })()}
+                        </span>
                       </td>
                       <td style={{ fontSize: "0.82rem" }}>
                         <button type="button" style={nomeClicavel}
-                          title={`Ver a linha do tempo de ${l.pessoa_nome} — pagamentos, vales e parcelas em ordem`}
-                          onClick={() => setFichaPessoaId(l.pessoa_id)}>
+                          title={`Abrir o discriminado deste lançamento de ${l.pessoa_nome}`}
+                          onClick={() => setExpandidaChave(aberta ? null : chave)}>
                           {l.pessoa_nome}
                         </button>
                       </td>
@@ -1296,11 +1614,19 @@ export default function FolhaPagamentoView() {
                       <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(l.valor)}</td>
                       <td style={{ textAlign: "right", fontSize: "0.76rem", color: "var(--text-muted)" }}>—</td>
                       <td style={{ textAlign: "right", fontSize: "0.76rem", color: "var(--text-muted)" }}>—</td>
-                      <td><span style={{ fontSize: "0.72rem", fontWeight: 700, color: l.status === "pago" ? "var(--green-light)" : "var(--amber)" }}>{l.status === "pago" ? "Pago" : "Pendente"}</span></td>
+                      <td><span title={statusLinha.titulo} style={{ fontSize: "0.72rem", fontWeight: 700, color: statusLinha.cor }}>{statusLinha.texto}</span></td>
                       <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{l.status === "pago" ? formatBRL(l.valor) : "—"}</td>
                       {admin && <td>—</td>}
                       <td style={{ textAlign: "right" }}>
                         <span className="flex items-center gap-2" style={{ justifyContent: "flex-end" }}>
+                          {/* A OUTRA porta para a linha do tempo, agora que o
+                              nome abre o discriminado. Continua sendo o único
+                              caminho até LinhaTempoPessoa no sistema inteiro. */}
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                            title={`Linha do tempo de ${l.pessoa_nome} — pagamentos, vales e parcelas em ordem`}
+                            onClick={() => setFichaPessoaId(l.pessoa_id)}>
+                            <History size={13} />
+                          </button>
                           <button className="btn-ghost" title="Imprimir recibo de pagamento" style={{ fontSize: "0.72rem" }}
                             onClick={() => setReciboLinha({
                               numero_lancamento: `${l.tipo}-${l.origem_id}`,
@@ -1329,6 +1655,32 @@ export default function FolhaPagamentoView() {
                         </span>
                       </td>
                     </tr>
+                    {aberta && (
+                      <tr><td colSpan={admin ? 12 : 11}>
+                        <div style={{ padding: "0.6rem 0" }}>
+                          {/* Férias e 13º chegam com `detalhe` — o recibo de
+                              quatro colunas, igual ao holerite. Empreita,
+                              contrato e diária são pagamento de valor único,
+                              sem composição: o que se pode discriminar deles é
+                              a referência (de onde veio e para quando). */}
+                          {docLinha
+                            ? <Holerite documento={docLinha} compacto cabecalho={false} />
+                            : (
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3" style={{ fontSize: "0.8rem" }}>
+                                <div><div style={labelStyleLote}>Descrição</div>{l.descricao}</div>
+                                <div><div style={labelStyleLote}>Referência</div>
+                                  {l.data_vencimento ? `vence em ${formatDate(l.data_vencimento)}` : "sem vencimento"}
+                                  {l.data_pagamento ? ` · pago em ${formatDate(l.data_pagamento)}` : ""}</div>
+                                <div><div style={labelStyleLote}>Valor</div>{formatBRL(l.valor)}</div>
+                                <div><div style={labelStyleLote}>No extrato</div>
+                                  {l.numero_lancamento_gerado
+                                    ? <LinkExtrato numero={l.numero_lancamento_gerado} />
+                                    : <span style={{ color: "var(--text-muted)" }}>—</span>}</div>
+                              </div>
+                            )}
+                        </div>
+                      </td></tr>
+                    )}
                     {editandoLinha && (
                       <tr>
                         <td colSpan={admin ? 12 : 11} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
@@ -1379,13 +1731,14 @@ export default function FolhaPagamentoView() {
                         </span>
                       </td>
                       <td style={{ fontSize: "0.82rem" }}>
-                        {/* O NOME abre a linha do tempo da pessoa; o resto da
-                            linha continua abrindo o recibo da competência. São
-                            duas perguntas diferentes ("quanto sai agora" e "de
-                            onde veio isto") e cada uma tem o próprio alvo. */}
+                        {/* O NOME abre o discriminado — o gesto do desenho
+                            aprovado ("clicou no nome, abre o discriminado
+                            daquele contrato"). A linha do tempo da pessoa, que
+                            antes morava aqui, ganhou botão próprio na coluna
+                            de ações: continua sendo a única porta para ela. */}
                         <button type="button" style={nomeClicavel}
-                          title={`Ver a linha do tempo de ${r.pessoa_nome} — folhas, vales e parcelas em ordem`}
-                          onClick={(e) => { e.stopPropagation(); setFichaPessoaId(r.pessoa_id); }}>
+                          title={`Abrir o discriminado da folha de ${r.pessoa_nome} — ${mesCompLabel(r.competencia)}`}
+                          onClick={(e) => { e.stopPropagation(); setExpandedId(expandido ? null : r.id); }}>
                           {r.pessoa_nome}
                         </button>
                         {(r.recorrente || r.origem_recorrencia_id) && (
@@ -1407,11 +1760,18 @@ export default function FolhaPagamentoView() {
                         onClick={(e) => { e.stopPropagation(); setExpandDesc(descAberto && expandDesc!.tipo === "vale" ? null : { id: r.id, tipo: "vale" }); }}>
                         {formatBRL(descVale)}
                       </td>
-                      <td><span style={{ fontSize: "0.72rem", fontWeight: 700, color: r.status === "pago" ? "var(--green-light)" : "var(--amber)" }}>{r.status === "pago" ? "Pago" : "Pendente"}</span></td>
+                      <td>{(() => { const st = rotuloStatusLinha(r.status); return (
+                        <span title={st.titulo} style={{ fontSize: "0.72rem", fontWeight: 700, color: st.cor }}>{st.texto}</span>
+                      ); })()}</td>
                       <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{r.status === "pago" ? formatBRL(r.valor_liquido) : "—"}</td>
                       {admin && <td>{r.usuario_nome ?? "—"}</td>}
                       <td style={{ textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
                         <span className="flex items-center gap-2" style={{ justifyContent: "flex-end" }}>
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                            title={`Linha do tempo de ${r.pessoa_nome} — folhas, vales e parcelas em ordem`}
+                            onClick={() => setFichaPessoaId(r.pessoa_id)}>
+                            <History size={13} />
+                          </button>
                           <span style={{ position: "relative" }}>
                             <button className="btn-ghost" title={`Imprimir holerite de ${r.pessoa_nome} (${mesCompLabel(r.competencia)})`} style={{ fontSize: "0.72rem" }}
                               onClick={() => setImprimindoHoleriteChave(imprimindoHoleriteChave === chave ? null : chave)}>
@@ -1434,6 +1794,17 @@ export default function FolhaPagamentoView() {
                                 <Trash2 size={13} />
                               </button>
                             </>
+                          )}
+                          {/* Só admin: o estorno desfaz a baixa da conta a
+                              pagar e descongela a discriminação de um recibo
+                              já emitido. Não é vermelho — não exclui nada. */}
+                          {r.status === "pago" && admin && (
+                            <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                              title="Estornar o pagamento — desfaz a baixa e devolve a folha a pendente, para poder corrigir"
+                              disabled={estornandoId === r.id}
+                              onClick={() => estornarFolha(r)}>
+                              <RotateCcw size={13} /> {estornandoId === r.id ? "Estornando…" : "Estornar"}
+                            </button>
                           )}
                         </span>
                       </td>
@@ -1522,8 +1893,29 @@ export default function FolhaPagamentoView() {
                               <Pencil size={12} /> Editar lançamento
                             </button>
                           ) : (
-                            <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Lançamento já pago — não pode mais ser editado.</p>
+                            <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>
+                              Lançamento já pago — não pode mais ser editado. {admin ? "Use \u201cEstornar\u201d na linha para reabri-lo." : "Peça a um administrador para estornar o pagamento."}
+                            </p>
                           )}
+                          {estornoErro && <p style={{ color: "var(--red)", fontSize: "0.78rem", marginTop: "0.4rem" }}>{estornoErro}</p>}
+
+                          {/* O PAINEL DE RUBRICAS — acrescentar vencimento e
+                              desconto ao holerite. Ele morava em Contas >
+                              Holerites e recibos, que passou a ser só
+                              consulta: era o único jeito de acrescentar uma
+                              verba a um holerite, e ficava justamente na tela
+                              onde nada se altera. Fica FORA do papel, abaixo
+                              dele — o recibo continua sendo quatro colunas sem
+                              botão nenhum entre os números (ver o cabeçalho de
+                              RubricasHolerite.tsx). */}
+                          <RubricasHolerite
+                            key={r.id}
+                            folhaId={r.id}
+                            bloqueio={r.status === "pago"
+                              ? "Esta folha já foi paga e o recibo está congelado — estorne o pagamento para acrescentar ou corrigir vencimentos e descontos."
+                              : null}
+                            onMudou={() => { carregar(); carregarUnificada(); }}
+                          />
                         </div>
                       </td></tr>
                     )}
@@ -1615,8 +2007,15 @@ export default function FolhaPagamentoView() {
       </SecaoRecolhivel>
 
       {/* Relatório de guias de FGTS/DCTF já lançadas — dados estruturados
-          (não só o PDF anexado), para acompanhar competência a competência. */}
-      <SecaoRecolhivel titulo="Guias de FGTS/DCTF lançadas" icon={Filter} defaultAberta={false} descricao="Competência, valores e origem (manual ou leitura automática) de cada guia">
+          (não só o PDF anexado), para acompanhar competência a competência.
+          Só sob Funcionário e Todos: era este bloco que aparecia embaixo de
+          Empreita, Contrato e Diária cobrando encargo de CLT de quem não é
+          CLT. Quem decide agora é `capacidades.guias`, não um `if` local. */}
+      {capacidades.guias && (
+      <SecaoRecolhivel titulo="Guias de FGTS/DCTF lançadas" icon={Filter}
+        aberta={grupoAberto("guias")} onAlternar={() => alternarGrupo("guias")}
+        badge={guias ? <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>{guias.length}</span> : null}
+        descricao="Competência, valores e origem (manual ou leitura automática) de cada guia">
         {excluirGuiaErro && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{excluirGuiaErro}</p>}
         {!guias || !guias.length ? (
           <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma guia lançada ainda.</p>
@@ -1707,9 +2106,19 @@ export default function FolhaPagamentoView() {
           </div>
         )}
       </SecaoRecolhivel>
+      )}
 
-      {/* Relatório de vales e descontos — vale de funcionário, filtrável e ordenável */}
-      <SecaoRecolhivel titulo="Relatório de vales e descontos" icon={Filter} defaultAberta={false} descricao="Vales de funcionário lançados, com parcelamento e status de aplicação">
+      {/* Relatório de vales e descontos — vale de FUNCIONÁRIO, filtrável e
+          ordenável. Estava no mesmo card dos vales de empreitada/contrato/
+          diária, e por isso aparecia inteiro sob qualquer categoria: quem
+          escolhia "Empreita" via a tabela de vales de CLT logo abaixo. São
+          dois relatórios de coisas diferentes e agora são dois cards, cada um
+          declarado por sua categoria. */}
+      {capacidades.valeFuncionario && (
+      <SecaoRecolhivel titulo="Vales de funcionário" icon={Filter}
+        aberta={grupoAberto("vales_funcionario")} onAlternar={() => alternarGrupo("vales_funcionario")}
+        badge={vales ? <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>{valesOrdenados.length}</span> : null}
+        descricao="Vales de funcionário lançados, com parcelamento e status de aplicação">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
           <div><label style={labelStyleLote}>Data do vale — de</label>
             <input type="date" style={selStyleLote} value={fValeDe} onChange={(e) => setFValeDe(e.target.value)} /></div>
@@ -1878,8 +2287,24 @@ export default function FolhaPagamentoView() {
             </tbody>
           </table>
         </div>
+      </SecaoRecolhivel>
+      )}
 
-        <p style={{ fontSize: "0.82rem", fontWeight: 600, margin: "1.25rem 0 0.5rem" }}>Vales de empreitada, contrato e diária</p>
+      {capacidades.valeAvulso && (
+      <SecaoRecolhivel titulo="Vales de empreitada, contrato e diária" icon={Filter}
+        aberta={grupoAberto("vales_avulsos")} onAlternar={() => alternarGrupo("vales_avulsos")}
+        badge={valesAvulsos ? <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>{valesAvulsosOrdenados.length}</span> : null}
+        descricao="Adiantamentos abatidos da próxima parcela/etapa pendente">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div><label style={labelStyleLote}>Data do vale — de</label>
+            <input type="date" style={selStyleLote} value={fValeDe} onChange={(e) => setFValeDe(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Data do vale — até</label>
+            <input type="date" style={selStyleLote} value={fValeAte} onChange={(e) => setFValeAte(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Pessoa</label>
+            <select style={selStyleLote} value={fValePessoa} onChange={(e) => setFValePessoa(e.target.value)}>
+              <option value="">Todos</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+            </select></div>
+        </div>
         {excluirValeAvulsoErro && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{excluirValeAvulsoErro}</p>}
         <div className="overflow-x-auto">
           <table className="fazenda-table">
@@ -1983,8 +2408,17 @@ export default function FolhaPagamentoView() {
           </table>
         </div>
       </SecaoRecolhivel>
-      </>)}
-      {/* ↑ fim do bloco "Consultar" (oculto sob o chip Rescisão) */}
+      )}
+
+      {/* A listagem da tela própria da categoria — "Empreitas lançadas",
+          "Controle de diárias", "Férias lançadas"… É onde moram as ações que
+          só existem ali (concluir etapa, redistribuir parcelas, encerrar e
+          cobrar, reabrir, marcar como pago). O formulário correspondente fica
+          sob o card "Lançar"; aqui só o que já foi lançado. */}
+      {capacidades.telaPropria && telaDaCategoria("listar")}
+
+      </>))}
+      {/* ↑ fim do card "Consultar" */}
 
       {divergenciaParcela && (
         <ModalDivergenciaVale
