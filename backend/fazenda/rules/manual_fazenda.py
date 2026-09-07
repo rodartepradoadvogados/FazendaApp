@@ -20,7 +20,7 @@ from datetime import date, datetime, timedelta
 from sqlmodel import Session, select
 
 from fazenda.models import (
-    Animal, ControleLeiteiro, Estoque, Parto, ParametroManualFazenda,
+    Animal, ControleLeiteiro, Estoque, Fazenda, Parto, ParametroManualFazenda,
     ProtocoloSanitarioAplicacao, ProtocoloSanitarioLancamento, ProtocoloSanitario,
     Sanidade, Secagem, Servico, SugestaoManualFazenda, Usuario, UsuarioFazenda,
 )
@@ -301,10 +301,19 @@ def montar_manual(session: Session, fazenda_id: int | None) -> dict:
 
 def emails_administradores_fazenda(session: Session, fazenda_id: int | None) -> list[str]:
     """E-mails dos administradores da fazenda (papel="admin", ativo, com
-    e-mail cadastrado) — destinatários do envio semanal. Com fazenda_id
-    definido, restringe aos vinculados via UsuarioFazenda; sem ele (piloto
-    conservador de multi-fazenda, mesma regra do resto do sistema), pega
-    todos os admins ativos com e-mail."""
+    e-mail cadastrado) — destinatários do envio semanal.
+
+    Com fazenda_id definido, restringe aos vinculados ÀQUELA fazenda via
+    UsuarioFazenda: admin de outra fazenda nunca entra na lista.
+
+    Com fazenda_id NULO devolve todo admin ativo com e-mail, e isso só é
+    seguro em INSTALAÇÃO DE FAZENDA ÚNICA (tabela `fazenda` vazia), onde
+    "todos os admins" e "os admins desta fazenda" são o mesmo conjunto. Num
+    banco com duas fazendas-cliente esse ramo VAZA — manda o PDF de uma
+    fazenda para os admins da outra, por e-mail, para fora do sistema, sem
+    desfazer. Por isso quem chama de fundo é
+    `enviar_manual_semanal_todas_fazendas`, que só passa None quando o
+    multi-fazenda não está provisionado; nenhum caminho novo deve passar."""
     query = select(Usuario).where(Usuario.papel == "admin", Usuario.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query = query.join(UsuarioFazenda, UsuarioFazenda.usuario_id == Usuario.id).where(
@@ -360,3 +369,59 @@ def enviar_manual_semanal_se_necessario(session: Session, fazenda_id: int | None
         return True
     except Exception:  # noqa: BLE001 — nunca deixa o loop de fundo cair por causa do envio
         return False
+
+
+def fazendas_do_envio_semanal(session: Session) -> list[int | None]:
+    """As fazendas alvo do envio semanal do Manual — uma entrada por envio.
+
+    Só fazendas-CLIENTE. Descarta as duas que não são cliente, mesmo critério
+    de `_fazenda_cliente_unica()` na migração a4f8c1d92e07:
+      • `eh_empresa_cowdata` — a fazenda "lógica" da própria CowData;
+      • `eh_teste` — a sandbox de demonstração, que vive no MESMO banco de
+        produção. A sandbox não pode disparar e-mail para ninguém: e-mail sai
+        do sistema e não volta atrás.
+
+    Instalação de FAZENDA ÚNICA (tabela `fazenda` vazia — ambiente anterior ao
+    multi-fazenda, e a suíte de testes que não monta o cenário) devolve
+    [None]: ali, e só ali, `fazenda_id = None` quer dizer "esta instalação",
+    não "todas as fazendas". É a mesma leitura que
+    `auth.resolver_fazenda_id_escrita` usa para decidir se o multi-fazenda
+    está de fato provisionado.
+    """
+    if session.exec(select(Fazenda.id).limit(1)).first() is None:
+        return [None]
+    return list(session.exec(
+        select(Fazenda.id)
+        .where(Fazenda.eh_empresa_cowdata == False, Fazenda.eh_teste == False)  # noqa: E712
+        .order_by(Fazenda.id)
+    ).all())
+
+
+def enviar_manual_semanal_todas_fazendas(session: Session, agora: datetime | None = None) -> list[int | None]:
+    """Ponto de entrada do loop de fundo (ver main.py): percorre as
+    fazendas-cliente e manda UM Manual POR FAZENDA, cada um com o recorte da
+    sua — conteúdo e destinatários. Devolve os ids que efetivamente enviaram
+    nesta passada (lista vazia é o normal fora de segunda-feira de manhã).
+
+    Antes, o loop chamava `enviar_manual_semanal_se_necessario(session)` sem
+    fazenda nenhuma: com `fazenda_id = None` o manual saía sem recorte e ia
+    para TODOS os admins ativos de TODAS as fazendas. Com uma segunda
+    fazenda-cliente isso seria vazamento por e-mail, para fora do sistema e
+    sem desfazer — daí o recorte morar aqui, no laço, e não na disciplina de
+    quem chama.
+
+    Uma fazenda que falha não pode calar as outras: o envio em si já é
+    protegido dentro de `enviar_manual_semanal_se_necessario`, mas a leitura
+    do parâmetro e dos destinatários (antes do try de lá) não é, e um erro de
+    banco numa fazenda derrubaria a passada inteira — as fazendas seguintes
+    ficariam sem manual. O `rollback` é para a transação quebrada de uma não
+    contaminar a próxima, que reusa a mesma sessão.
+    """
+    enviadas: list[int | None] = []
+    for fazenda_id in fazendas_do_envio_semanal(session):
+        try:
+            if enviar_manual_semanal_se_necessario(session, fazenda_id, agora):
+                enviadas.append(fazenda_id)
+        except Exception:  # noqa: BLE001 — uma fazenda com problema não impede as demais
+            session.rollback()
+    return enviadas
