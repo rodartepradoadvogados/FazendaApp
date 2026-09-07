@@ -2413,6 +2413,40 @@ export async function estornarPagamentoFolha(id: number) {
   return res.json();
 }
 
+// ── Pagar a folha lançando valor DISTINTO numa verba (ver
+// backend/.../rh_folha_pagar.py). O pop-up do ato do pagamento: clica-se no
+// vale, lança-se o valor efetivamente descontado e a diferença precisa de
+// destino — as MESMAS três decisões do painel de ações do vale, só que
+// disparadas por quanto se está pagando agora. ──
+export type DecisaoDiferencaFolha = "abater" | "desconsiderar" | "reparcelar";
+export type PagarFolhaDados = {
+  data_pagamento: string;
+  /** Só parcela de vale é editável — é a única verba que é dívida da pessoa. */
+  verbas?: { parcela_id: number; valor_pago: number }[];
+  decisao?: {
+    tipo: DecisaoDiferencaFolha;
+    /** abater: conta que RECEBEU a devolução em dinheiro (opcional — abatimento
+     *  que é perdão não tem entrada de caixa a lançar). */
+    conta_corrente_id?: number;
+    parcelas?: number;             // reparcelar
+    competencia_inicio?: string;   // reparcelar (padrão: a competência seguinte)
+    motivo?: string;
+  };
+};
+export type PagarFolhaResultado = {
+  id: number; status: string; valor_liquido: number; valor_vale?: number;
+  recibo_congelado: boolean;
+  decisoes: { decisao: DecisaoDiferencaFolha; valor: number; resumo: string }[];
+  [chave: string]: any;
+};
+export async function pagarFolhaComVerbas(id: number, dados: PagarFolhaDados): Promise<PagarFolhaResultado> {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/${id}/pagar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar o pagamento da folha"); }
+  return res.json();
+}
+
 // ── Guia de FGTS/DCTF — lançamento manual ou por leitura automática (ver
 // POST /financeiro/ler-documento, tipo_documento "guia_fgts"/"guia_dctf")
 // — substitui o antigo "gerar guias" (soma projetada sem vínculo com guia

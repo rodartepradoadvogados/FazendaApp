@@ -16,6 +16,7 @@ import {
 } from "@/lib/api";
 import { ModalDivergenciaVale, ModalResultadoDivergenciaVale, ModalConfirmarDivergenciaTotal } from "@/components/ModalDivergenciaVale";
 import AcoesValeModal from "@/components/AcoesValeModal";
+import PagarFolhaModal from "@/components/PagarFolhaModal";
 import { Modal } from "@/components/Modal";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { ReciboModal } from "@/components/ReciboModal";
@@ -292,9 +293,11 @@ export default function FolhaPagamentoView() {
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
 
+  // Qual folha está com o pop-up de pagamento aberto. A data do pagamento e a
+  // decisão sobre a diferença moram DENTRO do pop-up (PagarFolhaModal): pagar
+  // deixou de ser "escolher uma data na linha" quando passou a poder lançar
+  // valor distinto numa verba.
   const [pagandoId, setPagandoId] = useState<number | null>(null);
-  const [pagoErro, setPagoErro] = useState<string | null>(null);
-  const [dataPagamento, setDataPagamento] = useState(() => new Date().toISOString().slice(0, 10));
   const [anexarAberto, setAnexarAberto] = useState(false);
   const [arquivoPreview, setArquivoPreview] = useState<File | null>(null);
 
@@ -1016,26 +1019,6 @@ export default function FolhaPagamentoView() {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar folha" });
     } finally {
       setSalvando(false);
-    }
-  }
-
-  async function marcarPago(r: RegistroFolha) {
-    setPagoErro(null);
-    try {
-      await atualizarFolhaPagamento(r.id, {
-        pessoa_id: r.pessoa_id, competencia: r.competencia, valor_bruto: r.valor_bruto,
-        descontos: r.descontos, percentual_inss: r.percentual_inss, percentual_ir: r.percentual_ir,
-        valor_inss: r.valor_inss, valor_ir: r.valor_ir,
-        percentual_fgts: r.percentual_fgts, valor_fgts: r.valor_fgts,
-        percentual_dctf: r.percentual_dctf, valor_dctf: r.valor_dctf,
-        data_pagamento: dataPagamento, status: "pago", observacao: r.observacao || undefined,
-        recorrente: r.recorrente, dia_vencimento: r.dia_vencimento,
-        conta_corrente_id: r.conta_corrente_id,
-      });
-      setPagandoId(null);
-      carregar();
-    } catch (e: any) {
-      setPagoErro(e.message || "Erro ao marcar como pago");
     }
   }
 
@@ -1787,7 +1770,7 @@ export default function FolhaPagamentoView() {
                           </span>
                           {r.status === "pendente" && (
                             <>
-                              <button className="btn-ghost" title="Registrar o pagamento deste lançamento de folha" style={{ fontSize: "0.72rem" }} onClick={() => { setPagoErro(null); setPagandoId(pagandoId === r.id ? null : r.id); }}>Marcar como pago</button>
+                              <button className="btn-ghost" title="Pagar — dá para lançar valor distinto do previsto no vale e decidir o destino da diferença" style={{ fontSize: "0.72rem" }} onClick={() => setPagandoId(r.id)}>Pagar</button>
                               <button className="btn-ghost" title="Excluir este lançamento pendente" style={{ fontSize: "0.72rem", color: "var(--red)" }}
                                 disabled={excluindoChave === chave}
                                 onClick={() => { if (window.confirm("Excluir este lançamento de folha pendente?")) excluirLinha(l); }}>
@@ -1864,17 +1847,6 @@ export default function FolhaPagamentoView() {
                               {expandDesc!.tipo === "vale" && !valeLinhas.length && <tr><td style={{ color: "var(--text-muted)" }}>Sem parcelas de vale nesta competência.</td></tr>}
                             </tbody>
                           </table>
-                        </div>
-                      </td></tr>
-                    )}
-                    {pagandoId === r.id && (
-                      <tr><td colSpan={admin ? 12 : 11}>
-                        <div className="flex items-end gap-2" style={{ padding: "0.5rem 0", flexWrap: "wrap" }} onClick={(e) => e.stopPropagation()}>
-                          <div><label style={labelStyleLote}>Data do pagamento</label>
-                            <input type="date" style={selStyleLote} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
-                          <button className="btn-primary" title="Confirmar pagamento" style={{ fontSize: "0.78rem" }} onClick={() => marcarPago(r)}><Check size={13} /> Confirmar</button>
-                          <button className="btn-ghost" title="Cancelar" style={{ fontSize: "0.78rem" }} onClick={() => { setPagoErro(null); setPagandoId(null); }}>Cancelar</button>
-                          {pagoErro && <span style={{ color: "var(--red)", fontSize: "0.78rem", alignSelf: "center" }}>{pagoErro}</span>}
                         </div>
                       </td></tr>
                     )}
@@ -2457,6 +2429,27 @@ export default function FolhaPagamentoView() {
           onConfirmar={(acao) => salvarEdicaoValeAvulso(divergenciaValeAvulso.v, acao)}
         />
       )}
+      {(() => {
+        // O pop-up do ATO do pagamento (ver PagarFolhaModal): valor distinto
+        // por verba e a decisão sobre a diferença. Vive fora da tabela, como
+        // os demais modais — a linha não tem largura para o discriminado.
+        const emPagamento = (regs || []).find((r) => r.id === pagandoId);
+        if (!emPagamento) return null;
+        return (
+          <PagarFolhaModal
+            registro={emPagamento}
+            contasCorrentes={contasCorrentes}
+            onPago={() => {
+              // Recarrega o que o pagamento pode ter mexido: a folha, o
+              // relatório de vales (a decisão muda saldo/parcelas) e a visão
+              // unificada.
+              setPagandoId(null);
+              carregar(); carregarUnificada(); carregarVales();
+            }}
+            onFechar={() => setPagandoId(null)}
+          />
+        );
+      })()}
       {acoesVale && (
         <AcoesValeModal
           valeId={acoesVale.valeId}
