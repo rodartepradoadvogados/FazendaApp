@@ -22,10 +22,13 @@ O QUE CADA BLOCO PROVA:
     do vale volta a ser vale no Financeiro (rótulo e descrição idênticos aos
     que `_sincronizar_conta_vale` escreve, não um texto parecido).
 
- C) O que a reversão RECUSA, e por quê: assunção que mexeu em item de nota
-    (desfazer às cegas corromperia a nota) e assunção de natureza
-    indistinguível (vale sem lançamento próprio pode ser "sem lastro" ou "item
-    de nota já solto" — chutar contaria a mesma despesa duas vezes).
+ C) O que a reversão RECUSA, e por quê — e o que ela DEIXOU de recusar desde
+    que a natureza da assunção passa a ser gravada na parcela no ato
+    (`natureza_assuncao`/`assuncao_detalhe`, migração b7d21f9c4a30). Item de
+    nota continua recusado (desfazer às cegas corromperia a nota, que é
+    documento fiscal); "sem lastro" gravado passa a ser reversível, porque
+    deixou de ser um palpite; parcela ANTIGA, sem natureza gravada, continua
+    caindo na recusa por ambiguidade — não se inventa natureza para o passado.
 
  D) A tela só recebe o que não vai dar erro (`acoes_disponiveis`).
 
@@ -444,21 +447,87 @@ class TestReversaoRecusadaNoFinanceiro:
             ).all()
         assert round(sum(i.valor_total for i in itens), 2) == 300.0, "a nota continua fechando"
 
-    def test_vale_sem_lancamento_proprio_recusa_por_ambiguidade(self, ambiente):
-        """Vale sem saída de caixa e sem item vinculado hoje pode ser as duas
-        coisas: nunca teve lastro (nada a desfazer) ou nasceu de item de nota
-        cujo vínculo foi SOLTO na assunção — e as duas ficam idênticas depois.
-        Reverter no escuro contaria a mesma despesa duas vezes."""
+    def test_vale_sem_lastro_deixou_de_ser_ambiguo_porque_a_natureza_e_gravada(self, ambiente):
+        """MUDANÇA DELIBERADA em relação ao #720/#722: este caso era recusado.
+
+        Vale sem saída de caixa e sem item vinculado hoje podia ser as duas
+        coisas — nunca ter tido lastro (nada a desfazer) ou ter nascido de item
+        de nota cujo vínculo foi SOLTO na assunção —, e as duas ficavam
+        idênticas depois; reverter no escuro contaria a mesma despesa duas
+        vezes. A ambiguidade acabou porque a natureza passou a ser GRAVADA na
+        parcela no ato da assunção (`natureza_assuncao`, migração
+        b7d21f9c4a30): aqui está escrito "sem_lastro", então não há nada a
+        desfazer no Financeiro e a volta é segura."""
         c, engine = ambiente
         vale = _criar_vale(c, valor=300.0, parcelas=1, conta_id=None, forma="desconto_integral_folha")
         assumir = _acao(c, vale["id"], {"acao": "desconsiderar_mes", "competencia": "2026-07"})
         assert assumir.json()["financeiro"]["natureza"] == "sem_lastro"
+        assert _parcelas(engine, vale["id"])[0].natureza_assuncao == "sem_lastro"
 
+        resposta = _acao(c, vale["id"], {"acao": "reverter_desconsideracao", "competencia": "2026-07"})
+        assert resposta.status_code == 200, resposta.text
+        assert resposta.json()["financeiro"]["natureza"] == "sem_lastro"
+        parcela = _parcelas(engine, vale["id"])[0]
+        assert parcela.assumida_pela_fazenda is False
+        # A marca da assunção sai INTEIRA: deixá-la para trás faria a próxima
+        # reversão decidir com base numa assunção que já foi desfeita.
+        assert parcela.natureza_assuncao is None and parcela.assuncao_detalhe is None
+
+    def test_parcela_sem_natureza_gravada_continua_recusada_por_ambiguidade(self, ambiente):
+        """A parcela ANTIGA — assumida antes de a coluna existir — fica com
+        `natureza_assuncao` NULL, e NULL significa "natureza desconhecida":
+        continua caindo na recusa, porque inventar natureza para o passado é
+        exatamente o erro que a coluna existe para evitar."""
+        c, engine = ambiente
+        vale = _criar_vale(c, valor=300.0, parcelas=1, conta_id=None, forma="desconto_integral_folha")
+        _acao(c, vale["id"], {"acao": "desconsiderar_mes", "competencia": "2026-07"})
+        # Apaga a natureza gravada: é assim que está no banco a parcela
+        # assumida antes desta feature.
+        with Session(engine) as s:
+            parcela = s.exec(select(ValeParcela).where(ValeParcela.vale_id == vale["id"])).first()
+            parcela.natureza_assuncao = None
+            parcela.assuncao_detalhe = None
+            s.add(parcela)
+            s.commit()
+
+        contexto = _contexto(c, vale["id"]).json()
+        assert "reverter_desconsideracao" not in contexto["acoes_disponiveis"]
         resposta = _acao(c, vale["id"], {"acao": "reverter_desconsideracao", "competencia": "2026-07"})
         assert resposta.status_code == 400, resposta.text
         assert "não dá para saber" in resposta.json()["detail"].lower()
-        parcela = _parcelas(engine, vale["id"])[0]
-        assert parcela.assumida_pela_fazenda is True, "recusa não pode reverter meio caminho"
+        assert _parcelas(engine, vale["id"])[0].assumida_pela_fazenda is True
+
+    def test_item_de_nota_continua_recusado_mesmo_com_a_natureza_gravada(self, ambiente):
+        """A coluna resolve a AMBIGUIDADE, não torna tudo reversível.
+
+        Numa assunção TOTAL o vínculo do item é solto (`limpar_vinculo_de_
+        itens`) e o vale fica sem item nenhum hoje — a cara exata do "sem
+        lastro". A natureza gravada diz que era item de nota, e a recusa
+        continua de pé: o item pode ter sido editado desde então, e juntar as
+        linhas às cegas corromperia a nota fiscal. O que muda é a qualidade da
+        recusa — ela agora NOMEIA o lançamento a acertar à mão."""
+        c, engine = ambiente
+        nota = _lancamento_com_vale(c, vale={
+            "pessoa_id": 1, "modo": "folha", "parcelas": 1, "competencia_inicio": "2026-07",
+        })
+        assert nota.status_code == 201, nota.text
+        numero = nota.json()["numero_lancamento"]
+        vale_id = nota.json()["vales_criados"][0]["vale_id"]
+
+        assumir = _acao(c, vale_id, {"acao": "desconsiderar_mes", "competencia": "2026-07"})
+        assert assumir.json()["financeiro"]["natureza"] == "item_de_nota"
+        with Session(engine) as s:
+            # O vínculo foi solto: sem a natureza gravada, este vale seria
+            # indistinguível de um "sem lastro".
+            assert s.exec(
+                select(LancamentoItem).where(LancamentoItem.vale_funcionario_id == vale_id)
+            ).all() == []
+        assert _parcelas(engine, vale_id)[0].natureza_assuncao == "item_de_nota"
+
+        resposta = _acao(c, vale_id, {"acao": "reverter_desconsideracao", "competencia": "2026-07"})
+        assert resposta.status_code == 400, resposta.text
+        assert numero in resposta.json()["detail"], "a recusa tem de dizer QUAL lançamento acertar"
+        assert _parcelas(engine, vale_id)[0].assumida_pela_fazenda is True
 
 
 # ===========================================================================
@@ -505,11 +574,15 @@ class TestAcoesDisponiveis:
         assert contexto["competencias_revertiveis"] == ["2026-07"]
         assert "reverter_desconsideracao" not in contexto["acoes_disponiveis"]
 
-    def test_vale_cancelado_nao_oferece_nada(self, ambiente):
+    def test_vale_cancelado_so_oferece_a_volta_do_cancelamento(self, ambiente):
+        """MUDANÇA DELIBERADA em relação ao #720: a lista era vazia — cancelar
+        era a única das seis ações sem volta. Continua sendo verdade que
+        nenhuma das outras alcança um vale cancelado (o saldo dele já virou
+        despesa da fazenda); o que existe agora é a porta de saída."""
         c, engine = ambiente
         vale = _criar_vale(c)
         _acao(c, vale["id"], {"acao": "cancelar"})
-        assert _contexto(c, vale["id"]).json()["acoes_disponiveis"] == []
+        assert _contexto(c, vale["id"]).json()["acoes_disponiveis"] == ["reverter_cancelamento"]
 
 
 # ===========================================================================
@@ -665,3 +738,388 @@ class TestParcelaAssumidaNaFolha:
         assert folha["valor_vale"] == 0.0
         assert folha["valor_liquido"] == 3000.0
         assert [l["motivo"] for l in folha["vale_assumido"]] == ["acerto de contas"]
+
+
+# ===========================================================================
+# G) Desconsiderar um mês que ainda NÃO tem folha lançada
+#
+# O BECO QUE ISTO FECHA. A linha informativa do #722 (bloco F acima) só existe
+# onde há uma `FolhaPagamento` lançada para a competência — é ela que carrega o
+# painel "Descontos de vale" e, com ele, o botão "Ações". Desconsiderar um mês
+# ainda sem folha não tinha painel nenhum: a explicação e a porta do desfazer
+# sumiam juntas naquele mês.
+#
+# A saída não foi código novo: `_competencias_revertiveis` sempre listou o mês
+# sem folha (ela lê as PARCELAS do vale, e `_vale_competencia_paga` só encontra
+# folha com status "pago" — sem folha nenhuma a competência entra na lista), e
+# o botão "Ações" do card "Vales de funcionário" alcança o vale inteiro, com
+# folha ou sem. O que faltava era travar as duas coisas num teste.
+# ===========================================================================
+class TestMesDesconsideradoSemFolhaLancada:
+    def test_o_mes_sem_folha_entra_no_seletor_do_desfazer(self, ambiente):
+        c, engine = ambiente
+        vale = _criar_vale(c)  # 3 parcelas: 2026-07, 2026-08, 2026-09
+        # NENHUMA folha lançada para 2026-09 — nem a de julho, de propósito.
+        assert _acao(c, vale["id"], {
+            "acao": "desconsiderar_mes", "competencia": "2026-09", "motivo": "trator",
+        }).status_code == 200
+
+        contexto = _contexto(c, vale["id"]).json()
+        assert contexto["competencias_revertiveis"] == ["2026-09"], (
+            "o mês assumido tem de aparecer no seletor mesmo sem folha lançada — sem folha não há "
+            "painel de descontos, e este seletor é a única porta do desfazer naquele mês"
+        )
+        assert "reverter_desconsideracao" in contexto["acoes_disponiveis"]
+
+    def test_a_volta_funciona_e_a_folha_lancada_depois_ja_nasce_descontando(self, ambiente):
+        """A prova de que a volta valeu de verdade: a folha de setembro é
+        lançada só DEPOIS, e nasce com o desconto do vale."""
+        c, engine = ambiente
+        vale = _criar_vale(c)
+        _acao(c, vale["id"], {"acao": "desconsiderar_mes", "competencia": "2026-09"})
+
+        resposta = _acao(c, vale["id"], {"acao": "reverter_desconsideracao", "competencia": "2026-09"})
+        assert resposta.status_code == 200, resposta.text
+        assert resposta.json()["valor_revertido"] == 300.0
+
+        _criar_folha(c, competencia="2026-09")
+        folha = _folha(c, "2026-09")
+        assert folha["valor_vale"] == 300.0
+        assert folha["valor_liquido"] == 2700.0
+        assert folha["vale_assumido"] == []
+
+    def test_varios_meses_assumidos_sem_folha_aparecem_todos(self, ambiente):
+        """O seletor lista TODAS as competências assumidas — escolher uma por
+        conta própria mexeria no mês errado."""
+        c, engine = ambiente
+        vale = _criar_vale(c)
+        _acao(c, vale["id"], {"acao": "desconsiderar_mes", "competencia": "2026-08"})
+        _acao(c, vale["id"], {"acao": "desconsiderar_mes", "competencia": "2026-09"})
+        assert _contexto(c, vale["id"]).json()["competencias_revertiveis"] == ["2026-08", "2026-09"]
+
+    def test_a_fazenda_vizinha_nao_alcanca_o_mes_sem_folha_do_vale_alheio(self, ambiente):
+        c, engine = ambiente
+        vale = _criar_vale(c)
+        _acao(c, vale["id"], {"acao": "desconsiderar_mes", "competencia": "2026-09"})
+
+        for chamada in (
+            lambda h: _contexto(c, vale["id"], headers=h),
+            lambda h: _acao(c, vale["id"], {
+                "acao": "reverter_desconsideracao", "competencia": "2026-09",
+            }, headers=h),
+        ):
+            resposta = chamada(_cab("admin2", 2))
+            assert resposta.status_code == 404, (
+                "vale de outra fazenda tem de ser NÃO ENCONTRADO — 403 confirmaria que o id existe. "
+                f"Resposta: {resposta.status_code} {resposta.text[:200]}"
+            )
+        # Contraprova dentro da fazenda certa: o 404 acima é do isolamento.
+        assert _contexto(c, vale["id"]).json()["competencias_revertiveis"] == ["2026-09"]
+        assert _acao(c, vale["id"], {
+            "acao": "reverter_desconsideracao", "competencia": "2026-09",
+        }).status_code == 200
+
+
+# ===========================================================================
+# H) Reverter o CANCELAMENTO do vale
+#
+# O QUE ISTO FECHA. Cancelar era a mais destrutiva das seis ações e a única
+# sem volta: a trava no topo de `executar_acao_vale` recusa qualquer ação sobre
+# vale cancelado, então nem as voltas atrás do #720 o alcançavam. Um clique
+# errado em "Cancelar o vale inteiro" tirava para sempre a cobrança de um
+# adiantamento que o funcionário recebeu de verdade.
+#
+# A trava CONTINUA recusando tudo — a exceção é nomeada, uma só. E a volta
+# desfaz exatamente o que o cancelamento fez: nem menos (o mês desconsiderado
+# ANTES dele continua desconsiderado), nem mais (competência que virou folha
+# paga depois é recusada, em vez de reescrever um recibo).
+# ===========================================================================
+class TestReverterCancelamento:
+    def test_o_vale_volta_a_ser_cobranca_do_funcionario(self, ambiente):
+        c, engine = ambiente
+        vale = _criar_vale(c)  # 900,00 em 3x de 300,00
+        _criar_folha(c, competencia="2026-07")
+        assert _acao(c, vale["id"], {"acao": "cancelar", "motivo": "engano"}).status_code == 200
+        assert _folha(c, "2026-07")["valor_vale"] == 0.0
+
+        resposta = _acao(c, vale["id"], {"acao": "reverter_cancelamento"})
+        assert resposta.status_code == 200, resposta.text
+        corpo = resposta.json()
+        assert corpo["valor_revertido"] == 900.0
+        assert corpo["competencias"] == ["2026-07", "2026-08", "2026-09"]
+        assert corpo["competencias_ainda_assumidas"] == []
+
+        with Session(engine) as s:
+            registro = s.get(ValeFuncionario, vale["id"])
+            assert registro.status == "ativo"
+            assert registro.valor_assumido_fazenda == 0.0
+            assert registro.valor_total == 900.0, "o valor adiantado é histórico e não se reescreve"
+        for p in _parcelas(engine, vale["id"]):
+            assert p.assumida_pela_fazenda is False
+            assert p.motivo_assuncao is None
+            assert p.natureza_assuncao is None and p.assuncao_detalhe is None
+        # E a folha do mês volta a descontar.
+        folha = _folha(c, "2026-07")
+        assert folha["valor_vale"] == 300.0
+        assert folha["valor_liquido"] == 2700.0
+        assert folha["vale_assumido"] == []
+
+    def test_o_lancamento_do_vale_volta_a_ser_vale_no_financeiro(self, ambiente):
+        """O cancelamento total reclassifica o lançamento próprio para despesa
+        comum ("Recibo"). A volta devolve o rótulo e a descrição EXATOS que
+        `_sincronizar_conta_vale` escreve — não um texto parecido: divergir
+        faria o Financeiro voltar a aceitar estorno/edição à mão num
+        lançamento que pertence ao RH."""
+        c, engine = ambiente
+        vale = _criar_vale(c, valor=300.0, parcelas=1)
+        with Session(engine) as s:
+            numero = s.get(ValeFuncionario, vale["id"]).numero_lancamento_gerado
+        assert numero
+        _acao(c, vale["id"], {"acao": "cancelar"})
+        assert _conta(engine, numero).tipo_documento == "Recibo"
+
+        resposta = _acao(c, vale["id"], {"acao": "reverter_cancelamento"})
+        assert resposta.status_code == 200, resposta.text
+        assert resposta.json()["financeiro"] == {
+            "natureza": "lancamento_proprio", "numero_lancamento": numero, "reclassificado": True,
+        }
+        conta = _conta(engine, numero)
+        assert conta.tipo_documento == "Vale de funcionário"
+        assert conta.descricao == "Vale — Leomir Bonfim (2026-07)"
+        assert conta.valor_total == 300.0, "a saída de caixa aconteceu e não pode mudar de valor"
+
+    def test_o_mes_desconsiderado_antes_do_cancelamento_continua_desconsiderado(self, ambiente):
+        """Desfazer o cancelamento não pode voltar a cobrar um mês que o dono
+        já havia perdoado por decisão própria, com outro motivo. É para isso
+        que a AÇÃO que assumiu cada parcela fica gravada."""
+        c, engine = ambiente
+        vale = _criar_vale(c)
+        _acao(c, vale["id"], {
+            "acao": "desconsiderar_mes", "competencia": "2026-07", "motivo": "trator",
+        })
+        _acao(c, vale["id"], {"acao": "cancelar", "motivo": "acerto"})
+
+        resposta = _acao(c, vale["id"], {"acao": "reverter_cancelamento"})
+        assert resposta.status_code == 200, resposta.text
+        corpo = resposta.json()
+        assert corpo["competencias"] == ["2026-08", "2026-09"]
+        assert corpo["competencias_ainda_assumidas"] == ["2026-07"]
+        assert corpo["valor_revertido"] == 600.0
+        assert "2026-07" in corpo["resumo"]
+
+        por_competencia = {p.competencia: p for p in _parcelas(engine, vale["id"])}
+        assert por_competencia["2026-07"].assumida_pela_fazenda is True
+        assert por_competencia["2026-07"].motivo_assuncao == "trator"
+        assert por_competencia["2026-08"].assumida_pela_fazenda is False
+        with Session(engine) as s:
+            registro = s.get(ValeFuncionario, vale["id"])
+            assert registro.status == "ativo"
+            assert registro.valor_assumido_fazenda == 300.0, "sobra o que a desconsideração assumiu"
+        # E, com o vale ativo de novo, aquele mês tem sua própria volta.
+        assert _contexto(c, vale["id"]).json()["competencias_revertiveis"] == ["2026-07"]
+
+    def test_o_que_ja_estava_descontado_em_folha_paga_nao_volta_a_ser_cobrado(self, ambiente):
+        """O cancelamento não mexe no que já caiu numa folha PAGA (aquilo foi
+        descontado de verdade), então a volta também não tem o que devolver
+        ali — e o holerite daquele mês continua intocado."""
+        c, engine = ambiente
+        vale = _criar_vale(c)
+        _criar_folha(c, competencia="2026-07", paga=True)
+        _acao(c, vale["id"], {"acao": "cancelar"})
+
+        resposta = _acao(c, vale["id"], {"acao": "reverter_cancelamento"})
+        assert resposta.status_code == 200, resposta.text
+        assert resposta.json()["competencias"] == ["2026-08", "2026-09"]
+        assert resposta.json()["valor_revertido"] == 600.0
+        por_competencia = {p.competencia: p for p in _parcelas(engine, vale["id"])}
+        assert por_competencia["2026-07"].assumida_pela_fazenda is False
+        assert por_competencia["2026-07"].valor == 300.0
+        assert _folha(c, "2026-07")["status"] == "pago"
+
+    def test_folha_paga_depois_do_cancelamento_recusa_e_diz_qual_estornar(self, ambiente):
+        """O recibo daquele mês foi emitido SEM o desconto (a parcela estava
+        assumida pela fazenda quando ele foi congelado). Voltar a cobrá-la
+        agora cobraria um valor que o holerite não tem."""
+        c, engine = ambiente
+        vale = _criar_vale(c)
+        _acao(c, vale["id"], {"acao": "cancelar"})
+        _criar_folha(c, competencia="2026-08", paga=True)
+
+        resposta = _acao(c, vale["id"], {"acao": "reverter_cancelamento"})
+        assert resposta.status_code == 400, resposta.text
+        detalhe = resposta.json()["detail"]
+        assert "2026-08" in detalhe and "Estorne o pagamento" in detalhe
+        # Nada foi escrito: nem o status, nem uma parcela sequer.
+        with Session(engine) as s:
+            assert s.get(ValeFuncionario, vale["id"]).status == "cancelado"
+        assert all(p.assumida_pela_fazenda for p in _parcelas(engine, vale["id"]))
+        # E a tela não oferece o que o POST vai recusar — mas DIZ o motivo.
+        contexto = _contexto(c, vale["id"]).json()
+        assert contexto["acoes_disponiveis"] == []
+        assert "2026-08" in contexto["impedimento_reverter_cancelamento"]
+
+    def test_cancelamento_de_vale_de_item_de_nota_recusa_a_volta(self, ambiente):
+        """Mesma regra da reversão de desconsideração, pelo mesmo motivo: a
+        assunção partiu o item da nota (ou soltou o vínculo) e o gêmeo pode ter
+        sido editado desde então — juntar às cegas corromperia o documento
+        fiscal. Recusa nomeando o lançamento, sem escrever nada."""
+        c, engine = ambiente
+        nota = _lancamento_com_vale(c, vale={
+            "pessoa_id": 1, "modo": "folha", "parcelas": 2, "competencia_inicio": "2026-07",
+        })
+        assert nota.status_code == 201, nota.text
+        numero = nota.json()["numero_lancamento"]
+        vale_id = nota.json()["vales_criados"][0]["vale_id"]
+        _acao(c, vale_id, {"acao": "cancelar"})
+
+        resposta = _acao(c, vale_id, {"acao": "reverter_cancelamento"})
+        assert resposta.status_code == 400, resposta.text
+        assert numero in resposta.json()["detail"] and "à mão" in resposta.json()["detail"]
+        with Session(engine) as s:
+            assert s.get(ValeFuncionario, vale_id).status == "cancelado"
+            itens = s.exec(
+                select(LancamentoItem).where(LancamentoItem.numero_lancamento == numero)
+            ).all()
+        assert round(sum(i.valor_total for i in itens), 2) == 300.0, "a nota continua fechando"
+        assert _contexto(c, vale_id).json()["acoes_disponiveis"] == []
+
+    @pytest.mark.parametrize("corpo", [
+        {"acao": "reparcelar", "parcelas": 2},
+        {"acao": "abater", "valor": 100.0},
+        {"acao": "desconsiderar_mes", "competencia": "2026-08"},
+        {"acao": "cancelar"},
+        {"acao": "estornar_abatimento"},
+        {"acao": "reverter_desconsideracao", "competencia": "2026-08"},
+    ])
+    def test_a_trava_do_vale_cancelado_continua_recusando_todo_o_resto(self, ambiente, corpo):
+        """A exceção é NOMEADA, uma só: nenhuma outra ação passou a alcançar um
+        vale cancelado. Mexer no saldo dele — que já virou despesa da fazenda —
+        sem antes desfazer o cancelamento deixaria o vale meio de cada lado."""
+        c, engine = ambiente
+        vale = _criar_vale(c)
+        _acao(c, vale["id"], {"acao": "cancelar"})
+
+        resposta = _acao(c, vale["id"], corpo)
+        assert resposta.status_code == 400, resposta.text
+        assert "já foi cancelado" in resposta.json()["detail"]
+        assert "Reverter o cancelamento" in resposta.json()["detail"], (
+            "a recusa tem de dizer por onde sair"
+        )
+
+    def test_depois_da_volta_as_outras_acoes_funcionam_de_novo(self, ambiente):
+        c, engine = ambiente
+        vale = _criar_vale(c)
+        _acao(c, vale["id"], {"acao": "cancelar"})
+        assert _acao(c, vale["id"], {"acao": "reverter_cancelamento"}).status_code == 200
+
+        assert _acao(c, vale["id"], {"acao": "abater", "valor": 300.0}).status_code == 200
+        assert _valores(engine, vale["id"]) == [200.0, 200.0, 200.0]
+
+    def test_reverter_o_que_nao_foi_cancelado_e_recusado(self, ambiente):
+        c, engine = ambiente
+        vale = _criar_vale(c)
+        resposta = _acao(c, vale["id"], {"acao": "reverter_cancelamento"})
+        assert resposta.status_code == 400, resposta.text
+        assert "não está cancelado" in resposta.json()["detail"]
+
+    def test_a_fazenda_vizinha_nao_desfaz_o_cancelamento_alheio(self, ambiente):
+        c, engine = ambiente
+        vale = _criar_vale(c)
+        _acao(c, vale["id"], {"acao": "cancelar"})
+
+        resposta = _acao(c, vale["id"], {"acao": "reverter_cancelamento"}, headers=_cab("admin2", 2))
+        assert resposta.status_code == 404, (
+            "vale de outra fazenda tem de ser NÃO ENCONTRADO — 403 confirmaria que o id existe. "
+            f"Resposta: {resposta.status_code} {resposta.text[:200]}"
+        )
+        with Session(engine) as s:
+            assert s.get(ValeFuncionario, vale["id"]).status == "cancelado", "nada foi escrito"
+
+        # Contraprova: dentro da fazenda certa a mesma chamada funciona — o 404
+        # acima é do isolamento, não de a ação não existir.
+        assert _acao(c, vale["id"], {"acao": "reverter_cancelamento"}).status_code == 200
+        with Session(engine) as s:
+            assert s.get(ValeFuncionario, vale["id"]).status == "ativo"
+
+    def test_vale_cancelado_orfao_sem_fazenda_nao_e_alcancavel_por_ninguem(self, ambiente):
+        """Registro com `fazenda_id` nulo (o que a migração de backfill assume
+        que sobra) não pode ser descancelado por tenant nenhum."""
+        c, engine = ambiente
+        with Session(engine) as s:
+            orfao = ValeFuncionario(
+                pessoa_id=1, valor_total=500.0, forma_pagamento="pix",
+                data_pagamento=__import__("datetime").date(2026, 6, 10), parcelas=1,
+                competencia_inicio="2026-07", status="cancelado",
+                valor_assumido_fazenda=500.0, fazenda_id=None,
+            )
+            s.add(orfao)
+            s.commit()
+            s.refresh(orfao)
+            orfao_id = orfao.id
+
+        for headers in (_cab("admin1", 1), _cab("admin2", 2)):
+            resposta = _acao(c, orfao_id, {"acao": "reverter_cancelamento"}, headers=headers)
+            assert resposta.status_code == 404, resposta.text
+
+
+# ===========================================================================
+# I) A natureza da assunção, gravada no ato
+#
+# É a coluna que acabou com o palpite (ver o bloco C). Aqui ficam as provas de
+# que ela é ESCRITA nos três caminhos que assumem parcela — desconsiderar,
+# cancelar e o pop-up de pagar a folha —, e de que a ação registrada é o que
+# mantém `reverter_cancelamento` devolvendo só o que o cancelamento varreu.
+# ===========================================================================
+class TestNaturezaDaAssuncaoGravada:
+    def test_desconsiderar_grava_natureza_e_acao(self, ambiente):
+        c, engine = ambiente
+        vale = _criar_vale(c)
+        _acao(c, vale["id"], {"acao": "desconsiderar_mes", "competencia": "2026-07"})
+
+        parcela = next(p for p in _parcelas(engine, vale["id"]) if p.competencia == "2026-07")
+        assert parcela.natureza_assuncao == "lancamento_proprio"
+        detalhe = __import__("json").loads(parcela.assuncao_detalhe)
+        assert detalhe["acao"] == "desconsiderar_mes"
+        assert detalhe["numero_lancamento"]
+        # Assunção PARCIAL não reclassifica o lançamento (o vale segue vivo) —
+        # e é isso que fica gravado, para a volta não inventar uma alteração.
+        assert detalhe["reclassificado"] is False
+
+    def test_cancelar_grava_a_acao_em_cada_parcela_que_varreu(self, ambiente):
+        c, engine = ambiente
+        vale = _criar_vale(c)
+        _acao(c, vale["id"], {"acao": "cancelar"})
+
+        for p in _parcelas(engine, vale["id"]):
+            assert p.natureza_assuncao == "lancamento_proprio"
+            assert __import__("json").loads(p.assuncao_detalhe)["acao"] == "cancelar"
+
+    def test_a_diferenca_decidida_no_pagamento_e_gravada_como_pagamento_de_folha(self, ambiente):
+        """O pop-up de pagar a folha (#718) também assume parcela. A ação
+        registrada ali é `pagamento_folha`, e NÃO `cancelar`: assim, se o vale
+        for cancelado depois e o cancelamento for revertido, a diferença
+        decidida no ato do pagamento continua sendo da fazenda."""
+        c, engine = ambiente
+        vale = _criar_vale(c)  # 3x de 300,00 a partir de 2026-07
+        folha = _criar_folha(c, competencia="2026-07")
+        parcela_id = next(p.id for p in _parcelas(engine, vale["id"]) if p.competencia == "2026-07")
+
+        pagar = c.post(f"/cadastro/folha-pagamento/{folha['id']}/pagar", headers=_cab(), json={
+            "data_pagamento": "2026-08-05",
+            "verbas": [{"parcela_id": parcela_id, "valor_pago": 100.0}],
+            "decisao": {"tipo": "desconsiderar", "motivo": "a fazenda assume o resto"},
+        })
+        assert pagar.status_code == 200, pagar.text
+
+        assumidas = [p for p in _parcelas(engine, vale["id"]) if p.assumida_pela_fazenda]
+        assert len(assumidas) == 1 and assumidas[0].valor == 200.0
+        assert assumidas[0].natureza_assuncao == "lancamento_proprio"
+        assert __import__("json").loads(assumidas[0].assuncao_detalhe)["acao"] == "pagamento_folha"
+
+        # Cancelar o resto e voltar atrás não devolve a diferença do pagamento.
+        _acao(c, vale["id"], {"acao": "cancelar"})
+        resposta = _acao(c, vale["id"], {"acao": "reverter_cancelamento"})
+        assert resposta.status_code == 200, resposta.text
+        assert resposta.json()["competencias_ainda_assumidas"] == ["2026-07"]
+        assumidas = [p for p in _parcelas(engine, vale["id"]) if p.assumida_pela_fazenda]
+        assert [p.valor for p in assumidas] == [200.0]

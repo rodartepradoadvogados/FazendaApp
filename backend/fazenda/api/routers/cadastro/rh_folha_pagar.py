@@ -68,6 +68,7 @@ from .rh_folha import (
     _valor_vale,
 )
 from .rh_vale_acoes import (
+    ACAO_PAGAMENTO_FOLHA,
     ValeAcaoIn,
     _acao_reparcelar,
     _assumir_no_financeiro,
@@ -75,6 +76,7 @@ from .rh_vale_acoes import (
     _lancar_devolucao_de_vale,
     _parcelas_do_vale,
     _parcelas_pendentes,
+    _registrar_assuncao,
     _vale_da_fazenda,
 )
 
@@ -252,15 +254,18 @@ def _decisao_desconsiderar(
         parcela.assumida_pela_fazenda = True
         parcela.motivo_assuncao = motivo
         session.add(parcela)
+        assumidas = [parcela]
     else:
         parcela.valor = pago
         session.add(parcela)
-        session.add(ValeParcela(
+        assumida = ValeParcela(
             vale_id=vale.id, pessoa_id=vale.pessoa_id, competencia=parcela.competencia,
             valor=diferenca, aplicada=True,
             assumida_pela_fazenda=True, motivo_assuncao=motivo,
             fazenda_id=vale.fazenda_id,
-        ))
+        )
+        session.add(assumida)
+        assumidas = [assumida]
     vale.valor_assumido_fazenda = round(vale.valor_assumido_fazenda + diferenca, 2)
     session.add(vale)
     session.flush()
@@ -269,6 +274,13 @@ def _decisao_desconsiderar(
     financeiro = _assumir_no_financeiro(
         session, vale, pessoa, diferenca, total=total, motivo=motivo, fazenda_id=fazenda_id,
     )
+    # O que a assunção fez no Financeiro fica gravado NA PARCELA, aqui pelo
+    # mesmo motivo do #708: sem isso, desfazer depois seria adivinhar entre
+    # "sem lastro" e "item de nota com o vínculo já solto" — e o palpite
+    # errado conta a mesma despesa duas vezes. A ação registrada é
+    # `pagamento_folha`, não `cancelar`: assim `reverter_cancelamento` nunca
+    # devolve à cobrança uma diferença que foi decidida no ato do pagamento.
+    _registrar_assuncao(session, assumidas, financeiro, ACAO_PAGAMENTO_FOLHA)
     return {
         "decisao": "desconsiderar",
         "valor": diferenca,
