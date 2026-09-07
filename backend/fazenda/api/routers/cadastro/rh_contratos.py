@@ -154,6 +154,19 @@ def listar_folha_pagamento_unificada(
             # linha ao extrato.
             "competencia": r["competencia"],
             "detalhe": r["detalhe"],
+            # As parcelas de vale que a FAZENDA assumiu naquele mês — campo
+            # SEPARADO de `detalhe`, nunca dentro dele, exatamente como sai de
+            # `GET /folha-pagamento` (ver `_vale_assumido_folha`). Sem elas,
+            # quem abre o holerite aqui via o desconto de vale sumir do
+            # documento sem explicação nenhuma: esta tela é só consulta e não
+            # tem o painel de ações da tela de fechamento, onde a explicação
+            # já aparecia.
+            #
+            # A trava é a mesma do #722, e vale igual aqui: a linha é INERTE
+            # (provento/desconto nulos, `valor` zero) e não entra em soma
+            # nenhuma — nem em `totais`, nem no líquido, nem no PDF/Excel do
+            # holerite, que leem `detalhe`. Só explica.
+            "vale_assumido": r["vale_assumido"],
             "totais": r["totais"],
             "bases": r["bases"],
             "numero_lancamento_gerado": r["numero_lancamento_gerado"],

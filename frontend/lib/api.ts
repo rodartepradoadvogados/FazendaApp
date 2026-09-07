@@ -2544,6 +2544,13 @@ export type LinhaFolhaUnificada = {
    *  e descartava ao montar a linha: era por isso que a tela de Contas não
    *  tinha o que mostrar ao clicar num nome. */
   detalhe?: LinhaHolerite[];
+  /** As parcelas de vale que a FAZENDA assumiu naquela competência — campo
+   *  separado de `detalhe`, nunca dentro dele, porque não são desconto de
+   *  ninguém e não podem entrar em soma nenhuma. Vêm até aqui só para o
+   *  documento EXPLICAR por que o desconto de vale sumiu do mês: esta é a
+   *  tela de consulta (Contas > Holerites e recibos), que não tem o painel de
+   *  ações onde a explicação já aparecia. */
+  vale_assumido?: LinhaValeAssumido[];
   totais?: TotaisHolerite;
   bases?: BasesHolerite;
   competencia?: string;
@@ -2747,10 +2754,11 @@ export async function atualizarParcelaVale(valeId: number, parcelaId: number, da
 // aconteceu do outro lado. Ver backend/.../cadastro/rh_vale_acoes.py.
 export type ValeAcao =
   | "reparcelar" | "abater" | "desconsiderar_mes" | "cancelar"
-  // As duas voltas atrás (rh_vale_acoes.py): desfazem um abatimento lançado
-  // por engano e um mês desconsiderado. Só aparecem em `acoes_disponiveis`
-  // quando o servidor diz que são possíveis NESTE vale — ver AcoesValeModal.
-  | "estornar_abatimento" | "reverter_desconsideracao";
+  // As três voltas atrás (rh_vale_acoes.py): desfazem um abatimento lançado
+  // por engano, um mês desconsiderado e o cancelamento do vale inteiro. Só
+  // aparecem em `acoes_disponiveis` quando o servidor diz que são possíveis
+  // NESTE vale — ver AcoesValeModal.
+  | "estornar_abatimento" | "reverter_desconsideracao" | "reverter_cancelamento";
 export type ValeAcaoIn = {
   acao: ValeAcao;
   parcelas?: number;              // reparcelar
@@ -2775,8 +2783,14 @@ export type ValeAcaoContexto = {
   acoes_disponiveis: ValeAcao[];
   /** Competências assumidas pela fazenda que ainda dá para voltar a descontar
    *  (folha em aberto) — o seletor de `reverter_desconsideracao` sai daqui, e
-   *  não de uma dedução da tela, para não discordar da recusa do POST. */
+   *  não de uma dedução da tela, para não discordar da recusa do POST. Inclui
+   *  mês SEM folha lançada: é a única porta do desfazer nesse caso, porque
+   *  sem folha não existe painel de descontos onde o botão moraria. */
   competencias_revertiveis: string[];
+  /** Por que a volta do cancelamento não está disponível, em palavras — null
+   *  quando ela está (ou quando o vale nem está cancelado). Sem isto a tela
+   *  ficaria muda justamente diante da ação mais destrutiva das seis. */
+  impedimento_reverter_cancelamento?: string | null;
 };
 export type ValeAcaoResultado = {
   acao: ValeAcao;

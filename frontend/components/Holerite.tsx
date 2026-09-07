@@ -363,6 +363,45 @@ export function Holerite({
           <p style={{ fontSize: "0.75rem", color: "var(--red)", marginTop: "0.5rem" }}>{bloqueio}</p>
         )}
 
+        {/* O MÊS QUE A FAZENDA ASSUMIU — explicação, não linha do documento.
+            Fica DEPOIS do líquido, fora das quatro colunas e fora de
+            `corpo`/`linhasDoCorpo`, porque nenhum centavo daqui é desconto de
+            ninguém: entrar no corpo seria entrar nos totais, no líquido e no
+            PDF. Está aqui porque, sem isso, quem abre o holerite nesta tela
+            (só consulta, sem o painel de ações do fechamento da folha) via o
+            desconto de vale simplesmente sumir do mês, sem uma palavra.
+            Nenhum botão de ação: desfazer é decisão que se toma em Ações >
+            Fechamento da folha, ou no card "Vales de funcionário". */}
+        {documento.valeAssumido.length > 0 && (
+          <div style={{
+            marginTop: "0.6rem", padding: "0.5rem 0.65rem", borderRadius: "var(--r-sm)",
+            background: "var(--surface-2)", border: "1px dotted var(--border)",
+          }}>
+            <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--text-muted)", marginBottom: "0.25rem" }}>
+              Vale assumido pela fazenda — não descontado nesta folha
+            </div>
+            {documento.valeAssumido.map((v, i) => (
+              <div key={`assumido-${i}`} className="flex items-baseline gap-2" style={{ flexWrap: "wrap" }}>
+                <span style={{ fontSize: "0.78rem" }}>{v.descricao}</span>
+                <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                  {v.referencia}{v.motivo ? ` · ${v.motivo}` : ""}
+                </span>
+                <span style={{ flexGrow: 1 }} />
+                <span
+                  title="A fazenda assumiu este valor: ele não foi descontado do funcionário e não entra em nenhum total deste recibo."
+                  style={{
+                    fontSize: "0.78rem", color: "var(--text-muted)", textDecoration: "line-through",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >{formatBRL(v.valor_assumido)}</span>
+              </div>
+            ))}
+            <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+              Este valor virou despesa da fazenda no Financeiro e por isso não aparece entre os descontos acima.
+            </div>
+          </div>
+        )}
+
         {/* Rodapé: só o que o banco sustenta. As bases de contribuição do
             holerite de papel (Sal. Cont. INSS, Base Calc. FGTS, Base Calc.
             IRRF) NÃO são reproduzidas — não são armazenadas, e a de IRRF é
