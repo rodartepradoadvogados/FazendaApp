@@ -124,7 +124,7 @@ from fazenda.rules.recria_doenca import backfill_doenca_catalogo
 from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
 from fazenda.rules.backup import executar_backup_se_necessario
-from fazenda.rules.manual_fazenda import enviar_manual_semanal_se_necessario
+from fazenda.rules.manual_fazenda import enviar_manual_semanal_todas_fazendas
 from fazenda.rules.supabase_storage import garantir_buckets
 from fazenda.api.routers.push import despachar_agenda_do_dia, despachar_push_pendentes
 
@@ -177,7 +177,13 @@ async def _loop_manual_fazenda_semanal() -> None:
     while True:
         try:
             with Session(engine) as session:
-                enviar_manual_semanal_se_necessario(session)
+                # UM manual por fazenda-cliente, cada um com o recorte da sua
+                # (ver enviar_manual_semanal_todas_fazendas). Chamar
+                # `enviar_manual_semanal_se_necessario(session)` aqui, sem
+                # fazenda, montava o manual sem recorte e mandava para todos
+                # os admins ativos de todas as fazendas — vazamento por
+                # e-mail, que sai do sistema e não se desfaz.
+                enviar_manual_semanal_todas_fazendas(session)
         except Exception:
             pass  # nunca deixa essa tarefa de fundo derrubar o resto da aplicação
         await asyncio.sleep(_INTERVALO_VERIFICACAO_MANUAL_SEMANAL_SEGUNDOS)

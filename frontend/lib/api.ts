@@ -2324,6 +2324,16 @@ export type OrigemRubrica = {
   /** "2026-08" no aumento na folha (a partir de quando vira salário-base);
    *  null em todas as demais. */
   competencia_incorporacao: string | null;
+  /**
+   * Se esta verba pode ser alterada NO ATO DO PAGAMENTO sem confirmação
+   * ("livre" → a coluna mostra "Editar") ou só depois do aviso do cadeado
+   * ("contratual"). Vem do catálogo do servidor (`rules/rubrica_folha.py`),
+   * NUNCA de uma segunda lista escrita aqui — ver `pagamentoFolhaRegras.ts`.
+   * Opcional porque discriminação congelada antes deste campo existir não o
+   * tem; quem lê trata a ausência como "contratual" (pedir confirmação é o
+   * lado seguro de não saber).
+   */
+  alteracao?: "livre" | "contratual";
   fundamento: string | null;
   compra: CompraDoDesconto | null;
 };
@@ -2428,16 +2438,28 @@ export async function estornarPagamentoFolha(id: number) {
   return res.json();
 }
 
-// ── Pagar a folha lançando valor DISTINTO numa verba (ver
-// backend/.../rh_folha_pagar.py). O pop-up do ato do pagamento: clica-se no
-// vale, lança-se o valor efetivamente descontado e a diferença precisa de
-// destino — as MESMAS três decisões do painel de ações do vale, só que
-// disparadas por quanto se está pagando agora. ──
-export type DecisaoDiferencaFolha = "abater" | "desconsiderar" | "reparcelar";
+// ── Pagar a folha lançando valor DISTINTO nas verbas (ver
+// backend/.../rh_folha_pagar.py). O pop-up do ato do pagamento: cada verba tem
+// a coluna de edição ("Editar" ou cadeado), e a diferença de uma parcela de
+// VALE ainda precisa de destino — as decisões do painel de ações do vale,
+// disparadas por quanto se está pagando agora, mais `acrescimo_avulso`, que só
+// existe para quem descontou a MAIS (o excedente vira linha própria do
+// holerite em vez de antecipar o saldo). ──
+export type DecisaoDiferencaFolha = "abater" | "desconsiderar" | "reparcelar" | "acrescimo_avulso";
 export type PagarFolhaDados = {
   data_pagamento: string;
-  /** Só parcela de vale é editável — é a única verba que é dívida da pessoa. */
+  /** Parcelas de vale — as únicas cuja diferença abre uma decisão, por serem
+   *  a única verba que é dívida da pessoa. */
   verbas?: { parcela_id: number; valor_pago: number }[];
+  /** As demais verbas da coluna de edição. `confirmado` é a marca do CADEADO:
+   *  nas verbas contratuais o servidor recusa a alteração que chega sem ele —
+   *  a trava não pode existir só na tela. */
+  rubricas?: { rubrica_id: number; valor_pago: number; confirmado: boolean }[];
+  retencoes?: { tipo: "inss" | "ir"; valor_pago: number; confirmado: boolean }[];
+  /** Para MAIOR vira aumento incorporado (novo salário daí em diante); para
+   *  MENOR o servidor recusa com 400 — CLT, art. 468. */
+  salario?: { valor_pago: number; confirmado: boolean };
+  outros_descontos?: { valor_pago: number };
   decisao?: {
     tipo: DecisaoDiferencaFolha;
     /** abater: conta que RECEBEU a devolução em dinheiro (opcional — abatimento
@@ -2452,6 +2474,8 @@ export type PagarFolhaResultado = {
   id: number; status: string; valor_liquido: number; valor_vale?: number;
   recibo_congelado: boolean;
   decisoes: { decisao: DecisaoDiferencaFolha; valor: number; resumo: string }[];
+  /** O que a coluna de edição gravou — uma entrada por verba alterada. */
+  alteracoes?: { verba: string; de: number; para: number; resumo: string }[];
   [chave: string]: any;
 };
 export async function pagarFolhaComVerbas(id: number, dados: PagarFolhaDados): Promise<PagarFolhaResultado> {
@@ -2578,6 +2602,8 @@ export type RubricaCatalogoItem = {
   incide_fgts?: boolean;
   incorpora_base?: boolean;
   exige_compra?: boolean;
+  /** Ver `OrigemRubrica.alteracao` — o eixo da coluna de edição do pagamento. */
+  alteracao?: "livre" | "contratual";
 };
 export type CatalogoRubricas = { vencimentos: RubricaCatalogoItem[]; descontos: RubricaCatalogoItem[] };
 export type RubricaFolha = {

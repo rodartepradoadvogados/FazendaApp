@@ -2,7 +2,7 @@
 Rubricas avulsas do holerite — o catálogo trabalhista, o regime tributário de
 cada uma e as linhas que elas viram no recibo de quatro colunas.
 
-POR QUE O REGIME TRIBUTÁRIO MORA AQUI, E POR RUBRICA. Tratar as cinco verbas
+POR QUE O REGIME TRIBUTÁRIO MORA AQUI, E POR RUBRICA. Tratar todas as verbas
 igual é o erro que este módulo existe para impedir: um reembolso de R$ 400
 somado ao salário bruto aumenta a base de INSS/IRRF/FGTS e faz o funcionário
 pagar contribuição sobre dinheiro que é dele (só está sendo devolvido). O
@@ -40,6 +40,21 @@ com a contabilidade dele):
 - `reembolso` — INDENIZATÓRIA. Devolução de despesa do EMPREGADOR adiantada
   pelo empregado (combustível, peça, compra de insumo): mera reposição
   patrimonial, sem acréscimo — não integra salário nem sofre incidência.
+- `vale_transporte` — INDENIZATÓRIA, e é o enquadramento mais firme daqui: a
+  própria lei do benefício diz que ele "não tem natureza salarial, nem se
+  incorpora à remuneração para quaisquer efeitos" e "não constitui base de
+  incidência de contribuição previdenciária ou de FGTS" (Lei 7.418/85,
+  art. 2º, alíneas "a" e "d"). A cota-parte do empregado tem código PRÓPRIO
+  no catálogo de descontos (`desconto_vale_transporte`), porque é desconto e
+  não vencimento, e porque o fundamento dela é outro (art. 4º, parágrafo
+  único, da mesma lei).
+
+VALE-ALIMENTAÇÃO NÃO ENTRA, e a ausência é deliberada: a natureza dele depende
+da FORMA de pagamento — pago em ticket/cartão dentro do PAT é indenizatório
+(CLT, art. 457, §2º, e Lei 14.442/2022), pago em DINHEIRO é salarial e integra
+as bases. O modelo não tem onde gravar a forma de pagamento de uma rubrica, e
+escolher um dos dois enquadramentos por padrão poria a base de INSS/IRRF/FGTS
+errada em metade dos casos — ver o relatório do PR.
 
 O QUE ESTE MÓDULO NÃO FAZ: não calcula a tabela progressiva do IRRF nem as
 faixas do INSS. O projeto inteiro trabalha com percentual informado pelo
@@ -64,11 +79,38 @@ NATUREZA_INDENIZATORIA = "indenizatoria"
 ESPECIE_VENCIMENTO = "vencimento"
 ESPECIE_DESCONTO = "desconto"
 
-# As cinco rubricas de vencimento pedidas pelo dono, com o enquadramento
-# discutido na docstring. `incide_*` é o que decide a BASE de cada tributo —
-# por tributo, e não um "tributável: sim/não" único, porque nada garante que
-# uma rubrica futura incida nos três (gorjeta, por exemplo, integra a
-# remuneração para FGTS mas tem reflexo limitado pela Súmula 354 do TST).
+# ── Quem pode ser alterado NO ATO DO PAGAMENTO, e sob que condição ──
+#
+# POR QUE ESTE EIXO NÃO É `natureza`, e precisou de campo próprio. O dono
+# pediu a coluna de edição do pop-up de pagamento com dois estados: "Editar"
+# nos vales, bonificações e vale-transporte; CADEADO no salário, no INSS, no
+# IR e "nas demais verbas salariais ou indenizatórias". Só que bonificação
+# TEM natureza salarial (art. 457, §1º) e ganha "Editar", enquanto indenização
+# e reembolso são indenizatórios e ganham cadeado — ou seja, o eixo que o dono
+# enxerga NÃO é o regime tributário que `natureza` grava. É outro:
+#
+#   LIVRE       → o valor é MEDIDO no mês. Quanto de vale foi descontado,
+#                 quanto se bonificou, quantos dias de vale-transporte. Não
+#                 existe valor prometido a alterar: editar aqui é dizer o que
+#                 aconteceu, não mudar o contrato.
+#   CONTRATUAL  → o valor é DETERMINADO pela lei ou pelo contrato (salário,
+#                 aumento incorporado, retenções, indenização ajustada,
+#                 desconto amarrado a uma compra). Mexer nele vale como
+#                 alteração daquele momento em diante (CLT, art. 468) — daí o
+#                 cadeado, que não bloqueia: pergunta e deixa passar.
+#
+# O enquadramento de cada código vai escrito verbete a verbete, e não deduzido
+# de outro campo, justamente porque os dois eixos não coincidem — e porque o
+# dono precisa poder ler a lista e mudar UMA linha quando discordar.
+ALTERACAO_LIVRE = "livre"
+ALTERACAO_CONTRATUAL = "contratual"
+
+# As rubricas de vencimento do catálogo, com o enquadramento discutido na
+# docstring. `incide_*` é o que decide a BASE de cada tributo — por tributo, e
+# não um "tributável: sim/não" único, porque nada garante que uma rubrica
+# futura incida nos três (gorjeta, por exemplo, integra a remuneração para
+# FGTS mas tem reflexo limitado pela Súmula 354 do TST). `alteracao` é o outro
+# eixo, o da edição no ato do pagamento — ver o bloco de constantes acima.
 CATALOGO_VENCIMENTOS: dict[str, dict] = {
     "bonificacao_produtividade": {
         "rotulo": "Bonificação por produtividade",
@@ -77,6 +119,10 @@ CATALOGO_VENCIMENTOS: dict[str, dict] = {
         "incide_irrf": True,
         "incide_fgts": True,
         "incorpora_base": False,
+        # Quanto se bonifica é medido no mês (produção, colheita, resultado):
+        # não há valor prometido cujo ajuste seja alteração contratual. O dono
+        # nomeou "bonificações" entre as verbas de "Editar".
+        "alteracao": ALTERACAO_LIVRE,
         "fundamento": "Gratificação ajustada — CLT, art. 457, §1º",
     },
     "aumento_folha": {
@@ -86,6 +132,10 @@ CATALOGO_VENCIMENTOS: dict[str, dict] = {
         "incide_irrf": True,
         "incide_fgts": True,
         "incorpora_base": True,
+        # É o próprio salário: `incorpora_base` faz esta linha virar
+        # salário-base na competência seguinte (`_propagar_aumento`). Mexer
+        # nela É a alteração contratual — cadeado, sempre.
+        "alteracao": ALTERACAO_CONTRATUAL,
         "fundamento": "Aumento salarial incorporado — CLT, art. 468",
     },
     "gueltas": {
@@ -95,7 +145,29 @@ CATALOGO_VENCIMENTOS: dict[str, dict] = {
         "incide_irrf": True,
         "incide_fgts": True,
         "incorpora_base": False,
+        # Valor pago por terceiro, evento a evento: como a bonificação, o que
+        # se lança é quanto veio no mês.
+        "alteracao": ALTERACAO_LIVRE,
         "fundamento": "Parcela paga por terceiro em razão do trabalho — CLT, art. 457, §3º; Súmula 354 do TST",
+    },
+    "vale_transporte": {
+        "rotulo": "Vale-transporte",
+        # A lei do vale-transporte é EXPRESSA: não tem natureza salarial, não
+        # se incorpora à remuneração "para quaisquer efeitos" e não é base de
+        # contribuição previdenciária nem de FGTS. É o enquadramento menos
+        # ambíguo do catálogo inteiro — por isso ele entra, e o
+        # vale-alimentação não (ver o relatório do PR): a natureza do
+        # auxílio-alimentação depende da FORMA de pagamento (ticket/cartão do
+        # PAT × dinheiro, Lei 14.442/2022), e o modelo não tem onde gravar
+        # essa forma. Adivinhar poria a base de INSS/IRRF/FGTS errada.
+        "natureza": NATUREZA_INDENIZATORIA,
+        "incide_inss": False,
+        "incide_irrf": False,
+        "incide_fgts": False,
+        "incorpora_base": False,
+        # Quantos dias de deslocamento houve no mês é medição, não promessa.
+        "alteracao": ALTERACAO_LIVRE,
+        "fundamento": "Vale-transporte, sem natureza salarial — Lei 7.418/85, art. 2º",
     },
     "indenizacao": {
         "rotulo": "Indenização",
@@ -104,6 +176,9 @@ CATALOGO_VENCIMENTOS: dict[str, dict] = {
         "incide_irrf": False,
         "incide_fgts": False,
         "incorpora_base": False,
+        # Verba indenizatória: o valor repara um dano JÁ apurado e ajustado
+        # com o empregado. O dono pediu cadeado nas indenizatórias.
+        "alteracao": ALTERACAO_CONTRATUAL,
         "fundamento": "Verba indenizatória — CLT, art. 457, §2º; Lei 8.212/91, art. 28, §9º",
     },
     "reembolso": {
@@ -113,23 +188,45 @@ CATALOGO_VENCIMENTOS: dict[str, dict] = {
         "incide_irrf": False,
         "incide_fgts": False,
         "incorpora_base": False,
+        # O valor é o do comprovante que o empregado apresentou: alterá-lo é
+        # reembolsar coisa diferente da que foi gasta.
+        "alteracao": ALTERACAO_CONTRATUAL,
         "fundamento": "Reposição de despesa do empregador — CLT, art. 457, §2º; Lei 8.212/91, art. 28, §9º",
     },
 }
 
 # Desconto não tem "natureza tributária": ele não entra em base nenhuma — sai
 # do LÍQUIDO, depois de as retenções já estarem calculadas. O que distingue os
-# dois códigos é a ORIGEM que a linha do recibo consegue mostrar.
+# códigos é a ORIGEM que a linha do recibo consegue mostrar.
 CATALOGO_DESCONTOS: dict[str, dict] = {
     "desconto_valor": {
         "rotulo": "Desconto em folha",
         "exige_compra": False,
+        "alteracao": ALTERACAO_LIVRE,
         "fundamento": "Desconto autorizado pelo empregado — CLT, art. 462, caput",
     },
     "desconto_compra": {
         "rotulo": "Desconto de compra realizada",
         "exige_compra": True,
+        # O valor está amarrado à parcela da compra (FK `conta_gerencial_id`):
+        # editá-lo desfaz o casamento entre o que o recibo cobra e o que a
+        # nota diz — cadeado.
+        "alteracao": ALTERACAO_CONTRATUAL,
         "fundamento": "Ressarcimento de compra feita pela fazenda — CLT, art. 462, caput",
+    },
+    "desconto_vale_transporte": {
+        "rotulo": "Vale-transporte — participação do empregado",
+        "exige_compra": False,
+        "alteracao": ALTERACAO_LIVRE,
+        # Existe junto com o vencimento `vale_transporte`: sem ele a fazenda
+        # concederia o VT e não teria onde registrar a cota-parte legal do
+        # empregado. O TETO de 6% não é imposto aqui (o sistema não impõe
+        # tetos que o usuário não pediu) — o fundamento fica escrito para ele
+        # conferir com a contabilidade.
+        "fundamento": (
+            "Participação do empregado no vale-transporte, limitada a 6% do salário-base — "
+            "Lei 7.418/85, art. 4º, parágrafo único"
+        ),
     },
 }
 
@@ -239,6 +336,20 @@ def origem_rubrica(rubrica: FolhaRubrica, compra: dict | None = None) -> dict:
         "competencia_incorporacao": (
             competencia_seguinte(rubrica.competencia) if rubrica.incorpora_base else None
         ),
+        # A coluna de edição do pop-up de pagamento sai DAQUI, e não de uma
+        # segunda lista escrita no frontend: a tela só desenha "Editar" ou o
+        # cadeado conforme o que o servidor mandou. Repetir o catálogo em
+        # TypeScript era garantir que um dia os dois discordassem — e o lado
+        # que decide é o servidor, que é quem recusa a gravação.
+        #
+        # Vem do CATÁLOGO (`dados`), não de uma coluna gravada na linha, ao
+        # contrário de `natureza`/`incide_*`: aquelas são congeladas porque o
+        # recibo é PROVA e não pode mudar de conteúdo se a lei mudar. Esta não
+        # descreve o recibo — descreve o que a TELA pode fazer hoje —, então
+        # deve seguir o catálogo de hoje. Rubrica de código desconhecido (do
+        # futuro, ou de um catálogo que encolheu) cai em "contratual": o lado
+        # seguro é pedir confirmação, nunca liberar em silêncio.
+        "alteracao": dados.get("alteracao", ALTERACAO_CONTRATUAL),
         "fundamento": dados.get("fundamento"),
         "compra": compra,
     }

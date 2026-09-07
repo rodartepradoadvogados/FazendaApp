@@ -18,12 +18,17 @@ import { Modal } from "@/components/Modal";
  * ter — o valor editável e o "remover". Misturar as duas coisas faria o
  * recibo impresso e a tela deixarem de ser a mesma leitura.
  *
- * O ENQUADRAMENTO NÃO É ESCOLHIDO AQUI. A tela manda o CÓDIGO da rubrica
- * (bonificação, aumento, gueltas, indenização, reembolso) e o servidor decide
- * a natureza (salarial × indenizatória) e as incidências de INSS/IRRF/FGTS —
- * ver backend/fazenda/rules/rubrica_folha.py. O que a tela faz é DIZER a
- * consequência antes do lançamento, para o dono não descobrir depois no valor
- * retido: cada opção carrega o fundamento legal e a frase de incidência.
+ * O ENQUADRAMENTO NÃO É ESCOLHIDO AQUI. A tela manda o CÓDIGO da rubrica e o
+ * servidor decide a natureza (salarial × indenizatória) e as incidências de
+ * INSS/IRRF/FGTS — ver backend/fazenda/rules/rubrica_folha.py. O que a tela
+ * faz é DIZER a consequência antes do lançamento, para o dono não descobrir
+ * depois no valor retido: cada opção carrega o fundamento legal e a frase de
+ * incidência.
+ *
+ * A LISTA DE VERBAS VEM DO SERVIDOR, sempre (`fetchCatalogoRubricas`): esta
+ * tela nunca teve — e não pode ganhar — uma cópia dos códigos. É por isso que
+ * tornar o vale-transporte cadastrável foi acrescentar UM verbete ao catálogo
+ * do backend, sem tela nova e sem uma linha mudada aqui.
  *
  * A CONSULTA DE CONTAS ABRE EM JANELA SOBREPOSTA (`Modal`, com a animação de
  * entrada/saída que o projeto já tem), não em navegação: escolher a compra

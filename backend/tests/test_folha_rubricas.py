@@ -139,10 +139,11 @@ def _linhas(detalhe: list[dict], tipo: str) -> list[dict]:
 # O catálogo e o enquadramento de cada uma das cinco rubricas
 # ---------------------------------------------------------------------------
 class TestCatalogoTrabalhista:
-    def test_as_cinco_rubricas_de_vencimento_existem_com_o_enquadramento(self):
+    def test_as_rubricas_de_vencimento_existem_com_o_enquadramento(self):
         catalogo = rubrica_folha.CATALOGO_VENCIMENTOS
         assert set(catalogo) == {
-            "bonificacao_produtividade", "aumento_folha", "gueltas", "indenizacao", "reembolso",
+            "bonificacao_produtividade", "aumento_folha", "gueltas", "vale_transporte",
+            "indenizacao", "reembolso",
         }
         salariais = {"bonificacao_produtividade", "aumento_folha", "gueltas"}
         for codigo, dados in catalogo.items():
@@ -157,6 +158,31 @@ class TestCatalogoTrabalhista:
             assert dados["fundamento"], codigo
         # Só o aumento muda o futuro.
         assert [c for c, d in catalogo.items() if d["incorpora_base"]] == ["aumento_folha"]
+
+    def test_todo_verbete_declara_se_pode_ser_alterado_no_pagamento(self):
+        """`alteracao` é o eixo da coluna de edição do pop-up de pagamento
+        (ver rules/verba_pagamento.py). Verbete sem ele cairia em "contratual"
+        por omissão — o lado seguro, mas por acidente e não por decisão. O
+        teste obriga a decisão a ser escrita."""
+        for catalogo in (rubrica_folha.CATALOGO_VENCIMENTOS, rubrica_folha.CATALOGO_DESCONTOS):
+            for codigo, dados in catalogo.items():
+                assert dados.get("alteracao") in (
+                    rubrica_folha.ALTERACAO_LIVRE, rubrica_folha.ALTERACAO_CONTRATUAL,
+                ), codigo
+
+    def test_o_enquadramento_do_vale_transporte_e_o_que_a_lei_diz(self):
+        """Lei 7.418/85, art. 2º: sem natureza salarial, sem incorporação à
+        remuneração "para quaisquer efeitos" e fora da base de contribuição
+        previdenciária e de FGTS. É o verbete menos ambíguo do catálogo, e o
+        teste existe para ele não ser "arrumado" para salarial sem que alguém
+        leia a lei antes."""
+        vt = rubrica_folha.CATALOGO_VENCIMENTOS["vale_transporte"]
+        assert vt["natureza"] == rubrica_folha.NATUREZA_INDENIZATORIA
+        assert not (vt["incide_inss"] or vt["incide_irrf"] or vt["incide_fgts"])
+        assert not vt["incorpora_base"]
+        assert "7.418" in vt["fundamento"]
+        # A cota-parte do empregado é DESCONTO, com fundamento próprio.
+        assert "6%" in rubrica_folha.CATALOGO_DESCONTOS["desconto_vale_transporte"]["fundamento"]
 
     def test_catalogo_mantem_bases_alinhadas(self):
         """`FolhaPagamento.valor_rubricas_tributaveis` é UM número para os três
@@ -175,7 +201,13 @@ class TestCatalogoTrabalhista:
         assert r.status_code == 200, r.text
         corpo = r.json()
         assert {v["codigo"] for v in corpo["vencimentos"]} == set(rubrica_folha.CATALOGO_VENCIMENTOS)
-        assert {d["codigo"] for d in corpo["descontos"]} == {"desconto_valor", "desconto_compra"}
+        assert {d["codigo"] for d in corpo["descontos"]} == {
+            "desconto_valor", "desconto_compra", "desconto_vale_transporte",
+        }
+        # O catálogo é o que a tela de rubricas do holerite lê para montar o
+        # <select>: o vale-transporte ser cadastrável É estar aqui — não há
+        # tela nova nem cadastro paralelo.
+        assert {v["codigo"] for v in corpo["vencimentos"]} >= {"vale_transporte"}
 
 
 # ---------------------------------------------------------------------------
