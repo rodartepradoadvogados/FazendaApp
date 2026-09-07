@@ -183,16 +183,38 @@ def sugestoes_movimentacao(
     }
 
 
-def _parametro_sugestao_movimentacao(session: Session, fazenda_id: int | None = None) -> ParametroSugestaoMovimentacao:
-    """Uma linha por fazenda (mesmo padrão de `ParametroDiariaPadrao`) com a
-    configuração de quando as sugestões de troca de lote aparecem na Agenda."""
+def ler_parametro_sugestao_movimentacao(session: Session, fazenda_id: int | None = None) -> ParametroSugestaoMovimentacao:
+    """LEITURA PURA do parâmetro DA FAZENDA — nunca cria linha, nunca commita.
+    Sem linha cadastrada devolve um objeto em memória (transiente, fora da
+    sessão) com os padrões do modelo: exatamente o que a tela de Parâmetros
+    mostra antes de o dono salvar a primeira vez.
+
+    Existe separada do get-or-create abaixo porque quem lê isto não é só a
+    tela: a Agenda (`fazenda.api.routers.agenda.calcular_agenda`) consulta o
+    parâmetro a CADA carregamento, e ela é caminho de leitura. Criar linha e
+    commitar dentro de um GET é efeito colateral indesejado — num tenant novo,
+    a primeira visita à Agenda já gravaria o parâmetro no banco sem ninguém ter
+    configurado nada. Daí "ler" e "ler ou criar" serem duas funções.
+
+    O recorte de fazenda mora DENTRO da consulta (mesmo padrão de
+    `ParametroDiariaPadrao`): uma linha por fazenda, e `fazenda_id` nulo casa
+    só com a linha nula da instalação de fazenda única."""
     query = select(ParametroSugestaoMovimentacao)
     query = query.where(ParametroSugestaoMovimentacao.fazenda_id == fazenda_id) if fazenda_id is not None else query.where(
         ParametroSugestaoMovimentacao.fazenda_id.is_(None)
     )
-    parametro = session.exec(query).first()
-    if not parametro:
-        parametro = ParametroSugestaoMovimentacao(fazenda_id=fazenda_id)
+    return session.exec(query).first() or ParametroSugestaoMovimentacao(fazenda_id=fazenda_id)
+
+
+def _parametro_sugestao_movimentacao(session: Session, fazenda_id: int | None = None) -> ParametroSugestaoMovimentacao:
+    """Uma linha por fazenda (mesmo padrão de `ParametroDiariaPadrao`) com a
+    configuração de quando as sugestões de troca de lote aparecem na Agenda.
+
+    Get-or-CREATE: é o caminho da tela de Parâmetros (GET/PUT desta rota), que
+    pode materializar a linha da fazenda. Quem só precisa do valor configurado
+    usa `ler_parametro_sugestao_movimentacao`, que não grava."""
+    parametro = ler_parametro_sugestao_movimentacao(session, fazenda_id)
+    if parametro.id is None:  # ainda transiente — esta fazenda não tem linha
         session.add(parametro)
         session.commit()
         session.refresh(parametro)
