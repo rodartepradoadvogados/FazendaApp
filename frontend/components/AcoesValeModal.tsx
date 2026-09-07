@@ -105,11 +105,11 @@ export default function AcoesValeModal({
   const valorRevertido = contexto ? valorDaReversao(contexto, competenciaReverter) : 0;
   const pode = (a: ValeAcao) => !!contexto?.acoes_disponiveis.includes(a);
 
-  async function confirmar() {
+  async function confirmar(confirmarTeto = false) {
     setErro(null);
     setSalvando(true);
     try {
-      const corpo: any = { acao, motivo: motivo.trim() || undefined };
+      const corpo: any = { acao, motivo: motivo.trim() || undefined, confirmar: confirmarTeto || undefined };
       if (acao === "reparcelar") {
         corpo.parcelas = Number(parcelas) || 0;
         if (competenciaInicio) corpo.competencia_inicio = competenciaInicio;
@@ -128,7 +128,20 @@ export default function AcoesValeModal({
       const resultado = await executarAcaoVale(valeId, corpo);
       onFeito(resultado);
     } catch (e: any) {
-      setErro(e.message || "Erro ao executar a ação");
+      // O teto de 40% do salário: reparcelar em 1x era a forma mais direta de
+      // empilhar o saldo inteiro num mês, e esta porta não avisava nada. O
+      // aviso é confirmável — o dono pode ter motivo —, mas ele precisa
+      // existir. Mesmo padrão de confirmação de criar/editar vale.
+      if (e?.status === 409 && e?.detail?.competencias_excedidas) {
+        const lista = e.detail.competencias_excedidas.map((c: any) => `${c.competencia} (${formatBRL(c.total)})`).join(", ");
+        if (window.confirm(`${e.detail.mensagem}\n\nCompetências afetadas: ${lista}\n\nDeseja reparcelar mesmo assim?`)) {
+          await confirmar(true);
+          return;
+        }
+        setErro(null);
+      } else {
+        setErro(e.message || "Erro ao executar a ação");
+      }
     } finally {
       setSalvando(false);
     }
@@ -324,7 +337,7 @@ export default function AcoesValeModal({
 
       <div className="flex items-center gap-3 mt-3">
         {contexto && (contexto.status !== "cancelado" || pode("reverter_cancelamento")) && (
-          <button type="button" className="btn-primary" disabled={salvando} onClick={confirmar}>
+          <button type="button" className="btn-primary" disabled={salvando} onClick={() => confirmar()}>
             <Check size={14} />{" "}
             {salvando
               ? "Salvando…"

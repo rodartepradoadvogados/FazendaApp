@@ -94,6 +94,7 @@ from .rh_folha import (
     TIPO_DOCUMENTO_VALE,
     _competencias_do_vale,
     _exigir_competencias_nao_pagas,
+    _exigir_teto_vale,
     _reconciliar_vale_competencias,
     _vale_competencia_paga,
     descricao_conta_vale,
@@ -558,6 +559,11 @@ class ValeAcaoIn(BaseModel):
     # um por conta própria mexeria no mês errado).
     competencia: str | None = None  # "AAAA-MM"
     motivo: str | None = None
+    # reparcelar: confirma prosseguir mesmo deixando alguma competência com
+    # mais de 40% do salário em desconto de vale. Reparcelar era uma das três
+    # portas que não conferiam o teto — dava para jogar o saldo inteiro num
+    # mês só, em silêncio (ver `_exigir_teto_vale`, em rh_folha.py).
+    confirmar: bool = False
 
 
 def _competencias_revertiveis(
@@ -780,7 +786,7 @@ def executar_acao_vale(
     motivo = (dados.motivo or "").strip()
 
     if dados.acao == "reparcelar":
-        resultado = _acao_reparcelar(session, vale, pendentes, saldo, dados, fazenda_id)
+        resultado = _acao_reparcelar(session, vale, pessoa, pendentes, saldo, dados, fazenda_id)
     elif dados.acao == "abater":
         resultado = _acao_abater(session, vale, pessoa, pendentes, saldo, dados, fazenda_id)
     elif dados.acao == "desconsiderar_mes":
@@ -800,12 +806,17 @@ def executar_acao_vale(
 
 
 def _acao_reparcelar(
-    session: Session, vale: ValeFuncionario, pendentes: list[ValeParcela], saldo: float,
+    session: Session, vale: ValeFuncionario, pessoa: Pessoa, pendentes: list[ValeParcela], saldo: float,
     dados: ValeAcaoIn, fazenda_id: int | None,
 ) -> dict:
     """Redistribui o SALDO (o que ainda não foi descontado) em N parcelas a
     partir de uma competência. Só o saldo, nunca `valor_total`: o que já caiu
-    numa folha paga foi descontado de verdade e não volta atrás."""
+    numa folha paga foi descontado de verdade e não volta atrás.
+
+    `pessoa` entra só para o teto de 40% do salário (`_exigir_teto_vale`):
+    reparcelar em 1x é exatamente o caminho de concentrar num mês um saldo que
+    o funcionário não tem como absorver, e era uma das três portas que não
+    avisavam nada."""
     if not dados.parcelas or dados.parcelas < 1:
         raise HTTPException(status_code=400, detail="Informe em quantas parcelas o saldo será dividido.")
     if not pendentes or saldo <= 0:
@@ -818,12 +829,22 @@ def _acao_reparcelar(
     competencias_novas = _competencias_do_vale(competencia_inicio, dados.parcelas)
     _exigir_competencias_nao_pagas(session, vale.pessoa_id, competencias_novas, fazenda_id, "reparcelar")
 
+    valores = _split_valores(saldo, dados.parcelas)
+    # Teto de 40% do salário — ANTES de apagar as pendentes, para a recusa
+    # acontecer com o banco intacto. As parcelas que vão sumir saem do "já
+    # lançado": elas serão substituídas pelo novo cronograma, e contá-las
+    # somaria o saldo a si mesmo.
+    _exigir_teto_vale(
+        session, vale.pessoa_id, pessoa.salario_base, list(zip(competencias_novas, valores)),
+        confirmar=dados.confirmar, verbo="reparcelar",
+        parcela_ids_substituidas={p.id for p in pendentes},
+    )
+
     competencias_antigas = [p.competencia for p in pendentes]
     for p in pendentes:
         session.delete(p)
     session.flush()
 
-    valores = _split_valores(saldo, dados.parcelas)
     for competencia, valor in zip(competencias_novas, valores):
         session.add(ValeParcela(
             vale_id=vale.id, pessoa_id=vale.pessoa_id, competencia=competencia,
@@ -907,6 +928,88 @@ def _acao_abater(
             f"Abatimento de R$ {_fmt_brl(valor)} — o saldo do vale caiu para R$ {_fmt_brl(saldo_novo)}."
         ),
     }
+
+
+def abater_saldo_na_rescisao(
+    session: Session, pessoa: Pessoa, valor: float, fazenda_id: int | None,
+) -> list[dict]:
+    """
+    Baixa `valor` do saldo de vale cobrável da pessoa porque a RESCISÃO já o
+    descontou do que ela tem a receber — a metade "resolver" do defeito que
+    deixou R$ 6.485,00 de vale de pé numa rescisão fechada (Jorbeson Nunes,
+    pessoa 3, fazenda 1; ver `_saldo_vale_em_aberto`, em rh_folha.py).
+
+    NÃO É UM TERCEIRO CAMINHO DE ABATIMENTO: cada vale é baixado por
+    `_acao_abater`, o mesmo desta casa, com o mesmo rateio proporcional de
+    `_reescalar_parcelas`. O que existe aqui é só a REPARTIÇÃO entre vales,
+    que o abatimento (que sempre falou de um vale só) não tinha: os vales são
+    quitados do mais antigo para o mais novo (pela primeira competência ainda
+    pendente, e o id como desempate), até o valor acabar. Quitar do mais
+    antigo é o que uma pessoa faria com a folha na mão, e deixa a sobra — se
+    houver — no vale mais recente, que é o mais fácil de reconhecer depois.
+
+    SEM LANÇAMENTO NOVO NO FINANCEIRO, e isto é deliberado: `conta_corrente_id`
+    fica de fora da chamada de `_acao_abater` porque não houve devolução em
+    dinheiro. O caixa já fecha sozinho — a saída do vale continua lançada como
+    sempre esteve, e a rescisão paga um líquido MENOR exatamente nesse valor.
+    Lançar uma "devolução" aqui contaria a recuperação duas vezes.
+    """
+    restante = round(valor, 2)
+    if restante <= 0:
+        return []
+
+    parcelas_por_vale: dict[int, list[ValeParcela]] = {}
+    for p in session.exec(
+        select(ValeParcela).where(
+            ValeParcela.pessoa_id == pessoa.id,
+            ValeParcela.assumida_pela_fazenda == False,  # noqa: E712
+        )
+    ).all():
+        parcelas_por_vale.setdefault(p.vale_id, []).append(p)
+
+    if not parcelas_por_vale:
+        return []
+
+    def _pendentes(vale: ValeFuncionario) -> list[ValeParcela]:
+        return _parcelas_pendentes(
+            session, vale,
+            sorted(parcelas_por_vale[vale.id], key=lambda x: (x.competencia, x.id or 0)),
+            fazenda_id,
+        )
+
+    vales = sorted(
+        (
+            v for v in session.exec(
+                select(ValeFuncionario).where(ValeFuncionario.id.in_(list(parcelas_por_vale)))
+            ).all()
+            if v.status != "cancelado"
+        ),
+        # "9999-99" para vale sem parcela pendente nenhuma: ele vai para o fim
+        # da fila e o laço abaixo o pula (saldo zero) — nunca para o começo,
+        # onde bloquearia a vez de um vale que de fato tem o que baixar.
+        key=lambda v: (min((p.competencia for p in _pendentes(v)), default="9999-99"), v.id or 0),
+    )
+
+    baixados: list[dict] = []
+    for vale in vales:
+        if restante <= 0:
+            break
+        pendentes = _pendentes(vale)
+        saldo = round(sum(p.valor for p in pendentes), 2)
+        if saldo <= 0:
+            continue
+        valor_neste = min(restante, saldo)
+        resultado = _acao_abater(
+            session, vale, pessoa, pendentes, saldo,
+            ValeAcaoIn(acao="abater", valor=valor_neste), fazenda_id,
+        )
+        restante = round(restante - valor_neste, 2)
+        baixados.append({
+            "vale_id": vale.id,
+            "valor_abatido": valor_neste,
+            "saldo_apos": resultado["saldo_apos"],
+        })
+    return baixados
 
 
 def _acao_desconsiderar_mes(

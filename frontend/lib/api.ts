@@ -2479,6 +2479,9 @@ export type PagarFolhaDados = {
     parcelas?: number;             // reparcelar
     competencia_inicio?: string;   // reparcelar (padrão: a competência seguinte)
     motivo?: string;
+    /** reparcelar: confirma prosseguir mesmo deixando alguma competência acima
+     *  de 40% do salário em desconto de vale (409 do backend). */
+    confirmar?: boolean;
   };
 };
 export type PagarFolhaResultado = {
@@ -2493,7 +2496,20 @@ export async function pagarFolhaComVerbas(id: number, dados: PagarFolhaDados): P
   const res = await authFetch(`${API}/cadastro/folha-pagamento/${id}/pagar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar o pagamento da folha"); }
+  if (!res.ok) {
+    // Preserva `detail`/`status` (mesmo padrão de `criarVale`): o 409 de
+    // "ultrapassa 40% do salário" ao reparcelar a diferença precisa do
+    // `detail.competencias_excedidas` estruturado para a tela oferecer o
+    // "confirmar mesmo assim", e não só de uma string solta.
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(
+      mensagemErroApi(d.detail) || (typeof d.detail === "object" ? d.detail?.mensagem : null)
+      || "Erro ao registrar o pagamento da folha",
+    );
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 
@@ -2769,6 +2785,11 @@ export async function excluirVale(valeId: number) {
 export async function atualizarParcelaVale(valeId: number, parcelaId: number, dados: {
   valor: number; acao?: "conceder" | "redistribuir_igual" | "redistribuir_livre";
   valores_parcelas?: Record<number, number>; confirmar?: boolean; confirmar_divergencia_total?: boolean;
+  /** Confirma concentrar, em alguma competência, mais de 40% do salário em
+   *  desconto de vale — 409 com `{mensagem, competencias_excedidas, limite}`.
+   *  Campo PRÓPRIO, separado de `confirmar` (que é a divergência de valor):
+   *  são dois avisos diferentes e cada um precisa ser lido antes de passar. */
+  confirmar_teto?: boolean;
 }) {
   const res = await authFetch(`${API}/cadastro/vales/${valeId}/parcelas/${parcelaId}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -2804,6 +2825,10 @@ export type ValeAcaoIn = {
   conta_corrente_id?: number;     // abater: conta que RECEBEU a devolução (opcional)
   competencia?: string;           // desconsiderar_mes; reverter_desconsideracao (obrigatória)
   motivo?: string;
+  /** reparcelar: confirma prosseguir mesmo deixando alguma competência acima
+   *  de 40% do salário em desconto de vale — o 409 traz
+   *  `{mensagem, competencias_excedidas, limite}`. */
+  confirmar?: boolean;
 };
 export type ValeAcaoContexto = {
   vale_id: number;
@@ -3157,8 +3182,22 @@ export type RescisaoDados = {
   dias_ferias_vencidas?: number; aviso_previo_trabalhado?: boolean;
   data_pagamento?: string; status?: string; observacao?: string; centro_custo?: string;
 };
+/** Saldo de vale ainda COBRÁVEL da pessoa (parcelas não assumidas pela
+ *  fazenda, de vales ativos, em competências sem folha paga) — o número que
+ *  faltava na rescisão. Sem ele o campo "Vale em aberto" nascia em zero e era
+ *  assim que ficava: uma rescisão real foi fechada deixando R$ 6.485,00 de
+ *  vale de pé, em competências que nunca mais teriam folha para descontar.
+ *  O backend recusa fechar a rescisão enquanto sobrar saldo não endereçado. */
+export type SaldoValeEmAberto = {
+  total: number;
+  competencias: { competencia: string; valor: number }[];
+  parcela_ids: number[];
+};
 export type CalculoRescisao = {
   tipo_rescisao: TipoRescisao;
+  /** O saldo de vale a descontar — usado para pré-preencher (editável) o
+   *  campo "Vale em aberto" da simulação. */
+  vale_em_aberto: SaldoValeEmAberto;
   saldo_salario: { dias_trabalhados_mes: number; valor: number };
   aviso_previo: { devido: boolean; dias: number; dias_indenizados: number; trabalhado: boolean; valor: number };
   ferias_vencidas: { valor_ferias: number; valor_terco_constitucional: number; valor_abono: number; valor_total: number };
@@ -3215,6 +3254,10 @@ export type RegistroRescisaoFuncionario = {
   observacao: string | null; numero_lancamento_gerado: string | null; centro_custo: string | null;
   criado_em: string; usuario_id: number | null; fazenda_id: number;
   pessoa_nome: string; usuario_nome: string | null; detalhe: LinhaDetalheRescisao[]; legado: boolean;
+  /** Só nas SIMULAÇÕES (null nas fechadas e nas legado): o saldo de vale ainda
+   *  cobrável. Numa rescisão fechada o saldo já foi resolvido — o fechamento
+   *  recusa enquanto sobrar. */
+  vale_em_aberto?: SaldoValeEmAberto | null;
   // Só presentes em linhas legado (projeção de ContaGerencial pré-migração).
   legado_conta_id?: number; descricao?: string;
 };

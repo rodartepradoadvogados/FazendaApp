@@ -104,6 +104,7 @@ from .rh_folha import (
     _conta_da_folha,
     _congelar_discriminacao,
     _exigir_competencias_nao_pagas,
+    _exigir_teto_vale,
     _folha_resposta,
     _liquido_folha,
     _marcar_vale_aplicado,
@@ -122,6 +123,7 @@ from .rh_vale_acoes import (
     _parcelas_do_vale,
     _parcelas_pendentes,
     _registrar_assuncao,
+    _split_valores,
     _vale_da_fazenda,
 )
 
@@ -212,6 +214,12 @@ class DecisaoDiferencaIn(BaseModel):
     parcelas: int | None = None
     competencia_inicio: str | None = None  # "AAAA-MM"; padrão: a competência seguinte
     motivo: str | None = None
+    # Confirma prosseguir mesmo deixando alguma competência acima de 40% do
+    # salário em desconto de vale (ver `_exigir_teto_vale`, em rh_folha.py).
+    # Reparcelar no ato do pagamento era a terceira porta sem conferência
+    # nenhuma: "reparcelar em 1x" no mês seguinte empilhava ali o saldo
+    # inteiro, sem aviso.
+    confirmar: bool = False
 
 
 class PagarFolhaIn(BaseModel):
@@ -395,8 +403,8 @@ def _decisao_desconsiderar(
 
 
 def _decisao_reparcelar(
-    session: Session, vale: ValeFuncionario, parcela: ValeParcela, pago: float, diferenca: float,
-    decisao: DecisaoDiferencaIn, fazenda_id: int | None,
+    session: Session, vale: ValeFuncionario, pessoa: Pessoa, parcela: ValeParcela, pago: float,
+    diferenca: float, decisao: DecisaoDiferencaIn, fazenda_id: int | None,
 ) -> dict:
     """Reparcelar o saldo: a diferença continua sendo dívida e é redistribuída
     nas competências seguintes, junto com o que ainda restava do vale.
@@ -420,8 +428,23 @@ def _decisao_reparcelar(
     # Antes de gravar qualquer coisa: as competências de destino não podem ter
     # folha paga. `_acao_reparcelar` confere de novo (é a trava dele), mas
     # conferir aqui evita criar a parcela da diferença para depois abortar.
+    competencias_destino = _competencias_do_vale(inicio, decisao.parcelas)
     _exigir_competencias_nao_pagas(
-        session, vale.pessoa_id, _competencias_do_vale(inicio, decisao.parcelas), fazenda_id, "reparcelar",
+        session, vale.pessoa_id, competencias_destino, fazenda_id, "reparcelar",
+    )
+    # Teto de 40% do salário, também ANTES de gravar. `_acao_reparcelar`
+    # confere de novo (é a trava dele, e é a que vale), mas o cronograma final
+    # é previsível daqui: o saldo que sobra do vale MAIS a diferença que não
+    # foi descontada agora, dividido em N a partir de `inicio`. Conferir aqui
+    # evita criar a parcela da diferença para só então abortar — e é o mesmo
+    # cuidado que a linha acima já tinha com a folha paga.
+    pendentes_previstas = _pendentes_fora_do_mes(session, vale, parcela.competencia, fazenda_id)
+    saldo_previsto = round(sum(p.valor for p in pendentes_previstas) + diferenca, 2)
+    _exigir_teto_vale(
+        session, vale.pessoa_id, pessoa.salario_base,
+        list(zip(competencias_destino, _split_valores(saldo_previsto, decisao.parcelas))),
+        confirmar=decisao.confirmar, verbo="reparcelar",
+        parcela_ids_substituidas={p.id for p in pendentes_previstas},
     )
 
     _fixar_parcela_do_mes(session, parcela, pago)
@@ -434,8 +457,11 @@ def _decisao_reparcelar(
     pendentes = _pendentes_fora_do_mes(session, vale, parcela.competencia, fazenda_id)
     saldo = round(sum(p.valor for p in pendentes), 2)
     resultado = _acao_reparcelar(
-        session, vale, pendentes, saldo,
-        ValeAcaoIn(acao="reparcelar", parcelas=decisao.parcelas, competencia_inicio=inicio),
+        session, vale, pessoa, pendentes, saldo,
+        ValeAcaoIn(
+            acao="reparcelar", parcelas=decisao.parcelas, competencia_inicio=inicio,
+            confirmar=decisao.confirmar,
+        ),
         fazenda_id,
     )
     return {
@@ -450,8 +476,8 @@ def _decisao_reparcelar(
 
 
 def _decisao_antecipar(
-    session: Session, vale: ValeFuncionario, parcela: ValeParcela, pago: float, excesso: float,
-    decisao: DecisaoDiferencaIn, fazenda_id: int | None,
+    session: Session, vale: ValeFuncionario, pessoa: Pessoa, parcela: ValeParcela, pago: float,
+    excesso: float, decisao: DecisaoDiferencaIn, fazenda_id: int | None,
 ) -> dict:
     """Descontou MAIS do que a parcela previa — o excedente é antecipação do
     saldo, e o que resta do vale precisa caber no que ainda é devido.
@@ -491,9 +517,14 @@ def _decisao_antecipar(
 
     parcelas = decisao.parcelas or len(pendentes)
     inicio = (decisao.competencia_inicio or "").strip() or pendentes[0].competencia
+    # `pessoa`/`confirmar` são repassados porque `_acao_reparcelar` confere o
+    # teto de 40%: descontar a mais reduz o saldo, mas o novo cronograma ainda
+    # pode concentrá-lo num mês só — e o dono precisa poder confirmar.
     resultado = _acao_reparcelar(
-        session, vale, pendentes, saldo_novo,
-        ValeAcaoIn(acao="reparcelar", parcelas=parcelas, competencia_inicio=inicio),
+        session, vale, pessoa, pendentes, saldo_novo,
+        ValeAcaoIn(
+            acao="reparcelar", parcelas=parcelas, competencia_inicio=inicio, confirmar=decisao.confirmar,
+        ),
         fazenda_id,
     )
     return {
@@ -610,7 +641,7 @@ def _aplicar_decisao(
             # Nem o vale nem a parcela entram: é justamente o ponto desta
             # decisão — o excedente não toca no vale.
             return _decisao_acrescimo(session, registro, -diferenca, motivo, fazenda_id, usuario_id)
-        return _decisao_antecipar(session, vale, parcela, pago, -diferenca, decisao, fazenda_id)
+        return _decisao_antecipar(session, vale, pessoa, parcela, pago, -diferenca, decisao, fazenda_id)
 
     if decisao.tipo == "acrescimo_avulso":
         raise HTTPException(
@@ -625,7 +656,7 @@ def _aplicar_decisao(
         return _decisao_abater(session, vale, pessoa, parcela, pago, diferenca, decisao, fazenda_id)
     if decisao.tipo == "desconsiderar":
         return _decisao_desconsiderar(session, vale, pessoa, parcela, pago, diferenca, motivo, fazenda_id)
-    return _decisao_reparcelar(session, vale, parcela, pago, diferenca, decisao, fazenda_id)
+    return _decisao_reparcelar(session, vale, pessoa, parcela, pago, diferenca, decisao, fazenda_id)
 
 
 # ---------------------------------------------------------------------------

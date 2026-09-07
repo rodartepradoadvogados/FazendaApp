@@ -175,7 +175,7 @@ export default function PagarFolhaModal({
     if (direcao === "maior") setAvisoSalario({ verba, valor });
   }
 
-  async function confirmar() {
+  async function confirmar(confirmarTeto = false) {
     const problema =
       erroDasAlteracoes(verbas, valores, confirmadas)
       || erroDoPagamento(diferenca, decisao, { parcelas: nParcelas, dataPagamento });
@@ -196,11 +196,28 @@ export default function PagarFolhaModal({
           parcelas: decisao === "reparcelar" ? nParcelas : undefined,
           competencia_inicio: decisao === "reparcelar" ? competenciaInicio : undefined,
           motivo: motivo.trim() || undefined,
+          confirmar: confirmarTeto || undefined,
         } : undefined,
       });
       onPago(resultado);
     } catch (e) {
-      setErro(e instanceof Error && e.message ? e.message : "Erro ao registrar o pagamento da folha");
+      // O teto de 40% do salário ao REPARCELAR a diferença: "reparcelar em 1x"
+      // no mês seguinte empilhava ali o saldo inteiro, sem aviso nenhum — esta
+      // era uma das três portas que não conferiam o limite. Confirmável, como
+      // nas demais portas do vale.
+      const err = e as any;
+      if (err?.status === 409 && err?.detail?.competencias_excedidas) {
+        const lista = err.detail.competencias_excedidas
+          .map((c: any) => `${c.competencia} (${formatBRL(c.total)})`).join(", ");
+        if (window.confirm(`${err.detail.mensagem}\n\nCompetências afetadas: ${lista}\n\nDeseja reparcelar mesmo assim?`)) {
+          setSalvando(false);
+          await confirmar(true);
+          return;
+        }
+        setErro(null);
+      } else {
+        setErro(e instanceof Error && e.message ? e.message : "Erro ao registrar o pagamento da folha");
+      }
     } finally {
       setSalvando(false);
     }
@@ -385,7 +402,7 @@ export default function PagarFolhaModal({
         {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
 
         <div className="flex items-center gap-3">
-          <button type="button" className="btn-primary" disabled={salvando} onClick={confirmar}>
+          <button type="button" className="btn-primary" disabled={salvando} onClick={() => confirmar()}>
             <Check size={14} /> {salvando ? "Pagando…" : "Confirmar pagamento"}
           </button>
           <button type="button" className="btn-ghost" onClick={onFechar}><X size={14} /> Cancelar</button>
