@@ -35,6 +35,39 @@ else:
 engine = create_engine(DATABASE_URL, **engine_kwargs)
 
 
+def _montar_engine_manutencao():
+    """A engine que as rotinas sem recorte de fazenda usam (hoje: o backup
+    automático). Sem `DATABASE_URL_MANUTENCAO` configurada, é a MESMA engine de
+    sempre — nenhuma conexão a mais, nenhum comportamento diferente.
+
+    Ela existe para o dia em que o RLS entrar. A `DATABASE_URL` passará a
+    apontar para um role de aplicação contido pela política; o backup, que
+    precisa ler o banco inteiro por definição, passa a apontar para o role
+    dono por aqui. Ver docs/security-audit/rls-proposta.md, seção 8 — e o
+    que essa escolha custa está escrito lá também: no desenho transitório a
+    credencial de dono fica no ambiente da API.
+    """
+    url = settings.database_url_manutencao
+    if not url:
+        return engine
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    kwargs: dict = {"echo": settings.environment == "development"}
+    if "sqlite" in url:
+        kwargs["connect_args"] = {"check_same_thread": False}
+    else:
+        # Pool mínimo de propósito: esta engine atende uma rotina de fundo que
+        # roda de meia em meia hora, não requisição de usuário.
+        kwargs["pool_pre_ping"] = True
+        kwargs["pool_size"] = 1
+        kwargs["max_overflow"] = 1
+    logger.info("Conexão de manutenção própria configurada (DATABASE_URL_MANUTENCAO).")
+    return create_engine(url, **kwargs)
+
+
+engine_manutencao = _montar_engine_manutencao()
+
+
 # Migração leve (histórico congelado): colunas adicionadas a tabelas que já
 # podem existir em produção, de antes da adoção do Alembic. O create_all não
 # altera tabelas existentes, então essas eram adicionadas manualmente aqui.
