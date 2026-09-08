@@ -415,7 +415,7 @@ def opcoes_vale_item(
     if fazenda_id is not None:
         query_empreitadas = query_empreitadas.where(Empreitada.fazenda_id == fazenda_id)
     for e in session.exec(query_empreitadas.order_by(Empreitada.criado_em.desc())).all():
-        _, itens_pendentes = _itens_pendentes_vale_avulso(session, "empreitada", e.id)
+        _, itens_pendentes = _itens_pendentes_vale_avulso(session, "empreitada", e.id, fazenda_id)
         origens.append({
             "origem_tipo": "empreitada", "origem_id": e.id, "label": _rotulo_origem("empreitada", e),
             "saldo_pendente": round(sum(i.valor for i in itens_pendentes), 2),
@@ -426,7 +426,7 @@ def opcoes_vale_item(
     if fazenda_id is not None:
         query_contratos = query_contratos.where(Contrato.fazenda_id == fazenda_id)
     for c in session.exec(query_contratos.order_by(Contrato.criado_em.desc())).all():
-        _, itens_pendentes = _itens_pendentes_vale_avulso(session, "contrato", c.id)
+        _, itens_pendentes = _itens_pendentes_vale_avulso(session, "contrato", c.id, fazenda_id)
         origens.append({
             "origem_tipo": "contrato", "origem_id": c.id, "label": _rotulo_origem("contrato", c),
             "saldo_pendente": round(sum(i.valor for i in itens_pendentes), 2),

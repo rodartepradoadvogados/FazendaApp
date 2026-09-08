@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import and_, or_
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
+from fazenda.auth import exigir_admin, exigir_fazenda_da_operacao, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.rules import estoque_baixa
 from fazenda.rules import lactacao as regras_lactacao
@@ -496,7 +496,26 @@ def buscar(
 
 
 def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None) -> tuple[list[str], list]:
-    """Retorna (descrições do impacto, objetos que serão apagados)."""
+    """Retorna (descrições do impacto, objetos que serão apagados).
+
+    PORTA ÚNICA DA EXCLUSÃO. Os três endpoints que apagam alguma coisa
+    (`impacto`, `confirmar` e `aprovar_pendente`) passam por aqui, então é
+    aqui que a fazenda da operação é EXIGIDA: `fazenda_id` chegando None
+    deixou de ser "atende sem recorte" e passou a ser recusa explícita, com a
+    mensagem que ensina o caminho inteiro (fazenda → pessoa dentro dela →
+    usuário dessa pessoa → suporte CowData). Ver
+    `fazenda.auth.exigir_fazenda_da_operacao` — e note que a escape hatch dela
+    (instalação com a tabela `fazenda` VAZIA) é o que mantém válidos os
+    recortes incondicionais espalhados abaixo: sem nenhuma fazenda, toda linha
+    do banco tem `fazenda_id` nulo e `Modelo.fazenda_id == None` vira
+    `IS NULL`, casando exatamente o conjunto certo.
+
+    Por consequência, os `fazenda_id is not None and ...` que ainda aparecem
+    nas checagens de propriedade daqui para baixo são, depois desta linha,
+    no-ops seguros — sobrevivem só porque o 404 que eles produzem já está
+    coberto por teste tipo a tipo.
+    """
+    fazenda_id = exigir_fazenda_da_operacao(session, fazenda_id)
     if tipo in REGISTRO:
         return REGISTRO[tipo].alvos(id_=id_, session=session, fazenda_id=fazenda_id)
 
@@ -753,14 +772,32 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         c = session.get(ContaGerencial, int(id_))
         if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+        # RECORTE DE FAZENDA DENTRO DA CONSULTA, incondicional — daqui até o
+        # fim de `_alvos` toda busca por `numero_lancamento` leva o filtro.
+        # O número do lançamento é sequencial POR ANO (ver
+        # `_proximo_numero_lancamento` em financeiro.py), não é chave global:
+        # numa base importada, ou no dia em que o Financeiro passar a numerar
+        # por fazenda, duas fazendas têm "LC-2026-00042" — e o que sai daqui
+        # é a LISTA DO QUE VAI SER APAGADO. Sem o filtro, excluir uma parcela
+        # da fazenda A levava junto as parcelas e os itens de nota da B.
+        # Padrão de referência (com a justificativa escrita):
+        # `_conta_do_numero` em cadastro/rh_folha.py.
         itens = (
-            session.exec(select(LancamentoItem).where(LancamentoItem.numero_lancamento == c.numero_lancamento)).all()
+            session.exec(
+                select(LancamentoItem).where(
+                    LancamentoItem.numero_lancamento == c.numero_lancamento,
+                    LancamentoItem.fazenda_id == fazenda_id,
+                )
+            ).all()
             if c.numero_lancamento else []
         )
         n_itens_vale = sum(1 for it in itens if eh_item_de_vale(it))
         if c.numero_lancamento and (c.parcela_total or 1) > 1:
             irmaos = session.exec(
-                select(ContaGerencial).where(ContaGerencial.numero_lancamento == c.numero_lancamento)
+                select(ContaGerencial).where(
+                    ContaGerencial.numero_lancamento == c.numero_lancamento,
+                    ContaGerencial.fazenda_id == fazenda_id,
+                )
             ).all()
             impacto = [
                 f"Lançamento {c.numero_lancamento} — {c.descricao or '—'}",
@@ -784,8 +821,16 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             raise HTTPException(status_code=404, detail="Compra de animal não encontrada")
         impacto = [f"Compra do animal {c.numero_animal} — {c.vendedor} — {_br(c.data_compra)} (R$ {c.valor or 0:,.2f})"]
         objetos: list = [c]
+        # Contagem de irmãos com recorte de fazenda: ela é o que DECIDE se o
+        # lançamento financeiro vai junto ou fica. Uma compra em lote de outra
+        # fazenda com o mesmo número inflava `irmaos` e fazia a conta a pagar
+        # da própria fazenda sobreviver como órfã (e o contrário: sem irmão
+        # nenhum do outro lado, apagava a conta alheia).
         irmaos = (
-            session.exec(select(CompraAnimal).where(CompraAnimal.numero_lancamento_gerado == c.numero_lancamento_gerado)).all()
+            session.exec(select(CompraAnimal).where(
+                CompraAnimal.numero_lancamento_gerado == c.numero_lancamento_gerado,
+                CompraAnimal.fazenda_id == fazenda_id,
+            )).all()
             if c.numero_lancamento_gerado else [c]
         )
         if len(irmaos) > 1:
@@ -795,17 +840,26 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             )
         else:
             contas = (
-                session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == c.numero_lancamento_gerado)).all()
+                session.exec(select(ContaGerencial).where(
+                    ContaGerencial.numero_lancamento == c.numero_lancamento_gerado,
+                    ContaGerencial.fazenda_id == fazenda_id,
+                )).all()
                 if c.numero_lancamento_gerado else []
             )
             comissoes = (
-                session.exec(select(ComissaoCorretagem).where(ComissaoCorretagem.numero_lancamento == c.numero_lancamento_gerado)).all()
+                session.exec(select(ComissaoCorretagem).where(
+                    ComissaoCorretagem.numero_lancamento == c.numero_lancamento_gerado,
+                    ComissaoCorretagem.fazenda_id == fazenda_id,
+                )).all()
                 if c.numero_lancamento_gerado else []
             )
             contas_comissao = []
             for co in comissoes:
                 contas_comissao += session.exec(
-                    select(ContaGerencial).where(ContaGerencial.numero_lancamento == co.numero_lancamento_comissao)
+                    select(ContaGerencial).where(
+                        ContaGerencial.numero_lancamento == co.numero_lancamento_comissao,
+                        ContaGerencial.fazenda_id == fazenda_id,
+                    )
                 ).all()
             if contas:
                 impacto.append(f"Lançamento financeiro {c.numero_lancamento_gerado} (R$ {sum(x.valor_total or 0 for x in contas):,.2f})")
@@ -820,8 +874,13 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             raise HTTPException(status_code=404, detail="Venda de animal não encontrada")
         impacto = [f"Venda do animal {v.numero_animal} — {v.comprador} — {_br(v.data_venda)} (R$ {v.valor or 0:,.2f})"]
         objetos: list = [v]
+        # Recorte de fazenda pelo mesmo motivo da compra, logo acima: a
+        # contagem de irmãos decide se a conta a pagar vai junto ou fica.
         irmaos = (
-            session.exec(select(VendaAnimal).where(VendaAnimal.numero_lancamento_gerado == v.numero_lancamento_gerado)).all()
+            session.exec(select(VendaAnimal).where(
+                VendaAnimal.numero_lancamento_gerado == v.numero_lancamento_gerado,
+                VendaAnimal.fazenda_id == fazenda_id,
+            )).all()
             if v.numero_lancamento_gerado else [v]
         )
         if len(irmaos) > 1:
@@ -831,17 +890,26 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             )
         else:
             contas = (
-                session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == v.numero_lancamento_gerado)).all()
+                session.exec(select(ContaGerencial).where(
+                    ContaGerencial.numero_lancamento == v.numero_lancamento_gerado,
+                    ContaGerencial.fazenda_id == fazenda_id,
+                )).all()
                 if v.numero_lancamento_gerado else []
             )
             comissoes = (
-                session.exec(select(ComissaoCorretagem).where(ComissaoCorretagem.numero_lancamento == v.numero_lancamento_gerado)).all()
+                session.exec(select(ComissaoCorretagem).where(
+                    ComissaoCorretagem.numero_lancamento == v.numero_lancamento_gerado,
+                    ComissaoCorretagem.fazenda_id == fazenda_id,
+                )).all()
                 if v.numero_lancamento_gerado else []
             )
             contas_comissao = []
             for co in comissoes:
                 contas_comissao += session.exec(
-                    select(ContaGerencial).where(ContaGerencial.numero_lancamento == co.numero_lancamento_comissao)
+                    select(ContaGerencial).where(
+                        ContaGerencial.numero_lancamento == co.numero_lancamento_comissao,
+                        ContaGerencial.fazenda_id == fazenda_id,
+                    )
                 ).all()
             if contas:
                 impacto.append(f"Lançamento financeiro {v.numero_lancamento_gerado} (R$ {sum(x.valor_total or 0 for x in contas):,.2f})")
@@ -875,7 +943,10 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         # apagado junto quando este é o ÚLTIMO item daquela nota; do
         # contrário, ele continua valendo para os itens irmãos restantes.
         irmaos = (
-            session.exec(select(CompraSemen).where(CompraSemen.numero_lancamento_gerado == c.numero_lancamento_gerado)).all()
+            session.exec(select(CompraSemen).where(
+                CompraSemen.numero_lancamento_gerado == c.numero_lancamento_gerado,
+                CompraSemen.fazenda_id == fazenda_id,
+            )).all()
             if c.numero_lancamento_gerado else [c]
         )
         if len(irmaos) > 1:
@@ -885,7 +956,10 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             )
         else:
             contas = (
-                session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == c.numero_lancamento_gerado)).all()
+                session.exec(select(ContaGerencial).where(
+                    ContaGerencial.numero_lancamento == c.numero_lancamento_gerado,
+                    ContaGerencial.fazenda_id == fazenda_id,
+                )).all()
                 if c.numero_lancamento_gerado else []
             )
             if contas:

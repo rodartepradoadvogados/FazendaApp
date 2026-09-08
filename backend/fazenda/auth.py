@@ -253,6 +253,32 @@ def get_fazenda_atual_id(
     return dados.get("fid") if dados else None
 
 
+# Texto único da recusa "esta escrita não tem fazenda a que pertencer" — a
+# ponta de ESCRITA da mesma trava que `routers/auth.py::ERRO_USUARIO_SEM_FAZENDA`
+# guarda na CRIAÇÃO DE USUÁRIO, e mora numa constante pelo mesmo motivo: é a
+# única explicação que a pessoa travada recebe, e o teste de regressão cobra
+# este texto para ninguém trocá-lo por um "não foi possível salvar" genérico.
+#
+# A REGRA DO DONO, textual: "Fazenda chegar vazia, tem que dar erro e pedido de
+# acionamento do suporte CowData. Isso só é resolvido se tiver uma fazenda
+# cadastrada, a pessoa cadastrada e usuário atribuído a uma pessoa cadastrada
+# dentro de uma fazenda." Por isso a mensagem manda acionar o SUPORTE e não
+# "peça a um administrador": nenhuma tela do lado do cliente conserta um
+# usuário sem vínculo nenhum — quem cria fazenda e amarra pessoa→usuário é a
+# CowData. Mandar a pessoa procurar o próprio administrador era mandá-la a um
+# lugar onde não existe botão.
+#
+# Só vale para o caso "nenhum vínculo": quem tem DUAS fazendas e não escolheu
+# uma continua recebendo a instrução de sair e entrar de novo, logo abaixo —
+# esse a própria pessoa resolve em dez segundos, e chamar o suporte para isso
+# seria ruído.
+ERRO_ESCRITA_SEM_FAZENDA = (
+    "Seu usuário não está vinculado a nenhuma fazenda, e nada pode ser gravado fora de uma "
+    "fazenda. Acione o suporte CowData: isso só se resolve com a fazenda cadastrada, a pessoa "
+    "cadastrada dentro dela e o seu login atribuído a essa pessoa."
+)
+
+
 def resolver_fazenda_id_escrita(session: Session, user: Usuario, fazenda_id_do_token: int | None) -> int | None:
     """Resolve a fazenda de um lançamento novo — em qualquer ambiente onde o
     multi-fazenda está de fato provisionado (tabela `fazenda` com pelo menos
@@ -279,8 +305,12 @@ def resolver_fazenda_id_escrita(session: Session, user: Usuario, fazenda_id_do_t
        (é o caso de toda a suíte de testes que não monta cenário de
        multi-fazenda, e seria o de qualquer instalação anterior à migração
        f1a2b3c4d5e6). Havendo QUALQUER fazenda cadastrada, recusa com 409 em
-       vez de adivinhar — o usuário precisa sair e entrar de novo para que o
-       login emita um token já com a fazenda escolhida.
+       vez de adivinhar — e as duas recusas dizem coisas diferentes de
+       propósito: quem tem MAIS DE UMA fazenda só precisa sair e entrar de
+       novo (o login reemite o token já com a fazenda escolhida), enquanto
+       quem não tem NENHUMA recebe `ERRO_ESCRITA_SEM_FAZENDA`, que manda
+       acionar o suporte CowData — não há tela do lado do cliente que crie o
+       vínculo que falta.
     """
     if fazenda_id_do_token is not None:
         return fazenda_id_do_token
@@ -294,11 +324,7 @@ def resolver_fazenda_id_escrita(session: Session, user: Usuario, fazenda_id_do_t
     if session.exec(select(Fazenda.id).limit(1)).first() is None:
         return None
     if not fazendas:
-        raise HTTPException(
-            status_code=409,
-            detail="Seu usuário não está vinculado a nenhuma fazenda. Peça a um administrador para "
-                   "vincular seu acesso a uma fazenda antes de lançar dados.",
-        )
+        raise HTTPException(status_code=409, detail=ERRO_ESCRITA_SEM_FAZENDA)
     raise HTTPException(
         status_code=409,
         detail="Sua sessão não tem uma fazenda selecionada e seu usuário tem acesso a mais de uma. "
@@ -765,6 +791,69 @@ def multifazenda_provisionado(session: Session) -> bool:
     cadastrada — todo ambiente de produção — a falta de fazenda no token
     deixa de ser "legado tolerado" e passa a ser recusa."""
     return session.exec(select(Fazenda.id).limit(1)).first() is not None
+
+
+# ---------------------------------------------------------------------------
+# Recusa explícita quando a operação chega SEM fazenda
+#
+# A REGRA DO DONO, textual: "Fazenda chegar vazia, tem que dar erro e pedido de
+# acionamento do suporte CowData. Isso só é resolvido se tiver uma fazenda
+# cadastrada, a pessoa cadastrada e usuário atribuído a uma pessoa cadastrada
+# dentro de uma fazenda."
+#
+# Ou seja: `fazenda_id=None` dentro de uma rotina que APAGA ou REESCREVE dado
+# deixa de ser "atende sem recorte" e passa a ser "não atende". O padrão
+# tolerante herdado do piloto de multi-fazenda
+# (`if fazenda_id is not None: query = query.where(...)`) faz exatamente o
+# contrário do que parece: sem fazenda no token ele não restringe nada, ele
+# DESLIGA o isolamento — e numa rotina de exclusão isso significa apagar o
+# lançamento de outro inquilino que por acaso tenha o mesmo
+# `numero_lancamento` (a numeração é sequencial por ano, não é chave global).
+# ---------------------------------------------------------------------------
+ERRO_OPERACAO_SEM_FAZENDA = (
+    "Não foi possível identificar em qual fazenda esta operação aconteceria, então ela foi "
+    "recusada e nada foi alterado. Três cadastros precisam existir, nesta ordem: a fazenda; "
+    "a pessoa cadastrada dentro dessa fazenda; e o seu usuário vinculado a essa pessoa. "
+    "Saia e entre novamente para escolher a fazenda — se o erro continuar, acione o suporte "
+    "CowData para completar o cadastro."
+)
+
+
+def exigir_fazenda_da_operacao(session: Session, fazenda_id: int | None) -> int | None:
+    """A fazenda em que esta operação acontece — ou uma RECUSA, quando não há
+    resposta. Devolve o próprio `fazenda_id` para poder ser usada em linha
+    (`fazenda_id = exigir_fazenda_da_operacao(session, fazenda_id)`).
+
+    É a versão "dentro do corpo da função" de `exigir_fazenda_selecionada`,
+    para as rotinas que já estão fundo adentro do endpoint (e para as regras
+    de `fazenda/rules/`, que não são dependências de rota e por isso nunca
+    passariam por uma `Depends`). Usa EXATAMENTE o mesmo corte que
+    `resolver_fazenda_id_escrita` e `exigir_fazenda_selecionada`:
+
+    - Tabela `fazenda` VAZIA (`multifazenda_provisionado` False): devolve
+      None e a operação segue. Não há tenant a isolar — toda linha do banco
+      tem `fazenda_id` nulo, então o recorte incondicional
+      `Modelo.fazenda_id == None` (que em SQL vira `IS NULL`) casa exatamente
+      o conjunto certo. É o caso de instalação anterior à migração
+      f1a2b3c4d5e6 e o da maior parte da suíte de testes.
+    - QUALQUER fazenda cadastrada — todo ambiente de produção — sem fazenda
+      resolvida: recusa com `ERRO_OPERACAO_SEM_FAZENDA`, que é a única
+      explicação que o usuário travado recebe e por isso ensina o caminho
+      inteiro (fazenda → pessoa → usuário → suporte CowData).
+
+    409, e não 400/403, pelo mesmo motivo de `exigir_fazenda_selecionada`: não
+    é dado inválido nem falta de permissão, é um conflito de estado da sessão
+    que o usuário resolve reentrando (ou o suporte resolve completando o
+    cadastro). Deliberadamente SEM o cabeçalho `X-Fazenda-Nao-Selecionada`:
+    ele manda o frontend para /escolher-conta, e quem cai aqui pode não ter
+    fazenda nenhuma para escolher — o laço esconderia justamente a mensagem
+    que manda acionar o suporte.
+    """
+    if fazenda_id is not None:
+        return fazenda_id
+    if not multifazenda_provisionado(session):
+        return None
+    raise HTTPException(status_code=409, detail=ERRO_OPERACAO_SEM_FAZENDA)
 
 
 def exigir_fazenda_selecionada():

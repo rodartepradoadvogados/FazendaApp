@@ -639,7 +639,7 @@ def excluir_parcela_empreitada(
     parcela = session.get(EmpreitadaParcela, parcela_id)
     if not parcela or (parcela.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Parcela de empreitada não encontrada")
-    if parcela.numero_lancamento_gerado and _numeros_pagos(session, [parcela.numero_lancamento_gerado]):
+    if parcela.numero_lancamento_gerado and _numeros_pagos(session, [parcela.numero_lancamento_gerado], fazenda_id):
         raise HTTPException(status_code=400, detail="Parcela já paga não pode ser excluída aqui — exclua em Lançamentos > Excluir lançamento.")
     # `_conta_do_numero` (rh_folha.py) recorta a fazenda DENTRO da consulta:
     # o número do lançamento é sequencial por ano, não é chave global, e aqui
@@ -729,7 +729,7 @@ def atualizar_parcela_empreitada(
         raise HTTPException(status_code=404, detail="Parcela de empreitada não encontrada")
     if dados.valor <= 0:
         raise HTTPException(status_code=400, detail="Valor da parcela deve ser positivo")
-    if parcela.numero_lancamento_gerado and _numeros_pagos(session, [parcela.numero_lancamento_gerado]):
+    if parcela.numero_lancamento_gerado and _numeros_pagos(session, [parcela.numero_lancamento_gerado], fazenda_id):
         raise HTTPException(status_code=400, detail="Parcela já paga não pode ser editada aqui — edite em Lançamentos > Financeiro.")
     parcela.data_vencimento = dados.data_vencimento
     parcela.valor = dados.valor
@@ -756,7 +756,7 @@ def redistribuir_parcelas_empreitada(
     parcelas = session.exec(
         select(EmpreitadaParcela).where(EmpreitadaParcela.empreitada_id == empreitada_id).order_by(EmpreitadaParcela.data_vencimento)
     ).all()
-    pagos = _numeros_pagos(session, [p.numero_lancamento_gerado for p in parcelas if p.numero_lancamento_gerado])
+    pagos = _numeros_pagos(session, [p.numero_lancamento_gerado for p in parcelas if p.numero_lancamento_gerado], fazenda_id)
     pendentes = [p for p in parcelas if p.numero_lancamento_gerado not in pagos]
     _redistribuir_parcelas_pendentes(session, pendentes, fazenda_id)
     session.commit()
@@ -928,7 +928,7 @@ def excluir_parcela_contrato(
     parcela = session.get(ContratoParcela, parcela_id)
     if not parcela or (parcela.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Parcela de contrato não encontrada")
-    if parcela.numero_lancamento_gerado and _numeros_pagos(session, [parcela.numero_lancamento_gerado]):
+    if parcela.numero_lancamento_gerado and _numeros_pagos(session, [parcela.numero_lancamento_gerado], fazenda_id):
         raise HTTPException(status_code=400, detail="Parcela já paga não pode ser excluída aqui — exclua em Lançamentos > Excluir lançamento.")
     # `_conta_do_numero` (rh_folha.py) recorta a fazenda DENTRO da consulta:
     # o número do lançamento é sequencial por ano, não é chave global, e aqui
@@ -953,7 +953,7 @@ def atualizar_parcela_contrato(
         raise HTTPException(status_code=404, detail="Parcela de contrato não encontrada")
     if dados.valor <= 0:
         raise HTTPException(status_code=400, detail="Valor da parcela deve ser positivo")
-    if parcela.numero_lancamento_gerado and _numeros_pagos(session, [parcela.numero_lancamento_gerado]):
+    if parcela.numero_lancamento_gerado and _numeros_pagos(session, [parcela.numero_lancamento_gerado], fazenda_id):
         raise HTTPException(status_code=400, detail="Parcela já paga não pode ser editada aqui — edite em Lançamentos > Financeiro.")
     parcela.data_vencimento = dados.data_vencimento
     parcela.valor = dados.valor
@@ -977,7 +977,7 @@ def redistribuir_parcelas_contrato(
     parcelas = session.exec(
         select(ContratoParcela).where(ContratoParcela.contrato_id == contrato_id).order_by(ContratoParcela.data_vencimento)
     ).all()
-    pagos = _numeros_pagos(session, [p.numero_lancamento_gerado for p in parcelas if p.numero_lancamento_gerado])
+    pagos = _numeros_pagos(session, [p.numero_lancamento_gerado for p in parcelas if p.numero_lancamento_gerado], fazenda_id)
     pendentes = [p for p in parcelas if p.numero_lancamento_gerado not in pagos]
     _redistribuir_parcelas_pendentes(session, pendentes, fazenda_id)
     session.commit()
@@ -1968,16 +1968,52 @@ def _listar_vales_avulsos(session: Session, origem_tipo: str, origem_id: int) ->
     return [{**v.model_dump(), **_info_parcelas_vale_avulso(session, v)} for v in vales]
 
 
-def _numeros_pagos(session: Session, numeros: list[str]) -> set[str]:
+def _numeros_pagos(session: Session, numeros: list[str], fazenda_id: int | None) -> set[str]:
+    """Quais destes números de lançamento já foram BAIXADOS no Financeiro.
+
+    É leitura, e é ela que decide o que ainda está em aberto: quais parcelas
+    de empreitada/contrato aceitam abatimento de vale avulso, e se a exclusão
+    da empreitada/contrato inteiro é liberada ou recusada com "estorne a baixa
+    primeiro".
+
+    O RECORTE DE FAZENDA É OBRIGATÓRIO (parâmetro sem valor padrão, para
+    nenhum chamador novo esquecer dele) e vai DENTRO da consulta, junto do
+    `IN`. O `numero_lancamento` é sequencial por ano, não é chave global: sem
+    o recorte, a BAIXA de um lançamento homônimo de outra fazenda marcava como
+    "paga" uma parcela que está em aberto aqui. O erro falha fechado — no pior
+    caso esconde uma parcela aberta, nunca deixa pagar duas vezes — mas
+    esconder parcela é esconder dinheiro devido, e a mensagem de recusa da
+    exclusão passava a citar um lançamento que o usuário não consegue nem
+    enxergar para estornar. Mesmo padrão e mesma justificativa de
+    `_conta_do_numero` (rh_folha.py).
+
+    `fazenda_id` None é legítimo aqui: significa instalação sem nenhuma
+    fazenda cadastrada (ver `fazenda.auth.multifazenda_provisionado`), onde
+    `fazenda_id == None` vira `IS NULL` e casa exatamente as linhas desse
+    ambiente. Quem APAGA a partir deste resultado recusa o None antes de
+    chegar aqui (ver `fazenda.rules.exclusao_tipos.pessoal`).
+    """
     if not numeros:
         return set()
-    contas = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros))).all()
+    contas = session.exec(
+        select(ContaGerencial).where(
+            ContaGerencial.numero_lancamento.in_(numeros),
+            ContaGerencial.fazenda_id == fazenda_id,
+        )
+    ).all()
     return {c.numero_lancamento for c in contas if c.valor_pago is not None}
 
 
-def _itens_pendentes_vale_avulso(session: Session, origem_tipo: str, origem_id: int) -> tuple[str, list]:
+def _itens_pendentes_vale_avulso(
+    session: Session, origem_tipo: str, origem_id: int, fazenda_id: int | None,
+) -> tuple[str, list]:
     """Retorna (item_tipo, itens pendentes em ordem de vencimento) para o
-    abatimento/reversão de um vale avulso de Empreitada/Contrato."""
+    abatimento/reversão de um vale avulso de Empreitada/Contrato.
+
+    `fazenda_id` só existe para repassar a `_numeros_pagos` — as consultas de
+    parcela/etapa aqui filtram por `empreitada_id`/`contrato_id`, que são
+    chaves globais de verdade (PK), e por isso já são naturalmente do
+    inquilino certo."""
     if origem_tipo == "empreitada":
         empreitada = session.get(Empreitada, origem_id)
         if empreitada and empreitada.tipo_pagamento == "por_etapa":
@@ -1990,13 +2026,13 @@ def _itens_pendentes_vale_avulso(session: Session, origem_tipo: str, origem_id: 
         todas = session.exec(
             select(EmpreitadaParcela).where(EmpreitadaParcela.empreitada_id == origem_id).order_by(EmpreitadaParcela.data_vencimento)
         ).all()
-        pagos = _numeros_pagos(session, [p.numero_lancamento_gerado for p in todas if p.numero_lancamento_gerado])
+        pagos = _numeros_pagos(session, [p.numero_lancamento_gerado for p in todas if p.numero_lancamento_gerado], fazenda_id)
         return "empreitada_parcela", [p for p in todas if p.numero_lancamento_gerado not in pagos]
     if origem_tipo == "contrato":
         todas = session.exec(
             select(ContratoParcela).where(ContratoParcela.contrato_id == origem_id).order_by(ContratoParcela.data_vencimento)
         ).all()
-        pagos = _numeros_pagos(session, [p.numero_lancamento_gerado for p in todas if p.numero_lancamento_gerado])
+        pagos = _numeros_pagos(session, [p.numero_lancamento_gerado for p in todas if p.numero_lancamento_gerado], fazenda_id)
         return "contrato_parcela", [p for p in todas if p.numero_lancamento_gerado not in pagos]
     return "", []
 
@@ -2109,7 +2145,8 @@ def _bloquear_reversao_de_abatimento_pago(session: Session, vale_avulso_id: int)
 
 
 def _saldo_pendente_do_alvo(
-    session: Session, origem_tipo: str, origem_id: int, vale_avulso_id: int | None = None,
+    session: Session, origem_tipo: str, origem_id: int, fazenda_id: int | None,
+    vale_avulso_id: int | None = None,
 ) -> float | None:
     """
     Total ainda em aberto (soma das parcelas/etapas pendentes) do alvo de um
@@ -2124,10 +2161,15 @@ def _saldo_pendente_do_alvo(
     estão pendentes. Calculado por aritmética justamente para a checagem
     poder acontecer ANTES de qualquer escrita (um 409 no meio do
     reverter/reaplicar deixaria o vale sem abatimento nenhum).
+
+    `fazenda_id` desce até `_numeros_pagos`, que precisa dele para não contar
+    como paga uma parcela cujo lançamento homônimo foi baixado em OUTRA
+    fazenda — o pendente sairia menor do que é e o usuário levaria um 409 de
+    "vale acima do pendente" que não existe.
     """
     if origem_tipo == "diaria":
         return None
-    item_tipo, itens = _itens_pendentes_vale_avulso(session, origem_tipo, origem_id)
+    item_tipo, itens = _itens_pendentes_vale_avulso(session, origem_tipo, origem_id, fazenda_id)
     if not item_tipo or not itens:
         return None if not item_tipo else 0.0
     total = round(sum(i.valor for i in itens), 2)
@@ -2145,7 +2187,7 @@ def _saldo_pendente_do_alvo(
 
 def _exigir_confirmacao_vale_acima_do_pendente(
     session: Session, origem_tipo: str, origem_id: int, valor: float, confirmado: bool,
-    vale_avulso_id: int | None = None,
+    fazenda_id: int | None, vale_avulso_id: int | None = None,
 ) -> None:
     """
     Vale maior que o saldo pendente do alvo: pede confirmação explícita (409)
@@ -2171,7 +2213,7 @@ def _exigir_confirmacao_vale_acima_do_pendente(
     """
     if confirmado:
         return
-    pendente = _saldo_pendente_do_alvo(session, origem_tipo, origem_id, vale_avulso_id)
+    pendente = _saldo_pendente_do_alvo(session, origem_tipo, origem_id, fazenda_id, vale_avulso_id)
     if pendente is None:
         return
     excedente = round(round(valor, 2) - pendente, 2)
@@ -2224,7 +2266,7 @@ def _aplicar_vale_avulso(
     if restante <= 0 or origem_tipo == "diaria":
         return
 
-    item_tipo, itens = _itens_pendentes_vale_avulso(session, origem_tipo, origem_id)
+    item_tipo, itens = _itens_pendentes_vale_avulso(session, origem_tipo, origem_id, fazenda_id)
     if not item_tipo:
         return
 
@@ -2451,6 +2493,7 @@ def criar_vale_avulso(
     # deixaria um vale órfão gravado, sem abatimento e sem lançamento.
     _exigir_confirmacao_vale_acima_do_pendente(
         session, dados.origem_tipo, dados.origem_id, dados.valor, dados.confirmar_excedente,
+        fazenda_id=fazenda_id,
     )
     pessoa = session.get(Pessoa, origem.pessoa_id)
 
@@ -2548,7 +2591,7 @@ def atualizar_vale_avulso(
     # `vale_avulso_id` — ver `_saldo_pendente_do_alvo`.
     _exigir_confirmacao_vale_acima_do_pendente(
         session, dados.origem_tipo, dados.origem_id, dados.valor, dados.confirmar_excedente,
-        vale_avulso_id=vale_id,
+        fazenda_id=fazenda_id, vale_avulso_id=vale_id,
     )
 
     _reverter_vale_avulso(session, vale_id)
@@ -2574,7 +2617,7 @@ def atualizar_vale_avulso(
     # "redistribuir_*" reequilibra as parcelas/etapas do alvo ainda
     # pendentes, para o efeito não ficar concentrado só na primeira delas.
     if diferenca != 0 and dados.acao in ("redistribuir_igual", "redistribuir_livre") and dados.origem_tipo in ("empreitada", "contrato"):
-        _, itens_pendentes = _itens_pendentes_vale_avulso(session, dados.origem_tipo, dados.origem_id)
+        _, itens_pendentes = _itens_pendentes_vale_avulso(session, dados.origem_tipo, dados.origem_id, fazenda_id)
         if dados.acao == "redistribuir_igual":
             _redistribuir_itens_pendentes_igual(session, itens_pendentes)
         else:
