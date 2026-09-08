@@ -6,8 +6,9 @@ import {
   excluirSimulacaoRescisao, fecharRescisao, formatBRL, fetchContasCorrentes, fetchPessoas,
   type TipoRescisao, type CalculoRescisao, type RegistroRescisaoFuncionario,
   type RescisaoSimulacaoDados, type FormaLancamentoRescisao, type ContaCorrenteCadastro,
-  type SaldoValeEmAberto,
+  type SaldoValeEmAberto, type MediasVariaveisComposicao,
 } from "@/lib/api";
+import { MediaVerbasVariaveis } from "@/components/MediaVerbasVariaveis";
 import { ReciboModal } from "@/components/ReciboModal";
 import { exportarFichaPDF, exportarMultiExcel, type SecaoFicha, type LancamentoRecibo } from "@/lib/export";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -111,6 +112,13 @@ export default function RescisaoView({ mostrar = "tudo" }: { mostrar?: ModoSecao
 
   const [calculando, setCalculando] = useState(false);
   const [contexto, setContexto] = useState<ContextoVerbas | null>(null);
+  // As TRÊS composições de média de verbas variáveis habituais, vindas da
+  // simulação. São três porque cada verba segue a regra da SUA natureza: o 13º
+  // proporcional usa o ANO CIVIL (Decreto 57.155/65, art. 2º), as férias
+  // vencidas e proporcionais usam o PERÍODO AQUISITIVO (CLT, art. 142) e o
+  // aviso prévio indenizado usa os ÚLTIMOS 12 MESES. Mostrar uma média só
+  // esconderia que as outras duas são outro número.
+  const [medias, setMedias] = useState<MediasVariaveisComposicao | null>(null);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
 
   // Etapa 2 — as 6 verbas + 3 descontos, todas editáveis.
@@ -202,6 +210,7 @@ export default function RescisaoView({ mostrar = "tudo" }: { mostrar?: ModoSecao
         mesesFeriasProporcionais: resultado.ferias_proporcionais.meses, mesesDecimoTerceiro: resultado.decimo_terceiro_proporcional.meses,
         percentualMultaFgts: Math.round(resultado.fgts.percentual_multa * 100),
       });
+      setMedias(resultado.medias_variaveis_composicao ?? null);
       setValorSaldoSalario(String(resultado.saldo_salario.valor));
       setValorAvisoPrevio(String(resultado.aviso_previo.valor));
       setValorFeriasVencidas(String(resultado.ferias_vencidas.valor_total));
@@ -482,8 +491,20 @@ export default function RescisaoView({ mostrar = "tudo" }: { mostrar?: ModoSecao
             </div>
             <div style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginBottom: "0.8rem" }}>
               A multa do FGTS é uma ESTIMATIVA — o sistema não guarda o extrato real de depósitos. Confira com o extrato oficial do FGTS antes de pagar.
+              A média de verbas variáveis NÃO entra nela, justamente por ser estimativa; entra no 13º, nas férias e no aviso prévio indenizado.
               Sem envio ao eSocial/TRCT — só o cálculo interno e o lançamento financeiro.
             </div>
+
+            {/* Só aparece quando a fazenda LIGOU as médias. Desligado, três
+                linhas dizendo "não apurada" seriam ruído puro para quem
+                escolheu deixar isso com a contabilidade externa. */}
+            {medias?.decimo_terceiro?.aplicada && (
+              <div style={{ marginBottom: "0.8rem" }}>
+                <MediaVerbasVariaveis composicao={medias.decimo_terceiro} titulo="13º proporcional" compacto />
+                <MediaVerbasVariaveis composicao={medias.ferias} titulo="Férias (vencidas e proporcionais)" compacto />
+                <MediaVerbasVariaveis composicao={medias.aviso_previo} titulo="Aviso prévio indenizado" compacto />
+              </div>
+            )}
 
             <div className="card" style={{ padding: "0.6rem 0.8rem", background: "var(--surface-2)", marginBottom: "0.8rem" }}>
               <div className="card-header mb-2" style={{ fontSize: "0.8rem" }}>Descontos</div>
@@ -707,6 +728,13 @@ export default function RescisaoView({ mostrar = "tudo" }: { mostrar?: ModoSecao
                                   ))}
                                 </tbody>
                               </table>
+                            )}
+                            {r.medias_variaveis_composicao?.decimo_terceiro?.aplicada && (
+                              <div style={{ marginTop: "0.5rem", maxWidth: 620 }}>
+                                <MediaVerbasVariaveis composicao={r.medias_variaveis_composicao.decimo_terceiro} titulo="13º proporcional" compacto />
+                                <MediaVerbasVariaveis composicao={r.medias_variaveis_composicao.ferias} titulo="Férias (vencidas e proporcionais)" compacto />
+                                <MediaVerbasVariaveis composicao={r.medias_variaveis_composicao.aviso_previo} titulo="Aviso prévio indenizado" compacto />
+                              </div>
                             )}
                             {r.observacao && <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Obs.: {r.observacao}</p>}
                           </div>

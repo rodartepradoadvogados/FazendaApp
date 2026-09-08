@@ -1396,7 +1396,26 @@ def _crud_nome_ativo_financeiro(model, rotulo: str):
     módulo via rh_contratos.py, então importar cadastro._comum aqui de volta
     criaria um import circular). Filtra a listagem e a checagem de duplicata
     pela fazenda atual, e carimba fazenda_id no registro criado (piloto
-    conservador de multi-fazenda, Fase 3B)."""
+    conservador de multi-fazenda, Fase 3B).
+
+    `criar` — o único dos três que GRAVA fazenda_id; `atualizar` só lê uma
+    linha que já existe — usa o resolvedor estrito `get_fazenda_id_escrita`,
+    igual à fábrica irmã do cadastro/_comum.py. Antes usava o
+    `get_fazenda_atual_id` tolerante e o tipo de documento / forma de
+    pagamento / classificação nascia com `fazenda_id` nulo (achado de
+    severidade baixa da auditoria de 02/09/2026, financeiro.py:1377-1428).
+    Numa linha de catálogo isso não é só uma órfã: a listagem de cada fazenda
+    filtra por `fazenda_id ==`, então a linha nula some do seletor de todo
+    mundo — inclusive de quem acabou de criá-la — e continua ocupando o nome
+    na checagem de duplicata quando o token vem sem fazenda.
+
+    POR QUE ESTE SOBROU depois de as irmãs (conta corrente, centro de custo,
+    conta gerencial) já terem sido corrigidas: as duas sentinelas de AST
+    (tests/test_sentinela_*) só enxergam função DECORADA com
+    `@router.post(...)`. Aqui a rota é registrada por chamada —
+    `router.post("/tipos-documento")(_criar_tipo_doc)` —, e a função nasce
+    dentro desta fábrica. Ficou fora da rede das duas, e por isso atravessou
+    as ondas P1/P2/P3 inteiras."""
 
     def listar(session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id)) -> list[dict]:
         fazenda_id = fazenda_id_seguro(fazenda_id)
@@ -1406,9 +1425,15 @@ def _crud_nome_ativo_financeiro(model, rotulo: str):
         return [m.model_dump() for m in session.exec(query).all()]
 
     def criar(
-        dados: NomeAtivoFinanceiroIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+        dados: NomeAtivoFinanceiroIn, session: Session = Depends(get_session),
+        fazenda_id: int = Depends(get_fazenda_id_escrita),
     ) -> dict:
-        fazenda_id = fazenda_id_seguro(fazenda_id)
+        # Sem `fazenda_id_seguro` aqui de propósito: ele existe para as
+        # funções que também são chamadas fora do ciclo do FastAPI (o
+        # parâmetro chega como `Depends(...)` não resolvido, ver
+        # rules/auditoria.py), e esta só é alcançável pela rota. Passar o
+        # valor por ele de novo só serviria para reintroduzir o None que o
+        # resolvedor estrito acabou de recusar.
         nome = dados.nome.strip()
         if not nome:
             raise HTTPException(status_code=400, detail="Nome é obrigatório")

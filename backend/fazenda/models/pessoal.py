@@ -339,6 +339,25 @@ class FeriasFuncionario(SQLModel, table=True):
     # a pagar era sobrescrita em silêncio. Nulo só em registro anterior à
     # migração e0b7c3a91d24 que não pôde ser reconstituído.
     salario_base: Optional[float] = None
+    # ── Média das parcelas salariais VARIÁVEIS habituais (CLT, art. 142,
+    #    §§ 1º a 6º — período aquisitivo) ──
+    # NULL = a média não foi apurada neste lançamento: ou o registro é
+    # anterior à feature, ou o parâmetro `calcula_media_verbas_variaveis` da
+    # fazenda estava desligado (o padrão). Nos dois casos o cálculo saiu só
+    # sobre `salario_base`, e é NULL — não 0.0 — que diz isso: zero apurado
+    # ("a pessoa não teve variável no período") é informação diferente de não
+    # apurado, e o recibo mostra uma coisa ou outra.
+    # SNAPSHOT, pelo mesmo motivo de `salario_base` logo acima: a composição
+    # da média é fotografada aqui no lançamento e nunca mais recalculada. Uma
+    # folha lançada depois, ou uma rubrica corrigida em competência aberta,
+    # não pode mexer no valor de umas férias já lançadas.
+    media_variaveis: Optional[float] = None
+    # A composição em JSON (mesmo padrão de `FolhaPagamento.discriminacao_congelada`
+    # e de `Pessoa.telefones`): competências que entraram, rubricas de cada
+    # uma, total, divisor e o critério dele. É o que permite ao dono CONFERIR
+    # a média — média que ninguém consegue conferir é média que ninguém usa.
+    # Ver `rules/media_verbas_habituais.py::apurar`.
+    media_variaveis_composicao: Optional[str] = None
     valor_ferias: float
     valor_terco_constitucional: float
     # Abono pecuniário (dias vendidos + o respectivo 1/3). ERA CALCULADO E
@@ -383,7 +402,14 @@ class DecimoTerceiro(SQLModel, table=True):
     meses_trabalhados: int  # 1 a 12 — proporcional ao ano de admissão/desligamento
     # Snapshot do salário usado no cálculo — ver FeriasFuncionario.salario_base.
     salario_base: Optional[float] = None
-    # 13º INTEGRAL do ano (salario_base / 12 × meses). `valor_bruto` é o que
+    # Média das parcelas salariais VARIÁVEIS habituais do ANO CIVIL, dividida
+    # pelos meses de vigência do contrato no ano (Lei 4.090/62, art. 1º, §1º;
+    # Decreto 57.155/65, art. 2º). NULL = não apurada (parâmetro desligado ou
+    # registro anterior à feature) — ver FeriasFuncionario.media_variaveis,
+    # mesmo desenho e mesmo motivo para ser snapshot.
+    media_variaveis: Optional[float] = None
+    media_variaveis_composicao: Optional[str] = None
+    # 13º INTEGRAL do ano ((salario_base + media_variaveis) / 12 × meses). `valor_bruto` é o que
     # se paga NESTA parcela: até 50% do integral na 1ª (adiantamento, Lei
     # 4.749/1965, art. 2º) e o SALDO na 2ª/única. Antes as duas colunas eram
     # a mesma coisa — `valor_bruto` guardava sempre o integral, e lançar 1ª +
@@ -442,6 +468,23 @@ class RescisaoFuncionario(SQLModel, table=True):
     # depois (mesmo motivo de qualquer outro snapshot deste arquivo).
     salario_base: float
     data_admissao: date
+    # ── As TRÊS médias de verbas variáveis habituais ──
+    # São três porque, na rescisão, cada verba segue a regra da SUA natureza —
+    # não existe "a média da rescisão": o 13º proporcional usa o ANO CIVIL
+    # (Decreto 57.155/65, art. 2º), as férias vencidas e proporcionais usam o
+    # PERÍODO AQUISITIVO (CLT, art. 142) e o aviso prévio indenizado usa os
+    # ÚLTIMOS 12 MESES. Guardar uma média só seria gravar a resposta errada
+    # para duas das três verbas.
+    # NULL = não apuradas (parâmetro `calcula_media_verbas_variaveis`
+    # desligado, o padrão, ou registro anterior à feature) — ver
+    # FeriasFuncionario.media_variaveis.
+    media_variaveis_decimo_terceiro: Optional[float] = None
+    media_variaveis_ferias: Optional[float] = None
+    media_variaveis_aviso_previo: Optional[float] = None
+    # As três composições num JSON só (chaves "decimo_terceiro", "ferias",
+    # "aviso_previo"): é o que o TRCT e a tela abrem para o dono conferir
+    # competência a competência de onde saiu cada média.
+    media_variaveis_composicao: Optional[str] = None
     # Seis verbas — cada uma é `override do usuário if informado else valor
     # calculado por calcular_rescisao()` (ver _aplicar_calculo_rescisao).
     valor_saldo_salario: float = 0.0
