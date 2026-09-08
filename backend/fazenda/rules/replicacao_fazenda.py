@@ -11,7 +11,9 @@ funcionalidade nova sem tocar em produção nem inventar dado sintético.
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ REGRAS INEGOCIÁVEIS (repita antes de mexer aqui):                        │
 │  1. Sentido único: ORIGEM → DESTINO. Nunca escreve na origem.            │
-│  2. Destino tem que ter `Fazenda.eh_teste = True` — senão 409.           │
+│  2. Destino tem que ter `Fazenda.eh_teste = True` — senão 409. Conferido │
+│     em SQL, pela conexão que escreve, DUAS vezes: na entrada e dentro do  │
+│     `_apagar_destino` (ver `_exigir_destino_de_teste`).                   │
 │  3. origem_id == destino_id é sempre recusado.                          │
 │  4. DESTRUTIVO no destino: apaga tudo do destino antes de copiar.        │
 │  5. Tudo numa única transação — qualquer falha reverte o destino ao      │
@@ -512,6 +514,8 @@ def _aplicar_fks_adiadas(
     ids_globais: dict[str, set[int]],
     fks_adiadas_por_tabela: dict[str, list[tuple[str, str, int]]],
     avisos: list[str],
+    *,
+    destino_id: int,
 ) -> None:
     """2ª passada (ver docstring do módulo, seção b/c): agora que toda
     tabela já tem seu mapa (id_antigo -> id_novo) completo, resolve de
@@ -541,7 +545,62 @@ def _aplicar_fks_adiadas(
                         f"{tabela_alvo}.id={valor_antigo}, não resolvido na 2ª passada — mantido NULL."
                     )
                     continue
-            conn.execute(sa_update(tabela).where(pk == id_novo_linha).values(**{coluna: novo_valor}))
+            # Recorte de fazenda DENTRO da consulta, junto da PK: o id novo
+            # sempre pertence a uma linha recém-inserida no destino, então o
+            # `fazenda_id == destino_id` é redundante hoje — e é justamente
+            # por isso que ele fica. Sem ele, esta 2ª passada seria o único
+            # UPDATE do módulo capaz de, em caso de mapa de ids errado (bug
+            # futuro, sequência de id reiniciada, tabela cujo id não venha do
+            # banco), gravar numa linha da fazenda de ORIGEM — violando a
+            # regra 1 sem nenhum aviso. Com o recorte, escrever na origem é
+            # impossível por construção, não por confiança no mapa.
+            conn.execute(
+                sa_update(tabela)
+                .where(pk == id_novo_linha, tabela.c.fazenda_id == destino_id)
+                .values(**{coluna: novo_valor})
+            )
+
+
+# ---------------------------------------------------------------------------
+# A TRAVA DURA (regra 2) — a única coisa neste módulo que, se falhar, apaga a
+# fazenda de um cliente de verdade. Por isso ela NÃO mora só na porta de
+# entrada da rotina: é uma função própria, chamada tanto no começo de
+# `sincronizar_fazenda_teste_destrutivo` (para recusar cedo, com mensagem
+# boa) quanto DENTRO de `_apagar_destino`, imediatamente antes do primeiro
+# DELETE — o próprio caminho de escrita.
+#
+# Por que repetir a checagem duas vezes num arquivo só? Porque uma validação
+# feita apenas na entrada é uma convenção, não uma trava: basta alguém, um
+# dia, chamar `_apagar_destino` de outro lugar (um comando de manutenção, um
+# "limpar sandbox" sem cópia, uma refatoração que separe apagar de copiar)
+# para o destino ser apagado sem nunca passar pela porta da frente. Duplicar
+# a checagem custa um SELECT e torna esse acidente impossível por construção.
+#
+# E por que ler `eh_teste` com SQL cru pela `Connection` em vez de usar o
+# objeto `Fazenda` do ORM? Porque a `Session` responde `session.get()` a
+# partir do mapa de identidade — devolve o objeto que já está em memória,
+# possivelmente com `eh_teste` alterado e ainda não gravado. A fonte de
+# verdade tem que ser o BANCO, e ainda por cima lido pela MESMA conexão que
+# vai executar os DELETEs (mesma transação, mesma visão de dados): não
+# existe janela entre "conferi" e "apaguei".
+# ---------------------------------------------------------------------------
+def _exigir_destino_de_teste(conn: Connection, destino_id: int) -> None:
+    """Estoura 409 se a fazenda `destino_id` não existir ou não estiver
+    marcada `eh_teste = True` no banco. Incondicional: não há parâmetro,
+    variável de ambiente nem flag que pule esta verificação."""
+    tabela_fazenda = Fazenda.__table__
+    linha = conn.execute(
+        sa_select(tabela_fazenda.c.nome, tabela_fazenda.c.eh_teste).where(tabela_fazenda.c.id == destino_id)
+    ).first()
+    if linha is None:
+        raise SincronizacaoInvalidaError(f"Fazenda de destino (id={destino_id}) não existe.")
+    nome, eh_teste = linha
+    if not eh_teste:
+        raise SincronizacaoInvalidaError(
+            f'A fazenda de destino ("{nome}") não está marcada como fazenda de TESTE '
+            "(Fazenda.eh_teste=False) — a sincronização destrutiva só pode gravar em cima de uma "
+            "fazenda de teste, nunca de uma fazenda-cliente real."
+        )
 
 
 def _apagar_destino(
@@ -558,7 +617,13 @@ def _apagar_destino(
     `_ordenar_com_quebra_de_ciclo`) pra nenhum DELETE esbarrar numa FK que
     aponta pra uma linha que está prestes a ser apagada; só depois apaga
     tabela por tabela na ordem REVERSA da topológica (filhas antes de pais).
+
+    Primeira linha do corpo, antes de qualquer escrita: a trava dura de novo
+    (ver `_exigir_destino_de_teste` acima). É aqui que ela realmente importa
+    — este é o ponto onde o dado morre.
     """
+    _exigir_destino_de_teste(conn, destino_id)
+
     for nome_tabela, colunas in colunas_adiadas_por_tabela.items():
         tabela = tabelas[nome_tabela]
         conn.execute(
@@ -586,30 +651,32 @@ def sincronizar_fazenda_teste_destrutivo(
     if origem_id == destino_id:
         raise SincronizacaoInvalidaError("Origem e destino não podem ser a mesma fazenda.")
 
+    # Regras 1 e 6: tudo dentro de UMA transação (conn é a MESMA conexão que
+    # a Session já abriu; nenhum commit parcial acontece até o fim da
+    # função — qualquer exceção sobe e o `with` da Session reverte tudo).
+    # Pegamos a conexão ANTES de qualquer validação porque a trava dura tem
+    # que ser lida pela mesma conexão que fará as escritas (ver
+    # `_exigir_destino_de_teste`), não pelo mapa de identidade da Session.
+    conn = session.connection()
+
+    # Regra 2 — a trava dura, aqui só para recusar cedo e com mensagem boa.
+    # Ela é aplicada DE NOVO, incondicionalmente, dentro de `_apagar_destino`,
+    # que é o caminho de escrita de verdade — nenhuma das duas é dispensável
+    # (ver o comentário longo em `_exigir_destino_de_teste`).
+    _exigir_destino_de_teste(conn, destino_id)
+
     origem = session.get(Fazenda, origem_id)
     if not origem:
         raise SincronizacaoInvalidaError(f"Fazenda de origem (id={origem_id}) não existe.")
+    # Nunca None: `_exigir_destino_de_teste` acabou de provar, pela conexão
+    # desta mesma transação, que a linha existe. Carregado só para o nome
+    # aparecer no log do fim da função.
     destino = session.get(Fazenda, destino_id)
-    if not destino:
-        raise SincronizacaoInvalidaError(f"Fazenda de destino (id={destino_id}) não existe.")
-    # Regra 2 — a trava dura. Nunca aceita destino que não seja marcado
-    # explicitamente como sandbox de teste, custe o que custar.
-    if not destino.eh_teste:
-        raise SincronizacaoInvalidaError(
-            f'A fazenda de destino ("{destino.nome}") não está marcada como fazenda de TESTE '
-            "(Fazenda.eh_teste=False) — a sincronização destrutiva só pode gravar em cima de uma "
-            "fazenda de teste, nunca de uma fazenda-cliente real."
-        )
 
     tabelas = _tabelas_fazenda()
     ordem, colunas_adiadas_por_tabela = _ordenar_com_quebra_de_ciclo(tabelas)
 
     avisos: list[str] = []
-
-    # Regras 1 e 6: tudo dentro de UMA transação (conn é a MESMA conexão que
-    # a Session já abriu; nenhum commit parcial acontece até o fim da
-    # função — qualquer exceção sobe e o `with` da Session reverte tudo).
-    conn = session.connection()
 
     _apagar_destino(conn, tabelas, ordem, colunas_adiadas_por_tabela, destino_id)
 
@@ -638,7 +705,7 @@ def sincronizar_fazenda_teste_destrutivo(
         )
         total_linhas += copiadas
 
-    _aplicar_fks_adiadas(conn, tabelas, mapa_ids, ids_globais, fks_adiadas_globais, avisos)
+    _aplicar_fks_adiadas(conn, tabelas, mapa_ids, ids_globais, fks_adiadas_globais, avisos, destino_id=destino_id)
 
     if contadores.get("anexos_nao_copiados"):
         # (f) só avisa se de fato existia algum anexo pra avisar — ver
