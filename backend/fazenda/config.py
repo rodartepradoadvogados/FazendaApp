@@ -6,6 +6,18 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./fazenda.db"
+    # Conexão de MANUTENÇÃO — usada pelas rotinas que precisam ler o banco
+    # inteiro, sem recorte de fazenda: hoje, o backup automático. Vazia (o
+    # padrão) = usa a mesma `database_url`, e nada muda.
+    #
+    # Ela existe por causa do RLS. No desenho aprovado (ver
+    # docs/security-audit/rls-proposta.md, seção 8), as políticas ficam SEM
+    # `FORCE`, e é o dono das tabelas quem enxerga tudo — enquanto a aplicação,
+    # que não é dona, fica contida pela política. O backup é justamente a
+    # rotina que precisa ver o banco inteiro por definição, então ele passa a
+    # conectar por esta URL, com o role dono, em vez de abrir um `BYPASSRLS`
+    # de propósito geral que qualquer código da API poderia assumir.
+    database_url_manutencao: str = ""
     environment: str = "development"
 
     # Robô do Telegram (intake de documentos financeiros). Vazio = desligado.

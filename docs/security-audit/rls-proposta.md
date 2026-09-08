@@ -572,14 +572,36 @@ lê o banco inteiro por essa conexão. É o mesmo trade-off já registrado na
 seção 6 — este item não acrescenta risco novo, e ele desaparece no desenho
 (b), com backup e migração como passos de deploy próprios.
 
-### A guarda que o backup precisa, em qualquer desenho
+### A guarda que o backup precisa — FEITA em 08/09/2026
 
-Independente de RLS: um backup que sai vazio tem que falhar alto. Basta
-`gerar_backup_zip` devolver também a contagem de linhas e
-`executar_backup_se_necessario` gravar `sucesso=False` quando o total for
-zero. Sem isso, qualquer erro futuro de permissão volta a produzir backup de
-cabeçalho com carimbo de sucesso. **Não é mudança de RLS — é dívida de hoje**,
-e vale fazer antes, independente da decisão maior.
+Independente de RLS: um backup que sai vazio tem que falhar alto. Está no
+código, e foi o primeiro passo da ativação aprovada pelo dono.
+
+`gerar_backup_zip` passou a devolver, junto com o ZIP, **quantas linhas saíram
+das tabelas com `fazenda_id`** — e não o total de linhas do banco. A diferença
+decide se a guarda funciona: as políticas só entram nas tabelas com essa
+coluna, então `backup_automatico` (que não a tem) continua visível sob RLS, e
+uma contagem do total do banco nunca chegaria a zero por causa do registro da
+rodada anterior. A guarda nunca dispararia justamente no cenário para o qual
+existe. Há teste fixando isso.
+
+Com o total zerado, `executar_backup_se_necessario` grava `sucesso=False`, **não
+envia o ZIP** e manda ao dono um e-mail cujo assunto começa com "FALHOU". Como
+só um sucesso conta para o intervalo de sete dias, a próxima tentativa continua
+sendo em 30 minutos — um problema que dure minutos não custa uma semana sem
+backup.
+
+E a conexão: `main.py::_loop_backup_automatico` passou a usar
+`database.py::engine_manutencao`, que sem `DATABASE_URL_MANUTENCAO` configurada
+**é o mesmo objeto** de sempre. Nada muda hoje; no dia da ativação, é por ela
+que o backup enxerga o banco inteiro, com o role dono, sem que exista nenhum
+role `BYPASSRLS` para a API assumir.
+
+`tests/test_backup_sob_rls.py` prova isso num PostgreSQL 16 real, com as duas
+metades no mesmo cenário: pela conexão da aplicação o backup sai vazio e é
+recusado; pela conexão de manutenção ele traz o dado. Roda no CI, no job
+`backend-tests-postgres` — RLS não existe em SQLite, e a suíte principal é toda
+SQLite.
 
 
 ## 9. Um furo que o RLS sozinho NÃO fecha: chave estrangeira
