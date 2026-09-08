@@ -2677,10 +2677,18 @@ def listar_realizados(
 @router.delete("/realizados/{evento_id}")
 def desmarcar_realizado(
     evento_id: str, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    """Desfaz a marcação de realizado — o evento volta a aparecer na agenda."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
+    """Desfaz a marcação de realizado — o evento volta a aparecer na agenda.
+
+    Dependência ESTRITA, como a de `marcar_realizado` logo acima. Esta rota
+    escreve: ela reverte aplicações para pendente em quatro famílias
+    (IATF, indução, protocolo personalizado e lida). Com a dependência
+    tolerante, um token sem "fid" entregava `fazenda_id=None` às quatro, e as
+    que filtravam dentro de `if fazenda_id is not None` passavam a rodar sem
+    recorte nenhum — desconfirmando a aplicação de outra fazenda, que volta
+    para a agenda dela como tarefa pendente que ninguém pediu.
+    """
     if evento_id.startswith(COMUNICADO_PREFIXOS):
         raise HTTPException(status_code=400, detail="Comunicados não podem ser excluídos — eles somem sozinhos no dia seguinte.")
     if evento_id.startswith("protocolo_iatf_"):

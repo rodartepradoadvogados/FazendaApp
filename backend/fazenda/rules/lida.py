@@ -39,8 +39,13 @@ def eventos_agenda(
         LidaLancamento.ativo == True,  # noqa: E712
         LidaLancamento.encerrado_em.is_(None),
     )
-    if fazenda_id is not None:
-        query_lanc = query_lanc.where(LidaLancamento.fazenda_id == fazenda_id)
+    # Recorte INCONDICIONAL. O padrão tolerante (`if fazenda_id is not None`)
+    # que estava aqui não restringe quando o valor é nulo — ele DESLIGA o
+    # isolamento, e é o mesmo anti-padrão que as críticas da auditoria
+    # fecharam no resto do sistema. Com `fazenda_id` nulo a comparação vira
+    # `IS NULL` e a consulta traz, no máximo, linha órfã — falha fechada, que
+    # é o comportamento certo quando não se sabe de quem é o dado.
+    query_lanc = query_lanc.where(LidaLancamento.fazenda_id == fazenda_id)
     lancamentos_por_id = {l.id: l for l in session.exec(query_lanc).all()}
     if not lancamentos_por_id:
         return []
@@ -111,8 +116,13 @@ def marcar_realizado(
     # BUG DE SEGURANÇA CORRIGIDO: sem este filtro, qualquer fazenda-cliente
     # podia confirmar a lida de outro tenant (e consumir o próprio estoque
     # numa tarefa que não é dela) só adivinhando o lancamento_id.
-    if fazenda_id is not None:
-        query = query.where(LidaAplicacao.fazenda_id == fazenda_id)
+    #
+    # O filtro é INCONDICIONAL desde 08/09/2026. Ele nasceu dentro de um
+    # `if fazenda_id is not None`, que com valor nulo não restringe nada —
+    # desliga o isolamento justamente no caso em que ele mais importa, porque
+    # esta função dá BAIXA DE ESTOQUE de verdade (ver `dar_baixa_estoque`
+    # abaixo): confirmar a lida alheia consumiria estoque alheio.
+    query = query.where(LidaAplicacao.fazenda_id == fazenda_id)
     aplicacoes = session.exec(query).all()
     if animais is not None:
         alvo = set(animais)
@@ -157,8 +167,10 @@ def desmarcar_realizado(session: Session, evento_id: str, fazenda_id: int | None
         LidaAplicacao.dia == dia,
         LidaAplicacao.realizada == True,  # noqa: E712
     )
-    if fazenda_id is not None:
-        query = query.where(LidaAplicacao.fazenda_id == fazenda_id)
+    # Incondicional, mesma razão de `marcar_realizado` acima: desmarcar a lida
+    # de outra fazenda a devolve para a agenda dela, como tarefa pendente que
+    # ninguém pediu.
+    query = query.where(LidaAplicacao.fazenda_id == fazenda_id)
     aplicacoes = session.exec(query).all()
     for ap in aplicacoes:
         ap.realizada = False
