@@ -53,7 +53,6 @@ _VERBOS_DE_ESCRITA = {"post", "put", "patch", "delete"}
 # PR esperava CI. Ao trazer a main, `test_a_divida_congelada_nao_tem_entrada_morta`
 # apontou as duas entradas mortas em vez de deixá-las apodrecendo aqui.
 _DIVIDA_CONHECIDA: set[tuple[str, str]] = {
-    ("agenda.py", "desmarcar_realizado"),
     ("alimentacao.py", "atualizar_alimento"),
     ("alimentacao.py", "atualizar_categoria_alimento"),
     ("alimentacao.py", "atualizar_categoria_estoque"),
