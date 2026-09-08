@@ -369,7 +369,13 @@ export async function fetchAuditoriaAtividades(params: { usuario_id: number; dat
 }
 export async function criarUsuario(dados: {
   username: string; senha: string; papel: string; permissoes: string[]; email?: string; pode_publicar_materias_blog?: boolean;
-  pessoa_id?: number; nome?: string; // uma das duas: pessoa_id (fazenda) ou nome (conta sem fazenda, ex.: equipe CowData)
+  // `pessoa_id` é o caminho: todo login nasce de uma pessoa já cadastrada
+  // DENTRO de uma fazenda, e o backend cria o vínculo usuário↔fazenda no mesmo
+  // commit (ver backend auth.py::_fazenda_do_novo_usuario — fazenda → pessoa →
+  // usuário, sempre nessa ordem). `nome` livre, sem pessoa, é recusado com 400
+  // em qualquer instalação com fazenda cadastrada; a equipe da própria CowData
+  // tem tela própria (Painel CowData > Equipe), não passa por aqui.
+  pessoa_id?: number; nome?: string;
 }) {
   const res = await fetch(`${API}/auth/usuarios`, {
     method: "POST", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },

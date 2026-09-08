@@ -1,10 +1,14 @@
 """
-Testes de POST/PUT /auth/usuarios — uma conta de login pode vincular a uma
-Pessoa já cadastrada na fazenda (cada pessoa só pode estar vinculada a um
-único usuário por vez) OU, sem nenhum vínculo com fazenda nenhuma, usar
-`nome` livre — caminho pra equipe da própria CowData, sem misturar com o
-cadastro de pessoas da fazenda (ver
-fazenda.api.routers.auth._validar_pessoa_ou_nome).
+Testes de POST/PUT /auth/usuarios — uma conta de login vincula a uma Pessoa já
+cadastrada na fazenda (cada pessoa só pode estar vinculada a um único usuário
+por vez), ver fazenda.api.routers.auth._validar_pessoa_ou_nome.
+
+A fixture daqui NÃO cadastra fazenda nenhuma (tabela `fazenda` vazia), então
+estes testes rodam do lado "multi-fazenda não provisionado" da linha divisória
+(fazenda.auth.multifazenda_provisionado) — onde o caminho de `nome` livre, sem
+Pessoa, ainda é aceito. A trava "todo usuário nasce dentro de uma fazenda", que
+vale em qualquer ambiente com fazenda cadastrada (isto é: em produção), tem
+arquivo próprio: tests/test_usuario_sempre_com_fazenda.py.
 """
 from __future__ import annotations
 
@@ -81,7 +85,12 @@ def test_criar_usuario_deriva_nome_da_pessoa(client):
 
 
 def test_criar_usuario_sem_fazenda_usa_nome_livre(client):
-    """Equipe CowData — conta sem pessoa_id, sem vínculo com nenhuma fazenda."""
+    """Nome livre (sem pessoa_id) só continua aceito porque este banco não tem
+    NENHUMA fazenda cadastrada — instalação anterior ao multi-fazenda, onde não
+    há tenant a isolar (mesmo corte de fazenda.auth.multifazenda_provisionado).
+    Havendo qualquer fazenda, este mesmo POST é recusado com
+    auth.ERRO_USUARIO_SEM_FAZENDA — ver tests/test_usuario_sempre_com_fazenda.py.
+    """
     c, engine = client
     token = _login(c)
     r = c.post(
@@ -247,21 +256,29 @@ def test_listar_usuarios_com_fazenda_selecionada_mostra_so_essa_fazenda(client):
         s.refresh(pessoa_b)
         pid_a, pid_b = pessoa_a.id, pessoa_b.id
 
-    c.post(
-        "/auth/usuarios",
-        json={"username": "user_a", "senha": "123", "pessoa_id": pid_a, "papel": "operador", "permissoes": []},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    c.post(
-        "/auth/usuarios",
-        json={"username": "user_b", "senha": "123", "pessoa_id": pid_b, "papel": "operador", "permissoes": []},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-
+    # TESTE CONSERTADO junto com a trava "todo usuário nasce dentro de uma
+    # fazenda": estes dois POST rodavam com o token do admin SEM fazenda
+    # selecionada, num banco que já tem fazenda cadastrada — ou seja, criavam
+    # exatamente o usuário órfão que a trava passou a impedir (agora 409 de
+    # get_fazenda_id_escrita: a sessão não sabe em que fazenda está). O
+    # cenário que este teste quer continua idêntico — cada usuário na sua
+    # fazenda —, só que agora criado de dentro de uma fazenda selecionada. A
+    # fazenda do VÍNCULO vem da Pessoa (10 e 20, respectivamente), não deste
+    # override, que só resolve "de onde o dono está criando".
     from fazenda.auth import get_fazenda_atual_id
     import main
     main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 10
     try:
+        c.post(
+            "/auth/usuarios",
+            json={"username": "user_a", "senha": "123", "pessoa_id": pid_a, "papel": "operador", "permissoes": []},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        c.post(
+            "/auth/usuarios",
+            json={"username": "user_b", "senha": "123", "pessoa_id": pid_b, "papel": "operador", "permissoes": []},
+            headers={"Authorization": f"Bearer {token}"},
+        )
         r = c.get("/auth/usuarios", headers={"Authorization": f"Bearer {token}"})
     finally:
         del main.app.dependency_overrides[get_fazenda_atual_id]
