@@ -840,9 +840,19 @@ def exigir_fazenda_selecionada():
         # ele legitimamente não tem fazenda vinculada e entra pelo Cofre de
         # acesso (routers/cofre_acesso.py), que carimba o `fid` da fazenda
         # visitada. Mandá-lo ao suporte seria mandá-lo a si mesmo.
-        if not eh_membro_equipe_cowdata(session, user) and not eh_email_dono_equivalente(user.email):
+        #
+        # A decisão sai do usuário COMO ELE ESTÁ NO BANCO, e não do objeto que
+        # a dependência entregou. Não é preciosismo: metade da suíte substitui
+        # `get_current_user` por um dublê mínimo (id, papel, ativo, username,
+        # email) e `eh_membro_equipe_cowdata` lê `pessoa_id`, que o dublê não
+        # tem — 15 testes de outras áreas quebraram assim na primeira versão
+        # desta guarda. Lendo do banco, a checagem vale igual em produção e
+        # não obriga cada dublê da suíte a crescer junto com ela.
+        usuario = session.get(Usuario, getattr(user, "id", None))
+        if usuario is not None and not eh_membro_equipe_cowdata(session, usuario) \
+                and not eh_email_dono_equivalente(usuario.email):
             tem_vinculo = session.exec(
-                select(UsuarioFazenda.fazenda_id).where(UsuarioFazenda.usuario_id == user.id)
+                select(UsuarioFazenda.fazenda_id).where(UsuarioFazenda.usuario_id == usuario.id)
             ).first()
             if tem_vinculo is None:
                 raise HTTPException(
