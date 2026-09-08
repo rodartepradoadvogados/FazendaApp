@@ -554,12 +554,13 @@ def _remover_folha_pos_rescisao(session: Session, fazenda_id: int | None) -> Non
     for registro in session.exec(query).all():
         if not _rescisao_fechada_encerra_competencia(session, registro.pessoa_id, registro.competencia, fazenda_id):
             continue
-        if registro.numero_lancamento_gerado:
-            conta = session.exec(
-                select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado)
-            ).first()
-            if conta and conta.valor_pago is None:
-                session.delete(conta)
+        # A conta a pagar vem por `_conta_do_numero`, que recorta a fazenda
+        # DENTRO da consulta: o número do lançamento não é chave global, e uma
+        # rotina que APAGA lançamento financeiro não pode alcançar o de outro
+        # inquilino por causa de um número repetido em base importada.
+        conta = _conta_do_numero(session, registro.numero_lancamento_gerado, fazenda_id)
+        if conta and conta.valor_pago is None:
+            session.delete(conta)
         session.delete(registro)
     session.commit()
 
@@ -593,14 +594,11 @@ def _remover_folha_duplicada(session: Session, fazenda_id: int | None) -> None:
         for registro in registros:
             if registro.id == manter_id or registro.status == "pago":
                 continue
-            if registro.numero_lancamento_gerado:
-                conta = session.exec(
-                    select(ContaGerencial).where(
-                        ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado
-                    )
-                ).first()
-                if conta and conta.valor_pago is None:
-                    session.delete(conta)
+            # Mesmo recorte de `_remover_folha_pos_rescisao`, e pelo mesmo
+            # motivo: aqui também se APAGA conta a pagar a partir do número.
+            conta = _conta_do_numero(session, registro.numero_lancamento_gerado, fazenda_id)
+            if conta and conta.valor_pago is None:
+                session.delete(conta)
             session.delete(registro)
             houve_remocao = True
     if houve_remocao:
@@ -805,15 +803,13 @@ def _corrigir_folha_gerada_sem_retencao(session: Session, fazenda_id: int | None
             continue
         # A conta a pagar já quitada trava a correção mesmo com a folha ainda
         # "pendente" (baixa feita direto no Financeiro) — o dinheiro já saiu.
-        conta = None
-        if registro.numero_lancamento_gerado:
-            conta = session.exec(
-                select(ContaGerencial).where(
-                    ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado
-                )
-            ).first()
-            if conta and conta.valor_pago is not None:
-                continue
+        # Recorte de fazenda na própria consulta (`_conta_do_numero`): esta
+        # rotina REESCREVE `valor_total` de conta a pagar, então um número de
+        # lançamento repetido entre fazendas não pode fazê-la corrigir o
+        # dinheiro do vizinho.
+        conta = _conta_do_numero(session, registro.numero_lancamento_gerado, fazenda_id)
+        if conta and conta.valor_pago is not None:
+            continue
 
         mudou = False
         # Campos que a geração simplesmente não copiava e que nascem vazios:
@@ -1280,15 +1276,12 @@ def listar_folha_pagamento(
             )
             _marcar_vale_aplicado(session, registro.pessoa_id, registro.competencia)
             session.add(registro)
-            if registro.numero_lancamento_gerado:
-                conta = session.exec(
-                    select(ContaGerencial).where(
-                        ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado
-                    )
-                ).first()
-                if conta and conta.valor_pago is None:
-                    conta.valor_total = registro.valor_liquido
-                    session.add(conta)
+            # `_conta_do_numero` — recorte de fazenda dentro da consulta,
+            # porque este self-heal grava o novo líquido na conta a pagar.
+            conta = _conta_do_numero(session, registro.numero_lancamento_gerado, fazenda_id)
+            if conta and conta.valor_pago is None:
+                conta.valor_total = registro.valor_liquido
+                session.add(conta)
             houve_mudanca = True
         # Vale-alimentação: mesma ideia do self-heal acima, e pelo mesmo
         # motivo. Ligar o benefício (ou corrigir o valor-base) no cadastro tem
@@ -1520,24 +1513,24 @@ def atualizar_folha_pagamento(
     session.add(registro)
 
     # Mantém a conta a pagar gerada automaticamente em sincronia com a edição.
-    if registro.numero_lancamento_gerado:
-        conta = session.exec(
-            select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado)
-        ).first()
-        if conta and conta.valor_pago is None:
-            pessoa = session.get(Pessoa, dados.pessoa_id)
-            ano, mes = (int(x) for x in dados.competencia.split("-"))
-            conta.descricao = f"Folha de pagamento — {pessoa.nome} ({dados.competencia})"
-            conta.fornecedor_cliente = pessoa.nome
-            conta.data_vencimento = _data_vencimento_folha(dados.competencia, dados.dia_vencimento)
-            conta.data_competencia = date(ano, mes, 1)
-            conta.centro_custo = dados.centro_custo
-            conta.valor_total = valor_liquido
-            conta.conta_bancaria = rotulo_conta_corrente(conta_corrente) if conta_corrente else None
-            if dados.status == "pago":
-                conta.data_pagamento = dados.data_pagamento
-                conta.valor_pago = valor_liquido
-            session.add(conta)
+    # Busca por `_conta_do_numero` (recorte de fazenda na consulta): sem ele,
+    # um número de lançamento repetido em outra fazenda receberia aqui a
+    # descrição, o vencimento e o VALOR desta folha.
+    conta = _conta_do_numero(session, registro.numero_lancamento_gerado, fazenda_id)
+    if conta and conta.valor_pago is None:
+        pessoa = session.get(Pessoa, dados.pessoa_id)
+        ano, mes = (int(x) for x in dados.competencia.split("-"))
+        conta.descricao = f"Folha de pagamento — {pessoa.nome} ({dados.competencia})"
+        conta.fornecedor_cliente = pessoa.nome
+        conta.data_vencimento = _data_vencimento_folha(dados.competencia, dados.dia_vencimento)
+        conta.data_competencia = date(ano, mes, 1)
+        conta.centro_custo = dados.centro_custo
+        conta.valor_total = valor_liquido
+        conta.conta_bancaria = rotulo_conta_corrente(conta_corrente) if conta_corrente else None
+        if dados.status == "pago":
+            conta.data_pagamento = dados.data_pagamento
+            conta.valor_pago = valor_liquido
+        session.add(conta)
 
     # A folha acabou de virar recibo (o botão "Marcar como pago" cai aqui, e o
     # endpoint recusa editar folha já paga — então esta é sempre a transição
@@ -2039,22 +2032,21 @@ def atualizar_ferias(
     registro.conta_corrente_id = conta_corrente.id if conta_corrente else None
     session.add(registro)
 
-    if registro.numero_lancamento_gerado:
-        conta = session.exec(
-            select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado)
-        ).first()
-        if conta and conta.valor_pago is None:
-            conta.descricao = f"Férias — {pessoa.nome} ({dados.data_inicio_gozo.isoformat()} a {dados.data_fim_gozo.isoformat()})"
-            conta.fornecedor_cliente = pessoa.nome
-            conta.data_vencimento = _vencimento_ferias(dados.data_inicio_gozo, dados.data_pagamento)
-            conta.data_competencia = dados.data_inicio_gozo
-            conta.centro_custo = dados.centro_custo
-            conta.valor_total = calculo["valor_total"]
-            conta.conta_bancaria = rotulo_conta_corrente(conta_corrente) if conta_corrente else None
-            if dados.status == "pago":
-                conta.data_pagamento = dados.data_pagamento
-                conta.valor_pago = calculo["valor_total"]
-            session.add(conta)
+    # `_conta_do_numero` recorta a fazenda na consulta — ver
+    # `atualizar_folha_pagamento`, mesma reescrita e mesmo risco.
+    conta = _conta_do_numero(session, registro.numero_lancamento_gerado, fazenda_id)
+    if conta and conta.valor_pago is None:
+        conta.descricao = f"Férias — {pessoa.nome} ({dados.data_inicio_gozo.isoformat()} a {dados.data_fim_gozo.isoformat()})"
+        conta.fornecedor_cliente = pessoa.nome
+        conta.data_vencimento = _vencimento_ferias(dados.data_inicio_gozo, dados.data_pagamento)
+        conta.data_competencia = dados.data_inicio_gozo
+        conta.centro_custo = dados.centro_custo
+        conta.valor_total = calculo["valor_total"]
+        conta.conta_bancaria = rotulo_conta_corrente(conta_corrente) if conta_corrente else None
+        if dados.status == "pago":
+            conta.data_pagamento = dados.data_pagamento
+            conta.valor_pago = calculo["valor_total"]
+        session.add(conta)
 
     session.commit()
     session.refresh(registro)
@@ -2319,22 +2311,21 @@ def atualizar_decimo_terceiro(
     session.add(registro)
 
     vencimento_padrao = date(dados.ano, 12, 20) if dados.parcela in ("unica", "segunda") else date(dados.ano, 11, 30)
-    if registro.numero_lancamento_gerado:
-        conta = session.exec(
-            select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado)
-        ).first()
-        if conta and conta.valor_pago is None:
-            conta.descricao = f"13º salário ({dados.parcela}) — {pessoa.nome} ({dados.ano})"
-            conta.fornecedor_cliente = pessoa.nome
-            conta.data_vencimento = dados.data_pagamento or vencimento_padrao
-            conta.data_competencia = date(dados.ano, 12, 1)
-            conta.centro_custo = dados.centro_custo
-            conta.valor_total = valor_liquido
-            conta.conta_bancaria = rotulo_conta_corrente(conta_corrente) if conta_corrente else None
-            if dados.status == "pago":
-                conta.data_pagamento = dados.data_pagamento
-                conta.valor_pago = valor_liquido
-            session.add(conta)
+    # `_conta_do_numero` recorta a fazenda na consulta — ver
+    # `atualizar_folha_pagamento`, mesma reescrita e mesmo risco.
+    conta = _conta_do_numero(session, registro.numero_lancamento_gerado, fazenda_id)
+    if conta and conta.valor_pago is None:
+        conta.descricao = f"13º salário ({dados.parcela}) — {pessoa.nome} ({dados.ano})"
+        conta.fornecedor_cliente = pessoa.nome
+        conta.data_vencimento = dados.data_pagamento or vencimento_padrao
+        conta.data_competencia = date(dados.ano, 12, 1)
+        conta.centro_custo = dados.centro_custo
+        conta.valor_total = valor_liquido
+        conta.conta_bancaria = rotulo_conta_corrente(conta_corrente) if conta_corrente else None
+        if dados.status == "pago":
+            conta.data_pagamento = dados.data_pagamento
+            conta.valor_pago = valor_liquido
+        session.add(conta)
 
     session.commit()
     session.refresh(registro)
@@ -3462,11 +3453,11 @@ def _sincronizar_conta_vale(
     se o vale tinha um lançamento de uma edição anterior (mudou de forma de
     pagamento), ele é removido.
     """
-    conta_existente = None
-    if vale.numero_lancamento_gerado:
-        conta_existente = session.exec(
-            select(ContaGerencial).where(ContaGerencial.numero_lancamento == vale.numero_lancamento_gerado)
-        ).first()
+    # O lançamento do vale é procurado por `_conta_do_numero`, que filtra a
+    # fazenda DENTRO da consulta: daqui sai tanto uma reescrita quanto um
+    # `session.delete()`, e o número do lançamento sozinho não identifica o
+    # inquilino (ver a docstring do helper).
+    conta_existente = _conta_do_numero(session, vale.numero_lancamento_gerado, fazenda_id)
 
     if conta is None:
         if conta_existente:
