@@ -3127,6 +3127,60 @@ export async function salvarDiasDiaria(diariaId: number, dados: {
 }
 
 // ── Férias (Financeiro > Ações > Folha de Pagamento > Férias / 13º) ──
+// ── Média das verbas variáveis habituais (13º, férias e rescisão) ──
+// A integração das parcelas SALARIAIS VARIÁVEIS (bonificação por
+// produtividade, gueltas, vale-alimentação de natureza salarial…) nas bases de
+// 13º, férias e rescisão — CLT, art. 457, §1º, e Súmula 45 do TST. Cada verba
+// tem a SUA janela: 13º pelo ANO CIVIL (Decreto 57.155/65, art. 2º), férias
+// pelo PERÍODO AQUISITIVO (CLT, art. 142) e aviso prévio indenizado pelos
+// ÚLTIMOS 12 MESES.
+//
+// DESLIGADO POR PADRÃO (Configurações > Parâmetros > Folha de pagamento / RH,
+// "O sistema calcula as médias de verbas variáveis…"): sem ele, `aplicada` vem
+// false, `media` vem 0 e as três contas saem só sobre o salário-base, exatamente
+// como antes. É por isso que a tela precisa saber distinguir "não apurada" de
+// "apurada e deu zero" — são coisas diferentes, e o dono tem de ver qual é.
+export type JanelaMediaVariaveis = "ano_civil" | "periodo_aquisitivo" | "ultimos_12_meses";
+export type RubricaDaMedia = { codigo: string; rotulo: string; valor: number };
+export type CompetenciaDaMedia = {
+  competencia: string; rotulo: string; valor: number;
+  /** Contrato vigente, mas sem folha lançada naquele mês. Entra no divisor
+   *  valendo ZERO (Decreto 57.155/65, art. 2º: "meses de vigência do
+   *  contrato"), e por isso precisa aparecer marcado — é o que explica um
+   *  divisor maior que o número de meses com movimento. */
+  sem_folha: boolean;
+  rubricas: RubricaDaMedia[];
+};
+export type ComposicaoMediaVariaveis = {
+  /** false = a média NÃO foi apurada (parâmetro desligado). Diferente de
+   *  `media === 0`, que é "apurada e a pessoa não teve variável no período". */
+  aplicada: boolean;
+  janela: JanelaMediaVariaveis;
+  fundamento: string;
+  motivo?: string;
+  inicio: string | null; fim: string | null; rotulo_janela: string;
+  competencias: CompetenciaDaMedia[];
+  competencias_sem_folha: number;
+  total: number;
+  divisor: number;
+  divisor_imposto: boolean;
+  criterio_divisor: string;
+  media: number;
+};
+
+/** Prévia da média — só lê, não grava. Existe para o "valor sugerido" que a
+ *  tela calcula no navegador não divergir do que o servidor vai gravar. */
+export async function fetchPreviaMediaVariaveis(params: {
+  pessoa_id: number; janela: JanelaMediaVariaveis;
+  inicio?: string; fim?: string; ano?: number; meses_trabalhados?: number;
+}): Promise<ComposicaoMediaVariaveis> {
+  const busca = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== "") busca.set(k, String(v)); });
+  const res = await authFetch(`${API}/cadastro/media-verbas-variaveis?${busca.toString()}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao calcular a média de verbas variáveis"); }
+  return res.json();
+}
+
 // Controle DENTRO do app (cálculo, lançamento e acompanhamento) — sem envio
 // ao eSocial (fora de escopo).
 export type FeriasDados = {
@@ -3141,6 +3195,12 @@ export type RegistroFerias = FeriasDados & {
   id: number; pessoa_nome: string; valor_ferias: number; valor_terco_constitucional: number;
   valor_total: number; numero_lancamento_gerado: string | null; usuario_nome?: string | null;
   status: string;
+  /** Média das variáveis do PERÍODO AQUISITIVO que entrou na base (CLT, art.
+   *  142). `null` = não apurada — o lançamento saiu só sobre o salário-base. */
+  media_variaveis?: number | null;
+  /** A composição CONGELADA no lançamento — é ela que o dono abre para
+   *  conferir de onde saiu a média. Nunca reapurada na leitura. */
+  media_variaveis_detalhe?: ComposicaoMediaVariaveis | null;
 };
 export async function fetchFerias(): Promise<RegistroFerias[]> {
   const res = await authFetch(`${API}/cadastro/ferias`, { cache: "no-store" });
@@ -3178,6 +3238,11 @@ export type DecimoTerceiroDados = {
 export type RegistroDecimoTerceiro = DecimoTerceiroDados & {
   id: number; pessoa_nome: string; valor_bruto: number; valor_liquido: number;
   numero_lancamento_gerado: string | null; usuario_nome?: string | null; status: string;
+  valor_integral?: number | null;
+  /** Média das variáveis do ANO CIVIL, dividida pelos mesmos avos do 13º
+   *  (Decreto 57.155/65, art. 2º). `null` = não apurada. */
+  media_variaveis?: number | null;
+  media_variaveis_detalhe?: ComposicaoMediaVariaveis | null;
 };
 export async function fetchDecimoTerceiro(): Promise<RegistroDecimoTerceiro[]> {
   const res = await authFetch(`${API}/cadastro/decimo-terceiro`, { cache: "no-store" });
@@ -3242,6 +3307,11 @@ export type CalculoRescisao = {
     deposito_total_estimado: number; percentual_multa: number; multa: number; percentual_saque_permitido: number;
   };
   data_referencia_tempo_servico: string;
+  /** As três médias aplicadas — uma por natureza de verba. */
+  medias_variaveis: { decimo_terceiro: number; ferias: number; aviso_previo: number; alguma: boolean };
+  /** As três composições, para a tela mostrar de onde saiu cada média ANTES
+   *  de o dono decidir lançar. */
+  medias_variaveis_composicao: MediasVariaveisComposicao;
   valor_total: number;
 };
 export async function simularRescisao(dados: RescisaoDados): Promise<CalculoRescisao> {
@@ -3260,6 +3330,13 @@ export async function simularRescisao(dados: RescisaoDados): Promise<CalculoResc
 export type StatusRescisao = "simulacao" | "fechada";
 export type FormaLancamentoRescisao = "unico" | "detalhado";
 export type LinhaDetalheRescisao = { label: string; valor: number };
+/** As três composições da rescisão, chaveadas pela verba: cada uma tem a SUA
+ *  janela, e é por isso que são três e não uma. */
+export type MediasVariaveisComposicao = {
+  decimo_terceiro: ComposicaoMediaVariaveis;
+  ferias: ComposicaoMediaVariaveis;
+  aviso_previo: ComposicaoMediaVariaveis;
+};
 
 export type RescisaoSimulacaoDados = {
   pessoa_id: number; tipo_rescisao: TipoRescisao; data_desligamento: string;
@@ -3288,6 +3365,11 @@ export type RegistroRescisaoFuncionario = {
   observacao: string | null; numero_lancamento_gerado: string | null; centro_custo: string | null;
   criado_em: string; usuario_id: number | null; fazenda_id: number;
   pessoa_nome: string; usuario_nome: string | null; detalhe: LinhaDetalheRescisao[]; legado: boolean;
+  /** As três médias congeladas no cálculo — `null` quando não apuradas. */
+  media_variaveis_decimo_terceiro?: number | null;
+  media_variaveis_ferias?: number | null;
+  media_variaveis_aviso_previo?: number | null;
+  medias_variaveis_composicao?: MediasVariaveisComposicao | null;
   /** Só nas SIMULAÇÕES (null nas fechadas e nas legado): o saldo de vale ainda
    *  cobrável. Numa rescisão fechada o saldo já foi resolvido — o fechamento
    *  recusa enquanto sobrar. */

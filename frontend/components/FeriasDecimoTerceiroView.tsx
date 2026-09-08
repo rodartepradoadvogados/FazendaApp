@@ -1,12 +1,14 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Plus, Check } from "lucide-react";
 import {
   fetchPessoas, fetchFerias, criarFerias, atualizarFerias,
   fetchDecimoTerceiro, criarDecimoTerceiro, atualizarDecimoTerceiro,
-  fetchContasCorrentes,
+  fetchContasCorrentes, fetchPreviaMediaVariaveis,
   formatBRL, type RegistroFerias, type RegistroDecimoTerceiro, type ContaCorrenteCadastro,
+  type ComposicaoMediaVariaveis,
 } from "@/lib/api";
+import { MediaVerbasVariaveis } from "@/components/MediaVerbasVariaveis";
 import { SecaoRecolhivel, type ModoSecaoCategoria } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -67,6 +69,14 @@ function FeriasSection({ pessoas, contasCorrentes, mostrar }: { pessoas: Pessoa[
   const [contaCorrenteId, setContaCorrenteId] = useState("");
 
   const [calculo, setCalculo] = useState<{ valor_ferias: number; valor_terco_constitucional: number; valor_abono: number; valor_total: number } | null>(null);
+  // A média das verbas variáveis do PERÍODO AQUISITIVO (CLT, art. 142) vem do
+  // SERVIDOR, e não de uma segunda conta feita aqui: a média sai das rubricas
+  // salariais já gravadas nas folhas, que o navegador não tem. Sem esta
+  // consulta, o "valor sugerido" desta tela passaria a divergir do valor que o
+  // servidor grava assim que a fazenda ligasse o parâmetro — e o dono só
+  // descobriria a diferença DEPOIS de lançar.
+  const [mediaPrevia, setMediaPrevia] = useState<ComposicaoMediaVariaveis | null>(null);
+  const [expandido, setExpandido] = useState<number | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
 
@@ -81,16 +91,34 @@ function FeriasSection({ pessoas, contasCorrentes, mostrar }: { pessoas: Pessoa[
 
   const pessoaSelecionada = useMemo(() => pessoas.find((p) => String(p.id) === pessoaId), [pessoas, pessoaId]);
 
-  function calcular() {
+  async function calcular() {
     setMsg(null);
     if (!pessoaSelecionada || !pessoaSelecionada.salario_base) {
       setMsg({ tipo: "erro", texto: "Selecione um funcionário com salário base cadastrado." });
       return;
     }
-    const salario = pessoaSelecionada.salario_base;
+    if (!periodoInicio || !periodoFim) {
+      setMsg({ tipo: "erro", texto: "Informe o período aquisitivo — é ele que define a janela da média de verbas variáveis." });
+      return;
+    }
+    // A média entra na BASE do dia de férias, e o terço incide sobre o total
+    // já somado (CLT, art. 142). Erro na consulta não pode impedir a
+    // conferência: cai para média zero, que é o comportamento de quem não
+    // ligou o parâmetro.
+    let media: ComposicaoMediaVariaveis | null = null;
+    try {
+      media = await fetchPreviaMediaVariaveis({
+        pessoa_id: pessoaSelecionada.id, janela: "periodo_aquisitivo",
+        inicio: periodoInicio, fim: periodoFim,
+      });
+    } catch {
+      media = null;
+    }
+    setMediaPrevia(media);
+    const base = pessoaSelecionada.salario_base + (media?.aplicada ? media.media : 0);
     const dg = parseInt(diasGozados, 10) || 0;
     const ab = parseInt(abonoDias, 10) || 0;
-    const valorDia = salario / 30;
+    const valorDia = base / 30;
     const valorFerias = Math.round(valorDia * dg * 100) / 100;
     const valorTerco = Math.round(valorFerias * (1 / 3) * 100) / 100;
     const valorAbono = ab > 0 ? Math.round(valorDia * ab * (1 + 1 / 3) * 100) / 100 : 0;
@@ -116,7 +144,7 @@ function FeriasSection({ pessoas, contasCorrentes, mostrar }: { pessoas: Pessoa[
       });
       setMsg({ tipo: "sucesso", texto: "Férias lançadas." });
       setPessoaId(""); setPeriodoInicio(""); setPeriodoFim(""); setDataInicioGozo(""); setDataFimGozo("");
-      setDiasGozados("30"); setAbonoDias("0"); setObservacao(""); setCalculo(null); setContaCorrenteId("");
+      setDiasGozados("30"); setAbonoDias("0"); setObservacao(""); setCalculo(null); setMediaPrevia(null); setContaCorrenteId("");
       carregar();
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar férias" });
@@ -209,6 +237,7 @@ function FeriasSection({ pessoas, contasCorrentes, mostrar }: { pessoas: Pessoa[
             <div style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: "0.2rem" }}>
               Valor sugerido só para conferência — o valor final é recalculado pelo servidor ao lançar.
             </div>
+            <MediaVerbasVariaveis composicao={mediaPrevia} compacto />
           </div>
         )}
 
@@ -240,22 +269,48 @@ function FeriasSection({ pessoas, contasCorrentes, mostrar }: { pessoas: Pessoa[
               </thead>
               <tbody>
                 {ordFerias.linhasOrdenadas.map((r) => (
-                  <tr key={r.id}>
-                    <td style={{ fontWeight: 700 }}>{r.pessoa_nome}</td>
-                    <td>{r.data_inicio_gozo} a {r.data_fim_gozo}</td>
-                    <td>{r.dias_gozados}</td>
-                    <td>{r.abono_pecuniario_dias || 0}</td>
-                    <td style={{ textAlign: "right", fontWeight: 600 }}>{formatBRL(r.valor_total)}</td>
-                    <td><StatusBadge status={r.status} /></td>
-                    <td>
-                      {r.status !== "pago" && (
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
-                          onClick={() => { setPagoErro(null); setPagandoId(pagandoId === r.id ? null : r.id); }}>
-                          Marcar como pago
-                        </button>
-                      )}
-                    </td>
-                  </tr>
+                  <Fragment key={r.id}>
+                    <tr>
+                      <td style={{ fontWeight: 700 }}>{r.pessoa_nome}</td>
+                      <td>{r.data_inicio_gozo} a {r.data_fim_gozo}</td>
+                      <td>{r.dias_gozados}</td>
+                      <td>{r.abono_pecuniario_dias || 0}</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>
+                        {formatBRL(r.valor_total)}
+                        {/* A média aparece JUNTO do valor, e não só dentro do
+                            detalhe: é ela que explica por que estas férias não
+                            são simplesmente o salário-base ÷ 30 × dias. */}
+                        {!!r.media_variaveis && (
+                          <div style={{ fontSize: "0.68rem", color: "var(--text-muted)", fontWeight: 400 }}>
+                            + média variáveis {formatBRL(r.media_variaveis)}
+                          </div>
+                        )}
+                      </td>
+                      <td><StatusBadge status={r.status} /></td>
+                      <td>
+                        {/* Só quando a média foi de fato apurada: um botão que
+                            abre uma linha dizendo "desligado" é ruído para
+                            quem escolheu não usar a feature. */}
+                        {r.media_variaveis_detalhe?.aplicada && (
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                            onClick={() => setExpandido(expandido === r.id ? null : r.id)}>
+                            {expandido === r.id ? "Ocultar média" : "Ver média"}
+                          </button>
+                        )}
+                        {r.status !== "pago" && (
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                            onClick={() => { setPagoErro(null); setPagandoId(pagandoId === r.id ? null : r.id); }}>
+                            Marcar como pago
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {expandido === r.id && (
+                      <tr><td colSpan={7}>
+                        <MediaVerbasVariaveis composicao={r.media_variaveis_detalhe} titulo="Férias" />
+                      </td></tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -296,6 +351,13 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes, mostrar }: { pessoas:
   const [contaCorrenteId, setContaCorrenteId] = useState("");
 
   const [valorCalculado, setValorCalculado] = useState<number | null>(null);
+  // Ver o comentário equivalente na seção de Férias: a média sai das rubricas
+  // salariais já gravadas nas folhas, que só o servidor conhece. Aqui a janela
+  // é o ANO CIVIL, e o divisor são os MESMOS avos digitados ao lado (Decreto
+  // 57.155/65, art. 2º) — dois números para a mesma contagem é como eles
+  // passam a divergir.
+  const [mediaPrevia, setMediaPrevia] = useState<ComposicaoMediaVariaveis | null>(null);
+  const [expandido, setExpandido] = useState<number | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
 
@@ -324,14 +386,25 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes, mostrar }: { pessoas:
     setValorCalculado(null);
   }, [pessoaSelecionada, ano]);
 
-  function calcular() {
+  async function calcular() {
     setMsg(null);
     if (!pessoaSelecionada || !pessoaSelecionada.salario_base) {
       setMsg({ tipo: "erro", texto: "Selecione um funcionário com salário base cadastrado." });
       return;
     }
     const meses = parseInt(mesesTrabalhados, 10) || 0;
-    const integral = Math.round((pessoaSelecionada.salario_base / 12) * meses * 100) / 100;
+    let media: ComposicaoMediaVariaveis | null = null;
+    try {
+      media = await fetchPreviaMediaVariaveis({
+        pessoa_id: pessoaSelecionada.id, janela: "ano_civil",
+        ano: parseInt(ano, 10), meses_trabalhados: meses,
+      });
+    } catch {
+      media = null;
+    }
+    setMediaPrevia(media);
+    const base = pessoaSelecionada.salario_base + (media?.aplicada ? media.media : 0);
+    const integral = Math.round((base / 12) * meses * 100) / 100;
     // A 1ª parcela é ADIANTAMENTO de até 50% do 13º (Lei 4.749/1965, art. 2º).
     // Esta tela sugeria o 13º cheio para as três parcelas, batendo com o
     // servidor, que também gravava cheio — era o 13º pago em dobro. O
@@ -353,7 +426,7 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes, mostrar }: { pessoas:
         conta_corrente_id: contaCorrenteId ? Number(contaCorrenteId) : undefined,
       });
       setMsg({ tipo: "sucesso", texto: "13º salário lançado." });
-      setPessoaId(""); setObservacao(""); setValorCalculado(null); setContaCorrenteId("");
+      setPessoaId(""); setObservacao(""); setValorCalculado(null); setMediaPrevia(null); setContaCorrenteId("");
       carregar();
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar 13º salário" });
@@ -436,6 +509,7 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes, mostrar }: { pessoas:
                 ? "Adiantamento de 50% do 13º (Lei 4.749/1965) — sem INSS/IR, que incidem só na 2ª parcela."
                 : "INSS/IR (se houver) são informados na edição — o servidor recalcula o bruto ao lançar, descontando o que já foi lançado no ano."}
             </div>
+            <MediaVerbasVariaveis composicao={mediaPrevia} compacto />
           </div>
         )}
 
@@ -467,22 +541,45 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes, mostrar }: { pessoas:
               </thead>
               <tbody>
                 {ordDecimo.linhasOrdenadas.map((r) => (
-                  <tr key={r.id}>
-                    <td style={{ fontWeight: 700 }}>{r.pessoa_nome}</td>
-                    <td>{r.ano}</td>
-                    <td>{LABEL_PARCELA[r.parcela || "unica"] || r.parcela}</td>
-                    <td>{r.meses_trabalhados}</td>
-                    <td style={{ textAlign: "right", fontWeight: 600 }}>{formatBRL(r.valor_liquido)}</td>
-                    <td><StatusBadge status={r.status} /></td>
-                    <td>
-                      {r.status !== "pago" && (
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
-                          onClick={() => { setPagoErro(null); setPagandoId(pagandoId === r.id ? null : r.id); }}>
-                          Marcar como pago
-                        </button>
-                      )}
-                    </td>
-                  </tr>
+                  <Fragment key={r.id}>
+                    <tr>
+                      <td style={{ fontWeight: 700 }}>{r.pessoa_nome}</td>
+                      <td>{r.ano}</td>
+                      <td>{LABEL_PARCELA[r.parcela || "unica"] || r.parcela}</td>
+                      <td>{r.meses_trabalhados}</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>
+                        {formatBRL(r.valor_liquido)}
+                        {!!r.media_variaveis && (
+                          <div style={{ fontSize: "0.68rem", color: "var(--text-muted)", fontWeight: 400 }}>
+                            + média variáveis {formatBRL(r.media_variaveis)}
+                          </div>
+                        )}
+                      </td>
+                      <td><StatusBadge status={r.status} /></td>
+                      <td>
+                        {/* Só quando a média foi de fato apurada: um botão que
+                            abre uma linha dizendo "desligado" é ruído para
+                            quem escolheu não usar a feature. */}
+                        {r.media_variaveis_detalhe?.aplicada && (
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                            onClick={() => setExpandido(expandido === r.id ? null : r.id)}>
+                            {expandido === r.id ? "Ocultar média" : "Ver média"}
+                          </button>
+                        )}
+                        {r.status !== "pago" && (
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                            onClick={() => { setPagoErro(null); setPagandoId(pagandoId === r.id ? null : r.id); }}>
+                            Marcar como pago
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {expandido === r.id && (
+                      <tr><td colSpan={7}>
+                        <MediaVerbasVariaveis composicao={r.media_variaveis_detalhe} titulo="13º salário" />
+                      </td></tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

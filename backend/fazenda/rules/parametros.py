@@ -163,6 +163,24 @@ DEFINICOES: list[dict] = [
     # FGTS cadastrado (ver `fazenda.rules.folha_rh.calcular_rescisao`).
     {"chave": "percentual_estimado_fgts_mensal", "grupo": "folha_rh", "label": "Estimativa de depósito mensal de FGTS", "valor": 0.08, "tipo": "float", "unidade": "fração"},
 
+    # ---- Folha de pagamento / RH — média das verbas variáveis habituais ----
+    # LIGA a integração das parcelas SALARIAIS VARIÁVEIS (bonificação por
+    # produtividade, gueltas, vale-alimentação de natureza salarial e o que
+    # mais o catálogo enquadrar como salarial) nas bases de 13º, férias e
+    # rescisão — CLT, art. 457, §1º, e Súmula 45 do TST; as janelas de cada
+    # verba estão em `rules/media_verbas_habituais.py`.
+    #
+    # PADRÃO FALSO, e o padrão é o requisito, textual, do dono: "tem que ser
+    # de modo que possa ser configurável, para usar ou não, pois a fazenda
+    # pode não querer controlar os detalhes e deixar só com a contabilidade
+    # externa". Desligado, o 13º, as férias e a rescisão saem exatamente como
+    # sempre saíram (só sobre o salário-base) — nenhuma fazenda existente muda
+    # de comportamento sem alguém escolher. Ligado, a média entra a partir do
+    # PRÓXIMO lançamento: nada já pago ou fechado é recalculado.
+    {"chave": "calcula_media_verbas_variaveis", "grupo": "folha_rh",
+     "label": "O sistema calcula as médias de verbas variáveis no 13º, férias e rescisão",
+     "valor": "false", "tipo": "bool"},
+
     # ---- Folha de pagamento / RH — vale-alimentação -------------------------
     # O PAT é fato da FAZENDA, não do funcionário, e por isso mora aqui e não
     # em `Pessoa`. Ele muda a NATUREZA da verba em duas das quatro linhas da
@@ -552,6 +570,18 @@ def dias_ferias_padrao() -> int:
     """Dias de férias padrão (direito integral por período aquisitivo) —
     sugestão inicial no lançamento de férias, sempre editável."""
     return int(get_param("dias_ferias_padrao", 30) or 30)
+
+
+def calcula_media_verbas_variaveis() -> bool:
+    """A fazenda quer que o sistema apure a média das parcelas salariais
+    VARIÁVEIS habituais (bonificação, gueltas, vale-alimentação salarial…) e a
+    some às bases de 13º, férias e rescisão? Padrão FALSO — desligado, as três
+    contas saem só sobre o salário-base, exatamente como antes desta feature.
+
+    Ver `rules/media_verbas_habituais.py` para as janelas de cada verba (ano
+    civil no 13º, período aquisitivo nas férias, últimos 12 meses no aviso
+    prévio indenizado) e para o fundamento de cada uma."""
+    return get_param_bool("calcula_media_verbas_variaveis", False)
 
 
 def fazenda_inscrita_no_pat() -> bool:

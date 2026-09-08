@@ -65,26 +65,36 @@ função — é o ÚNICO ponto de verdade do sistema sobre isso, e nada aqui nem
 em `rh_folha.py` reimplementa a regra.
 
 ────────────────────────────────────────────────────────────────────────────
-LIMITE CONHECIDO — 13º E FÉRIAS
+13º, FÉRIAS E RESCISÃO — o limite que era conhecido, e como ele foi fechado
 ────────────────────────────────────────────────────────────────────────────
 Quando a natureza é salarial, o benefício ENTRA nas bases de INSS, IRRF e FGTS
 da folha mensal: a linha nasce com `incide_inss`/`incide_irrf`/`incide_fgts`
 verdadeiros e `rubrica_folha.base_extra` a soma à base sobre a qual o
-percentual é aplicado. Esse caminho existe e está coberto por teste.
+percentual é aplicado.
 
-O 13º e as FÉRIAS deste sistema, porém, são calculados só sobre
-`Pessoa.salario_base` (`rules/folha_rh.py::calcular_ferias`,
-`calcular_decimo_terceiro`, `calcular_rescisao`) — eles não consultam rubrica
-NENHUMA. Não é uma lacuna do vale-alimentação: bonificação por produtividade,
-gueltas e todas as demais verbas salariais do catálogo têm hoje exatamente o
-mesmo tratamento, porque o sistema não tem o conceito de "média das parcelas
-salariais habituais" (art. 457, §1º, da CLT; Súmulas 45 e 253 do TST) de que
-essa integração dependeria. Fazer o VA salarial integrar 13º/férias sem esse
-conceito seria escolher uma média por conta própria — quantos meses, quais
-competências — e aplicá-la de imediato a TODAS as verbas salariais de TODAS as
-fazendas. Fica registrado como decisão consciente e como o próximo passo:
-quando houver a média habitual, ela entra em `folha_rh.py` para o catálogo
-inteiro de uma vez, e não por um atalho só para esta verba.
+O 13º, as FÉRIAS e a RESCISÃO eram calculados só sobre `Pessoa.salario_base`
+(`rules/folha_rh.py`), sem consultar rubrica nenhuma. Não era lacuna do
+vale-alimentação: bonificação por produtividade, gueltas e todas as demais
+verbas salariais do catálogo tinham o mesmo tratamento, porque faltava ao
+sistema o conceito de "média das parcelas salariais habituais" (art. 457, §1º,
+da CLT; Súmula 45 do TST). Ficava registrado aqui como decisão consciente e
+como o próximo passo — e o próximo passo foi dado, exatamente como estava
+prometido: para o CATÁLOGO INTEIRO de uma vez, e não por um atalho só para
+esta verba.
+
+O conceito mora agora em `rules/media_verbas_habituais.py`, e este módulo
+continua não sabendo nada sobre ele. A média soma as `FolhaRubrica` de
+`especie == "vencimento"` e `natureza == "salarial"` — ou seja, ela lê a
+natureza que `_sincronizar_vale_alimentacao` já gravou na linha a partir da
+árvore de `natureza_do_vale_alimentacao`. Consequência direta e correta: o VA
+pago em DINHEIRO (salarial) integra 13º, férias e rescisão; o VA em
+cartão/ticket (indenizatório) não integra — sem uma única linha de exceção
+para o vale-alimentação em nenhum dos dois lados.
+
+E nada disso liga sozinho: a média depende do parâmetro
+`calcula_media_verbas_variaveis` da fazenda, DESLIGADO por padrão (ver
+`rules/parametros.py`). Desligado, o 13º, as férias e a rescisão saem
+exatamente como sempre saíram.
 
 Funções puras, sem I/O: quem chama carrega a `Pessoa`, lê os parâmetros da
 fazenda (`rules/parametros.py`) e passa tudo. A gravação da linha (e a recusa

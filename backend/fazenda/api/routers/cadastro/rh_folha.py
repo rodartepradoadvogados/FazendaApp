@@ -29,16 +29,18 @@ from fazenda.models import (
 from fazenda.api.routers.financeiro import TAMANHO_MAXIMO_ANEXO, _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
-from fazenda.rules import holerite, rubrica_folha, vale_alimentacao
+from fazenda.rules import holerite, media_verbas_habituais, rubrica_folha, vale_alimentacao
 from fazenda.rules.folha_rh import (
     PARCELAS_DECIMO_TERCEIRO,
     calcular_decimo_terceiro,
     calcular_ferias,
     calcular_rescisao,
+    inicio_periodo_aquisitivo_atual,
     retencoes_permitidas_decimo_terceiro,
     valor_parcela_decimo_terceiro,
 )
 from fazenda.rules.parametros import (
+    calcula_media_verbas_variaveis,
     dias_ferias_padrao,
     fazenda_inscrita_no_pat,
     percentual_estimado_fgts_mensal,
@@ -1952,6 +1954,193 @@ def excluir_guia_folha_encargo(
 
 
 # ---------------------------------------------------------------------------
+# Média das verbas variáveis habituais — a cola entre o parâmetro da fazenda,
+# a apuração com banco (`rules/media_verbas_habituais.py`) e as funções PURAS
+# de `rules/folha_rh.py`, que só sabem receber um float.
+#
+# É AQUI, E SÓ AQUI, QUE O INTERRUPTOR É LIDO. Desligado (o padrão), estas
+# funções devolvem `(0.0, composição "não apurada")` sem tocar no banco, e as
+# três contas de RH saem byte a byte iguais ao que sempre saíram — que é o
+# requisito literal do dono ("possa ser configurável, para usar ou não, pois a
+# fazenda pode não querer controlar os detalhes e deixar só com a
+# contabilidade externa"). Ligado, a média entra a partir do PRÓXIMO
+# lançamento: nada já pago ou fechado é recalculado, porque os endpoints de
+# edição já recusam registro pago/fechado antes de chegar aqui.
+# ---------------------------------------------------------------------------
+def _media_desligada(janela: str) -> tuple[float, dict]:
+    return 0.0, media_verbas_habituais.nao_apurada(janela)
+
+
+def _media_ferias(
+    session: Session, pessoa_id: int, fazenda_id: int | None,
+    periodo_inicio: date, periodo_fim: date, pessoa: Pessoa,
+) -> tuple[float, dict]:
+    """Média das variáveis do PERÍODO AQUISITIVO das férias (CLT, art. 142,
+    §§ 1º a 6º) — o período que o próprio lançamento informa, não uma
+    aproximação: `FeriasFuncionario` grava início e fim desde sempre."""
+    if not calcula_media_verbas_variaveis():
+        return _media_desligada(media_verbas_habituais.JANELA_PERIODO_AQUISITIVO)
+    composicao = media_verbas_habituais.media_do_periodo_aquisitivo(
+        session, pessoa_id, fazenda_id, periodo_inicio, periodo_fim,
+        data_admissao=pessoa.data_admissao,
+    )
+    return composicao["media"], composicao
+
+
+def _media_decimo_terceiro(
+    session: Session, pessoa_id: int, fazenda_id: int | None, ano: int,
+    meses_trabalhados: int, pessoa: Pessoa,
+) -> tuple[float, dict]:
+    """Média das variáveis do ANO CIVIL (Lei 4.090/62, art. 1º, §1º; Decreto
+    57.155/65, art. 2º), dividida pelos MESMOS avos que o lançamento usa para
+    proporcionalizar o 13º — dois números para a mesma contagem é como eles
+    passam a divergir.
+
+    O QUE ISSO ASSUME, e é bom estar escrito: que `meses_trabalhados` é mesmo
+    o número de meses de VIGÊNCIA DO CONTRATO no ano — que é o que o campo
+    significa (a tela até o sugere a partir da data de admissão) e o que o
+    decreto manda usar como divisor. Quem baixar os avos à mão para pagar
+    menos 13º sem que o contrato tenha durado menos vai ver a média subir na
+    mesma proporção; a composição gravada declara o divisor e o critério dele
+    (`criterio_divisor`), justamente para essa conta ficar conferível em vez
+    de virar surpresa no holerite.
+
+    O NUMERADOR já é recortado pela ADMISSÃO dentro da própria apuração, então
+    no caso comum — admitido no meio do ano — o divisor imposto e o calculado
+    coincidem, e a média sai igual com ou sem esta imposição."""
+    if not calcula_media_verbas_variaveis():
+        return _media_desligada(media_verbas_habituais.JANELA_ANO_CIVIL)
+    composicao = media_verbas_habituais.media_do_ano_civil(
+        session, pessoa_id, fazenda_id, ano,
+        data_admissao=pessoa.data_admissao, divisor=meses_trabalhados,
+    )
+    return composicao["media"], composicao
+
+
+def _medias_rescisao(
+    session: Session, pessoa: Pessoa, fazenda_id: int | None, data_desligamento: date,
+) -> tuple[float, float, float, dict]:
+    """As TRÊS médias da rescisão — uma por natureza de verba, nunca uma só:
+    13º proporcional pelo ANO CIVIL do desligamento, férias vencidas e
+    proporcionais pelo PERÍODO AQUISITIVO em curso, aviso prévio indenizado
+    pelos ÚLTIMOS 12 MESES. Devolve as três + o dicionário de composições que
+    vai congelado no registro.
+
+    O período aquisitivo em curso sai de `folha_rh.inicio_periodo_aquisitivo_atual`
+    — a MESMA função que `calcular_rescisao` usa para contar os avos das
+    férias proporcionais. Recalcular o aniversário de admissão por aqui seria
+    a segunda contagem a divergir.
+
+    A janela do 13º e a do período aquisitivo param no DESLIGAMENTO, não na
+    data projetada do aviso prévio (Súmula 371 do TST): o contrato se projeta
+    para efeito de avos, mas nenhuma verba variável é recebida no período
+    projetado — somar meses vazios ao divisor diluiria a média sem nenhum fato
+    por trás."""
+    if not calcula_media_verbas_variaveis():
+        _, sem_13 = _media_desligada(media_verbas_habituais.JANELA_ANO_CIVIL)
+        _, sem_ferias = _media_desligada(media_verbas_habituais.JANELA_PERIODO_AQUISITIVO)
+        _, sem_aviso = _media_desligada(media_verbas_habituais.JANELA_ULTIMOS_12_MESES)
+        return 0.0, 0.0, 0.0, {
+            "decimo_terceiro": sem_13, "ferias": sem_ferias, "aviso_previo": sem_aviso,
+        }
+
+    inicio_aquisitivo = inicio_periodo_aquisitivo_atual(pessoa.data_admissao, data_desligamento)
+    comp_13 = media_verbas_habituais.media_do_ano_civil(
+        session, pessoa.id, fazenda_id, data_desligamento.year,
+        data_admissao=pessoa.data_admissao, data_desligamento=data_desligamento,
+    )
+    comp_ferias = media_verbas_habituais.media_do_periodo_aquisitivo(
+        session, pessoa.id, fazenda_id, inicio_aquisitivo, data_desligamento,
+        data_admissao=pessoa.data_admissao, data_desligamento=data_desligamento,
+    )
+    comp_aviso = media_verbas_habituais.media_dos_ultimos_12_meses(
+        session, pessoa.id, fazenda_id, data_desligamento,
+        data_admissao=pessoa.data_admissao, data_desligamento=data_desligamento,
+    )
+    return (
+        comp_13["media"], comp_ferias["media"], comp_aviso["media"],
+        {"decimo_terceiro": comp_13, "ferias": comp_ferias, "aviso_previo": comp_aviso},
+    )
+
+
+def _composicao_gravada(bruto: str | None) -> dict | None:
+    """O JSON congelado da média de volta como dicionário, para a listagem e o
+    recibo. JSON quebrado (edição manual no banco, truncamento) devolve None
+    em vez de derrubar a tela inteira — mesmo cuidado de
+    `_discriminacao_congelada`."""
+    if not bruto:
+        return None
+    try:
+        carregado = json.loads(bruto)
+    except (ValueError, TypeError):
+        return None
+    return carregado if isinstance(carregado, dict) else None
+
+
+@router.get("/media-verbas-variaveis")
+def previa_media_verbas_variaveis(
+    pessoa_id: int,
+    janela: str,
+    inicio: date | None = None,
+    fim: date | None = None,
+    ano: int | None = None,
+    meses_trabalhados: int | None = None,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """
+    PRÉVIA da média de verbas variáveis habituais, com a composição inteira —
+    só lê, não grava nada.
+
+    Existe porque a tela de férias/13º calcula um "valor sugerido" no próprio
+    navegador, a partir do salário-base, ANTES de salvar. Sem este endpoint,
+    esse número passaria a divergir do valor que o servidor gravaria assim que
+    a fazenda ligasse o parâmetro — e o dono descobriria a diferença depois do
+    lançamento, que é exatamente o momento errado.
+
+    `janela` é uma das três de `rules/media_verbas_habituais.py`:
+    - `ano_civil`            → exige `ano` (e aceita `meses_trabalhados` como
+                               divisor, os mesmos avos do 13º);
+    - `periodo_aquisitivo`   → exige `inicio` e `fim`;
+    - `ultimos_12_meses`     → exige `fim` (a data do desligamento).
+
+    Recorte de fazenda INCONDICIONAL: a pessoa é buscada com o filtro dentro
+    da consulta e a ausência devolve 404, nunca 403 — quem não é da fazenda
+    não fica sabendo nem que o id existe.
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    pessoa = session.exec(
+        select(Pessoa).where(Pessoa.id == pessoa_id, Pessoa.fazenda_id == fazenda_id)
+    ).first()
+    if not pessoa:
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+
+    if not calcula_media_verbas_variaveis():
+        return media_verbas_habituais.nao_apurada(janela)
+
+    if janela == media_verbas_habituais.JANELA_ANO_CIVIL:
+        if ano is None:
+            raise HTTPException(status_code=400, detail="Informe o ano para a média do ano civil")
+        return media_verbas_habituais.media_do_ano_civil(
+            session, pessoa_id, fazenda_id, ano,
+            data_admissao=pessoa.data_admissao, divisor=meses_trabalhados,
+        )
+    if janela == media_verbas_habituais.JANELA_PERIODO_AQUISITIVO:
+        if inicio is None or fim is None:
+            raise HTTPException(status_code=400, detail="Informe início e fim do período aquisitivo")
+        return media_verbas_habituais.media_do_periodo_aquisitivo(
+            session, pessoa_id, fazenda_id, inicio, fim, data_admissao=pessoa.data_admissao,
+        )
+    if janela == media_verbas_habituais.JANELA_ULTIMOS_12_MESES:
+        if fim is None:
+            raise HTTPException(status_code=400, detail="Informe a data de referência (desligamento)")
+        return media_verbas_habituais.media_dos_ultimos_12_meses(
+            session, pessoa_id, fazenda_id, fim, data_admissao=pessoa.data_admissao,
+        )
+    raise HTTPException(status_code=400, detail="Janela de média inválida")
+
+
+# ---------------------------------------------------------------------------
 # Férias — cálculo (dias gozados + 1/3 constitucional + abono pecuniário
 # opcional) e lançamento em Contas a Pagar. Sem envio ao eSocial (fora de
 # escopo) — só o controle interno do que a fazenda já paga hoje.
@@ -2036,7 +2225,15 @@ def listar_ferias(
     registros = session.exec(query.order_by(FeriasFuncionario.data_inicio_gozo.desc())).all()
     nomes_usuarios = mapa_usuarios(session, {r.usuario_id for r in registros})
     return [
-        {**r.model_dump(), "pessoa_nome": pessoas.get(r.pessoa_id, "—"), "usuario_nome": nomes_usuarios.get(r.usuario_id)}
+        {
+            **r.model_dump(), "pessoa_nome": pessoas.get(r.pessoa_id, "—"),
+            "usuario_nome": nomes_usuarios.get(r.usuario_id),
+            # A composição CONGELADA da média, já como objeto — é ela que a
+            # tela abre para o dono conferir competência a competência de onde
+            # saiu o valor. Nunca reapurada aqui: o que o recibo mostra tem de
+            # ser o que produziu o valor gravado.
+            "media_variaveis_detalhe": _composicao_gravada(r.media_variaveis_composicao),
+        }
         for r in registros
     ]
 
@@ -2059,8 +2256,15 @@ def criar_ferias(
     # Snapshot do salário no momento do lançamento — daqui pra frente é ELE
     # que manda no recálculo (ver o PUT), não o Pessoa.salario_base de hoje.
     salario_base = pessoa.salario_base
+    # Média das variáveis do PERÍODO AQUISITIVO informado (CLT, art. 142) —
+    # zero, e sem tocar no banco, quando a fazenda não ligou o parâmetro.
+    media, composicao_media = _media_ferias(
+        session, dados.pessoa_id, fazenda_id,
+        dados.periodo_aquisitivo_inicio, dados.periodo_aquisitivo_fim, pessoa,
+    )
     calculo = calcular_ferias(
-        salario_base, dados.dias_gozados, dados.abono_pecuniario_dias, percentual_terco_constitucional_ferias(),
+        salario_base, dados.dias_gozados, dados.abono_pecuniario_dias,
+        percentual_terco_constitucional_ferias(), media,
     )
     numero_lancamento = _proximo_numero_lancamento(session, dados.data_fim_gozo.year)
 
@@ -2071,6 +2275,11 @@ def criar_ferias(
         data_inicio_gozo=dados.data_inicio_gozo, data_fim_gozo=dados.data_fim_gozo,
         abono_pecuniario_dias=dados.abono_pecuniario_dias,
         salario_base=salario_base,
+        # SNAPSHOT, como `salario_base` acima: a média e a composição que a
+        # produziram ficam congeladas neste lançamento. Uma folha lançada
+        # amanhã não pode mudar o valor destas férias.
+        media_variaveis=media if composicao_media["aplicada"] else None,
+        media_variaveis_composicao=json.dumps(composicao_media, ensure_ascii=False),
         valor_ferias=calculo["valor_ferias"], valor_terco_constitucional=calculo["valor_terco_constitucional"],
         valor_abono=calculo["valor_abono"],
         valor_total=calculo["valor_total"],
@@ -2100,7 +2309,12 @@ def criar_ferias(
     ))
     session.commit()
     session.refresh(registro)
-    return registro.model_dump()
+    return {
+        **registro.model_dump(),
+        # A composição da média volta já no POST/PUT para a tela poder
+        # mostrar de onde saiu o valor sem uma segunda requisição.
+        "media_variaveis_detalhe": _composicao_gravada(registro.media_variaveis_composicao),
+    }
 
 
 @router.put("/ferias/{registro_id}")
@@ -2139,10 +2353,22 @@ def atualizar_ferias(
     salario_base = registro.salario_base
     if salario_base is None or dados.pessoa_id != registro.pessoa_id:
         salario_base = pessoa.salario_base
+    # A MÉDIA É REAPURADA NO PUT, e não reaproveitada do snapshot, porque o
+    # PUT pode ter mudado o que a define: a pessoa, o período aquisitivo. Isso
+    # NÃO é recálculo de registro pago — férias pagas já foram recusadas lá em
+    # cima (o `status == "pago"` no topo desta função), que é a mesma guarda
+    # que `_sincronizar_vale_alimentacao` aplica à folha congelada.
+    media, composicao_media = _media_ferias(
+        session, dados.pessoa_id, fazenda_id,
+        dados.periodo_aquisitivo_inicio, dados.periodo_aquisitivo_fim, pessoa,
+    )
     calculo = calcular_ferias(
-        salario_base, dados.dias_gozados, dados.abono_pecuniario_dias, percentual_terco_constitucional_ferias(),
+        salario_base, dados.dias_gozados, dados.abono_pecuniario_dias,
+        percentual_terco_constitucional_ferias(), media,
     )
     registro.salario_base = salario_base
+    registro.media_variaveis = media if composicao_media["aplicada"] else None
+    registro.media_variaveis_composicao = json.dumps(composicao_media, ensure_ascii=False)
     registro.pessoa_id = dados.pessoa_id
     registro.periodo_aquisitivo_inicio = dados.periodo_aquisitivo_inicio
     registro.periodo_aquisitivo_fim = dados.periodo_aquisitivo_fim
@@ -2180,7 +2406,12 @@ def atualizar_ferias(
 
     session.commit()
     session.refresh(registro)
-    return registro.model_dump()
+    return {
+        **registro.model_dump(),
+        # A composição da média volta já no POST/PUT para a tela poder
+        # mostrar de onde saiu o valor sem uma segunda requisição.
+        "media_variaveis_detalhe": _composicao_gravada(registro.media_variaveis_composicao),
+    }
 
 
 @router.delete("/ferias/{registro_id}")
@@ -2302,7 +2533,12 @@ def listar_decimo_terceiro(
     registros = session.exec(query.order_by(DecimoTerceiro.ano.desc())).all()
     nomes_usuarios = mapa_usuarios(session, {r.usuario_id for r in registros})
     return [
-        {**r.model_dump(), "pessoa_nome": pessoas.get(r.pessoa_id, "—"), "usuario_nome": nomes_usuarios.get(r.usuario_id)}
+        {
+            **r.model_dump(), "pessoa_nome": pessoas.get(r.pessoa_id, "—"),
+            "usuario_nome": nomes_usuarios.get(r.usuario_id),
+            # Composição congelada da média do ano civil — ver `listar_ferias`.
+            "media_variaveis_detalhe": _composicao_gravada(r.media_variaveis_composicao),
+        }
         for r in registros
     ]
 
@@ -2328,7 +2564,12 @@ def criar_decimo_terceiro(
     # trocava o rótulo e o vencimento. Lançar 1ª + 2ª de um salário de
     # R$ 3.000 punha R$ 6.000 em Contas a Pagar.
     salario_base = pessoa.salario_base
-    valor_integral = calcular_decimo_terceiro(salario_base, dados.meses_trabalhados)
+    # Média das variáveis do ANO CIVIL, com divisor = os MESMOS avos que o
+    # lançamento usa para proporcionalizar o 13º (Decreto 57.155/65, art. 2º).
+    media, composicao_media = _media_decimo_terceiro(
+        session, dados.pessoa_id, fazenda_id, dados.ano, dados.meses_trabalhados, pessoa,
+    )
+    valor_integral = calcular_decimo_terceiro(salario_base, dados.meses_trabalhados, media)
     ja_lancado = _decimo_terceiro_ja_lancado(session, dados.pessoa_id, dados.ano, fazenda_id)
     valor_bruto = valor_parcela_decimo_terceiro(valor_integral, dados.parcela, ja_lancado)
     if valor_bruto <= 0:
@@ -2347,7 +2588,11 @@ def criar_decimo_terceiro(
 
     registro = DecimoTerceiro(
         pessoa_id=dados.pessoa_id, ano=dados.ano, parcela=dados.parcela, meses_trabalhados=dados.meses_trabalhados,
-        salario_base=salario_base, valor_integral=valor_integral,
+        salario_base=salario_base,
+        # Snapshot da média e da sua composição — ver `criar_ferias`.
+        media_variaveis=media if composicao_media["aplicada"] else None,
+        media_variaveis_composicao=json.dumps(composicao_media, ensure_ascii=False),
+        valor_integral=valor_integral,
         valor_bruto=valor_bruto, valor_inss=valor_inss, valor_ir=valor_ir, valor_liquido=valor_liquido,
         data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
         numero_lancamento_gerado=numero_lancamento, centro_custo=dados.centro_custo,
@@ -2373,7 +2618,12 @@ def criar_decimo_terceiro(
     ))
     session.commit()
     session.refresh(registro)
-    return registro.model_dump()
+    return {
+        **registro.model_dump(),
+        # A composição da média volta já no POST/PUT para a tela poder
+        # mostrar de onde saiu o valor sem uma segunda requisição.
+        "media_variaveis_detalhe": _composicao_gravada(registro.media_variaveis_composicao),
+    }
 
 
 @router.put("/decimo-terceiro/{registro_id}")
@@ -2407,7 +2657,12 @@ def atualizar_decimo_terceiro(
     salario_base = registro.salario_base
     if salario_base is None or dados.pessoa_id != registro.pessoa_id:
         salario_base = pessoa.salario_base
-    valor_integral = calcular_decimo_terceiro(salario_base, dados.meses_trabalhados)
+    # Reapurada aqui pelo mesmo motivo de `atualizar_ferias`: o PUT pode ter
+    # mudado a pessoa, o ano ou os avos. 13º já pago foi recusado no topo.
+    media, composicao_media = _media_decimo_terceiro(
+        session, dados.pessoa_id, fazenda_id, dados.ano, dados.meses_trabalhados, pessoa,
+    )
+    valor_integral = calcular_decimo_terceiro(salario_base, dados.meses_trabalhados, media)
     ja_lancado = _decimo_terceiro_ja_lancado(
         session, dados.pessoa_id, dados.ano, fazenda_id, ignorar_id=registro.id,
     )
@@ -2428,6 +2683,8 @@ def atualizar_decimo_terceiro(
     registro.parcela = dados.parcela
     registro.meses_trabalhados = dados.meses_trabalhados
     registro.salario_base = salario_base
+    registro.media_variaveis = media if composicao_media["aplicada"] else None
+    registro.media_variaveis_composicao = json.dumps(composicao_media, ensure_ascii=False)
     registro.valor_integral = valor_integral
     registro.valor_bruto = valor_bruto
     registro.valor_inss = valor_inss
@@ -2459,7 +2716,12 @@ def atualizar_decimo_terceiro(
 
     session.commit()
     session.refresh(registro)
-    return registro.model_dump()
+    return {
+        **registro.model_dump(),
+        # A composição da média volta já no POST/PUT para a tela poder
+        # mostrar de onde saiu o valor sem uma segunda requisição.
+        "media_variaveis_detalhe": _composicao_gravada(registro.media_variaveis_composicao),
+    }
 
 
 @router.delete("/decimo-terceiro/{registro_id}")
@@ -2614,6 +2876,9 @@ def _calcular_rescisao_pessoa(dados: RescisaoIn, session: Session, fazenda_id: i
         raise HTTPException(status_code=400, detail="Pessoa não tem data de admissão cadastrada")
     _validar_rescisao(dados, pessoa)
 
+    media_13, media_ferias, media_aviso, composicoes = _medias_rescisao(
+        session, pessoa, fazenda_id, dados.data_desligamento,
+    )
     calculo = calcular_rescisao(
         pessoa.salario_base,
         pessoa.data_admissao,
@@ -2623,7 +2888,15 @@ def _calcular_rescisao_pessoa(dados: RescisaoIn, session: Session, fazenda_id: i
         dados.aviso_previo_trabalhado,
         percentual_terco_constitucional_ferias(),
         percentual_estimado_fgts_mensal(),
+        media_13,
+        media_ferias,
+        media_aviso,
     )
+    # A composição viaja junto com a SIMULAÇÃO (este endpoint não grava nada):
+    # é o que permite à tela mostrar de onde saiu cada média ANTES de o dono
+    # decidir lançar. Média que só aparece depois do lançamento é média que
+    # ninguém confere.
+    calculo = {**calculo, "medias_variaveis_composicao": composicoes}
     return pessoa, calculo
 
 
@@ -2729,12 +3002,24 @@ def _pessoa_para_rescisao(dados: RescisaoSimulacaoIn, session: Session, fazenda_
     return pessoa
 
 
-def _aplicar_calculo_rescisao(dados: RescisaoSimulacaoIn, pessoa: Pessoa, registro: RescisaoFuncionario) -> None:
-    """Roda o cálculo puro `calcular_rescisao` (inalterado) e grava o
-    resultado no `registro`: cada uma das 6 verbas usa o valor informado por
-    `dados` quando presente (override manual), senão o valor calculado.
+def _aplicar_calculo_rescisao(
+    dados: RescisaoSimulacaoIn, pessoa: Pessoa, registro: RescisaoFuncionario,
+    session: Session, fazenda_id: int | None,
+) -> None:
+    """Roda o cálculo puro `calcular_rescisao` e grava o resultado no
+    `registro`: cada uma das 6 verbas usa o valor informado por `dados` quando
+    presente (override manual), senão o valor calculado.
     `valor_bruto`/`valor_total` são SEMPRE recomputados aqui a partir das 6
-    verbas já resolvidas e das deduções — nunca aceitos prontos do cliente."""
+    verbas já resolvidas e das deduções — nunca aceitos prontos do cliente.
+
+    RECEBE `session` E `fazenda_id` porque as três médias de verbas variáveis
+    habituais precisam de banco (elas leem as `FolhaRubrica` já gravadas, com
+    a natureza congelada no lançamento). Os dois chamadores — criar e atualizar
+    SIMULAÇÃO — já recusaram a rescisão FECHADA antes de chegar aqui, então
+    esta função nunca recalcula uma rescisão que virou dinheiro."""
+    media_13, media_ferias, media_aviso, composicoes = _medias_rescisao(
+        session, pessoa, fazenda_id, dados.data_desligamento,
+    )
     calculo = calcular_rescisao(
         pessoa.salario_base,
         pessoa.data_admissao,
@@ -2744,6 +3029,9 @@ def _aplicar_calculo_rescisao(dados: RescisaoSimulacaoIn, pessoa: Pessoa, regist
         dados.aviso_previo_trabalhado,
         percentual_terco_constitucional_ferias(),
         percentual_estimado_fgts_mensal(),
+        media_13,
+        media_ferias,
+        media_aviso,
     )
 
     def _resolver(override: float | None, calculado: float) -> float:
@@ -2758,6 +3046,15 @@ def _aplicar_calculo_rescisao(dados: RescisaoSimulacaoIn, pessoa: Pessoa, regist
     registro.centro_custo = dados.centro_custo
     registro.salario_base = pessoa.salario_base
     registro.data_admissao = pessoa.data_admissao
+    # Snapshot das TRÊS médias e das TRÊS composições — cada verba tem a sua
+    # janela (ver `_medias_rescisao`). NULL quando o parâmetro está desligado:
+    # "não apurada" é informação diferente de "apurada e deu zero", e o TRCT
+    # mostra uma coisa ou outra.
+    aplicada = composicoes["decimo_terceiro"]["aplicada"]
+    registro.media_variaveis_decimo_terceiro = media_13 if aplicada else None
+    registro.media_variaveis_ferias = media_ferias if aplicada else None
+    registro.media_variaveis_aviso_previo = media_aviso if aplicada else None
+    registro.media_variaveis_composicao = json.dumps(composicoes, ensure_ascii=False)
 
     registro.valor_saldo_salario = _resolver(dados.valor_saldo_salario, calculo["saldo_salario"]["valor"])
     registro.valor_aviso_previo = _resolver(dados.valor_aviso_previo, calculo["aviso_previo"]["valor"])
@@ -2795,24 +3092,53 @@ def _aplicar_calculo_rescisao(dados: RescisaoSimulacaoIn, pessoa: Pessoa, regist
     )
 
 
+def _sufixo_media(media: float | None) -> str:
+    """" + média de variáveis R$ 600,00" — o pedaço que a verba acrescenta ao
+    próprio rótulo quando a média entrou na base dela.
+
+    Vai no RÓTULO, e não numa linha nova, por dois motivos: uma linha a mais
+    quebraria a soma do documento (o `detalhe` da rescisão é uma lista de
+    valores que fecham no líquido), e o lugar onde o dono procura "por que
+    esta verba deu esse valor" é a própria verba. `None` (média não apurada,
+    parâmetro desligado) e `0.0` (apurada e sem variável no período) não
+    escrevem nada — só polui o papel de quem não usa a feature."""
+    if not media:
+        return ""
+    return f" + média de variáveis {holerite._brl(media)}"
+
+
 def _linhas_verbas_rescisao(registro: RescisaoFuncionario) -> dict[str, tuple[str, float]]:
     """Label + valor de cada uma das 6 verbas, chaveado pelo nome interno —
     fonte única usada tanto por `_detalhe_rescisao` (ordem de exibição) quanto
     pela cascata de dedução do fechamento detalhado (ordem fixa definida no
     plano: saldo → 13º → férias proporcionais → férias vencidas → aviso
-    prévio → multa do FGTS)."""
+    prévio → multa do FGTS).
+
+    Cada verba que recebeu média de verbas variáveis habituais DIZ ISSO no
+    próprio rótulo, e diz a SUA média — o 13º usa a do ano civil, as férias a
+    do período aquisitivo e o aviso prévio a dos últimos 12 meses (ver
+    `_medias_rescisao`). Saldo de salário e multa do FGTS não levam média, e
+    por isso não têm sufixo."""
     return {
         "saldo_salario": (f"Saldo de salário ({registro.dias_saldo_salario} dia(s))", registro.valor_saldo_salario),
         "aviso_previo": (
-            f"Aviso prévio indenizado ({registro.dias_aviso_previo_indenizados} dia(s))", registro.valor_aviso_previo,
+            f"Aviso prévio indenizado ({registro.dias_aviso_previo_indenizados} dia(s))"
+            f"{_sufixo_media(registro.media_variaveis_aviso_previo)}",
+            registro.valor_aviso_previo,
         ),
-        "ferias_vencidas": ("Férias vencidas + 1/3", registro.valor_ferias_vencidas),
+        "ferias_vencidas": (
+            f"Férias vencidas + 1/3{_sufixo_media(registro.media_variaveis_ferias)}",
+            registro.valor_ferias_vencidas,
+        ),
         "ferias_proporcionais": (
-            f"Férias proporcionais + 1/3 ({registro.meses_ferias_proporcionais} mês(es))",
+            f"Férias proporcionais + 1/3 ({registro.meses_ferias_proporcionais} mês(es))"
+            f"{_sufixo_media(registro.media_variaveis_ferias)}",
             registro.valor_ferias_proporcionais,
         ),
         "decimo_terceiro_proporcional": (
-            f"13º proporcional ({registro.meses_decimo_terceiro} mês(es))", registro.valor_decimo_terceiro_proporcional,
+            f"13º proporcional ({registro.meses_decimo_terceiro} mês(es))"
+            f"{_sufixo_media(registro.media_variaveis_decimo_terceiro)}",
+            registro.valor_decimo_terceiro_proporcional,
         ),
         "multa_fgts": (
             f"Multa do FGTS estimada ({registro.percentual_multa_fgts:.0%})", registro.valor_multa_fgts,
@@ -2896,6 +3222,10 @@ def listar_rescisoes(
             "pessoa_nome": pessoas.get(r.pessoa_id, "—"),
             "usuario_nome": nomes_usuarios.get(r.usuario_id),
             "detalhe": _detalhe_rescisao(r),
+            # As TRÊS composições congeladas (13º pelo ano civil, férias pelo
+            # período aquisitivo, aviso prévio pelos últimos 12 meses) —
+            # nunca reapuradas na leitura, inclusive numa rescisão FECHADA.
+            "medias_variaveis_composicao": _composicao_gravada(r.media_variaveis_composicao),
             # Só nas SIMULAÇÕES: a tela abre um rascunho da listagem para
             # editar/fechar, e é aí que o saldo de vale precisa estar à vista.
             # Numa rescisão já fechada o saldo foi baixado no fechamento (e o
@@ -2966,7 +3296,7 @@ def criar_rescisao_simulacao(
         usuario_id=user.id,
         fazenda_id=fazenda_id,
     )
-    _aplicar_calculo_rescisao(dados, pessoa, registro)
+    _aplicar_calculo_rescisao(dados, pessoa, registro, session, fazenda_id)
     if registro.valor_total < 0:
         raise HTTPException(status_code=400, detail="O valor líquido da rescisão não pode ser negativo")
 
@@ -2975,6 +3305,8 @@ def criar_rescisao_simulacao(
     session.refresh(registro)
     return {
         **registro.model_dump(), "pessoa_nome": pessoa.nome, "detalhe": _detalhe_rescisao(registro),
+        # As três composições congeladas — ver `listar_rescisoes`.
+        "medias_variaveis_composicao": _composicao_gravada(registro.media_variaveis_composicao),
         # O saldo real de vale acompanha o rascunho: é ele que o fechamento vai
         # exigir que esteja endereçado, então a tela precisa mostrá-lo desde já.
         "vale_em_aberto": _saldo_vale_em_aberto(session, registro.pessoa_id, fazenda_id),
@@ -2994,7 +3326,7 @@ def atualizar_rescisao_simulacao(
         raise HTTPException(status_code=400, detail="Esta rescisão já está fechada.")
     pessoa = _pessoa_para_rescisao(dados, session, fazenda_id)
 
-    _aplicar_calculo_rescisao(dados, pessoa, registro)
+    _aplicar_calculo_rescisao(dados, pessoa, registro, session, fazenda_id)
     if registro.valor_total < 0:
         raise HTTPException(status_code=400, detail="O valor líquido da rescisão não pode ser negativo")
 
@@ -3003,6 +3335,8 @@ def atualizar_rescisao_simulacao(
     session.refresh(registro)
     return {
         **registro.model_dump(), "pessoa_nome": pessoa.nome, "detalhe": _detalhe_rescisao(registro),
+        # As três composições congeladas — ver `listar_rescisoes`.
+        "medias_variaveis_composicao": _composicao_gravada(registro.media_variaveis_composicao),
         "vale_em_aberto": _saldo_vale_em_aberto(session, registro.pessoa_id, fazenda_id),
     }
 
@@ -3265,6 +3599,10 @@ def fechar_rescisao(
         **registro.model_dump(),
         "pessoa_nome": pessoa.nome,
         "detalhe": _detalhe_rescisao(registro),
+        # As três composições congeladas no fechamento — ver `listar_rescisoes`.
+        # Fechar NÃO reapura média nenhuma: o que fecha é o que a simulação já
+        # havia calculado, e é isso que vira dinheiro em Contas a Pagar.
+        "medias_variaveis_composicao": _composicao_gravada(registro.media_variaveis_composicao),
         # Explícito na resposta para a tela poder dizer o que foi encerrado
         # junto, em vez de o lançamento sumir sem explicação.
         "lancamentos_cancelados": cancelados,
