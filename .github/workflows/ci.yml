@@ -158,6 +158,51 @@ jobs:
         timeout-minutes: 60
         run: python -m pytest tests/ -q -n auto --dist loadfile
 
+  # RLS nao existe em SQLite — e a suite acima roda toda em SQLite. Os testes
+  # que provam o comportamento do backup SOB politica de seguranca de linha
+  # (tests/test_backup_sob_rls.py) precisam de um PostgreSQL de verdade, com
+  # dois roles e politica ligada, entao rodam aqui, num job proprio.
+  #
+  # Sao poucos testes e o banco e descartavel: o job leva pouco mais de um
+  # minuto, contra os ~17 da suite. Ele fica separado de proposito — sem
+  # servico de banco, o job grande continua tao barato quanto e hoje.
+  #
+  # Por que isso merece CI e nao so uma medicao pontual: sob RLS o backup
+  # automatico NAO falha, ele grava "sucesso" com um ZIP de cabecalhos, porque
+  # SELECT negado por politica devolve vazio em vez de erro. E o unico modo de
+  # falha do sistema que destroi a rede de seguranca em silencio. A guarda que
+  # o impede so vale se alguem estiver conferindo que ela continua valendo.
+  backend-tests-postgres:
+    name: Backup sob RLS (PostgreSQL)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt
+      - name: Rodar os testes de RLS
+        working-directory: backend
+        timeout-minutes: 10
+        env:
+          DATABASE_URL_POSTGRES_TESTE: postgresql+psycopg2://postgres:postgres@localhost:5432/postgres
+        run: python -m pytest tests/test_backup_sob_rls.py -q
+
   # Mitigacao pra janela documentada acima: "Require branches to be up to
   # date before merging" fecharia o buraco de verdade, mas exige GitHub Pro
   # (branch protection nao esta disponivel em repositorio privado no plano

@@ -16,7 +16,7 @@ from fazenda.auth import (
     get_current_user, seed_admin,
     seed_email_dono_backfill, seed_email_dono_correcao_202607c, seed_permissao_publicar_dono,
 )
-from fazenda.database import create_db_and_tables, engine, get_session
+from fazenda.database import create_db_and_tables, engine, engine_manutencao, get_session
 from fazenda.models import IdempotenciaChave
 from fazenda.api.routers import (
     agenda,
@@ -152,7 +152,12 @@ _INTERVALO_VERIFICACAO_MANUAL_SEMANAL_SEGUNDOS = 30 * 60
 async def _loop_backup_automatico() -> None:
     while True:
         try:
-            with Session(engine) as session:
+            # `engine_manutencao`, e não `engine`: o backup é a única rotina do
+            # sistema que precisa ler o banco INTEIRO, sem recorte de fazenda.
+            # Sem DATABASE_URL_MANUTENCAO configurada as duas são o mesmo
+            # objeto e nada muda; com o RLS ligado, é por ela que o backup
+            # enxerga o dado (ver fazenda/database.py::_montar_engine_manutencao).
+            with Session(engine_manutencao) as session:
                 executar_backup_se_necessario(session)
         except Exception:
             pass  # nunca deixa essa tarefa de fundo derrubar o resto da aplicação
