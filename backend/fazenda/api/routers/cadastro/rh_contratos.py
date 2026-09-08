@@ -641,12 +641,13 @@ def excluir_parcela_empreitada(
         raise HTTPException(status_code=404, detail="Parcela de empreitada não encontrada")
     if parcela.numero_lancamento_gerado and _numeros_pagos(session, [parcela.numero_lancamento_gerado]):
         raise HTTPException(status_code=400, detail="Parcela já paga não pode ser excluída aqui — exclua em Lançamentos > Excluir lançamento.")
-    if parcela.numero_lancamento_gerado:
-        conta = session.exec(
-            select(ContaGerencial).where(ContaGerencial.numero_lancamento == parcela.numero_lancamento_gerado)
-        ).first()
-        if conta:
-            session.delete(conta)
+    # `_conta_do_numero` (rh_folha.py) recorta a fazenda DENTRO da consulta:
+    # o número do lançamento é sequencial por ano, não é chave global, e aqui
+    # se APAGA o lançamento — sem o recorte, um número repetido numa base
+    # importada levaria embora a conta a pagar de outro inquilino.
+    conta = _conta_do_numero(session, parcela.numero_lancamento_gerado, fazenda_id)
+    if conta:
+        session.delete(conta)
     session.delete(parcela)
     session.commit()
     return {"ok": True}
@@ -657,13 +658,21 @@ class ParcelaEditIn(BaseModel):
     valor: float
 
 
-def _sincronizar_conta_parcela(session: Session, numero_lancamento: str | None, data_vencimento: date, valor: float) -> None:
+def _sincronizar_conta_parcela(
+    session: Session, numero_lancamento: str | None, data_vencimento: date, valor: float,
+    fazenda_id: int | None,
+) -> None:
     """Mantém o lançamento gerado (ContaGerencial) alinhado após editar/
     redistribuir uma parcela de Empreitada/Contrato — só toca contas ainda
-    não pagas (parcela paga é bloqueada antes de chegar aqui)."""
-    if not numero_lancamento:
-        return
-    conta = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)).first()
+    não pagas (parcela paga é bloqueada antes de chegar aqui).
+
+    `fazenda_id` é obrigatório e vem do endpoint (`get_fazenda_atual_id` +
+    `fazenda_id_seguro`), nunca deduzido aqui: a busca é por
+    `_conta_do_numero`, que filtra a fazenda dentro do `select`. O número do
+    lançamento não identifica o inquilino, e esta função REESCREVE vencimento
+    e valor de conta a pagar — com dois números iguais em fazendas diferentes,
+    editar a parcela de uma remarcaria a dívida da outra."""
+    conta = _conta_do_numero(session, numero_lancamento, fazenda_id)
     if conta and conta.valor_pago is None:
         conta.data_vencimento = data_vencimento
         conta.data_competencia = data_vencimento.replace(day=1)
@@ -685,7 +694,7 @@ def _reajustar_valor_contratado(session: Session, parcela, item_tipo: str) -> No
     parcela.valor_contratado = round(parcela.valor + abatido, 2)
 
 
-def _redistribuir_parcelas_pendentes(session: Session, pendentes: list) -> None:
+def _redistribuir_parcelas_pendentes(session: Session, pendentes: list, fazenda_id: int | None) -> None:
     """Redivide igualmente o total das parcelas pendentes informadas (mantendo
     as datas de vencimento de cada uma), ajustando o arredondamento na
     última para o somatório bater exatamente com o total original.
@@ -706,7 +715,7 @@ def _redistribuir_parcelas_pendentes(session: Session, pendentes: list) -> None:
         restante = round(restante - valor, 2)
         p.valor = valor
         session.add(p)
-        _sincronizar_conta_parcela(session, p.numero_lancamento_gerado, p.data_vencimento, valor)
+        _sincronizar_conta_parcela(session, p.numero_lancamento_gerado, p.data_vencimento, valor, fazenda_id)
 
 
 @router.put("/empreitadas/parcelas/{parcela_id}")
@@ -726,7 +735,7 @@ def atualizar_parcela_empreitada(
     parcela.valor = dados.valor
     _reajustar_valor_contratado(session, parcela, "empreitada_parcela")
     session.add(parcela)
-    _sincronizar_conta_parcela(session, parcela.numero_lancamento_gerado, dados.data_vencimento, dados.valor)
+    _sincronizar_conta_parcela(session, parcela.numero_lancamento_gerado, dados.data_vencimento, dados.valor, fazenda_id)
     session.commit()
     empreitada = session.get(Empreitada, parcela.empreitada_id)
     return _serializar_empreitada(session, empreitada)
@@ -749,7 +758,7 @@ def redistribuir_parcelas_empreitada(
     ).all()
     pagos = _numeros_pagos(session, [p.numero_lancamento_gerado for p in parcelas if p.numero_lancamento_gerado])
     pendentes = [p for p in parcelas if p.numero_lancamento_gerado not in pagos]
-    _redistribuir_parcelas_pendentes(session, pendentes)
+    _redistribuir_parcelas_pendentes(session, pendentes, fazenda_id)
     session.commit()
     return _serializar_empreitada(session, empreitada)
 
@@ -921,12 +930,13 @@ def excluir_parcela_contrato(
         raise HTTPException(status_code=404, detail="Parcela de contrato não encontrada")
     if parcela.numero_lancamento_gerado and _numeros_pagos(session, [parcela.numero_lancamento_gerado]):
         raise HTTPException(status_code=400, detail="Parcela já paga não pode ser excluída aqui — exclua em Lançamentos > Excluir lançamento.")
-    if parcela.numero_lancamento_gerado:
-        conta = session.exec(
-            select(ContaGerencial).where(ContaGerencial.numero_lancamento == parcela.numero_lancamento_gerado)
-        ).first()
-        if conta:
-            session.delete(conta)
+    # `_conta_do_numero` (rh_folha.py) recorta a fazenda DENTRO da consulta:
+    # o número do lançamento é sequencial por ano, não é chave global, e aqui
+    # se APAGA o lançamento — sem o recorte, um número repetido numa base
+    # importada levaria embora a conta a pagar de outro inquilino.
+    conta = _conta_do_numero(session, parcela.numero_lancamento_gerado, fazenda_id)
+    if conta:
+        session.delete(conta)
     session.delete(parcela)
     session.commit()
     return {"ok": True}
@@ -949,7 +959,7 @@ def atualizar_parcela_contrato(
     parcela.valor = dados.valor
     _reajustar_valor_contratado(session, parcela, "contrato_parcela")
     session.add(parcela)
-    _sincronizar_conta_parcela(session, parcela.numero_lancamento_gerado, dados.data_vencimento, dados.valor)
+    _sincronizar_conta_parcela(session, parcela.numero_lancamento_gerado, dados.data_vencimento, dados.valor, fazenda_id)
     session.commit()
     contrato = session.get(Contrato, parcela.contrato_id)
     return _serializar_contrato(session, contrato)
@@ -969,7 +979,7 @@ def redistribuir_parcelas_contrato(
     ).all()
     pagos = _numeros_pagos(session, [p.numero_lancamento_gerado for p in parcelas if p.numero_lancamento_gerado])
     pendentes = [p for p in parcelas if p.numero_lancamento_gerado not in pagos]
-    _redistribuir_parcelas_pendentes(session, pendentes)
+    _redistribuir_parcelas_pendentes(session, pendentes, fazenda_id)
     session.commit()
     return _serializar_contrato(session, contrato)
 
@@ -1996,9 +2006,29 @@ def _modelo_item_vale_avulso(item_tipo: str):
 
 
 def _sincronizar_conta_do_item(session: Session, item) -> None:
+    """Alinha o lançamento (ContaGerencial) da parcela/etapa ao novo valor
+    dela — só o que ainda não foi pago.
+
+    O recorte de fazenda sai do PRÓPRIO item (`item.fazenda_id`), dentro da
+    consulta, e não de um `fazenda_id` recebido: o lançamento é o espelho
+    financeiro desta parcela/etapa, então ele é, por construção, do mesmo
+    inquilino que ela. É o padrão já usado em `_recalcular_folha` e
+    `_conta_do_encerramento` — a linha-pai já veio recortada do endpoint, e o
+    espelho segue a linha. O que não pode existir é a busca SÓ pelo número:
+    ele é sequencial por ano e se repete entre fazendas numa base importada,
+    e daqui sai uma reescrita de valor de conta a pagar.
+
+    Chega aqui por caminhos que não têm o `fazenda_id` do token à mão
+    (`_reverter_vale_avulso` é chamado até de `rules/exclusao_tipos/pessoal.py`),
+    e é por isso que a âncora é o item, e não um parâmetro propagado."""
     numero = getattr(item, "numero_lancamento_gerado", None)
     if numero:
-        conta = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero)).first()
+        conta = session.exec(
+            select(ContaGerencial).where(
+                ContaGerencial.numero_lancamento == numero,
+                ContaGerencial.fazenda_id == item.fazenda_id,
+            )
+        ).first()
         if conta and conta.valor_pago is None:
             conta.valor_total = item.valor
             session.add(conta)
@@ -2013,7 +2043,15 @@ def _conta_paga_do_item(session: Session, item) -> ContaGerencial | None:
     numero = getattr(item, "numero_lancamento_gerado", None)
     if not numero:
         return None
-    conta = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero)).first()
+    # Mesmo recorte por `item.fazenda_id` de `_sincronizar_conta_do_item` (ver
+    # o porquê lá): sem ele, a conta PAGA de outra fazenda com o mesmo número
+    # bloquearia — ou, pior, deixaria de bloquear — a reversão errada.
+    conta = session.exec(
+        select(ContaGerencial).where(
+            ContaGerencial.numero_lancamento == numero,
+            ContaGerencial.fazenda_id == item.fazenda_id,
+        )
+    ).first()
     return conta if conta is not None and conta.valor_pago is not None else None
 
 
@@ -2341,11 +2379,11 @@ def _sincronizar_conta_vale_avulso(
     não há saída de caixa nenhuma a registrar — nenhum ContaGerencial é
     criado/mantido (removendo um lançamento de edição anterior, se houver).
     """
-    conta_existente = None
-    if vale.numero_lancamento_gerado:
-        conta_existente = session.exec(
-            select(ContaGerencial).where(ContaGerencial.numero_lancamento == vale.numero_lancamento_gerado)
-        ).first()
+    # `_conta_do_numero` (rh_folha.py) filtra a fazenda DENTRO da consulta —
+    # daqui sai tanto uma reescrita quanto um `session.delete()`, e o número
+    # do lançamento sozinho não diz de quem é a conta (ver a docstring do
+    # helper). Mesmo tratamento de `_sincronizar_conta_vale`.
+    conta_existente = _conta_do_numero(session, vale.numero_lancamento_gerado, fazenda_id)
 
     if conta is None:
         if conta_existente:

@@ -153,13 +153,25 @@ def valor_vale_do_item(valor_item: float, dados: ValeItemIn) -> float:
     return valor_vale
 
 
-def _resolver_data_pagamento_vale(item: LancamentoItem, session: Session) -> date:
+def _resolver_data_pagamento_vale(item: LancamentoItem, session: Session, fazenda_id: int | None) -> date:
     """data_pagamento do vale = data da compra: ContaGerencial.data_emissao
     or .data_competencia or .data_vencimento da primeira parcela do mesmo
-    numero_lancamento; fallback LancamentoItem.data_competencia; fallback hoje."""
+    numero_lancamento; fallback LancamentoItem.data_competencia; fallback hoje.
+
+    `fazenda_id` vem do endpoint (`get_fazenda_id_escrita`) e entra
+    INCONDICIONALMENTE no `where`, apesar de isto ser só leitura: o número do
+    lançamento é sequencial por ano e se repete entre fazendas numa base
+    importada, e a data que sai daqui vira `data_pagamento` do vale — ou seja,
+    a compra de OUTRO inquilino datando um vale que não é dele, e ainda por
+    cima escolhendo em silêncio (o `.first()` não tem como saber que pegou a
+    nota errada). O item já foi validado contra este mesmo `fazenda_id` pelos
+    chamadores, então o recorte aqui nunca esconde a nota certa."""
     primeira = session.exec(
         select(ContaGerencial)
-        .where(ContaGerencial.numero_lancamento == item.numero_lancamento)
+        .where(
+            ContaGerencial.numero_lancamento == item.numero_lancamento,
+            ContaGerencial.fazenda_id == fazenda_id,
+        )
         .order_by(ContaGerencial.parcela_num)
     ).first()
     if primeira:
@@ -266,7 +278,7 @@ def aplicar_vale_item(
     diretamente. NÃO reimplementa parcelamento, limite de 40%,
     `_aplicar_vale_avulso` nem `ValeAvulsoAbatimento`. Grava o vínculo no
     item (vale_funcionario_id ou vale_avulso_id) e commita."""
-    data_pagamento = _resolver_data_pagamento_vale(item, session)
+    data_pagamento = _resolver_data_pagamento_vale(item, session, fazenda_id)
     observacao = dados.observacao or f"Vale gerado do item '{item.produto}' da nota {item.numero_lancamento}"
 
     # Vale PARCIAL: o item se divide antes de qualquer outra coisa (decisão
@@ -472,7 +484,7 @@ def marcar_item_como_vale(
     if item.tipo == "receita":
         raise HTTPException(status_code=400, detail="Só item de despesa pode virar vale.")
 
-    data_pagamento = _resolver_data_pagamento_vale(item, session)
+    data_pagamento = _resolver_data_pagamento_vale(item, session, fazenda_id)
     contexto = validar_vale_item(session, item.valor_total, data_pagamento, dados, fazenda_id)
     resultado = aplicar_vale_item(session, item, dados, user, fazenda_id)
 
