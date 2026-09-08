@@ -15,7 +15,8 @@ from sqlmodel import Session, select
 from datetime import datetime, timedelta
 
 from fazenda.auth import (
-    DESBLOQUEIO_VALIDADE_S, EMAIL_DONO, MODULOS, criar_token, criar_token_desbloqueio, eh_consultor_cowdata,
+    DESBLOQUEIO_VALIDADE_S, EMAIL_DONO, FECHO_ORDEM_E_SUPORTE, MODULOS, criar_token,
+    criar_token_desbloqueio, eh_consultor_cowdata,
     eh_email_dono_equivalente, eh_membro_equipe_cowdata, exigir_admin_ou_dono, exigir_dono, get_current_user,
     get_fazenda_atual_id, get_fazenda_id_escrita, get_suporte_do_token, hash_senha, multifazenda_provisionado,
     token_manter_conectado, verificar_senha,
@@ -162,9 +163,7 @@ def _validar_pessoa_ou_nome(session: Session, pessoa_id: int | None, nome: str |
 # regressão cobra este texto, para ninguém trocá-lo por um "dados inválidos"
 # genérico sem perceber que está apagando a instrução.
 ERRO_USUARIO_SEM_FAZENDA = (
-    "Não é possível criar um usuário fora de uma fazenda. A ordem é sempre esta: primeiro a "
-    "fazenda, depois a pessoa dentro dela (Configurações > Cadastro > Pessoas) e só então o "
-    "login dessa pessoa."
+    "Não é possível criar um usuário fora de uma fazenda. " + FECHO_ORDEM_E_SUPORTE
 )
 
 

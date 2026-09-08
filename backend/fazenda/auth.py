@@ -272,10 +272,34 @@ def get_fazenda_atual_id(
 # uma continua recebendo a instrução de sair e entrar de novo, logo abaixo —
 # esse a própria pessoa resolve em dez segundos, e chamar o suporte para isso
 # seria ruído.
+# FECHO PADRÃO DAS TRÊS RECUSAS POR FALTA DE FAZENDA.
+#
+# São três recusas com CAUSAS diferentes — criar usuário fora de fazenda
+# (`routers/auth.py::ERRO_USUARIO_SEM_FAZENDA`), usuário sem vínculo nenhum
+# tentando gravar (`ERRO_ESCRITA_SEM_FAZENDA`) e operação que não sabe em que
+# fazenda acontece (`ERRO_OPERACAO_SEM_FAZENDA`). A primeira frase de cada uma
+# diz a causa, e por isso continua diferente: colapsá-las numa mensagem só
+# tornaria o texto vago justamente onde ele existe para orientar.
+#
+# O FECHO, esse é o mesmo nos três — porque a saída é a mesma, e porque o
+# usuário precisa reconhecer o caminho independentemente de por onde esbarrou
+# nele. A ordem vem da regra do dono, textual: "isso só é resolvido se tiver
+# uma fazenda cadastrada, a pessoa cadastrada e usuário atribuído a uma pessoa
+# cadastrada dentro de uma fazenda".
+#
+# "Acione o suporte CowData" e não "peça a um administrador": nenhuma tela do
+# lado do cliente conserta um usuário sem vínculo nenhum — quem cria fazenda e
+# amarra pessoa->usuário é a CowData. Mandar a pessoa procurar o próprio
+# administrador era mandá-la a um lugar onde não existe botão.
+FECHO_ORDEM_E_SUPORTE = (
+    "A ordem é sempre esta: primeiro a fazenda cadastrada, depois a pessoa dentro dela "
+    "(Configurações > Cadastro > Pessoas) e só então o usuário dessa pessoa. Se não conseguir "
+    "concluir, acione o suporte CowData."
+)
+
 ERRO_ESCRITA_SEM_FAZENDA = (
     "Seu usuário não está vinculado a nenhuma fazenda, e nada pode ser gravado fora de uma "
-    "fazenda. Acione o suporte CowData: isso só se resolve com a fazenda cadastrada, a pessoa "
-    "cadastrada dentro dela e o seu login atribuído a essa pessoa."
+    "fazenda. " + FECHO_ORDEM_E_SUPORTE
 )
 
 
@@ -812,10 +836,8 @@ def multifazenda_provisionado(session: Session) -> bool:
 # ---------------------------------------------------------------------------
 ERRO_OPERACAO_SEM_FAZENDA = (
     "Não foi possível identificar em qual fazenda esta operação aconteceria, então ela foi "
-    "recusada e nada foi alterado. Três cadastros precisam existir, nesta ordem: a fazenda; "
-    "a pessoa cadastrada dentro dessa fazenda; e o seu usuário vinculado a essa pessoa. "
-    "Saia e entre novamente para escolher a fazenda — se o erro continuar, acione o suporte "
-    "CowData para completar o cadastro."
+    "recusada e nada foi alterado. Saia e entre novamente para escolher a fazenda. "
+    + FECHO_ORDEM_E_SUPORTE
 )
 
 
