@@ -14,11 +14,14 @@ O QUE ESTES TESTES TRAVAM, e por que cada um é dinheiro de gente real:
    antecipado, ela paga o VA de março (31 dias). Se o regime só trocasse uma
    palavra na Referência, três diárias de benefício sumiriam do holerite sem
    ninguém ver.
-3. **A verba é INDENIZATÓRIA (padrão do PAT) e não entra em base nenhuma.**
-   Fazer o VA integrar INSS/IRRF/FGTS é cobrar contribuição sobre alimentação
-   — o mesmo erro que o catálogo de rubricas existe para impedir. (Ressalva
-   registrada no código: VA pago em DINHEIRO seria salarial; o sistema assume
-   o PAT por decisão do dono.)
+3. **A natureza da verba sai da FORMA de pagamento, não do código.** Estes
+   testes cobrem o caminho do cartão/ticket — indenizatório, fora das três
+   bases. A árvore inteira (dinheiro, cartão com e sem PAT, refeição in
+   natura, e a trava da OJ 413) tem arquivo próprio:
+   `test_vale_alimentacao_natureza.py`. Fazer um VA de cartão integrar
+   INSS/IRRF/FGTS é cobrar contribuição sobre alimentação; deixar um VA pago
+   em dinheiro fora delas é subdeclarar base — os dois erros custam dinheiro
+   de gente real, em direções opostas.
 4. **Folha PAGA não muda.** Ligar o benefício hoje acrescenta a verba nas
    competências abertas e não reescreve um centavo de nenhum recibo já
    emitido — a discriminação dele está congelada porque holerite é PROVA.
@@ -54,8 +57,16 @@ from fazenda.rules import holerite, rubrica_folha, vale_alimentacao
 # diferença entre os dois que faz "antecipado" e "vencido" produzirem números
 # distintos, e não só uma palavra distinta na Referência.
 COMPETENCIA = "2026-02"
+# Dias CORRIDOS — os do mês de calendário.
 DIAS_FEVEREIRO = 28
 DIAS_MARCO = 31
+# Dias TRABALHADOS (segunda a sábado), que é a base PADRÃO da contagem do
+# vale-alimentação diário (`parametros.vale_alimentacao_base_dias`). Fevereiro
+# de 2026 começa num domingo: 28 − 4 domingos = 24; março, 31 − 5 = 26. A
+# diferença entre os dois pares é o que faz "antecipado" e "vencido"
+# produzirem números distintos na MESMA folha.
+DIAS_TRABALHADOS_FEVEREIRO = 24
+DIAS_TRABALHADOS_MARCO = 26
 VALOR_BASE = 25.0
 
 
@@ -116,6 +127,7 @@ def _cab(fazenda_id: int):
 def _configurar_va(
     engine, pessoa_id: int, *, ligado: bool = True, valor: float = VALOR_BASE,
     periodicidade: str = "mensal", regime: str = "vencido", data_admissao: date | None = None,
+    forma: str = "cartao",
 ) -> None:
     """Grava a configuração direto no cadastro. Direto no banco de propósito
     nos testes de CÁLCULO: o que está em julgamento ali é a folha ler a
@@ -127,6 +139,12 @@ def _configurar_va(
         p.vale_alimentacao_valor = valor if ligado else None
         p.vale_alimentacao_periodicidade = periodicidade if ligado else None
         p.vale_alimentacao_regime = regime if ligado else None
+        # `cartao` é o padrão DESTE HELPER, não do sistema: o cadastro exige a
+        # escolha e a regra pura trata o nulo como "não sei" (enquadrando como
+        # salarial). Fixar a forma aqui é o que mantém estes testes falando de
+        # uma coisa só — quanto, de que mês —, com a árvore da natureza
+        # coberta em `test_vale_alimentacao_natureza.py`.
+        p.vale_alimentacao_forma = forma if ligado else None
         if data_admissao is not None:
             p.data_admissao = data_admissao
         s.add(p)
@@ -179,7 +197,7 @@ class TestRegraPura:
         pessoa = Pessoa(
             nome="x", tipo="Funcionário", vale_alimentacao=True, vale_alimentacao_valor=600.0,
             vale_alimentacao_periodicidade="mensal", vale_alimentacao_regime="vencido",
-            data_admissao=date(2026, 2, 10),
+            vale_alimentacao_forma="cartao", data_admissao=date(2026, 2, 10),
         )
         calculo = vale_alimentacao.calcular(pessoa, COMPETENCIA)
         assert calculo["valor"] == 600.0
@@ -187,19 +205,25 @@ class TestRegraPura:
         assert calculo["competencia_beneficio"] == COMPETENCIA
 
     def test_diario_multiplica_pelos_dias_da_competencia(self):
+        """E os dias são os da base PADRÃO — trabalhados, segunda a sábado —,
+        não os dias corridos do calendário: o auxílio custeia a refeição
+        durante a jornada, e domingo não tem jornada."""
         pessoa = Pessoa(
             nome="x", tipo="Funcionário", vale_alimentacao=True, vale_alimentacao_valor=VALOR_BASE,
             vale_alimentacao_periodicidade="diario", vale_alimentacao_regime="vencido",
-            data_admissao=date(2024, 1, 10),
+            vale_alimentacao_forma="cartao", data_admissao=date(2024, 1, 10),
         )
         calculo = vale_alimentacao.calcular(pessoa, COMPETENCIA)
-        assert calculo["dias"] == DIAS_FEVEREIRO
-        assert calculo["valor"] == round(VALOR_BASE * DIAS_FEVEREIRO, 2)
+        assert calculo["dias"] == DIAS_TRABALHADOS_FEVEREIRO
+        assert calculo["base_dias"] == vale_alimentacao.BASE_DIAS_TRABALHADOS
+        assert calculo["valor"] == round(VALOR_BASE * DIAS_TRABALHADOS_FEVEREIRO, 2)
 
     def test_a_contagem_de_dias_e_a_MESMA_da_folha(self):
-        """A prova de que não nasceu uma segunda contagem de dias: a que o VA
-        diário usa é, número por número, a que a folha já usava para sugerir o
-        salário proporcional do mês de admissão."""
+        """A contagem do SALÁRIO continua sendo uma só no sistema — e a base
+        `corridos` do vale-alimentação é ELA, número por número. O VA ganhou
+        bases próprias (úteis/trabalhados) porque não há norma legal que fixe a
+        contagem do benefício; o que não podia acontecer é a base "corridos"
+        divergir do que a folha já usa no salário."""
         from fazenda.api.routers.cadastro.rh_folha import _proporcional_admissao
 
         pessoa = Pessoa(nome="x", tipo="Funcionário", data_admissao=date(2026, 2, 10))
@@ -207,16 +231,21 @@ class TestRegraPura:
         dias, dias_mes = holerite.dias_da_competencia(COMPETENCIA, pessoa.data_admissao)
         assert (dias, dias_mes) == (proporcional["dias_trabalhados"], proporcional["dias_mes"])
         assert dias == DIAS_FEVEREIRO - 10 + 1
+        assert vale_alimentacao.dias_do_beneficio(
+            COMPETENCIA, pessoa.data_admissao, base_dias=vale_alimentacao.BASE_DIAS_CORRIDOS,
+        ) == (dias, dias_mes)
 
     def test_diario_no_mes_de_admissao_e_proporcional(self):
         pessoa = Pessoa(
             nome="x", tipo="Funcionário", vale_alimentacao=True, vale_alimentacao_valor=VALOR_BASE,
             vale_alimentacao_periodicidade="diario", vale_alimentacao_regime="vencido",
-            data_admissao=date(2026, 2, 10),
+            vale_alimentacao_forma="cartao", data_admissao=date(2026, 2, 10),
         )
         calculo = vale_alimentacao.calcular(pessoa, COMPETENCIA)
-        assert calculo["dias"] == 19  # 28 − 10 + 1
-        assert calculo["valor"] == round(VALOR_BASE * 19, 2)
+        # Dias TRABALHADOS de 10 a 28/02/2026: 19 dias corridos menos os
+        # domingos 15 e 22.
+        assert calculo["dias"] == 17
+        assert calculo["valor"] == round(VALOR_BASE * 17, 2)
 
     def test_competencia_do_beneficio_traduz_antecipado_e_vencido(self):
         """Vencido: a folha de C paga o VA de C. Antecipado: o VA de uma
@@ -231,6 +260,7 @@ class TestRegraPura:
         assert vale_alimentacao.calcular(Pessoa(nome="x", tipo="Funcionário"), COMPETENCIA) is None
         ligado_sem_valor = Pessoa(
             nome="x", tipo="Funcionário", vale_alimentacao=True, vale_alimentacao_valor=0.0,
+            vale_alimentacao_forma="cartao",
         )
         # Benefício ligado sem valor-base não vira linha de R$ 0,00: num
         # documento oficial, zero lê como "não recebeu", que é outra afirmação.
@@ -243,6 +273,7 @@ class TestRegraPura:
         pessoa = Pessoa(
             nome="x", tipo="Funcionário", vale_alimentacao=True, vale_alimentacao_valor=600.0,
             vale_alimentacao_periodicidade="quinzenal", vale_alimentacao_regime="sei la",
+            vale_alimentacao_forma="cartao",
         )
         calculo = vale_alimentacao.calcular(pessoa, COMPETENCIA)
         assert calculo["periodicidade"] == "mensal"
@@ -288,10 +319,10 @@ class TestFolhaGeraAVerba:
         folha_id = _criar_folha(c, 1, ids["pessoa1"])
         folha = _folha(c, 1, folha_id)
 
-        esperado = round(VALOR_BASE * DIAS_FEVEREIRO, 2)  # 700,00
+        esperado = round(VALOR_BASE * DIAS_TRABALHADOS_FEVEREIRO, 2)  # 600,00
         linha = _linha_va(folha)
         assert linha["provento"] == esperado
-        assert f"× {DIAS_FEVEREIRO} dias" in linha["referencia"]
+        assert f"× {DIAS_TRABALHADOS_FEVEREIRO} dias trabalhados" in linha["referencia"]
         assert folha["valor_liquido"] == round(2730.0 + esperado, 2)
 
     def test_diario_no_mes_de_admissao_usa_a_proporcionalidade_da_folha(self, ambiente):
@@ -302,26 +333,28 @@ class TestFolhaGeraAVerba:
         )
         folha_id = _criar_folha(c, 1, ids["pessoa1"])
         linha = _linha_va(_folha(c, 1, folha_id))
-        assert linha["provento"] == round(VALOR_BASE * 19, 2)
-        assert "× 19 dias" in linha["referencia"]
+        # 10 a 28/02/2026 em dias trabalhados: 19 corridos menos dois domingos.
+        assert linha["provento"] == round(VALOR_BASE * 17, 2)
+        assert "× 17 dias trabalhados" in linha["referencia"]
 
     def test_antecipado_e_vencido_caem_em_competencias_diferentes(self, ambiente):
         """O coração do "para fins de competência". Na MESMA folha de
-        fevereiro: vencido paga os 28 dias de fevereiro, antecipado paga os 31
-        de março — e a Referência diz qual mês está sendo pago ali."""
+        fevereiro: vencido paga os 24 dias trabalhados de fevereiro, antecipado
+        paga os 26 de março — e a Referência diz qual mês está sendo pago
+        ali."""
         c, engine, ids = ambiente
 
         _configurar_va(engine, ids["pessoa1"], periodicidade="diario", regime="vencido")
         folha_id = _criar_folha(c, 1, ids["pessoa1"])
         vencido = _linha_va(_folha(c, 1, folha_id))
-        assert vencido["provento"] == round(VALOR_BASE * DIAS_FEVEREIRO, 2)
+        assert vencido["provento"] == round(VALOR_BASE * DIAS_TRABALHADOS_FEVEREIRO, 2)
         assert "competência 02/2026 (vencido)" in vencido["referencia"]
 
         # Mesma folha, mesma pessoa, só o regime muda no cadastro: o self-heal
         # da listagem realinha a competência aberta.
         _configurar_va(engine, ids["pessoa1"], periodicidade="diario", regime="antecipado")
         antecipado = _linha_va(_folha(c, 1, folha_id))
-        assert antecipado["provento"] == round(VALOR_BASE * DIAS_MARCO, 2)
+        assert antecipado["provento"] == round(VALOR_BASE * DIAS_TRABALHADOS_MARCO, 2)
         assert "competência 03/2026 (antecipado)" in antecipado["referencia"]
 
     def test_ligar_e_desligar_depois_reflete_na_competencia_aberta(self, ambiente):
@@ -412,10 +445,13 @@ class TestFolhaGeraAVerba:
 # Enquadramento: indenizatório, fora das três bases
 # ---------------------------------------------------------------------------
 class TestEnquadramento:
-    def test_a_verba_nao_entra_em_base_de_inss_irrf_nem_fgts(self, ambiente):
-        """Padrão do PAT (CLT, art. 457, §2º; Lei 14.442/2022). Se o VA
-        entrasse na base, o funcionário pagaria INSS sobre a alimentação dele
-        e a fazenda provisionaria FGTS sobre ela."""
+    def test_va_em_cartao_nao_entra_em_base_de_inss_irrf_nem_fgts(self, ambiente):
+        """VA pago em CARTÃO/TICKET: indenizatório, com ou sem PAT (CLT, art.
+        457, §2º; Solução de Consulta COSIT nº 35/2019 da Receita Federal). Se
+        ele entrasse na base, o funcionário pagaria INSS sobre a alimentação
+        dele e a fazenda provisionaria FGTS sobre ela. O caso oposto — VA em
+        dinheiro, que É salarial e ENTRA nas três — está em
+        `test_vale_alimentacao_natureza.py`."""
         c, engine, ids = ambiente
         _configurar_va(engine, ids["pessoa1"], valor=600.0)
         folha_id = _criar_folha(c, 1, ids["pessoa1"], percentual_fgts=8.0)
@@ -437,15 +473,24 @@ class TestEnquadramento:
             # Não incorpora ao salário-base: o VA não é salário do mês seguinte.
             assert not rubrica.incorpora_base
 
-    def test_o_verbete_do_catalogo_declara_o_padrao_pat_e_a_classe(self):
+    def test_o_verbete_do_catalogo_declara_o_ultimo_recurso_e_a_classe(self):
+        """O catálogo NÃO decide a natureza desta verba (quem decide é
+        `natureza_do_vale_alimentacao`, por funcionário) — mas ele ainda
+        precisa declarar alguma coisa, porque `_nova_rubrica` monta linha a
+        partir do catálogo para os outros códigos. O valor declarado é o
+        CONSERVADOR: salarial, nas três bases. Errar recolhendo a mais aparece
+        no holerite do mês seguinte; errar subdeclarando base aparece anos
+        depois, com juros."""
         verbete = rubrica_folha.CATALOGO_VENCIMENTOS[vale_alimentacao.CODIGO]
-        assert verbete["natureza"] == rubrica_folha.NATUREZA_INDENIZATORIA
-        assert not (verbete["incide_inss"] or verbete["incide_irrf"] or verbete["incide_fgts"])
+        assert verbete["natureza"] == rubrica_folha.NATUREZA_SALARIAL
+        assert verbete["incide_inss"] and verbete["incide_irrf"] and verbete["incide_fgts"]
         # CONTRATUAL (cadeado no pop-up de pagamento) porque o valor é DERIVADO
         # do cadastro, não medido no mês — ao contrário do vale-transporte.
         assert verbete["alteracao"] == rubrica_folha.ALTERACAO_CONTRATUAL
         assert verbete["gerado_por_cadastro"] is True
-        assert "14.442" in verbete["fundamento"]
+        # O fundamento do catálogo é genérico de propósito: o que vale para
+        # cada linha é o da forma daquele funcionário, escrito na Referência.
+        assert "OJs 133 e 413" in verbete["fundamento"]
 
     def test_o_verbete_nao_aparece_no_formulario_de_lancamento(self):
         publico = rubrica_folha.catalogo_publico()
@@ -548,13 +593,14 @@ class TestCadastroDaConfiguracao:
         corpo.update(extra)
         return corpo
 
-    def test_grava_os_quatro_campos(self, ambiente):
+    def test_grava_os_campos_da_configuracao(self, ambiente):
         c, _engine, ids = ambiente
         r = c.put(
             f"/cadastro/pessoas/{ids['pessoa1']}",
             json=self._payload(
                 vale_alimentacao=True, vale_alimentacao_valor=25.0,
                 vale_alimentacao_periodicidade="diario", vale_alimentacao_regime="antecipado",
+                vale_alimentacao_forma="cartao",
             ),
             headers=_cab(1),
         )
@@ -564,12 +610,19 @@ class TestCadastroDaConfiguracao:
         assert corpo["vale_alimentacao_valor"] == 25.0
         assert corpo["vale_alimentacao_periodicidade"] == "diario"
         assert corpo["vale_alimentacao_regime"] == "antecipado"
+        assert corpo["vale_alimentacao_forma"] == "cartao"
 
     @pytest.mark.parametrize("faltando,trecho", [
         ({"vale_alimentacao_valor": 0.0, "vale_alimentacao_periodicidade": "diario",
-          "vale_alimentacao_regime": "vencido"}, "valor-base"),
-        ({"vale_alimentacao_valor": 25.0, "vale_alimentacao_regime": "vencido"}, "diário ou mensal"),
-        ({"vale_alimentacao_valor": 25.0, "vale_alimentacao_periodicidade": "diario"}, "antecipado ou vencido"),
+          "vale_alimentacao_regime": "vencido", "vale_alimentacao_forma": "cartao"}, "valor-base"),
+        ({"vale_alimentacao_valor": 25.0, "vale_alimentacao_regime": "vencido",
+          "vale_alimentacao_forma": "cartao"}, "diário ou mensal"),
+        ({"vale_alimentacao_valor": 25.0, "vale_alimentacao_periodicidade": "diario",
+          "vale_alimentacao_forma": "cartao"}, "antecipado ou vencido"),
+        # A forma é a exigência NOVA, e a única que não é burocracia: dela sai
+        # a resposta de se a verba entra nas bases de INSS, FGTS, 13º e férias.
+        ({"vale_alimentacao_valor": 25.0, "vale_alimentacao_periodicidade": "diario",
+          "vale_alimentacao_regime": "vencido"}, "COMO o vale-alimentação é pago"),
     ])
     def test_configuracao_incompleta_e_recusada(self, ambiente, faltando, trecho):
         """Recusa no CADASTRO, que é onde o usuário está olhando. As regras
@@ -621,7 +674,7 @@ class TestIsolamentoEntreFazendas:
             json={
                 "nome": "Leomir Bonfim", "tipos": ["Funcionário"], "vale_alimentacao": True,
                 "vale_alimentacao_valor": 999.0, "vale_alimentacao_periodicidade": "mensal",
-                "vale_alimentacao_regime": "vencido",
+                "vale_alimentacao_regime": "vencido", "vale_alimentacao_forma": "cartao",
             },
             headers=_cab(1),
         )

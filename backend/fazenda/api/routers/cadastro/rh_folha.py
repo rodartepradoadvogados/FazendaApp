@@ -40,8 +40,12 @@ from fazenda.rules.folha_rh import (
 )
 from fazenda.rules.parametros import (
     dias_ferias_padrao,
+    fazenda_inscrita_no_pat,
     percentual_estimado_fgts_mensal,
     percentual_terco_constitucional_ferias,
+    vale_alimentacao_base_dias,
+    vale_alimentacao_falta_justificada_desconta,
+    vale_alimentacao_mes_admissao_integral,
 )
 from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo, nome_seguro_storage
 from fazenda.config import settings
@@ -310,6 +314,64 @@ def _recalcular_folha(session: Session, folha: FolhaPagamento) -> list[FolhaRubr
 # distingue é a ORIGEM: quem manda no valor é o cadastro, e é por isso que os
 # endpoints de rubrica recusam criar/editar/excluir esta linha na mão.
 # ---------------------------------------------------------------------------
+def _politica_vale_alimentacao() -> dict:
+    """
+    Os quatro parâmetros da FAZENDA que o vale-alimentação consulta, lidos de
+    uma vez: se ela é inscrita no PAT (que muda a NATUREZA da verba na
+    refeição in natura — ver `vale_alimentacao.natureza_do_vale_alimentacao`) e
+    as três escolhas de contagem de dias.
+
+    Existe como função, e é chamada UMA VEZ por caminho, porque
+    `parametros.get_param*` abre uma sessão nova a cada leitura: na listagem de
+    folhas, que sincroniza o vale-alimentação de cada registro, ler os quatro
+    dentro do laço seriam quatro consultas por folha. Quem sincroniza em lote
+    passa o resultado adiante (`politica=`); quem sincroniza uma folha só deixa
+    a função ser chamada sozinha.
+
+    Os padrões dos parâmetros são os mesmos padrões das regras puras — uma
+    fazenda que nunca abriu a tela de Parâmetros vê exatamente o comportamento
+    documentado em `rules/vale_alimentacao.py`.
+    """
+    return {
+        "fazenda_no_pat": fazenda_inscrita_no_pat(),
+        "base_dias": vale_alimentacao_base_dias(),
+        "mes_admissao_integral": vale_alimentacao_mes_admissao_integral(),
+        "falta_justificada_desconta": vale_alimentacao_falta_justificada_desconta(),
+    }
+
+
+def _data_desligamento_da_pessoa(
+    session: Session, pessoa_id: int, fazenda_id: int | None,
+) -> date | None:
+    """
+    A data do último desligamento FECHADO da pessoa, ou None.
+
+    Entra no vale-alimentação DIÁRIO para o mês da rescisão sair proporcional:
+    o benefício custeia a refeição dos dias em que houve vínculo, e pagar o mês
+    cheio de quem saiu no dia 5 é pagar 25 refeições que não aconteceram.
+
+    Filtro de fazenda INCONDICIONAL dentro da consulta (`== fazenda_id`, que em
+    None vira `IS NULL`), pelo mesmo motivo de `_pessoa_da_folha` e de
+    `_rescisao_fechada_encerra_competencia`: o que sai daqui vira dinheiro a
+    menos no holerite de alguém, e o padrão tolerante ("se veio fazenda,
+    filtra") é o que deixaria a rescisão de um inquilino encolher a verba de
+    outro.
+
+    SIMULAÇÃO NÃO CONTA — só `status == "fechada"`, o mesmo critério de
+    `_rescisao_fechada_encerra_competencia`. Uma rescisão em simulação é um
+    cenário que o dono está estudando; cortar o benefício do funcionário por
+    causa dela seria pagar a menos por uma conta que ninguém fechou.
+    """
+    rescisoes = session.exec(
+        select(RescisaoFuncionario).where(
+            RescisaoFuncionario.pessoa_id == pessoa_id,
+            RescisaoFuncionario.fazenda_id == fazenda_id,
+            RescisaoFuncionario.status == "fechada",
+        )
+    ).all()
+    return max((r.data_desligamento for r in rescisoes), default=None)
+
+
 def _pessoa_da_folha(session: Session, folha: FolhaPagamento) -> Pessoa | None:
     """
     A pessoa da folha, com o filtro de fazenda DENTRO da consulta e
@@ -327,7 +389,7 @@ def _pessoa_da_folha(session: Session, folha: FolhaPagamento) -> Pessoa | None:
 
 def _sincronizar_vale_alimentacao(
     session: Session, folha: FolhaPagamento, pessoa: Pessoa | None = None,
-    *, recem_criada: bool = False,
+    *, recem_criada: bool = False, politica: dict | None = None,
 ) -> bool:
     """
     Põe a linha de vale-alimentação desta folha igual ao que o CADASTRO diz —
@@ -350,6 +412,24 @@ def _sincronizar_vale_alimentacao(
     (listagem, recorrência) continua intocável, e a que já tem fotografia é
     recusada mesmo com a marca ligada.
 
+    O ENQUADRAMENTO DA LINHA (natureza e as três incidências) SAI DO CADASTRO,
+    e é a única diferença de fundo desta função para a versão que só sabia o
+    valor. Ele vem de `vale_alimentacao.natureza_do_vale_alimentacao` — forma
+    de pagamento do funcionário × PAT da fazenda × trava da OJ 413 —, e é
+    COPIADO para a linha, como toda rubrica faz, porque holerite é prova e não
+    pode mudar de conteúdo quando o cadastro mudar depois. Não sai do catálogo:
+    o catálogo tem UM enquadramento por código, e aqui a mesma verba pode ser
+    salarial num funcionário e indenizatória no outro na mesma folha.
+
+    MUDAR A FORMA NO CADASTRO REESCREVE A LINHA DA COMPETÊNCIA ABERTA, e com
+    ela a base de INSS/IRRF/FGTS e o líquido — é o mesmo self-heal que já valia
+    para o valor. A folha PAGA continua intocada (a recusa acima), então
+    nenhuma retenção já recolhida é recalculada por causa desta função.
+
+    `politica` são os parâmetros da fazenda (`_politica_vale_alimentacao`), e
+    ela pode chegar pronta de quem sincroniza em lote — a listagem de folhas —
+    para não reler quatro parâmetros do banco por folha.
+
     NÃO COMMITA: quem chama decide a transação, porque a linha, o líquido e a
     conta a pagar têm de cair juntos se algo falhar no meio (mesmo motivo do
     `flush` em `criar_rubrica_folha`).
@@ -367,7 +447,21 @@ def _sincronizar_vale_alimentacao(
     if pessoa is None:
         return False
 
-    calculo = vale_alimentacao.calcular(pessoa, folha.competencia)
+    politica = politica if politica is not None else _politica_vale_alimentacao()
+    # O desligamento só é consultado quando ele pode mudar alguma conta: no
+    # MENSAL o valor é cheio por decisão do dono, e uma consulta por folha na
+    # listagem inteira para não usar o resultado seria custo puro.
+    data_desligamento = (
+        _data_desligamento_da_pessoa(session, pessoa.id, folha.fazenda_id)
+        if getattr(pessoa, "vale_alimentacao", False)
+        and vale_alimentacao.periodicidade_valida(
+            getattr(pessoa, "vale_alimentacao_periodicidade", None)
+        ) == vale_alimentacao.PERIODICIDADE_DIARIA
+        else None
+    )
+    calculo = vale_alimentacao.calcular(
+        pessoa, folha.competencia, data_desligamento=data_desligamento, **politica,
+    )
     existente = session.exec(
         select(FolhaRubrica).where(
             FolhaRubrica.folha_id == folha.id,
@@ -397,8 +491,20 @@ def _sincronizar_vale_alimentacao(
         alinhada = (
             existente.competencia == folha.competencia and existente.pessoa_id == folha.pessoa_id
         )
+        # O ENQUADRAMENTO entra na comparação junto com o valor: trocar a forma
+        # de pagamento de "cartão" para "dinheiro" não muda um centavo do valor
+        # do benefício, mas muda a base de INSS/IRRF/FGTS e o líquido. Sem esta
+        # verificação a linha continuaria indenizatória para sempre — o defeito
+        # mais silencioso que este módulo poderia ter.
+        enquadrada = (
+            existente.natureza == calculo["natureza"]
+            and bool(existente.incide_inss) == bool(calculo["incide_inss"])
+            and bool(existente.incide_irrf) == bool(calculo["incide_irrf"])
+            and bool(existente.incide_fgts) == bool(calculo["incide_fgts"])
+        )
         if (
             alinhada
+            and enquadrada
             and abs(existente.valor - valor) <= 0.001
             and (existente.descricao or "") == descricao
         ):
@@ -410,6 +516,10 @@ def _sincronizar_vale_alimentacao(
         existente.pessoa_id = folha.pessoa_id
         existente.valor = valor
         existente.descricao = descricao
+        existente.natureza = calculo["natureza"]
+        existente.incide_inss = bool(calculo["incide_inss"])
+        existente.incide_irrf = bool(calculo["incide_irrf"])
+        existente.incide_fgts = bool(calculo["incide_fgts"])
         session.add(existente)
         session.flush()
         return True
@@ -423,12 +533,20 @@ def _sincronizar_vale_alimentacao(
         codigo=vale_alimentacao.CODIGO,
         descricao=descricao,
         valor=valor,
-        # Enquadramento COPIADO do catálogo, igual à rubrica lançada à mão: o
-        # recibo já emitido não muda de conteúdo se a lei mudar depois.
-        natureza=verbete["natureza"],
-        incide_inss=bool(verbete["incide_inss"]),
-        incide_irrf=bool(verbete["incide_irrf"]),
-        incide_fgts=bool(verbete["incide_fgts"]),
+        # Enquadramento COPIADO para a linha, igual à rubrica lançada à mão —
+        # o recibo já emitido não muda de conteúdo se a lei (ou o cadastro)
+        # mudar depois. A diferença é DE ONDE ele vem: da árvore do
+        # `vale_alimentacao`, que cruza a forma de pagamento do funcionário com
+        # o PAT da fazenda e com a trava da OJ 413, e não do catálogo — que tem
+        # um enquadramento só por código e não saberia distinguir dois
+        # funcionários na mesma folha.
+        natureza=calculo["natureza"],
+        incide_inss=bool(calculo["incide_inss"]),
+        incide_irrf=bool(calculo["incide_irrf"]),
+        incide_fgts=bool(calculo["incide_fgts"]),
+        # `incorpora_base` continua vindo do catálogo: é do CÓDIGO, não da
+        # forma de pagamento. Vale-alimentação não vira salário-base do mês
+        # seguinte em enquadramento nenhum — só o "aumento na folha" faz isso.
         incorpora_base=bool(verbete["incorpora_base"]),
         # `usuario_id` fica nulo: ninguém lançou esta linha — ela veio do
         # cadastro. Carimbar quem abriu a tela seria atribuir a uma pessoa um
@@ -440,12 +558,17 @@ def _sincronizar_vale_alimentacao(
 
 def _aplicar_vale_alimentacao(
     session: Session, folha: FolhaPagamento, pessoa: Pessoa | None = None,
-    *, recem_criada: bool = False,
+    *, recem_criada: bool = False, politica: dict | None = None,
 ) -> bool:
     """Sincroniza a linha e, se ela mudou, refaz bases/retenções/líquido e a
     conta a pagar. É o par que todo chamador precisa — separado só para o
-    self-heal da listagem poder saber se houve mudança a commitar."""
-    if not _sincronizar_vale_alimentacao(session, folha, pessoa, recem_criada=recem_criada):
+    self-heal da listagem poder saber se houve mudança a commitar.
+
+    `politica` é repassada tal como veio (ver `_politica_vale_alimentacao`):
+    quem sincroniza em lote lê os parâmetros da fazenda uma vez e passa aqui."""
+    if not _sincronizar_vale_alimentacao(
+        session, folha, pessoa, recem_criada=recem_criada, politica=politica,
+    ):
         return False
     _recalcular_folha(session, folha)
     return True
@@ -649,6 +772,10 @@ def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> 
         FolhaPagamento.fazenda_id == fazenda_id,
     )
     modelos = session.exec(query).all()
+    # Parâmetros do vale-alimentação lidos UMA VEZ para a varredura inteira:
+    # `parametros.get_param*` abre uma sessão por leitura, e são quatro
+    # parâmetros por competência gerada (ver `_politica_vale_alimentacao`).
+    politica_va = _politica_vale_alimentacao()
     for modelo in modelos:
         pessoa = session.get(Pessoa, modelo.pessoa_id)
         if not pessoa:
@@ -744,7 +871,7 @@ def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> 
                 # folha; e o recálculo daqui é o que deixa a CONTA A PAGAR já
                 # nascer com o valor certo — é ela que o dono paga.
                 session.refresh(nova)
-                if _aplicar_vale_alimentacao(session, nova, pessoa):
+                if _aplicar_vale_alimentacao(session, nova, pessoa, politica=politica_va):
                     session.commit()
             competencia = _competencia_seguinte(competencia)
 
@@ -1264,6 +1391,9 @@ def listar_folha_pagamento(
     # sendo refletido. Recomputa o valor_vale a partir da SOMA das parcelas e,
     # se mudou, atualiza o líquido e a conta a pagar vinculada.
     houve_mudanca = False
+    # Ver `_politica_vale_alimentacao`: quatro parâmetros da fazenda lidos uma
+    # vez para a listagem inteira, e não quatro consultas por folha.
+    politica_va = _politica_vale_alimentacao()
     for registro in registros:
         if registro.status == "pago":
             continue
@@ -1289,7 +1419,7 @@ def listar_folha_pagamento(
         # e salvar cada folha — e não pode aparecer nas pagas, que a própria
         # `_sincronizar_vale_alimentacao` recusa. Roda DEPOIS do bloco do vale
         # para não pular o `_marcar_vale_aplicado` dele.
-        if _aplicar_vale_alimentacao(session, registro):
+        if _aplicar_vale_alimentacao(session, registro, politica=politica_va):
             houve_mudanca = True
     if houve_mudanca:
         session.commit()

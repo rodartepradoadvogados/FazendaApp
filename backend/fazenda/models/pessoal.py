@@ -107,25 +107,21 @@ class Pessoa(SQLModel, table=True):
     # antecipado ou vencido"). Decisão do dono, nas palavras dele: "não
     # precisa de uma rubrica para vale alimentação, só precisa de ter como
     # cadastrar se vai ter ou não e o valor-base... o resto é padrão". A folha
-    # lê estes quatro campos e GERA a linha do holerite sozinha (ver
+    # lê estes campos e GERA a linha do holerite sozinha (ver
     # `rules/vale_alimentacao.py` e `_sincronizar_vale_alimentacao`).
     #
-    # ENQUADRAMENTO ASSUMIDO — leia antes de mexer. O sistema trata o
-    # benefício pelo PADRÃO DO PAT: indenizatório, fora das bases de INSS,
-    # IRRF e FGTS (CLT, art. 457, §2º; Lei 14.442/2022, que passou a exigir o
-    # pagamento em ticket/cartão de uso exclusivo em alimentação). NÃO existe
-    # campo de forma de pagamento, e a ausência é decisão do dono, não
-    # descuido: ele determinou que "o resto é padrão". A RESSALVA que fica
-    # registrada para o próximo leitor é esta — vale-alimentação pago EM
-    # DINHEIRO tem natureza SALARIAL e integraria as bases de INSS, IRRF e
-    # FGTS. Quem pagar em dinheiro está com a base subdeclarada por este
-    # sistema; o caminho, se um dia isso acontecer, é acrescentar a forma de
-    # pagamento aqui e um segundo verbete salarial ao catálogo — nunca
-    # reinterpretar o verbete indenizatório de hoje, que já estará congelado
-    # em holerites emitidos (ver models/folha_rubrica.py).
+    # ENQUADRAMENTO — não é mais assumido. Até set/2026 o sistema tratava o
+    # benefício pelo padrão do PAT (indenizatório, fora de todas as bases) e
+    # deixava registrada a ressalva de que VA pago EM DINHEIRO é SALARIAL. A
+    # ressalva virou regra: quem decide a natureza é
+    # `rules/vale_alimentacao.py::natureza_do_vale_alimentacao`, a partir da
+    # FORMA de pagamento (abaixo), do PAT da fazenda (parâmetro
+    # `inscrita_no_pat`) e da trava da OJ 413 (abaixo). A árvore inteira, com
+    # o fundamento de cada linha, está na docstring daquela função — é o ponto
+    # de verdade único, e nada aqui reimplementa a regra.
     #
-    # As quatro colunas nascem nulas/falsas: ninguém que já está cadastrado
-    # passa a ter vale-alimentação por causa desta migração.
+    # As colunas nascem nulas/falsas: ninguém que já está cadastrado passa a
+    # ter vale-alimentação por causa de uma migração.
     vale_alimentacao: bool = False
     vale_alimentacao_valor: Optional[float] = None  # valor-base, em reais
     vale_alimentacao_periodicidade: Optional[str] = None  # "diario" | "mensal"
@@ -135,6 +131,32 @@ class Pessoa(SQLModel, table=True):
     # dono: "se pago antecipado ou vencido, para fins de competência"). Ver
     # `rules/vale_alimentacao.py::competencia_do_beneficio`.
     vale_alimentacao_regime: Optional[str] = None
+
+    # "dinheiro" | "cartao" | "in_natura" — O EIXO QUE DECIDE A NATUREZA da
+    # verba, e por isso SEM PADRÃO ADIVINHADO: o cadastro exige a escolha
+    # quando o benefício está ligado (`pessoas.py::_validar_vale_alimentacao`)
+    # e a regra trata o nulo como "não sei", caindo no lado que não
+    # subdeclara base (salarial). Assumir "cartão" em silêncio tiraria da base
+    # do INSS e do FGTS uma verba que, paga em dinheiro, tem de entrar.
+    vale_alimentacao_forma: Optional[str] = None
+
+    # A OJ 413 da SDI-1 do TST virada coluna. "A pactuação em norma coletiva
+    # conferindo caráter indenizatório à verba 'auxílio-alimentação' ou a
+    # adesão posterior do empregador ao PAT não altera a natureza salarial da
+    # parcela, instituída anteriormente, para aqueles empregados que,
+    # habitualmente, já percebiam o benefício" — mudar a forma de pagamento
+    # depois (ou entrar no PAT depois) não limpa a natureza de quem JÁ VINHA
+    # recebendo; seria alteração contratual lesiva (CLT, art. 468). Vale só
+    # para quem for contratado dali em diante, e é por isso que a trava é POR
+    # FUNCIONÁRIO e não parâmetro da fazenda: a mesma fazenda pode ter duas
+    # populações com regras diferentes na mesma folha. Ligada, vence a forma e
+    # vence o PAT. Edição restrita a administrador (ver `pessoas.py`).
+    #
+    # Optional[bool] (e não `bool = False`) porque a coluna nasce NULLABLE e
+    # sem `server_default`: a migração roda no boot da API e um default
+    # forçaria reescrever a tabela inteira. NULL lê como False em todo lugar
+    # que a consulta (`bool(getattr(...))`) — ver `natureza_do_vale_alimentacao`.
+    vale_alimentacao_natureza_travada_salarial: Optional[bool] = False
 
 
 # ---------------------------------------------------------------------------

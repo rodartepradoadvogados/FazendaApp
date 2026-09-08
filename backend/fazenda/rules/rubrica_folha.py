@@ -58,17 +58,33 @@ com a contabilidade dele):
   rubrica recusarem criar/editar/excluir esta linha na mão: quem manda é o
   cadastro, e a folha refaz a linha sozinha.
 
-  ENQUADRAMENTO E A RESSALVA QUE FICA REGISTRADA. Adota-se o PADRÃO DO PAT —
-  ticket/cartão de uso exclusivo em alimentação: indenizatório, fora das bases
-  de INSS, IRRF e FGTS (CLT, art. 457, §2º; Lei 14.442/2022). Este catálogo
-  chegou a NÃO ter vale-alimentação exatamente porque a natureza dele depende
-  da FORMA de pagamento: pago em DINHEIRO ele é SALARIAL e integra as três
-  bases. O dono decidiu que não há campo de forma de pagamento ("o resto é
-  padrão"), então o sistema assume o PAT — não é descuido, é escolha, e ela
-  está errada para quem pagar em dinheiro. Se um dia for preciso cobrir esse
-  caso, o caminho é um CÓDIGO NOVO salarial mais o campo da forma no cadastro,
-  nunca reinterpretar este verbete: ele já estará congelado em holerites
-  emitidos (ver models/folha_rubrica.py).
+  ENQUADRAMENTO DERIVADO, E É O ÚNICO VERBETE ASSIM. Este catálogo chegou a
+  NÃO ter vale-alimentação exatamente porque a natureza dele não é do CÓDIGO:
+  é da FORMA de pagamento cruzada com o PAT da fazenda e com a trava da OJ 413
+  do TST — pago em dinheiro ele é SALARIAL e integra as três bases; em
+  cartão/ticket é indenizatório com ou sem PAT; servido in natura é
+  salário-utilidade, salvo no PAT. A árvore inteira, com o fundamento de cada
+  linha, mora em `rules/vale_alimentacao.py::natureza_do_vale_alimentacao`, e
+  é de lá que `_sincronizar_vale_alimentacao` tira `natureza` e as três
+  incidências ANTES de gravar a linha — nunca daqui.
+
+  ENTÃO PARA QUE SERVEM `natureza`/`incide_*` ABAIXO? São o último recurso, e
+  o valor escolhido é o CONSERVADOR (salarial, nas três bases): se algum
+  caminho futuro montar a linha a partir do catálogo (é o que `_nova_rubrica`
+  em rh_folha_pagar.py faz para os outros códigos), o erro que ele comete é
+  recolher a mais sobre uma verba que talvez não precisasse — visível no
+  holerite do mês seguinte e reversível —, e não subdeclarar base, que só
+  aparece anos depois com juros. Pelo mesmo motivo a regra enquadra como
+  salarial quem está com a forma de pagamento em branco no cadastro.
+
+  Um CÓDIGO NOVO por natureza foi considerado e recusado: a natureza varia por
+  FUNCIONÁRIO (a trava da OJ 413 é individual), então dois códigos exigiriam
+  que a folha trocasse o código da linha quando o cadastro mudasse — e o
+  código é justamente o que os endpoints de rubrica, o pop-up de pagamento e
+  a busca da linha existente usam para se localizar. O que precisa ficar
+  congelado no recibo emitido já fica: `natureza` e `incide_*` são copiados
+  PARA A LINHA no momento da gravação (ver models/folha_rubrica.py), e nenhum
+  holerite pago muda de conteúdo por causa de uma edição de cadastro posterior.
 
 O QUE ESTE MÓDULO NÃO FAZ: não calcula a tabela progressiva do IRRF nem as
 faixas do INSS. O projeto inteiro trabalha com percentual informado pelo
@@ -171,8 +187,8 @@ CATALOGO_VENCIMENTOS: dict[str, dict] = {
         # contribuição previdenciária nem de FGTS. É o enquadramento menos
         # ambíguo do catálogo inteiro. (O vale-alimentação, que por um tempo
         # ficou de fora justamente por não ter enquadramento único, entrou
-        # depois por outro caminho — gerado pelo cadastro e no padrão do PAT;
-        # ver a docstring do módulo.)
+        # depois por outro caminho — gerado pelo cadastro, com a natureza
+        # derivada da forma de pagamento; ver a docstring do módulo.)
         "natureza": NATUREZA_INDENIZATORIA,
         "incide_inss": False,
         "incide_irrf": False,
@@ -184,11 +200,16 @@ CATALOGO_VENCIMENTOS: dict[str, dict] = {
     },
     "vale_alimentacao": {
         "rotulo": "Vale-alimentação",
-        # Padrão do PAT — ver a docstring do módulo e a ressalva do dinheiro.
-        "natureza": NATUREZA_INDENIZATORIA,
-        "incide_inss": False,
-        "incide_irrf": False,
-        "incide_fgts": False,
+        # ÚLTIMO RECURSO, não a resposta: quem decide a natureza desta verba é
+        # `vale_alimentacao.natureza_do_vale_alimentacao`, por funcionário (ver
+        # a docstring do módulo). O valor aqui é o conservador — salarial, nas
+        # três bases —, porque entre recolher a mais sobre uma verba que talvez
+        # não precisasse e subdeclarar base, o segundo é o que aparece anos
+        # depois com juros.
+        "natureza": NATUREZA_SALARIAL,
+        "incide_inss": True,
+        "incide_irrf": True,
+        "incide_fgts": True,
         "incorpora_base": False,
         # CONTRATUAL, e a justificativa não é a natureza (vale-transporte é
         # indenizatório e é livre): é a ORIGEM do número. O valor desta linha
@@ -202,9 +223,16 @@ CATALOGO_VENCIMENTOS: dict[str, dict] = {
         # A marca que tira este código do formulário de lançamento manual e faz
         # os endpoints de rubrica recusarem POST/PUT/DELETE nele.
         "gerado_por_cadastro": True,
+        # Fundamento GENÉRICO de propósito: o fundamento que vale para cada
+        # linha é o da forma de pagamento daquele funcionário, e ele vai escrito
+        # na própria linha (`FolhaRubrica.descricao` → coluna Referência, ver
+        # `vale_alimentacao.descricao`). Repetir um fundamento fixo aqui faria o
+        # cartão do holerite afirmar "sem natureza salarial" numa linha que a
+        # folha gravou como salarial.
         "fundamento": (
-            "Auxílio-alimentação do PAT, sem natureza salarial — CLT, art. 457, §2º; "
-            "Lei 14.442/2022 (pago em dinheiro seria salarial)"
+            "Auxílio-alimentação — a natureza depende da FORMA de pagamento e do PAT "
+            "(CLT, arts. 457, §2º, e 458, caput; OJs 133 e 413 da SDI-1 do TST); "
+            "a Referência da linha declara o enquadramento aplicado"
         ),
     },
     "indenizacao": {

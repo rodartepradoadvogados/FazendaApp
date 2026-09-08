@@ -4,7 +4,7 @@ import { Users, Plus, Pencil, Trash2, AlertTriangle, Check, X, Search, FileText,
 import {
   fetchPessoas, criarPessoa, atualizarPessoa, excluirPessoa, fetchTiposPessoa, criarTipoPessoa,
   CATEGORIAS_PESSOA_ANEXO, anexarArquivoPessoa, listarAnexosPessoa, excluirAnexoPessoa, urlAnexoPessoa, type AnexoPessoa,
-  type PeriodicidadeValeAlimentacao, type RegimeValeAlimentacao,
+  type PeriodicidadeValeAlimentacao, type RegimeValeAlimentacao, type FormaValeAlimentacao, ehAdmin,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { maskTelefone, maskCpfCnpj, maskCep } from "@/lib/masks";
@@ -23,6 +23,8 @@ type Pessoa = {
   vale_alimentacao_valor: number | null;
   vale_alimentacao_periodicidade: PeriodicidadeValeAlimentacao | null;
   vale_alimentacao_regime: RegimeValeAlimentacao | null;
+  vale_alimentacao_forma: FormaValeAlimentacao | null;
+  vale_alimentacao_natureza_travada_salarial: boolean | null;
 };
 type Form = {
   nome: string; tipos: string[]; telefones: string[]; emails: string[]; cpfCnpj: string; cep: string; observacoes: string; ativo: boolean;
@@ -35,6 +37,11 @@ type Form = {
   valeAlimentacao: boolean; valeAlimentacaoValor: string;
   valeAlimentacaoPeriodicidade: PeriodicidadeValeAlimentacao;
   valeAlimentacaoRegime: RegimeValeAlimentacao;
+  // "" = ainda não escolhida. O servidor RECUSA salvar o benefício ligado sem
+  // forma, e a tela não escolhe por ninguém: é dela que sai a resposta de se a
+  // verba entra nas bases de INSS, FGTS, 13º e férias.
+  valeAlimentacaoForma: FormaValeAlimentacao | "";
+  valeAlimentacaoTravadaSalarial: boolean;
 };
 type AnexoStagedPessoa = { file: File; categoria: string; data_validade: string };
 const formVazio: Form = {
@@ -45,6 +52,8 @@ const formVazio: Form = {
   // multiplica por dias, "vencido" não desloca o benefício para outro mês).
   valeAlimentacao: false, valeAlimentacaoValor: "",
   valeAlimentacaoPeriodicidade: "mensal", valeAlimentacaoRegime: "vencido",
+  // A forma NASCE VAZIA de propósito — ver o comentário do tipo acima.
+  valeAlimentacaoForma: "", valeAlimentacaoTravadaSalarial: false,
 };
 
 // Obrigatórios para cadastrar (decisão jul/2026): nome, CPF e endereço
@@ -77,6 +86,14 @@ function paraPayload(f: Form) {
       ? parseFloat(f.valeAlimentacaoValor) : undefined,
     vale_alimentacao_periodicidade: f.valeAlimentacao ? f.valeAlimentacaoPeriodicidade : undefined,
     vale_alimentacao_regime: f.valeAlimentacao ? f.valeAlimentacaoRegime : undefined,
+    vale_alimentacao_forma: f.valeAlimentacao && f.valeAlimentacaoForma !== ""
+      ? f.valeAlimentacaoForma : undefined,
+    // A trava só VIAJA quando quem está salvando é administrador: para todo
+    // mundo mais o campo nem aparece na tela, e mandar `false` desligaria em
+    // silêncio a proteção da OJ 413 de quem já a tinha. `undefined` no payload
+    // é o que o servidor lê como "não mexe no que está gravado".
+    vale_alimentacao_natureza_travada_salarial: ehAdmin() && f.valeAlimentacao
+      ? f.valeAlimentacaoTravadaSalarial : undefined,
   };
 }
 
@@ -144,6 +161,11 @@ export default function CadastroPessoas() {
       valeAlimentacaoValor: p.vale_alimentacao_valor != null ? String(p.vale_alimentacao_valor) : "",
       valeAlimentacaoPeriodicidade: p.vale_alimentacao_periodicidade ?? "mensal",
       valeAlimentacaoRegime: p.vale_alimentacao_regime ?? "vencido",
+      // Sem `?? "cartao"`: cadastro antigo (anterior ao campo) abre com a
+      // escolha em branco, e é a recusa do servidor que obriga a preenchê-la.
+      // Um padrão aqui esconderia justamente o que precisa ser decidido.
+      valeAlimentacaoForma: p.vale_alimentacao_forma ?? "",
+      valeAlimentacaoTravadaSalarial: !!p.vale_alimentacao_natureza_travada_salarial,
     });
     setEditando(p.id); setMsg(null); setErroAnexo(null);
     setAnexosStaged([]);
@@ -509,10 +531,82 @@ function FormItem({
               <option value="vencido">Vencido (na folha da própria competência)</option>
               <option value="antecipado">Antecipado (na folha da competência anterior)</option>
             </select></div>
+          {/* A FORMA é o campo que decide se a verba entra ou não nas bases de
+              INSS, FGTS, 13º e férias — ver
+              backend/fazenda/rules/vale_alimentacao.py::natureza_do_vale_alimentacao.
+              Nasce em branco e o servidor recusa salvar sem ela: escolher por
+              conta própria aqui seria tirar da base do INSS uma verba que
+              talvez tivesse de entrar, e o erro só apareceria anos depois. */}
+          <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Como é pago</label>
+            <select style={inputStyle} value={form.valeAlimentacaoForma}
+              onChange={(e) => setForm({ ...form, valeAlimentacaoForma: e.target.value as FormaValeAlimentacao | "" })}
+              title="É a forma de pagamento que define a natureza da verba — e, com ela, se o vale-alimentação entra nas bases de INSS, FGTS, 13º e férias">
+              <option value="">— escolha —</option>
+              <option value="cartao">Cartão ou ticket de alimentação</option>
+              <option value="in_natura">Refeição servida na fazenda</option>
+              <option value="dinheiro">Dinheiro, junto do salário</option>
+            </select></div>
+          {form.valeAlimentacaoForma === "cartao" && (
+            <p style={{ gridColumn: "1 / -1", fontSize: "0.68rem", color: "var(--text-muted)", margin: 0 }}>
+              Natureza indenizatória: fora das bases de INSS, FGTS, 13º e férias — com ou sem inscrição no PAT
+              (OJ 133 da SDI-1 do TST; Solução de Consulta COSIT nº 35/2019 da Receita Federal).
+            </p>
+          )}
+          {form.valeAlimentacaoForma === "in_natura" && (
+            <p style={{ gridColumn: "1 / -1", fontSize: "0.68rem", color: "var(--text-muted)", margin: 0 }}>
+              Refeição fornecida in natura é <strong>salário-utilidade</strong> e <strong>integra</strong> INSS, FGTS,
+              13º e férias (CLT, art. 458, caput) — <em>salvo</em> se a fazenda for inscrita no PAT (OJ 133 da SDI-1
+              do TST). Marque a inscrição no PAT em Configurações &gt; Parâmetros &gt; Folha de pagamento / RH.
+            </p>
+          )}
+          {/* Dinheiro AVISA e não bloqueia: a decisão é do empregador, e travar
+              o cadastro só esconderia do holerite um pagamento que está
+              acontecendo de qualquer jeito. As duas consequências são
+              independentes — uma é tributária, a outra é uma infração
+              autônoma. */}
+          {form.valeAlimentacaoForma === "dinheiro" && (
+            <div className="alert-critico" style={{ gridColumn: "1 / -1", fontSize: "0.72rem", alignItems: "flex-start" }}>
+              <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: "0.1rem" }} />
+              <span>
+                Pagar o vale-alimentação em dinheiro tem duas consequências, e elas são independentes:
+                <br />1. a verba passa a ter <strong>natureza salarial</strong> e <strong>integra as bases de INSS,
+                FGTS, 13º e férias</strong> — a exclusão do art. 457, §2º, da CLT vale “vedado seu pagamento em
+                dinheiro”;
+                <br />2. é <strong>infração à Lei 14.442/2022</strong>, que proíbe o pagamento em dinheiro e o saque
+                do saldo, com <strong>multa de R$ 5.000 a R$ 50.000</strong>, dobrada em caso de reincidência.
+                <br />O cadastro não bloqueia a escolha — a decisão é sua, e o holerite passará a mostrar a
+                incidência.
+              </span>
+            </div>
+          )}
+          {/* A trava da OJ 413 só aparece para administrador: ela é o único
+              campo do cadastro que aumenta a carga de INSS/FGTS de um
+              funcionário específico contra o que a forma diria — e o único
+              que, desligado por engano, tira de alguém uma proteção que a
+              jurisprudência lhe deu. O servidor recusa a alteração vinda de
+              quem não é administrador; esconder é só o outro lado da mesma
+              regra. */}
+          {ehAdmin() && (
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+                <input type="checkbox" checked={form.valeAlimentacaoTravadaSalarial}
+                  onChange={(e) => setForm({ ...form, valeAlimentacaoTravadaSalarial: e.target.checked })} />
+                Já recebia o vale-alimentação como salário (mantém a natureza salarial)
+              </label>
+              <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", margin: "0.2rem 0 0" }}>
+                Marque quando este funcionário <strong>já vinha recebendo</strong> o benefício com natureza salarial
+                antes de a fazenda mudar a forma de pagamento ou aderir ao PAT. Nesse caso a natureza salarial
+                <strong> não se perde</strong>, qualquer que seja a forma escolhida acima — mudá-la depois seria
+                alteração contratual lesiva (OJ 413 da SDI-1 do TST; CLT, art. 468). Vale só para quem já recebia:
+                quem for contratado daqui em diante segue a forma de pagamento.
+              </p>
+            </div>
+          )}
           <p style={{ gridColumn: "1 / -1", fontSize: "0.68rem", color: "var(--text-muted)", margin: 0 }}>
             A folha inclui o vale-alimentação sozinha no holerite das competências ainda não pagas — não é preciso
-            lançar nada mês a mês. Enquadramento adotado: auxílio-alimentação do PAT, sem natureza salarial e fora
-            das bases de INSS, IRRF e FGTS.
+            lançar nada mês a mês. A contagem de dias do vale diário (corridos, úteis ou trabalhados), a
+            proporcionalidade do mês de admissão e a inscrição no PAT ficam em Configurações &gt; Parâmetros &gt;
+            Folha de pagamento / RH.
           </p>
         </>}
         <div style={{ gridColumn: "1 / -1" }}><label style={labelStyle}>Observações</label>
