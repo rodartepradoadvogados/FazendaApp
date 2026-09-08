@@ -17,8 +17,8 @@ from datetime import datetime, timedelta
 from fazenda.auth import (
     DESBLOQUEIO_VALIDADE_S, EMAIL_DONO, MODULOS, criar_token, criar_token_desbloqueio, eh_consultor_cowdata,
     eh_email_dono_equivalente, eh_membro_equipe_cowdata, exigir_admin_ou_dono, exigir_dono, get_current_user,
-    get_fazenda_atual_id, get_suporte_do_token, hash_senha, multifazenda_provisionado, token_manter_conectado,
-    verificar_senha,
+    get_fazenda_atual_id, get_fazenda_id_escrita, get_suporte_do_token, hash_senha, multifazenda_provisionado,
+    token_manter_conectado, verificar_senha,
 )
 from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
 from fazenda.config import settings
@@ -53,10 +53,16 @@ class LoginIn(BaseModel):
 class NovoUsuario(BaseModel):
     username: str
     senha: str
-    # Uma das duas: pessoa_id (funcionário/consultor da fazenda, já cadastrado
-    # em Configurações > Cadastro > Pessoas) ou nome (conta sem vínculo com
-    # nenhuma fazenda — ex.: equipe da própria CowData, criada em Painel
-    # CowData > Equipe — ver _validar_pessoa_ou_nome).
+    # `pessoa_id` — a pessoa (funcionário/consultor) JÁ cadastrada dentro de
+    # uma fazenda, em Configurações > Cadastro > Pessoas. É o único caminho
+    # aceito num ambiente com fazenda cadastrada: o usuário nasce vinculado à
+    # fazenda dessa pessoa (ver _fazenda_do_novo_usuario e criar_usuario).
+    # `nome` é o resto do caminho antigo "conta sem fazenda nenhuma" (nome
+    # livre, sem Pessoa) — ver _validar_pessoa_ou_nome. Continua aqui só para
+    # a edição retroativa de contas legadas e para instalação ainda sem
+    # nenhuma fazenda; a criação por ele é RECUSADA assim que existe fazenda
+    # no banco. Conta da própria equipe CowData não passa mais por aqui: ela
+    # tem endpoint próprio (Painel CowData > Equipe).
     pessoa_id: int | None = None
     nome: str | None = None
     papel: str = "operador"
@@ -148,6 +154,67 @@ def _validar_pessoa_ou_nome(session: Session, pessoa_id: int | None, nome: str |
     if not nome_limpo:
         raise HTTPException(status_code=400, detail="Informe pessoa_id (funcionário da fazenda) ou nome (conta sem fazenda).")
     return None, nome_limpo
+
+
+# Texto único da recusa da trava "todo usuário nasce dentro de uma fazenda"
+# (ver _fazenda_do_novo_usuario). Mora numa constante porque é a ÚNICA
+# explicação que quem tenta o caminho errado recebe — e porque o teste de
+# regressão cobra este texto, para ninguém trocá-lo por um "dados inválidos"
+# genérico sem perceber que está apagando a instrução.
+ERRO_USUARIO_SEM_FAZENDA = (
+    "Não é possível criar um usuário fora de uma fazenda. A ordem é sempre esta: primeiro a "
+    "fazenda, depois a pessoa dentro dela (Configurações > Cadastro > Pessoas) e só então o "
+    "login dessa pessoa."
+)
+
+
+def _fazenda_do_novo_usuario(session: Session, pessoa_id: int | None, fazenda_id_escrita: int | None) -> int | None:
+    """A que fazenda o usuário que está nascendo agora vai ficar vinculado —
+    ou uma recusa, quando não existe resposta.
+
+    POR QUE ISTO EXISTE: até aqui, POST /auth/usuarios gravava o `Usuario` e
+    nunca criava o `UsuarioFazenda` (ver fazenda/models/multitenant.py). O
+    resultado era uma conta sem fazenda nenhuma, e é justamente esse estado
+    que abre o furo de isolamento: o login de quem tem 0 vínculos emite token
+    SEM a claim "fid" (ver login()), e o sistema inteiro isola tenant pelo
+    padrão tolerante `if fazenda_id is not None: query = query.where(...)` —
+    um token sem "fid" não restringe nada, ele DESLIGA o recorte por fazenda
+    em toda rota que segue esse padrão. Ou seja: criar usuário órfão não é um
+    detalhe de cadastro, é fabricar a chave que abre as outras fazendas.
+
+    A REGRA DO DONO, textual: "não pode ser possível criar usuário sem
+    fazenda. O CowData cria a fazenda, daí depois cria uma pessoa lá dentro,
+    cria o usuário dela... depois disso, sempre se cria pessoa dentro de uma
+    fazenda e depois usuário." Fazenda → pessoa → usuário, nessa ordem.
+
+    Como a fazenda é resolvida, em ordem:
+    1. Ambiente SEM nenhuma fazenda cadastrada (`multifazenda_provisionado`
+       False) devolve None e nada é vinculado — não há tenant a isolar nem
+       fazenda a que vincular, e é o mesmo corte que `resolver_fazenda_id_
+       escrita` e `exigir_fazenda_selecionada` já usam para separar "legado
+       tolerado" de "recusa". Todo ambiente de produção tem fazenda, então lá
+       a trava está sempre ligada.
+    2. A fazenda da PESSOA escolhida — ela é a resposta certa por definição
+       (o usuário É aquela pessoa), e é o mesmo recorte que GET /auth/usuarios
+       usa para listar (join em Pessoa.fazenda_id). Sem pessoa nenhuma
+       (caminho de `nome` livre), recusa: é exatamente "criar usuário sem
+       fazenda".
+    3. Pessoa legada com `fazenda_id` nulo (cadastrada antes do backfill de
+       multi-fazenda) cai na fazenda de ESCRITA da sessão de quem está
+       criando — a mesma fazenda em que a tela de Controle de Acesso está
+       aberta. É um caminho real que não pode ser bloqueado (não há tela para
+       corrigir `Pessoa.fazenda_id` retroativamente), e ele continua não
+       produzindo órfão, que é o ponto. Se nem isso resolver, recusa.
+    """
+    if not multifazenda_provisionado(session):
+        return None
+    pessoa = session.get(Pessoa, pessoa_id) if pessoa_id is not None else None
+    if pessoa is None:
+        raise HTTPException(status_code=400, detail=ERRO_USUARIO_SEM_FAZENDA)
+    fazenda_id = pessoa.fazenda_id or fazenda_id_escrita
+    if fazenda_id is None:
+        raise HTTPException(status_code=400, detail=ERRO_USUARIO_SEM_FAZENDA)
+    return fazenda_id
 
 
 def _fazendas_vinculadas(session: Session, usuario_id: int) -> list[Fazenda]:
@@ -552,15 +619,44 @@ def listar_modulos(_: Usuario = Depends(get_current_user)) -> list[str]:
 
 
 @router.post("/usuarios")
-def criar_usuario(dados: NovoUsuario, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> dict:
+def criar_usuario(
+    dados: NovoUsuario, _: Usuario = Depends(exigir_dono),
+    fazenda_id_escrita: int | None = Depends(get_fazenda_id_escrita),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Cria o login de uma pessoa JÁ cadastrada dentro de uma fazenda — e
+    cria o vínculo `UsuarioFazenda` no MESMO commit.
+
+    O vínculo junto não é enfeite: um `Usuario` sem nenhuma fazenda é o
+    estado que desliga o isolamento entre clientes (o raciocínio completo
+    está em _fazenda_do_novo_usuario). Por isso ele entra na mesma transação
+    — `flush()` para o INSERT resolver o `id` sem fechar a transação, e um
+    único `commit()` no fim. Validar a entrada e gravar em dois commits não
+    bastaria: falhando o segundo, o usuário órfão já estaria no banco, que é
+    exatamente o que esta rota não pode mais produzir.
+
+    Fazenda de escrita (`get_fazenda_id_escrita`, padrão da casa para toda
+    rota que grava) entra só como resposta para a pessoa legada sem
+    `fazenda_id`; ela também é quem recusa com 409 uma sessão que não sabe em
+    que fazenda está — mesma exigência que GET /auth/usuarios (a tela de
+    Controle de Acesso) já faz do outro lado."""
     if session.exec(select(Usuario).where(Usuario.username == dados.username)).first():
         raise HTTPException(status_code=400, detail="Usuário já existe")
     pessoa_id, nome = _validar_pessoa_ou_nome(session, dados.pessoa_id, dados.nome)
+    fazenda_do_vinculo = _fazenda_do_novo_usuario(session, pessoa_id, fazenda_id_escrita)
     perms = "" if dados.papel == "admin" else ",".join(m for m in dados.permissoes if m in MODULOS)
     novo = Usuario(username=dados.username, nome=nome, pessoa_id=pessoa_id, senha_hash=hash_senha(dados.senha),
                    papel=dados.papel, permissoes=perms, email=(dados.email or "").strip() or None,
                    pode_publicar_materias_blog=dados.pode_publicar_materias_blog)
     session.add(novo)
+    session.flush()  # resolve novo.id sem encerrar a transação — o vínculo vai no mesmo commit
+    if fazenda_do_vinculo is not None:
+        # Vínculo simples de propósito (contratante=False): a trava aqui é
+        # contra usuário órfão, não um jeito de distribuir o papel de
+        # contratante — esse é sempre uma atribuição deliberada, por
+        # POST /fazendas/{id}/vincular-usuario ou pelo Painel CowData
+        # (ver painel_cowdata_usuarios.py::_garantir_vinculo).
+        session.add(UsuarioFazenda(usuario_id=novo.id, fazenda_id=fazenda_do_vinculo))
     session.commit()
     session.refresh(novo)
     return _publico(novo, session)

@@ -900,6 +900,15 @@ def seed_admin(session: Session) -> None:
     valor padrão escrito no código, que é público no repositório: qualquer
     instalação que subisse sem ADMIN_PASS ficava com a senha do dono conhecida
     por quem lesse o fonte.
+
+    EXCEÇÃO DECLARADA à regra "todo usuário nasce dentro de uma fazenda" (ver
+    fazenda/api/routers/auth.py::_fazenda_do_novo_usuario): este admin nasce
+    sem `UsuarioFazenda` porque nasce ANTES de existir qualquer fazenda — é o
+    bootstrap da instalação, o login que vai criar a primeira fazenda. Ele é o
+    proprietário da plataforma (EMAIL_DONO), não usuário de tenant nenhum, e
+    ganha vínculo depois, ao ser vinculado à fazenda que criar (ver
+    POST /fazendas/{id}/vincular-usuario). Roda uma única vez, só com a tabela
+    `usuario` vazia.
     """
     existe = session.exec(select(Usuario)).first()
     if existe:

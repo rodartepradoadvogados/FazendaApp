@@ -481,6 +481,21 @@ def _permissao_equipe_cowdata_ou_vazia(session: Session, usuario_id: int) -> Per
 def criar_usuario_equipe(
     pessoa_id: int, dados: UsuarioEquipeCowDataIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
 ) -> dict:
+    """Login de um membro da própria equipe CowData (suporte/consultoria).
+
+    EXCEÇÃO DECLARADA à regra "todo usuário nasce dentro de uma fazenda" (ver
+    auth.py::_fazenda_do_novo_usuario): este usuário sai daqui SEM
+    `UsuarioFazenda`, de propósito, e é por isso que ele tem endpoint próprio
+    em vez de passar por POST /auth/usuarios. Ele não é usuário de tenant
+    nenhum — a Pessoa dele vive na fazenda "lógica" da CowData
+    (`eh_empresa_cowdata`, ver seed_cowdata_empresa), que nunca é uma
+    fazenda-cliente. Zero vínculos aqui é a resposta certa, não um descuido:
+    o login dele cai na escolha "Painel CowData" (ver _opcoes_de_conta) com
+    token sem "fid", e `exigir_fazenda_selecionada` mantém esse token fora de
+    qualquer rota de dado de fazenda. Ele só entra numa fazenda-cliente pelo
+    Cofre de acesso (cofre_acesso.py), que carimba o "fid" da fazenda
+    visitada com motivo, protocolo, expiração e auditoria — o controle que a
+    conta com vínculo permanente justamente não teria."""
     pessoa = _pessoa_equipe_ou_404(session, pessoa_id)
     if session.exec(select(Usuario).where(Usuario.pessoa_id == pessoa.id)).first():
         raise HTTPException(status_code=400, detail="Este membro já tem um usuário de login — edite as permissões em vez de criar outro.")

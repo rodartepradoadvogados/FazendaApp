@@ -14,12 +14,17 @@ Acesso de cada fazenda), só que com fazenda_id explícito no path em vez de
 vir do token (Painel CowData não tem fazenda selecionada — ver
 fazenda.auth.get_fazenda_atual_id).
 
-Fecha também uma lacuna que já existia mesmo entrando por modo suporte:
-POST/PUT /auth/usuarios nunca cria o vínculo UsuarioFazenda (ver
-fazenda/models/multitenant.py) — sem ele, o login do novo usuário não
-resolve `fid` nenhum (0 vínculos) e ele não haveria de cair nesta fazenda
-de jeito nenhum. Aqui sempre garantimos o vínculo (contratante=True quando
-papel="admin", os demais como vínculo simples) ao criar OU editar.
+Aqui sempre garantimos o vínculo UsuarioFazenda (ver
+fazenda/models/multitenant.py) ao criar OU editar — contratante=True quando
+papel="admin", os demais como vínculo simples. Sem vínculo, o login do novo
+usuário não resolveria `fid` nenhum (0 vínculos), não cairia nesta fazenda
+de jeito nenhum, e o token sem "fid" ainda desligaria o recorte por fazenda
+nas rotas que seguem o padrão tolerante.
+
+Esta rota já criava o vínculo desde que nasceu; POST /auth/usuarios (o mesmo
+formulário, entrando pela fazenda) não criava, e essa lacuna foi fechada —
+ver auth.py::_fazenda_do_novo_usuario para a regra "fazenda → pessoa →
+usuário, sempre nessa ordem".
 """
 from __future__ import annotations
 
@@ -163,10 +168,17 @@ def criar_usuario_da_fazenda(
         papel=dados.papel, permissoes=perms, email=email,
     )
     session.add(novo)
-    session.commit()
-    session.refresh(novo)
+    # `flush()` (não `commit()`): o INSERT vai ao banco e resolve `novo.id`,
+    # mas a transação continua aberta — o vínculo entra no MESMO commit lá
+    # embaixo. Eram dois commits aqui, e nessa janela entre eles uma falha no
+    # segundo (ou qualquer erro depois do primeiro) deixava o `Usuario`
+    # gravado sem fazenda nenhuma — o estado órfão que POST /auth/usuarios
+    # também passou a impedir (ver auth.py::_fazenda_do_novo_usuario). Agora
+    # é tudo ou nada.
+    session.flush()
     _garantir_vinculo(session, novo.id, fazenda_id, dados.papel)
     session.commit()
+    session.refresh(novo)
     return _publico(novo, session)
 
 
