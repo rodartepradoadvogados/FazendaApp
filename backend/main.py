@@ -755,7 +755,15 @@ app.add_middleware(
     # padrão. É o que permite ao frontend distinguir o 409 de "sua sessão não
     # tem fazenda selecionada" (ver fazenda/auth.py::exigir_fazenda_selecionada)
     # dos outros 409 de negócio e levar o usuário à tela de escolha de conta.
-    expose_headers=["X-Fazenda-Nao-Selecionada"],
+    #
+    # X-Conta-Sem-Fazenda marca o 409 do OUTRO caso: usuário que não tem
+    # fazenda nenhuma vinculada. Ele NÃO leva à tela de escolha — ali não
+    # haveria o que escolher —, e o `authFetch` (lib/api.ts) só redireciona
+    # quando vê o cabeçalho de cima, então esta resposta chega à tela como
+    # mensagem, que é o desejado. Fica exposto para o frontend poder um dia
+    # dar a esse caso um tratamento próprio, e para aparecer na aba de rede
+    # quando o suporte for investigar um acesso que não abre.
+    expose_headers=["X-Fazenda-Nao-Selecionada", "X-Conta-Sem-Fazenda"],
 )
 
 # Auth (aberto) + rotas de dados (exigem login).
