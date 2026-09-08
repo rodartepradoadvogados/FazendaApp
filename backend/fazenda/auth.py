@@ -815,11 +815,56 @@ def exigir_fazenda_selecionada():
     def _dep(
         fazenda_id: int | None = Depends(get_fazenda_atual_id),
         session: Session = Depends(get_session),
+        user: Usuario = Depends(get_current_user),
     ) -> None:
         if fazenda_id is not None:
             return
         if not multifazenda_provisionado(session):
             return
+        # Duas situações diferentes chegam aqui, e mandar as duas para a tela
+        # de escolha é útil só numa delas.
+        #
+        # Quem TEM fazenda e apenas não escolheu qual resolve sozinho: escolhe
+        # e entra. Quem NÃO TEM fazenda nenhuma não tem o que escolher — a
+        # tela de escolha viria vazia, e a orientação de "sair e entrar de
+        # novo" o deixaria num laço, repetindo a mesma coisa sem entender por
+        # quê e sem saber que precisa falar com alguém.
+        #
+        # O vínculo é criado pela CowData, e só por ela: cria a fazenda,
+        # cadastra a pessoa nela e liga o usuário a essa pessoa (ver
+        # routers/auth.py::criar_usuario, que desde o PR #729 recusa criar
+        # usuário sem `UsuarioFazenda`). Por isso a saída para este caso é o
+        # suporte, e não uma ação na tela.
+        #
+        # Membro da Equipe CowData fica de fora desta mensagem de propósito:
+        # ele legitimamente não tem fazenda vinculada e entra pelo Cofre de
+        # acesso (routers/cofre_acesso.py), que carimba o `fid` da fazenda
+        # visitada. Mandá-lo ao suporte seria mandá-lo a si mesmo.
+        #
+        # A decisão sai do usuário COMO ELE ESTÁ NO BANCO, e não do objeto que
+        # a dependência entregou. Não é preciosismo: metade da suíte substitui
+        # `get_current_user` por um dublê mínimo (id, papel, ativo, username,
+        # email) e `eh_membro_equipe_cowdata` lê `pessoa_id`, que o dublê não
+        # tem — 15 testes de outras áreas quebraram assim na primeira versão
+        # desta guarda. Lendo do banco, a checagem vale igual em produção e
+        # não obriga cada dublê da suíte a crescer junto com ela.
+        usuario = session.get(Usuario, getattr(user, "id", None))
+        if usuario is not None and not eh_membro_equipe_cowdata(session, usuario) \
+                and not eh_email_dono_equivalente(usuario.email):
+            tem_vinculo = session.exec(
+                select(UsuarioFazenda.fazenda_id).where(UsuarioFazenda.usuario_id == usuario.id)
+            ).first()
+            if tem_vinculo is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Seu acesso ainda não está liberado para nenhuma fazenda. "
+                           "Fale com o suporte da CowData para concluir seu cadastro.",
+                    # SEM o cabeçalho X-Fazenda-Nao-Selecionada: ele é o que faz
+                    # o frontend mandar o usuário para /escolher-conta, e é
+                    # justamente para lá que esta pessoa NÃO deve ir. Sem o
+                    # cabeçalho, a mensagem aparece como está escrita aqui.
+                    headers={"X-Conta-Sem-Fazenda": "1"},
+                )
         raise HTTPException(
             status_code=409,
             detail="Sua sessão não tem uma fazenda selecionada. Saia e entre novamente para "
