@@ -240,13 +240,22 @@ class PessoaIn(BaseModel):
     endereco_uf: str | None = None
     # ── Vale-alimentação (set/2026) — ver models/pessoal.py e
     # rules/vale_alimentacao.py. É CONFIGURAÇÃO do vínculo: a folha lê estes
-    # quatro campos e gera a linha do holerite sozinha, sem ninguém lançar
-    # rubrica mês a mês. Todos opcionais — cadastro que não mexer neles
-    # continua exatamente como estava.
+    # campos e gera a linha do holerite sozinha, sem ninguém lançar rubrica mês
+    # a mês. Todos opcionais — cadastro que não mexer neles continua
+    # exatamente como estava.
     vale_alimentacao: bool = False
     vale_alimentacao_valor: float | None = None
     vale_alimentacao_periodicidade: str | None = None  # "diario" | "mensal"
     vale_alimentacao_regime: str | None = None  # "antecipado" | "vencido"
+    # "dinheiro" | "cartao" | "in_natura" — o eixo que decide se a verba entra
+    # nas bases de INSS/IRRF/FGTS. Obrigatório com o benefício ligado (ver
+    # `_validar_vale_alimentacao`): é o único campo do cadastro cuja omissão o
+    # sistema se recusa a suprir com um padrão.
+    vale_alimentacao_forma: str | None = None
+    # A trava da OJ 413 da SDI-1 do TST — só administrador liga/desliga (ver
+    # `_validar_trava_oj413`). `None` significa "não veio no payload": um PUT
+    # de usuário comum que não mexeu na trava não pode desligá-la sem querer.
+    vale_alimentacao_natureza_travada_salarial: bool | None = None
 
 
 def _validar_vale_alimentacao(dados: PessoaIn) -> None:
@@ -278,6 +287,71 @@ def _validar_vale_alimentacao(dados: PessoaIn) -> None:
             status_code=400,
             detail="Escolha se o vale-alimentação é pago antecipado ou vencido.",
         )
+    # A FORMA É OBRIGATÓRIA, e é a única exigência deste bloco que não é
+    # burocracia: dela sai a resposta de se o benefício entra ou não na base de
+    # INSS, FGTS, 13º e férias (ver
+    # `vale_alimentacao.natureza_do_vale_alimentacao`). A regra pura trata o
+    # nulo como "não sei" e enquadra como salarial — o lado que não subdeclara
+    # base —, mas isso é rede de segurança do dado antigo, não licença para
+    # gravar dado novo sem a escolha. Aceitar em branco aqui seria deixar o
+    # sistema recolher INSS sobre um vale-refeição de cartão porque ninguém
+    # marcou uma caixa.
+    if vale_alimentacao.forma_valida(dados.vale_alimentacao_forma) is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Escolha COMO o vale-alimentação é pago (dinheiro, cartão/ticket ou refeição "
+                "servida na fazenda) — é isso que define se ele entra nas bases de INSS, FGTS, "
+                "13º e férias."
+            ),
+        )
+
+
+def _validar_trava_oj413(
+    dados: PessoaIn, usuario: Usuario, atual: bool | None = None,
+) -> bool | None:
+    """
+    Devolve o valor a gravar em `vale_alimentacao_natureza_travada_salarial`,
+    ou `None` para "não mexe no que está lá".
+
+    O QUE A TRAVA É. A OJ 413 da SDI-1 do TST: quem já vinha recebendo o
+    vale-alimentação com natureza salarial não perde essa natureza porque a
+    fazenda mudou a forma de pagamento depois, nem porque aderiu ao PAT depois
+    — seria alteração contratual lesiva (CLT, art. 468). Ligada, ela vence a
+    forma e vence o PAT no cálculo da folha.
+
+    POR QUE SÓ ADMINISTRADOR. Ela é o único campo do cadastro que aumenta a
+    carga de INSS/FGTS de um funcionário específico contra o que a forma de
+    pagamento diria — e o único que, DESLIGADO por engano, tira de alguém uma
+    proteção que a jurisprudência lhe deu. Não é dado operacional; é uma
+    afirmação sobre o histórico do contrato.
+
+    OMITIR NÃO É DESLIGAR. `None` no payload (o caso de quem nunca viu o campo,
+    porque a tela só o mostra para administrador) preserva o valor gravado. Sem
+    isso, qualquer PUT de um usuário comum — salvar um telefone novo —
+    apagaria a trava em silêncio.
+
+    404, nunca 403, é a regra do projeto para RECURSO de outra fazenda. Aqui é
+    outra coisa: o recurso é desta fazenda e o usuário pode editá-lo; o que
+    falta é papel para mexer NESTE campo. Recusar com 403 e a explicação é o
+    honesto — esconder o motivo faria a tela parecer quebrada.
+    """
+    pedido = dados.vale_alimentacao_natureza_travada_salarial
+    if pedido is None:
+        return None
+    if bool(pedido) == bool(atual):
+        # Reenvio do mesmo valor (a tela devolve o formulário inteiro): não é
+        # alteração, então não exige papel nenhum.
+        return None
+    if usuario.papel != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Só um administrador pode alterar a trava de natureza salarial do "
+                "vale-alimentação (OJ 413 da SDI-1 do TST)."
+            ),
+        )
+    return bool(pedido)
 
 
 def _exigir_campos_obrigatorios(dados: PessoaIn) -> None:
@@ -437,15 +511,24 @@ def listar_pessoas(
 @router.post("/pessoas")
 def criar_pessoa(
     dados: PessoaIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
+    usuario: Usuario = Depends(get_current_user),
 ) -> dict:
     tipo_csv = _validar_tipos(session, dados.tipos, fazenda_id=fazenda_id)
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
     _validar_vale_alimentacao(dados)
+    # Pessoa NOVA nasce sem trava (`atual=False`): ligá-la já no cadastro é
+    # alteração, e por isso exige administrador como qualquer outra.
+    trava = _validar_trava_oj413(dados, usuario, atual=False)
     telefones = _normalizar_lista_contato(dados.telefones)
     emails = _normalizar_lista_contato(dados.emails)
-    campos = dados.model_dump(exclude={"tipos", "telefones", "emails"})
-    p = Pessoa(**campos, tipo=tipo_csv, fazenda_id=fazenda_id)
+    campos = dados.model_dump(
+        exclude={"tipos", "telefones", "emails", "vale_alimentacao_natureza_travada_salarial"},
+    )
+    p = Pessoa(
+        **campos, tipo=tipo_csv, fazenda_id=fazenda_id,
+        vale_alimentacao_natureza_travada_salarial=bool(trava),
+    )
     _aplicar_contatos(p, telefones, emails)
     session.add(p)
     session.commit()
@@ -457,6 +540,7 @@ def criar_pessoa(
 def atualizar_pessoa(
     pessoa_id: int, dados: PessoaIn, session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    usuario: Usuario = Depends(get_current_user),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     p = session.get(Pessoa, pessoa_id)
@@ -464,8 +548,19 @@ def atualizar_pessoa(
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     tipo_csv = _validar_tipos(session, dados.tipos, fazenda_id=fazenda_id)
     _validar_vale_alimentacao(dados)
-    for campo, valor in dados.model_dump(exclude={"tipos", "telefones", "emails"}).items():
+    trava = _validar_trava_oj413(
+        dados, usuario, atual=bool(p.vale_alimentacao_natureza_travada_salarial),
+    )
+    # A trava sai do `model_dump` e é aplicada à parte: `None` no payload
+    # significa "não mexe", e um `setattr` cru gravaria None por cima do que
+    # estava lá — desligando em silêncio uma proteção que só administrador
+    # deveria poder tirar.
+    for campo, valor in dados.model_dump(
+        exclude={"tipos", "telefones", "emails", "vale_alimentacao_natureza_travada_salarial"},
+    ).items():
         setattr(p, campo, valor)
+    if trava is not None:
+        p.vale_alimentacao_natureza_travada_salarial = trava
     p.tipo = tipo_csv
     _aplicar_contatos(p, _normalizar_lista_contato(dados.telefones), _normalizar_lista_contato(dados.emails))
     session.add(p)

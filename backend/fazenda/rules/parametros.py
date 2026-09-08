@@ -163,6 +163,45 @@ DEFINICOES: list[dict] = [
     # FGTS cadastrado (ver `fazenda.rules.folha_rh.calcular_rescisao`).
     {"chave": "percentual_estimado_fgts_mensal", "grupo": "folha_rh", "label": "Estimativa de depósito mensal de FGTS", "valor": 0.08, "tipo": "float", "unidade": "fração"},
 
+    # ---- Folha de pagamento / RH — vale-alimentação -------------------------
+    # O PAT é fato da FAZENDA, não do funcionário, e por isso mora aqui e não
+    # em `Pessoa`. Ele muda a NATUREZA da verba em duas das quatro linhas da
+    # árvore (refeição servida in natura: salário-utilidade fora do PAT, art.
+    # 458, caput, da CLT; indenizatória dentro dele, OJ 133 da SDI-1 do TST) —
+    # e é ele também que abre a dedução de IRPJ do programa. Padrão FALSO: a
+    # maioria das fazendas rurais não é inscrita, e inscrever ninguém por
+    # omissão é o lado que não subdeclara base. Ver
+    # `rules/vale_alimentacao.py::natureza_do_vale_alimentacao`.
+    {"chave": "inscrita_no_pat", "grupo": "folha_rh",
+     "label": "Fazenda inscrita no PAT (Programa de Alimentação do Trabalhador)",
+     "valor": "false", "tipo": "bool"},
+    # Contagem de dias do vale-alimentação DIÁRIO. Não há norma legal que fixe
+    # uma: quem manda é a convenção coletiva rural da base, depois o contrato,
+    # depois a política da fazenda. Padrão `trabalhados` porque o auxílio
+    # custeia a refeição DURANTE a jornada. Fica como texto pelo mesmo motivo
+    # de `modo_lancamento_alimentacao`: a tela de Parâmetros só renderiza int,
+    # bool, date, float e texto — os valores aceitos vão no rótulo, e a
+    # validação mora em `vale_alimentacao.base_dias_valida`.
+    {"chave": "vale_alimentacao_base_dias", "grupo": "folha_rh",
+     "label": "Vale-alimentação diário — contagem de dias (corridos | uteis | trabalhados)",
+     "valor": "trabalhados", "tipo": "texto"},
+    # Falta INJUSTIFICADA autoriza suprimir o dia do benefício (não houve
+    # jornada, não houve refeição a custear) e isso é fixo. Falta JUSTIFICADA,
+    # férias, afastamento pelo INSS e feriado normalmente NÃO autorizam — mas a
+    # CCT decide, e por isso este é o interruptor. Padrão FALSO: não descontar
+    # é o que a maioria das convenções prevê, e o padrão que não tira dinheiro
+    # de ninguém sem alguém ter pedido.
+    {"chave": "vale_alimentacao_falta_justificada_desconta", "grupo": "folha_rh",
+     "label": "Vale-alimentação — falta justificada desconta o dia", "valor": "false", "tipo": "bool"},
+    # No mês de ADMISSÃO o padrão é proporcional (conta a partir do dia da
+    # admissão), porque o benefício custeia a refeição dos dias em que houve
+    # vínculo. Algumas CCTs mandam pagar o mês cheio — é o que este
+    # interruptor liga. Não existe equivalente para o mês de RESCISÃO: nenhuma
+    # norma manda pagar refeição depois do desligamento.
+    {"chave": "vale_alimentacao_mes_admissao_integral", "grupo": "folha_rh",
+     "label": "Vale-alimentação — mês de admissão integral (não proporcional)",
+     "valor": "false", "tipo": "bool"},
+
     # ---- Estrutura da fazenda — usado pelo indicador "Custo por hectare"
     # (Financeiro > Relatórios), que divide as despesas do período por este
     # valor. Sem cadastro de área em nenhum outro lugar do sistema hoje
@@ -513,6 +552,33 @@ def dias_ferias_padrao() -> int:
     """Dias de férias padrão (direito integral por período aquisitivo) —
     sugestão inicial no lançamento de férias, sempre editável."""
     return int(get_param("dias_ferias_padrao", 30) or 30)
+
+
+def fazenda_inscrita_no_pat() -> bool:
+    """A fazenda é inscrita no PAT? Fato da FAZENDA (não do funcionário) que
+    decide duas das quatro linhas da árvore de natureza do vale-alimentação —
+    ver `rules/vale_alimentacao.py::natureza_do_vale_alimentacao`."""
+    return get_param_bool("inscrita_no_pat", False)
+
+
+def vale_alimentacao_base_dias() -> str:
+    """"corridos" | "uteis" | "trabalhados" — a contagem do VA diário. Quem
+    normaliza valor desconhecido é `vale_alimentacao.base_dias_valida`, que é
+    também quem conhece o padrão: um segundo padrão escrito aqui é como os
+    dois passam a discordar."""
+    return get_param_texto("vale_alimentacao_base_dias", "trabalhados")
+
+
+def vale_alimentacao_falta_justificada_desconta() -> bool:
+    """A CCT da base manda suprimir o dia de benefício na falta JUSTIFICADA?
+    Padrão False — a injustificada desconta sempre, e não é configurável."""
+    return get_param_bool("vale_alimentacao_falta_justificada_desconta", False)
+
+
+def vale_alimentacao_mes_admissao_integral() -> bool:
+    """No mês de admissão, paga-se o benefício cheio em vez de proporcional?
+    Padrão False (proporcional)."""
+    return get_param_bool("vale_alimentacao_mes_admissao_integral", False)
 
 
 def percentual_estimado_fgts_mensal() -> float:

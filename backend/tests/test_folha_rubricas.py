@@ -145,7 +145,18 @@ class TestCatalogoTrabalhista:
             "bonificacao_produtividade", "aumento_folha", "gueltas", "vale_transporte",
             "vale_alimentacao", "indenizacao", "reembolso",
         }
-        salariais = {"bonificacao_produtividade", "aumento_folha", "gueltas"}
+        # `vale_alimentacao` está entre os salariais e NÃO é engano: a
+        # natureza dele não é do código, é da FORMA de pagamento cruzada com o
+        # PAT e com a trava da OJ 413 (ver
+        # `rules/vale_alimentacao.py::natureza_do_vale_alimentacao`, que é quem
+        # decide de verdade, por funcionário). O que o catálogo declara é o
+        # ÚLTIMO RECURSO — o valor usado se algum caminho montar a linha a
+        # partir daqui —, e ele é o conservador: recolher a mais sobre uma
+        # verba que talvez não precisasse aparece no holerite do mês seguinte;
+        # subdeclarar base aparece anos depois, com juros.
+        salariais = {
+            "bonificacao_produtividade", "aumento_folha", "gueltas", "vale_alimentacao",
+        }
         for codigo, dados in catalogo.items():
             esperado = (
                 rubrica_folha.NATUREZA_SALARIAL if codigo in salariais

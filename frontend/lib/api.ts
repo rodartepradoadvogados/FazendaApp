@@ -8826,3 +8826,41 @@ export async function fetchRelatorioSobra(p: { de: string; ate: string; lote?: n
   if (!res.ok) throw new Error(`Relatório de sobra error: ${res.status}`);
   return res.json();
 }
+
+// ---------------------------------------------------------------------------
+// Vale-alimentação — a FORMA de pagamento e a trava da OJ 413 (set/2026)
+//
+// Acrescentados no fim do arquivo, e não junto de `PessoaDados`, para não
+// tocar num bloco em revisão noutro pull request. Estruturalmente dá no mesmo:
+// `criarPessoa`/`atualizarPessoa` recebem o payload como VARIÁVEL (ver
+// `CadastroPessoas.tsx::paraPayload`), e o TypeScript só recusa propriedade
+// extra em literal de objeto passado direto.
+// ---------------------------------------------------------------------------
+
+/** Como o vale-alimentação é pago — o eixo que decide se ele entra ou não nas
+ *  bases de INSS, FGTS, 13º e férias. A árvore inteira, com o fundamento de
+ *  cada linha, está em
+ *  `backend/fazenda/rules/vale_alimentacao.py::natureza_do_vale_alimentacao`:
+ *
+ *  - `dinheiro`   → SALARIAL, integra tudo (CLT, art. 457, §2º — a exclusão da
+ *                   base vale "vedado seu pagamento em dinheiro"). E é
+ *                   infração autônoma à Lei 14.442/2022, multa de R$ 5.000 a
+ *                   R$ 50.000, dobrada na reincidência;
+ *  - `cartao`     → indenizatória, com ou sem PAT (OJ 133 da SDI-1 do TST;
+ *                   Solução de Consulta COSIT nº 35/2019 da Receita Federal);
+ *  - `in_natura`  → salário-utilidade, INTEGRA (CLT, art. 458, caput), salvo
+ *                   se a fazenda for inscrita no PAT (OJ 133).
+ *
+ *  NÃO existe valor padrão: o servidor recusa o cadastro com o benefício
+ *  ligado e a forma em branco. Escolher por conta própria na tela seria tirar
+ *  da base do INSS uma verba que talvez tivesse de entrar. */
+export type FormaValeAlimentacao = "dinheiro" | "cartao" | "in_natura";
+
+/** Os dois campos novos do cadastro de vale-alimentação. `undefined` na trava
+ *  significa "não mexe no que está gravado": a tela só mostra o campo para
+ *  administrador, e mandar `false` num PUT de usuário comum desligaria em
+ *  silêncio uma proteção que só administrador pode tirar. */
+export type ValeAlimentacaoEnquadramentoIn = {
+  vale_alimentacao_forma?: FormaValeAlimentacao;
+  vale_alimentacao_natureza_travada_salarial?: boolean;
+};
