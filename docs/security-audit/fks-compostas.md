@@ -94,6 +94,30 @@ de hoje.
 Trocar 1 e 2 de lugar não é preferência de estilo: sem o `NOT NULL`, o passo 2
 é caro e não fecha o que promete.
 
+### Passo 1, medido no esquema real
+
+A migração `c8e2a4f70b13_fazenda_id_not_null.py`, rodada contra as 206 tabelas
+do esquema real (criado por `create_all`), com uma linha órfã semeada de
+propósito em `sanidade`:
+
+| | |
+|---|---|
+| tabelas com `fazenda_id` | 185 |
+| já eram `NOT NULL` | 15 |
+| catálogo global, não tocadas | 18 |
+| alvos | 152 |
+| **travadas** | **151** |
+| puladas por ainda terem órfã | 1 (a semeada) |
+
+Ao fim, 166 das 185 recusam nulo. O `downgrade` devolveu exatamente as 151 e
+parou nas 15 originais — não afrouxou nada que já era estrito.
+
+**O que isso significa para o passo 2:** tabela PULADA continua aceitando nulo,
+e por causa do `MATCH SIMPLE` do achado 2 a FK composta dela nasce inerte. Antes
+de compor as chaves, é preciso conferir a saída da migração no boot: cada tabela
+listada como pulada é uma que o passo 2 não fecha. Em banco limpo a lista vem
+vazia — o backfill do PR #717 tratou as órfãs que existiam.
+
 ## Como reproduzir
 
 O roteiro dos dois achados está em `fks-compostas-experimento.sql`, e roda
