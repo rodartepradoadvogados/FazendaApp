@@ -46,11 +46,26 @@ pytestmark = pytest.mark.skipif(
 _BANCO = "cowdata_teste_rls_backup"
 _DONO = "cowdata_teste_dono"
 _APP = "cowdata_teste_app"
+# Senha dos roles descartáveis deste teste. Não é segredo de nada: os roles
+# nascem e morrem dentro do próprio arquivo, num banco criado e destruído aqui.
+# Ela existe porque quem decide é a autenticação do servidor, não o teste: um
+# Postgres local com `trust` aceita role sem senha, mas o container do CI usa
+# `scram-sha-256` para conexão via host e recusa com "role has no password
+# assigned" — foi exatamente assim que este arquivo falhou ao rodar lá pela
+# primeira vez.
+_SENHA = "teste_rls_local"
 
 
 def _url_para(banco: str, usuario: str | None = None) -> str:
     url = sa.engine.make_url(URL_ADMIN).set(database=banco)
-    return str(url.set(username=usuario) if usuario else url)
+    if usuario:
+        url = url.set(username=usuario, password=_SENHA)
+    # `render_as_string(hide_password=False)` e não `str(url)`: o `__str__` da
+    # URL do SQLAlchemy TROCA a senha por `***`, de propósito, para não vazar
+    # segredo em log. Com `str()` a conexão sai literalmente com asteriscos no
+    # lugar da senha — some num servidor `trust` (que ignora senha) e falha num
+    # com `scram-sha-256`, que é o do CI.
+    return url.render_as_string(hide_password=False)
 
 
 @pytest.fixture(scope="module")
@@ -67,7 +82,7 @@ def banco_com_rls():
         conn.execute(sa.text(f"DROP DATABASE IF EXISTS {_BANCO}"))
         for role in (_DONO, _APP):
             conn.execute(sa.text(f"DROP ROLE IF EXISTS {role}"))
-            conn.execute(sa.text(f"CREATE ROLE {role} LOGIN NOSUPERUSER"))
+            conn.execute(sa.text(f"CREATE ROLE {role} LOGIN NOSUPERUSER PASSWORD '{_SENHA}'"))
         conn.execute(sa.text(f"CREATE DATABASE {_BANCO} OWNER {_DONO}"))
     admin.dispose()
 
