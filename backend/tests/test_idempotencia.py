@@ -58,6 +58,36 @@ def _contar(engine, modelo) -> int:
         return len(s.exec(select(modelo)).all())
 
 
+@pytest.fixture
+def client_com_get_session_real(monkeypatch):
+    """Variante do fixture `client` que NÃO sobrescreve `database.get_session`
+    — só troca o `engine` real por um SQLite descartável. Existe só para o
+    teste abaixo: o bug estava no CAMINHO REAL do middleware de idempotência
+    (`main.py::_sessao_idempotencia`), que chama `get_session()` direto,
+    sem passar pela injeção de dependência do FastAPI — um override de teste
+    (como o fixture `client` normal usa) mascara exatamente esse bug, porque
+    o override é sempre uma função sem parâmetro nenhum."""
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr(database, "engine", engine)
+
+    import main
+    from fazenda.auth import get_current_user
+
+    class _FakeUser:
+        id = 1
+        papel = "admin"
+        ativo = True
+        username = "teste"
+
+    main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+
+    with TestClient(main.app) as c:
+        yield c, engine
+
+    main.app.dependency_overrides.clear()
+
+
 class TestIdempotencia:
     def test_reenvio_com_mesma_chave_nao_duplica(self, client):
         c, engine = client
@@ -228,3 +258,34 @@ class TestIdempotenciaMantemCorsHeaders:
         r2 = c.post(CAMINHO, json=corpo, headers={"Idempotency-Key": "cors-cache-1", "Origin": "http://localhost:3000"})
         assert r2.status_code == 201
         assert r2.headers.get("access-control-allow-origin") == "http://localhost:3000"
+
+
+class TestIdempotenciaComGetSessionReal:
+    """Bug real relatado pelo usuário (09/09/2026): "Sem conexão com a API"
+    ao confirmar um pagamento (PUT /financeiro/lancamentos/{id}/pagar) —
+    voltou a acontecer depois do PR #744 (contexto de fazenda por sessão).
+    `get_session` ganhou o parâmetro `authorization` (Header do FastAPI, só
+    resolvido quando chamado VIA `Depends`), mas `_sessao_idempotencia`
+    chama `get_session()` direto — o parâmetro não resolvido fica sendo o
+    próprio marcador `Header(...)`, e `get_fazenda_atual_id` quebra em
+    `authorization.lower()` (AttributeError: 'Header' object has no
+    attribute 'lower'), only com o header `Idempotency-Key` presente em
+    POST/PUT/PATCH (por isso passou batido nos outros testes: o fixture
+    `client` comum sobrescreve `get_session` por um override sem parâmetro,
+    que mascara exatamente este bug)."""
+
+    def test_put_com_idempotency_key_e_authorization_nao_quebra(self, client_com_get_session_real):
+        c, _ = client_com_get_session_real
+        r = c.post(
+            CAMINHO, json={"data": "2026-07-01", "alimento": "Silagem"},
+            headers={"Idempotency-Key": "sessao-real-1", "Authorization": "Bearer token-qualquer"},
+        )
+        assert r.status_code == 201, r.text
+
+    def test_sem_authorization_tambem_nao_quebra(self, client_com_get_session_real):
+        c, _ = client_com_get_session_real
+        r = c.post(
+            CAMINHO, json={"data": "2026-07-01", "alimento": "Silagem"},
+            headers={"Idempotency-Key": "sessao-real-2"},
+        )
+        assert r.status_code == 201, r.text
