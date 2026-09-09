@@ -138,6 +138,15 @@ type CalendarioForm = {
   freqValor: string; freqUnidade: string; dataEvento: string; observacao: string; realizado: boolean;
   usaCronograma: boolean;
   modoFreq: "periodica" | "evento_vida"; gatilho: string; gatilhoLote: string; gatilhoIdadeMeses: string; offsetDias: string;
+  // Janela de aplicação (só para modoFreq "evento_vida") — de/até em dias ou
+  // meses após o gatilho, ação ao sair sem aplicação, teto etário opcional e
+  // veterinário padrão. Gravados no EVENTO SANITÁRIO (Object 1), não na
+  // regra do calendário — ver EventoSanitarioIn no backend.
+  janelaDeValor: string; janelaDeUnidade: "dias" | "meses";
+  janelaAteValor: string; janelaAteUnidade: "dias" | "meses";
+  acaoForaJanela: string;
+  tetoEtarioValor: string; tetoEtarioUnidade: "dias" | "meses";
+  veterinarioPadraoId: string;
 };
 const calendarioFormVazio = (): CalendarioForm => ({
   eventoId: "", categoriaAlvoSel: [], doencaId: "", produto: "", principioId: "",
@@ -145,6 +154,8 @@ const calendarioFormVazio = (): CalendarioForm => ({
   freqValor: "1", freqUnidade: "meses", dataEvento: "", observacao: "", realizado: false,
   usaCronograma: false,
   modoFreq: "periodica", gatilho: "nascimento", gatilhoLote: "", gatilhoIdadeMeses: "", offsetDias: "0",
+  janelaDeValor: "", janelaDeUnidade: "meses", janelaAteValor: "", janelaAteUnidade: "meses",
+  acaoForaJanela: "", tetoEtarioValor: "", tetoEtarioUnidade: "meses", veterinarioPadraoId: "",
 });
 
 export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
@@ -162,7 +173,9 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
   const [form, setForm] = useState<CalendarioForm>(calendarioFormVazio());
   const { eventoId, categoriaAlvoSel, doencaId, produto, principioId, dosagem, unidade, responsavel, veterinario,
     freqValor, freqUnidade, dataEvento, observacao, realizado, usaCronograma,
-    modoFreq, gatilho, gatilhoLote, gatilhoIdadeMeses, offsetDias } = form;
+    modoFreq, gatilho, gatilhoLote, gatilhoIdadeMeses, offsetDias,
+    janelaDeValor, janelaDeUnidade, janelaAteValor, janelaAteUnidade, acaoForaJanela,
+    tetoEtarioValor, tetoEtarioUnidade, veterinarioPadraoId } = form;
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
@@ -211,6 +224,14 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
         freqValor: regraVinculada ? String(regraVinculada.frequencia_valor) : "30",
         freqUnidade: regraVinculada ? regraVinculada.frequencia_unidade : "dias",
         dataEvento: regraVinculada ? regraVinculada.data_evento : new Date().toISOString().slice(0, 10),
+        janelaDeValor: eventoSel.janela_de_valor != null ? String(eventoSel.janela_de_valor) : "",
+        janelaDeUnidade: eventoSel.janela_de_unidade || "meses",
+        janelaAteValor: eventoSel.janela_ate_valor != null ? String(eventoSel.janela_ate_valor) : "",
+        janelaAteUnidade: eventoSel.janela_ate_unidade || "meses",
+        acaoForaJanela: eventoSel.acao_fora_janela || "",
+        tetoEtarioValor: eventoSel.teto_etario_valor != null ? String(eventoSel.teto_etario_valor) : "",
+        tetoEtarioUnidade: eventoSel.teto_etario_unidade || "meses",
+        veterinarioPadraoId: eventoSel.veterinario_padrao_pessoa_id ? String(eventoSel.veterinario_padrao_pessoa_id) : "",
       }));
     } else {
       setForm((f) => ({ ...f, modoFreq: "periodica", usaCronograma: false }));
@@ -306,6 +327,14 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
           gatilho_lote: gatilho === "entrada_lote" ? gatilhoLote.trim() : null,
           gatilho_idade_meses: gatilho === "novilha_apta" ? Number(gatilhoIdadeMeses) : null,
           offset_dias: offsetDias ? Number(offsetDias) : 0,
+          janela_de_valor: janelaDeValor ? Number(janelaDeValor) : null,
+          janela_de_unidade: janelaDeValor ? janelaDeUnidade : null,
+          janela_ate_valor: janelaAteValor ? Number(janelaAteValor) : null,
+          janela_ate_unidade: janelaAteValor ? janelaAteUnidade : null,
+          acao_fora_janela: acaoForaJanela || null,
+          teto_etario_valor: tetoEtarioValor ? Number(tetoEtarioValor) : null,
+          teto_etario_unidade: tetoEtarioValor ? tetoEtarioUnidade : null,
+          veterinario_padrao_pessoa_id: veterinarioPadraoId ? Number(veterinarioPadraoId) : null,
         });
         // "Usar cronograma sanitário" marcado (ou já havia uma regra
         // vinculada a este evento) — cria/atualiza a regra que liga esse
@@ -435,6 +464,67 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
                   assim que o animal bater o critério, colocá-lo numa lista de espera por leva.
                 </p>
               </div>
+
+              <div style={{ gridColumn: "1 / -1", marginTop: "0.5rem", paddingTop: "0.75rem", borderTop: "1px solid var(--border)" }}>
+                <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.15rem" }}>Janela de aplicação</p>
+                <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+                  Após o gatilho, a janela de aplicação é definida no prazo cadastrado.
+                </p>
+              </div>
+              <Campo label="Janela — de">
+                <div className="flex items-center gap-2">
+                  <input type="number" min={0} style={inputStyle} value={f.janelaDeValor} onChange={(e) => sf({ ...f, janelaDeValor: e.target.value })} placeholder="3" />
+                  <select style={inputStyle} value={f.janelaDeUnidade} onChange={(e) => sf({ ...f, janelaDeUnidade: e.target.value as "dias" | "meses" })}>
+                    <option value="dias">dias</option><option value="meses">meses</option>
+                  </select>
+                </div>
+              </Campo>
+              <Campo label="Janela — até">
+                <div className="flex items-center gap-2">
+                  <input type="number" min={0} style={inputStyle} value={f.janelaAteValor} onChange={(e) => sf({ ...f, janelaAteValor: e.target.value })} placeholder="8" />
+                  <select style={inputStyle} value={f.janelaAteUnidade} onChange={(e) => sf({ ...f, janelaAteUnidade: e.target.value as "dias" | "meses" })}>
+                    <option value="dias">dias</option><option value="meses">meses</option>
+                  </select>
+                </div>
+              </Campo>
+              <Campo label="Ação ao sair da janela sem aplicação" full>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  {([
+                    ["sair", "Sair", "Encerra — passa a constar como lacuna permanente no histórico"],
+                    ["manter", "Manter até aplicação", "Continua pendente, mesmo fora da janela biológica"],
+                    ["notificar", "Notificar urgência", "Fecha em N dias — alerta antes de sair"],
+                  ] as const).map(([v, lbl, desc]) => (
+                    <button key={v} type="button" onClick={() => sf({ ...f, acaoForaJanela: v })}
+                      style={{ textAlign: "left", padding: "0.55rem 0.65rem", borderRadius: 8, cursor: "pointer",
+                        border: "1.5px solid " + (f.acaoForaJanela === v ? "var(--dourado)" : "var(--border)"),
+                        background: f.acaoForaJanela === v ? "rgba(94,26,46,0.25)" : "transparent" }}>
+                      <span style={{ display: "block", fontSize: "0.78rem", fontWeight: 700, color: f.acaoForaJanela === v ? "var(--dourado-light)" : "var(--text)" }}>{lbl}</span>
+                      <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.1rem" }}>{desc}</span>
+                    </button>
+                  ))}
+                </div>
+              </Campo>
+              {f.acaoForaJanela === "manter" && (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <p style={{ fontSize: "0.7rem", color: "var(--dourado-light)" }}>
+                    "Manter" nunca se aplica além do teto etário abaixo, se um for informado — evita pendência indevida para animais fora da idade biológica desta regra.
+                  </p>
+                </div>
+              )}
+              <Campo label="Veterinário padrão">
+                <select style={inputStyle} value={f.veterinarioPadraoId} onChange={(e) => sf({ ...f, veterinarioPadraoId: e.target.value })}>
+                  <option value="">— (escolher na hora)</option>
+                  {veterinariosZootecnistas.map((p: any) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                </select>
+              </Campo>
+              <Campo label="Teto etário (opcional)">
+                <div className="flex items-center gap-2">
+                  <input type="number" min={0} style={inputStyle} value={f.tetoEtarioValor} onChange={(e) => sf({ ...f, tetoEtarioValor: e.target.value })} placeholder="8" />
+                  <select style={inputStyle} value={f.tetoEtarioUnidade} onChange={(e) => sf({ ...f, tetoEtarioUnidade: e.target.value as "dias" | "meses" })}>
+                    <option value="dias">dias</option><option value="meses">meses</option>
+                  </select>
+                </div>
+              </Campo>
             </>
           )}
           {(f.modoFreq === "periodica" || f.usaCronograma) && (
