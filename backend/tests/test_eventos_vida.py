@@ -167,3 +167,42 @@ class TestRelatorioEventosVida:
         c, _ = client
         r = c.get("/sanidade/calendario/relatorio-eventos-vida", params={"gatilho": "inexistente"})
         assert r.status_code == 400
+
+    def test_janela_de_aplicacao_classifica_situacao(self, client):
+        """Com janela_de/janela_ate cadastrados, o relatório devolve
+        situacao_janela por animal — sem janela cadastrada, nenhuma das novas
+        chaves aparece (comportamento de hoje intacto)."""
+        c, engine = client
+        with Session(engine) as s:
+            # Nasceu há 5 meses: está DENTRO de uma janela "3 a 8 meses".
+            s.add(Animal(numero="910", data_nasc=HOJE - timedelta(days=150), sexo="F"))
+            # Nasceu há 10 meses: já passou da janela "3 a 8 meses".
+            s.add(Animal(numero="911", data_nasc=HOJE - timedelta(days=300), sexo="F"))
+            s.commit()
+        criado = c.post("/cadastro/eventos-sanitarios", json={
+            "nome": "B19 com janela", "tipo_agendamento": "evento", "gatilho": "nascimento",
+            "janela_de_valor": 3, "janela_de_unidade": "meses",
+            "janela_ate_valor": 8, "janela_ate_unidade": "meses",
+            "acao_fora_janela": "sair",
+        })
+        assert criado.status_code == 200, criado.text
+        r = c.get("/sanidade/calendario/relatorio-eventos-vida", params={"evento_sanitario_id": criado.json()["id"]})
+        assert r.status_code == 200, r.text
+        por_numero = {a["numero_matriz"]: a for a in r.json()["animais"]}
+        assert por_numero["910"]["situacao_janela"] == "na_janela"
+        assert por_numero["911"]["situacao_janela"] == "fora_da_janela"
+        assert por_numero["911"]["acao_fora_janela"] == "sair"
+
+    def test_sem_janela_cadastrada_nao_inclui_situacao(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="912", data_nasc=HOJE - timedelta(days=150), sexo="F"))
+            s.commit()
+        criado = c.post("/cadastro/eventos-sanitarios", json={
+            "nome": "Sem janela", "tipo_agendamento": "evento", "gatilho": "nascimento",
+        })
+        assert criado.status_code == 200, criado.text
+        r = c.get("/sanidade/calendario/relatorio-eventos-vida", params={"evento_sanitario_id": criado.json()["id"]})
+        assert r.status_code == 200, r.text
+        linha = next(a for a in r.json()["animais"] if a["numero_matriz"] == "912")
+        assert "situacao_janela" not in linha

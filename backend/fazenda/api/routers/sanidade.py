@@ -1028,6 +1028,7 @@ def relatorio_eventos_vida(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     nome_evento = None
     sexo_alvo = None
+    ev: EventoSanitario | None = None
     if evento_sanitario_id is not None:
         ev = session.get(EventoSanitario, evento_sanitario_id)
         if not ev or (fazenda_id is not None and ev.fazenda_id != fazenda_id):
@@ -1045,6 +1046,19 @@ def relatorio_eventos_vida(
         query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
     animais = {a.numero: a for a in session.exec(query_animais).all()}
     hoje = date.today()
+
+    # "Quem está na janela" — após o gatilho, a janela de aplicação é definida
+    # pelo prazo cadastrado em EventoSanitario (janela_de/janela_ate). Só se
+    # aplica quando o relatório foi chamado por evento_sanitario_id (a janela
+    # é uma propriedade da regra, não do gatilho avulso).
+    tem_janela = ev is not None and ev.janela_de_valor is not None and ev.janela_ate_valor is not None
+
+    def _janela(d: date) -> tuple[date, date]:
+        return (
+            proxima_ocorrencia(d, ev.janela_de_valor, ev.janela_de_unidade),
+            proxima_ocorrencia(d, ev.janela_ate_valor, ev.janela_ate_unidade),
+        )
+
     linhas = []
     for numero, quando in _datas_gatilho(session, gatilho, gatilho_lote, gatilho_idade_meses, 0, sexo_alvo, fazenda_id):
         if data_inicio and quando.isoformat() < data_inicio:
@@ -1052,14 +1066,28 @@ def relatorio_eventos_vida(
         if data_fim and quando.isoformat() > data_fim:
             continue
         a = animais.get(numero)
-        linhas.append({
+        linha = {
             "numero_matriz": numero,
             "nome": a.nome if a else None,
             "grupo_primario": a.grupo_primario if a else None,
             "categoria": (a.categoria_abrev or a.categoria_completa) if a else None,
             "data_evento": quando.isoformat(),
             "dias_restantes": (quando - hoje).days,
-        })
+        }
+        if tem_janela:
+            ini, fim = _janela(quando)
+            if hoje < ini:
+                situacao = "ainda_nao"
+            elif hoje <= fim:
+                situacao = "na_janela"
+            else:
+                situacao = "fora_da_janela"
+            linha.update({
+                "janela_inicio": ini.isoformat(), "janela_fim": fim.isoformat(),
+                "situacao_janela": situacao, "dias_para_fechar_janela": (fim - hoje).days,
+                "acao_fora_janela": ev.acao_fora_janela if ev else None,
+            })
+        linhas.append(linha)
     linhas.sort(key=lambda x: x["data_evento"])
     return {"gatilho": gatilho, "rotulo": ROTULOS_GATILHO.get(gatilho, gatilho), "evento_sanitario_nome": nome_evento, "animais": linhas}
 
