@@ -4497,6 +4497,17 @@ export type EventoSanitarioPayload = {
   // Nome de um serviço cadastrado (Configurações > Cadastro > Serviços) —
   // liga este evento ao botão "Lançar financeiro" no calendário sanitário.
   servico_financeiro?: string | null;
+  // Janela de aplicação — após o gatilho, de/até quando o animal ainda está
+  // dentro da janela. Cada limite tem sua própria unidade (dias ou meses).
+  janela_de_valor?: number | null; janela_de_unidade?: "dias" | "meses" | null;
+  janela_ate_valor?: number | null; janela_ate_unidade?: "dias" | "meses" | null;
+  // O que acontece quando a janela se encerra sem aplicação: "sair" | "manter" | "notificar".
+  acao_fora_janela?: string | null;
+  // Teto etário (opcional) — além dessa idade, "manter" nunca se aplica.
+  teto_etario_valor?: number | null; teto_etario_unidade?: "dias" | "meses" | null;
+  // Veterinário padrão sugerido no agendamento (editável na hora).
+  veterinario_padrao_pessoa_id?: number | null;
+  veterinario_padrao_nome?: string | null;
 };
 export async function fetchEventosSanitarios() {
   const res = await authFetch(`${API}/cadastro/eventos-sanitarios`, { cache: "no-store" });

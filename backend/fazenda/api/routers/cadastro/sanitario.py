@@ -16,7 +16,7 @@ from sqlmodel import Session, select
 from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendamentoPesagem, CalendarioSanitario, Doenca, EventoSanitario, ExameDefinicao, Lote, PrincipioAtivo,
+    AgendamentoPesagem, CalendarioSanitario, Doenca, EventoSanitario, ExameDefinicao, Lote, Pessoa, PrincipioAtivo,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
@@ -409,6 +409,8 @@ def excluir_agendamento_pesagem(
 # Evento sanitário — cadastro RICO (nome + agendamento por época/evento +
 # medicamento padrão). Alimenta o calendário sanitário e a Agenda.
 FREQUENCIAS_EVENTO = ["dias", "meses", "anos"]
+UNIDADES_JANELA = ["dias", "meses"]
+ACOES_FORA_JANELA = ["sair", "manter", "notificar"]
 TIPOS_AGENDAMENTO = ["nenhum", "epoca", "evento"]
 GATILHOS_EVENTO = [
     "nascimento", "entrada_lote", "novilha_apta", "secagem", "parto",
@@ -450,6 +452,19 @@ class EventoSanitarioIn(BaseModel):
     # botão "Lançar financeiro" no calendário sanitário, sem depender de
     # adivinhar pelo nome do evento.
     servico_financeiro: str | None = None
+    # Janela de aplicação — após o gatilho, de/até quando o animal ainda está
+    # dentro da janela. Cada limite tem sua própria unidade (dias ou meses).
+    janela_de_valor: int | None = None
+    janela_de_unidade: str | None = None
+    janela_ate_valor: int | None = None
+    janela_ate_unidade: str | None = None
+    # O que acontece quando a janela se encerra sem aplicação.
+    acao_fora_janela: str | None = None
+    # Teto etário (opcional) — além dessa idade, "manter" nunca se aplica.
+    teto_etario_valor: int | None = None
+    teto_etario_unidade: str | None = None
+    # Veterinário padrão sugerido no agendamento (editável na hora).
+    veterinario_padrao_pessoa_id: int | None = None
 
 
 def _dto_evento_sanitario(session: Session, ev: EventoSanitario) -> dict:
@@ -466,6 +481,10 @@ def _dto_evento_sanitario(session: Session, ev: EventoSanitario) -> dict:
     if ev.exame_definicao_id:
         exame_def = session.get(ExameDefinicao, ev.exame_definicao_id)
         d["exame_definicao_nome"] = exame_def.nome if exame_def else None
+    d["veterinario_padrao_nome"] = None
+    if ev.veterinario_padrao_pessoa_id:
+        pessoa = session.get(Pessoa, ev.veterinario_padrao_pessoa_id)
+        d["veterinario_padrao_nome"] = pessoa.nome if pessoa else None
     if ev.tipo_agendamento == "epoca" and ev.data_primeiro and ev.frequencia_valor and ev.frequencia_unidade:
         d["proxima_ocorrencia"] = proxima_ocorrencia(ev.data_primeiro, ev.frequencia_valor, ev.frequencia_unidade).isoformat()
     else:
@@ -487,6 +506,22 @@ def _validar_evento_sanitario(dados: EventoSanitarioIn, session: Session, *, ite
             raise HTTPException(status_code=400, detail="Evento sanitário da condição não encontrado")
     if dados.exame_definicao_id is not None and not session.get(ExameDefinicao, dados.exame_definicao_id):
         raise HTTPException(status_code=400, detail="Exame (cadastro) não encontrado")
+    if dados.veterinario_padrao_pessoa_id is not None and not session.get(Pessoa, dados.veterinario_padrao_pessoa_id):
+        raise HTTPException(status_code=400, detail="Veterinário (pessoa) não encontrado")
+    if dados.janela_de_unidade is not None and dados.janela_de_unidade not in UNIDADES_JANELA:
+        raise HTTPException(status_code=400, detail=f"Unidade da janela (de) inválida (use: {', '.join(UNIDADES_JANELA)})")
+    if dados.janela_ate_unidade is not None and dados.janela_ate_unidade not in UNIDADES_JANELA:
+        raise HTTPException(status_code=400, detail=f"Unidade da janela (até) inválida (use: {', '.join(UNIDADES_JANELA)})")
+    if dados.acao_fora_janela is not None and dados.acao_fora_janela not in ACOES_FORA_JANELA:
+        raise HTTPException(status_code=400, detail=f"Ação ao sair da janela inválida (use: {', '.join(ACOES_FORA_JANELA)})")
+    if dados.teto_etario_unidade is not None and dados.teto_etario_unidade not in UNIDADES_JANELA:
+        raise HTTPException(status_code=400, detail=f"Unidade do teto etário inválida (use: {', '.join(UNIDADES_JANELA)})")
+    if (dados.janela_de_valor is None) != (dados.janela_de_unidade is None):
+        raise HTTPException(status_code=400, detail="Informe o valor e a unidade da janela (de), ou deixe os dois em branco")
+    if (dados.janela_ate_valor is None) != (dados.janela_ate_unidade is None):
+        raise HTTPException(status_code=400, detail="Informe o valor e a unidade da janela (até), ou deixe os dois em branco")
+    if (dados.teto_etario_valor is None) != (dados.teto_etario_unidade is None):
+        raise HTTPException(status_code=400, detail="Informe o valor e a unidade do teto etário, ou deixe os dois em branco")
     if dados.tipo_agendamento == "epoca":
         if not dados.data_primeiro:
             raise HTTPException(status_code=400, detail="Informe a data do primeiro evento (agendamento por época)")

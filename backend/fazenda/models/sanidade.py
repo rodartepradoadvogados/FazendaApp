@@ -544,6 +544,23 @@ class EventoSanitario(SQLModel, table=True):
     # confirmar o exame com o veterinário (pendência distinta da do próprio dia).
     agenda_dias_antes: Optional[int] = None
 
+    # Janela de aplicação — após o gatilho, de/até quando o animal ainda está
+    # dentro da janela (cada limite com sua própria unidade: "dias" | "meses").
+    janela_de_valor: Optional[int] = None
+    janela_de_unidade: Optional[str] = None
+    janela_ate_valor: Optional[int] = None
+    janela_ate_unidade: Optional[str] = None
+    # O que acontece quando a janela se encerra sem aplicação:
+    # "sair" | "manter" | "notificar".
+    acao_fora_janela: Optional[str] = None
+    # Teto etário (opcional) — além dessa idade, "manter" nunca se aplica
+    # (trava biológica, independente de "acao_fora_janela").
+    teto_etario_valor: Optional[int] = None
+    teto_etario_unidade: Optional[str] = None
+    # Veterinário padrão sugerido no agendamento — mesmo padrão de
+    # CronogramaSanitario.veterinario_pessoa_id (FK a Pessoa, editável na hora).
+    veterinario_padrao_pessoa_id: Optional[int] = Field(default=None, foreign_key="pessoa.id")
+
     # Serviço financeiro (nome de um ServicoCadastro) para o botão "Lançar
     # financeiro" no calendário sanitário — explícito em vez de adivinhar pelo
     # nome do evento, para funcionar tanto em vacina quanto em exame.
