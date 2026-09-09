@@ -5,7 +5,8 @@ Usa SQLite em desenvolvimento, PostgreSQL em produção (via DATABASE_URL).
 import logging
 from pathlib import Path
 
-from sqlalchemy import inspect, text
+from fastapi import Header
+from sqlalchemy import event, inspect, text
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from fazenda.config import settings
@@ -498,7 +499,88 @@ def create_db_and_tables() -> None:
     _backfill_login_acesso()
 
 
-def get_session():
-    """Dependency injection do FastAPI para obter uma sessão de banco."""
+@event.listens_for(Session, "after_begin")
+def _aplicar_contexto_de_fazenda(session, transaction, connection) -> None:
+    """Sob RLS, é esta linha que o banco lê para decidir o que a conexão
+    enxerga (rls-proposta.md, seção 4): `USING (fazenda_id =
+    NULLIF(current_setting('app.fazenda_id', true), '')::int)`.
+
+    POR QUE UM LISTENER DE `after_begin`, E NÃO UM `SET LOCAL` NO
+    `get_session()`. `SET LOCAL` só vale até o fim da TRANSAÇÃO — e o padrão
+    deste projeto é `session.add(...); session.commit()` várias vezes dentro
+    de uma mesma rota (462 `session.commit()` só nos routers, uma função de
+    financeiro.py com 49). Cada `commit()` fecha a transação e abre outra por
+    trás (autobegin do SQLAlchemy) na próxima instrução — um `SET LOCAL`
+    disparado uma vez, na abertura da sessão, valeria só para a PRIMEIRA
+    leva de queries e desapareceria depois do primeiro commit no meio da
+    rota. `after_begin` dispara de novo a cada transação nova na MESMA
+    sessão, então o contexto é reaplicado a cada commit — é o comportamento
+    correto por construção, não por disciplina de quem escreve a rota.
+
+    De propósito não normaliza o gatilho: dispara para toda `Session` do
+    projeto (é aqui que `sqlmodel.Session` é usada em todo lugar, inclusive
+    a suíte de testes em SQLite), mas só AGE quando `session.info` tem a
+    chave `"fazenda_id"` — só `get_session()` (abaixo) e quem mais decidir
+    marcar a própria sessão a coloca. Sessão comum, sem a chave, sai daqui
+    sem fazer nada: nenhum teste dos 5000+ que já existem muda de
+    comportamento.
+
+    `"fazenda_id" in session.info`, não `.get(...)`: a chave PRECISA
+    distinguir "nunca marcada" de "marcada como None" (token sem "fid",
+    ou fora de fazenda nenhuma) — os dois têm efeito diferente aqui: o
+    primeiro não faz nada, o segundo chama `set_config` com `NULL`, que é o
+    "sem contexto nega tudo" da política (seção 4).
+    """
+    if "fazenda_id" not in session.info:
+        return
+    if connection.dialect.name != "postgresql":
+        # SQLite (suíte principal) não tem `set_config`, e não tem RLS —
+        # nada aqui muda o resultado de teste nenhum.
+        return
+    valor = session.info["fazenda_id"]
+    # `set_config`, não `SET LOCAL app.fazenda_id = ...` interpolado: `SET`
+    # não aceita bind parameter — só `set_config()`, por ser uma chamada de
+    # função comum, aceita. É o que evita colar um int direto numa string SQL.
+    connection.execute(
+        text("SELECT set_config('app.fazenda_id', :valor, true)"),
+        {"valor": None if valor is None else str(valor)},
+    )
+
+
+def get_session(authorization: str | None = Header(default=None)):
+    """Dependency injection do FastAPI para obter uma sessão de banco — usada
+    em praticamente toda rota do projeto via `Depends(get_session)`.
+
+    Marca `session.info["fazenda_id"]` a partir do token, para o listener
+    `after_begin` acima aplicar a cada transação. Sem RLS ligado (hoje),
+    marcar a chave não muda NADA visível: nenhuma política existe ainda para
+    ler `current_setting('app.fazenda_id', ...)`. É o mesmo desenho de
+    `engine_manutencao`: inócuo até o dia em que a política entrar.
+
+    Também vale para as rotas do Painel CowData/auth/fazendas, que operam
+    sem fazenda selecionada por definição (ver main.py, comentário da TRAVA
+    DE TENANT) — nelas `get_fazenda_atual_id` devolve `None`, e é exatamente
+    esse `None` que o listener grava com `set_config(..., NULL, true)`.
+
+    Recebe o cabeçalho `Authorization` cru, e não
+    `Depends(get_fazenda_atual_id)`, por um motivo estrutural: `auth.py`
+    importa `get_session` DESTE módulo em ~14 rotas (`Depends(get_session)`),
+    e um `Depends(get_fazenda_atual_id)` aqui, como valor padrão de
+    parâmetro, seria resolvido na DEFINIÇÃO da função — ou seja, na hora em
+    que `database.py` é importado, antes de `auth.py` sequer existir. Um
+    import local dentro do corpo da função resolve o ciclo porque só roda
+    quando a função é CHAMADA, não quando é definida — mas um valor padrão de
+    parâmetro (`= Depends(...)`) é sempre resolvido na definição, e um import
+    local não adianta ali. Chamar `get_fazenda_atual_id` como função comum,
+    dentro do corpo, reusa a MESMA lógica de leitura do token — não duplica
+    nada, só adia o import para a hora certa.
+
+    Os ~1500 testes que fazem `dependency_overrides[database.get_session]`
+    substituem esta função inteira — o corpo real abaixo nunca roda para
+    eles, e continuam funcionando sem tocar em nada disto."""
+    from fazenda.auth import get_fazenda_atual_id  # import local: evita ciclo (auth.py importa get_session daqui)
+
+    fazenda_id = get_fazenda_atual_id(authorization)
     with Session(engine) as session:
+        session.info["fazenda_id"] = fazenda_id
         yield session

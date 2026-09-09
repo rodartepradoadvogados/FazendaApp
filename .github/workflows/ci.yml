@@ -183,6 +183,7 @@ jobs:
         tests/test_replicacao_desambiguacao_postgres.py
         tests/test_boot_conexao_dono.py
         tests/test_migracao_fks_compostas.py
+        tests/test_contexto_fazenda_sessao.py
     services:
       postgres:
         image: postgres:16
