@@ -180,6 +180,7 @@ jobs:
       ARQUIVOS_POSTGRES: >-
         tests/test_backup_sob_rls.py
         tests/test_migracao_fazenda_id_not_null.py
+        tests/test_replicacao_desambiguacao_postgres.py
         tests/test_boot_conexao_dono.py
     services:
       postgres:
