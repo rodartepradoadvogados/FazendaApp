@@ -627,7 +627,15 @@ def _sessao_idempotencia(request):
     gravando a chave de idempotência no banco de desenvolvimento de verdade
     por baixo do pano, em vez do banco isolado do teste."""
     fabrica = request.app.dependency_overrides.get(get_session, get_session)
-    gerador = fabrica()
+    # `get_session` passou a receber `authorization` (Header do FastAPI) para
+    # marcar session.info["fazenda_id"] — chamando fora da injeção de
+    # dependência normal (como aqui), o valor padrão do parâmetro não é
+    # resolvido pelo FastAPI e fica sendo o próprio marcador `Header(...)`,
+    # não uma string (AttributeError: 'Header' object has no attribute
+    # 'lower' dentro de get_fazenda_atual_id). Repassar o cabeçalho cru
+    # resolve — mas só quando `fabrica` é a função real: os overrides de
+    # teste (dependency_overrides) continuam sem parâmetro nenhum.
+    gerador = fabrica(request.headers.get("authorization")) if fabrica is get_session else fabrica()
     session = next(gerador)
     try:
         yield session
