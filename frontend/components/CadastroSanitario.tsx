@@ -22,6 +22,7 @@ import { CLASSIFICACOES_MEDICAMENTO } from "@/lib/api";
 import { normalizarBusca as normalizar } from "@/lib/busca";
 import { WizardProtocolo, type PassoWizard } from "@/components/protocolos/WizardProtocolo";
 import { Modal } from "@/components/Modal";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 
 const CRITERIOS: [string, string][] = [
   ["medicamento", "Medicamento"],
@@ -905,6 +906,11 @@ type EventoForm = {
   condicao_evento_id: string;
   exame_definicao_id: string;
   servico_financeiro: string;
+  janela_de_valor: string; janela_de_unidade: "dias" | "meses";
+  janela_ate_valor: string; janela_ate_unidade: "dias" | "meses";
+  acao_fora_janela: string;
+  teto_etario_valor: string; teto_etario_unidade: "dias" | "meses";
+  veterinario_padrao_pessoa_id: string;
 };
 const eventoFormVazio = (): EventoForm => ({
   nome: "", ativo: true, tipo_agendamento: "nenhum", categoria_alvo: "", sexo_alvo: "", categoria_preventiva: "vacina", doenca_id: "",
@@ -915,6 +921,11 @@ const eventoFormVazio = (): EventoForm => ({
   condicao_evento_id: "",
   exame_definicao_id: "",
   servico_financeiro: "",
+  janela_de_valor: "", janela_de_unidade: "meses",
+  janela_ate_valor: "", janela_ate_unidade: "meses",
+  acao_fora_janela: "",
+  teto_etario_valor: "", teto_etario_unidade: "meses",
+  veterinario_padrao_pessoa_id: "",
 });
 
 export function CadastroEventosSanitarios() {
@@ -930,6 +941,8 @@ export function CadastroEventosSanitarios() {
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
+  const { pessoas: pessoasAtivas } = usePessoasAtivas();
+  const veterinariosZootecnistas = pessoasAtivas.filter((p) => (p.tipos || []).some((t: string) => ["Veterinário", "Zootecnista"].includes(t)));
 
   const carregar = () => fetchEventosSanitarios().then(setItens).catch((e) => setError(e.message));
   useEffect(() => {
@@ -956,6 +969,14 @@ export function CadastroEventosSanitarios() {
       condicao_evento_id: e.condicao_evento_id ? String(e.condicao_evento_id) : "",
       exame_definicao_id: (e as any).exame_definicao_id ? String((e as any).exame_definicao_id) : "",
       servico_financeiro: (e as any).servico_financeiro || "",
+      janela_de_valor: (e as any).janela_de_valor != null ? String((e as any).janela_de_valor) : "",
+      janela_de_unidade: (e as any).janela_de_unidade || "meses",
+      janela_ate_valor: (e as any).janela_ate_valor != null ? String((e as any).janela_ate_valor) : "",
+      janela_ate_unidade: (e as any).janela_ate_unidade || "meses",
+      acao_fora_janela: (e as any).acao_fora_janela || "",
+      teto_etario_valor: (e as any).teto_etario_valor != null ? String((e as any).teto_etario_valor) : "",
+      teto_etario_unidade: (e as any).teto_etario_unidade || "meses",
+      veterinario_padrao_pessoa_id: (e as any).veterinario_padrao_pessoa_id ? String((e as any).veterinario_padrao_pessoa_id) : "",
     });
     setEditando(e.id); setMsg(null);
   };
@@ -981,6 +1002,14 @@ export function CadastroEventosSanitarios() {
       condicao_evento_id: form.condicao_evento_id ? Number(form.condicao_evento_id) : null,
       exame_definicao_id: form.categoria_preventiva === "exame" && form.exame_definicao_id ? Number(form.exame_definicao_id) : null,
       servico_financeiro: form.servico_financeiro || null,
+      janela_de_valor: form.janela_de_valor ? Number(form.janela_de_valor) : null,
+      janela_de_unidade: form.janela_de_valor ? form.janela_de_unidade : null,
+      janela_ate_valor: form.janela_ate_valor ? Number(form.janela_ate_valor) : null,
+      janela_ate_unidade: form.janela_ate_valor ? form.janela_ate_unidade : null,
+      acao_fora_janela: form.acao_fora_janela || null,
+      teto_etario_valor: form.teto_etario_valor ? Number(form.teto_etario_valor) : null,
+      teto_etario_unidade: form.teto_etario_valor ? form.teto_etario_unidade : null,
+      veterinario_padrao_pessoa_id: form.veterinario_padrao_pessoa_id ? Number(form.veterinario_padrao_pessoa_id) : null,
     };
     setSalvando(true); setMsg(null);
     try {
@@ -995,6 +1024,16 @@ export function CadastroEventosSanitarios() {
   const termoBusca = normalizar(busca.trim());
   const filtrados = (itens ?? []).filter((e) => !termoBusca || normalizar(e.nome).includes(termoBusca));
   const unidadesProduto = unidadesCompat(estoque.find((it) => it.nome === form.produto_padrao)?.unidade);
+
+  const ACAO_FORA_JANELA_LABEL: Record<string, string> = { sair: "Sair", manter: "Manter", notificar: "Notificar urgência" };
+  const rotuloJanela = (e: EventoSanitarioRow) => {
+    const de = (e as any).janela_de_valor, ate = (e as any).janela_ate_valor;
+    if (de == null && ate == null) return "—";
+    const un = (v: number | null, unidade: string | null) => v == null ? "" : `${v} ${unidade || ""}`;
+    const faixa = de != null && ate != null ? `${un(de, (e as any).janela_de_unidade)} a ${un(ate, (e as any).janela_ate_unidade)}` : (de != null ? `de ${un(de, (e as any).janela_de_unidade)}` : `até ${un(ate, (e as any).janela_ate_unidade)}`);
+    const acao = ACAO_FORA_JANELA_LABEL[(e as any).acao_fora_janela || ""];
+    return acao ? `${faixa} · ${acao}` : faixa;
+  };
 
   const rotuloAgendamento = (e: EventoSanitarioRow) => {
     if (e.tipo_agendamento === "epoca")
@@ -1142,6 +1181,68 @@ export function CadastroEventosSanitarios() {
         </div>
       )}
 
+      {(form.categoria_preventiva === "vacina" || form.categoria_preventiva === "exame") && (
+        <>
+          <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.2rem" }}>Janela de aplicação</p>
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+            Após o gatilho, a janela de aplicação é definida no prazo cadastrado.
+          </p>
+          <div className="flex items-end gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+            <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", paddingBottom: "0.55rem" }}>De</span>
+            <div style={{ width: 80 }}><input type="number" min={0} style={inputStyle} value={form.janela_de_valor} onChange={(e) => setForm({ ...form, janela_de_valor: e.target.value })} placeholder="3" /></div>
+            <div style={{ width: 100 }}>
+              <select style={inputStyle} value={form.janela_de_unidade} onChange={(e) => setForm({ ...form, janela_de_unidade: e.target.value as "dias" | "meses" })}>
+                <option value="dias">dias</option><option value="meses">meses</option>
+              </select>
+            </div>
+            <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontWeight: 600, paddingBottom: "0.55rem" }}>até</span>
+            <div style={{ width: 80 }}><input type="number" min={0} style={inputStyle} value={form.janela_ate_valor} onChange={(e) => setForm({ ...form, janela_ate_valor: e.target.value })} placeholder="8" /></div>
+            <div style={{ width: 100 }}>
+              <select style={inputStyle} value={form.janela_ate_unidade} onChange={(e) => setForm({ ...form, janela_ate_unidade: e.target.value as "dias" | "meses" })}>
+                <option value="dias">dias</option><option value="meses">meses</option>
+              </select>
+            </div>
+            <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", paddingBottom: "0.55rem" }}>após o gatilho</span>
+          </div>
+
+          <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.2rem" }}>Ação ao sair da janela sem aplicação</p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
+            {([
+              ["sair", "Sair", "Encerra — passa a constar como lacuna permanente no histórico"],
+              ["manter", "Manter até aplicação", "Continua pendente, mesmo fora da janela biológica"],
+              ["notificar", "Notificar urgência", "Fecha em N dias — alerta antes de sair"],
+            ] as const).map(([v, lbl, desc]) => (
+              <button key={v} type="button" onClick={() => setForm({ ...form, acao_fora_janela: v })}
+                style={{ textAlign: "left", padding: "0.6rem 0.7rem", borderRadius: "var(--r-sm)", cursor: "pointer",
+                  border: "1.5px solid " + (form.acao_fora_janela === v ? "var(--dourado)" : "var(--border)"),
+                  background: form.acao_fora_janela === v ? "rgba(94,26,46,0.25)" : "transparent" }}>
+                <span style={{ display: "block", fontSize: "0.8rem", fontWeight: 700, color: form.acao_fora_janela === v ? "var(--dourado-light)" : "var(--text)" }}>{lbl}</span>
+                <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>{desc}</span>
+              </button>
+            ))}
+          </div>
+          {form.acao_fora_janela === "manter" && (
+            <p style={{ fontSize: "0.7rem", color: "var(--dourado-light)", marginBottom: "0.5rem" }}>
+              "Manter" nunca se aplica além do teto etário abaixo, se um for informado — evita pendência indevida para animais fora da idade biológica desta regra.
+            </p>
+          )}
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <div><label style={labelStyle}>Veterinário padrão</label>
+              <select style={inputStyle} value={form.veterinario_padrao_pessoa_id} onChange={(e) => setForm({ ...form, veterinario_padrao_pessoa_id: e.target.value })}>
+                <option value="">— (escolher na hora)</option>
+                {veterinariosZootecnistas.map((p: any) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+              </select></div>
+            <div><label style={labelStyle}>Teto etário (opcional)</label>
+              <input type="number" min={0} style={inputStyle} value={form.teto_etario_valor} onChange={(e) => setForm({ ...form, teto_etario_valor: e.target.value })} placeholder="8" /></div>
+            <div><label style={labelStyle}>Unidade do teto</label>
+              <select style={inputStyle} value={form.teto_etario_unidade} onChange={(e) => setForm({ ...form, teto_etario_unidade: e.target.value as "dias" | "meses" })}>
+                <option value="dias">dias</option><option value="meses">meses</option>
+              </select></div>
+          </div>
+        </>
+      )}
+
       {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
       <div className="flex items-center gap-2">
         <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={salvar} disabled={salvando}>
@@ -1181,7 +1282,7 @@ export function CadastroEventosSanitarios() {
           </div>
           <div className="overflow-x-auto">
             <table className="fazenda-table">
-              <thead><tr><th>Nome</th><th>Agendamento</th><th>Medicamento padrão</th><th>Próxima</th><th></th></tr></thead>
+              <thead><tr><th>Nome</th><th>Agendamento</th><th>Medicamento padrão</th><th>Janela</th><th>Próxima</th><th></th></tr></thead>
               <tbody>
                 {filtrados.map((e) => (
                   <Fragment key={e.id}>
@@ -1196,6 +1297,7 @@ export function CadastroEventosSanitarios() {
                       </td>
                       <td style={{ fontSize: "0.78rem" }}>{rotuloAgendamento(e)}</td>
                       <td style={{ fontSize: "0.78rem" }}>{e.produto_padrao ? `${e.produto_padrao}${e.dose_padrao != null ? ` — ${e.dose_padrao} ${e.unidade_padrao || ""}` : ""}` : "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{rotuloJanela(e)}</td>
                       <td style={{ fontSize: "0.78rem", color: "var(--dourado-light)" }}>{e.proxima_ocorrencia ? new Date(e.proxima_ocorrencia + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
                       <td style={{ textAlign: "right" }}>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(e)}>
@@ -1203,11 +1305,11 @@ export function CadastroEventosSanitarios() {
                         </button>
                       </td>
                     </tr>
-                    {editando === e.id && <tr><td colSpan={5} style={{ padding: 0 }}>{formEl}</td></tr>}
+                    {editando === e.id && <tr><td colSpan={6} style={{ padding: 0 }}>{formEl}</td></tr>}
                   </Fragment>
                 ))}
-                {!itens.length && !editando && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum evento sanitário cadastrado ainda.</td></tr>}
-                {!!itens.length && !filtrados.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
+                {!itens.length && !editando && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum evento sanitário cadastrado ainda.</td></tr>}
+                {!!itens.length && !filtrados.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
               </tbody>
             </table>
           </div>
