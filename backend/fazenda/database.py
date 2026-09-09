@@ -35,6 +35,17 @@ else:
 engine = create_engine(DATABASE_URL, **engine_kwargs)
 
 
+def _normalizar(url: str) -> str:
+    """Railway/Heroku entregam `postgres://`, que o SQLAlchemy 2.0 recusa."""
+    return url.replace("postgres://", "postgresql://", 1) if url.startswith("postgres://") else url
+
+
+# A URL que as rotinas de DONO usam. Sem `DATABASE_URL_MANUTENCAO`, é a mesma
+# de sempre — e é por isso que toda a mudança de 09/09/2026 é inócua em
+# ambiente que não a define (a suíte inteira, e a produção de hoje).
+DATABASE_URL_MANUTENCAO = _normalizar(settings.database_url_manutencao or DATABASE_URL)
+
+
 def _montar_engine_manutencao():
     """A engine que as rotinas sem recorte de fazenda usam (hoje: o backup
     automático). Sem `DATABASE_URL_MANUTENCAO` configurada, é a MESMA engine de
@@ -47,11 +58,9 @@ def _montar_engine_manutencao():
     que essa escolha custa está escrito lá também: no desenho transitório a
     credencial de dono fica no ambiente da API.
     """
-    url = settings.database_url_manutencao
-    if not url:
+    if not settings.database_url_manutencao:
         return engine
-    if url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql://", 1)
+    url = DATABASE_URL_MANUTENCAO
     kwargs: dict = {"echo": settings.environment == "development"}
     if "sqlite" in url:
         kwargs["connect_args"] = {"check_same_thread": False}
@@ -326,9 +335,9 @@ def _migrar_colunas() -> None:
     aborta a transação inteira e não derruba o startup do app (já aconteceu:
     um `BOOLEAN DEFAULT 0` incompatível com Postgres travou a inicialização
     inteira em produção)."""
-    insp = inspect(engine)
+    insp = inspect(engine_manutencao)
     tabelas = set(insp.get_table_names())
-    with engine.begin() as conn:
+    with engine_manutencao.begin() as conn:
         for tabela, colunas in _COLUNAS_NOVAS.items():
             if tabela not in tabelas:
                 continue  # create_all já criou com o schema completo
@@ -358,9 +367,9 @@ _COLUNAS_BIGINT: list[tuple[str, str]] = [
 def _migrar_tipos_bigint() -> None:
     if is_sqlite:
         return
-    insp = inspect(engine)
+    insp = inspect(engine_manutencao)
     tabelas = set(insp.get_table_names())
-    with engine.begin() as conn:
+    with engine_manutencao.begin() as conn:
         for tabela, coluna in _COLUNAS_BIGINT:
             if tabela not in tabelas:
                 continue
@@ -380,10 +389,10 @@ def _inativar_animais_semen() -> None:
     ainda estiver ativo."""
     from fazenda.models import Animal  # import local: evita ciclo no boot do módulo
 
-    insp = inspect(engine)
+    insp = inspect(engine_manutencao)
     if "animal" not in insp.get_table_names():
         return
-    with Session(engine) as session:
+    with Session(engine_manutencao) as session:
         pendentes = session.exec(
             select(Animal).where(Animal.eh_semen == True, Animal.ativo == True)  # noqa: E712
         ).all()
@@ -406,10 +415,10 @@ def _backfill_login_acesso() -> None:
     Idempotente: só roda para quem ainda não tem nenhuma linha."""
     from fazenda.models import LoginAcesso, Usuario  # import local: evita ciclo no boot do módulo
 
-    insp = inspect(engine)
+    insp = inspect(engine_manutencao)
     if "login_acesso" not in insp.get_table_names():
         return
-    with Session(engine) as session:
+    with Session(engine_manutencao) as session:
         usuarios = session.exec(select(Usuario).where(Usuario.ultimo_login != None)).all()  # noqa: E711
         for u in usuarios:
             ja_tem = session.exec(select(LoginAcesso).where(LoginAcesso.usuario_id == u.id)).first()
@@ -442,9 +451,14 @@ def _aplicar_alembic() -> None:
     # reconfiguraria (e desabilitaria) os loggers do resto do app, já que só
     # os loggers "root"/"sqlalchemy"/"alembic" estão listados no alembic.ini.
     cfg.config_file_name = None
-    cfg.set_main_option("sqlalchemy.url", DATABASE_URL)
+    # `%` dobrado: `set_main_option` grava num ConfigParser, que interpreta `%`
+    # como interpolação e levanta ValueError. Uma senha com `%`, ou um host de
+    # socket escapado (`%2F`), derrubaria o boot aqui — e derrubaria antes
+    # desta mudança também, com a `DATABASE_URL` de sempre. É o workaround
+    # documentado do Alembic.
+    cfg.set_main_option("sqlalchemy.url", DATABASE_URL_MANUTENCAO.replace("%", "%%"))
 
-    insp = inspect(engine)
+    insp = inspect(engine_manutencao)
     tabelas_existentes = set(insp.get_table_names())
     ja_tem_alembic = "alembic_version" in tabelas_existentes
     banco_pre_existente = bool(tabelas_existentes - {"alembic_version"})
@@ -457,9 +471,27 @@ def _aplicar_alembic() -> None:
 
 def create_db_and_tables() -> None:
     """Aplica as migrações de schema (Alembic) e as migrações leves antigas
-    (histórico congelado, ver comentário de `_COLUNAS_NOVAS`)."""
+    (histórico congelado, ver comentário de `_COLUNAS_NOVAS`).
+
+    TUDO AQUI CORRE PELA CONEXÃO DE DONO (`engine_manutencao`), desde
+    09/09/2026. O motivo é concreto e já mediu no Staging: o `cowdata_app`
+    criado pelo roteiro do RLS (docs/security-audit/railway-staging-passos.md)
+    recebe SELECT/INSERT/UPDATE/DELETE e nada mais — de propósito, é o que faz
+    a política valer para ele. Ele não pode `CREATE TABLE` nem `ALTER TABLE`.
+
+    E isto roda NO BOOT: `main.py::lifespan` chama esta função antes de servir
+    a primeira requisição, e `_aplicar_alembic()` não tem proteção nenhuma em
+    volta. Com a conexão contida, a primeira migração que criasse ou alterasse
+    uma tabela seria recusada pelo banco e a API não subiria — a migração das
+    130 FKs compostas, que altera dezenas de tabelas, seria exatamente esse
+    gatilho.
+
+    Sem `DATABASE_URL_MANUTENCAO` definida, `engine_manutencao` É a `engine` de
+    sempre, então em todo ambiente que não a define — a suíte inteira, e a
+    produção de hoje — isto não muda absolutamente nada.
+    """
     _aplicar_alembic()
-    SQLModel.metadata.create_all(engine)  # rede de segurança p/ tabela nova sem migração ainda
+    SQLModel.metadata.create_all(engine_manutencao)  # rede de segurança p/ tabela nova sem migração ainda
     _migrar_colunas()
     _migrar_tipos_bigint()
     _inativar_animais_semen()

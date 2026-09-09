@@ -210,7 +210,14 @@ async def lifespan(app: FastAPI):
     if os.environ.get("FAZENDA_TESTING"):
         yield
         return
-    with Session(engine) as session:
+    # Conexão de DONO, e não a de sempre: sob RLS a `DATABASE_URL` é um role
+    # contido pela política, e política de fazenda não devolve erro — devolve
+    # VAZIO. Um seed que roda contido não falha: ele lê zero linhas, conclui
+    # que o dado não existe e o cria de novo, a cada boot. Sem
+    # `DATABASE_URL_MANUTENCAO` definida, `engine_manutencao` É a `engine`
+    # (ver database.py::_montar_engine_manutencao) — então isto não muda nada
+    # em ambiente que não a tenha.
+    with Session(engine_manutencao) as session:
         seed_admin(session)
         seed_email_dono_backfill(session)
         seed_email_dono_correcao_202607c(session)
