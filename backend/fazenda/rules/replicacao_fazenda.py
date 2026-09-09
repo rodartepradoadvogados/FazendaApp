@@ -67,6 +67,7 @@ import time
 from dataclasses import dataclass, field
 
 from fastapi import HTTPException
+import sqlalchemy as sa
 from sqlalchemy import Table
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import insert as sa_insert
@@ -353,7 +354,7 @@ def _restricoes_unicas(tabela: Table) -> list[tuple[str, ...]]:
     return grupos
 
 
-def _colunas_para_desambiguar(tabela: Table) -> set[str]:
+def _colunas_para_desambiguar(tabela: Table, tabelas: dict[str, Table], avisos: list[str]) -> set[str]:
     """Colunas que precisam de um valor NOVO (não o valor da origem tal
     como está) pra não violar uma UNIQUE ao copiar.
 
@@ -365,21 +366,71 @@ def _colunas_para_desambiguar(tabela: Table) -> set[str]:
     de mutação — depois do remapeamento de FK, os ids novos já garantem que
     não colide com nada, porque o destino foi limpo antes da cópia).
 
-    Hoje isto pega exatamente: `Animal.numero` (até a outra frente trocar
-    por `UniqueConstraint(fazenda_id, numero)` — ver relatório da tarefa),
+    Medido contra o esquema real (09/09/2026), isto pega 5 tabelas:
     `CobrancaPix.txid`, `CobrancaAsaas.referencia_asaas` e
-    `ContratoAssinaturaZapSign.document_token` (essas três são referência de
-    gateway externo — Asaas/ZapSign —, então nunca fariam sentido
-    duplicadas mesmo depois de qualquer migração: o sandbox não fala com o
-    gateway de verdade)."""
+    `ContratoAssinaturaZapSign.document_token` (referência de gateway externo
+    — Asaas/ZapSign —, que nunca faria sentido duplicada: o sandbox não fala
+    com o gateway de verdade), `FiltroSalvo(tela, nome)` e
+    `IdempotenciaChave(chave, metodo, caminho)`. `Animal.numero` saiu quando
+    ganhou `UniqueConstraint(fazenda_id, numero)`.
+
+    O QUE MUDOU EM 09/09/2026, e por quê. O critério antigo era "toda coluna
+    não-FK de uma UNIQUE sem `fazenda_id`". Ele encostava em três restrições
+    que já eram seguras por conterem FK remapeada — `DiariaDia(diaria_id,
+    data)`, `FaturaCartao(cartao_id, competencia)` e
+    `CronogramaSanitarioAnimal(cronograma_id, numero_matriz)` — e a primeira
+    QUEBRAVA: `data` é DATE, e o sufixo de texto grudado nela fazia o Postgres
+    responder `time zone "sandbox-diaria_dia-1" not recognized`. A
+    sincronização inteira morria com HTTP 500 e a Fazenda Teste ficava vazia.
+
+    O parágrafo acima já dizia a regra certa — "depois do remapeamento de FK,
+    os ids novos já garantem que não colide" —, mas o código só a aplicava
+    quando a restrição era feita SÓ de FKs. Basta UMA."""
     nomes_fk = {fk.parent.name for fk in tabela.foreign_keys}
+    # FKs cujo alvo TAMBÉM é copiado nesta sincronização — só essas ganham id
+    # novo no destino (`_fks_relevantes`). FK para fora do conjunto (catálogo
+    # global, `usuario.id`) mantém o valor da origem e não desambigua nada.
+    fks_remapeadas = {coluna for coluna, _alvo in _fks_relevantes(tabela, tabelas)}
     resultado: set[str] = set()
     for colunas in _restricoes_unicas(tabela):
         if "fazenda_id" in colunas:
             continue
-        candidatas = [c for c in colunas if c not in nomes_fk]
-        resultado.update(candidatas)
+        if fks_remapeadas.intersection(colunas):
+            # Basta UMA FK remapeada na restrição: como o destino é limpo antes
+            # da cópia, e o id novo do pai é criado agora e não colide com o de
+            # nenhuma outra fazenda, a restrição já está isolada. É a mesma
+            # razão do parágrafo acima, que só a enxergava quando a restrição
+            # era feita SÓ de FKs — e era essa a frouxidão do critério.
+            continue
+        for coluna in colunas:
+            if coluna in nomes_fk:
+                continue
+            if not _coluna_textual(tabela.c[coluna]):
+                # O sufixo é texto: grudá-lo numa data/número produz um valor
+                # que o banco recusa. Hoje nenhuma coluna cai aqui (as 7 reais
+                # são todas VARCHAR); o caminho existe para que uma restrição
+                # futura falhe com aviso e violação nomeada, em vez do erro
+                # ilegível que o `data` de `diaria_dia` produzia.
+                avisos.append(
+                    f"{tabela.name}: a restrição UNIQUE {colunas} exigiria desambiguar "
+                    f"{coluna!r}, que não é coluna de texto — copiada sem sufixo."
+                )
+                continue
+            resultado.add(coluna)
     return resultado
+
+
+def _coluna_textual(coluna) -> bool:
+    """A coluna aceita o sufixo de desambiguação (texto), ou não.
+
+    Desembrulha `TypeDecorator` porque o `AutoString` do SQLModel é um — um
+    `isinstance(coluna.type, sa.String)` seco devolve False para toda coluna
+    de texto do projeto.
+    """
+    tipo = coluna.type
+    while isinstance(tipo, sa.types.TypeDecorator):
+        tipo = tipo.impl if not isinstance(tipo.impl, type) else tipo.impl()
+    return isinstance(tipo, sa.String)
 
 
 def _valor_desambiguado(tabela_nome: str, coluna: str, valor_original, id_antigo: int):
@@ -688,7 +739,7 @@ def sincronizar_fazenda_teste_destrutivo(
 
     for nome_tabela in ordem:
         tabela = tabelas[nome_tabela]
-        colunas_desambiguar = _colunas_para_desambiguar(tabela)
+        colunas_desambiguar = _colunas_para_desambiguar(tabela, tabelas, avisos)
         copiadas = _copiar_tabela(
             conn,
             tabela,

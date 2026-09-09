@@ -173,9 +173,16 @@ jobs:
   # falha do sistema que destroi a rede de seguranca em silencio. A guarda que
   # o impede so vale se alguem estiver conferindo que ela continua valendo.
   backend-tests-postgres:
-    name: Backup sob RLS (PostgreSQL)
+    name: Testes que exigem PostgreSQL
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    env:
+      ARQUIVOS_POSTGRES: >-
+        tests/test_backup_sob_rls.py
+        tests/test_migracao_fazenda_id_not_null.py
+        tests/test_replicacao_desambiguacao_postgres.py
+        tests/test_boot_conexao_dono.py
+        tests/test_migracao_fks_compostas.py
     services:
       postgres:
         image: postgres:16
@@ -196,12 +203,29 @@ jobs:
           cache: "pip"
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r backend/requirements.txt
-      - name: Rodar os testes de RLS
+      # Estes testes se PULAM sozinhos quando `DATABASE_URL_POSTGRES_TESTE` nao
+      # esta definida — e ela nao esta no job da suite principal. Ou seja: fora
+      # daqui eles nao rodam, e um teste pulado passa em silencio. Por isso a
+      # conferencia abaixo, antes de rodar: ela quebra o CI se algum arquivo de
+      # teste que precisa de PostgreSQL ficou de fora desta lista, em vez de
+      # deixa-lo virar teste que nunca roda.
+      - name: Conferir que nenhum teste de PostgreSQL ficou de fora
+        working-directory: backend
+        run: |
+          esperados=$(grep -rl --include='test_*.py' DATABASE_URL_POSTGRES_TESTE tests/ | sort)
+          rodados=$(printf '%s\n' $ARQUIVOS_POSTGRES | sort)
+          if [ "$esperados" != "$rodados" ]; then
+            echo "Arquivos que usam DATABASE_URL_POSTGRES_TESTE:"; echo "$esperados"
+            echo "Arquivos que este job roda:"; echo "$rodados"
+            echo "Acrescente o que falta a ARQUIVOS_POSTGRES, senao ele nunca roda no CI."
+            exit 1
+          fi
+      - name: Rodar os testes que precisam de PostgreSQL
         working-directory: backend
         timeout-minutes: 10
         env:
           DATABASE_URL_POSTGRES_TESTE: postgresql+psycopg2://postgres:postgres@localhost:5432/postgres
-        run: python -m pytest tests/test_backup_sob_rls.py -q
+        run: python -m pytest $ARQUIVOS_POSTGRES -q
 
   # Mitigacao pra janela documentada acima: "Require branches to be up to
   # date before merging" fecharia o buraco de verdade, mas exige GitHub Pro

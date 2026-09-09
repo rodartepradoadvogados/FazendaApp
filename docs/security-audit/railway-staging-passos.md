@@ -184,8 +184,12 @@ com os mesmos 28 passos e o seletor do passo 2 em `production`.
 
 ## O que fica pendente do lado do código, depois destes 28 passos
 
-- os ~50 seeds do boot (`main.py::lifespan`) precisam da conexão de dono sob
-  RLS — hoje usam a conexão comum, e isso só passa a fazer diferença depois do
-  passo 25 (ver `rls-proposta.md`, seção 6);
+- ~~os ~50 seeds do boot precisam da conexão de dono~~ — **FEITO** em
+  09/09/2026. E era maior do que estava escrito aqui: valia para as MIGRAÇÕES
+  também, não só para os seeds. O `cowdata_app` não pode `CREATE TABLE` nem
+  `ALTER TABLE`, e `_aplicar_alembic()` roda no boot sem proteção — a primeira
+  migração de schema depois do passo 25 teria derrubado a API do Staging, e a
+  das 130 FKs compostas seria exatamente esse gatilho. Migrações, `create_all`
+  e seeds passaram todos para `engine_manutencao`;
 - as políticas em si, que só entram depois de `fazenda_id NOT NULL` e das 130
   FKs compostas (ver `fks-compostas.md`).
