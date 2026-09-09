@@ -487,6 +487,13 @@ def _linhas_para_csv(linhas: list[dict]) -> str:
 
 def _executar_exportacao(itens: list[dict], destinatario_email: str, fazenda_id: int | None) -> None:
     with Session(engine) as session:
+        # Mesmo mecanismo de database.py::get_session — marca o contexto
+        # ANTES da primeira query desta sessão própria (a BackgroundTask não
+        # tem acesso à sessão nem ao token do request original). O filtro
+        # explícito abaixo (`.where(cfg["model"].fazenda_id == fazenda_id)`)
+        # já é a defesa real; isto só garante que a mesma fazenda_id também
+        # fique visível para uma futura política de RLS.
+        session.info["fazenda_id"] = fazenda_id
         buffer_zip = io.BytesIO()
         with zipfile.ZipFile(buffer_zip, "w", zipfile.ZIP_DEFLATED) as zf:
             for item in itens:

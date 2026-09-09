@@ -16,7 +16,7 @@ from fazenda.auth import (
     get_current_user, seed_admin,
     seed_email_dono_backfill, seed_email_dono_correcao_202607c, seed_permissao_publicar_dono,
 )
-from fazenda.database import create_db_and_tables, engine, engine_manutencao, get_session
+from fazenda.database import create_db_and_tables, engine, engine_manutencao, get_session  # noqa: F401 — `engine` não é lido aqui, mas dezenas de testes fazem monkeypatch.setattr(main, "engine", ...)
 from fazenda.models import IdempotenciaChave
 from fazenda.api.routers import (
     agenda,
@@ -167,7 +167,19 @@ async def _loop_backup_automatico() -> None:
 async def _loop_despacho_push() -> None:
     while True:
         try:
-            with Session(engine) as session:
+            # `engine_manutencao`, e não `engine`: as duas funções abaixo
+            # enumeram usuários/fazendas de TODO o sistema (push.py::
+            # usuarios_com_canal_push não filtra por fazenda) e só DEPOIS
+            # resolvem a fazenda de cada um (Usuario.pessoa_id → Pessoa.
+            # fazenda_id) para filtrar em Python — nessa ordem, sob RLS a
+            # própria busca da fazenda do usuário ficaria cega (Pessoa tem
+            # fazenda_id, e não há como saber o contexto certo ANTES de
+            # descobrir a fazenda). O recorte por fazenda já é feito
+            # explicitamente em Python (fazenda_id=fazenda_id repassado a
+            # calcular_agenda/montar_itens_notificacoes) — RLS aqui seria
+            # redundante, não a defesa principal, mesmo desenho de
+            # `_loop_backup_automatico` acima.
+            with Session(engine_manutencao) as session:
                 despachar_push_pendentes(session)
                 # "Agenda do dia": resumo 1x/dia (não 1 push por item) — dedup
                 # por usuário+dia em despachar_agenda_do_dia já evita reenvio
@@ -181,7 +193,13 @@ async def _loop_despacho_push() -> None:
 async def _loop_manual_fazenda_semanal() -> None:
     while True:
         try:
-            with Session(engine) as session:
+            # `engine_manutencao`, e não `engine`: `fazendas_do_envio_semanal`
+            # enumera TODAS as fazendas-cliente antes de saber qual está
+            # sendo processada, e o recorte por fazenda já é feito
+            # explicitamente em Python dentro do laço (ver
+            # enviar_manual_semanal_todas_fazendas) — mesmo desenho de
+            # `_loop_backup_automatico`/`_loop_despacho_push` acima.
+            with Session(engine_manutencao) as session:
                 # UM manual por fazenda-cliente, cada um com o recorte da sua
                 # (ver enviar_manual_semanal_todas_fazendas). Chamar
                 # `enviar_manual_semanal_se_necessario(session)` aqui, sem
