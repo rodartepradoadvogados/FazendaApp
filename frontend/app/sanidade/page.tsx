@@ -82,7 +82,15 @@ function servicoDoExame(nome: string): string {
 type LinhaEventoVida = {
   numero_matriz: string; nome: string | null; grupo_primario: string | null; categoria: string | null;
   data_evento: string; dias_restantes: number;
+  // Presentes só quando o evento sanitário tem janela de aplicação cadastrada
+  // (janela_de/janela_ate) — ver rotuloSituacaoJanela/corSituacaoJanela.
+  situacao_janela?: "ainda_nao" | "na_janela" | "fora_da_janela";
+  janela_inicio?: string; janela_fim?: string; dias_para_fechar_janela?: number;
+  acao_fora_janela?: "sair" | "manter" | "notificar" | null;
 };
+const ROTULO_SITUACAO_JANELA: Record<string, string> = { ainda_nao: "Ainda não entrou", na_janela: "Na janela", fora_da_janela: "Fora da janela" };
+const COR_SITUACAO_JANELA: Record<string, string> = { ainda_nao: "var(--text-muted)", na_janela: "var(--dourado-light)", fora_da_janela: "var(--red)" };
+const ACAO_FORA_JANELA_LABEL_CURTO: Record<string, string> = { sair: "saiu", manter: "mantido pendente", notificar: "urgência" };
 
 /**
  * Relatório de mudança de categoria/eventos de vida — "quais animais entrarão
@@ -138,9 +146,11 @@ function RelatorioEventosVidaView({
   useEffect(() => { if (eventoSanitarioId || gatilho) buscar(); }, [eventoSanitarioId, gatilho, ini, fim, buscar]);
 
   const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(resultado?.animais || []);
+  const temJanela = !!(resultado?.animais || []).some((a) => a.situacao_janela);
   const linhasExport = (resultado?.animais || []).map((a) => ({
     ...a, dias_restantes_fmt: a.dias_restantes < 0 ? `${Math.abs(a.dias_restantes)}d atrás` : `em ${a.dias_restantes}d`,
     data_evento_fmt: formatDate(a.data_evento),
+    situacao_janela_fmt: a.situacao_janela ? ROTULO_SITUACAO_JANELA[a.situacao_janela] : "",
   }));
 
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
@@ -183,6 +193,7 @@ function RelatorioEventosVidaView({
               colunas={[
                 { header: "Nº", key: "numero_matriz" }, { header: "Nome", key: "nome" }, { header: "Lote", key: "grupo_primario" },
                 { header: "Categoria", key: "categoria" }, { header: "Data do evento", key: "data_evento_fmt" }, { header: "Dias restantes", key: "dias_restantes_fmt" },
+                ...(temJanela ? [{ header: "Situação da janela", key: "situacao_janela_fmt" }] : []),
               ]}
               linhas={linhasExport}
             />
@@ -196,6 +207,7 @@ function RelatorioEventosVidaView({
                 <ThOrdenavel label="Categoria" campo="categoria" coluna={coluna} dir={dir} ordenar={ordenar} />
                 <ThOrdenavel label="Data do evento" campo="data_evento" coluna={coluna} dir={dir} ordenar={ordenar} />
                 <ThOrdenavel label="Dias restantes" campo="dias_restantes" coluna={coluna} dir={dir} ordenar={ordenar} />
+                {temJanela && <ThOrdenavel label="Situação da janela" campo="situacao_janela" coluna={coluna} dir={dir} ordenar={ordenar} />}
               </tr></thead>
               <tbody>
                 {linhasOrdenadas.map((a) => (
@@ -208,9 +220,20 @@ function RelatorioEventosVidaView({
                     <td style={{ fontSize: "0.78rem", textAlign: "right", fontWeight: 600, color: a.dias_restantes < 0 ? "var(--red)" : "var(--dourado-light)" }}>
                       {a.dias_restantes < 0 ? `${Math.abs(a.dias_restantes)}d atrás` : `em ${a.dias_restantes}d`}
                     </td>
+                    {temJanela && (
+                      <td style={{ fontSize: "0.78rem" }}>
+                        {a.situacao_janela ? (
+                          <span style={{ fontWeight: 700, color: COR_SITUACAO_JANELA[a.situacao_janela] }}>
+                            {ROTULO_SITUACAO_JANELA[a.situacao_janela]}
+                            {a.situacao_janela === "na_janela" && a.dias_para_fechar_janela != null && ` — fecha em ${a.dias_para_fechar_janela}d`}
+                            {a.situacao_janela === "fora_da_janela" && a.acao_fora_janela && ` (${ACAO_FORA_JANELA_LABEL_CURTO[a.acao_fora_janela] || a.acao_fora_janela})`}
+                          </span>
+                        ) : "—"}
+                      </td>
+                    )}
                   </tr>
                 ))}
-                {!resultado.animais.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum animal encontrado.</td></tr>}
+                {!resultado.animais.length && <tr><td colSpan={temJanela ? 7 : 6} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum animal encontrado.</td></tr>}
               </tbody>
             </table>
           </div>
