@@ -42,10 +42,13 @@
 -- silêncio — que é exatamente como nascem os furos que a auditoria achou.
 --
 -- As duas naturezas ganham políticas DIFERENTES:
---   • catálogo global (14 tabelas) — na LEITURA, a fazenda atual OU as
+--   • catálogo global (18 tabelas — reconferido em 10/09/2026 contra o
+--     esquema real pós-#744/#745: bate exatamente com a lista de
+--     alembic/versions/c8e2a4f70b13_fazenda_id_not_null.py::_CATALOGO_GLOBAL,
+--     nenhuma tabela nova nem removida) — na LEITURA, a fazenda atual OU as
 --     linhas globais (`fazenda_id IS NULL`); na ESCRITA, só a fazenda
 --     atual. O tenant lê o catálogo de todos, mas nunca escreve nele.
---   • dado da fazenda (as outras 171) — só a fazenda atual, na leitura e na
+--   • dado da fazenda (as outras 167) — só a fazenda atual, na leitura e na
 --     escrita. `fazenda_id IS NULL` ali é órfão e não passa por ninguém.
 -- ---------------------------------------------------------------------
 DO $$
