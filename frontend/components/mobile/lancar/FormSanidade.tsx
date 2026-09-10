@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Syringe, ClipboardList, Bandage, ShieldCheck, CalendarClock, Droplets } from "lucide-react";
 import { MobCampo, MobAviso, MobVoltar, MobCard } from "@/components/mobile/ui";
-import { fetchEstoque, fetchProtocolosSanitarios, fetchMedicamentos, fetchPrincipiosAtivos, fetchDoencas, fetchEventosSanitarios, fetchAgenda, fetchCategoriasManejo, formatDate, fetchIndicacoesDoenca, type OpcaoIndicacaoDoenca } from "@/lib/api";
+import { fetchEstoque, fetchProtocolosSanitarios, fetchMedicamentos, fetchPrincipiosAtivos, fetchDoencas, fetchEventosSanitarios, fetchAgenda, fetchCategoriasManejo, fetchPessoas, fetchRelatorioEventosVida, formatDate, fetchIndicacoesDoenca, type OpcaoIndicacaoDoenca } from "@/lib/api";
 import { fetchComCache } from "@/lib/offline";
 import { EstoquePicker } from "@/components/EstoquePicker";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -23,6 +23,10 @@ type Protocolo = { id: number; nome: string; eh_mastite?: boolean };
 type EventoPrev = {
   id: number; nome: string; categoria_preventiva: string | null;
   produto_padrao?: string | null; dose_padrao?: number | null; unidade_padrao?: string | null;
+  // Presentes só quando o evento é agendado por evento de vida (gatilho) —
+  // decide se a modalidade "Na janela" aparece (ver PreventivoAplicacao).
+  tipo_agendamento?: string; gatilho?: string | null;
+  veterinario_padrao_pessoa_id?: number | null;
 };
 const CLASSIF_MASTITE = ["clinica", "subclinica", "ambiental"];
 // Separador usado para guardar mais de uma categoria-alvo no mesmo campo de
@@ -47,12 +51,19 @@ const TITULOS_PREV: Record<TipoPreventiva, string> = {
   aplicacao: "Aplicação preventiva", calendario: "Calendário sanitário", bst: "BST",
 };
 
-export function FormSanidade({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
+export function FormSanidade({ animais, animalFixado, deepLinkEventoId }: {
+  animais: Animal[]; animalFixado: string | null;
+  /** Vindo de "Ver quem está na janela" (Menu > Calendário Sanitário) — pula
+   *  direto para Preventiva > Aplicação, evento e modo "Na janela" já
+   *  escolhidos, em vez de obrigar o usuário a repetir os 2 toques
+   *  (Preventiva > Aplicação) e escolher o evento de novo. */
+  deepLinkEventoId?: string | null;
+}) {
   const estoque = useCache<EstoqueItem[]>("estoque_itens", () => fetchEstoque().then((d) => d.itens as EstoqueItem[]), []);
 
-  const [modalidade, setModalidade] = useState<Modalidade | null>(null);
+  const [modalidade, setModalidade] = useState<Modalidade | null>(deepLinkEventoId ? "preventiva" : null);
   const [tipo, setTipo] = useState<TipoCurativa | null>(null);
-  const [tipoPrev, setTipoPrev] = useState<TipoPreventiva | null>(null);
+  const [tipoPrev, setTipoPrev] = useState<TipoPreventiva | null>(deepLinkEventoId ? "aplicacao" : null);
 
   if (!modalidade) {
     return (
@@ -85,7 +96,13 @@ export function FormSanidade({ animais, animalFixado }: { animais: Animal[]; ani
     return (
       <>
         <MobVoltar titulo={TITULOS_PREV[tipoPrev]} onVoltar={() => setTipoPrev(null)} />
-        {tipoPrev === "aplicacao" && <PreventivoAplicacao animais={animais} animalFixado={animalFixado} estoque={estoque.dados} />}
+        {tipoPrev === "aplicacao" && (
+          <PreventivoAplicacao
+            animais={animais} animalFixado={animalFixado} estoque={estoque.dados}
+            eventoIdInicial={deepLinkEventoId || undefined}
+            modoInicial={deepLinkEventoId ? "janela" : undefined}
+          />
+        )}
         {tipoPrev === "calendario" && <PreventivoCalendario estoque={estoque.dados} />}
         {tipoPrev === "bst" && <PreventivoBst />}
       </>
@@ -395,15 +412,20 @@ function SubstitutoBanner({ indicacoes, zerado, produto, doenca, onUsar }: {
 }
 
 // ── Preventiva > Aplicação — POST /sanidade/calendario/cadastrar-preventivo ──
-function PreventivoAplicacao({ animais, animalFixado, estoque }: { animais: Animal[]; animalFixado: string | null; estoque: EstoqueItem[] }) {
+function PreventivoAplicacao({ animais, animalFixado, estoque, eventoIdInicial, modoInicial }: {
+  animais: Animal[]; animalFixado: string | null; estoque: EstoqueItem[];
+  /** Deep-link vindo de "Ver quem está na janela" (Calendário Sanitário). */
+  eventoIdInicial?: string; modoInicial?: "janela";
+}) {
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   const [eventos, setEventos] = useState<EventoPrev[]>([]);
-  const [eventoId, setEventoId] = useState("");
+  const [eventoId, setEventoId] = useState(eventoIdInicial || "");
   const [data, setData] = useState(hoje());
+  const [hora, setHora] = useState("");
   const [freqValor, setFreqValor] = useState("1");
   const [freqUnidade, setFreqUnidade] = useState("meses");
   const [veterinario, setVeterinario] = useState("");
-  const [modo, setModo] = useState<"animal" | "lote">("animal");
+  const [modo, setModo] = useState<"animal" | "lote" | "janela">(modoInicial || "animal");
   const [animal, setAnimal] = useState(animalFixado || "");
   const [lote, setLote] = useState("");
   // Medicamento aplicado — sempre pedido para vacina/tratamento (não para
@@ -412,13 +434,33 @@ function PreventivoAplicacao({ animais, animalFixado, estoque }: { animais: Anim
   const [dose, setDose] = useState("");
   const [unidade, setUnidade] = useState("");
 
+  // "Na janela" (pedido do usuário, 10/09/2026) — mesmo painel do site:
+  // lista quem está na janela de aplicação DESTE evento, marca por padrão
+  // quem já entrou nela, deixa ajustar a seleção, e pede o veterinário (por
+  // Pessoa cadastrada, não texto livre) na hora de agendar.
+  const [pessoas, setPessoas] = useState<any[]>([]);
+  const [veterinarioId, setVeterinarioId] = useState("");
+  const [janela, setJanela] = useState<{ animais: { numero_matriz: string; nome: string | null; situacao_janela?: string; dias_para_fechar_janela?: number | null }[] } | null>(null);
+  const [carregandoJanela, setCarregandoJanela] = useState(false);
+  const [erroJanela, setErroJanela] = useState<string | null>(null);
+  const [selJanela, setSelJanela] = useState<Set<string>>(new Set());
+
   useEffect(() => {
     fetchComCache<EventoPrev[]>("sanidade_eventos_sanitarios_ativos", () => fetchEventosSanitarios().then((d: any[]) => d.filter((e) => e.ativo)))
       .then(({ dados }) => setEventos(dados || []));
   }, []);
+  useEffect(() => { fetchPessoas().then(setPessoas).catch(() => setPessoas([])); }, []);
+  const veterinarios = useMemo(
+    () => pessoas.filter((p) => p.ativo !== false && (p.tipos || []).some((t: string) => ["Veterinário", "Zootecnista"].includes(t)))
+      .sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
+    [pessoas]
+  );
 
   const evento = eventos.find((e) => String(e.id) === eventoId);
   const ehExame = evento?.categoria_preventiva === "exame";
+  // Só evento agendado por gatilho (evento de vida) tem janela de aplicação —
+  // mesmo critério do relatório que alimenta este painel.
+  const elegivelJanela = evento?.tipo_agendamento === "evento" && !!evento?.gatilho;
   const compativeis = useMemo(() => unidadesCompativeis(estoque.find((e) => e.nome === produto)?.unidade), [estoque, produto]);
 
   useEffect(() => {
@@ -427,8 +469,38 @@ function PreventivoAplicacao({ animais, animalFixado, estoque }: { animais: Anim
     setProduto(nomePadrao);
     setDose(evento?.dose_padrao != null ? String(evento.dose_padrao) : "");
     setUnidade(evento?.unidade_padrao && comp.includes(evento.unidade_padrao) ? evento.unidade_padrao : (comp[0] || ""));
+    if (evento?.veterinario_padrao_pessoa_id) setVeterinarioId(String(evento.veterinario_padrao_pessoa_id));
+    // `eventos` entra nas deps (além de `eventoId`) por causa do deep-link
+    // ("Ver quem está na janela"): `eventoId` já chega pronto ANTES da lista
+    // de eventos terminar de carregar, e sem reagir à chegada de `eventos`
+    // este efeito rodaria uma vez com `evento` ainda undefined e nunca mais —
+    // produto/dose/veterinário do deep-link ficariam vazios para sempre.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventoId]);
+  }, [eventoId, eventos]);
+
+  // Volta pro modo "animal" se o evento escolhido não tem gatilho (não faz
+  // sentido oferecer "Na janela" pra evento agendado por época) — mesmo
+  // motivo de `eventos` entrar nas deps acima.
+  useEffect(() => {
+    if (!eventos.length) return;
+    if (modo === "janela" && !elegivelJanela) setModo("animal");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventoId, eventos]);
+
+  useEffect(() => {
+    if (modo !== "janela" || !eventoId) { setJanela(null); return; }
+    let vivo = true;
+    setCarregandoJanela(true); setErroJanela(null);
+    fetchRelatorioEventosVida({ eventoSanitarioId: Number(eventoId) })
+      .then((r: any) => {
+        if (!vivo) return;
+        setJanela(r);
+        setSelJanela(new Set((r.animais || []).filter((a: any) => !a.situacao_janela || a.situacao_janela === "na_janela").map((a: any) => a.numero_matriz)));
+      })
+      .catch((e) => { if (vivo) setErroJanela(e.message); })
+      .finally(() => { if (vivo) setCarregandoJanela(false); });
+    return () => { vivo = false; };
+  }, [modo, eventoId]);
 
   function escolherProduto(nome: string) {
     setProduto(nome);
@@ -442,28 +514,39 @@ function PreventivoAplicacao({ animais, animalFixado, estoque }: { animais: Anim
     return Array.from(set).sort();
   }, [animais]);
 
-  const alvoAnimais = () => modo === "animal" ? (animal ? [animal] : []) : animais.filter((a) => a.grupo_primario === lote).map((a) => a.numero);
+  const toggleJanela = (n: string) => setSelJanela((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  const todosMarcadosJanela = !!janela?.animais.length && janela.animais.every((a) => selJanela.has(a.numero_matriz));
+  const alternarTodosJanela = () => setSelJanela(todosMarcadosJanela ? new Set() : new Set((janela?.animais || []).map((a) => a.numero_matriz)));
+
+  const alvoAnimais = () => modo === "animal" ? (animal ? [animal] : [])
+    : modo === "lote" ? animais.filter((a) => a.grupo_primario === lote).map((a) => a.numero)
+    : Array.from(selJanela);
 
   function salvar() {
     const alvo = alvoAnimais();
     if (!eventoId) return erroValidacao("Selecione o evento preventivo.");
     if (!data) return erroValidacao("Informe a data de referência.");
-    if (!alvo.length) return erroValidacao(modo === "animal" ? "Selecione o animal." : "Selecione o lote.");
+    if (!alvo.length) return erroValidacao(modo === "animal" ? "Selecione o animal." : modo === "lote" ? "Selecione o lote." : "Selecione ao menos um animal na janela.");
     if (!ehExame) {
       if (!produto) return erroValidacao("Selecione o medicamento aplicado.");
       if (!(Number(dose) > 0)) return erroValidacao("Informe a dose.");
       if (!unidade) return erroValidacao("Selecione a unidade.");
     }
+    const vetJanela = veterinarios.find((p) => String(p.id) === veterinarioId);
     enviar(
       "/sanidade/calendario/cadastrar-preventivo",
       {
         evento_sanitario_id: Number(eventoId), categoria_alvo: modo === "lote" ? lote : undefined, data_evento: data,
-        frequencia_valor: Number(freqValor) || 1, frequencia_unidade: freqUnidade,
-        animais: alvo, aplicar: !ehExame, veterinario: veterinario || undefined,
+        // "Na janela" não cria regra recorrente de época — o evento já é
+        // regido pelo próprio gatilho/janela cadastrados.
+        frequencia_valor: modo === "janela" ? 0 : (Number(freqValor) || 1), frequencia_unidade: freqUnidade,
+        animais: alvo, aplicar: !ehExame,
+        veterinario: modo === "janela" ? (vetJanela?.nome || undefined) : (veterinario || undefined),
+        observacao: modo === "janela" && hora ? `Horário: ${hora}` : undefined,
         produto: ehExame ? undefined : produto, dose: ehExame ? undefined : Number(dose), unidade: ehExame ? undefined : unidade,
       },
-      `Preventivo ${evento?.nome || ""} — ${modo === "animal" ? `animal ${animal}` : `lote ${lote}`}`,
-      () => { setEventoId(""); setVeterinario(""); },
+      `Preventivo ${evento?.nome || ""} — ${modo === "animal" ? `animal ${animal}` : modo === "lote" ? `lote ${lote}` : `${alvo.length} na janela`}`,
+      () => { setEventoId(""); setVeterinario(""); setVeterinarioId(""); setSelJanela(new Set()); setHora(""); },
     );
   }
 
@@ -478,20 +561,24 @@ function PreventivoAplicacao({ animais, animalFixado, estoque }: { animais: Anim
       <MobCampo label="Data de referência">
         <input type="date" className="mob-input" value={data} onChange={(e) => setData(e.target.value)} />
       </MobCampo>
-      <MobCampo label="Repetir a cada">
-        <div style={{ display: "flex", gap: "0.6rem" }}>
-          <input type="number" inputMode="numeric" className="mob-input" style={{ flex: 1 }} value={freqValor} onChange={(e) => setFreqValor(e.target.value)} />
-          <select className="mob-input" style={{ flex: 1 }} value={freqUnidade} onChange={(e) => setFreqUnidade(e.target.value)}>
-            <option value="dias">dia(s)</option>
-            <option value="meses">mês(es)</option>
-            <option value="anos">ano(s)</option>
-          </select>
-        </div>
-      </MobCampo>
-      {ehExame ? (
-        <MobCampo label="Veterinário (exame)">
-          <input className="mob-input" value={veterinario} onChange={(e) => setVeterinario(e.target.value)} placeholder="ex.: Dr. Carlos" />
+      {modo !== "janela" && (
+        <MobCampo label="Repetir a cada">
+          <div style={{ display: "flex", gap: "0.6rem" }}>
+            <input type="number" inputMode="numeric" className="mob-input" style={{ flex: 1 }} value={freqValor} onChange={(e) => setFreqValor(e.target.value)} />
+            <select className="mob-input" style={{ flex: 1 }} value={freqUnidade} onChange={(e) => setFreqUnidade(e.target.value)}>
+              <option value="dias">dia(s)</option>
+              <option value="meses">mês(es)</option>
+              <option value="anos">ano(s)</option>
+            </select>
+          </div>
         </MobCampo>
+      )}
+      {ehExame ? (
+        modo !== "janela" && (
+          <MobCampo label="Veterinário (exame)">
+            <input className="mob-input" value={veterinario} onChange={(e) => setVeterinario(e.target.value)} placeholder="ex.: Dr. Carlos" />
+          </MobCampo>
+        )
       ) : (
         <>
           <MobCampo label="Medicamento aplicado">
@@ -514,18 +601,60 @@ function PreventivoAplicacao({ animais, animalFixado, estoque }: { animais: Anim
       <LinhaPills>
         <MobPill ativa={modo === "animal"} onClick={() => setModo("animal")}>Animal</MobPill>
         <MobPill ativa={modo === "lote"} onClick={() => setModo("lote")}>Lote</MobPill>
+        {elegivelJanela && <MobPill ativa={modo === "janela"} onClick={() => setModo("janela")}>Na janela</MobPill>}
       </LinhaPills>
-      {modo === "animal" ? (
+      {modo === "animal" && (
         <MobCampo label="Animal (nº / nome)">
           <SeletorAnimal animais={animais} valor={animal} onChange={setAnimal} placeholder="Buscar animal…" />
         </MobCampo>
-      ) : (
+      )}
+      {modo === "lote" && (
         <MobCampo label="Lote">
           <select className="mob-input" value={lote} onChange={(e) => setLote(e.target.value)}>
             <option value="">Selecione o lote…</option>
             {lotes.map((l) => <option key={l} value={l}>{l}</option>)}
           </select>
         </MobCampo>
+      )}
+      {modo === "janela" && (
+        <>
+          {carregandoJanela && <p style={{ color: "var(--mob-muted)", fontSize: "0.85rem" }}>Carregando quem está na janela…</p>}
+          {erroJanela && <MobAviso tipo="erro">{erroJanela}</MobAviso>}
+          {janela && (
+            <>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.5rem" }}>
+                <span style={{ fontSize: "0.82rem", fontWeight: 700 }}>{selJanela.size} de {janela.animais.length} selecionado(s)</span>
+                <button type="button" onClick={alternarTodosJanela}
+                  style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--mob-dourado-2)", background: "none", border: "none", cursor: "pointer" }}>
+                  {todosMarcadosJanela ? "Desmarcar todos" : "Marcar todos"}
+                </button>
+              </div>
+              <div style={{ display: "grid", gap: "0.4rem", maxHeight: "40vh", overflowY: "auto", marginBottom: "0.8rem" }}>
+                {janela.animais.map((a) => (
+                  <label key={a.numero_matriz} className="mob-card" style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.6rem 0.8rem", cursor: "pointer" }}>
+                    <input type="checkbox" checked={selJanela.has(a.numero_matriz)} onChange={() => toggleJanela(a.numero_matriz)} />
+                    <span style={{ flex: 1 }}>
+                      <strong>{a.numero_matriz}</strong>{a.nome ? ` · ${a.nome}` : ""}
+                    </span>
+                    {a.situacao_janela === "na_janela" && a.dias_para_fechar_janela != null && (
+                      <span style={{ fontSize: "0.7rem", color: "var(--mob-dourado-2)" }}>fecha em {a.dias_para_fechar_janela}d</span>
+                    )}
+                  </label>
+                ))}
+                {!janela.animais.length && <p style={{ color: "var(--mob-muted)", fontSize: "0.85rem" }}>Nenhum animal encontrado.</p>}
+              </div>
+              <MobCampo label="Veterinário">
+                <select className="mob-input" value={veterinarioId} onChange={(e) => setVeterinarioId(e.target.value)}>
+                  <option value="">Opcional</option>
+                  {veterinarios.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                </select>
+              </MobCampo>
+              <MobCampo label="Hora (opcional)">
+                <input type="time" className="mob-input" value={hora} onChange={(e) => setHora(e.target.value)} />
+              </MobCampo>
+            </>
+          )}
+        </>
       )}
 
       <button className="mob-btn" onClick={salvar} disabled={enviando}>{enviando ? "Salvando…" : "Salvar"}</button>

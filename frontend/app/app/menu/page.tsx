@@ -20,7 +20,7 @@ import {
   Stethoscope, Syringe, CalendarDays, CalendarRange, Wheat, FileBarChart, Gauge,
   LogOut, CheckCheck, Heart, ShieldPlus, Landmark,
   Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Monitor, WifiOff,
-  Milk, FlaskConical, Droplet, Droplets, Scale, ListChecks, ChevronRight, ChevronDown, Sun,
+  Milk, FlaskConical, Droplet, Droplets, Scale, ListChecks, ChevronRight, ChevronDown, Sun, ClipboardCheck,
 } from "lucide-react";
 import { getUsuario, podeModulo, ehAdmin, ehDono, ehOperadorRestrito, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, descartarPendente, lerCache } from "@/lib/offline";
@@ -30,6 +30,7 @@ import AgendaVet from "@/components/mobile/menu/AgendaVet";
 import ProtocolosIatf from "@/components/mobile/menu/ProtocolosIatf";
 import CalendarioSanitario from "@/components/mobile/menu/CalendarioSanitario";
 import AplicacoesSanidade from "@/components/mobile/menu/AplicacoesSanidade";
+import Cronogramas from "@/components/mobile/menu/Cronogramas";
 import PlanoAlimentacao from "@/components/mobile/menu/PlanoAlimentacao";
 import LancarDieta from "@/components/mobile/menu/LancarDieta";
 import ConsultarDietas from "@/components/mobile/menu/ConsultarDietas";
@@ -57,7 +58,7 @@ import RemediosPorDoenca from "@/components/mobile/menu/RemediosPorDoenca";
 import Sincronizacao from "@/components/mobile/menu/Sincronizacao";
 import Ciclos21Dias from "@/components/mobile/menu/Ciclos21Dias";
 
-type SubKey = "agendaVet" | "iatf" | "ciclos21" | "calendario" | "aplicacoes" | "remedios" | "plano" | "lancarDieta" | "consultarDietas" | "necessidadeMensal" | "manejo" | "indicadores" | "aprovacoes"
+type SubKey = "agendaVet" | "iatf" | "ciclos21" | "calendario" | "cronogramas" | "aplicacoes" | "remedios" | "plano" | "lancarDieta" | "consultarDietas" | "necessidadeMensal" | "manejo" | "indicadores" | "aprovacoes"
   | "fluxoCaixa" | "dre" | "rmca" | "extrato" | "ultimosControles" | "qualidadeLeite" | "secagens" | "bstHistorico" | "pesagemHistorico";
 type SecaoKey = "reproducao" | "sanidade" | "alimentacao" | "producao" | "gestao" | "financeiro";
 type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode; soAdmin?: boolean; cor?: string };
@@ -77,8 +78,9 @@ const GRUPOS: Grupo[] = [
     { chave: "ciclos21", titulo: "Ciclos de 21 dias", subtitulo: "Eficiência reprodutiva ciclo a ciclo", rota: "/ciclos-21-dias", icone: <CalendarRange size={20} /> },
   ] },
   { secao: "sanidade", titulo: "Sanidade", cor: "var(--cat-sanidade)", iconeSecao: <ShieldPlus size={26} />, itens: [
-    { chave: "calendario", titulo: "Calendário Sanitário", subtitulo: "Próximos eventos (90 dias)", rota: "/sanidade", icone: <CalendarDays size={20} /> },
-    { chave: "aplicacoes", titulo: "Aplicações", subtitulo: "Medicamentos aplicados — editar/excluir", rota: "/sanidade", icone: <Syringe size={20} />, soAdmin: true },
+    { chave: "calendario", titulo: "Calendário Sanitário", subtitulo: "Próximos eventos e já aplicados", rota: "/sanidade", icone: <CalendarDays size={20} /> },
+    { chave: "cronogramas", titulo: "Acompanhamento", subtitulo: "Cronogramas em aberto — incluir/excluir, decidir veterinário", rota: "/sanidade", icone: <ClipboardCheck size={20} /> },
+    { chave: "aplicacoes", titulo: "Histórico", subtitulo: "Preventivo (vacina/exame) e curativo", rota: "/sanidade", icone: <Syringe size={20} /> },
     { chave: "remedios", titulo: "Remédios por Doença", subtitulo: "Consulta rápida + substitutos indicados", rota: "/sanidade", icone: <FlaskConical size={20} /> },
   ] },
   // Os 4 itens abaixo não levam `cor` própria de propósito: sem override,
@@ -117,6 +119,7 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
   iatf: ProtocolosIatf,
   ciclos21: Ciclos21Dias,
   calendario: CalendarioSanitario,
+  cronogramas: Cronogramas,
   aplicacoes: AplicacoesSanidade,
   remedios: RemediosPorDoenca,
   plano: PlanoAlimentacao,
