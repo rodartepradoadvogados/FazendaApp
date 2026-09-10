@@ -1117,8 +1117,14 @@ export function CadastroEventosSanitarios() {
             <div><label style={labelStyle}>Idade-alvo (meses)</label>
               <input type="number" min={1} style={inputStyle} value={form.gatilho_idade_meses} onChange={(e) => setForm({ ...form, gatilho_idade_meses: e.target.value })} placeholder="ex.: 13" /></div>
           )}
-          <div><label style={labelStyle}>Dias após o gatilho</label>
-            <input type="number" min={0} style={inputStyle} value={form.offset_dias} onChange={(e) => setForm({ ...form, offset_dias: e.target.value })} placeholder="0" /></div>
+          {/* Some da tela assim que "Janela — de" (mais abaixo) é preenchida —
+              ela passa a decidir sozinha quando o item entra na Agenda,
+              inclusive em meses (isto aqui só sabe contar em dias). Ver
+              FormCalendarioSanitario.tsx, mesmo padrão. */}
+          {!form.janela_de_valor && (
+            <div><label style={labelStyle}>Dias após o gatilho</label>
+              <input type="number" min={0} style={inputStyle} value={form.offset_dias} onChange={(e) => setForm({ ...form, offset_dias: e.target.value })} placeholder="0" /></div>
+          )}
           <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Condição — só agendar se NÃO tiver recebido</label>
             <select style={inputStyle} value={form.condicao_evento_id} onChange={(e) => setForm({ ...form, condicao_evento_id: e.target.value })}>
               <option value="">— (sempre agendar)</option>

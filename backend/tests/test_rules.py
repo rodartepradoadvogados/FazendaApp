@@ -298,6 +298,36 @@ class TestBST:
         assert res.elegivel is False
         assert "secar" in res.motivo_exclusao.lower()
 
+    def test_lote_novo_fora_do_01_02_03_fica_de_fora_sem_cadastro(self):
+        """Sem `codigos_lactacao`, cai no padrão histórico 01/02/03 — um lote
+        novo (ex.: "04 — pós-parto imediato") não é reconhecido como
+        lactação, mesmo com DEL/secagem que qualificariam."""
+        res = avaliar_bst(
+            numero_matriz="005",
+            grupo_primario="04 - POS PARTO IMEDIATO",
+            del_dias=90,
+            data_secagem=date.today() + timedelta(days=30),
+            data_referencia=date.today(),
+        )
+        assert res.elegivel is False
+        assert "lactação" in res.motivo_exclusao.lower()
+
+    def test_codigos_lactacao_customizado_reconhece_lote_novo(self):
+        """Bug real reportado pelo usuário 2026-09-10: fazenda reorganizou os
+        lotes e criou um "04" de lactação (pós-parto imediato) — o chamador
+        (agenda_engine, a partir do cadastro real de Lote) agora pode passar
+        o conjunto de códigos que valem como lactação, em vez de ficar preso
+        em 01/02/03."""
+        res = avaliar_bst(
+            numero_matriz="005",
+            grupo_primario="04 - POS PARTO IMEDIATO",
+            del_dias=90,
+            data_secagem=date.today() + timedelta(days=30),
+            data_referencia=date.today(),
+            codigos_lactacao={"01", "02", "03", "04"},
+        )
+        assert res.elegivel is True
+
 
 # ============================================================
 # INDICADORES
@@ -343,6 +373,7 @@ class TestIndicadores:
         r = calcular_indicadores(animais, servicos, partos, data_ref=date(2026, 7, 5))
         assert r["rebanho"]["total"] == 4
         assert r["rebanho"]["vacas_lactacao"] == 2  # grupos 01 e 02
+        assert r["rebanho"]["codigos_lactacao"] == ["01", "02", "03"]  # padrão sem cadastro de Lote
         assert r["rebanho"]["vacas_secas"] == 1
         assert r["reproducao"]["prenhes"] == 2
         assert r["reproducao"]["vazias"] == 1
@@ -379,6 +410,39 @@ class TestIndicadores:
         assert r["producao"]["producao_total_dia_kg"] == 0.0
         assert r["producao"]["ultimo_por_animal"]["vacas_com_producao"] == 2
         assert r["producao"]["ultimo_por_animal"]["producao_total_kg"] == 55.0
+
+    def test_vacas_lactacao_reconhece_lote_novo_via_cadastro(self):
+        """Bug real reportado pelo usuário 2026-09-10: reorganizou os lotes e
+        criou um "04" (pós-parto imediato) com Parto/Lactação reais abertos —
+        "vacas em lactação" continuava presa a 01/02/03 porque a conta nunca
+        olhava o cadastro de Lote (só olhava codigos_secas/codigos_pre_parto).
+        Com o cadastro passando status_lactacao="lactacao" pro lote 04, ele
+        entra na soma — mesmo padrão já usado por codigos_secas/pre_parto."""
+        animais, servicos, partos = self._dados()
+        animais = animais + [{"grupo_primario": "04 - POS PARTO IMEDIATO", "sit_rep": "Ges.", "del_dias": 5, "ult_cl_kg": 20.0}]
+        lotes = [
+            {"codigo": "01", "status_lactacao": None, "pre_parto": False},
+            {"codigo": "04", "status_lactacao": "lactacao", "pre_parto": False},
+            {"codigo": "05", "status_lactacao": "seca", "pre_parto": False},
+        ]
+        r = calcular_indicadores(animais, servicos, partos, data_ref=date(2026, 7, 5), lotes=lotes)
+        # Com `lotes` fornecido, a soma passa a seguir só o que está marcado
+        # `status_lactacao="lactacao"` no cadastro — aqui, só o 04 (01/02 têm
+        # `status_lactacao=None` no cadastro desta fixture, então ficam de
+        # fora da soma, mesmo sem terem mudado de significado de verdade).
+        assert r["rebanho"]["vacas_lactacao"] == 1  # só o animal do lote 04
+        assert r["rebanho"]["codigos_lactacao"] == ["04"]
+        assert r["rebanho"]["vacas_secas"] == 1  # lote 05, via cadastro
+
+    def test_vacas_lactacao_cai_no_padrao_sem_nenhum_lote_marcado(self):
+        """Cadastro de Lote existe mas nenhum tem status_lactacao="lactacao"
+        — não esvazia a contagem, cai no padrão histórico 01/02/03 (mesma
+        rede de segurança já usada por codigos_secas/codigos_pre_parto)."""
+        animais, servicos, partos = self._dados()
+        lotes = [{"codigo": "05", "status_lactacao": "seca", "pre_parto": False}]
+        r = calcular_indicadores(animais, servicos, partos, data_ref=date(2026, 7, 5), lotes=lotes)
+        assert r["rebanho"]["vacas_lactacao"] == 2  # grupos 01 e 02, padrão
+        assert r["rebanho"]["codigos_lactacao"] == ["01", "02", "03"]
         assert r["producao"]["del_medio"] == 100.0  # (120 + 80) / 2 — sem `numero`, cai no congelado
 
     def test_rebanho_vazio_nao_quebra(self):

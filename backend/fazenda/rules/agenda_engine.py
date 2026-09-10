@@ -16,7 +16,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from fazenda.api.routers.animais import _del_dias_ao_vivo
-from fazenda.rules.bst import ResultadoBST, avaliar_bst
+from fazenda.rules.bst import GRUPOS_LACTACAO, ResultadoBST, avaliar_bst
 from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules.gestation import calcular_parto_provavel
 from fazenda.rules.iatf import (
@@ -231,6 +231,15 @@ class AgendaEngine:
         grupos_ja_pre_parto = {
             f"{l['codigo']} - {l['nome']}" for l in (lotes or []) if l.get("pre_parto")
         }
+        # Códigos de lote (2 dígitos) que contam como lactação para o BST —
+        # mesma correção de fazenda.rules.indicadores: sem isto, ficava preso
+        # em GRUPOS_LACTACAO (01/02/03) mesmo quando o cadastro de Lote
+        # (status_lactacao == "lactacao") diz que um lote renumerado/novo
+        # também é lactação — vaca lactante nesse lote nunca entrava na
+        # elegibilidade nem na lista de excluídos do BST.
+        codigos_lactacao = {
+            l.get("codigo") for l in (lotes or []) if l.get("status_lactacao") == "lactacao"
+        } or set(GRUPOS_LACTACAO)
 
         # Índices auxiliares
         servico_por_animal: dict[str, dict] = {
@@ -613,7 +622,7 @@ class AgendaEngine:
             # reanálise na próxima aplicação (indicador amarelo no front).
             if animal.get("excluir_bst") or animal.get("aguardando_nova_aplicacao_bst"):
                 cod = (grupo or "").strip()[:2]
-                if cod in ("01", "02", "03"):
+                if cod in codigos_lactacao:
                     res_bst = avaliar_bst(
                         numero_matriz=numero,
                         grupo_primario=grupo,
@@ -622,6 +631,7 @@ class AgendaEngine:
                         data_referencia=data_referencia,
                         del_atual=del_dias,
                         del_projetado=_del_projetado_bst(del_dias, result.proxima_visita_bst, data_referencia),
+                        codigos_lactacao=codigos_lactacao,
                     )
                     res_bst.motivo_exclusao = (
                         "Excluída manualmente do BST — revisar na próxima aplicação"
@@ -645,14 +655,16 @@ class AgendaEngine:
                     data_referencia=data_referencia,
                     del_atual=del_dias,
                     del_projetado=_del_projetado_bst(del_dias, result.proxima_visita_bst, data_referencia),
+                    codigos_lactacao=codigos_lactacao,
                 )
                 if res_bst.elegivel:
                     bst_elegiveis.append(res_bst)
                 else:
-                    # Excluídos do BST: apenas lactantes (01/02/03) que não cumprem os
-                    # requisitos — não faz sentido listar a fazenda inteira.
+                    # Excluídos do BST: apenas lactantes (cadastro real de Lote, ou
+                    # 01/02/03 sem cadastro) que não cumprem os requisitos — não faz
+                    # sentido listar a fazenda inteira.
                     cod = (grupo or "").strip()[:2]
-                    if cod in ("01", "02", "03"):
+                    if cod in codigos_lactacao:
                         bst_excluidos.append(res_bst)
 
         result.bst_elegiveis = bst_elegiveis

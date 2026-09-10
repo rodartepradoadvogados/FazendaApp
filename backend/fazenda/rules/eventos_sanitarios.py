@@ -106,6 +106,7 @@ def _datas_gatilho(
     session: Session, gatilho: str, gatilho_lote: str | None = None, gatilho_idade_meses: int | None = None,
     offset_dias: int = 0, sexo_alvo: str | None = None, fazenda_id: int | None = None,
     animais_cache: dict[str, Animal] | None = None,
+    offset_unidade: str = "dias",
 ) -> list[tuple[str, date]]:
     """Datas (por animal) em que um gatilho de evento de vida ocorre ou vai
     ocorrer — usado tanto para gerar a pendência na Agenda (`eventos_agenda`)
@@ -117,8 +118,17 @@ def _datas_gatilho(
     função uma vez por EVENTO SANITÁRIO "por evento" cadastrado), evita reler
     a tabela inteira de novo só para o filtro de elegibilidade no fim desta
     função; sem cache (demais chamadores, uma chamada isolada cada), consulta
-    como sempre."""
-    offset = timedelta(days=offset_dias or 0)
+    como sempre.
+
+    `offset_unidade` deixa o deslocamento ser em dias OU meses (calendário
+    de verdade, via `proxima_ocorrencia` — não uma aproximação de 30 dias).
+    Com o padrão "dias", `_aplicar_offset` é idêntico a `data + timedelta`
+    de antes: nenhum chamador existente muda de comportamento."""
+    def _aplicar_offset(d: date) -> date:
+        if not offset_dias:
+            return d
+        return proxima_ocorrencia(d, offset_dias, offset_unidade or "dias")
+
     saida: list[tuple[str, date]] = []
 
     def _da_fazenda(query, modelo):
@@ -128,16 +138,16 @@ def _datas_gatilho(
 
     if gatilho == "nascimento":
         for a in session.exec(_da_fazenda(select(Animal).where(Animal.data_nasc != None), Animal)).all():  # noqa: E711
-            saida.append((a.numero, a.data_nasc + offset))
+            saida.append((a.numero, _aplicar_offset(a.data_nasc)))
     elif gatilho == "secagem":
         for s in session.exec(_da_fazenda(select(Secagem), Secagem)).all():
-            saida.append((s.numero_matriz, s.data_secagem + offset))
+            saida.append((s.numero_matriz, _aplicar_offset(s.data_secagem)))
     elif gatilho == "parto":
         for p in session.exec(_da_fazenda(select(Parto).where(Parto.data_parto != None), Parto)).all():  # noqa: E711
-            saida.append((p.numero_matriz, p.data_parto + offset))
+            saida.append((p.numero_matriz, _aplicar_offset(p.data_parto)))
     elif gatilho == "entrada_lote" and gatilho_lote:
         for m in session.exec(_da_fazenda(select(MovimentoLote).where(MovimentoLote.lote_destino == gatilho_lote), MovimentoLote)).all():
-            saida.append((m.numero_matriz, m.data_movimento + offset))
+            saida.append((m.numero_matriz, _aplicar_offset(m.data_movimento)))
     elif gatilho == "novilha_apta" and gatilho_idade_meses:
         # Este gatilho NÃO é a aptidão reprodutiva da regra 7
         # (`estado_reprodutivo.classificar_animal`, idade_apta_min_meses ∧
@@ -165,18 +175,18 @@ def _datas_gatilho(
         ).all():
             if a.numero in matriz_com_parto or a.a_descartar:
                 continue
-            saida.append((a.numero, _somar_meses(a.data_nasc, gatilho_idade_meses) + offset))
+            saida.append((a.numero, _aplicar_offset(_somar_meses(a.data_nasc, gatilho_idade_meses))))
     elif gatilho == "desmama":
         dia_desmama, _ = _limiares_categoria(session, fazenda_id)
         for a in session.exec(_da_fazenda(select(Animal).where(Animal.data_nasc != None), Animal)).all():  # noqa: E711
-            saida.append((a.numero, a.data_nasc + timedelta(days=dia_desmama) + offset))
+            saida.append((a.numero, _aplicar_offset(a.data_nasc + timedelta(days=dia_desmama))))
     elif gatilho == "mudanca_recria":
         _, dia_recria = _limiares_categoria(session, fazenda_id)
         for a in session.exec(_da_fazenda(select(Animal).where(Animal.data_nasc != None), Animal)).all():  # noqa: E711
-            saida.append((a.numero, a.data_nasc + timedelta(days=dia_recria) + offset))
+            saida.append((a.numero, _aplicar_offset(a.data_nasc + timedelta(days=dia_recria))))
     elif gatilho == "inseminacao":
         for s in session.exec(_da_fazenda(select(Servico).where(Servico.data_servico != None), Servico)).all():  # noqa: E711
-            saida.append((s.numero_matriz, s.data_servico + offset))
+            saida.append((s.numero_matriz, _aplicar_offset(s.data_servico)))
     elif gatilho == "gestacao_confirmada":
         # `data_perda_prenhez.is_(None)` — uma prenhez que já se perdeu (manual
         # ou automática por reinseminação, ver fazenda.rules.perda_prenhez)
@@ -191,7 +201,7 @@ def _datas_gatilho(
         ).all():
             base = s.data_diagnostico or s.data_servico
             if base:
-                saida.append((s.numero_matriz, base + offset))
+                saida.append((s.numero_matriz, _aplicar_offset(base)))
     elif gatilho == "mudanca_pre_parto":
         limite = pre_parto_max()
         # Mesmo filtro de perda de prenhez do gatilho acima — sem ele, uma
@@ -208,7 +218,7 @@ def _datas_gatilho(
             )
         ).all():
             prevista = calcular_parto_provavel(s.data_servico, s.raca_matriz).data_parto_provavel
-            saida.append((s.numero_matriz, prevista - timedelta(days=limite) + offset))
+            saida.append((s.numero_matriz, _aplicar_offset(prevista - timedelta(days=limite))))
 
     # Filtro único no fim (não em cada ramo, pra cobrir gatilho novo por
     # igual): nunca sugere animal já baixado (vendido/morto/etc.) — pendência
@@ -322,15 +332,27 @@ def _eventos_calendario_agenda(session: Session, hoje: date, realizados: set[str
     return saida
 
 
-def _base(ev: EventoSanitario, quando: date, numero: str | None, sufixo: str, principio_ativo_id: int | None) -> dict:
+def _base(
+    ev: EventoSanitario, quando: date, numero: str | None, sufixo: str, principio_ativo_id: int | None,
+    hoje: date | None = None, janela_fim: date | None = None,
+) -> dict:
     alvo = f"matriz {numero}" if numero else (ev.categoria_alvo or "rebanho")
+    observacao = "Dê baixa para gerar a aplicação e a saída de estoque."
+    # "Notificar urgência" — mesmo texto de alerta em ambos os lugares que
+    # mostram esta pendência (Agenda e o relatório de exploração em
+    # sanidade.py), pra não descrever o mesmo prazo de dois jeitos.
+    dias_para_fechar = None
+    if janela_fim is not None and hoje is not None:
+        dias_para_fechar = (janela_fim - hoje).days
+        if ev.acao_fora_janela == "notificar" and dias_para_fechar <= 7:
+            observacao = f"Janela de aplicação fecha em {dias_para_fechar} dia(s) ({janela_fim.isoformat()}) — dê baixa logo. " + observacao
     return {
         "id": f"evento_sanitario_{ev.id}__{numero or 'rebanho'}__{sufixo}",
         "data": quando.isoformat(),
         "categoria": "sanidade",
         "descricao": f"{ev.nome} — {alvo}" + (f" — {ev.produto_padrao}" if ev.produto_padrao else ""),
         "numero_animal": numero,
-        "observacao": "Dê baixa para gerar a aplicação e a saída de estoque.",
+        "observacao": observacao,
         "fonte": "auto",
         "cor": "var(--dourado)",
         "ref": None,
@@ -342,6 +364,9 @@ def _base(ev: EventoSanitario, quando: date, numero: str | None, sufixo: str, pr
         "categoria_alvo": ev.categoria_alvo,
         "principio_ativo_id": principio_ativo_id,
         "evento_sanitario_id": ev.id,
+        "janela_fim": janela_fim.isoformat() if janela_fim else None,
+        "dias_para_fechar_janela": dias_para_fechar,
+        "acao_fora_janela": ev.acao_fora_janela if janela_fim else None,
     }
 
 
@@ -434,7 +459,18 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
     saida: list[dict] = []
 
     for ev in eventos:
-        offset = ev.offset_dias or 0
+        # A janela de aplicação (quando cadastrada) É a fonte real de quando
+        # o item entra na Agenda — substitui "offset_dias" (mantido só como
+        # fallback pros eventos antigos que nunca configuraram janela, sem
+        # quebrar nada já cadastrado). Ver conversa com o usuário 2026-09-10:
+        # antes os dois campos pareciam duplicados na tela porque de fato
+        # calculavam a mesma coisa por dois caminhos diferentes — "Dias após
+        # o gatilho" nunca soube de meses, só de dias.
+        tem_janela_de = ev.janela_de_valor is not None and ev.janela_de_unidade is not None
+        if tem_janela_de:
+            offset_valor, offset_unidade = ev.janela_de_valor, ev.janela_de_unidade
+        else:
+            offset_valor, offset_unidade = (ev.offset_dias or 0), "dias"
         principio_ativo_id = principio_por_nome.get(ev.produto_padrao) if ev.produto_padrao else None
 
         if ev.tipo_agendamento == "epoca":
@@ -450,9 +486,22 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
         minimo = hoje - timedelta(days=janela_passado)
         limite = hoje + timedelta(days=janela_futuro)
         gatilhos = _datas_gatilho(
-            session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, offset, ev.sexo_alvo, fazenda_id,
-            animais_cache=animais_cache,
+            session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, offset_valor, ev.sexo_alvo, fazenda_id,
+            animais_cache=animais_cache, offset_unidade=offset_unidade,
         )
+
+        # Fim da janela por animal — só calculado quando a janela está
+        # completa (de E até cadastrados). Usado tanto pra "sair" (encerra a
+        # pendência passado o fim, vira lacuna permanente) quanto pra
+        # "notificar" (aviso de urgência perto de fechar) — "manter" não
+        # precisa disto, é o comportamento de sempre (nunca expira sozinho).
+        fins_janela: dict[str, date] = {}
+        tem_janela_completa = tem_janela_de and ev.janela_ate_valor is not None and ev.janela_ate_unidade is not None
+        if tem_janela_completa:
+            fins_janela = dict(_datas_gatilho(
+                session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, ev.janela_ate_valor, ev.sexo_alvo, fazenda_id,
+                animais_cache=animais_cache, offset_unidade=ev.janela_ate_unidade,
+            ))
 
         calendario_cron = calendarios_cronograma.get(ev.id)
 
@@ -467,6 +516,10 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
                 continue
             if bloqueado_pela_condicao(ev, numero):
                 continue
+            janela_fim = fins_janela.get(numero) if fins_janela else None
+            if janela_fim is not None and ev.acao_fora_janela == "sair" and hoje > janela_fim:
+                vistos.add(numero)
+                continue
             if calendario_cron:
                 # Trilha do cronograma: só sugere quando o animal JÁ bateu o
                 # critério (não antecipa animais que ainda vão chegar lá) —
@@ -475,7 +528,7 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
                     vistos.add(numero)
                     numeros_para_cronograma.append(numero)
                 continue
-            evt = _base(ev, quando, numero, quando.isoformat(), principio_ativo_id)
+            evt = _base(ev, quando, numero, quando.isoformat(), principio_ativo_id, hoje=hoje, janela_fim=janela_fim)
             if evt["id"] in realizados:
                 continue
             vistos.add(numero)

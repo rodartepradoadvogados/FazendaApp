@@ -913,9 +913,25 @@ def calcular_indicadores(
     if lotes:
         codigos_secas = {l.get("codigo") for l in lotes if l.get("status_lactacao") == "seca"}
         codigos_pre_parto = {l.get("codigo") for l in lotes if l.get("pre_parto")}
+        # Mesma lógica de codigos_secas/codigos_pre_parto acima, faltando até
+        # agora: sem isto, "vacas em lactação" ficava presa ao número fixo
+        # 01/02/03 mesmo quando o cadastro real de Lote (status_lactacao)
+        # dizia outra coisa — um lote novo (ex. "04 — pós-parto imediato",
+        # criado numa reorganização de números) ficava invisível a esta
+        # contagem mesmo com Parto/Lactação reais abertos, porque a conta
+        # nunca olha Parto/Lactação: só compara o código do lote atual do
+        # animal contra este conjunto. Bug real reportado pelo usuário
+        # 2026-09-10 (37 = soma de 01+02+03, lote 4 ausente).
+        codigos_lactacao = {l.get("codigo") for l in lotes if l.get("status_lactacao") == "lactacao"}
+        if not codigos_lactacao:
+            # Cadastro de Lote existe mas nenhum está marcado "Situação
+            # produtiva = Lactação" — não apaga a contagem, cai no padrão
+            # histórico (mesma rede de segurança de codigos_secas/pre_parto).
+            codigos_lactacao = set(GRUPOS_LACTACAO)
     else:
         codigos_secas = {GRUPO_SECAS}
         codigos_pre_parto = {GRUPO_PRE_PARTO}
+        codigos_lactacao = set(GRUPOS_LACTACAO)
 
     # ---------------------------------------------------------------
     # Composição do rebanho
@@ -927,7 +943,7 @@ def calcular_indicadores(
         distribuicao[g] = distribuicao.get(g, 0) + 1
 
     codigos = [_codigo_grupo(a.get("grupo_primario")) for a in animais]
-    vacas_lactacao = sum(1 for c in codigos if c in GRUPOS_LACTACAO)
+    vacas_lactacao = sum(1 for c in codigos if c in codigos_lactacao)
     vacas_secas = sum(1 for c in codigos if c in codigos_secas)
     pre_parto = sum(1 for c in codigos if c in codigos_pre_parto)
 
@@ -1107,7 +1123,7 @@ def calcular_indicadores(
     del_vivo_por_matriz: dict[str, float] = {}
     del_vivo_lactacao: list[float] = []
     for a in animais:
-        if _codigo_grupo(a.get("grupo_primario")) not in GRUPOS_LACTACAO:
+        if _codigo_grupo(a.get("grupo_primario")) not in codigos_lactacao:
             continue
         numero = a.get("numero")
         del_vivo = del_dias_ao_vivo(
@@ -1333,6 +1349,13 @@ def calcular_indicadores(
             "vacas_secas": vacas_secas,
             "pre_parto": pre_parto,
             "distribuicao_grupos": dict(sorted(distribuicao.items())),
+            # Códigos de lote (2 dígitos) que compõem "vacas_lactacao" acima —
+            # o frontend usa esta lista (em vez de um ["01","02","03"] fixo)
+            # pra filtrar a mesma lista de animais no drill-down do card,
+            # senão o clique no card mostra um conjunto diferente do número
+            # exibido assim que o cadastro de Lote tiver mais de 3 lotes de
+            # lactação.
+            "codigos_lactacao": sorted(c for c in codigos_lactacao if c),
         },
         "reproducao": {
             "aptas": aptas,
