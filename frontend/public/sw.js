@@ -3,7 +3,7 @@
    Os DADOS offline (agenda, listas, fila de lançamentos e fotos) são
    tratados pela aplicação em IndexedDB (lib/offline.ts, lib/outboxDb.ts) —
    aqui só cuidamos dos arquivos estáticos (casca do app). */
-const CACHE = "fazenda-app-v1";
+const CACHE = "fazenda-app-v2";
 const PAGINAS_APP = ["/app", "/app/lancar", "/app/rebanho", "/app/menu"];
 
 self.addEventListener("install", (event) => {
@@ -81,8 +81,16 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Arquivos estáticos com hash (JS/CSS/fontes) e ícones: cache primeiro.
-  if (url.pathname.startsWith("/_next/static/") || url.pathname.startsWith("/icons/")) {
+  // Arquivos estáticos com hash (JS/CSS/fontes) e ícones: cache primeiro —
+  // MAS só quando pedidos por uma página do /app. O `register("/sw.js")`
+  // (sem `scope`) abrange o site INTEIRO por padrão (raiz "/"), não só
+  // "/app" — sem este filtro, visitar o /app uma vez bastava pra prender
+  // TODAS as páginas do site (Central de Protocolos, Sanidade…) num bundle
+  // JS congelado no que estava em cache na 1ª visita, nunca mais atualizado
+  // por um novo deploy (bug real, caso relatado: "nada mudou" mesmo após
+  // vários merges). `req.referrer` é a página que disparou o pedido do
+  // arquivo — vazio numa navegação direta, então checamos por padrão.
+  if ((url.pathname.startsWith("/_next/static/") || url.pathname.startsWith("/icons/")) && req.referrer && new URL(req.referrer).pathname.startsWith("/app")) {
     event.respondWith(
       caches.match(req).then(
         (hit) =>
