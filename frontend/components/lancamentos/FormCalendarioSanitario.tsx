@@ -455,7 +455,16 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
               {f.gatilho === "novilha_apta" && (
                 <Campo label="Idade-alvo (meses)"><input type="number" min={1} style={inputStyle} value={f.gatilhoIdadeMeses} onChange={(e) => sf({ ...f, gatilhoIdadeMeses: e.target.value })} placeholder="ex.: 13" /></Campo>
               )}
-              <Campo label="Dias após o gatilho"><input type="number" style={inputStyle} value={f.offsetDias} onChange={(e) => sf({ ...f, offsetDias: e.target.value })} /></Campo>
+              {/* "Dias após o gatilho" fica visível só enquanto nenhuma janela de
+                  aplicação está configurada — é o campo legado que decide
+                  sozinho quando o item entra na Agenda para eventos antigos.
+                  Assim que "Janela — de" (mais abaixo) é preenchida, ela passa
+                  a decidir isso no lugar dele (já em dias OU meses, coisa que
+                  este campo nunca soube fazer) — mostrar os dois juntos era
+                  pedir a mesma informação duas vezes. */}
+              {!f.janelaDeValor && (
+                <Campo label="Dias após o gatilho"><input type="number" style={inputStyle} value={f.offsetDias} onChange={(e) => sf({ ...f, offsetDias: e.target.value })} /></Campo>
+              )}
               <div style={{ gridColumn: "1 / -1" }}>
                 <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
                   Este modo por si só não cria uma regra de frequência — ele configura o evento sanitário selecionado para
