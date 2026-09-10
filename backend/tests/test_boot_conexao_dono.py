@@ -136,6 +136,47 @@ def test_com_a_conexao_de_dono_o_boot_completa(monkeypatch, papeis):
         eng_manut.dispose()
 
 
+def test_alembic_usa_a_conexao_de_dono_nao_a_da_aplicacao(monkeypatch, papeis):
+    """Regressão do bug de 10/09/2026: `alembic/env.py` importava e usava
+    `DATABASE_URL` (o role de aplicação) em vez de `DATABASE_URL_MANUTENCAO`
+    (o role dono) — e como `config` dentro de `env.py` é o MESMO objeto que
+    `_aplicar_alembic()` monta com a URL de dono, essa linha SOBRESCREVIA a
+    URL certa assim que `command.upgrade` carregava `env.py`. Toda migração
+    de verdade (a que só existe no Staging, com `cowdata_app` restrito)
+    passava a tentar rodar pela conexão ERRADA — "must be owner of table X".
+
+    O teste acima (`test_com_a_conexao_de_dono_o_boot_completa`) NÃO pega
+    isso: ele nunca diferencia `DATABASE_URL` de `DATABASE_URL_MANUTENCAO`
+    (só a segunda é trocada), e mesmo quando o bug redireciona `env.py` para
+    outro banco (SQLite, no ambiente de teste — `DATABASE_URL` nunca foi
+    trocada ali), `create_all(engine_manutencao)` cria as tabelas de qualquer
+    jeito, como rede de segurança, mascarando que o Alembic em si rodou no
+    lugar errado.
+
+    Este teste força a diferença — `DATABASE_URL` vira o role CONTIDO,
+    igual ao Staging — e verifica um efeito que só o Alembic produz e o
+    `create_all()` nunca toca: a tabela `alembic_version`. Sem a correção,
+    `command.upgrade` tenta criá-la pelo role sem `CREATE` e falha alto
+    (`permission denied`), no banco vazio — nada aqui para o `create_all()`
+    mascarar."""
+    database, eng_app, eng_manut = _montar(monkeypatch, manutencao_e_dono=True)
+    # A diferença que expõe o bug: `DATABASE_URL` (o que `env.py` usava antes
+    # da correção) precisa ser DIFERENTE de `DATABASE_URL_MANUTENCAO` —
+    # exatamente como no Staging (`cowdata_app` vs o role dono).
+    monkeypatch.setattr(database, "DATABASE_URL", _url("app_teste_boot", _BANCO))
+    try:
+        database.create_db_and_tables()  # se levantar "permission denied", o bug voltou
+
+        with eng_manut.connect() as conn:
+            existe = conn.execute(sa.text(
+                "SELECT to_regclass('public.alembic_version') IS NOT NULL"
+            )).scalar()
+        assert existe, "alembic_version tinha que ter sido criada pela conexão de dono"
+    finally:
+        eng_app.dispose()
+        eng_manut.dispose()
+
+
 def test_sem_a_conexao_de_dono_o_boot_e_recusado(monkeypatch, papeis):
     """O par do teste acima: prova que ele mede alguma coisa.
 
