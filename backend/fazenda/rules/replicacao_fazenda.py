@@ -482,6 +482,7 @@ def _copiar_tabela(
         if not lote:
             break
         offset += TAMANHO_LOTE
+        print(f"SYNC_DEBUG   {tabela.name}: lote lido da origem, offset={offset - TAMANHO_LOTE}, {len(lote)} linha(s)", flush=True)
 
         for linha in lote:
             id_antigo = linha[pk]
@@ -547,14 +548,20 @@ def _copiar_tabela(
 
             if not linha_valida:
                 orfas_puladas += 1
+                print(f"SYNC_DEBUG   {tabela.name}: linha id_antigo={id_antigo} IGNORADA (órfã não resolvida)", flush=True)
                 continue
 
-            novo_id = conn.execute(sa_insert(tabela).values(**valores).returning(tabela.c[pk])).scalar_one()
+            try:
+                novo_id = conn.execute(sa_insert(tabela).values(**valores).returning(tabela.c[pk])).scalar_one()
+            except Exception as exc:
+                print(f"SYNC_DEBUG   {tabela.name}: ERRO ao inserir linha id_antigo={id_antigo}: {exc!r}", flush=True)
+                raise
             mapa_local[id_antigo] = novo_id
             total_copiado += 1
 
     if orfas_puladas:
         logger.warning("replicacao_fazenda: %s linha(s) órfã(s) ignoradas em %s", orfas_puladas, tabela.name)
+    print(f"SYNC_DEBUG   {tabela.name}: total_copiado={total_copiado}, orfas_puladas={orfas_puladas}", flush=True)
     return total_copiado
 
 
@@ -737,9 +744,17 @@ def sincronizar_fazenda_teste_destrutivo(
     contadores: dict[str, int] = {}
     total_linhas = 0
 
-    for nome_tabela in ordem:
+    for posicao, nome_tabela in enumerate(ordem):
         tabela = tabelas[nome_tabela]
         colunas_desambiguar = _colunas_para_desambiguar(tabela, tabelas, avisos)
+        # DIAGNÓSTICO TEMPORÁRIO (remover depois de achar a causa do
+        # "Sincronizar Fazenda Teste" não copiar a maior parte do dado real —
+        # ver docs/security-audit ou pedido do dono, 10/09/2026): print, não
+        # logger, porque logger.info não aparece nos logs do Railway em
+        # produção (root logger fica em WARNING) e este é justamente o único
+        # jeito de ver, linha por linha, onde a cópia para de bater com a
+        # origem.
+        print(f"SYNC_DEBUG [{posicao}/{len(ordem)}] iniciando {nome_tabela}", flush=True)
         copiadas = _copiar_tabela(
             conn,
             tabela,
@@ -754,6 +769,7 @@ def sincronizar_fazenda_teste_destrutivo(
             avisos=avisos,
             contadores=contadores,
         )
+        print(f"SYNC_DEBUG [{posicao}/{len(ordem)}] {nome_tabela}: copiadas={copiadas}", flush=True)
         total_linhas += copiadas
 
     _aplicar_fks_adiadas(conn, tabelas, mapa_ids, ids_globais, fks_adiadas_globais, avisos, destino_id=destino_id)
