@@ -322,7 +322,7 @@ function Capa() {
           em si (com meta/média do país) migrou para Indicadores. */}
       <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-2">
         <KPI v={reb?.total ?? "—"} l="Fêmeas no rebanho" cat="geral" onClick={() => abrir("Fêmeas no rebanho", () => true)} />
-        <KPI v={reb?.vacas_lactacao ?? "—"} l="Vacas em lactação" cat="geral" onClick={() => abrir("Vacas em lactação", (a) => LACTACAO.includes(cod(a.grupo_primario) || ""))} />
+        <KPI v={reb?.vacas_lactacao ?? "—"} l="Vacas em lactação" cat="geral" onClick={() => abrir("Vacas em lactação", (a) => (reb?.codigos_lactacao?.length ? reb.codigos_lactacao : LACTACAO).includes(cod(a.grupo_primario) || ""))} />
         <KPI v={rep?.taxa_prenhez_pct != null ? `${rep.taxa_prenhez_pct}%` : "—"} l="Fêmeas prenhas" cat="reprodutivo" />
         <KPI v={rep?.taxa_concepcao_pct != null ? `${rep.taxa_concepcao_pct}%` : "—"} l="Concepção / serviço" cat="reprodutivo" />
         <KPI v={prod?.producao_total_dia_kg != null ? `${prod.producao_total_dia_kg} kg` : "—"} l="Produção/dia (últ. controle)" cat="producao" />
