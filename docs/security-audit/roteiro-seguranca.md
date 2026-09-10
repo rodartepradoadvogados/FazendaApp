@@ -96,7 +96,7 @@ iteração. RLS ali seria redundante e, pior, cego — nunca a defesa real.
 - `main.py::lifespan` (os ~50 seeds) e as migrações do boot — usam
   `engine_manutencao` desde #740.
 
-### 3. As políticas em si (`rls-migracao-proposta.sql`) — reconferido e testado; aplicado e REVERTIDO no Staging em 10/09/2026
+### 3. As políticas em si (`rls-migracao-proposta.sql`) — RLS ATIVO no Staging desde 10/09/2026
 
 **Reconferência feita**: a lista de 18 tabelas de catálogo global do DDL foi
 comparada contra o esquema real reconstruído via `alembic upgrade head` num
@@ -120,8 +120,33 @@ backfill de órfãos que só existem no Staging porque ele tem dado real com
 órfãos passados; confirmado que nenhum código de aplicação as lê, só o
 `downgrade()` daquela migração — RLS nelas é inofensivo).
 
-**REVERTIDO imediatamente em seguida** — ver "BLOQUEIO" abaixo. Antes de
-reaplicar, o bloqueio precisa ser resolvido.
+**REVERTIDO na hora, por precaução** — ver "BLOQUEIO" abaixo: a réplica que
+estava de fato servindo tráfego no Staging naquele momento era anterior aos
+PRs #744/#745, sem o mecanismo de `session.info["fazenda_id"]`; RLS ligado
+sobre esse binário teria deixado toda consulta muda, em silêncio.
+
+**REAPLICADO em 10/09/2026, depois do bloqueio resolvido (PR #752) e com
+autorização do dono** ("sim para os dois", junto com o merge do PR #753):
+mesmo script, mesma `DATABASE_URL_MANUTENCAO`, via `railway-agent` — resultado
+idêntico ao da primeira aplicação, `com_rls_ligada=189, sem_rls_ligada=0`.
+Desta vez **não foi revertido**. Checagem de saúde imediatamente depois,
+igual à da primeira tentativa:
+
+- o deploy que já estava servindo no momento da reaplicação (`b01d2e4f`,
+  ativo desde 10:12 UTC, já com o código dos PRs #744/#745/#752) seguiu
+  online, sem erro novo nos logs;
+- o merge do PR #753 (só documentação) disparou um redeploy novo
+  (`780cedf0`) logo em seguida — **subiu com o RLS já ativo no banco**:
+  `Application startup complete`, `/health` 200, sem nenhum
+  `InsufficientPrivilege` ou erro de contexto ausente. É a confirmação mais
+  forte que temos até agora: um boot inteiro (migrações + seeds pela
+  `engine_manutencao`, depois a aplicação normal) completou do zero com a
+  política já valendo.
+
+Não foi feito ainda (fica para a seção 4, Validação): um teste de leitura
+autenticado de verdade (login + tela com dado de fazenda), que é o único
+jeito de pegar o cenário "RLS nega tudo em silêncio, sem erro" — `/health`
+não passa por nenhuma tabela com política.
 
 De propósito continua um `.sql` avulso, não uma revisão Alembic — a razão
 está escrita no próprio arquivo: uma revisão em `alembic/versions/` seria
@@ -223,14 +248,18 @@ de trabalho em paralelo).
    09/09/2026).**
 3. ~~Reconferir e aplicar o DDL das políticas no Staging~~ — **feito e
    REVERTIDO em 10/09/2026 por precaução** (ver seção 3 acima). O DDL em si
-   está pronto e testado.
+   estava pronto e testado.
 3.1. ~~Bloqueio: `DATABASE_URL_MANUTENCAO` do Staging não estava dando
    privilégio de dono~~ — **RESOLVIDO, PR #752 (mergeado 10/09/2026)**: o bug
    era em `alembic/env.py`, não na variável. Deploy do Staging confirmado
    saudável depois do merge.
-3.2. **Próximo passo real**: reaplicar o DDL de RLS no Staging (agora que o
-   deploy sobe limpo) — aguardando autorização do dono para prosseguir.
-4. Validar no Staging (seção 4) — só depois de 3.2.
+3.2. ~~Reaplicar o DDL de RLS no Staging~~ — **FEITO em 10/09/2026, com
+   autorização do dono, e desta vez MANTIDO** (ver seção 3 acima). Checagem de
+   saúde pós-ativação: deploy em curso e o deploy seguinte (via merge do
+   PR #753) subiram limpos.
+4. **Próximo passo real**: validar no Staging (seção 4) — os oito ataques da
+   seção 10 de `rls-proposta.md`, um teste de fumaça manual do dono (login +
+   leitura de dado de fazenda) e o custo de desempenho com volume real.
 5. Produção — só com autorização e aviso prévio à sessão principal.
 
 Cada item, ao ser fechado, deve atualizar este documento — é o registro
