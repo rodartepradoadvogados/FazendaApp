@@ -2,12 +2,24 @@
 import { useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
 
-const DURACAO_SLIDE_MS = 280;
+const DURACAO_SLIDE_MS = 380;
 
 /** Anima a troca de etapa: a etapa anterior arrasta pra fora (esquerda ao
  * avançar, direita ao voltar) enquanto a nova entra do lado oposto, uma
  * dando lugar à outra — em vez da troca instantânea de antes. `direcao`
  * é 1 ao avançar (Continuar) e -1 ao voltar (Voltar). */
+function usePrefereMenosMovimento(): boolean {
+  const [reduzido, setReduzido] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    setReduzido(mq.matches);
+    const ouvir = (e: MediaQueryListEvent) => setReduzido(e.matches);
+    mq.addEventListener("change", ouvir);
+    return () => mq.removeEventListener("change", ouvir);
+  }, []);
+  return reduzido;
+}
+
 function useTransicaoDeEtapa(passoAtual: number) {
   const [saindo, setSaindo] = useState<{ idx: number; direcao: 1 | -1 } | null>(null);
   const [ativo, setAtivo] = useState(false);
@@ -179,9 +191,17 @@ export function WizardProtocolo<F>({
   const ultimo = passoAtual === passos.length - 1;
   const passoAtualDef = passos[passoAtual];
   const { saindo, ativo } = useTransicaoDeEtapa(passoAtual);
+  const menosMovimento = usePrefereMenosMovimento();
 
   return (
-    <div>
+    // Painel com borda/fundo/sombra próprios — deixa claro que esta área
+    // (do stepper até Cancelar/Voltar/Continuar) é UM campo de lançamento
+    // fechado, separado do resto da tela, e não só mais uma seção da página.
+    <div style={{
+      border: "1px solid var(--border)", borderRadius: 14,
+      background: "var(--surface-2)", boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
+      padding: "1.1rem 1.2rem",
+    }}>
       <div style={{
         position: "sticky", top: 0, zIndex: 3, background: "var(--surface-2)",
         paddingBottom: "0.7rem", marginBottom: "0.9rem",
@@ -227,24 +247,31 @@ export function WizardProtocolo<F>({
       </div>
 
       <div style={{ position: "relative", overflow: "hidden", minHeight: "12rem" }}>
-        {saindo && (
+        {saindo && !menosMovimento && (
           <div style={{
             position: "absolute", inset: 0,
             transform: `translateX(${ativo ? -100 * saindo.direcao : 0}%)`,
-            transition: `transform ${DURACAO_SLIDE_MS}ms cubic-bezier(0.4, 0, 0.2, 1)`,
+            opacity: ativo ? 0 : 1,
+            transition: `transform ${DURACAO_SLIDE_MS}ms cubic-bezier(0.4, 0, 0.2, 1), opacity ${DURACAO_SLIDE_MS}ms ease`,
           }}>
             {passos[saindo.idx].render({ form, setForm })}
           </div>
         )}
         <div style={{
-          transform: saindo ? `translateX(${ativo ? 0 : 100 * saindo.direcao}%)` : undefined,
-          transition: saindo ? `transform ${DURACAO_SLIDE_MS}ms cubic-bezier(0.4, 0, 0.2, 1)` : undefined,
+          transform: saindo && !menosMovimento ? `translateX(${ativo ? 0 : 100 * saindo.direcao}%)` : undefined,
+          opacity: saindo && !menosMovimento ? (ativo ? 1 : 0) : 1,
+          transition: saindo && !menosMovimento ? `transform ${DURACAO_SLIDE_MS}ms cubic-bezier(0.4, 0, 0.2, 1), opacity ${DURACAO_SLIDE_MS}ms ease` : undefined,
         }}>
           {passoAtualDef.render({ form, setForm })}
         </div>
       </div>
 
-      {(erroPasso || erro) && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.8rem" }}>{erroPasso || erro}</p>}
+      {/* `erro` (o erro de submit do onConcluir, no último passo) some ao
+          voltar/pular de passo — senão fica preso na tela mesmo depois do
+          usuário já ter corrigido o campo, porque só é limpo no início do
+          próximo `onConcluir()` (passo final de novo). `erroPasso` (validação
+          da própria etapa) sempre pode aparecer, é sempre relevante na hora. */}
+      {(erroPasso || (erro && ultimo)) && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.8rem" }}>{erroPasso || erro}</p>}
 
       <div style={{
         position: "sticky", bottom: 0, zIndex: 3, background: "var(--surface-2)",
