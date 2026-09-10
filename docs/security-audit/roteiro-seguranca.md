@@ -200,9 +200,10 @@ Só depois do bloqueio acima resolvido e do DDL reaplicado:
 - ~~os oito ataques da seção 10 de `rls-proposta.md`, reproduzidos contra o
   Staging de verdade~~ — **7 de 8 FEITO em 10/09/2026**, ver abaixo;
 - um teste de fumaça manual do dono: entrar, abrir uma tela que lê dado de
-  fazenda, gravar algo — igual ao que já foi feito na troca de credencial;
-- custo de desempenho da política, medido com volume real do Staging —
-  item que a proposta deixou em aberto (seção 11) e ninguém mediu ainda.
+  fazenda, gravar algo — igual ao que já foi feito na troca de credencial.
+  **Ainda pendente — ver nota abaixo**;
+- ~~custo de desempenho da política, medido com volume real do Staging~~ —
+  **verificado no nível estrutural em 10/09/2026**, ver abaixo.
 
 **Os 7 ataques reproduzidos contra o Staging real (10/09/2026)**: o roteiro
 `rls-experimento.sql` original **não podia** ser apontado direto para lá —
@@ -234,6 +235,40 @@ Achado incidental, não um risco: só existem 2 fazendas reais no Staging
 hoje (1 = Jairo Nasser, com dado; 2 = CowData/empresa, sem dado ainda nas
 tabelas de tenant) — por isso os ataques usam linha de teste própria em
 vez de dado pré-existente da fazenda 2.
+
+**Custo de desempenho — verificado no nível estrutural (10/09/2026)**:
+`EXPLAIN` (sem `ANALYZE`, só leitura) comparando o plano de consulta como
+dono (filtro `fazenda_id` escrito à mão) contra o mesmo `SELECT` como
+`cowdata_app` com o contexto setado (a política injeta o filtro sozinha):
+
+| Tabela | Como dono (filtro manual) | Como `cowdata_app` (RLS injeta) |
+|---|---|---|
+| `estoque` (dado da fazenda) | `Index Scan using ix_estoque_fazenda_id` | **mesmo** `Index Scan using ix_estoque_fazenda_id` |
+| `principio_ativo` (catálogo, `OR fazenda_id IS NULL`) | `Seq Scan` (tabela pequena, plano do Postgres) | **mesmo** `Seq Scan` |
+
+A política usa o índice de `fazenda_id` do mesmo jeito que um `WHERE`
+escrito à mão usaria — o predicado injetado pelo RLS não muda a forma do
+plano em nenhum dos dois casos (o `Seq Scan` do catálogo acontece nos
+DOIS lados, é o otimizador escolhendo por causa do tamanho pequeno da
+tabela, não algo que a política piora). **O que isso NÃO prova**: custo
+real sob volume/carga de produção — o Staging hoje tem ~20 linhas no
+total nas tabelas de tenant, longe do "volume real" que a seção 11 da
+proposta pedia para medir. Essa medição de carga de verdade só faz
+sentido com dado em escala (produção, ou uma carga sintética grande em
+Staging) — fica registrada como pendência separada, não bloqueia o RLS
+(a única coisa que uma medição de carga poderia revelar é a necessidade
+de um índice a mais, nunca "desligar a política").
+
+**Teste de fumaça manual — ainda pendente, e por quê**: diferente dos
+passos acima, este exige uma sessão de usuário de verdade (login com
+credencial real do Staging). Deliberadamente não fui atrás do segredo que
+assina os tokens de sessão (`AUTH_SECRET`, variável do Staging) para
+forjar um token sozinho — é uma chave mestra (quem a tem assina sessão de
+qualquer usuário, de qualquer fazenda) e não fazia parte do que foi
+compartilhado para este trabalho (diferente de `DATABASE_URL_MANUTENCAO`,
+passada explicitamente pelo dono). Este passo continua esperando o dono
+entrar de verdade no Staging (ou uma decisão explícita de liberar outro
+caminho).
 
 ### 5. Produção
 
@@ -290,8 +325,11 @@ de trabalho em paralelo).
    PR #753) subiram limpos.
 4. ~~Validar no Staging (seção 4): os oito ataques~~ — **7 de 8 FEITO em
    10/09/2026** (ver seção 4 acima; o 8º já está coberto pela suíte de CI).
-   **Próximo passo real**: falta o teste de fumaça manual do dono (login +
-   leitura de dado de fazenda) e o custo de desempenho com volume real.
+   ~~Custo de desempenho com volume real~~ — **nível estrutural verificado
+   em 10/09/2026** (mesmo índice usado com e sem a política; medição de
+   carga de verdade fica para quando houver volume em escala). **Falta só**:
+   o teste de fumaça manual do dono (login + leitura de dado de fazenda) —
+   pendente, precisa de uma sessão de usuário de verdade.
 5. Produção — só com autorização e aviso prévio à sessão principal.
 
 Cada item, ao ser fechado, deve atualizar este documento — é o registro
