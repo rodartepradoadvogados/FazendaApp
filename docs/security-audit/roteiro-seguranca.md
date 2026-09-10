@@ -197,12 +197,43 @@ porque produção ainda usa a `DATABASE_URL` de dono direto (não migrou para o
 
 Só depois do bloqueio acima resolvido e do DDL reaplicado:
 
-- os oito ataques da seção 10 de `rls-proposta.md`, reproduzidos contra o
-  Staging de verdade (o roteiro `.sql` já existe, é só apontar para lá);
+- ~~os oito ataques da seção 10 de `rls-proposta.md`, reproduzidos contra o
+  Staging de verdade~~ — **7 de 8 FEITO em 10/09/2026**, ver abaixo;
 - um teste de fumaça manual do dono: entrar, abrir uma tela que lê dado de
   fazenda, gravar algo — igual ao que já foi feito na troca de credencial;
 - custo de desempenho da política, medido com volume real do Staging —
   item que a proposta deixou em aberto (seção 11) e ninguém mediu ainda.
+
+**Os 7 ataques reproduzidos contra o Staging real (10/09/2026)**: o roteiro
+`rls-experimento.sql` original **não podia** ser apontado direto para lá —
+ele faz `DROP TABLE`/`CREATE TABLE` de propósito (é para Postgres
+descartável; `sanidade`, um dos nomes que ele usa, é tabela real de
+produção). Foi escrito `rls-validacao-staging.sql`, sem nenhum DDL, contra
+a tabela real `estoque` (dado da fazenda, não catálogo): insere duas
+linhas de teste com nome inconfundível (`__RLS_TESTE_VALIDACAO...`) como
+dono, roda os ataques como `cowdata_app` (`SET ROLE`, mesma conexão), e
+termina com `ROLLBACK` — nada persiste. **Testado antes localmente**,
+contra um Postgres descartável com o mesmo schema/role/DDL do Staging
+(achou e corrigiu um bug do próprio script de teste:
+`estoque.atualizado_em` é `NOT NULL` sem default no banco). Rodado depois
+contra o Staging via `railway-agent`, com verificação independente
+(conexão nova) de que nenhuma linha de teste sobrou:
+
+| Ataque | Resultado no Staging |
+|---|---|
+| 1. Ler sem contexto | 0 linhas |
+| 2. Fazenda 1 lê fazenda 2 | só a própria |
+| 3. Fazenda 1 grava em nome da fazenda 2 | `ERROR: new row violates row-level security policy` |
+| 4. Fazenda 1 muda a dona do próprio registro | mesmo erro |
+| 5. Fazenda 1 grava registro órfão | mesmo erro |
+| 6. Contexto forjado (`1 OR true`) | `ERROR: invalid input syntax for type integer` |
+| 7. DELETE da fazenda 1 mirando linha da fazenda 2 | `DELETE 0` |
+| 8. `SET` sem `LOCAL` vazando entre requisições | **fora de escopo aqui** — provar exigiria um `COMMIT` real no Staging; já coberto contra Postgres de verdade em `test_contexto_fazenda_sessao.py::test_contexto_reaplicado_apos_commit_no_meio_da_sessao` (suíte de CI) |
+
+Achado incidental, não um risco: só existem 2 fazendas reais no Staging
+hoje (1 = Jairo Nasser, com dado; 2 = CowData/empresa, sem dado ainda nas
+tabelas de tenant) — por isso os ataques usam linha de teste própria em
+vez de dado pré-existente da fazenda 2.
 
 ### 5. Produção
 
@@ -257,8 +288,9 @@ de trabalho em paralelo).
    autorização do dono, e desta vez MANTIDO** (ver seção 3 acima). Checagem de
    saúde pós-ativação: deploy em curso e o deploy seguinte (via merge do
    PR #753) subiram limpos.
-4. **Próximo passo real**: validar no Staging (seção 4) — os oito ataques da
-   seção 10 de `rls-proposta.md`, um teste de fumaça manual do dono (login +
+4. ~~Validar no Staging (seção 4): os oito ataques~~ — **7 de 8 FEITO em
+   10/09/2026** (ver seção 4 acima; o 8º já está coberto pela suíte de CI).
+   **Próximo passo real**: falta o teste de fumaça manual do dono (login +
    leitura de dado de fazenda) e o custo de desempenho com volume real.
 5. Produção — só com autorização e aviso prévio à sessão principal.
 
