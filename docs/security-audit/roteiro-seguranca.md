@@ -95,23 +95,75 @@ iteração. RLS ali seria redundante e, pior, cego — nunca a defesa real.
 - `main.py::lifespan` (os ~50 seeds) e as migrações do boot — usam
   `engine_manutencao` desde #740.
 
-### 3. As políticas em si (`rls-migracao-proposta.sql`)
+### 3. As políticas em si (`rls-migracao-proposta.sql`) — reconferido e testado; aplicado e REVERTIDO no Staging em 10/09/2026
 
-O DDL parametrizado já existe e é dinâmico (varre o catálogo do banco, não
-lista escrita à mão) — mas foi escrito e medido em 06/09/2026, **antes** das
-etapas 1 e 2 acima. Antes de rodar:
+**Reconferência feita**: a lista de 18 tabelas de catálogo global do DDL foi
+comparada contra o esquema real reconstruído via `alembic upgrade head` num
+Postgres descartável — bate exatamente com
+`c8e2a4f70b13_fazenda_id_not_null.py::_CATALOGO_GLOBAL`, nenhuma tabela nova
+nem removida. O único ajuste foi um comentário desatualizado no próprio
+arquivo (dizia "14 tabelas", já eram 18 desde a correção da migração NOT
+NULL).
 
-- reconferir a lista de 18 tabelas de catálogo global contra o esquema atual
-  (a mesma lista já foi usada, verificada, em `c8e2a4f70b13` e
-  `472f92e0860b` — deveria bater, mas confirmar antes de aplicar);
-- **de propósito, continua um `.sql` avulso, não uma revisão Alembic** — a
-  razão está escrita no próprio arquivo: uma revisão em `alembic/versions/`
-  seria aplicada em produção no próximo deploy, sozinha. Aplicar primeiro no
-  Staging, à mão, como os passos do roteiro Railway.
+**Testado localmente**: o DDL (passo 1 + passo 2 de conferência) rodou limpo
+contra essa réplica do esquema real — 185 tabelas, 18 de catálogo + 167 de
+dado, `com_rls_ligada=185, sem_rls_ligada=0`. A reversão (`NO FORCE` +
+`DISABLE`) também testada, volta ao estado original.
+
+**Aplicado no Staging de verdade** (via `railway-agent`, a sessão não tem
+saída TCP direta — só HTTPS via proxy; o agente do próprio Railway rodou o
+SQL com a `DATABASE_URL_MANUTENCAO` que o dono forneceu): resultado
+`com_rls_ligada=189, sem_rls_ligada=0` — 18 de catálogo + 171 de dado (as +4
+são tabelas `ckpt_a4f8c1d92e07_*`, checkpoints de downgrade da migração de
+backfill de órfãos que só existem no Staging porque ele tem dado real com
+órfãos passados; confirmado que nenhum código de aplicação as lê, só o
+`downgrade()` daquela migração — RLS nelas é inofensivo).
+
+**REVERTIDO imediatamente em seguida** — ver "BLOQUEIO" abaixo. Antes de
+reaplicar, o bloqueio precisa ser resolvido.
+
+De propósito continua um `.sql` avulso, não uma revisão Alembic — a razão
+está escrita no próprio arquivo: uma revisão em `alembic/versions/` seria
+aplicada em produção no próximo deploy, sozinha.
+
+### ⚠️ BLOQUEIO NOVO, descoberto em 10/09/2026 — Staging não consegue subir código novo
+
+Ao aplicar o DDL acima, a checagem de saúde do FazendaApp no Staging revelou
+que os deploys estão falhando desde pelo menos o PR #747 (de outra sessão,
+**nada a ver com este trabalho de RLS** — confirmado comparando os commits e
+os horários das falhas): toda migração que precisa de `ALTER TABLE` numa
+tabela que já existia antes do `cowdata_app` ser criado falha com
+`psycopg2.errors.InsufficientPrivilege: must be owner of table X`, porque
+`_aplicar_alembic()` está rodando pela `engine` normal (o role contido), não
+pela `engine_manutencao` (o role dono) — apesar de `DATABASE_URL_MANUTENCAO`
+aparecer configurada no Railway. O motivo exato ainda não foi confirmado (só
+o dono/sessão mãe tem acesso de leitura ao valor real da variável).
+
+**Consequência prática**: a réplica do FazendaApp que está DE FATO servindo
+tráfego no Staging hoje é de 09/09 09:50 UTC — anterior aos PRs #744 e #745.
+Ou seja, o Staging está rodando um binário que **não sabe marcar
+`session.info["fazenda_id"]`**. Foi por isso que revertemos o RLS na hora: com
+a política ligada e o app rodando sem o mecanismo de contexto, toda
+consulta em toda tela ficaria muda (RLS nega tudo sem contexto — não dá erro,
+devolve vazio).
+
+**Produção não tem este problema** (conferido): o deploy da mesma mudança
+(#745) subiu limpo em produção no mesmo instante — porque produção ainda usa
+a `DATABASE_URL` de dono direto (não migrou para o `cowdata_app` ainda), então
+`engine_manutencao` cai no fallback trivial (mesma conexão de sempre).
+
+**O que falta antes de reaplicar o RLS no Staging**:
+1. o dono (ou a sessão mãe, que tem acesso à variável) confirma por que
+   `DATABASE_URL_MANUTENCAO` não está chegando com privilégio de dono no
+   processo rodando — provavelmente a variável está vazia, mal configurada,
+   ou aponta para o role errado;
+2. um deploy novo do FazendaApp em Staging precisa suceder de verdade
+   (`_aplicar_alembic()` completando sem erro de privilégio) ANTES de
+   reaplicar as políticas — senão o mesmo problema se repete.
 
 ### 4. Validação no Staging
 
-Depois de 1 e 2 mergeados e o DDL aplicado no Staging:
+Só depois do bloqueio acima resolvido e do DDL reaplicado:
 
 - os oito ataques da seção 10 de `rls-proposta.md`, reproduzidos contra o
   Staging de verdade (o roteiro `.sql` já existe, é só apontar para lá);
@@ -160,10 +212,18 @@ de trabalho em paralelo).
 
 1. ~~`SET LOCAL app.fazenda_id` em `get_session()`~~ — **feito, PR #744
    (mergeado 09/09/2026).**
-2. ~~As rotinas de fundo (seção 2 acima)~~ — **feito, este PR.**
-3. Reconferir e aplicar o DDL das políticas no Staging (fora de PR — é SQL
-   direto, como os 28 passos).
-4. Validar no Staging (seção 4).
+2. ~~As rotinas de fundo (seção 2 acima)~~ — **feito, PR #745 (mergeado
+   09/09/2026).**
+3. ~~Reconferir e aplicar o DDL das políticas no Staging~~ — **feito e
+   REVERTIDO em 10/09/2026** (ver "BLOQUEIO NOVO" acima). O DDL em si está
+   pronto e testado; falta resolver por que os deploys do FazendaApp no
+   Staging não sobem com privilégio de dono antes de reaplicar.
+3.1. **Bloqueio a resolver primeiro**: `DATABASE_URL_MANUTENCAO` do Staging
+   não está dando privilégio de dono a `_aplicar_alembic()` — investigar a
+   variável no Railway (dono/sessão mãe têm acesso ao valor) e confirmar um
+   deploy limpo do FazendaApp em Staging antes de qualquer nova tentativa de
+   RLS lá.
+4. Validar no Staging (seção 4) — só depois de 3.1.
 5. Produção — só com autorização e aviso prévio à sessão principal.
 
 Cada item, ao ser fechado, deve atualizar este documento — é o registro
