@@ -317,6 +317,15 @@ def _linha(chave: str):
     fid = fazenda_atual.get()
     try:
         with Session(engine) as session:
+            # Marca o contexto ANTES da primeira query desta sessão nova
+            # (mesmo mecanismo de database.py::get_session — o listener
+            # after_begin lê session.info na abertura da transação). Sem
+            # isto, sob RLS a política de catálogo (fazenda_id = atual OR
+            # fazenda_id IS NULL) nunca veria a linha `fid` nem a `NULL`: a
+            # sessão nasceria sem contexto nenhum, e get_param cairia sempre
+            # no `padrao` do chamador — a personalização por fazenda some em
+            # silêncio.
+            session.info["fazenda_id"] = fid
             if fid is not None:
                 especifica = session.exec(
                     select(ParametroFazenda).where(
