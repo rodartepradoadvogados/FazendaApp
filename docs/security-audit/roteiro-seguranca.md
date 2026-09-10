@@ -16,7 +16,8 @@ cruzando os documentos já existentes (`rls-proposta.md`, `fks-compostas.md`,
 | Migrações e seeds pela conexão de dono | #740 | `create_db_and_tables()` inteira roda por `engine_manutencao` |
 | 120 FKs entre tabelas de fazenda, compostas | #742 | referência cruzada e oráculo de existência fechados nas relações que já tinham FK |
 | `SET LOCAL app.fazenda_id` por requisição | #744 | `get_session()` marca `session.info["fazenda_id"]`; listener `after_begin` reaplica a cada transação — inócuo até a política de RLS entrar |
-| Rotinas de fundo sem contexto de fazenda | (este PR) | `push.py`/`manual_fazenda.py` passam a usar `engine_manutencao`; `parametros.py`/`portal.py` marcam `session.info["fazenda_id"]` na abertura |
+| Rotinas de fundo sem contexto de fazenda | #745 | `push.py`/`manual_fazenda.py` passam a usar `engine_manutencao`; `parametros.py`/`portal.py` marcam `session.info["fazenda_id"]` na abertura |
+| `alembic/env.py` usava a conexão errada nas migrações | #752 | causa raiz do bloqueio do Staging — `env.py` sobrescrevia `DATABASE_URL_MANUTENCAO` com `DATABASE_URL`; deploy do Staging confirmado saudável depois |
 
 ## Feito no Staging (ação do dono, fora de código)
 
@@ -126,40 +127,46 @@ De propósito continua um `.sql` avulso, não uma revisão Alembic — a razão
 está escrita no próprio arquivo: uma revisão em `alembic/versions/` seria
 aplicada em produção no próximo deploy, sozinha.
 
-### ⚠️ BLOQUEIO NOVO, descoberto em 10/09/2026 — Staging não consegue subir código novo
+### ⚠️ BLOQUEIO — RESOLVIDO em 10/09/2026, PR #752
 
 Ao aplicar o DDL acima, a checagem de saúde do FazendaApp no Staging revelou
-que os deploys estão falhando desde pelo menos o PR #747 (de outra sessão,
-**nada a ver com este trabalho de RLS** — confirmado comparando os commits e
-os horários das falhas): toda migração que precisa de `ALTER TABLE` numa
-tabela que já existia antes do `cowdata_app` ser criado falha com
-`psycopg2.errors.InsufficientPrivilege: must be owner of table X`, porque
-`_aplicar_alembic()` está rodando pela `engine` normal (o role contido), não
-pela `engine_manutencao` (o role dono) — apesar de `DATABASE_URL_MANUTENCAO`
-aparecer configurada no Railway. O motivo exato ainda não foi confirmado (só
-o dono/sessão mãe tem acesso de leitura ao valor real da variável).
+que os deploys estavam falhando desde pelo menos o PR #747 (de outra sessão,
+**nada a ver com este trabalho de RLS**): toda migração que precisa de
+`ALTER TABLE` numa tabela que já existia antes do `cowdata_app` ser criado
+falhava com `psycopg2.errors.InsufficientPrivilege: must be owner of table X`.
 
-**Consequência prática**: a réplica do FazendaApp que está DE FATO servindo
-tráfego no Staging hoje é de 09/09 09:50 UTC — anterior aos PRs #744 e #745.
-Ou seja, o Staging está rodando um binário que **não sabe marcar
-`session.info["fazenda_id"]`**. Foi por isso que revertemos o RLS na hora: com
-a política ligada e o app rodando sem o mecanismo de contexto, toda
-consulta em toda tela ficaria muda (RLS nega tudo sem contexto — não dá erro,
-devolve vazio).
+**Causa raiz encontrada (não era a variável)**: `alembic/env.py` importava e
+usava `DATABASE_URL` (o role de aplicação) em vez de `DATABASE_URL_MANUTENCAO`
+(o role dono). Como `config` dentro de `env.py` é o MESMO objeto que
+`_aplicar_alembic()` monta com a URL de dono antes de `command.upgrade(cfg,
+"head")`, a linha `config.set_main_option("sqlalchemy.url", DATABASE_URL)` de
+`env.py` sobrescrevia essa URL silenciosamente assim que era carregada —
+anulando por completo a proteção do PR #740 para qualquer migração real.
+`DATABASE_URL_MANUTENCAO` estava correta o tempo todo (confirmado: testada
+direto, tem privilégio de dono); passou despercebido porque
+`create_all(engine_manutencao)`, rodado logo depois como rede de segurança,
+cobre CRIAR tabela nova (o único cenário que `test_boot_conexao_dono.py`
+media até então), nunca ALTERAR uma que já existe.
 
-**Produção não tem este problema** (conferido): o deploy da mesma mudança
-(#745) subiu limpo em produção no mesmo instante — porque produção ainda usa
-a `DATABASE_URL` de dono direto (não migrou para o `cowdata_app` ainda), então
-`engine_manutencao` cai no fallback trivial (mesma conexão de sempre).
+**Correção**: PR #752 — `env.py` agora usa `DATABASE_URL_MANUTENCAO`, com
+teste de regressão novo (`test_alembic_usa_a_conexao_de_dono_nao_a_da_
+aplicacao`) que reproduz o erro real sem a correção e passa com ela.
+Confirmado no Railway: o deploy seguinte ao merge (09:37 UTC) subiu limpo —
+"Application startup complete", `/health` respondendo 200, sem o erro de
+privilégio nos logs.
 
-**O que falta antes de reaplicar o RLS no Staging**:
-1. o dono (ou a sessão mãe, que tem acesso à variável) confirma por que
-   `DATABASE_URL_MANUTENCAO` não está chegando com privilégio de dono no
-   processo rodando — provavelmente a variável está vazia, mal configurada,
-   ou aponta para o role errado;
-2. um deploy novo do FazendaApp em Staging precisa suceder de verdade
-   (`_aplicar_alembic()` completando sem erro de privilégio) ANTES de
-   reaplicar as políticas — senão o mesmo problema se repete.
+**Consequência que isso resolve**: antes da correção, a réplica que estava DE
+FATO servindo tráfego no Staging era de 09/09 09:50 UTC — anterior aos PRs
+#744 e #745, sem o mecanismo de `session.info["fazenda_id"]`. Reaplicar o RLS
+com esse binário rodando teria deixado toda consulta muda (RLS nega tudo sem
+contexto, sem erro). Agora o Staging roda o código certo — o pré-requisito
+para reaplicar as políticas está atendido.
+
+**Produção nunca teve este problema** (conferido): o deploy da mesma mudança
+(#745) subiu limpo em produção no mesmo instante em que falhava no Staging —
+porque produção ainda usa a `DATABASE_URL` de dono direto (não migrou para o
+`cowdata_app` ainda), então `engine_manutencao` já caía no fallback trivial
+(mesma conexão de sempre), mascarando o bug por lá.
 
 ### 4. Validação no Staging
 
@@ -215,15 +222,15 @@ de trabalho em paralelo).
 2. ~~As rotinas de fundo (seção 2 acima)~~ — **feito, PR #745 (mergeado
    09/09/2026).**
 3. ~~Reconferir e aplicar o DDL das políticas no Staging~~ — **feito e
-   REVERTIDO em 10/09/2026** (ver "BLOQUEIO NOVO" acima). O DDL em si está
-   pronto e testado; falta resolver por que os deploys do FazendaApp no
-   Staging não sobem com privilégio de dono antes de reaplicar.
-3.1. **Bloqueio a resolver primeiro**: `DATABASE_URL_MANUTENCAO` do Staging
-   não está dando privilégio de dono a `_aplicar_alembic()` — investigar a
-   variável no Railway (dono/sessão mãe têm acesso ao valor) e confirmar um
-   deploy limpo do FazendaApp em Staging antes de qualquer nova tentativa de
-   RLS lá.
-4. Validar no Staging (seção 4) — só depois de 3.1.
+   REVERTIDO em 10/09/2026 por precaução** (ver seção 3 acima). O DDL em si
+   está pronto e testado.
+3.1. ~~Bloqueio: `DATABASE_URL_MANUTENCAO` do Staging não estava dando
+   privilégio de dono~~ — **RESOLVIDO, PR #752 (mergeado 10/09/2026)**: o bug
+   era em `alembic/env.py`, não na variável. Deploy do Staging confirmado
+   saudável depois do merge.
+3.2. **Próximo passo real**: reaplicar o DDL de RLS no Staging (agora que o
+   deploy sobe limpo) — aguardando autorização do dono para prosseguir.
+4. Validar no Staging (seção 4) — só depois de 3.2.
 5. Produção — só com autorização e aviso prévio à sessão principal.
 
 Cada item, ao ser fechado, deve atualizar este documento — é o registro
