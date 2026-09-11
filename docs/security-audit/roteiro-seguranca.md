@@ -272,12 +272,20 @@ caminho).
 
 ### 5. Produção
 
-**Só depois do Staging validado, e com autorização explícita.** Duas coisas
-valem para este passo, e são regra permanente deste projeto, não só desta
-etapa:
-- roteiro Railway de novo, com o seletor de ambiente em `production`;
-- **nada que ative RLS em produção é mergeado sem avisar a sessão principal
-  antes** — combinado com o dono, vale para todo o trabalho de RLS.
+**Só depois do Staging validado, e com autorização explícita.**
+
+- roteiro Railway de novo (`railway-staging-passos.md`), com o seletor de
+  ambiente em `production` em vez de `Staging`.
+
+**Regra do aviso prévio à sessão principal — revista em 11/09/2026.** A
+regra original ("nada que ative RLS em produção é mergeado sem avisar a
+sessão principal antes") supunha uma sessão-mãe acompanhando este trabalho
+em paralelo. O dono se desvinculou dela — `ListAgents` confirma que não há
+nenhuma outra sessão Claude alcançável — e decidiu, explicitamente, seguir
+só por aqui: "Mude o roteiro para não precisar avisar a sessão mãe, pois
+desvinculei de lá, então sigamos por aqui." A partir daqui, a autorização
+do dono nesta própria conversa é suficiente para produção — não há mais
+"aviso prévio" separado para dar, porque não há mais quem avisar.
 
 ## Achados novos, registrados como pendência (não bloqueiam o RLS)
 
@@ -330,7 +338,8 @@ de trabalho em paralelo).
    carga de verdade fica para quando houver volume em escala). **Falta só**:
    o teste de fumaça manual do dono (login + leitura de dado de fazenda) —
    pendente, precisa de uma sessão de usuário de verdade.
-5. Produção — só com autorização e aviso prévio à sessão principal.
+5. Produção — só com autorização explícita do dono (revisto em 11/09/2026:
+   não há mais aviso prévio à sessão principal a dar, ver seção 5 acima).
 
 Cada item, ao ser fechado, deve atualizar este documento — é o registro
 vivo, não uma foto de hoje.
