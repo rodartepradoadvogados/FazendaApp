@@ -1395,6 +1395,9 @@ export type RealizadoExtras = {
   responsavel?: string;                 // cronograma_sanitario_aplicar_ / aplic_agendada_
   observacao?: string;                  // idem
   produto?: string; dose?: number; unidade?: string; via?: string; // overrides de aplicação agendada
+  // Checklist da Ocorrência (redesenho do evento sanitário) — cronograma_sanitario_checklist_.
+  acao?: "pular";                       // ausente = confirma o item (comportamento decidido pela chave já gravada nele)
+  resposta?: string;                    // "sim"/"nao" (item vet) ou horário (item horario)
 };
 export async function marcarEventoRealizado(eventoId: string, animais?: string[], medicamentos?: MedicamentoIatf[], extras?: RealizadoExtras) {
   const res = await authFetch(`${API}/agenda/realizados`, {
@@ -4812,6 +4815,48 @@ export async function criarCronogramaSanitario(calendarioSanitarioId: number) {
     body: JSON.stringify({ calendario_sanitario_id: calendarioSanitarioId }),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar cronograma"); }
+  return res.json();
+}
+
+// ── Ocorrência (redesenho do evento sanitário, telas 1-2) ──────────────────
+// GET /sanidade/ocorrencias e /ocorrencias/{id} — ver
+// fazenda/api/routers/sanidade.py e docs/redesenho-evento-sanitario.md.
+export type EstadoOcorrencia = "provavel" | "em_edicao" | "confirmado" | "realizado";
+export type LinhaOcorrencia = {
+  calendario_sanitario_id: number; cronograma_id: number | null;
+  evento_sanitario_nome: string; tipo: "vacina" | "exame" | "tratamento";
+  categoria_alvo: string | null; data_prevista: string; estado: EstadoOcorrencia;
+  animais_incluidos: number; animais_sugeridos: number; veterinario_nome: string | null;
+  atraso_dias: number; alerta_clinico: boolean;
+};
+export type IndicadoresOcorrencias = {
+  vencidas: number; provaveis_30d: number; confirmadas_aguardando: number; alerta_clinico_ativo: number;
+};
+export async function fetchOcorrencias(): Promise<{ indicadores: IndicadoresOcorrencias; linhas: LinhaOcorrencia[] }> {
+  const res = await authFetch(`${API}/sanidade/ocorrencias`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Ocorrências error: ${res.status}`);
+  return res.json();
+}
+
+export type ChecklistItemOcorrencia = {
+  id: number; chave: "estoque" | "vet" | "horario" | "lotes" | "financeiro" | "custom"; nome: string;
+  status: "pendente" | "cumprido" | "pulado"; resposta: string | null; observacao: string | null;
+  respondido_em: string | null;
+};
+export type AnimalOcorrencia = {
+  id: number; numero_matriz: string; status: "sugerido" | "incluido" | "excluido" | "aplicado";
+  data_sugestao: string; data_decisao: string | null;
+};
+export type DetalheOcorrencia = {
+  cronograma_id: number; calendario_sanitario_id: number | null; evento_sanitario_nome: string;
+  tipo: "vacina" | "exame" | "tratamento"; categoria_alvo: string | null; data_prevista: string;
+  estado: EstadoOcorrencia; checklist_desconsiderado: boolean; checklist_desconsiderado_motivo: string | null;
+  veterinario_nome: string | null; alerta_clinico: boolean;
+  animais: AnimalOcorrencia[]; checklist: ChecklistItemOcorrencia[];
+};
+export async function fetchDetalheOcorrencia(cronogramaId: number): Promise<DetalheOcorrencia> {
+  const res = await authFetch(`${API}/sanidade/ocorrencias/${cronogramaId}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Detalhe da ocorrência error: ${res.status}`);
   return res.json();
 }
 

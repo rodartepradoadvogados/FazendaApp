@@ -9,6 +9,9 @@ import {
   fetchResultadosExame, atualizarResultadoExame, type ExameResultado,
   fetchMedicamentos, fetchPessoas, cadastrarPreventivo,
   fetchRastreabilidadeSanitaria, type LinhaRastreabilidadeSanitaria,
+  fetchOcorrencias, fetchDetalheOcorrencia, marcarEventoRealizado,
+  type EstadoOcorrencia, type LinhaOcorrencia, type IndicadoresOcorrencias, type DetalheOcorrencia,
+  type ChecklistItemOcorrencia, type RealizadoExtras,
 } from "@/lib/api";
 import { VIAS_APLICACAO } from "@/lib/constants";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
@@ -841,11 +844,309 @@ function CalendarioVisualView({ onAbrirCronograma }: { onAbrirCronograma: (calen
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Ocorrência (redesenho do evento sanitário) — Fase 2, telas 1-2
+// (docs/redesenho-evento-sanitario.md, seções 3.2.1/3.2.2). Aba nova,
+// paralela às 4 já existentes acima — não substitui nada ainda; é onde o
+// modelo novo (4 estados, checklist) fica visível e testável sem tirar o
+// que já funciona hoje. As demais abas do wizard/telas de Cadastro (seção
+// 3.7) e Realizar Evento/Exame (seção 3.2.8) ainda não foram construídas —
+// próximas partes da Fase 2/Fase 4.
+// ─────────────────────────────────────────────────────────────────────────
+const ESTADO_OCORRENCIA_LABEL: Record<EstadoOcorrencia, string> = {
+  provavel: "Provável", em_edicao: "Em edição", confirmado: "Confirmado", realizado: "Realizado",
+};
+const ESTADO_OCORRENCIA_COR: Record<EstadoOcorrencia, string> = {
+  provavel: "var(--text-muted)", em_edicao: "var(--amber)", confirmado: "var(--blue)", realizado: "var(--green-light)",
+};
+const ESTADO_OCORRENCIA_BG: Record<EstadoOcorrencia, string> = {
+  provavel: "var(--surface-2)", em_edicao: "rgba(217,164,65,0.12)", confirmado: "rgba(88,145,255,0.12)", realizado: "rgba(76,175,128,0.12)",
+};
+
+function BadgeEstadoOcorrencia({ estado }: { estado: EstadoOcorrencia }) {
+  return (
+    <span style={{
+      fontSize: "0.72rem", fontWeight: 700, padding: "0.2rem 0.6rem", borderRadius: 999,
+      color: ESTADO_OCORRENCIA_COR[estado], background: ESTADO_OCORRENCIA_BG[estado],
+    }}>
+      {ESTADO_OCORRENCIA_LABEL[estado]}
+    </span>
+  );
+}
+
+function OcorrenciasView() {
+  const [dados, setDados] = useState<{ indicadores: IndicadoresOcorrencias; linhas: LinhaOcorrencia[] } | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [cronogramaAberto, setCronogramaAberto] = useState<number | null>(null);
+  const [recarregar, setRecarregar] = useState(0);
+
+  const carregar = useCallback(() => {
+    fetchOcorrencias().then(setDados).catch((e) => setErro(e.message));
+  }, []);
+  useEffect(carregar, [carregar, recarregar]);
+
+  if (cronogramaAberto != null) {
+    return (
+      <DetalheOcorrenciaView
+        cronogramaId={cronogramaAberto}
+        onVoltar={() => { setCronogramaAberto(null); setRecarregar((n) => n + 1); }}
+      />
+    );
+  }
+
+  const linhas = dados?.linhas || [];
+  const ind = dados?.indicadores;
+
+  return (
+    <div>
+      <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", marginBottom: "0.75rem" }}>
+        Modelo novo, em construção — cada Regra com a Ocorrência mais recente e o estado dela (Provável → Em edição → Confirmado → Realizado). Ainda sem o widget financeiro nem o Relatório de Vencidos (próximas partes da Fase 2/3).
+      </p>
+
+      {ind && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
+          <Indicador rotulo="Vencidas" valor={ind.vencidas} cor="var(--red)" />
+          <Indicador rotulo="Prováveis (30 dias)" valor={ind.provaveis_30d} />
+          <Indicador rotulo="Confirmadas p/ realizar" valor={ind.confirmadas_aguardando} cor="var(--blue)" />
+          <Indicador rotulo="Alerta clínico ativo" valor={ind.alerta_clinico_ativo} cor="var(--red)" />
+        </div>
+      )}
+
+      {erro && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>{erro}</span></div>}
+      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+      {dados && (
+        <div className="card">
+          <div className="overflow-x-auto">
+            <table className="fazenda-table">
+              <thead><tr>
+                <th>Regra</th><th>Tipo</th><th>Categoria alvo</th><th>Data prevista</th><th>Estado</th>
+                <th>Animais</th><th>Veterinário</th><th>Atraso</th><th></th>
+              </tr></thead>
+              <tbody>
+                {linhas.map((l) => (
+                  <tr
+                    key={l.calendario_sanitario_id}
+                    className={l.cronograma_id ? "clickable" : undefined}
+                    style={{ cursor: l.cronograma_id ? "pointer" : "default" }}
+                    onClick={() => l.cronograma_id && setCronogramaAberto(l.cronograma_id)}
+                  >
+                    <td style={{ fontWeight: 700 }}>
+                      {l.evento_sanitario_nome}
+                      {l.alerta_clinico && <span title="Veterinário não confirmou" style={{ color: "var(--red)", marginLeft: 6 }}>⚠</span>}
+                    </td>
+                    <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{ROTULO_TIPO_REGRA[l.tipo] || l.tipo}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{l.categoria_alvo || "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{formatDate(l.data_prevista)}</td>
+                    <td><BadgeEstadoOcorrencia estado={l.estado} /></td>
+                    <td style={{ fontSize: "0.78rem" }}>{l.cronograma_id == null ? "—" : `${l.animais_incluidos} incluído(s), ${l.animais_sugeridos} sugerido(s)`}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{l.veterinario_nome || "—"}</td>
+                    <td style={{ fontSize: "0.78rem", color: l.atraso_dias > 0 ? "var(--red)" : "var(--text-muted)", fontWeight: l.atraso_dias > 0 ? 700 : 400 }}>
+                      {l.atraso_dias > 0 ? `${l.atraso_dias}d` : "—"}
+                    </td>
+                    <td>{l.cronograma_id && <ChevronRight size={16} style={{ color: "var(--text-muted)" }} />}</td>
+                  </tr>
+                ))}
+                {!linhas.length && <tr><td colSpan={9} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma regra ativa.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetalheOcorrenciaView({ cronogramaId, onVoltar }: { cronogramaId: number; onVoltar: () => void }) {
+  const [det, setDet] = useState<DetalheOcorrencia | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [aba, setAba] = useState<"animais" | "checklist">("checklist");
+  const [salvandoItem, setSalvandoItem] = useState<number | null>(null);
+  const [horarioValor, setHorarioValor] = useState<Record<number, string>>({});
+
+  const carregar = useCallback(() => {
+    fetchDetalheOcorrencia(cronogramaId).then(setDet).catch((e) => setErro(e.message));
+  }, [cronogramaId]);
+  useEffect(carregar, [carregar]);
+
+  async function agir(itemId: number, extras: RealizadoExtras) {
+    setSalvandoItem(itemId);
+    try {
+      await marcarEventoRealizado(`cronograma_sanitario_checklist_${itemId}`, undefined, undefined, extras);
+      carregar();
+    } catch (e: any) { setErro(e.message); }
+    finally { setSalvandoItem(null); }
+  }
+
+  async function pular(item: ChecklistItemOcorrencia) {
+    const motivo = window.prompt(`Pular "${item.nome}"? Confirme que não se aplica a esta ocorrência. Motivo (opcional):`);
+    if (motivo === null) return; // cancelou
+    await agir(item.id, { acao: "pular", motivo: motivo || undefined });
+  }
+
+  async function desconsiderarCronograma() {
+    if (!det) return;
+    const motivo = window.prompt("Esta ocorrência será confirmada sem passar pelo checklist. Motivo (opcional):");
+    if (motivo === null) return;
+    setErro(null);
+    try {
+      await marcarEventoRealizado(`cronograma_sanitario_desconsiderar_${det.cronograma_id}`, undefined, undefined, { motivo: motivo || undefined });
+      carregar();
+    } catch (e: any) { setErro(e.message); }
+  }
+
+  if (erro && !det) return (
+    <div>
+      <button className="btn-secondary mb-3" style={{ fontSize: "0.78rem" }} onClick={onVoltar}>← Voltar</button>
+      <div className="alert-critico"><AlertTriangle size={18} /><span>{erro}</span></div>
+    </div>
+  );
+  if (!det) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
+
+  const progresso = det.checklist.length
+    ? Math.round(det.checklist.filter((i) => i.status !== "pendente").length / det.checklist.length * 100)
+    : 0;
+
+  return (
+    <div>
+      <button className="btn-secondary mb-3" style={{ fontSize: "0.78rem" }} onClick={onVoltar}>← Voltar</button>
+
+      <div className="card mb-3">
+        <div className="flex items-center justify-between mb-1" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+          <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+            <BadgeEstadoOcorrencia estado={det.estado} />
+            <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>{det.evento_sanitario_nome}</span>
+            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>— {ROTULO_TIPO_REGRA[det.tipo] || det.tipo}</span>
+          </div>
+          {det.estado !== "realizado" && det.estado !== "confirmado" && (
+            <button className="btn-secondary" style={{ fontSize: "0.75rem" }} onClick={desconsiderarCronograma}>
+              Desconsiderar cronograma
+            </button>
+          )}
+        </div>
+        <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+          {det.categoria_alvo || "Todos os animais"} · previsto {formatDate(det.data_prevista)}
+          {det.veterinario_nome && <> · Veterinário: {det.veterinario_nome}</>}
+        </div>
+        {det.checklist_desconsiderado && (
+          <div style={{ marginTop: "0.5rem", fontSize: "0.78rem", color: "var(--blue)" }}>
+            Cronograma desconsiderado{det.checklist_desconsiderado_motivo ? ` — ${det.checklist_desconsiderado_motivo}` : ""}.
+          </div>
+        )}
+      </div>
+
+      <TabBar
+        abas={[
+          { id: "animais", label: `Animais (${det.animais.length})`, title: "Animais sugeridos/incluídos nesta Ocorrência" },
+          { id: "checklist", label: `Checklist (${progresso}%)`, title: "Itens a cumprir antes de confirmar a Ocorrência" },
+        ] as const}
+        ativa={aba}
+        onChange={setAba}
+      />
+
+      {aba === "animais" && (
+        <div className="card">
+          <table className="fazenda-table">
+            <thead><tr><th>Nº</th><th>Status</th><th>Sugerido em</th><th>Decidido em</th></tr></thead>
+            <tbody>
+              {det.animais.map((a) => (
+                <tr key={a.id}>
+                  <td className="mono" style={{ fontWeight: 700 }}>{a.numero_matriz}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{{ sugerido: "Sugerido", incluido: "Incluído", excluido: "Excluído", aplicado: "Aplicado" }[a.status]}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{formatDate(a.data_sugestao)}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{a.data_decisao ? formatDate(a.data_decisao) : "—"}</td>
+                </tr>
+              ))}
+              {!det.animais.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum animal ainda.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {aba === "checklist" && (
+        <div>
+          <div style={{ height: 7, background: "var(--surface-2)", borderRadius: 99, overflow: "hidden", marginBottom: "0.9rem" }}>
+            <div style={{ height: "100%", width: `${progresso}%`, background: "var(--dourado)", borderRadius: 99, transition: "width .3s" }} />
+          </div>
+          {erro && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>{erro}</span></div>}
+          {det.checklist.map((item) => {
+            const desabilitado = salvandoItem === item.id;
+            const jaRespondido = item.status !== "pendente";
+            return (
+              <div key={item.id} className="card mb-2">
+                <div className="flex items-center justify-between" style={{ gap: "0.6rem", flexWrap: "wrap" }}>
+                  <span style={{ fontWeight: 700, fontSize: "0.86rem" }}>{item.nome}</span>
+
+                  {jaRespondido ? (
+                    <span style={{
+                      fontSize: "0.72rem", fontWeight: 700, padding: "0.15rem 0.55rem", borderRadius: 999,
+                      color: item.status === "cumprido" ? "var(--green-light)" : "var(--text-muted)",
+                      background: item.status === "cumprido" ? "rgba(76,175,128,0.12)" : "var(--surface-2)",
+                    }}>
+                      {item.status === "cumprido" ? "Cumprido" : "Pulado"}
+                      {item.chave === "horario" && item.resposta ? ` — ${item.resposta}` : ""}
+                    </span>
+                  ) : item.chave === "vet" ? (
+                    <div className="flex items-center gap-2">
+                      <button className="btn-secondary" disabled={desabilitado} style={{ fontSize: "0.75rem" }}
+                        onClick={() => agir(item.id, { resposta: "sim" })}>Sim</button>
+                      <button className="btn-secondary" disabled={desabilitado} style={{ fontSize: "0.75rem", color: "var(--red)" }}
+                        onClick={() => {
+                          const motivo = window.prompt("O veterinário NÃO confirmou. Justificativa (obrigatória):");
+                          if (!motivo || !motivo.trim()) { window.alert("Justificativa obrigatória."); return; }
+                          agir(item.id, { resposta: "nao", motivo });
+                        }}>Não</button>
+                      <button className="btn-ghost" disabled={desabilitado} style={{ fontSize: "0.75rem" }} onClick={() => pular(item)}>Pular</button>
+                    </div>
+                  ) : item.chave === "horario" ? (
+                    <div className="flex items-center gap-2">
+                      <input type="time" style={{ padding: "0.3rem 0.5rem", borderRadius: 6, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)" }}
+                        value={horarioValor[item.id] || ""} onChange={(e) => setHorarioValor((h) => ({ ...h, [item.id]: e.target.value }))} />
+                      <button className="btn-secondary" disabled={desabilitado || !horarioValor[item.id]} style={{ fontSize: "0.75rem" }}
+                        onClick={() => agir(item.id, { resposta: horarioValor[item.id] })}>Confirmar horário</button>
+                      <button className="btn-ghost" disabled={desabilitado} style={{ fontSize: "0.75rem" }} onClick={() => pular(item)}>Pular</button>
+                    </div>
+                  ) : item.chave === "lotes" ? (
+                    <div className="flex items-center gap-2">
+                      <button className="btn-secondary" disabled={desabilitado} style={{ fontSize: "0.75rem" }}
+                        onClick={() => agir(item.id, {})}>Marcar como revisado</button>
+                      <button className="btn-ghost" disabled={desabilitado} style={{ fontSize: "0.75rem" }} onClick={() => pular(item)}>Pular</button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <button className="btn-secondary" disabled={desabilitado} style={{ fontSize: "0.75rem" }}
+                        onClick={() => agir(item.id, {})}>{item.chave === "financeiro" ? "Marcar como lançado" : "Marcar cumprido"}</button>
+                      <button className="btn-ghost" disabled={desabilitado} style={{ fontSize: "0.75rem" }} onClick={() => pular(item)}>Pular</button>
+                    </div>
+                  )}
+                </div>
+                {item.chave === "vet" && item.resposta === "nao" && (
+                  <div className="alert-critico mt-2" style={{ fontSize: "0.78rem" }}>
+                    <AlertTriangle size={15} /><span>Veterinário não confirmou — {item.observacao}</span>
+                  </div>
+                )}
+                {item.chave === "lotes" && (
+                  <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+                    Distribuição por lote de manejo — ver aba Animais (a tabela detalhada por lote chega numa próxima parte da Fase 2).
+                  </p>
+                )}
+                {item.status === "pulado" && item.observacao && (
+                  <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>Motivo: {item.observacao}</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Exportado — reaproveitado também em Central de Protocolos > Acompanhamento
 // > Sanitário > Preventivo (ver app/protocolos/page.tsx), mesmo componente,
 // mesmos endpoints: não há dado nem lógica duplicada entre as duas telas.
 export function CalendarioSanitarioView({ modoInicial }: { modoInicial?: "calendario" | "cronogramas" } = {}) {
-  const [modo, setModo] = useState<"calendario" | "regras" | "cronogramas" | "exames">(modoInicial || "calendario");
+  const [modo, setModo] = useState<"calendario" | "regras" | "cronogramas" | "exames" | "ocorrencias">(modoInicial || "calendario");
   const [cronogramaFiltroCalendarioId, setCronogramaFiltroCalendarioId] = useState<number | null>(null);
   const [regras, setRegras] = useState<RegraCalendario[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -905,6 +1206,7 @@ export function CalendarioSanitarioView({ modoInicial }: { modoInicial?: "calend
           { id: "regras", label: "Regras cadastradas", title: "Regras recorrentes já cadastradas" },
           { id: "cronogramas", label: "Cronogramas", title: "Acompanhamento das regras usa_cronograma: animais na lista de espera e decisão de execução" },
           { id: "exames", label: "Resultados de exames", title: "Diagnóstico/valor lançado em cada exame preventivo" },
+          { id: "ocorrencias", label: "Ocorrências (novo modelo)", title: "Redesenho do evento sanitário — 4 estados e checklist, em construção" },
         ] as const}
         ativa={modo}
         onChange={(id) => { setModo(id); if (id !== "cronogramas") setCronogramaFiltroCalendarioId(null); }}
@@ -914,7 +1216,8 @@ export function CalendarioSanitarioView({ modoInicial }: { modoInicial?: "calend
         <CalendarioVisualView onAbrirCronograma={(id) => { setCronogramaFiltroCalendarioId(id); setModo("cronogramas"); }} />
       ) : modo === "cronogramas" ? (
         <CronogramasSanitariosView calendarioIdInicial={cronogramaFiltroCalendarioId} onLimparFiltro={() => setCronogramaFiltroCalendarioId(null)} />
-      ) : modo === "exames" ? <RelatorioResultadosExameView eventos={eventos} /> : (
+      ) : modo === "exames" ? <RelatorioResultadosExameView eventos={eventos} />
+      : modo === "ocorrencias" ? <OcorrenciasView /> : (
       <>
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
