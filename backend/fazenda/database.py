@@ -66,11 +66,20 @@ def _montar_engine_manutencao():
     if "sqlite" in url:
         kwargs["connect_args"] = {"check_same_thread": False}
     else:
-        # Pool mínimo de propósito: esta engine atende uma rotina de fundo que
-        # roda de meia em meia hora, não requisição de usuário.
+        # Até 11/09/2026 isto atendia só rotinas de fundo de meia em meia
+        # hora — pool de 1+1 sobrava. Deixou de ser verdade no incidente de
+        # ativação do RLS em produção: login/troca de fazenda/identidade da
+        # Equipe CowData (auth.py, api/routers/auth.py, api/routers/
+        # fazendas.py::minhas_fazendas) passaram a abrir sessão própria nesta
+        # engine EM TODA REQUISIÇÃO — essas consultas enumeram vínculos de um
+        # usuário ANTES de existir contexto de fazenda (ou entre fazendas
+        # diferentes, caso da Equipe CowData), o que a política de RLS nega
+        # sozinha, sem erro (ver roteiro-seguranca.md, incidente de
+        # 11/09/2026). Mesmo tamanho da engine principal — dimensionada para
+        # tráfego de requisição, não mais só para um laço esporádico.
         kwargs["pool_pre_ping"] = True
-        kwargs["pool_size"] = 1
-        kwargs["max_overflow"] = 1
+        kwargs["pool_size"] = 5
+        kwargs["max_overflow"] = 10
     logger.info("Conexão de manutenção própria configurada (DATABASE_URL_MANUTENCAO).")
     return create_engine(url, **kwargs)
 

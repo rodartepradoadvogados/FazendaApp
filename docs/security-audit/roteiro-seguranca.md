@@ -324,14 +324,92 @@ um `499` (cliente fechou a conexão antes da resposta) e dois `403`
 (autorização de aplicação, não de banco) — nenhum dos dois relacionado a
 RLS.
 
-**Ainda pendente, igual ao que faltou no Staging**: o teste de fumaça
-manual do dono em produção (login real + tela com dado de fazenda) — é o
-único jeito de pegar o cenário "RLS nega tudo em silêncio, sem erro HTTP",
-que a checagem de log acima não cobre. Os 7 ataques de
-`rls-validacao-staging.sql` (adaptados) ainda não foram repetidos contra
-produção — decisão do dono se vale a pena rodar contra dado real (o script
-usa `SET ROLE` + `ROLLBACK`, não persiste nada, mas é produção de
-verdade).
+### ⚠️ INCIDENTE em 11/09/2026 — teste de fumaça em produção pegou o RLS negando o login em silêncio, REVERTIDO na hora
+
+O teste de fumaça manual pendente acima foi feito minutos depois da
+ativação: o dono entrou no app de produção e reportou "a fazenda real
+sumiu!" — a tela de troca de fazenda (`/escolher-conta`) só mostrava
+"Fazenda Teste" (de um token antigo, de uma sessão de teste anterior) e
+"Painel CowData"; a fazenda real do cliente tinha desaparecido da lista.
+**Revertido imediatamente** (mesmo `railway-agent`, mesma
+`DATABASE_URL_MANUTENCAO`): `DROP POLICY` + `NO FORCE` + `DISABLE` em
+todas as 198 tabelas — confirmado `com_rls_ligada=0, sem_rls_ligada=198`.
+Produção rodou o resto do incidente SEM RLS.
+
+**Causa raiz — um `ovo-e-galinha` que a seção 2 já tinha nomeado, mas não
+nesta ponta**: `POST /auth/login` decide quais fazendas oferecer lendo
+`UsuarioFazenda` ANTES de qualquer fazenda estar selecionada — o token de
+um login que está acontecendo agora não tem "fid" nenhum ainda. Sob a
+política (`fazenda_id = current_setting('app.fazenda_id', ...)`), essa
+consulta nega TUDO em silêncio: sem contexto, nenhuma linha bate — não é
+"a fazenda errada", é "nenhuma fazenda". Isso derrubava o login de
+QUALQUER usuário (não só multi-fazenda): `_fazendas_vinculadas` sempre
+voltava vazia, `fazenda_auto` nunca era escolhido, e o token saía sem
+"fid" para todo mundo. A tela mostrou "Fazenda Teste" e não uma lista
+vazia porque o dono tinha um token ANTIGO no navegador (de um teste
+anterior, com "fid" da Fazenda Teste) — `GET /auth/contas-disponiveis` usa
+ESSE token, então a política filtrou a lista para só o vínculo que batia
+com aquele contexto velho, escondendo a fazenda real.
+
+O mesmo mecanismo quebrava `POST /auth/selecionar-fazenda` (o token do
+login ainda não tem a fazenda que a pessoa está tentando escolher — 403
+"Você não está vinculado a esta fazenda" para quem estava genuinamente
+vinculado) e as duas checagens de identidade da Equipe CowData
+(`eh_membro_equipe_cowdata`/`eh_consultor_cowdata`, que leem a `Pessoa` do
+usuário na fazenda INTERNA da CowData — quase sempre diferente da fazenda-
+cliente hoje selecionada, quando há uma).
+
+**Correção aplicada e testada** (`fazenda/auth.py`,
+`fazenda/api/routers/auth.py`, `fazenda/api/routers/fazendas.py`): as
+leituras de enumeração/identidade acima passam a ir por
+`engine_manutencao` (role dono, sem RLS) em vez da `session` da
+requisição — mesmo raciocínio já registrado na seção 2 para as rotinas de
+fundo: o filtro de segurança real é `usuario_id`/`pessoa_id`/`fazenda_id`
+explícito em Python, nunca dependeu de RLS, e RLS aqui só cegava. Pool da
+`engine_manutencao` ampliado de 1+1 para 5+10 (`database.py`) — deixou de
+ser só uma rotina de meia em meia hora, passou a atender caminho de
+login/troca de fazenda em toda requisição. Regressão nova,
+`tests/test_login_sob_rls.py`, contra PostgreSQL real com a mesma política
+do DDL: prova que a consulta pela sessão da requisição nega o vínculo em
+silêncio (reprodução do bug), e que `POST /auth/login`/`GET
+/auth/contas-disponiveis` voltam a ver a fazenda real com a correção —
+testado **sem** a correção (falha, `2 failed`) e **com** ela (passa,
+`3 passed`), mesmo rigor do teste do bug de `session.commit()` (PR #760).
+Registrada em `ARQUIVOS_POSTGRES` no CI.
+
+**Achado maior, AINDA NÃO CORRIGIDO — todo o Painel CowData está exposto
+ao mesmo padrão de bug.** Ao investigar, ficou claro que login não é o
+único lugar: TODA rota do Painel CowData (`painel_cowdata_usuarios.py`,
+`painel_cowdata_cadastros.py`, `painel_cowdata_farmacia.py`,
+`painel_cowdata_parametros.py`, `painel_cowdata_touros.py`,
+`painel_cowdata_sincronizacao.py`, `painel_cowdata.py`) opera **sem
+fazenda selecionada por definição** (token sem "fid", de propósito — é um
+painel cross-tenant) e lê/escreve tabelas de fazenda filtrando
+EXPLICITAMENTE por um `fazenda_id` que vem do PATH/BODY da requisição, não
+do token. Sob a política atual (que só enxerga o `app.fazenda_id` do
+token), toda essa leitura/escrita nega em silêncio, do mesmo jeito que
+matou o login — confirmado por leitura de código em pelo menos três desses
+arquivos (`painel_cowdata_cadastros.py` chega a laçar TODAS as fazendas do
+sistema para aplicar um cadastro global, o mesmo padrão "enumera antes de
+saber de quem" da seção 2). **A boa notícia**: o PORTÃO de entrada no
+Painel CowData (`exigir_area_painel_cowdata`/`exigir_permissao_painel_
+cowdata`, via `PermissaoEquipeCowData`) não tem `fazenda_id` — não foi
+alcançado pelo DDL, continua são; ninguém fica trancado do lado de fora.
+O problema é tudo que essas rotas leem/escrevem DEPOIS de entrar.
+
+**Isto MUDA o que falta para religar RLS — em qualquer ambiente:**
+- Staging está com RLS ligado desde 10/09/2026 e **nunca teve o Painel
+  CowData testado sob essa política** (só os 7 ataques da seção 4, que não
+  tocam nessas rotas) — as funcionalidades do Painel CowData no Staging
+  hoje são suspeitas de estarem quebradas em silêncio pelo mesmo motivo.
+- Produção está REVERTIDA (sem RLS) — segura, mas o item "5. Produção"
+  desta seção não pode ser considerado fechado.
+- Antes de religar em QUALQUER ambiente: auditar as 7 rotas do Painel
+  CowData com o mesmo rigor usado aqui (mapear toda leitura/escrita de
+  tabela com `fazenda_id`, decidir `engine_manutencao` vs. `SET LOCAL`
+  explícito por request, escrever teste de regressão contra Postgres real
+  por rota migrada) — fica registrado como PRÉ-REQUISITO novo, antes do
+  item 5 poder ser refeito.
 
 ## Achados novos, registrados como pendência (não bloqueiam o RLS)
 
@@ -381,15 +459,31 @@ de trabalho em paralelo).
    10/09/2026** (ver seção 4 acima; o 8º já está coberto pela suíte de CI).
    ~~Custo de desempenho com volume real~~ — **nível estrutural verificado
    em 10/09/2026** (mesmo índice usado com e sem a política; medição de
-   carga de verdade fica para quando houver volume em escala). **Falta só**:
-   o teste de fumaça manual do dono (login + leitura de dado de fazenda) —
-   pendente, precisa de uma sessão de usuário de verdade.
-5. Produção — só com autorização explícita do dono (revisto em 11/09/2026:
-   não há mais aviso prévio à sessão principal a dar, ver seção 5 acima).
-   **Roteiro Railway (28 passos) e DDL de RLS FEITOS em 11/09/2026** — ver
-   seção 5 acima para os resultados e o que ainda falta: teste de fumaça
-   manual do dono em produção, e decidir se vale repetir os 7 ataques de
-   validação contra dado real.
+   carga de verdade fica para quando houver volume em escala). O teste de
+   fumaça manual (login + leitura de dado de fazenda) **acabou sendo feito
+   em PRODUÇÃO, não no Staging** (ver item 5) — e achou um bug real.
+5. Produção — **FEITO E REVERTIDO em 11/09/2026** (ver seção 5 acima,
+   "INCIDENTE"). Roteiro Railway (28 passos) executado, DDL de RLS
+   aplicado, teste de fumaça manual do dono pegou o login negando a
+   fazenda real em silêncio — revertido na hora. Causa raiz encontrada e
+   corrigida (`_fazendas_vinculadas`/`_vinculo`/`eh_membro_equipe_cowdata`/
+   `eh_consultor_cowdata`/`minhas_fazendas` agora leem por
+   `engine_manutencao`, com teste de regressão contra Postgres real). Ao
+   investigar, achado um problema MAIOR e ainda não corrigido: as 7 rotas
+   do Painel CowData (leitura/escrita por `fazenda_id` explícito, sem
+   token de fazenda) estão expostas ao mesmo padrão de bug — PRÉ-REQUISITO
+   NOVO antes de religar RLS em qualquer ambiente (ver seção 5).
+5.1. **NOVO, ainda não feito**: auditar as 7 rotas do Painel CowData
+   (`painel_cowdata*.py`) e migrar cada leitura/escrita de tabela com
+   `fazenda_id` para `engine_manutencao` (ou `SET LOCAL` explícito por
+   request), com teste de regressão contra Postgres real por rota — mesmo
+   padrão do item acima. Staging continua com RLS ligado desde 10/09 e
+   NÃO tem esta parte validada — tratar as funcionalidades do Painel
+   CowData lá como suspeitas até a auditoria fechar.
+5.2. Só depois de 5.1: repetir o roteiro Railway + DDL em produção (a
+   parte de infraestrutura já está pronta — role `cowdata_app`,
+   `DATABASE_URL_MANUTENCAO` — só falta religar o DDL) e refazer o teste
+   de fumaça manual, desta vez cobrindo também o Painel CowData.
 
 Cada item, ao ser fechado, deve atualizar este documento — é o registro
 vivo, não uma foto de hoje.

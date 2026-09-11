@@ -184,6 +184,7 @@ jobs:
         tests/test_boot_conexao_dono.py
         tests/test_migracao_fks_compostas.py
         tests/test_contexto_fazenda_sessao.py
+        tests/test_login_sob_rls.py
     services:
       postgres:
         image: postgres:16
