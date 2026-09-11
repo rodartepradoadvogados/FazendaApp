@@ -48,69 +48,85 @@ _ITENS_EXAME = [
 
 def upgrade() -> None:
     """Upgrade schema."""
-    op.create_table(
-        'checklist_template_item',
-        sa.Column('id', sa.Integer(), nullable=False),
-        sa.Column('tipo', sa.String(), nullable=False),
-        sa.Column('nome', sa.String(), nullable=False),
-        sa.Column('chave', sa.String(), nullable=False, server_default='custom'),
-        sa.Column('ordem', sa.Integer(), nullable=False, server_default='0'),
-        sa.Column('ativo', sa.Boolean(), nullable=False, server_default=sa.true()),
-        sa.Column('criado_em', sa.DateTime(), nullable=False),
-        sa.Column('fazenda_id', sa.Integer(), nullable=True),
-        sa.ForeignKeyConstraint(['fazenda_id'], ['fazenda.id']),
-        sa.PrimaryKeyConstraint('id'),
-    )
-    op.create_index(op.f('ix_checklist_template_item_tipo'), 'checklist_template_item', ['tipo'])
-    op.create_index(op.f('ix_checklist_template_item_fazenda_id'), 'checklist_template_item', ['fazenda_id'])
+    conn = op.get_bind()
+    insp = sa.inspect(conn)
 
-    checklist_template_item = sa.table(
-        'checklist_template_item',
-        sa.column('tipo', sa.String()), sa.column('nome', sa.String()), sa.column('chave', sa.String()),
-        sa.column('ordem', sa.Integer()), sa.column('ativo', sa.Boolean()),
-        sa.column('criado_em', sa.DateTime()), sa.column('fazenda_id', sa.Integer()),
-    )
-    agora = datetime.utcnow()
-    linhas = [
-        {"tipo": "vacina", "nome": nome, "chave": chave, "ordem": ordem, "ativo": True, "criado_em": agora, "fazenda_id": None}
-        for ordem, chave, nome in _ITENS_VACINA
-    ] + [
-        {"tipo": "exame", "nome": nome, "chave": chave, "ordem": ordem, "ativo": True, "criado_em": agora, "fazenda_id": None}
-        for ordem, chave, nome in _ITENS_EXAME
-    ]
-    op.bulk_insert(checklist_template_item, linhas)
+    # Idempotente por tabela (`insp.has_table`, mesmo padrão de
+    # 4ede0ee68b09) — precisa ser seguro quando a tabela já existe via
+    # `SQLModel.metadata.create_all` (rede de segurança da subida da app),
+    # cenário coberto por tests/test_migracao_tabelas_faltantes.py.
+    if not insp.has_table('checklist_template_item'):
+        op.create_table(
+            'checklist_template_item',
+            sa.Column('id', sa.Integer(), nullable=False),
+            sa.Column('tipo', sa.String(), nullable=False),
+            sa.Column('nome', sa.String(), nullable=False),
+            sa.Column('chave', sa.String(), nullable=False, server_default='custom'),
+            sa.Column('ordem', sa.Integer(), nullable=False, server_default='0'),
+            sa.Column('ativo', sa.Boolean(), nullable=False, server_default=sa.true()),
+            sa.Column('criado_em', sa.DateTime(), nullable=False),
+            sa.Column('fazenda_id', sa.Integer(), nullable=True),
+            sa.ForeignKeyConstraint(['fazenda_id'], ['fazenda.id']),
+            sa.PrimaryKeyConstraint('id'),
+        )
+        op.create_index(op.f('ix_checklist_template_item_tipo'), 'checklist_template_item', ['tipo'])
+        op.create_index(op.f('ix_checklist_template_item_fazenda_id'), 'checklist_template_item', ['fazenda_id'])
 
-    op.create_table(
-        'cronograma_sanitario_checklist_item',
-        sa.Column('id', sa.Integer(), nullable=False),
-        sa.Column('cronograma_id', sa.Integer(), nullable=False),
-        sa.Column('chave', sa.String(), nullable=False),
-        sa.Column('nome', sa.String(), nullable=False),
-        sa.Column('ordem', sa.Integer(), nullable=False, server_default='0'),
-        sa.Column('status', sa.String(), nullable=False, server_default='pendente'),
-        sa.Column('resposta', sa.String(), nullable=True),
-        sa.Column('observacao', sa.String(), nullable=True),
-        sa.Column('responsavel_usuario_id', sa.Integer(), nullable=True),
-        sa.Column('respondido_em', sa.DateTime(), nullable=True),
-        sa.Column('criado_em', sa.DateTime(), nullable=False),
-        sa.Column('fazenda_id', sa.Integer(), nullable=True),
-        sa.ForeignKeyConstraint(['cronograma_id'], ['cronograma_sanitario.id']),
-        sa.ForeignKeyConstraint(['responsavel_usuario_id'], ['usuario.id']),
-        sa.ForeignKeyConstraint(['fazenda_id'], ['fazenda.id']),
-        sa.PrimaryKeyConstraint('id'),
-    )
-    op.create_index(
-        op.f('ix_cronograma_sanitario_checklist_item_cronograma_id'),
-        'cronograma_sanitario_checklist_item', ['cronograma_id'],
-    )
-    op.create_index(
-        op.f('ix_cronograma_sanitario_checklist_item_status'),
-        'cronograma_sanitario_checklist_item', ['status'],
-    )
-    op.create_index(
-        op.f('ix_cronograma_sanitario_checklist_item_fazenda_id'),
-        'cronograma_sanitario_checklist_item', ['fazenda_id'],
-    )
+    # Seed condicionado a "tabela vazia" (não a "acabei de criar") — cobre
+    # tanto a tabela nova quanto a que já existia via create_all mas sem os
+    # itens ainda (create_all só cria a estrutura, nunca semeia dados);
+    # numa 2ª chamada (tabela já semeada) não duplica.
+    conn = op.get_bind()
+    ja_tem_linha = conn.execute(sa.text("SELECT 1 FROM checklist_template_item LIMIT 1")).first()
+    if not ja_tem_linha:
+        checklist_template_item = sa.table(
+            'checklist_template_item',
+            sa.column('tipo', sa.String()), sa.column('nome', sa.String()), sa.column('chave', sa.String()),
+            sa.column('ordem', sa.Integer()), sa.column('ativo', sa.Boolean()),
+            sa.column('criado_em', sa.DateTime()), sa.column('fazenda_id', sa.Integer()),
+        )
+        agora = datetime.utcnow()
+        linhas = [
+            {"tipo": "vacina", "nome": nome, "chave": chave, "ordem": ordem, "ativo": True, "criado_em": agora, "fazenda_id": None}
+            for ordem, chave, nome in _ITENS_VACINA
+        ] + [
+            {"tipo": "exame", "nome": nome, "chave": chave, "ordem": ordem, "ativo": True, "criado_em": agora, "fazenda_id": None}
+            for ordem, chave, nome in _ITENS_EXAME
+        ]
+        op.bulk_insert(checklist_template_item, linhas)
+
+    if not insp.has_table('cronograma_sanitario_checklist_item'):
+        op.create_table(
+            'cronograma_sanitario_checklist_item',
+            sa.Column('id', sa.Integer(), nullable=False),
+            sa.Column('cronograma_id', sa.Integer(), nullable=False),
+            sa.Column('chave', sa.String(), nullable=False),
+            sa.Column('nome', sa.String(), nullable=False),
+            sa.Column('ordem', sa.Integer(), nullable=False, server_default='0'),
+            sa.Column('status', sa.String(), nullable=False, server_default='pendente'),
+            sa.Column('resposta', sa.String(), nullable=True),
+            sa.Column('observacao', sa.String(), nullable=True),
+            sa.Column('responsavel_usuario_id', sa.Integer(), nullable=True),
+            sa.Column('respondido_em', sa.DateTime(), nullable=True),
+            sa.Column('criado_em', sa.DateTime(), nullable=False),
+            sa.Column('fazenda_id', sa.Integer(), nullable=True),
+            sa.ForeignKeyConstraint(['cronograma_id'], ['cronograma_sanitario.id']),
+            sa.ForeignKeyConstraint(['responsavel_usuario_id'], ['usuario.id']),
+            sa.ForeignKeyConstraint(['fazenda_id'], ['fazenda.id']),
+            sa.PrimaryKeyConstraint('id'),
+        )
+        op.create_index(
+            op.f('ix_cronograma_sanitario_checklist_item_cronograma_id'),
+            'cronograma_sanitario_checklist_item', ['cronograma_id'],
+        )
+        op.create_index(
+            op.f('ix_cronograma_sanitario_checklist_item_status'),
+            'cronograma_sanitario_checklist_item', ['status'],
+        )
+        op.create_index(
+            op.f('ix_cronograma_sanitario_checklist_item_fazenda_id'),
+            'cronograma_sanitario_checklist_item', ['fazenda_id'],
+        )
 
 
 def downgrade() -> None:

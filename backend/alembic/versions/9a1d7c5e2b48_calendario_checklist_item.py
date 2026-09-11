@@ -30,6 +30,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    # Idempotente por tabela (`insp.has_table`, mesmo padrão de 4ede0ee68b09
+    # e b3c1e9d24f07) — precisa ser seguro quando a tabela já existe via
+    # `SQLModel.metadata.create_all` (rede de segurança da subida da app),
+    # cenário coberto por tests/test_migracao_tabelas_faltantes.py.
+    conn = op.get_bind()
+    insp = sa.inspect(conn)
+    if insp.has_table('calendario_sanitario_checklist_item'):
+        return
+
     op.create_table(
         'calendario_sanitario_checklist_item',
         sa.Column('id', sa.Integer(), nullable=False),
