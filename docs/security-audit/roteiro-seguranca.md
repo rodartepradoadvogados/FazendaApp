@@ -287,6 +287,52 @@ desvinculei de lá, então sigamos por aqui." A partir daqui, a autorização
 do dono nesta própria conversa é suficiente para produção — não há mais
 "aviso prévio" separado para dar, porque não há mais quem avisar.
 
+**Roteiro Railway (28 passos) executado pelo dono em 11/09/2026.** Duas
+travas do próprio Railway atrapalharam a execução, resolvidas em tempo
+real, registradas aqui para quem repetir isto num quarto ambiente:
+- a aba **Data** do console Postgres injeta um `LIMIT` sozinha (é um
+  navegador de tabelas, não aceita DDL) — o `CREATE ROLE`/`GRANT` teve que
+  ser rodado pela aba **Console** (`psql` de verdade);
+- colar uma consulta na aba **Console** enquanto o buffer do `psql` estava
+  em modo de continuação (prompt `railway-#`) produzia lixo de bracketed
+  paste (`^[[200~`); resolvido com `\r` (limpa o buffer) antes de colar de
+  novo.
+
+Conferido ao final: `cowdata_app` criado com `rolsuper=false,
+rolbypassrls=false`; `DATABASE_URL` do FazendaApp em `production` trocada
+para ele; `DATABASE_URL_MANUTENCAO` mantendo o role dono; deploy seguinte
+`Active`, log de build e deploy sem `permission denied`, requisições reais
+(`/animais/`, `/producao/`, `/financeiro/...`, `/estoque/`, etc.) com
+`200 OK`.
+
+**DDL de RLS aplicado em produção em 11/09/2026**, mesmo padrão do
+Staging: via `railway-agent` (a sessão não tem saída TCP direta), conectado
+com a `DATABASE_URL_MANUTENCAO` (role dono — conferido antes de rodar:
+`current_user=postgres`, não `cowdata_app`). Resultado:
+`com_rls_ligada=198, sem_rls_ligada=0` — 18 de catálogo global + 180 de
+dado da fazenda (produção não tem as +4 tabelas de checkpoint de downgrade
+que só existiam no Staging — coerente, aquelas eram resíduo específico do
+histórico de órfãos do Staging). Nenhum erro durante a aplicação.
+
+**Checagem de saúde imediata**: logs do deploy ativo (janela 09:45–10:16
+UTC, cobrindo o momento da aplicação do DDL) sem nenhum
+`permission denied`/`InsufficientPrivilege`; requisições reais de usuário
+em produção (`/agenda/`, `/cadastro/principios-ativos`,
+`/notificacoes/`, `/aprovacoes/contagem`) respondendo `200 OK` depois da
+ativação. Os únicos avisos nos logs HTTP da janela são de outra natureza —
+um `499` (cliente fechou a conexão antes da resposta) e dois `403`
+(autorização de aplicação, não de banco) — nenhum dos dois relacionado a
+RLS.
+
+**Ainda pendente, igual ao que faltou no Staging**: o teste de fumaça
+manual do dono em produção (login real + tela com dado de fazenda) — é o
+único jeito de pegar o cenário "RLS nega tudo em silêncio, sem erro HTTP",
+que a checagem de log acima não cobre. Os 7 ataques de
+`rls-validacao-staging.sql` (adaptados) ainda não foram repetidos contra
+produção — decisão do dono se vale a pena rodar contra dado real (o script
+usa `SET ROLE` + `ROLLBACK`, não persiste nada, mas é produção de
+verdade).
+
 ## Achados novos, registrados como pendência (não bloqueiam o RLS)
 
 Encontrados ao escrever a migração de FKs compostas (#742), documentados em
@@ -340,6 +386,10 @@ de trabalho em paralelo).
    pendente, precisa de uma sessão de usuário de verdade.
 5. Produção — só com autorização explícita do dono (revisto em 11/09/2026:
    não há mais aviso prévio à sessão principal a dar, ver seção 5 acima).
+   **Roteiro Railway (28 passos) e DDL de RLS FEITOS em 11/09/2026** — ver
+   seção 5 acima para os resultados e o que ainda falta: teste de fumaça
+   manual do dono em produção, e decidir se vale repetir os 7 ataques de
+   validação contra dado real.
 
 Cada item, ao ser fechado, deve atualizar este documento — é o registro
 vivo, não uma foto de hoje.
