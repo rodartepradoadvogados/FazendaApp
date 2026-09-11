@@ -62,8 +62,11 @@ Fechadas em entrevista `/grill-me` de 4 rodadas. Resumo executivo (a especifica�
 | 7 | **Modal — Reabrir ocorrência** | Confirmado → Em edição, a qualquer momento até Realizado. |
 | 8 | **Tela — Realizar Evento** | Decisão por animal (com atalho de massa), lote do medicamento com checagem de validade, dose, via, responsável, carência, observação clínica; gera `Sanidade`, baixa estoque. |
 | 9 | **Relatório de Eventos Vencidos** | Ocorrências vencidas e não Realizadas, com indicadores de adesão e Dispensar por linha. |
+| 10 | **Cadastro — Vacinas e Exames** (Configurações › Cadastro › Sanitário) | Catálogo de `EventoSanitario`: nome, tipo, doença, produto/dose/via padrão, veterinário padrão, janela de aplicação (evento de vida). |
+| 11 | **Cadastro — Regras do Calendário Sanitário** (mesmo caminho) | Substitui o wizard atual (`FormCalendarioSanitario.tsx`) — vincula um evento a uma categoria-alvo e a um disparo (época ou evento de vida). |
+| 12 | **Cadastro — Template de Checklist por Tipo** (mesmo caminho) | Define os itens padrão que toda Ocorrência nova de Vacina/Exame já traz — editável (adicionar/remover item), ponto de partida para a Ocorrência (que ainda pode ajustar item a item, ver seção 3.2.2). |
 
-Nenhuma tela nova além destas 9. Cadastro de vacina/exame, cadastro de Regra do calendário sanitário e template de checklist por tipo continuam sendo feitos **só no site** (Configurações/Cadastro) — nunca no app mobile.
+12 telas no total. As três de Cadastro (10-12) existem **só no site** (Configurações/Cadastro) — nunca no app mobile.
 
 ### 3.2 Campos e ações por tela
 
@@ -205,10 +208,10 @@ Regras de transição:
 2. **"Confirmação com o veterinário selecionado"** — resposta **Sim/Não** obrigatória para marcar o item como respondido; exibe lado a lado quem marcou e o veterinário (com CRMV) pré-preenchido. **Se a resposta for "Não"**: exige justificativa obrigatória no próprio item e mantém alerta visual vermelho **"Veterinário não confirmou"** propagado por toda a Ocorrência (Resumo, Histórico, Calendário Sanitário, Relatório de Vencidos) até a resposta mudar para "Sim" ou o item ser reaberto — isso não bloqueia a Confirmação da Ocorrência, mas nunca fica silencioso.
    Pular: *"Pular confirmação com o veterinário? Confirme que não precisa. Para medicamentos de controle especial isso pode ter implicação de responsabilidade técnica."*
 
-3. **"Horário da aplicação"** — campo de hora.
+3. **"Horário da aplicação"** — **não é um toggle de "cumprido"**: exige preencher o campo de hora primeiro. O item mostra um `<input type="time">` inline; o botão "Confirmar horário" só habilita depois de um valor preenchido, e é ele que marca o item como Cumprido (o horário confirmado fica visível no próprio item — "Cumprido — 09:30" — e vai para a aba Resumo/Histórico). Sem valor preenchido, só resta "Pular".
    Pular: *"Pular registro de horário da aplicação? Confirme que não precisa."*
 
-4. **"Lotes de manejo atuais"** — item informativo/derivado, somente leitura: lote/grupo de manejo de cada animal incluído (não é o lote do medicamento, que é capturado por animal na Tela Realizar Evento). Ação: **"Marcar como revisado"**.
+4. **"Lotes de manejo atuais"** — **não é um toggle de "cumprido"**: o item expande, ali mesmo, a distribuição real dos animais incluídos por lote de manejo (tabela lote → nº de animais — não é o lote do medicamento, que é capturado por animal na Tela Realizar Evento). O usuário precisa ver essa distribuição antes de poder confirmar; o botão só existe depois da tabela, com o rótulo **"Marcar como revisado"** (nunca "cumprido" genérico, porque não há nada a "cumprir" — é uma conferência).
    Pular: *"Pular revisão dos lotes de manejo? Confirme que não precisa."*
 
 5. **"Lançamento financeiro"** — abre o modal 3.2.6.
@@ -217,9 +220,9 @@ Regras de transição:
 **Exame (4 itens — os mesmos, menos estoque)**
 
 1. **"Confirmação com o veterinário selecionado"** — idêntico ao de vacina, inclusive o tratamento da resposta "Não".
-2. **"Horário da coleta/realização do exame"** — mesmo padrão.
+2. **"Horário da coleta/realização do exame"** — mesmo padrão do item de vacina: exige preencher a hora antes de confirmar.
    Pular: *"Pular registro de horário da coleta/realização? Confirme que não precisa."*
-3. **"Lotes de manejo atuais"** — idêntico ao de vacina.
+3. **"Lotes de manejo atuais"** — idêntico ao de vacina (mostra a distribuição real antes de permitir "Marcar como revisado").
 4. **"Lançamento financeiro"** — idêntico ao de vacina.
 
 Todo item aceita Cumprido ou Pulado, sem exceção (inclusive financeiro), sempre via modal 3.2.4. Não existe item de "funcionários em serviço" — o sistema não controla escala/turno.
@@ -249,6 +252,34 @@ Fixo no cabeçalho do Detalhe, visível em todas as abas, replicado no modal "De
 **Toggle "Mostrar dispensados"**: histórico de auditoria (data original, quem, quando, motivo se houver) — base dos percentuais por motivo do cabeçalho.
 
 Ao reabrir a Ocorrência pelo Detalhe, a aba Histórico mostra: *"Dispensada do relatório de vencidos em [data] por [usuário]."*
+
+### 3.7 Cadastro (Configurações › Cadastro › Sanitário)
+
+Três telas, só no site, acessadas por abas dentro do mesmo caminho (Vacinas e Exames / Regras / Template de Checklist). Substituem por completo o wizard atual (`FormCalendarioSanitario.tsx`), que é a origem direta do bug relatado pelo usuário (sobrescrita silenciosa de frequência/data/veterinário ao reabrir um evento já vinculado a uma regra).
+
+#### 3.7.1 Cadastro — Vacinas e Exames
+
+Catálogo de `EventoSanitario`. **Tabela**: nome · tipo (Vacina/Exame, badge) · doença combatida · produto + dose padrão (quando Vacina) · veterinário padrão · janela de aplicação (só quando o disparo for evento de vida) · botão Editar.
+
+**Formulário** ("+ Novo evento sanitário"): nome · tipo (Vacina/Exame) · doença · produto padrão + dose padrão + via padrão (só Vacina, opcionais — a Regra e a Realização ainda podem sobrescrever por animal) · veterinário padrão (opcional) · janela de aplicação como intervalo relativo ao evento de vida (ex.: "3 a 8 meses após o nascimento", só quando aplicável) · ação fora da janela (texto livre ou chip, ex.: "Notificar urgência").
+
+Este cadastro **não define frequência nem categoria-alvo** — isso é exclusivo da Regra (3.7.2). Um mesmo evento pode ter zero, uma ou (raramente) mais de uma Regra vinculada.
+
+#### 3.7.2 Cadastro — Regras do Calendário Sanitário
+
+Formulário de nova regra + tabela das regras existentes (evento · categoria-alvo · disparo · detalhe · próxima ocorrência · Editar).
+
+**Campos do formulário**: evento sanitário (seleção, obrigatório) · categoria-alvo (texto/seleção) · disparo — **época** (frequência em valor+unidade, ex. "a cada 4 meses") ou **evento de vida** (ex. "Nascimento", reaproveita a janela já cadastrada no evento) · produto/dose/via (pré-preenchido do evento, editável por regra) · veterinário (pré-preenchido do evento, editável por regra).
+
+**Comportamento ao selecionar um evento que já tem regra vinculada** (fix direto do bug original): em vez de pré-preencher e sobrescrever silenciosamente os campos do formulário, aparece um banner informativo: *"Este evento já tem uma regra cadastrada — [detalhe da regra existente, ex. 'a cada 4 meses'], próxima ocorrência [data]. Nada foi alterado. Você quer: **Editar essa regra** / **Criar uma regra nova mesmo assim**"* (uma segunda regra para o mesmo evento só faz sentido com categoria-alvo diferente, ex. uma frequência para bezerras e outra para o rebanho adulto). O formulário continua vazio até o usuário escolher um dos dois caminhos — nenhum dado da regra existente é copiado para dentro do formulário de criação.
+
+Salvar uma regra nova ou editada **nunca** toca numa Ocorrência já materializada (Provável/Em edição/Confirmado) — só passa a valer a partir da próxima vez que o motor de projeção (R-2) gerar uma Ocorrência.
+
+#### 3.7.3 Cadastro — Template de Checklist por Tipo
+
+Duas listas lado a lado, Vacina e Exame, com os itens padrão da seção 3.4 (mesma redação) — cada item com botão Remover e um campo "Novo item…" + "+ Adicionar" por lista. É o ponto de partida: toda Ocorrência nova nasce com esses itens, mas cada Ocorrência ainda pode ajustar item a item (aba Checklist, seção 3.2.2) sem afetar o template nem outras Ocorrências.
+
+Não existe (nem aqui, nem em nenhuma tela) item de "funcionários em serviço" — confirmado na seção R2.3: a fazenda se organiza internamente, o sistema não controla escala/turno.
 
 ---
 
