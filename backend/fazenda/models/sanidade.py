@@ -653,6 +653,15 @@ class CronogramaSanitario(SQLModel, table=True):
     #   "cancelado".
     status: str = Field(default="aberto", index=True)
     observacao: Optional[str] = None
+    # "Desconsiderar cronograma" (redesenho do evento sanitário, seção 3.2.5)
+    # — confirma a Ocorrência SEM passar pelo checklist, decisão por
+    # Ocorrência (nunca muda a Regra). Independente de `status`/
+    # `modo_execucao` (que continuam governando a trilha antiga de
+    # veterinário/equipe própria, ver Fase 4) — checklist_completo() OR
+    # checklist_desconsiderado é o que decide "Confirmado" no modelo novo.
+    checklist_desconsiderado: bool = False
+    checklist_desconsiderado_motivo: Optional[str] = None
+    checklist_desconsiderado_em: Optional[datetime] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
     concluido_em: Optional[datetime] = None
