@@ -513,6 +513,17 @@ def cronograma_sanitario_janela_agrupamento_dias() -> int:
     return int(get_param("cronograma_sanitario_janela_agrupamento_dias", 7) or 7)
 
 
+def usar_ocorrencia_universal() -> bool:
+    """Feature flag por fazenda (R-1, docs/redesenho-evento-sanitario.md) —
+    liga a geração automática de Ocorrência (`CronogramaSanitario`) para TODA
+    regra do calendário sanitário ativa, não só as marcadas
+    `usa_cronograma=True` como hoje. False por padrão — nenhuma fazenda muda
+    de comportamento sozinha; só liga depois que o usuário confirma que
+    revisou o cadastro de Regras (rotina de "saúde do cadastro", Fase 6 do
+    redesenho)."""
+    return get_param_bool("usar_ocorrencia_universal", False)
+
+
 def patrimonio_atualizacao_valor_mercado_meses() -> int:
     """Frequência padrão (em meses) de "atualizar valor de mercado" pra
     patrimônio não depreciável (ex.: terra) sem override próprio — ver

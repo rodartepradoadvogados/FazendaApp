@@ -1,14 +1,24 @@
 """
 Cronograma sanitário — motor de estado do workflow dinâmico de acompanhamento
-de uma regra do calendário sanitário (CalendarioSanitario) marcada
-`usa_cronograma=True`.
+de uma regra do calendário sanitário (CalendarioSanitario). É a "Ocorrência"
+do redesenho do evento sanitário (docs/redesenho-evento-sanitario.md, seção
+1) — entidade generalizada, não uma tabela nova.
+
+Hoje só roda para regra marcada `usa_cronograma=True`. Atrás da feature flag
+por fazenda `usar_ocorrencia_universal` (R-1 do redesenho, Fase 1), passa a
+rodar para TODA regra ativa — comportamento inalterado (False) até a fazenda
+ligar explicitamente.
 
 Duas trilhas independentes, que se encontram na aplicação:
   (1) trilha do animal — CronogramaSanitarioAnimal: todo dia, animais que
-      batem o critério do EventoSanitario (idade/gatilho, ver
-      fazenda.rules.eventos_sanitarios) entram "sugeridos" no cronograma
+      batem o critério do EventoSanitario entram "sugeridos" no cronograma
       ABERTO da regra; o funcionário aprova ("incluido") ou recusa
-      ("excluido") pela Agenda.
+      ("excluido") pela Agenda. Regra por EVENTO DE VIDA é alimentada por
+      `fazenda.rules.eventos_sanitarios` (gatilho por animal, já existia).
+      Regra por ÉPOCA (`EventoSanitario.tipo_agendamento != "evento"`) é
+      alimentada aqui mesmo, via `fazenda.rules.projecao_categoria` (R-2) —
+      projeta quem vai estar na categoria-alvo na data prevista da
+      Ocorrência, não em quem está na categoria HOJE.
   (2) trilha do agendamento — os campos do próprio CronogramaSanitario:
       decide COM QUEM (veterinário cadastrado como Pessoa, ou equipe
       própria) e QUANDO a aplicação acontece. Sem decisão, a Agenda cobra
@@ -26,7 +36,8 @@ from sqlmodel import Session, select
 
 from fazenda.models import CalendarioSanitario, CronogramaSanitario, CronogramaSanitarioAnimal, Pessoa
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
-from fazenda.rules.parametros import cronograma_sanitario_dias_aviso
+from fazenda.rules.parametros import cronograma_sanitario_dias_aviso, usar_ocorrencia_universal
+from fazenda.rules.projecao_categoria import animais_projetados_na_categoria
 
 PREFIXO_CRONOGRAMA = "cronograma_sanitario_"
 
@@ -242,6 +253,17 @@ def concluir(session: Session, cronograma: CronogramaSanitario, animais_aplicado
     session.commit()
 
 
+def _regra_e_por_epoca(calendario: CalendarioSanitario, eventos_por_id: dict) -> bool:
+    """True quando a regra é do tipo "época" (frequência/categoria, sem
+    gatilho por animal) — o único caso que precisa do motor de projeção
+    (R-2). Regra por evento de vida (`EventoSanitario.tipo_agendamento ==
+    "evento"`) já tem sugestão própria, alimentada por
+    fazenda.rules.eventos_sanitarios; nunca passa por aqui, mesmo com a flag
+    `usar_ocorrencia_universal` ligada."""
+    evento = eventos_por_id.get(calendario.evento_sanitario_id)
+    return evento is None or evento.tipo_agendamento != "evento"
+
+
 # ---------------------------------------------------------------------------
 # Eventos da Agenda — as 4 pendências do desenho (ver docs/plano no chat):
 # animal sugerido (incluir/excluir), decisão de modo (recém-criado),
@@ -249,7 +271,12 @@ def concluir(session: Session, cronograma: CronogramaSanitario, animais_aplicado
 # (dia do evento, modo já definido).
 # ---------------------------------------------------------------------------
 def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_id: int | None = None) -> list[dict]:
-    query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True).where(CalendarioSanitario.usa_cronograma == True)  # noqa: E712
+    query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
+    # `usa_cronograma` continua filtrando por padrão (comportamento de
+    # sempre); com a flag ligada para a fazenda (R-1), toda regra ativa passa
+    # a ter Ocorrência — o campo deixa de ser opt-in.
+    if not usar_ocorrencia_universal():
+        query = query.where(CalendarioSanitario.usa_cronograma == True)  # noqa: E712
     if fazenda_id is not None:
         query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
     regras = {c.id: c for c in session.exec(query).all()}
@@ -290,6 +317,29 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
     for calendario_id, calendario in regras.items():
         if calendario_id not in regras_com_cronograma:
             cronogramas.append(cronograma_aberto(session, calendario))
+
+    # Trilha do animal (1) para regras por ÉPOCA — só sob a flag (R-1): usa o
+    # motor de projeção (R-2, fazenda.rules.projecao_categoria) para sugerir
+    # quem vai bater a categoria-alvo na data PREVISTA de cada cronograma
+    # aberto, não em quem bate hoje. Regra por evento de vida continua sendo
+    # alimentada por fazenda.rules.eventos_sanitarios (gatilho por animal, já
+    # existia antes deste redesenho) — nunca duplicada aqui.
+    # `coletar_dados_criterios` (rebanho inteiro + histórico reprodutivo) só
+    # é buscado se existir ao menos 1 regra por época com cronograma aberto —
+    # 1 consulta pesada por carregamento da Agenda, nunca uma por regra.
+    if usar_ocorrencia_universal():
+        cronogramas_epoca = [
+            c for c in cronogramas
+            if _regra_e_por_epoca(regras[c.calendario_sanitario_id], eventos_por_id)
+        ]
+        if cronogramas_epoca:
+            from fazenda.api.routers.lotes import coletar_dados_criterios
+            dados_criterios = coletar_dados_criterios(session, fazenda_id)
+            for cron in cronogramas_epoca:
+                calendario = regras[cron.calendario_sanitario_id]
+                numeros = animais_projetados_na_categoria(calendario.categoria_alvo or "", cron.data_evento, dados_criterios)
+                if numeros:
+                    sugerir_animais_em_lote(session, calendario, numeros, hoje)
 
     # Trilhas do animal (1) e de aplicação (3) abaixo, em lote para TODOS os
     # cronogramas de uma vez — antes eram 2 SELECTs por cronograma aberto

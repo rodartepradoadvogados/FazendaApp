@@ -702,6 +702,11 @@ class ChecklistTemplateItem(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     tipo: str = Field(index=True)  # "vacina" | "exame" (tratamento usa o de vacina)
     nome: str
+    # Mesmo vocabulário de ChecklistItem.chave — item adicionado pelo usuário
+    # (fora dos 5 canônicos de vacina / 4 de exame, seção 3.4 do redesenho)
+    # nasce "custom", sem comportamento especial. Renomear um item canônico
+    # não muda a chave (o comportamento especial segue a chave, não o texto).
+    chave: str = "custom"
     ordem: int = 0
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)

@@ -3,15 +3,18 @@
 Fase 0, passo 3 do redesenho do evento sanitário
 (docs/redesenho-evento-sanitario.md) — checklist por Ocorrência
 (`CronogramaSanitario`, ver seção 1 do documento) e o cadastro do template
-padrão por tipo de evento (seção 3.7.3). Migração puramente ADITIVA, sem
-backfill — nenhuma linha nova em nenhuma tabela, nenhuma regra de hoje muda
-de comportamento (a leitura/escrita destas duas tabelas só entra na Fase 1).
+padrão por tipo de evento (seção 3.7.3). Migração ADITIVA — a única linha
+nova é o seed dos 9 itens canônicos do template global (fazenda_id NULL,
+seção 3.4: 5 de vacina, 4 de exame), para toda fazenda nascer com o mesmo
+ponto de partida de hoje seria manual. Nenhuma regra de hoje muda de
+comportamento (a leitura/escrita destas duas tabelas só entra na Fase 1).
 
 Revision ID: b3c1e9d24f07
 Revises: 3f2dbf3acef1
 Create Date: 2026-09-11 00:00:00.000000
 
 """
+from datetime import datetime
 from typing import Sequence, Union
 
 from alembic import op
@@ -24,6 +27,24 @@ down_revision: Union[str, Sequence[str], None] = '3f2dbf3acef1'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+# Redação exata da seção 3.4 do redesenho — mesma ordem, mesma chave (decide
+# o comportamento especial na UI: estoque nunca bloqueia, vet exige Sim/Não,
+# horario/lotes exigem preencher/revisar antes de confirmar, financeiro abre
+# o modal). "tratamento" reaproveita o template de "vacina" (seção 3.7.0).
+_ITENS_VACINA = [
+    (1, "estoque", "Estoque suficiente?"),
+    (2, "vet", "Confirmação com o veterinário selecionado"),
+    (3, "horario", "Horário da aplicação"),
+    (4, "lotes", "Lotes de manejo atuais"),
+    (5, "financeiro", "Lançamento financeiro"),
+]
+_ITENS_EXAME = [
+    (1, "vet", "Confirmação com o veterinário selecionado"),
+    (2, "horario", "Horário da coleta/realização do exame"),
+    (3, "lotes", "Lotes de manejo atuais"),
+    (4, "financeiro", "Lançamento financeiro"),
+]
+
 
 def upgrade() -> None:
     """Upgrade schema."""
@@ -32,6 +53,7 @@ def upgrade() -> None:
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('tipo', sa.String(), nullable=False),
         sa.Column('nome', sa.String(), nullable=False),
+        sa.Column('chave', sa.String(), nullable=False, server_default='custom'),
         sa.Column('ordem', sa.Integer(), nullable=False, server_default='0'),
         sa.Column('ativo', sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column('criado_em', sa.DateTime(), nullable=False),
@@ -41,6 +63,22 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_checklist_template_item_tipo'), 'checklist_template_item', ['tipo'])
     op.create_index(op.f('ix_checklist_template_item_fazenda_id'), 'checklist_template_item', ['fazenda_id'])
+
+    checklist_template_item = sa.table(
+        'checklist_template_item',
+        sa.column('tipo', sa.String()), sa.column('nome', sa.String()), sa.column('chave', sa.String()),
+        sa.column('ordem', sa.Integer()), sa.column('ativo', sa.Boolean()),
+        sa.column('criado_em', sa.DateTime()), sa.column('fazenda_id', sa.Integer()),
+    )
+    agora = datetime.utcnow()
+    linhas = [
+        {"tipo": "vacina", "nome": nome, "chave": chave, "ordem": ordem, "ativo": True, "criado_em": agora, "fazenda_id": None}
+        for ordem, chave, nome in _ITENS_VACINA
+    ] + [
+        {"tipo": "exame", "nome": nome, "chave": chave, "ordem": ordem, "ativo": True, "criado_em": agora, "fazenda_id": None}
+        for ordem, chave, nome in _ITENS_EXAME
+    ]
+    op.bulk_insert(checklist_template_item, linhas)
 
     op.create_table(
         'cronograma_sanitario_checklist_item',
