@@ -16,6 +16,15 @@ exclui em massa de várias fazendas de uma vez: apagar de verdade continua
 sendo uma ação de UMA fazenda por vez, na tela de Cadastro dela mesma (ou
 via suporte), pra nunca virar um botão que some com dado real de vários
 clientes ao mesmo tempo por engano. "Remover" aqui só desativa (ativo=False).
+
+RLS (auditoria de 11/09/2026, ver docs/security-audit/roteiro-seguranca.md):
+as rotas que leem/escrevem `fazenda_id` explícito (todas, exceto
+`/categorias` e `/fazendas`, que só leem `Fazenda`) usam
+`Depends(get_session_manutencao)`, não `get_session` — sob RLS, sem
+fazenda selecionada no token (nunca há, aqui), a sessão comum negaria em
+silêncio (leituras vazias) ou falharia com 500 (escritas, mesmo as
+corretas). `fazenda_id` explícito no laço já é o recorte de segurança
+real — RLS nunca foi a defesa destas rotas.
 """
 from __future__ import annotations
 
@@ -24,7 +33,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.auth import exigir_area_painel_cowdata, exigir_permissao_painel_cowdata
-from fazenda.database import get_session
+from fazenda.database import get_session, get_session_manutencao
 from fazenda.models import (
     Fazenda, GrauSangue, MetodoServicoReprodutivo, MotivoBaixa, MotivoMovimentacao, Raca, TipoServicoReprodutivo, Usuario,
 )
@@ -124,7 +133,8 @@ def listar_fazendas_alvo(
 # ---------------------------------------------------------------------------
 @router.get("/metodo_servico/listar")
 def listar_metodos_agregado(
-    _: Usuario = Depends(exigir_area_painel_cowdata("cadastros")), session: Session = Depends(get_session),
+    _: Usuario = Depends(exigir_area_painel_cowdata("cadastros")),
+    session: Session = Depends(get_session_manutencao),
 ) -> dict:
     fazendas = _fazendas_ativas(session)
     total = len(fazendas)
@@ -155,7 +165,7 @@ class AplicarMetodoIn(BaseModel):
 @router.post("/metodo_servico/aplicar")
 def aplicar_metodo(
     dados: AplicarMetodoIn,
-    _: Usuario = _dep_edicao, session: Session = Depends(get_session),
+    _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),
 ) -> dict:
     nome = dados.nome.strip()
     tipo_nome = dados.tipo_nome.strip()
@@ -189,7 +199,8 @@ def aplicar_metodo(
 
 @router.get("/{categoria}")
 def listar_item_agregado(
-    categoria: str, _: Usuario = Depends(exigir_area_painel_cowdata("cadastros")), session: Session = Depends(get_session),
+    categoria: str, _: Usuario = Depends(exigir_area_painel_cowdata("cadastros")),
+    session: Session = Depends(get_session_manutencao),
 ) -> dict:
     """Visão agregada: cada NOME distinto que existe em pelo menos uma
     fazenda, com em quantas/quais já está cadastrado — pra ver de cara o que
@@ -224,7 +235,7 @@ class AplicarIn(BaseModel):
 @router.post("/{categoria}/aplicar")
 def aplicar_item(
     categoria: str, dados: AplicarIn,
-    _: Usuario = _dep_edicao, session: Session = Depends(get_session),
+    _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),
 ) -> dict:
     """Cria (ou reativa, se existia desativado) este item nas fazendas
     alvo — todas por padrão, ou só as selecionadas. Nunca duplica: se já
@@ -270,7 +281,7 @@ class RenomearIn(BaseModel):
 @router.put("/{categoria}/renomear")
 def renomear_item(
     categoria: str, dados: RenomearIn,
-    _: Usuario = _dep_edicao, session: Session = Depends(get_session),
+    _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),
 ) -> dict:
     modelo = _model(categoria)
     novo_nome = dados.novo_nome.strip()
@@ -302,7 +313,7 @@ class DesativarIn(BaseModel):
 @router.post("/{categoria}/desativar")
 def desativar_item(
     categoria: str, dados: DesativarIn,
-    _: Usuario = _dep_edicao, session: Session = Depends(get_session),
+    _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),
 ) -> dict:
     modelo = _model(categoria)
     alvo = _fazendas_alvo(session, dados.fazenda_ids)

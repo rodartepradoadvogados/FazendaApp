@@ -25,6 +25,10 @@ Esta rota já criava o vínculo desde que nasceu; POST /auth/usuarios (o mesmo
 formulário, entrando pela fazenda) não criava, e essa lacuna foi fechada —
 ver auth.py::_fazenda_do_novo_usuario para a regra "fazenda → pessoa →
 usuário, sempre nessa ordem".
+
+RLS (auditoria de 11/09/2026, ver docs/security-audit/roteiro-seguranca.md):
+as 4 rotas usam `Depends(get_session_manutencao)`, não `get_session` —
+`fazenda_id` explícito no path, nunca o token (que aqui nunca tem "fid").
 """
 from __future__ import annotations
 
@@ -36,7 +40,7 @@ from fazenda.api.routers.auth import MODULOS, _publico
 from fazenda.auth import (
     eh_email_dono_equivalente, exigir_permissao_painel_cowdata, hash_senha, tem_permissao_painel_cowdata,
 )
-from fazenda.database import get_session
+from fazenda.database import get_session_manutencao
 from fazenda.models import Fazenda, Pessoa, Usuario, UsuarioFazenda
 
 router = APIRouter(prefix="/painel-cowdata/usuarios", tags=["painel-cowdata-usuarios"])
@@ -88,7 +92,7 @@ def _garantir_vinculo(session: Session, usuario_id: int, fazenda_id: int, papel:
 
 @router.get("/{fazenda_id}/pessoas")
 def listar_pessoas_da_fazenda(
-    fazenda_id: int, _: Usuario = _dep_consulta, session: Session = Depends(get_session),
+    fazenda_id: int, _: Usuario = _dep_consulta, session: Session = Depends(get_session_manutencao),
 ) -> list[dict]:
     _fazenda_cliente(session, fazenda_id)
     pessoas = session.exec(
@@ -105,7 +109,7 @@ def listar_pessoas_da_fazenda(
 
 @router.get("/{fazenda_id}")
 def listar_usuarios_da_fazenda(
-    fazenda_id: int, _: Usuario = _dep_consulta, session: Session = Depends(get_session),
+    fazenda_id: int, _: Usuario = _dep_consulta, session: Session = Depends(get_session_manutencao),
 ) -> list[dict]:
     _fazenda_cliente(session, fazenda_id)
     usuarios = session.exec(
@@ -134,7 +138,7 @@ class NovoUsuarioFazenda(BaseModel):
 @router.post("/{fazenda_id}")
 def criar_usuario_da_fazenda(
     fazenda_id: int, dados: NovoUsuarioFazenda,
-    ator: Usuario = _dep_edicao, session: Session = Depends(get_session),
+    ator: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),
 ) -> dict:
     # Criar um login É dar acesso (nasce com senha, papel e permissões), então
     # o POST exige as duas permissões — não dá para "só cadastrar" alguém sem
@@ -194,7 +198,7 @@ class EditarUsuarioFazenda(BaseModel):
 @router.put("/{fazenda_id}/{usuario_id}")
 def editar_usuario_da_fazenda(
     fazenda_id: int, usuario_id: int, dados: EditarUsuarioFazenda,
-    ator: Usuario = _dep_edicao, session: Session = Depends(get_session),
+    ator: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),
 ) -> dict:
     _fazenda_cliente(session, fazenda_id)
     u = session.get(Usuario, usuario_id)

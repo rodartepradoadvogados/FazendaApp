@@ -6,7 +6,7 @@ import logging
 from contextlib import contextmanager
 from pathlib import Path
 
-from fastapi import Header
+from fastapi import Depends, Header
 from sqlalchemy import event, inspect, text
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -621,3 +621,38 @@ def get_session(authorization: str | None = Header(default=None)):
     with Session(engine) as session:
         session.info["fazenda_id"] = fazenda_id
         yield session
+
+
+def get_session_manutencao(session: Session = Depends(get_session)):
+    """Dependency injection para rotas que operam SEM fazenda selecionada
+    por definição e, dentro delas, leem E ESCREVEM explicitamente em nome
+    de um `fazenda_id` que vem do path/body — hoje só o Painel CowData
+    (auditoria de 11/09/2026, ver docs/security-audit/roteiro-seguranca.md):
+    listagens/edições por fazenda-cliente específica, e os botões "aplicar
+    em todas as fazendas de uma vez" (Farmácia/Cadastros/Parâmetros), que
+    fazem exatamente isso num laço.
+
+    Por que uma dependency SEPARADA e não `sessao_sem_recorte_de_fazenda`
+    (usada no login): aquela cobre uma LEITURA pontual dentro de uma rota
+    que, fora isso, usa a sessão normal. Aqui a rota INTEIRA — leitura e
+    ESCRITA — precisa da conexão de dono: sob RLS, mesmo a escrita CERTA
+    (`fazenda_id` real explícito, ou `fazenda_id=None` numa linha de
+    catálogo global) viola o `WITH CHECK` da política sem o contexto certo
+    (e não tem como setar `app.fazenda_id` por linha dentro do MESMO laço
+    que passa por várias fazendas). `usuario_id`/`fazenda_id` explícito em
+    Python já é o recorte de segurança real destas rotas — sempre foi, o
+    Painel CowData nunca dependeu de RLS pra isolar, só de
+    `exigir_area_painel_cowdata`/`exigir_permissao_painel_cowdata`.
+
+    Depende de `Depends(get_session)`, não abre a própria conexão direto:
+    assim, um teste que só faz `dependency_overrides[get_session]` (o
+    padrão de ~1500 testes da suíte) já cobre esta dependency também, SEM
+    precisar saber que ela existe — FastAPI resolve o override através da
+    cadeia de `Depends`. Só sob PostgreSQL de verdade troca para
+    `engine_manutencao` (dono, sem RLS); fora disso (a suíte inteira, em
+    SQLite) devolve a MESMA sessão que `get_session` já entregou."""
+    if session.get_bind().dialect.name != "postgresql":
+        yield session
+        return
+    with Session(engine_manutencao) as sm:
+        yield sm

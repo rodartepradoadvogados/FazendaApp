@@ -14,6 +14,13 @@ proprietário (`exigir_dono`). Opera sempre sobre a ÚNICA fazenda marcada
 Reaproveita os modelos Pessoa/FolhaPagamento (mesmo formato da folha de
 pagamento de qualquer fazenda-cliente), mas por endpoints NOVOS e isolados —
 nenhuma alteração nos routers tenant-facing já testados.
+
+RLS (auditoria de 11/09/2026, ver docs/security-audit/roteiro-seguranca.md):
+toda rota que lê/escreve `Pessoa`/`FolhaPagamento`/`CobrancaAsaas` (a
+fazenda lógica da CowData nunca é a fazenda selecionada no token — não há
+uma, aqui) usa `Depends(get_session_manutencao)`, não `get_session`. As
+quatro rotas de `LancamentoCowData` (sem `fazenda_id`) continuam com
+`get_session` normal — não são afetadas por RLS.
 """
 from __future__ import annotations
 
@@ -27,7 +34,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.auth import eh_email_dono_equivalente, exigir_area_painel_cowdata, exigir_dono, hash_senha
-from fazenda.database import get_session
+from fazenda.database import get_session, get_session_manutencao
 from fazenda.models import CobrancaAsaas, Fazenda, FolhaPagamento, Pessoa, SeedFlag, TipoPessoa, Usuario
 from fazenda.models.cowdata_interno import LancamentoCowData
 from fazenda.models.equipe_cowdata_acesso import (
@@ -157,7 +164,7 @@ def listar_tipos_vinculo(_: Usuario = Depends(exigir_area_painel_cowdata("equipe
 
 
 @router.get("/equipe/cargos")
-def listar_cargos(_: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)) -> list[str]:
+def listar_cargos(_: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao)) -> list[str]:
     fazenda_id = _fazenda_cowdata_id(session)
     tipos = session.exec(
         select(TipoPessoa).where(TipoPessoa.fazenda_id == fazenda_id, TipoPessoa.ativo == True)  # noqa: E712
@@ -166,7 +173,7 @@ def listar_cargos(_: Usuario = Depends(exigir_area_painel_cowdata("equipe")), se
 
 
 @router.get("/equipe/pessoas")
-def listar_equipe(_: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)) -> list[dict]:
+def listar_equipe(_: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao)) -> list[dict]:
     fazenda_id = _fazenda_cowdata_id(session)
     pessoas = session.exec(select(Pessoa).where(Pessoa.fazenda_id == fazenda_id)).all()
     return [_pessoa_publica(p) for p in sorted(pessoas, key=lambda p: p.nome)]
@@ -174,7 +181,7 @@ def listar_equipe(_: Usuario = Depends(exigir_area_painel_cowdata("equipe")), se
 
 @router.get("/equipe/consultores")
 def listar_consultores_cowdata(
-    _: Usuario = Depends(exigir_area_painel_cowdata("fazendas")), session: Session = Depends(get_session)
+    _: Usuario = Depends(exigir_area_painel_cowdata("fazendas")), session: Session = Depends(get_session_manutencao)
 ) -> list[dict]:
     """Membros ATIVOS da Equipe CowData com cargo Consultor que já têm login
     próprio ATIVO — é a lista do seletor "Consultor CowData" ao definir o
@@ -211,7 +218,7 @@ def listar_consultores_cowdata(
 
 @router.post("/equipe/pessoas")
 def criar_membro_equipe(
-    dados: PessoaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
+    dados: PessoaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao)
 ) -> dict:
     fazenda_id = _fazenda_cowdata_id(session)
     cargo_existe = session.exec(
@@ -262,7 +269,7 @@ def _pessoa_equipe_ou_404(session: Session, pessoa_id: int) -> Pessoa:
 
 @router.put("/equipe/pessoas/{pessoa_id}")
 def editar_membro_equipe(
-    pessoa_id: int, dados: PessoaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
+    pessoa_id: int, dados: PessoaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao)
 ) -> dict:
     pessoa = _pessoa_equipe_ou_404(session, pessoa_id)
     _validar_vinculo(dados)
@@ -303,7 +310,7 @@ def baixar_contrato_membro(
     objeto_servico: str | None = None, dia_pagamento: int | None = None, vigencia: str | None = None,
     representante_nome: str | None = None, representante_cpf: str | None = None,
     cidade_foro: str | None = None, estado_foro: str | None = None,
-    _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session),
+    _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao),
 ) -> Response:
     """Minuta do contrato do membro — CLT quando `tipo_vinculo="funcionario"`,
     prestação de serviços quando `"pj"`. O corpo vem do cadastro (nome, RG,
@@ -333,7 +340,7 @@ def baixar_contrato_membro(
 
 @router.delete("/equipe/pessoas/{pessoa_id}")
 def excluir_membro_equipe(
-    pessoa_id: int, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
+    pessoa_id: int, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao)
 ) -> dict:
     pessoa = _pessoa_equipe_ou_404(session, pessoa_id)
     session.delete(pessoa)
@@ -462,7 +469,7 @@ def _aplicar_permissao_news(usuario: Usuario, dados: UsuarioEquipeCowDataIn) -> 
 
 @router.get("/equipe/pessoas/{pessoa_id}/usuario")
 def obter_usuario_equipe(
-    pessoa_id: int, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    pessoa_id: int, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session_manutencao)
 ) -> Optional[dict]:
     pessoa = _pessoa_equipe_ou_404(session, pessoa_id)
     usuario = session.exec(select(Usuario).where(Usuario.pessoa_id == pessoa.id)).first()
@@ -479,7 +486,7 @@ def _permissao_equipe_cowdata_ou_vazia(session: Session, usuario_id: int) -> Per
 
 @router.post("/equipe/pessoas/{pessoa_id}/usuario")
 def criar_usuario_equipe(
-    pessoa_id: int, dados: UsuarioEquipeCowDataIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    pessoa_id: int, dados: UsuarioEquipeCowDataIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session_manutencao)
 ) -> dict:
     """Login de um membro da própria equipe CowData (suporte/consultoria).
 
@@ -525,7 +532,7 @@ def criar_usuario_equipe(
 
 @router.put("/equipe/pessoas/{pessoa_id}/usuario")
 def editar_usuario_equipe(
-    pessoa_id: int, dados: UsuarioEquipeCowDataIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    pessoa_id: int, dados: UsuarioEquipeCowDataIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session_manutencao)
 ) -> dict:
     pessoa = _pessoa_equipe_ou_404(session, pessoa_id)
     usuario = session.exec(select(Usuario).where(Usuario.pessoa_id == pessoa.id)).first()
@@ -590,7 +597,7 @@ def _folha_publica(f: FolhaPagamento) -> dict:
 
 @router.get("/equipe/pessoas/{pessoa_id}/folha")
 def listar_folha_membro(
-    pessoa_id: int, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
+    pessoa_id: int, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao)
 ) -> list[dict]:
     _pessoa_equipe_ou_404(session, pessoa_id)
     lancamentos = session.exec(select(FolhaPagamento).where(FolhaPagamento.pessoa_id == pessoa_id)).all()
@@ -599,7 +606,7 @@ def listar_folha_membro(
 
 @router.post("/equipe/pessoas/{pessoa_id}/folha")
 def lancar_folha_membro(
-    pessoa_id: int, dados: FolhaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
+    pessoa_id: int, dados: FolhaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao)
 ) -> dict:
     fazenda_id = _fazenda_cowdata_id(session)
     _pessoa_equipe_ou_404(session, pessoa_id)
@@ -630,7 +637,7 @@ def _folha_equipe_ou_404(session: Session, folha_id: int) -> FolhaPagamento:
 
 @router.put("/equipe/folha/{folha_id}")
 def editar_folha_membro(
-    folha_id: int, dados: FolhaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
+    folha_id: int, dados: FolhaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao)
 ) -> dict:
     folha = _folha_equipe_ou_404(session, folha_id)
     folha.competencia = dados.competencia
@@ -647,7 +654,7 @@ def editar_folha_membro(
 
 
 @router.delete("/equipe/folha/{folha_id}")
-def excluir_folha_membro(folha_id: int, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)) -> dict:
+def excluir_folha_membro(folha_id: int, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao)) -> dict:
     folha = _folha_equipe_ou_404(session, folha_id)
     session.delete(folha)
     session.commit()
@@ -804,7 +811,7 @@ def _movimentos_periodo(session: Session, de: date, ate: date) -> list[dict]:
 
 @router.get("/financeiro/resumo")
 def resumo_financeiro(
-    de: date, ate: date, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session)
+    de: date, ate: date, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session_manutencao)
 ) -> dict:
     movimentos = _movimentos_periodo(session, de, ate)
     receita = sum(m["valor"] for m in movimentos if m["tipo"] == "receita")
@@ -814,7 +821,7 @@ def resumo_financeiro(
 
 @router.get("/financeiro/livro-caixa")
 def livro_caixa(
-    de: date, ate: date, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session)
+    de: date, ate: date, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session_manutencao)
 ) -> list[dict]:
     movimentos = _movimentos_periodo(session, de, ate)
     saldo = 0.0
@@ -827,7 +834,7 @@ def livro_caixa(
 
 @router.get("/financeiro/fluxo-caixa")
 def fluxo_caixa(
-    de: date, ate: date, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session)
+    de: date, ate: date, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session_manutencao)
 ) -> list[dict]:
     """Agrupado por mês (entradas/saídas/saldo do mês/saldo acumulado) —
     distinto do livro-caixa (lançamento a lançamento)."""
@@ -854,7 +861,7 @@ def fluxo_caixa(
 
 
 @router.get("/financeiro/dre")
-def dre(ano: int, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session)) -> dict:
+def dre(ano: int, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session_manutencao)) -> dict:
     """DRE simplificado do ano: receita total, despesas por categoria e
     resultado — mesma base de dados do livro-caixa/fluxo-caixa, só reagrupada."""
     de, ate = date(ano, 1, 1), date(ano, 12, 31)
