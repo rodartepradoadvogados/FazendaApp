@@ -507,8 +507,8 @@ mesma política do DDL de produção — `tests/test_sincronizacao_sob_rls.py`
 mecanismo idêntico nos 3 botões, não repetido teste por teste). Suíte
 Postgres/RLS completa: **17 passed**. Suíte SQLite filtrada por
 `painel_cowdata`/`cowdata`: **182 passed, 1 skipped**. Suíte SQLite
-completa (~5.400 testes, 13 lotes): confirmação final em andamento no
-momento deste registro — nenhuma falha nos lotes concluídos até aqui.
+completa (5.416 testes, 13 lotes): **0 failed** (1 xfailed esperado) —
+confirmação final, sem nenhuma regressão em nenhum dos 13 lotes.
 
 **O que ainda falta antes de religar RLS em qualquer ambiente:**
 - Staging está com RLS ligado desde 10/09/2026 — o Painel CowData lá
