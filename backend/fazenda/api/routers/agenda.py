@@ -16,7 +16,7 @@ from fazenda.auth import (
 )
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, ConsumoAlimento,
+    AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ChecklistItem, ColostragemBezerra, ConsumoAlimento,
     ConsumoSobra, ContaGerencial,
     CronogramaSanitario, CronogramaSanitarioAnimal, DietaLancamento, Diaria,
     DiariaAuditoria, DiariaDia, Empreitada, EmpreitadaEtapa, Estoque, EstoqueSemen, EventoRealizado, Lote, MedicamentoComercial, Parto,
@@ -40,6 +40,8 @@ from fazenda.rules.agenda_engine import AgendaEngine, AgendaItem
 from fazenda.rules.eventos_sanitarios import eventos_agenda as _eventos_sanitarios_agenda
 from fazenda.rules import cronograma_sanitario as _cronograma_sanitario_rules
 from fazenda.rules.cronograma_sanitario import PREFIXO_CRONOGRAMA as _PREFIXO_CRONOGRAMA, CronogramaError
+from fazenda.rules import checklist_sanitario as _checklist_sanitario_rules
+from fazenda.rules.checklist_sanitario import ChecklistError
 from fazenda.rules.cura_protocolo import protocolo_terminado
 from fazenda.rules import lactacao as regras_lactacao
 from fazenda.rules.lactacao import inducao_concluida
@@ -1784,6 +1786,11 @@ class RealizadoIn(BaseModel):
     motivo: str | None = None                       # cronograma_sanitario_modo_ — motivo do adiamento (opcional)
     responsavel: str | None = None                  # cronograma_sanitario_aplicar_
     observacao: str | None = None                   # cronograma_sanitario_aplicar_
+    # Checklist da Ocorrência (redesenho do evento sanitário, Fase 1) — cada
+    # campo só é lido pelo prefixo correspondente (ver
+    # _decidir_checklist_item/_desconsiderar_cronograma abaixo).
+    acao: str | None = None       # cronograma_sanitario_checklist_ — "pular" ou None (confirma o item)
+    resposta: str | None = None   # cronograma_sanitario_checklist_ — "sim"/"nao" (item vet) ou horário (item horario)
 
 
 def _exigir_da_fazenda(registro, fazenda_id: int | None, rotulo: str):
@@ -1893,6 +1900,49 @@ def _aplicar_cronograma(
     return [f"Aplicado em {len(animais_aplicar)} animal(is)."] + (
         [f"{restantes} animal(is) do cronograma seguem pendentes de aplicação."] if restantes else []
     )
+
+
+def _decidir_checklist_item(
+    session: Session, evento_id: str, acao: str | None, resposta: str | None, motivo: str | None,
+    fazenda_id: int | None, usuario_id: int | None,
+) -> None:
+    """Checklist da Ocorrência (redesenho do evento sanitário, Fase 1) — um
+    item por vez. `acao == "pular"` sempre disponível, em qualquer item, sem
+    exceção (arquitetura travada, seção 1 do redesenho); qualquer outro valor
+    confirma o item, com o comportamento específico da `chave` já gravada
+    nele (o cliente não escolhe a chave — evita um item "vet" ser confirmado
+    como se fosse genérico só porque o front mandou errado)."""
+    item_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}checklist_"))
+    item = _exigir_da_fazenda(session.get(ChecklistItem, item_id), fazenda_id, "Item do checklist")
+    hoje = datetime.utcnow()
+    try:
+        if acao == "pular":
+            _checklist_sanitario_rules.marcar_pulado(session, item.id, motivo, usuario_id, hoje, fazenda_id)
+        elif item.chave == "vet":
+            _checklist_sanitario_rules.responder_veterinario(session, item.id, resposta or "", motivo, usuario_id, hoje, fazenda_id)
+        elif item.chave == "horario":
+            _checklist_sanitario_rules.confirmar_horario(session, item.id, resposta or "", usuario_id, hoje, fazenda_id)
+        elif item.chave == "lotes":
+            _checklist_sanitario_rules.marcar_lotes_revisado(session, item.id, usuario_id, hoje, fazenda_id)
+        else:
+            _checklist_sanitario_rules.marcar_cumprido(session, item.id, usuario_id, hoje, fazenda_id)
+    except ChecklistError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def _desconsiderar_cronograma(
+    session: Session, evento_id: str, motivo: str | None, fazenda_id: int | None,
+) -> None:
+    """"Desconsiderar cronograma" (seção 3.2.5 do redesenho) — confirma a
+    Ocorrência inteira sem passar pelo checklist. Ação sobre o cronograma
+    (não um item), por isso prefixo próprio em vez de reaproveitar
+    `checklist_`."""
+    cronograma_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}desconsiderar_"))
+    cronograma = _exigir_da_fazenda(session.get(CronogramaSanitario, cronograma_id), fazenda_id, "Cronograma")
+    try:
+        _checklist_sanitario_rules.desconsiderar_cronograma(session, cronograma, motivo, datetime.utcnow())
+    except ChecklistError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 def _baixar_protocolo_sanitario(
@@ -2388,6 +2438,12 @@ def marcar_realizado(
             dados.produto, dados.dose, dados.unidade, dados.via, fazenda_id, user,
         )
         return {"marcado": True, "avisos": avisos}
+    if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}checklist_"):
+        _decidir_checklist_item(session, dados.evento_id, dados.acao, dados.resposta, dados.motivo, fazenda_id, usuario_id)
+        return {"marcado": True}
+    if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}desconsiderar_"):
+        _desconsiderar_cronograma(session, dados.evento_id, dados.motivo, fazenda_id)
+        return {"marcado": True}
 
     query_existe = select(EventoRealizado).where(EventoRealizado.evento_id == dados.evento_id)
     if fazenda_id is not None:

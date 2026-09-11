@@ -36,6 +36,7 @@ from sqlmodel import Session, select
 
 from fazenda.models import CalendarioSanitario, CronogramaSanitario, CronogramaSanitarioAnimal, Pessoa
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
+from fazenda.rules.checklist_sanitario import materializar_checklist
 from fazenda.rules.parametros import cronograma_sanitario_dias_aviso, usar_ocorrencia_universal
 from fazenda.rules.projecao_categoria import animais_projetados_na_categoria
 
@@ -317,6 +318,15 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
     for calendario_id, calendario in regras.items():
         if calendario_id not in regras_com_cronograma:
             cronogramas.append(cronograma_aberto(session, calendario))
+
+    # Checklist da Ocorrência (Fase 1, passo 7) — materializa (idempotente,
+    # nunca duplica/reseta) assim que o cronograma existe, no mesmo espírito
+    # de "nasce no ato" do comentário acima. Puramente aditivo: só cria linha
+    # numa tabela nova que ninguém lê ainda fora deste redesenho — sem flag.
+    for cron in cronogramas:
+        evento = eventos_por_id.get(regras[cron.calendario_sanitario_id].evento_sanitario_id)
+        if evento is not None:
+            materializar_checklist(session, cron, evento)
 
     # Trilha do animal (1) para regras por ÉPOCA — só sob a flag (R-1): usa o
     # motor de projeção (R-2, fazenda.rules.projecao_categoria) para sugerir
