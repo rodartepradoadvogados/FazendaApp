@@ -39,7 +39,7 @@ Fechadas em entrevista `/grill-me` de 4 rodadas. Resumo executivo (a especifica�
 | Financeiro vinculado ao evento | `frontend/components/lancamentos/PopupVinculoFinanceiro.tsx`, `lib/vinculoSanitarioFinanceiroBridge.ts` | Hoje só dispara **depois** de aplicado, como popup pontual de 3 opções. Passa a ser um **item de checklist + widget persistente**, disponível durante todo o planejamento (antes de `Realizado`). Reaproveita o modal, mas muda o gatilho (abre a qualquer momento, não só pós-salvar) e adiciona o estado "pendente/preenchido" refletido na tela da Ocorrência. |
 | `frontend/components/lancamentos/FormCalendarioSanitario.tsx` (wizard "Identificação → Critérios → Roteiro → Revisão", hoje em `/protocolos` — Central de Protocolos › Cadastro › Sanitário › Preventivo) | Todo o arquivo | Este é o wizard que causou o bug relatado — `regraVinculadaEventoVida` (linha ~290) resolve qualquer regra já vinculada ao evento e sobrescreve os campos do formulário no efeito de auto-preenchimento (linhas 207-240), sem revalidar quando `regras` termina de carregar depois do `eventoId` já estar setado (condição de corrida). **Será substituído** por um novo wizard no **mesmo local de hoje** (Central de Protocolos, não Configurações — ver seção 3.7), com um passo "Tipo" (Vacina/Exame) antes de "Identificação" e o passo "Critérios" corrigido (banner em vez de sobrescrita). |
 | `frontend/components/CadastroSanitario.tsx` — abas "Evento sanitário" (`CadastroEventosSanitarios`) e "Exames" (`CadastroExames`), hoje também espelhadas em Configurações › Cadastro › Sanitário | Todo o arquivo | Hoje já são cadastros **separados** — `EventoSanitario` (catálogo único vacina/exame, campo `categoria_preventiva`) e `ExameDefinicao` (só decide o formato do resultado: diagnóstico ou numérico+faixa, nunca produto/dose/via). O redesenho **mantém essa separação** (ver seção 3.7) — o erro do protótipo inicial foi ter desenhado uma tabela única; corrigido. |
-| `ExameResultado` (`backend/fazenda/models/sanidade.py:464-492`) | Sem mudança de schema | Continua sendo o destino do resultado de exame — **nunca** `Sanidade`, nunca baixa estoque. A tela nova "Realizar Exame" (seção 3.1, Tela 8b) grava aqui; "Realizar Evento" (vacina/tratamento) continua gravando em `Sanidade`. |
+| `ExameResultado` (`backend/fazenda/models/sanidade.py:464-492`) + `POST /sanidade/calendario/cadastrar-preventivo` (`backend/fazenda/api/routers/sanidade.py:1151-1280`, bloco "3) Diagnóstico/resultado do exame") | Sem mudança de schema — **a lógica de criar `ExameResultado` (inclusive o cálculo de banda por `_banda_numerica`) já existe hoje** neste endpoint, usado hoje pelo lançamento ad-hoc de preventivo. | A tela nova "Realizar Exame" (seção 3.1, Tela 8b) **reaproveita este bloco** (não é lógica nova) — só precisa: (a) passar a chamar dentro do fluxo da Ocorrência (hoje esse endpoint não sabe o que é uma Ocorrência/checklist — é chamado direto do formulário de lançamento); (b) fazer a chamada transicionar a Ocorrência para Realizado. "Realizar Evento" (vacina/tratamento) continua gravando em `Sanidade` via `registrar_aplicacao` (mesmo arquivo, linhas 1242-1255), pelo mesmo raciocínio. |
 | `frontend/app/sanidade/page.tsx` — `CalendarioSanitarioView`, `CronogramasSanitariosView`, `RelatorioEventosVidaView`, `HistoricoPreventivoView`, `AplicacoesView` | Todo o arquivo | Consolidam nas 10 telas não-cadastro da seção 3 (1-9 + 8b). `RelatorioEventosVidaView` (que ganhou o painel de agendamento em lote nesta mesma sessão, PR #759) é o embrião da aba **Animais** da tela **Detalhe da Ocorrência** — muito do código já escrito (seleção de animais, marcar/desmarcar todos, veterinário) é reaproveitável quase directo. |
 | Mobile: `FormSanidade.tsx`, `CalendarioSanitario.tsx`, `Cronogramas.tsx`, `AplicacoesSanidade.tsx` | `frontend/components/mobile/**` | Consolidam nas 10 telas mobile da seção 4 (1-9 + 8b). `Cronogramas.tsx` (Acompanhamento, construído nesta mesma sessão) já implementa boa parte do padrão "cartão expansível com decisão inline" que o novo modelo pede — mesma base, precisa do checklist e dos 4 estados por cima. |
 | `backend/fazenda/api/routers/agenda.py` — dispatch `cronograma_sanitario_*` | Linhas ~2379-2390 | O dispatch por prefixo de `evento_id` continua sendo o mecanismo de decisão (incluir/excluir animal, decidir modo, aplicar) — só precisa de um prefixo novo para as ações de checklist (marcar item cumprido/pulado) e para reabrir. |
@@ -288,7 +288,7 @@ O usuário confirmou explicitamente **manter o cadastro no mesmo lugar de hoje**
 
 Substitui o wizard de 4 passos de hoje. Cada passo entra com uma transição de slide (curva suave, ~220ms) — nunca "pisca" ao trocar de passo, e nunca perde o que já foi digitado ao voltar.
 
-1. **Tipo** — Vacina/Tratamento ou Exame. Decide os campos do passo 2 e qual checklist-padrão (3.7.3/3.4) a Ocorrência herda.
+1. **Tipo** — Vacina/Tratamento ou Exame. `categoria_preventiva` tem hoje 3 valores (`vacina`/`exame`/`tratamento`) — Vacina e Tratamento usam exatamente os mesmos campos (produto/dose/via, escrevem em `Sanidade`, mesmo checklist-padrão), então dividem o mesmo botão/bucket no passo 1; só Exame é visualmente e estruturalmente diferente (sem produto/dose/via, escreve em `ExameResultado`). Decide os campos do passo 2 e qual checklist-padrão (3.7.3/3.4) a Ocorrência herda.
 2. **Identificação** — nome do evento (ou selecionar um já cadastrado do mesmo tipo) + doença.
    - **Vacina**: produto padrão, dose padrão, via padrão (opcionais — Regra e Realização ainda podem sobrescrever).
    - **Exame**: vincular um `ExameDefinicao` já cadastrado, **ou** criar um novo inline (nome do exame + tipo de resultado diagnóstico/numérico + faixa min/máx quando numérico) — sem sair do wizard.
@@ -465,6 +465,11 @@ Azul para Confirmado e verde para Realizado (nunca dois tons da mesma cor) — r
 **R-7 — Verificar se o cadastro de lote de compra (Estoque, Fase G/FIFO) já grava data de validade — pré-requisito do gate "lote vencido bloqueia".**
 - *Ação*: 1 investigação de 15 minutos antes de começar a Fase 4 (Realizar Evento) — ler `backend/fazenda/models/estoque.py` e confirmar o campo. Se não existir, é um campo a mais no cadastro de lote (baixo esforço), não redesenho.
 
+**R-9 — "Realizar Exame" (Tela 8b) precisa encaixar uma lógica de backend que já existe (criação de `ExameResultado`, ver seção 2) dentro do ciclo de estados da Ocorrência, que não existe ainda.**
+- *Gap*: `POST /sanidade/calendario/cadastrar-preventivo` já sabe criar `ExameResultado` com banda calculada, mas foi escrito para o lançamento ad-hoc de hoje — não sabe o que é uma Ocorrência, checklist ou o estado `Confirmado`.
+- *Risco*: baixo (a lógica de negócio do resultado do exame já está testada em produção) — o risco real é só esquecer de conectar a chamada à transição `Confirmado → Realizado` e tratar como se fosse reescrever o endpoint do zero.
+- *Mitigação*: reaproveitar o bloco "3) Diagnóstico/resultado do exame" como está; a Fase 4 (seção 7) só precisa chamá-lo a partir da Ocorrência e, na resposta, mudar o estado.
+
 **R-8 — Motivo do "não-conformidade de 100%" da banca de personas (91%/90%) já foi resolvido no texto final — não é risco de implementação, é registro de decisão de produto.**
 - *Ação nenhuma*: os pontos de divergência (seção 3 do resultado do gauntlet-loop, já incorporados nos textos das seções 3 e 4 deste documento) foram todos resolvidos antes de chegar aqui.
 
@@ -477,6 +482,7 @@ Azul para Confirmado e verde para Realizado (nunca dois tons da mesma cor) — r
 - Painel consolidado de adesão entre fazendas-cliente (visão multi-tenant para cooperativas) — fora da arquitetura multi-tenant isolada atual.
 - Taxa real de uso do scanner de lote em campo (mobile) — monitorar pós-lançamento.
 - Sem migração dos cronogramas hoje abertos — recriação manual pelo usuário.
+- **Espelho em Configurações › Cadastro › Sanitário** (`CadastroSanitario.tsx`, abas "Evento sanitário" e "Exames", mesmo componente/endpoint da Central de Protocolos): decisão de manter, simplificar ou remover esse segundo caminho **não foi tomada** — perguntada ao usuário e ainda sem resposta. Não bloqueia a implementação (é um caminho redundante para o mesmo dado, não a fonte da verdade), mas precisa de decisão antes da Fase 6 (corte e comunicação) para não deixar uma tela "órfã" apontando para um fluxo que não existe mais.
 
 ---
 
@@ -498,7 +504,7 @@ Ordem pensada para nunca deixar o sistema num estado pior do que o atual entre f
 9. Testes de backend cobrindo os 4 estados + reabertura + desconsiderar, espelhando o padrão de testes já existente (`backend/tests/test_cronograma_sanitario.py`, `test_calendario_sanitario.py`).
 
 ### Fase 2 — Site: telas 1-2 (Calendário + Detalhe)
-10. Substituir `FormCalendarioSanitario.tsx` (cadastro de Regra) — remover o efeito de auto-preenchimento que causa o bug relatado; sem "usa_cronograma" como checkbox.
+10. Substituir `FormCalendarioSanitario.tsx` pelo wizard novo de 5 passos (Tipo → Identificação → Critérios → Checklist → Revisão, com transição em slide entre passos — seção 3.7.0), **no mesmo lugar de hoje** (Central de Protocolos › Cadastro › Sanitário › Preventivo, `frontend/app/protocolos/page.tsx` — não mover para Configurações). Remove o efeito de auto-preenchimento que causa o bug relatado no passo "Critérios" (banner em vez de sobrescrita); sem "usa_cronograma" como checkbox. Passo "Tipo" só distingue Vacina/Tratamento vs. Exame (mesmo bucket para os dois primeiros — ver nota da seção 3.7.0). Inclui a tela de lista (Eventos + Regras cadastradas) como ponto de entrada antes do wizard.
 11. Reescrever `CalendarioSanitarioView` como a tela 1 (indicadores + tabela com os 4 estados coloridos).
 12. Construir a tela 2 (Detalhe da Ocorrência) reaproveitando o painel de seleção de animais já existente em `RelatorioEventosVidaView` (construído nesta mesma sessão) para a aba Animais.
 13. Construir a aba Checklist (consumindo a API da Fase 1) com o item do veterinário (Sim/Não + alerta persistente).
@@ -507,17 +513,20 @@ Ordem pensada para nunca deixar o sistema num estado pior do que o atual entre f
 14. Adaptar `PopupVinculoFinanceiro`/`vinculoSanitarioFinanceiroBridge` para o widget persistente (novo gatilho: qualquer momento, não só pós-aplicação).
 15. Modais: Incluir fora da janela, Pular item, Desconsiderar cronograma, Reabrir (a maioria é CRUD simples sobre o que já existe nas Fases 1-2).
 
-### Fase 4 — Site: Realizar Evento + Vencidos
-16. Tela Realizar Evento: campos de dose/via/responsável por animal (novos no registro de `Sanidade` — migração de coluna), gate de lote vencido/a vencer (depende de R-7).
+### Fase 4 — Site: Realizar Evento + Realizar Exame + Vencidos
+16. Tela Realizar Evento (Vacina/Tratamento): campos de dose/via/responsável por animal (novos no registro de `Sanidade` — migração de coluna), gate de lote vencido/a vencer (depende de R-7).
+16b. Tela Realizar Exame (seção 3.2.8b): reaproveita o bloco "3) Diagnóstico/resultado do exame" de `cadastrar_preventivo` (R-9) — chame-o a partir da Ocorrência (não do formulário ad-hoc atual) e, na resposta, transicione o estado para Realizado. Sem lote/dose/via/estoque na tela — reforçar isso no texto fixo (ver seção 3.2.8b).
 17. Relatório de Eventos Vencidos (query simples: data prevista passada + estado ≠ realizado) + Dispensar.
 
 ### Fase 5 — Mobile
 18. Reaproveitar `Cronogramas.tsx` (Acompanhamento, já construído nesta sessão) como base da tela 2 mobile — adicionar checklist e os 4 estados por cima.
 19. Home mobile (cards com os 4 estados coloridos) — reaproveitar `CalendarioSanitario.tsx` mobile como base.
 20. Realizar Evento mobile (cartão cheio por animal) + offline-first (checklist, incluir fora da janela, realizar evento, foto financeira) — depende de R-3 (conciliação de estoque) estar pronta no backend.
+20b. Realizar Exame mobile (seção 4.2, mesmo padrão de tela cheia por animal, sem lote/dose/via/estoque) — reaproveita o endpoint da Fase 4/passo 16b; não depende de R-3 (nunca toca estoque).
 21. Login por PIN (se ainda não existir no app) — verificar mecanismo de autenticação atual antes de estimar esforço.
 
 ### Fase 6 — Corte e comunicação
+21b. Decidir o destino do espelho em Configurações › Cadastro › Sanitário (pendência da seção 6, sem resposta do usuário ainda) — manter, simplificar ou remover, antes do corte.
 22. Ligar a feature flag por fazenda (R-1) depois de rodar a "saúde do cadastro" (Regras sem produto/dose).
 23. Comunicar a mudança ao usuário (changelog) — não é incremento silencioso, é um modelo novo.
 24. Usuário recria manualmente os cronogramas de teste que hoje estão travados (decisão já tomada — sem migração).
