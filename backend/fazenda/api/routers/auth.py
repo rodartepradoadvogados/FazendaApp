@@ -23,7 +23,7 @@ from fazenda.auth import (
 )
 from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
 from fazenda.config import settings
-from fazenda.database import engine_manutencao, get_session
+from fazenda.database import get_session, sessao_sem_recorte_de_fazenda
 from fazenda.models import ContratoFazendaModulo, Fazenda, LoginAcesso, Pessoa, Usuario, UsuarioFazenda
 from fazenda.rules.email import enviar_email
 
@@ -94,12 +94,12 @@ def _publico(u: Usuario, session: Session | None = None) -> dict:
     pessoa_nome = None
     pessoa_tipo = None
     if u.pessoa_id and session is not None:
-        # engine_manutencao, não `session`: é a Pessoa DESTE usuário, um id
-        # já conhecido — segurança real. Pela `session` (RLS-bound), sob RLS
-        # isto nega em silêncio sempre que chamado antes de uma fazenda
-        # selecionada (login) — incidente de 11/09/2026, ver
-        # docs/security-audit/roteiro-seguranca.md.
-        with Session(engine_manutencao) as sm:
+        # sessao_sem_recorte_de_fazenda, não `session` direto: é a Pessoa
+        # DESTE usuário, um id já conhecido — segurança real. Pela `session`
+        # (RLS-bound), sob RLS isto nega em silêncio sempre que chamado
+        # antes de uma fazenda selecionada (login) — incidente de
+        # 11/09/2026, ver docs/security-audit/roteiro-seguranca.md.
+        with sessao_sem_recorte_de_fazenda(session) as sm:
             pessoa = sm.get(Pessoa, u.pessoa_id)
         pessoa_nome = pessoa.nome if pessoa else None
         # CSV de TipoPessoa.nome (ex.: "Empreiteiro" ou "Funcionário,Diarista")
@@ -223,8 +223,8 @@ def _fazenda_do_novo_usuario(session: Session, pessoa_id: int | None, fazenda_id
 
 
 def _fazendas_vinculadas(session: Session, usuario_id: int) -> list[Fazenda]:
-    """`engine_manutencao`, não a `session` (RLS-bound) recebida — de
-    propósito, e não um descuido. Esta função existe exatamente para
+    """`sessao_sem_recorte_de_fazenda`, não a `session` recebida direto —
+    de propósito, e não um descuido. Esta função existe exatamente para
     ENUMERAR AS FAZENDAS deste usuário ANTES de qualquer uma estar
     selecionada (chamada por login()/`_opcoes_de_conta`, sem contexto de
     fazenda ainda) — sob RLS, a mesma consulta pela `session` da requisição
@@ -232,7 +232,7 @@ def _fazendas_vinculadas(session: Session, usuario_id: int) -> list[Fazenda]:
     existe). `usuario_id` já é o recorte de segurança real (mesmo
     raciocínio das rotinas de fundo, roteiro-seguranca.md seção 2) —
     incidente de 11/09/2026 que derrubou o login em produção."""
-    with Session(engine_manutencao) as sm:
+    with sessao_sem_recorte_de_fazenda(session) as sm:
         vinculos = sm.exec(select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == usuario_id)).all()
         fazendas = [sm.get(Fazenda, v.fazenda_id) for v in vinculos]
         return [f for f in fazendas if f and f.ativa]
@@ -259,15 +259,15 @@ def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None, session:
     # banco à mão) devolve lista vazia — o frontend trata ausência do campo
     # como "sem restrição conhecida", nunca escondendo por engano.
     #
-    # A leitura em si vai por `engine_manutencao`, não pela `session`
-    # recebida: esta função é chamada tanto com fazenda já selecionada
-    # (GET /auth/me, contexto bate) quanto ANTES de selecionar
+    # A leitura em si vai por `sessao_sem_recorte_de_fazenda`, não pela
+    # `session` recebida direto: esta função é chamada tanto com fazenda já
+    # selecionada (GET /auth/me, contexto bate) quanto ANTES de selecionar
     # (login()/selecionar_fazenda(), sem contexto nenhum ainda) — sob RLS,
     # o segundo caso negava em silêncio (incidente de 11/09/2026). O filtro
     # explícito em `fazenda_id == f.id` já é o recorte de segurança real.
     modulos: list[str] = []
     if session is not None:
-        with Session(engine_manutencao) as sm:
+        with sessao_sem_recorte_de_fazenda(session) as sm:
             modulos = sorted(
                 m.modulo for m in sm.exec(
                     select(ContratoFazendaModulo).where(
@@ -289,14 +289,13 @@ def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None, session:
 
 
 def _vinculo(session: Session, usuario_id: int, fazenda_id: int) -> UsuarioFazenda | None:
-    """`engine_manutencao`, não a `session` recebida (parâmetro mantido só
-    por compatibilidade de assinatura com os chamadores) — chamada tanto com
-    fazenda já selecionada (GET /auth/me, contexto bate) quanto ANTES de
-    selecionar (login()/selecionar_fazenda()), onde sob RLS a mesma consulta
-    pela `session` da requisição negava em silêncio (incidente de
-    11/09/2026). `usuario_id`+`fazenda_id`, os dois explícitos no filtro, já
-    são o recorte de segurança real."""
-    with Session(engine_manutencao) as sm:
+    """`sessao_sem_recorte_de_fazenda`, não a `session` recebida direto —
+    chamada tanto com fazenda já selecionada (GET /auth/me, contexto bate)
+    quanto ANTES de selecionar (login()/selecionar_fazenda()), onde sob RLS
+    a mesma consulta pela `session` da requisição negava em silêncio
+    (incidente de 11/09/2026). `usuario_id`+`fazenda_id`, os dois explícitos
+    no filtro, já são o recorte de segurança real."""
+    with sessao_sem_recorte_de_fazenda(session) as sm:
         return sm.exec(
             select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == usuario_id, UsuarioFazenda.fazenda_id == fazenda_id)
         ).first()

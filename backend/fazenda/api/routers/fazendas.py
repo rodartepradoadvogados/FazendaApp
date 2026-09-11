@@ -19,7 +19,7 @@ from sqlmodel import Session, select
 from fazenda.auth import (
     eh_email_dono_equivalente, exigir_contratante_ou_dono, exigir_dono, get_current_user, get_fazenda_atual_id,
 )
-from fazenda.database import engine_manutencao, get_session
+from fazenda.database import get_session, sessao_sem_recorte_de_fazenda
 from fazenda.models import (
     CentroCusto, ContaCorrente, ContratoAnexo, ContratoAssinaturaZapSign, ContratoFazenda, ContratoFazendaModulo,
     EmpresaOperadora, Fazenda, PrecoModulo, Usuario, UsuarioFazenda,
@@ -165,18 +165,17 @@ def listar_fazendas(_: Usuario = Depends(exigir_dono), session: Session = Depend
 
 
 @router.get("/minhas")
-def minhas_fazendas(user: Usuario = Depends(get_current_user), _session: Session = Depends(get_session)) -> list[dict]:
+def minhas_fazendas(user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> list[dict]:
     """Fazendas vinculadas ao usuário logado — usado pela tela de "trocar de
     fazenda" (o login já devolve a mesma lista quando há mais de uma).
 
-    Lê por `engine_manutencao`, não pela `_session` da requisição (mantida
-    só para preservar a trava de autenticação `Depends(get_current_user)`,
-    que também depende de `get_session`): esta rota ENUMERA as fazendas do
-    usuário — o mesmo padrão de `api/routers/auth.py::_fazendas_vinculadas`,
-    mesmo incidente de 11/09/2026 (sob RLS, sem uma fazenda já selecionada
-    no token desta requisição, a consulta pela sessão comum nega tudo em
-    silêncio). `usuario_id` já é o recorte de segurança real."""
-    with Session(engine_manutencao) as sm:
+    Lê por `sessao_sem_recorte_de_fazenda`, não pela `session` da
+    requisição direto: esta rota ENUMERA as fazendas do usuário — o mesmo
+    padrão de `api/routers/auth.py::_fazendas_vinculadas`, mesmo incidente
+    de 11/09/2026 (sob RLS, sem uma fazenda já selecionada no token desta
+    requisição, a consulta pela sessão comum nega tudo em silêncio).
+    `usuario_id` já é o recorte de segurança real."""
+    with sessao_sem_recorte_de_fazenda(session) as sm:
         vinculos = sm.exec(select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == user.id)).all()
         fazendas = [sm.get(Fazenda, v.fazenda_id) for v in vinculos]
         return [_publico(f) for f in fazendas if f and f.ativa]

@@ -37,9 +37,6 @@ import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel
 
-import fazenda.api.routers.auth as auth_router
-import fazenda.api.routers.fazendas as fazendas_router
-import fazenda.auth as auth_module
 import fazenda.database as database
 from fazenda.auth import hash_senha
 from fazenda.models import Fazenda, Pessoa, Usuario, UsuarioFazenda
@@ -151,15 +148,14 @@ def client(banco_com_rls, monkeypatch):
     `set_config`, então a política de RLS entra em ação igual a produção."""
     engine_dono, engine_app, fazenda_id, usuario_id = banco_com_rls
 
-    # As funções corrigidas leem `engine_manutencao` do MÓDULO onde foram
-    # importadas (fazenda.auth / api/routers/auth.py / api/routers/
-    # fazendas.py) — sem isto, elas usariam a `engine_manutencao` de
-    # verdade do processo (sem DATABASE_URL_MANUTENCAO no ambiente de
-    # teste, cai na mesma `engine` de sempre, não no `engine_dono` deste
-    # banco descartável), e o teste não provaria nada sobre o bug real.
-    monkeypatch.setattr(auth_module, "engine_manutencao", engine_dono, raising=False)
-    monkeypatch.setattr(auth_router, "engine_manutencao", engine_dono, raising=False)
-    monkeypatch.setattr(fazendas_router, "engine_manutencao", engine_dono, raising=False)
+    # As funções corrigidas leem por `database.sessao_sem_recorte_de_fazenda`,
+    # que só troca de conexão sob Postgres — e aí usa o `engine_manutencao`
+    # do MÓDULO `fazenda.database` (não o `engine_app` deste banco de
+    # teste). Sem este monkeypatch, sem DATABASE_URL_MANUTENCAO no ambiente
+    # de teste, cairia na mesma `engine` de sempre (não o `engine_dono`
+    # deste banco descartável), e o teste não provaria nada sobre o bug
+    # real.
+    monkeypatch.setattr(database, "engine_manutencao", engine_dono)
 
     def _get_session_override():
         with Session(engine_app) as session:

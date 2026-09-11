@@ -3,6 +3,7 @@ Conexão com o banco de dados e criação das tabelas.
 Usa SQLite em desenvolvimento, PostgreSQL em produção (via DATABASE_URL).
 """
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi import Header
@@ -85,6 +86,33 @@ def _montar_engine_manutencao():
 
 
 engine_manutencao = _montar_engine_manutencao()
+
+
+@contextmanager
+def sessao_sem_recorte_de_fazenda(session: Session):
+    """Para leituras que precisam enxergar MAIS DE UMA fazenda na mesma
+    consulta — enumerar os vínculos de um usuário antes de qualquer fazenda
+    selecionada (login, troca de fazenda), ou checar a identidade da Equipe
+    CowData (a Pessoa dela mora na fazenda interna da CowData, quase sempre
+    diferente da fazenda-cliente hoje selecionada). Nunca a defesa real —
+    o filtro explícito em Python (`usuario_id`/`pessoa_id`/`fazenda_id`) já
+    é — só evita que a política de RLS negue em silêncio por falta de
+    contexto (incidente de 11/09/2026, ver roteiro-seguranca.md).
+
+    SÓ troca de conexão sob PostgreSQL, onde RLS existe. Fora dele — a
+    suíte inteira, que roda em SQLite, cada teste com seu próprio engine
+    isolado via `dependency_overrides[get_session]` — devolve a MESMA
+    `session` recebida, sem abrir nada: `engine_manutencao`, sem
+    `DATABASE_URL_MANUTENCAO`, é só um nome a mais para o `engine` do
+    MÓDULO (não o engine isolado que o teste criou), e trocar de conexão
+    ali faria a leitura enxergar um banco vazio, não o que o teste semeou —
+    foi exatamente esse regressão que a primeira versão desta correção
+    causou (71 testes existentes quebrados) antes de ganhar esta guarda."""
+    if session.get_bind().dialect.name != "postgresql":
+        yield session
+        return
+    with Session(engine_manutencao) as sm:
+        yield sm
 
 
 # Migração leve (histórico congelado): colunas adicionadas a tabelas que já
