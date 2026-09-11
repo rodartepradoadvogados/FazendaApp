@@ -15,7 +15,8 @@ from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id, g
 from fazenda.database import get_session
 from fazenda.ordenacao import chave_numero
 from fazenda.models import (
-    Animal, AplicacaoAgendada, CalendarioSanitario, ChecklistItem, ColostragemBezerra, CronogramaSanitario, CronogramaSanitarioAnimal,
+    Animal, AplicacaoAgendada, CalendarioSanitario, CalendarioSanitarioChecklistItem, ChecklistItem, ColostragemBezerra,
+    CronogramaSanitario, CronogramaSanitarioAnimal,
     Doenca, Estoque, EventoRealizado,
     EventoSanitario, ExameDefinicao, ExameResultado, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque,
     Parto, Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
@@ -27,7 +28,10 @@ from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 from fazenda.rules.calendario_visao import montar_calendario_visual
 from fazenda.rules.cronograma_sanitario import cronograma_aberto
-from fazenda.rules.checklist_sanitario import alerta_clinico_ativo, estado_ocorrencia, materializar_checklist
+from fazenda.rules.checklist_sanitario import (
+    alerta_clinico_ativo, checklist_customizado_da_regra, estado_ocorrencia, materializar_checklist,
+    salvar_checklist_da_regra,
+)
 from fazenda.rules.cura_protocolo import protocolo_terminado
 from fazenda.rules.estoque_baixa import (
     baixar as _estoque_baixar, carencia_para_item, devolver as _estoque_devolver,
@@ -692,14 +696,31 @@ def _ultimo_evento_por_produto(session: Session, fazenda_id: int | None) -> dict
     return mapa
 
 
+def _checklist_por_regra(session: Session, fazenda_id: int | None) -> dict[int, list[dict]]:
+    """Checklist customizado (passo 4 do wizard novo, seção 3.7.0) por
+    `calendario_sanitario_id` — usado só para PRÉ-PREENCHER a edição de uma
+    regra no wizard (lista vazia = regra ainda usa o template do tipo
+    dinamicamente, nunca passou pelo wizard novo)."""
+    query = select(CalendarioSanitarioChecklistItem).order_by(CalendarioSanitarioChecklistItem.ordem)
+    if fazenda_id is not None:
+        query = query.where(CalendarioSanitarioChecklistItem.fazenda_id == fazenda_id)
+    mapa: dict[int, list[dict]] = {}
+    for item in session.exec(query).all():
+        mapa.setdefault(item.calendario_sanitario_id, []).append(
+            {"chave": item.chave, "nome": item.nome, "ordem": item.ordem}
+        )
+    return mapa
+
+
 def _serializar(
     c: CalendarioSanitario, eventos: dict, doencas: dict, principios: dict,
     categorias: dict | None = None, ultimos_por_produto: dict[str, dict] | None = None,
-    servicos_financeiro: dict | None = None,
+    servicos_financeiro: dict | None = None, checklist_por_regra: dict[int, list[dict]] | None = None,
 ) -> dict:
     categorias = categorias or {}
     ultimos_por_produto = ultimos_por_produto or {}
     servicos_financeiro = servicos_financeiro or {}
+    checklist_por_regra = checklist_por_regra or {}
     ultimo = ultimos_por_produto.get((c.produto or "").strip().lower()) if c.produto else None
     return {
         **c.model_dump(),
@@ -711,6 +732,7 @@ def _serializar(
         "proxima_ocorrencia": proxima_ocorrencia(c.data_evento, c.frequencia_valor, c.frequencia_unidade).isoformat(),
         "ultimo_evento_data": ultimo["data"] if ultimo else None,
         "ultimo_evento_id": ultimo["id"] if ultimo else None,
+        "checklist_itens": checklist_por_regra.get(c.id, []),
     }
 
 
@@ -728,11 +750,15 @@ def listar_calendario(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session, fazenda_id)
+    checklist_por_regra = _checklist_por_regra(session, fazenda_id)
     query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
     regras = session.exec(query).all()
-    saida = [_serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro) for c in regras]
+    saida = [
+        _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro, checklist_por_regra)
+        for c in regras
+    ]
     if evento_sanitario_id is not None:
         saida = [s for s in saida if s["evento_sanitario_id"] == evento_sanitario_id]
     if data_inicio:
@@ -740,6 +766,12 @@ def listar_calendario(
     if data_fim:
         saida = [s for s in saida if s["proxima_ocorrencia"] <= data_fim]
     return sorted(saida, key=lambda s: s["proxima_ocorrencia"])
+
+
+class ChecklistItemRegraIn(BaseModel):
+    chave: str = "custom"
+    nome: str
+    ordem: int = 0
 
 
 class CalendarioSanitarioIn(BaseModel):
@@ -766,6 +798,11 @@ class CalendarioSanitarioIn(BaseModel):
     # "Já foi realizado?" — quando a 1ª ocorrência é hoje/passada e já aconteceu,
     # marca o evento como realizado (some da Agenda). Não é campo do modelo.
     realizado: bool = False
+    # Passo 4 do wizard novo (seção 3.7.0 do redesenho) — checklist congelado
+    # para esta regra. `None` (padrão) = não veio do wizard novo, não altera
+    # nenhuma customização já existente; lista (mesmo vazia) = substitui por
+    # completo (ver rules.checklist_sanitario.salvar_checklist_da_regra).
+    checklist_itens: list[ChecklistItemRegraIn] | None = None
 
 
 def _validar_calendario(dados: CalendarioSanitarioIn, session: Session, fazenda_id: int | None) -> None:
@@ -845,7 +882,7 @@ def criar_calendario(
     dados: CalendarioSanitarioIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     _validar_calendario(dados, session, fazenda_id)
-    c = CalendarioSanitario(**dados.model_dump(exclude={"realizado"}), fazenda_id=fazenda_id)
+    c = CalendarioSanitario(**dados.model_dump(exclude={"realizado", "checklist_itens"}), fazenda_id=fazenda_id)
     session.add(c)
     session.commit()
     session.refresh(c)
@@ -856,9 +893,14 @@ def criar_calendario(
     # seguintes continuam pendentes normalmente.
     if dados.realizado:
         _marcar_calendario_realizado(session, c)
+    if dados.checklist_itens is not None:
+        salvar_checklist_da_regra(
+            session, c.id, [(i.chave, i.nome, i.ordem) for i in dados.checklist_itens], fazenda_id,
+        )
     eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session, fazenda_id)
-    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro)
+    checklist_por_regra = _checklist_por_regra(session, fazenda_id)
+    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro, checklist_por_regra)
 
 
 @router.put("/calendario/{calendario_id}")
@@ -871,16 +913,21 @@ def atualizar_calendario(
     if not c or (c.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
     _validar_calendario(dados, session, fazenda_id)
-    for campo, valor in dados.model_dump(exclude={"realizado"}).items():
+    for campo, valor in dados.model_dump(exclude={"realizado", "checklist_itens"}).items():
         setattr(c, campo, valor)
     session.add(c)
     session.commit()
     session.refresh(c)
     if dados.realizado:
         _marcar_calendario_realizado(session, c)
+    if dados.checklist_itens is not None:
+        salvar_checklist_da_regra(
+            session, c.id, [(i.chave, i.nome, i.ordem) for i in dados.checklist_itens], fazenda_id,
+        )
     eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session, fazenda_id)
-    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro)
+    checklist_por_regra = _checklist_por_regra(session, fazenda_id)
+    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro, checklist_por_regra)
 
 
 @router.delete("/calendario/{calendario_id}")

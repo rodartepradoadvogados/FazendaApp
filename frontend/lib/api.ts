@@ -4569,6 +4569,17 @@ export async function excluirExame(id: number) {
   return res.json();
 }
 
+// Template de Checklist por Tipo (redesenho do evento sanitário, seção
+// 3.7.3) — só leitura por aqui: ponto de partida do passo 4 do wizard novo
+// de Cadastro (seção 3.7.0), Central de Protocolos > Cadastro > Sanitário >
+// Preventivo.
+export type ChecklistTemplateItemDTO = { chave: string; nome: string; ordem: number };
+export async function fetchChecklistTemplate(tipo: "vacina" | "exame"): Promise<ChecklistTemplateItemDTO[]> {
+  const res = await authFetch(`${API}/cadastro/checklist-template?tipo=${tipo}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Template de checklist error: ${res.status}`);
+  return res.json();
+}
+
 // Resultados de exames (relatório) — GET /sanidade/exames/resultados.
 export type ExameResultado = {
   id: number; numero_matriz: string; evento_sanitario_id: number; evento_sanitario_nome: string | null;
@@ -4774,6 +4785,10 @@ type CalendarioSanitarioPayload = {
   // fazenda/rules/cronograma_sanitario.py): animal que bate o critério entra
   // numa lista de espera em vez de virar pendência de aplicar na hora.
   usa_cronograma?: boolean;
+  // Passo 4 do wizard novo (redesenho, seção 3.7.0) — checklist congelado
+  // para esta regra. Omitir preserva qualquer customização já existente;
+  // mandar (mesmo lista vazia) substitui por completo.
+  checklist_itens?: ChecklistTemplateItemDTO[];
 };
 export async function criarCalendarioSanitario(dados: CalendarioSanitarioPayload) {
   const res = await authFetch(`${API}/sanidade/calendario`, {

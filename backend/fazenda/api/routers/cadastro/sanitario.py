@@ -20,6 +20,7 @@ from fazenda.models import (
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
+from fazenda.rules.checklist_sanitario import template_do_tipo
 
 from ._comum import _crud_nome_ativo
 
@@ -697,5 +698,26 @@ def excluir_exame(
     session.delete(ex)
     session.commit()
     return {"excluido": True, "id": item_id}
+
+
+# ---------------------------------------------------------------------------
+# Template de Checklist por Tipo (seção 3.7.3 do redesenho do evento
+# sanitário) — só leitura por aqui: o passo 4 do wizard novo (seção 3.7.0)
+# usa isto como ponto de partida do checklist de uma regra, mas a edição do
+# template em si (a tela separada da 3.7.3) fica para uma rodada futura, fora
+# de escopo desta (ver docs/redesenho-evento-sanitario.md, seção 6).
+# ---------------------------------------------------------------------------
+TIPOS_TEMPLATE_CHECKLIST = ["vacina", "exame"]
+
+
+@router.get("/checklist-template")
+def listar_checklist_template(
+    tipo: str, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    if tipo not in TIPOS_TEMPLATE_CHECKLIST:
+        raise HTTPException(status_code=400, detail=f"Tipo inválido (use: {', '.join(TIPOS_TEMPLATE_CHECKLIST)})")
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    itens = template_do_tipo(session, tipo, fazenda_id)
+    return [{"chave": i.chave, "nome": i.nome, "ordem": i.ordem} for i in itens]
 
 

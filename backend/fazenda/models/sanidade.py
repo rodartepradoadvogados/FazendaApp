@@ -760,6 +760,28 @@ class ChecklistItem(SQLModel, table=True):
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
+class CalendarioSanitarioChecklistItem(SQLModel, table=True):
+    """Checklist customizado de UMA regra (`CalendarioSanitario`) — passo 4 do
+    wizard de cadastro (seção 3.7.0 do redesenho). Nasce como uma cópia do
+    template do tipo (`ChecklistTemplateItem`) no momento em que a regra é
+    salva pelo wizard novo, ajustável só aqui (adicionar/remover item), sem
+    afetar o template nem outras regras. Regra sem nenhuma linha aqui
+    (cadastrada antes deste wizard, ou nunca editada por ele) continua usando
+    o template do tipo dinamicamente, como sempre — ver
+    checklist_sanitario.materializar_checklist, que só olha aqui depois de
+    confirmar que não há linha nenhuma para a regra."""
+
+    __tablename__ = "calendario_sanitario_checklist_item"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    calendario_sanitario_id: int = Field(foreign_key="calendario_sanitario.id", index=True)
+    chave: str = "custom"
+    nome: str
+    ordem: int = 0
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
 class ServicoCadastro(SQLModel, table=True):
     """
     Serviço cadastrável para lançamento financeiro (ex.: manutenção de trator,

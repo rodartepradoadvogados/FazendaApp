@@ -1456,6 +1456,38 @@ class TestCadastroSanitario:
             assert "Mastite Global" in nomes_doenca
 
 
+class TestChecklistTemplateEndpoint:
+    """GET /cadastro/checklist-template — seção 3.7.3 do redesenho do evento
+    sanitário, consumido pelo passo 4 do wizard novo (seção 3.7.0) como ponto
+    de partida do checklist de uma regra."""
+
+    def _seed_template(self, engine):
+        from fazenda.models import ChecklistTemplateItem
+        with Session(engine) as s:
+            s.add(ChecklistTemplateItem(tipo="vacina", chave="estoque", nome="Estoque suficiente?", ordem=1))
+            s.add(ChecklistTemplateItem(tipo="vacina", chave="vet", nome="Confirmação com o veterinário", ordem=2))
+            s.add(ChecklistTemplateItem(tipo="exame", chave="vet", nome="Confirmação com o veterinário", ordem=1))
+            s.commit()
+
+    def test_lista_itens_do_tipo(self, client):
+        c, engine = client
+        self._seed_template(engine)
+        r = c.get("/cadastro/checklist-template", params={"tipo": "vacina"})
+        assert r.status_code == 200
+        assert [i["chave"] for i in r.json()] == ["estoque", "vet"]
+
+    def test_exame_nao_ve_itens_de_vacina(self, client):
+        c, engine = client
+        self._seed_template(engine)
+        r = c.get("/cadastro/checklist-template", params={"tipo": "exame"})
+        assert [i["chave"] for i in r.json()] == ["vet"]
+
+    def test_tipo_invalido_da_400(self, client):
+        c, engine = client
+        r = c.get("/cadastro/checklist-template", params={"tipo": "tratamento"})
+        assert r.status_code == 400
+
+
 class TestMotivoBaixa:
     """Motivo de baixa (Rebanho > Baixar animal) — mesmo padrão nome+ativo."""
 

@@ -23,7 +23,9 @@ from datetime import datetime
 
 from sqlmodel import Session, or_, select
 
-from fazenda.models import ChecklistItem, ChecklistTemplateItem, CronogramaSanitario, EventoSanitario
+from fazenda.models import (
+    CalendarioSanitarioChecklistItem, ChecklistItem, ChecklistTemplateItem, CronogramaSanitario, EventoSanitario,
+)
 
 
 class ChecklistError(Exception):
@@ -36,22 +38,34 @@ def tipo_template_do_evento(evento: EventoSanitario) -> str:
     return "exame" if evento.categoria_preventiva == "exame" else "vacina"
 
 
-def materializar_checklist(session: Session, cronograma: CronogramaSanitario, evento: EventoSanitario) -> list[ChecklistItem]:
-    """Copia o template padrão do tipo do evento para dentro desta Ocorrência
-    — idempotente: se a Ocorrência já tem itens (em qualquer status), devolve
-    os existentes sem duplicar nem resetar o que já foi respondido."""
-    existentes = session.exec(
-        select(ChecklistItem).where(ChecklistItem.cronograma_id == cronograma.id).order_by(ChecklistItem.ordem)
-    ).all()
-    if existentes:
-        return existentes
+class _ItemFonte:
+    """Formato mínimo comum entre `ChecklistTemplateItem` e
+    `CalendarioSanitarioChecklistItem` — o que `materializar_checklist`
+    precisa de qualquer uma das duas fontes (template do tipo, ou
+    customização da regra) para copiar dentro de uma Ocorrência nova."""
 
-    tipo = tipo_template_do_evento(evento)
+    __slots__ = ("chave", "nome", "ordem")
+
+    def __init__(self, chave: str, nome: str, ordem: int) -> None:
+        self.chave = chave
+        self.nome = nome
+        self.ordem = ordem
+
+
+def template_do_tipo(session: Session, tipo: str, fazenda_id: int | None) -> list[_ItemFonte]:
+    """Itens ativos do template padrão de um tipo (vacina/exame — seção 3.7.3
+    do redesenho), globais (`fazenda_id` nulo) + os que esta fazenda
+    personalizou, mesclados por `chave` (fazenda vence sobre o global,
+    mesma regra de `fazenda.rules.parametros._linha`, aplicada item a item
+    porque cada item tem sua própria "linha"). Usado tanto para materializar
+    o checklist de uma Ocorrência nova (quando a regra não tem customização
+    própria) quanto para semear o passo 4 do wizard de cadastro com o ponto
+    de partida do tipo escolhido no passo 1."""
     query = (
         select(ChecklistTemplateItem)
         .where(ChecklistTemplateItem.tipo == tipo)
         .where(ChecklistTemplateItem.ativo == True)  # noqa: E712
-        .where(or_(ChecklistTemplateItem.fazenda_id == cronograma.fazenda_id, ChecklistTemplateItem.fazenda_id.is_(None)))
+        .where(or_(ChecklistTemplateItem.fazenda_id == fazenda_id, ChecklistTemplateItem.fazenda_id.is_(None)))
         .order_by(ChecklistTemplateItem.ordem)
     )
     template = session.exec(query).all()
@@ -66,13 +80,45 @@ def materializar_checklist(session: Session, cronograma: CronogramaSanitario, ev
         if atual is None or (atual.fazenda_id is None and item.fazenda_id is not None):
             por_chave[item.chave] = item
     ordenados = sorted(por_chave.values(), key=lambda i: i.ordem)
+    return [_ItemFonte(i.chave, i.nome, i.ordem) for i in ordenados]
+
+
+def checklist_customizado_da_regra(session: Session, calendario_sanitario_id: int) -> list[_ItemFonte]:
+    """Checklist que o passo 4 do wizard congelou para ESTA regra (seção
+    3.7.0) — vazio quando a regra nunca passou pelo wizard novo (cadastrada
+    antes dele, ou nunca editada por ele), caso em que `materializar_checklist`
+    cai de volta no template do tipo, dinamicamente, como sempre fez."""
+    itens = session.exec(
+        select(CalendarioSanitarioChecklistItem)
+        .where(CalendarioSanitarioChecklistItem.calendario_sanitario_id == calendario_sanitario_id)
+        .order_by(CalendarioSanitarioChecklistItem.ordem)
+    ).all()
+    return [_ItemFonte(i.chave, i.nome, i.ordem) for i in itens]
+
+
+def materializar_checklist(session: Session, cronograma: CronogramaSanitario, evento: EventoSanitario) -> list[ChecklistItem]:
+    """Copia o checklist desta regra (customizado pelo wizard, seção 3.7.0) —
+    ou, na ausência de customização, o template padrão do tipo do evento —
+    para dentro desta Ocorrência. Idempotente: se a Ocorrência já tem itens
+    (em qualquer status), devolve os existentes sem duplicar nem resetar o
+    que já foi respondido."""
+    existentes = session.exec(
+        select(ChecklistItem).where(ChecklistItem.cronograma_id == cronograma.id).order_by(ChecklistItem.ordem)
+    ).all()
+    if existentes:
+        return existentes
+
+    fonte = checklist_customizado_da_regra(session, cronograma.calendario_sanitario_id)
+    if not fonte:
+        tipo = tipo_template_do_evento(evento)
+        fonte = template_do_tipo(session, tipo, cronograma.fazenda_id)
 
     novos = [
         ChecklistItem(
             cronograma_id=cronograma.id, chave=item.chave, nome=item.nome, ordem=item.ordem,
             fazenda_id=cronograma.fazenda_id,
         )
-        for item in ordenados
+        for item in fonte
     ]
     session.add_all(novos)
     session.commit()
@@ -254,3 +300,34 @@ def estado_ocorrencia(session: Session, cronograma: CronogramaSanitario) -> str:
     itens = session.exec(select(ChecklistItem).where(ChecklistItem.cronograma_id == cronograma.id)).all()
     algum_respondido = any(item.status != "pendente" for item in itens)
     return "em_edicao" if algum_respondido else "provavel"
+
+
+def salvar_checklist_da_regra(
+    session: Session, calendario_sanitario_id: int, itens: list[tuple[str, str, int]] | None, fazenda_id: int | None,
+) -> None:
+    """Passo 4 do wizard de cadastro (seção 3.7.0) — grava o checklist
+    congelado desta regra, substituindo por completo qualquer customização
+    anterior. `itens is None` significa "o wizard não passou pelo passo de
+    checklist" (chamada antiga, fora do wizard novo) — não toca em nada,
+    preservando uma customização já existente. Lista vazia (`[]`) É uma
+    escolha válida do usuário (removeu todos os itens no passo 4) e some com
+    a customização anterior, se houver — a partir daí `materializar_checklist`
+    cai de volta no template do tipo dinamicamente para esta regra, igual a
+    uma regra que nunca passou pelo wizard novo."""
+    if itens is None:
+        return
+    existentes = session.exec(
+        select(CalendarioSanitarioChecklistItem)
+        .where(CalendarioSanitarioChecklistItem.calendario_sanitario_id == calendario_sanitario_id)
+    ).all()
+    for item in existentes:
+        session.delete(item)
+    novos = [
+        CalendarioSanitarioChecklistItem(
+            calendario_sanitario_id=calendario_sanitario_id, chave=chave, nome=nome, ordem=ordem,
+            fazenda_id=fazenda_id,
+        )
+        for chave, nome, ordem in itens
+    ]
+    session.add_all(novos)
+    session.commit()

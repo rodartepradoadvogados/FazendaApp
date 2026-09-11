@@ -10,10 +10,13 @@ from datetime import date, datetime
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
-from fazenda.models import CalendarioSanitario, ChecklistTemplateItem, CronogramaSanitario, EventoSanitario
+from fazenda.models import (
+    CalendarioSanitario, CalendarioSanitarioChecklistItem, ChecklistTemplateItem, CronogramaSanitario, EventoSanitario,
+)
 from fazenda.rules.checklist_sanitario import (
     ChecklistError,
     checklist_completo,
+    checklist_customizado_da_regra,
     confirmado,
     confirmar_horario,
     desconsiderar_cronograma,
@@ -22,6 +25,8 @@ from fazenda.rules.checklist_sanitario import (
     marcar_pulado,
     materializar_checklist,
     responder_veterinario,
+    salvar_checklist_da_regra,
+    template_do_tipo,
     tipo_template_do_evento,
 )
 
@@ -119,6 +124,84 @@ class TestMaterializarChecklist:
         itens2 = materializar_checklist(session, cron, evento)
         assert len(itens2) == 5
         assert itens2[0].status == "cumprido"  # não voltou a "pendente"
+
+    def test_regra_sem_customizacao_usa_template_do_tipo(self, session):
+        """Regra cadastrada antes do wizard novo (seção 3.7.0) — sem nenhuma
+        linha em CalendarioSanitarioChecklistItem — continua usando o
+        template do tipo dinamicamente, como sempre (comportamento antigo
+        preservado)."""
+        cron, evento = _cronograma_vacina(session)
+        itens = materializar_checklist(session, cron, evento)
+        assert [i.chave for i in itens] == ["estoque", "vet", "horario", "lotes", "financeiro"]
+
+    def test_regra_customizada_pelo_wizard_ignora_template_do_tipo(self, session):
+        """Passo 4 do wizard (seção 3.7.0) — regra com checklist próprio
+        (menos itens, ordem diferente) usa exatamente o que foi congelado
+        para ela, não o template do tipo."""
+        cron, evento = _cronograma_vacina(session)
+        session.add(CalendarioSanitarioChecklistItem(
+            calendario_sanitario_id=cron.calendario_sanitario_id, chave="vet", nome="Confirmação com o veterinário", ordem=1,
+        ))
+        session.add(CalendarioSanitarioChecklistItem(
+            calendario_sanitario_id=cron.calendario_sanitario_id, chave="custom", nome="Verificar cerca do curral", ordem=2,
+        ))
+        session.commit()
+        itens = materializar_checklist(session, cron, evento)
+        assert [i.chave for i in itens] == ["vet", "custom"]
+        assert itens[1].nome == "Verificar cerca do curral"
+
+    def test_customizacao_de_outra_regra_nao_afeta_esta(self, session):
+        """Ajustar o checklist de UMA regra não muda o de outra — mesma
+        independência que o template tem de cada Ocorrência (seção 3.7.0)."""
+        cron1, evento1 = _cronograma_vacina(session)
+        cron2, evento2 = _cronograma_exame(session)
+        session.add(CalendarioSanitarioChecklistItem(
+            calendario_sanitario_id=cron1.calendario_sanitario_id, chave="vet", nome="Só o vet", ordem=1,
+        ))
+        session.commit()
+        itens1 = materializar_checklist(session, cron1, evento1)
+        itens2 = materializar_checklist(session, cron2, evento2)
+        assert [i.chave for i in itens1] == ["vet"]
+        assert [i.chave for i in itens2] == ["vet", "horario", "lotes", "financeiro"]  # template de exame, intocado
+
+
+class TestTemplateDoTipo:
+    def test_fazenda_personaliza_um_item_sem_duplicar(self, session):
+        session.add(ChecklistTemplateItem(tipo="vacina", chave="estoque", nome="Estoque ok?", ordem=1, fazenda_id=7))
+        session.commit()
+        itens = template_do_tipo(session, "vacina", fazenda_id=7)
+        assert [i.chave for i in itens] == ["estoque", "vet", "horario", "lotes", "financeiro"]
+        assert next(i for i in itens if i.chave == "estoque").nome == "Estoque ok?"  # a da fazenda, não a global
+
+    def test_outra_fazenda_nao_ve_personalizacao_alheia(self, session):
+        session.add(ChecklistTemplateItem(tipo="vacina", chave="estoque", nome="Estoque ok?", ordem=1, fazenda_id=7))
+        session.commit()
+        itens = template_do_tipo(session, "vacina", fazenda_id=99)
+        assert next(i for i in itens if i.chave == "estoque").nome == "Estoque suficiente?"  # a global
+
+
+class TestSalvarChecklistDaRegra:
+    def test_none_preserva_customizacao_existente(self, session):
+        cron, _ = _cronograma_vacina(session)
+        salvar_checklist_da_regra(session, cron.calendario_sanitario_id, [("vet", "Só o vet", 1)], fazenda_id=None)
+        salvar_checklist_da_regra(session, cron.calendario_sanitario_id, None, fazenda_id=None)
+        restantes = checklist_customizado_da_regra(session, cron.calendario_sanitario_id)
+        assert [i.chave for i in restantes] == ["vet"]
+
+    def test_lista_vazia_remove_customizacao_e_volta_ao_template(self, session):
+        cron, evento = _cronograma_vacina(session)
+        salvar_checklist_da_regra(session, cron.calendario_sanitario_id, [("vet", "Só o vet", 1)], fazenda_id=None)
+        salvar_checklist_da_regra(session, cron.calendario_sanitario_id, [], fazenda_id=None)
+        assert checklist_customizado_da_regra(session, cron.calendario_sanitario_id) == []
+        itens = materializar_checklist(session, cron, evento)
+        assert [i.chave for i in itens] == ["estoque", "vet", "horario", "lotes", "financeiro"]
+
+    def test_salvar_de_novo_substitui_por_completo(self, session):
+        cron, _ = _cronograma_vacina(session)
+        salvar_checklist_da_regra(session, cron.calendario_sanitario_id, [("vet", "Vet", 1), ("custom", "A", 2)], fazenda_id=None)
+        salvar_checklist_da_regra(session, cron.calendario_sanitario_id, [("horario", "Hora", 1)], fazenda_id=None)
+        restantes = checklist_customizado_da_regra(session, cron.calendario_sanitario_id)
+        assert [i.chave for i in restantes] == ["horario"]
 
 
 class TestItensComComportamentoEspecial:
