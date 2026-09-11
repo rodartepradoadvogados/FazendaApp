@@ -7,7 +7,7 @@ import {
   fetchCalendarioVisao, type JanelaCalendario, type JanelaCalendarioEvento,
   fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
   fetchResultadosExame, atualizarResultadoExame, type ExameResultado,
-  fetchMedicamentos,
+  fetchMedicamentos, fetchPessoas, cadastrarPreventivo,
   fetchRastreabilidadeSanitaria, type LinhaRastreabilidadeSanitaria,
 } from "@/lib/api";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -22,6 +22,7 @@ import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import type { AnimalRow } from "@/components/AnimalModal";
 import { HistoricoPreventivoView } from "@/components/sanidade/HistoricoPreventivoView";
+import { PopupVinculoFinanceiro, type OrigemPopupVinculo } from "@/components/lancamentos/PopupVinculoFinanceiro";
 import CatalogoFarmaciaConsulta from "@/components/sanidade/CatalogoFarmaciaConsulta";
 import RemediosPorDoenca from "@/components/RemediosPorDoenca";
 import { casaBusca } from "@/lib/busca";
@@ -111,10 +112,39 @@ function RelatorioEventosVidaView({
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
 
+  // ── Agendamento em lote a partir da janela de aplicação (pedido do usuário,
+  // 10/09/2026): ver quem compõe a janela DESTA vacina, marcar quem vai
+  // receber (todos "na janela" por padrão, ajustável), escolher data/hora/
+  // veterinário e agendar — reaproveita o mesmo POST
+  // /sanidade/calendario/cadastrar-preventivo que Lançamentos > Sanitário >
+  // Preventivo usa, com frequencia_valor=0 (não cria uma regra de "época":
+  // este evento já é regido pelo gatilho/janela cadastrados em
+  // EventoSanitario). Só se aplica a evento cadastrado (não ao gatilho
+  // avulso) e a vacina/tratamento — exame continua lançado em Lançamentos,
+  // que já pede o diagnóstico.
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [dataAgendamento, setDataAgendamento] = useState(() => new Date().toISOString().slice(0, 10));
+  const [horaAgendamento, setHoraAgendamento] = useState("");
+  const [pessoas, setPessoas] = useState<any[]>([]);
+  const [veterinarioId, setVeterinarioId] = useState("");
+  const [produtoAg, setProdutoAg] = useState("");
+  const [doseAg, setDoseAg] = useState("");
+  const [unidadeAg, setUnidadeAg] = useState("");
+  const [aplicadoAgora, setAplicadoAgora] = useState(false);
+  const [salvandoAgendamento, setSalvandoAgendamento] = useState(false);
+  const [msgAgendamento, setMsgAgendamento] = useState<{ tipo: "ok" | "erro"; txt: string } | null>(null);
+  const [popupOrigem, setPopupOrigem] = useState<OrigemPopupVinculo | null>(null);
+
   useEffect(() => {
     fetchEventosSanitarios().then((d: any[]) => setEventos(d.filter((e) => e.tipo_agendamento === "evento" && e.gatilho))).catch(() => {});
     fetchEventosVidaVocabulario().then(setGatilhosVida).catch(() => {});
+    fetchPessoas().then(setPessoas).catch(() => setPessoas([]));
   }, []);
+  const veterinarios = useMemo(
+    () => pessoas.filter((p) => p.ativo !== false && (p.tipos || []).some((t: string) => ["Veterinário", "Zootecnista"].includes(t)))
+      .sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
+    [pessoas]
+  );
 
   // Assim que a lista de eventos/gatilhos chega, escolhe um padrão (o 1º evento
   // cadastrado por evento, senão o 1º evento de vida) para já mostrar o
@@ -154,6 +184,75 @@ function RelatorioEventosVidaView({
   }));
 
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+
+  // Evento cadastrado escolhido (objeto completo, não só o resumo de `eventos`)
+  // — só existe quando o filtro é por evento cadastrado, nunca por gatilho avulso.
+  const eventoSelecionado = eventos.find((e) => String(e.id) === eventoSanitarioId) as any;
+  const categoriaPreventiva: string | null = eventoSelecionado?.categoria_preventiva ?? null;
+  // Agendamento em lote só faz sentido para vacina/tratamento (produto+dose) de
+  // um evento já cadastrado — exame segue tendo seu próprio fluxo de
+  // diagnóstico em Lançamentos > Sanitário > Preventivo.
+  const podeAgendar = !!eventoSanitarioId && categoriaPreventiva !== "exame" && categoriaPreventiva !== null;
+
+  // Ao trocar de evento, pré-preenche produto/dose/unidade/veterinário com o
+  // padrão cadastrado (editável na hora) e limpa a seleção anterior.
+  useEffect(() => {
+    setProdutoAg(eventoSelecionado?.produto_padrao || "");
+    setDoseAg(eventoSelecionado?.dose_padrao != null ? String(eventoSelecionado.dose_padrao) : "");
+    setUnidadeAg(eventoSelecionado?.unidade_padrao || "");
+    setVeterinarioId(eventoSelecionado?.veterinario_padrao_pessoa_id ? String(eventoSelecionado.veterinario_padrao_pessoa_id) : "");
+    setSelecionados(new Set());
+    setMsgAgendamento(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventoSanitarioId]);
+
+  // A cada busca, pré-seleciona quem já está "na janela" — o usuário ajusta
+  // (desmarca/marca) a partir daí, sem precisar marcar um por um.
+  useEffect(() => {
+    if (!resultado) return;
+    setSelecionados(new Set(resultado.animais.filter((a) => a.situacao_janela === "na_janela").map((a) => a.numero_matriz)));
+  }, [resultado]);
+
+  const toggleSelecionado = (n: string) => setSelecionados((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  const todosMarcados = !!resultado?.animais.length && resultado.animais.every((a) => selecionados.has(a.numero_matriz));
+  const alternarTodos = () => setSelecionados(todosMarcados ? new Set() : new Set((resultado?.animais || []).map((a) => a.numero_matriz)));
+
+  async function agendar() {
+    setMsgAgendamento(null);
+    if (!eventoSanitarioId) { setMsgAgendamento({ tipo: "erro", txt: "Escolha um evento sanitário cadastrado." }); return; }
+    if (!selecionados.size) { setMsgAgendamento({ tipo: "erro", txt: "Selecione ao menos um animal." }); return; }
+    if (!dataAgendamento) { setMsgAgendamento({ tipo: "erro", txt: "Informe a data." }); return; }
+    if (!produtoAg || doseAg.trim() === "" || !(Number(doseAg) > 0) || !unidadeAg) {
+      setMsgAgendamento({ tipo: "erro", txt: "Informe o medicamento, a dose e a unidade." }); return;
+    }
+    const vet = veterinarios.find((p) => String(p.id) === veterinarioId);
+    setSalvandoAgendamento(true);
+    try {
+      const r = await cadastrarPreventivo({
+        evento_sanitario_id: Number(eventoSanitarioId), categoria_alvo: null, data_evento: dataAgendamento,
+        frequencia_valor: 0, frequencia_unidade: "meses",
+        animais: Array.from(selecionados), aplicar: true, aplicado: aplicadoAgora,
+        veterinario: vet?.nome || null, responsavel: vet?.nome || null,
+        observacao: horaAgendamento ? `Horário: ${horaAgendamento}` : null,
+        produto: produtoAg, dose: Number(doseAg), unidade: unidadeAg,
+      });
+      const n = r?.aplicacao ? (r.aplicacao.criados || r.aplicacao.agendadas || 0) : 0;
+      setMsgAgendamento({ tipo: "ok", txt: `${n} animal(is) ${aplicadoAgora ? "registrado(s) como aplicado" : "programado(s) na Agenda"}.` });
+      if (categoriaPreventiva === "vacina" && r?.aplicacao?.sanidade_ids?.length) {
+        setPopupOrigem({
+          tipo: "sanidade", ids: r.aplicacao.sanidade_ids,
+          produto: `Vacina — ${resultado?.evento_sanitario_nome || eventoSelecionado?.nome || ""}`,
+          data: dataAgendamento, responsavel: vet?.nome || null,
+        });
+      }
+      setSelecionados(new Set());
+      buscar();
+    } catch (e: any) {
+      setMsgAgendamento({ tipo: "erro", txt: e.message });
+    } finally {
+      setSalvandoAgendamento(false);
+    }
+  }
 
   return (
     <>
@@ -201,6 +300,11 @@ function RelatorioEventosVidaView({
           <div className="overflow-x-auto" style={{ maxHeight: "480px" }}>
             <table className="fazenda-table">
               <thead><tr>
+                {podeAgendar && (
+                  <th style={{ width: 28 }}>
+                    <input type="checkbox" checked={todosMarcados} onChange={alternarTodos} title="Marcar/desmarcar todos" />
+                  </th>
+                )}
                 <ThOrdenavel label="Nº" campo="numero_matriz" coluna={coluna} dir={dir} ordenar={ordenar} />
                 <ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} />
                 <ThOrdenavel label="Lote" campo="grupo_primario" coluna={coluna} dir={dir} ordenar={ordenar} />
@@ -212,6 +316,11 @@ function RelatorioEventosVidaView({
               <tbody>
                 {linhasOrdenadas.map((a) => (
                   <tr key={a.numero_matriz} onClick={() => { window.location.href = `/rebanho?aba=ficha&numero=${encodeURIComponent(a.numero_matriz)}`; }} style={{ cursor: "pointer" }}>
+                    {podeAgendar && (
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <input type="checkbox" checked={selecionados.has(a.numero_matriz)} onChange={() => toggleSelecionado(a.numero_matriz)} />
+                      </td>
+                    )}
                     <td style={{ fontWeight: 700 }}>{a.numero_matriz}</td>
                     <td style={{ fontSize: "0.78rem" }}>{a.nome || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{a.grupo_primario || "—"}</td>
@@ -233,12 +342,51 @@ function RelatorioEventosVidaView({
                     )}
                   </tr>
                 ))}
-                {!resultado.animais.length && <tr><td colSpan={temJanela ? 7 : 6} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum animal encontrado.</td></tr>}
+                {!resultado.animais.length && <tr><td colSpan={(temJanela ? 7 : 6) + (podeAgendar ? 1 : 0)} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum animal encontrado.</td></tr>}
               </tbody>
             </table>
           </div>
+
+          {podeAgendar && (
+            <div style={{ marginTop: "1rem", borderTop: "1px solid var(--border)", paddingTop: "0.9rem" }}>
+              <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.6rem" }}>
+                Agendar aplicação — {selecionados.size} de {resultado.animais.length} animal(is) selecionado(s)
+              </p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Medicamento</label>
+                  <input style={selStyle} value={produtoAg} onChange={(e) => setProdutoAg(e.target.value)} placeholder="Produto" /></div>
+                <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Dose</label>
+                  <input type="number" inputMode="decimal" style={selStyle} value={doseAg} onChange={(e) => setDoseAg(e.target.value)} /></div>
+                <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Unidade</label>
+                  <input style={selStyle} value={unidadeAg} onChange={(e) => setUnidadeAg(e.target.value)} placeholder="mL, dose…" /></div>
+                <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Veterinário</label>
+                  <select style={selStyle} value={veterinarioId} onChange={(e) => setVeterinarioId(e.target.value)}>
+                    <option value="">Opcional</option>
+                    {veterinarios.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                  </select></div>
+                <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Data</label>
+                  <input type="date" style={selStyle} value={dataAgendamento} onChange={(e) => setDataAgendamento(e.target.value)} /></div>
+                <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Hora (opcional)</label>
+                  <input type="time" style={selStyle} value={horaAgendamento} onChange={(e) => setHoraAgendamento(e.target.value)} /></div>
+                <div className="flex items-end">
+                  <label className="flex items-center gap-2" style={{ fontSize: "0.78rem", cursor: "pointer" }}>
+                    <input type="checkbox" checked={aplicadoAgora} onChange={(e) => setAplicadoAgora(e.target.checked)} />
+                    Já foi aplicado agora (senão só programa na Agenda)
+                  </label>
+                </div>
+              </div>
+              {msgAgendamento && (
+                <p style={{ fontSize: "0.8rem", marginTop: "0.6rem", color: msgAgendamento.tipo === "ok" ? "var(--green-light)" : "var(--red)" }}>{msgAgendamento.txt}</p>
+              )}
+              <button className="btn-primary mt-3" onClick={agendar} disabled={salvandoAgendamento || !selecionados.size}>
+                {salvandoAgendamento ? "Salvando…" : `Agendar (${selecionados.size} animal(is))`}
+              </button>
+            </div>
+          )}
         </div>
       )}
+
+      {popupOrigem && <PopupVinculoFinanceiro origem={popupOrigem} onFechar={() => setPopupOrigem(null)} />}
     </>
   );
 }
