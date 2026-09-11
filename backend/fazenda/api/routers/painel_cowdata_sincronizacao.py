@@ -42,9 +42,22 @@ def sincronizar_fazenda_teste(
     `eh_teste=True`, ou se origem e destino forem a mesma fazenda.
 
     Tudo roda em UMA transação: se qualquer etapa falhar, nada do destino
-    fica "meio copiado" — a Session inteira reverte (ver
-    fazenda.database.get_session, que só dá commit se a rota terminar sem
-    exceção)."""
+    fica "meio copiado" — a exceção propaga sem passar pelo `session.commit()`
+    abaixo, e `fazenda.database.get_session` fecha a sessão sem commitar
+    (comportamento padrão do SQLAlchemy ao devolver a conexão pro pool sem
+    commit explícito): a Session inteira reverte.
+
+    BUG CORRIGIDO EM 11/09/2026: esta rota nunca chamava `session.commit()`
+    — só `sincronizar_fazenda_teste_destrutivo` dava `session.flush()`, que
+    deixa as linhas visíveis PRA MESMA transação (por isso a função sempre
+    devolvia a contagem certa, "sucesso"), mas nunca persistia de verdade.
+    A cada clique em "Sincronizar", a Fazenda Teste era apagada, recopiada
+    por inteiro, e tudo desfeito no fim — sobrava sempre o resíduo de uma
+    cópia bem mais antiga (de antes deste bug existir), nunca a cópia atual.
+    Todo outro router do projeto chama `session.commit()` explicitamente
+    quando quer persistir (462 ocorrências, ver docstring de
+    `fazenda/database.py::get_session`); esta rota, desde a primeira versão
+    (motor de replicação Fazenda -> Fazenda), nunca chamou."""
     try:
         resultado = sincronizar_fazenda_teste_destrutivo(session, origem_id=dados.origem_id, destino_id=destino_id)
     except CicloIrreparavelError as exc:
@@ -53,6 +66,8 @@ def sincronizar_fazenda_teste(
         # sinaliza que precisa de atenção de quem mexe em modelos, não que o
         # usuário pediu algo inválido.
         raise HTTPException(status_code=500, detail=f"Sincronização abortada — {exc}") from exc
+
+    session.commit()
 
     origem = session.get(Fazenda, dados.origem_id)
     destino = session.get(Fazenda, destino_id)
