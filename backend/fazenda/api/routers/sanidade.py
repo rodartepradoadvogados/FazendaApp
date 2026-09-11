@@ -15,7 +15,7 @@ from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id, g
 from fazenda.database import get_session
 from fazenda.ordenacao import chave_numero
 from fazenda.models import (
-    Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, CronogramaSanitario, CronogramaSanitarioAnimal,
+    Animal, AplicacaoAgendada, CalendarioSanitario, ChecklistItem, ColostragemBezerra, CronogramaSanitario, CronogramaSanitarioAnimal,
     Doenca, Estoque, EventoRealizado,
     EventoSanitario, ExameDefinicao, ExameResultado, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque,
     Parto, Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
@@ -27,6 +27,7 @@ from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 from fazenda.rules.calendario_visao import montar_calendario_visual
 from fazenda.rules.cronograma_sanitario import cronograma_aberto
+from fazenda.rules.checklist_sanitario import alerta_clinico_ativo, estado_ocorrencia, materializar_checklist
 from fazenda.rules.cura_protocolo import protocolo_terminado
 from fazenda.rules.estoque_baixa import (
     baixar as _estoque_baixar, carencia_para_item, devolver as _estoque_devolver,
@@ -986,6 +987,136 @@ def criar_cronograma_manual(
     eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
     return _serializar_cronograma(session, cron, calendarios, eventos, pessoas)
+
+
+def _tipo_evento(evento: EventoSanitario | None) -> str:
+    return (evento.categoria_preventiva if evento else None) or "vacina"
+
+
+@router.get("/ocorrencias")
+def listar_ocorrencias(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Tela 1 do redesenho do evento sanitário — Calendário Sanitário (lista),
+    docs/redesenho-evento-sanitario.md seção 3.2.1. 1 linha por Regra ativa,
+    com a Ocorrência (CronogramaSanitario) mais recente e o estado computado
+    (provavel/em_edicao/confirmado/realizado, ver
+    rules.checklist_sanitario.estado_ocorrencia).
+
+    Indicadores de financeiro e adesão (seção 3.2.1) ainda não entram aqui —
+    dependem do widget financeiro (Fase 3) e de histórico suficiente de
+    Realizado para a métrica fazer sentido; não é omissão silenciosa, é
+    escopo desta fase (Fase 2, telas 1-2)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
+    regras = session.exec(query).all()
+
+    eventos = {e.id: e for e in session.exec(select(EventoSanitario)).all()}
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    hoje = date.today()
+
+    linhas = []
+    for regra in regras:
+        evento = eventos.get(regra.evento_sanitario_id)
+        cron = session.exec(
+            select(CronogramaSanitario)
+            .where(CronogramaSanitario.calendario_sanitario_id == regra.id)
+            .order_by(CronogramaSanitario.criado_em.desc())
+        ).first()
+        if cron is None:
+            # Regra que nunca passou pela Agenda (ex.: usa_cronograma=False
+            # e a fazenda não tem a flag usar_ocorrencia_universal ligada) —
+            # "provável" pura, sem linha própria nem contagem de animais.
+            linhas.append({
+                "calendario_sanitario_id": regra.id, "cronograma_id": None,
+                "evento_sanitario_nome": evento.nome if evento else "—", "tipo": _tipo_evento(evento),
+                "categoria_alvo": regra.categoria_alvo, "data_prevista": regra.data_evento.isoformat(),
+                "estado": "provavel", "animais_incluidos": 0, "animais_sugeridos": 0,
+                "veterinario_nome": None, "atraso_dias": max(0, (hoje - regra.data_evento).days),
+                "alerta_clinico": False,
+            })
+            continue
+        animais = session.exec(
+            select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id == cron.id)
+        ).all()
+        contagem = {"sugerido": 0, "incluido": 0, "excluido": 0, "aplicado": 0}
+        for a in animais:
+            contagem[a.status] = contagem.get(a.status, 0) + 1
+        estado = estado_ocorrencia(session, cron)
+        linhas.append({
+            "calendario_sanitario_id": regra.id, "cronograma_id": cron.id,
+            "evento_sanitario_nome": evento.nome if evento else "—", "tipo": _tipo_evento(evento),
+            "categoria_alvo": regra.categoria_alvo, "data_prevista": cron.data_evento.isoformat(),
+            "estado": estado,
+            "animais_incluidos": contagem["incluido"] + contagem["aplicado"], "animais_sugeridos": contagem["sugerido"],
+            "veterinario_nome": pessoas.get(cron.veterinario_pessoa_id) if cron.veterinario_pessoa_id else None,
+            "atraso_dias": max(0, (hoje - cron.data_evento).days) if estado != "realizado" else 0,
+            "alerta_clinico": alerta_clinico_ativo(session, cron.id),
+        })
+
+    return {
+        "indicadores": {
+            "vencidas": sum(1 for l in linhas if l["atraso_dias"] > 0 and l["estado"] != "realizado"),
+            "provaveis_30d": sum(
+                1 for l in linhas if l["estado"] == "provavel" and (date.fromisoformat(l["data_prevista"]) - hoje).days <= 30
+            ),
+            "confirmadas_aguardando": sum(1 for l in linhas if l["estado"] == "confirmado"),
+            "alerta_clinico_ativo": sum(1 for l in linhas if l["alerta_clinico"]),
+        },
+        "linhas": linhas,
+    }
+
+
+@router.get("/ocorrencias/{cronograma_id}")
+def detalhe_ocorrencia(
+    cronograma_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Tela 2 do redesenho do evento sanitário — Detalhe da Ocorrência,
+    docs/redesenho-evento-sanitario.md seção 3.2.2 (abas Animais e Checklist
+    nesta fase; Resumo/Histórico ficam para a próxima parte da Fase 2)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    cron = session.get(CronogramaSanitario, cronograma_id)
+    if not cron or (fazenda_id is not None and cron.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Ocorrência não encontrada")
+    regra = session.get(CalendarioSanitario, cron.calendario_sanitario_id)
+    evento = session.get(EventoSanitario, regra.evento_sanitario_id) if regra else None
+    vet = session.get(Pessoa, cron.veterinario_pessoa_id) if cron.veterinario_pessoa_id else None
+
+    animais = session.exec(
+        select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id == cron.id)
+        .order_by(CronogramaSanitarioAnimal.numero_matriz)
+    ).all()
+    checklist = materializar_checklist(session, cron, evento) if evento else []
+
+    return {
+        "cronograma_id": cron.id, "calendario_sanitario_id": regra.id if regra else None,
+        "evento_sanitario_nome": evento.nome if evento else "—", "tipo": _tipo_evento(evento),
+        "categoria_alvo": regra.categoria_alvo if regra else None,
+        "data_prevista": cron.data_evento.isoformat(),
+        "estado": estado_ocorrencia(session, cron),
+        "checklist_desconsiderado": cron.checklist_desconsiderado,
+        "checklist_desconsiderado_motivo": cron.checklist_desconsiderado_motivo,
+        "veterinario_nome": vet.nome if vet else None,
+        "alerta_clinico": alerta_clinico_ativo(session, cron.id),
+        "animais": [
+            {
+                "id": a.id, "numero_matriz": a.numero_matriz, "status": a.status,
+                "data_sugestao": a.data_sugestao.isoformat(),
+                "data_decisao": a.data_decisao.isoformat() if a.data_decisao else None,
+            }
+            for a in animais
+        ],
+        "checklist": [
+            {
+                "id": item.id, "chave": item.chave, "nome": item.nome, "status": item.status,
+                "resposta": item.resposta, "observacao": item.observacao,
+                "respondido_em": item.respondido_em.isoformat() if item.respondido_em else None,
+            }
+            for item in sorted(checklist, key=lambda i: i.ordem)
+        ],
+    }
 
 
 @router.get("/calendario/eventos-vida")

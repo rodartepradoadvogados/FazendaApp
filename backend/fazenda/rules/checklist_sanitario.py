@@ -233,3 +233,24 @@ def confirmado(session: Session, cronograma: CronogramaSanitario) -> bool:
     if cronograma.checklist_desconsiderado:
         return True
     return checklist_completo(session, cronograma.id)
+
+
+def estado_ocorrencia(session: Session, cronograma: CronogramaSanitario) -> str:
+    """Estado da Ocorrência no vocabulário do redesenho (seção 3.3):
+    "provavel" | "em_edicao" | "confirmado" | "realizado" — computado por
+    leitura a cada chamada, sem mudar o `status` (aberto/agendado/concluido/
+    cancelado) que o motor antigo (rules.cronograma_sanitario, ainda em uso
+    pela trilha veterinário-vs-própria) continua gravando.
+
+    Decisão de leitura registrada em docs/redesenho-evento-sanitario.md
+    (gap apontado na seção 2/5): como o cronograma hoje já nasce
+    materializado assim que a Agenda roda (não existe pré-materialização),
+    "provavel" é lido, não um estado próprio gravado — vale enquanto NADA do
+    checklist foi tocado ainda, mesmo já existindo a linha."""
+    if cronograma.status == "concluido":
+        return "realizado"
+    if confirmado(session, cronograma):
+        return "confirmado"
+    itens = session.exec(select(ChecklistItem).where(ChecklistItem.cronograma_id == cronograma.id)).all()
+    algum_respondido = any(item.status != "pendente" for item in itens)
+    return "em_edicao" if algum_respondido else "provavel"
