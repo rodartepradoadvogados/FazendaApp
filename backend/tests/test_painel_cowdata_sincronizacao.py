@@ -12,7 +12,7 @@ from datetime import date
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.auth import EMAIL_DONO, hash_senha
@@ -50,7 +50,7 @@ def client():
     main.app.dependency_overrides[database.get_session] = _get_session_override
 
     with TestClient(main.app) as c:
-        yield c, origem_id, destino_id, destino_invalido_id
+        yield c, origem_id, destino_id, destino_invalido_id, engine
     main.app.dependency_overrides.clear()
 
 
@@ -61,7 +61,7 @@ def _login(c, username):
 
 
 def test_sem_area_painel_e_bloqueado(client):
-    c, origem_id, destino_id, _ = client
+    c, origem_id, destino_id, _, _engine = client
     token = _login(c, "comum")
     r = c.post(
         f"/painel-cowdata/fazendas/{destino_id}/sincronizar",
@@ -72,7 +72,7 @@ def test_sem_area_painel_e_bloqueado(client):
 
 
 def test_dono_sincroniza_com_sucesso(client):
-    c, origem_id, destino_id, _ = client
+    c, origem_id, destino_id, _, _engine = client
     token = _login(c, "dono")
     r = c.post(
         f"/painel-cowdata/fazendas/{destino_id}/sincronizar",
@@ -89,8 +89,38 @@ def test_dono_sincroniza_com_sucesso(client):
     assert isinstance(corpo["duracao_s"], float)
 
 
+def test_dados_persistem_depois_do_request_terminar(client):
+    """Regressão do bug de 11/09/2026: a rota nunca chamava `session.commit()`
+    — a cópia acontecia (`session.flush()` deixa as linhas visíveis PRA MESMA
+    sessão, então a resposta HTTP sempre reportava sucesso), mas era desfeita
+    assim que a sessão da requisição fechava, porque o SQLAlchemy reverte uma
+    transação pendente ao devolver a conexão pro pool sem commit explícito.
+
+    O teste `test_dono_sincroniza_com_sucesso` acima não pega isso: ele só
+    confere o corpo da resposta HTTP, que é escrito ANTES da sessão fechar —
+    passava mesmo com o bug. Este teste abre uma sessão NOVA e INDEPENDENTE
+    depois que o `TestClient` já processou a requisição inteira (o
+    equivalente, no teste, ao request ter terminado de verdade em produção) —
+    é a única forma de provar que o dado sobrevive, não só que a rota
+    respondeu OK."""
+    c, origem_id, destino_id, _, engine = client
+    token = _login(c, "dono")
+    r = c.post(
+        f"/painel-cowdata/fazendas/{destino_id}/sincronizar",
+        json={"origem_id": origem_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200, r.text
+
+    with Session(engine) as verificacao:
+        animais = verificacao.exec(select(Animal).where(Animal.fazenda_id == destino_id)).all()
+        partos = verificacao.exec(select(Parto).where(Parto.fazenda_id == destino_id)).all()
+    assert len(animais) == 1, "o Animal copiado tinha que ter sobrevivido ao fim do request"
+    assert len(partos) == 1, "o Parto copiado tinha que ter sobrevivido ao fim do request"
+
+
 def test_destino_sem_eh_teste_recusa_409(client):
-    c, origem_id, _, destino_invalido_id = client
+    c, origem_id, _, destino_invalido_id, _engine = client
     token = _login(c, "dono")
     r = c.post(
         f"/painel-cowdata/fazendas/{destino_invalido_id}/sincronizar",
@@ -101,7 +131,7 @@ def test_destino_sem_eh_teste_recusa_409(client):
 
 
 def test_origem_igual_destino_recusa_409(client):
-    c, origem_id, destino_id, _ = client
+    c, origem_id, destino_id, _, _engine = client
     token = _login(c, "dono")
     r = c.post(
         f"/painel-cowdata/fazendas/{destino_id}/sincronizar",
