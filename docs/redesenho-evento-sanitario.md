@@ -37,9 +37,11 @@ Fechadas em entrevista `/grill-me` de 4 rodadas. Resumo executivo (a especifica�
 | `AplicacaoAgendada` | `backend/fazenda/models/sanidade.py:66-93` | Só sobrevive para o "avulso puro" (sem regra nenhuma — decisão R2.6/R3.2). Deixa de ser usada por regras recorrentes. |
 | Checklist | **Não existe hoje.** | Tabela nova: itens por Ocorrência, com template por tipo de evento. Ver seção 3.4/4.3 para a redação exata dos itens. |
 | Financeiro vinculado ao evento | `frontend/components/lancamentos/PopupVinculoFinanceiro.tsx`, `lib/vinculoSanitarioFinanceiroBridge.ts` | Hoje só dispara **depois** de aplicado, como popup pontual de 3 opções. Passa a ser um **item de checklist + widget persistente**, disponível durante todo o planejamento (antes de `Realizado`). Reaproveita o modal, mas muda o gatilho (abre a qualquer momento, não só pós-salvar) e adiciona o estado "pendente/preenchido" refletido na tela da Ocorrência. |
-| `frontend/components/lancamentos/FormCalendarioSanitario.tsx` (wizard) | Todo o arquivo | Este é o wizard que causou o bug relatado — `regraVinculadaEventoVida` (linha ~290) resolve qualquer regra já vinculada ao evento e sobrescreve os campos do formulário no efeito de auto-preenchimento (linhas 207-240), sem revalidar quando `regras` termina de carregar depois do `eventoId` já estar setado (condição de corrida). **Será substituído** pelas novas telas de cadastro de Regra + template de checklist (não é mais "uma regra = um evento" — ver seção 3.1, Tela 1 e Regras cadastradas). |
-| `frontend/app/sanidade/page.tsx` — `CalendarioSanitarioView`, `CronogramasSanitariosView`, `RelatorioEventosVidaView`, `HistoricoPreventivoView`, `AplicacoesView` | Todo o arquivo | Consolidam nas 9 telas da seção 3. `RelatorioEventosVidaView` (que ganhou o painel de agendamento em lote nesta mesma sessão, PR #759) é o embrião da aba **Animais** da tela **Detalhe da Ocorrência** — muito do código já escrito (seleção de animais, marcar/desmarcar todos, veterinário) é reaproveitável quase directo. |
-| Mobile: `FormSanidade.tsx`, `CalendarioSanitario.tsx`, `Cronogramas.tsx`, `AplicacoesSanidade.tsx` | `frontend/components/mobile/**` | Consolidam nas 9 telas mobile da seção 4. `Cronogramas.tsx` (Acompanhamento, construído nesta mesma sessão) já implementa boa parte do padrão "cartão expansível com decisão inline" que o novo modelo pede — mesma base, precisa do checklist e dos 4 estados por cima. |
+| `frontend/components/lancamentos/FormCalendarioSanitario.tsx` (wizard "Identificação → Critérios → Roteiro → Revisão", hoje em `/protocolos` — Central de Protocolos › Cadastro › Sanitário › Preventivo) | Todo o arquivo | Este é o wizard que causou o bug relatado — `regraVinculadaEventoVida` (linha ~290) resolve qualquer regra já vinculada ao evento e sobrescreve os campos do formulário no efeito de auto-preenchimento (linhas 207-240), sem revalidar quando `regras` termina de carregar depois do `eventoId` já estar setado (condição de corrida). **Será substituído** por um novo wizard no **mesmo local de hoje** (Central de Protocolos, não Configurações — ver seção 3.7), com um passo "Tipo" (Vacina/Exame) antes de "Identificação" e o passo "Critérios" corrigido (banner em vez de sobrescrita). |
+| `frontend/components/CadastroSanitario.tsx` — abas "Evento sanitário" (`CadastroEventosSanitarios`) e "Exames" (`CadastroExames`), hoje também espelhadas em Configurações › Cadastro › Sanitário | Todo o arquivo | Hoje já são cadastros **separados** — `EventoSanitario` (catálogo único vacina/exame, campo `categoria_preventiva`) e `ExameDefinicao` (só decide o formato do resultado: diagnóstico ou numérico+faixa, nunca produto/dose/via). O redesenho **mantém essa separação** (ver seção 3.7) — o erro do protótipo inicial foi ter desenhado uma tabela única; corrigido. |
+| `ExameResultado` (`backend/fazenda/models/sanidade.py:464-492`) | Sem mudança de schema | Continua sendo o destino do resultado de exame — **nunca** `Sanidade`, nunca baixa estoque. A tela nova "Realizar Exame" (seção 3.1, Tela 8b) grava aqui; "Realizar Evento" (vacina/tratamento) continua gravando em `Sanidade`. |
+| `frontend/app/sanidade/page.tsx` — `CalendarioSanitarioView`, `CronogramasSanitariosView`, `RelatorioEventosVidaView`, `HistoricoPreventivoView`, `AplicacoesView` | Todo o arquivo | Consolidam nas 10 telas não-cadastro da seção 3 (1-9 + 8b). `RelatorioEventosVidaView` (que ganhou o painel de agendamento em lote nesta mesma sessão, PR #759) é o embrião da aba **Animais** da tela **Detalhe da Ocorrência** — muito do código já escrito (seleção de animais, marcar/desmarcar todos, veterinário) é reaproveitável quase directo. |
+| Mobile: `FormSanidade.tsx`, `CalendarioSanitario.tsx`, `Cronogramas.tsx`, `AplicacoesSanidade.tsx` | `frontend/components/mobile/**` | Consolidam nas 10 telas mobile da seção 4 (1-9 + 8b). `Cronogramas.tsx` (Acompanhamento, construído nesta mesma sessão) já implementa boa parte do padrão "cartão expansível com decisão inline" que o novo modelo pede — mesma base, precisa do checklist e dos 4 estados por cima. |
 | `backend/fazenda/api/routers/agenda.py` — dispatch `cronograma_sanitario_*` | Linhas ~2379-2390 | O dispatch por prefixo de `evento_id` continua sendo o mecanismo de decisão (incluir/excluir animal, decidir modo, aplicar) — só precisa de um prefixo novo para as ações de checklist (marcar item cumprido/pulado) e para reabrir. |
 | Estoque / lote (FIFO) | `backend/fazenda/models/estoque.py`, `rules/farmacia.py` | **Verificar antes de implementar** (ver Risco R-7): confirmar que o modelo de lote de compra (Fase G, FIFO) já grava data de validade — é pré-requisito do gate "lote vencido bloqueia" da Tela Realizar Evento. |
 
@@ -60,13 +62,13 @@ Fechadas em entrevista `/grill-me` de 4 rodadas. Resumo executivo (a especifica�
 | 5 | **Modal — Desconsiderar cronograma** | Confirma a Ocorrência em 1 clique, sem checklist, com card financeiro embutido. |
 | 6 | **Modal — Lançamento Financeiro da Ocorrência** | Janela suspensa de contas a pagar vinculada à Ocorrência. |
 | 7 | **Modal — Reabrir ocorrência** | Confirmado → Em edição, a qualquer momento até Realizado. |
-| 8 | **Tela — Realizar Evento** | Decisão por animal (com atalho de massa), lote do medicamento com checagem de validade, dose, via, responsável, carência, observação clínica; gera `Sanidade`, baixa estoque. |
+| 8 | **Tela — Realizar Evento** (Vacina/Tratamento) | Decisão por animal (com atalho de massa), lote do medicamento com checagem de validade, dose, via, responsável, carência, observação clínica; gera `Sanidade`, baixa estoque. |
+| 8b | **Tela — Realizar Exame** | Decisão por animal, resultado **diagnóstico** (positivo/negativo/indefinido) ou **numérico** (valor + faixa/conduta do `ExameDefinicao` vinculado), veterinário, observação. Sem lote, dose, via ou estoque — gera `ExameResultado`, nunca `Sanidade`, nunca baixa estoque. Tela própria porque o formulário é outro, não um "Realizar Evento" com campos condicionais. |
 | 9 | **Relatório de Eventos Vencidos** | Ocorrências vencidas e não Realizadas, com indicadores de adesão e Dispensar por linha. |
-| 10 | **Cadastro — Vacinas e Exames** (Configurações › Cadastro › Sanitário) | Catálogo de `EventoSanitario`: nome, tipo, doença, produto/dose/via padrão, veterinário padrão, janela de aplicação (evento de vida). |
-| 11 | **Cadastro — Regras do Calendário Sanitário** (mesmo caminho) | Substitui o wizard atual (`FormCalendarioSanitario.tsx`) — vincula um evento a uma categoria-alvo e a um disparo (época ou evento de vida). |
-| 12 | **Cadastro — Template de Checklist por Tipo** (mesmo caminho) | Define os itens padrão que toda Ocorrência nova de Vacina/Exame já traz — editável (adicionar/remover item), ponto de partida para a Ocorrência (que ainda pode ajustar item a item, ver seção 3.2.2). |
+| 10 | **Cadastro — Vacinas e Exames + Regras** (Central de Protocolos › Cadastro › Sanitário › Preventivo) | **Mesmo local de hoje** — substitui o wizard atual (`FormCalendarioSanitario.tsx`) por um wizard de 5 passos (Tipo → Identificação → Critérios → Checklist → Revisão), com transição animada (slide) entre passos. Evento (`EventoSanitario`, vacina ou exame) e Regra (`CalendarioSanitario`) continuam cadastrados juntos, num fluxo só — ver seção 3.7. |
+| 11 | **Cadastro — Template de Checklist por Tipo** (mesmo caminho) | Define os itens padrão que toda Ocorrência nova de Vacina/Exame já traz — editável (adicionar/remover item), ponto de partida para a Ocorrência (que ainda pode ajustar item a item, ver seção 3.2.2). |
 
-12 telas no total. As três de Cadastro (10-12) existem **só no site** (Configurações/Cadastro) — nunca no app mobile.
+13 telas no total (8b conta como tela própria por ter formulário e destino de dados diferentes de 8). As telas de Cadastro (10-11) existem **só no site**, no mesmo lugar de hoje — Central de Protocolos, não Configurações — e nunca no app mobile.
 
 ### 3.2 Campos e ações por tela
 
@@ -156,6 +158,22 @@ Disponível só a partir de Confirmado.
 
 Rodapé: "Confirmar realização" — gera 1 registro em Sanidade por animal com Aplicado=Sim (lote, dose, via, carência, observação clínica), baixa estoque pelos lotes informados, muda a Ocorrência para Realizado. Alerta visível se algum animal ficou Aplicado=Não.
 
+#### 3.2.8b Tela — Realizar Exame
+
+Disponível só a partir de Confirmado, quando `EventoSanitario.categoria_preventiva == "exame"`. **Tela própria, não uma variação de 3.2.8** — o formulário e o destino do registro são outros: sem lote de medicamento, sem dose, sem via, sem estoque; nunca gera `Sanidade`.
+
+**Por animal**, conforme o `tipo_resultado` do `ExameDefinicao` vinculado ao evento (cadastrado no passo 2 do wizard, seção 3.7.0 — decide isso por evento, não se escolhe na hora):
+- **Diagnóstico**: botões **Positivo / Negativo / Indefinido**.
+  - Positivo marca o animal para descarte (`a_descartar`) automaticamente — aviso visível na hora.
+  - Indefinido marca para repetir o exame — só informativo, não bloqueia a Ocorrência.
+  - Negativo é só informativo ("liberado").
+- **Numérico**: campo de valor + banda calculada automaticamente contra a faixa do `ExameDefinicao` (abaixo/dentro/acima) — mostra o texto de conduta cadastrado para aquela banda (ex.: *"Acima de 200.000 — investigar mastite subclínica."*).
+- **Veterinário** — pré-preenchido (nome + CRMV), mesmo padrão do checklist.
+- **Observação clínica** (opcional, por animal).
+- **Data/hora real** (default = prevista, editável).
+
+Rodapé: "Confirmar realização" — gera 1 registro em `ExameResultado` por animal (resultado ou valor+banda, veterinário, observação), muda a Ocorrência para Realizado. **Nunca baixa estoque** — texto fixo na tela reforça isso, porque é o oposto do hábito criado pela Tela 8 (vacina).
+
 #### 3.2.9 Relatório de Eventos Vencidos
 Ver seção 3.6.
 
@@ -175,16 +193,21 @@ Provável ──[usuário clica "Abrir ocorrência"]──► Em edição
                          "Reabrir para edição" (sem limite,
                           sem motivo obrigatório, até Realizado)
                                        │
-                          "Realizar evento" (decisão por animal,
-                           ação em massa; lote já vencido BLOQUEIA
-                           a linha/lote, lote a vencer em 7 dias
-                           exige confirmação agregada por lote;
-                           dose/via/responsável capturados)
+                          "Realizar evento" (Vacina: decisão por
+                           animal, ação em massa, lote já vencido
+                           BLOQUEIA a linha/lote, lote a vencer em
+                           7 dias exige confirmação agregada por
+                           lote, dose/via/responsável capturados —
+                           ver 3.2.8) ou "Realizar exame" (Exame:
+                           resultado diagnóstico ou numérico por
+                           animal, sem lote/dose/via — ver 3.2.8b)
                                        ▼
                                    Realizado
-                      (gera Sanidade por animal aplicado — lote,
-                       dose, via, carência, observação clínica —
-                       baixa estoque; terminal quanto a Sanidade)
+                 Vacina: gera Sanidade por animal aplicado (lote,
+                 dose, via, carência, observação clínica), baixa
+                 estoque · Exame: gera ExameResultado por animal
+                 (resultado/valor+banda), NUNCA baixa estoque —
+                 ambos terminais quanto ao próprio registro
                                        │
                          "Adicionar observação" (aditivo, não
                           edita/reabre Sanidade, não muda estado)
@@ -253,31 +276,33 @@ Fixo no cabeçalho do Detalhe, visível em todas as abas, replicado no modal "De
 
 Ao reabrir a Ocorrência pelo Detalhe, a aba Histórico mostra: *"Dispensada do relatório de vencidos em [data] por [usuário]."*
 
-### 3.7 Cadastro (Configurações › Cadastro › Sanitário)
+### 3.7 Cadastro (Central de Protocolos › Cadastro › Sanitário › Preventivo)
 
-Três telas, só no site, acessadas por abas dentro do mesmo caminho (Vacinas e Exames / Regras / Template de Checklist). Substituem por completo o wizard atual (`FormCalendarioSanitario.tsx`), que é a origem direta do bug relatado pelo usuário (sobrescrita silenciosa de frequência/data/veterinário ao reabrir um evento já vinculado a uma regra).
+**Correção de localização** (o protótipo inicial e uma versão anterior deste documento erravam isso — colocavam o cadastro em "Configurações"): cadastro de evento (vacina/exame) e de regra **já ficam hoje**, e continuam ficando, em `/protocolos` — **Central de Protocolos › Cadastro › Sanitário › Preventivo** (`SUBS_SANITARIO`/`SUBS_SANITARIO_LANCAMENTO` em `frontend/app/protocolos/page.tsx`) — não em Configurações. Configurações › Cadastro › Sanitário (`CadastroSanitario.tsx`) hoje é só um **espelho** das mesmas abas Evento/Exame (mesmo componente, mesmo endpoint) — o redesenho não precisa manter esse espelho, mas também não o remove por si (fora de escopo).
 
-#### 3.7.1 Cadastro — Vacinas e Exames
+O usuário confirmou explicitamente **manter o cadastro no mesmo lugar de hoje** (Central de Protocolos), como um **wizard único** com transição animada (slide) entre passos — substituindo em bloco o wizard atual de 4 passos (`FormCalendarioSanitario.tsx`: Identificação → Critérios → Roteiro → Revisão), que é a origem direta do bug relatado (sobrescrita silenciosa de frequência/data/veterinário no passo "Critérios").
 
-Catálogo de `EventoSanitario`. **Tabela**: nome · tipo (Vacina/Exame, badge) · doença combatida · produto + dose padrão (quando Vacina) · veterinário padrão · janela de aplicação (só quando o disparo for evento de vida) · botão Editar.
+**Correção de modelo** (o protótipo inicial também errava isso — desenhava Vacina e Exame como uma tabela única): o cadastro de evento continua sendo **um catálogo único** (`EventoSanitario`, com `categoria_preventiva` = vacina/exame/tratamento), mas **Exame nunca tem produto/dose/via/janela próprios** — quem decide como o *resultado* do exame é lançado é o `ExameDefinicao` vinculado (`exame_definicao_id`), cadastrado e mantido como entidade **separada** (nome, `tipo_resultado` diagnóstico/numérico, faixa min/máx e conduta abaixo/dentro/acima quando numérico). Isto é o modelo real de hoje (`backend/fazenda/models/sanidade.py:433-492`), não uma simplificação — mantido sem mudança de schema.
 
-**Formulário** ("+ Novo evento sanitário"): nome · tipo (Vacina/Exame) · doença · produto padrão + dose padrão + via padrão (só Vacina, opcionais — a Regra e a Realização ainda podem sobrescrever por animal) · veterinário padrão (opcional) · janela de aplicação como intervalo relativo ao evento de vida (ex.: "3 a 8 meses após o nascimento", só quando aplicável) · ação fora da janela (texto livre ou chip, ex.: "Notificar urgência").
+#### 3.7.0 Wizard único — 5 passos, com slide
 
-Este cadastro **não define frequência nem categoria-alvo** — isso é exclusivo da Regra (3.7.2). Um mesmo evento pode ter zero, uma ou (raramente) mais de uma Regra vinculada.
+Substitui o wizard de 4 passos de hoje. Cada passo entra com uma transição de slide (curva suave, ~220ms) — nunca "pisca" ao trocar de passo, e nunca perde o que já foi digitado ao voltar.
 
-#### 3.7.2 Cadastro — Regras do Calendário Sanitário
-
-Formulário de nova regra + tabela das regras existentes (evento · categoria-alvo · disparo · detalhe · próxima ocorrência · Editar).
-
-**Campos do formulário**: evento sanitário (seleção, obrigatório) · categoria-alvo (texto/seleção) · disparo — **época** (frequência em valor+unidade, ex. "a cada 4 meses") ou **evento de vida** (ex. "Nascimento", reaproveita a janela já cadastrada no evento) · produto/dose/via (pré-preenchido do evento, editável por regra) · veterinário (pré-preenchido do evento, editável por regra).
-
-**Comportamento ao selecionar um evento que já tem regra vinculada** (fix direto do bug original): em vez de pré-preencher e sobrescrever silenciosamente os campos do formulário, aparece um banner informativo: *"Este evento já tem uma regra cadastrada — [detalhe da regra existente, ex. 'a cada 4 meses'], próxima ocorrência [data]. Nada foi alterado. Você quer: **Editar essa regra** / **Criar uma regra nova mesmo assim**"* (uma segunda regra para o mesmo evento só faz sentido com categoria-alvo diferente, ex. uma frequência para bezerras e outra para o rebanho adulto). O formulário continua vazio até o usuário escolher um dos dois caminhos — nenhum dado da regra existente é copiado para dentro do formulário de criação.
+1. **Tipo** — Vacina/Tratamento ou Exame. Decide os campos do passo 2 e qual checklist-padrão (3.7.3/3.4) a Ocorrência herda.
+2. **Identificação** — nome do evento (ou selecionar um já cadastrado do mesmo tipo) + doença.
+   - **Vacina**: produto padrão, dose padrão, via padrão (opcionais — Regra e Realização ainda podem sobrescrever).
+   - **Exame**: vincular um `ExameDefinicao` já cadastrado, **ou** criar um novo inline (nome do exame + tipo de resultado diagnóstico/numérico + faixa min/máx quando numérico) — sem sair do wizard.
+3. **Critérios** — categoria-alvo, disparo (**época**: frequência valor+unidade; **evento de vida**: gatilho, reaproveita a janela do evento), veterinário padrão. **Aqui mora o fix do bug**: escolher um evento que já tem regra vinculada mostra um banner — *"Este evento já tem uma regra cadastrada — [detalhe], próxima ocorrência [data]. Nada foi alterado. Você quer: **Editar essa regra** / **Criar uma regra nova mesmo assim**"* — em vez de pré-preencher e sobrescrever os campos em silêncio. Nenhum dado da regra existente é copiado para o formulário de criação até o usuário escolher um dos dois caminhos.
+4. **Checklist** — nasce do template padrão do tipo (3.7.3), ajustável só para esta regra (adicionar/remover item), sem afetar o template nem outras regras.
+5. **Revisão** — resumo (evento, critérios, veterinário, nº de itens do checklist) + Salvar.
 
 Salvar uma regra nova ou editada **nunca** toca numa Ocorrência já materializada (Provável/Em edição/Confirmado) — só passa a valer a partir da próxima vez que o motor de projeção (R-2) gerar uma Ocorrência.
 
+Ponto de entrada antes do wizard: uma tela de lista com duas tabelas — **Eventos cadastrados** (nome · tipo · doença · produto padrão ou exame vinculado · veterinário padrão · Editar) e **Regras cadastradas** (evento · categoria-alvo · disparo · detalhe · próxima ocorrência · Editar) — e o botão "+ Nova regra do calendário sanitário", que abre o wizard no passo 1.
+
 #### 3.7.3 Cadastro — Template de Checklist por Tipo
 
-Duas listas lado a lado, Vacina e Exame, com os itens padrão da seção 3.4 (mesma redação) — cada item com botão Remover e um campo "Novo item…" + "+ Adicionar" por lista. É o ponto de partida: toda Ocorrência nova nasce com esses itens, mas cada Ocorrência ainda pode ajustar item a item (aba Checklist, seção 3.2.2) sem afetar o template nem outras Ocorrências.
+Tela separada (não um passo do wizard, porque é global — não pertence a uma regra específica). Duas listas lado a lado, Vacina e Exame, com os itens padrão da seção 3.4 (mesma redação) — cada item com botão Remover e um campo "Novo item…" + "+ Adicionar" por lista. É o ponto de partida: toda regra nova nasce com esses itens (passo 4 do wizard), mas cada regra ainda pode ajustar item a item sem afetar o template nem outras regras.
 
 Não existe (nem aqui, nem em nenhuma tela) item de "funcionários em serviço" — confirmado na seção R2.3: a fazenda se organiza internamente, o sistema não controla escala/turno.
 
@@ -293,7 +318,7 @@ Não existe (nem aqui, nem em nenhuma tela) item de "funcionários em serviço" 
 - Sem gestos obrigatórios. Swipe, quando existe, é sempre atalho — nunca o único caminho, e nunca destrutivo (exclusão/dispensa sempre por botão + confirmação explícita).
 - Redação dos itens de checklist e textos de aviso idêntica à do site — nenhuma abreviação de responsabilidade técnica no celular.
 - Cadastro de vacina/exame, criação de Regra do calendário sanitário e template de checklist **não existem no app** — qualquer tentativa redireciona para "Abra no site".
-- Offline-first cobre todo o registro de campo: Checklist, Incluir animal fora da janela e Realizar Evento (incluindo a foto de nota/boleto do financeiro rápido).
+- Offline-first cobre todo o registro de campo: Checklist, Incluir animal fora da janela, Realizar Evento e Realizar Exame (incluindo a foto de nota/boleto do financeiro rápido).
 
 ### 4.1 Lista de telas
 
@@ -306,10 +331,11 @@ Não existe (nem aqui, nem em nenhuma tela) item de "funcionários em serviço" 
 | 5 | **Folha — Desconsiderar cronograma** | Confirma a Ocorrência em 1 toque, com card financeiro embutido e aviso reforçado para programa sanitário oficial. |
 | 6 | **Chip + Folha — Financeiro rápido** | Lançamento nativo limitado a Valor + Vencimento + foto do boleto; "Completar no site" via webview para o resto. |
 | 7 | **Folha — Reabrir ocorrência** | Aviso de 1 linha (estoque/lote pode precisar revisão) + motivo opcional. |
-| 8 | **Realizar Evento** | Tela central e mais crítica do app — cartão de tela cheia por animal, lote/dose/via/carência definitivos, offline-first total. |
+| 8 | **Realizar Evento** (Vacina/Tratamento) | Tela central e mais crítica do app — cartão de tela cheia por animal, lote/dose/via/carência definitivos, offline-first total. |
+| 8b | **Realizar Exame** | Cartão de tela cheia por animal — chips grandes Positivo/Negativo/Indefinido (diagnóstico) ou stepper numérico com banda calculada (numérico), veterinário pré-preenchido, observação. Sem lote/dose/via — grava `ExameResultado`, nunca `Sanidade`, nunca estoque. |
 | 9 | **Relatório de Eventos Vencidos** | Cards no mesmo padrão da Home, Dispensar sempre por card (nunca em massa). |
 
-Nenhuma tela nova além destas 9.
+Nenhuma tela nova além destas 10 (contando 8b) — mesma regra do site: 8b é tela própria porque o formulário e o destino do dado são outros, não uma variação de 8.
 
 ### 4.2 Campos e ações por tela
 
@@ -349,6 +375,15 @@ Nenhuma tela nova além destas 9.
 - Carência — só leitura, calculada a partir da data real, nunca editável no app.
 
 Confirmação final: "Confirmar realização" com contador "X de Y" → folha explícita, ação não pode ser desfeita.
+
+**Realizar Exame**: mesmo padrão de navegação e offline-first de "Realizar Evento", mas tela própria. Cartão de tela cheia por animal:
+- **Diagnóstico**: 3 chips grandes — Positivo / Negativo / Indefinido. Positivo mostra aviso inline (descarte automático); Indefinido mostra aviso de repetição.
+- **Numérico**: stepper/input do valor + texto de conduta calculado na hora contra a faixa do `ExameDefinicao` (abaixo/dentro/acima).
+- Veterinário — só leitura (nome + CRMV), mesmo padrão do checklist.
+- Observação clínica — mesmo padrão da seção 4.5.
+- **Nunca** mostra lote, dose, via ou estoque — texto fixo de rodapé reforça "sem baixa de estoque" (o padrão mental do usuário treinado em "Realizar Evento" é o oposto).
+
+Confirmação final: "Confirmar realização" → gera `ExameResultado` por animal, mesma folha de confirmação não-desfazível de "Realizar Evento".
 
 **Relatório de Eventos Vencidos**: cards no padrão da Home, atraso em destaque, chips-indicador + "Motivos mais comuns" (top 3, só leitura). Dispensar por card, nunca em massa. Toggle "Mostrar dispensados" como aba secundária.
 
