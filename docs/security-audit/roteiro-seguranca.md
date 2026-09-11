@@ -481,20 +481,45 @@ ainda quebra:*
 - Rotas de `LancamentoCowData` (não tem `fazenda_id`) e qualquer rota que
   só consulte `Fazenda` por id/flags próprias.
 
-**Isto MUDA o que falta para religar RLS — em qualquer ambiente:**
-- Staging está com RLS ligado desde 10/09/2026 e **nunca teve o Painel
-  CowData testado sob essa política** (só os 7 ataques da seção 4, que não
-  tocam nessas rotas) — tratar as funcionalidades do Painel CowData lá como
-  quebradas até a correção estar feita e validada.
-- Produção está REVERTIDA (sem RLS) — segura, mas o item "5. Produção"
-  desta seção não pode ser considerado fechado.
-- Antes de religar em QUALQUER ambiente: corrigir os 8 grupos acima (ler
-  por `sessao_sem_recorte_de_fazenda`, e para as escritas — algo que o
-  login não precisou resolver — decidir COMO uma escrita em nome de outra
-  fazenda passa pelo `WITH CHECK`: a única forma correta é a escrita
-  também ir pela conexão de dono, não só a leitura), com teste de
-  regressão contra Postgres real por rota migrada. Fica registrado como
-  PRÉ-REQUISITO novo, antes do item 5 poder ser refeito.
+**CORRIGIDO em 11/09/2026, mesmo dia da auditoria.** Os 8 grupos acima
+foram todos corrigidos. Introduzido `database.py::get_session_manutencao`
+— uma dependency nova, análoga a `sessao_sem_recorte_de_fazenda` do login,
+mas para o ciclo de vida INTEIRO de uma rota (leitura E escrita, não só
+uma leitura pontual): depende de `Depends(get_session)` (assim os ~1500
+testes que só fazem `dependency_overrides[get_session]` já cobrem esta
+também, sem precisar saber que ela existe — FastAPI resolve o override
+através da cadeia de `Depends`) e só troca para `engine_manutencao` sob
+Postgres de verdade; fora dele (a suíte inteira, SQLite) é a MESMA sessão
+que `get_session` já entrega.
+
+Aplicado `Depends(get_session_manutencao)` em vez de `Depends(get_session)`
+em toda rota afetada dos 6 arquivos com problema real
+(`painel_cowdata.py`, `painel_cowdata_cadastros.py`,
+`painel_cowdata_farmacia.py`, `painel_cowdata_parametros.py`,
+`painel_cowdata_sincronizacao.py`, `painel_cowdata_usuarios.py`) —
+`painel_cowdata_touros.py` confirmado sem necessidade de mudança nenhuma.
+
+**Testado**: dois testes de regressão novos contra PostgreSQL real, com a
+mesma política do DDL de produção — `tests/test_sincronizacao_sob_rls.py`
+(prova que a Sincronização volta a copiar dado de verdade, não `"status":
+"ok"` com 0 linhas) e `tests/test_painel_cowdata_massa_sob_rls.py`
+(representante do padrão "aplicar em todas as fazendas de uma vez" —
+mecanismo idêntico nos 3 botões, não repetido teste por teste). Suíte
+Postgres/RLS completa: **17 passed**. Suíte SQLite filtrada por
+`painel_cowdata`/`cowdata`: **182 passed, 1 skipped**. Suíte SQLite
+completa (~5.400 testes, 13 lotes): confirmação final em andamento no
+momento deste registro — nenhuma falha nos lotes concluídos até aqui.
+
+**O que ainda falta antes de religar RLS em qualquer ambiente:**
+- Staging está com RLS ligado desde 10/09/2026 — o Painel CowData lá
+  segue rodando com o código ANTIGO (sem esta correção) até o deploy do
+  PR desta correção acontecer; até lá, tratar as funcionalidades do
+  Painel CowData no Staging como suspeitas.
+- Produção continua REVERTIDA (sem RLS) — segura, mas o item "5. Produção"
+  ainda não pode ser considerado fechado: falta reaplicar o DDL (a
+  infraestrutura — role `cowdata_app`, `DATABASE_URL_MANUTENCAO` — já está
+  pronta) e um teste de fumaça que desta vez cubra Painel CowData também,
+  não só login.
 
 ## Achados novos, registrados como pendência (não bloqueiam o RLS)
 
