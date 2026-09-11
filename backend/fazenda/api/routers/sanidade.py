@@ -15,7 +15,8 @@ from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id, g
 from fazenda.database import get_session
 from fazenda.ordenacao import chave_numero
 from fazenda.models import (
-    Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, CronogramaSanitario, CronogramaSanitarioAnimal,
+    Animal, AplicacaoAgendada, CalendarioSanitario, CalendarioSanitarioChecklistItem, ChecklistItem, ColostragemBezerra,
+    CronogramaSanitario, CronogramaSanitarioAnimal,
     Doenca, Estoque, EventoRealizado,
     EventoSanitario, ExameDefinicao, ExameResultado, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque,
     Parto, Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
@@ -27,6 +28,10 @@ from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 from fazenda.rules.calendario_visao import montar_calendario_visual
 from fazenda.rules.cronograma_sanitario import cronograma_aberto
+from fazenda.rules.checklist_sanitario import (
+    alerta_clinico_ativo, checklist_customizado_da_regra, estado_ocorrencia, materializar_checklist,
+    salvar_checklist_da_regra,
+)
 from fazenda.rules.cura_protocolo import protocolo_terminado
 from fazenda.rules.estoque_baixa import (
     baixar as _estoque_baixar, carencia_para_item, devolver as _estoque_devolver,
@@ -691,14 +696,31 @@ def _ultimo_evento_por_produto(session: Session, fazenda_id: int | None) -> dict
     return mapa
 
 
+def _checklist_por_regra(session: Session, fazenda_id: int | None) -> dict[int, list[dict]]:
+    """Checklist customizado (passo 4 do wizard novo, seção 3.7.0) por
+    `calendario_sanitario_id` — usado só para PRÉ-PREENCHER a edição de uma
+    regra no wizard (lista vazia = regra ainda usa o template do tipo
+    dinamicamente, nunca passou pelo wizard novo)."""
+    query = select(CalendarioSanitarioChecklistItem).order_by(CalendarioSanitarioChecklistItem.ordem)
+    if fazenda_id is not None:
+        query = query.where(CalendarioSanitarioChecklistItem.fazenda_id == fazenda_id)
+    mapa: dict[int, list[dict]] = {}
+    for item in session.exec(query).all():
+        mapa.setdefault(item.calendario_sanitario_id, []).append(
+            {"chave": item.chave, "nome": item.nome, "ordem": item.ordem}
+        )
+    return mapa
+
+
 def _serializar(
     c: CalendarioSanitario, eventos: dict, doencas: dict, principios: dict,
     categorias: dict | None = None, ultimos_por_produto: dict[str, dict] | None = None,
-    servicos_financeiro: dict | None = None,
+    servicos_financeiro: dict | None = None, checklist_por_regra: dict[int, list[dict]] | None = None,
 ) -> dict:
     categorias = categorias or {}
     ultimos_por_produto = ultimos_por_produto or {}
     servicos_financeiro = servicos_financeiro or {}
+    checklist_por_regra = checklist_por_regra or {}
     ultimo = ultimos_por_produto.get((c.produto or "").strip().lower()) if c.produto else None
     return {
         **c.model_dump(),
@@ -710,6 +732,7 @@ def _serializar(
         "proxima_ocorrencia": proxima_ocorrencia(c.data_evento, c.frequencia_valor, c.frequencia_unidade).isoformat(),
         "ultimo_evento_data": ultimo["data"] if ultimo else None,
         "ultimo_evento_id": ultimo["id"] if ultimo else None,
+        "checklist_itens": checklist_por_regra.get(c.id, []),
     }
 
 
@@ -727,11 +750,15 @@ def listar_calendario(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session, fazenda_id)
+    checklist_por_regra = _checklist_por_regra(session, fazenda_id)
     query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
     regras = session.exec(query).all()
-    saida = [_serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro) for c in regras]
+    saida = [
+        _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro, checklist_por_regra)
+        for c in regras
+    ]
     if evento_sanitario_id is not None:
         saida = [s for s in saida if s["evento_sanitario_id"] == evento_sanitario_id]
     if data_inicio:
@@ -739,6 +766,12 @@ def listar_calendario(
     if data_fim:
         saida = [s for s in saida if s["proxima_ocorrencia"] <= data_fim]
     return sorted(saida, key=lambda s: s["proxima_ocorrencia"])
+
+
+class ChecklistItemRegraIn(BaseModel):
+    chave: str = "custom"
+    nome: str
+    ordem: int = 0
 
 
 class CalendarioSanitarioIn(BaseModel):
@@ -765,6 +798,11 @@ class CalendarioSanitarioIn(BaseModel):
     # "Já foi realizado?" — quando a 1ª ocorrência é hoje/passada e já aconteceu,
     # marca o evento como realizado (some da Agenda). Não é campo do modelo.
     realizado: bool = False
+    # Passo 4 do wizard novo (seção 3.7.0 do redesenho) — checklist congelado
+    # para esta regra. `None` (padrão) = não veio do wizard novo, não altera
+    # nenhuma customização já existente; lista (mesmo vazia) = substitui por
+    # completo (ver rules.checklist_sanitario.salvar_checklist_da_regra).
+    checklist_itens: list[ChecklistItemRegraIn] | None = None
 
 
 def _validar_calendario(dados: CalendarioSanitarioIn, session: Session, fazenda_id: int | None) -> None:
@@ -844,7 +882,7 @@ def criar_calendario(
     dados: CalendarioSanitarioIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     _validar_calendario(dados, session, fazenda_id)
-    c = CalendarioSanitario(**dados.model_dump(exclude={"realizado"}), fazenda_id=fazenda_id)
+    c = CalendarioSanitario(**dados.model_dump(exclude={"realizado", "checklist_itens"}), fazenda_id=fazenda_id)
     session.add(c)
     session.commit()
     session.refresh(c)
@@ -855,9 +893,14 @@ def criar_calendario(
     # seguintes continuam pendentes normalmente.
     if dados.realizado:
         _marcar_calendario_realizado(session, c)
+    if dados.checklist_itens is not None:
+        salvar_checklist_da_regra(
+            session, c.id, [(i.chave, i.nome, i.ordem) for i in dados.checklist_itens], fazenda_id,
+        )
     eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session, fazenda_id)
-    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro)
+    checklist_por_regra = _checklist_por_regra(session, fazenda_id)
+    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro, checklist_por_regra)
 
 
 @router.put("/calendario/{calendario_id}")
@@ -870,16 +913,21 @@ def atualizar_calendario(
     if not c or (c.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
     _validar_calendario(dados, session, fazenda_id)
-    for campo, valor in dados.model_dump(exclude={"realizado"}).items():
+    for campo, valor in dados.model_dump(exclude={"realizado", "checklist_itens"}).items():
         setattr(c, campo, valor)
     session.add(c)
     session.commit()
     session.refresh(c)
     if dados.realizado:
         _marcar_calendario_realizado(session, c)
+    if dados.checklist_itens is not None:
+        salvar_checklist_da_regra(
+            session, c.id, [(i.chave, i.nome, i.ordem) for i in dados.checklist_itens], fazenda_id,
+        )
     eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session, fazenda_id)
-    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro)
+    checklist_por_regra = _checklist_por_regra(session, fazenda_id)
+    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro, checklist_por_regra)
 
 
 @router.delete("/calendario/{calendario_id}")
@@ -986,6 +1034,136 @@ def criar_cronograma_manual(
     eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
     return _serializar_cronograma(session, cron, calendarios, eventos, pessoas)
+
+
+def _tipo_evento(evento: EventoSanitario | None) -> str:
+    return (evento.categoria_preventiva if evento else None) or "vacina"
+
+
+@router.get("/ocorrencias")
+def listar_ocorrencias(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Tela 1 do redesenho do evento sanitário — Calendário Sanitário (lista),
+    docs/redesenho-evento-sanitario.md seção 3.2.1. 1 linha por Regra ativa,
+    com a Ocorrência (CronogramaSanitario) mais recente e o estado computado
+    (provavel/em_edicao/confirmado/realizado, ver
+    rules.checklist_sanitario.estado_ocorrencia).
+
+    Indicadores de financeiro e adesão (seção 3.2.1) ainda não entram aqui —
+    dependem do widget financeiro (Fase 3) e de histórico suficiente de
+    Realizado para a métrica fazer sentido; não é omissão silenciosa, é
+    escopo desta fase (Fase 2, telas 1-2)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
+    regras = session.exec(query).all()
+
+    eventos = {e.id: e for e in session.exec(select(EventoSanitario)).all()}
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    hoje = date.today()
+
+    linhas = []
+    for regra in regras:
+        evento = eventos.get(regra.evento_sanitario_id)
+        cron = session.exec(
+            select(CronogramaSanitario)
+            .where(CronogramaSanitario.calendario_sanitario_id == regra.id)
+            .order_by(CronogramaSanitario.criado_em.desc())
+        ).first()
+        if cron is None:
+            # Regra que nunca passou pela Agenda (ex.: usa_cronograma=False
+            # e a fazenda não tem a flag usar_ocorrencia_universal ligada) —
+            # "provável" pura, sem linha própria nem contagem de animais.
+            linhas.append({
+                "calendario_sanitario_id": regra.id, "cronograma_id": None,
+                "evento_sanitario_nome": evento.nome if evento else "—", "tipo": _tipo_evento(evento),
+                "categoria_alvo": regra.categoria_alvo, "data_prevista": regra.data_evento.isoformat(),
+                "estado": "provavel", "animais_incluidos": 0, "animais_sugeridos": 0,
+                "veterinario_nome": None, "atraso_dias": max(0, (hoje - regra.data_evento).days),
+                "alerta_clinico": False,
+            })
+            continue
+        animais = session.exec(
+            select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id == cron.id)
+        ).all()
+        contagem = {"sugerido": 0, "incluido": 0, "excluido": 0, "aplicado": 0}
+        for a in animais:
+            contagem[a.status] = contagem.get(a.status, 0) + 1
+        estado = estado_ocorrencia(session, cron)
+        linhas.append({
+            "calendario_sanitario_id": regra.id, "cronograma_id": cron.id,
+            "evento_sanitario_nome": evento.nome if evento else "—", "tipo": _tipo_evento(evento),
+            "categoria_alvo": regra.categoria_alvo, "data_prevista": cron.data_evento.isoformat(),
+            "estado": estado,
+            "animais_incluidos": contagem["incluido"] + contagem["aplicado"], "animais_sugeridos": contagem["sugerido"],
+            "veterinario_nome": pessoas.get(cron.veterinario_pessoa_id) if cron.veterinario_pessoa_id else None,
+            "atraso_dias": max(0, (hoje - cron.data_evento).days) if estado != "realizado" else 0,
+            "alerta_clinico": alerta_clinico_ativo(session, cron.id),
+        })
+
+    return {
+        "indicadores": {
+            "vencidas": sum(1 for l in linhas if l["atraso_dias"] > 0 and l["estado"] != "realizado"),
+            "provaveis_30d": sum(
+                1 for l in linhas if l["estado"] == "provavel" and (date.fromisoformat(l["data_prevista"]) - hoje).days <= 30
+            ),
+            "confirmadas_aguardando": sum(1 for l in linhas if l["estado"] == "confirmado"),
+            "alerta_clinico_ativo": sum(1 for l in linhas if l["alerta_clinico"]),
+        },
+        "linhas": linhas,
+    }
+
+
+@router.get("/ocorrencias/{cronograma_id}")
+def detalhe_ocorrencia(
+    cronograma_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Tela 2 do redesenho do evento sanitário — Detalhe da Ocorrência,
+    docs/redesenho-evento-sanitario.md seção 3.2.2 (abas Animais e Checklist
+    nesta fase; Resumo/Histórico ficam para a próxima parte da Fase 2)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    cron = session.get(CronogramaSanitario, cronograma_id)
+    if not cron or (fazenda_id is not None and cron.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Ocorrência não encontrada")
+    regra = session.get(CalendarioSanitario, cron.calendario_sanitario_id)
+    evento = session.get(EventoSanitario, regra.evento_sanitario_id) if regra else None
+    vet = session.get(Pessoa, cron.veterinario_pessoa_id) if cron.veterinario_pessoa_id else None
+
+    animais = session.exec(
+        select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id == cron.id)
+        .order_by(CronogramaSanitarioAnimal.numero_matriz)
+    ).all()
+    checklist = materializar_checklist(session, cron, evento) if evento else []
+
+    return {
+        "cronograma_id": cron.id, "calendario_sanitario_id": regra.id if regra else None,
+        "evento_sanitario_nome": evento.nome if evento else "—", "tipo": _tipo_evento(evento),
+        "categoria_alvo": regra.categoria_alvo if regra else None,
+        "data_prevista": cron.data_evento.isoformat(),
+        "estado": estado_ocorrencia(session, cron),
+        "checklist_desconsiderado": cron.checklist_desconsiderado,
+        "checklist_desconsiderado_motivo": cron.checklist_desconsiderado_motivo,
+        "veterinario_nome": vet.nome if vet else None,
+        "alerta_clinico": alerta_clinico_ativo(session, cron.id),
+        "animais": [
+            {
+                "id": a.id, "numero_matriz": a.numero_matriz, "status": a.status,
+                "data_sugestao": a.data_sugestao.isoformat(),
+                "data_decisao": a.data_decisao.isoformat() if a.data_decisao else None,
+            }
+            for a in animais
+        ],
+        "checklist": [
+            {
+                "id": item.id, "chave": item.chave, "nome": item.nome, "status": item.status,
+                "resposta": item.resposta, "observacao": item.observacao,
+                "respondido_em": item.respondido_em.isoformat() if item.respondido_em else None,
+            }
+            for item in sorted(checklist, key=lambda i: i.ordem)
+        ],
+    }
 
 
 @router.get("/calendario/eventos-vida")

@@ -1,22 +1,30 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
-import dynamic from "next/dynamic";
 import { Plus } from "lucide-react";
 import {
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario,
   atualizarCalendarioSanitario, excluirCalendarioSanitario, fetchExames, atualizarEventoSanitario, criarEventoSanitario,
-  fetchEventosVidaVocabulario, fetchCategoriasManejo, formatDate,
+  criarExame, fetchEventosVidaVocabulario, fetchCategoriasManejo, fetchChecklistTemplate, formatDate,
+  type ChecklistTemplateItemDTO,
 } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { EstoquePicker } from "@/components/EstoquePicker";
-import { Modal } from "@/components/Modal";
 import { SecaoRecolhivel, MultiFiltro } from "@/components/ui";
 import { Campo, inputStyle, nota, type EstoqueItem, unidadesCompativeis } from "@/components/lancamentos/comumForms";
 import { FREQUENCIA_UNIDADES, type ExameDef } from "@/components/lancamentos/_shared";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { WizardProtocolo, type PassoWizard } from "@/components/protocolos/WizardProtocolo";
-const CadastroEventosSanitarios = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroEventosSanitarios), { ssr: false });
 
+type EventoSanitarioDTO = {
+  id: number; nome: string; ativo: boolean; categoria_preventiva: string | null; tipo_agendamento: string;
+  doenca_id: number | null; doenca_nome: string | null; exame_definicao_id: number | null; exame_definicao_nome: string | null;
+  produto_padrao: string | null; dose_padrao: number | null; unidade_padrao: string | null; via_padrao: string | null;
+  veterinario_padrao_pessoa_id: number | null; veterinario_padrao_nome: string | null;
+  gatilho: string | null; gatilho_lote: string | null; gatilho_idade_meses: number | null; offset_dias: number | null;
+  janela_de_valor: number | null; janela_de_unidade: "dias" | "meses" | null;
+  janela_ate_valor: number | null; janela_ate_unidade: "dias" | "meses" | null;
+  acao_fora_janela: string | null; teto_etario_valor: number | null; teto_etario_unidade: "dias" | "meses" | null;
+};
 type OpcaoNomeAtivo = { id: number; nome: string; ativo: boolean };
 type RegraCalendario = {
   id: number; evento_sanitario_id: number; evento_sanitario_nome: string;
@@ -27,14 +35,17 @@ type RegraCalendario = {
   data_evento: string; proxima_ocorrencia: string; observacao: string | null; ativo: boolean;
   categoria_preventiva: string | null; ultimo_evento_data: string | null; ultimo_evento_id: number | null;
   usa_cronograma?: boolean;
+  checklist_itens?: ChecklistTemplateItemDTO[];
 };
 
-// vacina | exame | avulso/outro (nada marcado nos dois primeiros) | todos.
+// vacina | exame | tratamento | avulso/outro (nada marcado nos três primeiros) | todos.
 const TIPOS_REGRA_FILTRO = [
-  { v: "todos", l: "Todos" }, { v: "vacina", l: "Vacina" }, { v: "exame", l: "Exame" }, { v: "avulso", l: "Avulso/outro" },
+  { v: "todos", l: "Todos" }, { v: "vacina", l: "Vacina" }, { v: "tratamento", l: "Tratamento" },
+  { v: "exame", l: "Exame" }, { v: "avulso", l: "Avulso/outro" },
 ] as const;
-export function tipoRegra(r: { categoria_preventiva: string | null }): "vacina" | "exame" | "avulso" {
+export function tipoRegra(r: { categoria_preventiva: string | null }): "vacina" | "tratamento" | "exame" | "avulso" {
   if (r.categoria_preventiva === "exame") return "exame";
+  if (r.categoria_preventiva === "tratamento") return "tratamento";
   if (r.categoria_preventiva === "vacina") return "vacina";
   return "avulso";
 }
@@ -42,15 +53,635 @@ export function tipoRegra(r: { categoria_preventiva: string | null }): "vacina" 
 // (texto único no banco — cada regra continua com um único categoria_alvo).
 const SEP_CATEGORIAS = ", ";
 
+// ─────────────────────────── Wizard novo de 5 passos (redesenho do evento
+// sanitário, docs/redesenho-evento-sanitario.md, seção 3.7.0) — substitui em
+// bloco o wizard antigo de 4 passos (Identificação → Critérios → Roteiro →
+// Revisão), que era a origem do bug de sobrescrita silenciosa no passo
+// "Critérios". Passos novos:
+//   1. Tipo — Vacina/Tratamento (mesmo bucket, mesmos campos) ou Exame.
+//   2. Identificação — evento (selecionar ou criar) + doença + campos do tipo.
+//   3. Critérios — categoria-alvo, disparo, veterinário/responsável. Escolher
+//      um evento que já tem regra vinculada mostra um banner (fix do bug) em
+//      vez de pré-preencher e sobrescrever em silêncio.
+//   4. Checklist — nasce do template do tipo (3.7.3), ajustável só nesta regra.
+//   5. Revisão — resumo + Salvar.
+// ─────────────────────────────────────────────────────────────────────────
+type TipoBucket = "vacina_tratamento" | "exame";
+type ModoEvento = "existente" | "novo";
+type CalendarioForm = {
+  // Passo 1 — Tipo
+  tipoBucket: TipoBucket;
+  categoriaPreventiva: "vacina" | "tratamento";
+
+  // Passo 2 — Identificação
+  modoEvento: ModoEvento;
+  eventoId: string; // preenchido depois de criar, se modoEvento === "novo"
+  nomeNovoEvento: string;
+  doencaId: string;
+  produtoPadrao: string; dosePadrao: string; unidadePadrao: string; viaPadrao: string;
+  modoExame: ModoEvento;
+  exameDefinicaoId: string;
+  novoExameNome: string; novoExameTipoResultado: "diagnostico" | "numerico";
+  novoExameFaixaMin: string; novoExameFaixaMax: string;
+  novoExameAcaoAbaixo: string; novoExameAcaoDentro: string; novoExameAcaoAcima: string;
+
+  // Passo 3 — Critérios
+  decisaoConflito: "editar" | "nova" | null;
+  categoriaAlvoSel: string[];
+  modoFreq: "periodica" | "evento_vida";
+  freqValor: string; freqUnidade: string; dataEvento: string;
+  gatilho: string; gatilhoLote: string; gatilhoIdadeMeses: string; offsetDias: string;
+  janelaDeValor: string; janelaDeUnidade: "dias" | "meses";
+  janelaAteValor: string; janelaAteUnidade: "dias" | "meses";
+  acaoForaJanela: string;
+  tetoEtarioValor: string; tetoEtarioUnidade: "dias" | "meses";
+  veterinarioPadraoId: string;
+  responsavel: string; veterinario: string;
+  principioId: string; produto: string; dosagem: string; unidade: string;
+  observacao: string; realizado: boolean;
+
+  // Passo 4 — Checklist
+  checklistItens: ChecklistTemplateItemDTO[];
+};
+const calendarioFormVazio = (): CalendarioForm => ({
+  tipoBucket: "vacina_tratamento", categoriaPreventiva: "vacina",
+  modoEvento: "existente", eventoId: "", nomeNovoEvento: "", doencaId: "",
+  produtoPadrao: "", dosePadrao: "", unidadePadrao: "", viaPadrao: "",
+  modoExame: "existente", exameDefinicaoId: "", novoExameNome: "", novoExameTipoResultado: "diagnostico",
+  novoExameFaixaMin: "", novoExameFaixaMax: "", novoExameAcaoAbaixo: "", novoExameAcaoDentro: "", novoExameAcaoAcima: "",
+  decisaoConflito: null, categoriaAlvoSel: [],
+  modoFreq: "periodica", freqValor: "1", freqUnidade: "meses", dataEvento: "",
+  gatilho: "nascimento", gatilhoLote: "", gatilhoIdadeMeses: "", offsetDias: "0",
+  janelaDeValor: "", janelaDeUnidade: "meses", janelaAteValor: "", janelaAteUnidade: "meses",
+  acaoForaJanela: "", tetoEtarioValor: "", tetoEtarioUnidade: "meses", veterinarioPadraoId: "",
+  responsavel: "", veterinario: "", principioId: "", produto: "", dosagem: "", unidade: "",
+  observacao: "", realizado: false,
+  checklistItens: [],
+});
+
+export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
+  const [eventos, setEventos] = useState<EventoSanitarioDTO[]>([]);
+  const [exames, setExames] = useState<ExameDef[]>([]);
+  const [doencas, setDoencas] = useState<OpcaoNomeAtivo[]>([]);
+  const [principios, setPrincipios] = useState<OpcaoNomeAtivo[]>([]);
+  const [categoriasVida, setCategoriasVida] = useState<string[]>([]);
+  const [regras, setRegras] = useState<RegraCalendario[] | null>(null);
+  const [tela, setTela] = useState<"lista" | "wizard">("lista");
+
+  const [editando, setEditando] = useState<number | null>(null);
+  const [form, setForm] = useState<CalendarioForm>(calendarioFormVazio());
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
+  const [tipoFiltroRegras, setTipoFiltroRegras] = useState<"todos" | "vacina" | "tratamento" | "exame" | "avulso">("todos");
+  const regrasFiltradas = useMemo(
+    () => (regras ?? []).filter((r) => tipoFiltroRegras === "todos" || tipoRegra(r) === tipoFiltroRegras),
+    [regras, tipoFiltroRegras]
+  );
+  const ordRegras = useOrdenacao(regrasFiltradas);
+  const ordEventos = useOrdenacao(eventos);
+
+  const { pessoas: pessoasAtivas } = usePessoasAtivas();
+  const veterinariosZootecnistas = useMemo(
+    () => pessoasAtivas.filter((p) => (p.tipos || []).some((t: string) => ["Veterinário", "Zootecnista"].includes(t))),
+    [pessoasAtivas]
+  );
+  const [gatilhosVida, setGatilhosVida] = useState<{ gatilho: string; rotulo: string }[]>([]);
+  useEffect(() => { fetchEventosVidaVocabulario().then(setGatilhosVida).catch(() => {}); }, []);
+
+  const carregarRegras = () => fetchCalendarioSanitario().then(setRegras).catch((e) => setErro(e.message));
+  const carregarEventos = () => fetchEventosSanitarios().then(setEventos).catch(() => {});
+  useEffect(() => {
+    carregarEventos();
+    fetchExames().then(setExames).catch(() => {});
+    fetchDoencas().then((d) => setDoencas(d.filter((e: OpcaoNomeAtivo) => e.ativo))).catch(() => {});
+    fetchPrincipiosAtivos().then((d) => setPrincipios(d.filter((e: OpcaoNomeAtivo) => e.ativo !== false))).catch(() => {});
+    fetchCategoriasManejo().then((d) => setCategoriasVida(d.filter((c) => c.ativo).map((c) => c.nome))).catch(() => {});
+    carregarRegras();
+  }, []);
+
+  const eventosBucket = useMemo(
+    () => eventos.filter((e) => e.ativo && (form.tipoBucket === "exame" ? e.categoria_preventiva === "exame" : e.categoria_preventiva !== "exame")),
+    [eventos, form.tipoBucket]
+  );
+  const eventoSel = eventos.find((e) => String(e.id) === form.eventoId);
+  const ehExame = form.tipoBucket === "exame";
+  // Regra já vinculada a este evento (fix do bug — seção 3.7.0): só conta
+  // quando estamos CRIANDO (editando uma regra já traz seus próprios dados,
+  // não há nada a sobrescrever em silêncio).
+  const regraVinculada = editando === null && form.eventoId
+    ? (regras ?? []).find((r) => r.evento_sanitario_id === Number(form.eventoId))
+    : undefined;
+  const temConflito = !!regraVinculada && form.decisaoConflito === null;
+
+  const limpar = () => { setEditando(null); setForm(calendarioFormVazio()); };
+
+  // Checklist padrão do tipo — ponto de partida do passo 4 (seção 3.7.3),
+  // recarregado sempre que o bucket muda NUMA REGRA NOVA sem checklist ainda
+  // tocado manualmente (editar uma regra existente usa o que já foi salvo
+  // para ela, carregado em `abrirEdicao`, e nunca é sobrescrito por aqui).
+  // `wizardAberturaId` muda a cada "+ Nova regra" — sem ele, abrir uma
+  // segunda regra nova depois de já ter aberto (e fechado) uma primeira não
+  // dispara o efeito de novo (ehExame/editando/checklistTocado já estavam
+  // nesses mesmos valores desde a primeira vez), e o passo Checklist nasce
+  // vazio em silêncio.
+  const [checklistTocado, setChecklistTocado] = useState(false);
+  const [wizardAberturaId, setWizardAberturaId] = useState(0);
+  useEffect(() => {
+    if (editando !== null) return;
+    if (checklistTocado) return;
+    fetchChecklistTemplate(ehExame ? "exame" : "vacina")
+      .then((itens) => setForm((f) => ({ ...f, checklistItens: itens })))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ehExame, editando, checklistTocado, wizardAberturaId]);
+
+  const abrirEdicao = (r: RegraCalendario) => {
+    setEditando(r.id);
+    setChecklistTocado(true); // edição usa o que já foi salvo — nunca recarrega do template
+    const ev = eventos.find((e) => e.id === r.evento_sanitario_id);
+    const bucket: TipoBucket = ev?.categoria_preventiva === "exame" ? "exame" : "vacina_tratamento";
+    setForm((f) => ({
+      ...f,
+      tipoBucket: bucket, categoriaPreventiva: ev?.categoria_preventiva === "tratamento" ? "tratamento" : "vacina",
+      modoEvento: "existente", eventoId: String(r.evento_sanitario_id),
+      doencaId: r.doenca_id ? String(r.doenca_id) : "",
+      produtoPadrao: ev?.produto_padrao || "", dosePadrao: ev?.dose_padrao != null ? String(ev.dose_padrao) : "",
+      unidadePadrao: ev?.unidade_padrao || "", viaPadrao: ev?.via_padrao || "",
+      modoExame: "existente", exameDefinicaoId: ev?.exame_definicao_id ? String(ev.exame_definicao_id) : "",
+      decisaoConflito: "editar", // editando de verdade — não há banner a resolver
+      categoriaAlvoSel: r.categoria_alvo ? r.categoria_alvo.split(SEP_CATEGORIAS).map((c) => c.trim()).filter(Boolean) : [],
+      modoFreq: ev?.tipo_agendamento === "evento" ? "evento_vida" : "periodica",
+      gatilho: ev?.gatilho || "nascimento", gatilhoLote: ev?.gatilho_lote || "",
+      gatilhoIdadeMeses: ev?.gatilho_idade_meses ? String(ev.gatilho_idade_meses) : "",
+      offsetDias: ev?.offset_dias != null ? String(ev.offset_dias) : "0",
+      janelaDeValor: ev?.janela_de_valor != null ? String(ev.janela_de_valor) : "", janelaDeUnidade: ev?.janela_de_unidade || "meses",
+      janelaAteValor: ev?.janela_ate_valor != null ? String(ev.janela_ate_valor) : "", janelaAteUnidade: ev?.janela_ate_unidade || "meses",
+      acaoForaJanela: ev?.acao_fora_janela || "",
+      tetoEtarioValor: ev?.teto_etario_valor != null ? String(ev.teto_etario_valor) : "", tetoEtarioUnidade: ev?.teto_etario_unidade || "meses",
+      veterinarioPadraoId: ev?.veterinario_padrao_pessoa_id ? String(ev.veterinario_padrao_pessoa_id) : "",
+      freqValor: String(r.frequencia_valor), freqUnidade: r.frequencia_unidade, dataEvento: r.data_evento,
+      responsavel: r.responsavel || "", veterinario: r.veterinario || "",
+      principioId: r.principio_ativo_id ? String(r.principio_ativo_id) : "", produto: r.produto || "",
+      dosagem: r.dosagem || "", unidade: r.unidade || "", observacao: r.observacao || "", realizado: false,
+      checklistItens: r.checklist_itens && r.checklist_itens.length ? r.checklist_itens : f.checklistItens,
+    }));
+    setTela("wizard");
+  };
+
+  const novaRegra = () => { limpar(); setChecklistTocado(false); setWizardAberturaId((n) => n + 1); setTela("wizard"); };
+
+  const excluir = async (r: RegraCalendario) => {
+    if (!window.confirm(`Excluir a regra do calendário "${r.evento_sanitario_nome}" de ${formatDate(r.data_evento)}?`)) return;
+    try { await excluirCalendarioSanitario(r.id); carregarRegras(); }
+    catch (e: any) { setErro(e.message); }
+  };
+
+  const precisaCicloRegra = form.modoFreq === "periodica";
+
+  async function salvar(): Promise<boolean> {
+    setErro(null); setSucesso(null);
+    setSalvando(true);
+    try {
+      // Passo 2 — garante que o evento sanitário exista (cria ou atualiza).
+      let eventoId = form.eventoId;
+      const dadosEvento = {
+        categoria_preventiva: ehExame ? "exame" : form.categoriaPreventiva,
+        doenca_id: form.doencaId ? Number(form.doencaId) : undefined,
+        tipo_agendamento: (form.modoFreq === "evento_vida" ? "evento" : "epoca") as "evento" | "epoca",
+        gatilho: form.modoFreq === "evento_vida" ? form.gatilho : undefined,
+        gatilho_lote: form.modoFreq === "evento_vida" && form.gatilho === "entrada_lote" ? form.gatilhoLote.trim() : undefined,
+        gatilho_idade_meses: form.modoFreq === "evento_vida" && form.gatilho === "novilha_apta" ? Number(form.gatilhoIdadeMeses) : undefined,
+        offset_dias: form.modoFreq === "evento_vida" ? (form.offsetDias ? Number(form.offsetDias) : 0) : undefined,
+        data_primeiro: form.modoFreq === "periodica" ? form.dataEvento : undefined,
+        frequencia_valor: form.modoFreq === "periodica" ? Number(form.freqValor) : undefined,
+        frequencia_unidade: form.modoFreq === "periodica" ? form.freqUnidade : undefined,
+        produto_padrao: ehExame ? undefined : (form.produtoPadrao || undefined),
+        dose_padrao: ehExame ? undefined : (form.dosePadrao ? Number(form.dosePadrao) : undefined),
+        unidade_padrao: ehExame ? undefined : (form.unidadePadrao || undefined),
+        via_padrao: ehExame ? undefined : (form.viaPadrao || undefined),
+        exame_definicao_id: ehExame && form.exameDefinicaoId ? Number(form.exameDefinicaoId) : undefined,
+        janela_de_valor: form.modoFreq === "evento_vida" && form.janelaDeValor ? Number(form.janelaDeValor) : undefined,
+        janela_de_unidade: form.modoFreq === "evento_vida" && form.janelaDeValor ? form.janelaDeUnidade : undefined,
+        janela_ate_valor: form.modoFreq === "evento_vida" && form.janelaAteValor ? Number(form.janelaAteValor) : undefined,
+        janela_ate_unidade: form.modoFreq === "evento_vida" && form.janelaAteValor ? form.janelaAteUnidade : undefined,
+        acao_fora_janela: form.modoFreq === "evento_vida" ? (form.acaoForaJanela || undefined) : undefined,
+        teto_etario_valor: form.modoFreq === "evento_vida" && form.tetoEtarioValor ? Number(form.tetoEtarioValor) : undefined,
+        teto_etario_unidade: form.modoFreq === "evento_vida" && form.tetoEtarioValor ? form.tetoEtarioUnidade : undefined,
+        veterinario_padrao_pessoa_id: form.veterinarioPadraoId ? Number(form.veterinarioPadraoId) : undefined,
+      };
+      if (form.modoEvento === "novo") {
+        const novo = await criarEventoSanitario({ nome: form.nomeNovoEvento.trim(), ...dadosEvento });
+        eventoId = String(novo.id);
+      } else {
+        await atualizarEventoSanitario(Number(eventoId), { nome: eventoSel!.nome, ativo: true, ...dadosEvento });
+      }
+
+      const dadosRegra = {
+        evento_sanitario_id: Number(eventoId),
+        categoria_alvo: form.categoriaAlvoSel.length ? form.categoriaAlvoSel.join(SEP_CATEGORIAS) : undefined,
+        doenca_id: form.doencaId ? Number(form.doencaId) : undefined,
+        produto: ehExame ? undefined : (form.produto || undefined),
+        principio_ativo_id: ehExame ? undefined : (form.principioId ? Number(form.principioId) : undefined),
+        dosagem: ehExame ? undefined : (form.dosagem || undefined),
+        unidade: ehExame ? undefined : (form.unidade || undefined),
+        responsavel: form.responsavel || undefined,
+        veterinario: form.veterinario || undefined,
+        frequencia_valor: Number(form.freqValor) || 1, frequencia_unidade: form.freqUnidade,
+        data_evento: form.dataEvento || new Date().toISOString().slice(0, 10),
+        observacao: form.observacao || undefined, realizado: form.realizado,
+        checklist_itens: form.checklistItens,
+      };
+      if (editando) await atualizarCalendarioSanitario(editando, dadosRegra);
+      else await criarCalendarioSanitario(dadosRegra);
+      setSucesso(editando ? "Regra atualizada com sucesso." : "Regra do calendário sanitário criada com sucesso.");
+      limpar();
+      setChecklistTocado(false);
+      carregarEventos();
+      carregarRegras();
+      setTela("lista");
+      return true;
+    } catch (e: any) {
+      setErro(e.message || "Erro ao salvar a regra do calendário sanitário");
+      return false;
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  async function criarExameInline(f: CalendarioForm, sf: (f: CalendarioForm) => void) {
+    try {
+      const ex = await criarExame({
+        nome: f.novoExameNome.trim(), tipo_resultado: f.novoExameTipoResultado,
+        faixa_min: f.novoExameTipoResultado === "numerico" ? Number(f.novoExameFaixaMin) : undefined,
+        faixa_max: f.novoExameTipoResultado === "numerico" ? Number(f.novoExameFaixaMax) : undefined,
+        acao_abaixo: f.novoExameAcaoAbaixo || undefined, acao_dentro: f.novoExameAcaoDentro || undefined,
+        acao_acima: f.novoExameAcaoAcima || undefined,
+      });
+      setExames((prev) => [...prev, ex]);
+      sf({ ...f, exameDefinicaoId: String(ex.id), modoExame: "existente" });
+    } catch (e: any) {
+      setErro(e.message || "Erro ao cadastrar o exame");
+    }
+  }
+
+  const passos: PassoWizard<CalendarioForm>[] = [
+    {
+      id: "tipo", titulo: "Tipo",
+      render: ({ form: f, setForm: sf }) => (
+        <div>
+          <p style={nota}>Vacina e Tratamento usam exatamente os mesmos campos — só Exame é diferente (sem produto/dose/via, sem baixa de estoque).</p>
+          <div className="flex items-center gap-2 mt-3">
+            <button type="button" className={f.tipoBucket === "vacina_tratamento" ? "btn-primary" : "btn-secondary"}
+              onClick={() => sf({ ...f, tipoBucket: "vacina_tratamento" })}>Vacina / Tratamento</button>
+            <button type="button" className={f.tipoBucket === "exame" ? "btn-primary" : "btn-secondary"}
+              onClick={() => sf({ ...f, tipoBucket: "exame", modoEvento: "existente", eventoId: "" })}>Exame</button>
+          </div>
+          {f.tipoBucket === "vacina_tratamento" && (
+            <div className="flex items-center gap-4 mt-3" style={{ fontSize: "0.85rem" }}>
+              <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
+                <input type="radio" checked={f.categoriaPreventiva === "vacina"} onChange={() => sf({ ...f, categoriaPreventiva: "vacina" })} /> Vacina
+              </label>
+              <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
+                <input type="radio" checked={f.categoriaPreventiva === "tratamento"} onChange={() => sf({ ...f, categoriaPreventiva: "tratamento" })} /> Tratamento
+              </label>
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      id: "identificacao", titulo: "Identificação",
+      validar: (f) => {
+        if (f.modoEvento === "existente" && !f.eventoId) return "Selecione o evento sanitário, ou escolha \"Criar novo\".";
+        if (f.modoEvento === "novo" && !f.nomeNovoEvento.trim()) return "Informe o nome do novo evento.";
+        if (f.tipoBucket === "exame" && f.modoExame === "existente" && !f.exameDefinicaoId) return "Selecione o exame, ou escolha \"Criar novo\".";
+        if (f.tipoBucket === "exame" && f.modoExame === "novo" && !f.novoExameNome.trim()) return "Informe o nome do novo exame.";
+        return null;
+      },
+      render: ({ form: f, setForm: sf }) => (
+        <div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Campo label="Evento sanitário" full>
+              <div className="flex items-center gap-2 mb-2">
+                <button type="button" className={f.modoEvento === "existente" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.75rem" }}
+                  onClick={() => sf({ ...f, modoEvento: "existente" })}>Selecionar existente</button>
+                <button type="button" className={f.modoEvento === "novo" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.75rem" }}
+                  onClick={() => sf({ ...f, modoEvento: "novo", eventoId: "", decisaoConflito: null })}><Plus size={13} /> Criar novo</button>
+              </div>
+              {f.modoEvento === "existente" ? (
+                <select style={inputStyle} value={f.eventoId} onChange={(e) => sf({ ...f, eventoId: e.target.value, decisaoConflito: null })}>
+                  <option value="">Selecione…</option>
+                  {eventosBucket.map((ev) => <option key={ev.id} value={ev.id}>{ev.nome}</option>)}
+                </select>
+              ) : (
+                <input style={inputStyle} value={f.nomeNovoEvento} onChange={(e) => sf({ ...f, nomeNovoEvento: e.target.value })} placeholder="ex.: Brucelose B19" />
+              )}
+            </Campo>
+            <Campo label="Doença combatida">
+              <select style={inputStyle} value={f.doencaId} onChange={(e) => sf({ ...f, doencaId: e.target.value })}>
+                <option value="">—</option>{doencas.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
+              </select>
+            </Campo>
+          </div>
+          {f.tipoBucket === "exame" ? (
+            <div className="mt-3" style={{ paddingTop: "0.75rem", borderTop: "1px solid var(--border)" }}>
+              <Campo label="Exame (define como o resultado é lançado)" full>
+                <div className="flex items-center gap-2 mb-2">
+                  <button type="button" className={f.modoExame === "existente" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.75rem" }}
+                    onClick={() => sf({ ...f, modoExame: "existente" })}>Selecionar existente</button>
+                  <button type="button" className={f.modoExame === "novo" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.75rem" }}
+                    onClick={() => sf({ ...f, modoExame: "novo" })}><Plus size={13} /> Criar novo</button>
+                </div>
+                {f.modoExame === "existente" ? (
+                  <select style={inputStyle} value={f.exameDefinicaoId} onChange={(e) => sf({ ...f, exameDefinicaoId: e.target.value })}>
+                    <option value="">Selecione…</option>
+                    {exames.map((ex) => <option key={ex.id} value={ex.id}>{ex.nome}</option>)}
+                  </select>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <Campo label="Nome do exame"><input style={inputStyle} value={f.novoExameNome} onChange={(e) => sf({ ...f, novoExameNome: e.target.value })} /></Campo>
+                    <Campo label="Tipo de resultado">
+                      <select style={inputStyle} value={f.novoExameTipoResultado} onChange={(e) => sf({ ...f, novoExameTipoResultado: e.target.value as "diagnostico" | "numerico" })}>
+                        <option value="diagnostico">Diagnóstico (positivo/negativo/indefinido)</option>
+                        <option value="numerico">Numérico (faixa)</option>
+                      </select>
+                    </Campo>
+                    {f.novoExameTipoResultado === "numerico" && (
+                      <>
+                        <Campo label="Faixa mínima"><input type="number" style={inputStyle} value={f.novoExameFaixaMin} onChange={(e) => sf({ ...f, novoExameFaixaMin: e.target.value })} /></Campo>
+                        <Campo label="Faixa máxima"><input type="number" style={inputStyle} value={f.novoExameFaixaMax} onChange={(e) => sf({ ...f, novoExameFaixaMax: e.target.value })} /></Campo>
+                        <Campo label="Conduta abaixo da faixa"><input style={inputStyle} value={f.novoExameAcaoAbaixo} onChange={(e) => sf({ ...f, novoExameAcaoAbaixo: e.target.value })} /></Campo>
+                        <Campo label="Conduta dentro da faixa"><input style={inputStyle} value={f.novoExameAcaoDentro} onChange={(e) => sf({ ...f, novoExameAcaoDentro: e.target.value })} /></Campo>
+                        <Campo label="Conduta acima da faixa"><input style={inputStyle} value={f.novoExameAcaoAcima} onChange={(e) => sf({ ...f, novoExameAcaoAcima: e.target.value })} /></Campo>
+                      </>
+                    )}
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <button type="button" className="btn-secondary" style={{ fontSize: "0.75rem" }} disabled={!f.novoExameNome.trim()}
+                        onClick={() => criarExameInline(f, sf)}>Cadastrar este exame agora</button>
+                      <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>Cadastra o exame já, sem sair do wizard — depois escolha-o em "Selecionar existente".</p>
+                    </div>
+                  </div>
+                )}
+              </Campo>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3" style={{ paddingTop: "0.75rem", borderTop: "1px solid var(--border)" }}>
+              <Campo label="Produto padrão (opcional)"><EstoquePicker itens={estoque} value={f.produtoPadrao} onChange={(v) => sf({ ...f, produtoPadrao: v })} /></Campo>
+              <Campo label="Dose padrão (opcional)"><input type="number" style={inputStyle} value={f.dosePadrao} onChange={(e) => sf({ ...f, dosePadrao: e.target.value })} /></Campo>
+              <Campo label="Via padrão (opcional)"><input style={inputStyle} value={f.viaPadrao} onChange={(e) => sf({ ...f, viaPadrao: e.target.value })} placeholder="ex.: subcutânea" /></Campo>
+              <p style={{ gridColumn: "1 / -1", fontSize: "0.7rem", color: "var(--text-muted)" }}>Opcionais — a regra (próximo passo) e a realização ainda podem sobrescrever.</p>
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      id: "criterios", titulo: "Critérios",
+      validar: (f) => {
+        if (regraVinculada && f.decisaoConflito === null) return "Escolha uma das opções acima antes de continuar.";
+        const precisaCiclo = f.modoFreq === "periodica";
+        if (precisaCiclo && (!f.dataEvento || !f.freqValor)) return "Selecione a frequência e a data do evento.";
+        if (f.modoFreq === "evento_vida" && f.gatilho === "entrada_lote" && !f.gatilhoLote.trim()) return "Informe o lote do gatilho (entrada no lote).";
+        if (f.modoFreq === "evento_vida" && f.gatilho === "novilha_apta" && !f.gatilhoIdadeMeses) return "Informe a idade-alvo em meses (aptidão de novilha).";
+        if (f.realizado && f.dataEvento && f.dataEvento > new Date().toISOString().slice(0, 10))
+          return "Só é possível marcar como realizado um evento de hoje ou retroativo — a data informada é futura.";
+        return null;
+      },
+      render: ({ form: f, setForm: sf }) => {
+        if (regraVinculada && f.decisaoConflito === null) {
+          return (
+            <div style={{ padding: "0.9rem 1rem", borderRadius: 10, border: "1.5px solid var(--dourado)", background: "rgba(212,175,55,0.1)" }}>
+              <p style={{ fontSize: "0.85rem", fontWeight: 700, marginBottom: "0.4rem" }}>Este evento já tem uma regra cadastrada</p>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.8rem" }}>
+                {regraVinculada.categoria_alvo || "Rebanho todo"} — próxima ocorrência {formatDate(regraVinculada.proxima_ocorrencia)}. Nada foi alterado.
+              </p>
+              <div className="flex items-center gap-2">
+                <button type="button" className="btn-primary" style={{ fontSize: "0.8rem" }} onClick={() => abrirEdicao(regraVinculada)}>Editar essa regra</button>
+                <button type="button" className="btn-secondary" style={{ fontSize: "0.8rem" }} onClick={() => sf({ ...f, decisaoConflito: "nova" })}>Criar uma regra nova mesmo assim</button>
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Campo label="Categoria(s) alvo (período de vida)" full>
+              <MultiFiltroCategorias categoriasVida={categoriasVida} f={f} sf={sf} />
+            </Campo>
+            <Campo label="Repetir por" full>
+              <div className="flex items-center gap-4" style={{ fontSize: "0.85rem" }}>
+                <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
+                  <input type="radio" checked={f.modoFreq === "periodica"} onChange={() => sf({ ...f, modoFreq: "periodica" })} /> Frequência periódica
+                </label>
+                <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
+                  <input type="radio" checked={f.modoFreq === "evento_vida"} onChange={() => sf({ ...f, modoFreq: "evento_vida" })} /> Evento de vida do animal
+                </label>
+              </div>
+            </Campo>
+            {f.modoFreq === "evento_vida" ? (
+              <>
+                <Campo label="Evento de vida">
+                  <select style={inputStyle} value={f.gatilho} onChange={(e) => sf({ ...f, gatilho: e.target.value })}>
+                    {gatilhosVida.map((g) => <option key={g.gatilho} value={g.gatilho}>{g.rotulo}</option>)}
+                  </select>
+                </Campo>
+                {f.gatilho === "entrada_lote" && (
+                  <Campo label="Lote do gatilho"><input style={inputStyle} value={f.gatilhoLote} onChange={(e) => sf({ ...f, gatilhoLote: e.target.value })} placeholder="ex.: PRE_PARTO" /></Campo>
+                )}
+                {f.gatilho === "novilha_apta" && (
+                  <Campo label="Idade-alvo (meses)"><input type="number" min={1} style={inputStyle} value={f.gatilhoIdadeMeses} onChange={(e) => sf({ ...f, gatilhoIdadeMeses: e.target.value })} placeholder="ex.: 13" /></Campo>
+                )}
+                {!f.janelaDeValor && (
+                  <Campo label="Dias após o gatilho"><input type="number" style={inputStyle} value={f.offsetDias} onChange={(e) => sf({ ...f, offsetDias: e.target.value })} /></Campo>
+                )}
+                <Campo label="Janela — de">
+                  <div className="flex items-center gap-2">
+                    <input type="number" min={0} style={inputStyle} value={f.janelaDeValor} onChange={(e) => sf({ ...f, janelaDeValor: e.target.value })} placeholder="3" />
+                    <select style={inputStyle} value={f.janelaDeUnidade} onChange={(e) => sf({ ...f, janelaDeUnidade: e.target.value as "dias" | "meses" })}>
+                      <option value="dias">dias</option><option value="meses">meses</option>
+                    </select>
+                  </div>
+                </Campo>
+                <Campo label="Janela — até">
+                  <div className="flex items-center gap-2">
+                    <input type="number" min={0} style={inputStyle} value={f.janelaAteValor} onChange={(e) => sf({ ...f, janelaAteValor: e.target.value })} placeholder="8" />
+                    <select style={inputStyle} value={f.janelaAteUnidade} onChange={(e) => sf({ ...f, janelaAteUnidade: e.target.value as "dias" | "meses" })}>
+                      <option value="dias">dias</option><option value="meses">meses</option>
+                    </select>
+                  </div>
+                </Campo>
+                <Campo label="Ação ao sair da janela sem aplicação" full>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    {([
+                      ["sair", "Sair", "Encerra — passa a constar como lacuna permanente no histórico"],
+                      ["manter", "Manter até aplicação", "Continua pendente, mesmo fora da janela biológica"],
+                      ["notificar", "Notificar urgência", "Fecha em N dias — alerta antes de sair"],
+                    ] as const).map(([v, lblTxt, desc]) => (
+                      <button key={v} type="button" onClick={() => sf({ ...f, acaoForaJanela: v })}
+                        style={{ textAlign: "left", padding: "0.55rem 0.65rem", borderRadius: 8, cursor: "pointer",
+                          border: "1.5px solid " + (f.acaoForaJanela === v ? "var(--dourado)" : "var(--border)"),
+                          background: f.acaoForaJanela === v ? "rgba(94,26,46,0.25)" : "transparent" }}>
+                        <span style={{ display: "block", fontSize: "0.78rem", fontWeight: 700, color: f.acaoForaJanela === v ? "var(--dourado-light)" : "var(--text)" }}>{lblTxt}</span>
+                        <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.1rem" }}>{desc}</span>
+                      </button>
+                    ))}
+                  </div>
+                </Campo>
+                <Campo label="Teto etário (opcional)">
+                  <div className="flex items-center gap-2">
+                    <input type="number" min={0} style={inputStyle} value={f.tetoEtarioValor} onChange={(e) => sf({ ...f, tetoEtarioValor: e.target.value })} placeholder="8" />
+                    <select style={inputStyle} value={f.tetoEtarioUnidade} onChange={(e) => sf({ ...f, tetoEtarioUnidade: e.target.value as "dias" | "meses" })}>
+                      <option value="dias">dias</option><option value="meses">meses</option>
+                    </select>
+                  </div>
+                </Campo>
+              </>
+            ) : (
+              <>
+                <Campo label="Frequência">
+                  <div className="flex items-center gap-2">
+                    <input type="number" min={1} style={inputStyle} value={f.freqValor} onChange={(e) => sf({ ...f, freqValor: e.target.value })} />
+                    <select style={inputStyle} value={f.freqUnidade} onChange={(e) => sf({ ...f, freqUnidade: e.target.value })}>
+                      {FREQUENCIA_UNIDADES.map((u) => <option key={u.v} value={u.v}>{u.l}</option>)}
+                    </select>
+                  </div>
+                </Campo>
+                <Campo label="Data do evento (referência)"><input type="date" style={inputStyle} value={f.dataEvento} onChange={(e) => sf({ ...f, dataEvento: e.target.value })} /></Campo>
+              </>
+            )}
+            <Campo label="Veterinário padrão">
+              <select style={inputStyle} value={f.veterinarioPadraoId} onChange={(e) => sf({ ...f, veterinarioPadraoId: e.target.value })}>
+                <option value="">— (escolher na hora)</option>
+                {veterinariosZootecnistas.map((p: any) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+              </select>
+            </Campo>
+            <Campo label="Responsável">
+              <select style={inputStyle} value={f.responsavel} onChange={(e) => sf({ ...f, responsavel: e.target.value })}>
+                <option value="">Opcional</option>
+                {pessoasAtivas.map((p) => <option key={p.id ?? p.nome} value={p.nome}>{p.nome}</option>)}
+              </select>
+            </Campo>
+            {ehExame ? (
+              <Campo label="Veterinário (exame)">
+                <select style={inputStyle} value={f.veterinario} onChange={(e) => sf({ ...f, veterinario: e.target.value })}>
+                  <option value="">Opcional</option>
+                  {veterinariosZootecnistas.map((p) => <option key={p.id ?? p.nome} value={p.nome}>{p.nome}</option>)}
+                </select>
+              </Campo>
+            ) : (
+              <>
+                <Campo label="Princípio ativo">
+                  <select style={inputStyle} value={f.principioId} onChange={(e) => sf({ ...f, principioId: e.target.value })}>
+                    <option value="">—</option>{principios.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                  </select>
+                </Campo>
+                <Campo label="Produto (item de estoque)">
+                  <EstoquePicker itens={estoque} value={f.produto} onChange={(v) => sf({ ...f, produto: v })} />
+                </Campo>
+                <Campo label="Dosagem"><input style={inputStyle} value={f.dosagem} onChange={(e) => sf({ ...f, dosagem: e.target.value })} placeholder="ex.: 2 mL a 5 mL (conforme bula)" /></Campo>
+                <Campo label="Unidade">
+                  <select style={inputStyle} value={f.unidade} onChange={(e) => sf({ ...f, unidade: e.target.value })}>
+                    <option value="">—</option>
+                    {unidadesCompativeis(estoque.find((e) => e.nome === f.produto)?.unidade).map((u) => <option key={u}>{u}</option>)}
+                  </select>
+                </Campo>
+              </>
+            )}
+            <Campo label="Observação" full><input style={inputStyle} value={f.observacao} onChange={(e) => sf({ ...f, observacao: e.target.value })} /></Campo>
+            {f.modoFreq === "periodica" && (
+              <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", gridColumn: "1 / -1" }}>
+                <input type="checkbox" checked={f.realizado} onChange={(e) => sf({ ...f, realizado: e.target.checked })} /> Já foi realizado (não entra como pendência na Agenda)
+              </label>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      id: "checklist", titulo: "Checklist",
+      render: ({ form: f, setForm: sf }) => (
+        <PassoChecklist f={f} sf={sf} onTocado={() => setChecklistTocado(true)} />
+      ),
+    },
+    {
+      id: "revisao", titulo: "Revisão",
+      render: ({ form: f }) => {
+        const nomeEvento = f.modoEvento === "novo" ? f.nomeNovoEvento : eventos.find((e) => String(e.id) === f.eventoId)?.nome;
+        return (
+          <div>
+            <p style={{ fontSize: "0.82rem", marginBottom: "0.6rem" }}><strong>{nomeEvento || "(sem evento)"}</strong></p>
+            <ul style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.9, paddingLeft: "1.1rem" }}>
+              <li>Tipo: {ehExame ? "Exame" : f.categoriaPreventiva === "tratamento" ? "Tratamento" : "Vacina"}</li>
+              <li>Categoria(s) alvo: {f.categoriaAlvoSel.join(", ") || "—"}</li>
+              <li>Doença: {doencas.find((d) => String(d.id) === f.doencaId)?.nome || "—"}</li>
+              <li>Repete por: {f.modoFreq === "periodica" ? `a cada ${f.freqValor} ${FREQUENCIA_UNIDADES.find((u) => u.v === f.freqUnidade)?.l}` : `evento de vida (${gatilhosVida.find((g) => g.gatilho === f.gatilho)?.rotulo || f.gatilho})`}</li>
+              <li>Veterinário padrão: {veterinariosZootecnistas.find((p: any) => String(p.id) === f.veterinarioPadraoId)?.nome || "—"}</li>
+              <li>Itens do checklist: {f.checklistItens.length}</li>
+            </ul>
+          </div>
+        );
+      },
+    },
+  ];
+
+  if (tela === "lista") {
+    return (
+      <ListaEntradaCadastroSanitario
+        eventos={eventos} regras={regras} ordEventos={ordEventos} ordRegras={ordRegras}
+        tipoFiltroRegras={tipoFiltroRegras} setTipoFiltroRegras={setTipoFiltroRegras}
+        onNovo={novaRegra} onEditarEvento={(ev) => {
+          limpar(); setChecklistTocado(false); setWizardAberturaId((n) => n + 1);
+          setForm((f) => ({ ...f, tipoBucket: ev.categoria_preventiva === "exame" ? "exame" : "vacina_tratamento", eventoId: String(ev.id) }));
+          setTela("wizard");
+        }}
+        onEditarRegra={abrirEdicao} onExcluirRegra={excluir}
+      />
+    );
+  }
+
+  return (
+    <>
+      <WizardProtocolo<CalendarioForm>
+        key={editando ?? "novo"}
+        chaveRascunho={editando === null ? "wizard-protocolo:sanitario-preventivo" : null}
+        form={form} setForm={setForm}
+        ehVazio={(f) => f.modoEvento === "existente" && !f.eventoId && !f.nomeNovoEvento.trim()}
+        passos={passos}
+        onCancelar={() => { limpar(); setChecklistTocado(false); setTela("lista"); }}
+        onConcluir={salvar}
+        salvando={salvando}
+        rotuloConcluir={editando ? "Salvar alterações" : "Salvar"}
+        erro={erro}
+        tituloTopo={editando ? "Editando regra do calendário sanitário" : "Nova regra do calendário sanitário"}
+      />
+      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
+    </>
+  );
+}
+
+// Extraído para não redeclarar o componente de multi-seleção de categorias a
+// cada render do passo "Critérios" (mesma lógica do wizard antigo).
+function MultiFiltroCategorias({ categoriasVida, f, sf }: { categoriasVida: string[]; f: CalendarioForm; sf: (f: CalendarioForm) => void }) {
+  return (
+    <MultiFiltro
+      label="Categorias" opcoes={Array.from(new Set([...categoriasVida, ...f.categoriaAlvoSel]))}
+      selecionados={f.categoriaAlvoSel} onChange={(v: string[]) => sf({ ...f, categoriaAlvoSel: v })}
+      permitirNovo placeholderNovo="+ outra categoria…"
+      onAdicionarNovo={(v: string) => sf({ ...f, categoriaAlvoSel: Array.from(new Set([...f.categoriaAlvoSel, v])) })}
+    />
+  );
+}
+
 /**
  * Seletor de evento preventivo com a pergunta "vacina ou exame" na frente —
- * usado tanto no cadastro do Calendário sanitário quanto no lançamento de
- * Aplicações. "Avulso" (padrão, nada marcado) mantém o combinado tradicional
- * com todos os eventos, já que uma aplicação preventiva pode ser avulsa, sem
- * vínculo com uma vacina ou exame específico cadastrado.
+ * usado no lançamento de Aplicações (FormPreventivoAplicacao) para o fluxo
+ * "Avulso" (aplicação sem uma regra do calendário por trás). O wizard de
+ * Cadastro (acima) não usa mais este componente — ele tem seu próprio passo
+ * "Tipo"/"Identificação" com o fix do bug de sobrescrita silenciosa — mas ele
+ * continua aqui, inalterado, porque outras telas dependem dele.
  * Ao escolher um exame que ainda não tem um evento sanitário vinculado, cria
  * esse vínculo na hora (transparente para o usuário) para que o exame
- * cadastrado (Configurações > Cadastro > Sanitário > Exames) fique
+ * cadastrado (Central de Protocolos > Cadastro > Sanitário > Exames) fique
  * selecionável aqui sem precisar de um cadastro de evento à parte.
  */
 export function SeletorEventoPreventivo({ eventos, exames, eventoId, onEventoId, onEventosRecarregados }: {
@@ -61,8 +692,6 @@ export function SeletorEventoPreventivo({ eventos, exames, eventoId, onEventoId,
   const [vinculando, setVinculando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
-  // Mantém a aba coerente com o evento carregado (edição de uma regra já
-  // existente, ou pré-preenchimento vindo da Agenda).
   useEffect(() => {
     const ev = eventos.find((e) => String(e.id) === eventoId) as any;
     if (ev) setTipo(ev.categoria_preventiva === "exame" ? "exame" : "vacina");
@@ -119,606 +748,139 @@ export function SeletorEventoPreventivo({ eventos, exames, eventoId, onEventoId,
   );
 }
 
-// Wizard de 4 etapas (redesign "Cooperativa", T5) — todos os campos de UMA
-// regra do calendário sanitário vivem num único objeto (antes eram ~20
-// useState soltos) para caber na API do WizardProtocolo (form único +
-// setForm). Divisão escolhida:
-//  1. Identificação — QUAL evento sanitário (vacina/exame/avulso), categoria
-//     alvo e doença combatida: o que este registro do calendário representa.
-//  2. Critérios (quando disparar) — frequência periódica OU evento de vida
-//     (gatilho/lote/idade/offset), e o toggle "usar cronograma sanitário"
-//     (lista de espera em vez de cobrar aplicação na hora).
-//  3. Roteiro (o que aplicar) — responsável/veterinário, princípio
-//     ativo/produto/dosagem (ou nada, se for exame), observação e "já foi
-//     realizado".
-//  4. Revisão — resumo antes de gravar.
-type CalendarioForm = {
-  eventoId: string; categoriaAlvoSel: string[]; doencaId: string; produto: string; principioId: string;
-  dosagem: string; unidade: string; responsavel: string; veterinario: string;
-  freqValor: string; freqUnidade: string; dataEvento: string; observacao: string; realizado: boolean;
-  usaCronograma: boolean;
-  modoFreq: "periodica" | "evento_vida"; gatilho: string; gatilhoLote: string; gatilhoIdadeMeses: string; offsetDias: string;
-  // Janela de aplicação (só para modoFreq "evento_vida") — de/até em dias ou
-  // meses após o gatilho, ação ao sair sem aplicação, teto etário opcional e
-  // veterinário padrão. Gravados no EVENTO SANITÁRIO (Object 1), não na
-  // regra do calendário — ver EventoSanitarioIn no backend.
-  janelaDeValor: string; janelaDeUnidade: "dias" | "meses";
-  janelaAteValor: string; janelaAteUnidade: "dias" | "meses";
-  acaoForaJanela: string;
-  tetoEtarioValor: string; tetoEtarioUnidade: "dias" | "meses";
-  veterinarioPadraoId: string;
-};
-const calendarioFormVazio = (): CalendarioForm => ({
-  eventoId: "", categoriaAlvoSel: [], doencaId: "", produto: "", principioId: "",
-  dosagem: "", unidade: "", responsavel: "", veterinario: "",
-  freqValor: "1", freqUnidade: "meses", dataEvento: "", observacao: "", realizado: false,
-  usaCronograma: false,
-  modoFreq: "periodica", gatilho: "nascimento", gatilhoLote: "", gatilhoIdadeMeses: "", offsetDias: "0",
-  janelaDeValor: "", janelaDeUnidade: "meses", janelaAteValor: "", janelaAteUnidade: "meses",
-  acaoForaJanela: "", tetoEtarioValor: "", tetoEtarioUnidade: "meses", veterinarioPadraoId: "",
-});
-
-export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
-  const [eventos, setEventos] = useState<OpcaoNomeAtivo[]>([]);
-  const [exames, setExames] = useState<ExameDef[]>([]);
-  const [doencas, setDoencas] = useState<OpcaoNomeAtivo[]>([]);
-  const [principios, setPrincipios] = useState<OpcaoNomeAtivo[]>([]);
-  // Categorias de vida (Configurações > Cadastro > Categorias) — a lista real
-  // usada para "período de vida", nada a ver com CATEGORIAS_ANIMAIS (critérios
-  // de lançamento em massa por status reprodutivo, usado mais abaixo neste arquivo).
-  const [categoriasVida, setCategoriasVida] = useState<string[]>([]);
-  const [regras, setRegras] = useState<RegraCalendario[] | null>(null);
-
-  const [editando, setEditando] = useState<number | null>(null);
-  const [form, setForm] = useState<CalendarioForm>(calendarioFormVazio());
-  const { eventoId, categoriaAlvoSel, doencaId, produto, principioId, dosagem, unidade, responsavel, veterinario,
-    freqValor, freqUnidade, dataEvento, observacao, realizado, usaCronograma,
-    modoFreq, gatilho, gatilhoLote, gatilhoIdadeMeses, offsetDias,
-    janelaDeValor, janelaDeUnidade, janelaAteValor, janelaAteUnidade, acaoForaJanela,
-    tetoEtarioValor, tetoEtarioUnidade, veterinarioPadraoId } = form;
-  const [salvando, setSalvando] = useState(false);
-  const [erro, setErro] = useState<string | null>(null);
-  const [sucesso, setSucesso] = useState<string | null>(null);
-  const [tipoFiltroRegras, setTipoFiltroRegras] = useState<"todos" | "vacina" | "exame" | "avulso">("todos");
-  const regrasFiltradas = useMemo(
-    () => (regras ?? []).filter((r) => tipoFiltroRegras === "todos" || tipoRegra(r) === tipoFiltroRegras),
-    [regras, tipoFiltroRegras]
-  );
-  const ordRegras = useOrdenacao(regrasFiltradas);
-
-  const { pessoas: pessoasAtivas } = usePessoasAtivas();
-  const veterinariosZootecnistas = useMemo(
-    () => pessoasAtivas.filter((p) => (p.tipos || []).some((t: string) => ["Veterinário", "Zootecnista"].includes(t))),
-    [pessoasAtivas]
-  );
-
-  const [gatilhosVida, setGatilhosVida] = useState<{ gatilho: string; rotulo: string }[]>([]);
-
-  useEffect(() => { fetchEventosVidaVocabulario().then(setGatilhosVida).catch(() => {}); }, []);
-
-  const eventoSel = eventos.find((e) => String(e.id) === eventoId) as any;
-  const ehExame = eventoSel?.categoria_preventiva === "exame";
-
-  // Ao escolher um evento já cadastrado como "por evento" (tipo_agendamento
-  // == evento), o modo já vem pré-selecionado e os campos de gatilho
-  // preenchidos — só para uma regra NOVA (editando uma regra já existente,
-  // abrirEdicao já fixou modoFreq="periodica" e não deve ser sobrescrito,
-  // senão os campos da própria regra em edição somem da tela).
-  useEffect(() => {
-    if (editando !== null) return;
-    if (!eventoSel) return;
-    if (eventoSel.tipo_agendamento === "evento" && eventoSel.gatilho) {
-      // Pré-preenche o cronograma já vinculado a este evento (se existir) —
-      // permite revisar/ligar "usar cronograma sanitário" de um evento por
-      // evento de vida (ex.: Brucelose B19) direto por aqui, sem precisar
-      // achar a regra na lista "Regras cadastradas".
-      const regraVinculada = (regras ?? []).find((r) => r.evento_sanitario_id === eventoSel.id);
-      setForm((f) => ({
-        ...f,
-        modoFreq: "evento_vida",
-        gatilho: eventoSel.gatilho,
-        gatilhoLote: eventoSel.gatilho_lote || "",
-        gatilhoIdadeMeses: eventoSel.gatilho_idade_meses ? String(eventoSel.gatilho_idade_meses) : "",
-        offsetDias: eventoSel.offset_dias != null ? String(eventoSel.offset_dias) : "0",
-        usaCronograma: regraVinculada?.usa_cronograma ?? false,
-        freqValor: regraVinculada ? String(regraVinculada.frequencia_valor) : "30",
-        freqUnidade: regraVinculada ? regraVinculada.frequencia_unidade : "dias",
-        dataEvento: regraVinculada ? regraVinculada.data_evento : new Date().toISOString().slice(0, 10),
-        janelaDeValor: eventoSel.janela_de_valor != null ? String(eventoSel.janela_de_valor) : "",
-        janelaDeUnidade: eventoSel.janela_de_unidade || "meses",
-        janelaAteValor: eventoSel.janela_ate_valor != null ? String(eventoSel.janela_ate_valor) : "",
-        janelaAteUnidade: eventoSel.janela_ate_unidade || "meses",
-        acaoForaJanela: eventoSel.acao_fora_janela || "",
-        tetoEtarioValor: eventoSel.teto_etario_valor != null ? String(eventoSel.teto_etario_valor) : "",
-        tetoEtarioUnidade: eventoSel.teto_etario_unidade || "meses",
-        veterinarioPadraoId: eventoSel.veterinario_padrao_pessoa_id ? String(eventoSel.veterinario_padrao_pessoa_id) : "",
-      }));
-    } else {
-      setForm((f) => ({ ...f, modoFreq: "periodica", usaCronograma: false }));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventoId, editando]);
-
-  const carregarRegras = () => fetchCalendarioSanitario().then(setRegras).catch((e) => setErro(e.message));
-  const carregarEventos = () => fetchEventosSanitarios().then((d) => setEventos(d.filter((e: OpcaoNomeAtivo) => e.ativo))).catch(() => {});
-  useEffect(() => {
-    carregarEventos();
-    fetchExames().then(setExames).catch(() => {});
-    fetchDoencas().then((d) => setDoencas(d.filter((e: OpcaoNomeAtivo) => e.ativo))).catch(() => {});
-    fetchPrincipiosAtivos().then((d) => setPrincipios(d.filter((e: OpcaoNomeAtivo) => e.ativo !== false))).catch(() => {});
-    fetchCategoriasManejo().then((d) => setCategoriasVida(d.filter((c) => c.ativo).map((c) => c.nome))).catch(() => {});
-    carregarRegras();
-  }, []);
-  const [abrirNovoEvento, setAbrirNovoEvento] = useState(false);
-
-  const limpar = () => { setEditando(null); setForm(calendarioFormVazio()); };
-
-  const abrirEdicao = (r: RegraCalendario) => {
-    setEditando(r.id);
-    setForm((f) => ({
-      ...f,
-      eventoId: String(r.evento_sanitario_id),
-      categoriaAlvoSel: r.categoria_alvo ? r.categoria_alvo.split(SEP_CATEGORIAS).map((c) => c.trim()).filter(Boolean) : [],
-      doencaId: r.doenca_id ? String(r.doenca_id) : "", produto: r.produto || "",
-      principioId: r.principio_ativo_id ? String(r.principio_ativo_id) : "", dosagem: r.dosagem || "",
-      unidade: r.unidade || "",
-      responsavel: r.responsavel || "",
-      veterinario: (r as any).veterinario || "",
-      freqValor: String(r.frequencia_valor), freqUnidade: r.frequencia_unidade,
-      dataEvento: r.data_evento, observacao: r.observacao || "", realizado: false,
-      usaCronograma: r.usa_cronograma ?? false,
-      // Está editando uma regra JÁ existente (linha real de CalendarioSanitario) —
-      // o modo é sempre "periódica", mesmo que o evento vinculado também tenha
-      // um agendamento "por evento de vida" configurado (ex.: Brucelose B19).
-      // Sem isto, o efeito acima trocava de modo sozinho e escondia os campos
-      // da própria regra que se está editando.
-      modoFreq: "periodica",
-    }));
+// Passo 4 — Checklist (seção 3.7.0/3.7.3): lista editável nascida do template
+// do tipo, ajustável só para esta regra (adicionar/remover item), sem afetar
+// o template nem outras regras.
+function PassoChecklist({ f, sf, onTocado }: { f: CalendarioForm; sf: (f: CalendarioForm) => void; onTocado: () => void }) {
+  const [novoNome, setNovoNome] = useState("");
+  const remover = (idx: number) => {
+    onTocado();
+    sf({ ...f, checklistItens: f.checklistItens.filter((_, i) => i !== idx) });
   };
-
-  const excluir = async (r: RegraCalendario) => {
-    if (!window.confirm(`Excluir a regra do calendário "${r.evento_sanitario_nome}" de ${formatDate(r.data_evento)}?`)) return;
-    try { await excluirCalendarioSanitario(r.id); carregarRegras(); }
-    catch (e: any) { setErro(e.message); }
+  const adicionar = () => {
+    if (!novoNome.trim()) return;
+    onTocado();
+    const ordem = f.checklistItens.length ? Math.max(...f.checklistItens.map((i) => i.ordem)) + 1 : 1;
+    sf({ ...f, checklistItens: [...f.checklistItens, { chave: "custom", nome: novoNome.trim(), ordem }] });
+    setNovoNome("");
   };
-
-  // Se marcar "usar cronograma sanitário", a janela do cronograma (frequência
-  // + data de referência) precisa existir mesmo quando o modo é "evento de
-  // vida" — é o que liga o gatilho por animal (ex.: Brucelose B19 aos 150
-  // dias) à lista de espera em vez de cobrar aplicação na hora.
-  const precisaCicloRegra = modoFreq === "periodica" || usaCronograma;
-  const regraVinculadaEventoVida = modoFreq === "evento_vida" && eventoId
-    ? (regras ?? []).find((r) => r.evento_sanitario_id === Number(eventoId))
-    : undefined;
-
-  // Devolve true só quando salvou de verdade — sinal que o wizard usa para
-  // limpar o rascunho do localStorage (ver WizardProtocolo.onConcluir).
-  async function salvar(): Promise<boolean> {
-    setErro(null); setSucesso(null);
-    if (!eventoId) { setErro("Selecione o evento sanitário."); return false; }
-    if (precisaCicloRegra && (!dataEvento || !freqValor)) { setErro("Selecione a frequência e a data do evento."); return false; }
-    if (modoFreq === "evento_vida" && gatilho === "entrada_lote" && !gatilhoLote.trim()) { setErro("Informe o lote do gatilho (entrada no lote)."); return false; }
-    if (modoFreq === "evento_vida" && gatilho === "novilha_apta" && !gatilhoIdadeMeses) { setErro("Informe a idade-alvo em meses (aptidão de novilha)."); return false; }
-    // Só se marca como realizado evento do dia corrente ou retroativo — nunca um evento futuro.
-    if (modoFreq === "periodica" && realizado && dataEvento && dataEvento > new Date().toISOString().slice(0, 10)) {
-      setErro("Só é possível marcar como realizado um evento de hoje ou retroativo — a data informada é futura.");
-      return false;
-    }
-    setSalvando(true);
-    try {
-      const montarDadosRegra = () => ({
-        evento_sanitario_id: Number(eventoId), categoria_alvo: categoriaAlvoSel.length ? categoriaAlvoSel.join(SEP_CATEGORIAS) : undefined,
-        doenca_id: doencaId ? Number(doencaId) : undefined,
-        produto: ehExame ? undefined : (produto || undefined),
-        principio_ativo_id: ehExame ? undefined : (principioId ? Number(principioId) : undefined),
-        dosagem: ehExame ? undefined : (dosagem || undefined),
-        unidade: ehExame ? undefined : (unidade || undefined),
-        responsavel: responsavel || undefined,
-        veterinario: veterinario || undefined,
-        frequencia_valor: Number(freqValor), frequencia_unidade: freqUnidade, data_evento: dataEvento,
-        observacao: observacao || undefined, realizado, usa_cronograma: usaCronograma,
-      });
-
-      if (modoFreq === "evento_vida") {
-        // Configura o EVENTO SANITÁRIO selecionado para agendar por evento de
-        // vida (por animal), preservando os demais campos já cadastrados nele.
-        await atualizarEventoSanitario(Number(eventoId), {
-          ...eventoSel, tipo_agendamento: "evento", gatilho,
-          gatilho_lote: gatilho === "entrada_lote" ? gatilhoLote.trim() : null,
-          gatilho_idade_meses: gatilho === "novilha_apta" ? Number(gatilhoIdadeMeses) : null,
-          offset_dias: offsetDias ? Number(offsetDias) : 0,
-          janela_de_valor: janelaDeValor ? Number(janelaDeValor) : null,
-          janela_de_unidade: janelaDeValor ? janelaDeUnidade : null,
-          janela_ate_valor: janelaAteValor ? Number(janelaAteValor) : null,
-          janela_ate_unidade: janelaAteValor ? janelaAteUnidade : null,
-          acao_fora_janela: acaoForaJanela || null,
-          teto_etario_valor: tetoEtarioValor ? Number(tetoEtarioValor) : null,
-          teto_etario_unidade: tetoEtarioValor ? tetoEtarioUnidade : null,
-          veterinario_padrao_pessoa_id: veterinarioPadraoId ? Number(veterinarioPadraoId) : null,
-        });
-        // "Usar cronograma sanitário" marcado (ou já havia uma regra
-        // vinculada a este evento) — cria/atualiza a regra que liga esse
-        // gatilho por animal à lista de espera do cronograma.
-        if (usaCronograma || regraVinculadaEventoVida) {
-          const dadosRegra = montarDadosRegra();
-          if (regraVinculadaEventoVida) await atualizarCalendarioSanitario(regraVinculadaEventoVida.id, dadosRegra);
-          else await criarCalendarioSanitario(dadosRegra);
-        }
-        if (usaCronograma) {
-          window.location.href = "/sanidade?ir=cronogramas";
-          return true;
-        }
-        setSucesso("Evento sanitário configurado para agendar por evento de vida.");
-        limpar();
-        carregarEventos();
-        carregarRegras();
-        setSalvando(false);
-        return true;
-      }
-      const dados = montarDadosRegra();
-      if (editando) await atualizarCalendarioSanitario(editando, dados);
-      else await criarCalendarioSanitario(dados);
-      if (usaCronograma) {
-        // "Registrar cronograma deste evento" marcado — leva direto para o
-        // card Cronogramas (Sanidade > Preventiva > Calendário sanitário),
-        // para confirmar o 1º ciclo (agendar com veterinário, aplicação
-        // própria ou deixar em aberto), como pedido no momento do cadastro.
-        window.location.href = "/sanidade?ir=cronogramas";
-        return true;
-      }
-      setSucesso(editando ? "Regra atualizada com sucesso." : "Regra do calendário sanitário criada com sucesso.");
-      limpar();
-      carregarRegras();
-      return true;
-    } catch (e: any) {
-      setErro(e.message || "Erro ao salvar a regra do calendário sanitário");
-      return false;
-    } finally {
-      setSalvando(false);
-    }
-  }
-
-  const passos: PassoWizard<CalendarioForm>[] = [
-    {
-      id: "identificacao", titulo: "Identificação",
-      validar: (f) => (!f.eventoId ? "Selecione o evento sanitário." : null),
-      render: ({ form: f, setForm: sf }) => (
-        <div>
-          <p style={nota}>
-            Ex.: <strong>Vermífugo</strong> a cada 4 meses para bezerras (calendário sazonal), ou <strong>Brucelose B19</strong> uma
-            vez, no nascimento (protocolo por fase fisiológica) — escolha o evento, a frequência e preencha a dosagem.
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
-            <Campo label="Evento sanitário">
-              <div className="flex items-center gap-2">
-                <div style={{ flex: 1 }}>
-                  <SeletorEventoPreventivo eventos={eventos} exames={exames} eventoId={f.eventoId} onEventoId={(v) => sf({ ...f, eventoId: v })} onEventosRecarregados={carregarEventos} />
-                </div>
-                <button type="button" className="btn-ghost" title="Cadastrar novo evento sanitário" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setAbrirNovoEvento(true)}>
-                  <Plus size={13} /> Novo
-                </button>
-              </div>
-              {abrirNovoEvento && (
-                <Modal title="Novo evento sanitário" onClose={() => { setAbrirNovoEvento(false); carregarEventos(); }} width="900px">
-                  <CadastroEventosSanitarios />
-                </Modal>
-              )}
-            </Campo>
-            <Campo label="Categoria(s) alvo (período de vida)">
-              <MultiFiltro
-                label="Categorias" opcoes={Array.from(new Set([...categoriasVida, ...f.categoriaAlvoSel]))}
-                selecionados={f.categoriaAlvoSel} onChange={(v) => sf({ ...f, categoriaAlvoSel: v })}
-                permitirNovo placeholderNovo="+ outra categoria…"
-                onAdicionarNovo={(v) => sf({ ...f, categoriaAlvoSel: Array.from(new Set([...f.categoriaAlvoSel, v])) })}
-              />
-            </Campo>
-            <Campo label="Doença combatida">
-              <select style={inputStyle} value={f.doencaId} onChange={(e) => sf({ ...f, doencaId: e.target.value })}>
-                <option value="">—</option>{doencas.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
-              </select>
-            </Campo>
-          </div>
-        </div>
-      ),
-    },
-    {
-      id: "criterios", titulo: "Critérios",
-      validar: (f) => {
-        const precisaCiclo = f.modoFreq === "periodica" || f.usaCronograma;
-        if (precisaCiclo && (!f.dataEvento || !f.freqValor)) return "Selecione a frequência e a data do evento.";
-        if (f.modoFreq === "evento_vida" && f.gatilho === "entrada_lote" && !f.gatilhoLote.trim()) return "Informe o lote do gatilho (entrada no lote).";
-        if (f.modoFreq === "evento_vida" && f.gatilho === "novilha_apta" && !f.gatilhoIdadeMeses) return "Informe a idade-alvo em meses (aptidão de novilha).";
-        return null;
-      },
-      render: ({ form: f, setForm: sf }) => (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Campo label="Repetir por" full>
-            <div className="flex items-center gap-4" style={{ fontSize: "0.85rem" }}>
-              <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
-                <input type="radio" checked={f.modoFreq === "periodica"} onChange={() => sf({ ...f, modoFreq: "periodica" })} /> Frequência periódica
-              </label>
-              <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
-                <input type="radio" checked={f.modoFreq === "evento_vida"} onChange={() => sf({ ...f, modoFreq: "evento_vida" })} /> Evento de vida do animal
-              </label>
-            </div>
-          </Campo>
-          {f.modoFreq === "evento_vida" && (
-            <>
-              <Campo label="Evento de vida">
-                <select style={inputStyle} value={f.gatilho} onChange={(e) => sf({ ...f, gatilho: e.target.value })}>
-                  {gatilhosVida.map((g) => <option key={g.gatilho} value={g.gatilho}>{g.rotulo}</option>)}
-                </select>
-              </Campo>
-              {f.gatilho === "entrada_lote" && (
-                <Campo label="Lote do gatilho"><input style={inputStyle} value={f.gatilhoLote} onChange={(e) => sf({ ...f, gatilhoLote: e.target.value })} placeholder="ex.: PRE_PARTO" /></Campo>
-              )}
-              {f.gatilho === "novilha_apta" && (
-                <Campo label="Idade-alvo (meses)"><input type="number" min={1} style={inputStyle} value={f.gatilhoIdadeMeses} onChange={(e) => sf({ ...f, gatilhoIdadeMeses: e.target.value })} placeholder="ex.: 13" /></Campo>
-              )}
-              {/* "Dias após o gatilho" fica visível só enquanto nenhuma janela de
-                  aplicação está configurada — é o campo legado que decide
-                  sozinho quando o item entra na Agenda para eventos antigos.
-                  Assim que "Janela — de" (mais abaixo) é preenchida, ela passa
-                  a decidir isso no lugar dele (já em dias OU meses, coisa que
-                  este campo nunca soube fazer) — mostrar os dois juntos era
-                  pedir a mesma informação duas vezes. */}
-              {!f.janelaDeValor && (
-                <Campo label="Dias após o gatilho"><input type="number" style={inputStyle} value={f.offsetDias} onChange={(e) => sf({ ...f, offsetDias: e.target.value })} /></Campo>
-              )}
-              <div style={{ gridColumn: "1 / -1" }}>
-                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                  Este modo por si só não cria uma regra de frequência — ele configura o evento sanitário selecionado para
-                  entrar na Agenda automaticamente quando cada animal atingir esse evento de vida (por animal, não por
-                  rebanho todo). Marque "Usar cronograma sanitário" abaixo para, em vez de cobrar aplicação na hora
-                  assim que o animal bater o critério, colocá-lo numa lista de espera por leva.
-                </p>
-              </div>
-
-              <div style={{ gridColumn: "1 / -1", marginTop: "0.5rem", paddingTop: "0.75rem", borderTop: "1px solid var(--border)" }}>
-                <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.15rem" }}>Janela de aplicação</p>
-                <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
-                  Após o gatilho, a janela de aplicação é definida no prazo cadastrado.
-                </p>
-              </div>
-              <Campo label="Janela — de">
-                <div className="flex items-center gap-2">
-                  <input type="number" min={0} style={inputStyle} value={f.janelaDeValor} onChange={(e) => sf({ ...f, janelaDeValor: e.target.value })} placeholder="3" />
-                  <select style={inputStyle} value={f.janelaDeUnidade} onChange={(e) => sf({ ...f, janelaDeUnidade: e.target.value as "dias" | "meses" })}>
-                    <option value="dias">dias</option><option value="meses">meses</option>
-                  </select>
-                </div>
-              </Campo>
-              <Campo label="Janela — até">
-                <div className="flex items-center gap-2">
-                  <input type="number" min={0} style={inputStyle} value={f.janelaAteValor} onChange={(e) => sf({ ...f, janelaAteValor: e.target.value })} placeholder="8" />
-                  <select style={inputStyle} value={f.janelaAteUnidade} onChange={(e) => sf({ ...f, janelaAteUnidade: e.target.value as "dias" | "meses" })}>
-                    <option value="dias">dias</option><option value="meses">meses</option>
-                  </select>
-                </div>
-              </Campo>
-              <Campo label="Ação ao sair da janela sem aplicação" full>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                  {([
-                    ["sair", "Sair", "Encerra — passa a constar como lacuna permanente no histórico"],
-                    ["manter", "Manter até aplicação", "Continua pendente, mesmo fora da janela biológica"],
-                    ["notificar", "Notificar urgência", "Fecha em N dias — alerta antes de sair"],
-                  ] as const).map(([v, lbl, desc]) => (
-                    <button key={v} type="button" onClick={() => sf({ ...f, acaoForaJanela: v })}
-                      style={{ textAlign: "left", padding: "0.55rem 0.65rem", borderRadius: 8, cursor: "pointer",
-                        border: "1.5px solid " + (f.acaoForaJanela === v ? "var(--dourado)" : "var(--border)"),
-                        background: f.acaoForaJanela === v ? "rgba(94,26,46,0.25)" : "transparent" }}>
-                      <span style={{ display: "block", fontSize: "0.78rem", fontWeight: 700, color: f.acaoForaJanela === v ? "var(--dourado-light)" : "var(--text)" }}>{lbl}</span>
-                      <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.1rem" }}>{desc}</span>
-                    </button>
-                  ))}
-                </div>
-              </Campo>
-              {f.acaoForaJanela === "manter" && (
-                <div style={{ gridColumn: "1 / -1" }}>
-                  <p style={{ fontSize: "0.7rem", color: "var(--dourado-light)" }}>
-                    "Manter" nunca se aplica além do teto etário abaixo, se um for informado — evita pendência indevida para animais fora da idade biológica desta regra.
-                  </p>
-                </div>
-              )}
-              <Campo label="Veterinário padrão">
-                <select style={inputStyle} value={f.veterinarioPadraoId} onChange={(e) => sf({ ...f, veterinarioPadraoId: e.target.value })}>
-                  <option value="">— (escolher na hora)</option>
-                  {veterinariosZootecnistas.map((p: any) => <option key={p.id} value={p.id}>{p.nome}</option>)}
-                </select>
-              </Campo>
-              <Campo label="Teto etário (opcional)">
-                <div className="flex items-center gap-2">
-                  <input type="number" min={0} style={inputStyle} value={f.tetoEtarioValor} onChange={(e) => sf({ ...f, tetoEtarioValor: e.target.value })} placeholder="8" />
-                  <select style={inputStyle} value={f.tetoEtarioUnidade} onChange={(e) => sf({ ...f, tetoEtarioUnidade: e.target.value as "dias" | "meses" })}>
-                    <option value="dias">dias</option><option value="meses">meses</option>
-                  </select>
-                </div>
-              </Campo>
-            </>
-          )}
-          {(f.modoFreq === "periodica" || f.usaCronograma) && (
-            <>
-              <Campo label={f.modoFreq === "evento_vida" ? "Frequência da leva do cronograma" : "Frequência"}>
-                <div className="flex items-center gap-2">
-                  <input type="number" min={1} style={inputStyle} value={f.freqValor} onChange={(e) => sf({ ...f, freqValor: e.target.value })} />
-                  <select style={inputStyle} value={f.freqUnidade} onChange={(e) => sf({ ...f, freqUnidade: e.target.value })}>
-                    {FREQUENCIA_UNIDADES.map((u) => <option key={u.v} value={u.v}>{u.l}</option>)}
-                  </select>
-                </div>
-              </Campo>
-              <Campo label="Data do evento (referência)"><input type="date" style={inputStyle} value={f.dataEvento} onChange={(e) => sf({ ...f, dataEvento: e.target.value })} /></Campo>
-            </>
-          )}
-          {!!f.eventoId && (
-            <div style={{ gridColumn: "1 / -1", marginTop: "0.3rem", padding: "0.6rem 0.7rem", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)" }}>
-              <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", fontWeight: 700 }}>
-                <input type="checkbox" checked={f.usaCronograma} onChange={(e) => sf({ ...f, usaCronograma: e.target.checked })} /> Usar cronograma sanitário
-              </label>
-              <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>
-                Em vez de cobrar aplicação na hora, os animais que baterem o critério entram numa lista de espera até você agendar
-                com o veterinário ou confirmar aplicação própria. A Agenda mostra a lista de espera, a decisão de quem vai aplicar e,
-                perto da data prevista sem decisão, cobra confirmação obrigatória. Funciona tanto para uma regra de frequência
-                periódica quanto para um evento por evento de vida (ex.: uma vacina aplicada numa idade-alvo específica).
-              </p>
-            </div>
-          )}
-        </div>
-      ),
-    },
-    {
-      id: "roteiro", titulo: "Roteiro",
-      validar: (f) => {
-        const hoje = new Date().toISOString().slice(0, 10);
-        if (f.modoFreq === "periodica" && f.realizado && f.dataEvento && f.dataEvento > hoje)
-          return "Só é possível marcar como realizado um evento de hoje ou retroativo — a data informada é futura.";
-        return null;
-      },
-      render: ({ form: f, setForm: sf }) => (
-        <div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Campo label="Responsável">
-              <select style={inputStyle} value={f.responsavel} onChange={(e) => sf({ ...f, responsavel: e.target.value })}>
-                <option value="">Opcional</option>
-                {pessoasAtivas.map((p) => <option key={p.id ?? p.nome} value={p.nome}>{p.nome}</option>)}
-              </select>
-            </Campo>
-            {ehExame ? (
-              <Campo label="Veterinário (exame)">
-                <select style={inputStyle} value={f.veterinario} onChange={(e) => sf({ ...f, veterinario: e.target.value })}>
-                  <option value="">Opcional</option>
-                  {veterinariosZootecnistas.map((p) => <option key={p.id ?? p.nome} value={p.nome}>{p.nome}</option>)}
-                </select>
-              </Campo>
-            ) : (
-              <>
-                <Campo label="Princípio ativo">
-                  <select style={inputStyle} value={f.principioId} onChange={(e) => sf({ ...f, principioId: e.target.value })}>
-                    <option value="">—</option>{principios.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
-                  </select>
-                </Campo>
-                <Campo label="Produto (item de estoque)">
-                  <EstoquePicker itens={estoque} value={f.produto} onChange={(v) => sf({ ...f, produto: v })} />
-                </Campo>
-                <Campo label="Dosagem recomendada">
-                  <input style={inputStyle} value={f.dosagem} onChange={(e) => sf({ ...f, dosagem: e.target.value })} placeholder="ex.: 2 mL a 5 mL (conforme bula)" />
-                </Campo>
-                <Campo label="Unidade">
-                  <select style={inputStyle} value={f.unidade} onChange={(e) => sf({ ...f, unidade: e.target.value })}>
-                    <option value="">—</option>
-                    {unidadesCompativeis(estoque.find((e) => e.nome === f.produto)?.unidade).map((u) => <option key={u}>{u}</option>)}
-                  </select>
-                </Campo>
-              </>
-            )}
-            <Campo label="Observação" full><input style={inputStyle} value={f.observacao} onChange={(e) => sf({ ...f, observacao: e.target.value })} /></Campo>
-          </div>
-          {ehExame && (
-            <p style={{ fontSize: "0.75rem", color: "var(--blue)", marginTop: "0.5rem" }}>
-              Exame — sem baixa de estoque, só o agendamento. Use o botão "Lançar financeiro" na aba Sanidade &gt; Preventivo para registrar o custo do exame.
-            </p>
-          )}
-          {f.modoFreq === "periodica" && (
-            <label className="flex items-center gap-2 mt-2" style={{ fontSize: "0.8rem" }}>
-              <input type="checkbox" checked={f.realizado} onChange={(e) => sf({ ...f, realizado: e.target.checked })} /> Já foi realizado (não entra como pendência na Agenda)
-            </label>
-          )}
-        </div>
-      ),
-    },
-    {
-      id: "revisao", titulo: "Revisão",
-      render: ({ form: f }) => (
-        <div>
-          <p style={{ fontSize: "0.82rem", marginBottom: "0.6rem" }}>
-            <strong>{eventos.find((e) => String(e.id) === f.eventoId)?.nome || "(sem evento)"}</strong>
-          </p>
-          <ul style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.9, paddingLeft: "1.1rem" }}>
-            <li>Categoria(s) alvo: {f.categoriaAlvoSel.join(", ") || "—"}</li>
-            <li>Doença: {doencas.find((d) => String(d.id) === f.doencaId)?.nome || "—"}</li>
-            <li>Repete por: {f.modoFreq === "periodica" ? `a cada ${f.freqValor} ${FREQUENCIA_UNIDADES.find((u) => u.v === f.freqUnidade)?.l}` : `evento de vida (${gatilhosVida.find((g) => g.gatilho === f.gatilho)?.rotulo || f.gatilho})`}</li>
-            {!ehExame && <li>Produto: {f.produto || "—"} {f.dosagem ? `— ${f.dosagem} ${f.unidade || ""}` : ""}</li>}
-            <li>Usa cronograma sanitário: {f.usaCronograma ? "Sim" : "Não"}</li>
-          </ul>
-        </div>
-      ),
-    },
-  ];
-
   return (
-    <>
-      <WizardProtocolo<CalendarioForm>
-        key={editando ?? "novo"}
-        chaveRascunho={editando === null ? "wizard-protocolo:sanitario-preventivo" : null}
-        form={form} setForm={setForm}
-        ehVazio={(f) => !f.eventoId && !f.observacao.trim() && !f.produto.trim()}
-        passos={passos}
-        onCancelar={limpar}
-        onConcluir={salvar}
-        salvando={salvando}
-        rotuloConcluir={editando ? "Salvar alterações" : "Salvar"}
-        erro={erro}
-      />
-      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
-
-      {regras && (
-        <div className="mt-4">
-          <SecaoRecolhivel
-            titulo="Regras cadastradas"
-            defaultAberta={false}
-            descricao="Regras recorrentes já cadastradas no calendário sanitário"
-            badge={<span style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700 }}>{regras.length}</span>}
-          >
-          <div className="flex items-center gap-2 mb-2">
-            {TIPOS_REGRA_FILTRO.map((t) => (
-              <button key={t.v} type="button" className={tipoFiltroRegras === t.v ? "btn-primary" : "btn-secondary"}
-                style={{ fontSize: "0.72rem" }} onClick={() => setTipoFiltroRegras(t.v)}>{t.l}</button>
-            ))}
-          </div>
-          <div className="overflow-x-auto" style={{ maxHeight: "320px" }}>
-            <table className="fazenda-table" style={{ margin: 0 }}>
-              <thead><tr>
-                <ThOrdenavel label="Evento" campo="evento_sanitario_nome" coluna={ordRegras.coluna} dir={ordRegras.dir} ordenar={ordRegras.ordenar} />
-                <ThOrdenavel label="Tipo" campo="categoria_preventiva" coluna={ordRegras.coluna} dir={ordRegras.dir} ordenar={ordRegras.ordenar} />
-                <ThOrdenavel label="Responsável" campo="responsavel" coluna={ordRegras.coluna} dir={ordRegras.dir} ordenar={ordRegras.ordenar} />
-                <ThOrdenavel label="Categoria alvo" campo="categoria_alvo" coluna={ordRegras.coluna} dir={ordRegras.dir} ordenar={ordRegras.ordenar} />
-                <ThOrdenavel label="Frequência" campo="frequencia_valor" coluna={ordRegras.coluna} dir={ordRegras.dir} ordenar={ordRegras.ordenar} alinhar="right" />
-                <ThOrdenavel label="Próxima ocorrência" campo="proxima_ocorrencia" coluna={ordRegras.coluna} dir={ordRegras.dir} ordenar={ordRegras.ordenar} />
-                <th></th>
-              </tr></thead>
-              <tbody>
-                {ordRegras.linhasOrdenadas.map((r) => (
-                  <tr key={r.id}>
-                    <td style={{ fontWeight: 700 }}>
-                      {r.evento_sanitario_nome}
-                      {r.usa_cronograma && (
-                        <span title="Usa cronograma sanitário" style={{ marginLeft: "0.4rem", fontSize: "0.62rem", fontWeight: 700, color: "var(--dourado-light)", background: "rgba(212,175,55,0.14)", padding: "0.05rem 0.4rem", borderRadius: 999 }}>
-                          Cronograma
-                        </span>
-                      )}
-                    </td>
-                    <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-                      {tipoRegra(r) === "vacina" ? "Vacina" : tipoRegra(r) === "exame" ? "Exame" : "Avulso/outro"}
-                    </td>
-                    <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.responsavel || r.veterinario || "—"}</td>
-                    <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.categoria_alvo || "—"}</td>
-                    <td style={{ fontSize: "0.78rem" }}>a cada {r.frequencia_valor} {FREQUENCIA_UNIDADES.find((u) => u.v === r.frequencia_unidade)?.l}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{formatDate(r.proxima_ocorrencia)}</td>
-                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => abrirEdicao(r)}>Editar</button>
-                      <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => excluir(r)}>Excluir</button>
-                    </td>
-                  </tr>
-                ))}
-                {!regrasFiltradas.length && (
-                  <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma regra cadastrada ainda.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          </SecaoRecolhivel>
-        </div>
-      )}
-    </>
+    <div>
+      <p style={nota}>Nasce do template padrão deste tipo — ajuste só para esta regra (não afeta o template nem outras regras).</p>
+      <ul style={{ marginTop: "0.6rem", padding: 0, listStyle: "none" }}>
+        {f.checklistItens.map((item, idx) => (
+          <li key={`${item.chave}-${idx}`} className="flex items-center justify-between" style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--border)", fontSize: "0.82rem" }}>
+            <span>{item.nome}</span>
+            <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => remover(idx)}>Remover</button>
+          </li>
+        ))}
+        {!f.checklistItens.length && <li style={{ padding: "0.6rem", fontSize: "0.8rem", color: "var(--text-muted)" }}>Nenhum item — a Ocorrência nascerá sem checklist.</li>}
+      </ul>
+      <div className="flex items-center gap-2 mt-3">
+        <input style={inputStyle} placeholder="Novo item…" value={novoNome} onChange={(e) => setNovoNome(e.target.value)} />
+        <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }} onClick={adicionar}>+ Adicionar</button>
+      </div>
+    </div>
   );
 }
 
+// Ponto de entrada antes do wizard (seção 3.7.0) — duas tabelas: Eventos
+// cadastrados e Regras cadastradas, e o botão que abre o wizard no passo 1.
+function ListaEntradaCadastroSanitario({
+  eventos, regras, ordEventos, ordRegras, tipoFiltroRegras, setTipoFiltroRegras, onNovo, onEditarEvento, onEditarRegra, onExcluirRegra,
+}: {
+  eventos: EventoSanitarioDTO[]; regras: RegraCalendario[] | null;
+  ordEventos: ReturnType<typeof useOrdenacao<EventoSanitarioDTO>>;
+  ordRegras: ReturnType<typeof useOrdenacao<RegraCalendario>>;
+  tipoFiltroRegras: "todos" | "vacina" | "tratamento" | "exame" | "avulso";
+  setTipoFiltroRegras: (v: "todos" | "vacina" | "tratamento" | "exame" | "avulso") => void;
+  onNovo: () => void; onEditarEvento: (ev: EventoSanitarioDTO) => void;
+  onEditarRegra: (r: RegraCalendario) => void; onExcluirRegra: (r: RegraCalendario) => void;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <p style={nota}>Cadastro de vacina/tratamento/exame e das regras que geram o calendário sanitário.</p>
+        <button type="button" className="btn-primary" style={{ fontSize: "0.8rem", whiteSpace: "nowrap" }} onClick={onNovo}>
+          <Plus size={14} /> Nova regra do calendário sanitário
+        </button>
+      </div>
+
+      <SecaoRecolhivel titulo="Eventos cadastrados" defaultAberta={false}
+        descricao="Vacinas, tratamentos e exames já cadastrados" badge={<span style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700 }}>{eventos.length}</span>}>
+        <div className="overflow-x-auto" style={{ maxHeight: "320px" }}>
+          <table className="fazenda-table" style={{ margin: 0 }}>
+            <thead><tr>
+              <ThOrdenavel label="Nome" campo="nome" coluna={ordEventos.coluna} dir={ordEventos.dir} ordenar={ordEventos.ordenar} />
+              <ThOrdenavel label="Tipo" campo="categoria_preventiva" coluna={ordEventos.coluna} dir={ordEventos.dir} ordenar={ordEventos.ordenar} />
+              <ThOrdenavel label="Doença" campo="doenca_nome" coluna={ordEventos.coluna} dir={ordEventos.dir} ordenar={ordEventos.ordenar} />
+              <th>Produto padrão / exame vinculado</th>
+              <ThOrdenavel label="Veterinário padrão" campo="veterinario_padrao_nome" coluna={ordEventos.coluna} dir={ordEventos.dir} ordenar={ordEventos.ordenar} />
+              <th></th>
+            </tr></thead>
+            <tbody>
+              {ordEventos.linhasOrdenadas.filter((e) => e.ativo).map((ev) => (
+                <tr key={ev.id}>
+                  <td style={{ fontWeight: 700 }}>{ev.nome}</td>
+                  <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                    {ev.categoria_preventiva === "exame" ? "Exame" : ev.categoria_preventiva === "tratamento" ? "Tratamento" : "Vacina"}
+                  </td>
+                  <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{ev.doenca_nome || "—"}</td>
+                  <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{ev.exame_definicao_nome || ev.produto_padrao || "—"}</td>
+                  <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{ev.veterinario_padrao_nome || "—"}</td>
+                  <td style={{ textAlign: "right" }}><button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => onEditarEvento(ev)}>Editar</button></td>
+                </tr>
+              ))}
+              {!eventos.filter((e) => e.ativo).length && (
+                <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum evento cadastrado ainda.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </SecaoRecolhivel>
+
+      {regras && (
+        <div className="mt-4">
+          <SecaoRecolhivel titulo="Regras cadastradas" defaultAberta
+            descricao="Regras recorrentes já cadastradas no calendário sanitário"
+            badge={<span style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700 }}>{regras.length}</span>}>
+            <div className="flex items-center gap-2 mb-2">
+              {TIPOS_REGRA_FILTRO.map((t) => (
+                <button key={t.v} type="button" className={tipoFiltroRegras === t.v ? "btn-primary" : "btn-secondary"}
+                  style={{ fontSize: "0.72rem" }} onClick={() => setTipoFiltroRegras(t.v)}>{t.l}</button>
+              ))}
+            </div>
+            <div className="overflow-x-auto" style={{ maxHeight: "320px" }}>
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead><tr>
+                  <ThOrdenavel label="Evento" campo="evento_sanitario_nome" coluna={ordRegras.coluna} dir={ordRegras.dir} ordenar={ordRegras.ordenar} />
+                  <ThOrdenavel label="Categoria alvo" campo="categoria_alvo" coluna={ordRegras.coluna} dir={ordRegras.dir} ordenar={ordRegras.ordenar} />
+                  <ThOrdenavel label="Disparo" campo="frequencia_valor" coluna={ordRegras.coluna} dir={ordRegras.dir} ordenar={ordRegras.ordenar} />
+                  <ThOrdenavel label="Próxima ocorrência" campo="proxima_ocorrencia" coluna={ordRegras.coluna} dir={ordRegras.dir} ordenar={ordRegras.ordenar} />
+                  <th></th>
+                </tr></thead>
+                <tbody>
+                  {ordRegras.linhasOrdenadas.map((r) => (
+                    <tr key={r.id}>
+                      <td style={{ fontWeight: 700 }}>{r.evento_sanitario_nome}</td>
+                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.categoria_alvo || "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>a cada {r.frequencia_valor} {FREQUENCIA_UNIDADES.find((u) => u.v === r.frequencia_unidade)?.l}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{formatDate(r.proxima_ocorrencia)}</td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => onEditarRegra(r)}>Editar</button>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => onExcluirRegra(r)}>Excluir</button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!regras.length && (
+                    <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma regra cadastrada ainda.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </SecaoRecolhivel>
+        </div>
+      )}
+    </div>
+  );
+}

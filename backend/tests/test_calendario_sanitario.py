@@ -112,6 +112,37 @@ class TestCalendarioSanitarioCrud:
         assert r.status_code == 200
         assert r.json()["proxima_ocorrencia"] == "2026-07-10"
 
+    def test_regra_nova_sem_checklist_itens_no_body_nao_grava_customizacao(self, client):
+        """Chamada antiga (sem passar pelo wizard novo, seção 3.7.0) — não
+        manda `checklist_itens`, e a regra sai da lista com `checklist_itens: []`
+        (usa o template do tipo dinamicamente, comportamento de sempre)."""
+        c, engine = client
+        r = self._regra(c)
+        assert r.json()["checklist_itens"] == []
+
+    def test_passo_4_do_wizard_grava_checklist_congelado_da_regra(self, client):
+        c, engine = client
+        r = self._regra(c, checklist_itens=[{"chave": "vet", "nome": "Confirmar vet", "ordem": 1}])
+        assert r.status_code == 200
+        assert r.json()["checklist_itens"] == [{"chave": "vet", "nome": "Confirmar vet", "ordem": 1}]
+
+    def test_editar_regra_sem_checklist_itens_preserva_customizacao_anterior(self, client):
+        c, engine = client
+        regra_id = self._regra(c, checklist_itens=[{"chave": "vet", "nome": "Confirmar vet", "ordem": 1}]).json()["id"]
+        r = c.put(f"/sanidade/calendario/{regra_id}", json={
+            "evento_sanitario_id": 1, "frequencia_valor": 6, "frequencia_unidade": "meses", "data_evento": "2026-01-10",
+        })
+        assert r.json()["checklist_itens"] == [{"chave": "vet", "nome": "Confirmar vet", "ordem": 1}]
+
+    def test_editar_regra_com_lista_vazia_remove_customizacao(self, client):
+        c, engine = client
+        regra_id = self._regra(c, checklist_itens=[{"chave": "vet", "nome": "Confirmar vet", "ordem": 1}]).json()["id"]
+        r = c.put(f"/sanidade/calendario/{regra_id}", json={
+            "evento_sanitario_id": 1, "frequencia_valor": 6, "frequencia_unidade": "meses", "data_evento": "2026-01-10",
+            "checklist_itens": [],
+        })
+        assert r.json()["checklist_itens"] == []
+
     def test_lista_filtra_por_periodo_da_proxima_ocorrencia(self, client):
         c, engine = client
         self._regra(c, data_evento="2026-01-10", frequencia_valor=1, frequencia_unidade="meses")  # -> 2026-02-10

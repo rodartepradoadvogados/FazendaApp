@@ -653,6 +653,15 @@ class CronogramaSanitario(SQLModel, table=True):
     #   "cancelado".
     status: str = Field(default="aberto", index=True)
     observacao: Optional[str] = None
+    # "Desconsiderar cronograma" (redesenho do evento sanitário, seção 3.2.5)
+    # — confirma a Ocorrência SEM passar pelo checklist, decisão por
+    # Ocorrência (nunca muda a Regra). Independente de `status`/
+    # `modo_execucao` (que continuam governando a trilha antiga de
+    # veterinário/equipe própria, ver Fase 4) — checklist_completo() OR
+    # checklist_desconsiderado é o que decide "Confirmado" no modelo novo.
+    checklist_desconsiderado: bool = False
+    checklist_desconsiderado_motivo: Optional[str] = None
+    checklist_desconsiderado_em: Optional[datetime] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
     concluido_em: Optional[datetime] = None
@@ -675,6 +684,101 @@ class CronogramaSanitarioAnimal(SQLModel, table=True):
     data_sugestao: date
     data_decisao: Optional[date] = None
     data_aplicacao: Optional[date] = None
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+# ---------------------------------------------------------------------------
+# Checklist da Ocorrência — Fase 0, passo 3 do redesenho do evento sanitário
+# (docs/redesenho-evento-sanitario.md, seção 7). `CronogramaSanitario` É a
+# "Ocorrência" do redesenho (entidade generalizada, ver seção 1 do
+# documento — não uma tabela nova); este checklist é filho dela.
+#
+# `ChecklistTemplateItem` é o cadastro (seção 3.7.3 do redesenho — "Template
+# de Checklist por Tipo"): a lista-padrão que toda Ocorrência nova de um tipo
+# (vacina/tratamento ou exame) já traz. `ChecklistItem` é a cópia real,
+# ocorrência a ocorrência — editar o template não muda checklist já
+# materializado, e ajustar um item numa Ocorrência não afeta o template nem
+# outras Ocorrências (mesma independência que CATEGORIA_MANEJO tem de LOTE).
+# ---------------------------------------------------------------------------
+class ChecklistTemplateItem(SQLModel, table=True):
+    """Item padrão do checklist por tipo de evento — ponto de partida
+    editável (Central de Protocolos › Cadastro › Sanitário › Preventivo,
+    aba "Template de Checklist"). "tratamento" reaproveita o template de
+    "vacina" (mesmos campos/fluxo — ver seção 3.7.0 do redesenho)."""
+
+    __tablename__ = "checklist_template_item"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tipo: str = Field(index=True)  # "vacina" | "exame" (tratamento usa o de vacina)
+    nome: str
+    # Mesmo vocabulário de ChecklistItem.chave — item adicionado pelo usuário
+    # (fora dos 5 canônicos de vacina / 4 de exame, seção 3.4 do redesenho)
+    # nasce "custom", sem comportamento especial. Renomear um item canônico
+    # não muda a chave (o comportamento especial segue a chave, não o texto).
+    chave: str = "custom"
+    ordem: int = 0
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+class ChecklistItem(SQLModel, table=True):
+    """Um item do checklist de UMA Ocorrência (`CronogramaSanitario`) —
+    materializado a partir do `ChecklistTemplateItem` do tipo do evento
+    quando a Ocorrência é aberta. `nome` é copiado na hora (não referencia o
+    template) — editar o template depois não muda checklist já aberto.
+
+    `chave` identifica o item para a UI saber que comportamento especial
+    aplicar (ver docs/redesenho-evento-sanitario.md, seção 3.4): "estoque"
+    (só avisa, nunca bloqueia), "vet" (resposta Sim/Não obrigatória, com
+    alerta persistente se "Não"), "horario" (exige preencher a hora antes de
+    confirmar — não é toggle), "lotes" (exige ver a distribuição por lote de
+    manejo antes de "revisado" — não é toggle), "financeiro" (abre o modal de
+    lançamento). `chave="custom"` é um item extra, adicionado só nesta
+    Ocorrência (ou no template), sem comportamento especial — vira um
+    Cumprido/Pulado genérico."""
+
+    __tablename__ = "cronograma_sanitario_checklist_item"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    cronograma_id: int = Field(foreign_key="cronograma_sanitario.id", index=True)
+    chave: str  # "estoque" | "vet" | "horario" | "lotes" | "financeiro" | "custom"
+    nome: str
+    ordem: int = 0
+    status: str = Field(default="pendente", index=True)  # pendente | cumprido | pulado
+    # Valor livre por item: resposta do vet ("sim"/"nao"), horário confirmado
+    # ("HH:MM"), ou vazio para itens sem resposta própria (estoque/lotes/
+    # financeiro/custom, que só têm status).
+    resposta: Optional[str] = None
+    # Motivo de pular OU justificativa obrigatória quando `resposta == "nao"`
+    # no item "vet" — mesmo campo, os dois casos são "texto explicando uma
+    # resposta fora do caminho padrão".
+    observacao: Optional[str] = None
+    responsavel_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    respondido_em: Optional[datetime] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+class CalendarioSanitarioChecklistItem(SQLModel, table=True):
+    """Checklist customizado de UMA regra (`CalendarioSanitario`) — passo 4 do
+    wizard de cadastro (seção 3.7.0 do redesenho). Nasce como uma cópia do
+    template do tipo (`ChecklistTemplateItem`) no momento em que a regra é
+    salva pelo wizard novo, ajustável só aqui (adicionar/remover item), sem
+    afetar o template nem outras regras. Regra sem nenhuma linha aqui
+    (cadastrada antes deste wizard, ou nunca editada por ele) continua usando
+    o template do tipo dinamicamente, como sempre — ver
+    checklist_sanitario.materializar_checklist, que só olha aqui depois de
+    confirmar que não há linha nenhuma para a regra."""
+
+    __tablename__ = "calendario_sanitario_checklist_item"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    calendario_sanitario_id: int = Field(foreign_key="calendario_sanitario.id", index=True)
+    chave: str = "custom"
+    nome: str
+    ordem: int = 0
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
