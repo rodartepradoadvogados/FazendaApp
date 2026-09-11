@@ -361,55 +361,140 @@ cliente hoje selecionada, quando há uma).
 
 **Correção aplicada e testada** (`fazenda/auth.py`,
 `fazenda/api/routers/auth.py`, `fazenda/api/routers/fazendas.py`): as
-leituras de enumeração/identidade acima passam a ir por
-`engine_manutencao` (role dono, sem RLS) em vez da `session` da
-requisição — mesmo raciocínio já registrado na seção 2 para as rotinas de
-fundo: o filtro de segurança real é `usuario_id`/`pessoa_id`/`fazenda_id`
-explícito em Python, nunca dependeu de RLS, e RLS aqui só cegava. Pool da
+leituras de enumeração/identidade acima passam por
+`database.py::sessao_sem_recorte_de_fazenda(session)` — um context manager
+novo que só troca para a conexão de dono (`engine_manutencao`, sem RLS)
+quando o dialeto é `postgresql`; fora disso (a suíte inteira, SQLite, sem
+RLS) devolve a própria `session` recebida, sem abrir nada. Mesmo
+raciocínio já registrado na seção 2 para as rotinas de fundo: o filtro de
+segurança real é `usuario_id`/`pessoa_id`/`fazenda_id` explícito em
+Python, nunca dependeu de RLS, e RLS aqui só cegava. Pool da
 `engine_manutencao` ampliado de 1+1 para 5+10 (`database.py`) — deixou de
 ser só uma rotina de meia em meia hora, passou a atender caminho de
-login/troca de fazenda em toda requisição. Regressão nova,
-`tests/test_login_sob_rls.py`, contra PostgreSQL real com a mesma política
-do DDL: prova que a consulta pela sessão da requisição nega o vínculo em
-silêncio (reprodução do bug), e que `POST /auth/login`/`GET
-/auth/contas-disponiveis` voltam a ver a fazenda real com a correção —
-testado **sem** a correção (falha, `2 failed`) e **com** ela (passa,
+login/troca de fazenda em toda requisição.
+
+**Regressão pega e corrigida**: a primeira versão desta correção trocava a
+conexão sem checar o dialeto — quebrou 71 testes existentes, porque a
+suíte roda em SQLite com um engine ISOLADO por teste
+(`dependency_overrides[get_session]`), nunca o engine global do módulo, e
+`engine_manutencao` sem `DATABASE_URL_MANUTENCAO` é só um nome a mais para
+esse engine global. A guarda de dialeto acima resolveu: suíte ampla
+filtrada (`-k "auth or login or fazenda or consultor or cowdata or equipe
+or vinculo"`) voltou a **972 passed, 0 failed**.
+
+Regressão nova, `tests/test_login_sob_rls.py`, contra PostgreSQL real com
+a mesma política do DDL: prova que a consulta pela sessão da requisição
+nega o vínculo em silêncio (reprodução do bug), e que `POST /auth/login`/
+`GET /auth/contas-disponiveis` voltam a ver a fazenda real com a correção
+— testado **sem** a correção (falha, `2 failed`) e **com** ela (passa,
 `3 passed`), mesmo rigor do teste do bug de `session.commit()` (PR #760).
 Registrada em `ARQUIVOS_POSTGRES` no CI.
 
-**Achado maior, AINDA NÃO CORRIGIDO — todo o Painel CowData está exposto
-ao mesmo padrão de bug.** Ao investigar, ficou claro que login não é o
-único lugar: TODA rota do Painel CowData (`painel_cowdata_usuarios.py`,
-`painel_cowdata_cadastros.py`, `painel_cowdata_farmacia.py`,
-`painel_cowdata_parametros.py`, `painel_cowdata_touros.py`,
-`painel_cowdata_sincronizacao.py`, `painel_cowdata.py`) opera **sem
-fazenda selecionada por definição** (token sem "fid", de propósito — é um
-painel cross-tenant) e lê/escreve tabelas de fazenda filtrando
-EXPLICITAMENTE por um `fazenda_id` que vem do PATH/BODY da requisição, não
-do token. Sob a política atual (que só enxerga o `app.fazenda_id` do
-token), toda essa leitura/escrita nega em silêncio, do mesmo jeito que
-matou o login — confirmado por leitura de código em pelo menos três desses
-arquivos (`painel_cowdata_cadastros.py` chega a laçar TODAS as fazendas do
-sistema para aplicar um cadastro global, o mesmo padrão "enumera antes de
-saber de quem" da seção 2). **A boa notícia**: o PORTÃO de entrada no
-Painel CowData (`exigir_area_painel_cowdata`/`exigir_permissao_painel_
-cowdata`, via `PermissaoEquipeCowData`) não tem `fazenda_id` — não foi
-alcançado pelo DDL, continua são; ninguém fica trancado do lado de fora.
-O problema é tudo que essas rotas leem/escrevem DEPOIS de entrar.
+**Achado maior — auditoria do Painel CowData concluída em 11/09/2026,
+correção AINDA NÃO FEITA.** Login não era o único lugar: TODA rota do
+Painel CowData (`painel_cowdata.py`, `painel_cowdata_cadastros.py`,
+`painel_cowdata_farmacia.py`, `painel_cowdata_parametros.py`,
+`painel_cowdata_sincronizacao.py`, `painel_cowdata_touros.py`,
+`painel_cowdata_usuarios.py`) opera **sem fazenda selecionada por
+definição** (token sem "fid", de propósito — é um painel cross-tenant) e
+várias leem/escrevem tabelas de fazenda filtrando EXPLICITAMENTE por um
+`fazenda_id` que vem do PATH/BODY da requisição, não do token.
+
+**Mecanismo exato, mapeado por tabela**: das ~185 tabelas com
+`fazenda_id`, 18 são "catálogo global" (`rls-migracao-proposta.sql`) e têm
+`USING (fazenda_id = ctx OR fazenda_id IS NULL)` na LEITURA — linhas
+globais (`fazenda_id IS NULL`) continuam visíveis mesmo sem contexto.
+Todas as outras (~167, "dado de fazenda") são estritas nos dois sentidos.
+**Achado extra, não previsto antes desta auditoria**: o `WITH CHECK` de
+TODA tabela (mesmo as 18 globais) é sempre `fazenda_id = ctx`, **sem** a
+cláusula `OR IS NULL` — ou seja, mesmo a ESCRITA "certa" de uma linha
+global (`fazenda_id=None`) falha sob RLS sem contexto, com erro 500 HTTP
+duro (`new row violates row-level security policy`), não em silêncio.
+Resumindo o padrão de falha do Painel CowData inteiro:
+- leitura filtrada por `fazenda_id` real → **0 linhas, sem erro** (nega calado);
+- escrita em linha global OU de fazenda real → **500 duro** (`WITH CHECK`).
+
+**PORTÃO de entrada continua são**: `exigir_area_painel_cowdata`/
+`exigir_permissao_painel_cowdata` dependem de `PermissaoEquipeCowData`,
+que não tem `fazenda_id` — RLS não alcança, ninguém fica trancado do lado
+de fora. O problema é só o que cada rota lê/escreve DEPOIS de entrar.
+
+**Achados por gravidade** (mapa completo de endpoint→tabela na auditoria
+em si, não repetido aqui — ver histórico desta sessão):
+
+*Mais graves — botão "aplicar em todas as fazendas de uma vez" quebra, ou
+sucesso falso sem nenhum erro visível:*
+1. **`painel_cowdata_sincronizacao.py` + `rules/replicacao_fazenda.py`**
+   ("Sincronizar Fazenda Teste") — o MAIS crítico: sob RLS, `_apagar_destino`
+   apaga 0 linhas e `_copiar_tabela` lê 0 linhas da origem (ambos usam a
+   conexão da requisição via `session.connection()`, sujeita à política
+   igual a qualquer outra), mas **nenhuma dessas operações viola
+   `WITH CHECK`** (não há linha pra inserir) — `session.commit()` passa
+   limpo e a rota devolve **HTTP 200 "status": "ok"** com
+   `"linhas_copiadas": 0`. Reproduz o EXATO sintoma do bug de 11/09/2026 já
+   corrigido (PR #760), por uma causa nova — e pior, porque não há
+   exceção nenhuma que denuncie.
+2. **Fan-out/propagação em massa**: `painel_cowdata_farmacia.py::
+   _fan_out_medicamento`/`_criar_item_fanout` (ativar medicamento em toda
+   fazenda), `painel_cowdata_cadastros.py::aplicar_item`/`renomear_item`/
+   `desativar_item`/`aplicar_metodo` (aplicar cadastro em toda fazenda),
+   `painel_cowdata_parametros.py::aplicar_parametro` (aplicar parâmetro em
+   toda fazenda, padrão = TODAS) — todos fazem loop sobre as fazendas
+   ativas; sob RLS, o `INSERT`/`UPDATE` da primeira fazenda do loop já viola
+   `WITH CHECK` → **erro 500 duro, transação inteira aborta**. São os
+   botões de propagação em massa do Painel — uso frequente por desenho.
+3. **`painel_cowdata_farmacia.py`, escritas do catálogo global**
+   (`criar_categoria_global`, `criar_principio_global`,
+   `criar_medicamento_global`, `restaurar_catalogo_principios`, etc.) — 500
+   duro mesmo fazendo a coisa CERTA (`fazenda_id=None`), por causa do
+   `WITH CHECK` sem exceção de NULL citado acima. Cadastro do catálogo
+   padrão é operação corriqueira da equipe.
+
+*Graves, uso mais pontual — leitura vazia/404 falso, menos visível mas
+ainda quebra:*
+4. **`painel_cowdata.py`** — `listar_equipe`/`listar_consultores_cowdata`/
+   `listar_folha_membro` vêm vazias; `_pessoa_equipe_ou_404`/
+   `_folha_equipe_ou_404` (usadas por editar/excluir membro e folha) caem
+   em 404 falso; e **`_movimentos_periodo`** (usada por
+   `resumo_financeiro`/`livro_caixa`/`fluxo_caixa`/`dre`) some com a
+   receita de assinatura (`CobrancaAsaas`) e a despesa de folha
+   (`FolhaPagamento`) — **relatório financeiro da CowData reporta valores
+   plausíveis, mas sistematicamente incompletos**, sem erro nenhum.
+5. **`painel_cowdata_usuarios.py`** — `listar_pessoas_da_fazenda`/
+   `listar_usuarios_da_fazenda` vêm vazias; `criar_usuario_da_fazenda`/
+   `editar_usuario_da_fazenda` caem em 404 falso (`session.get(Pessoa,...)`
+   nega) ou 500 na escrita do vínculo (`UsuarioFazenda`).
+6. **`painel_cowdata_farmacia.py::diagnostico_farmacia`** — todo
+   medicamento aparece como "Ausente" mesmo já ativado na fazenda;
+   `_montar_medicamento_dict` sempre reporta `fan_out_fazendas: 0`.
+7. **`painel_cowdata_cadastros.py::listar_item_agregado`/
+   `listar_metodos_agregado`** — visão agregada sempre vazia.
+8. **`painel_cowdata_parametros.py::listar_parametros`** — perde a
+   informação de quais fazendas já personalizaram um parâmetro.
+
+**Confirmados SEM problema, não precisa mexer:**
+- **`painel_cowdata_touros.py`** inteiro — `Touro` não tem `fazenda_id`.
+- Leituras do catálogo global em `painel_cowdata_farmacia.py`
+  (`listar_categorias_globais`, `listar_principios_globais`,
+  `listar_medicamentos_globais`, etc.) — a cláusula `OR fazenda_id IS NULL`
+  da LEITURA já cobre.
+- Rotas de `LancamentoCowData` (não tem `fazenda_id`) e qualquer rota que
+  só consulte `Fazenda` por id/flags próprias.
 
 **Isto MUDA o que falta para religar RLS — em qualquer ambiente:**
 - Staging está com RLS ligado desde 10/09/2026 e **nunca teve o Painel
   CowData testado sob essa política** (só os 7 ataques da seção 4, que não
-  tocam nessas rotas) — as funcionalidades do Painel CowData no Staging
-  hoje são suspeitas de estarem quebradas em silêncio pelo mesmo motivo.
+  tocam nessas rotas) — tratar as funcionalidades do Painel CowData lá como
+  quebradas até a correção estar feita e validada.
 - Produção está REVERTIDA (sem RLS) — segura, mas o item "5. Produção"
   desta seção não pode ser considerado fechado.
-- Antes de religar em QUALQUER ambiente: auditar as 7 rotas do Painel
-  CowData com o mesmo rigor usado aqui (mapear toda leitura/escrita de
-  tabela com `fazenda_id`, decidir `engine_manutencao` vs. `SET LOCAL`
-  explícito por request, escrever teste de regressão contra Postgres real
-  por rota migrada) — fica registrado como PRÉ-REQUISITO novo, antes do
-  item 5 poder ser refeito.
+- Antes de religar em QUALQUER ambiente: corrigir os 8 grupos acima (ler
+  por `sessao_sem_recorte_de_fazenda`, e para as escritas — algo que o
+  login não precisou resolver — decidir COMO uma escrita em nome de outra
+  fazenda passa pelo `WITH CHECK`: a única forma correta é a escrita
+  também ir pela conexão de dono, não só a leitura), com teste de
+  regressão contra Postgres real por rota migrada. Fica registrado como
+  PRÉ-REQUISITO novo, antes do item 5 poder ser refeito.
 
 ## Achados novos, registrados como pendência (não bloqueiam o RLS)
 
