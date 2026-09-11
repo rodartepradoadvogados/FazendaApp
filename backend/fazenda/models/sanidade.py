@@ -678,6 +678,74 @@ class CronogramaSanitarioAnimal(SQLModel, table=True):
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
+# ---------------------------------------------------------------------------
+# Checklist da Ocorrência — Fase 0, passo 3 do redesenho do evento sanitário
+# (docs/redesenho-evento-sanitario.md, seção 7). `CronogramaSanitario` É a
+# "Ocorrência" do redesenho (entidade generalizada, ver seção 1 do
+# documento — não uma tabela nova); este checklist é filho dela.
+#
+# `ChecklistTemplateItem` é o cadastro (seção 3.7.3 do redesenho — "Template
+# de Checklist por Tipo"): a lista-padrão que toda Ocorrência nova de um tipo
+# (vacina/tratamento ou exame) já traz. `ChecklistItem` é a cópia real,
+# ocorrência a ocorrência — editar o template não muda checklist já
+# materializado, e ajustar um item numa Ocorrência não afeta o template nem
+# outras Ocorrências (mesma independência que CATEGORIA_MANEJO tem de LOTE).
+# ---------------------------------------------------------------------------
+class ChecklistTemplateItem(SQLModel, table=True):
+    """Item padrão do checklist por tipo de evento — ponto de partida
+    editável (Central de Protocolos › Cadastro › Sanitário › Preventivo,
+    aba "Template de Checklist"). "tratamento" reaproveita o template de
+    "vacina" (mesmos campos/fluxo — ver seção 3.7.0 do redesenho)."""
+
+    __tablename__ = "checklist_template_item"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tipo: str = Field(index=True)  # "vacina" | "exame" (tratamento usa o de vacina)
+    nome: str
+    ordem: int = 0
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+class ChecklistItem(SQLModel, table=True):
+    """Um item do checklist de UMA Ocorrência (`CronogramaSanitario`) —
+    materializado a partir do `ChecklistTemplateItem` do tipo do evento
+    quando a Ocorrência é aberta. `nome` é copiado na hora (não referencia o
+    template) — editar o template depois não muda checklist já aberto.
+
+    `chave` identifica o item para a UI saber que comportamento especial
+    aplicar (ver docs/redesenho-evento-sanitario.md, seção 3.4): "estoque"
+    (só avisa, nunca bloqueia), "vet" (resposta Sim/Não obrigatória, com
+    alerta persistente se "Não"), "horario" (exige preencher a hora antes de
+    confirmar — não é toggle), "lotes" (exige ver a distribuição por lote de
+    manejo antes de "revisado" — não é toggle), "financeiro" (abre o modal de
+    lançamento). `chave="custom"` é um item extra, adicionado só nesta
+    Ocorrência (ou no template), sem comportamento especial — vira um
+    Cumprido/Pulado genérico."""
+
+    __tablename__ = "cronograma_sanitario_checklist_item"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    cronograma_id: int = Field(foreign_key="cronograma_sanitario.id", index=True)
+    chave: str  # "estoque" | "vet" | "horario" | "lotes" | "financeiro" | "custom"
+    nome: str
+    ordem: int = 0
+    status: str = Field(default="pendente", index=True)  # pendente | cumprido | pulado
+    # Valor livre por item: resposta do vet ("sim"/"nao"), horário confirmado
+    # ("HH:MM"), ou vazio para itens sem resposta própria (estoque/lotes/
+    # financeiro/custom, que só têm status).
+    resposta: Optional[str] = None
+    # Motivo de pular OU justificativa obrigatória quando `resposta == "nao"`
+    # no item "vet" — mesmo campo, os dois casos são "texto explicando uma
+    # resposta fora do caminho padrão".
+    observacao: Optional[str] = None
+    responsavel_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    respondido_em: Optional[datetime] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
 class ServicoCadastro(SQLModel, table=True):
     """
     Serviço cadastrável para lançamento financeiro (ex.: manutenção de trator,

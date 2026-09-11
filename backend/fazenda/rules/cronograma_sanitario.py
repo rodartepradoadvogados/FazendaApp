@@ -176,6 +176,39 @@ def adiar(session: Session, cronograma: CronogramaSanitario, nova_data: date, mo
     return cronograma
 
 
+def reabrir(session: Session, cronograma: CronogramaSanitario, motivo: str | None = None) -> CronogramaSanitario:
+    """"Reabrir" de verdade — Fase 0, passo 4 do redesenho do evento
+    sanitário (docs/redesenho-evento-sanitario.md, seção 3.3: "Confirmado →
+    Em edição", a qualquer momento, sem limite, até Realizado). Igual a
+    `adiar()` na devolução ao estado editável (modo/veterinário zerados,
+    status "aberto"), mas SEM mudar `data_evento` nem gravar `data_original`
+    — `adiar` sempre muda a data; `reabrir` nunca muda.
+
+    Só permitido a partir de "agendado" (o único estado hoje que corresponde
+    ao "Confirmado" do redesenho — decisão de modo já tomada, aguardando a
+    data). Nunca a partir de "concluido": esse é o "Realizado" do redesenho,
+    terminal quanto ao registro em Sanidade — reabrir de lá quebraria a
+    arquitetura travada com o usuário (seção 1, ponto 2 do documento).
+    Reabrir um cronograma já "aberto" é idempotente (no-op, exceto o
+    motivo)."""
+    if cronograma.status == "concluido":
+        raise CronogramaError("Este cronograma já foi aplicado — não é possível reabrir (só \"Adicionar observação\")")
+    if cronograma.status == "cancelado":
+        raise CronogramaError("Este cronograma foi cancelado — não é possível reabrir")
+    if cronograma.status == "aberto":
+        return cronograma
+    cronograma.modo_execucao = None
+    cronograma.veterinario_pessoa_id = None
+    cronograma.status = "aberto"
+    if motivo:
+        cronograma.observacao = (f"{cronograma.observacao} | " if cronograma.observacao else "") + f"Reaberto: {motivo}"
+    cronograma.atualizado_em = datetime.utcnow()
+    session.add(cronograma)
+    session.commit()
+    session.refresh(cronograma)
+    return cronograma
+
+
 def animais_por_status(session: Session, cronograma_id: int, status: str) -> list[CronogramaSanitarioAnimal]:
     return session.exec(
         select(CronogramaSanitarioAnimal)
