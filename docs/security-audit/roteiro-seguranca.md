@@ -521,6 +521,69 @@ confirmação final, sem nenhuma regressão em nenhum dos 13 lotes.
   pronta) e um teste de fumaça que desta vez cubra Painel CowData também,
   não só login.
 
+### RLS RELIGADO em produção em 12/09/2026, depois do PR #761 no Staging
+
+O PR #761 (login + auditoria/correção completa do Painel CowData sob RLS)
+foi confirmado recebido no Staging pelo dono antes desta reativação.
+DDL reaplicado em produção pelo mesmo caminho de sempre (`railway-agent`,
+`DATABASE_URL_MANUTENCAO`, `current_user=postgres` conferido antes de
+rodar): `com_rls_ligada=201, sem_rls_ligada=0` (3 tabelas a mais que a
+aplicação de 11/09 — crescimento normal do schema entre uma data e outra,
+não é discrepância). Nenhum erro durante a aplicação.
+
+Confirmação de saúde **por uso orgânico real do dono** (não um teste de
+fumaça script ado à parte): logs HTTP da janela seguinte à ativação
+mostram o próprio dono batendo em quase todas as rotas do Painel CowData
+que tinham sido corrigidas nesta sessão — incluindo uma escrita real num
+cadastro global — todas `200 OK`, sem nenhum `permission denied`/
+`new row violates row-level security policy` inesperado. Ainda não há
+confirmação explícita de um login comum (fazenda-cliente, fora do Painel
+CowData) pós-reativação — o teste de fumaça de verdade continua em
+aberto, listado nas pendências gerais.
+
+**Os 7 ataques de isolamento, reproduzidos contra PRODUÇÃO em 12/09/2026**
+(autorizado explicitamente pelo dono: "Aceito sua recomendação, pode
+rodar"). Fazendas reais de produção, confirmadas por `SELECT` direto
+antes de rodar o script (não presumidas dos logs HTTP):
+
+| id | nome | eh_teste | eh_empresa_cowdata | ativa |
+|---|---|---|---|---|
+| 1 | Jairo Nasser | false | false | true |
+| 2 | Fazenda Teste | true | false | true |
+| 3 | CowData (empresa) | false | true | true |
+
+Os mesmos IDs 1 e 2 do script de Staging (`rls-validacao-staging.sql`)
+já eram os corretos para produção — nenhuma renumeração necessária.
+Script salvo em `docs/security-audit/rls-validacao-producao.sql` (mesma
+estrutura: `BEGIN`/`SAVEPOINT`/`ROLLBACK`, nenhum dado persiste). Rodado
+via `railway-agent`, com verificação independente de que nenhuma linha de
+teste sobrou:
+
+| Ataque | Resultado em produção |
+|---|---|
+| 1. Ler sem contexto | 0 linhas |
+| 2. Fazenda 1 lê fazenda 2 | só a própria |
+| 3. Fazenda 1 grava em nome da fazenda 2 | `ERROR: new row violates row-level security policy` |
+| 4. Fazenda 1 muda a dona do próprio registro | mesmo erro |
+| 5. Fazenda 1 grava registro órfão | mesmo erro |
+| 6. Contexto forjado (`1 OR true`) | `ERROR: invalid input syntax for type integer` |
+| 7. DELETE da fazenda 1 mirando linha da fazenda 2 | `DELETE 0` |
+| 8. `SET` sem `LOCAL` vazando entre requisições | fora de escopo aqui, mesmo motivo do Staging — coberto em `test_contexto_fazenda_sessao.py::test_contexto_reaplicado_apos_commit_no_meio_da_sessao` |
+
+Confirmação final (`deve_ser_zero`): **0** — nenhum dado de teste
+persistiu em produção.
+
+**Divergência ainda não resolvida — identidade das fazendas do Staging**:
+a nota de 10/09/2026 acima ("Achado incidental") registra a fazenda 2 do
+Staging como `CowData/empresa`, não como uma "fazenda teste". O dono
+descreveu-a em 12/09/2026 como "uma fazenda teste". Não foi possível
+confirmar contra o banco do Staging nesta sessão — a variável
+`DATABASE_URL_MANUTENCAO` do Staging veio protegida/sem valor tanto pelo
+`railway-agent` quanto por `list-variables` desta vez (diferente de
+produção, onde a mesma variável é legível pelo agente). Fica pendente:
+confirmar via UI do Staging ou compartilhar a credencial, como foi feito
+para produção.
+
 ## Achados novos, registrados como pendência (não bloqueiam o RLS)
 
 Encontrados ao escrever a migração de FKs compostas (#742), documentados em
