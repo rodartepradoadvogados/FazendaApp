@@ -338,11 +338,22 @@ def resolver_fazenda_id_escrita(session: Session, user: Usuario, fazenda_id_do_t
     """
     if fazenda_id_do_token is not None:
         return fazenda_id_do_token
-    fazendas = sorted({
-        fid for fid in session.exec(
-            select(UsuarioFazenda.fazenda_id).where(UsuarioFazenda.usuario_id == user.id)
-        ).all()
-    })
+    # `sessao_sem_recorte_de_fazenda`, não a `session` recebida direto — bug
+    # relatado em 12/09/2026 (funcionário travado logo após o login,
+    # "Não foi possível carregar a agenda" em toda tela): sob RLS, ESTA
+    # consulta acontece ANTES de qualquer fazenda selecionada (é o que ela
+    # está tentando descobrir), então a sessão comum tem `app.fazenda_id`
+    # NULO — e a política nega a linha de QUALQUER `UsuarioFazenda`, mesmo o
+    # vínculo único e real do usuário. `fazendas` saía sempre vazio, mesmo
+    # para quem tem exatamente 1 fazenda — o caminho comum de auto-seleção
+    # abaixo nunca era alcançado. Mesmo padrão já usado por
+    # `eh_membro_equipe_cowdata` (mesmo arquivo) para o mesmíssimo problema.
+    with sessao_sem_recorte_de_fazenda(session) as s:
+        fazendas = sorted({
+            fid for fid in s.exec(
+                select(UsuarioFazenda.fazenda_id).where(UsuarioFazenda.usuario_id == user.id)
+            ).all()
+        })
     if len(fazendas) == 1:
         return fazendas[0]
     if session.exec(select(Fazenda.id).limit(1)).first() is None:
@@ -982,9 +993,21 @@ def exigir_fazenda_selecionada():
         usuario = session.get(Usuario, getattr(user, "id", None))
         if usuario is not None and not eh_membro_equipe_cowdata(session, usuario) \
                 and not eh_email_dono_equivalente(usuario.email):
-            tem_vinculo = session.exec(
-                select(UsuarioFazenda.fazenda_id).where(UsuarioFazenda.usuario_id == usuario.id)
-            ).first()
+            # `sessao_sem_recorte_de_fazenda`, não a `session` recebida —
+            # mesmo bug de `resolver_fazenda_id_escrita` acima (relatado em
+            # 12/09/2026): sob RLS, sem fazenda selecionada ainda,
+            # `app.fazenda_id` está NULO nesta sessão, e a política nega
+            # QUALQUER linha de `UsuarioFazenda` — inclusive o vínculo real
+            # do usuário. `tem_vinculo` saía sempre None (nunca encontrado),
+            # então TODO usuário sem "fid" no token caía na mensagem "fale
+            # com o suporte" (sem o cabeçalho de redirecionamento), mesmo
+            # tendo vínculo de verdade com exatamente 1 fazenda — o
+            # `authFetch` do frontend nunca mandava a pessoa para
+            # /escolher-conta, e ela ficava presa vendo erro em toda tela.
+            with sessao_sem_recorte_de_fazenda(session) as s:
+                tem_vinculo = s.exec(
+                    select(UsuarioFazenda.fazenda_id).where(UsuarioFazenda.usuario_id == usuario.id)
+                ).first()
             if tem_vinculo is None:
                 raise HTTPException(
                     status_code=409,
