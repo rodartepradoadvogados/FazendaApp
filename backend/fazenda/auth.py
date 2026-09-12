@@ -998,15 +998,33 @@ def exigir_fazenda_selecionada():
                 )
         raise HTTPException(
             status_code=409,
-            detail="Sua sessão não tem uma fazenda selecionada. Saia e entre novamente para "
-                   "escolher em qual fazenda deseja trabalhar.",
+            # `detail` como objeto (não string) — mesmo padrão já usado pelos
+            # 409 de confirmação do RH (ver mensagemErroApi em lib/api.ts,
+            # que já sabe ler `detail.mensagem`). `codigo` é o sinal que
+            # sobrevive quando o CABEÇALHO abaixo não chega ao JS: no app
+            # Android empacotado (Capacitor, capacitor.config.ts ->
+            # CapacitorHttp:{enabled:true}), toda requisição passa pela ponte
+            # nativa (OkHttp) em vez do fetch da WebView, e essa ponte nem
+            # sempre repassa cabeçalhos de resposta CUSTOMIZADOS pro objeto
+            # Response que o JS enxerga — bug relatado em 12/09/2026
+            # (funcionário preso na Agenda com "Não foi possível carregar",
+            # em vez de cair em /escolher-conta; causa: token antigo sem
+            # "fid", provavelmente de antes do vínculo dele existir/mudar).
+            # authFetch lê o cabeçalho primeiro (caminho rápido, navegador
+            # normal) e cai para `detail.codigo` do corpo como reforço.
+            detail={
+                "mensagem": "Sua sessão não tem uma fazenda selecionada. Saia e entre novamente para "
+                            "escolher em qual fazenda deseja trabalhar.",
+                "codigo": "fazenda_nao_selecionada",
+            },
             # 409 já é usado como status de negócio em várias rotas (conflito
             # de sincronização, lançamento duplicado...), então o frontend não
             # pode reagir ao status sozinho. Este cabeçalho é a marca que
             # distingue ESTA recusa das outras: authFetch (lib/api.ts) a
             # reconhece e manda o usuário para /escolher-conta em vez de
             # mostrar um erro cru. Precisa estar em expose_headers do CORS
-            # (main.py) para o JS conseguir lê-lo.
+            # (main.py) para o JS conseguir lê-lo — mas ver `codigo` acima
+            # para quando o cabeçalho não chega.
             headers={"X-Fazenda-Nao-Selecionada": "1"},
         )
     return _dep
