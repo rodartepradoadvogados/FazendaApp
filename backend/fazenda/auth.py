@@ -18,7 +18,7 @@ import time
 from fastapi import Depends, Header, HTTPException, Request
 from sqlmodel import Session, select
 
-from fazenda.database import get_session
+from fazenda.database import get_session, sessao_sem_recorte_de_fazenda
 from fazenda.models import (
     ContratoFazenda, ContratoFazendaModulo, Fazenda, Pessoa, SeedFlag, Usuario, UsuarioFazenda,
 )
@@ -461,14 +461,26 @@ def eh_membro_equipe_cowdata(session: Session, user: Usuario) -> bool:
     (Pessoa cadastrada na fazenda interna eh_empresa_cowdata=True — ver
     painel_cowdata.py). Não confundir com dono-equivalente: um membro comum
     da equipe (Financeiro, Comercial, Consultor...) não é dono, só ganha
-    acesso ao que a PermissaoEquipeCowData dele liberar."""
+    acesso ao que a PermissaoEquipeCowData dele liberar.
+
+    As duas leituras abaixo vão por `sessao_sem_recorte_de_fazenda(session)`,
+    não direto pela `session` — incidente de 11/09/2026: isto é uma
+    checagem de IDENTIDADE (a Pessoa deste usuário mora na fazenda interna
+    da CowData, quase nunca a fazenda hoje selecionada na sessão — no
+    login, nenhuma ainda está selecionada), não um dado da fazenda atual.
+    Sob RLS, ler pela `session` da requisição nega isto em silêncio sempre
+    que a fazenda interna da CowData não é a do contexto corrente — foi o
+    que derrubou a tela de login/seleção de fazenda em produção.
+    `usuario_id`/`pessoa_id` já são o recorte de segurança real aqui (mesmo
+    raciocínio das rotinas de fundo, ver roteiro-seguranca.md seção 2)."""
     if not user.pessoa_id:
         return False
-    pessoa = session.get(Pessoa, user.pessoa_id)
-    if not pessoa or not pessoa.fazenda_id:
-        return False
-    fazenda = session.get(Fazenda, pessoa.fazenda_id)
-    return bool(fazenda and fazenda.eh_empresa_cowdata)
+    with sessao_sem_recorte_de_fazenda(session) as s:
+        pessoa = s.get(Pessoa, user.pessoa_id)
+        if not pessoa or not pessoa.fazenda_id:
+            return False
+        fazenda = s.get(Fazenda, pessoa.fazenda_id)
+        return bool(fazenda and fazenda.eh_empresa_cowdata)
 
 
 def _permissao_equipe_cowdata(session: Session, usuario_id: int) -> PermissaoEquipeCowData | None:
@@ -711,14 +723,22 @@ def eh_consultor_cowdata(session: Session, usuario: Usuario) -> bool:
 
     É o que distingue o CONSULTOR COWDATA do consultor externo convidado
     pelo próprio cliente — os dois usam `UsuarioFazenda.consultor` para o
-    vínculo com a fazenda, então o vínculo sozinho não diferencia."""
+    vínculo com a fazenda, então o vínculo sozinho não diferencia.
+
+    Mesma razão de `eh_membro_equipe_cowdata` para ler por
+    `sessao_sem_recorte_de_fazenda(session)`: a Pessoa deste usuário mora
+    na fazenda interna da CowData, não na fazenda-cliente hoje selecionada
+    (é justamente aqui, em exigir_admin_ou_consultor_fazenda, que as duas
+    fazendas são diferentes por definição) — sob RLS, ler pela sessão da
+    requisição nega isto em silêncio."""
     if not usuario.pessoa_id:
         return False
-    pessoa = session.get(Pessoa, usuario.pessoa_id)
-    if not pessoa or (pessoa.tipo or "") != "Consultor":
-        return False
-    fazenda = session.get(Fazenda, pessoa.fazenda_id) if pessoa.fazenda_id else None
-    return bool(fazenda and fazenda.eh_empresa_cowdata)
+    with sessao_sem_recorte_de_fazenda(session) as s:
+        pessoa = s.get(Pessoa, usuario.pessoa_id)
+        if not pessoa or (pessoa.tipo or "") != "Consultor":
+            return False
+        fazenda = s.get(Fazenda, pessoa.fazenda_id) if pessoa.fazenda_id else None
+        return bool(fazenda and fazenda.eh_empresa_cowdata)
 
 
 def exigir_admin_ou_consultor_fazenda():

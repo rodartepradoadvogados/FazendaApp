@@ -3,9 +3,10 @@ Conexão com o banco de dados e criação das tabelas.
 Usa SQLite em desenvolvimento, PostgreSQL em produção (via DATABASE_URL).
 """
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 
-from fastapi import Header
+from fastapi import Depends, Header
 from sqlalchemy import event, inspect, text
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -66,16 +67,52 @@ def _montar_engine_manutencao():
     if "sqlite" in url:
         kwargs["connect_args"] = {"check_same_thread": False}
     else:
-        # Pool mínimo de propósito: esta engine atende uma rotina de fundo que
-        # roda de meia em meia hora, não requisição de usuário.
+        # Até 11/09/2026 isto atendia só rotinas de fundo de meia em meia
+        # hora — pool de 1+1 sobrava. Deixou de ser verdade no incidente de
+        # ativação do RLS em produção: login/troca de fazenda/identidade da
+        # Equipe CowData (auth.py, api/routers/auth.py, api/routers/
+        # fazendas.py::minhas_fazendas) passaram a abrir sessão própria nesta
+        # engine EM TODA REQUISIÇÃO — essas consultas enumeram vínculos de um
+        # usuário ANTES de existir contexto de fazenda (ou entre fazendas
+        # diferentes, caso da Equipe CowData), o que a política de RLS nega
+        # sozinha, sem erro (ver roteiro-seguranca.md, incidente de
+        # 11/09/2026). Mesmo tamanho da engine principal — dimensionada para
+        # tráfego de requisição, não mais só para um laço esporádico.
         kwargs["pool_pre_ping"] = True
-        kwargs["pool_size"] = 1
-        kwargs["max_overflow"] = 1
+        kwargs["pool_size"] = 5
+        kwargs["max_overflow"] = 10
     logger.info("Conexão de manutenção própria configurada (DATABASE_URL_MANUTENCAO).")
     return create_engine(url, **kwargs)
 
 
 engine_manutencao = _montar_engine_manutencao()
+
+
+@contextmanager
+def sessao_sem_recorte_de_fazenda(session: Session):
+    """Para leituras que precisam enxergar MAIS DE UMA fazenda na mesma
+    consulta — enumerar os vínculos de um usuário antes de qualquer fazenda
+    selecionada (login, troca de fazenda), ou checar a identidade da Equipe
+    CowData (a Pessoa dela mora na fazenda interna da CowData, quase sempre
+    diferente da fazenda-cliente hoje selecionada). Nunca a defesa real —
+    o filtro explícito em Python (`usuario_id`/`pessoa_id`/`fazenda_id`) já
+    é — só evita que a política de RLS negue em silêncio por falta de
+    contexto (incidente de 11/09/2026, ver roteiro-seguranca.md).
+
+    SÓ troca de conexão sob PostgreSQL, onde RLS existe. Fora dele — a
+    suíte inteira, que roda em SQLite, cada teste com seu próprio engine
+    isolado via `dependency_overrides[get_session]` — devolve a MESMA
+    `session` recebida, sem abrir nada: `engine_manutencao`, sem
+    `DATABASE_URL_MANUTENCAO`, é só um nome a mais para o `engine` do
+    MÓDULO (não o engine isolado que o teste criou), e trocar de conexão
+    ali faria a leitura enxergar um banco vazio, não o que o teste semeou —
+    foi exatamente esse regressão que a primeira versão desta correção
+    causou (71 testes existentes quebrados) antes de ganhar esta guarda."""
+    if session.get_bind().dialect.name != "postgresql":
+        yield session
+        return
+    with Session(engine_manutencao) as sm:
+        yield sm
 
 
 # Migração leve (histórico congelado): colunas adicionadas a tabelas que já
@@ -584,3 +621,38 @@ def get_session(authorization: str | None = Header(default=None)):
     with Session(engine) as session:
         session.info["fazenda_id"] = fazenda_id
         yield session
+
+
+def get_session_manutencao(session: Session = Depends(get_session)):
+    """Dependency injection para rotas que operam SEM fazenda selecionada
+    por definição e, dentro delas, leem E ESCREVEM explicitamente em nome
+    de um `fazenda_id` que vem do path/body — hoje só o Painel CowData
+    (auditoria de 11/09/2026, ver docs/security-audit/roteiro-seguranca.md):
+    listagens/edições por fazenda-cliente específica, e os botões "aplicar
+    em todas as fazendas de uma vez" (Farmácia/Cadastros/Parâmetros), que
+    fazem exatamente isso num laço.
+
+    Por que uma dependency SEPARADA e não `sessao_sem_recorte_de_fazenda`
+    (usada no login): aquela cobre uma LEITURA pontual dentro de uma rota
+    que, fora isso, usa a sessão normal. Aqui a rota INTEIRA — leitura e
+    ESCRITA — precisa da conexão de dono: sob RLS, mesmo a escrita CERTA
+    (`fazenda_id` real explícito, ou `fazenda_id=None` numa linha de
+    catálogo global) viola o `WITH CHECK` da política sem o contexto certo
+    (e não tem como setar `app.fazenda_id` por linha dentro do MESMO laço
+    que passa por várias fazendas). `usuario_id`/`fazenda_id` explícito em
+    Python já é o recorte de segurança real destas rotas — sempre foi, o
+    Painel CowData nunca dependeu de RLS pra isolar, só de
+    `exigir_area_painel_cowdata`/`exigir_permissao_painel_cowdata`.
+
+    Depende de `Depends(get_session)`, não abre a própria conexão direto:
+    assim, um teste que só faz `dependency_overrides[get_session]` (o
+    padrão de ~1500 testes da suíte) já cobre esta dependency também, SEM
+    precisar saber que ela existe — FastAPI resolve o override através da
+    cadeia de `Depends`. Só sob PostgreSQL de verdade troca para
+    `engine_manutencao` (dono, sem RLS); fora disso (a suíte inteira, em
+    SQLite) devolve a MESMA sessão que `get_session` já entregou."""
+    if session.get_bind().dialect.name != "postgresql":
+        yield session
+        return
+    with Session(engine_manutencao) as sm:
+        yield sm

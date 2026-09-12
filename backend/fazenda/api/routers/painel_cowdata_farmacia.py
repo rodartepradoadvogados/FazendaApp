@@ -27,6 +27,18 @@ canto do sistema:
    acima. Mesmo padrão de fan-out idempotente de
    `painel_cowdata_cadastros.aplicar_item` (get-or-create por nome por
    fazenda), adaptado ao formato bem maior do Estoque.
+
+RLS (auditoria de 11/09/2026, ver docs/security-audit/roteiro-seguranca.md):
+toda rota deste arquivo usa `Depends(get_session_manutencao)`, não
+`get_session` — o Painel CowData nunca tem fazenda selecionada no token, e
+sob RLS: (a) a ESCRITA de uma linha de catálogo global (`fazenda_id=None`)
+falharia com 500 mesmo sendo a coisa certa — o `WITH CHECK` da política não
+tem exceção para NULL; (b) o fan-out (leitura E escrita de `Estoque` por
+`fazenda_id` real, em laço sobre todas as fazendas) falharia com 500 na
+primeira; (c) leituras que hoje funcionam sob RLS (catálogo global, graças
+ao `OR fazenda_id IS NULL` da política) ainda assim ficam aqui, por
+uniformidade e porque `_montar_medicamento_dict` lê `Estoque` (não
+catálogo) para contar `fan_out_fazendas`.
 """
 from __future__ import annotations
 
@@ -37,7 +49,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.auth import exigir_area_painel_cowdata, exigir_permissao_painel_cowdata
-from fazenda.database import get_session
+from fazenda.database import get_session_manutencao
 from fazenda.models import (
     CategoriaMedicamento, ClassificacaoMedicamento, Doenca, Estoque, Fazenda, IndicacaoTerapeutica,
     Laboratorio, MedicamentoCategoria, MedicamentoClassificacao, MedicamentoComercial,
@@ -80,14 +92,14 @@ class CategoriaIn(BaseModel):
 
 
 @router.get("/categorias")
-def listar_categorias_globais(_: Usuario = _dep, session: Session = Depends(get_session)) -> list[dict]:
+def listar_categorias_globais(_: Usuario = _dep, session: Session = Depends(get_session_manutencao)) -> list[dict]:
     doencas = session.exec(select(Doenca).where(Doenca.fazenda_id.is_(None)).order_by(Doenca.tipo, Doenca.nome)).all()
     return [d.model_dump() for d in doencas]
 
 
 @router.post("/categorias", status_code=201)
 def criar_categoria_global(
-    dados: CategoriaIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
+    dados: CategoriaIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),
 ) -> dict:
     nome = dados.nome.strip()
     if not nome:
@@ -105,7 +117,7 @@ def criar_categoria_global(
 
 @router.put("/categorias/{doenca_id}")
 def atualizar_categoria_global(
-    doenca_id: int, dados: CategoriaIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
+    doenca_id: int, dados: CategoriaIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),
 ) -> dict:
     doenca = session.get(Doenca, doenca_id)
     if not doenca or doenca.fazenda_id is not None:
@@ -140,14 +152,14 @@ class PrincipioGlobalIn(BaseModel):
 
 
 @router.get("/principios")
-def listar_principios_globais(_: Usuario = _dep, session: Session = Depends(get_session)) -> list[dict]:
+def listar_principios_globais(_: Usuario = _dep, session: Session = Depends(get_session_manutencao)) -> list[dict]:
     principios = session.exec(select(PrincipioAtivo).where(PrincipioAtivo.fazenda_id.is_(None)).order_by(PrincipioAtivo.nome)).all()
     return [p.model_dump() for p in principios]
 
 
 @router.post("/principios", status_code=201)
 def criar_principio_global(
-    dados: PrincipioGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
+    dados: PrincipioGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),
 ) -> dict:
     nome = dados.nome.strip()
     if not nome:
@@ -162,7 +174,7 @@ def criar_principio_global(
 
 
 @router.post("/principios/restaurar-catalogo")
-def restaurar_catalogo_principios(_: Usuario = _dep_edicao, session: Session = Depends(get_session)) -> dict:
+def restaurar_catalogo_principios(_: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao)) -> dict:
     """(Re)semeia o catálogo base de princípios ativos (documento base da
     farmácia) — add-missing e idempotente: só cria os que faltam e não
     sobrescreve edições. Útil quando o banco foi criado antes do catálogo
@@ -189,7 +201,7 @@ def restaurar_catalogo_principios(_: Usuario = _dep_edicao, session: Session = D
 
 @router.put("/principios/{principio_id}")
 def atualizar_principio_global(
-    principio_id: int, dados: PrincipioGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
+    principio_id: int, dados: PrincipioGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),
 ) -> dict:
     pa = session.get(PrincipioAtivo, principio_id)
     if not pa or pa.fazenda_id is not None:
@@ -207,7 +219,7 @@ def atualizar_principio_global(
 
 @router.delete("/principios/{principio_id}")
 def excluir_principio_global(
-    principio_id: int, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
+    principio_id: int, _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),
 ) -> dict:
     pa = session.get(PrincipioAtivo, principio_id)
     if not pa or pa.fazenda_id is not None:
@@ -235,12 +247,12 @@ class NomeAtivoGlobalIn(BaseModel):
 
 def _crud_catalogo_global(model, router: APIRouter, prefixo: str):
     @router.get(f"/{prefixo}")
-    def listar(_: Usuario = _dep, session: Session = Depends(get_session)) -> list[dict]:
+    def listar(_: Usuario = _dep, session: Session = Depends(get_session_manutencao)) -> list[dict]:
         itens = session.exec(select(model).where(model.fazenda_id.is_(None)).order_by(model.nome)).all()
         return [i.model_dump() for i in itens]
 
     @router.post(f"/{prefixo}", status_code=201)
-    def criar(dados: NomeAtivoGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session)) -> dict:
+    def criar(dados: NomeAtivoGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao)) -> dict:
         nome = dados.nome.strip()
         if not nome:
             raise HTTPException(status_code=400, detail="Nome é obrigatório")
@@ -253,7 +265,7 @@ def _crud_catalogo_global(model, router: APIRouter, prefixo: str):
         return obj.model_dump()
 
     @router.put(f"/{prefixo}/{{item_id}}")
-    def atualizar(item_id: int, dados: NomeAtivoGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session)) -> dict:
+    def atualizar(item_id: int, dados: NomeAtivoGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao)) -> dict:
         obj = session.get(model, item_id)
         if not obj or obj.fazenda_id is not None:
             raise HTTPException(status_code=404, detail="Registro global não encontrado")
@@ -371,7 +383,7 @@ def _montar_medicamento_dict(session: Session, m: MedicamentoComercial) -> dict:
 
 
 @router.get("/medicamentos")
-def listar_medicamentos_globais(_: Usuario = _dep, session: Session = Depends(get_session)) -> list[dict]:
+def listar_medicamentos_globais(_: Usuario = _dep, session: Session = Depends(get_session_manutencao)) -> list[dict]:
     medicamentos = session.exec(
         select(MedicamentoComercial).where(MedicamentoComercial.fazenda_id.is_(None)).order_by(MedicamentoComercial.nome_comercial)
     ).all()
@@ -380,7 +392,7 @@ def listar_medicamentos_globais(_: Usuario = _dep, session: Session = Depends(ge
 
 @router.get("/medicamentos/{medicamento_id}")
 def detalhar_medicamento_global(
-    medicamento_id: int, _: Usuario = _dep, session: Session = Depends(get_session),
+    medicamento_id: int, _: Usuario = _dep, session: Session = Depends(get_session_manutencao),
 ) -> dict:
     """Detalhe de UM medicamento do catálogo padrão — bug real (01/09/2026):
     "editar bula em Painel CowData deu 404". A tela de "Editar bula" (mesmo
@@ -433,7 +445,7 @@ def _fan_out_medicamento(session: Session, medicamento: MedicamentoComercial, pr
 
 @router.post("/medicamentos", status_code=201)
 def criar_medicamento_global(
-    dados: MedicamentoGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
+    dados: MedicamentoGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),
 ) -> dict:
     nome = dados.nome_comercial.strip()
     if not nome:
@@ -466,7 +478,7 @@ def criar_medicamento_global(
 
 @router.put("/medicamentos/{medicamento_id}")
 def atualizar_medicamento_global(
-    medicamento_id: int, dados: MedicamentoGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
+    medicamento_id: int, dados: MedicamentoGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),
 ) -> dict:
     """Edita a bula/princípios/doenças do medicamento PADRÃO — NÃO propaga
     automaticamente para os itens de Estoque já fanned-out (cada fazenda que
@@ -496,7 +508,7 @@ def atualizar_medicamento_global(
 
 @router.post("/medicamentos/{medicamento_id}/fanout")
 def reexecutar_fanout(
-    medicamento_id: int, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
+    medicamento_id: int, _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),
 ) -> dict:
     """Roda o fan-out de novo — pra preencher fazendas novas (cadastradas
     depois do medicamento) ou nunca alcançadas por algum motivo. Idempotente
@@ -512,7 +524,7 @@ def reexecutar_fanout(
 
 
 @router.get("/fazendas")
-def listar_fazendas_farmacia(_: Usuario = _dep, session: Session = Depends(get_session)) -> list[dict]:
+def listar_fazendas_farmacia(_: Usuario = _dep, session: Session = Depends(get_session_manutencao)) -> list[dict]:
     """Fazendas-cliente ativas — alimenta o seletor da tela de Diagnóstico
     (abaixo). Espelha /painel-cowdata/cadastros/fazendas, só que sob a
     permissão de área "farmacia" em vez de "cadastros"."""
@@ -544,7 +556,7 @@ def _fazenda_cliente_ou_404(session: Session, fazenda_id: int) -> Fazenda:
 
 @router.get("/diagnostico")
 def diagnostico_farmacia(
-    fazenda_id: int, _: Usuario = _dep, session: Session = Depends(get_session),
+    fazenda_id: int, _: Usuario = _dep, session: Session = Depends(get_session_manutencao),
 ) -> dict:
     _fazenda_cliente_ou_404(session, fazenda_id)
 
@@ -597,7 +609,7 @@ class VincularDiagnosticoIn(BaseModel):
 
 @router.post("/diagnostico/vincular")
 def vincular_item_ao_catalogo(
-    dados: VincularDiagnosticoIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
+    dados: VincularDiagnosticoIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),
 ) -> dict:
     """Resolve um 'Órfão': liga um item de Estoque já existente (nome mantido
     — pode ser diferente do nome comercial central, ex. "Tulatromicina 100mg
@@ -629,7 +641,7 @@ class AtivarDiagnosticoIn(BaseModel):
 
 @router.post("/diagnostico/ativar", status_code=201)
 def ativar_medicamento_em_fazenda(
-    dados: AtivarDiagnosticoIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session),
+    dados: AtivarDiagnosticoIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),
 ) -> dict:
     """Resolve um 'Ausente': cria nesta fazenda o item de Estoque que o
     fan-out em massa não alcançou (mesma regra idempotente do fan-out — não
@@ -665,7 +677,7 @@ EIXOS_FILTRO_SUBSTITUTIVOS = ("doenca", "principio", "categoria", "classificacao
 
 @router.get("/substitutivos")
 def listar_medicamentos_por_filtro(
-    eixo: str, valor_id: int, _: Usuario = _dep, session: Session = Depends(get_session),
+    eixo: str, valor_id: int, _: Usuario = _dep, session: Session = Depends(get_session_manutencao),
 ) -> list[dict]:
     """1º nível da tabela dinâmica: dado um eixo (Seção 1 = indicação, ou um
     dos catálogos de Seção 2) e um item específico dele, devolve os
@@ -720,7 +732,7 @@ def _atributos_clinicos_medicamento(session: Session, medicamento_id: int) -> di
 
 @router.get("/medicamentos/{medicamento_id}/substitutivos")
 def listar_substitutivos_de_medicamento(
-    medicamento_id: int, _: Usuario = _dep, session: Session = Depends(get_session),
+    medicamento_id: int, _: Usuario = _dep, session: Session = Depends(get_session_manutencao),
 ) -> list[dict]:
     """2º nível: dado um medicamento pivô, ranqueia os demais medicamentos
     globais por número de atributos clínicos coincidentes (princípio ativo,

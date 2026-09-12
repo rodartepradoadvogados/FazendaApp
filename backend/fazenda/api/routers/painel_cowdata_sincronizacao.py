@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sqlmodel import Session
 
 from fazenda.auth import exigir_area_painel_cowdata
-from fazenda.database import get_session
+from fazenda.database import get_session_manutencao
 from fazenda.models import Fazenda, Usuario
 from fazenda.rules.replicacao_fazenda import CicloIrreparavelError, sincronizar_fazenda_teste_destrutivo
 
@@ -33,7 +33,7 @@ def sincronizar_fazenda_teste(
     destino_id: int,
     dados: SincronizarIn,
     _user: Usuario = Depends(exigir_area_painel_cowdata("fazendas")),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session_manutencao),
 ) -> dict:
     """AÇÃO DESTRUTIVA NO DESTINO: apaga todo o dado hoje existente na
     fazenda `destino_id` e substitui por uma cópia completa da fazenda
@@ -57,7 +57,19 @@ def sincronizar_fazenda_teste(
     Todo outro router do projeto chama `session.commit()` explicitamente
     quando quer persistir (462 ocorrências, ver docstring de
     `fazenda/database.py::get_session`); esta rota, desde a primeira versão
-    (motor de replicação Fazenda -> Fazenda), nunca chamou."""
+    (motor de replicação Fazenda -> Fazenda), nunca chamou.
+
+    SEGUNDO BUG, achado na auditoria de RLS de 11/09/2026, MESMO SINTOMA:
+    `Depends(get_session_manutencao)`, não `get_session` — esta rota copia
+    linhas de UMA fazenda (`origem_id`) para OUTRA (`destino_id`) na MESMA
+    transação, sem nenhuma delas ser "a fazenda selecionada no token" (o
+    Painel CowData nunca tem uma). Sob RLS, pela sessão comum, a leitura da
+    origem viesse sempre vazia e o DELETE do destino apagasse 0 linhas —
+    sem violar nenhuma trava de escrita (não há linha pra inserir), então
+    `session.commit()` passaria limpo e a rota devolveria "status": "ok"
+    com `linhas_copiadas: 0` — sucesso falso, sem nenhum erro visível.
+    `origem_id`/`destino_id`, os dois explícitos nos parâmetros, já são o
+    recorte de segurança real; RLS nunca foi a defesa aqui."""
     try:
         resultado = sincronizar_fazenda_teste_destrutivo(session, origem_id=dados.origem_id, destino_id=destino_id)
     except CicloIrreparavelError as exc:

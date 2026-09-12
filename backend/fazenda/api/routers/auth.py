@@ -23,7 +23,7 @@ from fazenda.auth import (
 )
 from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
 from fazenda.config import settings
-from fazenda.database import get_session
+from fazenda.database import get_session, sessao_sem_recorte_de_fazenda
 from fazenda.models import ContratoFazendaModulo, Fazenda, LoginAcesso, Pessoa, Usuario, UsuarioFazenda
 from fazenda.rules.email import enviar_email
 
@@ -94,7 +94,13 @@ def _publico(u: Usuario, session: Session | None = None) -> dict:
     pessoa_nome = None
     pessoa_tipo = None
     if u.pessoa_id and session is not None:
-        pessoa = session.get(Pessoa, u.pessoa_id)
+        # sessao_sem_recorte_de_fazenda, não `session` direto: é a Pessoa
+        # DESTE usuário, um id já conhecido — segurança real. Pela `session`
+        # (RLS-bound), sob RLS isto nega em silêncio sempre que chamado
+        # antes de uma fazenda selecionada (login) — incidente de
+        # 11/09/2026, ver docs/security-audit/roteiro-seguranca.md.
+        with sessao_sem_recorte_de_fazenda(session) as sm:
+            pessoa = sm.get(Pessoa, u.pessoa_id)
         pessoa_nome = pessoa.nome if pessoa else None
         # CSV de TipoPessoa.nome (ex.: "Empreiteiro" ou "Funcionário,Diarista")
         # — usado no app de campo (frontend/lib/api.ts::ehOperadorRestrito)
@@ -217,9 +223,19 @@ def _fazenda_do_novo_usuario(session: Session, pessoa_id: int | None, fazenda_id
 
 
 def _fazendas_vinculadas(session: Session, usuario_id: int) -> list[Fazenda]:
-    vinculos = session.exec(select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == usuario_id)).all()
-    fazendas = [session.get(Fazenda, v.fazenda_id) for v in vinculos]
-    return [f for f in fazendas if f and f.ativa]
+    """`sessao_sem_recorte_de_fazenda`, não a `session` recebida direto —
+    de propósito, e não um descuido. Esta função existe exatamente para
+    ENUMERAR AS FAZENDAS deste usuário ANTES de qualquer uma estar
+    selecionada (chamada por login()/`_opcoes_de_conta`, sem contexto de
+    fazenda ainda) — sob RLS, a mesma consulta pela `session` da requisição
+    nega tudo em silêncio (nenhuma linha bate com um contexto que ainda não
+    existe). `usuario_id` já é o recorte de segurança real (mesmo
+    raciocínio das rotinas de fundo, roteiro-seguranca.md seção 2) —
+    incidente de 11/09/2026 que derrubou o login em produção."""
+    with sessao_sem_recorte_de_fazenda(session) as sm:
+        vinculos = sm.exec(select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == usuario_id)).all()
+        fazendas = [sm.get(Fazenda, v.fazenda_id) for v in vinculos]
+        return [f for f in fazendas if f and f.ativa]
 
 
 def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None, session: Session | None = None) -> dict:
@@ -242,15 +258,23 @@ def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None, session:
     # bug real encontrado em produção). `session=None` (ex.: contexto sem
     # banco à mão) devolve lista vazia — o frontend trata ausência do campo
     # como "sem restrição conhecida", nunca escondendo por engano.
+    #
+    # A leitura em si vai por `sessao_sem_recorte_de_fazenda`, não pela
+    # `session` recebida direto: esta função é chamada tanto com fazenda já
+    # selecionada (GET /auth/me, contexto bate) quanto ANTES de selecionar
+    # (login()/selecionar_fazenda(), sem contexto nenhum ainda) — sob RLS,
+    # o segundo caso negava em silêncio (incidente de 11/09/2026). O filtro
+    # explícito em `fazenda_id == f.id` já é o recorte de segurança real.
     modulos: list[str] = []
     if session is not None:
-        modulos = sorted(
-            m.modulo for m in session.exec(
-                select(ContratoFazendaModulo).where(
-                    ContratoFazendaModulo.fazenda_id == f.id, ContratoFazendaModulo.ativo == True,  # noqa: E712
-                )
-            ).all()
-        )
+        with sessao_sem_recorte_de_fazenda(session) as sm:
+            modulos = sorted(
+                m.modulo for m in sm.exec(
+                    select(ContratoFazendaModulo).where(
+                        ContratoFazendaModulo.fazenda_id == f.id, ContratoFazendaModulo.ativo == True,  # noqa: E712
+                    )
+                ).all()
+            )
     return {
         "id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf,
         # Fazenda de demonstração/sandbox (ver Fazenda.eh_teste) — o
@@ -265,9 +289,16 @@ def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None, session:
 
 
 def _vinculo(session: Session, usuario_id: int, fazenda_id: int) -> UsuarioFazenda | None:
-    return session.exec(
-        select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == usuario_id, UsuarioFazenda.fazenda_id == fazenda_id)
-    ).first()
+    """`sessao_sem_recorte_de_fazenda`, não a `session` recebida direto —
+    chamada tanto com fazenda já selecionada (GET /auth/me, contexto bate)
+    quanto ANTES de selecionar (login()/selecionar_fazenda()), onde sob RLS
+    a mesma consulta pela `session` da requisição negava em silêncio
+    (incidente de 11/09/2026). `usuario_id`+`fazenda_id`, os dois explícitos
+    no filtro, já são o recorte de segurança real."""
+    with sessao_sem_recorte_de_fazenda(session) as sm:
+        return sm.exec(
+            select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == usuario_id, UsuarioFazenda.fazenda_id == fazenda_id)
+        ).first()
 
 
 def _opcoes_de_conta(session: Session, user: Usuario) -> tuple[list[Fazenda], bool, list[dict]]:
@@ -371,10 +402,16 @@ def selecionar_fazenda(
     get_fazenda_atual_id, usado pelos endpoints que já filtram por fazenda).
     Preserva a validade longa do "Manter conectado" do login original —
     senão quem marcou a opção era jogado de volta para as 12h padrão assim
-    que escolhia a fazenda."""
-    vinculo = session.exec(
-        select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == user.id, UsuarioFazenda.fazenda_id == dados.fazenda_id)
-    ).first()
+    que escolhia a fazenda.
+
+    A busca do vínculo é `_vinculo(...)`, não uma consulta própria — reusa a
+    mesma leitura por `engine_manutencao` (ver docstring de `_vinculo`):
+    neste ponto o token ainda não tem "fid" nenhum (é o token que POST
+    /auth/login emitiu sem auto-selecionar), então não há contexto de RLS
+    que bata com `dados.fazenda_id` — era exatamente aqui que a troca de
+    fazenda recusava com 403 mesmo para quem estava genuinamente vinculado
+    (incidente de 11/09/2026)."""
+    vinculo = _vinculo(session, user.id, dados.fazenda_id)
     if not vinculo:
         raise HTTPException(status_code=403, detail="Você não está vinculado a esta fazenda")
     fazenda = session.get(Fazenda, dados.fazenda_id)
