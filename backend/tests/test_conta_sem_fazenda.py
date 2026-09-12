@@ -129,14 +129,22 @@ def test_sem_fazenda_nenhuma_nao_e_mandado_para_a_tela_de_escolha(ambiente):
 
 def test_quem_tem_fazenda_e_so_nao_escolheu_continua_indo_escolher(ambiente):
     """A correção não pode ter estragado o caso que já funcionava — e é o
-    caso comum."""
+    caso comum.
+
+    `detail` é objeto (não string) desde 12/09/2026 — mesmo padrão já usado
+    pelos 409 de confirmação do RH (ver `mensagemErroApi` em lib/api.ts).
+    `codigo` é o reforço para quando o CABEÇALHO abaixo não sobrevive à
+    ponte nativa do app Android empacotado (Capacitor/CapacitorHttp) — bug
+    relatado em 12/09/2026 (funcionário preso na Agenda sem cair em
+    /escolher-conta)."""
     c, _ = ambiente
     r = c.get(ROTA, headers=_cab("com_duas"))
 
     assert r.status_code == 409, f"Resposta: {r.status_code} {r.text[:200]}"
     detalhe = r.json()["detail"]
-    assert "Saia e entre novamente" in detalhe, detalhe
-    assert "suporte" not in detalhe.lower(), (
+    assert detalhe["codigo"] == "fazenda_nao_selecionada"
+    assert "Saia e entre novamente" in detalhe["mensagem"], detalhe
+    assert "suporte" not in detalhe["mensagem"].lower(), (
         "esta pessoa resolve sozinha: ela tem fazendas para escolher"
     )
     assert r.headers.get("X-Fazenda-Nao-Selecionada") == "1"
@@ -153,4 +161,4 @@ def test_equipe_cowdata_sem_vinculo_nao_e_mandada_ao_suporte(ambiente, monkeypat
     r = c.get(ROTA, headers=_cab("sem_fazenda"))
 
     assert r.status_code == 409, f"Resposta: {r.status_code} {r.text[:200]}"
-    assert "suporte" not in r.json()["detail"].lower()
+    assert "suporte" not in r.json()["detail"]["mensagem"].lower()

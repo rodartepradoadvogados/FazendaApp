@@ -1282,7 +1282,7 @@ export function authFetch(url: string, opts: RequestInit = {}): Promise<Response
   const token = getToken();
   const headers = new Headers(opts.headers || {});
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  return fetch(url, { ...opts, headers, cache: "no-store" }).then((res) => {
+  return fetch(url, { ...opts, headers, cache: "no-store" }).then(async (res) => {
     if (res.status === 401 && typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
       logout();
     }
@@ -1295,11 +1295,26 @@ export function authFetch(url: string, opts: RequestInit = {}): Promise<Response
     // descartada (ao contrário do 401): o login continua válido, só falta
     // escolher onde entrar.
     if (
-      res.status === 409 && res.headers.get("X-Fazenda-Nao-Selecionada") &&
-      typeof window !== "undefined" &&
+      res.status === 409 && typeof window !== "undefined" &&
       !location.pathname.startsWith("/escolher-conta") && !location.pathname.startsWith("/login")
     ) {
-      location.href = "/escolher-conta";
+      // Cabeçalho é o caminho rápido (navegador normal). Fallback pelo CORPO
+      // (`detail.codigo`) — bug relatado em 12/09/2026: no app Android
+      // empacotado (Capacitor, capacitor.config.ts -> CapacitorHttp:{enabled:
+      // true}), toda requisição passa pela ponte nativa (OkHttp) em vez do
+      // fetch da WebView, e essa ponte nem sempre repassa cabeçalhos de
+      // resposta CUSTOMIZADOS pro objeto Response que o JS enxerga — um
+      // funcionário ficava preso vendo "Não foi possível carregar a agenda"
+      // em vez de cair aqui. `res.clone()` porque quem chamou `authFetch`
+      // ainda vai ler o corpo desta mesma resposta depois.
+      let precisaEscolherConta = !!res.headers.get("X-Fazenda-Nao-Selecionada");
+      if (!precisaEscolherConta) {
+        try {
+          const corpo = await res.clone().json();
+          precisaEscolherConta = corpo?.detail?.codigo === "fazenda_nao_selecionada";
+        } catch { /* corpo não é JSON, ou não deu pra ler — segue sem redirecionar */ }
+      }
+      if (precisaEscolherConta) location.href = "/escolher-conta";
     }
     return res;
   });
