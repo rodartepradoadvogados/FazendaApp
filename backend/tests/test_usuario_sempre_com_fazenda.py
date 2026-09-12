@@ -317,3 +317,70 @@ def test_falha_ao_gravar_vinculo_nao_deixa_usuario_orfao(client, monkeypatch):
 
     with Session(engine) as s:
         assert s.exec(select(Usuario).where(Usuario.username == "pedro")).first() is None
+
+
+# ---------------------------------------------------------------------------
+# (e) PUT /auth/usuarios/{id} fecha o mesmo furo pelo lado da edição
+# ---------------------------------------------------------------------------
+def test_vincular_pessoa_a_usuario_existente_sem_vinculo_cria_o_vinculo_que_faltava(client):
+    """Caso real de produção (12/09/2026): um funcionário ficou preso em
+    "fazenda não selecionada" em toda tela. Causa raiz, achada direto no
+    banco: `Usuario` com `pessoa_id` apontando para uma Pessoa de uma fazenda
+    real, mas ZERO linhas em `UsuarioFazenda` — o mesmo estado órfão que
+    POST /auth/usuarios já bloqueia na criação, só que este nasceu depois,
+    por PUT /auth/usuarios/{id} atribuindo (ou trocando) a Pessoa de um login
+    que já existia sem o vínculo correspondente nunca ter sido criado.
+
+    Aqui o Usuario nasce direto no banco sem `pessoa_id` (simulando o estado
+    órfão pré-existente, de antes desta trava) e o teste prova que vincular a
+    Pessoa por PUT agora cria o `UsuarioFazenda` que faltava, na fazenda da
+    Pessoa — em vez de só trocar `pessoa_id` e manter o login preso."""
+    c, engine = client
+    token, fazenda_id = _fazenda_pronta_com_dono_dentro(c, engine)
+
+    r_pessoa = c.post(
+        "/cadastro/pessoas", json={"nome": "Rosivaldo Lourenço Ferreira", "tipos": ["Funcionário"]}, headers=_auth(token),
+    )
+    assert r_pessoa.status_code == 200, r_pessoa.text
+    pessoa_id = r_pessoa.json()["id"]
+
+    with Session(engine) as s:
+        orfao = Usuario(username="rosivaldo", nome="Conta Órfã", senha_hash=hash_senha("123"), papel="operador", permissoes="agenda", ativo=True)
+        s.add(orfao)
+        s.commit()
+        s.refresh(orfao)
+        usuario_id = orfao.id
+    assert _vinculos(engine, "rosivaldo") == []  # o estado órfão pré-existente
+
+    r = c.put(f"/auth/usuarios/{usuario_id}", json={"pessoa_id": pessoa_id}, headers=_auth(token))
+    assert r.status_code == 200, r.text
+    assert r.json()["pessoa_id"] == pessoa_id
+
+    vinculos = _vinculos(engine, "rosivaldo")
+    assert [v.fazenda_id for v in vinculos] == [fazenda_id]
+
+    dados_login = _login(c, "rosivaldo", "123")
+    assert dados_login["fazenda_atual"]["id"] == fazenda_id
+    assert "selecao_fazenda_necessaria" not in dados_login
+
+
+def test_vincular_pessoa_a_usuario_que_ja_tem_o_vinculo_nao_duplica(client):
+    """Editar outros campos (ou reenviar o mesmo `pessoa_id`) de um usuário que
+    JÁ tem o vínculo certo não pode tentar criar um segundo — estouraria a
+    UniqueConstraint(usuario_id, fazenda_id)."""
+    c, engine = client
+    token, fazenda_id = _fazenda_pronta_com_dono_dentro(c, engine)
+
+    r_pessoa = c.post("/cadastro/pessoas", json={"nome": "Maria Ordenhadora", "tipos": ["Funcionário"]}, headers=_auth(token))
+    pessoa_id = r_pessoa.json()["id"]
+    r = c.post(
+        "/auth/usuarios",
+        json={"username": "maria", "senha": "123", "pessoa_id": pessoa_id, "papel": "operador", "permissoes": []},
+        headers=_auth(token),
+    )
+    usuario_id = r.json()["id"]
+    assert len(_vinculos(engine, "maria")) == 1
+
+    r2 = c.put(f"/auth/usuarios/{usuario_id}", json={"pessoa_id": pessoa_id}, headers=_auth(token))
+    assert r2.status_code == 200, r2.text
+    assert len(_vinculos(engine, "maria")) == 1
