@@ -699,7 +699,11 @@ def criar_usuario(
 
 
 @router.put("/usuarios/{user_id}")
-def editar_usuario(user_id: int, dados: EditarUsuario, admin: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> dict:
+def editar_usuario(
+    user_id: int, dados: EditarUsuario, admin: Usuario = Depends(exigir_dono),
+    fazenda_id_escrita: int | None = Depends(get_fazenda_id_escrita),
+    session: Session = Depends(get_session),
+) -> dict:
     u = session.get(Usuario, user_id)
     if not u:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
@@ -711,6 +715,18 @@ def editar_usuario(user_id: int, dados: EditarUsuario, admin: Usuario = Depends(
         pessoa = _validar_pessoa_do_usuario(session, dados.pessoa_id, ignorar_usuario_id=u.id)
         u.pessoa_id = pessoa.id
         u.nome = pessoa.nome
+        # Mesmo furo que POST /auth/usuarios já fechou (ver
+        # _fazenda_do_novo_usuario): vincular um login a uma Pessoa sem criar
+        # o UsuarioFazenda correspondente fabrica exatamente o mesmo usuário
+        # órfão — só que por aqui, no futuro, não na criação. Caso real de
+        # produção (12/09/2026): um funcionário ficou preso em "fazenda não
+        # selecionada" em toda tela porque seu login foi ligado à Pessoa dele
+        # só depois de criado, e nenhum UsuarioFazenda nasceu nesse momento.
+        fazenda_do_vinculo = _fazenda_do_novo_usuario(session, pessoa.id, fazenda_id_escrita)
+        if fazenda_do_vinculo is not None and not session.exec(
+            select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == u.id, UsuarioFazenda.fazenda_id == fazenda_do_vinculo)
+        ).first():
+            session.add(UsuarioFazenda(usuario_id=u.id, fazenda_id=fazenda_do_vinculo))
     if dados.papel is not None:
         u.papel = dados.papel
     if dados.permissoes is not None:
