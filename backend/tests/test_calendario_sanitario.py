@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Doenca, EventoSanitario, PrincipioAtivo
+from fazenda.models import Animal, Doenca, EventoSanitario, PrincipioAtivo
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 
 
@@ -181,3 +181,48 @@ class TestCalendarioSanitarioCrud:
         r = c.get("/sanidade/calendario", params={"evento_sanitario_id": 2})
         assert len(r.json()) == 1
         assert r.json()[0]["evento_sanitario_nome"] == "Leptospirose"
+
+    def test_regra_com_cronograma_mostra_a_data_do_1o_ciclo_nao_data_evento_mais_frequencia(self, client):
+        """Bug relatado pelo usuário em 12/09/2026 (verificação pós-merge):
+        para uma regra com `usa_cronograma=True`, o motor do workflow
+        (`cronograma_sanitario.cronograma_aberto`) trata `data_evento` como
+        "a data da PRÓXIMA aplicação" ao criar o 1º cronograma — mas
+        `proxima_ocorrencia` aqui sempre somava a frequência de novo por
+        cima da mesma `data_evento`, tratando-a como "a da ÚLTIMA". As duas
+        leituras da mesma regra divergiam por um ciclo inteiro, só no
+        início (ex.: regra criada com data_evento=20/09 e frequência de 60
+        dias mostrava "próxima ocorrência" = 19/11 em Regras cadastradas,
+        enquanto Cronogramas/Calendário mostravam a data real, 20/09)."""
+        c, engine = client
+        r = self._regra(c, data_evento="2026-09-20", frequencia_valor=60, frequencia_unidade="dias", usa_cronograma=True)
+        assert r.status_code == 200
+        calendario_id = r.json()["id"]
+        # Sem cronograma aberto ainda (Agenda nunca rodou pra esta regra) —
+        # já usa a mesma data que `cronograma_aberto()` usaria ao criar o 1º.
+        assert r.json()["proxima_ocorrencia"] == "2026-09-20"
+
+        c.get("/agenda/", params={"data": "2026-09-12"})  # materializa o 1º cronograma
+        regra = next(x for x in c.get("/sanidade/calendario").json() if x["id"] == calendario_id)
+        assert regra["proxima_ocorrencia"] == "2026-09-20"
+
+        cronograma_id = c.get("/sanidade/cronogramas", params={"calendario_id": calendario_id}).json()[0]["id"]
+        with Session(engine) as s:
+            s.add(Animal(numero="500", data_nasc=date(2020, 1, 1), sexo="F", ativo=True))
+            s.commit()
+        c.post("/agenda/realizados", json={
+            "evento_id": f"cronograma_sanitario_incluir_manual_{cronograma_id}", "numero_matriz": "500",
+        })
+        c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_modo_{cronograma_id}", "modo": "propria"})
+        r = c.post("/agenda/realizados", json={
+            "evento_id": f"cronograma_sanitario_aplicar_{cronograma_id}",
+            "produto": "Ivermectina 4%", "dose": 1, "unidade": "ml", "via": "Subcutânea",
+        })
+        assert r.status_code == 200, r.text
+        c.get("/agenda/", params={"data": "2026-09-12"})  # materializa o 2º cronograma
+
+        regra = next(x for x in c.get("/sanidade/calendario").json() if x["id"] == calendario_id)
+        assert regra["proxima_ocorrencia"] == "2026-11-19"
+        cronograma_2 = next(
+            x for x in c.get("/sanidade/cronogramas", params={"calendario_id": calendario_id}).json() if x["status"] == "aberto"
+        )
+        assert cronograma_2["data_evento"] == "2026-11-19"

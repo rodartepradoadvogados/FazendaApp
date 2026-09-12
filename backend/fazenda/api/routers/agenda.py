@@ -1001,7 +1001,16 @@ def calcular_agenda(
 
     # Eventos sanitários agendados (por época ou por evento de vida) — cada um
     # já traz o medicamento padrão para pré-preencher a Aplicação ao dar baixa.
-    eventos_sanitarios = _eventos_sanitarios_agenda(session, data, realizados)
+    # BUG DE SEGURANÇA CORRIGIDO (achado durante a investigação do
+    # "app não abre a agenda" em 12/09/2026): faltava `fazenda_id` aqui —
+    # `eventos_agenda` (fazenda/rules/eventos_sanitarios.py) tem o parâmetro,
+    # mas com ele omitido caía no default `None`, que remove TODOS os filtros
+    # `.where(fazenda_id == ...)` internos. Toda pendência sanitária por
+    # evento de vida (ex.: Brucelose B19 de todo cliente do SaaS) aparecia
+    # misturada na Agenda de qualquer fazenda — mesma classe de furo que a
+    # auditoria de RLS (PR #767) mirou, só que numa chamada que ela não
+    # cobria por não ser uma consulta direta a `session.exec`.
+    eventos_sanitarios = _eventos_sanitarios_agenda(session, data, realizados, fazenda_id)
 
     # Protocolos personalizados (Configurações > Cadastro > Protocolos
     # personalizados) — fonte ADITIVA de tarefas: o cronograma que o próprio
