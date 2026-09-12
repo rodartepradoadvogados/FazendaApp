@@ -1786,6 +1786,7 @@ class RealizadoIn(BaseModel):
     motivo: str | None = None                       # cronograma_sanitario_modo_ — motivo do adiamento (opcional)
     responsavel: str | None = None                  # cronograma_sanitario_aplicar_
     observacao: str | None = None                   # cronograma_sanitario_aplicar_
+    numero_matriz: str | None = None                # cronograma_sanitario_incluir_manual_ — animal a incluir fora da janela
     # Checklist da Ocorrência (redesenho do evento sanitário, Fase 1) — cada
     # campo só é lido pelo prefixo correspondente (ver
     # _decidir_checklist_item/_desconsiderar_cronograma abaixo).
@@ -1841,6 +1842,28 @@ def _decidir_cronograma_animal(
     _exigir_da_fazenda(session.get(CronogramaSanitarioAnimal, linha_id), fazenda_id, "Animal do cronograma")
     try:
         _cronograma_sanitario_rules.decidir_animal(session, linha_id, incluir, date.today())
+    except CronogramaError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def _incluir_animal_manual(
+    session: Session, evento_id: str, numero_matriz: str | None, fazenda_id: int | None = None
+) -> None:
+    """Inclusão manual, fora da janela de aplicação (bug relatado pelo
+    usuário em 12/09/2026) — animal que não bateu o critério automático da
+    regra (idade/gatilho/categoria projetada) e por isso nunca ganhou linha
+    "sugerido" nenhuma para decidir."""
+    if not (numero_matriz or "").strip():
+        raise HTTPException(status_code=400, detail="Selecione o animal a incluir")
+    cronograma_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}incluir_manual_"))
+    cronograma = _exigir_da_fazenda(session.get(CronogramaSanitario, cronograma_id), fazenda_id, "Cronograma")
+    query_animal = select(Animal).where(Animal.numero == numero_matriz)
+    if fazenda_id is not None:
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+    if not session.exec(query_animal).first():
+        raise HTTPException(status_code=404, detail="Animal não encontrado")
+    try:
+        _cronograma_sanitario_rules.incluir_animal_manual(session, cronograma, numero_matriz, date.today())
     except CronogramaError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -2428,6 +2451,9 @@ def marcar_realizado(
         return {"marcado": True, "avisos": avisos}
     if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}animal_"):
         _decidir_cronograma_animal(session, dados.evento_id, dados.incluir, fazenda_id)
+        return {"marcado": True}
+    if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}incluir_manual_"):
+        _incluir_animal_manual(session, dados.evento_id, dados.numero_matriz, fazenda_id)
         return {"marcado": True}
     if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}modo_"):
         _decidir_cronograma_modo(session, dados.evento_id, dados.modo, dados.veterinario_pessoa_id, dados.nova_data, dados.motivo, fazenda_id)

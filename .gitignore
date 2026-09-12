@@ -50,3 +50,7 @@ desktop.ini
 docs/security-audit/.venv/
 docs/security-audit/_chart_*.png
 docs/security-audit/_preview_*.png
+
+# Relatórios locais do skill /impeccable critique|harden|... — arquivo de
+# trabalho da ferramenta, não entregável de código.
+.impeccable/

@@ -1398,6 +1398,7 @@ export type RealizadoExtras = {
   // Checklist da Ocorrência (redesenho do evento sanitário) — cronograma_sanitario_checklist_.
   acao?: "pular";                       // ausente = confirma o item (comportamento decidido pela chave já gravada nele)
   resposta?: string;                    // "sim"/"nao" (item vet) ou horário (item horario)
+  numero_matriz?: string;               // cronograma_sanitario_incluir_manual_ — animal a incluir fora da janela
 };
 export async function marcarEventoRealizado(eventoId: string, animais?: string[], medicamentos?: MedicamentoIatf[], extras?: RealizadoExtras) {
   const res = await authFetch(`${API}/agenda/realizados`, {
