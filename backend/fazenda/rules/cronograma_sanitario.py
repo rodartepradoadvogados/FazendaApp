@@ -129,6 +129,36 @@ def sugerir_animais_em_lote(session: Session, calendario: CalendarioSanitario, n
     session.commit()
 
 
+def incluir_animal_manual(
+    session: Session, cronograma: CronogramaSanitario, numero_matriz: str, hoje: date,
+) -> CronogramaSanitarioAnimal:
+    """Inclusão manual, fora da janela de aplicação — bug relatado pelo
+    usuário em 12/09/2026 ("não tem como colocar animal fora da janela"): a
+    trilha do animal (sugerir_animal/sugerir_animais_em_lote) só cria linha
+    para quem bate o critério automático (idade/gatilho/categoria projetada).
+    Um animal fora desse critério nunca ganhava linha nenhuma, então nunca
+    aparecia pra decidir. Aqui a linha nasce direto "incluido" (pula
+    "sugerido" — não houve sugestão automática nenhuma para aceitar/recusar),
+    igual ao efeito final de `decidir_animal(incluir=True)`."""
+    if cronograma.status in ("concluido", "cancelado"):
+        raise CronogramaError("Este cronograma já foi encerrado — não é possível incluir animal")
+    existente = session.exec(
+        select(CronogramaSanitarioAnimal)
+        .where(CronogramaSanitarioAnimal.cronograma_id == cronograma.id)
+        .where(CronogramaSanitarioAnimal.numero_matriz == numero_matriz)
+    ).first()
+    if existente:
+        raise CronogramaError(f"Matriz {numero_matriz} já está neste cronograma ({existente.status})")
+    linha = CronogramaSanitarioAnimal(
+        cronograma_id=cronograma.id, numero_matriz=numero_matriz, status="incluido",
+        data_sugestao=hoje, data_decisao=hoje, fazenda_id=cronograma.fazenda_id,
+    )
+    session.add(linha)
+    session.commit()
+    session.refresh(linha)
+    return linha
+
+
 def decidir_animal(session: Session, cronograma_animal_id: int, incluir: bool, hoje: date) -> CronogramaSanitarioAnimal:
     linha = session.get(CronogramaSanitarioAnimal, cronograma_animal_id)
     if not linha:

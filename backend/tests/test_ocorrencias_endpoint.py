@@ -159,3 +159,45 @@ class TestDetalheOcorrencia:
         c, _ = client
         r = c.get("/sanidade/ocorrencias/999999")
         assert r.status_code == 404
+
+
+class TestEstoqueInfoOcorrencia:
+    """Aviso de saldo do produto vinculado à regra no item "estoque" do
+    checklist — pedido do usuário em 12/09/2026 ("tem que pelo menos avisar
+    se não houver"), depois do fix anterior que só renomeava o botão sem
+    checar saldo nenhum."""
+
+    def test_produto_nao_encontrado_no_estoque(self, client):
+        c, _ = client
+        _criar_regra(c, dias_ate_evento=15)
+        c.get("/agenda/", params={"data": HOJE.isoformat()})
+        cron_id = c.get("/sanidade/ocorrencias").json()["linhas"][0]["cronograma_id"]
+
+        dados = c.get(f"/sanidade/ocorrencias/{cron_id}").json()
+        assert dados["estoque"] == {"produto": "VACINA BRUCELOSE B19", "encontrado": False, "saldo": None, "unidade": None}
+
+    def test_sem_saldo_avisa(self, client):
+        c, engine = client
+        from fazenda.models import Estoque
+        with Session(engine) as s:
+            s.add(Estoque(nome="VACINA BRUCELOSE B19", quantidade=0, unidade="ml"))
+            s.commit()
+        _criar_regra(c, dias_ate_evento=15)
+        c.get("/agenda/", params={"data": HOJE.isoformat()})
+        cron_id = c.get("/sanidade/ocorrencias").json()["linhas"][0]["cronograma_id"]
+
+        dados = c.get(f"/sanidade/ocorrencias/{cron_id}").json()
+        assert dados["estoque"] == {"produto": "VACINA BRUCELOSE B19", "encontrado": True, "saldo": 0, "unidade": "ml"}
+
+    def test_com_saldo_mostra_quantidade(self, client):
+        c, engine = client
+        from fazenda.models import Estoque
+        with Session(engine) as s:
+            s.add(Estoque(nome="VACINA BRUCELOSE B19", quantidade=48, unidade="ml"))
+            s.commit()
+        _criar_regra(c, dias_ate_evento=15)
+        c.get("/agenda/", params={"data": HOJE.isoformat()})
+        cron_id = c.get("/sanidade/ocorrencias").json()["linhas"][0]["cronograma_id"]
+
+        dados = c.get(f"/sanidade/ocorrencias/{cron_id}").json()
+        assert dados["estoque"] == {"produto": "VACINA BRUCELOSE B19", "encontrado": True, "saldo": 48, "unidade": "ml"}

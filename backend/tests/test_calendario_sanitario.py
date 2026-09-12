@@ -86,6 +86,23 @@ class TestCalendarioSanitarioCrud:
         assert corpo["doenca_nome"] == "Verminose"
         assert corpo["principio_ativo_nome"] == "Ivermectina"
         assert corpo["proxima_ocorrencia"] == "2026-05-10"
+        assert corpo["proxima_ocorrencia_por_animal"] is False
+
+    def test_regra_por_evento_de_vida_marca_proxima_ocorrencia_por_animal(self, client):
+        """Bug relatado pelo usuário em 12/09/2026: uma regra por evento de
+        vida (ex.: Brucelose B19, gatilho=nascimento) mostrava uma "próxima
+        ocorrência" calculada pela fórmula periódica (data_evento + frequência)
+        — valores vestigiais que o wizard nunca expõe nesse modo — divergindo
+        da data real (por animal) mostrada em Ocorrências/Cronogramas.
+        `proxima_ocorrencia_por_animal=True` avisa o frontend a não confiar
+        nessa data como se fosse única."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(EventoSanitario(nome="Brucelose B19", tipo_agendamento="evento", gatilho="nascimento"))
+            s.commit()
+        r = self._regra(c, evento_sanitario_id=2)
+        assert r.status_code == 200
+        assert r.json()["proxima_ocorrencia_por_animal"] is True
 
     def test_evento_sanitario_inexistente_da_400(self, client):
         c, engine = client

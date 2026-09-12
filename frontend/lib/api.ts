@@ -1398,6 +1398,7 @@ export type RealizadoExtras = {
   // Checklist da Ocorrência (redesenho do evento sanitário) — cronograma_sanitario_checklist_.
   acao?: "pular";                       // ausente = confirma o item (comportamento decidido pela chave já gravada nele)
   resposta?: string;                    // "sim"/"nao" (item vet) ou horário (item horario)
+  numero_matriz?: string;               // cronograma_sanitario_incluir_manual_ — animal a incluir fora da janela
 };
 export async function marcarEventoRealizado(eventoId: string, animais?: string[], medicamentos?: MedicamentoIatf[], extras?: RealizadoExtras) {
   const res = await authFetch(`${API}/agenda/realizados`, {
@@ -4867,6 +4868,10 @@ export type DetalheOcorrencia = {
   tipo: "vacina" | "exame" | "tratamento"; categoria_alvo: string | null; data_prevista: string;
   estado: EstadoOcorrencia; checklist_desconsiderado: boolean; checklist_desconsiderado_motivo: string | null;
   veterinario_nome: string | null; alerta_clinico: boolean;
+  // Saldo do produto vinculado à regra — aviso honesto (não é o cálculo
+  // preciso "dá pra aplicar em todos os incluídos", só o saldo atual),
+  // pedido pelo usuário em 12/09/2026 para o item "estoque" do checklist.
+  estoque: { produto: string; encontrado: boolean; saldo: number | null; unidade: string | null } | null;
   animais: AnimalOcorrencia[]; checklist: ChecklistItemOcorrencia[];
 };
 export async function fetchDetalheOcorrencia(cronogramaId: number): Promise<DetalheOcorrencia> {

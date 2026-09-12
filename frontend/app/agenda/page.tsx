@@ -228,6 +228,37 @@ export default function AgendaPage() {
     finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
   };
 
+  // "Incluir animal fora da janela de aplicação" (bug relatado pelo usuário
+  // em 12/09/2026: só entra na lista quem bate o critério automático da
+  // regra — idade/gatilho/categoria projetada — sem nenhum jeito de incluir
+  // manualmente quem está fora dele). A flag abre o seletor com TODOS os
+  // animais da fazenda, não só os sugeridos automaticamente.
+  const [cronogramaForaJanela, setCronogramaForaJanela] = useState<Record<string, boolean>>({});
+  const [cronogramaForaJanelaSel, setCronogramaForaJanelaSel] = useState<Record<string, Set<string>>>({});
+  const toggleCronogramaForaJanela = (id: string) => setCronogramaForaJanela((p) => ({ ...p, [id]: !p[id] }));
+  const algumForaJanelaAberto = Object.values(cronogramaForaJanela).some(Boolean);
+  useEffect(() => { if (algumForaJanelaAberto && !animaisTodos.length) fetchAnimais().then(setAnimaisTodos).catch(() => {}); }, [algumForaJanelaAberto, animaisTodos.length]);
+  const toggleAnimalForaJanela = (id: string, numero: string) => setCronogramaForaJanelaSel((p) => {
+    const atual = new Set(p[id] || []);
+    atual.has(numero) ? atual.delete(numero) : atual.add(numero);
+    return { ...p, [id]: atual };
+  });
+  const incluirAnimaisForaJanela = async (e: any) => {
+    const numeros = Array.from(cronogramaForaJanelaSel[e.id] || []);
+    if (!numeros.length) return;
+    setMarcando((p) => new Set(p).add(e.id));
+    try {
+      for (const numero of numeros) {
+        await marcarEventoRealizado(`cronograma_sanitario_incluir_manual_${e.cronograma_id}`, undefined, undefined, { numero_matriz: numero });
+      }
+      await carregar();
+      mostrarFeedback(`${numeros.length} animal(is) incluído(s) manualmente no cronograma.`);
+      setCronogramaForaJanelaSel((p) => ({ ...p, [e.id]: new Set() }));
+      setCronogramaForaJanela((p) => ({ ...p, [e.id]: false }));
+    } catch (err: any) { mostrarFeedback(err.message, true); }
+    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
+  };
+
   const decidirCronogramaModo = async (e: any, modo: "veterinario" | "propria") => {
     if (modo === "veterinario" && !cronogramaVetSel[e.id]) { mostrarFeedback("Selecione o veterinário.", true); return; }
     setMarcando((p) => new Set(p).add(e.id));
@@ -1540,6 +1571,39 @@ export default function AgendaPage() {
                                       </div>
                                     </div>
                                   )}
+
+                                  {/* Só entra na lista de "sugeridos" quem bate o critério automático
+                                      da regra (idade/gatilho/categoria projetada) — sem isto, não havia
+                                      jeito de incluir manualmente um animal fora desse critério (bug
+                                      relatado pelo usuário em 12/09/2026). */}
+                                  <div className="mt-3" style={{ borderTop: "1px solid var(--border)", paddingTop: "0.6rem" }}>
+                                    <label className="flex items-center gap-2" style={{ fontSize: "0.75rem", cursor: "pointer" }}>
+                                      <input type="checkbox" checked={!!cronogramaForaJanela[e.id]} onChange={() => toggleCronogramaForaJanela(e.id)} />
+                                      Incluir animal fora da janela de aplicação
+                                    </label>
+                                    {cronogramaForaJanela[e.id] && (
+                                      <div className="mt-2" style={{ maxWidth: 420 }}>
+                                        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.35rem" }}>
+                                          Mostra todos os animais da fazenda, não só os que entraram automaticamente na janela — use para incluir manualmente quem ficou de fora.
+                                        </p>
+                                        <AnimalPickerModal
+                                          animais={animaisTodos}
+                                          selecionados={cronogramaForaJanelaSel[e.id] || new Set()}
+                                          onToggle={(numero) => toggleAnimalForaJanela(e.id, numero)}
+                                          colunas={pickerColunasAnimais}
+                                          titulo="Incluir animal fora da janela"
+                                          placeholder="Selecionar animal(is)…"
+                                        />
+                                        <div className="flex items-center gap-2 mt-2">
+                                          <button className="btn-primary" style={{ fontSize: "0.72rem" }}
+                                            disabled={marcando.has(e.id) || !(cronogramaForaJanelaSel[e.id]?.size)}
+                                            onClick={() => incluirAnimaisForaJanela(e)}>
+                                            <Check size={12} /> Incluir{cronogramaForaJanelaSel[e.id]?.size ? ` (${cronogramaForaJanelaSel[e.id].size})` : ""}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                               </td>
                             </tr>

@@ -1,5 +1,5 @@
 "use client";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks, Percent, Route, History, FlaskConical, BookOpen } from "lucide-react";
 import {
   fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, confirmarExclusao, excluirCalendarioSanitario, ehAdmin, formatDate, today, fetchTaxaCura, type CasoTaxaCura, marcarCuraAplicacao, marcarCuraProtocolo,
@@ -48,6 +48,12 @@ type RegraCalendario = {
   responsavel: string | null; veterinario: string | null; categoria_preventiva: string | null;
   servico_financeiro: string | null; usa_cronograma?: boolean;
   frequencia_valor: number; frequencia_unidade: string; data_evento: string; proxima_ocorrencia: string; observacao: string | null;
+  // Regra por evento de vida (gatilho por animal, ex.: Brucelose B19 no
+  // nascimento) não tem uma única "próxima ocorrência" — a data calculada
+  // pela fórmula periódica aqui é vestigial, não a data real (que é por
+  // animal, ver aba Ocorrências/Cronogramas). Não mostrar como se fosse
+  // única (bug relatado pelo usuário em 12/09/2026).
+  proxima_ocorrencia_por_animal?: boolean;
 };
 
 // vacina | exame | tratamento | legado (sem categoria — não é mais possível
@@ -669,6 +675,13 @@ function CalendarioVisualView({ onAbrirCronograma }: { onAbrirCronograma: (calen
   const [erro, setErro] = useState<string | null>(null);
   const [diaSelecionado, setDiaSelecionado] = useState<string | null>(null);
   const [drillDown, setDrillDown] = useState<{ eventoId: number; ini: string; fim: string } | null>(null);
+  // "Ver animais" abria o painel no fim da página sem nenhum aviso — indistinguível
+  // de "não fez nada" para quem clica com pressa (critique de 12/09/2026). Rola até
+  // o painel assim que ele aparece, em vez de deixar o usuário procurar por ele.
+  const painelDrillDownRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (drillDown) painelDrillDownRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [drillDown]);
 
   useEffect(() => {
     const hoje = today();
@@ -685,6 +698,17 @@ function CalendarioVisualView({ onAbrirCronograma }: { onAbrirCronograma: (calen
 
   const linhaEvento = (o: JanelaCalendarioEvento & { janela: JanelaCalendario }) => {
     const podeVerAnimais = !o.usa_cronograma && o.animais !== null && !o.estimativa;
+    // Antes o botão só sumia em silêncio quando a condição não batia — parecia
+    // bug (critique de 12/09/2026: "clica e não faz nada" era, na maioria dos
+    // casos reais, o botão nunca ter existido para aquela linha). Explica o
+    // motivo em vez de omitir.
+    const motivoSemVerAnimais = o.usa_cronograma
+      ? null
+      : o.animais == null
+      ? "sem estimativa de animais ainda"
+      : o.estimativa
+      ? "estimativa da última aplicação — sem lista individual de animais"
+      : null;
     return (
       <div key={`${o.calendario_sanitario_id}-${o.data}`} style={{ padding: "0.55rem 0", borderTop: "1px solid var(--border)" }}>
         <div className="flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.4rem" }}>
@@ -707,10 +731,12 @@ function CalendarioVisualView({ onAbrirCronograma }: { onAbrirCronograma: (calen
                   Cronograma: {STATUS_CRONOGRAMA_LABEL[o.cronograma.status] || o.cronograma.status}
                 </button>
               )}
-              {podeVerAnimais && (
+              {podeVerAnimais ? (
                 <button className="btn-secondary" style={{ fontSize: "0.7rem" }} onClick={() => setDrillDown({ eventoId: o.evento_sanitario_id, ini: o.janela.data_inicio, fim: o.janela.data_fim })}>
                   Ver animais
                 </button>
+              ) : motivoSemVerAnimais && (
+                <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", fontStyle: "italic" }}>{motivoSemVerAnimais}</span>
               )}
               {o.servico_financeiro && (
                 <a className="btn-secondary" style={{ fontSize: "0.7rem", color: "var(--green-light)" }}
@@ -832,7 +858,7 @@ function CalendarioVisualView({ onAbrirCronograma }: { onAbrirCronograma: (calen
       )}
 
       {drillDown && (
-        <div className="card mt-3">
+        <div className="card mt-3" ref={painelDrillDownRef} style={{ scrollMarginTop: "1rem" }}>
           <div className="flex items-center justify-between mb-2">
             <span style={{ fontWeight: 700 }}>Quais animais entram nesta janela</span>
             <button className="btn-secondary" style={{ fontSize: "0.72rem" }} onClick={() => setDrillDown(null)}>Fechar</button>
@@ -1065,6 +1091,13 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar }: { cronogramaId: numbe
 
       {aba === "checklist" && (
         <div>
+          {/* Menção à data já marcada — pedido do usuário em 12/09/2026: não
+              precisa virar item do checklist (a data é do cronograma, não uma
+              resposta a preencher aqui), só precisa ficar claro, na própria
+              aba Checklist, que já existe uma data para esta ocorrência. */}
+          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.7rem" }}>
+            Data marcada para esta ocorrência: <strong style={{ color: "var(--text)" }}>{formatDate(det.data_prevista)}</strong>
+          </p>
           <div style={{ height: 7, background: "var(--surface-2)", borderRadius: 99, overflow: "hidden", marginBottom: "0.9rem" }}>
             <div style={{ height: "100%", width: `${progresso}%`, background: "var(--dourado)", borderRadius: 99, transition: "width .3s" }} />
           </div>
@@ -1115,7 +1148,11 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar }: { cronogramaId: numbe
                   ) : (
                     <div className="flex items-center gap-2">
                       <button className="btn-secondary" disabled={desabilitado} style={{ fontSize: "0.75rem" }}
-                        onClick={() => agir(item.id, {})}>{item.chave === "financeiro" ? "Marcar como lançado" : "Marcar cumprido"}</button>
+                        onClick={() => agir(item.id, {})}>
+                        {item.chave === "financeiro" ? "Marcar como lançado manualmente"
+                          : item.chave === "estoque" ? "Marcar como verificado manualmente"
+                          : "Marcar cumprido"}
+                      </button>
                       <button className="btn-ghost" disabled={desabilitado} style={{ fontSize: "0.75rem" }} onClick={() => pular(item)}>Pular</button>
                     </div>
                   )}
@@ -1129,6 +1166,33 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar }: { cronogramaId: numbe
                   <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
                     Distribuição por lote de manejo — ver aba Animais (a tabela detalhada por lote chega numa próxima parte da Fase 2).
                   </p>
+                )}
+                {item.chave === "financeiro" && (
+                  <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+                    Ainda não cria um lançamento financeiro de verdade — lance manualmente em Financeiro antes de marcar este item.
+                  </p>
+                )}
+                {item.chave === "estoque" && (
+                  det.estoque ? (
+                    !det.estoque.encontrado ? (
+                      <div className="alert-critico mt-2" style={{ fontSize: "0.78rem" }}>
+                        <AlertTriangle size={15} /><span>Produto "{det.estoque.produto}" não encontrado no estoque — confira manualmente.</span>
+                      </div>
+                    ) : (det.estoque.saldo ?? 0) <= 0 ? (
+                      <div className="alert-critico mt-2" style={{ fontSize: "0.78rem" }}>
+                        <AlertTriangle size={15} /><span>Sem saldo em estoque de "{det.estoque.produto}".</span>
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+                        Saldo atual em estoque: {det.estoque.saldo} {det.estoque.unidade || ""} de "{det.estoque.produto}" —
+                        não é o cálculo exato para todos os animais incluídos (dosagem é texto livre), confirme antes de marcar.
+                      </p>
+                    )
+                  ) : (
+                    <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+                      Esta regra não tem produto vinculado ao estoque — confirme a disponibilidade manualmente.
+                    </p>
+                  )
                 )}
                 {item.status === "pulado" && item.observacao && (
                   <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>Motivo: {item.observacao}</p>
@@ -1173,7 +1237,7 @@ export function CalendarioSanitarioView({ modoInicial }: { modoInicial?: "calend
   const linhasExport = regrasFiltradas.map((r) => ({
     ...r, tipoFmt: ROTULO_TIPO_REGRA[tipoRegra(r)],
     frequenciaFmt: `a cada ${r.frequencia_valor} ${LABEL_FREQ[r.frequencia_unidade]}`,
-    proxima_ocorrencia_fmt: formatDate(r.proxima_ocorrencia),
+    proxima_ocorrencia_fmt: r.proxima_ocorrencia_por_animal ? "Calculado por animal" : formatDate(r.proxima_ocorrencia),
   }));
 
   const excluir = async (r: RegraCalendario) => {
@@ -1206,7 +1270,14 @@ export function CalendarioSanitarioView({ modoInicial }: { modoInicial?: "calend
           { id: "regras", label: "Regras cadastradas", title: "Regras recorrentes já cadastradas" },
           { id: "cronogramas", label: "Cronogramas", title: "Acompanhamento das regras usa_cronograma: animais na lista de espera e decisão de execução" },
           { id: "exames", label: "Resultados de exames", title: "Diagnóstico/valor lançado em cada exame preventivo" },
-          { id: "ocorrencias", label: "Ocorrências (novo modelo)", title: "Redesenho do evento sanitário — 4 estados e checklist, em construção" },
+          // "Ocorrências (novo modelo)" escondida por decisão do dono (critique
+          // de 12/09/2026): a materialização universal (usar_ocorrencia_universal)
+          // está desligada por padrão, então a aba ficava visível mas vazia para
+          // quase toda regra real (só usa_cronograma=True opt-in materializa).
+          // Reexibir só quando o financeiro/estoque reais (Fase 3) e a
+          // materialização universal estiverem prontos — o `modo === "ocorrencias"`
+          // e o componente `OcorrenciasView` continuam intactos abaixo, e os dados
+          // já criados nele (ex.: a regra de Brucelose B19) não são afetados.
         ] as const}
         ativa={modo}
         onChange={(id) => { setModo(id); if (id !== "cronogramas") setCronogramaFiltroCalendarioId(null); }}
@@ -1272,8 +1343,14 @@ export function CalendarioSanitarioView({ modoInicial }: { modoInicial?: "calend
                     <td style={{ fontSize: "0.78rem" }}>{r.produto || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.dosagem || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.responsavel || r.veterinario || "—"}</td>
-                    <td style={{ fontSize: "0.78rem" }}>a cada {r.frequencia_valor} {LABEL_FREQ[r.frequencia_unidade]}</td>
-                    <td style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--dourado-light)" }}>{formatDate(r.proxima_ocorrencia)}</td>
+                    <td style={{ fontSize: "0.78rem" }}>
+                      {r.proxima_ocorrencia_por_animal ? "Por evento de vida" : `a cada ${r.frequencia_valor} ${LABEL_FREQ[r.frequencia_unidade]}`}
+                    </td>
+                    <td style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--dourado-light)" }}>
+                      {r.proxima_ocorrencia_por_animal
+                        ? <span title="Esta regra dispara por evento de vida — cada animal tem sua própria data, calculada quando atinge o gatilho. Veja em Ocorrências/Cronogramas.">Calculado por animal</span>
+                        : formatDate(r.proxima_ocorrencia)}
+                    </td>
                     {admin && (
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                         <span style={{ display: "inline-flex", gap: "0.35rem", alignItems: "center" }}>
