@@ -656,14 +656,17 @@ def relatorio_taxa_cura(
 # Calendário sanitário — regras recorrentes (sazonal/de rebanho ou por fase
 # fisiológica), cadastradas aqui e acompanhadas com filtro por período/evento.
 # ---------------------------------------------------------------------------
-def _nomes(session: Session) -> tuple[dict[int, str], dict[int, str], dict[int, str], dict[int, str | None], dict[int, str | None]]:
+def _nomes(
+    session: Session,
+) -> tuple[dict[int, str], dict[int, str], dict[int, str], dict[int, str | None], dict[int, str | None], dict[int, str]]:
     evs = session.exec(select(EventoSanitario)).all()
     eventos = {e.id: e.nome for e in evs}
     categorias = {e.id: e.categoria_preventiva for e in evs}
     servicos_financeiro = {e.id: e.servico_financeiro for e in evs}
+    tipos_agendamento = {e.id: e.tipo_agendamento for e in evs}
     doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
     principios = {p.id: p.nome for p in session.exec(select(PrincipioAtivo)).all()}
-    return eventos, doencas, principios, categorias, servicos_financeiro
+    return eventos, doencas, principios, categorias, servicos_financeiro, tipos_agendamento
 
 
 def _ultimo_evento_por_produto(session: Session, fazenda_id: int | None) -> dict[str, dict]:
@@ -716,12 +719,25 @@ def _serializar(
     c: CalendarioSanitario, eventos: dict, doencas: dict, principios: dict,
     categorias: dict | None = None, ultimos_por_produto: dict[str, dict] | None = None,
     servicos_financeiro: dict | None = None, checklist_por_regra: dict[int, list[dict]] | None = None,
+    tipos_agendamento: dict[int, str] | None = None,
 ) -> dict:
     categorias = categorias or {}
     ultimos_por_produto = ultimos_por_produto or {}
     servicos_financeiro = servicos_financeiro or {}
     checklist_por_regra = checklist_por_regra or {}
+    tipos_agendamento = tipos_agendamento or {}
     ultimo = ultimos_por_produto.get((c.produto or "").strip().lower()) if c.produto else None
+    # Regra por evento de vida (gatilho por animal, ex.: Brucelose B19 no
+    # nascimento) não tem uma "próxima ocorrência" única — `data_evento`/
+    # `frequencia_valor/unidade` aqui são só valores vestigiais que o wizard
+    # nunca expõe nesse modo (ficam em "hoje"/"1 mês"). Aplicar a fórmula
+    # periódica a eles produzia uma data sem relação nenhuma com o gatilho
+    # real, divergindo da data de verdade mostrada em Ocorrências/Cronogramas
+    # — bug relatado pelo usuário em 12/09/2026 (critique). `proxima_ocorrencia`
+    # continua calculada (mantém ordenação/filtro por período estáveis nesta
+    # lista), mas `proxima_ocorrencia_por_animal=True` avisa o frontend para
+    # não mostrar essa data como se fosse real.
+    por_animal = tipos_agendamento.get(c.evento_sanitario_id) == "evento"
     return {
         **c.model_dump(),
         "evento_sanitario_nome": eventos.get(c.evento_sanitario_id, "—"),
@@ -730,6 +746,7 @@ def _serializar(
         "doenca_nome": doencas.get(c.doenca_id) if c.doenca_id else None,
         "principio_ativo_nome": principios.get(c.principio_ativo_id) if c.principio_ativo_id else None,
         "proxima_ocorrencia": proxima_ocorrencia(c.data_evento, c.frequencia_valor, c.frequencia_unidade).isoformat(),
+        "proxima_ocorrencia_por_animal": por_animal,
         "ultimo_evento_data": ultimo["data"] if ultimo else None,
         "ultimo_evento_id": ultimo["id"] if ultimo else None,
         "checklist_itens": checklist_por_regra.get(c.id, []),
@@ -748,7 +765,7 @@ def listar_calendario(
     (esse fica em /sanidade/aplicacoes).
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
+    eventos, doencas, principios, categorias, servicos_financeiro, tipos_agendamento = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session, fazenda_id)
     checklist_por_regra = _checklist_por_regra(session, fazenda_id)
     query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
@@ -756,7 +773,7 @@ def listar_calendario(
         query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
     regras = session.exec(query).all()
     saida = [
-        _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro, checklist_por_regra)
+        _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro, checklist_por_regra, tipos_agendamento)
         for c in regras
     ]
     if evento_sanitario_id is not None:
@@ -897,10 +914,10 @@ def criar_calendario(
         salvar_checklist_da_regra(
             session, c.id, [(i.chave, i.nome, i.ordem) for i in dados.checklist_itens], fazenda_id,
         )
-    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
+    eventos, doencas, principios, categorias, servicos_financeiro, tipos_agendamento = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session, fazenda_id)
     checklist_por_regra = _checklist_por_regra(session, fazenda_id)
-    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro, checklist_por_regra)
+    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro, checklist_por_regra, tipos_agendamento)
 
 
 @router.put("/calendario/{calendario_id}")
@@ -924,10 +941,10 @@ def atualizar_calendario(
         salvar_checklist_da_regra(
             session, c.id, [(i.chave, i.nome, i.ordem) for i in dados.checklist_itens], fazenda_id,
         )
-    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
+    eventos, doencas, principios, categorias, servicos_financeiro, tipos_agendamento = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session, fazenda_id)
     checklist_por_regra = _checklist_por_regra(session, fazenda_id)
-    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro, checklist_por_regra)
+    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro, checklist_por_regra, tipos_agendamento)
 
 
 @router.delete("/calendario/{calendario_id}")
@@ -1466,9 +1483,9 @@ def cadastrar_preventivo(
             )
         resultado_exame = {"resultado": dados.resultado_exame, "banda": banda, "animais": len(dados.animais), "ids": exame_resultado_ids}
 
-    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
+    eventos, doencas, principios, categorias, servicos_financeiro, tipos_agendamento = _nomes(session)
     return {
-        "regra": _serializar(regra, eventos, doencas, principios, categorias, servicos_financeiro=servicos_financeiro) if regra else None,
+        "regra": _serializar(regra, eventos, doencas, principios, categorias, servicos_financeiro=servicos_financeiro, tipos_agendamento=tipos_agendamento) if regra else None,
         "aplicacao": aplicacao,
         "resultado_exame": resultado_exame,
     }

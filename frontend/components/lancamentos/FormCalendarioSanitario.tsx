@@ -36,6 +36,9 @@ type RegraCalendario = {
   categoria_preventiva: string | null; ultimo_evento_data: string | null; ultimo_evento_id: number | null;
   usa_cronograma?: boolean;
   checklist_itens?: ChecklistTemplateItemDTO[];
+  // Regra por evento de vida não tem uma única "próxima ocorrência" — a data
+  // calculada aqui é vestigial (bug relatado pelo usuário em 12/09/2026).
+  proxima_ocorrencia_por_animal?: boolean;
 };
 
 // vacina | exame | tratamento | avulso/outro (nada marcado nos três primeiros) | todos.
@@ -454,7 +457,8 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
             <div style={{ padding: "0.9rem 1rem", borderRadius: 10, border: "1.5px solid var(--dourado)", background: "rgba(212,175,55,0.1)" }}>
               <p style={{ fontSize: "0.85rem", fontWeight: 700, marginBottom: "0.4rem" }}>Este evento já tem uma regra cadastrada</p>
               <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.8rem" }}>
-                {regraVinculada.categoria_alvo || "Rebanho todo"} — próxima ocorrência {formatDate(regraVinculada.proxima_ocorrencia)}. Nada foi alterado.
+                {regraVinculada.categoria_alvo || "Rebanho todo"} — próxima ocorrência{" "}
+                {regraVinculada.proxima_ocorrencia_por_animal ? "calculada por animal (evento de vida)" : formatDate(regraVinculada.proxima_ocorrencia)}. Nada foi alterado.
               </p>
               <div className="flex items-center gap-2">
                 <button type="button" className="btn-primary" style={{ fontSize: "0.8rem" }} onClick={() => abrirEdicao(regraVinculada)}>Editar essa regra</button>
@@ -864,8 +868,12 @@ function ListaEntradaCadastroSanitario({
                     <tr key={r.id}>
                       <td style={{ fontWeight: 700 }}>{r.evento_sanitario_nome}</td>
                       <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.categoria_alvo || "—"}</td>
-                      <td style={{ fontSize: "0.78rem" }}>a cada {r.frequencia_valor} {FREQUENCIA_UNIDADES.find((u) => u.v === r.frequencia_unidade)?.l}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{formatDate(r.proxima_ocorrencia)}</td>
+                      <td style={{ fontSize: "0.78rem" }}>
+                        {r.proxima_ocorrencia_por_animal ? "Por evento de vida" : `a cada ${r.frequencia_valor} ${FREQUENCIA_UNIDADES.find((u) => u.v === r.frequencia_unidade)?.l}`}
+                      </td>
+                      <td style={{ fontSize: "0.78rem" }}>
+                        {r.proxima_ocorrencia_por_animal ? "Calculado por animal" : formatDate(r.proxima_ocorrencia)}
+                      </td>
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => onEditarRegra(r)}>Editar</button>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => onExcluirRegra(r)}>Excluir</button>
