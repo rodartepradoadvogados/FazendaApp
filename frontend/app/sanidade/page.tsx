@@ -1091,6 +1091,13 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar }: { cronogramaId: numbe
 
       {aba === "checklist" && (
         <div>
+          {/* Menção à data já marcada — pedido do usuário em 12/09/2026: não
+              precisa virar item do checklist (a data é do cronograma, não uma
+              resposta a preencher aqui), só precisa ficar claro, na própria
+              aba Checklist, que já existe uma data para esta ocorrência. */}
+          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.7rem" }}>
+            Data marcada para esta ocorrência: <strong style={{ color: "var(--text)" }}>{formatDate(det.data_prevista)}</strong>
+          </p>
           <div style={{ height: 7, background: "var(--surface-2)", borderRadius: 99, overflow: "hidden", marginBottom: "0.9rem" }}>
             <div style={{ height: "100%", width: `${progresso}%`, background: "var(--dourado)", borderRadius: 99, transition: "width .3s" }} />
           </div>
@@ -1166,9 +1173,26 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar }: { cronogramaId: numbe
                   </p>
                 )}
                 {item.chave === "estoque" && (
-                  <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
-                    Ainda não confere o estoque do medicamento automaticamente — confirme a disponibilidade manualmente antes de marcar.
-                  </p>
+                  det.estoque ? (
+                    !det.estoque.encontrado ? (
+                      <div className="alert-critico mt-2" style={{ fontSize: "0.78rem" }}>
+                        <AlertTriangle size={15} /><span>Produto "{det.estoque.produto}" não encontrado no estoque — confira manualmente.</span>
+                      </div>
+                    ) : (det.estoque.saldo ?? 0) <= 0 ? (
+                      <div className="alert-critico mt-2" style={{ fontSize: "0.78rem" }}>
+                        <AlertTriangle size={15} /><span>Sem saldo em estoque de "{det.estoque.produto}".</span>
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+                        Saldo atual em estoque: {det.estoque.saldo} {det.estoque.unidade || ""} de "{det.estoque.produto}" —
+                        não é o cálculo exato para todos os animais incluídos (dosagem é texto livre), confirme antes de marcar.
+                      </p>
+                    )
+                  ) : (
+                    <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+                      Esta regra não tem produto vinculado ao estoque — confirme a disponibilidade manualmente.
+                    </p>
+                  )
                 )}
                 {item.status === "pulado" && item.observacao && (
                   <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>Motivo: {item.observacao}</p>

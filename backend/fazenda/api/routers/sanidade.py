@@ -1133,6 +1133,24 @@ def listar_ocorrencias(
     }
 
 
+def _estoque_info_ocorrencia(session: Session, regra: CalendarioSanitario | None, fazenda_id: int | None) -> dict | None:
+    """Aviso de saldo do produto vinculado à regra, para o item "estoque" do
+    checklist deixar de ser um clique sem informação nenhuma (pedido do
+    usuário em 12/09/2026). NÃO é o cálculo preciso "dá pra aplicar em todos
+    os incluídos" (dosagem é texto livre — "2 mL a 5 mL conforme bula" — sem
+    unidade normalizada por animal para multiplicar); é só o saldo atual do
+    produto, honesto quanto ao que de fato verifica."""
+    if not regra or not (regra.produto or "").strip():
+        return None
+    query = select(Estoque).where(Estoque.nome == regra.produto)
+    if fazenda_id is not None:
+        query = query.where(Estoque.fazenda_id == fazenda_id)
+    item = session.exec(query).first()
+    if not item:
+        return {"produto": regra.produto, "encontrado": False, "saldo": None, "unidade": None}
+    return {"produto": regra.produto, "encontrado": True, "saldo": item.quantidade, "unidade": item.unidade}
+
+
 @router.get("/ocorrencias/{cronograma_id}")
 def detalhe_ocorrencia(
     cronograma_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -1164,6 +1182,7 @@ def detalhe_ocorrencia(
         "checklist_desconsiderado_motivo": cron.checklist_desconsiderado_motivo,
         "veterinario_nome": vet.nome if vet else None,
         "alerta_clinico": alerta_clinico_ativo(session, cron.id),
+        "estoque": _estoque_info_ocorrencia(session, regra, fazenda_id),
         "animais": [
             {
                 "id": a.id, "numero_matriz": a.numero_matriz, "status": a.status,
