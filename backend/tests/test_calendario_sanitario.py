@@ -1,16 +1,19 @@
 """Testes do Calendário sanitário: cálculo de recorrência e CRUD/listagem."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import Animal, Doenca, EventoSanitario, PrincipioAtivo
-from fazenda.rules.calendario_sanitario import proxima_ocorrencia
+from fazenda.models import (
+    Animal, CalendarioSanitario, CalendarioSanitarioChecklistItem, ChecklistItem,
+    CronogramaSanitario, CronogramaSanitarioAnimal, Doenca, EventoSanitario, PrincipioAtivo,
+)
+from fazenda.rules.calendario_sanitario import proxima_ocorrencia, proxima_ocorrencia_a_partir_de
 
 
 class TestProximaOcorrencia:
@@ -33,6 +36,29 @@ class TestProximaOcorrencia:
     def test_unidade_invalida(self):
         with pytest.raises(ValueError):
             proxima_ocorrencia(date(2026, 1, 1), 1, "semanas")
+
+
+class TestProximaOcorrenciaAPartirDe:
+    """`data_evento` é a 1ª ocorrência (a referência), não a última — bug
+    relatado pelo usuário em 12/09/2026 (verificação E2E do mecanismo): a
+    coluna "Regras cadastradas" pulava sempre o 1º ciclo de toda regra nova,
+    porque `proxima_ocorrencia` somava a frequência por cima incondicionalmente."""
+
+    def test_data_evento_no_futuro_e_ela_mesma_a_proxima(self):
+        hoje = date(2026, 9, 12)
+        assert proxima_ocorrencia_a_partir_de(date(2026, 9, 20), 60, "dias", hoje) == date(2026, 9, 20)
+
+    def test_data_evento_e_hoje_e_ela_mesma_a_proxima(self):
+        hoje = date(2026, 9, 12)
+        assert proxima_ocorrencia_a_partir_de(hoje, 2, "meses", hoje) == hoje
+
+    def test_data_evento_no_passado_rola_um_ciclo(self):
+        hoje = date(2026, 9, 12)
+        assert proxima_ocorrencia_a_partir_de(date(2026, 8, 20), 1, "meses", hoje) == date(2026, 9, 20)
+
+    def test_data_evento_no_passado_rola_varios_ciclos(self):
+        hoje = date(2026, 9, 12)
+        assert proxima_ocorrencia_a_partir_de(date(2026, 1, 10), 4, "meses", hoje) == date(2027, 1, 10)
 
 
 @pytest.fixture
@@ -78,14 +104,18 @@ class TestCalendarioSanitarioCrud:
         return c.post("/sanidade/calendario", json=dados)
 
     def test_cria_regra_e_calcula_proxima_ocorrencia(self, client):
+        # `data_evento` no futuro (30 dias a partir de hoje) — a própria
+        # `data_evento` já é a próxima ocorrência, sem somar a frequência
+        # por cima (ver TestProximaOcorrenciaAPartirDe).
+        data_evento = (date.today() + timedelta(days=30)).isoformat()
         c, engine = client
-        r = self._regra(c)
+        r = self._regra(c, data_evento=data_evento)
         assert r.status_code == 200
         corpo = r.json()
         assert corpo["evento_sanitario_nome"] == "Vermífugo"
         assert corpo["doenca_nome"] == "Verminose"
         assert corpo["principio_ativo_nome"] == "Ivermectina"
-        assert corpo["proxima_ocorrencia"] == "2026-05-10"
+        assert corpo["proxima_ocorrencia"] == data_evento
         assert corpo["proxima_ocorrencia_por_animal"] is False
 
     def test_regra_por_evento_de_vida_marca_proxima_ocorrencia_por_animal(self, client):
@@ -120,14 +150,22 @@ class TestCalendarioSanitarioCrud:
         assert r.status_code == 400
 
     def test_atualiza_regra(self, client):
+        # `data_evento` fixa no passado (não no futuro, como no teste acima)
+        # de propósito: só assim a atualização da frequência (4 -> 6 meses)
+        # realmente muda o cálculo da próxima ocorrência, exercitando que o
+        # PUT recalcula com o valor NOVO — com `data_evento` no futuro, a
+        # resposta seria sempre a própria `data_evento`, disfarçando um PUT
+        # que ignorasse a frequência nova por completo.
+        data_evento = date(2026, 1, 10)
         c, engine = client
-        regra_id = self._regra(c).json()["id"]
+        regra_id = self._regra(c, data_evento=data_evento.isoformat()).json()["id"]
         r = c.put(f"/sanidade/calendario/{regra_id}", json={
             "evento_sanitario_id": 1, "frequencia_valor": 6, "frequencia_unidade": "meses",
-            "data_evento": "2026-01-10",
+            "data_evento": data_evento.isoformat(),
         })
         assert r.status_code == 200
-        assert r.json()["proxima_ocorrencia"] == "2026-07-10"
+        esperado = proxima_ocorrencia_a_partir_de(data_evento, 6, "meses", date.today())
+        assert r.json()["proxima_ocorrencia"] == esperado.isoformat()
 
     def test_regra_nova_sem_checklist_itens_no_body_nao_grava_customizacao(self, client):
         """Chamada antiga (sem passar pelo wizard novo, seção 3.7.0) — não
@@ -161,14 +199,23 @@ class TestCalendarioSanitarioCrud:
         assert r.json()["checklist_itens"] == []
 
     def test_lista_filtra_por_periodo_da_proxima_ocorrencia(self, client):
+        # Datas de referência no futuro (a partir de hoje): a próxima
+        # ocorrência de cada regra é a própria `data_evento`, então o filtro
+        # de período exercita só a listagem — não a rolagem de ciclos
+        # (coberta à parte em TestProximaOcorrenciaAPartirDe).
+        perto = (date.today() + timedelta(days=30)).isoformat()
+        longe = (date.today() + timedelta(days=150)).isoformat()
         c, engine = client
-        self._regra(c, data_evento="2026-01-10", frequencia_valor=1, frequencia_unidade="meses")  # -> 2026-02-10
-        self._regra(c, data_evento="2026-06-01", frequencia_valor=1, frequencia_unidade="meses")  # -> 2026-07-01
+        self._regra(c, data_evento=perto, frequencia_valor=1, frequencia_unidade="meses")
+        self._regra(c, data_evento=longe, frequencia_valor=1, frequencia_unidade="meses")
 
-        r = c.get("/sanidade/calendario", params={"data_inicio": "2026-03-01", "data_fim": "2026-12-31"})
+        r = c.get("/sanidade/calendario", params={
+            "data_inicio": (date.today() + timedelta(days=100)).isoformat(),
+            "data_fim": (date.today() + timedelta(days=200)).isoformat(),
+        })
         assert r.status_code == 200
         assert len(r.json()) == 1
-        assert r.json()[0]["proxima_ocorrencia"] == "2026-07-01"
+        assert r.json()[0]["proxima_ocorrencia"] == longe
 
     def test_lista_filtra_por_evento(self, client):
         c, engine = client
@@ -226,3 +273,120 @@ class TestCalendarioSanitarioCrud:
             x for x in c.get("/sanidade/cronogramas", params={"calendario_id": calendario_id}).json() if x["status"] == "aberto"
         )
         assert cronograma_2["data_evento"] == "2026-11-19"
+
+
+class TestExcluirCalendarioCascade:
+    """Achado real na verificação E2E de 12/09/2026: `DELETE /sanidade/
+    calendario/{id}` só apagava a regra, deixando `CronogramaSanitario`
+    (e filhos) e `CalendarioSanitarioChecklistItem` órfãos. Sob SQLite sem
+    AUTOINCREMENT, uma regra nova criada depois podia reaproveitar o mesmo id
+    e "herdar" visualmente cronogramas/animais/checklist que nunca foram
+    dela — em Postgres o id não se repete, mas os órfãos ficam do mesmo jeito."""
+
+    def test_excluir_regra_apaga_cronogramas_e_filhos_e_checklist_customizado(self, client):
+        c, engine = client
+        r = c.post("/sanidade/calendario", json={
+            "evento_sanitario_id": 1, "categoria_alvo": "Bezerras", "doenca_id": 1,
+            "produto": "Ivermectina 4%", "principio_ativo_id": 1, "dosagem": "1 mL/50 kg",
+            "frequencia_valor": 60, "frequencia_unidade": "dias", "data_evento": "2026-09-20",
+            "usa_cronograma": True, "checklist_itens": [{"chave": "vet", "nome": "Confirmar vet", "ordem": 1}],
+        })
+        assert r.status_code == 200, r.text
+        calendario_id = r.json()["id"]
+
+        c.get("/agenda/", params={"data": "2026-09-12"})  # materializa o 1º cronograma
+        cronograma_id = c.get("/sanidade/cronogramas", params={"calendario_id": calendario_id}).json()[0]["id"]
+        with Session(engine) as s:
+            s.add(CronogramaSanitarioAnimal(
+                cronograma_id=cronograma_id, numero_matriz="500", status="incluido", data_sugestao=date(2026, 9, 12),
+            ))
+            s.commit()
+            assert s.exec(select(CronogramaSanitario).where(CronogramaSanitario.calendario_sanitario_id == calendario_id)).all()
+            assert s.exec(select(ChecklistItem).where(ChecklistItem.cronograma_id == cronograma_id)).all()
+            assert s.exec(select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id == cronograma_id)).all()
+            assert s.exec(select(CalendarioSanitarioChecklistItem).where(CalendarioSanitarioChecklistItem.calendario_sanitario_id == calendario_id)).all()
+
+        r = c.delete(f"/sanidade/calendario/{calendario_id}")
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            assert s.get(CalendarioSanitario, calendario_id) is None
+            assert s.exec(select(CronogramaSanitario).where(CronogramaSanitario.calendario_sanitario_id == calendario_id)).all() == []
+            assert s.exec(select(ChecklistItem).where(ChecklistItem.cronograma_id == cronograma_id)).all() == []
+            assert s.exec(select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id == cronograma_id)).all() == []
+            assert s.exec(select(CalendarioSanitarioChecklistItem).where(CalendarioSanitarioChecklistItem.calendario_sanitario_id == calendario_id)).all() == []
+
+    def test_regra_nova_nao_herda_cronograma_de_regra_excluida_com_mesmo_id(self, client):
+        """O achado exato: sob SQLite (sem AUTOINCREMENT), o id de uma regra
+        excluída pode ser reaproveitado por uma regra nova — sem a cascata
+        acima, a regra nova "herdava" visualmente o cronograma da antiga."""
+        c, engine = client
+        r1 = c.post("/sanidade/calendario", json={
+            "evento_sanitario_id": 1, "data_evento": "2026-09-20",
+            "frequencia_valor": 60, "frequencia_unidade": "dias", "usa_cronograma": True,
+        })
+        calendario_id_1 = r1.json()["id"]
+        c.get("/agenda/", params={"data": "2026-09-12"})
+        assert c.get("/sanidade/cronogramas", params={"calendario_id": calendario_id_1}).json()
+
+        c.delete(f"/sanidade/calendario/{calendario_id_1}")
+
+        r2 = c.post("/sanidade/calendario", json={
+            "evento_sanitario_id": 1, "data_evento": "2030-01-01",
+            "frequencia_valor": 30, "frequencia_unidade": "dias", "usa_cronograma": True,
+        })
+        calendario_id_2 = r2.json()["id"]
+        assert c.get("/sanidade/cronogramas", params={"calendario_id": calendario_id_2}).json() == []
+
+
+class TestEventosAgendaNaoDuplicaComRegraDeCalendario:
+    """Achado real na verificação E2E de 12/09/2026: o wizard (FormCalendario
+    Sanitario.tsx::salvar) grava a periodicidade em DOIS lugares para a mesma
+    regra — `tipo_agendamento="epoca"` no EventoSanitario E um
+    CalendarioSanitario com a própria frequência. A Agenda materializava as
+    DUAS pendências para o mesmo dia (uma "evento_sanitario_…", sem saber da
+    categoria_alvo; outra "calendario_sanitario_…", com a categoria certa)."""
+
+    def test_evento_epoca_com_regra_ativa_materializa_so_pela_regra(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            ev = s.get(EventoSanitario, 1)
+            ev.tipo_agendamento = "epoca"
+            ev.data_primeiro = date(2026, 9, 12)
+            ev.frequencia_valor = 7
+            ev.frequencia_unidade = "dias"
+            s.add(ev)
+            s.commit()
+
+        r = c.post("/sanidade/calendario", json={
+            "evento_sanitario_id": 1, "categoria_alvo": "Prenha",
+            "frequencia_valor": 7, "frequencia_unidade": "dias", "data_evento": "2026-09-12",
+        })
+        assert r.status_code == 200, r.text
+        calendario_id = r.json()["id"]
+
+        agenda = c.get("/agenda/", params={"data_inicio": "2026-09-12", "data_fim": "2026-09-12"}).json()
+        ids = [e["id"] for e in agenda["eventos"]] if isinstance(agenda, dict) and "eventos" in agenda else [e["id"] for e in agenda]
+        de_hoje = [
+            i for i in ids
+            if i.startswith(("evento_sanitario_1__", "calendario_sanitario_")) and i.endswith("2026-09-12")
+        ]
+        assert de_hoje == [f"calendario_sanitario_{calendario_id}__2026-09-12"], de_hoje
+
+    def test_evento_epoca_sem_regra_nenhuma_continua_materializando_como_sempre(self, client):
+        """O evento "epoca" standalone (sem NENHUM CalendarioSanitario — caso
+        legado) não pode ficar mudo: a exclusão é só quando existe uma regra
+        ativa para assumir a periodicidade."""
+        c, engine = client
+        with Session(engine) as s:
+            ev = s.get(EventoSanitario, 1)
+            ev.tipo_agendamento = "epoca"
+            ev.data_primeiro = date(2026, 9, 12)
+            ev.frequencia_valor = 7
+            ev.frequencia_unidade = "dias"
+            s.add(ev)
+            s.commit()
+
+        agenda = c.get("/agenda/", params={"data_inicio": "2026-09-12", "data_fim": "2026-09-12"}).json()
+        ids = [e["id"] for e in agenda["eventos"]] if isinstance(agenda, dict) and "eventos" in agenda else [e["id"] for e in agenda]
+        assert any(i.startswith("evento_sanitario_1__") for i in ids), ids
