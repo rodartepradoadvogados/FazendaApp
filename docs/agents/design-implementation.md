@@ -403,6 +403,52 @@ existe no backend, só falta consumir.
   mensagens atuais são texto de validação legítimo vindo do backend, fora do escopo dos
   mockups aprovados — decisão deliberada, não descuido.
 
+### 9.4 Merge com `main` (2026-09-13) — decisões que mudam o que está no ar
+
+Entre o início desta sessão e a abertura do PR, `main` recebeu trabalho paralelo e
+independente que tocou exatamente as mesmas telas das Frentes 1, 2 e 3 (outra sessão de
+design/implementação, não coordenada com esta). O merge do PR #773 precisou reconciliar os
+dois lados — registrado aqui porque muda o que efetivamente ficou no ar em relação ao que a
+seção 5 descreve:
+
+- **Frente 1 (`app/page.tsx`) — `main` já tinha um redesign próprio da Capa** ("Redesign T1",
+  mockup 1b): busca de animal (⌘K), bloco "Hoje" reformulado (tarefas atrasadas/de hoje +
+  "Fora do esperado"), grade de 12 KPIs em vez da grade agrupada por seção com cabeçalhos, e
+  a página `/` dividida em `Capa()` (logado) vs. `LandingPublica()` (T8, deslogado). Resolução:
+  manter a estrutura de `main` (mais completa e já testada) e reaplicar por cima só o que
+  esta sessão trouxe de novo — `Delta` (setas de tendência de 7 dias) ligado nos 5 KPIs
+  pedidos, os 3 `ErroSecao` por fonte, e o card de meta batida da Sanidade (Ousado, aprovado)
+  — este último agora vive como um 7º item no fim da primeira grade de KPIs (antes tinha
+  posição própria dentro de uma seção "Rebanho" que não existe mais nessa estrutura). O card
+  "Eficiência Reprodutiva" (medidores/gauges + tabela de benchmark expansível) que existia
+  nesta sessão foi **removido** — `main` já tinha migrado esse conteúdo para a página
+  `/indicadores` antes do merge; manter os dois seria duplicar a mesma informação em dois
+  lugares.
+- **Frente 2 (`app/login/page.tsx`) — `main` já tinha o próprio redesign da página pública**
+  ("Redesign T7: Login enxuto" + "T8 — Landing pública vira `/`"): a página de login virou só
+  o cartão de entrar, e todo o conteúdo de marketing (carrossel, showcase de recursos, grid de
+  banners, simulador de preço, callout do Milk News) saiu de `login/page.tsx` e hoje vive em
+  `components/landing/LandingPublica.tsx`, com conteúdo **próprio**, escrito do zero — **não**
+  reaproveita os componentes que esta sessão corrigiu (`BannerCarousel.tsx`,
+  `FeatureShowcase.tsx`, `BannerGrid.tsx`, `MilkPriceExplainer.tsx`, `banners.ts`). Esses
+  arquivos continuam no repo com as correções desta sessão (contraste, No-Lift, tamanho das
+  setas, validação do simulador) mas **não são mais renderizados em lugar nenhum** — ficaram
+  órfãos. O que sobreviveu e foi reaplicado: os `id`/`htmlFor` de acessibilidade nos campos
+  Usuário/Senha do cartão de login (compatível com a estrutura nova de `main`). **Decisão
+  pendente do dono do produto**: apagar os componentes órfãos, ou portar as mesmas correções
+  para dentro de `LandingPublica.tsx` (que é quem precisa delas de verdade agora).
+- **Frente 3 (`app/painel-cowdata/page.tsx`) — `main` também adicionou sparklines/tendência**
+  nos cartões do Cockpit (`registrarLeituraKpisCowData`/`calcularTendencia`, armazenando
+  leituras reais ao longo do tempo — mesmo espírito do `Delta` desta sessão, implementado de
+  forma independente) e uma fila de aprovação rica com botão "Aprovar" inline. Resolução:
+  mantida a fila rica de `main` + os sparklines; a fila de suporte pendente desta sessão
+  (`fetchPedidosRecentesCofre`) virou uma seção própria "Suporte pendente" ao lado da fila de
+  aprovação, em vez do card "Hoje" unificado original — o card "Atalhos" (que esta sessão
+  queria remover por duplicar a sidebar) foi removido, como planejado.
+
+Nenhuma dessas reconciliações foi testada via `$impeccable polish`/`critique` de novo — vale
+uma passada nessas 3 telas antes de considerar as Frentes 1–3 definitivamente fechadas.
+
 Nenhuma dessas três pendências bloqueia o merge desta rodada — são candidatas naturais para
 uma passada futura de `$impeccable polish` ou `$impeccable harden` por frente, conforme o
 plano da seção 7.
