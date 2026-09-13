@@ -19,8 +19,11 @@ export const BANNERS: Banner[] = [
   {
     slug: "reprodutivo",
     eyebrow: "Reprodutivo",
-    titulo: "Reprodução sob controle, do cio ao diagnóstico",
-    descricao: "Protocolos IATF, inseminação, diagnóstico de gestação, categorias do rebanho e a visão global da situação reprodutiva em tempo real.",
+    // Cita o mecanismo real (motor de regras), não "um painel a mais" —
+    // achado da crítica da página pública, ver
+    // docs/agents/design-implementation.md §5, o-motor-nao-o-painel.html.
+    titulo: "Sua agenda sabe que Girolando prenha em 287 dias",
+    descricao: "Holandês, 280. Gir e zebu, 295. Protocolo IATF completo (D0/D7/D9/D11), elegibilidade de BST e secagem — as regras que hoje vivem numa macro de Excel, testadas e rodando sozinhas todo dia.",
     icon: HeartPulse,
     href: "/sobre/reprodutivo",
   },

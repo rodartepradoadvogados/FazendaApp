@@ -1,0 +1,143 @@
+<title>Milk News, Editorial</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --vinho:#0E2A47; --dourado:#8A6D2F; --dourado-light:#C9A44C;
+    --bg:#F4F6F9; --surface:#FFFFFF; --surface-2:#F9FAFB; --border:#DCE3EA;
+    --text:#1F2937; --text-muted:#6B7280; --red:#C0392B;
+    --cat-financeiro:#7A2233; --cat-sanidade:#4E7A5A;
+    --news-a:#3E6B8F; --news-b:#7A5C3E; --news-c:#5C6B3E;
+    --r:2px; --shadow:0 1px 4px rgba(20,30,45,.10);
+    --review-bg:#EDEFF2; --review-fg:#3A4250; --review-border:#D6DAE1; --review-accent:#0E2A47;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0B0D10; --surface:#15181D; --surface-2:#1B1F26; --border:#2A2E36;
+      --text:#F0E8EC; --text-muted:#9B8A91;
+      --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0B0D10; --surface:#15181D; --surface-2:#1B1F26; --border:#2A2E36;
+    --text:#F0E8EC; --text-muted:#9B8A91;
+    --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--review-bg); color:var(--text); font-family:'Inter',sans-serif;
+    padding-inline:max(16px, calc((100vw - 1000px)/2)); padding-block:20px 48px; }
+  .review-bar{ max-width:1000px; margin:0 auto 18px; padding:.85rem 1.1rem; background:var(--review-bg); border:1px solid var(--review-border); border-radius:8px; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
+  .review-tag{ font-size:.68rem; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--review-fg); }
+  .review-tag b{ color:var(--review-accent); }
+  .review-switch{ display:inline-flex; border:1px solid var(--review-border); border-radius:999px; padding:3px; gap:2px; background:var(--surface); }
+  .review-switch button{ font-weight:700; font-size:.85rem; padding:.4rem 1.1rem; border-radius:999px; border:none; cursor:pointer; background:transparent; color:var(--text-muted); }
+  .review-switch button.active{ background:var(--vinho); color:var(--dourado-light); }
+  .review-note{ max-width:1000px; margin:0 auto 18px; font-size:.82rem; color:var(--review-fg); }
+  .review-note b{ color:var(--review-accent); }
+  .stage{ max-width:1000px; margin:0 auto; display:flex; flex-direction:column; gap:1.1rem; }
+  .card{ background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:1.2rem 1.3rem; box-shadow:var(--shadow); }
+  .section-label{ font-size:.68rem; font-weight:700; letter-spacing:.13em; text-transform:uppercase; color:var(--text-muted); margin:0 0 .7rem; display:flex; align-items:center; gap:.5rem; }
+  .section-label .rule{ flex:1; height:1px; background:var(--border); }
+
+  /* 1: erro amigável */
+  .err-old{ background:rgba(192,57,43,.08); border:1px solid var(--red); border-radius:var(--r); padding:.8rem 1rem; font-family:ui-monospace,monospace; font-size:.8rem; color:var(--red); }
+  .err-new{ background:rgba(192,57,43,.08); border:1px solid var(--red); border-radius:var(--r); padding:1rem 1.1rem; display:flex; gap:.8rem; align-items:flex-start; }
+  .err-new b{ display:block; font-size:.9rem; margin-bottom:.2rem; }
+  .err-new .retry{ margin-top:.5rem; font-size:.8rem; font-weight:700; color:#fff; background:var(--vinho); border:none; border-radius:var(--r); padding:.4rem .9rem; cursor:pointer; }
+
+  /* 2: cores de seção próprias */
+  .tag-row{ display:flex; gap:.6rem; flex-wrap:wrap; }
+  .tag{ font-size:.72rem; font-weight:700; padding:.25rem .7rem; border-radius:999px; }
+
+  /* 3: estado vazio */
+  .empty-old{ text-align:left; color:var(--text-muted); font-size:.85rem; padding:.5rem 0; }
+  .empty-new{ text-align:center; padding:2rem 1rem; border:1.5px dashed var(--border); border-radius:var(--r); background:var(--surface-2); }
+  .empty-new .ico{ font-size:2rem; margin-bottom:.5rem; }
+  .empty-new .t{ font-weight:700; font-size:.95rem; margin-bottom:.2rem; }
+  .empty-new .d{ font-size:.82rem; color:var(--text-muted); }
+
+  /* 4: rótulo maiúsculo */
+  .label-old{ text-transform:uppercase; font-size:.72rem; font-weight:700; color:var(--text-muted); letter-spacing:.04em; }
+  .label-new{ font-size:.78rem; font-weight:700; color:var(--text-muted); letter-spacing:.02em; }
+
+  .state-panel{ display:none; } .state-panel.active{ display:block; }
+</style>
+
+<div class="review-bar">
+  <span class="review-tag">Revisão de proposta · Milk News &nbsp;—&nbsp; <b>Acabamento editorial</b></span>
+  <div class="review-switch" role="tablist">
+    <button class="stbtn active" data-state="atual">Atual</button>
+    <button class="stbtn" data-state="proposta">Proposta</button>
+  </div>
+</div>
+<p class="review-note" id="note-atual">
+  <b>Hoje:</b> erro cru pro visitante público, cores de seção reaproveitadas das categorias fixas do produto (contradiz o `DESIGN.md`), estado vazio em texto solto, rótulo "FONTES" em maiúsculo total (achado do detector: <code>call-caps-body</code>).
+</p>
+<p class="review-note" id="note-proposta" hidden>
+  <b>Proposta:</b> erro traduzido com botão de tentar de novo, paleta de seção própria do Milk News (nunca as 8 cores fixas de categoria), estado vazio ilustrado, rótulo em peso/cor em vez de maiúsculo total.
+</p>
+
+<div class="stage">
+
+  <!-- ================= ATUAL ================= -->
+  <div class="state-panel active" id="panel-atual">
+    <div class="card">
+      <div class="section-label">1. Erro cru pro visitante público<span class="rule"></span></div>
+      <div class="err-old">Não foi possível carregar as notícias: Failed to fetch.</div>
+    </div>
+    <div class="card">
+      <div class="section-label">2. Cores de categoria do produto, reaproveitadas<span class="rule"></span></div>
+      <div class="tag-row">
+        <span class="tag" style="background:color-mix(in srgb, var(--cat-financeiro) 16%, transparent); color:var(--cat-financeiro);">Regulação</span>
+        <span class="tag" style="background:color-mix(in srgb, var(--cat-sanidade) 16%, transparent); color:var(--cat-sanidade);">Manejo e clima</span>
+      </div>
+      <p style="font-size:.78rem;color:var(--text-muted);margin-top:.6rem;">↑ mesmas cores de "Financeiro" e "Sanidade" do produto — mas aqui significam outra coisa</p>
+    </div>
+    <div class="card">
+      <div class="section-label">3. Estado vazio<span class="rule"></span></div>
+      <div class="empty-old">Nenhuma matéria publicada ainda.</div>
+    </div>
+    <div class="card">
+      <div class="section-label">4. Rótulo em maiúsculo total<span class="rule"></span></div>
+      <div class="label-old">Fontes que acompanhamos todo dia</div>
+    </div>
+  </div>
+
+  <!-- ================= PROPOSTA ================= -->
+  <div class="state-panel" id="panel-proposta">
+    <div class="card">
+      <div class="section-label">1. Erro traduzido, com ação<span class="rule"></span></div>
+      <div class="err-new">⚠ <div><b>Não conseguimos carregar as notícias agora.</b><span style="color:var(--text-muted);font-size:.85rem;">Pode ser instabilidade temporária — tente de novo em instantes.</span><button class="retry">↻ Tentar novamente</button></div></div>
+    </div>
+    <div class="card">
+      <div class="section-label">2. Paleta própria do Milk News<span class="rule"></span></div>
+      <div class="tag-row">
+        <span class="tag" style="background:color-mix(in srgb, var(--news-a) 16%, transparent); color:var(--news-a);">Regulação</span>
+        <span class="tag" style="background:color-mix(in srgb, var(--news-c) 16%, transparent); color:var(--news-c);">Manejo e clima</span>
+      </div>
+      <p style="font-size:.78rem;color:var(--text-muted);margin-top:.6rem;">↑ tons distintos, sem colidir com o significado das 8 cores fixas de categoria do produto</p>
+    </div>
+    <div class="card">
+      <div class="section-label">3. Estado vazio ilustrado<span class="rule"></span></div>
+      <div class="empty-new"><div class="ico">📰</div><div class="t">Nenhuma matéria publicada ainda</div><div class="d">Voltamos em breve com as próximas notícias do setor.</div></div>
+    </div>
+    <div class="card">
+      <div class="section-label">4. Rótulo sem maiúsculo total<span class="rule"></span></div>
+      <div class="label-new">Fontes que acompanhamos todo dia</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  var buttons = Array.prototype.slice.call(document.querySelectorAll('.stbtn'));
+  var panels = { atual: document.getElementById('panel-atual'), proposta: document.getElementById('panel-proposta') };
+  var notes = { atual: document.getElementById('note-atual'), proposta: document.getElementById('note-proposta') };
+  function setState(state){
+    buttons.forEach(function(b){ b.classList.toggle('active', b.dataset.state === state); });
+    Object.keys(panels).forEach(function(k){ panels[k].classList.toggle('active', k === state); });
+    Object.keys(notes).forEach(function(k){ notes[k].hidden = k !== state; });
+  }
+  buttons.forEach(function(b){ b.addEventListener('click', function(){ setState(b.dataset.state); }); });
+</script>

@@ -1,10 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { CreditCard, Building2, Clock, TrendingUp, ShieldCheck, CheckCircle2, ExternalLink, AlertTriangle, PieChart } from "lucide-react";
+import { CreditCard, Building2, Clock, TrendingUp, LifeBuoy, ShieldCheck, CheckCircle2, ExternalLink, AlertTriangle, PieChart } from "lucide-react";
 import {
-  fetchResumoCowData, fetchFazendas, fetchContratoFazenda, aprovarContratoFazenda, fetchFazendasCofre,
-  type ResumoCowData, type Fazenda, type FazendaCofre,
+  fetchResumoCowData, fetchPedidosRecentesCofre, fetchFazendas, fetchContratoFazenda, aprovarContratoFazenda, fetchFazendasCofre,
+  type ResumoCowData, type PedidoAcessoSuporte, type Fazenda, type FazendaCofre,
 } from "@/lib/api";
 import { usePainelCowDataCor } from "@/lib/painelCowDataTema";
 import { registrarLeituraKpisCowData, calcularTendencia, type PontoHistoricoKpisCowData } from "@/lib/painelCowDataHistorico";
@@ -20,14 +20,14 @@ const ORDEM_PLANOS = ["Standard", "Silver", "Gold", "Diamond", "Sob medida", "Se
 type ItemFilaAprovacao = { id: number; nome: string; plano: string; precoMensal: number | null };
 
 function Cartao({
-  titulo, valor, icon: Icon, cor, historico, tendencia, favoravelSeSobe = true,
+  titulo, valor, icon: Icon, cor, href, historico, tendencia, favoravelSeSobe = true,
 }: {
-  titulo: string; valor: string; icon: any; cor?: string;
+  titulo: string; valor: string; icon: any; cor?: string; href?: string;
   historico?: number[]; tendencia?: ReturnType<typeof calcularTendencia>; favoravelSeSobe?: boolean;
 }) {
   const COR = usePainelCowDataCor();
-  return (
-    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "1.1rem 1.3rem", flex: "1 1 12rem" }}>
+  const conteudo = (
+    <div style={{ background: COR.cartao, border: `1px solid ${href ? COR.dourado : COR.borda}`, borderRadius: "var(--r-sm)", padding: "1.1rem 1.3rem", flex: "1 1 12rem" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.06em", color: COR.mudo, marginBottom: "0.5rem" }}>
         <Icon size={13} /> {titulo}
       </div>
@@ -40,8 +40,15 @@ function Cartao({
           <SetaTendencia tendencia={tendencia} favoravelSeSobe={favoravelSeSobe} cor={COR} />
         </div>
       )}
+      {href && <div style={{ fontSize: "0.72rem", color: COR.dourado, fontWeight: 700, marginTop: "0.3rem" }}>Ver fila →</div>}
     </div>
   );
+  // Card "Aguardando aprovação" vira link real pra fila filtrada — antes era
+  // decorativo (só ficava dourado), sem linkar pra lugar nenhum (achado P1
+  // da crítica, ver docs/agents/design-implementation.md §5,
+  // confirmar-antes-de-cortar.html).
+  if (href) return <Link href={href} style={{ textDecoration: "none", flex: "1 1 12rem" }}>{conteudo}</Link>;
+  return conteudo;
 }
 
 export default function CockpitCowData() {
@@ -61,6 +68,7 @@ export default function CockpitCowData() {
   const [appMode, setAppMode] = useState(false);
   useEffect(() => { ehAppDeCampo().then(setAppMode); }, []);
   const [resumo, setResumo] = useState<ResumoCowData | null>(null);
+  const [pedidosSuporte, setPedidosSuporte] = useState<PedidoAcessoSuporte[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [historico, setHistorico] = useState<PontoHistoricoKpisCowData[]>([]);
 
@@ -74,9 +82,16 @@ export default function CockpitCowData() {
   function carregarResumo() {
     fetchResumoCowData()
       .then((r) => { setResumo(r); setHistorico(registrarLeituraKpisCowData(r)); })
-      .catch((e) => setErro(e.message));
+      .catch(() => setErro("Não foi possível carregar o resumo do negócio agora. Tente novamente."));
   }
-  useEffect(carregarResumo, []);
+  function carregar() {
+    setErro(null);
+    carregarResumo();
+    fetchPedidosRecentesCofre().then(setPedidosSuporte).catch(() => {});
+  }
+  useEffect(carregar, []);
+
+  const suportePendente = (pedidosSuporte ?? []).filter((p) => p.status === "aguardando_aprovacao");
 
   // Rodapé "Base de fazendas por plano" — reaproveita o mesmo endpoint que já
   // alimenta Suporte › Política de aprovação por fazenda (fetchFazendasCofre),
@@ -148,7 +163,14 @@ export default function CockpitCowData() {
         Visão geral do negócio CowData — separado dos dados operacionais da Fazenda Jairo Nasser.
       </p>
 
-      {erro && <p style={{ color: COR.vermelho, fontSize: "0.85rem", marginBottom: "1rem" }}>{erro}</p>}
+      {erro && (
+        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", background: `${COR.vermelho}18`, border: `1px solid ${COR.vermelho}`, borderRadius: "var(--r-sm)", padding: "0.6rem 0.9rem", marginBottom: "1rem" }}>
+          <p style={{ color: COR.vermelho, fontSize: "0.85rem", flex: 1, margin: 0 }}>{erro}</p>
+          <button onClick={carregar} style={{ background: "transparent", border: `1px solid ${COR.vermelho}`, color: COR.vermelho, borderRadius: "var(--r-sm)", padding: "0.3rem 0.7rem", fontSize: "0.78rem", cursor: "pointer", flexShrink: 0 }}>
+            ↻ Tentar novamente
+          </button>
+        </div>
+      )}
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.9rem", marginBottom: "1.8rem" }}>
         <Cartao
@@ -166,6 +188,7 @@ export default function CockpitCowData() {
         <Cartao
           titulo="Aguardando aprovação" valor={resumo ? String(resumo.aguardando_aprovacao) : "—"} icon={Clock}
           cor={resumo && resumo.aguardando_aprovacao > 0 ? COR.dourado : undefined}
+          href={resumo && resumo.aguardando_aprovacao > 0 ? "/painel-cowdata/assinaturas?filtro=pendente" : undefined}
           historico={historicoValores("aguardando_aprovacao")} tendencia={calcularTendencia(historico, "aguardando_aprovacao")}
           favoravelSeSobe={false}
         />
@@ -217,14 +240,32 @@ export default function CockpitCowData() {
         </div>
       )}
 
-      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "1.2rem 1.4rem", marginBottom: "1.5rem" }}>
-        <h2 style={{ fontSize: "0.95rem", fontWeight: 700, marginBottom: "0.6rem" }}>Atalhos</h2>
-        <div style={{ display: "flex", gap: "0.8rem", flexWrap: "wrap" }}>
-          <Link href="/painel-cowdata/assinaturas" style={{ color: COR.dourado, fontSize: "0.82rem", textDecoration: "none" }}>Ver assinaturas →</Link>
-          <Link href="/painel-cowdata/fazendas" style={{ color: COR.dourado, fontSize: "0.82rem", textDecoration: "none" }}>Aprovar/gerenciar contratos →</Link>
-          <Link href="/painel-cowdata/financeiro" style={{ color: COR.dourado, fontSize: "0.82rem", textDecoration: "none" }}>Financeiro CowData →</Link>
+      {/* Sessões de suporte pendentes — junta-se à fila de aprovação como
+          "o que precisa de mim hoje" (achado da crítica, ver docs/agents/
+          design-implementation.md §5, painel-consistente.html); o card
+          "Atalhos" que existia aqui foi removido por duplicar a sidebar. */}
+      {suportePendente.length > 0 && (
+        <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "1.1rem 1.3rem", marginBottom: "1.5rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.8rem" }}>
+            <LifeBuoy size={16} style={{ color: COR.dourado }} />
+            <h2 style={{ fontSize: "0.95rem", fontWeight: 700 }}>Suporte pendente</h2>
+            <span style={{ fontSize: "0.72rem", color: COR.mudo }}>{suportePendente.length} sessão(ões) aguardando</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+            {suportePendente.map((p) => (
+              <Link key={p.id} href="/painel-cowdata/cofre" style={{ textDecoration: "none" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.7rem", padding: "0.65rem 0.85rem", borderRadius: "var(--r-sm)", background: COR.painelAlt, borderLeft: `3px solid ${COR.dourado}` }}>
+                  <LifeBuoy size={16} style={{ color: COR.dourado, flexShrink: 0 }} />
+                  <span style={{ fontSize: "0.82rem", color: COR.texto, flex: 1 }}>
+                    Sessão de suporte solicitada por {p.fazenda_nome}
+                  </span>
+                  <span style={{ fontSize: "0.72rem", color: COR.dourado, fontWeight: 700 }}>Suporte →</span>
+                </div>
+              </Link>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Rodapé — base de fazendas por plano. */}
       <div style={{ borderTop: `1px solid ${COR.borda}`, paddingTop: "1rem" }}>

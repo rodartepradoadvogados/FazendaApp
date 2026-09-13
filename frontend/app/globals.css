@@ -763,6 +763,24 @@ textarea:focus-visible, [tabindex]:focus-visible {
   .pulse-dot { animation: none; }
 }
 
+/* ── Esqueleto de carregamento ──
+   Substitui texto solto ("Carregando…") por um placeholder no formato real
+   do conteúdo (ver Capa, page.tsx) — achado da crítica do SaaS interno, ver
+   docs/agents/design-implementation.md §5, por-secao.html. */
+@keyframes skeletonShimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.skeleton {
+  border-radius: var(--r-sm);
+  background: linear-gradient(90deg, var(--border) 25%, var(--surface-2) 50%, var(--border) 75%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; background: var(--border); }
+}
+
 /* ── Microinterações (04/09/2026) — vocabulário comum de movimento ──────────
    Duração por escala do elemento: 120-180ms pra feedback imediato (check,
    validação), 200-280ms pra elementos entrando/saindo (linha, popup),
@@ -1201,6 +1219,20 @@ html, body { max-width: 100%; overflow-x: hidden; }
   color: var(--mob-verde-neon);
   background: rgba(0, 255, 157, 0.10);
   filter: drop-shadow(0 0 6px rgba(0, 255, 157, 0.45));
+}
+/* Variante sólida pra sol forte — o brilho neon fino soma pouco contraste
+   sobre uma tela já clara sob luz direta (achado da crítica do app de
+   campo, ver docs/agents/design-implementation.md §5,
+   acabamento-de-campo.html). `prefers-contrast: more` é o sinal padrão do
+   SO/navegador pra "preciso de mais contraste" — sem exigir um switch
+   próprio do app. */
+@media (prefers-contrast: more) {
+  .mob-check.feito {
+    background: var(--mob-verde);
+    border-color: var(--mob-verde);
+    color: var(--mob-verde-fg);
+    filter: none;
+  }
 }
 
 /* Barra inferior fixa (zona do polegar). */

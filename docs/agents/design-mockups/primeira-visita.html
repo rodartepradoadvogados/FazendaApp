@@ -1,0 +1,174 @@
+<title>Primeira Visita</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --panel-bg:#212832; --panel-surface:#2A323D; --panel-surface-2:#323C48; --panel-border:#3C4653;
+    --panel-text:#E7ECF2; --panel-muted:#9CA6B4; --panel-accent:#6E93B0;
+    --dourado:#C9A44C; --red:#D97373; --amber:#D9A55C;
+    --r:2px; --shadow:0 1px 4px rgba(0,0,0,.2);
+    --review-bg:#EDEFF2; --review-fg:#3A4250; --review-border:#D6DAE1; --review-accent:#0E2A47; --review-surface:#FFFFFF;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){ --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C; --review-surface:#1E2229; }
+  }
+  :root[data-theme="dark"]{ --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C; --review-surface:#1E2229; }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--review-bg); color:var(--review-fg); font-family:'Inter',sans-serif;
+    padding-inline:max(16px, calc((100vw - 1080px)/2)); padding-block:20px 48px; }
+  .review-bar{ max-width:1080px; margin:0 auto 18px; padding:.85rem 1.1rem; background:var(--review-bg); border:1px solid var(--review-border); border-radius:8px; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
+  .review-tag{ font-size:.68rem; font-weight:700; letter-spacing:.1em; text-transform:uppercase; }
+  .review-tag b{ color:var(--review-accent); }
+  .review-switch{ display:inline-flex; border:1px solid var(--review-border); border-radius:999px; padding:3px; gap:2px; background:var(--review-surface); }
+  .review-switch button{ font-weight:700; font-size:.82rem; padding:.4rem 1rem; border-radius:999px; border:none; cursor:pointer; background:transparent; color:var(--review-fg); }
+  .review-switch button.active{ background:var(--panel-bg); color:var(--dourado); }
+  .review-note{ max-width:1080px; margin:0 auto 18px; font-size:.82rem; }
+  .review-note b{ color:var(--review-accent); } .review-note code{ background:#fff; border:1px solid var(--review-border); border-radius:4px; padding:.05rem .35rem; }
+
+  .panel{ max-width:1080px; margin:0 auto; background:var(--panel-bg); border-radius:10px; padding:1.6rem 1.7rem 2rem; box-shadow:0 20px 50px rgba(0,0,0,.15); }
+  .panel-head{ border-top:2px solid var(--panel-accent); border-bottom:1px solid var(--panel-border); padding:1rem 0 1.1rem; margin-bottom:1.2rem; }
+  .panel-head h1{ font-family:'Source Serif 4',Georgia,serif; font-weight:700; font-size:1.5rem; color:var(--panel-text); margin:0 0 .2rem; }
+  .panel-head .sub{ font-size:.8rem; color:var(--panel-muted); }
+
+  .tabs{ display:flex; align-items:center; gap:.4rem; flex-wrap:wrap; margin-bottom:1.2rem; }
+  .tab{ font-size:.82rem; font-weight:600; padding:.5rem .9rem; border-radius:var(--r); border:1px solid var(--panel-border); background:var(--panel-surface); color:var(--panel-muted); cursor:pointer; }
+  .tab.active{ background:var(--panel-surface-2); color:var(--panel-text); border-color:var(--panel-accent); }
+  .tab-divider{ width:1px; height:1.6rem; background:var(--panel-border); margin:0 .3rem; }
+  .tab.risk{ border-color:var(--amber); color:var(--amber); display:flex; align-items:center; gap:.35rem; }
+  .tab.risk.active{ background:rgba(217,165,92,.14); }
+
+  .primer{ display:none; align-items:flex-start; gap:.6rem; background:var(--panel-surface); border:1px solid var(--panel-accent); border-radius:var(--r); padding:.8rem 1rem; margin-bottom:1.1rem; font-size:.84rem; color:var(--panel-text); }
+  .primer.show{ display:flex; }
+  .primer .ico{ color:var(--panel-accent); flex-shrink:0; }
+  .primer b{ color:var(--dourado); }
+
+  .content-card{ background:var(--panel-surface); border:1px solid var(--panel-border); border-radius:var(--r); padding:1.1rem 1.3rem; }
+  .kpi-row{ display:flex; gap:.8rem; flex-wrap:wrap; margin-bottom:1rem; }
+  .kpi{ flex:1 1 10rem; background:var(--panel-surface-2); border:1px solid var(--panel-border); border-radius:var(--r); padding:.8rem 1rem; }
+  .kpi .l{ font-size:.68rem; color:var(--panel-muted); text-transform:uppercase; letter-spacing:.05em; }
+  .kpi .v{ font-size:1.25rem; font-weight:700; color:var(--panel-text); font-variant-numeric:tabular-nums; }
+  table{ width:100%; border-collapse:collapse; font-size:.82rem; }
+  th{ text-align:left; color:var(--panel-muted); font-size:.68rem; text-transform:uppercase; letter-spacing:.05em; padding:.5rem .6rem; border-bottom:1px solid var(--panel-border); }
+  td{ padding:.5rem .6rem; color:var(--panel-text); border-bottom:1px solid var(--panel-border); }
+
+  .state-panel{ display:none; } .state-panel.active{ display:block; }
+  .tabpanel{ display:none; } .tabpanel.active{ display:block; }
+</style>
+
+<div class="review-bar">
+  <span class="review-tag">Revisão de proposta · Painel do Contador &nbsp;—&nbsp; <b>P0+P1 · Orientação + separação da aba de risco</b></span>
+  <div class="review-switch" role="tablist">
+    <button class="stbtn active" data-state="atual">Atual</button>
+    <button class="stbtn" data-state="proposta">Proposta</button>
+  </div>
+</div>
+<p class="review-note" id="note-atual">
+  <b>Hoje:</b> 9 abas no mesmo peso visual, incluindo "Ações extraordinárias" (a única que altera dado). Clique em RMCA — nada explica o que é, pra alguém que entra 2x por ano e não é da fazenda.
+</p>
+<p class="review-note" id="note-proposta" hidden>
+  <b>Proposta:</b> "Ações extraordinárias" ganha um divisor e cor de aviso, separada das 8 abas de consulta. Cada aba mostra um cabeçalho de uma linha explicando o que é — clique em RMCA/DRE abaixo pra comparar.
+</p>
+
+<div class="panel">
+  <div class="panel-head">
+    <h1>Painel do Contador</h1>
+    <div class="sub">Fazenda Estreito Ponte de Pedra · Somente leitura, salvo indicado</div>
+  </div>
+
+  <!-- ================= ATUAL ================= -->
+  <div class="state-panel active" id="panel-atual">
+    <div class="tabs">
+      <button class="tab active" data-tab="dre-a">DRE</button>
+      <button class="tab" data-tab="rmca-a">RMCA</button>
+      <button class="tab">Plano de contas</button>
+      <button class="tab">Extrato</button>
+      <button class="tab">Patrimônio</button>
+      <button class="tab">Folha</button>
+      <button class="tab">Documentos</button>
+      <button class="tab">Ações extraordinárias</button>
+    </div>
+
+    <div class="tabpanel active" id="dre-a">
+      <div class="content-card">
+        <div class="kpi-row">
+          <div class="kpi"><div class="l">Receita</div><div class="v">R$ 82.400</div></div>
+          <div class="kpi"><div class="l">Custos</div><div class="v">R$ 61.900</div></div>
+          <div class="kpi"><div class="l">Resultado</div><div class="v">R$ 20.500</div></div>
+        </div>
+        <table><thead><tr><th>Conta</th><th>Valor</th></tr></thead><tbody><tr><td>Venda de leite</td><td>R$ 78.200</td></tr><tr><td>Venda de animais</td><td>R$ 4.200</td></tr></tbody></table>
+      </div>
+    </div>
+    <div class="tabpanel" id="rmca-a">
+      <div class="content-card">
+        <div class="kpi-row"><div class="kpi"><div class="l">RMCA</div><div class="v">2,4</div></div></div>
+        <p style="font-size:.82rem;color:var(--panel-muted);">↑ nenhuma explicação do que esse número significa</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= PROPOSTA ================= -->
+  <div class="state-panel" id="panel-proposta">
+    <div class="tabs">
+      <button class="tab active" data-tab="dre-p">DRE</button>
+      <button class="tab" data-tab="rmca-p">RMCA</button>
+      <button class="tab">Plano de contas</button>
+      <button class="tab">Extrato</button>
+      <button class="tab">Patrimônio</button>
+      <button class="tab">Folha</button>
+      <button class="tab">Documentos</button>
+      <span class="tab-divider"></span>
+      <button class="tab risk">🔒 Ações extraordinárias</button>
+    </div>
+
+    <div class="tabpanel active" id="dre-p">
+      <div class="primer show">
+        <span class="ico">ⓘ</span>
+        <div><b>DRE</b> — Demonstração do Resultado do Exercício. Receitas menos custos do período selecionado; é o resultado contábil da fazenda.</div>
+      </div>
+      <div class="content-card">
+        <div class="kpi-row">
+          <div class="kpi"><div class="l">Receita</div><div class="v">R$ 82.400</div></div>
+          <div class="kpi"><div class="l">Custos</div><div class="v">R$ 61.900</div></div>
+          <div class="kpi"><div class="l">Resultado</div><div class="v">R$ 20.500</div></div>
+        </div>
+        <table><thead><tr><th>Conta</th><th>Valor</th></tr></thead><tbody><tr><td>Venda de leite</td><td>R$ 78.200</td></tr><tr><td>Venda de animais</td><td>R$ 4.200</td></tr></tbody></table>
+      </div>
+    </div>
+    <div class="tabpanel" id="rmca-p">
+      <div class="primer show">
+        <span class="ico">ⓘ</span>
+        <div><b>RMCA</b> — Relação Leite/Alimentação. Indicador de eficiência de custo com alimentação, específico de pecuária leiteira; não é um termo contábil padrão, então não tem equivalente direto no seu plano de contas usual.</div>
+      </div>
+      <div class="content-card">
+        <div class="kpi-row"><div class="kpi"><div class="l">RMCA</div><div class="v">2,4</div></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  var stBtns = Array.prototype.slice.call(document.querySelectorAll('.stbtn'));
+  var statePanels = { atual: document.getElementById('panel-atual'), proposta: document.getElementById('panel-proposta') };
+  var notes = { atual: document.getElementById('note-atual'), proposta: document.getElementById('note-proposta') };
+  function setState(state){
+    stBtns.forEach(function(b){ b.classList.toggle('active', b.dataset.state === state); });
+    Object.keys(statePanels).forEach(function(k){ statePanels[k].classList.toggle('active', k === state); });
+    Object.keys(notes).forEach(function(k){ notes[k].hidden = k !== state; });
+  }
+  stBtns.forEach(function(b){ b.addEventListener('click', function(){ setState(b.dataset.state); }); });
+
+  ['panel-atual','panel-proposta'].forEach(function(panelId){
+    var root = document.getElementById(panelId);
+    var tabBtns = Array.prototype.slice.call(root.querySelectorAll('.tab[data-tab]'));
+    tabBtns.forEach(function(btn){
+      btn.addEventListener('click', function(){
+        tabBtns.forEach(function(b){ b.classList.toggle('active', b === btn); });
+        var target = btn.dataset.tab;
+        Array.prototype.slice.call(root.querySelectorAll('.tabpanel')).forEach(function(tp){
+          tp.classList.toggle('active', tp.id === target);
+        });
+      });
+    });
+  });
+</script>

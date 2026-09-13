@@ -16,10 +16,15 @@ import {
   fetchLotes, fetchDietaDoLote, fetchConsumoDoDia,
   type ItemDietaDoLote, type ConsumoDoDia, type ConsumoItemIn,
 } from "@/lib/api";
-import { useCache, useEnvio, hoje, BotoesEscolha, type Aviso } from "./comum";
+import { useCache, useEnvio, useRascunho, hoje, BotoesEscolha, RascunhoAviso, type Aviso } from "./comum";
 
 type Lote = { id: number; codigo: string; nome: string };
 type DietaDoLote = { itens: ItemDietaDoLote[]; base_quantidade: string };
+// Rascunho — nº de animais/kg por alimento e sobra do cocho são exatamente o
+// tipo de dado que se perde numa interrupção (docs/agents/
+// design-implementation.md §5, acabamento-de-campo.html). Data fica de fora
+// (sempre volta a "hoje", não vale a pena persistir).
+type DraftAlimentacao = { loteSel: string; modoConsumo: "animais" | "kg"; numAnimais: string; qtdKg: Record<string, string>; kgSobra: string };
 
 /** Vibração curta de confirmação — mesmo reforço tátil usado no resto do app
  * (comum.tsx tem a mesma função, mas não é exportada; duplicar 4 linhas é
@@ -34,7 +39,16 @@ function vibrar(padrao: number | number[]) {
 
 export function FormAlimentacao() {
   const lotes = useCache<Lote[]>("lotes", () => fetchLotes() as Promise<Lote[]>, []);
-  const [loteSel, setLoteSel] = useState(""); // guarda o CÓDIGO (2 dígitos) do lote, igual ao select
+  const rascunho = useRascunho<DraftAlimentacao>("alimentacao", { loteSel: "", modoConsumo: "animais", numAnimais: "", qtdKg: {}, kgSobra: "" });
+  const { loteSel, modoConsumo, numAnimais, qtdKg, kgSobra } = rascunho.valor;
+  const atualizar = (patch: Partial<DraftAlimentacao>) => rascunho.setValor((atual) => ({ ...atual, ...patch }));
+  const setLoteSel = (v: string) => atualizar({ loteSel: v }); // guarda o CÓDIGO (2 dígitos) do lote, igual ao select
+  const setModoConsumo = (v: "animais" | "kg") => atualizar({ modoConsumo: v });
+  const setNumAnimais = (v: string) => atualizar({ numAnimais: v });
+  const setQtdKg = (v: Record<string, string> | ((atual: Record<string, string>) => Record<string, string>)) =>
+    atualizar({ qtdKg: typeof v === "function" ? v(qtdKg) : v });
+  const setKgSobra = (v: string | ((atual: string) => string)) =>
+    atualizar({ kgSobra: typeof v === "function" ? v(kgSobra) : v });
   const [data, setData] = useState(hoje());
 
   // undefined = ainda carregando · null = carregou e não há dieta ativa
@@ -43,11 +57,6 @@ export function FormAlimentacao() {
   // Sobe a cada lançamento salvo com sucesso, só para forçar o refetch de
   // "já lançado hoje" abaixo — não há endpoint de invalidação de cache aqui.
   const [versao, setVersao] = useState(0);
-
-  const [modoConsumo, setModoConsumo] = useState<"animais" | "kg">("animais");
-  const [numAnimais, setNumAnimais] = useState("");
-  const [qtdKg, setQtdKg] = useState<Record<string, string>>({});
-  const [kgSobra, setKgSobra] = useState("");
 
   const [avisoConsumo, setAvisoConsumo] = useState<Aviso>(null);
   const [avisosEstoque, setAvisosEstoque] = useState<string[]>([]);
@@ -166,6 +175,7 @@ export function FormAlimentacao() {
 
   return (
     <>
+      <RascunhoAviso mostrar={rascunho.salvo} />
       <MobCampo label="Lote">
         <select className="mob-input" value={loteSel} onChange={(e) => setLoteSel(e.target.value)}>
           <option value="">Selecione o lote…</option>

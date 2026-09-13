@@ -164,16 +164,30 @@ export default function MilkPriceExplainer() {
     };
   }, [precoBase, volume, ccs, cbt, gordura, proteina]);
 
+  // Faixa plausível por campo — evita que um valor fisicamente impossível
+  // (CCS negativo, volume zero) produza um "ajuste" sem sentido em
+  // silêncio (achado da crítica da página pública, ver
+  // docs/agents/design-implementation.md §5, prova-e-acabamento.html).
   const numInput = (
+    id: string,
     value: number,
     onChange: (v: number) => void,
     step = 0.01,
+    min = 0,
+    max = 999999,
   ) => (
     <input
+      id={id}
       type="number"
       step={step}
+      min={min}
+      max={max}
       value={Number.isFinite(value) ? value : ""}
-      onChange={(e) => onChange(e.target.value === "" ? 0 : parseFloat(e.target.value))}
+      onChange={(e) => {
+        if (e.target.value === "") { onChange(0); return; }
+        const v = parseFloat(e.target.value);
+        onChange(Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : 0);
+      }}
       style={input}
     />
   );
@@ -211,28 +225,28 @@ export default function MilkPriceExplainer() {
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))", gap: "0.7rem" }}>
           <div>
-            <label style={label}>Preço base (R$/litro)</label>
-            {numInput(precoBase, setPrecoBase, 0.01)}
+            <label htmlFor="sim-preco-base" style={label}>Preço base (R$/litro)</label>
+            {numInput("sim-preco-base", precoBase, setPrecoBase, 0.01, 0, 20)}
           </div>
           <div>
-            <label style={label}>Volume mensal (litros)</label>
-            {numInput(volume, setVolume, 100)}
+            <label htmlFor="sim-volume" style={label}>Volume mensal (litros)</label>
+            {numInput("sim-volume", volume, setVolume, 100, 0, 5_000_000)}
           </div>
           <div>
-            <label style={label}>CCS (mil cél./mL)</label>
-            {numInput(ccs, setCcs, 10)}
+            <label htmlFor="sim-ccs" style={label}>CCS (mil cél./mL)</label>
+            {numInput("sim-ccs", ccs, setCcs, 10, 0, 5000)}
           </div>
           <div>
-            <label style={label}>CPP/CBT (mil UFC/mL)</label>
-            {numInput(cbt, setCbt, 10)}
+            <label htmlFor="sim-cbt" style={label}>CPP/CBT (mil UFC/mL)</label>
+            {numInput("sim-cbt", cbt, setCbt, 10, 0, 5000)}
           </div>
           <div>
-            <label style={label}>Gordura (%)</label>
-            {numInput(gordura, setGordura, 0.1)}
+            <label htmlFor="sim-gordura" style={label}>Gordura (%)</label>
+            {numInput("sim-gordura", gordura, setGordura, 0.1, 0, 15)}
           </div>
           <div>
-            <label style={label}>Proteína (%)</label>
-            {numInput(proteina, setProteina, 0.1)}
+            <label htmlFor="sim-proteina" style={label}>Proteína (%)</label>
+            {numInput("sim-proteina", proteina, setProteina, 0.1, 0, 15)}
           </div>
         </div>
 
@@ -296,18 +310,33 @@ export default function MilkPriceExplainer() {
         </p>
 
         <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-          {REFERENCIA_COMPOSICAO.map((item) => (
+          {/* Selo numerado no lugar da borda esquerda sólida ("side-tab") —
+              o próprio detector do Impeccable identifica esse padrão como "a
+              marca mais reconhecível de UI gerada por IA", ver
+              docs/agents/design-implementation.md §5, prova-e-acabamento.html. */}
+          {REFERENCIA_COMPOSICAO.map((item, i) => (
             <div
               key={item.titulo}
               style={{
                 padding: "0.65rem 0.85rem",
                 borderRadius: "var(--r-sm)",
                 background: "var(--surface-2)",
-                borderLeft: "3px solid var(--dourado)",
+                display: "flex",
+                gap: "0.7rem",
+                alignItems: "flex-start",
               }}
             >
-              <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text)" }}>{item.titulo}</div>
-              <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>{item.texto}</div>
+              <span style={{
+                flexShrink: 0, width: "1.5rem", height: "1.5rem", borderRadius: "50%",
+                background: "var(--dourado)", color: "#fff", fontWeight: 800, fontSize: "0.75rem",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                {i + 1}
+              </span>
+              <div>
+                <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text)" }}>{item.titulo.replace(/^\d+\.\s*/, "")}</div>
+                <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>{item.texto}</div>
+              </div>
             </div>
           ))}
         </div>

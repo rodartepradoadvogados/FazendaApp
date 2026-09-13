@@ -10,7 +10,10 @@ export default function BannerGrid() {
       <h3 style={{ fontSize: "1rem", fontWeight: 700, color: "#fff", textAlign: "center", margin: "2.4rem 0 1.2rem" }}>
         Todos os temas do sistema
       </h3>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px,1fr))", gap: "0.9rem" }}>
+      {/* 3 colunas fixas — os 9 temas reais cabem exatos em 3×3, sem sobrar
+          espaço vazio na última linha (achado da crítica da página pública,
+          ver docs/agents/design-implementation.md §5, o-motor-nao-o-painel.html). */}
+      <div className="banner-grid" style={{ display: "grid", gap: "0.9rem" }}>
         {BANNERS.map((b) => (
           <Link
             key={b.slug}
@@ -36,12 +39,13 @@ export default function BannerGrid() {
         ))}
       </div>
       <style>{`
-        .banner-grid-card { transition: border-color 0.15s ease, transform 0.15s ease; }
-        .banner-grid-card:hover { border-color: var(--dourado); transform: translateY(-2px); }
-        @media (prefers-reduced-motion: reduce) {
-          .banner-grid-card { transition: none; }
-          .banner-grid-card:hover { transform: none; }
-        }
+        /* Sem elevação no hover (No-Lift Rule) — mesma correção do
+           FeatureShowcase, ver o-motor-nao-o-painel.html. */
+        .banner-grid-card { transition: border-color 0.15s ease; }
+        .banner-grid-card:hover { border-color: var(--dourado); }
+        .banner-grid { grid-template-columns: repeat(3, 1fr); }
+        @media (max-width: 700px) { .banner-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 460px) { .banner-grid { grid-template-columns: 1fr; } }
       `}</style>
     </div>
   );

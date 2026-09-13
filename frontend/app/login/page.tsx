@@ -223,10 +223,11 @@ function Hero() {
 
       {/* Cartão de login: enxuto — só entrar (redesign T7, mockup 1h). O
           carrossel/showcase de recursos/grid de banners/simulador de preço/
-          callout de News saíram daqui (viram a landing pública — T8, ainda
-          não construída). Nenhuma lógica do formulário mudou, só o layout
-          ao redor: antes era 2 colunas (carrossel + cartão à direita),
-          agora é 1 cartão único e centralizado. */}
+          callout de News saíram daqui (viram a landing pública — T8, ver
+          components/landing/LandingPublica.tsx). Nenhuma lógica do
+          formulário mudou, só o layout ao redor: antes era 2 colunas
+          (carrossel + cartão à direita), agora é 1 cartão único e
+          centralizado. */}
       <div className="card" style={{ position: "relative", zIndex: 1, width: "100%", maxWidth: "352px", boxShadow: "0 24px 60px rgba(0,0,0,0.45)" }}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.5rem", marginBottom: "1.3rem" }}>
           <CowDataMark size={46} />
@@ -237,13 +238,13 @@ function Hero() {
         </p>
         <form onSubmit={entrar} className="space-y-3">
           <div>
-            <label style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Usuário</label>
-            <input style={input} value={username} onChange={(e) => setUsername(e.target.value)} autoFocus autoComplete="username" />
+            <label htmlFor="login-usuario" style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Usuário</label>
+            <input id="login-usuario" style={input} value={username} onChange={(e) => setUsername(e.target.value)} autoFocus autoComplete="username" />
           </div>
           <div>
-            <label style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Senha</label>
+            <label htmlFor="login-senha" style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Senha</label>
             <div style={{ position: "relative" }}>
-              <input style={{ ...input, paddingRight: "2.4rem" }} type={mostrarSenha ? "text" : "password"} value={senha}
+              <input id="login-senha" style={{ ...input, paddingRight: "2.4rem" }} type={mostrarSenha ? "text" : "password"} value={senha}
                 onChange={(e) => setSenha(e.target.value)} autoComplete="current-password" />
               <button type="button" onClick={() => setMostrarSenha((v) => !v)} aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
                 style={{
@@ -289,8 +290,8 @@ function Hero() {
 // marketing que existiam aqui (showcase de recursos, grid de banners,
 // simulador de preço do leite, callout do Milk News, via os componentes
 // Secao/MilkNewsCallout que moravam neste arquivo) saíram; o login volta a
-// ser só o cartão de entrar. Esse conteúdo vira a landing pública (mockup
-// 1g, ainda não construída) — os componentes que ele usava
+// ser só o cartão de entrar. Esse conteúdo virou a landing pública (T8, ver
+// components/landing/LandingPublica.tsx) — os componentes que ele usava
 // (BannerCarousel/FeatureShowcase/BannerGrid/MilkPriceExplainer) continuam
 // existindo em components/login/*, só não são mais importados aqui.
 export default function LoginPage() {

@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Newspaper, Link as LinkIcon, AlertTriangle, Loader2, RefreshCw, CalendarDays, ArrowRight, TrendingUp, Mail, CheckCircle2 } from "lucide-react";
 import { fetchNoticias, type NoticiaNews } from "@/lib/api";
 import { imagemMateria, categoriaVisual } from "@/lib/newsVisual";
@@ -41,12 +42,17 @@ function corBadgeCategoria(categoria?: string | null): string {
 // skill /milknews classifica como Mercado, Mercado Internacional ou Custo de
 // Produção (ver backend/fazenda/seed_data/milknews_lotes/*.json).
 type SecaoNews = { chave: string; label: string; cor: string };
+// Paleta própria do Milk News — antes reaproveitava --cat-financeiro/
+// --cat-sanidade/--cat-gestao/--cat-estoque com outro significado, colidindo
+// com a regra de cores fixas de categoria do DESIGN.md (achado da crítica,
+// ver docs/agents/design-implementation.md §5, milk-news-editorial.html).
+// --dourado fica (é o acento da marca, não uma categoria fixa de módulo).
 const SECOES_NEWS: SecaoNews[] = [
-  { chave: "mercado", label: "Cotação e mercado", cor: "var(--dourado)" },
-  { chave: "regulacao", label: "Regulação e política agrícola", cor: "var(--cat-financeiro)" },
-  { chave: "manejo", label: "Manejo e clima", cor: "var(--cat-sanidade)" },
-  { chave: "tecnico", label: "Genética e técnica", cor: "var(--cat-gestao)" },
-  { chave: "geral", label: "Notícia setorial", cor: "var(--cat-estoque)" },
+  { chave: "mercado", label: "Mercado e cotação", cor: "var(--dourado)" },
+  { chave: "regulacao", label: "Regulação e política agrícola", cor: "#3E6B8F" },
+  { chave: "manejo", label: "Manejo e clima", cor: "#5C6B3E" },
+  { chave: "tecnico", label: "Conteúdo técnico", cor: "#7A5C3E" },
+  { chave: "geral", label: "Notícias do setor", cor: "#6B5C7A" },
 ];
 // A classificação em si (regras de regex sobre categoria/manchete/resumo)
 // mora em lib/newsVisual.ts (`categoriaVisual`) — é a mesma usada para
@@ -144,7 +150,6 @@ export default function NewsPage() {
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [verTudo, setVerTudo] = useState(true);
-  const [expandida, setExpandida] = useState<number | null>(null);
 
   const carregar = useCallback((tudo: boolean) => {
     setCarregando(true);
@@ -195,8 +200,8 @@ export default function NewsPage() {
   function cardGrade(n: NoticiaNews, i: number) {
     const cor = secaoDaMateria(n).cor;
     return (
-      <article key={n.id} className="rounded-xl overflow-hidden flex flex-col" style={{ border: "1px solid var(--border)", background: "var(--surface)", transition: "transform 0.15s ease" }}>
-        <div className="relative" style={{ height: "160px" }}>
+      <Link key={n.id} href={`/news/${n.id}`} className="rounded-xl overflow-hidden flex flex-col" style={{ border: "1px solid var(--border)", background: "var(--surface)", textDecoration: "none", color: "inherit" }}>
+        <div className="relative" style={{ height: "148px" }}>
           <img src={imagemMateria(n, i)} alt="" className="w-full h-full object-cover" />
           <div className="absolute left-0 right-0 bottom-0" style={{ height: "3px", background: cor }} />
         </div>
@@ -216,13 +221,13 @@ export default function NewsPage() {
           <div className="pt-3 mt-auto flex items-center justify-between" style={{ borderTop: "1px solid var(--border)", fontSize: "0.68rem", color: "var(--text-muted)" }}>
             <span className="flex items-center gap-1"><CalendarDays size={11} /> {formatarData(n.data_publicacao)}</span>
             {!!(n.fontes || []).length && (
-              <a href={n.fontes![0]} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: "0.2rem", color: "var(--text-muted)", textDecoration: "none" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: "0.2rem" }}>
                 <LinkIcon size={10} /> {dominio(n.fontes![0])}
-              </a>
+              </span>
             )}
           </div>
         </div>
-      </article>
+      </Link>
     );
   }
 
@@ -293,8 +298,14 @@ export default function NewsPage() {
       )}
 
       <div className="card mb-6">
+        {/* Rótulo curto — a frase inteira em maiúsculo (32 caracteres) era o
+            único achado do detector aqui (`call-caps-body`); .card-header
+            maiúsculo é a regra do produto pra RÓTULOS curtos (DESIGN.md,
+            All-Caps Label Rule), não pra frase de explicação — que já existe
+            no parágrafo abaixo. Ver
+            docs/agents/design-implementation.md §5, milk-news-editorial.html. */}
         <div className="card-header mb-3" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-          <LinkIcon size={14} /> Fontes que acompanhamos todo dia
+          <LinkIcon size={14} /> Fontes
         </div>
         <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", marginBottom: "0.8rem" }}>
           As matérias daqui são escritas por nós a partir destas referências de mercado, notícia e conteúdo técnico — o acesso direto está sempre no rodapé de cada matéria.
@@ -317,10 +328,22 @@ export default function NewsPage() {
         </div>
       </div>
 
-      {erro && <div className="alert-critico mb-4"><AlertTriangle size={16} /> <span>Não foi possível carregar as notícias: {erro}.</span></div>}
+      {erro && (
+        <div className="mb-4" style={{ display: "flex", alignItems: "center", gap: "0.6rem", background: "color-mix(in srgb, var(--red) 8%, var(--surface))", border: "1px solid var(--red)", borderRadius: "var(--r)", padding: "0.8rem 1rem" }}>
+          <AlertTriangle size={18} style={{ color: "var(--red)", flexShrink: 0 }} />
+          <div style={{ flex: 1 }}>
+            <p style={{ margin: 0, fontWeight: 700, fontSize: "0.9rem", color: "var(--text)" }}>Não conseguimos carregar as notícias agora.</p>
+            <p style={{ margin: 0, fontSize: "0.82rem", color: "var(--text-muted)" }}>Pode ser instabilidade temporária — tente de novo em instantes.</p>
+          </div>
+          <button onClick={() => carregar(verTudo)} className="btn-ghost" style={{ fontSize: "0.8rem", flexShrink: 0 }}>↻ Tentar novamente</button>
+        </div>
+      )}
       {carregando && !materias && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
       {materias && materias.length === 0 && (
-        <p style={{ color: "var(--text-muted)" }}>Nenhuma matéria publicada ainda.</p>
+        <div className="empty-state">
+          <Newspaper size={22} />
+          <div>Nenhuma matéria publicada ainda. Voltamos em breve com as próximas notícias do setor.</div>
+        </div>
       )}
 
       <div className="max-w-[1400px] mx-auto flex flex-col gap-6">
@@ -355,21 +378,19 @@ export default function NewsPage() {
               <div className="flex items-center gap-2 mb-3" style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>
                 <CalendarDays size={12} /> Publicado em {formatarData(destaque.data_publicacao)}
               </div>
-              <h2 className="text-2xl font-bold mb-3" style={{ color: "var(--dourado-light)", lineHeight: 1.25, fontFamily: "var(--font-sora), sans-serif" }}>
-                {destaque.manchete}
-              </h2>
+              <Link href={`/news/${destaque.id}`} style={{ textDecoration: "none" }}>
+                <h2 className="text-2xl font-bold mb-3" style={{ color: "var(--dourado-light)", lineHeight: 1.25, fontFamily: "var(--font-sora), sans-serif" }}>
+                  {destaque.manchete}
+                </h2>
+              </Link>
               {(destaque.materia || destaque.resumo) && (
-                <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", lineHeight: 1.6, marginBottom: "1rem" }}
-                  className={expandida === destaque.id ? "" : "line-clamp-3"}>
+                <p className="line-clamp-3" style={{ color: "var(--text-muted)", fontSize: "0.9rem", lineHeight: 1.6, marginBottom: "1rem" }}>
                   {destaque.materia || destaque.resumo}
                 </p>
               )}
-              {(destaque.materia || destaque.resumo) && (destaque.materia || destaque.resumo)!.length > 220 && (
-                <button className="self-start mb-3" style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--dourado-light)", display: "flex", alignItems: "center", gap: "0.35rem" }}
-                  onClick={() => setExpandida(expandida === destaque.id ? null : destaque.id)}>
-                  {expandida === destaque.id ? "Mostrar menos" : "Ler artigo completo"} <ArrowRight size={14} />
-                </button>
-              )}
+              <Link href={`/news/${destaque.id}`} className="self-start mb-3" style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--dourado-light)", display: "flex", alignItems: "center", gap: "0.35rem", textDecoration: "none" }}>
+                Ler artigo completo <ArrowRight size={14} />
+              </Link>
               {!!(destaque.fontes || []).length && (
                 <div className="flex flex-wrap gap-2 mt-auto">
                   {(destaque.fontes || []).map((url, i) => (

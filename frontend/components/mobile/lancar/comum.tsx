@@ -102,6 +102,59 @@ function vibrar(padrao: number | number[]) {
   }
 }
 
+/**
+ * Rascunho de formulário em andamento, persistido em localStorage — se o app
+ * for interrompido no meio de um lançamento (a vaca se move, toca o
+ * telefone), o preenchimento não se perde ao voltar. `salvo` fica `true`
+ * enquanto existir rascunho pendente; `limpar()` some com ele (chamar depois
+ * de um envio bem-sucedido). Achado da crítica do app de campo, ver
+ * docs/agents/design-implementation.md §5, acabamento-de-campo.html.
+ */
+export function useRascunho<T>(chave: string, valorInicial: T) {
+  const chaveCompleta = `rascunho_lancar_${chave}`;
+  const [valor, setValorEstado] = useState<T>(() => {
+    if (typeof window === "undefined") return valorInicial;
+    try {
+      const guardado = window.localStorage.getItem(chaveCompleta);
+      return guardado ? (JSON.parse(guardado) as T) : valorInicial;
+    } catch {
+      return valorInicial;
+    }
+  });
+  const [salvo, setSalvo] = useState(false);
+
+  // Aceita valor direto OU forma funcional `(atual) => novo` — mesma
+  // assinatura do setState do React, porque vários chamadores (ex.:
+  // adicionar/remover matriz de uma lista) já usam esse padrão.
+  function setValor(v: T | ((atual: T) => T)) {
+    setValorEstado((atual) => {
+      const novo = typeof v === "function" ? (v as (atual: T) => T)(atual) : v;
+      try {
+        const estaVazio = novo == null || (Array.isArray(novo) && novo.length === 0) || novo === ("" as unknown as T);
+        if (estaVazio) {
+          window.localStorage.removeItem(chaveCompleta);
+          setSalvo(false);
+        } else {
+          window.localStorage.setItem(chaveCompleta, JSON.stringify(novo));
+          setSalvo(true);
+        }
+      } catch {
+        // localStorage indisponível (modo privado, cota cheia) — segue sem
+        // rascunho, não deve quebrar o formulário.
+      }
+      return novo;
+    });
+  }
+
+  function limpar() {
+    setValorEstado(valorInicial);
+    setSalvo(false);
+    try { window.localStorage.removeItem(chaveCompleta); } catch { /* idem acima */ }
+  }
+
+  return { valor, setValor, salvo, limpar };
+}
+
 // ── Envio padrão de todos os formulários ─────────────────────────────────────
 export type Aviso = { tipo: "ok" | "offline" | "erro"; msg: string } | null;
 
@@ -136,6 +189,17 @@ export function useEnvio() {
   }
 
   return { aviso, setAviso, enviar, enviando, erroValidacao };
+}
+
+/** Aviso "rascunho salvo" — mesmo texto/estilo em todo formulário do Lançar
+ * que usa `useRascunho`. */
+export function RascunhoAviso({ mostrar }: { mostrar: boolean }) {
+  if (!mostrar) return null;
+  return (
+    <p style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.76rem", color: "var(--mob-dourado-2)", marginBottom: "0.7rem" }}>
+      💾 Rascunho salvo — continua daqui se você sair e voltar
+    </p>
+  );
 }
 
 // ── Primitivos locais ────────────────────────────────────────────────────────

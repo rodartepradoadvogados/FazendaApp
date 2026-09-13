@@ -18,15 +18,19 @@ import { SuporteBanner } from "@/components/SuporteBanner";
 import { FazendaTesteBanner } from "@/components/FazendaTesteBanner";
 
 // Rotas públicas: acessíveis sem login, sem redirecionar para /login.
-// News é o blog da fazenda — leitura livre para qualquer visitante; /sobre/*
-// são as páginas institucionais linkadas pelos banners da própria /login.
+// News é o blog da fazenda — leitura livre para qualquer visitante,
+// incluindo a página de artigo (/news/[id]) — antes só a listagem exata
+// (/news) era pública, deixando as manchetes sem pra onde linkar de verdade
+// pra um visitante anônimo (achado P0 da crítica, ver
+// docs/agents/design-implementation.md §5, a-materia-completa.html);
+// /sobre/* são as páginas institucionais linkadas pelos banners da /login.
 // "/" (T8): visitante sem login vê a landing pública, não é mais empurrado
 // para /login — ver bypass de casca dedicado logo abaixo (path === "/" &&
 // estado === "deslogado"), que faz o mesmo papel do bypass de /login/sobre
 // para essa rota específica (que, ao contrário delas, também é válida
 // LOGADA — por isso não pode ganhar o mesmo `return <>{children}</>}`
 // incondicional daquelas duas, só o condicional a seguir).
-const ROTA_PUBLICA = (p: string) => p === "/" || p === "/login" || p === "/news" || p.startsWith("/sobre/");
+const ROTA_PUBLICA = (p: string) => p === "/" || p === "/login" || p === "/news" || p.startsWith("/news/") || p.startsWith("/sobre/");
 
 /**
  * Porta de entrada: só mostra o sistema para quem estiver logado.
@@ -289,7 +293,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // — igual para qualquer visitante, logado ou não, independente do tema
   // escolhido no resto do sistema (ver NewsShell). Fica antes do gate de
   // "estado" porque não depende de login (ver ROTA_PUBLICA acima).
-  if (path === "/news") {
+  if (path === "/news" || path.startsWith("/news/")) {
     return (
       <NewsShell
         voltarHref={estado === "logado" ? "/" : "/login"}

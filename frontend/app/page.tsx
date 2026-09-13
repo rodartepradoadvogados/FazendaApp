@@ -35,18 +35,90 @@ const LABEL_MOTIVO_BAIXA: Record<string, string> = {
   venda: "Venda", abate: "Abate", acidente: "Acidente", doenca: "Doença", macho: "Macho", outros: "Outros",
 };
 
+// Esqueleto de carregamento — mesmo formato das seções reais da Capa (Hoje +
+// grade de KPI), em vez do texto solto "Carregando painel…" (achado da
+// crítica, ver docs/agents/design-implementation.md §5, por-secao.html).
+function PainelSkeleton() {
+  return (
+    <div className="p-6">
+      <div className="skeleton" style={{ height: "1.6rem", width: "18rem", marginBottom: "0.5rem" }} />
+      <div className="skeleton" style={{ height: "0.9rem", width: "22rem", marginBottom: "1.6rem" }} />
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.55rem", marginBottom: "1.4rem" }}>
+        {[0, 1].map((i) => (
+          <div key={i} className="card" style={{ padding: "0.75rem 0.95rem", borderLeft: "4px solid var(--border)" }}>
+            <div className="skeleton" style={{ height: "0.9rem", width: "60%", marginBottom: "0.4rem" }} />
+            <div className="skeleton" style={{ height: "0.7rem", width: "35%" }} />
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="kpi-card" style={{ borderLeftColor: "var(--border)" }}>
+            <div className="skeleton" style={{ width: 28, height: 28, borderRadius: "50%", marginBottom: "0.5rem" }} />
+            <div className="skeleton" style={{ height: "1.5rem", width: "70%", marginBottom: "0.4rem" }} />
+            <div className="skeleton" style={{ height: "0.6rem", width: "50%" }} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Erro por seção — nomeia o que falhou e oferece retry ali mesmo, em vez de
+// um banner genérico pra página inteira (docs/agents/design-implementation.md
+// §5, por-secao.html).
+function ErroSecao({ mensagem, detalhe, onRetry }: { mensagem: string; detalhe: string; onRetry: () => void }) {
+  return (
+    <div className="mb-4" style={{ background: "color-mix(in srgb, var(--red) 8%, var(--surface))", border: "1px dashed var(--red)", borderRadius: "var(--r)", padding: "0.8rem 1rem", display: "flex", alignItems: "flex-start", gap: "0.7rem" }}>
+      <AlertTriangle size={18} style={{ color: "var(--red)", flexShrink: 0, marginTop: "0.1rem" }} />
+      <div style={{ flex: 1 }}>
+        <p style={{ fontSize: "0.86rem", fontWeight: 700, color: "var(--text)" }}>{mensagem}</p>
+        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{detalhe}</p>
+      </div>
+      <button onClick={onRetry} className="btn-ghost" style={{ flexShrink: 0, fontSize: "0.78rem" }}>↻ Tentar novamente</button>
+    </div>
+  );
+}
+
+// Seta de tendência — hoje vs. o mesmo indicador recalculado 7 dias atrás
+// (mesmo endpoint real, /indicadores e /agenda aceitam `data` de referência
+// e recalculam de verdade a partir dos registros — não é série fabricada,
+// ver docs/agents/design-implementation.md §5, meta-batida.html). Some
+// silenciosamente se o comparativo não carregou — é um extra, não bloqueia nada.
+function Delta({ atual, anterior, sufixo = "", casasDecimais = 0 }: { atual: number | null | undefined; anterior: number | null | undefined; sufixo?: string; casasDecimais?: number }) {
+  if (atual == null || anterior == null) return null;
+  const diff = Number((atual - anterior).toFixed(casasDecimais));
+  if (diff === 0) return <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--text-muted)", marginLeft: "0.35rem" }}>▬</span>;
+  const subiu = diff > 0;
+  return (
+    <span style={{ fontSize: "0.72rem", fontWeight: 700, color: subiu ? "var(--green-light)" : "var(--red)", marginLeft: "0.35rem" }} title="Comparado a 7 dias atrás">
+      {subiu ? "▲" : "▼"} {subiu ? "+" : ""}{diff}{sufixo}
+    </span>
+  );
+}
+
 // A Capa (dashboard) propriamente dita — só renderizada para quem está
 // logado. Ver Home() no fim do arquivo, que decide entre esta e a landing
 // pública (T8); a divisão em dois componentes existe só por isso, nenhuma
 // lógica interna da Capa mudou.
 function Capa() {
   const [d, setD] = useState<any>(null);
+  // Comparativo de 7 dias — recalculado de verdade pelo backend (data_ref),
+  // nunca fabricado no cliente (achado da crítica original: inventar
+  // tendência seria mentir pro dono da fazenda).
+  const [dAnterior, setDAnterior] = useState<any>(null);
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
   const [catRep, setCatRep] = useState<"todas" | "vaca" | "novilha">("todas");
   const [recarregando, setRecarregando] = useState(false);
-  // Quando qualquer fetch falha, alguns cards mostram "—"; sinalizamos isso num banner.
-  const [erroCarga, setErroCarga] = useState(false);
+  // Por fonte (não um booleano só): cada seção mostra seu próprio erro,
+  // nomeando o que falhou, em vez de um banner genérico de página inteira
+  // (achado da crítica, ver docs/agents/design-implementation.md §5,
+  // por-secao.html). "Tentar novamente" recarrega tudo — as 5 fontes já
+  // saem juntas do mesmo Promise.allSettled, então isolar o retry por fonte
+  // exigiria separar essa orquestração; o que se resolve aqui é a seção
+  // errada não mais escondendo QUAL fonte falhou.
+  const [errosFonte, setErrosFonte] = useState<{ ind?: boolean; ag?: boolean; prod?: boolean; resMes?: boolean; est?: boolean }>({});
 
   const [baixas, setBaixas] = useState<any[]>([]);
   const [desdeDescarte, setDesdeDescarte] = useState(() => `${new Date().getFullYear()}-01-01`);
@@ -56,6 +128,15 @@ function Capa() {
   // pelo dono da plataforma; some quando não há nenhuma ativa.
   const [nota, setNota] = useState<NotaCapa | null>(null);
   const [notaFechada, setNotaFechada] = useState(false);
+  // Streak de sanidade (meta-batida.html): dias desde a última baixa registrada.
+  const datasBaixa = baixas.map((b: any) => b.data_baixa).filter(Boolean).sort();
+  const diasSemBaixa = datasBaixa.length
+    ? Math.max(0, Math.floor((Date.now() - new Date(datasBaixa[datasBaixa.length - 1] + "T00:00:00").getTime()) / 86400000))
+    : null;
+  // Sheen do card de meta batida (exceção aprovada ao DESIGN.md — ver
+  // docs/agents/design-implementation.md §5, meta-batida.html, variante Ousada).
+  const [metaSheen, setMetaSheen] = useState(false);
+  const reduzMovimento = typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
   // Busca rápida por nº de animal (⌘K/Ctrl+K foca o campo) — redesign T1,
   // cabeçalho da Capa. Reaproveita o AnimalModal já usado nos outros
@@ -87,7 +168,10 @@ function Capa() {
     Promise.allSettled([
       fetchIndicadores(), fetchAgenda(), fetchProducao(), fetchResultadoMesRecente(), fetchEstoque(),
     ]).then(([ind, ag, prod, resMes, est]) => {
-      setErroCarga([ind, ag, prod, resMes, est].some((r) => r.status === "rejected"));
+      setErrosFonte({
+        ind: ind.status === "rejected", ag: ag.status === "rejected", prod: prod.status === "rejected",
+        resMes: resMes.status === "rejected", est: est.status === "rejected",
+      });
       setD({
         ind: ind.status === "fulfilled" ? ind.value : null,
         ag: ag.status === "fulfilled" ? ag.value : null,
@@ -101,9 +185,31 @@ function Capa() {
     }).finally(() => setRecarregando(false));
     fetchAnimais().then(setAnimais).catch(() => {});
     fetchBaixas().then(setBaixas).catch(() => {});
+
+    // Comparativo de 7 dias atrás — mesmo endpoint real recalculado com
+    // `data` de referência passada. Não-bloqueante e silencioso: se falhar,
+    // as setas de tendência simplesmente não aparecem, sem afetar o resto
+    // da Capa (docs/agents/design-implementation.md §5, meta-batida.html).
+    const seteDiasAtras = new Date();
+    seteDiasAtras.setDate(seteDiasAtras.getDate() - 7);
+    const dataAnteriorStr = seteDiasAtras.toISOString().slice(0, 10);
+    Promise.allSettled([fetchIndicadores(dataAnteriorStr), fetchAgenda(dataAnteriorStr)])
+      .then(([indAnt, agAnt]) => {
+        setDAnterior({
+          ind: indAnt.status === "fulfilled" ? indAnt.value : null,
+          ag: agAnt.status === "fulfilled" ? agAnt.value : null,
+        });
+      });
   };
 
   useEffect(() => { carregar(); }, []);
+
+  // Passa o brilho uma vez quando o streak de sanidade aparece (reduced-motion desliga).
+  useEffect(() => {
+    if (reduzMovimento || diasSemBaixa == null) return;
+    const t = requestAnimationFrame(() => setMetaSheen(true));
+    return () => cancelAnimationFrame(t);
+  }, [reduzMovimento, diasSemBaixa]);
 
   const abrir = (title: string, filtro: (a: AnimalRow) => boolean) => { if (animais.length) setModal({ title, list: animais.filter(filtro) }); };
   // Drill-down pela lista de números que o BACKEND contou — o número do card e
@@ -116,10 +222,14 @@ function Capa() {
     setModal({ title, list: animais.filter((a) => set.has(a.numero)) });
   };
 
-  if (!d) return <div className="p-6"><p style={{ color: "var(--text-muted)" }}>Carregando painel…</p></div>;
+  if (!d) return <PainelSkeleton />;
 
   const reb = d.ind?.rebanho, prod = d.ind?.producao;
   const rep = d.ind?.reproducao as IndicadoresReproducao | undefined;
+  // Comparativo de 7 dias — mesma forma dos valores atuais, calculada sobre
+  // o recálculo real do backend (ver `carregar`, acima).
+  const rebAnt = dAnterior?.ind?.rebanho, repAnt = dAnterior?.ind?.reproducao, prodAnt = dAnterior?.ind?.producao;
+  const candidatasIatfAnt: number | null = dAnterior?.ag?.totais?.candidatas_iatf ?? null;
   const semDados = !d.ind && !d.ag;
 
   // Benchmark reprodutivo (nosso valor × meta × média do país), por categoria
@@ -236,12 +346,16 @@ function Capa() {
         </div>
       )}
 
-      {erroCarga && (
-        <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Alguns dados não puderam ser carregados.</span></div>
-      )}
-
       {semDados && (
         <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados</a>.</span></div>
+      )}
+
+      {(errosFonte.ag || errosFonte.est) && (
+        <ErroSecao
+          mensagem="Não foi possível carregar a agenda do dia"
+          detalhe="Falha ao consultar agenda/estoque — os outros módulos abaixo não foram afetados."
+          onRetry={carregar}
+        />
       )}
 
       {/* Bloco "Hoje" (redesign T1, mockup 1b): abre pela tarefa do dia em vez
@@ -319,17 +433,47 @@ function Capa() {
           os 3 números que antes só apareciam dentro do card de medidores
           (Prenhez/21d, Taxa de serviço, IEP médio) e o descarte, que antes
           vinha só dentro do card de Situação Reprodutiva. O card de medidores
-          em si (com meta/média do país) migrou para Indicadores. */}
+          em si (com meta/média do país) migrou para Indicadores. Setas de
+          tendência (▲▼) comparam com o mesmo indicador recalculado 7 dias
+          atrás (ver `Delta`, acima) — não fabricado, ver docs/agents/
+          design-implementation.md §5, meta-batida.html. */}
+      {errosFonte.ind && (
+        <ErroSecao
+          mensagem="Não foi possível carregar os indicadores do rebanho"
+          detalhe="Falha ao consultar /indicadores — Hoje e Financeiro não foram afetados."
+          onRetry={carregar}
+        />
+      )}
       <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-2">
         <KPI v={reb?.total ?? "—"} l="Fêmeas no rebanho" cat="geral" onClick={() => abrir("Fêmeas no rebanho", () => true)} />
-        <KPI v={reb?.vacas_lactacao ?? "—"} l="Vacas em lactação" cat="geral" onClick={() => abrir("Vacas em lactação", (a) => (reb?.codigos_lactacao?.length ? reb.codigos_lactacao : LACTACAO).includes(cod(a.grupo_primario) || ""))} />
-        <KPI v={rep?.taxa_prenhez_pct != null ? `${rep.taxa_prenhez_pct}%` : "—"} l="Fêmeas prenhas" cat="reprodutivo" />
-        <KPI v={rep?.taxa_concepcao_pct != null ? `${rep.taxa_concepcao_pct}%` : "—"} l="Concepção / serviço" cat="reprodutivo" />
-        <KPI v={prod?.producao_total_dia_kg != null ? `${prod.producao_total_dia_kg} kg` : "—"} l="Produção/dia (últ. controle)" cat="producao" />
+        <KPI v={<>{reb?.vacas_lactacao ?? "—"}<Delta atual={reb?.vacas_lactacao} anterior={rebAnt?.vacas_lactacao} /></>} l="Vacas em lactação · 7 dias" cat="geral" onClick={() => abrir("Vacas em lactação", (a) => (reb?.codigos_lactacao?.length ? reb.codigos_lactacao : LACTACAO).includes(cod(a.grupo_primario) || ""))} />
+        <KPI v={<>{rep?.taxa_prenhez_pct != null ? `${rep.taxa_prenhez_pct}%` : "—"}<Delta atual={rep?.taxa_prenhez_pct} anterior={repAnt?.taxa_prenhez_pct} sufixo="pp" casasDecimais={1} /></>} l="Fêmeas prenhas · 7 dias" cat="reprodutivo" />
+        <KPI v={<>{rep?.taxa_concepcao_pct != null ? `${rep.taxa_concepcao_pct}%` : "—"}<Delta atual={rep?.taxa_concepcao_pct} anterior={repAnt?.taxa_concepcao_pct} sufixo="pp" casasDecimais={1} /></>} l="Concepção / serviço · 7 dias" cat="reprodutivo" />
+        <KPI v={<>{prod?.producao_total_dia_kg != null ? `${prod.producao_total_dia_kg} kg` : "—"}<Delta atual={prod?.producao_total_dia_kg} anterior={prodAnt?.producao_total_dia_kg} sufixo="kg" casasDecimais={1} /></>} l="Produção/dia (últ. controle) · 7 dias" cat="producao" />
         <KPI v={prod?.del_medio ?? "—"} l="DEL médio" cat="producao" />
+        {/* Exceção aprovada ao DESIGN.md (No-Lift / sem gradiente): o card de
+            meta batida (Sanidade) ganha elevação 3px + sombra dourada + sheen,
+            só aqui — docs/agents/design-implementation.md §5, meta-batida.html
+            (variante Ousada). Não estender a outros componentes. */}
+        {diasSemBaixa != null && (
+          <div className="kpi-card" style={{ position: "relative", overflow: "hidden", ["--kpi-c" as any]: "var(--cat-sanidade)", transform: metaSheen ? "translateY(-3px)" : undefined, boxShadow: metaSheen ? "0 10px 24px rgba(138,109,47,.28), var(--shadow)" : undefined, transition: reduzMovimento ? "none" : "transform .5s ease, box-shadow .5s ease" }}>
+            <div style={{ position: "absolute", top: 0, left: metaSheen ? "130%" : "-60%", width: "40%", height: "100%", background: "linear-gradient(75deg, transparent, rgba(255,255,255,.55), transparent)", transform: "skewX(-18deg)", transition: reduzMovimento ? "none" : "left 1.1s ease", pointerEvents: "none" }} />
+            <span style={{ position: "absolute", top: "0.7rem", right: "0.7rem", fontSize: "0.6rem", fontWeight: 700, letterSpacing: "0.08em", color: "var(--vinho-dark)", background: "color-mix(in srgb, var(--dourado-light) 30%, transparent)", border: "1px solid var(--dourado)", borderRadius: "999px", padding: "0.15rem 0.55rem" }}>META</span>
+            <div className="kpi-chip"><HeartPulse size={15} /></div>
+            <p className="kpi-value" style={{ fontSize: "1.4rem", color: "var(--dourado)" }}>{diasSemBaixa}<span style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-muted)", marginLeft: "0.3rem" }}>dias sem baixa</span></p>
+            <p className="kpi-label">Sanidade · meta: zero baixas por doença</p>
+          </div>
+        )}
       </div>
+      {errosFonte.resMes && podeModulo("financeiro") && (
+        <ErroSecao
+          mensagem="Não foi possível carregar o resultado do mês"
+          detalhe="Falha ao consultar /financeiro/resultado-mes-recente — os demais indicadores não foram afetados."
+          onRetry={carregar}
+        />
+      )}
       <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-5">
-        <KPI v={d.ag?.totais?.candidatas_iatf ?? "—"} l="Candidatas IATF" cat="reprodutivo"
+        <KPI v={<>{d.ag?.totais?.candidatas_iatf ?? "—"}<Delta atual={d.ag?.totais?.candidatas_iatf} anterior={candidatasIatfAnt} /></>} l="Candidatas IATF · 7 dias" cat="reprodutivo"
           podeClicar={candidatasList.length > 0}
           onClick={() => setModal({ title: "Candidatas IATF", list: candidatasList })} />
         <KPI v={bm("taxa_prenhez_ciclo").valor != null ? `${bm("taxa_prenhez_ciclo").valor}%` : "—"} l="Prenhez / 21 dias" cat="reprodutivo" podeClicar={false} />
@@ -343,12 +487,12 @@ function Capa() {
             "—" no lugar do valor, revelando uma métrica paga a quem nunca
             comprou o módulo (ver auditoria de planos). */}
         {podeModulo("financeiro") && (
-          <KPI v={resultadoMes != null ? formatBRL(resultadoMes) : "—"} l={`Resultado ${mesLabel}`} cat="financeiro" c={resultadoMes != null && resultadoMes >= 0 ? "var(--green-light)" : "var(--amber)"} />
+          <KPI v={resultadoMes != null ? formatBRL(resultadoMes) : "—"} l={`Resultado ${mesLabel}`} cat="financeiro" c={resultadoMes != null && resultadoMes >= 0 ? "var(--green-light)" : "var(--red)"} />
         )}
       </div>
 
       {/* Gráficos */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5 animate-in" style={{ animationDelay: "240ms" }}>
         <div className="card">
           <div className="card-header mb-2">Produção do Rebanho (média kg/vaca por mês)</div>
           {serieProd.length ? (

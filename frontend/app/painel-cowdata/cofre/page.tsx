@@ -126,8 +126,10 @@ export default function SuporteCowData() {
         {([["acesso", "Acesso CowData"], ["auditoria", "Auditoria de Acessos CowData"]] as const).map(([id, label]) => (
           <button key={id} onClick={() => setAba(id)} style={{
             background: "none", border: "none", cursor: "pointer", padding: "0.6rem 0.9rem", fontSize: "0.82rem",
-            fontWeight: 700, color: aba === id ? COR.dourado : COR.mudo,
-            borderBottom: aba === id ? `2px solid ${COR.dourado}` : "2px solid transparent",
+            // Aba ativa em destaque neutro — dourado reservado pra confirmar
+            // (docs/agents/design-implementation.md §5, painel-consistente.html).
+            fontWeight: 700, color: aba === id ? COR.texto : COR.mudo,
+            borderBottom: aba === id ? `2px solid ${COR.texto}` : "2px solid transparent",
           }}>
             {label}
           </button>

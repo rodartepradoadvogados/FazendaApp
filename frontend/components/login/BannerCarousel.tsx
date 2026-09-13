@@ -54,9 +54,14 @@ export function BannerCarousel() {
 
   const indiceReal = total > 1 ? (((indice - 1) % total) + total) % total : 0;
 
+  // Alvo de toque de 44px (era 34px) e ancorado perto do topo do slide — em
+  // vez de centralizado na altura inteira do card, que em telas estreitas
+  // (texto quebra em mais linhas) fazia a seta sobrepor o parágrafo. Achado
+  // da crítica, ver docs/agents/design-implementation.md §5,
+  // acabamento-de-campo.html.
   const setaStyle: React.CSSProperties = {
-    position: "absolute", top: "50%", transform: "translateY(-50%)", zIndex: 2,
-    width: "2.1rem", height: "2.1rem", borderRadius: "999px",
+    position: "absolute", top: "0.4rem", zIndex: 2,
+    width: "2.75rem", height: "2.75rem", borderRadius: "999px",
     background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.18)",
     color: "rgba(245,238,241,0.75)", display: "flex", alignItems: "center", justifyContent: "center",
     cursor: "pointer", transition: "background 0.15s ease, color 0.15s ease",

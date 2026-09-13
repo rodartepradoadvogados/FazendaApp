@@ -1,0 +1,156 @@
+<title>Acabamento de Campo</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --mob-vinho:#0E2A47; --mob-dourado:#8A6D2F; --mob-dourado-2:#C9A44C;
+    --mob-bg:#EFF1F5; --mob-surface:#FFFFFF; --mob-surface-2:#F6F7F9; --mob-border:#E4E7EC;
+    --mob-text:#101828; --mob-muted:#5B6470; --mob-verde-neon:#00FF9D; --mob-verde:#047857;
+    --hero-bg:#14385A;
+    --review-bg:#EDEFF2; --review-fg:#3A4250; --review-border:#D6DAE1; --review-accent:#0E2A47;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --mob-bg:#0A0A0A; --mob-surface:#161616; --mob-surface-2:#1E1E1E; --mob-border:#242424;
+      --mob-text:#F3F4F6; --mob-muted:#9AA1AA;
+      --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+    }
+  }
+  :root[data-theme="dark"]{
+    --mob-bg:#0A0A0A; --mob-surface:#161616; --mob-surface-2:#1E1E1E; --mob-border:#242424;
+    --mob-text:#F3F4F6; --mob-muted:#9AA1AA;
+    --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--review-bg); color:var(--review-fg); font-family:'Inter',sans-serif;
+    padding-inline:max(16px, calc((100vw - 1000px)/2)); padding-block:20px 48px; }
+  .review-bar{ max-width:1000px; margin:0 auto 18px; padding:.85rem 1.1rem; background:var(--review-bg); border:1px solid var(--review-border); border-radius:8px; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
+  .review-tag{ font-size:.68rem; font-weight:700; letter-spacing:.1em; text-transform:uppercase; }
+  .review-tag b{ color:var(--review-accent); }
+  .review-switch{ display:inline-flex; border:1px solid var(--review-border); border-radius:999px; padding:3px; gap:2px; background:#fff; }
+  .review-switch button{ font-weight:700; font-size:.8rem; padding:.35rem .9rem; border-radius:999px; border:none; cursor:pointer; background:transparent; color:var(--review-fg); }
+  .review-switch button.active{ background:var(--mob-vinho); color:#fff; }
+  .review-note{ max-width:1000px; margin:0 auto 18px; font-size:.82rem; }
+  .review-note b{ color:var(--review-accent); } .review-note code{ background:#fff; border:1px solid var(--review-border); border-radius:4px; padding:.05rem .35rem; }
+
+  .stage{ max-width:1000px; margin:0 auto; display:flex; flex-direction:column; gap:1.1rem; }
+  .card{ background:var(--mob-bg); border:1px solid var(--review-border); border-radius:10px; padding:1.2rem 1.3rem; }
+  .section-label{ font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--mob-muted); margin:0 0 .7rem; display:flex; align-items:center; gap:.5rem; }
+  .section-label .rule{ flex:1; height:1px; background:var(--mob-border); }
+
+  /* 1: rascunho salvo */
+  .form-card{ max-width:340px; background:var(--mob-surface); border:1px solid var(--mob-border); padding:1rem; }
+  .form-card label{ display:block; font-size:.72rem; color:var(--mob-muted); margin-bottom:.2rem; }
+  .form-card input, .form-card select{ width:100%; padding:.6rem .7rem; font-size:1rem; border:1px solid var(--mob-border); background:var(--mob-surface-2); color:var(--mob-text); margin-bottom:.7rem; }
+  .draft-banner{ display:flex; align-items:center; gap:.5rem; font-size:.76rem; color:var(--mob-muted); background:var(--mob-surface-2); border:1px solid var(--mob-border); padding:.5rem .7rem; margin-bottom:.8rem; }
+  .draft-banner.on{ color:var(--mob-dourado); border-color:var(--mob-dourado); }
+
+  /* 2: carrossel largura mobile */
+  .phone-frame{ max-width:280px; }
+  .hero-mini{ background:var(--hero-bg); border-radius:10px; padding:1rem; position:relative; color:#fff; font-size:.78rem; }
+  .arrow-old{ position:absolute; top:2.6rem; width:34px;height:34px; border-radius:999px; background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.2); display:flex; align-items:center; justify-content:center; }
+  .arrow-new{ position:absolute; top:2.2rem; width:44px;height:44px; border-radius:999px; background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.2); display:flex; align-items:center; justify-content:center; }
+  .hero-copy-old{ margin-top:3.6rem; padding-right:2.4rem; line-height:1.4; }
+  .hero-copy-new{ margin-top:4.2rem; line-height:1.4; }
+
+  /* 3: brilho neon sob sol */
+  .glow-demo{ display:flex; gap:1rem; flex-wrap:wrap; }
+  .glare-box{ width:150px; height:110px; border-radius:8px; display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden; }
+  .glare-box::after{ content:""; position:absolute; inset:0; background:radial-gradient(circle at 30% 20%, rgba(255,255,255,.55), transparent 55%); }
+  .check-old{ width:44px;height:44px;border-radius:50%; border:2px solid var(--mob-verde-neon); color:var(--mob-verde-neon); display:flex; align-items:center; justify-content:center; background:rgba(0,255,157,.08); }
+  .check-new{ width:44px;height:44px;border-radius:50%; border:2px solid var(--mob-verde); color:#fff; display:flex; align-items:center; justify-content:center; background:var(--mob-verde); }
+
+  .state-panel{ display:none; } .state-panel.active{ display:block; }
+</style>
+
+<div class="review-bar">
+  <span class="review-tag">Revisão de proposta · App de campo &nbsp;—&nbsp; <b>Acabamento · P2 + luxo</b></span>
+  <div class="review-switch" role="tablist">
+    <button class="stbtn active" data-state="atual">Atual</button>
+    <button class="stbtn" data-state="proposta">Proposta</button>
+  </div>
+</div>
+<p class="review-note" id="note-atual">
+  <b>Hoje:</b> sem indicação de rascunho salvo num formulário de várias etapas; as setas do carrossel de login (34px) se sobrepõem ao texto em largura de celular; o brilho verde-neon do "feito" pode lavar sob sol direto (nunca testado contra glare real).
+</p>
+<p class="review-note" id="note-proposta" hidden>
+  <b>Proposta:</b> aviso "rascunho salvo automaticamente" some sozinho; setas de 44px com espaço reservado, sem sobrepor texto; variante de alto contraste do "feito" pra uso sob sol forte, preenchimento sólido em vez de brilho fino.
+</p>
+
+<div class="stage">
+
+  <!-- ================= ATUAL ================= -->
+  <div class="state-panel active" id="panel-atual">
+    <div class="card">
+      <div class="section-label">1. Sem rascunho salvo<span class="rule"></span></div>
+      <div class="form-card">
+        <label>Matriz (brinco)</label><input value="4521" readonly>
+        <label>Protocolo</label><select><option>IATF — D0</option></select>
+        <label>Observação</label><input value="Aplicado Sincrogest...">
+      </div>
+      <p style="font-size:.78rem;color:var(--mob-muted);margin-top:.5rem;">↑ se o app for pra segundo plano agora, esse preenchimento pode se perder sem aviso nenhum</p>
+    </div>
+
+    <div class="card">
+      <div class="section-label">2. Setas do carrossel — sobrepõem o texto<span class="rule"></span></div>
+      <div class="phone-frame">
+        <div class="hero-mini">
+          <div class="arrow-old" style="right:.4rem;">›</div>
+          <div class="hero-copy-old">Estoque mínimo com alerta automático de compra, cálculo de alimentação por lote...</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-label">3. Brilho neon sob sol forte — não testado<span class="rule"></span></div>
+      <div class="glow-demo">
+        <div class="glare-box" style="background:#e8e8e8;"><div class="check-old">✓</div></div>
+      </div>
+      <p style="font-size:.78rem;color:var(--mob-muted);margin-top:.5rem;">↑ simulação de reflexo de sol — o brilho fino soma pouco contraste sobre o fundo já claro</p>
+    </div>
+  </div>
+
+  <!-- ================= PROPOSTA ================= -->
+  <div class="state-panel" id="panel-proposta">
+    <div class="card">
+      <div class="section-label">1. Rascunho salvo automaticamente<span class="rule"></span></div>
+      <div class="form-card">
+        <div class="draft-banner on">💾 Rascunho salvo — continua daqui se você sair e voltar</div>
+        <label>Matriz (brinco)</label><input value="4521" readonly>
+        <label>Protocolo</label><select><option>IATF — D0</option></select>
+        <label>Observação</label><input value="Aplicado Sincrogest...">
+      </div>
+      <p style="font-size:.78rem;color:var(--mob-muted);margin-top:.5rem;">↑ mesmo mecanismo de fila offline já usado nos envios, aplicado ao formulário em andamento</p>
+    </div>
+
+    <div class="card">
+      <div class="section-label">2. Setas de 44px, sem sobrepor texto<span class="rule"></span></div>
+      <div class="phone-frame">
+        <div class="hero-mini">
+          <div class="arrow-new" style="right:.4rem;">›</div>
+          <div class="hero-copy-new">Estoque mínimo com alerta automático de compra, cálculo de alimentação por lote...</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-label">3. Variante de alto contraste pra sol forte<span class="rule"></span></div>
+      <div class="glow-demo">
+        <div class="glare-box" style="background:#e8e8e8;"><div class="check-new">✓</div></div>
+      </div>
+      <p style="font-size:.78rem;color:var(--mob-muted);margin-top:.5rem;">↑ preenchimento sólido em vez de brilho fino — lê mesmo com reflexo de sol na tela</p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  var buttons = Array.prototype.slice.call(document.querySelectorAll('.stbtn'));
+  var panels = { atual: document.getElementById('panel-atual'), proposta: document.getElementById('panel-proposta') };
+  var notes = { atual: document.getElementById('note-atual'), proposta: document.getElementById('note-proposta') };
+  function setState(state){
+    buttons.forEach(function(b){ b.classList.toggle('active', b.dataset.state === state); });
+    Object.keys(panels).forEach(function(k){ panels[k].classList.toggle('active', k === state); });
+    Object.keys(notes).forEach(function(k){ notes[k].hidden = k !== state; });
+  }
+  buttons.forEach(function(b){ b.addEventListener('click', function(){ setState(b.dataset.state); }); });
+</script>

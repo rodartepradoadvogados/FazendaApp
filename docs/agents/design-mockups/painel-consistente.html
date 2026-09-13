@@ -1,0 +1,178 @@
+<title>Painel Consistente</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --op-bg:#F4F5F7; --op-surface:#FFFFFF; --op-surface-2:#F8F9FA; --op-border:#E1E4E9;
+    --op-text:#1E2430; --op-muted:#69707D; --op-accent:#3D4A63;
+    --dourado:#8A6D2F; --dourado-light:#C9A44C;
+    --green:#2E7D52; --green-light:#4CAF80; --red:#C0392B; --amber:#D97706;
+    --r:2px; --shadow:0 1px 4px rgba(20,30,45,.10);
+    --review-bg:#EDEFF2; --review-fg:#3A4250; --review-border:#D6DAE1; --review-accent:#0E2A47;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --op-bg:#0E1116; --op-surface:#171B22; --op-surface-2:#1D222B; --op-border:#2B313C;
+      --op-text:#E7EAF0; --op-muted:#8A93A3; --op-accent:#5A6B8C;
+      --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+    }
+  }
+  :root[data-theme="dark"]{
+    --op-bg:#0E1116; --op-surface:#171B22; --op-surface-2:#1D222B; --op-border:#2B313C;
+    --op-text:#E7EAF0; --op-muted:#8A93A3; --op-accent:#5A6B8C;
+    --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--review-bg); color:var(--op-text); font-family:'Barlow', Inter, sans-serif;
+    padding-inline:max(16px, calc((100vw - 1180px)/2)); padding-block:20px 48px; }
+  h1,h2,.section-label{ font-family:'Barlow Condensed', Inter, sans-serif; }
+  .review-bar{ max-width:1180px; margin:0 auto 18px; padding:.85rem 1.1rem; background:var(--review-bg); border:1px solid var(--review-border); border-radius:8px; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
+  .review-tag{ font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--review-fg); }
+  .review-tag b{ color:var(--review-accent); }
+  .review-switch{ display:inline-flex; border:1px solid var(--review-border); border-radius:999px; padding:3px; gap:2px; background:var(--op-surface); }
+  .review-switch button{ font-family:'Barlow Condensed', Inter, sans-serif; font-weight:700; font-size:.85rem; padding:.4rem 1.1rem; border-radius:999px; border:none; cursor:pointer; background:transparent; color:var(--op-muted); }
+  .review-switch button.active{ background:var(--op-accent); color:#fff; }
+  .review-note{ max-width:1180px; margin:0 auto 18px; font-size:.82rem; color:var(--review-fg); }
+  .review-note b{ color:var(--review-accent); } .review-note code{ background:var(--op-surface-2); border:1px solid var(--op-border); border-radius:4px; padding:.05rem .35rem; font-size:.78rem; }
+
+  .stage{ max-width:1180px; margin:0 auto; display:flex; flex-direction:column; gap:1.1rem; }
+  .card-plain{ background:var(--op-bg); border:1px solid var(--review-border); border-radius:10px; padding:1.2rem 1.3rem; }
+  .section-label{ font-size:.68rem; font-weight:700; letter-spacing:.13em; text-transform:uppercase; color:var(--op-muted); margin:0 0 .7rem; display:flex; align-items:center; gap:.5rem; }
+  .section-label .rule{ flex:1; height:1px; background:var(--op-border); }
+
+  /* item 1: raio */
+  .radius-demo{ display:flex; gap:1rem; flex-wrap:wrap; }
+  .box-old{ background:var(--op-surface); border:1px solid var(--op-border); border-radius:10px; padding:.9rem 1.1rem; font-size:.82rem; }
+  .box-new{ background:var(--op-surface); border:1px solid var(--op-border); border-radius:var(--r); padding:.9rem 1.1rem; font-size:.82rem; }
+
+  /* item 2: dourado */
+  .tabs{ display:flex; gap:.4rem; margin-bottom:.6rem; }
+  .tab{ font-size:.8rem; font-weight:600; padding:.4rem .9rem; border-radius:999px; border:1px solid var(--op-border); background:transparent; color:var(--op-muted); cursor:pointer; }
+  .tab.active-old{ background:rgba(138,109,47,.16); color:var(--dourado); border-color:var(--dourado); }
+  .tab.active-new{ background:var(--op-surface-2); color:var(--op-text); border-color:var(--op-accent); font-weight:700; }
+  .btn-gold{ background:var(--dourado); color:#fff; border:1px solid var(--dourado); border-radius:var(--r); padding:.4rem .9rem; font-size:.82rem; font-weight:700; }
+
+  /* item 3: status redundante */
+  .status{ display:inline-flex; align-items:center; gap:.35rem; font-size:.78rem; font-weight:600; padding:.15rem .55rem; border-radius:999px; }
+  .status.ativo{ background:rgba(46,125,82,.14); color:var(--green); }
+  .status.suspenso{ background:rgba(192,57,43,.14); color:var(--red); }
+  .status.gray{ filter:grayscale(1) contrast(.7); }
+
+  /* item 4: erro */
+  .err-old{ font-family:ui-monospace,monospace; font-size:.78rem; color:var(--red); background:rgba(192,57,43,.08); border:1px solid var(--red); border-radius:4px; padding:.6rem .8rem; }
+  .err-new{ font-size:.85rem; background:rgba(192,57,43,.08); border:1px solid var(--red); border-radius:var(--r); padding:.7rem .9rem; display:flex; gap:.6rem; align-items:flex-start; }
+
+  /* item 5: fila unificada */
+  .queue-item{ display:flex; align-items:center; gap:.7rem; padding:.6rem .8rem; border-radius:var(--r); background:var(--op-surface); border:1px solid var(--op-border); border-left:3px solid var(--dourado); margin-bottom:.5rem; }
+  .queue-item .src{ font-size:.66rem; text-transform:uppercase; letter-spacing:.05em; color:var(--op-muted); width:5.5rem; flex-shrink:0; }
+  .old-shortcuts a{ display:block; color:var(--dourado-light); font-size:.82rem; text-decoration:none; margin-bottom:.4rem; }
+
+  .state-panel{ display:none; } .state-panel.active{ display:block; }
+</style>
+
+<div class="review-bar">
+  <span class="review-tag">Revisão de proposta · Painel CowData &nbsp;—&nbsp; <b>Acabamento · P2/P3 + luxo</b></span>
+  <div class="review-switch" role="tablist">
+    <button class="stbtn active" data-state="atual">Atual</button>
+    <button class="stbtn" data-state="proposta">Proposta</button>
+  </div>
+</div>
+<p class="review-note" id="note-atual">
+  <b>Hoje:</b> raio hardcoded fora do padrão em duas telas, dourado usado pra qualquer destaque (não só confirmar), status só por cor, erro cru da API, e o card "Atalhos" repete links que já estão na sidebar.
+</p>
+<p class="review-note" id="note-proposta" hidden>
+  <b>Proposta:</b> raio institucional em tudo, dourado só na ação de confirmar, status com ícone+texto, erro traduzido com orientação, e o antigo card "Atalhos" virou uma fila real de "o que precisa de mim hoje" (contratos + suporte juntos).
+</p>
+
+<div class="stage">
+
+  <!-- ================= ATUAL ================= -->
+  <div class="state-panel active" id="panel-atual">
+    <div class="card-plain">
+      <div class="section-label">1. Raio de canto — Usuários/Parâmetros<span class="rule"></span></div>
+      <div class="radius-demo"><div class="box-old">border-radius: 10px (hardcoded)</div></div>
+    </div>
+
+    <div class="card-plain">
+      <div class="section-label">2. Dourado como destaque genérico<span class="rule"></span></div>
+      <div class="tabs">
+        <button class="tab active-old">Cockpit</button>
+        <button class="tab">Assinaturas</button>
+        <button class="tab">Financeiro</button>
+      </div>
+      <a href="#" style="color:var(--dourado-light); font-size:.85rem;">Ver assinaturas →</a>
+      <div style="margin-top:.6rem;"><button class="btn-gold">Salvar</button></div>
+      <p style="font-size:.78rem;color:var(--op-muted);margin-top:.5rem;">↑ aba ativa, link comum e botão de salvar — os três dourados, o significado se perde</p>
+    </div>
+
+    <div class="card-plain">
+      <div class="section-label">3. Status só por cor<span class="rule"></span></div>
+      <div class="status ativo gray">Ativo</div> &nbsp; <div class="status suspenso gray">Suspenso</div>
+      <p style="font-size:.78rem;color:var(--op-muted);margin-top:.5rem;">↑ simulação de visão daltônica — os dois viram quase a mesma pílula cinza</p>
+    </div>
+
+    <div class="card-plain">
+      <div class="section-label">4. Erro cru da API<span class="rule"></span></div>
+      <div class="err-old">Error: Request failed with status code 500 at fetchAssinaturas (api.ts:214)</div>
+    </div>
+
+    <div class="card-plain">
+      <div class="section-label">5. Card "Atalhos"<span class="rule"></span></div>
+      <div class="old-shortcuts"><a href="#">Ver assinaturas →</a><a href="#">Aprovar/gerenciar contratos →</a><a href="#">Financeiro CowData →</a></div>
+      <p style="font-size:.78rem;color:var(--op-muted);margin-top:.3rem;">↑ os 3 links já existem na sidebar — o card não soma nada</p>
+    </div>
+  </div>
+
+  <!-- ================= PROPOSTA ================= -->
+  <div class="state-panel" id="panel-proposta">
+    <div class="card-plain">
+      <div class="section-label">1. Raio de canto — token institucional<span class="rule"></span></div>
+      <div class="radius-demo"><div class="box-new">border-radius: var(--r-sm) → 2px</div></div>
+    </div>
+
+    <div class="card-plain">
+      <div class="section-label">2. Dourado reservado pra confirmar<span class="rule"></span></div>
+      <div class="tabs">
+        <button class="tab active-new">Cockpit</button>
+        <button class="tab">Assinaturas</button>
+        <button class="tab">Financeiro</button>
+      </div>
+      <a href="#" style="color:var(--op-text); font-size:.85rem; text-decoration:underline;">Ver assinaturas →</a>
+      <div style="margin-top:.6rem;"><button class="btn-gold">Salvar</button></div>
+      <p style="font-size:.78rem;color:var(--op-muted);margin-top:.5rem;">↑ aba ativa vira destaque neutro, link comum some do dourado — só "Salvar" continua dourado</p>
+    </div>
+
+    <div class="card-plain">
+      <div class="section-label">3. Status com ícone + texto<span class="rule"></span></div>
+      <div class="status ativo gray">✓ Ativo</div> &nbsp; <div class="status suspenso gray">✕ Suspenso</div>
+      <p style="font-size:.78rem;color:var(--op-muted);margin-top:.5rem;">↑ mesma simulação daltônica — agora o ícone distingue mesmo sem cor</p>
+    </div>
+
+    <div class="card-plain">
+      <div class="section-label">4. Erro traduzido com orientação<span class="rule"></span></div>
+      <div class="err-new">⚠ <div><b>Não foi possível carregar as assinaturas.</b><br><span style="color:var(--op-muted);">O servidor não respondeu. <a href="#" style="color:var(--dourado);">Tentar novamente</a></span></div></div>
+    </div>
+
+    <div class="card-plain">
+      <div class="section-label">5. Fila unificada — "o que precisa de mim hoje"<span class="rule"></span></div>
+      <div class="queue-item"><span class="src">Contrato</span><span>Sítio Três Marias — aguardando aprovação há 2 dias</span></div>
+      <div class="queue-item"><span class="src">Suporte</span><span>Sessão de suporte solicitada por Fazenda Boa Vista</span></div>
+      <div class="queue-item"><span class="src">Contrato</span><span>Rancho Bela Vista — aguardando aprovação há 6h</span></div>
+      <p style="font-size:.78rem;color:var(--op-muted);margin-top:.3rem;">↑ substitui o card "Atalhos" — junta Cockpit + Assinaturas + Suporte numa lista só</p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  var buttons = Array.prototype.slice.call(document.querySelectorAll('.stbtn'));
+  var panels = { atual: document.getElementById('panel-atual'), proposta: document.getElementById('panel-proposta') };
+  var notes = { atual: document.getElementById('note-atual'), proposta: document.getElementById('note-proposta') };
+  function setState(state){
+    buttons.forEach(function(b){ b.classList.toggle('active', b.dataset.state === state); });
+    Object.keys(panels).forEach(function(k){ panels[k].classList.toggle('active', k === state); });
+    Object.keys(notes).forEach(function(k){ notes[k].hidden = k !== state; });
+  }
+  buttons.forEach(function(b){ b.addEventListener('click', function(){ setState(b.dataset.state); }); });
+</script>

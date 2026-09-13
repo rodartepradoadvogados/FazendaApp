@@ -1,0 +1,738 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home e Agenda do CowData</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+  /* ===== Documento (tema do leitor) ===== */
+  :root{
+    --bg:#F4F6F9;
+    --surface:#FFFFFF;
+    --surface-2:#EDF1F7;
+    --ink:#1B1F26;
+    --ink-soft:#3F4756;
+    --muted:#768092;
+    --line:#E3E8EF;
+    --line-strong:#CBD4E0;
+    --accent:#2563EB;
+    --accent-ink:#1D4ED8;
+    --accent-soft:#E3EDFD;
+    --gold:#E0A63C;
+    --gold-soft:#F7E9C9;
+    --ok:#16A34A;
+    --warn:#D97706;
+    --danger:#DC2626;
+    --danger-soft:#FDE8E8;
+    --shadow:0 1px 2px rgba(16,24,40,.06),0 8px 24px rgba(16,24,40,.06);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0F141B;
+      --surface:#171E27;
+      --surface-2:#1E2732;
+      --ink:#E7ECF3;
+      --ink-soft:#B8C2D0;
+      --muted:#8794A6;
+      --line:#28323F;
+      --line-strong:#35404F;
+      --accent:#60A5FA;
+      --accent-ink:#93C5FD;
+      --accent-soft:#16283F;
+      --gold:#E6B14E;
+      --gold-soft:#2C2412;
+      --ok:#4ADE80;
+      --warn:#FBBF24;
+      --danger:#F87171;
+      --danger-soft:#341A1A;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.4);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0F141B;
+    --surface:#171E27;
+    --surface-2:#1E2732;
+    --ink:#E7ECF3;
+    --ink-soft:#B8C2D0;
+    --muted:#8794A6;
+    --line:#28323F;
+    --line-strong:#35404F;
+    --accent:#60A5FA;
+    --accent-ink:#93C5FD;
+    --accent-soft:#16283F;
+    --gold:#E6B14E;
+    --gold-soft:#2C2412;
+    --ok:#4ADE80;
+    --warn:#FBBF24;
+    --danger:#F87171;
+    --danger-soft:#341A1A;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.4);
+  }
+
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    font-size:15px;
+    line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1160px;margin:0 auto;padding:0 28px 96px}
+
+  /* Header do documento */
+  .doc-head{padding:56px 0 8px}
+  .doc-head .kicker{
+    font-size:13px;font-weight:600;color:var(--accent);
+    letter-spacing:.04em;text-transform:uppercase;
+  }
+  .doc-head h1{
+    font-family:"Barlow Condensed",sans-serif;
+    font-weight:700;font-size:clamp(40px,6vw,68px);
+    line-height:.95;margin:10px 0 14px;letter-spacing:-.01em;
+    text-wrap:balance;
+  }
+  .doc-head .lede{
+    max-width:56ch;color:var(--ink-soft);font-size:16px;margin:0 0 20px;
+  }
+  .criteria{display:flex;flex-wrap:wrap;gap:8px}
+  .criteria span{
+    font-size:12.5px;font-weight:600;color:var(--ink-soft);
+    padding:5px 12px;border:1px solid var(--line-strong);border-radius:999px;
+    background:var(--surface);
+  }
+
+  /* Tokens strip */
+  .tokens{
+    display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+    gap:12px;margin:40px 0 8px;padding:18px 20px;
+    background:var(--surface);border:1px solid var(--line);border-radius:14px;
+  }
+  .tokens h2{
+    grid-column:1/-1;font-family:"Barlow Condensed",sans-serif;
+    font-weight:600;font-size:17px;margin:0 0 2px;letter-spacing:.02em;
+    text-transform:uppercase;color:var(--muted);
+  }
+  .token-group h3{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:0 0 8px}
+  .swatches{display:flex;flex-wrap:wrap;gap:6px}
+  .sw{width:22px;height:22px;border-radius:6px;border:1px solid rgba(0,0,0,.08)}
+  .faces{display:flex;flex-direction:column;gap:3px}
+  .faces .d{font-family:"Barlow Condensed",sans-serif;font-weight:700;font-size:24px;line-height:1}
+  .faces .b{font-size:14px;color:var(--ink-soft)}
+  .faces .n{font-variant-numeric:tabular-nums;font-size:14px}
+
+  /* Seções */
+  .section{margin-top:64px}
+  .section-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+  .section-head h2{
+    font-family:"Barlow Condensed",sans-serif;font-weight:700;
+    font-size:clamp(30px,4vw,42px);margin:0;line-height:1;
+  }
+  .section-head .tag{
+    font-size:12px;font-weight:600;color:var(--muted);
+    border:1px solid var(--line-strong);border-radius:999px;padding:3px 11px;
+  }
+
+  /* Mockup frame */
+  .mock{
+    background:var(--surface);border:1px solid var(--line);border-radius:16px;
+    overflow:hidden;box-shadow:var(--shadow);
+  }
+  .mock-bar{
+    display:flex;align-items:center;gap:8px;padding:10px 14px;
+    background:var(--surface-2);border-bottom:1px solid var(--line);
+  }
+  .mock-bar .dot{width:10px;height:10px;border-radius:50%;background:var(--line-strong)}
+  .mock-bar .url{
+    flex:1;text-align:center;font-size:12px;color:var(--muted);
+    background:var(--surface);border:1px solid var(--line);border-radius:6px;
+    padding:3px 10px;max-width:280px;margin:0 auto;
+  }
+
+  /* ===== App (luz fixa, como screenshot) ===== */
+  .app{
+    --app-bg:#F4F6F9;--app-surface:#FFFFFF;--app-surface2:#EDF1F7;
+    --app-ink:#1B1F26;--app-ink-soft:#3F4756;--app-muted:#768092;
+    --app-line:#E3E8EF;--app-line-strong:#CBD4E0;
+    --app-accent:#2563EB;--app-accent-soft:#E3EDFD;
+    --app-gold:#E0A63C;--app-gold-soft:#F7E9C9;
+    --app-ok:#16A34A;--app-warn:#D97706;--app-danger:#DC2626;--app-danger-soft:#FDE8E8;
+    --app-rep:#8B7FF0;--app-rep-soft:#EFECFD;
+    --app-san:#4E7A5A;--app-san-soft:#E7EFEA;
+    --app-pro:#3B82F6;--app-pro-soft:#E7F0FE;
+    --app-ges:#5B8FB0;--app-ges-soft:#E8F1F6;
+    --app-fin:#7A2233;--app-fin-soft:#F4E7EA;
+    background:var(--app-bg);color:var(--app-ink);
+    font-family:"Inter",system-ui,sans-serif;font-size:13px;line-height:1.45;
+    display:flex;min-height:520px;
+  }
+  .app .rail{
+    width:190px;flex:0 0 190px;background:var(--app-ink);color:#fff;
+    padding:16px 12px;display:flex;flex-direction:column;gap:16px;
+  }
+  .app .brand{
+    font-family:"Barlow Condensed",sans-serif;font-weight:700;font-size:24px;
+    letter-spacing:.01em;padding:0 6px;color:#fff;
+  }
+  .app .brand span{color:var(--app-gold)}
+  .app .nav-group{display:flex;flex-direction:column;gap:2px}
+  .app .nav-group .glabel{
+    font-size:10px;font-weight:600;color:rgba(255,255,255,.42);
+    text-transform:uppercase;letter-spacing:.07em;padding:0 8px;margin:8px 0 4px;
+  }
+  .app .nav-item{
+    display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:8px;
+    color:rgba(255,255,255,.78);font-size:13px;font-weight:500;cursor:default;
+  }
+  .app .nav-item .ico{width:15px;height:15px;border-radius:4px;background:rgba(255,255,255,.16);flex:0 0 15px}
+  .app .nav-item.active{background:var(--app-accent);color:#fff}
+  .app .nav-item.active .ico{background:rgba(255,255,255,.28)}
+  .app .rail .foot{margin-top:auto;font-size:10.5px;color:rgba(255,255,255,.4);padding:0 8px;display:flex;align-items:center;gap:6px}
+  .app .rail .foot .dot{width:7px;height:7px;border-radius:50%;background:var(--app-ok)}
+
+  .app .stage{flex:1;min-width:0;display:flex;flex-direction:column}
+
+  /* Header de página (dentro do app) */
+  .app .page-head{padding:20px 24px 14px}
+  .app .page-head h1{
+    font-family:"Barlow Condensed",sans-serif;font-weight:700;font-size:30px;
+    margin:0 0 2px;line-height:1;color:var(--app-ink);
+  }
+  .app .page-head .sub{font-size:12.5px;color:var(--app-muted)}
+  .app .page-head .row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+
+  .app .content{padding:0 24px 24px;display:flex;flex-direction:column;gap:16px}
+
+  /* Alerta strip */
+  .app .alert-strip{
+    display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:10px;
+    background:var(--app-danger-soft);color:#7A2233;border:1px solid rgba(220,38,38,.22);
+    font-weight:500;font-size:12.5px;
+  }
+  .app .alert-strip b{font-weight:700}
+
+  /* Faixa Hoje */
+  .app .hoje{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:0;
+    background:linear-gradient(120deg,#2563EB 0%,#1D4ED8 100%);
+    border-radius:14px;overflow:hidden;color:#fff;
+  }
+  .app .hoje .cell{padding:22px 22px 18px;border-right:1px solid rgba(255,255,255,.14)}
+  .app .hoje .cell:last-child{border-right:0}
+  .app .hoje .label{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:rgba(255,255,255,.7)}
+  .app .hoje .val{
+    font-family:"Barlow Condensed",sans-serif;font-weight:700;font-size:52px;
+    line-height:.95;margin:8px 0 6px;font-variant-numeric:tabular-nums;
+  }
+  .app .hoje .val small{font-size:22px;font-weight:600;color:rgba(255,255,255,.8)}
+  .app .hoje .delta{font-size:12px;font-weight:600;color:#CBE3FE}
+  .app .hoje .ticker{
+    grid-column:1/-1;display:flex;gap:8px;align-items:center;
+    padding:11px 16px;background:rgba(0,0,0,.14);font-size:12.5px;
+    border-top:1px solid rgba(255,255,255,.12);
+  }
+  .app .hoje .ticker b{font-weight:700}
+  .app .hoje .ticker .tt{color:rgba(255,255,255,.72)}
+  .app .hoje .chip{
+    font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px;
+    background:rgba(255,255,255,.18);white-space:nowrap;
+  }
+  .app .hoje .chip.red{background:#DC2626}
+
+  /* Título de bloco */
+  .app .blk-title{
+    font-family:"Barlow Condensed",sans-serif;font-weight:600;font-size:14px;
+    letter-spacing:.04em;text-transform:uppercase;color:var(--app-muted);
+    margin:2px 0 0;display:flex;align-items:center;gap:8px;
+  }
+  .app .blk-title::after{content:"";flex:1;height:1px;background:var(--app-line)}
+
+  /* Grid KPI */
+  .app .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .app .kpi{
+    background:var(--app-surface);border:1px solid var(--app-line);border-radius:12px;
+    padding:14px 16px;border-left:3px solid var(--cat,var(--app-line-strong));
+  }
+  .app .kpi .k-label{font-size:11.5px;color:var(--app-muted);font-weight:500}
+  .app .kpi .k-val{
+    font-family:"Barlow Condensed",sans-serif;font-weight:700;font-size:30px;
+    line-height:1;margin:6px 0 4px;font-variant-numeric:tabular-nums;
+  }
+  .app .kpi .k-delta{font-size:11.5px;font-weight:600}
+  .app .kpi .k-delta.up{color:var(--app-ok)}
+  .app .kpi .k-delta.down{color:var(--app-danger)}
+  .app .kpi .k-delta.flat{color:var(--app-muted)}
+
+  /* Charts row */
+  .app .charts{display:grid;grid-template-columns:1.6fr 1fr;gap:12px}
+  .app .chart-card{
+    background:var(--app-surface);border:1px solid var(--app-line);border-radius:12px;
+    padding:16px;display:flex;flex-direction:column;gap:10px;
+  }
+  .app .chart-card h4{font-size:12.5px;font-weight:600;margin:0;color:var(--app-ink-soft)}
+  .app .chart-card .cap{font-size:11px;color:var(--app-muted);margin-top:-6px}
+  .app .legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:6px}
+  .app .legend .li{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--app-ink-soft)}
+  .app .legend .li i{width:9px;height:9px;border-radius:3px;display:inline-block}
+  .app .donut-wrap{display:flex;align-items:center;gap:16px}
+  .app .donut-center{font-family:"Barlow Condensed",sans-serif;font-weight:700;font-size:20px;text-anchor:middle;fill:var(--app-ink)}
+  .app .donut-sub{font-size:9px;text-anchor:middle;fill:var(--app-muted);font-family:"Inter",sans-serif}
+
+  /* ===== Agenda ===== */
+  .app .agenda-toolbar{
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    padding:12px 14px;background:var(--app-surface);border:1px solid var(--app-line);
+    border-radius:12px;position:sticky;top:0;z-index:2;
+  }
+  .app .seg{
+    display:flex;background:var(--app-surface2);border-radius:9px;padding:3px;gap:2px;
+  }
+  .app .seg button{
+    border:0;background:transparent;font-family:inherit;font-size:12.5px;font-weight:600;
+    color:var(--app-muted);padding:6px 13px;border-radius:7px;cursor:default;
+  }
+  .app .seg button.on{background:var(--app-surface);color:var(--app-ink);box-shadow:0 1px 2px rgba(16,24,40,.12)}
+  .app .cat-chips{display:flex;gap:6px;flex-wrap:wrap;flex:1}
+  .app .cchip{
+    font-size:12px;font-weight:600;padding:6px 12px;border-radius:999px;
+    border:1px solid var(--app-line);background:var(--app-surface);color:var(--app-ink-soft);
+    display:flex;align-items:center;gap:6px;
+  }
+  .app .cchip i{width:8px;height:8px;border-radius:50%}
+  .app .cchip.on{background:var(--app-ink);color:#fff;border-color:var(--app-ink)}
+  .app .daterange{
+    display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;
+    color:var(--app-ink-soft);padding:6px 12px;border:1px solid var(--app-line);border-radius:9px;
+  }
+  .app .daterange .arw{color:var(--app-muted);font-weight:400}
+  .app .btn-hoje{
+    border:0;background:var(--app-accent);color:#fff;font-family:inherit;font-weight:600;
+    font-size:12px;padding:7px 14px;border-radius:9px;
+  }
+
+  .app .triage{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .app .triage .t{
+    background:var(--app-surface);border:1px solid var(--app-line);border-radius:12px;
+    padding:14px 16px;display:flex;align-items:center;gap:12px;
+  }
+  .app .triage .t .n{
+    font-family:"Barlow Condensed",sans-serif;font-weight:700;font-size:34px;line-height:1;
+    font-variant-numeric:tabular-nums;
+  }
+  .app .triage .t .l{font-size:12px;color:var(--app-muted);font-weight:500}
+  .app .triage .t.hoje .n{color:var(--app-accent)}
+  .app .triage .t.atraso .n{color:var(--app-danger)}
+  .app .triage .t.done .n{color:var(--app-ok)}
+
+  .app .day{}
+  .app .day-head{
+    display:flex;align-items:center;gap:12px;padding:12px 2px 8px;
+    position:sticky;top:62px;background:var(--app-bg);z-index:1;
+  }
+  .app .day-head .dow{
+    font-family:"Barlow Condensed",sans-serif;font-weight:700;font-size:16px;
+    text-transform:uppercase;letter-spacing:.03em;color:var(--app-ink);
+  }
+  .app .day-head .dat{font-size:12px;color:var(--app-muted);font-weight:500}
+  .app .day-head .hoje-pill{
+    font-size:10px;font-weight:700;color:#fff;background:var(--app-accent);
+    padding:2px 9px;border-radius:999px;text-transform:uppercase;letter-spacing:.04em;
+  }
+  .app .day-head::after{content:"";flex:1;height:1px;background:var(--app-line)}
+
+  .app .event{
+    display:flex;align-items:stretch;gap:14px;background:var(--app-surface);
+    border:1px solid var(--app-line);border-radius:12px;margin-bottom:8px;overflow:hidden;
+  }
+  .app .event .accent{width:4px;flex:0 0 4px;background:var(--cat,var(--app-line-strong))}
+  .app .event .time{
+    flex:0 0 52px;padding:14px 0 14px 14px;font-weight:600;font-size:13px;
+    color:var(--app-ink);font-variant-numeric:tabular-nums;
+  }
+  .app .event .body{flex:1;min-width:0;padding:12px 4px 12px 0}
+  .app .event .title{font-weight:600;font-size:13.5px;color:var(--app-ink)}
+  .app .event .meta{font-size:12px;color:var(--app-muted);margin-top:2px}
+  .app .event .cat-tag{
+    display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;
+    margin-left:8px;vertical-align:1px;
+  }
+  .app .event .actions{flex:0 0 auto;display:flex;align-items:center;padding:0 14px}
+  .app .event .do{
+    border:1px solid var(--app-line-strong);background:var(--app-surface);color:var(--app-ink-soft);
+    font-family:inherit;font-weight:600;font-size:12px;padding:6px 12px;border-radius:8px;cursor:default;
+  }
+  .app .event .do:hover{border-color:var(--app-accent);color:var(--app-accent)}
+  .app .pill{
+    font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;text-transform:uppercase;letter-spacing:.03em;
+  }
+  .app .pill.atraso{background:var(--app-danger);color:#fff}
+  .app .pill.hoje{background:var(--app-gold-soft);color:#8a5a00}
+
+  /* Notes */
+  .notes{
+    margin-top:18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+    gap:12px;
+  }
+  .notes .note{
+    background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;
+  }
+  .notes .note b{display:block;font-size:13px;color:var(--ink);margin-bottom:4px}
+  .notes .note span{font-size:12.5px;color:var(--ink-soft)}
+
+  .footnote{margin-top:56px;font-size:12.5px;color:var(--muted);max-width:60ch}
+  .footnote code{font-family:inherit;background:var(--surface-2);padding:1px 6px;border-radius:5px;color:var(--ink-soft)}
+
+  @media (max-width:820px){
+    .app .kpis{grid-template-columns:repeat(2,1fr)}
+    .app .charts{grid-template-columns:1fr}
+    .app .hoje{grid-template-columns:1fr}
+    .app .hoje .cell{border-right:0;border-bottom:1px solid rgba(255,255,255,.14)}
+    .app .rail{display:none}
+    .app .triage{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="doc-head">
+    <div class="kicker">Proposta de layout · setembro 2026</div>
+    <h1>Home e Agenda do CowData</h1>
+    <p class="lede">Como a página inicial e a agenda podem organizar o dia de uma fazenda leiteira. Hierarquia por tamanho e posição, cor de categoria como significado e navegação em que o que precisa de atenção aparece primeiro.</p>
+    <div class="criteria">
+      <span>Navegabilidade</span><span>Intuitividade</span><span>Profissionalismo</span><span>Modernidade</span>
+    </div>
+  </header>
+
+  <section class="tokens">
+    <h2>Paleta &amp; tipo</h2>
+    <div class="token-group">
+      <h3>Base</h3>
+      <div class="swatches">
+        <span class="sw" style="background:#2563EB"></span>
+        <span class="sw" style="background:#E0A63C"></span>
+        <span class="sw" style="background:#1B1F26"></span>
+        <span class="sw" style="background:#F4F6F9"></span>
+        <span class="sw" style="background:#DC2626"></span>
+        <span class="sw" style="background:#16A34A"></span>
+      </div>
+    </div>
+    <div class="token-group">
+      <h3>Categorias</h3>
+      <div class="swatches">
+        <span class="sw" style="background:#8B7FF0"></span>
+        <span class="sw" style="background:#4E7A5A"></span>
+        <span class="sw" style="background:#3B82F6"></span>
+        <span class="sw" style="background:#5B8FB0"></span>
+        <span class="sw" style="background:#7A2233"></span>
+      </div>
+    </div>
+    <div class="token-group">
+      <h3>Tipo</h3>
+      <div class="faces">
+        <div class="d">1.284 L — Barlow Condensed</div>
+        <div class="b">Corpo e UI em Inter</div>
+        <div class="n">21,4 &nbsp;·&nbsp; R$ 84.230 &nbsp;·&nbsp; 94%</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ HOME ============ -->
+  <section class="section">
+    <div class="section-head">
+      <h2>Página inicial</h2>
+      <span class="tag">Capa</span>
+    </div>
+
+    <div class="mock">
+      <div class="mock-bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="url">app.cowdata.com.br/capa</span>
+      </div>
+
+      <div class="app">
+        <aside class="rail">
+          <div class="brand">Cow<span>Data</span></div>
+          <div class="nav-group">
+            <div class="glabel">Ciclo diário</div>
+            <div class="nav-item active"><span class="ico"></span> Capa</div>
+            <div class="nav-item"><span class="ico"></span> Agenda</div>
+            <div class="nav-item"><span class="ico"></span> Lançamentos</div>
+            <div class="glabel">Manejo do rebanho</div>
+            <div class="nav-item"><span class="ico"></span> Rebanho</div>
+            <div class="nav-item"><span class="ico"></span> Sanidade</div>
+            <div class="nav-item"><span class="ico"></span> Reprodução</div>
+            <div class="glabel">Insumos</div>
+            <div class="nav-item"><span class="ico"></span> Estoque</div>
+            <div class="nav-item"><span class="ico"></span> Alimentação</div>
+            <div class="glabel">Financeiro</div>
+            <div class="nav-item"><span class="ico"></span> Controle Financeiro</div>
+          </div>
+          <div class="foot"><span class="dot"></span> API online · v1.0</div>
+        </aside>
+
+        <div class="stage">
+          <div class="page-head">
+            <div class="row">
+              <div>
+                <h1>Fazenda Estreito Ponte de Pedra</h1>
+                <div class="sub">sábado, 06 set 2026 · período de seca</div>
+              </div>
+              <div style="font-size:12px;color:#768092;font-weight:600">⟳ Atualizar</div>
+            </div>
+          </div>
+
+          <div class="content">
+            <div class="alert-strip"><b>2 eventos atrasados</b> — vacina aftosa (rebanho adulto) e fechamento de caixa de quinta.</div>
+
+            <div class="hoje">
+              <div class="cell">
+                <div class="label">Produção hoje</div>
+                <div class="val">1.284 <small>L</small></div>
+                <div class="delta">▲ 3,2% vs. ontem</div>
+              </div>
+              <div class="cell">
+                <div class="label">Animais em atenção</div>
+                <div class="val">47</div>
+                <div class="delta">2 atrasados</div>
+              </div>
+              <div class="cell">
+                <div class="label">Eventos em 24h</div>
+                <div class="val">6</div>
+                <div class="delta">próximo em 2h</div>
+              </div>
+              <div class="ticker">
+                <span class="tt">Hoje</span>
+                <b>08:00</b> Colostragem <span class="chip">Produção</span>
+                <b>09:30</b> IATF D0 <span class="chip">Reprodução</span>
+                <b>14:00</b> Aftosa <span class="chip red">Atrasado</span>
+              </div>
+            </div>
+
+            <div class="blk-title">Situação do rebanho</div>
+            <div class="kpis">
+              <div class="kpi" style="--cat:#8B7FF0"><div class="k-label">Prenhez confirmada</div><div class="k-val">32</div><div class="k-delta up">▲ +4 nesta semana</div></div>
+              <div class="kpi" style="--cat:#8B7FF0"><div class="k-label">A inseminar</div><div class="k-val">18</div><div class="k-delta flat">fêmeas aptas</div></div>
+              <div class="kpi" style="--cat:#4E7A5A"><div class="k-label">Vacinas em dia</div><div class="k-val">94%</div><div class="k-delta up">▲ +1,2 p.p.</div></div>
+              <div class="kpi" style="--cat:#4E7A5A"><div class="k-label">Tratamentos ativos</div><div class="k-val">5</div><div class="k-delta down">▼ -2</div></div>
+              <div class="kpi" style="--cat:#3B82F6"><div class="k-label">Média por vaca</div><div class="k-val">21,4 L</div><div class="k-delta up">▲ +0,6 L</div></div>
+              <div class="kpi" style="--cat:#3B82F6"><div class="k-label">CCS</div><div class="k-val">210k</div><div class="k-delta down">▼ -15%</div></div>
+              <div class="kpi" style="--cat:#7A2233"><div class="k-label">Receita do mês</div><div class="k-val">R$ 84,2k</div><div class="k-delta up">▲ +9%</div></div>
+              <div class="kpi" style="--cat:#7A2233"><div class="k-label">Resultado</div><div class="k-val">R$ 12,4k</div><div class="k-delta up">▲ +18%</div></div>
+            </div>
+
+            <div class="blk-title">Tendências</div>
+            <div class="charts">
+              <div class="chart-card">
+                <h4>Produção diária — 14 dias</h4>
+                <div class="cap">litros por vaca em lactação</div>
+                <svg viewBox="0 0 320 120" role="img" aria-label="Gráfico de produção diária">
+                  <defs>
+                    <linearGradient id="area" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0" stop-color="#2563EB" stop-opacity=".28"/>
+                      <stop offset="1" stop-color="#2563EB" stop-opacity="0"/>
+                    </linearGradient>
+                  </defs>
+                  <line x1="10" y1="108" x2="309" y2="108" stroke="#E3E8EF" stroke-width="1"/>
+                  <text x="10" y="16" font-size="9" fill="#768092" font-family="Inter">22</text>
+                  <text x="10" y="74" font-size="9" fill="#768092" font-family="Inter">20</text>
+                  <text x="10" y="108" font-size="9" fill="#768092" font-family="Inter" dy="-3">19</text>
+                  <polygon points="10,102 33,84 56,76 79,82 102,61 125,49 148,55 171,40 194,46 217,29 240,20 263,32 286,23 309,38 309,108 10,108" fill="url(#area)"/>
+                  <polyline points="10,102 33,84 56,76 79,82 102,61 125,49 148,55 171,40 194,46 217,29 240,20 263,32 286,23 309,38" fill="none" stroke="#2563EB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+                  <circle cx="309" cy="38" r="4" fill="#2563EB" stroke="#fff" stroke-width="2"/>
+                </svg>
+                <div class="legend">
+                  <span class="li"><i style="background:#2563EB"></i> média diária</span>
+                  <span class="li"><i style="background:#2563EB;opacity:.35"></i> 21,4 L hoje</span>
+                </div>
+              </div>
+
+              <div class="chart-card">
+                <h4>Situação reprodutiva</h4>
+                <div class="cap">214 fêmeas aptas</div>
+                <div class="donut-wrap">
+                  <svg viewBox="0 0 100 100" width="132" height="132" role="img" aria-label="Situação reprodutiva">
+                    <g transform="rotate(-90 50 50)">
+                      <circle cx="50" cy="50" r="40" fill="none" stroke="#16A34A" stroke-width="15" stroke-dasharray="112.77 251.33"/>
+                      <circle cx="50" cy="50" r="40" fill="none" stroke="#3B82F6" stroke-width="15" stroke-dasharray="49.33 251.33" stroke-dashoffset="-112.77"/>
+                      <circle cx="50" cy="50" r="40" fill="none" stroke="#DC2626" stroke-width="15" stroke-dasharray="46.98 251.33" stroke-dashoffset="-162.10"/>
+                      <circle cx="50" cy="50" r="40" fill="none" stroke="#E0A63C" stroke-width="15" stroke-dasharray="42.29 251.33" stroke-dashoffset="-209.08"/>
+                    </g>
+                    <text x="50" y="48" class="donut-center">214</text>
+                    <text x="50" y="60" class="donut-sub">fêmeas aptas</text>
+                  </svg>
+                  <div class="legend" style="flex-direction:column;gap:5px">
+                    <span class="li"><i style="background:#16A34A"></i> Prenhes · 96</span>
+                    <span class="li"><i style="background:#3B82F6"></i> Vazias · 42</span>
+                    <span class="li"><i style="background:#DC2626"></i> Inseminadas · 40</span>
+                    <span class="li"><i style="background:#E0A63C"></i> A inseminar · 36</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <div class="note"><b>Faixa "Hoje" em primeiro</b><span>Um único bloco azul com numerais condensados responde "o que preciso fazer agora" antes de qualquer KPI. A cor de destaque é um só lugar, não espalhada.</span></div>
+      <div class="note"><b>KPIs agrupados por domínio</b><span>Cada tile ganha uma borda à esquerda na cor da categoria (reprodução, sanidade, produção, financeiro) — a cor explica, não decora. O delta indica direção em vez de virar outro número solto.</span></div>
+      <div class="note"><b>Alerte como faixa, não card</b><span>O que está atrasado sobe para o topo em uma linha contínua, em vez de virar mais um card disputando atenção no grid.</span></div>
+    </div>
+  </section>
+
+  <!-- ============ AGENDA ============ -->
+  <section class="section">
+    <div class="section-head">
+      <h2>Agenda</h2>
+      <span class="tag">Linha do tempo</span>
+    </div>
+
+    <div class="mock">
+      <div class="mock-bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="url">app.cowdata.com.br/agenda</span>
+      </div>
+
+      <div class="app">
+        <aside class="rail">
+          <div class="brand">Cow<span>Data</span></div>
+          <div class="nav-group">
+            <div class="glabel">Ciclo diário</div>
+            <div class="nav-item"><span class="ico"></span> Capa</div>
+            <div class="nav-item active"><span class="ico"></span> Agenda</div>
+            <div class="nav-item"><span class="ico"></span> Lançamentos</div>
+            <div class="glabel">Manejo do rebanho</div>
+            <div class="nav-item"><span class="ico"></span> Rebanho</div>
+            <div class="nav-item"><span class="ico"></span> Sanidade</div>
+            <div class="nav-item"><span class="ico"></span> Reprodução</div>
+            <div class="glabel">Insumos</div>
+            <div class="nav-item"><span class="ico"></span> Estoque</div>
+            <div class="nav-item"><span class="ico"></span> Alimentação</div>
+            <div class="glabel">Financeiro</div>
+            <div class="nav-item"><span class="ico"></span> Controle Financeiro</div>
+          </div>
+          <div class="foot"><span class="dot"></span> API online · v1.0</div>
+        </aside>
+
+        <div class="stage">
+          <div class="page-head" style="padding-bottom:12px">
+            <h1>Agenda</h1>
+            <div class="sub">próximos 7 dias · 18 eventos</div>
+          </div>
+
+          <div class="content">
+            <div class="agenda-toolbar">
+              <div class="seg">
+                <button class="on">Linha do tempo</button>
+                <button>Calendário</button>
+              </div>
+              <div class="cat-chips">
+                <span class="cchip on"><i style="background:#94A3B8"></i>Todos</span>
+                <span class="cchip"><i style="background:#8B7FF0"></i>Reprodução</span>
+                <span class="cchip"><i style="background:#4E7A5A"></i>Sanidade</span>
+                <span class="cchip"><i style="background:#3B82F6"></i>Produção</span>
+                <span class="cchip"><i style="background:#5B8FB0"></i>Gestão</span>
+                <span class="cchip"><i style="background:#7A2233"></i>Financeiro</span>
+              </div>
+              <div class="daterange"><span class="arw">◀</span> 06 — 12 set <span class="arw">▶</span></div>
+              <button class="btn-hoje">Hoje</button>
+            </div>
+
+            <div class="triage">
+              <div class="t hoje"><div class="n">6</div><div class="l">a fazer hoje</div></div>
+              <div class="t atraso"><div class="n">2</div><div class="l">atrasados</div></div>
+              <div class="t done"><div class="n">14</div><div class="l">concluídos na semana</div></div>
+            </div>
+
+            <div class="day">
+              <div class="day-head"><span class="dow">Sábado 06 set</span><span class="dat">hoje</span><span class="hoje-pill">Hoje</span></div>
+
+              <div class="event" style="--cat:#3B82F6">
+                <span class="accent"></span>
+                <div class="time">08:00</div>
+                <div class="body">
+                  <div class="title">Colostragem <span class="cat-tag" style="background:#E7F0FE;color:#1D4ED8">Produção</span></div>
+                  <div class="meta">Lote 12 · 3 bezerras nascidas na madrugada</div>
+                </div>
+                <div class="actions"><button class="do">Concluir</button></div>
+              </div>
+
+              <div class="event" style="--cat:#8B7FF0">
+                <span class="accent"></span>
+                <div class="time">09:30</div>
+                <div class="body">
+                  <div class="title">IATF — D0 <span class="cat-tag" style="background:#EFECFD;color:#6B5BEA">Reprodução</span></div>
+                  <div class="meta">14 fêmeas · inserir implante e protocolo (D0 → D11)</div>
+                </div>
+                <div class="actions"><button class="do">Concluir</button></div>
+              </div>
+
+              <div class="event" style="--cat:#4E7A5A">
+                <span class="accent"></span>
+                <div class="time">14:00</div>
+                <div class="body">
+                  <div class="title">Vacina aftosa <span class="cat-tag" style="background:#E7EFEA;color:#3E634A">Sanidade</span></div>
+                  <div class="meta">rebanho adulto · dose de reforço</div>
+                </div>
+                <div class="actions"><span class="pill atraso">Atrasado</span></div>
+              </div>
+            </div>
+
+            <div class="day">
+              <div class="day-head"><span class="dow">Domingo 07 set</span><span class="dat">1 evento</span></div>
+              <div class="event" style="--cat:#8B7FF0">
+                <span class="accent"></span>
+                <div class="time">10:00</div>
+                <div class="body">
+                  <div class="title">Leitura de cios <span class="cat-tag" style="background:#EFECFD;color:#6B5BEA">Reprodução</span></div>
+                  <div class="meta">22 fêmeas aptas · fita de marcador</div>
+                </div>
+                <div class="actions"><button class="do">Concluir</button></div>
+              </div>
+            </div>
+
+            <div class="day">
+              <div class="day-head"><span class="dow">Segunda 08 set</span><span class="dat">2 eventos</span></div>
+              <div class="event" style="--cat:#3B82F6">
+                <span class="accent"></span>
+                <div class="time">07:00</div>
+                <div class="body">
+                  <div class="title">Ordenha — pesagem <span class="cat-tag" style="background:#E7F0FE;color:#1D4ED8">Produção</span></div>
+                  <div class="meta">3 ordenhas · registrar litros por lote</div>
+                </div>
+                <div class="actions"><button class="do">Concluir</button></div>
+              </div>
+              <div class="event" style="--cat:#7A2233">
+                <span class="accent"></span>
+                <div class="time">15:30</div>
+                <div class="body">
+                  <div class="title">Fechamento de caixa <span class="cat-tag" style="background:#F4E7EA;color:#7A2233">Financeiro</span></div>
+                  <div class="meta">consolidar vendas e despesas do dia</div>
+                </div>
+                <div class="actions"><button class="do">Concluir</button></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <div class="note"><b>Filtros fixos no topo</b><span>O filtro sai do rodapé da página e vira uma barra persistente: categoria, período e a troca linha do tempo/calendário ficam sempre visíveis enquanto você rola.</span></div>
+      <div class="note"><b>Cabeçalho de triagem</b><span>Três contadores — a fazer hoje, atrasados, concluídos — funcionam como atalhos: um toque filtra a lista para o que importa agora.</span></div>
+      <div class="note"><b>Dia como âncora</b><span>O cabeçalho do dia é fixo ao rolar, e cada evento carrega a barra de categoria na largura inteira — a cor salta mesmo num olhar rápido. "Atrasado" vira pílula vermelha, separada da cor de categoria.</span></div>
+    </div>
+  </section>
+
+  <p class="footnote">Proposta visual sobre a direção já em curso (<code>Barlow Condensed</code>, paleta <code>azul</code>, cores <code>--cat-*</code>). Números são ilustrativos, marcados como exemplo — não são dados reais da fazenda. Nenhuma alteração de código foi feita no app.</p>
+
+</div>
+</body>
+</html>

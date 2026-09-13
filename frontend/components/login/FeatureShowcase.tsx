@@ -98,21 +98,15 @@ export default function FeatureShowcase() {
         ))}
       </div>
       <style>{`
+        /* Sem elevação/sombra no hover (No-Lift Rule do DESIGN.md) — achado
+           da crítica da página pública, ver
+           docs/agents/design-implementation.md §5, o-motor-nao-o-painel.html.
+           Só a borda reage. */
         .feature-showcase-card {
-          transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+          transition: border-color 0.2s ease;
         }
         .feature-showcase-card:hover {
-          transform: translateY(-3px);
           border-color: var(--dourado);
-          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .feature-showcase-card {
-            transition: none;
-          }
-          .feature-showcase-card:hover {
-            transform: none;
-          }
         }
       `}</style>
     </div>

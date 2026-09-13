@@ -49,9 +49,24 @@ const ABAS = [
   { id: "folha", label: "Folha de pagamento" },
   { id: "animais", label: "Compra/venda de animais" },
   { id: "documentos", label: "Documentos" },
-  { id: "extraordinario", label: "Ações extraordinárias" },
 ] as const;
-type Aba = (typeof ABAS)[number]["id"];
+// "Ações extraordinárias" é a única aba que ESCREVE dado (o resto é
+// consulta/exportação) — separada do resto da barra, não mais uma aba igual
+// às outras (achado P1 da crítica, ver
+// docs/agents/design-implementation.md §5, primeira-visita.html).
+const ABA_RISCO = { id: "extraordinario", label: "Ações extraordinárias" } as const;
+type Aba = (typeof ABAS)[number]["id"] | typeof ABA_RISCO.id;
+
+// Cabeçalho contextual de uma linha por aba — pra um contador externo que
+// entra 2x por ano e não tem contexto de fazenda leiteira, especialmente
+// RMCA e GTA, que não são termos contábeis padrão (achado P0 da crítica,
+// ver docs/agents/design-implementation.md §5, primeira-visita.html).
+const PRIMER_ABA: Partial<Record<Aba, string>> = {
+  dre: "Demonstração do Resultado do Exercício — receitas menos custos do período selecionado.",
+  rmca: "Relação Leite/Alimentação — indicador de eficiência de custo com alimentação, específico de pecuária leiteira; não tem equivalente direto no plano de contas usual.",
+  plano: "Todas as contas gerenciais cadastradas na fazenda, com natureza (receita/despesa) e classificação fixo/variável.",
+  animais: "GTA = Guia de Trânsito Animal, documento oficial que acompanha toda movimentação de gado.",
+};
 
 function primeiroDiaDoMes() {
   const h = new Date();
@@ -305,7 +320,7 @@ export default function PainelContadorPage() {
         </button>
       </div>
 
-      <div style={{ display: "flex", gap: "0.2rem", borderBottom: `1px solid ${CORES_CONTADOR.borda}`, marginBottom: "1.3rem", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.2rem", borderBottom: `1px solid ${CORES_CONTADOR.borda}`, marginBottom: aba in PRIMER_ABA ? "0" : "1.3rem", flexWrap: "wrap" }}>
         {ABAS.map((t) => (
           <button key={t.id} type="button" onClick={() => setAba(t.id)}
             style={{
@@ -316,7 +331,22 @@ export default function PainelContadorPage() {
             {t.label}
           </button>
         ))}
+        <span style={{ width: 1, alignSelf: "stretch", background: CORES_CONTADOR.bordaClara, margin: "0 0.3rem" }} />
+        <button type="button" onClick={() => setAba(ABA_RISCO.id)} title="Única aba que altera dado"
+          style={{
+            background: "none", border: "none", borderBottom: aba === ABA_RISCO.id ? `2px solid ${CORES_CONTADOR.negativo}` : "2px solid transparent",
+            color: aba === ABA_RISCO.id ? CORES_CONTADOR.negativo : CORES_CONTADOR.mudo, fontWeight: aba === ABA_RISCO.id ? 700 : 500,
+            fontSize: "0.82rem", padding: "0.6rem 0.8rem", cursor: "pointer",
+          }}>
+          ⚠ {ABA_RISCO.label}
+        </button>
       </div>
+
+      {PRIMER_ABA[aba] && (
+        <p style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", fontSize: "0.8rem", color: CORES_CONTADOR.mudo, background: CORES_CONTADOR.painelAlt, border: `1px solid ${CORES_CONTADOR.borda}`, borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem", margin: "0.8rem 0 1.3rem" }}>
+          ⓘ {PRIMER_ABA[aba]}
+        </p>
+      )}
 
       {aba === "dre" && (
         <div>
