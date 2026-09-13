@@ -428,20 +428,29 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
         nome = ev.nome if ev else "Evento sanitário"
         alvo = calendario.categoria_alvo or "rebanho"
 
-        # (1) Trilha do animal — um card por animal "sugerido" ainda sem decisão.
-        for linha in sugeridos_por_cronograma.get(cron.id, []):
-            eid = f"{PREFIXO_CRONOGRAMA}animal_{linha.id}"
-            if eid in realizados:
-                continue
+        # (1) Trilha do animal — UM card resumo por cronograma (não mais um
+        # por animal): pedido do usuário em 13/09/2026, uma regra com vários
+        # animais entrando na janela poluía a Agenda com um card idêntico por
+        # matriz. A decisão individual (incluir/excluir cada um) continua
+        # existindo — só que agora só dentro do detalhe do cronograma (aba
+        # Animais, Sanidade > Preventiva > Cronogramas), não mais direto na
+        # Agenda. Sem checagem de `realizados` aqui de propósito: este card
+        # não é uma pendência que se "marca como feita" à parte — ele
+        # simplesmente reflete quantos animais ainda estão "sugerido" agora;
+        # decidir cada um (que continua usando `cronograma_sanitario_animal_
+        # {id}` internamente) já tira o animal dessa contagem sozinho.
+        sugeridos = sugeridos_por_cronograma.get(cron.id, [])
+        if sugeridos:
             saida.append({
-                "id": eid, "data": linha.data_sugestao.isoformat(), "categoria": "sanidade",
-                "descricao": f"Matriz {linha.numero_matriz} entrou na janela — {nome}",
-                "numero_animal": linha.numero_matriz,
-                "observacao": "Incluir no cronograma (aguarda a próxima aplicação) ou excluir?",
+                "id": f"{PREFIXO_CRONOGRAMA}sugeridos_{cron.id}",
+                "data": min(l.data_sugestao for l in sugeridos).isoformat(), "categoria": "sanidade",
+                "descricao": f"{len(sugeridos)} animal(is) na janela de aplicação — {nome} ({alvo})",
+                "numero_animal": None,
+                "observacao": "Clique para ver os animais e decidir incluir ou excluir cada um.",
                 "fonte": "auto", "cor": "var(--dourado)", "ref": None,
-                "tipo": "cronograma_sanitario_animal",
-                "cronograma_animal_id": linha.id, "cronograma_id": cron.id,
-                "evento_sanitario_id": calendario.evento_sanitario_id,
+                "tipo": "cronograma_sanitario_sugeridos",
+                "cronograma_id": cron.id, "evento_sanitario_id": calendario.evento_sanitario_id,
+                "quantidade_sugeridos": len(sugeridos),
             })
 
         # (2) Trilha do agendamento — 1 card por cronograma aberto, com

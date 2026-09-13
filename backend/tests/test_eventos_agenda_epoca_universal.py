@@ -74,9 +74,11 @@ class TestEventosAgendaEpocaUniversal:
         # cronograma mesmo sem usa_cronograma=True.
         assert any(e["tipo"] in ("cronograma_sanitario_modo", "cronograma_sanitario_urgente") for e in saida)
         # Animal 55 (Novilha, projeção só precisa da idade de hoje aqui) tem
-        # que ter entrado "sugerido" — card da trilha 1.
-        cards_animal = [e for e in saida if e["tipo"] == "cronograma_sanitario_animal"]
-        assert any(c["numero_animal"] == "55" for c in cards_animal)
+        # que ter entrado "sugerido" — card-resumo da trilha 1 (1 por
+        # cronograma desde 13/09/2026, não mais 1 por animal).
+        cards_sugeridos = [e for e in saida if e["tipo"] == "cronograma_sanitario_sugeridos"]
+        assert len(cards_sugeridos) == 1
+        assert cards_sugeridos[0]["quantidade_sugeridos"] == 1
 
         with Session(engine) as s:
             linhas = s.exec(select(CronogramaSanitarioAnimal)).all()
@@ -109,8 +111,8 @@ class TestEventosAgendaEpocaUniversal:
         # generalização da flag vale pra ISSO), mas NENHUM animal sugerido
         # pelo caminho de projeção por época — o animal 55 só pode ter
         # entrado pela regra "Novilha" por época, não pela de Brucelose.
-        cards_animal_brucelose = [
+        cards_sugeridos_brucelose = [
             e for e in saida
-            if e["tipo"] == "cronograma_sanitario_animal" and "Brucelose" in e["descricao"]
+            if e["tipo"] == "cronograma_sanitario_sugeridos" and "Brucelose" in e["descricao"]
         ]
-        assert cards_animal_brucelose == []
+        assert cards_sugeridos_brucelose == []

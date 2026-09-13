@@ -55,7 +55,7 @@ type Agenda = { eventos?: Evento[] };
 // direto aqui e vira "abrir na Agenda completa".
 const TIPOS_COMPLEXOS = new Set([
   "protocolo_iatf", "protocolo_inducao", "protocolo_sanitario", "protocolo_customizado",
-  "cronograma_sanitario_animal", "cronograma_sanitario_modo", "cronograma_sanitario_urgente", "cronograma_sanitario_aplicar",
+  "cronograma_sanitario_sugeridos", "cronograma_sanitario_modo", "cronograma_sanitario_urgente", "cronograma_sanitario_aplicar",
   "bst_aplicacao", "sugestao_movimentacao", "colostragem_pendente", "igg_pendente",
   "evento_sanitario", "calendario_sanitario", "aplicacao_agendada",
   // Diária de diarista: 3 decisões (Confirmar/Meia diária/Não teve), não um
