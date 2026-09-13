@@ -255,14 +255,20 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
       const dadosEvento = {
         categoria_preventiva: ehExame ? "exame" : form.categoriaPreventiva,
         doenca_id: form.doencaId ? Number(form.doencaId) : undefined,
-        tipo_agendamento: (form.modoFreq === "evento_vida" ? "evento" : "epoca") as "evento" | "epoca",
+        // "periodica": NÃO é "epoca" — a periodicidade mora só na regra
+        // (CalendarioSanitario.frequencia_valor/unidade), nunca também aqui.
+        // Achado real na reverificação E2E de 13/09/2026: gravar "epoca" +
+        // data_primeiro/frequencia_* no EventoSanitario ao mesmo tempo que a
+        // regra cria o MESMO agendamento duplicado (ver eventos_agenda() no
+        // backend) — e pior, excluir a regra depois não apaga essa cópia: o
+        // evento continua "ativo" com o próprio agendamento e a pendência
+        // RESSUSCITA na Agenda (com o texto genérico antigo, sem categoria-
+        // alvo), mesmo com a regra já sumida de "Regras cadastradas".
+        tipo_agendamento: (form.modoFreq === "evento_vida" ? "evento" : "nenhum") as "evento" | "nenhum",
         gatilho: form.modoFreq === "evento_vida" ? form.gatilho : undefined,
         gatilho_lote: form.modoFreq === "evento_vida" && form.gatilho === "entrada_lote" ? form.gatilhoLote.trim() : undefined,
         gatilho_idade_meses: form.modoFreq === "evento_vida" && form.gatilho === "novilha_apta" ? Number(form.gatilhoIdadeMeses) : undefined,
         offset_dias: form.modoFreq === "evento_vida" ? (form.offsetDias ? Number(form.offsetDias) : 0) : undefined,
-        data_primeiro: form.modoFreq === "periodica" ? form.dataEvento : undefined,
-        frequencia_valor: form.modoFreq === "periodica" ? Number(form.freqValor) : undefined,
-        frequencia_unidade: form.modoFreq === "periodica" ? form.freqUnidade : undefined,
         produto_padrao: ehExame ? undefined : (form.produtoPadrao || undefined),
         dose_padrao: ehExame ? undefined : (form.dosePadrao ? Number(form.dosePadrao) : undefined),
         unidade_padrao: ehExame ? undefined : (form.unidadePadrao || undefined),

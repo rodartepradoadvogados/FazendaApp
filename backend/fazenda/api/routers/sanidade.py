@@ -1034,7 +1034,31 @@ def excluir_calendario(
         select(CalendarioSanitarioChecklistItem).where(CalendarioSanitarioChecklistItem.calendario_sanitario_id == calendario_id)
     ).all():
         session.delete(item)
+    evento_sanitario_id = c.evento_sanitario_id
     session.delete(c)
+    session.flush()  # a regra já não conta na consulta abaixo, sem precisar de commit ainda
+    # Achado real (reverificação E2E de 13/09/2026): o wizard (antes desta
+    # correção) gravava a MESMA periodicidade também no EventoSanitario
+    # (tipo_agendamento="epoca") — excluir a regra não apagava essa cópia, e
+    # a pendência "ressuscitava" na Agenda (texto genérico, sem categoria-
+    # alvo) pelo fallback legado em eventos_agenda(), mesmo com a regra já
+    # fora de "Regras cadastradas". O wizard não grava mais essa cópia (ver
+    # FormCalendarioSanitario.tsx::salvar), mas dados já gravados antes desta
+    # correção (ou pela tela legada) continuam por aí — limpa aqui, na única
+    # regra que ainda os referenciava, em vez de uma migração de backfill.
+    outra_regra_ativa = session.exec(
+        select(CalendarioSanitario)
+        .where(CalendarioSanitario.evento_sanitario_id == evento_sanitario_id)
+        .where(CalendarioSanitario.ativo == True)  # noqa: E712
+    ).first()
+    if not outra_regra_ativa:
+        ev = session.get(EventoSanitario, evento_sanitario_id)
+        if ev and ev.tipo_agendamento == "epoca":
+            ev.tipo_agendamento = "nenhum"
+            ev.data_primeiro = None
+            ev.frequencia_valor = None
+            ev.frequencia_unidade = None
+            session.add(ev)
     session.commit()
     return {"excluido": True, "id": calendario_id}
 

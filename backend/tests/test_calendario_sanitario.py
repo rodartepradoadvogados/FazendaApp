@@ -338,6 +338,73 @@ class TestExcluirCalendarioCascade:
         calendario_id_2 = r2.json()["id"]
         assert c.get("/sanidade/cronogramas", params={"calendario_id": calendario_id_2}).json() == []
 
+    def test_excluir_ultima_regra_ativa_limpa_a_copia_de_periodicidade_do_evento(self, client):
+        """Achado real na reverificação E2E de 13/09/2026: antes desta
+        correção, o wizard gravava a MESMA periodicidade no EventoSanitario
+        (tipo_agendamento="epoca") e na regra — excluir a regra deixava essa
+        cópia viva, e a pendência RESSUSCITAVA na Agenda (texto genérico,
+        sem categoria-alvo), mesmo com a regra já fora de "Regras
+        cadastradas". O wizard não grava mais essa cópia, mas este teste
+        cobre dados antigos (ou gravados pela tela legada), simulando o
+        estado que o bug deixava: `EventoSanitario` com `tipo_agendamento=
+        "epoca"` de verdade, não só um resquício vazio."""
+        c, engine = client
+        with Session(engine) as s:
+            ev = s.get(EventoSanitario, 1)
+            ev.tipo_agendamento = "epoca"
+            ev.data_primeiro = date(2026, 9, 12)
+            ev.frequencia_valor = 7
+            ev.frequencia_unidade = "dias"
+            s.add(ev)
+            s.commit()
+
+        r = c.post("/sanidade/calendario", json={
+            "evento_sanitario_id": 1, "categoria_alvo": "Prenha",
+            "frequencia_valor": 7, "frequencia_unidade": "dias", "data_evento": "2026-09-12",
+        })
+        calendario_id = r.json()["id"]
+
+        c.delete(f"/sanidade/calendario/{calendario_id}")
+
+        with Session(engine) as s:
+            ev = s.get(EventoSanitario, 1)
+            assert ev.tipo_agendamento == "nenhum"
+            assert ev.data_primeiro is None
+            assert ev.frequencia_valor is None
+            assert ev.frequencia_unidade is None
+
+        agenda = c.get("/agenda/", params={"data_inicio": "2026-09-12", "data_fim": "2026-09-12"}).json()
+        ids = [e["id"] for e in agenda["eventos"]] if isinstance(agenda, dict) and "eventos" in agenda else [e["id"] for e in agenda]
+        assert not [i for i in ids if i.startswith(("evento_sanitario_1__", "calendario_sanitario_"))]
+
+    def test_excluir_regra_preserva_periodicidade_do_evento_se_outra_regra_ativa_continua(self, client):
+        """Duas regras (ex.: categorias-alvo diferentes) para o mesmo evento —
+        excluir uma não pode apagar a periodicidade que a OUTRA ainda usa."""
+        c, engine = client
+        with Session(engine) as s:
+            ev = s.get(EventoSanitario, 1)
+            ev.tipo_agendamento = "epoca"
+            ev.data_primeiro = date(2026, 9, 12)
+            ev.frequencia_valor = 7
+            ev.frequencia_unidade = "dias"
+            s.add(ev)
+            s.commit()
+
+        r1 = c.post("/sanidade/calendario", json={
+            "evento_sanitario_id": 1, "categoria_alvo": "Prenha",
+            "frequencia_valor": 7, "frequencia_unidade": "dias", "data_evento": "2026-09-12",
+        })
+        r2 = c.post("/sanidade/calendario", json={
+            "evento_sanitario_id": 1, "categoria_alvo": "Bezerras",
+            "frequencia_valor": 7, "frequencia_unidade": "dias", "data_evento": "2026-09-12",
+        })
+        c.delete(f"/sanidade/calendario/{r1.json()['id']}")
+
+        with Session(engine) as s:
+            ev = s.get(EventoSanitario, 1)
+            assert ev.tipo_agendamento == "epoca"
+        assert any(x["id"] == r2.json()["id"] for x in c.get("/sanidade/calendario").json())
+
 
 class TestEventosAgendaNaoDuplicaComRegraDeCalendario:
     """Achado real na verificação E2E de 12/09/2026: o wizard (FormCalendario
