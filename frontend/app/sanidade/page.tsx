@@ -996,10 +996,10 @@ function OcorrenciasView() {
   );
 }
 
-function DetalheOcorrenciaView({ cronogramaId, onVoltar }: { cronogramaId: number; onVoltar: () => void }) {
+function DetalheOcorrenciaView({ cronogramaId, onVoltar, abaInicial }: { cronogramaId: number; onVoltar: () => void; abaInicial?: "animais" | "checklist" }) {
   const [det, setDet] = useState<DetalheOcorrencia | null>(null);
   const [erro, setErro] = useState<string | null>(null);
-  const [aba, setAba] = useState<"animais" | "checklist">("checklist");
+  const [aba, setAba] = useState<"animais" | "checklist">(abaInicial || "checklist");
   const [salvandoItem, setSalvandoItem] = useState<number | null>(null);
   const [horarioValor, setHorarioValor] = useState<Record<number, string>>({});
   const [salvandoAnimal, setSalvandoAnimal] = useState<number | "novo" | null>(null);
@@ -1522,6 +1522,13 @@ function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro, cronog
   // já usado por `OcorrenciasView` (tela escondida), sem reexibir aquela tela
   // inteira — só o essencial (consultar/incluir/remover animal) pela aba real.
   const [aberto, setAberto] = useState<number | null>(cronogramaIdInicial ?? null);
+  // Vindo do card-resumo da Agenda ("N animal(is) na janela"): abre direto na
+  // aba Animais, não na Checklist (padrão) — é lá que a decisão pendente
+  // (incluir/excluir) realmente está. Só vale para ESSA abertura inicial —
+  // clicar manualmente numa linha da lista continua caindo no padrão.
+  const [abaInicialDetalhe, setAbaInicialDetalhe] = useState<"animais" | "checklist" | undefined>(
+    cronogramaIdInicial ? "animais" : undefined
+  );
 
   const carregar = useCallback(() => {
     fetchCronogramasSanitarios(calendarioIdInicial ? { calendarioId: calendarioIdInicial } : undefined)
@@ -1563,7 +1570,7 @@ function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro, cronog
   // hooks entre renders e derruba o componente inteiro (bug real, achado na
   // reverificação E2E de 13/09/2026: "Rendered fewer hooks than expected").
   if (aberto != null) {
-    return <DetalheOcorrenciaView cronogramaId={aberto} onVoltar={() => { setAberto(null); carregar(); }} />;
+    return <DetalheOcorrenciaView cronogramaId={aberto} abaInicial={abaInicialDetalhe} onVoltar={() => { setAberto(null); carregar(); }} />;
   }
 
   return (
@@ -1626,7 +1633,7 @@ function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro, cronog
           </tr></thead>
           <tbody>
             {linhasOrdenadas.map((c) => (
-              <tr key={c.id} className="clickable" style={{ cursor: "pointer" }} onClick={() => setAberto(c.id)} title="Ver/incluir/remover animais desta ocorrência">
+              <tr key={c.id} className="clickable" style={{ cursor: "pointer" }} onClick={() => { setAbaInicialDetalhe(undefined); setAberto(c.id); }} title="Ver/incluir/remover animais desta ocorrência">
                 <td style={{ fontWeight: 700 }}>{c.evento_sanitario_nome} <span style={{ fontWeight: 400, fontSize: "0.68rem", color: "var(--text-muted)" }}>#{c.id}</span></td>
                 <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{c.categoria_alvo || "—"}</td>
                 <td style={{ fontSize: "0.78rem" }}>{formatDate(c.data_evento)}{c.data_original && c.data_original !== c.data_evento ? <span style={{ color: "var(--text-muted)", fontSize: "0.68rem" }}> (adiado, era {formatDate(c.data_original)})</span> : null}</td>
