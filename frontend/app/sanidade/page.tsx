@@ -1472,10 +1472,6 @@ function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro }: { ca
       .then(setCronogramas).catch((e) => setError(e.message));
   }, [calendarioIdInicial]);
   useEffect(() => { carregar(); }, [carregar]);
-
-  if (aberto != null) {
-    return <DetalheOcorrenciaView cronogramaId={aberto} onVoltar={() => { setAberto(null); carregar(); }} />;
-  }
   useEffect(() => {
     fetchCalendarioSanitario().then((rs: RegraCalendario[]) => setRegrasCronograma(rs.filter((r) => r.usa_cronograma))).catch(() => {});
   }, []);
@@ -1505,6 +1501,14 @@ function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro }: { ca
     } catch (e: any) { setMsgNovo(e.message); }
     finally { setCriando(false); }
   };
+
+  // Precisa vir DEPOIS de todos os hooks acima (useState/useEffect/useMemo/
+  // useOrdenacao) — um return condicional antes deles muda a contagem de
+  // hooks entre renders e derruba o componente inteiro (bug real, achado na
+  // reverificação E2E de 13/09/2026: "Rendered fewer hooks than expected").
+  if (aberto != null) {
+    return <DetalheOcorrenciaView cronogramaId={aberto} onVoltar={() => { setAberto(null); carregar(); }} />;
+  }
 
   return (
     <>
