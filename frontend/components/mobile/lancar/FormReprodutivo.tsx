@@ -13,8 +13,8 @@ import { enviarOuEnfileirar, fetchComCache } from "@/lib/offline";
 import { TouroPicker, type TouroPickerItem } from "@/components/TouroPicker";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 import {
-  type Animal, useCache, useEnvio, hoje, rotuloAnimal,
-  BotoesEscolha, SeletorAnimal, GradeAcoes, MobPill, LinhaPills,
+  type Animal, useCache, useEnvio, useRascunho, hoje, rotuloAnimal,
+  BotoesEscolha, SeletorAnimal, GradeAcoes, MobPill, LinhaPills, RascunhoAviso,
 } from "./comum";
 
 type Aba = "inseminacao" | "diagnostico" | "parto" | "iatf";
@@ -70,7 +70,12 @@ export function FormReprodutivo({ animais, animalFixado }: { animais: Animal[]; 
 function Inseminacao({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   const semen = useCache<SemenDisponivel | null>("semen_disponivel", () => fetchSemenDisponivel(), null);
-  const [matriz, setMatriz] = useState(animalFixado || "");
+  // Rascunho da matriz escolhida — o passo mais trabalhoso (buscar/tocar o
+  // animal certo); se o app for interrompido no meio, não se perde ao voltar
+  // (docs/agents/design-implementation.md §5, acabamento-de-campo.html).
+  const rascunho = useRascunho<string>("inseminacao_matriz", animalFixado || "");
+  const matriz = rascunho.valor;
+  const setMatriz = rascunho.setValor;
   const [data, setData] = useState(hoje());
   const [categoria, setCategoria] = useState<"convencional" | "sexado" | "fazenda">("convencional");
   const [touro, setTouro] = useState("");
@@ -90,7 +95,7 @@ function Inseminacao({ animais, animalFixado }: { animais: Animal[]; animalFixad
         tipo_semen: ehFazenda ? undefined : categoria,
       },
       `${ehFazenda ? "Monta natural" : "Inseminação"} — matriz ${matriz}${touro ? ` (${touro})` : ""}`,
-      () => setTouro(""),
+      () => { setTouro(""); rascunho.limpar(); },
     );
   }
 
@@ -99,6 +104,7 @@ function Inseminacao({ animais, animalFixado }: { animais: Animal[]; animalFixad
   const itensCatalogo: TouroPickerItem[] = catalogoTouros.map((t) => ({ naab: t.naab, nome: t.nome || t.naab, central: t.central, raca: t.raca, tpi: t.tpi }));
   return (
     <>
+      <RascunhoAviso mostrar={rascunho.salvo} />
       <MobCampo label="Matriz (nº / nome)">
         <SeletorAnimal animais={animais} valor={matriz} onChange={setMatriz} placeholder="Buscar matriz…" />
       </MobCampo>
@@ -168,7 +174,13 @@ function Diagnostico({ animais, animalFixado }: { animais: Animal[]; animalFixad
   }, [animais, porNumero]);
 
   const [vinculo, setVinculo] = useState<"animal" | "lote" | "agenda">("animal");
-  const [matrizes, setMatrizes] = useState<string[]>(animalFixado ? [animalFixado] : []);
+  // Rascunho da lista de matrizes — construir essa lista (buscar/tocar cada
+  // animal, ou marcar lote/categoria) é o passo mais trabalhoso daqui; se o
+  // app for interrompido, não se perde ao voltar
+  // (docs/agents/design-implementation.md §5, acabamento-de-campo.html).
+  const rascunho = useRascunho<string[]>("diagnostico_matrizes", animalFixado ? [animalFixado] : []);
+  const matrizes = rascunho.valor;
+  const setMatrizes = rascunho.setValor;
   function adicionar(numero: string) {
     setMatrizes((atual) => (atual.includes(numero) ? atual : [...atual, numero]));
   }
@@ -255,13 +267,14 @@ function Diagnostico({ animais, animalFixado }: { animais: Animal[]; animalFixad
     } else {
       setAviso({ tipo: "ok", msg: `Diagnóstico salvo para ${salvos} matriz(es).` });
       setResultado("");
-      if (vinculo === "animal") setMatrizes(animalFixado ? [animalFixado] : []);
+      if (vinculo === "animal") rascunho.limpar();
     }
     setSalvando(false);
   }
 
   return (
     <>
+      <RascunhoAviso mostrar={rascunho.salvo} />
       <MobCampo label="Seleção">
         <BotoesEscolha
           opcoes={[
@@ -365,7 +378,11 @@ type SugestaoLoteParto = { tipo: "mae" | "cria"; numero: string; codigo: string;
 
 function Parto({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
   const { aviso, setAviso, erroValidacao } = useEnvio();
-  const [matriz, setMatriz] = useState(animalFixado || "");
+  // Rascunho da matriz — mesma razão dos demais formulários (docs/agents/
+  // design-implementation.md §5, acabamento-de-campo.html).
+  const rascunho = useRascunho<string>("parto_matriz", animalFixado || "");
+  const matriz = rascunho.valor;
+  const setMatriz = rascunho.setValor;
   const [data, setData] = useState(hoje());
   const [sexo, setSexo] = useState<"F" | "M" | "">("");
   const [brincoCria, setBrincoCria] = useState("");
@@ -463,6 +480,7 @@ function Parto({ animais, animalFixado }: { animais: Animal[]; animalFixado: str
 
   return (
     <>
+      <RascunhoAviso mostrar={rascunho.salvo} />
       <MobCampo label="Matriz (nº / nome)">
         <SeletorAnimal animais={animais} valor={matriz} onChange={setMatriz} placeholder="Buscar matriz…" />
       </MobCampo>
@@ -507,15 +525,19 @@ function Parto({ animais, animalFixado }: { animais: Animal[]; animalFixado: str
 export function ProtocoloIatf({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   const { rotuloDe } = useEstadosReprodutivos();
-  const [matrizes, setMatrizes] = useState<string[]>(animalFixado ? [animalFixado] : []);
+  // Rascunho persistido — se o app for interrompido no meio (a vaca se move,
+  // toca o telefone), as matrizes já escolhidas não se perdem ao voltar
+  // (docs/agents/design-implementation.md §5, acabamento-de-campo.html).
+  const rascunho = useRascunho<string[]>("iatf_matrizes", animalFixado ? [animalFixado] : []);
+  const matrizes = rascunho.valor;
   const [dataD0, setDataD0] = useState(hoje());
   const [verHormonios, setVerHormonios] = useState(false);
 
   function adicionar(numero: string) {
-    setMatrizes((atual) => (atual.includes(numero) ? atual : [...atual, numero]));
+    if (!matrizes.includes(numero)) rascunho.setValor([...matrizes, numero]);
   }
   function remover(numero: string) {
-    setMatrizes((atual) => atual.filter((n) => n !== numero));
+    rascunho.setValor(matrizes.filter((n) => n !== numero));
   }
 
   function salvar() {
@@ -525,7 +547,7 @@ export function ProtocoloIatf({ animais, animalFixado }: { animais: Animal[]; an
       "/reproducao/protocolo-iatf",
       { animais: matrizes, data_d0: dataD0 },
       `Protocolo IATF D0 — ${matrizes.length} vaca(s)`,
-      () => setMatrizes([]),
+      () => rascunho.limpar(),
       { ok: "Protocolo IATF (D0) lançado — as etapas entram na agenda." },
     );
   }
@@ -543,6 +565,8 @@ export function ProtocoloIatf({ animais, animalFixado }: { animais: Animal[]; an
       <MobCampo label="Matrizes (nº / nome) — pode escolher várias">
         <SeletorAnimal animais={animais} valor="" onChange={adicionar} placeholder="Buscar matriz e tocar para adicionar…" />
       </MobCampo>
+
+      <RascunhoAviso mostrar={rascunho.salvo} />
 
       {matrizes.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "0.9rem" }}>

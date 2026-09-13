@@ -297,13 +297,13 @@ function Hero() {
               </p>
               <form onSubmit={entrar} className="space-y-3">
                 <div>
-                  <label style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Usuário</label>
-                  <input style={input} value={username} onChange={(e) => setUsername(e.target.value)} autoFocus autoComplete="username" />
+                  <label htmlFor="login-usuario" style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Usuário</label>
+                  <input id="login-usuario" style={input} value={username} onChange={(e) => setUsername(e.target.value)} autoFocus autoComplete="username" />
                 </div>
                 <div>
-                  <label style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Senha</label>
+                  <label htmlFor="login-senha" style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Senha</label>
                   <div style={{ position: "relative" }}>
-                    <input style={{ ...input, paddingRight: "2.4rem" }} type={mostrarSenha ? "text" : "password"} value={senha}
+                    <input id="login-senha" style={{ ...input, paddingRight: "2.4rem" }} type={mostrarSenha ? "text" : "password"} value={senha}
                       onChange={(e) => setSenha(e.target.value)} autoComplete="current-password" />
                     <button type="button" onClick={() => setMostrarSenha((v) => !v)} aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
                       style={{
@@ -366,11 +366,17 @@ function MilkNewsCallout() {
   return (
     <section id="milknews" style={{ padding: "3rem 1.5rem 4rem" }}>
       <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
+        {/* Hex fixo, não var(--vinho) — a área pública é uma vitrine de marca
+            fixa (ver marcaVars em PublicShell.tsx), igual ao fundo em
+            gradiente do PublicPage; --vinho segue a paleta escolhida na área
+            logada (vinho/verde/azul) e fazia esse card mudar de cor sozinho
+            pra um visitante com preferência salva. Achado da crítica, ver
+            docs/agents/design-implementation.md §5, o-motor-nao-o-painel.html. */}
         <Link href="/news" style={{
           display: "flex", flexWrap: "wrap", alignItems: "center", gap: "1.2rem", textDecoration: "none",
           padding: "1.6rem 1.8rem", borderRadius: "var(--r-sm)",
-          background: "linear-gradient(135deg, var(--vinho), var(--vinho-dark))",
-          border: "1px solid var(--vinho-light)", boxShadow: "0 12px 32px rgba(0,0,0,0.35)",
+          background: "linear-gradient(135deg, #0E2A47, #081A2C)",
+          border: "1px solid #416180", boxShadow: "0 12px 32px rgba(0,0,0,0.35)",
         }}>
           <span style={{
             display: "inline-flex", alignItems: "center", justifyContent: "center",

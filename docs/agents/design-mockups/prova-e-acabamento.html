@@ -1,0 +1,193 @@
+<title>Prova e Acabamento</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --vinho:#0E2A47; --vinho-light:#416180; --dourado:#8A6D2F; --dourado-light:#C9A44C;
+    --bg:#F4F6F9; --surface:#FFFFFF; --surface-2:#F9FAFB; --border:#DCE3EA; --border-strong:#C3CDD8;
+    --text:#1F2937; --text-muted:#6B7280; --red:#C0392B; --green-light:#4CAF80;
+    --r:2px; --shadow:0 1px 4px rgba(20,30,45,.10);
+    --review-bg:#EDEFF2; --review-fg:#3A4250; --review-border:#D6DAE1; --review-accent:#0E2A47;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0B0D10; --surface:#15181D; --surface-2:#1B1F26; --border:#2A2E36; --border-strong:#3A3F49;
+      --text:#F0E8EC; --text-muted:#9B8A91; --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0B0D10; --surface:#15181D; --surface-2:#1B1F26; --border:#2A2E36; --border-strong:#3A3F49;
+    --text:#F0E8EC; --text-muted:#9B8A91; --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--review-bg); color:var(--text); font-family:'Barlow', Inter, sans-serif;
+    padding-inline:max(16px, calc((100vw - 1180px)/2)); padding-block:20px 48px; }
+  h1,h2,.section-label{ font-family:'Barlow Condensed', Inter, sans-serif; }
+
+  .review-bar{ max-width:1180px; margin:0 auto 18px; padding:.85rem 1.1rem; background:var(--review-bg); border:1px solid var(--review-border); border-radius:8px; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
+  .review-tag{ font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--review-fg); }
+  .review-tag b{ color:var(--review-accent); }
+  .review-switch{ display:inline-flex; border:1px solid var(--review-border); border-radius:999px; padding:3px; gap:2px; background:var(--surface); }
+  .review-switch button{ font-family:'Barlow Condensed', Inter, sans-serif; font-weight:700; font-size:.85rem; padding:.4rem 1.1rem; border-radius:999px; border:none; cursor:pointer; background:transparent; color:var(--text-muted); }
+  .review-switch button.active{ background:var(--vinho); color:var(--dourado-light); }
+  .review-note{ max-width:1180px; margin:0 auto 18px; font-size:.82rem; color:var(--review-fg); }
+  .review-note b{ color:var(--review-accent); }
+  .review-note code{ background:var(--surface-2); border:1px solid var(--border); border-radius:4px; padding:.05rem .35rem; font-size:.78rem; }
+
+  .stage{ max-width:1180px; margin:0 auto; display:flex; flex-direction:column; gap:1.2rem; }
+  .card-plain{ background:var(--surface); border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow); padding:1.2rem 1.3rem; }
+  .section-label{ font-size:.68rem; font-weight:700; letter-spacing:.13em; text-transform:uppercase; color:var(--review-fg); margin:0 0 .7rem; display:flex; align-items:center; gap:.5rem; }
+  .section-label .rule{ flex:1; height:1px; background:var(--review-border); }
+
+  /* -------- explicativos (side-tab vs numbered) -------- */
+  .explain-list{ display:flex; flex-direction:column; gap:.55rem; }
+  .explain-item{ padding:.7rem .85rem; border-radius:var(--r); background:var(--surface-2); display:flex; gap:.7rem; align-items:flex-start; }
+  .explain-item.old{ border-left:3px solid var(--dourado); }
+  .explain-item .num{ flex-shrink:0; width:1.6rem; height:1.6rem; border-radius:50%; background:var(--dourado); color:#fff; font-weight:800; font-size:.78rem; display:flex; align-items:center; justify-content:center; }
+  .explain-item .txt .t{ font-size:.85rem; font-weight:700; } .explain-item .txt .d{ font-size:.78rem; color:var(--text-muted); margin-top:.1rem; }
+
+  /* -------- simulador: validação -------- */
+  .field-row{ display:flex; gap:.8rem; flex-wrap:wrap; align-items:flex-start; }
+  .field{ min-width:160px; }
+  .field label{ display:block; font-size:.72rem; color:var(--text-muted); margin-bottom:.25rem; }
+  .field input{ width:100%; background:var(--surface-2); border:1px solid var(--border); border-radius:var(--r); padding:.5rem .7rem; font-size:.9rem; color:var(--text); font-family:inherit; }
+  .field input.err{ border-color:var(--red); }
+  .field .msg{ font-size:.72rem; margin-top:.3rem; }
+  .field .msg.err{ color:var(--red); } .field .msg.ok{ color:var(--text-muted); }
+  .out-box{ margin-top:.9rem; padding:.8rem 1rem; border-radius:var(--r); background:var(--surface-2); border:1px solid var(--border); }
+  .out-box .v{ font-size:1.3rem; font-weight:800; font-variant-numeric:tabular-nums; }
+
+  /* -------- carrossel: alvo de toque -------- */
+  .arrow-demo{ display:flex; gap:1.4rem; align-items:center; }
+  .arrow-demo .box{ background:var(--vinho); border-radius:10px; padding:1.3rem; display:flex; align-items:center; justify-content:center; }
+  .arrow-old{ width:2.1rem; height:2.1rem; border-radius:999px; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.18); color:#fff; display:flex; align-items:center; justify-content:center; }
+  .arrow-new{ width:2.75rem; height:2.75rem; border-radius:999px; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.18); color:#fff; display:flex; align-items:center; justify-content:center; }
+
+  /* -------- rodapé -------- */
+  .footer-old{ text-align:center; color:var(--text-muted); font-size:.85rem; padding:1.2rem 0; }
+  .footer-new{ padding:1.6rem 1.4rem; background:var(--vinho); border-radius:8px; color:#fff; display:flex; justify-content:space-between; gap:1.5rem; flex-wrap:wrap; }
+  .footer-new .proof{ font-size:.8rem; color:var(--dourado-light); font-weight:700; margin-bottom:.4rem; }
+  .footer-new .links{ display:flex; gap:1.2rem; font-size:.82rem; }
+  .footer-new .links a{ color:rgba(255,255,255,.75); text-decoration:none; }
+
+  .state-panel{ display:none; } .state-panel.active{ display:block; }
+</style>
+
+<div class="review-bar">
+  <span class="review-tag">Revisão de proposta · CowData &nbsp;—&nbsp; <b>Página pública 2/3 · Prova, validação e acabamento</b></span>
+  <div class="review-switch" role="tablist">
+    <button class="stbtn active" data-state="atual">Atual</button>
+    <button class="stbtn" data-state="proposta">Proposta</button>
+  </div>
+</div>
+<p class="review-note" id="note-atual">
+  <b>Hoje:</b> o "side-tab" (borda esquerda sólida) se repete em 5 cards — o próprio detector chama isso de "a marca mais reconhecível de UI gerada por IA". O simulador não valida entrada (CCS negativo passa direto). As setas do carrossel têm ~34px de alvo de toque. O rodapé é uma linha de texto, sem prova nem link nenhum.
+</p>
+<p class="review-note" id="note-proposta" hidden>
+  <b>Proposta:</b> selo numerado no lugar da borda sólida. Digite um CCS negativo no campo abaixo — o erro aparece inline e a saída trava. Setas do carrossel em 44px. Rodapé vira uma linha de prova concreta + links reais.
+</p>
+
+<div class="stage">
+
+  <!-- ================= ATUAL ================= -->
+  <div class="state-panel active" id="panel-atual">
+    <div class="card-plain">
+      <div class="section-label">Como o preço é composto — 5 cards<span class="rule"></span></div>
+      <div class="explain-list">
+        <div class="explain-item old"><div class="txt"><div class="t">1. Preço base negociado</div><div class="d">Valor combinado em contrato com o laticínio.</div></div></div>
+        <div class="explain-item old"><div class="txt"><div class="t">2. Bonificação por qualidade</div><div class="d">CCS e CBT/CPP baixos rendem um extra por litro.</div></div></div>
+        <div class="explain-item old"><div class="txt"><div class="t">3. Bonificação por sólidos</div><div class="d">Gordura e proteína acima da referência agregam valor.</div></div></div>
+      </div>
+    </div>
+
+    <div class="card-plain">
+      <div class="section-label">Simulador — sem validação<span class="rule"></span></div>
+      <div class="field-row">
+        <div class="field"><label>CCS (mil cél./mL)</label><input value="-300"><div class="msg ok">&nbsp;</div></div>
+      </div>
+      <div class="out-box"><div style="font-size:.72rem;color:var(--text-muted);">Ajuste por CCS</div><div class="v" style="color:var(--green-light);">+R$0,07/L</div></div>
+      <p style="font-size:.78rem;color:var(--red);margin:.6rem 0 0;">↑ CCS negativo não existe fisicamente — e o simulador computa um ajuste como se fosse válido</p>
+    </div>
+
+    <div class="card-plain">
+      <div class="section-label">Setas do carrossel — ~34px<span class="rule"></span></div>
+      <div class="arrow-demo"><div class="box"><span class="arrow-old">‹</span></div><span style="font-size:.82rem;color:var(--text-muted);">abaixo do mínimo de 44px pra toque confiável</span></div>
+    </div>
+
+    <div class="footer-old">CowData · Estreito Ponte de Pedra · Jairo Nasser</div>
+  </div>
+
+  <!-- ================= PROPOSTA ================= -->
+  <div class="state-panel" id="panel-proposta">
+    <div class="card-plain">
+      <div class="section-label">Como o preço é composto — 5 cards<span class="rule"></span></div>
+      <div class="explain-list">
+        <div class="explain-item"><div class="num">1</div><div class="txt"><div class="t">Preço base negociado</div><div class="d">Valor combinado em contrato com o laticínio.</div></div></div>
+        <div class="explain-item"><div class="num">2</div><div class="txt"><div class="t">Bonificação por qualidade</div><div class="d">CCS e CBT/CPP baixos rendem um extra por litro.</div></div></div>
+        <div class="explain-item"><div class="num">3</div><div class="txt"><div class="t">Bonificação por sólidos</div><div class="d">Gordura e proteína acima da referência agregam valor.</div></div></div>
+      </div>
+    </div>
+
+    <div class="card-plain">
+      <div class="section-label">Simulador — com validação<span class="rule"></span></div>
+      <div class="field-row">
+        <div class="field">
+          <label>CCS (mil cél./mL)</label>
+          <input id="ccs-input" class="err" value="-300" min="0" max="2000">
+          <div class="msg err" id="ccs-msg">CCS não pode ser negativo — mínimo 0.</div>
+        </div>
+      </div>
+      <div class="out-box" id="ccs-out" style="opacity:.4;"><div style="font-size:.72rem;color:var(--text-muted);">Ajuste por CCS</div><div class="v" style="color:var(--text-muted);">— corrija o valor para calcular</div></div>
+      <p style="font-size:.78rem;color:var(--text-muted);margin:.6rem 0 0;">Tente digitar um valor válido (0–2000) no campo acima →</p>
+    </div>
+
+    <div class="card-plain">
+      <div class="section-label">Setas do carrossel — 44px<span class="rule"></span></div>
+      <div class="arrow-demo"><div class="box"><span class="arrow-new">‹</span></div><span style="font-size:.82rem;color:var(--text-muted);">alvo de toque no piso recomendado, mesmo visual</span></div>
+    </div>
+
+    <div class="footer-new">
+      <div>
+        <div class="proof">27+ testes automatizados das regras de negócio · dados reais da Fazenda Estreito Ponte de Pedra</div>
+        <div style="font-size:.8rem;color:rgba(255,255,255,.7);">CowData · Estreito Ponte de Pedra · Jairo Nasser</div>
+      </div>
+      <div class="links"><a href="#">Sobre</a><a href="#">Contato</a><a href="#">Termos</a></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  var buttons = Array.prototype.slice.call(document.querySelectorAll('.stbtn'));
+  var panels = { atual: document.getElementById('panel-atual'), proposta: document.getElementById('panel-proposta') };
+  var notes = { atual: document.getElementById('note-atual'), proposta: document.getElementById('note-proposta') };
+  function setState(state){
+    buttons.forEach(function(b){ b.classList.toggle('active', b.dataset.state === state); });
+    Object.keys(panels).forEach(function(k){ panels[k].classList.toggle('active', k === state); });
+    Object.keys(notes).forEach(function(k){ notes[k].hidden = k !== state; });
+  }
+  buttons.forEach(function(b){ b.addEventListener('click', function(){ setState(b.dataset.state); }); });
+
+  var ccsInput = document.getElementById('ccs-input');
+  var ccsMsg = document.getElementById('ccs-msg');
+  var ccsOut = document.getElementById('ccs-out');
+  function validarCcs(){
+    var v = parseFloat(ccsInput.value);
+    var valido = Number.isFinite(v) && v >= 0 && v <= 2000;
+    ccsInput.classList.toggle('err', !valido);
+    if (valido) {
+      ccsMsg.textContent = ''; ccsMsg.className = 'msg ok';
+      ccsOut.style.opacity = '1';
+      var ajuste = v < 200 ? 0.04 : v <= 400 ? 0.02 : v <= 600 ? 0 : -0.03;
+      ccsOut.querySelector('.v').textContent = (ajuste >= 0 ? '+R$' : '−R$') + Math.abs(ajuste).toFixed(2).replace('.', ',') + '/L';
+      ccsOut.querySelector('.v').style.color = ajuste >= 0 ? 'var(--green-light)' : 'var(--red)';
+    } else {
+      ccsMsg.textContent = 'CCS não pode ser negativo — mínimo 0.'; ccsMsg.className = 'msg err';
+      ccsOut.style.opacity = '.4';
+      ccsOut.querySelector('.v').textContent = '— corrija o valor para calcular';
+      ccsOut.querySelector('.v').style.color = 'var(--text-muted)';
+    }
+  }
+  ccsInput.addEventListener('input', validarCcs);
+</script>

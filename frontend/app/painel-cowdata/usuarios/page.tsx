@@ -113,7 +113,7 @@ export default function UsuariosPorFazendaCowData() {
 
       {fazendaId !== "" && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: 10, padding: "1rem" }}>
+          <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "1rem" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.85rem", fontWeight: 700, color: COR.texto, marginBottom: "0.8rem" }}>
               <UserPlus size={14} /> Novo usuário
             </div>
@@ -165,7 +165,7 @@ export default function UsuariosPorFazendaCowData() {
             </div>
           </div>
 
-          <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: 10, padding: "1rem" }}>
+          <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "1rem" }}>
             <div style={{ fontSize: "0.85rem", fontWeight: 700, color: COR.texto, marginBottom: "0.8rem" }}>
               Usuários desta fazenda {carregando && <span style={{ color: COR.mudo, fontWeight: 400 }}>· carregando…</span>}
             </div>
@@ -214,7 +214,7 @@ function LinhaUsuario({ u, fazendaId, aberto, onAbrir, onSalvo }: {
   };
 
   return (
-    <div style={{ border: `1px solid ${COR.borda}`, borderRadius: 8, overflow: "hidden" }}>
+    <div style={{ border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", overflow: "hidden" }}>
       <button onClick={onAbrir} style={{
         width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.55rem 0.7rem",
         background: "rgba(255,255,255,0.02)", border: "none", cursor: "pointer", color: COR.texto, textAlign: "left",

@@ -1,0 +1,189 @@
+<title>Confirmar Antes de Cortar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* paleta própria do painel-cowdata (slate-blue escuro, isolada do produto de fazenda) */
+    --op-bg:#F4F5F7; --op-surface:#FFFFFF; --op-surface-2:#F8F9FA; --op-border:#E1E4E9;
+    --op-text:#1E2430; --op-muted:#69707D;
+    --op-accent:#3D4A63; --op-accent-2:#5A6B8C;
+    --dourado:#8A6D2F; --dourado-light:#C9A44C;
+    --green:#2E7D52; --green-light:#4CAF80; --red:#C0392B; --amber:#D97706;
+    --r:2px; --shadow:0 1px 4px rgba(20,30,45,.10);
+    --review-bg:#EDEFF2; --review-fg:#3A4250; --review-border:#D6DAE1; --review-accent:#0E2A47;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --op-bg:#0E1116; --op-surface:#171B22; --op-surface-2:#1D222B; --op-border:#2B313C;
+      --op-text:#E7EAF0; --op-muted:#8A93A3; --op-accent:#5A6B8C; --op-accent-2:#7C8CAD;
+      --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+    }
+  }
+  :root[data-theme="dark"]{
+    --op-bg:#0E1116; --op-surface:#171B22; --op-surface-2:#1D222B; --op-border:#2B313C;
+    --op-text:#E7EAF0; --op-muted:#8A93A3; --op-accent:#5A6B8C; --op-accent-2:#7C8CAD;
+    --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--review-bg); color:var(--op-text); font-family:'Barlow', Inter, sans-serif;
+    padding-inline:max(16px, calc((100vw - 1180px)/2)); padding-block:20px 48px; }
+  h1,h2,.section-label{ font-family:'Barlow Condensed', Inter, sans-serif; }
+
+  .review-bar{ max-width:1180px; margin:0 auto 18px; padding:.85rem 1.1rem; background:var(--review-bg); border:1px solid var(--review-border); border-radius:8px; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
+  .review-tag{ font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--review-fg); }
+  .review-tag b{ color:var(--review-accent); }
+  .review-switch{ display:inline-flex; border:1px solid var(--review-border); border-radius:999px; padding:3px; gap:2px; background:var(--op-surface); }
+  .review-switch button{ font-family:'Barlow Condensed', Inter, sans-serif; font-weight:700; font-size:.85rem; padding:.4rem 1.1rem; border-radius:999px; border:none; cursor:pointer; background:transparent; color:var(--op-muted); }
+  .review-switch button.active{ background:var(--op-accent); color:#fff; }
+  .review-note{ max-width:1180px; margin:0 auto 18px; font-size:.82rem; color:var(--review-fg); }
+  .review-note b{ color:var(--review-accent); }
+  .review-note code{ background:var(--op-surface-2); border:1px solid var(--op-border); border-radius:4px; padding:.05rem .35rem; font-size:.78rem; }
+
+  .app{ max-width:1180px; margin:0 auto; background:var(--op-bg); border:1px solid var(--review-border); border-radius:10px; padding:1.6rem 1.7rem 2rem; }
+  .app h1{ font-size:1.3rem; font-weight:700; margin:0 0 .2rem; }
+  .app .sub{ font-size:.82rem; color:var(--op-muted); margin-bottom:1.3rem; }
+
+  .kpi-row{ display:flex; gap:.9rem; flex-wrap:wrap; margin-bottom:1.4rem; }
+  .kpi{ background:var(--op-surface); border:1px solid var(--op-border); border-radius:var(--r); padding:1rem 1.2rem; flex:1 1 12rem; box-shadow:var(--shadow); text-decoration:none; color:inherit; display:block; }
+  .kpi .l{ font-size:.68rem; text-transform:uppercase; letter-spacing:.06em; color:var(--op-muted); margin-bottom:.4rem; }
+  .kpi .v{ font-size:1.5rem; font-weight:700; font-variant-numeric:tabular-nums; }
+  .kpi.pending .v{ color:var(--dourado); }
+  .kpi.pending.linkable{ border-color:var(--dourado); cursor:pointer; transition:border-color .15s; }
+  .kpi.pending.linkable:hover{ border-color:var(--dourado-light); }
+  .kpi .arrow{ font-size:.72rem; color:var(--dourado); margin-top:.3rem; font-weight:700; }
+
+  .section-label{ font-size:.68rem; font-weight:700; letter-spacing:.13em; text-transform:uppercase; color:var(--op-muted); margin:0 0 .7rem; display:flex; align-items:center; gap:.5rem; }
+  .section-label .rule{ flex:1; height:1px; background:var(--op-border); }
+
+  table{ width:100%; border-collapse:collapse; background:var(--op-surface); border:1px solid var(--op-border); border-radius:var(--r); overflow:hidden; }
+  th{ text-align:left; font-size:.68rem; text-transform:uppercase; letter-spacing:.06em; color:var(--op-muted); padding:.6rem .9rem; background:var(--op-surface-2); border-bottom:1px solid var(--op-border); }
+  td{ padding:.65rem .9rem; font-size:.85rem; border-bottom:1px solid var(--op-border); }
+  tr:last-child td{ border-bottom:none; }
+  .status{ display:inline-flex; align-items:center; gap:.35rem; font-size:.78rem; font-weight:600; padding:.15rem .55rem; border-radius:999px; }
+  .status.pendente{ background:rgba(138,109,47,.14); color:var(--dourado); }
+  .status.ativo{ background:rgba(46,125,82,.14); color:var(--green); }
+  .status.suspenso{ background:rgba(192,57,43,.14); color:var(--red); }
+  .row-pending{ background:rgba(138,109,47,.05); }
+
+  .btn{ font-size:.78rem; font-weight:700; border-radius:var(--r); padding:.35rem .75rem; cursor:pointer; border:1px solid; background:transparent; }
+  .btn-approve{ color:var(--green); border-color:var(--green); }
+  .btn-suspend{ color:var(--red); border-color:var(--red); }
+  .btn.disabled{ opacity:.4; cursor:not-allowed; }
+
+  /* modal de confirmação */
+  .overlay{ position:fixed; inset:0; background:rgba(10,14,20,.55); display:flex; align-items:center; justify-content:center; z-index:50; }
+  .overlay[hidden]{ display:none; }
+  .modal{ background:var(--op-surface); border:1px solid var(--op-border); border-radius:8px; padding:1.4rem 1.5rem; max-width:26rem; width:100%; box-shadow:0 20px 50px rgba(0,0,0,.35); }
+  .modal h3{ margin:0 0 .5rem; font-size:1.05rem; }
+  .modal p{ font-size:.85rem; color:var(--op-muted); margin:0 0 1.1rem; line-height:1.5; }
+  .modal p b{ color:var(--op-text); }
+  .modal .actions{ display:flex; gap:.6rem; justify-content:flex-end; }
+  .modal .btn-ghost{ background:transparent; border:1px solid var(--op-border); color:var(--op-text); border-radius:var(--r); padding:.5rem 1rem; font-size:.85rem; cursor:pointer; }
+  .modal .btn-danger{ background:var(--red); border:1px solid var(--red); color:#fff; border-radius:var(--r); padding:.5rem 1rem; font-size:.85rem; cursor:pointer; font-weight:600; }
+  .toast{ position:fixed; bottom:1.5rem; right:1.5rem; background:var(--green); color:#fff; padding:.7rem 1.1rem; border-radius:var(--r); font-size:.85rem; font-weight:600; box-shadow:0 10px 24px rgba(0,0,0,.3); z-index:60; opacity:0; transform:translateY(8px); transition:opacity .25s, transform .25s; }
+  .toast.show{ opacity:1; transform:translateY(0); }
+
+  .state-panel{ display:none; } .state-panel.active{ display:block; }
+</style>
+
+<div class="review-bar">
+  <span class="review-tag">Revisão de proposta · Painel CowData &nbsp;—&nbsp; <b>P0+P1 · Confirmação + fila por urgência</b></span>
+  <div class="review-switch" role="tablist">
+    <button class="stbtn active" data-state="atual">Atual</button>
+    <button class="stbtn" data-state="proposta">Proposta</button>
+  </div>
+</div>
+<p class="review-note" id="note-atual">
+  <b>Hoje:</b> "Aguardando aprovação" no Cockpit é decorativo (só fica dourado), sem link. Na tabela de Assinaturas, a ordem é arbitrária — não por urgência. Suspender ou aprovar dispara na hora, sem confirmação — a ação de maior consequência do sistema é a que tem <b>menos</b> fricção.
+</p>
+<p class="review-note" id="note-proposta" hidden>
+  <b>Proposta:</b> o card "Aguardando aprovação" agora é um link real pra fila filtrada. A tabela ordena pendentes primeiro. Clique em "Suspender" numa linha — aparece um modal nomeando a fazenda antes de qualquer coisa acontecer, e um toast confirma o resultado.
+</p>
+
+<div class="app">
+  <h1>Cockpit</h1>
+  <div class="sub">Visão geral do negócio CowData</div>
+
+  <!-- ================= ATUAL ================= -->
+  <div class="state-panel active" id="panel-atual">
+    <div class="kpi-row">
+      <div class="kpi"><div class="l">MRR</div><div class="v">R$ 4.180,00</div></div>
+      <div class="kpi"><div class="l">Fazendas-cliente</div><div class="v">6</div></div>
+      <div class="kpi"><div class="l">Contratos ativos</div><div class="v">5</div></div>
+      <div class="kpi pending"><div class="l">Aguardando aprovação</div><div class="v">2</div></div>
+    </div>
+
+    <div class="section-label">Assinaturas — ordem de cadastro<span class="rule"></span></div>
+    <table>
+      <thead><tr><th>Fazenda</th><th>Plano</th><th>Status</th><th>MRR</th><th>Ação</th></tr></thead>
+      <tbody>
+        <tr><td>Fazenda Boa Vista</td><td>Pro</td><td><span class="status ativo">● Ativo</span></td><td>R$ 890</td><td><button class="btn btn-suspend" onclick="abrirModal('Fazenda Boa Vista')">Suspender</button></td></tr>
+        <tr><td>Sítio Três Marias</td><td>Básico</td><td><span class="status pendente">● Pendente</span></td><td>R$ 420</td><td><button class="btn btn-approve">Aprovar</button></td></tr>
+        <tr><td>Fazenda Capão Alto</td><td>Pro</td><td><span class="status ativo">● Ativo</span></td><td>R$ 890</td><td><button class="btn btn-suspend" onclick="abrirModal('Fazenda Capão Alto')">Suspender</button></td></tr>
+        <tr><td>Rancho Bela Vista</td><td>Básico</td><td><span class="status pendente">● Pendente</span></td><td>R$ 420</td><td><button class="btn btn-approve">Aprovar</button></td></tr>
+        <tr><td>Fazenda Santa Luzia</td><td>Pro</td><td><span class="status suspenso">● Suspenso</span></td><td>R$ 0</td><td><button class="btn disabled">—</button></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ================= PROPOSTA ================= -->
+  <div class="state-panel" id="panel-proposta">
+    <div class="kpi-row">
+      <div class="kpi"><div class="l">MRR</div><div class="v">R$ 4.180,00</div></div>
+      <div class="kpi"><div class="l">Fazendas-cliente</div><div class="v">6</div></div>
+      <div class="kpi"><div class="l">Contratos ativos</div><div class="v">5</div></div>
+      <a href="#" class="kpi pending linkable" onclick="return false;"><div class="l">Aguardando aprovação</div><div class="v">2</div><div class="arrow">Ver fila →</div></a>
+    </div>
+
+    <div class="section-label">Assinaturas — pendentes primeiro<span class="rule"></span></div>
+    <table>
+      <thead><tr><th>Fazenda</th><th>Plano</th><th>Status</th><th>MRR</th><th>Ação</th></tr></thead>
+      <tbody>
+        <tr class="row-pending"><td>Sítio Três Marias</td><td>Básico</td><td><span class="status pendente">● Pendente</span></td><td>R$ 420</td><td><button class="btn btn-approve">Aprovar</button></td></tr>
+        <tr class="row-pending"><td>Rancho Bela Vista</td><td>Básico</td><td><span class="status pendente">● Pendente</span></td><td>R$ 420</td><td><button class="btn btn-approve">Aprovar</button></td></tr>
+        <tr><td>Fazenda Boa Vista</td><td>Pro</td><td><span class="status ativo">● Ativo</span></td><td>R$ 890</td><td><button class="btn btn-suspend" onclick="abrirModal('Fazenda Boa Vista')">Suspender</button></td></tr>
+        <tr><td>Fazenda Capão Alto</td><td>Pro</td><td><span class="status ativo">● Ativo</span></td><td>R$ 890</td><td><button class="btn btn-suspend" onclick="abrirModal('Fazenda Capão Alto')">Suspender</button></td></tr>
+        <tr><td>Fazenda Santa Luzia</td><td>Pro</td><td><span class="status suspenso">● Suspenso</span></td><td>R$ 0</td><td><button class="btn disabled">—</button></td></tr>
+      </tbody>
+    </table>
+    <p style="font-size:.78rem;color:var(--op-muted);margin-top:.6rem;">↑ clique em "Suspender" em qualquer linha pra ver a confirmação real</p>
+  </div>
+</div>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="modal">
+    <h3>Suspender acesso?</h3>
+    <p>Você está prestes a suspender o acesso de <b id="modal-fazenda">—</b>. O usuário da fazenda perde acesso ao painel e ao app de campo imediatamente. Essa ação pode ser revertida depois, em Assinaturas.</p>
+    <div class="actions">
+      <button class="btn-ghost" onclick="fecharModal()">Cancelar</button>
+      <button class="btn-danger" onclick="confirmarSuspensao()">Suspender mesmo assim</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+  var buttons = Array.prototype.slice.call(document.querySelectorAll('.stbtn'));
+  var panels = { atual: document.getElementById('panel-atual'), proposta: document.getElementById('panel-proposta') };
+  var notes = { atual: document.getElementById('note-atual'), proposta: document.getElementById('note-proposta') };
+  function setState(state){
+    buttons.forEach(function(b){ b.classList.toggle('active', b.dataset.state === state); });
+    Object.keys(panels).forEach(function(k){ panels[k].classList.toggle('active', k === state); });
+    Object.keys(notes).forEach(function(k){ notes[k].hidden = k !== state; });
+  }
+  buttons.forEach(function(b){ b.addEventListener('click', function(){ setState(b.dataset.state); }); });
+
+  var overlay = document.getElementById('overlay');
+  var modalFazenda = document.getElementById('modal-fazenda');
+  var fazendaAtual = '';
+  function abrirModal(nome){ fazendaAtual = nome; modalFazenda.textContent = nome; overlay.hidden = false; }
+  function fecharModal(){ overlay.hidden = true; }
+  var toast = document.getElementById('toast');
+  function confirmarSuspensao(){
+    overlay.hidden = true;
+    toast.textContent = fazendaAtual + ' suspensa com sucesso.';
+    toast.classList.add('show');
+    setTimeout(function(){ toast.classList.remove('show'); }, 2600);
+  }
+</script>

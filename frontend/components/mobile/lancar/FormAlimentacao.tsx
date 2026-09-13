@@ -9,9 +9,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { MobCampo, MobAviso } from "@/components/mobile/ui";
 import { fetchDietas, fetchLotes } from "@/lib/api";
-import { type Dieta, useCache, useEnvio, hoje } from "./comum";
+import { type Dieta, useCache, useEnvio, useRascunho, hoje, RascunhoAviso } from "./comum";
 
 type Lote = { id: number; codigo: string; nome: string };
+type DraftAlimentacao = { loteSel: string; dietaId: string; alimento: string; quantidade: string };
 
 export function FormAlimentacao() {
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
@@ -19,10 +20,16 @@ export function FormAlimentacao() {
   const dietas = useCache<Dieta[]>("dietas", () => fetchDietas() as Promise<Dieta[]>, []);
   const lotes = useCache<Lote[]>("lotes", () => fetchLotes() as Promise<Lote[]>, []);
 
-  const [loteSel, setLoteSel] = useState<string>("");
-  const [dietaId, setDietaId] = useState("");
-  const [alimento, setAlimento] = useState("");
-  const [quantidade, setQuantidade] = useState("");
+  // Rascunho — a quantidade pesada no cocho é exatamente o tipo de dado que
+  // se perde numa interrupção (docs/agents/design-implementation.md §5,
+  // acabamento-de-campo.html).
+  const rascunho = useRascunho<DraftAlimentacao>("alimentacao", { loteSel: "", dietaId: "", alimento: "", quantidade: "" });
+  const { loteSel, dietaId, alimento, quantidade } = rascunho.valor;
+  const atualizar = (patch: Partial<DraftAlimentacao>) => rascunho.setValor((atual) => ({ ...atual, ...patch }));
+  const setLoteSel = (v: string) => atualizar({ loteSel: v });
+  const setDietaId = (v: string) => atualizar({ dietaId: v });
+  const setAlimento = (v: string) => atualizar({ alimento: v });
+  const setQuantidade = (v: string) => atualizar({ quantidade: v });
   const [data, setData] = useState(hoje());
 
   const rotuloLote = (l: number) => {
@@ -56,8 +63,7 @@ export function FormAlimentacao() {
 
   // Ao trocar de lote, seleciona a dieta preferida (ou limpa se ambígua).
   useEffect(() => {
-    setDietaId(dietaPreferida ? String(dietaPreferida.id) : "");
-    setAlimento("");
+    atualizar({ dietaId: dietaPreferida ? String(dietaPreferida.id) : "", alimento: "" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loteSel]);
 
@@ -72,7 +78,7 @@ export function FormAlimentacao() {
       `/alimentacao/dietas/${dietaSel.id}/real`,
       { data, itens: [{ alimento, quantidade: Number(quantidade), unidade: itemSel.unidade }] },
       `Alimentação — ${rotuloLote(dietaSel.lote)}: ${quantidade} ${itemSel.unidade} de ${alimento}`,
-      () => { setAlimento(""); setQuantidade(""); },
+      () => atualizar({ alimento: "", quantidade: "" }),
     );
   }
 
@@ -90,6 +96,7 @@ export function FormAlimentacao() {
 
   return (
     <>
+      <RascunhoAviso mostrar={rascunho.salvo} />
       <MobCampo label="Lote">
         <select className="mob-input" value={loteSel} onChange={(e) => setLoteSel(e.target.value)}>
           <option value="">Selecione o lote…</option>

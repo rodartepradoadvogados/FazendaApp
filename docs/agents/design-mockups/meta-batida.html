@@ -1,0 +1,224 @@
+<title>Meta Batida</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --vinho:#0E2A47; --vinho-light:#416180; --vinho-dark:#0A1F36;
+    --dourado:#8A6D2F; --dourado-light:#C9A44C;
+    --bg:#F4F6F9; --surface:#FFFFFF; --surface-2:#F9FAFB;
+    --border:#DCE3EA; --border-strong:#C3CDD8;
+    --text:#1F2937; --text-muted:#6B7280;
+    --green:#2E7D52; --green-light:#4CAF80; --red:#C0392B; --amber:#D97706;
+    --r:2px; --shadow:0 1px 4px rgba(20,30,45,.10);
+    --review-bg:#EDEFF2; --review-fg:#3A4250; --review-border:#D6DAE1; --review-accent:#0E2A47;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --vinho:#1B3A5C; --vinho-light:#5B85A8; --dourado:#C9A44C; --dourado-light:#E3C077;
+      --bg: color-mix(in srgb, var(--vinho) 12%, #050304);
+      --surface: color-mix(in srgb, var(--vinho) 14%, #0F0A0C);
+      --surface-2: color-mix(in srgb, var(--vinho) 16%, #170F13);
+      --border: color-mix(in srgb, var(--vinho) 22%, #2A1A20);
+      --text:#F0E8EC; --text-muted:#9B8A91;
+      --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+    }
+  }
+  :root[data-theme="dark"]{
+    --vinho:#1B3A5C; --vinho-light:#5B85A8; --dourado:#C9A44C; --dourado-light:#E3C077;
+    --bg: color-mix(in srgb, var(--vinho) 12%, #050304);
+    --surface: color-mix(in srgb, var(--vinho) 14%, #0F0A0C);
+    --surface-2: color-mix(in srgb, var(--vinho) 16%, #170F13);
+    --border: color-mix(in srgb, var(--vinho) 22%, #2A1A20);
+    --text:#F0E8EC; --text-muted:#9B8A91;
+    --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+  }
+
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--review-bg); color:var(--text); font-family:'Barlow', Inter, sans-serif;
+    padding-inline: max(16px, calc((100vw - 1180px)/2)); padding-block: 20px 48px; }
+  h1,h2,.section-label{ font-family:'Barlow Condensed', Inter, sans-serif; }
+
+  .review-bar{ max-width:1180px; margin:0 auto 18px; padding:.85rem 1.1rem; background:var(--review-bg); border:1px solid var(--review-border); border-radius:8px; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
+  .review-tag{ font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--review-fg); }
+  .review-tag b{ color:var(--review-accent); }
+  .review-switch{ display:inline-flex; border:1px solid var(--review-border); border-radius:999px; padding:3px; gap:2px; background:var(--surface); }
+  .review-switch button{ font-family:'Barlow Condensed', Inter, sans-serif; font-weight:700; font-size:.85rem; padding:.4rem 1.1rem; border-radius:999px; border:none; cursor:pointer; background:transparent; color:var(--text-muted); }
+  .review-switch button.active{ background:var(--vinho); color:var(--dourado-light); }
+  .review-note{ max-width:1180px; margin:0 auto 18px; font-size:.82rem; color:var(--review-fg); }
+  .review-note b{ color:var(--review-accent); }
+  .flag{ display:inline-block; margin:0 auto 22px; max-width:1180px; font-size:.78rem; color:#8A5A1E; background:rgba(201,164,76,.14); border:1px solid var(--dourado); border-radius:6px; padding:.6rem .9rem; }
+  .flag b{ color:var(--dourado); }
+
+  .app{ max-width:1180px; margin:0 auto; background:var(--bg); border:1px solid var(--review-border); border-radius:10px; padding:1.6rem 1.7rem 2rem; }
+  .kpi-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:1rem; }
+
+  .kpi{ background:var(--surface); border:1px solid var(--border); border-radius:var(--r); box-shadow:var(--shadow); padding:1.1rem 1.2rem; position:relative; border-left:3px solid var(--vinho); }
+  .kpi-top{ display:flex; align-items:baseline; justify-content:space-between; gap:.5rem; }
+  .kpi-value{ font-size:1.6rem; font-weight:800; color:var(--vinho); font-variant-numeric:tabular-nums; line-height:1; }
+  .kpi-delta{ font-size:.78rem; font-weight:700; display:inline-flex; align-items:center; gap:.15rem; }
+  .kpi-delta.up{ color:var(--green); } .kpi-delta.down{ color:var(--red); }
+  .kpi-label{ font-size:.64rem; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--text-muted); margin:.3rem 0 .6rem; }
+  .kpi-spark{ display:block; width:100%; height:34px; }
+  .kpi-meta-line{ stroke:var(--border-strong); stroke-width:1; stroke-dasharray:2 2; }
+
+  /* ---- Sanidade: cartão de meta batida ---- */
+  .kpi.meta-goal{ border-left-color:var(--dourado); }
+  .badge-meta{ position:absolute; top:.7rem; right:.7rem; font-size:.6rem; font-weight:700; letter-spacing:.08em; color:var(--vinho-dark); background:color-mix(in srgb, var(--dourado-light) 30%, transparent); border:1px solid var(--dourado); border-radius:999px; padding:.15rem .55rem; }
+  .streak-value{ font-size:1.6rem; font-weight:800; color:var(--dourado); }
+  .streak-unit{ font-size:.8rem; color:var(--text-muted); font-weight:600; }
+
+  /* ---- variante OUSADA: exceção pontual às regras No-Lift / sem gradiente ---- */
+  .kpi.ousado{ transition:transform .5s ease, box-shadow .5s ease; }
+  .kpi.ousado.armed{ transform:translateY(-3px); box-shadow:0 10px 24px rgba(138,109,47,.28), var(--shadow); }
+  .sheen{ position:absolute; inset:0; border-radius:var(--r); overflow:hidden; pointer-events:none; }
+  .sheen::after{
+    content:""; position:absolute; top:0; left:-60%; width:40%; height:100%;
+    background:linear-gradient(75deg, transparent, rgba(255,255,255,.55), transparent);
+    transform:skewX(-18deg); transition:left 1.1s ease;
+  }
+  .kpi.ousado.armed .sheen::after{ left:130%; }
+  @media (prefers-reduced-motion: reduce){ .kpi.ousado{ transition:none; } .kpi.ousado.armed{ transform:none; } .sheen::after{ transition:none; left:130%; } }
+
+  .state-panel{ display:none; } .state-panel.active{ display:block; }
+
+  @media (max-width:640px){ .app{ padding:1.1rem; } }
+</style>
+
+<div class="review-bar">
+  <span class="review-tag">Revisão de proposta · CowData &nbsp;—&nbsp; <b>5/6 · Aformoseamento (delight)</b></span>
+  <div class="review-switch" role="tablist">
+    <button class="stbtn active" data-state="atual">Atual</button>
+    <button class="stbtn" data-state="contido">Contido</button>
+    <button class="stbtn" data-state="ousado">Ousado</button>
+  </div>
+</div>
+<p class="review-note" id="note-atual">
+  <b>Hoje:</b> cada KPI é um número cru — sem tendência, sem meta, sem diferenciar "vai bem" de "vai mal". A pergunta 1 do critique original era exatamente essa: nada aqui recompensa um rebanho que está indo bem.
+</p>
+<p class="review-note" id="note-contido" hidden>
+  <b>Contido:</b> sparkline (10 dias) + delta + linha pontilhada de meta onde existe. 100% dentro das regras do <code>DESIGN.md</code> — sem gradiente, sem elevação, só cor/glifo.
+</p>
+<p class="review-note" id="note-ousado" hidden>
+  <b>Ousado:</b> igual ao Contido, mais um tratamento único no card de meta batida — clique em "Recarregar" pra ver o brilho passar. É uma <b>exceção pontual e nomeada</b> às regras No-Lift e sem-gradiente, só neste card, só neste estado (meta batida), nunca virando padrão geral.
+</p>
+<p class="flag" id="flag-ousado" hidden>
+  ⚠ <b>Exceção às regras do DESIGN.md</b> proposta aqui: elevação de 3px + sombra dourada + um brilho (sheen) em gradiente que passa uma vez pelo card, só quando uma meta é batida. Quebra literalmente a "No-Lift Rule" e a proibição de gradiente — decisão sua se isso vira uma exceção documentada ou se ficamos só no Contido.
+</p>
+
+<div class="app">
+
+  <!-- ================= ATUAL ================= -->
+  <div class="state-panel active" id="panel-atual">
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-value">128</div><div class="kpi-label">Vacas em lactação</div></div>
+      <div class="kpi"><div class="kpi-value">62%</div><div class="kpi-label">Prenhez do rebanho</div></div>
+      <div class="kpi"><div class="kpi-value">48%</div><div class="kpi-label">Taxa concepção IATF</div></div>
+      <div class="kpi"><div class="kpi-value">7</div><div class="kpi-label">Descartes no ano</div></div>
+    </div>
+  </div>
+
+  <!-- ================= CONTIDO ================= -->
+  <div class="state-panel" id="panel-contido">
+    <div class="kpi-grid">
+      <div class="kpi">
+        <div class="kpi-top"><span class="kpi-value">128</span><span class="kpi-delta up">▲ +4</span></div>
+        <div class="kpi-label">Vacas em lactação · 10 dias</div>
+        <svg class="kpi-spark" viewBox="0 0 100 30" preserveAspectRatio="none">
+          <polyline points="0,22 11,20 22,21 33,17 44,15 56,16 67,12 78,13 89,10 100,8" fill="none" stroke="var(--green)" stroke-width="2"/>
+          <polygon points="0,22 11,20 22,21 33,17 44,15 56,16 67,12 78,13 89,10 100,8 100,30 0,30" fill="var(--green)" opacity=".12"/>
+          <circle cx="100" cy="8" r="2.4" fill="var(--green)"/>
+        </svg>
+      </div>
+      <div class="kpi">
+        <div class="kpi-top"><span class="kpi-value">62%</span><span class="kpi-delta down">▼ −2pp</span></div>
+        <div class="kpi-label">Prenhez do rebanho · meta 65%</div>
+        <svg class="kpi-spark" viewBox="0 0 100 30" preserveAspectRatio="none">
+          <line class="kpi-meta-line" x1="0" y1="9" x2="100" y2="9"/>
+          <polyline points="0,4 11,5 22,6 33,6 44,7 56,7 67,8 78,8 89,9 100,10" fill="none" stroke="var(--red)" stroke-width="2"/>
+          <circle cx="100" cy="10" r="2.4" fill="var(--red)"/>
+        </svg>
+      </div>
+      <div class="kpi">
+        <div class="kpi-top"><span class="kpi-value">48%</span><span class="kpi-delta up">▲ +3pp</span></div>
+        <div class="kpi-label">Taxa concepção IATF · 10 dias</div>
+        <svg class="kpi-spark" viewBox="0 0 100 30" preserveAspectRatio="none">
+          <polyline points="0,20 11,18 22,19 33,15 44,14 56,15 67,11 78,10 89,11 100,8" fill="none" stroke="var(--green)" stroke-width="2"/>
+          <polygon points="0,20 11,18 22,19 33,15 44,14 56,15 67,11 78,10 89,11 100,8 100,30 0,30" fill="var(--green)" opacity=".12"/>
+          <circle cx="100" cy="8" r="2.4" fill="var(--green)"/>
+        </svg>
+      </div>
+      <div class="kpi meta-goal">
+        <span class="badge-meta">META</span>
+        <div class="kpi-top"><span class="streak-value">32</span><span class="streak-unit">dias sem baixa</span></div>
+        <div class="kpi-label">Sanidade · meta: zero baixas por doença</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= OUSADO ================= -->
+  <div class="state-panel" id="panel-ousado">
+    <div class="kpi-grid">
+      <div class="kpi">
+        <div class="kpi-top"><span class="kpi-value">128</span><span class="kpi-delta up">▲ +4</span></div>
+        <div class="kpi-label">Vacas em lactação · 10 dias</div>
+        <svg class="kpi-spark" viewBox="0 0 100 30" preserveAspectRatio="none">
+          <polyline points="0,22 11,20 22,21 33,17 44,15 56,16 67,12 78,13 89,10 100,8" fill="none" stroke="var(--green)" stroke-width="2"/>
+          <polygon points="0,22 11,20 22,21 33,17 44,15 56,16 67,12 78,13 89,10 100,8 100,30 0,30" fill="var(--green)" opacity=".12"/>
+          <circle cx="100" cy="8" r="2.4" fill="var(--green)"/>
+        </svg>
+      </div>
+      <div class="kpi">
+        <div class="kpi-top"><span class="kpi-value">62%</span><span class="kpi-delta down">▼ −2pp</span></div>
+        <div class="kpi-label">Prenhez do rebanho · meta 65%</div>
+        <svg class="kpi-spark" viewBox="0 0 100 30" preserveAspectRatio="none">
+          <line class="kpi-meta-line" x1="0" y1="9" x2="100" y2="9"/>
+          <polyline points="0,4 11,5 22,6 33,6 44,7 56,7 67,8 78,8 89,9 100,10" fill="none" stroke="var(--red)" stroke-width="2"/>
+          <circle cx="100" cy="10" r="2.4" fill="var(--red)"/>
+        </svg>
+      </div>
+      <div class="kpi">
+        <div class="kpi-top"><span class="kpi-value">48%</span><span class="kpi-delta up">▲ +3pp</span></div>
+        <div class="kpi-label">Taxa concepção IATF · 10 dias</div>
+        <svg class="kpi-spark" viewBox="0 0 100 30" preserveAspectRatio="none">
+          <polyline points="0,20 11,18 22,19 33,15 44,14 56,15 67,11 78,10 89,11 100,8" fill="none" stroke="var(--green)" stroke-width="2"/>
+          <polygon points="0,20 11,18 22,19 33,15 44,14 56,15 67,11 78,10 89,11 100,8 100,30 0,30" fill="var(--green)" opacity=".12"/>
+          <circle cx="100" cy="8" r="2.4" fill="var(--green)"/>
+        </svg>
+      </div>
+      <div class="kpi meta-goal ousado" id="kpi-ousado">
+        <div class="sheen"></div>
+        <span class="badge-meta">META</span>
+        <div class="kpi-top"><span class="streak-value">32</span><span class="streak-unit">dias sem baixa</span></div>
+        <div class="kpi-label">Sanidade · meta: zero baixas por doença</div>
+      </div>
+    </div>
+    <button id="btn-replay" type="button" style="margin-top:1.1rem; background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:.5rem 1rem; font-size:.82rem; font-weight:600; color:var(--text); cursor:pointer;">↻ Recarregar o brilho</button>
+  </div>
+
+</div>
+
+<script>
+  var buttons = Array.prototype.slice.call(document.querySelectorAll('.stbtn'));
+  var panels = { atual: document.getElementById('panel-atual'), contido: document.getElementById('panel-contido'), ousado: document.getElementById('panel-ousado') };
+  var notes = { atual: document.getElementById('note-atual'), contido: document.getElementById('note-contido'), ousado: document.getElementById('note-ousado') };
+  var flag = document.getElementById('flag-ousado');
+  var kpiOusado = document.getElementById('kpi-ousado');
+  var btnReplay = document.getElementById('btn-replay');
+
+  function armSheen(){
+    kpiOusado.classList.remove('armed');
+    void kpiOusado.offsetWidth;
+    requestAnimationFrame(function(){ kpiOusado.classList.add('armed'); });
+  }
+
+  function setState(state){
+    buttons.forEach(function(b){ b.classList.toggle('active', b.dataset.state === state); });
+    Object.keys(panels).forEach(function(k){ panels[k].classList.toggle('active', k === state); });
+    Object.keys(notes).forEach(function(k){ notes[k].hidden = k !== state; });
+    flag.hidden = state !== 'ousado';
+    if (state === 'ousado') armSheen();
+  }
+  buttons.forEach(function(b){ b.addEventListener('click', function(){ setState(b.dataset.state); }); });
+  btnReplay.addEventListener('click', armSheen);
+</script>

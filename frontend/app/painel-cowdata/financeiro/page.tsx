@@ -74,8 +74,11 @@ export default function FinanceiroCowData() {
           <button key={a} onClick={() => setAba(a)}
             style={{
               padding: "0.5rem 0.9rem", fontSize: "0.8rem", background: "transparent", border: "none", cursor: "pointer",
-              color: aba === a ? COR.dourado : COR.mudo, fontWeight: aba === a ? 700 : 400,
-              borderBottom: aba === a ? `2px solid ${COR.dourado}` : "2px solid transparent",
+              // Aba ativa em destaque neutro, não dourado — dourado fica só
+              // pra ação de confirmar/salvar (achado da crítica, ver
+              // docs/agents/design-implementation.md §5, painel-consistente.html).
+              color: aba === a ? COR.texto : COR.mudo, fontWeight: aba === a ? 700 : 400,
+              borderBottom: aba === a ? `2px solid ${COR.texto}` : "2px solid transparent",
             }}>
             {LABEL_ABA[a]}
           </button>

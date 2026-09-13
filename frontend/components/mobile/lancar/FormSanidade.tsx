@@ -14,8 +14,8 @@ import { fetchComCache } from "@/lib/offline";
 import { EstoquePicker } from "@/components/EstoquePicker";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import {
-  type Animal, type EstoqueItem, useCache, useEnvio, hoje,
-  MobPill, LinhaPills, SeletorAnimal, unidadesCompativeis, GradeAcoes,
+  type Animal, type EstoqueItem, useCache, useEnvio, useRascunho, hoje,
+  MobPill, LinhaPills, SeletorAnimal, unidadesCompativeis, GradeAcoes, RascunhoAviso,
 } from "./comum";
 
 type Protocolo = { id: number; nome: string; eh_mastite?: boolean };
@@ -122,9 +122,18 @@ export function CurativaForm({ tipo, animais, animalFixado, estoque }: { tipo: T
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   const protocolos = useCache<Protocolo[]>("protocolos_sanitarios", () => fetchProtocolosSanitarios() as Promise<Protocolo[]>, []);
 
-  const [modo, setModo] = useState<"animal" | "lote">("animal");
-  const [animal, setAnimal] = useState(animalFixado || "");
-  const [lote, setLote] = useState("");
+  // Rascunho do alvo (animal/lote escolhido) — o passo mais trabalhoso, não
+  // se perde numa interrupção (docs/agents/design-implementation.md §5,
+  // acabamento-de-campo.html).
+  const rascunhoAlvo = useRascunho<{ modo: "animal" | "lote"; animal: string; lote: string }>(
+    "sanidade_curativa_alvo", { modo: "animal", animal: animalFixado || "", lote: "" },
+  );
+  const { modo, animal, lote } = rascunhoAlvo.valor;
+  const atualizarAlvo = (patch: Partial<{ modo: "animal" | "lote"; animal: string; lote: string }>) =>
+    rascunhoAlvo.setValor((atual) => ({ ...atual, ...patch }));
+  const setModo = (v: "animal" | "lote") => atualizarAlvo({ modo: v });
+  const setAnimal = (v: string) => atualizarAlvo({ animal: v });
+  const setLote = (v: string) => atualizarAlvo({ lote: v });
   const [data, setData] = useState(hoje());
   const [produto, setProduto] = useState("");
   const [quantidade, setQuantidade] = useState("");
@@ -236,6 +245,7 @@ export function CurativaForm({ tipo, animais, animalFixado, estoque }: { tipo: T
 
   return (
     <>
+      <RascunhoAviso mostrar={rascunhoAlvo.salvo} />
       <LinhaPills>
         <MobPill ativa={modo === "animal"} onClick={() => setModo("animal")}>Animal</MobPill>
         <MobPill ativa={modo === "lote"} onClick={() => setModo("lote")}>Lote</MobPill>
@@ -401,9 +411,15 @@ function PreventivoAplicacao({ animais, animalFixado, estoque }: { animais: Anim
   const [freqValor, setFreqValor] = useState("1");
   const [freqUnidade, setFreqUnidade] = useState("meses");
   const [veterinario, setVeterinario] = useState("");
-  const [modo, setModo] = useState<"animal" | "lote">("animal");
-  const [animal, setAnimal] = useState(animalFixado || "");
-  const [lote, setLote] = useState("");
+  const rascunhoAlvo = useRascunho<{ modo: "animal" | "lote"; animal: string; lote: string }>(
+    "sanidade_preventiva_alvo", { modo: "animal", animal: animalFixado || "", lote: "" },
+  );
+  const { modo, animal, lote } = rascunhoAlvo.valor;
+  const atualizarAlvo = (patch: Partial<{ modo: "animal" | "lote"; animal: string; lote: string }>) =>
+    rascunhoAlvo.setValor((atual) => ({ ...atual, ...patch }));
+  const setModo = (v: "animal" | "lote") => atualizarAlvo({ modo: v });
+  const setAnimal = (v: string) => atualizarAlvo({ animal: v });
+  const setLote = (v: string) => atualizarAlvo({ lote: v });
   // Medicamento aplicado — sempre pedido para vacina/tratamento (não para
   // exame); pré-preenche com o padrão do evento, mas o usuário pode trocar.
   const [produto, setProduto] = useState("");
@@ -467,6 +483,7 @@ function PreventivoAplicacao({ animais, animalFixado, estoque }: { animais: Anim
 
   return (
     <>
+      <RascunhoAviso mostrar={rascunhoAlvo.salvo} />
       <MobCampo label="Evento preventivo">
         <select className="mob-input" value={eventoId} onChange={(e) => setEventoId(e.target.value)}>
           <option value="">Selecione…</option>
@@ -533,16 +550,28 @@ function PreventivoAplicacao({ animais, animalFixado, estoque }: { animais: Anim
 }
 
 // ── Preventiva > Calendário sanitário — POST /sanidade/calendario ───────────
+type DraftCalendarioSanitario = {
+  eventoId: string; categoriaAlvoSel: string[]; produto: string; dosagem: string; unidade: string;
+};
+
 function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
   const router = useRouter();
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   const [eventos, setEventos] = useState<EventoPrev[]>([]);
-  const [eventoId, setEventoId] = useState("");
   const [categoriasVida, setCategoriasVida] = useState<string[]>([]);
-  const [categoriaAlvoSel, setCategoriaAlvoSel] = useState<string[]>([]);
-  const [produto, setProduto] = useState("");
-  const [dosagem, setDosagem] = useState("");
-  const [unidade, setUnidade] = useState("");
+  // Rascunho — evento + categoria-alvo + medicamento escolhidos, o mais
+  // trabalhoso de reconstituir se o app for interrompido (docs/agents/
+  // design-implementation.md §5, acabamento-de-campo.html).
+  const rascunho = useRascunho<DraftCalendarioSanitario>("sanidade_calendario", {
+    eventoId: "", categoriaAlvoSel: [], produto: "", dosagem: "", unidade: "",
+  });
+  const { eventoId, categoriaAlvoSel, produto, dosagem, unidade } = rascunho.valor;
+  const atualizar = (patch: Partial<DraftCalendarioSanitario>) => rascunho.setValor((atual) => ({ ...atual, ...patch }));
+  const setEventoId = (v: string) => atualizar({ eventoId: v });
+  const setCategoriaAlvoSel = (v: string[]) => atualizar({ categoriaAlvoSel: v });
+  const setProduto = (v: string) => atualizar({ produto: v });
+  const setDosagem = (v: string) => atualizar({ dosagem: v });
+  const setUnidade = (v: string) => atualizar({ unidade: v });
   const [veterinario, setVeterinario] = useState("");
   const [freqValor, setFreqValor] = useState("1");
   const [freqUnidade, setFreqUnidade] = useState("meses");
@@ -585,7 +614,7 @@ function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
       },
       `Regra do calendário — ${evento?.nome || ""}`,
       () => {
-        setEventoId(""); setCategoriaAlvoSel([]); setProduto(""); setDosagem(""); setUnidade(""); setVeterinario(""); setObs(""); setUsaCronograma(false);
+        rascunho.limpar(); setVeterinario(""); setObs(""); setUsaCronograma(false);
         setCronogramaCriado(usouCronograma);
       },
     );
@@ -593,6 +622,7 @@ function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
 
   return (
     <>
+      <RascunhoAviso mostrar={rascunho.salvo} />
       <MobCampo label="Evento sanitário">
         <select className="mob-input" value={eventoId} onChange={(e) => setEventoId(e.target.value)}>
           <option value="">Selecione…</option>

@@ -1,0 +1,168 @@
+<title>O Motor, Não o Painel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --vinho:#0E2A47; --vinho-light:#416180; --dourado:#8A6D2F; --dourado-light:#C9A44C;
+    --bg:#F4F6F9; --surface:#FFFFFF; --surface-2:#F9FAFB; --border:#DCE3EA; --border-strong:#C3CDD8;
+    --text:#1F2937; --text-muted:#6B7280; --red:#C0392B;
+    --r:2px; --shadow:0 1px 4px rgba(20,30,45,.10); --hero-bg:#14385A;
+    --cat-reproducao:#8B7FF0; --cat-sanidade:#4E7A5A; --cat-financeiro:#7A2233; --cat-estoque:#C98A2A; --cat-gestao:#5B8FB0; --azul-prod:#1E6FA8;
+    --review-bg:#EDEFF2; --review-fg:#3A4250; --review-border:#D6DAE1; --review-accent:#0E2A47;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0B0D10; --surface:#15181D; --surface-2:#1B1F26; --border:#2A2E36; --border-strong:#3A3F49;
+      --text:#F0E8EC; --text-muted:#9B8A91; --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0B0D10; --surface:#15181D; --surface-2:#1B1F26; --border:#2A2E36; --border-strong:#3A3F49;
+    --text:#F0E8EC; --text-muted:#9B8A91; --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--review-bg); color:var(--text); font-family:'Barlow', Inter, sans-serif;
+    padding-inline:max(16px, calc((100vw - 1180px)/2)); padding-block:20px 48px; }
+  h1,h2,.section-label{ font-family:'Barlow Condensed', Inter, sans-serif; }
+
+  .review-bar{ max-width:1180px; margin:0 auto 18px; padding:.85rem 1.1rem; background:var(--review-bg); border:1px solid var(--review-border); border-radius:8px; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
+  .review-tag{ font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--review-fg); }
+  .review-tag b{ color:var(--review-accent); }
+  .review-switch{ display:inline-flex; border:1px solid var(--review-border); border-radius:999px; padding:3px; gap:2px; background:var(--surface); }
+  .review-switch button{ font-family:'Barlow Condensed', Inter, sans-serif; font-weight:700; font-size:.85rem; padding:.4rem 1.1rem; border-radius:999px; border:none; cursor:pointer; background:transparent; color:var(--text-muted); }
+  .review-switch button.active{ background:var(--vinho); color:var(--dourado-light); }
+  .review-note{ max-width:1180px; margin:0 auto 18px; font-size:.82rem; color:var(--review-fg); }
+  .review-note b{ color:var(--review-accent); }
+  .review-note code{ background:var(--surface-2); border:1px solid var(--border); border-radius:4px; padding:.05rem .35rem; font-size:.78rem; }
+
+  .stage{ max-width:1180px; margin:0 auto; display:flex; flex-direction:column; gap:1.3rem; }
+  .hero{ background:var(--hero-bg); border-radius:10px; padding:2.4rem 2.2rem; }
+  .hero .eyebrow{ display:inline-block; padding:.3rem .75rem; border-radius:999px; font-size:.7rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--dourado-light); background:rgba(201,164,76,.14); border:1px solid rgba(201,164,76,.3); margin-bottom:1rem; }
+  .hero h1{ font-size:clamp(1.7rem,3.2vw,2.5rem); font-weight:800; line-height:1.14; margin:0 0 .8rem; color:#fff; max-width:38rem; }
+  .hero p{ font-size:.98rem; color:rgba(245,238,241,.8); max-width:34rem; margin:0 0 1.2rem; line-height:1.55; }
+  .hero .cta{ display:inline-flex; align-items:center; gap:.4rem; background:var(--vinho); color:#fff; border:1px solid var(--vinho); border-radius:var(--r); padding:.55rem 1.2rem; font-weight:600; font-size:.9rem; }
+
+  .section-label{ font-size:.68rem; font-weight:700; letter-spacing:.13em; text-transform:uppercase; color:var(--review-fg); margin:0 0 .7rem; display:flex; align-items:center; gap:.5rem; }
+  .section-label .rule{ flex:1; height:1px; background:var(--review-border); }
+  .card-plain{ background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:1.2rem 1.3rem; }
+
+  /* ---- cards de destaque: hover REAL, compare de verdade passando o mouse ---- */
+  .feat-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:.9rem; }
+  .feat{ background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:1rem; box-shadow:var(--shadow); }
+  .feat .chip{ width:2.4rem; height:2.4rem; border-radius:50%; display:flex; align-items:center; justify-content:center; margin-bottom:.55rem; font-size:1.1rem; }
+  .feat .t{ font-weight:700; font-size:.9rem; } .feat .d{ font-size:.78rem; color:var(--text-muted); margin-top:.25rem; line-height:1.4; }
+
+  #feat-atual .feat{ transition:transform .2s ease, border-color .2s ease, box-shadow .2s ease; }
+  #feat-atual .feat:hover{ transform:translateY(-3px); border-color:var(--dourado); box-shadow:0 4px 14px rgba(0,0,0,.25); }
+  #feat-proposta .feat{ transition:border-color .2s ease; }
+  #feat-proposta .feat:hover{ border-color:var(--dourado); }
+  @media (prefers-reduced-motion: reduce){ #feat-atual .feat{ transition:none; } #feat-atual .feat:hover{ transform:none; } }
+
+  /* ---- grade "todos os temas": 8 num grid de 4 vs. 9 reais reagrupados ---- */
+  .theme-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:.7rem; }
+  .theme-chip{ background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:.7rem .8rem; font-size:.82rem; font-weight:600; display:flex; align-items:center; gap:.5rem; }
+  .theme-chip .dot{ width:8px;height:8px;border-radius:50%; flex-shrink:0; }
+  .ghost-slot{ border:1px dashed var(--border-strong); border-radius:var(--r); opacity:.5; }
+
+  .hidden{ display:none !important; }
+  .state-panel{ display:none; } .state-panel.active{ display:block; }
+  @media (max-width:640px){ .theme-grid{ grid-template-columns:repeat(2,1fr); } }
+</style>
+
+<div class="review-bar">
+  <span class="review-tag">Revisão de proposta · CowData &nbsp;—&nbsp; <b>Página pública 1/3 · Hero + No-Lift + grade</b></span>
+  <div class="review-switch" role="tablist">
+    <button class="stbtn active" data-state="atual">Atual</button>
+    <button class="stbtn" data-state="proposta">Proposta</button>
+  </div>
+</div>
+<p class="review-note" id="note-atual">
+  <b>Hoje:</b> o hero gira 4 dos 9 banners reais de <code>banners.ts</code> — nenhum deles cita o motor de regras (gestação por raça, protocolo IATF, elegibilidade de BST). Os cards de destaque (<code>FeatureShowcase.tsx:104-107</code>) sobem 3px e ganham sombra no hover — a própria <b>No-Lift Rule</b> do <code>DESIGN.md</code>, quebrada. A grade "Todos os temas" força os 9 banners reais em 4 colunas, deixando 3 vazias na última linha.
+</p>
+<p class="review-note" id="note-proposta" hidden>
+  <b>Proposta:</b> um banner novo entra na rotação citando o mecanismo real, com número e tudo. Passe o mouse nos cards — só a borda reage agora, sem subir nem ganhar sombra (mesma regra que já vale no app interno). A grade de temas veio pra 3 colunas × 3 linhas — cabe certinho, sem sobra.
+</p>
+
+<div class="stage">
+
+  <!-- ================= ATUAL ================= -->
+  <div class="state-panel active" id="panel-atual">
+    <div class="hero">
+      <span class="eyebrow">Indicadores gerenciais</span>
+      <h1>A fazenda inteira, num único painel de decisão</h1>
+      <p>Indicadores gerenciais para decisão rápida — a visão global dos resultados da fazenda, sem precisar abrir uma tela por vez.</p>
+      <span class="cta">Saiba mais →</span>
+    </div>
+
+    <div class="section-label" style="margin-top:1.3rem;">Tudo que a fazenda precisa<span class="rule"></span></div>
+    <div class="feat-grid" id="feat-atual">
+      <div class="feat"><div class="chip" style="background:color-mix(in srgb, var(--cat-reproducao) 16%, var(--surface-2)); border:1px solid var(--cat-reproducao); color:var(--cat-reproducao);">♥</div><div class="t">Reprodução</div><div class="d">Protocolos IATF, inseminação, diagnóstico de gestação e histórico por matriz.</div></div>
+      <div class="feat"><div class="chip" style="background:color-mix(in srgb, var(--azul-prod) 16%, var(--surface-2)); border:1px solid var(--azul-prod); color:var(--azul-prod);">🥛</div><div class="t">Produção</div><div class="d">Controle leiteiro, qualidade do leite (CCS/CPP), secagem e indicadores.</div></div>
+      <div class="feat"><div class="chip" style="background:color-mix(in srgb, var(--cat-sanidade) 16%, var(--surface-2)); border:1px solid var(--cat-sanidade); color:var(--cat-sanidade);">✚</div><div class="t">Sanidade</div><div class="d">Calendário sanitário preventivo, protocolos de tratamento e histórico clínico.</div></div>
+      <div class="feat"><div class="chip" style="background:color-mix(in srgb, var(--cat-financeiro) 16%, var(--surface-2)); border:1px solid var(--cat-financeiro); color:var(--cat-financeiro);">R$</div><div class="t">Financeiro</div><div class="d">Contas a pagar/receber, fluxo de caixa, DRE e folha de pagamento.</div></div>
+    </div>
+    <p style="font-size:.78rem;color:var(--text-muted);margin:.6rem 0 0;">↑ passe o mouse: os cards sobem e ganham sombra (hover atual, real)</p>
+
+    <div class="section-label" style="margin-top:1.3rem;">Todos os temas do sistema<span class="rule"></span></div>
+    <div class="theme-grid">
+      <div class="theme-chip"><span class="dot" style="background:var(--cat-reproducao)"></span>Reprodutivo</div>
+      <div class="theme-chip"><span class="dot" style="background:var(--cat-financeiro)"></span>Financeiro</div>
+      <div class="theme-chip"><span class="dot" style="background:var(--cat-gestao)"></span>Área do consultor</div>
+      <div class="theme-chip"><span class="dot" style="background:var(--azul-prod)"></span>Indicadores</div>
+      <div class="theme-chip"><span class="dot" style="background:var(--dourado)"></span>Milk News</div>
+      <div class="theme-chip"><span class="dot" style="background:var(--cat-estoque)"></span>Estoque & Alimentação</div>
+      <div class="theme-chip"><span class="dot" style="background:var(--cat-gestao)"></span>Pedidos & Planejamento</div>
+      <div class="theme-chip"><span class="dot" style="background:var(--cat-sanidade)"></span>Sanidade</div>
+      <div class="theme-chip"><span class="dot" style="background:var(--vinho-light)"></span>App de campo</div>
+      <div class="ghost-slot"></div><div class="ghost-slot"></div><div class="ghost-slot"></div>
+    </div>
+    <p style="font-size:.78rem;color:var(--red);margin:.6rem 0 0;">↑ 9 temas em 4 colunas = 3 espaços vazios na última linha</p>
+  </div>
+
+  <!-- ================= PROPOSTA ================= -->
+  <div class="state-panel" id="panel-proposta">
+    <div class="hero">
+      <span class="eyebrow">Reprodutivo</span>
+      <h1>Sua agenda sabe que Girolando prenha em 287 dias</h1>
+      <p>Holandês, 280. Gir e zebu, 295. Protocolo IATF completo (D0/D7/D9/D11), elegibilidade de BST e secagem — as regras que hoje vivem numa macro de Excel, testadas e rodando sozinhas todo dia.</p>
+      <span class="cta">Ver como funciona →</span>
+    </div>
+
+    <div class="section-label" style="margin-top:1.3rem;">Tudo que a fazenda precisa<span class="rule"></span></div>
+    <div class="feat-grid" id="feat-proposta">
+      <div class="feat"><div class="chip" style="background:color-mix(in srgb, var(--cat-reproducao) 16%, var(--surface-2)); border:1px solid var(--cat-reproducao); color:var(--cat-reproducao);">♥</div><div class="t">Reprodução</div><div class="d">Protocolos IATF, inseminação, diagnóstico de gestação e histórico por matriz.</div></div>
+      <div class="feat"><div class="chip" style="background:color-mix(in srgb, var(--azul-prod) 16%, var(--surface-2)); border:1px solid var(--azul-prod); color:var(--azul-prod);">🥛</div><div class="t">Produção</div><div class="d">Controle leiteiro, qualidade do leite (CCS/CPP), secagem e indicadores.</div></div>
+      <div class="feat"><div class="chip" style="background:color-mix(in srgb, var(--cat-sanidade) 16%, var(--surface-2)); border:1px solid var(--cat-sanidade); color:var(--cat-sanidade);">✚</div><div class="t">Sanidade</div><div class="d">Calendário sanitário preventivo, protocolos de tratamento e histórico clínico.</div></div>
+      <div class="feat"><div class="chip" style="background:color-mix(in srgb, var(--cat-financeiro) 16%, var(--surface-2)); border:1px solid var(--cat-financeiro); color:var(--cat-financeiro);">R$</div><div class="t">Financeiro</div><div class="d">Contas a pagar/receber, fluxo de caixa, DRE e folha de pagamento.</div></div>
+    </div>
+    <p style="font-size:.78rem;color:var(--text-muted);margin:.6rem 0 0;">↑ passe o mouse: só a borda reage — sem subir, sem sombra (No-Lift respeitada)</p>
+
+    <div class="section-label" style="margin-top:1.3rem;">Todos os temas do sistema<span class="rule"></span></div>
+    <div class="theme-grid" style="grid-template-columns:repeat(3,1fr);">
+      <div class="theme-chip"><span class="dot" style="background:var(--cat-reproducao)"></span>Reprodutivo</div>
+      <div class="theme-chip"><span class="dot" style="background:var(--cat-financeiro)"></span>Financeiro</div>
+      <div class="theme-chip"><span class="dot" style="background:var(--cat-gestao)"></span>Área do consultor</div>
+      <div class="theme-chip"><span class="dot" style="background:var(--azul-prod)"></span>Indicadores</div>
+      <div class="theme-chip"><span class="dot" style="background:var(--dourado)"></span>Milk News</div>
+      <div class="theme-chip"><span class="dot" style="background:var(--cat-estoque)"></span>Estoque & Alimentação</div>
+      <div class="theme-chip"><span class="dot" style="background:var(--cat-gestao)"></span>Pedidos & Planejamento</div>
+      <div class="theme-chip"><span class="dot" style="background:var(--cat-sanidade)"></span>Sanidade</div>
+      <div class="theme-chip"><span class="dot" style="background:var(--vinho-light)"></span>App de campo</div>
+    </div>
+    <p style="font-size:.78rem;color:var(--text-muted);margin:.6rem 0 0;">↑ 9 temas em 3 colunas × 3 linhas — encaixa exato, zero espaço morto</p>
+  </div>
+
+</div>
+
+<script>
+  var buttons = Array.prototype.slice.call(document.querySelectorAll('.stbtn'));
+  var panels = { atual: document.getElementById('panel-atual'), proposta: document.getElementById('panel-proposta') };
+  var notes = { atual: document.getElementById('note-atual'), proposta: document.getElementById('note-proposta') };
+  function setState(state){
+    buttons.forEach(function(b){ b.classList.toggle('active', b.dataset.state === state); });
+    Object.keys(panels).forEach(function(k){ panels[k].classList.toggle('active', k === state); });
+    Object.keys(notes).forEach(function(k){ notes[k].hidden = k !== state; });
+  }
+  buttons.forEach(function(b){ b.addEventListener('click', function(){ setState(b.dataset.state); }); });
+</script>

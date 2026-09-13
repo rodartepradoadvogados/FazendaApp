@@ -15,9 +15,13 @@ import { SubNavTabs } from "@/components/SubNavTabs";
 import { SuporteBanner } from "@/components/SuporteBanner";
 
 // Rotas públicas: acessíveis sem login, sem redirecionar para /login.
-// News é o blog da fazenda — leitura livre para qualquer visitante; /sobre/*
-// são as páginas institucionais linkadas pelos banners da própria /login.
-const ROTA_PUBLICA = (p: string) => p === "/login" || p === "/news" || p.startsWith("/sobre/");
+// News é o blog da fazenda — leitura livre para qualquer visitante,
+// incluindo a página de artigo (/news/[id]) — antes só a listagem exata
+// (/news) era pública, deixando as manchetes sem pra onde linkar de verdade
+// pra um visitante anônimo (achado P0 da crítica, ver
+// docs/agents/design-implementation.md §5, a-materia-completa.html);
+// /sobre/* são as páginas institucionais linkadas pelos banners da /login.
+const ROTA_PUBLICA = (p: string) => p === "/login" || p === "/news" || p.startsWith("/news/") || p.startsWith("/sobre/");
 
 /**
  * Porta de entrada: só mostra o sistema para quem estiver logado.
@@ -149,7 +153,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // — igual para qualquer visitante, logado ou não, independente do tema
   // escolhido no resto do sistema (ver NewsShell). Fica antes do gate de
   // "estado" porque não depende de login (ver ROTA_PUBLICA acima).
-  if (path === "/news") {
+  if (path === "/news" || path.startsWith("/news/")) {
     return (
       <NewsShell
         voltarHref={estado === "logado" ? "/" : "/login"}

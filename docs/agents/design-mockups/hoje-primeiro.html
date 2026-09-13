@@ -1,0 +1,316 @@
+<title>Hoje Primeiro</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* ---- tokens CowData (extraídos de DESIGN.md / globals.css — tema claro + paleta azul) ---- */
+    --vinho:#0E2A47; --vinho-light:#416180; --vinho-dark:#0A1F36;
+    --dourado:#8A6D2F; --dourado-light:#C9A44C;
+    --bg:#F4F6F9; --surface:#FFFFFF; --surface-2:#F9FAFB;
+    --border:#DCE3EA; --border-strong:#C3CDD8;
+    --text:#1F2937; --text-muted:#6B7280;
+    --green:#2E7D52; --green-light:#4CAF80;
+    --red:#C0392B; --amber:#D97706; --azul-prod:#1E6FA8;
+    --cat-reproducao:#8B7FF0; --cat-sanidade:#4E7A5A; --cat-alimentacao:#E0A63C;
+    --cat-gestao:#5B8FB0; --cat-financeiro:#7A2233; --cat-estoque:#C98A2A;
+    --r: 2px; /* the Almost-Square Rule */
+    --shadow: 0 1px 4px rgba(20,30,45,.10);
+
+    --review-bg:#EDEFF2; --review-fg:#3A4250; --review-border:#D6DAE1; --review-accent:#0E2A47;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --vinho:#1B3A5C; --vinho-light:#5B85A8; --vinho-dark:#081627;
+      --dourado:#C9A44C; --dourado-light:#E3C077;
+      --bg: color-mix(in srgb, var(--vinho) 12%, #050304);
+      --surface: color-mix(in srgb, var(--vinho) 14%, #0F0A0C);
+      --surface-2: color-mix(in srgb, var(--vinho) 16%, #170F13);
+      --border: color-mix(in srgb, var(--vinho) 22%, #2A1A20);
+      --border-strong: color-mix(in srgb, var(--vinho) 30%, #2A1A20);
+      --text:#F0E8EC; --text-muted:#9B8A91;
+      --green-light:#4CAF80; --red:#E07070;
+      --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+    }
+  }
+  :root[data-theme="dark"]{
+    --vinho:#1B3A5C; --vinho-light:#5B85A8; --vinho-dark:#081627;
+    --dourado:#C9A44C; --dourado-light:#E3C077;
+    --bg: color-mix(in srgb, var(--vinho) 12%, #050304);
+    --surface: color-mix(in srgb, var(--vinho) 14%, #0F0A0C);
+    --surface-2: color-mix(in srgb, var(--vinho) 16%, #170F13);
+    --border: color-mix(in srgb, var(--vinho) 22%, #2A1A20);
+    --border-strong: color-mix(in srgb, var(--vinho) 30%, #2A1A20);
+    --text:#F0E8EC; --text-muted:#9B8A91;
+    --green-light:#4CAF80; --red:#E07070;
+    --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--review-bg); color:var(--text);
+    font-family:'Barlow', Inter, sans-serif;
+    padding-inline: max(16px, calc((100vw - 1180px)/2));
+    padding-block: 20px 48px;
+  }
+  h1,h2,h3,.label,.card-header,.kpi-value,.eyebrow{ font-family:'Barlow Condensed', Inter, sans-serif; }
+
+  /* ============ chrome de revisão (NÃO é o produto — ferramenta desta comparação) ============ */
+  .review-bar{
+    max-width:1180px; margin:0 auto 18px; padding:.85rem 1.1rem;
+    background:var(--review-bg); border:1px solid var(--review-border); border-radius:8px;
+    display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap;
+  }
+  .review-tag{ font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--review-fg); }
+  .review-tag b{ color:var(--review-accent); }
+  .review-switch{ display:inline-flex; border:1px solid var(--review-border); border-radius:999px; padding:3px; gap:2px; background:var(--surface); }
+  .review-switch button{
+    font-family:'Barlow Condensed', Inter, sans-serif; font-weight:700; font-size:.85rem; letter-spacing:.02em;
+    padding:.4rem 1.1rem; border-radius:999px; border:none; cursor:pointer; background:transparent; color:var(--text-muted);
+  }
+  .review-switch button.active{ background:var(--vinho); color:var(--dourado-light); }
+  .review-note{ max-width:1180px; margin:0 auto 22px; font-size:.82rem; color:var(--review-fg); }
+  .review-note b{ color:var(--review-accent); }
+
+  /* ============ o "app" (réplica fiel dos tokens do painel CowData) ============ */
+  .app{ max-width:1180px; margin:0 auto; background:var(--bg); border:1px solid var(--review-border); border-radius:10px; padding:1.6rem 1.7rem 2rem; }
+  .app-header{ display:flex; align-items:baseline; justify-content:space-between; gap:1rem; margin-bottom:1.3rem; flex-wrap:wrap; }
+  .app-header h1{ font-size:1.5rem; font-weight:700; margin:0; color:var(--vinho); }
+  .app-header .sub{ font-size:.82rem; color:var(--text-muted); margin-top:.15rem; }
+  .app-header .when{ font-size:.78rem; color:var(--text-muted); }
+
+  .section-label{
+    font-size:.68rem; font-weight:700; letter-spacing:.13em; text-transform:uppercase; color:var(--text-muted);
+    margin: 1.6rem 0 .6rem; display:flex; align-items:center; gap:.5rem;
+  }
+  .section-label:first-child{ margin-top:0; }
+  .section-label .rule{ flex:1; height:1px; background:var(--border); }
+
+  .card{ background:var(--surface); border:1px solid var(--border); border-radius:var(--r); box-shadow:var(--shadow); }
+
+  /* ---- grade de KPI ---- */
+  .kpi-grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:.8rem; }
+  .kpi{ padding:1rem 1.1rem; border-left:3px solid var(--vinho); position:relative; }
+  .kpi.destaque{ border-left-color:var(--dourado); }
+  .kpi.alerta{ border-left-color:var(--red); }
+  .kpi-chip{ width:26px;height:26px;border-radius:50%; display:flex;align-items:center;justify-content:center; margin-bottom:.5rem; }
+  .kpi-value{ font-size:1.55rem; font-weight:800; line-height:1; font-variant-numeric:tabular-nums; color:var(--vinho); }
+  .kpi.alerta .kpi-value{ color:var(--red); }
+  .kpi-label{ font-size:.65rem; font-weight:600; letter-spacing:.11em; text-transform:uppercase; color:var(--text-muted); margin-top:.35rem; }
+  .kpi-delta{ display:inline-flex; align-items:center; gap:.2rem; font-size:.72rem; font-weight:700; margin-left:.4rem; }
+  .kpi-delta.up{ color:var(--green); } .kpi-delta.down{ color:var(--red); } .kpi-delta.flat{ color:var(--text-muted); }
+  .kpi-meta-badge{
+    position:absolute; top:.7rem; right:.7rem; font-size:.6rem; font-weight:700; letter-spacing:.08em;
+    color:var(--vinho-dark); background:color-mix(in srgb, var(--dourado-light) 30%, transparent);
+    border:1px solid var(--dourado); border-radius:999px; padding:.15rem .5rem;
+  }
+
+  /* grade "atual": tudo no mesmo grupo, mesmo peso, 7 cartões */
+  .flat-grid .kpi{ border-left-color:var(--vinho); }
+  .flat-grid .kpi.loss-amber .kpi-value{ color:var(--amber); }
+
+  /* ---- módulo HOJE (proposta) ---- */
+  .hoje-list{ display:flex; flex-direction:column; gap:.55rem; }
+  .hoje-item{
+    display:flex; align-items:center; gap:.8rem; padding:.75rem .95rem; background:var(--surface);
+    border:1px solid var(--border); border-left:4px solid var(--border-strong); border-radius:var(--r); box-shadow:var(--shadow);
+  }
+  .hoje-item.critico{ border-left-color:var(--red); }
+  .hoje-item.atencao{ border-left-color:var(--amber); }
+  .hoje-item.normal{ border-left-color:var(--vinho-light); }
+  .hoje-item.feito{ border-left-color:var(--green); opacity:.68; }
+  .hoje-stripe-label{
+    font-size:.62rem; font-weight:700; letter-spacing:.1em; text-transform:uppercase; flex-shrink:0; width:64px;
+  }
+  .hoje-item.critico .hoje-stripe-label{ color:var(--red); }
+  .hoje-item.atencao .hoje-stripe-label{ color:var(--amber); }
+  .hoje-item.normal .hoje-stripe-label{ color:var(--vinho-light); }
+  .hoje-item.feito .hoje-stripe-label{ color:var(--green); }
+  .hoje-icon{ flex-shrink:0; width:20px; height:20px; color:var(--text-muted); }
+  .hoje-item.critico .hoje-icon{ color:var(--red); }
+  .hoje-item.atencao .hoje-icon{ color:var(--amber); }
+  .hoje-body{ flex:1; min-width:0; }
+  .hoje-title{ font-size:.9rem; font-weight:600; color:var(--text); }
+  .hoje-item.feito .hoje-title{ text-decoration:line-through; text-decoration-color:var(--text-muted); }
+  .hoje-meta{ font-size:.76rem; color:var(--text-muted); margin-top:.1rem; }
+  .hoje-action{ flex-shrink:0; font-size:.76rem; font-weight:700; color:var(--dourado); white-space:nowrap; }
+
+  /* ---- lista "atual": mesmos itens, sem hierarquia ---- */
+  .plain-list{ display:flex; flex-direction:column; }
+  .plain-row{ display:flex; justify-content:space-between; gap:1rem; padding:.6rem 0; border-bottom:1px solid var(--border); font-size:.85rem; }
+  .plain-row:last-child{ border-bottom:none; }
+  .plain-row .d{ color:var(--text-muted); font-size:.78rem; }
+
+  /* ---- placeholders de gráficos/gauges (conteúdo real inalterado, só reposicionado) ---- */
+  .placeholder-row{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:.9rem; }
+  .placeholder{ padding:1.1rem; min-height:120px; display:flex; flex-direction:column; justify-content:space-between; }
+  .placeholder .cap{ font-size:.7rem; color:var(--text-muted); font-weight:600; letter-spacing:.06em; text-transform:uppercase; }
+  .placeholder .art{ align-self:center; opacity:.5; }
+  .unchanged-tag{ font-size:.68rem; color:var(--text-muted); font-style:italic; }
+
+  /* categorias */
+  .cat-dot{ width:8px;height:8px;border-radius:50%; display:inline-block; margin-right:.35rem; }
+
+  @media (max-width:640px){
+    .app{ padding:1.1rem; }
+    .kpi-grid{ grid-template-columns:repeat(2,1fr); }
+  }
+</style>
+
+<div class="review-bar">
+  <span class="review-tag">Revisão de proposta · CowData &nbsp;—&nbsp; <b>1/6 · Hierarquia do painel</b></span>
+  <div class="review-switch" role="tablist" aria-label="Alternar entre versão atual e proposta">
+    <button id="btn-atual" class="active" aria-pressed="true">Atual</button>
+    <button id="btn-proposta" aria-pressed="false">Proposta</button>
+  </div>
+</div>
+<p class="review-note" id="note-atual">
+  <b>Hoje:</b> a lista "Próximos Eventos" — o que fazer agora — fica no fim da página, depois de 7 KPIs do mesmo peso, gauges, gráficos e um comparativo. O prejuízo do mês aparece em âmbar, a mesma cor de uma conta que só está "próxima do vencimento".
+</p>
+<p class="review-note" id="note-proposta" hidden>
+  <b>Proposta:</b> o módulo <b>Hoje</b> sobe para o topo com severidade real (crítico / atenção / rotina / feito). Os KPIs continuam todos visíveis, agora agrupados por assunto e com menor peso visual. O prejuízo do mês passa a vermelho — não é mais "atenção genérica", é perda.
+</p>
+
+<div class="app">
+  <div class="app-header">
+    <div>
+      <h1>Fazenda Estreito Ponte de Pedra</h1>
+      <div class="sub">CowData · Jairo Nasser</div>
+    </div>
+    <div class="when">Segunda-feira, 14 de setembro de 2026</div>
+  </div>
+
+  <!-- ============ VISÃO ATUAL ============ -->
+  <div id="view-atual">
+    <div class="section-label">Indicadores gerais<span class="rule"></span></div>
+    <div class="kpi-grid flat-grid">
+      <div class="card kpi"><div class="kpi-chip" style="background:color-mix(in srgb, var(--vinho-light) 18%, transparent); color:var(--vinho-light);">🐄</div><div class="kpi-value">128</div><div class="kpi-label">Vacas em lactação</div></div>
+      <div class="card kpi"><div class="kpi-chip" style="background:color-mix(in srgb, var(--cat-reproducao) 18%, transparent); color:var(--cat-reproducao);">♥</div><div class="kpi-value">62%</div><div class="kpi-label">Prenhez do rebanho</div></div>
+      <div class="card kpi"><div class="kpi-chip" style="background:color-mix(in srgb, var(--cat-reproducao) 18%, transparent); color:var(--cat-reproducao);">%</div><div class="kpi-value">48%</div><div class="kpi-label">Taxa concepção IATF</div></div>
+      <div class="card kpi"><div class="kpi-chip" style="background:color-mix(in srgb, var(--azul-prod) 18%, transparent); color:var(--azul-prod);">🥛</div><div class="kpi-value">2.340 L</div><div class="kpi-label">Produção diária</div></div>
+      <div class="card kpi loss-amber"><div class="kpi-chip" style="background:color-mix(in srgb, var(--cat-financeiro) 18%, transparent); color:var(--cat-financeiro);">R$</div><div class="kpi-value">−8.420</div><div class="kpi-label">Resultado do mês</div></div>
+      <div class="card kpi"><div class="kpi-chip" style="background:color-mix(in srgb, var(--cat-estoque) 18%, transparent); color:var(--cat-estoque);">⚑</div><div class="kpi-value">16</div><div class="kpi-label">Implante em falta</div></div>
+      <div class="card kpi"><div class="kpi-chip" style="background:color-mix(in srgb, var(--cat-sanidade) 18%, transparent); color:var(--cat-sanidade);">✚</div><div class="kpi-value">7</div><div class="kpi-label">Descartes no ano</div></div>
+    </div>
+
+    <div class="section-label">Reprodução — gauges e comparativo<span class="rule"></span></div>
+    <div class="placeholder-row">
+      <div class="card placeholder"><div class="cap">Gauge · taxa de concepção</div><div class="art">◔</div><div class="unchanged-tag">inalterado</div></div>
+      <div class="card placeholder"><div class="cap">Gauge · prenhez do rebanho</div><div class="art">◑</div><div class="unchanged-tag">inalterado</div></div>
+      <div class="card placeholder"><div class="cap">Comparativo vs. meta e média do país</div><div class="art">▤</div><div class="unchanged-tag">recolhido por padrão</div></div>
+    </div>
+
+    <div class="section-label">Produção — 30 dias<span class="rule"></span></div>
+    <div class="placeholder-row">
+      <div class="card placeholder"><div class="cap">Litros por dia</div><div class="art">📈</div><div class="unchanged-tag">inalterado</div></div>
+      <div class="card placeholder"><div class="cap">Situação reprodutiva do rebanho</div><div class="art">◕</div><div class="unchanged-tag">inalterado</div></div>
+    </div>
+
+    <div class="section-label">Próximos eventos<span class="rule"></span></div>
+    <div class="card" style="padding:.4rem 1rem;">
+      <div class="plain-list">
+        <div class="plain-row"><span>Estoque de Sincrogest insuficiente para IATF de amanhã — faltam 16 doses</span><span class="d">amanhã</span></div>
+        <div class="plain-row"><span>3 contas vencem nos próximos 10 dias — R$ 12.640,00</span><span class="d">até 10d</span></div>
+        <div class="plain-row"><span>Aplicar BST em 23 vacas elegíveis (grupos 01/02/03)</span><span class="d">hoje</span></div>
+        <div class="plain-row"><span>Visita reprodutiva Alpha/ABS — Carlos</span><span class="d">hoje, 14h</span></div>
+        <div class="plain-row"><span>Pesagem de bezerros — grupos 2 e 3</span><span class="d">concluído</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ VISÃO PROPOSTA ============ -->
+  <div id="view-proposta" hidden>
+    <div class="section-label">Hoje<span class="rule"></span></div>
+    <div class="hoje-list">
+      <div class="hoje-item critico">
+        <span class="hoje-stripe-label">Crítico</span>
+        <svg class="hoje-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v4M12 17h.01"/></svg>
+        <div class="hoje-body"><div class="hoje-title">Estoque de Sincrogest insuficiente para IATF de amanhã</div><div class="hoje-meta">Faltam 16 doses · protocolo D0 de amanhã em risco</div></div>
+        <span class="hoje-action">Ver estoque →</span>
+      </div>
+      <div class="hoje-item atencao">
+        <span class="hoje-stripe-label">Atenção</span>
+        <svg class="hoje-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
+        <div class="hoje-body"><div class="hoje-title">3 contas vencem nos próximos 10 dias</div><div class="hoje-meta">R$ 12.640,00 em aberto</div></div>
+        <span class="hoje-action">Ver financeiro →</span>
+      </div>
+      <div class="hoje-item normal">
+        <span class="hoje-stripe-label">Hoje</span>
+        <svg class="hoje-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/></svg>
+        <div class="hoje-body"><div class="hoje-title">Aplicar BST em 23 vacas elegíveis</div><div class="hoje-meta">Grupos 01 / 02 / 03 · DEL ≥ 60</div></div>
+        <span class="hoje-action">Ver lista →</span>
+      </div>
+      <div class="hoje-item normal">
+        <span class="hoje-stripe-label">Hoje</span>
+        <svg class="hoje-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="1"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>
+        <div class="hoje-body"><div class="hoje-title">Visita reprodutiva Alpha/ABS — Carlos</div><div class="hoje-meta">14h · a cada 21 dias</div></div>
+        <span class="hoje-action">Agenda →</span>
+      </div>
+      <div class="hoje-item feito">
+        <span class="hoje-stripe-label">Feito</span>
+        <svg class="hoje-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m4 12 5 5L20 6"/></svg>
+        <div class="hoje-body"><div class="hoje-title">Pesagem de bezerros — grupos 2 e 3</div><div class="hoje-meta">Concluída às 08:40</div></div>
+      </div>
+    </div>
+
+    <div class="section-label"><span class="cat-dot" style="background:var(--vinho-light)"></span>Rebanho<span class="rule"></span></div>
+    <div class="kpi-grid">
+      <div class="card kpi"><div class="kpi-chip" style="background:color-mix(in srgb, var(--vinho-light) 18%, transparent); color:var(--vinho-light);">🐄</div><div class="kpi-value">128 <span class="kpi-delta up">▲4</span></div><div class="kpi-label">Vacas em lactação</div></div>
+      <div class="card kpi"><div class="kpi-chip" style="background:color-mix(in srgb, var(--cat-sanidade) 18%, transparent); color:var(--cat-sanidade);">✚</div><div class="kpi-value">7 <span class="kpi-delta flat">▬</span></div><div class="kpi-label">Descartes no ano</div>
+        <span class="kpi-meta-badge" title="Zero baixas por doença nos últimos 30 dias">META</span>
+      </div>
+    </div>
+
+    <div class="section-label"><span class="cat-dot" style="background:var(--cat-reproducao)"></span>Reprodução<span class="rule"></span></div>
+    <div class="kpi-grid">
+      <div class="card kpi"><div class="kpi-chip" style="background:color-mix(in srgb, var(--cat-reproducao) 18%, transparent); color:var(--cat-reproducao);">♥</div><div class="kpi-value">62% <span class="kpi-delta down">▼2pp</span></div><div class="kpi-label">Prenhez do rebanho · meta 65%</div></div>
+      <div class="card kpi"><div class="kpi-chip" style="background:color-mix(in srgb, var(--cat-reproducao) 18%, transparent); color:var(--cat-reproducao);">%</div><div class="kpi-value">48% <span class="kpi-delta up">▲3pp</span></div><div class="kpi-label">Taxa concepção IATF</div></div>
+    </div>
+
+    <div class="section-label"><span class="cat-dot" style="background:var(--azul-prod)"></span>Produção<span class="rule"></span></div>
+    <div class="kpi-grid">
+      <div class="card kpi"><div class="kpi-chip" style="background:color-mix(in srgb, var(--azul-prod) 18%, transparent); color:var(--azul-prod);">🥛</div><div class="kpi-value">2.340 L <span class="kpi-delta down">▼3%</span></div><div class="kpi-label">Produção diária</div></div>
+    </div>
+
+    <div class="section-label"><span class="cat-dot" style="background:var(--cat-financeiro)"></span>Financeiro<span class="rule"></span></div>
+    <div class="kpi-grid">
+      <div class="card kpi alerta"><div class="kpi-chip" style="background:color-mix(in srgb, var(--red) 16%, transparent); color:var(--red);">R$</div><div class="kpi-value">−8.420 <span class="kpi-delta down">▼ piora</span></div><div class="kpi-label">Resultado do mês · abaixo da meta</div></div>
+    </div>
+
+    <div class="section-label" style="opacity:.85">Reprodução — gauges e comparativo (secundário)<span class="rule"></span></div>
+    <div class="placeholder-row">
+      <div class="card placeholder"><div class="cap">Gauge · taxa de concepção</div><div class="art">◔</div><div class="unchanged-tag">mesmo conteúdo, só reposicionado</div></div>
+      <div class="card placeholder"><div class="cap">Gauge · prenhez do rebanho</div><div class="art">◑</div><div class="unchanged-tag">mesmo conteúdo, só reposicionado</div></div>
+      <div class="card placeholder"><div class="cap">Comparativo vs. meta e média do país</div><div class="art">▤</div><div class="unchanged-tag">recolhido por padrão</div></div>
+    </div>
+
+    <div class="section-label" style="opacity:.85">Produção — 30 dias (secundário)<span class="rule"></span></div>
+    <div class="placeholder-row">
+      <div class="card placeholder"><div class="cap">Litros por dia</div><div class="art">📈</div><div class="unchanged-tag">mesmo conteúdo, só reposicionado</div></div>
+      <div class="card placeholder"><div class="cap">Situação reprodutiva do rebanho</div><div class="art">◕</div><div class="unchanged-tag">mesmo conteúdo, só reposicionado</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  var btnAtual = document.getElementById('btn-atual');
+  var btnProposta = document.getElementById('btn-proposta');
+  var viewAtual = document.getElementById('view-atual');
+  var viewProposta = document.getElementById('view-proposta');
+  var noteAtual = document.getElementById('note-atual');
+  var noteProposta = document.getElementById('note-proposta');
+
+  function setMode(mode){
+    var isProposta = mode === 'proposta';
+    viewAtual.hidden = isProposta;
+    viewProposta.hidden = !isProposta;
+    noteAtual.hidden = isProposta;
+    noteProposta.hidden = !isProposta;
+    btnAtual.classList.toggle('active', !isProposta);
+    btnProposta.classList.toggle('active', isProposta);
+    btnAtual.setAttribute('aria-pressed', String(!isProposta));
+    btnProposta.setAttribute('aria-pressed', String(isProposta));
+  }
+  btnAtual.addEventListener('click', function(){ setMode('atual'); });
+  btnProposta.addEventListener('click', function(){ setMode('proposta'); });
+</script>

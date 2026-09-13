@@ -1,0 +1,226 @@
+<title>Por Seção</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --vinho:#0E2A47; --vinho-light:#416180; --vinho-dark:#0A1F36;
+    --dourado:#8A6D2F; --dourado-light:#C9A44C;
+    --bg:#F4F6F9; --surface:#FFFFFF; --surface-2:#F9FAFB;
+    --border:#DCE3EA; --border-strong:#C3CDD8;
+    --text:#1F2937; --text-muted:#6B7280;
+    --green:#2E7D52; --green-light:#4CAF80; --red:#C0392B; --amber:#D97706; --azul-prod:#1E6FA8;
+    --cat-reproducao:#8B7FF0; --cat-financeiro:#7A2233;
+    --r:2px; --shadow:0 1px 4px rgba(20,30,45,.10);
+    --review-bg:#EDEFF2; --review-fg:#3A4250; --review-border:#D6DAE1; --review-accent:#0E2A47;
+    --skel-a: color-mix(in srgb, var(--border) 60%, var(--surface));
+    --skel-b: var(--surface-2);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --vinho:#1B3A5C; --vinho-light:#5B85A8; --dourado:#C9A44C; --dourado-light:#E3C077;
+      --bg: color-mix(in srgb, var(--vinho) 12%, #050304);
+      --surface: color-mix(in srgb, var(--vinho) 14%, #0F0A0C);
+      --surface-2: color-mix(in srgb, var(--vinho) 16%, #170F13);
+      --border: color-mix(in srgb, var(--vinho) 22%, #2A1A20);
+      --text:#F0E8EC; --text-muted:#9B8A91;
+      --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+      --skel-a: color-mix(in srgb, var(--vinho) 30%, #2A1A20); --skel-b: var(--surface-2);
+    }
+  }
+  :root[data-theme="dark"]{
+    --vinho:#1B3A5C; --vinho-light:#5B85A8; --dourado:#C9A44C; --dourado-light:#E3C077;
+    --bg: color-mix(in srgb, var(--vinho) 12%, #050304);
+    --surface: color-mix(in srgb, var(--vinho) 14%, #0F0A0C);
+    --surface-2: color-mix(in srgb, var(--vinho) 16%, #170F13);
+    --border: color-mix(in srgb, var(--vinho) 22%, #2A1A20);
+    --text:#F0E8EC; --text-muted:#9B8A91;
+    --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+    --skel-a: color-mix(in srgb, var(--vinho) 30%, #2A1A20); --skel-b: var(--surface-2);
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--review-bg); color:var(--text); font-family:'Barlow', Inter, sans-serif;
+    padding-inline: max(16px, calc((100vw - 1180px)/2)); padding-block: 20px 48px;
+  }
+  h1,h2,.section-label{ font-family:'Barlow Condensed', Inter, sans-serif; }
+
+  .review-bar{ max-width:1180px; margin:0 auto 18px; padding:.85rem 1.1rem; background:var(--review-bg); border:1px solid var(--review-border); border-radius:8px; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
+  .review-tag{ font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--review-fg); }
+  .review-tag b{ color:var(--review-accent); }
+  .review-switch{ display:inline-flex; border:1px solid var(--review-border); border-radius:999px; padding:3px; gap:2px; background:var(--surface); }
+  .review-switch button{ font-family:'Barlow Condensed', Inter, sans-serif; font-weight:700; font-size:.85rem; padding:.4rem 1rem; border-radius:999px; border:none; cursor:pointer; background:transparent; color:var(--text-muted); }
+  .review-switch button.active{ background:var(--vinho); color:var(--dourado-light); }
+  .review-note{ max-width:1180px; margin:0 auto 22px; font-size:.82rem; color:var(--review-fg); }
+  .review-note b{ color:var(--review-accent); }
+  .review-note code{ background:var(--surface-2); border:1px solid var(--border); border-radius:4px; padding:.05rem .35rem; font-size:.78rem; }
+
+  .app{ max-width:1180px; margin:0 auto; background:var(--bg); border:1px solid var(--review-border); border-radius:10px; padding:1.6rem 1.7rem 2rem; }
+  .section-label{ font-size:.68rem; font-weight:700; letter-spacing:.13em; text-transform:uppercase; color:var(--text-muted); margin:1.5rem 0 .6rem; display:flex; align-items:center; gap:.5rem; }
+  .section-label:first-child{ margin-top:0; }
+  .section-label .rule{ flex:1; height:1px; background:var(--border); }
+  .section-label .tag{ font-size:.62rem; padding:.1rem .5rem; border-radius:999px; border:1px solid var(--border-strong); color:var(--text-muted); text-transform:none; letter-spacing:0; }
+
+  .card{ background:var(--surface); border:1px solid var(--border); border-radius:var(--r); box-shadow:var(--shadow); }
+
+  /* -------- conteúdo real -------- */
+  .hoje-list{ display:flex; flex-direction:column; gap:.55rem; }
+  .hoje-item{ display:flex; align-items:center; gap:.8rem; padding:.7rem .9rem; border-left:4px solid var(--vinho-light); }
+  .hoje-item.critico{ border-left-color:var(--red); }
+  .hoje-title{ font-size:.88rem; font-weight:600; }
+  .hoje-meta{ font-size:.74rem; color:var(--text-muted); }
+
+  .kpi-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:.8rem; }
+  .kpi{ padding:1rem 1.1rem; border-left:3px solid var(--vinho); }
+  .kpi-value{ font-size:1.5rem; font-weight:800; color:var(--vinho); font-variant-numeric:tabular-nums; }
+  .kpi-label{ font-size:.64rem; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--text-muted); margin-top:.3rem; }
+
+  .fin-card{ padding:1.1rem 1.3rem; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
+  .fin-value{ font-size:1.7rem; font-weight:800; color:var(--red); font-variant-numeric:tabular-nums; }
+  .fin-label{ font-size:.72rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:.08em; }
+
+  /* -------- skeleton (Carregando) -------- */
+  @keyframes shimmer{ 0%{ background-position:200% 0; } 100%{ background-position:-200% 0; } }
+  .sk{ border-radius:var(--r); background:linear-gradient(90deg, var(--skel-a) 25%, var(--skel-b) 50%, var(--skel-a) 75%); background-size:200% 100%; animation:shimmer 1.6s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce){ .sk{ animation:none; background:var(--skel-a); } }
+  .sk-line{ height:.85rem; margin-bottom:.5rem; }
+  .sk-line.w60{ width:60%; } .sk-line.w40{ width:40%; } .sk-line.w80{ width:80%; }
+  .sk-kpi{ padding:1rem 1.1rem; border-left:3px solid var(--border); }
+  .sk-value{ height:1.5rem; width:70%; margin-bottom:.5rem; }
+  .sk-label{ height:.6rem; width:50%; }
+  .sk-hoje{ padding:.7rem .9rem; border-left:4px solid var(--border); display:flex; flex-direction:column; gap:.4rem; }
+
+  /* -------- erro por seção -------- */
+  .err-card{ padding:1rem 1.2rem; border:1px dashed var(--red); background:color-mix(in srgb, var(--red) 8%, var(--surface)); display:flex; align-items:center; gap:.8rem; }
+  .err-icon{ width:20px; height:20px; color:var(--red); flex-shrink:0; }
+  .err-body{ flex:1; }
+  .err-title{ font-size:.86rem; font-weight:700; color:var(--text); }
+  .err-detail{ font-size:.78rem; color:var(--text-muted); margin-top:.1rem; }
+  .err-retry{ font-size:.78rem; font-weight:700; color:#fff; background:var(--vinho); border:1px solid var(--vinho); border-radius:var(--r); padding:.4rem .8rem; cursor:pointer; flex-shrink:0; }
+
+  /* -------- entrada suave (respeitando No-Lift: só opacidade/posição) -------- */
+  .enter{ opacity:0; transform:translateY(6px); }
+  .enter.in{ opacity:1; transform:translateY(0); transition:opacity .38s ease-out, transform .38s ease-out; }
+  @media (prefers-reduced-motion: reduce){ .enter{ opacity:1; transform:none; } .enter.in{ transition:none; } }
+
+  .hidden{ display:none !important; }
+  .state-panel{ display:none; }
+  .state-panel.active{ display:block; }
+
+  @media (max-width:640px){ .app{ padding:1.1rem; } .kpi-grid{ grid-template-columns:repeat(2,1fr); } }
+</style>
+
+<div class="review-bar">
+  <span class="review-tag">Revisão de proposta · CowData &nbsp;—&nbsp; <b>3 e 4/6 · Carregamento + erro por seção</b></span>
+  <div class="review-switch" role="tablist" aria-label="Alternar estado de carregamento">
+    <button class="stbtn active" data-state="atual">Atual</button>
+    <button class="stbtn" data-state="loading">Carregando</button>
+    <button class="stbtn" data-state="error">Erro parcial</button>
+    <button class="stbtn" data-state="ok">OK</button>
+  </div>
+</div>
+<p class="review-note" id="note-atual">
+  <b>Hoje:</b> <code>page.tsx</code> busca 5 recursos em paralelo (<code>indicadores</code>, <code>agenda</code>, <code>producao</code>, <code>resultado-mes-recente</code>, <code>estoque</code>) e, se qualquer um falhar, mostra <b>um único texto genérico</b> ("Carregando painel…" ou um banner de erro), sem dizer qual seção falhou nem oferecer um retry específico.
+</p>
+<p class="review-note" id="note-loading" hidden><b>Carregando (proposta):</b> cada seção mostra um esqueleto no formato real do conteúdo que vai aparecer — não mais um texto solto.</p>
+<p class="review-note" id="note-error" hidden><b>Erro parcial (proposta):</b> aqui só o <b>Financeiro</b> falhou (fetch do resultado do mês) — Hoje e Indicadores carregaram normalmente e continuam usáveis. O card com erro nomeia o que falhou e oferece "Tentar novamente" ali mesmo.</p>
+<p class="review-note" id="note-ok" hidden><b>OK (proposta):</b> ao terminar de carregar, cada bloco entra com um fade + leve deslocamento vertical (opacidade/posição só — sem sombra nem elevação, dentro da regra No-Lift do DESIGN.md) e escalonado por seção, em vez de aparecer tudo de uma vez.</p>
+
+<div class="app">
+
+  <!-- ================= ATUAL ================= -->
+  <div class="state-panel active" id="panel-atual">
+    <div style="padding:2rem 0; text-align:center; color:var(--text-muted); font-size:.95rem;">Carregando painel…</div>
+    <div class="card" style="margin-top:1rem; padding:.9rem 1.1rem; border-color:var(--amber); background:color-mix(in srgb, var(--amber) 10%, var(--surface));">
+      <span style="font-size:.85rem;">⚠ Alguns dados não puderam ser carregados.</span>
+    </div>
+  </div>
+
+  <!-- ================= CARREGANDO ================= -->
+  <div class="state-panel" id="panel-loading">
+    <div class="section-label">Hoje<span class="rule"></span></div>
+    <div class="card sk-hoje"><div class="sk sk-line w60"></div><div class="sk sk-line w40" style="margin-bottom:0;"></div></div>
+    <div class="section-label" style="margin-top:.55rem;"><span class="rule"></span></div>
+    <div class="card sk-hoje"><div class="sk sk-line w80"></div><div class="sk sk-line w40" style="margin-bottom:0;"></div></div>
+
+    <div class="section-label">Indicadores<span class="rule"></span></div>
+    <div class="kpi-grid">
+      <div class="card sk-kpi"><div class="sk sk-value"></div><div class="sk sk-label"></div></div>
+      <div class="card sk-kpi"><div class="sk sk-value"></div><div class="sk sk-label"></div></div>
+      <div class="card sk-kpi"><div class="sk sk-value"></div><div class="sk sk-label"></div></div>
+    </div>
+
+    <div class="section-label">Financeiro<span class="rule"></span></div>
+    <div class="card sk-kpi" style="border-left-color:var(--border);"><div class="sk sk-value" style="width:40%;height:1.9rem;"></div><div class="sk sk-label"></div></div>
+  </div>
+
+  <!-- ================= ERRO PARCIAL ================= -->
+  <div class="state-panel" id="panel-error">
+    <div class="section-label">Hoje<span class="tag">carregado</span><span class="rule"></span></div>
+    <div class="hoje-list">
+      <div class="card hoje-item critico"><div><div class="hoje-title">Estoque de Sincrogest insuficiente para IATF de amanhã</div><div class="hoje-meta">Faltam 16 doses</div></div></div>
+      <div class="card hoje-item"><div><div class="hoje-title">Aplicar BST em 23 vacas elegíveis</div><div class="hoje-meta">Grupos 01/02/03</div></div></div>
+    </div>
+
+    <div class="section-label">Indicadores<span class="tag">carregado</span><span class="rule"></span></div>
+    <div class="kpi-grid">
+      <div class="card kpi"><div class="kpi-value">128</div><div class="kpi-label">Vacas em lactação</div></div>
+      <div class="card kpi"><div class="kpi-value">62%</div><div class="kpi-label">Prenhez do rebanho</div></div>
+      <div class="card kpi"><div class="kpi-value">48%</div><div class="kpi-label">Taxa concepção IATF</div></div>
+    </div>
+
+    <div class="section-label">Financeiro<span class="tag" style="border-color:var(--red);color:var(--red);">falhou</span><span class="rule"></span></div>
+    <div class="err-card">
+      <svg class="err-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <div class="err-body">
+        <div class="err-title">Não foi possível carregar o resultado do mês</div>
+        <div class="err-detail">Falha ao consultar <code>/financeiro/resultado-mes-recente</code> — os outros módulos não foram afetados.</div>
+      </div>
+      <button class="err-retry" type="button">↻ Tentar novamente</button>
+    </div>
+  </div>
+
+  <!-- ================= OK ================= -->
+  <div class="state-panel" id="panel-ok">
+    <div class="section-label">Hoje<span class="rule"></span></div>
+    <div class="hoje-list">
+      <div class="card hoje-item critico enter" style="transition-delay:0s"><div><div class="hoje-title">Estoque de Sincrogest insuficiente para IATF de amanhã</div><div class="hoje-meta">Faltam 16 doses</div></div></div>
+      <div class="card hoje-item enter" style="transition-delay:.05s"><div><div class="hoje-title">Aplicar BST em 23 vacas elegíveis</div><div class="hoje-meta">Grupos 01/02/03</div></div></div>
+    </div>
+
+    <div class="section-label">Indicadores<span class="rule"></span></div>
+    <div class="kpi-grid">
+      <div class="card kpi enter" style="transition-delay:.10s"><div class="kpi-value">128</div><div class="kpi-label">Vacas em lactação</div></div>
+      <div class="card kpi enter" style="transition-delay:.15s"><div class="kpi-value">62%</div><div class="kpi-label">Prenhez do rebanho</div></div>
+      <div class="card kpi enter" style="transition-delay:.20s"><div class="kpi-value">48%</div><div class="kpi-label">Taxa concepção IATF</div></div>
+    </div>
+
+    <div class="section-label">Financeiro<span class="rule"></span></div>
+    <div class="card fin-card enter" style="transition-delay:.25s">
+      <div><div class="fin-value">−R$ 8.420</div><div class="fin-label">Resultado do mês</div></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  var buttons = Array.prototype.slice.call(document.querySelectorAll('.stbtn'));
+  var panels = { atual: document.getElementById('panel-atual'), loading: document.getElementById('panel-loading'), error: document.getElementById('panel-error'), ok: document.getElementById('panel-ok') };
+  var notes = { atual: document.getElementById('note-atual'), loading: document.getElementById('note-loading'), error: document.getElementById('note-error'), ok: document.getElementById('note-ok') };
+
+  function playEnter(){
+    var els = panels.ok.querySelectorAll('.enter');
+    els.forEach(function(el){ el.classList.remove('in'); });
+    void panels.ok.offsetWidth; // força reflow pra reiniciar a transição
+    requestAnimationFrame(function(){ els.forEach(function(el){ el.classList.add('in'); }); });
+  }
+
+  function setState(state){
+    buttons.forEach(function(b){ b.classList.toggle('active', b.dataset.state === state); });
+    Object.keys(panels).forEach(function(k){ panels[k].classList.toggle('active', k === state); });
+    Object.keys(notes).forEach(function(k){ notes[k].hidden = k !== state; });
+    if (state === 'ok') playEnter();
+  }
+  buttons.forEach(function(b){ b.addEventListener('click', function(){ setState(b.dataset.state); }); });
+</script>

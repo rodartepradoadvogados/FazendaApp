@@ -1,0 +1,179 @@
+<title>Lançar Rápido</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --mob-vinho:#0E2A47; --mob-dourado:#8A6D2F; --mob-dourado-2:#C9A44C;
+    --mob-bg:#EFF1F5; --mob-surface:#FFFFFF; --mob-surface-2:#F6F7F9; --mob-border:#E4E7EC;
+    --mob-text:#101828; --mob-muted:#5B6470; --mob-vermelho:#DC2626;
+    --mob-verde:#047857; --mob-azul:#2563EB; --mob-roxo:#7C3AED;
+    --review-bg:#EDEFF2; --review-fg:#3A4250; --review-border:#D6DAE1; --review-accent:#0E2A47;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --mob-bg:#0A0A0A; --mob-surface:#161616; --mob-surface-2:#1E1E1E; --mob-border:#242424;
+      --mob-text:#F3F4F6; --mob-muted:#9AA1AA; --mob-vinho:#1B3A5C; --mob-dourado:#C9A44C;
+      --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+    }
+  }
+  :root[data-theme="dark"]{
+    --mob-bg:#0A0A0A; --mob-surface:#161616; --mob-surface-2:#1E1E1E; --mob-border:#242424;
+    --mob-text:#F3F4F6; --mob-muted:#9AA1AA; --mob-vinho:#1B3A5C; --mob-dourado:#C9A44C;
+    --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--review-bg); color:var(--review-fg); font-family:'Inter',sans-serif;
+    padding-inline:max(16px, calc((100vw - 900px)/2)); padding-block:20px 48px; }
+
+  .review-bar{ max-width:900px; margin:0 auto 18px; padding:.85rem 1.1rem; background:var(--review-bg); border:1px solid var(--review-border); border-radius:8px; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
+  .review-tag{ font-size:.68rem; font-weight:700; letter-spacing:.1em; text-transform:uppercase; }
+  .review-tag b{ color:var(--review-accent); }
+  .switches{ display:flex; gap:.6rem; flex-wrap:wrap; }
+  .review-switch{ display:inline-flex; border:1px solid var(--review-border); border-radius:999px; padding:3px; gap:2px; background:#fff; }
+  .review-switch button{ font-weight:700; font-size:.8rem; padding:.35rem .9rem; border-radius:999px; border:none; cursor:pointer; background:transparent; color:var(--review-fg); }
+  .review-switch button.active{ background:var(--mob-vinho); color:#fff; }
+  .review-note{ max-width:900px; margin:0 auto 18px; font-size:.82rem; }
+  .review-note b{ color:var(--review-accent); } .review-note code{ background:#fff; border:1px solid var(--review-border); border-radius:4px; padding:.05rem .35rem; }
+
+  .phone-wrap{ max-width:420px; margin:0 auto; }
+  .phone{ background:var(--mob-bg); border:1px solid var(--review-border); border-radius:28px; padding:1.1rem .9rem 1.4rem; box-shadow:0 20px 50px rgba(0,0,0,.15); }
+  .phone-header{ display:flex; align-items:center; justify-content:space-between; margin-bottom:.9rem; }
+  .phone-header h1{ font-size:1.1rem; font-weight:800; margin:0; color:var(--mob-text); }
+  .phone-header .live{ width:8px;height:8px;border-radius:50%; background:var(--mob-verde); }
+
+  .tile-grid{ display:grid; grid-template-columns:repeat(2,1fr); gap:.6rem; }
+  .tile{ background:var(--mob-surface); border:1px solid var(--mob-border); border-radius:0; min-height:5.5rem; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.4rem; padding:.7rem; font-weight:700; font-size:.85rem; text-align:center; color:var(--mob-text); }
+  .tile .icon{ width:26px;height:26px; color:var(--mob-dourado-2); }
+  .tile.risk{ border:1px solid var(--mob-vermelho); color:var(--mob-vermelho); }
+  .tile.risk .icon{ color:var(--mob-vermelho); }
+
+  .divider{ font-size:.68rem; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--mob-muted); margin:1rem 0 .5rem; display:flex; align-items:center; gap:.5rem; }
+  .divider .rule{ flex:1; height:1px; background:var(--mob-border); }
+
+  .featured-row{ display:grid; grid-template-columns:repeat(3,1fr); gap:.6rem; }
+  .tile-big{ background:var(--mob-surface); border:1px solid var(--mob-border); min-height:6.5rem; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.5rem; padding:.8rem .5rem; font-weight:800; font-size:.9rem; text-align:center; color:var(--mob-text); }
+  .tile-big .icon{ width:30px; height:30px; }
+
+  .secondary-row{ display:grid; grid-template-columns:repeat(3,1fr); gap:.5rem; }
+  .tile-sm{ background:var(--mob-surface-2); border:1px solid var(--mob-border); min-height:4rem; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.3rem; padding:.5rem; font-weight:600; font-size:.76rem; text-align:center; color:var(--mob-muted); }
+  .tile-sm .icon{ width:19px;height:19px; }
+
+  .risk-zone{ border:1.5px dashed var(--mob-vermelho); padding:.7rem; display:flex; flex-direction:column; gap:.5rem; }
+  .risk-zone-header{ font-size:.72rem; font-weight:700; color:var(--mob-vermelho); text-transform:uppercase; letter-spacing:.06em; display:flex; align-items:center; gap:.4rem; }
+  .risk-tile{ background:transparent; border:1px solid var(--mob-vermelho); color:var(--mob-vermelho); min-height:2.8rem; display:flex; align-items:center; justify-content:center; gap:.5rem; font-weight:700; font-size:.82rem; }
+
+  /* Menu / glossário */
+  .menu-item{ display:flex; align-items:center; justify-content:space-between; padding:.85rem .3rem; border-bottom:1px solid var(--mob-border); }
+  .menu-item .t{ font-weight:700; font-size:.92rem; color:var(--mob-text); }
+  .menu-item .gloss{ font-size:.74rem; color:var(--mob-muted); margin-top:.15rem; font-weight:400; }
+  .menu-item:last-child{ border-bottom:none; }
+  .chev{ color:var(--mob-muted); }
+
+  .state-panel{ display:none; } .state-panel.active{ display:block; }
+  .screen-panel{ display:none; } .screen-panel.active{ display:block; }
+</style>
+
+<div class="review-bar">
+  <span class="review-tag">Revisão de proposta · App de campo &nbsp;—&nbsp; <b>P0+P1 · Lançar reorganizado + glossário</b></span>
+  <div class="switches">
+    <div class="review-switch" role="tablist">
+      <button class="scbtn active" data-screen="lancar">Lançar</button>
+      <button class="scbtn" data-screen="menu">Menu</button>
+    </div>
+    <div class="review-switch" role="tablist">
+      <button class="stbtn active" data-state="atual">Atual</button>
+      <button class="stbtn" data-state="proposta">Proposta</button>
+    </div>
+  </div>
+</div>
+<p class="review-note" id="note-atual">
+  <b>Hoje:</b> a grade do Lançar tem blocos do mesmo tamanho pra tudo — inclusive "Baixar animal" e "Excluir lançamento" (irreversíveis) ao lado de "Produção" (rotina diária). No Menu, siglas como IATF/PEV/BST aparecem sem tradução nenhuma.
+</p>
+<p class="review-note" id="note-proposta" hidden>
+  <b>Proposta:</b> as 3 ações mais frequentes ficam grandes no topo; o resto vira uma linha secundária menor; as duas ações irreversíveis ganham uma "zona de risco" com borda tracejada vermelha, visualmente separada do resto. No Menu, cada sigla ganha uma linha de tradução simples embaixo.
+</p>
+
+<div class="phone-wrap">
+  <div class="phone">
+
+    <!-- ========== TELA LANÇAR ========== -->
+    <div class="screen-panel active" id="screen-lancar">
+      <div class="phone-header"><h1>Lançar</h1><span class="live"></span></div>
+
+      <div class="state-panel active" id="lancar-atual">
+        <div class="tile-grid">
+          <div class="tile">♥<br>Reprodutivo</div>
+          <div class="tile">🥛<br>Produção</div>
+          <div class="tile">✚<br>Sanidade</div>
+          <div class="tile">↔<br>Movimentar</div>
+          <div class="tile">📦<br>Estoque</div>
+          <div class="tile">R$<br>Financeiro</div>
+          <div class="tile risk">⤓<br>Baixar animal</div>
+          <div class="tile risk">✕<br>Excluir lançamento</div>
+        </div>
+      </div>
+
+      <div class="state-panel" id="lancar-proposta">
+        <div class="divider">Mais usados<span class="rule"></span></div>
+        <div class="featured-row">
+          <div class="tile-big">🥛<br>Produção</div>
+          <div class="tile-big">✚<br>Sanidade</div>
+          <div class="tile-big">♥<br>Reprodutivo</div>
+        </div>
+        <div class="divider">Outras ações<span class="rule"></span></div>
+        <div class="secondary-row">
+          <div class="tile-sm">↔<br>Movimentar</div>
+          <div class="tile-sm">📦<br>Estoque</div>
+          <div class="tile-sm">R$<br>Financeiro</div>
+        </div>
+        <div class="divider">Zona de risco<span class="rule"></span></div>
+        <div class="risk-zone">
+          <div class="risk-zone-header">⚠ Ações irreversíveis</div>
+          <div class="risk-tile">⤓ Baixar animal</div>
+          <div class="risk-tile">✕ Excluir lançamento</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== TELA MENU ========== -->
+    <div class="screen-panel" id="screen-menu">
+      <div class="phone-header"><h1>Menu · Reprodução</h1><span class="live"></span></div>
+
+      <div class="state-panel active" id="menu-atual">
+        <div class="menu-item"><div class="t">IATF</div><span class="chev">›</span></div>
+        <div class="menu-item"><div class="t">PEV</div><span class="chev">›</span></div>
+        <div class="menu-item"><div class="t">BST</div><span class="chev">›</span></div>
+        <div class="menu-item"><div class="t">Scratch</div><span class="chev">›</span></div>
+      </div>
+
+      <div class="state-panel" id="menu-proposta">
+        <div class="menu-item"><div><div class="t">IATF</div><div class="gloss">Protocolo de inseminação programada (D0/D7/D9)</div></div><span class="chev">›</span></div>
+        <div class="menu-item"><div><div class="t">PEV</div><div class="gloss">Período de espera voluntário — 45 dias pra liberar inseminação</div></div><span class="chev">›</span></div>
+        <div class="menu-item"><div><div class="t">BST</div><div class="gloss">Hormônio de produção — aplicado a cada 12 dias</div></div><span class="chev">›</span></div>
+        <div class="menu-item"><div><div class="t">Scratch</div><div class="gloss">Adesivo de cio — 14 dias após o serviço</div></div><span class="chev">›</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  var scBtns = Array.prototype.slice.call(document.querySelectorAll('.scbtn'));
+  var stBtns = Array.prototype.slice.call(document.querySelectorAll('.stbtn'));
+  var screens = { lancar: document.getElementById('screen-lancar'), menu: document.getElementById('screen-menu') };
+  var statesLancar = { atual: document.getElementById('lancar-atual'), proposta: document.getElementById('lancar-proposta') };
+  var statesMenu = { atual: document.getElementById('menu-atual'), proposta: document.getElementById('menu-proposta') };
+  var notes = { atual: document.getElementById('note-atual'), proposta: document.getElementById('note-proposta') };
+  var currentScreen = 'lancar', currentState = 'atual';
+
+  function render(){
+    Object.keys(screens).forEach(function(k){ screens[k].classList.toggle('active', k === currentScreen); });
+    var states = currentScreen === 'lancar' ? statesLancar : statesMenu;
+    Object.keys(states).forEach(function(k){ states[k].classList.toggle('active', k === currentState); });
+    scBtns.forEach(function(b){ b.classList.toggle('active', b.dataset.screen === currentScreen); });
+    stBtns.forEach(function(b){ b.classList.toggle('active', b.dataset.state === currentState); });
+    notes.atual.hidden = currentState !== 'atual';
+    notes.proposta.hidden = currentState !== 'proposta';
+  }
+  scBtns.forEach(function(b){ b.addEventListener('click', function(){ currentScreen = b.dataset.screen; render(); }); });
+  stBtns.forEach(function(b){ b.addEventListener('click', function(){ currentState = b.dataset.state; render(); }); });
+</script>

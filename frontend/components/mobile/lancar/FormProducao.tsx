@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { Milk, Scale, Moon, Pill, TestTube, Truck, Zap } from "lucide-react";
 import { MobCampo, MobAviso, MobVoltar } from "@/components/mobile/ui";
-import { BotoesEscolha, GradeAcoes, type Animal, useEnvio, hoje, SeletorAnimal } from "./comum";
+import { BotoesEscolha, GradeAcoes, type Animal, useEnvio, useRascunho, hoje, SeletorAnimal, RascunhoAviso } from "./comum";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
 import { fetchAgenda, fetchEstoque, fetchSanidade } from "@/lib/api";
 import { fetchComCache } from "@/lib/offline";
@@ -114,16 +114,29 @@ function lotesDe(animais: Animal[]): string[] {
   return Array.from(new Set(animais.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
+type DraftControleLeiteiro = {
+  modo: "vaca" | "lote"; animal: string; lote: string;
+  o1: string; o2: string; o3: string;
+  porVaca: Record<string, [string, string, string]>;
+};
+
 function ControleLeiteiro({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
-  const [modo, setModo] = useState<"vaca" | "lote">("vaca");
-  const [animal, setAnimal] = useState(animalFixado || "");
-  const [lote, setLote] = useState("");
+  // Rascunho único do formulário — no modo lote, pode ter várias vacas
+  // pesadas antes de uma interrupção; perder isso no meio do curral custaria
+  // caro (docs/agents/design-implementation.md §5, acabamento-de-campo.html).
+  const rascunho = useRascunho<DraftControleLeiteiro>("controle_leiteiro", {
+    modo: "vaca", animal: animalFixado || "", lote: "", o1: "", o2: "", o3: "", porVaca: {},
+  });
+  const { modo, animal, lote, o1, o2, o3, porVaca } = rascunho.valor;
+  const atualizar = (patch: Partial<DraftControleLeiteiro>) => rascunho.setValor((atual) => ({ ...atual, ...patch }));
+  const setModo = (v: "vaca" | "lote") => atualizar({ modo: v });
+  const setAnimal = (v: string) => atualizar({ animal: v });
+  const setLote = (v: string) => atualizar({ lote: v });
+  const setO1 = (v: string) => atualizar({ o1: v });
+  const setO2 = (v: string) => atualizar({ o2: v });
+  const setO3 = (v: string) => atualizar({ o3: v });
   const [data, setData] = useState(hoje());
-  const [o1, setO1] = useState("");
-  const [o2, setO2] = useState("");
-  const [o3, setO3] = useState("");
-  const [porVaca, setPorVaca] = useState<Record<string, [string, string, string]>>({});
 
   const total = (Number(o1) || 0) + (Number(o2) || 0) + (Number(o3) || 0);
 
@@ -132,8 +145,11 @@ function ControleLeiteiro({ animais, animalFixado }: { animais: Animal[]; animal
     [animais],
   );
   const vacasDoLote = useMemo(() => (lote ? animais.filter((a) => a.grupo_primario === lote) : []), [animais, lote]);
-  const setOrdVaca = (numero: string, idx: 0 | 1 | 2, valor: string) =>
-    setPorVaca((p) => { const arr: [string, string, string] = [...(p[numero] || ["", "", ""])]; arr[idx] = valor; return { ...p, [numero]: arr }; });
+  const setOrdVaca = (numero: string, idx: 0 | 1 | 2, valor: string) => {
+    const arr: [string, string, string] = [...(porVaca[numero] || ["", "", ""])];
+    arr[idx] = valor;
+    atualizar({ porVaca: { ...porVaca, [numero]: arr } });
+  };
   const totalVaca = (numero: string) => (porVaca[numero] || ["", "", ""]).reduce((s, v) => s + (Number(v) || 0), 0);
   const totalLote = vacasDoLote.reduce((s, a) => s + totalVaca(a.numero), 0);
 
@@ -149,7 +165,7 @@ function ControleLeiteiro({ animais, animalFixado }: { animais: Animal[]; animal
         "/producao/controles",
         { data_controle: data, entradas: [{ numero_matriz: animal, ordenhas }] },
         `Controle leiteiro — vaca ${animal} (${total.toFixed(1)} kg)`,
-        () => { setO1(""); setO2(""); setO3(""); },
+        () => atualizar({ o1: "", o2: "", o3: "" }),
       );
     } else {
       if (!lote) return erroValidacao("Selecione o lote.");
@@ -166,13 +182,14 @@ function ControleLeiteiro({ animais, animalFixado }: { animais: Animal[]; animal
         "/producao/controles",
         { data_controle: data, entradas },
         `Controle leiteiro — lote ${lote} (${entradas.length} vaca(s), ${totalLote.toFixed(1)} kg)`,
-        () => { setPorVaca({}); },
+        () => atualizar({ porVaca: {} }),
       );
     }
   }
 
   return (
     <>
+      <RascunhoAviso mostrar={rascunho.salvo} />
       <MobCampo label="Lançar por">
         <BotoesEscolha
           opcoes={[{ valor: "vaca", label: "Vaca" }, { valor: "lote", label: "Lote" }]}

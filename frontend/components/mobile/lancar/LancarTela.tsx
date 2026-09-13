@@ -96,24 +96,39 @@ export function LancarTela() {
         ? <ChipAnimal animal={fixado} onSoltar={() => setFixado(null)} />
         : <BuscaAnimal animais={animais.dados} onEscolher={setFixado} />}
 
+      {/* Mais usados — blocos maiores, no topo (achado da crítica: a grade
+          plana de 10 escolhas forçava um scan completo antes de cada
+          lançamento, ver docs/agents/design-implementation.md §5,
+          lancar-rapido.html). */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.7rem", marginTop: "0.4rem" }}>
-        <MobBloco icone={<Activity size={22} />} label="Reprodutivo" onClick={() => setTela("reprodutivo")} />
-        <MobBloco icone={<Milk size={22} />} label="Produção (Leite)" onClick={() => setTela("producao")} />
-        <MobBloco icone={<Syringe size={22} />} label="Sanidade" onClick={() => setTela("sanidade")} />
+        <MobBloco destaque icone={<Milk size={22} />} label="Produção (Leite)" onClick={() => setTela("producao")} />
+        <MobBloco destaque icone={<Syringe size={22} />} label="Sanidade" onClick={() => setTela("sanidade")} />
+        <MobBloco destaque icone={<Activity size={22} />} label="Reprodutivo" onClick={() => setTela("reprodutivo")} />
+      </div>
+
+      <div style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--mob-muted)", margin: "1rem 0 0.5rem" }}>
+        Outras ações
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.7rem" }}>
         <MobBloco icone={<Wheat size={22} />} label="Alimentação" onClick={() => setTela("alimentacao")} />
         <MobBloco icone={<ListChecks size={22} />} label="Protocolos" onClick={() => setTela("protocolos")} />
         <MobBloco icone={<ArrowLeftRight size={22} />} label="Movimentar" onClick={() => setTela("movimentar")} />
-        {/* Vermelho reservado para as 2 ações realmente destrutivas/irreversíveis
-            (baixa de animal, exclusão de lançamento) — as demais usam o mesmo
-            dourado neutro, sem uma cor por seção (ver .mob-bloco .icone). */}
-        <MobBloco icone={<Skull size={22} />} label="Baixar animal" cor="var(--mob-vermelho)" onClick={() => setTela("baixar")} />
         {montado && podeModulo("financeiro") && (
           <MobBloco icone={<Landmark size={22} />} label="Financeiro" onClick={() => { setTipoFinanceiroInicial(undefined); setTela("financeiro"); }} />
         )}
         {montado && podeModulo("estoque") && (
           <MobBloco icone={<Boxes size={22} />} label="Balanço de estoque" onClick={() => setTela("estoque")} />
         )}
-        <MobBloco icone={<Trash2 size={22} />} label="Excluir lançamento" cor="var(--mob-vermelho)" onClick={() => setTela("exclusao")} />
+      </div>
+
+      {/* Zona de risco — as 2 ações irreversíveis, isoladas do resto (mesmo
+          achado da crítica). */}
+      <div className="mob-zona-risco" style={{ marginTop: "1rem" }}>
+        <div className="mob-zona-risco-titulo">⚠ Ações irreversíveis</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.7rem" }}>
+          <MobBloco icone={<Skull size={22} />} label="Baixar animal" cor="var(--mob-vermelho)" onClick={() => setTela("baixar")} />
+          <MobBloco icone={<Trash2 size={22} />} label="Excluir lançamento" cor="var(--mob-vermelho)" onClick={() => setTela("exclusao")} />
+        </div>
       </div>
     </div>
   );

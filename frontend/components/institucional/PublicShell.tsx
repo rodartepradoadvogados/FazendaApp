@@ -17,6 +17,13 @@ export const marcaVars = {
   "--border": "rgba(255,255,255,0.14)",
   "--text": "#F5EEF1",
   "--text-muted": "rgba(245,238,241,0.68)",
+  // --red/--green-light/--alert-fg do tema claro/escuro do site falham
+  // contraste (2.2:1 / 4.4:1) contra o fundo marinho fixo desta árvore —
+  // recalibrados só aqui (achado da crítica da página pública, ver
+  // docs/agents/design-implementation.md §5, entrada-acessivel.html).
+  "--red": "#FF8A80",
+  "--green-light": "#6BC79A",
+  "--alert-fg": "#FF8A80",
 } as React.CSSProperties;
 
 export function PublicHeader({ variant = "institucional" }: { variant?: "login" | "institucional" }) {
@@ -47,10 +54,31 @@ export function PublicHeader({ variant = "institucional" }: { variant?: "login" 
   );
 }
 
+// Rodapé com prova concreta + links — antes era uma linha só, sem nenhum
+// sinal de confiança pra um visitante que rolou a página inteira procurando
+// um motivo pra confiar (achado da crítica, ver
+// docs/agents/design-implementation.md §5, prova-e-acabamento.html).
 export function PublicFooter() {
+  const linkStyle: React.CSSProperties = { color: "rgba(245,238,241,0.65)", textDecoration: "none", fontSize: "0.8rem" };
   return (
-    <footer style={{ padding: "1.5rem", textAlign: "center", color: "rgba(245,238,241,0.45)", fontSize: "0.75rem", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-      CowData · Estreito Ponte de Pedra · Jairo Nasser
+    <footer style={{
+      padding: "1.6rem 1.5rem", borderTop: "1px solid rgba(255,255,255,0.08)",
+      display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: "1rem",
+    }}>
+      <div>
+        <p style={{ margin: "0 0 0.3rem", fontSize: "0.8rem", fontWeight: 700, color: "#C9A44C" }}>
+          48+ testes automatizados das regras de negócio · construído com dados reais da Fazenda Estreito Ponte de Pedra
+        </p>
+        <p style={{ margin: 0, fontSize: "0.75rem", color: "rgba(245,238,241,0.45)" }}>
+          CowData · Estreito Ponte de Pedra · Jairo Nasser
+        </p>
+      </div>
+      {/* Só links que já existem de verdade no site — nada de "Contato"/
+          "Termos" fabricados sem página real por trás. */}
+      <nav style={{ display: "flex", gap: "1.2rem" }}>
+        <a href="/login#recursos" style={linkStyle}>Recursos</a>
+        <a href="/news" style={linkStyle}>Milk News</a>
+      </nav>
     </footer>
   );
 }

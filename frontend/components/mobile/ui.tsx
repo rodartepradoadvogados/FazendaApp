@@ -98,9 +98,9 @@ export function MobCheck({ feito, onClick, title }: { feito: boolean; onClick?: 
 
 /** Bloco grande do Lançamento Rápido — `cor` tinge o contorno e o fundo leve
  * do círculo do ícone (ex.: "var(--mob-roxo)"); sem `cor`, cai no dourado da marca. */
-export function MobBloco({ icone, label, cor, onClick }: { icone: ReactNode; label: string; cor?: string; onClick: () => void }) {
+export function MobBloco({ icone, label, cor, onClick, destaque }: { icone: ReactNode; label: string; cor?: string; onClick: () => void; destaque?: boolean }) {
   return (
-    <button type="button" className="mob-bloco" onClick={onClick} style={cor ? ({ "--c": cor } as CSSProperties) : undefined}>
+    <button type="button" className={destaque ? "mob-bloco mob-bloco--destaque" : "mob-bloco"} onClick={onClick} style={cor ? ({ "--c": cor } as CSSProperties) : undefined}>
       <span className="icone">{icone}</span>
       {label}
     </button>

@@ -1,0 +1,265 @@
+<title>Entrada Acessível</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --vinho:#0E2A47; --vinho-light:#416180; --vinho-dark:#0A1F36;
+    --dourado:#8A6D2F; --dourado-light:#C9A44C;
+    --bg:#F4F6F9; --surface:#FFFFFF; --surface-2:#F9FAFB;
+    --border:#DCE3EA; --border-strong:#C3CDD8;
+    --text:#1F2937; --text-muted:#6B7280;
+    --red:#C0392B; --green-light:#4CAF80;
+    --r:2px; --shadow:0 1px 4px rgba(20,30,45,.10);
+    --hero-bg:#14385A; /* fundo real do hero público de login — hardcoded, não segue o tema claro/escuro do app autenticado */
+    --review-bg:#EDEFF2; --review-fg:#3A4250; --review-border:#D6DAE1; --review-accent:#0E2A47;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0B0D10; --surface:#15181D; --surface-2:#1B1F26; --border:#2A2E36; --border-strong:#3A3F49;
+      --text:#F0E8EC; --text-muted:#9B8A91;
+      --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0B0D10; --surface:#15181D; --surface-2:#1B1F26; --border:#2A2E36; --border-strong:#3A3F49;
+    --text:#F0E8EC; --text-muted:#9B8A91;
+    --review-bg:#15181D; --review-fg:#C9CDD3; --review-border:#2A2E36; --review-accent:#C9A44C;
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--review-bg); color:var(--text);
+    font-family:'Barlow', Inter, sans-serif;
+    padding-inline: max(16px, calc((100vw - 1180px)/2));
+    padding-block: 20px 48px;
+  }
+  h1,h2,h3,.card-header,.section-label{ font-family:'Barlow Condensed', Inter, sans-serif; }
+  code, .mono{ font-family:'JetBrains Mono', ui-monospace, monospace; }
+
+  .review-bar{
+    max-width:1180px; margin:0 auto 18px; padding:.85rem 1.1rem;
+    background:var(--review-bg); border:1px solid var(--review-border); border-radius:8px;
+    display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap;
+  }
+  .review-tag{ font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--review-fg); }
+  .review-tag b{ color:var(--review-accent); }
+  .review-switch{ display:inline-flex; border:1px solid var(--review-border); border-radius:999px; padding:3px; gap:2px; background:var(--surface); }
+  .review-switch button{
+    font-family:'Barlow Condensed', Inter, sans-serif; font-weight:700; font-size:.85rem;
+    padding:.4rem 1.1rem; border-radius:999px; border:none; cursor:pointer; background:transparent; color:var(--text-muted);
+  }
+  .review-switch button.active{ background:var(--vinho); color:var(--dourado-light); }
+  .review-note{ max-width:1180px; margin:0 auto 22px; font-size:.82rem; color:var(--review-fg); }
+  .review-note b{ color:var(--review-accent); }
+  .review-note code{ background:var(--surface-2); border:1px solid var(--border); border-radius:4px; padding:.05rem .35rem; font-size:.78rem; }
+
+  .stage{ max-width:1180px; margin:0 auto; display:flex; flex-direction:column; gap:1.4rem; }
+
+  /* ---------- palco escuro: réplica do hero público de login (fundo fixo #14385A) ---------- */
+  .hero{
+    background:var(--hero-bg); border-radius:10px; padding:2.2rem 2rem; position:relative; overflow:hidden;
+    display:grid; grid-template-columns: minmax(0,1fr) minmax(300px,360px); gap:1.6rem; align-items:start;
+  }
+  .hero::before{
+    content:""; position:absolute; inset:0; opacity:.10; pointer-events:none;
+    background:radial-gradient(circle at 25% 30%, #fff 0%, transparent 45%);
+  }
+  .hero h2{ color:#fff; font-size:1.05rem; font-weight:700; margin:0 0 .3rem; }
+  .hero .hero-sub{ color:rgba(255,255,255,.68); font-size:.82rem; max-width:32rem; }
+
+  .login-card{
+    background:var(--surface); border-radius:var(--r); box-shadow:0 20px 50px rgba(0,0,0,.4);
+    padding:1.4rem 1.3rem; position:relative; z-index:1;
+  }
+  .login-card .kicker{ text-align:center; color:var(--text-muted); font-size:.82rem; font-weight:600; margin:0 0 1rem; }
+  .field{ margin-bottom:.85rem; position:relative; }
+  .field label{ display:block; font-size:.72rem; color:var(--text-muted); margin-bottom:.2rem; }
+  .field input{
+    width:100%; background:var(--surface-2); color:var(--text); border:1px solid var(--border);
+    border-radius:var(--r); padding:.55rem .75rem; font-size:.92rem; font-family:inherit;
+  }
+  .sr-hint{
+    display:flex; align-items:flex-start; gap:.35rem; font-size:.68rem; margin-top:.3rem; padding:.3rem .5rem;
+    border-radius:4px; line-height:1.35;
+  }
+  .sr-hint.bad{ background:rgba(192,57,43,.12); color:#F1897E; }
+  .sr-hint.good{ background:rgba(46,125,82,.14); color:#8FDCB4; }
+  .field-flag{
+    position:absolute; top:-.4rem; right:-.4rem; width:16px; height:16px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center; font-size:.62rem; font-weight:800; color:#fff;
+  }
+  .field-flag.bad{ background:var(--red); }
+  .field-flag.good{ background:var(--green-light); }
+  .btn-primary{
+    width:100%; background:var(--vinho); color:#fff; border:1px solid var(--vinho); border-radius:var(--r);
+    padding:.55rem 1rem; font-weight:600; font-size:.9rem; cursor:pointer; margin-top:.3rem;
+  }
+
+  /* ---------- simulador de preço (parte do mesmo palco escuro) ---------- */
+  .sim-card{ background:var(--surface); border-radius:var(--r); box-shadow:var(--shadow); padding:1.2rem 1.3rem; position:relative; z-index:1; }
+  .sim-title{ font-size:.95rem; font-weight:700; color:var(--text); margin:0 0 .9rem; display:flex; align-items:center; gap:.4rem; }
+  .sim-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:.7rem; margin-bottom:1rem; }
+  .sim-field label{ display:block; font-size:.68rem; color:var(--text-muted); margin-bottom:.2rem; }
+  .sim-field input{
+    width:100%; background:var(--surface-2); color:var(--text); border:1px solid var(--border);
+    border-radius:var(--r); padding:.4rem .6rem; font-size:.85rem; font-family:inherit; font-variant-numeric:tabular-nums;
+  }
+  .sim-field{ position:relative; }
+  .ajuste-panel{ background:var(--surface-2); border:1px solid var(--border); border-radius:var(--r); padding:.8rem .9rem; }
+  .ajuste-row{ display:flex; justify-content:space-between; font-size:.83rem; padding:.28rem 0; }
+  .ajuste-row .v{ font-weight:700; font-variant-numeric:tabular-nums; }
+
+  /* ---------- faixa de contraste (evidência calculada) ---------- */
+  .contrast-strip{ display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:1rem; }
+  .swatch{ border-radius:var(--r); padding:1rem 1.1rem; background:var(--hero-bg); border:1px solid #0A2740; }
+  .swatch .big{ font-size:1.5rem; font-weight:800; font-variant-numeric:tabular-nums; }
+  .swatch .ratio-row{ display:flex; align-items:center; gap:.5rem; margin-top:.5rem; font-size:.76rem; }
+  .pill{ font-size:.66rem; font-weight:700; letter-spacing:.05em; padding:.15rem .5rem; border-radius:999px; text-transform:uppercase; }
+  .pill.fail{ background:rgba(192,57,43,.22); color:#F1897E; }
+  .pill.pass{ background:rgba(46,125,82,.22); color:#8FDCB4; }
+  .card-plain{ background:var(--surface); border:1px solid var(--border); border-radius:var(--r); box-shadow:var(--shadow); padding:1rem 1.2rem; }
+
+  code.diff-old{ color:#F1897E; } code.diff-new{ color:#8FDCB4; }
+
+  @media (max-width:760px){ .hero{ grid-template-columns:1fr; } }
+</style>
+
+<div class="review-bar">
+  <span class="review-tag">Revisão de proposta · CowData &nbsp;—&nbsp; <b>2/6 · Login: labels e contraste</b></span>
+  <div class="review-switch" role="tablist" aria-label="Alternar entre versão atual e proposta">
+    <button id="btn-atual" class="active" aria-pressed="true">Atual</button>
+    <button id="btn-proposta" aria-pressed="false">Proposta</button>
+  </div>
+</div>
+<p class="review-note" id="note-atual">
+  <b>Hoje:</b> em <code>app/login/page.tsx</code> (Usuário/Senha) e em <code>components/login/MilkPriceExplainer.tsx</code> (6 campos do simulador), o <code>&lt;label&gt;</code> existe visualmente mas é um elemento irmão solto — sem <code>htmlFor</code>/<code>id</code>, o leitor de tela não faz a ligação. São exatamente os 8 campos que o detector achou ao vivo. No mesmo simulador, os valores de ajuste usam os tokens globais <code>--red</code>/<code>--green-light</code> sobre o fundo fixo do hero público (<code>#14385A</code>) — tokens pensados para fundo claro, não para este navy escuro.
+</p>
+<p class="review-note" id="note-proposta" hidden>
+  <b>Proposta:</b> cada <code>&lt;label&gt;</code> ganha <code>htmlFor</code> apontando pro <code>id</code> real do campo — zero mudança visual, o leitor de tela passa a anunciar o nome do campo. As cores de ajuste ganham uma variante calibrada para o fundo escuro do hero (mesma família de cor, contraste calculado ≥ 4.5:1 — ver faixa de evidência abaixo).
+</p>
+
+<div class="stage">
+
+  <div class="hero">
+    <div>
+      <h2>Entre com seu usuário e senha</h2>
+      <div class="hero-sub">Fundo real do hero de login — <span class="mono">#14385A</span>, fixo, independente do tema claro/escuro do painel autenticado.</div>
+    </div>
+    <div class="login-card">
+      <p class="kicker">Entre com seu usuário e senha</p>
+
+      <!-- ATUAL -->
+      <div id="login-atual">
+        <div class="field">
+          <label>Usuário</label>
+          <input type="text" autocomplete="username" aria-label="">
+          <span class="field-flag bad">!</span>
+          <div class="sr-hint bad">🔇 leitor de tela ouve: <em>&nbsp;"caixa de texto"</em> — sem nome do campo</div>
+        </div>
+        <div class="field">
+          <label>Senha</label>
+          <input type="password" autocomplete="current-password">
+          <span class="field-flag bad">!</span>
+          <div class="sr-hint bad">🔇 leitor de tela ouve: <em>&nbsp;"campo protegido"</em> — sem nome do campo</div>
+        </div>
+        <button class="btn-primary">Entrar</button>
+      </div>
+
+      <!-- PROPOSTA -->
+      <div id="login-proposta" hidden>
+        <div class="field">
+          <label for="p-usuario">Usuário</label>
+          <input id="p-usuario" type="text" autocomplete="username">
+          <span class="field-flag good">✓</span>
+          <div class="sr-hint good">🔊 leitor de tela ouve: <em>&nbsp;"Usuário, caixa de texto"</em></div>
+        </div>
+        <div class="field">
+          <label for="p-senha">Senha</label>
+          <input id="p-senha" type="password" autocomplete="current-password">
+          <span class="field-flag good">✓</span>
+          <div class="sr-hint good">🔊 leitor de tela ouve: <em>&nbsp;"Senha, campo protegido"</em></div>
+        </div>
+        <button class="btn-primary">Entrar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="hero" style="grid-template-columns:1fr;">
+    <div class="sim-card">
+      <p class="sim-title">🧮 Simulador de preço do leite</p>
+
+      <!-- ATUAL -->
+      <div id="sim-atual">
+        <div class="sim-grid">
+          <div class="sim-field"><label>Preço base (R$/L)</label><input value="2,20" readonly><span class="field-flag bad" style="top:-.3rem;right:-.3rem;">!</span></div>
+          <div class="sim-field"><label>Volume mensal (L)</label><input value="45.000" readonly><span class="field-flag bad" style="top:-.3rem;right:-.3rem;">!</span></div>
+          <div class="sim-field"><label>CCS (mil/mL)</label><input value="300" readonly><span class="field-flag bad" style="top:-.3rem;right:-.3rem;">!</span></div>
+          <div class="sim-field"><label>CPP/CBT (mil UFC/mL)</label><input value="80" readonly><span class="field-flag bad" style="top:-.3rem;right:-.3rem;">!</span></div>
+          <div class="sim-field"><label>Gordura (%)</label><input value="3,4" readonly><span class="field-flag bad" style="top:-.3rem;right:-.3rem;">!</span></div>
+          <div class="sim-field"><label>Proteína (%)</label><input value="3,2" readonly><span class="field-flag bad" style="top:-.3rem;right:-.3rem;">!</span></div>
+        </div>
+        <div class="sr-hint bad" style="margin-bottom:.7rem;">🔇 6 campos sem <code>htmlFor</code>/<code>id</code> — mesmo defeito do login, em maior escala</div>
+        <div class="ajuste-panel">
+          <div class="ajuste-row"><span>CCS (qualidade celular)</span><span class="v" style="color:var(--red)">−R$0,03/L</span></div>
+          <div class="ajuste-row"><span>Gordura</span><span class="v" style="color:var(--green-light)">+R$0,04/L</span></div>
+        </div>
+      </div>
+
+      <!-- PROPOSTA -->
+      <div id="sim-proposta" hidden>
+        <div class="sim-grid">
+          <div class="sim-field"><label for="p-preco">Preço base (R$/L)</label><input id="p-preco" value="2,20" readonly><span class="field-flag good" style="top:-.3rem;right:-.3rem;">✓</span></div>
+          <div class="sim-field"><label for="p-volume">Volume mensal (L)</label><input id="p-volume" value="45.000" readonly><span class="field-flag good" style="top:-.3rem;right:-.3rem;">✓</span></div>
+          <div class="sim-field"><label for="p-ccs">CCS (mil/mL)</label><input id="p-ccs" value="300" readonly><span class="field-flag good" style="top:-.3rem;right:-.3rem;">✓</span></div>
+          <div class="sim-field"><label for="p-cbt">CPP/CBT (mil UFC/mL)</label><input id="p-cbt" value="80" readonly><span class="field-flag good" style="top:-.3rem;right:-.3rem;">✓</span></div>
+          <div class="sim-field"><label for="p-gord">Gordura (%)</label><input id="p-gord" value="3,4" readonly><span class="field-flag good" style="top:-.3rem;right:-.3rem;">✓</span></div>
+          <div class="sim-field"><label for="p-prot">Proteína (%)</label><input id="p-prot" value="3,2" readonly><span class="field-flag good" style="top:-.3rem;right:-.3rem;">✓</span></div>
+        </div>
+        <div class="sr-hint good" style="margin-bottom:.7rem;">🔊 cada campo anuncia seu próprio nome — nenhuma mudança visual</div>
+        <div class="ajuste-panel">
+          <div class="ajuste-row"><span>CCS (qualidade celular)</span><span class="v" style="color:#FF8A80">−R$0,03/L</span></div>
+          <div class="ajuste-row"><span>Gordura</span><span class="v" style="color:#6BC79A">+R$0,04/L</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card-plain">
+    <div class="section-label" style="font-size:.72rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);margin:0 0 .8rem;">Evidência de contraste — texto sobre o fundo real do hero (#14385A)</div>
+    <div class="contrast-strip">
+      <div class="swatch"><div class="big" style="color:var(--red)">−R$0,03/L</div><div class="ratio-row"><span class="mono" style="color:#fff8">#C0392B</span><span class="pill fail">2.2:1 · reprova</span></div></div>
+      <div class="swatch"><div class="big" style="color:#FF8A80">−R$0,03/L</div><div class="ratio-row"><span class="mono" style="color:#fff8">#FF8A80</span><span class="pill pass">5.3:1 · aprova</span></div></div>
+      <div class="swatch"><div class="big" style="color:var(--green-light)">+R$0,04/L</div><div class="ratio-row"><span class="mono" style="color:#fff8">#4CAF80</span><span class="pill fail">4.4:1 · reprova (piso é 4.5:1)</span></div></div>
+      <div class="swatch"><div class="big" style="color:#6BC79A">+R$0,04/L</div><div class="ratio-row"><span class="mono" style="color:#fff8">#6BC79A</span><span class="pill pass">5.9:1 · aprova</span></div></div>
+    </div>
+    <p style="font-size:.76rem;color:var(--text-muted);margin:.9rem 0 0;">
+      Achado colateral: o token <code>--alert-fg (#E07070)</code>, já usado hoje para alertas em fundo escuro em outras telas, calcula ~3.9:1 contra este mesmo <span class="mono">#14385A</span> — também abaixo de 4.5:1. Vale auditar esse token junto, não só o par encontrado nesta página.
+    </p>
+  </div>
+
+</div>
+
+<script>
+  var btnAtual = document.getElementById('btn-atual');
+  var btnProposta = document.getElementById('btn-proposta');
+  var pairs = [
+    [document.getElementById('login-atual'), document.getElementById('login-proposta')],
+    [document.getElementById('sim-atual'), document.getElementById('sim-proposta')],
+  ];
+  var noteAtual = document.getElementById('note-atual');
+  var noteProposta = document.getElementById('note-proposta');
+
+  function setMode(mode){
+    var isProposta = mode === 'proposta';
+    pairs.forEach(function(p){ p[0].hidden = isProposta; p[1].hidden = !isProposta; });
+    noteAtual.hidden = isProposta;
+    noteProposta.hidden = !isProposta;
+    btnAtual.classList.toggle('active', !isProposta);
+    btnProposta.classList.toggle('active', isProposta);
+    btnAtual.setAttribute('aria-pressed', String(!isProposta));
+    btnProposta.setAttribute('aria-pressed', String(isProposta));
+  }
+  btnAtual.addEventListener('click', function(){ setMode('atual'); });
+  btnProposta.addEventListener('click', function(){ setMode('proposta'); });
+</script>

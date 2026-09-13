@@ -18,8 +18,8 @@ import {
   type ProtocoloCustomizado,
 } from "@/lib/api";
 import {
-  type Animal, type EstoqueItem, useCache, useEnvio, hoje,
-  GradeAcoes, BotoesEscolha, SeletorAnimal,
+  type Animal, type EstoqueItem, useCache, useEnvio, useRascunho, hoje,
+  GradeAcoes, BotoesEscolha, SeletorAnimal, RascunhoAviso,
 } from "./comum";
 import { ProtocoloIatf } from "./FormReprodutivo";
 import { CurativaForm } from "./FormSanidade";
@@ -80,9 +80,17 @@ function ProtocoloCustomizadoApp({ animais, animalFixado }: { animais: Animal[];
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   const [protocolos, setProtocolos] = useState<ProtocoloCustomizado[]>([]);
   const [pessoas, setPessoas] = useState<{ id?: number; nome: string; ativo?: boolean }[]>([]);
-  const [protocoloId, setProtocoloId] = useState("");
-  const [alvo, setAlvo] = useState<"animal" | "fazenda">("animal");
-  const [matriz, setMatriz] = useState(animalFixado || "");
+  // Rascunho — protocolo + alvo escolhidos (docs/agents/
+  // design-implementation.md §5, acabamento-de-campo.html).
+  const rascunho = useRascunho<{ protocoloId: string; alvo: "animal" | "fazenda"; matriz: string }>(
+    "protocolo_customizado", { protocoloId: "", alvo: "animal", matriz: animalFixado || "" },
+  );
+  const { protocoloId, alvo, matriz } = rascunho.valor;
+  const atualizar = (patch: Partial<{ protocoloId: string; alvo: "animal" | "fazenda"; matriz: string }>) =>
+    rascunho.setValor((atual) => ({ ...atual, ...patch }));
+  const setProtocoloId = (v: string) => atualizar({ protocoloId: v });
+  const setAlvo = (v: "animal" | "fazenda") => atualizar({ alvo: v });
+  const setMatriz = (v: string) => atualizar({ matriz: v });
   const [data, setData] = useState(hoje());
   const [responsavel, setResponsavel] = useState("");
 
@@ -105,7 +113,7 @@ function ProtocoloCustomizadoApp({ animais, animalFixado }: { animais: Animal[];
         responsavel: responsavel || undefined,
       },
       `Protocolo ${protocolo?.nome || ""}${alvo === "animal" ? ` — matriz ${matriz}` : " — tarefa da fazenda"}`,
-      () => { if (!animalFixado) setMatriz(""); },
+      () => { if (!animalFixado) atualizar({ matriz: "" }); },
       { ok: "Protocolo lançado — as etapas entram na agenda." },
     );
   }
@@ -114,6 +122,7 @@ function ProtocoloCustomizadoApp({ animais, animalFixado }: { animais: Animal[];
 
   return (
     <>
+      <RascunhoAviso mostrar={rascunho.salvo} />
       <MobCampo label="Protocolo">
         <select className="mob-input" value={protocoloId} onChange={(e) => setProtocoloId(e.target.value)}>
           <option value="">Selecione…</option>

@@ -66,7 +66,7 @@ type Grupo = { secao: SecaoKey; titulo: string; cor: string; iconeSecao: React.R
 const GRUPOS: Grupo[] = [
   { secao: "reproducao", titulo: "Reprodução", cor: "var(--cat-reproducao)", iconeSecao: <Heart size={26} />, itens: [
     { chave: "agendaVet", titulo: "Agenda Reprodutiva", subtitulo: "Listas do rebanho para a visita", rota: "/relatorios", icone: <Stethoscope size={20} /> },
-    { chave: "iatf", titulo: "Protocolos IATF", subtitulo: "Vacas em andamento (D0/D7/D9/D11)", rota: "/reproducao", icone: <Syringe size={20} /> },
+    { chave: "iatf", titulo: "Protocolos IATF", subtitulo: "Inseminação em tempo fixo — vacas em andamento (D0/D7/D9/D11)", rota: "/reproducao", icone: <Syringe size={20} /> },
   ] },
   { secao: "sanidade", titulo: "Sanidade", cor: "var(--cat-sanidade)", iconeSecao: <ShieldPlus size={26} />, itens: [
     { chave: "calendario", titulo: "Calendário Sanitário", subtitulo: "Próximos eventos (90 dias)", rota: "/sanidade", icone: <CalendarDays size={20} /> },
@@ -83,7 +83,7 @@ const GRUPOS: Grupo[] = [
     { chave: "ultimosControles", titulo: "Últimos controles leiteiros", subtitulo: "Produção por controle, mais recente primeiro", rota: "/producao", icone: <Milk size={20} /> },
     { chave: "qualidadeLeite", titulo: "Qualidade do leite", subtitulo: "CCS, CBT, gordura, proteína — por período", rota: "/producao", icone: <FlaskConical size={20} /> },
     { chave: "secagens", titulo: "Secagens", subtitulo: "Histórico de secagens, motivo e ECC", rota: "/reproducao", icone: <Droplet size={20} /> },
-    { chave: "bstHistorico", titulo: "BST — aplicações", subtitulo: "Histórico de aplicações de BST", rota: "/producao", icone: <Droplets size={20} /> },
+    { chave: "bstHistorico", titulo: "BST — aplicações", subtitulo: "Hormônio de produção (Boostin/Lactotropin) — histórico de aplicações", rota: "/producao", icone: <Droplets size={20} /> },
     { chave: "pesagemHistorico", titulo: "Pesagens", subtitulo: "Crescimento (GMD/GPD) por animal, lote ou rebanho", rota: "/producao", icone: <Scale size={20} /> },
   ] },
   { secao: "gestao", titulo: "Gestão", cor: "var(--cat-gestao)", iconeSecao: <FileBarChart size={26} />, itens: [

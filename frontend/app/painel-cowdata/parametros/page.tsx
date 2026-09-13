@@ -121,7 +121,7 @@ export default function ParametrosCowData() {
         ))}
       </div>
 
-      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: 10, padding: "0.9rem 1rem", marginBottom: "1rem" }}>
+      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.9rem 1rem", marginBottom: "1rem" }}>
         <p style={{ fontSize: "0.7rem", color: COR.mudo, marginBottom: "0.5rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Aplicar em</p>
         <div className="flex items-center gap-4" style={{ flexWrap: "wrap" }}>
           <label className="flex items-center gap-2" style={{ fontSize: "0.82rem", color: COR.texto, cursor: "pointer" }}>
@@ -152,7 +152,7 @@ export default function ParametrosCowData() {
       ) : !grupoAtual ? (
         <p style={{ color: COR.mudo, fontSize: "0.85rem" }}>Nenhum parâmetro encontrado.</p>
       ) : (
-        <div style={{ border: `1px solid ${COR.borda}`, borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", overflow: "hidden" }}>
           {grupoAtual.itens.map((item, i) => (
             <div key={item.chave} style={{
               display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.65rem 0.9rem",
