@@ -4,10 +4,11 @@ import { Plus } from "lucide-react";
 import {
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario,
   atualizarCalendarioSanitario, excluirCalendarioSanitario, fetchExames, atualizarEventoSanitario, criarEventoSanitario,
-  criarExame, fetchEventosVidaVocabulario, fetchCategoriasManejo, fetchChecklistTemplate, formatDate,
+  criarExame, fetchEventosVidaVocabulario, fetchCategoriasManejo, fetchChecklistTemplate, fetchServicosCadastro, formatDate,
   type ChecklistTemplateItemDTO,
 } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
+import { VIAS_APLICACAO } from "@/lib/constants";
 import { EstoquePicker } from "@/components/EstoquePicker";
 import { SecaoRecolhivel, MultiFiltro } from "@/components/ui";
 import { Campo, inputStyle, nota, type EstoqueItem, unidadesCompativeis } from "@/components/lancamentos/comumForms";
@@ -24,6 +25,7 @@ type EventoSanitarioDTO = {
   janela_de_valor: number | null; janela_de_unidade: "dias" | "meses" | null;
   janela_ate_valor: number | null; janela_ate_unidade: "dias" | "meses" | null;
   acao_fora_janela: string | null; teto_etario_valor: number | null; teto_etario_unidade: "dias" | "meses" | null;
+  servico_financeiro: string | null;
 };
 type OpcaoNomeAtivo = { id: number; nome: string; ativo: boolean };
 type RegraCalendario = {
@@ -101,7 +103,7 @@ type CalendarioForm = {
   veterinarioPadraoId: string;
   responsavel: string; veterinario: string;
   principioId: string; produto: string; dosagem: string; unidade: string;
-  observacao: string; realizado: boolean;
+  observacao: string; realizado: boolean; servicoFinanceiro: string;
 
   // Passo 4 — Checklist
   checklistItens: ChecklistTemplateItemDTO[];
@@ -118,7 +120,7 @@ const calendarioFormVazio = (): CalendarioForm => ({
   janelaDeValor: "", janelaDeUnidade: "meses", janelaAteValor: "", janelaAteUnidade: "meses",
   acaoForaJanela: "", tetoEtarioValor: "", tetoEtarioUnidade: "meses", veterinarioPadraoId: "",
   responsavel: "", veterinario: "", principioId: "", produto: "", dosagem: "", unidade: "",
-  observacao: "", realizado: false,
+  observacao: "", realizado: false, servicoFinanceiro: "",
   checklistItens: [],
 });
 
@@ -128,6 +130,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
   const [doencas, setDoencas] = useState<OpcaoNomeAtivo[]>([]);
   const [principios, setPrincipios] = useState<OpcaoNomeAtivo[]>([]);
   const [categoriasVida, setCategoriasVida] = useState<string[]>([]);
+  const [servicos, setServicos] = useState<OpcaoNomeAtivo[]>([]);
   const [regras, setRegras] = useState<RegraCalendario[] | null>(null);
   const [tela, setTela] = useState<"lista" | "wizard">("lista");
 
@@ -160,6 +163,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
     fetchDoencas().then((d) => setDoencas(d.filter((e: OpcaoNomeAtivo) => e.ativo))).catch(() => {});
     fetchPrincipiosAtivos().then((d) => setPrincipios(d.filter((e: OpcaoNomeAtivo) => e.ativo !== false))).catch(() => {});
     fetchCategoriasManejo().then((d) => setCategoriasVida(d.filter((c) => c.ativo).map((c) => c.nome))).catch(() => {});
+    fetchServicosCadastro().then((d: OpcaoNomeAtivo[]) => setServicos(d.filter((s) => s.ativo !== false))).catch(() => {});
     carregarRegras();
   }, []);
 
@@ -227,6 +231,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
       responsavel: r.responsavel || "", veterinario: r.veterinario || "",
       principioId: r.principio_ativo_id ? String(r.principio_ativo_id) : "", produto: r.produto || "",
       dosagem: r.dosagem || "", unidade: r.unidade || "", observacao: r.observacao || "", realizado: false,
+      servicoFinanceiro: ev?.servico_financeiro || "",
       checklistItens: r.checklist_itens && r.checklist_itens.length ? r.checklist_itens : f.checklistItens,
     }));
     setTela("wizard");
@@ -251,14 +256,20 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
       const dadosEvento = {
         categoria_preventiva: ehExame ? "exame" : form.categoriaPreventiva,
         doenca_id: form.doencaId ? Number(form.doencaId) : undefined,
-        tipo_agendamento: (form.modoFreq === "evento_vida" ? "evento" : "epoca") as "evento" | "epoca",
+        // "periodica": NÃO é "epoca" — a periodicidade mora só na regra
+        // (CalendarioSanitario.frequencia_valor/unidade), nunca também aqui.
+        // Achado real na reverificação E2E de 13/09/2026: gravar "epoca" +
+        // data_primeiro/frequencia_* no EventoSanitario ao mesmo tempo que a
+        // regra cria o MESMO agendamento duplicado (ver eventos_agenda() no
+        // backend) — e pior, excluir a regra depois não apaga essa cópia: o
+        // evento continua "ativo" com o próprio agendamento e a pendência
+        // RESSUSCITA na Agenda (com o texto genérico antigo, sem categoria-
+        // alvo), mesmo com a regra já sumida de "Regras cadastradas".
+        tipo_agendamento: (form.modoFreq === "evento_vida" ? "evento" : "nenhum") as "evento" | "nenhum",
         gatilho: form.modoFreq === "evento_vida" ? form.gatilho : undefined,
         gatilho_lote: form.modoFreq === "evento_vida" && form.gatilho === "entrada_lote" ? form.gatilhoLote.trim() : undefined,
         gatilho_idade_meses: form.modoFreq === "evento_vida" && form.gatilho === "novilha_apta" ? Number(form.gatilhoIdadeMeses) : undefined,
         offset_dias: form.modoFreq === "evento_vida" ? (form.offsetDias ? Number(form.offsetDias) : 0) : undefined,
-        data_primeiro: form.modoFreq === "periodica" ? form.dataEvento : undefined,
-        frequencia_valor: form.modoFreq === "periodica" ? Number(form.freqValor) : undefined,
-        frequencia_unidade: form.modoFreq === "periodica" ? form.freqUnidade : undefined,
         produto_padrao: ehExame ? undefined : (form.produtoPadrao || undefined),
         dose_padrao: ehExame ? undefined : (form.dosePadrao ? Number(form.dosePadrao) : undefined),
         unidade_padrao: ehExame ? undefined : (form.unidadePadrao || undefined),
@@ -272,6 +283,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
         teto_etario_valor: form.modoFreq === "evento_vida" && form.tetoEtarioValor ? Number(form.tetoEtarioValor) : undefined,
         teto_etario_unidade: form.modoFreq === "evento_vida" && form.tetoEtarioValor ? form.tetoEtarioUnidade : undefined,
         veterinario_padrao_pessoa_id: form.veterinarioPadraoId ? Number(form.veterinarioPadraoId) : undefined,
+        servico_financeiro: form.servicoFinanceiro || undefined,
       };
       if (form.modoEvento === "novo") {
         const novo = await criarEventoSanitario({ nome: form.nomeNovoEvento.trim(), ...dadosEvento });
@@ -432,7 +444,14 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3" style={{ paddingTop: "0.75rem", borderTop: "1px solid var(--border)" }}>
               <Campo label="Produto padrão (opcional)"><EstoquePicker itens={estoque} value={f.produtoPadrao} onChange={(v) => sf({ ...f, produtoPadrao: v })} /></Campo>
               <Campo label="Dose padrão (opcional)"><input type="number" style={inputStyle} value={f.dosePadrao} onChange={(e) => sf({ ...f, dosePadrao: e.target.value })} /></Campo>
-              <Campo label="Via padrão (opcional)"><input style={inputStyle} value={f.viaPadrao} onChange={(e) => sf({ ...f, viaPadrao: e.target.value })} placeholder="ex.: subcutânea" /></Campo>
+              <Campo label="Via padrão (opcional)">
+                <select style={inputStyle} value={f.viaPadrao} onChange={(e) => sf({ ...f, viaPadrao: e.target.value })}>
+                  <option value="">—</option>
+                  {/* Regra antiga com via em texto livre (antes desta correção) continua aparecendo, mesmo fora da lista fixa. */}
+                  {!VIAS_APLICACAO.includes(f.viaPadrao) && f.viaPadrao && <option value={f.viaPadrao}>{f.viaPadrao}</option>}
+                  {VIAS_APLICACAO.map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </Campo>
               <p style={{ gridColumn: "1 / -1", fontSize: "0.7rem", color: "var(--text-muted)" }}>Opcionais — a regra (próximo passo) e a realização ainda podem sobrescrever.</p>
             </div>
           )}
@@ -591,6 +610,12 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
                 </Campo>
               </>
             )}
+            <Campo label="Serviço financeiro (opcional)">
+              <select style={inputStyle} value={f.servicoFinanceiro} onChange={(e) => sf({ ...f, servicoFinanceiro: e.target.value })}>
+                <option value="">— (sem botão "Lançar financeiro" no calendário)</option>
+                {servicos.map((s) => <option key={s.id} value={s.nome}>{s.nome}</option>)}
+              </select>
+            </Campo>
             <Campo label="Observação" full><input style={inputStyle} value={f.observacao} onChange={(e) => sf({ ...f, observacao: e.target.value })} /></Campo>
             {f.modoFreq === "periodica" && (
               <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", gridColumn: "1 / -1" }}>
@@ -620,6 +645,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
               <li>Doença: {doencas.find((d) => String(d.id) === f.doencaId)?.nome || "—"}</li>
               <li>Repete por: {f.modoFreq === "periodica" ? `a cada ${f.freqValor} ${FREQUENCIA_UNIDADES.find((u) => u.v === f.freqUnidade)?.l}` : `evento de vida (${gatilhosVida.find((g) => g.gatilho === f.gatilho)?.rotulo || f.gatilho})`}</li>
               <li>Veterinário padrão: {veterinariosZootecnistas.find((p: any) => String(p.id) === f.veterinarioPadraoId)?.nome || "—"}</li>
+              <li>Serviço financeiro: {f.servicoFinanceiro || "—"}</li>
               <li>Itens do checklist: {f.checklistItens.length}</li>
             </ul>
           </div>

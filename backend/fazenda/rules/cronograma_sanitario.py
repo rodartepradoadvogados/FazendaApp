@@ -173,6 +173,29 @@ def decidir_animal(session: Session, cronograma_animal_id: int, incluir: bool, h
     return linha
 
 
+def remover_animal(session: Session, cronograma_animal_id: int, hoje: date) -> CronogramaSanitarioAnimal:
+    """Remove um animal já incluído (ou ainda sugerido) do cronograma — pedido
+    do usuário em 13/09/2026 ("adicionar OU remover animais manualmente"):
+    `decidir_animal` só decide uma linha "sugerido" pela primeira vez (nunca
+    desfaz), e a inclusão manual (`incluir_animal_manual`) não tinha
+    contrapartida nenhuma para tirar o animal de volta. Vira "excluido",
+    igual ao efeito de recusar uma sugestão — nunca em animal já aplicado
+    (isso já virou aplicação de verdade, com baixa de estoque)."""
+    linha = session.get(CronogramaSanitarioAnimal, cronograma_animal_id)
+    if not linha:
+        raise CronogramaError("Animal não encontrado no cronograma")
+    if linha.status == "aplicado":
+        raise CronogramaError("Este animal já foi aplicado — não é possível remover")
+    if linha.status == "excluido":
+        raise CronogramaError("Este animal já está excluído")
+    linha.status = "excluido"
+    linha.data_decisao = hoje
+    session.add(linha)
+    session.commit()
+    session.refresh(linha)
+    return linha
+
+
 def decidir_modo(
     session: Session, cronograma: CronogramaSanitario, modo: str | None, veterinario_pessoa_id: int | None,
 ) -> CronogramaSanitario:

@@ -25,7 +25,7 @@ from fazenda.models import (
 from fazenda.api.routers.baixas import ADescartarIn, marcar_a_descartar
 from fazenda.api.routers.cadastro import GATILHOS_EVENTO
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
-from fazenda.rules.calendario_sanitario import proxima_ocorrencia
+from fazenda.rules.calendario_sanitario import proxima_ocorrencia, proxima_ocorrencia_a_partir_de
 from fazenda.rules.calendario_visao import montar_calendario_visual
 from fazenda.rules.cronograma_sanitario import cronograma_aberto
 from fazenda.rules.checklist_sanitario import (
@@ -773,7 +773,14 @@ def _serializar(
     if c.usa_cronograma:
         proxima = cronograma_aberto_por_regra.get(c.id, c.data_evento)
     else:
-        proxima = proxima_ocorrencia(c.data_evento, c.frequencia_valor, c.frequencia_unidade)
+        # Mesmo raciocínio do branch acima, pelo caminho comum (achado na
+        # verificação E2E de 12/09/2026): `data_evento` é a 1ª ocorrência, não
+        # a última — se ela ainda não aconteceu, ela MESMA é a próxima, sem
+        # somar a frequência por cima (antes pulava sempre o 1º ciclo de
+        # qualquer regra nova, já que `data_evento` é tipicamente hoje/futuro
+        # ao cadastrar). `proxima_ocorrencia` sozinha (usada em todo o resto
+        # do arquivo) fica reservada para rolar uma série já em andamento.
+        proxima = proxima_ocorrencia_a_partir_de(c.data_evento, c.frequencia_valor, c.frequencia_unidade, date.today())
     return {
         **c.model_dump(),
         "evento_sanitario_nome": eventos.get(c.evento_sanitario_id, "—"),
@@ -999,12 +1006,59 @@ def atualizar_calendario(
 def excluir_calendario(
     calendario_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    """Exclui uma regra do calendário sanitário (e suas ocorrências somem da Agenda)."""
+    """Exclui uma regra do calendário sanitário (e suas ocorrências somem da Agenda).
+
+    Apaga também os `CronogramaSanitario` (e os `ChecklistItem`/
+    `CronogramaSanitarioAnimal` de cada um) e os `CalendarioSanitarioChecklistItem`
+    da regra — nenhum dos quatro FKs tem cascade no banco (SQLite nesta suíte
+    não aplica `ON DELETE`), então sem isto eles ficavam órfãos. Achado real
+    (verificação E2E de 12/09/2026): uma regra nova criada depois reaproveitou
+    o ID de uma regra excluída (SQLite sem AUTOINCREMENT reaproveita o maior ID
+    livre) e "herdou" visualmente cronogramas/animais/checklist que nunca foram
+    dela — em Postgres o ID não se repete, mas os órfãos ficariam do mesmo jeito,
+    só sem reaparecer em outra regra."""
     c = session.get(CalendarioSanitario, calendario_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
     if not c or (c.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
+    cronogramas = session.exec(
+        select(CronogramaSanitario).where(CronogramaSanitario.calendario_sanitario_id == calendario_id)
+    ).all()
+    for cron in cronogramas:
+        for item in session.exec(select(ChecklistItem).where(ChecklistItem.cronograma_id == cron.id)).all():
+            session.delete(item)
+        for animal in session.exec(select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id == cron.id)).all():
+            session.delete(animal)
+        session.delete(cron)
+    for item in session.exec(
+        select(CalendarioSanitarioChecklistItem).where(CalendarioSanitarioChecklistItem.calendario_sanitario_id == calendario_id)
+    ).all():
+        session.delete(item)
+    evento_sanitario_id = c.evento_sanitario_id
     session.delete(c)
+    session.flush()  # a regra já não conta na consulta abaixo, sem precisar de commit ainda
+    # Achado real (reverificação E2E de 13/09/2026): o wizard (antes desta
+    # correção) gravava a MESMA periodicidade também no EventoSanitario
+    # (tipo_agendamento="epoca") — excluir a regra não apagava essa cópia, e
+    # a pendência "ressuscitava" na Agenda (texto genérico, sem categoria-
+    # alvo) pelo fallback legado em eventos_agenda(), mesmo com a regra já
+    # fora de "Regras cadastradas". O wizard não grava mais essa cópia (ver
+    # FormCalendarioSanitario.tsx::salvar), mas dados já gravados antes desta
+    # correção (ou pela tela legada) continuam por aí — limpa aqui, na única
+    # regra que ainda os referenciava, em vez de uma migração de backfill.
+    outra_regra_ativa = session.exec(
+        select(CalendarioSanitario)
+        .where(CalendarioSanitario.evento_sanitario_id == evento_sanitario_id)
+        .where(CalendarioSanitario.ativo == True)  # noqa: E712
+    ).first()
+    if not outra_regra_ativa:
+        ev = session.get(EventoSanitario, evento_sanitario_id)
+        if ev and ev.tipo_agendamento == "epoca":
+            ev.tipo_agendamento = "nenhum"
+            ev.data_primeiro = None
+            ev.frequencia_valor = None
+            ev.frequencia_unidade = None
+            session.add(ev)
     session.commit()
     return {"excluido": True, "id": calendario_id}
 

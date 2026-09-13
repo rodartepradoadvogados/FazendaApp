@@ -45,7 +45,18 @@ export function EstoquePicker({ itens, value, onChange, placeholder = "Seleciona
   const [busca, setBusca] = useState("");
   const disponiveis = useMemo(
     () => itens
-      .filter((i) => (incluirNaoEstocaveis || i.estocavel !== false) && (todasFinalidades || i.finalidade == null || finalidades.includes(i.finalidade)) && (!somenteVinculadosAlimento || i.alimento_id != null))
+      .filter((i) =>
+        (incluirNaoEstocaveis || i.estocavel !== false) &&
+        // `finalidade == null` entra como "não classificado, não esconder à
+        // toa" — mas item de sêmen (`estoque_semen_id` preenchido) nunca é
+        // "Medicamento"/"Ração" etc., classificado ou não: sem esta exclusão,
+        // uma fazenda cujo estoque não tem `finalidade` preenchida em nada
+        // (comum — ver Configurações > Cadastro > Estoque > Finalidades)
+        // via o seletor de "Produto padrão" de uma vacina listar só doses de
+        // sêmen (achado real, verificação E2E de 12/09/2026: selecionável e
+        // GRAVÁVEL como medicamento padrão da regra).
+        (todasFinalidades || (i.estoque_semen_id == null && (i.finalidade == null || finalidades.includes(i.finalidade)))) &&
+        (!somenteVinculadosAlimento || i.alimento_id != null))
       .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")),
     [itens, finalidades, todasFinalidades, somenteVinculadosAlimento, incluirNaoEstocaveis]
   );

@@ -393,6 +393,24 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
         query_calendarios_cron = query_calendarios_cron.where(CalendarioSanitario.fazenda_id == fazenda_id)
     calendarios_cronograma = {c.evento_sanitario_id: c for c in session.exec(query_calendarios_cron).all()}
 
+    # Duplicidade real de produção (verificação E2E de 12/09/2026): o wizard
+    # de cadastro (FormCalendarioSanitario.tsx::salvar) grava a periodicidade
+    # em DOIS lugares ao mesmo tempo para a mesma regra — tipo_agendamento=
+    # "epoca" + data_primeiro/frequencia_* no próprio EventoSanitario, E um
+    # CalendarioSanitario com as mesmas frequencia_valor/unidade. O branch
+    # "epoca" abaixo materializava por EventoSanitario (id "evento_sanitario_
+    # …", sem saber de categoria_alvo, sempre "— rebanho") AO MESMO TEMPO que
+    # `_eventos_calendario_agenda` materializava pela regra (id "calendario_
+    # sanitario_…", com a categoria_alvo certa) — duas pendências, mesmo dia,
+    # textos diferentes, para o mesmo evento. Mesmo raciocínio já aplicado
+    # acima para usa_cronograma=True: existindo QUALQUER regra ativa para este
+    # evento, ela é a única fonte de periodicidade — o "epoca" aqui materializa
+    # só os eventos legados sem regra nenhuma (nunca migrados para o calendário).
+    query_calendarios_ativos = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query_calendarios_ativos = query_calendarios_ativos.where(CalendarioSanitario.fazenda_id == fazenda_id)
+    eventos_com_regra_ativa = {c.evento_sanitario_id for c in session.exec(query_calendarios_ativos).all()}
+
     # Resolve o princípio ativo do produto padrão (nome do item de estoque) —
     # alimenta o seletor "Princípio ativo" já pré-preenchido na Agenda, do
     # mesmo jeito que as regras do calendário sanitário já fazem.
@@ -474,6 +492,8 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
         principio_ativo_id = principio_por_nome.get(ev.produto_padrao) if ev.produto_padrao else None
 
         if ev.tipo_agendamento == "epoca":
+            if ev.id in eventos_com_regra_ativa:
+                continue
             for d in _ocorrencias_epoca(ev, hoje, janela_passado, janela_futuro):
                 evt = _base(ev, d, None, d.isoformat(), principio_ativo_id)
                 if evt["id"] not in realizados:
