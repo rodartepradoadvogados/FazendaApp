@@ -218,16 +218,6 @@ export default function AgendaPage() {
     return { ...p, [id]: atual };
   });
 
-  const decidirCronogramaAnimal = async (e: any, incluir: boolean) => {
-    setMarcando((p) => new Set(p).add(e.id));
-    try {
-      await marcarEventoRealizado(e.id, undefined, undefined, { incluir });
-      await carregar();
-      mostrarFeedback(incluir ? `Matriz ${e.numero_animal} incluída no cronograma.` : `Matriz ${e.numero_animal} excluída do cronograma.`);
-    } catch (err: any) { mostrarFeedback(err.message, true); }
-    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
-  };
-
   // "Incluir animal fora da janela de aplicação" (bug relatado pelo usuário
   // em 12/09/2026: só entra na lista quem bate o critério automático da
   // regra — idade/gatilho/categoria projetada — sem nenhum jeito de incluir
@@ -1057,8 +1047,8 @@ export default function AgendaPage() {
           // 1 animal no grupo — com 1 só, o fallback genérico (linha "simples",
           // numero_animal já preenchido) é suficiente e mais direto.
           linhas.push({ tipo: "protocolo_custom", e });
-        } else if (e.tipo === "cronograma_sanitario_animal") {
-          linhas.push({ tipo: "cronograma_animal", e });
+        } else if (e.tipo === "cronograma_sanitario_sugeridos") {
+          linhas.push({ tipo: "cronograma_sugeridos", e });
         } else if (e.tipo === "cronograma_sanitario_modo" || e.tipo === "cronograma_sanitario_urgente") {
           linhas.push({ tipo: "cronograma_modo", e });
         } else if (e.tipo === "cronograma_sanitario_aplicar") {
@@ -1464,25 +1454,18 @@ export default function AgendaPage() {
                         </React.Fragment>
                       );
                     }
-                    if (linha.tipo === "cronograma_animal") {
+                    if (linha.tipo === "cronograma_sugeridos") {
                       const e = linha.e;
                       return (
-                        <tr key={`cron-animal-${i}`}>
+                        <tr key={`cron-sugeridos-${i}`} className="clickable" style={{ cursor: "pointer" }}
+                          onClick={() => router.push(`/sanidade?ir=cronogramas&cronograma_id=${e.cronograma_id}`)}
+                          title="Ver os animais e decidir incluir ou excluir cada um">
                           {tdAccent(e.categoria)}
-                          <td style={{ fontWeight: 700 }}>{e.numero_animal}</td>
+                          <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>—</td>
                           <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>{e.descricao}{mostrarAtraso && pillAtraso(e.data)}</td>
                           <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
                           <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>
-                          <td>
-                            <span className="flex items-center gap-1">
-                              <button className="btn-primary" style={{ fontSize: "0.68rem" }} disabled={marcando.has(e.id)} onClick={() => decidirCronogramaAnimal(e, true)}>
-                                <Check size={11} /> Incluir
-                              </button>
-                              <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={marcando.has(e.id)} onClick={() => decidirCronogramaAnimal(e, false)}>
-                                <X size={11} /> Excluir
-                              </button>
-                            </span>
-                          </td>
+                          <td><ChevronRight size={16} style={{ color: "var(--text-muted)" }} /></td>
                         </tr>
                       );
                     }

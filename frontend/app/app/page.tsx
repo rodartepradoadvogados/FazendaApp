@@ -141,6 +141,9 @@ type Evento = {
   // Diarista ativa sem folga marcada hoje (tipo diaria_trabalho) — id da
   // Diaria para o PUT /cadastro/diarias/{id}/dias, ver decidirDiaria.
   diaria_id?: number | null;
+  // Card-resumo "N animal(is) na janela" (tipo cronograma_sanitario_sugeridos)
+  // — leva direto ao detalhe do cronograma em Sanidade, sem decidir aqui.
+  cronograma_id?: number | null;
 };
 
 // Um grupo de aplicações do mesmo protocolo/dia/data (lote) — para oferecer
@@ -556,21 +559,6 @@ export default function AgendaMovel() {
       else setAviso({ tipo: "ok", msg: `Confirmado em ${animaisSel.length} animal(is).` });
     } catch (err) {
       if (!individual) setFeitos((p) => { const n = new Set(p); n.delete(e.id); return n; });
-      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
-    }
-  }
-
-  // ── Cronograma sanitário ──────────────────────────────────────────────
-  // (1) Trilha do animal: incluir/excluir a matriz sugerida no cronograma.
-  async function decidirCronAnimal(e: Evento, incluir: boolean) {
-    setAviso(null);
-    setFeitos((p) => new Set(p).add(e.id));
-    try {
-      const r = await enviarOuEnfileirar("/agenda/realizados", { evento_id: e.id, incluir },
-        `${incluir ? "Incluir" : "Excluir"} ${e.numero_animal || ""} no cronograma`, "POST");
-      if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
-    } catch (err) {
-      setFeitos((p) => { const n = new Set(p); n.delete(e.id); return n; });
       setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
     }
   }
@@ -1265,31 +1253,29 @@ export default function AgendaMovel() {
       );
     }
 
-    // Cronograma sanitário (1): matriz entrou na janela do gatilho — só
-    // incluir/excluir no cronograma da regra, sem opções de aplicação aqui.
-    if (e.tipo === "cronograma_sanitario_animal") {
+    // Cronograma sanitário (1): resumo "N animal(is) na janela de aplicação"
+    // — toque leva direto ao detalhe do cronograma (aba Animais) em Sanidade,
+    // onde incluir/excluir cada matriz acontece de fato (13/09/2026: deixou
+    // de decidir aqui, um card por matriz poluía a Agenda).
+    if (e.tipo === "cronograma_sanitario_sugeridos") {
       return (
-        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }} estado={feito ? "feito" : atrasada ? "atrasado" : "normal"}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.85rem", marginBottom: feito ? 0 : "0.7rem" }}>
-            <IconeCategoria chave={chave} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <RotuloCategoria chave={chave} rotulo={rotulo} />
-              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>
-                {e.descricao}
+        <Link key={e.id} href={`/sanidade?ir=cronogramas&cronograma_id=${e.cronograma_id}`} style={{ textDecoration: "none", color: "inherit" }}>
+          <MobCard alt={alt} style={{ marginBottom: "0.6rem" }} estado={atrasada ? "atrasado" : "normal"}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
+              <IconeCategoria chave={chave} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <RotuloCategoria chave={chave} rotulo={rotulo} />
+                <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: "var(--mob-text)" }}>
+                  {e.descricao}
+                </div>
+                {e.observacao && (
+                  <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>{e.observacao}</div>
+                )}
               </div>
-              {e.observacao && (
-                <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>{e.observacao}</div>
-              )}
+              <ChevronRight size={20} style={{ color: "var(--mob-muted)", flexShrink: 0 }} />
             </div>
-            {feito && <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Feito</span>}
-          </div>
-          {!feito && (
-            <div style={{ display: "flex", gap: "0.6rem" }}>
-              <button type="button" className="mob-btn" style={{ flex: 1 }} onClick={() => decidirCronAnimal(e, true)}>Incluir</button>
-              <button type="button" className="mob-btn mob-btn-sec" style={{ flex: 1 }} onClick={() => decidirCronAnimal(e, false)}>Excluir</button>
-            </div>
-          )}
-        </MobCard>
+          </MobCard>
+        </Link>
       );
     }
 

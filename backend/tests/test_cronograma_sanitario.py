@@ -79,6 +79,21 @@ def _agenda(c, tipo: str | None = None) -> list[dict]:
     return eventos
 
 
+def _animal_cronograma(engine, numero_matriz: str) -> CronogramaSanitarioAnimal:
+    """Acha a linha `CronogramaSanitarioAnimal` de uma matriz direto no banco —
+    desde que o resumo por cronograma (`cronograma_sanitario_sugeridos_{id}`)
+    substituiu o card por animal na Agenda (13/09/2026), decidir/remover um
+    animal específico não passa mais por um `id` que a Agenda devolve; o `id`
+    da linha (usado em `cronograma_sanitario_animal_{id}`/`remover_animal_
+    {id}`) é lido direto daqui, como a tela de detalhe (GET /sanidade/
+    ocorrencias/{cronograma_id}) também faz."""
+    from sqlmodel import select as _select
+    with Session(engine) as s:
+        linha = s.exec(_select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.numero_matriz == numero_matriz)).first()
+        assert linha is not None, f"nenhuma linha de cronograma para a matriz {numero_matriz}"
+        return linha
+
+
 class TestTrilhaDoAnimal:
     def test_animal_que_bate_criterio_vira_sugestao_nao_pendencia_antiga(self, client):
         c, engine = client
@@ -87,8 +102,11 @@ class TestTrilhaDoAnimal:
             s.add(Animal(numero="900", data_nasc=HOJE - timedelta(days=95), sexo="F", ativo=True))
             s.commit()
 
-        sugestoes = _agenda(c, "cronograma_sanitario_animal")
-        assert any(e["numero_animal"] == "900" for e in sugestoes)
+        sugeridos = _agenda(c, "cronograma_sanitario_sugeridos")
+        assert len(sugeridos) == 1
+        assert sugeridos[0]["quantidade_sugeridos"] == 1
+        linha = _animal_cronograma(engine, "900")
+        assert linha.status == "sugerido"
         # Não deve mais gerar a pendência antiga de "aplicar agora".
         assert not any(e.get("numero_animal") == "900" for e in _agenda(c, "evento_sanitario"))
 
@@ -99,16 +117,17 @@ class TestTrilhaDoAnimal:
             s.add(Animal(numero="901", data_nasc=HOJE - timedelta(days=95), sexo="F", ativo=True))
             s.commit()
 
-        sugestao = _agenda(c, "cronograma_sanitario_animal")[0]
-        r = c.post("/agenda/realizados", json={"evento_id": sugestao["id"], "incluir": True})
+        _agenda(c)  # materializa a linha de cronograma
+        linha_id = _animal_cronograma(engine, "901").id
+        r = c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_animal_{linha_id}", "incluir": True})
         assert r.status_code == 200, r.text
 
         with Session(engine) as s:
-            linha = s.get(CronogramaSanitarioAnimal, sugestao["cronograma_animal_id"])
+            linha = s.get(CronogramaSanitarioAnimal, linha_id)
             assert linha.status == "incluido"
 
         # A sugestão some da Agenda depois de decidida.
-        assert not _agenda(c, "cronograma_sanitario_animal")
+        assert not _agenda(c, "cronograma_sanitario_sugeridos")
 
     def test_excluir_animal_marca_status_excluido(self, client):
         c, engine = client
@@ -117,10 +136,11 @@ class TestTrilhaDoAnimal:
             s.add(Animal(numero="902", data_nasc=HOJE - timedelta(days=95), sexo="F", ativo=True))
             s.commit()
 
-        sugestao = _agenda(c, "cronograma_sanitario_animal")[0]
-        c.post("/agenda/realizados", json={"evento_id": sugestao["id"], "incluir": False})
+        _agenda(c)  # materializa a linha de cronograma
+        linha_id = _animal_cronograma(engine, "902").id
+        c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_animal_{linha_id}", "incluir": False})
         with Session(engine) as s:
-            linha = s.get(CronogramaSanitarioAnimal, sugestao["cronograma_animal_id"])
+            linha = s.get(CronogramaSanitarioAnimal, linha_id)
             assert linha.status == "excluido"
 
     def test_decidir_sem_incluir_da_400(self, client):
@@ -129,8 +149,9 @@ class TestTrilhaDoAnimal:
         with Session(engine) as s:
             s.add(Animal(numero="903", data_nasc=HOJE - timedelta(days=95), sexo="F", ativo=True))
             s.commit()
-        sugestao = _agenda(c, "cronograma_sanitario_animal")[0]
-        r = c.post("/agenda/realizados", json={"evento_id": sugestao["id"]})
+        _agenda(c)  # materializa a linha de cronograma
+        linha_id = _animal_cronograma(engine, "903").id
+        r = c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_animal_{linha_id}"})
         assert r.status_code == 400
 
 
@@ -146,7 +167,10 @@ class TestIncluirAnimalForaDaJanela:
             # Muito nova pro gatilho "novilha_apta aos 3 meses" — nunca entraria como sugestão.
             s.add(Animal(numero="950", data_nasc=HOJE - timedelta(days=10), sexo="F", ativo=True))
             s.commit()
-        assert not any(e["numero_animal"] == "950" for e in _agenda(c, "cronograma_sanitario_animal"))
+        _agenda(c)  # materializa os cronogramas — 950 não deve entrar em nenhum
+        with Session(engine) as s:
+            from sqlmodel import select as _select
+            assert s.exec(_select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.numero_matriz == "950")).first() is None
 
         cronograma_id = _agenda(c, "cronograma_sanitario_modo")[0]["cronograma_id"]
         r = c.post("/agenda/realizados", json={
@@ -178,9 +202,10 @@ class TestIncluirAnimalForaDaJanela:
         with Session(engine) as s:
             s.add(Animal(numero="951", data_nasc=HOJE - timedelta(days=95), sexo="F", ativo=True))
             s.commit()
-        sugestao = _agenda(c, "cronograma_sanitario_animal")[0]
-        cronograma_id = sugestao["cronograma_id"]
-        c.post("/agenda/realizados", json={"evento_id": sugestao["id"], "incluir": True})
+        _agenda(c)  # materializa a linha de cronograma
+        linha = _animal_cronograma(engine, "951")
+        cronograma_id = linha.cronograma_id
+        c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_animal_{linha.id}", "incluir": True})
 
         r = c.post("/agenda/realizados", json={
             "evento_id": f"cronograma_sanitario_incluir_manual_{cronograma_id}", "numero_matriz": "951",
@@ -231,8 +256,8 @@ class TestRemoverAnimal:
         with Session(engine) as s:
             s.add(Animal(numero="961", data_nasc=HOJE - timedelta(days=95), sexo="F", ativo=True))
             s.commit()
-        sugestao = _agenda(c, "cronograma_sanitario_animal")[0]
-        linha_id = sugestao["cronograma_animal_id"]
+        _agenda(c)  # materializa a linha de cronograma
+        linha_id = _animal_cronograma(engine, "961").id
 
         r = c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_remover_animal_{linha_id}"})
         assert r.status_code == 200, r.text
@@ -259,8 +284,8 @@ class TestRemoverAnimal:
         with Session(engine) as s:
             s.add(Animal(numero="963", data_nasc=HOJE - timedelta(days=95), sexo="F", ativo=True))
             s.commit()
-        sugestao = _agenda(c, "cronograma_sanitario_animal")[0]
-        linha_id = sugestao["cronograma_animal_id"]
+        _agenda(c)  # materializa a linha de cronograma
+        linha_id = _animal_cronograma(engine, "963").id
         c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_remover_animal_{linha_id}"})
 
         r = c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_remover_animal_{linha_id}"})
@@ -339,8 +364,9 @@ class TestAplicacao:
             s.add(Estoque(nome="VACINA BRUCELOSE B19", quantidade=100, unidade="ml", estocavel=True))
             s.commit()
 
-        sugestao = _agenda(c, "cronograma_sanitario_animal")[0]
-        c.post("/agenda/realizados", json={"evento_id": sugestao["id"], "incluir": True})
+        _agenda(c)  # materializa a linha de cronograma
+        linha_id = _animal_cronograma(engine, "910").id
+        c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_animal_{linha_id}", "incluir": True})
 
         # dias_ate_evento=0 cai dentro da janela de urgência (padrão 5 dias) —
         # o card é "urgente", não o "modo" normal (ver TestTrilhaDoAgendamento).
@@ -376,8 +402,9 @@ class TestAplicacao:
         with Session(engine) as s:
             s.add(Animal(numero="911", data_nasc=HOJE - timedelta(days=95), sexo="F", ativo=True))
             s.commit()
-        sugestao = _agenda(c, "cronograma_sanitario_animal")[0]
-        c.post("/agenda/realizados", json={"evento_id": sugestao["id"], "incluir": True})
+        _agenda(c)  # materializa a linha de cronograma
+        linha_id = _animal_cronograma(engine, "911").id
+        c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_animal_{linha_id}", "incluir": True})
         # Sem decidir modo, o cronograma segue "aberto" — nunca aparece o card de aplicar.
         assert not _agenda(c, "cronograma_sanitario_aplicar")
 

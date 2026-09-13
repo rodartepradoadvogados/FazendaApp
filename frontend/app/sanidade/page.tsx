@@ -726,10 +726,22 @@ function CalendarioVisualView({ onAbrirCronograma }: { onAbrirCronograma: (calen
             <div>
               {o.animais == null ? "sem estimativa" : <>{o.estimativa ? "~" : ""}{o.animais} animal(is){o.estimativa && <span style={{ color: "var(--text-muted)" }}> (última aplicação)</span>}</>}
             </div>
+            {o.usa_cronograma && o.cronograma && (
+              <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>
+                {o.cronograma.animais_contagem.sugerido} sugerido(s), {o.cronograma.animais_contagem.incluido} incluído(s)
+              </div>
+            )}
             <div className="flex items-center gap-2" style={{ justifyContent: "flex-end", marginTop: "0.2rem" }}>
               {o.usa_cronograma && o.cronograma && (
+                // Nº do cronograma exposto de propósito: essa data/contagem vem
+                // do MESMO registro mostrado em Cronogramas (cronograma_aberto(),
+                // reaproveitado nos dois lugares) — se um dia divergirem de novo
+                // (relatado pelo usuário em 13/09/2026), o nº aqui e lá confirma
+                // na hora se é o mesmo registro (tela dessincronizada, só
+                // recarregar) ou dois de verdade (regra duplicada, ver Regras
+                // cadastradas).
                 <button className="btn-secondary" style={{ fontSize: "0.7rem" }} onClick={() => onAbrirCronograma(o.calendario_sanitario_id)}>
-                  Cronograma: {STATUS_CRONOGRAMA_LABEL[o.cronograma.status] || o.cronograma.status}
+                  Cronograma #{o.cronograma.id}: {STATUS_CRONOGRAMA_LABEL[o.cronograma.status] || o.cronograma.status}
                 </button>
               )}
               {podeVerAnimais ? (
@@ -984,15 +996,23 @@ function OcorrenciasView() {
   );
 }
 
-function DetalheOcorrenciaView({ cronogramaId, onVoltar }: { cronogramaId: number; onVoltar: () => void }) {
+function DetalheOcorrenciaView({ cronogramaId, onVoltar, abaInicial }: { cronogramaId: number; onVoltar: () => void; abaInicial?: "animais" | "checklist" }) {
   const [det, setDet] = useState<DetalheOcorrencia | null>(null);
   const [erro, setErro] = useState<string | null>(null);
-  const [aba, setAba] = useState<"animais" | "checklist">("checklist");
+  const [aba, setAba] = useState<"animais" | "checklist">(abaInicial || "checklist");
   const [salvandoItem, setSalvandoItem] = useState<number | null>(null);
   const [horarioValor, setHorarioValor] = useState<Record<number, string>>({});
   const [salvandoAnimal, setSalvandoAnimal] = useState<number | "novo" | null>(null);
   const [animalNovo, setAnimalNovo] = useState("");
   const [animaisCadastro, setAnimaisCadastro] = useState<AnimalRow[]>([]);
+  // "Adiar / Agendar para uma data" — pedido do usuário em 13/09/2026: um
+  // local único e persistente para marcar a data do agendamento (reaproveita
+  // `adiar()`, que já existia no backend), em vez de só aparecer no card
+  // "Urgente" da Agenda quando a decisão de modo já estava atrasada.
+  const [adiarAberto, setAdiarAberto] = useState(false);
+  const [adiarData, setAdiarData] = useState("");
+  const [adiarMotivo, setAdiarMotivo] = useState("");
+  const [salvandoAdiar, setSalvandoAdiar] = useState(false);
 
   const carregar = useCallback(() => {
     fetchDetalheOcorrencia(cronogramaId).then(setDet).catch((e) => setErro(e.message));
@@ -1060,6 +1080,19 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar }: { cronogramaId: numbe
     } catch (e: any) { setErro(e.message); }
   }
 
+  async function confirmarAdiamento() {
+    if (!det || !adiarData) return;
+    setSalvandoAdiar(true); setErro(null);
+    try {
+      await marcarEventoRealizado(`cronograma_sanitario_modo_${det.cronograma_id}`, undefined, undefined, {
+        nova_data: adiarData, motivo: adiarMotivo || undefined,
+      });
+      setAdiarAberto(false); setAdiarData(""); setAdiarMotivo("");
+      carregar();
+    } catch (e: any) { setErro(e.message); }
+    finally { setSalvandoAdiar(false); }
+  }
+
   if (erro && !det) return (
     <div>
       <button className="btn-secondary mb-3" style={{ fontSize: "0.78rem" }} onClick={onVoltar}>← Voltar</button>
@@ -1083,11 +1116,18 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar }: { cronogramaId: numbe
             <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>{det.evento_sanitario_nome}</span>
             <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>— {ROTULO_TIPO_REGRA[det.tipo] || det.tipo}</span>
           </div>
-          {det.estado !== "realizado" && det.estado !== "confirmado" && (
-            <button className="btn-secondary" style={{ fontSize: "0.75rem" }} onClick={desconsiderarCronograma}>
-              Desconsiderar cronograma
-            </button>
-          )}
+          <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+            {det.estado !== "realizado" && (
+              <button className="btn-secondary" style={{ fontSize: "0.75rem" }} onClick={() => setAdiarAberto((v) => !v)}>
+                Adiar / Agendar para uma data
+              </button>
+            )}
+            {det.estado !== "realizado" && det.estado !== "confirmado" && (
+              <button className="btn-secondary" style={{ fontSize: "0.75rem" }} onClick={desconsiderarCronograma}>
+                Desconsiderar cronograma
+              </button>
+            )}
+          </div>
         </div>
         <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
           {det.categoria_alvo || "Todos os animais"} · previsto {formatDate(det.data_prevista)}
@@ -1096,6 +1136,22 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar }: { cronogramaId: numbe
         {det.checklist_desconsiderado && (
           <div style={{ marginTop: "0.5rem", fontSize: "0.78rem", color: "var(--blue)" }}>
             Cronograma desconsiderado{det.checklist_desconsiderado_motivo ? ` — ${det.checklist_desconsiderado_motivo}` : ""}.
+          </div>
+        )}
+        {adiarAberto && (
+          <div className="mt-3" style={{ borderTop: "1px solid var(--border)", paddingTop: "0.6rem", maxWidth: 320 }}>
+            <label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" }}>Nova data</label>
+            <input type="date" style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
+              value={adiarData} onChange={(e) => setAdiarData(e.target.value)} />
+            <label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", margin: "0.4rem 0 0.2rem" }}>Motivo (opcional)</label>
+            <input style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
+              value={adiarMotivo} onChange={(e) => setAdiarMotivo(e.target.value)} />
+            <div className="flex items-center gap-2 mt-2">
+              <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={salvandoAdiar || !adiarData} onClick={confirmarAdiamento}>
+                <Check size={12} /> Confirmar
+              </button>
+              <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setAdiarAberto(false)}>Cancelar</button>
+            </div>
           </div>
         )}
       </div>
@@ -1269,7 +1325,7 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar }: { cronogramaId: numbe
 // Exportado — reaproveitado também em Central de Protocolos > Acompanhamento
 // > Sanitário > Preventivo (ver app/protocolos/page.tsx), mesmo componente,
 // mesmos endpoints: não há dado nem lógica duplicada entre as duas telas.
-export function CalendarioSanitarioView({ modoInicial }: { modoInicial?: "calendario" | "cronogramas" } = {}) {
+export function CalendarioSanitarioView({ modoInicial, cronogramaIdInicial }: { modoInicial?: "calendario" | "cronogramas"; cronogramaIdInicial?: number | null } = {}) {
   const [modo, setModo] = useState<"calendario" | "regras" | "cronogramas" | "exames" | "ocorrencias">(modoInicial || "calendario");
   const [cronogramaFiltroCalendarioId, setCronogramaFiltroCalendarioId] = useState<number | null>(null);
   const [regras, setRegras] = useState<RegraCalendario[] | null>(null);
@@ -1346,7 +1402,7 @@ export function CalendarioSanitarioView({ modoInicial }: { modoInicial?: "calend
       {modo === "calendario" ? (
         <CalendarioVisualView onAbrirCronograma={(id) => { setCronogramaFiltroCalendarioId(id); setModo("cronogramas"); }} />
       ) : modo === "cronogramas" ? (
-        <CronogramasSanitariosView calendarioIdInicial={cronogramaFiltroCalendarioId} onLimparFiltro={() => setCronogramaFiltroCalendarioId(null)} />
+        <CronogramasSanitariosView calendarioIdInicial={cronogramaFiltroCalendarioId} onLimparFiltro={() => setCronogramaFiltroCalendarioId(null)} cronogramaIdInicial={cronogramaIdInicial} />
       ) : modo === "exames" ? <RelatorioResultadosExameView eventos={eventos} />
       : modo === "ocorrencias" ? <OcorrenciasView /> : (
       <>
@@ -1452,7 +1508,7 @@ const STATUS_CRONOGRAMA_LABEL: Record<string, string> = {
 const STATUS_CRONOGRAMA_COR: Record<string, string> = {
   aberto: "var(--amber)", agendado: "var(--dourado-light)", concluido: "var(--green-light)", cancelado: "var(--text-muted)",
 };
-function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro }: { calendarioIdInicial?: number | null; onLimparFiltro?: () => void } = {}) {
+function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro, cronogramaIdInicial }: { calendarioIdInicial?: number | null; onLimparFiltro?: () => void; cronogramaIdInicial?: number | null } = {}) {
   const [cronogramas, setCronogramas] = useState<Cronograma[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusFiltro, setStatusFiltro] = useState<"todos" | "aberto" | "agendado" | "concluido" | "cancelado">("todos");
@@ -1465,7 +1521,14 @@ function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro }: { ca
   // pedido do usuário em 13/09/2026: reaproveita o mesmo `DetalheOcorrenciaView`
   // já usado por `OcorrenciasView` (tela escondida), sem reexibir aquela tela
   // inteira — só o essencial (consultar/incluir/remover animal) pela aba real.
-  const [aberto, setAberto] = useState<number | null>(null);
+  const [aberto, setAberto] = useState<number | null>(cronogramaIdInicial ?? null);
+  // Vindo do card-resumo da Agenda ("N animal(is) na janela"): abre direto na
+  // aba Animais, não na Checklist (padrão) — é lá que a decisão pendente
+  // (incluir/excluir) realmente está. Só vale para ESSA abertura inicial —
+  // clicar manualmente numa linha da lista continua caindo no padrão.
+  const [abaInicialDetalhe, setAbaInicialDetalhe] = useState<"animais" | "checklist" | undefined>(
+    cronogramaIdInicial ? "animais" : undefined
+  );
 
   const carregar = useCallback(() => {
     fetchCronogramasSanitarios(calendarioIdInicial ? { calendarioId: calendarioIdInicial } : undefined)
@@ -1507,7 +1570,7 @@ function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro }: { ca
   // hooks entre renders e derruba o componente inteiro (bug real, achado na
   // reverificação E2E de 13/09/2026: "Rendered fewer hooks than expected").
   if (aberto != null) {
-    return <DetalheOcorrenciaView cronogramaId={aberto} onVoltar={() => { setAberto(null); carregar(); }} />;
+    return <DetalheOcorrenciaView cronogramaId={aberto} abaInicial={abaInicialDetalhe} onVoltar={() => { setAberto(null); carregar(); }} />;
   }
 
   return (
@@ -1570,8 +1633,8 @@ function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro }: { ca
           </tr></thead>
           <tbody>
             {linhasOrdenadas.map((c) => (
-              <tr key={c.id} className="clickable" style={{ cursor: "pointer" }} onClick={() => setAberto(c.id)} title="Ver/incluir/remover animais desta ocorrência">
-                <td style={{ fontWeight: 700 }}>{c.evento_sanitario_nome}</td>
+              <tr key={c.id} className="clickable" style={{ cursor: "pointer" }} onClick={() => { setAbaInicialDetalhe(undefined); setAberto(c.id); }} title="Ver/incluir/remover animais desta ocorrência">
+                <td style={{ fontWeight: 700 }}>{c.evento_sanitario_nome} <span style={{ fontWeight: 400, fontSize: "0.68rem", color: "var(--text-muted)" }}>#{c.id}</span></td>
                 <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{c.categoria_alvo || "—"}</td>
                 <td style={{ fontSize: "0.78rem" }}>{formatDate(c.data_evento)}{c.data_original && c.data_original !== c.data_evento ? <span style={{ color: "var(--text-muted)", fontSize: "0.68rem" }}> (adiado, era {formatDate(c.data_original)})</span> : null}</td>
                 <td style={{ fontSize: "0.78rem", fontWeight: 600, color: STATUS_CRONOGRAMA_COR[c.status] || "var(--text-muted)" }}>{STATUS_CRONOGRAMA_LABEL[c.status] || c.status}</td>
@@ -2793,6 +2856,9 @@ export default function SanidadePage() {
   // Vindo de "Registrar cronograma deste evento" (Lançamentos > Sanitário >
   // Preventivo > Calendário sanitário): abre direto no card Cronogramas.
   const [modoPreventivoInicial, setModoPreventivoInicial] = useState<"calendario" | "cronogramas">("calendario");
+  // Vindo do card-resumo "N animal(is) na janela" na Agenda: abre direto no
+  // detalhe (aba Animais) do cronograma específico, não só na lista.
+  const [cronogramaIdInicial, setCronogramaIdInicial] = useState<number | null>(null);
   useEffect(() => {
     const qs = new URLSearchParams(window.location.search);
     if (qs.get("editar_aplicacao_id")) {
@@ -2802,6 +2868,8 @@ export default function SanidadePage() {
     if (qs.get("ir") === "cronogramas") {
       setAba("preventiva"); setAbaPrev("calendario");
       setModoPreventivoInicial("cronogramas");
+      const cid = qs.get("cronograma_id");
+      if (cid) setCronogramaIdInicial(Number(cid));
     }
   }, []);
 
@@ -2843,7 +2911,7 @@ export default function SanidadePage() {
       {aba === "preventiva" && (
         <>
           {abaPrev === "aplicacoes" && <AplicacoesView natureza="preventivo" autoEditarId={autoEditarId} />}
-          {abaPrev === "calendario" && <CalendarioSanitarioView modoInicial={modoPreventivoInicial} />}
+          {abaPrev === "calendario" && <CalendarioSanitarioView modoInicial={modoPreventivoInicial} cronogramaIdInicial={cronogramaIdInicial} />}
           {abaPrev === "historico" && <HistoricoPreventivoView />}
         </>
       )}
