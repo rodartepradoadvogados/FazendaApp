@@ -13,13 +13,14 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import ContaGerencial, ControleLeiteiro, DietaLancamento, EntregaLeiteMensal
+from fazenda.models import ContaGerencial, ControleLeiteiro, DietaLancamento, EntregaLeiteMensal, ParametroFazenda
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr(database, "engine", engine)
 
     def _get_session_override():
         with Session(engine) as session:
@@ -90,3 +91,32 @@ class TestRelatorioControleEntrega:
         d = r.json()
         assert d["dias_periodo"] == 10
         assert d["entrega_projetada_kg"] == 1000.0    # 100 kg/dia × 10 dias
+
+
+class TestNomeLaticinioConfiguravel:
+    """Gauntlet A-16: o nome do comprador do leite era "italac" fixo no
+    código — qualquer fazenda com outro laticínio nunca tinha a receita
+    reconhecida. Agora é o parâmetro `laticinio_nome` (rules/parametros.py),
+    com "italac" como valor padrão de sempre (compatibilidade)."""
+
+    def test_outro_laticinio_configurado_e_reconhecido(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(ParametroFazenda(chave="laticinio_nome", grupo="financeiro", label="x", valor="Laticínio Serra Azul", tipo="texto"))
+            s.add(ContaGerencial(tipo="receita", fornecedor_cliente="Laticínio Serra Azul Ltda", data_competencia=date(2026, 7, 31), valor_total=20000))
+            s.commit()
+
+        r = c.get("/producao/relatorio-controle-entrega", params={"data_inicio": "2026-07-01", "data_fim": "2026-07-31"})
+        assert r.status_code == 200, r.text
+        assert r.json()["receita_projetada"] == 20000.0
+
+    def test_configurado_para_outro_laticinio_deixa_de_reconhecer_italac(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(ParametroFazenda(chave="laticinio_nome", grupo="financeiro", label="x", valor="Laticínio Serra Azul", tipo="texto"))
+            s.add(ContaGerencial(tipo="receita", fornecedor_cliente="ITALAC", data_competencia=date(2026, 7, 31), valor_total=31000))
+            s.commit()
+
+        r = c.get("/producao/relatorio-controle-entrega", params={"data_inicio": "2026-07-01", "data_fim": "2026-07-31"})
+        assert r.status_code == 200, r.text
+        assert r.json()["receita_projetada"] is None

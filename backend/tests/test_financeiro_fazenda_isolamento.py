@@ -128,21 +128,33 @@ class TestIsolamentoFinanceiroFazenda:
         r = c.put(f"/financeiro/lancamentos/{lancamento_id}", json={"descricao": "Tentativa de invasão"})
         assert r.status_code == 404
 
-    def test_lancamento_sem_fazenda_no_token_ve_tudo_como_antes(self, client):
+    def test_sessao_sem_fazenda_e_recusada(self, client):
+        """A auditoria encontrou este teste afirmando o próprio furo.
+
+        Ele nasceu no piloto de multi-fazenda, quando havia uma fazenda só e
+        "token sem fid" queria dizer "emitido antes da migração" — a regra
+        era não ter retroatividade: sessão antiga continuava vendo tudo. Com
+        mais de um cliente no mesmo banco, "vê tudo" deixou de ser
+        compatibilidade e virou vazamento entre clientes (F-A-01/F-B-01/
+        F-B-02): o `if fazenda_id is not None:` de centenas de consultas
+        simplesmente não filtra.
+
+        A regra agora é a oposta, e vale na porta: se a requisição mexe em
+        dado de fazenda, o token tem que dizer QUAL fazenda — não dizendo,
+        não entra (fazenda/auth.py::exigir_fazenda_selecionada). Este teste
+        passou a guardar a recusa."""
         c, engine = client
         _como_fazenda(1)
-        _criar_lancamento(c, "Lançamento fazenda 1 (legado)")
+        _criar_lancamento(c, "Lançamento fazenda 1")
         _como_fazenda(2)
-        _criar_lancamento(c, "Lançamento fazenda 2 (legado)")
+        _criar_lancamento(c, "Lançamento fazenda 2")
 
-        # Token legado (sem 'fid') não filtra por fazenda_id — vê tudo,
-        # exatamente como antes do retrofit multi-tenant (sem retroatividade).
         _como_fazenda(None)
         r = c.get("/financeiro/lancamentos")
-        assert r.status_code == 200
-        descricoes = {item["descricao"] for item in r.json()["lancamentos"]}
-        assert "Lançamento fazenda 1 (legado)" in descricoes
-        assert "Lançamento fazenda 2 (legado)" in descricoes
+        assert r.status_code == 409, (
+            f"o financeiro consolidado das duas fazendas saiu para uma sessão sem fazenda "
+            f"selecionada: {r.status_code} {r.text[:200]}"
+        )
 
 
 def _criar_recorrente(c, descricao: str):

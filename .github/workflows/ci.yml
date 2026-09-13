@@ -5,6 +5,19 @@ on:
   push:
     branches: [main]
 
+# Sem isto, cada push novo abre mais uma execucao e as anteriores do MESMO
+# branch continuam rodando ate o fim. Em 06/09/2026 a fila chegou a quatro
+# execucoes simultaneas de ~100 minutos cada e o limite de gasto da conta
+# estourou. Uma execucao por branch: a nova cancela a anterior.
+#
+# (Registro honesto: na primeira leitura eu atribui a esse estouro de gasto os
+# "shutdown signal" que matavam a suite no meio. Era outra coisa — memoria do
+# runner; ver o comentario do passo `Rodar pytest`. Este bloco continua valendo
+# pelo motivo proprio dele: nao pagar por execucao que ja foi superada.)
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Guarda contra a quebra de deploy mais recorrente do projeto: dois PRs
   # paralelos criam migracoes irmas, o historico fica com duas cabecas e
@@ -35,6 +48,188 @@ jobs:
           python-version: "3.12"
       - run: pip install "alembic>=1.14" sqlmodel
       - run: python backend/scripts/check_alembic_heads.py
+
+  # Nome usado sem import é a falha mais barata de cometer e a mais cara de
+  # descobrir aqui: ela nao aparece em revisao de diff, nao aparece no
+  # typecheck do frontend, e so estoura em runtime — na pratica, no fim dos
+  # ~24 minutos da suite abaixo, ou pior, em producao, se o caminho nao tiver
+  # teste. Aconteceu duas vezes no mesmo dia de trabalho, as duas ao ligar uma
+  # funcao nova a um chamador sem levar o import junto.
+  #
+  # `ruff check --select F821` responde exatamente essa pergunta ("existe algum
+  # nome indefinido?") em 0,2 segundo sobre o backend inteiro. Fica como job
+  # proprio, antes da suite, pra falhar rapido: nenhuma outra regra de estilo
+  # entra aqui de proposito — o objetivo nao e padronizar codigo, e travar uma
+  # classe de erro especifica que ja custou caro.
+  nomes-indefinidos:
+    name: Nomes indefinidos (F821)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - name: Procurar nomes usados sem definicao/import
+        run: ruff check --select F821 backend/
+
+  # Antes deste job, a suite de 3000+ testes so rodava manualmente (na maquina
+  # de quem estava trabalhando) — um PR podia quebrar qualquer coisa e mergear
+  # verde, porque o unico check automatico (acima) e sobre migracoes, nao
+  # sobre comportamento. Cada teste usa engine SQLite proprio (criado no
+  # fixture), entao nao precisa de Postgres nem de DATABASE_URL de verdade
+  # aqui — so instalar as dependencias (requirements.txt já inclui pytest) e
+  # rodar.
+  backend-tests:
+    name: Suite de testes do backend
+    runs-on: ubuntu-latest
+    # So no PR, nao no `push: main`. Hoje a suite roda DUAS vezes por mudanca:
+    # uma no PR e outra no merge em main — o mesmo codigo, o mesmo resultado,
+    # o dobro do minuto pago. O evento `pull_request` ja testa o MERGE do PR
+    # com a base (nao o branch cru), entao a segunda execucao so acrescenta
+    # informacao quando a base andou entre o check e o merge — a mesma janela
+    # que "Require branches to be up to date" fecharia e que exige GitHub Pro
+    # (ver o comentario do job alembic-auto-fix abaixo).
+    #
+    # Isto nao e economia de estilo: em 06/09/2026 o teto de gasto da conta foi
+    # atingido tres vezes, e metade das execucoes que o consumiram eram estas,
+    # redundantes. (A morte das execucoes NO MEIO da suite tinha outra causa,
+    # de memoria — ver o passo `Rodar pytest`. Sao dois problemas distintos que
+    # aconteceram no mesmo dia e se pareciam.)
+    #
+    # O que continua rodando no push em main: `alembic-heads` (12 segundos, e o
+    # gatilho do auto-fix de cabecas concorrentes) e `nomes-indefinidos` (0,2
+    # segundo). O caro sai; a guarda barata fica.
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt
+      # A suite roda em PARALELO, e isso deixou de ser so questao de velocidade.
+      #
+      # Diagnostico de 06/09/2026. Toda execucao morria por volta dos 31% da
+      # suite com "The runner has received a shutdown signal" e exit 143, com
+      # todos os testes passando ate ali — o que parece teste quebrado e nao e.
+      # Nao era teto de gasto (aconteceu com saldo liberado e sem execucao
+      # concorrente) nem teto de tempo: execucoes de 28, 31, 32 e 35 minutos
+      # morreram todas no MESMO ponto da suite. Percentual fixo com tempo
+      # variavel e assinatura de MEMORIA.
+      #
+      # A causa: `fastapi.dependencies.models` memoriza cada callable de
+      # dependencia em caches `@lru_cache(maxsize=4096)` que guardam referencia
+      # FORTE. Quase todo arquivo de teste registra uma closure NOVA em
+      # `app.dependency_overrides[get_session]`, e essa closure segura a engine
+      # do teste, com conexao SQLite aberta. Os caches so descartam no 4.097o
+      # callable distinto — e a suite tem 4.9k testes. Medido em test_cadastro
+      # (140 testes): 969 MB e 132 engines vivas antes da faxina; 465 MB e 2
+      # engines depois. Em serie, o processo unico passava dos 7 GB do runner
+      # (repositorio privado no plano gratuito) e era morto. Esta maquina tem
+      # 15 GB, e por isso a suite fechava aqui e morria la.
+      #
+      # A faxina esta em tests/conftest.py. Com ela, 4 workers fecharam a suite
+      # em 16m36s contra 43m12s antes, sem worker derrubado. Cada worker segura
+      # so a sua fatia dos modulos, entao o paralelismo tambem e o que faz o
+      # consumo caber na maquina — nao e otimizacao, e requisito.
+      #
+      # Sobre `--dist loadfile` (por arquivo) em vez do padrao `load` (por
+      # teste): e o que foi MEDIDO, e fica. A justificativa que estava escrita
+      # aqui antes — "os fixtures sao de escopo de modulo e varios arquivos
+      # montam o proprio engine no nivel do modulo" — era FALSA, conferido em
+      # 06/09/2026: a suite tem ZERO fixtures de escopo module/session e ZERO
+      # engines criados fora de fixture. Cada teste monta e desmonta o proprio
+      # banco, entao `load` tambem funcionaria.
+      #
+      # O motivo real de manter `loadfile` e mais simples: manter os testes de
+      # um arquivo no mesmo worker reduz repeticao de setup caro (montar schema
+      # + TestClient) e foi a configuracao sob a qual os 16m36s e o consumo de
+      # memoria por worker foram medidos. Trocar para `load` exigiria medir de
+      # novo, sem ganho conhecido.
+      #
+      # O timeout existe porque sem ele um job travado consome o teto de 6h do
+      # GitHub antes de alguem perceber. 60 minutos e folga larga sobre a
+      # medicao, porque o runner tem menos nucleos que esta maquina e `-n auto`
+      # abrira menos workers la.
+      - name: Rodar pytest
+        working-directory: backend
+        timeout-minutes: 60
+        run: python -m pytest tests/ -q -n auto --dist loadfile
+
+  # RLS nao existe em SQLite — e a suite acima roda toda em SQLite. Os testes
+  # que provam o comportamento do backup SOB politica de seguranca de linha
+  # (tests/test_backup_sob_rls.py) precisam de um PostgreSQL de verdade, com
+  # dois roles e politica ligada, entao rodam aqui, num job proprio.
+  #
+  # Sao poucos testes e o banco e descartavel: o job leva pouco mais de um
+  # minuto, contra os ~17 da suite. Ele fica separado de proposito — sem
+  # servico de banco, o job grande continua tao barato quanto e hoje.
+  #
+  # Por que isso merece CI e nao so uma medicao pontual: sob RLS o backup
+  # automatico NAO falha, ele grava "sucesso" com um ZIP de cabecalhos, porque
+  # SELECT negado por politica devolve vazio em vez de erro. E o unico modo de
+  # falha do sistema que destroi a rede de seguranca em silencio. A guarda que
+  # o impede so vale se alguem estiver conferindo que ela continua valendo.
+  backend-tests-postgres:
+    name: Testes que exigem PostgreSQL
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    env:
+      ARQUIVOS_POSTGRES: >-
+        tests/test_backup_sob_rls.py
+        tests/test_migracao_fazenda_id_not_null.py
+        tests/test_replicacao_desambiguacao_postgres.py
+        tests/test_boot_conexao_dono.py
+        tests/test_migracao_fks_compostas.py
+        tests/test_contexto_fazenda_sessao.py
+        tests/test_login_sob_rls.py
+        tests/test_sincronizacao_sob_rls.py
+        tests/test_painel_cowdata_massa_sob_rls.py
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt
+      # Estes testes se PULAM sozinhos quando `DATABASE_URL_POSTGRES_TESTE` nao
+      # esta definida — e ela nao esta no job da suite principal. Ou seja: fora
+      # daqui eles nao rodam, e um teste pulado passa em silencio. Por isso a
+      # conferencia abaixo, antes de rodar: ela quebra o CI se algum arquivo de
+      # teste que precisa de PostgreSQL ficou de fora desta lista, em vez de
+      # deixa-lo virar teste que nunca roda.
+      - name: Conferir que nenhum teste de PostgreSQL ficou de fora
+        working-directory: backend
+        run: |
+          esperados=$(grep -rl --include='test_*.py' DATABASE_URL_POSTGRES_TESTE tests/ | sort)
+          rodados=$(printf '%s\n' $ARQUIVOS_POSTGRES | sort)
+          if [ "$esperados" != "$rodados" ]; then
+            echo "Arquivos que usam DATABASE_URL_POSTGRES_TESTE:"; echo "$esperados"
+            echo "Arquivos que este job roda:"; echo "$rodados"
+            echo "Acrescente o que falta a ARQUIVOS_POSTGRES, senao ele nunca roda no CI."
+            exit 1
+          fi
+      - name: Rodar os testes que precisam de PostgreSQL
+        working-directory: backend
+        timeout-minutes: 10
+        env:
+          DATABASE_URL_POSTGRES_TESTE: postgresql+psycopg2://postgres:postgres@localhost:5432/postgres
+        run: python -m pytest $ARQUIVOS_POSTGRES -q
 
   # Mitigacao pra janela documentada acima: "Require branches to be up to
   # date before merging" fecharia o buraco de verdade, mas exige GitHub Pro

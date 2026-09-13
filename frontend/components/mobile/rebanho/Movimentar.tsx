@@ -40,16 +40,26 @@ export default function Movimentar() {
     if (!destino) { setAviso({ tipo: "erro", texto: "Selecione o lote de destino." }); return; }
     setEnviando(true);
     try {
-      const { enviado } = await enviarOuEnfileirar(
+      const { enviado, resposta } = await enviarOuEnfileirar(
         "/movimentacoes/mover",
         { data_movimento: data, motivo: motivo || undefined, lote_destino_codigo: destino, animais: [numero] },
         `Movimentação — brinco ${numero} → ${destino}`,
       );
-      setAviso(enviado
-        ? { tipo: "ok", texto: "Movimentação salva." }
-        : { tipo: "offline", texto: "Sem internet — guardado, será enviado ao conectar." });
-      vibrar(enviado ? 20 : [15, 60, 15]);
-      limpar();
+      // Enviado com sucesso não é o mesmo que "moveu de verdade" — um brinco
+      // digitado errado responde 200 com movidos:0 (ver app/app/page.tsx::
+      // aceitarSugestaoMov, mesmo padrão).
+      const naoEncontrado: string[] = resposta?.nao_encontrados ?? [];
+      const moveuDeVerdade = !enviado || ((resposta?.movidos ?? 0) >= 1 && !naoEncontrado.includes(numero));
+      if (enviado && !moveuDeVerdade) {
+        setAviso({ tipo: "erro", texto: `Animal ${numero} não encontrado — confira o número do brinco.` });
+        vibrar([25, 60, 25, 60, 25]);
+      } else {
+        setAviso(enviado
+          ? { tipo: "ok", texto: "Movimentação salva." }
+          : { tipo: "offline", texto: "Sem internet — guardado, será enviado ao conectar." });
+        vibrar(enviado ? 20 : [15, 60, 15]);
+        limpar();
+      }
     } catch (e) {
       setAviso({ tipo: "erro", texto: e instanceof Error ? e.message : "Erro ao mover animal." });
       vibrar([25, 60, 25, 60, 25]);

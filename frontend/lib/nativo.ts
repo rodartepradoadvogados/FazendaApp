@@ -140,11 +140,34 @@ export async function registrarPushNativo(aoTocarNotificacao?: (rota: string) =>
   }
 }
 
-/** Entrega ao usuário um arquivo gerado no cliente (Blob) — Excel/PDF de
- *  relatórios, recibos etc. No navegador/PWA usa o mecanismo padrão (<a
- *  download> + blob: URL, clicado programaticamente). Dentro do app nativo
- *  (Capacitor Android) esse mesmo clique não dispara nada: a WebView do
- *  Bridge padrão do Capacitor (ver android/.../MainActivity.java — só
+function baixarViaAncora(blob: Blob, nomeArquivo: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nomeArquivo;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function blobParaBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(",")[1] ?? "");
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+/** Entrega ao usuário um arquivo gerado no cliente (Blob) e já abre a folha
+ *  de COMPARTILHAR — usado pelo botão "Compartilhar" (envia por WhatsApp,
+ *  e-mail etc.), distinto do botão "Baixar" (ver salvarArquivo abaixo, que
+ *  só salva, sem abrir nada). No navegador/PWA usa o mecanismo padrão (<a
+ *  download> + blob: URL, clicado programaticamente) — sem noção de
+ *  "compartilhar" ali, é idêntico a salvarArquivo. Dentro do app nativo
+ *  (Capacitor Android) esse mesmo clique de <a> não dispara nada: a WebView
+ *  do Bridge padrão do Capacitor (ver android/.../MainActivity.java — só
  *  `BridgeActivity`, sem `setDownloadListener`/`WebChromeClient` customizado)
  *  não tem um handler de download registrado, então o "clique" no <a> não
  *  produz erro nenhum nem download nenhum — some em silêncio. Por isso, só
@@ -157,24 +180,34 @@ export async function baixarArquivo(blob: Blob, nomeArquivo: string): Promise<vo
       import("@capacitor/filesystem"),
       import("@capacitor/share"),
     ]);
-    const base64 = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve((reader.result as string).split(",")[1] ?? "");
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(blob);
-    });
+    const base64 = await blobParaBase64(blob);
     const gravado = await Filesystem.writeFile({ path: nomeArquivo, data: base64, directory: Directory.Cache });
     await Share.share({ url: gravado.uri, title: nomeArquivo });
     return;
   }
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = nomeArquivo;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  baixarViaAncora(blob, nomeArquivo);
+}
+
+/** Entrega ao usuário um arquivo gerado no cliente SEM abrir a folha de
+ *  compartilhar — usado pelo botão "Baixar" (ver baixarArquivo acima para o
+ *  "Compartilhar", que abre a folha nativa). Existe porque antes desta
+ *  função só havia um caminho de entrega dentro do app, e ele SEMPRE
+ *  compartilhava — clicar em "Exportar" jogava direto na folha de
+ *  compartilhar do Android, sem opção de só baixar (pedido explícito do
+ *  usuário para separar os dois). No navegador/PWA é idêntico a
+ *  baixarArquivo (mesmo <a download>; não existe "compartilhar" por lá).
+ *  Dentro do app nativo, grava em Directory.Documents (pasta persistente do
+ *  app, não o cache usado por baixarArquivo/Share) e devolve o caminho
+ *  gravado, para quem chamou avisar o usuário onde o arquivo ficou. */
+export async function salvarArquivo(blob: Blob, nomeArquivo: string): Promise<{ uri: string } | undefined> {
+  if (await ehApp()) {
+    const { Filesystem, Directory } = await import("@capacitor/filesystem");
+    const base64 = await blobParaBase64(blob);
+    const gravado = await Filesystem.writeFile({ path: nomeArquivo, data: base64, directory: Directory.Documents });
+    return { uri: gravado.uri };
+  }
+  baixarViaAncora(blob, nomeArquivo);
+  return undefined;
 }
 
 /** Remove o token FCM deste aparelho do backend — chamado no logout do app
@@ -206,11 +239,18 @@ export async function removerPushNativo(): Promise<void> {
 const CHAVE_SESSAO_TOKEN = "token";
 const CHAVE_SESSAO_USUARIO = "usuario";
 const CHAVE_SESSAO_FAZENDA = "fazenda_atual";
+// "conta_ativa" (ver lib/api.ts::getContaAtivaId) — 0 = Painel CowData,
+// id>0 = a fazenda. Sem espelhar isto também, um dono/membro da Equipe
+// CowData que force-fecha o app enquanto está NO Painel CowData e reabre
+// depois (restaurarSessaoNativa) perderia essa marcação: a tela de troca de
+// conta não saberia mais dizer qual conta é "aqui" logo após restaurar.
+const CHAVE_SESSAO_CONTA_ATIVA = "conta_ativa";
 
 /** Grava a sessão atual na cópia nativa — chamado só quando "Manter conectado"
- *  está marcado (ver lib/api.ts::login/selecionarFazenda). Best-effort, nunca
- *  trava o login por causa disso. Não faz nada fora do app nativo. */
-export async function salvarSessaoNativa(token: string, usuario: unknown, fazendaAtual: unknown | null): Promise<void> {
+ *  está marcado (ver lib/api.ts::login/selecionarFazenda/entrarPainelCowData).
+ *  Best-effort, nunca trava o login por causa disso. Não faz nada fora do
+ *  app nativo. */
+export async function salvarSessaoNativa(token: string, usuario: unknown, fazendaAtual: unknown | null, contaAtiva: string | null = null): Promise<void> {
   if (!(await ehApp())) return;
   try {
     const { Preferences } = await import("@capacitor/preferences");
@@ -218,6 +258,8 @@ export async function salvarSessaoNativa(token: string, usuario: unknown, fazend
     await Preferences.set({ key: CHAVE_SESSAO_USUARIO, value: JSON.stringify(usuario ?? null) });
     if (fazendaAtual) await Preferences.set({ key: CHAVE_SESSAO_FAZENDA, value: JSON.stringify(fazendaAtual) });
     else await Preferences.remove({ key: CHAVE_SESSAO_FAZENDA });
+    if (contaAtiva != null) await Preferences.set({ key: CHAVE_SESSAO_CONTA_ATIVA, value: contaAtiva });
+    else await Preferences.remove({ key: CHAVE_SESSAO_CONTA_ATIVA });
   } catch { /* best-effort */ }
 }
 
@@ -236,6 +278,8 @@ export async function restaurarSessaoNativa(): Promise<void> {
     if (usuario) localStorage.setItem(CHAVE_SESSAO_USUARIO, usuario);
     const { value: fazenda } = await Preferences.get({ key: CHAVE_SESSAO_FAZENDA });
     if (fazenda) localStorage.setItem(CHAVE_SESSAO_FAZENDA, fazenda);
+    const { value: contaAtiva } = await Preferences.get({ key: CHAVE_SESSAO_CONTA_ATIVA });
+    if (contaAtiva) localStorage.setItem(CHAVE_SESSAO_CONTA_ATIVA, contaAtiva);
   } catch { /* best-effort */ }
 }
 
@@ -249,5 +293,56 @@ export async function limparSessaoNativa(): Promise<void> {
     await Preferences.remove({ key: CHAVE_SESSAO_TOKEN });
     await Preferences.remove({ key: CHAVE_SESSAO_USUARIO });
     await Preferences.remove({ key: CHAVE_SESSAO_FAZENDA });
+    await Preferences.remove({ key: CHAVE_SESSAO_CONTA_ATIVA });
   } catch { /* best-effort */ }
+}
+
+/** Registra um callback disparado toda vez que o SISTEMA traz o app de
+ *  volta ao primeiro plano — dentro do app nativo usa o evento do próprio
+ *  Capacitor (appStateChange), fora dele mas ainda no PWA instalado
+ *  (standalone) usa a Page Visibility API do navegador (visibilitychange).
+ *  Os dois só disparam quando o FOCO DO SISTEMA OPERACIONAL muda (a pessoa
+ *  saiu para outro app/tela inicial/trocou de app e voltou, ou abriu o app
+ *  do zero) — NUNCA por navegação interna (trocar de tela dentro do
+ *  próprio app), que não mexe no foco do SO. É exatamente essa distinção
+ *  que permite perguntar "trocar de conta?" a cada ABERTURA (ver
+ *  AuthShell.tsx) sem a pergunta reaparecer a cada troca de aba interna,
+ *  o que viraria tortura.
+ *
+ *  Retorna a função de limpeza. Fora do app nativo/PWA (site comum, onde
+ *  esta pergunta não se repete sozinha — ver AuthShell.tsx) não registra
+ *  nada e devolve um no-op. */
+/** O app de campo (/app) é para CELULAR — esta é a regra única que decide
+ * quem cai nele.
+ *
+ * `ehAppOuPwa()` sozinho não serve: `display-mode: standalone` não tem relação
+ * nenhuma com tamanho de tela, então um atalho instalado no notebook responde
+ * "sim" igual a um celular. Era por isso que instalar o PWA no computador
+ * abria o app de campo, e a pessoa tinha que ir no menu e pedir "site
+ * completo" toda vez.
+ *
+ * App nativo (Capacitor) é sempre celular ou tablet, então entra direto. PWA
+ * instalado só entra se a tela também for pequena. Navegador comum (aba) nunca
+ * entra — quem quiser o app de campo no desktop navega para /app na mão.
+ *
+ * A regra nasceu em app/painel-cowdata/layout.tsx (01/09/2026) e valia só
+ * lá; aqui ela é o comportamento do produto inteiro. */
+export async function ehAppDeCampo(): Promise<boolean> {
+  if (await ehApp()) return true;
+  if (typeof window === "undefined") return false;
+  return (await ehAppOuPwa()) && window.matchMedia("(max-width: 767px)").matches;
+}
+
+export async function registrarAoAbrirApp(callback: () => void): Promise<() => void> {
+  if (await ehApp()) {
+    const { App } = await import("@capacitor/app");
+    const handle = await App.addListener("appStateChange", ({ isActive }) => { if (isActive) callback(); });
+    return () => { handle.remove(); };
+  }
+  if (typeof document !== "undefined" && (await ehAppOuPwa())) {
+    const ouvinte = () => { if (document.visibilityState === "visible") callback(); };
+    document.addEventListener("visibilitychange", ouvinte);
+    return () => document.removeEventListener("visibilitychange", ouvinte);
+  }
+  return () => {};
 }

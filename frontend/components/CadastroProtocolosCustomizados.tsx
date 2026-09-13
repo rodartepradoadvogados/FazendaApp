@@ -1,6 +1,6 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { ClipboardList, Plus, Pencil, AlertTriangle, Check, X, Trash2, Search } from "lucide-react";
+import { ClipboardList, Plus, Pencil, AlertTriangle, Trash2, Search } from "lucide-react";
 import {
   fetchProtocolosCustomizados, criarProtocoloCustomizado, atualizarProtocoloCustomizado, excluirProtocoloCustomizado,
   fetchEstoque, CATEGORIAS_PROTOCOLO_CUSTOM, TIPOS_PROTOCOLO_CUSTOM,
@@ -10,6 +10,7 @@ import { VIAS_APLICACAO, UNIDADES_PROTOCOLO } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
 import { normalizarBusca as normalizar } from "@/lib/busca";
+import { WizardProtocolo, type PassoWizard } from "@/components/protocolos/WizardProtocolo";
 
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
@@ -57,10 +58,12 @@ export default function CadastroProtocolosCustomizados() {
     catch (e: any) { setError(e.message); }
   };
 
-  const salvar = async () => {
-    if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return; }
-    if (form.etapas.some((e) => e.dia < 0)) { setMsg("O dia da etapa não pode ser negativo (o protocolo pode começar em D0)."); return; }
-    if (form.etapas.some((e) => !e.descricao_evento.trim())) { setMsg("Descreva o que fazer em cada etapa."); return; }
+  // Devolve true só quando salvou de verdade — sinal que o wizard usa para
+  // limpar o rascunho do localStorage (ver WizardProtocolo.onConcluir).
+  const salvar = async (): Promise<boolean> => {
+    if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return false; }
+    if (form.etapas.some((e) => e.dia < 0)) { setMsg("O dia da etapa não pode ser negativo (o protocolo pode começar em D0)."); return false; }
+    if (form.etapas.some((e) => !e.descricao_evento.trim())) { setMsg("Descreva o que fazer em cada etapa."); return false; }
     setSalvando(true); setMsg(null);
     try {
       const dados = {
@@ -76,8 +79,10 @@ export default function CadastroProtocolosCustomizados() {
       else if (typeof editando === "number") await atualizarProtocoloCustomizado(editando, dados);
       setEditando(null);
       await carregar();
+      return true;
     } catch (e: any) {
       setMsg(e.message || "Erro ao salvar");
+      return false;
     } finally {
       setSalvando(false);
     }
@@ -89,81 +94,87 @@ export default function CadastroProtocolosCustomizados() {
   const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(filtrados);
 
   return (
-    <div className="card">
-      <div className="card-header mb-3 flex items-center justify-between">
-        <span className="flex items-center gap-2"><ClipboardList size={16} /> Protocolos personalizados</span>
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
-          <Plus size={14} /> Novo
-        </button>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        <div className="card">
+          <div className="card-header mb-3 flex items-center justify-between">
+            <span className="flex items-center gap-2"><ClipboardList size={16} /> Protocolos personalizados</span>
+            <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
+              <Plus size={14} /> Novo
+            </button>
+          </div>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+            Crie um roteiro próprio de etapas (dia, o que fazer e insumo sugerido) para qualquer rotina que não se encaixe
+            nos protocolos prontos do sistema — ex.: um checklist de recepção de bezerras, uma rotina de pastejo rotacionado
+            ou um calendário de manutenção. Depois de cadastrado, o protocolo fica disponível em <strong>Lançamentos</strong>
+            para aplicar contra animais, um lote ou como tarefa geral da fazenda, e as pendências aparecem na <strong>Agenda</strong>.
+            Os dias começam em D0, como os demais protocolos do sistema.
+          </p>
+
+          {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+          {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+          {itens && (
+            <>
+              <div style={{ position: "relative", marginBottom: "0.8rem" }}>
+                <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+                <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar protocolo…" />
+              </div>
+              <div className="overflow-x-auto">
+                <table className="fazenda-table">
+                  <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><ThOrdenavel label="Categoria" campo="categoria" coluna={coluna} dir={dir} ordenar={ordenar} /><th>Tipo</th><th>Etapas</th><th></th></tr></thead>
+                  <tbody>
+                    {linhasOrdenadas.map((p) => (
+                      <tr key={p.id}>
+                        <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
+                        <td style={{ fontSize: "0.78rem" }}>{categoriaLabel(p.categoria)}</td>
+                        <td style={{ fontSize: "0.78rem" }}>{p.tipo ? (TIPOS_PROTOCOLO_CUSTOM.find(([v]) => v === p.tipo)?.[1] || p.tipo) : <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
+                        <td style={{ fontSize: "0.78rem" }}>{p.etapas.map((e) => `D${e.dia - p.dia_inicial}`).join(", ")}</td>
+                        <td style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: "0.4rem" }}>
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
+                            <Pencil size={13} /> Editar
+                          </button>
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => excluir(p)}>
+                            <Trash2 size={13} /> Excluir
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!itens.length && !editando && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo personalizado cadastrado ainda.</td></tr>}
+                    {!!itens.length && !filtrados.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
       </div>
-      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-        Crie um roteiro próprio de etapas (dia, o que fazer e insumo sugerido) para qualquer rotina que não se encaixe
-        nos protocolos prontos do sistema — ex.: um checklist de recepção de bezerras, uma rotina de pastejo rotacionado
-        ou um calendário de manutenção. Depois de cadastrado, o protocolo fica disponível em <strong>Lançamentos</strong>
-        para aplicar contra animais, um lote ou como tarefa geral da fazenda, e as pendências aparecem na <strong>Agenda</strong>.
-        Os dias começam em D0, como os demais protocolos do sistema.
-      </p>
-
-      {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
-      {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-
-      {editando === "novo" && (
-        <FormProtocoloCustomizado
-          form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-          acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
-        />
-      )}
-
-      {itens && (
-        <>
-          <div style={{ position: "relative", marginBottom: "0.8rem" }}>
-            <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
-            <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar protocolo…" />
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        {editando !== null ? (
+          <FormProtocoloCustomizado
+            key={editando} form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg} editando={editando}
+            acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
+          />
+        ) : (
+          <div className="card" style={{ textAlign: "center", padding: "2.2rem 1rem" }}>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione um protocolo para editar, ou clique em Novo.</p>
           </div>
-          <div className="overflow-x-auto">
-            <table className="fazenda-table">
-              <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><ThOrdenavel label="Categoria" campo="categoria" coluna={coluna} dir={dir} ordenar={ordenar} /><th>Tipo</th><th>Etapas</th><th></th></tr></thead>
-              <tbody>
-                {linhasOrdenadas.map((p) => (
-                  <Fragment key={p.id}>
-                    <tr>
-                      <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{categoriaLabel(p.categoria)}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{p.tipo ? (TIPOS_PROTOCOLO_CUSTOM.find(([v]) => v === p.tipo)?.[1] || p.tipo) : <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{p.etapas.map((e) => `D${e.dia - p.dia_inicial}`).join(", ")}</td>
-                      <td style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: "0.4rem" }}>
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
-                          <Pencil size={13} /> Editar
-                        </button>
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => excluir(p)}>
-                          <Trash2 size={13} /> Excluir
-                        </button>
-                      </td>
-                    </tr>
-                    {editando === p.id && (
-                      <tr><td colSpan={5} style={{ padding: 0 }}>
-                        <FormProtocoloCustomizado
-                          form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-                          acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
-                        />
-                      </td></tr>
-                    )}
-                  </Fragment>
-                ))}
-                {!itens.length && !editando && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo personalizado cadastrado ainda.</td></tr>}
-                {!!itens.length && !filtrados.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+        )}
+      </div>
     </div>
   );
 }
 
-function FormProtocoloCustomizado({ form, setForm, onSalvar, onCancelar, salvando, msg, acrescentarEtapa, removerEtapa, atualizarEtapa }: {
+// Wizard de 4 etapas (T5) para o Customizado — divisão escolhida:
+//  1. Identificação — nome, categoria, ativo.
+//  2. Critérios — tipo (a classificação usada pelos filtros de
+//     Acompanhamento/Histórico da Central de Protocolos) + observação: o
+//     contexto de quando/para que este roteiro serve.
+//  3. Roteiro (etapas) — o roteiro livre dia a dia, já existente.
+//  4. Revisão — resumo antes de gravar.
+function FormProtocoloCustomizado({ form, setForm, onSalvar, onCancelar, salvando, msg, editando, acrescentarEtapa, removerEtapa, atualizarEtapa }: {
   form: ProtocoloForm; setForm: (f: ProtocoloForm) => void;
-  onSalvar: () => void; onCancelar: () => void; salvando: boolean; msg: string | null;
+  onSalvar: () => Promise<boolean>; onCancelar: () => void; salvando: boolean; msg: string | null; editando: number | "novo";
   acrescentarEtapa: () => void; removerEtapa: (idx: number) => void; atualizarEtapa: (idx: number, patch: Partial<EtapaProtocoloCustomizado>) => void;
 }) {
   // Insumo sugerido: cada etapa pode vir do estoque (com opção de mostrar
@@ -182,107 +193,154 @@ function FormProtocoloCustomizado({ form, setForm, onSalvar, onCancelar, salvand
   const modoDaEtapa = (idx: number, valorAtual: string) =>
     modoInsumo[idx] ?? (valorAtual && estoque.some((it) => it.nome === valorAtual) ? "estoque" : "livre");
 
-  return (
-    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-        <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Nome</label>
-          <input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder="ex.: Recepção de bezerras" /></div>
-        <div><label style={labelStyle}>Categoria</label>
-          <select style={inputStyle} value={form.categoria} onChange={(e) => setForm({ ...form, categoria: e.target.value })}>
-            {CATEGORIAS_PROTOCOLO_CUSTOM.map(([v, lbl]) => <option key={v} value={v}>{lbl}</option>)}
-          </select></div>
-        <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
-          <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativo</label></div>
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-        <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Tipo (Central de Protocolos)</label>
-          <select style={inputStyle} value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
-            <option value="">Sem tipo — fora de Acompanhamento/Histórico</option>
-            {TIPOS_PROTOCOLO_CUSTOM.map(([v, lbl]) => <option key={v} value={v}>{lbl}</option>)}
-          </select>
-          <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>
-            Só entra nos filtros por tipo da Central de Protocolos se isto estiver preenchido.
+  const passos: PassoWizard<ProtocoloForm>[] = [
+    {
+      id: "identificacao", titulo: "Identificação",
+      validar: (f) => (!f.nome.trim() ? "Nome é obrigatório." : null),
+      render: ({ form: f, setForm: sf }) => (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Nome</label>
+            <input style={inputStyle} value={f.nome} onChange={(e) => sf({ ...f, nome: e.target.value })} placeholder="ex.: Recepção de bezerras" autoFocus /></div>
+          <div><label style={labelStyle}>Categoria</label>
+            <select style={inputStyle} value={f.categoria} onChange={(e) => sf({ ...f, categoria: e.target.value })}>
+              {CATEGORIAS_PROTOCOLO_CUSTOM.map(([v, lbl]) => <option key={v} value={v}>{lbl}</option>)}
+            </select></div>
+          <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+            <input type="checkbox" checked={f.ativo} onChange={(e) => sf({ ...f, ativo: e.target.checked })} /> Ativo</label></div>
+        </div>
+      ),
+    },
+    {
+      id: "criterios", titulo: "Critérios",
+      render: ({ form: f, setForm: sf }) => (
+        <div>
+          <div className="mb-3"><label style={labelStyle}>Tipo (Central de Protocolos)</label>
+            <select style={inputStyle} value={f.tipo} onChange={(e) => sf({ ...f, tipo: e.target.value })}>
+              <option value="">Sem tipo — fora de Acompanhamento/Histórico</option>
+              {TIPOS_PROTOCOLO_CUSTOM.map(([v, lbl]) => <option key={v} value={v}>{lbl}</option>)}
+            </select>
+            <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>
+              Só entra nos filtros por tipo da Central de Protocolos se isto estiver preenchido.
+            </p>
+          </div>
+          <div><label style={labelStyle}>Observação (opcional)</label>
+            <input style={inputStyle} value={f.observacao} onChange={(e) => sf({ ...f, observacao: e.target.value })} placeholder="Contexto geral do protocolo" /></div>
+        </div>
+      ),
+    },
+    {
+      id: "roteiro", titulo: "Roteiro",
+      validar: (f) => {
+        if (f.etapas.some((e) => e.dia < 0)) return "O dia da etapa não pode ser negativo (o protocolo pode começar em D0).";
+        if (f.etapas.some((e) => !e.descricao_evento.trim())) return "Descreva o que fazer em cada etapa.";
+        return null;
+      },
+      render: ({ form: f }) => (
+        <div>
+          <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.2rem" }}>Etapas (D0, D1, D2...)</p>
+          <label className="flex items-center gap-2" style={{ fontSize: "0.72rem", color: "var(--text-muted)", cursor: "pointer", marginBottom: "0.5rem" }}>
+            <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => setIncluirSemEstoque(e.target.checked)} />
+            Ao selecionar do estoque, incluir itens sem saldo
+          </label>
+          <div className="space-y-2 mb-2">
+            {f.etapas.map((e, idx) => {
+              const modo = modoDaEtapa(idx, e.insumo_padrao || "");
+              return (
+              <div key={idx} className="grid grid-cols-2 md:grid-cols-8 gap-2 items-end" style={{ background: "var(--surface)", padding: "0.5rem", borderRadius: "var(--r-sm)" }}>
+                <div><label style={labelStyle}>Dia (D)</label><input type="number" min={0} style={inputStyle} value={e.dia} onChange={(ev) => atualizarEtapa(idx, { dia: Number(ev.target.value) })} /></div>
+                <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>O que fazer</label>
+                  <input style={inputStyle} value={e.descricao_evento} onChange={(ev) => atualizarEtapa(idx, { descricao_evento: ev.target.value })} placeholder="ex.: Pesar e vermifugar" /></div>
+                <div>
+                  <div className="flex items-center justify-between" style={{ marginBottom: "0.15rem" }}>
+                    <label style={labelStyle}>Insumo sugerido</label>
+                    <select
+                      style={{ background: "transparent", color: "var(--text-muted)", border: "none", fontSize: "0.68rem", cursor: "pointer" }}
+                      value={modo}
+                      onChange={(ev) => setModoInsumo((m) => ({ ...m, [idx]: ev.target.value as "estoque" | "livre" }))}
+                    >
+                      <option value="estoque">do estoque</option>
+                      <option value="livre">texto livre</option>
+                    </select>
+                  </div>
+                  {modo === "estoque" ? (
+                    <select style={inputStyle} value={e.insumo_padrao || ""} onChange={(ev) => atualizarEtapa(idx, { insumo_padrao: ev.target.value })}>
+                      <option value="">Selecione…</option>
+                      {/* Item já salvo que não bate com o estoque visível (fora de linha, ou saldo zerado com o checkbox desmarcado) continua listado para não sumir. */}
+                      {e.insumo_padrao && !estoqueVisivel.some((it) => it.nome === e.insumo_padrao) && <option value={e.insumo_padrao}>{e.insumo_padrao}</option>}
+                      {estoqueVisivel.map((it) => <option key={it.nome} value={it.nome}>{it.nome}{it.quantidade != null ? ` (${it.quantidade} ${it.unidade || ""})` : ""}</option>)}
+                    </select>
+                  ) : (
+                    <input style={inputStyle} value={e.insumo_padrao || ""} onChange={(ev) => atualizarEtapa(idx, { insumo_padrao: ev.target.value })} placeholder="texto livre — informativo" />
+                  )}
+                </div>
+                <div><label style={labelStyle}>Dose</label><input type="number" inputMode="decimal" style={inputStyle} value={e.dose ?? ""} onChange={(ev) => atualizarEtapa(idx, { dose: ev.target.value ? Number(ev.target.value) : null })} /></div>
+                <div><label style={labelStyle}>Unidade</label>
+                  <select style={inputStyle} value={e.unidade || ""} onChange={(ev) => atualizarEtapa(idx, { unidade: ev.target.value })}>
+                    <option value="">—</option>
+                    {/* Unidade fora da lista (protocolo antigo) continua visível para não sumir ao editar. */}
+                    {e.unidade && !UNIDADES_PROTOCOLO.includes(e.unidade) && <option value={e.unidade}>{e.unidade}</option>}
+                    {UNIDADES_PROTOCOLO.map((u) => <option key={u} value={u}>{u}</option>)}
+                  </select></div>
+                <div><label style={labelStyle}>Via</label>
+                  <select style={inputStyle} value={e.via || ""} onChange={(ev) => atualizarEtapa(idx, { via: ev.target.value })}>
+                    <option value="">—</option>{VIAS_APLICACAO.map((v) => <option key={v}>{v}</option>)}
+                  </select></div>
+                <div className="flex items-end gap-1">
+                  <div style={{ flex: 1 }}><label style={labelStyle}>Observação</label>
+                    <input style={inputStyle} value={e.observacao || ""} onChange={(ev) => atualizarEtapa(idx, { observacao: ev.target.value })} placeholder="ex.: Se necessário" /></div>
+                  {f.etapas.length > 1 && <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => removerEtapa(idx)}><Trash2 size={13} /></button>}
+                </div>
+              </div>
+              );
+            })}
+          </div>
+          <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={acrescentarEtapa}>
+            <Plus size={14} /> Acrescentar etapa
+          </button>
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.8rem" }}>
+            O insumo é apenas informativo — não gera baixa automática de estoque nem evento de Sanidade. Para tratamentos
+            que exigem controle de estoque/mastite, use o Protocolo sanitário (Cadastro › Sanitário).
           </p>
         </div>
-      </div>
-      <div className="mb-3"><label style={labelStyle}>Observação (opcional)</label>
-        <input style={inputStyle} value={form.observacao} onChange={(e) => setForm({ ...form, observacao: e.target.value })} placeholder="Contexto geral do protocolo" /></div>
+      ),
+    },
+    {
+      id: "revisao", titulo: "Revisão",
+      render: ({ form: f }) => (
+        <div>
+          <p style={{ fontSize: "0.82rem", marginBottom: "0.6rem" }}>
+            <strong>{f.nome || "(sem nome)"}</strong>{!f.ativo && <span style={{ color: "var(--text-muted)" }}> (inativo)</span>}
+          </p>
+          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.8rem" }}>
+            Categoria: {CATEGORIAS_PROTOCOLO_CUSTOM.find(([v]) => v === f.categoria)?.[1] || f.categoria} ·{" "}
+            Tipo: {f.tipo ? (TIPOS_PROTOCOLO_CUSTOM.find(([v]) => v === f.tipo)?.[1] || f.tipo) : "—"}
+          </p>
+          <table className="fazenda-table">
+            <thead><tr><th>Dia</th><th>O que fazer</th><th>Insumo</th></tr></thead>
+            <tbody>
+              {f.etapas.map((e, idx) => (
+                <tr key={idx}><td>D{e.dia}</td><td>{e.descricao_evento || "—"}</td><td>{e.insumo_padrao || "—"}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ),
+    },
+  ];
 
-      <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.2rem" }}>Etapas (D0, D1, D2...)</p>
-      <label className="flex items-center gap-2" style={{ fontSize: "0.72rem", color: "var(--text-muted)", cursor: "pointer", marginBottom: "0.5rem" }}>
-        <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => setIncluirSemEstoque(e.target.checked)} />
-        Ao selecionar do estoque, incluir itens sem saldo
-      </label>
-      <div className="space-y-2 mb-2">
-        {form.etapas.map((e, idx) => {
-          const modo = modoDaEtapa(idx, e.insumo_padrao || "");
-          return (
-          <div key={idx} className="grid grid-cols-2 md:grid-cols-8 gap-2 items-end" style={{ background: "var(--surface)", padding: "0.5rem", borderRadius: "var(--r-sm)" }}>
-            <div><label style={labelStyle}>Dia (D)</label><input type="number" min={0} style={inputStyle} value={e.dia} onChange={(ev) => atualizarEtapa(idx, { dia: Number(ev.target.value) })} /></div>
-            <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>O que fazer</label>
-              <input style={inputStyle} value={e.descricao_evento} onChange={(ev) => atualizarEtapa(idx, { descricao_evento: ev.target.value })} placeholder="ex.: Pesar e vermifugar" /></div>
-            <div>
-              <div className="flex items-center justify-between" style={{ marginBottom: "0.15rem" }}>
-                <label style={labelStyle}>Insumo sugerido</label>
-                <select
-                  style={{ background: "transparent", color: "var(--text-muted)", border: "none", fontSize: "0.68rem", cursor: "pointer" }}
-                  value={modo}
-                  onChange={(ev) => setModoInsumo((m) => ({ ...m, [idx]: ev.target.value as "estoque" | "livre" }))}
-                >
-                  <option value="estoque">do estoque</option>
-                  <option value="livre">texto livre</option>
-                </select>
-              </div>
-              {modo === "estoque" ? (
-                <select style={inputStyle} value={e.insumo_padrao || ""} onChange={(ev) => atualizarEtapa(idx, { insumo_padrao: ev.target.value })}>
-                  <option value="">Selecione…</option>
-                  {/* Item já salvo que não bate com o estoque visível (fora de linha, ou saldo zerado com o checkbox desmarcado) continua listado para não sumir. */}
-                  {e.insumo_padrao && !estoqueVisivel.some((it) => it.nome === e.insumo_padrao) && <option value={e.insumo_padrao}>{e.insumo_padrao}</option>}
-                  {estoqueVisivel.map((it) => <option key={it.nome} value={it.nome}>{it.nome}{it.quantidade != null ? ` (${it.quantidade} ${it.unidade || ""})` : ""}</option>)}
-                </select>
-              ) : (
-                <input style={inputStyle} value={e.insumo_padrao || ""} onChange={(ev) => atualizarEtapa(idx, { insumo_padrao: ev.target.value })} placeholder="texto livre — informativo" />
-              )}
-            </div>
-            <div><label style={labelStyle}>Dose</label><input type="number" inputMode="decimal" style={inputStyle} value={e.dose ?? ""} onChange={(ev) => atualizarEtapa(idx, { dose: ev.target.value ? Number(ev.target.value) : null })} /></div>
-            <div><label style={labelStyle}>Unidade</label>
-              <select style={inputStyle} value={e.unidade || ""} onChange={(ev) => atualizarEtapa(idx, { unidade: ev.target.value })}>
-                <option value="">—</option>
-                {/* Unidade fora da lista (protocolo antigo) continua visível para não sumir ao editar. */}
-                {e.unidade && !UNIDADES_PROTOCOLO.includes(e.unidade) && <option value={e.unidade}>{e.unidade}</option>}
-                {UNIDADES_PROTOCOLO.map((u) => <option key={u} value={u}>{u}</option>)}
-              </select></div>
-            <div><label style={labelStyle}>Via</label>
-              <select style={inputStyle} value={e.via || ""} onChange={(ev) => atualizarEtapa(idx, { via: ev.target.value })}>
-                <option value="">—</option>{VIAS_APLICACAO.map((v) => <option key={v}>{v}</option>)}
-              </select></div>
-            <div className="flex items-end gap-1">
-              <div style={{ flex: 1 }}><label style={labelStyle}>Observação</label>
-                <input style={inputStyle} value={e.observacao || ""} onChange={(ev) => atualizarEtapa(idx, { observacao: ev.target.value })} placeholder="ex.: Se necessário" /></div>
-              {form.etapas.length > 1 && <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => removerEtapa(idx)}><Trash2 size={13} /></button>}
-            </div>
-          </div>
-          );
-        })}
-      </div>
-      <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem", marginBottom: "0.8rem" }} onClick={acrescentarEtapa}>
-        <Plus size={14} /> Acrescentar etapa
-      </button>
-
-      <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.8rem" }}>
-        O insumo é apenas informativo — não gera baixa automática de estoque nem evento de Sanidade. Para tratamentos
-        que exigem controle de estoque/mastite, use o Protocolo sanitário (Cadastro › Sanitário).
-      </p>
-
-      {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
-      <div className="flex items-center gap-2">
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={onSalvar} disabled={salvando}>
-          <Check size={14} /> {salvando ? "Salvando…" : "Salvar"}
-        </button>
-        <button className="btn-ghost" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={onCancelar}>
-          <X size={14} /> Cancelar
-        </button>
-      </div>
+  return (
+    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
+      <WizardProtocolo<ProtocoloForm>
+        chaveRascunho={editando === "novo" ? "wizard-protocolo:customizado" : null}
+        form={form} setForm={setForm}
+        ehVazio={(f) => !f.nome.trim() && !f.observacao.trim() && f.etapas.every((e) => !e.descricao_evento.trim())}
+        passos={passos}
+        onCancelar={onCancelar}
+        onConcluir={onSalvar}
+        salvando={salvando}
+        rotuloConcluir="Salvar"
+        erro={msg}
+      />
     </div>
   );
 }

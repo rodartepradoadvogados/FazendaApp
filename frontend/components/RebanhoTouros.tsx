@@ -2,11 +2,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Dna, Search, Warehouse, FlaskConical, Database, Pencil, Trash2, X } from "lucide-react";
 import {
-  fetchEstoqueSemen, fetchTouros, fetchAnimais, atualizarEstoqueSemen, atualizarTouro, excluirEstoqueSemen,
-  fetchProvaMediaSemen, type Touro, type TouroIn, type ProvaMediaSemen, type ProvaMediaCampos,
+  fetchEstoqueSemen, fetchTouros, fetchAnimais, atualizarEstoqueSemen, excluirEstoqueSemen,
+  fetchProvaMediaSemen, fetchProvaAoVivoSemen, type Touro, type TouroIn, type ProvaMediaSemen, type ProvaMediaCampos,
+  type ProvaAoVivoSemen,
 } from "@/lib/api";
 import type { AnimalRow } from "./AnimalModal";
-import { CAMPOS_NUMERICOS, parseDadosExtra, FormTouro, CAMPO_VAZIO } from "./CadastroTouros";
+import { CAMPOS_NUMERICOS, parseDadosExtra } from "./CadastroTouros";
 import { TouroDetalheModal } from "./TouroDetalheModal";
 import { useOrdenacao, ThOrdenavel } from "./Ordenavel";
 import { usePaginacao, Paginacao } from "./Paginacao";
@@ -111,27 +112,51 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
   const [machos, setMachos] = useState<MachoAnimal[]>([]);
   const [detalhe, setDetalhe] = useState<{ titulo: string; campos: [string, string][] } | null>(null);
   const [editEstoque, setEditEstoque] = useState<EstoqueSemenItem | null>(null);
-  const [editNaab, setEditNaab] = useState<Touro | null>(null);
   const [provaMedia, setProvaMedia] = useState<ProvaMediaSemen | null>(null);
   const [provaErro, setProvaErro] = useState<string | null>(null);
-  const [provaDe, setProvaDe] = useState("");
-  const [provaAte, setProvaAte] = useState("");
+  // Prova ao vivo (mesmos indicadores genéticos do catálogo, ponderados
+  // pelo uso REAL no rebanho, não pelas doses em estoque) — filtros
+  // opcionais, só limitam quais serviços contam como uso.
+  const [pavCategoria, setPavCategoria] = useState<"todas" | "vaca" | "novilha">("todas");
+  const [pavAno, setPavAno] = useState("");
+  const [pavDe, setPavDe] = useState("");
+  const [pavAte, setPavAte] = useState("");
+  const [provaAoVivo, setProvaAoVivo] = useState<ProvaAoVivoSemen | null>(null);
+  const [provaAoVivoErro, setProvaAoVivoErro] = useState<string | null>(null);
+  // Por padrão as três modalidades de prova média EXCLUEM touros da própria
+  // fazenda (sêmen produzido/usado internamente, tipo "fazenda" — não
+  // comprado de central de genética): não têm prova de central para
+  // ponderar, e a "ao vivo" existe justamente para medir sêmen comercial
+  // usado de verdade. Liga sob demanda.
+  const [incluirFazenda, setIncluirFazenda] = useState(false);
 
   useEffect(() => {
     fetchEstoqueSemen().then(setEstoque).catch(() => setEstoque([]));
     fetchAnimais({ incluirMachos: true }).then((d) => setMachos(d.filter((a: MachoAnimal) => a.sexo === "M"))).catch(() => {});
   }, []);
 
-  // Prova média (Quadro 3): só faz sentido olhando o estoque de sêmen (é ele
-  // que dá o peso/doses) — recalcula ao entrar na sub-aba ou trocar o
-  // período dos serviços considerados.
+  // Prova média genética (Quadro 3, simples/ponderada): só faz sentido
+  // olhando o estoque de sêmen (é ele que dá o peso/doses) — recalcula ao
+  // entrar na sub-aba.
   useEffect(() => {
     if (origemSemen !== "estoque") return;
     setProvaErro(null);
-    fetchProvaMediaSemen(provaDe || undefined, provaAte || undefined)
+    fetchProvaMediaSemen({ incluirFazenda })
       .then(setProvaMedia)
       .catch((e: any) => setProvaErro(e.message || "Erro ao calcular a prova média"));
-  }, [origemSemen, provaDe, provaAte]);
+  }, [origemSemen, incluirFazenda]);
+
+  // Prova ao vivo: recalcula ao entrar na sub-aba ou trocar qualquer filtro.
+  useEffect(() => {
+    if (origemSemen !== "estoque") return;
+    setProvaAoVivoErro(null);
+    fetchProvaAoVivoSemen({
+      categoria: pavCategoria, anoNascimento: pavAno ? Number(pavAno) : undefined,
+      de: pavDe || undefined, ate: pavAte || undefined, incluirFazenda,
+    })
+      .then(setProvaAoVivo)
+      .catch((e: any) => setProvaAoVivoErro(e.message || "Erro ao calcular a prova ao vivo"));
+  }, [origemSemen, pavCategoria, pavAno, pavDe, pavAte, incluirFazenda]);
 
   const abrirTouroFazenda = (touroNome: string, f: EstoqueSemenItem) => {
     const animal = machos.find((a) => (a.nome || "").trim().toLowerCase() === touroNome.trim().toLowerCase());
@@ -242,12 +267,14 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
     setEditEstoque(null);
   };
 
-  const salvarEdicaoNaab = async (d: TouroIn) => {
-    if (!editNaab?.id) return;
-    const atualizado = await atualizarTouro(editNaab.id, d);
-    setNaab((prev) => (prev ?? []).map((t) => (t.id === atualizado.id ? atualizado : t)));
-    setEditNaab(null);
-  };
+  // EDIÇÃO DO CATÁLOGO NAAB: SAIU DAQUI (set/2026). Havia um lápis nesta
+  // tabela que chamava PUT /cadastro/touros/{id} — só que `Touro` é catálogo
+  // GLOBAL (sem fazenda_id, o mesmo para todas as fazendas-cliente), então
+  // editar aqui mudava a prova do touro para todo mundo. A manutenção do
+  // catálogo passou a ser exclusiva do Painel CowData (Touros Naab), sob a
+  // permissão "editar touros NAAB"; as rotas de escrita da fazenda deixaram
+  // de existir. Esta tela continua fazendo tudo que fazia com touro: filtrar,
+  // buscar, ver a ficha completa, prova média e prova ao vivo.
 
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 
@@ -380,7 +407,6 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
                       <ThOrdenavel label="Raça" campo="raca" coluna={ordNaab.coluna} dir={ordNaab.dir} ordenar={ordNaab.ordenar} />
                       <ThOrdenavel label="TPI" campo="tpi" coluna={ordNaab.coluna} dir={ordNaab.dir} ordenar={ordNaab.ordenar} alinhar="right" />
                       <ThOrdenavel label="Leite (kg)" campo="leite_kg" coluna={ordNaab.coluna} dir={ordNaab.dir} ordenar={ordNaab.ordenar} alinhar="right" />
-                      <th></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -392,15 +418,9 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
                         <td style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{t.raca || "—"}</td>
                         <td style={{ textAlign: "right", fontWeight: 600, color: "var(--dourado-light)" }}>{fmt(t.tpi)}</td>
                         <td style={{ textAlign: "right" }}>{fmt(t.leite_kg)}</td>
-                        <td style={{ textAlign: "right" }}>
-                          <button onClick={(ev) => { ev.stopPropagation(); setEditNaab(t); }} title="Editar touro"
-                            style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted)" }}>
-                            <Pencil size={14} />
-                          </button>
-                        </td>
                       </tr>
                     ))}
-                    {!naabFiltrado.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", textAlign: "center" }}>Nenhum touro do catálogo NAAB encontrado.</td></tr>}
+                    {!naabFiltrado.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", textAlign: "center" }}>Nenhum touro do catálogo NAAB encontrado.</td></tr>}
                   </tbody>
                 </table>
               )}
@@ -416,48 +436,132 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
       {fonte === "semen" && origemSemen === "estoque" && (
         <div className="card mb-4">
           <div className="card-header mb-3">3. Prova média — automático</div>
-          <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.9rem" }}>
-            Média ponderada dos indicadores de prova de cada touro pela quantidade de doses de sêmen — soma(indicador × doses) ÷ soma(doses).
-            É a mesma lógica de índice ponderado que provas genéticas oficiais já usam (ex.: o PTI combina produção e tipo numa razão fixa entre eles);
-            aqui quem pondera é a quantidade de sêmen, não uma razão fixa. Um touro sem determinado indicador não entra no cálculo
-            daquele indicador específico — não puxa a média do grupo para baixo.
+          <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.7rem" }}>
+            Três recortes: os dois primeiros são o índice genético/PTA do catálogo de cada touro (a "prova de papel", a mesma
+            de sempre); o terceiro pondera esses MESMOS indicadores pelo uso REAL no seu próprio rebanho, em vez das doses em estoque.
           </p>
-          <div className="grid grid-cols-2 gap-3 mb-4" style={{ maxWidth: 420 }}>
-            <div><label style={labelStyle}>Serviços de (data)</label><input type="date" style={inputStyle} value={provaDe} onChange={(e) => setProvaDe(e.target.value)} /></div>
-            <div><label style={labelStyle}>Serviços até (data)</label><input type="date" style={inputStyle} value={provaAte} onChange={(e) => setProvaAte(e.target.value)} /></div>
-          </div>
+          <label className="flex items-center gap-2" style={{ fontSize: "0.82rem", marginBottom: "1rem", cursor: "pointer" }}>
+            <input type="checkbox" checked={incluirFazenda} onChange={(e) => setIncluirFazenda(e.target.checked)} />
+            Incluir touros da fazenda
+          </label>
+          <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "-0.7rem", marginBottom: "0.9rem" }}>
+            Por padrão, touros da própria fazenda (sêmen produzido/usado internamente para monta natural, tipo "fazenda" — não
+            comprado de central de genética) ficam de fora das três provas abaixo: não têm prova de central para ponderar. Marque
+            para incluir mesmo assim (só entram se também estiverem cadastrados no catálogo NAAB).
+          </p>
+          <p style={{ fontWeight: 700, fontSize: "0.85rem", marginBottom: "0.4rem" }}>Prova genética (catálogo)</p>
+          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.7rem" }}>
+            Só entram touros com pelo menos 1 dose em estoque hoje.
+            Um touro sem determinado indicador não entra no cálculo daquele indicador específico — não puxa a média do grupo para baixo.
+          </p>
           {provaErro && <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{provaErro}</p>}
           {!provaMedia && !provaErro && <p style={{ color: "var(--text-muted)" }}>Calculando…</p>}
           {provaMedia && (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto mb-4">
               <table className="fazenda-table" style={{ margin: 0 }}>
                 <thead>
                   <tr>
                     <th>Indicador</th>
-                    <th style={{ textAlign: "right" }}>Prova média do botijão (fazenda toda)</th>
-                    <th style={{ textAlign: "right" }}>Prova média das doses usadas nos serviços</th>
+                    <th style={{ textAlign: "right" }} title="Cada touro pesa 1, tenha 1 dose ou 20 em estoque">Prova média — simples</th>
+                    <th style={{ textAlign: "right" }} title="Soma(indicador × doses) ÷ soma(doses)">Prova média — ponderada pelas doses</th>
                   </tr>
                 </thead>
                 <tbody>
                   {CAMPOS_NUMERICOS.map(({ chave, label }) => (
                     <tr key={chave}>
                       <td style={{ fontSize: "0.82rem" }}>{label}</td>
-                      <td style={{ textAlign: "right", fontWeight: 600 }}>{fmt(provaMedia.botijao.prova[chave as keyof ProvaMediaCampos], 2)}</td>
-                      <td style={{ textAlign: "right", fontWeight: 600, color: "var(--dourado-light)" }}>{fmt(provaMedia.servicos_periodo.prova[chave as keyof ProvaMediaCampos], 2)}</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>{fmt(provaMedia.simples.prova[chave as keyof ProvaMediaCampos], 2)}</td>
+                      <td style={{ textAlign: "right", fontWeight: 600, color: "var(--dourado-light)" }}>{fmt(provaMedia.ponderada.prova[chave as keyof ProvaMediaCampos], 2)}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>Doses / touros considerados</td>
+                    <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>Touros / doses considerados</td>
                     <td style={{ textAlign: "right", fontSize: "0.76rem", color: "var(--text-muted)" }}>
-                      {provaMedia.botijao.total_doses} dose(s) · {provaMedia.botijao.touros_considerados} touro(s)
+                      {provaMedia.simples.touros_considerados} touro(s)
                     </td>
                     <td style={{ textAlign: "right", fontSize: "0.76rem", color: "var(--text-muted)" }}>
-                      {provaMedia.servicos_periodo.total_doses} dose(s) · {provaMedia.servicos_periodo.touros_considerados} touro(s)
+                      {provaMedia.ponderada.total_doses} dose(s) · {provaMedia.ponderada.touros_considerados} touro(s)
                     </td>
                   </tr>
                 </tfoot>
+              </table>
+            </div>
+          )}
+
+          <p style={{ fontWeight: 700, fontSize: "0.85rem", marginBottom: "0.4rem", borderTop: "1px solid var(--border)", paddingTop: "0.9rem" }}>
+            Prova ao vivo — mesmos indicadores genéticos, ponderados pelo uso real
+          </p>
+          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.7rem" }}>
+            Os MESMOS indicadores genéticos do catálogo acima (leite, gordura, proteína, TPI, NM$ etc.), só que ponderados pelo
+            nº de serviços em que cada touro foi de fato usado na fazenda — não pelas doses em estoque. Não é taxa de concepção
+            nem outro resultado reprodutivo do rebanho (isso é do cruzamento touro + matriz + manejo, não prova do touro).
+            Filtros opcionais — só limitam quais serviços contam como uso.
+          </p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            <div>
+              <label style={labelStyle}>Categoria</label>
+              <select style={inputStyle} value={pavCategoria} onChange={(e) => setPavCategoria(e.target.value as any)}>
+                <option value="todas">Todas</option>
+                <option value="vaca">Vaca</option>
+                <option value="novilha">Novilha</option>
+              </select>
+            </div>
+            <div><label style={labelStyle}>Ano de nascimento</label><input type="number" style={inputStyle} value={pavAno} onChange={(e) => setPavAno(e.target.value)} placeholder="ex.: 2023" /></div>
+            <div><label style={labelStyle}>Inseminação de (data)</label><input type="date" style={inputStyle} value={pavDe} onChange={(e) => setPavDe(e.target.value)} /></div>
+            <div><label style={labelStyle}>Inseminação até (data)</label><input type="date" style={inputStyle} value={pavAte} onChange={(e) => setPavAte(e.target.value)} /></div>
+          </div>
+          {provaAoVivoErro && <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{provaAoVivoErro}</p>}
+          {!provaAoVivo && !provaAoVivoErro && <p style={{ color: "var(--text-muted)" }}>Calculando…</p>}
+          {provaAoVivo && (
+            <div className="overflow-x-auto mb-4">
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead>
+                  <tr>
+                    <th>Indicador</th>
+                    <th style={{ textAlign: "right" }} title="Soma(indicador × nº de serviços) ÷ soma(nº de serviços)">Prova ao vivo — ponderada pelo uso</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {CAMPOS_NUMERICOS.map(({ chave, label }) => (
+                    <tr key={chave}>
+                      <td style={{ fontSize: "0.82rem" }}>{label}</td>
+                      <td style={{ textAlign: "right", fontWeight: 600, color: "var(--dourado-light)" }}>{fmt(provaAoVivo.prova[chave as keyof ProvaMediaCampos], 2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>Serviços / touros considerados</td>
+                    <td style={{ textAlign: "right", fontSize: "0.76rem", color: "var(--text-muted)" }}>
+                      {provaAoVivo.total_servicos} serviço(s) · {provaAoVivo.touros_considerados} touro(s)
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+          {provaAoVivo && (
+            <div className="overflow-x-auto">
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead>
+                  <tr>
+                    <th>Touro / sêmen</th>
+                    <th style={{ textAlign: "right" }} title="Peso do touro na média ponderada acima">Serviços (uso)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {provaAoVivo.touros.map((t) => (
+                    <tr key={t.touro}>
+                      <td style={{ fontSize: "0.82rem", fontWeight: 700 }}>{t.touro}</td>
+                      <td style={{ textAlign: "right" }}>{t.servicos}</td>
+                    </tr>
+                  ))}
+                  {!provaAoVivo.touros.length && (
+                    <tr><td colSpan={2} style={{ color: "var(--text-muted)", textAlign: "center" }}>Nenhum touro com prova genética e uso real identificados para esse filtro.</td></tr>
+                  )}
+                </tbody>
               </table>
             </div>
           )}
@@ -477,13 +581,6 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
         <FormEstoqueSemenEdit inicial={editEstoque} onSalvar={salvarEdicaoEstoque} onCancelar={() => setEditEstoque(null)} />
       )}
 
-      {editNaab && (
-        <FormTouro
-          inicial={{ ...CAMPO_VAZIO, ...editNaab, nome: editNaab.nome || "", dados_extra: parseDadosExtra(editNaab.dados_extra) }}
-          onSalvar={salvarEdicaoNaab}
-          onCancelar={() => setEditNaab(null)}
-        />
-      )}
     </div>
   );
 }

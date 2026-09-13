@@ -12,19 +12,23 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import and_, or_
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
+from fazenda.auth import exigir_admin, exigir_fazenda_da_operacao, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.rules import estoque_baixa
+from fazenda.rules import lactacao as regras_lactacao
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.exclusao_tipos import REGISTRO
 from fazenda.rules.exclusao_tipos._base import _br, _contem, _dentro_periodo
+from fazenda.rules.farmacia_multi_principio import checar_e_desvincular_exclusao_principio
 from fazenda.rules.vale_item import eh_item_de_vale
 from fazenda.models import (
     AgendaManual,
     Animal,
     CalendarioSanitario,
+    ColostragemBezerra,
     ComissaoCorretagem,
     CompraAnimal,
     CompraSemen,
@@ -36,11 +40,14 @@ from fazenda.models import (
     EventoSanitario,
     FolhaPagamento,
     Fornecedor,
+    FotoCampo,
+    Lactacao,
     LancamentoItem,
     Lote,
     MotivoMovimentacao,
     MovimentoEstoque,
     Parto,
+    PesagemCorporal,
     Pessoa,
     PrincipioAtivo,
     ProtocoloIatfAplicacao,
@@ -51,6 +58,7 @@ from fazenda.models import (
     ProtocoloSanitarioEtapa,
     ProtocoloSanitarioLancamento,
     Sanidade,
+    Secagem,
     Servico,
     SolicitacaoExclusao,
     Usuario,
@@ -126,7 +134,10 @@ def _buscar_um(
         )
 
     if tipo == "animal":
-        rows = session.exec(select(Animal)).all()
+        query = select(Animal)
+        if fazenda_id is not None:
+            query = query.where(Animal.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {"id": a.numero, "titulo": a.numero, "subtitulo": f"{a.categoria_abrev or a.categoria_completa or '—'} · {a.grupo_primario or '—'}"}
             for a in rows if _contem(termo, a.numero, a.grupo_primario, a.categoria_completa)
@@ -134,7 +145,10 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
     if tipo == "servico":
-        rows = session.exec(select(Servico)).all()
+        query = select(Servico)
+        if fazenda_id is not None:
+            query = query.where(Servico.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {
                 "id": s.id,
@@ -149,7 +163,10 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
     if tipo == "parto":
-        rows = session.exec(select(Parto)).all()
+        query = select(Parto)
+        if fazenda_id is not None:
+            query = query.where(Parto.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {
                 "id": p.id,
@@ -180,7 +197,10 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
     if tipo == "sanidade":
-        rows = session.exec(select(Sanidade)).all()
+        query = select(Sanidade)
+        if fazenda_id is not None:
+            query = query.where(Sanidade.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {
                 "id": s.id,
@@ -195,7 +215,10 @@ def _buscar_um(
 
     if tipo == "protocolo_sanitario_lancamento":
         protocolos = {p.id: p.nome for p in session.exec(select(ProtocoloSanitario)).all()}
-        rows = session.exec(select(ProtocoloSanitarioLancamento)).all()
+        query = select(ProtocoloSanitarioLancamento)
+        if fazenda_id is not None:
+            query = query.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         aplicacoes_por_lancamento: dict[int, list] = {}
         for ap in session.exec(select(ProtocoloSanitarioAplicacao)).all():
             aplicacoes_por_lancamento.setdefault(ap.lancamento_id, []).append(ap)
@@ -217,7 +240,10 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
     if tipo == "protocolo_iatf_lancamento":
-        rows = session.exec(select(ProtocoloIatfLancamento)).all()
+        query = select(ProtocoloIatfLancamento)
+        if fazenda_id is not None:
+            query = query.where(ProtocoloIatfLancamento.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         aplicacoes_por_lancamento: dict[int, list] = {}
         for ap in session.exec(select(ProtocoloIatfAplicacao)).all():
             aplicacoes_por_lancamento.setdefault(ap.lancamento_id, []).append(ap)
@@ -239,7 +265,10 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
     if tipo == "financeiro":
-        rows = session.exec(select(ContaGerencial)).all()
+        query = select(ContaGerencial)
+        if fazenda_id is not None:
+            query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {
                 "id": c.id,
@@ -313,7 +342,10 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
     if tipo == "estoque":
-        rows = session.exec(select(Estoque)).all()
+        query = select(Estoque)
+        if fazenda_id is not None:
+            query = query.where(Estoque.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {"id": e.id, "titulo": e.nome, "subtitulo": f"{e.quantidade or 0} {e.unidade or ''}"}
             for e in rows if _contem(termo, e.nome)
@@ -349,7 +381,10 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
     if tipo == "fornecedor":
-        rows = session.exec(select(Fornecedor)).all()
+        query = select(Fornecedor)
+        if fazenda_id is not None:
+            query = query.where(Fornecedor.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {"id": f.id, "titulo": f.nome, "subtitulo": f"{f.tipo} · {f.categoria or '—'}"}
             for f in rows if _contem(termo, f.nome, f.tipo, f.categoria)
@@ -365,27 +400,42 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
     if tipo == "pessoa":
-        rows = session.exec(select(Pessoa)).all()
+        query = select(Pessoa)
+        if fazenda_id is not None:
+            query = query.where(Pessoa.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [{"id": p.id, "titulo": p.nome, "subtitulo": (p.tipo or "").replace(",", ", ")} for p in rows if _contem(termo, p.nome, p.tipo)]
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
     if tipo == "principio_ativo":
-        rows = session.exec(select(PrincipioAtivo)).all()
+        query = select(PrincipioAtivo)
+        if fazenda_id is not None:
+            query = query.where(PrincipioAtivo.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [{"id": p.id, "titulo": p.nome, "subtitulo": "Ativo" if p.ativo else "Inativo"} for p in rows if _contem(termo, p.nome)]
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
     if tipo == "doenca":
-        rows = session.exec(select(Doenca)).all()
+        query = select(Doenca)
+        if fazenda_id is not None:
+            query = query.where(Doenca.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [{"id": d.id, "titulo": d.nome, "subtitulo": "Ativo" if d.ativo else "Inativo"} for d in rows if _contem(termo, d.nome)]
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
     if tipo == "evento_sanitario":
-        rows = session.exec(select(EventoSanitario)).all()
+        query = select(EventoSanitario)
+        if fazenda_id is not None:
+            query = query.where(EventoSanitario.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [{"id": e.id, "titulo": e.nome, "subtitulo": "Ativo" if e.ativo else "Inativo"} for e in rows if _contem(termo, e.nome)]
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
     if tipo == "protocolo_sanitario":
-        rows = session.exec(select(ProtocoloSanitario)).all()
+        query = select(ProtocoloSanitario)
+        if fazenda_id is not None:
+            query = query.where(ProtocoloSanitario.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {"id": p.id, "titulo": p.nome, "subtitulo": "Mastite" if p.eh_mastite else "—"}
             for p in rows if _contem(termo, p.nome)
@@ -395,7 +445,10 @@ def _buscar_um(
     if tipo == "calendario_sanitario":
         eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
         doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
-        rows = session.exec(select(CalendarioSanitario)).all()
+        query = select(CalendarioSanitario)
+        if fazenda_id is not None:
+            query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {"id": c.id,
              "titulo": f"{eventos.get(c.evento_sanitario_id, '—')} — {_br(c.data_evento)}",
@@ -443,18 +496,101 @@ def buscar(
 
 
 def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None) -> tuple[list[str], list]:
-    """Retorna (descrições do impacto, objetos que serão apagados)."""
+    """Retorna (descrições do impacto, objetos que serão apagados).
+
+    PORTA ÚNICA DA EXCLUSÃO. Os três endpoints que apagam alguma coisa
+    (`impacto`, `confirmar` e `aprovar_pendente`) passam por aqui, então é
+    aqui que a fazenda da operação é EXIGIDA: `fazenda_id` chegando None
+    deixou de ser "atende sem recorte" e passou a ser recusa explícita, com a
+    mensagem que ensina o caminho inteiro (fazenda → pessoa dentro dela →
+    usuário dessa pessoa → suporte CowData). Ver
+    `fazenda.auth.exigir_fazenda_da_operacao` — e note que a escape hatch dela
+    (instalação com a tabela `fazenda` VAZIA) é o que mantém válidos os
+    recortes incondicionais espalhados abaixo: sem nenhuma fazenda, toda linha
+    do banco tem `fazenda_id` nulo e `Modelo.fazenda_id == None` vira
+    `IS NULL`, casando exatamente o conjunto certo.
+
+    Por consequência, os `fazenda_id is not None and ...` que ainda aparecem
+    nas checagens de propriedade daqui para baixo são, depois desta linha,
+    no-ops seguros — sobrevivem só porque o 404 que eles produzem já está
+    coberto por teste tipo a tipo.
+    """
+    fazenda_id = exigir_fazenda_da_operacao(session, fazenda_id)
     if tipo in REGISTRO:
         return REGISTRO[tipo].alvos(id_=id_, session=session, fazenda_id=fazenda_id)
 
     if tipo == "animal":
-        animal = session.exec(select(Animal).where(Animal.numero == id_)).first()
+        # Escopo incondicional (ver o bloco de comentário logo abaixo): animal
+        # de outra fazenda tem que dar 404 — nunca 403, que confirmaria ao
+        # atacante que aquele número existe do outro lado.
+        query_animal = select(Animal).where(Animal.numero == id_, Animal.fazenda_id == fazenda_id)
+        animal = session.exec(query_animal).first()
         if not animal:
             raise HTTPException(status_code=404, detail="Animal não encontrado")
-        servicos = session.exec(select(Servico).where(Servico.numero_matriz == id_)).all()
-        partos = session.exec(select(Parto).where(Parto.numero_matriz == id_)).all()
-        controles = session.exec(select(ControleLeiteiro).where(ControleLeiteiro.numero_matriz == id_)).all()
-        sanidades = session.exec(select(Sanidade).where(Sanidade.numero_matriz == id_)).all()
+        # BUG DE SEGURANÇA CORRIGIDO: números de animal são pequenos e podem
+        # coincidir entre fazendas-cliente diferentes — sem o filtro de
+        # fazenda_id abaixo, excluir o animal "X" da própria fazenda também
+        # apagava o histórico reprodutivo/produtivo/sanitário do animal "X"
+        # de OUTRA fazenda, se os números coincidissem. Estes quatro conjuntos
+        # vão direto para `_excluir_alvos_em_ordem`: aqui não se lê dado
+        # demais, se APAGA dado demais, e isso não tem volta.
+        #
+        # O filtro é INCONDICIONAL de propósito. O padrão tolerante
+        # (`if fazenda_id is not None: query = query.where(...)`) é a causa
+        # raiz de toda esta família de achados: com fazenda_id None ele não
+        # restringe, ele DESLIGA o isolamento — numa rotina destrutiva, o
+        # modo de falha é apagar o histórico de todos os tenants de uma vez.
+        # Sem multi-fazenda provisionado (tabela `fazenda` vazia) isto vira
+        # `fazenda_id IS NULL`, que é exatamente o conjunto de linhas desse
+        # ambiente; num banco com fazendas, um token sem "fid" nem chega aqui
+        # (ver auth.py::exigir_fazenda_selecionada, no include_router).
+        query_servicos = select(Servico).where(
+            Servico.numero_matriz == id_, Servico.fazenda_id == fazenda_id)
+        query_partos = select(Parto).where(
+            Parto.numero_matriz == id_, Parto.fazenda_id == fazenda_id)
+        query_controles = select(ControleLeiteiro).where(
+            ControleLeiteiro.numero_matriz == id_, ControleLeiteiro.fazenda_id == fazenda_id)
+        query_sanidades = select(Sanidade).where(
+            Sanidade.numero_matriz == id_, Sanidade.fazenda_id == fazenda_id)
+        servicos = session.exec(query_servicos).all()
+        partos = session.exec(query_partos).all()
+        controles = session.exec(query_controles).all()
+        sanidades = session.exec(query_sanidades).all()
+        # ColostragemBezerra, Lactacao e FotoCampo têm FK de verdade pra
+        # animal.id (ao contrário dos quatro acima, que só casam por
+        # numero_matriz em texto solto) — sem incluí-los aqui, excluir o
+        # animal violava essa FK no Postgres de produção e o commit
+        # explodia num 500 que, por sair da exceção não tratada do
+        # FastAPI, sai sem cabeçalho CORS: o navegador não mostra o erro
+        # de verdade, só "Failed to fetch" (achado real, 01/09/2026 — o
+        # SQLite dos testes não pega isso porque não aplica FK por padrão).
+        # Casa por animal_id OU pelo número em texto, pra pegar também
+        # registros antigos de antes do FK existir.
+        #
+        # BUG DE SEGURANÇA CORRIGIDO: o lado "por número em texto" do OR não
+        # tinha filtro de fazenda_id nenhum — com numero deixando de ser
+        # único globalmente (ver Animal.numero), excluir o animal "100" desta
+        # fazenda apagava também a colostragem/lactação/foto de campo órfã
+        # (sem animal_id preenchido) do animal "100" de OUTRA fazenda. O lado
+        # "por animal_id" não precisa do filtro — já é a FK do animal certo.
+        # O escopo do lado "por número" também é incondicional, pelo mesmo
+        # motivo do bloco acima: sem multi-fazenda provisionado ele vira
+        # `fazenda_id IS NULL`, que casa exatamente as linhas desse ambiente.
+        def _por_animal_ou_numero_escopado(coluna_animal_id, coluna_numero_texto, coluna_fazenda_id):
+            return or_(
+                coluna_animal_id == animal.id,
+                and_(coluna_numero_texto == id_, coluna_fazenda_id == fazenda_id),
+            )
+
+        colostragens = session.exec(select(ColostragemBezerra).where(_por_animal_ou_numero_escopado(
+            ColostragemBezerra.animal_id, ColostragemBezerra.numero_animal, ColostragemBezerra.fazenda_id,
+        ))).all()
+        lactacoes = session.exec(select(Lactacao).where(_por_animal_ou_numero_escopado(
+            Lactacao.animal_id, Lactacao.numero_matriz, Lactacao.fazenda_id,
+        ))).all()
+        fotos = session.exec(select(FotoCampo).where(_por_animal_ou_numero_escopado(
+            FotoCampo.animal_id, FotoCampo.identificacao_animal, FotoCampo.fazenda_id,
+        ))).all()
         impacto = [f"Ficha do animal {id_}"]
         if servicos:
             impacto.append(f"{len(servicos)} serviço(s) de IA/cobertura")
@@ -464,19 +600,82 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             impacto.append(f"{len(controles)} registro(s) de controle leiteiro")
         if sanidades:
             impacto.append(f"{len(sanidades)} aplicação(ões) de sanidade")
-        return impacto, [animal, *servicos, *partos, *controles, *sanidades]
+        if colostragens:
+            impacto.append(f"{len(colostragens)} registro(s) de colostragem/IgG")
+        if lactacoes:
+            impacto.append(f"{len(lactacoes)} lactação(ões)")
+        if fotos:
+            impacto.append(f"{len(fotos)} foto(s) do campo")
+        return impacto, [animal, *servicos, *partos, *controles, *sanidades, *colostragens, *lactacoes, *fotos]
 
     if tipo == "servico":
         s = session.get(Servico, int(id_))
-        if not s:
+        if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Serviço não encontrado")
         return [f"Serviço de {s.numero_matriz} em {_br(s.data_servico)}"], [s]
 
     if tipo == "parto":
         p = session.get(Parto, int(id_))
-        if not p:
+        if not p or (fazenda_id is not None and p.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Parto não encontrado")
-        return [f"Parto de {p.numero_matriz} em {_br(p.data_parto)}"], [p]
+        impacto = [f"Parto de {p.numero_matriz} em {_br(p.data_parto)}"]
+        alvos: list = [p]
+
+        # Retenção de placenta gera um item na Agenda no dia do parto (ver
+        # registrar_parto) sem guardar o parto_id — mesma heurística por
+        # matriz/data/prefixo do texto já usada acima para o mirror de
+        # Sanidade dos protocolos.
+        # Escopo incondicional (mesmo motivo do bloco "animal"): a pendência é
+        # achada por HEURÍSTICA DE TEXTO, sem id nenhum, então basta o número
+        # da vaca e a data do parto coincidirem para a agenda de outra fazenda
+        # entrar na lista do que vai ser apagado.
+        query_agendas = select(AgendaManual).where(
+            AgendaManual.numero_animal == p.numero_matriz, AgendaManual.data_evento == p.data_parto,
+            AgendaManual.descricao.startswith(f"Retenção de placenta — vaca {p.numero_matriz}"),
+            AgendaManual.fazenda_id == fazenda_id,
+        )
+        agendas = session.exec(query_agendas).all()
+        if agendas:
+            impacto.append(f"{len(agendas)} pendência(s) de retenção de placenta na Agenda")
+            alvos.extend(agendas)
+
+        # Crias cadastradas por ESTE parto (ver registrar_parto) — só entram
+        # na exclusão se ainda não ganharam vida própria no sistema (nenhum
+        # outro registro as referencia). Uma cria que já tem pesagem, IA,
+        # sanidade etc. lançada fica: apagar a ficha destruiria histórico
+        # real só porque o parto que a originou foi corrigido/apagado.
+        numeros_crias = [n for n in (p.numero_cria_1, p.numero_cria_2) if n]
+        crias_orfas = []
+        for numero_cria in numeros_crias:
+            query_cria = select(Animal).where(
+                Animal.numero == numero_cria, Animal.fazenda_id == fazenda_id)
+            cria = session.exec(query_cria).first()
+            if cria is None:
+                continue
+            # Mesmo cuidado de fazenda_id do bloco "animal" acima — sem ele,
+            # um registro de OUTRA fazenda com o mesmo número da cria faria
+            # esta cria parecer "com histórico" e nunca ser considerada órfã
+            # (aqui o padrão tolerante erra para o lado de apagar de MENOS, e
+            # ainda assim é um vazamento: revela que a outra fazenda tem esse
+            # número). Também incondicional, pela mesma razão do resto.
+            def _existe(model, campo):
+                return session.exec(
+                    select(model).where(campo == numero_cria, model.fazenda_id == fazenda_id)
+                ).first()
+            tem_outros_registros = any([
+                _existe(Servico, Servico.numero_matriz),
+                _existe(Parto, Parto.numero_matriz),
+                _existe(ControleLeiteiro, ControleLeiteiro.numero_matriz),
+                _existe(Sanidade, Sanidade.numero_matriz),
+                _existe(PesagemCorporal, PesagemCorporal.numero_matriz),
+            ])
+            if not tem_outros_registros:
+                crias_orfas.append(cria)
+        if crias_orfas:
+            impacto.append(f"{len(crias_orfas)} ficha(s) de cria sem nenhum outro registro (nascida só por este parto)")
+            alvos.extend(crias_orfas)
+
+        return impacto, alvos
 
     if tipo == "controle":
         c = session.get(ControleLeiteiro, int(id_))
@@ -486,13 +685,13 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "sanidade":
         s = session.get(Sanidade, int(id_))
-        if not s:
+        if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Registro não encontrado")
         return [f"Aplicação de {s.produto} em {s.numero_matriz}"], [s]
 
     if tipo == "protocolo_sanitario_lancamento":
         lancamento = session.get(ProtocoloSanitarioLancamento, int(id_))
-        if not lancamento:
+        if not lancamento or (fazenda_id is not None and lancamento.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Lançamento de protocolo não encontrado")
         aplicacoes = session.exec(
             select(ProtocoloSanitarioAplicacao).where(ProtocoloSanitarioAplicacao.lancamento_id == lancamento.id)
@@ -505,12 +704,18 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             select(Sanidade).where(Sanidade.protocolo_sanitario_lancamento_id == lancamento.id)
         ).all()
         if not sanidades:
-            candidatas = session.exec(
-                select(Sanidade).where(
-                    Sanidade.numero_matriz == lancamento.numero_matriz,
-                    Sanidade.data_aplicacao >= lancamento.data_inicio,
-                )
-            ).all()
+            # BUG DE SEGURANÇA CORRIGIDO: a heurística por numero_matriz+data
+            # não filtrava fazenda — usa `lancamento.fazenda_id` (já
+            # validado acima contra o fazenda_id do pedido) em vez do
+            # parâmetro solto, pra nunca arrastar Sanidade de outra fazenda
+            # com o mesmo numero_matriz para dentro desta exclusão.
+            query_candidatas = select(Sanidade).where(
+                Sanidade.numero_matriz == lancamento.numero_matriz,
+                Sanidade.data_aplicacao >= lancamento.data_inicio,
+            )
+            if lancamento.fazenda_id is not None:
+                query_candidatas = query_candidatas.where(Sanidade.fazenda_id == lancamento.fazenda_id)
+            candidatas = session.exec(query_candidatas).all()
             sanidades = [s for s in candidatas if (s.obs or "").startswith("Protocolo sanitário — D")]
         protocolo = session.get(ProtocoloSanitario, lancamento.protocolo_id)
         impacto = [f"Lançamento do protocolo {protocolo.nome if protocolo else '—'} em {lancamento.numero_matriz} ({_br(lancamento.data_inicio)})"]
@@ -522,7 +727,7 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "protocolo_iatf_lancamento":
         lancamento = session.get(ProtocoloIatfLancamento, int(id_))
-        if not lancamento:
+        if not lancamento or (fazenda_id is not None and lancamento.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Lançamento de protocolo IATF não encontrado")
         aplicacoes = session.exec(
             select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.lancamento_id == lancamento.id)
@@ -553,28 +758,46 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "estoque":
         e = session.get(Estoque, int(id_))
-        if not e:
+        if not e or (fazenda_id is not None and e.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Item não encontrado")
         return [f'Item de estoque "{e.nome}"'], [e]
 
     if tipo == "evento_manual":
         ev = session.get(AgendaManual, int(id_))
-        if not ev:
+        if not ev or (fazenda_id is not None and ev.fazenda_id not in (fazenda_id, None)):
             raise HTTPException(status_code=404, detail="Evento não encontrado")
         return [f'Evento manual "{ev.descricao}" em {_br(ev.data_evento)}'], [ev]
 
     if tipo == "financeiro":
         c = session.get(ContaGerencial, int(id_))
-        if not c:
+        if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+        # RECORTE DE FAZENDA DENTRO DA CONSULTA, incondicional — daqui até o
+        # fim de `_alvos` toda busca por `numero_lancamento` leva o filtro.
+        # O número do lançamento é sequencial POR ANO (ver
+        # `_proximo_numero_lancamento` em financeiro.py), não é chave global:
+        # numa base importada, ou no dia em que o Financeiro passar a numerar
+        # por fazenda, duas fazendas têm "LC-2026-00042" — e o que sai daqui
+        # é a LISTA DO QUE VAI SER APAGADO. Sem o filtro, excluir uma parcela
+        # da fazenda A levava junto as parcelas e os itens de nota da B.
+        # Padrão de referência (com a justificativa escrita):
+        # `_conta_do_numero` em cadastro/rh_folha.py.
         itens = (
-            session.exec(select(LancamentoItem).where(LancamentoItem.numero_lancamento == c.numero_lancamento)).all()
+            session.exec(
+                select(LancamentoItem).where(
+                    LancamentoItem.numero_lancamento == c.numero_lancamento,
+                    LancamentoItem.fazenda_id == fazenda_id,
+                )
+            ).all()
             if c.numero_lancamento else []
         )
         n_itens_vale = sum(1 for it in itens if eh_item_de_vale(it))
         if c.numero_lancamento and (c.parcela_total or 1) > 1:
             irmaos = session.exec(
-                select(ContaGerencial).where(ContaGerencial.numero_lancamento == c.numero_lancamento)
+                select(ContaGerencial).where(
+                    ContaGerencial.numero_lancamento == c.numero_lancamento,
+                    ContaGerencial.fazenda_id == fazenda_id,
+                )
             ).all()
             impacto = [
                 f"Lançamento {c.numero_lancamento} — {c.descricao or '—'}",
@@ -598,8 +821,16 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             raise HTTPException(status_code=404, detail="Compra de animal não encontrada")
         impacto = [f"Compra do animal {c.numero_animal} — {c.vendedor} — {_br(c.data_compra)} (R$ {c.valor or 0:,.2f})"]
         objetos: list = [c]
+        # Contagem de irmãos com recorte de fazenda: ela é o que DECIDE se o
+        # lançamento financeiro vai junto ou fica. Uma compra em lote de outra
+        # fazenda com o mesmo número inflava `irmaos` e fazia a conta a pagar
+        # da própria fazenda sobreviver como órfã (e o contrário: sem irmão
+        # nenhum do outro lado, apagava a conta alheia).
         irmaos = (
-            session.exec(select(CompraAnimal).where(CompraAnimal.numero_lancamento_gerado == c.numero_lancamento_gerado)).all()
+            session.exec(select(CompraAnimal).where(
+                CompraAnimal.numero_lancamento_gerado == c.numero_lancamento_gerado,
+                CompraAnimal.fazenda_id == fazenda_id,
+            )).all()
             if c.numero_lancamento_gerado else [c]
         )
         if len(irmaos) > 1:
@@ -609,17 +840,26 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             )
         else:
             contas = (
-                session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == c.numero_lancamento_gerado)).all()
+                session.exec(select(ContaGerencial).where(
+                    ContaGerencial.numero_lancamento == c.numero_lancamento_gerado,
+                    ContaGerencial.fazenda_id == fazenda_id,
+                )).all()
                 if c.numero_lancamento_gerado else []
             )
             comissoes = (
-                session.exec(select(ComissaoCorretagem).where(ComissaoCorretagem.numero_lancamento == c.numero_lancamento_gerado)).all()
+                session.exec(select(ComissaoCorretagem).where(
+                    ComissaoCorretagem.numero_lancamento == c.numero_lancamento_gerado,
+                    ComissaoCorretagem.fazenda_id == fazenda_id,
+                )).all()
                 if c.numero_lancamento_gerado else []
             )
             contas_comissao = []
             for co in comissoes:
                 contas_comissao += session.exec(
-                    select(ContaGerencial).where(ContaGerencial.numero_lancamento == co.numero_lancamento_comissao)
+                    select(ContaGerencial).where(
+                        ContaGerencial.numero_lancamento == co.numero_lancamento_comissao,
+                        ContaGerencial.fazenda_id == fazenda_id,
+                    )
                 ).all()
             if contas:
                 impacto.append(f"Lançamento financeiro {c.numero_lancamento_gerado} (R$ {sum(x.valor_total or 0 for x in contas):,.2f})")
@@ -634,8 +874,13 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             raise HTTPException(status_code=404, detail="Venda de animal não encontrada")
         impacto = [f"Venda do animal {v.numero_animal} — {v.comprador} — {_br(v.data_venda)} (R$ {v.valor or 0:,.2f})"]
         objetos: list = [v]
+        # Recorte de fazenda pelo mesmo motivo da compra, logo acima: a
+        # contagem de irmãos decide se a conta a pagar vai junto ou fica.
         irmaos = (
-            session.exec(select(VendaAnimal).where(VendaAnimal.numero_lancamento_gerado == v.numero_lancamento_gerado)).all()
+            session.exec(select(VendaAnimal).where(
+                VendaAnimal.numero_lancamento_gerado == v.numero_lancamento_gerado,
+                VendaAnimal.fazenda_id == fazenda_id,
+            )).all()
             if v.numero_lancamento_gerado else [v]
         )
         if len(irmaos) > 1:
@@ -645,17 +890,26 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             )
         else:
             contas = (
-                session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == v.numero_lancamento_gerado)).all()
+                session.exec(select(ContaGerencial).where(
+                    ContaGerencial.numero_lancamento == v.numero_lancamento_gerado,
+                    ContaGerencial.fazenda_id == fazenda_id,
+                )).all()
                 if v.numero_lancamento_gerado else []
             )
             comissoes = (
-                session.exec(select(ComissaoCorretagem).where(ComissaoCorretagem.numero_lancamento == v.numero_lancamento_gerado)).all()
+                session.exec(select(ComissaoCorretagem).where(
+                    ComissaoCorretagem.numero_lancamento == v.numero_lancamento_gerado,
+                    ComissaoCorretagem.fazenda_id == fazenda_id,
+                )).all()
                 if v.numero_lancamento_gerado else []
             )
             contas_comissao = []
             for co in comissoes:
                 contas_comissao += session.exec(
-                    select(ContaGerencial).where(ContaGerencial.numero_lancamento == co.numero_lancamento_comissao)
+                    select(ContaGerencial).where(
+                        ContaGerencial.numero_lancamento == co.numero_lancamento_comissao,
+                        ContaGerencial.fazenda_id == fazenda_id,
+                    )
                 ).all()
             if contas:
                 impacto.append(f"Lançamento financeiro {v.numero_lancamento_gerado} (R$ {sum(x.valor_total or 0 for x in contas):,.2f})")
@@ -673,14 +927,26 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         estoque = session.get(EstoqueSemen, c.estoque_semen_id)
         if estoque:
             impacto.append(f"{c.doses} dose(s) serão subtraídas do estoque de sêmen de {estoque.touro_nome} (saldo atual: {estoque.doses})")
-            estoque.doses = estoque.doses - c.doses
-            session.add(estoque)
+            # Mesmo motor de todo o resto (`estoque_baixa`), não um ajuste
+            # direto no campo: sem isso, esta baixa não deixava rastro em
+            # MovimentoEstoque — nem no histórico, nem no custo físico do
+            # RMCA. A compra original foi uma ENTRADA; o estorno é uma SAÍDA
+            # (sinal=-1), não uma "Aplicação" (que seria consumo real).
+            estoque_baixa.movimentar_dose_semen(
+                session, touro=estoque, doses=c.doses, data=date.today(), fazenda_id=fazenda_id,
+                usuario_id=None, movimento="Saída de ajuste", sinal=-1,
+                observacao=f"Estorno por exclusão da compra de sêmen #{c.id} ({c.touro_nome})",
+                origem_tipo="estorno_compra_semen", origem_id=c.id,
+            )
         # Uma compra pode ter vários touros/sêmens lançados na mesma nota
         # (mesmo numero_lancamento_gerado) — o lançamento financeiro só é
         # apagado junto quando este é o ÚLTIMO item daquela nota; do
         # contrário, ele continua valendo para os itens irmãos restantes.
         irmaos = (
-            session.exec(select(CompraSemen).where(CompraSemen.numero_lancamento_gerado == c.numero_lancamento_gerado)).all()
+            session.exec(select(CompraSemen).where(
+                CompraSemen.numero_lancamento_gerado == c.numero_lancamento_gerado,
+                CompraSemen.fazenda_id == fazenda_id,
+            )).all()
             if c.numero_lancamento_gerado else [c]
         )
         if len(irmaos) > 1:
@@ -690,7 +956,10 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             )
         else:
             contas = (
-                session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == c.numero_lancamento_gerado)).all()
+                session.exec(select(ContaGerencial).where(
+                    ContaGerencial.numero_lancamento == c.numero_lancamento_gerado,
+                    ContaGerencial.fazenda_id == fazenda_id,
+                )).all()
                 if c.numero_lancamento_gerado else []
             )
             if contas:
@@ -711,7 +980,7 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "fornecedor":
         fornecedor = session.get(Fornecedor, int(id_))
-        if not fornecedor:
+        if not fornecedor or (fazenda_id is not None and fornecedor.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Fornecedor não encontrado")
         vinculados = session.exec(select(Estoque).where(Estoque.fornecedor_id == fornecedor.id)).all()
         impacto = [f"Fornecedor {fornecedor.nome}"]
@@ -730,7 +999,7 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "pessoa":
         pessoa = session.get(Pessoa, int(id_))
-        if not pessoa:
+        if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Pessoa não encontrada")
         n_folha = len(session.exec(select(FolhaPagamento).where(FolhaPagamento.pessoa_id == pessoa.id)).all())
         n_vale = len(session.exec(select(ValeFuncionario).where(ValeFuncionario.pessoa_id == pessoa.id)).all())
@@ -743,21 +1012,19 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         return [f"Pessoa {pessoa.nome}"], [pessoa]
 
     if tipo == "principio_ativo":
+        # Checagem de impacto nas 7 tabelas que hoje têm FK pra
+        # principio_ativo.id (achado numa varredura, 31/08/2026 — antes só
+        # CalendarioSanitario era checado, e as outras 6 ficavam órfãs em
+        # silêncio) — extraída pra rules/farmacia_multi_principio.py porque
+        # `DELETE /farmacia/principios/{id}` usa exatamente a mesma regra.
         pa = session.get(PrincipioAtivo, int(id_))
-        if not pa:
+        if not pa or (fazenda_id is not None and pa.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Princípio ativo não encontrado")
-        vinculados = session.exec(select(CalendarioSanitario).where(CalendarioSanitario.principio_ativo_id == pa.id)).all()
-        impacto = [f"Princípio ativo {pa.nome}"]
-        if vinculados:
-            impacto.append(f"{len(vinculados)} regra(s) do calendário sanitário perderão esse vínculo")
-            for regra in vinculados:
-                regra.principio_ativo_id = None
-                session.add(regra)
-        return impacto, [pa]
+        return checar_e_desvincular_exclusao_principio(session, pa)
 
     if tipo == "doenca":
         doenca = session.get(Doenca, int(id_))
-        if not doenca:
+        if not doenca or (fazenda_id is not None and doenca.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Doença não encontrada")
         n_calendario = session.exec(select(CalendarioSanitario).where(CalendarioSanitario.doenca_id == doenca.id)).all()
         n_protocolo = session.exec(select(ProtocoloSanitario).where(ProtocoloSanitario.doenca_id == doenca.id)).all()
@@ -774,7 +1041,7 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "evento_sanitario":
         evento = session.get(EventoSanitario, int(id_))
-        if not evento:
+        if not evento or (fazenda_id is not None and evento.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Evento sanitário não encontrado")
         n_calendario = len(session.exec(select(CalendarioSanitario).where(CalendarioSanitario.evento_sanitario_id == evento.id)).all())
         if n_calendario:
@@ -787,7 +1054,7 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "protocolo_sanitario":
         protocolo = session.get(ProtocoloSanitario, int(id_))
-        if not protocolo:
+        if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Protocolo sanitário não encontrado")
         n_lancamentos = len(session.exec(
             select(ProtocoloSanitarioLancamento).where(ProtocoloSanitarioLancamento.protocolo_id == protocolo.id)
@@ -806,7 +1073,7 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "calendario_sanitario":
         c = session.get(CalendarioSanitario, int(id_))
-        if not c:
+        if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
         evento = session.get(EventoSanitario, c.evento_sanitario_id)
         nome = evento.nome if evento else "evento"
@@ -840,6 +1107,12 @@ _ORIGENS_POR_CLASSE: dict[type, list[str]] = {
     ProtocoloSanitarioAplicacao: ["protocolo_sanitario"],
     ProtocoloIatfLancamento: ["iatf"],
     Servico: ["ia_semen"],
+    # Compra de produto estocável lançada em Financeiro dá ENTRADA automática
+    # no estoque (sinal=+1, ver financeiro.py::criar_lancamento) — diferente
+    # dos demais casos acima (que são baixas/consumo, sinal=-1). Por isso o
+    # estorno abaixo trata "Entrada de compra" à parte: precisa SUBTRAIR a
+    # quantidade de volta, não devolver.
+    LancamentoItem: ["compra_financeiro"],
 }
 
 
@@ -882,6 +1155,148 @@ def _desvincular_vales_dos_alvos(session: Session, alvos: list, fazenda_id: int 
             desvincular_vale_do_item(session, obj, excluir_vale=True, fazenda_id=fazenda_id)
 
 
+def _restaurar_ult_ocorrencia_dos_alvos(session: Session, alvos: list, fazenda_id: int | None) -> None:
+    """Antes de excluir, se algum Servico em `alvos` é o "vigente" do animal
+    (ult_ocorrencia=1 — ver reproducao.py::registrar_servico/registrar_servico_lote,
+    que zera o flag de todo serviço anterior ao criar um novo), promove o
+    serviço anterior mais recente que sobrar a vigente. Sem isso, excluir a
+    IA/cobertura mais recente de um animal deixa NENHUM serviço marcado como
+    vigente — quebra o diagnóstico "atual" usado pela Agenda Reprodutiva e
+    pela sugestão de candidatas a IATF (ver diag_por_animal em reproducao.py)."""
+    excluidos = {obj.id for obj in alvos if isinstance(obj, Servico)}
+    matrizes = {obj.numero_matriz for obj in alvos if isinstance(obj, Servico) and obj.ult_ocorrencia == 1}
+    for matriz in matrizes:
+        query = select(Servico).where(Servico.numero_matriz == matriz)
+        if fazenda_id is not None:
+            query = query.where(Servico.fazenda_id == fazenda_id)
+        restantes = [s for s in session.exec(query).all() if s.id not in excluidos]
+        if not restantes:
+            continue
+        mais_recente = max(restantes, key=lambda s: (s.data_servico or date.min, s.id))
+        mais_recente.ult_ocorrencia = 1
+        session.add(mais_recente)
+
+
+def _reverter_perda_prenhez_causada_pelos_alvos(session: Session, alvos: list, fazenda_id: int | None) -> None:
+    """Um Servico excluído pode ter sido a NOVA inseminação que disparou a
+    detecção automática de perda de prenhez no serviço anterior (ver
+    `Servico.perda_causada_por_servico_id` e
+    `fazenda.rules.perda_prenhez.detectar_e_registrar_perda_por_reinseminacao`)
+    — sem isso, excluir essa inseminação (ex.: lançamento em duplicidade)
+    deixava a perda gravada no anterior sem nenhum jeito de desfazer. Reverte
+    a perda quando ainda está pendente de motivo (ninguém confirmou); se o
+    motivo já foi preenchido, o usuário confirmou a perda como fato — só
+    desvincula a referência ao serviço que não existe mais."""
+    excluidos = {obj.id for obj in alvos if isinstance(obj, Servico)}
+    if not excluidos:
+        return
+    query = select(Servico).where(Servico.perda_causada_por_servico_id.in_(excluidos))
+    if fazenda_id is not None:
+        query = query.where(Servico.fazenda_id == fazenda_id)
+    for anterior in session.exec(query).all():
+        if anterior.motivo_perda_prenhez is None:
+            anterior.data_perda_prenhez = None
+            anterior.origem_perda_prenhez = None
+        anterior.perda_causada_por_servico_id = None
+        session.add(anterior)
+
+
+def _remover_lactacao_dos_partos_excluidos(session: Session, alvos: list, fazenda_id: int | None) -> None:
+    """Todo parto (inclusive o aborto) abre uma `Lactacao` — excluir o parto
+    tem que fechar esse ciclo também, senão a matriz fica "em lactação" para
+    sempre por causa de um evento que não existe mais, e o controle leiteiro
+    dela continuaria sendo aceito (ver POST /producao/controles).
+
+    Casa pelo `parto_id` e, para as lactações do backfill que possam não tê-lo,
+    também por (matriz, data de início == data do parto).
+
+    REABRE a lactação anterior quando foi ESTE parto que a fechou: `abrir_
+    lactacao` encerra a anterior na data do novo parto quando não houve
+    secagem no meio (ver rules/lactacao.py). Desfazer o parto tem que desfazer
+    esse fechamento — mas só ele: uma lactação fechada por uma `Secagem` real
+    (`secagem_id` preenchido) continua fechada, porque aquele evento aconteceu
+    de verdade e não depende deste parto."""
+    partos_excluidos = [obj for obj in alvos if isinstance(obj, Parto)]
+    if not partos_excluidos:
+        return
+    for p in partos_excluidos:
+        query = select(Lactacao).where(Lactacao.numero_matriz == p.numero_matriz)
+        if fazenda_id is not None:
+            query = query.where(Lactacao.fazenda_id == fazenda_id)
+        lactacoes = sorted(session.exec(query).all(), key=lambda l: l.data_inicio)
+        for lact in lactacoes:
+            if lact.parto_id != p.id and not (p.data_parto and lact.data_inicio == p.data_parto):
+                continue
+            for anterior in lactacoes:
+                if (
+                    anterior is not lact
+                    and anterior.data_fim == lact.data_inicio
+                    and anterior.secagem_id is None
+                ):
+                    anterior.data_fim = None
+                    session.add(anterior)
+            session.delete(lact)
+
+
+def _reabrir_lactacao_das_secagens_excluidas(session: Session, alvos: list, fazenda_id: int | None) -> None:
+    """A secagem é o evento que FECHA a lactação (ver rules/lactacao.py) —
+    excluir a secagem tem que desfazer esse fechamento também, senão a
+    lactação continua "fechada" para sempre por um evento que não existe
+    mais, e todo controle leiteiro lançado depois passa a ser recusado (ou,
+    pior, o relatório de correção de DEL passa a reportá-lo como "sem
+    lactação" — caso relatado: secagem lançada em lote por engano em
+    04/07/2026, fechando a lactação de vacas que na verdade só secaram
+    semanas depois).
+
+    Mesmo espírito de `_remover_lactacao_dos_partos_excluidos`, mas para
+    `Secagem`: usa `reabrir_lactacao_fechada_por_secagem`, que já sabe achar
+    a lactação certa pelo `secagem_id` e não faz nada quando esta secagem
+    não tinha fechado nenhuma (lançada para quem já constava seco)."""
+    secagens_excluidas = [obj for obj in alvos if isinstance(obj, Secagem)]
+    for s in secagens_excluidas:
+        if s.id is not None:
+            regras_lactacao.reabrir_lactacao_fechada_por_secagem(session, secagem_id=s.id, fazenda_id=fazenda_id)
+
+
+def _reajustar_del_dias_apos_excluir_parto(session: Session, alvos: list, fazenda_id: int | None) -> None:
+    """`registrar_parto` zera `Animal.del_dias` da mãe no instante do parto
+    (congelado dali em diante, só voltando a bater com a realidade no próximo
+    upload do GERAL.csv — ver `_del_dias_ao_vivo` em api/routers/animais.py).
+    Excluir esse Parto deixava o 0 congelado pra sempre, mesmo quando a vaca
+    na verdade está há dias em lactação (ou já foi seca) por outro parto
+    remanescente. Recalcula com o MESMO critério "ao vivo": parto
+    remanescente mais recente da matriz, e None quando não há nenhum (não dá
+    pra reconstruir o valor pré-parto sem o próximo import do CSV)."""
+    partos_excluidos = [obj for obj in alvos if isinstance(obj, Parto)]
+    if not partos_excluidos:
+        return
+    ids_excluidos = {p.id for p in partos_excluidos}
+    hoje = date.today()
+    for p in partos_excluidos:
+        query_animal = select(Animal).where(Animal.numero == p.numero_matriz)
+        if fazenda_id is not None:
+            query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+        mae = session.exec(query_animal).first()
+        if mae is None:
+            continue
+        query_partos = select(Parto).where(Parto.numero_matriz == p.numero_matriz)
+        if fazenda_id is not None:
+            query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
+        ult_parto = max(
+            (x.data_parto for x in session.exec(query_partos).all() if x.data_parto and x.id not in ids_excluidos),
+            default=None,
+        )
+        query_secagens = select(Secagem).where(Secagem.numero_matriz == p.numero_matriz)
+        if fazenda_id is not None:
+            query_secagens = query_secagens.where(Secagem.fazenda_id == fazenda_id)
+        ult_secagem = max((x.data_secagem for x in session.exec(query_secagens).all() if x.data_secagem), default=None)
+        if ult_parto is None or (ult_secagem and ult_secagem >= ult_parto):
+            mae.del_dias = None
+        else:
+            mae.del_dias = (hoje - ult_parto).days
+        session.add(mae)
+
+
 def _estornar_estoque_dos_alvos(session: Session, alvos: list, fazenda_id: int | None, tipo_exclusao: str) -> list[str]:
     """Antes de excluir, devolve ao estoque tudo que os objetos em `alvos`
     consumiram — resolvido pelos MovimentoEstoque que apontam pra eles via
@@ -895,10 +1310,18 @@ def _estornar_estoque_dos_alvos(session: Session, alvos: list, fazenda_id: int |
         origens = _ORIGENS_POR_CLASSE.get(type(obj))
         if not origens or getattr(obj, "id", None) is None:
             continue
+        # Lançamento já cancelado (POST .../cancelar, ver central_protocolos.py)
+        # — o cancelamento já devolveu ao estoque tudo que ele consumiu, mas
+        # não apaga o MovimentoEstoque de "Aplicação" original (só grava um
+        # estorno ao lado). Sem esta guarda, excluir um lançamento já
+        # cancelado encontrava de novo a MESMA "Aplicação" e devolvia o
+        # estoque uma segunda vez — hormônio em dobro.
+        if getattr(obj, "ativo", True) is False:
+            continue
         query = select(MovimentoEstoque).where(
             MovimentoEstoque.origem_tipo.in_(origens),
             MovimentoEstoque.origem_id == obj.id,
-            MovimentoEstoque.movimento == "Aplicação",
+            MovimentoEstoque.movimento.in_(["Aplicação", "Entrada de compra"]),
         )
         if fazenda_id is not None:
             query = query.where(MovimentoEstoque.fazenda_id == fazenda_id)
@@ -908,12 +1331,49 @@ def _estornar_estoque_dos_alvos(session: Session, alvos: list, fazenda_id: int |
                 avisos.extend(_devolver_dose_semen_do_movimento(session, mov, fazenda_id, observacao))
                 continue
             item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=mov.nome_item, estoque_id=mov.estoque_id)
-            avisos.extend(estoque_baixa.devolver(
-                session, item=item, quantidade=mov.quantidade, unidade=mov.unidade, data=date.today(),
-                fazenda_id=fazenda_id, observacao=observacao,
-                origem_tipo=f"estorno_{tipo_exclusao}", origem_id=obj.id, produto=mov.nome_item,
-            ))
+            if mov.movimento == "Entrada de compra":
+                # A baixa original SOMOU ao estoque (compra financeira) — o
+                # estorno precisa SUBTRAIR a mesma quantidade, não devolver.
+                # `lote_id` (Fase G, 01/09/2026): quando a compra original
+                # abriu um lote, o estorno tira exatamente dele.
+                avisos.extend(estoque_baixa.movimentar(
+                    session, item=item, quantidade=mov.quantidade, unidade=mov.unidade, data=date.today(),
+                    fazenda_id=fazenda_id, movimento="Saída de ajuste", observacao=observacao, sinal=-1,
+                    origem_tipo=f"estorno_{tipo_exclusao}", origem_id=obj.id, produto=mov.nome_item,
+                    lote_id=mov.lote_id,
+                ))
+            else:
+                avisos.extend(estoque_baixa.devolver(
+                    session, item=item, quantidade=mov.quantidade, unidade=mov.unidade, data=date.today(),
+                    fazenda_id=fazenda_id, observacao=observacao,
+                    origem_tipo=f"estorno_{tipo_exclusao}", origem_id=obj.id, produto=mov.nome_item,
+                    lote_id=mov.lote_id,
+                ))
     return avisos
+
+
+def _excluir_alvos_em_ordem(session: Session, alvos: list) -> None:
+    """Apaga cada objeto de `alvos` com um flush logo em seguida, na ordem
+    INVERSA à que `_alvos()` devolve (que é sempre [raiz, *dependentes] — ex.:
+    [animal, *servicos, ...] ou [lancamento, *aplicações, ...]) — assim os
+    dependentes saem do banco antes da raiz.
+
+    Sem isto, `session.delete(a); session.delete(b); session.commit()`
+    deixa o SQLAlchemy livre pra emitir os DELETEs em QUALQUER ordem entre
+    mappers diferentes — ele só respeita dependência de FK automaticamente
+    quando existe um `relationship()` ORM declarado entre as classes, e este
+    código nunca declara (é todo baseado em `select()` avulso). Resultado
+    real, batido em teste (SQLite com PRAGMA foreign_keys=ON, que reproduz o
+    Postgres de produção): excluir um animal com `Servico.animal_id`
+    preenchido gerava `DELETE FROM animal` ANTES de `DELETE FROM servico` —
+    violação de FK, commit falha com uma exceção não tratada, e como esse
+    500 sai fora do CORSMiddleware (a exceção nunca passa pelo `send`
+    dele — quem responde é o ServerErrorMiddleware, que fica por fora), o
+    navegador nunca chega a ler o erro de verdade: só um "Failed to fetch"
+    sem pista nenhuma (achado real, animal 1291, 01/09/2026)."""
+    for obj in reversed(alvos):
+        session.delete(obj)
+        session.flush()
 
 
 class ExclusaoIn(BaseModel):
@@ -943,12 +1403,26 @@ def confirmar(
 
     if user.papel == "admin":
         _desvincular_vales_dos_alvos(session, alvos, fazenda_id)
+        _restaurar_ult_ocorrencia_dos_alvos(session, alvos, fazenda_id)
+        _reverter_perda_prenhez_causada_pelos_alvos(session, alvos, fazenda_id)
+        _remover_lactacao_dos_partos_excluidos(session, alvos, fazenda_id)
+        _reabrir_lactacao_das_secagens_excluidas(session, alvos, fazenda_id)
+        _reajustar_del_dias_apos_excluir_parto(session, alvos, fazenda_id)
         avisos = _estornar_estoque_dos_alvos(session, alvos, fazenda_id, dados.tipo)
-        for obj in alvos:
-            session.delete(obj)
+        _excluir_alvos_em_ordem(session, alvos)
         session.commit()
         return {"status": "excluido", "itens": itens, "avisos": avisos}
 
+    # `_alvos()` pode ter side effects de reversão (ex.: saldo de estoque em
+    # `estoque.py::_alvos_movimento_estoque`, "A descartar" em
+    # `sanidade.py::_alvos_exame_resultado`) escritos na sessão via
+    # `session.add(...)` — pensados pra rodar só quando a exclusão acontece
+    # de fato (aqui mesmo, no ramo admin acima, ou em `aprovar_pendente`, que
+    # chama `_alvos()` de novo na hora de aprovar). Uma mera SOLICITAÇÃO não
+    # pode carregar esses efeitos: descarta com rollback antes de gravar a
+    # `SolicitacaoExclusao` — sem isso, `session.commit()` logo abaixo
+    # persistiria a reversão junto, como se já tivesse sido aprovada.
+    session.rollback()
     solicitacao = SolicitacaoExclusao(
         tipo=dados.tipo,
         id_alvo=dados.id,
@@ -989,9 +1463,13 @@ def aprovar_pendente(
 
     _, alvos = _alvos(sol.tipo, sol.id_alvo, session, fazenda_id=fazenda_id)
     _desvincular_vales_dos_alvos(session, alvos, fazenda_id)
+    _restaurar_ult_ocorrencia_dos_alvos(session, alvos, fazenda_id)
+    _reverter_perda_prenhez_causada_pelos_alvos(session, alvos, fazenda_id)
+    _remover_lactacao_dos_partos_excluidos(session, alvos, fazenda_id)
+    _reabrir_lactacao_das_secagens_excluidas(session, alvos, fazenda_id)
+    _reajustar_del_dias_apos_excluir_parto(session, alvos, fazenda_id)
     avisos = _estornar_estoque_dos_alvos(session, alvos, fazenda_id, sol.tipo)
-    for obj in alvos:
-        session.delete(obj)
+    _excluir_alvos_em_ordem(session, alvos)
     sol.status = "aprovada"
     sol.decidido_por = user.username
     sol.decidido_em = datetime.utcnow()

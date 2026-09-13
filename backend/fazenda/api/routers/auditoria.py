@@ -1,7 +1,9 @@
 """
 Auditoria de atividade — consulta unificada dos lançamentos feitos por um
-usuário, em qualquer módulo do sistema. Restrito ao proprietário (mesma
-regra do relatório de últimos acessos, ver fazenda.auth.exigir_dono).
+usuário, em qualquer módulo do sistema. Dono-equivalente OU administrador da
+fazenda atual (ver fazenda.auth.exigir_admin_ou_dono — ampliado de
+`exigir_dono` a pedido explícito do usuário, ago/2026: "tem que ser restrito
+a dono e ao administrador de cada fazenda").
 Endpoints: GET /auditoria/opcoes · GET /auditoria/atividades
 """
 from __future__ import annotations
@@ -12,14 +14,14 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_dono
+from fazenda.auth import exigir_admin_ou_dono, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, AnaliseBromatologica, AplicacaoAgendada, BaixaAnimal, ColostragemBezerra,
     CompraAnimal, CompraSemen, ContaGerencial, Contrato, ControleLeiteiro, Diaria,
     DietaLancamento, DietaRegistroReal, Empreitada, EntregaLeiteMensal, FolhaPagamento,
     LancamentoAnexo, MovimentoEstoque, MovimentoLote, OcorrenciaClinica, OrcamentoItem,
-    Parto, Pedido, PesagemCorporal, PlanejamentoCenario, ProtocoloIatfLancamento,
+    Parto, Pedido, PesagemCorporal, PlanejamentoCenario, Pessoa, ProtocoloIatfLancamento,
     ProtocoloInducaoLancamento, ProtocoloSanitarioLancamento, QualidadeLeite, RegistroCocho,
     Sanidade, Servico, Usuario, ValeAvulso, ValeFuncionario, VendaAnimal,
 )
@@ -80,8 +82,21 @@ def _resumo(obj, campos: list[str]) -> str:
 
 
 @router.get("/opcoes")
-def opcoes_auditoria(_: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> dict:
-    usuarios = session.exec(select(Usuario)).all()
+def opcoes_auditoria(
+    _: Usuario = Depends(exigir_admin_ou_dono),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Lista de usuários consultáveis — escopada à fazenda ATUAL (mesmo
+    padrão de `listar_usuarios` em auth.py): `exigir_admin_ou_dono` abre esta
+    tela para o administrador de QUALQUER fazenda-cliente, então misturar
+    usuários de todo o banco aqui vazaria dados entre clientes da
+    plataforma. Token sem fazenda selecionada (legado) mantém o
+    comportamento antigo, sem filtro."""
+    query = select(Usuario)
+    if fazenda_id is not None:
+        query = query.join(Pessoa, Pessoa.id == Usuario.pessoa_id).where(Pessoa.fazenda_id == fazenda_id)
+    usuarios = session.exec(query).all()
     return {
         "tipos": [{"chave": chave, "label": cfg["label"]} for chave, cfg in CATALOGO.items()],
         "usuarios": [
@@ -98,7 +113,8 @@ def listar_atividades(
     data_fim: Optional[date] = None,
     chaves: Optional[str] = None,
     limit: int = 2000,
-    _: Usuario = Depends(exigir_dono),
+    _: Usuario = Depends(exigir_admin_ou_dono),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
     session: Session = Depends(get_session),
 ) -> dict:
     """Lista os lançamentos de um usuário em todos os tipos do catálogo (ou só
@@ -113,6 +129,16 @@ def listar_atividades(
     alvo = session.get(Usuario, usuario_id)
     if not alvo:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    # IDOR: `usuario_id` é um id global, não escopado por fazenda — sem esta
+    # checagem, um administrador de UMA fazenda-cliente poderia consultar a
+    # atividade de um usuário de OUTRA só sabendo/adivinhando o id (a lista
+    # de GET /opcoes já não oferece esse id como opção, mas o parâmetro cru
+    # aceitaria qualquer um). Mesma convenção 404 (não 403) do resto do
+    # sistema para não confirmar a existência do id a quem não é dono dele.
+    if fazenda_id is not None:
+        pessoa_alvo = session.get(Pessoa, alvo.pessoa_id) if alvo.pessoa_id else None
+        if not pessoa_alvo or pessoa_alvo.fazenda_id != fazenda_id:
+            raise HTTPException(status_code=404, detail="Usuário não encontrado")
     selecionadas = [c for c in (chaves.split(",") if chaves else list(CATALOGO.keys())) if c in CATALOGO]
 
     itens: list[dict] = []

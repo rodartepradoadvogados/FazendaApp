@@ -14,6 +14,8 @@ import { FichaDetalhe } from "@/components/mobile/rebanho/Ficha";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao } from "@/components/Ordenavel";
 import { SeletorOrdenacao, type CampoOrdenacao } from "@/components/mobile/SeletorOrdenacao";
+import { FiltroAgendaReprodutiva } from "@/components/mobile/menu/FiltroAgendaReprodutiva";
+import { CardsAgendaReprodutivaMobile } from "@/components/mobile/menu/CardsAgendaReprodutivaMobile";
 
 // Campos ordenáveis das listas da Agenda — nem toda lista preenche todos
 // (ex.: só as "inseminadas" têm dias_inseminada), mas useOrdenacao já joga os
@@ -41,19 +43,24 @@ type Animal = {
 type Resposta = { data_referencia: string; listas: Record<string, Animal[]>; totais: Record<string, number> };
 
 // Ordem e rótulos amigáveis das 10 listas (ver fazenda/rules/agenda_veterinario.py).
-const LISTAS: { chave: string; rotulo: string }[] = [
-  { chave: "inseminadas_1_29", rotulo: "Inseminadas 1–29 dias (aguardar toque)" },
-  { chave: "inseminadas_30_59", rotulo: "Inseminadas 30–59 dias (tocar)" },
-  { chave: "inseminadas_60_mais", rotulo: "Inseminadas 60+ dias (reconfirmar)" },
-  { chave: "novilhas_aptas_vazias", rotulo: "Novilhas aptas e vazias (inseminar)" },
-  { chave: "novilhas_gestantes", rotulo: "Novilhas gestantes" },
-  { chave: "verificar_aptidao", rotulo: "Verificar aptidão (≥280 kg, nunca servida)" },
-  { chave: "verificar_pre_parto", rotulo: "Pré-parto (verificar)" },
-  { chave: "vacas_gestantes", rotulo: "Vacas gestantes" },
-  { chave: "vazias_por_diagnostico", rotulo: "Vazias por diagnóstico (novo serviço)" },
-  { chave: "pendentes_classificacao", rotulo: "Pendentes de classificação" },
+// Cor por lista (05/09/2026, mesmo pedido do Menu/Lotes: "selo sólido +
+// espinha" em vez de banho de cor único) — cada lista carrega a cor da
+// situação reprodutiva que ela representa, reaproveitando exatamente os
+// mesmos tons já usados em Rebanho > Lotes e nos cards configuráveis
+// (inseminada=dourado, gestante=azul, vazia/apta=verde...), pra o vocabulário
+// de cor ser o MESMO em toda a Agenda Reprodutiva, não uma paleta nova.
+const LISTAS: { chave: string; rotulo: string; cor: string }[] = [
+  { chave: "inseminadas_1_29", rotulo: "Inseminadas 1–29 dias (aguardar toque)", cor: "var(--mob-dourado)" },
+  { chave: "inseminadas_30_59", rotulo: "Inseminadas 30–59 dias (tocar)", cor: "var(--mob-dourado)" },
+  { chave: "inseminadas_60_mais", rotulo: "Inseminadas 60+ dias (reconfirmar)", cor: "var(--mob-dourado)" },
+  { chave: "novilhas_aptas_vazias", rotulo: "Novilhas aptas e vazias (inseminar)", cor: "var(--mob-verde)" },
+  { chave: "novilhas_gestantes", rotulo: "Novilhas gestantes", cor: "var(--mob-azul)" },
+  { chave: "verificar_pre_parto", rotulo: "Pré-parto (verificar)", cor: "var(--mob-roxo)" },
+  { chave: "vacas_gestantes", rotulo: "Vacas gestantes", cor: "var(--mob-azul)" },
+  { chave: "vazias_por_diagnostico", rotulo: "Vazias por diagnóstico (novo serviço)", cor: "var(--mob-amarelo)" },
+  { chave: "pendentes_classificacao", rotulo: "Pendentes de classificação", cor: "var(--mob-muted)" },
   // Só aparece quando o parâmetro "usa_adesivo_deteccao_cio" está ativo.
-  { chave: "observacao_cio", rotulo: "Observação de cio — adesivo de repasse" },
+  { chave: "observacao_cio", rotulo: "Observação de cio — adesivo de repasse", cor: "var(--mob-laranja)" },
 ];
 
 function detalhe(chave: string, a: Animal): string {
@@ -61,7 +68,6 @@ function detalhe(chave: string, a: Animal): string {
   const partes: string[] = [];
   if (a.dias_para_parto != null) partes.push(`parto em ${a.dias_para_parto} dias`);
   if (a.dias_inseminada != null) partes.push(`${a.dias_inseminada} dias inseminada`);
-  if (a.peso != null) partes.push(`${a.peso} kg`);
   if (a.atrasada) partes.push("atrasada");
   if (!partes.length && a.data_servico) partes.push(`serviço ${formatDate(a.data_servico)}`);
   return partes.join(" · ");
@@ -98,8 +104,8 @@ function EnviarDgForm({ numero, onFeito, onCancelar }: { numero: string; onFeito
   );
 }
 
-function ListaSecao({ chave, rotulo, animais, enviandoDg, setEnviandoDg, onFichaAberta, onDgFeito }: {
-  chave: string; rotulo: string; animais: Animal[];
+function ListaSecao({ chave, rotulo, cor, animais, enviandoDg, setEnviandoDg, onFichaAberta, onDgFeito }: {
+  chave: string; rotulo: string; cor: string; animais: Animal[];
   enviandoDg: string | null; setEnviandoDg: (n: string | null) => void;
   onFichaAberta: (numero: string) => void; onDgFeito: (msg: string) => void;
 }) {
@@ -114,10 +120,13 @@ function ListaSecao({ chave, rotulo, animais, enviandoDg, setEnviandoDg, onFicha
   }));
 
   return (
-    <details className="mob-card mob-card-vet" style={{ padding: "0.4rem 0.9rem", marginBottom: "0.6rem" }}>
+    <details className="mob-card mob-tint" style={{ ["--tint-cor" as any]: cor, padding: "0.4rem 0.9rem", marginBottom: "0.6rem" }}>
       <summary style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.6rem", cursor: "pointer", padding: "0.55rem 0", fontWeight: 700, fontSize: "0.95rem", listStyle: "none" }}>
         <span style={{ flex: 1, minWidth: 0 }}>{rotulo}</span>
-        <span style={{ fontSize: "0.78rem", fontWeight: 800, padding: "0.2rem 0.6rem", borderRadius: 999, background: "var(--mob-surface-2)", border: "1px solid var(--mob-border)", color: "var(--mob-muted)", flexShrink: 0 }}>
+        <span style={{
+          fontSize: "0.78rem", fontWeight: 800, padding: "0.2rem 0.6rem", borderRadius: 999, flexShrink: 0,
+          color: cor, background: `color-mix(in srgb, ${cor} 16%, transparent)`, border: `1px solid color-mix(in srgb, ${cor} 40%, transparent)`,
+        }}>
           {animais.length}
         </span>
       </summary>
@@ -173,6 +182,17 @@ export default function AgendaVet({ onVoltar }: { onVoltar: () => void }) {
         </div>
       )}
 
+      {/* Cards 100% configuráveis (situação/período/categoria/lote), salvos e
+          reaproveitáveis — a MESMA capacidade dos cards do site (#570/#591 só
+          tinham trazido a busca avulsa abaixo, sem permitir salvar um card).
+          Independente das 10 listas fixas abaixo, então não depende de
+          `dados` ter carregado. */}
+      <CardsAgendaReprodutivaMobile onFichaAberta={setFichaAberta} />
+
+      {/* Busca avulsa por parâmetro — para uma pergunta pontual que não vale
+          a pena salvar como card. */}
+      <FiltroAgendaReprodutiva onFichaAberta={setFichaAberta} />
+
       {carregando && !dados ? (
         <Carregando />
       ) : !dados ? (
@@ -180,11 +200,11 @@ export default function AgendaVet({ onVoltar }: { onVoltar: () => void }) {
       ) : total === 0 ? (
         <Vazio>Nenhum animal a acompanhar no momento 🎉</Vazio>
       ) : (
-        LISTAS.map(({ chave, rotulo }) => {
+        LISTAS.map(({ chave, rotulo, cor }) => {
           const animais = dados.listas[chave] || [];
           if (!animais.length) return null;
           return (
-            <ListaSecao key={chave} chave={chave} rotulo={rotulo} animais={animais}
+            <ListaSecao key={chave} chave={chave} rotulo={rotulo} cor={cor} animais={animais}
               enviandoDg={enviandoDg} setEnviandoDg={setEnviandoDg}
               onFichaAberta={setFichaAberta} onDgFeito={setSucesso} />
           );

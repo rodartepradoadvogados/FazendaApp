@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { Dna } from "lucide-react";
-import { fetchPedido, fetchPedidos, fetchPlanoContas, movimentarEstoque, FINALIDADES_ESTOQUE } from "@/lib/api";
+import { fetchPedido, fetchPedidos, fetchPlanoContas, movimentarEstoque } from "@/lib/api";
 import { pedirLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
 import { EstoquePicker } from "@/components/EstoquePicker";
 import { CampoMoeda } from "@/components/CampoMoeda";
@@ -17,7 +17,7 @@ const MOVIMENTOS_SOMENTE_ESTOCAVEL = new Set(["Doação", "Entrada de cortesia"]
 const MOVIMENTOS_SAIDA = MOVIMENTOS_ESTOQUE.filter((m) => MOV_BAIXA.has(m));
 const MOVIMENTOS_ENTRADA = MOVIMENTOS_ESTOQUE.filter((m) => !MOV_BAIXA.has(m));
 
-export function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueItem[]; onIrParaFinanceiro?: (leaf: "financeiro_despesa" | "financeiro_receita") => void }) {
+export function FormEstoque({ estoque, onIrParaFinanceiro, onSalvo }: { estoque: EstoqueItem[]; onIrParaFinanceiro?: (leaf: "financeiro_despesa" | "financeiro_receita") => void; onSalvo?: () => void }) {
   const [produto, setProduto] = useState("");
   const [tipo, setTipo] = useState<"entrada" | "saida" | "">("");
   const [mov, setMov] = useState("");
@@ -120,6 +120,11 @@ export function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueI
           observacao: observacao || undefined,
         });
         onIrParaFinanceiro?.(tipo === "entrada" ? "financeiro_despesa" : "financeiro_receita");
+      } else {
+        // Só sinaliza "pronto para o próximo" quando o usuário fica na própria
+        // tela — gerarFinanceiro já redireciona pra outra sub-aba (Financeiro),
+        // então a gaveta de Estoque nem continua aberta nesse caso.
+        onSalvo?.();
       }
       setMov(""); setQtd(""); setObservacao(""); setPedidoId(""); setPedidoItemId("");
       setLancarValor(false); setValorUnitario(""); setGerarFinanceiro(false);
@@ -169,7 +174,7 @@ export function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueI
             value={produto}
             onChange={setProduto}
             placeholder="Buscar item…"
-            finalidades={FINALIDADES_ESTOQUE}
+            todasFinalidades
             incluirNaoEstocaveis={!somenteEstocaveis}
           />
           {itensFiltrados.length !== itensBase.length && (
@@ -199,7 +204,14 @@ export function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueI
         <Campo label="Quantidade"><input type="number" inputMode="decimal" style={inputStyle} value={qtd} onChange={(e) => setQtd(e.target.value)} /></Campo>
         <Campo label="Unidade">
           <select style={inputStyle} value={unidade || item?.unidade || "unidade"} onChange={(e) => setUnidade(e.target.value)}>
-            {UNIDADES.map((u) => <option key={u}>{u}</option>)}
+            {/* A unidade DE VERDADE do item (livre, cadastrada em Configurações > Estoque —
+                "Tonelada (ton)", "Bag" etc.) pode não estar na lista fixa UNIDADES abaixo
+                (pensada só para unidade de APLICAÇÃO de medicamento). Sem isto, o <select>
+                controlado não achava a option certa e mostrava a primeira da lista ("ml")
+                como se estivesse selecionada. */}
+            {[item?.unidade, ...UNIDADES.filter((u) => u !== item?.unidade)].filter(Boolean).map((u) => (
+              <option key={u} value={u as string}>{u}</option>
+            ))}
           </select>
         </Campo>
         <Campo label="Data"><input type="date" style={inputStyle} value={dataMov} onChange={(e) => setDataMov(e.target.value)} /></Campo>

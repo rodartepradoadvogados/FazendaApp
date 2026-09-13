@@ -1,22 +1,37 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Plus, Check } from "lucide-react";
 import {
   fetchPessoas, fetchFerias, criarFerias, atualizarFerias,
   fetchDecimoTerceiro, criarDecimoTerceiro, atualizarDecimoTerceiro,
-  fetchContasCorrentes,
+  fetchContasCorrentes, fetchPreviaMediaVariaveis,
   formatBRL, type RegistroFerias, type RegistroDecimoTerceiro, type ContaCorrenteCadastro,
+  type ComposicaoMediaVariaveis,
 } from "@/lib/api";
-import { SecaoRecolhivel } from "@/components/ui";
+import { MediaVerbasVariaveis } from "@/components/MediaVerbasVariaveis";
+import { SecaoRecolhivel, type ModoSecaoCategoria } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import RescisaoView from "@/components/RescisaoView";
 
 /*
  * Férias e 13º salário — controle DENTRO do app (cálculo, lançamento e
  * acompanhamento). Sem envio ao eSocial (fora de escopo — inviável sem
  * certificado digital/infraestrutura própria); aqui só organiza o que a
  * fazenda já paga hoje.
+ *
+ * NÃO REMONTE A RESCISÃO AQUI DENTRO. Ela já foi a 3ª sub-aba desta tela
+ * (#547) porque `calcular_rescisao` reaproveita `calcular_ferias` e
+ * `calcular_decimo_terceiro` no backend — conveniência de cálculo que virou
+ * arquitetura de informação e, ao virar menu, inverteu a hierarquia: no
+ * código a rescisão é quem CHAMA férias e 13º (o nível de cima), e no menu
+ * ela aparecia como aba dentro de duas das suas próprias parcelas. A
+ * rescisão abrange no mínimo 11 verbas que não são 13º nem férias (saldo de
+ * salário, aviso prévio, multa de FGTS, arts. 479/480 CLT, Súmula 314,
+ * estabilidades, arts. 467 e 477) e dispara obrigações acessórias próprias
+ * (S-2299 do eSocial, guia de FGTS, baixa na CTPS, seguro-desemprego) — não
+ * é um caso particular de férias/13º. Hoje ela é um chip irmão no seletor
+ * de categoria da Folha (ver FolhaPagamentoView.tsx e RescisaoView.tsx). O
+ * reaproveitamento de cálculo continua no backend e não pede nada daqui.
  */
 type Pessoa = { id: number; nome: string; tipos: string[]; salario_base?: number | null; data_admissao?: string | null };
 
@@ -38,7 +53,7 @@ function StatusBadge({ status }: { status: string }) {
 // ---------------------------------------------------------------------------
 // Sub-seção: Férias
 // ---------------------------------------------------------------------------
-function FeriasSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contasCorrentes: ContaCorrenteCadastro[] }) {
+function FeriasSection({ pessoas, contasCorrentes, mostrar }: { pessoas: Pessoa[]; contasCorrentes: ContaCorrenteCadastro[]; mostrar: ModoSecaoCategoria }) {
   const [itens, setItens] = useState<RegistroFerias[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,6 +69,14 @@ function FeriasSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contas
   const [contaCorrenteId, setContaCorrenteId] = useState("");
 
   const [calculo, setCalculo] = useState<{ valor_ferias: number; valor_terco_constitucional: number; valor_abono: number; valor_total: number } | null>(null);
+  // A média das verbas variáveis do PERÍODO AQUISITIVO (CLT, art. 142) vem do
+  // SERVIDOR, e não de uma segunda conta feita aqui: a média sai das rubricas
+  // salariais já gravadas nas folhas, que o navegador não tem. Sem esta
+  // consulta, o "valor sugerido" desta tela passaria a divergir do valor que o
+  // servidor grava assim que a fazenda ligasse o parâmetro — e o dono só
+  // descobriria a diferença DEPOIS de lançar.
+  const [mediaPrevia, setMediaPrevia] = useState<ComposicaoMediaVariaveis | null>(null);
+  const [expandido, setExpandido] = useState<number | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
 
@@ -68,16 +91,34 @@ function FeriasSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contas
 
   const pessoaSelecionada = useMemo(() => pessoas.find((p) => String(p.id) === pessoaId), [pessoas, pessoaId]);
 
-  function calcular() {
+  async function calcular() {
     setMsg(null);
     if (!pessoaSelecionada || !pessoaSelecionada.salario_base) {
       setMsg({ tipo: "erro", texto: "Selecione um funcionário com salário base cadastrado." });
       return;
     }
-    const salario = pessoaSelecionada.salario_base;
+    if (!periodoInicio || !periodoFim) {
+      setMsg({ tipo: "erro", texto: "Informe o período aquisitivo — é ele que define a janela da média de verbas variáveis." });
+      return;
+    }
+    // A média entra na BASE do dia de férias, e o terço incide sobre o total
+    // já somado (CLT, art. 142). Erro na consulta não pode impedir a
+    // conferência: cai para média zero, que é o comportamento de quem não
+    // ligou o parâmetro.
+    let media: ComposicaoMediaVariaveis | null = null;
+    try {
+      media = await fetchPreviaMediaVariaveis({
+        pessoa_id: pessoaSelecionada.id, janela: "periodo_aquisitivo",
+        inicio: periodoInicio, fim: periodoFim,
+      });
+    } catch {
+      media = null;
+    }
+    setMediaPrevia(media);
+    const base = pessoaSelecionada.salario_base + (media?.aplicada ? media.media : 0);
     const dg = parseInt(diasGozados, 10) || 0;
     const ab = parseInt(abonoDias, 10) || 0;
-    const valorDia = salario / 30;
+    const valorDia = base / 30;
     const valorFerias = Math.round(valorDia * dg * 100) / 100;
     const valorTerco = Math.round(valorFerias * (1 / 3) * 100) / 100;
     const valorAbono = ab > 0 ? Math.round(valorDia * ab * (1 + 1 / 3) * 100) / 100 : 0;
@@ -103,7 +144,7 @@ function FeriasSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contas
       });
       setMsg({ tipo: "sucesso", texto: "Férias lançadas." });
       setPessoaId(""); setPeriodoInicio(""); setPeriodoFim(""); setDataInicioGozo(""); setDataFimGozo("");
-      setDiasGozados("30"); setAbonoDias("0"); setObservacao(""); setCalculo(null); setContaCorrenteId("");
+      setDiasGozados("30"); setAbonoDias("0"); setObservacao(""); setCalculo(null); setMediaPrevia(null); setContaCorrenteId("");
       carregar();
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar férias" });
@@ -134,6 +175,7 @@ function FeriasSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contas
 
   return (
     <div>
+      {mostrar !== "listar" && (
       <SecaoRecolhivel titulo="Nova férias" icon={Plus} defaultAberta={false} descricao="Período aquisitivo, dias a gozar e abono pecuniário opcional">
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
           <div>
@@ -195,6 +237,7 @@ function FeriasSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contas
             <div style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: "0.2rem" }}>
               Valor sugerido só para conferência — o valor final é recalculado pelo servidor ao lançar.
             </div>
+            <MediaVerbasVariaveis composicao={mediaPrevia} compacto />
           </div>
         )}
 
@@ -203,7 +246,9 @@ function FeriasSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contas
           {salvando ? "Salvando…" : "Lançar férias"}
         </button>
       </SecaoRecolhivel>
+      )}
 
+      {mostrar !== "lancar" && (
       <div className="card mt-4">
         <div className="card-header mb-3">Férias lançadas</div>
         {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
@@ -224,28 +269,55 @@ function FeriasSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contas
               </thead>
               <tbody>
                 {ordFerias.linhasOrdenadas.map((r) => (
-                  <tr key={r.id}>
-                    <td style={{ fontWeight: 700 }}>{r.pessoa_nome}</td>
-                    <td>{r.data_inicio_gozo} a {r.data_fim_gozo}</td>
-                    <td>{r.dias_gozados}</td>
-                    <td>{r.abono_pecuniario_dias || 0}</td>
-                    <td style={{ textAlign: "right", fontWeight: 600 }}>{formatBRL(r.valor_total)}</td>
-                    <td><StatusBadge status={r.status} /></td>
-                    <td>
-                      {r.status !== "pago" && (
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
-                          onClick={() => { setPagoErro(null); setPagandoId(pagandoId === r.id ? null : r.id); }}>
-                          Marcar como pago
-                        </button>
-                      )}
-                    </td>
-                  </tr>
+                  <Fragment key={r.id}>
+                    <tr>
+                      <td style={{ fontWeight: 700 }}>{r.pessoa_nome}</td>
+                      <td>{r.data_inicio_gozo} a {r.data_fim_gozo}</td>
+                      <td>{r.dias_gozados}</td>
+                      <td>{r.abono_pecuniario_dias || 0}</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>
+                        {formatBRL(r.valor_total)}
+                        {/* A média aparece JUNTO do valor, e não só dentro do
+                            detalhe: é ela que explica por que estas férias não
+                            são simplesmente o salário-base ÷ 30 × dias. */}
+                        {!!r.media_variaveis && (
+                          <div style={{ fontSize: "0.68rem", color: "var(--text-muted)", fontWeight: 400 }}>
+                            + média variáveis {formatBRL(r.media_variaveis)}
+                          </div>
+                        )}
+                      </td>
+                      <td><StatusBadge status={r.status} /></td>
+                      <td>
+                        {/* Só quando a média foi de fato apurada: um botão que
+                            abre uma linha dizendo "desligado" é ruído para
+                            quem escolheu não usar a feature. */}
+                        {r.media_variaveis_detalhe?.aplicada && (
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                            onClick={() => setExpandido(expandido === r.id ? null : r.id)}>
+                            {expandido === r.id ? "Ocultar média" : "Ver média"}
+                          </button>
+                        )}
+                        {r.status !== "pago" && (
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                            onClick={() => { setPagoErro(null); setPagandoId(pagandoId === r.id ? null : r.id); }}>
+                            Marcar como pago
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {expandido === r.id && (
+                      <tr><td colSpan={7}>
+                        <MediaVerbasVariaveis composicao={r.media_variaveis_detalhe} titulo="Férias" />
+                      </td></tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
           </div>
         )}
       </div>
+      )}
 
       {pagandoId !== null && (
         <Modal title="Registrar pagamento de férias" onClose={() => setPagandoId(null)} width="380px">
@@ -267,7 +339,7 @@ function FeriasSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contas
 // ---------------------------------------------------------------------------
 // Sub-seção: 13º salário
 // ---------------------------------------------------------------------------
-function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contasCorrentes: ContaCorrenteCadastro[] }) {
+function DecimoTerceiroSection({ pessoas, contasCorrentes, mostrar }: { pessoas: Pessoa[]; contasCorrentes: ContaCorrenteCadastro[]; mostrar: ModoSecaoCategoria }) {
   const [itens, setItens] = useState<RegistroDecimoTerceiro[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -279,6 +351,13 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]
   const [contaCorrenteId, setContaCorrenteId] = useState("");
 
   const [valorCalculado, setValorCalculado] = useState<number | null>(null);
+  // Ver o comentário equivalente na seção de Férias: a média sai das rubricas
+  // salariais já gravadas nas folhas, que só o servidor conhece. Aqui a janela
+  // é o ANO CIVIL, e o divisor são os MESMOS avos digitados ao lado (Decreto
+  // 57.155/65, art. 2º) — dois números para a mesma contagem é como eles
+  // passam a divergir.
+  const [mediaPrevia, setMediaPrevia] = useState<ComposicaoMediaVariaveis | null>(null);
+  const [expandido, setExpandido] = useState<number | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
 
@@ -307,14 +386,31 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]
     setValorCalculado(null);
   }, [pessoaSelecionada, ano]);
 
-  function calcular() {
+  async function calcular() {
     setMsg(null);
     if (!pessoaSelecionada || !pessoaSelecionada.salario_base) {
       setMsg({ tipo: "erro", texto: "Selecione um funcionário com salário base cadastrado." });
       return;
     }
     const meses = parseInt(mesesTrabalhados, 10) || 0;
-    setValorCalculado(Math.round((pessoaSelecionada.salario_base / 12) * meses * 100) / 100);
+    let media: ComposicaoMediaVariaveis | null = null;
+    try {
+      media = await fetchPreviaMediaVariaveis({
+        pessoa_id: pessoaSelecionada.id, janela: "ano_civil",
+        ano: parseInt(ano, 10), meses_trabalhados: meses,
+      });
+    } catch {
+      media = null;
+    }
+    setMediaPrevia(media);
+    const base = pessoaSelecionada.salario_base + (media?.aplicada ? media.media : 0);
+    const integral = Math.round((base / 12) * meses * 100) / 100;
+    // A 1ª parcela é ADIANTAMENTO de até 50% do 13º (Lei 4.749/1965, art. 2º).
+    // Esta tela sugeria o 13º cheio para as três parcelas, batendo com o
+    // servidor, que também gravava cheio — era o 13º pago em dobro. O
+    // servidor agora divide de verdade (e desconta o que já foi lançado no
+    // ano), então o sugerido aqui é só uma estimativa da mesma regra.
+    setValorCalculado(parcela === "primeira" ? Math.round(integral * 50) / 100 : integral);
   }
 
   async function salvar() {
@@ -330,7 +426,7 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]
         conta_corrente_id: contaCorrenteId ? Number(contaCorrenteId) : undefined,
       });
       setMsg({ tipo: "sucesso", texto: "13º salário lançado." });
-      setPessoaId(""); setObservacao(""); setValorCalculado(null); setContaCorrenteId("");
+      setPessoaId(""); setObservacao(""); setValorCalculado(null); setMediaPrevia(null); setContaCorrenteId("");
       carregar();
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar 13º salário" });
@@ -361,6 +457,7 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]
 
   return (
     <div>
+      {mostrar !== "listar" && (
       <SecaoRecolhivel titulo="Novo 13º salário" icon={Plus} defaultAberta={false} descricao="Proporcional aos meses trabalhados no ano">
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
           <div>
@@ -376,7 +473,9 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]
           </div>
           <div>
             <label style={lbl}>Parcela</label>
-            <select style={inputSm} value={parcela} onChange={(e) => setParcela(e.target.value)}>
+            {/* Limpa o sugerido: trocar a parcela muda o valor (a 1ª é
+                adiantamento de 50%), e o número velho ficava na tela. */}
+            <select style={inputSm} value={parcela} onChange={(e) => { setParcela(e.target.value); setValorCalculado(null); }}>
               <option value="unica">Única</option>
               <option value="primeira">1ª parcela</option>
               <option value="segunda">2ª parcela</option>
@@ -406,8 +505,11 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]
           <div className="card mt-2" style={{ padding: "0.6rem 0.8rem", fontSize: "0.8rem" }}>
             Valor bruto sugerido: <strong style={{ color: "var(--dourado-light)" }}>{formatBRL(valorCalculado)}</strong>
             <div style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: "0.2rem" }}>
-              INSS/IR (se houver) são informados na edição — o servidor recalcula o bruto ao lançar.
+              {parcela === "primeira"
+                ? "Adiantamento de 50% do 13º (Lei 4.749/1965) — sem INSS/IR, que incidem só na 2ª parcela."
+                : "INSS/IR (se houver) são informados na edição — o servidor recalcula o bruto ao lançar, descontando o que já foi lançado no ano."}
             </div>
+            <MediaVerbasVariaveis composicao={mediaPrevia} compacto />
           </div>
         )}
 
@@ -416,7 +518,9 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]
           {salvando ? "Salvando…" : "Lançar 13º salário"}
         </button>
       </SecaoRecolhivel>
+      )}
 
+      {mostrar !== "lancar" && (
       <div className="card mt-4">
         <div className="card-header mb-3">13º salário lançado</div>
         {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
@@ -437,28 +541,52 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]
               </thead>
               <tbody>
                 {ordDecimo.linhasOrdenadas.map((r) => (
-                  <tr key={r.id}>
-                    <td style={{ fontWeight: 700 }}>{r.pessoa_nome}</td>
-                    <td>{r.ano}</td>
-                    <td>{LABEL_PARCELA[r.parcela || "unica"] || r.parcela}</td>
-                    <td>{r.meses_trabalhados}</td>
-                    <td style={{ textAlign: "right", fontWeight: 600 }}>{formatBRL(r.valor_liquido)}</td>
-                    <td><StatusBadge status={r.status} /></td>
-                    <td>
-                      {r.status !== "pago" && (
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
-                          onClick={() => { setPagoErro(null); setPagandoId(pagandoId === r.id ? null : r.id); }}>
-                          Marcar como pago
-                        </button>
-                      )}
-                    </td>
-                  </tr>
+                  <Fragment key={r.id}>
+                    <tr>
+                      <td style={{ fontWeight: 700 }}>{r.pessoa_nome}</td>
+                      <td>{r.ano}</td>
+                      <td>{LABEL_PARCELA[r.parcela || "unica"] || r.parcela}</td>
+                      <td>{r.meses_trabalhados}</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>
+                        {formatBRL(r.valor_liquido)}
+                        {!!r.media_variaveis && (
+                          <div style={{ fontSize: "0.68rem", color: "var(--text-muted)", fontWeight: 400 }}>
+                            + média variáveis {formatBRL(r.media_variaveis)}
+                          </div>
+                        )}
+                      </td>
+                      <td><StatusBadge status={r.status} /></td>
+                      <td>
+                        {/* Só quando a média foi de fato apurada: um botão que
+                            abre uma linha dizendo "desligado" é ruído para
+                            quem escolheu não usar a feature. */}
+                        {r.media_variaveis_detalhe?.aplicada && (
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                            onClick={() => setExpandido(expandido === r.id ? null : r.id)}>
+                            {expandido === r.id ? "Ocultar média" : "Ver média"}
+                          </button>
+                        )}
+                        {r.status !== "pago" && (
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                            onClick={() => { setPagoErro(null); setPagandoId(pagandoId === r.id ? null : r.id); }}>
+                            Marcar como pago
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {expandido === r.id && (
+                      <tr><td colSpan={7}>
+                        <MediaVerbasVariaveis composicao={r.media_variaveis_detalhe} titulo="13º salário" />
+                      </td></tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
           </div>
         )}
       </div>
+      )}
 
       {pagandoId !== null && (
         <Modal title="Registrar pagamento de 13º salário" onClose={() => setPagandoId(null)} width="380px">
@@ -478,36 +606,36 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]
 }
 
 // ---------------------------------------------------------------------------
-// Componente principal — chaveado internamente entre Férias, 13º salário e
-// Rescisão.
+// Componente principal — chaveado internamente entre Férias e 13º salário.
+// (Duas sub-abas, não três: a Rescisão saiu daqui — ver o cabeçalho.)
 // ---------------------------------------------------------------------------
-export default function FeriasDecimoTerceiroView() {
+export default function FeriasDecimoTerceiroView({ mostrar = "tudo" }: { mostrar?: ModoSecaoCategoria } = {}) {
   const [pessoas, setPessoas] = useState<Pessoa[]>([]);
-  const [subaba, setSubaba] = useState<"ferias" | "decimo" | "rescisao">("ferias");
+  const [subaba, setSubaba] = useState<"ferias" | "decimo">("ferias");
   // Contas correntes (id + rótulo) — para o seletor opcional "Conta bancária"
-  // de Férias/13º/Rescisão, mesmo padrão do Vale de funcionário: carregado
-  // uma vez aqui e repassado às 3 sub-seções.
+  // de Férias/13º, mesmo padrão do Vale de funcionário: carregado uma vez
+  // aqui e repassado às 2 sub-seções.
   const [contasCorrentes, setContasCorrentes] = useState<ContaCorrenteCadastro[]>([]);
 
-  const carregarPessoas = () => fetchPessoas().then(setPessoas).catch(() => {});
-  useEffect(() => { carregarPessoas(); fetchContasCorrentes().then(setContasCorrentes).catch(() => {}); }, []);
+  // Roda a cada montagem — e esta tela remonta toda vez que o chip "Férias /
+  // 13º" é escolhido no seletor de categoria da Folha. É o que mantém os
+  // dropdowns em dia depois de uma rescisão fechada com "marcar como
+  // inativo" na tela irmã (Pessoa.ativo=False no banco, confirmado em
+  // backend/tests/test_rescisao_fluxo.py), sem precisar de callback entre as
+  // duas telas como era quando a rescisão morava aqui dentro.
+  useEffect(() => {
+    fetchPessoas().then(setPessoas).catch(() => {});
+    fetchContasCorrentes().then(setContasCorrentes).catch(() => {});
+  }, []);
 
   return (
     <div>
       <div className="flex items-center gap-2 mb-4" style={{ flexWrap: "wrap" }}>
         <button className={subaba === "ferias" ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.8rem" }} onClick={() => setSubaba("ferias")}>Férias</button>
         <button className={subaba === "decimo" ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.8rem" }} onClick={() => setSubaba("decimo")}>13º salário</button>
-        <button className={subaba === "rescisao" ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.8rem" }} onClick={() => setSubaba("rescisao")}>Rescisão</button>
       </div>
-      {subaba === "ferias" && <FeriasSection pessoas={pessoas} contasCorrentes={contasCorrentes} />}
-      {subaba === "decimo" && <DecimoTerceiroSection pessoas={pessoas} contasCorrentes={contasCorrentes} />}
-      {/* onPessoaInativada: fechar rescisão com "marcar como inativo" muda
-          Pessoa.ativo no banco (confirmado em backend/tests/test_rescisao_fluxo.py),
-          mas esta lista `pessoas` só era buscada 1x no mount — sem isso, o
-          funcionário recém-inativado continuava aparecendo como ativo em
-          qualquer dropdown desta página (Férias/13º/nova Rescisão) até um
-          F5, dando a falsa impressão de que a caixinha não fez nada. */}
-      {subaba === "rescisao" && <RescisaoView pessoas={pessoas} onPessoaInativada={carregarPessoas} />}
+      {subaba === "ferias" && <FeriasSection pessoas={pessoas} contasCorrentes={contasCorrentes} mostrar={mostrar} />}
+      {subaba === "decimo" && <DecimoTerceiroSection pessoas={pessoas} contasCorrentes={contasCorrentes} mostrar={mostrar} />}
     </div>
   );
 }

@@ -9,10 +9,19 @@ import React from "react";
  * válido, e `onChange` sempre entrega reais (ex.: 1234.56), não string.
  */
 export function CampoMoeda({
-  value, onChange, placeholder = "R$ 0,00", disabled = false, style, className, autoFocus = false, id, name,
+  value, onChange, onBlur, placeholder = "R$ 0,00", disabled = false, style, className, autoFocus = false, id, name,
 }: {
   value: number | null | undefined;
   onChange: (v: number) => void;
+  /**
+   * Chamado ao SAIR do campo, com o valor final em reais. Existe porque
+   * validar a cada tecla é impossível aqui: o campo digita como caixa
+   * registradora (cada dígito entra pela direita), então trocar R$ 3.000 por
+   * R$ 3.500 passa obrigatoriamente por R$ 0,03, R$ 0,35 e R$ 3,50 — e uma
+   * regra de "valor menor que o previsto" dispararia em todos eles. Quem
+   * precisa validar um valor inteiro valida na saída do campo.
+   */
+  onBlur?: (v: number) => void;
   placeholder?: string;
   disabled?: boolean;
   style?: React.CSSProperties;
@@ -45,6 +54,7 @@ export function CampoMoeda({
       style={style}
       className={className}
       onChange={aoDigitar}
+      onBlur={onBlur ? () => onBlur(value || 0) : undefined}
     />
   );
 }

@@ -40,7 +40,13 @@ def criar_lancamento_programado(
     regra de dieta ativa por lote (409 sem `encerrar_anterior`, encerra a
     anterior na data de abertura desta quando True) do endpoint original de
     Alimentação. `itens` é uma lista de dicts com as chaves `alimento`,
-    `quantidade`, `unidade`, `base`, `ms_pct` (mesmo shape de ItemProgramadoIn)."""
+    `quantidade`, `unidade`, `base`, `ms_pct`, `base_quantidade` (mesmo shape
+    de ItemProgramadoIn) — `base_quantidade` é opcional e, quando ausente ou
+    None, o item herda a base da dieta (`base_quantidade` do parâmetro
+    abaixo), exatamente como antes deste campo existir. Sem validação de
+    valor (igual ao `base_quantidade` da própria dieta, hoje também livre) —
+    qualquer coisa que não seja exatamente "animal" já cai no ramo "total"
+    em `_base_efetiva`/`_por_cabeca`."""
     if not itens:
         raise HTTPException(status_code=400, detail="Informe ao menos um alimento do plano programado")
 
@@ -110,6 +116,7 @@ def criar_lancamento_programado(
             dieta_lancamento_id=dieta.id, alimento_id=alimento_id, fazenda_id=fazenda_id,
             alimento=item["alimento"], quantidade=item["quantidade"], unidade=item["unidade"],
             base=item.get("base"), ms_pct=item.get("ms_pct"),
+            base_quantidade=item.get("base_quantidade"),
         ))
     session.commit()
     return dieta
@@ -129,6 +136,7 @@ def contexto_lote(session: Session, fazenda_id: int | None, lote: int) -> dict:
     com o prefixo de `Animal.grupo_primario`)."""
     from fazenda.models import Animal, Parto, Servico
     from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
+    from fazenda.rules.producao_leiteira import com_fallback_animal, ultimo_controle_por_animal
 
     query_lote = select(Lote).where(Lote.codigo == f"{lote:02d}")
     if fazenda_id is not None:
@@ -145,9 +153,15 @@ def contexto_lote(session: Session, fazenda_id: int | None, lote: int) -> dict:
     ]
     n = len(animais)
     dels = [a.del_dias for a in animais if a.del_dias is not None]
-    cls = [a.ult_cl_kg for a in animais if a.ult_cl_kg is not None]
-
+    # Último controle leiteiro AO VIVO — mesmo motivo/fix do contexto de
+    # Alimentação (ver rules/producao_leiteira.py): Animal.ult_cl_kg sozinho
+    # fica congelado na data do último CSV importado.
     numeros_do_lote = {a.numero for a in animais}
+    controles_ao_vivo = ultimo_controle_por_animal(session, numeros_do_lote, fazenda_id)
+    cls = [
+        p for a in animais
+        if (p := com_fallback_animal(a.numero, controles_ao_vivo, a)[0]) is not None
+    ]
     gestacoes: list[int] = []
     if numeros_do_lote:
         query_servicos = select(Servico).where(Servico.numero_matriz.in_(numeros_do_lote))

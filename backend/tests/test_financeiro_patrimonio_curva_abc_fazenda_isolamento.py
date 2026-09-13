@@ -86,14 +86,28 @@ class TestIsolamentoPatrimonio:
         assert "Trator fazenda 1" in nomes
         assert "Ordenhadeira fazenda 2" not in nomes
 
-    def test_token_legado_ve_patrimonio_de_todas_as_fazendas(self, client):
+    def test_sessao_sem_fazenda_e_recusada(self, client):
+        """A auditoria encontrou este teste afirmando o próprio furo.
+
+        Ele nasceu no piloto de multi-fazenda, quando havia uma fazenda só e
+        "token sem fid" queria dizer "emitido antes da migração" — a regra
+        era não ter retroatividade: sessão antiga continuava vendo tudo. Com
+        mais de um cliente no mesmo banco, "vê tudo" deixou de ser
+        compatibilidade e virou vazamento entre clientes (F-A-01/F-B-01/
+        F-B-02): o `if fazenda_id is not None:` de centenas de consultas
+        simplesmente não filtra.
+
+        A regra agora é a oposta, e vale na porta: se a requisição mexe em
+        dado de fazenda, o token tem que dizer QUAL fazenda — não dizendo,
+        não entra (fazenda/auth.py::exigir_fazenda_selecionada). Este teste
+        passou a guardar a recusa."""
         c, _ = client
         _como_fazenda(None)
         r = c.get("/financeiro/patrimonio")
-        assert r.status_code == 200
-        nomes = {i["nome"] for i in r.json()["itens"]}
-        assert "Trator fazenda 1" in nomes
-        assert "Ordenhadeira fazenda 2" in nomes
+        assert r.status_code == 409, (
+            f"o patrimônio das duas fazendas saiu junto para uma sessão sem fazenda "
+            f"selecionada: {r.status_code} {r.text[:200]}"
+        )
 
     def test_fazenda_1_nao_edita_plano_de_manutencao_da_fazenda_2(self, client):
         c, _ = client

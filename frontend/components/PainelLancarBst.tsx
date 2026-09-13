@@ -1,12 +1,15 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { Droplets, AlertTriangle, Check, Ban, X as XIcon } from "lucide-react";
-import { aplicarBstLote, marcarInaptaBst, fetchEstoque, fetchPessoas, formatDate } from "@/lib/api";
+import { aplicarBstLote, marcarInaptaBst, fetchEstoque, formatDate } from "@/lib/api";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { Modal } from "@/components/Modal";
 import { MultiFiltro } from "@/components/ui";
 import { PainelAjustarProximaAplicacaoBst } from "@/components/AjusteProximaAplicacaoBst";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { EstoquePicker } from "@/components/EstoquePicker";
+import { ExportarBotoes } from "@/components/ExportarBotoes";
+import type { ColunaExport } from "@/lib/export";
 
 // Mesmo padrão de nome usado no backend para reconhecer um item de estoque
 // como BST (ver MARCADORES_BST em fazenda/api/routers/agenda.py) — não há
@@ -81,6 +84,24 @@ export function TabelasStatusBst({ agenda, selecionados, onToggle }: { agenda: a
     ["ambos", "Ambos"], ["atual", "Só DEL atual"], ["projetado", "Só DEL projetado"],
   ];
 
+  // Exportação (PDF/Excel) das 3 listas juntas — mesma tabela usada tanto na
+  // Agenda (card de BST) quanto em Lançamentos > Produção > BST e em
+  // Produção > Relatórios de BST, já que todas renderizam via este
+  // componente. "Situação" identifica de qual das 3 tabelas a linha veio.
+  const colunasExport: ColunaExport[] = [
+    { header: "Nº", key: "numero_matriz" },
+    { header: "Lote", key: "grupo" },
+    { header: "DEL atual", key: "del_atual" },
+    { header: "DEL projetado", key: "del_projetado" },
+    { header: "Situação", key: "situacao" },
+    { header: "Obs.", key: "obs" },
+  ];
+  const linhasExport = useMemo(() => [
+    ...aptas.map((b) => ({ ...b, situacao: "Apta", obs: "" })),
+    ...nuncaAplicadas.map((b) => ({ ...b, situacao: "Incluir no próximo BST", obs: "Nunca aplicada — apta na próxima" })),
+    ...inaptas.map((b) => ({ ...b, situacao: "Inapta", obs: b.requer_reanalise ? (b.motivo_exclusao || "Retirada do BST — revisar") : "" })),
+  ], [aptas, nuncaAplicadas, inaptas]);
+
   return (
     <div className="space-y-2">
       <p style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>
@@ -88,16 +109,19 @@ export function TabelasStatusBst({ agenda, selecionados, onToggle }: { agenda: a
         {agenda?.proxima_visita_bst ? <> (<strong>{formatDate(agenda.proxima_visita_bst)}</strong>)</> : null} — é essa
         projeção que decide se a vaca chega apta na hora certa.
       </p>
-      <div className="flex items-center gap-2">
-        <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Ver:</span>
-        <div className="flex gap-1">
-          {opcoesVerDel.map(([valor, rotulo]) => (
-            <button key={valor} type="button" onClick={() => setVerDel(valor)}
-              className={verDel === valor ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem" }}>
-              {rotulo}
-            </button>
-          ))}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Ver:</span>
+          <div className="flex gap-1">
+            {opcoesVerDel.map(([valor, rotulo]) => (
+              <button key={valor} type="button" onClick={() => setVerDel(valor)}
+                className={verDel === valor ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem" }}>
+                {rotulo}
+              </button>
+            ))}
+          </div>
         </div>
+        <ExportarBotoes titulo="BST — DEL atual e projetado" colunas={colunasExport} linhas={linhasExport} nomeArquivoBase="bst_del" />
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Tabela titulo="BST — Aptas" lista={aptas} cor="var(--green-light)" />
@@ -125,23 +149,39 @@ export function TabelasStatusBst({ agenda, selecionados, onToggle }: { agenda: a
  * amarela na tabela, sinalizando que precisam ser reavaliados antes de
  * entrar de novo no lançamento.
  */
-export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtualizado: () => void }) {
+type DadosAplicarBst = {
+  numeros_matriz: string[]; data_aplicacao: string; aplicado?: boolean; produto?: string;
+  dose?: number | null; unidade?: string | null; responsavel?: string; dose_por_animal?: boolean;
+};
+type DadosMarcarInaptaBst = { numeros_matriz: string[]; inapta?: boolean };
+
+export function PainelLancarBst({
+  agenda, onAtualizado, aplicarBst = aplicarBstLote, marcarInapta: marcarInaptaFn = marcarInaptaBst,
+}: {
+  agenda: any; onAtualizado: () => void;
+  aplicarBst?: (dados: DadosAplicarBst) => Promise<unknown>;
+  marcarInapta?: (dados: DadosMarcarInaptaBst) => Promise<unknown>;
+}) {
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [lotesFiltro, setLotesFiltro] = useState<string[]>([]);
   const [dataAplicacao, setDataAplicacao] = useState(() => new Date().toISOString().slice(0, 10));
   const [produto, setProduto] = useState("Lactotropin");
   const [dose, setDose] = useState("");
+  // A dose informada é de UM animal (padrão — igual sempre foi) ou o TOTAL
+  // já aplicado ao lote inteiro? Comunicar isso certo pro backend evita
+  // baixar o estoque errado (total tratado como se fosse por animal, N
+  // vezes maior que o real) e confundir o relatório por animal.
+  const [dosePorAnimal, setDosePorAnimal] = useState(true);
   const [unidade, setUnidade] = useState("unidade");
   const [responsavel, setResponsavel] = useState("");
   const [confirmacao, setConfirmacao] = useState<"agendar" | "aplicar" | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [estoqueItens, setEstoqueItens] = useState<any[]>([]);
-  const [pessoas, setPessoas] = useState<any[]>([]);
+  const { pessoas: pessoasAtivas } = usePessoasAtivas();
 
   useEffect(() => {
     fetchEstoque().then((d) => setEstoqueItens(d.itens || [])).catch(() => setEstoqueItens([]));
-    fetchPessoas().then(setPessoas).catch(() => setPessoas([]));
   }, []);
 
   // Itens de estoque reconhecidos como BST (mesmo critério do backend) —
@@ -153,11 +193,6 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
     [estoqueItens]
   );
 
-  const pessoasAtivas = useMemo(
-    () => pessoas.filter((p) => p.ativo !== false).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
-    [pessoas]
-  );
-
   const toggle = (numero: string) => setSelecionados((prev) => {
     const novo = new Set(prev);
     novo.has(numero) ? novo.delete(numero) : novo.add(numero);
@@ -167,10 +202,10 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
   const executarAplicar = async () => {
     setOcupado(true); setErro(null);
     try {
-      await aplicarBstLote({
+      await aplicarBst({
         numeros_matriz: Array.from(selecionados), data_aplicacao: dataAplicacao, aplicado: true,
         produto: produto.trim() || "Lactotropin", dose: dose ? Number(dose) : null, unidade: unidade || null,
-        responsavel: responsavel.trim() || undefined,
+        responsavel: responsavel.trim() || undefined, dose_por_animal: dosePorAnimal,
       });
       setSelecionados(new Set());
       onAtualizado();
@@ -181,7 +216,7 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
   const marcarInapta = async () => {
     setOcupado(true); setErro(null);
     try {
-      await marcarInaptaBst({ numeros_matriz: Array.from(selecionados), inapta: true });
+      await marcarInaptaFn({ numeros_matriz: Array.from(selecionados), inapta: true });
       setSelecionados(new Set());
       onAtualizado();
     } catch (e: any) { setErro(e.message); }
@@ -191,7 +226,7 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
   const reverterInapta = async () => {
     setOcupado(true); setErro(null);
     try {
-      await marcarInaptaBst({ numeros_matriz: Array.from(selecionados), inapta: false });
+      await marcarInaptaFn({ numeros_matriz: Array.from(selecionados), inapta: false });
       setSelecionados(new Set());
       onAtualizado();
     } catch (e: any) { setErro(e.message); }
@@ -237,6 +272,32 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
         <MultiFiltro label="Filtrar por lote" opcoes={lotesDisponiveis} selecionados={lotesFiltro} onChange={setLotesFiltro} />
       </div>
 
+      <div className="flex items-center gap-2 flex-wrap">
+        {([
+          ["aptas", "Selecionar todas aptas", agendaFiltrada?.bst_elegiveis],
+          ["para incluir", "Selecionar todas para incluir", agendaFiltrada?.bst_nunca_aplicados],
+          ["inaptas", "Selecionar todas inaptas", agendaFiltrada?.bst_excluidos],
+        ] as [string, string, any[] | undefined][]).map(([nomeCategoria, rotulo, lista]) => {
+          const numeros = (lista ?? []).map((b) => b.numero_matriz as string);
+          const todasMarcadas = numeros.length > 0 && numeros.every((n) => selecionados.has(n));
+          return (
+            <button key={rotulo} type="button" className={todasMarcadas ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.76rem" }}
+              disabled={!numeros.length}
+              onClick={() => setSelecionados((prev) => {
+                const novo = new Set(prev);
+                if (todasMarcadas) numeros.forEach((n) => novo.delete(n));
+                else numeros.forEach((n) => novo.add(n));
+                return novo;
+              })}>
+              {todasMarcadas ? `Desmarcar ${nomeCategoria}` : rotulo} ({numeros.length})
+            </button>
+          );
+        })}
+        <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginLeft: "0.3rem" }}>
+          {selecionados.size} animal(is) selecionado(s)
+        </span>
+      </div>
+
       <TabelasStatusBst agenda={agendaFiltrada} selecionados={selecionados} onToggle={toggle} />
 
       <div className="card">
@@ -266,6 +327,16 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
             <input type="number" step="0.01" style={{ ...inputStyle, width: "5.5rem" }} value={dose} onChange={(e) => setDose(e.target.value)} /></div>
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Unidade</label>
             <input style={{ ...inputStyle, width: "5rem" }} value={unidade} onChange={(e) => setUnidade(e.target.value)} placeholder="unidade" /></div>
+          <div>
+            <label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Essa dose é</label>
+            <div className="flex items-center gap-1">
+              <button type="button" className={dosePorAnimal ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.74rem", padding: "0.3rem 0.6rem" }}
+                onClick={() => setDosePorAnimal(true)}>Por animal</button>
+              <button type="button" className={!dosePorAnimal ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.74rem", padding: "0.3rem 0.6rem" }}
+                title="A dose informada é o total já aplicado para todos os selecionados — o sistema divide pelo número de animais antes de baixar do estoque e lançar por animal."
+                onClick={() => setDosePorAnimal(false)}>Total do lote selecionado</button>
+            </div>
+          </div>
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Responsável</label>
             <select style={{ ...inputStyle, width: "9rem" }} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
               <option value="">Opcional</option>
@@ -288,7 +359,7 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
           <p style={{ fontSize: "0.85rem", marginBottom: "1rem" }}>
             {confirmacao === "agendar"
               ? `A data escolhida (${new Date(dataAplicacao + "T00:00:00").toLocaleDateString("pt-BR")}) é futura. Deseja agendar a aplicação de BST para essa data? Ela ficará pendente na Agenda até ser confirmada.`
-              : `Confirma a aplicação de BST (${produto.trim() || "Lactotropin"}${dose ? `, ${dose} ${unidade || ""}` : ""}) na data ${new Date(dataAplicacao + "T00:00:00").toLocaleDateString("pt-BR")} para os ${selecionados.size} animal(is) selecionado(s)? O lançamento vai gerar o registro de sanidade correspondente.`}
+              : `Confirma a aplicação de BST (${produto.trim() || "Lactotropin"}${dose ? `, ${dose} ${unidade || ""} ${dosePorAnimal ? "por animal" : "no TOTAL do lote"}` : ""}) na data ${new Date(dataAplicacao + "T00:00:00").toLocaleDateString("pt-BR")} para os ${selecionados.size} animal(is) selecionado(s)? O lançamento vai gerar o registro de sanidade correspondente.`}
           </p>
           <div className="flex gap-2 justify-end">
             <button className="btn-ghost" onClick={() => setConfirmacao(null)}>Não</button>

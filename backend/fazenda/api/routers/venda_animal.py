@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import Animal, ContaGerencial, Usuario, VendaAnimal
 from fazenda.api.routers.financeiro import ParcelaIn, _proximo_numero_lancamento
@@ -89,9 +89,8 @@ def listar_vendas(
 @router.post("/")
 def registrar_venda(
     dados: VendaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Informe ao menos um animal")
     if not (dados.comprador or "").strip():

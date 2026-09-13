@@ -12,7 +12,6 @@ listamos seus modelos para aparecerem lado a lado na mesma tela.
 """
 from __future__ import annotations
 
-import io
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
@@ -23,7 +22,8 @@ from fazenda.api.routers.cadastro.animais import _completar_genealogia_paterna
 from fazenda.api.routers.estoque import MovimentoIn, _criar_movimento_estoque
 from fazenda.api.routers.financeiro import ItemIn, LancamentoIn, ParcelaIn, criar_lancamento
 from fazenda.api.routers.producao import (
-    ControlesIn, OrdenhaIn, PesagensIn, PesoIn, QualidadeLeiteIn, criar_controles, criar_pesagens, criar_qualidade_leite,
+    ControlesIn, OrdenhaIn, PesagensIn, PesoIn, QualidadeLeiteIn, _gravar_controles, criar_controles,
+    criar_pesagens, criar_qualidade_leite,
 )
 from fazenda.api.routers.sanidade import AplicacaoIn, ItemAplicacaoIn, registrar_aplicacao
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
@@ -33,7 +33,7 @@ from fazenda.models import (
     EventoRealizado, EventoSanitario, Fornecedor, LancamentoItem, Parto, Sanidade, Usuario,
 )
 from fazenda.parsers.utils import iter_csv_rows, parse_date, parse_float, parse_int
-from fazenda.rules.auditoria import fazenda_id_seguro
+from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 from fazenda.rules.eventos_sanitarios import _datas_gatilho
 
@@ -147,21 +147,6 @@ CATEGORIAS_NOVAS = {
         ],
         "exemplo": ["evento_sanitario", "Brucelose B19", "464", "10/04/2026", "Vacina B19", "2", "ml", "Subcutânea", "Carlos", ""],
         "precisa_data_corte": True,
-    },
-    "touros_naab": {
-        "label": "Touros — catálogo NAAB/provas do fornecedor (Excel ou CSV)",
-        "colunas": [
-            "NAAB (código)", "Nome", "Raça", "Central", "Leite", "Gordura kg", "Gordura %", "Proteína kg",
-            "Proteína %", "TPI", "NM$", "Tipo (PTAT)", "Úbere (UDC)", "Pernas (FLC)", "CCS (SCS)",
-            "Fertilidade (DPR)", "Facilidade de parto",
-        ],
-        "colunas_csv": [
-            "naab", "nome", "raca", "central", "leite", "gordura_kg", "gordura", "proteina_kg", "proteina",
-            "tpi", "nm", "tipo", "ubere", "pernas", "ccs", "dpr", "facilidade de parto",
-        ],
-        "exemplo": ["7HO16011", "FRAZZLED", "Holandês", "Select Sires", "800", "45", "0.03", "35", "0.02",
-                    "2850", "780", "2.10", "1.80", "1.20", "2.85", "1.5", "6.2"],
-        "aceita_excel": True,
     },
 }
 
@@ -315,8 +300,13 @@ async def importar_controle_leiteiro_simples(
 
     criados = 0
     for dia, entradas in por_data.items():
-        resultado = criar_controles(ControlesIn(data_controle=dia, entradas=entradas), session=session, user=user, fazenda_id=fazenda_id)
+        # Importação em massa usa o caminho NÃO estrito: a vaca sem lactação
+        # aberta é pulada e reportada em `erros`, em vez de derrubar o arquivo
+        # inteiro (ver producao._gravar_controles).
+        resultado = _gravar_controles(session, ControlesIn(data_controle=dia, entradas=entradas),
+                                      user.id if isinstance(user, Usuario) else None, fazenda_id, estrito=False)
         criados += resultado["criados"]
+        erros.extend(i["motivo"] for i in resultado["ignorados"])
     return {"categoria": "controle_leiteiro_simples", "criados": criados, "erros": erros}
 
 
@@ -479,7 +469,10 @@ async def importar_fornecedores(
 
 
 @router.post("/animais_cadastro")
-async def importar_animais_cadastro(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+async def importar_animais_cadastro(
+    file: UploadFile, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
     """
     Cadastro em lote de animais pela ficha simplificada — cria os que não
     existem e atualiza os que já existem (casado por número), sem exigir a
@@ -495,9 +488,21 @@ async def importar_animais_cadastro(file: UploadFile, session: Session = Depends
             erros.append(f"Linha {i}: número é obrigatório")
             continue
 
-        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        # BUG DE SEGURANÇA CORRIGIDO: sem o filtro de fazenda_id, um número
+        # coincidente com o de outra fazenda-cliente sobrescrevia o cadastro
+        # dela; animais novos eram criados sem fazenda_id (órfãos).
+        animal = session.exec(
+            select(Animal).where(Animal.numero == numero, Animal.fazenda_id == fazenda_id)
+        ).first()
         if not animal:
-            animal = Animal(numero=numero, ativo=True)
+            # `Animal.numero` passou a ser único só POR FAZENDA (ver migração
+            # c24befa94c1b) — duas fazendas diferentes podem legitimamente ter
+            # cada uma o seu animal "100" (é justamente o caso da Fazenda
+            # Teste, cópia da fazenda real com os mesmos números). Por isso
+            # NÃO existe mais aqui a checagem de "número já usado em outra
+            # fazenda": ela vinha de quando a unicidade era global e hoje
+            # bloquearia uma importação legítima.
+            animal = Animal(numero=numero, ativo=True, fazenda_id=fazenda_id)
             criados += 1
         else:
             atualizados += 1
@@ -539,7 +544,10 @@ async def importar_animais_cadastro(file: UploadFile, session: Session = Depends
 
 
 @router.post("/animais_genealogia")
-async def importar_animais_genealogia(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+async def importar_animais_genealogia(
+    file: UploadFile, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
     """
     Complemento de genealogia (pai/mãe) para animais JÁ CADASTRADOS — ao
     contrário de /animais_cadastro, NÃO cria animal novo (número não
@@ -557,7 +565,11 @@ async def importar_animais_genealogia(file: UploadFile, session: Session = Depen
         if not numero:
             erros.append(f"Linha {i}: número é obrigatório")
             continue
-        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        # BUG DE SEGURANÇA CORRIGIDO: sem este filtro, esta rota editava a
+        # genealogia de um animal de OUTRA fazenda se o número coincidisse.
+        animal = session.exec(
+            select(Animal).where(Animal.numero == numero, Animal.fazenda_id == fazenda_id)
+        ).first()
         if not animal:
             erros.append(f"Linha {i}: animal {numero} não encontrado — cadastre-o primeiro (ex.: em \"Cadastro de animais em lote\")")
             continue
@@ -590,7 +602,10 @@ async def importar_animais_genealogia(file: UploadFile, session: Session = Depen
 
 
 @router.post("/qualidade_leite")
-async def importar_qualidade_leite(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+async def importar_qualidade_leite(
+    file: UploadFile, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
     """Histórico de qualidade do leite — uma linha por coleta (tanque quando
     numero_matriz vem vazio, ou de uma vaca específica)."""
     content = await file.read()
@@ -643,14 +658,25 @@ async def importar_qualidade_leite(file: UploadFile, session: Session = Depends(
             lactose_pct=parse_float(get(row_norm, "lactose_pct")),
             nul=parse_float(get(row_norm, "nul")),
         )
-        criar_qualidade_leite(dados, session)
+        # BUG DE SEGURANÇA CORRIGIDO: `criar_qualidade_leite` é rota FastAPI
+        # (`user`/`fazenda_id` são `Depends(...)`); chamada POSICIONALMENTE,
+        # como estava aqui, esses dois parâmetros ficavam com o próprio objeto
+        # `Depends(...)` e `_usuario_id_seguro`/`fazenda_id_seguro` os
+        # convertiam para None — toda coleta importada nascia órfã, sem dono e
+        # sem autor. Registro sem fazenda_id aparece em TODA consulta do
+        # padrão tolerante do sistema, ou seja, dentro de todas as fazendas.
+        # Mesmo bug (e mesma correção por keyword) de `importar_pesagem`.
+        criar_qualidade_leite(dados, session=session, user=user, fazenda_id=fazenda_id)
         criados += 1
 
     return {"categoria": "qualidade_leite", "criados": criados, "erros": erros}
 
 
 @router.post("/dairycomp")
-async def importar_dairycomp(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+async def importar_dairycomp(
+    file: UploadFile, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
     """
     Importa um export do DairyComp 305 (uma linha por animal/parto) com a data
     de nascimento e as datas de parto — alimenta a idade ao 1º parto (Wisconsin)
@@ -663,9 +689,15 @@ async def importar_dairycomp(file: UploadFile, session: Session = Depends(get_se
     partos_criados = 0
     erros: list[str] = []
 
-    # Índice dos partos já existentes por (animal, data) para deduplicar.
+    # BUG DE SEGURANÇA CORRIGIDO: sem o filtro de fazenda_id, um número
+    # coincidente com o de outra fazenda-cliente alterava a data de
+    # nascimento dela e podia anexar um Parto ao animal errado. O índice de
+    # dedup também é escopado por fazenda — senão um (numero, data) já
+    # existente em OUTRA fazenda escondia um parto legítimo desta.
     existentes = {
-        (p.numero_matriz, p.data_parto) for p in session.exec(select(Parto)).all() if p.data_parto
+        (p.numero_matriz, p.data_parto)
+        for p in session.exec(select(Parto).where(Parto.fazenda_id == fazenda_id)).all()
+        if p.data_parto
     }
 
     # O DairyComp exporta separado por vírgula; o resto do site usa ';'. Aceita
@@ -689,9 +721,14 @@ async def importar_dairycomp(file: UploadFile, session: Session = Depends(get_se
         data_parto = parse_date(row.get("data_parto", ""))
         ordem = parse_int(row.get("ordem_parto", ""))
 
-        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        animal = session.exec(
+            select(Animal).where(Animal.numero == numero, Animal.fazenda_id == fazenda_id)
+        ).first()
         if not animal:
-            animal = Animal(numero=numero, data_nasc=data_nasc, ativo=True)
+            # Mesma observação de importar_animais_cadastro acima: numero é
+            # único só por fazenda desde c24befa94c1b, então coincidir com o
+            # número de outra fazenda não é mais motivo para recusar.
+            animal = Animal(numero=numero, data_nasc=data_nasc, ativo=True, fazenda_id=fazenda_id)
             session.add(animal)
             session.commit()
             session.refresh(animal)
@@ -704,11 +741,20 @@ async def importar_dairycomp(file: UploadFile, session: Session = Depends(get_se
         if data_parto and (numero, data_parto) not in existentes:
             session.add(Parto(
                 animal_id=animal.id, numero_matriz=numero, data_parto=data_parto, ordem_parto=ordem,
+                fazenda_id=fazenda_id,
             ))
             existentes.add((numero, data_parto))
             partos_criados += 1
 
     session.commit()
+    # Partos importados também precisam existir como LACTAÇÃO — senão o
+    # controle leiteiro dessas vacas passa a ser recusado (ver
+    # POST /producao/controles) por uma lactação que só falta materializar.
+    # Idempotente: reprocessar não duplica (ver rules/lactacao.py).
+    if partos_criados:
+        from fazenda.rules.lactacao import backfill_lactacoes
+        backfill_lactacoes(session)
+        session.commit()
     return {
         "categoria": "dairycomp", "criados": partos_criados,
         "animais_atualizados": animais_atualizados, "erros": erros,
@@ -716,7 +762,10 @@ async def importar_dairycomp(file: UploadFile, session: Session = Depends(get_se
 
 
 @router.post("/calendario_sanitario")
-async def importar_calendario_sanitario(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+async def importar_calendario_sanitario(
+    file: UploadFile, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
     """
     Calendário sanitário (preventivo) da fazenda — uma regra por linha. Casa o
     evento sanitário pelo nome (cria se não existir, já com a categoria
@@ -730,10 +779,16 @@ async def importar_calendario_sanitario(file: UploadFile, session: Session = Dep
 
     CATS_PREVENTIVAS = {"vacina", "exame", "tratamento"}
 
+    # BUG DE SEGURANÇA CORRIGIDO: EventoSanitario/Doenca são cadastros POR
+    # FAZENDA (uq_..._nome_fazenda) — buscar/criar sem fazenda_id podia
+    # editar o evento de OUTRA fazenda com o mesmo nome, ou criar um
+    # registro órfão (fazenda_id=NULL) global a todas as fazendas.
     def _evento(nome: str, categoria: str | None, doenca_id: int | None) -> EventoSanitario:
-        ev = session.exec(select(EventoSanitario).where(EventoSanitario.nome == nome)).first()
+        ev = session.exec(
+            select(EventoSanitario).where(EventoSanitario.nome == nome, EventoSanitario.fazenda_id == fazenda_id)
+        ).first()
         if not ev:
-            ev = EventoSanitario(nome=nome)
+            ev = EventoSanitario(nome=nome, fazenda_id=fazenda_id)
             session.add(ev)
         if categoria and not ev.categoria_preventiva:
             ev.categoria_preventiva = categoria
@@ -746,9 +801,11 @@ async def importar_calendario_sanitario(file: UploadFile, session: Session = Dep
         nome = (nome or "").strip()
         if not nome:
             return None
-        d = session.exec(select(Doenca).where(Doenca.nome == nome)).first()
+        d = session.exec(
+            select(Doenca).where(Doenca.nome == nome, Doenca.fazenda_id == fazenda_id)
+        ).first()
         if not d:
-            d = Doenca(nome=nome)
+            d = Doenca(nome=nome, fazenda_id=fazenda_id)
             session.add(d)
             session.flush()
         return d.id
@@ -792,6 +849,7 @@ async def importar_calendario_sanitario(file: UploadFile, session: Session = Dep
                 evento_sanitario_id=ev.id, categoria_alvo=categoria_alvo, doenca_id=doenca_id,
                 produto=row.get("produto", "").strip() or None, dosagem=row.get("dosagem", "").strip() or None,
                 frequencia_valor=freq_valor, frequencia_unidade=freq_unidade, data_evento=data_evento,
+                fazenda_id=fazenda_id,
             ))
             criados += 1
 
@@ -833,13 +891,27 @@ async def importar_baixas_pendencias_agenda(
     criados, dispensados, erros = 0, 0, []
 
     def _ja_realizado(eid: str) -> bool:
-        return session.exec(select(EventoRealizado).where(EventoRealizado.evento_id == eid)).first() is not None
+        # `fazenda_id` gravado abaixo (não mais None) — filtra por ele também
+        # aqui: o par (evento_id, fazenda_id) é a chave real (uq em
+        # models/sistema.py::EventoRealizado), não só evento_id.
+        query = select(EventoRealizado).where(EventoRealizado.evento_id == eid)
+        if fazenda_id is not None:
+            query = query.where(EventoRealizado.fazenda_id == fazenda_id)
+        return session.exec(query).first() is not None
 
     def _dispensar(eid: str) -> bool:
         """Marca o evento como realizado; False se já estava (evita duplicar Sanidade)."""
         if _ja_realizado(eid):
             return False
-        session.add(EventoRealizado(evento_id=eid))
+        # BUG DE SEGURANÇA CORRIGIDO: gravava sem `fazenda_id` (None); como
+        # agenda.py lê EventoRealizado com `fazenda_id.in_((fazenda_id, None))`
+        # (a linha NULL "dispensa para todo mundo"), um `eid` que a cadeia
+        # acima resolvesse para a REGRA de outra fazenda dispensava a
+        # pendência dela na Agenda dela — sem ela ter feito nada. Combinado
+        # com o filtro de fazenda_id nas duas seleções abaixo, `eid` agora só
+        # pode se referir a uma regra da PRÓPRIA fazenda, e fica gravado como
+        # tal.
+        session.add(EventoRealizado(evento_id=eid, fazenda_id=fazenda_id))
         session.flush()
         return True
 
@@ -866,7 +938,17 @@ async def importar_baixas_pendencias_agenda(
             if tipo == "evento_sanitario":
                 if not nome_evento:
                     raise ValueError("nome_evento é obrigatório para tipo evento_sanitario")
-                ev = session.exec(select(EventoSanitario).where(EventoSanitario.nome == nome_evento)).first()
+                # BUG DE SEGURANÇA CORRIGIDO: faltava o filtro por fazenda_id
+                # (uq real é (nome, fazenda_id) — models/sanidade.py — e cada
+                # fazenda cria seu próprio "Vermífugo"/"Brucelose B19" com o
+                # mesmo nome do catálogo semeado). Sem o filtro, um nome_evento
+                # que também existisse em OUTRA fazenda podia resolver o
+                # EventoSanitario dela — produto/dose padrão e regras de
+                # gatilho alheios entrando no lançamento local.
+                query_ev = select(EventoSanitario).where(EventoSanitario.nome == nome_evento)
+                if fazenda_id is not None:
+                    query_ev = query_ev.where(EventoSanitario.fazenda_id == fazenda_id)
+                ev = session.exec(query_ev).first()
                 if not ev:
                     raise ValueError(f'evento sanitário "{nome_evento}" não encontrado')
 
@@ -874,7 +956,14 @@ async def importar_baixas_pendencias_agenda(
                     if len(numeros) != 1:
                         raise ValueError("este evento é por gatilho (por animal) — informe exatamente 1 numero_animal")
                     numero = numeros[0]
-                    candidatos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, ev.offset_dias or 0, ev.sexo_alvo)
+                    # `fazenda_id` explícito (antes ficava None por posição —
+                    # mesmo defeito do F-C-01): sem ele, a validação do
+                    # gatilho considerava animal/secagem/parto/etc. de
+                    # QUALQUER fazenda, não só da própria.
+                    candidatos = _datas_gatilho(
+                        session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, ev.offset_dias or 0, ev.sexo_alvo,
+                        fazenda_id=fazenda_id,
+                    )
                     if not any(n == numero and d == data_pendencia for n, d in candidatos):
                         raise ValueError(f"nenhuma ocorrência do gatilho deste evento para a matriz {numero} em {data_pendencia.isoformat()}")
                     eid = f"evento_sanitario_{ev.id}__{numero}__{data_pendencia.isoformat()}"
@@ -918,11 +1007,23 @@ async def importar_baixas_pendencias_agenda(
             elif tipo == "calendario_sanitario":
                 if not nome_evento:
                     raise ValueError("nome_evento é obrigatório para tipo calendario_sanitario")
-                regras = session.exec(
+                # BUG DE SEGURANÇA CORRIGIDO: mesma omissão do ramo
+                # `evento_sanitario` acima — o JOIN casava regras de
+                # CalendarioSanitario de QUALQUER fazenda que tivesse um
+                # EventoSanitario com esse nome. `_dispensar` abaixo usa o id
+                # da regra encontrada (`c.id`) no `eid` — resolver a regra
+                # errada dispensava a pendência de OUTRA fazenda na Agenda
+                # dela (ver rules/eventos_sanitarios.py e agenda.py, mesmo
+                # padrão de filtro estrito por fazenda_id usado nesses dois
+                # arquivos para CalendarioSanitario).
+                query_regras = (
                     select(CalendarioSanitario)
                     .join(EventoSanitario, CalendarioSanitario.evento_sanitario_id == EventoSanitario.id)
                     .where(EventoSanitario.nome == nome_evento, CalendarioSanitario.ativo == True)  # noqa: E712
-                ).all()
+                )
+                if fazenda_id is not None:
+                    query_regras = query_regras.where(CalendarioSanitario.fazenda_id == fazenda_id)
+                regras = session.exec(query_regras).all()
                 validas = [c for c in regras if _ocorrencia_valida(c.data_evento, c.frequencia_valor, c.frequencia_unidade, data_pendencia)]
                 if not validas:
                     raise ValueError(f'nenhuma regra do calendário sanitário "{nome_evento}" tem ocorrência em {data_pendencia.isoformat()}')
@@ -959,11 +1060,19 @@ async def importar_baixas_pendencias_agenda(
                 if len(numeros) != 1:
                     raise ValueError("informe exatamente 1 numero_animal para tipo aplicacao_agendada")
                 numero = numeros[0]
+                # BUG DE SEGURANÇA CORRIGIDO: sem o filtro de fazenda_id, uma
+                # colisão de numero_matriz com outra fazenda (numero deixou
+                # de ser único globalmente — ver Animal.numero) podia pegar a
+                # AplicacaoAgendada PENDENTE DE OUTRA FAZENDA e, pior, o
+                # `_baixar_aplicacao_agendada` abaixo era chamado sem
+                # `fazenda_id` (ficava None por default) — perdia até a
+                # trava de segurança que a própria função já tem.
                 ag = session.exec(
                     select(AplicacaoAgendada).where(
                         AplicacaoAgendada.numero_matriz == numero,
                         AplicacaoAgendada.data == data_pendencia,
                         AplicacaoAgendada.aplicado == False,  # noqa: E712
+                        AplicacaoAgendada.fazenda_id == fazenda_id,
                     )
                 ).first()
                 if not ag:
@@ -971,7 +1080,10 @@ async def importar_baixas_pendencias_agenda(
                 eid = f"aplic_agendada_{ag.id}"
                 novo = _dispensar(eid)
                 if novo:
-                    _baixar_aplicacao_agendada(session, eid, produto, dose, unidade, via)
+                    _baixar_aplicacao_agendada(
+                        session, eid, produto, dose, unidade, via,
+                        fazenda_id=fazenda_id, usuario_id=usuario_id_seguro(user),
+                    )
                     criados += 1
                     dispensados += 1
 
@@ -987,40 +1099,23 @@ async def importar_baixas_pendencias_agenda(
     return {"categoria": "baixas_pendencias_agenda", "criados": criados, "dispensados": dispensados, "erros": erros}
 
 
-@router.post("/touros_naab")
-async def importar_touros_naab(
-    file: UploadFile,
-    fonte: str = Form(""),
-    rodada: str = Form(""),
-    session: Session = Depends(get_session),
-) -> dict:
-    """
-    Catálogo genético de touros (provas do fornecedor / NAAB-CDCB). Aceita o
-    Excel (.xlsx) ou CSV exportado do ABS BullSearch, Alta, Select Sires etc.
-
-    Catálogos completos (dezenas de colunas de provas, ex.: exportação da
-    Alta Genetics) são lidos por posição de coluna, preservando TODOS os
-    dados por touro; CSVs simples continuam usando o casamento por apelidos.
-    Upsert por código NAAB; nunca apaga touros existentes.
-    """
-    from fazenda.rules.touros import eh_planilha_rica, importar_touros, importar_touros_planilha_rica, ler_planilha
-    content = await file.read()
-    nome = (file.filename or "").lower()
-    try:
-        if nome.endswith((".xlsx", ".xlsm")):
-            import openpyxl
-            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-            cabecalhos = next(wb.active.iter_rows(values_only=True), [])
-            if eh_planilha_rica(list(cabecalhos)):
-                resultado = importar_touros_planilha_rica(session, content, fonte.strip() or None, rodada.strip() or None)
-                return {"categoria": "touros_naab", **resultado}
-        linhas = ler_planilha(content, file.filename)
-    except HTTPException:
-        raise
-    except Exception as e:  # noqa: BLE001 — arquivo ilegível vira erro amigável
-        raise HTTPException(status_code=400, detail=f"Não consegui ler o arquivo: {e}")
-    resultado = importar_touros(session, linhas, fonte.strip() or None, rodada.strip() or None)
-    return {"categoria": "touros_naab", **resultado}
+# ── CATÁLOGO DE TOUROS NAAB: SAIU DAQUI (furo de segurança, set/2026) ──────
+# `POST /importar/touros_naab` (e a categoria "touros_naab" do catálogo de
+# modelos acima) viviam aqui e agora vivem em
+# fazenda/api/routers/painel_cowdata_touros.py::importar_touros_naab_painel,
+# sob a permissão "editar touros NAAB" do cadastro de equipe do Painel
+# CowData.
+#
+# O QUE ESTAVA ERRADO. `Touro` é catálogo GLOBAL (sem `fazenda_id`, uma
+# tabela só lida por todas as fazendas-cliente), mas esta rota era protegida
+# apenas por `exigir_modulo("upload")` — a mesma trava dos importadores de
+# dado da PRÓPRIA fazenda, onde ela é suficiente. Na prática, qualquer
+# fazenda-cliente com o módulo Upload subia uma planilha e reescrevia por
+# upsert (nome, provas, TPI/NM$, rodada) o catálogo que todas as outras
+# consultam. Mesmo furo, e mesma correção, das rotas de
+# POST/PUT/DELETE /cadastro/touros — ver cadastro/genetica.py.
+#
+# A LEITURA da fazenda não mudou: `GET /cadastro/touros` continua igual.
 
 
 @router.post("/backfill")
@@ -1034,11 +1129,17 @@ def backfill_fornecedores_e_estoque(
     que ainda não existem — idempotente, seguro de rodar quantas vezes quiser.
     Não sobrescreve nada que já existe, só preenche o que falta.
     """
-    fornecedor_query = select(Fornecedor.nome)
-    conta_query = select(ContaGerencial.fornecedor_cliente)
-    if fazenda_id is not None:
-        fornecedor_query = fornecedor_query.where(Fornecedor.fazenda_id == fazenda_id)
-        conta_query = conta_query.where(ContaGerencial.fazenda_id == fazenda_id)
+    # Os filtros abaixo são INCONDICIONAIS de propósito. O padrão tolerante
+    # (`if fazenda_id is not None: query = query.where(...)`) não restringe
+    # quando fazenda_id é None — ele DESLIGA o isolamento, e aqui isso
+    # significa a fazenda 2 varrer os lançamentos/dietas/aplicações da
+    # fazenda 1 e materializar os nomes de produto dela como cadastro de
+    # estoque dentro da 2. `get_fazenda_id_escrita` só devolve None em
+    # ambiente sem multi-fazenda provisionado (tabela `fazenda` vazia — ver
+    # `resolver_fazenda_id_escrita`), e aí `== None` vira `IS NULL`, que é
+    # exatamente o conjunto de linhas desse ambiente.
+    fornecedor_query = select(Fornecedor.nome).where(Fornecedor.fazenda_id == fazenda_id)
+    conta_query = select(ContaGerencial.fornecedor_cliente).where(ContaGerencial.fazenda_id == fazenda_id)
     fornecedores_existentes = set(session.exec(fornecedor_query).all())
     nomes_conta = {c.strip() for c in session.exec(conta_query).all() if c and c.strip()}
     fornecedores_criados = []
@@ -1047,18 +1148,18 @@ def backfill_fornecedores_e_estoque(
         session.add(f)
         fornecedores_criados.append(nome)
 
-    estoque_query = select(Estoque.nome)
-    curva_query = select(CurvaABC.produto)
+    estoque_query = select(Estoque.nome).where(Estoque.fazenda_id == fazenda_id)
+    curva_query = select(CurvaABC.produto).where(CurvaABC.fazenda_id == fazenda_id)
     # NÃO aplicar sem_itens_de_vale aqui — são candidatos a cadastro de
     # estoque a partir de nomes de produto já usados; excluir os itens de
     # vale só empobreceria a lista de sugestões (ver rules/vale_item.py).
-    lancamento_query = select(LancamentoItem.produto)
-    sanidade_query = select(Sanidade.produto)
-    if fazenda_id is not None:
-        estoque_query = estoque_query.where(Estoque.fazenda_id == fazenda_id)
-        curva_query = curva_query.where(CurvaABC.fazenda_id == fazenda_id)
-        lancamento_query = lancamento_query.where(LancamentoItem.fazenda_id == fazenda_id)
-        sanidade_query = sanidade_query.where(Sanidade.fazenda_id == fazenda_id)
+    lancamento_query = select(LancamentoItem.produto).where(LancamentoItem.fazenda_id == fazenda_id)
+    sanidade_query = select(Sanidade.produto).where(Sanidade.fazenda_id == fazenda_id)
+    # BUG DE SEGURANÇA CORRIGIDO: esta era a ÚNICA das quatro fontes lida sem
+    # nenhum filtro de fazenda — o ingrediente da dieta da fazenda 1 (que pode
+    # ser a fórmula/produto que ela não quer expor) virava item de estoque
+    # cadastrado dentro da fazenda 2, só por rodar o backfill.
+    dieta_query = select(Dieta.ingrediente).where(Dieta.fazenda_id == fazenda_id)
     estoque_existente = set(session.exec(estoque_query).all())
     candidatos_estoque: set[str] = set()
     for produto in session.exec(curva_query).all():
@@ -1067,7 +1168,7 @@ def backfill_fornecedores_e_estoque(
     for produto in session.exec(lancamento_query).all():
         if produto and produto.strip():
             candidatos_estoque.add(produto.strip())
-    for ingrediente in session.exec(select(Dieta.ingrediente)).all():
+    for ingrediente in session.exec(dieta_query).all():
         if ingrediente and ingrediente.strip():
             candidatos_estoque.add(ingrediente.strip())
     for produto in session.exec(sanidade_query).all():

@@ -21,6 +21,7 @@ import { UNIDADES_PROTOCOLO } from "@/lib/constants";
 import { TabBar } from "@/components/ui";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import type { ColunaExport } from "@/lib/export";
+import { WizardProtocolo, type PassoWizard } from "@/components/protocolos/WizardProtocolo";
 
 const FormProtocoloCustomizado = dynamic(() => import("@/components/lancamentos/FormProtocoloCustomizado").then((m) => m.FormProtocoloCustomizado), { ssr: false });
 // Os mesmos formulários já usados em Lançamentos — reaproveitados aqui, na
@@ -29,9 +30,21 @@ const FormProtocoloCustomizado = dynamic(() => import("@/components/lancamentos/
 const FormProtocoloIatf = dynamic(() => import("@/components/lancamentos/FormProtocoloIatf").then((m) => m.FormProtocoloIatf), { ssr: false });
 const FormInducaoLactacao = dynamic(() => import("@/components/FormInducaoLactacao").then((m) => m.FormInducaoLactacao), { ssr: false });
 const FormProtocoloSanitario = dynamic(() => import("@/components/lancamentos/FormProtocoloSanitario").then((m) => m.FormProtocoloSanitario), { ssr: false });
+// Aplicar (não cadastrar) uma regra do calendário sanitário — mesmo formulário
+// já usado em Lançamentos > Sanitário > Preventiva > Calendário sanitário.
+const FormAplicarCalendarioSanitario = dynamic(() => import("@/components/lancamentos/FormAplicarCalendarioSanitario").then((m) => m.FormAplicarCalendarioSanitario), { ssr: false });
+// Acompanhamento/Histórico do calendário sanitário — MESMOS componentes já
+// usados em Sanidade > Preventiva (Calendário/Cronogramas e Histórico
+// agrupado por vacina/exame). Nada de tabela ou endpoint paralelo.
+const CalendarioSanitarioAcompanhamento = dynamic(() => import("@/app/sanidade/page").then((m) => m.CalendarioSanitarioView), { ssr: false });
+const HistoricoPreventivoView = dynamic(() => import("@/components/sanidade/HistoricoPreventivoView").then((m) => m.HistoricoPreventivoView), { ssr: false });
 // Editores de cadastro reaproveitados de Configurações > Cadastro — MESMO
 // componente, mesmo endpoint, mesmos protocolos. Ver comentário em TIPOS_CADASTRO.
 const CadastroProtocolosSanitarios = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosSanitarios), { ssr: false });
+// Cadastro do Calendário Sanitário (Preventivo) — migrado de Lançamentos para
+// cá: em Lançamentos só se aplica uma regra já cadastrada (ver
+// FormAplicarCalendarioSanitario), o cadastro da regra em si mora aqui.
+const FormCalendarioSanitario = dynamic(() => import("@/components/lancamentos/FormCalendarioSanitario").then((m) => m.FormCalendarioSanitario), { ssr: false });
 const CadastroProtocolosInducao = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosInducao), { ssr: false });
 const CadastroProtocolosCustomizados = dynamic(() => import("@/components/CadastroProtocolosCustomizados"), { ssr: false });
 const CadastroLida = dynamic(() => import("@/components/CadastroLida"), { ssr: false });
@@ -60,10 +73,21 @@ function novaEtapaIatf(dia: number): EtapaProtocoloIatf {
   return { dia, criterio_tipo: "medicamento", produto: "", dose: null, unidade: "", via: "" };
 }
 
+type IatfMoldeForm = { nome: string; observacao: string; etapas: EtapaProtocoloIatf[] };
+const iatfMoldeFormVazio = (): IatfMoldeForm => ({ nome: "", observacao: "", etapas: [novaEtapaIatf(0)] });
+
+// Wizard de 4 etapas (T5) para o molde IATF — divisão escolhida:
+//  1. Identificação — nome do molde.
+//  2. Critérios — observação livre (este tipo não tem doença/finalidade; o
+//     texto explicando a regra D0/D7/D9 e o cálculo automático da
+//     inseminação mora aqui, já que é o único "critério" configurável além
+//     do roteiro em si).
+//  3. Roteiro (etapas) — os hormônios por dia, já existente.
+//  4. Revisão — resumo antes de gravar.
 function EditorMoldeIatf({ molde, onSalvo, onCancelar }: { molde: ProtocoloIatfMolde | null; onSalvo: () => void; onCancelar: () => void }) {
-  const [nome, setNome] = useState(molde?.nome || "");
-  const [observacao, setObservacao] = useState(molde?.observacao || "");
-  const [etapas, setEtapas] = useState<EtapaProtocoloIatf[]>(molde?.etapas.length ? molde.etapas : [novaEtapaIatf(0)]);
+  const [form, setForm] = useState<IatfMoldeForm>(() => molde
+    ? { nome: molde.nome || "", observacao: molde.observacao || "", etapas: molde.etapas.length ? molde.etapas : [novaEtapaIatf(0)] }
+    : iatfMoldeFormVazio());
   const [principios, setPrincipios] = useState<string[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -71,89 +95,137 @@ function EditorMoldeIatf({ molde, onSalvo, onCancelar }: { molde: ProtocoloIatfM
   useEffect(() => { fetchPrincipiosAtivos().then((d: any[]) => setPrincipios(d.map((p) => p.nome))).catch(() => {}); }, []);
 
   function atualizar(i: number, patch: Partial<EtapaProtocoloIatf>) {
-    setEtapas((es) => es.map((e, idx) => (idx === i ? { ...e, ...patch } : e)));
+    setForm((f) => ({ ...f, etapas: f.etapas.map((e, idx) => (idx === i ? { ...e, ...patch } : e)) }));
   }
-  function remover(i: number) { setEtapas((es) => es.filter((_, idx) => idx !== i)); }
-  function adicionar() { setEtapas((es) => [...es, novaEtapaIatf(0)]); }
+  function remover(i: number) { setForm((f) => ({ ...f, etapas: f.etapas.filter((_, idx) => idx !== i) })); }
+  function adicionar() { setForm((f) => ({ ...f, etapas: [...f.etapas, novaEtapaIatf(0)] })); }
 
-  async function salvar() {
+  // Devolve true só quando salvou de verdade — sinal que o wizard usa para
+  // limpar o rascunho do localStorage (ver WizardProtocolo.onConcluir).
+  async function salvar(): Promise<boolean> {
     setErro(null);
-    if (!nome.trim()) { setErro("Informe o nome do protocolo."); return; }
-    if (!etapas.length) { setErro("Informe ao menos uma etapa (D0, D7 ou D9)."); return; }
+    if (!form.nome.trim()) { setErro("Informe o nome do protocolo."); return false; }
+    if (!form.etapas.length) { setErro("Informe ao menos uma etapa (D0, D7 ou D9)."); return false; }
     setSalvando(true);
     try {
-      const payload = { nome: nome.trim(), observacao: observacao || null, ativo: true, etapas };
+      const payload = { nome: form.nome.trim(), observacao: form.observacao || null, ativo: true, etapas: form.etapas };
       if (molde) await atualizarProtocoloIatfCadastrado(molde.id, payload);
       else await criarProtocoloIatfCadastrado(payload);
       onSalvo();
+      return true;
     } catch (e: any) {
       setErro(e.message || "Erro ao salvar o protocolo IATF");
+      return false;
     } finally {
       setSalvando(false);
     }
   }
 
+  const passos: PassoWizard<IatfMoldeForm>[] = [
+    {
+      id: "identificacao", titulo: "Identificação",
+      validar: (f) => (!f.nome.trim() ? "Informe o nome do protocolo." : null),
+      render: ({ form: f, setForm: sf }) => (
+        <div><label style={labelStyle}>Nome</label>
+          <input style={inputStyle} value={f.nome} onChange={(e) => sf({ ...f, nome: e.target.value })} placeholder="ex.: Protocolo IATF Lote A" autoFocus /></div>
+      ),
+    },
+    {
+      id: "criterios", titulo: "Critérios",
+      render: ({ form: f, setForm: sf }) => (
+        <div>
+          <label style={labelStyle}>Observação</label>
+          <input style={inputStyle} value={f.observacao} onChange={(e) => sf({ ...f, observacao: e.target.value })} placeholder="Opcional" />
+          <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
+            O dia de cada hormônio é livre — o clássico é D0/D7/D9, mas há protocolo com outro espaçamento (ex.: D0/D8/D10/D12).
+            A inseminação nunca entra no molde: ela é sempre 2 dias depois da última etapa cadastrada.
+          </p>
+        </div>
+      ),
+    },
+    {
+      id: "roteiro", titulo: "Roteiro",
+      validar: (f) => (!f.etapas.length ? "Informe ao menos uma etapa (D0, D7 ou D9)." : null),
+      render: ({ form: f }) => (
+        <div>
+          {f.etapas.map((e, i) => (
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "auto 1fr 1fr 1fr auto auto auto", gap: "0.4rem", alignItems: "end", marginBottom: "0.5rem" }}>
+              <div><label style={labelStyle}>Dia</label>
+                <div className="flex items-center gap-1">
+                  <span style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>D</span>
+                  <input type="number" min={0} step={1} style={inputStyle} value={e.dia}
+                         onChange={(ev) => atualizar(i, { dia: Math.max(0, Number(ev.target.value) || 0) })} />
+                </div>
+              </div>
+              <div><label style={labelStyle}>Definir por</label>
+                <select style={inputStyle} value={e.criterio_tipo} onChange={(ev) => atualizar(i, { criterio_tipo: ev.target.value as any, produto: "" })}>
+                  <option value="medicamento">Medicamento</option>
+                  <option value="principio_ativo">Princípio ativo</option>
+                  <option value="classificacao">Classificação</option>
+                </select>
+              </div>
+              <div><label style={labelStyle}>{e.criterio_tipo === "principio_ativo" ? "Princípio ativo" : e.criterio_tipo === "classificacao" ? "Classificação" : "Medicamento"}</label>
+                {e.criterio_tipo === "principio_ativo" ? (
+                  <select style={inputStyle} value={e.produto} onChange={(ev) => atualizar(i, { produto: ev.target.value })}>
+                    <option value="">Selecione…</option>
+                    {principios.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                ) : (
+                  <input style={inputStyle} value={e.produto} onChange={(ev) => atualizar(i, { produto: ev.target.value })} placeholder="Nome" />
+                )}
+              </div>
+              <div><label style={labelStyle}>Dose / unid.</label>
+                <div style={{ display: "flex", gap: "0.3rem" }}>
+                  <input type="number" style={inputStyle} value={e.dose ?? ""} onChange={(ev) => atualizar(i, { dose: ev.target.value ? Number(ev.target.value) : null })} placeholder="0" />
+                  <select style={inputStyle} value={e.unidade || ""} onChange={(ev) => atualizar(i, { unidade: ev.target.value })}>
+                    <option value="">—</option>
+                    {/* Unidade fora da lista (protocolo antigo) continua visível para não sumir ao editar. */}
+                    {e.unidade && !UNIDADES_PROTOCOLO.includes(e.unidade) && <option value={e.unidade}>{e.unidade}</option>}
+                    {UNIDADES_PROTOCOLO.map((u) => <option key={u} value={u}>{u}</option>)}
+                  </select>
+                </div>
+              </div>
+              <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => remover(i)} title="Remover etapa"><Trash2 size={15} /></button>
+            </div>
+          ))}
+          <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem", display: "inline-flex", alignItems: "center", gap: 4 }} onClick={adicionar}>
+            <Plus size={13} /> Adicionar hormônio
+          </button>
+        </div>
+      ),
+    },
+    {
+      id: "revisao", titulo: "Revisão",
+      render: ({ form: f }) => (
+        <div>
+          <p style={{ fontSize: "0.82rem", marginBottom: "0.6rem" }}><strong>{f.nome || "(sem nome)"}</strong></p>
+          <table className="fazenda-table">
+            <thead><tr><th>Dia</th><th>Hormônio/critério</th><th>Dose</th></tr></thead>
+            <tbody>
+              {f.etapas.map((e, i) => (
+                <tr key={i}><td>D{e.dia}</td><td>{e.produto || "—"}</td><td>{e.dose != null ? `${e.dose} ${e.unidade || ""}` : "—"}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="card mb-3" style={{ background: "var(--surface-2)" }}>
       <div className="card-header mb-2">{molde ? "Editar protocolo IATF" : "Novo protocolo IATF"}</div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-        <div><label style={labelStyle}>Nome</label>
-          <input style={inputStyle} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="ex.: Protocolo IATF Lote A" /></div>
-        <div><label style={labelStyle}>Observação</label>
-          <input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} placeholder="Opcional" /></div>
-      </div>
-      <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
-        O dia de cada hormônio é livre — o clássico é D0/D7/D9, mas há protocolo com outro espaçamento (ex.: D0/D8/D10/D12).
-        A inseminação nunca entra no molde: ela é sempre 2 dias depois da última etapa cadastrada.
-      </p>
-      {etapas.map((e, i) => (
-        <div key={i} style={{ display: "grid", gridTemplateColumns: "auto 1fr 1fr 1fr auto auto auto", gap: "0.4rem", alignItems: "end", marginBottom: "0.5rem" }}>
-          <div><label style={labelStyle}>Dia</label>
-            <div className="flex items-center gap-1">
-              <span style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>D</span>
-              <input type="number" min={0} step={1} style={inputStyle} value={e.dia}
-                     onChange={(ev) => atualizar(i, { dia: Math.max(0, Number(ev.target.value) || 0) })} />
-            </div>
-          </div>
-          <div><label style={labelStyle}>Definir por</label>
-            <select style={inputStyle} value={e.criterio_tipo} onChange={(ev) => atualizar(i, { criterio_tipo: ev.target.value as any, produto: "" })}>
-              <option value="medicamento">Medicamento</option>
-              <option value="principio_ativo">Princípio ativo</option>
-              <option value="classificacao">Classificação</option>
-            </select>
-          </div>
-          <div><label style={labelStyle}>{e.criterio_tipo === "principio_ativo" ? "Princípio ativo" : e.criterio_tipo === "classificacao" ? "Classificação" : "Medicamento"}</label>
-            {e.criterio_tipo === "principio_ativo" ? (
-              <select style={inputStyle} value={e.produto} onChange={(ev) => atualizar(i, { produto: ev.target.value })}>
-                <option value="">Selecione…</option>
-                {principios.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
-            ) : (
-              <input style={inputStyle} value={e.produto} onChange={(ev) => atualizar(i, { produto: ev.target.value })} placeholder="Nome" />
-            )}
-          </div>
-          <div><label style={labelStyle}>Dose / unid.</label>
-            <div style={{ display: "flex", gap: "0.3rem" }}>
-              <input type="number" style={inputStyle} value={e.dose ?? ""} onChange={(ev) => atualizar(i, { dose: ev.target.value ? Number(ev.target.value) : null })} placeholder="0" />
-              <select style={inputStyle} value={e.unidade || ""} onChange={(ev) => atualizar(i, { unidade: ev.target.value })}>
-                <option value="">—</option>
-                {/* Unidade fora da lista (protocolo antigo) continua visível para não sumir ao editar. */}
-                {e.unidade && !UNIDADES_PROTOCOLO.includes(e.unidade) && <option value={e.unidade}>{e.unidade}</option>}
-                {UNIDADES_PROTOCOLO.map((u) => <option key={u} value={u}>{u}</option>)}
-              </select>
-            </div>
-          </div>
-          <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => remover(i)} title="Remover etapa"><Trash2 size={15} /></button>
-        </div>
-      ))}
-      <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem", display: "inline-flex", alignItems: "center", gap: 4, marginBottom: "0.8rem" }} onClick={adicionar}>
-        <Plus size={13} /> Adicionar hormônio
-      </button>
-      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{erro}</p>}
-      <div className="flex items-center gap-3">
-        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
-        <button className="btn-ghost" onClick={onCancelar}>Cancelar</button>
-      </div>
+      <WizardProtocolo<IatfMoldeForm>
+        chaveRascunho={molde ? null : "wizard-protocolo:iatf"}
+        form={form} setForm={setForm}
+        ehVazio={(f) => !f.nome.trim() && !f.observacao.trim() && f.etapas.every((e) => !e.produto.trim())}
+        passos={passos}
+        onCancelar={onCancelar}
+        onConcluir={salvar}
+        salvando={salvando}
+        rotuloConcluir="Salvar"
+        erro={erro}
+      />
     </div>
   );
 }
@@ -175,45 +247,55 @@ function CadastroIatf() {
   }
 
   return (
-    <div className="card">
-      <div className="flex items-center justify-between mb-2">
-        <div className="card-header" style={{ padding: 0 }}>Protocolos IATF cadastrados</div>
-        {editando === null && (
-          <button className="btn-primary" style={{ fontSize: "0.78rem", display: "inline-flex", alignItems: "center", gap: 4 }} onClick={() => setEditando("novo")}>
-            <Plus size={13} /> Novo
-          </button>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        <div className="card">
+          <div className="flex items-center justify-between mb-2">
+            <div className="card-header" style={{ padding: 0 }}>Protocolos IATF cadastrados</div>
+            {editando === null && (
+              <button className="btn-primary" style={{ fontSize: "0.78rem", display: "inline-flex", alignItems: "center", gap: 4 }} onClick={() => setEditando("novo")}>
+                <Plus size={13} /> Novo
+              </button>
+            )}
+          </div>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+            Define os hormônios em dias livres (o clássico é D0/D7/D9, mas aceita outro espaçamento, ex.: D0/D8/D10/D12).
+            A inseminação nunca faz parte do molde — é sempre 2 dias depois da última etapa cadastrada.
+            Lançar sem escolher um molde continua funcionando (hormônios digitados na hora, cronograma clássico D0/D7/D9/D11), como sempre foi.
+          </p>
+          <table className="fazenda-table">
+            <thead><tr><th>Nome</th><th>Etapas</th><th></th></tr></thead>
+            <tbody>
+              {(moldesIatf || []).map((m) => (
+                <tr key={m.id}>
+                  <td style={{ fontWeight: 600 }}>{m.nome}{!m.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
+                  <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{m.etapas.map((e) => `D${e.dia}`).join(", ") || "—"}</td>
+                  <td style={{ textAlign: "right" }}>
+                    <button className="btn-ghost" style={{ fontSize: "0.74rem", marginRight: "0.5rem" }} onClick={() => setEditando(m)}>Editar</button>
+                    <button className="btn-ghost" style={{ fontSize: "0.74rem", color: "var(--red)" }} onClick={() => excluir(m.id)}>Excluir</button>
+                  </td>
+                </tr>
+              ))}
+              {moldesIatf && !moldesIatf.length && (
+                <tr><td colSpan={3} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo IATF cadastrado — lançar continua funcionando sem molde (hormônios digitados na hora).</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        {editando !== null ? (
+          <EditorMoldeIatf
+            molde={editando === "novo" ? null : editando}
+            onSalvo={() => { setEditando(null); carregar(); }}
+            onCancelar={() => setEditando(null)}
+          />
+        ) : (
+          <div className="card" style={{ textAlign: "center", padding: "2.2rem 1rem" }}>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione um protocolo para editar, ou clique em Novo.</p>
+          </div>
         )}
       </div>
-      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-        Define os hormônios em dias livres (o clássico é D0/D7/D9, mas aceita outro espaçamento, ex.: D0/D8/D10/D12).
-        A inseminação nunca faz parte do molde — é sempre 2 dias depois da última etapa cadastrada.
-        Lançar sem escolher um molde continua funcionando (hormônios digitados na hora, cronograma clássico D0/D7/D9/D11), como sempre foi.
-      </p>
-      {editando !== null && (
-        <EditorMoldeIatf
-          molde={editando === "novo" ? null : editando}
-          onSalvo={() => { setEditando(null); carregar(); }}
-          onCancelar={() => setEditando(null)}
-        />
-      )}
-      <table className="fazenda-table">
-        <thead><tr><th>Nome</th><th>Etapas</th><th></th></tr></thead>
-        <tbody>
-          {(moldesIatf || []).map((m) => (
-            <tr key={m.id}>
-              <td style={{ fontWeight: 600 }}>{m.nome}{!m.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
-              <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{m.etapas.map((e) => `D${e.dia}`).join(", ") || "—"}</td>
-              <td style={{ textAlign: "right" }}>
-                <button className="btn-ghost" style={{ fontSize: "0.74rem", marginRight: "0.5rem" }} onClick={() => setEditando(m)}>Editar</button>
-                <button className="btn-ghost" style={{ fontSize: "0.74rem", color: "var(--red)" }} onClick={() => excluir(m.id)}>Excluir</button>
-              </td>
-            </tr>
-          ))}
-          {moldesIatf && !moldesIatf.length && (
-            <tr><td colSpan={3} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo IATF cadastrado — lançar continua funcionando sem molde (hormônios digitados na hora).</td></tr>
-          )}
-        </tbody>
-      </table>
     </div>
   );
 }
@@ -261,7 +343,7 @@ function SeletorTipoProtocolo<T extends string>({ titulo, tipos, tipo, onChange 
 // mesmo endpoint, mesmos protocolos já cadastrados. Não há cópia nem tabela
 // paralela: cadastrar aqui ou lá é indiferente.
 const TIPOS_CADASTRO = [
-  { id: "sanitario", label: "Sanitário", desc: "Curativo ou preventivo — cronograma de dias (D0/D1/D2…)" },
+  { id: "sanitario", label: "Sanitário", desc: "Curativo (cronograma de dias) ou Preventivo (calendário sanitário — regra recorrente)" },
   { id: "iatf", label: "IATF", desc: "Hormônios em dias livres (D0/D7/D9 ou outro espaçamento)" },
   { id: "inducao", label: "Indução de lactação", desc: "Medicamento, implante e manejo por dia" },
   { id: "customizado", label: "Customizado", desc: "Roteiro livre de etapas, para qualquer rotina" },
@@ -269,23 +351,45 @@ const TIPOS_CADASTRO = [
 ] as const;
 type TipoCadastro = typeof TIPOS_CADASTRO[number]["id"];
 
-function CadastroTab() {
+// Sanitário se divide em dois sub-cards: Curativo (cronograma de etapas de
+// dias fixos, D0/D1/D2…) e Preventivo (o Calendário Sanitário — regra
+// recorrente por frequência ou por evento de vida, ver FormCalendarioSanitario).
+// São modelos de dados bem diferentes — por isso viram sub-abas, não um
+// campo a mais no mesmo formulário.
+const SUBS_SANITARIO = [
+  { id: "curativo", label: "Curativo", desc: "Cronograma de etapas em dias fixos (D0/D1/D2…)" },
+  { id: "preventivo", label: "Preventivo", desc: "Calendário sanitário — regra recorrente (frequência ou evento de vida)" },
+] as const;
+type SubSanitario = typeof SUBS_SANITARIO[number]["id"];
+
+function CadastroTab({ estoque }: { estoque: EstoqueItem[] }) {
   const [tipo, setTipo] = useState<TipoCadastro>("sanitario");
+  const [subSanitario, setSubSanitario] = useState<SubSanitario>("curativo");
+  // Atalho vindo de fora (ex.: "Editar" no calendário sanitário, em Sanidade)
+  // — abre direto em Sanitário > Preventivo.
+  useEffect(() => {
+    const qs = new URLSearchParams(window.location.search);
+    const tipoQs = qs.get("tipo");
+    if (tipoQs && TIPOS_CADASTRO.some((t) => t.id === tipoQs)) setTipo(tipoQs as TipoCadastro);
+    const subQs = qs.get("sub");
+    if (subQs && SUBS_SANITARIO.some((s) => s.id === subQs)) setSubSanitario(subQs as SubSanitario);
+  }, []);
 
   return (
     <div>
       <SeletorTipoProtocolo titulo="Do que se trata o protocolo?" tipos={TIPOS_CADASTRO} tipo={tipo} onChange={setTipo} />
 
+      {tipo === "sanitario" && (
+        <>
+          <SeletorTipoProtocolo titulo="Curativo ou preventivo?" tipos={SUBS_SANITARIO} tipo={subSanitario} onChange={setSubSanitario} />
+          {subSanitario === "curativo" && <CadastroProtocolosSanitarios />}
+          {subSanitario === "preventivo" && <FormCalendarioSanitario estoque={estoque} />}
+        </>
+      )}
       {tipo === "iatf" && <CadastroIatf />}
-      {tipo === "sanitario" && <CadastroProtocolosSanitarios />}
       {tipo === "inducao" && <CadastroProtocolosInducao />}
       {tipo === "customizado" && <CadastroProtocolosCustomizados />}
       {tipo === "lida" && <CadastroLida />}
-
-      <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "1rem" }}>
-        Regra que <strong>se repete</strong> no tempo (vermífugo a cada 4 meses, Brucelose no nascimento) não é protocolo
-        de etapas — continua no <strong>Calendário Sanitário</strong>, em Sanidade. Aqui ficam só os cronogramas de dias fixos.
-      </p>
     </div>
   );
 }
@@ -309,18 +413,35 @@ const TIPOS_LANCAMENTO = [
 ] as const;
 type TipoLancamento = typeof TIPOS_LANCAMENTO[number]["id"];
 
-function LancamentoTab({ animais, estoque }: { animais: AnimalRow[]; estoque: EstoqueItem[] }) {
+// Sub-abas de lançamento do Sanitário — mesma divisão de Cadastro (ver
+// SUBS_SANITARIO), só que aqui é "aplicar", não "cadastrar": Curativo aplica
+// um protocolo de cronograma (D0/D1/D2…) e Preventivo aplica uma regra já
+// cadastrada no calendário sanitário (FormAplicarCalendarioSanitario — o
+// mesmo formulário de Lançamentos > Sanitário > Preventiva > Calendário
+// sanitário).
+const SUBS_SANITARIO_LANCAMENTO = [
+  { id: "curativo", label: "Curativo", desc: "Aplicar um protocolo cadastrado (cronograma de dias fixos)" },
+  { id: "preventivo", label: "Preventivo", desc: "Aplicar uma vacina/exame do calendário sanitário já cadastrado" },
+] as const;
+
+function LancamentoTab({ animais, estoque, lotes }: { animais: AnimalRow[]; estoque: EstoqueItem[]; lotes: string[] }) {
   const [tipo, setTipo] = useState<TipoLancamento>("sanitario");
+  const [subSanitario, setSubSanitario] = useState<SubSanitario>("curativo");
 
   return (
     <div>
       <SeletorTipoProtocolo titulo="Qual protocolo você quer lançar?" tipos={TIPOS_LANCAMENTO} tipo={tipo} onChange={setTipo} />
 
+      {tipo === "sanitario" && (
+        <SeletorTipoProtocolo titulo="Curativo ou preventivo?" tipos={SUBS_SANITARIO_LANCAMENTO} tipo={subSanitario} onChange={setSubSanitario} />
+      )}
+
       <div className="card mb-3">
         <div className="card-header mb-2">Lançar {TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label.toLowerCase()}</div>
         {tipo === "iatf" && <FormProtocoloIatf animais={animais} />}
         {tipo === "inducao" && <FormInducaoLactacao animais={animais} />}
-        {tipo === "sanitario" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
+        {tipo === "sanitario" && subSanitario === "curativo" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
+        {tipo === "sanitario" && subSanitario === "preventivo" && <FormAplicarCalendarioSanitario animais={animais} lotes={lotes} estoque={estoque} />}
         {tipo === "customizado" && <FormProtocoloCustomizado animais={animais as any} />}
         {tipo === "lida" && <FormLida animais={animais as any} />}
       </div>
@@ -370,6 +491,12 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
   // várias opções podem ter estoque_id null). Mesma lógica da Agenda (ver
   // medIatf em app/agenda/page.tsx).
   const [medSelecionado, setMedSelecionado] = useState<Record<number, Record<number, number | "">>>({});
+  // "de qual lote/frasco de COMPRA?" (Fase G) — um nível abaixo do frasco
+  // (medSelecionado), só preenchido quando a opção de frasco escolhida tem
+  // lotes abertos (ver OpcaoMedicamento.lotes). "" = deixa o backend
+  // escolher por FIFO (lote mais antigo primeiro), mesmo padrão de
+  // FormSanidade.tsx.
+  const [loteSelecionado, setLoteSelecionado] = useState<Record<number, Record<number, number | "">>>({});
   // Toggle "incluir todos os medicamentos/hormônios, inclusive sem estoque":
   // expande as opções do picker além dos frascos já em Estoque, listando
   // toda marca comercial cadastrada do mesmo princípio ativo — dá liberdade
@@ -401,10 +528,11 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
         .map((a) => a.numero_matriz),
     );
     setMedSelecionado((p) => ({ ...p, [dia]: {} }));
+    setLoteSelecionado((p) => ({ ...p, [dia]: {} }));
     setAviso(null);
   }
 
-  const hormoniosDoDiaBaixa = (origem === "iatf" || origem === "inducao") && diaBaixa != null
+  const hormoniosDoDiaBaixa = (origem === "iatf" || origem === "inducao" || origem === "sanitario") && diaBaixa != null
     ? det?.dias.find((d) => d.dia === diaBaixa)?.hormonios || []
     : [];
 
@@ -414,20 +542,25 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
     try {
       const pendentes = (det?.animais || []).filter((a) => a.celulas.some((c) => c.dia === diaBaixa && !c.realizada));
       const todos = animaisBaixa.length === pendentes.length;
-      // IATF e Indução: monta `medicamentos` a partir dos hormônios do dia +
-      // o frasco escolhido em medSelecionado (índice em h.opcoes) — mesmo
-      // mapeamento que a Agenda já faz (marcarRealizado em app/agenda/page.tsx).
-      // Sem hormônios cadastrados (protocolo ad-hoc, ou D11/inseminação), não
-      // manda nada — mesmo comportamento de antes (backend cai nos
-      // medicamentos cadastrados no lançamento).
+      // IATF, Indução e Sanitário: monta `medicamentos` a partir dos
+      // hormônios do dia + o frasco escolhido em medSelecionado (índice em
+      // h.opcoes) — mesmo mapeamento que a Agenda já faz (marcarRealizado em
+      // app/agenda/page.tsx). Sanitário ganha também o lote (Fase G, um
+      // nível abaixo do frasco — ver loteSelecionado). Sem hormônios
+      // cadastrados (protocolo ad-hoc, ou D11/inseminação), não manda nada —
+      // mesmo comportamento de antes (backend cai nos medicamentos
+      // cadastrados no lançamento).
       let medicamentos: MedicamentoIatf[] | undefined;
-      if ((origem === "iatf" || origem === "inducao") && hormoniosDoDiaBaixa.length) {
+      if ((origem === "iatf" || origem === "inducao" || origem === "sanitario") && hormoniosDoDiaBaixa.length) {
         const sel = medSelecionado[diaBaixa] || {};
+        const loteSel = loteSelecionado[diaBaixa] || {};
         medicamentos = hormoniosDoDiaBaixa.map((h, idx) => {
           const optIdx = sel[idx] ?? (h.opcoes?.length === 1 ? 0 : "");
           const opcao = optIdx === "" ? undefined : h.opcoes?.[optIdx];
+          const loteIdx = loteSel[idx];
           return {
             produto: opcao?.nome ?? h.produto, estoque_id: opcao?.estoque_id ?? undefined,
+            lote_id: loteIdx != null && loteIdx !== "" ? loteIdx : undefined,
             dose: h.dose, unidade: h.unidade, via: h.via,
           };
         }).filter((m) => m.produto);
@@ -615,7 +748,7 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
         <div className="card mt-2" style={{ background: "var(--surface-2)", border: "1px solid var(--red)" }}>
           <p style={{ fontSize: "0.82rem", marginBottom: "0.5rem" }}>
             Desfazer a aplicação de <strong>{desfazerAlvo.numero_matriz}</strong> em <strong>{desfazerAlvo.rotulo}</strong>?
-            {origem === "iatf" && " O estoque consumido por esta vaca é estornado; a Sanidade já registrada na ficha permanece."}
+            {(origem === "iatf" || origem === "sanitario") && " O estoque consumido por esta vaca é estornado; a Sanidade já registrada na ficha permanece."}
           </p>
           <div className="flex gap-2">
             <button className="btn-primary" style={{ background: "var(--red)" }} onClick={confirmarDesfazer} disabled={desfazendo}>
@@ -679,6 +812,9 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
               </div>
               {hormoniosDoDiaBaixa.map((h, idx) => {
                 const sel = medSelecionado[diaBaixa!]?.[idx] ?? (h.opcoes?.length === 1 ? 0 : "");
+                const opcaoSelecionada = sel === "" ? undefined : h.opcoes?.[sel as number];
+                const lotesDaOpcao = opcaoSelecionada?.lotes || [];
+                const loteSel = loteSelecionado[diaBaixa!]?.[idx] ?? "";
                 return (
                   <div key={idx} className="flex items-center gap-2" style={{ marginBottom: "0.3rem", flexWrap: "wrap" }}>
                     <span style={{ fontSize: "0.76rem", minWidth: 130 }}>
@@ -692,14 +828,31 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
                     ) : (
                       <select style={{ width: "auto", minWidth: 220, fontSize: "0.76rem", padding: "0.3rem 0.5rem", borderRadius: 6, background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}
                               value={sel}
-                              onChange={(ev) => setMedSelecionado((p) => ({
-                                ...p, [diaBaixa!]: { ...(p[diaBaixa!] || {}), [idx]: ev.target.value === "" ? "" : Number(ev.target.value) },
-                              }))}>
+                              onChange={(ev) => {
+                                const novoIdx = ev.target.value === "" ? "" : Number(ev.target.value);
+                                setMedSelecionado((p) => ({ ...p, [diaBaixa!]: { ...(p[diaBaixa!] || {}), [idx]: novoIdx } }));
+                                // Trocou o frasco — o lote escolhido antes não vale mais pro frasco novo.
+                                setLoteSelecionado((p) => ({ ...p, [diaBaixa!]: { ...(p[diaBaixa!] || {}), [idx]: "" } }));
+                              }}>
                         <option value="">Selecione o frasco…</option>
                         {h.opcoes.map((o, oi) => (
                           <option key={oi} value={oi}>
                             {o.nome}{o.marca ? ` · ${o.marca}` : ""}
                             {o.sem_estoque ? " — sem frasco em estoque" : ` — saldo ${o.saldo} ${o.unidade || ""}${!o.estoque_inicializado ? " (sem estoque inicial)" : ""}`}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {lotesDaOpcao.length > 1 && (
+                      <select style={{ width: "auto", minWidth: 220, fontSize: "0.76rem", padding: "0.3rem 0.5rem", borderRadius: 6, background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}
+                              value={loteSel}
+                              onChange={(ev) => setLoteSelecionado((p) => ({
+                                ...p, [diaBaixa!]: { ...(p[diaBaixa!] || {}), [idx]: ev.target.value === "" ? "" : Number(ev.target.value) },
+                              }))}>
+                        <option value="">De qual lote? (automático — mais antigo primeiro)</option>
+                        {lotesDaOpcao.map((l) => (
+                          <option key={l.id} value={l.id}>
+                            {l.numero_lote ? `Lote ${l.numero_lote}` : `Comprado em ${l.data_compra}`} — saldo {l.quantidade_restante}
                           </option>
                         ))}
                       </select>
@@ -810,6 +963,12 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
   const [linhas, setLinhas] = useState<LinhaCentralProtocolos[] | null>(null);
   const [nome, setNome] = useState("");
   const [origem, setOrigem] = useState<OrigemAcompanhamento>(origemFixa ?? "");
+  // Sanitário aqui só cobre o Curativo (lançamentos com etapas — ver
+  // _linhas_sanitario no backend); o Preventivo (calendário sanitário) é um
+  // modelo de dado bem diferente (regra recorrente, não lançamento com
+  // etapas) e mora só na Sanidade — reaproveita-se a MESMA tela de lá
+  // (CalendarioSanitarioView / HistoricoPreventivoView), sem tabela paralela.
+  const [subSanitario, setSubSanitario] = useState<SubSanitario>("curativo");
   const [erro, setErro] = useState<string | null>(null);
   const [aberto, setAberto] = useState<{ origem: string; id: number } | null>(null);
   const [recarga, setRecarga] = useState(0);
@@ -847,8 +1006,20 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
     status: LABEL_STATUS[l.status] || l.status,
   })), [linhasFiltradas]);
 
+  const mostrarPreventivo = !origemFixa && origem === "sanitario" && subSanitario === "preventivo";
+
   return (
     <div>
+      {!origemFixa && <SeletorTipoProtocolo titulo="Filtrar por protocolo" tipos={TIPOS_ACOMPANHAMENTO} tipo={origem} onChange={setOrigem} />}
+      {!origemFixa && origem === "sanitario" && (
+        <SeletorTipoProtocolo titulo="Curativo ou preventivo?" tipos={SUBS_SANITARIO} tipo={subSanitario} onChange={setSubSanitario} />
+      )}
+
+      {mostrarPreventivo ? (
+        historico ? <HistoricoPreventivoView /> : <CalendarioSanitarioAcompanhamento modoInicial="calendario" />
+      ) : (
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <div className="mb-3">
         <label style={labelStyle}>Buscar por nome do protocolo</label>
         <input style={inputStyle} list={datalistId} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="ex.: mastite, IATF…" />
@@ -857,15 +1028,18 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
         </datalist>
       </div>
 
-      {!origemFixa && <SeletorTipoProtocolo titulo="Filtrar por protocolo" tipos={TIPOS_ACOMPANHAMENTO} tipo={origem} onChange={setOrigem} />}
-
       {erro && <div className="alert-critico mb-3"><span>Sem dados: {erro}.</span></div>}
+      {linhas && (
+        <div className="flex items-center justify-between mb-2">
+          <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{linhasFiltradas.length} protocolo(s)</span>
+          {historico && <ExportarBotoes titulo="Central de Protocolos — Histórico" nomeArquivoBase="central_protocolos_historico" colunas={COLUNAS_EXPORT} linhas={linhasExport} />}
+        </div>
+      )}
+      </div>
+
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       {!linhas ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : (
         <>
-          <div className="flex items-center justify-between mb-2">
-            <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{linhasFiltradas.length} protocolo(s)</span>
-            {historico && <ExportarBotoes titulo="Central de Protocolos — Histórico" nomeArquivoBase="central_protocolos_historico" colunas={COLUNAS_EXPORT} linhas={linhasExport} />}
-          </div>
           <div className="overflow-x-auto">
             <table className="fazenda-table">
               <thead><tr>
@@ -873,15 +1047,11 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
               </tr></thead>
               <tbody>
                 {linhasFiltradas.map((l) => {
-                  // Sanitário é lançado por animal e na Central aparece só
-                  // agrupado para exibição — abrir a grade dele exigiria
-                  // decidir o que fazer com o grupo inteiro. Segue pela Agenda.
-                  const abrivel = l.origem !== "sanitario";
                   return (
                   <tr key={`${l.origem}-${l.origem_id}`}
-                      onClick={abrivel ? () => setAberto({ origem: l.origem, id: l.origem_id }) : undefined}
-                      style={abrivel ? { cursor: "pointer" } : undefined}
-                      title={abrivel ? "Abrir a grade animal × dia, dar baixa e encerrar" : "Protocolo sanitário: baixa pela Agenda"}>
+                      onClick={() => setAberto({ origem: l.origem, id: l.origem_id })}
+                      style={{ cursor: "pointer" }}
+                      title="Abrir a grade animal × dia, dar baixa e encerrar">
                     <td style={{ fontWeight: 600, fontSize: "0.82rem" }}>{l.nome}</td>
                     <td><Pill cor={COR_TIPO[l.tipo]}>{LABEL_TIPO[l.tipo] || l.tipo}</Pill></td>
                     <td style={{ fontSize: "0.78rem" }}>{formatDate(l.data_inicio)}</td>
@@ -905,6 +1075,9 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
           </div>
         </>
       )}
+      </div>
+      </div>
+      )}
 
       {aberto && (
         <DetalheProtocolo origem={aberto.origem} origemId={aberto.id}
@@ -922,6 +1095,26 @@ export default function ProtocolosPage() {
   useEffect(() => {
     fetchAnimais().then(setAnimais).catch(() => {});
     fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
+  }, []);
+  // Lotes existentes (para o lançamento de Calendário sanitário, que aplica
+  // por animal/lote/categoria) — mesma dedução de maiúsculas/minúsculas de
+  // app/lancamentos/page.tsx.
+  const lotes = useMemo(() => {
+    const porChave = new Map<string, string>();
+    (animais.map((a) => a.grupo_primario).filter(Boolean) as string[]).forEach((l) => {
+      const chave = l.toUpperCase();
+      const atual = porChave.get(chave);
+      if (!atual || l === l.toUpperCase()) porChave.set(chave, l === l.toUpperCase() ? l : atual || l);
+    });
+    return Array.from(porChave.values()).sort();
+  }, [animais]);
+  // Atalho vindo de fora (ex.: "Editar" no calendário sanitário, em Sanidade,
+  // ou no relatório de Exclusão) — só escolhe a aba certa; a Central de
+  // Protocolos não permite pular direto para uma regra específica, mesmo
+  // padrão do "ir=" de Lançamentos.
+  useEffect(() => {
+    const abaQs = new URLSearchParams(window.location.search).get("aba");
+    if (abaQs && ["cadastro", "lancamento", "acompanhamento", "historico"].includes(abaQs)) setAba(abaQs as typeof aba);
   }, []);
 
   return (
@@ -943,8 +1136,8 @@ export default function ProtocolosPage() {
         onChange={setAba}
       />
 
-      {aba === "cadastro" && <CadastroTab />}
-      {aba === "lancamento" && <LancamentoTab animais={animais} estoque={estoque} />}
+      {aba === "cadastro" && <CadastroTab estoque={estoque} />}
+      {aba === "lancamento" && <LancamentoTab animais={animais} estoque={estoque} lotes={lotes} />}
       {aba === "acompanhamento" && <ListaProtocolos historico={false} />}
       {aba === "historico" && <ListaProtocolos historico />}
     </div>

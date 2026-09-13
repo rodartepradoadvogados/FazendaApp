@@ -4,6 +4,8 @@ e lançamento de diagnóstico de gestação.
 """
 from __future__ import annotations
 
+import html
+import logging
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -13,17 +15,28 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, ControleLeiteiro, EstoqueSemen, Lote, Parto, PesagemCorporal, ProtocoloIatf, ProtocoloIatfAplicacao,
+    Animal, ControleLeiteiro, EstoqueSemen, Lactacao, Lote, Parto, PesagemCorporal, ProtocoloIatf, ProtocoloIatfAplicacao,
     ProtocoloIatfEtapa, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
-    SeedFlag, Secagem, Servico, Usuario,
+    Sanidade, SeedFlag, Secagem, Servico, Usuario,
 )
 from fazenda.ordenacao import chave_numero
+from fazenda.rules.agenda_reprodutiva_configuravel import SITUACOES, avaliar_card
 from fazenda.rules.agenda_veterinario import classificar_rebanho
+from fazenda.rules.aptidao import AptidaoResultado, avaliar_aptidao_no_banco, parametros_aptidao
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules import estoque_baixa
 from fazenda.rules.email import enviar_email
+from fazenda.rules.estado_reprodutivo import data_em_que_ficou_apta, estados_ao_vivo
 from fazenda.rules.genetica import calcular_grau_sangue_cria
+from fazenda.rules import lactacao as regras_lactacao
 from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
+from fazenda.rules.parto import (
+    TIPO_PARTO_ABORTO, TIPO_PARTO_NATIMORTO, TIPO_PARTO_NORMAL, eh_parto_produtivo, proxima_ordem_parto,
+)
+from fazenda.rules.parametros import (
+    dias_atraso_apos_aptidao_novilha, get_param, idade_apta_min_meses, idade_max_1a_cobertura_meses, peso_apta_min,
+    pev_dias as pev_dias_param,
+)
 from fazenda.rules.perda_prenhez import (
     MOTIVOS_PERDA_PRENHEZ,
     MOTIVOS_PERDA_PRENHEZ_VALIDOS,
@@ -31,6 +44,12 @@ from fazenda.rules.perda_prenhez import (
     detectar_e_registrar_perda_por_reinseminacao,
     fechar_servicos_abertos_por_reinseminacao,
     servico_esta_em_aberto,
+    servico_esta_positivo_vigente,
+)
+from fazenda.rules.programa_reprodutivo import (
+    calcular_series,
+    ciclos_21_dias,
+    montar_perfil,
 )
 from fazenda.rules.protocolo_iatf import (
     PASSOS_PROTOCOLO_IATF_PADRAO as PASSOS_PROTOCOLO_IATF,
@@ -39,7 +58,270 @@ from fazenda.rules.protocolo_iatf import (
 )
 from fazenda.rules.reproducao_analise import agregar_mensal, analisar_servicos
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/reproducao", tags=["reproducao"])
+
+
+def _buscar_da_fazenda(session: Session, modelo, registro_id: int | None, fazenda_id: int | None):
+    """Carrega UM registro por id JÁ FILTRANDO por fazenda na própria consulta,
+    em vez de `session.get()` seguido de um `if` sobre o objeto carregado.
+
+    A diferença não é estética. O `if` que estava em quase todas as rotas
+    daqui era `registro.fazenda_id not in (None, fazenda_id)`, que TOLERAVA
+    `fazenda_id=NULL` no registro. `servico`, `parto`, `secagem`, `sanidade` e
+    `protocolo_iatf_lancamento` sobrevivem nulos justamente em instalação com
+    2+ fazendas — é o que o relatório da migração
+    029227481e9e_backfill_fazenda_id_nulo imprime como pendente quando não há
+    pai de onde derivar nem fazenda única para atribuir. Enquanto a tolerância
+    existia, um Servico órfão tinha diagnóstico/perda de prenhez editáveis por
+    QUALQUER fazenda-cliente, só enumerando o id. Filtrando na consulta, "de
+    outra fazenda" e "sem fazenda" caem os dois no mesmo lugar: não
+    encontrado. 404, nunca 403 — responder 403 já confirmaria que o id existe.
+
+    `fazenda_id is None` só acontece em ambiente onde o multi-fazenda NÃO está
+    provisionado (tabela `fazenda` vazia — suíte de testes e instalação
+    anterior à migração f1a2b3c4d5e6). Havendo qualquer fazenda cadastrada, a
+    trava de porta (fazenda/auth.py::exigir_fazenda_selecionada, montada no
+    router de Reprodução em main.py) recusa a requisição antes de chegar aqui.
+    O caso está tratado explicitamente, não por omissão: sem tenant cadastrado
+    não há tenant a isolar.
+
+    Cópia deliberada de api/routers/agenda.py::_buscar_da_fazenda — o mesmo
+    desenho, aplicado aos registros deste router (o helper ainda não tem um
+    módulo compartilhado; quando tiver, os dois saem daqui juntos).
+    """
+    if registro_id is None:
+        return None
+    query = select(modelo).where(modelo.id == registro_id)
+    if fazenda_id is not None:
+        query = query.where(modelo.fazenda_id == fazenda_id)
+    return session.exec(query).first()
+
+
+# ---------------------------------------------------------------------------
+# Trava de aptidão para serviço reprodutivo (ver fazenda/rules/aptidao.py)
+#
+# Antes desta trava, nenhum dos três pontos de entrada de serviço/IA validava
+# nada além de "o animal existe": dava para inseminar bezerra, macho, animal
+# baixado ou vaca prenhe — e reinseminar uma matriz gestante fazia o sistema
+# INVENTAR sozinho uma perda de prenhez no serviço anterior. Agora esse caso
+# exige uma confirmação explícita (`forcar: true`) de uma pessoa.
+# ---------------------------------------------------------------------------
+def _detalhe_aptidao(resultado: AptidaoResultado, numeros: list[str] | None = None) -> dict:
+    """Corpo do 409. `msg` é a chave que o tratamento genérico de erro do
+    frontend já lê (`mensagemErroApi`); `motivo`/`confirmavel` existem para a
+    tela decidir se oferece o botão "confirmar mesmo assim" sem precisar
+    interpretar o texto da mensagem."""
+    return {
+        "erro": "aptidao",
+        "msg": resultado.mensagem,
+        "motivo": resultado.motivo,
+        "confirmavel": resultado.confirmavel,
+        "animais": numeros or [],
+    }
+
+
+def _exigir_aptidao(
+    session: Session, animal: Animal, *, data: date, fazenda_id: int | None, forcar: bool,
+) -> AptidaoResultado:
+    """Avalia a aptidão e levanta 409 quando o serviço não pode ser gravado.
+
+    Devolve o resultado mesmo quando passa — o chamador usa isso para
+    registrar no log que houve uma confirmação manual (`forcar`)."""
+    resultado = avaliar_aptidao_no_banco(session, animal, data=data, fazenda_id=fazenda_id)
+    if resultado.bloqueia(forcar):
+        raise HTTPException(status_code=409, detail=_detalhe_aptidao(resultado, [animal.numero]))
+    if not resultado.apta and forcar:
+        # Auditoria completa da confirmação manual fica para a rodada da
+        # trilha de eventos (Peça de auditoria de transição de estado); por
+        # ora o registro é este log, que já distingue "o sistema decidiu" de
+        # "uma pessoa confirmou".
+        logger.info(
+            "Aptidão forçada manualmente: matriz=%s motivo=%s data=%s", animal.numero, resultado.motivo, data,
+        )
+    return resultado
+
+
+def carregar_perfis_reprodutivos(
+    session: Session, fazenda_id: int | None, *, categoria: str = "todas",
+) -> list:
+    """Monta os `PerfilAnimal` de todas as fêmeas do rebanho, com os registros
+    já indexados por número.
+
+    Mesmo padrão de carregamento de `api/routers/indicadores.py` (indexa uma
+    vez por número em vez de varrer as listas por animal — o rebanho tem
+    milhares de serviços/partos).
+
+    `categoria`: "todas" | "vaca" | "novilha". Vaca = já pariu alguma vez.
+    """
+    query_animais = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    query_servicos = select(Servico)
+    query_partos = select(Parto)
+    query_iatf = select(ProtocoloIatfAplicacao)
+    query_pesagem = select(PesagemCorporal)
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+        query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
+        query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
+        query_iatf = query_iatf.where(ProtocoloIatfAplicacao.fazenda_id == fazenda_id)
+        query_pesagem = query_pesagem.where(PesagemCorporal.fazenda_id == fazenda_id)
+
+    femeas = [a for a in session.exec(query_animais).all() if not a.eh_semen and a.sexo != "M"]
+
+    servicos_por: dict[str, list] = {}
+    for s in session.exec(query_servicos).all():
+        servicos_por.setdefault(s.numero_matriz, []).append(s)
+    partos_por: dict[str, list] = {}
+    for p in session.exec(query_partos).all():
+        partos_por.setdefault(p.numero_matriz, []).append(p)
+    iatf_por: dict[str, list] = {}
+    for ap in session.exec(query_iatf).all():
+        iatf_por.setdefault(ap.numero_matriz, []).append(ap)
+
+    # Peso mais recente de cada animal — entra na aptidão da novilha nulípara.
+    peso_por: dict[str, float] = {}
+    ultima: dict[str, date] = {}
+    for pes in session.exec(query_pesagem).all():
+        if pes.numero_matriz not in ultima or pes.data_pesagem > ultima[pes.numero_matriz]:
+            ultima[pes.numero_matriz] = pes.data_pesagem
+            peso_por[pes.numero_matriz] = pes.peso_kg
+
+    perfis = []
+    for a in femeas:
+        dados = a.model_dump()
+        dados["peso_kg"] = peso_por.get(a.numero)
+        perfil = montar_perfil(
+            dados,
+            partos=partos_por.get(a.numero, []),
+            servicos=servicos_por.get(a.numero, []),
+            aplicacoes_iatf=iatf_por.get(a.numero, []),
+        )
+        if categoria != "todas" and perfil.categoria != categoria:
+            continue
+        perfis.append(perfil)
+    return perfis
+
+
+@router.get("/ciclos-21-dias")
+def ciclos_de_21_dias(
+    ancora: date = Query(..., description="Data de referência do ciclo"),
+    modo: str = Query("fim", description='"inicio" (conta para frente) ou "fim" (conta para trás)'),
+    n_ciclos: int = Query(6, ge=1, le=26, description="Quantos ciclos de 21 dias"),
+    categoria: str = Query("todas", description='"todas" | "vaca" | "novilha"'),
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Risco de prenhez em ciclos de 21 dias — o BREDSUM\\E do DairyComp.
+
+    Devolve, por ciclo: BR ELIG (elegíveis para inseminação) → BRED (servidas)
+    → PG ELIG (elegíveis para prenhez) → PREG (prenhes), com as três taxas e a
+    lista nominal de animais em cada balde, para o usuário conferir na tela
+    exatamente quem entrou e quem saiu de cada denominador.
+
+    A âncora é livre: `modo="inicio"` conta 21 dias para frente a partir dela;
+    `modo="fim"` conta para trás. Substitui a ancoragem fechada anterior, presa
+    ao D11 do protocolo IATF ou à data da inseminação.
+
+    Ver `fazenda.rules.programa_reprodutivo` para o modelo lógico completo
+    (regras R1–R9) que define cada um desses conjuntos.
+    """
+    from fazenda.rules.parametros import (
+        dias_minimos_no_ciclo, dias_reinseminacao_min, dias_resultado_conhecido, get_param,
+        idade_apta_min_meses,
+        idade_max_1a_cobertura_meses, meta_taxa_concepcao, meta_taxa_prenhez,
+        meta_taxa_servico, pev_dias, peso_apta_min,
+    )
+
+    if modo not in ("inicio", "fim"):
+        raise HTTPException(status_code=400, detail='modo deve ser "inicio" ou "fim"')
+    if categoria not in ("todas", "vaca", "novilha"):
+        raise HTTPException(status_code=400, detail='categoria deve ser "todas", "vaca" ou "novilha"')
+
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    perfis = carregar_perfis_reprodutivos(session, fazenda_id, categoria=categoria)
+    ciclos = ciclos_21_dias(ancora, modo=modo, n_ciclos=n_ciclos)
+
+    resultados = calcular_series(
+        perfis, ciclos, date.today(),
+        pev_dias=pev_dias(),
+        dias_minimos=dias_minimos_no_ciclo(),
+        dias_resultado=dias_resultado_conhecido(),
+        # Janela mínima de cio de repasse — a mesma que a tela de Reprodução
+        # já usa. Sem passar aqui, o motor cairia no piso embutido e o campo
+        # editável em Configurações não faria efeito nenhum (foi por ser um
+        # campo assim, editável e inerte, que `idade_maturidade_novilha` foi
+        # aposentado).
+        dias_minimos_repasse=dias_reinseminacao_min(),
+        del_max_1o_servico=int(get_param("meta_del_max_1o_servico", 100) or 100),
+        idade_apta_dias=int(idade_apta_min_meses() * 30.44),
+        idade_atraso_dias=int(idade_max_1a_cobertura_meses() * 30.44),
+        peso_apta_kg=peso_apta_min(),
+    )
+
+    linhas = [r.para_dict() for r in resultados]
+    # Média ponderada pelo denominador de cada ciclo — a média simples das
+    # porcentagens daria peso igual a um ciclo de 3 vacas e a um de 300.
+    def _ponderada(campo: str, denominador: str) -> float | None:
+        total_den = sum(l[denominador] for l in linhas)
+        if not total_den:
+            return None
+        soma = sum((l[campo] or 0) * l[denominador] for l in linhas)
+        return round(soma / total_den, 1)
+
+    # `animais_avaliados` já se chamou assim sem merecer: media quantos perfis
+    # foram CARREGADOS do banco para o cálculo, não quantos de fato passaram
+    # por algum crivo do BREDSUM\E. Uma vaca gestante o período todo, ou uma
+    # baixada antes do primeiro ciclo, entrava nessa contagem do mesmo jeito
+    # que uma que foi de fato avaliada — nome prometendo mais do que a conta
+    # entregava. A união de br_elig/bred/pg_elig/preg de todos os ciclos já
+    # responde "quem passou por pelo menos um balde", sem inventar cálculo
+    # novo: cada `ResultadoCiclo` já carrega essas listas. O valor antigo (o
+    # tamanho do rebanho carregado) não desaparece — seria informação querida
+    # por quem calibra o carregamento em si — só passa a ter nome que não
+    # mente: `animais_carregados`. Mesmo princípio de `ultimo_por_animal` em
+    # rules/indicadores.py, que preservou um acumulado ao ser destronado do
+    # card.
+    animais_avaliados: set[str] = set()
+    for r in resultados:
+        animais_avaliados.update(r.br_elig, r.bred, r.pg_elig, r.preg)
+
+    return {
+        "ancora": ancora.isoformat(),
+        "modo": modo,
+        "categoria": categoria,
+        "periodo": {"inicio": ciclos[0].inicio.isoformat(), "fim": ciclos[-1].fim.isoformat()},
+        "ciclos": linhas,
+        "resumo": {
+            "taxa_servico": _ponderada("taxa_servico", "br_elig"),
+            "taxa_prenhez": _ponderada("taxa_prenhez", "pg_elig"),
+            "taxa_concepcao": _ponderada("taxa_concepcao", "servicos_com_resultado"),
+            "animais_avaliados": len(animais_avaliados),
+            "animais_carregados": len(perfis),
+        },
+        "metas": {
+            "taxa_servico": meta_taxa_servico(),
+            "taxa_prenhez": meta_taxa_prenhez(),
+            "taxa_concepcao": meta_taxa_concepcao(),
+        },
+        "parametros": {
+            "pev_dias": pev_dias(),
+            "dias_minimos_no_ciclo": dias_minimos_no_ciclo(),
+            "dias_resultado_conhecido": dias_resultado_conhecido(),
+        },
+        # Aviso do rodapé da tela. Ficou desatualizado quando `a_descartar_em`
+        # passou a existir (ver `descartada_em` em rules/programa_reprodutivo.py):
+        # dizia ao usuário que a marcação NUNCA tem data, o que virou meia
+        # verdade — passou a valer só para quem foi marcado antes da coluna.
+        # Texto que engana é pior que aviso nenhum, ainda mais um que serve
+        # justamente para o usuário calibrar quanta fé ter na série histórica.
+        "ressalva_historica": (
+            "A marcação \"a descartar\" passou a ser datada: quem for marcado de agora "
+            "em diante sai do cálculo só a partir da data da marcação. Quem já estava "
+            "marcado antes disso não tem data registrada e segue valendo para todo o "
+            "período. Baixas sempre foram datadas e são reconstruídas corretamente."
+        ),
+    }
 
 
 def deduplicar_partos(session: Session) -> None:
@@ -245,9 +527,17 @@ def agenda_veterinario(
         if not atual or (s.data_servico and (not atual.get("data_servico") or s.data_servico > atual["data_servico"])):
             servico_por_animal[s.numero_matriz] = s.model_dump()
 
+    # A pesagem era a ÚNICA subconsulta do roteiro sem filtro de fazenda
+    # (achado 9 da auditoria). `numero_matriz` é texto livre sem FK e
+    # `animal.numero` não é mais único entre fazendas (migração c24befa94c1b):
+    # a vaca "500" da outra fazenda entregava o peso dela para o roteiro
+    # daqui — e o peso é o que decide novilha apta/inapta.
+    query_pesagens = select(PesagemCorporal)
+    if fazenda_id is not None:
+        query_pesagens = query_pesagens.where(PesagemCorporal.fazenda_id == fazenda_id)
     peso_por_animal: dict[str, float] = {}
     ultima_data: dict[str, date] = {}
-    for p in session.exec(select(PesagemCorporal)).all():
+    for p in session.exec(query_pesagens).all():
         atual = ultima_data.get(p.numero_matriz)
         if not atual or p.data_pesagem > atual:
             ultima_data[p.numero_matriz] = p.data_pesagem
@@ -311,6 +601,122 @@ def agenda_veterinario(
     }
 
 
+class CardAgendaReprodutivaIn(BaseModel):
+    """Definição de um card configurável da Agenda Reprodutiva — os 4 eixos
+    (ver fazenda.rules.agenda_reprodutiva_configuravel). `periodos` é uma
+    lista de (de, ate) em dias; o eixo do dia depende de `situacao` (PEV/
+    vazia: dias desde o parto; inseminada: dias desde o serviço; gestante:
+    dias de gestação). Vazia = sem restrição de período."""
+
+    categoria: str = "todas"  # "vaca" | "novilha" | "todas"
+    lotes: list[str] = []
+    situacao: str  # "pev" | "inseminada" | "gestante" | "vazia" | "vazia_atrasada" | "a_descartar"
+    periodos: list[tuple[int, int]] = []
+    somente_atrasadas: bool = False
+    exceto_atrasadas: bool = False
+
+
+@router.post("/agenda-reprodutiva/card")
+def agenda_reprodutiva_card(
+    config: CardAgendaReprodutivaIn,
+    data: date | None = None,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Resultado de UM card configurável da Agenda Reprodutiva (ver proposta:
+    substitui os cards fixos de `/agenda-veterinario`, exceto "Vazias por
+    diagnóstico" e "Pendentes de classificação", que não são situação
+    reprodutiva e continuam só naquele endpoint).
+
+    Mesmo padrão de coleta de dados de `/agenda-veterinario` acima —
+    `aplicacoes_iatf=[]` porque este endpoint não carrega
+    ProtocoloIatfAplicacao: um animal em protocolo aparece como PEV/APTA/
+    ATRASADA conforme o resto dos dados, mesma limitação aceita de
+    `recria._contexto_categoria` (ver o comentário lá)."""
+    if config.situacao not in SITUACOES:
+        raise HTTPException(status_code=422, detail=f"situacao inválida: {config.situacao}")
+    if config.categoria not in ("todas", "vaca", "novilha"):
+        raise HTTPException(status_code=422, detail=f"categoria inválida: {config.categoria}")
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    hoje = data or date.today()
+
+    query_animais = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+    animais = [a.model_dump() for a in session.exec(query_animais).all() if not a.eh_semen and a.sexo != "M"]
+
+    query_servicos = select(Servico)
+    query_partos = select(Parto)
+    query_pesagens = select(PesagemCorporal)
+    if fazenda_id is not None:
+        query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
+        query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
+        query_pesagens = query_pesagens.where(PesagemCorporal.fazenda_id == fazenda_id)
+    servicos = session.exec(query_servicos).all()
+    partos = session.exec(query_partos).all()
+
+    peso_por_animal: dict[str, float] = {}
+    pesagens_por_animal: dict[str, list[tuple[date, float]]] = {}
+    for p in session.exec(query_pesagens).all():
+        if not p.peso_kg or not p.data_pesagem:
+            continue
+        pesagens_por_animal.setdefault(p.numero_matriz, []).append((p.data_pesagem, p.peso_kg))
+    for numero, lista in pesagens_por_animal.items():
+        lista.sort(key=lambda item: item[0])
+        peso_por_animal[numero] = lista[-1][1]
+
+    pev = pev_dias_param()
+    del_max = int(get_param("meta_del_max_1o_servico", 100) or 100)
+    idade_apta_dias = round(idade_apta_min_meses() * 30.44)
+    idade_atraso_dias = round(idade_max_1a_cobertura_meses() * 30.44)
+    peso_apta_kg = peso_apta_min()
+    dias_atraso_apos_aptidao = dias_atraso_apos_aptidao_novilha()
+
+    datas_ficou_apta: dict[str, date] = {}
+    for a in animais:
+        numero = a["numero"]
+        d = data_em_que_ficou_apta(
+            data_nasc=a.get("data_nasc"), idade_apta_dias=idade_apta_dias,
+            pesagens=pesagens_por_animal.get(numero, []), peso_apta_kg=peso_apta_kg,
+        )
+        if d is not None:
+            datas_ficou_apta[numero] = d
+
+    estados = estados_ao_vivo(
+        animais, hoje=hoje, partos=partos, servicos=servicos, aplicacoes_iatf=[],
+        pev_dias=pev, del_max_1o_servico=del_max, peso_por_animal=peso_por_animal,
+        idade_apta_dias=idade_apta_dias, idade_atraso_dias=idade_atraso_dias, peso_apta_kg=peso_apta_kg,
+        dias_atraso_apos_aptidao=dias_atraso_apos_aptidao, datas_ficou_apta_por_animal=datas_ficou_apta,
+    )
+
+    itens = avaliar_card(
+        categoria=config.categoria, lotes=config.lotes, situacao=config.situacao,
+        periodos=[tuple(p) for p in config.periodos],
+        somente_atrasadas=config.somente_atrasadas, exceto_atrasadas=config.exceto_atrasadas,
+        animais=animais, estados=estados,
+    )
+    itens.sort(key=lambda it: chave_numero(it.get("numero")))
+
+    return {
+        "data_referencia": hoje.isoformat(),
+        "total": len(itens),
+        "itens": [
+            {
+                "numero_matriz": it.get("numero"),
+                "categoria": it.get("categoria_normalizada"),
+                "lote_atual": it.get("grupo_primario"),
+                "estado": it.get("estado"),
+                "del_dias": it.get("del_dias"),
+                "dias_gestacao": it.get("dias_gestacao"),
+                "dias_desde_servico": it.get("dias_desde_servico"),
+                "data_servico": it.get("data_servico"),
+                "parto_previsto": it.get("parto_previsto"),
+            }
+            for it in itens
+        ],
+    }
+
+
 def _ultimo_servico(session: Session, numero_matriz: str, fazenda_id: int | None = None) -> Servico | None:
     query = select(Servico).where(Servico.numero_matriz == numero_matriz)
     if fazenda_id is not None:
@@ -356,16 +762,19 @@ def enviar_ultimo_diagnostico(
         raise HTTPException(status_code=400, detail=f"A matriz {numero_matriz} ainda não tem diagnóstico de gestação registrado")
 
     fmt = lambda d: d.strftime("%d/%m/%Y") if d else "—"  # noqa: E731
+    # BUG DE SEGURANÇA CORRIGIDO: numero_matriz/diagnostico/metodo_diagnostico
+    # não têm validação de valores fechados no backend — sem escape, um
+    # cliente de e-mail que renderiza HTML executaria markup injetado.
     linhas = [
-        f"<p><b>Matriz:</b> {numero_matriz}</p>",
+        f"<p><b>Matriz:</b> {html.escape(numero_matriz)}</p>",
         f"<p><b>Data do serviço:</b> {fmt(servico.data_servico)}</p>",
         f"<p><b>Data do diagnóstico:</b> {fmt(servico.data_diagnostico)}</p>",
-        f"<p><b>Resultado:</b> {servico.diagnostico or '—'}</p>",
+        f"<p><b>Resultado:</b> {html.escape(servico.diagnostico or '—')}</p>",
     ]
     if servico.metodo_diagnostico:
-        linhas.append(f"<p><b>Método:</b> {servico.metodo_diagnostico}</p>")
+        linhas.append(f"<p><b>Método:</b> {html.escape(servico.metodo_diagnostico)}</p>")
     if servico.data_reconfirmacao:
-        linhas.append(f"<p><b>Reconfirmação ({fmt(servico.data_reconfirmacao)}):</b> {servico.diagnostico_reconfirmacao or '—'}</p>")
+        linhas.append(f"<p><b>Reconfirmação ({fmt(servico.data_reconfirmacao)}):</b> {html.escape(servico.diagnostico_reconfirmacao or '—')}</p>")
     corpo_html = "".join(linhas) + "<p>Fazenda Estreito Ponte de Pedra</p>"
 
     try:
@@ -417,7 +826,7 @@ def listar_servicos_analise(
     servicos = [s.model_dump() for s in session.exec(query).all()]
     registros = analisar_servicos(servicos)
     nomes = mapa_usuarios(session, {r["usuario_id"] for r in registros})
-    tipo_por_touro = _mapa_tipo_semen_por_touro(session)
+    tipo_por_touro = _mapa_tipo_semen_por_touro(session, fazenda_id)
     data_d0_por_servico = _mapa_data_d0_por_servico(session, fazenda_id)
     for r in registros:
         r["usuario_nome"] = nomes.get(r.pop("usuario_id"))
@@ -492,6 +901,59 @@ class ServicoEditIn(BaseModel):
     motivo_perda_prenhez: str | None = None
 
 
+# Vocabulário fechado do diagnóstico de gestação. Ele SEMPRE existiu, mas só
+# como comentário em models/reprodutivo.py ("POSITIVO | NEGATIVO | INDEFINIDO"
+# e "Palpação | Ultrassom | Cio de repasse") — nunca como validação (achado 65
+# da auditoria): o PUT /servicos/{id} faz `setattr` genérico sobre tudo que
+# chega e só `motivo_perda_prenhez` tinha allow-list.
+#
+# O corpo do e-mail de diagnóstico já escapa o valor (`html.escape`, mais
+# acima), então o XSS está fechado no SINK; isto fecha a ORIGEM. E o dano
+# maior nem era o e-mail: `diagnostico` é lido como enum por
+# rules/estado_reprodutivo.py, agenda_engine.py, perda_prenhez.py,
+# reproducao_analise.py e iatf.py, todos comparando com "POSITIVO"/"NEGATIVO"
+# em caixa alta. Qualquer outro texto gravado aqui não é rejeitado por
+# ninguém: a vaca simplesmente deixa de casar com qualquer estado e some das
+# listas de reprodução sem erro nenhum na tela.
+DIAGNOSTICOS_VALIDOS = ("POSITIVO", "NEGATIVO", "INDEFINIDO")
+METODOS_DIAGNOSTICO_VALIDOS = ("Palpação", "Ultrassom", "Cio de repasse")
+
+
+def _normalizar_escolha(valor: str, opcoes: tuple[str, ...]) -> str | None:
+    """Casa `valor` com uma das `opcoes` ignorando caixa, acento e espaço em
+    volta, e devolve a opção NA FORMA CANÔNICA (ou None se não casar).
+
+    Normaliza em vez de comparar cru porque as telas antigas mandam
+    "positivo", "Palpacao" e "ULTRASSOM" — recusar isso quebraria o
+    lançamento sem fechar furo nenhum. Gravar a forma canônica é o que
+    importa: as regras de reprodução comparam com "POSITIVO" em caixa alta."""
+    import unicodedata
+
+    def chave(t: str) -> str:
+        sem_acento = unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode()
+        return sem_acento.strip().casefold()
+
+    procurado = chave(valor)
+    for opcao in opcoes:
+        if chave(opcao) == procurado:
+            return opcao
+    return None
+
+
+def _exigir_metodo_diagnostico(metodo: str | None) -> str | None:
+    """Método na forma canônica, ou 400. `None`/vazio segue válido — o método
+    é opcional no lançamento (nem todo diagnóstico registra como foi feito)."""
+    if not (metodo or "").strip():
+        return None
+    canonico = _normalizar_escolha(metodo, METODOS_DIAGNOSTICO_VALIDOS)
+    if canonico is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Método de diagnóstico inválido — use um de: {', '.join(METODOS_DIAGNOSTICO_VALIDOS)}",
+        )
+    return canonico
+
+
 @router.put("/servicos/{servico_id}")
 def atualizar_servico(
     servico_id: int,
@@ -500,8 +962,12 @@ def atualizar_servico(
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    servico = session.get(Servico, servico_id)
-    if not servico or (fazenda_id is not None and servico.fazenda_id not in (None, fazenda_id)):
+    # Carga filtrada na consulta (ver _buscar_da_fazenda): a checagem antiga
+    # tolerava `servico.fazenda_id is None`, e o Servico órfão continua
+    # existindo em instalação com 2+ fazendas ('servico' está em
+    # _TABELAS_SEM_PAI na migração de backfill).
+    servico = _buscar_da_fazenda(session, Servico, servico_id, fazenda_id)
+    if not servico:
         raise HTTPException(status_code=404, detail="Serviço não encontrado")
     campos = dados.model_dump(exclude_unset=True)
     # "nao_informado" só entra aqui (não em MOTIVOS_PERDA_PRENHEZ, a lista de
@@ -511,6 +977,22 @@ def atualizar_servico(
     if "motivo_perda_prenhez" in campos and campos["motivo_perda_prenhez"] is not None \
             and campos["motivo_perda_prenhez"] not in MOTIVOS_PERDA_PRENHEZ_VALIDOS:
         raise HTTPException(status_code=400, detail="Motivo de perda de prenhez inválido")
+    # Allow-list de diagnóstico/método (achado 65 — ver DIAGNOSTICOS_VALIDOS).
+    # `None` continua passando: apagar o diagnóstico é uma edição legítima
+    # (reabrir o serviço), o que não pode é gravar texto que ninguém lê.
+    for campo, opcoes, rotulo in (
+        ("diagnostico", DIAGNOSTICOS_VALIDOS, "Diagnóstico"),
+        ("metodo_diagnostico", METODOS_DIAGNOSTICO_VALIDOS, "Método de diagnóstico"),
+    ):
+        if campos.get(campo) is None:
+            continue
+        canonico = _normalizar_escolha(campos[campo], opcoes)
+        if canonico is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{rotulo} inválido — use um de: {', '.join(opcoes)}",
+            )
+        campos[campo] = canonico
     for campo, valor in campos.items():
         setattr(servico, campo, valor)
     session.add(servico)
@@ -592,7 +1074,9 @@ def indicadores_mensais_analise(
         secagens = [s for s in secagens if no_periodo(s.get("data_secagem"))]
         controles = [c for c in controles if no_periodo(c.get("data_controle"))]
 
-    return agregar_mensal(registros, secagens, controles)
+    from fazenda.rules.parametros import dias_resultado_conhecido
+
+    return agregar_mensal(registros, secagens, controles, dias_resultado=dias_resultado_conhecido())
 
 
 class DiagnosticoIn(BaseModel):
@@ -676,7 +1160,10 @@ def registrar_diagnostico(
         servico.retoque = False
     else:
         servico.data_diagnostico = dados.data_diagnostico
-        servico.metodo_diagnostico = dados.metodo
+        # Mesma allow-list do PUT /servicos/{id} (achado 65): `dados.metodo` é
+        # texto livre e cai no mesmo campo, então validar só lá deixaria a
+        # porta da frente aberta. O `resultado` logo abaixo já era fechado.
+        servico.metodo_diagnostico = _exigir_metodo_diagnostico(dados.metodo)
         if dados.resultado == "retoque":
             servico.diagnostico = "POSITIVO"
             servico.retoque = True
@@ -840,8 +1327,10 @@ def atualizar_parto(
     pela Ficha do Animal (ver /animais/{numero} e verificar_mae_parto abaixo,
     que cruza a mãe informada na ficha com os partos dela)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    parto = session.get(Parto, parto_id)
-    if not parto or (fazenda_id is not None and parto.fazenda_id not in (None, fazenda_id)):
+    # Mesmo caso do atualizar_servico — 'parto' também está em
+    # _TABELAS_SEM_PAI na migração de backfill (ver _buscar_da_fazenda).
+    parto = _buscar_da_fazenda(session, Parto, parto_id, fazenda_id)
+    if not parto:
         raise HTTPException(status_code=404, detail="Parto não encontrado")
     for campo, valor in dados.model_dump(exclude_unset=True).items():
         setattr(parto, campo, valor)
@@ -871,6 +1360,8 @@ def verificar_mae_parto(
     mae = session.exec(query_mae).first()
 
     query_animal = select(Animal).where(Animal.numero == animal_numero) if animal_numero else None
+    if query_animal is not None and fazenda_id is not None:
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
     animal = session.exec(query_animal).first() if query_animal is not None else None
     nascimento = animal.data_nasc if animal else None
 
@@ -955,8 +1446,8 @@ def atualizar_secagem(
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    secagem = session.get(Secagem, secagem_id)
-    if not secagem or (fazenda_id is not None and secagem.fazenda_id != fazenda_id):
+    secagem = _buscar_da_fazenda(session, Secagem, secagem_id, fazenda_id)
+    if not secagem:
         raise HTTPException(status_code=404, detail="Secagem não encontrada")
     for campo, valor in dados.model_dump(exclude_unset=True).items():
         setattr(secagem, campo, valor)
@@ -983,57 +1474,73 @@ class PartoIn(BaseModel):
     observacao: str | None = None
 
 
-@router.post("/parto")
-def registrar_parto(
-    dados: PartoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int = Depends(get_fazenda_id_escrita),
-) -> dict:
-    """
-    Registra o parto e cria a ficha de cada cria nascida viva ainda não
-    cadastrada. Não move ninguém de lote sozinho — o front sugere o lote via
-    /producao/sugestao-lote-evento e só move (POST /movimentacoes/mover) com
-    confirmação explícita do usuário.
-    """
-    query_mae = select(Animal).where(Animal.numero == dados.numero_matriz)
+def _partos_da_matriz(session: Session, numero_matriz: str, fazenda_id: int | None) -> list[Parto]:
+    """Todos os partos gravados da matriz — inclusive os abortos, que também
+    são `Parto` desde o endpoint único de encerramento de gestação. Quem
+    precisa só dos produtivos filtra com `rules.parto.eh_parto_produtivo`."""
+    query = select(Parto).where(Parto.numero_matriz == numero_matriz)
     if fazenda_id is not None:
-        query_mae = query_mae.where(Animal.fazenda_id == fazenda_id)
-    mae = session.exec(query_mae).first()
-    if not mae:
+        query = query.where(Parto.fazenda_id == fazenda_id)
+    return list(session.exec(query).all())
+
+
+def _buscar_matriz(session: Session, numero_matriz: str, fazenda_id: int | None) -> Animal:
+    query = select(Animal).where(Animal.numero == numero_matriz)
+    if fazenda_id is not None:
+        query = query.where(Animal.fazenda_id == fazenda_id)
+    animal = session.exec(query).first()
+    if not animal:
         raise HTTPException(status_code=404, detail="Matriz não encontrada")
+    return animal
 
-    query_ultimo_parto = select(Parto).where(Parto.numero_matriz == dados.numero_matriz).order_by(Parto.ordem_parto.desc())
-    if fazenda_id is not None:
-        query_ultimo_parto = query_ultimo_parto.where(Parto.fazenda_id == fazenda_id)
-    ultimo_parto = session.exec(query_ultimo_parto).first()
-    ordem_parto = (ultimo_parto.ordem_parto or 0) + 1 if ultimo_parto else 1
 
-    # Sexo do parto gemelar: usa o informado ou deriva dos sexos das crias.
-    gemelar_sexo = dados.gemelar_sexo
-    if not gemelar_sexo and len(dados.crias) >= 2:
-        combo = "".join(sorted((dados.crias[0].sexo or "").upper() + (dados.crias[1].sexo or "").upper()))
+def _gravar_parto_e_crias(
+    session: Session, mae: Animal, *, data_parto: date, tipo_parto: str | None,
+    crias: list[CriaIn], retencao_placenta: bool | None, gemelar: bool | None,
+    gemelar_sexo: str | None, ordem_parto: int | None, usuario_id: int | None,
+    fazenda_id: int | None, abriu_lactacao: bool = False,
+) -> tuple[Parto, list[str], list[str]]:
+    """Cria o `Parto`, cadastra as crias nascidas vivas e agenda a avaliação
+    de retenção de placenta — SEM commit.
+
+    Extraído de `registrar_parto` para ser o corpo comum dele e do endpoint
+    único de encerramento de gestação: os dois precisam gravar exatamente o
+    mesmo `Parto`, e ter duas cópias dessa gravação é como o aborto acabou
+    sem `Parto` nenhum em primeiro lugar.
+
+    `ordem_parto=None` marca um fim de gestação NÃO produtivo (aborto sem
+    abertura de lactação) — ver `fazenda.rules.parto`. `abriu_lactacao=True`
+    é o registro, no próprio `Parto`, de que este aborto específico abriu
+    lactação (True só chega aqui vindo de `encerrar_gestacao`, nunca de
+    `registrar_parto` — só o aborto pode ser não-produtivo).
+    """
+    if not gemelar_sexo and len(crias) >= 2:
+        combo = "".join(sorted((crias[0].sexo or "").upper() + (crias[1].sexo or "").upper()))
         gemelar_sexo = {"FF": "FF", "FM": "FM", "MM": "MM"}.get(combo)
 
     parto = Parto(
         animal_id=mae.id,
-        numero_matriz=dados.numero_matriz,
-        data_parto=dados.data_parto,
+        numero_matriz=mae.numero,
+        data_parto=data_parto,
         ordem_parto=ordem_parto,
-        tipo_parto=dados.tipo_parto,
-        sexo_cria_1=dados.crias[0].sexo if len(dados.crias) > 0 else None,
-        sexo_cria_2=dados.crias[1].sexo if len(dados.crias) > 1 else None,
-        numero_cria_1=(dados.crias[0].numero or None) if len(dados.crias) > 0 else None,
-        numero_cria_2=(dados.crias[1].numero or None) if len(dados.crias) > 1 else None,
-        gemelar=dados.gemelar if dados.gemelar is not None else len(dados.crias) > 1,
+        tipo_parto=tipo_parto,
+        sexo_cria_1=crias[0].sexo if len(crias) > 0 else None,
+        sexo_cria_2=crias[1].sexo if len(crias) > 1 else None,
+        numero_cria_1=(crias[0].numero or None) if len(crias) > 0 else None,
+        numero_cria_2=(crias[1].numero or None) if len(crias) > 1 else None,
+        gemelar=gemelar if gemelar is not None else len(crias) > 1,
         gemelar_sexo=gemelar_sexo,
-        retencao_placenta=dados.retencao_placenta,
-        usuario_id=usuario_id_seguro(user),
+        retencao_placenta=retencao_placenta,
+        abriu_lactacao=abriu_lactacao,
+        usuario_id=usuario_id,
         fazenda_id=fazenda_id,
     )
     session.add(parto)
+    session.flush()  # precisa do parto.id para vincular a lactação
 
-    crias_criadas = []
-    crias_baixadas = []
-    for cria in dados.crias:
+    crias_criadas: list[str] = []
+    crias_baixadas: list[str] = []
+    for cria in crias:
         # Sem número OU marcada como não-viva → baixa automática (natimorto/não
         # entra no rebanho). Fica registrada no parto (sexo), mas sem ficha.
         if not (cria.numero or "").strip() or not cria.nasceu_viva:
@@ -1044,14 +1551,14 @@ def registrar_parto(
             query_cria_existente = query_cria_existente.where(Animal.fazenda_id == fazenda_id)
         if session.exec(query_cria_existente).first():
             continue  # já cadastrada — não sobrescreve
-        raca_cria, grau_sangue_cria = calcular_grau_sangue_cria(session, mae, dados.data_parto)
+        raca_cria, grau_sangue_cria = calcular_grau_sangue_cria(session, mae, data_parto, fazenda_id)
         # Todo animal que nasce entra automaticamente na categoria "bezerra/o
         # mamando" — o próximo upload do GERAL.csv (Ideagri) pode atualizar
         # depois, mas a cria não deve ficar sem categoria até lá.
         categoria_completa_cria = "Bezerra Mamando" if cria.sexo == "F" else "Bezerro Mamando"
         categoria_abrev_cria = "Bezerra" if cria.sexo == "F" else "Bezerro"
         session.add(Animal(
-            numero=cria.numero, sexo=cria.sexo, raca=raca_cria, grau_sangue=grau_sangue_cria, data_nasc=dados.data_parto,
+            numero=cria.numero, sexo=cria.sexo, raca=raca_cria, grau_sangue=grau_sangue_cria, data_nasc=data_parto,
             mae_numero=mae.numero, mae_nome=mae.nome, ativo=True,
             categoria_completa=categoria_completa_cria, categoria_abrev=categoria_abrev_cria,
             fazenda_id=fazenda_id,
@@ -1060,27 +1567,283 @@ def registrar_parto(
 
     # Retenção de placenta → gera um item na Agenda (avaliação/tratamento) no
     # dia do parto, para não passar despercebido.
-    if dados.retencao_placenta:
+    if retencao_placenta:
         from fazenda.models import AgendaManual
         session.add(AgendaManual(
-            data_evento=dados.data_parto,
+            data_evento=data_parto,
             descricao=f"Retenção de placenta — vaca {mae.numero}: avaliar/tratar",
             categoria="Sanidade",
             numero_animal=mae.numero,
             tipo_evento="Outro",
             observacao="Gerado automaticamente pelo lançamento de parto com retenção de placenta.",
-            usuario_id=usuario_id_seguro(user),
+            usuario_id=usuario_id,
             fazenda_id=fazenda_id,
         ))
 
-    # DEL reseta ao parir — o resto da ficha (categoria, produção etc.) só é
-    # atualizado de fato no próximo upload do GERAL.csv.
-    mae.del_dias = 0
-    mae.atualizado_em = datetime.utcnow()
-    session.add(mae)
+    return parto, crias_criadas, crias_baixadas
+
+
+@router.post("/parto")
+def registrar_parto(
+    dados: PartoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """
+    Registra o parto e cria a ficha de cada cria nascida viva ainda não
+    cadastrada. Não move ninguém de lote sozinho — o front sugere o lote via
+    /producao/sugestao-lote-evento e só move (POST /movimentacoes/mover) com
+    confirmação explícita do usuário.
+
+    Continua existindo para não quebrar quem já o chama (app de campo, bot do
+    Telegram, importações); o caminho novo e completo — que também resolve a
+    perda de prenhez e cobre aborto/natimorto — é
+    POST /reproducao/encerramento-gestacao.
+    """
+    mae = _buscar_matriz(session, dados.numero_matriz, fazenda_id)
+
+    # A ordem sai de `rules.parto.proxima_ordem_parto` — não mais de
+    # "`ordem_parto` do mais recente + 1" ordenado por essa mesma coluna.
+    # Agora que o aborto também gera um `Parto` (com `ordem_parto` NULL, ver
+    # fazenda/rules/parto.py), aquela consulta ficaria dependente de como o
+    # banco ordena NULLs: em Postgres eles vêm PRIMEIRO no DESC, e toda matriz
+    # com um aborto no histórico recomeçaria a contagem do 1.
+    ordem_parto = proxima_ordem_parto(_partos_da_matriz(session, dados.numero_matriz, fazenda_id))
+
+    parto, crias_criadas, crias_baixadas = _gravar_parto_e_crias(
+        session, mae, data_parto=dados.data_parto, tipo_parto=dados.tipo_parto, crias=dados.crias,
+        retencao_placenta=dados.retencao_placenta, gemelar=dados.gemelar, gemelar_sexo=dados.gemelar_sexo,
+        ordem_parto=ordem_parto, usuario_id=usuario_id_seguro(user), fazenda_id=fazenda_id,
+    )
+
+    # Todo parto abre uma lactação (ver fazenda/rules/lactacao.py) — a
+    # entidade que faltava e sem a qual "esta vaca está em lactação?" era
+    # inferido de forma diferente em cada tela. `data_inicio` é a data REAL
+    # do parto, inclusive retroativa: é dela que sai o DEL ao vivo gravado
+    # em cada controle leiteiro.
+    regras_lactacao.abrir_lactacao(
+        session, numero_matriz=dados.numero_matriz, data_inicio=dados.data_parto,
+        origem=regras_lactacao.ORIGEM_PARTO, parto_id=parto.id, animal_id=mae.id,
+        fazenda_id=fazenda_id, usuario_id=usuario_id_seguro(user),
+    )
+
+    # `Animal.del_dias` é campo CONGELADO, mantido em dia aqui só por
+    # compatibilidade com as telas que ainda o leem (a migração delas para
+    # ler a Lactacao direto é a Peça 1). Note que agora sai do DEL AO VIVO
+    # da lactação recém-aberta, não de um `0` cravado: num parto lançado
+    # retroativamente, `0` era simplesmente falso.
+    regras_lactacao.sincronizar_del_do_animal(
+        session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id,
+    )
 
     session.commit()
     return {"criado": True, "ordem_parto": ordem_parto, "crias_criadas": crias_criadas, "crias_baixadas": crias_baixadas}
+
+
+# ---------------------------------------------------------------------------
+# Encerramento de gestação — o caminho ÚNICO de "esta gestação acabou"
+#
+# Antes existiam TRÊS caminhos incoerentes para a mesma coisa:
+#
+#   1. `POST /reproducao/parto` — criava `Parto`, mas só servia para parto
+#      normal e não tocava na perda de prenhez;
+#   2. `POST /reproducao/perda-prenhez` (o que o botão "Aborto" do FormParto
+#      chamava) — NÃO criava `Parto` nenhum, só carimbava dois campos no
+#      serviço MAIS RECENTE POR DATA da matriz, que nem sempre é o serviço
+#      que originou a gestação perdida;
+#   3. `POST /reproducao/animais/{n}/abrir-lactacao` — gravava `del_dias = 0`
+#      e nada mais, sem nem receber a data do evento.
+#
+# O resultado era o bug que originou esta correção: a matriz que abortou
+# ficava sem `Parto` (logo, "novilha gestante, sem parto" na Ficha para
+# sempre), com a perda possivelmente carimbada no serviço errado, e com uma
+# "lactação" que existia só como um zero num campo congelado.
+#
+# Este endpoint faz as quatro coisas numa transação só, para os três tipos de
+# fim de gestação. Os endpoints antigos continuam existindo (há outros
+# chamadores), mas o fluxo de aborto do FormParto passa por aqui.
+# ---------------------------------------------------------------------------
+TIPOS_ENCERRAMENTO = ("parto", "aborto", "natimorto")
+
+# Rótulo gravado em `Parto.tipo_parto` por tipo de encerramento. O do aborto é
+# o mesmo texto que a importação do CSV do Ideagri já traz, de propósito (ver
+# fazenda/rules/parto.py).
+ROTULO_TIPO_PARTO = {
+    "parto": TIPO_PARTO_NORMAL,
+    "aborto": TIPO_PARTO_ABORTO,
+    "natimorto": TIPO_PARTO_NATIMORTO,
+}
+
+# Motivo de perda de prenhez implícito em cada tipo, quando o usuário não
+# informa um. Parto normal não gera perda nenhuma — ver o comentário no corpo.
+MOTIVO_PADRAO_POR_TIPO = {"aborto": "aborto", "natimorto": "natimorto"}
+
+
+class EncerramentoGestacaoIn(BaseModel):
+    numero_matriz: str
+    data: date                      # data REAL do evento — aceita retroativa
+    tipo: str                       # "parto" | "aborto" | "natimorto"
+    abrir_lactacao: bool = False    # resposta do popup "deseja abrir lactação?"
+    motivo: str | None = None       # perda de prenhez: aborto | natimorto | outros
+    crias: list[CriaIn] = []
+    retencao_placenta: bool | None = None
+    gemelar: bool | None = None
+    gemelar_sexo: str | None = None
+    tipo_parto: str | None = None   # rótulo livre do parto (distocia etc.); vazio = o padrão do tipo
+    observacao: str | None = None
+    forcar: bool = False            # reservado: confirmação manual de situações limítrofes
+
+
+@router.post("/encerramento-gestacao")
+def encerrar_gestacao(
+    dados: EncerramentoGestacaoIn, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """
+    Encerra a gestação de uma matriz — parto, aborto ou natimorto — numa
+    única transação:
+
+    1. cria o `Parto` (nos TRÊS casos; no aborto SEM abertura de lactação,
+       `ordem_parto` fica NULL, que é o que o mantém fora do IEP/ordem de
+       parto — ver rules/parto.py). Aborto COM abertura de lactação
+       (`abrir_lactacao=True`) é produtivo — recebe `ordem_parto` e grava
+       `Parto.abriu_lactacao=True`, a mesma exceção de `eh_parto_produtivo`;
+    2. carimba a perda de prenhez no serviço VIGENTE POSITIVO certo (aborto e
+       natimorto), usando `rules.perda_prenhez.servico_esta_positivo_vigente`
+       em vez de "o serviço mais recente por data", que podia carimbar a
+       perda numa inseminação posterior à gestação perdida;
+    3. abre a `Lactacao` com `data_inicio` = a data REAL do evento, se
+       `abrir_lactacao`;
+    4. sincroniza `Animal.del_dias` com o DEL ao vivo recém-calculado, para
+       as telas que ainda leem o campo congelado.
+
+    Não move ninguém de lote: devolve `sugerir_lote` para o front pedir a
+    sugestão em /producao/sugestao-lote-evento e confirmar com o usuário —
+    exatamente o que o parto normal já faz, e que o caminho de aborto pulava
+    inteiro.
+    """
+    if dados.tipo not in TIPOS_ENCERRAMENTO:
+        raise HTTPException(status_code=400, detail=f"Tipo inválido: {dados.tipo}")
+    if dados.motivo is not None and dados.motivo not in MOTIVOS_PERDA_PRENHEZ:
+        raise HTTPException(status_code=400, detail="Motivo de perda de prenhez inválido")
+
+    mae = _buscar_matriz(session, dados.numero_matriz, fazenda_id)
+    usuario_id = usuario_id_seguro(user)
+    partos_anteriores = _partos_da_matriz(session, dados.numero_matriz, fazenda_id)
+
+    # (1) O Parto. Aborto -> ordem_parto NULL: a gestação acabou (e todo o
+    # motor ao vivo que pergunta "existe parto?" passa a enxergar isso), mas
+    # não houve cria e a ordem de parto da matriz não avança. EXCEÇÃO: aborto
+    # que abre lactação (`dados.abrir_lactacao=True`) é produtivo — a vaca
+    # entrou em lactação de verdade, funcionalmente equivalente a uma cria
+    # para fins de contagem de ordem de parto (pedido explícito do usuário).
+    abriu_lactacao_no_aborto = dados.tipo == "aborto" and dados.abrir_lactacao
+    produtivo = dados.tipo != "aborto" or dados.abrir_lactacao
+    ordem_parto = proxima_ordem_parto(partos_anteriores) if produtivo else None
+    parto, crias_criadas, crias_baixadas = _gravar_parto_e_crias(
+        session, mae, data_parto=dados.data, tipo_parto=dados.tipo_parto or ROTULO_TIPO_PARTO[dados.tipo],
+        crias=dados.crias, retencao_placenta=dados.retencao_placenta, gemelar=dados.gemelar,
+        gemelar_sexo=dados.gemelar_sexo, ordem_parto=ordem_parto, usuario_id=usuario_id, fazenda_id=fazenda_id,
+        abriu_lactacao=abriu_lactacao_no_aborto,
+    )
+
+    # (2) A perda de prenhez — só quando de fato houve perda. Um parto normal
+    # NÃO carimba `data_perda_prenhez`: a gestação se resolveu do jeito certo,
+    # e marcar perda ali corromperia as taxas de perda de prenhez do rebanho.
+    servico_perda = None
+    if dados.tipo in MOTIVO_PADRAO_POR_TIPO:
+        servico_perda = _carimbar_perda_no_servico_vigente(
+            session, numero_matriz=dados.numero_matriz, data_perda=dados.data,
+            motivo=dados.motivo or MOTIVO_PADRAO_POR_TIPO[dados.tipo],
+            partos_anteriores=partos_anteriores, fazenda_id=fazenda_id,
+        )
+
+    # (3) A lactação, com a data REAL do evento (retroativa quando for o
+    # caso). É daqui que sai o DEL — não mais de um `del_dias = 0` cravado
+    # no dia do lançamento, que dava DEL 0 a uma vaca que abortou há 40 dias.
+    lactacao = None
+    if dados.abrir_lactacao:
+        lactacao = regras_lactacao.abrir_lactacao(
+            session, numero_matriz=dados.numero_matriz, data_inicio=dados.data,
+            origem=regras_lactacao.ORIGEM_ABORTO if dados.tipo == "aborto" else regras_lactacao.ORIGEM_PARTO,
+            parto_id=parto.id, animal_id=mae.id, fazenda_id=fazenda_id, usuario_id=usuario_id,
+            observacao=dados.observacao,
+        )
+
+    # (4) Compatibilidade com quem ainda lê o campo congelado.
+    del_atual = regras_lactacao.sincronizar_del_do_animal(
+        session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id,
+    )
+    # A gestação acabou — "gestante" no texto congelado deixou de ser
+    # verdade, seja lá qual for o tipo (parto, aborto ou natimorto). Sem
+    # isso, `Animal.categoria_completa/categoria_abrev` continuam dizendo
+    # "gestante" até o próximo upload do GERAL.csv, que pode nunca vir (caso
+    # relatado: novilha "14", abortou, categoria seguiu "Novilha gestante").
+    regras_lactacao.sincronizar_categoria_do_animal(
+        session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id,
+    )
+
+    session.commit()
+    if lactacao is not None:
+        session.refresh(lactacao)
+    return {
+        "criado": True,
+        "tipo": dados.tipo,
+        "parto_id": parto.id,
+        "ordem_parto": ordem_parto,
+        "crias_criadas": crias_criadas,
+        "crias_baixadas": crias_baixadas,
+        "perda_prenhez_servico_id": servico_perda.id if servico_perda else None,
+        "lactacao_id": lactacao.id if lactacao else None,
+        "lactacao_aberta": lactacao is not None,
+        "del_dias": del_atual,
+        # O front usa isto para rodar o MESMO bloco de sugestão de lote do
+        # parto normal (ver prepararPendenciaLote/alocarSemConfirmar em
+        # FormParto.tsx), que o caminho antigo de aborto pulava.
+        "sugerir_lote": lactacao is not None,
+    }
+
+
+def _carimbar_perda_no_servico_vigente(
+    session: Session, *, numero_matriz: str, data_perda: date, motivo: str,
+    partos_anteriores: list[Parto], fazenda_id: int | None,
+) -> Servico | None:
+    """Grava a perda de prenhez no serviço que ORIGINOU a gestação perdida.
+
+    O caminho antigo (`POST /reproducao/perda-prenhez`) pegava simplesmente o
+    serviço de data mais recente da matriz. Isso carimba no serviço errado
+    sempre que existe uma inseminação POSTERIOR à gestação perdida — e a
+    matriz passa a constar com uma perda numa tentativa que ainda nem foi
+    diagnosticada, enquanto a gestação que realmente se perdeu continua
+    contando como vigente.
+
+    Aqui o alvo é o serviço vigente que ainda vale como prenhez, pelo mesmo
+    critério de `rules.perda_prenhez.servico_esta_positivo_vigente`: o mais
+    recente ATÉ a data do evento, posterior ao último parto anterior, com
+    diagnóstico POSITIVO e sem perda já registrada.
+
+    Devolve `None` (sem erro) quando não há serviço assim — é o caso legítimo
+    da matriz que abortou sem que ninguém tivesse lançado o diagnóstico
+    positivo. O `Parto` do aborto continua sendo criado, que é o que conserta
+    o estado dela.
+    """
+    ultimo_parto = max(
+        (p.data_parto for p in partos_anteriores if p.data_parto and p.data_parto < data_perda), default=None,
+    )
+    query = select(Servico).where(Servico.numero_matriz == numero_matriz)
+    if fazenda_id is not None:
+        query = query.where(Servico.fazenda_id == fazenda_id)
+    candidatos = [
+        s for s in session.exec(query).all()
+        if s.data_servico and s.data_servico <= data_perda
+        and (ultimo_parto is None or s.data_servico > ultimo_parto)
+    ]
+    vigente = max(candidatos, key=lambda s: s.data_servico, default=None)
+    if vigente is None or not servico_esta_positivo_vigente(vigente):
+        return None
+    vigente.data_perda_prenhez = data_perda
+    vigente.motivo_perda_prenhez = motivo
+    session.add(vigente)
+    return vigente
 
 
 class HormonioIatfIn(BaseModel):
@@ -1102,6 +1865,7 @@ class ProtocoloIatfIn(BaseModel):
     # Medicamentos por dia (ex.: D0 = 1ml SincroCP + 2ml Estron). Opcional —
     # sem eles, o protocolo funciona como antes (sem baixa de estoque).
     hormonios: list[HormonioIatfIn] = []
+    forcar: bool = False  # confirmação manual dos bloqueios confirmáveis de aptidão (ver rules/aptidao.py)
 
 
 @router.post("/protocolo-iatf")
@@ -1120,10 +1884,19 @@ def lancar_protocolo_iatf(
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
 
+    # Colocar a matriz num protocolo hormonal é decidir que ela vai ser
+    # inseminada — a mesma trava de aptidão da inseminação vale aqui, e vale
+    # AQUI PRIMEIRO: entre o D0 e a IA passam ~11 dias de hormônio aplicado
+    # em bicho que nunca deveria ter entrado no protocolo. Valida contra a
+    # data do D0 (a idade do animal HOJE, não daqui a 11 dias).
+    _exigir_aptidao_do_lote(
+        session, dados.animais, data=dados.data_d0, fazenda_id=fazenda_id, forcar=dados.forcar,
+    )
+
     nome_base = "Protocolo IATF"
     if dados.protocolo_id is not None:
-        molde = session.get(ProtocoloIatf, dados.protocolo_id)
-        if not molde or (fazenda_id is not None and molde.fazenda_id != fazenda_id):
+        molde = _buscar_da_fazenda(session, ProtocoloIatf, dados.protocolo_id, fazenda_id)
+        if not molde:
             raise HTTPException(status_code=404, detail="Protocolo IATF cadastrado não encontrado")
         nome_base = molde.nome
 
@@ -1313,25 +2086,48 @@ def listar_protocolos_iatf_ativos(
     def candidatas_herd() -> list[dict]:
         nonlocal _candidatas_cache
         if _candidatas_cache is None:
-            query_animais = select(Animal).where(Animal.ativo == True)  # noqa: E712
-            if fazenda_id is not None:
-                query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
-            animais = session.exec(query_animais).all()
+            from fazenda.rules.parametros import (
+                get_param, idade_apta_min_meses, idade_max_1a_cobertura_meses, peso_apta_min, pev_dias,
+            )
+            from fazenda.rules.programa_reprodutivo import estado_no_dia
+
+            hoje_ref = date.today()
+            perfis = carregar_perfis_reprodutivos(session, fazenda_id)
             query_servicos = select(Servico).where(Servico.ult_ocorrencia == 1)
             if fazenda_id is not None:
                 query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
-            servicos = session.exec(query_servicos).all()
-            diag_por_animal = {s.numero_matriz: s.diagnostico for s in servicos}
-            iatf_input = [
-                {
-                    "numero_matriz": a.numero, "sit_rep": a.sit_rep, "del_dias": a.del_dias,
-                    "diagnostico_ultimo": diag_por_animal.get(a.numero),
+            diag_por_animal = {
+                s.numero_matriz: s.diagnostico for s in session.exec(query_servicos).all()
+            }
+            query_sit = select(Animal)
+            if fazenda_id is not None:
+                query_sit = query_sit.where(Animal.fazenda_id == fazenda_id)
+            sit_por_animal = {a.numero: a.sit_rep for a in session.exec(query_sit).all()}
+
+            kwargs_estado = {
+                "pev_dias": pev_dias(),
+                "del_max_1o_servico": int(get_param("meta_del_max_1o_servico", 100) or 100),
+                "idade_apta_dias": int(idade_apta_min_meses() * 30.44), "idade_atraso_dias": int(idade_max_1a_cobertura_meses() * 30.44),
+                "peso_apta_kg": peso_apta_min(),
+            }
+            # Mesmo critério da Agenda: quem está apta HOJE. `estado_no_dia` já
+            # aplica R1 (a descartar / baixada), que `classificar_animal` não faz.
+            estados = {
+                perfil.numero: {
+                    "estado": estado_no_dia(perfil, hoje_ref, **kwargs_estado).estado_reprodutivo,
+                    "del_dias": _del_em(perfil, hoje_ref),
                 }
-                for a in animais
+                for perfil in perfis
+            }
+            entrada = [
+                {"numero_matriz": perfil.numero, "sit_rep": sit_por_animal.get(perfil.numero),
+                 "diagnostico_ultimo": diag_por_animal.get(perfil.numero)}
+                for perfil in perfis
             ]
-            candidatas = selecionar_candidatas_iatf(iatf_input)
+            candidatas = selecionar_candidatas_iatf(entrada, estados)
             _candidatas_cache = [
-                {"numero_matriz": c.numero_matriz, "sit_rep": c.sit_rep, "del_dias": c.del_dias, "motivo": c.motivo}
+                {"numero_matriz": c.numero_matriz, "sit_rep": c.sit_rep, "del_dias": c.del_dias,
+                 "motivo": c.motivo, "estado": c.estado, "estado_rotulo": c.estado_rotulo}
                 for c in candidatas
             ]
         return _candidatas_cache
@@ -1458,6 +2254,26 @@ def listar_protocolos_iatf_ativos(
     return ativos
 
 
+def _del_em(perfil, d: date) -> int | None:
+    """DEL do animal NA DATA `d` — dias desde o último parto que já tinha
+    acontecido até ali.
+
+    Substitui a conta antiga de "DEL projetado" (`Animal.del_dias` congelado +
+    dias até a visita), que herdava a defasagem do CSV e ainda somava dias a um
+    número que podia estar errado desde o começo."""
+    datas = []
+    for p in perfil.partos:
+        dp = p.get("data_parto") if isinstance(p, dict) else getattr(p, "data_parto", None)
+        if isinstance(dp, str):
+            try:
+                dp = date.fromisoformat(dp[:10])
+            except ValueError:
+                dp = None
+        if dp and dp <= d:
+            datas.append(dp)
+    return (d - max(datas)).days if datas else None
+
+
 @router.get("/protocolo-iatf/candidatas")
 def candidatas_iatf_projetadas(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -1466,43 +2282,84 @@ def candidatas_iatf_projetadas(
     usado na Agenda), com projeção de aptidão na data da próxima visita reprodutiva —
     último serviço do rebanho + `intervalo_visita_reprodutiva` dias (Configurações
     > Parâmetros). Usado em Histórico > Reprodução > Ciclos de IATF."""
-    from fazenda.rules.iatf import selecionar_candidatas_iatf
-    from fazenda.rules.parametros import get_param, intervalo_visita_reprodutiva
+    from fazenda.rules.iatf import ESTADOS_CANDIDATA, selecionar_candidatas_iatf
+    from fazenda.rules.parametros import (
+        get_param, idade_apta_min_meses, idade_max_1a_cobertura_meses,
+        intervalo_visita_reprodutiva, peso_apta_min,
+    )
+    from fazenda.rules.programa_reprodutivo import estado_no_dia
 
     fazenda_id = fazenda_id_seguro(fazenda_id)
     hoje = date.today()
-    query_animais = select(Animal).where(Animal.ativo == True)  # noqa: E712
-    if fazenda_id is not None:
-        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
-    animais = session.exec(query_animais).all()
+    # `carregar_perfis_reprodutivos` traz as cinco cargas (Animal, Servico,
+    # Parto, aplicações de IATF e pesagem) já indexadas, com escopo de fazenda e
+    # sem machos nem sêmen — este endpoint antes não filtrava nem isso.
+    perfis = carregar_perfis_reprodutivos(session, fazenda_id)
+
     query_servicos = select(Servico)
     if fazenda_id is not None:
         query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
     todos_servicos = session.exec(query_servicos).all()
     diag_por_animal = {s.numero_matriz: s.diagnostico for s in todos_servicos if s.ult_ocorrencia == 1}
-    iatf_input = [
-        {"numero_matriz": a.numero, "sit_rep": a.sit_rep, "del_dias": a.del_dias,
-         "diagnostico_ultimo": diag_por_animal.get(a.numero)}
-        for a in animais
-    ]
-    candidatas = selecionar_candidatas_iatf(iatf_input)
+    sit_rep_por_animal = {}
+    query_sit = select(Animal)
+    if fazenda_id is not None:
+        query_sit = query_sit.where(Animal.fazenda_id == fazenda_id)
+    for a in session.exec(query_sit).all():
+        sit_rep_por_animal[a.numero] = a.sit_rep
 
     datas_servico = [s.data_servico for s in todos_servicos if s.data_servico]
     intervalo = intervalo_visita_reprodutiva()
     proxima_visita = (max(datas_servico) + timedelta(days=intervalo)) if (datas_servico and intervalo > 0) else None
-    dias_ate_visita = (proxima_visita - hoje).days if proxima_visita else None
-    pev_dias = int(get_param("pev_dias", 45) or 45)
+    pev = int(get_param("pev_dias", 45) or 45)
+    kwargs_estado = {
+        "pev_dias": pev,
+        "del_max_1o_servico": int(get_param("meta_del_max_1o_servico", 100) or 100),
+        "idade_apta_dias": int(idade_apta_min_meses() * 30.44), "idade_atraso_dias": int(idade_max_1a_cobertura_meses() * 30.44),
+        "peso_apta_kg": peso_apta_min(),
+    }
+
+    # A pergunta desta tela é "quem planejo para a VISITA", não "quem trabalho
+    # hoje" — por isso o estado é avaliado na data da visita, e não somando dias
+    # ao `Animal.del_dias` congelado como antes. Quem sai do PEV entre hoje e a
+    # visita aparece; quem entra em protocolo ou é inseminada nesse meio-tempo,
+    # não. A Agenda continua respondendo pelo dia de hoje.
+    data_alvo = proxima_visita or hoje
+    estados_hoje = {}
+    estados_visita = {}
+    for perfil in perfis:
+        estados_hoje[perfil.numero] = estado_no_dia(perfil, hoje, **kwargs_estado)
+        estados_visita[perfil.numero] = estado_no_dia(perfil, data_alvo, **kwargs_estado)
+
+    entrada = [
+        {"numero_matriz": p.numero, "sit_rep": sit_rep_por_animal.get(p.numero),
+         "diagnostico_ultimo": diag_por_animal.get(p.numero)}
+        for p in perfis
+    ]
+    # `estado_no_dia` já aplicou R1 (a descartar / baixada) na data da visita.
+    mapa_visita = {
+        n: {"estado": e.estado_reprodutivo, "del_dias": None}
+        for n, e in estados_visita.items()
+    }
+    del_por_animal = {p.numero: _del_em(p, hoje) for p in perfis}
+    del_visita = {p.numero: _del_em(p, data_alvo) for p in perfis}
+    for n in mapa_visita:
+        mapa_visita[n]["del_dias"] = del_por_animal.get(n)
+    candidatas = selecionar_candidatas_iatf(entrada, mapa_visita)
 
     resultado = []
     for c in candidatas:
-        del_projetado = (c.del_dias + dias_ate_visita) if (c.del_dias is not None and dias_ate_visita is not None) else c.del_dias
-        # "Diagnóstico negativo" não depende de DEL/PEV — já é candidata apta
-        # independente da data; as demais (vazia apta/em atraso) só se
-        # confirmam se o DEL projetado ainda cobrir o PEV na data da visita.
-        apta_projetada = True if c.motivo == "Diagnóstico negativo" else (del_projetado is not None and del_projetado >= pev_dias)
+        estado_agora = estados_hoje.get(c.numero_matriz)
         resultado.append({
-            "numero_matriz": c.numero_matriz, "sit_rep": c.sit_rep, "del_dias": c.del_dias, "motivo": c.motivo,
-            "del_dias_projetado": del_projetado, "apta_na_proxima_visita": apta_projetada,
+            "numero_matriz": c.numero_matriz, "sit_rep": c.sit_rep, "del_dias": c.del_dias,
+            "motivo": c.motivo, "estado": c.estado, "estado_rotulo": c.estado_rotulo,
+            "del_dias_projetado": del_visita.get(c.numero_matriz),
+            # Ela É candidata na visita por construção — a lista já foi montada
+            # com o estado daquela data. O campo sobrevive para a tela, e agora
+            # significa o que o nome diz.
+            "apta_na_proxima_visita": True,
+            # Quem já está apta hoje pode ser trabalhada sem esperar a visita.
+            "apta_hoje": bool(estado_agora and estado_agora.estado_reprodutivo in ESTADOS_CANDIDATA),
         })
     return {"candidatas": resultado, "proxima_visita_iatf": proxima_visita.isoformat() if proxima_visita else None}
 
@@ -1549,16 +2406,21 @@ def adicionar_animais_iatf(
     lancamento_id: int,
     dados: AdicionarAnimaisIatfIn,
     session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     Adiciona animais a um protocolo IATF já lançado (esqueci de incluí-los na
     hora). Reaproveita a MESMA data de D0 e os mesmos hormônios por dia; ignora
     animais que já estão no protocolo.
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
-    lancamento = session.get(ProtocoloIatfLancamento, lancamento_id)
-    if not lancamento or (fazenda_id is not None and lancamento.fazenda_id not in (None, fazenda_id)):
+    # Filtro na consulta (ver _buscar_da_fazenda): um lançamento IATF sem
+    # molde (protocolo_id nulo) não tem pai de onde a migração de backfill
+    # derive a fazenda, então ele continua órfão em instalação com 2+
+    # fazendas — e a checagem tolerante deixava qualquer tenant despejar
+    # animais dentro dele (fechando serviços em aberto das matrizes de
+    # quebra, ver fechar_servicos_abertos_por_reinseminacao abaixo).
+    lancamento = _buscar_da_fazenda(session, ProtocoloIatfLancamento, lancamento_id, fazenda_id)
+    if not lancamento:
         raise HTTPException(status_code=404, detail="Protocolo IATF não encontrado")
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
@@ -1630,8 +2492,8 @@ def remover_animal_iatf(
     estoque/Sanidade), desmarque "Realizado" na Agenda primeiro.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    lancamento = session.get(ProtocoloIatfLancamento, lancamento_id)
-    if not lancamento or (fazenda_id is not None and lancamento.fazenda_id not in (None, fazenda_id)):
+    lancamento = _buscar_da_fazenda(session, ProtocoloIatfLancamento, lancamento_id, fazenda_id)
+    if not lancamento:
         raise HTTPException(status_code=404, detail="Protocolo IATF não encontrado")
 
     aplicacoes = session.exec(
@@ -1653,12 +2515,20 @@ def remover_animal_iatf(
     return {"removido": True, "lancamento_id": lancamento_id, "numero_matriz": numero_matriz}
 
 
-def _mapa_tipo_semen_por_touro(session: Session) -> dict[str, str]:
+def _mapa_tipo_semen_por_touro(session: Session, fazenda_id: int | None = None) -> dict[str, str]:
     """touro_nome (minúsculo) -> tipo (convencional/sexado/fazenda) do Estoque
     de Sêmen — usado para completar o tipo_semen de serviços antigos que não
-    gravaram a modalidade no momento da inseminação."""
+    gravaram a modalidade no momento da inseminação.
+
+    Filtrado por fazenda, igual à baixa de dose (_baixar_dose_semen): sem
+    isso, o mapa era montado com o Estoque de Sêmen de TODAS as fazendas e a
+    tela de análise completava o tipo do serviço com a modalidade cadastrada
+    por outro tenant para um touro de mesmo nome."""
     mapa: dict[str, str] = {}
-    for e in session.exec(select(EstoqueSemen)).all():
+    query = select(EstoqueSemen)
+    if fazenda_id is not None:
+        query = query.where(EstoqueSemen.fazenda_id == fazenda_id)
+    for e in session.exec(query).all():
         if e.touro_nome:
             mapa.setdefault(e.touro_nome.strip().lower(), e.tipo or "convencional")
     return mapa
@@ -1716,6 +2586,11 @@ class ServicoIn(BaseModel):
     reprodutor: str | None = None
     responsavel: str | None = None
     tipo_semen: str | None = None  # convencional | sexado | fazenda
+    # Confirmação explícita de quem lança para os bloqueios CONFIRMÁVEIS de
+    # aptidão (novilha sem pesagem/abaixo do peso, matriz que consta como
+    # gestante) — ver fazenda/rules/aptidao.py. Nunca destrava os bloqueios
+    # duros (sexo, animal baixado, idade abaixo do mínimo).
+    forcar: bool = False
 
 
 @router.post("/servico")
@@ -1735,6 +2610,14 @@ def registrar_servico(
     animal = session.exec(query_animal).first()
     if not animal:
         raise HTTPException(status_code=404, detail="Matriz não encontrada")
+
+    # Trava de aptidão (ver fazenda/rules/aptidao.py) — antes daqui não havia
+    # nenhuma, e a checagem "≥ 13 meses" que existia só no frontend divergia
+    # do parâmetro real da fazenda e não valia para o app de campo nem para o
+    # bot do Telegram, que chamam esta rota direto.
+    _exigir_aptidao(
+        session, animal, data=dados.data_servico, fazenda_id=fazenda_id, forcar=dados.forcar,
+    )
 
     query_anteriores = select(Servico).where(Servico.numero_matriz == dados.numero_matriz)
     if fazenda_id is not None:
@@ -1756,7 +2639,7 @@ def registrar_servico(
     # pendência "Cadastrar motivo da perda de prenhez" na Agenda). Sem efeito
     # quando não há prenhez vigente, quando a perda já foi registrada
     # (idempotente) ou quando um parto real já resolveu a gestação.
-    detectar_e_registrar_perda_por_reinseminacao(
+    perda_registrada = detectar_e_registrar_perda_por_reinseminacao(
         session, numero_matriz=dados.numero_matriz, nova_data_servico=dados.data_servico, fazenda_id=fazenda_id,
     )
     # E o caso irmão: serviço anterior que ficou SEM diagnóstico. A nova
@@ -1787,6 +2670,12 @@ def registrar_servico(
     )
     session.add(servico)
     session.flush()
+    if perda_registrada is not None:
+        # Guarda quem causou a perda automática — sem isso, excluir esta
+        # inseminação depois não tinha como desfazer a perda que ela mesma
+        # disparou no serviço anterior (ver exclusoes.py).
+        perda_registrada.perda_causada_por_servico_id = servico.id
+        session.add(perda_registrada)
     # Desconta 1 dose do Estoque de Sêmen (mesma regra do lançamento em lote,
     # ver registrar_servico_lote) — não se aplica a monta natural, que não usa
     # sêmen estocado.
@@ -1857,15 +2746,23 @@ def _nome_auto_iatf(d0: date) -> str:
 def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: date,
                           tipo_servico: str, protocolo: str | None, reprodutor: str | None,
                           inseminador: str | None = None, usuario_id: int | None = None,
-                          tipo_semen: str | None = None, fazenda_id: int | None = None) -> Servico | None:
+                          tipo_semen: str | None = None, fazenda_id: int | None = None,
+                          forcar: bool = False) -> Servico | None:
     """Cria um Servico para uma matriz (mesma lógica de registrar_servico, sem
-    commit) — resolve a inseminação do protocolo IATF vinculado, se houver."""
+    commit) — resolve a inseminação do protocolo IATF vinculado, se houver.
+
+    Aplica a MESMA trava de aptidão de `registrar_servico` (ver
+    fazenda/rules/aptidao.py): este é o caminho do lançamento em lote e do
+    protocolo IATF, e deixá-lo de fora seria manter a porta dos fundos
+    aberta justamente no ponto em que se lançam dezenas de animais de uma
+    vez sem olhar um por um."""
     query_animal = select(Animal).where(Animal.numero == numero_matriz)
     if fazenda_id is not None:
         query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
     animal = session.exec(query_animal).first()
     if not animal:
         return None
+    _exigir_aptidao(session, animal, data=data_servico, fazenda_id=fazenda_id, forcar=forcar)
     query_anteriores = select(Servico).where(Servico.numero_matriz == numero_matriz)
     if fazenda_id is not None:
         query_anteriores = query_anteriores.where(Servico.fazenda_id == fazenda_id)
@@ -1880,7 +2777,7 @@ def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: da
     # Mesma detecção automática de perda por reinseminação de registrar_servico
     # (ver o comentário lá) — este é o caminho usado por lançamento em lote e
     # pelo protocolo IATF, então precisa da mesma regra.
-    detectar_e_registrar_perda_por_reinseminacao(
+    perda_registrada = detectar_e_registrar_perda_por_reinseminacao(
         session, numero_matriz=numero_matriz, nova_data_servico=data_servico, fazenda_id=fazenda_id,
     )
     fechar_servicos_abertos_por_reinseminacao(
@@ -1901,6 +2798,11 @@ def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: da
             aplicacao_insem.realizada = True
             aplicacao_insem.data_realizacao = data_servico
             session.add(aplicacao_insem)
+    if perda_registrada is not None:
+        # `servico` só ganha id no flush do chamador (precisa dele pra gravar
+        # o vínculo) — guarda a referência num atributo comum (não é coluna
+        # do model) pro chamador ler depois desse flush.
+        servico._perda_registrada = perda_registrada
     return servico
 
 
@@ -1917,7 +2819,13 @@ def _animal_tem_protocolo_pendente(
     if not ap:
         return None
     lanc_ids = {a.lancamento_id for a in ap}
-    lancs = [l for l in (session.get(ProtocoloIatfLancamento, lid) for lid in lanc_ids) if l]
+    # Os lançamentos também são carregados filtrando por fazenda: as
+    # aplicações acima já são as da fazenda, mas uma delas apontando para um
+    # lançamento órfão/alheio (resíduo do backfill) traria o nome do
+    # protocolo de outro tenant para dentro dos serviços gravados aqui.
+    lancs = [
+        l for l in (_buscar_da_fazenda(session, ProtocoloIatfLancamento, lid, fazenda_id) for lid in lanc_ids) if l
+    ]
     return max(lancs, key=lambda l: l.data_d0, default=None) if lancs else None
 
 
@@ -1930,6 +2838,52 @@ class ServicoLoteIn(BaseModel):
     protocolo_lancamento_id: int | None = None  # IATF: vincular a este lançamento
     auto_lancar_iatf: bool = False  # IATF: se não há protocolo, cria um retroativo (D0 = serviço − 11)
     tipo_semen: str | None = None  # convencional | sexado | fazenda
+    forcar: bool = False  # confirmação manual dos bloqueios confirmáveis de aptidão (ver rules/aptidao.py)
+
+
+def _exigir_aptidao_do_lote(
+    session: Session, numeros: list[str], *, data: date, fazenda_id: int | None, forcar: bool,
+) -> None:
+    """Valida a aptidão de TODOS os animais do lote ANTES de gravar qualquer
+    coisa, e recusa o lote inteiro se algum estiver bloqueado.
+
+    Tudo ou nada, de propósito: o lançamento em lote cria protocolos IATF
+    retroativos e baixa dose de sêmen ao longo do laço, e abortar no meio
+    deixaria metade do lote gravada com a outra metade recusada — o pior dos
+    dois mundos para quem está no curral. Animais desconhecidos NÃO entram
+    aqui: eles já têm o caminho `incompativeis`, que a UI sabe tratar.
+    """
+    bloqueados: list[tuple[str, AptidaoResultado]] = []
+    params = parametros_aptidao()
+    for numero in numeros:
+        query = select(Animal).where(Animal.numero == numero)
+        if fazenda_id is not None:
+            query = query.where(Animal.fazenda_id == fazenda_id)
+        animal = session.exec(query).first()
+        if animal is None:
+            continue
+        resultado = avaliar_aptidao_no_banco(session, animal, data=data, fazenda_id=fazenda_id, params=params)
+        if resultado.bloqueia(forcar):
+            bloqueados.append((numero, resultado))
+        elif not resultado.apta and forcar:
+            logger.info(
+                "Aptidão forçada manualmente (lote): matriz=%s motivo=%s data=%s", numero, resultado.motivo, data,
+            )
+    if not bloqueados:
+        return
+    primeiro = bloqueados[0][1]
+    confirmavel = all(r.confirmavel for _, r in bloqueados)
+    detalhes = "; ".join(r.mensagem for _, r in bloqueados if r.mensagem)
+    resumo = AptidaoResultado(
+        apta=False,
+        motivo=primeiro.motivo if len({r.motivo for _, r in bloqueados}) == 1 else "varios",
+        mensagem=(
+            f"{len(bloqueados)} animal(is) do lote não estão aptos a receber serviço: {detalhes}"
+            if len(bloqueados) > 1 else detalhes
+        ),
+        severidade=primeiro.severidade if confirmavel else "duro",
+    )
+    raise HTTPException(status_code=409, detail=_detalhe_aptidao(resumo, [n for n, _ in bloqueados]))
 
 
 @router.post("/servico-lote")
@@ -1952,12 +2906,22 @@ def registrar_servico_lote(
     if dados.tipo not in ("cio_natural", "iatf", "monta_natural"):
         raise HTTPException(status_code=400, detail="Tipo inválido")
 
+    _exigir_aptidao_do_lote(
+        session, dados.animais, data=dados.data_servico, fazenda_id=fazenda_id, forcar=dados.forcar,
+    )
+
     tipo_servico = "Monta natural" if dados.tipo == "monta_natural" else "IA"
-    lanc_escolhido = session.get(ProtocoloIatfLancamento, dados.protocolo_lancamento_id) if dados.protocolo_lancamento_id else None
-    if lanc_escolhido and fazenda_id is not None and lanc_escolhido.fazenda_id not in (None, fazenda_id):
-        lanc_escolhido = None
+    # `protocolo_lancamento_id` vem do corpo da requisição: carga filtrada por
+    # fazenda (ver _buscar_da_fazenda), em vez do `session.get` + checagem
+    # tolerante a NULL de antes — vincular o serviço a um lançamento alheio
+    # ou órfão carimbava o nome do protocolo de outra fazenda nos serviços
+    # gravados aqui e confirmava a etapa de inseminação lá.
+    lanc_escolhido = _buscar_da_fazenda(
+        session, ProtocoloIatfLancamento, dados.protocolo_lancamento_id, fazenda_id,
+    )
 
     criados, incompativeis = 0, []
+    servicos_criados: list[Servico] = []
     for numero in dados.animais:
         protocolo_name: str | None = None
         if dados.tipo == "iatf":
@@ -2002,21 +2966,120 @@ def registrar_servico_lote(
         s = _registrar_um_servico(
             session, numero, dados.data_servico, tipo_servico, protocolo_name, dados.reprodutor, dados.responsavel,
             usuario_id=usuario_id_seguro(user), tipo_semen=dados.tipo_semen, fazenda_id=fazenda_id,
+            forcar=dados.forcar,
         )
         if s is None:
             incompativeis.append(numero)
         else:
+            session.flush()  # precisa do id antes de usá-lo como origem_id da baixa, abaixo
+            perda_registrada = getattr(s, "_perda_registrada", None)
+            if perda_registrada is not None:
+                perda_registrada.perda_causada_por_servico_id = s.id
+                session.add(perda_registrada)
+            servicos_criados.append(s)
             criados += 1
 
     # Desconta 1 dose por inseminação realizada (IA — cio natural ou IATF; não
     # se aplica à monta natural, que não usa sêmen estocado) do touro
     # informado — mantém o Estoque de Sêmen em dia com o uso real sem exigir
-    # baixa manual a cada inseminação.
-    if criados and dados.tipo != "monta_natural" and dados.reprodutor:
-        _baixar_dose_semen(
-            session, dados.reprodutor, dados.tipo_semen, criados, fazenda_id=fazenda_id,
-            usuario_id=usuario_id_seguro(user), data=dados.data_servico,
-        )
+    # baixa manual a cada inseminação. Baixa POR ANIMAL, não uma única
+    # agregada pro lote inteiro (mesmo motivo do padrão em sanidade.py
+    # registrar_aplicacao): cada MovimentoEstoque fica com origem_id=servico.id
+    # — sem isso, excluir o Serviço de UM animal do lote nunca achava o que
+    # estornar (o estorno de exclusoes.py busca por origem_id) e a dose
+    # daquele animal nunca voltava ao estoque.
+    if dados.tipo != "monta_natural" and dados.reprodutor:
+        for s in servicos_criados:
+            _baixar_dose_semen(
+                session, dados.reprodutor, dados.tipo_semen, 1, fazenda_id=fazenda_id,
+                usuario_id=usuario_id_seguro(user), data=dados.data_servico, origem_id=s.id,
+            )
 
     session.commit()
     return {"criados": criados, "incompativeis": incompativeis, "tipo": dados.tipo}
+
+
+# ---------------------------------------------------------------------------
+# Indução de cio (PGF2α/Cloprostenol) — estímulo hormonal aplicado geralmente
+# nos últimos dias do PEV para a vaca entrar em cio em 2 a 5 dias. Guardado
+# como Sanidade (mesmo padrão que BST já usa em agenda.py::aplicar_bst_lote)
+# com `atividade` própria — gera histórico, mas de propósito NÃO é gravado em
+# Servico (inseminação) nem em ProtocoloIatf*: não é IATF, não é diagnóstico,
+# só um estímulo para o cio aparecer naturalmente (o cio observado depois vira
+# um Serviço/IA normal, lançado à parte). A Agenda usa esta atividade para
+# lembrar de observar o cio na janela de 2 a 5 dias (ver agenda_engine.py,
+# bloco "3b").
+# ---------------------------------------------------------------------------
+ATIVIDADE_INDUCAO_CIO = "Indução de cio"
+
+
+class InducaoCioIn(BaseModel):
+    numeros_matriz: list[str]
+    data_aplicacao: date
+    produto: str = "Cloprostenol"
+    dose: float | None = None
+    unidade: str | None = None
+    via: str | None = None
+    responsavel: str | None = None
+    observacao: str | None = None
+
+
+@router.post("/inducao-cio", status_code=201)
+def registrar_inducao_cio(
+    dados: InducaoCioIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    if not dados.numeros_matriz:
+        raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
+    usuario_id = usuario_id_seguro(user)
+    avisos: list[str] = []
+    for numero in dados.numeros_matriz:
+        sanidade = Sanidade(
+            numero_matriz=numero, data_aplicacao=dados.data_aplicacao, produto=dados.produto,
+            dose=dados.dose, unidade=dados.unidade, via=dados.via, responsavel=dados.responsavel,
+            atividade=ATIVIDADE_INDUCAO_CIO, obs=dados.observacao, natureza="preventivo",
+            usuario_id=usuario_id, fazenda_id=fazenda_id,
+        )
+        session.add(sanidade)
+        session.flush()
+        if dados.dose and dados.unidade:
+            estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=dados.produto)
+            avisos.extend(estoque_baixa.baixar(
+                session, item=estoque_item, quantidade=dados.dose, unidade=dados.unidade, data=dados.data_aplicacao,
+                fazenda_id=fazenda_id, observacao=f"Indução de cio — matriz {numero}", usuario_id=usuario_id,
+                origem_tipo="inducao_cio", origem_id=sanidade.id, produto=dados.produto,
+            ))
+    session.commit()
+    return {"aplicados": len(dados.numeros_matriz), "avisos": avisos}
+
+
+@router.get("/inducao-cio")
+def listar_inducoes_cio(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Sanidade).where(Sanidade.atividade == ATIVIDADE_INDUCAO_CIO)
+    if fazenda_id is not None:
+        query = query.where(Sanidade.fazenda_id == fazenda_id)
+    lancamentos = session.exec(query.order_by(Sanidade.data_aplicacao.desc())).all()
+    return [
+        {
+            "id": s.id, "numero_matriz": s.numero_matriz, "data_aplicacao": s.data_aplicacao.isoformat() if s.data_aplicacao else None,
+            "produto": s.produto, "dose": s.dose, "unidade": s.unidade, "via": s.via,
+            "responsavel": s.responsavel, "observacao": s.obs,
+        }
+        for s in lancamentos
+    ]
+
+
+@router.delete("/inducao-cio/{lancamento_id}")
+def excluir_inducao_cio(
+    lancamento_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    sanidade = _buscar_da_fazenda(session, Sanidade, lancamento_id, fazenda_id)
+    if not sanidade or sanidade.atividade != ATIVIDADE_INDUCAO_CIO:
+        raise HTTPException(status_code=404, detail="Lançamento de indução de cio não encontrado")
+    session.delete(sanidade)
+    session.commit()
+    return {"excluido": True}

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Check, X, RefreshCw, Inbox, Pencil, Plus, Trash2, Undo2, ChevronDown, ChevronRight } from "lucide-react";
+import { Check, X, RefreshCw, Inbox, Pencil, Plus, Trash2, Undo2, ChevronDown, ChevronRight, Image as ImageIcon, ImageOff, FolderOpen } from "lucide-react";
 import {
   fetchAprovacoes, aprovarLancamento, rejeitarLancamento, editarLancamentoPendente, ehAdmin, podePublicarMaterias,
   fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, formatBRL, type LancamentoPendente,
@@ -11,9 +11,12 @@ import { CampoMoeda } from "@/components/CampoMoeda";
 import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 import NovaContaGerencial from "@/components/NovaContaGerencial";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
+import { BancoFotosNews } from "@/components/BancoFotosNews";
 import type { ContaPlano } from "@/lib/contaGerencial";
 
-const OCULTAR = new Set(["_ops", "_nome"]);
+// "imagem" (matéria do Milknews) tem UI própria — thumbnail + seletor do
+// banco de fotos — e nunca aparece na tabela genérica de campos.
+const OCULTAR = new Set(["_ops", "_nome", "imagem"]);
 const rotuloCampo = (k: string) => k.replace(/_/g, " ");
 const valorCampo = (v: any) => {
   if (ehArrayDeObjetos(v)) return v.map((it: any) => it?.produto ? `${it.produto}${it.quantidade ? ` (${it.quantidade}x)` : ""} — R$ ${Number(it.valor_total ?? 0).toFixed(2)}` : JSON.stringify(it)).join("; ");
@@ -105,6 +108,11 @@ export function AprovacoesView({ compacto = false }: { compacto?: boolean }) {
   const [mostrarDecididos, setMostrarDecididos] = useState(false);
   const [desfazendo, setDesfazendo] = useState<number | null>(null);
   const [erroDecididos, setErroDecididos] = useState<string | null>(null);
+  // Banco de fotos do Milknews: `bancoAberto` é a gestão pura (botão no
+  // cabeçalho); `pickerImagemPara` é o seletor aberto para escolher a
+  // ilustração de UM item específico (id do LancamentoPendente em edição).
+  const [bancoAberto, setBancoAberto] = useState(false);
+  const [pickerImagemPara, setPickerImagemPara] = useState<number | null>(null);
   const admin = ehAdmin();
 
   const carregar = () => fetchAprovacoes().then(setItens).catch((e) => setErro(e.message));
@@ -155,6 +163,9 @@ export function AprovacoesView({ compacto = false }: { compacto?: boolean }) {
       const achado = tiposDocumento.find((o) => o.toLowerCase() === bruto || o.toLowerCase().replace(/\s+/g, "_") === bruto);
       if (achado) vals["tipo_documento"] = achado;
     }
+    // "imagem" fica de fora de camposEditaveis (OCULTAR) — tem widget próprio,
+    // mas ainda precisa entrar em editVals para o seletor ler/escrever.
+    if (it.dados.imagem !== undefined) vals["imagem"] = it.dados.imagem || "";
     setEditVals(vals);
 
     if (ehFinanceiro(it)) {
@@ -195,6 +206,7 @@ export function AprovacoesView({ compacto = false }: { compacto?: boolean }) {
         const txt = (editVals[k] ?? "").trim();
         novos[k] = Array.isArray(orig) ? txt.split(/[,\s]+/).filter(Boolean) : txt;
       });
+      if (it.dados.imagem !== undefined) novos.imagem = editVals["imagem"] || null;
 
       if (ehFinanceiro(it)) {
         const itensValidos = editItens.filter((i) => i.produto.trim());
@@ -261,10 +273,17 @@ export function AprovacoesView({ compacto = false }: { compacto?: boolean }) {
         <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
           Lançamentos enviados pelo Telegram, aguardando sua aprovação. <strong style={{ color: "var(--text)" }}>Aprovar</strong> cria o registro de verdade.
         </p>
-        <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={carregar} title="Atualizar a lista">
-          <RefreshCw size={13} /> Atualizar
-        </button>
+        <div className="flex items-center gap-2">
+          <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setBancoAberto(true)} title="Gerenciar o banco de fotos do Milknews (pastas, enviar, excluir)">
+            <FolderOpen size={13} /> Banco de fotos
+          </button>
+          <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={carregar} title="Atualizar a lista">
+            <RefreshCw size={13} /> Atualizar
+          </button>
+        </div>
       </div>
+
+      {bancoAberto && <BancoFotosNews onClose={() => setBancoAberto(false)} />}
 
       {erro && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.6rem" }}>{erro}</p>}
 
@@ -292,6 +311,41 @@ export function AprovacoesView({ compacto = false }: { compacto?: boolean }) {
                 {it.solicitante_nome ? `por ${it.solicitante_nome} · ` : ""}{it.criado_em ? new Date(it.criado_em).toLocaleString("pt-BR") : ""}
               </span>
             </div>
+
+            {it.dados.imagem !== undefined && (
+              <div className="flex items-center gap-3" style={{ marginTop: "0.6rem" }}>
+                <div style={{ width: 96, height: 72, borderRadius: "var(--r-sm)", overflow: "hidden", background: "var(--surface-2)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {(editando ? editVals["imagem"] : it.dados.imagem) ? (
+                    <img src={editando ? editVals["imagem"] : it.dados.imagem} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  ) : (
+                    <ImageOff size={18} style={{ color: "var(--text-muted)", opacity: 0.6 }} />
+                  )}
+                </div>
+                {editando ? (
+                  <div className="flex items-center gap-2">
+                    <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setPickerImagemPara(it.id)}>
+                      <ImageIcon size={13} /> Escolher do banco de fotos
+                    </button>
+                    {editVals["imagem"] && (
+                      <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setEditVals((s) => ({ ...s, imagem: "" }))}>
+                        <X size={13} /> Remover foto
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <span style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>
+                    {it.dados.imagem ? "Foto selecionada" : "Nenhuma foto selecionada — toque em Editar para escolher"}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {pickerImagemPara === it.id && (
+              <BancoFotosNews
+                onClose={() => setPickerImagemPara(null)}
+                onSelecionar={(url) => { setEditVals((s) => ({ ...s, imagem: url })); setPickerImagemPara(null); }}
+              />
+            )}
 
             {!editando ? (
               <table style={{ width: "100%", maxWidth: 560, fontSize: "0.82rem", marginTop: "0.5rem" }}>

@@ -11,19 +11,59 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
 from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
-from fazenda.models import Doenca, Estoque, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo
+from fazenda.models import (
+    Doenca, Estoque, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque, ParametroMinimoFarmacia, PrincipioAtivo,
+)
 from fazenda.rules.auditoria import fazenda_id_seguro
+from fazenda.rules.validacao import link_http_seguro
 from fazenda.rules.busca import normalizar_busca
 from fazenda.rules.carencia import carencia_dict
 from fazenda.rules.farmacia import resumo_principios
+from fazenda.rules.farmacia_multi_principio import checar_e_desvincular_exclusao_principio
 from fazenda.rules.visibilidade import visivel
 
 router = APIRouter(prefix="/farmacia", tags=["farmacia"])
+
+
+def _do_catalogo_da_fazenda(session: Session, modelo, registro_id: int, fazenda_id: int | None):
+    """Carrega UMA linha por id JÁ FILTRANDO por fazenda na própria consulta,
+    em vez de `session.get()` seguido de um `if` sobre o objeto carregado.
+    Mesmo desenho de `agenda.py::_buscar_da_fazenda`.
+
+    O `if` de antes era `if fazenda_id is not None and m.fazenda_id != ...` —
+    ou seja, o isolamento só existia enquanto o token trouxesse "fid". Um
+    token sem "fid" (legado/"manter conectado", ou usuário com 2+ fazendas
+    que não escolheu nenhuma) transformava a checagem inteira em no-op e o
+    DELETE passava a valer para QUALQUER linha do banco, incluindo o
+    catálogo GLOBAL da CowData (`fazenda_id` nulo, semeado igual para todo
+    produtor): um `DELETE /farmacia/medicamentos/{id}` apagava a marca
+    padrão de TODAS as fazendas-clientes de uma vez. Os PUT irmãos
+    (`atualizar_marca`/`atualizar_indicacao`) já tinham sido corrigidos para
+    `get_fazenda_id_escrita`; os DELETE ficaram para trás — é a assimetria
+    do achado 33 da auditoria.
+
+    Filtrando na consulta, "de outra fazenda", "sem fazenda" (linha órfã da
+    migração 029227481e9e) e "catálogo global" caem os três no mesmo lugar:
+    não encontrado — 404, nunca 403, porque um 403 já confirma que o id
+    existe. Apagar o padrão global continua não sendo uma operação de
+    tenant: o caminho para deixar de usá-lo é personalizar
+    (`POST /indicacoes/{id}/personalizar`), nunca excluir.
+
+    `fazenda_id is None` só acontece em ambiente onde o multi-fazenda NÃO
+    está provisionado (tabela `fazenda` vazia — suíte de testes e instalação
+    anterior à migração f1a2b3c4d5e6); ali não há tenant a isolar. Havendo
+    qualquer fazenda cadastrada, `get_fazenda_id_escrita` nunca devolve None
+    e a trava de porta (auth.py::exigir_fazenda_selecionada) já recusou
+    antes. O caso está tratado explicitamente, não por omissão."""
+    query = select(modelo).where(modelo.id == registro_id)
+    if fazenda_id is not None:
+        query = query.where(modelo.fazenda_id == fazenda_id)
+    return session.exec(query).first()
 
 
 @router.get("/principios")
@@ -44,9 +84,22 @@ def detalhar_principio(
     if not pa or (fazenda_id is not None and pa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Princípio ativo não encontrado")
     resumo = next((r for r in resumo_principios(session, fazenda_id) if r["id"] == principio_id), None)
+    # FURO NOVO CORRIGIDO (varredura de hoje): a lista de marcas era a única
+    # consulta do handler sem recorte de fazenda — devolvia TODA
+    # MedicamentoComercial que apontasse para este princípio, de qualquer
+    # cliente. Combinada com o `setattr` cego de `atualizar_marca` (que
+    # aceitava `principio_ativo_id` do corpo sem conferir de quem é o
+    # princípio), a fazenda 2 repontava a marca dela para o princípio da
+    # fazenda 1 e a fazenda 1 passava a ver nome comercial, laboratório,
+    # bula e carência de um medicamento que não é dela — na tela de onde ela
+    # tira a dose que vai aplicar no animal. `visivel()` (e não o `==`
+    # estrito) porque marca do catálogo GLOBAL da CowData tem `fazenda_id`
+    # nulo e é de todo mundo por definição; a de OUTRA fazenda fica de fora.
     marcas = session.exec(
-        select(MedicamentoComercial).where(MedicamentoComercial.principio_ativo_id == principio_id)
-        .order_by(MedicamentoComercial.nome_comercial)
+        visivel(
+            select(MedicamentoComercial).where(MedicamentoComercial.principio_ativo_id == principio_id),
+            MedicamentoComercial, fazenda_id,
+        ).order_by(MedicamentoComercial.nome_comercial)
     ).all()
     return {**(resumo or {}), "marcas": [m.model_dump() for m in marcas]}
 
@@ -86,11 +139,14 @@ def criar_principio(
 @router.put("/principios/{principio_id}")
 def atualizar_principio(
     principio_id: int, dados: PrincipioIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
-    pa = session.get(PrincipioAtivo, principio_id)
-    if not pa or (fazenda_id is not None and pa.fazenda_id != fazenda_id):
+    """BUG DE SEGURANÇA CORRIGIDO (mesma família do achado 33): PUT e DELETE
+    de princípio ativo tinham a mesma tolerância dos irmãos de marca/
+    indicação — `get_fazenda_atual_id` + `if fazenda_id is not None`. Ver
+    `_do_catalogo_da_fazenda`."""
+    pa = _do_catalogo_da_fazenda(session, PrincipioAtivo, principio_id, fazenda_id)
+    if not pa:
         raise HTTPException(status_code=404, detail="Princípio ativo não encontrado")
     for k, v in dados.model_dump().items():
         setattr(pa, k, v)
@@ -98,6 +154,75 @@ def atualizar_principio(
     session.commit()
     session.refresh(pa)
     return pa.model_dump()
+
+
+@router.delete("/principios/{principio_id}")
+def excluir_principio(
+    principio_id: int, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Exclui um princípio ativo checando impacto nas 7 tabelas que hoje têm
+    FK pra ele — mesma regra de `POST /exclusoes/impacto` (tipo=
+    principio_ativo), extraída pra rules/farmacia_multi_principio.py.
+
+    BUG DE SEGURANÇA CORRIGIDO (mesma família do achado 33) — e aqui o
+    estrago é o maior do arquivo: `checar_e_desvincular_exclusao_principio`
+    desvincula/apaga em 7 tabelas dependentes. Ver
+    `_do_catalogo_da_fazenda`."""
+    pa = _do_catalogo_da_fazenda(session, PrincipioAtivo, principio_id, fazenda_id)
+    if not pa:
+        raise HTTPException(status_code=404, detail="Princípio ativo não encontrado")
+    impacto, alvos = checar_e_desvincular_exclusao_principio(session, pa)
+    for obj in alvos:
+        session.delete(obj)
+    session.commit()
+    return {"excluido": True, "impacto": impacto}
+
+
+class EstoqueMinimoIn(BaseModel):
+    estoque_minimo_base: float
+
+
+@router.put("/principios/{principio_id}/estoque-minimo")
+def definir_estoque_minimo_base(
+    principio_id: int, dados: EstoqueMinimoIn, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Define o estoque mínimo de UM princípio ativo, em `unidade_base` (ml/L/
+    g/unidade) — pedido do usuário (31/08/2026): "estoque mínimo... tem que
+    ser em unidade de medida, e não em pacotes/frascos". Um princípio de
+    cada vez, ação deliberada — nunca em lote, nunca automática (ver
+    docstring de ParametroMinimoFarmacia).
+
+    Grava numa tabela À PARTE do princípio (nunca no próprio `PrincipioAtivo`,
+    que pode ser um registro GLOBAL do catálogo padrão CowData e nunca é
+    clonado) — por isso funciona também para princípios globais que esta
+    fazenda usa, sem afetar o mínimo de nenhuma outra fazenda-cliente."""
+    if dados.estoque_minimo_base < 0:
+        raise HTTPException(status_code=400, detail="Estoque mínimo não pode ser negativo")
+    pa = session.exec(visivel(select(PrincipioAtivo).where(PrincipioAtivo.id == principio_id), PrincipioAtivo, fazenda_id)).first()
+    if not pa:
+        raise HTTPException(status_code=404, detail="Princípio ativo não encontrado")
+    if not pa.unidade_base:
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{pa.nome}' ainda não tem unidade de medida (unidade_base) cadastrada — defina-a antes do mínimo.",
+        )
+    existente = session.exec(
+        select(ParametroMinimoFarmacia).where(
+            ParametroMinimoFarmacia.fazenda_id == fazenda_id, ParametroMinimoFarmacia.principio_ativo_id == principio_id,
+        )
+    ).first()
+    if existente:
+        existente.estoque_minimo_base = dados.estoque_minimo_base
+        existente.atualizado_em = datetime.utcnow()
+        session.add(existente)
+    else:
+        session.add(ParametroMinimoFarmacia(
+            fazenda_id=fazenda_id, principio_ativo_id=principio_id, estoque_minimo_base=dados.estoque_minimo_base,
+        ))
+    session.commit()
+    resumo = next((r for r in resumo_principios(session, fazenda_id) if r["id"] == principio_id), None)
+    return resumo or {"ok": True}
 
 
 class MarcaIn(BaseModel):
@@ -120,6 +245,13 @@ class MarcaIn(BaseModel):
     proibido_lactacao: bool | None = None
     alerta_gestacao: bool | None = None
     alerta: str | None = None
+
+    # BUG DE SEGURANÇA CORRIGIDO: link_bula vira <a href> no frontend — sem
+    # validar o esquema, um valor "javascript:..." executava no clique.
+    @field_validator("link_bula")
+    @classmethod
+    def _validar_link_bula(cls, v: str | None) -> str | None:
+        return link_http_seguro(v)
 
 
 @router.post("/medicamentos", status_code=201)
@@ -183,6 +315,25 @@ def atualizar_marca(
         m = _clonar_marca(session, m, fazenda_id)
         personalizou = True
 
+    # FURO NOVO CORRIGIDO (varredura de hoje): `principio_ativo_id` vem do
+    # CORPO e caía direto no `setattr` abaixo, sem passar por checagem
+    # nenhuma — só a MARCA era conferida. A fazenda 2 editava uma marca
+    # legitimamente dela informando o `principio_ativo_id` da fazenda 1 e a
+    # marca migrava para o princípio da vítima: a partir dali ela aparecia
+    # em `GET /farmacia/principios/{id}` da fazenda 1 (ver o `visivel()` que
+    # aquele handler também ganhou). Ou seja, escrita cruzada disfarçada de
+    # edição própria — sem nunca tocar num id da vítima na URL. `visivel()`
+    # porque o princípio pode ser do catálogo global (de todo mundo).
+    if dados.principio_ativo_id != m.principio_ativo_id:
+        destino = session.exec(
+            visivel(
+                select(PrincipioAtivo).where(PrincipioAtivo.id == dados.principio_ativo_id),
+                PrincipioAtivo, fazenda_id,
+            )
+        ).first()
+        if not destino:
+            raise HTTPException(status_code=400, detail="Princípio ativo inexistente")
+
     for k, v in dados.model_dump().items():
         setattr(m, k, v)
     session.add(m)
@@ -197,11 +348,16 @@ def atualizar_marca(
 
 @router.delete("/medicamentos/{marca_id}")
 def excluir_marca(
-    marca_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    marca_id: int, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
-    m = session.get(MedicamentoComercial, marca_id)
-    if not m or (fazenda_id is not None and m.fazenda_id != fazenda_id):
+    """Exclui uma marca comercial DESTA fazenda.
+
+    BUG DE SEGURANÇA CORRIGIDO (achado 33): usava `get_fazenda_atual_id` +
+    `if fazenda_id is not None and ...` enquanto o PUT irmão já usava
+    `get_fazenda_id_escrita` com checagem incondicional. Ver
+    `_do_catalogo_da_fazenda` para o cenário concreto."""
+    m = _do_catalogo_da_fazenda(session, MedicamentoComercial, marca_id, fazenda_id)
+    if not m:
         raise HTTPException(status_code=404, detail="Marca não encontrada")
     session.delete(m)
     session.commit()
@@ -239,6 +395,10 @@ def listar_apresentacoes(
             "saldo": it.quantidade or 0, "unidade": it.unidade,
             "volume_por_apresentacao": it.volume_por_apresentacao, "volume_unidade": it.volume_unidade,
             "estoque_inicializado": it.estoque_inicializado is not False,
+            # Unidade de medida ATUAL do item (ex.: "ml/frasco") — usado só
+            # pra rotular o seletor "de qual lote?" com a unidade certa,
+            # nunca um valor fixo (ver ApresentacaoEmbalagemEstoque).
+            "medida_embalagem": it.medida_embalagem,
         }
         for it in itens
     ]
@@ -276,7 +436,7 @@ def inicializar_estoque(
         # `fazenda_id` não era gravado aqui (bug pré-existente, achado nesta
         # varredura) — o movimento nascia sempre órfão, mesmo com o item de
         # Estoque de origem já escopado corretamente.
-        fazenda_id=fazenda_id, estoque_id=item.id,
+        fazenda_id=fazenda_id, estoque_id=item.id, valor_unitario=item.valor_unitario,
     ))
     session.commit()
     return {"ok": True, "estoque_inicializado": True, "quantidade": item.quantidade}
@@ -339,11 +499,15 @@ def criar_indicacao(
 
 @router.delete("/indicacoes/{indicacao_id}")
 def excluir_indicacao(
-    indicacao_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    indicacao_id: int, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
-    ind = session.get(IndicacaoTerapeutica, indicacao_id)
-    if not ind or (fazenda_id is not None and ind.fazenda_id != fazenda_id):
+    """Exclui um vínculo princípio↔doença DESTA fazenda.
+
+    BUG DE SEGURANÇA CORRIGIDO (achado 33): mesma assimetria de
+    `excluir_marca` — o PUT irmão (`atualizar_indicacao`) já resolvia a
+    fazenda pela escrita, o DELETE não. Ver `_do_catalogo_da_fazenda`."""
+    ind = _do_catalogo_da_fazenda(session, IndicacaoTerapeutica, indicacao_id, fazenda_id)
+    if not ind:
         raise HTTPException(status_code=404, detail="Indicação não encontrada")
     session.delete(ind)
     session.commit()
@@ -680,7 +844,7 @@ def personalizar_indicacao(
 
 @router.delete("/indicacoes/{doenca_id}/personalizar")
 def despersonalizar_indicacao(
-    doenca_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    doenca_id: int, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Desfaz a personalização: apaga o clone da fazenda (a Doenca, suas
     IndicacaoTerapeutica e as MedicamentoComercial clonadas dos princípios
@@ -692,9 +856,17 @@ def despersonalizar_indicacao(
     se nenhuma outra indicação desta fazenda ainda usa o mesmo princípio —
     marcas são compartilhadas entre indicações que citam o mesmo princípio.
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
-    doenca = session.get(Doenca, doenca_id)
-    if not doenca or doenca.origem_id is None or (fazenda_id is not None and doenca.fazenda_id != fazenda_id):
+    # BUG DE SEGURANÇA CORRIGIDO (achado 33): a rota vinha de
+    # `get_fazenda_atual_id` com o `if fazenda_id is not None` na frente da
+    # comparação — um token sem "fid" apagava a personalização (a Doenca
+    # clonada, suas indicações e as marcas clonadas) de QUALQUER fazenda-
+    # cliente só chutando o `doenca_id`, que é inteiro pequeno e sequencial.
+    # O irmão `personalizar_indicacao` (POST, logo acima) já exigia a
+    # fazenda resolvida; o DELETE que desfaz a mesma coisa, não. Agora o
+    # filtro vai na consulta: de outra fazenda, órfã ou do catálogo global
+    # dá o mesmo 404. Ver `_do_catalogo_da_fazenda`.
+    doenca = _do_catalogo_da_fazenda(session, Doenca, doenca_id, fazenda_id)
+    if not doenca or doenca.origem_id is None:
         raise HTTPException(status_code=404, detail="Não é uma personalização desta fazenda")
 
     indicacoes_clonadas = session.exec(

@@ -6,14 +6,15 @@ import {
   fetchSugestaoAcasalamento, fetchTouros,
 } from "@/lib/api";
 import type { SemenDisponivel, Touro, SugestaoAcasalamento } from "@/lib/api";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
 import { TouroPicker, type TouroPickerItem } from "@/components/TouroPicker";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { TabBar } from "@/components/ui";
 import { Campo, inputStyle, lbl, nota, codigoGrupo } from "@/components/lancamentos/comumForms";
-import { IDADE_MIN_SERVICO } from "@/components/lancamentos/_shared";
+import { IDADE_MIN_SERVICO_PADRAO } from "@/components/lancamentos/_shared";
+import { ErroApi } from "@/lib/api";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 
 const CAT_TOURO = [
@@ -22,14 +23,28 @@ const CAT_TOURO = [
   { id: "fazenda" as const, label: "Touro da fazenda" },
 ];
 
-export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
+export function FormInseminacao({ animais, motivosInaptidao, idadeMinServico = IDADE_MIN_SERVICO_PADRAO, prefill, onSalvo }: {
+  animais: AnimalRow[];
+  // numero -> motivo de inaptidão a serviço. A lista mostra TODAS as fêmeas,
+  // com as inaptas em cinza e o motivo ao lado — antes elas simplesmente não
+  // apareciam, e a tela não tinha como explicar por quê (ver
+  // app/lancamentos/page.tsx e backend/fazenda/rules/aptidao.py).
+  motivosInaptidao?: Map<string, string>;
+  idadeMinServico?: number;
+  prefill?: { numeroMatriz?: string | null; protocolo?: string | null };
+  onSalvo?: () => void;
+}) {
   const { rotuloDe } = useEstadosReprodutivos();
+  // Ligado quando o backend recusa com um 409 de aptidão CONFIRMÁVEL — aí a
+  // tela oferece "confirmar e lançar mesmo assim" (envia `forcar: true`).
+  const [podeForcar, setPodeForcar] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [dataServico, setDataServico] = useState("");
   const [tipo, setTipo] = useState<"cio_natural" | "iatf" | "monta_natural">("cio_natural");
   const [categoria, setCategoria] = useState<"convencional" | "sexado" | "fazenda">("convencional");
   const [touro, setTouro] = useState("");
   const [responsavel, setResponsavel] = useState("");
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   // IATF: vincular a um lançamento já existente + auto-lançar retroativo.
   const [protocoloId, setProtocoloId] = useState("");
   const [autoLancar, setAutoLancar] = useState(false);
@@ -128,12 +143,15 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
   }, []);
 
   // Vindo da Agenda (link "Ir para Inseminação" do D11): pré-seleciona matriz + IATF.
+  // `prefill` (quando a gaveta é aberta direto pela própria Agenda, sem
+  // navegar pra outra página) tem prioridade; sem ele, cai no querystring de
+  // sempre (fluxo antigo via /lancamentos?ir=inseminacao&...).
   useEffect(() => {
     const qs = new URLSearchParams(window.location.search);
-    const numeroMatriz = qs.get("numero_matriz");
+    const numeroMatriz = prefill?.numeroMatriz ?? qs.get("numero_matriz");
     if (numeroMatriz) setSel(new Set([numeroMatriz]));
-    if (qs.get("protocolo")) { setTipo("iatf"); setOrigemSelecao("protocolo"); }
-  }, []);
+    if (prefill?.protocolo ?? qs.get("protocolo")) { setTipo("iatf"); setOrigemSelecao("protocolo"); }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Na origem "protocolo", quando a seleção pertence a um único lançamento
   // IATF, vincula automaticamente — evita o usuário ter que escolher à toa.
@@ -155,8 +173,8 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
     [semen, categoria]
   );
 
-  async function salvar() {
-    setErro(null); setSucesso(null);
+  async function salvar(forcar = false) {
+    setErro(null); setSucesso(null); setPodeForcar(false);
     const alvo = Array.from(alvoFinal);
     if (!alvo.length) { setErro("Selecione ao menos uma matriz."); return; }
     if (!dataServico) { setErro("Informe a data da inseminação."); return; }
@@ -168,6 +186,7 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
         protocolo_lancamento_id: tipo === "iatf" && protocoloId ? Number(protocoloId) : null,
         auto_lancar_iatf: tipo === "iatf" ? autoLancar : false,
         tipo_semen: categoria === "fazenda" ? null : categoria,
+        forcar: forcar || undefined,
       });
       if (r.incompativeis.length) {
         setVinculoInsem("animal"); setLotesSelecionadosInsem([]); setSel(new Set(r.incompativeis));
@@ -176,6 +195,7 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
       } else {
         setSucesso(`${r.criados} inseminação(ões) registrada(s)${tipo === "iatf" ? " (IATF)" : tipo === "monta_natural" ? " (monta natural)" : " (cio natural)"}.`);
         setSel(new Set()); setLotesSelecionadosInsem([]); setTouro("");
+        onSalvo?.();
       }
       // Sem isso, o estoque de sêmen exibido (doses do touro) e a lista de
       // matrizes em protocolo IATF vigente ficavam presos no valor de quando
@@ -187,6 +207,12 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
       }
     } catch (e: any) {
       setErro(e.message || "Erro ao registrar inseminação");
+      // 409 de aptidão CONFIRMÁVEL (novilha sem pesagem, ou matriz que consta
+      // como gestante): o backend recusou, mas aceita a decisão de uma
+      // pessoa. Mostra o botão de confirmar em vez de deixar o usuário sem
+      // saída — e sem repetir a inferência silenciosa que o sistema fazia
+      // sozinho antes (registrar uma perda de prenhez que ninguém afirmou).
+      if (e instanceof ErroApi && e.status === 409 && e.confirmavel) setPodeForcar(true);
     } finally {
       setSalvando(false);
     }
@@ -194,6 +220,8 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
 
   return (
     <>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       {semen && (semen.abaixo_minimo.convencional || semen.abaixo_minimo.sexado) && (
         <div className="mb-3" style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", background: "rgba(220,38,38,0.1)", border: "1px solid var(--red)", borderRadius: 8, padding: "0.6rem 0.8rem" }}>
           <AlertTriangle size={16} style={{ color: "var(--red)", marginTop: "0.1rem" }} />
@@ -249,6 +277,7 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
                 animais={animais}
                 selecionados={sel} onToggle={toggle}
                 titulo="Escolher matriz / novilha"
+                motivosInaptidao={motivosInaptidao}
                 colunas={[
                   { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
                   { header: "Lote", render: (a) => a.grupo_primario || "—" },
@@ -267,8 +296,14 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
                   <div style={{ marginTop: "0.6rem" }}>
                     <AnimalPickerModal
                       animais={animaisDoLoteInsem} selecionados={selLoteInsem} onToggle={toggleLoteInsem}
-                      titulo="Ajustar aptas do(s) lote(s) selecionado(s)"
-                      placeholder="Ajustar aptas do(s) lote(s)…"
+                      titulo="Confirmar aptas do(s) lote(s) selecionado(s)"
+                      placeholder="Confirmar aptas do(s) lote(s)…"
+                      // Sem isso, o lote entrava inteiro por padrão e o
+                      // usuário só via quem foi incluído se lembrasse de
+                      // clicar aqui — a lista de animais do lote escolhido
+                      // agora aparece sozinha, forçando a decisão explícita
+                      // (todos, nenhum, ou alguns) antes de seguir.
+                      abrirAoMudar={lotesSelecionadosInsem.join("|")}
                       colunas={[
                         { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
                         { header: "Lote", render: (a) => a.grupo_primario || "—" },
@@ -276,7 +311,7 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
                       ]}
                     />
                     <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
-                      {selLoteInsem.size} de {animaisDoLoteInsem.length} apta(s) no(s) lote(s) selecionado(s) — desmarque na janela acima para excluir alguma.
+                      {selLoteInsem.size} de {animaisDoLoteInsem.length} apta(s) no(s) lote(s) selecionado(s) — "Selecionar todos"/"Limpar seleção" ou desmarque uma a uma na janela acima.
                     </p>
                   </div>
                 )}
@@ -353,8 +388,10 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
           ))}
         </div>
       )}
+      </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Data da inseminação"><input type="date" style={inputStyle} value={dataServico} onChange={(e) => setDataServico(e.target.value)} /></Campo>
         <Campo label="Categoria do touro / sêmen">
           <select style={inputStyle} value={categoria} onChange={(e) => { setCategoria(e.target.value as typeof categoria); setTouro(""); }}>
@@ -380,7 +417,7 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
           )}
         </Campo>
         <Campo label="Responsável / inseminador">
-          <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="">Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}</select>
+          <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="">Selecione…</option>{nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}</select>
         </Campo>
       </div>
 
@@ -428,11 +465,25 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
         </div>
       )}
 
-      <p style={nota}>Matriz lista apenas fêmeas aptas (≥ {IDADE_MIN_SERVICO} meses).</p>
+      <p style={nota}>
+        A lista mostra todas as fêmeas do rebanho. As <strong>inaptas aparecem em cinza</strong>, com o motivo ao lado
+        (idade mínima de {idadeMinServico} meses, animal baixado ou marcado a descartar) — antes elas simplesmente
+        sumiam da lista. Peso mínimo e reinseminação de matriz gestante são conferidos ao salvar.
+      </p>
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        <button className="btn-primary" onClick={() => salvar()} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        {/* Só aparece quando o backend disse que ESTE bloqueio admite
+            confirmação manual — nunca para idade/sexo/animal baixado. */}
+        {podeForcar && (
+          <button className="btn-secondary" onClick={() => salvar(true)} disabled={salvando}
+            title="Registra a inseminação assumindo a situação descrita acima">
+            Confirmar e lançar mesmo assim
+          </button>
+        )}
+      </div>
+      </div>
       </div>
     </>
   );

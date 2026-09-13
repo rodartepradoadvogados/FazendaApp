@@ -1,5 +1,5 @@
 """
-Agenda/roteiro do veterinário do serviço — classifica o rebanho fêmea em 11
+Agenda/roteiro do veterinário do serviço — classifica o rebanho fêmea em 10
 listas para orientar a visita reprodutiva. Machos e bezerras nunca entram em
 nenhuma lista.
 
@@ -9,10 +9,19 @@ Parâmetros de análise (todos editáveis em Configurações > Parâmetros — v
     300 kg): só entram na lista "novilhas aptas vazias" (protocolos de
     novilha apta) — NÃO é mais um filtro geral que esconde a novilha das
     demais listas (toque, reconfirmação, pré-parto etc.); ver #364.
-  - Verificar aptidão (idade_verificar_aptidao_meses/peso_verificar_aptidao_min,
-    padrão 14 meses e 280 kg — limiar mais baixo, de "olho nela em breve"):
-    novilha que nunca tenha sido inseminada nem coberta (nenhum registro de
-    serviço).
+  - Idade máxima para a 1ª cobertura (idade_max_1a_cobertura_meses, padrão 16
+    meses): dentro de "novilhas aptas vazias", separa a novilha que ACABOU de
+    ficar apta da que já passou do teto e continua vazia. Não filtra ninguém
+    (as duas seguem na mesma lista, que é a lista de quem precisa de serviço)
+    — marca `atrasada` e ordena as atrasadas primeiro, para o veterinário
+    atacá-las na visita antes das demais. Mesmo teto que faz o motor devolver
+    ATRASADA para novilha nulípara (ver `fazenda.rules.estado_reprodutivo`) —
+    que agora também considera `dias_atraso_apos_aptidao_novilha` em paralelo
+    (o que vier primeiro).
+  - Removida a lista "Verificar aptidão" (limiar próprio de 14 meses/280 kg):
+    virou um subconjunto estrito de "novilhas aptas vazias" assim que os dois
+    limiares foram unificados no gate oficial — não agregava mais nenhuma
+    novilha que a outra lista já não mostrasse.
   - Inseminada de 1 a 29 dias: aguardar 30 dias para o toque.
   - Inseminada de 30 a 59 dias: dar o toque; se não tiver toque nessa fase,
     fica marcada como "toque atrasado".
@@ -35,16 +44,15 @@ Parâmetros de análise (todos editáveis em Configurações > Parâmetros — v
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from fazenda.rules.parametros import (
     dias_adesivo_cio_max,
     dias_adesivo_cio_min,
     gestacao_dias_referencia,
     idade_apta_min_meses,
-    idade_verificar_aptidao_meses,
+    idade_max_1a_cobertura_meses,
     peso_apta_min,
-    peso_verificar_aptidao_min,
     pre_parto_max,
     pre_parto_min,
     usa_adesivo_deteccao_cio,
@@ -54,6 +62,15 @@ from fazenda.rules.perda_prenhez import (
     pariu_depois_do_servico,
     secou_de_rotina_depois_do_servico,
 )
+from fazenda.rules.reproducao_analise import _metodo_ia
+from fazenda.rules.scratch_pev import calcular_pev
+
+# Dias após um eventual novo serviço até o próximo diagnóstico de gestação —
+# mesmo limiar usado para cobrar o 1º toque (ver "Inseminada de 30 a 59
+# dias" no cabeçalho deste módulo). Só uma estimativa para orientar o
+# produtor em "Vazias por diagnóstico"; não é uma data real até o novo
+# serviço ser lançado de verdade.
+DIAS_ATE_PROXIMO_DG_ESTIMADO = 30
 
 
 def _categoria(animal: dict) -> str:
@@ -90,7 +107,7 @@ def classificar_rebanho(
 ) -> dict:
     listas: dict[str, list[dict]] = {
         "inseminadas_1_29": [], "inseminadas_30_59": [], "inseminadas_60_mais": [],
-        "novilhas_aptas_vazias": [], "novilhas_gestantes": [], "verificar_aptidao": [],
+        "novilhas_aptas_vazias": [], "novilhas_gestantes": [],
         "verificar_pre_parto": [], "vacas_gestantes": [],
         "vazias_por_diagnostico": [], "pendentes_classificacao": [],
         "observacao_cio": [],
@@ -99,8 +116,7 @@ def classificar_rebanho(
     gestacao_dias = gestacao_dias_referencia()
     peso_apta = peso_apta_min()
     idade_apta = idade_apta_min_meses()
-    peso_verificar = peso_verificar_aptidao_min()
-    idade_verificar = idade_verificar_aptidao_meses()
+    idade_atraso = idade_max_1a_cobertura_meses()
     pre_parto_de = pre_parto_min()
     pre_parto_ate = pre_parto_max()
     usa_adesivo = usa_adesivo_deteccao_cio()
@@ -120,19 +136,6 @@ def classificar_rebanho(
         peso = peso_por_animal.get(numero)
         idade = _idade_meses(animal, hoje)
         servico = servico_por_animal.get(numero)
-
-        if (
-            categoria == "novilha"
-            and peso is not None and peso >= peso_verificar
-            and idade is not None and idade >= idade_verificar
-            and servico is None
-        ):
-            listas["verificar_aptidao"].append({
-                "numero_matriz": numero, "categoria": categoria, "peso": peso,
-                "dias_inseminada": None, "data_servico": None,
-                "tocada": False, "reconfirmada": False,
-                "diagnostico": None, "diagnostico_reconfirmacao": None,
-            })
 
         # Nota #364: o gate de idade/peso (idade_apta_min_meses/peso_apta_min)
         # NÃO é mais um filtro geral aqui — ele só passa a valer dentro do
@@ -196,12 +199,23 @@ def classificar_rebanho(
         if diag_positivo_vigente and not pariu_depois and data_servico:
             dpp = round(gestacao_dias - (hoje - data_servico).days)
 
+        data_diagnostico = (servico or {}).get("data_diagnostico")
+        data_reconfirmacao_evt = (servico or {}).get("data_reconfirmacao")
         classificado = False
         base = {
             "numero_matriz": numero, "categoria": categoria, "peso": peso,
+            "lote_atual": animal.get("grupo_primario"),
             "dias_inseminada": dias_insem, "data_servico": data_servico.isoformat() if data_servico else None,
+            "inseminador": (servico or {}).get("inseminador"),
+            "touro": (servico or {}).get("reprodutor"),
+            "tipo_servico": (servico or {}).get("tipo_servico"),
+            "metodo": _metodo_ia((servico or {}).get("tipo_servico"), (servico or {}).get("protocolo")) if servico else None,
             "tocada": tocada, "reconfirmada": reconfirmada,
-            "diagnostico": diag1, "diagnostico_reconfirmacao": diag2,
+            "data_diagnostico": data_diagnostico.isoformat() if data_diagnostico else None,
+            "diagnostico": diag1,
+            "data_reconfirmacao": data_reconfirmacao_evt.isoformat() if data_reconfirmacao_evt else None,
+            "diagnostico_reconfirmacao": diag2,
+            "tem_servico": servico is not None,
         }
 
         em_aberto = (
@@ -230,7 +244,15 @@ def classificar_rebanho(
             # mínimos NÃO afetam nenhuma outra lista acima/abaixo.
             apta = idade is not None and idade >= idade_apta and peso is not None and peso >= peso_apta
             if vazia and apta:
-                listas["novilhas_aptas_vazias"].append(base)
+                # Atrasada x recém-apta: sem esta marca a lista juntava num
+                # balde só a novilha que ficou apta ontem e a que está há um
+                # ano esperando serviço — o veterinário não via diferença
+                # entre as duas. Mesmo teto de idade que o motor usa para
+                # devolver ATRASADA (estado_reprodutivo.classificar_animal);
+                # aqui o gate é reimplementado à mão (idade_apta/peso_apta
+                # locais), então a marca também precisa ser calculada aqui.
+                atrasada_1a_cobertura = idade is not None and idade > idade_atraso
+                listas["novilhas_aptas_vazias"].append({**base, "atrasada": atrasada_1a_cobertura})
                 classificado = True
             if gestante_confirmada:
                 listas["novilhas_gestantes"].append({**base, "dias_para_parto": dpp})
@@ -245,20 +267,43 @@ def classificar_rebanho(
             classificado = True
 
         if not classificado:
-            if negativo_toque:
-                motivo = f"{categoria.capitalize()} com diagnóstico negativo no toque, aguardando novo serviço."
-                listas["vazias_por_diagnostico"].append({**base, "motivo": motivo})
-            elif perda_prenhez:
-                motivo = "Perda de prenhez confirmada na reconfirmação, aguardando novo serviço."
-                listas["vazias_por_diagnostico"].append({**base, "motivo": motivo})
-            elif pariu_depois:
-                motivo = f"{categoria.capitalize()} pariu — a gestação deste serviço já se resolveu, aguardando nova inseminação."
-                listas["vazias_por_diagnostico"].append({**base, "motivo": motivo})
+            if negativo_toque or perda_prenhez or pariu_depois:
+                # DEL projetado no próximo serviço: se o novo serviço fosse
+                # lançado hoje, é este o DEL que ele registraria (mesma conta
+                # de Servico.del_servico, congelada no momento do lançamento).
+                # Enquanto o animal ainda estiver dentro do PEV, junto sinaliza
+                # quantos dias faltam para liberar (nota vermelha no front).
+                del_projetado = (hoje - ultimo_parto).days if ultimo_parto else None
+                pev_restante = None
+                if ultimo_parto:
+                    pev = calcular_pev(numero, ultimo_parto, hoje)
+                    if not pev.liberado:
+                        pev_restante = pev.dias_restantes
+                extras_vazia = {
+                    "del_projetado_proximo_servico": del_projetado,
+                    "pev_dias_restantes_projetado": pev_restante,
+                    "proxima_data_dg_estimada": (hoje + timedelta(days=DIAS_ATE_PROXIMO_DG_ESTIMADO)).isoformat(),
+                }
+                if negativo_toque:
+                    motivo = f"{categoria.capitalize()} com diagnóstico negativo no toque, aguardando novo serviço."
+                    data_dg_negativo = base["data_diagnostico"]
+                elif perda_prenhez:
+                    motivo = "Perda de prenhez confirmada na reconfirmação, aguardando novo serviço."
+                    data_dg_negativo = None
+                else:
+                    motivo = f"{categoria.capitalize()} pariu — a gestação deste serviço já se resolveu, aguardando nova inseminação."
+                    data_dg_negativo = None
+                listas["vazias_por_diagnostico"].append({**base, "motivo": motivo, "data_dg_negativo": data_dg_negativo, **extras_vazia})
             elif not servico:
                 motivo = f"{categoria.capitalize()} sem histórico de serviço nem diagnóstico de gestação registrado."
                 listas["pendentes_classificacao"].append({**base, "motivo": motivo})
             else:
                 motivo = "Dados insuficientes para classificar."
                 listas["pendentes_classificacao"].append({**base, "motivo": motivo})
+
+    # Atrasadas primeiro dentro da lista de novilhas aptas vazias — é a ordem
+    # de trabalho da visita (quem está esperando há mais tempo vem antes).
+    # `sort` é estável: dentro de cada bloco a ordem de entrada é preservada.
+    listas["novilhas_aptas_vazias"].sort(key=lambda item: not item["atrasada"])
 
     return listas

@@ -99,6 +99,104 @@ class Pessoa(SQLModel, table=True):
     subtipo_pj: Optional[str] = None  # "MEI" | "ME" | "EPP" | "Outros" — só quando tipo_vinculo="pj"
     pagamento_mensal: Optional[float] = None
 
+    # ── Vale-alimentação (set/2026) — CONFIGURAÇÃO, não rubrica avulsa ──
+    #
+    # POR QUE MORA NO CADASTRO E NÃO NO CATÁLOGO DE RUBRICAS. O vale-
+    # alimentação não é lançado mês a mês como uma bonificação: ele é uma
+    # condição do vínculo ("tem ou não tem, quanto, diário ou mensal,
+    # antecipado ou vencido"). Decisão do dono, nas palavras dele: "não
+    # precisa de uma rubrica para vale alimentação, só precisa de ter como
+    # cadastrar se vai ter ou não e o valor-base... o resto é padrão". A folha
+    # lê estes campos e GERA a linha do holerite sozinha (ver
+    # `rules/vale_alimentacao.py` e `_sincronizar_vale_alimentacao`).
+    #
+    # ENQUADRAMENTO — não é mais assumido. Até set/2026 o sistema tratava o
+    # benefício pelo padrão do PAT (indenizatório, fora de todas as bases) e
+    # deixava registrada a ressalva de que VA pago EM DINHEIRO é SALARIAL. A
+    # ressalva virou regra: quem decide a natureza é
+    # `rules/vale_alimentacao.py::natureza_do_vale_alimentacao`, a partir da
+    # FORMA de pagamento (abaixo), do PAT da fazenda (parâmetro
+    # `inscrita_no_pat`) e da trava da OJ 413 (abaixo). A árvore inteira, com
+    # o fundamento de cada linha, está na docstring daquela função — é o ponto
+    # de verdade único, e nada aqui reimplementa a regra.
+    #
+    # As colunas nascem nulas/falsas: ninguém que já está cadastrado passa a
+    # ter vale-alimentação por causa de uma migração.
+    vale_alimentacao: bool = False
+    vale_alimentacao_valor: Optional[float] = None  # valor-base, em reais
+    vale_alimentacao_periodicidade: Optional[str] = None  # "diario" | "mensal"
+    # "antecipado" | "vencido" — o eixo de COMPETÊNCIA. Vencido: o VA da
+    # competência sai na folha da própria competência. Antecipado: o VA de uma
+    # competência é pago junto com a folha da competência ANTERIOR (palavras do
+    # dono: "se pago antecipado ou vencido, para fins de competência"). Ver
+    # `rules/vale_alimentacao.py::competencia_do_beneficio`.
+    vale_alimentacao_regime: Optional[str] = None
+
+    # "dinheiro" | "cartao" | "in_natura" — O EIXO QUE DECIDE A NATUREZA da
+    # verba, e por isso SEM PADRÃO ADIVINHADO: o cadastro exige a escolha
+    # quando o benefício está ligado (`pessoas.py::_validar_vale_alimentacao`)
+    # e a regra trata o nulo como "não sei", caindo no lado que não
+    # subdeclara base (salarial). Assumir "cartão" em silêncio tiraria da base
+    # do INSS e do FGTS uma verba que, paga em dinheiro, tem de entrar.
+    vale_alimentacao_forma: Optional[str] = None
+
+    # A OJ 413 da SDI-1 do TST virada coluna. "A pactuação em norma coletiva
+    # conferindo caráter indenizatório à verba 'auxílio-alimentação' ou a
+    # adesão posterior do empregador ao PAT não altera a natureza salarial da
+    # parcela, instituída anteriormente, para aqueles empregados que,
+    # habitualmente, já percebiam o benefício" — mudar a forma de pagamento
+    # depois (ou entrar no PAT depois) não limpa a natureza de quem JÁ VINHA
+    # recebendo; seria alteração contratual lesiva (CLT, art. 468). Vale só
+    # para quem for contratado dali em diante, e é por isso que a trava é POR
+    # FUNCIONÁRIO e não parâmetro da fazenda: a mesma fazenda pode ter duas
+    # populações com regras diferentes na mesma folha. Ligada, vence a forma e
+    # vence o PAT. Edição restrita a administrador (ver `pessoas.py`).
+    #
+    # Optional[bool] (e não `bool = False`) porque a coluna nasce NULLABLE e
+    # sem `server_default`: a migração roda no boot da API e um default
+    # forçaria reescrever a tabela inteira. NULL lê como False em todo lugar
+    # que a consulta (`bool(getattr(...))`) — ver `natureza_do_vale_alimentacao`.
+    vale_alimentacao_natureza_travada_salarial: Optional[bool] = False
+
+
+# ---------------------------------------------------------------------------
+# Documentos anexados à Pessoa — RG, CPF, carteira de trabalho, contratos,
+# holerite, comprovantes. Mesmo padrão de PedidoAnexo (fazenda/models/
+# financeiro.py): lista fixa de categorias (não uma tabela cadastrável — o
+# conjunto é fechado, específico de RH), conteúdo no Supabase Storage (bucket
+# `settings.supabase_bucket_financeiro`, mesmo de PedidoAnexo/LancamentoAnexo
+# — documento de pessoa é financeiramente adjacente, sem precisar de bucket
+# próprio), `data_validade` opcional é dela que a Agenda tira o alerta de
+# vencimento (ver fazenda/rules/agenda_engine.py) — só faz sentido para
+# "Contrato de trabalho por prazo determinado" na prática, mas o campo fica
+# livre para qualquer categoria em que o usuário queira acompanhar validade.
+# "Contrato de trabalho por prazo indeterminado" é o funcionário com carteira
+# assinada — não pede validade nem documento adicional além do que já existe
+# aqui (Carteira de trabalho, Ficha de registro).
+CATEGORIAS_PESSOA_ANEXO = [
+    "RG", "CPF", "Carteira de trabalho", "Ficha de registro",
+    "Contrato de trabalho por prazo indeterminado", "Contrato de trabalho por prazo determinado",
+    "Contrato de empreita", "Holerite", "Comprovante de pagamento", "Comprovante de vale",
+]
+
+
+class PessoaAnexo(SQLModel, table=True):
+    """Documento anexado a uma Pessoa — ver CATEGORIAS_PESSOA_ANEXO."""
+
+    __tablename__ = "pessoa_anexo"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    pessoa_id: int = Field(foreign_key="pessoa.id", index=True)
+    nome_arquivo: str
+    mime_type: str
+    tamanho_bytes: int
+    categoria: str  # um de CATEGORIAS_PESSOA_ANEXO
+    data_validade: Optional[date] = None
+    caminho_storage: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+
 
 # ---------------------------------------------------------------------------
 # Folha de pagamento — lançamento e acompanhamento por pessoa/competência.
@@ -124,6 +222,22 @@ class FolhaPagamento(SQLModel, table=True):
     # passa a ser só os "descontos de folha" manuais). Computado sempre a partir
     # da SOMA das ValeParcela da competência, para ser idempotente.
     valor_vale: float = 0.0
+    # Rubricas avulsas do holerite — vencimentos e descontos que o dono
+    # acrescenta linha a linha (ver models/folha_rubrica.py). As DUAS colunas
+    # são cache do que as linhas de `FolhaRubrica` somam, mantidas na mesma
+    # transação que grava a rubrica, e existem por um motivo cada:
+    # - `valor_rubricas` (vencimentos − descontos, pode ser negativo) é o que
+    #   permite a fórmula do líquido continuar num lugar só (`_liquido_folha`),
+    #   que é função PURA e não tem sessão para reconsultar as rubricas. Sem
+    #   ela, todo self-heal que recalcula o líquido (o do vale na listagem, o
+    #   de `_corrigir_folha_gerada_sem_retencao`) apagaria em silêncio o
+    #   acréscimo que o dono lançou.
+    # - `valor_rubricas_tributaveis` é quanto as rubricas SALARIAIS somam à
+    #   base das retenções — reembolso e indenização não entram (natureza
+    #   indenizatória). É o que faz o rodapé do holerite mostrar a base sobre
+    #   a qual o INSS foi de fato calculado, em vez do salário puro.
+    valor_rubricas: float = 0.0
+    valor_rubricas_tributaveis: float = 0.0
     valor_liquido: float
     data_pagamento: Optional[date] = None
     status: str = "pendente"  # pendente | pago
@@ -165,6 +279,30 @@ class FolhaPagamento(SQLModel, table=True):
     # ContaGerencial.conta_bancaria (o que os relatórios gerenciais filtram) e
     # permite a um formulário de edição pré-selecionar a conta já escolhida.
     conta_corrente_id: Optional[int] = Field(default=None, foreign_key="conta_corrente.id")
+
+    # ── Discriminação congelada no pagamento (ver `_congelar_discriminacao` e
+    #    `estornar_pagamento_folha` em routers/cadastro/rh_folha.py) ──
+    # O RECIBO da folha era montado de novo A CADA LEITURA (`_detalhe_folha`
+    # consultava `ValeParcela` ao vivo), inclusive para folha JÁ PAGA — mas o
+    # `valor_liquido` acima ficou GRAVADO no pagamento e o self-heal
+    # (`_corrigir_folha_gerada_sem_retencao`) não toca em folha paga, de
+    # propósito. Os dois números chegavam por caminhos diferentes: bastava
+    # editar/quitar/estornar um vale, ou remanejar a parcela para outra
+    # competência, DEPOIS do pagamento, para o holerite impresso hoje deixar
+    # de ser o recibo do que foi efetivamente pago. Num documento trabalhista
+    # isso é grave — o holerite é prova.
+    # A partir do pagamento, a discriminação que gerou aquele líquido é
+    # gravada aqui (JSON com as linhas no formato de `holerite.linha`, mesmo
+    # padrão de `Pessoa.telefones`) e passa a ser a FONTE DA VERDADE do recibo
+    # daquela folha. Folha não paga continua sendo calculada ao vivo.
+    # Mesmo desenho da fotografia de `Diaria.encerramento_*`: congelar no
+    # fechamento e só descongelar por um ato explícito — aqui, o estorno do
+    # pagamento (`POST /folha-pagamento/{id}/estornar`), nunca em silêncio.
+    discriminacao_congelada: Optional[str] = None
+    # Marco que separa os dois mundos (o papel de `Diaria.data_encerramento`):
+    # NULL numa folha "paga" = pagamento anterior a esta feature ou já
+    # estornado, e aí o recibo volta a ser calculado ao vivo, como sempre foi.
+    discriminacao_congelada_em: Optional[datetime] = None
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
@@ -193,11 +331,49 @@ class FeriasFuncionario(SQLModel, table=True):
     # Dias "vendidos" (abono pecuniário, art. 143 CLT — até 1/3 de dias_direito),
     # opcional — 0 quando a pessoa goza integralmente os dias.
     abono_pecuniario_dias: int = 0
+    # Snapshot do salário usado no cálculo — MESMO motivo de
+    # `RescisaoFuncionario.salario_base`, que já fazia certo. Sem ele, o PUT
+    # (usado pelo botão "Marcar como pago") recalculava tudo a partir do
+    # `Pessoa.salario_base` de HOJE: férias lançadas a R$ 2.666,67 em janeiro
+    # viravam R$ 4.000 em março só porque o salário subiu no meio, e a conta
+    # a pagar era sobrescrita em silêncio. Nulo só em registro anterior à
+    # migração e0b7c3a91d24 que não pôde ser reconstituído.
+    salario_base: Optional[float] = None
+    # ── Média das parcelas salariais VARIÁVEIS habituais (CLT, art. 142,
+    #    §§ 1º a 6º — período aquisitivo) ──
+    # NULL = a média não foi apurada neste lançamento: ou o registro é
+    # anterior à feature, ou o parâmetro `calcula_media_verbas_variaveis` da
+    # fazenda estava desligado (o padrão). Nos dois casos o cálculo saiu só
+    # sobre `salario_base`, e é NULL — não 0.0 — que diz isso: zero apurado
+    # ("a pessoa não teve variável no período") é informação diferente de não
+    # apurado, e o recibo mostra uma coisa ou outra.
+    # SNAPSHOT, pelo mesmo motivo de `salario_base` logo acima: a composição
+    # da média é fotografada aqui no lançamento e nunca mais recalculada. Uma
+    # folha lançada depois, ou uma rubrica corrigida em competência aberta,
+    # não pode mexer no valor de umas férias já lançadas.
+    media_variaveis: Optional[float] = None
+    # A composição em JSON (mesmo padrão de `FolhaPagamento.discriminacao_congelada`
+    # e de `Pessoa.telefones`): competências que entraram, rubricas de cada
+    # uma, total, divisor e o critério dele. É o que permite ao dono CONFERIR
+    # a média — média que ninguém consegue conferir é média que ninguém usa.
+    # Ver `rules/media_verbas_habituais.py::apurar`.
+    media_variaveis_composicao: Optional[str] = None
     valor_ferias: float
     valor_terco_constitucional: float
+    # Abono pecuniário (dias vendidos + o respectivo 1/3). ERA CALCULADO E
+    # JOGADO FORA: entrava em `valor_total` mas não era gravado, então com
+    # abono `valor_ferias + valor_terco_constitucional != valor_total` no
+    # banco e o valor não era reconstituível a partir das colunas.
+    valor_abono: float = 0.0
     valor_total: float
     data_pagamento: Optional[date] = None
-    status: str = "pendente"  # pendente | pago
+    # pendente | pago | cancelado_rescisao — o último é posto pelo servidor
+    # ao FECHAR uma rescisão que absorve estas férias (ver `rescisao_id`);
+    # nunca aceito na entrada dos endpoints.
+    status: str = "pendente"
+    # Rescisão que cancelou este lançamento — o registro NUNCA é apagado,
+    # para o cancelamento ser rastreável e reversível.
+    rescisao_id: Optional[int] = Field(default=None, foreign_key="rescisao_funcionario.id")
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
@@ -224,12 +400,31 @@ class DecimoTerceiro(SQLModel, table=True):
     ano: int
     parcela: str = "unica"  # unica | primeira | segunda
     meses_trabalhados: int  # 1 a 12 — proporcional ao ano de admissão/desligamento
+    # Snapshot do salário usado no cálculo — ver FeriasFuncionario.salario_base.
+    salario_base: Optional[float] = None
+    # Média das parcelas salariais VARIÁVEIS habituais do ANO CIVIL, dividida
+    # pelos meses de vigência do contrato no ano (Lei 4.090/62, art. 1º, §1º;
+    # Decreto 57.155/65, art. 2º). NULL = não apurada (parâmetro desligado ou
+    # registro anterior à feature) — ver FeriasFuncionario.media_variaveis,
+    # mesmo desenho e mesmo motivo para ser snapshot.
+    media_variaveis: Optional[float] = None
+    media_variaveis_composicao: Optional[str] = None
+    # 13º INTEGRAL do ano ((salario_base + media_variaveis) / 12 × meses). `valor_bruto` é o que
+    # se paga NESTA parcela: até 50% do integral na 1ª (adiantamento, Lei
+    # 4.749/1965, art. 2º) e o SALDO na 2ª/única. Antes as duas colunas eram
+    # a mesma coisa — `valor_bruto` guardava sempre o integral, e lançar 1ª +
+    # 2ª parcela pagava o 13º duas vezes.
+    valor_integral: Optional[float] = None
     valor_bruto: float
     valor_inss: float = 0.0
     valor_ir: float = 0.0
     valor_liquido: float
     data_pagamento: Optional[date] = None
-    status: str = "pendente"  # pendente | pago
+    # pendente | pago | cancelado_rescisao — ver FeriasFuncionario.status.
+    status: str = "pendente"
+    # Rescisão que cancelou este lançamento (o 13º proporcional já está
+    # dentro das verbas rescisórias) — ver FeriasFuncionario.rescisao_id.
+    rescisao_id: Optional[int] = Field(default=None, foreign_key="rescisao_funcionario.id")
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
@@ -273,6 +468,23 @@ class RescisaoFuncionario(SQLModel, table=True):
     # depois (mesmo motivo de qualquer outro snapshot deste arquivo).
     salario_base: float
     data_admissao: date
+    # ── As TRÊS médias de verbas variáveis habituais ──
+    # São três porque, na rescisão, cada verba segue a regra da SUA natureza —
+    # não existe "a média da rescisão": o 13º proporcional usa o ANO CIVIL
+    # (Decreto 57.155/65, art. 2º), as férias vencidas e proporcionais usam o
+    # PERÍODO AQUISITIVO (CLT, art. 142) e o aviso prévio indenizado usa os
+    # ÚLTIMOS 12 MESES. Guardar uma média só seria gravar a resposta errada
+    # para duas das três verbas.
+    # NULL = não apuradas (parâmetro `calcula_media_verbas_variaveis`
+    # desligado, o padrão, ou registro anterior à feature) — ver
+    # FeriasFuncionario.media_variaveis.
+    media_variaveis_decimo_terceiro: Optional[float] = None
+    media_variaveis_ferias: Optional[float] = None
+    media_variaveis_aviso_previo: Optional[float] = None
+    # As três composições num JSON só (chaves "decimo_terceiro", "ferias",
+    # "aviso_previo"): é o que o TRCT e a tela abrem para o dono conferir
+    # competência a competência de onde saiu cada média.
+    media_variaveis_composicao: Optional[str] = None
     # Seis verbas — cada uma é `override do usuário if informado else valor
     # calculado por calcular_rescisao()` (ver _aplicar_calculo_rescisao).
     valor_saldo_salario: float = 0.0
@@ -342,6 +554,24 @@ class ValeFuncionario(SQLModel, table=True):
     # vale — mesmo padrão de FolhaPagamento.numero_lancamento_gerado — para
     # o extrato mostrar a saída de caixa que hoje falta (ver criar_vale).
     numero_lancamento_gerado: Optional[str] = None
+    # ── Ações do dono sobre um vale JÁ lançado (Folha de Pagamento > vale >
+    # Ações — ver fazenda/api/routers/cadastro/rh_vale_acoes.py) ────────────
+    # "ativo" | "cancelado". Cancelar NÃO apaga o vale (diferente de
+    # DELETE /vales, que é "isto nunca deveria ter existido"): o dinheiro
+    # saiu de verdade e o histórico continua valendo — o que muda é que o
+    # saldo pendente deixa de ser cobrança do funcionário e passa a ser
+    # despesa assumida pela fazenda. Por isso é coluna de estado, não
+    # exclusão.
+    status: str = Field(default="ativo", index=True)
+    # Acumuladores das ações, PARA O HISTÓRICO — `valor_total` nunca muda
+    # (é o valor efetivamente adiantado à pessoa, mesma regra que
+    # `editar_parcela_vale` já seguia): `valor_abatido` é o que o
+    # funcionário devolveu/o dono perdoou, `valor_assumido_fazenda` é o que
+    # deixou de ser cobrado dele porque a fazenda assumiu (desconsiderar o
+    # mês / cancelar o vale). Sem eles, a soma das parcelas divergiria do
+    # valor pago sem dizer POR QUE divergiu.
+    valor_abatido: float = 0.0
+    valor_assumido_fazenda: float = 0.0
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
@@ -358,6 +588,43 @@ class ValeParcela(SQLModel, table=True):
     competencia: str = Field(index=True)  # "AAAA-MM"
     valor: float
     aplicada: bool = False  # já foi somada aos descontos de algum lançamento de folha?
+    # Parcela que o dono mandou DESCONSIDERAR neste mês (ou que foi varrida
+    # junto com o cancelamento do vale): continua existindo — a competência,
+    # o valor e o motivo são o registro de que aquele mês foi perdoado —, mas
+    # NÃO é descontada do funcionário: `_valor_vale` (rh_folha.py) ignora
+    # estas parcelas, e o valor correspondente vira despesa da fazenda no
+    # Financeiro. Apagar a parcela seria mais simples e é justamente o que
+    # não serve: sem ela o holerite do mês não teria como explicar por que o
+    # desconto sumiu.
+    assumida_pela_fazenda: bool = False
+    motivo_assuncao: Optional[str] = None
+    # ── O QUE A ASSUNÇÃO FEZ, gravado NO ATO (ver `_assumir_no_financeiro` e
+    # `_registrar_assuncao`, em rh_vale_acoes.py) ──────────────────────────
+    # Sem estas duas colunas, desfazer a assunção era um chute: um vale sem
+    # item vinculado HOJE e sem lançamento próprio pode ser "sem lastro"
+    # (nada foi tocado no Financeiro, nada a desfazer) ou "item de nota cujo
+    # vínculo foi SOLTO na assunção" — `limpar_vinculo_de_itens` não deixa
+    # marca, e os dois ficam com exatamente a mesma cara depois. Errar o
+    # palpite conta a mesma despesa duas vezes (o item volta a ser gasto da
+    # fazenda no gerencial E o funcionário volta a ser descontado pelo mesmo
+    # dinheiro), então `reverter_desconsideracao` recusava os dois casos.
+    #
+    # `natureza_assuncao`: "item_de_nota" | "lancamento_proprio" |
+    # "sem_lastro" — os mesmos valores que `_assumir_no_financeiro` devolve.
+    # NULL significa "natureza desconhecida" (parcela assumida antes desta
+    # coluna existir) e CONTINUA caindo na recusa por ambiguidade: não se
+    # inventa natureza para o passado.
+    natureza_assuncao: Optional[str] = None
+    # JSON com o resto do que a assunção fez, para poder ser desfeita com
+    # precisão: qual ação assumiu esta parcela (`acao`: "desconsiderar_mes" |
+    # "cancelar" | "pagamento_folha" — é ela que faz `reverter_cancelamento`
+    # devolver SÓ o que o cancelamento varreu, deixando de pé um mês que já
+    # havia sido desconsiderado antes), o nº do lançamento envolvido, se ele
+    # foi reclassificado e quais itens de nota foram divididos. Coluna de
+    # texto (não relacional) pelo mesmo motivo de
+    # `FolhaPagamento.discriminacao_congelada`: é uma fotografia do ato, não
+    # um vínculo vivo a manter em sincronia.
+    assuncao_detalhe: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
@@ -395,7 +662,13 @@ class ValeAvulsoAbatimento(SQLModel, table=True):
     pendente, para permitir reverter o efeito exatamente (editar/excluir o
     vale) sem depender de recalcular a partir do zero — ao contrário do vale
     de funcionário (que tem `ValeParcela` recomputável), aqui o abatimento é
-    uma mutação direta no valor da parcela/etapa/conta gerencial."""
+    uma mutação direta no valor da parcela/etapa/conta gerencial.
+
+    `fazenda_id`: espelha `ValeAvulso.fazenda_id` do pai (backfill por join)
+    — sem ela, o motor de replicação Fazenda -> Fazenda (que descobre o que
+    copiar por `fazenda_id` presente na tabela) não enxergava este registro
+    e a Fazenda Teste ficava com o vale copiado mas sem o abatimento já
+    aplicado nele."""
 
     __tablename__ = "vale_avulso_abatimento"
 
@@ -405,6 +678,7 @@ class ValeAvulsoAbatimento(SQLModel, table=True):
     item_id: int
     valor_abatido: float
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -436,7 +710,23 @@ class Empreitada(SQLModel, table=True):
 
 class EmpreitadaParcela(SQLModel, table=True):
     """Parcela de pagamento de uma empreitada com frequência fixa — mesmo
-    padrão de parcelamento editável do lançamento financeiro."""
+    padrão de parcelamento editável do lançamento financeiro.
+
+    `numero`/`numero_total` = "parcela k de n", CONGELADOS na criação. Antes
+    não existiam: a tela numerava pela posição na lista ordenada por
+    vencimento, então excluir a parcela 3 de 5 fazia a 4 virar "3" e todo
+    recibo já impresso ("vale referente à parcela 3 de 5") passava a apontar
+    para outra parcela. Com o número gravado, a exclusão deixa o buraco
+    honesto (1, 2, 4, 5 de 5) e nada é renumerado.
+
+    `valor_contratado` = o BRUTO acordado nesta parcela; `valor` = o que
+    sobra a pagar depois dos vales adiantados (ver `_aplicar_vale_avulso`).
+    Precisa ser um campo PERSISTIDO, não reconstruído: a tentação é dizer
+    que `bruto = valor + Σ ValeAvulsoAbatimento`, e isso QUEBRA — a
+    redistribuição (`_redistribuir_parcelas_pendentes` /
+    `_redistribuir_itens_pendentes_*`) reescreve `valor` sem tocar em
+    nenhum `ValeAvulsoAbatimento`, então depois dela a soma não fecha mais.
+    Por isso a redistribuição nunca reescreve este campo."""
 
     __tablename__ = "empreitada_parcela"
 
@@ -444,6 +734,9 @@ class EmpreitadaParcela(SQLModel, table=True):
     empreitada_id: int = Field(foreign_key="empreitada.id")
     data_vencimento: date
     valor: float
+    numero: Optional[int] = None
+    numero_total: Optional[int] = None
+    valor_contratado: Optional[float] = None
     numero_lancamento_gerado: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
@@ -497,7 +790,10 @@ class Contrato(SQLModel, table=True):
 
 class ContratoParcela(SQLModel, table=True):
     """Parcela de pagamento de um contrato com frequência fixa — mesmo padrão
-    de parcelamento editável do lançamento financeiro."""
+    de parcelamento editável do lançamento financeiro.
+
+    `numero`/`numero_total`/`valor_contratado`: mesma semântica (e mesmo
+    motivo) de EmpreitadaParcela acima — ver o docstring de lá."""
 
     __tablename__ = "contrato_parcela"
 
@@ -505,6 +801,9 @@ class ContratoParcela(SQLModel, table=True):
     contrato_id: int = Field(foreign_key="contrato.id")
     data_vencimento: date
     valor: float
+    numero: Optional[int] = None
+    numero_total: Optional[int] = None
+    valor_contratado: Optional[float] = None
     numero_lancamento_gerado: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
@@ -539,6 +838,31 @@ class Diaria(SQLModel, table=True):
     # quantidade/valor totais mesmo antes de ela chegar.
     data_fim: Optional[date] = None
     status: str = "ativo"  # ativo | encerrado
+    # ── Encerramento do período (ver `encerrar_diaria`/`reabrir_diaria`) ──
+    # `data_encerramento` é o ÚLTIMO DIA TRABALHADO informado no fechamento
+    # (e copiado para `data_fim`, que é quem faz o contador parar). Ele
+    # também é o marco que diz se este encerramento é dos novos: NULL numa
+    # diária com status "encerrado" = fechamento antigo, de antes desta
+    # feature, que continua 100% na regra de sempre (`_resumo_diaria`
+    # recalcula tudo) — sem retroatividade.
+    data_encerramento: Optional[date] = None
+    # Conta a pagar emitida no encerramento (receita canônica do projeto:
+    # `_proximo_numero_lancamento` + ContaGerencial tipo="despesa"/
+    # origem="auto" — o mesmo que `concluir_etapa_empreitada` faz). É o elo
+    # que faltava: sem ele o saldo devedor de um período encerrado ficava
+    # registrado só aqui e NUNCA aparecia na Agenda nem em Contas a Pagar.
+    numero_lancamento_gerado: Optional[str] = None
+    # Fotografia congelada no fechamento. Existe porque o resumo era todo
+    # recalculado a cada leitura: uma auditoria respondida depois, um dia
+    # corrigido no calendário ou um vale novo mudavam sozinhos o valor de um
+    # período já FECHADO — e portanto divergiam da conta a pagar já emitida,
+    # que ninguém reescreve. A partir do encerramento, `_resumo_diaria` LÊ
+    # estes números em vez de recalcular.
+    encerramento_numero_diarias: Optional[float] = None
+    encerramento_total_apurado: Optional[float] = None
+    encerramento_valor_pago: Optional[float] = None
+    encerramento_valor_vale: Optional[float] = None
+    encerramento_saldo_devedor: Optional[float] = None
     # Correção manual do contador de diárias (botão de editar no controle) —
     # substitui, a partir de `ajuste_numero_diarias_em`, a contagem dia a dia
     # que viria de `data_inicio`/auditorias. Ver _resumo_diaria.
@@ -622,6 +946,14 @@ class DiariaDia(SQLModel, table=True):
     diaria_id: int = Field(foreign_key="diaria.id", index=True)
     data: date = Field(index=True)
     trabalhado: bool = False
+    # Fração da diária cumprida neste dia (0 a 1) — None em linhas antigas
+    # (só existiam folgas antes desta feature) equivale a 0.0, o mesmo que
+    # `trabalhado=False` já significava. 0.5 = meia diária (metade do valor);
+    # ver `_fracao_dia` em routers/cadastro/rh_contratos.py. Uma linha de dia
+    # CHEIO nunca é gravada (o calendário é esparso — ausência de linha já
+    # significa dia cheio), então `trabalhado` continua sempre False em toda
+    # linha existente; ele fica só por compatibilidade com dado histórico.
+    fracao: Optional[float] = None
     observacao: Optional[str] = None
     registrado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")

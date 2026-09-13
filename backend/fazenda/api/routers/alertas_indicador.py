@@ -16,15 +16,18 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.api.routers.indicadores import calcular_indicadores_fazenda
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import AlertaIndicador, Usuario
-from fazenda.rules.auditoria import fazenda_id_seguro
 
 router = APIRouter(prefix="/alertas-indicador", tags=["alertas-indicador"])
 
 INDICADORES_CATALOGO = [
-    {"chave": "taxa_prenhez_pct", "label": "Taxa de prenhez (%)", "caminho": ("reproducao", "taxa_prenhez_pct")},
+    # Rótulo "Fêmeas prenhas", não "Taxa de prenhez": este campo é inventário
+    # (% do rebanho apto prenhe hoje), não a taxa formal do programa
+    # reprodutivo (PREG ÷ PG ELIG) de /reproducao/ciclos-21-dias — mesmo nome
+    # que passaria a colidir com este aqui. Mesmo rótulo usado na Capa.
+    {"chave": "taxa_prenhez_pct", "label": "Fêmeas prenhas (%)", "caminho": ("reproducao", "taxa_prenhez_pct")},
     {"chave": "perc_vazias_pct", "label": "Percentual de vazias (%)", "caminho": ("reproducao", "perc_vazias_pct")},
     {"chave": "taxa_concepcao_pct", "label": "Taxa de concepção (%)", "caminho": ("reproducao", "taxa_concepcao_pct")},
     {"chave": "producao_media_kg", "label": "Produção média por vaca (kg/dia)", "caminho": ("producao", "producao_media_kg")},
@@ -114,7 +117,7 @@ class AlertaIndicadorIn(BaseModel):
 @router.post("", status_code=201)
 def criar_alerta(
     dados: AlertaIndicadorIn, user: Usuario = Depends(get_current_user), session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     if dados.indicador_chave not in CATALOGO_POR_CHAVE:
         raise HTTPException(400, f"Indicador inválido: {dados.indicador_chave}")
@@ -123,7 +126,7 @@ def criar_alerta(
 
     alerta = AlertaIndicador(
         usuario_id=user.id,
-        fazenda_id=fazenda_id_seguro(fazenda_id),
+        fazenda_id=fazenda_id,
         indicador_chave=dados.indicador_chave,
         operador=dados.operador,
         valor_limite=dados.valor_limite,

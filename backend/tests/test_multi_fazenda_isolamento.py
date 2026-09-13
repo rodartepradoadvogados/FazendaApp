@@ -27,9 +27,10 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import (
-    Animal, CalendarioSanitario, CentroCusto, ContaCorrente, ContratoFazenda, ContratoFazendaModulo, Doenca,
-    EventoSanitario, Fazenda, MedicamentoComercial, MetodoServicoReprodutivo, Pessoa, PrincipioAtivo,
-    TipoServicoReprodutivo, UsuarioFazenda,
+    Animal, BaixaAnimal, CalendarioSanitario, CentroCusto, CompraAnimal, ContaCorrente, ContratoFazenda,
+    ContratoFazendaModulo, Doenca, EventoSanitario, Fazenda, MedicamentoComercial, MetodoServicoReprodutivo,
+    MovimentoLote, OcorrenciaClinica, Pessoa, PrincipioAtivo, TipoServicoReprodutivo, UsuarioFazenda,
+    VendaAnimal,
 )
 from fazenda.models.planos import MODULOS_COMERCIAIS
 
@@ -61,7 +62,15 @@ def client(monkeypatch):
             data_evento=date(2026, 1, 1),
         ))
         # Farmácia (Fase 4A) — PrincipioAtivo/MedicamentoComercial da fazenda #1.
-        pa = PrincipioAtivo(nome="Meloxicam", fazenda_id=1)
+        # NOME PROPOSITALMENTE INVENTADO: o catálogo global da CowData
+        # (rules/farmacia_seed.py) semeia princípios reais — "Meloxicam" entre
+        # eles — com fazenda_id nulo, e linha global é visível a TODA fazenda
+        # por definição (ver rules/visibilidade.py). Usando um nome real, o
+        # teste passava ou falhava conforme a semeadura tivesse rodado antes,
+        # e o que ele reprovava era o catálogo global funcionando, não um
+        # vazamento. Com um nome que só pode existir aqui, a asserção volta a
+        # medir o que interessa: a linha DA FAZENDA 1 não aparece para a 2.
+        pa = PrincipioAtivo(nome="Zzmeloxitest-F1", fazenda_id=1)
         s.add(pa)
         s.commit()
         s.refresh(pa)
@@ -159,13 +168,26 @@ class TestIsolamentoEntreFazendas:
         r = c.get("/cadastro/pessoas")
         assert "Leomir Bonfim" in {item["nome"] for item in r.json()}
 
-    def test_sem_fazenda_no_token_ve_tudo_como_antes(self, client):
-        """Token emitido antes do piloto (sem 'fid') — comportamento idêntico
-        ao de sempre, sem filtro nenhum."""
+    def test_sessao_sem_fazenda_e_recusada(self, client):
+        """A auditoria encontrou este teste afirmando o próprio furo — o
+        docstring antigo dizia, com todas as letras, "sem filtro nenhum".
+
+        Era a regra do piloto de multi-fazenda: com uma fazenda só, "token
+        sem fid" queria dizer "emitido antes da migração", e não havia
+        retroatividade. Com mais de um cliente no mesmo banco, "sem filtro
+        nenhum" deixou de ser compatibilidade e virou vazamento entre
+        clientes (F-A-01/F-B-01/F-B-02).
+
+        Agora a regra é a oposta e vale na porta: ou o token diz em qual
+        fazenda a requisição acontece, ou ela não entra (fazenda/auth.py::
+        exigir_fazenda_selecionada)."""
         c, engine = client
         _como_fazenda(None)
         r = c.get("/financeiro/contas-correntes")
-        assert "Banco do Brasil" in {item["banco"] for item in r.json()}
+        assert r.status_code == 409, (
+            f"as contas correntes das duas fazendas saíram juntas para uma sessão sem fazenda "
+            f"selecionada: {r.status_code} {r.text[:200]}"
+        )
 
     def test_farmacia_principios_isolado(self, client):
         """Fase 4A — Farmácia (/farmacia/principios) não vazava princípios
@@ -177,11 +199,11 @@ class TestIsolamentoEntreFazendas:
         r = c.get("/farmacia/principios")
         assert r.status_code == 200
         nomes = {item["nome"] for item in r.json()}
-        assert "Meloxicam" not in nomes
+        assert "Zzmeloxitest-F1" not in nomes
         _como_fazenda(1)
         r = c.get("/farmacia/principios")
         nomes = {item["nome"] for item in r.json()}
-        assert "Meloxicam" in nomes
+        assert "Zzmeloxitest-F1" in nomes
 
     def test_tipos_metodos_servico_isolados(self, client):
         """Fase 4A — vocabulário de Serviço/Inseminação (TipoServicoReprodutivo/
@@ -204,6 +226,45 @@ class TestIsolamentoEntreFazendas:
         _como_fazenda(1)
         assert c.get("/animais/9001").status_code == 200
         assert c.get("/animais/9001/ficha").status_code == 200
+
+    def test_ficha_animal_nao_mistura_historico_de_numero_colidente(self, client):
+        """FURO DE MULTI-TENANT CORRIGIDO: `animal.numero` deixou de ser
+        único no banco inteiro (migração c24befa94c1b — unicidade composta
+        (fazenda_id, numero), feita para permitir a Fazenda Teste replicar
+        uma fazenda real com os MESMOS números) — duas fazendas podem ter
+        cada uma um animal "9500". A ficha de UM deles não pode mostrar
+        MovimentoLote/BaixaAnimal/CompraAnimal/VendaAnimal/OcorrenciaClinica
+        do OUTRO (essas 5 tabelas já têm fazenda_id, mas a ficha não
+        filtrava por ele antes desta correção)."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="9500", sexo="F", ativo=True, fazenda_id=1, nome="Fazenda 1"))
+            s.add(Animal(numero="9500", sexo="F", ativo=True, fazenda_id=2, nome="Fazenda 2"))
+            s.add(MovimentoLote(
+                numero_matriz="9500", data_movimento=date(2026, 1, 1),
+                lote_origem="01", lote_destino="02", fazenda_id=1,
+            ))
+            s.add(BaixaAnimal(numero_animal="9500", data_baixa=date(2026, 1, 1), tipo_baixa="morte", motivo="morte", fazenda_id=1))
+            s.add(CompraAnimal(
+                numero_animal="9500", vendedor="Fulano", valor=1000.0, tipo_valor="por_animal",
+                data_compra=date(2026, 1, 1), fazenda_id=1,
+            ))
+            s.add(VendaAnimal(
+                numero_animal="9500", comprador="Beltrano", valor=2000.0, tipo_valor="por_animal",
+                data_venda=date(2026, 1, 1), fazenda_id=1,
+            ))
+            s.add(OcorrenciaClinica(numero_matriz="9500", doenca="Diarreia", data_ocorrencia=date(2026, 1, 1), fazenda_id=1))
+            s.commit()
+
+        _como_fazenda(2)
+        r = c.get("/animais/9500/ficha")
+        assert r.status_code == 200, r.text
+        corpo = r.json()
+        assert corpo["movimentos_lote"] == []
+        assert corpo["baixa"] is None
+        assert corpo["compras"] == []
+        assert corpo["vendas"] == []
+        assert corpo["ocorrencias_clinicas"] == []
 
 
 class TestProvisionamentoFazendaNova:

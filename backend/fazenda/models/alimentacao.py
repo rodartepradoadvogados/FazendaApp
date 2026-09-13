@@ -18,14 +18,29 @@ from sqlmodel import Field, SQLModel, UniqueConstraint
 class CategoriaAlimento(SQLModel, table=True):
     """Categoria de alimento (Volumoso, Concentrado, Mineral...), editável em
     Configurações > Cadastro > Alimentação > Categorias. Agrupa os Alimentos
-    cadastrados — puramente organizacional, sem regra de cálculo própria."""
+    cadastrados — puramente organizacional, sem regra de cálculo própria.
+
+    `categoria_pai_id` permite UM nível de subdivisão (ex.: "Proteico" sob
+    "Concentrado") — NULL é raiz. Só dois níveis são permitidos: o router
+    recusa uma categoria que já tem pai virar pai de outra (ver
+    `criar_categoria_alimento`/`atualizar_categoria_alimento`). A FK aponta
+    para a própria tabela, então não pode ser NOT NULL nem ter default
+    diferente de None (senão a primeira raiz nunca cadastrada travaria)."""
 
     __tablename__ = "categoria_alimento"
-    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_categoria_alimento_nome_fazenda"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "nome", "categoria_pai_id", "fazenda_id", name="uq_categoria_alimento_nome_pai_fazenda"
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    # Auto-FK opcional — raiz quando None. Indexada porque toda listagem
+    # (GET /alimentacao/categorias) e toda checagem de "tem filha" (exclusão)
+    # filtram por ela.
+    categoria_pai_id: Optional[int] = Field(default=None, foreign_key="categoria_alimento.id", index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
@@ -50,6 +65,17 @@ class Alimento(SQLModel, table=True):
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Fase P1 do refactor Alimento/Estoque — quando este Alimento tem 2+
+    # itens de Estoque vinculados (`Estoque.alimento_id`), toda resolução por
+    # nome (`_estoque_por_alimento`, usada pela baixa automática diária, pelo
+    # lançamento manual de consumo e pela necessidade mensal) hoje pega o
+    # primeiro candidato que a query devolve, em ordem arbitrária — ver
+    # TestEscolhaArbitrariaDeCandidato (T11) em tests/test_migracao_alimento.py.
+    # Este campo deixa a fazenda ESCOLHER deliberadamente qual item recebe a
+    # baixa (ver PUT /alimentacao/alimentos/{alimento_id}/estoque-preferido);
+    # NULL preserva a ordem arbitrária de hoje exatamente como está — nenhum
+    # comportamento muda pra quem não usar o mecanismo novo.
+    estoque_preferido_id: Optional[int] = Field(default=None, foreign_key="estoque.id")
 
 
 class Dieta(SQLModel, table=True):
@@ -88,6 +114,8 @@ class DietaLancamento(SQLModel, table=True):
     observacao: Optional[str] = None
     # Como as quantidades dos itens foram informadas: "total" do lote/dia (padrão)
     # ou "animal" (por cabeça/dia — o total é multiplicado pelo nº de animais).
+    # Serve de PADRÃO da dieta — cada item pode sobrescrever isso individualmente
+    # em `DietaItemProgramado.base_quantidade` (ver lá).
     base_quantidade: Optional[str] = None
     # Leite destinado aos bezerros nesta dieta (kg/dia do lote) — alimenta o
     # relatório Controle × Entregue (consumo de bezerros). Preenchido pelo
@@ -123,6 +151,12 @@ class DietaItemProgramado(SQLModel, table=True):
     # entre as duas bases quando informado.
     base: Optional[str] = None
     ms_pct: Optional[float] = None
+    # Sobrescreve, só para este item, o `DietaLancamento.base_quantidade` da
+    # dieta ("total" ou "animal") — permite misturar bases no mesmo lançamento
+    # (ex.: silagem em total do lote e concentrado em por-cabeça). `None`
+    # (padrão) significa "usa o valor da dieta" — retrocompatível com todo
+    # item lançado antes desta coluna existir.
+    base_quantidade: Optional[str] = None
 
 
 class IngredienteMS(SQLModel, table=True):
@@ -153,6 +187,10 @@ class TabelaNutricionalProduto(SQLModel, table=True):
     # Vínculo opcional com o cadastro de Alimento — quando presente, a tela de
     # cadastro do Alimento pode oferecer "cadastrar tabela nutricional" direto.
     alimento_id: Optional[int] = Field(default=None, foreign_key="alimento.id")
+    # Vínculo opcional com o item de Estoque que este produto representa —
+    # quando presente, o "nome" veio do cadastro fechado de produtos de
+    # alimentação (Estoque com finalidade Ração/Alimento) em vez de texto livre.
+    estoque_id: Optional[int] = Field(default=None, foreign_key="estoque.id", index=True)
 
 
 class TabelaNutricionalValor(SQLModel, table=True):
@@ -237,3 +275,90 @@ class AlimentacaoEstado(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     ultima_data_deducao: Optional[date] = None
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+# ---------------------------------------------------------------------------
+# Consumo diário e sobra (Lançamentos > Alimentação)
+# ---------------------------------------------------------------------------
+class ConsumoAlimento(SQLModel, table=True):
+    """O que foi REALMENTE FORNECIDO de um alimento a um lote, num dia.
+
+    Distinto de `DietaItemProgramado` (o plano) e de `DietaRegistroReal` (que
+    registra o real por dieta mas NÃO dá baixa em estoque). Este é o único
+    lançamento de alimentação que debita estoque pelo motor
+    `rules/estoque_baixa.movimentar()`, com `origem_tipo="consumo_alimento"`,
+    para a baixa ser rastreável e reversível.
+
+    `lote` é `int`, a MESMA representação de `DietaLancamento.lote` — e essa
+    escolha é deliberada: o lançamento de consumo só existe ancorado numa dieta
+    ativa, então tem de falar a língua dela. O sistema tem quatro
+    representações de lote convivendo (`Lote.codigo` str de 2 dígitos,
+    `Animal.grupo_primario` "01 - Nome", este `int`, e str livre em
+    Recria/Sanidade); a ponte para o cadastro é `f"{lote:02d}"`, como já faz
+    `apresentacao_dieta`.
+
+    Lançamentos do mesmo dia SOMAM (decisão do produto): o trato é fracionado
+    ao longo do dia e cada passada do vagão é um lançamento.
+    """
+
+    __tablename__ = "consumo_alimento"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    data: date = Field(index=True)
+    lote: int = Field(index=True)
+    alimento: str
+    alimento_id: Optional[int] = Field(default=None, foreign_key="alimento.id")
+    quantidade: float
+    unidade: str
+    # Quantos animais o lançamento considerou, quando veio pelo modo "por
+    # cabeça". Guardado mesmo no modo kg direto porque é o que permite auditar
+    # depois por que o número era aquele — o lote muda de tamanho todo dia.
+    num_animais: Optional[int] = None
+    # "animais" = derivado do nº de cabeças × quantidade por cabeça da dieta;
+    # "kg" = digitado direto pelo funcionário.
+    origem: str = "kg"
+    # Alimento que não está na dieta ativa do lote, aceito porque o lote tem a
+    # flag `permitir_fora_da_dieta`. Marcado para o relatório poder separar o
+    # que foi exceção do que foi plano.
+    fora_da_dieta: bool = False
+    # Se ESTE registro de fato debitou o Estoque (`estoque_baixa.baixar`) ao
+    # ser criado — depende do `Lote.modo_baixa_estoque` NO MOMENTO do
+    # lançamento ("consumo_real" debita, "automatica"/"sem_baixa" não, pra não
+    # dobrar a baixa que a Alimentação já faz sozinha por dia decorrido).
+    # Nasce True porque toda linha existente ANTES deste campo debitou estoque
+    # incondicionalmente (era o único comportamento que existia). Guardado no
+    # registro, não recalculado do modo ATUAL do lote, porque o modo pode
+    # mudar depois — a exclusão (`excluir_consumo`) tem de saber se estorna
+    # olhando pro que aconteceu quando o lançamento foi feito, não pro que o
+    # lote é hoje.
+    baixou_estoque: bool = True
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ConsumoSobra(SQLModel, table=True):
+    """A sobra do cocho de um lote num dia, em QUILOS TOTAIS.
+
+    Não é por alimento, e isso é decisão do produto: ninguém separa o que
+    sobrou no cocho por ingrediente. O rateio por alimento é CALCULADO a partir
+    da proporção da dieta (ver `rules/unidades.kg_equivalente`) e nunca
+    gravado — gravar um rateio o congelaria, e ele muda se a dieta mudar.
+
+    Ao contrário do consumo, relançar a sobra no mesmo dia SUBSTITUI em vez de
+    somar: sobra é uma medição única do dia, não um acúmulo de eventos. A
+    unicidade por (fazenda, lote, data) trava isso no banco, para não depender
+    de a aplicação lembrar.
+    """
+
+    __tablename__ = "consumo_sobra"
+    __table_args__ = (UniqueConstraint("fazenda_id", "lote", "data", name="uq_consumo_sobra_fazenda_lote_data"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    data: date = Field(index=True)
+    lote: int = Field(index=True)
+    kg_sobra: float = 0.0
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)

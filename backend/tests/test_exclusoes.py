@@ -7,13 +7,17 @@ from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import (
+    AgendaManual,
     Animal,
     CalendarioSanitario,
+    ColostragemBezerra,
+    CompraSemen,
     ContaGerencial,
     ControleLeiteiro,
     Doenca,
@@ -22,10 +26,13 @@ from fazenda.models import (
     EventoSanitario,
     FolhaPagamento,
     Fornecedor,
+    FotoCampo,
+    Lactacao,
     Lote,
     MotivoMovimentacao,
     MovimentoEstoque,
     Parto,
+    PesagemCorporal,
     Pessoa,
     PrincipioAtivo,
     ProtocoloSanitario,
@@ -41,6 +48,16 @@ from fazenda.models import (
 @pytest.fixture
 def client(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+
+    # SQLite não aplica FOREIGN KEY por padrão (ao contrário do Postgres de
+    # produção) — sem isto nenhum teste aqui pegaria uma exclusão que deixa
+    # pra trás uma linha com FK pra outra que acabou de sumir (foi exatamente
+    # esse ponto cego que deixou passar o achado de 01/09/2026, ver
+    # `_excluir_alvos_em_ordem` em exclusoes.py).
+    @event.listens_for(engine, "connect")
+    def _habilitar_fk(conexao_dbapi, _):
+        conexao_dbapi.execute("PRAGMA foreign_keys=ON")
+
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(database, "engine", engine)
 
@@ -113,6 +130,203 @@ class TestExclusaoAnimal:
         c, _ = client
         r = c.post("/exclusoes/impacto", json={"tipo": "animal", "id": "nope"})
         assert r.status_code == 404
+
+    def test_confirmar_apaga_colostragem_lactacao_e_foto_ligados_por_fk(self, client):
+        """Achado de 01/09/2026: ColostragemBezerra/Lactacao/FotoCampo têm FK de
+        verdade pra animal.id (ao contrário de Servico/Parto/ControleLeiteiro/
+        Sanidade, que só casam por numero_matriz em texto solto) — sem entrar
+        na lista de exclusão do animal, ficavam órfãos e o commit violava essa
+        FK no Postgres de produção (o SQLite de teste não aplica FK por
+        padrão, por isso não pegava). Pro usuário isso surgia sem pista
+        nenhuma: um 500 sem cabeçalho CORS aparece no navegador como "Failed
+        to fetch"."""
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Animal(numero="1291", ativo=True))
+            s.commit()
+            animal = s.exec(select(Animal).where(Animal.numero == "1291")).first()
+            s.add(ColostragemBezerra(animal_id=animal.id, numero_animal="1291", tomou_colostro=True))
+            s.add(Lactacao(animal_id=animal.id, numero_matriz="1291", data_inicio=date(2024, 1, 1), origem="parto"))
+            s.add(FotoCampo(
+                caminho_storage="x/1291.jpg", mime_type="image/jpeg", tamanho_bytes=1,
+                animal_id=animal.id, identificacao_animal="1291", tipo_assunto="animal",
+            ))
+            s.commit()
+
+        r = c.post("/exclusoes/impacto", json={"tipo": "animal", "id": "1291"})
+        assert r.status_code == 200
+        impacto = r.json()["impacto"]
+        assert any("colostragem" in i for i in impacto)
+        assert any("lactação" in i for i in impacto)
+        assert any("foto" in i for i in impacto)
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "1291"})
+        assert r.status_code == 200
+        assert r.json()["status"] == "excluido"
+
+        with _sessao(engine) as s:
+            assert s.exec(select(Animal).where(Animal.numero == "1291")).first() is None
+            assert s.exec(select(ColostragemBezerra).where(ColostragemBezerra.numero_animal == "1291")).first() is None
+            assert s.exec(select(Lactacao).where(Lactacao.numero_matriz == "1291")).first() is None
+            assert s.exec(select(FotoCampo).where(FotoCampo.identificacao_animal == "1291")).first() is None
+
+
+class TestExclusaoParto:
+    """Gauntlet A-11: excluir um Parto (POST /exclusoes/confirmar) apagava só
+    a linha do Parto — deixando órfãos a pendência de retenção de placenta na
+    Agenda, a ficha da cria (quando ela nunca chegou a ganhar histórico
+    próprio) e `Animal.del_dias` da mãe (congelado em 0 pra sempre)."""
+
+    def test_exclui_parto_remove_pendencia_de_retencao_placenta_na_agenda(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Animal(numero="300", ativo=True))
+            s.commit()
+
+        r = c.post("/reproducao/parto", json={
+            "numero_matriz": "300", "data_parto": "2026-07-01", "retencao_placenta": True,
+        })
+        assert r.status_code == 200, r.text
+
+        with _sessao(engine) as s:
+            parto_id = s.exec(select(Parto).where(Parto.numero_matriz == "300")).first().id
+            assert s.exec(select(AgendaManual).where(AgendaManual.numero_animal == "300")).first() is not None
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "parto", "id": str(parto_id)})
+        assert r.status_code == 200, r.text
+
+        with _sessao(engine) as s:
+            assert s.exec(select(Parto).where(Parto.id == parto_id)).first() is None
+            assert s.exec(select(AgendaManual).where(AgendaManual.numero_animal == "300")).first() is None
+
+    def test_exclui_parto_remove_cria_sem_outros_registros(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Animal(numero="301", ativo=True))
+            s.commit()
+
+        r = c.post("/reproducao/parto", json={
+            "numero_matriz": "301", "data_parto": "2026-07-01",
+            "crias": [{"numero": "301-1", "sexo": "F", "nasceu_viva": True}],
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["crias_criadas"] == ["301-1"]
+
+        with _sessao(engine) as s:
+            parto_id = s.exec(select(Parto).where(Parto.numero_matriz == "301")).first().id
+            assert s.exec(select(Animal).where(Animal.numero == "301-1")).first() is not None
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "parto", "id": str(parto_id)})
+        assert r.status_code == 200, r.text
+
+        with _sessao(engine) as s:
+            assert s.exec(select(Animal).where(Animal.numero == "301-1")).first() is None, \
+                "cria sem nenhum outro registro deve sair junto com o parto que a originou"
+
+    def test_exclui_parto_preserva_cria_que_ja_tem_outro_registro(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Animal(numero="302", ativo=True))
+            s.commit()
+
+        r = c.post("/reproducao/parto", json={
+            "numero_matriz": "302", "data_parto": "2026-07-01",
+            "crias": [{"numero": "302-1", "sexo": "F", "nasceu_viva": True}],
+        })
+        assert r.status_code == 200, r.text
+
+        with _sessao(engine) as s:
+            parto_id = s.exec(select(Parto).where(Parto.numero_matriz == "302")).first().id
+            # A cria já ganhou vida própria no sistema (ex.: uma pesagem lançada).
+            s.add(ControleLeiteiro(numero_matriz="302-1", data_controle=date(2026, 8, 1), producao_kg=1))
+            s.commit()
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "parto", "id": str(parto_id)})
+        assert r.status_code == 200, r.text
+
+        with _sessao(engine) as s:
+            assert s.exec(select(Animal).where(Animal.numero == "302-1")).first() is not None, \
+                "cria com histórico próprio não pode ser apagada só por causa do parto"
+
+    def test_exclui_unico_parto_deixa_del_dias_da_mae_desconhecido(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Animal(numero="303", ativo=True))
+            s.commit()
+
+        c.post("/reproducao/parto", json={"numero_matriz": "303", "data_parto": "2026-07-01"})
+        with _sessao(engine) as s:
+            # `del_dias` da mãe passou a sair do DEL AO VIVO da `Lactacao`
+            # aberta pelo parto (ver rules/lactacao.py), não mais de um `0`
+            # cravado no lançamento: num parto retroativo como este, `0` era
+            # simplesmente falso.
+            assert s.exec(select(Animal).where(Animal.numero == "303")).first().del_dias == (
+                date.today() - date(2026, 7, 1)
+            ).days
+            parto_id = s.exec(select(Parto).where(Parto.numero_matriz == "303")).first().id
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "parto", "id": str(parto_id)})
+        assert r.status_code == 200, r.text
+
+        with _sessao(engine) as s:
+            assert s.exec(select(Animal).where(Animal.numero == "303")).first().del_dias is None, \
+                "sem outro parto remanescente, 0 congelado é ativamente errado — melhor None (desconhecido) até o próximo GERAL.csv"
+
+    def test_exclui_parto_mais_recente_recalcula_del_dias_pelo_parto_remanescente(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Animal(numero="304", ativo=True))
+            s.commit()
+
+        c.post("/reproducao/parto", json={"numero_matriz": "304", "data_parto": "2026-01-01"})
+        c.post("/reproducao/parto", json={"numero_matriz": "304", "data_parto": "2026-07-01"})
+        with _sessao(engine) as s:
+            partos = s.exec(select(Parto).where(Parto.numero_matriz == "304").order_by(Parto.data_parto)).all()
+            parto_antigo_id, parto_recente_id = partos[0].id, partos[1].id
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "parto", "id": str(parto_recente_id)})
+        assert r.status_code == 200, r.text
+
+        with _sessao(engine) as s:
+            mae = s.exec(select(Animal).where(Animal.numero == "304")).first()
+            assert mae.del_dias == (date.today() - date(2026, 1, 1)).days
+            assert s.exec(select(Parto).where(Parto.id == parto_antigo_id)).first() is not None
+
+
+class TestExclusaoCompraSemen:
+    """Gauntlet A-12: excluir uma compra de sêmen ajustava `EstoqueSemen.doses`
+    direto no campo, sem passar pelo motor de estoque (`estoque_baixa`) — sem
+    MovimentoEstoque nenhum, o estorno não deixava rastro no histórico nem no
+    custo físico do RMCA."""
+
+    def test_excluir_compra_semen_grava_movimento_de_estorno(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            touro = EstoqueSemen(touro_nome="Coors", tipo="convencional", doses=30)
+            s.add(touro)
+            s.commit()
+            s.refresh(touro)
+            compra = CompraSemen(
+                estoque_semen_id=touro.id, touro_nome="Coors", origem="estoque", tipo="convencional",
+                doses=10, valor_unitario=50.0, vendedor="Central X", data_compra=date(2026, 7, 1),
+            )
+            s.add(compra)
+            s.commit()
+            s.refresh(compra)
+            compra_id = compra.id
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "compra_semen", "id": str(compra_id)})
+        assert r.status_code == 200, r.text
+
+        with _sessao(engine) as s:
+            assert s.exec(select(EstoqueSemen).where(EstoqueSemen.touro_nome == "Coors")).first().doses == 20
+            movimentos = s.exec(
+                select(MovimentoEstoque).where(MovimentoEstoque.origem_tipo == "estorno_compra_semen")
+            ).all()
+            assert len(movimentos) == 1, "o estorno precisa deixar rastro em MovimentoEstoque, não só ajustar o campo"
+            assert movimentos[0].movimento == "Saída de ajuste"
+            assert movimentos[0].quantidade == 10
+            assert movimentos[0].origem_id == compra_id
 
 
 class TestExclusaoFinanceiro:
@@ -605,7 +819,11 @@ class TestEstornoDeEstoqueNaExclusao:
     def test_exclui_servico_devolve_dose_de_semen(self, client):
         c, engine = client
         with _sessao(engine) as s:
-            s.add(Animal(numero="700", ativo=True))
+            s.add(Animal(numero="700", ativo=True, sexo="F", data_nasc=date(2024, 1, 1)))
+            # Novilha APTA: a trava de aptidão (rules/aptidao.py) recusa uma
+            # nulípara sem nenhuma pesagem registrada, e este teste é sobre o
+            # estorno de estoque, não sobre aptidão.
+            s.add(PesagemCorporal(numero_matriz="700", data_pesagem=date(2026, 6, 1), peso_kg=400))
             s.add(EstoqueSemen(touro_nome="Coors", tipo="convencional", doses=30))
             s.commit()
 
@@ -625,6 +843,43 @@ class TestEstornoDeEstoqueNaExclusao:
         with _sessao(engine) as s:
             assert s.exec(select(EstoqueSemen).where(EstoqueSemen.touro_nome == "Coors")).first().doses == 30
             assert s.exec(select(Servico).where(Servico.id == servico_id)).first() is None
+
+    def test_excluir_servico_mais_recente_restaura_ult_ocorrencia_do_anterior(self, client):
+        """Gauntlet A-9: `registrar_servico` zera `ult_ocorrencia` de todo
+        serviço anterior do animal ao criar o novo (vigente). Excluir esse
+        novo serviço (o mais recente) não restaurava o flag no anterior —
+        o animal ficava sem NENHUM serviço "vigente", quebrando o
+        diagnóstico atual usado pela Agenda Reprodutiva/candidatas a IATF."""
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Animal(numero="700", ativo=True, sexo="F", data_nasc=date(2024, 1, 1)))
+            # Novilha APTA — ver o comentário no teste da dose de sêmen acima.
+            s.add(PesagemCorporal(numero_matriz="700", data_pesagem=date(2026, 6, 1), peso_kg=400))
+            s.commit()
+
+        r1 = c.post("/reproducao/servico", json={
+            "numero_matriz": "700", "data_servico": "2026-07-01", "tipo_servico": "Monta natural",
+        })
+        assert r1.status_code == 200, r1.text
+        servico_1_id = r1.json()["id"]
+
+        r2 = c.post("/reproducao/servico", json={
+            "numero_matriz": "700", "data_servico": "2026-07-20", "tipo_servico": "Monta natural",
+        })
+        assert r2.status_code == 200, r2.text
+        servico_2_id = r2.json()["id"]
+
+        with _sessao(engine) as s:
+            assert s.get(Servico, servico_1_id).ult_ocorrencia == 0
+            assert s.get(Servico, servico_2_id).ult_ocorrencia == 1
+
+        r3 = c.post("/exclusoes/confirmar", json={"tipo": "servico", "id": str(servico_2_id)})
+        assert r3.status_code == 200, r3.text
+
+        with _sessao(engine) as s:
+            assert s.exec(select(Servico).where(Servico.id == servico_2_id)).first() is None
+            assert s.get(Servico, servico_1_id).ult_ocorrencia == 1, \
+                "excluir o serviço vigente deve promover o anterior a vigente"
 
     def test_exclui_sanidade_direto_pelo_painel_de_exclusoes_devolve_estoque(self, client):
         """Bypass fechado: antes, só o DELETE /sanidade/aplicacoes/{id} estornava —

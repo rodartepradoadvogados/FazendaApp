@@ -1,36 +1,167 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Plus, Paperclip, Check, ChevronDown, ChevronRight, RefreshCw, Filter, Pencil, Trash2, Printer } from "lucide-react";
+import { Plus, Paperclip, Check, ChevronDown, ChevronRight, RefreshCw, Filter, Pencil, Trash2, Printer, History, Search, RotateCcw } from "lucide-react";
 import {
   fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, excluirFolhaPagamento,
+  estornarPagamentoFolha,
   fetchFolhaPagamentoUnificada, excluirParcelaEmpreitada, excluirParcelaContrato, type LinhaFolhaUnificada,
   atualizarParcelaEmpreitada, atualizarParcelaContrato,
   fetchVales, criarVale, atualizarVale, atualizarParcelaVale, excluirParcelaVale, excluirVale, ehAdmin, formatBRL,
-  fetchValesAvulsos, atualizarValeAvulso, excluirValeAvulso,
-  lancarGuiaFolhaEncargo, fetchGuiasFolhaEncargo, type GuiaFolhaEncargo,
+  fetchValesAvulsos, atualizarValeAvulso, excluirValeAvulso, previaExclusaoVale, previaExclusaoValeAvulso,
+  type PreviaExclusaoVale,
+  lancarGuiaFolhaEncargo, fetchGuiasFolhaEncargo, atualizarGuiaFolhaEncargo, excluirGuiaFolhaEncargo, type GuiaFolhaEncargo,
   lerDocumentoFinanceiro, anexarArquivoLancamento, formatDate,
   fetchContasCorrentes, type ContaCorrenteCadastro,
+  anexarComprovanteVale, listarComprovantesVale, excluirComprovanteVale, urlComprovanteVale,
+  type LinhaHolerite, type LinhaValeAssumido, type TotaisHolerite, type BasesHolerite,
 } from "@/lib/api";
 import { ModalDivergenciaVale, ModalResultadoDivergenciaVale, ModalConfirmarDivergenciaTotal } from "@/components/ModalDivergenciaVale";
+import AcoesValeModal from "@/components/AcoesValeModal";
+import PagarFolhaModal from "@/components/PagarFolhaModal";
 import { Modal } from "@/components/Modal";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { ReciboModal } from "@/components/ReciboModal";
-import { exportarFichaPDF, exportarMultiExcel, type SecaoFicha, type LancamentoRecibo } from "@/lib/export";
+import { type LancamentoRecibo } from "@/lib/export";
+import { Holerite, LinkExtrato } from "@/components/Holerite";
+import {
+  competenciaExtenso, filtrarPorSituacao, holeriteDaLinha, imprimirHolerite, imprimirHolerites,
+  rotuloStatusLinha, type Holerite as DocHolerite, type SituacaoPagamento,
+} from "@/lib/holerite";
 import { ModalDivididoDocumento } from "@/components/ModalDivididoDocumento";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { AvisoSalvo } from "@/components/AvisoSalvo";
 import { Dropzone } from "@/components/Dropzone";
-import { SecaoRecolhivel, Indicador } from "@/components/ui";
+import { SecaoRecolhivel } from "@/components/ui";
+import { RubricasHolerite } from "@/components/RubricasHolerite";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
+import { BarraCompetencia } from "@/components/BarraCompetencia";
+import { EquacaoFolha, OutrosPagamentosDoMes } from "@/components/EquacaoFolha";
+import { ExcecoesFolha } from "@/components/ExcecoesFolha";
+import { LinhaTempoPessoa } from "@/components/LinhaTempoPessoa";
+import { type ValeDaLinhaTempo } from "@/lib/linhaTempoPessoa";
+import {
+  equacaoDoMes, excecoesDoMes, competenciasDoMes, mesDaLinha, mesInicial, mesesDoLedger,
+  resumoOutrosTipos, situacaoDoMes, type Excecao,
+} from "@/lib/folhaCompetencia";
 import EmpreitadaView from "@/components/EmpreitadaView";
 import ContratoView from "@/components/ContratoView";
 import DiariaView from "@/components/DiariaView";
 import FeriasDecimoTerceiroView from "@/components/FeriasDecimoTerceiroView";
+import RescisaoView from "@/components/RescisaoView";
 
 const LABEL_TIPO: Record<string, string> = {
   funcionario: "Funcionário", empreita: "Empreita", contrato: "Contrato", diaria: "Diária", ferias_decimo: "Férias / 13º",
+  // "rescisao" é rótulo só de CHIP: o ledger unificado ainda não emite linhas
+  // desse tipo — é por isso que a categoria declara `tipoLedger: null` abaixo.
+  rescisao: "Rescisão",
 };
+
+type CategoriaFolha =
+  | "todos" | "funcionario" | "empreita" | "contrato" | "diarias" | "ferias_decimo" | "rescisao";
+
+/**
+ * O QUE EXISTE EM CADA CATEGORIA — a tabela que governa a tela inteira.
+ *
+ * Antes, o único recorte era `mostraFormasGerais` (categoria "todos" ou
+ * "funcionario"), e ele escondia só os três formulários de lançar. Tudo o
+ * resto continuava na tela: sob Empreita, Contrato e Diária apareciam as
+ * "Guias de FGTS/DCTF lançadas" e o "Relatório de vales e descontos" de
+ * FUNCIONÁRIO — FGTS é encargo de CLT e empreiteiro não é CLT. Era a
+ * reclamação do dono, e a causa não era um `if` esquecido: era não haver
+ * lugar nenhum onde a pergunta "isto existe nesta categoria?" fosse
+ * respondida uma vez só.
+ *
+ * Agora ela é respondida aqui, em dados. Cada bloco da tela lê um campo desta
+ * tabela; nenhum bloco decide por conta própria se aparece. Acrescentar uma
+ * categoria (ou dar FGTS a alguma delas) é editar esta tabela, não caçar
+ * condições espalhadas pela renderização.
+ */
+type CapacidadesCategoria = {
+  rotulo: string;
+  /** Tipo correspondente no ledger unificado. `""` = todos os tipos;
+   *  `null` = a categoria NÃO tem linha no ledger (rescisão) e por isso não
+   *  tem mês, equação, exceções nem tabela — ver `RescisaoView`. */
+  tipoLedger: string | null;
+  /** Formulário "Nova folha" + holerite + rubricas — só CLT. */
+  folhaFuncionario: boolean;
+  /** Guias de FGTS/DCTF (lançar e listar) — encargo de CLT, só funcionário. */
+  guias: boolean;
+  /** Vale de FUNCIONÁRIO: parcelado, descontado na folha da competência. */
+  valeFuncionario: boolean;
+  /** Vale AVULSO: abatido da próxima parcela/etapa de empreita/contrato/diária. */
+  valeAvulso: boolean;
+  /** Tela própria da categoria (formulário + listagem), quando existe. */
+  telaPropria: "empreita" | "contrato" | "diarias" | "ferias_decimo" | "rescisao" | null;
+};
+
+const CATEGORIAS: Record<CategoriaFolha, CapacidadesCategoria> = {
+  todos: {
+    rotulo: "Todos", tipoLedger: "",
+    folhaFuncionario: true, guias: true, valeFuncionario: true, valeAvulso: true, telaPropria: null,
+  },
+  funcionario: {
+    rotulo: "Funcionário", tipoLedger: "funcionario",
+    folhaFuncionario: true, guias: true, valeFuncionario: true, valeAvulso: false, telaPropria: null,
+  },
+  empreita: {
+    rotulo: "Empreita", tipoLedger: "empreita",
+    folhaFuncionario: false, guias: false, valeFuncionario: false, valeAvulso: true, telaPropria: "empreita",
+  },
+  contrato: {
+    rotulo: "Contrato", tipoLedger: "contrato",
+    folhaFuncionario: false, guias: false, valeFuncionario: false, valeAvulso: true, telaPropria: "contrato",
+  },
+  diarias: {
+    rotulo: "Diária", tipoLedger: "diaria",
+    folhaFuncionario: false, guias: false, valeFuncionario: false, valeAvulso: true, telaPropria: "diarias",
+  },
+  ferias_decimo: {
+    rotulo: "Férias / 13º", tipoLedger: "ferias_decimo",
+    folhaFuncionario: false, guias: false, valeFuncionario: false, valeAvulso: false, telaPropria: "ferias_decimo",
+  },
+  // A rescisão é a única sem ledger: o endpoint unificado monta CINCO tipos e
+  // ela não é um deles. Antes, o chip dela apagava meia tela (barra do mês,
+  // equação e tabela sumiam por uma condição solta); agora a ausência é
+  // DECLARADA, e a tela dela é montada com o que lhe cabe — nada some, nada
+  // aparece zerado mentindo que "não há rescisão nenhuma".
+  rescisao: {
+    rotulo: "Rescisão", tipoLedger: null,
+    folhaFuncionario: false, guias: false, valeFuncionario: false, valeAvulso: false, telaPropria: "rescisao",
+  },
+};
+
+const ORDEM_CATEGORIAS: CategoriaFolha[] = [
+  "todos", "funcionario", "empreita", "contrato", "diarias", "ferias_decimo", "rescisao",
+];
+
+// Aliases de URL: a Agenda linkava `categoria=empreitada` (o nome da tabela no
+// banco) e o chip se chama `empreita` — o valor desconhecido caía em silêncio
+// no chip "Todos". O link foi corrigido na Agenda; o alias fica para os
+// eventos/notificações que já estavam gravados com o nome antigo.
+const ALIAS_CATEGORIA: Record<string, CategoriaFolha> = { empreitada: "empreita", diaria: "diarias" };
+
+// O MESMO filtro de "Contas > Holerites e recibos", com os mesmos rótulos:
+// era o único lugar em que ele existia, e quem fecha o mês é quem mais
+// precisa dele. Substitui o select "Status" (pendente/pago), que tinha
+// exatamente este predicado sob outro nome — ver `filtrarPorSituacao`.
+const SITUACOES: { id: SituacaoPagamento; label: string; dica: string }[] = [
+  { id: "pagos", label: "Pagos", dica: "Só o que já foi pago" },
+  { id: "a_pagar", label: "A pagar", dica: "Tudo o que ainda não foi pago, vencido ou não" },
+  { id: "todos", label: "Todos", dica: "Pagos e a pagar, juntos" },
+];
+
+/** Os três cards do topo — o que a tela está fazendo agora. */
+type CardFolha = "consultar" | "lancar" | "resolver";
+
+// Cada card do topo, seu papel e o que ele conta. O número é a resposta curta
+// da pergunta do card, não enfeite: quanto há no mês, quantas formas de lançar
+// existem NESTA categoria, quantas pendências travam o fechamento.
+const CARDS: { id: CardFolha; titulo: string; descricao: string }[] = [
+  { id: "consultar", titulo: "Consultar", descricao: "o que já está lançado no mês" },
+  { id: "lancar", titulo: "Lançar", descricao: "formas de lançamento desta categoria" },
+  { id: "resolver", titulo: "Resolver antes de fechar", descricao: "pendências que travam o fechamento" },
+];
 // Acentos emprestados da paleta CowData (navy+dourado+verde+vermelho do
 // painel do dono do software) — usados só nos 3 cards de "Lançar" desta
 // tela, não como fundo/base (que continua o tema normal da fazenda).
@@ -46,22 +177,52 @@ const mesCompLabel = (comp: string) => {
   return idx >= 0 && idx < 12 ? `${MESES_ABREV[idx]}/${a}` : (comp || "");
 };
 
-function KPI({ v, l, c }: { v: string; l: string; c?: string }) {
-  return <Indicador categoria="financeiro" valor={v} rotulo={l} cor={c || "var(--dourado-light)"} />;
-}
-
 const selStyleLote: React.CSSProperties = {
   fontSize: "0.82rem", background: "var(--surface-2)", color: "var(--text)",
   border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", width: "100%",
 };
 const labelStyleLote: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
+// Nome clicável na tabela — o mesmo sinal de "isto abre algo" que as colunas
+// de desconto desta tela já usam (sublinhado pontilhado), e não uma classe de
+// link nova: o projeto não tem nenhuma, e inventar uma aqui criaria um estilo
+// de link que só existe nesta tabela.
+// O que o clique no nome ABRE mudou: era a linha do tempo da pessoa, e passou
+// a ser o discriminado do lançamento (é o gesto do desenho aprovado). A linha
+// do tempo não perdeu a porta — ganhou um botão próprio na coluna de ações,
+// com ícone de histórico; ela continua sendo a ÚNICA maneira de chegar a
+// LinhaTempoPessoa em todo o sistema.
+const nomeClicavel: React.CSSProperties = {
+  background: "none", border: "none", padding: 0, font: "inherit", color: "inherit",
+  cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: "0.2em",
+};
 
 /*
- * Folha de pagamento — lançamento e acompanhamento por pessoa/competência.
+ * Financeiro > Ações > Fechamento da folha — AQUI SE FECHA O MÊS.
+ *
  * Pessoas (funcionário, veterinário, diarista etc.) vêm do cadastro em
- * Configurações > Cadastro > Pessoas; aqui só lançamos e damos baixa.
+ * Configurações > Cadastro > Pessoas; aqui se lança, se confere, se
+ * acrescenta verba ao holerite e se dá baixa. A tela irmã, Contas >
+ * Holerites e recibos, é SÓ CONSULTA — e as duas dizem isso na própria
+ * interface, porque no menu a frase some assim que se entra.
+ *
+ * A TELA TEM TRÊS NÍVEIS, nesta ordem:
+ *
+ *   1. os três CARDS do topo — Consultar · Lançar · Resolver antes de fechar
+ *      — que dizem o que a tela está fazendo agora;
+ *   2. os CHIPS de categoria, que dizem sobre o quê;
+ *   3. a faixa de FILTROS (que some inteira sob "Lançar": não se filtra o que
+ *      ainda não existe) e, abaixo, o conteúdo em cards de grupo — cada card
+ *      abre os lançamentos, e o clique no NOME abre o discriminado.
+ *
+ * A regra que governa tudo isso é uma só e mora em `CATEGORIAS`, acima: só
+ * aparece o que compete à categoria escolhida. Antes, o único recorte era
+ * `mostraFormasGerais` — e por isso as guias de FGTS e o relatório de vales
+ * de FUNCIONÁRIO continuavam na tela sob Empreita, Contrato e Diária.
  */
-type PessoaFolha = { id: number; nome: string; tipos: string[] };
+// `data_admissao` já vem em `GET /cadastro/pessoas` (o serializador devolve a
+// Pessoa inteira) e é o que a ficha da pessoa escreve como vínculo — o
+// cadastro não precisou ganhar campo nenhum para a linha do tempo existir.
+type PessoaFolha = { id: number; nome: string; tipos: string[]; data_admissao?: string | null };
 type RegistroFolha = {
   id: number; pessoa_id: number; pessoa_nome: string; competencia: string;
   valor_bruto: number; descontos: number;
@@ -75,7 +236,19 @@ type RegistroFolha = {
   recorrente: boolean; dia_vencimento: number | null;
   conta_corrente_id?: number | null;
   origem_recorrencia_id: number | null; numero_lancamento_gerado: string | null;
-  detalhe: { label: string; valor: number }[];
+  // Cada linha traz agora descrição, REFERÊNCIA (de onde o valor veio) e,
+  // quando é desconto de vale, a origem com o `vale_id` — o que substitui o
+  // `/vale/i.test(label)` que a tela usava para adivinhar "o que é vale".
+  detalhe: LinhaHolerite[];
+  // Parcelas que a FAZENDA assumiu naquela competência — campo à parte de
+  // `detalhe` porque não são desconto de ninguém e não podem entrar em soma
+  // nenhuma (nem no total do mês, nem no líquido, nem no holerite impresso).
+  // Vêm para o painel poder explicar por que o desconto sumiu e para o botão
+  // "Ações" continuar existindo no mês desconsiderado — sem elas a ação de
+  // desfazer ficava sem porta de entrada.
+  vale_assumido?: LinhaValeAssumido[];
+  totais: TotaisHolerite;
+  bases: BasesHolerite;
   usuario_nome?: string | null;
 };
 
@@ -106,6 +279,7 @@ function CampoRetencao({
 export default function FolhaPagamentoView() {
   const admin = ehAdmin();
   const [pessoas, setPessoas] = useState<PessoaFolha[]>([]);
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [regs, setRegs] = useState<RegistroFolha[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -127,19 +301,59 @@ export default function FolhaPagamentoView() {
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
 
+  // Qual folha está com o pop-up de pagamento aberto. A data do pagamento e a
+  // decisão sobre a diferença moram DENTRO do pop-up (PagarFolhaModal): pagar
+  // deixou de ser "escolher uma data na linha" quando passou a poder lançar
+  // valor distinto numa verba.
   const [pagandoId, setPagandoId] = useState<number | null>(null);
-  const [pagoErro, setPagoErro] = useState<string | null>(null);
-  const [dataPagamento, setDataPagamento] = useState(() => new Date().toISOString().slice(0, 10));
   const [anexarAberto, setAnexarAberto] = useState(false);
   const [arquivoPreview, setArquivoPreview] = useState<File | null>(null);
 
   // Seletor único de categoria — antes era uma TabBar que só navegava entre
   // telas (sem filtrar nada); agora governa TANTO o que aparece em "Lançar"
   // quanto o filtro de "Consultar" logo abaixo (ver `tipoUnificado`).
-  const [categoria, setCategoria] = useState<"todos" | "funcionario" | "empreita" | "contrato" | "diarias" | "ferias_decimo">("todos");
+  // "rescisao" é chip IRMÃO dos demais, não sub-aba de "ferias_decimo": a
+  // rescisão é quem consome férias e 13º (no backend e na lei), não o
+  // contrário — ver o cabeçalho de RescisaoView.tsx.
+  const [categoria, setCategoria] = useState<CategoriaFolha>("todos");
+  // O card do topo é o MODO da tela: consultar o mês, lançar, ou resolver o
+  // que trava o fechamento. Nasce em "consultar" porque a primeira pergunta
+  // de quem abre a tela é "como está o mês", não "o que eu lanço".
+  const [cardAtivo, setCardAtivo] = useState<CardFolha>("consultar");
+  // Cards de grupo do conteúdo — CONTROLADOS aqui (e não pelo estado interno
+  // de cada SecaoRecolhivel) porque "Ver a folha", no painel de exceções,
+  // precisa ABRIR o card certo antes de rolar até a linha: com dois níveis de
+  // recolhimento, a linha alvo pode estar dentro de um card fechado, e o
+  // `getElementById` não acha elemento que não está montado.
+  const [gruposAbertos, setGruposAbertos] = useState<Record<string, boolean>>({});
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  // Ações do dono sobre um vale que aparece na folha (reparcelar o saldo,
+  // abater, desconsiderar o mês, cancelar) — abertas do painel "Descontos de
+  // vale" da própria competência, que é onde o dono vê o desconto e decide.
+  // Guarda a competência junto porque "desconsiderar o vale neste mês" é
+  // sobre a linha de onde o modal foi aberto, não sobre um mês a escolher.
+  // `competencia` é OPCIONAL: quando o modal é aberto pelo painel de descontos
+  // de uma folha, o mês é o daquela linha; quando é aberto pelo card "Vales de
+  // funcionário", a linha é do vale inteiro e quem escolhe o mês é o contexto
+  // do servidor (ver AcoesValeModal).
+  const [acoesVale, setAcoesVale] = useState<{ valeId: number; pessoaNome: string; competencia?: string } | null>(null);
+
+  // Expansão da linha que NÃO é de funcionário (empreita, contrato, diária,
+  // férias/13º) — a folha de funcionário já tinha a sua em `expandedId`.
+  // Existe porque o clique no NOME passou a significar "abre o discriminado"
+  // em toda a tabela, e essas linhas não tinham expansão nenhuma: férias e
+  // 13º chegam do servidor com `detalhe` (o recibo inteiro) e a tela o jogava
+  // fora.
+  const [expandidaChave, setExpandidaChave] = useState<string | null>(null);
+
   // Expansão focada de um desconto (folha ou vale) numa linha específica.
   const [expandDesc, setExpandDesc] = useState<{ id: number; tipo: "folha" | "vale" } | null>(null);
+  // Folha apontada pelo painel de exceções — pisca em dourado ("é esta, aqui")
+  // e volta ao normal sozinha, sem virar destaque permanente.
+  const [folhaDestacada, setFolhaDestacada] = useState<number | null>(null);
+  // Ficha da pessoa (linha do tempo) — abre pelo clique NO NOME, não na linha:
+  // a linha continua abrindo o recibo da competência, que é o trabalho do mês.
+  const [fichaPessoaId, setFichaPessoaId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editPessoaId, setEditPessoaId] = useState("");
   const [editCompetencia, setEditCompetencia] = useState("");
@@ -172,12 +386,29 @@ export default function FolhaPagamentoView() {
   const [erroUnificada, setErroUnificada] = useState<string | null>(null);
   const [fUniVencDe, setFUniVencDe] = useState("");
   const [fUniVencAte, setFUniVencAte] = useState("");
-  const [fUniStatus, setFUniStatus] = useState<"" | "pendente" | "pago">("");
+  // "Pagos · A pagar · Todos" no lugar do antigo select "Status" (pendente/
+  // pago): é o mesmo predicado sob o rótulo que o dono usa, e é o MESMO
+  // controle da tela de Contas — ver `filtrarPorSituacao` em lib/holeriteRegras.
+  const [situacao, setSituacao] = useState<SituacaoPagamento>("todos");
   const [fUniPessoa, setFUniPessoa] = useState("");
+  // Busca livre por pessoa — existia só em Contas > Holerites e recibos
+  // ("Buscar pessoa…"), e quem fecha o mês é quem mais precisa dela.
+  const [buscaPessoa, setBuscaPessoa] = useState("");
+  // O MÊS em tela — o objeto desta tela, e não mais um filtro entre outros.
+  // `null` = "todos os meses" (o comportamento antigo, que continua a um
+  // clique). Nasce indefinido e é resolvido quando o ledger chega, porque a
+  // escolha depende do que existe: mês corrente se ele tiver lançamento,
+  // senão o mês mais recente que tiver — abrir a tela vazia por decreto seria
+  // pior do que o estado de hoje, em que pelo menos tudo aparece.
+  const [mesFolha, setMesFolha] = useState<string | null | undefined>(undefined);
   // Deriva o filtro de tipo do seletor de categoria do topo — não é mais um
   // controle à parte, senão o usuário tinha 2 lugares pra "escolher a
   // categoria" que podiam divergir (o motivo de "não funcionar de verdade").
-  const tipoUnificado = categoria === "todos" ? "" : categoria === "diarias" ? "diaria" : categoria;
+  const capacidades = CATEGORIAS[categoria];
+  // `null` = a categoria não tem ledger (rescisão): não há mês, equação,
+  // exceções nem tabela a montar, e a tela dela é outra.
+  const temLedger = capacidades.tipoLedger !== null;
+  const tipoUnificado = capacidades.tipoLedger ?? "";
   const [excluindoChave, setExcluindoChave] = useState<string | null>(null);
   const [excluirErro, setExcluirErro] = useState<string | null>(null);
 
@@ -186,12 +417,19 @@ export default function FolhaPagamentoView() {
   // e app/agenda/page.tsx) — abre direto na sub-aba Diária e, se veio um id,
   // já abre o calendário "Dias trabalhados" daquela diarista, sem o usuário
   // ter que caçar a linha na tabela de Controle de diárias.
+  // A rescisão entra na MESMA lista: ?ir=folha&categoria=rescisao é o endereço
+  // próprio dela — antes não havia como linkar a tela, porque ela era uma
+  // sub-aba interna de "ferias_decimo" e o único endereço possível parava no
+  // card errado (Férias/13º), com a Rescisão a mais um clique não linkável.
+  // Continua sendo `window.location.search` (e não useSearchParams) de
+  // propósito: é o padrão já usado aqui e não exige fronteira de Suspense.
   const [deepLinkDiaria, setDeepLinkDiaria] = useState<{ id: number; modo: "ultimo_periodo" | "completo" } | null>(null);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const cat = params.get("categoria");
-    if (cat && ["todos", "funcionario", "empreita", "contrato", "diarias", "ferias_decimo"].includes(cat)) {
-      setCategoria(cat as typeof categoria);
+    const catNormalizada = cat ? (ALIAS_CATEGORIA[cat] ?? cat) : null;
+    if (catNormalizada && catNormalizada in CATEGORIAS) {
+      setCategoria(catNormalizada as CategoriaFolha);
     }
     const diariaId = params.get("diaria");
     if (diariaId && !Number.isNaN(Number(diariaId))) {
@@ -272,6 +510,21 @@ export default function FolhaPagamentoView() {
   } | null>(null);
 
   const [guias, setGuias] = useState<GuiaFolhaEncargo[] | null>(null);
+  // Edição/exclusão de guia de FGTS/DCTF já lançada — mesmo padrão de
+  // editingValeId/excluindoValeId, sem parcelas (a guia é um registro só).
+  const [editingGuiaId, setEditingGuiaId] = useState<number | null>(null);
+  const [editGuiaTipo, setEditGuiaTipo] = useState<"fgts" | "dctf">("fgts");
+  const [editGuiaCompetencia, setEditGuiaCompetencia] = useState("");
+  const [editGuiaCodigoReceita, setEditGuiaCodigoReceita] = useState("");
+  const [editGuiaValorPrincipal, setEditGuiaValorPrincipal] = useState("");
+  const [editGuiaValorMulta, setEditGuiaValorMulta] = useState("");
+  const [editGuiaValorJuros, setEditGuiaValorJuros] = useState("");
+  const [editGuiaDataVencimento, setEditGuiaDataVencimento] = useState("");
+  const [editGuiaLinhaDigitavel, setEditGuiaLinhaDigitavel] = useState("");
+  const [editGuiaMsg, setEditGuiaMsg] = useState<string | null>(null);
+  const [editGuiaSalvando, setEditGuiaSalvando] = useState(false);
+  const [excluindoGuiaId, setExcluindoGuiaId] = useState<number | null>(null);
+  const [excluirGuiaErro, setExcluirGuiaErro] = useState<string | null>(null);
   const carregar = () => fetchFolhaPagamento().then(setRegs).catch((e) => setError(e.message));
   const carregarUnificada = () => fetchFolhaPagamentoUnificada().then(setUnificada).catch((e) => setErroUnificada(e.message));
   const carregarVales = () => fetchVales().then(setVales).catch(() => {});
@@ -314,6 +567,50 @@ export default function FolhaPagamentoView() {
   const [editLinhaMsg, setEditLinhaMsg] = useState<string | null>(null);
   const [salvandoLinha, setSalvandoLinha] = useState(false);
 
+  // ── Cards de grupo (o 1º nível de recolhimento do conteúdo) ─────────────
+  // Só o ledger nasce aberto: é o que responde "como está o mês". Guias e
+  // vales são conferência, e abrem quando o dono pergunta por eles.
+  const GRUPO_LEDGER = "ledger";
+  const PADRAO_ABERTO: Record<string, boolean> = { [GRUPO_LEDGER]: true };
+  const grupoAberto = (id: string) => gruposAbertos[id] ?? PADRAO_ABERTO[id] ?? false;
+  const alternarGrupo = (id: string) => setGruposAbertos((g) => ({ ...g, [id]: !grupoAberto(id) }));
+
+  /**
+   * O que a ação de uma exceção faz: abre a folha envolvida com a
+   * discriminação à vista e rola até ela, piscando a linha. O painel não
+   * conserta nada por conta própria — apontar o lançamento é o serviço, e
+   * quem decide o que fazer com ele continua sendo o dono. Quando a exceção
+   * não tem folha (vencidos que são só empreita/contrato/diária), rola até a
+   * tabela, que é onde estão os lançamentos em questão.
+   *
+   * ABRIR ANTES DE ROLAR é obrigatório desde que a tela ganhou dois níveis de
+   * recolhimento: o painel de exceções mora no card "Resolver antes de
+   * fechar" e a linha alvo mora dentro do card do ledger, que pode estar
+   * fechado — e o `getElementById` não acha o que não está montado. Por isso
+   * a função troca o card do topo, abre o grupo, expande a linha e só então
+   * rola, dois quadros depois (um para o React pintar o card novo, outro para
+   * a expansão da linha entrar na altura final).
+   */
+  function irParaExcecao(excecao: Excecao) {
+    const reduzMovimento = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    setCardAtivo("consultar");
+    setGruposAbertos((g) => ({ ...g, [GRUPO_LEDGER]: true }));
+    const alvo = excecao.folhaIds[0];
+    if (alvo != null) {
+      setExpandedId(alvo);
+      setFolhaDestacada(alvo);
+    }
+    const seletor = alvo == null ? "folha-tabela" : `folha-linha-${alvo}`;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      document.getElementById(seletor)?.scrollIntoView({
+        behavior: reduzMovimento ? "auto" : "smooth", block: alvo == null ? "start" : "center",
+      });
+    }));
+    // O pisco é de 0,6s (.flash-localizado); tirar a classe depois disso é o
+    // que permite piscar de novo se o usuário clicar na mesma exceção.
+    if (alvo != null) window.setTimeout(() => setFolhaDestacada(null), 900);
+  }
+
   function podeEditarLinha(l: LinhaFolhaUnificada) {
     return l.status !== "pago" && l.origem_subtipo === "parcela" && (l.tipo === "empreita" || l.tipo === "contrato");
   }
@@ -342,16 +639,44 @@ export default function FolhaPagamentoView() {
     }
   }
 
-  const unificadaFiltrada = useMemo(() => (unificada || []).filter((l) =>
-    (!fUniVencDe || (l.data_vencimento || "") >= fUniVencDe) &&
-    (!fUniVencAte || (l.data_vencimento || "") <= fUniVencAte) &&
-    (!fUniStatus || l.status === fUniStatus) &&
-    (!fUniPessoa || String(l.pessoa_id) === fUniPessoa) &&
-    (!tipoUnificado || l.tipo === tipoUnificado)
-  ), [unificada, fUniVencDe, fUniVencAte, fUniStatus, fUniPessoa, tipoUnificado]);
+  // O mês em tela é DERIVADO, não inicializado por efeito: enquanto o usuário
+  // não escolher um mês (`mesFolha === undefined`), vale o que `mesInicial`
+  // decide a partir do ledger que chegou. Guardar isso com um `setState`
+  // dentro de `useEffect` daria uma renderização em cascata — e um quadro
+  // inteiro em que a tela mostra "todos os meses" antes de assentar no mês.
+  const mesesComLancamento = useMemo(() => mesesDoLedger(unificada || []), [unificada]);
+  const mesEmTela = mesFolha === undefined
+    ? (unificada ? mesInicial(unificada, new Date().toISOString().slice(0, 7)) : null)
+    : mesFolha;
+
+  const unificadaFiltrada = useMemo(() => {
+    const alvo = buscaPessoa.trim().toLowerCase();
+    return filtrarPorSituacao((unificada || []).filter((l) =>
+      (!mesEmTela || mesDaLinha(l) === mesEmTela) &&
+      (!fUniVencDe || (l.data_vencimento || "") >= fUniVencDe) &&
+      (!fUniVencAte || (l.data_vencimento || "") <= fUniVencAte) &&
+      (!fUniPessoa || String(l.pessoa_id) === fUniPessoa) &&
+      (!alvo || l.pessoa_nome.toLowerCase().includes(alvo)) &&
+      (!tipoUnificado || l.tipo === tipoUnificado)
+    ), situacao);
+  }, [unificada, mesEmTela, fUniVencDe, fUniVencAte, situacao, fUniPessoa, buscaPessoa, tipoUnificado]);
+  // A equação, o resumo dos outros tipos e as exceções saem TODOS da mesma
+  // lista já filtrada — nenhum deles recalcula o recorte por conta própria.
+  const equacao = useMemo(() => equacaoDoMes(unificadaFiltrada), [unificadaFiltrada]);
+  const outrosTipos = useMemo(() => resumoOutrosTipos(unificadaFiltrada), [unificadaFiltrada]);
+  const excecoes = useMemo(() => excecoesDoMes(unificadaFiltrada), [unificadaFiltrada]);
+  const situacaoMes = useMemo(() => situacaoDoMes(unificadaFiltrada, excecoes), [unificadaFiltrada, excecoes]);
+  const competenciasEmTela = useMemo(() => competenciasDoMes(unificadaFiltrada), [unificadaFiltrada]);
   const { linhasOrdenadas: unificadaOrdenada, coluna: uniColuna, dir: uniDir, ordenar: uniOrdenar } = useOrdenacao(unificadaFiltrada);
   const somaUnificadaFiltrada = unificadaFiltrada.reduce((a, l) => a + l.valor, 0);
-  const somaUniPendente = unificadaFiltrada.filter((l) => l.status === "pendente").reduce((a, l) => a + l.valor, 0);
+  // Uma folha em que os descontos passam os vencimentos tem líquido NEGATIVO —
+  // e, somada aqui, REDUZIA o total a pagar do mês: o erro se disfarçava de
+  // bom número. Sai da soma e vira um número próprio, em valor absoluto.
+  const uniBloqueadas = unificadaFiltrada.filter((l) => l.valor < 0);
+  const somaUniBloqueada = uniBloqueadas.reduce((a, l) => a + Math.abs(l.valor), 0);
+  const somaUniPendente = unificadaFiltrada
+    .filter((l) => l.status === "pendente" && l.valor >= 0)
+    .reduce((a, l) => a + l.valor, 0);
   const somaUniPago = unificadaFiltrada.filter((l) => l.status === "pago").reduce((a, l) => a + l.valor, 0);
 
   const valesFiltrados = useMemo(() => (vales || []).filter((v: any) =>
@@ -429,6 +754,7 @@ export default function FolhaPagamentoView() {
   async function salvarParcela(
     vale: any, parcela: any, acao?: "conceder" | "redistribuir_igual" | "redistribuir_livre",
     valoresItens?: Record<number, number>, confirmarDivergenciaTotal?: boolean,
+    confirmarTeto?: boolean,
   ) {
     const valor = parseFloat(editParcelaValor);
     if (isNaN(valor) || valor < 0) { setParcelaErro("Informe um valor válido."); return; }
@@ -438,6 +764,7 @@ export default function FolhaPagamentoView() {
       const resultado = await atualizarParcelaVale(vale.id, parcela.id, {
         valor, acao, valores_parcelas: valoresItens, confirmar: !!acao,
         confirmar_divergencia_total: !!confirmarDivergenciaTotal,
+        confirmar_teto: !!confirmarTeto,
       });
       setEditandoParcela(null);
       setDivergenciaParcela(null);
@@ -450,7 +777,17 @@ export default function FolhaPagamentoView() {
       // Duas divergências distintas, cada uma com seu próprio popup:
       // 1) valor_vale/valor_lancado — total final (redistribuir_livre) ≠ valor pago no vale.
       // 2) valor_calculado/valor_informado — o valor desta parcela ≠ o que estava calculado.
-      if (e.status === 409 && e.detail?.valor_vale !== undefined) {
+      // 3) o teto de 40% do salário na competência — o aviso que faltava nesta
+      // porta: editar uma parcela para o valor cheio concentrava num mês só um
+      // desconto acima do limite legal, em silêncio. Confirmável, como nas
+      // outras portas do vale (criar/editar o vale inteiro).
+      if (e.status === 409 && e.detail?.competencias_excedidas) {
+        const lista = e.detail.competencias_excedidas.map((c: any) => `${c.competencia} (R$ ${c.total.toFixed(2)})`).join(", ");
+        if (window.confirm(`${e.detail.mensagem}\n\nCompetências afetadas: ${lista}\n\nDeseja salvar mesmo assim?`)) {
+          await salvarParcela(vale, parcela, acao, valoresItens, confirmarDivergenciaTotal, true);
+          return;
+        }
+      } else if (e.status === 409 && e.detail?.valor_vale !== undefined) {
         setDivergenciaTotalParcela({
           vale, parcela, valoresItens: valoresItens || {}, valorVale: e.detail.valor_vale, valorLancado: e.detail.valor_lancado,
         });
@@ -496,10 +833,36 @@ export default function FolhaPagamentoView() {
     }
   }
 
+  // EXCLUIR ≠ CANCELAR. Excluir é para o vale que NUNCA DEVERIA TER EXISTIDO
+  // (valor errado, pessoa errada, duplicado): apaga o vale E a saída de caixa
+  // que ele criou no Financeiro. Para o vale que aconteceu e só não vai mais
+  // ser cobrado do funcionário, a porta é "Cancelar o vale" (painel de ações),
+  // que mantém a saída de caixa no extrato e pode ser desfeita. Por isso o
+  // diálogo pergunta com o lançamento NOMEADO (LC-..., valor e data) e diz, em
+  // uma linha, qual é a outra porta — os dois textos vêm do backend, que é
+  // quem sabe qual lançamento existe e o que ele tem dentro.
   async function excluirValeHandler(v: any) {
-    if (!window.confirm("Excluir este vale? Os descontos já refletidos em folhas ainda não pagas serão revertidos.")) return;
     setExcluirValeErro(null);
+    // O botão já fica travado durante a CONSULTA da prévia, não só durante a
+    // exclusão: sem isso, dois cliques seguidos abrem dois diálogos.
     setExcluindoValeId(v.id);
+    let previa: PreviaExclusaoVale;
+    try {
+      previa = await previaExclusaoVale(v.id);
+    } catch (e: any) {
+      setExcluirValeErro(e.message || "Erro ao conferir o vale");
+      setExcluindoValeId(null);
+      return;
+    }
+    // Recusa do backend (comprovante anexado, folha paga, valor acertado à
+    // mão no Financeiro...): mostra o motivo em vez de perguntar algo que já
+    // se sabe que vai dar erro.
+    if (!previa.pode_excluir) {
+      setExcluirValeErro(previa.impedimento || "Este vale não pode ser excluído.");
+      setExcluindoValeId(null);
+      return;
+    }
+    if (!window.confirm(`${previa.confirmacao}\n\n${previa.alternativa}`)) { setExcluindoValeId(null); return; }
     try {
       await excluirVale(v.id);
       if (expandedValeId === v.id) setExpandedValeId(null);
@@ -510,6 +873,63 @@ export default function FolhaPagamentoView() {
       setExcluindoValeId(null);
     }
   }
+
+  // Edição/exclusão de guia de FGTS/DCTF já lançada — mesmo padrão de
+  // iniciarEdicaoVale/salvarEdicaoVale/excluirValeHandler acima.
+  function iniciarEdicaoGuia(g: GuiaFolhaEncargo) {
+    setEditingGuiaId(g.id);
+    setEditGuiaTipo(g.tipo);
+    setEditGuiaCompetencia(g.competencia);
+    setEditGuiaCodigoReceita(g.codigo_receita || "");
+    setEditGuiaValorPrincipal(String(g.valor_principal));
+    setEditGuiaValorMulta(String(g.valor_multa || 0));
+    setEditGuiaValorJuros(String(g.valor_juros || 0));
+    setEditGuiaDataVencimento(g.data_vencimento);
+    setEditGuiaLinhaDigitavel(g.linha_digitavel || "");
+    setEditGuiaMsg(null);
+  }
+
+  async function salvarEdicaoGuia(guiaId: number) {
+    setEditGuiaMsg(null);
+    if (!editGuiaCompetencia) { setEditGuiaMsg("Informe a competência."); return; }
+    if (!editGuiaValorPrincipal || parseFloat(editGuiaValorPrincipal) < 0) { setEditGuiaMsg("Informe o valor principal."); return; }
+    if (!editGuiaDataVencimento) { setEditGuiaMsg("Informe o vencimento."); return; }
+    setEditGuiaSalvando(true);
+    try {
+      await atualizarGuiaFolhaEncargo(guiaId, {
+        tipo: editGuiaTipo, competencia: editGuiaCompetencia,
+        codigo_receita: editGuiaTipo === "dctf" ? (editGuiaCodigoReceita || undefined) : undefined,
+        valor_principal: parseFloat(editGuiaValorPrincipal),
+        valor_multa: parseFloat(editGuiaValorMulta) || 0,
+        valor_juros: parseFloat(editGuiaValorJuros) || 0,
+        data_vencimento: editGuiaDataVencimento,
+        linha_digitavel: editGuiaLinhaDigitavel || undefined,
+      });
+      setEditingGuiaId(null);
+      carregarGuias(); carregarUnificada();
+    } catch (e: any) {
+      setEditGuiaMsg(e.message || "Erro ao editar guia");
+    } finally {
+      setEditGuiaSalvando(false);
+    }
+  }
+
+  async function excluirGuiaHandler(g: GuiaFolhaEncargo) {
+    if (!window.confirm(`Excluir a guia de ${g.tipo === "fgts" ? "FGTS" : "DCTF"} de ${mesCompLabel(g.competencia)}? A conta a pagar vinculada também será excluída.`)) return;
+    setExcluirGuiaErro(null);
+    setExcluindoGuiaId(g.id);
+    try {
+      await excluirGuiaFolhaEncargo(g.id);
+      if (editingGuiaId === g.id) setEditingGuiaId(null);
+      carregarGuias(); carregarUnificada();
+    } catch (e: any) {
+      setExcluirGuiaErro(e.message || "Erro ao excluir guia");
+    } finally {
+      setExcluindoGuiaId(null);
+    }
+  }
+
+  const ordGuias = useOrdenacao(guias ?? []);
 
   const valesAvulsosFiltrados = useMemo(() => (valesAvulsos || []).filter((v: any) =>
     (!fValeDe || v.data_pagamento >= fValeDe) &&
@@ -561,10 +981,27 @@ export default function FolhaPagamentoView() {
     }
   }
 
+  // Mesmo desenho do vale de funcionário acima (ver o comentário lá): o
+  // diálogo nomeia a saída de caixa que vai junto e diz qual é a alternativa
+  // — aqui, editar o vale, porque "cancelar o vale" é ação do vale de
+  // funcionário e não existe para o avulso.
   async function excluirValeAvulsoHandler(v: any) {
-    if (!window.confirm("Excluir este vale? O valor abatido da(s) parcela(s)/etapa(s) pendente(s) será revertido.")) return;
     setExcluirValeAvulsoErro(null);
     setExcluindoValeAvulsoId(v.id);
+    let previa: PreviaExclusaoVale;
+    try {
+      previa = await previaExclusaoValeAvulso(v.id);
+    } catch (e: any) {
+      setExcluirValeAvulsoErro(e.message || "Erro ao conferir o vale");
+      setExcluindoValeAvulsoId(null);
+      return;
+    }
+    if (!previa.pode_excluir) {
+      setExcluirValeAvulsoErro(previa.impedimento || "Este vale não pode ser excluído.");
+      setExcluindoValeAvulsoId(null);
+      return;
+    }
+    if (!window.confirm(`${previa.confirmacao}\n\n${previa.alternativa}`)) { setExcluindoValeAvulsoId(null); return; }
     try {
       await excluirValeAvulso(v.id);
       if (expandedValeAvulsoId === v.id) setExpandedValeAvulsoId(null);
@@ -652,23 +1089,32 @@ export default function FolhaPagamentoView() {
     }
   }
 
-  async function marcarPago(r: RegistroFolha) {
-    setPagoErro(null);
+  /**
+   * Estornar o pagamento — a porta de saída que faltava.
+   *
+   * `POST /cadastro/folha-pagamento/{id}/estornar` existe desde o C7 e nenhuma
+   * tela o chamava: o holerite mandava o usuário "estornar o pagamento para
+   * acrescentar ou corrigir vencimentos e descontos" e não havia botão nenhum.
+   * Só admin: o estorno desfaz a baixa da conta a pagar e DESCONGELA a
+   * discriminação de um recibo já emitido.
+   */
+  const [estornandoId, setEstornandoId] = useState<number | null>(null);
+  const [estornoErro, setEstornoErro] = useState<string | null>(null);
+  async function estornarFolha(r: RegistroFolha) {
+    if (!window.confirm(
+      `Estornar o pagamento da folha de ${r.pessoa_nome} (${mesCompLabel(r.competencia)})?\n\n`
+      + "A baixa da conta a pagar é desfeita, o lançamento volta a \"pendente\" e o recibo "
+      + "volta a ser calculado ao vivo — podendo mudar se houver vale ou rubrica pendente.",
+    )) return;
+    setEstornoErro(null);
+    setEstornandoId(r.id);
     try {
-      await atualizarFolhaPagamento(r.id, {
-        pessoa_id: r.pessoa_id, competencia: r.competencia, valor_bruto: r.valor_bruto,
-        descontos: r.descontos, percentual_inss: r.percentual_inss, percentual_ir: r.percentual_ir,
-        valor_inss: r.valor_inss, valor_ir: r.valor_ir,
-        percentual_fgts: r.percentual_fgts, valor_fgts: r.valor_fgts,
-        percentual_dctf: r.percentual_dctf, valor_dctf: r.valor_dctf,
-        data_pagamento: dataPagamento, status: "pago", observacao: r.observacao || undefined,
-        recorrente: r.recorrente, dia_vencimento: r.dia_vencimento,
-        conta_corrente_id: r.conta_corrente_id,
-      });
-      setPagandoId(null);
-      carregar();
+      await estornarPagamentoFolha(r.id);
+      carregar(); carregarUnificada();
     } catch (e: any) {
-      setPagoErro(e.message || "Erro ao marcar como pago");
+      setEstornoErro(e.message || "Erro ao estornar o pagamento da folha");
+    } finally {
+      setEstornandoId(null);
     }
   }
 
@@ -747,33 +1193,50 @@ export default function FolhaPagamentoView() {
     return m;
   }, [regs]);
 
+  // O documento de um lançamento de folha — o MESMO objeto que a tela de
+  // Contas renderiza e que a impressão consome, montado uma vez só. É aqui
+  // que a expansão da linha deixa de ser uma lista "rótulo → valor" e passa a
+  // ser o recibo de quatro colunas, com cada desconto clicável até a origem.
+  function holeriteDoRegistro(r: RegistroFolha): DocHolerite | null {
+    return holeriteDaLinha({
+      tipo: "funcionario", origem_id: r.id, origem_subtipo: "folha",
+      pessoa_id: r.pessoa_id, pessoa_nome: r.pessoa_nome,
+      descricao: `Folha — ${r.competencia}`,
+      valor: r.valor_liquido,
+      data_vencimento: r.data_vencimento ?? null,
+      data_pagamento: r.data_pagamento,
+      status: r.status === "pago" ? "pago" : "pendente",
+      pode_excluir: r.status !== "pago",
+      vencido: false,
+      detalhe: r.detalhe, totais: r.totais, bases: r.bases,
+      // A explicação do mês assumido viaja junto para o documento (fora de
+      // `detalhe`, como sempre): a prévia do recibo aqui e a tela de Contas
+      // mostram o mesmo papel, e um explicar o desconto sumido enquanto o
+      // outro cala seria a mesma divergência que `lib/holerite.ts` existe
+      // para não deixar acontecer.
+      vale_assumido: r.vale_assumido,
+      competencia: r.competencia,
+      numero_lancamento_gerado: r.numero_lancamento_gerado,
+      observacao: r.observacao,
+    });
+  }
+
   // Imprimir holerite — em PDF (identidade visual de relatórios) ou Excel.
-  // Base comum: monta 1 seção por funcionário (usada tanto pelo botão por
-  // linha — 1 funcionário só — quanto pelo botão de lote "do mês filtrado").
   const [imprimindoHoleriteChave, setImprimindoHoleriteChave] = useState<string | null>(null);
   const [imprimindoHoleriteMes, setImprimindoHoleriteMes] = useState(false);
   const [holeriteExportando, setHoleriteExportando] = useState(false);
 
-  async function gerarHolerites(lista: RegistroFolha[], subtitulo: string, base: string, formato: "pdf" | "excel") {
-    const secoes: SecaoFicha[] = lista.map((x) => ({
-      titulo: x.pessoa_nome,
-      colunas: [{ header: "Item", key: "item" }, { header: "Valor", key: "valor" }],
-      linhas: x.detalhe.map((d) => ({ item: d.label, valor: formatBRL(d.valor) })),
-    }));
-    if (formato === "pdf") {
-      await exportarFichaPDF("Holerite — Folha de pagamento", subtitulo, secoes, base);
-    } else {
-      await exportarMultiExcel("Holerite — Folha de pagamento", secoes, base);
-    }
-  }
-
-  // Botão POR LINHA — imprime o holerite só daquele funcionário (antes,
-  // apesar de ficar dentro da linha, ele juntava todo mundo da competência).
+  // Botão POR LINHA — imprime o holerite só daquele funcionário, nas MESMAS
+  // quatro colunas da tela (Descrição · Referência · Vencimentos · Descontos).
+  // Antes o PDF era montado à parte, em duas colunas "Item | Valor": a
+  // referência não tinha onde entrar e o dono recebia sete linhas escritas
+  // "Vale" também no papel. Agora tela, PDF e Excel leem de lib/holerite.
   async function imprimirHoleriteLinha(r: RegistroFolha, formato: "pdf" | "excel") {
+    const documento = holeriteDoRegistro(r);
+    if (!documento) return;
     setHoleriteExportando(true);
     try {
-      const base = `holerite_${r.pessoa_nome.replace(/\s+/g, "_")}_${r.competencia}`;
-      await gerarHolerites([r], mesCompLabel(r.competencia), base, formato);
+      await imprimirHolerite(documento, formato);
     } catch {
       // erro já mostrado ao usuário dentro de exportarFichaPDF/exportarMultiExcel (lib/export.ts)
     } finally {
@@ -803,10 +1266,17 @@ export default function FolhaPagamentoView() {
     try {
       const competencias = Array.from(new Set(funcionariosFolhaFiltrados.map((x) => x.competencia))).sort();
       const subtitulo = competencias.length === 1
-        ? mesCompLabel(competencias[0])
+        ? competenciaExtenso(competencias[0])
         : `${competencias.map(mesCompLabel).join(", ")} — filtro atual`;
       const base = `holerites_${competencias.length === 1 ? competencias[0] : "filtro"}`;
-      await gerarHolerites(funcionariosFolhaFiltrados, subtitulo, base, formato);
+      // Folha em que os descontos passam os vencimentos fica FORA do lote: um
+      // papel dizendo que o funcionário deve dinheiro não é comprovante de
+      // pagamento (ver `bloqueioDeImpressao`).
+      const documentos = funcionariosFolhaFiltrados
+        .map(holeriteDoRegistro)
+        .filter((d): d is DocHolerite => !!d && !d.totais.liquido_negativo);
+      if (!documentos.length) return;
+      await imprimirHolerites(documentos, subtitulo, base, formato);
     } catch {
       // erro já mostrado ao usuário dentro de exportarFichaPDF/exportarMultiExcel (lib/export.ts)
     } finally {
@@ -819,44 +1289,172 @@ export default function FolhaPagamentoView() {
   // ReciboModal já usado no financeiro.
   const [reciboLinha, setReciboLinha] = useState<LancamentoRecibo | null>(null);
 
-  const mostraFormasGerais = categoria === "todos" || categoria === "funcionario";
+  // Quantas formas de lançar existem NESTA categoria — o número do card
+  // "Lançar". A tela própria da categoria (empreita, contrato, diária,
+  // férias/13º, rescisão) conta como uma.
+  const formasDeLancar =
+    (capacidades.folhaFuncionario ? 1 : 0) + (capacidades.valeFuncionario ? 1 : 0)
+    + (capacidades.guias ? 1 : 0) + (capacidades.telaPropria ? 1 : 0);
+  // A tela própria da categoria, montada com a metade que o card pede: os
+  // formulários sob "Lançar", a listagem (e as ações sobre cada item) sob
+  // "Consultar". Sem esse corte, escolher "Lançar" continuaria despejando a
+  // listagem inteira embaixo do formulário e o card não significaria nada.
+  const telaDaCategoria = (mostrar: "lancar" | "listar") => {
+    switch (capacidades.telaPropria) {
+      case "empreita": return <EmpreitadaView mostrar={mostrar} />;
+      case "contrato": return <ContratoView mostrar={mostrar} />;
+      case "diarias": return <DiariaView mostrar={mostrar} deepLinkDiariaId={deepLinkDiaria?.id} deepLinkModo={deepLinkDiaria?.modo} />;
+      case "ferias_decimo": return <FeriasDecimoTerceiroView mostrar={mostrar} />;
+      // Sem props de pessoa: RescisaoView busca as próprias desde que deixou
+      // de ser sub-aba de Férias/13º (que lhe emprestava a lista).
+      case "rescisao": return <RescisaoView mostrar={mostrar} />;
+      default: return null;
+    }
+  };
 
   return (
     <div>
-      {/* Seletor único de categoria — troca o que "Lançar" mostra E filtra
-          "Consultar" logo abaixo. "Todos" é a 1ª opção (item aprovado da
-          proposta): antes não existia nenhuma visão que juntasse as 5. */}
+      {/* O título "Controle Financeiro" é o <h1> da própria página
+          (app/financeiro/page.tsx) — repeti-lo aqui daria dois títulos iguais
+          empilhados. O que falta abaixo dele é o papel DESTA tela. */}
+      {/* O papel da tela, dito na própria tela. As duas telas de folha diziam
+          o que fazem só no texto do menu, que some assim que se entra — e o
+          dono acabava lançando de um lado e conferindo do outro sem saber
+          qual era qual. */}
+      <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", margin: "0 0 1rem" }}>
+        <strong style={{ color: "var(--text)" }}>Aqui se fecha a folha</strong> — lançar, conferir,
+        acrescentar vencimento/desconto e pagar. Para só consultar e imprimir o recibo, use{" "}
+        <a href="/financeiro?ir=folha_relatorio" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}
+          title="Abrir Contas > Holerites e recibos (só consulta)">Contas › Holerites e recibos</a>.
+      </p>
+
+      {/* Os três cards — o MODO da tela. Acento por borda esquerda, como o
+          resto da casa; o card ativo troca o fundo, não só a borda. */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+        {CARDS.map((c) => {
+          const ativo = cardAtivo === c.id;
+          const numero = c.id === "consultar"
+            ? (temLedger ? formatBRL(somaUnificadaFiltrada) : "—")
+            : c.id === "lancar" ? String(formasDeLancar)
+            : (temLedger ? String(excecoes.length) : "—");
+          return (
+            <button key={c.id} type="button" aria-pressed={ativo} onClick={() => setCardAtivo(c.id)}
+              title={c.descricao}
+              style={{
+                textAlign: "left", cursor: "pointer", font: "inherit",
+                background: ativo ? "color-mix(in srgb, var(--dourado-light) 12%, var(--surface))" : "var(--surface)",
+                border: "1px solid var(--border)",
+                borderLeft: `4px solid ${ativo ? "var(--dourado)" : "var(--border)"}`,
+                borderRadius: "var(--r-sm)", padding: "0.7rem 1rem",
+                display: "flex", flexDirection: "column", gap: "0.1rem",
+              }}>
+              <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text)" }}>{c.titulo}</span>
+              <span style={{ fontSize: "1.15rem", fontWeight: 800, fontVariantNumeric: "tabular-nums", color: ativo ? "var(--dourado-light)" : "var(--text)" }}>
+                {numero}
+              </span>
+              <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{c.descricao}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Seletor de categoria — governa TUDO o que aparece abaixo, via a
+          tabela CATEGORIAS: o que se pode lançar, o que se consulta e o que
+          sequer existe naquela categoria (empreiteiro não tem FGTS). */}
       <div className="flex items-center gap-2 mb-4" style={{ flexWrap: "wrap" }}>
-        {(["todos", "funcionario", "empreita", "contrato", "diarias", "ferias_decimo"] as const).map((cat) => (
-          <button key={cat} type="button" onClick={() => setCategoria(cat)}
+        {ORDEM_CATEGORIAS.map((cat) => (
+          <button key={cat} type="button" aria-pressed={categoria === cat} onClick={() => setCategoria(cat)}
+            title={`Ver só ${CATEGORIAS[cat].rotulo.toLowerCase()}`}
             style={{ fontSize: "0.82rem", fontWeight: 600, padding: "0.45rem 0.9rem", borderRadius: "999px",
               border: `1px solid ${categoria === cat ? "var(--dourado)" : "var(--border)"}`,
               background: categoria === cat ? "var(--dourado)" : "var(--surface)",
               color: categoria === cat ? "var(--vinho-dark, #0A1F36)" : "var(--text-muted)", cursor: "pointer" }}>
-            {cat === "todos" ? "Todos" : LABEL_TIPO[cat === "diarias" ? "diaria" : cat]}
+            {CATEGORIAS[cat].rotulo}
           </button>
         ))}
       </div>
 
-      <div className="flex items-center gap-2 mb-2" style={{ fontSize: "0.74rem", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, color: "var(--text-muted)" }}>
-        Lançar
-      </div>
-
-      {categoria === "empreita" && <EmpreitadaView />}
-      {categoria === "contrato" && <ContratoView />}
-      {categoria === "diarias" && <DiariaView deepLinkDiariaId={deepLinkDiaria?.id} deepLinkModo={deepLinkDiaria?.modo} />}
-      {categoria === "ferias_decimo" && <FeriasDecimoTerceiroView />}
-
-      {mostraFormasGerais && (error ? <div className="alert-critico"><span>Sem dados: {error}.</span></div> : <>
+      {error && <div className="alert-critico mb-3"><span>Sem dados: {error}.</span></div>}
       <AvisoSalvo texto={msg?.tipo === "sucesso" ? msg.texto : null} />
+
+      {/* ── FAIXA DE FILTROS ────────────────────────────────────────────────
+          Some INTEIRA sob o card "Lançar": não se filtra o que ainda não
+          existe. E não aparece na rescisão, que não tem ledger a filtrar. */}
+      {cardAtivo !== "lancar" && temLedger && (<>
+        {/* O MÊS é o primeiro filtro, e é um objeto próprio (não dois campos
+            de data soltos): é ele que define "o mês que se está fechando". A
+            equação que confere esse mês fica no card Consultar, junto do que
+            ela soma. */}
+        <BarraCompetencia
+          mes={mesEmTela}
+          mesesComLancamento={mesesComLancamento}
+          competencias={competenciasEmTela}
+          situacao={situacaoMes}
+          quantidade={unificadaFiltrada.length}
+          onMes={setMesFolha}
+        />
+        <div className="card mb-3">
+          <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar dentro do mês</div>
+          <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+            <span style={{ ...labelStyleLote, marginRight: "0.2rem" }}>Situação do pagamento</span>
+            {SITUACOES.map((sit) => (
+              <button key={sit.id} type="button" className="btn-ghost" title={sit.dica}
+                aria-pressed={situacao === sit.id} onClick={() => setSituacao(sit.id)}
+                style={{
+                  fontSize: "0.76rem",
+                  borderColor: situacao === sit.id ? "var(--dourado)" : undefined,
+                  color: situacao === sit.id ? "var(--dourado-light)" : undefined,
+                  fontWeight: situacao === sit.id ? 700 : undefined,
+                  background: situacao === sit.id ? "color-mix(in srgb, var(--dourado-light) 12%, transparent)" : undefined,
+                }}>{sit.label}</button>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div><label style={labelStyleLote}>Vencimento — de</label>
+              <input type="date" style={selStyleLote} value={fUniVencDe} onChange={(e) => setFUniVencDe(e.target.value)} /></div>
+            <div><label style={labelStyleLote}>Vencimento — até</label>
+              <input type="date" style={selStyleLote} value={fUniVencAte} onChange={(e) => setFUniVencAte(e.target.value)} /></div>
+            <div><label style={labelStyleLote}>Pessoa</label>
+              <select style={selStyleLote} value={fUniPessoa} onChange={(e) => setFUniPessoa(e.target.value)}>
+                <option value="">Todos</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+              </select></div>
+            <div><label style={labelStyleLote}>Buscar pessoa…</label>
+              <div style={{ position: "relative" }}>
+                <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
+                <input style={{ ...selStyleLote, paddingLeft: "1.6rem" }} value={buscaPessoa}
+                  onChange={(e) => setBuscaPessoa(e.target.value)} placeholder="parte do nome" /></div></div>
+          </div>
+        </div>
+      </>)}
+
+      {/* ── CARD "RESOLVER ANTES DE FECHAR" ───────────────────────────────── */}
+      {cardAtivo === "resolver" && (temLedger ? (
+        <ExcecoesFolha excecoes={excecoes} onResolver={irParaExcecao} />
+      ) : (
+        <div className="card mb-3" style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+          A rescisão não entra no ledger unificado do mês — não há pendência de fechamento a apontar aqui.
+          O que a rescisão gera é uma conta a pagar, que aparece em{" "}
+          <strong style={{ color: "var(--text)" }}>Contas a pagar</strong>.
+        </div>
+      ))}
+
+      {/* ── CARD "LANÇAR" ──────────────────────────────────────────────────
+          Os três formulários gerais (folha, vale, guia) lado a lado, no mesmo
+          formato, cores e acentos de sempre — e, quando a categoria tem tela
+          própria, ela entra aqui com os formulários dela. */}
+      {cardAtivo === "lancar" && (<>
+      {capacidades.telaPropria && telaDaCategoria("lancar")}
+      {(capacidades.folhaFuncionario || capacidades.valeFuncionario || capacidades.guias) && (<>
       {anexarAberto && (
         <ModalDivididoDocumento title="Anexar comprovante — leitura automática (despesa)" onClose={() => { setAnexarAberto(false); setArquivoPreview(null); }} arquivo={arquivoPreview}>
-          <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onArquivoParaLeitura={setArquivoPreview}
+          <FormFinanceiro tipo="despesa" responsaveis={nomesResponsaveis} onArquivoParaLeitura={setArquivoPreview}
             onSalvo={(mensagem) => { setAnexarAberto(false); setArquivoPreview(null); setMsg({ tipo: "sucesso", texto: mensagem }); carregar(); carregarUnificada(); }} />
         </ModalDivididoDocumento>
       )}
 
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-start">
       {/* 1) Novo lançamento de folha — acento dourado */}
+      {capacidades.folhaFuncionario && (
       <div style={{ borderLeft: `4px solid ${COR_LANCAR.folha}`, borderRadius: "var(--r-sm)", marginBottom: "0.9rem" }}>
       <SecaoRecolhivel titulo="Nova folha — Funcionário" icon={Plus} defaultAberta={false} descricao="Lance a folha de uma pessoa em uma competência">
         <div className="mb-3" style={{ textAlign: "right" }}>
@@ -926,16 +1524,22 @@ export default function FolhaPagamentoView() {
         </button>
       </SecaoRecolhivel>
       </div>
+      )}
 
       {/* 2) Vale de funcionário — acento verde */}
+      {capacidades.valeFuncionario && (
       <div style={{ borderLeft: `4px solid ${COR_LANCAR.vale}`, borderRadius: "var(--r-sm)", marginBottom: "0.9rem" }}>
       <SecaoRecolhivel titulo="Novo vale" icon={Plus} defaultAberta={false} descricao="Adiantamento pago à parte, descontado da folha">
         <ValeFuncionarioSection pessoas={pessoas} contasCorrentes={contasCorrentes} onLancado={() => { carregar(); carregarUnificada(); carregarVales(); }} />
       </SecaoRecolhivel>
       </div>
+      )}
 
       {/* 3) Lançar guia de FGTS/DCTF — acento vermelho — manual ou por leitura
-          automática do PDF/foto da guia real. */}
+          automática do PDF/foto da guia real. Só sob Funcionário e Todos:
+          FGTS/DCTF são encargos de CLT, e o empreiteiro não é CLT (decisão do
+          dono, e a razão de a guia sumir das outras categorias). */}
+      {capacidades.guias && (
       <div style={{ borderLeft: `4px solid ${COR_LANCAR.guia}`, borderRadius: "var(--r-sm)", marginBottom: "0.9rem" }}>
       <SecaoRecolhivel
         titulo="Lançar guia de FGTS/DCTF" icon={Plus} defaultAberta={false}
@@ -944,44 +1548,52 @@ export default function FolhaPagamentoView() {
         <LancarGuiaFgtsDctfSection onLancado={() => { carregarUnificada(); carregarGuias(); }} />
       </SecaoRecolhivel>
       </div>
+      )}
+      </div>
+      {categoria === "todos" && (
+        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+          Empreita, contrato, diária, férias/13º e rescisão têm formulário próprio — escolha a categoria acima
+          para lançar cada uma delas.
+        </p>
+      )}
+      </>)}
       </>)}
 
-      <div className="flex items-center gap-2 mb-2 mt-4" style={{ fontSize: "0.74rem", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, color: "var(--text-muted)" }}>
-        Consultar
-      </div>
-
-      {/* KPIs da folha de pagamento unificada (funcionário + empreita + contrato + diária + férias/13º), refletindo os filtros abaixo */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
-        <KPI v={String(unificadaFiltrada.length)} l="Lançamentos" />
-        <KPI v={formatBRL(somaUniPendente)} l="Pendente" c="var(--amber)" />
-        <KPI v={formatBRL(somaUniPago)} l="Pago" c="var(--green-light)" />
-      </div>
-
-      {/* Filtro da folha de pagamento unificada — a categoria já vem do
-          seletor do topo; aqui só os filtros complementares. */}
-      <div className="card mb-3">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar a folha de pagamento</div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div><label style={labelStyleLote}>Vencimento — de</label>
-            <input type="date" style={selStyleLote} value={fUniVencDe} onChange={(e) => setFUniVencDe(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Vencimento — até</label>
-            <input type="date" style={selStyleLote} value={fUniVencAte} onChange={(e) => setFUniVencAte(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Status</label>
-            <select style={selStyleLote} value={fUniStatus} onChange={(e) => setFUniStatus(e.target.value as any)}>
-              <option value="">Todos</option><option value="pendente">Pendente</option><option value="pago">Pago</option>
-            </select></div>
-          <div><label style={labelStyleLote}>Pessoa</label>
-            <select style={selStyleLote} value={fUniPessoa} onChange={(e) => setFUniPessoa(e.target.value)}>
-              <option value="">Todos</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
-            </select></div>
+      {/* ── CARD "CONSULTAR" ───────────────────────────────────────────────
+          O ledger unificado é montado pelo backend com CINCO tipos —
+          funcionario, empreita, contrato, diaria, ferias_decimo. A rescisão
+          não é um deles, e é por isso que ela tem TELA PRÓPRIA: mostrar a
+          barra do mês, a equação e a tabela zeradas diria "não há rescisão
+          nenhuma", o que é falso — elas estão na tabela da própria tela de
+          Rescisão. Quando o ledger passar a emitir o 6º tipo, é só dar um
+          `tipoLedger` à categoria em CATEGORIAS. */}
+      {cardAtivo === "consultar" && (!temLedger ? (<>
+        {telaDaCategoria("listar")}
+        <div className="card mb-3" style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+          A conta a pagar gerada ao fechar uma rescisão aparece em{" "}
+          <strong style={{ color: "var(--text)" }}>Contas a pagar</strong> — o ledger unificado
+          da folha ainda não inclui rescisão, e por isso ela não entra na equação do mês acima.
         </div>
-      </div>
+      </>) : (<>
+
+      {/* A EQUAÇÃO do mês no lugar dos três KPIs soltos (Lançamentos/
+          Pendente/Pago) que não formavam conta nenhuma: sem identidade a
+          conferir, um total errado não tinha como saltar aos olhos. */}
+      <EquacaoFolha eq={equacao} />
+      <OutrosPagamentosDoMes resumo={outrosTipos} />
 
       {/* Total filtrado + ação em lote de holerites — fora do cabeçalho clicável
           da SecaoRecolhivel abaixo (não dá pra aninhar um <button> dentro do
           <button> do cabeçalho), mas visualmente bem ao lado um do outro. */}
       <div className="flex items-center justify-between gap-2 mb-2" style={{ flexWrap: "wrap" }}>
-        <span style={{ fontSize: "0.78rem", fontWeight: 700, whiteSpace: "nowrap" }}>Total filtrado: {formatBRL(somaUnificadaFiltrada)}</span>
+        <span style={{ fontSize: "0.78rem", fontWeight: 700, whiteSpace: "nowrap" }}>
+          Total filtrado: {formatBRL(somaUnificadaFiltrada)}
+          <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>
+            {" "}· {formatBRL(somaUniPendente)} a pagar · {formatBRL(somaUniPago)} pago
+            {uniBloqueadas.length > 0 ? ` · ${formatBRL(somaUniBloqueada)} fora da conta` : ""}
+          </span>
+        </span>
+        {capacidades.folhaFuncionario && (
         <span style={{ position: "relative" }}>
           <button className="btn-ghost" type="button" title="Imprimir o holerite de todos os funcionários que estão passando pelo filtro atual (ex.: um mês específico)"
             style={{ fontSize: "0.75rem" }} disabled={!funcionariosFolhaFiltrados.length}
@@ -996,16 +1608,22 @@ export default function FolhaPagamentoView() {
             </span>
           )}
         </span>
+        )}
       </div>
 
       {/* Folha de pagamento — funcionário, empreita, contrato, diária e férias/13º num único ledger;
           recolhida por padrão, expande ao clicar no cabeçalho. Prioriza pendências (destacando as vencidas em vinho). */}
       <SecaoRecolhivel
-        titulo="Folha de pagamento" icon={Filter} defaultAberta={false}
-        descricao="Clique para ver todos os lançamentos — funcionário, empreita, contrato, diária e férias/13º"
+        titulo={categoria === "todos" ? "Folha de pagamento" : `${capacidades.rotulo} — lançamentos do mês`}
+        icon={Filter}
+        aberta={grupoAberto(GRUPO_LEDGER)} onAlternar={() => alternarGrupo(GRUPO_LEDGER)}
+        badge={<span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>
+          {unificadaFiltrada.length} {unificadaFiltrada.length === 1 ? "lançamento" : "lançamentos"} · {formatBRL(somaUnificadaFiltrada)}
+        </span>}
+        descricao="Clique no nome da pessoa para abrir o discriminado do lançamento."
       >
         {erroUnificada ? <div className="alert-critico"><span>Sem dados: {erroUnificada}.</span></div> : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" id="folha-tabela">
           <table className="fazenda-table">
             <thead><tr>
               <ThOrdenavel label="Tipo" campo="tipo" coluna={uniColuna} dir={uniDir} ordenar={uniOrdenar} />
@@ -1027,24 +1645,44 @@ export default function FolhaPagamentoView() {
                 if (l.tipo !== "funcionario") {
                   const editavel = podeEditarLinha(l);
                   const editandoLinha = editingLinhaChave === chave;
+                  const aberta = expandidaChave === chave;
+                  const docLinha = holeriteDaLinha(l);
+                  const statusLinha = rotuloStatusLinha(l.status);
                   return (
                     <Fragment key={chave}>
                     <tr style={l.vencido ? { background: VENCIDO_BG } : undefined}>
                       <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{LABEL_TIPO[l.tipo]}</td>
                       <td style={{ fontWeight: 600, fontSize: "0.82rem", whiteSpace: "nowrap" }}>
-                        {(() => { const d = l.data_pagamento || l.data_vencimento; return d ? mesCompLabel(d.slice(0, 7)) : "—"; })()}
+                        <span className="flex items-center gap-1">
+                          {aberta ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                          {(() => { const d = l.data_pagamento || l.data_vencimento; return d ? mesCompLabel(d.slice(0, 7)) : "—"; })()}
+                        </span>
                       </td>
-                      <td style={{ fontSize: "0.82rem" }}>{l.pessoa_nome}</td>
+                      <td style={{ fontSize: "0.82rem" }}>
+                        <button type="button" style={nomeClicavel}
+                          title={`Abrir o discriminado deste lançamento de ${l.pessoa_nome}`}
+                          onClick={() => setExpandidaChave(aberta ? null : chave)}>
+                          {l.pessoa_nome}
+                        </button>
+                      </td>
                       <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>—</td>
                       <td style={{ fontSize: "0.78rem" }}>{l.data_vencimento ? l.data_vencimento.split("-").reverse().join("/") : "—"}{l.vencido && " ⚠"}</td>
                       <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(l.valor)}</td>
                       <td style={{ textAlign: "right", fontSize: "0.76rem", color: "var(--text-muted)" }}>—</td>
                       <td style={{ textAlign: "right", fontSize: "0.76rem", color: "var(--text-muted)" }}>—</td>
-                      <td><span style={{ fontSize: "0.72rem", fontWeight: 700, color: l.status === "pago" ? "var(--green-light)" : "var(--amber)" }}>{l.status === "pago" ? "Pago" : "Pendente"}</span></td>
+                      <td><span title={statusLinha.titulo} style={{ fontSize: "0.72rem", fontWeight: 700, color: statusLinha.cor }}>{statusLinha.texto}</span></td>
                       <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{l.status === "pago" ? formatBRL(l.valor) : "—"}</td>
                       {admin && <td>—</td>}
                       <td style={{ textAlign: "right" }}>
                         <span className="flex items-center gap-2" style={{ justifyContent: "flex-end" }}>
+                          {/* A OUTRA porta para a linha do tempo, agora que o
+                              nome abre o discriminado. Continua sendo o único
+                              caminho até LinhaTempoPessoa no sistema inteiro. */}
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                            title={`Linha do tempo de ${l.pessoa_nome} — pagamentos, vales e parcelas em ordem`}
+                            onClick={() => setFichaPessoaId(l.pessoa_id)}>
+                            <History size={13} />
+                          </button>
                           <button className="btn-ghost" title="Imprimir recibo de pagamento" style={{ fontSize: "0.72rem" }}
                             onClick={() => setReciboLinha({
                               numero_lancamento: `${l.tipo}-${l.origem_id}`,
@@ -1073,6 +1711,32 @@ export default function FolhaPagamentoView() {
                         </span>
                       </td>
                     </tr>
+                    {aberta && (
+                      <tr><td colSpan={admin ? 12 : 11}>
+                        <div style={{ padding: "0.6rem 0" }}>
+                          {/* Férias e 13º chegam com `detalhe` — o recibo de
+                              quatro colunas, igual ao holerite. Empreita,
+                              contrato e diária são pagamento de valor único,
+                              sem composição: o que se pode discriminar deles é
+                              a referência (de onde veio e para quando). */}
+                          {docLinha
+                            ? <Holerite documento={docLinha} compacto cabecalho={false} />
+                            : (
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3" style={{ fontSize: "0.8rem" }}>
+                                <div><div style={labelStyleLote}>Descrição</div>{l.descricao}</div>
+                                <div><div style={labelStyleLote}>Referência</div>
+                                  {l.data_vencimento ? `vence em ${formatDate(l.data_vencimento)}` : "sem vencimento"}
+                                  {l.data_pagamento ? ` · pago em ${formatDate(l.data_pagamento)}` : ""}</div>
+                                <div><div style={labelStyleLote}>Valor</div>{formatBRL(l.valor)}</div>
+                                <div><div style={labelStyleLote}>No extrato</div>
+                                  {l.numero_lancamento_gerado
+                                    ? <LinkExtrato numero={l.numero_lancamento_gerado} />
+                                    : <span style={{ color: "var(--text-muted)" }}>—</span>}</div>
+                              </div>
+                            )}
+                        </div>
+                      </td></tr>
+                    )}
                     {editandoLinha && (
                       <tr>
                         <td colSpan={admin ? 12 : 11} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
@@ -1102,10 +1766,24 @@ export default function FolhaPagamentoView() {
                 const descFolha = arredonda2(r.descontos + r.valor_inss + r.valor_ir);
                 const descVale = arredonda2(r.valor_vale || 0);
                 const descAberto = expandDesc && expandDesc.id === r.id;
-                const valeLinhas = r.detalhe.filter((d) => /vale/i.test(d.label));
+                // Era `r.detalhe.filter((d) => /vale/i.test(d.label))`: a tela
+                // descobria "o que é vale" por regex no rótulo em português,
+                // porque o servidor mandava só texto. Agora a linha declara o
+                // próprio tipo e carrega o vale de origem.
+                const valeLinhas = r.detalhe.filter((d) => d.tipo === "vale");
+                // As parcelas que a fazenda assumiu naquele mês. Vêm em campo
+                // PRÓPRIO (nunca em `r.detalhe`), então `descVale` e todos os
+                // totais do mês seguem sem elas — aqui elas só explicam o
+                // desconto que sumiu e devolvem o botão "Ações" à competência
+                // desconsiderada, que era onde a volta atrás ficava sem porta.
+                const valeAssumido = r.vale_assumido || [];
+                const temPainelVale = descVale > 0 || valeAssumido.length > 0;
+                const documento = holeriteDoRegistro(r);
                 return (
                   <Fragment key={chave}>
-                    <tr className="row-clickable" title="Clique para ver a discriminação deste lançamento de folha" onClick={() => setExpandedId(expandido ? null : r.id)}
+                    <tr id={`folha-linha-${r.id}`}
+                      className={`row-clickable${folhaDestacada === r.id ? " flash-localizado" : ""}`}
+                      title="Clique para ver a discriminação deste lançamento de folha" onClick={() => setExpandedId(expandido ? null : r.id)}
                       style={l.vencido ? { background: VENCIDO_BG } : undefined}>
                       <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{LABEL_TIPO.funcionario}</td>
                       <td style={{ fontWeight: 600, fontSize: "0.82rem", whiteSpace: "nowrap" }}
@@ -1116,7 +1794,16 @@ export default function FolhaPagamentoView() {
                         </span>
                       </td>
                       <td style={{ fontSize: "0.82rem" }}>
-                        {r.pessoa_nome}
+                        {/* O NOME abre o discriminado — o gesto do desenho
+                            aprovado ("clicou no nome, abre o discriminado
+                            daquele contrato"). A linha do tempo da pessoa, que
+                            antes morava aqui, ganhou botão próprio na coluna
+                            de ações: continua sendo a única porta para ela. */}
+                        <button type="button" style={nomeClicavel}
+                          title={`Abrir o discriminado da folha de ${r.pessoa_nome} — ${mesCompLabel(r.competencia)}`}
+                          onClick={(e) => { e.stopPropagation(); setExpandedId(expandido ? null : r.id); }}>
+                          {r.pessoa_nome}
+                        </button>
                         {(r.recorrente || r.origem_recorrencia_id) && (
                           <span title={r.recorrente ? "Modelo recorrente — gera Contas a Pagar todo mês" : "Gerado automaticamente pela recorrência"} style={{ marginLeft: "0.4rem", display: "inline-flex", verticalAlign: "middle", color: "var(--dourado-light)" }}>
                             <RefreshCw size={12} />
@@ -1131,16 +1818,32 @@ export default function FolhaPagamentoView() {
                         onClick={(e) => { e.stopPropagation(); setExpandDesc(descAberto && expandDesc!.tipo === "folha" ? null : { id: r.id, tipo: "folha" }); }}>
                         {formatBRL(descFolha)}
                       </td>
-                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: descVale ? "var(--amber)" : "var(--text-muted)", cursor: "pointer", textDecoration: descVale ? "underline dotted" : undefined }}
-                        title="Clique para ver as parcelas de vale descontadas nesta folha"
+                      {/* O VALOR aqui é só o que foi efetivamente descontado
+                          (`valor_vale`, que ignora a parcela assumida). O que
+                          muda com a parcela assumida é a porta: sem o pontilhado
+                          a célula zerada não parecia clicável, e era ali dentro
+                          que morava o único acesso ao desfazer. */}
+                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: descVale ? "var(--amber)" : "var(--text-muted)", cursor: "pointer", textDecoration: temPainelVale ? "underline dotted" : undefined }}
+                        title={descVale
+                          ? "Clique para ver as parcelas de vale descontadas nesta folha"
+                          : valeAssumido.length
+                            ? "Nada foi descontado: a fazenda assumiu a parcela de vale deste mês. Clique para ver o motivo e desfazer."
+                            : "Clique para ver as parcelas de vale descontadas nesta folha"}
                         onClick={(e) => { e.stopPropagation(); setExpandDesc(descAberto && expandDesc!.tipo === "vale" ? null : { id: r.id, tipo: "vale" }); }}>
                         {formatBRL(descVale)}
                       </td>
-                      <td><span style={{ fontSize: "0.72rem", fontWeight: 700, color: r.status === "pago" ? "var(--green-light)" : "var(--amber)" }}>{r.status === "pago" ? "Pago" : "Pendente"}</span></td>
+                      <td>{(() => { const st = rotuloStatusLinha(r.status); return (
+                        <span title={st.titulo} style={{ fontSize: "0.72rem", fontWeight: 700, color: st.cor }}>{st.texto}</span>
+                      ); })()}</td>
                       <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{r.status === "pago" ? formatBRL(r.valor_liquido) : "—"}</td>
                       {admin && <td>{r.usuario_nome ?? "—"}</td>}
                       <td style={{ textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
                         <span className="flex items-center gap-2" style={{ justifyContent: "flex-end" }}>
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                            title={`Linha do tempo de ${r.pessoa_nome} — folhas, vales e parcelas em ordem`}
+                            onClick={() => setFichaPessoaId(r.pessoa_id)}>
+                            <History size={13} />
+                          </button>
                           <span style={{ position: "relative" }}>
                             <button className="btn-ghost" title={`Imprimir holerite de ${r.pessoa_nome} (${mesCompLabel(r.competencia)})`} style={{ fontSize: "0.72rem" }}
                               onClick={() => setImprimindoHoleriteChave(imprimindoHoleriteChave === chave ? null : chave)}>
@@ -1156,13 +1859,24 @@ export default function FolhaPagamentoView() {
                           </span>
                           {r.status === "pendente" && (
                             <>
-                              <button className="btn-ghost" title="Registrar o pagamento deste lançamento de folha" style={{ fontSize: "0.72rem" }} onClick={() => { setPagoErro(null); setPagandoId(pagandoId === r.id ? null : r.id); }}>Marcar como pago</button>
+                              <button className="btn-ghost" title="Pagar — dá para lançar valor distinto do previsto no vale e decidir o destino da diferença" style={{ fontSize: "0.72rem" }} onClick={() => setPagandoId(r.id)}>Pagar</button>
                               <button className="btn-ghost" title="Excluir este lançamento pendente" style={{ fontSize: "0.72rem", color: "var(--red)" }}
                                 disabled={excluindoChave === chave}
                                 onClick={() => { if (window.confirm("Excluir este lançamento de folha pendente?")) excluirLinha(l); }}>
                                 <Trash2 size={13} />
                               </button>
                             </>
+                          )}
+                          {/* Só admin: o estorno desfaz a baixa da conta a
+                              pagar e descongela a discriminação de um recibo
+                              já emitido. Não é vermelho — não exclui nada. */}
+                          {r.status === "pago" && admin && (
+                            <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                              title="Estornar o pagamento — desfaz a baixa e devolve a folha a pendente, para poder corrigir"
+                              disabled={estornandoId === r.id}
+                              onClick={() => estornarFolha(r)}>
+                              <RotateCcw size={13} /> {estornandoId === r.id ? "Estornando…" : "Estornar"}
+                            </button>
                           )}
                         </span>
                       </td>
@@ -1176,63 +1890,129 @@ export default function FolhaPagamentoView() {
                           <table style={{ width: "100%", maxWidth: 460, fontSize: "0.78rem" }}>
                             <tbody>
                               {expandDesc!.tipo === "folha" ? (
-                                [
-                                  { label: "Outros descontos", valor: r.descontos },
-                                  { label: `INSS${r.percentual_inss ? ` (${r.percentual_inss}%)` : ""}`, valor: r.valor_inss },
-                                  { label: `IR${r.percentual_ir ? ` (${r.percentual_ir}%)` : ""}`, valor: r.valor_ir },
-                                ].filter((d) => d.valor).map((d, i) => (
+                                // Lido do MESMO discriminado do recibo — este
+                                // painel e o holerite ao lado montavam a lista
+                                // por conta própria e podiam discordar sobre
+                                // uma retenção digitada sem percentual.
+                                r.detalhe.filter((d) => ["inss", "ir", "outros"].includes(d.tipo)).map((d, i) => (
                                   <tr key={i}>
-                                    <td style={{ padding: "0.15rem 0.5rem 0.15rem 0" }}>{d.label}</td>
-                                    <td style={{ textAlign: "right", color: "var(--red)" }}>− {formatBRL(d.valor)}</td>
+                                    <td style={{ padding: "0.15rem 0.5rem 0.15rem 0" }}>
+                                      {d.descricao}
+                                      <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{d.referencia}</div>
+                                    </td>
+                                    <td style={{ textAlign: "right", color: "var(--red)", verticalAlign: "top" }}>− {formatBRL(d.desconto || 0)}</td>
                                   </tr>
                                 ))
                               ) : (
-                                valeLinhas.map((d, i) => (
+                                <>
+                                {/* Uma linha por parcela, com a REFERÊNCIA que
+                                    desempata: "Parcela 3 de 13 · vale de
+                                    12/03/2026" no lugar de N linhas idênticas
+                                    escritas "Vale". */}
+                                {valeLinhas.map((d, i) => (
                                   <tr key={i}>
-                                    <td style={{ padding: "0.15rem 0.5rem 0.15rem 0" }}>{d.label}</td>
-                                    <td style={{ textAlign: "right", color: "var(--amber)" }}>{formatBRL(d.valor)}</td>
+                                    <td style={{ padding: "0.15rem 0.5rem 0.15rem 0" }}>
+                                      {d.descricao}
+                                      <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{d.referencia}</div>
+                                    </td>
+                                    <td style={{ textAlign: "right", color: "var(--amber)", verticalAlign: "top" }}>− {formatBRL(d.desconto || 0)}</td>
+                                    <td style={{ textAlign: "right", verticalAlign: "top", paddingLeft: "0.5rem" }}>
+                                      {/* O vale só é editável enquanto a folha não virou recibo:
+                                          folha paga tem a discriminação congelada e nenhuma ação
+                                          pode reescrevê-la (o backend recusa do mesmo jeito). */}
+                                      {r.status !== "pago" && d.origem && "vale_id" in d.origem && (
+                                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                                          title="Reparcelar o saldo, abater um valor, desconsiderar este mês ou cancelar o vale"
+                                          onClick={() => setAcoesVale({
+                                            valeId: (d.origem as any).vale_id, pessoaNome: r.pessoa_nome, competencia: r.competencia,
+                                          })}>
+                                          <Pencil size={12} /> Ações
+                                        </button>
+                                      )}
+                                    </td>
                                   </tr>
-                                ))
+                                ))}
+                                {/* As parcelas que a FAZENDA assumiu. Não são
+                                    desconto — o valor vai riscado e em cinza, sem
+                                    o sinal de menos, justamente para não ser lido
+                                    como cobrança —, e nenhuma soma da tela as
+                                    enxerga: elas nem chegam em `r.detalhe`. Estão
+                                    aqui por dois motivos: dizer POR QUE o desconto
+                                    do mês sumiu, e devolver o botão "Ações" ao mês
+                                    desconsiderado, que é a única porta para voltar
+                                    a descontá-lo. */}
+                                {valeAssumido.map((d, i) => (
+                                  <tr key={`assumido-${i}`}>
+                                    <td style={{ padding: "0.15rem 0.5rem 0.15rem 0" }}>
+                                      {d.descricao}
+                                      <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                                        {d.referencia} · assumida pela fazenda{d.motivo ? ` — ${d.motivo}` : ""}
+                                      </div>
+                                    </td>
+                                    <td style={{ textAlign: "right", color: "var(--text-muted)", verticalAlign: "top", textDecoration: "line-through" }}
+                                      title="A fazenda assumiu este valor: ele não foi descontado do funcionário e não entra em desconto nenhum desta folha.">
+                                      {formatBRL(d.valor_assumido)}
+                                    </td>
+                                    <td style={{ textAlign: "right", verticalAlign: "top", paddingLeft: "0.5rem" }}>
+                                      {r.status !== "pago" && d.origem && "vale_id" in d.origem && (
+                                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                                          title="Voltar a descontar este mês, reparcelar o saldo, abater um valor ou cancelar o vale"
+                                          onClick={() => setAcoesVale({
+                                            valeId: (d.origem as any).vale_id, pessoaNome: r.pessoa_nome, competencia: r.competencia,
+                                          })}>
+                                          <Pencil size={12} /> Ações
+                                        </button>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))}
+                                </>
                               )}
                               {expandDesc!.tipo === "folha" && descFolha === 0 && <tr><td style={{ color: "var(--text-muted)" }}>Sem descontos de folha nesta competência.</td></tr>}
-                              {expandDesc!.tipo === "vale" && !valeLinhas.length && <tr><td style={{ color: "var(--text-muted)" }}>Sem parcelas de vale nesta competência.</td></tr>}
+                              {expandDesc!.tipo === "vale" && !valeLinhas.length && !valeAssumido.length && <tr><td style={{ color: "var(--text-muted)" }}>Sem parcelas de vale nesta competência.</td></tr>}
                             </tbody>
                           </table>
-                        </div>
-                      </td></tr>
-                    )}
-                    {pagandoId === r.id && (
-                      <tr><td colSpan={admin ? 12 : 11}>
-                        <div className="flex items-end gap-2" style={{ padding: "0.5rem 0", flexWrap: "wrap" }} onClick={(e) => e.stopPropagation()}>
-                          <div><label style={labelStyleLote}>Data do pagamento</label>
-                            <input type="date" style={selStyleLote} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
-                          <button className="btn-primary" title="Confirmar pagamento" style={{ fontSize: "0.78rem" }} onClick={() => marcarPago(r)}><Check size={13} /> Confirmar</button>
-                          <button className="btn-ghost" title="Cancelar" style={{ fontSize: "0.78rem" }} onClick={() => { setPagoErro(null); setPagandoId(null); }}>Cancelar</button>
-                          {pagoErro && <span style={{ color: "var(--red)", fontSize: "0.78rem", alignSelf: "center" }}>{pagoErro}</span>}
                         </div>
                       </td></tr>
                     )}
                     {expandido && !editando && (
                       <tr><td colSpan={admin ? 12 : 11}>
                         <div style={{ padding: "0.6rem 0" }} onClick={(e) => e.stopPropagation()}>
-                          <table style={{ width: "100%", maxWidth: 420, fontSize: "0.78rem" }}>
-                            <tbody>
-                              {r.detalhe.map((d, i) => (
-                                <tr key={i}>
-                                  <td style={{ padding: "0.15rem 0.5rem 0.15rem 0", fontWeight: d.label === "Valor líquido" ? 700 : 400 }}>{d.label}</td>
-                                  <td style={{ textAlign: "right", fontWeight: d.label === "Valor líquido" ? 700 : 400, color: d.valor < 0 ? "var(--red)" : undefined }}>{formatBRL(d.valor)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                          {r.observacao && <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Obs.: {r.observacao}</p>}
+                          {/* A prévia do recibo, na própria linha: as quatro
+                              colunas do papel, e cada desconto clicável até a
+                              origem. Antes era uma lista "rótulo → valor" em
+                              que sete parcelas de vale saíam idênticas. */}
+                          {documento
+                            ? <Holerite documento={documento} compacto cabecalho={false} />
+                            : <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Sem discriminação para esta competência.</p>}
                           {r.status !== "pago" ? (
                             <button className="btn-ghost mt-2" title="Editar este lançamento de folha (enquanto não estiver pago)" style={{ fontSize: "0.75rem" }} onClick={() => iniciarEdicao(r)}>
                               <Pencil size={12} /> Editar lançamento
                             </button>
                           ) : (
-                            <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Lançamento já pago — não pode mais ser editado.</p>
+                            <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>
+                              Lançamento já pago — não pode mais ser editado. {admin ? "Use \u201cEstornar\u201d na linha para reabri-lo." : "Peça a um administrador para estornar o pagamento."}
+                            </p>
                           )}
+                          {estornoErro && <p style={{ color: "var(--red)", fontSize: "0.78rem", marginTop: "0.4rem" }}>{estornoErro}</p>}
+
+                          {/* O PAINEL DE RUBRICAS — acrescentar vencimento e
+                              desconto ao holerite. Ele morava em Contas >
+                              Holerites e recibos, que passou a ser só
+                              consulta: era o único jeito de acrescentar uma
+                              verba a um holerite, e ficava justamente na tela
+                              onde nada se altera. Fica FORA do papel, abaixo
+                              dele — o recibo continua sendo quatro colunas sem
+                              botão nenhum entre os números (ver o cabeçalho de
+                              RubricasHolerite.tsx). */}
+                          <RubricasHolerite
+                            key={r.id}
+                            folhaId={r.id}
+                            bloqueio={r.status === "pago"
+                              ? "Esta folha já foi paga e o recibo está congelado — estorne o pagamento para acrescentar ou corrigir vencimentos e descontos."
+                              : null}
+                            onMudou={() => { carregar(); carregarUnificada(); }}
+                          />
                         </div>
                       </td></tr>
                     )}
@@ -1324,17 +2104,37 @@ export default function FolhaPagamentoView() {
       </SecaoRecolhivel>
 
       {/* Relatório de guias de FGTS/DCTF já lançadas — dados estruturados
-          (não só o PDF anexado), para acompanhar competência a competência. */}
-      <SecaoRecolhivel titulo="Guias de FGTS/DCTF lançadas" icon={Filter} defaultAberta={false} descricao="Competência, valores e origem (manual ou leitura automática) de cada guia">
+          (não só o PDF anexado), para acompanhar competência a competência.
+          Só sob Funcionário e Todos: era este bloco que aparecia embaixo de
+          Empreita, Contrato e Diária cobrando encargo de CLT de quem não é
+          CLT. Quem decide agora é `capacidades.guias`, não um `if` local. */}
+      {capacidades.guias && (
+      <SecaoRecolhivel titulo="Guias de FGTS/DCTF lançadas" icon={Filter}
+        aberta={grupoAberto("guias")} onAlternar={() => alternarGrupo("guias")}
+        badge={guias ? <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>{guias.length}</span> : null}
+        descricao="Competência, valores e origem (manual ou leitura automática) de cada guia">
+        {excluirGuiaErro && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{excluirGuiaErro}</p>}
         {!guias || !guias.length ? (
           <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma guia lançada ainda.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="fazenda-table">
-              <thead><tr><th>Tipo</th><th>Competência</th><th>Cód. receita</th><th style={{ textAlign: "right" }}>Principal</th><th style={{ textAlign: "right" }}>Multa</th><th style={{ textAlign: "right" }}>Juros</th><th style={{ textAlign: "right" }}>Total</th><th>Vencimento</th><th>Origem</th></tr></thead>
+              <thead><tr>
+                <ThOrdenavel label="Tipo" campo="tipo" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <ThOrdenavel label="Competência" campo="competencia" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <ThOrdenavel label="Cód. receita" campo="codigo_receita" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <ThOrdenavel label="Principal" campo="valor_principal" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
+                <ThOrdenavel label="Multa" campo="valor_multa" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
+                <ThOrdenavel label="Juros" campo="valor_juros" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
+                <ThOrdenavel label="Total" campo="valor_total" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
+                <ThOrdenavel label="Vencimento" campo="data_vencimento" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <ThOrdenavel label="Origem" campo="origem" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <th>Ações</th>
+              </tr></thead>
               <tbody>
-                {guias.map((g) => (
-                  <tr key={g.id}>
+                {ordGuias.linhasOrdenadas.map((g) => (
+                  <Fragment key={g.id}>
+                  <tr>
                     <td>{g.tipo === "fgts" ? "FGTS" : "DCTF"}</td>
                     <td>{mesCompLabel(g.competencia)}</td>
                     <td>{g.codigo_receita || "—"}</td>
@@ -1344,16 +2144,78 @@ export default function FolhaPagamentoView() {
                     <td style={{ textAlign: "right", fontWeight: 700 }}>{formatBRL(g.valor_total)}</td>
                     <td>{formatDate(g.data_vencimento)}</td>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{g.origem === "leitura_automatica" ? "Leitura automática" : "Manual"}</td>
+                    <td>
+                      <span className="flex items-center gap-2">
+                        <button className="btn-ghost" title="Editar esta guia" style={{ fontSize: "0.72rem" }}
+                          onClick={() => (editingGuiaId === g.id ? setEditingGuiaId(null) : iniciarEdicaoGuia(g))}>
+                          <Pencil size={13} />
+                        </button>
+                        <button className="btn-ghost" title="Excluir esta guia" style={{ fontSize: "0.72rem", color: "var(--red)" }}
+                          disabled={excluindoGuiaId === g.id}
+                          onClick={() => excluirGuiaHandler(g)}>
+                          <Trash2 size={13} />
+                        </button>
+                      </span>
+                    </td>
                   </tr>
+                  {editingGuiaId === g.id && (
+                    <tr>
+                      <td colSpan={10} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                          <div><label style={labelStyleLote}>Tipo</label>
+                            <select style={selStyleLote} value={editGuiaTipo} onChange={(e) => setEditGuiaTipo(e.target.value as "fgts" | "dctf")}>
+                              <option value="fgts">FGTS</option>
+                              <option value="dctf">DCTF</option>
+                            </select></div>
+                          <div><label style={labelStyleLote}>Competência (mês)</label>
+                            <input type="month" style={selStyleLote} value={editGuiaCompetencia} onChange={(e) => setEditGuiaCompetencia(e.target.value)} /></div>
+                          {editGuiaTipo === "dctf" && (
+                            <div><label style={labelStyleLote}>Código da receita</label>
+                              <input style={selStyleLote} value={editGuiaCodigoReceita} onChange={(e) => setEditGuiaCodigoReceita(e.target.value)} /></div>
+                          )}
+                          <div><label style={labelStyleLote}>Vencimento</label>
+                            <input type="date" style={selStyleLote} value={editGuiaDataVencimento} onChange={(e) => setEditGuiaDataVencimento(e.target.value)} /></div>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                          <div><label style={labelStyleLote}>Valor principal (R$)</label>
+                            <CampoMoeda style={selStyleLote} value={Number(editGuiaValorPrincipal) || 0} onChange={(v) => setEditGuiaValorPrincipal(v ? String(v) : "")} /></div>
+                          <div><label style={labelStyleLote}>Multa (R$)</label>
+                            <CampoMoeda style={selStyleLote} value={Number(editGuiaValorMulta) || 0} onChange={(v) => setEditGuiaValorMulta(v ? String(v) : "")} /></div>
+                          <div><label style={labelStyleLote}>Juros (R$)</label>
+                            <CampoMoeda style={selStyleLote} value={Number(editGuiaValorJuros) || 0} onChange={(v) => setEditGuiaValorJuros(v ? String(v) : "")} /></div>
+                          <div><label style={labelStyleLote}>Linha digitável</label>
+                            <input style={selStyleLote} value={editGuiaLinhaDigitavel} onChange={(e) => setEditGuiaLinhaDigitavel(e.target.value)} /></div>
+                        </div>
+                        {editGuiaMsg && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{editGuiaMsg}</p>}
+                        <div style={{ display: "flex", gap: "0.5rem" }}>
+                          <button className="btn-primary" disabled={editGuiaSalvando} onClick={() => salvarEdicaoGuia(g.id)}>
+                            <Check size={14} /> {editGuiaSalvando ? "Salvando…" : "Salvar"}
+                          </button>
+                          <button className="btn-ghost" onClick={() => setEditingGuiaId(null)}>Cancelar</button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
           </div>
         )}
       </SecaoRecolhivel>
+      )}
 
-      {/* Relatório de vales e descontos — vale de funcionário, filtrável e ordenável */}
-      <SecaoRecolhivel titulo="Relatório de vales e descontos" icon={Filter} defaultAberta={false} descricao="Vales de funcionário lançados, com parcelamento e status de aplicação">
+      {/* Relatório de vales e descontos — vale de FUNCIONÁRIO, filtrável e
+          ordenável. Estava no mesmo card dos vales de empreitada/contrato/
+          diária, e por isso aparecia inteiro sob qualquer categoria: quem
+          escolhia "Empreita" via a tabela de vales de CLT logo abaixo. São
+          dois relatórios de coisas diferentes e agora são dois cards, cada um
+          declarado por sua categoria. */}
+      {capacidades.valeFuncionario && (
+      <SecaoRecolhivel titulo="Vales de funcionário" icon={Filter}
+        aberta={grupoAberto("vales_funcionario")} onAlternar={() => alternarGrupo("vales_funcionario")}
+        badge={vales ? <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>{valesOrdenados.length}</span> : null}
+        descricao="Vales de funcionário lançados, com parcelamento e status de aplicação">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
           <div><label style={labelStyleLote}>Data do vale — de</label>
             <input type="date" style={selStyleLote} value={fValeDe} onChange={(e) => setFValeDe(e.target.value)} /></div>
@@ -1402,11 +2264,29 @@ export default function FolhaPagamentoView() {
                       : "Lançamento avulso"}
                   </td>
                   <td>
-                    <button className="btn-ghost" title="Excluir este vale" style={{ fontSize: "0.72rem", color: "var(--red)" }}
-                      disabled={excluindoValeId === v.id}
-                      onClick={(e) => { e.stopPropagation(); excluirValeHandler(v); }}>
-                      <Trash2 size={13} />
-                    </button>
+                    <span className="flex items-center gap-1">
+                      {/* O MESMO menu de ações do painel "Descontos de vale"
+                          da folha — mesmo modal, mesmas regras, nenhuma
+                          duplicada. Ele só existia lá dentro, e é AQUI que o
+                          dono procura o vale: este card é a lista dos vales.
+                          Sem competência fixa de propósito — a linha é do
+                          vale inteiro, não de um mês, então quem escolhe o mês
+                          alvo é o contexto do servidor (a 1ª competência ainda
+                          pendente; ver AcoesValeModal). É também a única porta
+                          de um vale CANCELADO e a de um mês desconsiderado que
+                          não tem folha lançada: nos dois casos não existe
+                          painel de descontos nenhum para abrigar o botão. */}
+                      <button className="btn-ghost" title="Ações do vale — reparcelar, abater, desconsiderar um mês, cancelar (e desfazer)"
+                        style={{ fontSize: "0.72rem" }}
+                        onClick={(e) => { e.stopPropagation(); setAcoesVale({ valeId: v.id, pessoaNome: v.pessoa_nome }); }}>
+                        <Pencil size={13} /> Ações
+                      </button>
+                      <button className="btn-ghost" title="Excluir este vale" style={{ fontSize: "0.72rem", color: "var(--red)" }}
+                        disabled={excluindoValeId === v.id}
+                        onClick={(e) => { e.stopPropagation(); excluirValeHandler(v); }}>
+                        <Trash2 size={13} />
+                      </button>
+                    </span>
                   </td>
                 </tr>
                 {expandedValeId === v.id && (
@@ -1510,6 +2390,7 @@ export default function FolhaPagamentoView() {
                           <button className="btn-ghost" onClick={() => iniciarEdicaoVale(v)}>
                             <Pencil size={12} /> Editar vale
                           </button>
+                          <ComprovanteVale tipo="funcionario" valeId={v.id} />
                         </div>
                       )}
                     </td>
@@ -1521,8 +2402,24 @@ export default function FolhaPagamentoView() {
             </tbody>
           </table>
         </div>
+      </SecaoRecolhivel>
+      )}
 
-        <p style={{ fontSize: "0.82rem", fontWeight: 600, margin: "1.25rem 0 0.5rem" }}>Vales de empreitada, contrato e diária</p>
+      {capacidades.valeAvulso && (
+      <SecaoRecolhivel titulo="Vales de empreitada, contrato e diária" icon={Filter}
+        aberta={grupoAberto("vales_avulsos")} onAlternar={() => alternarGrupo("vales_avulsos")}
+        badge={valesAvulsos ? <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>{valesAvulsosOrdenados.length}</span> : null}
+        descricao="Adiantamentos abatidos da próxima parcela/etapa pendente">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div><label style={labelStyleLote}>Data do vale — de</label>
+            <input type="date" style={selStyleLote} value={fValeDe} onChange={(e) => setFValeDe(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Data do vale — até</label>
+            <input type="date" style={selStyleLote} value={fValeAte} onChange={(e) => setFValeAte(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Pessoa</label>
+            <select style={selStyleLote} value={fValePessoa} onChange={(e) => setFValePessoa(e.target.value)}>
+              <option value="">Todos</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+            </select></div>
+        </div>
         {excluirValeAvulsoErro && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{excluirValeAvulsoErro}</p>}
         <div className="overflow-x-auto">
           <table className="fazenda-table">
@@ -1613,6 +2510,7 @@ export default function FolhaPagamentoView() {
                           <button className="btn-ghost" onClick={() => iniciarEdicaoValeAvulso(v)}>
                             <Pencil size={12} /> Editar vale
                           </button>
+                          <ComprovanteVale tipo="avulso" valeId={v.id} />
                         </div>
                       )}
                     </td>
@@ -1625,6 +2523,17 @@ export default function FolhaPagamentoView() {
           </table>
         </div>
       </SecaoRecolhivel>
+      )}
+
+      {/* A listagem da tela própria da categoria — "Empreitas lançadas",
+          "Controle de diárias", "Férias lançadas"… É onde moram as ações que
+          só existem ali (concluir etapa, redistribuir parcelas, encerrar e
+          cobrar, reabrir, marcar como pago). O formulário correspondente fica
+          sob o card "Lançar"; aqui só o que já foi lançado. */}
+      {capacidades.telaPropria && telaDaCategoria("listar")}
+
+      </>))}
+      {/* ↑ fim do card "Consultar" */}
 
       {divergenciaParcela && (
         <ModalDivergenciaVale
@@ -1661,6 +2570,44 @@ export default function FolhaPagamentoView() {
           salvando={editValeAvulsoSalvando}
           onCancelar={() => setDivergenciaValeAvulso(null)}
           onConfirmar={(acao) => salvarEdicaoValeAvulso(divergenciaValeAvulso.v, acao)}
+        />
+      )}
+      {(() => {
+        // O pop-up do ATO do pagamento (ver PagarFolhaModal): valor distinto
+        // por verba e a decisão sobre a diferença. Vive fora da tabela, como
+        // os demais modais — a linha não tem largura para o discriminado.
+        const emPagamento = (regs || []).find((r) => r.id === pagandoId);
+        if (!emPagamento) return null;
+        return (
+          <PagarFolhaModal
+            registro={emPagamento}
+            contasCorrentes={contasCorrentes}
+            onPago={() => {
+              // Recarrega o que o pagamento pode ter mexido: a folha, o
+              // relatório de vales (a decisão muda saldo/parcelas) e a visão
+              // unificada.
+              setPagandoId(null);
+              carregar(); carregarUnificada(); carregarVales();
+            }}
+            onFechar={() => setPagandoId(null)}
+          />
+        );
+      })()}
+      {acoesVale && (
+        <AcoesValeModal
+          valeId={acoesVale.valeId}
+          pessoaNome={acoesVale.pessoaNome}
+          competencia={acoesVale.competencia}
+          contasCorrentes={contasCorrentes}
+          onFeito={() => {
+            // Recarrega tudo o que a ação pode ter mexido: a folha (o
+            // desconto do mês muda), o relatório de vales (saldo/parcelas) e
+            // a visão unificada. "Desconsiderar"/"cancelar" mexem também no
+            // Financeiro, mas essa tela não mostra o extrato.
+            setAcoesVale(null);
+            carregar(); carregarUnificada(); carregarVales();
+          }}
+          onFechar={() => setAcoesVale(null)}
         />
       )}
       {excluindoParcela && (
@@ -1715,6 +2662,23 @@ export default function FolhaPagamentoView() {
         </Modal>
       )}
       {reciboLinha && <ReciboModal lanc={reciboLinha} onClose={() => setReciboLinha(null)} />}
+
+      {/* A ficha da pessoa lê o ledger INTEIRO (`unificada`), não o mês
+          filtrado: a pergunta que ela responde é justamente a que atravessa
+          competências — a parcela 3/13 de setembro nasceu de um vale de
+          março, e o vale de março não está no mês em tela. */}
+      {fichaPessoaId != null && (() => {
+        const p = pessoas.find((x) => x.id === fichaPessoaId);
+        return (
+          <LinhaTempoPessoa
+            pessoa={p || { id: fichaPessoaId, nome: "—", tipos: [] }}
+            linhas={unificada || []}
+            vales={(vales || []) as ValeDaLinhaTempo[]}
+            ano={(mesEmTela || new Date().toISOString().slice(0, 7)).slice(0, 4)}
+            onFechar={() => setFichaPessoaId(null)}
+          />
+        );
+      })()}
       {resultadoDivergencia && (
         <ModalResultadoDivergenciaVale
           valorPago={resultadoDivergencia.valorPago}
@@ -1744,6 +2708,76 @@ const contaObrigatoriaVale = (forma: string) => forma !== "desconto_integral_fol
 const contaObrigatoriaValeAvulso = (forma: string) => forma !== "desconto_proximo_pagamento";
 
 /**
+ * Comprovante de pagamento do vale (D7-D10) — mesmo padrão visual de
+ * "Anexos" já usado no lançamento financeiro (Dropzone + lista com link/
+ * excluir, ver app/financeiro/page.tsx), só que ancorado no vale em vez do
+ * lançamento: aqui não há categoria/nº de documento para escolher, porque
+ * o vale já é o documento inteiro — só falta anexar a prova de que o
+ * dinheiro foi entregue (recibo assinado, foto do PIX etc.).
+ */
+function ComprovanteVale({ tipo, valeId }: { tipo: "funcionario" | "avulso"; valeId: number }) {
+  const [comprovantes, setComprovantes] = useState<{ id: number; nome_arquivo: string; mime_type: string; criado_em: string }[] | null>(null);
+  const [enviando, setEnviando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    listarComprovantesVale(tipo, valeId).then(setComprovantes).catch(() => setComprovantes([]));
+  }, [tipo, valeId]);
+
+  const enviar = async (file: File) => {
+    setEnviando(true); setErro(null);
+    try {
+      const novo = await anexarComprovanteVale(tipo, valeId, file);
+      setComprovantes((p) => [...(p || []), { id: novo.id, nome_arquivo: novo.nome_arquivo, mime_type: file.type, criado_em: new Date().toISOString() }]);
+    } catch (e: any) {
+      setErro(e.message || "Erro ao anexar o comprovante");
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  const remover = async (id: number) => {
+    try {
+      await excluirComprovanteVale(id);
+      setComprovantes((p) => (p || []).filter((a) => a.id !== id));
+    } catch (e: any) {
+      setErro(e.message || "Erro ao excluir o comprovante");
+    }
+  };
+
+  return (
+    <div style={{ borderTop: "1px solid var(--border)", paddingTop: "0.6rem", marginTop: "0.6rem" }}>
+      <label style={labelStyleLote}>Comprovante de pagamento</label>
+      <Dropzone
+        compact
+        accept="application/pdf,image/jpeg,image/png"
+        disabled={enviando}
+        label={enviando ? "Enviando…" : "Arraste o comprovante aqui, ou"}
+        onFiles={(files) => enviar(files[0])}
+      />
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.78rem", margin: "0.3rem 0" }}>{erro}</p>}
+      {comprovantes === null ? (
+        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Carregando comprovantes…</p>
+      ) : comprovantes.length === 0 ? (
+        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Nenhum comprovante anexado ainda.</p>
+      ) : (
+        <ul style={{ listStyle: "none", padding: 0, margin: "0.3rem 0 0" }}>
+          {comprovantes.map((a) => (
+            <li key={a.id} className="flex items-center gap-2" style={{ padding: "0.2rem 0", fontSize: "0.78rem" }}>
+              <a href={urlComprovanteVale(a.id)} target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)", flex: 1 }}
+                title="Abrir este comprovante numa aba nova">
+                {a.nome_arquivo}
+              </a>
+              <button type="button" className="btn-ghost" title="Excluir comprovante" onClick={() => remover(a.id)}><Trash2 size={13} /></button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
  * Vale de funcionário — só o formulário de lançamento. A lista de parcelas
  * geradas não aparece mais aqui: ela vira a expansão da folha listada (na
  * competência em que a parcela é aplicada), por decisão explícita do
@@ -1763,6 +2797,10 @@ function ValeFuncionarioSection({
   const [contaCorrenteId, setContaCorrenteId] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
+  // Id do vale recém-lançado — só existe DEPOIS de salvo (a rota de
+  // comprovante é ancorada no id do vale), por isso o anexo aparece aqui
+  // embaixo da mensagem de sucesso, não junto dos campos do formulário.
+  const [valeRecemCriadoId, setValeRecemCriadoId] = useState<number | null>(null);
 
   async function lancar(confirmar = false) {
     setMsg(null);
@@ -1774,13 +2812,14 @@ function ValeFuncionarioSection({
     }
     setSalvando(true);
     try {
-      await criarVale({
+      const vale = await criarVale({
         pessoa_id: Number(pessoaId), valor_total: parseFloat(valorTotal), forma_pagamento: formaPagamento,
         data_pagamento: dataPagamento, parcelas: Number(parcelas), competencia_inicio: competenciaInicio,
         observacao: observacao || undefined, numero_documento_pagamento: numeroDocumentoPagamento || undefined,
         conta_corrente_id: contaObrigatoriaVale(formaPagamento) && contaCorrenteId ? Number(contaCorrenteId) : undefined,
         confirmar,
       });
+      setValeRecemCriadoId(vale.id);
       setMsg({ tipo: "sucesso", texto: "Vale lançado — o desconto aparecerá na expansão da folha de cada competência afetada." });
       setPessoaId(""); setValorTotal(""); setParcelas("1"); setObservacao(""); setNumeroDocumentoPagamento(""); setContaCorrenteId("");
       onLancado();
@@ -1847,6 +2886,10 @@ function ValeFuncionarioSection({
       <button className="btn-primary" title="Lançar o vale" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={() => lancar(false)} disabled={salvando}>
         <Check size={14} /> {salvando ? "Salvando…" : "Lançar vale"}
       </button>
+      {/* Só existe depois de salvo (a rota de comprovante é ancorada no id
+          do vale) — mesmo componente/mecanismo de anexo já usado na
+          listagem de vales abaixo (ver ComprovanteVale). */}
+      {valeRecemCriadoId != null && <ComprovanteVale tipo="funcionario" valeId={valeRecemCriadoId} />}
     </div>
   );
 }
@@ -1917,7 +2960,13 @@ function LancarGuiaFgtsDctfSection({ onLancado }: { onLancado: () => void }) {
         data_vencimento: dataVencimento, linha_digitavel: linhaDigitavel || undefined, origem,
       });
       if (arquivoLido && guia.numero_lancamento) {
-        await anexarArquivoLancamento(guia.numero_lancamento, arquivoLido, tipo === "fgts" ? "Guia FGTS" : "Guia DCTF").catch(() => {});
+        // numero_documento = número do boleto/linha digitável — é o que torna
+        // a guia arquivada pesquisável por esse número em Central de
+        // Documentos e no filtro de Financeiro (pedido explícito do usuário).
+        await anexarArquivoLancamento(
+          guia.numero_lancamento, arquivoLido, tipo === "fgts" ? "Guia FGTS" : "Guia DCTF",
+          linhaDigitavel || undefined, dataVencimento || undefined,
+        ).catch(() => {});
       }
       setMsg({ tipo: "sucesso", texto: `Guia de ${tipo === "fgts" ? "FGTS" : "DCTF"} lançada em Contas a Pagar.` });
       setValorPrincipal(""); setValorMulta("0"); setValorJuros("0"); setDataVencimento(""); setLinhaDigitavel(""); setCodigoReceita("");

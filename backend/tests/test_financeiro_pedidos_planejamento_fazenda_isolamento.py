@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 
-from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Fazenda
+from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Fazenda, PedidoAnexo
 from fazenda.models.planos import MODULOS_COMERCIAIS
 
 
@@ -118,6 +118,7 @@ class TestIsolamentoPedidos:
         assert c.get(f"/pedidos/{pedido_id}").status_code == 404
         assert c.put(f"/pedidos/{pedido_id}", json=_pedido_payload()).status_code == 404
         assert c.put(f"/pedidos/{pedido_id}/status", json={"status": "cancelado"}).status_code == 404
+        assert c.put(f"/pedidos/{pedido_id}/rastreio", json={"enviado": True, "codigo_rastreio": "X"}).status_code == 404
         assert c.delete(f"/pedidos/{pedido_id}").status_code == 404
 
     def test_fazenda_2_pode_gerenciar_seu_proprio_pedido(self, client):
@@ -129,19 +130,57 @@ class TestIsolamentoPedidos:
         assert c.put(f"/pedidos/{pedido_id}/status", json={"status": "cancelado"}).status_code == 200
         assert c.delete(f"/pedidos/{pedido_id}").status_code == 204
 
-    def test_token_legado_sem_fazenda_ve_todos_os_pedidos(self, client):
+    def test_sessao_sem_fazenda_e_recusada(self, client):
+        """A auditoria encontrou este teste afirmando o próprio furo.
+
+        Ele nasceu no piloto de multi-fazenda, quando havia uma fazenda só e
+        "token sem fid" queria dizer "emitido antes da migração" — a regra
+        era não ter retroatividade: sessão antiga continuava vendo tudo. Com
+        mais de um cliente no mesmo banco, "vê tudo" deixou de ser
+        compatibilidade e virou vazamento entre clientes (F-A-01/F-B-01/
+        F-B-02): o `if fazenda_id is not None:` de centenas de consultas
+        simplesmente não filtra.
+
+        A regra agora é a oposta, e vale na porta: se a requisição mexe em
+        dado de fazenda, o token tem que dizer QUAL fazenda — não dizendo,
+        não entra (fazenda/auth.py::exigir_fazenda_selecionada). Este teste
+        passou a guardar a recusa."""
         c, _ = client
         _como_fazenda(1)
-        c.post("/pedidos/", json=_pedido_payload(observacao="Fazenda 1 legado"))
+        c.post("/pedidos/", json=_pedido_payload(observacao="Fazenda 1"))
         _como_fazenda(2)
-        c.post("/pedidos/", json=_pedido_payload(observacao="Fazenda 2 legado"))
+        c.post("/pedidos/", json=_pedido_payload(observacao="Fazenda 2"))
 
         _como_fazenda(None)
         r = c.get("/pedidos/")
-        assert r.status_code == 200
-        observacoes = {p.get("observacao") for p in r.json()}
-        assert "Fazenda 1 legado" in observacoes
-        assert "Fazenda 2 legado" in observacoes
+        assert r.status_code == 409, (
+            f"os pedidos das duas fazendas saíram juntos para uma sessão sem fazenda "
+            f"selecionada: {r.status_code} {r.text[:200]}"
+        )
+
+
+class TestIsolamentoPedidoAnexo:
+    def test_fazenda_1_nao_acessa_anexo_de_pedido_da_fazenda_2(self, client, monkeypatch):
+        c, _ = client
+        import fazenda.api.routers.pedidos as pedidos_mod
+        _bucket: dict[str, bytes] = {}
+        monkeypatch.setattr(pedidos_mod, "enviar_arquivo", lambda caminho, conteudo, *a, **k: _bucket.__setitem__(caminho, conteudo))
+        monkeypatch.setattr(pedidos_mod, "baixar_arquivo", lambda caminho, *a, **k: _bucket[caminho])
+        monkeypatch.setattr(pedidos_mod, "excluir_arquivo", lambda caminho, *a, **k: _bucket.pop(caminho, None))
+
+        _como_fazenda(2)
+        pedido_id = c.post("/pedidos/", json=_pedido_payload()).json()["id"]
+        anexo_id = c.post(
+            f"/pedidos/{pedido_id}/anexos",
+            files={"file": ("orcamento.pdf", b"%PDF-1.4", "application/pdf")},
+            data={"categoria": "Orçamento"},
+        ).json()["id"]
+
+        _como_fazenda(1)
+        assert c.post(f"/pedidos/{pedido_id}/anexos", files={"file": ("x.pdf", b"x", "application/pdf")}, data={"categoria": "Orçamento"}).status_code == 404
+        assert c.get(f"/pedidos/{pedido_id}/anexos").status_code == 404
+        assert c.get(f"/pedidos/anexos/{anexo_id}").status_code == 404
+        assert c.delete(f"/pedidos/anexos/{anexo_id}").status_code == 404
 
 
 class TestIsolamentoOrcamento:
@@ -173,7 +212,21 @@ class TestIsolamentoOrcamento:
         assert c.put(f"/planejamento/orcamento/{item_id}", json=self._item_payload()).status_code == 404
         assert c.delete(f"/planejamento/orcamento/{item_id}").status_code == 404
 
-    def test_token_legado_ve_itens_de_orcamento_de_todas_as_fazendas(self, client):
+    def test_sessao_sem_fazenda_e_recusada(self, client):
+        """A auditoria encontrou este teste afirmando o próprio furo.
+
+        Ele nasceu no piloto de multi-fazenda, quando havia uma fazenda só e
+        "token sem fid" queria dizer "emitido antes da migração" — a regra
+        era não ter retroatividade: sessão antiga continuava vendo tudo. Com
+        mais de um cliente no mesmo banco, "vê tudo" deixou de ser
+        compatibilidade e virou vazamento entre clientes (F-A-01/F-B-01/
+        F-B-02): o `if fazenda_id is not None:` de centenas de consultas
+        simplesmente não filtra.
+
+        A regra agora é a oposta, e vale na porta: se a requisição mexe em
+        dado de fazenda, o token tem que dizer QUAL fazenda — não dizendo,
+        não entra (fazenda/auth.py::exigir_fazenda_selecionada). Este teste
+        passou a guardar a recusa."""
         c, _ = client
         _como_fazenda(1)
         c.post("/planejamento/orcamento", json=self._item_payload(observacao="F1"))
@@ -182,10 +235,10 @@ class TestIsolamentoOrcamento:
 
         _como_fazenda(None)
         r = c.get("/planejamento/orcamento")
-        assert r.status_code == 200
-        observacoes = {i.get("observacao") for i in r.json()}
-        assert "F1" in observacoes
-        assert "F2" in observacoes
+        assert r.status_code == 409, (
+            f"o orçamento das duas fazendas saiu junto para uma sessão sem fazenda "
+            f"selecionada: {r.status_code} {r.text[:200]}"
+        )
 
 
 class TestIsolamentoPlanejamentoCenarios:
@@ -216,7 +269,21 @@ class TestIsolamentoPlanejamentoCenarios:
         assert c.put(f"/planejamento/cenarios/{cenario_id}", json={"nome": "Hackeado"}).status_code == 404
         assert c.delete(f"/planejamento/cenarios/{cenario_id}").status_code == 404
 
-    def test_token_legado_ve_cenarios_de_todas_as_fazendas(self, client):
+    def test_sessao_sem_fazenda_e_recusada(self, client):
+        """A auditoria encontrou este teste afirmando o próprio furo.
+
+        Ele nasceu no piloto de multi-fazenda, quando havia uma fazenda só e
+        "token sem fid" queria dizer "emitido antes da migração" — a regra
+        era não ter retroatividade: sessão antiga continuava vendo tudo. Com
+        mais de um cliente no mesmo banco, "vê tudo" deixou de ser
+        compatibilidade e virou vazamento entre clientes (F-A-01/F-B-01/
+        F-B-02): o `if fazenda_id is not None:` de centenas de consultas
+        simplesmente não filtra.
+
+        A regra agora é a oposta, e vale na porta: se a requisição mexe em
+        dado de fazenda, o token tem que dizer QUAL fazenda — não dizendo,
+        não entra (fazenda/auth.py::exigir_fazenda_selecionada). Este teste
+        passou a guardar a recusa."""
         c, _ = client
         _como_fazenda(1)
         c.post("/planejamento/cenarios", json={"nome": "Cenário F1"})
@@ -225,10 +292,10 @@ class TestIsolamentoPlanejamentoCenarios:
 
         _como_fazenda(None)
         r = c.get("/planejamento/cenarios")
-        assert r.status_code == 200
-        nomes = {ce["nome"] for ce in r.json()}
-        assert "Cenário F1" in nomes
-        assert "Cenário F2" in nomes
+        assert r.status_code == 409, (
+            f"os cenários de planejamento das duas fazendas saíram juntos para uma sessão sem "
+            f"fazenda selecionada: {r.status_code} {r.text[:200]}"
+        )
 
 
 class TestIsolamentoImportarParaPedido:

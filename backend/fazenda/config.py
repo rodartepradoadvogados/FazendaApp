@@ -6,7 +6,18 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./fazenda.db"
-    secret_key: str = "change-me"
+    # Conexão de MANUTENÇÃO — usada pelas rotinas que precisam ler o banco
+    # inteiro, sem recorte de fazenda: hoje, o backup automático. Vazia (o
+    # padrão) = usa a mesma `database_url`, e nada muda.
+    #
+    # Ela existe por causa do RLS. No desenho aprovado (ver
+    # docs/security-audit/rls-proposta.md, seção 8), as políticas ficam SEM
+    # `FORCE`, e é o dono das tabelas quem enxerga tudo — enquanto a aplicação,
+    # que não é dona, fica contida pela política. O backup é justamente a
+    # rotina que precisa ver o banco inteiro por definição, então ele passa a
+    # conectar por esta URL, com o role dono, em vez de abrir um `BYPASSRLS`
+    # de propósito geral que qualquer código da API poderia assumir.
+    database_url_manutencao: str = ""
     environment: str = "development"
 
     # Robô do Telegram (intake de documentos financeiros). Vazio = desligado.
@@ -43,6 +54,11 @@ class Settings(BaseSettings):
     bb_developer_application_key: str = ""
     bb_ambiente: str = "sandbox"            # "sandbox" ou "producao"
     bb_pix_chave: str = ""                  # chave PIX recebedora cadastrada no BB
+    # Segredo do webhook de cobrança BB, cadastrado igual nos dois lados (BB e
+    # aqui) — o Portal Developers BB não embute segredo próprio no payload,
+    # então esse valor vai na própria URL do webhook (/cobranca/webhook/bb/{secret}).
+    # Vazio = webhook rejeita tudo (ver cobranca_webhook_bb).
+    bb_webhook_secret: str = ""
 
     # Cobrança da assinatura CowData via Asaas (boleto mensal + Pix Automático/
     # recorrente + QR Code Pix dinâmico avulso para o desconto semestral) —
@@ -68,6 +84,12 @@ class Settings(BaseSettings):
     # receber) — bucket próprio, mesma conta/chave de serviço do Supabase, ver
     # fazenda/api/routers/financeiro.py (anexos de LancamentoAnexo).
     supabase_bucket_financeiro: str = "anexos-financeiro"
+    # Banco de fotos do Milknews (blog News) — usado para ilustrar as matérias
+    # na aba de aprovação/News, ver fazenda/api/routers/fotos_news.py. Único
+    # bucket PÚBLICO do sistema (os outros três acima são privados): a página
+    # pública do blog (GET /news, sem login) renderiza `<img src={imagem}>`
+    # direto com a URL pública do Supabase Storage, sem passar pelo backend.
+    supabase_bucket_news_fotos: str = "fotos-news-banco"
 
     # Push do app Android NATIVO (Capacitor) via Firebase Cloud Messaging —
     # canal irmão do Web Push (VAPID, acima em fazenda/api/routers/push.py):

@@ -27,7 +27,13 @@ def test_inativa_apenas_animal_eh_semen_ativo():
         s.commit()
 
     import fazenda.database as database
+    # `engine_manutencao` e não `engine`: desde 09/09/2026 esta rotina de boot
+    # roda pela conexão de DONO (ver create_db_and_tables). Sob RLS ela
+    # precisa disso — com a conexão contida da aplicação, a varredura por
+    # `eh_semen` devolveria ZERO linhas e a migração não faria nada, em
+    # silêncio. Fora do RLS as duas engines são a mesma.
     database.engine = engine
+    database.engine_manutencao = engine
     _inativar_animais_semen()
 
     with Session(engine) as s:
@@ -44,7 +50,13 @@ def test_idempotente_segunda_chamada_nao_falha():
         s.commit()
 
     import fazenda.database as database
+    # `engine_manutencao` e não `engine`: desde 09/09/2026 esta rotina de boot
+    # roda pela conexão de DONO (ver create_db_and_tables). Sob RLS ela
+    # precisa disso — com a conexão contida da aplicação, a varredura por
+    # `eh_semen` devolveria ZERO linhas e a migração não faria nada, em
+    # silêncio. Fora do RLS as duas engines são a mesma.
     database.engine = engine
+    database.engine_manutencao = engine
     _inativar_animais_semen()
     _inativar_animais_semen()  # não deve levantar erro nem reverter nada
 

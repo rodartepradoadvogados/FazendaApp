@@ -11,12 +11,22 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
-from jinja2 import Template
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from fazenda.models.multitenant import EmpresaOperadora, Fazenda
 from fazenda.models.planos import DESCONTO_CICLO_PAGAMENTO, MESES_POR_CICLO, PLANOS_CATALOGO
 
 _DIR_TEMPLATES = Path(__file__).resolve().parent.parent / "templates"
+
+# BUG DE SEGURANÇA CORRIGIDO: `Template(texto)` sem Environment nunca escapa
+# nada — nome/endereço de fazenda vindos do cadastro (e portanto de
+# entrada do usuário) iam direto pro HTML do contrato. `select_autoescape`
+# decide pela extensão do nome carregado via loader: escapa o ".html", mas
+# não mexe no ".md" (mesmo padrão de contrato_equipe_render.py).
+_AMBIENTE = Environment(
+    loader=FileSystemLoader(str(_DIR_TEMPLATES)),
+    autoescape=select_autoescape(["html"]),
+)
 
 MODULO_LABEL = {
     "rebanho": "Rebanho", "reprodutivo": "Reprodutivo", "produtivo": "Produtivo",
@@ -65,9 +75,8 @@ def render_contrato(
     cidade_foro: str | None = None, estado_foro: str | None = None,
 ) -> str:
     """`formato`: "html" (Baixar contrato) ou "md" (envio ao ZapSign)."""
-    arquivo = _DIR_TEMPLATES / f"contrato_cowdata.{formato}"
     contexto = _contexto(
         fazenda, empresa, plano, modulos, preco_mensal, ciclo_pagamento,
         documento, endereco, representante_nome, representante_cpf, cidade_foro, estado_foro,
     )
-    return Template(arquivo.read_text(encoding="utf-8")).render(**contexto)
+    return _AMBIENTE.get_template(f"contrato_cowdata.{formato}").render(**contexto)

@@ -2,9 +2,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, X } from "lucide-react";
 import {
-  fetchLidasParaLancar, lancarLida, fetchLidasAtivas, cancelarProtocolo, formatDate, fetchPessoas,
+  fetchLidasParaLancar, lancarLida, fetchLidasAtivas, cancelarProtocolo, formatDate,
   type Lida,
 } from "@/lib/api";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
@@ -26,9 +27,15 @@ function LidasAtivas({ recarregarRef }: { recarregarRef: React.MutableRefObject<
     finally { setCancelando(null); }
   };
 
-  if (!ativos || !ativos.length) return null;
+  if (!ativos || !ativos.length) {
+    return (
+      <div className="card" style={{ textAlign: "center", padding: "2.2rem 1rem" }}>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma lida em andamento.</p>
+      </div>
+    );
+  }
   return (
-    <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+    <div className="card" style={{ background: "var(--surface-2)" }}>
       <div className="card-header mb-2" style={{ background: "none", color: "var(--dourado-light)", padding: "0 0 0.3rem" }}>
         Lidas em andamento ({ativos.length})
       </div>
@@ -105,15 +112,10 @@ export function FormLida({ animais }: { animais: AnimalRow[] }) {
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
   const recarregarAtivosRef = useRef(() => {});
-  const [pessoas, setPessoas] = useState<any[]>([]);
+  const { pessoas: pessoasAtivas } = usePessoasAtivas();
 
   useEffect(() => { fetchLidasParaLancar().then(setLidas).catch(() => setLidas([])); }, []);
-  useEffect(() => { fetchPessoas().then(setPessoas).catch(() => setPessoas([])); }, []);
   const lida = lidas.find((l) => String(l.id) === lidaId);
-  const pessoasAtivas = useMemo(
-    () => pessoas.filter((p) => p.ativo !== false).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
-    [pessoas]
-  );
 
   async function salvar() {
     setErro(null); setSucesso(null);
@@ -155,6 +157,11 @@ export function FormLida({ animais }: { animais: AnimalRow[] }) {
 
   return (
     <>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        <LidasAtivas recarregarRef={recarregarAtivosRef} />
+      </div>
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Lida" full>
           <select style={inputStyle} value={lidaId} onChange={(e) => setLidaId(e.target.value)}>
@@ -264,13 +271,14 @@ export function FormLida({ animais }: { animais: AnimalRow[] }) {
           )}
         </div>
       )}
-      <LidasAtivas recarregarRef={recarregarAtivosRef} />
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
         <button className="btn-primary" onClick={salvar} disabled={salvando || !podeSalvar}>
           {salvando ? "Salvando…" : vinculo === "fazenda" ? "Salvar (tarefa da fazenda)" : `Salvar (${numerosAlvo.size || 0} ${numerosAlvo.size !== 1 ? "animais" : "animal"})`}
         </button>
+      </div>
+      </div>
       </div>
     </>
   );

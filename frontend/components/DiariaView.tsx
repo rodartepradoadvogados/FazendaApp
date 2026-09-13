@@ -1,13 +1,13 @@
 "use client";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, DollarSign, Pencil, Check, X, Trash2, Receipt, CalendarCheck2, CalendarClock } from "lucide-react";
+import { Plus, DollarSign, Pencil, Check, X, Trash2, Receipt, CalendarCheck2, CalendarClock, Ban, RotateCcw } from "lucide-react";
 import {
   fetchPessoas, fetchDiarias, criarDiaria, atualizarDiaria, registrarPagamentoDiaria, formatBRL,
   fetchParametroDiariaPadrao, salvarParametroDiariaPadrao, responderAuditoriaDiaria, ParametroDiariaPadrao, ehAdmin,
-  confirmarExclusao, fetchContasCorrentes, type ContaCorrenteCadastro,
-  fetchDiasDiaria, salvarDiasDiaria, type DiasDiariaResposta,
+  confirmarExclusao, fetchContasCorrentes, type ContaCorrenteCadastro, encerrarDiaria, reabrirDiaria,
+  fetchDiasDiaria, salvarDiasDiaria, type DiasDiariaResposta, anexarArquivoLancamento,
 } from "@/lib/api";
-import { SecaoRecolhivel } from "@/components/ui";
+import { SecaoRecolhivel, type ModoSecaoCategoria } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import ValeAvulsoSection from "@/components/ValeAvulsoSection";
 import CalendarioDiasTrabalhados from "@/components/CalendarioDiasTrabalhados";
@@ -16,7 +16,7 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
 
 type Pessoa = { id: number; nome: string; tipos: string[] };
-type Pagamento = { id: number; data_pagamento: string; valor: number; observacao: string | null };
+type Pagamento = { id: number; data_pagamento: string; valor: number; observacao: string | null; numero_lancamento_gerado: string | null };
 type ValeAvulso = { id: number; valor: number; forma_pagamento: string; data_pagamento: string; observacao: string | null };
 type AuditoriaPendente = { id: number; diaria_id: number; periodo_inicio: string; periodo_fim: string };
 type Diaria = {
@@ -31,9 +31,31 @@ type Diaria = {
   // contagem cega legada); uma vez setado, nunca mais volta a null.
   controle_por_dia_desde: string | null;
   dias_folga: number;
+  dias_meia_diaria: number;
   ultima_folga: string | null;
   pago_ate: string | null;
+  // Encerramento do período (ver rh_contratos.py::encerrar_diaria). Encerrar
+  // devendo passa a EMITIR uma conta a pagar de verdade — antes a dívida
+  // ficava só aqui e sumia do radar financeiro (nem Agenda, nem Contas a
+  // Pagar), ainda por cima com a linha fora da listagem padrão.
+  data_encerramento: string | null;
+  // `periodo_congelado` = fechado pelo fluxo novo: o apurado para de ser
+  // recalculado e vem da fotografia gravada no fechamento. Diária encerrada
+  // ANTES desta feature vem false (sem retroatividade).
+  periodo_congelado: boolean;
+  cobranca: {
+    numero_lancamento: string; valor: number; data_vencimento: string;
+    valor_pago: number | null; data_pagamento: string | null; status: "pago" | "em_aberto";
+  } | null;
 };
+
+// Dia 1º do mês seguinte — mesmo vencimento-padrão que o backend usa para a
+// etapa de empreitada concluída (`_competencia_seguinte`).
+function primeiroDiaDoMesSeguinte(): string {
+  const hoje = new Date();
+  const proximo = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 1);
+  return `${proximo.getFullYear()}-${String(proximo.getMonth() + 1).padStart(2, "0")}-01`;
+}
 
 const DIAS_SEMANA = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 
@@ -42,15 +64,25 @@ function fmtDataBR(iso: string | null): string {
   return iso.split("-").reverse().join("/");
 }
 
-export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
+export default function DiariaView({ deepLinkDiariaId, deepLinkModo, mostrar = "tudo" }: {
   // Vem do card "diária de hoje" da Agenda, via FolhaPagamentoView — abre o
   // calendário "Dias trabalhados" já na diarista certa, sem o usuário caçar
   // a linha na tabela (ver comentário em FolhaPagamentoView.tsx).
   deepLinkDiariaId?: number; deepLinkModo?: "ultimo_periodo" | "completo";
+  /** Formulários, listagem, ou os dois — ver ModoSecaoCategoria. */
+  mostrar?: ModoSecaoCategoria;
 } = {}) {
   const [pessoas, setPessoas] = useState<Pessoa[]>([]);
   const [itens, setItens] = useState<Diaria[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Nasce MARCADO. Era desmarcado ("só quem ainda está fazendo diárias",
+  // padrão de "mostrar inativos" de Usuários), e é justamente aí que a
+  // dívida sumia: um período encerrado devendo saía da tela e ninguém mais
+  // olhava para ele. Como o encerramento passou a emitir conta a pagar, os
+  // encerrados são exatamente as linhas que ainda custam dinheiro — e são
+  // eles que alimentam o cartão "Cobrado, em aberto" logo abaixo.
+  const [mostrarFinalizadas, setMostrarFinalizadas] = useState(true);
+  const [encerrandoId, setEncerrandoId] = useState<number | null>(null);
 
   const [pessoaId, setPessoaId] = useState("");
   const [valorDiaria, setValorDiaria] = useState("");
@@ -76,6 +108,9 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
   const [pagoErro, setPagoErro] = useState<string | null>(null);
   const [contasCorrentes, setContasCorrentes] = useState<ContaCorrenteCadastro[]>([]);
   const [pagamentoContaCorrenteId, setPagamentoContaCorrenteId] = useState("");
+  const [comprovantePagamento, setComprovantePagamento] = useState<File | null>(null);
+  const [enviandoPagamento, setEnviandoPagamento] = useState(false);
+  const [enviandoComprovanteId, setEnviandoComprovanteId] = useState<number | null>(null);
 
   const [diasTrabalhadosPorAuditoria, setDiasTrabalhadosPorAuditoria] = useState<Record<number, string>>({});
   const [auditoriaErro, setAuditoriaErro] = useState<string | null>(null);
@@ -92,6 +127,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
   // app/sanidade/page.tsx): admin exclui na hora, operador só solicita.
   const [pagamentosAbertoId, setPagamentosAbertoId] = useState<number | null>(null);
   const [erroExclusao, setErroExclusao] = useState<string | null>(null);
+  const [avisoPagamento, setAvisoPagamento] = useState<string | null>(null);
   const [ocupadoExclusao, setOcupadoExclusao] = useState<number | null>(null);
 
   // Estimativa de nº de diárias/valor quando início e fim são informados no
@@ -109,13 +145,77 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
     return { totalDias, totalValor: totalDias * valor, futura, diasAteHoje, valorAteHoje: diasAteHoje * valor };
   }, [dataInicio, dataFim, valorDiaria]);
 
-  const carregar = () => fetchDiarias().then(setItens).catch((e) => setError(e.message));
+  const carregar = () => fetchDiarias(mostrarFinalizadas).then(setItens).catch((e) => setError(e.message));
   useEffect(() => {
     carregar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mostrarFinalizadas]);
+  useEffect(() => {
     fetchPessoas().then(setPessoas).catch(() => {});
     fetchParametroDiariaPadrao().then(setParametroPadrao).catch(() => {});
     fetchContasCorrentes().then(setContasCorrentes).catch(() => {});
   }, []);
+
+  // ── Encerrar e cobrar ───────────────────────────────────────────────────
+  // Era um window.confirm que só marcava a diária como finalizada. O
+  // problema: encerrar devendo não gerava conta a pagar nenhuma, e a linha
+  // ainda sumia da listagem padrão — a dívida deixava de existir para quem
+  // olha a Agenda ou o Contas a Pagar. Agora é um passo consciente, com o
+  // apurado na frente, o último dia trabalhado (obrigatório, senão o
+  // contador não para) e o vencimento da cobrança.
+  const [encerrandoDiaria, setEncerrandoDiaria] = useState<Diaria | null>(null);
+  const [encerrarUltimoDia, setEncerrarUltimoDia] = useState("");
+  const [encerrarVencimento, setEncerrarVencimento] = useState("");
+  const [encerrarErro, setEncerrarErro] = useState<string | null>(null);
+  const [reabrindoId, setReabrindoId] = useState<number | null>(null);
+
+  function abrirEncerramento(d: Diaria) {
+    setEncerrandoDiaria(d);
+    setEncerrarUltimoDia(d.data_fim || new Date().toISOString().slice(0, 10));
+    setEncerrarVencimento(primeiroDiaDoMesSeguinte());
+    setEncerrarErro(null);
+  }
+
+  async function confirmarEncerramento() {
+    const d = encerrandoDiaria;
+    if (!d) return;
+    if (!encerrarUltimoDia) { setEncerrarErro("Informe o último dia trabalhado."); return; }
+    if (d.saldo_devedor > 0 && !encerrarVencimento) { setEncerrarErro("Informe o vencimento da conta a pagar."); return; }
+    setEncerrandoId(d.id);
+    setEncerrarErro(null);
+    try {
+      await encerrarDiaria(d.id, {
+        data_encerramento: encerrarUltimoDia,
+        data_vencimento: d.saldo_devedor > 0 ? encerrarVencimento : undefined,
+      });
+      setEncerrandoDiaria(null);
+      carregar();
+    } catch (e: any) {
+      setEncerrarErro(e.message || "Erro ao encerrar diária");
+    } finally {
+      setEncerrandoId(null);
+    }
+  }
+
+  // Reabrir apaga a cobrança emitida e descongela o apurado. O backend
+  // recusa (400) quando a conta já foi paga — a mensagem dele já explica que
+  // o caminho é estornar a baixa no Financeiro.
+  async function reabrirPeriodo(d: Diaria) {
+    const aviso = d.cobranca
+      ? `Reabrir o período de ${d.pessoa_nome}? A conta a pagar ${d.cobranca.numero_lancamento} (${formatBRL(d.cobranca.valor)}) será apagada e o apurado volta a correr.`
+      : `Reabrir o período de ${d.pessoa_nome}? O apurado volta a correr a partir do último dia trabalhado.`;
+    if (!window.confirm(aviso)) return;
+    setErroExclusao(null);
+    setReabrindoId(d.id);
+    try {
+      await reabrirDiaria(d.id);
+      carregar();
+    } catch (e: any) {
+      setErroExclusao(e.message || "Erro ao reabrir diária");
+    } finally {
+      setReabrindoId(null);
+    }
+  }
 
   async function salvar() {
     setMsg(null);
@@ -173,15 +273,46 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
   async function registrarPagamento(diariaId: number) {
     setPagoErro(null);
     if (!valorPagamento || parseFloat(valorPagamento) <= 0) { setPagoErro("Informe o valor do pagamento."); return; }
+    setEnviandoPagamento(true);
     try {
-      await registrarPagamentoDiaria(diariaId, {
+      const resultado = await registrarPagamentoDiaria(diariaId, {
         data_pagamento: dataPagamento, valor: parseFloat(valorPagamento),
         conta_corrente_id: pagamentoContaCorrenteId ? Number(pagamentoContaCorrenteId) : undefined,
       });
-      setPagandoId(null); setValorPagamento(""); setPagamentoContaCorrenteId("");
+      // O pagamento já foi salvo aqui — se o anexo do comprovante falhar
+      // (ex.: arquivo grande numa conexão ruim), o pagamento não pode
+      // desaparecer nem parecer que deu erro; só avisa e deixa a fazenda
+      // anexar depois pela lista de pagamentos lançados.
+      if (comprovantePagamento && resultado.numero_lancamento_gerado) {
+        try {
+          await anexarArquivoLancamento(resultado.numero_lancamento_gerado, comprovantePagamento);
+        } catch (e: any) {
+          setPagandoId(null); setValorPagamento(""); setPagamentoContaCorrenteId(""); setComprovantePagamento(null);
+          carregar();
+          setAvisoPagamento(`Pagamento registrado, mas o comprovante não foi anexado: ${e.message || "erro desconhecido"}. Anexe de novo pela lista de pagamentos lançados.`);
+          return;
+        }
+      }
+      setPagandoId(null); setValorPagamento(""); setPagamentoContaCorrenteId(""); setComprovantePagamento(null);
       carregar();
     } catch (e: any) {
       setPagoErro(e.message || "Erro ao registrar pagamento");
+    } finally {
+      setEnviandoPagamento(false);
+    }
+  }
+
+  async function anexarComprovantePagamento(pagamentoId: number, numeroLancamento: string | null, file: File) {
+    if (!numeroLancamento) { setAvisoPagamento("Este pagamento é antigo e não tem lançamento associado — não é possível anexar comprovante nele."); return; }
+    setEnviandoComprovanteId(pagamentoId);
+    setAvisoPagamento(null);
+    try {
+      await anexarArquivoLancamento(numeroLancamento, file);
+      carregar();
+    } catch (e: any) {
+      setAvisoPagamento(`Erro ao anexar comprovante: ${e.message || "erro desconhecido"}`);
+    } finally {
+      setEnviandoComprovanteId(null);
     }
   }
 
@@ -266,6 +397,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
   const [calendarioAberto, setCalendarioAberto] = useState<{ diariaId: number; modo: "ultimo_periodo" | "completo" } | null>(null);
   const [dadosCalendario, setDadosCalendario] = useState<DiasDiariaResposta | null>(null);
   const [diasNaoTrabalhados, setDiasNaoTrabalhados] = useState<Set<string>>(new Set());
+  const [diasMeiaDiaria, setDiasMeiaDiaria] = useState<Set<string>>(new Set());
   const [calendarioCarregando, setCalendarioCarregando] = useState(false);
   const [calendarioSalvando, setCalendarioSalvando] = useState(false);
   const [calendarioErro, setCalendarioErro] = useState<string | null>(null);
@@ -282,7 +414,8 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
     try {
       const dados = await fetchDiasDiaria(diariaId, { modo, desde: opts?.desde, ate: opts?.ate });
       setDadosCalendario(dados);
-      setDiasNaoTrabalhados(new Set(dados.dias.filter((d) => !d.trabalhado).map((d) => d.data)));
+      setDiasNaoTrabalhados(new Set(dados.dias.filter((d) => !d.trabalhado && !d.meia_diaria).map((d) => d.data)));
+      setDiasMeiaDiaria(new Set(dados.dias.filter((d) => d.meia_diaria).map((d) => d.data)));
       setCalendarioDesde(dados.periodo_inicio);
       setCalendarioAte(dados.periodo_fim);
     } catch (e: any) {
@@ -296,6 +429,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
     setCalendarioAberto(null);
     setDadosCalendario(null);
     setDiasNaoTrabalhados(new Set());
+    setDiasMeiaDiaria(new Set());
     setCalendarioErro(null);
   }
 
@@ -314,12 +448,30 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itens, deepLinkDiariaId, deepLinkModo]);
 
-  function toggleDiaCalendario(iso: string) {
-    setDiasNaoTrabalhados((prev) => {
-      const novo = new Set(prev);
-      if (novo.has(iso)) novo.delete(iso); else novo.add(iso);
-      return novo;
+  // Cicla um dia entre os 3 estados: trabalhado -> folga -> meia diária ->
+  // trabalhado. "Marcar todos como X" (CalendarioDiasTrabalhados.tsx) seta
+  // os Sets direto em vez de simular cliques.
+  function cicloDiaCalendario(iso: string) {
+    if (diasNaoTrabalhados.has(iso)) {
+      setDiasNaoTrabalhados((p) => { const n = new Set(p); n.delete(iso); return n; });
+      setDiasMeiaDiaria((p) => new Set(p).add(iso));
+    } else if (diasMeiaDiaria.has(iso)) {
+      setDiasMeiaDiaria((p) => { const n = new Set(p); n.delete(iso); return n; });
+    } else {
+      setDiasNaoTrabalhados((p) => new Set(p).add(iso));
+    }
+  }
+
+  function marcarTodosComo(alvo: "trabalhado" | "folga" | "meia") {
+    if (!dadosCalendario) return;
+    const novasFolgas = new Set<string>();
+    const novasMeias = new Set<string>();
+    dadosCalendario.dias.forEach((d) => {
+      if (alvo === "folga") novasFolgas.add(d.data);
+      else if (alvo === "meia") novasMeias.add(d.data);
     });
+    setDiasNaoTrabalhados(novasFolgas);
+    setDiasMeiaDiaria(novasMeias);
   }
 
   async function salvarCalendario() {
@@ -330,6 +482,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
       periodo_inicio: dadosCalendario.periodo_inicio,
       periodo_fim: dadosCalendario.periodo_fim,
       dias_nao_trabalhados: Array.from(diasNaoTrabalhados),
+      dias_meia_diaria: Array.from(diasMeiaDiaria),
     };
     try {
       await salvarDiasDiaria(calendarioAberto.diariaId, body);
@@ -366,10 +519,38 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
   const ordAuditorias = useOrdenacao(auditoriasPendentes);
   const ordDiarias = useOrdenacao(itens ?? []);
 
+  // Os três números que respondem "quanto a fazenda deve", separados porque
+  // significam coisas diferentes: o que ainda nem virou cobrança, o que já
+  // foi cobrado e está esperando pagamento, e o que foi pago A MAIS. O
+  // crédito fica em caixa própria de propósito — dinheiro pago a mais para
+  // uma pessoa não abate o que se deve a outra, e somar tudo numa linha só
+  // esconderia as duas informações.
+  const totais = useMemo(() => {
+    const lista = itens ?? [];
+    let aCobrar = 0, pessoasACobrar = 0, cobradoEmAberto = 0, contasEmAberto = 0, credito = 0, pessoasComCredito = 0;
+    for (const d of lista) {
+      if (d.cobranca && d.cobranca.status === "em_aberto") {
+        cobradoEmAberto += d.cobranca.valor - (d.cobranca.valor_pago ?? 0);
+        contasEmAberto += 1;
+      } else if (d.saldo_devedor > 0) {
+        aCobrar += d.saldo_devedor;
+        pessoasACobrar += 1;
+      } else if (d.saldo_devedor < 0) {
+        credito += -d.saldo_devedor;
+        pessoasComCredito += 1;
+      }
+    }
+    return { aCobrar, pessoasACobrar, cobradoEmAberto, contasEmAberto, credito, pessoasComCredito };
+  }, [itens]);
+
   if (error) return <div className="alert-critico"><span>Sem dados: {error}.</span></div>;
+
+  const mostraLancar = mostrar !== "listar";
+  const mostraListagem = mostrar !== "lancar";
 
   return (
     <div>
+      {mostraLancar && (<>
       <SecaoRecolhivel titulo="Novo diarista" icon={Plus} defaultAberta={false} descricao="Valor da diária e data de início da contagem">
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
           <div>
@@ -501,7 +682,9 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
           onLancado={carregar}
         />
       </SecaoRecolhivel>
+      </>)}
 
+      {mostraListagem && (<>
       {itens && itens.some((d) => d.auditorias_pendentes?.length) && (
         <div className="card mt-4" style={{ borderLeft: "3px solid var(--amber)" }}>
           <div className="card-header mb-3">Auditorias de diária pendentes</div>
@@ -538,9 +721,54 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
         </div>
       )}
 
+      {itens && itens.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
+          <div className="card" style={{ borderLeft: "3px solid var(--dourado)", padding: "0.85rem 1rem" }}>
+            <div style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-muted)" }}>
+              A pagar — ainda não cobrado
+            </div>
+            <div style={{ fontSize: "1.35rem", fontWeight: 700, marginTop: "0.15rem" }}>{formatBRL(totais.aCobrar)}</div>
+            <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+              {totais.pessoasACobrar} diarista(s) com saldo em aberto
+            </div>
+          </div>
+          <div className="card" style={{ borderLeft: "3px solid var(--amber)", padding: "0.85rem 1rem" }}>
+            <div style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-muted)" }}>
+              Cobrado, em aberto
+            </div>
+            <div style={{ fontSize: "1.35rem", fontWeight: 700, marginTop: "0.15rem", color: "var(--amber)" }}>{formatBRL(totais.cobradoEmAberto)}</div>
+            <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+              {totais.contasEmAberto} conta(s) a pagar emitida(s)
+            </div>
+          </div>
+          <div className="card" style={{ borderLeft: "3px solid var(--red)", padding: "0.85rem 1rem" }}>
+            <div style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--red)" }}>
+              Pago a mais
+            </div>
+            <div style={{ fontSize: "1.35rem", fontWeight: 700, marginTop: "0.15rem", color: "var(--red)" }}>{formatBRL(totais.credito)}</div>
+            <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+              {totais.pessoasComCredito} diarista(s) — crédito da fazenda, não abate o que se deve a outra pessoa
+            </div>
+          </div>
+          {!mostrarFinalizadas && (
+            <p style={{ gridColumn: "1 / -1", fontSize: "0.72rem", color: "var(--amber)", margin: 0 }}>
+              Estes totais contam só as diárias listadas abaixo. Com &quot;Incluir finalizadas&quot; desmarcado, os períodos já
+              encerrados — inclusive os que têm conta a pagar em aberto — ficam de fora.
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="card mt-4">
-        <div className="card-header mb-3">Controle de diárias</div>
+        <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+          <span>Controle de diárias</span>
+          <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", fontWeight: 400, cursor: "pointer" }}>
+            <input type="checkbox" checked={mostrarFinalizadas} onChange={(e) => setMostrarFinalizadas(e.target.checked)} />
+            Incluir finalizadas
+          </label>
+        </div>
         {erroExclusao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{erroExclusao}</p>}
+        {avisoPagamento && <p style={{ color: "var(--amber)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{avisoPagamento}</p>}
         {calendarioMsg && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{calendarioMsg}</p>}
         {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
         {itens && !itens.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma diarista lançada ainda.</p>}
@@ -554,6 +782,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
                   <ThOrdenavel label="Fim" campo="data_fim" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
                   <ThOrdenavel label="Nº diárias" campo="numero_diarias" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
                   <ThOrdenavel label="Folgas" campo="dias_folga" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
+                  <ThOrdenavel label="Meia diária" campo="dias_meia_diaria" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
                   <ThOrdenavel label="Valor diária" campo="valor_diaria" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
                   <ThOrdenavel label="Total até hoje" campo="total_ate_hoje" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
                   <ThOrdenavel label="Pago" campo="valor_pago" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
@@ -566,11 +795,38 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
                 {ordDiarias.linhasOrdenadas.map((d) => (
                   <Fragment key={d.id}>
                   <tr>
-                    <td style={{ fontWeight: 700 }}>{d.pessoa_nome}</td>
+                    <td style={{ fontWeight: 700 }}>
+                      {d.pessoa_nome}
+                      {d.status === "encerrado" && (
+                        <span style={{ marginLeft: "0.4rem", fontSize: "0.68rem", fontWeight: 700, color: "var(--text-muted)", border: "1px solid var(--border)", borderRadius: "999px", padding: "0.05rem 0.45rem" }}>
+                          Finalizada
+                        </span>
+                      )}
+                      {/* De onde está a dívida: enquanto não há cobrança
+                          emitida, ela só existe aqui — que era exatamente o
+                          problema. Com a conta emitida, o selo aponta o
+                          lançamento que a Agenda e o Contas a Pagar mostram. */}
+                      {d.cobranca && (
+                        <span title={`Conta a pagar ${d.cobranca.numero_lancamento} — vence em ${fmtDataBR(d.cobranca.data_vencimento)}`}
+                          style={{
+                            marginLeft: "0.4rem", fontSize: "0.68rem", fontWeight: 700, borderRadius: "999px", padding: "0.05rem 0.45rem",
+                            color: d.cobranca.status === "pago" ? "var(--green-light)" : "var(--amber)",
+                            border: `1px solid ${d.cobranca.status === "pago" ? "var(--green-light)" : "var(--amber)"}`,
+                          }}>
+                          {d.cobranca.status === "pago" ? "Cobrança paga" : `Cobrado — ${d.cobranca.numero_lancamento}`}
+                        </span>
+                      )}
+                      {d.periodo_congelado && !d.cobranca && (
+                        <span style={{ marginLeft: "0.4rem", fontSize: "0.68rem", fontWeight: 700, color: "var(--green-light)", border: "1px solid var(--green-light)", borderRadius: "999px", padding: "0.05rem 0.45rem" }}>
+                          Quitada no fechamento
+                        </span>
+                      )}
+                    </td>
                     <td>{fmtDataBR(d.data_inicio)}</td>
                     <td>{fmtDataBR(d.data_fim)}</td>
                     <td>{d.numero_diarias}</td>
                     <td>{d.dias_folga ?? 0}</td>
+                    <td>{d.dias_meia_diaria ?? 0}</td>
                     <td>{formatBRL(d.valor_diaria)}</td>
                     <td>{formatBRL(d.total_ate_hoje)}</td>
                     <td>{formatBRL(d.valor_pago)}</td>
@@ -583,7 +839,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
                           <Pencil size={13} />
                         </button>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
-                          onClick={() => { setPagandoId(d.id); setValorPagamento(d.saldo_devedor > 0 ? d.saldo_devedor.toFixed(2) : ""); setPagamentoContaCorrenteId(""); setPagoErro(null); }}>
+                          onClick={() => { setPagandoId(d.id); setValorPagamento(d.saldo_devedor > 0 ? d.saldo_devedor.toFixed(2) : ""); setPagamentoContaCorrenteId(""); setComprovantePagamento(null); setPagoErro(null); }}>
                           <DollarSign size={13} /> Pagar
                         </button>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem" }} title="Ver pagamentos lançados"
@@ -610,6 +866,20 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
                             </button>
                           </>
                         )}
+                        {d.status !== "encerrado" && (
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                            title="Fechar o período: para o contador, congela o apurado e emite a conta a pagar do que ainda se deve"
+                            disabled={encerrandoId === d.id} onClick={() => abrirEncerramento(d)}>
+                            <Ban size={13} /> {d.saldo_devedor > 0 ? "Encerrar e cobrar" : "Encerrar"}
+                          </button>
+                        )}
+                        {d.periodo_congelado && (
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                            title="Reabrir o período — apaga a cobrança em aberto e descongela o apurado (recusado se a conta já foi paga)"
+                            disabled={reabrindoId === d.id} onClick={() => reabrirPeriodo(d)}>
+                            <RotateCcw size={13} /> {reabrindoId === d.id ? "Reabrindo…" : "Reabrir"}
+                          </button>
+                        )}
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} title="Excluir diária"
                           disabled={ocupadoExclusao === d.id} onClick={() => excluirDiaria(d)}>
                           <Trash2 size={13} />
@@ -619,7 +889,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
                   </tr>
                   {pagamentosAbertoId === d.id && (
                     <tr>
-                      <td colSpan={11} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                      <td colSpan={12} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
                         <div style={{ fontSize: "0.75rem", fontWeight: 700, marginBottom: "0.4rem" }}>Pagamentos lançados</div>
                         {!d.pagamentos?.length && <p style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>Nenhum pagamento lançado ainda.</p>}
                         {d.pagamentos?.length > 0 && (
@@ -634,6 +904,15 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
                                   <td>{formatBRL(p.valor)}</td>
                                   <td>{p.observacao || "—"}</td>
                                   <td>
+                                    <label className="btn-ghost" style={{ fontSize: "0.7rem", display: "inline-flex", alignItems: "center", gap: "0.25rem", cursor: "pointer" }}
+                                      title="Anexar comprovante de pagamento">
+                                      <Receipt size={12} /> {enviandoComprovanteId === p.id ? "Enviando…" : "Comprovante"}
+                                      <input
+                                        type="file" accept="application/pdf,image/jpeg,image/png,image/webp" style={{ display: "none" }}
+                                        disabled={enviandoComprovanteId === p.id}
+                                        onChange={(e) => { const f = e.target.files?.[0]; if (f) anexarComprovantePagamento(p.id, p.numero_lancamento_gerado, f); e.target.value = ""; }}
+                                      />
+                                    </label>
                                     <button className="btn-ghost" style={{ fontSize: "0.7rem", color: "var(--red)" }} title="Excluir pagamento"
                                       disabled={ocupadoExclusao === p.id}
                                       onClick={() => excluirPagamento(p.id, d.pessoa_nome, p.valor)}>
@@ -650,7 +929,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
                   )}
                   {editandoId === d.id && (
                     <tr>
-                      <td colSpan={11} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                      <td colSpan={12} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
                           <div><label style={lbl}>Data de início</label>
                             <input type="date" style={inputSm} value={editDataInicio} onChange={(e) => setEditDataInicio(e.target.value)} /></div>
@@ -678,6 +957,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
           </div>
         )}
       </div>
+      </>)}
 
       {pagandoId !== null && (
         <Modal title="Registrar pagamento de diária" onClose={() => setPagandoId(null)} width="380px">
@@ -696,9 +976,17 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
               {contasCorrentes.map((c) => <option key={c.id} value={c.id}>{c.rotulo}</option>)}
             </select>
           </div>
+          <div style={{ marginTop: "0.6rem" }}>
+            <label style={lbl}>Comprovante de pagamento (opcional)</label>
+            <input
+              type="file" accept="application/pdf,image/jpeg,image/png,image/webp"
+              onChange={(e) => setComprovantePagamento(e.target.files?.[0] || null)}
+              style={{ fontSize: "0.78rem" }}
+            />
+          </div>
           {pagoErro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.5rem" }}>{pagoErro}</p>}
-          <button className="btn-primary" style={{ fontSize: "0.8rem", marginTop: "1rem" }} onClick={() => registrarPagamento(pagandoId)}>
-            Confirmar pagamento
+          <button className="btn-primary" style={{ fontSize: "0.8rem", marginTop: "1rem" }} disabled={enviandoPagamento} onClick={() => registrarPagamento(pagandoId)}>
+            {enviandoPagamento ? "Enviando…" : "Confirmar pagamento"}
           </button>
         </Modal>
       )}
@@ -742,7 +1030,9 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
               <CalendarioDiasTrabalhados
                 dados={dadosCalendario}
                 diasNaoTrabalhados={diasNaoTrabalhados}
-                onToggleDia={toggleDiaCalendario}
+                diasMeiaDiaria={diasMeiaDiaria}
+                onClickDia={cicloDiaCalendario}
+                onMarcarTodos={marcarTodosComo}
               />
 
               <div className="flex items-center gap-2" style={{ marginTop: "1rem" }}>
@@ -755,6 +1045,86 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
               </div>
             </div>
           )}
+        </Modal>
+      )}
+
+      {/* Encerrar e cobrar — o apurado na frente, o último dia trabalhado
+          (obrigatório: sem ele o contador não para e o período "encerrado"
+          segue somando diária todo dia, invisível) e o vencimento da conta
+          que vai nascer. */}
+      {encerrandoDiaria && (
+        <Modal title={`Encerrar e cobrar — ${encerrandoDiaria.pessoa_nome}`} onClose={() => setEncerrandoDiaria(null)} width="560px">
+          <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+            Confira o que foi apurado antes de fechar. Depois de encerrado, o valor deste período para de mudar.
+          </p>
+          <table className="fazenda-table" style={{ fontSize: "0.8rem", marginBottom: "0.9rem" }}>
+            <tbody>
+              <tr>
+                <td>Diárias apuradas</td>
+                <td style={{ color: "var(--text-muted)" }}>
+                  {encerrandoDiaria.numero_diarias} × {formatBRL(encerrandoDiaria.valor_diaria)}
+                </td>
+                <td style={{ textAlign: "right" }}>{formatBRL(encerrandoDiaria.total_ate_hoje)}</td>
+              </tr>
+              <tr>
+                <td>Já pago</td>
+                <td style={{ color: "var(--text-muted)" }}>{encerrandoDiaria.pagamentos?.length ?? 0} pagamento(s)</td>
+                <td style={{ textAlign: "right" }}>− {formatBRL(encerrandoDiaria.valor_pago)}</td>
+              </tr>
+              <tr>
+                <td>Vales adiantados</td>
+                <td style={{ color: "var(--text-muted)" }}>{encerrandoDiaria.vales?.length ?? 0} vale(s)</td>
+                <td style={{ textAlign: "right" }}>− {formatBRL(encerrandoDiaria.valor_vale)}</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 700 }}>A fazenda deve</td>
+                <td style={{ color: "var(--text-muted)" }}>valor congelado no fechamento</td>
+                <td style={{ textAlign: "right", fontWeight: 700, color: encerrandoDiaria.saldo_devedor > 0 ? "var(--amber)" : "var(--green-light)" }}>
+                  {formatBRL(encerrandoDiaria.saldo_devedor)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label style={lbl}>Último dia trabalhado</label>
+              <input type="date" style={inputSm} value={encerrarUltimoDia} onChange={(e) => setEncerrarUltimoDia(e.target.value)} />
+            </div>
+            {encerrandoDiaria.saldo_devedor > 0 && (
+              <div>
+                <label style={lbl}>Vencimento da conta a pagar</label>
+                <input type="date" style={inputSm} value={encerrarVencimento} onChange={(e) => setEncerrarVencimento(e.target.value)} />
+              </div>
+            )}
+          </div>
+
+          <ul style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: "0.9rem 0 0", paddingLeft: "1.1rem", lineHeight: 1.55 }}>
+            {encerrandoDiaria.saldo_devedor > 0 ? (
+              <>
+                <li>Nasce uma conta a pagar de <strong>{formatBRL(encerrandoDiaria.saldo_devedor)}</strong>, em aberto.</li>
+                <li>Ela aparece na Agenda e em Contas a pagar como qualquer despesa da fazenda.</li>
+                <li>Quando você baixar essa conta no Financeiro, o pagamento volta para cá e o saldo zera.</li>
+              </>
+            ) : (
+              <li>Não há saldo devedor: nenhuma conta a pagar é criada (uma conta de R$ 0,00 seria invisível na Agenda e ficaria pendurada para sempre).</li>
+            )}
+            <li>O apurado para de crescer, e corrigir dias/pagamentos passa a exigir reabrir o período.</li>
+          </ul>
+
+          {encerrarErro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.7rem" }}>{encerrarErro}</p>}
+
+          <div className="flex items-center gap-2" style={{ marginTop: "1rem" }}>
+            <button className="btn-primary" style={{ fontSize: "0.8rem" }}
+              disabled={encerrandoId === encerrandoDiaria.id} onClick={confirmarEncerramento}>
+              {encerrandoId === encerrandoDiaria.id
+                ? "Encerrando…"
+                : encerrandoDiaria.saldo_devedor > 0
+                  ? `Encerrar e emitir conta de ${formatBRL(encerrandoDiaria.saldo_devedor)}`
+                  : "Encerrar período"}
+            </button>
+            <button className="btn-ghost" style={{ fontSize: "0.8rem" }} onClick={() => setEncerrandoDiaria(null)}>Cancelar</button>
+          </div>
         </Modal>
       )}
     </div>

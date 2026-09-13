@@ -17,6 +17,14 @@ Cobre:
 
 Testa tanto a função de regra pura (fazenda.rules.perda_prenhez) quanto a
 integração via API (POST /reproducao/servico + GET /agenda/).
+
+NOTA sobre `"forcar": True` nos lançamentos de integração: reinseminar uma
+matriz que consta como GESTANTE deixou de ser silencioso. A trava de aptidão
+(fazenda/rules/aptidao.py) agora recusa esse lançamento com 409 até alguém
+confirmar explicitamente — justamente porque o efeito dele é o sistema gravar
+uma perda de prenhez que ninguém afirmou. A detecção automática em si não
+mudou: continua acontecendo exatamente como estes testes verificam, só que
+depois de uma decisão humana em vez de por conta própria.
 """
 from __future__ import annotations
 
@@ -212,7 +220,7 @@ class TestIntegracaoReinseminacao:
         _add_servico(engine, "200", date(2026, 3, 1), diagnostico="POSITIVO")
 
         r = c.post("/reproducao/servico", json={
-            "numero_matriz": "200", "data_servico": "2026-08-01", "tipo_servico": "IA",
+            "numero_matriz": "200", "data_servico": "2026-08-01", "tipo_servico": "IA", "forcar": True,
         })
         assert r.status_code == 200, r.text
 
@@ -239,7 +247,7 @@ class TestIntegracaoReinseminacao:
         _add_servico(engine, "201", date(2026, 3, 1), diagnostico="POSITIVO")
 
         r = c.post("/reproducao/servico", json={
-            "numero_matriz": "201", "data_servico": "2026-08-01", "tipo_servico": "IA",
+            "numero_matriz": "201", "data_servico": "2026-08-01", "tipo_servico": "IA", "forcar": True,
         })
         assert r.status_code == 200, r.text
 
@@ -275,7 +283,7 @@ class TestIntegracaoReinseminacao:
         _add_servico(engine, "203", date(2026, 3, 1), diagnostico="POSITIVO")
 
         r1 = c.post("/reproducao/servico", json={
-            "numero_matriz": "203", "data_servico": "2026-08-01", "tipo_servico": "IA",
+            "numero_matriz": "203", "data_servico": "2026-08-01", "tipo_servico": "IA", "forcar": True,
         })
         assert r1.status_code == 200, r1.text
 
@@ -283,7 +291,7 @@ class TestIntegracaoReinseminacao:
         # 1ª (o serviço imediatamente anterior a esta 3ª é a 2ª IA, sem
         # diagnóstico — não há prenhez vigente para "perder" de novo).
         r2 = c.post("/reproducao/servico", json={
-            "numero_matriz": "203", "data_servico": "2026-09-15", "tipo_servico": "IA",
+            "numero_matriz": "203", "data_servico": "2026-09-15", "tipo_servico": "IA", "forcar": True,
         })
         assert r2.status_code == 200, r2.text
 
@@ -303,7 +311,7 @@ class TestIntegracaoReinseminacao:
         _add_animal(engine, "204")
         _add_servico(engine, "204", date(2026, 3, 1), diagnostico="POSITIVO")
         c.post("/reproducao/servico", json={
-            "numero_matriz": "204", "data_servico": "2026-08-01", "tipo_servico": "IA",
+            "numero_matriz": "204", "data_servico": "2026-08-01", "tipo_servico": "IA", "forcar": True,
         })
         with Session(engine) as s:
             anterior = s.exec(
@@ -324,7 +332,7 @@ class TestIntegracaoReinseminacao:
         _add_animal(engine, "205")
         _add_servico(engine, "205", date(2026, 3, 1), diagnostico="POSITIVO")
         c.post("/reproducao/servico", json={
-            "numero_matriz": "205", "data_servico": "2026-08-01", "tipo_servico": "IA",
+            "numero_matriz": "205", "data_servico": "2026-08-01", "tipo_servico": "IA", "forcar": True,
         })
         with Session(engine) as s:
             anterior = s.exec(
@@ -364,7 +372,7 @@ class TestIntegracaoReinseminacao:
         _add_servico(engine, "207", date(2026, 3, 1), diagnostico="POSITIVO")
 
         r = c.post("/reproducao/servico-lote", json={
-            "animais": ["207"], "data_servico": "2026-08-01", "tipo": "cio_natural",
+            "animais": ["207"], "data_servico": "2026-08-01", "tipo": "cio_natural", "forcar": True,
         })
         assert r.status_code == 200, r.text
 
@@ -374,3 +382,72 @@ class TestIntegracaoReinseminacao:
             ).first()
         assert anterior.data_perda_prenhez == date(2026, 7, 31)
         assert anterior.origem_perda_prenhez == "reinseminacao"
+
+
+class TestExcluirServicoCausadorRevertePerdaPrenhez:
+    """Gauntlet A-10: a perda automática (acima) gravava tudo no serviço
+    ANTERIOR sem guardar qual serviço NOVO a causou — excluir essa nova
+    inseminação (ex.: lançamento em duplicidade) não tinha como desfazer a
+    perda que ela mesma disparou. `Servico.perda_causada_por_servico_id`
+    fecha esse vínculo; `exclusoes.py` usa-o para reverter."""
+
+    def test_excluir_causador_com_motivo_pendente_reverte_a_perda(self, client):
+        c, engine = client
+        _add_animal(engine, "700")
+        _add_servico(engine, "700", date(2026, 3, 1), diagnostico="POSITIVO")
+
+        r = c.post("/reproducao/servico", json={
+            "numero_matriz": "700", "data_servico": "2026-08-01", "tipo_servico": "IA", "forcar": True,
+        })
+        assert r.status_code == 200, r.text
+        causador_id = r.json()["id"]
+
+        with Session(engine) as s:
+            anterior = s.exec(
+                select(Servico).where(Servico.numero_matriz == "700", Servico.data_servico == date(2026, 3, 1))
+            ).first()
+            assert anterior.data_perda_prenhez == date(2026, 7, 31)
+            assert anterior.perda_causada_por_servico_id == causador_id
+            anterior_id = anterior.id
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "servico", "id": str(causador_id)})
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            anterior = s.get(Servico, anterior_id)
+            assert anterior.data_perda_prenhez is None, \
+                "excluir a IA causadora deve desfazer a perda automática ainda pendente de motivo"
+            assert anterior.origem_perda_prenhez is None
+            assert anterior.perda_causada_por_servico_id is None
+            assert anterior.diagnostico == "POSITIVO", "a vaca volta a estar prenha vigente"
+
+    def test_excluir_causador_com_motivo_ja_confirmado_preserva_a_perda(self, client):
+        """Depois que alguém confirmou o motivo (a perda deixou de ser só uma
+        inferência), excluir o causador não pode apagar um fato já
+        registrado — só desvincula a referência ao serviço que não existe
+        mais."""
+        c, engine = client
+        _add_animal(engine, "701")
+        _add_servico(engine, "701", date(2026, 3, 1), diagnostico="POSITIVO")
+
+        r = c.post("/reproducao/servico", json={
+            "numero_matriz": "701", "data_servico": "2026-08-01", "tipo_servico": "IA", "forcar": True,
+        })
+        assert r.status_code == 200, r.text
+        causador_id = r.json()["id"]
+
+        with Session(engine) as s:
+            anterior_id = s.exec(
+                select(Servico).where(Servico.numero_matriz == "701", Servico.data_servico == date(2026, 3, 1))
+            ).first().id
+
+        c.put(f"/reproducao/servicos/{anterior_id}", json={"motivo_perda_prenhez": "aborto"})
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "servico", "id": str(causador_id)})
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            anterior = s.get(Servico, anterior_id)
+            assert anterior.data_perda_prenhez == date(2026, 7, 31), "motivo já confirmado — a perda é um fato"
+            assert anterior.motivo_perda_prenhez == "aborto"
+            assert anterior.perda_causada_por_servico_id is None, "referência ao serviço apagado é desvinculada"

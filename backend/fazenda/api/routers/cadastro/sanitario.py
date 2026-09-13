@@ -13,13 +13,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_fazenda_atual_id
+from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendamentoPesagem, CalendarioSanitario, Doenca, EventoSanitario, ExameDefinicao, Lote, PrincipioAtivo,
+    AgendamentoPesagem, CalendarioSanitario, Doenca, EventoSanitario, ExameDefinicao, Lote, Pessoa, PrincipioAtivo,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
+from fazenda.rules.checklist_sanitario import template_do_tipo
 
 from ._comum import _crud_nome_ativo
 
@@ -291,24 +292,35 @@ def configurar_calendario_sanitario_padrao(session: Session) -> None:
     session.commit()
 
 
-_listar_principios, _criar_principio, _atualizar_principio, _ = _crud_nome_ativo(PrincipioAtivo, com_fazenda=True)
+_listar_principios, _criar_principio, _atualizar_principio, _ = _crud_nome_ativo(
+    PrincipioAtivo, com_fazenda=True, global_compartilhado=True,
+)
 router.get("/principios-ativos")(_listar_principios)
 router.post("/principios-ativos")(_criar_principio)
 router.put("/principios-ativos/{item_id}")(_atualizar_principio)
 
 
-@router.post("/principios-ativos/restaurar-catalogo")
-def restaurar_catalogo_principios(session: Session = Depends(get_session)) -> dict:
-    """(Re)semeia o catálogo base de princípios ativos (documento base da farmácia)
-    — add-missing e idempotente: só cria os que faltam e não sobrescreve edições.
-    Útil quando o banco foi criado antes do catálogo completo existir."""
-    from fazenda.rules.farmacia import seed_farmacia
-    antes = len(session.exec(select(PrincipioAtivo)).all())
-    seed_farmacia(session)
-    total = len(session.exec(select(PrincipioAtivo)).all())
-    return {"criados": total - antes, "total": total}
+# BUG DE SEGURANÇA CORRIGIDO (achado 35): aqui existia
+# `POST /principios-ativos/restaurar-catalogo`, SEM dependência de fazenda e
+# SEM gate de papel — qualquer usuário com o módulo sanitário disparava uma
+# reescrita (add-missing) do catálogo GLOBAL de princípios ativos, que é
+# compartilhado por todas as fazendas-cliente.
+#
+# Não bastava acrescentar um `exigir_admin` aqui: o catálogo global não é
+# dado da fazenda, é dado da CowData, e escrever nele a partir de um router
+# do TENANT é o mesmo erro estrutural que o catálogo de touros NAAB já teve
+# (escrita removida do lado da fazenda no PR #702). A rota foi movida para
+# `painel_cowdata_farmacia.py`, junto das outras escritas do catálogo global,
+# com o gate que elas já usam (área "farmacia" + `pode_editar_farmacia`).
+#
+# Ninguém do lado da fazenda perdeu função: o botão que a chamava só é
+# renderizado no Painel CowData (Farmacia.tsx só o mostra quando
+# `!somenteLeitura`, e a tela do tenant monta o componente com
+# `somenteLeitura`).
 
-_listar_doencas, _criar_doenca, _atualizar_doenca, _ = _crud_nome_ativo(Doenca, com_fazenda=True)
+_listar_doencas, _criar_doenca, _atualizar_doenca, _ = _crud_nome_ativo(
+    Doenca, com_fazenda=True, global_compartilhado=True,
+)
 router.get("/doencas")(_listar_doencas)
 router.post("/doencas")(_criar_doenca)
 router.put("/doencas/{item_id}")(_atualizar_doenca)
@@ -355,9 +367,8 @@ def _valida_pesagem(dados: AgendamentoPesagemIn) -> None:
 
 @router.post("/agendamentos-pesagem", status_code=201)
 def criar_agendamento_pesagem(
-    dados: AgendamentoPesagemIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: AgendamentoPesagemIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     _valida_pesagem(dados)
     obj = AgendamentoPesagem(**{**dados.model_dump(), "nome": dados.nome.strip()}, fazenda_id=fazenda_id)
     session.add(obj)
@@ -399,6 +410,8 @@ def excluir_agendamento_pesagem(
 # Evento sanitário — cadastro RICO (nome + agendamento por época/evento +
 # medicamento padrão). Alimenta o calendário sanitário e a Agenda.
 FREQUENCIAS_EVENTO = ["dias", "meses", "anos"]
+UNIDADES_JANELA = ["dias", "meses"]
+ACOES_FORA_JANELA = ["sair", "manter", "notificar"]
 TIPOS_AGENDAMENTO = ["nenhum", "epoca", "evento"]
 GATILHOS_EVENTO = [
     "nascimento", "entrada_lote", "novilha_apta", "secagem", "parto",
@@ -440,6 +453,19 @@ class EventoSanitarioIn(BaseModel):
     # botão "Lançar financeiro" no calendário sanitário, sem depender de
     # adivinhar pelo nome do evento.
     servico_financeiro: str | None = None
+    # Janela de aplicação — após o gatilho, de/até quando o animal ainda está
+    # dentro da janela. Cada limite tem sua própria unidade (dias ou meses).
+    janela_de_valor: int | None = None
+    janela_de_unidade: str | None = None
+    janela_ate_valor: int | None = None
+    janela_ate_unidade: str | None = None
+    # O que acontece quando a janela se encerra sem aplicação.
+    acao_fora_janela: str | None = None
+    # Teto etário (opcional) — além dessa idade, "manter" nunca se aplica.
+    teto_etario_valor: int | None = None
+    teto_etario_unidade: str | None = None
+    # Veterinário padrão sugerido no agendamento (editável na hora).
+    veterinario_padrao_pessoa_id: int | None = None
 
 
 def _dto_evento_sanitario(session: Session, ev: EventoSanitario) -> dict:
@@ -456,6 +482,10 @@ def _dto_evento_sanitario(session: Session, ev: EventoSanitario) -> dict:
     if ev.exame_definicao_id:
         exame_def = session.get(ExameDefinicao, ev.exame_definicao_id)
         d["exame_definicao_nome"] = exame_def.nome if exame_def else None
+    d["veterinario_padrao_nome"] = None
+    if ev.veterinario_padrao_pessoa_id:
+        pessoa = session.get(Pessoa, ev.veterinario_padrao_pessoa_id)
+        d["veterinario_padrao_nome"] = pessoa.nome if pessoa else None
     if ev.tipo_agendamento == "epoca" and ev.data_primeiro and ev.frequencia_valor and ev.frequencia_unidade:
         d["proxima_ocorrencia"] = proxima_ocorrencia(ev.data_primeiro, ev.frequencia_valor, ev.frequencia_unidade).isoformat()
     else:
@@ -477,6 +507,22 @@ def _validar_evento_sanitario(dados: EventoSanitarioIn, session: Session, *, ite
             raise HTTPException(status_code=400, detail="Evento sanitário da condição não encontrado")
     if dados.exame_definicao_id is not None and not session.get(ExameDefinicao, dados.exame_definicao_id):
         raise HTTPException(status_code=400, detail="Exame (cadastro) não encontrado")
+    if dados.veterinario_padrao_pessoa_id is not None and not session.get(Pessoa, dados.veterinario_padrao_pessoa_id):
+        raise HTTPException(status_code=400, detail="Veterinário (pessoa) não encontrado")
+    if dados.janela_de_unidade is not None and dados.janela_de_unidade not in UNIDADES_JANELA:
+        raise HTTPException(status_code=400, detail=f"Unidade da janela (de) inválida (use: {', '.join(UNIDADES_JANELA)})")
+    if dados.janela_ate_unidade is not None and dados.janela_ate_unidade not in UNIDADES_JANELA:
+        raise HTTPException(status_code=400, detail=f"Unidade da janela (até) inválida (use: {', '.join(UNIDADES_JANELA)})")
+    if dados.acao_fora_janela is not None and dados.acao_fora_janela not in ACOES_FORA_JANELA:
+        raise HTTPException(status_code=400, detail=f"Ação ao sair da janela inválida (use: {', '.join(ACOES_FORA_JANELA)})")
+    if dados.teto_etario_unidade is not None and dados.teto_etario_unidade not in UNIDADES_JANELA:
+        raise HTTPException(status_code=400, detail=f"Unidade do teto etário inválida (use: {', '.join(UNIDADES_JANELA)})")
+    if (dados.janela_de_valor is None) != (dados.janela_de_unidade is None):
+        raise HTTPException(status_code=400, detail="Informe o valor e a unidade da janela (de), ou deixe os dois em branco")
+    if (dados.janela_ate_valor is None) != (dados.janela_ate_unidade is None):
+        raise HTTPException(status_code=400, detail="Informe o valor e a unidade da janela (até), ou deixe os dois em branco")
+    if (dados.teto_etario_valor is None) != (dados.teto_etario_unidade is None):
+        raise HTTPException(status_code=400, detail="Informe o valor e a unidade do teto etário, ou deixe os dois em branco")
     if dados.tipo_agendamento == "epoca":
         if not dados.data_primeiro:
             raise HTTPException(status_code=400, detail="Informe a data do primeiro evento (agendamento por época)")
@@ -507,9 +553,8 @@ def listar_eventos_sanitarios(
 
 @router.post("/eventos-sanitarios")
 def criar_evento_sanitario(
-    dados: EventoSanitarioIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: EventoSanitarioIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
@@ -603,9 +648,8 @@ def listar_exames(
 
 @router.post("/exames")
 def criar_exame(
-    dados: ExameDefinicaoIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: ExameDefinicaoIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
@@ -654,5 +698,26 @@ def excluir_exame(
     session.delete(ex)
     session.commit()
     return {"excluido": True, "id": item_id}
+
+
+# ---------------------------------------------------------------------------
+# Template de Checklist por Tipo (seção 3.7.3 do redesenho do evento
+# sanitário) — só leitura por aqui: o passo 4 do wizard novo (seção 3.7.0)
+# usa isto como ponto de partida do checklist de uma regra, mas a edição do
+# template em si (a tela separada da 3.7.3) fica para uma rodada futura, fora
+# de escopo desta (ver docs/redesenho-evento-sanitario.md, seção 6).
+# ---------------------------------------------------------------------------
+TIPOS_TEMPLATE_CHECKLIST = ["vacina", "exame"]
+
+
+@router.get("/checklist-template")
+def listar_checklist_template(
+    tipo: str, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    if tipo not in TIPOS_TEMPLATE_CHECKLIST:
+        raise HTTPException(status_code=400, detail=f"Tipo inválido (use: {', '.join(TIPOS_TEMPLATE_CHECKLIST)})")
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    itens = template_do_tipo(session, tipo, fazenda_id)
+    return [{"chave": i.chave, "nome": i.nome, "ordem": i.ordem} for i in itens]
 
 

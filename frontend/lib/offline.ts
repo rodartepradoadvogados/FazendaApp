@@ -674,6 +674,37 @@ async function fetchCruArquivo(reg: RegistroOutbox): Promise<Response> {
 
 let sincronizando = false;
 
+// ── Progresso da sincronização (barra de progresso do cabeçalho/Menu) ───────
+// Só INSTRUMENTAÇÃO/leitura do que sincronizar() já faz — nenhuma mudança na
+// ordem de envio, no backoff ou no tratamento de erro acima. `total` é fixado
+// no início de cada rodada (itens elegíveis agora); `feitos` cresce a cada
+// envio bem-sucedido OU falha definitiva (ambos "resolvidos" desta rodada,
+// pra a barra não travar em 3/8 esperando um item que ficará pendente até a
+// próxima rodada). null = nenhuma sincronização rodando agora.
+export type ProgressoSync = { total: number; feitos: number } | null;
+let progressoSync: ProgressoSync = null;
+export const EVENTO_SYNC_PROGRESSO = "mob-sync-progresso";
+
+function notificarProgresso() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(EVENTO_SYNC_PROGRESSO));
+}
+
+/** Hook: progresso da sincronização em andamento (ou null, se nenhuma). Usado
+ *  pela faixa de conexão do cabeçalho (app/app/layout.tsx) e pela tela Menu >
+ *  Sincronização para mostrar "3 de 8" com uma barra de preenchimento, em vez
+ *  de só um spinner genérico. */
+export function useSincProgresso(): ProgressoSync {
+  const [p, setP] = useState<ProgressoSync>(progressoSync);
+  useEffect(() => {
+    const ler = () => setP(progressoSync);
+    ler();
+    window.addEventListener(EVENTO_SYNC_PROGRESSO, ler);
+    return () => window.removeEventListener(EVENTO_SYNC_PROGRESSO, ler);
+  }, []);
+  return p;
+}
+
 /** Envia a fila em ordem — lançamentos JSON primeiro, depois fotos: uma foto
  *  de vários MB com sinal ruim (timeout de até 2min) não pode atrasar um
  *  lançamento reprodutivo/sanitário pendente. Falha de rede/401/403/5xx =
@@ -698,12 +729,18 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
     const elegiveis = (await listarTudo()).filter(
       (i) => i.status !== "erro" && (!i.proximaTentativaEm || new Date(i.proximaTentativaEm).getTime() <= agora),
     );
+    progressoSync = { total: elegiveis.length, feitos: 0 };
+    notificarProgresso();
     const grupos: ResumoOutbox[][] = [
       elegiveis.filter((i) => i.tipo === "json"),
       elegiveis.filter((i) => i.tipo === "form"),
     ];
     for (const grupo of grupos) {
       for (const item of grupo) {
+        // try/finally só para contar o progresso (feitos++ a cada item
+        // RESOLVIDO nesta rodada, sucesso ou falha) — nenhuma mudança no
+        // fluxo continue/break existente abaixo, só instrumentação.
+        try {
         const atual = await lerItemCompleto(item.id);
         if (!atual) continue; // descartado/enviado por outra aba desde a listagem
         // Item enfileirado numa fazenda e o usuário trocou de fazenda antes
@@ -759,10 +796,15 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
           });
           break;
         }
+        } finally {
+          if (progressoSync) { progressoSync = { ...progressoSync, feitos: progressoSync.feitos + 1 }; notificarProgresso(); }
+        }
       }
     }
   } finally {
     sincronizando = false;
+    progressoSync = null;
+    notificarProgresso();
     await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
   }
   return { enviados, restantes: (await listarTudo()).length };

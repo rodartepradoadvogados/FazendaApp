@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, AplicacaoAgendada, Estoque, Lote, MovimentoEstoque, Parto, Sanidade, Secagem, Servico
+from fazenda.models import Animal, AplicacaoAgendada, Estoque, Lactacao, Lote, MovimentoEstoque, Parto, Sanidade, Secagem, Servico
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 
 
@@ -130,6 +130,7 @@ class TestRegistrarSecagem:
         c, engine = client
         with Session(engine) as s:
             s.add(Animal(numero="500", raca="Girolando", del_dias=220, ativo=True))
+            s.add(Lactacao(numero_matriz="500", data_inicio=date(2020, 1, 1)))
             s.add(Estoque(nome="Tetradelta", quantidade=20, unidade="dose"))
             s.add(Lote(codigo="05", nome="SECAS", status_lactacao="seca"))
             s.commit()
@@ -158,6 +159,7 @@ class TestRegistrarSecagem:
     def test_data_futura_programa_produto_sem_baixar_estoque(self, client):
         c, engine = client
         with Session(engine) as s:
+            s.add(Lactacao(numero_matriz="500", data_inicio=date(2020, 1, 1)))
             s.add(Estoque(nome="Tetradelta", quantidade=20, unidade="dose"))
             s.commit()
 
@@ -180,6 +182,7 @@ class TestRegistrarSecagem:
     def test_nao_aplicado_programa_mesmo_com_data_de_hoje(self, client):
         c, engine = client
         with Session(engine) as s:
+            s.add(Lactacao(numero_matriz="500", data_inicio=date(2020, 1, 1)))
             s.add(Estoque(nome="Tetradelta", quantidade=20, unidade="dose"))
             s.commit()
         r = c.post("/producao/secagem", json={
@@ -210,6 +213,7 @@ class TestRegistrarSecagem:
         with Session(engine) as s:
             from sqlmodel import select
             s.add(Animal(numero="500", raca="Girolando", del_dias=220, ativo=True))
+            s.add(Lactacao(numero_matriz="500", data_inicio=date(2020, 1, 1)))
             s.add(Estoque(nome="Tetradelta", quantidade=20, unidade="dose"))
             s.commit()
 
@@ -240,6 +244,7 @@ class TestVacinaPreParto:
         with Session(engine) as s:
             from sqlmodel import select
             s.add(Animal(numero="500", raca="Girolando", del_dias=220, ativo=True))
+            s.add(Lactacao(numero_matriz="500", data_inicio=date(2020, 1, 1)))
             s.add(Estoque(nome="Bovilis", quantidade=10, unidade="dose"))
             s.commit()
 
@@ -265,6 +270,7 @@ class TestVacinaPreParto:
         with Session(engine) as s:
             from sqlmodel import select
             s.add(Animal(numero="500", raca="Girolando", del_dias=220, ativo=True))
+            s.add(Lactacao(numero_matriz="500", data_inicio=date(2020, 1, 1)))
             s.add(Estoque(nome="Bovilis", quantidade=10, unidade="dose"))
             s.commit()
 
@@ -287,6 +293,60 @@ class TestVacinaPreParto:
             mov = s.exec(select(MovimentoEstoque).where(MovimentoEstoque.nome_item == "Bovilis")).first()
             assert mov is not None
             assert mov.origem_tipo == "vacina_pre_parto"
+
+    def test_resposta_nao_fica_gravada_no_historico_sem_gerar_pendencia(self, client):
+        """"Não" não pode virar pendência na Agenda, mas precisa continuar
+        registrado na secagem — antes essa resposta simplesmente não era
+        gravada em lugar nenhum."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="501", raca="Girolando", del_dias=220, ativo=True))
+            s.add(Lactacao(numero_matriz="501", data_inicio=date(2020, 1, 1)))
+            s.commit()
+
+        r = c.post("/producao/secagem", json={
+            "numero_matriz": "501", "data_secagem": "2026-07-08", "motivo": "rotina", "vacina_pre_parto": False,
+        })
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            from sqlmodel import select
+            secagem = s.exec(select(Secagem).where(Secagem.numero_matriz == "501")).first()
+            assert secagem.vacina_pre_parto is False
+            pendencia = s.exec(select(AplicacaoAgendada).where(AplicacaoAgendada.numero_matriz == "501")).first()
+            assert pendencia is None
+
+    def test_resposta_sim_fica_gravada_junto_com_a_pendencia(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="502", raca="Girolando", del_dias=220, ativo=True))
+            s.add(Lactacao(numero_matriz="502", data_inicio=date(2020, 1, 1)))
+            s.commit()
+
+        c.post("/producao/secagem", json={
+            "numero_matriz": "502", "data_secagem": "2026-07-08", "motivo": "rotina",
+            "vacina_pre_parto": True, "vacinas_pre_parto": ["Bovilis"],
+        })
+
+        with Session(engine) as s:
+            from sqlmodel import select
+            secagem = s.exec(select(Secagem).where(Secagem.numero_matriz == "502")).first()
+            assert secagem.vacina_pre_parto is True
+
+    def test_sem_resposta_fica_nulo(self, client):
+        """Dado legado/sem resposta explícita — não confunde com "não"."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="503", raca="Girolando", del_dias=220, ativo=True))
+            s.add(Lactacao(numero_matriz="503", data_inicio=date(2020, 1, 1)))
+            s.commit()
+
+        c.post("/producao/secagem", json={"numero_matriz": "503", "data_secagem": "2026-07-08", "motivo": "rotina"})
+
+        with Session(engine) as s:
+            from sqlmodel import select
+            secagem = s.exec(select(Secagem).where(Secagem.numero_matriz == "503")).first()
+            assert secagem.vacina_pre_parto is None
 
 
 class TestSugestaoLoteEvento:
@@ -373,7 +433,10 @@ class TestRegistrarParto:
             assert cria.mae_numero == "500"
             assert cria.raca == "Girolando"
             mae = s.exec(select(Animal).where(Animal.numero == "500")).first()
-            assert mae.del_dias == 0
+            # `del_dias` da mãe passou a sair do DEL AO VIVO da `Lactacao` que
+            # o parto abre (ver rules/lactacao.py), não mais de um `0` cravado
+            # no lançamento: neste parto retroativo, `0` era simplesmente falso.
+            assert mae.del_dias == (date.today() - date(2026, 7, 8)).days
 
     def test_incrementa_ordem_parto_em_partos_subsequentes(self, client):
         c, engine = client
@@ -510,9 +573,18 @@ class TestProtocoloIatf:
         # lista — passa a aparecer com concluido=True, mostrando a data do
         # próximo serviço (D11 + intervalo_visita_reprodutiva, padrão 21
         # dias) e as candidatas herd-wide ao próximo repasse.
+        #
+        # Datas relativas a hoje (não fixas): `ativos()` só lista protocolos
+        # concluídos dentro de uma janela após a próxima visita (ver
+        # reproducao.py) — datas fixas no passado (ex.: "2026-07-08") saem
+        # dessa janela conforme o tempo passa e o teste quebra sem nenhuma
+        # mudança de código, só pelo calendário avançar.
         c, engine = client
+        d0 = date.today() - timedelta(days=15)
+        d11 = d0 + timedelta(days=11)
+        proxima_visita = d11 + timedelta(days=21)
         c.post("/reproducao/protocolo-iatf", json={
-            "animais": ["500"], "data_d0": "2026-07-08", "protocolo": "Protocolo padrão",
+            "animais": ["500"], "data_d0": d0.isoformat(), "protocolo": "Protocolo padrão",
         })
         with Session(engine) as s:
             from sqlmodel import select
@@ -520,7 +592,7 @@ class TestProtocoloIatf:
             for ap in s.exec(select(ProtocoloIatfAplicacao)).all():
                 ap.realizada = True
                 if ap.dia == 11:
-                    ap.data_realizacao = date(2026, 7, 19)
+                    ap.data_realizacao = d11
                 s.add(ap)
             s.commit()
         r = c.get("/reproducao/protocolo-iatf/ativos")
@@ -528,8 +600,8 @@ class TestProtocoloIatf:
         assert len(ativos) == 1
         item = ativos[0]
         assert item["concluido"] is True
-        assert item["data_d11"] == "2026-07-19"
-        assert item["proxima_visita"] == "2026-08-09"
+        assert item["data_d11"] == d11.isoformat()
+        assert item["proxima_visita"] == proxima_visita.isoformat()
         assert "candidatas_proxima_visita" in item
         # #440: mesmo concluído, a lista de animais do protocolo continua
         # populada (para a Agenda poder mostrar "ÚLTIMA IATF — y animais"

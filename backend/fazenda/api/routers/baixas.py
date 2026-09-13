@@ -60,20 +60,49 @@ class ADescartarIn(BaseModel):
     animais: list[str]
     descartar: bool = True  # True marca; False desfaz a marcação
     observacao: str | None = None
+    # QUANDO SE DECIDIU. Ausente = hoje. Editável porque é esta data que o
+    # motor reprodutivo usa para reconstruir o passado: quem lança a decisão
+    # com atraso precisa poder gravar o dia em que ela foi realmente tomada,
+    # senão a série histórica nasce errada e não há como perceber depois.
+    marcado_em: date | None = None
+    # QUANDO SE PRETENDE tirar do rebanho. Ausente = sem previsão, que é um
+    # estado legítimo — nem toda decisão nasce com data de saída.
+    previsto_em: date | None = None
 
 
 @router.post("/a-descartar")
 def marcar_a_descartar(
-    dados: ADescartarIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: ADescartarIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     Marca (ou desmarca) animais como "A descartar": seguem ATIVOS no rebanho
     — continuam na ordenha, sanidade e movimentação — mas saem de todas as
     ações reprodutivas (IATF, inseminação, candidatas). Não é baixa definitiva.
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
+    # BUG DE SEGURANÇA CORRIGIDO (achado 58): o irmão direto POST /baixas/ já
+    # usava `get_fazenda_id_escrita`; só esta rota tinha ficado na tolerante.
+    # A diferença aqui não é gravar órfão — é ESCREVER NO ANIMAL ERRADO: o
+    # alvo chega como `numero` (texto), e o filtro de fazenda da busca abaixo
+    # está dentro de um `if fazenda_id is not None`. Com o token sem "fid" o
+    # `where` sumia e sobrava `Animal.numero == chave`, que desde a migração
+    # c24befa94c1b casa com mais de uma vaca (o próprio upload.py comenta que
+    # o número se repete entre fazendas): a vaca "500" que saía da reprodução
+    # podia ser a do outro cliente. Recusar na porta com 409 fecha isso.
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
+    marcado_em = dados.marcado_em or date.today()
+    # Prever a saída para antes de ter decidido é erro de digitação, não um
+    # caso de uso: deixar passar gravaria um plano impossível e geraria evento
+    # de Agenda com data anterior à própria decisão. Barra antes de escrever
+    # qualquer animal — a validação vale para o lote inteiro.
+    if dados.descartar and dados.previsto_em and dados.previsto_em < marcado_em:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"A previsão de descarte ({dados.previsto_em.strftime('%d/%m/%Y')}) é anterior "
+                f"à data da marcação ({marcado_em.strftime('%d/%m/%Y')})."
+            ),
+        )
     afetados = 0
     nao_encontrados: list[str] = []
     for numero in dados.animais:
@@ -86,6 +115,12 @@ def marcar_a_descartar(
             nao_encontrados.append(chave)
             continue
         animal.a_descartar = dados.descartar
+        # As duas datas só existem enquanto a marcação vale; ao desmarcar,
+        # limpam junto (ver Animal.a_descartar_em: sobrar data de uma marcação
+        # já revertida seria pior que não ter data nenhuma — e uma previsão
+        # órfã ainda geraria evento na Agenda para um descarte cancelado).
+        animal.a_descartar_em = marcado_em if dados.descartar else None
+        animal.descarte_previsto_em = dados.previsto_em if dados.descartar else None
         if dados.observacao:
             animal.observacoes = dados.observacao
         animal.atualizado_em = datetime.utcnow()

@@ -44,3 +44,13 @@ desktop.ini
 
 # Logs e temporários
 *.log
+
+# Auditoria de segurança — ambiente virtual e artefatos de verificação local
+# (o script gerador e o PDF final são o entregável; venv e previews não)
+docs/security-audit/.venv/
+docs/security-audit/_chart_*.png
+docs/security-audit/_preview_*.png
+
+# Relatórios locais do skill /impeccable critique|harden|... — arquivo de
+# trabalho da ferramenta, não entregável de código.
+.impeccable/

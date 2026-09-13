@@ -487,6 +487,33 @@ class TestCancelarEstornoExato:
         assert _saldo(engine, "Benzoato de estradiol") == 50
 
 
+class TestCancelarEExcluirNaoDevolveEmDobro:
+    """Gauntlet A-8: cancelar() (central_protocolos.py) já devolve ao estoque
+    tudo que o lançamento consumiu, mas não apaga o MovimentoEstoque de
+    "Aplicação" original — só grava um estorno ao lado. Excluir esse mesmo
+    lançamento depois (POST /exclusoes/confirmar) encontrava de novo a MESMA
+    "Aplicação" (origem_tipo="iatf", origem_id=lançamento) e devolvia o
+    estoque uma segunda vez: hormônio em dobro no saldo."""
+
+    def test_excluir_protocolo_iatf_ja_cancelado_nao_devolve_de_novo(self, client):
+        c, engine = client
+        _animais(engine, ["700", "701"])
+        _estoque(engine, nome="Sincrocp", quantidade=50, unidade="ml")
+        lid = _lancar_iatf(c, ["700", "701"], date.today(), hormonios=[
+            {"dia": 0, "produto": "Sincrocp", "dose": 2, "unidade": "ml", "via": "Intramuscular"},
+        ])
+        c.post(f"/central-protocolos/iatf/{lid}/baixa", json={"dia": 0})
+        assert _saldo(engine, "Sincrocp") == 46
+
+        r = c.post(f"/central-protocolos/iatf/{lid}/cancelar", json={"motivo": "teste"})
+        assert r.status_code == 200, r.text
+        assert _saldo(engine, "Sincrocp") == 50
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "protocolo_iatf_lancamento", "id": str(lid)})
+        assert r.status_code == 200, r.text
+        assert _saldo(engine, "Sincrocp") == 50, "excluir um lançamento já cancelado não pode devolver o estoque de novo"
+
+
 class TestLidaBaixaEEstorno:
     def test_baixa_abate_dose_vezes_aplicacoes_confirmadas(self, client):
         c, engine = client

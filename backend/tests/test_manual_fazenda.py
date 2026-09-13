@@ -10,8 +10,10 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, Estoque, ParametroManualFazenda, Parto, Sanidade, Servico, Usuario
-from fazenda.rules.manual_fazenda import deve_enviar_manual_semanal, emails_administradores_fazenda, enviar_manual_semanal_se_necessario
+from fazenda.models import Animal, ControleLeiteiro, Estoque, ParametroManualFazenda, Parto, Sanidade, Servico, Usuario
+from fazenda.rules.manual_fazenda import (
+    _insights, deve_enviar_manual_semanal, emails_administradores_fazenda, enviar_manual_semanal_se_necessario,
+)
 
 
 @pytest.fixture
@@ -107,6 +109,59 @@ def test_manual_monta_rotina_resultado_insights_sugestoes(client):
     assert any(s["texto"] == "Sugestão manual de teste" for s in manual["sugestoes"])
     # Estoque abaixo do mínimo deve gerar sugestão automática.
     assert any("Silagem" in s["texto"] for s in manual["sugestoes"])
+
+
+def test_insights_nao_gera_queda_de_concepcao_por_mes_incompleto(client):
+    """Reproduz e prova a correção do bug relatado: o mês corrente, cuja
+    janela de DG (R7) ainda não fechou, tem que sair da comparação de
+    `_insights`. Sem isto, o mês corrente — quase sem diagnóstico por
+    definição, e enviesado para os poucos resultados que resolvem rápido
+    (aqui, um NEGATIVO precoce) — inventa uma "queda de concepção" que é só
+    falta de tempo, e vira sugestão automática de revisar o manejo com o
+    responsável técnico."""
+    c, engine = client
+    hoje = date.today()
+    with Session(engine) as s:
+        # 5 meses maduros, bem no passado (2020, longe de qualquer "hoje" real
+        # de execução do teste) — histórico estável em 50% de concepção.
+        for mes in range(1, 6):
+            data = date(2020, mes, 5)
+            s.add(Servico(numero_matriz=f"m{mes}-1", data_servico=data, diagnostico="POSITIVO"))
+            s.add(Servico(numero_matriz=f"m{mes}-2", data_servico=data + timedelta(days=1), diagnostico="NEGATIVO"))
+        # Mês corrente: um único serviço, já resolvido (rápido) como NEGATIVO.
+        # A vaca que vai dar positivo nesse mês ainda nem teve tempo de
+        # confirmar — é exatamente a amostra pequena e enviesada do relato.
+        s.add(Servico(numero_matriz="atual-1", data_servico=hoje, diagnostico="NEGATIVO"))
+        s.commit()
+
+    with Session(engine) as s:
+        insights = _insights(s, None)
+
+    quedas_concepcao = [i for i in insights if i["metrica"] == "Taxa de concepção" and i["tendencia"] == "queda"]
+    assert quedas_concepcao == []
+
+
+def test_insights_gera_queda_normalmente_para_metrica_sem_dependencia_de_dg(client):
+    """Nem toda métrica de METRICAS_INSIGHT depende de diagnóstico — só
+    `taxa_concepcao` (ver METRICAS_DEPENDEM_DE_DG). `producao_leite` continua
+    comparando o mês corrente normalmente; a correção do R7 não pode virar
+    "nunca comparar o mês corrente com nada"."""
+    c, engine = client
+    hoje = date.today()
+    with Session(engine) as s:
+        for mes in range(1, 4):
+            s.add(ControleLeiteiro(numero_matriz=f"m{mes}", data_controle=date(2020, mes, 5), producao_kg=30.0))
+        for mes in range(4, 6):
+            s.add(ControleLeiteiro(numero_matriz=f"m{mes}", data_controle=date(2020, mes, 5), producao_kg=15.0))
+        s.add(ControleLeiteiro(numero_matriz="atual", data_controle=hoje, producao_kg=15.0))
+        s.commit()
+
+    with Session(engine) as s:
+        insights = _insights(s, None)
+
+    producao = [i for i in insights if i["metrica"] == "Produção de leite (média)"]
+    assert len(producao) == 1
+    assert producao[0]["tendencia"] == "queda"
 
 
 def test_pdf_gera_arquivo_binario(client):

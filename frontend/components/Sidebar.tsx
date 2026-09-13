@@ -25,7 +25,7 @@ import {
   LineChart,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { checkHealth, getUsuario, getFazendaAtual, logout, podeModulo, ehAdmin, ehDono, podeFormularDietas, ROTA_MODULO } from "@/lib/api";
+import { checkHealth, getUsuario, getFazendaAtual, podeModulo, ehAdmin, ehDono, podeFormularDietas, ROTA_MODULO } from "@/lib/api";
 import { LogOut, UserCircle } from "lucide-react";
 import { CowIcon } from "@/components/CowIcon";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
@@ -49,7 +49,7 @@ function SidebarLink({ href, title, label, active, recolhida, children }: {
     <Link
       href={href}
       title={title || label}
-      className="flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150"
+      className="flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150"
       style={{
         background: active ? "var(--sidebar-active-bg)" : "transparent",
         color: active ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
@@ -89,6 +89,7 @@ const links = [
   // ── Manejo do rebanho ──
   { href: "/rebanho",     label: "Rebanho",      icon: CowIcon,       title: "Rebanho — animais, movimentações entre lotes e ficha do animal", grupo: "Manejo do rebanho" },
   { href: "/historico",   label: "Histórico",    icon: Heart,         title: "Histórico — Reprodução (serviços, diagnósticos, partos) e Produção (controle leiteiro, secagem, BST)", grupo: "Manejo do rebanho" },
+  { href: "/ciclos-21-dias", label: "Ciclos de 21 dias", icon: Calendar, title: "Risco de prenhez em ciclos de 21 dias (padrão BREDSUM\\E): elegíveis para inseminação → servidas → elegíveis para prenhez → prenhes", grupo: "Manejo do rebanho" },
   // ── Insumos e sanidade ──
   { href: "/sanidade",    label: "Sanidade",     icon: Syringe,       title: "Sanidade — aplicações, protocolos e calendário sanitário", grupo: "Insumos e sanidade" },
   { href: "/alimentacao", label: "Alimentação",  icon: Wheat,         title: "Alimentação — dieta, consumo e necessidade por lote", grupo: "Insumos e sanidade" },
@@ -223,7 +224,7 @@ export function Sidebar() {
           escondido atrás dela. */}
       <div className="md:hidden flex items-center gap-3 px-4 fixed top-0 left-0 right-0 z-30"
         style={{
-          top: "var(--suporte-banner-h, 0px)",
+          top: "var(--faixas-topo-h, 0px)",
           height: "calc(3.25rem + env(safe-area-inset-top, 0px))",
           paddingTop: "env(safe-area-inset-top, 0px)",
           background: "var(--sidebar-bg)", borderBottom: "1px solid var(--sidebar-border)",
@@ -254,7 +255,7 @@ export function Sidebar() {
         // sempre abre na largura cheia (w-56 base), independente da
         // preferência de recolher salva (essa é só para a barra fixa do
         // desktop; no mobile o menu já fecha inteiro depois de navegar).
-        className={`w-56 ${recolhida ? "md:w-[52px]" : "md:w-56"} flex flex-col flex-shrink-0 h-full fixed md:static inset-y-0 left-0 z-50 transform transition-[width,transform] duration-200 ${aberto ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}
+        className={`w-56 ${recolhida ? "md:w-[52px]" : "md:w-[196px]"} flex flex-col flex-shrink-0 h-full fixed md:static inset-y-0 left-0 z-50 transform transition-[width,transform] duration-200 ${aberto ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}
       >
       {/* Botão fechar — só no mobile */}
       <button onClick={() => setAberto(false)} aria-label="Fechar menu" title="Fechar o menu de navegação"
@@ -426,6 +427,7 @@ export function Sidebar() {
 }
 
 function UsuarioLogado() {
+  const router = useRouter();
   const [nome, setNome] = useState<string | null>(null);
   useEffect(() => { const u = getUsuario(); setNome(u?.nome || u?.username || null); }, []);
   if (!nome) return null;
@@ -434,10 +436,16 @@ function UsuarioLogado() {
       <div className="flex items-center justify-center gap-1.5 mb-1" style={{ color: "var(--sidebar-fg)" }}>
         <UserCircle size={13} /> {nome}
       </div>
-      <button onClick={logout} title="Encerra a sessão — a próxima pessoa faz login com o próprio usuário"
+      {/* Leva pra tela-eixo de escolha de conta (ver components/
+          EscolherConta.tsx) — NÃO desconecta por si só; "Sair da conta" é
+          um botão à parte, discreto, dentro daquela tela. Trocar de conta é
+          o que se faz todo dia (o dono entre fazendas, o suporte entre
+          fazenda-cliente e Painel CowData); sair é raro, o peso visual aqui
+          segue esse uso. */}
+      <button onClick={() => router.push("/escolher-conta")} title="Trocar para outra fazenda ou o Painel CowData, sem sair da conta"
         className="flex items-center justify-center gap-1.5 mx-auto"
         style={{ background: "none", border: "1px solid var(--sidebar-border)", borderRadius: "var(--r-sm)", padding: "0.2rem 0.55rem", color: "var(--sidebar-muted)", cursor: "pointer" }}>
-        <LogOut size={12} /> Sair / trocar de usuário
+        <LogOut size={12} /> Trocar de conta
       </button>
     </div>
   );

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { onPedidoCadastroDeEstoque, onPedidoCadastroDeAlimento } from "@/lib/alimentoEstoqueBridge";
+import { onPedidoCadastroDeEstoque, onPedidoCadastroDeAlimento, onPedidoReaberturaDeAlimento } from "@/lib/alimentoEstoqueBridge";
 import { Layers, Beef, Truck, Package, ArrowRightLeft, Users, HeartPulse, HeartCrack, Wrench, Trash2, Dna, GitBranch, Wheat, Pill, Scale, Baby, Sprout, ClipboardList } from "lucide-react";
 import CadastroLotes from "./CadastroLotes";
 import CadastroSafra from "./CadastroSafra";
@@ -21,11 +21,14 @@ import CadastroProtocolosCustomizados from "./CadastroProtocolosCustomizados";
 import CadastroSanitario, { type AbaCadastroSanitario } from "./CadastroSanitario";
 import CentralSemen, { type AbaCentralSemen } from "./CentralSemen";
 import { FormExclusao } from "./FormExclusao";
-import UsuariosPage from "@/app/usuarios/page";
+import { OrdemPartoReconstrucaoView } from "./OrdemPartoReconstrucaoView";
+import { OrdemPartoPartosReconstrucaoView } from "./OrdemPartoPartosReconstrucaoView";
+import { DelControleReconstrucaoView } from "./DelControleReconstrucaoView";
 
-// Ordem alfabética (pelo rótulo exibido). "usuarios" é restrito a
-// administradores — quem monta a árvore de sub-navegação (Configurações >
-// page.tsx) filtra essa entrada para não-admins antes de exibi-la.
+// Ordem alfabética (pelo rótulo exibido). "Usuários" não vive mais aqui —
+// era um duplicado exato da aba "Controle de Acesso" (/usuarios), removido
+// em 17/08/2026 a pedido explícito do usuário para não ter dois caminhos
+// para a mesma tela.
 export const ABAS_CADASTRO = [
   ["alimentacao", "Alimentação", Wheat],
   ["animal", "Animal (ficha)", Beef],
@@ -36,6 +39,7 @@ export const ABAS_CADASTRO = [
   ["fornecedores", "Fornecedores", Truck],
   ["estoque", "Estoque", Package],
   ["lotes", "Lotes", Layers],
+  ["manutencao", "Manutenção de dados", Wrench],
   ["motivos-baixa", "Motivos de baixa", HeartCrack],
   ["motivos", "Motivos de movimentação", ArrowRightLeft],
   ["pesagem", "Pesagem do rebanho", Scale],
@@ -46,7 +50,6 @@ export const ABAS_CADASTRO = [
   ["sanitario", "Sanitário", HeartPulse],
   ["servicos", "Serviços", Wrench],
   ["tipos-metodos-servico", "Tipos/Métodos", Wrench],
-  ["usuarios", "Usuários", Users],
 ] as const;
 export type AbaCadastro = (typeof ABAS_CADASTRO)[number][0];
 
@@ -85,7 +88,8 @@ export default function Cadastro({
   useEffect(() => {
     const off1 = onPedidoCadastroDeEstoque(() => setAba("estoque"));
     const off2 = onPedidoCadastroDeAlimento(() => setAba("alimentacao"));
-    return () => { off1(); off2(); };
+    const off3 = onPedidoReaberturaDeAlimento(() => setAba("alimentacao"));
+    return () => { off1(); off2(); off3(); };
   }, [setAba]);
 
   return (
@@ -115,7 +119,18 @@ export default function Cadastro({
       {aba === "sanitario" && <CadastroSanitario abaControlada={abaSanitario} onAbaChange={setAbaSanitario} />}
       {aba === "pesagem" && <CadastroPesagem />}
       {aba === "recria" && <CadastroRecria />}
-      {aba === "usuarios" && <UsuariosPage />}
+      {aba === "manutencao" && (
+        <>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.875rem", marginTop: "-0.5rem", marginBottom: "1rem" }}>
+            Ferramentas administrativas de correção de dado histórico — pontuais, cada uma pensada para ser
+            rodada uma única vez. Nenhuma altera pesagem, produção ou qualquer dado além do campo que ela mesma
+            descreve, e nenhuma grava nada sem você conferir o relatório e confirmar primeiro.
+          </p>
+          <OrdemPartoPartosReconstrucaoView />
+          <OrdemPartoReconstrucaoView />
+          <DelControleReconstrucaoView />
+        </>
+      )}
       {aba === "excluir" && (
         <>
           <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>

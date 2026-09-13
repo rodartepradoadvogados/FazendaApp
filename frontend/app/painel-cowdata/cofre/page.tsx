@@ -76,10 +76,10 @@ export default function SuporteCowData() {
 
   function carregarTudo() {
     fetchFazendasCofre().then(setFazendas).catch((e) => setErro(e.message));
-    fetchSessoesAtivasCofre().then(setSessoes).catch(() => {});
-    fetchPedidosRecentesCofre().then(setPedidos).catch(() => {});
-    fetchAuditoriaRecenteCofre().then(setAuditoria).catch(() => {});
-    fetchAcoesSuporte().then(setAcoes).catch(() => {});
+    fetchSessoesAtivasCofre().then(setSessoes).catch((e) => setErro(e.message));
+    fetchPedidosRecentesCofre().then(setPedidos).catch((e) => setErro(e.message));
+    fetchAuditoriaRecenteCofre().then(setAuditoria).catch((e) => setErro(e.message));
+    fetchAcoesSuporte().then(setAcoes).catch((e) => setErro(e.message));
   }
   useEffect(() => {
     carregarTudo();
@@ -233,6 +233,7 @@ export default function SuporteCowData() {
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead><tr><Th>Fazenda</Th><Th>Plano</Th><Th>Exige aprovação prévia?</Th></tr></thead>
                 <tbody>
+                  {fazendas.length === 0 && <Vazio colSpan={3} texto="Nenhuma fazenda encontrada." />}
                   {fazendas.map((f) => (
                     <tr key={f.id}>
                       <Td style={{ fontWeight: 600 }}>{f.nome}</Td>

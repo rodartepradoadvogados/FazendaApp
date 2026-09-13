@@ -2,20 +2,25 @@
 // Primitivos de interface do APP MÓVEL (/app) — botões grandes, cartões e
 // rótulos pensados para uso no campo (sol forte, pressa, dedo grosso).
 // As classes .mob-* vivem em globals.css; aqui ficam os componentes React.
-import { Check, ChevronRight, ChevronLeft, Heart, ShieldPlus, Milk, Wheat, Landmark, CheckCheck } from "lucide-react";
+import { Check, ChevronRight, ChevronLeft, Heart, ShieldPlus, Milk, Wheat, Landmark, CheckCheck, X as XIcon } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode, CSSProperties } from "react";
 
 /** Cores dos rótulos de categoria — as MESMAS cores já usadas em Lançar
  * (LancarTela) e no Menu, para que a mesma categoria nunca mude de cor ao
- * trocar de tela dentro do app. */
+ * trocar de tela dentro do app. Usa os tokens --cat-* (globals.css), fixos
+ * por módulo em todo o produto — antes este mapa tinha seu próprio conjunto
+ * de cores soltas (--mob-roxo/azul/verde/laranja/vinho), divergente do
+ * Menu e da Agenda apesar do comentário acima já prometer as "MESMAS
+ * cores". "manejo" (Relatórios de Manejo) cai em --cat-gestao, a seção do
+ * Menu onde ele vive; "atividades" segue neutro (não é um módulo). */
 export const CATEGORIA_COR: Record<string, string> = {
-  reprodutivo: "var(--mob-roxo)",
-  producao: "var(--mob-azul)",
-  sanidade: "var(--mob-verde)",
-  manejo: "var(--mob-azul)",
-  alimentacao: "var(--mob-laranja)",
-  financeiro: "var(--mob-vinho)",
+  reprodutivo: "var(--cat-reproducao)",
+  producao: "var(--cat-producao)",
+  sanidade: "var(--cat-sanidade)",
+  manejo: "var(--cat-gestao)",
+  alimentacao: "var(--cat-alimentacao)",
+  financeiro: "var(--cat-financeiro)",
   atividades: "var(--mob-muted)",
 };
 export function corCategoria(cat?: string | null): string {
@@ -97,10 +102,12 @@ export function MobCheck({ feito, onClick, title }: { feito: boolean; onClick?: 
 }
 
 /** Bloco grande do Lançamento Rápido — `cor` tinge o contorno e o fundo leve
- * do círculo do ícone (ex.: "var(--mob-roxo)"); sem `cor`, cai no dourado da marca. */
-export function MobBloco({ icone, label, cor, onClick, destaque }: { icone: ReactNode; label: string; cor?: string; onClick: () => void; destaque?: boolean }) {
+ * do círculo do ícone (ex.: "var(--mob-roxo)"); sem `cor`, cai no dourado da marca.
+ * `variante="grande"` é pra 1-3 destinos de maior frequência de uso real — vira
+ * uma linha horizontal mais alta em vez do quadrado padrão da grade 2×N. */
+export function MobBloco({ icone, label, cor, onClick, variante }: { icone: ReactNode; label: string; cor?: string; onClick: () => void; variante?: "grande" }) {
   return (
-    <button type="button" className={destaque ? "mob-bloco mob-bloco--destaque" : "mob-bloco"} onClick={onClick} style={cor ? ({ "--c": cor } as CSSProperties) : undefined}>
+    <button type="button" className={variante === "grande" ? "mob-bloco mob-bloco-grande" : "mob-bloco"} onClick={onClick} style={cor ? ({ "--c": cor } as CSSProperties) : undefined}>
       <span className="icone">{icone}</span>
       {label}
     </button>
@@ -139,15 +146,39 @@ export function MobCampo({ label, children }: { label: string; children: ReactNo
   );
 }
 
-/** Cabeçalho de sub-tela com botão voltar. */
-export function MobVoltar({ titulo, onVoltar }: { titulo: string; onVoltar: () => void }) {
+/** Cabeçalho de sub-tela com botão voltar. `subtitulo` (opcional) fica abaixo
+ * do título, em texto discreto — usado pelas seções da Ficha do Animal para
+ * lembrar de qual animal se trata ("Nº 4521 — Estrela") sem repetir o cartão
+ * de identidade inteiro em toda seção. */
+export function MobVoltar({ titulo, subtitulo, onVoltar }: { titulo: string; subtitulo?: string; onVoltar: () => void }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", margin: "0.25rem 0 1rem" }}>
       <button type="button" onClick={onVoltar} aria-label="Voltar"
-        style={{ width: 48, height: 48, borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)", background: "var(--mob-surface)", color: "var(--mob-text)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+        style={{ width: 56, height: 56, borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)", background: "var(--mob-surface)", color: "var(--mob-text)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
         <ChevronLeft size={20} />
       </button>
-      <h1 style={{ fontSize: "1.1rem", fontWeight: 800 }}>{titulo}</h1>
+      <div style={{ minWidth: 0 }}>
+        <h1 style={{ fontSize: "1.1rem", fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{titulo}</h1>
+        {subtitulo && <div style={{ fontSize: "0.74rem", color: "var(--mob-muted)", fontWeight: 600, marginTop: "0.1rem" }}>{subtitulo}</div>}
+      </div>
+    </div>
+  );
+}
+
+/** Barra de progresso genérica ("3 de 8", com preenchimento proporcional) —
+ * usada em sincronização e em qualquer confirmação em lote (ex.: aplicar um
+ * protocolo sanitário/IATF em todas as matrizes de um grupo, na Agenda).
+ * Deliberadamente NÃO é um spinner genérico: mostra quantos itens já foram
+ * resolvidos, não só "processando…". */
+export function MobBarraProgresso({ feitos, total, rotulo }: { feitos: number; total: number; rotulo?: string }) {
+  const pct = total > 0 ? Math.round((feitos / total) * 100) : 100;
+  return (
+    <div style={{ margin: "0.5rem 0" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.76rem", fontWeight: 700, color: "var(--mob-muted)", marginBottom: "0.3rem" }}>
+        <span>{rotulo || "Progresso"}</span>
+        <span>{feitos} de {total}</span>
+      </div>
+      <div className="mob-progresso"><div className="mob-progresso-preenchido" style={{ width: `${pct}%` }} /></div>
     </div>
   );
 }
@@ -159,6 +190,47 @@ export function MobAviso({ tipo, children }: { tipo: "ok" | "offline" | "erro"; 
     <p style={{ margin: "0.7rem 0 0", padding: "0.7rem 0.8rem", borderRadius: "var(--r-app)", fontSize: "0.88rem", fontWeight: 600, color: cor, background: "color-mix(in srgb, currentColor 10%, transparent)", border: `1px solid ${cor}` }}>
       {children}
     </p>
+  );
+}
+
+/**
+ * Gaveta inferior (bottom sheet) no padrão visual do app — overlay + painel
+ * que sobe do rodapé, com um título e um botão fechar. Usada por Lançar
+ * ("Mais opções": destinos menos frequentes + baixa/exclusão, ver
+ * LancarTela.tsx) para tirar da tela principal o que não está entre os 6
+ * blocos mais usados, sem removê-los do app — só um toque a mais para
+ * chegar neles. Mesmo padrão de overlay do MobConfirmModal (abaixo): fixed
+ * inset, sem portal (o conteúdo do app não usa transform em nenhum
+ * ancestro, então fixed já cobre a tela inteira).
+ */
+export function MobGaveta({ aberto, titulo, onFechar, children }: { aberto: boolean; titulo: string; onFechar: () => void; children: ReactNode }) {
+  if (!aberto) return null;
+  return (
+    <div role="presentation" onClick={onFechar}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 210, overflow: "hidden" }}>
+      {/* .folha-inferior-painel (ver globals.css) anima a entrada deslizando
+          de baixo via `bottom` — por isso o posicionamento explícito aqui,
+          em vez de contar com o alignItems:flex-end do scrim como antes. */}
+      <div role="dialog" aria-modal="true" aria-label={titulo} onClick={(e) => e.stopPropagation()}
+        className="folha-inferior-painel"
+        style={{
+          position: "fixed", left: 0, right: 0, bottom: 0,
+          width: "100%", maxHeight: "80vh", overflowY: "auto",
+          background: "var(--mob-surface)", borderRadius: "1.1rem 1.1rem 0 0",
+          padding: "0.9rem 1rem calc(1.2rem + env(safe-area-inset-bottom))",
+          boxShadow: "0 -8px 24px rgba(0,0,0,0.25)",
+        }}>
+        <div style={{ width: 40, height: 4, borderRadius: 999, background: "var(--mob-border)", margin: "0 auto 0.8rem" }} aria-hidden="true" />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.7rem" }}>
+          <h2 style={{ fontSize: "1.02rem", fontWeight: 800, color: "var(--mob-text)" }}>{titulo}</h2>
+          <button type="button" onClick={onFechar} aria-label="Fechar"
+            style={{ width: 56, height: 56, borderRadius: "50%", border: "none", background: "var(--mob-surface-2)", color: "var(--mob-text)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+            <XIcon size={19} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
   );
 }
 

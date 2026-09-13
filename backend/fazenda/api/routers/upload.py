@@ -6,9 +6,15 @@ ISOLAMENTO POR FAZENDA (Fase 0): quase todo tipo de upload aqui é
 "apaga tudo e reimporta" — o Ideagri sempre reenvia o histórico completo.
 Sem filtro de fazenda, subir o CSV de UMA fazenda apagava os dados de TODAS
 as outras (Servico, Sanidade, Estoque, Dieta, ControleLeiteiro,
-ContaGerencial, CurvaABC, Patrimônio, PlanoContaGerencial). Agora todo
-delete é escopado pela fazenda atual e toda linha inserida é carimbada com
-ela — ver `_escopo` e `_carimbar` abaixo.
+ContaGerencial, CurvaABC, PlanoContaGerencial). Agora todo delete é
+escopado pela fazenda atual e toda linha inserida é carimbada com ela — ver
+`_escopo` e `_carimbar` abaixo.
+
+Patrimônio é a ÚNICA exceção ao "apaga tudo e reimporta": vira upsert real
+(ver `_upsert_patrimonio`) porque o item carrega dado que só existe no app
+(depreciavel corrigido à mão, valor de mercado, plano de manutenção) e pode
+estar referenciado por `ContaGerencial.patrimonio_id` — apagar e reinserir
+destruía os dois.
 """
 from __future__ import annotations
 
@@ -40,6 +46,7 @@ from fazenda.parsers.patrimonio import parse_patrimonio
 from fazenda.parsers.plano_conta_gerencial import parse_plano_conta_gerencial
 from fazenda.parsers.reprodutivo import parse_reprodutivo
 from fazenda.parsers.sanidade import parse_sanidade
+from fazenda.rules import lactacao as regras_lactacao
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -154,15 +161,57 @@ async def _upsert_plano_conta_gerencial(content: bytes, session: Session, fazend
     return {"tipo": "plano_conta_gerencial", "registros": len(contas)}
 
 
+# Campos que o CSV do Ideagri realmente carrega — é só isto que uma
+# reimportação pode atualizar num item já existente. Todo o resto
+# (`depreciavel`, valor de mercado, plano de manutenção, `valor_por_unidade`)
+# só existe no app: o CSV não tem essas colunas, então sobrescrever com o
+# que "viria" de lá era sempre None/default, apagando o que o usuário já
+# tinha corrigido/cadastrado na tela — ver ADR abaixo.
+_CAMPOS_CSV_PATRIMONIO = (
+    "tipo", "nome", "numero", "atividade_cultura", "data_imobilizacao",
+    "metodo_depreciacao", "vida_util", "valor_residual", "quantidade",
+    "unidade", "valor_total", "data_baixa",
+)
+
+
 async def _upsert_patrimonio(content: bytes, session: Session, fazenda_id: int | None) -> dict:
-    itens = parse_patrimonio(content)
-    for antigo in session.exec(_escopo(select(Patrimonio), Patrimonio, fazenda_id)).all():
-        session.delete(antigo)
+    """Upsert (não mais "apaga tudo e reimporta" — ver histórico do módulo):
+    o Ideagri reenvia o LISTA_DE_PATRIMONIO.csv completo a cada exportação,
+    mas apagar tudo antes de reinserir destruía:
+    - a marcação `depreciavel` corrigida à mão (o CSV não traz essa coluna,
+      então ela nasce de novo do zero — errada — em todo item reimportado);
+    - `valor_mercado_atual`/plano de manutenção, cadastrados só no app;
+    - qualquer item cadastrado direto pelo app (sem número/linha no Ideagri
+      ainda) — reimportar o Ideagri não pode apagar o que o app criou;
+    - linhas referenciadas por `ContaGerencial.patrimonio_id`
+      (fk sem ON DELETE, ver alembic c6d7e8f9a0b1) — o DELETE quebrava esse
+      vínculo silenciosamente.
+
+    Casamento: por `numero` quando o CSV traz número (é o identificador mais
+    estável — mesmo bem, mesmo número, mesmo com nome reescrito); por
+    (`nome`, `tipo`) quando não há número. Item batido é atualizado só nos
+    campos que vêm do CSV (`_CAMPOS_CSV_PATRIMONIO`); item que existe no
+    banco e não veio nesta rodada do CSV NÃO é apagado."""
+    itens = _carimbar(parse_patrimonio(content), fazenda_id)
+
+    existentes = session.exec(_escopo(select(Patrimonio), Patrimonio, fazenda_id)).all()
+    por_numero = {e.numero: e for e in existentes if e.numero}
+    por_nome_tipo = {(e.nome, e.tipo): e for e in existentes}
+
+    inseridos, atualizados = 0, 0
+    for novo in itens:
+        existente = por_numero.get(novo.numero) if novo.numero else por_nome_tipo.get((novo.nome, novo.tipo))
+        if existente:
+            for campo in _CAMPOS_CSV_PATRIMONIO:
+                setattr(existente, campo, getattr(novo, campo))
+            session.add(existente)
+            atualizados += 1
+        else:
+            session.add(novo)
+            inseridos += 1
+
     session.commit()
-    for item in _carimbar(itens, fazenda_id):
-        session.add(item)
-    session.commit()
-    return {"tipo": "patrimonio", "registros": len(itens)}
+    return {"tipo": "patrimonio", "registros": len(itens), "inseridos": inseridos, "atualizados": atualizados}
 
 
 async def _upsert_geral(content: bytes, session: Session, fazenda_id: int | None) -> dict:
@@ -200,8 +249,30 @@ async def _upsert_reprodutivo(content: bytes, session: Session, fazenda_id: int 
     _carimbar(servicos, fazenda_id)
     _carimbar(partos, fazenda_id)
 
-    # Limpa e reinserere (sem chave natural complexa nos serviços — recria a cada upload)
+    # Serviços: limpa e reinsere (o CSV do Ideagri não tem chave natural
+    # estável nos serviços), MAS preservando o que só o app produz.
+    #
+    # O bug que este bloco fecha: o apaga-tudo levava junto tudo que foi
+    # lançado no app e não existe na planilha — a perda de prenhez lançada
+    # pelo produtor (data E motivo), o retoque/reconfirmação marcados pelo
+    # veterinário, o tipo de sêmen e o inseminador gravados na inseminação, e
+    # o carimbo de quem lançou. Um upload de CSV bastava para apagar em
+    # silêncio o aborto que alguém tinha acabado de registrar — e a matriz
+    # voltava a constar como gestante.
+    #
+    # A chave de casamento é (matriz, data do serviço): é o que identifica a
+    # mesma inseminação nos dois lados. Mesmo padrão dos `Parto` logo abaixo
+    # (ver `preservados` lá).
+    CAMPOS_SO_DO_APP = (
+        "data_perda_prenhez", "motivo_perda_prenhez", "origem_perda_prenhez",
+        "retoque", "data_reconfirmacao", "diagnostico_reconfirmacao",
+        "tipo_semen", "inseminador", "usuario_id",
+    )
+    preservados_servico: dict[tuple[str, object], dict] = {}
     for s in session.exec(_escopo(select(Servico), Servico, fazenda_id)).all():
+        guardado = {campo: getattr(s, campo, None) for campo in CAMPOS_SO_DO_APP}
+        if any(v is not None for v in guardado.values()):
+            preservados_servico[(s.numero_matriz, s.data_servico)] = guardado
         session.delete(s)
     session.commit()
 
@@ -213,6 +284,15 @@ async def _upsert_reprodutivo(content: bytes, session: Session, fazenda_id: int 
         ).first()
         if animal:
             servico.animal_id = animal.id
+        salvo = preservados_servico.get((servico.numero_matriz, servico.data_servico))
+        if salvo:
+            for campo, valor in salvo.items():
+                # `or` na direção certa: o que o CSV traz preenchido vence (a
+                # planilha É a fonte para o que ela cobre — ex.: a coluna
+                # "DATA DA PERDA DE PRENHEZ" do Ideagri); o guardado só
+                # preenche o que veio vazio do CSV.
+                if getattr(servico, campo, None) is None:
+                    setattr(servico, campo, valor)
         session.add(servico)
 
     # Partos: reimporta sem DUPLICAR. Antes só inseria — cada reenvio do CSV
@@ -252,6 +332,15 @@ async def _upsert_reprodutivo(content: bytes, session: Session, fazenda_id: int 
         session.add(parto)
 
     session.commit()
+    # Todo parto importado também precisa existir como LACTAÇÃO — senão o
+    # controle leiteiro dessas vacas passa a ser recusado (ver
+    # POST /producao/controles) por uma lactação que só falta materializar.
+    # Reaproveita a MESMA reconstrução da migração de dados; idempotente
+    # (ver rules/lactacao.py::backfill_lactacoes).
+    if partos:
+        from fazenda.rules.lactacao import backfill_lactacoes
+        backfill_lactacoes(session, fazenda_id=fazenda_id)
+        session.commit()
     return {
         "tipo": "reprodutivo",
         "servicos": len(servicos),
@@ -327,7 +416,24 @@ async def _upsert_controle_leiteiro(content: bytes, session: Session, fazenda_id
         session.delete(r)
     session.commit()
 
-    for reg in _carimbar(registros, fazenda_id):
+    # Mesma trava de `_gravar_controles(estrito=False)` (POST
+    # /producao/controles) — sem lactação aberta na data, a linha é PULADA em
+    # vez de gravada. Antes deste conserto, este era o ÚNICO dos 5 pontos de
+    # entrada de ControleLeiteiro sem checagem nenhuma: uma novilha sem
+    # `Parto`/`Lactacao` (caso relatado: "14") passava direto por aqui a cada
+    # reimportação do CSV, mesmo com a trava já valendo pros outros 4
+    # caminhos (lançamento manual, planilha de confirmação, app, Telegram).
+    ignorados = 0
+    gravados: list = []
+    for reg in registros:
+        if regras_lactacao.lactacao_aberta(
+            session, numero_matriz=reg.numero_matriz, data=reg.data_controle, fazenda_id=fazenda_id,
+        ) is None:
+            ignorados += 1
+            continue
+        gravados.append(reg)
+
+    for reg in _carimbar(gravados, fazenda_id):
         animal = session.exec(
             _escopo(select(Animal).where(Animal.numero == reg.numero_matriz), Animal, fazenda_id)
         ).first()
@@ -336,5 +442,5 @@ async def _upsert_controle_leiteiro(content: bytes, session: Session, fazenda_id
         session.add(reg)
 
     session.commit()
-    vacas = len({r.numero_matriz for r in registros})
-    return {"tipo": "controle_leiteiro", "registros": len(registros), "vacas": vacas}
+    vacas = len({r.numero_matriz for r in gravados})
+    return {"tipo": "controle_leiteiro", "registros": len(gravados), "ignorados": ignorados, "vacas": vacas}

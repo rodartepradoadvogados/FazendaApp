@@ -33,7 +33,38 @@ from fazenda.models import (
     Pessoa,
     ValeAvulso,
 )
+from fazenda.auth import exigir_fazenda_da_operacao
 from fazenda.rules.exclusao_tipos._base import TipoExclusao, _br, _contem, _dentro_periodo
+
+
+# ---------------------------------------------------------------------------
+# RECORTE DE FAZENDA NOS `alvos` (a lista do que vai ser APAGADO)
+#
+# Toda função `_alvos_*` deste módulo monta a lista de objetos que o motor de
+# exclusões (`api/routers/exclusoes.py`) vai deletar. Duas regras valem para
+# todas elas, e são o que impede a exclusão de um inquilino levar embora dado
+# de outro:
+#
+# 1. SEM FAZENDA, NÃO APAGA. `fazenda_id` chegando None deixou de ser
+#    "atende sem recorte" e passou a ser recusa explícita — regra do dono do
+#    produto, ver `fazenda.auth.exigir_fazenda_da_operacao` e a constante
+#    `ERRO_OPERACAO_SEM_FAZENDA`, que é a mensagem que ensina o caminho
+#    (fazenda → pessoa dentro dela → usuário dessa pessoa → suporte CowData).
+#    A escape hatch é a mesma de `resolver_fazenda_id_escrita`: instalação com
+#    a tabela `fazenda` VAZIA não tem tenant a isolar e continua passando, com
+#    `fazenda_id` None — e aí o recorte incondicional do item 2 vira
+#    `fazenda_id IS NULL`, que casa exatamente as linhas desse ambiente.
+#
+# 2. O RECORTE VAI DENTRO DA CONSULTA, INCONDICIONAL. As contas a pagar
+#    espelho (`ContaGerencial`) eram localizadas só pelo `numero_lancamento`.
+#    Esse número é sequencial POR ANO (ver `_proximo_numero_lancamento`), não
+#    é chave global: numa base importada — ou no dia em que o Financeiro
+#    passar a numerar por fazenda — duas fazendas têm "LC-2026-00042", e a
+#    exclusão de uma empreitada da fazenda A colocava na lista de deleção a
+#    conta da fazenda B. Não há RLS no banco: o isolamento existe só aqui.
+#    O padrão de referência (com a justificativa escrita) é
+#    `_conta_do_numero` em `api/routers/cadastro/rh_folha.py`.
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +95,7 @@ def _buscar_diaria_pagamento(termo, data_inicio, data_fim, session, fazenda_id=N
 
 
 def _alvos_diaria_pagamento(id_, session, fazenda_id=None) -> tuple[list[str], list]:
+    fazenda_id = exigir_fazenda_da_operacao(session, fazenda_id)  # ver bloco "RECORTE DE FAZENDA" acima
     pagamento = session.get(DiariaPagamento, int(id_))
     if not pagamento or (fazenda_id is not None and pagamento.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pagamento de diária não encontrado")
@@ -76,7 +108,10 @@ def _alvos_diaria_pagamento(id_, session, fazenda_id=None) -> tuple[list[str], l
 
     if pagamento.numero_lancamento_gerado:
         conta = session.exec(
-            select(ContaGerencial).where(ContaGerencial.numero_lancamento == pagamento.numero_lancamento_gerado)
+            select(ContaGerencial).where(
+                ContaGerencial.numero_lancamento == pagamento.numero_lancamento_gerado,
+                ContaGerencial.fazenda_id == fazenda_id,
+            )
         ).first()
         if conta:
             impacto.append(f"Lançamento financeiro {conta.numero_lancamento} (baixado) também será excluído")
@@ -125,6 +160,7 @@ def _alvos_empreitada(id_, session, fazenda_id=None) -> tuple[list[str], list]:
     from fazenda.api.routers.cadastro.rh_contratos import _numeros_pagos, _reverter_vale_avulso
     from fazenda.rules.vale_item import limpar_vinculo_de_itens
 
+    fazenda_id = exigir_fazenda_da_operacao(session, fazenda_id)  # ver bloco "RECORTE DE FAZENDA" acima
     empreitada = session.get(Empreitada, int(id_))
     if not empreitada or (fazenda_id is not None and empreitada.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Empreitada não encontrada")
@@ -137,7 +173,7 @@ def _alvos_empreitada(id_, session, fazenda_id=None) -> tuple[list[str], list]:
 
     # 1. Bloqueia se qualquer parcela/etapa já foi paga — não reverte
     # pagamento automaticamente (o dinheiro já saiu do banco).
-    pagos = _numeros_pagos(session, numeros)
+    pagos = _numeros_pagos(session, numeros, fazenda_id)
     if pagos:
         raise HTTPException(
             status_code=400,
@@ -145,10 +181,21 @@ def _alvos_empreitada(id_, session, fazenda_id=None) -> tuple[list[str], list]:
                    "Estorne a baixa em Financeiro › Contas pagas e depois exclua.",
         )
 
-    contas = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros))).all() if numeros else []
+    contas = session.exec(
+        select(ContaGerencial).where(
+            ContaGerencial.numero_lancamento.in_(numeros),
+            ContaGerencial.fazenda_id == fazenda_id,
+        )
+    ).all() if numeros else []
 
     # 2. Reverte os vales avulsos antes de apagar as parcelas — sem isso
     # sobraria ValeAvulsoAbatimento órfão.
+    # `origem_id` é a PK da empreitada (única no banco inteiro), então esta
+    # consulta já é naturalmente do inquilino certo — não leva recorte de
+    # fazenda de propósito: adicioná-lo só serviria para DEIXAR PARA TRÁS um
+    # vale legado de `fazenda_id` nulo, e o `ValeAvulsoAbatimento` dele
+    # ficaria órfão. O que precisa de recorte é a busca por
+    # `numero_lancamento`, logo abaixo — esse sim não é chave global.
     vales = session.exec(
         select(ValeAvulso).where(ValeAvulso.origem_tipo == "empreitada", ValeAvulso.origem_id == empreitada.id)
     ).all()
@@ -158,7 +205,10 @@ def _alvos_empreitada(id_, session, fazenda_id=None) -> tuple[list[str], list]:
         limpar_vinculo_de_itens(session, vale_avulso_id=vale.id)
         if vale.numero_lancamento_gerado:
             conta_vale = session.exec(
-                select(ContaGerencial).where(ContaGerencial.numero_lancamento == vale.numero_lancamento_gerado)
+                select(ContaGerencial).where(
+                    ContaGerencial.numero_lancamento == vale.numero_lancamento_gerado,
+                    ContaGerencial.fazenda_id == fazenda_id,
+                )
             ).first()
             if conta_vale:
                 contas_vale.append(conta_vale)
@@ -201,6 +251,7 @@ def _alvos_contrato(id_, session, fazenda_id=None) -> tuple[list[str], list]:
     from fazenda.api.routers.cadastro.rh_contratos import _numeros_pagos, _reverter_vale_avulso
     from fazenda.rules.vale_item import limpar_vinculo_de_itens
 
+    fazenda_id = exigir_fazenda_da_operacao(session, fazenda_id)  # ver bloco "RECORTE DE FAZENDA" acima
     contrato = session.get(Contrato, int(id_))
     if not contrato or (fazenda_id is not None and contrato.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Contrato não encontrado")
@@ -211,7 +262,7 @@ def _alvos_contrato(id_, session, fazenda_id=None) -> tuple[list[str], list]:
     numeros = [p.numero_lancamento_gerado for p in parcelas if p.numero_lancamento_gerado]
 
     # Bloqueio idêntico ao da empreitada: parcela paga → 400 apontando o estorno.
-    pagos = _numeros_pagos(session, numeros)
+    pagos = _numeros_pagos(session, numeros, fazenda_id)
     if pagos:
         raise HTTPException(
             status_code=400,
@@ -219,8 +270,15 @@ def _alvos_contrato(id_, session, fazenda_id=None) -> tuple[list[str], list]:
                    "Estorne a baixa em Financeiro › Contas pagas e depois exclua.",
         )
 
-    contas = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros))).all() if numeros else []
+    contas = session.exec(
+        select(ContaGerencial).where(
+            ContaGerencial.numero_lancamento.in_(numeros),
+            ContaGerencial.fazenda_id == fazenda_id,
+        )
+    ).all() if numeros else []
 
+    # Sem recorte de fazenda pelo mesmo motivo do bloco gêmeo da empreitada:
+    # `origem_id` é a PK do contrato, chave global de verdade.
     vales = session.exec(
         select(ValeAvulso).where(ValeAvulso.origem_tipo == "contrato", ValeAvulso.origem_id == contrato.id)
     ).all()
@@ -230,7 +288,10 @@ def _alvos_contrato(id_, session, fazenda_id=None) -> tuple[list[str], list]:
         limpar_vinculo_de_itens(session, vale_avulso_id=vale.id)
         if vale.numero_lancamento_gerado:
             conta_vale = session.exec(
-                select(ContaGerencial).where(ContaGerencial.numero_lancamento == vale.numero_lancamento_gerado)
+                select(ContaGerencial).where(
+                    ContaGerencial.numero_lancamento == vale.numero_lancamento_gerado,
+                    ContaGerencial.fazenda_id == fazenda_id,
+                )
             ).first()
             if conta_vale:
                 contas_vale.append(conta_vale)
@@ -296,6 +357,7 @@ def _buscar_diaria(termo, data_inicio, data_fim, session, fazenda_id=None) -> li
 def _alvos_diaria(id_, session, fazenda_id=None) -> tuple[list[str], list]:
     from fazenda.rules.vale_item import limpar_vinculo_de_itens
 
+    fazenda_id = exigir_fazenda_da_operacao(session, fazenda_id)  # ver bloco "RECORTE DE FAZENDA" acima
     diaria = session.get(Diaria, int(id_))
     if not diaria or (fazenda_id is not None and diaria.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Diária não encontrada")
@@ -325,6 +387,36 @@ def _alvos_diaria(id_, session, fazenda_id=None) -> tuple[list[str], list]:
                    f"caixa já pago(s) (R$ {total_vale:,.2f}). Veja o Relatório de vales avulsos antes de excluir.",
         )
 
+    # Conta a pagar emitida no encerramento do período (ver
+    # `rh_contratos.encerrar_diaria`). Se já foi paga, excluir a diária é
+    # recusado pelo mesmo motivo dos pagamentos acima — o dinheiro saiu do
+    # caixa e a diária é o único registro do trabalho que ele pagou. Se
+    # ainda está em aberto, ela vai junto: deixá-la para trás encheria o
+    # Contas a Pagar de uma cobrança órfã, sem nada que explique de onde veio.
+    #
+    # O recorte de fazenda desta consulta sai do PRÓPRIO registro
+    # (`diaria.fazenda_id`) e não do `fazenda_id` do pedido — mesmo padrão de
+    # `_sincronizar_conta_do_item` (rh_contratos.py): o lançamento é o espelho
+    # financeiro desta diária, logo é do mesmo inquilino que ela. Os dois
+    # valores são iguais aqui de qualquer forma — a checagem de propriedade
+    # acima já rejeitou (404) qualquer diária que não seja da fazenda do
+    # pedido.
+    conta_encerramento = None
+    if diaria.numero_lancamento_gerado:
+        conta_encerramento = session.exec(
+            select(ContaGerencial).where(
+                ContaGerencial.numero_lancamento == diaria.numero_lancamento_gerado,
+                ContaGerencial.fazenda_id == diaria.fazenda_id,
+            )
+        ).first()
+    if conta_encerramento is not None and conta_encerramento.valor_pago is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Não é possível excluir esta diária: a conta a pagar do encerramento "
+                   f"({conta_encerramento.numero_lancamento}, R$ {conta_encerramento.valor_pago:,.2f}) já foi paga. "
+                   "Estorne a baixa em Financeiro › Lançamentos antes de excluir.",
+        )
+
     auditorias = session.exec(select(DiariaAuditoria).where(DiariaAuditoria.diaria_id == diaria.id)).all()
     dias_calendario = session.exec(select(DiariaDia).where(DiariaDia.diaria_id == diaria.id)).all()
 
@@ -341,12 +433,18 @@ def _alvos_diaria(id_, session, fazenda_id=None) -> tuple[list[str], list]:
     # ValeAvulsoAbatimento — _aplicar_vale_avulso retorna cedo para "diaria")
     # junto.
     objetos: list = [diaria, *auditorias, *dias_calendario]
+    if conta_encerramento is not None:
+        impacto.append(f"conta a pagar do encerramento ({conta_encerramento.numero_lancamento})")
+        objetos.append(conta_encerramento)
     for vale in vales:
         limpar_vinculo_de_itens(session, vale_avulso_id=vale.id)
         objetos.append(vale)
         if vale.numero_lancamento_gerado:
             conta_vale = session.exec(
-                select(ContaGerencial).where(ContaGerencial.numero_lancamento == vale.numero_lancamento_gerado)
+                select(ContaGerencial).where(
+                    ContaGerencial.numero_lancamento == vale.numero_lancamento_gerado,
+                    ContaGerencial.fazenda_id == fazenda_id,
+                )
             ).first()
             if conta_vale:
                 objetos.append(conta_vale)

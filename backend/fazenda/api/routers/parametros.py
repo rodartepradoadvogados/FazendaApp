@@ -87,6 +87,15 @@ def obter_parametros(
                 valor = float(linha.valor)
             except (TypeError, ValueError):
                 valor = None
+        elif linha.tipo == "texto":
+            # Sem este ramo o texto caía no `else` abaixo, que tenta
+            # `int(float(...))` e devolve None em silêncio. Não é hipótese: o
+            # único parâmetro de texto que existia (`laticinio_nome`, que
+            # decide qual receita o RMCA reconhece como leite) chegava nulo na
+            # tela desde que foi criado — o campo aparecia vazio e, salvo por
+            # cima, apagava a configuração. Texto é texto; não há o que
+            # converter.
+            valor = linha.valor or ""
         else:
             try:
                 valor = int(float(linha.valor))
@@ -100,6 +109,20 @@ def obter_parametros(
     # evita cards vazios antes do primeiro startup rodar o seed).
     grupos = {k: v for k, v in grupos.items() if v["itens"]}
     return {"grupos": grupos}
+
+
+@router.get("/transferencia-lote-automatica")
+def obter_transferencia_lote_automatica(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Secagem/Parto sugerem mover o animal para o lote de secas/lote 03 —
+    consultado direto (sem carregar o bloco inteiro de Parâmetros) por
+    FormSecagem.tsx/FormParto.tsx pra decidir entre perguntar (padrão) ou
+    mover sozinho, sem popup de confirmação."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    linha = _linha_visivel(session, "transferencia_lote_automatica", fazenda_id)
+    automatica = bool(linha and (linha.valor or "").strip().lower() in ("1", "true", "sim", "yes"))
+    return {"automatica": automatica}
 
 
 class AtualizarParametroIn(BaseModel):

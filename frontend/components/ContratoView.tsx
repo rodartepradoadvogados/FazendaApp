@@ -10,6 +10,7 @@ import {
   fetchPessoas, fetchContratos, criarContrato, encerrarContrato,
   atualizarParcelaContrato, redistribuirParcelasContrato, confirmarExclusao, ehAdmin,
 } from "@/lib/api";
+import { type ModoSecaoCategoria } from "@/components/ui";
 import CadastroAvulsoParceladoGenerico, { type ParcelaAvulsa, type ValeItemAvulso } from "@/components/CadastroAvulsoParceladoGenerico";
 
 type Pessoa = { id: number; nome: string; tipos: string[] };
@@ -26,7 +27,7 @@ const FORMAS = [
   { id: "semanal", label: "Semanal" },
 ];
 
-export default function ContratoView() {
+export default function ContratoView({ mostrar = "tudo" }: { mostrar?: ModoSecaoCategoria }) {
   const [pessoas, setPessoas] = useState<Pessoa[]>([]);
   const [itens, setItens] = useState<Contrato[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -72,6 +73,7 @@ export default function ContratoView() {
 
   return (
     <CadastroAvulsoParceladoGenerico<Contrato>
+      mostrar={mostrar}
       itens={itens} error={error} recarregar={carregar}
       pessoas={pessoas} labelPessoa="Pessoa" placeholderDescricao="Ex.: Consultoria, parceria de arrendamento…"
       msgSelecionePessoa="Selecione a pessoa." msgDescricaoObrigatoria="Informe a descrição do contrato."

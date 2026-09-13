@@ -1,5 +1,5 @@
 "use client";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Circle, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
   Paperclip, Pencil, ShoppingCart, Target, TrendingUp, Compass, Trash2, Wrench, AlertTriangle, Repeat, CreditCard, ArrowLeft, Award, Undo2,
@@ -8,10 +8,14 @@ import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, criarBaixaLoteDetalhada, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
   atualizarPlanoManutencaoPatrimonio, fetchManutencoesPatrimonio, registrarManutencaoPatrimonio,
   criarPatrimonio, atualizarPatrimonio, atualizarValorMercadoPatrimonio, vincularLancamentoPatrimonio, fetchPatrimonioListaSimples, type PatrimonioPayload,
+  // Onda 2 — listas fechadas, código PAT e baixa do patrimônio
+  fetchOpcoesPatrimonio, gerarCodigosPatrimonio, baixarPatrimonio, estornarBaixaPatrimonio, type OpcoesPatrimonio,
+  // Onda 3b — DRE em cascata / Onda 4 — Caixa Real
+  fetchDreCascata, classificarContaDre, type DreResposta,
+  fetchCaixaReal, fetchFundoReservaSugerido, type CaixaReal,
   fetchPessoas, fetchRmca, fetchCustoLitroLeite, fetchCustoHectare, fetchCustoVacaLote, fetchCustoSafra, fetchSafras, formatBRL, formatDate,
-  atualizarLancamentoFinanceiro, ehAdmin, ehConsultor, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
+  atualizarLancamentoFinanceiro, ehAdmin, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
   fetchRelatorioCompraSemen, type LinhaRelatorioCompraSemen,
-  fetchSupabaseDashboardUrl,
   fetchCentrosCusto,
   fetchOrcamento, criarItemOrcamento, atualizarItemOrcamento, excluirItemOrcamento, fetchComparativoOrcado,
   fetchCenarios, criarCenario, atualizarCenario, excluirCenario,
@@ -24,6 +28,7 @@ import {
   marcarItemComoVale, desmarcarItemComoVale,
   estornarPagamentoLancamento, type EstornoLancamentoOut,
   fetchEstoque, fetchServicosCadastro,
+  vincularProdutoItem, fetchClassificacoesCadastro, criarClassificacao,
 } from "@/lib/api";
 import ValeItemModal, { type ValeItemDados } from "@/components/ValeItemModal";
 import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
@@ -48,7 +53,7 @@ import type { ContaPlano } from "@/lib/contaGerencial";
 import { TabBar, SecaoRecolhivel, Indicador } from "@/components/ui";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import FolhaPagamentoView from "@/components/FolhaPagamentoView";
 import RelatorioFolhaPagamentoView from "@/components/RelatorioFolhaPagamentoView";
 import { DocumentosFiscais } from "@/components/DocumentosFiscais";
@@ -73,9 +78,10 @@ const COLUNAS_LIVRO = [
 type Lanc = {
   id: number; numero_lancamento: string | null;
   tipo: string; valor: number; valor_pago: number | null; desconto_acrescimo: number | null;
-  centro_custo: string; codigo_conta: string; conta_completa: string;
+  centro_custo: string; classificacao?: string | null; codigo_conta: string; conta_completa: string;
   descricao: string; fornecedor: string; responsavel: string | null;
   tipo_documento: string | null; numero_documento: string | null; numero_os_orcamento: string | null; numero_documento_pagamento: string | null;
+  numero_boleto?: string | null;
   // Tem comprovante/anexo em arquivo — inclusive o comprovante único de um
   // pagamento em lote, que é o mesmo arquivo para todas as notas da remessa.
   tem_comprovante?: boolean;
@@ -83,17 +89,18 @@ type Lanc = {
   parcela_num: number | null; parcela_total: number | null;
   data_competencia: string | null; data_pagamento: string | null; data_vencimento: string | null; data_emissao: string | null;
   mes_competencia: string | null; mes_caixa: string | null;
-  itens?: { id: number; produto: string; valor_total: number; descricao?: string | null;
+  itens?: { id: number; produto: string; tipo_item?: string | null; valor_total: number; descricao?: string | null;
             eh_vale: boolean; vale_tipo: "funcionario" | "avulso" | null; vale_id: number | null;
             vale_pessoa_id: number | null; vale_pessoa_nome: string | null }[];
   usuario_nome?: string | null;
   patrimonio_id?: number | null;
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
-  { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado por competência" },
+  { id: "caixa_real", label: "Caixa Real", icon: TrendingUp, desc: "Projeção de liquidez: quanto tem hoje e como o saldo evolui com os compromissos já lançados" },
+  { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado em cascata — receita de vendas até resultado líquido" },
   { id: "livro", label: "Livro Caixa", icon: BookOpen, desc: "Lançamentos com saldo acumulado" },
   { id: "extrato", label: "Extrato completo", icon: Receipt, desc: "Todos os lançamentos, com ou sem baixa" },
   { id: "rmca", label: "RMCA", icon: BarChart3, desc: "Receita do leite menos custo de alimentação — gerencial e físico lado a lado" },
@@ -109,21 +116,39 @@ const CONTAS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "a_receber", label: "Contas a receber", icon: Clock, desc: "Receitas em aberto (sem data de recebimento)" },
   { id: "pagas", label: "Contas pagas", icon: CheckCircle2, desc: "Despesas já quitadas" },
   { id: "recebidas", label: "Contas recebidas", icon: CheckCircle2, desc: "Receitas já recebidas" },
-  { id: "folha_relatorio", label: "Folha de Pagamento", icon: Users, desc: "Relatório da folha — pagos e a vencer, com exportação" },
-  { id: "extrato", label: "Todas", icon: Receipt, desc: "Todos os lançamentos, com ou sem baixa" },
+  // Os dois itens de menu se chamavam "Folha de Pagamento" e o segundo continha
+  // o primeiro — daí a confusão de qual abrir. Cada um passa a dizer o trabalho
+  // que faz: aqui se CONSULTA e IMPRIME o documento; em Ações se FECHA o mês.
+  // (O id não muda: navegação salva e links profundos continuam valendo.)
+  { id: "folha_relatorio", label: "Holerites e recibos", icon: Users, desc: "O recibo de cada pessoa, linha a linha — com impressão individual e em lote" },
+  // id PRÓPRIO ("todas_contas"), distinto do "extrato" de Relatórios > Extrato
+  // completo — mesma tela/mesmo destino visual (ver EXTRATO_IDS abaixo), mas
+  // um id diferente evita reintroduzir o bug de destaque duplicado (clicar em
+  // "Extrato completo" acendendo "Contas > Todas" por engano) que motivou
+  // tirar esta aba da árvore antes. Ver comentário em `subNavTree`.
+  { id: "todas_contas", label: "Todas", icon: Receipt, desc: "Todos os lançamentos, com ou sem baixa" },
 ];
+// "extrato" (Relatórios > Extrato completo) e "todas_contas" (Contas > Todas)
+// são o MESMO destino/tela — só o id da árvore de navegação é diferente
+// (ver acima). Toda decisão de CONTEÚDO (não de navegação) que hoje testa
+// `rel === "extrato"` precisa também aceitar "todas_contas".
+const EXTRATO_IDS = new Set<Rel>(["extrato", "todas_contas"]);
 const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "pagamento", label: "Pagamento", icon: Wallet, desc: "Lançar/quitar uma nota de despesa" },
   { id: "recebimento", label: "Recebimento", icon: Wallet, desc: "Lançar/quitar uma nota de receita" },
   { id: "lote", label: "Pagamento/recebimento em lote", icon: Layers, desc: "Dar baixa em várias notas de uma vez" },
-  { id: "folha", label: "Folha de pagamento", icon: Users, desc: "Lançamento e acompanhamento da folha" },
+  { id: "folha", label: "Fechamento da folha", icon: Users, desc: "Lançar, conferir e pagar a folha do mês — para só consultar/imprimir, use Contas > Holerites e recibos" },
   { id: "recorrentes", label: "Lançamentos recorrentes", icon: Repeat, desc: "Contas que se repetem todo mês (energia, internet, aluguel...) — cadastre uma vez, gere só com o valor do período" },
 ];
 const PLANEJAMENTO: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "orcamento", label: "Orçamento", icon: Target, desc: "Planilha orçamentária por conta gerencial/centro de custo/mês, comparada ao realizado" },
   { id: "planejamento_financeiro", label: "Planejamento financeiro", icon: TrendingUp, desc: "Cenários (otimista/realista/pessimista) com projeção de fluxo de caixa" },
 ];
-const CONTAS_IDS = new Set(CONTAS.map((c) => c.id));
+// Inclui "extrato" mesmo não estando mais em CONTAS — Relatórios > Extrato
+// completo precisa continuar se comportando como uma view de "Contas" (sem
+// período padrão implícito, filtros de tipo, etc.), igual já era antes de
+// "todas_contas" virar um id próprio.
+const CONTAS_IDS = new Set<Rel>([...CONTAS.map((c) => c.id), "extrato"]);
 const brk = (v: number) => `R$${(v / 1000).toFixed(0)}k`;
 const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", color: "var(--text)", fontSize: "0.8rem" };
 const fmtMes = (m: string) => m?.slice(2) ?? "";
@@ -228,15 +253,6 @@ export default function FinanceiroPage() {
   const [regs, setRegs] = useState<Lanc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rel, setRel] = useState<Rel>("a_pagar");
-  // Link pro banco de dados externo (Supabase) — só busca quando o usuário
-  // entra numa sub-aba de Relatórios financeiros, e só se não for consultor
-  // (backend já bloqueia; aqui é só pra não mostrar o botão à toa).
-  const [supabaseUrl, setSupabaseUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (RELATORIOS.some((r) => r.id === rel) && !ehConsultor() && supabaseUrl === null) {
-      fetchSupabaseDashboardUrl().then((d) => setSupabaseUrl(d.url || "")).catch(() => setSupabaseUrl(""));
-    }
-  }, [rel]);
   const [inicio, setInicio] = useState("");
   const [fim, setFim] = useState("");
   // Único filtro de período das sub-abas de Contas (a pagar/receber/pagas/
@@ -338,7 +354,10 @@ export default function FinanceiroPage() {
     // lida pelo próprio FolhaPagamentoView a partir de categoria/diaria/
     // calendario, ver useEffect lá).
     else if (ir === "folha") setRel("folha");
-    else if (ir && ["pagas", "recebidas", "extrato"].includes(ir)) setRel(ir as Rel);
+    // "folha_relatorio" entra na lista porque as duas telas de folha agora se
+    // apontam uma à outra na própria interface (só consulta × onde se fecha),
+    // e o link precisa de um endereço.
+    else if (ir && ["pagas", "recebidas", "extrato", "todas_contas", "folha_relatorio"].includes(ir)) setRel(ir as Rel);
     const ref = qs.get("ref");
     if (ref) setNotaAlvoRef(ref);
   }, []);
@@ -476,7 +495,7 @@ export default function FinanceiroPage() {
       if (relTipo && r.tipo !== relTipo) return false;
       if (relFornecedor && r.fornecedor !== relFornecedor) return false;
       if (relProduto && !(r.itens || []).some((it) => it.produto === relProduto)) return false;
-      if (relDocumento && !casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""}`, relDocumento)) return false;
+      if (relDocumento && !casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""} ${r.numero_boleto || ""}`, relDocumento)) return false;
       if (!casaContaGerencial(r, relConta)) return false;
       return true;
     });
@@ -485,6 +504,22 @@ export default function FinanceiroPage() {
   const receitas = filtrados.filter((r) => r.tipo === "receita").reduce((a, r) => a + r.valor, 0);
   const despesas = filtrados.filter((r) => r.tipo === "despesa").reduce((a, r) => a + r.valor, 0);
   const resultado = receitas - despesas;
+
+  // Panorama da coluna esquerda de Contas a pagar/a receber (ver tela
+  // "Consultar" do plano de duas colunas) — só faz sentido "vencido"/"a
+  // vencer" nessas duas abas (contas ainda em aberto); pagas/recebidas/
+  // extrato mostram só o total do período filtrado.
+  const kpisContas = useMemo(() => {
+    if (!CONTAS_IDS.has(rel)) return null;
+    const total = filtrados.reduce((s, r) => s + (r.valor || 0), 0);
+    if (rel !== "a_pagar" && rel !== "a_receber") return { total, vencido: null as number | null, aVencer: null as number | null };
+    const hoje = new Date().toISOString().slice(0, 10);
+    const em7dias = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    const abertos = filtrados.filter((r) => r.valor_pago == null);
+    const vencido = abertos.filter((r) => r.data_vencimento && r.data_vencimento < hoje).reduce((s, r) => s + (r.valor || 0), 0);
+    const aVencer = abertos.filter((r) => r.data_vencimento && r.data_vencimento >= hoje && r.data_vencimento <= em7dias).reduce((s, r) => s + (r.valor || 0), 0);
+    return { total, vencido, aVencer };
+  }, [filtrados, rel]);
 
   // Fluxo de caixa mensal (com saldo acumulado)
   const fluxoMensal = useMemo(() => {
@@ -604,18 +639,82 @@ export default function FinanceiroPage() {
 
   const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 
+  // Cartão de filtros — reaproveitado tanto na coluna esquerda de Contas
+  // (a pagar/a receber/pagas/recebidas/extrato, ver kpisContas acima) quanto
+  // no layout de coluna única dos outros relatórios (Fluxo/DRE/Livro...).
+  const filtrosCard = (
+    <div className="card mb-4">
+      <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
+      <div className="mb-3">
+        <FiltrosSalvos tela={`financeiro_${rel}`} valor={filtrosAtuais()} aoAplicar={aplicarFiltrosSalvos} />
+      </div>
+      <div className="flex flex-wrap gap-3 items-end">
+        {CONTAS_IDS.has(rel) ? (
+          <div>
+            <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Período por</label>
+            <div className="flex gap-2">
+              <select style={inputStyle} value={campoPeriodoContas} onChange={(e) => setCampoPeriodoContas(e.target.value as any)}>
+                <option value="emissao">Emissão</option>
+                <option value="vencimento">Vencimento</option>
+                {rel !== "a_pagar" && rel !== "a_receber" && <option value="pagamento">Pagamento</option>}
+              </select>
+              <input type="date" style={inputStyle} value={inicio} onChange={(e) => setInicio(e.target.value)} title="De" />
+              <input type="date" style={inputStyle} value={fim} onChange={(e) => setFim(e.target.value)} title="Até" />
+            </div>
+          </div>
+        ) : <>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Início</label><input type="date" style={inputStyle} value={inicio} onChange={(e) => setInicio(e.target.value)} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Fim</label><input type="date" style={inputStyle} value={fim} onChange={(e) => setFim(e.target.value)} /></div>
+        </>}
+        <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Centro de custo</label>
+          <select style={inputStyle} value={centro} onChange={(e) => setCentro(e.target.value)}><option value="">Todos</option>{centros.map((c) => <option key={c}>{c}</option>)}</select></div>
+        {CONTAS_IDS.has(rel) && (
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Conta bancária</label>
+            <select style={inputStyle} value={contaBanco} onChange={(e) => setContaBanco(e.target.value)}><option value="">Todas</option>{contasBancarias.map((c) => <option key={c}>{c}</option>)}</select></div>
+        )}
+        {!CONTAS_IDS.has(rel) && <>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Tipo</label>
+            <select style={inputStyle} value={relTipo} onChange={(e) => setRelTipo(e.target.value as any)}>
+              <option value="">Receitas e despesas</option><option value="receita">Só receitas</option><option value="despesa">Só despesas</option>
+            </select></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Fornecedor / cliente</label>
+            <select style={inputStyle} value={relFornecedor} onChange={(e) => setRelFornecedor(e.target.value)}>
+              <option value="">Todos</option>{opcoesRel.fornecedores.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Produto / serviço</label>
+            <select style={inputStyle} value={relProduto} onChange={(e) => setRelProduto(e.target.value)}>
+              <option value="">Todos</option>{opcoesProdutoRel.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Nº do documento</label>
+            <div style={{ position: "relative" }}>
+              <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
+              <input style={{ ...inputStyle, paddingLeft: "1.6rem" }} value={relDocumento} onChange={(e) => setRelDocumento(e.target.value)} placeholder="ex.: 4521" /></div></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Conta gerencial</label>
+            <FiltroContaGerencial contas={planoContas}
+              tipos={relTipo === "receita" ? ["receita"] : relTipo === "despesa" ? ["despesa"] : ["despesa", "receita"]}
+              codigo={relConta} nome={relContaNome}
+              onChange={(c, n) => { setRelConta(c); setRelContaNome(n); }} /></div>
+        </>}
+        <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", paddingBottom: "0.4rem" }}>
+          {!CONTAS_IDS.has(rel) && <>Regime: <strong style={{ color: "var(--dourado-light)" }}>{rel === "dre" ? "competência" : "caixa"}</strong> · </>}
+          {filtrados.length} lançamento{filtrados.length === 1 ? "" : "s"}
+        </span>
+      </div>
+    </div>
+  );
+
   return (
     <div className="p-6 animate-in">
       <div className="mb-4 flex items-start justify-between gap-3" style={{ flexWrap: "wrap" }}>
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 size={22} style={{ color: "var(--dourado)" }} /> Controle Financeiro</h1>
-          <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Escolha o relatório, o período e o centro de custo — indicadores, consolidado e gráfico.</p>
+          {/* A tela de folha traz o próprio texto de papel logo abaixo (é ela
+              que precisa dizer "aqui se fecha" × "lá só se consulta"); repetir
+              a frase de relatório em cima dele confundia as duas coisas. */}
+          {rel !== "folha" && (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Escolha o relatório, o período e o centro de custo — indicadores, consolidado e gráfico.</p>
+          )}
         </div>
-        {RELATORIOS.some((r) => r.id === rel) && !!supabaseUrl && (
-          <a href={supabaseUrl} target="_blank" rel="noreferrer" className="btn-ghost" style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>
-            <Layers size={13} /> Banco de dados (Supabase)
-          </a>
-        )}
       </div>
 
       {error && <div className="alert-critico mb-4"><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os lançamentos financeiros</a>.</span></div>}
@@ -633,7 +732,8 @@ export default function FinanceiroPage() {
       )}
 
       {regs && regs.length > 0 && <>
-        {rel === "patrimonio" ? <PatrimonioView />
+        {rel === "caixa_real" ? <CaixaRealView />
+          : rel === "patrimonio" ? <PatrimonioView />
           : rel === "cartao_credito" ? <CartaoCreditoView />
           : rel === "documentos" ? <DocumentosFiscais />
           : rel === "recorrentes" ? <LancamentosRecorrentesView onFeito={recarregar} />
@@ -649,73 +749,56 @@ export default function FinanceiroPage() {
           : rel === "compra_semen" ? <RelatorioCompraSemenView />
           : rel === "orcamento" ? <OrcamentoView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} />
           : rel === "planejamento_financeiro" ? <PlanejamentoFinanceiroView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} /> : <>
-        {/* Filtros */}
-        <div className="card mb-4">
-          <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
-          <div className="mb-3">
-            <FiltrosSalvos tela={`financeiro_${rel}`} valor={filtrosAtuais()} aoAplicar={aplicarFiltrosSalvos} />
-          </div>
-          <div className="flex flex-wrap gap-3 items-end">
-            {CONTAS_IDS.has(rel) ? (
-              <div>
-                <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Período por</label>
-                <div className="flex gap-2">
-                  <select style={inputStyle} value={campoPeriodoContas} onChange={(e) => setCampoPeriodoContas(e.target.value as any)}>
-                    <option value="emissao">Emissão</option>
-                    <option value="vencimento">Vencimento</option>
-                    {rel !== "a_pagar" && rel !== "a_receber" && <option value="pagamento">Pagamento</option>}
-                  </select>
-                  <input type="date" style={inputStyle} value={inicio} onChange={(e) => setInicio(e.target.value)} title="De" />
-                  <input type="date" style={inputStyle} value={fim} onChange={(e) => setFim(e.target.value)} title="Até" />
-                </div>
-              </div>
-            ) : <>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Início</label><input type="date" style={inputStyle} value={inicio} onChange={(e) => setInicio(e.target.value)} /></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Fim</label><input type="date" style={inputStyle} value={fim} onChange={(e) => setFim(e.target.value)} /></div>
-            </>}
-            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Centro de custo</label>
-              <select style={inputStyle} value={centro} onChange={(e) => setCentro(e.target.value)}><option value="">Todos</option>{centros.map((c) => <option key={c}>{c}</option>)}</select></div>
-            {CONTAS_IDS.has(rel) && (
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Conta bancária</label>
-                <select style={inputStyle} value={contaBanco} onChange={(e) => setContaBanco(e.target.value)}><option value="">Todas</option>{contasBancarias.map((c) => <option key={c}>{c}</option>)}</select></div>
-            )}
-            {!CONTAS_IDS.has(rel) && <>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Tipo</label>
-                <select style={inputStyle} value={relTipo} onChange={(e) => setRelTipo(e.target.value as any)}>
-                  <option value="">Receitas e despesas</option><option value="receita">Só receitas</option><option value="despesa">Só despesas</option>
-                </select></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Fornecedor / cliente</label>
-                <select style={inputStyle} value={relFornecedor} onChange={(e) => setRelFornecedor(e.target.value)}>
-                  <option value="">Todos</option>{opcoesRel.fornecedores.map((f) => <option key={f} value={f}>{f}</option>)}
-                </select></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Produto / serviço</label>
-                <select style={inputStyle} value={relProduto} onChange={(e) => setRelProduto(e.target.value)}>
-                  <option value="">Todos</option>{opcoesProdutoRel.map((p) => <option key={p} value={p}>{p}</option>)}
-                </select></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Nº do documento</label>
-                <div style={{ position: "relative" }}>
-                  <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
-                  <input style={{ ...inputStyle, paddingLeft: "1.6rem" }} value={relDocumento} onChange={(e) => setRelDocumento(e.target.value)} placeholder="ex.: 4521" /></div></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Conta gerencial</label>
-                <FiltroContaGerencial contas={planoContas}
-                  tipos={relTipo === "receita" ? ["receita"] : relTipo === "despesa" ? ["despesa"] : ["despesa", "receita"]}
-                  codigo={relConta} nome={relContaNome}
-                  onChange={(c, n) => { setRelConta(c); setRelContaNome(n); }} /></div>
-            </>}
-            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", paddingBottom: "0.4rem" }}>
-              {!CONTAS_IDS.has(rel) && <>Regime: <strong style={{ color: "var(--dourado-light)" }}>{rel === "dre" ? "competência" : "caixa"}</strong> · </>}
-              {filtrados.length} lançamento{filtrados.length === 1 ? "" : "s"}
-            </span>
-          </div>
-        </div>
-
         {CONTAS_IDS.has(rel) ? (
-          <TabelaContas key={rel} rel={rel} itens={filtrados} planoContas={planoContas}
-            onTratar={(l) => { setRel(l.tipo === "receita" ? "recebimento" : "pagamento"); setNotaAlvoRef(l.numero_lancamento || l.numero_documento || null); }}
-            onEditar={(l) => setEditando(l)}
-            onRecibo={(l) => setRecibo({ ...l, reparcelamento: reparcelamentoDoRecibo(l) })}
-            onEstornado={recarregar} />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+              <div className="mb-4">
+                {kpisContas?.vencido != null ? (
+                  // Um número dominante (o que decide se precisa agir agora) em vez
+                  // de 3 cartões do mesmo peso competindo pelo olhar — vencido e
+                  // "vence em 7 dias" continuam os mesmos dados, só menores.
+                  <div className="card" style={{ padding: "1.1rem 1.3rem" }}>
+                    <div style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.13em", textTransform: "uppercase", color: "var(--text-muted)" }}>
+                      {rel === "a_pagar" ? "Total em aberto" : "Total a receber"}
+                    </div>
+                    <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--dourado-light)", marginTop: "0.25rem", fontVariantNumeric: "tabular-nums" }}>
+                      {formatBRL(kpisContas.total)}
+                    </div>
+                    <div style={{ display: "flex", gap: "1.6rem", marginTop: "0.9rem", paddingTop: "0.8rem", borderTop: "1px solid var(--border)" }}>
+                      <div>
+                        <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--red)", fontVariantNumeric: "tabular-nums" }}>{formatBRL(kpisContas.vencido)}</div>
+                        <div style={{ fontSize: "0.62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginTop: "0.1rem" }}>Vencido</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--amber)", fontVariantNumeric: "tabular-nums" }}>{formatBRL(kpisContas.aVencer ?? 0)}</div>
+                        <div style={{ fontSize: "0.62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginTop: "0.1rem" }}>Vence em 7 dias</div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-2">
+                    <KPI v={formatBRL(kpisContas?.total ?? 0)} l="Total do período" c="var(--dourado-light)" />
+                  </div>
+                )}
+              </div>
+              {filtrosCard}
+            </div>
+            <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto" }}>
+              {/* `documentoInicial`: quando se chega aqui por um link
+                  "?ir=extrato&ref=LC-…" (o "No extrato" do holerite, a Agenda,
+                  o sino), o nº já entra no filtro de documento — sem isso o
+                  link abria a lista inteira e o usuário tinha que digitar o
+                  número que acabou de clicar. */}
+              <TabelaContas key={rel} rel={rel} itens={filtrados} planoContas={planoContas}
+                documentoInicial={EXTRATO_IDS.has(rel) ? notaAlvoRef : null}
+                onTratar={(l) => { setRel(l.tipo === "receita" ? "recebimento" : "pagamento"); setNotaAlvoRef(l.numero_lancamento || l.numero_documento || null); }}
+                onEditar={(l) => setEditando(l)}
+                onRecibo={(l) => setRecibo({ ...l, reparcelamento: reparcelamentoDoRecibo(l) })}
+                onEstornado={recarregar} />
+            </div>
+          </div>
         ) : <>
+        {filtrosCard}
         {/* Indicadores consolidados */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
           {rel === "fluxo" && <>
@@ -737,6 +820,11 @@ export default function FinanceiroPage() {
             <KPI v={String(livro.length)} l="Lançamentos" />
           </>}
         </div>
+
+        {/* Onda 3b — a cascata de 15 linhas é a leitura principal da DRE.
+            Usa o MESMO período do filtro da página (início/fim), para a tela
+            não ter dois controles de data dizendo coisas diferentes. */}
+        {rel === "dre" && <DreCascataView dataInicio={inicio} dataFim={fim} />}
 
         {/* Diário/Mensal — só se aplica ao Fluxo de Caixa */}
         {rel === "fluxo" && (
@@ -1030,6 +1118,7 @@ const theadStickyStyle: React.CSSProperties = { position: "sticky", top: 0, zInd
 export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: string[]; onFeito?: () => void }) {
   const admin = ehAdmin();
   const [regs, setRegs] = useState<Lanc[] | null>(null);
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [error, setError] = useState<string | null>(null);
   const [opcoes, setOpcoes] = useState<{ fornecedores: string[]; produtos: string[] }>({ fornecedores: [], produtos: [] });
 
@@ -1051,17 +1140,29 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
   const [numeroComprovante, setNumeroComprovante] = useState("");
   // "unico" = mesmo pagamento p/ todas; "linha" = data/valor/conta/forma por nota.
   const [modoLote, setModoLote] = useState<"unico" | "linha">("unico");
-  type LinhaPag = { data: string; valor: string; conta: string; forma: string; vencCartao: string; comprovante: string };
+  type LinhaPag = {
+    data: string; valor: string; conta: string; forma: string; vencCartao: string; comprovante: string;
+    // O que fazer com a diferença entre `valor` e o valor_total da nota, no
+    // modo "Ajustar por linha": `null` = ainda não decidido (nunca um
+    // default silencioso — ver darBaixaEmLote, que bloqueia o salvamento
+    // enquanto houver linha com diferença e sem decisão). "desconto" = vira
+    // desconto/acréscimo nesta própria nota (comportamento de sempre).
+    // "saldo" = cria uma nova conta a pagar/receber com o restante (mesmo
+    // mecanismo de "parcelar a diferença" da baixa individual).
+    modoDiferenca: "desconto" | "saldo" | null;
+    vencSaldo: string; // vencimento da nova conta, só quando modoDiferenca === "saldo"
+  };
   const [porLinha, setPorLinha] = useState<Record<number, LinhaPag>>({});
   const patchLinha = (id: number, patch: Partial<LinhaPag>) => setPorLinha((p) => ({ ...p, [id]: { ...p[id], ...patch } }));
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
-  // Comprovante em ARQUIVO da remessa — o banco emite um só para o lote
-  // inteiro, e ele precisa aparecer em todas as notas daquele pagamento no
+  // Comprovante(s) em ARQUIVO da remessa — o banco às vezes emite mais de um
+  // para o mesmo lote (o PDF da remessa inteira + o comprovante de uma linha,
+  // por exemplo), e todos precisam aparecer em cada nota daquele pagamento no
   // relatório de Contas pagas. Diferente de `numeroComprovante`, que é apenas
-  // o número digitado. Sobe DEPOIS da baixa confirmada: sem baixa não há o
+  // o número digitado. Sobem DEPOIS da baixa confirmada: sem baixa não há o
   // que comprovar, e assim uma falha no upload nunca desfaz o pagamento.
-  const [comprovanteArquivo, setComprovanteArquivo] = useState<File | null>(null);
+  const [comprovantesArquivos, setComprovantesArquivos] = useState<File[]>([]);
   const [anexarAberto, setAnexarAberto] = useState(false);
   const [arquivoPreview, setArquivoPreview] = useState<File | null>(null);
 
@@ -1088,7 +1189,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
     return regs.filter((r) =>
       !r.data_pagamento &&
       (tipoFiltro === "todos" || r.tipo === tipoFiltro) &&
-      casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""}`, numeroDocumento) &&
+      casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""} ${r.numero_boleto || ""}`, numeroDocumento) &&
       (!fornecedor || r.fornecedor === fornecedor) &&
       (!produto || (r.itens || []).some((it) => it.produto === produto)) &&
       (!centroCusto || r.centro_custo === centroCusto) &&
@@ -1111,7 +1212,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
     setPorLinha((p) => {
       const n = { ...p };
       for (const r of notasSelecionadas) {
-        if (!n[r.id]) n[r.id] = { data: dataPagamento, valor: String(r.valor), conta: contaBancaria, forma: formaPagamento, vencCartao: "", comprovante: "" };
+        if (!n[r.id]) n[r.id] = { data: dataPagamento, valor: String(r.valor), conta: contaBancaria, forma: formaPagamento, vencCartao: "", comprovante: "", modoDiferenca: null, vencSaldo: "" };
       }
       return n;
     });
@@ -1138,14 +1239,33 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
         for (const n of notasSelecionadas) {
           const l = porLinha[n.id];
           if (l?.forma === "credito" && !l.vencCartao) { setMsg({ tipo: "erro", texto: `Informe o vencimento do cartão da nota ${n.numero_documento || n.numero_lancamento || n.id}.` }); setSalvando(false); return; }
+          // Diferença entre valor pago e valor da nota: nunca um default
+          // silencioso — se ainda não foi decidido o que fazer (radio na
+          // linha de diferença, logo abaixo da nota na tabela), a baixa é
+          // bloqueada aqui em vez de assumir desconto/acréscimo sozinha.
+          const diferencaLinha = Math.round(((Number(l?.valor) || 0) - n.valor) * 100) / 100;
+          if (diferencaLinha !== 0 && !l?.modoDiferenca) {
+            setMsg({ tipo: "erro", texto: `Escolha o que fazer com a diferença de ${formatBRL(Math.abs(diferencaLinha))} da nota ${n.numero_documento || n.numero_lancamento || n.id} antes de dar baixa.` });
+            setSalvando(false);
+            return;
+          }
+          if (diferencaLinha !== 0 && l?.modoDiferenca === "saldo" && !l.vencSaldo) {
+            setMsg({ tipo: "erro", texto: `Informe o vencimento da nova conta com o saldo da nota ${n.numero_documento || n.numero_lancamento || n.id}.` });
+            setSalvando(false);
+            return;
+          }
         }
         r = await criarBaixaLoteDetalhada(notasSelecionadas.map((n) => {
           const l = porLinha[n.id];
+          const diferencaLinha = Math.round(((Number(l?.valor) || 0) - n.valor) * 100) / 100;
           return {
             lancamento_id: n.id, data_pagamento: l?.data || dataPagamento, valor_pago: Number(l?.valor) || 0,
             conta_bancaria: l?.conta || undefined, forma_pagamento: l?.forma || undefined,
             data_vencimento_cartao: l?.forma === "credito" ? l.vencCartao : undefined,
             numero_documento_pagamento: l?.comprovante || undefined,
+            parcelas_diferenca: diferencaLinha !== 0 && l?.modoDiferenca === "saldo"
+              ? [{ data_vencimento: l.vencSaldo, valor: Math.abs(diferencaLinha) }]
+              : undefined,
           };
         }));
       } else {
@@ -1157,23 +1277,24 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
           numero_documento_pagamento: numeroComprovante || undefined,
         });
       }
-      // Comprovante do lote: sobe DEPOIS da baixa, sobre os ids que acabaram
-      // de ser baixados. Se o upload falhar, a baixa continua valendo — o
-      // aviso diferencia os dois casos para o usuário saber o que refazer.
+      // Comprovante(s) do lote: sobem DEPOIS da baixa, sobre os ids que
+      // acabaram de ser baixados. Se o upload falhar, a baixa continua
+      // valendo — o aviso diferencia os dois casos para o usuário saber o
+      // que refazer.
       let aviso = `${r.baixados} lançamento(s) baixado(s) com sucesso.`;
-      if (comprovanteArquivo) {
+      if (comprovantesArquivos.length > 0) {
         try {
-          const a = await anexarComprovanteEmLote(Array.from(selecionados), comprovanteArquivo);
-          aviso += ` Comprovante "${a.nome_arquivo}" anexado a ${a.anexados} lançamento(s).`;
+          const a = await anexarComprovanteEmLote(Array.from(selecionados), comprovantesArquivos);
+          aviso += ` ${a.arquivos.length} comprovante(s) anexado(s) a ${a.anexados} lançamento(s) no total.`;
         } catch (e: any) {
-          setMsg({ tipo: "erro", texto: `Baixa concluída, mas o comprovante não foi anexado: ${e.message}. Anexe pela tela de pagamento.` });
-          setSelecionados(new Set()); setNumeroComprovante(""); setPorLinha({}); setComprovanteArquivo(null);
+          setMsg({ tipo: "erro", texto: `Baixa concluída, mas o(s) comprovante(s) não foram anexados: ${e.message}. Anexe pela tela de pagamento.` });
+          setSelecionados(new Set()); setNumeroComprovante(""); setPorLinha({}); setComprovantesArquivos([]);
           carregar(); onFeito?.();
           return;
         }
       }
       setMsg({ tipo: "sucesso", texto: aviso });
-      setSelecionados(new Set()); setNumeroComprovante(""); setPorLinha({}); setComprovanteArquivo(null);
+      setSelecionados(new Set()); setNumeroComprovante(""); setPorLinha({}); setComprovantesArquivos([]);
       carregar();
       onFeito?.();
     } catch (e: any) {
@@ -1232,12 +1353,14 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
 
       {anexarAberto && (
         <ModalDivididoDocumento title="Novo lançamento — leitura automática" onClose={() => { setAnexarAberto(false); setArquivoPreview(null); }} arquivo={arquivoPreview}>
-          <FormFinanceiro tipo={tipoFiltro === "receita" ? "receita" : "despesa"} responsaveis={RESPONSAVEIS}
+          <FormFinanceiro tipo={tipoFiltro === "receita" ? "receita" : "despesa"} responsaveis={nomesResponsaveis}
             onArquivoParaLeitura={setArquivoPreview}
             onSalvo={(mensagem) => { setAnexarAberto(false); setArquivoPreview(null); setMsg({ tipo: "sucesso", texto: mensagem }); carregar(); }} />
         </ModalDivididoDocumento>
       )}
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden", marginBottom: "1rem" }}>
         <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.4rem" }}>
           <span style={{ fontSize: "0.85rem" }}>
@@ -1248,7 +1371,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
             {selecionados.size === filtrados.length && filtrados.length ? "Limpar seleção" : `Selecionar todas (${filtrados.length})`}
           </button>
         </div>
-        <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
+        <div className="overflow-x-auto">
           <table className="fazenda-table" style={{ margin: 0 }}>
             <thead style={theadStickyStyle}><tr>
               <th style={theadStickyStyle}></th>
@@ -1289,8 +1412,10 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
           </table>
         </div>
       </div>
+      </div>
 
-      {selecionados.size > 0 && (
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      {selecionados.size > 0 ? (
         <div className="card">
           <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
             <span>Baixa de {selecionados.size} lançamento(s) — {formatBRL(totalSelecionado)}</span>
@@ -1331,7 +1456,8 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
           ) : (
             <div className="mb-3">
               <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
-                Cada nota com sua própria data, valor, conta e forma. Valor diferente do total vira desconto/acréscimo.
+                Cada nota com sua própria data, valor, conta e forma. Valor diferente do total pede uma decisão
+                (desconto/acréscimo ou nova conta com o saldo) antes de dar baixa.
                 Total a pagar: <strong style={{ color: "var(--text)" }}>{formatBRL(totalPagoLinha)}</strong> (de {formatBRL(totalSelecionado)}).
               </p>
               <div className="overflow-x-auto" style={{ maxHeight: "340px" }}>
@@ -1342,7 +1468,8 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
                   </tr></thead>
                   <tbody>
                     {notasSelecionadas.map((n) => {
-                      const l = porLinha[n.id] || { data: dataPagamento, valor: String(n.valor), conta: "", forma: "", vencCartao: "", comprovante: "" };
+                      const l = porLinha[n.id] || { data: dataPagamento, valor: String(n.valor), conta: "", forma: "", vencCartao: "", comprovante: "", modoDiferenca: null, vencSaldo: "" };
+                      const diferencaLinha = Math.round(((Number(l.valor) || 0) - n.valor) * 100) / 100;
                       return (
                         <tr key={n.id}>
                           <td style={{ maxWidth: 180 }}>
@@ -1367,32 +1494,74 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
                         </tr>
                       );
                     })}
+                    {/* Linha de decisão — só aparece quando o valor pago desta
+                        nota difere do valor_total dela. Nunca um default
+                        silencioso: modoDiferenca nasce `null` (ver o efeito
+                        que preenche porLinha) e darBaixaEmLote bloqueia o
+                        salvamento enquanto alguma diferença ficar sem
+                        escolha — mesmas duas opções da baixa individual
+                        (Tratar pagamento/recebimento), aqui por linha. */}
+                    {notasSelecionadas.map((n) => {
+                      const l = porLinha[n.id] || { data: dataPagamento, valor: String(n.valor), conta: "", forma: "", vencCartao: "", comprovante: "", modoDiferenca: null, vencSaldo: "" };
+                      const diferencaLinha = Math.round(((Number(l.valor) || 0) - n.valor) * 100) / 100;
+                      if (diferencaLinha === 0) return null;
+                      return (
+                        <tr key={`dif-${n.id}`}>
+                          <td colSpan={7} style={{ background: "var(--surface-2)", padding: "0.5rem 0.7rem" }}>
+                            <p style={{ margin: "0 0 0.35rem", fontSize: "0.74rem", color: diferencaLinha < 0 ? "var(--green-light)" : "var(--amber)" }}>
+                              {n.numero_documento || n.numero_lancamento || "Nota"}: {diferencaLinha < 0 ? `desconto de ${formatBRL(Math.abs(diferencaLinha))}` : `acréscimo de ${formatBRL(diferencaLinha)}`} em relação ao valor da nota. O que fazer com a diferença?
+                            </p>
+                            <div className="flex items-center gap-4" style={{ flexWrap: "wrap" }}>
+                              <label className="flex items-center gap-2" style={{ fontSize: "0.76rem", cursor: "pointer" }}>
+                                <input type="radio" name={`dif-${n.id}`} checked={l.modoDiferenca === "desconto"} onChange={() => patchLinha(n.id, { modoDiferenca: "desconto" })} />
+                                Lançar {diferencaLinha < 0 ? "desconto" : "acréscimo"} nesta nota
+                              </label>
+                              <label className="flex items-center gap-2" style={{ fontSize: "0.76rem", cursor: "pointer" }}>
+                                <input type="radio" name={`dif-${n.id}`} checked={l.modoDiferenca === "saldo"} onChange={() => patchLinha(n.id, { modoDiferenca: "saldo", vencSaldo: l.vencSaldo || dividirDiferenca(Math.abs(diferencaLinha), 1, l.data)[0].data_vencimento })} />
+                                Criar nova conta com o saldo de {formatBRL(Math.abs(diferencaLinha))}
+                              </label>
+                              {l.modoDiferenca === "saldo" && (
+                                <label className="flex items-center gap-2" style={{ fontSize: "0.76rem" }}>
+                                  Vencimento:
+                                  <input type="date" style={{ ...selStyleLote, minWidth: 130 }} value={l.vencSaldo} onChange={(e) => patchLinha(n.id, { vencSaldo: e.target.value })} />
+                                </label>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             </div>
           )}
-          {/* Comprovante único da remessa — vale para os dois modos (pagamento
+          {/* Comprovante(s) da remessa — vale para os dois modos (pagamento
               igual para todas ou linha a linha): o que define o lote é a
               seleção, não o modo. Fica fora do card de "pagamento único" por
-              isso. */}
+              isso. Mais de um arquivo é aceito (o banco às vezes emite mais
+              de um recibo pra mesma remessa) — todos ficam vinculados a
+              todas as notas selecionadas. */}
           {selecionados.size > 0 && (
             <div className="card mb-4">
-              <div className="card-header mb-2">Comprovante do lote <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.75rem" }}>(opcional)</span></div>
+              <div className="card-header mb-2">Comprovante(s) do lote <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.75rem" }}>(opcional)</span></div>
               <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginBottom: "0.6rem" }}>
-                Um arquivo só — o mesmo comprovante fica vinculado às {selecionados.size} nota(s) selecionada(s) e aparece
+                Cada arquivo anexado aqui fica vinculado às {selecionados.size} nota(s) selecionada(s) e aparece
                 no relatório de Contas pagas de cada uma.
               </p>
-              {comprovanteArquivo ? (
-                <div className="flex items-center gap-2" style={{ fontSize: "0.8rem" }}>
-                  <FileText size={14} style={{ color: "var(--dourado-light)" }} />
-                  <span>{comprovanteArquivo.name}</span>
-                  <button type="button" onClick={() => setComprovanteArquivo(null)} className="btn-ghost" title="Remover comprovante" aria-label="Remover comprovante"><X size={14} /></button>
-                </div>
-              ) : (
-                <Dropzone compact label="Arraste o comprovante do pagamento" hint="PDF ou imagem, até 15 MB"
-                  onFiles={(fs) => setComprovanteArquivo(fs[0] || null)} />
+              {comprovantesArquivos.length > 0 && (
+                <ul style={{ listStyle: "none", padding: 0, margin: "0 0 0.6rem" }}>
+                  {comprovantesArquivos.map((f, i) => (
+                    <li key={`${f.name}-${i}`} className="flex items-center gap-2" style={{ fontSize: "0.8rem", padding: "0.15rem 0" }}>
+                      <FileText size={14} style={{ color: "var(--dourado-light)" }} />
+                      <span>{f.name}</span>
+                      <button type="button" onClick={() => setComprovantesArquivos((p) => p.filter((_, j) => j !== i))} className="btn-ghost" title="Remover este comprovante" aria-label="Remover este comprovante"><X size={14} /></button>
+                    </li>
+                  ))}
+                </ul>
               )}
+              <Dropzone compact multiple label="Arraste o(s) comprovante(s) do pagamento" hint="PDF ou imagem, até 15 MB cada"
+                onFiles={(fs) => setComprovantesArquivos((p) => [...p, ...fs])} />
             </div>
           )}
           {/* Sucesso vai pro aviso persistente no topo (AvisoSalvo) — este
@@ -1404,7 +1573,14 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
             <Check size={14} /> {salvando ? "Salvando…" : `Dar baixa em ${selecionados.size} lançamento(s)`}
           </button>
         </div>
+      ) : (
+        <div className="card" style={{ textAlign: "center", padding: "2.4rem 1rem" }}>
+          <Check size={22} style={{ color: "var(--text-muted)", margin: "0 auto 0.6rem" }} />
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione uma ou mais notas à esquerda para ver os dados da baixa.</p>
+        </div>
       )}
+      </div>
+      </div>
     </div>
   );
 }
@@ -1414,7 +1590,17 @@ type ItemPatrimonio = {
   atividade_cultura: string | null; data_imobilizacao: string | null;
   metodo_depreciacao: string | null; vida_util: string | null; valor_residual: number | null;
   quantidade: number | null; unidade: string | null; valor_total: number | null; data_baixa: string | null;
-  depreciacao_acumulada: number | null; valor_atual: number | null; vida_util_anos: number | null; inconsistencia: string | null;
+  depreciacao_acumulada: number | null; valor_atual: number | null; inconsistencia: string | null;
+  // Onda 2: `vida_util_anos`/`vida_util_meses` são os campos do CADASTRO (os
+  // steppers); `vida_util_total_anos` é o total calculado (10 anos e 6 meses
+  // = 10,5), usado para exibir e ordenar. Nomes distintos de propósito — ver
+  // o comentário em listar_patrimonio no backend.
+  vida_util_anos: number | null; vida_util_meses: number | null; vida_util_total_anos: number | null;
+  codigo: string | null; metodo_rotulo: string | null;
+  fator_saldo_decrescente: number | null;
+  unidades_vida_util_total: number | null; unidades_consumidas: number | null; unidade_uso: string | null;
+  motivo_baixa: string | null; valor_baixa: number | null;
+  baixa: { motivo: string | null; data_baixa: string; valor_recebido: number; valor_contabil: number; resultado: number; estimado: boolean } | null;
   frequencia_manutencao_meses: number | null; data_ultima_manutencao: string | null;
   data_proxima_manutencao: string | null; observacao_manutencao: string | null;
   situacao_manutencao: "vencida" | "proxima" | "ok" | null; dias_para_manutencao: number | null;
@@ -1456,11 +1642,17 @@ function PatrimonioView() {
 }
 
 function PatrimonioViewAdmin() {
-  const [dados, setDados] = useState<{ itens: ItemPatrimonio[]; total: number; valor_total: number; valor_atual_total: number; inconsistencias: InconsistenciaPatrimonio[] } | null>(null);
+  const [dados, setDados] = useState<{
+    itens: ItemPatrimonio[]; total: number; valor_total: number; valor_atual_total: number;
+    valor_atual_total_inconsistentes: number; itens_inconsistentes: number;
+    inconsistencias: InconsistenciaPatrimonio[]; sem_codigo: number;
+  } | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [itemManutencao, setItemManutencao] = useState<ItemPatrimonio | null>(null);
   const [itemEditando, setItemEditando] = useState<ItemPatrimonio | "novo" | null>(null);
   const [itemValorMercado, setItemValorMercado] = useState<ItemPatrimonio | null>(null);
+  const [itemBaixa, setItemBaixa] = useState<ItemPatrimonio | null>(null);
+  const [gerandoCodigos, setGerandoCodigos] = useState(false);
 
   const carregar = () => { fetchPatrimonio().then(setDados).catch((e) => setErro(e.message)); };
   useEffect(carregar, []);
@@ -1472,7 +1664,8 @@ function PatrimonioViewAdmin() {
     tipo: (i) => (i.tipo || "").toLowerCase(),
     nome: (i) => (i.nome || "").toLowerCase(),
     numero: (i) => (i.numero || "").toLowerCase(),
-    vidaUtil: (i) => i.vida_util_anos ?? -1,
+    codigo: (i) => i.codigo || "",
+    vidaUtil: (i) => i.vida_util_total_anos ?? -1,
     valorResidual: (i) => i.valor_residual ?? -1,
     quantidade: (i) => i.quantidade ?? -1,
     valorTotal: (i) => i.valor_total ?? -1,
@@ -1503,7 +1696,15 @@ function PatrimonioViewAdmin() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
         <KPI v={String(dados.total)} l="Itens" />
         <KPI v={formatBRL(dados.valor_total)} l="Valor total (histórico)" c="var(--text-muted)" />
-        <KPI v={formatBRL(dados.valor_atual_total)} l="Valor atual (após depreciação)" c="var(--dourado-light)" />
+        <KPI
+          v={formatBRL(dados.valor_atual_total)}
+          l={
+            dados.itens_inconsistentes > 0
+              ? `Valor atual (após depreciação) — ${dados.itens_inconsistentes} item(ns) fora deste total, ver inconsistências`
+              : "Valor atual (após depreciação)"
+          }
+          c="var(--dourado-light)"
+        />
         <KPI v={String(dados.itens.filter((i) => i.data_baixa).length)} l="Com baixa" c="var(--text-muted)" />
       </div>
       {(vencidas > 0 || proximas > 0) && (
@@ -1517,9 +1718,45 @@ function PatrimonioViewAdmin() {
           </p>
         </div>
       )}
+      {/* Onda 2 — bens que nasceram sem código PAT (todo o legado). O backfill
+          é report-first: a prévia não grava nada. */}
+      {dados.sem_codigo > 0 && (
+        <div className="card mb-4" style={{ borderColor: "var(--dourado-light)" }}>
+          <div className="flex items-center justify-between gap-3" style={{ flexWrap: "wrap" }}>
+            <p style={{ fontSize: "0.82rem", margin: 0 }}>
+              <strong>{dados.sem_codigo} bem(ns) sem código.</strong>{" "}
+              <span style={{ color: "var(--text-muted)" }}>
+                O código (PAT-0001) é como você identifica o bem no dia a dia — “baixa o PAT-0007”.
+                Os itens importados antes desta versão ainda não têm um.
+              </span>
+            </p>
+            <button className="btn-primary" style={{ fontSize: "0.78rem" }} disabled={gerandoCodigos}
+              onClick={async () => {
+                setGerandoCodigos(true);
+                try {
+                  const previa = await gerarCodigosPatrimonio(false);
+                  const ok = confirm(
+                    `Gerar ${previa.total} código(s), de ${previa.primeiro} a ${previa.ultimo}?\n\n` +
+                    `A ordem segue a data de imobilização de cada bem. Nada foi gravado ainda.`
+                  );
+                  if (ok) { await gerarCodigosPatrimonio(true); carregar(); }
+                } catch (e: any) { setErro(e.message); } finally { setGerandoCodigos(false); }
+              }}>
+              {gerandoCodigos ? "Gerando…" : "Gerar códigos"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {dados.inconsistencias.length > 0 && (
         <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
           <div className="card-header mb-2" style={{ color: "var(--amber)" }}>Inconsistências na depreciação ({dados.inconsistencias.length})</div>
+          {dados.itens_inconsistentes > 0 && (
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+              {formatBRL(dados.valor_atual_total_inconsistentes)} em valor de aquisição (não depreciado) destes itens
+              ficam FORA do KPI "Valor atual" acima — corrija o cadastro para incluí-los.
+            </p>
+          )}
           <ul style={{ fontSize: "0.8rem", color: "var(--text-muted)", paddingLeft: "1.2rem" }}>
             {dados.inconsistencias.map((inc, i) => (
               <li key={i}>{inc.item}{inc.numero ? ` (Nº ${inc.numero})` : ""}: {inc.motivo}</li>
@@ -1538,6 +1775,7 @@ function PatrimonioViewAdmin() {
           <table className="fazenda-table">
             <thead>
               <tr>
+                <ThOrd rotulo="Código" chave="codigo" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} />
                 <ThOrd rotulo="Tipo" chave="tipo" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} />
                 <ThOrd rotulo="Nome" chave="nome" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} />
                 <ThOrd rotulo="Nº" chave="numero" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} />
@@ -1557,6 +1795,7 @@ function PatrimonioViewAdmin() {
             <tbody>
               {bensOrdenados.map((i) => (
                 <tr key={i.id} style={i.data_baixa ? { opacity: 0.55 } : undefined}>
+                  <td style={{ fontSize: "0.76rem", fontFamily: "var(--font-mono, monospace)", color: "var(--dourado-light)", whiteSpace: "nowrap" }}>{i.codigo || "—"}</td>
                   <td style={{ fontSize: "0.78rem" }}>{i.tipo || "—"}</td>
                   <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>
                     {i.nome}
@@ -1564,8 +1803,23 @@ function PatrimonioViewAdmin() {
                   </td>
                   <td style={{ fontSize: "0.78rem" }}>{i.numero || "—"}</td>
                   <td style={{ fontSize: "0.78rem" }}>{i.data_imobilizacao ? formatDate(i.data_imobilizacao) : "—"}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{i.depreciavel ? (i.metodo_depreciacao || "—") : "—"}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{i.depreciavel ? (i.vida_util || "—") : "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{i.depreciavel ? (i.metodo_rotulo || i.metodo_depreciacao || "—") : "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>
+                    {!i.depreciavel ? "—"
+                      : i.vida_util_anos != null || i.vida_util_meses != null
+                        // Cadastro novo (steppers): mostra exatamente o que foi digitado.
+                        ? [i.vida_util_anos ? `${i.vida_util_anos}a` : null, i.vida_util_meses ? `${i.vida_util_meses}m` : null].filter(Boolean).join(" ") || "—"
+                        // Legado: o texto livre, com o total interpretado ao lado, para
+                        // o usuário ver COMO o sistema entendeu o que está escrito.
+                        : i.vida_util
+                          ? <span title="Cadastro antigo em texto livre — edite o bem para gravar anos e meses">
+                              {i.vida_util}
+                              {i.vida_util_total_anos != null && (
+                                <span style={{ color: "var(--text-muted)" }}> (= {i.vida_util_total_anos.toFixed(1)}a)</span>
+                              )}
+                            </span>
+                          : "—"}
+                  </td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{i.depreciavel && i.valor_residual != null ? formatBRL(i.valor_residual) : "—"}</td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{i.quantidade ?? "—"} {i.unidade || ""}</td>
                   <td style={{ textAlign: "right", fontWeight: 600, fontSize: "0.83rem" }}>{i.valor_total != null ? formatBRL(i.valor_total) : "—"}</td>
@@ -1573,7 +1827,19 @@ function PatrimonioViewAdmin() {
                     {!i.depreciavel ? "—" : i.depreciacao_acumulada != null ? formatBRL(i.depreciacao_acumulada) : <span title={i.inconsistencia || undefined} style={{ color: "var(--amber)" }}>—</span>}
                   </td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600, color: "var(--dourado-light)" }}>{i.valor_atual != null ? formatBRL(i.valor_atual) : "—"}</td>
-                  <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{i.data_baixa ? formatDate(i.data_baixa) : "—"}</td>
+                  <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                    {!i.data_baixa ? "—" : (
+                      <>
+                        {formatDate(i.data_baixa)}
+                        {i.baixa && (
+                          <div style={{ color: i.baixa.resultado >= 0 ? "var(--green-light)" : "var(--red)", fontWeight: 600 }}
+                               title={`Valor contábil na baixa: ${formatBRL(i.baixa.valor_contabil)} · Recebido: ${formatBRL(i.baixa.valor_recebido)}${i.baixa.estimado ? " (estimado — cadastro incompleto)" : ""}`}>
+                            {i.baixa.resultado >= 0 ? "Ganho " : "Perda "}{formatBRL(Math.abs(i.baixa.resultado))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </td>
                   <td>
                     {i.data_baixa ? <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>—</span>
                       : i.depreciavel ? <SeloManutencao item={i} />
@@ -1598,6 +1864,19 @@ function PatrimonioViewAdmin() {
                           <TrendingUp size={14} />
                         </button>
                       )}
+                      {!i.data_baixa ? (
+                        <button className="btn-ghost" title="Baixar do ativo (venda, perda, doação…)" style={{ padding: "0.25rem" }} onClick={() => setItemBaixa(i)}>
+                          <Trash2 size={14} />
+                        </button>
+                      ) : (
+                        <button className="btn-ghost" title="Estornar a baixa — o bem volta ao ativo" style={{ padding: "0.25rem" }}
+                          onClick={async () => {
+                            if (!confirm(`Estornar a baixa de ${i.nome}? O bem volta ao ativo e volta a depreciar.`)) return;
+                            try { await estornarBaixaPatrimonio(i.id); carregar(); } catch (e: any) { setErro(e.message); }
+                          }}>
+                          <Undo2 size={14} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -1614,6 +1893,9 @@ function PatrimonioViewAdmin() {
       )}
       {itemValorMercado && (
         <ModalValorMercadoPatrimonio item={itemValorMercado} onClose={() => setItemValorMercado(null)} onSalvo={() => { setItemValorMercado(null); carregar(); }} />
+      )}
+      {itemBaixa && (
+        <ModalBaixaPatrimonio item={itemBaixa} onClose={() => setItemBaixa(null)} onSalvo={() => { setItemBaixa(null); carregar(); }} />
       )}
     </>
   );
@@ -1634,8 +1916,18 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
   const [unidade, setUnidade] = useState(item?.unidade || "");
   const [valorTotal, setValorTotal] = useState(item?.valor_total != null ? String(item.valor_total) : "");
   const [depreciavel, setDepreciavel] = useState(item?.depreciavel ?? true);
-  const [metodoDepreciacao, setMetodoDepreciacao] = useState(item?.metodo_depreciacao || "");
-  const [vidaUtil, setVidaUtil] = useState(item?.vida_util || "");
+  const [metodoDepreciacao, setMetodoDepreciacao] = useState(item?.metodo_depreciacao || "LINEAR");
+  // Onda 2 — vida útil ESTRUTURADA. Item legado só tem o texto livre
+  // (`vida_util`), então os steppers começam vazios e o texto antigo fica
+  // visível como procedência até o usuário preencher os campos novos.
+  const [vidaUtilAnos, setVidaUtilAnos] = useState(item?.vida_util_anos != null ? String(item.vida_util_anos) : "");
+  const [vidaUtilMeses, setVidaUtilMeses] = useState(item?.vida_util_meses != null ? String(item.vida_util_meses) : "");
+  const [fatorSaldo, setFatorSaldo] = useState(item?.fator_saldo_decrescente != null ? String(item.fator_saldo_decrescente) : "");
+  const [unidadesTotal, setUnidadesTotal] = useState(item?.unidades_vida_util_total != null ? String(item.unidades_vida_util_total) : "");
+  const [unidadesConsumidas, setUnidadesConsumidas] = useState(item?.unidades_consumidas != null ? String(item.unidades_consumidas) : "");
+  const [unidadeUso, setUnidadeUso] = useState(item?.unidade_uso || "horas");
+  const [opcoes, setOpcoes] = useState<OpcoesPatrimonio | null>(null);
+  useEffect(() => { fetchOpcoesPatrimonio().then(setOpcoes).catch(() => {}); }, []);
   const [valorResidual, setValorResidual] = useState(item?.valor_residual != null ? String(item.valor_residual) : "");
   const [frequenciaValorMercado, setFrequenciaValorMercado] = useState(
     item?.atualizacao_valor_mercado_frequencia_meses != null ? String(item.atualizacao_valor_mercado_frequencia_meses) : ""
@@ -1652,7 +1944,15 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
       valor_total: valorTotal ? Number(valorTotal) : null,
       depreciavel,
       metodo_depreciacao: depreciavel ? (metodoDepreciacao || null) : null,
-      vida_util: depreciavel ? (vidaUtil || null) : null,
+      // O texto livre é PRESERVADO como veio (procedência do dado importado);
+      // quem manda no cálculo são os campos estruturados abaixo.
+      vida_util: depreciavel ? (item?.vida_util || null) : null,
+      vida_util_anos: depreciavel && vidaUtilAnos !== "" ? Number(vidaUtilAnos) : null,
+      vida_util_meses: depreciavel && vidaUtilMeses !== "" ? Number(vidaUtilMeses) : null,
+      fator_saldo_decrescente: depreciavel && metodoDepreciacao === "SALDO_DECRESCENTE" && fatorSaldo ? Number(fatorSaldo) : null,
+      unidades_vida_util_total: depreciavel && metodoDepreciacao === "UNIDADES_PRODUZIDAS" && unidadesTotal ? Number(unidadesTotal) : null,
+      unidades_consumidas: depreciavel && metodoDepreciacao === "UNIDADES_PRODUZIDAS" && unidadesConsumidas ? Number(unidadesConsumidas) : null,
+      unidade_uso: depreciavel && metodoDepreciacao === "UNIDADES_PRODUZIDAS" ? (unidadeUso || null) : null,
       valor_residual: depreciavel && valorResidual ? Number(valorResidual) : null,
       atualizacao_valor_mercado_frequencia_meses: !depreciavel && frequenciaValorMercado ? Number(frequenciaValorMercado) : null,
     };
@@ -1692,7 +1992,18 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
           <div style={{ gridColumn: "1 / -1" }}><label style={label}>Nome</label>
             <input style={inputStyle} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="ex.: Trator Massey Ferguson" /></div>
           <div><label style={label}>Tipo</label>
-            <input style={inputStyle} value={tipo} onChange={(e) => setTipo(e.target.value)} placeholder="ex.: Máquinas, Terra, Benfeitoria" /></div>
+            <select style={inputStyle} value={tipo} onChange={(e) => {
+              const novo = e.target.value;
+              setTipo(novo);
+              // Terra/Fazenda/Terreno não depreciam (CPC 27 e IN RFB 1700 não
+              // atribuem taxa a terreno). Marcar sozinho evita o cadastro
+              // incoerente que gerava a nota "vida útil não reconhecida".
+              if (["Terra", "Fazenda", "Terreno"].includes(novo)) setDepreciavel(false);
+            }}>
+              <option value="">Selecione…</option>
+              {(opcoes?.tipos || (tipo ? [tipo] : [])).map((t) => <option key={t} value={t}>{t}</option>)}
+              {tipo && !(opcoes?.tipos || []).includes(tipo) && <option value={tipo}>{tipo} (cadastro antigo)</option>}
+            </select></div>
           <div><label style={label}>Nº patrimônio</label>
             <input style={inputStyle} value={numero} onChange={(e) => setNumero(e.target.value)} /></div>
           <div><label style={label}>Data de imobilização</label>
@@ -1702,7 +2013,11 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
           <div><label style={label}>Quantidade</label>
             <input type="number" style={inputStyle} value={quantidade} onChange={(e) => setQuantidade(e.target.value)} /></div>
           <div><label style={label}>Unidade</label>
-            <input style={inputStyle} value={unidade} onChange={(e) => setUnidade(e.target.value)} /></div>
+            <select style={inputStyle} value={unidade} onChange={(e) => setUnidade(e.target.value)}>
+              <option value="">—</option>
+              {(opcoes?.unidades || []).map((u) => <option key={u} value={u}>{u}</option>)}
+              {unidade && !(opcoes?.unidades || []).includes(unidade) && <option value={unidade}>{unidade} (cadastro antigo)</option>}
+            </select></div>
         </div>
 
         <div className="flex items-center gap-2 mt-2" style={{ flexWrap: "wrap" }}>
@@ -1714,10 +2029,65 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
 
         {depreciavel ? (
           <div className="grid grid-cols-2 gap-3">
-            <div><label style={label}>Método de depreciação</label>
-              <input style={inputStyle} value={metodoDepreciacao} onChange={(e) => setMetodoDepreciacao(e.target.value)} placeholder="ex.: Linear" /></div>
-            <div><label style={label}>Vida útil</label>
-              <input style={inputStyle} value={vidaUtil} onChange={(e) => setVidaUtil(e.target.value)} placeholder="ex.: 10 Anos" /></div>
+            <div style={{ gridColumn: "1 / -1" }}><label style={label}>Método de depreciação</label>
+              <select style={inputStyle} value={metodoDepreciacao} onChange={(e) => setMetodoDepreciacao(e.target.value)}>
+                {(opcoes?.metodos || [{ valor: "LINEAR", rotulo: "Linear (quotas constantes)", ajuda: "" }]).map((m) => (
+                  <option key={m.valor} value={m.valor}>{m.rotulo}</option>
+                ))}
+              </select>
+              {opcoes?.metodos.find((m) => m.valor === metodoDepreciacao)?.ajuda && (
+                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                  {opcoes.metodos.find((m) => m.valor === metodoDepreciacao)!.ajuda}
+                </p>
+              )}
+            </div>
+
+            {/* Vida útil em dois campos numéricos — substitui o texto livre
+                "10 Anos", que o sistema tinha que adivinhar (e adivinhava
+                errado: "10 anos e 6 meses" virava 0,83 ano). Não se aplica ao
+                método por unidades, que deprecia por uso e não por tempo. */}
+            {metodoDepreciacao !== "UNIDADES_PRODUZIDAS" && <>
+              <div><label style={label}>Vida útil — anos</label>
+                <input type="number" min={0} max={100} style={inputStyle} value={vidaUtilAnos}
+                  onChange={(e) => setVidaUtilAnos(e.target.value)} placeholder="ex.: 10" /></div>
+              <div><label style={label}>Vida útil — meses adicionais</label>
+                <input type="number" min={0} max={11} style={inputStyle} value={vidaUtilMeses}
+                  onChange={(e) => setVidaUtilMeses(e.target.value)} placeholder="ex.: 6" /></div>
+            </>}
+
+            {metodoDepreciacao === "SALDO_DECRESCENTE" && (
+              <div><label style={label}>Multiplicador da taxa</label>
+                <input type="number" min={1} step={0.5} style={inputStyle} value={fatorSaldo}
+                  onChange={(e) => setFatorSaldo(e.target.value)} placeholder="vazio = 2 (em dobro)" />
+                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                  2 = “saldo decrescente em dobro”, a convenção mais usada.
+                </p>
+              </div>
+            )}
+
+            {metodoDepreciacao === "UNIDADES_PRODUZIDAS" && <>
+              <div><label style={label}>Unidade de uso</label>
+                <select style={inputStyle} value={unidadeUso} onChange={(e) => setUnidadeUso(e.target.value)}>
+                  <option value="horas">horas</option>
+                  <option value="km">km</option>
+                  <option value="fardos">fardos</option>
+                  <option value="toneladas">toneladas</option>
+                  <option value="ciclos">ciclos</option>
+                </select></div>
+              <div><label style={label}>Total na vida inteira</label>
+                <input type="number" min={0} style={inputStyle} value={unidadesTotal}
+                  onChange={(e) => setUnidadesTotal(e.target.value)} placeholder="ex.: 10000" /></div>
+              <div><label style={label}>Já consumido</label>
+                <input type="number" min={0} style={inputStyle} value={unidadesConsumidas}
+                  onChange={(e) => setUnidadesConsumidas(e.target.value)} placeholder="ex.: 2500" /></div>
+              <div style={{ alignSelf: "end" }}>
+                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                  O sistema não lê horímetro — atualize o “já consumido” à mão quando quiser
+                  que a depreciação acompanhe o uso.
+                </p>
+              </div>
+            </>}
+
             <div><label style={label}>Valor residual (R$)</label>
               <CampoMoeda style={inputStyle} value={Number(valorResidual) || 0} onChange={(v) => setValorResidual(v ? String(v) : "")} /></div>
           </div>
@@ -1734,6 +2104,106 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
           <button className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
           <button className="btn-primary" onClick={salvar} disabled={salvando}>
             {salvando ? "Salvando…" : ehCompraAgora && !item ? "Ir para o lançamento" : "Salvar"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** Onda 2 — baixa do bem com apuração de ganho/perda de capital.
+ *  Antes, dar baixa era preencher `data_baixa` na tela de edição: o bem sumia
+ *  dos totais e o resultado da operação não era apurado em lugar nenhum. */
+function ModalBaixaPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio; onClose: () => void; onSalvo: () => void }) {
+  const [dataBaixa, setDataBaixa] = useState(new Date().toISOString().slice(0, 10));
+  const [motivo, setMotivo] = useState("VENDA");
+  const [valorRecebido, setValorRecebido] = useState("");
+  const [observacao, setObservacao] = useState("");
+  const [opcoes, setOpcoes] = useState<OpcoesPatrimonio | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+  useEffect(() => { fetchOpcoesPatrimonio().then(setOpcoes).catch(() => {}); }, []);
+
+  const motivoTemVenda = (opcoes?.motivos_baixa.find((m) => m.valor === motivo)?.tem_valor_venda) ?? (motivo === "VENDA");
+  // Prévia do resultado com o valor contábil de HOJE. O número final é
+  // apurado no backend com o valor contábil na DATA DA BAIXA — se o usuário
+  // informar uma data retroativa, o resultado gravado será diferente deste.
+  const valorContabilHoje = item.valor_atual ?? 0;
+  const resultadoPrevisto = (motivoTemVenda ? Number(valorRecebido) || 0 : 0) - valorContabilHoje;
+
+  const salvar = async () => {
+    setSalvando(true); setErro("");
+    try {
+      await baixarPatrimonio(item.id, {
+        data_baixa: dataBaixa, motivo,
+        valor_recebido: motivoTemVenda && valorRecebido ? Number(valorRecebido) : null,
+        observacao: observacao || null,
+      });
+      onSalvo();
+    } catch (e: any) { setErro(e.message); setSalvando(false); }
+  };
+
+  const inputStyle: React.CSSProperties = {
+    background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
+    borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
+  };
+  const label: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
+
+  return (
+    <Modal title={`Baixar do ativo — ${item.codigo ? `${item.codigo} · ` : ""}${item.nome}`} onClose={onClose} width="560px">
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div><label style={label}>Data da baixa</label>
+            <input type="date" style={inputStyle} value={dataBaixa} onChange={(e) => setDataBaixa(e.target.value)} /></div>
+          <div><label style={label}>Motivo</label>
+            <select style={inputStyle} value={motivo} onChange={(e) => setMotivo(e.target.value)}>
+              {(opcoes?.motivos_baixa || [{ valor: "VENDA", rotulo: "Venda", tem_valor_venda: true }]).map((m) => (
+                <option key={m.valor} value={m.valor}>{m.rotulo}</option>
+              ))}
+            </select></div>
+          {motivoTemVenda && (
+            <div><label style={label}>Valor recebido (R$)</label>
+              <CampoMoeda style={inputStyle} value={Number(valorRecebido) || 0} onChange={(v) => setValorRecebido(v ? String(v) : "")} /></div>
+          )}
+          <div style={{ gridColumn: motivoTemVenda ? "auto" : "1 / -1" }}><label style={label}>Observação</label>
+            <input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} placeholder="opcional" /></div>
+        </div>
+
+        <div className="card" style={{ padding: "0.8rem 1rem" }}>
+          <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+            Resultado previsto
+          </div>
+          <div style={{ display: "flex", gap: "1.5rem", marginTop: "0.5rem", flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: "0.95rem", fontWeight: 700 }}>{formatBRL(valorContabilHoje)}</div>
+              <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Valor contábil hoje</div>
+            </div>
+            <div>
+              <div style={{ fontSize: "0.95rem", fontWeight: 700 }}>{formatBRL(motivoTemVenda ? Number(valorRecebido) || 0 : 0)}</div>
+              <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Valor recebido</div>
+            </div>
+            <div>
+              <div style={{ fontSize: "0.95rem", fontWeight: 700, color: resultadoPrevisto >= 0 ? "var(--green-light)" : "var(--red)" }}>
+                {formatBRL(resultadoPrevisto)}
+              </div>
+              <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>
+                {resultadoPrevisto >= 0 ? "Ganho de capital" : "Perda de capital"}
+              </div>
+            </div>
+          </div>
+          <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
+            Prévia com o valor contábil de hoje. Se a data da baixa for retroativa, o valor
+            contábil daquela data é menor de depreciação — o resultado final é recalculado ao salvar.
+            Este ganho/perda é resultado do exercício e pertence à linha <strong>Outras receitas e
+            despesas</strong> da DRE.
+          </p>
+        </div>
+
+        {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+        <div className="flex gap-2 justify-end">
+          <button className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
+          <button className="btn-primary" onClick={salvar} disabled={salvando}>
+            {salvando ? "Baixando…" : "Confirmar baixa"}
           </button>
         </div>
       </div>
@@ -2425,10 +2895,30 @@ function RelatorioCompraVendaAnimaisView() {
 
       {linhas && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
-            <KPI v={String(linhas.length)} l="Lançamentos" />
-            <KPI v={formatBRL(totalCompra)} l="Total comprado" c="var(--red)" />
-            <KPI v={formatBRL(totalVenda)} l="Total vendido" c="var(--green-light)" />
+          {/* "Par de contraste": comprado e vendido são igualmente relevantes
+              em sentidos opostos — nenhum dos dois deve virar âncora do outro
+              (diferente do padrão de métrica-âncora usado no resto do app).
+              Os dois dividem o mesmo card com peso visual igual, separados
+              por um filete; Lançamentos vira legenda pequena no rodapé. */}
+          <div className="card mb-4" style={{ padding: "1.2rem 1.4rem" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center" }}>
+              <div>
+                <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Total comprado</div>
+                <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.1rem", fontWeight: 800, lineHeight: 1, color: "var(--red)", marginTop: ".3rem", fontVariantNumeric: "tabular-nums" }}>
+                  {formatBRL(totalCompra)}
+                </div>
+              </div>
+              <div style={{ width: 1, alignSelf: "stretch", background: "var(--border)", margin: "0 1.6rem" }} />
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Total vendido</div>
+                <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.1rem", fontWeight: 800, lineHeight: 1, color: "var(--green-light)", marginTop: ".3rem", fontVariantNumeric: "tabular-nums" }}>
+                  {formatBRL(totalVenda)}
+                </div>
+              </div>
+            </div>
+            <div style={{ marginTop: "1rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", fontSize: ".72rem", color: "var(--text-muted)" }}>
+              {linhas.length} lançamento{linhas.length !== 1 ? "s" : ""} no período
+            </div>
           </div>
           <div className="card">
             <div className="flex items-center justify-between mb-3">
@@ -2552,10 +3042,23 @@ function RelatorioCompraSemenView() {
 
       {linhas && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
-            <KPI v={String(linhas.length)} l="Compras" />
-            <KPI v={String(totalDoses)} l="Doses compradas" />
-            <KPI v={formatBRL(totalGasto)} l="Total gasto" c="var(--red)" />
+          {/* Total gasto já era o único KPI marcado em vermelho — vira métrica-
+              âncora. Mesmos 3 números de antes, só reordenados por prioridade. */}
+          <div className="card mb-4" style={{ padding: "1.1rem 1.3rem" }}>
+            <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Total gasto</div>
+            <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--red)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+              {formatBRL(totalGasto)}
+            </div>
+            <div style={{ display: "flex", gap: "1.6rem", marginTop: ".9rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{linhas.length}</div>
+                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Compras</div>
+              </div>
+              <div>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{totalDoses}</div>
+                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Doses compradas</div>
+              </div>
+            </div>
           </div>
           <div className="card">
             <div className="flex items-center justify-between mb-3">
@@ -2635,10 +3138,17 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   const [tipoItem, setTipoItem] = useState<"produto" | "servico">("produto");
   const [modoProduto, setModoProduto] = useState<"estoque" | "livre">("estoque");
   const [produtosEstoqueEdicao, setProdutosEstoqueEdicao] = useState<EstoqueItemPicker[]>([]);
-  const carregarEstoqueEdicao = () => fetchEstoque().then((d) => setProdutosEstoqueEdicao((d.itens || []).map((i: any) => ({
-    nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
-    estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
-  })))).catch(() => {});
+  // Lista completa (model_dump() do Estoque, não só o formato reduzido do
+  // picker) — precisa dela pra abrir "editar cadastro" de um item já
+  // registrado direto da lista de itens da nota (ver `editarItemEstoque`).
+  const [estoqueCompletoEdicao, setEstoqueCompletoEdicao] = useState<Record<string, any>[]>([]);
+  const carregarEstoqueEdicao = () => fetchEstoque().then((d) => {
+    setEstoqueCompletoEdicao(d.itens || []);
+    setProdutosEstoqueEdicao((d.itens || []).map((i: any) => ({
+      nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
+      estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
+    })));
+  }).catch(() => {});
   useEffect(() => { carregarEstoqueEdicao(); }, []);
   const [servicosEdicao, setServicosEdicao] = useState<{ id: number; nome: string; ativo: boolean }[]>([]);
   const carregarServicosEdicao = () => fetchServicosCadastro().then(setServicosEdicao).catch(() => {});
@@ -2647,6 +3157,21 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
     () => servicosEdicao.filter((s) => s.ativo).map((s) => s.nome).sort((a, b) => a.localeCompare(b, "pt-BR")),
     [servicosEdicao]
   );
+  // Um item da nota "existe de verdade" no catálogo quando o nome bate
+  // (exato, sem diferenciar maiúsculas) com um Estoque ou ServicoCadastro
+  // ativo — vale não entra nessa checagem (não é produto/serviço de
+  // catálogo, é adiantamento a uma pessoa). Sem isso, um item lido de XML/
+  // OCR que não batia com nada do catálogo (ex.: "TEATSEAL") ficava salvo
+  // como texto solto: sem estocável, sem centro de custo padrão, invisível
+  // pras telas de aplicação — e sem jeito de perceber isso na edição.
+  function itemCadastrado(it: { produto: string; eh_vale: boolean; tipo_item?: string | null }): boolean {
+    if (it.eh_vale || !it.produto?.trim()) return true;
+    const nome = it.produto.trim().toLowerCase();
+    if (it.tipo_item === "servico") return sugestoesServicoEdicao.some((s) => s.toLowerCase() === nome);
+    return produtosEstoqueEdicao.some((p) => p.nome.toLowerCase() === nome);
+  }
+  const [catalogarItem, setCatalogarItem] = useState<{ id: number; nome: string; tipo: "produto" | "servico" } | null>(null);
+  const [editarItemEstoque, setEditarItemEstoque] = useState<Record<string, any> | null>(null);
   // Chute do tipo (produto × serviço) a partir do nome já salvo — só uma vez,
   // assim que o cadastro de serviços carrega; depois disso quem manda é o
   // toggle clicado pelo usuário (evita "brigar" com a escolha dele).
@@ -2660,6 +3185,18 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   const [adicionarNovoAberto, setAdicionarNovoAberto] = useState(false);
   const [modoAdicionarEdicao, setModoAdicionarEdicao] = useState<"produto" | "servico">("produto");
   const [centroCusto, setCentroCusto] = useState(lanc.centro_custo || "");
+  const [classificacao, setClassificacao] = useState(lanc.classificacao || "");
+  const [classificacoes, setClassificacoes] = useState<string[]>([]);
+  const [novaClassificacaoAberta, setNovaClassificacaoAberta] = useState(false);
+  const [novaClassificacaoNome, setNovaClassificacaoNome] = useState("");
+  const [salvandoClassificacao, setSalvandoClassificacao] = useState(false);
+  // Associar um item já lançado (não cadastrado no catálogo) a um produto/
+  // serviço JÁ EXISTENTE — alternativa a "cadastrar novo" (ver catalogarItem
+  // abaixo). `avisoAssociar` mostra o retorno do backend (ex.: entrada de
+  // estoque retroativa dada na hora de associar).
+  const [associarItem, setAssociarItem] = useState<{ id: number; nome: string; tipo: "produto" | "servico" } | null>(null);
+  const [salvandoAssociar, setSalvandoAssociar] = useState(false);
+  const [avisoAssociar, setAvisoAssociar] = useState<string[] | null>(null);
   const [codigoConta, setCodigoConta] = useState(lanc.codigo_conta || "");
   const [nomeConta, setNomeConta] = useState(lanc.conta_completa || "");
   const [valor, setValor] = useState(String(lanc.valor ?? ""));
@@ -2708,6 +3245,10 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   async function marcarVale(item: ItemLancEditar, dados: ValeItemDados) {
     await marcarItemComoVale(item.id, {
       pessoa_id: dados.pessoa_id, modo: dados.modo, parcelas: dados.parcelas,
+      // Vale parcial (só uma fatia do item é do funcionário): o backend
+      // divide o item em duas linhas e a sobra vira despesa da fazenda.
+      abrangencia: dados.abrangencia || "integral",
+      percentual: dados.percentual ?? null, valor: dados.valor ?? null,
       competencia_inicio: dados.competencia_inicio || undefined,
       origem_tipo: dados.origem_tipo, origem_id: dados.origem_id,
       observacao: dados.observacao, confirmar: dados.confirmar,
@@ -2728,7 +3269,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
       setDesmarcando(false);
     }
   }
-  useEffect(() => { fetchOpcoesFinanceiro().then((d) => setTiposDocumento(d.tipos_documento || [])).catch(() => {}); }, []);
+  useEffect(() => { fetchOpcoesFinanceiro().then((d) => { setTiposDocumento(d.tipos_documento || []); setClassificacoes(d.classificacoes || []); }).catch(() => {}); }, []);
   useEffect(() => {
     listarAnexosLancamentoPorId(lanc.id).then(setAnexos).catch(() => setAnexos([]));
   }, [lanc.id]);
@@ -2750,11 +3291,24 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
     } catch (e: any) { setErro(e.message); }
   };
 
+  // Associa um item já lançado (LancamentoItem) a um produto/serviço do
+  // catálogo — usado tanto por "cadastrar novo" quanto por "associar
+  // existente" acima. Explícito (por id), não depende do nome bater sozinho.
+  async function vincularProduto(itemId: number, nomeProduto: string) {
+    try {
+      const r = await vincularProdutoItem(itemId, nomeProduto);
+      setAvisoAssociar(r.avisos_estoque || []);
+      onSalvo();
+    } catch (e: any) {
+      setErro(e.message || "Erro ao associar o produto/serviço a este item");
+    }
+  }
+
   const salvar = async () => {
     setSalvando(true); setErro("");
     try {
       await atualizarLancamentoFinanceiro(lanc.id, {
-        descricao, fornecedor_cliente: fornecedor, centro_custo: centroCusto || null,
+        descricao, fornecedor_cliente: fornecedor, centro_custo: centroCusto || null, classificacao: classificacao || null,
         codigo_conta: codigoConta || null, valor_total: parseFloat(valor.replace(",", ".")) || 0,
         data_emissao: dataEmissao || null, data_vencimento: dataVencimento || null,
         data_competencia: dataCompetencia || null, numero_nota: numeroNota || null,
@@ -2784,7 +3338,14 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
       )}
       <div className="grid grid-cols-2 gap-3">
         <div style={{ gridColumn: "1 / -1" }}><label style={labelStyleLote}>Descrição</label>
-          <input style={selStyleLote} value={descricao} onChange={(e) => setDescricao(e.target.value)} /></div>
+          <input style={selStyleLote} value={descricao} onChange={(e) => setDescricao(e.target.value)} />
+          {itensDoLanc.length > 0 && (
+            <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>
+              Gerada automaticamente a partir dos itens — edite aqui só se quiser um resumo diferente para os relatórios.
+              Veja/edite cada item em &ldquo;Produtos/serviços desta nota&rdquo;, abaixo.
+            </p>
+          )}
+        </div>
         <div><label style={labelStyleLote}>{tipoConta === "receita" ? "Cliente" : "Fornecedor"}</label>
           <div className="flex items-center gap-2">
             <select style={selStyleLote} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)}>
@@ -2854,25 +3415,60 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
           <div style={{ gridColumn: "1 / -1" }}>
             <label style={labelStyleLote}>Produtos/serviços desta nota</label>
             <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem", marginTop: "0.3rem" }}>
-              {itensDoLanc.map((it) => (
-                <div key={it.id} className="flex items-center gap-2" style={{ fontSize: "0.8rem", flexWrap: "wrap" }}>
-                  {tipoConta === "despesa" && (
-                    <input type="checkbox" checked={it.eh_vale}
-                      onChange={(e) => e.target.checked ? setValeModalItem(it) : setConfirmarDesmarcar(it)} />
-                  )}
-                  <span>{it.produto} — {formatBRL(it.valor_total)}</span>
-                  {it.eh_vale && (
-                    <span style={{ color: "var(--dourado-light)", fontSize: "0.74rem" }}>
-                      → vale de {it.vale_pessoa_nome}
-                      {" "}
-                      <button type="button" className="btn-ghost" style={{ fontSize: "0.7rem" }}
-                        onClick={() => onVerRelatorioVales?.()}>
-                        ver no relatório de vales
+              {itensDoLanc.map((it) => {
+                const cadastrado = itemCadastrado(it);
+                return (
+                  <div key={it.id} className="flex items-center gap-2" style={{ fontSize: "0.8rem", flexWrap: "wrap",
+                    ...(cadastrado ? {} : { background: "rgba(180,120,0,0.12)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem" }) }}>
+                    {tipoConta === "despesa" && (
+                      <input id={`vale-lanc-item-${it.id}`} type="checkbox" checked={it.eh_vale}
+                        onChange={(e) => e.target.checked ? setValeModalItem(it) : setConfirmarDesmarcar(it)} />
+                    )}
+                    {tipoConta === "despesa" && (
+                      <label htmlFor={`vale-lanc-item-${it.id}`} style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>É vale de funcionário?</label>
+                    )}
+                    {cadastrado ? (
+                      <button type="button" className="btn-ghost" style={{ fontSize: "0.8rem", padding: 0, textDecoration: "underline" }}
+                        title="Abrir o cadastro deste produto/serviço"
+                        onClick={() => {
+                          if (it.tipo_item === "servico") return; // sem tela de edição de serviço avulsa ainda
+                          const item = estoqueCompletoEdicao.find((e) => (e.nome || "").toLowerCase() === it.produto.trim().toLowerCase());
+                          if (item) setEditarItemEstoque(item);
+                        }}>
+                        {it.produto}
                       </button>
-                    </span>
-                  )}
-                </div>
-              ))}
+                    ) : (
+                      <span style={{ color: "var(--amber)" }}>
+                        <AlertTriangle size={12} style={{ display: "inline", marginRight: "0.25rem", verticalAlign: "-1px" }} />
+                        {it.produto} — não cadastrado
+                      </span>
+                    )}
+                    <span>— {formatBRL(it.valor_total)}</span>
+                    {!cadastrado && (
+                      <>
+                        <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                          onClick={() => setCatalogarItem({ id: it.id, nome: it.produto, tipo: it.tipo_item === "servico" ? "servico" : "produto" })}>
+                          <Plus size={12} /> Cadastrar {it.tipo_item === "servico" ? "serviço" : "produto"} novo
+                        </button>
+                        <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                          onClick={() => setAssociarItem({ id: it.id, nome: it.produto, tipo: it.tipo_item === "servico" ? "servico" : "produto" })}>
+                          Associar a {it.tipo_item === "servico" ? "serviço" : "produto"} já existente
+                        </button>
+                      </>
+                    )}
+                    {it.eh_vale && (
+                      <span style={{ color: "var(--dourado-light)", fontSize: "0.74rem" }}>
+                        → vale de {it.vale_pessoa_nome}
+                        {" "}
+                        <button type="button" className="btn-ghost" style={{ fontSize: "0.7rem" }}
+                          onClick={() => onVerRelatorioVales?.()}>
+                          ver no relatório de vales
+                        </button>
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -2897,6 +3493,39 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
             {tipoDocumento && !tiposDocumento.includes(tipoDocumento) && <option value={tipoDocumento}>{tipoDocumento}</option>}
             {(tiposDocumento.length ? tiposDocumento : ["Nota fiscal", "Recibo", "Folha de pagamento", "Fatura", "Contrato"]).map((t) => <option key={t}>{t}</option>)}
           </select></div>
+        <div><label style={labelStyleLote}>Classificação</label>
+          {!novaClassificacaoAberta ? (
+            <div className="flex items-center gap-2">
+              <select style={selStyleLote} value={classificacao} onChange={(e) => setClassificacao(e.target.value)}>
+                <option value="">—</option>
+                {classificacao && !classificacoes.includes(classificacao) && <option value={classificacao}>{classificacao}</option>}
+                {classificacoes.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <button type="button" className="btn-ghost" title="Cadastrar nova classificação" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setNovaClassificacaoAberta(true)}>
+                <Plus size={13} /> Nova
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <input style={selStyleLote} value={novaClassificacaoNome} onChange={(e) => setNovaClassificacaoNome(e.target.value)} placeholder="ex.: Medicamentos" autoFocus />
+              <button type="button" className="btn-primary" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} disabled={salvandoClassificacao || !novaClassificacaoNome.trim()} onClick={async () => {
+                setSalvandoClassificacao(true);
+                try {
+                  await criarClassificacao({ nome: novaClassificacaoNome.trim() });
+                  const nome = novaClassificacaoNome.trim();
+                  setClassificacao(nome);
+                  setClassificacoes((prev) => Array.from(new Set([...prev, nome])).sort());
+                  setNovaClassificacaoNome(""); setNovaClassificacaoAberta(false);
+                } catch (e: any) {
+                  setErro(e.message || "Erro ao criar classificação");
+                } finally {
+                  setSalvandoClassificacao(false);
+                }
+              }}>{salvandoClassificacao ? "Salvando…" : "Salvar"}</button>
+              <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => { setNovaClassificacaoAberta(false); setNovaClassificacaoNome(""); }}>Cancelar</button>
+            </div>
+          )}
+        </div>
         <div><label style={labelStyleLote}>Nº do documento</label>
           <input style={selStyleLote} value={numeroNota} onChange={(e) => setNumeroNota(e.target.value)} /></div>
         <div><label style={labelStyleLote}>Nº da OS/Orçamento</label>
@@ -3016,6 +3645,108 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
         </Modal>
       )}
 
+      {catalogarItem && (
+        // Cadastro rápido pra um item específico da nota que veio sem
+        // correspondência no catálogo (ex.: "TEATSEAL" lido de um XML/PDF) —
+        // pré-preenchido com o nome já lançado. Depois de cadastrar, o item
+        // da nota é EXPLICITAMENTE associado ao produto/serviço recém-criado
+        // (PUT /financeiro/itens/{id}/vincular-produto) — não depende do
+        // nome bater sozinho (o usuário pode ter ajustado o nome no cadastro).
+        // Para produto, isso também dá entrada retroativa no estoque com a
+        // quantidade já lançada nesta nota, se ainda não tiver dado entrada.
+        <Modal title={`Cadastrar ${catalogarItem.tipo === "servico" ? "serviço" : "produto"} — ${catalogarItem.nome}`}
+          onClose={() => setCatalogarItem(null)} width="700px" zIndex={100}>
+          {catalogarItem.tipo === "servico" ? (
+            <NovoServicoRapido
+              prefillNome={catalogarItem.nome}
+              onCriado={(servico) => {
+                const id = catalogarItem.id;
+                carregarServicosEdicao();
+                setCatalogarItem(null);
+                if (servico?.nome) vincularProduto(id, servico.nome);
+              }}
+              onCancelar={() => setCatalogarItem(null)}
+            />
+          ) : (
+            <>
+              <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+                A quantidade deste item já lançada nesta nota entra automaticamente como entrada de estoque ao cadastrar —
+                deixe o &ldquo;saldo inicial&rdquo; abaixo em branco, a menos que a fazenda já tivesse estoque deste produto
+                ANTES desta compra.
+              </p>
+              <NovoItemEstoque
+                prefill={{ nome: catalogarItem.nome }}
+                onCriado={(item) => {
+                  const id = catalogarItem.id;
+                  carregarEstoqueEdicao();
+                  setCatalogarItem(null);
+                  if (item?.nome) vincularProduto(id, item.nome);
+                }}
+                onCancelar={() => setCatalogarItem(null)}
+              />
+            </>
+          )}
+        </Modal>
+      )}
+
+      {associarItem && (
+        // "Associar a produto/serviço já existente" — alternativa a
+        // cadastrar novo, para quando o item da nota (ex.: nome vindo de
+        // XML/OCR ligeiramente diferente) na verdade já corresponde a algo
+        // do catálogo. Mesmo endpoint de vínculo do fluxo de cadastro acima.
+        <Modal title={`Associar "${associarItem.nome}" a um ${associarItem.tipo === "servico" ? "serviço" : "produto"} já existente`}
+          onClose={() => setAssociarItem(null)} width="600px" zIndex={100}>
+          {associarItem.tipo === "servico" ? (
+            <ServicoPicker servicos={sugestoesServicoEdicao.map((nome) => ({ nome }))}
+              value="" onChange={(nomeEscolhido) => {
+                if (!nomeEscolhido) return;
+                const id = associarItem.id;
+                setAssociarItem(null);
+                vincularProduto(id, nomeEscolhido);
+              }} />
+          ) : (
+            <EstoquePicker itens={produtosEstoqueEdicao} value="" todasFinalidades incluirNaoEstocaveis
+              onChange={(nomeEscolhido) => {
+                if (!nomeEscolhido) return;
+                const id = associarItem.id;
+                setAssociarItem(null);
+                vincularProduto(id, nomeEscolhido);
+              }} />
+          )}
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
+            Se for produto de estoque com quantidade já lançada nesta nota e ainda sem entrada registrada, a entrada é
+            dada automaticamente ao associar.
+          </p>
+          <div className="flex justify-end mt-2">
+            <button type="button" className="btn-ghost" onClick={() => setAssociarItem(null)}>Cancelar</button>
+          </div>
+        </Modal>
+      )}
+      {avisoAssociar && (
+        <Modal title="Estoque atualizado" onClose={() => setAvisoAssociar(null)} width="480px" zIndex={110}>
+          {avisoAssociar.length === 0 ? (
+            <p style={{ fontSize: "0.85rem" }}>Produto/serviço associado a esta nota.</p>
+          ) : (
+            <ul style={{ fontSize: "0.82rem", paddingLeft: "1.1rem" }}>
+              {avisoAssociar.map((a, i) => <li key={i} style={{ marginBottom: "0.3rem" }}>{a}</li>)}
+            </ul>
+          )}
+          <div className="flex justify-end mt-2">
+            <button type="button" className="btn-primary" onClick={() => setAvisoAssociar(null)}>Entendi</button>
+          </div>
+        </Modal>
+      )}
+
+      {editarItemEstoque && (
+        <Modal title={`Editar cadastro — ${editarItemEstoque.nome}`} onClose={() => setEditarItemEstoque(null)} width="700px" zIndex={100}>
+          <NovoItemEstoque
+            editando={editarItemEstoque as any}
+            onCriado={() => { carregarEstoqueEdicao(); setEditarItemEstoque(null); }}
+            onCancelar={() => setEditarItemEstoque(null)}
+          />
+        </Modal>
+      )}
+
       {valeModalItem && (
         <ValeItemModal apresentacao="modal"
           valorItem={valeModalItem.valor_total}
@@ -3050,7 +3781,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   );
 }
 
-function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, onEstornado }: { rel: Rel; itens: Lanc[]; planoContas: ContaPlano[]; onTratar: (l: Lanc) => void; onEditar: (l: Lanc) => void; onRecibo: (l: Lanc) => void; onEstornado: () => void }) {
+function TabelaContas({ rel, itens, planoContas, documentoInicial, onTratar, onEditar, onRecibo, onEstornado }: { rel: Rel; itens: Lanc[]; planoContas: ContaPlano[]; documentoInicial?: string | null; onTratar: (l: Lanc) => void; onEditar: (l: Lanc) => void; onRecibo: (l: Lanc) => void; onEstornado: () => void }) {
   const admin = ehAdmin();
   const emAberto = rel === "a_pagar" || rel === "a_receber";
 
@@ -3083,11 +3814,11 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, o
     }
   };
   const hoje = new Date().toISOString().slice(0, 10);
-  const rotuloContraparte = rel === "a_receber" || rel === "recebidas" ? "Cliente" : rel === "extrato" ? "Fornecedor/Cliente" : "Fornecedor";
+  const rotuloContraparte = rel === "a_receber" || rel === "recebidas" ? "Cliente" : EXTRATO_IDS.has(rel) ? "Fornecedor/Cliente" : "Fornecedor";
   // Tipo desta aba (para a árvore de conta gerencial). Extrato mistura os dois.
   const tiposConta: ("despesa" | "receita")[] =
     rel === "a_receber" || rel === "recebidas" ? ["receita"]
-    : rel === "extrato" ? ["despesa", "receita"] : ["despesa"];
+    : EXTRATO_IDS.has(rel) ? ["despesa", "receita"] : ["despesa"];
 
   // Filtros próprios da lista (além do período/centro globais, já filtrados
   // pelo período único de Contas antes de chegar em `itens`): produto/serviço,
@@ -3095,7 +3826,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, o
   // Todos client-side.
   const [fProduto, setFProduto] = useState("");
   const [fContraparte, setFContraparte] = useState("");
-  const [fDocumento, setFDocumento] = useState("");
+  const [fDocumento, setFDocumento] = useState(documentoInicial || "");
   const [fConta, setFConta] = useState("");
   const [fContaNome, setFContaNome] = useState("");
   const [fTipo, setFTipo] = useState<"" | "receita" | "despesa">("");
@@ -3116,7 +3847,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, o
     (!fContraparte || r.fornecedor === fContraparte) &&
     casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""}`, fDocumento) &&
     casaContaGerencial(r, fConta) &&
-    (rel !== "extrato" || !fTipo || r.tipo === fTipo)
+    (!EXTRATO_IDS.has(rel) || !fTipo || r.tipo === fTipo)
   ), [itens, fProduto, fContraparte, fDocumento, fConta, fTipo, rel]);
 
   const { ordenados, sortKey, sortDir, ordenar } = useOrdenacao(filtradosLocal, {
@@ -3153,7 +3884,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, o
             <select style={selStyleLote} value={fContraparte} onChange={(e) => setFContraparte(e.target.value)}>
               <option value="">Todos</option>{opcoesContraparte.map((f) => <option key={f} value={f}>{f}</option>)}
             </select></div>
-          {rel === "extrato" && (
+          {EXTRATO_IDS.has(rel) && (
             <div><label style={labelStyleLote}>Tipo</label>
               <select style={selStyleLote} value={fTipo} onChange={(e) => setFTipo(e.target.value as any)}>
                 <option value="">Receitas e despesas</option><option value="receita">Só receitas</option><option value="despesa">Só despesas</option>
@@ -3166,14 +3897,14 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, o
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
         <KPI v={String(filtradosLocal.length)} l="Lançamentos" />
-        <KPI v={formatBRL(total)} l={emAberto ? "Valor em aberto" : "Valor total"} c={rel === "a_pagar" || rel === "pagas" ? "var(--red)" : rel === "extrato" ? undefined : "var(--green-light)"} />
-        {!emAberto && rel !== "extrato" && <KPI v={formatBRL(totalPago)} l="Valor pago/recebido" c="var(--dourado-light)" />}
-        {!emAberto && rel !== "extrato" && <KPI v={formatBRL(totalDesconto)} l="Desconto/acréscimo" c={totalDesconto <= 0 ? "var(--green-light)" : "var(--amber)"} />}
+        <KPI v={formatBRL(total)} l={emAberto ? "Valor em aberto" : "Valor total"} c={rel === "a_pagar" || rel === "pagas" ? "var(--red)" : EXTRATO_IDS.has(rel) ? undefined : "var(--green-light)"} />
+        {!emAberto && !EXTRATO_IDS.has(rel) && <KPI v={formatBRL(totalPago)} l="Valor pago/recebido" c="var(--dourado-light)" />}
+        {!emAberto && !EXTRATO_IDS.has(rel) && <KPI v={formatBRL(totalDesconto)} l="Desconto/acréscimo" c={totalDesconto <= 0 ? "var(--green-light)" : "var(--amber)"} />}
       </div>
       <div className="card">
         <div className="card-header mb-3 flex items-center justify-between">
           <span>Lançamentos</span>
-          <ExportarBotoes titulo={CONTAS.find((c) => c.id === rel)?.label || "Lançamentos"} nomeArquivoBase={`financeiro_${rel}`}
+          <ExportarBotoes titulo={CONTAS.find((c) => c.id === rel)?.label || RELATORIOS.find((r) => r.id === rel)?.label || "Lançamentos"} nomeArquivoBase={`financeiro_${rel}`}
             colunas={COLUNAS_LANCAMENTOS}
             linhas={ordenados.map((r) => ({ ...r, data: formatDate((emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || ""), documento: `${r.tipo_documento ? `${r.tipo_documento} ` : ""}${r.numero_documento || ""}`, comprovante_txt: r.tem_comprovante ? "Sim" : "" }))} />
         </div>
@@ -3185,7 +3916,6 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, o
                 <ThOrd rotulo={emAberto ? "Vencimento" : "Data"} chave="data" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
                 <ThOrd rotulo="Descrição" chave="descricao" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
                 <ThOrd rotulo="Fornecedor/Cliente" chave="fornecedor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
-                <th style={theadStickyStyle}>Centro custo</th><th style={theadStickyStyle}>Documento</th>
                 <ThOrd rotulo="Valor" chave="valor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ ...theadStickyStyle, textAlign: "right" }} />
                 {!emAberto && <ThOrd rotulo="Pago" chave="pago" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ ...theadStickyStyle, textAlign: "right" }} />}
                 {!emAberto && <th style={theadStickyStyle}>Conta bancária</th>}
@@ -3211,10 +3941,26 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, o
                           vale
                         </span>
                       )}
+                      {/* Centro de custo e documento não são ordenáveis nem filtrados
+                          por coluna própria (o filtro de documento já busca aqui
+                          também) — viram apoio dentro da célula em vez de coluna
+                          fixa, pra reduzir a rolagem horizontal em notebook. */}
+                      {(r.centro_custo || r.tipo_documento || r.numero_documento) && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", marginTop: "0.25rem" }}>
+                          {r.centro_custo && (
+                            <span style={{ fontSize: "0.64rem", padding: "0.08rem 0.42rem", borderRadius: "999px", background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                              {r.centro_custo}
+                            </span>
+                          )}
+                          {(r.tipo_documento || r.numero_documento) && (
+                            <span style={{ fontSize: "0.64rem", padding: "0.08rem 0.42rem", borderRadius: "999px", background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                              {r.tipo_documento ? `${r.tipo_documento} ` : ""}{r.numero_documento || ""}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{r.fornecedor || "—"}</td>
-                    <td style={{ fontSize: "0.75rem" }}>{r.centro_custo}</td>
-                    <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{r.tipo_documento ? `${r.tipo_documento} ` : ""}{r.numero_documento || ""}</td>
                     <td style={{ textAlign: "right", fontWeight: 600, color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{formatBRL(r.valor)}</td>
                     {!emAberto && <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{r.valor_pago != null ? formatBRL(r.valor_pago) : "—"}</td>}
                     {!emAberto && <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{r.conta_bancaria || "—"}</td>}
@@ -3233,7 +3979,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, o
                   </tr>
                 );
               })}
-              {!ordenados.length && <tr><td colSpan={admin ? 11 : 10} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1.5rem" }}>Nenhum lançamento nesta aba.</td></tr>}
+              {!ordenados.length && <tr><td colSpan={admin ? 9 : 8} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1.5rem" }}>Nenhum lançamento nesta aba.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -3311,6 +4057,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   const [regs, setRegs] = useState<Lanc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [opcoes, setOpcoes] = useState<{ fornecedores: string[]; produtos: string[] }>({ fornecedores: [], produtos: [] });
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
 
   const [numeroDocumento, setNumeroDocumento] = useState("");
   const [fornecedor, setFornecedor] = useState("");
@@ -3505,17 +4252,19 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
       {anexarAberto && (
         <ModalDivididoDocumento title={`Novo lançamento — leitura automática (${tipo === "receita" ? "recebimento" : "pagamento"})`}
           onClose={() => { setAnexarAberto(false); setArquivoPreview(null); }} arquivo={arquivoPreview}>
-          <FormFinanceiro tipo={tipo} responsaveis={RESPONSAVEIS}
+          <FormFinanceiro tipo={tipo} responsaveis={nomesResponsaveis}
             onArquivoParaLeitura={setArquivoPreview}
             onSalvo={(mensagem) => { setAnexarAberto(false); setArquivoPreview(null); setMsg({ tipo: "sucesso", texto: mensagem }); carregar(); }} />
         </ModalDivididoDocumento>
       )}
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden", marginBottom: "1rem" }}>
         <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem" }}>
           <span style={{ fontSize: "0.85rem" }}>{filtradas.length} nota(s) em aberto no filtro — total {formatBRL(totalFiltrado)}</span>
         </div>
-        <div className="overflow-x-auto" style={{ maxHeight: "360px" }}>
+        <div className="overflow-x-auto">
           <table className="fazenda-table" style={{ margin: 0 }}>
             <thead style={theadStickyStyle}><tr>
               <ThOrd rotulo="Nota / lançamento" chave="numero" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
@@ -3557,8 +4306,10 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
           </div>
         )}
       </div>
+      </div>
 
-      {notaSelecionada && (
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      {notaSelecionada ? (
         <div className="card">
           <div className="card-header mb-3">
             Tratar {tipo === "receita" ? "recebimento" : "pagamento"} — {notaSelecionada.descricao} · {formatBRL(notaSelecionada.valor)}
@@ -3674,7 +4425,14 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
             <button className="btn-ghost" title="Cancelar e voltar à seleção de nota" onClick={() => setNotaId(null)}>Cancelar</button>
           </div>
         </div>
+      ) : (
+        <div className="card" style={{ textAlign: "center", padding: "2.4rem 1rem" }}>
+          <Circle size={22} style={{ color: "var(--text-muted)", margin: "0 auto 0.6rem" }} />
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione uma nota à esquerda para tratar {tipo === "receita" ? "o recebimento" : "o pagamento"}.</p>
+        </div>
       )}
+      </div>
+      </div>
     </div>
   );
 }
@@ -3685,7 +4443,12 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
  * marcadas em Configurações > Parâmetros financeiros) e "físico" (consumo
  * real registrado pela Alimentação × valor unitário do Estoque).
  */
-type ItemFisicoRmca = { ingrediente: string; quantidade: number; valor_unitario: number; custo: number };
+type ItemFisicoRmca = {
+  ingrediente: string; quantidade: number; quantidade_kg: number; valor_unitario: number; custo: number;
+  estoque_id: number | null; unidade: string | null;
+  preco_padrao_kg: number | null; preco_ultima_compra_kg: number | null;
+};
+type PrecoMedioLitroLeite = { competencia: string; litros: number; receita: number; preco_por_litro: number } | null;
 type RmcaResp = {
   periodo: { inicio: string; fim: string };
   configurado: boolean;
@@ -3694,6 +4457,7 @@ type RmcaResp = {
   gerencial: { receita_leite: number; custo_alimentacao: number; rmca: number };
   fisico: { receita_leite: number; custo_alimentacao: number; rmca: number; itens: ItemFisicoRmca[] };
   meta_rmca: number;
+  preco_medio_litro_leite: PrecoMedioLitroLeite;
 };
 
 function primeiroDiaDoMes() {
@@ -3731,6 +4495,461 @@ function RoteiroRmcaModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Onda 3b — DRE Gerencial em cascata (15 linhas) + classificação de contas
+// ---------------------------------------------------------------------------
+
+/** Rótulos das 9 linhas atribuíveis + o escape hatch, para o seletor de
+ *  classificação. A ordem e os textos espelham ESPECIFICACAO_LINHAS no
+ *  backend (fazenda/rules/dre.py) — quem valida é o backend; isto aqui é só
+ *  a apresentação. */
+const LINHAS_DRE_ATRIBUIVEIS: { valor: string; rotulo: string }[] = [
+  { valor: "RECEITA_VENDAS", rotulo: "Receita de vendas" },
+  { valor: "DEDUCAO_IMPOSTOS", rotulo: "Deduções de impostos" },
+  { valor: "CUSTO_VARIAVEL", rotulo: "Custo variável (CPV/CMV)" },
+  { valor: "DESPESA_VARIAVEL", rotulo: "Despesas variáveis" },
+  { valor: "GASTOS_PESSOAL", rotulo: "Gastos com pessoal" },
+  { valor: "DESPESAS_OPERACIONAIS", rotulo: "Despesas operacionais" },
+  { valor: "DEPRECIACAO_AMORT_EXAUSTAO", rotulo: "Depreciação, amortização e exaustão" },
+  { valor: "OUTRAS_REC_DESP", rotulo: "Outras receitas e despesas" },
+  { valor: "TRIBUTOS_IR_CSLL", rotulo: "Tributos (IRPJ e CSLL)" },
+  { valor: "NAO_ENTRA_NA_DRE", rotulo: "— Não entra na DRE (principal de financiamento, transferência, aporte)" },
+];
+
+function DreCascataView({ dataInicio, dataFim }: { dataInicio: string; dataFim: string }) {
+  const [regime, setRegime] = useState<"competencia" | "caixa">("competencia");
+  const [dados, setDados] = useState<DreResposta | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [abertas, setAbertas] = useState<Set<string>>(new Set());
+  const [salvando, setSalvando] = useState<string | null>(null);
+
+  // O filtro de período da página começa VAZIO, e vazio ali significa "sem
+  // filtro — mostra tudo". O endpoint da cascata, porém, exige as duas datas:
+  // sem esta tradução, abrir a DRE disparava
+  // GET /financeiro/dre?data_inicio=&data_fim= e o backend recusava com 422 no
+  // PRIMEIRO render — a tela nascia quebrada toda vez. Uma janela bem larga
+  // reproduz exatamente o "mostra tudo" que o filtro vazio promete.
+  const semFiltroDePeriodo = !dataInicio || !dataFim;
+  const de = dataInicio || "2000-01-01";
+  const ate = dataFim || `${new Date().getFullYear() + 1}-12-31`;
+
+  const carregar = useCallback(() => {
+    setErro(null);
+    fetchDreCascata({ data_inicio: de, data_fim: ate, regime })
+      .then(setDados).catch((e) => setErro(e.message));
+  }, [de, ate, regime]);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const classificar = async (codigo: string, linha: string) => {
+    setSalvando(codigo);
+    try {
+      await classificarContaDre(codigo, linha || null);
+      carregar();
+    } catch (e) { setErro((e as Error).message); } finally { setSalvando(null); }
+  };
+
+  const alternar = (chave: string) => setAbertas((atual) => {
+    const proxima = new Set(atual);
+    if (proxima.has(chave)) proxima.delete(chave); else proxima.add(chave);
+    return proxima;
+  });
+
+  return (
+    <div>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Regime da cascata</div>
+        <div className="flex flex-wrap gap-3 items-end">
+          <div>
+            <label style={labelStyleLote}>Regime</label>
+            <select style={selStyleLote} value={regime} onChange={(e) => setRegime(e.target.value as "competencia" | "caixa")}>
+              <option value="competencia">Competência (quando aconteceu)</option>
+              <option value="caixa">Caixa (quando foi pago)</option>
+            </select>
+          </div>
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", margin: 0, alignSelf: "center" }}>
+            O período é o do filtro acima.
+          </p>
+        </div>
+      </div>
+
+      {erro && <div className="alert-critico mb-3"><span>{erro}</span></div>}
+      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+      {dados && (() => {
+        // Frontend e backend sobem em velocidades diferentes (Vercel em ~2min;
+        // Railway recompila e roda migração). Na janela em que o site novo
+        // conversa com a API antiga, estes campos chegam indefinidos — e um
+        // `.map` em undefined derrubava a tela inteira do Financeiro, porque
+        // esta página não tem barreira de erro. Normalizar aqui faz a tela
+        // degradar com um aviso em vez de morrer, hoje e em todo deploy futuro.
+        const cascata = dados.cascata ?? [];
+        const naoClassificado = dados.nao_classificado ?? { total: 0, contas: [] };
+        const foraDaDre = dados.fora_da_dre ?? { total: 0, contas: [] };
+        const depreciacao = dados.depreciacao_periodo ?? { total: 0, inconsistencias: [] };
+        const apiAntiga = !dados.cascata;
+        return <>
+        {apiAntiga && (
+          <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
+            <p style={{ fontSize: "0.85rem", color: "var(--amber)", margin: 0 }}>
+              <strong>A cascata de 15 linhas ainda não está disponível neste servidor.</strong>{" "}
+              O site já está atualizado, mas a API ainda responde na versão anterior — normalmente
+              é o servidor terminando de subir. Atualize a página em alguns minutos. O gráfico e o
+              detalhamento por conta, abaixo, seguem funcionando normalmente.
+            </p>
+          </div>
+        )}
+        {/* Contas ainda sem classificação — a DRE nunca finge que fecha, então
+            elas ficam FORA de todos os subtotais até serem classificadas. */}
+        {naoClassificado.total !== 0 && (
+          <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
+            <div className="card-header mb-2" style={{ color: "var(--amber)" }}>
+              Falta classificar {formatBRL(Math.abs(naoClassificado.total))} em {naoClassificado.contas.length} conta(s)
+            </div>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+              Estes valores <strong>não entram em nenhuma linha</strong> da cascata abaixo — nem nos subtotais.
+              A DRE prefere mostrar o buraco a fechar com um número errado. Escolha a linha de cada conta:
+            </p>
+            <div className="overflow-x-auto">
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead><tr><th>Conta</th><th style={{ textAlign: "right" }}>Valor</th><th style={{ width: "22rem" }}>Linha da DRE</th></tr></thead>
+                <tbody>
+                  {naoClassificado.contas.map((c) => (
+                    <tr key={c.codigo || c.nome}>
+                      <td style={{ fontSize: "0.78rem" }}>
+                        {c.codigo && <span style={{ color: "var(--text-muted)", marginRight: "0.4rem" }}>{c.codigo}</span>}
+                        {c.nome}
+                      </td>
+                      <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{formatBRL(c.valor)}</td>
+                      <td>
+                        {c.codigo ? (
+                          <select
+                            style={{ ...selStyleLote, width: "100%" }}
+                            disabled={salvando === c.codigo}
+                            defaultValue=""
+                            onChange={(e) => e.target.value && classificar(c.codigo!, e.target.value)}
+                          >
+                            <option value="">{salvando === c.codigo ? "Salvando…" : "Escolher linha…"}</option>
+                            {LINHAS_DRE_ATRIBUIVEIS.map((l) => <option key={l.valor} value={l.valor}>{l.rotulo}</option>)}
+                          </select>
+                        ) : (
+                          <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                            Sem código de conta — classifique pelo plano de contas.
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* A cascata */}
+        <div className="card mb-4">
+          <div className="card-header mb-3">
+            DRE Gerencial — {semFiltroDePeriodo
+              ? "todo o período (use o filtro acima para restringir)"
+              : `${new Date(de + "T12:00:00").toLocaleDateString("pt-BR")} a ${new Date(ate + "T12:00:00").toLocaleDateString("pt-BR")}`}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="fazenda-table" style={{ margin: 0 }}>
+              <tbody>
+                {cascata.map((linha) => {
+                  const temContas = (linha.contas?.length || 0) > 0;
+                  const aberta = abertas.has(linha.chave);
+                  const negativo = linha.valor < 0;
+                  return (
+                    <Fragment key={linha.chave}>
+                      <tr
+                        onClick={() => temContas && alternar(linha.chave)}
+                        style={{
+                          cursor: temContas ? "pointer" : "default",
+                          background: linha.eh_subtotal ? "var(--bg-elevated)" : undefined,
+                          borderTop: linha.eh_subtotal ? "1px solid var(--border)" : undefined,
+                        }}
+                      >
+                        <td style={{
+                          fontWeight: linha.eh_subtotal ? 700 : 400,
+                          fontSize: linha.eh_subtotal ? "0.85rem" : "0.8rem",
+                          paddingLeft: linha.eh_subtotal ? "0.75rem" : "1.75rem",
+                        }}>
+                          {temContas && <span style={{ color: "var(--text-muted)", marginRight: "0.4rem" }}>{aberta ? "▾" : "▸"}</span>}
+                          {linha.rotulo}
+                          {!linha.eh_subtotal && (
+                            <span style={{ color: "var(--text-muted)", marginLeft: "0.5rem", fontSize: "0.7rem" }}>
+                              {linha.operador === "-" ? "(subtrai)" : linha.operador === "±" ? "(líquido)" : ""}
+                            </span>
+                          )}
+                        </td>
+                        <td style={{
+                          textAlign: "right",
+                          fontWeight: linha.eh_subtotal ? 700 : 500,
+                          fontSize: linha.eh_subtotal ? "0.9rem" : "0.82rem",
+                          color: linha.eh_subtotal
+                            ? (negativo ? "var(--red)" : "var(--green-light)")
+                            : linha.operador === "-" ? "var(--red)" : undefined,
+                          whiteSpace: "nowrap",
+                        }}>
+                          {linha.operador === "-" && linha.valor !== 0 ? "− " : ""}{formatBRL(Math.abs(linha.valor))}
+                        </td>
+                      </tr>
+                      {aberta && linha.contas?.map((c) => (
+                        <tr key={`${linha.chave}-${c.codigo || c.nome}`} style={{ background: "var(--bg-base)" }}>
+                          <td style={{ paddingLeft: "3rem", fontSize: "0.74rem", color: "var(--text-muted)" }}>
+                            {c.codigo && <span style={{ marginRight: "0.4rem" }}>{c.codigo}</span>}{c.nome}
+                          </td>
+                          <td style={{ textAlign: "right", fontSize: "0.74rem", color: "var(--text-muted)" }}>{formatBRL(c.valor)}</td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Depreciação: o elo com o Patrimônio, que não existia antes da Onda 3 */}
+          <div className="card">
+            <div className="card-header mb-2">Depreciação do período</div>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+              Calculada a partir do cadastro de Patrimônio pelo método de cada bem. É despesa
+              que <strong>não é saída de caixa</strong> — por isso entra aqui e não no Caixa Real.
+            </p>
+            <KPI v={formatBRL(depreciacao.total)} l="Depreciação, amortização e exaustão" c="var(--amber)" />
+            {depreciacao.inconsistencias.length > 0 && (
+              <ul style={{ marginTop: "0.75rem", fontSize: "0.72rem", color: "var(--amber)" }}>
+                {depreciacao.inconsistencias.slice(0, 5).map((m, i) => (
+                  <li key={i}>• {m.item}{m.numero ? ` (Nº ${m.numero})` : ""}: {m.motivo}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {/* Fora da DRE de propósito — o escape hatch consciente */}
+          <div className="card">
+            <div className="card-header mb-2">Fora da DRE (por decisão)</div>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+              Contas marcadas como <strong>Não entra na DRE</strong>: principal de financiamento,
+              transferência entre contas próprias, aporte de sócio. Não é "falta classificar" —
+              é decisão registrada. Principal de financiamento é saída de caixa que{" "}
+              <strong>não é despesa</strong>; só o juro é despesa, e vai em Outras receitas e despesas.
+            </p>
+            <KPI v={formatBRL(foraDaDre.total)} l={`${foraDaDre.contas.length} conta(s)`} />
+            {foraDaDre.contas.length > 0 && (
+              <ul style={{ marginTop: "0.75rem", fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                {foraDaDre.contas.slice(0, 6).map((c) => (
+                  <li key={c.codigo || c.nome}>• {c.nome} — {formatBRL(c.valor)}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+        </>;
+      })()}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Onda 4 — Caixa Real (projeção de liquidez)
+// ---------------------------------------------------------------------------
+function CaixaRealView() {
+  const [dias, setDias] = useState(90);
+  const [dados, setDados] = useState<CaixaReal | null>(null);
+  const [sugestao, setSugestao] = useState<{ sugerido: number; meses_folga: number; atual: number } | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    setErro(null);
+    fetchCaixaReal(dias).then(setDados).catch((e) => setErro(e.message));
+  }, [dias]);
+  useEffect(() => { fetchFundoReservaSugerido().then(setSugestao).catch(() => {}); }, []);
+
+  // Só os dias com movimento — a série vem completa (365 pontos num ano) e
+  // listar dia vazio afogaria o que importa. O `|| []` também protege a tela
+  // quando a API ainda está na versão anterior (ver o comentário na DRE).
+  const diasComMovimento = (dados?.serie || []).filter((d) => d.entradas || d.saidas);
+  const contasDoCaixa = dados?.contas || [];
+
+  const formatarDia = (iso: string) => new Date(iso + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+
+  return (
+    <div>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Horizonte da projeção</div>
+        <div className="flex flex-wrap gap-3 items-end">
+          <div>
+            <label style={labelStyleLote}>Projetar os próximos</label>
+            <select style={selStyleLote} value={dias} onChange={(e) => setDias(Number(e.target.value))}>
+              <option value={30}>30 dias</option>
+              <option value={60}>60 dias</option>
+              <option value={90}>90 dias</option>
+              <option value={180}>180 dias</option>
+              <option value={365}>365 dias</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div className="card mb-4" style={{ borderColor: "var(--border)" }}>
+        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: 0 }}>
+          <strong>Caixa Real responde “tem dinheiro?”; a DRE responde “deu lucro?”.</strong>{" "}
+          As duas não batem, e não devem bater: depreciação é despesa na DRE e não sai do caixa;
+          o principal de um financiamento sai do caixa e não é despesa. Fazenda lucrativa pode
+          quebrar por falta de caixa — é isso que esta tela antecipa.
+        </p>
+      </div>
+
+      {erro && <div className="alert-critico mb-3"><span>{erro}</span></div>}
+      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+      {dados && <>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+          <KPI v={formatBRL(dados.saldo_inicial)} l="Saldo hoje" c="var(--dourado-light)" />
+          <KPI v={formatBRL(dados.saldo_final)} l={`Saldo projetado em ${dados.dias} dias`} c={dados.saldo_final >= 0 ? "var(--green-light)" : "var(--red)"} />
+          <KPI v={formatBRL(dados.total_entradas)} l="Entradas previstas" c="var(--green-light)" />
+          <KPI v={formatBRL(dados.total_saidas)} l="Saídas previstas" c="var(--red)" />
+        </div>
+
+        {/* Os dois alertas são distintos: furar a reserva é aviso; ficar
+            negativo é falta de dinheiro. */}
+        {dados.primeiro_dia_negativo && (
+          <div className="alert-critico mb-3">
+            <span>
+              <strong>O caixa fica negativo em {new Date(dados.primeiro_dia_negativo + "T12:00:00").toLocaleDateString("pt-BR")}.</strong>{" "}
+              Nessa data falta dinheiro para honrar os compromissos já lançados.
+            </span>
+          </div>
+        )}
+        {!dados.primeiro_dia_negativo && dados.primeiro_dia_abaixo_da_reserva && (
+          <div className="card mb-3" style={{ borderColor: "var(--amber)" }}>
+            <p style={{ fontSize: "0.82rem", color: "var(--amber)", margin: 0 }}>
+              O saldo fura o fundo de reserva de {formatBRL(dados.fundo_reserva)} em{" "}
+              <strong>{new Date(dados.primeiro_dia_abaixo_da_reserva + "T12:00:00").toLocaleDateString("pt-BR")}</strong>.
+              Ainda há dinheiro, mas a folga acabou.
+            </p>
+          </div>
+        )}
+        {dados.compromissos_sem_vencimento > 0 && (
+          <div className="card mb-3" style={{ borderColor: "var(--amber)" }}>
+            <p style={{ fontSize: "0.78rem", color: "var(--amber)", margin: 0 }}>
+              {dados.compromissos_sem_vencimento} lançamento(s) em aberto <strong>sem data de vencimento</strong> ficaram
+              fora da projeção — não há como posicioná-los na linha do tempo. O caixa real pode ser
+              mais apertado do que o mostrado aqui.
+            </p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div className="card">
+            <div className="card-header mb-2">Fundo de reserva</div>
+            {dados.fundo_reserva > 0 ? (
+              <>
+                <KPI v={formatBRL(dados.fundo_reserva)} l="Colchão definido" />
+                <div style={{ marginTop: "0.75rem" }}>
+                  <KPI
+                    v={formatBRL(dados.folga_minima)}
+                    l="Folga mínima na projeção"
+                    c={dados.folga_minima >= 0 ? "var(--green-light)" : "var(--red)"}
+                  />
+                </div>
+                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.75rem" }}>
+                  A folga é o pior saldo da projeção menos a reserva. Negativa significa que a
+                  reserva é furada em algum momento, mesmo que o saldo final pareça confortável.
+                </p>
+              </>
+            ) : (
+              <>
+                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+                  Nenhum fundo de reserva definido — a tela só alerta quando o caixa fica negativo.
+                </p>
+                {sugestao && sugestao.sugerido > 0 && (
+                  <p style={{ fontSize: "0.8rem" }}>
+                    Sugestão pelo seu histórico: <strong>{formatBRL(sugestao.sugerido)}</strong>{" "}
+                    ({sugestao.meses_folga} meses de custo médio). Para adotar, grave em{" "}
+                    <a href="/configuracoes?aba=parametros" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>
+                      Configurações → Parâmetros
+                    </a>, no campo “Caixa Real — fundo de reserva”.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="card-header mb-2">Saldo por conta</div>
+            {contasDoCaixa.length ? (
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <tbody>
+                  {contasDoCaixa.map((c) => (
+                    <tr key={c.id}>
+                      <td style={{ fontSize: "0.8rem" }}>{c.nome}</td>
+                      <td style={{ textAlign: "right", fontSize: "0.8rem", fontWeight: 600, color: c.saldo < 0 ? "var(--red)" : undefined }}>
+                        {formatBRL(c.saldo)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Nenhuma conta corrente cadastrada.</p>}
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-header mb-3">Linha do tempo — dias com movimento</div>
+          {diasComMovimento.length ? (
+            <div className="overflow-x-auto">
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead>
+                  <tr>
+                    <th>Data</th><th>Compromissos</th>
+                    <th style={{ textAlign: "right" }}>Entradas</th>
+                    <th style={{ textAlign: "right" }}>Saídas</th>
+                    <th style={{ textAlign: "right" }}>Saldo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {diasComMovimento.map((d) => (
+                    <tr key={d.data} style={{ background: d.saldo < 0 ? "rgba(220,80,80,0.08)" : undefined }}>
+                      <td style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>{formatarDia(d.data)}</td>
+                      <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                        {d.itens.slice(0, 3).map((it, i) => (
+                          <span key={i}>
+                            {i > 0 && " · "}
+                            {it.vencido && <span style={{ color: "var(--amber)" }} title={`Venceu em ${new Date(it.data_original + "T12:00:00").toLocaleDateString("pt-BR")} e não foi pago`}>⚠ </span>}
+                            {it.descricao}
+                          </span>
+                        ))}
+                        {d.itens.length > 3 && <span> · +{d.itens.length - 3}</span>}
+                      </td>
+                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: d.entradas ? "var(--green-light)" : "var(--text-muted)" }}>
+                        {d.entradas ? formatBRL(d.entradas) : "—"}
+                      </td>
+                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: d.saidas ? "var(--red)" : "var(--text-muted)" }}>
+                        {d.saidas ? formatBRL(d.saidas) : "—"}
+                      </td>
+                      <td style={{ textAlign: "right", fontSize: "0.8rem", fontWeight: 600, color: d.saldo < 0 ? "var(--red)" : undefined }}>
+                        {formatBRL(d.saldo)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
+              Nenhum compromisso em aberto com vencimento nos próximos {dados.dias} dias.
+            </p>
+          )}
+        </div>
+      </>}
+    </div>
+  );
+}
+
 function RmcaView() {
   const [dataInicio, setDataInicio] = useState(() => primeiroDiaDoMes());
   const [dataFim, setDataFim] = useState(() => new Date().toISOString().slice(0, 10));
@@ -3738,7 +4957,19 @@ function RmcaView() {
   const [erro, setErro] = useState<string | null>(null);
   const [roteiroAberto, setRoteiroAberto] = useState(false);
 
-  useEffect(() => { fetchRmca(dataInicio, dataFim).then(setDados).catch((e) => setErro(e.message)); }, [dataInicio, dataFim]);
+  // "vivo" evita que uma resposta desatualizada sobrescreva uma mais nova:
+  // o <input type="date"> pode emitir um valor vazio por uma fração de
+  // segundo ao trocar mês/ano (varia por navegador), disparando uma busca
+  // com data inválida (422) logo antes da busca boa — sem esta trava, se a
+  // resposta ruim chegasse DEPOIS da boa, o erro ficava "preso" na tela
+  // mesmo com o período certo selecionado. Mesmo padrão já usado no
+  // celular (ver components/mobile/menu/Rmca.tsx).
+  useEffect(() => {
+    let vivo = true;
+    fetchRmca(dataInicio, dataFim).then((r) => { if (vivo) { setDados(r); setErro(null); } })
+      .catch((e) => { if (vivo) setErro(e.message); });
+    return () => { vivo = false; };
+  }, [dataInicio, dataFim]);
 
   return (
     <div>
@@ -3814,7 +5045,256 @@ function RmcaView() {
               {!dados.fisico.itens.length && <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Sem consumo registrado pela Alimentação no período.</p>}
             </div>
           </div>
+          <RmcaSimulador dados={dados} />
         </>
+      )}
+    </div>
+  );
+}
+
+/* ───────────────────────── Simulador de cenários (RMCA) ─────────────────────────
+ * Calculadora "e se" nos moldes da planilha manual do nutricionista: uma
+ * lista de ingredientes (kg/dia × R$/kg) por cenário — "dieta de hoje" ao
+ * lado de "dieta pretendida" — comparada com a receita do leite do mesmo
+ * período. Não lança nada; é só simulação, por isso vive só no front, sem
+ * endpoint de escrita. */
+type FonteCusto = "manual" | "ultima_compra" | "padrao";
+type LinhaSimulador = {
+  id: string; nome: string; kgDia: number; fonte: FonteCusto;
+  precoManual: number; precoUltimaCompra: number | null; precoPadrao: number | null;
+};
+type FontePrecoLeite = "manual" | "media_laticinio";
+
+function diasDoPeriodo(p: { inicio: string; fim: string }): number {
+  const ini = new Date(p.inicio + "T00:00:00").getTime();
+  const fim = new Date(p.fim + "T00:00:00").getTime();
+  return Math.max(1, Math.round((fim - ini) / 86400000) + 1);
+}
+
+function linhasDoFisico(dados: RmcaResp): LinhaSimulador[] {
+  const dias = diasDoPeriodo(dados.periodo);
+  return dados.fisico.itens.map((it, i) => ({
+    id: `${it.estoque_id ?? it.ingrediente}-${i}`,
+    nome: it.ingrediente,
+    kgDia: Math.round((it.quantidade_kg / dias) * 100) / 100,
+    fonte: "padrao" as FonteCusto,
+    precoManual: it.preco_padrao_kg ?? it.valor_unitario ?? 0,
+    precoUltimaCompra: it.preco_ultima_compra_kg,
+    precoPadrao: it.preco_padrao_kg,
+  }));
+}
+
+function precoEfetivoLinha(l: LinhaSimulador): number {
+  if (l.fonte === "manual") return l.precoManual;
+  if (l.fonte === "ultima_compra") return l.precoUltimaCompra ?? l.precoPadrao ?? l.precoManual;
+  return l.precoPadrao ?? l.precoManual;
+}
+
+function TabelaCenario({ titulo, linhas, setLinhas }: {
+  titulo: string; linhas: LinhaSimulador[]; setLinhas: (fn: (atual: LinhaSimulador[]) => LinhaSimulador[]) => void;
+}) {
+  const atualizar = (id: string, campo: keyof LinhaSimulador, valor: any) =>
+    setLinhas((atual) => atual.map((l) => (l.id === id ? { ...l, [campo]: valor } : l)));
+  const remover = (id: string) => setLinhas((atual) => atual.filter((l) => l.id !== id));
+  const adicionar = () => setLinhas((atual) => [
+    ...atual, { id: `novo-${Date.now()}`, nome: "Novo ingrediente", kgDia: 0, fonte: "manual", precoManual: 0, precoUltimaCompra: null, precoPadrao: null },
+  ]);
+  const totalDia = linhas.reduce((s, l) => s + l.kgDia * precoEfetivoLinha(l), 0);
+
+  return (
+    <div className="card">
+      <div className="card-header mb-3">{titulo}</div>
+      <div className="overflow-x-auto">
+        <table className="fazenda-table" style={{ margin: 0 }}>
+          <thead>
+            <tr>
+              <th>Ingrediente</th>
+              <th style={{ textAlign: "right" }}>kg/dia</th>
+              <th>Fonte do preço</th>
+              <th style={{ textAlign: "right" }}>R$/kg</th>
+              <th style={{ textAlign: "right" }}>Subtotal/dia</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {linhas.map((l) => {
+              const preco = precoEfetivoLinha(l);
+              const semFonte = l.fonte === "ultima_compra" && l.precoUltimaCompra == null;
+              return (
+                <tr key={l.id}>
+                  <td style={{ minWidth: "10rem" }}>
+                    <input style={{ ...selStyleLote, fontSize: "0.78rem" }} value={l.nome} onChange={(e) => atualizar(l.id, "nome", e.target.value)} />
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    <input type="number" style={{ ...selStyleLote, fontSize: "0.78rem", textAlign: "right", width: "5.5rem" }}
+                      value={l.kgDia} step="0.1" onChange={(e) => atualizar(l.id, "kgDia", Number(e.target.value) || 0)} />
+                  </td>
+                  <td style={{ minWidth: "11rem" }}>
+                    <select style={{ ...selStyleLote, fontSize: "0.78rem" }} value={l.fonte} onChange={(e) => atualizar(l.id, "fonte", e.target.value as FonteCusto)}>
+                      <option value="manual">Lançar R$/kg</option>
+                      <option value="ultima_compra">Último preço de compra{l.precoUltimaCompra == null ? " (sem compra registrada)" : ""}</option>
+                      <option value="padrao">Preço padrão do cadastro{l.precoPadrao == null ? " (sem cadastro)" : ""}</option>
+                    </select>
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    {l.fonte === "manual" ? (
+                      <input type="number" style={{ ...selStyleLote, fontSize: "0.78rem", textAlign: "right", width: "5.5rem" }}
+                        value={l.precoManual} step="0.01" onChange={(e) => atualizar(l.id, "precoManual", Number(e.target.value) || 0)} />
+                    ) : (
+                      <span style={{ fontSize: "0.78rem", color: semFonte ? "var(--amber)" : undefined }}>{formatBRL(preco)}</span>
+                    )}
+                  </td>
+                  <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{formatBRL(l.kgDia * preco)}</td>
+                  <td><button className="btn-ghost" title="Remover ingrediente" onClick={() => remover(l.id)}><Trash2 size={13} /></button></td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colSpan={4} style={{ fontWeight: 700 }}>Total diário de alimentação</td>
+              <td style={{ textAlign: "right", fontWeight: 700 }}>{formatBRL(totalDia)}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <button className="btn-ghost mt-2" style={{ fontSize: "0.75rem" }} onClick={adicionar}><Plus size={13} /> Adicionar ingrediente</button>
+    </div>
+  );
+}
+
+function RmcaSimulador({ dados }: { dados: RmcaResp }) {
+  const [aberto, setAberto] = useState(false);
+  const [cenarioA, setCenarioA] = useState<LinhaSimulador[]>(() => linhasDoFisico(dados));
+  const [cenarioB, setCenarioB] = useState<LinhaSimulador[]>(() => linhasDoFisico(dados));
+
+  const [litrosDia, setLitrosDia] = useState(1000);
+  const [fontePrecoVenda, setFontePrecoVenda] = useState<FontePrecoLeite>("manual");
+  const [precoVendaManual, setPrecoVendaManual] = useState(3.0);
+  const [litrosBezerros, setLitrosBezerros] = useState(0);
+  const [fontePrecoBezerro, setFontePrecoBezerro] = useState<FontePrecoLeite>("manual");
+  const [precoBezerroPadrao, setPrecoBezerroPadrao] = useState(3.0);
+
+  const precoMedioLaticinio = dados.preco_medio_litro_leite?.preco_por_litro ?? null;
+  const precoVenda = fontePrecoVenda === "media_laticinio" ? (precoMedioLaticinio ?? precoVendaManual) : precoVendaManual;
+  const precoBezerro = fontePrecoBezerro === "media_laticinio" ? (precoMedioLaticinio ?? precoBezerroPadrao) : precoBezerroPadrao;
+  const litrosVendidos = Math.max(0, litrosDia - litrosBezerros);
+  const receitaVenda = litrosVendidos * precoVenda;
+  const valorLeiteBezerros = litrosBezerros * precoBezerro;
+
+  const custoA = cenarioA.reduce((s, l) => s + l.kgDia * precoEfetivoLinha(l), 0);
+  const custoB = cenarioB.reduce((s, l) => s + l.kgDia * precoEfetivoLinha(l), 0);
+  const pctA = receitaVenda > 0 ? (custoA / receitaVenda) * 100 : null;
+  const pctB = receitaVenda > 0 ? (custoB / receitaVenda) * 100 : null;
+
+  const recarregarDoFisico = (coluna: "A" | "B") => {
+    const linhas = linhasDoFisico(dados);
+    if (coluna === "A") setCenarioA(linhas); else setCenarioB(linhas);
+  };
+
+  return (
+    <div className="card mt-4">
+      <div className="card-header mb-3 flex items-center justify-between">
+        <span>Simulador de cenários</span>
+        <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setAberto((v) => !v)}>
+          {aberto ? "Recolher" : "Abrir simulador"}
+        </button>
+      </div>
+      {!aberto && (
+        <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+          Compare o custo diário de alimentação de dois cenários (ex.: a dieta de hoje × uma dieta que você está pensando em fazer) contra a receita do leite — mesma mecânica da planilha manual, mas recalculando ao vivo.
+        </p>
+      )}
+      {aberto && (
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: 0 }}>
+              Os dois cenários já vêm pré-preenchidos com o consumo real do RMCA físico no período — edite livremente, ou recarregue a partir do real a qualquer momento.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <TabelaCenario titulo="Cenário A — Dieta de hoje" linhas={cenarioA} setLinhas={setCenarioA} />
+              <button className="btn-ghost mt-1" style={{ fontSize: "0.72rem" }} onClick={() => recarregarDoFisico("A")}>
+                <Undo2 size={12} /> Recarregar do RMCA físico
+              </button>
+            </div>
+            <div>
+              <TabelaCenario titulo="Cenário B — Dieta pretendida" linhas={cenarioB} setLinhas={setCenarioB} />
+              <button className="btn-ghost mt-1" style={{ fontSize: "0.72rem" }} onClick={() => recarregarDoFisico("B")}>
+                <Undo2 size={12} /> Recarregar do RMCA físico
+              </button>
+            </div>
+          </div>
+
+          <div className="card mb-4" style={{ background: "var(--surface-2)" }}>
+            <div className="card-header mb-3">Receita do leite (usada nos dois cenários)</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <div className="flex flex-wrap gap-3 items-end mb-2">
+                  <div><label style={labelStyleLote}>Litros produzidos/dia</label>
+                    <input type="number" style={selStyleLote} value={litrosDia} step="10" onChange={(e) => setLitrosDia(Number(e.target.value) || 0)} /></div>
+                  <div><label style={labelStyleLote}>Fonte do preço de venda</label>
+                    <select style={selStyleLote} value={fontePrecoVenda} onChange={(e) => setFontePrecoVenda(e.target.value as FontePrecoLeite)}>
+                      <option value="manual">Valor digitado</option>
+                      <option value="media_laticinio">Média paga pelo laticínio{precoMedioLaticinio == null ? " (sem dado ainda)" : ""}</option>
+                    </select></div>
+                  {fontePrecoVenda === "manual" && (
+                    <div><label style={labelStyleLote}>R$/litro</label>
+                      <input type="number" style={selStyleLote} value={precoVendaManual} step="0.01" onChange={(e) => setPrecoVendaManual(Number(e.target.value) || 0)} /></div>
+                  )}
+                </div>
+                {dados.preco_medio_litro_leite && (
+                  <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                    Última nota do laticínio ({mesCompLabel(dados.preco_medio_litro_leite.competencia)}): {formatBRL(dados.preco_medio_litro_leite.preco_por_litro)}/L
+                    ({formatBRL(dados.preco_medio_litro_leite.receita)} ÷ {dados.preco_medio_litro_leite.litros.toLocaleString("pt-BR")} L).
+                  </p>
+                )}
+              </div>
+              <div>
+                <div className="flex flex-wrap gap-3 items-end mb-2">
+                  <div><label style={labelStyleLote}>Leite p/ bezerros (L/dia)</label>
+                    <input type="number" style={selStyleLote} value={litrosBezerros} step="1" onChange={(e) => setLitrosBezerros(Number(e.target.value) || 0)} /></div>
+                  <div><label style={labelStyleLote}>Fonte do valor atribuído</label>
+                    <select style={selStyleLote} value={fontePrecoBezerro} onChange={(e) => setFontePrecoBezerro(e.target.value as FontePrecoLeite)}>
+                      <option value="manual">Valor padrão digitado</option>
+                      <option value="media_laticinio">Média paga pelo laticínio{precoMedioLaticinio == null ? " (sem dado ainda)" : ""}</option>
+                    </select></div>
+                  {fontePrecoBezerro === "manual" && (
+                    <div><label style={labelStyleLote}>R$/litro (padrão)</label>
+                      <input type="number" style={selStyleLote} value={precoBezerroPadrao} step="0.01" onChange={(e) => setPrecoBezerroPadrao(Number(e.target.value) || 0)} /></div>
+                  )}
+                </div>
+                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                  Litros produzidos são descontados do leite fornecido a bezerros antes de calcular a receita de venda; o valor do leite de bezerro aparece à parte, informativo.
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+              <KPI v={`${litrosVendidos.toLocaleString("pt-BR")} L`} l="Litros disponíveis p/ venda" />
+              <KPI v={formatBRL(receitaVenda)} l="Receita de venda" c="var(--green-light)" />
+              <KPI v={formatBRL(valorLeiteBezerros)} l="Valor do leite p/ bezerros" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[{ nome: "Cenário A", custo: custoA, pct: pctA }, { nome: "Cenário B", custo: custoB, pct: pctB }].map((c) => (
+              <div key={c.nome} className="card" style={{ borderColor: c.pct != null && c.pct >= 45 ? "var(--red)" : undefined }}>
+                <div className="card-header mb-3">{c.nome}</div>
+                <div className="grid grid-cols-1 gap-3">
+                  <KPI v={formatBRL(c.custo)} l="Custo de alimentação/dia" c="var(--red)" />
+                  <KPI v={c.pct != null ? `${c.pct.toFixed(2)}%` : "—"} l="Custo ÷ Receita de venda" c={c.pct != null && c.pct >= 45 ? "var(--red)" : "var(--green-light)"} />
+                </div>
+                {c.pct != null && (
+                  <div style={{ height: "0.5rem", borderRadius: "99px", background: "var(--surface-2)", overflow: "hidden", marginTop: "0.6rem" }}>
+                    <div style={{ height: "100%", width: `${Math.min(c.pct, 100)}%`, background: c.pct >= 45 ? "var(--red)" : "var(--green-light)" }} />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -3831,7 +5311,14 @@ function CustoLitroLeiteView() {
   const [dados, setDados] = useState<CustoLitroLeiteResp | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
-  useEffect(() => { fetchCustoLitroLeite(dataInicio, dataFim).then(setDados).catch((e) => setErro(e.message)); }, [dataInicio, dataFim]);
+  // Mesma trava de resposta desatualizada de RmcaView, acima — ver o
+  // comentário lá para a explicação completa do 422 intermitente.
+  useEffect(() => {
+    let vivo = true;
+    fetchCustoLitroLeite(dataInicio, dataFim).then((r) => { if (vivo) { setDados(r); setErro(null); } })
+      .catch((e) => { if (vivo) setErro(e.message); });
+    return () => { vivo = false; };
+  }, [dataInicio, dataFim]);
 
   return (
     <div>

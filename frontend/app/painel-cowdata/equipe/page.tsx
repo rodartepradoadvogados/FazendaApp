@@ -8,6 +8,7 @@ import {
   fetchUsuarioEquipeCowData, criarUsuarioEquipeCowData, editarUsuarioEquipeCowData,
   AREAS_PAINEL_COWDATA, LABEL_AREA_PAINEL_COWDATA,
   NIVEIS_SIGILO_EQUIPE_COWDATA, LABEL_NIVEL_SIGILO_EQUIPE_COWDATA, DESCRICAO_NIVEL_SIGILO_EQUIPE_COWDATA,
+  PERMISSOES_EDICAO_PAINEL_COWDATA,
   type PessoaCowData, type FolhaCowData, type UsuarioEquipeCowData, type AreaPainelCowData, type NivelSigiloEquipeCowData,
 } from "@/lib/api";
 
@@ -286,6 +287,7 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
   }
 
   async function excluirFolha(id: number) {
+    if (!confirm("Excluir este lançamento de folha? Isso não pode ser desfeito.")) return;
     try { await excluirFolhaCowData(id); setFolhas(await fetchFolhaMembroCowData(pessoa.id)); } catch (e: any) { setErro(e.message); }
   }
 
@@ -420,6 +422,12 @@ const LOGIN_VAZIO = {
   pode_suspender_assinatura: false, pode_acessar_fazendas: false,
   pode_alterar_cadastro: false, pode_modificar_suspender_plano: false, pode_emitir_auditar_contratos: false,
   pode_emitir_cobrancas: false, pode_vincular_usuarios: false, pode_cadastrar_usuarios: false,
+  // As sete permissões de EDIÇÃO no próprio Painel CowData (set/2026).
+  // Todas nascem desligadas, aqui e na migração do banco — decisão explícita
+  // do dono: "ninguém ganha nada; você libera depois".
+  pode_editar_cadastros_globais: false, pode_editar_touros_naab: false, pode_editar_farmacia: false,
+  pode_consultar_usuarios: false, pode_editar_usuarios: false, pode_controlar_acesso_usuarios: false,
+  pode_editar_news: false,
 };
 
 // Login + permissões do membro no próprio Painel CowData — pedido explícito
@@ -447,6 +455,13 @@ function LoginEquipe({ pessoa }: { pessoa: PessoaCowData }) {
       pode_alterar_cadastro: usuario.pode_alterar_cadastro, pode_modificar_suspender_plano: usuario.pode_modificar_suspender_plano,
       pode_emitir_auditar_contratos: usuario.pode_emitir_auditar_contratos, pode_emitir_cobrancas: usuario.pode_emitir_cobrancas,
       pode_vincular_usuarios: usuario.pode_vincular_usuarios, pode_cadastrar_usuarios: usuario.pode_cadastrar_usuarios,
+      pode_editar_cadastros_globais: usuario.pode_editar_cadastros_globais,
+      pode_editar_touros_naab: usuario.pode_editar_touros_naab,
+      pode_editar_farmacia: usuario.pode_editar_farmacia,
+      pode_consultar_usuarios: usuario.pode_consultar_usuarios,
+      pode_editar_usuarios: usuario.pode_editar_usuarios,
+      pode_controlar_acesso_usuarios: usuario.pode_controlar_acesso_usuarios,
+      pode_editar_news: usuario.pode_editar_news,
     } : { ...LOGIN_VAZIO, email: pessoa.emails[0] || "" });
     setErro(null);
     setEditando(true);
@@ -556,7 +571,44 @@ function LoginEquipe({ pessoa }: { pessoa: PessoaCowData }) {
             ))}
           </div>
 
-          <p style={labelStyle}>Permissão de acesso</p>
+          {/* O QUE ELE PODE EDITAR DENTRO DO PAINEL COWDATA (set/2026).
+              Bloco à parte de "Tipo — acesso a quais dados" logo acima, e é
+              essa a separação inteira: a área diz o que ele VÊ, estas caixas
+              dizem o que ele pode ESCREVER. Nos três primeiros itens a
+              consulta é livre de propósito — desmarcar NÃO esconde nada,
+              só tranca a escrita —, e a tela precisa dizer isso, senão
+              parece que o dono está tirando a visualização de alguém.
+              Backend: exigir_permissao_painel_cowdata (fazenda/auth.py). */}
+          <p style={labelStyle}>Edição no Painel CowData — o que ele pode alterar</p>
+          <p style={{ fontSize: "0.74rem", color: COR.mudo, marginBottom: "0.5rem", maxWidth: "40rem" }}>
+            Estas caixas liberam a ESCRITA. Nos três primeiros itens a consulta continua livre para quem tem a área
+            correspondente marcada acima — desmarcar aqui não tira a visualização, só impede alterar.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem", marginBottom: "0.9rem" }}>
+            {PERMISSOES_EDICAO_PAINEL_COWDATA.map(({ campo, rotulo, ajuda, consultaLivre }) => (
+              <label key={campo} style={{
+                display: "flex", alignItems: "flex-start", gap: "0.5rem", fontSize: "0.78rem", cursor: "pointer",
+                padding: "0.45rem 0.6rem", borderRadius: "var(--r-sm)",
+                border: `1px solid ${form[campo] ? COR.dourado : COR.borda}`,
+                background: form[campo] ? "rgba(212, 175, 55, 0.08)" : "transparent",
+              }}>
+                <input type="checkbox" checked={form[campo]} onChange={(e) => setForm({ ...form, [campo]: e.target.checked })}
+                  style={{ marginTop: "0.2rem" }} />
+                <span>
+                  <span style={{ fontWeight: 700, color: COR.texto }}>{rotulo}</span>
+                  {consultaLivre && (
+                    <span style={{ color: COR.verde, fontSize: "0.7rem", marginLeft: "0.4rem" }}>
+                      consulta é livre
+                    </span>
+                  )}
+                  <br />
+                  <span style={{ color: COR.mudo }}>{ajuda}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+
+          <p style={labelStyle}>Permissão de acesso — o que ele pode fazer nas fazendas-cliente</p>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", marginBottom: "0.5rem" }}>
             <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", cursor: "pointer" }}>
               <input type="checkbox" checked={form.pode_suspender_assinatura} onChange={(e) => setForm({ ...form, pode_suspender_assinatura: e.target.checked })} />

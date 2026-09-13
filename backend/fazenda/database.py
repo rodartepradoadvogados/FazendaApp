@@ -3,9 +3,11 @@ Conexão com o banco de dados e criação das tabelas.
 Usa SQLite em desenvolvimento, PostgreSQL em produção (via DATABASE_URL).
 """
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import inspect, text
+from fastapi import Depends, Header
+from sqlalchemy import event, inspect, text
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from fazenda.config import settings
@@ -33,6 +35,84 @@ else:
     engine_kwargs["max_overflow"] = 10
 
 engine = create_engine(DATABASE_URL, **engine_kwargs)
+
+
+def _normalizar(url: str) -> str:
+    """Railway/Heroku entregam `postgres://`, que o SQLAlchemy 2.0 recusa."""
+    return url.replace("postgres://", "postgresql://", 1) if url.startswith("postgres://") else url
+
+
+# A URL que as rotinas de DONO usam. Sem `DATABASE_URL_MANUTENCAO`, é a mesma
+# de sempre — e é por isso que toda a mudança de 09/09/2026 é inócua em
+# ambiente que não a define (a suíte inteira, e a produção de hoje).
+DATABASE_URL_MANUTENCAO = _normalizar(settings.database_url_manutencao or DATABASE_URL)
+
+
+def _montar_engine_manutencao():
+    """A engine que as rotinas sem recorte de fazenda usam (hoje: o backup
+    automático). Sem `DATABASE_URL_MANUTENCAO` configurada, é a MESMA engine de
+    sempre — nenhuma conexão a mais, nenhum comportamento diferente.
+
+    Ela existe para o dia em que o RLS entrar. A `DATABASE_URL` passará a
+    apontar para um role de aplicação contido pela política; o backup, que
+    precisa ler o banco inteiro por definição, passa a apontar para o role
+    dono por aqui. Ver docs/security-audit/rls-proposta.md, seção 8 — e o
+    que essa escolha custa está escrito lá também: no desenho transitório a
+    credencial de dono fica no ambiente da API.
+    """
+    if not settings.database_url_manutencao:
+        return engine
+    url = DATABASE_URL_MANUTENCAO
+    kwargs: dict = {"echo": settings.environment == "development"}
+    if "sqlite" in url:
+        kwargs["connect_args"] = {"check_same_thread": False}
+    else:
+        # Até 11/09/2026 isto atendia só rotinas de fundo de meia em meia
+        # hora — pool de 1+1 sobrava. Deixou de ser verdade no incidente de
+        # ativação do RLS em produção: login/troca de fazenda/identidade da
+        # Equipe CowData (auth.py, api/routers/auth.py, api/routers/
+        # fazendas.py::minhas_fazendas) passaram a abrir sessão própria nesta
+        # engine EM TODA REQUISIÇÃO — essas consultas enumeram vínculos de um
+        # usuário ANTES de existir contexto de fazenda (ou entre fazendas
+        # diferentes, caso da Equipe CowData), o que a política de RLS nega
+        # sozinha, sem erro (ver roteiro-seguranca.md, incidente de
+        # 11/09/2026). Mesmo tamanho da engine principal — dimensionada para
+        # tráfego de requisição, não mais só para um laço esporádico.
+        kwargs["pool_pre_ping"] = True
+        kwargs["pool_size"] = 5
+        kwargs["max_overflow"] = 10
+    logger.info("Conexão de manutenção própria configurada (DATABASE_URL_MANUTENCAO).")
+    return create_engine(url, **kwargs)
+
+
+engine_manutencao = _montar_engine_manutencao()
+
+
+@contextmanager
+def sessao_sem_recorte_de_fazenda(session: Session):
+    """Para leituras que precisam enxergar MAIS DE UMA fazenda na mesma
+    consulta — enumerar os vínculos de um usuário antes de qualquer fazenda
+    selecionada (login, troca de fazenda), ou checar a identidade da Equipe
+    CowData (a Pessoa dela mora na fazenda interna da CowData, quase sempre
+    diferente da fazenda-cliente hoje selecionada). Nunca a defesa real —
+    o filtro explícito em Python (`usuario_id`/`pessoa_id`/`fazenda_id`) já
+    é — só evita que a política de RLS negue em silêncio por falta de
+    contexto (incidente de 11/09/2026, ver roteiro-seguranca.md).
+
+    SÓ troca de conexão sob PostgreSQL, onde RLS existe. Fora dele — a
+    suíte inteira, que roda em SQLite, cada teste com seu próprio engine
+    isolado via `dependency_overrides[get_session]` — devolve a MESMA
+    `session` recebida, sem abrir nada: `engine_manutencao`, sem
+    `DATABASE_URL_MANUTENCAO`, é só um nome a mais para o `engine` do
+    MÓDULO (não o engine isolado que o teste criou), e trocar de conexão
+    ali faria a leitura enxergar um banco vazio, não o que o teste semeou —
+    foi exatamente esse regressão que a primeira versão desta correção
+    causou (71 testes existentes quebrados) antes de ganhar esta guarda."""
+    if session.get_bind().dialect.name != "postgresql":
+        yield session
+        return
+    with Session(engine_manutencao) as sm:
+        yield sm
 
 
 # Migração leve (histórico congelado): colunas adicionadas a tabelas que já
@@ -293,9 +373,9 @@ def _migrar_colunas() -> None:
     aborta a transação inteira e não derruba o startup do app (já aconteceu:
     um `BOOLEAN DEFAULT 0` incompatível com Postgres travou a inicialização
     inteira em produção)."""
-    insp = inspect(engine)
+    insp = inspect(engine_manutencao)
     tabelas = set(insp.get_table_names())
-    with engine.begin() as conn:
+    with engine_manutencao.begin() as conn:
         for tabela, colunas in _COLUNAS_NOVAS.items():
             if tabela not in tabelas:
                 continue  # create_all já criou com o schema completo
@@ -325,9 +405,9 @@ _COLUNAS_BIGINT: list[tuple[str, str]] = [
 def _migrar_tipos_bigint() -> None:
     if is_sqlite:
         return
-    insp = inspect(engine)
+    insp = inspect(engine_manutencao)
     tabelas = set(insp.get_table_names())
-    with engine.begin() as conn:
+    with engine_manutencao.begin() as conn:
         for tabela, coluna in _COLUNAS_BIGINT:
             if tabela not in tabelas:
                 continue
@@ -347,10 +427,10 @@ def _inativar_animais_semen() -> None:
     ainda estiver ativo."""
     from fazenda.models import Animal  # import local: evita ciclo no boot do módulo
 
-    insp = inspect(engine)
+    insp = inspect(engine_manutencao)
     if "animal" not in insp.get_table_names():
         return
-    with Session(engine) as session:
+    with Session(engine_manutencao) as session:
         pendentes = session.exec(
             select(Animal).where(Animal.eh_semen == True, Animal.ativo == True)  # noqa: E712
         ).all()
@@ -373,10 +453,10 @@ def _backfill_login_acesso() -> None:
     Idempotente: só roda para quem ainda não tem nenhuma linha."""
     from fazenda.models import LoginAcesso, Usuario  # import local: evita ciclo no boot do módulo
 
-    insp = inspect(engine)
+    insp = inspect(engine_manutencao)
     if "login_acesso" not in insp.get_table_names():
         return
-    with Session(engine) as session:
+    with Session(engine_manutencao) as session:
         usuarios = session.exec(select(Usuario).where(Usuario.ultimo_login != None)).all()  # noqa: E711
         for u in usuarios:
             ja_tem = session.exec(select(LoginAcesso).where(LoginAcesso.usuario_id == u.id)).first()
@@ -409,9 +489,14 @@ def _aplicar_alembic() -> None:
     # reconfiguraria (e desabilitaria) os loggers do resto do app, já que só
     # os loggers "root"/"sqlalchemy"/"alembic" estão listados no alembic.ini.
     cfg.config_file_name = None
-    cfg.set_main_option("sqlalchemy.url", DATABASE_URL)
+    # `%` dobrado: `set_main_option` grava num ConfigParser, que interpreta `%`
+    # como interpolação e levanta ValueError. Uma senha com `%`, ou um host de
+    # socket escapado (`%2F`), derrubaria o boot aqui — e derrubaria antes
+    # desta mudança também, com a `DATABASE_URL` de sempre. É o workaround
+    # documentado do Alembic.
+    cfg.set_main_option("sqlalchemy.url", DATABASE_URL_MANUTENCAO.replace("%", "%%"))
 
-    insp = inspect(engine)
+    insp = inspect(engine_manutencao)
     tabelas_existentes = set(insp.get_table_names())
     ja_tem_alembic = "alembic_version" in tabelas_existentes
     banco_pre_existente = bool(tabelas_existentes - {"alembic_version"})
@@ -424,16 +509,150 @@ def _aplicar_alembic() -> None:
 
 def create_db_and_tables() -> None:
     """Aplica as migrações de schema (Alembic) e as migrações leves antigas
-    (histórico congelado, ver comentário de `_COLUNAS_NOVAS`)."""
+    (histórico congelado, ver comentário de `_COLUNAS_NOVAS`).
+
+    TUDO AQUI CORRE PELA CONEXÃO DE DONO (`engine_manutencao`), desde
+    09/09/2026. O motivo é concreto e já mediu no Staging: o `cowdata_app`
+    criado pelo roteiro do RLS (docs/security-audit/railway-staging-passos.md)
+    recebe SELECT/INSERT/UPDATE/DELETE e nada mais — de propósito, é o que faz
+    a política valer para ele. Ele não pode `CREATE TABLE` nem `ALTER TABLE`.
+
+    E isto roda NO BOOT: `main.py::lifespan` chama esta função antes de servir
+    a primeira requisição, e `_aplicar_alembic()` não tem proteção nenhuma em
+    volta. Com a conexão contida, a primeira migração que criasse ou alterasse
+    uma tabela seria recusada pelo banco e a API não subiria — a migração das
+    130 FKs compostas, que altera dezenas de tabelas, seria exatamente esse
+    gatilho.
+
+    Sem `DATABASE_URL_MANUTENCAO` definida, `engine_manutencao` É a `engine` de
+    sempre, então em todo ambiente que não a define — a suíte inteira, e a
+    produção de hoje — isto não muda absolutamente nada.
+    """
     _aplicar_alembic()
-    SQLModel.metadata.create_all(engine)  # rede de segurança p/ tabela nova sem migração ainda
+    SQLModel.metadata.create_all(engine_manutencao)  # rede de segurança p/ tabela nova sem migração ainda
     _migrar_colunas()
     _migrar_tipos_bigint()
     _inativar_animais_semen()
     _backfill_login_acesso()
 
 
-def get_session():
-    """Dependency injection do FastAPI para obter uma sessão de banco."""
+@event.listens_for(Session, "after_begin")
+def _aplicar_contexto_de_fazenda(session, transaction, connection) -> None:
+    """Sob RLS, é esta linha que o banco lê para decidir o que a conexão
+    enxerga (rls-proposta.md, seção 4): `USING (fazenda_id =
+    NULLIF(current_setting('app.fazenda_id', true), '')::int)`.
+
+    POR QUE UM LISTENER DE `after_begin`, E NÃO UM `SET LOCAL` NO
+    `get_session()`. `SET LOCAL` só vale até o fim da TRANSAÇÃO — e o padrão
+    deste projeto é `session.add(...); session.commit()` várias vezes dentro
+    de uma mesma rota (462 `session.commit()` só nos routers, uma função de
+    financeiro.py com 49). Cada `commit()` fecha a transação e abre outra por
+    trás (autobegin do SQLAlchemy) na próxima instrução — um `SET LOCAL`
+    disparado uma vez, na abertura da sessão, valeria só para a PRIMEIRA
+    leva de queries e desapareceria depois do primeiro commit no meio da
+    rota. `after_begin` dispara de novo a cada transação nova na MESMA
+    sessão, então o contexto é reaplicado a cada commit — é o comportamento
+    correto por construção, não por disciplina de quem escreve a rota.
+
+    De propósito não normaliza o gatilho: dispara para toda `Session` do
+    projeto (é aqui que `sqlmodel.Session` é usada em todo lugar, inclusive
+    a suíte de testes em SQLite), mas só AGE quando `session.info` tem a
+    chave `"fazenda_id"` — só `get_session()` (abaixo) e quem mais decidir
+    marcar a própria sessão a coloca. Sessão comum, sem a chave, sai daqui
+    sem fazer nada: nenhum teste dos 5000+ que já existem muda de
+    comportamento.
+
+    `"fazenda_id" in session.info`, não `.get(...)`: a chave PRECISA
+    distinguir "nunca marcada" de "marcada como None" (token sem "fid",
+    ou fora de fazenda nenhuma) — os dois têm efeito diferente aqui: o
+    primeiro não faz nada, o segundo chama `set_config` com `NULL`, que é o
+    "sem contexto nega tudo" da política (seção 4).
+    """
+    if "fazenda_id" not in session.info:
+        return
+    if connection.dialect.name != "postgresql":
+        # SQLite (suíte principal) não tem `set_config`, e não tem RLS —
+        # nada aqui muda o resultado de teste nenhum.
+        return
+    valor = session.info["fazenda_id"]
+    # `set_config`, não `SET LOCAL app.fazenda_id = ...` interpolado: `SET`
+    # não aceita bind parameter — só `set_config()`, por ser uma chamada de
+    # função comum, aceita. É o que evita colar um int direto numa string SQL.
+    connection.execute(
+        text("SELECT set_config('app.fazenda_id', :valor, true)"),
+        {"valor": None if valor is None else str(valor)},
+    )
+
+
+def get_session(authorization: str | None = Header(default=None)):
+    """Dependency injection do FastAPI para obter uma sessão de banco — usada
+    em praticamente toda rota do projeto via `Depends(get_session)`.
+
+    Marca `session.info["fazenda_id"]` a partir do token, para o listener
+    `after_begin` acima aplicar a cada transação. Sem RLS ligado (hoje),
+    marcar a chave não muda NADA visível: nenhuma política existe ainda para
+    ler `current_setting('app.fazenda_id', ...)`. É o mesmo desenho de
+    `engine_manutencao`: inócuo até o dia em que a política entrar.
+
+    Também vale para as rotas do Painel CowData/auth/fazendas, que operam
+    sem fazenda selecionada por definição (ver main.py, comentário da TRAVA
+    DE TENANT) — nelas `get_fazenda_atual_id` devolve `None`, e é exatamente
+    esse `None` que o listener grava com `set_config(..., NULL, true)`.
+
+    Recebe o cabeçalho `Authorization` cru, e não
+    `Depends(get_fazenda_atual_id)`, por um motivo estrutural: `auth.py`
+    importa `get_session` DESTE módulo em ~14 rotas (`Depends(get_session)`),
+    e um `Depends(get_fazenda_atual_id)` aqui, como valor padrão de
+    parâmetro, seria resolvido na DEFINIÇÃO da função — ou seja, na hora em
+    que `database.py` é importado, antes de `auth.py` sequer existir. Um
+    import local dentro do corpo da função resolve o ciclo porque só roda
+    quando a função é CHAMADA, não quando é definida — mas um valor padrão de
+    parâmetro (`= Depends(...)`) é sempre resolvido na definição, e um import
+    local não adianta ali. Chamar `get_fazenda_atual_id` como função comum,
+    dentro do corpo, reusa a MESMA lógica de leitura do token — não duplica
+    nada, só adia o import para a hora certa.
+
+    Os ~1500 testes que fazem `dependency_overrides[database.get_session]`
+    substituem esta função inteira — o corpo real abaixo nunca roda para
+    eles, e continuam funcionando sem tocar em nada disto."""
+    from fazenda.auth import get_fazenda_atual_id  # import local: evita ciclo (auth.py importa get_session daqui)
+
+    fazenda_id = get_fazenda_atual_id(authorization)
     with Session(engine) as session:
+        session.info["fazenda_id"] = fazenda_id
         yield session
+
+
+def get_session_manutencao(session: Session = Depends(get_session)):
+    """Dependency injection para rotas que operam SEM fazenda selecionada
+    por definição e, dentro delas, leem E ESCREVEM explicitamente em nome
+    de um `fazenda_id` que vem do path/body — hoje só o Painel CowData
+    (auditoria de 11/09/2026, ver docs/security-audit/roteiro-seguranca.md):
+    listagens/edições por fazenda-cliente específica, e os botões "aplicar
+    em todas as fazendas de uma vez" (Farmácia/Cadastros/Parâmetros), que
+    fazem exatamente isso num laço.
+
+    Por que uma dependency SEPARADA e não `sessao_sem_recorte_de_fazenda`
+    (usada no login): aquela cobre uma LEITURA pontual dentro de uma rota
+    que, fora isso, usa a sessão normal. Aqui a rota INTEIRA — leitura e
+    ESCRITA — precisa da conexão de dono: sob RLS, mesmo a escrita CERTA
+    (`fazenda_id` real explícito, ou `fazenda_id=None` numa linha de
+    catálogo global) viola o `WITH CHECK` da política sem o contexto certo
+    (e não tem como setar `app.fazenda_id` por linha dentro do MESMO laço
+    que passa por várias fazendas). `usuario_id`/`fazenda_id` explícito em
+    Python já é o recorte de segurança real destas rotas — sempre foi, o
+    Painel CowData nunca dependeu de RLS pra isolar, só de
+    `exigir_area_painel_cowdata`/`exigir_permissao_painel_cowdata`.
+
+    Depende de `Depends(get_session)`, não abre a própria conexão direto:
+    assim, um teste que só faz `dependency_overrides[get_session]` (o
+    padrão de ~1500 testes da suíte) já cobre esta dependency também, SEM
+    precisar saber que ela existe — FastAPI resolve o override através da
+    cadeia de `Depends`. Só sob PostgreSQL de verdade troca para
+    `engine_manutencao` (dono, sem RLS); fora disso (a suíte inteira, em
+    SQLite) devolve a MESMA sessão que `get_session` já entregou."""
+    if session.get_bind().dialect.name != "postgresql":
+        yield session
+        return
+    with Session(engine_manutencao) as sm:
+        yield sm

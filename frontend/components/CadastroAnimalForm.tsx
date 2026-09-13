@@ -1,25 +1,36 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Beef, Check, Eye } from "lucide-react";
+import { AlertTriangle, Beef, Check, Eye } from "lucide-react";
 import {
   fetchAnimais, criarAnimalFicha, atualizarAnimalFicha, fetchRacas, fetchGrausSangue,
-  fetchEstoqueSemen, fetchTouros, fetchMotivosBaixaCadastro, type Touro,
+  fetchEstoqueSemen, fetchTouros, fetchMotivosBaixaCadastro, fetchLotes, fetchCategoriasManejo,
+  fetchMatrizesComParto, type Touro, type CategoriaManejo, type MatrizComParto,
 } from "@/lib/api";
 import { AnimalRow } from "./AnimalModal";
 import { AnimalPicker } from "./AnimalPicker";
+import { ListaFechadaPicker, type OpcaoListaFechada } from "./ListaFechadaPicker";
 import { TouroPicker, type TouroPickerItem } from "./TouroPicker";
 import { TouroDetalheModal } from "./TouroDetalheModal";
 import { CAMPOS_NUMERICOS, parseDadosExtra } from "./CadastroTouros";
 import { CampoMoeda } from "@/components/CampoMoeda";
 
+// Categorias-base do animal (Vaca/Novilha/Bezerra/Touro/Bezerro) — mantidas
+// fixas porque é o vocabulário que o resto do sistema já espera encontrar em
+// `categoria_abrev` (casamento por substring "vaca"/"novilh"/"bezerr" em
+// fazenda.rules.lote_criterios, agenda_veterinario, sanidade etc., e também
+// o que o upload do GERAL.csv grava). O SELECT do campo "Categoria" abaixo
+// combina esta base fixa com as categorias cadastradas em Configurações >
+// Cadastro > Categorias (`fetchCategoriasManejo` — mesmo cadastro que tem
+// situacao_reprodutiva/situacao_produtiva/dias_gestacao_min/max), assim uma
+// categoria nova criada lá também aparece aqui, sem exigir texto livre.
 const CATEGORIAS_ANIMAL = ["Bezerra", "Novilha", "Vaca", "Touro", "Bezerro"];
 // Fallback caso o cadastro (Configurações > Cadastro > Raças e grau de
 // sangue) ainda não tenha sido carregado/semeado.
-const GRAUS_SANGUE_FALLBACK = [
-  "1/2 Holandês x Gir", "3/4 Holandês", "7/8 Holandês", "15/16 Holandês",
-  "31/32 Holandês", "PCOD Holandês", "PO Holandês",
-];
-const RACAS_FALLBACK = ["Girolando", "Holandês", "Gir", "Outra"];
+const GRAUS_SANGUE_FALLBACK: OpcaoListaFechada[] = [
+  "1/2 Holandês x Gir", "3/4 Holandês x Gir", "7/8 Holandês x Gir", "15/16 Holandês x Gir",
+  "31/32 Holandês x Gir", "PCOD Holandês", "PO Holandês",
+].map((nome) => ({ nome }));
+const RACAS_FALLBACK: OpcaoListaFechada[] = ["Girolando", "Holandês", "Gir"].map((nome) => ({ nome }));
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -76,25 +87,45 @@ export default function CadastroAnimalForm() {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
-  const [racas, setRacas] = useState<string[]>(RACAS_FALLBACK);
-  const [grausSangue, setGrausSangue] = useState<string[]>(GRAUS_SANGUE_FALLBACK);
+  const [racas, setRacas] = useState<OpcaoListaFechada[]>(RACAS_FALLBACK);
+  const [grausSangue, setGrausSangue] = useState<OpcaoListaFechada[]>(GRAUS_SANGUE_FALLBACK);
   const [naab, setNaab] = useState<Touro[]>([]);
   const [estoqueSemen, setEstoqueSemen] = useState<TouroPickerItem[]>([]);
   const [motivosBaixa, setMotivosBaixa] = useState<{ id: number; nome: string; ativo: boolean }[]>([]);
   const [detalheTouro, setDetalheTouro] = useState<{ titulo: string; campos: [string, string][] } | null>(null);
+  const [categoriasManejo, setCategoriasManejo] = useState<CategoriaManejo[]>([]);
+  const [matrizes, setMatrizes] = useState<MatrizComParto[]>([]);
+  // Mensagem do popup de bloqueio quando a mãe informada não tem nenhum
+  // parto "livre" para vincular a este cadastro (ver validar_e_vincular_mae
+  // no backend — fazenda/api/routers/cadastro/animais.py).
+  const [alertaMae, setAlertaMae] = useState<string | null>(null);
 
   useEffect(() => {
     fetchAnimais({ incluirMachos: true }).then((d) => {
       setAnimais(d);
-      const grupos = Array.from(new Set(d.map((a: AnimalRow) => a.grupo_primario).filter(Boolean))) as string[];
-      setLotes(grupos.sort());
     }).catch(() => {});
+    // Lotes cadastrados (Configurações > Cadastro > Lotes) — mesmo endpoint
+    // usado pelo resto do site (GrupoLotePicker/CadastroLotes), em vez de
+    // derivar a lista de grupo_primario já usados pelos animais (que perde
+    // lotes recém-criados sem nenhum animal ainda).
+    fetchLotes().then((d: any[]) => {
+      const ativos = d.filter((l) => l.ativo).map((l) => l.rotulo as string);
+      if (ativos.length) setLotes(ativos.sort());
+    }).catch(() => {});
+    // Categorias cadastradas em Configurações > Cadastro > Categorias —
+    // somadas à base fixa Vaca/Novilha/Bezerra/Touro/Bezerro no select de
+    // "Categoria" abaixo (ver comentário de CATEGORIAS_ANIMAL).
+    fetchCategoriasManejo().then(setCategoriasManejo).catch(() => {});
+    // Fêmeas com pelo menos 1 parto — sugestão do campo "Número da mãe"; a
+    // compatibilidade de verdade (parto livre para vincular) é validada no
+    // backend ao salvar.
+    fetchMatrizesComParto().then(setMatrizes).catch(() => {});
     fetchRacas().then((d) => {
-      const ativas = d.filter((r: any) => r.ativo).map((r: any) => r.nome as string);
+      const ativas = d.filter((r: any) => r.ativo).map((r: any) => ({ nome: r.nome as string, nota: r.nota as string | null }));
       if (ativas.length) setRacas(ativas);
     }).catch(() => {});
     fetchGrausSangue().then((d) => {
-      const ativos = d.filter((g: any) => g.ativo).map((g: any) => g.nome as string);
+      const ativos = d.filter((g: any) => g.ativo).map((g: any) => ({ nome: g.nome as string, nota: g.nota as string | null }));
       if (ativos.length) setGrausSangue(ativos);
     }).catch(() => {});
     fetchTouros().then(setNaab).catch(() => {});
@@ -106,6 +137,34 @@ export default function CadastroAnimalForm() {
   const motivosBaixaAtivos = useMemo(
     () => motivosBaixa.filter((m) => m.ativo !== false).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
     [motivosBaixa]
+  );
+
+  // Opções do select "Categoria": base fixa + nomes cadastrados em Categorias
+  // (ordenados como lá: ordem/dia_min) + o valor atual da ficha, caso ele não
+  // esteja em nenhuma das duas listas (animal antigo/importado do CSV com uma
+  // categoria mais rica, ex.: "Vaca ges. lac.") — sem isso, abrir a edição
+  // "perderia" o valor gravado ao reabrir o select.
+  const categoriaOpcoes = useMemo(() => {
+    const dasCategorias = categoriasManejo.map((c) => c.nome);
+    const todas = [...CATEGORIAS_ANIMAL, ...dasCategorias.filter((n) => !CATEGORIAS_ANIMAL.includes(n))];
+    if (form.categoria_abrev && !todas.includes(form.categoria_abrev)) todas.push(form.categoria_abrev);
+    return todas;
+  }, [categoriasManejo, form.categoria_abrev]);
+
+  // Opções do select "Lote": os lotes cadastrados + o lote atual da ficha,
+  // caso já não esteja mais ativo/cadastrado (não perde o valor ao editar).
+  const loteOpcoes = useMemo(() => {
+    if (form.grupo_primario && !lotes.includes(form.grupo_primario)) return [...lotes, form.grupo_primario];
+    return lotes;
+  }, [lotes, form.grupo_primario]);
+
+  // Itens de sugestão do campo "Número da mãe" — reaproveita o TouroPicker
+  // (busca com sugestão + aceita digitação livre) já usado para pai/avô/
+  // bisavô; aqui a "busca" é pelo número da matriz, com o nome dela como
+  // subtítulo.
+  const itensMatrizes: TouroPickerItem[] = useMemo(
+    () => matrizes.map((m) => ({ nome: m.numero, central: m.nome || undefined })),
+    [matrizes]
   );
 
   // Touros da fazenda (monta natural) + sêmen em estoque + catálogo NAAB, numa
@@ -167,7 +226,7 @@ export default function CadastroAnimalForm() {
   };
 
   async function salvar() {
-    setErro(null); setSucesso(null);
+    setErro(null); setSucesso(null); setAlertaMae(null);
     if (!form.numero.trim()) { setErro("Número/brinco é obrigatório."); return; }
     setSalvando(true);
     try {
@@ -181,7 +240,12 @@ export default function CadastroAnimalForm() {
         setSucesso(`Ficha de ${numeroEdicao} atualizada com sucesso.`);
       }
     } catch (e: any) {
-      setErro(e.message || "Erro ao salvar");
+      // 409 = mãe informada incompatível com o histórico de partos dela (ver
+      // validar_e_vincular_mae no backend) — mostra num popup de alerta em
+      // vez do texto de erro discreto, já que é uma decisão que exige atenção
+      // (lançar o parto no Histórico antes de cadastrar este animal).
+      if (e.status === 409) setAlertaMae(e.message || "Não é possível vincular essa mãe a este animal.");
+      else setErro(e.message || "Erro ao salvar");
     } finally {
       setSalvando(false);
     }
@@ -233,25 +297,23 @@ export default function CadastroAnimalForm() {
               </select>
             </Campo>
             <Campo label="Raça">
-              <input style={inputStyle} list="racas-cadastro" value={form.raca}
-                onChange={(e) => setForm({ ...form, raca: e.target.value })}
-                placeholder="Selecione ou digite…" />
-              <datalist id="racas-cadastro">{racas.map((r) => <option key={r} value={r} />)}</datalist>
+              <ListaFechadaPicker opcoes={racas} value={form.raca || null}
+                onChange={(v) => setForm({ ...form, raca: v || "" })}
+                placeholder="Selecionar raça…" />
             </Campo>
             <Campo label="Grau de sangue">
-              <input style={inputStyle} list="graus-sangue" value={form.grau_sangue}
-                onChange={(e) => setForm({ ...form, grau_sangue: e.target.value })}
-                placeholder="Selecione ou digite…" />
-              <datalist id="graus-sangue">{grausSangue.map((g) => <option key={g} value={g} />)}</datalist>
+              <ListaFechadaPicker opcoes={grausSangue} value={form.grau_sangue || null}
+                onChange={(v) => setForm({ ...form, grau_sangue: v || "" })}
+                placeholder="Selecionar grau de sangue…" />
             </Campo>
             <Campo label="Categoria">
               <select style={inputStyle} value={form.categoria_abrev} onChange={(e) => setForm({ ...form, categoria_abrev: e.target.value })}>
-                <option value="">Selecione…</option>{CATEGORIAS_ANIMAL.map((c) => <option key={c}>{c}</option>)}
+                <option value="">Selecione…</option>{categoriaOpcoes.map((c) => <option key={c}>{c}</option>)}
               </select>
             </Campo>
             <Campo label="Lote">
               <select style={inputStyle} value={form.grupo_primario} onChange={(e) => setForm({ ...form, grupo_primario: e.target.value })}>
-                <option value="">Selecione o lote…</option>{lotes.map((l) => <option key={l}>{l}</option>)}
+                <option value="">Selecione o lote…</option>{loteOpcoes.map((l) => <option key={l}>{l}</option>)}
               </select>
             </Campo>
           </div>
@@ -278,9 +340,21 @@ export default function CadastroAnimalForm() {
 
           <Secao>Genealogia</Secao>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Campo label="Nome/Número da mãe"><input style={inputStyle} value={form.mae_numero} onChange={(e) => setForm({ ...form, mae_numero: e.target.value })} /></Campo>
+            <Campo label="Número da mãe">
+              <TouroPicker
+                style={inputStyle} itens={itensMatrizes} value={form.mae_numero}
+                placeholder="Nº da matriz (só fêmeas com parto já lançado aparecem na sugestão)…"
+                onChangeTexto={(v) => setForm({ ...form, mae_numero: v })}
+                onSelecionar={(m) => setForm({ ...form, mae_numero: m.nome, mae_nome: m.central || form.mae_nome })}
+              />
+            </Campo>
             <Campo label="Nome da mãe"><input style={inputStyle} value={form.mae_nome} onChange={(e) => setForm({ ...form, mae_nome: e.target.value })} /></Campo>
           </div>
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+            Ao salvar, o número informado é cruzado com os partos já lançados dessa mãe (Histórico &gt;
+            Reprodução &gt; Partos) — se todos os partos dela já estiverem vinculados a outros animais,
+            o cadastro é bloqueado com uma explicação.
+          </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3" style={{ marginTop: "0.75rem" }}>
             <Campo label="Nome/Número do pai">
               <div className="flex items-center gap-2">
@@ -342,6 +416,20 @@ export default function CadastroAnimalForm() {
 
       {detalheTouro && (
         <TouroDetalheModal titulo={detalheTouro.titulo} campos={detalheTouro.campos} onFechar={() => setDetalheTouro(null)} />
+      )}
+
+      {alertaMae && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: "1rem" }}>
+          <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480, width: "92%" }}>
+            <div className="card-header mb-3 flex items-center gap-2" style={{ color: "var(--red)" }}>
+              <AlertTriangle size={16} /> Não é possível vincular essa mãe
+            </div>
+            <p style={{ fontSize: "0.85rem", lineHeight: 1.5 }}>{alertaMae}</p>
+            <div className="flex items-center justify-end mt-4">
+              <button className="btn-primary" onClick={() => setAlertaMae(null)}>Entendi</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

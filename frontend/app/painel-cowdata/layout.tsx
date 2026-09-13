@@ -16,17 +16,27 @@ import {
 } from "lucide-react";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
-import { ehAppOuPwa } from "@/lib/nativo";
+import { ehAppDeCampo } from "@/lib/nativo";
 import { temAreaPainelCowData, ehDono, type AreaPainelCowData } from "@/lib/api";
 import { consumirVeioDaAdministracao } from "@/lib/portalAdministracao";
 import { PainelCowDataTemaProvider, usePainelCowDataTema, type TemaPainelCowData } from "@/lib/painelCowDataTema";
+import FazendasMobile from "@/components/painel-cowdata/mobile/FazendasMobile";
+import CadastrosMobile from "@/components/painel-cowdata/mobile/CadastrosMobile";
+import UsuariosMobile from "@/components/painel-cowdata/mobile/UsuariosMobile";
+import ParametrosMobile from "@/components/painel-cowdata/mobile/ParametrosMobile";
+import CofreMobile from "@/components/painel-cowdata/mobile/CofreMobile";
 
-// Só estas 3 áreas têm a permissão de verdade aplicada nas rotas do backend
+// Só estas áreas têm a permissão de verdade aplicada nas rotas do backend
 // hoje (ver exigir_area_painel_cowdata em painel_cowdata.py/cofre_acesso.py)
 // — as demais ficam fora do menu de quem não é dono, mesmo que a área
 // esteja marcada no cadastro dele, pra nunca mostrar um item que ainda
 // devolve 403 nas rotas de verdade.
-const AREAS_ENFORCADAS: AreaPainelCowData[] = ["equipe", "financeiro", "cofre", "cadastros"];
+// "farmacia" entrou em set/2026: painel_cowdata_farmacia.py sempre exigiu
+// essa área, mas o item de menu apontava para "cadastros" e a área nem
+// aparecia no formulário de equipe (lib/api.ts) — quem tinha "cadastros"
+// via o item e tomava 403 na primeira chamada. Agora o menu, o formulário e
+// a rota falam da mesma área.
+const AREAS_ENFORCADAS: AreaPainelCowData[] = ["equipe", "financeiro", "cofre", "cadastros", "farmacia"];
 
 // `area` casa com AREAS_PAINEL_COWDATA (backend) — dono vê tudo; um membro
 // da Equipe CowData com login próprio (ver lib/api.ts::temAreaPainelCowData)
@@ -35,7 +45,10 @@ const AREAS_ENFORCADAS: AreaPainelCowData[] = ["equipe", "financeiro", "cofre", 
 // exigir_area_painel_cowdata no backend) — os demais ficam escondidos por
 // enquanto para quem não é dono, mesmo que a área apareça marcada no
 // cadastro dele (ver docstring de equipe_cowdata_acesso.py).
-const GRUPOS: { titulo: string; itens: { href: string; label: string; icon: any; area: AreaPainelCowData }[] }[] = [
+// Exportado — reaproveitado pelo início mobile do app (ver
+// components/painel-cowdata/mobile/InicioMobilePainelCowData.tsx) pra listar
+// as mesmas áreas do site, sem duplicar a lista.
+export const GRUPOS: { titulo: string; itens: { href: string; label: string; icon: any; area: AreaPainelCowData }[] }[] = [
   {
     titulo: "Negócio",
     itens: [
@@ -65,14 +78,15 @@ const GRUPOS: { titulo: string; itens: { href: string; label: string; icon: any;
       // fazendas-cliente de uma vez, ou só às selecionadas — ver
       // painel-cowdata/cadastros/page.tsx.
       { href: "/painel-cowdata/cadastros", label: "Cadastros globais", icon: ListChecks, area: "cadastros" },
-      // Catálogo de touros — mesma tela/rotas do Cadastro > Touros de
-      // qualquer fazenda (Touro não tem fazenda_id: é global por natureza,
-      // não precisa de mecânica de "aplicar em fazendas" nenhuma).
+      // Catálogo de touros — `Touro` não tem fazenda_id: é global por
+      // natureza, e desde set/2026 esta é a ÚNICA tela onde ele se edita (a
+      // fazenda só consulta). Ver painel_cowdata_touros.py; a escrita exige,
+      // além da área, a permissão "editar touros NAAB".
       { href: "/painel-cowdata/touros", label: "Touros Naab", icon: Dna, area: "cadastros" },
       // Catálogo global de indicações/princípios/marcas da Farmácia — mesmo
       // componente da sub-aba Farmácia dos Cadastros da fazenda, chamado sem
       // fazenda selecionada (ver app/painel-cowdata/farmacia/page.tsx).
-      { href: "/painel-cowdata/farmacia", label: "Farmácia", icon: Pill, area: "cadastros" },
+      { href: "/painel-cowdata/farmacia", label: "Farmácia", icon: Pill, area: "farmacia" },
       // Diferente dos itens acima, este NUNCA "aplica em várias fazendas de
       // uma vez" — login é sempre de uma fazenda só, escolhida explicitamente
       // (ver app/painel-cowdata/usuarios/page.tsx).
@@ -88,6 +102,17 @@ const GRUPOS: { titulo: string; itens: { href: string; label: string; icon: any;
     ],
   },
 ];
+
+// Mesma regra de filtro por área que a barra lateral já aplicava — extraída
+// pra função à parte (era um `const` dentro do componente) porque o início
+// mobile do app (fora desta árvore de componente) precisa do mesmo cálculo.
+export function gruposVisiveisPainelCowData() {
+  return ehDono()
+    ? GRUPOS
+    : GRUPOS
+        .map((g) => ({ ...g, itens: g.itens.filter((i) => AREAS_ENFORCADAS.includes(i.area) && temAreaPainelCowData(i.area)) }))
+        .filter((g) => g.itens.length > 0);
+}
 
 export default function PainelCowDataLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -140,14 +165,18 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
   // após escolher "Painel CowData" no login. Manda pra primeira área de
   // verdade que ele tiver, em vez disso.
   useEffect(() => {
-    if (ehDono() || path !== "/painel-cowdata") return;
+    // "/painel-cowdata/cockpit" é a mesma tela (Cockpit), só que na versão
+    // mobile do app (ver InicioMobilePainelCowData) — precisa da MESMA
+    // guarda, senão um membro da equipe sem ser dono alcançaria de propósito
+    // pela URL uma tela sem a permissão de verdade aplicada na rota.
+    if (ehDono() || (path !== "/painel-cowdata" && path !== "/painel-cowdata/cockpit")) return;
     const primeiraArea = GRUPOS.flatMap((g) => g.itens).find((i) => AREAS_ENFORCADAS.includes(i.area) && temAreaPainelCowData(i.area));
     router.replace(primeiraArea?.href || "/");
   }, [path, router]);
   // Chegou aqui pelo item "Painel CowData" do Menu do app (ver
   // app/app/menu/page.tsx) — "voltar à fazenda" precisa cair no /app, nunca
   // no site desktop completo (mesma regra do AuthShell::destinoRaiz). Cobre
-  // app nativo E PWA instalado (ver lib/nativo.ts::ehAppOuPwa).
+  // app nativo E PWA instalado em tela pequena (lib/nativo.ts::ehAppDeCampo).
   // "Voltar" tem 3 destinos possíveis: veio do portal Administração (voltar
   // para lá, não para a Capa — ver lib/portalAdministracao.ts), app/PWA
   // nativo (voltar para o Menu do app), ou nenhum dos dois (voltar para a
@@ -160,18 +189,42 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
       setVoltarLabel("Voltar à Administração");
       return;
     }
-    ehAppOuPwa().then((app) => { if (app) setVoltarHref("/app"); });
+    ehAppDeCampo().then((app) => { if (app) setVoltarHref("/app"); });
   }, []);
 
-  const gruposVisiveis = ehDono()
-    ? GRUPOS
-    : GRUPOS
-        .map((g) => ({ ...g, itens: g.itens.filter((i) => AREAS_ENFORCADAS.includes(i.area) && temAreaPainelCowData(i.area)) }))
-        .filter((g) => g.itens.length > 0);
+  const gruposVisiveis = gruposVisiveisPainelCowData();
+
+  // App nativo/PWA — casca própria (grade de início + telas focadas com
+  // botão "voltar", ver components/painel-cowdata/mobile/) em vez da barra
+  // lateral/gaveta pensada pro desktop. Pedido explícito do usuário
+  // (01/09/2026): "ao clicar em painel CowData no app, abra essa versão".
+  //
+  // CORRIGIDO (01/09/2026): `ehAppOuPwa()` sozinho também dá true pra um PWA
+  // instalado como atalho de DESKTOP/notebook (display-mode: standalone não
+  // tem relação nenhuma com tamanho de tela) — quem instalou o atalho no
+  // computador caía nesta casca mobile mesmo com o monitor inteiro. App
+  // nativo (Capacitor, sempre celular/tablet) continua entrando direto; PWA
+  // instalado só entra na casca mobile se a tela também for pequena — do
+  // contrário cai no layout clássico (barra lateral) mais abaixo, exatamente
+  // como pedido: "em tela de computador, notebook, no modo que já era".
+  //
+  // Essa regra, que nasceu aqui, virou `lib/nativo.ts::ehAppDeCampo()` em
+  // 06/09/2026 e hoje vale no sistema inteiro (AuthShell, login, escolha de
+  // conta e a abertura do PWA em app/page.tsx). O matchMedia continua abaixo
+  // só para REAVALIAR quando a janela muda de tamanho — quem responde a
+  // pergunta é ehAppDeCampo().
+  const [appMode, setAppMode] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const avaliar = async () => setAppMode(await ehAppDeCampo());
+    avaliar();
+    mq.addEventListener("change", avaliar);
+    return () => mq.removeEventListener("change", avaliar);
+  }, []);
 
   const navConteudo = (
     <>
-      <div style={{ padding: "1.1rem 1.1rem 0.9rem" }}>
+      <div style={{ padding: "calc(1.1rem + env(safe-area-inset-top, 0px)) 1.1rem 0.9rem" }}>
         <Link href={voltarHref} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.75rem", color: COR.mudo, textDecoration: "none", marginBottom: "0.9rem" }}>
           <ArrowLeft size={13} /> {voltarLabel}
         </Link>
@@ -229,11 +282,69 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
     "--pill-active-bg": COR.dourado, "--pill-active-fg": COR.bg,
   } as CSSProperties;
 
+  if (appMode) {
+    // Estas rotas trazem a própria tela cheia mobile-nativa (cabeçalho
+    // incluso) — ver InicioMobilePainelCowData/CockpitMobile e as 5 telas
+    // abaixo (estudo /design aprovado 05/09/2026: lista → detalhe em
+    // acordeão / grade de catálogos / farm-picker / seções + "aplicar em" /
+    // abas — ver ComumMobile.tsx). As demais telas (Assinaturas, Financeiro,
+    // Equipe, Produto, Confiança, Touros, Farmácia, News) ainda são as do
+    // site — cadastros completos demais pra reconstruir aqui de uma vez;
+    // só ganham uma barra mínima de volta, no lugar da gaveta lateral, pra
+    // nunca ficarem sem navegação nenhuma dentro do app.
+    if (path === "/painel-cowdata" || path === "/painel-cowdata/cockpit") {
+      return <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }}>{children}</div>;
+    }
+    if (path.startsWith("/painel-cowdata/fazendas")) {
+      return <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }}><FazendasMobile /></div>;
+    }
+    if (path.startsWith("/painel-cowdata/cadastros")) {
+      return <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }}><CadastrosMobile /></div>;
+    }
+    if (path.startsWith("/painel-cowdata/usuarios")) {
+      return <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }}><UsuariosMobile /></div>;
+    }
+    if (path.startsWith("/painel-cowdata/parametros")) {
+      return <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }}><ParametrosMobile /></div>;
+    }
+    if (path.startsWith("/painel-cowdata/cofre")) {
+      return <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }}><CofreMobile /></div>;
+    }
+    const itemAtual = GRUPOS.flatMap((g) => g.itens).find((i) => i.href !== "/painel-cowdata" && path.startsWith(i.href));
+    return (
+      <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }}>
+        <div style={{
+          display: "flex", alignItems: "center", gap: "0.6rem", borderBottom: `1px solid ${COR.borda}`,
+          padding: "calc(0.9rem + env(safe-area-inset-top, 0px)) 1.1rem 0.9rem",
+        }}>
+          <button onClick={() => router.push("/painel-cowdata")} aria-label="Voltar ao Painel CowData" title="Voltar ao Painel CowData"
+            style={{ background: "none", border: "none", color: COR.texto, cursor: "pointer", display: "flex", flexShrink: 0 }}>
+            <ArrowLeft size={19} />
+          </button>
+          <span style={{ fontSize: "1.02rem", fontWeight: 700 }}>{itemAtual?.label || "Painel CowData"}</span>
+        </div>
+        <div style={{ padding: "1rem 1.1rem 2rem" }}>{children}</div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }} className="md:flex">
-      {/* Barra superior — só no mobile. Mesmo padrão do Sidebar.tsx do site. */}
-      <div className="md:hidden flex items-center gap-3 px-4 fixed top-0 left-0 right-0 z-30"
-        style={{ height: "3.25rem", background: COR.painel, borderBottom: `1px solid ${COR.borda}` }}>
+      {/* Barra superior — só no mobile. Mesmo padrão do Sidebar.tsx do site —
+          precisa do MESMO respiro pra status bar/notch (env(safe-area-inset-top))
+          e do MESMO offset pra faixa de suporte (--suporte-banner-h) que todo
+          outro cabeçalho fixo do app usa (ver app/app/layout.tsx) — sem isso,
+          esta barra ficava por baixo da status bar em app instalado/nativo
+          (edge-to-edge, ver appleWebApp.statusBarStyle no layout raiz): o
+          hambúrguer ficava visualmente atrás do relógio/bateria do celular e
+          não recebia toque nenhum (achado real, 01/09/2026). */}
+      <div className="md:hidden flex items-center gap-3 px-4 fixed left-0 right-0 z-30"
+        style={{
+          top: "var(--suporte-banner-h, 0px)",
+          height: "calc(3.25rem + env(safe-area-inset-top, 0px))",
+          paddingTop: "env(safe-area-inset-top, 0px)",
+          background: COR.painel, borderBottom: `1px solid ${COR.borda}`,
+        }}>
         <button onClick={() => setAberto(true)} aria-label="Abrir menu" title="Abrir o menu do Painel CowData"
           style={{ background: "none", border: "none", color: COR.textoPainel, cursor: "pointer", display: "flex" }}>
           <Menu size={22} />
@@ -241,7 +352,7 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
         <CowDataWordmark size="0.85rem" cowColor={COR.textoPainel} dataColor={COR.doradoClaro} />
         <span style={{ color: COR.mudo, fontSize: "0.7rem" }}>· Painel da empresa</span>
       </div>
-      <div className="md:hidden" style={{ height: "3.25rem" }} aria-hidden="true" />
+      <div className="md:hidden" style={{ height: "calc(3.25rem + env(safe-area-inset-top, 0px))" }} aria-hidden="true" />
 
       {aberto && <div className="md:hidden fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.55)" }} onClick={() => setAberto(false)} />}
 

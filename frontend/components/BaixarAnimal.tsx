@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useId, useMemo, useState } from "react";
-import { Skull, AlertTriangle, Check, Search } from "lucide-react";
+import { Skull, AlertTriangle, Check, Search, X } from "lucide-react";
 import { fetchAnimais, fetchOpcoesBaixa, criarBaixaAnimal, fetchFornecedores, marcarADescartar, fetchBaixas, ehAdmin } from "@/lib/api";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import ComissaoCorretagemForm from "./ComissaoCorretagemForm";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
@@ -56,7 +56,15 @@ export default function BaixarAnimal() {
   const [cliente, setCliente] = useState("");
   const [vendaRecria, setVendaRecria] = useState(false);
   const [dataBaixa, setDataBaixa] = useState(hoje());
+  // Duas datas com papéis diferentes (ver Animal.descarte_previsto_em):
+  // `marcadoEm` é QUANDO SE DECIDIU — é ela que o motor reprodutivo lê, por
+  // isso vem preenchida com hoje mas editável, para quem lança com atraso.
+  // `previstoEm` é QUANDO SE PRETENDE tirar do rebanho, e fica vazia de
+  // propósito: sem previsão é um estado legítimo, não uma pendência.
+  const [marcadoEm, setMarcadoEm] = useState(hoje());
+  const [previstoEm, setPrevistoEm] = useState("");
   const [responsavel, setResponsavel] = useState("");
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
@@ -73,7 +81,10 @@ export default function BaixarAnimal() {
   const clientes = useMemo(() => fornecedores.filter((f) => f.tipo === "cliente" && f.ativo).map((f) => f.nome).sort((a, b) => a.localeCompare(b)), [fornecedores]);
 
   const carregar = () => {
-    fetchAnimais().then((a: Animal[]) => setAnimais(a.filter((x) => x.ativo !== false))).catch((e) => setError(e.message));
+    // incluirMachos: baixa (venda/morte/descarte) vale pra qualquer animal
+    // ativo da fazenda, não só fêmeas — sem isso, touro e bezerro macho
+    // nunca apareciam pra dar baixa.
+    fetchAnimais({ incluirMachos: true }).then((a: Animal[]) => setAnimais(a.filter((x) => x.ativo !== false))).catch((e) => setError(e.message));
     fetchOpcoesBaixa().then(setOpcoes).catch((e) => setError(e.message));
     fetchFornecedores().then(setFornecedores).catch(() => {});
     fetchBaixas().then(setHistorico).catch(() => {});
@@ -95,6 +106,22 @@ export default function BaixarAnimal() {
   const ord = useOrdenacao(candidatos);
   const ordHistorico = useOrdenacao(historico || []);
 
+  // Resumo persistente de quem já foi selecionado — independente do filtro/
+  // busca atual da tabela. Sem isso, ao digitar o número do próximo animal
+  // na busca, os já selecionados (que não batem mais com o texto buscado)
+  // somem da tela sem deixar nenhum rastro visível, e só reaparecem
+  // marcados se o usuário limpar a busca de novo (relatado pelo usuário
+  // 31/08/2026: "só aparecem enquanto eu os seleciono").
+  const animalPorNumero = useMemo(() => {
+    const m = new Map<string, Animal>();
+    (animais || []).forEach((a) => m.set(a.numero, a));
+    return m;
+  }, [animais]);
+  const listaSelecionados = useMemo(
+    () => Array.from(selecionados).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    [selecionados]
+  );
+
   const toggleAnimal = (numero: string) => setSelecionados((p) => {
     const n = new Set(p); n.has(numero) ? n.delete(numero) : n.add(numero); return n;
   });
@@ -105,6 +132,7 @@ export default function BaixarAnimal() {
   const limpar = () => {
     setSelecionados(new Set()); setBusca(""); setFiltroLote(""); setTipoBaixa(""); setMotivo(""); setMotivoDoenca(""); setMotivoAcidente(""); setMotivoOutro("");
     setValor(""); setTipoValor("por_animal"); setCliente(""); setVendaRecria(false); setObservacao("");
+    setMarcadoEm(hoje()); setPrevistoEm("");
     setPagarComissao(false); setCorretorNome(""); setValorComissao(""); setFormaComissao("redirecionado");
   };
 
@@ -114,7 +142,10 @@ export default function BaixarAnimal() {
     if (modo === "a_descartar") {
       setSalvando(true);
       try {
-        const r = await marcarADescartar({ animais: Array.from(selecionados), descartar: true, observacao: observacao || undefined });
+        const r = await marcarADescartar({
+          animais: Array.from(selecionados), descartar: true, observacao: observacao || undefined,
+          marcado_em: marcadoEm || undefined, previsto_em: previstoEm || undefined,
+        });
         setMsg({ tipo: "sucesso", texto: `${r.afetados} animal(is) marcado(s) como "A descartar" — seguem ativos, fora das ações reprodutivas.` });
         limpar();
         carregar();
@@ -233,11 +264,52 @@ export default function BaixarAnimal() {
             </div>
           </div>
 
+          {listaSelecionados.length > 0 && (
+            <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem", marginBottom: "1rem", background: "var(--surface-2)" }}>
+              <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.4rem" }}>
+                Selecionados para conferência ({listaSelecionados.length}):
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {listaSelecionados.map((numero) => {
+                  const a = animalPorNumero.get(numero);
+                  return (
+                    <span key={numero} style={{
+                      display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.25rem 0.55rem",
+                      borderRadius: "999px", background: "var(--surface)", border: "1px solid var(--border)", fontSize: "0.78rem",
+                    }}>
+                      <strong>{numero}</strong>
+                      {a?.grupo_primario && <span style={{ color: "var(--text-muted)" }}>({a.grupo_primario})</span>}
+                      <button type="button" onClick={() => toggleAnimal(numero)} title="Remover da seleção"
+                        style={{ display: "flex", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 0 }}>
+                        <X size={12} />
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {modo === "a_descartar" && (
             <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
               A(s) vaca(s) marcada(s) continua(m) no rebanho (ordenha, sanidade, movimentação), mas some(m) das candidatas a IATF,
               inseminação e demais ações reprodutivas. Use quando decidir descartar mais adiante, sem dar baixa agora.
             </p>
+          )}
+
+          {modo === "a_descartar" && (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+              <div><label style={labelStyle}>Marcado em</label>
+                <input type="date" style={selStyle} value={marcadoEm} onChange={(e) => setMarcadoEm(e.target.value)} />
+                <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Quando a decisão foi tomada.</span></div>
+              <div><label style={labelStyle}>Previsão de descarte (opcional)</label>
+                <input type="date" style={selStyle} value={previstoEm} min={marcadoEm || undefined} onChange={(e) => setPrevistoEm(e.target.value)} />
+                <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>
+                  {previstoEm ? "Entra na Agenda nessa data." : "Pode ficar em branco — nem toda decisão já tem data de saída."}
+                </span></div>
+              <div style={{ gridColumn: "span 1" }}><label style={labelStyle}>Observação (opcional)</label>
+                <input style={selStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
+            </div>
           )}
 
           {modo === "definitiva" && (
@@ -341,7 +413,7 @@ export default function BaixarAnimal() {
             <div><label style={labelStyle}>Responsável</label>
               <select style={selStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
                 <option value="">Selecione...</option>
-                {RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}
+                {nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}
               </select></div>
             <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Observação (opcional)</label>
               <input style={selStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>

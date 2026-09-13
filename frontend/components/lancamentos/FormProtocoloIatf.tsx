@@ -1,14 +1,16 @@
 "use client";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Check, AlertTriangle, X } from "lucide-react";
 import { adicionarAnimaisIatf, criarProtocoloIatf, fetchLancamentosIatf, fetchProtocolosIatfAtivos, fetchProtocolosIatfCadastrados, formatDate, removerAnimalIatf } from "@/lib/api";
 import type { HormonioIatf, ProtocoloIatfMolde } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
+import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { EditorHormoniosIatf } from "@/components/EditorHormoniosIatf";
 import { TabBar } from "@/components/ui";
 import { Campo, inputStyle, lbl, nota } from "@/components/lancamentos/comumForms";
-import { SelectAnimal, addDias, IDADE_MIN_SERVICO } from "@/components/lancamentos/_shared";
+import { SelectAnimal, addDias, IDADE_MIN_SERVICO_PADRAO } from "@/components/lancamentos/_shared";
+import { ErroApi } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 // Mesma regra de fazenda/rules/nomenclatura_protocolo.py — só para pré-visualização;
@@ -109,9 +111,15 @@ function ProtocolosIatfAtivos({ recarregarRef }: { recarregarRef: React.MutableR
     }
   }
 
-  if (!ativos || !ativos.length) return null;
+  if (!ativos || !ativos.length) {
+    return (
+      <div className="card" style={{ textAlign: "center", padding: "2.2rem 1rem" }}>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo IATF em andamento.</p>
+      </div>
+    );
+  }
   return (
-    <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+    <div className="card" style={{ background: "var(--surface-2)" }}>
       <div className="card-header mb-2" style={{ background: "none", color: "var(--dourado-light)", padding: "0 0 0.3rem" }}>
         Protocolos IATF em andamento ({ativos.length})
       </div>
@@ -134,12 +142,25 @@ function ProtocolosIatfAtivos({ recarregarRef }: { recarregarRef: React.MutableR
   );
 }
 
-export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
+export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico = IDADE_MIN_SERVICO_PADRAO, onSalvo }: {
+  animais: AnimalRow[];
+  // numero -> motivo de inaptidão (ver FormInseminacao e rules/aptidao.py).
+  motivosInaptidao?: Map<string, string>;
+  idadeMinServico?: number;
+  onSalvo?: () => void;
+}) {
   // Novo protocolo (cria um lançamento) ou adicionar animais a um já existente.
   const [modo, setModo] = useState<"novo" | "existente">("novo");
+  const [podeForcar, setPodeForcar] = useState(false);
   const [emLote, setEmLote] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [um, setUm] = useState("");
+  // Seleção "em lote" pode ser por animal (picker de sempre) ou por lote(s)
+  // inteiro(s) — escolher o(s) lote(s) pré-seleciona seus animais, ainda
+  // ajustável (todos/nenhum/individual) na janela de confirmação abaixo.
+  const [vinculoProtocolo, setVinculoProtocolo] = useState<"animal" | "lote">("animal");
+  const [lotesSelecionados, setLotesSelecionados] = useState<string[]>([]);
+  const [selLote, setSelLote] = useState<Set<string>>(new Set());
   const [d0, setD0] = useState("");
   const [hormonios, setHormonios] = useState<HormonioIatf[]>([]);
   // Protocolos já lançados (para "existente").
@@ -157,6 +178,18 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
   const [sucesso, setSucesso] = useState<string | null>(null);
   const recarregarAtivosRef = useRef(() => {});
   const toggle = (n: string) => setSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  const toggleLote = (n: string) => setSelLote((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  const codigosLotes = useMemo(
+    () => Array.from(new Set(animais.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort(),
+    [animais]
+  );
+  const animaisDoLote = useMemo(() => {
+    const cods = new Set(lotesSelecionados);
+    return animais.filter((a) => a.grupo_primario && cods.has(a.grupo_primario));
+  }, [animais, lotesSelecionados]);
+  useEffect(() => {
+    setSelLote(new Set(animaisDoLote.map((a) => a.numero)));
+  }, [lotesSelecionados.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const moldeSelecionado = moldes.find((m) => String(m.id) === moldeId) || null;
   const nomeBase = moldeSelecionado?.nome || "Protocolo IATF";
@@ -179,9 +212,9 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
     if (modo === "existente") fetchLancamentosIatf().then(setExistentes).catch(() => setExistentes([]));
   }, [modo]);
 
-  async function salvar() {
-    setErro(null); setSucesso(null);
-    const animaisAlvo = emLote ? Array.from(sel) : (um ? [um] : []);
+  async function salvar(forcar = false) {
+    setErro(null); setSucesso(null); setPodeForcar(false);
+    const animaisAlvo = emLote ? Array.from(vinculoProtocolo === "lote" ? selLote : sel) : (um ? [um] : []);
     if (!animaisAlvo.length) { setErro(emLote ? "Selecione ao menos um animal." : "Selecione a matriz."); return; }
     setSalvando(true);
     try {
@@ -191,7 +224,7 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
         setSucesso(`${r.adicionados} animal(is) adicionado(s) ao protocolo "${r.nome_protocolo}".`);
       } else {
         if (!d0) { setErro("Informe a data do D0."); setSalvando(false); return; }
-        const r = await criarProtocoloIatf({ animais: animaisAlvo, data_d0: d0, protocolo_id: moldeId ? Number(moldeId) : null, hormonios: hormoniosEfetivos });
+        const r = await criarProtocoloIatf({ animais: animaisAlvo, data_d0: d0, protocolo_id: moldeId ? Number(moldeId) : null, hormonios: hormoniosEfetivos, forcar: forcar || undefined });
         // `criado: false` = o backend achou um lançamento ativo idêntico (mesmo
         // protocolo/D0/animais, ou mesmo D0/animais/hormônios num ad-hoc sem
         // molde) e reaproveitou em vez de duplicar — duplo clique ou retry da
@@ -204,8 +237,11 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
       setSel(new Set()); setUm("");
       recarregarAtivosRef.current();
       if (modo === "existente") fetchLancamentosIatf().then(setExistentes).catch(() => {});
+      onSalvo?.();
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar protocolo IATF");
+      // 409 de aptidão confirmável — ver o mesmo tratamento em FormInseminacao.
+      if (e instanceof ErroApi && e.status === 409 && e.confirmavel) setPodeForcar(true);
     } finally {
       setSalvando(false);
     }
@@ -222,7 +258,12 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
         onChange={setModo}
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-3">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        <ProtocolosIatfAtivos recarregarRef={recarregarAtivosRef} />
+      </div>
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Seleção">
           <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}>
             <input type="checkbox" checked={emLote} onChange={(e) => setEmLote(e.target.checked)} /> Em lote (vários animais)
@@ -253,18 +294,67 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
 
       <div className="mt-3">
         <label style={lbl}>Matriz (nº)</label>
-        {emLote
-          ? <AnimalPickerModal
-              animais={animais} selecionados={sel} onToggle={toggle}
-              titulo="Escolher animais para o protocolo IATF"
-              colunas={[
-                { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
-                { header: "Lote", render: (a) => a.grupo_primario || "—" },
+        {emLote ? (
+          <>
+            <TabBar<"animal" | "lote">
+              abas={[
+                { id: "animal", label: "Animal(is)", title: "Selecionar matrizes/novilhas individualmente" },
+                { id: "lote", label: "Lote(s)", title: "Selecionar um ou mais lotes — pré-seleciona os animais de cada um, ajustável" },
               ]}
+              ativa={vinculoProtocolo}
+              onChange={setVinculoProtocolo}
             />
-          : <SelectAnimal animais={animais} value={um} onChange={setUm} placeholder="Selecione a matriz…" />}
+            {vinculoProtocolo === "animal" ? (
+              <AnimalPickerModal
+                animais={animais} selecionados={sel} onToggle={toggle}
+                titulo="Escolher animais para o protocolo IATF"
+                motivosInaptidao={motivosInaptidao}
+                colunas={[
+                  { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                  { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                ]}
+              />
+            ) : (
+              <div style={{ marginTop: "0.5rem" }}>
+                <LotePicker
+                  opcoes={opcoesLoteDeAnimais(animais, codigosLotes)}
+                  selecionados={lotesSelecionados}
+                  onChange={setLotesSelecionados}
+                  placeholder="Selecionar lote(s)…"
+                />
+                {lotesSelecionados.length > 0 && (
+                  <div style={{ marginTop: "0.6rem" }}>
+                    <AnimalPickerModal
+                      animais={animaisDoLote} selecionados={selLote} onToggle={toggleLote}
+                      titulo="Confirmar animais do(s) lote(s) selecionado(s)"
+                      placeholder="Confirmar animais do(s) lote(s)…"
+                      motivosInaptidao={motivosInaptidao}
+                      // Sem isso, o lote entrava inteiro por padrão e o
+                      // usuário só via quem foi incluído se lembrasse de
+                      // clicar aqui — mesma disciplina de FormInseminacao.tsx.
+                      abrirAoMudar={lotesSelecionados.join("|")}
+                      colunas={[
+                        { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                        { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                      ]}
+                    />
+                    <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                      {selLote.size} de {animaisDoLote.length} animal(is) no(s) lote(s) selecionado(s) — "Selecionar todos"/"Limpar seleção" ou desmarque um a um na janela acima.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        ) : (
+          <SelectAnimal animais={animais} value={um} onChange={setUm} placeholder="Selecione a matriz…" motivosInaptidao={motivosInaptidao} />
+        )}
       </div>
-      <p style={nota}>Matriz lista apenas fêmeas aptas (≥ {IDADE_MIN_SERVICO} meses). Isso só agenda o protocolo hormonal — a inseminação em si (D{diaFinal}) é lançada à parte, na sub-aba Inseminação.</p>
+      <p style={nota}>
+        A lista mostra todas as fêmeas — as <strong>inaptas em cinza</strong>, com o motivo (idade mínima de {idadeMinServico} meses,
+        animal baixado ou a descartar). Isso só agenda o protocolo hormonal — a inseminação em si (D{diaFinal}) é
+        lançada à parte, na sub-aba Inseminação.
+      </p>
 
       {modo === "novo" && (
         <>
@@ -314,11 +404,18 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
           )}
         </>
       )}
-      <ProtocolosIatfAtivos recarregarRef={recarregarAtivosRef} />
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        <button className="btn-primary" onClick={() => salvar()} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        {podeForcar && (
+          <button className="btn-secondary" onClick={() => salvar(true)} disabled={salvando}
+            title="Lança o protocolo assumindo a situação descrita acima">
+            Confirmar e lançar mesmo assim
+          </button>
+        )}
+      </div>
+      </div>
       </div>
     </>
   );

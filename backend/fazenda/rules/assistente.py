@@ -23,8 +23,8 @@ from sqlmodel import Session, select
 
 from fazenda.auth import tem_modulo
 from fazenda.models import (
-    Animal, AssistenteEnsinamento, ContaGerencial, Estoque, EventoSanitario, ExameResultado, Fornecedor, Lote, Parto,
-    PesagemCorporal, Servico, Usuario,
+    Animal, AssistenteEnsinamento, ContaGerencial, ControleLeiteiro, Estoque, EventoSanitario, ExameResultado,
+    Fornecedor, Lote, Parto, PesagemCorporal, Secagem, Servico, Usuario,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.indicadores import calcular_indicadores
@@ -221,16 +221,35 @@ def _tool_consultar_indicadores(session: Session, fazenda_id: int | None = None)
     partos = [p.model_dump() for p in session.exec(query_parto).all()]
     peso_por_animal: dict[str, float] = {}
     ultima_data: dict[str, date] = {}
-    # PesagemCorporal (Recria) ainda não tem fazenda_id — ver proposta de
-    # separação fazenda/empresa, Parte 1.6; fica sem filtro por enquanto.
-    for p in session.exec(select(PesagemCorporal)).all():
+    # FURO DE MULTI-TENANT CORRIGIDO: PesagemCorporal e Lote já têm
+    # fazenda_id (o comentário antigo dizia o contrário — desatualizado);
+    # sem o filtro, o Assistente misturava peso/lote de OUTRAS fazendas nos
+    # indicadores calculados para esta.
+    query_pesagem = select(PesagemCorporal)
+    query_lote = select(Lote)
+    if fazenda_id is not None:
+        query_pesagem = query_pesagem.where(PesagemCorporal.fazenda_id == fazenda_id)
+        query_lote = query_lote.where(Lote.fazenda_id == fazenda_id)
+    for p in session.exec(query_pesagem).all():
         atual = ultima_data.get(p.numero_matriz)
         if not atual or p.data_pesagem > atual:
             ultima_data[p.numero_matriz] = p.data_pesagem
             peso_por_animal[p.numero_matriz] = p.peso_kg
-    # Lote (Animais) também ainda não tem fazenda_id — mesma nota acima.
-    lotes = [l.model_dump() for l in session.exec(select(Lote)).all()]
-    return calcular_indicadores(animais, servicos, partos, data_ref=date.today(), peso_por_animal=peso_por_animal, lotes=lotes)
+    lotes = [l.model_dump() for l in session.exec(query_lote).all()]
+    # Controles/secagens — sem eles, a resposta da Claude sobre produção
+    # saía só de `Animal.ult_cl_kg` (campo congelado do CSV do Ideagri
+    # aposentado) e o DEL citado usava o congelado em vez do ao vivo.
+    query_controles = select(ControleLeiteiro)
+    query_secagens = select(Secagem)
+    if fazenda_id is not None:
+        query_controles = query_controles.where(ControleLeiteiro.fazenda_id == fazenda_id)
+        query_secagens = query_secagens.where(Secagem.fazenda_id == fazenda_id)
+    controles = [c.model_dump() for c in session.exec(query_controles).all()]
+    secagens = [s.model_dump() for s in session.exec(query_secagens).all()]
+    return calcular_indicadores(
+        animais, servicos, partos, data_ref=date.today(), peso_por_animal=peso_por_animal, lotes=lotes,
+        controles=controles, secagens=secagens,
+    )
 
 
 def _tool_buscar_animal(session: Session, numero: str, fazenda_id: int | None = None) -> dict:
@@ -274,12 +293,15 @@ def _codigo_grupo(grupo: str | None) -> str | None:
 
 
 def _tool_listar_lotes(session: Session, fazenda_id: int | None = None) -> dict:
-    # Lote ainda não tem fazenda_id — só Animal é filtrado por enquanto (ver
-    # proposta de separação fazenda/empresa, Parte 1.6).
-    lotes = session.exec(select(Lote).where(Lote.ativo == True)).all()  # noqa: E712
+    # FURO DE MULTI-TENANT CORRIGIDO: Lote já tem fazenda_id (comentário
+    # antigo desatualizado) — sem o filtro, o Assistente listava também os
+    # lotes de OUTRAS fazendas.
+    query_lote = select(Lote).where(Lote.ativo == True)  # noqa: E712
     query_animal = select(Animal).where(Animal.ativo == True)  # noqa: E712
     if fazenda_id is not None:
+        query_lote = query_lote.where(Lote.fazenda_id == fazenda_id)
         query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+    lotes = session.exec(query_lote).all()
     animais = session.exec(query_animal).all()
     contagem: dict[str, int] = {}
     for a in animais:
@@ -293,11 +315,13 @@ def _tool_listar_lotes(session: Session, fazenda_id: int | None = None) -> dict:
 
 def _tool_consultar_lote(session: Session, codigo: str, fazenda_id: int | None = None) -> dict:
     codigo = (codigo or "").strip().zfill(2)[:2]
-    # Lote ainda não tem fazenda_id — ver nota em _tool_listar_lotes.
-    lote = session.exec(select(Lote).where(Lote.codigo == codigo)).first()
+    # FURO DE MULTI-TENANT CORRIGIDO: ver nota em _tool_listar_lotes.
+    query_lote = select(Lote).where(Lote.codigo == codigo)
     query_animal = select(Animal).where(Animal.ativo == True)  # noqa: E712
     if fazenda_id is not None:
+        query_lote = query_lote.where(Lote.fazenda_id == fazenda_id)
         query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+    lote = session.exec(query_lote).first()
     animais = session.exec(query_animal).all()
     do_lote = [a for a in animais if not a.eh_semen and _codigo_grupo(a.grupo_primario) == codigo]
     if not lote and not do_lote:
@@ -379,12 +403,18 @@ def _tool_consultar_analise_reprodutiva(session: Session, fazenda_id: int | None
     # proposta de separação fazenda/empresa, Parte 1.6; sem filtro por enquanto.
     secagens = [s.model_dump() for s in session.exec(select(Secagem)).all()]
     controles = [c.model_dump() for c in session.exec(select(ControleLeiteiro)).all()]
-    agregado = agregar_mensal(registros, secagens, controles)
+    from fazenda.rules.parametros import dias_resultado_conhecido
+
+    agregado = agregar_mensal(registros, secagens, controles, dias_resultado=dias_resultado_conhecido())
     # Só os últimos 12 meses — evita mandar um histórico enorme para a Claude.
     meses = agregado["meses"][-12:]
     offset = len(agregado["meses"]) - len(meses)
     series = {k: v[offset:] for k, v in agregado["series"].items()}
-    return {"meses": meses, "series": series}
+    # A Claude precisa saber que o mês mais recente pode estar com a janela de
+    # diagnóstico aberta (R7) — sem isto ela lê o número baixo como piora de
+    # manejo em vez de "ainda não deu tempo de saber".
+    janela_dg_completa = agregado["janela_dg_completa"][offset:]
+    return {"meses": meses, "series": series, "janela_dg_completa": janela_dg_completa}
 
 
 _EXECUTORES = {

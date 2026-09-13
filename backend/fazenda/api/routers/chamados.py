@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Chamado, Usuario
 from fazenda.rules.auditoria import fazenda_id_seguro
@@ -71,7 +71,11 @@ def abrir_chamado(
 def atualizar_status_chamado(
     chamado_id: int, dados: ChamadoStatusIn, session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _admin: Usuario = Depends(exigir_admin),
 ) -> dict:
+    # BUG DE SEGURANÇA CORRIGIDO: qualquer usuário autenticado (inclusive
+    # "operador") podia mudar status/resposta de um chamado — agora exige
+    # admin, mesmo padrão de exclusão de documento em documentos.py.
     if dados.status not in ("aberto", "em_andamento", "resolvido"):
         raise HTTPException(status_code=400, detail="status deve ser 'aberto', 'em_andamento' ou 'resolvido'")
     fazenda_id = fazenda_id_seguro(fazenda_id)

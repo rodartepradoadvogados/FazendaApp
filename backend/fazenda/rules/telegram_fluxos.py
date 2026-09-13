@@ -205,6 +205,10 @@ FLUXOS: dict[str, dict] = {
             C("resumo", "Resumo", "texto", obrigatorio=False),
             C("link", "Link", "texto", obrigatorio=False),
             C("data_publicacao", "Data de publicação", "texto", obrigatorio=False),
+            # URL da foto escolhida no banco de fotos do Milknews (aba
+            # Aprovações) — não é perguntado em conversa, só editado ali via
+            # o seletor de fotos (ver frontend/components/AprovacoesView.tsx).
+            C("imagem", "Imagem", "texto", obrigatorio=False),
         ],
     },
 }
@@ -397,12 +401,20 @@ def criar_registro(tipo: str, dados: dict, session: Session, *, user, fazenda_id
         # criados por (numero_matriz, data_movimento), um por animal movido.
         # tipo "movimento_lote" é o G4 — mesma tolerância de dependência
         # cruzada do "secagem" acima.
-        candidatos = session.exec(
+        #
+        # FURO DE MULTI-TENANT CORRIGIDO: sem o filtro de fazenda_id, a
+        # mesma (numero_matriz, data_movimento) já lançada em OUTRA fazenda
+        # (ex.: a Fazenda Teste, cópia com os mesmos números e histórico)
+        # podia ser resolvida aqui em vez do movimento recém-criado desta
+        # fazenda — o registro de "desfazer" (G17) apontaria pro id errado.
+        query_candidatos = (
             select(MovimentoLote)
             .where(MovimentoLote.numero_matriz.in_(animais_lista))
             .where(MovimentoLote.data_movimento == data_movimento)
-            .order_by(MovimentoLote.id.desc())
-        ).all()
+        )
+        if fazenda_id is not None:
+            query_candidatos = query_candidatos.where(MovimentoLote.fazenda_id == fazenda_id)
+        candidatos = session.exec(query_candidatos.order_by(MovimentoLote.id.desc())).all()
         vistos: set[str] = set()
         ids: list[int] = []
         for m in candidatos:

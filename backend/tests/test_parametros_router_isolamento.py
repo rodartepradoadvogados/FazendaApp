@@ -80,7 +80,14 @@ def test_editar_numa_fazenda_nao_muda_o_valor_visto_por_outra(client):
     assert _item(r.json(), "pev_dias")["valor"] == 70
 
 
-def test_get_sem_fazenda_no_token_mostra_so_o_padrao_global(client):
+def test_sessao_sem_fazenda_e_recusada(client):
+    """Antes esta rota atendia a sessão sem fazenda devolvendo o padrão
+    global — comportamento do piloto de multi-fazenda, quando "sem fid"
+    queria dizer "token antigo". A auditoria mostrou que essa tolerância é a
+    mesma que, nas outras centenas de consultas do sistema, desliga o filtro
+    por fazenda inteiro (F-A-01/F-B-01/F-B-02). A regra passou a valer na
+    porta, igual para todas as rotas de fazenda: ou o token diz em qual
+    fazenda a requisição acontece, ou ela não entra."""
     c, engine = client
     token = _login(c)
     headers = {"Authorization": f"Bearer {token}"}
@@ -90,7 +97,7 @@ def test_get_sem_fazenda_no_token_mostra_so_o_padrao_global(client):
 
     _com_fazenda(None)
     r = c.get("/parametros/", headers=headers)
-    assert _item(r.json(), "pev_dias")["valor"] == 45
+    assert r.status_code == 409, f"{r.status_code} {r.text[:200]}"
 
 
 def test_get_nao_duplica_item_quando_fazenda_personalizou(client):
@@ -119,3 +126,39 @@ def test_editar_clona_a_linha_global_em_vez_de_mutar_ela(client):
         por_fazenda = {l.fazenda_id: l.valor for l in linhas}
         assert por_fazenda[None] == "45", "padrão global não podia ter sido alterado"
         assert por_fazenda[3] == "99"
+
+
+class TestTransferenciaLoteAutomatica:
+    """GET dedicado consumido por FormSecagem.tsx/FormParto.tsx pra decidir
+    entre perguntar (padrão) ou mover o animal pro lote sugerido sozinho."""
+
+    def _seed_global(self, engine):
+        with Session(engine) as s:
+            s.add(ParametroFazenda(
+                chave="transferencia_lote_automatica", fazenda_id=None, grupo="agenda_sistema",
+                label="Transferir automaticamente", valor="false", tipo="bool",
+            ))
+            s.commit()
+
+    def test_padrao_e_false_sem_personalizacao(self, client):
+        c, engine = client
+        self._seed_global(engine)
+        token = _login(c)
+        headers = {"Authorization": f"Bearer {token}"}
+        _com_fazenda(1)
+        r = c.get("/parametros/transferencia-lote-automatica", headers=headers)
+        assert r.status_code == 200, r.text
+        assert r.json() == {"automatica": False}
+
+    def test_fazenda_liga_sem_afetar_outra(self, client):
+        c, engine = client
+        self._seed_global(engine)
+        token = _login(c)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        _com_fazenda(1)
+        c.put("/parametros/transferencia_lote_automatica", json={"valor": True}, headers=headers)
+        assert c.get("/parametros/transferencia-lote-automatica", headers=headers).json() == {"automatica": True}
+
+        _com_fazenda(2)
+        assert c.get("/parametros/transferencia-lote-automatica", headers=headers).json() == {"automatica": False}

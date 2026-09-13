@@ -1,19 +1,27 @@
 "use client";
-import { useEffect, useState } from "react";
-import { AlertTriangle, MilkOff, TrendingDown, HeartPulse, Gauge as GaugeIcon, ChevronDown, ChevronRight, Target, RefreshCw, Skull, Calendar, Newspaper } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Target, RefreshCw, Skull, Newspaper, Search, CheckCircle2, ArrowRight, Plus } from "lucide-react";
 import {
   fetchIndicadores, fetchAgenda, fetchProducao, fetchResultadoMesRecente, fetchEstoque, fetchAnimais, fetchBaixas, formatBRL,
-  fetchNotaCapa, podeModulo, type NotaCapa,
+  fetchNotaCapa, podeModulo, today, getToken, type NotaCapa, type IndicadoresReproducao, type ReproducaoCategoria,
 } from "@/lib/api";
+import { cartao } from "@/lib/cartaoDrillDown";
 import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import { OnboardingChecklist } from "@/components/OnboardingChecklist";
-import { Gauge } from "@/components/Gauge";
 import { Indicador, EstadoVazio } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { NewsButton } from "@/components/NewsButton";
+import { ThemeSwitcher } from "@/components/ThemeSwitcher";
+import { NotificationBell } from "@/components/NotificationBell";
+import { ManualFazendaButton } from "@/components/ManualFazendaModal";
+import { LandingPublica } from "@/components/landing/LandingPublica";
+import { ehAppDeCampo } from "@/lib/nativo";
 
 const SIT_CORES: Record<string, string> = {
   Prenhes: "var(--green-light)", Inseminadas: "var(--dourado-light)",
+  "Em protocolo": "var(--vinho-light, #416180)",
   PEV: "var(--amber)", "A inseminar": "var(--blue)", Vazias: "var(--red)",
 };
 
@@ -89,7 +97,11 @@ function Delta({ atual, anterior, sufixo = "", casasDecimais = 0 }: { atual: num
   );
 }
 
-export default function Home() {
+// A Capa (dashboard) propriamente dita — só renderizada para quem está
+// logado. Ver Home() no fim do arquivo, que decide entre esta e a landing
+// pública (T8); a divisão em dois componentes existe só por isso, nenhuma
+// lógica interna da Capa mudou.
+function Capa() {
   const [d, setD] = useState<any>(null);
   // Comparativo de 7 dias — recalculado de verdade pelo backend (data_ref),
   // nunca fabricado no cliente (achado da crítica original: inventar
@@ -97,7 +109,6 @@ export default function Home() {
   const [dAnterior, setDAnterior] = useState<any>(null);
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
-  const [benchAberto, setBenchAberto] = useState(false);
   const [catRep, setCatRep] = useState<"todas" | "vaca" | "novilha">("todas");
   const [recarregando, setRecarregando] = useState(false);
   // Por fonte (não um booleano só): cada seção mostra seu próprio erro,
@@ -126,6 +137,30 @@ export default function Home() {
   // docs/agents/design-implementation.md §5, meta-batida.html, variante Ousada).
   const [metaSheen, setMetaSheen] = useState(false);
   const reduzMovimento = typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
+  // Busca rápida por nº de animal (⌘K/Ctrl+K foca o campo) — redesign T1,
+  // cabeçalho da Capa. Reaproveita o AnimalModal já usado nos outros
+  // drill-downs desta tela; não é uma busca global do site (telas, ajuda
+  // etc.), só animais, que é o que se procura com mais urgência no dia a dia.
+  const [busca, setBusca] = useState("");
+  const buscaRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        buscaRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const buscarAnimal = (e: React.FormEvent) => {
+    e.preventDefault();
+    const termo = busca.trim().toLowerCase();
+    if (!termo || !animais.length) return;
+    const achados = animais.filter((a) => a.numero.toLowerCase().includes(termo));
+    setModal({ title: `Busca — "${busca.trim()}"`, list: achados });
+  };
 
   const carregar = () => {
     setRecarregando(true);
@@ -177,21 +212,33 @@ export default function Home() {
   }, [reduzMovimento, diasSemBaixa]);
 
   const abrir = (title: string, filtro: (a: AnimalRow) => boolean) => { if (animais.length) setModal({ title, list: animais.filter(filtro) }); };
+  // Drill-down pela lista de números que o BACKEND contou — o número do card e
+  // a lista que ele abre saem da mesma conta (mesmo padrão de `aptas_nums`).
+  // Com isso o recorte vaca/novilha também é o do backend (registro de Parto),
+  // e não `data_ult_parto` do CSV.
+  const abrirNums = (title: string, nums?: string[] | null) => {
+    if (!animais.length) return;
+    const set = new Set(nums || []);
+    setModal({ title, list: animais.filter((a) => set.has(a.numero)) });
+  };
 
   if (!d) return <PainelSkeleton />;
 
-  const reb = d.ind?.rebanho, rep = d.ind?.reproducao, prod = d.ind?.producao;
+  const reb = d.ind?.rebanho, prod = d.ind?.producao;
+  const rep = d.ind?.reproducao as IndicadoresReproducao | undefined;
   // Comparativo de 7 dias — mesma forma dos valores atuais, calculada sobre
   // o recálculo real do backend (ver `carregar`, acima).
   const rebAnt = dAnterior?.ind?.rebanho, repAnt = dAnterior?.ind?.reproducao, prodAnt = dAnterior?.ind?.producao;
   const candidatasIatfAnt: number | null = dAnterior?.ag?.totais?.candidatas_iatf ?? null;
   const semDados = !d.ind && !d.ag;
 
-  // Benchmark reprodutivo (nosso valor × meta × média do país), por categoria.
+  // Benchmark reprodutivo (nosso valor × meta × média do país), por categoria
+  // — o comparativo completo (medidores + tabela de meta/média do país) migrou
+  // para Indicadores (redesign T1); aqui só lê os dois valores que viraram
+  // KPI ("Prenhez/21d" e "Taxa de serviço").
   const benchCats: any = d.ind?.benchmark_categorias || { todas: d.ind?.benchmark || [] };
   const bench: any[] = benchCats[catRep] || benchCats.todas || [];
   const bm = (k: string) => bench.find((b) => b.chave === k) || {};
-  const fmtBench = (b: any) => (b?.valor == null ? "—" : `${b.valor}${b.unidade ? (b.unidade === "%" ? "%" : " " + b.unidade) : ""}`);
 
   // Resultado do mês mais recente (competência) — já vem pronto do backend
   // (GET /financeiro/resultado-mes-recente), sem precisar do extrato
@@ -204,23 +251,17 @@ export default function Home() {
   const implanteFalta = implante && !implante.suficiente;
   const contasPagar = d.ag?.totais?.contas_a_pagar ?? 0;
 
-  // Módulo "Hoje" — agenda do dia com severidade real (crítico/atenção/rotina),
-  // a partir dos sinais que já existem (implante, estoque, contas, eventos).
-  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
-  const hojeLimite = new Date(hoje); hojeLimite.setDate(hojeLimite.getDate() + 7);
-  const eventosProximos = (d.ag?.eventos || [])
-    .filter((e: any) => { const dt = new Date(e.data + "T00:00:00"); return dt >= hoje && dt <= hojeLimite; })
-    .slice(0, 5);
-  const hojeItems: { sev: "critico" | "atencao" | "rotina"; titulo: string; meta?: string }[] = [
-    ...(implanteFalta ? [{ sev: "critico" as const, titulo: "Estoque de implante insuficiente para IATF", meta: `Faltam ${Math.ceil(implante.falta)} doses` }] : []),
-    ...(!!abaixoMin && abaixoMin > 0 ? [{ sev: "critico" as const, titulo: `${abaixoMin} item(ns) de estoque abaixo do mínimo`, meta: "Reposição recomendada" }] : []),
-    ...(contasPagar > 0 ? [{ sev: "atencao" as const, titulo: `${contasPagar} conta(s) vencem nos próximos 10 dias`, meta: "Contas a pagar" }] : []),
-    ...eventosProximos.map((ev: any) => ({
-      sev: "rotina" as const,
-      titulo: ev.descricao,
-      meta: new Date(ev.data + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }),
-    })),
-  ];
+  // Bloco "Hoje" (redesign T1, mockup 1b): tudo que precisa ser feito hoje —
+  // o que já está atrasado (data < hoje) mais o que vence hoje — mesma fonte
+  // que a Agenda usa (d.ag.eventos), só um recorte mais curto pra Capa. Ação
+  // de fato (marcar realizado etc.) continua só na Agenda — aqui é resumo +
+  // atalho, não duplica a lógica de baixa por tipo de evento.
+  const hoje = today();
+  const eventosAtivos: any[] = (d.ag?.eventos || []).filter((e: any) => !e.comunicado);
+  const tarefasAtrasadas = eventosAtivos.filter((e: any) => e.data < hoje);
+  const tarefasDeHoje = eventosAtivos.filter((e: any) => e.data === hoje);
+  const tarefasHoje = [...tarefasAtrasadas, ...tarefasDeHoje];
+  const TAREFAS_VISIVEIS = 4;
 
   const serieProd = (d.prod?.serie_temporal || []).slice(-12).map((s: any) => ({
     mes: s.data ? new Date(s.data + "T00:00:00").toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }).replace(".", "") : "",
@@ -229,12 +270,21 @@ export default function Home() {
   const kgs = serieProd.map((s: any) => s.kg).filter((v: any) => v != null) as number[];
   const kgMin = kgs.length ? Math.floor(Math.min(...kgs) - 1) : 0;
   const kgMax = kgs.length ? Math.ceil(Math.max(...kgs) + 1) : 30;
-  const repCats: any = d.ind?.reproducao_categorias || { todas: rep };
-  const repSel: any = repCats[catRep] || rep;
+  // Mesma rede de segurança de app/indicadores/page.tsx: sem
+  // `reproducao_categorias` (payload de cache antigo), cai de volta no bloco
+  // `reproducao`, que não tem todos os `_nums` de `ReproducaoCategoria` — o
+  // cast só nomeia essa lacuna pré-existente.
+  const repSel = (d.ind?.reproducao_categorias?.[catRep] || rep) as ReproducaoCategoria | undefined;
+  // As 6 fatias são uma partição do rebanho da categoria (por isso somam o
+  // total): "Em protocolo" entrou justamente porque não cabia em nenhuma das
+  // outras — sem ela o donut ficava faltando animais.
   const donutRep = repSel ? [
-    { nome: "Prenhes", v: repSel.prenhes }, { nome: "Inseminadas", v: repSel.inseminadas },
-    { nome: "PEV", v: repSel.pev }, { nome: "A inseminar", v: repSel.a_inseminar },
-    { nome: "Vazias", v: repSel.nao_classificadas },
+    { nome: "Prenhes", v: repSel.prenhes, nums: repSel.prenhes_nums },
+    { nome: "Inseminadas", v: repSel.inseminadas, nums: repSel.inseminadas_nums },
+    { nome: "Em protocolo", v: repSel.em_protocolo, nums: repSel.em_protocolo_nums },
+    { nome: "PEV", v: repSel.pev, nums: repSel.pev_nums },
+    { nome: "A inseminar", v: repSel.a_inseminar, nums: repSel.a_inseminar_nums },
+    { nome: "Vazias", v: repSel.nao_classificadas, nums: repSel.nao_classificadas_nums },
   ].filter((x) => x.v > 0) : [];
 
   const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", color: "var(--text)", fontSize: "0.8rem" };
@@ -246,29 +296,37 @@ export default function Home() {
       extra={onClick ? <Target size={11} style={{ color: "var(--dourado-light)" }} /> : null}
     />
   );
-  const Secao = ({ cor, label }: { cor: string; label: string }) => (
-    <div style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.13em", textTransform: "uppercase", color: "var(--text-muted)", margin: "1.4rem 0 0.6rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-      <span style={{ width: 8, height: 8, borderRadius: "50%", background: cor, display: "inline-block" }} />
-      {label}
-      <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
-    </div>
-  );
-  const candidatasList: AnimalRow[] = (d.ag?.candidatas_iatf || []).map((c: any) => ({ numero: c.numero_matriz, sit_rep: c.sit_rep, del_dias: c.del_dias }));
+  const candidatasList: AnimalRow[] = (d.ag?.candidatas_iatf || []).map((c: any) => ({ numero: c.numero_matriz, sit_rep: c.estado_rotulo || c.sit_rep, del_dias: c.del_dias }));
   const aDescartarList: AnimalRow[] = animais.filter((a) => a.a_descartar);
   const descartadosList = baixas.filter((b) => TIPOS_DESCARTE.includes(b.tipo_baixa) && (!desdeDescarte || b.data_baixa >= desdeDescarte));
 
   return (
     <div className="p-6 animate-in">
-      <div className="mb-5 flex items-start justify-between gap-3">
+      {/* Cabeçalho: título/subtítulo + busca/News/tema/sino no fluxo normal —
+          redesign T1 (mockup 1b). Nas demais telas esses três últimos
+          continuam fixos no topo (ver AuthShell.tsx); só aqui saem do
+          position:fixed, porque a Capa é a única com esse cabeçalho próprio
+          logo abaixo do topo (nas outras, SubNavTabs/o cabeçalho de cada
+          página fica mais abaixo e continua precisando da faixa fixa). */}
+      <div className="mb-5 flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: "var(--text)" }}>Fazenda Estreito Ponte de Pedra</h1>
           <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
             Pecuária leiteira · Girolando / Holandês · {new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          {/* Botão Manual da Fazenda mudou para o topo fixo (junto do News) —
-              ver AuthShell.tsx — para nunca mais sobrepor outro botão fixo. */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <form onSubmit={buscarAnimal} className="flex items-center gap-2"
+            style={{ border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", minWidth: "180px", background: "var(--surface)" }}>
+            <Search size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+            <input ref={buscaRef} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar animal…"
+              style={{ border: "none", background: "none", outline: "none", fontSize: "0.78rem", color: "var(--text)", width: "100%" }} />
+            <span style={{ fontSize: "0.62rem", fontWeight: 600, border: "1px solid var(--border)", borderRadius: "4px", padding: "0.05rem 0.3rem", color: "var(--text-muted)", flexShrink: 0 }}>⌘K</span>
+          </form>
+          <ManualFazendaButton />
+          <NewsButton />
+          <ThemeSwitcher />
+          <NotificationBell />
           <button onClick={carregar} className="btn-ghost" title="Recarregar dados" disabled={recarregando}>
             <RefreshCw size={16} className={recarregando ? "animate-spin" : ""} />
           </button>
@@ -300,38 +358,85 @@ export default function Home() {
         />
       )}
 
-      {/* Módulo "Hoje" — agenda do dia com severidade real, promovida ao topo
-          (docs/agents/design-implementation.md §5, Frente 1, hoje-primeiro.html). */}
-      <div className="mb-5 animate-in" style={{ animationDelay: "0ms" }}>
-        <div style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.13em", textTransform: "uppercase", color: "var(--text-muted)", margin: "0 0 0.6rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-          Hoje<span style={{ flex: 1, height: 1, background: "var(--border)" }} />
-        </div>
-        {hojeItems.length ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.55rem" }}>
-            {hojeItems.map((item, i) => {
-              const SEV = {
-                critico: { label: "Crítico", cor: "var(--red)", Icon: AlertTriangle },
-                atencao: { label: "Atenção", cor: "var(--amber)", Icon: TrendingDown },
-                rotina: { label: "Hoje", cor: "var(--vinho-light)", Icon: Calendar },
-              }[item.sev];
-              return (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: "0.8rem", padding: "0.75rem 0.95rem", background: "var(--surface)", border: "1px solid var(--border)", borderLeft: `4px solid ${SEV.cor}`, borderRadius: "var(--r)", boxShadow: "var(--shadow)" }}>
-                  <span style={{ fontSize: "0.62rem", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", flexShrink: 0, width: "64px", color: SEV.cor }}>{SEV.label}</span>
-                  <SEV.Icon size={20} style={{ flexShrink: 0, color: SEV.cor }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: "0.9rem", fontWeight: 600, color: "var(--text)" }}>{item.titulo}</div>
-                    {item.meta && <div style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.1rem" }}>{item.meta}</div>}
-                  </div>
-                </div>
-              );
-            })}
+      {/* Bloco "Hoje" (redesign T1, mockup 1b): abre pela tarefa do dia em vez
+          do módulo — tarefas de hoje/atrasadas à esquerda (mesma fonte que a
+          Agenda usa), "Fora do esperado" (os 3 alertas que antes eram uma
+          faixa solta) à direita. Ação de cada item continua só na Agenda. */}
+      <div className="card mb-5" style={{ borderLeft: "3px solid var(--vinho)", padding: 0 }}>
+        <div className="flex items-center gap-3 flex-wrap" style={{ padding: "0.7rem 0.9rem", borderBottom: "1px solid var(--border)" }}>
+          <span className="card-header" style={{ margin: 0 }}>Hoje</span>
+          <span style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-muted)" }}>
+            {tarefasHoje.length} tarefa{tarefasHoje.length === 1 ? "" : "s"}
+            {tarefasAtrasadas.length > 0 && <> · <span style={{ color: "var(--red)" }}>{tarefasAtrasadas.length} atrasada{tarefasAtrasadas.length === 1 ? "" : "s"}</span></>}
+          </span>
+          <div style={{ marginLeft: "auto", display: "flex", gap: "0.5rem" }}>
+            <a href="/agenda" className="btn-ghost" style={{ fontSize: "0.78rem", padding: "0.35rem 0.7rem" }}>Ver agenda completa</a>
+            <a href="/lancamentos" className="btn-ghost" style={{ fontSize: "0.78rem", padding: "0.35rem 0.7rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}><Plus size={13} /> Lançar</a>
           </div>
-        ) : (
-          <p style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>Nada pendente para hoje.</p>
-        )}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_236px]">
+          <div style={{ padding: "0.6rem 0.9rem", display: "flex", flexDirection: "column", gap: "0.4rem", borderRight: "1px solid var(--border)" }}>
+            {tarefasHoje.length ? (
+              <>
+                {tarefasHoje.slice(0, TAREFAS_VISIVEIS).map((ev: any, i: number) => {
+                  const atrasado = ev.data < hoje;
+                  return (
+                    <a key={ev.id ?? i} href="/agenda"
+                      className="flex items-center gap-3"
+                      style={{ padding: "0.5rem 0.6rem", border: "1px solid var(--border)", borderLeft: `3px solid ${atrasado ? "var(--red)" : "var(--dourado)"}`, borderRadius: "var(--r-sm)", textDecoration: "none" }}>
+                      <span style={{ flex: 1 }}>
+                        <span style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "var(--text)" }}>{ev.numero_animal ? `${ev.numero_animal} · ` : ""}{ev.descricao}</span>
+                        <span style={{ display: "block", fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                          {ev.categoria}{atrasado ? ` · atrasado desde ${new Date(ev.data + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}` : ""}
+                        </span>
+                      </span>
+                      <span style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--dourado-light)", display: "flex", alignItems: "center", gap: "0.2rem", flexShrink: 0 }}>Abrir <ArrowRight size={12} /></span>
+                    </a>
+                  );
+                })}
+                {tarefasHoje.length > TAREFAS_VISIVEIS && (
+                  <a href="/agenda" style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--vinho, var(--dourado-light))", paddingLeft: "0.2rem" }}>
+                    + {tarefasHoje.length - TAREFAS_VISIVEIS} tarefa{tarefasHoje.length - TAREFAS_VISIVEIS === 1 ? "" : "s"} de hoje
+                  </a>
+                )}
+              </>
+            ) : (
+              <EstadoVazio icon={CheckCircle2}>Nada pendente para hoje.</EstadoVazio>
+            )}
+          </div>
+          <div style={{ padding: "0.6rem 0.9rem", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+            <span className="card-header" style={{ fontSize: "0.66rem", margin: 0 }}>Fora do esperado</span>
+            {implanteFalta && (
+              <div className="flex items-start gap-2" style={{ background: "rgba(168,52,28,0.08)", borderLeft: "3px solid var(--red)", padding: "0.45rem 0.5rem", fontSize: "0.76rem" }}>
+                <Syringe size={13} style={{ color: "var(--red)", marginTop: "0.1rem", flexShrink: 0 }} /> Implante em falta: {Math.ceil(implante.falta)} p/ IATF
+              </div>
+            )}
+            {contasPagar > 0 && (
+              <div className="flex items-start gap-2" style={{ background: "rgba(185,131,31,0.1)", borderLeft: "3px solid var(--amber)", padding: "0.45rem 0.5rem", fontSize: "0.76rem" }}>
+                <TrendingDown size={13} style={{ color: "var(--amber)", marginTop: "0.1rem", flexShrink: 0 }} /> {contasPagar} conta(s) a pagar (10 dias)
+              </div>
+            )}
+            {!!abaixoMin && abaixoMin > 0 && (
+              <div className="flex items-start gap-2" style={{ background: "rgba(168,52,28,0.08)", borderLeft: "3px solid var(--red)", padding: "0.45rem 0.5rem", fontSize: "0.76rem" }}>
+                <Package size={13} style={{ color: "var(--red)", marginTop: "0.1rem", flexShrink: 0 }} /> {abaixoMin} item(ns) abaixo do mínimo
+              </div>
+            )}
+            {!implanteFalta && !(contasPagar > 0) && !(!!abaixoMin && abaixoMin > 0) && (
+              <span style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>Nada fora do esperado.</span>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* KPIs executivos, agrupados por assunto (hoje-primeiro.html) */}
+      {/* KPIs executivos — 12 no total, em duas grades de 6 (redesign T1): a
+          primeira é a visão geral que já existia; a segunda promove pra cima
+          os 3 números que antes só apareciam dentro do card de medidores
+          (Prenhez/21d, Taxa de serviço, IEP médio) e o descarte, que antes
+          vinha só dentro do card de Situação Reprodutiva. O card de medidores
+          em si (com meta/média do país) migrou para Indicadores. Setas de
+          tendência (▲▼) comparam com o mesmo indicador recalculado 7 dias
+          atrás (ver `Delta`, acima) — não fabricado, ver docs/agents/
+          design-implementation.md §5, meta-batida.html. */}
       {errosFonte.ind && (
         <ErroSecao
           mensagem="Não foi possível carregar os indicadores do rebanho"
@@ -339,11 +444,13 @@ export default function Home() {
           onRetry={carregar}
         />
       )}
-      <div className="animate-in" style={{ animationDelay: "60ms" }}>
-      <Secao cor="var(--vinho-light)" label="Rebanho" />
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-2">
         <KPI v={reb?.total ?? "—"} l="Fêmeas no rebanho" cat="geral" onClick={() => abrir("Fêmeas no rebanho", () => true)} />
-        <KPI v={<>{reb?.vacas_lactacao ?? "—"}<Delta atual={reb?.vacas_lactacao} anterior={rebAnt?.vacas_lactacao} /></>} l="Vacas em lactação · 7 dias" cat="geral" onClick={() => abrir("Vacas em lactação", (a) => LACTACAO.includes(cod(a.grupo_primario) || ""))} />
+        <KPI v={<>{reb?.vacas_lactacao ?? "—"}<Delta atual={reb?.vacas_lactacao} anterior={rebAnt?.vacas_lactacao} /></>} l="Vacas em lactação · 7 dias" cat="geral" onClick={() => abrir("Vacas em lactação", (a) => (reb?.codigos_lactacao?.length ? reb.codigos_lactacao : LACTACAO).includes(cod(a.grupo_primario) || ""))} />
+        <KPI v={<>{rep?.taxa_prenhez_pct != null ? `${rep.taxa_prenhez_pct}%` : "—"}<Delta atual={rep?.taxa_prenhez_pct} anterior={repAnt?.taxa_prenhez_pct} sufixo="pp" casasDecimais={1} /></>} l="Fêmeas prenhas · 7 dias" cat="reprodutivo" />
+        <KPI v={<>{rep?.taxa_concepcao_pct != null ? `${rep.taxa_concepcao_pct}%` : "—"}<Delta atual={rep?.taxa_concepcao_pct} anterior={repAnt?.taxa_concepcao_pct} sufixo="pp" casasDecimais={1} /></>} l="Concepção / serviço · 7 dias" cat="reprodutivo" />
+        <KPI v={<>{prod?.producao_total_dia_kg != null ? `${prod.producao_total_dia_kg} kg` : "—"}<Delta atual={prod?.producao_total_dia_kg} anterior={prodAnt?.producao_total_dia_kg} sufixo="kg" casasDecimais={1} /></>} l="Produção/dia (últ. controle) · 7 dias" cat="producao" />
+        <KPI v={prod?.del_medio ?? "—"} l="DEL médio" cat="producao" />
         {/* Exceção aprovada ao DESIGN.md (No-Lift / sem gradiente): o card de
             meta batida (Sanidade) ganha elevação 3px + sombra dourada + sheen,
             só aqui — docs/agents/design-implementation.md §5, meta-batida.html
@@ -358,23 +465,6 @@ export default function Home() {
           </div>
         )}
       </div>
-
-      <Secao cor="var(--cat-reproducao)" label="Reprodução" />
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
-        <KPI v={<>{rep?.taxa_prenhez_pct != null ? `${rep.taxa_prenhez_pct}%` : "—"}<Delta atual={rep?.taxa_prenhez_pct} anterior={repAnt?.taxa_prenhez_pct} sufixo="pp" casasDecimais={1} /></>} l="Fêmeas prenhas · 7 dias" cat="reprodutivo" />
-        <KPI v={<>{rep?.taxa_concepcao_pct != null ? `${rep.taxa_concepcao_pct}%` : "—"}<Delta atual={rep?.taxa_concepcao_pct} anterior={repAnt?.taxa_concepcao_pct} sufixo="pp" casasDecimais={1} /></>} l="Concepção / serviço · 7 dias" cat="reprodutivo" />
-        <KPI v={<>{d.ag?.totais?.candidatas_iatf ?? "—"}<Delta atual={d.ag?.totais?.candidatas_iatf} anterior={candidatasIatfAnt} /></>} l="Candidatas IATF · 7 dias" cat="reprodutivo"
-          podeClicar={candidatasList.length > 0}
-          onClick={() => setModal({ title: "Candidatas IATF", list: candidatasList })} />
-      </div>
-
-      <Secao cor="var(--blue)" label="Produção" />
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
-        <KPI v={<>{prod?.producao_total_dia_kg != null ? `${prod.producao_total_dia_kg} kg` : "—"}<Delta atual={prod?.producao_total_dia_kg} anterior={prodAnt?.producao_total_dia_kg} sufixo="kg" casasDecimais={1} /></>} l="Produção/dia (últ. controle) · 7 dias" cat="producao" />
-        <KPI v={prod?.del_medio ?? "—"} l="DEL médio" cat="producao" />
-      </div>
-      </div>
-
       {errosFonte.resMes && podeModulo("financeiro") && (
         <ErroSecao
           mensagem="Não foi possível carregar o resultado do mês"
@@ -382,68 +472,22 @@ export default function Home() {
           onRetry={carregar}
         />
       )}
-      <div className="animate-in" style={{ animationDelay: "120ms" }}>
-      <Secao cor="var(--cat-financeiro)" label="Financeiro" />
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-5">
+        <KPI v={<>{d.ag?.totais?.candidatas_iatf ?? "—"}<Delta atual={d.ag?.totais?.candidatas_iatf} anterior={candidatasIatfAnt} /></>} l="Candidatas IATF · 7 dias" cat="reprodutivo"
+          podeClicar={candidatasList.length > 0}
+          onClick={() => setModal({ title: "Candidatas IATF", list: candidatasList })} />
+        <KPI v={bm("taxa_prenhez_ciclo").valor != null ? `${bm("taxa_prenhez_ciclo").valor}%` : "—"} l="Prenhez / 21 dias" cat="reprodutivo" podeClicar={false} />
+        <KPI v={bm("taxa_servico").valor != null ? `${bm("taxa_servico").valor}%` : "—"} l="Taxa de serviço" cat="reprodutivo" podeClicar={false} />
+        <KPI v={rep?.iep_meses ?? "—"} l="IEP médio (meses)" cat="reprodutivo" podeClicar={false} />
+        <KPI v={descartadosList.length} l={`Descartadas ${new Date(desdeDescarte + "T00:00:00").getFullYear()}`} cat="geral" c="var(--red)"
+          podeClicar={descartadosList.length > 0}
+          onClick={() => setModalDescartados({ title: "Descartados", list: descartadosList })} />
         {/* Some por completo (não só o valor) para quem não tem o módulo
             Financeiro contratado — antes o card ficava sempre visível, com
             "—" no lugar do valor, revelando uma métrica paga a quem nunca
             comprou o módulo (ver auditoria de planos). */}
         {podeModulo("financeiro") && (
           <KPI v={resultadoMes != null ? formatBRL(resultadoMes) : "—"} l={`Resultado ${mesLabel}`} cat="financeiro" c={resultadoMes != null && resultadoMes >= 0 ? "var(--green-light)" : "var(--red)"} />
-        )}
-      </div>
-      </div>
-
-      {/* Medidores reprodutivos (modelo velocímetro) */}
-      <div className="card mb-5 animate-in" style={{ animationDelay: "180ms" }}>
-        <div className="card-header mb-3 flex flex-wrap items-center gap-2"><GaugeIcon size={15} /> Eficiência Reprodutiva
-          <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>· desde {rep?.concepcao_desde ? new Date(rep.concepcao_desde + "T00:00:00").toLocaleDateString("pt-BR") : "01/01/2026"} · Prenhez = Serviço × Concepção</span>
-          <div style={{ marginLeft: "auto", display: "flex", gap: "0.25rem" }}>
-            {([["todas", "Todas"], ["vaca", "Vacas"], ["novilha", "Novilhas"]] as const).map(([k, lbl]) => (
-              <button key={k} onClick={() => setCatRep(k)} title={`Ver eficiência reprodutiva — ${lbl}`}
-                style={{ fontSize: "0.7rem", padding: "0.2rem 0.6rem", borderRadius: "999px", cursor: "pointer",
-                  border: "1px solid " + (catRep === k ? "var(--dourado)" : "var(--border)"),
-                  background: catRep === k ? "var(--dourado)" : "transparent",
-                  color: catRep === k ? "#1a1a1a" : "var(--text-muted)", fontWeight: catRep === k ? 700 : 400 }}>
-                {lbl}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <Gauge titulo="Taxa de Serviço" value={bm("taxa_servico").valor} meta={bm("taxa_servico").meta} mediaPais={bm("taxa_servico").media_pais} maiorMelhor={bm("taxa_servico").maior_melhor ?? true} />
-          <Gauge titulo="Taxa de Concepção" value={bm("taxa_concepcao").valor} meta={bm("taxa_concepcao").meta} mediaPais={bm("taxa_concepcao").media_pais} maiorMelhor={bm("taxa_concepcao").maior_melhor ?? true} />
-          <Gauge titulo="Taxa de Prenhez" value={bm("taxa_prenhez_ciclo").valor} meta={bm("taxa_prenhez_ciclo").meta} mediaPais={bm("taxa_prenhez_ciclo").media_pais} maiorMelhor={bm("taxa_prenhez_ciclo").maior_melhor ?? true} />
-        </div>
-        {/* Linha expansível: painel completo de benchmark */}
-        <button onClick={() => setBenchAberto((v) => !v)}
-          style={{ marginTop: "0.6rem", width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.5rem 0.2rem", background: "none", border: "none", borderTop: "1px solid var(--border)", color: "var(--dourado-light)", cursor: "pointer", fontSize: "0.8rem", fontWeight: 600 }}>
-          {benchAberto ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-          Comparar com metas e média do país <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>· {catRep === "todas" ? "todas as fêmeas" : catRep === "vaca" ? "vacas" : "novilhas"}</span>
-        </button>
-        {benchAberto && (
-          <div className="overflow-x-auto">
-            <table className="fazenda-table" style={{ marginTop: "0.4rem" }}>
-              <thead><tr><th>Indicador</th><th style={{ textAlign: "right" }}>Nosso</th><th style={{ textAlign: "right" }}>Meta</th><th style={{ textAlign: "right" }}>Média país</th></tr></thead>
-              <tbody>
-                {bench.map((b: any) => {
-                  const ok = b.valor != null && b.meta != null && (b.maior_melhor ? b.valor >= b.meta : b.valor <= b.meta);
-                  return (
-                    <tr key={b.chave}>
-                      <td>{b.label}</td>
-                      <td style={{ textAlign: "right", fontWeight: 700, color: b.valor == null ? "var(--text-muted)" : ok ? "var(--green-light)" : "var(--amber)" }}>{fmtBench(b)}</td>
-                      <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{b.meta != null ? `${b.meta}${b.unidade === "%" ? "%" : b.unidade ? " " + b.unidade : ""}` : "—"}</td>
-                      <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{b.media_pais != null ? `${b.media_pais}${b.unidade === "%" ? "%" : b.unidade ? " " + b.unidade : ""}` : "—"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            <p style={{ fontSize: "0.66rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
-              Estimativas a partir dos serviços e diagnósticos carregados. Metas ajustáveis em <a href="/parametros" style={{ color: "var(--dourado-light)" }}>Parâmetros</a>.
-            </p>
-          </div>
         )}
       </div>
 
@@ -485,12 +529,16 @@ export default function Home() {
           </div>
           {repSel ? (
             <div className="grid grid-cols-3 gap-2 mb-2">
-              {([
-                ["Aptas", repSel.aptas, (a: AnimalRow) => (repSel.aptas_nums || []).includes(a.numero)],
-                ["Inseminadas", repSel.inseminadas, (a: AnimalRow) => a.sit_rep === "Ins." && (catRep === "todas" ? true : catRep === "vaca" ? !!a.data_ult_parto : !a.data_ult_parto)],
-                ["Gestantes", repSel.prenhes, (a: AnimalRow) => a.sit_rep === "Ges." && (catRep === "todas" ? true : catRep === "vaca" ? !!a.data_ult_parto : !a.data_ult_parto)],
-              ] as const).map(([l, v, f]) => (
-                <KPI key={l} l={l} v={v} cat="reprodutivo" onClick={() => abrir(l, f)} />
+              {/* Cada card é um Cartao (lib/cartaoDrillDown.ts): valor e `nums`
+                  saem das duas chaves do MESMO `repSel`, tipadas contra
+                  `ReproducaoCategoria` — não compila se `nums` apontar para
+                  um campo que não existe nesse objeto. */}
+              {[
+                cartao({ origem: repSel, titulo: "Aptas", conta: "aptas", nums: "aptas_nums" }),
+                cartao({ origem: repSel, titulo: "Inseminadas", conta: "inseminadas", nums: "inseminadas_nums" }),
+                cartao({ origem: repSel, titulo: "Gestantes", conta: "prenhes", nums: "prenhes_nums" }),
+              ].map((c) => (
+                <KPI key={c.titulo} l={c.titulo} v={c.valor} cat="reprodutivo" onClick={() => abrirNums(c.titulo, c.nums)} />
               ))}
             </div>
           ) : null}
@@ -520,17 +568,7 @@ export default function Home() {
                   style={{ cursor: animais.length ? "pointer" : undefined }}
                   onClick={(e: any) => {
                     const nome = e?.name; if (!nome) return;
-                    const porCategoria = (a: AnimalRow) => catRep === "todas" ? true : catRep === "vaca" ? !!a.data_ult_parto : !a.data_ult_parto;
-                    const f = nome === "Prenhes"
-                      ? (a: AnimalRow) => a.sit_rep === "Ges." && porCategoria(a)
-                      : nome === "Inseminadas"
-                      ? (a: AnimalRow) => a.sit_rep === "Ins." && porCategoria(a)
-                      : nome === "PEV"
-                      ? (a: AnimalRow) => a.sit_rep === "Vaz. pev" && porCategoria(a)
-                      : nome === "A inseminar"
-                      ? (a: AnimalRow) => (a.sit_rep === "Vaz. apt." || a.sit_rep === "Vaz. atr.") && porCategoria(a)
-                      : (a: AnimalRow) => !["Ges.", "Ins.", "Vaz. pev", "Vaz. apt.", "Vaz. atr."].includes((a.sit_rep || "")) && porCategoria(a);
-                    abrir(nome, f);
+                    abrirNums(nome, donutRep.find((s: any) => s.nome === nome)?.nums);
                   }}>
                   {donutRep.map((s: any, i: number) => <Cell key={i} fill={SIT_CORES[s.nome]} />)}
                 </Pie>
@@ -583,4 +621,28 @@ export default function Home() {
       )}
     </div>
   );
+}
+
+// Porta de entrada "/" (T8): visitante sem login vê a landing pública, quem
+// já está logado vai direto para a Capa — exatamente como antes. AuthShell
+// (ver components/AuthShell.tsx::ROTA_PUBLICA) já garante que esta função só
+// é chamada depois que a sessão foi checada (nunca durante o "Carregando…"
+// nem no servidor) — então getToken() aqui é seguro e não repete a checagem
+// de auth: reaproveita o mesmo helper que o próprio AuthShell usa, sem
+// contexto/hook novo.
+export default function Home() {
+  // O manifesto do PWA abre em "/" (ver app/manifest.ts) — o padrão do
+  // aplicativo instalado passou a ser o SITE COMPLETO, porque instalar no
+  // notebook e cair na casca de celular era o comportamento errado.
+  // Aparelho de campo (app nativo, ou PWA instalado numa tela pequena) segue
+  // para /app aqui, na abertura, em vez de o manifesto decidir isso por todo
+  // mundo. Site aberto no navegador do celular NÃO entra aqui: continua
+  // sendo o site, como sempre foi (ver lib/nativo.ts::ehAppDeCampo).
+  const router = useRouter();
+  useEffect(() => {
+    if (!getToken()) return;
+    ehAppDeCampo().then((campo) => { if (campo) router.replace("/app"); });
+  }, [router]);
+
+  return getToken() ? <Capa /> : <LandingPublica />;
 }

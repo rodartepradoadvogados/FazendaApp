@@ -4,15 +4,17 @@ import { Check, Plus, X } from "lucide-react";
 import {
   criarItemEstoque, atualizarItemEstoque, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPrincipiosAtivos,
   criarPrincipioAtivo,
-  CLASSIFICACOES_MEDICAMENTO,
   fetchCategoriasEstoqueCadastro, fetchFinalidadesEstoqueCadastro, fetchUnidadesEstoqueCadastro,
   fetchUnidadesEmbalagemEstoqueCadastro, fetchUnidadesMedidaEmbalagemEstoqueCadastro, fetchLocaisArmazenamento,
-  type ItemCadastroSimples,
+  fetchLaboratoriosCadastro, criarLaboratorioCadastro, fetchCategoriasMedicamentoCadastro, fetchClassificacoesMedicamentoCadastro,
+  fetchLotesEstoque, abrirLoteEstoque, fetchEmbalagensEstoque, criarEmbalagemEstoque, removerEmbalagemEstoque,
+  type ItemCadastroSimples, type LoteEstoque, type ApresentacaoEmbalagemEstoque,
 } from "@/lib/api";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { CampoMoeda } from "@/components/CampoMoeda";
+import SeletorMultiploComBusca from "@/components/SeletorMultiploComBusca";
 import type { ContaPlano } from "@/lib/contaGerencial";
-import { pedirCadastroDeAlimento, type PrefillNovoEstoque } from "@/lib/alimentoEstoqueBridge";
+import { pedirCadastroDeAlimento, pedirReaberturaDeAlimento, type PrefillNovoEstoque } from "@/lib/alimentoEstoqueBridge";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -26,16 +28,143 @@ const vazio = {
   nome: "", numero_produto: "", categoria: "", finalidade: "", unidade: "", quantidade: "", estoque_minimo: "",
   valor_unitario: "", local_armazenamento: "", fornecedor_id: "",
   unidade_embalagem: "", medida_embalagem: "", quantidade_embalagem: "",
-  ativo: true, observacao: "", carencia_dias: "", centro_custo_padrao: "",
+  ativo: true, observacao: "", carencia_dias: "", carencia_leite_dias: "", carencia_carne_dias: "",
+  proibido_lactacao: false, centro_custo_padrao: "",
   conta_gerencial_despesa_padrao: "", conta_gerencial_despesa_nome: "",
   conta_gerencial_receita_padrao: "", conta_gerencial_receita_nome: "",
   gera_receita: false, gera_patrimonio: false,
   exibir_necessidade_compra_agenda: false, estocavel: true, data_inicio_controle: "",
-  principio_ativo: "", principio_ativo_id: "", classificacao_medicamento: "",
+  principio_ativo: "", principio_ativo_id: "",
+  laboratorio: "", categoriaMedicamentoIds: [] as number[], classificacaoMedicamentoIds: [] as number[],
   tipo_semen: "",
 };
 
 type PrincipioAtivo = { id: number; nome: string; ativo?: boolean };
+
+// Lotes/frascos de compra (Fase G, 01/09/2026) — pedido do usuário:
+// "registrar/comprar um medicamento escolhendo um tamanho de frasco/
+// embalagem específico com sua própria dosagem, rastrear múltiplos lotes de
+// tamanhos diferentes do mesmo medicamento em estoque". Só aparece editando
+// um item já existente (um lote pertence a um item que já tem id) e só faz
+// sentido pra item estocável.
+function PainelLotesEstoque({ estoqueId, embalagens, medidaEmbalagem }: {
+  estoqueId: number; embalagens: ApresentacaoEmbalagemEstoque[]; medidaEmbalagem: string;
+}) {
+  const [lotes, setLotes] = useState<LoteEstoque[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [abrindo, setAbrindo] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [novo, setNovo] = useState({
+    apresentacao_id: "", quantidade: "", data_compra: new Date().toISOString().slice(0, 10), valor_unitario: "", numero_lote: "",
+  });
+
+  const carregar = () => fetchLotesEstoque(estoqueId).then(setLotes).catch((e: any) => setErro(e.message));
+  useEffect(() => { carregar(); }, [estoqueId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const embalagemEscolhida = embalagens.find((e) => String(e.id) === novo.apresentacao_id);
+
+  async function salvarLote() {
+    const quantidade = Number(novo.quantidade);
+    if (!quantidade || quantidade <= 0) {
+      setErro(embalagemEscolhida ? "Informe quantas embalagens foram compradas." : "Informe a quantidade comprada.");
+      return;
+    }
+    setSalvando(true); setErro(null);
+    try {
+      await abrirLoteEstoque(estoqueId, {
+        quantidade, data_compra: novo.data_compra,
+        valor_unitario: novo.valor_unitario ? Number(novo.valor_unitario) : undefined,
+        numero_lote: novo.numero_lote || undefined,
+        apresentacao_id: novo.apresentacao_id ? Number(novo.apresentacao_id) : undefined,
+      });
+      setNovo({ apresentacao_id: "", quantidade: "", data_compra: new Date().toISOString().slice(0, 10), valor_unitario: "", numero_lote: "" });
+      setAbrindo(false);
+      carregar();
+    } catch (e: any) {
+      setErro(e.message || "Erro ao abrir lote");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <div style={{ gridColumn: "1 / -1", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.75rem", marginTop: "0.3rem" }}>
+      <div className="flex items-center justify-between" style={{ marginBottom: "0.5rem" }}>
+        <label style={{ ...labelStyle, fontWeight: 700 }}>
+          Lotes de compra (frascos) — a baixa consome o mais antigo primeiro (FIFO), a não ser que se escolha um lote específico na aplicação
+        </label>
+        {!abrindo && (
+          <button type="button" className="btn-ghost" style={{ fontSize: "0.7rem", display: "flex", alignItems: "center", gap: "0.25rem" }} onClick={() => setAbrindo(true)}>
+            <Plus size={12} /> Registrar compra
+          </button>
+        )}
+      </div>
+
+      {abrindo && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2" style={{ marginBottom: "0.6rem" }}>
+          {embalagens.length > 0 && (
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label style={labelStyle}>Qual embalagem está comprando?</label>
+              <select style={inputStyle} value={novo.apresentacao_id} onChange={(e) => setNovo((n) => ({ ...n, apresentacao_id: e.target.value }))}>
+                <option value="">Quantidade direta (sem embalagem específica)</option>
+                {embalagens.map((emb) => (
+                  <option key={emb.id} value={emb.id}>{emb.quantidade} {medidaEmbalagem || ""}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div><label style={labelStyle}>{embalagemEscolhida ? "Quantidade de embalagens" : "Quantidade comprada"}</label>
+            <input type="number" style={inputStyle} value={novo.quantidade} onChange={(e) => setNovo((n) => ({ ...n, quantidade: e.target.value }))} />
+            {embalagemEscolhida && Number(novo.quantidade) > 0 && (
+              <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
+                = {Number(novo.quantidade) * embalagemEscolhida.quantidade} {medidaEmbalagem || ""}
+              </span>
+            )}
+          </div>
+          <div><label style={labelStyle}>Data da compra</label>
+            <input type="date" style={inputStyle} value={novo.data_compra} onChange={(e) => setNovo((n) => ({ ...n, data_compra: e.target.value }))} /></div>
+          <div><label style={labelStyle}>Valor unitário (R$)</label>
+            <input type="number" style={inputStyle} value={novo.valor_unitario} onChange={(e) => setNovo((n) => ({ ...n, valor_unitario: e.target.value }))} /></div>
+          <div><label style={labelStyle}>Nº do lote (opcional)</label>
+            <input style={inputStyle} value={novo.numero_lote} onChange={(e) => setNovo((n) => ({ ...n, numero_lote: e.target.value }))} /></div>
+          <div style={{ gridColumn: "1 / -1", display: "flex", gap: "0.4rem" }}>
+            <button type="button" className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={salvando} onClick={salvarLote}>
+              <Check size={12} /> {salvando ? "Salvando…" : "Salvar lote"}
+            </button>
+            <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setAbrindo(false)}><X size={12} /></button>
+          </div>
+        </div>
+      )}
+
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.72rem", marginBottom: "0.4rem" }}>{erro}</p>}
+      {!lotes ? (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>Carregando…</p>
+      ) : lotes.length === 0 ? (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>Nenhum lote registrado ainda — o saldo do item continua sendo controlado de forma agregada.</p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+          {lotes.map((l) => (
+            <div key={l.id} style={{
+              display: "flex", alignItems: "center", gap: "0.6rem", fontSize: "0.76rem",
+              padding: "0.35rem 0.55rem", borderRadius: 6, background: "var(--surface)",
+              opacity: l.quantidade_restante > 0 ? 1 : 0.55,
+            }}>
+              <strong>
+                {l.apresentacao_quantidade != null ? `${l.apresentacao_quantidade} ${medidaEmbalagem || ""} — ` : ""}
+                {l.numero_lote ? `Lote ${l.numero_lote}` : `Compra de ${l.data_compra}`}
+              </strong>
+              <span style={{ color: "var(--text-muted)" }}>comprado em {l.data_compra}</span>
+              <span style={{ marginLeft: "auto" }}>
+                {l.quantidade_restante} / {l.quantidade_comprada} restante
+                {l.quantidade_restante <= 0 && " — esgotado"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Item já cadastrado, para editar em vez de criar — mesmo formato do
  * model_dump() de Estoque (GET /estoque/). */
@@ -57,8 +186,30 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
   const [unidadesEmbalagem, setUnidadesEmbalagem] = useState<ItemCadastroSimples[]>([]);
   const [medidasEmbalagem, setMedidasEmbalagem] = useState<ItemCadastroSimples[]>([]);
   const [locaisArmazenamento, setLocaisArmazenamento] = useState<ItemCadastroSimples[]>([]);
+  const [laboratorios, setLaboratorios] = useState<ItemCadastroSimples[]>([]);
+  const [categoriasMedicamento, setCategoriasMedicamento] = useState<ItemCadastroSimples[]>([]);
+  const [classificacoesMedicamento, setClassificacoesMedicamento] = useState<ItemCadastroSimples[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [novoLaboratorioAberto, setNovoLaboratorioAberto] = useState(false);
+  const [novoLaboratorioNome, setNovoLaboratorioNome] = useState("");
+  const [salvandoLaboratorio, setSalvandoLaboratorio] = useState(false);
+  const [erroLaboratorio, setErroLaboratorio] = useState<string | null>(null);
+  // Embalagens (tamanhos de frasco) — pedido do usuário (04/09/2026): "eu
+  // quero comprar um Agrovet de 50ml e um Agrovet de 100ml, não preciso ter
+  // que cadastrar 2 produtos". Só existe pra item já salvo (precisa de
+  // estoque_id) — mesma restrição de PainelLotesEstoque.
+  const [embalagens, setEmbalagens] = useState<ApresentacaoEmbalagemEstoque[]>([]);
+  const [novaEmbalagemQtd, setNovaEmbalagemQtd] = useState("");
+  const [salvandoEmbalagem, setSalvandoEmbalagem] = useState(false);
+  const [erroEmbalagem, setErroEmbalagem] = useState<string | null>(null);
+  // Entrar/sair da lista (04/09/2026) — `entrandoId` liga por 1 quadro a
+  // classe que faz a linha nova subir suave (ver .linha-colapsavel em
+  // globals.css); `saindoEmbalagem` faz a mesma linha recolher antes de sumir
+  // de vez, só DEPOIS que o servidor confirmou a remoção (mesma ordem seguro-
+  // primeiro que já existia — a animação não muda quando o estado é gravado).
+  const [entrandoId, setEntrandoId] = useState<number | null>(null);
+  const [saindoEmbalagem, setSaindoEmbalagem] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     fetchFornecedores().then(setFornecedores).catch(() => {});
@@ -75,6 +226,11 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
     fetchUnidadesEmbalagemEstoqueCadastro().then((l) => setUnidadesEmbalagem(l.filter((i) => i.ativo))).catch(() => {});
     fetchUnidadesMedidaEmbalagemEstoqueCadastro().then((l) => setMedidasEmbalagem(l.filter((i) => i.ativo))).catch(() => {});
     fetchLocaisArmazenamento().then((l) => setLocaisArmazenamento(l.filter((i) => i.ativo))).catch(() => {});
+    // Catálogos globais do Painel CowData (ver rules/visibilidade.py) —
+    // laboratório e categoria/classificação (medicamento).
+    fetchLaboratoriosCadastro().then((l) => setLaboratorios(l.filter((i) => i.ativo))).catch(() => {});
+    fetchCategoriasMedicamentoCadastro().then((l) => setCategoriasMedicamento(l.filter((i) => i.ativo))).catch(() => {});
+    fetchClassificacoesMedicamentoCadastro().then((l) => setClassificacoesMedicamento(l.filter((i) => i.ativo))).catch(() => {});
   }, []);
 
   const set = (patch: Partial<typeof vazio>) => setForm((p) => ({ ...p, ...patch }));
@@ -97,6 +253,8 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
       unidade_embalagem: s(editando.unidade_embalagem), medida_embalagem: s(editando.medida_embalagem),
       quantidade_embalagem: s(editando.quantidade_embalagem), ativo: editando.ativo !== false,
       observacao: s(editando.observacao), carencia_dias: s(editando.carencia_dias),
+      carencia_leite_dias: s(editando.carencia_leite_dias), carencia_carne_dias: s(editando.carencia_carne_dias),
+      proibido_lactacao: editando.proibido_lactacao === true,
       centro_custo_padrao: s(editando.centro_custo_padrao),
       conta_gerencial_despesa_padrao: s(editando.conta_gerencial_despesa_padrao),
       conta_gerencial_receita_padrao: s(editando.conta_gerencial_receita_padrao),
@@ -105,7 +263,10 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
       exibir_necessidade_compra_agenda: editando.exibir_necessidade_compra_agenda === true,
       estocavel: editando.estocavel !== false, data_inicio_controle: s(editando.data_inicio_controle),
       principio_ativo: s(editando.principio_ativo), principio_ativo_id: s(editando.principio_ativo_id),
-      classificacao_medicamento: s(editando.classificacao_medicamento), tipo_semen: s(editando.tipo_semen) || "convencional",
+      laboratorio: s(editando.laboratorio),
+      categoriaMedicamentoIds: Array.isArray(editando.categoria_medicamento_ids) ? editando.categoria_medicamento_ids : [],
+      classificacaoMedicamentoIds: Array.isArray(editando.classificacao_medicamento_ids) ? editando.classificacao_medicamento_ids : [],
+      tipo_semen: s(editando.tipo_semen) || "convencional",
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editando]);
@@ -144,6 +305,65 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
     }
   }
 
+  useEffect(() => {
+    if (!editando) { setEmbalagens([]); return; }
+    fetchEmbalagensEstoque(editando.id).then((l) => setEmbalagens(l.filter((e) => e.ativa))).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editando]);
+
+  // Cadastra um laboratório novo sem sair do formulário — sempre grava com o
+  // fazenda_id da PRÓPRIA fazenda (nunca vira padrão global do Painel
+  // CowData), mesmo padrão de "+novo" já usado acima em Princípio ativo.
+  async function criarNovoLaboratorio() {
+    if (!novoLaboratorioNome.trim()) { setErroLaboratorio("Nome é obrigatório."); return; }
+    setSalvandoLaboratorio(true); setErroLaboratorio(null);
+    try {
+      const criado = await criarLaboratorioCadastro({ nome: novoLaboratorioNome.trim() });
+      const lista = await fetchLaboratoriosCadastro();
+      setLaboratorios(lista.filter((l) => l.ativo));
+      set({ laboratorio: criado.nome });
+      setNovoLaboratorioAberto(false);
+      setNovoLaboratorioNome("");
+    } catch (e: any) {
+      setErroLaboratorio(e.message || "Erro ao criar laboratório");
+    } finally {
+      setSalvandoLaboratorio(false);
+    }
+  }
+
+  async function adicionarEmbalagem() {
+    if (!editando) return;
+    const quantidade = Number(novaEmbalagemQtd);
+    if (!quantidade || quantidade <= 0) { setErroEmbalagem("Informe a quantidade."); return; }
+    setSalvandoEmbalagem(true); setErroEmbalagem(null);
+    try {
+      const criada = await criarEmbalagemEstoque(editando.id, quantidade);
+      setEmbalagens((e) => [...e, criada].sort((a, b) => a.quantidade - b.quantidade));
+      setNovaEmbalagemQtd("");
+      setEntrandoId(criada.id);
+      requestAnimationFrame(() => requestAnimationFrame(() => setEntrandoId((cur) => (cur === criada.id ? null : cur))));
+    } catch (e: any) {
+      setErroEmbalagem(e.message || "Erro ao cadastrar embalagem");
+    } finally {
+      setSalvandoEmbalagem(false);
+    }
+  }
+
+  async function removerEmbalagem(id: number) {
+    if (!editando) return;
+    setErroEmbalagem(null);
+    try {
+      await removerEmbalagemEstoque(editando.id, id);
+      setSaindoEmbalagem((s) => new Set(s).add(id));
+      setTimeout(() => {
+        setEmbalagens((e) => e.filter((x) => x.id !== id));
+        setSaindoEmbalagem((s) => { const n = new Set(s); n.delete(id); return n; });
+      }, 260);
+    } catch (e: any) {
+      setErroEmbalagem(e.message || "Erro ao remover embalagem");
+    }
+  }
+
   async function salvar() {
     if (!form.nome.trim()) { setErro("Nome é obrigatório."); return; }
     setErro(null); setSalvando(true);
@@ -167,6 +387,9 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         ativo: form.ativo,
         observacao: str(form.observacao),
         carencia_dias: num(form.carencia_dias),
+        carencia_leite_dias: num(form.carencia_leite_dias),
+        carencia_carne_dias: num(form.carencia_carne_dias),
+        proibido_lactacao: form.finalidade === "Medicamento" ? form.proibido_lactacao : undefined,
         centro_custo_padrao: str(form.centro_custo_padrao),
         conta_gerencial_despesa_padrao: str(form.conta_gerencial_despesa_padrao),
         conta_gerencial_receita_padrao: str(form.conta_gerencial_receita_padrao),
@@ -177,7 +400,9 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         data_inicio_controle: form.estocavel && form.data_inicio_controle.trim() !== "" ? form.data_inicio_controle : null,
         principio_ativo: str(form.principio_ativo),
         principio_ativo_id: form.principio_ativo_id ? Number(form.principio_ativo_id) : undefined,
-        classificacao_medicamento: str(form.classificacao_medicamento),
+        laboratorio: str(form.laboratorio),
+        categoria_medicamento_ids: form.finalidade === "Medicamento" ? form.categoriaMedicamentoIds : [],
+        classificacao_medicamento_ids: form.finalidade === "Medicamento" ? form.classificacaoMedicamentoIds : [],
         tipo_semen: form.categoria === "Sêmen e genética" ? str(form.tipo_semen) : undefined,
         alimento_id: prefill?.alimentoId,
       };
@@ -195,6 +420,11 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         const converter = window.confirm(`Deseja também cadastrar "${criado.nome}" como Alimento (Configurações > Cadastro > Alimentação > Alimentos), para uso em dietas?`);
         if (converter) pedirCadastroDeAlimento({ nome: criado.nome, estoqueId: criado.id });
       }
+      // Veio de "Cadastrar novo item de estoque vinculado" (Alimento já
+      // salvo) — volta sozinho pra edição daquele alimento, já mostrando o
+      // vínculo, em vez de deixar o usuário preso na tela de Estoque sem
+      // nenhum jeito de conferir se deu certo.
+      if (prefill?.alimentoId) pedirReaberturaDeAlimento(prefill.alimentoId);
       onCriado(criado);
     } catch (e: any) {
       setErro(e.message || "Erro ao cadastrar item");
@@ -208,7 +438,7 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
         <div><label style={labelStyle}>Nome</label><input style={inputStyle} value={form.nome} onChange={(e) => set({ nome: e.target.value })} /></div>
         <div><label style={labelStyle}>Número</label><input style={inputStyle} value={form.numero_produto} onChange={(e) => set({ numero_produto: e.target.value })} /></div>
-        <div><label style={labelStyle}>Categoria</label>
+        <div><label style={labelStyle}>Classificação</label>
           <select style={inputStyle} value={form.categoria} onChange={(e) => set({ categoria: e.target.value })}>
             <option value="">—</option>
             {form.categoria && !categorias.some((c) => c.nome === form.categoria) && <option value={form.categoria}>{form.categoria}</option>}
@@ -246,6 +476,9 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
                 }}
               >
                 <option value="">—</option>
+                {form.principio_ativo_id && !principiosAtivos.some((p) => String(p.id) === form.principio_ativo_id) && (
+                  <option value={form.principio_ativo_id}>{form.principio_ativo || `Princípio #${form.principio_ativo_id}`}</option>
+                )}
                 {principiosAtivos.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
               </select>
             ) : (
@@ -268,10 +501,57 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
           </div>
         )}
         {form.finalidade === "Medicamento" && (
-          <div><label style={labelStyle}>Classificação (medicamento)</label>
-            <select style={inputStyle} value={form.classificacao_medicamento} onChange={(e) => set({ classificacao_medicamento: e.target.value })}>
-              <option value="">—</option>{CLASSIFICACOES_MEDICAMENTO.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select></div>
+          <div>
+            <SeletorMultiploComBusca
+              label="Categoria (medicamento) — pode marcar mais de uma"
+              opcoes={categoriasMedicamento.map((c) => ({ id: c.id, nome: c.nome }))}
+              selecionados={form.categoriaMedicamentoIds} onChange={(ids) => set({ categoriaMedicamentoIds: ids })}
+              placeholder="Ex.: Antibiótico" />
+          </div>
+        )}
+        {form.finalidade === "Medicamento" && (
+          <div>
+            <SeletorMultiploComBusca
+              label="Classificação do medicamento — pode marcar mais de uma"
+              opcoes={classificacoesMedicamento.map((c) => ({ id: c.id, nome: c.nome }))}
+              selecionados={form.classificacaoMedicamentoIds} onChange={(ids) => set({ classificacaoMedicamentoIds: ids })}
+              placeholder="Ex.: Genérico, uso controlado…" />
+          </div>
+        )}
+        {form.finalidade === "Medicamento" && (
+          <div>
+            <div className="flex items-center justify-between">
+              <label style={labelStyle}>Laboratório</label>
+              <button type="button" className="btn-ghost" title="Cadastrar um laboratório que ainda não existe na lista — fica visível só nesta fazenda"
+                style={{ fontSize: "0.68rem", display: "flex", alignItems: "center", gap: "0.2rem", padding: "0.1rem 0.4rem" }}
+                onClick={() => { setNovoLaboratorioAberto(true); setErroLaboratorio(null); }}>
+                <Plus size={12} /> Novo
+              </button>
+            </div>
+            {!novoLaboratorioAberto ? (
+              <select style={inputStyle} value={form.laboratorio} onChange={(e) => set({ laboratorio: e.target.value })}>
+                <option value="">—</option>
+                {form.laboratorio && !laboratorios.some((l) => l.nome === form.laboratorio) && <option value={form.laboratorio}>{form.laboratorio}</option>}
+                {laboratorios.map((l) => <option key={l.id} value={l.nome}>{l.nome}</option>)}
+              </select>
+            ) : (
+              <div>
+                <div className="flex items-center gap-1">
+                  <input style={inputStyle} value={novoLaboratorioNome} onChange={(e) => setNovoLaboratorioNome(e.target.value)}
+                    placeholder="Nome do laboratório" autoFocus />
+                  <button type="button" className="btn-ghost" title="Salvar" style={{ padding: "0.3rem" }}
+                    disabled={salvandoLaboratorio} onClick={criarNovoLaboratorio}>
+                    <Check size={14} />
+                  </button>
+                  <button type="button" className="btn-ghost" title="Cancelar" style={{ padding: "0.3rem" }}
+                    onClick={() => { setNovoLaboratorioAberto(false); setNovoLaboratorioNome(""); setErroLaboratorio(null); }}>
+                    <X size={14} />
+                  </button>
+                </div>
+                {erroLaboratorio && <p style={{ color: "var(--red)", fontSize: "0.7rem", marginTop: "0.2rem" }}>{erroLaboratorio}</p>}
+              </div>
+            )}
+          </div>
         )}
         {form.categoria === "Sêmen e genética" && (
           <div><label style={labelStyle}>Sêmen sexado ou convencional?</label>
@@ -281,14 +561,65 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
             </select>
           </div>
         )}
-        <div><label style={labelStyle}>Unidade</label>
+
+        {/* Sinalizadores — agrupados aqui (pedido do usuário, 04/09/2026), logo
+            após os campos de medicamento, em vez de espalhados pelo formulário. */}
+        <div className="flex items-end gap-3">
+          <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+            <input type="checkbox" checked={form.ativo} onChange={(e) => set({ ativo: e.target.checked })} /> Ativo
+          </label>
+        </div>
+        <div className="flex items-end gap-3">
+          <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+            <input type="checkbox" checked={form.estocavel} onChange={(e) => set({ estocavel: e.target.checked })} /> Estocável
+          </label>
+        </div>
+        {form.finalidade === "Medicamento" && (
+          <div className="flex items-end gap-3">
+            <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }} title="Este medicamento não deve ser aplicado em vaca em lactação — aparece como aviso no lançamento de aplicação sanitária.">
+              <input type="checkbox" checked={form.proibido_lactacao} onChange={(e) => set({ proibido_lactacao: e.target.checked, carencia_leite_dias: e.target.checked ? "" : form.carencia_leite_dias })} />
+              Não usar em vaca em lactação
+            </label>
+          </div>
+        )}
+        <div className="flex items-end gap-3">
+          <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }} title="Produto de venda (leite, animal, esterco…) — usado nos relatórios de receita.">
+            <input type="checkbox" checked={form.gera_receita} onChange={(e) => set({ gera_receita: e.target.checked })} /> Gera receita
+          </label>
+        </div>
+        <div className="flex items-end gap-3">
+          <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }} title="Item de patrimônio (ex.: trator, benfeitoria) — uma compra deste item sugere vincular/criar um registro em Controle Financeiro > Patrimônio.">
+            <input type="checkbox" checked={form.gera_patrimonio} onChange={(e) => set({ gera_patrimonio: e.target.checked })} /> Patrimônio
+          </label>
+        </div>
+        {form.estocavel && (
+          <div className="flex items-end gap-3">
+            <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+              <input type="checkbox" checked={form.exibir_necessidade_compra_agenda} onChange={(e) => set({ exibir_necessidade_compra_agenda: e.target.checked })} />
+              Avisar na Agenda se abaixo do mínimo
+            </label>
+          </div>
+        )}
+        {!form.estocavel && (
+          <div style={{ gridColumn: "1 / -1", fontSize: "0.72rem", color: "var(--text-muted)" }}>
+            Item não estocável: só serve para lançamento financeiro (produto de nota). Não participa de baixa automática
+            por aplicação/consumo, nem pode ser doado ou recebido de cortesia.
+          </div>
+        )}
+
+        <div>
+          <label style={labelStyle}>{form.finalidade === "Medicamento" ? "Unidade de estoque (baixa)" : "Unidade"}</label>
           <select style={inputStyle} value={form.unidade} onChange={(e) => set({ unidade: e.target.value })}>
             <option value="">Selecione…</option>
             {form.unidade && !unidades.some((u) => u.nome === form.unidade) && <option value={form.unidade}>{form.unidade}</option>}
             {unidades.map((u) => <option key={u.id} value={u.nome}>{u.nome}</option>)}
           </select>
+          {form.finalidade === "Medicamento" && (
+            <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
+              Unidade em que a dose é dada baixa (ex.: ml, dose) — distinta da Unidade (embalagem) abaixo.
+            </span>
+          )}
         </div>
-
         {form.estocavel && (
           <div><label style={labelStyle}>Saldo inicial</label><input type="number" style={inputStyle} value={form.quantidade} onChange={(e) => set({ quantidade: e.target.value })} /></div>
         )}
@@ -296,48 +627,6 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
           <div><label style={labelStyle}>Estoque mínimo</label><input type="number" style={inputStyle} value={form.estoque_minimo} onChange={(e) => set({ estoque_minimo: e.target.value })} /></div>
         )}
         <div><label style={labelStyle}>Valor unitário (R$)</label><CampoMoeda style={inputStyle} value={Number(form.valor_unitario) || 0} onChange={(v) => set({ valor_unitario: v ? String(v) : "" })} /></div>
-        {form.estocavel && (
-          <div><label style={labelStyle}>Local de armazenamento</label>
-            <select style={inputStyle} value={form.local_armazenamento} onChange={(e) => set({ local_armazenamento: e.target.value })}>
-              <option value="">—</option>
-              {form.local_armazenamento && !locaisArmazenamento.some((l) => l.nome === form.local_armazenamento) && <option value={form.local_armazenamento}>{form.local_armazenamento}</option>}
-              {locaisArmazenamento.map((l) => <option key={l.id} value={l.nome}>{l.nome}</option>)}
-            </select>
-          </div>
-        )}
-        {form.estocavel && (
-          <div>
-            <label style={labelStyle}>Data de início do controle de estoque</label>
-            <input type="date" style={inputStyle} value={form.data_inicio_controle} onChange={(e) => set({ data_inicio_controle: e.target.value })} />
-            <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
-              A partir desta data o item passa a ser controlado; lançamentos anteriores não afetam o estoque.
-            </span>
-          </div>
-        )}
-
-        <div><label style={labelStyle}>Fornecedor principal</label>
-          <select style={inputStyle} value={form.fornecedor_id} onChange={(e) => set({ fornecedor_id: e.target.value })}>
-            <option value="">—</option>
-            {fornecedores.map((f) => <option key={f.id} value={f.id}>{f.nome}</option>)}
-          </select>
-        </div>
-        <div><label style={labelStyle}>Unidade (embalagem)</label>
-          <select style={inputStyle} value={form.unidade_embalagem} onChange={(e) => set({ unidade_embalagem: e.target.value })}>
-            <option value="">—</option>
-            {form.unidade_embalagem && !unidadesEmbalagem.some((u) => u.nome === form.unidade_embalagem) && <option value={form.unidade_embalagem}>{form.unidade_embalagem}</option>}
-            {unidadesEmbalagem.map((u) => <option key={u.id} value={u.nome}>{u.nome}</option>)}
-          </select>
-        </div>
-        <div><label style={labelStyle}>Unidade de medida</label>
-          <select style={inputStyle} value={form.medida_embalagem} onChange={(e) => set({ medida_embalagem: e.target.value })}>
-            <option value="">—</option>
-            {form.medida_embalagem && !medidasEmbalagem.some((m) => m.nome === form.medida_embalagem) && <option value={form.medida_embalagem}>{form.medida_embalagem}</option>}
-            {medidasEmbalagem.map((m) => <option key={m.id} value={m.nome}>{m.nome}</option>)}
-          </select>
-        </div>
-        <div><label style={labelStyle}>Quantidade por embalagem</label><input type="number" style={inputStyle} value={form.quantidade_embalagem} onChange={(e) => set({ quantidade_embalagem: e.target.value })} /></div>
-        <div><label style={labelStyle}>Carência (dias)</label><input type="number" style={inputStyle} value={form.carencia_dias} onChange={(e) => set({ carencia_dias: e.target.value })} placeholder="período de carência do leite/carne" /></div>
-
         <div><label style={labelStyle}>Centro de custo padrão</label>
           <select style={inputStyle} value={form.centro_custo_padrao} onChange={(e) => set({ centro_custo_padrao: e.target.value })}>
             <option value="">Selecione…</option>
@@ -367,43 +656,110 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
             placeholder="Escolha a conta de receita…"
           />
         </div>
-        <div className="flex items-end gap-3">
-          <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
-            <input type="checkbox" checked={form.ativo} onChange={(e) => set({ ativo: e.target.checked })} /> Ativo
-          </label>
-        </div>
-        <div className="flex items-end gap-3">
-          <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }} title="Produto de venda (leite, animal, esterco…) — usado nos relatórios de receita.">
-            <input type="checkbox" checked={form.gera_receita} onChange={(e) => set({ gera_receita: e.target.checked })} /> Gera receita
-          </label>
-        </div>
-        <div className="flex items-end gap-3">
-          <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
-            <input type="checkbox" checked={form.estocavel} onChange={(e) => set({ estocavel: e.target.checked })} /> Estocável
-          </label>
-        </div>
-        <div className="flex items-end gap-3">
-          <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }} title="Item de patrimônio (ex.: trator, benfeitoria) — uma compra deste item sugere vincular/criar um registro em Controle Financeiro > Patrimônio.">
-            <input type="checkbox" checked={form.gera_patrimonio} onChange={(e) => set({ gera_patrimonio: e.target.checked })} /> Patrimônio
-          </label>
-        </div>
-
+        {form.finalidade === "Medicamento" ? (
+          <>
+            <div><label style={labelStyle}>Carência do leite (dias)</label>
+              <input type="number" style={inputStyle} value={form.carencia_leite_dias} disabled={form.proibido_lactacao}
+                onChange={(e) => set({ carencia_leite_dias: e.target.value })} placeholder={form.proibido_lactacao ? "não se aplica" : "dias"} /></div>
+            <div><label style={labelStyle}>Carência da carne (dias)</label>
+              <input type="number" style={inputStyle} value={form.carencia_carne_dias} onChange={(e) => set({ carencia_carne_dias: e.target.value })} placeholder="dias" /></div>
+          </>
+        ) : (
+          <div><label style={labelStyle}>Carência (dias)</label><input type="number" style={inputStyle} value={form.carencia_dias} onChange={(e) => set({ carencia_dias: e.target.value })} placeholder="período de carência do leite/carne" /></div>
+        )}
         {form.estocavel && (
-          <div style={{ gridColumn: "1 / -1" }}>
-            <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
-              <input type="checkbox" checked={form.exibir_necessidade_compra_agenda} onChange={(e) => set({ exibir_necessidade_compra_agenda: e.target.checked })} />
-              Exibir necessidade de compra na Agenda quando o estoque ficar abaixo do mínimo
-            </label>
+          <div>
+            <label style={labelStyle}>Data de início do controle de estoque</label>
+            <input type="date" style={inputStyle} value={form.data_inicio_controle} onChange={(e) => set({ data_inicio_controle: e.target.value })} />
+            <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
+              A partir desta data o item passa a ser controlado; lançamentos anteriores não afetam o estoque.
+            </span>
           </div>
         )}
-        {!form.estocavel && (
-          <div style={{ gridColumn: "1 / -1", fontSize: "0.72rem", color: "var(--text-muted)" }}>
-            Item não estocável: só serve para lançamento financeiro (produto de nota). Não participa de baixa automática
-            por aplicação/consumo, nem pode ser doado ou recebido de cortesia.
+        <div><label style={labelStyle}>Fornecedor principal</label>
+          <select style={inputStyle} value={form.fornecedor_id} onChange={(e) => set({ fornecedor_id: e.target.value })}>
+            <option value="">—</option>
+            {fornecedores.map((f) => <option key={f.id} value={f.id}>{f.nome}</option>)}
+          </select>
+        </div>
+        <div><label style={labelStyle}>{form.finalidade === "Medicamento" ? "Unidade" : "Unidade (embalagem)"}</label>
+          <select style={inputStyle} value={form.unidade_embalagem} onChange={(e) => set({ unidade_embalagem: e.target.value })}>
+            <option value="">—</option>
+            {form.unidade_embalagem && !unidadesEmbalagem.some((u) => u.nome === form.unidade_embalagem) && <option value={form.unidade_embalagem}>{form.unidade_embalagem}</option>}
+            {unidadesEmbalagem.map((u) => <option key={u.id} value={u.nome}>{u.nome}</option>)}
+          </select>
+          {form.finalidade === "Medicamento" && (
+            <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>Ex.: Frasco, Garrafa…</span>
+          )}
+        </div>
+        <div><label style={labelStyle}>Unidade de medida</label>
+          <select style={inputStyle} value={form.medida_embalagem} onChange={(e) => set({ medida_embalagem: e.target.value })}>
+            <option value="">—</option>
+            {form.medida_embalagem && !medidasEmbalagem.some((m) => m.nome === form.medida_embalagem) && <option value={form.medida_embalagem}>{form.medida_embalagem}</option>}
+            {medidasEmbalagem.map((m) => <option key={m.id} value={m.nome}>{m.nome}</option>)}
+          </select>
+          {form.finalidade === "Medicamento" && (
+            <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>Ex.: ml/frasco, L/galão…</span>
+          )}
+        </div>
+        {form.finalidade === "Medicamento" ? (
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={labelStyle}>Unidade (embalagem)</label>
+            {!editando ? (
+              <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>
+                Salve o item primeiro para cadastrar os tamanhos de embalagem.
+              </p>
+            ) : (
+              <div style={{ display: "grid", gap: "0.4rem", maxWidth: 460, marginTop: "0.25rem" }}>
+                {embalagens.map((emb) => (
+                  <div key={emb.id} className={"linha-colapsavel" + (saindoEmbalagem.has(emb.id) ? " linha-saindo" : "") + (entrandoId === emb.id ? " linha-entrando" : "")}>
+                    <div className="flex items-center gap-2">
+                      <input style={{ ...inputStyle, width: 100 }} value={emb.quantidade} disabled />
+                      {/* A unidade mostrada aqui é SEMPRE a que estiver de fato em
+                          "Unidade de medida" acima — nunca um valor fixo tipo "ml"
+                          ou "frasco" (pedido explícito do usuário, 04/09/2026). */}
+                      <span style={{ ...inputStyle, background: "var(--surface)", color: "var(--text-muted)", flex: 1 }}>
+                        {form.medida_embalagem || "defina a Unidade de medida acima"}
+                      </span>
+                      <button type="button" className="btn-ghost" style={{ padding: "0.3rem" }} title="Remover" onClick={() => removerEmbalagem(emb.id)}>
+                        <X size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                <div className="flex items-center gap-2">
+                  <input type="number" style={{ ...inputStyle, width: 100 }} placeholder="Ex.: 50" value={novaEmbalagemQtd} onChange={(e) => setNovaEmbalagemQtd(e.target.value)} />
+                  <span style={{ ...inputStyle, background: "var(--surface)", color: "var(--text-muted)", flex: 1 }}>
+                    {form.medida_embalagem || "defina a Unidade de medida acima"}
+                  </span>
+                  <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} disabled={salvandoEmbalagem} onClick={adicionarEmbalagem}>
+                    <Plus size={12} /> Acrescentar
+                  </button>
+                </div>
+                {erroEmbalagem && <p style={{ color: "var(--red)", fontSize: "0.7rem" }}>{erroEmbalagem}</p>}
+                <p style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>
+                  Cada linha vira uma opção de tamanho na hora de comprar e de aplicar — não um item de estoque novo.
+                </p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div><label style={labelStyle}>Quantidade por embalagem</label><input type="number" style={inputStyle} value={form.quantidade_embalagem} onChange={(e) => set({ quantidade_embalagem: e.target.value })} /></div>
+        )}
+
+        {form.estocavel && (
+          <div><label style={labelStyle}>Local de armazenamento</label>
+            <select style={inputStyle} value={form.local_armazenamento} onChange={(e) => set({ local_armazenamento: e.target.value })}>
+              <option value="">—</option>
+              {form.local_armazenamento && !locaisArmazenamento.some((l) => l.nome === form.local_armazenamento) && <option value={form.local_armazenamento}>{form.local_armazenamento}</option>}
+              {locaisArmazenamento.map((l) => <option key={l.id} value={l.nome}>{l.nome}</option>)}
+            </select>
           </div>
         )}
         <div style={{ gridColumn: "1 / -1" }}><label style={labelStyle}>Observação</label>
           <textarea style={{ ...inputStyle, minHeight: "2.4rem" }} value={form.observacao} onChange={(e) => set({ observacao: e.target.value })} /></div>
+
+        {editando && form.estocavel && <PainelLotesEstoque estoqueId={editando.id} embalagens={embalagens} medidaEmbalagem={form.medida_embalagem} />}
       </div>
 
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{erro}</p>}

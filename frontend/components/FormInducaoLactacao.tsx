@@ -2,8 +2,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import {
-  fetchProtocolosInducaoLactacao, lancarInducaoLactacao, fetchInducaoLactacaoAtivos, formatDate, fetchPessoas,
+  fetchProtocolosInducaoLactacao, lancarInducaoLactacao, fetchInducaoLactacaoAtivos, formatDate,
 } from "@/lib/api";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
@@ -17,9 +18,15 @@ function InducaoLactacaoAtivos({ recarregarRef }: { recarregarRef: React.Mutable
   const carregar = () => fetchInducaoLactacaoAtivos().then(setAtivos).catch(() => setAtivos([]));
   useEffect(() => { carregar(); recarregarRef.current = carregar; }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!ativos || !ativos.length) return null;
+  if (!ativos || !ativos.length) {
+    return (
+      <div className="card" style={{ textAlign: "center", padding: "2.2rem 1rem" }}>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma indução de lactação em andamento.</p>
+      </div>
+    );
+  }
   return (
-    <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+    <div className="card" style={{ background: "var(--surface-2)" }}>
       <div className="card-header mb-2" style={{ background: "none", color: "var(--dourado-light)", padding: "0 0 0.3rem" }}>
         Induções de lactação em andamento ({ativos.length})
       </div>
@@ -55,7 +62,10 @@ function InducaoLactacaoAtivos({ recarregarRef }: { recarregarRef: React.Mutable
   );
 }
 
-export function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
+type DadosInducaoLactacao = { protocolo_id: number; animais: string[]; data_d0: string; responsavel?: string; observacao?: string };
+type SalvarInducaoLactacao = (dados: DadosInducaoLactacao) => Promise<{ criado?: boolean; aviso?: string; animais?: number; eventos_criados?: number; enviado?: boolean }>;
+
+export function FormInducaoLactacao({ animais, salvarInducao = lancarInducaoLactacao }: { animais: AnimalRow[]; salvarInducao?: SalvarInducaoLactacao }) {
   const [protocolos, setProtocolos] = useState<any[]>([]);
   const [protocoloId, setProtocoloId] = useState("");
   // Animal(is) ou lote(s) — mesmo padrão do Diagnóstico/Secagem.
@@ -85,15 +95,10 @@ export function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
   const recarregarAtivosRef = useRef(() => {});
-  const [pessoas, setPessoas] = useState<any[]>([]);
+  const { pessoas: pessoasAtivas } = usePessoasAtivas();
 
   useEffect(() => { fetchProtocolosInducaoLactacao().then(setProtocolos).catch(() => setProtocolos([])); }, []);
-  useEffect(() => { fetchPessoas().then(setPessoas).catch(() => setPessoas([])); }, []);
   const protocolo = protocolos.find((p) => String(p.id) === protocoloId);
-  const pessoasAtivas = useMemo(
-    () => pessoas.filter((p) => p.ativo !== false).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
-    [pessoas]
-  );
 
   async function salvar() {
     setErro(null); setSucesso(null);
@@ -103,7 +108,7 @@ export function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
     if (!dataD0) { setErro(`Informe a data do ${protocolo?.dia_inicial === 0 ? "D0" : "D1"}.`); return; }
     setSalvando(true);
     try {
-      const r = await lancarInducaoLactacao({
+      const r = await salvarInducao({
         protocolo_id: Number(protocoloId), animais: animaisAlvo, data_d0: dataD0,
         responsavel: responsavel || undefined, observacao: observacao || undefined,
       });
@@ -112,7 +117,9 @@ export function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
       // — acontece em duplo clique ou no retry da fila offline do app. Sem
       // este ramo a tela dizia "lançado ... — 0 eventos na Agenda", que parece
       // defeito.
-      setSucesso(r.criado === false
+      setSucesso(r.enviado === false
+        ? "Sem internet — guardado, será enviado quando conectar."
+        : r.criado === false
         ? (r.aviso || "Este protocolo já estava lançado para estes animais nesta data — nada foi duplicado.")
         : `Protocolo "${protocolo?.nome}" lançado para ${r.animais} animal(is) — ${r.eventos_criados} eventos na Agenda.`);
       setSel(new Set()); setLotesSelecionados([]);
@@ -126,6 +133,11 @@ export function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
 
   return (
     <>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        <InducaoLactacaoAtivos recarregarRef={recarregarAtivosRef} />
+      </div>
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Protocolo" full>
           <select style={inputStyle} value={protocoloId} onChange={(e) => setProtocoloId(e.target.value)}>
@@ -223,13 +235,14 @@ export function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
           </div>
         </div>
       )}
-      <InducaoLactacaoAtivos recarregarRef={recarregarAtivosRef} />
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
         <button className="btn-primary" onClick={salvar} disabled={salvando || !numerosAlvo.size}>
           {salvando ? "Salvando…" : `Salvar (${numerosAlvo.size || 0} ${numerosAlvo.size !== 1 ? "animais" : "animal"})`}
         </button>
+      </div>
+      </div>
       </div>
     </>
   );

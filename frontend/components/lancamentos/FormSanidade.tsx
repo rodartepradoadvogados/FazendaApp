@@ -1,9 +1,10 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Plus, ShoppingCart, Sparkles, Trash2 } from "lucide-react";
-import { criarAplicacaoSanidade, fetchApresentacoesFarmacia, fetchDoencas, fetchIndicacoesDoenca, fetchMedicamentos, fetchPrincipiosAtivos, marcarEventoRealizado } from "@/lib/api";
-import type { ApresentacaoFarmacia, OpcaoIndicacaoDoenca } from "@/lib/api";
-import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
+import { criarAplicacaoSanidade, fetchApresentacoesFarmacia, fetchDoencas, fetchIndicacoesDoenca, fetchLotesEstoque, fetchMedicamentos, fetchPrincipiosAtivos, marcarEventoRealizado } from "@/lib/api";
+import type { ApresentacaoFarmacia, LoteEstoque, OpcaoIndicacaoDoenca } from "@/lib/api";
+import { VIAS_APLICACAO } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
 import { EstoquePicker } from "@/components/EstoquePicker";
 import {
@@ -65,13 +66,28 @@ function BannerSubstitutosDoenca({
   );
 }
 
-export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[]; produtos: string[] }) {
+// Aviso não-bloqueante: produto marcado "proibido em lactação" (ver
+// Estoque.proibido_lactacao) aplicado num animal que está em lactação agora
+// — mesmo padrão de alerta já usado para risco de gestação, só avisa, nunca
+// impede salvar (decisão do usuário, 01/09/2026).
+function AvisoProibidoLactacao({ produto }: { produto: string }) {
+  return (
+    <div style={{ marginTop: "0.6rem", border: "1px solid var(--red)", background: "rgba(220,38,38,.08)", borderRadius: 8, padding: "0.55rem 0.7rem" }}>
+      <p className="flex items-center gap-2" style={{ fontSize: "0.78rem", color: "var(--red)", margin: 0, fontWeight: 700 }}>
+        <AlertTriangle size={14} /> "{produto}" não deve ser usado em vaca em lactação — o animal selecionado está em lactação.
+      </p>
+    </div>
+  );
+}
+
+export function FormSanidade({ animais, lotes, estoque, produtos, onSalvo }: { animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[]; produtos: string[]; onSalvo?: () => void }) {
   const [modo, setModo] = useState<"animal" | "lote">("animal");
   const [animal, setAnimal] = useState("");
   const [lotesSel, setLotesSel] = useState<Set<string>>(new Set());
   const [itens, setItens] = useState<ItemSanidade[]>([itemSanidadeVazio()]);
   const [dataAplicacao, setDataAplicacao] = useState(() => new Date().toISOString().slice(0, 10));
   const [responsavel, setResponsavel] = useState("");
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -86,6 +102,11 @@ export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: A
   // (frascos/marcas) do mesmo princípio ativo que existem no estoque. Só pergunta
   // quando há mais de uma.
   const [frascosPorItem, setFrascosPorItem] = useState<Record<number, ApresentacaoFarmacia[]>>({});
+  // "De qual frasco de COMPRA (lote)?" (Fase G, 01/09/2026) — um nível abaixo
+  // do frasco/apresentação acima: dentro do MESMO item de estoque escolhido,
+  // os lotes de compra com saldo. Só pergunta quando há mais de um; sem
+  // escolha, a baixa cai em FIFO (lote mais antigo primeiro) no backend.
+  const [lotesPorItem, setLotesPorItem] = useState<Record<number, LoteEstoque[]>>({});
   // Lançamento por doença ou princípio ativo: abre só os medicamentos que
   // correspondem ao critério (via Farmácia). Listas de opções e produtos
   // filtrados por item.
@@ -138,6 +159,12 @@ export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: A
 
   // Mesma regra do backend p/ estoque baixo/zerado (padrão em FormProtocoloSanitario).
   const estoquePorNome = useMemo(() => new Map(estoque.map((e) => [e.nome, e])), [estoque]);
+  // Algum animal-alvo (do modo Animal ou dos lotes marcados) está em
+  // lactação agora — para o aviso de "proibido em lactação" abaixo.
+  const algumAlvoEmLactacao = useMemo(() => {
+    if (modo === "animal") return !!animais.find((a) => a.numero === animal)?.em_lactacao;
+    return animais.some((a) => a.grupo_primario && lotesSel.has(a.grupo_primario) && a.em_lactacao);
+  }, [modo, animal, animais, lotesSel]);
   const estoqueBaixo = (produto: string) => {
     const item = estoquePorNome.get(produto);
     if (!item) return false;
@@ -155,14 +182,25 @@ export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: A
   const atualizarItem = (idx: number, patch: Partial<ItemSanidade>) => setItens((p) => {
     const n = [...p]; n[idx] = { ...n[idx], ...patch }; return n;
   });
+  // Escolher o frasco/apresentação (estoque_id) também precisa recarregar os
+  // lotes de compra DESSE item específico — trocar de frasco invalida
+  // qualquer lote escolhido antes (era de outro item de estoque).
+  const escolherFrasco = (idx: number, estoqueId: number | null) => {
+    atualizarItem(idx, { estoque_id: estoqueId, lote_id: null });
+    if (estoqueId == null) { setLotesPorItem((p) => ({ ...p, [idx]: [] })); return; }
+    fetchLotesEstoque(estoqueId)
+      .then((lotes) => setLotesPorItem((p) => ({ ...p, [idx]: lotes.filter((l) => l.quantidade_restante > 0) })))
+      .catch(() => setLotesPorItem((p) => ({ ...p, [idx]: [] })));
+  };
   const escolherProduto = (idx: number, produto: string, principioAtivoId?: number) => {
     const compativeis = unidadesCompativeis(estoque.find((e) => e.nome === produto)?.unidade);
-    atualizarItem(idx, { produto, unidade: compativeis[0] || "", estoque_id: null });
+    atualizarItem(idx, { produto, unidade: compativeis[0] || "", estoque_id: null, lote_id: null });
+    setLotesPorItem((p) => ({ ...p, [idx]: [] }));
     // "Qual frasco?": busca as apresentações do mesmo princípio ativo. Mais de
-    // uma → o usuário escolhe; só uma → já fixa nela.
+    // uma → o usuário escolhe; só uma → já fixa nela (e já busca os lotes dela).
     fetchApresentacoesFarmacia(principioAtivoId != null ? { principio_ativo_id: principioAtivoId } : { produto }).then((fr) => {
       setFrascosPorItem((p) => ({ ...p, [idx]: fr }));
-      if (fr.length === 1) atualizarItem(idx, { estoque_id: fr[0].estoque_id });
+      if (fr.length === 1) escolherFrasco(idx, fr[0].estoque_id);
     }).catch(() => setFrascosPorItem((p) => ({ ...p, [idx]: [] })));
     // Substituto inteligente: só busca indicações quando o item está definido
     // por doença e o produto escolhido está com estoque baixo/zerado.
@@ -205,7 +243,10 @@ export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: A
       const aplicadoEfetivo = aplicado && dataAplicacao <= hojeStr;
       const r = await criarAplicacaoSanidade({
         data_aplicacao: dataAplicacao, animais: animaisAlvo, responsavel: responsavel || undefined, observacao: observacao || undefined,
-        itens: itensValidos.map((i) => ({ produto: i.produto, via: i.via || undefined, quantidade: Number(i.quantidade), unidade: i.unidade, estoque_id: i.estoque_id ?? undefined })),
+        itens: itensValidos.map((i) => ({
+          produto: i.produto, via: i.via || undefined, quantidade: Number(i.quantidade), unidade: i.unidade,
+          estoque_id: i.estoque_id ?? undefined, lote_id: i.lote_id ?? undefined,
+        })),
         aplicado: aplicadoEfetivo,
       });
       if (aplicadoEfetivo && eventoAgenda) { await marcarEventoRealizado(eventoAgenda).catch(() => {}); setEventoAgenda(null); }
@@ -213,6 +254,7 @@ export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: A
         ? `Aplicação PROGRAMADA na Agenda (não baixou estoque). Dê baixa quando aplicar.`
         : `${r.criados} aplicação(ões) lançada(s) com sucesso.${r.avisos?.length ? " " + r.avisos.join(" ") : ""}${eventoAgenda ? " Baixado da Agenda." : ""}`);
       setItens([itemSanidadeVazio()]); setObservacao("");
+      onSalvo?.();
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar aplicação de sanidade");
     } finally {
@@ -234,7 +276,7 @@ export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: A
                 {lotes.map((l) => <label key={l} className="flex items-center gap-2" style={{ fontSize: "0.8rem" }}><input type="checkbox" checked={lotesSel.has(l)} onChange={() => toggleLote(l)} /> {l}</label>)}
               </div>
             </Campo>}
-        <Campo label="Responsável"><select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="" disabled>Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}</select></Campo>
+        <Campo label="Responsável"><select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="" disabled>Selecione…</option>{nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}</select></Campo>
         <Campo label="Observação"><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
         <Campo label="Já foi aplicado?" full>
           {dataAplicacao > new Date().toISOString().slice(0, 10) ? (
@@ -310,18 +352,43 @@ export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: A
                   onUsar={(opcao) => escolherProduto(idx, opcao.nome, opcao.principio_ativo_id)}
                 />
               )}
+              {item.produto && algumAlvoEmLactacao && estoquePorNome.get(item.produto)?.proibido_lactacao && (
+                <AvisoProibidoLactacao produto={item.produto} />
+              )}
               {(frascosPorItem[idx]?.length ?? 0) > 1 && (
                 <div style={{ marginTop: "0.6rem", background: "var(--surface-2)", border: "1px solid var(--dourado)", borderRadius: 8, padding: "0.55rem 0.7rem" }}>
                   <label style={{ fontSize: "0.76rem", fontWeight: 700, color: "var(--dourado-light)", display: "block", marginBottom: "0.3rem" }}>
                     Qual frasco/apresentação você está usando agora?
                   </label>
-                  <select style={inputStyle} value={item.estoque_id ?? ""} onChange={(e) => atualizarItem(idx, { estoque_id: e.target.value ? Number(e.target.value) : null })}>
+                  <select style={inputStyle} value={item.estoque_id ?? ""} onChange={(e) => escolherFrasco(idx, e.target.value ? Number(e.target.value) : null)}>
                     <option value="">Selecione o frasco…</option>
                     {frascosPorItem[idx].map((f) => (
                       <option key={f.estoque_id} value={f.estoque_id}>
                         {f.nome}{f.marca ? ` · ${f.marca}` : ""} — saldo {f.saldo} {f.unidade || ""}{!f.estoque_inicializado ? " (sem estoque inicial)" : ""}
                       </option>
                     ))}
+                  </select>
+                </div>
+              )}
+              {(lotesPorItem[idx]?.length ?? 0) > 1 && (
+                <div style={{ marginTop: "0.6rem", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, padding: "0.55rem 0.7rem" }}>
+                  <label style={{ fontSize: "0.76rem", fontWeight: 700, color: "var(--text-muted)", display: "block", marginBottom: "0.3rem" }}>
+                    De qual lote de compra? (opcional — sem escolher, sai do mais antigo primeiro)
+                  </label>
+                  <select style={inputStyle} value={item.lote_id ?? ""} onChange={(e) => atualizarItem(idx, { lote_id: e.target.value ? Number(e.target.value) : null })}>
+                    <option value="">Automático (lote mais antigo primeiro)</option>
+                    {lotesPorItem[idx].map((l) => {
+                      // "Frasco de 100" (a unidade — ml, dose... — é a que
+                      // estiver de fato cadastrada em medida_embalagem do
+                      // item; nunca um valor fixo assumido aqui).
+                      const medida = frascosPorItem[idx]?.find((f) => f.estoque_id === item.estoque_id)?.medida_embalagem;
+                      const tamanho = l.apresentacao_quantidade != null ? `Frasco de ${l.apresentacao_quantidade}${medida ? ` ${medida}` : ""} — ` : "";
+                      return (
+                        <option key={l.id} value={l.id}>
+                          {tamanho}{l.numero_lote ? `Lote ${l.numero_lote}` : `Comprado em ${l.data_compra}`} — sobram {l.quantidade_restante}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
               )}

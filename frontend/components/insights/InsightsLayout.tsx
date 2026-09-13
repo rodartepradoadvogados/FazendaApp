@@ -11,9 +11,11 @@
 //
 // Insights: Indicadores, Listas, Relatórios — leitura/análise, sem nenhuma
 // tela de configuração.
-// Administração: Controle de Acesso, Painel CowData, Painel do Contador
-// (os dois últimos entram como atalhos, mas mantêm a própria casca bespoke
-// já existente), Portal, Configurações.
+// Administração: Configurações, Parâmetros, News, Controle de Acesso,
+// Central de Documentos, Portal, Painel CowData, Painel do Contador (os dois
+// últimos entram como atalhos, mas mantêm a própria casca bespoke já
+// existente) — ordem e composição pedidas explicitamente pelo usuário
+// (17/08/2026); ver ABAS_ADMINISTRACAO abaixo para o gate de cada aba.
 //
 // Layout INVERTIDO em relação ao resto do site: aqui os módulos (o que na
 // Sidebar é a lista vertical) viram uma barra de abas no TOPO, e a
@@ -23,18 +25,19 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ArrowLeft, FileSpreadsheet, FileText, Loader2, ChevronDown } from "lucide-react";
+import { ArrowLeft, FileSpreadsheet, FileText, Loader2, ChevronDown, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
+import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { rotuloDaPagina } from "@/components/Sidebar";
 import { SubNavTree } from "@/components/SubNavTree";
 import { useSubNav } from "@/components/SubNavContext";
 import { useExportAtual } from "@/components/ExportContext";
 import { exportarExcel, exportarPDF } from "@/lib/export";
-import { getFazendaAtual, getUsuario, podeModulo, ehDono, ROTA_MODULO } from "@/lib/api";
+import { getFazendaAtual, getUsuario, podeModulo, ehDono, ehAdmin, podePublicarMaterias, ROTA_MODULO } from "@/lib/api";
 import { marcarVeioDaAdministracao } from "@/lib/portalAdministracao";
 
-type Aba = { href: string; label: string; donoOnly?: boolean; requerConfig?: boolean };
+type Aba = { href: string; label: string; donoOnly?: boolean; adminOnly?: boolean; requerConfig?: boolean; requerNews?: boolean };
 
 const ABAS_INSIGHTS: Aba[] = [
   { href: "/indicadores", label: "Indicadores" },
@@ -42,20 +45,29 @@ const ABAS_INSIGHTS: Aba[] = [
   { href: "/analise-relatorios", label: "Relatórios" },
 ];
 
+// Ordem pedida explicitamente pelo usuário (17/08/2026): Configurações,
+// Parâmetros e News saem/entram como abas de primeiro nível (os dois
+// últimos eram sub-abas dentro de Configurações); Controle de Acesso deixa
+// de ter a sub-aba duplicada "Usuários" dentro de Cadastro (ver Cadastro.tsx).
 const ABAS_ADMINISTRACAO: Aba[] = [
+  // A assinatura independente de consultor foi removida (backlog #122) — o
+  // consultor passa a existir só dentro da própria fazenda (vínculo
+  // UsuarioFazenda.consultor) e como Consultor CowData (Equipe CowData).
+  { href: "/configuracoes", label: "Configurações", requerConfig: true },
+  { href: "/parametros", label: "Parâmetros" }, // gate genérico via ROTA_MODULO["/parametros"] = "parametros"
+  { href: "/news-admin", label: "News", requerNews: true },
   { href: "/usuarios", label: "Controle de Acesso", donoOnly: true },
-  { href: "/painel-cowdata", label: "Painel CowData", donoOnly: true },
-  { href: "/contador", label: "Painel do Contador", donoOnly: true },
-  { href: "/portal", label: "Portal" },
   // Aberta a qualquer logado (igual a Portal) — o filtro de verdade é do
   // backend (GET /documentos-central): documento fiscal só pra admin,
   // documento de lançamento só pra quem tem o módulo financeiro. Quem não
   // tem nenhum dos dois só vê a tela vazia, não um 403.
   { href: "/documentos-central", label: "Central de Documentos" },
-  // A assinatura independente de consultor foi removida (backlog #122) — o
-  // consultor passa a existir só dentro da própria fazenda (vínculo
-  // UsuarioFazenda.consultor) e como Consultor CowData (Equipe CowData).
-  { href: "/configuracoes", label: "Configurações", requerConfig: true },
+  { href: "/portal", label: "Portal" },
+  { href: "/painel-cowdata", label: "Painel CowData", donoOnly: true },
+  // Administrador da fazenda vê a aba (além do dono, que já vê tudo) — o
+  // acesso de fato (inclusive do contador externo) é checado à parte em
+  // AuthShell.tsx, esta flag só decide a VISIBILIDADE da aba aqui.
+  { href: "/contador", label: "Painel do Contador", adminOnly: true },
 ];
 
 // Qual dos dois grupos a rota ATUAL pertence — decide tanto o conjunto de
@@ -136,26 +148,47 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
   const [admin, setAdmin] = useState(false);
   const [dono, setDono] = useState(false);
   const [temConfiguracoes, setTemConfiguracoes] = useState(false);
+  const [podeNews, setPodeNews] = useState(false);
+
+  // Rail de sub-navegação recolhível com 1 clique — mesmo padrão/tecla de
+  // localStorage do menu lateral principal do site (ver Sidebar.tsx
+  // ::alternarRecolhida), mas com chave própria: este rail é local a este
+  // portal, não deve herdar nem sobrescrever a preferência do menu principal.
+  const [railRecolhida, setRailRecolhida] = useState(false);
+  useEffect(() => {
+    try { setRailRecolhida(localStorage.getItem("insights-rail-recolhida") === "1"); } catch { /* ignore */ }
+  }, []);
+  function alternarRailRecolhida() {
+    setRailRecolhida((atual) => {
+      const proximo = !atual;
+      try { localStorage.setItem("insights-rail-recolhida", proximo ? "1" : "0"); } catch { /* ignore */ }
+      return proximo;
+    });
+  }
 
   useEffect(() => {
     setFazendaNome(getFazendaAtual()?.nome || "Jairo Nasser");
+    setAdmin(ehAdmin());
     setDono(ehDono());
     setTemConfiguracoes(podeModulo("parametros") || podeModulo("upload") || ehDono());
+    setPodeNews(podePublicarMaterias());
   }, [path]);
 
   const modo = modoDaRota(path);
   const titulo = modo === "administracao" ? "Administração" : "Insights";
   const abasVisiveis = (modo === "administracao" ? ABAS_ADMINISTRACAO : ABAS_INSIGHTS).filter((a) => {
     if (a.donoOnly) return dono;
+    if (a.adminOnly) return admin || dono;
     if (a.requerConfig) return temConfiguracoes;
+    if (a.requerNews) return podeNews;
     const mod = ROTA_MODULO[a.href];
     if (mod) return podeModulo(mod);
     return true; // /portal — liberado para todo logado
   });
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
-      <header style={{ background: "linear-gradient(135deg, #0E2A47, #0A1F36)" }}>
+    <div style={{ height: "calc(100vh - var(--faixas-topo-h, 0px))", display: "flex", flexDirection: "column", background: "var(--bg)" }}>
+      <header style={{ flexShrink: 0, background: "linear-gradient(135deg, #0E2A47, #0A1F36)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap", padding: "0.9rem 1.4rem" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.7rem" }}>
             <CowDataMark size={34} />
@@ -168,6 +201,7 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.7rem" }}>
             <ExportarCabecalho />
+            <ThemeSwitcher variant="header-escuro" />
             <button type="button" onClick={() => router.push("/")} title="Voltar à Capa da fazenda, nesta mesma aba"
               style={{
                 display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)",
@@ -206,19 +240,35 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
       {/* Corpo: rail de sub-navegação à ESQUERDA (quando a página registrou
           uma árvore de sub-abas — ver useSubNavRegister) + conteúdo. No resto
           do site esse rail fica em cima, dentro da Sidebar — aqui é o
-          inverso, por pedido explícito do usuário para este portal. */}
-      <div style={{ display: "flex", alignItems: "flex-start" }}>
+          inverso, por pedido explícito do usuário para este portal.
+          flex:1 + minHeight:0 no corpo, e height:100% + overflowY próprio no
+          rail e no conteúdo, é o que dá a cada um sua rolagem independente —
+          sem isso os dois cresciam livremente e quem rolava era a página
+          inteira (pedido explícito do usuário para consertar). */}
+      <div style={{ display: "flex", alignItems: "stretch", flex: 1, minHeight: 0 }}>
         {subNav && (
           <aside style={{
-            width: "15rem", flexShrink: 0, padding: "1rem 0.8rem", borderRight: "1px solid var(--border)",
-            minHeight: "calc(100vh - 6.5rem)",
+            width: railRecolhida ? "3.2rem" : "15rem", flexShrink: 0, padding: railRecolhida ? "1rem 0.4rem" : "1rem 0.8rem",
+            background: "var(--sidebar-bg)", borderRight: "1px solid var(--sidebar-border)",
+            height: "100%", overflowY: "auto", overflowX: "hidden",
+            transition: "width 0.2s, padding 0.2s",
           }}>
+            <button type="button" onClick={alternarRailRecolhida}
+              aria-label={railRecolhida ? "Expandir menu" : "Recolher menu"}
+              title={railRecolhida ? "Expandir menu" : "Recolher menu"}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: railRecolhida ? "center" : "flex-end",
+                width: "100%", padding: "0.3rem", marginBottom: "0.5rem", background: "none", border: "none",
+                borderRadius: "var(--r-sm)", color: "var(--sidebar-muted)", cursor: "pointer",
+              }}>
+              {railRecolhida ? <ChevronsRight size={14} /> : <ChevronsLeft size={14} />}
+            </button>
             <SubNavTree nodes={subNav.tree} activeId={subNav.activeId} onSelect={subNav.onSelect}
               raiz={subNav.tree} pathname={path} paginaLabel={rotuloDaPagina(path)}
-              recolhidos={new Set()} onToggleRecolhido={() => {}} />
+              recolhidos={new Set()} onToggleRecolhido={() => {}} recolhida={railRecolhida} />
           </aside>
         )}
-        <main style={{ flex: 1, minWidth: 0, padding: "1.4rem" }}>{children}</main>
+        <main style={{ flex: 1, minWidth: 0, padding: "1.4rem", height: "100%", overflowY: "auto" }}>{children}</main>
       </div>
     </div>
   );

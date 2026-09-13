@@ -223,6 +223,92 @@ class TestBugARegressaoAuditoriaRespondivel:
         assert r2.status_code == 200, r2.text  # Bug A fazia isso dar 404
 
 
+class TestFluxoBotoesAgendaDiaria:
+    """Fluxo disparado pelos 3 botões do cartão `diaria_trabalho` na Agenda
+    (site: decidirDiaria em app/agenda/page.tsx; mobile: decidirDiaria em
+    app/app/page.tsx) — PUT /cadastro/diarias/{id}/dias com
+    periodo_inicio=periodo_fim=hoje, sem passar pela tela de Financeiro."""
+
+    def test_confirmar_nao_grava_excecao_e_so_some_da_agenda_apos_realizado(self, client):
+        c, engine = client
+        pessoa_id = _pessoa(engine)
+        diaria_id = _diaria(engine, pessoa_id)
+        hoje = date.today().isoformat()
+
+        r = c.put(f"/cadastro/diarias/{diaria_id}/dias", json={
+            "periodo_inicio": hoje, "periodo_fim": hoje,
+            "dias_nao_trabalhados": [], "dias_meia_diaria": [],
+        })
+        assert r.status_code == 200, r.text
+        # "Confirmar" = dia cheio = sem exceção nenhuma (sem linha = dia
+        # trabalhado, já era o padrão antes do clique) — por isso o cartão
+        # continua na Agenda até o evento ser marcado "realizado" também.
+        with Session(engine) as s:
+            assert s.exec(select(DiariaDia).where(DiariaDia.diaria_id == diaria_id)).all() == []
+        eventos = _eventos_diaria_trabalho(c.get("/agenda/").json())
+        assert len(eventos) == 1
+        evento_id = eventos[0]["id"]
+
+        r_realizado = c.post("/agenda/realizados", json={"evento_id": evento_id})
+        assert r_realizado.status_code == 200, r_realizado.text
+        assert _eventos_diaria_trabalho(c.get("/agenda/").json()) == []
+
+    def test_meia_diaria_grava_fracao_e_some_da_agenda_sem_precisar_de_realizado(self, client):
+        c, engine = client
+        pessoa_id = _pessoa(engine)
+        diaria_id = _diaria(engine, pessoa_id)
+        hoje = date.today().isoformat()
+
+        r = c.put(f"/cadastro/diarias/{diaria_id}/dias", json={
+            "periodo_inicio": hoje, "periodo_fim": hoje,
+            "dias_nao_trabalhados": [], "dias_meia_diaria": [hoje],
+        })
+        assert r.status_code == 200, r.text
+        with Session(engine) as s:
+            dia = s.exec(select(DiariaDia).where(DiariaDia.diaria_id == diaria_id)).one()
+            assert dia.trabalhado is False
+            assert dia.fracao == 0.5
+        # O calendário esparso já basta pra tirar o evento da Agenda — não
+        # depende do POST /agenda/realizados (diferente de "Confirmar" acima).
+        assert _eventos_diaria_trabalho(c.get("/agenda/").json()) == []
+
+    def test_nao_teve_diaria_grava_folga_e_some_da_agenda_sem_precisar_de_realizado(self, client):
+        c, engine = client
+        pessoa_id = _pessoa(engine)
+        diaria_id = _diaria(engine, pessoa_id)
+        hoje = date.today().isoformat()
+
+        r = c.put(f"/cadastro/diarias/{diaria_id}/dias", json={
+            "periodo_inicio": hoje, "periodo_fim": hoje,
+            "dias_nao_trabalhados": [hoje], "dias_meia_diaria": [],
+        })
+        assert r.status_code == 200, r.text
+        with Session(engine) as s:
+            dia = s.exec(select(DiariaDia).where(DiariaDia.diaria_id == diaria_id)).one()
+            assert dia.trabalhado is False
+            assert dia.fracao == 0.0
+        assert _eventos_diaria_trabalho(c.get("/agenda/").json()) == []
+
+    def test_dia_ja_pago_recusa_com_409_amigavel_em_vez_de_quebrar(self, client):
+        c, engine = client
+        pessoa_id = _pessoa(engine)
+        diaria_id = _diaria(engine, pessoa_id)
+        hoje = date.today().isoformat()
+        r_pag = c.post(f"/cadastro/diarias/{diaria_id}/pagamentos", json={
+            "data_pagamento": hoje, "valor": 500.0,
+        })
+        assert r_pag.status_code == 200, r_pag.text
+
+        r = c.put(f"/cadastro/diarias/{diaria_id}/dias", json={
+            "periodo_inicio": hoje, "periodo_fim": hoje,
+            "dias_nao_trabalhados": [hoje], "dias_meia_diaria": [],
+        })
+        assert r.status_code == 409
+        assert "pagamento" in r.json()["detail"].lower()
+        # O cartão da Agenda continua ali — nenhuma exceção foi gravada.
+        assert len(_eventos_diaria_trabalho(c.get("/agenda/").json())) == 1
+
+
 class TestBugDCalendarioSuprimeAuditoriaAutomatica:
     def test_diaria_calendar_controlada_nao_gera_novas_auditorias(self, client_multi):
         engine, make_client = client_multi

@@ -21,26 +21,21 @@ from fazenda.models import (
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.parametros import get_param, pre_parto_max
+from fazenda.rules.parto_resumo import resumo_por_parto
 from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
 from fazenda.rules.gestation import dias_gestacao_da_raca
+from fazenda.rules.lactacao import em_lactacao_por_matriz as lactacoes_abertas_por_matriz
+from fazenda.rules.parto import eh_parto_produtivo
+from fazenda.rules.producao_leiteira import com_fallback_animal, del_dias_ao_vivo, ultimo_controle_por_animal
 from fazenda.rules.relatorios_gerenciais import GESTACAO_DIAS, LIMITE_SECAGEM_RETROATIVA_DIAS
 
 router = APIRouter(prefix="/animais", tags=["animais"])
 
-
-def _del_dias_ao_vivo(del_dias_congelado: int | None, ult_parto: date | None, ult_secagem: date | None, hoje: date) -> int | None:
-    """DEL (dias em lactação) AO VIVO a partir do parto mais recente lançado no
-    app — `Animal.del_dias` é zerado no instante do parto (ver registrar_parto)
-    mas fica congelado dali em diante, só voltando a bater com a realidade no
-    próximo upload do GERAL.csv (Ideagri). Sem isso, uma vaca que pariu há dias
-    aparece com DEL 0 até o próximo import. Mesmo racional AO VIVO já usado em
-    `fazenda.api.routers.producao.info_secagem` — aqui também considera a
-    Secagem mais recente: vaca já seca não conta dias de lactação."""
-    if ult_parto is None:
-        return del_dias_congelado
-    if ult_secagem and ult_secagem >= ult_parto:
-        return None
-    return (hoje - ult_parto).days
+# Alias local: a regra em si mora em `rules.producao_leiteira.del_dias_ao_vivo`
+# (função pura, sem Session, reaproveitada também por
+# `rules.indicadores.calcular_indicadores` para o card "DEL médio" da
+# Produção) — mantido para não mexer nas chamadas já existentes neste arquivo.
+_del_dias_ao_vivo = del_dias_ao_vivo
 
 
 def _categoria_ao_vivo(categoria_completa: str | None, categoria_abrev: str | None, ult_parto: date | None, ult_secagem: date | None) -> tuple[str | None, str | None]:
@@ -111,27 +106,80 @@ def listar_animais(
         numero: s.data_servico for numero, s in servicos_positivos_vigentes(servicos_todos, partos_todos).items()
     }
     ult_parto: dict[str, object] = {}
+    # Só para `data_ult_parto` (auditoria/histórico): a data do último `Parto`
+    # da matriz, QUALQUER tipo — inclusive aborto sem abertura de lactação.
+    # "Esta matriz encerrou uma gestação, foi quando?" é uma pergunta
+    # diferente de "esta matriz pariu de verdade?" (ver `ult_parto_produtivo`
+    # abaixo) — mistura-las aqui faria a data existir mas o resto da tela
+    # (DEL/categoria) discordar dela sem motivo aparente para quem só olha
+    # este campo isolado.
+    ult_parto_produtivo: dict[str, object] = {}
     for p in partos_todos:
         d = p.data_parto
         if d and (p.numero_matriz not in ult_parto or d > ult_parto[p.numero_matriz]):
             ult_parto[p.numero_matriz] = d
+        if d and eh_parto_produtivo(p) and (p.numero_matriz not in ult_parto_produtivo or d > ult_parto_produtivo[p.numero_matriz]):
+            ult_parto_produtivo[p.numero_matriz] = d
     ult_secagem: dict[str, object] = {}
     for s in session.exec(query_secagem).all():
         d = s.data_secagem
         if d and (s.numero_matriz not in ult_secagem or d > ult_secagem[s.numero_matriz]):
             ult_secagem[s.numero_matriz] = d
 
+    # Produção AO VIVO de cada animal — mesma dupla de funções que o contexto
+    # de dieta já usa (ver docstring de `rules.producao_leiteira`): o
+    # ControleLeiteiro lançado pelo app quando existe, senão o campo
+    # congelado `ult_cl_kg` do CSV do Ideagri (aposentado). UMA consulta para
+    # o rebanho inteiro — não uma por animal, que a listagem completa tornaria
+    # proibitivo.
+    numeros = {a.numero for a in animais}
+    producao_ao_vivo = ultimo_controle_por_animal(session, numeros, fazenda_id)
+
     hoje = date.today()
+    # FONTE ÚNICA de "está em lactação" para as telas de lançamento (ver
+    # fazenda/rules/lactacao.py): a `Lactacao` aberta hoje. Substitui os dois
+    # critérios divergentes que o frontend usava — "o código do lote é
+    # 01/02/03" (FormControle) e "del_dias > 0" (campo congelado) —, sendo
+    # que o app de campo não filtrava nada e deixava lançar leite de bezerra.
+    lactacoes_abertas = lactacoes_abertas_por_matriz(session, numeros, data=hoje, fazenda_id=fazenda_id)
+
     saida = []
     for a in animais:
         d = a.model_dump()
         sp = ult_pos.get(a.numero)
         pp = ult_parto.get(a.numero)
+        pp_produtivo = ult_parto_produtivo.get(a.numero)
         sec = ult_secagem.get(a.numero)
+        lact = lactacoes_abertas.get(a.numero)
         d["data_ult_servico_pos"] = sp.isoformat() if sp else None
         d["data_ult_parto"] = pp.isoformat() if pp else None
-        d["del_dias"] = _del_dias_ao_vivo(d["del_dias"], pp, sec, hoje)
-        d["categoria_completa"], d["categoria_abrev"] = _categoria_ao_vivo(d["categoria_completa"], d["categoria_abrev"], pp, sec)
+        d["em_lactacao"] = lact is not None
+        d["lactacao_inicio"] = lact.data_inicio.isoformat() if lact else None
+        # DEL e categoria usam SÓ o parto produtivo (`pp_produtivo`), nunca o
+        # `pp` bruto: um aborto sem abertura de lactação não deve dar DEL
+        # nenhum nem virar novilha em vaca (matriz 108, relatado 30/05/2026).
+        d["del_dias"] = _del_dias_ao_vivo(d["del_dias"], pp_produtivo, sec, hoje)
+        if lact is not None:
+            # Com lactação materializada, o DEL sai dela — inclusive nos
+            # casos em que `_del_dias_ao_vivo` não tem o que responder
+            # (lactação aberta por aborto ou indução, que não têm parto
+            # produtivo por trás).
+            d["del_dias"] = (hoje - lact.data_inicio).days
+        d["categoria_completa"], d["categoria_abrev"] = _categoria_ao_vivo(d["categoria_completa"], d["categoria_abrev"], pp_produtivo, sec)
+        producao_kg, producao_data = com_fallback_animal(a.numero, producao_ao_vivo, a)
+        d["producao_kg"] = producao_kg
+        d["producao_data"] = producao_data.isoformat() if producao_data else None
+        if a.numero in producao_ao_vivo:
+            d["producao_origem"] = "controle"
+        elif producao_kg is not None:
+            # `is not None` e não truthiness: uma vaca com `ult_cl_kg` 0,0
+            # (registro do CSV de quem já estava seca) tem origem conhecida —
+            # é o campo congelado. Dizer `None` ali seria afirmar que não se
+            # sabe de onde veio o número, que é justamente o silêncio que
+            # esta etapa remove.
+            d["producao_origem"] = "congelado"
+        else:
+            d["producao_origem"] = None
         saida.append(d)
     saida.sort(key=lambda d: chave_numero(d["numero"]))
     return saida
@@ -162,9 +210,13 @@ def estratificacao_rebanho(
         query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
     partos_todos = session.exec(query_parto).all()
     servicos_todos = session.exec(query_servico).all()
+    # Só o parto PRODUTIVO decide se a fêmea vira "vaca" no gráfico: uma
+    # novilha cujo único `Parto` é um aborto sem abertura de lactação não
+    # pariu de verdade (ver fazenda.rules.parto) e deve continuar nos
+    # estratos de idade (aleitamento/recria/novilhas), não em vacas_*.
     ult_parto: dict[str, date] = {}
     for p in partos_todos:
-        if p.data_parto and (p.numero_matriz not in ult_parto or p.data_parto > ult_parto[p.numero_matriz]):
+        if p.data_parto and eh_parto_produtivo(p) and (p.numero_matriz not in ult_parto or p.data_parto > ult_parto[p.numero_matriz]):
             ult_parto[p.numero_matriz] = p.data_parto
     # Serviço vigente positivo por matriz — mesmo critério de listar_animais
     # acima (ver fazenda.rules.perda_prenhez): não conta uma prenhez já
@@ -305,15 +357,15 @@ def ficha_animal(
     produção, sanidade, movimentação de lote, compra/baixa e agenda. Serve
     tanto a tela de consulta quanto a exportação em PDF (por maior que fique).
 
-    Isolamento por fazenda: a busca do animal e as tabelas que já têm
-    `fazenda_id` (Servico, Parto, ColostragemBezerra, ProtocoloIatfAplicacao,
-    Sanidade, ProtocoloSanitarioLancamento, ExameResultado) são filtradas
-    abaixo. MovimentoLote, ControleLeiteiro, PesagemCorporal, QualidadeLeite,
-    Secagem, AgendaManual, BaixaAnimal, CompraAnimal, VendaAnimal e
-    OcorrenciaClinica AINDA NÃO têm a coluna — ficam sem filtro até os
-    domínios Lote/Produção/Recria/Sistema serem migrados (ver proposta de
-    separação fazenda/empresa, Parte 1.6) — não são um esquecimento, é uma
-    lacuna conhecida e documentada.
+    Isolamento por fazenda: toda tabela referenciada aqui por numero/
+    numero_matriz/numero_animal (texto, sem FK real — ver `_TABELAS_NUMERO_ANIMAL`
+    em cadastro/animais.py) é filtrada abaixo por `fazenda_id`, quando
+    resolvido. Isto passou a ser obrigatório (não só desejável) a partir de
+    `animal.numero` deixar de ser único no banco inteiro (migração
+    c24befa94c1b: unicidade composta `(fazenda_id, numero)`, feita para
+    permitir a Fazenda Teste replicar uma fazenda real com os MESMOS
+    números) — duas fazendas podem hoje ter, cada uma, um animal "100", e sem
+    o filtro esta ficha misturaria o histórico de ambas.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     query_animal = select(Animal).where(Animal.numero == numero)
@@ -330,17 +382,34 @@ def ficha_animal(
     if fazenda_id is not None:
         query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
     partos = session.exec(query_partos.order_by(Parto.data_parto)).all()
-    # Ordem de parto = posição cronológica (1º, 2º, 3º…). Quando a fonte não
-    # traz o número (ex.: animal com um único parto), deriva pela ordem da data
-    # — o primeiro parto é sempre "1", não fica em branco/zero. Exibida como
-    # "X de N" (N = total de partos do animal) para ficar claro de cara quantos
-    # partos o animal já teve ao todo.
-    total_partos = len(partos)
+    # Ordem de parto = SEMPRE a posição cronológica (1º, 2º, 3º…) dentro desta
+    # lista, já ordenada por data_parto — nunca o `Parto.ordem_parto` gravado
+    # no banco. Esse campo vem do import de CSV (ver parsers/reprodutivo.py) e
+    # pode chegar errado ou duplicado (ex.: dois partos do mesmo animal ambos
+    # com ordem_parto=1) — confiar nele aqui fazia a vaca aparecer com "1 de 2"
+    # duas vezes em vez de "1 de 2" e "2 de 2" (bug relatado para o animal 403).
+    # Exibida como "X de N" (N = total de partos do animal) para ficar claro
+    # de cara quantos partos o animal já teve ao todo.
+    # Abortos aparecem no histórico (são `Parto` desde o endpoint único de
+    # encerramento de gestação — ver fazenda/rules/parto.py) mas NÃO entram na
+    # contagem "X de N": não são cria. Sem esta separação, uma vaca de 3 crias
+    # com um aborto no meio viraria "4 de 4".
+    total_partos = sum(1 for p in partos if eh_parto_produtivo(p))
     partos_dump = []
-    for idx, p in enumerate(partos):
+    ordem_corrente = 0
+    for p in partos:
         d = p.model_dump()
-        ordem = d.get("ordem_parto") or (idx + 1)
-        d["ordem_parto"] = f"{ordem} de {total_partos}"
+        # Coluna auxiliar da tabela de Partos da Ficha ("Considerar ordem de
+        # parto/lactação?") — mesmo critério de `eh_parto_produtivo` usado
+        # acima para "X de N", exposto explicitamente por linha para quem
+        # olha o histórico bruto e quer saber, sem fazer conta, se ESTE
+        # evento específico contou ou não.
+        d["conta_ordem_parto_lactacao"] = eh_parto_produtivo(p)
+        if eh_parto_produtivo(p):
+            ordem_corrente += 1
+            d["ordem_parto"] = f"{ordem_corrente} de {total_partos}"
+        else:
+            d["ordem_parto"] = "—"
         partos_dump.append(d)
     query_servicos = select(Servico).where(Servico.numero_matriz == numero)
     if fazenda_id is not None:
@@ -383,9 +452,24 @@ def ficha_animal(
         # Servico.ordem_parto, que só é preenchido pelo import do CSV
         # REPRODUTIVO) para valer também para lançamentos manuais de IA.
         if s.data_servico:
-            d["ordem_parto_na_ia"] = sum(1 for p in partos if p.data_parto and p.data_parto < s.data_servico) + 1
+            ordem_alvo = sum(1 for p in partos if p.data_parto and p.data_parto < s.data_servico) + 1
         else:
-            d["ordem_parto_na_ia"] = None
+            ordem_alvo = None
+        d["ordem_parto_na_ia"] = ordem_alvo
+        # Parto que ESTE serviço deu origem, para a coluna "Parto" da tabela de
+        # Serviço/IA e diagnóstico: não há FK Servico→Parto no modelo, então
+        # usa a mesma ordem cronológica calculada acima — este serviço mira o
+        # parto que ocupa a posição `ordem_alvo` na lista de partos do animal
+        # (já ordenada por data). Só é preenchido quando o diagnóstico deste
+        # serviço é POSITIVO (regra do card "Parto" na ficha) — None tanto
+        # para diagnóstico não positivo quanto para o parto ainda não ter
+        # acontecido (frontend distingue "vazio" de "—" pelo próprio
+        # `diagnostico`, que já vai no dump).
+        diagnostico_positivo = (s.diagnostico or "").strip().upper() == "POSITIVO"
+        parto_alvo = (
+            partos[ordem_alvo - 1] if diagnostico_positivo and ordem_alvo and ordem_alvo <= total_partos else None
+        )
+        d["parto_resultante_data"] = parto_alvo.data_parto.isoformat() if parto_alvo and parto_alvo.data_parto else None
         servicos_dump.append(d)
 
     # Pai deste animal (nome de guerra + NAAB). Prioridade 1: cadastrado
@@ -443,10 +527,14 @@ def ficha_animal(
     aplicacoes_iatf = session.exec(query_protocolos_iatf.order_by(ProtocoloIatfAplicacao.data_prevista)).all()
     protocolos_iatf = _agrupar_protocolos_iatf(session, aplicacoes_iatf)
 
-    # MovimentoLote ainda não tem fazenda_id — ver nota no docstring da função.
-    movimentos_lote = session.exec(
-        select(MovimentoLote).where(MovimentoLote.numero_matriz == numero).order_by(MovimentoLote.data_movimento)
-    ).all()
+    # FURO DE MULTI-TENANT CORRIGIDO: MovimentoLote já tem fazenda_id (o
+    # comentário antigo dizia o contrário — ficou desatualizado); sem o
+    # filtro, numero colidindo com outra fazenda misturava movimentação de
+    # lote alheia na ficha.
+    query_movimentos_lote = select(MovimentoLote).where(MovimentoLote.numero_matriz == numero)
+    if fazenda_id is not None:
+        query_movimentos_lote = query_movimentos_lote.where(MovimentoLote.fazenda_id == fazenda_id)
+    movimentos_lote = session.exec(query_movimentos_lote.order_by(MovimentoLote.data_movimento)).all()
 
     query_colostragem = select(ColostragemBezerra).where(ColostragemBezerra.numero_animal == numero)
     if fazenda_id is not None:
@@ -545,19 +633,30 @@ def ficha_animal(
         if e.numero_animal and numero in [n.strip() for n in e.numero_animal.split(",")]
     ]
 
-    baixa = session.exec(select(BaixaAnimal).where(BaixaAnimal.numero_animal == numero)).first()
+    # FURO DE MULTI-TENANT CORRIGIDO: BaixaAnimal/CompraAnimal/VendaAnimal/
+    # OcorrenciaClinica já têm fazenda_id — sem filtrar, um numero colidindo
+    # com outra fazenda misturava baixa/compra/venda/ocorrência clínica
+    # ALHEIA na ficha (inclusive GTA e valor de compra/venda de terceiros).
+    query_baixa = select(BaixaAnimal).where(BaixaAnimal.numero_animal == numero)
+    query_compras = select(CompraAnimal).where(CompraAnimal.numero_animal == numero)
+    query_vendas = select(VendaAnimal).where(VendaAnimal.numero_animal == numero)
+    query_ocorrencias = select(OcorrenciaClinica).where(OcorrenciaClinica.numero_matriz == numero)
+    if fazenda_id is not None:
+        query_baixa = query_baixa.where(BaixaAnimal.fazenda_id == fazenda_id)
+        query_compras = query_compras.where(CompraAnimal.fazenda_id == fazenda_id)
+        query_vendas = query_vendas.where(VendaAnimal.fazenda_id == fazenda_id)
+        query_ocorrencias = query_ocorrencias.where(OcorrenciaClinica.fazenda_id == fazenda_id)
+    baixa = session.exec(query_baixa).first()
     # Rastreabilidade sanitária/GTA: TODAS as compras e vendas do animal (não só
     # a primeira) — um animal pode ter mais de uma GTA ao longo da vida (ex.:
     # comprado e, mais tarde, revendido). `compra` é mantido por compatibilidade
     # (primeira compra registrada); `compras`/`vendas` trazem a lista completa.
-    compras = session.exec(select(CompraAnimal).where(CompraAnimal.numero_animal == numero).order_by(CompraAnimal.data_compra)).all()
-    vendas = session.exec(select(VendaAnimal).where(VendaAnimal.numero_animal == numero).order_by(VendaAnimal.data_venda)).all()
+    compras = session.exec(query_compras.order_by(CompraAnimal.data_compra)).all()
+    vendas = session.exec(query_vendas.order_by(VendaAnimal.data_venda)).all()
     compra = compras[0] if compras else None
     gtas = sorted({c.gta for c in compras if c.gta} | {v.gta for v in vendas if v.gta})
 
-    ocorrencias_clinicas = session.exec(
-        select(OcorrenciaClinica).where(OcorrenciaClinica.numero_matriz == numero).order_by(OcorrenciaClinica.data_ocorrencia)
-    ).all()
+    ocorrencias_clinicas = session.exec(query_ocorrencias.order_by(OcorrenciaClinica.data_ocorrencia)).all()
 
     query_eventos_sanitarios = select(EventoSanitario)
     if fazenda_id is not None:
@@ -623,9 +722,20 @@ def ficha_animal(
     # usar o valor cru aqui fazia um animal recém-parido pelo app nunca
     # ganhar previsão de secagem, e um animal recém-secado pelo app nunca
     # perder a previsão (ver auditoria ago/2026).
+    # `ultimo_parto_data` (QUALQUER `Parto`, inclusive aborto sem lactação) só
+    # serve para decidir se uma gestação "acabou" — usado abaixo no filtro de
+    # `servicos_positivos` ("gestação em curso" é o serviço positivo posterior
+    # ao último fim de gestação, seja qual for o tipo). Já `del_dias_vivo` e a
+    # categoria ao vivo (mais abaixo) precisam do parto PRODUTIVO: um aborto
+    # sem abertura de lactação não é "esta matriz pariu", e não deve zerar/
+    # mover o DEL nem virar novilha em vaca (matriz 108, relatado 30/05/2026 —
+    # mesmo bug de `listar_animais`, ver `ult_parto_produtivo` lá).
     ultimo_parto_data = partos_dump[-1]["data_parto"] if partos_dump else None
+    ultimo_parto_produtivo_data = next(
+        (p["data_parto"] for p in reversed(partos_dump) if p["conta_ordem_parto_lactacao"]), None,
+    )
     ultima_secagem_data = secagens[-1].data_secagem if secagens else None
-    del_dias_vivo = _del_dias_ao_vivo(animal.del_dias, ultimo_parto_data, ultima_secagem_data, date.today())
+    del_dias_vivo = _del_dias_ao_vivo(animal.del_dias, ultimo_parto_produtivo_data, ultima_secagem_data, date.today())
 
     # Previsão de parto / secagem: gestação em curso = último serviço positivo
     # (sem perda registrada) posterior ao último parto — mesma regra usada nas
@@ -649,10 +759,11 @@ def ficha_animal(
             previsao_secagem = concepcao + timedelta(days=gestacao_do_animal - seco)
             # Atraso implausível (parto/secagem que não foi lançado a tempo,
             # ver LIMITE_SECAGEM_RETROATIVA_DIAS) — mostra a data em que
-            # deveria ter secado (60 dias antes do último parto) em vez da
-            # projeção de gestação, sem seguir cobrando retroativo.
-            if (date.today() - previsao_secagem).days > LIMITE_SECAGEM_RETROATIVA_DIAS and ultimo_parto_data:
-                previsao_secagem = ultimo_parto_data - timedelta(days=seco)
+            # deveria ter secado (60 dias antes do último parto PRODUTIVO,
+            # que é quem abriu a lactação em aberto) em vez da projeção de
+            # gestação, sem seguir cobrando retroativo.
+            if (date.today() - previsao_secagem).days > LIMITE_SECAGEM_RETROATIVA_DIAS and ultimo_parto_produtivo_data:
+                previsao_secagem = ultimo_parto_produtivo_data - timedelta(days=seco)
 
     # Card "Precisão de parto": só existe com gestação em aberto (mesma
     # condição de `servicos_positivos` acima — último serviço com diagnóstico
@@ -674,8 +785,53 @@ def ficha_animal(
     animal_dump = animal.model_dump()
     animal_dump["del_dias"] = del_dias_vivo
     animal_dump["categoria_completa"], animal_dump["categoria_abrev"] = _categoria_ao_vivo(
-        animal_dump["categoria_completa"], animal_dump["categoria_abrev"], ultimo_parto_data, ultima_secagem_data,
+        animal_dump["categoria_completa"], animal_dump["categoria_abrev"], ultimo_parto_produtivo_data, ultima_secagem_data,
     )
+
+    # Mãe: prioridade 1 é o cadastro manual (Animal.mae_numero, preenchido em
+    # Configurações > Cadastro > Animal); fallback é o vínculo real de
+    # parentesco — o Parto que lista este animal como cria (`parto_como_cria`,
+    # já buscado acima para achar o pai) tem `numero_matriz`, que É a mãe. Sem
+    # este fallback, um animal nascido de um Parto lançado no sistema (sem
+    # ninguém preencher o cadastro manual depois) nunca mostrava a mãe na
+    # ficha — nem na versão de mesa, nem no app de campo — apesar do vínculo
+    # já existir nos dados.
+    if not animal_dump.get("mae_numero") and parto_como_cria:
+        animal_dump["mae_numero"] = parto_como_cria.numero_matriz
+        if not animal_dump.get("mae_nome"):
+            query_mae = select(Animal).where(Animal.numero == parto_como_cria.numero_matriz)
+            if fazenda_id is not None:
+                query_mae = query_mae.where(Animal.fazenda_id == fazenda_id)
+            mae_animal = session.exec(query_mae).first()
+            if mae_animal and mae_animal.nome:
+                animal_dump["mae_nome"] = mae_animal.nome
+
+    # Quadro "por parto" — o que se quer ver "se fosse comprar este animal":
+    # produção, duração da lactação, tentativas de emprenhar e DEL de
+    # concepção, por lactação (ver fazenda.rules.parto_resumo).
+    # Só partos PRODUTIVOS: o quadro numera as lactações por posição na lista
+    # (1ª, 2ª, 3ª…), então incluir um aborto deslocaria a numeração de todas
+    # as lactações seguintes da matriz.
+    resumo_partos = resumo_por_parto(
+        [
+            {
+                "data_parto": p.data_parto,
+                "tipo_parto": p.tipo_parto,
+                "numero_cria_1": p.numero_cria_1,
+                "numero_cria_2": p.numero_cria_2,
+                "gemelar": p.gemelar,
+            }
+            for p in partos if eh_parto_produtivo(p)
+        ],
+        [{"data_controle": c.data_controle, "producao_kg": c.producao_kg} for c in controles_leiteiros],
+        [{"data_secagem": s.data_secagem} for s in secagens],
+        [{"data_servico": s.data_servico, "diagnostico": s.diagnostico, "ordem_tentativa": s.ordem_tentativa} for s in servicos],
+    )
+    # "Última cria" da Ficha (área de identificação) — o campo `cria` do
+    # último parto produtivo, mesma regra do quadro (S/N sem número lançado,
+    # vazio se natimorto). Derivado daqui em vez de recalculado no frontend
+    # para não duplicar a lógica em dois lugares (desktop e mobile).
+    ultima_cria = resumo_partos[-1]["cria"] if resumo_partos else ""
 
     return {
         "animal": animal_dump,
@@ -684,6 +840,8 @@ def ficha_animal(
         "previsao_secagem": previsao_secagem,
         "precisao_parto": precisao_parto,
         "partos": partos_dump,
+        "resumo_partos": resumo_partos,
+        "ultima_cria": ultima_cria,
         "servicos": servicos_dump,
         # Já vem agrupado por protocolo (dicts prontos), não passa por _dump.
         "protocolos_iatf": protocolos_iatf,
@@ -706,4 +864,124 @@ def ficha_animal(
         "ocorrencias_clinicas": _dump(ocorrencias_clinicas),
         "exames_resultados": exames_resultados,
         "linha_tempo_sanitaria": linha_tempo_sanitaria,
+        # Curva média do rebanho por faixa de DEL — é a referência que a
+        # "Curva de lactação" da ficha desenha por trás dos pontos do animal,
+        # para responder "esta vaca está acima ou abaixo do padrão da casa?".
+        # Reusa `rules.producao.calcular_producao`, o mesmo cálculo da tela de
+        # Produção, em vez de inventar um modelo teórico à parte.
+        "curva_referencia_rebanho": _curva_referencia_rebanho(session, fazenda_id),
+        # Curva de Wood ajustada aos pontos REAIS deste animal (ver
+        # fazenda.rules.curva_wood) — trajetória esperada da lactação DELE,
+        # e projeção da cauda quando a lactação ainda está em aberto. None
+        # quando não há controle leiteiro suficiente para um ajuste com
+        # sentido (ver PONTOS_MINIMOS_AJUSTE no módulo).
+        "curva_wood": _curva_wood_do_animal(controles_leiteiros),
+        # Referência mais fina que `curva_referencia_rebanho`: só vacas na
+        # MESMA ordem de parto do animal (ex.: só outras de 3ª cria), não o
+        # rebanho inteiro. None quando o próprio animal nunca pariu ou não
+        # há outras vacas no mesmo grupo com controle suficiente.
+        "curva_referencia_grupo_ordem_parto": _curva_referencia_grupo_ordem_parto(
+            session, fazenda_id, total_partos,
+        ),
     }
+
+
+def _curva_wood_do_animal(controles_leiteiros) -> list[dict] | None:
+    """Extrai (DEL, kg) dos controles leiteiros do animal e ajusta a curva de
+    Wood (ver fazenda.rules.curva_wood.ajustar_curva_wood). Devolve só a
+    série de pontos prontos para desenhar — a/b/c ficam internos ao módulo de
+    regras, não fazem parte do contrato da ficha."""
+    from fazenda.rules.curva_wood import ajustar_curva_wood
+
+    pontos = [
+        (c.del_no_controle, c.producao_kg) for c in controles_leiteiros
+        if c.del_no_controle is not None and c.producao_kg is not None
+    ]
+    ajuste = ajustar_curva_wood(pontos)
+    return ajuste["pontos"] if ajuste else None
+
+
+def _curva_referencia_grupo_ordem_parto(
+    session: Session, fazenda_id: int | None, ordem_parto_animal: int,
+) -> list[dict] | None:
+    """Produção média por faixa de DEL, só de vacas na MESMA ordem de parto
+    do animal em questão — recorte mais fino que `_curva_referencia_rebanho`,
+    que mistura primípara com vaca de 5ª cria. Mesmo cálculo de
+    `rules.producao.calcular_producao`, aplicado a um subconjunto de
+    controles.
+
+    A ordem de parto de CADA controle é a posição cronológica (1º, 2º, 3º…)
+    do parto produtivo mais recente até a data daquele controle — mesmo
+    critério de `total_partos`/`ordem_parto` usado no resto desta ficha (ver
+    docstring de `ficha_animal`), não o campo `Parto.ordem_parto` gravado no
+    banco (pode vir errado do CSV). Um controle anterior a qualquer parto do
+    seu animal (ordem 0) fica sem ordem de parto conhecida e é EXCLUÍDO do
+    agrupamento — não entra por engano no grupo de primípara.
+
+    None quando o próprio animal nunca teve parto produtivo (sem ordem_parto
+    para comparar) ou quando não sobra nenhum controle de outra vaca no
+    mesmo grupo.
+    """
+    if not ordem_parto_animal:
+        return None
+
+    from fazenda.rules.parto import eh_parto_produtivo
+    from fazenda.rules.producao import calcular_producao
+
+    query_partos = select(Parto)
+    query_controles = select(ControleLeiteiro)
+    if fazenda_id is not None:
+        query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
+        query_controles = query_controles.where(ControleLeiteiro.fazenda_id == fazenda_id)
+
+    partos_produtivos_por_matriz: dict[str, list[date]] = {}
+    for p in session.exec(query_partos).all():
+        if eh_parto_produtivo(p) and p.data_parto:
+            partos_produtivos_por_matriz.setdefault(p.numero_matriz, []).append(p.data_parto)
+    for datas in partos_produtivos_por_matriz.values():
+        datas.sort()
+
+    controles_do_grupo = []
+    for c in session.exec(query_controles).all():
+        if not c.data_controle:
+            continue
+        datas_parto = partos_produtivos_por_matriz.get(c.numero_matriz)
+        if not datas_parto:
+            continue  # animal sem ordem de parto conhecida — fora do agrupamento
+        ordem_no_controle = sum(1 for d in datas_parto if d <= c.data_controle)
+        if ordem_no_controle == 0 or ordem_no_controle != ordem_parto_animal:
+            continue
+        controles_do_grupo.append({
+            "numero_matriz": c.numero_matriz,
+            "data_controle": c.data_controle,
+            "producao_kg": c.producao_kg,
+            "del_no_controle": c.del_no_controle,
+        })
+
+    if not controles_do_grupo:
+        return None
+    curva = calcular_producao(controles_do_grupo)["curva_lactacao"]
+    return curva or None
+
+
+def _curva_referencia_rebanho(session: Session, fazenda_id: int | None) -> list[dict]:
+    """Produção média do rebanho por faixa de DEL (0-30, 31-60, ...).
+
+    Vazia quando ainda não há controle leiteiro suficiente — a ficha
+    simplesmente não desenha a linha de referência nesse caso.
+    """
+    from fazenda.rules.producao import calcular_producao
+
+    query = select(ControleLeiteiro)
+    if fazenda_id is not None:
+        query = query.where(ControleLeiteiro.fazenda_id == fazenda_id)
+    controles = [
+        {
+            "numero_matriz": c.numero_matriz,
+            "data_controle": c.data_controle,
+            "producao_kg": c.producao_kg,
+            "del_no_controle": c.del_no_controle,
+        }
+        for c in session.exec(query).all()
+    ]
+    return calcular_producao(controles)["curva_lactacao"]

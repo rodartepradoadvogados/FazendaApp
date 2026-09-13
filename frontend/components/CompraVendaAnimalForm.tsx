@@ -6,7 +6,7 @@ import {
   criarCompraAnimal, criarVendaAnimal, fetchComprasAnimais, fetchVendasAnimais,
   ehAdmin, formatBRL,
 } from "@/lib/api";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { SeletorContaGerencial } from "./SeletorContaGerencial";
 import { AnimalPickerModal } from "./AnimalPickerModal";
@@ -41,7 +41,15 @@ type Registro = {
   gta?: string | null;
 };
 
-export default function CompraVendaAnimalForm({ modo, animais }: { modo: "compra" | "venda"; animais: AnimalRow[] }) {
+type DadosCompraAnimal = Parameters<typeof criarCompraAnimal>[0];
+type DadosVendaAnimal = Parameters<typeof criarVendaAnimal>[0];
+type SalvarCompraAnimal = (dados: DadosCompraAnimal) => Promise<{ comprados?: number; enviado?: boolean } | any>;
+type SalvarVendaAnimal = (dados: DadosVendaAnimal) => Promise<{ vendidos?: number; enviado?: boolean } | any>;
+
+export default function CompraVendaAnimalForm({ modo, animais, salvarCompra = criarCompraAnimal, salvarVenda = criarVendaAnimal }: {
+  modo: "compra" | "venda"; animais: AnimalRow[];
+  salvarCompra?: SalvarCompraAnimal; salvarVenda?: SalvarVendaAnimal;
+}) {
   const ehCompra = modo === "compra";
   const tipoFinanceiro: "despesa" | "receita" = ehCompra ? "despesa" : "receita";
   const prefixosConta = ehCompra ? PREFIXOS_COMPRA : PREFIXOS_VENDA;
@@ -59,6 +67,7 @@ export default function CompraVendaAnimalForm({ modo, animais }: { modo: "compra
   const [valor, setValor] = useState("");
   const [tipoValor, setTipoValor] = useState("por_animal");
   const [responsavel, setResponsavel] = useState("");
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [observacao, setObservacao] = useState("");
 
   // Motivo(s)/categoria(s) — só na venda.
@@ -207,21 +216,25 @@ export default function CompraVendaAnimalForm({ modo, animais }: { modo: "compra
     setSalvando(true);
     try {
       const r = ehCompra
-        ? await criarCompraAnimal({
+        ? await salvarCompra({
             ...camposComuns, animais: Array.from(animaisSel), vendedor: contraparte.trim(),
             valor: valorNum, tipo_valor: tipoValor, data_compra: data,
             observacao: observacao || undefined, responsavel: responsavel || undefined,
             data_prevista_entrada: dataPrevista || undefined,
           })
-        : await criarVendaAnimal({
+        : await salvarVenda({
             ...camposComuns, animais: Array.from(animaisSel), comprador: contraparte.trim(),
             valor: valorNum, tipo_valor: tipoValor, data_venda: data,
             observacao: observacao || undefined, responsavel: responsavel || undefined,
             categorias: Array.from(categoriasSel), motivo_venda: motivoVenda || undefined,
             data_prevista_saida: dataPrevista || undefined,
           });
-      const n = ehCompra ? (r as any).comprados : (r as any).vendidos;
-      setMsg({ tipo: "sucesso", texto: `${n} animal(is) registrado(s) como ${ehCompra ? "comprado(s)" : "vendido(s)"}.` });
+      if ((r as any)?.enviado === false) {
+        setMsg({ tipo: "sucesso", texto: `${quantidade} animal(is) guardado(s) — será enviado quando conectar.` });
+      } else {
+        const n = ehCompra ? (r as any).comprados : (r as any).vendidos;
+        setMsg({ tipo: "sucesso", texto: `${n} animal(is) registrado(s) como ${ehCompra ? "comprado(s)" : "vendido(s)"}.` });
+      }
       limpar();
       carregar();
     } catch (e: any) {
@@ -348,7 +361,7 @@ export default function CompraVendaAnimalForm({ modo, animais }: { modo: "compra
           <Campo label="Responsável pelo lançamento">
             <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
               <option value="">Selecione...</option>
-              {RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}
+              {nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}
             </select>
           </Campo>
           <Campo label="Tipo de documento">

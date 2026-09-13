@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, Lote, PesagemCorporal, Sanidade, Secagem, Servico
+from fazenda.models import Animal, Lote, Parto, PesagemCorporal, Sanidade, Secagem, Servico
 
 
 @pytest.fixture
@@ -159,6 +159,54 @@ class TestPreviewCriterios(object):
         assert r.json()["animais"] == ["3"]
 
 
+class TestParaJaResolvePreParto(object):
+    """Vaca 3335 pariu, mas o serviço positivo antigo continuava contando
+    "dias para o parto"/"Pré-parto" — no dia seguinte ao parto, o sistema
+    sugeria "faltam 2 dias para o parto", o que é logicamente impossível
+    (ver fazenda.rules.lote_criterios._ultimo_servico_positivo)."""
+
+    def _seed(self, engine, dias_desde_o_parto: int):
+        hoje = date.today()
+        from fazenda.rules.gestation import dias_gestacao
+        gestacao = round(dias_gestacao(None))
+        # Serviço datado para que, SEM considerar o parto, "faltariam 2 dias
+        # para o parto" hoje — exatamente o cenário relatado.
+        data_servico = hoje - timedelta(days=gestacao - 2)
+        with Session(engine) as s:
+            s.add(Animal(numero="3335", categoria_completa="Vaca em lactação", categoria_abrev="Vaca",
+                         sit_rep="Ges.", diagnostico="POSITIVO", data_nasc=hoje - timedelta(days=1500), ativo=True))
+            s.commit()
+            s.add(Servico(numero_matriz="3335", data_servico=data_servico, diagnostico="POSITIVO"))
+            s.add(Parto(numero_matriz="3335", data_parto=hoje - timedelta(days=dias_desde_o_parto)))
+            s.commit()
+
+    def test_pre_parto_nao_bate_no_dia_seguinte_ao_parto_real(self, client):
+        c, engine = client
+        self._seed(engine, dias_desde_o_parto=1)
+        r = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "pre_parto": True})
+        assert r.json()["animais"] == []
+
+    def test_faixa_dias_para_parto_nao_bate_apos_parto_real(self, client):
+        c, engine = client
+        self._seed(engine, dias_desde_o_parto=1)
+        r = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "dias_para_parto_min": 0, "dias_para_parto_max": 10})
+        assert r.json()["animais"] == []
+
+    def test_sem_parto_o_pre_parto_continua_batendo_normalmente(self, client):
+        c, engine = client
+        hoje = date.today()
+        from fazenda.rules.gestation import dias_gestacao
+        gestacao = round(dias_gestacao(None))
+        with Session(engine) as s:
+            s.add(Animal(numero="3335", categoria_completa="Vaca em lactação", categoria_abrev="Vaca",
+                         sit_rep="Ges.", diagnostico="POSITIVO", data_nasc=hoje - timedelta(days=1500), ativo=True))
+            s.commit()
+            s.add(Servico(numero_matriz="3335", data_servico=hoje - timedelta(days=gestacao - 2), diagnostico="POSITIVO"))
+            s.commit()
+        r = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "pre_parto": True})
+        assert r.json()["animais"] == ["3335"]
+
+
 class TestCamposGeradoresVsRestritivos(object):
     """Só os campos "geradores" (faixas numéricas, situação produtiva/reprodutiva)
     fazem um lote entrar na sugestão automática (`GET /movimentacoes/sugestoes`).
@@ -236,3 +284,91 @@ class TestCamposGeradoresVsRestritivos(object):
         motivo = r.json()["sugestoes"][0]["motivo"]
         assert "Dias pós-parto" in motivo
         assert "Categoria" not in motivo
+
+
+class TestSituacaoReprodutivaAoVivo:
+    """`lote.situacao_reprodutiva` (prenha/inseminada/vazia) seguia o
+    `sit_rep` congelado do último GERAL.csv — corrigido para ler o estado
+    reprodutivo AO VIVO (estado_reprodutivo.classificar_animal, dentro de
+    recria._contexto_categoria), a mesma fonte usada nas listas de Rebanho,
+    na Agenda e nos relatórios gerenciais."""
+
+    def test_engravidou_pelo_app_csv_ainda_diz_vazia(self, client):
+        c, engine = client
+        hoje = date.today()
+        with Session(engine) as s:
+            # sit_rep congelado ainda diz "vazia" (o CSV não foi reimportado
+            # desde a inseminação), mas o serviço lançado pelo próprio app
+            # já confirma a prenhez.
+            s.add(Animal(numero="10", categoria_completa="Vaca", categoria_abrev="Vaca",
+                         sit_rep="Vaz. atr.", data_nasc=hoje - timedelta(days=1800), ativo=True))
+            s.add(Parto(numero_matriz="10", data_parto=hoje - timedelta(days=300)))
+            s.add(Servico(numero_matriz="10", data_servico=hoje - timedelta(days=60), diagnostico="POSITIVO"))
+            s.commit()
+        r = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "situacao_reprodutiva": "prenha"})
+        assert r.json()["animais"] == ["10"]
+        # E ela NÃO deve mais casar com "vazia" (o critério antigo, lendo
+        # sit_rep, casaria — era exatamente esse o furo).
+        r2 = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "situacao_reprodutiva": "vazia"})
+        assert r2.json()["animais"] == []
+
+    def test_pariu_pelo_app_csv_ainda_diz_gestante(self, client):
+        c, engine = client
+        hoje = date.today()
+        with Session(engine) as s:
+            # sit_rep congelado ainda diz "Ges." — mas ela já pariu, e o
+            # parto já passou do PEV padrão (45 dias): está livre pra novo
+            # serviço, "vazia" ao vivo, não mais "prenha".
+            s.add(Animal(numero="11", categoria_completa="Vaca", categoria_abrev="Vaca",
+                         sit_rep="Ges.", data_nasc=hoje - timedelta(days=1800), ativo=True))
+            s.add(Servico(numero_matriz="11", data_servico=hoje - timedelta(days=340), diagnostico="POSITIVO"))
+            s.add(Parto(numero_matriz="11", data_parto=hoje - timedelta(days=60)))
+            s.commit()
+        r = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "situacao_reprodutiva": "vazia"})
+        assert r.json()["animais"] == ["11"]
+        r2 = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "situacao_reprodutiva": "prenha"})
+        assert r2.json()["animais"] == []
+
+
+class TestLoteVaziaAtrasada:
+    """A novilha nulípara em atraso passou a sair de
+    `recria._situacao_reprodutiva_3` como "vazia_atrasada" (antes: "vazia").
+    RETROCOMPATIBILIDADE: o lote já cadastrado com "vazia" tem que continuar
+    casando com ela — este é o ponto que garante que nenhum lote existente
+    muda de comportamento."""
+
+    def _seed(self, engine):
+        hoje = date.today()
+        with Session(engine) as s:
+            # Novilha de 26 meses, nunca servida: passou do teto de idade
+            # para a 1ª cobertura (16 meses) -> ATRASADA -> "vazia_atrasada".
+            s.add(Animal(numero="20", categoria_completa="Novilha", categoria_abrev="Novilha",
+                         data_nasc=hoje - timedelta(days=790), ativo=True))
+            # Novilha de 15,5 meses: apta e dentro do prazo -> "vazia".
+            s.add(Animal(numero="21", categoria_completa="Novilha", categoria_abrev="Novilha",
+                         data_nasc=hoje - timedelta(days=472), ativo=True))
+            s.commit()
+
+    def test_lote_configurado_com_vazia_continua_pegando_a_atrasada(self, client):
+        c, engine = client
+        self._seed(engine)
+        r = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "situacao_reprodutiva": "vazia"})
+        assert sorted(r.json()["animais"]) == ["20", "21"]
+
+    def test_lote_configurado_com_vazia_atrasada_pega_so_a_atrasada(self, client):
+        c, engine = client
+        self._seed(engine)
+        r = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "situacao_reprodutiva": "vazia_atrasada"})
+        assert r.json()["animais"] == ["20"]
+
+    def test_vazia_atrasada_nao_pega_prenha_nem_inseminada(self, client):
+        c, engine = client
+        hoje = date.today()
+        self._seed(engine)
+        with Session(engine) as s:
+            s.add(Animal(numero="22", categoria_completa="Novilha", categoria_abrev="Novilha",
+                         data_nasc=hoje - timedelta(days=790), ativo=True))
+            s.add(Servico(numero_matriz="22", data_servico=hoje - timedelta(days=10)))
+            s.commit()
+        r = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "situacao_reprodutiva": "vazia_atrasada"})
+        assert r.json()["animais"] == ["20"]

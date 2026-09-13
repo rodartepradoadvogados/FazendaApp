@@ -4,11 +4,18 @@ dimensões usadas nos dashboards (concepção/perda por categoria, raça, ordem
 de parto/tentativa, condição de IA, inseminador, mês, DEL no serviço).
 
 O front consome esses registros e fatia/agrega conforme os filtros escolhidos.
-Métrica central: TAXA DE CONCEPÇÃO = positivos / serviços diagnosticados.
+Métrica central: TAXA DE CONCEPÇÃO = positivos / serviços com resultado
+conhecido (regra R7 — ver `fazenda.rules.programa_reprodutivo`), não mais
+"positivos / diagnosticados": serviço antigo que ninguém diagnosticou conta
+como fracasso, não some da conta.
 """
 from __future__ import annotations
 
-from datetime import date
+from calendar import monthrange
+from collections import defaultdict
+from datetime import date, timedelta
+
+from fazenda.rules.programa_reprodutivo import DIAS_RESULTADO_CONHECIDO_PADRAO, conta_em_taxa
 
 
 def _del_servico(data_servico, data_ult_parto) -> int | None:
@@ -45,12 +52,17 @@ def analisar_servicos(servicos: list[dict]) -> list[dict]:
         mes = f"{ds.year}-{ds.month:02d}" if isinstance(ds, date) else None
         dpp = s.get("data_perda_prenhez")
         mes_perda = f"{dpp.year}-{dpp.month:02d}" if isinstance(dpp, date) else None
+        dn = s.get("data_nasc_matriz")
 
         registros.append({
             "id": s.get("id"),
             "numero": s.get("numero_matriz"),
             "raca": s.get("raca_matriz") or "(sem raça)",
             "categoria": s.get("categoria") or "(sem categoria)",
+            # Ano de nascimento da MATRIZ (não do serviço) — usado como filtro
+            # da "prova ao vivo" (Estoque de Sêmen > Prova média), ver
+            # `prova_ao_vivo_por_touro` abaixo.
+            "ano_nascimento": dn.year if isinstance(dn, date) else None,
             "ordem_parto": s.get("ordem_parto"),
             "ordem_tentativa": s.get("ordem_tentativa"),
             "tipo_servico": s.get("tipo_servico") or "(sem tipo)",
@@ -66,6 +78,11 @@ def analisar_servicos(servicos: list[dict]) -> list[dict]:
             "ano": ano,
             "mes": mes,
             "data": ds.isoformat() if isinstance(ds, date) else None,
+            # Cru (não string), ao contrário de "data" acima — é o nome de
+            # campo que `programa_reprodutivo.conta_em_taxa` espera (R7);
+            # `agregar_mensal` reusa a regra em vez de reimplementar a janela
+            # dos 28 dias.
+            "data_servico": ds if isinstance(ds, date) else None,
             "del_servico": _del_servico(ds, s.get("data_ult_parto")),
             "diagnostico": diag,
             # "reinseminacao" = o sistema concluiu que não pegou porque veio
@@ -96,9 +113,11 @@ def analisar_servicos(servicos: list[dict]) -> list[dict]:
 # reprodutiva (cruzamento de métricas por mês/ano). Cada série é uma lista
 # alinhada 1:1 com a lista de meses retornada.
 # ---------------------------------------------------------------------------
-def agregar_mensal(registros: list[dict], secagens: list[dict], controles: list[dict]) -> dict:
-    from collections import defaultdict
-
+def agregar_mensal(
+    registros: list[dict], secagens: list[dict], controles: list[dict], *,
+    hoje: date | None = None, dias_resultado: int = DIAS_RESULTADO_CONHECIDO_PADRAO,
+) -> dict:
+    hoje = hoje or date.today()
     meses: set[str] = set()
     por_mes_servico: dict[str, list[dict]] = defaultdict(list)
     for r in registros:
@@ -143,10 +162,43 @@ def agregar_mensal(registros: list[dict], secagens: list[dict], controles: list[
             return round(sum(vals) / len(vals), 1) if vals else None
         return _por_mes(f)
 
+    # "Há IA posterior para este animal?" — mesma aproximação já usada em
+    # `indicadores._repro_benchmark`: a existência de QUALQUER serviço mais
+    # recente do mesmo animal, sem recortar por lactação. Esta camada só
+    # enxerga serviços achatados (sem Parto), então não tem como reproduzir
+    # `programa_reprodutivo.tem_reinseminacao_posterior` inteira — que exige o
+    # perfil completo do animal para não confundir uma IA de lactação
+    # seguinte com uma reinseminação da mesma tentativa. Na prática o efeito
+    # de não recortar é pequeno: só adia por alguns dias, quando muito, a
+    # entrada de um serviço já fadado ao fracasso — não muda a taxa final.
+    ultimas_datas: dict[str, date] = {}
+    for r in registros:
+        n, d = r.get("numero"), r.get("data_servico")
+        if n and d and (n not in ultimas_datas or d > ultimas_datas[n]):
+            ultimas_datas[n] = d
+
     def _taxa_concepcao(regs):
-        diag = sum(1 for r in regs if r["diagnosticado"])
-        pos = sum(1 for r in regs if r["positivo"])
-        return round(100 * pos / diag, 1) if diag else None
+        """R7 — só entra no denominador o serviço cujo desfecho já pode ser
+        conhecido: 28 dias corridos (`dias_resultado`), DG lançado, perda de
+        prenhez registrada, ou reinseminação posterior que prova a falha.
+        Usa `conta_em_taxa`, a mesma porta de `_repro_benchmark` e dos ciclos
+        de 21 dias — antes o denominador era só "diagnosticado", e o serviço
+        antigo que ninguém diagnosticou simplesmente sumia da conta em vez de
+        contar como fracasso.
+        """
+        contam = []
+        for r in regs:
+            d = r["data_servico"]
+            if d is None:
+                continue
+            posterior = bool((ultima := ultimas_datas.get(r["numero"])) and ultima > d)
+            servico = {"data_servico": d, "diagnostico": r["diagnostico"], "data_perda_prenhez": r["data_perda"]}
+            if conta_em_taxa(servico, hoje, servico_posterior=posterior, dias=dias_resultado):
+                contam.append(r)
+        if not contam:
+            return None
+        pos = sum(1 for r in contam if r["positivo"])
+        return round(100 * pos / len(contam), 1)
 
     def _delta(serie):
         if not serie:
@@ -183,4 +235,18 @@ def agregar_mensal(registros: list[dict], secagens: list[dict], controles: list[
     series["variacao_del"] = _delta(del_medio)
     series["variacao_producao_leite"] = _delta(producao_leite)
 
-    return {"meses": meses_ordenados, "series": series}
+    # Mesmo padrão de `ResultadoCiclo.janela_dg_completa`: um mês só está
+    # "fechado" quando TODOS os seus serviços já passaram os `dias_resultado`
+    # dias — na prática, quando o fim do mês + a janela já ficou no passado.
+    # Sem isto, o mês corrente (quase sem diagnóstico ainda, por definição)
+    # entra na série de concepção como se fosse um mês maduro, e quem compara
+    # a série (`manual_fazenda._insights`) enxerga uma "queda" que é só falta
+    # de tempo — não piora de manejo.
+    def _mes_completo(m: str) -> bool:
+        ano, mes = (int(x) for x in m.split("-"))
+        fim_do_mes = date(ano, mes, monthrange(ano, mes)[1])
+        return fim_do_mes + timedelta(days=dias_resultado) <= hoje
+
+    janela_dg_completa = [_mes_completo(m) for m in meses_ordenados]
+
+    return {"meses": meses_ordenados, "series": series, "janela_dg_completa": janela_dg_completa}

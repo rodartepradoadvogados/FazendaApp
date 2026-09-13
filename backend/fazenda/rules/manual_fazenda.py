@@ -20,13 +20,15 @@ from datetime import date, datetime, timedelta
 from sqlmodel import Session, select
 
 from fazenda.models import (
-    Animal, ControleLeiteiro, Estoque, Parto, ParametroManualFazenda,
+    Animal, ControleLeiteiro, Estoque, Fazenda, Parto, ParametroManualFazenda,
     ProtocoloSanitarioAplicacao, ProtocoloSanitarioLancamento, ProtocoloSanitario,
     Sanidade, Secagem, Servico, SugestaoManualFazenda, Usuario, UsuarioFazenda,
 )
 from fazenda.rules.email import enviar_email
 from fazenda.rules.indicadores import calcular_indicadores
-from fazenda.rules.parametros import bst_ajuste_ancora_data, intervalo_bst, intervalo_visita_reprodutiva
+from fazenda.rules.parametros import (
+    bst_ajuste_ancora_data, dias_resultado_conhecido, intervalo_bst, intervalo_visita_reprodutiva,
+)
 from fazenda.rules.reproducao_analise import agregar_mensal, analisar_servicos
 
 MARCADORES_BST = re.compile(r"\b(lactotropi[nm]|boostin|bst|somatotropina)\b", re.IGNORECASE)
@@ -40,6 +42,15 @@ METRICAS_INSIGHT = [
     ("num_secagens", "Produção", "Secagens", ""),
     ("del_medio", "Produção", "DEL médio", "d"),
 ]
+
+# Subconjunto de METRICAS_INSIGHT cujo valor mensal depende de diagnóstico
+# (regra R7 — ver `agregar_mensal.janela_dg_completa`). Só "taxa_concepcao" se
+# encaixa: é positivos/serviços-com-resultado-conhecido, então o mês corrente
+# — cujos serviços recentes majoritariamente ainda não têm 28 dias nem DG —
+# fica com uma amostra pequena e enviesada. As demais (produção, perdas já
+# registradas, secagens, DEL) não esperam diagnóstico nenhum e não devem
+# perder o mês corrente da comparação.
+METRICAS_DEPENDEM_DE_DG = frozenset({"taxa_concepcao"})
 
 
 def parametro_manual(session: Session, fazenda_id: int | None) -> ParametroManualFazenda:
@@ -146,16 +157,25 @@ def _insights(session: Session, fazenda_id: int | None) -> list[dict]:
     registros = analisar_servicos(servicos)
     secagens = [s.model_dump() for s in session.exec(select(Secagem)).all()]
     controles = [c.model_dump() for c in session.exec(select(ControleLeiteiro)).all()]
-    agregado = agregar_mensal(registros, secagens, controles)
+    agregado = agregar_mensal(registros, secagens, controles, dias_resultado=dias_resultado_conhecido())
     meses = agregado["meses"]
     if len(meses) < 2:
         return []
+    janela_dg_completa = agregado["janela_dg_completa"]
     janela = min(3, len(meses) // 2) or 1
     insights = []
     for chave, categoria, label, unidade in METRICAS_INSIGHT:
         serie = agregado["series"].get(chave, [])
-        recentes = [v for v in serie[-janela:] if v is not None]
-        anteriores = [v for v in serie[-2 * janela:-janela] if v is not None]
+        # Métrica que depende de diagnóstico descarta o mês com janela de DG
+        # aberta das duas janelas de comparação — senão o mês corrente (quase
+        # sem diagnóstico, por definição) inventa uma "queda" que é só falta
+        # de tempo. As demais métricas comparam todos os meses normalmente.
+        completos = janela_dg_completa if chave in METRICAS_DEPENDEM_DE_DG else [True] * len(meses)
+        recentes = [v for v, completo in zip(serie[-janela:], completos[-janela:]) if v is not None and completo]
+        anteriores = [
+            v for v, completo in zip(serie[-2 * janela:-janela], completos[-2 * janela:-janela])
+            if v is not None and completo
+        ]
         if not recentes or not anteriores:
             continue
         media_recente = sum(recentes) / len(recentes)
@@ -224,7 +244,20 @@ def montar_manual(session: Session, fazenda_id: int | None) -> dict:
     animais = [a.model_dump() for a in session.exec(query_animais).all() if not a.eh_semen and a.sexo != "M"]
     servicos = [s.model_dump() for s in session.exec(query_servicos).all()]
     partos = [p.model_dump() for p in session.exec(query_partos).all()]
-    indicadores = calcular_indicadores(animais, servicos, partos, data_ref=hoje)
+    # Controles/secagens — sem eles, o texto do Manual sobre produção saía
+    # só de `Animal.ult_cl_kg` (campo congelado do CSV do Ideagri aposentado)
+    # e o "DEL médio" citado usava o DEL congelado em vez do ao vivo. Mesmo
+    # filtro de fazenda_id que o resto desta função já usa.
+    query_controles = select(ControleLeiteiro)
+    query_secagens = select(Secagem)
+    if fazenda_id is not None:
+        query_controles = query_controles.where(ControleLeiteiro.fazenda_id == fazenda_id)
+        query_secagens = query_secagens.where(Secagem.fazenda_id == fazenda_id)
+    controles = [c.model_dump() for c in session.exec(query_controles).all()]
+    secagens = [s.model_dump() for s in session.exec(query_secagens).all()]
+    indicadores = calcular_indicadores(
+        animais, servicos, partos, data_ref=hoje, controles=controles, secagens=secagens,
+    )
 
     rotina = {
         "bst": _rotina_bst(session, fazenda_id, hoje),
@@ -268,10 +301,19 @@ def montar_manual(session: Session, fazenda_id: int | None) -> dict:
 
 def emails_administradores_fazenda(session: Session, fazenda_id: int | None) -> list[str]:
     """E-mails dos administradores da fazenda (papel="admin", ativo, com
-    e-mail cadastrado) — destinatários do envio semanal. Com fazenda_id
-    definido, restringe aos vinculados via UsuarioFazenda; sem ele (piloto
-    conservador de multi-fazenda, mesma regra do resto do sistema), pega
-    todos os admins ativos com e-mail."""
+    e-mail cadastrado) — destinatários do envio semanal.
+
+    Com fazenda_id definido, restringe aos vinculados ÀQUELA fazenda via
+    UsuarioFazenda: admin de outra fazenda nunca entra na lista.
+
+    Com fazenda_id NULO devolve todo admin ativo com e-mail, e isso só é
+    seguro em INSTALAÇÃO DE FAZENDA ÚNICA (tabela `fazenda` vazia), onde
+    "todos os admins" e "os admins desta fazenda" são o mesmo conjunto. Num
+    banco com duas fazendas-cliente esse ramo VAZA — manda o PDF de uma
+    fazenda para os admins da outra, por e-mail, para fora do sistema, sem
+    desfazer. Por isso quem chama de fundo é
+    `enviar_manual_semanal_todas_fazendas`, que só passa None quando o
+    multi-fazenda não está provisionado; nenhum caminho novo deve passar."""
     query = select(Usuario).where(Usuario.papel == "admin", Usuario.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query = query.join(UsuarioFazenda, UsuarioFazenda.usuario_id == Usuario.id).where(
@@ -327,3 +369,68 @@ def enviar_manual_semanal_se_necessario(session: Session, fazenda_id: int | None
         return True
     except Exception:  # noqa: BLE001 — nunca deixa o loop de fundo cair por causa do envio
         return False
+
+
+def fazendas_do_envio_semanal(session: Session) -> list[int | None]:
+    """As fazendas alvo do envio semanal do Manual — uma entrada por envio.
+
+    Só fazendas-CLIENTE ATIVAS. Descarta as duas que não são cliente, mesmo
+    critério de `_fazenda_cliente_unica()` na migração a4f8c1d92e07:
+      • `eh_empresa_cowdata` — a fazenda "lógica" da própria CowData;
+      • `eh_teste` — a sandbox de demonstração, que vive no MESMO banco de
+        produção. A sandbox não pode disparar e-mail para ninguém: e-mail sai
+        do sistema e não volta atrás.
+    E descarta também a fazenda DESATIVADA (`ativa = False`): cliente que saiu
+    continua com a linha no cadastro (o histórico não é apagado) e, se o
+    parâmetro dele tiver ficado ligado, seguia recebendo o PDF semanal por
+    e-mail toda segunda — dado da fazenda saindo do sistema para quem já não é
+    mais cliente, sem desfazer. Desativar a fazenda tem que calar o envio.
+
+    Instalação de FAZENDA ÚNICA (tabela `fazenda` vazia — ambiente anterior ao
+    multi-fazenda, e a suíte de testes que não monta o cenário) devolve
+    [None]: ali, e só ali, `fazenda_id = None` quer dizer "esta instalação",
+    não "todas as fazendas". É a mesma leitura que
+    `auth.resolver_fazenda_id_escrita` usa para decidir se o multi-fazenda
+    está de fato provisionado.
+    """
+    if session.exec(select(Fazenda.id).limit(1)).first() is None:
+        return [None]
+    return list(session.exec(
+        select(Fazenda.id)
+        .where(
+            Fazenda.eh_empresa_cowdata == False,  # noqa: E712
+            Fazenda.eh_teste == False,  # noqa: E712
+            Fazenda.ativa == True,  # noqa: E712
+        )
+        .order_by(Fazenda.id)
+    ).all())
+
+
+def enviar_manual_semanal_todas_fazendas(session: Session, agora: datetime | None = None) -> list[int | None]:
+    """Ponto de entrada do loop de fundo (ver main.py): percorre as
+    fazendas-cliente e manda UM Manual POR FAZENDA, cada um com o recorte da
+    sua — conteúdo e destinatários. Devolve os ids que efetivamente enviaram
+    nesta passada (lista vazia é o normal fora de segunda-feira de manhã).
+
+    Antes, o loop chamava `enviar_manual_semanal_se_necessario(session)` sem
+    fazenda nenhuma: com `fazenda_id = None` o manual saía sem recorte e ia
+    para TODOS os admins ativos de TODAS as fazendas. Com uma segunda
+    fazenda-cliente isso seria vazamento por e-mail, para fora do sistema e
+    sem desfazer — daí o recorte morar aqui, no laço, e não na disciplina de
+    quem chama.
+
+    Uma fazenda que falha não pode calar as outras: o envio em si já é
+    protegido dentro de `enviar_manual_semanal_se_necessario`, mas a leitura
+    do parâmetro e dos destinatários (antes do try de lá) não é, e um erro de
+    banco numa fazenda derrubaria a passada inteira — as fazendas seguintes
+    ficariam sem manual. O `rollback` é para a transação quebrada de uma não
+    contaminar a próxima, que reusa a mesma sessão.
+    """
+    enviadas: list[int | None] = []
+    for fazenda_id in fazendas_do_envio_semanal(session):
+        try:
+            if enviar_manual_semanal_se_necessario(session, fazenda_id, agora):
+                enviadas.append(fazenda_id)
+        except Exception:  # noqa: BLE001 — uma fazenda com problema não impede as demais
+            session.rollback()
+    return enviadas

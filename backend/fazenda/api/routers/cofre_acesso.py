@@ -219,6 +219,11 @@ def aprovar_pedido(pedido_id: int, user: Usuario = Depends(exigir_area_painel_co
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
     if pedido.status != "aguardando_aprovacao":
         raise HTTPException(status_code=400, detail="Este pedido já foi decidido")
+    # Maker-checker: quem pediu o acesso não pode aprovar o próprio pedido
+    # (mesmo tendo a área "cofre" liberada) — só importa hoje quando
+    # Fazenda.exige_aprovacao_suporte=True (ver docstring acima).
+    if pedido.usuario_id == user.id:
+        raise HTTPException(status_code=403, detail="Você não pode aprovar seu próprio pedido de acesso")
     pedido.status = "aprovado"
     pedido.aprovado_por_usuario_id = user.id
     pedido.decidido_em = datetime.utcnow()

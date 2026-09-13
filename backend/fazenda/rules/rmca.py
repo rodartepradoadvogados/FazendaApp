@@ -33,10 +33,31 @@ def calcular_custo_fisico(movimentos: list[dict], estoque_por_nome: dict[str, di
         inicio = (estoque or {}).get("data_inicio_controle")
         if inicio and m.get("data_movimento") and m["data_movimento"] < inicio:
             continue
-        preco = (estoque or {}).get("valor_unitario") or 0
+        # Preço da ÉPOCA (snapshot gravado no próprio MovimentoEstoque, ver
+        # rules/estoque_baixa.py) — sem ele, todo o histórico era multiplicado
+        # pelo preço ATUAL do item, reescrevendo retroativamente o custo de
+        # meses cujo preço já mudou. `None` só em movimentos anteriores à
+        # existência desta coluna; cai no preço atual como aproximação.
+        preco = m.get("valor_unitario")
+        if preco is None:
+            preco = (estoque or {}).get("valor_unitario") or 0
         quantidade = m["quantidade"] or 0
-        acc = itens.setdefault(m["nome_item"], {"ingrediente": m["nome_item"], "quantidade": 0.0, "valor_unitario": preco, "custo": 0.0})
-        acc["quantidade"] = round(acc["quantidade"] + quantidade, 2)
-        acc["custo"] = round(acc["custo"] + quantidade * preco, 2)
+        acc = itens.setdefault(m["nome_item"], {
+            "ingrediente": m["nome_item"], "quantidade": 0.0, "valor_unitario": preco, "custo": 0.0,
+            # Id + unidade do item de Estoque — usados pelo Simulador de
+            # cenários do RMCA (ver GET /financeiro/rmca) pra resolver preço
+            # por kg (padrão do cadastro / última compra) na mesma conversão
+            # kg↔unidade já usada na baixa da Alimentação.
+            "estoque_id": (estoque or {}).get("id"), "unidade": (estoque or {}).get("unidade"),
+        })
+        # Acumula em ponto flutuante cheio — arredondar a cada iteração
+        # (round dentro do loop) compunha um erro pequeno a cada movimento
+        # somado, que crescia com a quantidade de lançamentos no período.
+        # Só arredonda o total final de cada ingrediente, uma vez.
+        acc["quantidade"] += quantidade
+        acc["custo"] += quantidade * preco
+    for acc in itens.values():
+        acc["quantidade"] = round(acc["quantidade"], 2)
+        acc["custo"] = round(acc["custo"], 2)
     custo_total = round(sum(i["custo"] for i in itens.values()), 2)
     return {"custo_total": custo_total, "itens": sorted(itens.values(), key=lambda x: -x["custo"])}

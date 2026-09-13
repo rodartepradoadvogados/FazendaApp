@@ -1,6 +1,15 @@
 // Funções de comunicação com o backend FastAPI
 export const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// Mesmo gerador de `lib/offline.ts::gerarId` (não importado de lá pra evitar
+// import circular — offline.ts já importa authFetch daqui). Usado só pelo
+// header Idempotency-Key em POST/PUT sensíveis a duplo clique/retry de rede
+// (ver main.py::_idempotencia) — não crypto.randomUUID() porque WebView
+// Android desatualizado (uso rural comum) pode não ter a API.
+function gerarChaveIdempotencia(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 /**
  * Extrai uma mensagem legível do `detail` de um erro da API.
  *
@@ -31,7 +40,70 @@ export function mensagemErroApi(detail: unknown): string | null {
   if (detail && typeof detail === "object" && "msg" in (detail as any)) {
     return String((detail as any).msg);
   }
+  // Os 409 de confirmação do módulo de RH (vale acima do pendente, pagamento
+  // de diária acima do saldo devedor) mandam o texto em `mensagem`, junto dos
+  // números que o aviso precisa mostrar. Sem esta linha o aviso caía no
+  // genérico "Erro ao lançar vale" — a trava funcionava e a pessoa não
+  // entendia por quê.
+  if (detail && typeof detail === "object" && "mensagem" in (detail as any)) {
+    return String((detail as any).mensagem);
+  }
   return null;
+}
+
+/**
+ * Erro de API que preserva o `detail` estruturado do backend.
+ *
+ * Nasceu para as travas de aptidão (`POST /reproducao/servico` e irmãos) e de
+ * lactação aberta (`POST /producao/controles`): as duas devolvem 409 com um
+ * objeto `{erro, msg, motivo, confirmavel, …}`, e a tela precisa saber se
+ * aquele bloqueio específico admite um "confirmar mesmo assim" (`forcar`) ou
+ * se é definitivo. Um `Error` com só a mensagem obrigaria a tela a adivinhar
+ * isso lendo o texto.
+ *
+ * `message` continua sendo a mensagem legível de sempre, então quem só faz
+ * `catch (e) { setErro(e.message) }` não muda em nada.
+ */
+/** O formato do `detail` que as travas devolvem no 409. */
+type DetalheBloqueio = {
+  motivo?: string | null; confirmavel?: boolean; erro?: string | null;
+  secagem_anterior?: { id: number; data_secagem: string; motivo: string } | null;
+};
+
+export class ErroApi extends Error {
+  status: number;
+  detalhe: unknown;
+  constructor(mensagem: string, status: number, detalhe: unknown) {
+    super(mensagem);
+    this.name = "ErroApi";
+    this.status = status;
+    this.detalhe = detalhe;
+  }
+  /** O `detail` quando ele é o objeto estruturado de bloqueio; senão `null`. */
+  private get bloqueio(): DetalheBloqueio | null {
+    return this.detalhe && typeof this.detalhe === "object" ? (this.detalhe as DetalheBloqueio) : null;
+  }
+  /** Código do motivo do bloqueio (ex.: "idade", "gestante", "sem_pesagem"). */
+  get motivo(): string | null {
+    return this.bloqueio?.motivo ?? null;
+  }
+  /** True quando reenviar com `forcar: true` destrava (bloqueio limítrofe, não erro grave). */
+  get confirmavel(): boolean {
+    return !!this.bloqueio?.confirmavel;
+  }
+  /** A secagem que já fechou a lactação, quando o bloqueio é
+   * "sem_lactacao_aberta" no lançamento de Secagem (ver `POST
+   * /producao/secagem`) — a tela usa isto pra oferecer "substituir a data
+   * desta secagem" em vez de só mostrar a mensagem de erro. */
+  get secagemAnterior(): { id: number; data_secagem: string; motivo: string } | null {
+    return this.bloqueio?.erro === "sem_lactacao_aberta" ? (this.bloqueio?.secagem_anterior ?? null) : null;
+  }
+}
+
+/** Lê o corpo do erro e devolve um `ErroApi` com o `detail` preservado. */
+export async function erroDaResposta(res: Response, padrao: string): Promise<ErroApi> {
+  const d: { detail?: unknown } = await res.json().catch(() => ({}));
+  return new ErroApi(mensagemErroApi(d?.detail) || padrao, res.status, d?.detail);
 }
 
 // ── Autenticação ──
@@ -69,10 +141,27 @@ export type FazendaAtual = {
   // esconder o que a fazenda não comprou. `undefined` (resposta antiga em
   // cache) não filtra nada; lista vazia É uma restrição de verdade.
   modulos_contratados?: string[];
+  // Fazenda-sandbox (ex.: "Fazenda Teste", cópia da fazenda real Jairo
+  // Nasser — ver ehFazendaTeste() abaixo e FazendaTesteBanner.tsx). Ausente
+  // em respostas antigas do backend (rollout em andamento noutra frente) —
+  // tratado como `false`, nunca como "não sei": mostrar a tarja errado por
+  // padrão seria pior que não mostrar, mas o inverso (deixar de mostrar
+  // numa fazenda de teste de verdade) é o risco que este campo existe pra
+  // evitar, então o dia em que o backend passar a mandá-lo, a tarja aparece
+  // sozinha sem precisar tocar neste arquivo de novo.
+  eh_teste?: boolean;
 };
 export function getFazendaAtual(): FazendaAtual | null {
   if (typeof window === "undefined") return null;
   try { return JSON.parse(localStorage.getItem("fazenda_atual") || "null"); } catch { return null; }
+}
+// A fazenda ATUAL (não uma fazenda qualquer da lista) é o sandbox de testes?
+// Único ponto de leitura de `eh_teste` — FazendaTesteBanner.tsx e qualquer
+// outra tela que precise saber usam esta função, nunca o campo cru, para o
+// default "ausente = false" (ver comentário em FazendaAtual acima) valer em
+// todo lugar de uma vez só.
+export function ehFazendaTeste(): boolean {
+  return getFazendaAtual()?.eh_teste === true;
 }
 export function logout() {
   if (typeof window !== "undefined") {
@@ -88,7 +177,7 @@ export function logout() {
       limparSessaoNativa();
     }).catch(() => {});
     localStorage.removeItem("token"); localStorage.removeItem("usuario"); localStorage.removeItem("fazenda_atual");
-    localStorage.removeItem("manter_conectado"); localStorage.removeItem("modo_suporte");
+    localStorage.removeItem("manter_conectado"); localStorage.removeItem("modo_suporte"); localStorage.removeItem("conta_ativa");
     location.href = "/login";
   }
 }
@@ -96,6 +185,7 @@ export function logout() {
 export const ROTA_MODULO: Record<string, string> = {
   "/": "capa", "/indicadores": "indicadores", "/agenda": "agenda", "/lancamentos": "lancamentos", "/protocolos": "lancamentos",
   "/reproducao": "reproducao", "/analise-reprodutiva": "analise", "/relatorios": "reproducao", "/rebanho": "rebanho",
+  "/ciclos-21-dias": "reproducao",
   "/producao": "producao", "/alimentacao": "alimentacao", "/sanidade": "sanidade", "/recria": "recria",
   "/financeiro": "financeiro", "/estoque": "estoque", "/pedidos": "pedidos", "/parametros": "parametros", "/upload": "upload",
   "/analise-relatorios": "indicadores",
@@ -222,6 +312,15 @@ function moduloContratadoDireto(chaveComercial: string): boolean {
   if (lista == null) return true;
   return lista.includes(chaveComercial);
 }
+// A FAZENDA contratou o módulo à-la-carte Formulação de Dietas? Diferente de
+// podeFormularDietas() (que também exige ser dono/consultor CowData — eixo
+// de acesso ao PORTAL de autoria /dietas): esta função só checa o módulo,
+// para telas de uso comum (ex.: Alimentação > lançar dieta) que precisam
+// saber se "importar dieta formulada" deve aparecer, sem restringir por
+// quem pode CRIAR simulações.
+export function moduloFormulacaoDietasAtivo(): boolean {
+  return moduloContratadoDireto("formulacao_dietas");
+}
 // "Contratante-administrador": quem pode ver Configurações > Auditoria
 // CowData (auditoria de acessos de suporte + Confiança e LGPD) — dono
 // sempre pode; senão precisa ser admin desta fazenda E o vínculo
@@ -270,7 +369,13 @@ export async function fetchAuditoriaAtividades(params: { usuario_id: number; dat
 }
 export async function criarUsuario(dados: {
   username: string; senha: string; papel: string; permissoes: string[]; email?: string; pode_publicar_materias_blog?: boolean;
-  pessoa_id?: number; nome?: string; // uma das duas: pessoa_id (fazenda) ou nome (conta sem fazenda, ex.: equipe CowData)
+  // `pessoa_id` é o caminho: todo login nasce de uma pessoa já cadastrada
+  // DENTRO de uma fazenda, e o backend cria o vínculo usuário↔fazenda no mesmo
+  // commit (ver backend auth.py::_fazenda_do_novo_usuario — fazenda → pessoa →
+  // usuário, sempre nessa ordem). `nome` livre, sem pessoa, é recusado com 400
+  // em qualquer instalação com fazenda cadastrada; a equipe da própria CowData
+  // tem tela própria (Painel CowData > Equipe), não passa por aqui.
+  pessoa_id?: number; nome?: string;
 }) {
   const res = await fetch(`${API}/auth/usuarios`, {
     method: "POST", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
@@ -302,6 +407,15 @@ export async function login(username: string, senha: string, manterConectado = f
   localStorage.setItem("usuario", JSON.stringify(data.usuario));
   if (data.fazenda_atual) localStorage.setItem("fazenda_atual", JSON.stringify(data.fazenda_atual));
   else localStorage.removeItem("fazenda_atual");
+  // "conta_ativa" (ver getContaAtivaId, abaixo) alimenta a tela-eixo de
+  // troca de conta (EscolherConta.tsx) — só sabe marcar "Você está aqui" em
+  // cima de uma escolha de verdade já feita. Login com auto-seleção (0 ou 1
+  // fazenda vinculada, sem a opção Painel CowData) já conta como escolha
+  // feita; quando o login devolve selecao_fazenda_necessaria, ainda não há
+  // nada pra marcar até a escolha de verdade (ver selecionarFazenda/
+  // entrarPainelCowData, mais abaixo).
+  if (data.fazenda_atual) localStorage.setItem("conta_ativa", String(data.fazenda_atual.id));
+  else localStorage.removeItem("conta_ativa");
   // Login de verdade encerra qualquer marcador de modo suporte de uma sessão
   // anterior — nunca deve sobreviver a um novo login.
   localStorage.removeItem("modo_suporte");
@@ -314,7 +428,7 @@ export async function login(username: string, senha: string, manterConectado = f
   // faz nada. Best-effort, sem aguardar: não pode atrasar o login.
   if (manterConectado) {
     import("@/lib/nativo")
-      .then(({ salvarSessaoNativa }) => salvarSessaoNativa(data.token, data.usuario, data.fazenda_atual || null))
+      .then(({ salvarSessaoNativa }) => salvarSessaoNativa(data.token, data.usuario, data.fazenda_atual || null, data.fazenda_atual ? String(data.fazenda_atual.id) : null))
       .catch(() => {});
   }
   // Paleta salva no cadastro do usuário tem prioridade sobre o que já estava no navegador.
@@ -338,13 +452,15 @@ export async function selecionarFazenda(fazendaId: number): Promise<FazendaAtual
   const data = await res.json();
   localStorage.setItem("token", data.token);
   localStorage.setItem("fazenda_atual", JSON.stringify(data.fazenda_atual));
+  // Ver comentário em login() — esta É a escolha de verdade que faltava.
+  localStorage.setItem("conta_ativa", String(data.fazenda_atual.id));
   // Escolher a fazenda DIRETO (administrador) nunca carrega modo suporte.
   localStorage.removeItem("modo_suporte");
   // Mantém a cópia nativa sincronizada com o token novo (o backend reemite o
   // token ao trocar de fazenda) — mesma lógica de login(), ver lib/nativo.ts.
   if (manterConectadoAtivo()) {
     import("@/lib/nativo")
-      .then(({ salvarSessaoNativa }) => salvarSessaoNativa(data.token, getUsuario(), data.fazenda_atual))
+      .then(({ salvarSessaoNativa }) => salvarSessaoNativa(data.token, getUsuario(), data.fazenda_atual, String(data.fazenda_atual.id)))
       .catch(() => {});
   }
   return data.fazenda_atual;
@@ -354,6 +470,70 @@ export async function fetchMinhasFazendas(): Promise<FazendaAtual[]> {
   const res = await authFetch(`${API}/fazendas/minhas`);
   if (!res.ok) throw new Error(`Fazendas error: ${res.status}`);
   return res.json();
+}
+
+// ── Tela-eixo de troca de conta (ver components/EscolherConta.tsx e
+// app/escolher-conta/page.tsx) ──
+
+// Conta ativa neste aparelho AGORA — gravada a cada escolha de verdade (ver
+// login/selecionarFazenda/entrarPainelCowData, acima e abaixo): 0 = Painel
+// CowData, id>0 = a fazenda, null = nenhuma escolha feita ainda (janela
+// entre o login e a tela de escolha, quando há mais de um acesso). Único
+// ponto de leitura — EscolherConta.tsx usa isto pra saber qual opção
+// mostrar esmaecida com "Você está aqui"; sem essa marcação a pessoa clica
+// na própria conta achando que trocou, e nada acontece.
+export function getContaAtivaId(): number | null {
+  if (typeof window === "undefined") return null;
+  const v = localStorage.getItem("conta_ativa");
+  return v == null ? null : Number(v);
+}
+
+// Mesma lista (e o MESMO critério) que POST /auth/login devolve em
+// "fazendas_disponiveis" — só que chamável a qualquer momento depois do
+// login (ver GET /auth/contas-disponiveis no backend). Devolve a lista
+// mesmo com 0 ou 1 opção: quem decide se vale a pena perguntar (> 1) é
+// quem chama (AuthShell só pergunta sozinho ao abrir o app quando há
+// escolha de verdade; o menu "Trocar de conta" pergunta sempre).
+export async function fetchContasDisponiveis(): Promise<FazendaAtual[]> {
+  const res = await authFetch(`${API}/auth/contas-disponiveis`);
+  if (!res.ok) throw new Error(`Contas disponíveis error: ${res.status}`);
+  const data = await res.json();
+  return data.opcoes as FazendaAtual[];
+}
+
+// Reemite o token do usuário SEM a claim "fid" — o formato que o Painel
+// CowData espera (ver backend/fazenda/auth.py::get_fazenda_atual_id).
+// Necessário quando quem JÁ entrou numa fazenda (token com fid) pede para
+// trocar para o Painel CowData: diferente da entrada logo após o login
+// (onde o token que POST /auth/login emitiu já não tem fid, ver
+// app/login/page.tsx), o token atual aqui tem fid gravado e não serve
+// (ver POST /auth/entrar-painel-cowdata no backend — RESTRITO a
+// dono-equivalente/Equipe CowData; nunca confiar só na UI escondendo a
+// opção, o 403 de lá é a trava de verdade).
+export async function entrarPainelCowData(): Promise<void> {
+  const res = await authFetch(`${API}/auth/entrar-painel-cowdata`, { method: "POST" });
+  if (!res.ok) throw await erroDaResposta(res, "Não foi possível entrar no Painel CowData");
+  const data = await res.json();
+  localStorage.setItem("token", data.token);
+  // Painel CowData nunca tem fazenda selecionada (token sem fid, ver acima).
+  localStorage.removeItem("fazenda_atual");
+  localStorage.setItem("conta_ativa", "0");
+  localStorage.removeItem("modo_suporte");
+  if (manterConectadoAtivo()) {
+    import("@/lib/nativo")
+      .then(({ salvarSessaoNativa }) => salvarSessaoNativa(data.token, getUsuario(), null, "0"))
+      .catch(() => {});
+  }
+}
+
+// Ação de escolha na tela-eixo (EscolherConta.tsx / app/escolher-conta) —
+// único ponto que sabe a diferença entre "escolheu uma fazenda de verdade"
+// (POST /auth/selecionar-fazenda) e "escolheu o Painel CowData" (token sem
+// fid, ver entrarPainelCowData acima); quem chama só decide para onde
+// navegar depois.
+export async function escolherConta(opcao: FazendaAtual): Promise<void> {
+  if (opcao.cowdata) { await entrarPainelCowData(); return; }
+  await selecionarFazenda(opcao.id);
 }
 
 // ── Planos comerciais e contrato por fazenda (Fase 2A, dono only) ──
@@ -558,12 +738,16 @@ export const fetchConsultoresCowData = (): Promise<ConsultorCowData[]> => _pcGet
 
 // Login + permissões de um membro no próprio Painel CowData (ago/2026) —
 // ver AREAS_PAINEL_COWDATA no backend. Restrito ao dono (não ao membro logado).
-export const AREAS_PAINEL_COWDATA = ["cockpit", "assinaturas", "fazendas", "financeiro", "equipe", "produto", "cofre", "confianca", "cadastros"] as const;
+export const AREAS_PAINEL_COWDATA = ["cockpit", "assinaturas", "fazendas", "financeiro", "equipe", "produto", "cofre", "confianca", "cadastros", "farmacia"] as const;
 export type AreaPainelCowData = typeof AREAS_PAINEL_COWDATA[number];
 export const LABEL_AREA_PAINEL_COWDATA: Record<AreaPainelCowData, string> = {
   cockpit: "Cockpit", assinaturas: "Assinaturas", fazendas: "Fazendas", financeiro: "Financeiro",
   equipe: "Equipe", produto: "Produtos e robôs", cofre: "Cofre de acesso (Suporte)", confianca: "Confiança e LGPD",
   cadastros: "Cadastros globais",
+  // "farmacia" existe em AREAS_PAINEL_COWDATA (backend) desde que
+  // painel_cowdata_farmacia.py nasceu, mas faltava aqui — sem ela o dono não
+  // tinha como conceder a área e todo membro batia em 403 na Farmácia.
+  farmacia: "Farmácia CowData",
 };
 // Nível de sigilo (#132) — quanto de uma fazenda-cliente este membro enxerga
 // numa sessão de suporte (Cofre de acesso), eixo à parte de "áreas" (o que
@@ -588,6 +772,12 @@ export type UsuarioEquipeCowData = {
   pode_suspender_assinatura: boolean; pode_acessar_fazendas: boolean; pode_alterar_cadastro: boolean;
   pode_modificar_suspender_plano: boolean; pode_emitir_auditar_contratos: boolean; pode_emitir_cobrancas: boolean;
   pode_vincular_usuarios: boolean; pode_cadastrar_usuarios: boolean;
+  // Sete permissões de EDIÇÃO no próprio Painel CowData (set/2026) — ver
+  // PERMISSOES_EDICAO_PAINEL_COWDATA no backend. Consulta continua vindo da
+  // área; estas só liberam a escrita.
+  pode_editar_cadastros_globais: boolean; pode_editar_touros_naab: boolean; pode_editar_farmacia: boolean;
+  pode_consultar_usuarios: boolean; pode_editar_usuarios: boolean; pode_controlar_acesso_usuarios: boolean;
+  pode_editar_news: boolean;
 };
 export type UsuarioEquipeCowDataIn = {
   username: string; email: string; senha?: string | null; ativo?: boolean; areas: string[];
@@ -595,7 +785,44 @@ export type UsuarioEquipeCowDataIn = {
   pode_suspender_assinatura?: boolean; pode_acessar_fazendas?: boolean; pode_alterar_cadastro?: boolean;
   pode_modificar_suspender_plano?: boolean; pode_emitir_auditar_contratos?: boolean; pode_emitir_cobrancas?: boolean;
   pode_vincular_usuarios?: boolean; pode_cadastrar_usuarios?: boolean;
+  pode_editar_cadastros_globais?: boolean; pode_editar_touros_naab?: boolean; pode_editar_farmacia?: boolean;
+  pode_consultar_usuarios?: boolean; pode_editar_usuarios?: boolean; pode_controlar_acesso_usuarios?: boolean;
+  pode_editar_news?: boolean;
 };
+// As sete permissões de EDIÇÃO no Painel CowData, na ordem em que o dono as
+// pediu. `livre` marca aquelas cujo CONSULTAR não depende de permissão
+// nenhuma — a tela precisa dizer isso em voz alta para ninguém achar que
+// desmarcar a caixa esconde a informação.
+export type CampoPermissaoEdicaoCowData =
+  | "pode_editar_cadastros_globais" | "pode_editar_touros_naab" | "pode_editar_farmacia"
+  | "pode_consultar_usuarios" | "pode_editar_usuarios" | "pode_controlar_acesso_usuarios"
+  | "pode_editar_news";
+export const PERMISSOES_EDICAO_PAINEL_COWDATA: {
+  campo: CampoPermissaoEdicaoCowData; rotulo: string; ajuda: string; consultaLivre: boolean;
+}[] = [
+  { campo: "pode_editar_cadastros_globais", rotulo: "Pode editar cadastros globais?",
+    ajuda: "Aplicar, renomear e desativar motivos, raças, grau de sangue, unidades de estoque e tipos/métodos reprodutivos nas fazendas-cliente.",
+    consultaLivre: true },
+  { campo: "pode_editar_touros_naab", rotulo: "Pode editar touros NAAB?",
+    ajuda: "Cadastrar, editar, excluir, recarregar o catálogo padrão e importar a planilha do fornecedor. O catálogo é o mesmo para todas as fazendas.",
+    consultaLivre: true },
+  { campo: "pode_editar_farmacia", rotulo: "Pode editar a Farmácia CowData?",
+    ajuda: "Criar e alterar categorias, princípios ativos e medicamentos do catálogo central, e propagá-los para as fazendas-cliente.",
+    consultaLivre: true },
+  { campo: "pode_consultar_usuarios", rotulo: "Pode consultar usuários das fazendas-cliente?",
+    ajuda: "Ver a lista de pessoas e de logins de cada fazenda-cliente na tela Usuários.",
+    consultaLivre: false },
+  { campo: "pode_editar_usuarios", rotulo: "Pode editar usuários das fazendas-cliente?",
+    ajuda: "Criar um login e alterar login/e-mail de quem já existe.",
+    consultaLivre: false },
+  { campo: "pode_controlar_acesso_usuarios", rotulo: "Pode controlar o acesso desses usuários?",
+    ajuda: "Definir senha, papel, permissões de módulo e situação (ativo/inativo) — é o que decide quem entra e até onde vai. Vale também na criação do login.",
+    consultaLivre: false },
+  { campo: "pode_editar_news", rotulo: "Pode editar News?",
+    ajuda: "Publicar, editar, excluir e revisar matérias do blog, e gerenciar as fotos delas.",
+    consultaLivre: false },
+];
+
 export const fetchUsuarioEquipeCowData = (pessoaId: number): Promise<UsuarioEquipeCowData | null> => _pcGet(`/equipe/pessoas/${pessoaId}/usuario`);
 export const criarUsuarioEquipeCowData = (pessoaId: number, d: UsuarioEquipeCowDataIn): Promise<UsuarioEquipeCowData> =>
   _pcSend(`/equipe/pessoas/${pessoaId}/usuario`, "POST", d);
@@ -721,6 +948,11 @@ export type PedidoAcessoSuporte = {
   // carimbado nesse token, calculado a partir de PermissaoEquipeCowData de
   // quem pediu.
   token?: string; sessao_id?: number; sessao_expira_em?: string; nivel_sigilo?: NivelSigiloEquipeCowData;
+  // Entrar em modo suporte também pode cair numa fazenda de teste (ex.:
+  // suporte testando algo na Fazenda Teste) — propagado para FazendaAtual em
+  // entrarComoSuporte() abaixo, mesma regra de "ausente = false" do campo em
+  // FazendaAtual.
+  eh_teste?: boolean;
 };
 export type SessaoAcessoSuporte = {
   id: number; protocolo: string | null; fazenda_id: number; fazenda_nome: string; usuario_id: number; membro_nome: string | null;
@@ -796,7 +1028,7 @@ export async function entrarComoSuporte(
     throw new Error("Pedido enviado, mas aguardando aprovação — essa fazenda exige aprovação prévia de acesso de suporte.");
   }
   localStorage.setItem("token", pedido.token);
-  const fazendaAtual: FazendaAtual = { id: pedido.fazenda_id, nome: pedido.fazenda_nome, modulos_contratados: pedido.modulos_contratados };
+  const fazendaAtual: FazendaAtual = { id: pedido.fazenda_id, nome: pedido.fazenda_nome, modulos_contratados: pedido.modulos_contratados, eh_teste: pedido.eh_teste };
   localStorage.setItem("fazenda_atual", JSON.stringify(fazendaAtual));
   const membroNome = getUsuario()?.nome || getUsuario()?.username || "Equipe CowData";
   localStorage.setItem("modo_suporte", JSON.stringify({
@@ -813,6 +1045,50 @@ export async function encerrarModoSuporte(): Promise<void> {
   limparModoSuporte();
 }
 export const encerrarSessaoCofre = (id: number): Promise<SessaoAcessoSuporte> => _pcSend(`/cofre/sessoes/${id}/encerrar`, "POST");
+
+// Piloto de fazenda-sandbox (ago/2026): "Fazenda Teste" é uma cópia completa
+// da fazenda real Jairo Nasser para a equipe testar com dado realista. A
+// sincronização é DESTRUTIVA no destino — apaga tudo da Fazenda Teste e
+// recopia da origem — por isso o resultado devolve o tamanho da cópia
+// (tabelas/linhas/duração) para a tela poder mostrar prova concreta do que
+// aconteceu, não só um "ok" mudo. `origem_id` fixo em 1 (Jairo Nasser): hoje
+// existe uma única fazenda real alimentando o sandbox — se um dia houver
+// mais de uma origem possível, isto vira parâmetro da tela em vez de
+// constante aqui.
+export const ORIGEM_SINCRONIZACAO_FAZENDA_TESTE_ID = 1;
+export type ResultadoSincronizacaoFazendaTeste = {
+  status: "ok"; origem: string; destino: string; tabelas: number; linhas_copiadas: number; duracao_s: number; avisos: string[];
+};
+export async function sincronizarFazendaTeste(destinoId: number): Promise<ResultadoSincronizacaoFazendaTeste> {
+  let res: Response;
+  try {
+    res = await authFetch(`${API}/painel-cowdata/fazendas/${destinoId}/sincronizar`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ origem_id: ORIGEM_SINCRONIZACAO_FAZENDA_TESTE_ID }),
+    });
+  } catch (e) {
+    // TypeError = "Failed to fetch": aqui SIM é queda de conexão de verdade —
+    // a cópia leva dezenas de segundos, tempo real de sobra pra um
+    // proxy/gateway derrubar a conexão no meio do caminho (ver netError). Os
+    // dois `if` abaixo (409/403) tratam respostas HTTP de verdade, nunca
+    // devem reaproveitar esta mensagem de "sem conexão" — é exatamente o
+    // engano que este trecho existe para não repetir (ver pedido do usuário).
+    throw netError(e);
+  }
+  if (res.status === 409) {
+    // Trava do backend: só se sincroniza POR CIMA de uma fazenda marcada como
+    // teste — nunca sobrescrever sem querer uma fazenda real.
+    throw await erroDaResposta(res, "Esta fazenda não é uma fazenda de teste — a sincronização só pode ter uma fazenda de teste como destino.");
+  }
+  if (res.status === 403) {
+    throw await erroDaResposta(res, "Sem permissão de administrador CowData para sincronizar fazendas.");
+  }
+  if (!res.ok) {
+    throw await erroDaResposta(res, `Falha ao sincronizar (HTTP ${res.status}).`);
+  }
+  return res.json();
+}
 
 // Contrato-modelo CowData ("Baixar contrato") e assinatura eletrônica via
 // ZapSign ("Assinar contrato") — ver fazenda/rules/contrato_render.py e
@@ -998,15 +1274,47 @@ async function salvarPreferencias(dados: { paleta?: "vinho" | "verde" | "azul"; 
   return usuario;
 }
 
-// fetch com token; redireciona ao login se a sessão cair (401).
+// fetch com token; redireciona ao login se a sessão cair (401), e à tela de
+// escolha de conta se a sessão não disser em qual fazenda ela está (409 com o
+// cabeçalho X-Fazenda-Nao-Selecionada).
 // Exportado para a fila offline do app móvel (lib/offline.ts) reutilizar.
 export function authFetch(url: string, opts: RequestInit = {}): Promise<Response> {
   const token = getToken();
   const headers = new Headers(opts.headers || {});
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  return fetch(url, { ...opts, headers, cache: "no-store" }).then((res) => {
+  return fetch(url, { ...opts, headers, cache: "no-store" }).then(async (res) => {
     if (res.status === 401 && typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
       logout();
+    }
+    // A trava de tenant do backend (fazenda/auth.py::exigir_fazenda_selecionada)
+    // recusa qualquer rota de fazenda quando o token não diz em qual fazenda a
+    // requisição acontece. Quem cai aqui é sobretudo quem já estava logado com
+    // um token antigo, de antes do multi-fazenda: para essa pessoa o certo é
+    // escolher a conta, não ver um erro. Só o cabeçalho identifica esta recusa
+    // — 409 sozinho é status de negócio em várias outras rotas. A sessão NÃO é
+    // descartada (ao contrário do 401): o login continua válido, só falta
+    // escolher onde entrar.
+    if (
+      res.status === 409 && typeof window !== "undefined" &&
+      !location.pathname.startsWith("/escolher-conta") && !location.pathname.startsWith("/login")
+    ) {
+      // Cabeçalho é o caminho rápido (navegador normal). Fallback pelo CORPO
+      // (`detail.codigo`) — bug relatado em 12/09/2026: no app Android
+      // empacotado (Capacitor, capacitor.config.ts -> CapacitorHttp:{enabled:
+      // true}), toda requisição passa pela ponte nativa (OkHttp) em vez do
+      // fetch da WebView, e essa ponte nem sempre repassa cabeçalhos de
+      // resposta CUSTOMIZADOS pro objeto Response que o JS enxerga — um
+      // funcionário ficava preso vendo "Não foi possível carregar a agenda"
+      // em vez de cair aqui. `res.clone()` porque quem chamou `authFetch`
+      // ainda vai ler o corpo desta mesma resposta depois.
+      let precisaEscolherConta = !!res.headers.get("X-Fazenda-Nao-Selecionada");
+      if (!precisaEscolherConta) {
+        try {
+          const corpo = await res.clone().json();
+          precisaEscolherConta = corpo?.detail?.codigo === "fazenda_nao_selecionada";
+        } catch { /* corpo não é JSON, ou não deu pra ler — segue sem redirecionar */ }
+      }
+      if (precisaEscolherConta) location.href = "/escolher-conta";
     }
     return res;
   });
@@ -1023,6 +1331,43 @@ function netError(e: unknown): Error {
     );
   }
   return e instanceof Error ? e : new Error(String(e));
+}
+
+// Mesma origem de erro que netError (TypeError = "Failed to fetch"), mas para
+// chamadas de processamento pesado (OCR de documento, leitura de XML) onde a
+// causa típica é o proxy/gateway derrubando a conexão por demora, não a API
+// estar de fato fora do ar — a mensagem genérica de netError ("verifique se o
+// backend está no ar / CORS") é enganosa aqui e assustava o usuário mesmo com
+// o salvamento manual funcionando normalmente em seguida.
+function netErrorProcessamento(e: unknown, oQue: string): Error {
+  if (e instanceof TypeError) {
+    return new Error(
+      `A leitura automática ${oQue} demorou demais e a conexão caiu no meio do caminho. ` +
+        `Nada foi lançado por causa disso — pode preencher os campos manualmente ou tentar de novo.`
+    );
+  }
+  return e instanceof Error ? e : new Error(String(e));
+}
+
+// Reexecuta uma chamada que falhou por "Failed to fetch" (TypeError — sem
+// resposta nenhuma do servidor, não um erro de negócio 4xx/5xx) até
+// `tentativas` vezes, com pausa crescente entre elas. Extraído do padrão já
+// usado em criarLancamentoFinanceiro/marcarPagoFinanceiro para não repetir a
+// mesma lacuna de proteção numa função nova — essa assimetria (só algumas
+// telas de Financeiro toleram uma queda momentânea de conexão) já foi
+// reportada 3x pelo usuário (agentes #174/#192 e o relato de 04/09/2026).
+async function fetchComRetry(fazer: () => Promise<Response>, tentativas = 3): Promise<Response> {
+  let ultimoErro: unknown;
+  for (let tentativa = 0; tentativa < tentativas; tentativa++) {
+    try {
+      return await fazer();
+    } catch (e) {
+      if (!(e instanceof TypeError)) throw netError(e);
+      ultimoErro = e;
+      if (tentativa < tentativas - 1) await new Promise((r) => setTimeout(r, 600 * (tentativa + 1)));
+    }
+  }
+  throw netError(ultimoErro);
 }
 
 // Verifica se o backend responde. Usado pelo indicador de status.
@@ -1045,7 +1390,14 @@ export async function fetchAgenda(data?: string, dias?: number) {
   return res.json();
 }
 
-export type MedicamentoIatf = { produto: string; estoque_id?: number | null; dose?: number | null; unidade?: string | null; via?: string | null };
+export type MedicamentoIatf = {
+  produto: string; estoque_id?: number | null;
+  // "de qual lote/frasco de COMPRA?" (Fase G) — só usado hoje pelo protocolo
+  // Sanitário na Central (ver DetalheCentralProtocolo.dias[].hormonios[].opcoes[].lotes);
+  // IATF/Indução ainda ignoram este campo no backend.
+  lote_id?: number | null;
+  dose?: number | null; unidade?: string | null; via?: string | null;
+};
 // Cronograma sanitário (ver fazenda/rules/cronograma_sanitario.py) + overrides
 // de aplicação agendada — cada campo só é lido pelo prefixo de evento_id
 // correspondente no backend (agenda.py::RealizadoIn), ignorado nos demais.
@@ -1058,6 +1410,10 @@ export type RealizadoExtras = {
   responsavel?: string;                 // cronograma_sanitario_aplicar_ / aplic_agendada_
   observacao?: string;                  // idem
   produto?: string; dose?: number; unidade?: string; via?: string; // overrides de aplicação agendada
+  // Checklist da Ocorrência (redesenho do evento sanitário) — cronograma_sanitario_checklist_.
+  acao?: "pular";                       // ausente = confirma o item (comportamento decidido pela chave já gravada nele)
+  resposta?: string;                    // "sim"/"nao" (item vet) ou horário (item horario)
+  numero_matriz?: string;               // cronograma_sanitario_incluir_manual_ — animal a incluir fora da janela
 };
 export async function marcarEventoRealizado(eventoId: string, animais?: string[], medicamentos?: MedicamentoIatf[], extras?: RealizadoExtras) {
   const res = await authFetch(`${API}/agenda/realizados`, {
@@ -1079,6 +1435,10 @@ export async function desmarcarEventoRealizado(eventoId: string) {
 
 export async function aplicarBstLote(dados: {
   numeros_matriz: string[]; data_aplicacao: string; produto?: string; dose?: number | null; unidade?: string | null; responsavel?: string; aplicado?: boolean;
+  // true (padrão) = `dose` é a dose de UM animal; false = `dose` é o TOTAL do
+  // lote selecionado, e o backend divide por numeros_matriz.length antes de
+  // gravar/baixar — evita confundir total com por-animal no estoque/relatório.
+  dose_por_animal?: boolean;
 }) {
   const res = await authFetch(`${API}/agenda/bst/aplicar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -1179,6 +1539,19 @@ export async function excluirProtocoloInducaoLactacao(id: number) {
   return res.json();
 }
 
+// Produção do animal AO VIVO, em GET /animais/ — do ControleLeiteiro mais
+// recente lançado no app, caindo para o campo congelado `ult_cl_kg` (CSV do
+// Ideagri) só para quem nunca teve controle lançado. `producao_origem` existe
+// para a tela poder dizer de onde o número veio: "congelado" é dado que não
+// anda mais, e o usuário tem direito de saber olhando.
+export type ProducaoOrigem = "controle" | "congelado";
+
+export type AnimalProducaoAoVivo = {
+  producao_kg: number | null;
+  producao_data: string | null;
+  producao_origem: ProducaoOrigem | null;
+};
+
 export async function fetchAnimais(params?: { grupo?: string; sit_rep?: string; incluirMachos?: boolean }) {
   const qs = new URLSearchParams();
   if (params?.grupo) qs.set("grupo", params.grupo);
@@ -1195,7 +1568,102 @@ export async function fetchFichaAnimal(numero: string) {
   return res.json();
 }
 
-export async function fetchIndicadores(data?: string) {
+// Bloco "producao" de GET /indicadores/ (fazenda/rules/indicadores.py::calcular_indicadores).
+// Contrato único das quatro telas que mostram produção — Capa, Indicadores,
+// e as duas do app. Antes cada uma redeclarava seu próprio tipo parcial sobre
+// um `any`, e foi por aí que o card e a lista passaram a mostrar números
+// diferentes com o mesmo nome sem ninguém notar.
+//
+// A separação que este tipo torna explícita:
+//   - o bloco de cima é O CONTROLE DO DIA: `producao_total_dia_kg` é a soma
+//     exata das linhas de `controle_nums` na data `data_controle`. O card é a
+//     soma da sua própria lista por construção, não por coincidência;
+//   - `ultimo_por_animal` é o acumulado antigo (último controle de CADA vaca,
+//     em qualquer data, com fallback para o campo congelado do CSV). Continua
+//     disponível, mas com nome que diz o que ele é.
+export type IndicadoresProducaoUltimoPorAnimal = {
+  producao_total_kg: number;
+  producao_media_kg: number | null;
+  vacas_com_producao: number;
+  /** Quantas vieram de um ControleLeiteiro lançado no app. */
+  de_controle: number;
+  /** Quantas ainda vêm de Animal.ult_cl_kg (CSV do Ideagri, importação aposentada). */
+  congelado: number;
+  congelado_nums: string[];
+};
+
+export type IndicadoresProducao = {
+  /** Dia do controle leiteiro mais recente lançado. null = nenhum controle. */
+  data_controle: string | null;
+  producao_total_dia_kg: number;
+  producao_media_kg: number | null;
+  vacas_no_controle: number;
+  /** Números das matrizes controladas em `data_controle` — a lista do card. */
+  controle_nums: string[];
+  vacas_lactacao: number;
+  cobertura_controle_pct: number | null;
+  /** DEL médio AO VIVO (último parto, zerado por secagem posterior). */
+  del_medio: number | null;
+  del_medio_animais: number;
+  ultimo_por_animal: IndicadoresProducaoUltimoPorAnimal;
+  /** Compatibilidade: igual a `vacas_no_controle`. */
+  vacas_com_producao: number;
+};
+
+// Bloco "reproducao_categorias.<todas|vaca|novilha>" de GET /indicadores/
+// (fazenda/rules/indicadores.py::_reproducao_categorias). Cada contador vem
+// pareado com o `_nums` do MESMO objeto — é o que `lib/cartaoDrillDown.ts`
+// exige ao ler os dois campos: não dá para escrever `conta: "prenhes"` e
+// `nums: "aptas_nums"` sem que o par exista de verdade neste tipo.
+export type ReproducaoCategoria = {
+  aptas: number; aptas_nums: string[];
+  prenhes: number; prenhes_nums: string[];
+  vazias: number; vazias_nums: string[];
+  inseminadas: number; inseminadas_nums: string[];
+  pev: number; pev_nums: string[];
+  a_inseminar: number; a_inseminar_nums: string[];
+  nao_classificadas: number; nao_classificadas_nums: string[];
+  em_protocolo: number; em_protocolo_nums: string[];
+};
+
+// Bloco "reproducao" de GET /indicadores/ (mesmo módulo). `prenhes_programa_nums`
+// e `vazias_programa_nums` são os denominadores do PROGRAMA reprodutivo (R1) —
+// pareiam com `taxa_prenhez_pct`/`perc_vazias_pct`, não com `prenhes`/`vazias`
+// (que são o INVENTÁRIO cru do rebanho inteiro, sem os cortes de R1). Ver o
+// comentário longo em indicadores.py sobre por que os dois existem.
+export type IndicadoresReproducao = {
+  aptas: number; aptas_nums: string[];
+  prenhes: number; vazias: number; inseminadas: number;
+  taxa_prenhez_pct: number | null; prenhes_programa_nums: string[];
+  perc_vazias_pct: number | null; vazias_programa_nums: string[];
+  servicos_positivos: number; servicos_negativos: number;
+  iep_dias: number | null; iep_meses: number | null;
+  partos_previstos: { em_30_dias: number; em_60_dias: number; em_90_dias: number };
+  partos_previstos_nums: { em_30_dias: string[]; em_60_dias: string[]; em_90_dias: string[] };
+  partos_previstos_datas: Record<string, string>;
+  gestantes_detalhe: { numero: string; dias_gestacao: number; parto_previsto: string }[];
+  iep_por_matriz: { numero: string; iep_dias: number; data_ultimo_parto: string }[];
+  concepcao_desde: string;
+  taxa_servico_pct: number | null;
+  taxa_concepcao_pct: number | null;
+  taxa_prenhez_ciclo_pct: number | null;
+  servicos_por_prenhez: number | null;
+  taxa_perda_prenhez_pct: number | null;
+  perc_vacas_prenhas_pct: number | null;
+  dias_abertos: number | null;
+  del_1a_ia: number | null;
+};
+
+// O resto do payload segue destipado (cada tela declara o recorte que usa);
+// a assinatura de índice existe para isso não quebrar enquanto migramos.
+export type IndicadoresResposta = {
+  producao?: IndicadoresProducao;
+  reproducao?: IndicadoresReproducao;
+  reproducao_categorias?: { todas: ReproducaoCategoria; vaca: ReproducaoCategoria; novilha: ReproducaoCategoria };
+  [chave: string]: any;
+};
+
+export async function fetchIndicadores(data?: string): Promise<IndicadoresResposta> {
   const url = data ? `${API}/indicadores/?data=${data}` : `${API}/indicadores/`;
   const res = await authFetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`Indicadores error: ${res.status}`);
@@ -1234,6 +1702,49 @@ export async function fetchNaoConformidades(): Promise<NaoConformidadesResp> {
 export async function fetchServicosAnalise() {
   const res = await authFetch(`${API}/reproducao/servicos`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Análise error: ${res.status}`);
+  return res.json();
+}
+
+// Ciclos de 21 dias — risco de prenhez no padrão BREDSUM\E do DairyComp.
+// BR ELIG (elegíveis para inseminação) → BRED (servidas) → PG ELIG (elegíveis
+// para prenhez) → PREG (prenhes). Ver backend/fazenda/rules/programa_reprodutivo.py.
+export type CicloReprodutivo = {
+  ciclo: number; inicio: string; fim: string;
+  br_elig: number; bred: number; taxa_servico: number | null;
+  pg_elig: number; preg: number; taxa_prenhez: number | null;
+  taxa_concepcao: number | null; servicos_com_resultado: number;
+  // False enquanto não passaram os dias de "resultado conhecido" desde o fim do
+  // ciclo: PG ELIG já está cheio e PREG ainda não, então a prenhez e a concepção
+  // estão subestimadas por construção. Quem exibe não pode comparar com a meta.
+  janela_dg_completa: boolean;
+  animais: { br_elig: string[]; bred: string[]; pg_elig: string[]; preg: string[] };
+};
+export type CiclosResposta = {
+  ancora: string; modo: "inicio" | "fim"; categoria: string;
+  periodo: { inicio: string; fim: string };
+  ciclos: CicloReprodutivo[];
+  resumo: {
+    taxa_servico: number | null; taxa_prenhez: number | null;
+    taxa_concepcao: number | null;
+    // `animais_avaliados`: quantos animais passaram por pelo menos um balde
+    // do BREDSUM\E (união de BR ELIG/BRED/PG ELIG/PREG de todos os ciclos) —
+    // NÃO é o tamanho do rebanho carregado. Quem quer o rebanho carregado
+    // (gestantes e baixadas incluídas) usa `animais_carregados`.
+    animais_avaliados: number; animais_carregados: number;
+  };
+  metas: { taxa_servico: number; taxa_prenhez: number; taxa_concepcao: number };
+  parametros: { pev_dias: number; dias_minimos_no_ciclo: number; dias_resultado_conhecido: number };
+  ressalva_historica: string;
+};
+export async function fetchCiclos21Dias(
+  ancora: string, modo: "inicio" | "fim", nCiclos: number, categoria: string,
+): Promise<CiclosResposta> {
+  const qs = new URLSearchParams({ ancora, modo, n_ciclos: String(nCiclos), categoria });
+  const res = await authFetch(`${API}/reproducao/ciclos-21-dias?${qs}`, { cache: "no-store" });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(mensagemErroApi(d.detail) || `Ciclos de 21 dias error: ${res.status}`);
+  }
   return res.json();
 }
 type ServicoEditPayload = {
@@ -1284,7 +1795,11 @@ export async function atualizarSecagem(id: number, dados: { data_secagem?: strin
   return res.json();
 }
 
-export type IndicadoresMensais = { meses: string[]; series: Record<string, (number | null)[]> };
+// `janela_dg_completa` — mesmo vocabulário de `ResultadoCiclo.janela_dg_completa`
+// (ciclos de 21 dias): alinhado 1:1 com `meses`, indica se aquele mês já
+// passou da janela de diagnóstico (R7) ou ainda está "em apuração" — a
+// concepção ainda pode subir. O mês corrente quase sempre vem `false`.
+export type IndicadoresMensais = { meses: string[]; series: Record<string, (number | null)[]>; janela_dg_completa: boolean[] };
 export type IndicadoresMensaisFiltros = {
   ini?: string;
   fim?: string;
@@ -1396,12 +1911,45 @@ export async function criarServicoLote(dados: {
   animais: string[]; data_servico: string; tipo: "cio_natural" | "iatf" | "monta_natural";
   reprodutor?: string; responsavel?: string; protocolo_lancamento_id?: number | null; auto_lancar_iatf?: boolean;
   tipo_semen?: string | null;
+  // Confirmação manual dos bloqueios de aptidão CONFIRMÁVEIS (novilha sem
+  // pesagem/abaixo do peso, matriz que consta como gestante) — ver
+  // backend/fazenda/rules/aptidao.py. Nunca destrava idade/sexo/baixado.
+  forcar?: boolean;
 }) {
   const res = await authFetch(`${API}/reproducao/servico-lote`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar inseminação"); }
+  if (!res.ok) throw await erroDaResposta(res, "Erro ao registrar inseminação");
   return res.json() as Promise<{ criados: number; incompativeis: string[]; tipo: string }>;
+}
+
+// Indução de cio (PGF2α/Cloprostenol) — estímulo hormonal lançado à parte de
+// protocolo IATF, inseminação e diagnóstico (ver reproducao.py). Gera
+// histórico (Sanidade com atividade própria) e alimenta o alerta "Observar
+// cio" na Agenda, 2 a 5 dias depois da aplicação.
+export type InducaoCioLancamento = {
+  id: number; numero_matriz: string; data_aplicacao: string | null; produto: string;
+  dose: number | null; unidade: string | null; via: string | null; responsavel: string | null; observacao: string | null;
+};
+export async function registrarInducaoCio(dados: {
+  numeros_matriz: string[]; data_aplicacao: string; produto?: string;
+  dose?: number | null; unidade?: string | null; via?: string | null; responsavel?: string | null; observacao?: string | null;
+}) {
+  const res = await authFetch(`${API}/reproducao/inducao-cio`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar indução de cio"); }
+  return res.json() as Promise<{ aplicados: number; avisos: string[] }>;
+}
+export async function fetchInducoesCio(): Promise<InducaoCioLancamento[]> {
+  const res = await authFetch(`${API}/reproducao/inducao-cio`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Erro ao buscar histórico de indução de cio");
+  return res.json();
+}
+export async function excluirInducaoCio(id: number) {
+  const res = await authFetch(`${API}/reproducao/inducao-cio/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir lançamento"); }
+  return res.json();
 }
 type EstoqueSemenDados = { touro_nome: string; codigo?: string | null; naab?: string | null; central?: string | null; tipo: string; doses: number; valor_unitario?: number | null; local_armazenamento?: string | null; observacao?: string | null; ativo?: boolean };
 export async function criarEstoqueSemen(dados: EstoqueSemenDados) {
@@ -1436,10 +1984,16 @@ export async function salvarDiagnostico(dados: {
 
 export type AgendaVetItem = {
   numero_matriz: string; categoria: string; peso: number | null;
+  lote_atual: string | null;
   dias_inseminada: number | null; data_servico: string | null;
+  inseminador: string | null; touro: string | null; tipo_servico: string | null; metodo: string | null;
   tocada: boolean; reconfirmada: boolean;
-  diagnostico: string | null; diagnostico_reconfirmacao: string | null;
+  data_diagnostico: string | null; diagnostico: string | null;
+  data_reconfirmacao: string | null; diagnostico_reconfirmacao: string | null;
+  tem_servico?: boolean;
   atrasada?: boolean; dias_para_parto?: number | null; motivo?: string;
+  data_dg_negativo?: string | null; del_projetado_proximo_servico?: number | null;
+  pev_dias_restantes_projetado?: number | null; proxima_data_dg_estimada?: string | null;
 };
 export type AgendaVetResposta = {
   data_referencia: string; projetado?: boolean; listas: Record<string, AgendaVetItem[]>; totais: Record<string, number>;
@@ -1463,7 +2017,6 @@ export const LISTAS_AGENDA_VETERINARIO: { chave: string; rotulo: string }[] = [
   { chave: "inseminadas_30_59", rotulo: "Inseminadas 30–59 dias — toque" },
   { chave: "inseminadas_60_mais", rotulo: "Inseminadas 60+ dias — reconfirmação" },
   { chave: "novilhas_aptas_vazias", rotulo: "Novilhas aptas vazias" },
-  { chave: "verificar_aptidao", rotulo: "Verificar aptidão" },
   { chave: "novilhas_gestantes", rotulo: "Novilhas gestantes" },
   { chave: "vacas_gestantes", rotulo: "Vacas gestantes" },
   { chave: "verificar_pre_parto", rotulo: "Verificar pré-parto" },
@@ -1471,6 +2024,37 @@ export const LISTAS_AGENDA_VETERINARIO: { chave: string; rotulo: string }[] = [
   { chave: "pendentes_classificacao", rotulo: "Pendentes de classificação" },
   { chave: "observacao_cio", rotulo: "Observação de cio" },
 ];
+
+// ── Card configurável da Agenda Reprodutiva (4 eixos: categoria/lote/
+// situação/período) — ver fazenda.rules.agenda_reprodutiva_configuravel. ──
+export type SituacaoCard = "pev" | "inseminada" | "gestante" | "vazia" | "vazia_atrasada" | "a_descartar";
+
+export type CardAgendaReprodutivaConfig = {
+  categoria: "todas" | "vaca" | "novilha";
+  lotes: string[];
+  situacao: SituacaoCard;
+  periodos: [number, number][];
+  somente_atrasadas: boolean;
+  exceto_atrasadas: boolean;
+};
+
+export type ItemCardAgendaReprodutiva = {
+  numero_matriz: string; categoria: string | null; lote_atual: string | null;
+  estado: string | null; del_dias: number | null; dias_gestacao: number | null;
+  dias_desde_servico: number | null; data_servico: string | null; parto_previsto: string | null;
+};
+
+export async function fetchAgendaReprodutivaCard(
+  config: CardAgendaReprodutivaConfig, data?: string,
+): Promise<{ data_referencia: string; total: number; itens: ItemCardAgendaReprodutiva[] }> {
+  const qs = data ? `?data=${encodeURIComponent(data)}` : "";
+  const res = await authFetch(`${API}/reproducao/agenda-reprodutiva/card${qs}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(config),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao montar o card"); }
+  return res.json();
+}
+
 
 export async function registrarReconfirmacao(dados: {
   numero_matriz: string; data_reconfirmacao: string; resultado: "positivo" | "negativo";
@@ -1518,8 +2102,50 @@ export async function registrarPerdaPrenhez(dados: {
   return res.json();
 }
 
+/**
+ * Encerramento de gestação — o caminho ÚNICO de "esta gestação acabou".
+ *
+ * Substitui, no fluxo de aborto, a dupla incoerente que existia antes:
+ * `registrarPerdaPrenhez` (que NÃO criava Parto nenhum e carimbava a perda no
+ * serviço mais recente por data, nem sempre o certo) seguida de
+ * `abrirLactacao` (que só gravava `del_dias = 0`, sem nem receber a data do
+ * evento). Numa transação só, o backend cria o `Parto`, carimba a perda no
+ * serviço vigente positivo correto, abre a `Lactacao` com a data REAL do
+ * evento e sincroniza o DEL. Ver POST /reproducao/encerramento-gestacao.
+ */
+export async function encerrarGestacao(dados: {
+  numero_matriz: string;
+  data: string;
+  tipo: "parto" | "aborto" | "natimorto";
+  abrir_lactacao?: boolean;
+  motivo?: "aborto" | "natimorto" | "outros";
+  crias?: { numero: string; sexo: string; nasceu_viva?: boolean }[];
+  retencao_placenta?: boolean;
+  gemelar?: boolean;
+  gemelar_sexo?: string;
+  tipo_parto?: string;
+  observacao?: string;
+  forcar?: boolean;
+}) {
+  const res = await authFetch(`${API}/reproducao/encerramento-gestacao`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) throw await erroDaResposta(res, "Erro ao registrar o encerramento da gestação");
+  return res.json() as Promise<{
+    criado: boolean; tipo: string; parto_id: number | null; ordem_parto: number | null;
+    crias_criadas: string[]; crias_baixadas: string[];
+    perda_prenhez_servico_id: number | null;
+    lactacao_id: number | null; lactacao_aberta: boolean; del_dias: number | null;
+    sugerir_lote: boolean;
+  }>;
+}
+
 // Abre lactação de um animal sem parto associado (popup pós-aborto — "deseja
 // abrir lactação para o animal X?").
+//
+// @deprecated Só grava `del_dias = 0` e não recebe a data do evento — use
+// `encerrarGestacao` com `abrir_lactacao: true`, que abre uma `Lactacao` de
+// verdade com a data real. Mantido porque outras telas ainda o chamam.
 export async function abrirLactacao(numeroMatriz: string) {
   const res = await authFetch(`${API}/reproducao/animais/${encodeURIComponent(numeroMatriz)}/abrir-lactacao`, {
     method: "POST",
@@ -1554,11 +2180,22 @@ export async function fetchPessoas() {
   if (!res.ok) throw new Error(`Pessoas error: ${res.status}`);
   return res.json();
 }
+/** Periodicidade e regime do vale-alimentação — ver
+ *  `backend/fazenda/rules/vale_alimentacao.py`. "antecipado" significa que o
+ *  VA de uma competência sai na folha da competência ANTERIOR. */
+export type PeriodicidadeValeAlimentacao = "diario" | "mensal";
+export type RegimeValeAlimentacao = "antecipado" | "vencido";
 type PessoaDados = {
   nome: string; tipos: string[]; telefones?: string[]; emails?: string[]; cpf_cnpj?: string; cep?: string;
   observacoes?: string; ativo?: boolean; salario_base?: number; data_admissao?: string;
   rg?: string; data_nascimento?: string; genero?: string; estado_civil?: string;
   endereco_rua?: string; endereco_numero?: string; endereco_bairro?: string; endereco_cidade?: string; endereco_uf?: string;
+  /** Configuração do vale-alimentação: a folha gera a linha do holerite a
+   *  partir daqui, não de uma rubrica lançada mês a mês. */
+  vale_alimentacao?: boolean;
+  vale_alimentacao_valor?: number;
+  vale_alimentacao_periodicidade?: PeriodicidadeValeAlimentacao;
+  vale_alimentacao_regime?: RegimeValeAlimentacao;
 };
 export async function criarPessoa(dados: PessoaDados) {
   const res = await authFetch(`${API}/cadastro/pessoas`, {
@@ -1577,6 +2214,42 @@ export async function atualizarPessoa(id: number, dados: PessoaDados) {
 export async function excluirPessoa(id: number) {
   const res = await authFetch(`${API}/cadastro/pessoas/${id}`, { method: "DELETE" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir pessoa"); }
+  return res.json();
+}
+
+// Anexos de Pessoa — RG, CPF, carteira de trabalho, contratos, holerite,
+// comprovantes (ver PessoaAnexo no backend), com validade opcional; quando
+// há validade, a Agenda alerta antes do vencimento — hoje só para "Contrato
+// de trabalho por prazo determinado" (15 dias antes).
+export const CATEGORIAS_PESSOA_ANEXO = [
+  "RG", "CPF", "Carteira de trabalho", "Ficha de registro",
+  "Contrato de trabalho por prazo indeterminado", "Contrato de trabalho por prazo determinado",
+  "Contrato de empreita", "Holerite", "Comprovante de pagamento", "Comprovante de vale",
+];
+export type AnexoPessoa = {
+  id: number; nome_arquivo: string; mime_type: string; tamanho_bytes: number; categoria: string;
+  data_validade?: string | null; criado_em?: string;
+};
+export async function anexarArquivoPessoa(pessoaId: number, file: File, categoria: string, dataValidade?: string | null): Promise<AnexoPessoa> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("categoria", categoria);
+  if (dataValidade) form.append("data_validade", dataValidade);
+  const res = await authFetch(`${API}/cadastro/pessoas/${pessoaId}/anexos`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o arquivo"); }
+  return res.json();
+}
+export async function listarAnexosPessoa(pessoaId: number): Promise<AnexoPessoa[]> {
+  const res = await authFetch(`${API}/cadastro/pessoas/${pessoaId}/anexos`);
+  if (!res.ok) throw new Error("Erro ao listar anexos da pessoa");
+  return res.json();
+}
+export function urlAnexoPessoa(anexoId: number): string {
+  return `${API}/cadastro/pessoas/anexos/${anexoId}`;
+}
+export async function excluirAnexoPessoa(anexoId: number) {
+  const res = await authFetch(`${API}/cadastro/pessoas/anexos/${anexoId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir anexo"); }
   return res.json();
 }
 export async function fetchInseminadores(): Promise<string[]> {
@@ -1612,6 +2285,144 @@ export async function fetchProporcionalAdmissao(pessoaId: number, competencia: s
   return res.json();
 }
 
+// ── Discriminação do holerite (as 4 colunas do recibo de papel) ──
+// Cada linha do discriminado passa a dizer DE ONDE o valor veio: a coluna
+// `referencia` ("7,78% sobre R$ 2.000,00", "Parcela 3 de 13 · vale de
+// 12/03/2026") e, quando é desconto de vale, a `origem` com o `vale_id` — o
+// que substitui o antigo `/vale/i.test(label)` (regex no rótulo em português,
+// que nunca teve como desempatar dois vales de mesmo valor no mesmo mês).
+// `label`/`valor` continuam sendo o texto e o valor com sinal de antes.
+export type OrigemVale = {
+  tipo: "vale";
+  vale_id: number;
+  parcela_id: number | null;
+  parcela: number;
+  parcelas_total: number;
+  valor_total: number;
+  data_pagamento: string | null;
+  forma_pagamento: string;
+  observacao: string | null;
+  numero_documento_pagamento: string | null;
+  numero_lancamento_gerado: string | null;
+  /** true quando forma_pagamento === "desconto_integral_folha": não houve
+   *  saída de caixa, então NÃO existe lançamento no extrato — por desenho. */
+  sem_saida_de_caixa: boolean;
+  origem_lancamento: {
+    item_id: number | null; numero_lancamento: string | null; produto: string | null;
+    valor_item: number | null; fornecedor_cliente: string | null;
+    numero_documento: string | null; data_emissao: string | null;
+  } | null;
+  aplicada: boolean;
+};
+export type OrigemRetencao = {
+  tipo: "retencao";
+  percentual: number | null;
+  base: number | null;
+  /** null quando não há percentual gravado — sem base declarada, conferir
+   *  seria inventar o percentual a partir do valor. */
+  confere: boolean | null;
+  diferenca: number | null;
+};
+/** A compra (parcela de lançamento financeiro) que um desconto está abatendo —
+ *  o que a janela sobreposta de consulta de contas devolve e o que viaja junto
+ *  da linha do recibo. */
+export type CompraDoDesconto = {
+  conta_id: number;
+  numero_lancamento: string | null;
+  descricao: string | null;
+  fornecedor_cliente: string | null;
+  numero_nota: string | null;
+  tipo_documento: string | null;
+  centro_custo: string | null;
+  data_emissao: string | null;
+  data_vencimento: string | null;
+  data_pagamento: string | null;
+  valor_total: number;
+  valor_pago: number | null;
+  parcela_num: number | null;
+  parcela_total: number | null;
+};
+/** Origem de uma rubrica acrescentada ao holerite (vencimento ou desconto).
+ *  O enquadramento vem CONGELADO do servidor — a tela nunca decide natureza
+ *  nem incidência, só mostra o que foi gravado no lançamento. */
+export type OrigemRubrica = {
+  tipo: "rubrica";
+  rubrica_id: number;
+  codigo: string;
+  rotulo: string;
+  especie: "vencimento" | "desconto";
+  descricao: string | null;
+  natureza: "salarial" | "indenizatoria";
+  incide_inss: boolean;
+  incide_irrf: boolean;
+  incide_fgts: boolean;
+  incorpora_base: boolean;
+  /** "2026-08" no aumento na folha (a partir de quando vira salário-base);
+   *  null em todas as demais. */
+  competencia_incorporacao: string | null;
+  /**
+   * Se esta verba pode ser alterada NO ATO DO PAGAMENTO sem confirmação
+   * ("livre" → a coluna mostra "Editar") ou só depois do aviso do cadeado
+   * ("contratual"). Vem do catálogo do servidor (`rules/rubrica_folha.py`),
+   * NUNCA de uma segunda lista escrita aqui — ver `pagamentoFolhaRegras.ts`.
+   * Opcional porque discriminação congelada antes deste campo existir não o
+   * tem; quem lê trata a ausência como "contratual" (pedir confirmação é o
+   * lado seguro de não saber).
+   */
+  alteracao?: "livre" | "contratual";
+  fundamento: string | null;
+  compra: CompraDoDesconto | null;
+};
+export type LinhaHolerite = {
+  label: string;
+  valor: number;
+  tipo: "bruto" | "inss" | "ir" | "vale" | "outros" | "liquido" | "ferias" | "terco" | "abono"
+    | "vencimento_extra" | "desconto_extra";
+  descricao: string;
+  referencia: string;
+  provento: number | null;
+  desconto: number | null;
+  origem: OrigemVale | OrigemRetencao | OrigemRubrica | null;
+};
+/**
+ * Parcela de vale que a FAZENDA assumiu (mês desconsiderado ou vale
+ * cancelado). Chega num campo SEPARADO de `detalhe` — nunca dentro dele —
+ * porque não é desconto de ninguém e não pode entrar em soma nenhuma; existe
+ * só para o painel de vale explicar por que o desconto sumiu daquele mês e
+ * continuar oferecendo o botão "Ações", que é a porta para desfazer.
+ * `provento`/`desconto`/`valor` vêm neutros do servidor pelo mesmo motivo: o
+ * valor real está em `valor_assumido`.
+ */
+export type LinhaValeAssumido = Omit<LinhaHolerite, "tipo"> & {
+  tipo: "vale_assumido";
+  valor_assumido: number;
+  motivo: string | null;
+  competencia: string;
+};
+export type TotaisHolerite = {
+  total_proventos: number;
+  total_descontos: number;
+  liquido: number;
+  /** Descontos maiores que vencimentos: não é um líquido válido, é um
+   *  excedente — e um recibo assim não pode ser emitido. */
+  liquido_negativo: boolean;
+  excedente: number;
+};
+export type BasesHolerite = {
+  /** Sempre `FolhaPagamento.valor_bruto`, NUNCA `Pessoa.salario_base` (valor
+   *  vivo: reimprimir 2024 mostraria o salário de hoje). */
+  salario_base: number;
+  /** Base das retenções = salário + rubricas SALARIAIS (bonificação, guelta,
+   *  aumento). Reembolso e indenização não entram: são indenizatórios. */
+  base_inss: number | null;
+  base_ir: number | null;
+  /** Quanto das bases veio de rubrica salarial — 0 na folha comum. */
+  rubricas_tributaveis?: number;
+  fgts_projetado: number | null;
+  percentual_fgts: number | null;
+  dctf_projetado: number | null;
+};
+
 // ── Folha de pagamento (Configurações > Cadastro / Financeiro) ──
 export async function fetchFolhaPagamento() {
   const res = await authFetch(`${API}/cadastro/folha-pagamento`, { cache: "no-store" });
@@ -1646,6 +2457,84 @@ export async function atualizarFolhaPagamento(id: number, dados: FolhaPagamentoD
 export async function excluirFolhaPagamento(id: number) {
   const res = await authFetch(`${API}/cadastro/folha-pagamento/${id}`, { method: "DELETE" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir lançamento de folha"); }
+  return res.json();
+}
+/**
+ * Estorna o pagamento de uma folha — desfaz a baixa da conta a pagar,
+ * devolve o lançamento a "pendente" e DESCONGELA a discriminação.
+ *
+ * A rota existe desde o C7, mas nenhuma tela a chamava: o holerite mandava o
+ * usuário "estornar o pagamento para acrescentar ou corrigir vencimentos e
+ * descontos" e não havia botão nenhum para isso — o caminho era mexer no
+ * banco à mão.
+ */
+export async function estornarPagamentoFolha(id: number) {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/${id}/estornar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao estornar o pagamento da folha"); }
+  return res.json();
+}
+
+// ── Pagar a folha lançando valor DISTINTO nas verbas (ver
+// backend/.../rh_folha_pagar.py). O pop-up do ato do pagamento: cada verba tem
+// a coluna de edição ("Editar" ou cadeado), e a diferença de uma parcela de
+// VALE ainda precisa de destino — as decisões do painel de ações do vale,
+// disparadas por quanto se está pagando agora, mais `acrescimo_avulso`, que só
+// existe para quem descontou a MAIS (o excedente vira linha própria do
+// holerite em vez de antecipar o saldo). ──
+export type DecisaoDiferencaFolha = "abater" | "desconsiderar" | "reparcelar" | "acrescimo_avulso";
+export type PagarFolhaDados = {
+  data_pagamento: string;
+  /** Parcelas de vale — as únicas cuja diferença abre uma decisão, por serem
+   *  a única verba que é dívida da pessoa. */
+  verbas?: { parcela_id: number; valor_pago: number }[];
+  /** As demais verbas da coluna de edição. `confirmado` é a marca do CADEADO:
+   *  nas verbas contratuais o servidor recusa a alteração que chega sem ele —
+   *  a trava não pode existir só na tela. */
+  rubricas?: { rubrica_id: number; valor_pago: number; confirmado: boolean }[];
+  retencoes?: { tipo: "inss" | "ir"; valor_pago: number; confirmado: boolean }[];
+  /** Para MAIOR vira aumento incorporado (novo salário daí em diante); para
+   *  MENOR o servidor recusa com 400 — CLT, art. 468. */
+  salario?: { valor_pago: number; confirmado: boolean };
+  outros_descontos?: { valor_pago: number };
+  decisao?: {
+    tipo: DecisaoDiferencaFolha;
+    /** abater: conta que RECEBEU a devolução em dinheiro (opcional — abatimento
+     *  que é perdão não tem entrada de caixa a lançar). */
+    conta_corrente_id?: number;
+    parcelas?: number;             // reparcelar
+    competencia_inicio?: string;   // reparcelar (padrão: a competência seguinte)
+    motivo?: string;
+    /** reparcelar: confirma prosseguir mesmo deixando alguma competência acima
+     *  de 40% do salário em desconto de vale (409 do backend). */
+    confirmar?: boolean;
+  };
+};
+export type PagarFolhaResultado = {
+  id: number; status: string; valor_liquido: number; valor_vale?: number;
+  recibo_congelado: boolean;
+  decisoes: { decisao: DecisaoDiferencaFolha; valor: number; resumo: string }[];
+  /** O que a coluna de edição gravou — uma entrada por verba alterada. */
+  alteracoes?: { verba: string; de: number; para: number; resumo: string }[];
+  [chave: string]: any;
+};
+export async function pagarFolhaComVerbas(id: number, dados: PagarFolhaDados): Promise<PagarFolhaResultado> {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/${id}/pagar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) {
+    // Preserva `detail`/`status` (mesmo padrão de `criarVale`): o 409 de
+    // "ultrapassa 40% do salário" ao reparcelar a diferença precisa do
+    // `detail.competencias_excedidas` estruturado para a tela oferecer o
+    // "confirmar mesmo assim", e não só de uma string solta.
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(
+      mensagemErroApi(d.detail) || (typeof d.detail === "object" ? d.detail?.mensagem : null)
+      || "Erro ao registrar o pagamento da folha",
+    );
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 
@@ -1692,6 +2581,20 @@ export async function fetchGuiasFolhaEncargo(): Promise<GuiaFolhaEncargo[]> {
   if (!res.ok) throw new Error(`Guias de FGTS/DCTF error: ${res.status}`);
   return res.json();
 }
+export async function atualizarGuiaFolhaEncargo(
+  guiaId: number, dados: GuiaFolhaEncargoDados,
+): Promise<GuiaFolhaEncargo & { conta_id: number | null }> {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/guias/${guiaId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar guia de FGTS/DCTF"); }
+  return res.json();
+}
+export async function excluirGuiaFolhaEncargo(guiaId: number) {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/guias/${guiaId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir guia de FGTS/DCTF"); }
+  return res.json();
+}
 
 // ── Folha de pagamento unificada (funcionário + empreita + contrato + diária + férias/13º) ──
 export type LinhaFolhaUnificada = {
@@ -1704,13 +2607,117 @@ export type LinhaFolhaUnificada = {
   valor: number;
   data_vencimento: string | null;
   data_pagamento: string | null;
-  status: "pendente" | "pago";
+  /** O tipo dizia só "pendente | pago" e o servidor sempre pôde mandar um
+   *  TERCEIRO estado: férias e 13º absorvidos por uma rescisão saem com
+   *  "cancelado_rescisao" (ver STATUS_CANCELADO_RESCISAO em rh_folha.py). A
+   *  tela lia isso como "não é pago, logo é pendente" e cobrava de novo, na
+   *  tabela, um valor que já foi pago dentro das verbas rescisórias. */
+  status: "pendente" | "pago" | "cancelado_rescisao";
   pode_excluir: boolean;
   vencido: boolean;
+  /** Discriminado do documento — presente em funcionário (holerite completo) e
+   *  em férias/13º (recibo com referência própria). O ledger já calculava isso
+   *  e descartava ao montar a linha: era por isso que a tela de Contas não
+   *  tinha o que mostrar ao clicar num nome. */
+  detalhe?: LinhaHolerite[];
+  /** As parcelas de vale que a FAZENDA assumiu naquela competência — campo
+   *  separado de `detalhe`, nunca dentro dele, porque não são desconto de
+   *  ninguém e não podem entrar em soma nenhuma. Vêm até aqui só para o
+   *  documento EXPLICAR por que o desconto de vale sumiu do mês: esta é a
+   *  tela de consulta (Contas > Holerites e recibos), que não tem o painel de
+   *  ações onde a explicação já aparecia. */
+  vale_assumido?: LinhaValeAssumido[];
+  totais?: TotaisHolerite;
+  bases?: BasesHolerite;
+  competencia?: string;
+  numero_lancamento_gerado?: string | null;
+  observacao?: string | null;
 };
 export async function fetchFolhaPagamentoUnificada(): Promise<LinhaFolhaUnificada[]> {
   const res = await authFetch(`${API}/cadastro/folha-pagamento-unificada`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Folha de pagamento (unificada) error: ${res.status}`);
+  return res.json();
+}
+
+// ── Rubricas do holerite (vencimentos e descontos acrescentados) ──
+// O enquadramento trabalhista (natureza salarial × indenizatória e as
+// incidências de INSS/IRRF/FGTS) é decidido no SERVIDOR a partir do código —
+// a tela manda o código e exibe a consequência, nunca a define. Ver
+// backend/fazenda/rules/rubrica_folha.py.
+export type RubricaCatalogoItem = {
+  codigo: string;
+  rotulo: string;
+  fundamento: string;
+  natureza?: "salarial" | "indenizatoria";
+  incide_inss?: boolean;
+  incide_irrf?: boolean;
+  incide_fgts?: boolean;
+  incorpora_base?: boolean;
+  exige_compra?: boolean;
+  /** Ver `OrigemRubrica.alteracao` — o eixo da coluna de edição do pagamento. */
+  alteracao?: "livre" | "contratual";
+};
+export type CatalogoRubricas = { vencimentos: RubricaCatalogoItem[]; descontos: RubricaCatalogoItem[] };
+export type RubricaFolha = {
+  id: number;
+  folha_id: number;
+  pessoa_id: number;
+  competencia: string;
+  especie: "vencimento" | "desconto";
+  codigo: string;
+  descricao: string | null;
+  valor: number;
+  natureza: "salarial" | "indenizatoria";
+  incide_inss: boolean;
+  incide_irrf: boolean;
+  incide_fgts: boolean;
+  incorpora_base: boolean;
+  conta_gerencial_id: number | null;
+  numero_lancamento: string | null;
+  rotulo: string;
+  referencia: string;
+  compra: CompraDoDesconto | null;
+};
+export type RubricaFolhaDados = {
+  especie: "vencimento" | "desconto";
+  codigo: string;
+  valor: number;
+  descricao?: string | null;
+  conta_gerencial_id?: number | null;
+};
+export async function fetchCatalogoRubricas(): Promise<CatalogoRubricas> {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/rubricas/catalogo`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Catálogo de rubricas error: ${res.status}`);
+  return res.json();
+}
+export async function fetchComprasParaDesconto(busca?: string): Promise<CompraDoDesconto[]> {
+  const qs = busca ? `?busca=${encodeURIComponent(busca)}` : "";
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/rubricas/compras${qs}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Consulta de contas error: ${res.status}`);
+  return res.json();
+}
+export async function fetchRubricasFolha(folhaId: number): Promise<RubricaFolha[]> {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/${folhaId}/rubricas`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Rubricas da folha error: ${res.status}`);
+  return res.json();
+}
+export async function criarRubricaFolha(folhaId: number, dados: RubricaFolhaDados) {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/${folhaId}/rubricas`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao acrescentar a rubrica"); }
+  return res.json();
+}
+export async function atualizarRubricaFolha(rubricaId: number, dados: { valor: number; descricao?: string | null }) {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/rubricas/${rubricaId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar a rubrica"); }
+  return res.json();
+}
+export async function excluirRubricaFolha(rubricaId: number) {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/rubricas/${rubricaId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir a rubrica"); }
   return res.json();
 }
 export async function excluirParcelaEmpreitada(id: number) {
@@ -1790,6 +2797,34 @@ export async function atualizarVale(valeId: number, dados: {
   }
   return res.json();
 }
+/** O que a tela precisa mostrar ANTES de perguntar "excluir este vale?".
+ *
+ * EXCLUIR ≠ CANCELAR (a distinção que originou esta prévia): excluir é para o
+ * vale que NUNCA DEVERIA TER EXISTIDO — apaga o vale E a saída de caixa que
+ * ele criou no Financeiro. Para o vale que aconteceu e só não vai mais ser
+ * cobrado, a porta é a ação "Cancelar o vale" (painel de ações do vale), que
+ * mantém a saída de caixa e tem desfazer.
+ *
+ * `confirmacao` e `alternativa` vêm PRONTAS do backend de propósito: o número
+ * do lançamento (LC-...), o valor e a data da baixa vivem só no Financeiro —
+ * montar essa frase no front seria inventar texto com dados que ele não tem.
+ * `impedimento` preenchido = o backend vai recusar (400); mostre o motivo em
+ * vez de perguntar. */
+export type PreviaExclusaoVale = {
+  pode_excluir: boolean;
+  impedimento: string | null;
+  lancamento: {
+    numero_lancamento: string | null; valor: number | null;
+    data_pagamento: string | null; conta_bancaria: string | null; descricao: string | null;
+  } | null;
+  confirmacao: string;
+  alternativa: string;
+};
+export async function previaExclusaoVale(valeId: number): Promise<PreviaExclusaoVale> {
+  const res = await authFetch(`${API}/cadastro/vales/${valeId}/exclusao`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao conferir o vale"); }
+  return res.json();
+}
 export async function excluirVale(valeId: number) {
   const res = await authFetch(`${API}/cadastro/vales/${valeId}`, { method: "DELETE" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir vale"); }
@@ -1803,6 +2838,11 @@ export async function excluirVale(valeId: number) {
 export async function atualizarParcelaVale(valeId: number, parcelaId: number, dados: {
   valor: number; acao?: "conceder" | "redistribuir_igual" | "redistribuir_livre";
   valores_parcelas?: Record<number, number>; confirmar?: boolean; confirmar_divergencia_total?: boolean;
+  /** Confirma concentrar, em alguma competência, mais de 40% do salário em
+   *  desconto de vale — 409 com `{mensagem, competencias_excedidas, limite}`.
+   *  Campo PRÓPRIO, separado de `confirmar` (que é a divergência de valor):
+   *  são dois avisos diferentes e cada um precisa ser lido antes de passar. */
+  confirmar_teto?: boolean;
 }) {
   const res = await authFetch(`${API}/cadastro/vales/${valeId}/parcelas/${parcelaId}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -1816,6 +2856,88 @@ export async function atualizarParcelaVale(valeId: number, parcelaId: number, da
   }
   return res.json();
 }
+// ── Ações do dono sobre um vale já lançado (Folha > vale > Ações) ──
+// As quatro decisões que existiam na cabeça do dono e não existiam na tela:
+// reparcelar o saldo, abater um valor, desconsiderar o vale de UM mês e
+// cancelar o vale inteiro. As duas últimas mexem TAMBÉM no Financeiro (o
+// valor deixa de ser cobrança da pessoa e vira despesa da fazenda), e é por
+// isso que a resposta traz `financeiro` — a tela precisa poder dizer o que
+// aconteceu do outro lado. Ver backend/.../cadastro/rh_vale_acoes.py.
+export type ValeAcao =
+  | "reparcelar" | "abater" | "desconsiderar_mes" | "cancelar"
+  // As três voltas atrás (rh_vale_acoes.py): desfazem um abatimento lançado
+  // por engano, um mês desconsiderado e o cancelamento do vale inteiro. Só
+  // aparecem em `acoes_disponiveis` quando o servidor diz que são possíveis
+  // NESTE vale — ver AcoesValeModal.
+  | "estornar_abatimento" | "reverter_desconsideracao" | "reverter_cancelamento";
+export type ValeAcaoIn = {
+  acao: ValeAcao;
+  parcelas?: number;              // reparcelar
+  competencia_inicio?: string;    // reparcelar (padrão: 1ª competência pendente)
+  valor?: number;                 // abater; estornar_abatimento (opcional: tudo)
+  conta_corrente_id?: number;     // abater: conta que RECEBEU a devolução (opcional)
+  competencia?: string;           // desconsiderar_mes; reverter_desconsideracao (obrigatória)
+  motivo?: string;
+  /** reparcelar: confirma prosseguir mesmo deixando alguma competência acima
+   *  de 40% do salário em desconto de vale — o 409 traz
+   *  `{mensagem, competencias_excedidas, limite}`. */
+  confirmar?: boolean;
+};
+export type ValeAcaoContexto = {
+  vale_id: number;
+  status: "ativo" | "cancelado";
+  valor_total: number;
+  valor_abatido: number;
+  valor_assumido_fazenda: number;
+  saldo_pendente: number;
+  parcelas: {
+    id: number; competencia: string; valor: number;
+    assumida_pela_fazenda: boolean; motivo_assuncao: string | null;
+    pendente: boolean; competencia_paga: boolean;
+  }[];
+  acoes_disponiveis: ValeAcao[];
+  /** Competências assumidas pela fazenda que ainda dá para voltar a descontar
+   *  (folha em aberto) — o seletor de `reverter_desconsideracao` sai daqui, e
+   *  não de uma dedução da tela, para não discordar da recusa do POST. Inclui
+   *  mês SEM folha lançada: é a única porta do desfazer nesse caso, porque
+   *  sem folha não existe painel de descontos onde o botão moraria. */
+  competencias_revertiveis: string[];
+  /** Por que a volta do cancelamento não está disponível, em palavras — null
+   *  quando ela está (ou quando o vale nem está cancelado). Sem isto a tela
+   *  ficaria muda justamente diante da ação mais destrutiva das seis. */
+  impedimento_reverter_cancelamento?: string | null;
+};
+export type ValeAcaoResultado = {
+  acao: ValeAcao;
+  resumo: string;
+  vale: ValeAcaoContexto;
+  financeiro?: { natureza: "item_de_nota" | "lancamento_proprio" | "sem_lastro"; numero_lancamento: string | null };
+  [chave: string]: any;
+};
+
+export async function fetchAcoesVale(valeId: number): Promise<ValeAcaoContexto> {
+  const res = await authFetch(`${API}/cadastro/vales/${valeId}/acoes`, { cache: "no-store" });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(mensagemErroApi(d.detail) || "Erro ao buscar as ações do vale");
+  }
+  return res.json();
+}
+
+export async function executarAcaoVale(valeId: number, dados: ValeAcaoIn): Promise<ValeAcaoResultado> {
+  const res = await authFetch(`${API}/cadastro/vales/${valeId}/acoes`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao executar a ação do vale");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
 /** G15 — exclui UMA parcela do vale (não o vale inteiro; para isso já existe
  * `excluirVale`). 400 se a parcela já caiu em folha paga, ou se for a única
  * parcela do vale (exclua o vale inteiro nesse caso). Sem `confirmar`, a API
@@ -1882,9 +3004,34 @@ export async function encerrarContrato(id: number) {
 }
 
 // ── Diária (Financeiro > Ações > Folha de Pagamento) ──
-export async function fetchDiarias() {
-  const res = await authFetch(`${API}/cadastro/diarias`, { cache: "no-store" });
+// Por padrão só traz quem ainda está fazendo diárias (status "ativo") — ver
+// `incluirFinalizadas` para trazer também as encerradas (ver encerrarDiaria).
+export async function fetchDiarias(incluirFinalizadas = false) {
+  const qs = incluirFinalizadas ? "?incluir_finalizadas=true" : "";
+  const res = await authFetch(`${API}/cadastro/diarias${qs}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Diárias error: ${res.status}`);
+  return res.json();
+}
+/** Encerra o período e, havendo saldo devedor, EMITE a conta a pagar (que
+ * cai sozinha na Agenda e em Contas a Pagar). `data_encerramento` é o último
+ * dia trabalhado — sem ele o contador não parava e o período "encerrado"
+ * seguia somando diária todo dia, invisível. O corpo é opcional no backend
+ * por compatibilidade, mas a tela sempre manda a data. */
+export async function encerrarDiaria(id: number, dados?: {
+  data_encerramento?: string; data_vencimento?: string; emitir_conta?: boolean;
+}) {
+  const res = await authFetch(`${API}/cadastro/diarias/${id}/encerrar`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados ?? {}),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao encerrar diária"); }
+  return res.json();
+}
+/** Desfaz o encerramento: apaga a cobrança em aberto e descongela o
+ * apurado. Recusado (400) se a conta emitida já foi paga — nesse caso o
+ * caminho é estornar a baixa em Financeiro › Lançamentos. */
+export async function reabrirDiaria(id: number) {
+  const res = await authFetch(`${API}/cadastro/diarias/${id}/reabrir`, { method: "PUT" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao reabrir diária"); }
   return res.json();
 }
 export async function criarDiaria(dados: {
@@ -1905,11 +3052,18 @@ export async function atualizarDiaria(diariaId: number, dados: { data_inicio: st
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar diária"); }
   return res.json();
 }
+/** Pagar acima do saldo devedor da diária responde 409 com {mensagem,
+ * saldo_devedor, excedente, total_ate_hoje, valor_pago, valor_vale} — pagar a
+ * mais continua permitido (acerto final, gorjeta, arredondamento), mas nunca
+ * em silêncio: reenviar com `confirmar_excedente: true` depois de mostrar o
+ * aviso. Sem isso o operador que digita o total esquecendo o adiantamento
+ * paga duas vezes sem nenhum sinal. */
 export async function registrarPagamentoDiaria(diariaId: number, dados: {
   data_pagamento: string; valor: number; observacao?: string;
   // Conta bancária de onde sai o pagamento — OPCIONAL (ver _resolver_conta_corrente no backend).
   conta_corrente_id?: number | null;
-}) {
+  confirmar_excedente?: boolean;
+}): Promise<{ numero_lancamento_gerado: string } & Record<string, any>> {
   const res = await authFetch(`${API}/cadastro/diarias/${diariaId}/pagamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -1946,7 +3100,7 @@ export async function responderAuditoriaDiaria(auditoriaId: number, diasTrabalha
 // de folga pra desmarcar. `dias` sempre vem denso (um item por dia corrido no
 // período), então o componente só precisa renderizar o que a API manda, sem
 // nenhuma lógica de "default" no cliente.
-export type DiaTrabalhadoDiaria = { data: string; trabalhado: boolean; pago: boolean };
+export type DiaTrabalhadoDiaria = { data: string; trabalhado: boolean; meia_diaria: boolean; pago: boolean };
 export type DiasDiariaResposta = {
   diaria_id: number; pessoa_nome: string; valor_diaria: number;
   data_inicio: string; data_fim: string | null; hoje: string;
@@ -1955,7 +3109,7 @@ export type DiasDiariaResposta = {
   ultima_folga: string | null; controle_por_dia_desde: string | null;
   nunca_auditado: boolean; pago_ate: string | null;
   dias: DiaTrabalhadoDiaria[];
-  resumo_periodo: { dias_no_periodo: number; dias_trabalhados: number; dias_folga: number; valor_periodo: number };
+  resumo_periodo: { dias_no_periodo: number; dias_trabalhados: number; dias_folga: number; dias_meia_diaria: number; valor_periodo: number };
 };
 export async function fetchDiasDiaria(
   diariaId: number, params?: { modo?: "ultimo_periodo" | "completo"; desde?: string; ate?: string },
@@ -1975,7 +3129,8 @@ export async function fetchDiasDiaria(
  * `confirmar_periodo_pago: true`; mesmo idioma de `atualizarParcelaVale` etc.
  * (ver `err.status` nesta função). */
 export async function salvarDiasDiaria(diariaId: number, dados: {
-  periodo_inicio: string; periodo_fim: string; dias_nao_trabalhados: string[]; confirmar_periodo_pago?: boolean;
+  periodo_inicio: string; periodo_fim: string; dias_nao_trabalhados: string[];
+  dias_meia_diaria?: string[]; confirmar_periodo_pago?: boolean;
 }): Promise<unknown> {
   const res = await authFetch(`${API}/cadastro/diarias/${diariaId}/dias`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -1991,6 +3146,60 @@ export async function salvarDiasDiaria(diariaId: number, dados: {
 }
 
 // ── Férias (Financeiro > Ações > Folha de Pagamento > Férias / 13º) ──
+// ── Média das verbas variáveis habituais (13º, férias e rescisão) ──
+// A integração das parcelas SALARIAIS VARIÁVEIS (bonificação por
+// produtividade, gueltas, vale-alimentação de natureza salarial…) nas bases de
+// 13º, férias e rescisão — CLT, art. 457, §1º, e Súmula 45 do TST. Cada verba
+// tem a SUA janela: 13º pelo ANO CIVIL (Decreto 57.155/65, art. 2º), férias
+// pelo PERÍODO AQUISITIVO (CLT, art. 142) e aviso prévio indenizado pelos
+// ÚLTIMOS 12 MESES.
+//
+// DESLIGADO POR PADRÃO (Configurações > Parâmetros > Folha de pagamento / RH,
+// "O sistema calcula as médias de verbas variáveis…"): sem ele, `aplicada` vem
+// false, `media` vem 0 e as três contas saem só sobre o salário-base, exatamente
+// como antes. É por isso que a tela precisa saber distinguir "não apurada" de
+// "apurada e deu zero" — são coisas diferentes, e o dono tem de ver qual é.
+export type JanelaMediaVariaveis = "ano_civil" | "periodo_aquisitivo" | "ultimos_12_meses";
+export type RubricaDaMedia = { codigo: string; rotulo: string; valor: number };
+export type CompetenciaDaMedia = {
+  competencia: string; rotulo: string; valor: number;
+  /** Contrato vigente, mas sem folha lançada naquele mês. Entra no divisor
+   *  valendo ZERO (Decreto 57.155/65, art. 2º: "meses de vigência do
+   *  contrato"), e por isso precisa aparecer marcado — é o que explica um
+   *  divisor maior que o número de meses com movimento. */
+  sem_folha: boolean;
+  rubricas: RubricaDaMedia[];
+};
+export type ComposicaoMediaVariaveis = {
+  /** false = a média NÃO foi apurada (parâmetro desligado). Diferente de
+   *  `media === 0`, que é "apurada e a pessoa não teve variável no período". */
+  aplicada: boolean;
+  janela: JanelaMediaVariaveis;
+  fundamento: string;
+  motivo?: string;
+  inicio: string | null; fim: string | null; rotulo_janela: string;
+  competencias: CompetenciaDaMedia[];
+  competencias_sem_folha: number;
+  total: number;
+  divisor: number;
+  divisor_imposto: boolean;
+  criterio_divisor: string;
+  media: number;
+};
+
+/** Prévia da média — só lê, não grava. Existe para o "valor sugerido" que a
+ *  tela calcula no navegador não divergir do que o servidor vai gravar. */
+export async function fetchPreviaMediaVariaveis(params: {
+  pessoa_id: number; janela: JanelaMediaVariaveis;
+  inicio?: string; fim?: string; ano?: number; meses_trabalhados?: number;
+}): Promise<ComposicaoMediaVariaveis> {
+  const busca = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== "") busca.set(k, String(v)); });
+  const res = await authFetch(`${API}/cadastro/media-verbas-variaveis?${busca.toString()}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao calcular a média de verbas variáveis"); }
+  return res.json();
+}
+
 // Controle DENTRO do app (cálculo, lançamento e acompanhamento) — sem envio
 // ao eSocial (fora de escopo).
 export type FeriasDados = {
@@ -2005,6 +3214,12 @@ export type RegistroFerias = FeriasDados & {
   id: number; pessoa_nome: string; valor_ferias: number; valor_terco_constitucional: number;
   valor_total: number; numero_lancamento_gerado: string | null; usuario_nome?: string | null;
   status: string;
+  /** Média das variáveis do PERÍODO AQUISITIVO que entrou na base (CLT, art.
+   *  142). `null` = não apurada — o lançamento saiu só sobre o salário-base. */
+  media_variaveis?: number | null;
+  /** A composição CONGELADA no lançamento — é ela que o dono abre para
+   *  conferir de onde saiu a média. Nunca reapurada na leitura. */
+  media_variaveis_detalhe?: ComposicaoMediaVariaveis | null;
 };
 export async function fetchFerias(): Promise<RegistroFerias[]> {
   const res = await authFetch(`${API}/cadastro/ferias`, { cache: "no-store" });
@@ -2042,6 +3257,11 @@ export type DecimoTerceiroDados = {
 export type RegistroDecimoTerceiro = DecimoTerceiroDados & {
   id: number; pessoa_nome: string; valor_bruto: number; valor_liquido: number;
   numero_lancamento_gerado: string | null; usuario_nome?: string | null; status: string;
+  valor_integral?: number | null;
+  /** Média das variáveis do ANO CIVIL, dividida pelos mesmos avos do 13º
+   *  (Decreto 57.155/65, art. 2º). `null` = não apurada. */
+  media_variaveis?: number | null;
+  media_variaveis_detalhe?: ComposicaoMediaVariaveis | null;
 };
 export async function fetchDecimoTerceiro(): Promise<RegistroDecimoTerceiro[]> {
   const res = await authFetch(`${API}/cadastro/decimo-terceiro`, { cache: "no-store" });
@@ -2080,8 +3300,22 @@ export type RescisaoDados = {
   dias_ferias_vencidas?: number; aviso_previo_trabalhado?: boolean;
   data_pagamento?: string; status?: string; observacao?: string; centro_custo?: string;
 };
+/** Saldo de vale ainda COBRÁVEL da pessoa (parcelas não assumidas pela
+ *  fazenda, de vales ativos, em competências sem folha paga) — o número que
+ *  faltava na rescisão. Sem ele o campo "Vale em aberto" nascia em zero e era
+ *  assim que ficava: uma rescisão real foi fechada deixando R$ 6.485,00 de
+ *  vale de pé, em competências que nunca mais teriam folha para descontar.
+ *  O backend recusa fechar a rescisão enquanto sobrar saldo não endereçado. */
+export type SaldoValeEmAberto = {
+  total: number;
+  competencias: { competencia: string; valor: number }[];
+  parcela_ids: number[];
+};
 export type CalculoRescisao = {
   tipo_rescisao: TipoRescisao;
+  /** O saldo de vale a descontar — usado para pré-preencher (editável) o
+   *  campo "Vale em aberto" da simulação. */
+  vale_em_aberto: SaldoValeEmAberto;
   saldo_salario: { dias_trabalhados_mes: number; valor: number };
   aviso_previo: { devido: boolean; dias: number; dias_indenizados: number; trabalhado: boolean; valor: number };
   ferias_vencidas: { valor_ferias: number; valor_terco_constitucional: number; valor_abono: number; valor_total: number };
@@ -2092,6 +3326,11 @@ export type CalculoRescisao = {
     deposito_total_estimado: number; percentual_multa: number; multa: number; percentual_saque_permitido: number;
   };
   data_referencia_tempo_servico: string;
+  /** As três médias aplicadas — uma por natureza de verba. */
+  medias_variaveis: { decimo_terceiro: number; ferias: number; aviso_previo: number; alguma: boolean };
+  /** As três composições, para a tela mostrar de onde saiu cada média ANTES
+   *  de o dono decidir lançar. */
+  medias_variaveis_composicao: MediasVariaveisComposicao;
   valor_total: number;
 };
 export async function simularRescisao(dados: RescisaoDados): Promise<CalculoRescisao> {
@@ -2110,6 +3349,13 @@ export async function simularRescisao(dados: RescisaoDados): Promise<CalculoResc
 export type StatusRescisao = "simulacao" | "fechada";
 export type FormaLancamentoRescisao = "unico" | "detalhado";
 export type LinhaDetalheRescisao = { label: string; valor: number };
+/** As três composições da rescisão, chaveadas pela verba: cada uma tem a SUA
+ *  janela, e é por isso que são três e não uma. */
+export type MediasVariaveisComposicao = {
+  decimo_terceiro: ComposicaoMediaVariaveis;
+  ferias: ComposicaoMediaVariaveis;
+  aviso_previo: ComposicaoMediaVariaveis;
+};
 
 export type RescisaoSimulacaoDados = {
   pessoa_id: number; tipo_rescisao: TipoRescisao; data_desligamento: string;
@@ -2138,6 +3384,15 @@ export type RegistroRescisaoFuncionario = {
   observacao: string | null; numero_lancamento_gerado: string | null; centro_custo: string | null;
   criado_em: string; usuario_id: number | null; fazenda_id: number;
   pessoa_nome: string; usuario_nome: string | null; detalhe: LinhaDetalheRescisao[]; legado: boolean;
+  /** As três médias congeladas no cálculo — `null` quando não apuradas. */
+  media_variaveis_decimo_terceiro?: number | null;
+  media_variaveis_ferias?: number | null;
+  media_variaveis_aviso_previo?: number | null;
+  medias_variaveis_composicao?: MediasVariaveisComposicao | null;
+  /** Só nas SIMULAÇÕES (null nas fechadas e nas legado): o saldo de vale ainda
+   *  cobrável. Numa rescisão fechada o saldo já foi resolvido — o fechamento
+   *  recusa enquanto sobrar. */
+  vale_em_aberto?: SaldoValeEmAberto | null;
   // Só presentes em linhas legado (projeção de ContaGerencial pré-migração).
   legado_conta_id?: number; descricao?: string;
 };
@@ -2182,12 +3437,72 @@ export async function fecharRescisao(id: number, dados: RescisaoFecharDados): Pr
   return res.json();
 }
 
+// Último valor unitário pago num produto ou serviço, para a mini-observação
+// abaixo do item em Contas a pagar. Devolve `null` quando o item nunca foi
+// comprado — a tela NÃO deve inventar número nesse caso, apenas não mostrar
+// a observação. Independe de quantidade e valor informados no item atual.
+export type UltimoPrecoProduto = {
+  produto: string;
+  valor_unitario: number;
+  data: string | null;
+  numero_lancamento: string | null;
+} | null;
+
+export async function fetchUltimoPrecoProduto(produto: string): Promise<UltimoPrecoProduto> {
+  const nome = (produto || "").trim();
+  if (!nome) return null;
+  const res = await authFetch(`${API}/financeiro/ultimo-preco?produto=${encodeURIComponent(nome)}`, { cache: "no-store" });
+  if (!res.ok) return null;   // sem histórico não é erro — é ausência de observação
+  const d = await res.json().catch(() => null);
+  return d && typeof d.valor_unitario === "number" ? d : null;
+}
+
+// Comprovante de pagamento de vale. Espelha o padrão já usado no anexo de
+// lançamento financeiro (anexarArquivoLancamentoPorId acima): multipart, o
+// arquivo vai para o mesmo Storage, e a categoria default é "Comprovante".
+// `tipo` distingue os dois modelos de vale que existem no sistema — o vale
+// marcado a partir de um item de lançamento já herda o anexo da própria nota.
+export async function anexarComprovanteVale(
+  tipo: "funcionario" | "avulso", valeId: number, file: File,
+): Promise<{ id: number; nome_arquivo: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await authFetch(`${API}/cadastro/vales/${tipo}/${valeId}/comprovante`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o comprovante"); }
+  return res.json();
+}
+
+export async function listarComprovantesVale(
+  tipo: "funcionario" | "avulso", valeId: number,
+): Promise<{ id: number; nome_arquivo: string; mime_type: string; criado_em: string }[]> {
+  const res = await authFetch(`${API}/cadastro/vales/${tipo}/${valeId}/comprovante`, { cache: "no-store" });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function excluirComprovanteVale(anexoId: number) {
+  const res = await authFetch(`${API}/cadastro/vales/comprovante/${anexoId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir o comprovante"); }
+  return res.json();
+}
+
+export function urlComprovanteVale(anexoId: number): string {
+  return `${API}/cadastro/vales/comprovante/${anexoId}`;
+}
+
+/** Vale maior que o saldo pendente do alvo responde 409 com {mensagem,
+ * saldo_pendente, excedente} — adiantar acima do pendente é legítimo (etapa
+ * ainda não cadastrada, contrato a prorrogar, contrato sem frequência
+ * definida, que não tem parcela nenhuma), então não se recusa: avisa-se e,
+ * com `confirmar_excedente: true`, a sobra fica gravada como valor não
+ * abatido em vez de sumir do controle. */
 export async function criarValeAvulso(dados: {
   origem_tipo: "empreitada" | "contrato" | "diaria"; origem_id: number; valor: number;
   forma_pagamento: string; data_pagamento: string; observacao?: string;
   // Conta bancária de onde sai o vale — obrigatória quando a forma de pagamento
   // implica saída de caixa agora (dinheiro/pix/transferência); ver _validar_conta_vale_avulso.
   conta_corrente_id?: number;
+  confirmar_excedente?: boolean;
 }) {
   const res = await authFetch(`${API}/cadastro/vale-avulso`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -2224,6 +3539,14 @@ export async function atualizarValeAvulso(valeId: number, dados: {
   }
   return res.json();
 }
+/** Prévia da exclusão do vale avulso — mesma ideia (e mesmo formato) de
+ * `previaExclusaoVale`. Aqui a alternativa é editar o vale: "cancelar o
+ * vale" é ação do vale de FUNCIONÁRIO, não existe para o avulso. */
+export async function previaExclusaoValeAvulso(valeId: number): Promise<PreviaExclusaoVale> {
+  const res = await authFetch(`${API}/cadastro/vale-avulso/${valeId}/exclusao`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao conferir o vale"); }
+  return res.json();
+}
 export async function excluirValeAvulso(valeId: number) {
   const res = await authFetch(`${API}/cadastro/vale-avulso/${valeId}`, { method: "DELETE" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir vale"); }
@@ -2234,14 +3557,51 @@ export async function criarAnimalFicha(dados: Record<string, any>) {
   const res = await authFetch(`${API}/cadastro/animais`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar animal"); }
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar animal");
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 export async function atualizarAnimalFicha(numero: string, dados: Record<string, any>) {
   const res = await authFetch(`${API}/cadastro/animais/${numero}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar ficha"); }
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(mensagemErroApi(d.detail) || "Erro ao atualizar ficha");
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+// Corrige o número/brinco de um animal (01/09/2026) — só admin do tenant
+// (backend: Depends(exigir_admin)); a Ficha do Animal reforça isso com um
+// cadeado que precisa ser destravado antes de mostrar o campo.
+export async function renumerarAnimal(numeroAtual: string, novoNumero: string) {
+  const res = await authFetch(`${API}/cadastro/animais/${numeroAtual}/renumerar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ novo_numero: novoNumero }),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(mensagemErroApi(d.detail) || "Erro ao renumerar animal");
+    err.status = res.status;
+    throw err;
+  }
+  return res.json() as Promise<{ numero_antigo: string; numero_novo: string; tabelas_afetadas: string[] }>;
+}
+
+// Fêmeas da fazenda com pelo menos 1 parto registrado — matrizes possíveis
+// para a sugestão/autocomplete do campo "Número da mãe" na ficha do animal
+// (CadastroAnimalForm). O backend valida a compatibilidade de verdade ao
+// salvar (ver validar_e_vincular_mae) — isto aqui é só a sugestão no campo.
+export type MatrizComParto = { numero: string; nome: string | null };
+export async function fetchMatrizesComParto(): Promise<MatrizComParto[]> {
+  const res = await authFetch(`${API}/cadastro/animais/matrizes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Matrizes com parto error: ${res.status}`);
   return res.json();
 }
 
@@ -2281,6 +3641,15 @@ export async function fetchParametros() {
   const res = await authFetch(`${API}/parametros/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Parâmetros error: ${res.status}`);
   return res.json();
+}
+
+// Secagem/Parto sugerem mover o animal para o lote de secas/lote 03 — este
+// parâmetro (Configurações > Parâmetros) decide se o formulário pergunta
+// (padrão) ou move sozinho, sem popup de confirmação.
+export async function fetchTransferenciaLoteAutomatica(): Promise<boolean> {
+  const res = await authFetch(`${API}/parametros/transferencia-lote-automatica`, { cache: "no-store" });
+  if (!res.ok) return false;
+  return (await res.json()).automatica === true;
 }
 
 export async function atualizarParametro(chave: string, valor: number | string | boolean) {
@@ -2328,12 +3697,13 @@ export async function fetchManualFazenda() {
   if (!res.ok) throw new Error(`Manual da Fazenda error: ${res.status}`);
   return res.json() as Promise<ManualFazenda>;
 }
-export async function baixarPdfManualFazenda() {
+export async function baixarPdfManualFazenda(modo: "baixar" | "compartilhar" = "baixar") {
   const res = await authFetch(`${API}/manual-fazenda/pdf`);
   if (!res.ok) throw new Error(`Erro ao gerar PDF do Manual da Fazenda: ${res.status}`);
   const blob = await res.blob();
-  const { baixarArquivo } = await import("./nativo");
-  await baixarArquivo(blob, "manual_da_fazenda.pdf");
+  const { baixarArquivo, salvarArquivo } = await import("./nativo");
+  if (modo === "compartilhar") await baixarArquivo(blob, "manual_da_fazenda.pdf");
+  else await salvarArquivo(blob, "manual_da_fazenda.pdf");
 }
 export async function fetchParametrosManualFazenda() {
   const res = await authFetch(`${API}/manual-fazenda/parametros`, { cache: "no-store" });
@@ -2547,14 +3917,14 @@ export async function fetchRacas() {
   if (!res.ok) throw new Error(`Raças error: ${res.status}`);
   return res.json();
 }
-export async function criarRaca(dados: { nome: string; ativo?: boolean }) {
+export async function criarRaca(dados: { nome: string; nota?: string | null; ativo?: boolean }) {
   const res = await authFetch(`${API}/cadastro/racas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar raça"); }
   return res.json();
 }
-export async function atualizarRaca(id: number, dados: { nome: string; ativo: boolean }) {
+export async function atualizarRaca(id: number, dados: { nome: string; nota?: string | null; ativo: boolean }) {
   const res = await authFetch(`${API}/cadastro/racas/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -2637,20 +4007,39 @@ export const criarUnidadeMedidaEmbalagemEstoque = apiUnidadesMedidaEmbalagemEsto
 export const atualizarUnidadeMedidaEmbalagemEstoque = apiUnidadesMedidaEmbalagemEstoque.atualizar;
 export const excluirUnidadeMedidaEmbalagemEstoque = apiUnidadesMedidaEmbalagemEstoque.excluir;
 
+// Laboratório / Categoria (medicamento) / Classificação do medicamento —
+// catálogos globais cadastrados no Painel CowData, visíveis automaticamente
+// aqui (ver rules/visibilidade.py::visivel(), global_compartilhado=True em
+// _crud_nome_ativo). `criar` aqui sempre grava com o fazenda_id da PRÓPRIA
+// fazenda (get_fazenda_id_escrita, nunca nulo) — pedido do usuário
+// (04/09/2026): "Laboratório, com botão de + novo, que, se lançado na
+// fazenda, não vai para o painel CowData". Sem `excluir`/`atualizar`
+// expostos: o tenant só cria as PRÓPRIAS linhas novas, nunca edita/apaga a
+// linha global (isso é papel exclusivo do Painel CowData).
+const apiLaboratorios = criarApiCadastroSimples("laboratorios", "Laboratório");
+export const fetchLaboratoriosCadastro = apiLaboratorios.fetch;
+export const criarLaboratorioCadastro = apiLaboratorios.criar;
+
+const apiCategoriasMedicamento = criarApiCadastroSimples("categorias-medicamento", "Categoria (medicamento)");
+export const fetchCategoriasMedicamentoCadastro = apiCategoriasMedicamento.fetch;
+
+const apiClassificacoesMedicamento = criarApiCadastroSimples("classificacoes-medicamento", "Classificação do medicamento");
+export const fetchClassificacoesMedicamentoCadastro = apiClassificacoesMedicamento.fetch;
+
 // ── Graus de sangue (Configurações > Cadastro) ──
 export async function fetchGrausSangue() {
   const res = await authFetch(`${API}/cadastro/graus-sangue`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Graus de sangue error: ${res.status}`);
   return res.json();
 }
-export async function criarGrauSangue(dados: { nome: string; fracao_holandes?: number | null; ativo?: boolean }) {
+export async function criarGrauSangue(dados: { nome: string; fracao_holandes?: number | null; nota?: string | null; ativo?: boolean }) {
   const res = await authFetch(`${API}/cadastro/graus-sangue`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar grau de sangue"); }
   return res.json();
 }
-export async function atualizarGrauSangue(id: number, dados: { nome: string; fracao_holandes?: number | null; ativo: boolean }) {
+export async function atualizarGrauSangue(id: number, dados: { nome: string; fracao_holandes?: number | null; nota?: string | null; ativo: boolean }) {
   const res = await authFetch(`${API}/cadastro/graus-sangue/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -2764,7 +4153,15 @@ export async function criarBaixaAnimal(dados: {
   return res.json();
 }
 
-export async function marcarADescartar(dados: { animais: string[]; descartar?: boolean; observacao?: string }) {
+// `marcado_em`: QUANDO SE DECIDIU (ausente = hoje). É a data que o motor
+// reprodutivo lê para reconstruir o passado — por isso é editável, para quem
+// lança com atraso gravar o dia real da decisão.
+// `previsto_em`: QUANDO SE PRETENDE tirar do rebanho (ausente = sem previsão,
+// que é um estado legítimo). Só informativa: não move taxa nenhuma.
+export async function marcarADescartar(dados: {
+  animais: string[]; descartar?: boolean; observacao?: string;
+  marcado_em?: string | null; previsto_em?: string | null;
+}) {
   const res = await authFetch(`${API}/baixas/a-descartar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -2978,7 +4375,7 @@ export async function fetchUnidadesCompativeis(produto: string) {
 
 export async function criarAplicacaoSanidade(dados: {
   data_aplicacao: string; animais: string[]; responsavel?: string; observacao?: string;
-  itens: { produto: string; via?: string; quantidade: number; unidade: string; estoque_id?: number | null }[];
+  itens: { produto: string; via?: string; quantidade: number; unidade: string; estoque_id?: number | null; lote_id?: number | null }[];
   aplicado?: boolean;
 }) {
   const res = await authFetch(`${API}/sanidade/aplicacoes`, {
@@ -3010,6 +4407,22 @@ export async function marcarCuraAplicacao(id: number, curada: boolean) {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ curada }),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao marcar cura"); }
+  return res.json();
+}
+
+export async function confirmarLactacaoInducao(
+  lancamentoId: number, numeroMatriz: string, entrouEmLactacao: boolean, dataInicio?: string,
+) {
+  // Resposta ao card "Confirmar início de lactação" da Agenda (indução de
+  // lactação concluída sem lactação aberta — ver agenda.py::
+  // eventos_confirmar_lactacao_inducao). "Não" não grava nada no backend
+  // além do ack; quem tira o card da Agenda é sempre o
+  // marcarEventoRealizado chamado em seguida pelo handler, igual à cura.
+  const res = await authFetch(`${API}/producao/inducao-lactacao/${lancamentoId}/${encodeURIComponent(numeroMatriz)}/confirmar`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ entrou_em_lactacao: entrouEmLactacao, data_inicio: dataInicio || undefined }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao confirmar início de lactação"); }
   return res.json();
 }
 
@@ -3066,8 +4479,15 @@ const _principiosAtivos = _crudNomeAtivo("principios-ativos", "Princípio ativo"
 export const fetchPrincipiosAtivos = _principiosAtivos.listar;
 export const criarPrincipioAtivo = _principiosAtivos.criar;
 export const atualizarPrincipioAtivo = _principiosAtivos.atualizar;
+// Escrita no catálogo GLOBAL de princípios ativos: a rota mudou de
+// /cadastro/... para /painel-cowdata/farmacia/... (achado 35 da auditoria).
+// Lá ela não tinha gate de papel nenhum e qualquer usuário de qualquer
+// fazenda com o módulo sanitário reescrevia o catálogo que todas as
+// fazendas-cliente enxergam. O botão que chama isto só é renderizado no
+// Painel CowData (Farmacia.tsx, ramo `!somenteLeitura`), então a tela do
+// tenant não perdeu nada.
 export async function restaurarCatalogoPrincipios(): Promise<{ criados: number; total: number }> {
-  const res = await authFetch(`${API}/cadastro/principios-ativos/restaurar-catalogo`, { method: "POST" });
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/principios/restaurar-catalogo`, { method: "POST" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao restaurar catálogo"); }
   return res.json();
 }
@@ -3096,6 +4516,17 @@ export type EventoSanitarioPayload = {
   // Nome de um serviço cadastrado (Configurações > Cadastro > Serviços) —
   // liga este evento ao botão "Lançar financeiro" no calendário sanitário.
   servico_financeiro?: string | null;
+  // Janela de aplicação — após o gatilho, de/até quando o animal ainda está
+  // dentro da janela. Cada limite tem sua própria unidade (dias ou meses).
+  janela_de_valor?: number | null; janela_de_unidade?: "dias" | "meses" | null;
+  janela_ate_valor?: number | null; janela_ate_unidade?: "dias" | "meses" | null;
+  // O que acontece quando a janela se encerra sem aplicação: "sair" | "manter" | "notificar".
+  acao_fora_janela?: string | null;
+  // Teto etário (opcional) — além dessa idade, "manter" nunca se aplica.
+  teto_etario_valor?: number | null; teto_etario_unidade?: "dias" | "meses" | null;
+  // Veterinário padrão sugerido no agendamento (editável na hora).
+  veterinario_padrao_pessoa_id?: number | null;
+  veterinario_padrao_nome?: string | null;
 };
 export async function fetchEventosSanitarios() {
   const res = await authFetch(`${API}/cadastro/eventos-sanitarios`, { cache: "no-store" });
@@ -3154,6 +4585,17 @@ export async function excluirExame(id: number) {
   return res.json();
 }
 
+// Template de Checklist por Tipo (redesenho do evento sanitário, seção
+// 3.7.3) — só leitura por aqui: ponto de partida do passo 4 do wizard novo
+// de Cadastro (seção 3.7.0), Central de Protocolos > Cadastro > Sanitário >
+// Preventivo.
+export type ChecklistTemplateItemDTO = { chave: string; nome: string; ordem: number };
+export async function fetchChecklistTemplate(tipo: "vacina" | "exame"): Promise<ChecklistTemplateItemDTO[]> {
+  const res = await authFetch(`${API}/cadastro/checklist-template?tipo=${tipo}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Template de checklist error: ${res.status}`);
+  return res.json();
+}
+
 // Resultados de exames (relatório) — GET /sanidade/exames/resultados.
 export type ExameResultado = {
   id: number; numero_matriz: string; evento_sanitario_id: number; evento_sanitario_nome: string | null;
@@ -3171,6 +4613,16 @@ export async function fetchResultadosExame(filtros?: { eventoSanitarioId?: numbe
   const res = await authFetch(`${API}/sanidade/exames/resultados${qs.toString() ? `?${qs}` : ""}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Resultados de exame error: ${res.status}`);
   return res.json() as Promise<ExameResultado[]>;
+}
+export async function atualizarResultadoExame(id: number, dados: {
+  data_exame?: string; resultado?: "positivo" | "negativo" | "indefinido" | null;
+  valor_numerico?: number | null; veterinario?: string | null; observacao?: string | null;
+}) {
+  const res = await authFetch(`${API}/sanidade/exames/resultados/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar resultado do exame"); }
+  return res.json() as Promise<ExameResultado>;
 }
 
 // Classificações de medicamento (para cadastrar/protocolar por classificação).
@@ -3246,7 +4698,32 @@ export async function excluirAgendamentoPesagem(id: number) {
 // ── Protocolo sanitário (cadastro + lançamento) ──
 // criterio_tipo: "medicamento" (produto = item de estoque), "principio_ativo"
 // ou "classificacao" (produto = o valor do critério; medicamento escolhido no lançamento).
-export type ProtocoloEtapa = { dia: number; criterio_tipo?: string; produto: string; dosagem: number; unidade: string; via?: string | null; observacao?: string | null };
+export type ProtocoloEtapa = {
+  dia: number; criterio_tipo?: string; produto: string; dosagem: number; unidade: string;
+  via?: string | null; observacao?: string | null;
+  // Onda "Protocolo à Mostra" — "fixa" (padrão, é o legado inteiro): `dosagem`
+  // é a dose pronta. "por_peso": `dosagem` é a dose A CADA `dose_referencia_kg`
+  // de peso vivo do animal — ver rules.dose_protocolo no backend.
+  modo_dose?: "fixa" | "por_peso"; dose_referencia_kg?: number | null;
+};
+
+/** "2 mL" (fixa) ou "2 mL a cada 15 kg PV" (por peso) — a mesma fórmula
+ * sempre exibida como texto, nunca escondida atrás de um número calculado
+ * sozinho. Usada em toda tela que lista etapas de protocolo sanitário
+ * (cadastro, lançamento, Central de Protocolos, Agenda). */
+export function formatarDoseEtapa(e: Pick<ProtocoloEtapa, "dosagem" | "unidade" | "modo_dose" | "dose_referencia_kg">): string {
+  if (e.modo_dose === "por_peso" && e.dose_referencia_kg) {
+    return `${e.dosagem}${e.unidade ? ` ${e.unidade}` : ""} a cada ${e.dose_referencia_kg}kg PV`;
+  }
+  return `${e.dosagem}${e.unidade ? ` ${e.unidade}` : ""}`;
+}
+
+/** Dose calculada para um animal de `pesoKg`, quando a etapa é "por_peso".
+ * null quando a etapa é dose fixa (nada a calcular) ou falta o peso. */
+export function calcularDoseEtapa(e: Pick<ProtocoloEtapa, "dosagem" | "modo_dose" | "dose_referencia_kg">, pesoKg: number | null | undefined): number | null {
+  if (e.modo_dose !== "por_peso" || !e.dose_referencia_kg || !pesoKg) return null;
+  return Math.round((e.dosagem * (pesoKg / e.dose_referencia_kg)) * 10) / 10;
+}
 export async function fetchProtocolosSanitarios() {
   const res = await authFetch(`${API}/cadastro/protocolos-sanitarios`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Protocolos sanitários error: ${res.status}`);
@@ -3324,6 +4801,10 @@ type CalendarioSanitarioPayload = {
   // fazenda/rules/cronograma_sanitario.py): animal que bate o critério entra
   // numa lista de espera em vez de virar pendência de aplicar na hora.
   usa_cronograma?: boolean;
+  // Passo 4 do wizard novo (redesenho, seção 3.7.0) — checklist congelado
+  // para esta regra. Omitir preserva qualquer customização já existente;
+  // mandar (mesmo lista vazia) substitui por completo.
+  checklist_itens?: ChecklistTemplateItemDTO[];
 };
 export async function criarCalendarioSanitario(dados: CalendarioSanitarioPayload) {
   const res = await authFetch(`${API}/sanidade/calendario`, {
@@ -3365,6 +4846,52 @@ export async function criarCronogramaSanitario(calendarioSanitarioId: number) {
     body: JSON.stringify({ calendario_sanitario_id: calendarioSanitarioId }),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar cronograma"); }
+  return res.json();
+}
+
+// ── Ocorrência (redesenho do evento sanitário, telas 1-2) ──────────────────
+// GET /sanidade/ocorrencias e /ocorrencias/{id} — ver
+// fazenda/api/routers/sanidade.py e docs/redesenho-evento-sanitario.md.
+export type EstadoOcorrencia = "provavel" | "em_edicao" | "confirmado" | "realizado";
+export type LinhaOcorrencia = {
+  calendario_sanitario_id: number; cronograma_id: number | null;
+  evento_sanitario_nome: string; tipo: "vacina" | "exame" | "tratamento";
+  categoria_alvo: string | null; data_prevista: string; estado: EstadoOcorrencia;
+  animais_incluidos: number; animais_sugeridos: number; veterinario_nome: string | null;
+  atraso_dias: number; alerta_clinico: boolean;
+};
+export type IndicadoresOcorrencias = {
+  vencidas: number; provaveis_30d: number; confirmadas_aguardando: number; alerta_clinico_ativo: number;
+};
+export async function fetchOcorrencias(): Promise<{ indicadores: IndicadoresOcorrencias; linhas: LinhaOcorrencia[] }> {
+  const res = await authFetch(`${API}/sanidade/ocorrencias`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Ocorrências error: ${res.status}`);
+  return res.json();
+}
+
+export type ChecklistItemOcorrencia = {
+  id: number; chave: "estoque" | "vet" | "horario" | "lotes" | "financeiro" | "custom"; nome: string;
+  status: "pendente" | "cumprido" | "pulado"; resposta: string | null; observacao: string | null;
+  respondido_em: string | null;
+};
+export type AnimalOcorrencia = {
+  id: number; numero_matriz: string; status: "sugerido" | "incluido" | "excluido" | "aplicado";
+  data_sugestao: string; data_decisao: string | null;
+};
+export type DetalheOcorrencia = {
+  cronograma_id: number; calendario_sanitario_id: number | null; evento_sanitario_nome: string;
+  tipo: "vacina" | "exame" | "tratamento"; categoria_alvo: string | null; data_prevista: string;
+  estado: EstadoOcorrencia; checklist_desconsiderado: boolean; checklist_desconsiderado_motivo: string | null;
+  veterinario_nome: string | null; alerta_clinico: boolean;
+  // Saldo do produto vinculado à regra — aviso honesto (não é o cálculo
+  // preciso "dá pra aplicar em todos os incluídos", só o saldo atual),
+  // pedido pelo usuário em 12/09/2026 para o item "estoque" do checklist.
+  estoque: { produto: string; encontrado: boolean; saldo: number | null; unidade: string | null } | null;
+  animais: AnimalOcorrencia[]; checklist: ChecklistItemOcorrencia[];
+};
+export async function fetchDetalheOcorrencia(cronogramaId: number): Promise<DetalheOcorrencia> {
+  const res = await authFetch(`${API}/sanidade/ocorrencias/${cronogramaId}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Detalhe da ocorrência error: ${res.status}`);
   return res.json();
 }
 
@@ -3460,6 +4987,9 @@ export async function movimentarEstoque(dados: {
 export type MovimentoEstoqueRow = {
   id: number; nome_item: string; movimento: string; quantidade: number; unidade?: string | null;
   data_movimento: string; observacao?: string | null; usuario_nome?: string | null;
+  // Rótulo pronto (ex.: "100 ml/frasco") de qual embalagem este movimento
+  // afetou, quando o lote tinha um tamanho cadastrado — null nos demais casos.
+  embalagem?: string | null;
 };
 export async function fetchMovimentosEstoque(): Promise<{ movimentos: MovimentoEstoqueRow[]; total: number }> {
   const res = await authFetch(`${API}/estoque/movimentos`, { cache: "no-store" });
@@ -3503,20 +5033,29 @@ export async function fetchEstadoBaixaAlimentacao() {
 
 // ── Categorias de alimento e cadastro de Alimento (Configurações > Cadastro
 // > Alimentação > Categorias / Alimentos) ──
-export type CategoriaAlimento = { id: number; nome: string; ativo: boolean };
+// `categoria_pai_id` é a auto-FK que dá o SEGUNDO nível (ex.: "Proteico" e
+// "Energético" abaixo de "Concentrado"). São só dois níveis: uma categoria com
+// pai não pode virar pai de outra — quem barra é o backend.
+// `Alimento.categoria_alimento_id` continua sendo UMA só FK, e pode apontar
+// tanto para uma raiz quanto para uma subcategoria. Quem aponta para uma
+// subcategoria tem a categoria derivada do pai dela — é assim que a tela de
+// Alimentos preenche as colunas Categoria e Subcategoria sem um segundo campo.
+export type CategoriaAlimento = {
+  id: number; nome: string; ativo: boolean; categoria_pai_id: number | null;
+};
 export async function fetchCategoriasAlimento(): Promise<CategoriaAlimento[]> {
   const res = await authFetch(`${API}/alimentacao/categorias`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Categorias de alimento error: ${res.status}`);
   return res.json();
 }
-export async function criarCategoriaAlimento(dados: { nome: string; ativo?: boolean }) {
+export async function criarCategoriaAlimento(dados: { nome: string; ativo?: boolean; categoria_pai_id?: number | null }) {
   const res = await authFetch(`${API}/alimentacao/categorias`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar categoria"); }
   return res.json();
 }
-export async function atualizarCategoriaAlimento(id: number, dados: { nome: string; ativo?: boolean }) {
+export async function atualizarCategoriaAlimento(id: number, dados: { nome: string; ativo?: boolean; categoria_pai_id?: number | null }) {
   const res = await authFetch(`${API}/alimentacao/categorias/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -3561,6 +5100,80 @@ export async function excluirAlimento(id: number) {
   return res.json();
 }
 
+// ── Fase P0-B: relatório de conferência (SOMENTE LEITURA) do refactor
+// Alimento/Estoque — aba "Conferência" de Configurações > Cadastro >
+// Alimentação. Ver backend/fazenda/api/routers/alimentacao.py::relatorio_migracao.
+export type RelatorioMigracaoItem = {
+  id: number; nome: string; quantidade: number | null; unidade: string | null; finalidade: string | null;
+  fontes: { dieta: number; curva_abc: number; lancamento_item: number; sanidade: number };
+  quantidade_movimentos: number; primeiro_movimento: string | null; ultimo_movimento: string | null;
+  candidatos_mesclagem: { id: number; nome: string }[];
+};
+export type RelatorioMigracaoProdutoSemCategoria = {
+  id: number; nome: string; quantidade: number | null; unidade: string | null; finalidade: string | null; motivo: string;
+};
+export type RelatorioMigracaoDesmembramento = {
+  alimento_id: number; alimento_nome: string | null;
+  produtos: { id: number; nome: string; quantidade: number | null; unidade: string | null }[];
+  tem_alimento_nutricional: boolean;
+  // Fase P1: qual dos `produtos` acima (se algum) já foi escolhido
+  // deliberadamente como o item que recebe a baixa automática — null significa
+  // que ninguém escolheu ainda, e o sistema segue na ordem arbitrária de hoje.
+  estoque_preferido_id: number | null;
+};
+export type RelatorioMigracaoDivergenciaNome = {
+  alimento_id: number; alimento_nome: string; estoque_id: number; estoque_nome: string;
+  quantidade_laudos_pelo_nome_atual: number;
+  // Fase P1: quantos desses laudos já estão ligados por id (imunes a um
+  // futuro rename do Alimento) — informativo, não muda nenhuma resolução.
+  quantidade_laudos_pelo_id: number;
+};
+export type RelatorioMigracaoIngredienteNaoResolvivel = {
+  ingrediente: string; classificacao: "resolve_0" | "ambiguo"; motivo: string;
+  candidatos: { id: number; nome: string }[];
+};
+export type RelatorioMigracaoItemRmca = { id: number; nome: string; conta_gerencial_despesa_padrao: string | null; finalidade: string | null };
+export type RelatorioMigracao = {
+  fantasmas_importacao: RelatorioMigracaoItem[];
+  fantasmas_ponte: RelatorioMigracaoItem[];
+  produtos_sem_categoria: RelatorioMigracaoProdutoSemCategoria[];
+  desmembramentos: RelatorioMigracaoDesmembramento[];
+  divergencia_nome: RelatorioMigracaoDivergenciaNome[];
+  ingredientes_nao_resolviveis: RelatorioMigracaoIngredienteNaoResolvivel[];
+  rmca: {
+    so_pela_conta: RelatorioMigracaoItemRmca[]; so_pela_finalidade: RelatorioMigracaoItemRmca[]; por_ambas: RelatorioMigracaoItemRmca[];
+  };
+};
+export async function fetchRelatorioMigracaoAlimentacao(): Promise<RelatorioMigracao> {
+  const res = await authFetch(`${API}/alimentacao/migracao/relatorio`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Relatório de conferência error: ${res.status}`);
+  return res.json();
+}
+
+// Fase P1 — as duas únicas ações que a aba "Conferência" ganha (o resto da
+// aba continua somente leitura): escolher qual item de Estoque recebe a
+// baixa automática de um Alimento com 2+ candidatos, e ligar um item de
+// Estoque direto a uma CategoriaAlimento, sem precisar de um Alimento no meio.
+export async function atualizarEstoquePreferidoAlimento(alimentoId: number, estoqueId: number | null): Promise<Alimento> {
+  const res = await authFetch(`${API}/alimentacao/alimentos/${alimentoId}/estoque-preferido`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ estoque_id: estoqueId }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao definir o item preferido"); }
+  return res.json();
+}
+// Nome diferente de `atualizarCategoriaEstoque` (acima, Cadastro > Estoque >
+// Categoria — texto livre, sem relação nenhuma) DE PROPÓSITO: esta aqui grava
+// `Estoque.categoria_alimento_id`, o vínculo novo da Fase P1 com o cadastro de
+// CategoriaAlimento (o mesmo de Configurações > Cadastro > Alimentação >
+// Categorias) — duas colunas, dois conceitos, dois endpoints diferentes.
+export async function atualizarCategoriaAlimentoEstoque(estoqueId: number, categoriaAlimentoId: number | null) {
+  const res = await authFetch(`${API}/alimentacao/estoque/${estoqueId}/categoria`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ categoria_alimento_id: categoriaAlimentoId }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao definir a categoria do item de estoque"); }
+  return res.json();
+}
+
 // ── Lançamento de dieta (Lançamentos > Alimentação) ──
 export async function fetchAlimentosPadrao() {
   const res = await authFetch(`${API}/alimentacao/alimentos-padrao`, { cache: "no-store" });
@@ -3570,13 +5183,22 @@ export async function fetchAlimentosPadrao() {
 export async function fetchTabelaNutricional() {
   const res = await authFetch(`${API}/alimentacao/tabela-nutricional`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Tabela nutricional error: ${res.status}`);
-  return res.json() as Promise<{ alimentos: string[]; produto_ids: number[]; linhas: string[][] }>;
+  return res.json() as Promise<{ alimentos: string[]; produto_ids: number[]; estoque_ids: (number | null)[]; linhas: string[][] }>;
 }
-export async function criarProdutoTabelaNutricional(nome: string) {
+export async function criarProdutoTabelaNutricional(dados: { nome?: string; estoque_id?: number }) {
   const res = await authFetch(`${API}/alimentacao/tabela-nutricional/produtos`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }),
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar produto"); }
+  return res.json();
+}
+export type GerarComposicaoResposta = {
+  criado: boolean; alimento_nutricional_id: number;
+  convertidos: Record<string, number>; nao_convertidos: Record<string, string>;
+};
+export async function gerarComposicaoDeTabelaNutricional(produtoId: number): Promise<GerarComposicaoResposta> {
+  const res = await authFetch(`${API}/alimentacao/tabela-nutricional/produtos/${produtoId}/gerar-composicao`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao gerar composição"); }
   return res.json();
 }
 export async function renomearProdutoTabelaNutricional(id: number, nome: string) {
@@ -3657,7 +5279,7 @@ export async function criarAnaliseBromatologica(dados: {
 export async function criarDieta(dados: {
   lote: number; responsavel?: string; data_abertura: string; data_prevista_encerramento?: string; observacao?: string;
   base_quantidade?: string; leite_bezerros_kg_dia?: number | null;
-  itens: { alimento: string; quantidade: number; unidade: string; base?: string; ms_pct?: number | null }[]; encerrar_anterior?: boolean;
+  itens: { alimento: string; quantidade: number; unidade: string; base?: string; ms_pct?: number | null; base_quantidade?: string | null }[]; encerrar_anterior?: boolean;
 }) {
   const res = await authFetch(`${API}/alimentacao/dietas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -3668,7 +5290,14 @@ export async function criarDieta(dados: {
 export type ContextoDieta = {
   lote: number; nome: string | null; qtd_animais: number; del_medio: number | null; media_cl: number | null; data_ult_cl: string | null;
   animais: { numero: string; del_dias: number | null; ult_cl_kg: number | null; data_ult_leite: string | null }[];
-  ultima_dieta: { data_abertura: string; responsavel: string | null; itens: { alimento: string; unidade: string; total_dia: number; por_cabeca: number | null }[] } | null;
+  ultima_dieta: {
+    data_abertura: string; data_prevista_encerramento: string | null; responsavel: string | null;
+    base_quantidade: string | null; leite_bezerros_kg_dia: number | null; leite_por_bezerro_kg_dia: number | null;
+    // `total_dia` só é `null` no caso extremo de um item com override
+    // "por cabeça" num lote sem nenhum animal ativo (não há efetivo para
+    // multiplicar e chegar no total do lote) — ver `_totais_item` no backend.
+    itens: { alimento: string; unidade: string; total_dia: number | null; por_cabeca: number | null }[];
+  } | null;
 };
 export async function fetchContextoDieta(lote: number) {
   const res = await authFetch(`${API}/alimentacao/dietas/contexto/${lote}`, { cache: "no-store" });
@@ -3678,7 +5307,10 @@ export async function fetchContextoDieta(lote: number) {
 export type ApresentacaoDieta = {
   lote: number; nome: string | null; qtd_animais: number; data_abertura: string; data_prevista_encerramento: string | null;
   num_tratos: number; vagao_kg_dia: number; vagao_kg_trato: number;
-  itens: { alimento: string; unidade: string; total_dia: number; por_cabeca: number | null; total_trato: number }[];
+  // `total_dia`/`total_trato` só ficam `null` no caso extremo de um item com
+  // override "por cabeça" num lote sem nenhum animal ativo — ver
+  // `_totais_item` no backend.
+  itens: { alimento: string; unidade: string; total_dia: number | null; por_cabeca: number | null; total_trato: number | null }[];
 };
 export async function fetchApresentacaoDieta(id: number) {
   const res = await authFetch(`${API}/alimentacao/dietas/${id}/apresentacao`, { cache: "no-store" });
@@ -3713,15 +5345,32 @@ export type ApresentacaoFarmacia = {
   estoque_id: number; nome: string; marca: string | null; medicamento_comercial_id: number | null;
   saldo: number; unidade: string | null; volume_por_apresentacao: number | null; volume_unidade: string | null;
   apresentacoes: number | null; estoque_inicializado: boolean;
+  // Unidade de medida ATUAL do item (ex.: "ml/frasco") — ver
+  // ApresentacaoEmbalagemEstoque no backend. Nunca assumir "ml"/"frasco":
+  // sempre exibir este valor tal como veio, seja lá qual for.
+  medida_embalagem?: string | null;
+  // Composição por embalagem — só presente (não-vazio) quando o item usa o
+  // cadastro novo de "Unidade (embalagem)" com lotes em aberto vinculados a
+  // um tamanho. Cada linha = um lote de compra ainda com saldo.
+  lotes_embalagem?: { apresentacao_quantidade: number | null; quantidade_restante: number }[];
 };
 export type PrincipioFarmacia = {
   id: number; nome: string; ativo: boolean; categoria: string | null; categoria_software: string | null;
   uso_principal: string | null; justificativa: string | null;
   eh_biologico: boolean; doenca_id: number | null; unidade_base: string | null; unidade_apresentacao: string | null;
-  estoque_minimo_apresentacoes: number; total_base: number | null; total_apresentacoes: number;
+  estoque_minimo_apresentacoes: number; estoque_minimo_base: number | null; minimo_modo: "base" | "apresentacoes";
+  precisa_reconciliar_minimo: boolean;
+  total_base: number | null; total_apresentacoes: number;
   qtd_marcas_estoque: number; abaixo_minimo: boolean; precisa_inicializar: boolean; itens: ApresentacaoFarmacia[];
 };
 export type MarcaComercial = { id: number; principio_ativo_id: number; nome_comercial: string; laboratorio: string | null; ativo: boolean };
+export async function definirEstoqueMinimoFarmacia(principioId: number, estoqueMinimoBase: number) {
+  const res = await authFetch(`${API}/farmacia/principios/${principioId}/estoque-minimo`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ estoque_minimo_base: estoqueMinimoBase }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao definir estoque mínimo"); }
+  return res.json() as Promise<PrincipioFarmacia>;
+}
 export async function fetchFarmaciaPrincipios() {
   const res = await authFetch(`${API}/farmacia/principios`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Farmácia error: ${res.status}`);
@@ -3766,12 +5415,96 @@ export async function fetchApresentacoesFarmacia(params: { principio_ativo_id?: 
   if (!res.ok) throw new Error(`Apresentações error: ${res.status}`);
   return res.json() as Promise<ApresentacaoFarmacia[]>;
 }
+// Lotes/frascos de compra (Fase G, 01/09/2026) — pedido do usuário:
+// "registrar/comprar um medicamento escolhendo um tamanho de frasco/
+// embalagem específico com sua própria dosagem, rastrear múltiplos lotes de
+// tamanhos diferentes do mesmo medicamento em estoque, e — ao aplicar —
+// escolher explicitamente de qual frasco/lote a dose saiu, ou, se nenhum for
+// escolhido, baixar automaticamente do lote mais antigo primeiro (FIFO)."
+export type LoteEstoque = {
+  id: number; estoque_id: number; numero_lote: string | null; data_compra: string;
+  quantidade_comprada: number; quantidade_restante: number; valor_unitario: number | null;
+  observacao: string | null; ativo: boolean;
+  // De qual embalagem cadastrada (ApresentacaoEmbalagemEstoque) este lote
+  // veio — `apresentacao_quantidade` é resolvida ao vivo pelo backend
+  // (nunca copiada), sempre um NÚMERO puro: mostrar ao lado dele a unidade
+  // de medida ATUAL do item (`Estoque.medida_embalagem`), nunca um valor
+  // fixo tipo "ml" ou "frasco" — ver ApresentacaoEmbalagemEstoque no backend.
+  apresentacao_id: number | null; apresentacao_quantidade: number | null;
+};
+export async function fetchLotesEstoque(estoqueId: number) {
+  const res = await authFetch(`${API}/estoque/${estoqueId}/lotes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Lotes error: ${res.status}`);
+  return res.json() as Promise<LoteEstoque[]>;
+}
+export async function abrirLoteEstoque(estoqueId: number, dados: {
+  quantidade: number; data_compra: string; valor_unitario?: number | null; numero_lote?: string | null;
+  observacao?: string | null; apresentacao_id?: number | null;
+}) {
+  const res = await authFetch(`${API}/estoque/${estoqueId}/lotes`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao abrir lote"); }
+  return res.json() as Promise<LoteEstoque & { avisos: string[] }>;
+}
+
+// Embalagens (tamanhos de frasco/pacote) cadastráveis por item de Estoque —
+// pedido do usuário (04/09/2026): comprar "Agrovet frasco de 100ml" ou
+// "Agrovet frasco de 50ml" sem precisar de um item de Estoque à parte pra
+// cada tamanho. Só o número (`quantidade`) é cadastrado aqui — a unidade é
+// sempre `Estoque.medida_embalagem` do item, nunca duplicada nesta tabela.
+export type ApresentacaoEmbalagemEstoque = {
+  id: number; estoque_id: number; quantidade: number; ativa: boolean;
+};
+export async function fetchEmbalagensEstoque(estoqueId: number) {
+  const res = await authFetch(`${API}/estoque/${estoqueId}/embalagens`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Embalagens error: ${res.status}`);
+  return res.json() as Promise<ApresentacaoEmbalagemEstoque[]>;
+}
+export async function criarEmbalagemEstoque(estoqueId: number, quantidade: number) {
+  const res = await authFetch(`${API}/estoque/${estoqueId}/embalagens`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ quantidade }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar embalagem"); }
+  return res.json() as Promise<ApresentacaoEmbalagemEstoque>;
+}
+export async function removerEmbalagemEstoque(estoqueId: number, embalagemId: number) {
+  const res = await authFetch(`${API}/estoque/${estoqueId}/embalagens/${embalagemId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao remover embalagem"); }
+  return res.json();
+}
+
 export async function inicializarEstoqueFarmacia(estoqueId: number, dados: { quantidade: number; data?: string; observacao?: string }) {
   const res = await authFetch(`${API}/farmacia/estoque/${estoqueId}/inicializar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao inicializar estoque"); }
   return res.json();
+}
+
+// Mesclagem de itens de Estoque (01/09/2026) — "o tenant alinhar com o
+// padrão CowData sem perder histórico/estoque": junta um item digitado pela
+// fazenda com o item-fantasma que o fan-out do Painel CowData criou (ou
+// dois itens duplicados quaisquer do mesmo princípio ativo), preservando
+// MovimentoEstoque, lotes/frascos abertos e saldo físico do(s) perdedor(es)
+// — ver POST /estoque/{sobrevivente_id}/mesclar.
+export type SugestaoMesclagem = {
+  principio_ativo_id: number; principio_ativo_nome: string; sobrevivente_sugerido_id: number;
+  itens: { id: number; nome: string; quantidade: number | null; medicamento_comercial_id?: number | null }[];
+};
+export async function fetchSugestoesMesclagem() {
+  const res = await authFetch(`${API}/estoque/sugestoes-mesclagem`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Sugestões de mesclagem error: ${res.status}`);
+  return res.json() as Promise<SugestaoMesclagem[]>;
+}
+export async function mesclarItensEstoque(sobreviventeId: number, perdedorIds: number[]) {
+  const res = await authFetch(`${API}/estoque/${sobreviventeId}/mesclar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ perdedor_ids: perdedorIds }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao mesclar itens"); }
+  return res.json() as Promise<{
+    sobrevivente: Record<string, any>; mesclados: number; estoque_transferido: number; alinhou_padrao_cowdata: boolean;
+  }>;
 }
 
 // ── Indicações terapêuticas (substituto inteligente: princípio ↔ doença ↔ prioridade) ──
@@ -3870,6 +5603,197 @@ export async function atualizarVinculoIndicacao(id: number, dados: { prioridade:
   }>;
 }
 
+// ── Painel CowData > Farmácia — cadastro CENTRAL do catálogo padrão
+// (categoria/doença, princípio ativo, medicamento) que fica visível a TODAS
+// as fazendas-cliente (catálogo global) e, no caso de medicamento, também
+// gera automaticamente o item de Estoque em cada uma (inativo/não-estocável,
+// pra o tenant ativar se quiser) — ver backend/fazenda/api/routers/
+// painel_cowdata_farmacia.py.
+export type CategoriaFarmaciaCowData = {
+  id: number; nome: string; tipo: string; descricao: string | null; ativo: boolean; fazenda_id: number | null;
+};
+export type PrincipioFarmaciaCowData = Record<string, any> & { id: number; nome: string };
+export type MedicamentoFarmaciaCowData = Record<string, any> & {
+  id: number; nome_comercial: string; principio_ativo_ids: number[]; doenca_ids: number[];
+  fan_out_fazendas: number; fan_out_total_fazendas: number;
+};
+
+export async function fetchCategoriasFarmaciaCowData() {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/categorias`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Categorias error: ${res.status}`);
+  return res.json() as Promise<CategoriaFarmaciaCowData[]>;
+}
+export async function criarCategoriaFarmaciaCowData(dados: { nome: string; tipo: string; descricao?: string | null; ativo?: boolean }) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/categorias`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar categoria"); }
+  return res.json() as Promise<CategoriaFarmaciaCowData>;
+}
+export async function atualizarCategoriaFarmaciaCowData(id: number, dados: { nome: string; tipo: string; descricao?: string | null; ativo?: boolean }) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/categorias/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar categoria"); }
+  return res.json() as Promise<CategoriaFarmaciaCowData>;
+}
+export async function fetchPrincipiosFarmaciaCowData() {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/principios`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Princípios error: ${res.status}`);
+  return res.json() as Promise<PrincipioFarmaciaCowData[]>;
+}
+export async function criarPrincipioFarmaciaCowData(dados: { nome: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/principios`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar princípio ativo"); }
+  return res.json() as Promise<PrincipioFarmaciaCowData>;
+}
+export async function atualizarPrincipioFarmaciaCowData(id: number, dados: Record<string, any>) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/principios/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar princípio ativo"); }
+  return res.json() as Promise<PrincipioFarmaciaCowData>;
+}
+export async function excluirPrincipioFarmaciaCowData(id: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/principios/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir princípio ativo"); }
+  return res.json() as Promise<{ excluido: boolean; impacto: string[] }>;
+}
+export async function fetchMedicamentosFarmaciaCowData() {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Medicamentos error: ${res.status}`);
+  return res.json() as Promise<MedicamentoFarmaciaCowData[]>;
+}
+export async function fetchMedicamentoGlobalDetalhe(id: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos/${id}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Detalhe do medicamento error: ${res.status}`); }
+  return res.json() as Promise<Record<string, any>>;
+}
+export async function criarMedicamentoFarmaciaCowData(dados: Record<string, any>) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar medicamento"); }
+  return res.json() as Promise<MedicamentoFarmaciaCowData & { fan_out: { criados: number; ja_existiam: number } }>;
+}
+export async function atualizarMedicamentoFarmaciaCowData(id: number, dados: Record<string, any>) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar medicamento"); }
+  return res.json() as Promise<MedicamentoFarmaciaCowData>;
+}
+export async function refazerFanoutMedicamentoFarmaciaCowData(id: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos/${id}/fanout`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao propagar medicamento"); }
+  return res.json() as Promise<{ criados: number; ja_existiam: number }>;
+}
+
+// Laboratório / Categoria (medicamento) / Classificação do medicamento —
+// cadastro central no Painel CowData (mesmo padrão "nome + ativo" de
+// Princípios ativos acima, ver painel_cowdata_farmacia.py::_crud_catalogo_global).
+function criarApiCatalogoFarmaciaCowData(rota: string, rotulo: string) {
+  return {
+    fetch: async (): Promise<ItemCadastroSimples[]> => {
+      const res = await authFetch(`${API}/painel-cowdata/farmacia/${rota}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`${rotulo} error: ${res.status}`);
+      return res.json();
+    },
+    criar: async (dados: { nome: string; ativo?: boolean }): Promise<ItemCadastroSimples> => {
+      const res = await authFetch(`${API}/painel-cowdata/farmacia/${rota}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro ao criar ${rotulo.toLowerCase()}`); }
+      return res.json();
+    },
+    atualizar: async (id: number, dados: { nome: string; ativo: boolean }): Promise<ItemCadastroSimples> => {
+      const res = await authFetch(`${API}/painel-cowdata/farmacia/${rota}/${id}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro ao atualizar ${rotulo.toLowerCase()}`); }
+      return res.json();
+    },
+  };
+}
+
+const apiLaboratoriosFarmaciaCowData = criarApiCatalogoFarmaciaCowData("laboratorios", "Laboratório");
+export const fetchLaboratoriosFarmaciaCowData = apiLaboratoriosFarmaciaCowData.fetch;
+export const criarLaboratorioFarmaciaCowData = apiLaboratoriosFarmaciaCowData.criar;
+export const atualizarLaboratorioFarmaciaCowData = apiLaboratoriosFarmaciaCowData.atualizar;
+
+const apiCategoriasMedicamentoFarmaciaCowData = criarApiCatalogoFarmaciaCowData("categorias-medicamento", "Categoria (medicamento)");
+export const fetchCategoriasMedicamentoFarmaciaCowData = apiCategoriasMedicamentoFarmaciaCowData.fetch;
+export const criarCategoriaMedicamentoFarmaciaCowData = apiCategoriasMedicamentoFarmaciaCowData.criar;
+export const atualizarCategoriaMedicamentoFarmaciaCowData = apiCategoriasMedicamentoFarmaciaCowData.atualizar;
+
+const apiClassificacoesMedicamentoFarmaciaCowData = criarApiCatalogoFarmaciaCowData("classificacoes-medicamento", "Classificação do medicamento");
+export const fetchClassificacoesMedicamentoFarmaciaCowData = apiClassificacoesMedicamentoFarmaciaCowData.fetch;
+export const criarClassificacaoMedicamentoFarmaciaCowData = apiClassificacoesMedicamentoFarmaciaCowData.criar;
+export const atualizarClassificacaoMedicamentoFarmaciaCowData = apiClassificacoesMedicamentoFarmaciaCowData.atualizar;
+
+// Substitutivos (Fase E, 01/09/2026) — tabela dinâmica de cruzamento: 1º
+// nível filtra medicamentos por um eixo/item; 2º nível ranqueia os
+// substitutos de um medicamento pivô por atributos clínicos coincidentes.
+export type EixoFiltroSubstitutivos = "doenca" | "principio" | "categoria" | "classificacao" | "laboratorio";
+export type MedicamentoSubstituto = MedicamentoFarmaciaCowData & {
+  pontuacao_substituto: number;
+  coincidencias: { principio_ativo_ids: number[]; doenca_ids: number[]; categoria_medicamento_ids: number[]; classificacao_medicamento_ids: number[] };
+};
+
+export async function fetchSubstitutivosPorFiltro(eixo: EixoFiltroSubstitutivos, valorId: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/substitutivos?eixo=${eixo}&valor_id=${valorId}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Substitutivos error: ${res.status}`);
+  return res.json() as Promise<MedicamentoFarmaciaCowData[]>;
+}
+export async function fetchSubstitutivosDeMedicamento(medicamentoId: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos/${medicamentoId}/substitutivos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Substitutivos error: ${res.status}`);
+  return res.json() as Promise<MedicamentoSubstituto[]>;
+}
+
+// Diagnóstico (proposta validada em artefato, 04/09/2026) — audita, fazenda
+// por fazenda, se o catálogo central chegou direito no estoque do tenant.
+// Ver docstring da seção em painel_cowdata_farmacia.py.
+export type ItemDiagnosticoCasado = {
+  estoque_id: number; nome: string; medicamento_comercial_id: number; nome_comercial_central: string | null;
+  principio_ativo: string | null; categoria: string | null; classificacao_medicamento: string | null;
+};
+export type ItemDiagnosticoOrfao = {
+  estoque_id: number; nome: string; principio_ativo: string | null; categoria: string | null;
+  classificacao_medicamento: string | null; ativo: boolean;
+};
+export type ItemDiagnosticoAusente = MedicamentoFarmaciaCowData & { estoque_id: null };
+export type DiagnosticoFarmacia = {
+  fazenda_id: number; casados: ItemDiagnosticoCasado[]; orfaos: ItemDiagnosticoOrfao[]; ausentes: ItemDiagnosticoAusente[];
+};
+
+export async function fetchFazendasFarmaciaCowData() {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/fazendas`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Fazendas error: ${res.status}`);
+  return res.json() as Promise<{ id: number; nome: string }[]>;
+}
+export async function fetchDiagnosticoFarmaciaCowData(fazendaId: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/diagnostico?fazenda_id=${fazendaId}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Diagnóstico error: ${res.status}`); }
+  return res.json() as Promise<DiagnosticoFarmacia>;
+}
+export async function vincularDiagnosticoFarmaciaCowData(dados: { fazenda_id: number; estoque_id: number; medicamento_comercial_id: number }) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/diagnostico/vincular`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao vincular ao catálogo central"); }
+  return res.json() as Promise<Record<string, any>>;
+}
+export async function ativarDiagnosticoFarmaciaCowData(dados: { fazenda_id: number; medicamento_comercial_id: number }) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/diagnostico/ativar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar item de estoque"); }
+  return res.json() as Promise<Record<string, any>>;
+}
+
 export async function fetchProducao() {
   const res = await authFetch(`${API}/producao/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Produção error: ${res.status}`);
@@ -3882,6 +5806,177 @@ export async function fetchControles() {
   return res.json();
 }
 
+// Reconstrução de Parto.ordem_parto — a FONTE do dado (não o derivado em
+// ControleLeiteiro, logo abaixo). Ver fazenda/api/routers/producao.py (seção
+// "Reconstrução de Parto.ordem_parto") e rules/parto.py para o porquê
+// completo. Rode esta ANTES da de Controles: aquela lê Parto.ordem_parto
+// como fonte de verdade. GET nunca grava nada; POST só grava com
+// `confirmar: true` explícito.
+export type AmostraDivergenciaOrdemPartoPartos = {
+  numero_matriz: string;
+  data_parto: string | null;
+  ordem_hoje: number | null;
+  ordem_correta: number | null;
+};
+export type DivergenciasOrdemPartoPartos = {
+  partos: number;
+  matrizes_com_parto: number;
+  muda: number;
+  vira_desconhecido: number;
+  periodo_partos: [string, string] | null;
+  amostra: AmostraDivergenciaOrdemPartoPartos[];
+};
+export async function fetchDivergenciasOrdemPartoPartos(): Promise<DivergenciasOrdemPartoPartos> {
+  const res = await authFetch(`${API}/producao/ordem-parto/partos/divergencias`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao levantar as divergências de ordem de parto"); }
+  return res.json();
+}
+export async function reconstruirOrdemPartoPartos(confirmar: boolean): Promise<{ gravados: number }> {
+  const res = await authFetch(`${API}/producao/ordem-parto/partos/reconstruir`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmar }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao reconstruir a ordem de parto"); }
+  return res.json();
+}
+
+// Reconstrução de ControleLeiteiro.ordem_parto — ferramenta de correção de
+// dados histórica, ver fazenda/api/routers/producao.py (seção "Reconstrução
+// de ControleLeiteiro.ordem_parto") e rules/ordem_parto_historica.py para o
+// porquê completo. GET nunca grava nada; POST só grava com
+// `confirmar: true` explícito.
+export type AmostraDivergenciaOrdemParto = {
+  numero_matriz: string;
+  data_controle: string | null;
+  ordem_hoje: number | null;
+  ordem_correta: number | null;
+};
+export type DivergenciasOrdemParto = {
+  partos: number;
+  controles: number;
+  animais_com_parto: number;
+  lactacoes_por_ordem: Record<string, number>;
+  idade_ao_parto: Record<string, number>;
+  muda: number;
+  vira_desconhecido: number;
+  periodo_partos: [string, string] | null;
+  periodo_controles: [string, string] | null;
+  amostra: AmostraDivergenciaOrdemParto[];
+};
+export async function fetchDivergenciasOrdemParto(): Promise<DivergenciasOrdemParto> {
+  const res = await authFetch(`${API}/producao/ordem-parto/divergencias`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao levantar as divergências de ordem de parto"); }
+  return res.json();
+}
+export async function reconstruirOrdemParto(confirmar: boolean): Promise<{ gravados: number }> {
+  const res = await authFetch(`${API}/producao/ordem-parto/reconstruir`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmar }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao reconstruir a ordem de parto"); }
+  return res.json();
+}
+
+// Reconstrução de ControleLeiteiro.del_no_controle — mesmo padrão report-first
+// da ordem de parto acima, ver fazenda/api/routers/producao.py (seção
+// "Reconstrução de ControleLeiteiro.del_no_controle"). GET nunca grava nada;
+// POST só grava com `confirmar: true` explícito.
+export type AmostraDivergenciaDelControle = {
+  numero_matriz: string;
+  data_controle: string | null;
+  del_hoje: number | null;
+  del_correto: number | null;
+};
+export type DivergenciasDelControle = {
+  controles: number;
+  muda: number;
+  sem_lactacao: number;
+  periodo_controles: [string, string] | null;
+  amostra: AmostraDivergenciaDelControle[];
+};
+export async function fetchDivergenciasDelControle(): Promise<DivergenciasDelControle> {
+  const res = await authFetch(`${API}/producao/del-controle/divergencias`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao levantar as divergências de DEL"); }
+  return res.json();
+}
+export async function reconstruirDelControle(confirmar: boolean): Promise<{ gravados: number }> {
+  const res = await authFetch(`${API}/producao/del-controle/reconstruir`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmar }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao reconstruir o DEL dos controles"); }
+  return res.json();
+}
+
+// Equivalente maduro — redesign "padronização por vaca" (ver nota de
+// redesign no topo de `fazenda/rules/equivalente_maduro.py`). O trio de
+// apresentação (produz hoje / produzirá / diferença) nunca aparece sozinho;
+// os tipos abaixo espelham exatamente o `TrioEquivalenteMaduro` do backend.
+// Fatores fixos de tabela (Holandês, sempre — não depende mais de mínimo de
+// lactações do rebanho); confiança é a fração medida/projetada, não mais
+// tamanho de amostra do rebanho.
+export type NivelConfiancaEM = "muito baixa" | "baixa" | "média" | "alta";
+
+export type TrioEquivalenteMaduro = {
+  numero_matriz?: string;
+  ordem_parto: number | null;
+  classe: number | null;
+  producao_hoje_kg: number | null;
+  n_controles: number;
+  ja_maduro: boolean;
+  producao_maturidade_kg: number | null;
+  diferenca_kg: number | null;
+  confianca_nivel: NivelConfiancaEM | null;
+  confianca_fracao: number | null; // kg medido / kg projetado, 0..1
+  sem_base: boolean;
+  motivo: string | null;
+  // Presentes só nas linhas do relatório/ficha (não na calculadora avulsa).
+  del_atual?: number;
+  del_ultimo_controle?: number | null;
+  estimada?: boolean;
+  secagem_precoce?: boolean;
+  faltam_partos_maturidade?: number | null;
+  producao_dia_historica_kg?: number | null;
+};
+
+// Painel de aferição — fator observado no próprio rebanho × fator fixo de
+// tabela, por classe. Puramente informativo (collapsible no front); nunca
+// altera a conta do trio acima.
+export type LinhaAfericaoEM = {
+  classe: number;
+  n_lactacoes: number;
+  fator_observado: number | null;
+  fator_tabela: number;
+  divergencia_pct: number | null;
+  confianca_observado: "baixa" | "ok" | null;
+};
+
+export type RelatorioEquivalenteMaduro = {
+  painel_afericao: LinhaAfericaoEM[];
+  animais: TrioEquivalenteMaduro[];
+};
+
+export async function fetchEquivalenteMaduro(): Promise<RelatorioEquivalenteMaduro> {
+  const res = await authFetch(`${API}/producao/equivalente-maduro`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Equivalente maduro error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchEquivalenteMaduroDoAnimal(numeroMatriz: string): Promise<TrioEquivalenteMaduro> {
+  const res = await authFetch(`${API}/producao/equivalente-maduro/${encodeURIComponent(numeroMatriz)}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Equivalente maduro error: ${res.status}`); }
+  return res.json();
+}
+
+export async function calcularEquivalenteMaduro(dados: {
+  ordem_parto: number;
+  pontos: { del_dias: number; producao_kg: number }[];
+  del_secagem?: number | null;
+}): Promise<TrioEquivalenteMaduro> {
+  const res = await authFetch(`${API}/producao/equivalente-maduro/calcular`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao calcular equivalente maduro"); }
+  return res.json();
+}
+
 export async function criarControlesLeiteiros(dados: {
   data_controle: string;
   entradas: { numero_matriz: string; ordenhas: (number | null)[] }[];
@@ -3889,7 +5984,9 @@ export async function criarControlesLeiteiros(dados: {
   const res = await authFetch(`${API}/producao/controles`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar controle leiteiro"); }
+  // 409 = animal sem lactação aberta na data (ver POST /producao/controles).
+  // `erroDaResposta` preserva o `detail` para a tela poder dizer QUAL vaca.
+  if (!res.ok) throw await erroDaResposta(res, "Erro ao lançar controle leiteiro");
   return res.json();
 }
 
@@ -3925,6 +6022,28 @@ export async function importarControleLeiteiroPlanilha(file: File): Promise<{ cr
   form.append("file", file);
   const res = await authFetch(`${API}/producao/controle-leiteiro/importar`, { method: "POST", body: form });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar planilha"); }
+  return res.json();
+}
+
+// Fluxo de revisão: enviar a planilha só devolve as linhas normalizadas
+// (sem gravar nada) — o usuário edita na tela e só então confirma
+// (POST /confirmar), com as linhas já corrigidas se precisar.
+export type LinhaControleLeiteiroPreview = {
+  numero_matriz: string; data_controle: string;
+  ordenha1_kg: number | null; ordenha2_kg: number | null; ordenha3_kg: number | null; total_kg: number | null;
+};
+export async function preVisualizarControleLeiteiroPlanilha(file: File): Promise<{ linhas: LinhaControleLeiteiroPreview[]; erros: string[]; modo: "animal" | "lote" }> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await authFetch(`${API}/producao/controle-leiteiro/pre-visualizar`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao ler a planilha"); }
+  return res.json();
+}
+export async function confirmarControleLeiteiroPlanilha(linhas: LinhaControleLeiteiroPreview[]): Promise<{ criados: number }> {
+  const res = await authFetch(`${API}/producao/controle-leiteiro/confirmar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ linhas }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar o controle leiteiro"); }
   return res.json();
 }
 
@@ -4082,11 +6201,17 @@ export async function criarSecagem(dados: {
   produtos: { produto: string; via?: string; quantidade: number; unidade: string }[];
   vacinas_pre_parto?: string[];
   vacina_pre_parto_aplicada_agora?: boolean;
+  vacina_pre_parto?: boolean | null;
+  // Resposta a "esta vaca já consta como seca — substituir ou cancelar?"
+  // (ver `ErroApi.secagemAnterior` abaixo): id da secagem a substituir.
+  substituir_secagem_id?: number;
 }) {
   const res = await authFetch(`${API}/producao/secagem`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar secagem"); }
+  // `erroDaResposta` preserva o `detail` para a tela oferecer "substituir a
+  // secagem anterior ou cancelar" em vez de só mostrar a mensagem de erro.
+  if (!res.ok) throw await erroDaResposta(res, "Erro ao lançar secagem");
   return res.json();
 }
 export type LoteSugeridoEvento = { codigo: string; nome: string; rotulo: string };
@@ -4103,11 +6228,11 @@ export type HormonioIatf = { dia: number; produto: string; dose?: number | null;
 // Nome do lançamento é sempre automático (Central de Protocolos) — não se
 // digita mais; protocolo_id é opcional (molde cadastrado, só para
 // pré-preencher os hormônios e citar no nome).
-export async function criarProtocoloIatf(dados: { animais: string[]; data_d0: string; protocolo_id?: number | null; hormonios?: HormonioIatf[] }) {
+export async function criarProtocoloIatf(dados: { animais: string[]; data_d0: string; protocolo_id?: number | null; hormonios?: HormonioIatf[]; forcar?: boolean }) {
   const res = await authFetch(`${API}/reproducao/protocolo-iatf`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao agendar protocolo IATF"); }
+  if (!res.ok) throw await erroDaResposta(res, "Erro ao agendar protocolo IATF");
   return res.json();
 }
 
@@ -4188,6 +6313,10 @@ export type CelulaProtocolo = {
 export type OpcaoMedicamento = {
   estoque_id: number | null; nome: string; marca: string | null; saldo: number | null;
   unidade: string | null; estoque_inicializado: boolean; sem_estoque: boolean;
+  // "de qual lote/frasco de COMPRA?" (Fase G) — só vem preenchido para
+  // origem === "sanitario" hoje (ver central_protocolos.py::detalhe), e só
+  // quando o frasco (estoque_id) tem algum lote aberto com saldo.
+  lotes?: { id: number; numero_lote: string | null; data_compra: string; quantidade_restante: number }[];
 };
 export type HormonioProtocolo = {
   produto: string; dose: number | null; unidade: string | null; via: string | null;
@@ -4199,8 +6328,9 @@ export type DetalheCentralProtocolo = {
   ativo: boolean; etapas_total: number; etapas_realizadas: number; etapas_atrasadas: number;
   dias: {
     dia: number; rotulo: string; data_prevista: string; descricao: string | null; total: number; realizadas: number;
-    // Vem preenchido para origem === "iatf" ou "inducao" — o "qual
-    // medicamento/frasco?" que a Agenda já pergunta, agora também na Central.
+    // Vem preenchido para origem === "iatf", "inducao" ou "sanitario" — o
+    // "qual medicamento/frasco?" que a Agenda já pergunta, agora também na
+    // Central (Sanitário ganhou também o "de qual lote?", ver OpcaoMedicamento.lotes).
     hormonios?: HormonioProtocolo[];
   }[];
   animais: { numero_matriz: string; celulas: CelulaProtocolo[] }[];
@@ -4290,9 +6420,14 @@ export async function fetchProtocolosIatfAtivos() {
   if (!res.ok) throw new Error(`Protocolos IATF ativos error: ${res.status}`);
   return res.json();
 }
+// A lista É a lista da próxima visita: o estado reprodutivo de cada animal é
+// avaliado NAQUELA data, não hoje. Por isso `apta_na_proxima_visita` é sempre
+// true — quem não estará apta lá simplesmente não vem. `apta_hoje` distingue
+// quem já pode ser trabalhada agora de quem só na visita.
 export type CandidataIatfProjetada = {
   numero_matriz: string; sit_rep: string | null; del_dias: number | null; motivo: string;
-  del_dias_projetado: number | null; apta_na_proxima_visita: boolean;
+  estado: string; estado_rotulo: string;
+  del_dias_projetado: number | null; apta_na_proxima_visita: boolean; apta_hoje: boolean;
 };
 export async function fetchCandidatasIatfProjetadas() {
   const res = await authFetch(`${API}/reproducao/protocolo-iatf/candidatas`, { cache: "no-store" });
@@ -4323,11 +6458,12 @@ export async function criarServico(dados: {
   numero_matriz: string; data_servico: string; tipo_servico?: string;
   protocolo?: string; reprodutor?: string; responsavel?: string;
   tipo_semen?: string | null;
+  forcar?: boolean;  // ver criarServicoLote
 }) {
   const res = await authFetch(`${API}/reproducao/servico`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar serviço/inseminação"); }
+  if (!res.ok) throw await erroDaResposta(res, "Erro ao lançar serviço/inseminação");
   return res.json();
 }
 
@@ -4389,10 +6525,130 @@ export async function fetchPatrimonio() {
 export type PatrimonioPayload = {
   nome: string; tipo?: string | null; numero?: string | null; atividade_cultura?: string | null;
   data_imobilizacao?: string | null; quantidade?: number | null; unidade?: string | null;
-  valor_total?: number | null; depreciavel?: boolean; metodo_depreciacao?: string | null;
+  valor_total?: number | null; valor_por_unidade?: boolean; depreciavel?: boolean;
+  metodo_depreciacao?: string | null;
   vida_util?: string | null; valor_residual?: number | null; valor_mercado_atual?: number | null;
   atualizacao_valor_mercado_frequencia_meses?: number | null;
+  // Onda 2 — vida útil estruturada (substitui o texto livre `vida_util`) e
+  // parâmetros dos métodos acelerado / por uso.
+  vida_util_anos?: number | null; vida_util_meses?: number | null;
+  fator_saldo_decrescente?: number | null;
+  unidades_vida_util_total?: number | null; unidades_consumidas?: number | null;
+  unidade_uso?: string | null;
 };
+
+// --- Onda 2: listas fechadas, código PAT e baixa ----------------------------
+export type OpcoesPatrimonio = {
+  tipos: string[];
+  unidades: string[];
+  metodos: { valor: string; rotulo: string; ajuda: string }[];
+  motivos_baixa: { valor: string; rotulo: string; tem_valor_venda: boolean }[];
+};
+
+export async function fetchOpcoesPatrimonio(): Promise<OpcoesPatrimonio> {
+  const res = await authFetch(`${API}/financeiro/patrimonio/opcoes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Opções de patrimônio: ${res.status}`);
+  return res.json();
+}
+
+/** confirmar=false devolve só a prévia (nada é gravado) — report-first. */
+export async function gerarCodigosPatrimonio(confirmar = false) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/codigos-gerar?confirmar=${confirmar}`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao gerar códigos"); }
+  return res.json();
+}
+
+export async function baixarPatrimonio(itemId: number, dados: {
+  data_baixa: string; motivo: string; valor_recebido?: number | null; observacao?: string | null;
+}) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/baixa`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao baixar o bem"); }
+  return res.json();
+}
+
+export async function estornarBaixaPatrimonio(itemId: number) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/estornar-baixa`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao estornar a baixa"); }
+  return res.json();
+}
+
+// --- Onda 3b: DRE Gerencial em cascata --------------------------------------
+export type LinhaDre = {
+  chave: string; rotulo: string; operador: string; eh_subtotal: boolean;
+  valor: number; contas?: { codigo: string | null; nome: string | null; valor: number }[];
+};
+
+export type ContaDre = { codigo: string | null; nome: string | null; valor: number };
+
+export type DreResposta = {
+  periodo: { inicio: string; fim: string };
+  regime: string; centro_custo: string | null;
+  receitas_total: number; despesas_total: number; resultado: number;
+  cascata: LinhaDre[];
+  nao_classificado: { total: number; contas: ContaDre[] };
+  fora_da_dre: { total: number; contas: ContaDre[] };
+  depreciacao_periodo: { total: number; inconsistencias: { item: string; numero: string | null; motivo: string }[] };
+};
+
+export async function fetchDreCascata(params: {
+  data_inicio: string; data_fim: string; regime?: string; centro_custo?: string | null;
+}) {
+  const q = new URLSearchParams({
+    data_inicio: params.data_inicio, data_fim: params.data_fim,
+    regime: params.regime || "competencia",
+  });
+  if (params.centro_custo) q.set("centro_custo", params.centro_custo);
+  const res = await authFetch(`${API}/financeiro/dre?${q}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`DRE: ${res.status}`);
+  return res.json() as Promise<DreResposta>;
+}
+
+export async function fetchDreConferencia(params: { data_inicio: string; data_fim: string; regime?: string }) {
+  const q = new URLSearchParams({
+    data_inicio: params.data_inicio, data_fim: params.data_fim,
+    regime: params.regime || "competencia",
+  });
+  const res = await authFetch(`${API}/financeiro/dre/conferencia?${q}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Conferência da DRE: ${res.status}`);
+  return res.json();
+}
+
+export async function classificarContaDre(codigo: string, linhaDre: string | null) {
+  const res = await authFetch(`${API}/financeiro/plano-contas/${encodeURIComponent(codigo)}/linha-dre`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ linha_dre: linhaDre }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao classificar a conta"); }
+  return res.json();
+}
+
+// --- Onda 4: Caixa Real ------------------------------------------------------
+export type CaixaReal = {
+  saldo_inicial: number; saldo_final: number; total_entradas: number; total_saidas: number;
+  variacao: number; fundo_reserva: number; folga_minima: number; dias: number;
+  primeiro_dia_negativo: string | null; primeiro_dia_abaixo_da_reserva: string | null;
+  compromissos_sem_vencimento: number;
+  contas: { id: number; nome: string; saldo: number }[];
+  serie: {
+    data: string; entradas: number; saidas: number; saldo: number;
+    itens: { descricao: string | null; valor: number; tipo: string; vencido: boolean; data_original: string }[];
+  }[];
+};
+
+export async function fetchCaixaReal(dias?: number): Promise<CaixaReal> {
+  const q = dias ? `?dias=${dias}` : "";
+  const res = await authFetch(`${API}/financeiro/caixa-real${q}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Caixa Real: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchFundoReservaSugerido(mesesHistorico = 6) {
+  const res = await authFetch(`${API}/financeiro/caixa-real/fundo-reserva-sugerido?meses_historico=${mesesHistorico}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Fundo de reserva sugerido: ${res.status}`);
+  return res.json();
+}
 
 export async function criarPatrimonio(dados: PatrimonioPayload) {
   const res = await authFetch(`${API}/financeiro/patrimonio`, {
@@ -4420,9 +6676,9 @@ export async function atualizarValorMercadoPatrimonio(itemId: number, valorMerca
 }
 
 export async function vincularLancamentoPatrimonio(numeroLancamento: string, patrimonioId: number | null) {
-  const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/patrimonio`, {
+  const res = await fetchComRetry(() => authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/patrimonio`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ patrimonio_id: patrimonioId }),
-  });
+  }));
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao vincular patrimônio"); }
   return res.json();
 }
@@ -4555,12 +6811,18 @@ export async function fetchOpcoesFinanceiro() {
   return res.json();
 }
 
-// Link pro painel do Supabase (Table Editor) — botão em Relatórios
-// financeiros; backend bloqueia consultor (ver fazenda.auth.exigir_nao_consultor).
-// url: null quando o Supabase não está configurado.
-export async function fetchSupabaseDashboardUrl(): Promise<{ url: string | null }> {
-  const res = await authFetch(`${API}/financeiro/supabase-dashboard-url`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Link do Supabase error: ${res.status}`);
+// Coluna de contexto (histórico) do fornecedor/cliente na tela de
+// lançamento — em aberto, último lançamento, últimos lançamentos e
+// documentos já anexados a alguma nota dele. Só leitura.
+export type ContextoFornecedor = {
+  em_aberto: number;
+  ultimo_lancamento: string | null;
+  ultimos_lancamentos: { numero_lancamento: string | null; numero_documento: string | null; data: string | null; valor: number; pago: boolean }[];
+  documentos_anexados: { nome_arquivo: string; categoria: string | null; criado_em: string }[];
+};
+export async function fetchContextoFornecedor(nome: string, tipo: "despesa" | "receita" = "despesa"): Promise<ContextoFornecedor> {
+  const res = await authFetch(`${API}/financeiro/contexto-fornecedor?nome=${encodeURIComponent(nome)}&tipo=${tipo}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Contexto do fornecedor error: ${res.status}`);
   return res.json();
 }
 
@@ -4655,6 +6917,10 @@ export async function fetchCustoSafra(safraId: number) {
 // devolve rótulos em texto, sem id).
 export type ContaCorrenteCadastro = {
   id: number; banco: string; agencia: string; numero_conta: string; ativo: boolean; rotulo: string;
+  // Saldo calculado ("entradas − saídas"), não persistido — ver
+  // calcular_saldos_contas_correntes no backend. Soma lançamentos pagos
+  // vinculados à conta + transferências entre contas.
+  saldo: number;
 };
 export async function fetchContasCorrentes(): Promise<ContaCorrenteCadastro[]> {
   const res = await authFetch(`${API}/financeiro/contas-correntes`, { cache: "no-store" });
@@ -4676,20 +6942,47 @@ export async function atualizarContaCorrente(id: number, dados: { banco: string;
   return res.json();
 }
 
+// Transferência entre contas correntes — não é despesa nem receita da
+// fazenda (dinheiro sai de uma conta própria e entra em outra), por isso
+// fica fora do DRE/relatórios gerenciais; só ajusta o saldo calculado das
+// duas contas (ver TransferenciaContas no backend).
+export type TransferenciaContas = {
+  id: number; conta_origem_id: number; conta_destino_id: number; valor: number; data: string;
+  observacao: string | null; criado_em: string; usuario_id: number | null;
+};
+export async function fetchTransferenciasContas(): Promise<TransferenciaContas[]> {
+  const res = await authFetch(`${API}/financeiro/contas-correntes/transferencias`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Transferências entre contas error: ${res.status}`);
+  return res.json();
+}
+export async function criarTransferenciaContas(dados: {
+  conta_origem_id: number; conta_destino_id: number; valor: number; data: string; observacao?: string;
+}) {
+  const res = await authFetch(`${API}/financeiro/contas-correntes/transferencias`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao transferir entre contas"); }
+  return res.json();
+}
+
 // ── Centros de custo (Configurações > Parâmetros financeiros) ──
-export async function fetchCentrosCusto() {
+// `padrao`: usado automaticamente no Lançamento simplificado (Lançamentos >
+// Financeiro) — no máximo 1 marcado por fazenda (ver ParametrosFinanceiros.tsx
+// e components/FormFinanceiroSimplificado.tsx).
+export type CentroCustoCadastro = { id: number; nome: string; ativo: boolean; padrao: boolean };
+export async function fetchCentrosCusto(): Promise<CentroCustoCadastro[]> {
   const res = await authFetch(`${API}/financeiro/centros-custo`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Centros de custo error: ${res.status}`);
   return res.json();
 }
-export async function criarCentroCusto(dados: { nome: string; ativo?: boolean }) {
+export async function criarCentroCusto(dados: { nome: string; ativo?: boolean; padrao?: boolean }) {
   const res = await authFetch(`${API}/financeiro/centros-custo`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar centro de custo"); }
   return res.json();
 }
-export async function atualizarCentroCusto(id: number, dados: { nome: string; ativo: boolean }) {
+export async function atualizarCentroCusto(id: number, dados: { nome: string; ativo: boolean; padrao?: boolean }) {
   const res = await authFetch(`${API}/financeiro/centros-custo/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -4739,10 +7032,58 @@ export async function atualizarFormaPagamentoCadastro(id: number, dados: { nome:
   return res.json();
 }
 
-export async function criarLancamentoFinanceiro(dados: any) {
-  const res = await authFetch(`${API}/financeiro/lancamentos`, {
+// ── Classificações de lançamento (Configurações > Parâmetros financeiros) ──
+// Ex.: Medicamentos, Ração, Manutenção — selecionável ao lançar conta a
+// pagar/receber, cadastrável na hora (ver FormFinanceiro/FormEditarLancamento).
+export async function fetchClassificacoesCadastro() {
+  const res = await authFetch(`${API}/financeiro/classificacoes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Classificações error: ${res.status}`);
+  return res.json();
+}
+export async function criarClassificacao(dados: { nome: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/financeiro/classificacoes`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar classificação"); }
+  return res.json();
+}
+export async function atualizarClassificacao(id: number, dados: { nome: string; ativo: boolean }) {
+  const res = await authFetch(`${API}/financeiro/classificacoes/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar classificação"); }
+  return res.json();
+}
+
+export async function criarLancamentoFinanceiro(dados: any) {
+  // Mesma chave em todas as tentativas: se uma delas chegou a gravar no
+  // servidor mas a resposta se perdeu no caminho de volta (o "Failed to
+  // fetch" que aparece com o lançamento já salvo — relato real de usuário em
+  // conexão rural instável), o backend reconhece a chave repetida e devolve
+  // o mesmo lançamento em vez de duplicar (ver Idempotency-Key). Uma única
+  // retentativa IMEDIATA cai no mesmo blackout de poucos segundos que
+  // derrubou a 1ª — até 2 retentativas, com uma pequena pausa entre elas,
+  // dão tempo da conexão se recuperar antes de desistir e mostrar erro pro
+  // usuário como se nada tivesse sido salvo.
+  const chave = gerarChaveIdempotencia();
+  const post = () => authFetch(`${API}/financeiro/lancamentos`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": chave },
+    body: JSON.stringify(dados),
+  });
+  let res: Response | undefined;
+  let ultimoErro: unknown;
+  for (let tentativa = 0; tentativa < 3; tentativa++) {
+    try {
+      res = await post();
+      break;
+    } catch (e) {
+      if (!(e instanceof TypeError)) throw netError(e);
+      ultimoErro = e;
+      if (tentativa < 2) await new Promise((r) => setTimeout(r, 600 * (tentativa + 1)));
+    }
+  }
+  if (!res) throw netError(ultimoErro);
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
     // Preserva `detail`/`status` (padrão `criarVale`) — o 409 de "estourou 40%
@@ -4772,6 +7113,14 @@ export type ValeItemOpcoes = {
 export type ValeItemIn = {
   pessoa_id: number;
   modo: "folha" | "avulso";
+  // Quanto DO ITEM é vale: "integral" (o item inteiro, comportamento de
+  // sempre) ou "parcial" — e aí exatamente um entre `percentual` e `valor`.
+  // O caso do dono: 2/3 da ração de cachorro são do funcionário, 1/3 é dele;
+  // a sobra vira despesa normal da fazenda, na mesma conta gerencial e no
+  // mesmo centro de custo (o backend divide o item em duas linhas).
+  abrangencia?: "integral" | "parcial";
+  percentual?: number | null;
+  valor?: number | null;
   parcelas?: number;
   competencia_inicio?: string | null;
   origem_tipo?: "empreitada" | "contrato" | "diaria" | null;
@@ -4782,6 +7131,8 @@ export type ValeItemIn = {
 export type ValeItemResultado = {
   item_id: number; numero_lancamento: string; vale_tipo: "funcionario" | "avulso";
   vale_id: number; valor: number; data_pagamento: string;
+  // Preenchido só no vale parcial: a linha gêmea que ficou com a fazenda.
+  parte_fazenda: { item_id: number; valor: number; quantidade: number | null } | null;
   pessoa_id: number; pessoa_nome: string; resumo: string;
 };
 
@@ -4798,9 +7149,13 @@ export async function fetchOpcoesValeItem(pessoaId: number): Promise<ValeItemOpc
 }
 
 export async function marcarItemComoVale(itemId: number, dados: ValeItemIn): Promise<ValeItemResultado> {
-  const res = await authFetch(`${API}/cadastro/vale-item/${itemId}`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
-  });
+  // Mesma chave em todas as tentativas — sem isto, uma resposta perdida no
+  // caminho de volta faria a 2ª tentativa bater no 409 "item já gerou um
+  // vale" mesmo com o vale já criado com sucesso na 1ª (ver Idempotency-Key).
+  const chave = gerarChaveIdempotencia();
+  const res = await fetchComRetry(() => authFetch(`${API}/cadastro/vale-item/${itemId}`, {
+    method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": chave }, body: JSON.stringify(dados),
+  }));
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
     // Preserva `detail`/`status` (mesmo padrão de `criarVale`) — o 409 de
@@ -4815,7 +7170,7 @@ export async function marcarItemComoVale(itemId: number, dados: ValeItemIn): Pro
 }
 
 export async function desmarcarItemComoVale(itemId: number, excluirVale: boolean) {
-  const res = await authFetch(`${API}/cadastro/vale-item/${itemId}?excluir_vale=${excluirVale ? "true" : "false"}`, { method: "DELETE" });
+  const res = await fetchComRetry(() => authFetch(`${API}/cadastro/vale-item/${itemId}?excluir_vale=${excluirVale ? "true" : "false"}`, { method: "DELETE" }));
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
     const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao desmarcar vale");
@@ -4909,9 +7264,19 @@ export async function marcarPagoFinanceiro(id: number, dados: {
   // PUT /financeiro/lancamentos/{id}/pagar.
   parcelas_diferenca?: { data_vencimento: string; valor: number }[];
 }) {
-  const res = await authFetch(`${API}/financeiro/lancamentos/${id}/pagar`, {
-    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
-  });
+  // Mesma chave em todas as tentativas: se uma delas chegou a gravar a baixa
+  // no servidor mas a resposta se perdeu no caminho de volta (o "Failed to
+  // fetch" que aparece em "Ações > Pagamento" com o lançamento já baixado —
+  // conexão rural instável costuma cair bem no meio do PUT), o middleware de
+  // idempotência (main.py::_idempotencia) reconhece a chave repetida e
+  // devolve a mesma resposta em vez de baixar de novo. Mesmo padrão de
+  // criarLancamentoFinanceiro, acima.
+  const chave = gerarChaveIdempotencia();
+  const res = await fetchComRetry(() => authFetch(`${API}/financeiro/lancamentos/${id}/pagar`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": chave },
+    body: JSON.stringify(dados),
+  }));
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa"); }
   return res.json();
 }
@@ -4920,9 +7285,12 @@ export async function criarBaixaLote(dados: {
   lancamento_ids: number[]; data_pagamento: string; conta_bancaria?: string;
   forma_pagamento?: string; data_vencimento_cartao?: string; numero_documento_pagamento?: string;
 }) {
-  const res = await authFetch(`${API}/financeiro/lancamentos/baixa-lote`, {
-    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
-  });
+  // Mesma chave em todas as tentativas — mesmo padrão de marcarPagoFinanceiro
+  // (a versão individual desta mesma operação), que já tinha essa proteção.
+  const chave = gerarChaveIdempotencia();
+  const res = await fetchComRetry(() => authFetch(`${API}/financeiro/lancamentos/baixa-lote`, {
+    method: "PUT", headers: { "Content-Type": "application/json", "Idempotency-Key": chave }, body: JSON.stringify(dados),
+  }));
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa em lote"); }
   return res.json();
 }
@@ -4931,17 +7299,24 @@ export async function criarBaixaLote(dados: {
 export type BaixaLoteItem = {
   lancamento_id: number; data_pagamento: string; valor_pago: number;
   conta_bancaria?: string; forma_pagamento?: string; data_vencimento_cartao?: string; numero_documento_pagamento?: string;
+  // Mesmo mecanismo/formato de marcarPagoFinanceiro (baixa individual): sem
+  // isto, a diferença entre valor_pago e o valor da nota vira
+  // desconto_acrescimo, perdoada/cobrada de uma vez (comportamento de
+  // sempre). Preenchido, a diferença migra inteira para nova(s) parcela(s)
+  // do mesmo lançamento — ver PUT /financeiro/lancamentos/baixa-lote-detalhada.
+  parcelas_diferenca?: { data_vencimento: string; valor: number }[];
 };
 export async function criarBaixaLoteDetalhada(itens: BaixaLoteItem[]) {
-  const res = await authFetch(`${API}/financeiro/lancamentos/baixa-lote-detalhada`, {
-    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itens }),
-  });
+  const chave = gerarChaveIdempotencia();
+  const res = await fetchComRetry(() => authFetch(`${API}/financeiro/lancamentos/baixa-lote-detalhada`, {
+    method: "PUT", headers: { "Content-Type": "application/json", "Idempotency-Key": chave }, body: JSON.stringify({ itens }),
+  }));
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa em lote"); }
   return res.json();
 }
 
 export async function atualizarLancamentoFinanceiro(id: number, dados: {
-  descricao?: string | null; codigo_conta?: string | null; centro_custo?: string | null;
+  descricao?: string | null; codigo_conta?: string | null; centro_custo?: string | null; classificacao?: string | null;
   fornecedor_cliente?: string | null; numero_nota?: string | null; numero_documento_pagamento?: string | null; tipo_documento?: string | null;
   numero_os_orcamento?: string | null; numero_boleto?: string | null;
   data_emissao?: string | null; data_vencimento?: string | null; data_competencia?: string | null;
@@ -4949,11 +7324,32 @@ export async function atualizarLancamentoFinanceiro(id: number, dados: {
   quantidade?: number | null; valor_unitario?: number | null; valor_total?: number | null;
   desconto_acrescimo?: number | null; responsavel?: string | null; produto?: string | null;
 }) {
-  const res = await authFetch(`${API}/financeiro/lancamentos/${id}`, {
+  // Sem retentativa nenhuma até aqui — era a única gravação de Financeiro
+  // que mostrava "Sem conexão com a API" (netError) numa queda momentânea de
+  // conexão mesmo quando o PUT tinha ido e voltado direitinho no navegador
+  // (relato de 04/09/2026: "quando salvo lançamentos financeiros, sempre dá
+  // esse aviso, mas continua salvando"). PUT substitui os mesmos campos
+  // sempre — repetir não duplica nada, então não precisa de Idempotency-Key.
+  const res = await fetchComRetry(() => authFetch(`${API}/financeiro/lancamentos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
-  });
+  }));
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar o lançamento"); }
   return res.json();
+}
+
+// Associa/renomeia o produto/serviço de UM item já lançado (LancamentoItem)
+// para um nome do catálogo — "associar a produto já existente" e o passo
+// seguinte a "cadastrar produto novo" na tela de edição (ver
+// FormEditarLancamento). Quando o item é um produto de estoque com
+// quantidade > 0 e ainda sem entrada registrada, o backend também dá baixa
+// (entrada) retroativa — ver PUT /financeiro/itens/{id}/vincular-produto.
+export async function vincularProdutoItem(itemId: number, produto: string) {
+  const chave = gerarChaveIdempotencia();
+  const res = await fetchComRetry(() => authFetch(`${API}/financeiro/itens/${itemId}/vincular-produto`, {
+    method: "PUT", headers: { "Content-Type": "application/json", "Idempotency-Key": chave }, body: JSON.stringify({ produto }),
+  }));
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao associar o produto/serviço"); }
+  return res.json() as Promise<{ id: number; produto: string; avisos_estoque: string[] }>;
 }
 
 // G2 — reverte a baixa (o lançamento volta para "em aberto"); não exclui o
@@ -4966,9 +7362,10 @@ export type EstornoLancamentoOut = Record<string, any> & {
   estornado: true; parcelas_diferenca_removidas: number; avisos: string[];
 };
 export async function estornarPagamentoLancamento(id: number, dados: EstornoLancamentoIn = {}): Promise<EstornoLancamentoOut> {
-  const res = await authFetch(`${API}/financeiro/lancamentos/${id}/estornar`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
-  });
+  const chave = gerarChaveIdempotencia();
+  const res = await fetchComRetry(() => authFetch(`${API}/financeiro/lancamentos/${id}/estornar`, {
+    method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": chave }, body: JSON.stringify(dados),
+  }));
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
     const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao estornar pagamento");
@@ -4988,20 +7385,63 @@ export type SugestaoCadastroItem = {
   texto: string; candidato: string; score: number; confianca: "provavel";
   tipo?: "produto" | "servico"; indice?: number;
 };
-export type SugestoesCadastro = { fornecedor: SugestaoCadastroItem | null; itens: SugestaoCadastroItem[] };
+// fornecedor_confianca vai sempre (não só quando há sugestão) — "exato" não
+// precisa de nada (já bate sozinho), "provavel"/"incerto" são os dois casos
+// em que o texto bruto da nota não é, ele mesmo, um nome já cadastrado —
+// gatilho pra oferecer "salvar como apelido padrão" (ver
+// criarFornecedorApelido) quando o usuário corrige/confirma o fornecedor.
+export type SugestoesCadastro = {
+  fornecedor: SugestaoCadastroItem | null;
+  fornecedor_confianca: "exato" | "provavel" | "incerto" | null;
+  itens: SugestaoCadastroItem[];
+};
+
+// Ensina o sistema a reconhecer um nome de fornecedor/cliente como aparece
+// BRUTO num documento (razão social completa da nota) como um nome já
+// cadastrado — usado quando fornecedor_confianca acima não é "exato". Por
+// fazenda (nunca cruza tenants). Chamar de novo com o mesmo nomeBruto
+// ATUALIZA o apelido em vez de duplicar.
+export async function criarFornecedorApelido(nomeBruto: string, nomeCanonico: string) {
+  const res = await authFetch(`${API}/financeiro/fornecedor-apelidos`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nome_bruto: nomeBruto, nome_canonico: nomeCanonico }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar apelido de fornecedor"); }
+  return res.json();
+}
 
 export async function importarXmlFinanceiro(xml: string) {
-  const res = await authFetch(`${API}/financeiro/importar-xml`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ xml }),
-  });
+  let res: Response;
+  try {
+    res = await authFetch(`${API}/financeiro/importar-xml`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ xml }),
+    });
+  } catch (e) {
+    throw netErrorProcessamento(e, "do XML"); // "Failed to fetch" cru vira uma mensagem acionável, sem alarme falso de "backend fora do ar".
+  }
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao ler o XML"); }
   return res.json();
 }
 
+// Leitura automática (OCR) de PDF/JPEG/PNG — pode demorar bastante num
+// documento com várias páginas (ver comentário em run_in_threadpool no
+// backend); se a conexão cair no meio (proxy/gateway derrubando por
+// demora, Wi-Fi instável etc.), `fetch` lança um TypeError cru ("Failed to
+// fetch") — sem o try/catch abaixo, essa falha de REDE ficava indistinguível
+// de qualquer outro erro de NEGÓCIO (documento ilegível, tipo não
+// suportado...) pro usuário, que via só o texto bruto do navegador.
+// `netErrorProcessamento` traduz isso numa mensagem clara sem o alarme falso
+// de "backend fora do ar/CORS" do netError genérico — aqui a causa típica é
+// só o gateway cortando por demora, não a API estar de fato indisponível.
 export async function lerDocumentoFinanceiro(file: File) {
   const form = new FormData();
   form.append("file", file);
-  const res = await authFetch(`${API}/financeiro/ler-documento`, { method: "POST", body: form });
+  let res: Response;
+  try {
+    res = await authFetch(`${API}/financeiro/ler-documento`, { method: "POST", body: form });
+  } catch (e) {
+    throw netErrorProcessamento(e, "do documento");
+  }
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao ler o documento"); }
   return res.json();
 }
@@ -5021,12 +7461,29 @@ export async function anexarArquivoLancamento(
   numeroLancamento: string, file: File, categoria?: string | null,
   numeroDocumento?: string | null, dataDocumento?: string | null,
 ): Promise<AnexoLancamento> {
-  const form = new FormData();
-  form.append("file", file);
-  if (categoria) form.append("categoria", categoria);
-  if (numeroDocumento) form.append("numero_documento", numeroDocumento);
-  if (dataDocumento) form.append("data_documento", dataDocumento);
-  const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/anexos`, { method: "POST", body: form });
+  // Mesma chave nas duas tentativas: upload de foto/comprovante é o request
+  // mais exposto a "Failed to fetch" com sucesso no servidor (arquivo maior,
+  // conexão rural instável derruba no meio da volta da resposta) — mesmo
+  // padrão de criarLancamentoFinanceiro/marcarPagoFinanceiro, acima. A key
+  // vai por fora do FormData (o middleware de idempotência só olha o header).
+  const chave = gerarChaveIdempotencia();
+  const enviar = () => {
+    const form = new FormData();
+    form.append("file", file);
+    if (categoria) form.append("categoria", categoria);
+    if (numeroDocumento) form.append("numero_documento", numeroDocumento);
+    if (dataDocumento) form.append("data_documento", dataDocumento);
+    return authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/anexos`, {
+      method: "POST", headers: { "Idempotency-Key": chave }, body: form,
+    });
+  };
+  let res: Response;
+  try {
+    res = await enviar();
+  } catch (e) {
+    if (!(e instanceof TypeError)) throw netError(e);
+    res = await enviar().catch((e2) => { throw netError(e2); }); // 1 nova tentativa, mesma chave
+  }
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o arquivo"); }
   return res.json();
 }
@@ -5045,28 +7502,55 @@ export async function anexarArquivoLancamentoPorId(
   lancamentoId: number, file: File, categoria?: string | null,
   numeroDocumento?: string | null, dataDocumento?: string | null,
 ): Promise<AnexoLancamento> {
-  const form = new FormData();
-  form.append("file", file);
-  if (categoria) form.append("categoria", categoria);
-  if (numeroDocumento) form.append("numero_documento", numeroDocumento);
-  if (dataDocumento) form.append("data_documento", dataDocumento);
-  const res = await authFetch(`${API}/financeiro/lancamentos/por-id/${lancamentoId}/anexos`, { method: "POST", body: form });
+  // Usado pelo comprovante em "Ações > Pagamento" (PagamentoIndividualView) —
+  // mesma chave nas duas tentativas, mesmo motivo de anexarArquivoLancamento
+  // acima: foto de comprovante em conexão rural instável é o caso mais
+  // exposto a "Failed to fetch" com o upload já salvo no servidor.
+  const chave = gerarChaveIdempotencia();
+  const enviar = () => {
+    const form = new FormData();
+    form.append("file", file);
+    if (categoria) form.append("categoria", categoria);
+    if (numeroDocumento) form.append("numero_documento", numeroDocumento);
+    if (dataDocumento) form.append("data_documento", dataDocumento);
+    return authFetch(`${API}/financeiro/lancamentos/por-id/${lancamentoId}/anexos`, {
+      method: "POST", headers: { "Idempotency-Key": chave }, body: form,
+    });
+  };
+  let res: Response;
+  try {
+    res = await enviar();
+  } catch (e) {
+    if (!(e instanceof TypeError)) throw netError(e);
+    res = await enviar().catch((e2) => { throw netError(e2); }); // 1 nova tentativa, mesma chave
+  }
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o arquivo"); }
   return res.json();
 }
 
-// Um comprovante ÚNICO para vários lançamentos pagos na mesma remessa
-// (Financeiro > Pagamento em lote). O arquivo sobe uma vez só e o backend
-// cria o vínculo com cada lançamento, para que todos exibam o comprovante no
+// Um ou mais comprovantes para vários lançamentos pagos na mesma remessa
+// (Financeiro > Pagamento em lote) — o banco às vezes emite mais de um
+// recibo para a mesma remessa (o PDF da remessa inteira + o comprovante de
+// uma linha, por exemplo). Cada arquivo sobe uma vez só e o backend cria o
+// vínculo com cada lançamento, para que todos exibam os comprovantes no
 // relatório de Contas pagas — ver anexar_comprovante_em_lote no backend.
 export async function anexarComprovanteEmLote(
-  lancamentoIds: number[], file: File, categoria?: string | null,
-): Promise<{ anexados: number; nome_arquivo: string; anexo_ids: number[]; numeros_lancamento: string[] }> {
-  const form = new FormData();
-  form.append("file", file);
-  form.append("lancamento_ids", lancamentoIds.join(","));
-  if (categoria) form.append("categoria", categoria);
-  const res = await authFetch(`${API}/financeiro/lancamentos/anexos-lote`, { method: "POST", body: form });
+  lancamentoIds: number[], files: File[], categoria?: string | null,
+): Promise<{ anexados: number; arquivos: string[]; nome_arquivo: string | null; anexo_ids: number[]; numeros_lancamento: string[] }> {
+  // Mesma chave em todas as tentativas — mesmo padrão de anexarArquivoLancamento:
+  // upload de comprovante é o request mais exposto a "Failed to fetch" com o
+  // arquivo já salvo (conexão rural instável, arquivo maior demora mais).
+  const chave = gerarChaveIdempotencia();
+  const enviar = () => {
+    const form = new FormData();
+    files.forEach((f) => form.append("file", f));
+    form.append("lancamento_ids", lancamentoIds.join(","));
+    if (categoria) form.append("categoria", categoria);
+    return authFetch(`${API}/financeiro/lancamentos/anexos-lote`, {
+      method: "POST", headers: { "Idempotency-Key": chave }, body: form,
+    });
+  };
+  const res = await fetchComRetry(enviar);
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o comprovante do lote"); }
   return res.json();
 }
@@ -5325,6 +7809,60 @@ export async function atualizarStatusPedido(id: number, status: string) {
 export async function excluirPedido(id: number) {
   const res = await authFetch(`${API}/pedidos/${id}`, { method: "DELETE" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir pedido"); }
+}
+export async function atualizarRastreioPedido(id: number, dados: { enviado: boolean; codigo_rastreio?: string | null; link_rastreio?: string | null }) {
+  const res = await authFetch(`${API}/pedidos/${id}/rastreio`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar rastreio do pedido"); }
+  return res.json();
+}
+// Marca quanto de um item do pedido já foi FISICAMENTE entregue — valor
+// ABSOLUTO novo do item (substitui, não soma). O status do pedido volta
+// recalculado (nunca mais escolhido à mão) e, se faltar algo para fechar a
+// ponta financeira, `pendencias` traz o que falta (ver marcar_entrega_item_pedido).
+export type EntregaItemPedidoResultado = {
+  id: number; status: string; pendencias: string[]; avisos_estoque: string[];
+  item: { id: number; quantidade_entregue: number };
+};
+export async function marcarEntregaItemPedido(pedidoId: number, itemId: number, quantidadeEntregue: number): Promise<EntregaItemPedidoResultado> {
+  const res = await authFetch(`${API}/pedidos/${pedidoId}/itens/${itemId}/entrega`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ quantidade_entregue: quantidadeEntregue }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao marcar entrega do item"); }
+  return res.json();
+}
+
+// Anexos de Pedido — orçamento, ordem de serviço ou outro documento, com
+// validade opcional (ver PedidoAnexo no backend); quando há validade, a
+// Agenda alerta 2 dias antes do vencimento enquanto o pedido segue aberto/
+// parcialmente atendido.
+export const CATEGORIAS_PEDIDO_ANEXO = ["Orçamento", "Ordem de serviço", "Outro documento"];
+export type AnexoPedido = {
+  id: number; nome_arquivo: string; mime_type: string; tamanho_bytes: number; categoria: string;
+  data_validade?: string | null; criado_em?: string;
+};
+export async function anexarArquivoPedido(pedidoId: number, file: File, categoria: string, dataValidade?: string | null): Promise<AnexoPedido> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("categoria", categoria);
+  if (dataValidade) form.append("data_validade", dataValidade);
+  const res = await authFetch(`${API}/pedidos/${pedidoId}/anexos`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o arquivo"); }
+  return res.json();
+}
+export async function listarAnexosPedido(pedidoId: number): Promise<AnexoPedido[]> {
+  const res = await authFetch(`${API}/pedidos/${pedidoId}/anexos`);
+  if (!res.ok) throw new Error("Erro ao listar anexos do pedido");
+  return res.json();
+}
+export function urlAnexoPedido(anexoId: number): string {
+  return `${API}/pedidos/anexos/${anexoId}`;
+}
+export async function excluirAnexoPedido(anexoId: number) {
+  const res = await authFetch(`${API}/pedidos/anexos/${anexoId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir anexo"); }
+  return res.json();
 }
 
 export async function fetchModelosImportar() {
@@ -5638,9 +8176,21 @@ export const excluirRecriaBenchmark = (id: number) => _rSend(`/recria/benchmark/
 
 export type WisconsinStats = { n: number; media: number; minimo: number; maximo: number; desvio_padrao: number; assimetria: number; curtose: number; idade_tipica_min: number; idade_tipica_max: number; amplitude_tipica: number };
 export type RecriaIdadeParto = { meta_idade_parto: number; meta_desvio_padrao: number; estatisticas: WisconsinStats | null; distribuicao: { mes: number; n: number; pct: number }[]; custo_excedente: { n: number; dias_excedentes_total: number; custo_total: number; dias_por_novilha: number; custo_por_novilha: number } };
-export type RecriaCiclo = { ciclo: number; inicio: string; fim: string; elegiveis: number; servidos: number; prenhes: number; taxa_servico: number | null; taxa_concepcao: number | null; taxa_prenhez: number | null };
+// Vem do mesmo motor que `CicloReprodutivo` (programa_reprodutivo.py), só
+// filtrado em novilhas. `elegiveis`/`servidos`/`prenhes` são aliases legados de
+// `br_elig`/`bred`/`preg`, mantidos por compatibilidade da tela de Recria.
+// ATENÇÃO: a taxa de prenhez usa `pg_elig` como denominador, não `elegiveis` —
+// os dois diferem quando há baixa durante a janela de diagnóstico.
+export type RecriaCiclo = {
+  ciclo: number; inicio: string; fim: string;
+  elegiveis: number; servidos: number; prenhes: number;
+  br_elig: number; bred: number; pg_elig: number; preg: number;
+  servicos_com_resultado: number; janela_dg_completa: boolean;
+  animais: { br_elig: string[]; bred: string[]; pg_elig: string[]; preg: string[] };
+  taxa_servico: number | null; taxa_concepcao: number | null; taxa_prenhez: number | null;
+};
 export const fetchRecriaIdadeParto = (): Promise<RecriaIdadeParto> => _rGet(`/recria/reproducao/idade-parto`);
-export const fetchRecriaTaxaPrenhez = (ini: string, fim: string, vwp = 0): Promise<{ ciclos: RecriaCiclo[]; taxa_prenhez_media: number | null; total_servicos: number; meta_taxa_prenhez: number }> =>
+export const fetchRecriaTaxaPrenhez = (ini: string, fim: string, vwp = 0): Promise<{ ciclos: RecriaCiclo[]; taxa_prenhez_media: number | null; total_servicos: number; /** Quantos entraram em pelo menos um balde do BREDSUM\E — não o tamanho do rebanho carregado (ver `animais_carregados`). */ animais_avaliados: number; animais_carregados: number; meta_taxa_prenhez: number }> =>
   _rGet(`/recria/reproducao/taxa-prenhez?ini=${ini}&fim=${fim}&vwp_dias=${vwp}`);
 
 export type RecriaDossie = {
@@ -5697,7 +8247,10 @@ export type CategoriaManejo = {
   id?: number; nome: string; dia_min: number; dia_max?: number | null;
   peso_min_kg?: number | null; peso_max_kg?: number | null; usa_status_reprodutivo: boolean;
   // Critérios adicionais — todos opcionais; deixe em branco para não filtrar por eles.
-  situacao_reprodutiva?: "vazia" | "inseminada" | "prenha" | null;
+  // "vazia" casa também com a atrasada (retrocompatibilidade); "vazia_atrasada"
+  // restringe à novilha/vaca que passou do prazo — ver
+  // fazenda/api/routers/recria.py::situacao_reprodutiva_casa.
+  situacao_reprodutiva?: "vazia" | "vazia_atrasada" | "inseminada" | "prenha" | null;
   situacao_produtiva?: "lactacao" | "seca" | null;
   dias_gestacao_min?: number | null; dias_gestacao_max?: number | null;
   dias_desde_servico_min?: number | null; dias_desde_servico_max?: number | null;
@@ -5722,29 +8275,75 @@ export type Touro = {
   dados_extra?: string | null; // JSON [[rótulo, valor], ...] — demais dados da planilha do fornecedor
 };
 export type TouroIn = Omit<Touro, "id" | "atualizado_em" | "dados_extra"> & { dados_extra?: [string, string][] | null };
+// LEITURA do catálogo NAAB pela fazenda — não mudou, e é ela que alimenta
+// listagem/busca, prova média, estudo de touros, inseminação (inclusive com
+// touro fora do estoque), sugestão de acasalamento, ficha do animal e compra
+// de sêmen.
 export const fetchTouros = (): Promise<Touro[]> => _rGet(`/cadastro/touros`);
-export const fetchCamposPlanilhaTouros = (): Promise<string[]> => _rGet(`/cadastro/touros/campos-planilha`);
-export const criarTouro = (d: TouroIn): Promise<Touro> => _rSend(`/cadastro/touros`, "POST", d);
-export const atualizarTouro = (id: number, d: TouroIn): Promise<Touro> => _rSend(`/cadastro/touros/${id}`, "PUT", d);
-export const excluirTouro = (id: number) => _rSend(`/cadastro/touros/${id}`, "DELETE");
-export const recarregarCatalogoTouros = (): Promise<{ touros_antes: number; touros_depois: number }> => _rSend(`/cadastro/touros/recarregar-catalogo`, "POST");
+
+// MANUTENÇÃO do catálogo — só no Painel CowData (set/2026). O catálogo é
+// GLOBAL (um `Touro` só, sem fazenda_id, lido por todas as fazendas-cliente):
+// as rotas de escrita saíram de /cadastro/touros, onde o administrador de
+// qualquer fazenda-cliente reescrevia o catálogo de todas, e hoje exigem a
+// permissão "editar touros NAAB" do cadastro de equipe. Ver
+// backend/fazenda/api/routers/painel_cowdata_touros.py.
+export const fetchTourosCowData = (): Promise<Touro[]> => _pcGet(`/touros`);
+export const fetchCamposPlanilhaTourosCowData = (): Promise<string[]> => _pcGet(`/touros/campos-planilha`);
+export const criarTouroCowData = (d: TouroIn): Promise<Touro> => _pcSend(`/touros`, "POST", d);
+export const atualizarTouroCowData = (id: number, d: TouroIn): Promise<Touro> => _pcSend(`/touros/${id}`, "PUT", d);
+export const excluirTouroCowData = (id: number) => _pcSend(`/touros/${id}`, "DELETE");
+export const recarregarCatalogoTourosCowData = (): Promise<{ touros_antes: number; touros_depois: number }> =>
+  _pcSend(`/touros/recarregar-catalogo`, "POST");
+
+// Importar a planilha do fornecedor (Excel ou CSV do ABS BullSearch, Alta,
+// Select Sires...). Era `POST /importar/touros_naab`, dentro do Importar
+// dados da fazenda: o mesmo upsert no catálogo global protegido só pela
+// permissão de Upload da fazenda. Multipart, por isso não passa pelo
+// _pcSend (que manda JSON).
+export async function importarPlanilhaTourosCowData(file: File, fonte: string, rodada: string) {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("fonte", fonte);
+  form.append("rodada", rodada);
+  const res = await authFetch(`${API}/painel-cowdata/touros/importar`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar o catálogo"); }
+  return res.json() as Promise<{ categoria: string; criados?: number; atualizados?: number; erros?: string[] }>;
+}
 
 export type ProvaMediaCampos = Record<
   "leite_kg" | "gordura_kg" | "gordura_pct" | "proteina_kg" | "proteina_pct" | "tpi" | "nm_dolar"
   | "tipo_composto" | "ubere_composto" | "pernas_composto" | "ccs_score" | "fertilidade_filhas" | "facilidade_parto",
   number | null
 >;
-export type ProvaMediaRecorte = { prova: ProvaMediaCampos; total_doses: number; touros_considerados: number };
+export type ProvaMediaRecorte = { prova: ProvaMediaCampos; touros_considerados: number };
 export type ProvaMediaSemen = {
-  botijao: ProvaMediaRecorte;
-  servicos_periodo: ProvaMediaRecorte & { de: string | null; ate: string | null };
+  simples: ProvaMediaRecorte;
+  ponderada: ProvaMediaRecorte & { total_doses: number };
 };
-export const fetchProvaMediaSemen = (de?: string, ate?: string): Promise<ProvaMediaSemen> => {
+export const fetchProvaMediaSemen = (opts?: { incluirFazenda?: boolean }): Promise<ProvaMediaSemen> =>
+  _rGet(`/cadastro/estoque-semen/prova-media${opts?.incluirFazenda ? "?incluir_fazenda=true" : ""}`);
+
+// "Prova ao vivo" — os MESMOS indicadores genéticos do catálogo (ver
+// ProvaMediaSemen acima: leite, gordura, proteína, TPI, NM$, etc.), só que
+// ponderados pelo USO REAL do touro na fazenda (nº de serviços em que foi
+// de fato usado), não pelas doses hoje em estoque. Não é taxa de concepção
+// nem outro indicador de resultado reprodutivo do rebanho.
+export type ProvaAoVivoTouro = { touro: string; servicos: number };
+export type ProvaAoVivoSemen = {
+  prova: ProvaMediaCampos; total_servicos: number; touros_considerados: number; touros: ProvaAoVivoTouro[];
+  categoria: string; ano_nascimento: number | null; de: string | null; ate: string | null;
+};
+export const fetchProvaAoVivoSemen = (filtros?: {
+  categoria?: "todas" | "vaca" | "novilha"; anoNascimento?: number; de?: string; ate?: string; incluirFazenda?: boolean;
+}): Promise<ProvaAoVivoSemen> => {
   const p = new URLSearchParams();
-  if (de) p.set("de", de);
-  if (ate) p.set("ate", ate);
+  if (filtros?.categoria && filtros.categoria !== "todas") p.set("categoria", filtros.categoria);
+  if (filtros?.anoNascimento) p.set("ano_nascimento", String(filtros.anoNascimento));
+  if (filtros?.de) p.set("de", filtros.de);
+  if (filtros?.ate) p.set("ate", filtros.ate);
+  if (filtros?.incluirFazenda) p.set("incluir_fazenda", "true");
   const qs = p.toString();
-  return _rGet(`/cadastro/estoque-semen/prova-media${qs ? `?${qs}` : ""}`);
+  return _rGet(`/cadastro/estoque-semen/prova-ao-vivo${qs ? `?${qs}` : ""}`);
 };
 
 // ── News (blog de pecuária leiteira) ──
@@ -5948,6 +8547,54 @@ export async function fetchFotoCampoUrl(id: number): Promise<string> {
 
 export async function excluirFotoCampo(id: number): Promise<void> {
   const res = await authFetch(`${API}/fotos/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir foto"); }
+}
+
+// ── Banco de fotos do Milknews (blog News) ──
+// Ver backend/fazenda/api/routers/fotos_news.py — bucket PÚBLICO do Supabase
+// Storage; `url` já vem pronta para uso direto em <img src>, sem autenticação
+// (a página pública do blog lê sem login). Gerido na aba Aprovações.
+export type PastaFotoNews = { id: number; nome: string; criado_em: string; quantidade_fotos: number };
+export type FotoNews = {
+  id: number; pasta_id: number | null; nome_arquivo: string; mime_type: string;
+  tamanho_bytes: number; tags: string | null; criado_em: string; url: string;
+};
+
+export async function fetchPastasFotosNews(): Promise<PastaFotoNews[]> {
+  const res = await authFetch(`${API}/fotos-news/pastas`);
+  if (!res.ok) throw new Error("Erro ao listar pastas do banco de fotos");
+  return res.json();
+}
+export async function criarPastaFotosNews(nome: string): Promise<PastaFotoNews> {
+  const res = await authFetch(`${API}/fotos-news/pastas`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar pasta"); }
+  return res.json();
+}
+export async function excluirPastaFotosNews(id: number): Promise<void> {
+  const res = await authFetch(`${API}/fotos-news/pastas/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir pasta"); }
+}
+export async function fetchFotosNews(pastaId?: number | null): Promise<FotoNews[]> {
+  const qs = pastaId === null ? "?sem_pasta=true" : pastaId != null ? `?pasta_id=${pastaId}` : "";
+  const res = await authFetch(`${API}/fotos-news${qs}`);
+  if (!res.ok) throw new Error("Erro ao listar fotos do banco");
+  return res.json();
+}
+export async function enviarFotoNews(file: File, pastaId?: number | null, tags?: string): Promise<FotoNews> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const params = new URLSearchParams();
+  if (pastaId != null) params.set("pasta_id", String(pastaId));
+  if (tags) params.set("tags", tags);
+  const qs = params.toString();
+  const res = await authFetch(`${API}/fotos-news/upload${qs ? `?${qs}` : ""}`, { method: "POST", body: fd });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao enviar foto"); }
+  return res.json();
+}
+export async function excluirFotoNews(id: number): Promise<void> {
+  const res = await authFetch(`${API}/fotos-news/${id}`, { method: "DELETE" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir foto"); }
 }
 
@@ -6269,3 +8916,124 @@ export async function fetchLidasAtivas(): Promise<LidaAtiva[]> {
   if (!res.ok) throw new Error(`Lida ativos error: ${res.status}`);
   return res.json();
 }
+
+// ── Consumo diário de alimento e sobra de cocho (Lançamentos > Alimentação) ──
+// `lote` é o INT da dieta (DietaLancamento.lote), não o código de 2 dígitos do
+// cadastro nem o "01 - Nome" de Animal.grupo_primario — o lançamento de consumo
+// só existe ancorado numa dieta ativa e fala a língua dela. A ponte para o
+// cadastro é `String(lote).padStart(2, "0")`.
+export type ItemDietaDoLote = {
+  alimento: string; alimento_id: number | null;
+  quantidade: number; unidade: string;          // quantidade programada
+  por_cabeca: number | null;                    // já resolvido pelo backend
+  converte_para_kg: boolean;                    // false = fica fora do rateio da sobra
+};
+export type ConsumoDoDia = {
+  lote: number; data: string; num_animais: number | null;
+  itens: { alimento: string; quantidade: number; unidade: string; kg_equivalente: number | null }[];
+  kg_fornecido_total: number;
+  sobra_kg: number | null;
+  sobra_pct: number | null;
+  dentro_da_faixa: boolean | null;              // null = sem sobra lançada ainda
+};
+export type ConsumoItemIn = {
+  alimento: string; alimento_id?: number | null; quantidade: number; unidade: string;
+};
+export type RespostaConsumo = {
+  ok: boolean;
+  // Avisos vindos do motor de estoque (saldo negativo etc.). Hoje os avisos da
+  // baixa de alimentação são descartados pelo chamador; com lançamento manual
+  // eles passam a ter destinatário — mostre na tela.
+  avisos: string[];
+};
+
+export async function fetchDietaDoLote(lote: number): Promise<{ itens: ItemDietaDoLote[]; base_quantidade: string } | null> {
+  const res = await authFetch(`${API}/alimentacao/consumo/dieta-do-lote?lote=${lote}`, { cache: "no-store" });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Dieta do lote error: ${res.status}`);
+  return res.json();
+}
+export async function fetchConsumoDoDia(lote: number, data: string): Promise<ConsumoDoDia> {
+  const res = await authFetch(`${API}/alimentacao/consumo?lote=${lote}&data=${data}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Consumo do dia error: ${res.status}`);
+  return res.json();
+}
+export async function lancarConsumo(dados: {
+  lote: number; data: string; num_animais?: number | null;
+  origem: "animais" | "kg"; itens: ConsumoItemIn[];
+}): Promise<RespostaConsumo> {
+  const res = await authFetch(`${API}/alimentacao/consumo`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar consumo"); }
+  return res.json();
+}
+export async function excluirConsumo(id: number) {
+  const res = await authFetch(`${API}/alimentacao/consumo/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir consumo"); }
+  return res.json();
+}
+// Relançar a sobra no mesmo dia SUBSTITUI (é medição do dia), ao contrário do
+// consumo, que soma (é o vagão passando várias vezes).
+export async function lancarSobra(dados: { lote: number; data: string; kg_sobra: number }) {
+  const res = await authFetch(`${API}/alimentacao/sobra`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar sobra"); }
+  return res.json();
+}
+export type RelatorioSobra = {
+  total_kg_sobra: number; total_kg_fornecido: number; pct_medio: number | null;
+  // `pct_do_total` é a fatia do TOTAL DE SOBRA do período que este alimento
+  // respondeu — não a proporção dele na dieta. Nomear errado aqui faria a
+  // tela exibir "% da dieta" com um número que não é isso.
+  por_alimento: { alimento: string; kg_sobra: number; pct_do_total: number }[];
+  // Itens da dieta cuja unidade não converte para kg (litro, dose, unidade):
+  // ficam FORA do rateio, e o relatório diz quais em vez de silenciar.
+  itens_sem_conversao: string[];
+};
+export async function fetchRelatorioSobra(p: { de: string; ate: string; lote?: number | null }): Promise<RelatorioSobra> {
+  const qs = new URLSearchParams({ de: p.de, ate: p.ate });
+  if (p.lote != null) qs.set("lote", String(p.lote));
+  const res = await authFetch(`${API}/alimentacao/sobra/relatorio?${qs.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Relatório de sobra error: ${res.status}`);
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Vale-alimentação — a FORMA de pagamento e a trava da OJ 413 (set/2026)
+//
+// Acrescentados no fim do arquivo, e não junto de `PessoaDados`, para não
+// tocar num bloco em revisão noutro pull request. Estruturalmente dá no mesmo:
+// `criarPessoa`/`atualizarPessoa` recebem o payload como VARIÁVEL (ver
+// `CadastroPessoas.tsx::paraPayload`), e o TypeScript só recusa propriedade
+// extra em literal de objeto passado direto.
+// ---------------------------------------------------------------------------
+
+/** Como o vale-alimentação é pago — o eixo que decide se ele entra ou não nas
+ *  bases de INSS, FGTS, 13º e férias. A árvore inteira, com o fundamento de
+ *  cada linha, está em
+ *  `backend/fazenda/rules/vale_alimentacao.py::natureza_do_vale_alimentacao`:
+ *
+ *  - `dinheiro`   → SALARIAL, integra tudo (CLT, art. 457, §2º — a exclusão da
+ *                   base vale "vedado seu pagamento em dinheiro"). E é
+ *                   infração autônoma à Lei 14.442/2022, multa de R$ 5.000 a
+ *                   R$ 50.000, dobrada na reincidência;
+ *  - `cartao`     → indenizatória, com ou sem PAT (OJ 133 da SDI-1 do TST;
+ *                   Solução de Consulta COSIT nº 35/2019 da Receita Federal);
+ *  - `in_natura`  → salário-utilidade, INTEGRA (CLT, art. 458, caput), salvo
+ *                   se a fazenda for inscrita no PAT (OJ 133).
+ *
+ *  NÃO existe valor padrão: o servidor recusa o cadastro com o benefício
+ *  ligado e a forma em branco. Escolher por conta própria na tela seria tirar
+ *  da base do INSS uma verba que talvez tivesse de entrar. */
+export type FormaValeAlimentacao = "dinheiro" | "cartao" | "in_natura";
+
+/** Os dois campos novos do cadastro de vale-alimentação. `undefined` na trava
+ *  significa "não mexe no que está gravado": a tela só mostra o campo para
+ *  administrador, e mandar `false` num PUT de usuário comum desligaria em
+ *  silêncio uma proteção que só administrador pode tirar. */
+export type ValeAlimentacaoEnquadramentoIn = {
+  vale_alimentacao_forma?: FormaValeAlimentacao;
+  vale_alimentacao_natureza_travada_salarial?: boolean;
+};

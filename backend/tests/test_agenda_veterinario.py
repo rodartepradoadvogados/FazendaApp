@@ -274,51 +274,6 @@ class TestNovilhas:
         assert any(a["numero_matriz"] == "23" for a in r.json()["listas"]["novilhas_gestantes"])
 
 
-class TestVerificarAptidao:
-    """Critério próprio: >=280kg, >=15 meses, nunca inseminada/coberta."""
-
-    def test_280kg_15_meses_sem_servico_entra(self, client):
-        c, engine = client
-        _add_animal(engine, "21", "Novilha", idade_meses=15)
-        _add_peso(engine, "21", 280)
-        # data=HOJE fixa a data de referência do endpoint (default é date.today()
-        # real, ver #490) — sem isso os testes de janela de dias (1-29/30-59/
-        # pré-parto) driftam e quebram conforme o calendário real avança.
-        r = c.get("/reproducao/agenda-veterinario", params={"data": HOJE.isoformat()})
-        assert any(a["numero_matriz"] == "21" for a in r.json()["listas"]["verificar_aptidao"])
-
-    def test_abaixo_280kg_nao_entra(self, client):
-        c, engine = client
-        _add_animal(engine, "24", "Novilha", idade_meses=15)
-        _add_peso(engine, "24", 270)
-        # data=HOJE fixa a data de referência do endpoint (default é date.today()
-        # real, ver #490) — sem isso os testes de janela de dias (1-29/30-59/
-        # pré-parto) driftam e quebram conforme o calendário real avança.
-        r = c.get("/reproducao/agenda-veterinario", params={"data": HOJE.isoformat()})
-        assert not any(a["numero_matriz"] == "24" for a in r.json()["listas"]["verificar_aptidao"])
-
-    def test_abaixo_15_meses_nao_entra(self, client):
-        c, engine = client
-        _add_animal(engine, "25", "Novilha", idade_meses=10)
-        _add_peso(engine, "25", 300)
-        # data=HOJE fixa a data de referência do endpoint (default é date.today()
-        # real, ver #490) — sem isso os testes de janela de dias (1-29/30-59/
-        # pré-parto) driftam e quebram conforme o calendário real avança.
-        r = c.get("/reproducao/agenda-veterinario", params={"data": HOJE.isoformat()})
-        assert not any(a["numero_matriz"] == "25" for a in r.json()["listas"]["verificar_aptidao"])
-
-    def test_ja_teve_servico_nao_entra(self, client):
-        c, engine = client
-        _add_animal(engine, "26", "Novilha", idade_meses=IDADE_APTA)
-        _add_peso(engine, "26", 320)
-        _add_servico(engine, "26", 5)
-        # data=HOJE fixa a data de referência do endpoint (default é date.today()
-        # real, ver #490) — sem isso os testes de janela de dias (1-29/30-59/
-        # pré-parto) driftam e quebram conforme o calendário real avança.
-        r = c.get("/reproducao/agenda-veterinario", params={"data": HOJE.isoformat()})
-        assert not any(a["numero_matriz"] == "26" for a in r.json()["listas"]["verificar_aptidao"])
-
-
 class TestPreParto:
     def test_gestante_0_a_30_dias_para_parto(self, client):
         c, engine = client
@@ -550,3 +505,50 @@ class TestProximaVisitaReprodutivaSugerida:
         assert corpo["ultimo_servico"] == "2026-07-01"
         assert corpo["intervalo_visita_reprodutiva"] == 0
         assert corpo["proxima_visita_reprodutiva"] is None
+
+
+class TestNovilhaAtrasadaNaListaDoVeterinario:
+    """A lista "novilhas aptas vazias" juntava num balde só a novilha que
+    acabou de ficar apta e a que está há um ano esperando serviço — o
+    veterinário não via diferença entre as duas. O gate de idade/peso é
+    reimplementado à mão neste módulo (idade_apta/peso_apta locais), então
+    ele não herdava sozinho o ATRASADA que o motor passou a devolver para
+    novilha nulípara (parâmetro idade_max_1a_cobertura_meses, 16 meses)."""
+
+    def test_marca_atrasada_so_quem_passou_da_idade_maxima(self, client):
+        c, engine = client
+        # 15,5 meses: já passou do piso de aptidão (15) e ainda não do teto (16).
+        _add_animal(engine, "70", "Novilha", idade_meses=15.5)
+        _add_peso(engine, "70", PESO_APTO)
+        # 24 meses: muito além do teto e continua vazia.
+        _add_animal(engine, "71", "Novilha", idade_meses=24.0)
+        _add_peso(engine, "71", PESO_APTO)
+        r = c.get("/reproducao/agenda-veterinario", params={"data": HOJE.isoformat()})
+        lista = {a["numero_matriz"]: a for a in r.json()["listas"]["novilhas_aptas_vazias"]}
+        assert set(lista) == {"70", "71"}
+        assert lista["70"]["atrasada"] is False
+        assert lista["71"]["atrasada"] is True
+
+    def test_atrasadas_vem_primeiro_na_lista(self, client):
+        c, engine = client
+        # Inseridas na ordem "recém-apta antes da atrasada" de propósito: sem a
+        # ordenação, a atrasada sairia no fim da lista da visita.
+        for numero, idade in (("72", 15.2), ("73", 15.4), ("74", 30.0), ("75", 40.0)):
+            _add_animal(engine, numero, "Novilha", idade_meses=idade)
+            _add_peso(engine, numero, PESO_APTO)
+        r = c.get("/reproducao/agenda-veterinario", params={"data": HOJE.isoformat()})
+        lista = r.json()["listas"]["novilhas_aptas_vazias"]
+        assert [a["numero_matriz"] for a in lista] == ["74", "75", "72", "73"]
+        assert [a["atrasada"] for a in lista] == [True, True, False, False]
+
+    def test_novilha_inseminada_nao_entra_na_lista(self, client):
+        # Sentinela: a marca não pode "puxar" ninguém para a lista — só
+        # descreve quem já estava nela (vazia + apta).
+        c, engine = client
+        _add_animal(engine, "76", "Novilha", idade_meses=30.0)
+        _add_peso(engine, "76", PESO_APTO)
+        _add_servico(engine, "76", 10)
+        r = c.get("/reproducao/agenda-veterinario", params={"data": HOJE.isoformat()})
+        listas = r.json()["listas"]
+        assert all(a["numero_matriz"] != "76" for a in listas["novilhas_aptas_vazias"])
+        assert any(a["numero_matriz"] == "76" for a in listas["inseminadas_1_29"])

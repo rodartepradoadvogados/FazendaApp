@@ -31,7 +31,8 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from fazenda.api.routers.recria import _contexto_categoria, _situacao_reprodutiva_3, classificar_categoria
+from fazenda.api.routers.recria import _contexto_categoria, classificar_categoria, situacao_reprodutiva_casa
+from fazenda.rules.estado_reprodutivo import GESTANTE
 from fazenda.rules.gestation import dias_gestacao
 from fazenda.rules.parametros import pre_parto_max
 
@@ -49,28 +50,40 @@ def _categoria_normalizada(animal: dict) -> str:
     return ""
 
 
-def _ultimo_servico_positivo(numero: str, servicos_por_animal: dict[str, list[dict]]) -> dict | None:
-    """Serviço VIGENTE da matriz (o mais recente), SE ele estiver positivo e
-    sem perda de prenhez registrada — não é "o último serviço positivo do
-    histórico": um serviço mais novo (mesmo sem diagnóstico ainda) já
-    substitui aquele positivo, e uma perda registrada (manual ou automática
-    por reinseminação, ver fazenda.rules.perda_prenhez) encerra a gestação
-    mesmo sem um serviço novo. Sem este critério, "dias para o parto" e o
-    critério "Pré-parto" do lote continuavam contando uma gestação que já
-    tinha acabado."""
+def _ultimo_servico_positivo(
+    numero: str, servicos_por_animal: dict[str, list[dict]], partos_por_animal: dict[str, list] | None = None,
+) -> dict | None:
+    """Serviço VIGENTE da matriz (o mais recente), SE ele estiver positivo,
+    sem perda de prenhez registrada E sem um PARTO já realizado desde então —
+    não é "o último serviço positivo do histórico": um serviço mais novo
+    (mesmo sem diagnóstico ainda) já substitui aquele positivo, uma perda
+    registrada (manual ou automática por reinseminação, ver
+    fazenda.rules.perda_prenhez) encerra a gestação mesmo sem um serviço
+    novo, e um PARTO real (`Parto.data_parto >= data_servico`) encerra a
+    gestação mesmo sem perda_prenhez registrada (parto normal não é perda).
+    Sem este último critério, uma vaca que acabava de parir continuava
+    contando "dias para o parto"/"Pré-parto" com base no serviço antigo — bug
+    real: no dia seguinte ao parto, o sistema sugeria "faltam 2 dias para o
+    parto" mesmo com o parto já lançado. `partos_por_animal` é opcional
+    (retrocompatível) — chamador sem essa info mantém o comportamento antigo."""
     servicos = sorted(
         (s for s in servicos_por_animal.get(numero, []) if s.get("data_servico")), key=lambda s: s["data_servico"],
     )
     if not servicos:
         return None
     ultimo = servicos[-1]
-    if (ultimo.get("diagnostico") or "").strip().upper() == "POSITIVO" and not ultimo.get("data_perda_prenhez"):
-        return ultimo
-    return None
+    if (ultimo.get("diagnostico") or "").strip().upper() != "POSITIVO" or ultimo.get("data_perda_prenhez"):
+        return None
+    if partos_por_animal:
+        data_servico = ultimo["data_servico"]
+        if any(p.data_parto and p.data_parto >= data_servico for p in partos_por_animal.get(numero, [])):
+            return None
+    return ultimo
 
 
 def dias_para_parto(
     numero: str, servicos_por_animal: dict[str, list[dict]], hoje: date, raca: str | None = None,
+    partos_por_animal: dict[str, list] | None = None,
 ) -> int | None:
     """`raca` (opcional, retrocompatível) usa a gestação ESPECÍFICA da raça
     do animal (280/287/295 dias — ver fazenda.rules.gestation), a mesma
@@ -79,8 +92,9 @@ def dias_para_parto(
     critério `lote.pre_parto`) caía sempre no ponto médio fixo da faixa
     editável, divergindo em até 15 dias da Agenda para raças não-Holandês
     (mesma classe de bug já corrigida uma vez para a Secagem, ver
-    relatorios_gerenciais.GESTACAO_DIAS)."""
-    servico = _ultimo_servico_positivo(numero, servicos_por_animal)
+    relatorios_gerenciais.GESTACAO_DIAS). `partos_por_animal` (opcional,
+    retrocompatível) — ver docstring de `_ultimo_servico_positivo`."""
+    servico = _ultimo_servico_positivo(numero, servicos_por_animal, partos_por_animal)
     if not servico:
         return None
     dias_decorridos = (hoje - servico["data_servico"]).days
@@ -111,6 +125,16 @@ def _contexto_animal(animal: dict, hoje: date, dados: dict) -> dict:
         dados["servicos_obj_por_animal"].get(numero, []),
         dados["partos_obj_por_animal"].get(numero, []),
         dados["secagens_obj_por_animal"].get(numero, []),
+        numero=numero,
+        # Os parâmetros do estado ao vivo (pev_dias etc.) vêm prontos de
+        # `coletar_dados_criterios` (routers/lotes.py) — lidos uma vez só lá,
+        # não a cada animal: este contexto roda em loop (um por animal, às
+        # vezes um por animal por lote em `sugerir_movimentacoes`).
+        pev_dias=dados.get("pev_dias"), del_max_1o_servico=dados.get("del_max_1o_servico"),
+        idade_apta_dias=dados.get("idade_apta_dias"), peso_apta_kg=dados.get("peso_apta_kg"),
+        idade_atraso_dias=dados.get("idade_atraso_dias"),
+        data_nasc=animal.get("data_nasc"), pesagens=dados.get("pesagens_por_animal", {}).get(numero, []),
+        dias_atraso_apos_aptidao=dados.get("dias_atraso_apos_aptidao"),
     )
 
 
@@ -150,13 +174,27 @@ def animal_atende_criterios(lote, animal: dict, hoje: date, dados: dict) -> bool
     servicos_por_animal = dados["servicos_por_animal"]
     sanidades_por_animal = dados["sanidades_por_animal"]
     peso_por_animal = dados["peso_por_animal"]
+    partos_obj_por_animal = dados["partos_obj_por_animal"]
     categoria = _categoria_normalizada(animal)
     ctx = _contexto_animal(animal, hoje, dados)
 
     if lote.status_lactacao and lote.status_lactacao != _situacao_produtiva(animal, ctx):
         return False
 
-    if lote.situacao_reprodutiva and _situacao_reprodutiva_3(animal.get("sit_rep")) != lote.situacao_reprodutiva:
+    # AO VIVO: ctx["situacao_reprodutiva_viva"] já vem do estado reprodutivo
+    # canônico (estado_reprodutivo.classificar_animal, dentro de
+    # _contexto_categoria) — não mais do `sit_rep` congelado do último
+    # GERAL.csv. Antes desta correção, uma vaca que engravidava pelo app
+    # (ou saía do PEV, ou terminava o protocolo de IATF) continuava sendo
+    # avaliada pelo texto velho aqui, e a sugestão de movimentação de lote
+    # (a razão de ser deste módulo) mandava ela pro lote errado até o
+    # próximo upload de planilha.
+    # `situacao_reprodutiva_casa` (e não `!=` direto): "vazia" continua
+    # casando com a novilha/vaca ATRASADA, que hoje sai de
+    # `_situacao_reprodutiva_3` como "vazia_atrasada" — nenhum lote já
+    # cadastrado muda de comportamento. Um lote cadastrado com
+    # "vazia_atrasada" casa só com as atrasadas.
+    if not situacao_reprodutiva_casa(lote.situacao_reprodutiva, ctx.get("situacao_reprodutiva_viva")):
         return False
 
     if lote.categorias:
@@ -164,7 +202,7 @@ def animal_atende_criterios(lote, animal: dict, hoje: date, dados: dict) -> bool
         if categoria not in alvo:
             return False
 
-    dpp = dias_para_parto(numero, servicos_por_animal, hoje, animal.get("raca"))
+    dpp = dias_para_parto(numero, servicos_por_animal, hoje, animal.get("raca"), partos_obj_por_animal)
 
     if lote.pre_parto:
         if dpp is None or dpp > pre_parto_max() or dpp < 0:
@@ -212,16 +250,17 @@ def animal_atende_criterios(lote, animal: dict, hoje: date, dados: dict) -> bool
     if lote.idade_dias_max is not None and (idade_dias is None or idade_dias > lote.idade_dias_max):
         return False
 
-    # AO VIVO: prenha = tem concepção vigente (ctx["situacao_reprodutiva_viva"]
-    # já cruza serviço/parto — ver _contexto_categoria em recria.py). Cai para
-    # o texto congelado (sit_rep) só quando o animal não tem NENHUM
-    # serviço/parto lançado ainda — mesmo fallback usado por
-    # `_situacao_produtiva` acima. Antes usava `Animal.diagnostico` (campo
-    # congelado do CSV) OU sit_rep == "Ges." direto: uma vaca reinseminada sem
-    # diagnóstico ainda, ou com a prenhez já perdida, continuava contando como
-    # gestante para os critérios "novilhas inseminadas"/"novilhas gestantes".
-    situacao_viva = ctx.get("situacao_reprodutiva_viva")
-    gestante = situacao_viva == "prenha" if situacao_viva is not None else (animal.get("sit_rep") or "") == "Ges."
+    # AO VIVO: prenha = estado_reprodutivo.GESTANTE, o mesmo motor canônico
+    # usado no resto do sistema (ctx["estado_vivo"], calculado dentro de
+    # _contexto_categoria via classificar_animal). Sem fallback pro sit_rep
+    # congelado: classificar_animal sempre devolve algum estado — mesmo sem
+    # nenhum serviço/parto lançado, cai em NAO_APTA/APTA pela idade/peso —,
+    # então não sobra caso "sem dado" que precise do texto do CSV. Antes
+    # usava `Animal.diagnostico` (campo congelado do CSV) OU sit_rep == "Ges."
+    # direto: uma vaca reinseminada sem diagnóstico ainda, ou com a prenhez
+    # já perdida, continuava contando como gestante para os critérios
+    # "novilhas inseminadas"/"novilhas gestantes".
+    gestante = ctx.get("estado_vivo") == GESTANTE
 
     if lote.novilhas_inseminadas:
         if categoria != "novilha" or not foi_inseminada(numero, servicos_por_animal) or gestante:
@@ -295,7 +334,7 @@ def _motivos_atendimento(lote, animal: dict, hoje: date, dados: dict) -> list[st
     servicos_por_animal = dados["servicos_por_animal"]
     peso_por_animal = dados["peso_por_animal"]
     ctx = _contexto_animal(animal, hoje, dados)
-    dpp = dias_para_parto(numero, servicos_por_animal, hoje, animal.get("raca"))
+    dpp = dias_para_parto(numero, servicos_por_animal, hoje, animal.get("raca"), dados["partos_obj_por_animal"])
     motivos = []
 
     if lote.status_lactacao:

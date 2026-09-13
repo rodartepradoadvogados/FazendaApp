@@ -3,12 +3,16 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Pencil, Trash2, Printer, X } from "lucide-react";
 import {
   simularRescisao, fetchRescisoesFuncionario, criarSimulacaoRescisao, atualizarSimulacaoRescisao,
-  excluirSimulacaoRescisao, fecharRescisao, formatBRL, fetchContasCorrentes,
+  excluirSimulacaoRescisao, fecharRescisao, formatBRL, fetchContasCorrentes, fetchPessoas,
   type TipoRescisao, type CalculoRescisao, type RegistroRescisaoFuncionario,
   type RescisaoSimulacaoDados, type FormaLancamentoRescisao, type ContaCorrenteCadastro,
+  type SaldoValeEmAberto, type MediasVariaveisComposicao,
 } from "@/lib/api";
+import { MediaVerbasVariaveis } from "@/components/MediaVerbasVariaveis";
 import { ReciboModal } from "@/components/ReciboModal";
 import { exportarFichaPDF, exportarMultiExcel, type SecaoFicha, type LancamentoRecibo } from "@/lib/export";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { type ModoSecaoCategoria } from "@/components/ui";
 
 /*
  * Rescisão contratual (CLT) — saldo de salário, aviso prévio, férias
@@ -20,6 +24,26 @@ import { exportarFichaPDF, exportarMultiExcel, type SecaoFicha, type LancamentoR
  * visível com as rescisões simuladas/fechadas, incluindo o histórico legado
  * pré-migração (somente leitura). Sem envio ao eSocial (fora de escopo —
  * inviável sem certificado digital/infraestrutura própria).
+ *
+ * ONDE ESTA TELA MORA — e por que NÃO volta para dentro de Férias/13º:
+ * até #547 esta tela era a 3ª sub-aba de `FeriasDecimoTerceiroView`. O
+ * motivo era de CÁLCULO, não de navegação: `calcular_rescisao` reaproveita
+ * `calcular_ferias` e `calcular_decimo_terceiro` (backend/fazenda/rules/
+ * folha_rh.py). Só que essa conveniência, ao virar menu, INVERTEU a
+ * hierarquia: no código a rescisão é o CONSUMIDOR (o nível de cima, que
+ * chama os dois), e no menu ela aparecia como terceira aba dentro de duas
+ * das suas próprias parcelas. Juridicamente a inversão é ainda mais clara —
+ * a rescisão abrange no mínimo 11 verbas que não são 13º nem férias (saldo
+ * de salário, aviso prévio, multa de 40%/20% do FGTS, arts. 479/480 CLT,
+ * Súmula 314 do TST, estabilidades, multas dos arts. 467 e 477) e dispara
+ * 10 obrigações acessórias; sem o evento S-2299 do eSocial não há guia de
+ * FGTS, baixa na CTPS nem seguro-desemprego.
+ * O reaproveitamento de cálculo vive no BACKEND e continua valendo onde
+ * quer que a tela fique — não há dívida técnica pedindo o contrário. Por
+ * isso a Rescisão é hoje um chip PRÓPRIO do seletor de categoria da Folha
+ * (ver FolhaPagamentoView.tsx), irmão de Funcionário/Empreita/Contrato/
+ * Diária/Férias-13º, e este componente é autossuficiente: busca as próprias
+ * pessoas, sem depender de um pai que já tivesse a lista carregada.
  */
 type Pessoa = { id: number; nome: string; tipos: string[]; salario_base?: number | null; data_admissao?: string | null };
 
@@ -63,7 +87,13 @@ function paraNumero(v: string): number {
   return isNaN(n) ? 0 : n;
 }
 
-export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: Pessoa[]; onPessoaInativada?: () => void }) {
+export default function RescisaoView({ mostrar = "tudo" }: { mostrar?: ModoSecaoCategoria } = {}) {
+  // A lista de pessoas é DESTA tela desde que a rescisão virou chip próprio:
+  // antes ela descia como prop de `FeriasDecimoTerceiroView` (que a buscava
+  // 1x no mount) e por isso precisava do callback `onPessoaInativada` para
+  // não ficar desatualizada depois de um fechamento com "marcar como
+  // inativo". Agora o refresh acontece aqui mesmo, em `carregarPessoas()`.
+  const [pessoas, setPessoas] = useState<Pessoa[]>([]);
   const [itens, setItens] = useState<RegistroRescisaoFuncionario[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -82,6 +112,13 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
 
   const [calculando, setCalculando] = useState(false);
   const [contexto, setContexto] = useState<ContextoVerbas | null>(null);
+  // As TRÊS composições de média de verbas variáveis habituais, vindas da
+  // simulação. São três porque cada verba segue a regra da SUA natureza: o 13º
+  // proporcional usa o ANO CIVIL (Decreto 57.155/65, art. 2º), as férias
+  // vencidas e proporcionais usam o PERÍODO AQUISITIVO (CLT, art. 142) e o
+  // aviso prévio indenizado usa os ÚLTIMOS 12 MESES. Mostrar uma média só
+  // esconderia que as outras duas são outro número.
+  const [medias, setMedias] = useState<MediasVariaveisComposicao | null>(null);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
 
   // Etapa 2 — as 6 verbas + 3 descontos, todas editáveis.
@@ -94,6 +131,14 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
   const [valorInss, setValorInss] = useState("0");
   const [valorIr, setValorIr] = useState("0");
   const [valorValeEmAberto, setValorValeEmAberto] = useState("0");
+  /* O saldo de vale REAL da pessoa, vindo do servidor — o número que a tela
+   * não tinha. "Vale em aberto" era digitado à mão e nascia em zero: uma
+   * rescisão real foi fechada com R$ 0,00 nesse campo e deixou R$ 6.485,00 de
+   * vale de pé, em competências que nunca mais teriam folha para descontar.
+   * Aqui ele é PRÉ-PREENCHIDO com o saldo e continua editável (o dono pode
+   * ter acertado parte por fora) — mas o fechamento recusa enquanto sobrar
+   * saldo não endereçado, porque rescisão fechada não reabre. */
+  const [saldoVale, setSaldoVale] = useState<SaldoValeEmAberto | null>(null);
   const [salvando, setSalvando] = useState(false);
 
   // Etapa 3 — fechamento.
@@ -114,7 +159,17 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
   const [reciboLinha, setReciboLinha] = useState<LancamentoRecibo | null>(null);
 
   const carregar = () => fetchRescisoesFuncionario().then(setItens).catch((e) => setError(e.message));
-  useEffect(() => { carregar(); fetchContasCorrentes().then(setContasCorrentes).catch(() => {}); }, []);
+  // Mesma busca (sem filtro de `ativo`) que `FeriasDecimoTerceiroView` fazia
+  // e repassava por prop — o dropdown de "nova rescisão" continua listando
+  // exatamente as mesmas pessoas de antes.
+  const carregarPessoas = () => fetchPessoas().then(setPessoas).catch(() => {});
+  useEffect(() => {
+    carregar();
+    carregarPessoas();
+    fetchContasCorrentes().then(setContasCorrentes).catch(() => {});
+  }, []);
+
+  const ordRescisoes = useOrdenacao(itens ?? []);
 
   const pessoaSelecionada = useMemo(() => pessoas.find((p) => String(p.id) === pessoaId), [pessoas, pessoaId]);
 
@@ -122,6 +177,7 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
     setValorSaldoSalario(""); setValorAvisoPrevio(""); setValorFeriasVencidas("");
     setValorFeriasProporcionais(""); setValorDecimoTerceiroProporcional(""); setValorMultaFgts("");
     setValorInss("0"); setValorIr("0"); setValorValeEmAberto("0");
+    setSaldoVale(null);
     setContexto(null);
   }
 
@@ -154,13 +210,17 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
         mesesFeriasProporcionais: resultado.ferias_proporcionais.meses, mesesDecimoTerceiro: resultado.decimo_terceiro_proporcional.meses,
         percentualMultaFgts: Math.round(resultado.fgts.percentual_multa * 100),
       });
+      setMedias(resultado.medias_variaveis_composicao ?? null);
       setValorSaldoSalario(String(resultado.saldo_salario.valor));
       setValorAvisoPrevio(String(resultado.aviso_previo.valor));
       setValorFeriasVencidas(String(resultado.ferias_vencidas.valor_total));
       setValorFeriasProporcionais(String(resultado.ferias_proporcionais.valor_total));
       setValorDecimoTerceiroProporcional(String(resultado.decimo_terceiro_proporcional.valor));
       setValorMultaFgts(String(resultado.fgts.multa));
-      setValorInss("0"); setValorIr("0"); setValorValeEmAberto("0");
+      setValorInss("0"); setValorIr("0");
+      // Pré-preenchido com o saldo real (e não mais com zero fixo) — editável.
+      setSaldoVale(resultado.vale_em_aberto ?? null);
+      setValorValeEmAberto(String(resultado.vale_em_aberto?.total ?? 0));
       setRascunhoId(null);
       setEtapa("editar");
     } catch (e: any) {
@@ -199,6 +259,7 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
         ? await criarSimulacaoRescisao(montarDadosSimulacao())
         : await atualizarSimulacaoRescisao(rascunhoId, montarDadosSimulacao());
       setRascunhoId(r.id);
+      if (r.vale_em_aberto !== undefined) setSaldoVale(r.vale_em_aberto);
       setMsg({ tipo: "sucesso", texto: "Simulação salva." });
       carregar();
     } catch (e: any) {
@@ -226,6 +287,7 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
     setValorInss(String(r.valor_inss ?? 0));
     setValorIr(String(r.valor_ir ?? 0));
     setValorValeEmAberto(String(r.valor_vale_em_aberto ?? 0));
+    setSaldoVale(r.vale_em_aberto ?? null);
     setContexto({
       diasSaldoSalario: r.dias_saldo_salario, diasAvisoPrevio: r.dias_aviso_previo,
       diasAvisoPrevioIndenizados: r.dias_aviso_previo_indenizados, avisoDevido: r.valor_aviso_previo > 0,
@@ -258,11 +320,13 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
       });
       resetTudo();
       carregar();
-      // Sem isto, a lista `pessoas` do componente pai (buscada 1x no mount)
-      // continua mostrando o funcionário como ativo em qualquer dropdown
-      // desta página até um F5 — mesmo com o backend já tendo gravado
-      // ativo=False (ver comentário em FeriasDecimoTerceiroView.tsx).
-      if (marcouInativo) onPessoaInativada?.();
+      // Sem isto, a lista `pessoas` (buscada 1x no mount) continua mostrando
+      // o funcionário como ativo no dropdown de nova rescisão até um F5 —
+      // mesmo com o backend já tendo gravado ativo=False (confirmado em
+      // backend/tests/test_rescisao_fluxo.py). Os dropdowns de Férias/13º
+      // não precisam mais de aviso: aquela tela é irmã desta no seletor de
+      // categoria e remonta (refazendo o fetch) ao ser escolhida.
+      if (marcouInativo) carregarPessoas();
     } catch (e: any) {
       setFecharMsg(e.message || "Erro ao fechar rescisão");
     } finally {
@@ -335,6 +399,7 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
 
   return (
     <div>
+      {mostrar !== "listar" && (
       <div className="card mb-4">
         <div className="flex items-center justify-between mb-3" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
           <div className="card-header">
@@ -426,8 +491,20 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
             </div>
             <div style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginBottom: "0.8rem" }}>
               A multa do FGTS é uma ESTIMATIVA — o sistema não guarda o extrato real de depósitos. Confira com o extrato oficial do FGTS antes de pagar.
+              A média de verbas variáveis NÃO entra nela, justamente por ser estimativa; entra no 13º, nas férias e no aviso prévio indenizado.
               Sem envio ao eSocial/TRCT — só o cálculo interno e o lançamento financeiro.
             </div>
+
+            {/* Só aparece quando a fazenda LIGOU as médias. Desligado, três
+                linhas dizendo "não apurada" seriam ruído puro para quem
+                escolheu deixar isso com a contabilidade externa. */}
+            {medias?.decimo_terceiro?.aplicada && (
+              <div style={{ marginBottom: "0.8rem" }}>
+                <MediaVerbasVariaveis composicao={medias.decimo_terceiro} titulo="13º proporcional" compacto />
+                <MediaVerbasVariaveis composicao={medias.ferias} titulo="Férias (vencidas e proporcionais)" compacto />
+                <MediaVerbasVariaveis composicao={medias.aviso_previo} titulo="Aviso prévio indenizado" compacto />
+              </div>
+            )}
 
             <div className="card" style={{ padding: "0.6rem 0.8rem", background: "var(--surface-2)", marginBottom: "0.8rem" }}>
               <div className="card-header mb-2" style={{ fontSize: "0.8rem" }}>Descontos</div>
@@ -441,10 +518,22 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
                   <input type="number" step="0.01" min="0" style={inputSm} value={valorIr} onChange={(e) => setValorIr(e.target.value)} />
                 </div>
                 <div>
-                  <label style={lbl}>Vale em aberto</label>
+                  <label style={lbl}>
+                    Vale em aberto
+                    {saldoVale ? ` (saldo cobrável: ${formatBRL(saldoVale.total)})` : ""}
+                  </label>
                   <input type="number" step="0.01" min="0" style={inputSm} value={valorValeEmAberto} onChange={(e) => setValorValeEmAberto(e.target.value)} />
                 </div>
               </div>
+              {saldoVale && saldoVale.total > 0 && (
+                <div style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: "0.5rem" }}>
+                  Parcelas de vale ainda a descontar: {saldoVale.competencias.map((c) => `${c.competencia} (${formatBRL(c.valor)})`).join(", ")}.
+                  {" "}O que for descontado aqui BAIXA essas parcelas no fechamento. O que sobrar impede o
+                  fechamento — depois de fechada a rescisão não há mais folha para descontar e ela não reabre:
+                  resolva a sobra em Folha de Pagamento &gt; vale &gt; Ações (abater, desconsiderar o mês ou
+                  cancelar o vale, que faz a fazenda assumir).
+                </div>
+              )}
             </div>
 
             <div className="card" style={{ padding: "0.6rem 0.8rem" }}>
@@ -538,7 +627,9 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
           </div>
         )}
       </div>
+      )}
 
+      {mostrar !== "lancar" && (
       <div className="card">
         <div className="card-header mb-3">Rescisões</div>
         {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
@@ -549,12 +640,16 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
             <table className="fazenda-table" style={{ fontSize: "0.8rem" }}>
               <thead>
                 <tr>
-                  <th>Funcionário</th><th>Modalidade</th><th>Desligamento</th>
-                  <th style={{ textAlign: "right" }}>Valor líquido</th><th>Status</th><th>Lançamento</th><th></th>
+                  <ThOrdenavel label="Funcionário" campo="pessoa_nome" coluna={ordRescisoes.coluna} dir={ordRescisoes.dir} ordenar={ordRescisoes.ordenar} />
+                  <ThOrdenavel label="Modalidade" campo="tipo_rescisao" coluna={ordRescisoes.coluna} dir={ordRescisoes.dir} ordenar={ordRescisoes.ordenar} />
+                  <ThOrdenavel label="Desligamento" campo="data_desligamento" coluna={ordRescisoes.coluna} dir={ordRescisoes.dir} ordenar={ordRescisoes.ordenar} />
+                  <ThOrdenavel label="Valor líquido" campo="valor_total" coluna={ordRescisoes.coluna} dir={ordRescisoes.dir} ordenar={ordRescisoes.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Status" campo="status" coluna={ordRescisoes.coluna} dir={ordRescisoes.dir} ordenar={ordRescisoes.ordenar} />
+                  <th>Lançamento</th><th></th>
                 </tr>
               </thead>
               <tbody>
-                {itens.map((r) => {
+                {ordRescisoes.linhasOrdenadas.map((r) => {
                   const expandido = expandedId === r.id;
                   return (
                     <Fragment key={r.id}>
@@ -634,6 +729,13 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
                                 </tbody>
                               </table>
                             )}
+                            {r.medias_variaveis_composicao?.decimo_terceiro?.aplicada && (
+                              <div style={{ marginTop: "0.5rem", maxWidth: 620 }}>
+                                <MediaVerbasVariaveis composicao={r.medias_variaveis_composicao.decimo_terceiro} titulo="13º proporcional" compacto />
+                                <MediaVerbasVariaveis composicao={r.medias_variaveis_composicao.ferias} titulo="Férias (vencidas e proporcionais)" compacto />
+                                <MediaVerbasVariaveis composicao={r.medias_variaveis_composicao.aviso_previo} titulo="Aviso prévio indenizado" compacto />
+                              </div>
+                            )}
                             {r.observacao && <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Obs.: {r.observacao}</p>}
                           </div>
                         </td></tr>
@@ -649,6 +751,7 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
           </div>
         )}
       </div>
+      )}
 
       {reciboLinha && <ReciboModal lanc={reciboLinha} onClose={() => setReciboLinha(null)} />}
     </div>

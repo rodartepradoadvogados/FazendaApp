@@ -10,6 +10,7 @@ do destinatário, não uma agenda privada por usuário, que não existe hoje).
 from __future__ import annotations
 
 import csv
+import html
 import io
 import zipfile
 from datetime import date, datetime
@@ -19,7 +20,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id, multifazenda_provisionado
 from fazenda.database import engine, get_session
 from fazenda.models import (
     AgendaManual, Animal, CompraAnimal, ContaGerencial, ControleLeiteiro, MovimentoEstoque, Estoque,
@@ -69,6 +70,35 @@ def usuarios_da_fazenda(session: Session, fazenda_id: int | None) -> list[Usuari
             .distinct()
         ).all()
     return [u for u in usuarios if u.username != "robo-milknews"]
+
+
+def _fazenda_obrigatoria(session: Session, fazenda_id: int | None) -> int | None:
+    """A fazenda de quem está exportando/enviando relatório — ou 409.
+
+    As duas rotas que usam isto (`POST /portal/exportar` e o anexo de
+    `POST /portal/email`) são as únicas do sistema que despacham dado de
+    fazenda para FORA dele, por e-mail, em lote. Por isso elas não confiam só
+    no `exigir_fazenda_selecionada` do include_router (main.py): repetem a
+    checagem aqui, na própria função, onde ela não some se alguém remontar o
+    router amanhã. `_executar_exportacao` ainda por cima roda DEPOIS da
+    resposta, numa BackgroundTask com sessão própria — quanto mais perto do
+    ponto de leitura a trava estiver, melhor.
+
+    A escape hatch é a mesma — e pela mesma razão — de
+    `exigir_fazenda_selecionada`/`resolver_fazenda_id_escrita`: com a tabela
+    `fazenda` VAZIA o multi-fazenda não está provisionado neste ambiente e não
+    há tenant a isolar (instalação anterior à migração f1a2b3c4d5e6 e boa
+    parte da suíte de testes). Havendo QUALQUER fazenda cadastrada — todo
+    ambiente de produção — sem fazenda no token não se exporta nada."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if fazenda_id is None and multifazenda_provisionado(session):
+        raise HTTPException(
+            status_code=409,
+            detail="Sua sessão não tem uma fazenda selecionada. Saia e entre novamente para escolher "
+                   "em qual fazenda deseja trabalhar antes de exportar ou enviar relatórios.",
+            headers={"X-Fazenda-Nao-Selecionada": "1"},
+        )
+    return fazenda_id
 
 
 def _serializar(m: PortalMensagem, session: Session) -> dict:
@@ -133,9 +163,19 @@ def enviar_mensagem(
     if not dados.destinatarios_usuario_id:
         raise HTTPException(400, "Selecione ao menos um destinatário")
 
+    # BUG DE SEGURANÇA CORRIGIDO: só conferia que o usuário EXISTIA
+    # (`session.get(Usuario, dest_id)`), não que ele era da MESMA fazenda de
+    # quem está enviando — dava pra mandar mensagem (com pedido de retorno)
+    # pra qualquer id de usuário de OUTRA fazenda, que caía direto na caixa
+    # de entrada dele (`mensagens_pendentes` só olha destinatario_usuario_id,
+    # sem fazenda_id). Mesma lista de `listar_destinatarios` acima (o "@" já
+    # usa `usuarios_da_fazenda`) — só quem já aparece nesse seletor pode ser
+    # destinatário de fato.
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    ids_validos = {u.id for u in usuarios_da_fazenda(session, fazenda_id)}
     criadas = []
     for dest_id in dados.destinatarios_usuario_id:
-        if not session.get(Usuario, dest_id):
+        if not session.get(Usuario, dest_id) or dest_id not in ids_validos:
             raise HTTPException(404, f"Usuário {dest_id} não encontrado")
         m = PortalMensagem(
             tipo="mensagem",
@@ -144,7 +184,7 @@ def enviar_mensagem(
             aba=dados.aba,
             corpo=dados.corpo.strip(),
             pede_retorno=dados.pede_retorno,
-            fazenda_id=fazenda_id_seguro(fazenda_id),
+            fazenda_id=fazenda_id,
         )
         session.add(m)
         criadas.append(m)
@@ -280,13 +320,16 @@ class EmailIn(BaseModel):
 
 
 @router.post("/email")
-def enviar_email_portal(dados: EmailIn, user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> dict:
+def enviar_email_portal(
+    dados: EmailIn, user: Usuario = Depends(get_current_user), session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     if not dados.destinatarios_usuario_id:
         raise HTTPException(400, "Selecione ao menos um destinatário")
     if not dados.assunto.strip():
         raise HTTPException(400, "Assunto obrigatório")
 
-    corpo_html = f"<p>{dados.corpo}</p>" if dados.corpo else "<p></p>"
+    corpo_html = f"<p>{html.escape(dados.corpo)}</p>" if dados.corpo else "<p></p>"
     anexo_nome = None
     anexo_bytes = None
 
@@ -297,22 +340,44 @@ def enviar_email_portal(dados: EmailIn, user: Usuario = Depends(get_current_user
             raise HTTPException(400, "Informe o período (de/até) do relatório")
         from fazenda.api.routers.financeiro import dre, rmca, custo_litro_leite
 
+        # BUG DE SEGURANÇA CORRIGIDO: dre/rmca/custo_litro_leite são rotas
+        # FastAPI com `fazenda_id: int | None = Depends(get_fazenda_atual_id)`
+        # — chamadas direto como função Python (sem passar fazenda_id), esse
+        # parâmetro ficava com o próprio objeto Depends(...), que
+        # fazenda_id_seguro() convertia para None, desligando todo filtro por
+        # fazenda dentro delas. Passar fazenda_id explícito fecha o vazamento.
+        #
+        # Só que passar `None` explícito desliga o filtro do mesmo jeito (lá
+        # dentro o padrão é o tolerante `if fazenda_id is not None`), e este
+        # anexo sai do sistema por e-mail. Então aqui não existe caminho
+        # "sem fazenda": ou a sessão diz qual é, ou não há relatório.
+        fazenda_id = _fazenda_obrigatoria(session, fazenda_id)
         if dados.relatorio == "dre":
-            resultado = dre(data_inicio=dados.data_inicio, data_fim=dados.data_fim, centro_custo=None, regime="competencia", session=session)
+            resultado = dre(data_inicio=dados.data_inicio, data_fim=dados.data_fim, centro_custo=None, regime="competencia", session=session, fazenda_id=fazenda_id)
         elif dados.relatorio == "rmca":
-            resultado = rmca(data_inicio=dados.data_inicio, data_fim=dados.data_fim, session=session)
+            resultado = rmca(data_inicio=dados.data_inicio, data_fim=dados.data_fim, session=session, fazenda_id=fazenda_id)
         else:
-            resultado = custo_litro_leite(data_inicio=dados.data_inicio, data_fim=dados.data_fim, session=session)
+            resultado = custo_litro_leite(data_inicio=dados.data_inicio, data_fim=dados.data_fim, session=session, fazenda_id=fazenda_id)
 
         csv_texto = _dict_para_csv(resultado)
         anexo_nome = f"{dados.relatorio}_{dados.data_inicio.isoformat()}_{dados.data_fim.isoformat()}.csv"
         anexo_bytes = csv_texto.encode("utf-8-sig")
         corpo_html += f"<p>Relatório {RELATORIOS_DISPONIVEIS[dados.relatorio]} em anexo (período {dados.data_inicio.isoformat()} a {dados.data_fim.isoformat()}).</p>"
 
+    # BUG DE SEGURANÇA CORRIGIDO: mesmo furo que `enviar_mensagem` e
+    # `delegar_tarefa` já tinham fechado, e que esta rota — a única das três
+    # que manda o dado para FORA do sistema — continuava com aberto: só
+    # conferia que o usuário EXISTIA, não que era da MESMA fazenda de quem
+    # está enviando. Cenário concreto: o admin da fazenda 2 escolhe o id de um
+    # funcionário da fazenda 1 e dispara para o e-mail pessoal dele a DRE da
+    # fazenda 2 — o relatório sai do tenant — ou um texto livre qualquer, que
+    # chega com a cara de comunicação oficial da plataforma. Mesma lista do
+    # seletor "@" (`listar_destinatarios`): só quem já aparece lá pode receber.
+    ids_validos = {u.id for u in usuarios_da_fazenda(session, fazenda_id_seguro(fazenda_id))}
     enviados = 0
     for dest_id in dados.destinatarios_usuario_id:
         destinatario = session.get(Usuario, dest_id)
-        if not destinatario:
+        if not destinatario or dest_id not in ids_validos:
             raise HTTPException(404, f"Usuário {dest_id} não encontrado")
         if not destinatario.email:
             raise HTTPException(400, f"Usuário {destinatario.nome or destinatario.username} não tem e-mail cadastrado")
@@ -344,11 +409,17 @@ def delegar_tarefa(
         raise HTTPException(400, "Selecione ao menos um destinatário")
 
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    # BUG DE SEGURANÇA CORRIGIDO: mesmo furo de `enviar_mensagem` acima — só
+    # conferia existência do usuário, não a fazenda dele. Aqui era ainda mais
+    # sensível: além da PortalMensagem cross-tenant, criava uma AgendaManual
+    # "de graça" (com o nome real do delegante) na fazenda de quem delegou,
+    # citando um destinatário de outra fazenda.
+    ids_validos = {u.id for u in usuarios_da_fazenda(session, fazenda_id)}
     data_evento = dados.data_evento or date.today()
     criadas = []
     for dest_id in dados.destinatarios_usuario_id:
         destinatario = session.get(Usuario, dest_id)
-        if not destinatario:
+        if not destinatario or dest_id not in ids_validos:
             raise HTTPException(404, f"Usuário {dest_id} não encontrado")
 
         evento = AgendaManual(
@@ -414,8 +485,15 @@ def _linhas_para_csv(linhas: list[dict]) -> str:
     return buffer.getvalue()
 
 
-def _executar_exportacao(itens: list[dict], destinatario_email: str) -> None:
+def _executar_exportacao(itens: list[dict], destinatario_email: str, fazenda_id: int | None) -> None:
     with Session(engine) as session:
+        # Mesmo mecanismo de database.py::get_session — marca o contexto
+        # ANTES da primeira query desta sessão própria (a BackgroundTask não
+        # tem acesso à sessão nem ao token do request original). O filtro
+        # explícito abaixo (`.where(cfg["model"].fazenda_id == fazenda_id)`)
+        # já é a defesa real; isto só garante que a mesma fazenda_id também
+        # fique visível para uma futura política de RLS.
+        session.info["fazenda_id"] = fazenda_id
         buffer_zip = io.BytesIO()
         with zipfile.ZipFile(buffer_zip, "w", zipfile.ZIP_DEFLATED) as zf:
             for item in itens:
@@ -426,17 +504,36 @@ def _executar_exportacao(itens: list[dict], destinatario_email: str) -> None:
                     if cfg["campo_data"] and item.get("data_inicio") and item.get("data_fim"):
                         coluna = getattr(cfg["model"], cfg["campo_data"])
                         query = query.where(coluna >= item["data_inicio"], coluna <= item["data_fim"])
+                    # BUG DE SEGURANÇA CORRIGIDO: nenhuma das 10 tabelas do
+                    # catálogo era filtrada por fazenda_id — qualquer admin
+                    # de qualquer fazenda-cliente exportava o banco inteiro
+                    # (animais, produção, sanidade, compras/vendas,
+                    # financeiro) de TODOS os outros clientes da plataforma.
+                    #
+                    # O filtro é INCONDICIONAL de propósito. O padrão tolerante
+                    # (`if fazenda_id is not None: ...where(...)`) é o que criou
+                    # o furo em primeiro lugar: com fazenda_id None ele não
+                    # restringe, ele DESLIGA o isolamento — e aqui isso vira um
+                    # ZIP com o banco de todos os clientes saindo por e-mail.
+                    # Com fazenda_id None (ambiente sem multi-fazenda
+                    # provisionado, ver `_fazenda_obrigatoria`) isto vira
+                    # `fazenda_id IS NULL`, que é exatamente o conjunto de
+                    # linhas desse ambiente — nunca as de outro tenant.
+                    query = query.where(cfg["model"].fazenda_id == fazenda_id)
                     linhas = [row.model_dump(mode="json") for row in session.exec(query).all()]
                     zf.writestr(f"{chave}.csv", _linhas_para_csv(linhas).encode("utf-8-sig"))
                 elif chave in RELATORIOS_DISPONIVEIS and item.get("data_inicio") and item.get("data_fim"):
                     from fazenda.api.routers.financeiro import custo_litro_leite, dre, rmca
 
+                    # BUG DE SEGURANÇA CORRIGIDO: ver comentário equivalente
+                    # em enviar_email_portal — sem fazenda_id explícito, estas
+                    # chamadas diretas desligavam todo filtro por fazenda.
                     if chave == "dre":
-                        resultado = dre(data_inicio=item["data_inicio"], data_fim=item["data_fim"], centro_custo=None, regime="competencia", session=session)
+                        resultado = dre(data_inicio=item["data_inicio"], data_fim=item["data_fim"], centro_custo=None, regime="competencia", session=session, fazenda_id=fazenda_id)
                     elif chave == "rmca":
-                        resultado = rmca(data_inicio=item["data_inicio"], data_fim=item["data_fim"], session=session)
+                        resultado = rmca(data_inicio=item["data_inicio"], data_fim=item["data_fim"], session=session, fazenda_id=fazenda_id)
                     else:
-                        resultado = custo_litro_leite(data_inicio=item["data_inicio"], data_fim=item["data_fim"], session=session)
+                        resultado = custo_litro_leite(data_inicio=item["data_inicio"], data_fim=item["data_fim"], session=session, fazenda_id=fazenda_id)
                     zf.writestr(f"{chave}.csv", _dict_para_csv(resultado).encode("utf-8-sig"))
 
         enviar_email(
@@ -474,7 +571,11 @@ class ExportarIn(BaseModel):
 
 
 @router.post("/exportar")
-def solicitar_exportacao(dados: ExportarIn, background_tasks: BackgroundTasks, user: Usuario = Depends(get_current_user)) -> dict:
+def solicitar_exportacao(
+    dados: ExportarIn, background_tasks: BackgroundTasks, user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session),
+) -> dict:
     if user.papel != "admin":
         raise HTTPException(403, "Só o administrador tem acesso à exportação")
     if not user.email:
@@ -487,6 +588,10 @@ def solicitar_exportacao(dados: ExportarIn, background_tasks: BackgroundTasks, u
         if item.chave not in chaves_validas:
             raise HTTPException(400, f"Item inválido: {item.chave}")
 
+    # A fazenda é resolvida (e exigida) AQUI, ainda dentro do request, e viaja
+    # como argumento para a BackgroundTask — que roda depois da resposta, com
+    # sessão própria e sem nenhum contexto de autenticação para consultar.
+    fazenda_id = _fazenda_obrigatoria(session, fazenda_id)
     itens = [item.model_dump() for item in dados.itens]
-    background_tasks.add_task(_executar_exportacao, itens, user.email)
+    background_tasks.add_task(_executar_exportacao, itens, user.email, fazenda_id)
     return {"mensagem": f"Em breve o resultado será enviado para {user.email}."}

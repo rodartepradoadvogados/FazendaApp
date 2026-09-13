@@ -12,6 +12,7 @@ import {
   fetchServicosCadastro,
   type ProtocoloEtapa, type EventoSanitarioPayload, type ExameDefinicaoPayload,
   type EtapaInducaoLactacao, type ProtocoloInducaoLactacaoCadastro, type ProtocoloInducaoLactacaoPayload,
+  formatarDoseEtapa,
 } from "@/lib/api";
 import { exportarExcel } from "@/lib/export";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -19,6 +20,9 @@ import { EstoquePicker, type EstoqueItemPicker } from "./EstoquePicker";
 import { VIAS_APLICACAO } from "@/lib/constants";
 import { CLASSIFICACOES_MEDICAMENTO } from "@/lib/api";
 import { normalizarBusca as normalizar } from "@/lib/busca";
+import { WizardProtocolo, type PassoWizard } from "@/components/protocolos/WizardProtocolo";
+import { Modal } from "@/components/Modal";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 
 const CRITERIOS: [string, string][] = [
   ["medicamento", "Medicamento"],
@@ -106,6 +110,10 @@ export function CadastroProtocolosSanitarios() {
   const inputImportRef = useRef<HTMLInputElement>(null);
   const [excluindo, setExcluindo] = useState<number | null>(null);
   const [erroExclusao, setErroExclusao] = useState<string | null>(null);
+  // Prévia somente-leitura do cronograma — antes só existia no passo 4
+  // ("Revisão") do assistente de edição, obrigando a clicar Editar e navegar
+  // 3 passos só para conferir produto/dose/via de um protocolo já pronto.
+  const [verCronograma, setVerCronograma] = useState<Protocolo | null>(null);
 
   const carregar = () => fetchProtocolosSanitarios().then(setItens).catch((e) => setError(e.message));
   useEffect(() => {
@@ -147,10 +155,12 @@ export function CadastroProtocolosSanitarios() {
   const atualizarEtapa = (idx: number, patch: Partial<ProtocoloEtapa>) =>
     setForm((f) => ({ ...f, etapas: f.etapas.map((e, i) => (i === idx ? { ...e, ...patch } : e)) }));
 
-  const salvar = async () => {
-    if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return; }
-    if (form.etapas.some((e) => e.dia < 0)) { setMsg("O dia da etapa não pode ser negativo (o protocolo pode começar em D0)."); return; }
-    if (form.etapas.some((e) => !e.produto.trim() || !e.dosagem || Number(e.dosagem) <= 0)) { setMsg("Preencha produto e dosagem em todas as etapas."); return; }
+  // Devolve true só quando salvou de verdade — é o sinal que o wizard usa
+  // para limpar o rascunho do localStorage (ver WizardProtocolo.onConcluir).
+  const salvar = async (): Promise<boolean> => {
+    if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return false; }
+    if (form.etapas.some((e) => e.dia < 0)) { setMsg("O dia da etapa não pode ser negativo (o protocolo pode começar em D0)."); return false; }
+    if (form.etapas.some((e) => !e.produto.trim() || !e.dosagem || Number(e.dosagem) <= 0)) { setMsg("Preencha produto e dosagem em todas as etapas."); return false; }
     setSalvando(true); setMsg(null);
     try {
       const dados = {
@@ -162,8 +172,10 @@ export function CadastroProtocolosSanitarios() {
       else if (typeof editando === "number") await atualizarProtocoloSanitario(editando, dados);
       setEditando(null);
       await carregar();
+      return true;
     } catch (e: any) {
       setMsg(e.message || "Erro ao salvar");
+      return false;
     } finally {
       setSalvando(false);
     }
@@ -215,200 +227,325 @@ export function CadastroProtocolosSanitarios() {
   const ordProtocolos = useOrdenacao(filtrados);
 
   return (
-    <div className="card">
-      <div className="card-header mb-3 flex items-center justify-between">
-        <span className="flex items-center gap-2"><ClipboardList size={16} /> Protocolos sanitários</span>
-        <div className="flex items-center gap-2">
-          <button className="btn-ghost" style={{ fontSize: "0.75rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={baixarModelo} title="Baixar planilha-modelo para preencher e importar">
-            <Download size={13} /> Baixar modelo
-          </button>
-          <button
-            className="btn-ghost" style={{ fontSize: "0.75rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
-            onClick={() => inputImportRef.current?.click()} disabled={importando}
-            title="Importar protocolo(s) de uma planilha Excel/CSV"
-          >
-            <Upload size={13} /> {importando ? "Importando…" : "Importar Excel"}
-          </button>
-          <input ref={inputImportRef} type="file" accept=".xlsx,.xlsm,.csv" style={{ display: "none" }}
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) importarArquivo(f); }} />
-          <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
-            <Plus size={14} /> Novo
-          </button>
+    <>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        <div className="card">
+          <div className="card-header mb-3 flex items-center justify-between">
+            <span className="flex items-center gap-2"><ClipboardList size={16} /> Protocolos sanitários</span>
+            <div className="flex items-center gap-2">
+              <button className="btn-ghost" style={{ fontSize: "0.75rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={baixarModelo} title="Baixar planilha-modelo para preencher e importar">
+                <Download size={13} /> Baixar modelo
+              </button>
+              <button
+                className="btn-ghost" style={{ fontSize: "0.75rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                onClick={() => inputImportRef.current?.click()} disabled={importando}
+                title="Importar protocolo(s) de uma planilha Excel/CSV"
+              >
+                <Upload size={13} /> {importando ? "Importando…" : "Importar Excel"}
+              </button>
+              <input ref={inputImportRef} type="file" accept=".xlsx,.xlsm,.csv" style={{ display: "none" }}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) importarArquivo(f); }} />
+              <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
+                <Plus size={14} /> Novo
+              </button>
+            </div>
+          </div>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+            Tratamento com múltiplas etapas (produto, dosagem, via e dia de aplicação), a exemplo do tratamento de
+            mastite. Os dias começam em D0, como todos os protocolos do sistema (inclusive o protocolo hormonal IATF).
+            Marque "É protocolo de mastite" para habilitar, no lançamento, os campos de CMT, teto afetado e
+            classificação (clínica/subclínica/ambiental). Para cadastrar vários protocolos de uma vez, baixe o modelo,
+            preencha uma linha por etapa (várias linhas com o mesmo nome formam um único protocolo) e importe.
+          </p>
+
+          {msgImport && (
+            <p style={{ color: msgImport.erro ? "var(--red)" : "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+              {msgImport.texto}
+            </p>
+          )}
+          {erroExclusao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>{erroExclusao}</p>}
+          {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+          {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+          {itens && (
+            <>
+              <div style={{ position: "relative", marginBottom: "0.8rem" }}>
+                <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+                <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar protocolo…" title="Buscar por nome ou doença" />
+              </div>
+              <div className="overflow-x-auto">
+              <table className="fazenda-table">
+                <thead><tr>
+                  <ThOrdenavel label="Nome" campo="nome" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
+                  <ThOrdenavel label="Doença" campo="doenca_nome" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
+                  <ThOrdenavel label="Finalidade" campo="finalidade" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
+                  <ThOrdenavel label="Mastite" campo="eh_mastite" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
+                  <th>Etapas</th><th></th>
+                </tr></thead>
+                <tbody>
+                  {ordProtocolos.linhasOrdenadas.map((p) => (
+                    <tr key={p.id}>
+                      <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{p.doenca_nome || "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{(p.finalidade || "curativo") === "preventivo" ? "Preventivo" : "Curativo"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{p.eh_mastite ? "Sim" : "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{p.etapas.map((e) => `D${e.dia - (p.dia_inicial ?? 0)}`).join(", ")}</td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => setVerCronograma(p)} title="Ver produto, dose e via de cada etapa, sem entrar em edição">
+                          <Search size={13} /> Ver cronograma
+                        </button>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", marginLeft: "0.4rem" }} onClick={() => abrirEdicao(p)}>
+                          <Pencil size={13} /> Editar
+                        </button>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", color: "var(--red)", marginLeft: "0.4rem" }}
+                          onClick={() => excluir(p)} disabled={excluindo === p.id} title="Excluir protocolo — só é possível se ele nunca foi lançado">
+                          <Trash2 size={13} /> {excluindo === p.id ? "Excluindo…" : "Excluir"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!itens.length && !editando && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo cadastrado ainda.</td></tr>}
+                  {!!itens.length && !filtrados.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
+                </tbody>
+              </table>
+              </div>
+            </>
+          )}
         </div>
       </div>
-      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-        Tratamento com múltiplas etapas (produto, dosagem, via e dia de aplicação), a exemplo do tratamento de
-        mastite. Os dias começam em D0, como todos os protocolos do sistema (inclusive o protocolo hormonal IATF).
-        Marque "É protocolo de mastite" para habilitar, no lançamento, os campos de CMT, teto afetado e
-        classificação (clínica/subclínica/ambiental). Para cadastrar vários protocolos de uma vez, baixe o modelo,
-        preencha uma linha por etapa (várias linhas com o mesmo nome formam um único protocolo) e importe.
-      </p>
-
-      {msgImport && (
-        <p style={{ color: msgImport.erro ? "var(--red)" : "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-          {msgImport.texto}
-        </p>
-      )}
-      {erroExclusao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>{erroExclusao}</p>}
-      {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
-      {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-
-      {editando === "novo" && (
-        <FormProtocolo
-          form={form} setForm={setForm} doencas={doencas} estoque={estoque} principios={principios} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-          acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
-        />
-      )}
-
-      {itens && (
-        <>
-          <div style={{ position: "relative", marginBottom: "0.8rem" }}>
-            <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
-            <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar protocolo…" title="Buscar por nome ou doença" />
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        {editando !== null ? (
+          <FormProtocolo
+            key={editando} form={form} setForm={setForm} doencas={doencas} estoque={estoque} principios={principios}
+            onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg} editando={editando}
+            acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
+          />
+        ) : (
+          <div className="card" style={{ textAlign: "center", padding: "2.2rem 1rem" }}>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione um protocolo para editar, ou clique em Novo.</p>
           </div>
-          <div className="overflow-x-auto">
-          <table className="fazenda-table">
-            <thead><tr>
-              <ThOrdenavel label="Nome" campo="nome" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
-              <ThOrdenavel label="Doença" campo="doenca_nome" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
-              <ThOrdenavel label="Finalidade" campo="finalidade" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
-              <ThOrdenavel label="Mastite" campo="eh_mastite" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
-              <th>Etapas</th><th></th>
-            </tr></thead>
-            <tbody>
-              {ordProtocolos.linhasOrdenadas.map((p) => (
-                <Fragment key={p.id}>
-                  <tr>
-                    <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{p.doenca_nome || "—"}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{(p.finalidade || "curativo") === "preventivo" ? "Preventivo" : "Curativo"}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{p.eh_mastite ? "Sim" : "—"}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{p.etapas.map((e) => `D${e.dia - (p.dia_inicial ?? 0)}`).join(", ")}</td>
-                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
-                        <Pencil size={13} /> Editar
-                      </button>
-                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", color: "var(--red)", marginLeft: "0.4rem" }}
-                        onClick={() => excluir(p)} disabled={excluindo === p.id} title="Excluir protocolo — só é possível se ele nunca foi lançado">
-                        <Trash2 size={13} /> {excluindo === p.id ? "Excluindo…" : "Excluir"}
-                      </button>
-                    </td>
-                  </tr>
-                  {editando === p.id && (
-                    <tr><td colSpan={6} style={{ padding: 0 }}>
-                      <FormProtocolo
-                        form={form} setForm={setForm} doencas={doencas} estoque={estoque} principios={principios} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-                        acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
-                      />
-                    </td></tr>
-                  )}
-                </Fragment>
-              ))}
-              {!itens.length && !editando && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo cadastrado ainda.</td></tr>}
-              {!!itens.length && !filtrados.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
-            </tbody>
-          </table>
-          </div>
-        </>
-      )}
+        )}
+      </div>
     </div>
+    {verCronograma && (
+      <Modal title={`Cronograma — ${verCronograma.nome}`} onClose={() => setVerCronograma(null)} width="640px">
+        <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+          Prévia somente-leitura, para conferir produto, dose e via de cada etapa antes de lançar. Para alterar, feche e use Editar.
+        </p>
+        <table className="fazenda-table">
+          <thead><tr><th>Dia</th><th>Produto</th><th>Dose</th><th>Via</th></tr></thead>
+          <tbody>
+            {verCronograma.etapas.map((e, idx) => (
+              <tr key={idx}>
+                <td>D{e.dia - (verCronograma.dia_inicial ?? 0)}</td>
+                <td>{e.produto || "—"}</td>
+                <td>{formatarDoseEtapa(e)}</td>
+                <td>{e.via || "—"}</td>
+              </tr>
+            ))}
+            {!verCronograma.etapas.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)" }}>Nenhuma etapa cadastrada.</td></tr>}
+          </tbody>
+        </table>
+      </Modal>
+    )}
+    </>
   );
 }
 
-function FormProtocolo({ form, setForm, doencas, estoque, principios, onSalvar, onCancelar, salvando, msg, acrescentarEtapa, removerEtapa, atualizarEtapa }: {
+// Wizard de 4 etapas (redesign "Cooperativa", T5) — divisão escolhida para o
+// Sanitário curativo:
+//  1. Identificação — nome + ativo (o mínimo para existir um protocolo).
+//  2. Critérios — doença combatida, finalidade e a flag de mastite: definem
+//     PARA QUE situação este protocolo serve (o equivalente, num cadastro de
+//     molde, ao "quem é elegível" — aqui não há animal para filtrar ainda,
+//     só o contexto clínico que o protocolo atende).
+//  3. Roteiro (etapas) — o coração do protocolo: o cronograma D0/D1/D2...
+//     com produto, dosagem, via — conteúdo que já existia, só reagrupado.
+//  4. Revisão — resumo antes de gravar, com o botão que efetivamente salva
+//     (a validação completa do endpoint continua rodando aqui, sem mudança).
+function FormProtocolo({ form, setForm, doencas, estoque, principios, onSalvar, onCancelar, salvando, msg, editando, acrescentarEtapa, removerEtapa, atualizarEtapa }: {
   form: ProtocoloForm; setForm: (f: ProtocoloForm) => void; doencas: { id: number; nome: string }[]; estoque: EstoqueItemPicker[];
   principios: { id: number; nome: string }[];
-  onSalvar: () => void; onCancelar: () => void; salvando: boolean; msg: string | null;
+  onSalvar: () => Promise<boolean>; onCancelar: () => void; salvando: boolean; msg: string | null; editando: number | "novo";
   acrescentarEtapa: () => void; removerEtapa: (idx: number) => void; atualizarEtapa: (idx: number, patch: Partial<ProtocoloEtapa>) => void;
 }) {
+  const passos: PassoWizard<ProtocoloForm>[] = [
+    {
+      id: "identificacao", titulo: "Identificação",
+      validar: (f) => (!f.nome.trim() ? "Informe o nome do protocolo." : null),
+      render: ({ form: f, setForm: sf }) => (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Nome</label>
+            <input style={inputStyle} value={f.nome} onChange={(e) => sf({ ...f, nome: e.target.value })} placeholder="ex.: Mastite clínica padrão" autoFocus /></div>
+          <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+            <input type="checkbox" checked={f.ativo} onChange={(e) => sf({ ...f, ativo: e.target.checked })} /> Ativo</label></div>
+        </div>
+      ),
+    },
+    {
+      id: "criterios", titulo: "Critérios",
+      render: ({ form: f, setForm: sf }) => (
+        <div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <div><label style={labelStyle}>Doença vinculada</label>
+              <select style={inputStyle} value={f.doenca_id} onChange={(e) => sf({ ...f, doenca_id: e.target.value })}>
+                <option value="">—</option>{doencas.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
+              </select></div>
+            <div><label style={labelStyle}>Finalidade</label>
+              <select style={inputStyle} value={f.finalidade} onChange={(e) => sf({ ...f, finalidade: e.target.value })}>
+                <option value="curativo">Curativo (trata animal doente)</option>
+                <option value="preventivo">Preventivo (sem doença instalada)</option>
+              </select></div>
+            <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+              <input type="checkbox" checked={f.eh_mastite} onChange={(e) => sf({ ...f, eh_mastite: e.target.checked })} /> É protocolo de mastite</label></div>
+          </div>
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+            Preventivo aqui é um cronograma de <strong>dias fixos</strong> (D0/D1/D2…) aplicado sem doença instalada — ex.: vacinação em 2 doses.
+            Rotina que <strong>se repete</strong> ("a cada 4 meses") continua no Calendário Sanitário, na aba Eventos sanitários.
+            Marcar "É protocolo de mastite" habilita, no lançamento, os campos de CMT, teto afetado e classificação.
+          </p>
+        </div>
+      ),
+    },
+    {
+      id: "roteiro", titulo: "Roteiro",
+      validar: (f) => {
+        if (f.etapas.some((e) => e.dia < 0)) return "O dia da etapa não pode ser negativo (o protocolo pode começar em D0).";
+        if (f.etapas.some((e) => !e.produto.trim() || !e.dosagem || Number(e.dosagem) <= 0)) return "Preencha produto e dosagem em todas as etapas.";
+        return null;
+      },
+      render: ({ form: f }) => (
+        <div>
+          <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.4rem" }}>Etapas (D0, D1, D2...)</p>
+          <div className="space-y-2 mb-2">
+            {f.etapas.map((e, idx) => (
+              <div key={idx} className="grid grid-cols-2 md:grid-cols-8 gap-2 items-end" style={{ background: "var(--surface)", padding: "0.5rem", borderRadius: "var(--r-sm)" }}>
+                <div><label style={labelStyle}>Dia (D)</label><input type="number" min={0} style={inputStyle} value={e.dia} onChange={(ev) => atualizarEtapa(idx, { dia: Number(ev.target.value) })} /></div>
+                <div><label style={labelStyle}>Definir por</label>
+                  <select style={inputStyle} value={e.criterio_tipo || "medicamento"} onChange={(ev) => atualizarEtapa(idx, { criterio_tipo: ev.target.value, produto: "" })}>
+                    {CRITERIOS.map(([v, lbl]) => <option key={v} value={v}>{lbl}</option>)}
+                  </select></div>
+                <div style={{ gridColumn: "span 2" }}>
+                  <label style={labelStyle}>{(e.criterio_tipo || "medicamento") === "medicamento" ? "Medicamento" : (e.criterio_tipo === "principio_ativo" ? "Princípio ativo" : e.criterio_tipo === "doenca" ? "Doença" : "Classificação")}</label>
+                  {(e.criterio_tipo || "medicamento") === "medicamento" ? (
+                    <EstoquePicker itens={estoque} value={e.produto} onChange={(v) => atualizarEtapa(idx, { produto: v })} />
+                  ) : e.criterio_tipo === "principio_ativo" ? (
+                    <select style={inputStyle} value={e.produto} onChange={(ev) => atualizarEtapa(idx, { produto: ev.target.value })}>
+                      <option value="">Selecione…</option>{principios.map((p) => <option key={p.id} value={p.nome}>{p.nome}</option>)}
+                    </select>
+                  ) : e.criterio_tipo === "doenca" ? (
+                    <select style={inputStyle} value={e.produto} onChange={(ev) => atualizarEtapa(idx, { produto: ev.target.value })}>
+                      <option value="">Selecione…</option>{doencas.map((d) => <option key={d.id} value={d.nome}>{d.nome}</option>)}
+                    </select>
+                  ) : (
+                    <select style={inputStyle} value={e.produto} onChange={(ev) => atualizarEtapa(idx, { produto: ev.target.value })}>
+                      <option value="">Selecione…</option>{CLASSIFICACOES_MEDICAMENTO.map((cl) => <option key={cl} value={cl}>{cl}</option>)}
+                    </select>
+                  )}
+                </div>
+                <div><label style={labelStyle}>Dosagem{(e.modo_dose === "por_peso") && <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> (a cada X kg)</span>}</label>
+                  <input type="number" inputMode="decimal" style={inputStyle} value={e.dosagem} onChange={(ev) => atualizarEtapa(idx, { dosagem: Number(ev.target.value) })} /></div>
+                <div><label style={labelStyle}>Unidade</label>
+                  {(() => {
+                    const un = unidadesCompat(estoque.find((it) => it.nome === e.produto)?.unidade);
+                    return (
+                      <select style={inputStyle} value={e.unidade} onChange={(ev) => atualizarEtapa(idx, { unidade: ev.target.value })}>
+                        {!un.includes(e.unidade) && e.unidade && <option value={e.unidade}>{e.unidade}</option>}
+                        {!e.unidade && <option value="">—</option>}
+                        {un.map((u) => <option key={u} value={u}>{u}</option>)}
+                      </select>
+                    );
+                  })()}
+                </div>
+                <div><label style={labelStyle}>Via</label>
+                  <select style={inputStyle} value={e.via || ""} onChange={(ev) => atualizarEtapa(idx, { via: ev.target.value })}>
+                    <option value="">—</option>{VIAS_APLICACAO.map((v) => <option key={v}>{v}</option>)}
+                  </select></div>
+                <div>
+                  <label style={labelStyle}>Como calcular a dose</label>
+                  <div className="flex gap-1">
+                    <button type="button"
+                      className={(e.modo_dose || "fixa") === "fixa" ? "btn-primary" : "btn-secondary"}
+                      style={{ fontSize: "0.7rem", padding: "0.3rem 0.5rem", flex: 1 }}
+                      onClick={() => atualizarEtapa(idx, { modo_dose: "fixa", dose_referencia_kg: null })}
+                      title="Sempre a mesma dose, qualquer que seja o peso do animal">
+                      Dose fixa
+                    </button>
+                    <button type="button"
+                      className={e.modo_dose === "por_peso" ? "btn-primary" : "btn-secondary"}
+                      style={{ fontSize: "0.7rem", padding: "0.3rem 0.5rem", flex: 1 }}
+                      onClick={() => atualizarEtapa(idx, { modo_dose: "por_peso" })}
+                      title="Calcula pelo peso do animal no lançamento — usa o último peso registrado, um peso lançado na hora, ou dose manual">
+                      Por peso vivo
+                    </button>
+                  </div>
+                </div>
+                {e.modo_dose === "por_peso" && (
+                  <div>
+                    <label style={labelStyle}>A cada quantos kg de peso vivo</label>
+                    <input type="number" inputMode="decimal" style={inputStyle} value={e.dose_referencia_kg ?? ""}
+                      onChange={(ev) => atualizarEtapa(idx, { dose_referencia_kg: ev.target.value ? Number(ev.target.value) : null })}
+                      placeholder="ex.: 15" />
+                    <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", margin: "0.2rem 0 0" }}>
+                      {e.dosagem > 0 && e.dose_referencia_kg
+                        ? `"${formatarDoseEtapa(e)}" — no lançamento, cada animal recebe sua própria dose calculada pelo peso.`
+                        : "Preencha dosagem e o peso de referência para ver a fórmula."}
+                    </p>
+                  </div>
+                )}
+                <div className="flex items-end gap-1">
+                  <div style={{ flex: 1 }}><label style={labelStyle}>Observação</label>
+                    <input style={inputStyle} value={e.observacao || ""} onChange={(ev) => atualizarEtapa(idx, { observacao: ev.target.value })} placeholder="ex.: Se necessário" /></div>
+                  {f.etapas.length > 1 && <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => removerEtapa(idx)}><Trash2 size={13} /></button>}
+                </div>
+              </div>
+            ))}
+          </div>
+          <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={acrescentarEtapa}>
+            <Plus size={14} /> Acrescentar etapa
+          </button>
+        </div>
+      ),
+    },
+    {
+      id: "revisao", titulo: "Revisão",
+      render: ({ form: f }) => (
+        <div>
+          <p style={{ fontSize: "0.82rem", marginBottom: "0.6rem" }}>
+            <strong>{f.nome || "(sem nome)"}</strong>{!f.ativo && <span style={{ color: "var(--text-muted)" }}> (inativo)</span>}
+            {f.eh_mastite && <span style={{ color: "var(--dourado-light)" }}> — protocolo de mastite</span>}
+          </p>
+          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.8rem" }}>
+            Doença: {doencas.find((d) => String(d.id) === f.doenca_id)?.nome || "—"} ·{" "}
+            Finalidade: {f.finalidade === "preventivo" ? "Preventivo" : "Curativo"}
+          </p>
+          <table className="fazenda-table">
+            <thead><tr><th>Dia</th><th>Produto</th><th>Dosagem</th><th>Via</th></tr></thead>
+            <tbody>
+              {f.etapas.map((e, idx) => (
+                <tr key={idx}><td>D{e.dia}</td><td>{e.produto || "—"}</td><td>{formatarDoseEtapa(e)}</td><td>{e.via || "—"}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-        <div><label style={labelStyle}>Nome</label><input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder="ex.: Mastite clínica padrão" /></div>
-        <div><label style={labelStyle}>Doença vinculada</label>
-          <select style={inputStyle} value={form.doenca_id} onChange={(e) => setForm({ ...form, doenca_id: e.target.value })}>
-            <option value="">—</option>{doencas.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
-          </select></div>
-        <div><label style={labelStyle}>Finalidade</label>
-          <select style={inputStyle} value={form.finalidade} onChange={(e) => setForm({ ...form, finalidade: e.target.value })}>
-            <option value="curativo">Curativo (trata animal doente)</option>
-            <option value="preventivo">Preventivo (sem doença instalada)</option>
-          </select></div>
-        <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
-          <input type="checkbox" checked={form.eh_mastite} onChange={(e) => setForm({ ...form, eh_mastite: e.target.checked })} /> É protocolo de mastite</label></div>
-        <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
-          <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativo</label></div>
-      </div>
-      <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "-0.4rem", marginBottom: "0.8rem" }}>
-        Preventivo aqui é um cronograma de <strong>dias fixos</strong> (D0/D1/D2…) aplicado sem doença instalada — ex.: vacinação em 2 doses.
-        Rotina que <strong>se repete</strong> ("a cada 4 meses") continua no Calendário Sanitário, na aba Eventos sanitários.
-      </p>
-
-      <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.4rem" }}>Etapas (D0, D1, D2...)</p>
-      <div className="space-y-2 mb-2">
-        {form.etapas.map((e, idx) => (
-          <div key={idx} className="grid grid-cols-2 md:grid-cols-8 gap-2 items-end" style={{ background: "var(--surface)", padding: "0.5rem", borderRadius: "var(--r-sm)" }}>
-            <div><label style={labelStyle}>Dia (D)</label><input type="number" min={0} style={inputStyle} value={e.dia} onChange={(ev) => atualizarEtapa(idx, { dia: Number(ev.target.value) })} /></div>
-            <div><label style={labelStyle}>Definir por</label>
-              <select style={inputStyle} value={e.criterio_tipo || "medicamento"} onChange={(ev) => atualizarEtapa(idx, { criterio_tipo: ev.target.value, produto: "" })}>
-                {CRITERIOS.map(([v, lbl]) => <option key={v} value={v}>{lbl}</option>)}
-              </select></div>
-            <div style={{ gridColumn: "span 2" }}>
-              <label style={labelStyle}>{(e.criterio_tipo || "medicamento") === "medicamento" ? "Medicamento" : (e.criterio_tipo === "principio_ativo" ? "Princípio ativo" : e.criterio_tipo === "doenca" ? "Doença" : "Classificação")}</label>
-              {(e.criterio_tipo || "medicamento") === "medicamento" ? (
-                <EstoquePicker itens={estoque} value={e.produto} onChange={(v) => atualizarEtapa(idx, { produto: v })} />
-              ) : e.criterio_tipo === "principio_ativo" ? (
-                <select style={inputStyle} value={e.produto} onChange={(ev) => atualizarEtapa(idx, { produto: ev.target.value })}>
-                  <option value="">Selecione…</option>{principios.map((p) => <option key={p.id} value={p.nome}>{p.nome}</option>)}
-                </select>
-              ) : e.criterio_tipo === "doenca" ? (
-                <select style={inputStyle} value={e.produto} onChange={(ev) => atualizarEtapa(idx, { produto: ev.target.value })}>
-                  <option value="">Selecione…</option>{doencas.map((d) => <option key={d.id} value={d.nome}>{d.nome}</option>)}
-                </select>
-              ) : (
-                <select style={inputStyle} value={e.produto} onChange={(ev) => atualizarEtapa(idx, { produto: ev.target.value })}>
-                  <option value="">Selecione…</option>{CLASSIFICACOES_MEDICAMENTO.map((cl) => <option key={cl} value={cl}>{cl}</option>)}
-                </select>
-              )}
-            </div>
-            <div><label style={labelStyle}>Dosagem</label><input type="number" inputMode="decimal" style={inputStyle} value={e.dosagem} onChange={(ev) => atualizarEtapa(idx, { dosagem: Number(ev.target.value) })} /></div>
-            <div><label style={labelStyle}>Unidade</label>
-              {(() => {
-                const un = unidadesCompat(estoque.find((it) => it.nome === e.produto)?.unidade);
-                return (
-                  <select style={inputStyle} value={e.unidade} onChange={(ev) => atualizarEtapa(idx, { unidade: ev.target.value })}>
-                    {!un.includes(e.unidade) && e.unidade && <option value={e.unidade}>{e.unidade}</option>}
-                    {!e.unidade && <option value="">—</option>}
-                    {un.map((u) => <option key={u} value={u}>{u}</option>)}
-                  </select>
-                );
-              })()}
-            </div>
-            <div><label style={labelStyle}>Via</label>
-              <select style={inputStyle} value={e.via || ""} onChange={(ev) => atualizarEtapa(idx, { via: ev.target.value })}>
-                <option value="">—</option>{VIAS_APLICACAO.map((v) => <option key={v}>{v}</option>)}
-              </select></div>
-            <div className="flex items-end gap-1">
-              <div style={{ flex: 1 }}><label style={labelStyle}>Observação</label>
-                <input style={inputStyle} value={e.observacao || ""} onChange={(ev) => atualizarEtapa(idx, { observacao: ev.target.value })} placeholder="ex.: Se necessário" /></div>
-              {form.etapas.length > 1 && <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => removerEtapa(idx)}><Trash2 size={13} /></button>}
-            </div>
-          </div>
-        ))}
-      </div>
-      <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem", marginBottom: "0.8rem" }} onClick={acrescentarEtapa}>
-        <Plus size={14} /> Acrescentar etapa
-      </button>
-
-      {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
-      <div className="flex items-center gap-2">
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={onSalvar} disabled={salvando}>
-          <Check size={14} /> {salvando ? "Salvando…" : "Salvar"}
-        </button>
-        <button className="btn-ghost" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={onCancelar}>
-          <X size={14} /> Cancelar
-        </button>
-      </div>
+      <WizardProtocolo<ProtocoloForm>
+        chaveRascunho={editando === "novo" ? "wizard-protocolo:sanitario-curativo" : null}
+        form={form} setForm={setForm}
+        ehVazio={(f) => !f.nome.trim() && !f.doenca_id && f.etapas.every((e) => !e.produto.trim() && !e.dosagem)}
+        passos={passos}
+        onCancelar={onCancelar}
+        onConcluir={onSalvar}
+        salvando={salvando}
+        rotuloConcluir="Salvar"
+        erro={msg}
+      />
     </div>
   );
 }
@@ -482,11 +619,11 @@ export function CadastroProtocolosInducao() {
   const atualizarEtapa = (idx: number, patch: Partial<EtapaInducaoLactacao>) =>
     setForm((f) => ({ ...f, etapas: f.etapas.map((e, i) => (i === idx ? { ...e, ...patch } : e)) }));
 
-  const salvar = async () => {
-    if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return; }
-    if (form.etapas.some((e) => e.dia < 0)) { setMsg("O dia da etapa não pode ser negativo (o protocolo pode começar em D0)."); return; }
-    if (form.etapas.some((e) => !e.produto.trim())) { setMsg("Preencha o produto/ação de todas as etapas."); return; }
-    if (form.etapas.some((e) => e.tipo === "dispositivo" && !e.acao_dispositivo)) { setMsg("Etapa de dispositivo precisa dizer se é para colocar ou retirar."); return; }
+  const salvar = async (): Promise<boolean> => {
+    if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return false; }
+    if (form.etapas.some((e) => e.dia < 0)) { setMsg("O dia da etapa não pode ser negativo (o protocolo pode começar em D0)."); return false; }
+    if (form.etapas.some((e) => !e.produto.trim())) { setMsg("Preencha o produto/ação de todas as etapas."); return false; }
+    if (form.etapas.some((e) => e.tipo === "dispositivo" && !e.acao_dispositivo)) { setMsg("Etapa de dispositivo precisa dizer se é para colocar ou retirar."); return false; }
     setSalvando(true); setMsg(null);
     try {
       const dados: ProtocoloInducaoLactacaoPayload = {
@@ -504,8 +641,10 @@ export function CadastroProtocolosInducao() {
       else if (typeof editando === "number") await atualizarProtocoloInducaoLactacao(editando, dados);
       setEditando(null);
       await carregar();
+      return true;
     } catch (e: any) {
       setMsg(e.message || "Erro ao salvar");
+      return false;
     } finally {
       setSalvando(false);
     }
@@ -516,162 +655,226 @@ export function CadastroProtocolosInducao() {
   const ordProtocolos = useOrdenacao(filtrados);
 
   return (
-    <div className="card">
-      <div className="card-header mb-3 flex items-center justify-between">
-        <span className="flex items-center gap-2"><Milk size={16} /> Protocolos de indução de lactação</span>
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
-          <Plus size={14} /> Novo
-        </button>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        <div className="card">
+          <div className="card-header mb-3 flex items-center justify-between">
+            <span className="flex items-center gap-2"><Milk size={16} /> Protocolos de indução de lactação</span>
+            <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
+              <Plus size={14} /> Novo
+            </button>
+          </div>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+            Cronograma por dia (D0, D1, D2...) com 3 tipos de etapa: medicamento (produto/dose/via), dispositivo
+            (colocar/retirar o implante de progesterona) e manejo (uma ação livre, ex.: "Adaptação na ordenha"). Usado
+            em Lançamentos › Produção › Indução de lactação.
+          </p>
+
+          {erroExclusao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>{erroExclusao}</p>}
+          {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+          {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+          {itens && (
+            <>
+              <div style={{ position: "relative", marginBottom: "0.8rem" }}>
+                <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+                <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar protocolo…" />
+              </div>
+              <div className="overflow-x-auto">
+              <table className="fazenda-table">
+                <thead><tr>
+                  <ThOrdenavel label="Nome" campo="nome" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
+                  <th>Duração</th><th>Etapas</th><th></th>
+                </tr></thead>
+                <tbody>
+                  {ordProtocolos.linhasOrdenadas.map((p) => (
+                    <tr key={p.id}>
+                      <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{p.etapas.length ? `D${p.dia_inicial} a D${Math.max(...p.etapas.map((e) => e.dia))}` : "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{p.etapas.length} etapa(s)</td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
+                          <Pencil size={13} /> Editar
+                        </button>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", color: "var(--red)", marginLeft: "0.4rem" }}
+                          onClick={() => excluir(p)} disabled={excluindo === p.id} title="Excluir protocolo — só é possível se ele nunca foi lançado">
+                          <Trash2 size={13} /> {excluindo === p.id ? "Excluindo…" : "Excluir"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!itens.length && !editando && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo cadastrado ainda.</td></tr>}
+                  {!!itens.length && !filtrados.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
+                </tbody>
+              </table>
+              </div>
+            </>
+          )}
+        </div>
       </div>
-      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-        Cronograma por dia (D0, D1, D2...) com 3 tipos de etapa: medicamento (produto/dose/via), dispositivo
-        (colocar/retirar o implante de progesterona) e manejo (uma ação livre, ex.: "Adaptação na ordenha"). Usado
-        em Lançamentos › Produção › Indução de lactação.
-      </p>
-
-      {erroExclusao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>{erroExclusao}</p>}
-      {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
-      {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-
-      {editando === "novo" && (
-        <FormProtocoloInducao
-          form={form} setForm={setForm} principios={principios} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-          acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
-        />
-      )}
-
-      {itens && (
-        <>
-          <div style={{ position: "relative", marginBottom: "0.8rem" }}>
-            <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
-            <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar protocolo…" />
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        {editando !== null ? (
+          <FormProtocoloInducao
+            key={editando} form={form} setForm={setForm} principios={principios} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg} editando={editando}
+            acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
+          />
+        ) : (
+          <div className="card" style={{ textAlign: "center", padding: "2.2rem 1rem" }}>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione um protocolo para editar, ou clique em Novo.</p>
           </div>
-          <div className="overflow-x-auto">
-          <table className="fazenda-table">
-            <thead><tr>
-              <ThOrdenavel label="Nome" campo="nome" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
-              <th>Duração</th><th>Etapas</th><th></th>
-            </tr></thead>
-            <tbody>
-              {ordProtocolos.linhasOrdenadas.map((p) => (
-                <Fragment key={p.id}>
-                  <tr>
-                    <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{p.etapas.length ? `D${p.dia_inicial} a D${Math.max(...p.etapas.map((e) => e.dia))}` : "—"}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{p.etapas.length} etapa(s)</td>
-                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
-                        <Pencil size={13} /> Editar
-                      </button>
-                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", color: "var(--red)", marginLeft: "0.4rem" }}
-                        onClick={() => excluir(p)} disabled={excluindo === p.id} title="Excluir protocolo — só é possível se ele nunca foi lançado">
-                        <Trash2 size={13} /> {excluindo === p.id ? "Excluindo…" : "Excluir"}
-                      </button>
-                    </td>
-                  </tr>
-                  {editando === p.id && (
-                    <tr><td colSpan={4} style={{ padding: 0 }}>
-                      <FormProtocoloInducao
-                        form={form} setForm={setForm} principios={principios} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-                        acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
-                      />
-                    </td></tr>
-                  )}
-                </Fragment>
-              ))}
-              {!itens.length && !editando && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo cadastrado ainda.</td></tr>}
-              {!!itens.length && !filtrados.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
-            </tbody>
-          </table>
-          </div>
-        </>
-      )}
+        )}
+      </div>
     </div>
   );
 }
 
-function FormProtocoloInducao({ form, setForm, principios, onSalvar, onCancelar, salvando, msg, acrescentarEtapa, removerEtapa, atualizarEtapa }: {
+// Wizard de 4 etapas (T5) para a Indução de lactação — divisão escolhida:
+//  1. Identificação — nome + ativo.
+//  2. Critérios — aqui a única informação de contexto além do nome é a
+//     observação livre (este tipo não tem doença/finalidade/categoria-alvo
+//     como o Sanitário); mesmo com um campo só, mantém a mesma forma dos
+//     demais tipos para o usuário não precisar reaprender o fluxo a cada
+//     protocolo que cadastra.
+//  3. Roteiro (etapas) — o cronograma D0/D1/D2... com os 3 tipos de etapa
+//     (medicamento/dispositivo/manejo), já existente.
+//  4. Revisão — resumo antes de gravar.
+function FormProtocoloInducao({ form, setForm, principios, onSalvar, onCancelar, salvando, msg, editando, acrescentarEtapa, removerEtapa, atualizarEtapa }: {
   form: ProtocoloInducaoForm; setForm: (f: ProtocoloInducaoForm) => void; principios: { id: number; nome: string }[];
-  onSalvar: () => void; onCancelar: () => void; salvando: boolean; msg: string | null;
+  onSalvar: () => Promise<boolean>; onCancelar: () => void; salvando: boolean; msg: string | null; editando: number | "novo";
   acrescentarEtapa: () => void; removerEtapa: (idx: number) => void; atualizarEtapa: (idx: number, patch: Partial<EtapaInducaoLactacao>) => void;
 }) {
+  const passos: PassoWizard<ProtocoloInducaoForm>[] = [
+    {
+      id: "identificacao", titulo: "Identificação",
+      validar: (f) => (!f.nome.trim() ? "Informe o nome do protocolo." : null),
+      render: ({ form: f, setForm: sf }) => (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Nome</label>
+            <input style={inputStyle} value={f.nome} onChange={(e) => sf({ ...f, nome: e.target.value })} placeholder="ex.: Protocolo de Indução — 18 dias" autoFocus /></div>
+          <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+            <input type="checkbox" checked={f.ativo} onChange={(e) => sf({ ...f, ativo: e.target.checked })} /> Ativo</label></div>
+        </div>
+      ),
+    },
+    {
+      id: "criterios", titulo: "Critérios",
+      render: ({ form: f, setForm: sf }) => (
+        <div>
+          <label style={labelStyle}>Observação</label>
+          <input style={inputStyle} value={f.observacao} onChange={(e) => sf({ ...f, observacao: e.target.value })} placeholder="opcional" />
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
+            Contexto geral do protocolo — ex.: para quais vacas/lactações costuma ser indicado. O roteiro dia a dia vem na próxima etapa.
+          </p>
+        </div>
+      ),
+    },
+    {
+      id: "roteiro", titulo: "Roteiro",
+      validar: (f) => {
+        if (f.etapas.some((e) => e.dia < 0)) return "O dia da etapa não pode ser negativo (o protocolo pode começar em D0).";
+        if (f.etapas.some((e) => !e.produto.trim())) return "Preencha o produto/ação de todas as etapas.";
+        if (f.etapas.some((e) => e.tipo === "dispositivo" && !e.acao_dispositivo)) return "Etapa de dispositivo precisa dizer se é para colocar ou retirar.";
+        return null;
+      },
+      render: ({ form: f }) => (
+        <div>
+          <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.4rem" }}>Etapas (D0, D1, D2...)</p>
+          <div className="space-y-2 mb-2">
+            {f.etapas.map((e, idx) => (
+              <div key={idx} className="grid grid-cols-2 md:grid-cols-8 gap-2 items-end" style={{ background: "var(--surface)", padding: "0.5rem", borderRadius: "var(--r-sm)" }}>
+                <div><label style={labelStyle}>Dia (D)</label><input type="number" min={0} style={inputStyle} value={e.dia} onChange={(ev) => atualizarEtapa(idx, { dia: Number(ev.target.value) })} /></div>
+                <div><label style={labelStyle}>Tipo</label>
+                  <select style={inputStyle} value={e.tipo} onChange={(ev) => atualizarEtapa(idx, { tipo: ev.target.value as EtapaInducaoLactacao["tipo"], produto: "", acao_dispositivo: null })}>
+                    {TIPOS_ETAPA_INDUCAO.map(([v, lbl]) => <option key={v} value={v}>{lbl}</option>)}
+                  </select></div>
+
+                {e.tipo === "medicamento" && (
+                  <>
+                    <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Princípio ativo</label>
+                      <select style={inputStyle} value={e.produto} onChange={(ev) => atualizarEtapa(idx, { produto: ev.target.value })}>
+                        <option value="">Selecione…</option>
+                        {!principios.some((p) => p.nome === e.produto) && e.produto && <option value={e.produto}>{e.produto}</option>}
+                        {principios.map((p) => <option key={p.id} value={p.nome}>{p.nome}</option>)}
+                      </select></div>
+                    <div><label style={labelStyle}>Dose (opcional)</label>
+                      <input type="number" inputMode="decimal" style={inputStyle} value={e.dose ?? ""} onChange={(ev) => atualizarEtapa(idx, { dose: ev.target.value === "" ? null : Number(ev.target.value) })} /></div>
+                    <div><label style={labelStyle}>Unidade</label>
+                      <select style={inputStyle} value={e.unidade || ""} onChange={(ev) => atualizarEtapa(idx, { unidade: ev.target.value })}>
+                        <option value="">—</option>{UNIDADES_PADRAO.map((u) => <option key={u} value={u}>{u}</option>)}
+                      </select></div>
+                    <div><label style={labelStyle}>Via</label>
+                      <select style={inputStyle} value={e.via || ""} onChange={(ev) => atualizarEtapa(idx, { via: ev.target.value })}>
+                        <option value="">—</option>{VIAS_APLICACAO.map((v) => <option key={v}>{v}</option>)}
+                      </select></div>
+                  </>
+                )}
+
+                {e.tipo === "dispositivo" && (
+                  <>
+                    <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Dispositivo</label>
+                      <input style={inputStyle} value={e.produto} onChange={(ev) => atualizarEtapa(idx, { produto: ev.target.value })} placeholder="ex.: Implante de Progesterona" /></div>
+                    <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Ação</label>
+                      <select style={inputStyle} value={e.acao_dispositivo || ""} onChange={(ev) => atualizarEtapa(idx, { acao_dispositivo: ev.target.value as "colocar" | "retirar" })}>
+                        <option value="">Selecione…</option><option value="colocar">Colocar</option><option value="retirar">Retirar</option>
+                      </select></div>
+                  </>
+                )}
+
+                {e.tipo === "manejo" && (
+                  <div style={{ gridColumn: "span 4" }}><label style={labelStyle}>Ação de manejo</label>
+                    <input style={inputStyle} value={e.produto} onChange={(ev) => atualizarEtapa(idx, { produto: ev.target.value })} placeholder="ex.: Adaptação na ordenha" /></div>
+                )}
+
+                <div className="flex items-end">
+                  {f.etapas.length > 1 && <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => removerEtapa(idx)}><Trash2 size={13} /></button>}
+                </div>
+              </div>
+            ))}
+          </div>
+          <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={acrescentarEtapa}>
+            <Plus size={14} /> Acrescentar etapa
+          </button>
+        </div>
+      ),
+    },
+    {
+      id: "revisao", titulo: "Revisão",
+      render: ({ form: f }) => (
+        <div>
+          <p style={{ fontSize: "0.82rem", marginBottom: "0.8rem" }}>
+            <strong>{f.nome || "(sem nome)"}</strong>{!f.ativo && <span style={{ color: "var(--text-muted)" }}> (inativo)</span>}
+          </p>
+          <table className="fazenda-table">
+            <thead><tr><th>Dia</th><th>Tipo</th><th>Produto/ação</th><th>Dose</th></tr></thead>
+            <tbody>
+              {f.etapas.map((e, idx) => (
+                <tr key={idx}>
+                  <td>D{e.dia}</td>
+                  <td>{TIPOS_ETAPA_INDUCAO.find(([v]) => v === e.tipo)?.[1] || e.tipo}</td>
+                  <td>{e.tipo === "dispositivo" ? `${e.produto} (${e.acao_dispositivo || "?"})` : e.produto}</td>
+                  <td>{e.tipo === "medicamento" && e.dose != null ? `${e.dose} ${e.unidade || ""}` : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-        <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Nome</label>
-          <input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder="ex.: Protocolo de Indução — 18 dias" /></div>
-        <div><label style={labelStyle}>Observação</label>
-          <input style={inputStyle} value={form.observacao} onChange={(e) => setForm({ ...form, observacao: e.target.value })} placeholder="opcional" /></div>
-        <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
-          <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativo</label></div>
-      </div>
-
-      <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.4rem" }}>Etapas (D0, D1, D2...)</p>
-      <div className="space-y-2 mb-2">
-        {form.etapas.map((e, idx) => (
-          <div key={idx} className="grid grid-cols-2 md:grid-cols-8 gap-2 items-end" style={{ background: "var(--surface)", padding: "0.5rem", borderRadius: "var(--r-sm)" }}>
-            <div><label style={labelStyle}>Dia (D)</label><input type="number" min={0} style={inputStyle} value={e.dia} onChange={(ev) => atualizarEtapa(idx, { dia: Number(ev.target.value) })} /></div>
-            <div><label style={labelStyle}>Tipo</label>
-              <select style={inputStyle} value={e.tipo} onChange={(ev) => atualizarEtapa(idx, { tipo: ev.target.value as EtapaInducaoLactacao["tipo"], produto: "", acao_dispositivo: null })}>
-                {TIPOS_ETAPA_INDUCAO.map(([v, lbl]) => <option key={v} value={v}>{lbl}</option>)}
-              </select></div>
-
-            {e.tipo === "medicamento" && (
-              <>
-                <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Princípio ativo</label>
-                  <select style={inputStyle} value={e.produto} onChange={(ev) => atualizarEtapa(idx, { produto: ev.target.value })}>
-                    <option value="">Selecione…</option>
-                    {!principios.some((p) => p.nome === e.produto) && e.produto && <option value={e.produto}>{e.produto}</option>}
-                    {principios.map((p) => <option key={p.id} value={p.nome}>{p.nome}</option>)}
-                  </select></div>
-                <div><label style={labelStyle}>Dose (opcional)</label>
-                  <input type="number" inputMode="decimal" style={inputStyle} value={e.dose ?? ""} onChange={(ev) => atualizarEtapa(idx, { dose: ev.target.value === "" ? null : Number(ev.target.value) })} /></div>
-                <div><label style={labelStyle}>Unidade</label>
-                  <select style={inputStyle} value={e.unidade || ""} onChange={(ev) => atualizarEtapa(idx, { unidade: ev.target.value })}>
-                    <option value="">—</option>{UNIDADES_PADRAO.map((u) => <option key={u} value={u}>{u}</option>)}
-                  </select></div>
-                <div><label style={labelStyle}>Via</label>
-                  <select style={inputStyle} value={e.via || ""} onChange={(ev) => atualizarEtapa(idx, { via: ev.target.value })}>
-                    <option value="">—</option>{VIAS_APLICACAO.map((v) => <option key={v}>{v}</option>)}
-                  </select></div>
-              </>
-            )}
-
-            {e.tipo === "dispositivo" && (
-              <>
-                <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Dispositivo</label>
-                  <input style={inputStyle} value={e.produto} onChange={(ev) => atualizarEtapa(idx, { produto: ev.target.value })} placeholder="ex.: Implante de Progesterona" /></div>
-                <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Ação</label>
-                  <select style={inputStyle} value={e.acao_dispositivo || ""} onChange={(ev) => atualizarEtapa(idx, { acao_dispositivo: ev.target.value as "colocar" | "retirar" })}>
-                    <option value="">Selecione…</option><option value="colocar">Colocar</option><option value="retirar">Retirar</option>
-                  </select></div>
-              </>
-            )}
-
-            {e.tipo === "manejo" && (
-              <div style={{ gridColumn: "span 4" }}><label style={labelStyle}>Ação de manejo</label>
-                <input style={inputStyle} value={e.produto} onChange={(ev) => atualizarEtapa(idx, { produto: ev.target.value })} placeholder="ex.: Adaptação na ordenha" /></div>
-            )}
-
-            <div className="flex items-end">
-              {form.etapas.length > 1 && <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => removerEtapa(idx)}><Trash2 size={13} /></button>}
-            </div>
-          </div>
-        ))}
-      </div>
-      <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem", marginBottom: "0.8rem" }} onClick={acrescentarEtapa}>
-        <Plus size={14} /> Acrescentar etapa
-      </button>
-
-      {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
-      <div className="flex items-center gap-2">
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={onSalvar} disabled={salvando}>
-          <Check size={14} /> {salvando ? "Salvando…" : "Salvar"}
-        </button>
-        <button className="btn-ghost" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={onCancelar}>
-          <X size={14} /> Cancelar
-        </button>
-      </div>
+      <WizardProtocolo<ProtocoloInducaoForm>
+        chaveRascunho={editando === "novo" ? "wizard-protocolo:inducao" : null}
+        form={form} setForm={setForm}
+        ehVazio={(f) => !f.nome.trim() && !f.observacao.trim() && f.etapas.every((e) => !e.produto.trim())}
+        passos={passos}
+        onCancelar={onCancelar}
+        onConcluir={onSalvar}
+        salvando={salvando}
+        rotuloConcluir="Salvar"
+        erro={msg}
+      />
     </div>
   );
 }
@@ -703,6 +906,11 @@ type EventoForm = {
   condicao_evento_id: string;
   exame_definicao_id: string;
   servico_financeiro: string;
+  janela_de_valor: string; janela_de_unidade: "dias" | "meses";
+  janela_ate_valor: string; janela_ate_unidade: "dias" | "meses";
+  acao_fora_janela: string;
+  teto_etario_valor: string; teto_etario_unidade: "dias" | "meses";
+  veterinario_padrao_pessoa_id: string;
 };
 const eventoFormVazio = (): EventoForm => ({
   nome: "", ativo: true, tipo_agendamento: "nenhum", categoria_alvo: "", sexo_alvo: "", categoria_preventiva: "vacina", doenca_id: "",
@@ -713,6 +921,11 @@ const eventoFormVazio = (): EventoForm => ({
   condicao_evento_id: "",
   exame_definicao_id: "",
   servico_financeiro: "",
+  janela_de_valor: "", janela_de_unidade: "meses",
+  janela_ate_valor: "", janela_ate_unidade: "meses",
+  acao_fora_janela: "",
+  teto_etario_valor: "", teto_etario_unidade: "meses",
+  veterinario_padrao_pessoa_id: "",
 });
 
 export function CadastroEventosSanitarios() {
@@ -728,6 +941,8 @@ export function CadastroEventosSanitarios() {
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
+  const { pessoas: pessoasAtivas } = usePessoasAtivas();
+  const veterinariosZootecnistas = pessoasAtivas.filter((p) => (p.tipos || []).some((t: string) => ["Veterinário", "Zootecnista"].includes(t)));
 
   const carregar = () => fetchEventosSanitarios().then(setItens).catch((e) => setError(e.message));
   useEffect(() => {
@@ -754,6 +969,14 @@ export function CadastroEventosSanitarios() {
       condicao_evento_id: e.condicao_evento_id ? String(e.condicao_evento_id) : "",
       exame_definicao_id: (e as any).exame_definicao_id ? String((e as any).exame_definicao_id) : "",
       servico_financeiro: (e as any).servico_financeiro || "",
+      janela_de_valor: (e as any).janela_de_valor != null ? String((e as any).janela_de_valor) : "",
+      janela_de_unidade: (e as any).janela_de_unidade || "meses",
+      janela_ate_valor: (e as any).janela_ate_valor != null ? String((e as any).janela_ate_valor) : "",
+      janela_ate_unidade: (e as any).janela_ate_unidade || "meses",
+      acao_fora_janela: (e as any).acao_fora_janela || "",
+      teto_etario_valor: (e as any).teto_etario_valor != null ? String((e as any).teto_etario_valor) : "",
+      teto_etario_unidade: (e as any).teto_etario_unidade || "meses",
+      veterinario_padrao_pessoa_id: (e as any).veterinario_padrao_pessoa_id ? String((e as any).veterinario_padrao_pessoa_id) : "",
     });
     setEditando(e.id); setMsg(null);
   };
@@ -779,6 +1002,14 @@ export function CadastroEventosSanitarios() {
       condicao_evento_id: form.condicao_evento_id ? Number(form.condicao_evento_id) : null,
       exame_definicao_id: form.categoria_preventiva === "exame" && form.exame_definicao_id ? Number(form.exame_definicao_id) : null,
       servico_financeiro: form.servico_financeiro || null,
+      janela_de_valor: form.janela_de_valor ? Number(form.janela_de_valor) : null,
+      janela_de_unidade: form.janela_de_valor ? form.janela_de_unidade : null,
+      janela_ate_valor: form.janela_ate_valor ? Number(form.janela_ate_valor) : null,
+      janela_ate_unidade: form.janela_ate_valor ? form.janela_ate_unidade : null,
+      acao_fora_janela: form.acao_fora_janela || null,
+      teto_etario_valor: form.teto_etario_valor ? Number(form.teto_etario_valor) : null,
+      teto_etario_unidade: form.teto_etario_valor ? form.teto_etario_unidade : null,
+      veterinario_padrao_pessoa_id: form.veterinario_padrao_pessoa_id ? Number(form.veterinario_padrao_pessoa_id) : null,
     };
     setSalvando(true); setMsg(null);
     try {
@@ -793,6 +1024,16 @@ export function CadastroEventosSanitarios() {
   const termoBusca = normalizar(busca.trim());
   const filtrados = (itens ?? []).filter((e) => !termoBusca || normalizar(e.nome).includes(termoBusca));
   const unidadesProduto = unidadesCompat(estoque.find((it) => it.nome === form.produto_padrao)?.unidade);
+
+  const ACAO_FORA_JANELA_LABEL: Record<string, string> = { sair: "Sair", manter: "Manter", notificar: "Notificar urgência" };
+  const rotuloJanela = (e: EventoSanitarioRow) => {
+    const de = (e as any).janela_de_valor, ate = (e as any).janela_ate_valor;
+    if (de == null && ate == null) return "—";
+    const un = (v: number | null, unidade: string | null) => v == null ? "" : `${v} ${unidade || ""}`;
+    const faixa = de != null && ate != null ? `${un(de, (e as any).janela_de_unidade)} a ${un(ate, (e as any).janela_ate_unidade)}` : (de != null ? `de ${un(de, (e as any).janela_de_unidade)}` : `até ${un(ate, (e as any).janela_ate_unidade)}`);
+    const acao = ACAO_FORA_JANELA_LABEL[(e as any).acao_fora_janela || ""];
+    return acao ? `${faixa} · ${acao}` : faixa;
+  };
 
   const rotuloAgendamento = (e: EventoSanitarioRow) => {
     if (e.tipo_agendamento === "epoca")
@@ -876,8 +1117,14 @@ export function CadastroEventosSanitarios() {
             <div><label style={labelStyle}>Idade-alvo (meses)</label>
               <input type="number" min={1} style={inputStyle} value={form.gatilho_idade_meses} onChange={(e) => setForm({ ...form, gatilho_idade_meses: e.target.value })} placeholder="ex.: 13" /></div>
           )}
-          <div><label style={labelStyle}>Dias após o gatilho</label>
-            <input type="number" min={0} style={inputStyle} value={form.offset_dias} onChange={(e) => setForm({ ...form, offset_dias: e.target.value })} placeholder="0" /></div>
+          {/* Some da tela assim que "Janela — de" (mais abaixo) é preenchida —
+              ela passa a decidir sozinha quando o item entra na Agenda,
+              inclusive em meses (isto aqui só sabe contar em dias). Ver
+              FormCalendarioSanitario.tsx, mesmo padrão. */}
+          {!form.janela_de_valor && (
+            <div><label style={labelStyle}>Dias após o gatilho</label>
+              <input type="number" min={0} style={inputStyle} value={form.offset_dias} onChange={(e) => setForm({ ...form, offset_dias: e.target.value })} placeholder="0" /></div>
+          )}
           <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Condição — só agendar se NÃO tiver recebido</label>
             <select style={inputStyle} value={form.condicao_evento_id} onChange={(e) => setForm({ ...form, condicao_evento_id: e.target.value })}>
               <option value="">— (sempre agendar)</option>
@@ -940,6 +1187,68 @@ export function CadastroEventosSanitarios() {
         </div>
       )}
 
+      {(form.categoria_preventiva === "vacina" || form.categoria_preventiva === "exame") && (
+        <>
+          <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.2rem" }}>Janela de aplicação</p>
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+            Após o gatilho, a janela de aplicação é definida no prazo cadastrado.
+          </p>
+          <div className="flex items-end gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+            <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", paddingBottom: "0.55rem" }}>De</span>
+            <div style={{ width: 80 }}><input type="number" min={0} style={inputStyle} value={form.janela_de_valor} onChange={(e) => setForm({ ...form, janela_de_valor: e.target.value })} placeholder="3" /></div>
+            <div style={{ width: 100 }}>
+              <select style={inputStyle} value={form.janela_de_unidade} onChange={(e) => setForm({ ...form, janela_de_unidade: e.target.value as "dias" | "meses" })}>
+                <option value="dias">dias</option><option value="meses">meses</option>
+              </select>
+            </div>
+            <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontWeight: 600, paddingBottom: "0.55rem" }}>até</span>
+            <div style={{ width: 80 }}><input type="number" min={0} style={inputStyle} value={form.janela_ate_valor} onChange={(e) => setForm({ ...form, janela_ate_valor: e.target.value })} placeholder="8" /></div>
+            <div style={{ width: 100 }}>
+              <select style={inputStyle} value={form.janela_ate_unidade} onChange={(e) => setForm({ ...form, janela_ate_unidade: e.target.value as "dias" | "meses" })}>
+                <option value="dias">dias</option><option value="meses">meses</option>
+              </select>
+            </div>
+            <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", paddingBottom: "0.55rem" }}>após o gatilho</span>
+          </div>
+
+          <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.2rem" }}>Ação ao sair da janela sem aplicação</p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
+            {([
+              ["sair", "Sair", "Encerra — passa a constar como lacuna permanente no histórico"],
+              ["manter", "Manter até aplicação", "Continua pendente, mesmo fora da janela biológica"],
+              ["notificar", "Notificar urgência", "Fecha em N dias — alerta antes de sair"],
+            ] as const).map(([v, lbl, desc]) => (
+              <button key={v} type="button" onClick={() => setForm({ ...form, acao_fora_janela: v })}
+                style={{ textAlign: "left", padding: "0.6rem 0.7rem", borderRadius: "var(--r-sm)", cursor: "pointer",
+                  border: "1.5px solid " + (form.acao_fora_janela === v ? "var(--dourado)" : "var(--border)"),
+                  background: form.acao_fora_janela === v ? "rgba(94,26,46,0.25)" : "transparent" }}>
+                <span style={{ display: "block", fontSize: "0.8rem", fontWeight: 700, color: form.acao_fora_janela === v ? "var(--dourado-light)" : "var(--text)" }}>{lbl}</span>
+                <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>{desc}</span>
+              </button>
+            ))}
+          </div>
+          {form.acao_fora_janela === "manter" && (
+            <p style={{ fontSize: "0.7rem", color: "var(--dourado-light)", marginBottom: "0.5rem" }}>
+              "Manter" nunca se aplica além do teto etário abaixo, se um for informado — evita pendência indevida para animais fora da idade biológica desta regra.
+            </p>
+          )}
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <div><label style={labelStyle}>Veterinário padrão</label>
+              <select style={inputStyle} value={form.veterinario_padrao_pessoa_id} onChange={(e) => setForm({ ...form, veterinario_padrao_pessoa_id: e.target.value })}>
+                <option value="">— (escolher na hora)</option>
+                {veterinariosZootecnistas.map((p: any) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+              </select></div>
+            <div><label style={labelStyle}>Teto etário (opcional)</label>
+              <input type="number" min={0} style={inputStyle} value={form.teto_etario_valor} onChange={(e) => setForm({ ...form, teto_etario_valor: e.target.value })} placeholder="8" /></div>
+            <div><label style={labelStyle}>Unidade do teto</label>
+              <select style={inputStyle} value={form.teto_etario_unidade} onChange={(e) => setForm({ ...form, teto_etario_unidade: e.target.value as "dias" | "meses" })}>
+                <option value="dias">dias</option><option value="meses">meses</option>
+              </select></div>
+          </div>
+        </>
+      )}
+
       {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
       <div className="flex items-center gap-2">
         <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={salvar} disabled={salvando}>
@@ -979,7 +1288,7 @@ export function CadastroEventosSanitarios() {
           </div>
           <div className="overflow-x-auto">
             <table className="fazenda-table">
-              <thead><tr><th>Nome</th><th>Agendamento</th><th>Medicamento padrão</th><th>Próxima</th><th></th></tr></thead>
+              <thead><tr><th>Nome</th><th>Agendamento</th><th>Medicamento padrão</th><th>Janela</th><th>Próxima</th><th></th></tr></thead>
               <tbody>
                 {filtrados.map((e) => (
                   <Fragment key={e.id}>
@@ -994,6 +1303,7 @@ export function CadastroEventosSanitarios() {
                       </td>
                       <td style={{ fontSize: "0.78rem" }}>{rotuloAgendamento(e)}</td>
                       <td style={{ fontSize: "0.78rem" }}>{e.produto_padrao ? `${e.produto_padrao}${e.dose_padrao != null ? ` — ${e.dose_padrao} ${e.unidade_padrao || ""}` : ""}` : "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{rotuloJanela(e)}</td>
                       <td style={{ fontSize: "0.78rem", color: "var(--dourado-light)" }}>{e.proxima_ocorrencia ? new Date(e.proxima_ocorrencia + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
                       <td style={{ textAlign: "right" }}>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(e)}>
@@ -1001,11 +1311,11 @@ export function CadastroEventosSanitarios() {
                         </button>
                       </td>
                     </tr>
-                    {editando === e.id && <tr><td colSpan={5} style={{ padding: 0 }}>{formEl}</td></tr>}
+                    {editando === e.id && <tr><td colSpan={6} style={{ padding: 0 }}>{formEl}</td></tr>}
                   </Fragment>
                 ))}
-                {!itens.length && !editando && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum evento sanitário cadastrado ainda.</td></tr>}
-                {!!itens.length && !filtrados.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
+                {!itens.length && !editando && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum evento sanitário cadastrado ainda.</td></tr>}
+                {!!itens.length && !filtrados.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
               </tbody>
             </table>
           </div>

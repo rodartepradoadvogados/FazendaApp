@@ -8,9 +8,31 @@
 import { useState } from "react";
 import dynamic from "next/dynamic";
 import { Receipt, HandCoins, ShoppingCart, Tag, Dna, Users, CircleDollarSign } from "lucide-react";
-import { MobVoltar } from "@/components/mobile/ui";
+import { MobAviso, MobVoltar } from "@/components/mobile/ui";
 import { GradeAcoes, type Animal } from "@/components/mobile/lancar/comum";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
+import { enviarOuEnfileirar } from "@/lib/offline";
+import { criarCompraAnimal, criarVendaAnimal, criarCompraSemen } from "@/lib/api";
+
+// Compra/venda de animal e compra de sêmen são registros simples (1 POST,
+// sem confirmação em 2 etapas nem anexo síncrono) — únicos 3 fluxos do
+// Financeiro migrados para a fila offline por ora. Contas a pagar/receber
+// (FormFinanceiro), folha de pagamento e dar baixa ficam de fora: nenhum tem
+// proteção de duplicidade no backend hoje e dar baixa em lote, em especial,
+// tem alto risco de pagar a mesma conta duas vezes se reenviada — mais seguro
+// exigir internet ali do que arriscar duplicar valor financeiro.
+async function salvarCompraAnimalOffline(dados: Parameters<typeof criarCompraAnimal>[0]) {
+  const r = await enviarOuEnfileirar("/compras-animais/", dados, `Compra de ${dados.animais.length} animal(is)`);
+  return { ...(r.resposta || {}), enviado: r.enviado };
+}
+async function salvarVendaAnimalOffline(dados: Parameters<typeof criarVendaAnimal>[0]) {
+  const r = await enviarOuEnfileirar("/vendas-animais/", dados, `Venda de ${dados.animais.length} animal(is)`);
+  return { ...(r.resposta || {}), enviado: r.enviado };
+}
+async function salvarCompraSemenOffline(dados: Parameters<typeof criarCompraSemen>[0]) {
+  const r = await enviarOuEnfileirar("/compras-semen/", dados, `Compra de sêmen (${dados.itens.length} item(ns))`);
+  return { ...(r.resposta || {}), enviado: r.enviado };
+}
 
 // Cada pílula só baixa seu próprio formulário quando aberta pela 1ª vez —
 // importante em conexão de campo, onde o app roda mais.
@@ -30,6 +52,7 @@ const TITULOS: Record<TipoLancamento, string> = {
 
 export default function FormFinanceiroApp({ onVoltar, tipoInicial, animais }: { onVoltar: () => void; tipoInicial?: "despesa" | "receita"; animais: Animal[] }) {
   const [tipo, setTipo] = useState<TipoLancamento | null>(tipoInicial || null);
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
 
   if (!tipo) {
     return (
@@ -59,10 +82,18 @@ export default function FormFinanceiroApp({ onVoltar, tipoInicial, animais }: { 
     <div>
       <MobVoltar titulo={TITULOS[tipo]} onVoltar={() => setTipo(null)} />
       <div className="mob-form-embutido">
-        {(tipo === "despesa" || tipo === "receita") && <FormFinanceiro key={tipo} tipo={tipo} responsaveis={RESPONSAVEIS} apresentacaoModais="tela" />}
-        {tipo === "compra_animal" && <CompraVendaAnimalForm key="compra_animal" modo="compra" animais={animais} />}
-        {tipo === "venda_animal" && <CompraVendaAnimalForm key="venda_animal" modo="venda" animais={animais} />}
-        {tipo === "compra_semen" && <CompraSemenForm key="compra_semen" />}
+        {/* Contas a pagar/receber e folha de pagamento reaproveitam o
+            formulário do site tal como é — salvam direto pela rede, sem
+            passar pela fila offline (nenhum dos dois tem proteção de
+            duplicidade no backend hoje). Compra/venda de animal e compra de
+            sêmen já passam pela fila (ver salvar*Offline acima). */}
+        {(tipo === "despesa" || tipo === "receita" || tipo === "folha") && (
+          <MobAviso tipo="offline">Esta tela precisa de internet no momento de salvar — não fica guardada pra enviar depois se a conexão cair.</MobAviso>
+        )}
+        {(tipo === "despesa" || tipo === "receita") && <FormFinanceiro key={tipo} tipo={tipo} responsaveis={nomesResponsaveis} apresentacaoModais="tela" />}
+        {tipo === "compra_animal" && <CompraVendaAnimalForm key="compra_animal" modo="compra" animais={animais} salvarCompra={salvarCompraAnimalOffline as any} />}
+        {tipo === "venda_animal" && <CompraVendaAnimalForm key="venda_animal" modo="venda" animais={animais} salvarVenda={salvarVendaAnimalOffline as any} />}
+        {tipo === "compra_semen" && <CompraSemenForm key="compra_semen" salvarCompra={salvarCompraSemenOffline as any} />}
         {tipo === "folha" && <FolhaPagamentoView key="folha" />}
       </div>
     </div>

@@ -16,21 +16,35 @@ from fazenda.auth import (
 )
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, ContaGerencial,
+    AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ChecklistItem, ColostragemBezerra, ConsumoAlimento,
+    ConsumoSobra, ContaGerencial,
     CronogramaSanitario, CronogramaSanitarioAnimal, DietaLancamento, Diaria,
-    DiariaAuditoria, DiariaDia, Estoque, EstoqueSemen, EventoRealizado, Lote, MedicamentoComercial, ParametroSugestaoMovimentacao, Parto,
-    Patrimonio, Pessoa, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
+    DiariaAuditoria, DiariaDia, Empreitada, EmpreitadaEtapa, Estoque, EstoqueSemen, EventoRealizado, Lote, MedicamentoComercial, Parto,
+    PesagemCorporal, Patrimonio, Pedido, PedidoAnexo, Pessoa, PessoaAnexo, PortalMensagem, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
-    ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
+    ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
+    ProtocoloSanitarioLancamento, ProtocoloSanitarioLote, Sanidade,
     Secagem, SeedFlag, Servico,
 )
 from fazenda.api.routers.lotes import coletar_dados_criterios
+# Leitura pura (nunca get-or-create) do parâmetro de agendamento das
+# sugestões de movimentação — mora junto da rota que a tela de Parâmetros
+# usa para GRAVAR, para que ler e gravar não possam divergir de novo. Este
+# módulo já importa de outros três routers (lotes, portal, reproducao), então
+# não vale mover a função para `rules/` só por causa deste import.
+from fazenda.api.routers.movimentacoes import ler_parametro_sugestao_movimentacao
+from fazenda.api.routers.portal import usuarios_da_fazenda
+from fazenda.api.routers.reproducao import ATIVIDADE_INDUCAO_CIO
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_engine import AgendaEngine, AgendaItem
 from fazenda.rules.eventos_sanitarios import eventos_agenda as _eventos_sanitarios_agenda
 from fazenda.rules import cronograma_sanitario as _cronograma_sanitario_rules
 from fazenda.rules.cronograma_sanitario import PREFIXO_CRONOGRAMA as _PREFIXO_CRONOGRAMA, CronogramaError
+from fazenda.rules import checklist_sanitario as _checklist_sanitario_rules
+from fazenda.rules.checklist_sanitario import ChecklistError
 from fazenda.rules.cura_protocolo import protocolo_terminado
+from fazenda.rules import lactacao as regras_lactacao
+from fazenda.rules.lactacao import inducao_concluida
 from fazenda.rules.protocolo_customizado import (
     eventos_agenda as _eventos_protocolo_custom_agenda,
     marcar_realizado as _marcar_protocolo_custom_realizado,
@@ -49,8 +63,9 @@ from fazenda.rules import estoque_baixa
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
 from fazenda.rules.nomenclatura_protocolo import nome_curto
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
-from fazenda.rules.parametros import bst_ajuste_ancora_data, intervalo_bst, minimos_semen_por_tipo, patrimonio_atualizacao_valor_mercado_meses
+from fazenda.rules.parametros import bst_ajuste_ancora_data, get_param, intervalo_bst, minimos_semen_por_tipo, patrimonio_atualizacao_valor_mercado_meses
 from fazenda.rules.patrimonio import proxima_atualizacao_valor_mercado, status_manutencao
+from fazenda.rules.unidades import kg_equivalente
 
 router = APIRouter(prefix="/agenda", tags=["agenda"])
 
@@ -91,9 +106,46 @@ MODULO_TECNICO_PARA_COMERCIAL = {
 # contrário de uma atividade (alguém executa e dá baixa), um comunicado só
 # informa: fica fixo enquanto vigora e some sozinho depois, sem poder ser
 # marcado como realizado/excluído pelo usuário (ver marcar_realizado abaixo).
-COMUNICADO_PREFIXOS = ("nova_dieta_",)
+# "alerta_sobra_" — sobra de cocho fora da faixa aceitável (sessão 3, Frente
+# C): mesma imunidade de "nova_dieta_" (não dá para marcar realizado nem
+# excluir — o alerta é recalculado a cada consulta, a partir do ConsumoSobra
+# vigente do dia, e some sozinho quando a sobra volta à faixa ou o dia passa).
+COMUNICADO_PREFIXOS = ("nova_dieta_", "alerta_sobra_")
 
 TIPOS_EVENTO = ["Compra", "Venda", "Serviço", "Outro"]
+
+# Rótulos amigáveis por prefixo de evento_id — usados só pelo card "Concluídos
+# no período" da Agenda (GET /agenda/realizados). EventoRealizado guarda
+# apenas um hash (evento_id) + marcado_em, não o texto da pendência original;
+# reconstruir o detalhe completo (qual animal, qual lote, qual data) exigiria
+# juntar de volta com a origem de cada um dos ~15 tipos de pendência que
+# passam por aqui — algumas já podem ter mudado desde então. Mapear o
+# PREFIXO (fixo, definido no código acima) para uma categoria é honesto e
+# estável; prefixo fora do mapa não inventa rótulo — o card mostra o
+# evento_id cru (ver _rotulo_evento_realizado).
+ROTULOS_EVENTO_REALIZADO: dict[str, str] = {
+    "cura_protocolo_": "Confirmação de cura — protocolo sanitário",
+    "diaria_trabalho_": "Diária — dia de trabalho confirmado",
+    "diaria_fim_": "Diária — fim de contrato",
+    "empreitada_penultima_etapa_": "Empreitada — penúltima etapa",
+    "pesagem_": "Pesagem do rebanho",
+    "protocolo_sanitario_": "Protocolo sanitário — aplicação",
+    "semen_minimo_": "Estoque de sêmen abaixo do mínimo",
+    "sugestao_movimentacao_": "Sugestão de movimentação de lote",
+    "vacina_pre_parto_": "Vacina pré-parto",
+    "calendario_sanitario_": "Evento sanitário — calendário",
+    "aplic_agendada_": "Aplicação agendada",
+    "dieta_analise_": "Análise de dieta",
+    "evento_sanitario_": "Evento sanitário",
+    "bst_aplicacao_": "Aplicação de BST",
+}
+
+
+def _rotulo_evento_realizado(evento_id: str) -> str | None:
+    for prefixo, rotulo in ROTULOS_EVENTO_REALIZADO.items():
+        if evento_id.startswith(prefixo):
+            return rotulo
+    return None
 
 
 def _modulos_liberados(usuario: Usuario) -> set[str]:
@@ -104,6 +156,135 @@ def _modulos_liberados(usuario: Usuario) -> set[str]:
         # à parte, senão admin nunca teria acesso a esse bloco.
         return set(MODULO_POR_CATEGORIA.values()) | {"reproducao", "estoque"}
     return {m.strip() for m in (usuario.permissoes or "").split(",") if m.strip()}
+
+
+# ---------------------------------------------------------------------------
+# Alerta de sobra de cocho fora da faixa (sessão 3, Frente C).
+# ---------------------------------------------------------------------------
+def _fmt_num_br(valor: float, casas: int = 1) -> str:
+    """1234.50 -> "1234,5"; 40.0 -> "40" (sem ",0" ocioso). O alerta pede
+    texto extremamente curto (pedido verbatim do usuário) — nem a vírgula
+    decimal pode sobrar quando o número já é inteiro."""
+    texto = f"{valor:.{casas}f}"
+    if "." in texto:
+        inteiro, frac = texto.split(".")
+        texto = inteiro if set(frac) == {"0"} else f"{inteiro},{frac}"
+    return texto
+
+
+def _texto_alerta_sobra(lote: int, pct: float, delta_total_kg: float, kg_por_alimento: dict[str, float], kg_total: float) -> str:
+    """Monta o texto do alerta — CURTO de propósito. Pedido original,
+    verbatim: "texto extremamente curto, pouquíssimas palavras, apenas o
+    necessário para entender". Por isso: sem saudação, sem explicar o que é
+    sobra de cocho, sem repetir "lote" a cada item — só o lote uma vez, o
+    percentual medido, e a lista de kg por alimento a ajustar (C4/C5).
+
+    O rateio do delta entre os alimentos usa a mesma proporção de cada um no
+    total fornecido (kg_por_alimento/kg_total) — já vem sem os itens que não
+    convertem para kg (C6, filtrados por quem chama, ver kg_equivalente)."""
+    verbo = "Acrescente" if delta_total_kg > 0 else "Reduza"
+    itens = []
+    if kg_total > 0:
+        for alimento, kg in kg_por_alimento.items():
+            delta_item = abs(delta_total_kg) * (kg / kg_total)
+            if round(delta_item, 1) <= 0:
+                continue  # arredondaria para "0 kg" — não ajuda ninguém, omite
+            itens.append(f"{_fmt_num_br(delta_item)} kg {alimento}")
+    pct_txt = _fmt_num_br(pct)
+    if itens:
+        return f"Lote {lote:02d}: sobra {pct_txt}%. {verbo} {', '.join(itens)}."
+    # Nenhum alimento da dieta converte para kg (C6 zerou a lista) — não dá
+    # para inventar quantidade por item, mas o alerta ainda tem de existir.
+    return f"Lote {lote:02d}: sobra {pct_txt}%. {verbo} os alimentos."
+
+
+def _chave_alerta_sobra(lote: int, data_sobra: date) -> str:
+    return f"alerta_sobra_{lote}_{data_sobra.isoformat()}"
+
+
+def _destinatarios_alerta_sobra(session: Session, fazenda_id: int | None) -> list[int]:
+    """Quem recebe o alerta na central de alertas: admin da fazenda ou
+    funcionário com acesso ao módulo Alimentação — mesma régua de
+    MODULO_POR_CATEGORIA["alimentacao"] usada para filtrar a Agenda, aplicada
+    aqui a cada usuário da fazenda (não só a quem está logado)."""
+    usuarios = usuarios_da_fazenda(session, fazenda_id)
+    resultado = []
+    for u in usuarios:
+        if u.id is None:
+            continue
+        permissoes = {p.strip() for p in (u.permissoes or "").split(",") if p.strip()}
+        if u.papel == "admin" or "alimentacao" in permissoes:
+            resultado.append(u.id)
+    return resultado
+
+
+def _limpar_alerta_sobra_portal(session: Session, fazenda_id: int | None, lote: int, data_sobra: date) -> None:
+    """Sobra corrigida para dentro da faixa no mesmo dia (C8: silêncio é a
+    mensagem) — remove o alerta que porventura já tenha sido criado na
+    central de alertas, em vez de deixá-lo pendurado até ser lido."""
+    chave = _chave_alerta_sobra(lote, data_sobra)
+    existentes = session.exec(
+        select(PortalMensagem).where(
+            PortalMensagem.tipo == "alerta_sobra", PortalMensagem.aba == chave,
+            PortalMensagem.fazenda_id == fazenda_id,
+        )
+    ).all()
+    if not existentes:
+        return
+    for m in existentes:
+        session.delete(m)
+    session.commit()
+
+
+def _upsert_alerta_sobra_portal(
+    session: Session, fazenda_id: int | None, lote: int, data_sobra: date, texto: str, usuario_lancou: int | None,
+) -> None:
+    """Cria/atualiza o alerta na central de alertas (PortalMensagem,
+    `pede_retorno=False` — C3), um por lote/dia (C7): relançar a sobra no
+    mesmo dia muda o número calculado, então atualiza o texto de quem ainda
+    não leu (e reabre para quem já tinha lido/marcado check, porque o
+    conteúdo mudou) — nunca duplica a mensagem.
+
+    Repassa a `aba` (campo livre, não usado por este tipo para navegação) só
+    como chave de idempotência lote+dia — é o único jeito de encontrar de
+    novo "o alerta desta sobra" sem um campo de origem dedicado no modelo."""
+    chave = _chave_alerta_sobra(lote, data_sobra)
+    destinatarios = _destinatarios_alerta_sobra(session, fazenda_id)
+    if not destinatarios:
+        return
+    remetente_id = usuario_lancou if usuario_lancou is not None else destinatarios[0]
+    existentes = {
+        m.destinatario_usuario_id: m
+        for m in session.exec(
+            select(PortalMensagem).where(
+                PortalMensagem.tipo == "alerta_sobra", PortalMensagem.aba == chave,
+                PortalMensagem.fazenda_id == fazenda_id,
+            )
+        ).all()
+    }
+    mudou = False
+    for dest_id in destinatarios:
+        atual = existentes.pop(dest_id, None)
+        if atual is None:
+            session.add(PortalMensagem(
+                tipo="alerta_sobra", remetente_usuario_id=remetente_id, destinatario_usuario_id=dest_id,
+                aba=chave, corpo=texto, pede_retorno=False, fazenda_id=fazenda_id,
+            ))
+            mudou = True
+        elif atual.corpo != texto:
+            atual.corpo = texto
+            atual.lida = False
+            atual.resolvida = False
+            session.add(atual)
+            mudou = True
+    # Sobrou em `existentes`: destinatário que não devia mais receber (só
+    # muda se a lista de acesso ao módulo Alimentação mudar no mesmo dia —
+    # raro, mas não deixa lixo pendurado).
+    for m in existentes.values():
+        session.delete(m)
+        mudou = True
+    if mudou:
+        session.commit()
 
 
 def _model_to_dict(obj) -> dict:
@@ -216,18 +397,25 @@ def _gerar_auditorias_diarias(session: Session) -> None:
             session.commit()
 
 
+# Texto do lembrete trimestral. Reescrito em set/2026: o catálogo NAAB é
+# GLOBAL (um `Touro` só, lido por todas as fazendas-cliente) e sua
+# manutenção passou a ser exclusiva do Painel CowData — a fazenda consulta,
+# mas não importa nem edita mais (ver painel_cowdata_touros.py). O passo a
+# passo antigo mandava para Configurações › Importar dados › 'Touros —
+# catálogo NAAB', tela que não existe mais do lado da fazenda; deixá-lo
+# seria mandar o cliente para um caminho sem saída.
 _INSTRUCOES_TOUROS = (
-    "Passo a passo para atualizar o banco de touros (provas NAAB):\n"
-    "1) Entre no site do seu fornecedor de sêmen (ABS BullSearch, Alta, Select Sires, CRV...) "
-    "e filtre/selecione os touros que você usa.\n"
-    "2) Exporte a lista em Excel (.xlsx) ou CSV — geralmente há um botão 'Exportar'.\n"
-    "3) Aqui no sistema: Configurações › Importar dados › 'Touros — catálogo NAAB'.\n"
-    "4) Escolha o arquivo, informe a Central (ex.: Select Sires) e a Rodada da prova "
-    "(ex.: Abr/2026) e clique em Enviar.\n"
-    "5) Pronto: o banco de touros atualiza (nome, produção, TPI/NM$, tipo e saúde) e passa a "
-    "aparecer na ficha do pai de cada animal.\n"
-    "Obs.: as provas oficiais (CDCB) saem em abril, agosto e dezembro — são essas as importações "
-    "que trazem números novos."
+    "Lembrete trimestral: as provas oficiais (CDCB) saem em abril, agosto e dezembro — "
+    "é quando o banco de touros (NAAB) ganha números novos.\n"
+    "O catálogo de touros é mantido pela CowData e é o mesmo para todas as fazendas, "
+    "então a atualização não é feita aqui dentro: nós subimos a rodada nova e ela aparece "
+    "automaticamente para você.\n"
+    "O que fazer: confira em Rebanho › Touros se os touros que você usa já estão com a "
+    "rodada mais recente. Se faltar algum touro do seu fornecedor (ABS BullSearch, Alta, "
+    "Select Sires, CRV...), fale com o suporte informando o código NAAB — a gente inclui "
+    "no catálogo.\n"
+    "As provas alimentam a prova média do seu estoque de sêmen, o estudo de touros e a "
+    "sugestão de acasalamento; nada disso mudou."
 )
 
 
@@ -310,7 +498,28 @@ def calcular_agenda(
             _da_fazenda(select(Servico).where(Servico.ult_ocorrencia == 1), Servico)
         ).all()
     ]
+    # Histórico COMPLETO de serviços — alimenta só a classificação reprodutiva
+    # ao vivo dentro do motor (candidatas a IATF e "PEV encerra"). O recorte
+    # `ult_ocorrencia == 1` acima continua sendo o que o resto da agenda usa.
+    servicos_todos = [_model_to_dict(s) for s in session.exec(_da_fazenda(select(Servico), Servico)).all()]
     partos = [_model_to_dict(p) for p in session.exec(_da_fazenda(select(Parto), Parto)).all()]
+    # Aplicações de IATF SEM o filtro `realizada == False` usado mais abaixo:
+    # `_d0_protocolo_ativo` precisa das linhas de D0, que já estão realizadas
+    # quando o implante foi colocado. Sem elas o estado EM_PROTOCOLO nunca sai
+    # e a vaca com D0 de hoje volta a aparecer como candidata a protocolo.
+    aplicacoes_iatf_todas = [
+        _model_to_dict(ap) for ap in session.exec(
+            _da_fazenda(select(ProtocoloIatfAplicacao), ProtocoloIatfAplicacao)
+        ).all()
+    ]
+    # Peso vivo mais recente por matriz — entra na aptidão da novilha nulípara
+    # (mesmo padrão de routers/indicadores.py e routers/reproducao.py).
+    peso_por_animal: dict[str, float] = {}
+    _ultima_pesagem: dict[str, date] = {}
+    for _pes in session.exec(_da_fazenda(select(PesagemCorporal), PesagemCorporal)).all():
+        if _pes.numero_matriz not in _ultima_pesagem or _pes.data_pesagem > _ultima_pesagem[_pes.numero_matriz]:
+            _ultima_pesagem[_pes.numero_matriz] = _pes.data_pesagem
+            peso_por_animal[_pes.numero_matriz] = _pes.peso_kg
     # Alimenta o DEL AO VIVO no motor (ver AgendaEngine.calcular, param
     # `secagens`) — sem isso, Secagem/Pré-parto e o DEL usado no BST ficavam
     # presos ao `Animal.del_dias` congelado no último GERAL.csv.
@@ -331,6 +540,76 @@ def calcular_agenda(
             )
         ).all()
     ]
+    # Orçamento/OS anexados a pedido ainda aberto/parcialmente atendido, com
+    # validade — dispara o alerta "vence em breve" (ver AgendaEngine.calcular,
+    # param `pedidos_documentos_vencendo`). Junta com Pedido pra pegar
+    # numero_pedido/status/fornecedor_cliente sem duas idas ao banco por item.
+    _rotulo_status_pedido = {"aberto": "em aberto", "parcialmente_atendido": "parcialmente atendido"}
+    query_docs_pedido = (
+        select(PedidoAnexo, Pedido)
+        .join(Pedido, PedidoAnexo.pedido_id == Pedido.id)
+        .where(PedidoAnexo.data_validade.is_not(None), Pedido.status.in_(("aberto", "parcialmente_atendido")))
+    )
+    if fazenda_id is not None:
+        query_docs_pedido = query_docs_pedido.where(Pedido.fazenda_id == fazenda_id)
+    pedidos_documentos_vencendo = [
+        {
+            "pedido_id": pedido.id,
+            "numero_pedido": pedido.numero_pedido,
+            "categoria": anexo.categoria,
+            "data_validade": anexo.data_validade,
+            "fornecedor_cliente": pedido.fornecedor_cliente,
+            "status_label": _rotulo_status_pedido.get(pedido.status, pedido.status),
+        }
+        for anexo, pedido in session.exec(query_docs_pedido).all()
+    ]
+
+    # Pedido ainda aberto/parcialmente atendido com data prevista de entrega —
+    # alerta persistente "já chegou?" (ver AgendaEngine.calcular, param
+    # `pedidos_entrega_prevista`). Diferente do bloco acima (documento
+    # vencendo, com janela de 2 dias): aqui não há prazo-limite, é um
+    # lembrete de conferência física que precisa continuar visível antes E
+    # depois de `data_prevista`, até a entrega ser de fato marcada
+    # (PedidoItem.quantidade_entregue) — mesmo racional do Pré-parto/Secagem.
+    query_pedidos_entrega = select(Pedido).where(
+        Pedido.data_prevista.is_not(None), Pedido.status.in_(("aberto", "parcialmente_atendido")),
+    )
+    if fazenda_id is not None:
+        query_pedidos_entrega = query_pedidos_entrega.where(Pedido.fazenda_id == fazenda_id)
+    pedidos_entrega_prevista = [
+        {
+            "pedido_id": pedido.id,
+            "numero_pedido": pedido.numero_pedido,
+            "data_prevista": pedido.data_prevista,
+            "fornecedor_cliente": pedido.fornecedor_cliente,
+        }
+        for pedido in session.exec(query_pedidos_entrega).all()
+    ]
+
+    # Documento de Pessoa vencendo — hoje só "Contrato de trabalho por prazo
+    # determinado" (ver AgendaEngine.calcular, param `pessoas_documentos_
+    # vencendo`), pessoa ainda ativa. Antecedência maior que a de Pedido (15
+    # dias, não 2): decidir renovar ou encerrar um vínculo de trabalho
+    # precisa de mais prazo do que aprovar um orçamento.
+    query_docs_pessoa = (
+        select(PessoaAnexo, Pessoa)
+        .join(Pessoa, PessoaAnexo.pessoa_id == Pessoa.id)
+        .where(
+            PessoaAnexo.data_validade.is_not(None),
+            PessoaAnexo.categoria == "Contrato de trabalho por prazo determinado",
+            Pessoa.ativo == True,  # noqa: E712
+        )
+    )
+    if fazenda_id is not None:
+        query_docs_pessoa = query_docs_pessoa.where(Pessoa.fazenda_id == fazenda_id)
+    pessoas_documentos_vencendo = [
+        {
+            "pessoa_id": pessoa.id, "pessoa_nome": pessoa.nome,
+            "categoria": anexo.categoria, "data_validade": anexo.data_validade,
+        }
+        for anexo, pessoa in session.exec(query_docs_pessoa).all()
+    ]
+
     # Cadastro de lotes (identifica qual é o lote "Pré-parto" pela flag real —
     # ver AgendaEngine.calcular, param `lotes`) para não repetir o alerta
     # "Pré-parto" de quem já foi movido para esse lote.
@@ -352,8 +631,38 @@ def calcular_agenda(
         s for s in session.exec(_da_fazenda(select(Sanidade), Sanidade)).all()
         if s.atividade == "BST" or MARCADORES_BST.search(s.produto or "")
     ]
-    datas_bst = [s.data_aplicacao for s in sanidades_bst if s.data_aplicacao]
+    # Âncora da PRÓXIMA aplicação de rotina do rebanho: usa só as aplicações
+    # feitas pela rotina de BST (atividade == "BST"), nunca as doses de um
+    # protocolo de indução de lactação (_marcar_protocolo_inducao_realizado,
+    # que grava protocolo_inducao_lancamento_id em vez de atividade) nem uma
+    # aplicação avulsa (criar_aplicacao_sanidade, em sanidade.py) — mesmo que
+    # o produto seja BST. Essas doses são de um animal específico, fora do
+    # ciclo do rebanho inteiro, e não têm o condão de antecipar/atrasar a
+    # próxima aplicação de rotina. `sanidades_bst` (acima, mais abrangente)
+    # continua servindo só para saber se um animal específico já recebeu
+    # BST alguma vez (bst_nunca_aplicados/ja_aplicado_antes).
+    sanidades_bst_rotina = [s for s in sanidades_bst if s.atividade == "BST"]
+    datas_bst = [s.data_aplicacao for s in sanidades_bst_rotina if s.data_aplicacao]
     intervalo_bst_dias = intervalo_bst()
+
+    # Indução de cio (PGF2α/Cloprostenol) — só a janela que o motor de fato
+    # usa (observar cio de 2 a 5 dias após a aplicação, ver AgendaEngine
+    # bloco "3b"): aplicação de até 6 dias atrás é o bastante para cobrir
+    # qualquer dia dentro da janela de 2 a 5 dias a partir de hoje.
+    inducoes_cio = [
+        {"numero_matriz": s.numero_matriz, "data_aplicacao": s.data_aplicacao, "produto": s.produto}
+        for s in session.exec(
+            _da_fazenda(
+                select(Sanidade).where(
+                    Sanidade.atividade == ATIVIDADE_INDUCAO_CIO,
+                    Sanidade.data_aplicacao >= data - timedelta(days=6),
+                    Sanidade.data_aplicacao <= data,
+                ),
+                Sanidade,
+            )
+        ).all()
+        if s.data_aplicacao
+    ]
     # `bst_ajuste_ancora_data` é o override manual gravado por
     # POST /producao/bst/ajustar-proxima-aplicacao (opção "considerar essa
     # nova data a referência") — só vale enquanto for mais recente que a
@@ -388,6 +697,13 @@ def calcular_agenda(
         proxima_visita_bst_real=proxima_visita_bst_real,
         lotes=lotes,
         secagens=secagens,
+        pedidos_documentos_vencendo=pedidos_documentos_vencendo,
+        pedidos_entrega_prevista=pedidos_entrega_prevista,
+        pessoas_documentos_vencendo=pessoas_documentos_vencendo,
+        inducoes_cio=inducoes_cio,
+        aplicacoes_iatf=aplicacoes_iatf_todas,
+        peso_por_animal=peso_por_animal,
+        servicos_historico=servicos_todos,
     )
 
     # Candidatas aptas que NUNCA receberam nenhuma aplicação de BST — vaca que
@@ -410,19 +726,34 @@ def calcular_agenda(
     # Compromisso de agenda para o dia da aplicação de BST — antes disso a
     # "próxima aplicação" só existia como número informativo (proxima_visita_bst)
     # e nos indicadores/tabelas aptos-excluídos-nunca aplicados, sem nunca virar
-    # um evento cronológico de verdade no dia certo. Carrega os números dos
-    # animais direto no evento (aptas/incluir no próximo/inaptas) para que o
-    # app também consiga mostrar as três listas sem precisar de outra chamada.
+    # um evento cronológico de verdade. Carrega os números dos animais direto
+    # no evento (aptas/incluir no próximo/inaptas) para que o app também
+    # consiga mostrar as três listas sem precisar de outra chamada.
+    #
+    # IMPORTANTE: data do evento é `proxima_visita_bst_real` (a data real da
+    # próxima aplicação), NÃO a data de referência `data` da consulta — o
+    # front sempre consulta a Agenda com `data=hoje` (não existe navegação que
+    # troque essa referência; a "visão de calendário"/"linha do tempo" só
+    # filtram no cliente uma única resposta já carregada, ver
+    # frontend/app/agenda/page.tsx). Gatear a criação do evento em
+    # `proxima_visita_bst_real == data` fazia o card só existir no dia exato
+    # em que alguém abrisse a Agenda bem naquele dia — em qualquer outro dia
+    # (inclusive olhando o dia da aplicação com antecedência pela grade do
+    # calendário) o evento simplesmente não era gerado e a "próxima aplicação"
+    # ficava só no número informativo. Mesmo padrão sem piso de data já usado
+    # pela "Visita reprodutiva" (proxima_visita_iatf, ver AgendaEngine.calcular
+    # — o evento carrega sua própria data e aparece em Atrasados se passar do
+    # dia sem confirmação).
     eventos_bst = []
-    if proxima_visita_bst_real is not None and proxima_visita_bst_real == data:
+    if proxima_visita_bst_real is not None:
         total_aptos = len(result.bst_elegiveis)
         total_incluir = len(bst_nunca_aplicados)
         total_inaptos = len(result.bst_excluidos)
-        chave_bst = f"bst_aplicacao_{data.isoformat()}"
+        chave_bst = f"bst_aplicacao_{proxima_visita_bst_real.isoformat()}"
         if chave_bst not in realizados:
             eventos_bst.append({
-                "id": chave_bst, "data": data.isoformat(), "categoria": "Reprodutivo",
-                "descricao": f"Aplicação de BST hoje — {total_aptos} apta(s), {total_incluir} para incluir no próximo BST",
+                "id": chave_bst, "data": proxima_visita_bst_real.isoformat(), "categoria": "Reprodutivo",
+                "descricao": f"Aplicação de BST — {total_aptos} apta(s), {total_incluir} para incluir no próximo BST",
                 "numero_animal": None,
                 "observacao": f"Vacas em lactação inaptas (não elegíveis): {total_inaptos}. Toque para ver as listas.",
                 "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "bst_aplicacao",
@@ -473,6 +804,11 @@ def calcular_agenda(
     } if ids_etapa_necessarios else {}
     lancamentos_por_id = {l.id: l for l in session.exec(_da_fazenda(select(ProtocoloSanitarioLancamento), ProtocoloSanitarioLancamento)).all()}
     protocolos_por_id = {p.id: p for p in session.exec(_da_fazenda(select(ProtocoloSanitario), ProtocoloSanitario)).all()}
+    # Mesmo princípio de IATF/Indução (ver `.encerrado_em`/`.ativo` abaixo,
+    # linhas ~840/941): um lote sanitário encerrado ou cancelado pela Central
+    # (ProtocoloSanitarioLote, ver central_protocolos.py) para de cobrar
+    # pendência na Agenda, mesmo com etapas ainda não realizadas.
+    lotes_por_id = {lo.id: lo for lo in session.exec(_da_fazenda(select(ProtocoloSanitarioLote), ProtocoloSanitarioLote)).all()}
     eventos_protocolo = []
     for ap in aplicacoes_pendentes:
         chave = f"protocolo_sanitario_{ap.id}"
@@ -482,6 +818,9 @@ def calcular_agenda(
         lancamento = lancamentos_por_id.get(ap.lancamento_id)
         protocolo = protocolos_por_id.get(lancamento.protocolo_id) if lancamento else None
         if not etapa or not lancamento or not protocolo:
+            continue
+        lote = lotes_por_id.get(lancamento.lote_id) if lancamento.lote_id else None
+        if lote and (lote.encerrado_em or not lote.ativo):
             continue
         produto = ap.produto or etapa.produto
         eventos_protocolo.append({
@@ -662,7 +1001,16 @@ def calcular_agenda(
 
     # Eventos sanitários agendados (por época ou por evento de vida) — cada um
     # já traz o medicamento padrão para pré-preencher a Aplicação ao dar baixa.
-    eventos_sanitarios = _eventos_sanitarios_agenda(session, data, realizados)
+    # BUG DE SEGURANÇA CORRIGIDO (achado durante a investigação do
+    # "app não abre a agenda" em 12/09/2026): faltava `fazenda_id` aqui —
+    # `eventos_agenda` (fazenda/rules/eventos_sanitarios.py) tem o parâmetro,
+    # mas com ele omitido caía no default `None`, que remove TODOS os filtros
+    # `.where(fazenda_id == ...)` internos. Toda pendência sanitária por
+    # evento de vida (ex.: Brucelose B19 de todo cliente do SaaS) aparecia
+    # misturada na Agenda de qualquer fazenda — mesma classe de furo que a
+    # auditoria de RLS (PR #767) mirou, só que numa chamada que ela não
+    # cobria por não ser uma consulta direta a `session.exec`.
+    eventos_sanitarios = _eventos_sanitarios_agenda(session, data, realizados, fazenda_id)
 
     # Protocolos personalizados (Configurações > Cadastro > Protocolos
     # personalizados) — fonte ADITIVA de tarefas: o cronograma que o próprio
@@ -814,6 +1162,70 @@ def calcular_agenda(
                 "cura_origem": "protocolo", "cura_id": lanc.id,
             })
 
+    # Confirmação de início de lactação — protocolo de indução de lactação
+    # (ProtocoloInducaoLancamento/Aplicacao, ver bloco acima) concluído para
+    # uma matriz sem que isso tenha aberto a `Lactacao` dela (ver
+    # fazenda/rules/lactacao.py — o modelo e `abrir_lactacao(origem="inducao")`
+    # já existiam prontos, mas nenhum call site os usava: uma matriz que
+    # terminava a indução ficava com todas as etapas realizadas e NUNCA
+    # entrava em lactação no sistema). Espelha "Confirmar cura" acima, mas a
+    # agregação é por (lançamento, MATRIZ) — o lançamento de indução é em
+    # LOTE (várias matrizes por lançamento), diferente do lançamento de
+    # protocolo sanitário (uma matriz só) — então um lançamento com 5
+    # matrizes onde só 3 terminaram já pergunta por essas 3, sem esperar as
+    # outras 2 (ver `inducao_concluida`, que agrega por animal).
+    # Sem piso de data, mesmo espírito de "perda de prenhez sem motivo"
+    # (mais abaixo): uma indução concluída há meses (ex.: matriz 422, que deu
+    # origem a este card) continua pendente até o usuário responder, não só
+    # nos dias seguintes à conclusão — é "computado ao vivo do estado atual",
+    # não um evento agendado com janela de validade.
+    eventos_confirmar_lactacao_inducao = []
+    aplicacoes_inducao_por_animal: dict[tuple[int, str], list[ProtocoloInducaoAplicacao]] = {}
+    for a in session.exec(_da_fazenda(select(ProtocoloInducaoAplicacao), ProtocoloInducaoAplicacao)).all():
+        lanc_inducao = lancamentos_inducao_por_id.get(a.lancamento_id)
+        if not lanc_inducao or not lanc_inducao.ativo or lanc_inducao.encerrado_em:
+            continue  # cancelado ou encerrado manualmente antes do fim — não pergunta
+        aplicacoes_inducao_por_animal.setdefault((a.lancamento_id, a.numero_matriz), []).append(a)
+    for (lancamento_id, numero_matriz), aps_animal in aplicacoes_inducao_por_animal.items():
+        chave = f"confirmar_lactacao_inducao_{lancamento_id}_{numero_matriz}"
+        if chave in realizados:
+            continue
+        concluida, data_sugerida = inducao_concluida(aps_animal)
+        if not concluida:
+            continue  # ainda falta etapa dessa matriz — não é pendência ainda
+        lanc_inducao = lancamentos_inducao_por_id[lancamento_id]
+        lactacao_atual = regras_lactacao.lactacao_aberta(
+            session, numero_matriz=numero_matriz, data=data, fazenda_id=fazenda_id,
+        )
+        # Só é "já resolvido, nada a perguntar" quando a lactação aberta COMEÇOU
+        # durante ou depois desta indução (ex.: a matriz emprenhou e pariu de
+        # verdade no meio do protocolo). Uma lactação aberta desde ANTES do D0
+        # é o bug real que motivou este card (matriz 422): uma secagem que
+        # nunca foi lançada no sistema deixa a Lactacao anterior aberta para
+        # sempre, com DEL vivo cada vez maior, mesmo com a matriz já seca de
+        # verdade. Silenciar o card nesse caso escondia o problema em vez de
+        # sinalizá-lo — por isso ele aparece do mesmo jeito, com aviso.
+        if lactacao_atual is not None and lactacao_atual.data_inicio >= lanc_inducao.data_d0:
+            continue  # já em lactação por evento real ocorrido nesta janela — nada a perguntar
+        aviso = None
+        if lactacao_atual is not None:
+            aviso = (
+                f"Esta matriz já tem uma lactação aberta desde {lactacao_atual.data_inicio.isoformat()} "
+                "(antes desta indução) — provável secagem nunca lançada no sistema. Confirmar "
+                "\"Sim\" fecha essa lactação antiga na data escolhida abaixo; se a secagem real "
+                "aconteceu antes, lance-a primeiro em Produção > Secagem para manter o histórico correto."
+            )
+        eventos_confirmar_lactacao_inducao.append({
+            "id": chave, "data": (data_sugerida or data).isoformat(), "categoria": "Produção",
+            "descricao": f"Confirmar início de lactação — indução concluída (matriz {numero_matriz})",
+            "numero_animal": numero_matriz,
+            "observacao": f"Protocolo: {lanc_inducao.nome_protocolo}",
+            "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "confirmar_lactacao_inducao",
+            "lancamento_id": lancamento_id, "numero_matriz": numero_matriz,
+            "data_sugerida": data_sugerida.isoformat() if data_sugerida else None,
+            "aviso": aviso,
+        })
+
     # Nova dieta: alerta um dia antes ("para amanhã") e no dia ("hoje"), com
     # link para abrir a dieta. A chave inclui a data de referência → o alerta
     # de véspera e o do dia são eventos distintos (marcar um não some o outro).
@@ -833,6 +1245,68 @@ def calcular_agenda(
                 "fonte": "auto", "cor": "var(--dourado)", "ref": str(d.id), "tipo": "nova_dieta", "lote": d.lote,
                 "comunicado": True,
             })
+
+    # Sobra de cocho fora da faixa aceitável (sessão 3, Frente C). Igual à
+    # "nova dieta" acima: COMPUTADO a cada chamada, nunca lido de uma tabela
+    # de alerta própria — porque ConsumoSobra é substituída (não somada) se
+    # relançada no mesmo dia, e o alerta tem de acompanhar o valor vigente,
+    # não o primeiro lançado (C7). Só olha a sobra DO DIA pedido (`data`),
+    # nunca a janela de `dias` — o alerta é "do mesmo dia" (C1), não uma
+    # cobrança retroativa.
+    eventos_alerta_sobra = []
+    sobras_hoje = session.exec(
+        _da_fazenda(select(ConsumoSobra).where(ConsumoSobra.data == data), ConsumoSobra)
+    ).all()
+    if sobras_hoje:
+        sobra_min = float(get_param("sobra_min_pct", 3) or 3)
+        sobra_max = float(get_param("sobra_max_pct", 7) or 7)
+        sobra_alvo = float(get_param("sobra_alvo_pct", 5) or 5)
+        for s in sobras_hoje:
+            consumo_lote = session.exec(
+                _da_fazenda(
+                    select(ConsumoAlimento).where(ConsumoAlimento.lote == s.lote, ConsumoAlimento.data == s.data),
+                    ConsumoAlimento,
+                )
+            ).all()
+            if not consumo_lote:
+                continue  # sem fornecido lançado — não dá para calcular % nem instrução, sem inventar
+            kg_por_alimento: dict[str, float] = {}
+            for c in consumo_lote:
+                kg = kg_equivalente(c.quantidade, c.unidade)
+                if kg is None:
+                    continue  # C6 — litro/dose/unidade não entram na conta nem na instrução
+                kg_por_alimento[c.alimento] = kg_por_alimento.get(c.alimento, 0.0) + kg
+            kg_total = sum(kg_por_alimento.values())
+            if kg_total <= 0:
+                continue  # só havia alimento sem conversão para kg — sem denominador, sem percentual
+            pct = (s.kg_sobra / kg_total) * 100.0
+            if sobra_min <= pct <= sobra_max:
+                # C8 — dentro da faixa, nenhum alerta (nem "está tudo certo").
+                # Mas se JÁ existia um alerta (sobra corrigida no mesmo dia
+                # para dentro da faixa), ele precisa sumir também da central.
+                _limpar_alerta_sobra_portal(session, fazenda_id, s.lote, s.data)
+                continue
+            # Quanto precisaria ter sido fornecido, mantendo o consumido real
+            # constante, para a sobra ter batido o alvo (sobra_alvo_pct):
+            #   kg_consumido = kg_total - kg_sobra (o que as vacas de fato comeram)
+            #   novo_total * (1 - alvo%) = kg_consumido  =>  novo_total = kg_consumido / (1 - alvo%)
+            # delta > 0 acrescentar, delta < 0 reduzir — mesma conta nos dois sentidos.
+            kg_consumido = kg_total - s.kg_sobra
+            divisor = 1.0 - (sobra_alvo / 100.0)
+            kg_total_alvo = (kg_consumido / divisor) if divisor > 0 else kg_total
+            delta_total_kg = kg_total_alvo - kg_total
+            texto = _texto_alerta_sobra(s.lote, pct, delta_total_kg, kg_por_alimento, kg_total)
+            chave = _chave_alerta_sobra(s.lote, s.data)
+            if chave in realizados:
+                continue
+            eventos_alerta_sobra.append({
+                "id": chave, "data": s.data.isoformat(), "categoria": "alimentacao",
+                "descricao": texto, "numero_animal": None,
+                "observacao": "Sobra fora da faixa aceitável — só um comunicado, sem lançamento a fazer aqui.",
+                "fonte": "auto", "cor": "var(--dourado)", "ref": str(s.id), "tipo": "alerta_sobra", "lote": s.lote,
+                "comunicado": True,
+            })
+            _upsert_alerta_sobra_portal(session, fazenda_id, s.lote, s.data, texto, s.usuario_id)
 
     # Pesagem do rebanho (acompanhamento da evolução de peso): cada agendamento
     # (fase) gera um lembrete na Agenda nos dias configurados (periodicidade +
@@ -883,7 +1357,25 @@ def calcular_agenda(
     # manualmente), uma eventual nova sugestão a partir do novo lote é tratada
     # como uma pendência nova, mesmo que o animal já tenha dispensado uma
     # sugestão antes a partir do lote anterior.
-    parametro_movimentacao = session.get(ParametroSugestaoMovimentacao, 1) or ParametroSugestaoMovimentacao(id=1)
+    #
+    # A Agenda passou a ENXERGAR o que a tela de Parâmetros configura — antes
+    # não enxergava. Isto é a correção de um bug silencioso, não uma
+    # refatoração: a leitura era `session.get(ParametroSugestaoMovimentacao, 1)`,
+    # ou seja, pela CHAVE PRIMÁRIA id = 1, sem recorte de fazenda nenhum. É o
+    # desenho antigo de linha única global, que ficou para trás quando o
+    # parâmetro virou uma linha por fazenda; a tela grava por fazenda (ver
+    # `movimentacoes._parametro_sugestao_movimentacao`), então o dono
+    # configurava num lugar e a Agenda lia outro. Pior: com a linha órfã de
+    # id 1 apagada pelo backfill por fazenda, o `get` devolvia None e a Agenda
+    # caía no objeto de fábrica do `or`, ignorando a configuração — mudando na
+    # prática QUANDO a sugestão aparece (na data em que o animal passa a
+    # atender outro lote × só no dia fixo da semana escolhido).
+    #
+    # Leitura PURA de propósito: a Agenda roda a cada carregamento de tela e
+    # não pode criar linha nem commitar (o get-or-create da tela faria a
+    # primeira visita de um tenant novo gravar o parâmetro sozinha). Sem linha
+    # cadastrada, vem o padrão em memória e nada é escrito no banco.
+    parametro_movimentacao = ler_parametro_sugestao_movimentacao(session, fazenda_id)
     eventos_movimentacao = []
     mostra_hoje = (
         parametro_movimentacao.modo == "dia_fixo_semana" and data.weekday() == parametro_movimentacao.dia_semana
@@ -1080,6 +1572,65 @@ def calcular_agenda(
             "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "diaria_fim", "diaria_id": diaria.id,
         })
 
+    # Empreitada por etapa — quando a PENÚLTIMA etapa é paga, avisa no dia
+    # seguinte para preparar/fechar a última etapa. "Paga" = a ContaGerencial
+    # gerada pela etapa (EmpreitadaEtapa.numero_lancamento_gerado, ver
+    # concluir_etapa_empreitada em rh_contratos.py) já tem data_pagamento —
+    # distinto de "concluída" (só marca que a etapa terminou e a conta a
+    # pagar foi lançada, ainda sem baixa). Contrato (não-empreita) não tem
+    # conceito de etapas hoje (só parcelamento fixo, ver ContratoParcela) —
+    # este alerta cobre só Empreitada.
+    eventos_empreitada_penultima_etapa = []
+    ontem = data - timedelta(days=1)
+    query_contas_pagas_ontem = select(ContaGerencial).where(
+        ContaGerencial.data_pagamento == ontem, ContaGerencial.valor_pago.is_not(None),
+    )
+    if fazenda_id is not None:
+        query_contas_pagas_ontem = query_contas_pagas_ontem.where(ContaGerencial.fazenda_id == fazenda_id)
+    numeros_pagos_ontem = {
+        c.numero_lancamento for c in session.exec(query_contas_pagas_ontem).all() if c.numero_lancamento
+    }
+    if numeros_pagos_ontem:
+        query_etapas_pagas = select(EmpreitadaEtapa).where(
+            EmpreitadaEtapa.numero_lancamento_gerado.in_(numeros_pagos_ontem)
+        )
+        if fazenda_id is not None:
+            query_etapas_pagas = query_etapas_pagas.where(EmpreitadaEtapa.fazenda_id == fazenda_id)
+        etapas_pagas_ontem = session.exec(query_etapas_pagas).all()
+        empreitada_ids = {e.empreitada_id for e in etapas_pagas_ontem}
+        if empreitada_ids:
+            todas_etapas_por_empreitada: dict[int, list] = {}
+            for e in session.exec(
+                select(EmpreitadaEtapa).where(EmpreitadaEtapa.empreitada_id.in_(empreitada_ids))
+            ).all():
+                todas_etapas_por_empreitada.setdefault(e.empreitada_id, []).append(e)
+            empreitadas_map = {
+                emp.id: emp for emp in session.exec(select(Empreitada).where(Empreitada.id.in_(empreitada_ids))).all()
+            }
+            pessoas_nome_map = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+            for etapa in etapas_pagas_ontem:
+                ordenadas = sorted(todas_etapas_por_empreitada.get(etapa.empreitada_id, []), key=lambda x: (x.ordem, x.id))
+                if len(ordenadas) < 2 or ordenadas[-2].id != etapa.id:
+                    continue  # só a PENÚLTIMA etapa dispara o aviso
+                emp = empreitadas_map.get(etapa.empreitada_id)
+                if not emp:
+                    continue
+                chave = f"empreitada_penultima_etapa_{etapa.id}"
+                if chave in realizados:
+                    continue
+                eventos_empreitada_penultima_etapa.append({
+                    "id": chave, "data": data.isoformat(), "categoria": "Gestão/Financeiro",
+                    "descricao": f"Penúltima etapa da empreita de {pessoas_nome_map.get(emp.pessoa_id, '—')} ({emp.descricao}) foi paga — falta a última etapa",
+                    "numero_animal": None, "observacao": f"Etapa paga: {etapa.nome}",
+                    "fonte": "auto", "cor": "var(--dourado)", "ref": None,
+                    "tipo": "empreitada_penultima_etapa", "empreitada_id": emp.id,
+                    # `empreita`, não `empreitada`: o chip da tela de folha se
+                    # chama "empreita" e o valor desconhecido caía em silêncio
+                    # no chip "Todos" — o link abria a tela certa e a categoria
+                    # errada (ver o useEffect de FolhaPagamentoView.tsx).
+                    "link": "/financeiro?ir=folha&categoria=empreita",
+                })
+
     # Só mostra o que o usuário tem permissão de ver — se falta acesso a um
     # módulo (ex.: "financeiro"), nenhum vestígio dele aparece na Agenda: nem
     # os eventos daquela categoria, nem as contas a pagar, nem os painéis
@@ -1114,7 +1665,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_diaria_trabalho + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario + eventos_perda_prenhez_pendente
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_confirmar_lactacao_inducao + eventos_nova_dieta + eventos_alerta_sobra + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_diaria_trabalho + eventos_empreitada_penultima_etapa + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario + eventos_perda_prenhez_pendente
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis
@@ -1208,6 +1759,12 @@ def calcular_agenda(
 class MedicamentoIatfIn(BaseModel):
     produto: str  # nome do medicamento/frasco escolhido (item de estoque)
     estoque_id: int | None = None  # "qual frasco?" — abate deste item específico
+    # "de qual lote/frasco de COMPRA?" (Fase G, 01/09/2026) — um nível abaixo
+    # de estoque_id, mesmo campo que a aplicação avulsa de Sanidade já tem
+    # (ver ItemSanidade em comumForms.tsx). Só usado hoje pelo protocolo
+    # Sanitário (ver _baixar_protocolo_sanitario); IATF/Indução ainda
+    # ignoram este campo. None = backend escolhe por FIFO (lote mais antigo).
+    lote_id: int | None = None
     dose: float | None = None
     unidade: str | None = None
     via: str | None = None
@@ -1238,6 +1795,12 @@ class RealizadoIn(BaseModel):
     motivo: str | None = None                       # cronograma_sanitario_modo_ — motivo do adiamento (opcional)
     responsavel: str | None = None                  # cronograma_sanitario_aplicar_
     observacao: str | None = None                   # cronograma_sanitario_aplicar_
+    numero_matriz: str | None = None                # cronograma_sanitario_incluir_manual_ — animal a incluir fora da janela
+    # Checklist da Ocorrência (redesenho do evento sanitário, Fase 1) — cada
+    # campo só é lido pelo prefixo correspondente (ver
+    # _decidir_checklist_item/_desconsiderar_cronograma abaixo).
+    acao: str | None = None       # cronograma_sanitario_checklist_ — "pular" ou None (confirma o item)
+    resposta: str | None = None   # cronograma_sanitario_checklist_ — "sim"/"nao" (item vet) ou horário (item horario)
 
 
 def _exigir_da_fazenda(registro, fazenda_id: int | None, rotulo: str):
@@ -1252,6 +1815,33 @@ def _exigir_da_fazenda(registro, fazenda_id: int | None, rotulo: str):
     return registro
 
 
+def _buscar_da_fazenda(session: Session, modelo, registro_id: int, fazenda_id: int | None):
+    """Carrega UM registro por id JÁ FILTRANDO por fazenda na própria consulta,
+    em vez de `session.get()` seguido de um `if` sobre o objeto carregado.
+
+    A diferença não é estética. O `if` de antes era
+    `registro.fazenda_id not in (None, fazenda_id)`, que tolerava
+    `fazenda_id=NULL` no registro: um ProtocoloSanitarioAplicacao órfão (a
+    própria migração 029227481e9e_backfill_fazenda_id_nulo documenta que
+    sobram linhas NULL em instalação com 2+ fazendas) era confirmável por
+    QUALQUER fazenda-cliente, gravando Sanidade e baixando estoque em cima
+    dele. Filtrando na consulta, "de outra fazenda" e "sem fazenda" caem os
+    dois no mesmo lugar: não encontrado.
+
+    `fazenda_id is None` só acontece em ambiente onde o multi-fazenda NÃO
+    está provisionado (tabela `fazenda` vazia — suíte de testes e instalação
+    anterior à migração f1a2b3c4d5e6). Havendo qualquer fazenda cadastrada, a
+    trava de porta (fazenda/auth.py::exigir_fazenda_selecionada, montada no
+    router da Agenda em main.py) recusa a requisição antes de chegar aqui, e
+    `get_fazenda_id_escrita` nunca devolve None. O caso está tratado
+    explicitamente, não por omissão: sem tenant cadastrado não há tenant a
+    isolar."""
+    query = select(modelo).where(modelo.id == registro_id)
+    if fazenda_id is not None:
+        query = query.where(modelo.fazenda_id == fazenda_id)
+    return session.exec(query).first()
+
+
 def _decidir_cronograma_animal(
     session: Session, evento_id: str, incluir: bool | None, fazenda_id: int | None = None
 ) -> None:
@@ -1261,6 +1851,39 @@ def _decidir_cronograma_animal(
     _exigir_da_fazenda(session.get(CronogramaSanitarioAnimal, linha_id), fazenda_id, "Animal do cronograma")
     try:
         _cronograma_sanitario_rules.decidir_animal(session, linha_id, incluir, date.today())
+    except CronogramaError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def _remover_animal_cronograma(
+    session: Session, evento_id: str, fazenda_id: int | None = None
+) -> None:
+    linha_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}remover_animal_"))
+    _exigir_da_fazenda(session.get(CronogramaSanitarioAnimal, linha_id), fazenda_id, "Animal do cronograma")
+    try:
+        _cronograma_sanitario_rules.remover_animal(session, linha_id, date.today())
+    except CronogramaError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def _incluir_animal_manual(
+    session: Session, evento_id: str, numero_matriz: str | None, fazenda_id: int | None = None
+) -> None:
+    """Inclusão manual, fora da janela de aplicação (bug relatado pelo
+    usuário em 12/09/2026) — animal que não bateu o critério automático da
+    regra (idade/gatilho/categoria projetada) e por isso nunca ganhou linha
+    "sugerido" nenhuma para decidir."""
+    if not (numero_matriz or "").strip():
+        raise HTTPException(status_code=400, detail="Selecione o animal a incluir")
+    cronograma_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}incluir_manual_"))
+    cronograma = _exigir_da_fazenda(session.get(CronogramaSanitario, cronograma_id), fazenda_id, "Cronograma")
+    query_animal = select(Animal).where(Animal.numero == numero_matriz)
+    if fazenda_id is not None:
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+    if not session.exec(query_animal).first():
+        raise HTTPException(status_code=404, detail="Animal não encontrado")
+    try:
+        _cronograma_sanitario_rules.incluir_animal_manual(session, cronograma, numero_matriz, date.today())
     except CronogramaError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1322,16 +1945,83 @@ def _aplicar_cronograma(
     )
 
 
+def _decidir_checklist_item(
+    session: Session, evento_id: str, acao: str | None, resposta: str | None, motivo: str | None,
+    fazenda_id: int | None, usuario_id: int | None,
+) -> None:
+    """Checklist da Ocorrência (redesenho do evento sanitário, Fase 1) — um
+    item por vez. `acao == "pular"` sempre disponível, em qualquer item, sem
+    exceção (arquitetura travada, seção 1 do redesenho); qualquer outro valor
+    confirma o item, com o comportamento específico da `chave` já gravada
+    nele (o cliente não escolhe a chave — evita um item "vet" ser confirmado
+    como se fosse genérico só porque o front mandou errado)."""
+    item_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}checklist_"))
+    item = _exigir_da_fazenda(session.get(ChecklistItem, item_id), fazenda_id, "Item do checklist")
+    hoje = datetime.utcnow()
+    try:
+        if acao == "pular":
+            _checklist_sanitario_rules.marcar_pulado(session, item.id, motivo, usuario_id, hoje, fazenda_id)
+        elif item.chave == "vet":
+            _checklist_sanitario_rules.responder_veterinario(session, item.id, resposta or "", motivo, usuario_id, hoje, fazenda_id)
+        elif item.chave == "horario":
+            _checklist_sanitario_rules.confirmar_horario(session, item.id, resposta or "", usuario_id, hoje, fazenda_id)
+        elif item.chave == "lotes":
+            _checklist_sanitario_rules.marcar_lotes_revisado(session, item.id, usuario_id, hoje, fazenda_id)
+        else:
+            _checklist_sanitario_rules.marcar_cumprido(session, item.id, usuario_id, hoje, fazenda_id)
+    except ChecklistError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def _desconsiderar_cronograma(
+    session: Session, evento_id: str, motivo: str | None, fazenda_id: int | None,
+) -> None:
+    """"Desconsiderar cronograma" (seção 3.2.5 do redesenho) — confirma a
+    Ocorrência inteira sem passar pelo checklist. Ação sobre o cronograma
+    (não um item), por isso prefixo próprio em vez de reaproveitar
+    `checklist_`."""
+    cronograma_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}desconsiderar_"))
+    cronograma = _exigir_da_fazenda(session.get(CronogramaSanitario, cronograma_id), fazenda_id, "Cronograma")
+    try:
+        _checklist_sanitario_rules.desconsiderar_cronograma(session, cronograma, motivo, datetime.utcnow())
+    except ChecklistError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 def _baixar_protocolo_sanitario(
     session: Session, evento_id: str, fazenda_id: int | None = None, usuario_id: int | None = None,
+    data_realizacao: date | None = None, estoque_id: int | None = None, lote_id: int | None = None,
 ) -> list[str]:
     """
     Ao marcar "realizado" um evento de protocolo sanitário: registra a
     aplicação em Sanidade e dá baixa automática do produto no Estoque (quando
     a unidade da etapa bate com a unidade de estoque do produto).
+
+    `data_realizacao` (padrão: hoje) permite baixa RETROATIVA — usado pela
+    Central de Protocolos (POST /central-protocolos/sanitario/{id}/baixa),
+    que reaproveita esta função exatamente como IATF/Indução/Customizado/Lida
+    reaproveitam suas respectivas `_marcar_*_realizado`. A confirmação normal
+    pela Agenda (POST /agenda/realizados) não passa este argumento — mantém
+    o comportamento de sempre (hoje).
+
+    `estoque_id`/`lote_id` (Fase G, 01/09/2026): "de qual frasco/lote?" —
+    escolhidos pelo usuário na Central (ver `dar_baixa`, origem="sanitario").
+    Sem eles, resolve o item pelo nome do produto e a baixa cai em FIFO
+    (mesmo comportamento de sempre).
     """
     aplicacao_id = int(evento_id.removeprefix("protocolo_sanitario_"))
-    aplicacao = session.get(ProtocoloSanitarioAplicacao, aplicacao_id)
+    # BUG DE SEGURANÇA CORRIGIDO: `aplicacao_id` é um inteiro pequeno e
+    # sequencial vindo do `evento_id` (texto livre no corpo do POST
+    # /agenda/realizados) — sem filtrar por fazenda, a fazenda B chutava
+    # "protocolo_sanitario_7" e confirmava a aplicação da fazenda A,
+    # gravando uma Sanidade falsa no animal da vítima e consumindo o
+    # PRÓPRIO estoque para isso.
+    #
+    # A carga é filtrada na consulta (ver _buscar_da_fazenda): a checagem
+    # anterior era um `if` pós-`session.get` que tolerava
+    # `aplicacao.fazenda_id is None`, deixando os registros órfãos da
+    # migração de backfill abertos para qualquer tenant.
+    aplicacao = _buscar_da_fazenda(session, ProtocoloSanitarioAplicacao, aplicacao_id, fazenda_id)
     if not aplicacao or aplicacao.realizada:
         return []
     etapa = session.get(ProtocoloSanitarioEtapa, aplicacao.etapa_id)
@@ -1339,9 +2029,9 @@ def _baixar_protocolo_sanitario(
     if not etapa or not lancamento:
         return []
 
-    hoje = date.today()
+    data_efetiva = data_realizacao or date.today()
     aplicacao.realizada = True
-    aplicacao.data_realizacao = hoje
+    aplicacao.data_realizacao = data_efetiva
     session.add(aplicacao)
 
     # Se a etapa foi cadastrada por princípio ativo/classificação, usa o
@@ -1349,17 +2039,18 @@ def _baixar_protocolo_sanitario(
     produto = aplicacao.produto or etapa.produto
 
     session.add(Sanidade(
-        numero_matriz=lancamento.numero_matriz, data_aplicacao=hoje, produto=produto,
+        numero_matriz=lancamento.numero_matriz, data_aplicacao=data_efetiva, produto=produto,
         dose=etapa.dosagem, unidade=etapa.unidade, via=etapa.via, responsavel=lancamento.responsavel,
         obs=f"Protocolo sanitário — D{etapa.dia}" + (f" — {lancamento.observacao}" if lancamento.observacao else ""),
-        protocolo_sanitario_lancamento_id=lancamento.id,
+        protocolo_sanitario_lancamento_id=lancamento.id, fazenda_id=fazenda_id,
     ))
 
-    estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=produto)
+    estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=produto, estoque_id=estoque_id)
     avisos = estoque_baixa.baixar(
-        session, item=estoque_item, quantidade=etapa.dosagem, unidade=etapa.unidade, data=hoje,
+        session, item=estoque_item, quantidade=etapa.dosagem, unidade=etapa.unidade, data=data_efetiva,
         fazenda_id=fazenda_id, observacao=f"Protocolo sanitário — matriz {lancamento.numero_matriz} — D{etapa.dia}",
         usuario_id=usuario_id, origem_tipo="protocolo_sanitario", origem_id=aplicacao.id, produto=produto,
+        lote_id=lote_id,
     )
     session.commit()
     return avisos
@@ -1376,7 +2067,13 @@ def _baixar_aplicacao_agendada(
     usuário pode ajustar o que foi de fato aplicado antes de confirmar; sem
     eles, usa os valores gravados na hora do agendamento."""
     aid = int(evento_id.removeprefix("aplic_agendada_"))
-    ag = session.get(AplicacaoAgendada, aid)
+    # BUG DE SEGURANÇA CORRIGIDO: mesmo cenário de _baixar_protocolo_sanitario
+    # — `aid` é um inteiro pequeno e sequencial vindo do corpo da requisição.
+    # A fazenda B chutava "aplic_agendada_12" e dava por aplicada a vacina
+    # programada de um animal da fazenda A. Carga filtrada na consulta; a
+    # checagem anterior (`ag.fazenda_id not in (None, fazenda_id)`) deixava
+    # passar toda AplicacaoAgendada órfã (fazenda_id NULL).
+    ag = _buscar_da_fazenda(session, AplicacaoAgendada, aid, fazenda_id)
     if not ag or ag.aplicado:
         return []
     hoje = date.today()
@@ -1395,13 +2092,16 @@ def _baixar_aplicacao_agendada(
     session.add(Sanidade(
         numero_matriz=ag.numero_matriz, data_aplicacao=hoje, produto=produto_final,
         dose=dose_final, unidade=unidade_final, via=via_final, responsavel=ag.responsavel, obs=ag.observacao,
-        natureza=ag.natureza or "curativo",
+        natureza=ag.natureza or "curativo", fazenda_id=fazenda_id,
     ))
 
     # Aplicação de BST confirmada (produto reconhecido) — fecha o ciclo do
     # "Reverter (voltar a apta)", igual à aplicação direta em aplicar_bst_lote.
     if MARCADORES_BST.search(produto_final or ""):
-        animal = session.exec(select(Animal).where(Animal.numero == ag.numero_matriz)).first()
+        query_animal = select(Animal).where(Animal.numero == ag.numero_matriz)
+        if fazenda_id is not None:
+            query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+        animal = session.exec(query_animal).first()
         if animal and animal.aguardando_nova_aplicacao_bst:
             animal.aguardando_nova_aplicacao_bst = False
             session.add(animal)
@@ -1431,14 +2131,18 @@ def _baixar_vacina_pre_parto(
     resto = evento_id.removeprefix("vacina_pre_parto_")
     numero_matriz, data_str = resto.rsplit("_", 1)
     data_evt = date.fromisoformat(data_str)
-    rows = session.exec(
-        select(AplicacaoAgendada).where(
-            AplicacaoAgendada.numero_matriz == numero_matriz,
-            AplicacaoAgendada.data == data_evt,
-            AplicacaoAgendada.observacao == "Vacina pré-parto",
-            AplicacaoAgendada.aplicado == False,  # noqa: E712
-        )
-    ).all()
+    query = select(AplicacaoAgendada).where(
+        AplicacaoAgendada.numero_matriz == numero_matriz,
+        AplicacaoAgendada.data == data_evt,
+        AplicacaoAgendada.observacao == "Vacina pré-parto",
+        AplicacaoAgendada.aplicado == False,  # noqa: E712
+    )
+    # BUG DE SEGURANÇA CORRIGIDO: sem este filtro, uma colisão de
+    # numero_matriz entre fazendas confirmava a vacina pré-parto de outro
+    # tenant.
+    if fazenda_id is not None:
+        query = query.where(AplicacaoAgendada.fazenda_id == fazenda_id)
+    rows = session.exec(query).all()
     hoje = date.today()
     avisos: list[str] = []
     for ag in rows:
@@ -1447,7 +2151,7 @@ def _baixar_vacina_pre_parto(
         session.add(ag)
         sanidade = Sanidade(
             numero_matriz=ag.numero_matriz, data_aplicacao=hoje, produto=ag.produto,
-            via=ag.via, responsavel=ag.responsavel, obs=ag.observacao,
+            via=ag.via, responsavel=ag.responsavel, obs=ag.observacao, fazenda_id=fazenda_id,
         )
         session.add(sanidade)
         session.flush()
@@ -1497,13 +2201,20 @@ def _marcar_protocolo_iatf_realizado(
     data_str, dia_str = resto.rsplit("_", 1)
     data_prevista, dia = date.fromisoformat(data_str), int(dia_str)
 
-    aplicacoes = session.exec(
-        select(ProtocoloIatfAplicacao).where(
-            ProtocoloIatfAplicacao.data_prevista == data_prevista,
-            ProtocoloIatfAplicacao.dia == dia,
-            ProtocoloIatfAplicacao.realizada == False,  # noqa: E712
-        )
-    ).all()
+    query = select(ProtocoloIatfAplicacao).where(
+        ProtocoloIatfAplicacao.data_prevista == data_prevista,
+        ProtocoloIatfAplicacao.dia == dia,
+        ProtocoloIatfAplicacao.realizada == False,  # noqa: E712
+    )
+    # BUG DE SEGURANÇA CORRIGIDO: sem este filtro, qualquer fazenda-cliente
+    # que batesse num par (data_prevista, dia) coincidente com outro tenant
+    # (D0/D7/D9/D11 são fixos, então colisão é comum) confirmava — e dava
+    # baixa de estoque/gravava Sanidade em cima de — um protocolo IATF que
+    # não era dela. `fazenda_id` vem de `get_fazenda_id_escrita` no único
+    # caller real (marcar_realizado), nunca None em produção.
+    if fazenda_id is not None:
+        query = query.where(ProtocoloIatfAplicacao.fazenda_id == fazenda_id)
+    aplicacoes = session.exec(query).all()
     if lancamento_id is not None:
         aplicacoes = [a for a in aplicacoes if a.lancamento_id == lancamento_id]
     if animais is not None:
@@ -1554,7 +2265,7 @@ def _marcar_protocolo_iatf_realizado(
                 numero_matriz=ap.numero_matriz, data_aplicacao=hoje, produto=m["produto"],
                 dose=m["dose"], unidade=m["unidade"], via=m["via"], responsavel=responsavel,
                 obs=f"Protocolo IATF — D{dia}",
-                protocolo_iatf_lancamento_id=ap.lancamento_id,
+                protocolo_iatf_lancamento_id=ap.lancamento_id, fazenda_id=fazenda_id,
             ))
 
     # Baixa de estoque: uma vez por medicamento, dose × nº de vacas confirmadas.
@@ -1631,13 +2342,17 @@ def _marcar_protocolo_inducao_realizado(
     lancamento_id_str, dia_str = resto.rsplit("_", 1)
     lancamento_id, dia = int(lancamento_id_str), int(dia_str)
 
-    aplicacoes = session.exec(
-        select(ProtocoloInducaoAplicacao).where(
-            ProtocoloInducaoAplicacao.lancamento_id == lancamento_id,
-            ProtocoloInducaoAplicacao.dia == dia,
-            ProtocoloInducaoAplicacao.realizada == False,  # noqa: E712
-        )
-    ).all()
+    query = select(ProtocoloInducaoAplicacao).where(
+        ProtocoloInducaoAplicacao.lancamento_id == lancamento_id,
+        ProtocoloInducaoAplicacao.dia == dia,
+        ProtocoloInducaoAplicacao.realizada == False,  # noqa: E712
+    )
+    # BUG DE SEGURANÇA CORRIGIDO: `lancamento_id` é um id sequencial
+    # adivinhável no corpo da requisição — sem este filtro, qualquer
+    # fazenda-cliente confirmava a indução de lactação de outro tenant.
+    if fazenda_id is not None:
+        query = query.where(ProtocoloInducaoAplicacao.fazenda_id == fazenda_id)
+    aplicacoes = session.exec(query).all()
     if animais is not None:
         alvo = set(animais)
         aplicacoes = [a for a in aplicacoes if a.numero_matriz in alvo]
@@ -1672,7 +2387,7 @@ def _marcar_protocolo_inducao_realizado(
                 numero_matriz=ap.numero_matriz, data_aplicacao=hoje, produto=m["produto"],
                 dose=m["dose"], unidade=m["unidade"], via=m["via"], responsavel=responsavel,
                 obs=f"Indução de lactação — D{dia}",
-                protocolo_inducao_lancamento_id=lancamento_id,
+                protocolo_inducao_lancamento_id=lancamento_id, fazenda_id=fazenda_id,
             ))
 
     # Baixa de estoque: uma vez por medicamento, dose × nº de vacas confirmadas.
@@ -1696,19 +2411,23 @@ def _marcar_protocolo_inducao_realizado(
     return avisos
 
 
-def _desmarcar_protocolo_inducao_realizado(session: Session, evento_id: str) -> None:
+def _desmarcar_protocolo_inducao_realizado(session: Session, evento_id: str, fazenda_id: int | None = None) -> None:
     """Reverte um grupo (lançamento, dia) da indução de lactação marcado por engano."""
     resto = evento_id.removeprefix("protocolo_inducao_")
     lancamento_id_str, dia_str = resto.rsplit("_", 1)
     lancamento_id, dia = int(lancamento_id_str), int(dia_str)
 
-    aplicacoes = session.exec(
-        select(ProtocoloInducaoAplicacao).where(
-            ProtocoloInducaoAplicacao.lancamento_id == lancamento_id,
-            ProtocoloInducaoAplicacao.dia == dia,
-            ProtocoloInducaoAplicacao.realizada == True,  # noqa: E712
-        )
-    ).all()
+    query = select(ProtocoloInducaoAplicacao).where(
+        ProtocoloInducaoAplicacao.lancamento_id == lancamento_id,
+        ProtocoloInducaoAplicacao.dia == dia,
+        ProtocoloInducaoAplicacao.realizada == True,  # noqa: E712
+    )
+    # BUG DE SEGURANÇA CORRIGIDO: sem este filtro, qualquer fazenda-cliente
+    # podia desconfirmar (reverter para pendente) a indução de lactação de
+    # outro tenant só adivinhando o lancamento_id.
+    if fazenda_id is not None:
+        query = query.where(ProtocoloInducaoAplicacao.fazenda_id == fazenda_id)
+    aplicacoes = session.exec(query).all()
     for ap in aplicacoes:
         ap.realizada = False
         ap.data_realizacao = None
@@ -1743,15 +2462,21 @@ def marcar_realizado(
         )
         return {"marcado": True, "avisos": avisos}
     if dados.evento_id.startswith(PREFIXO_PROTOCOLO_CUSTOM):
-        _marcar_protocolo_custom_realizado(session, dados.evento_id, dados.animais)
+        _marcar_protocolo_custom_realizado(session, dados.evento_id, dados.animais, fazenda_id=fazenda_id)
         return {"marcado": True}
     if dados.evento_id.startswith(PREFIXO_LIDA):
         avisos = _marcar_lida_realizado(
             session, dados.evento_id, dados.animais, fazenda_id=fazenda_id, usuario_id=usuario_id,
         )
         return {"marcado": True, "avisos": avisos}
+    if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}remover_animal_"):
+        _remover_animal_cronograma(session, dados.evento_id, fazenda_id)
+        return {"marcado": True}
     if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}animal_"):
         _decidir_cronograma_animal(session, dados.evento_id, dados.incluir, fazenda_id)
+        return {"marcado": True}
+    if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}incluir_manual_"):
+        _incluir_animal_manual(session, dados.evento_id, dados.numero_matriz, fazenda_id)
         return {"marcado": True}
     if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}modo_"):
         _decidir_cronograma_modo(session, dados.evento_id, dados.modo, dados.veterinario_pessoa_id, dados.nova_data, dados.motivo, fazenda_id)
@@ -1762,6 +2487,12 @@ def marcar_realizado(
             dados.produto, dados.dose, dados.unidade, dados.via, fazenda_id, user,
         )
         return {"marcado": True, "avisos": avisos}
+    if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}checklist_"):
+        _decidir_checklist_item(session, dados.evento_id, dados.acao, dados.resposta, dados.motivo, fazenda_id, usuario_id)
+        return {"marcado": True}
+    if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}desconsiderar_"):
+        _desconsiderar_cronograma(session, dados.evento_id, dados.motivo, fazenda_id)
+        return {"marcado": True}
 
     query_existe = select(EventoRealizado).where(EventoRealizado.evento_id == dados.evento_id)
     if fazenda_id is not None:
@@ -1794,6 +2525,16 @@ class AplicarBstIn(BaseModel):
     # (ou aplicado=False), NADA é baixado do estoque agora — fica programada
     # na Agenda até a visita ser confirmada.
     aplicado: bool = True
+    # `dose` acima é sempre A DOSE DE UM ANIMAL (comportamento histórico) —
+    # este campo deixa explícito, em vez de assumir, e permite que quem
+    # lança informe a dose já como TOTAL do lote selecionado (ex.: mediu
+    # 40 ml no total para 20 vacas) sem ter que fazer a conta na mão.
+    # True (padrão) = `dose` é por animal, gravada e baixada assim mesmo.
+    # False = `dose` é o total do lote; dividimos por `len(numeros_matriz)`
+    # antes de gravar/baixar, para não confundir "total" com "por animal"
+    # no estoque nem no relatório (cada Sanidade grava a dose por animal,
+    # nunca o total bruto).
+    dose_por_animal: bool = True
 
 
 @router.post("/bst/aplicar")
@@ -1813,11 +2554,20 @@ def aplicar_bst_lote(
     usuario_id = usuario_id_seguro(user)
     materializar = dados.aplicado and dados.data_aplicacao <= date.today()
 
+    # `dose` sempre vira "dose de UM animal" antes de gravar/baixar — quando
+    # veio como total do lote (dose_por_animal=False), divide pelo nº de
+    # animais selecionados agora, uma única vez. Cada Sanidade/AplicacaoAgendada
+    # grava e baixa só a fatia daquele animal, nunca o total bruto (senão o
+    # estoque cairia N vezes o total real e o relatório por animal ficaria
+    # inflado).
+    n = len(dados.numeros_matriz)
+    dose_individual = dados.dose if (dados.dose_por_animal or not dados.dose or not n) else round(dados.dose / n, 4)
+
     if not materializar:
         for numero in dados.numeros_matriz:
             session.add(AplicacaoAgendada(
                 numero_matriz=numero, data=dados.data_aplicacao, produto=dados.produto,
-                dose=dados.dose, unidade=dados.unidade, responsavel=dados.responsavel,
+                dose=dose_individual, unidade=dados.unidade, responsavel=dados.responsavel,
                 usuario_id=usuario_id, natureza="preventivo", fazenda_id=fazenda_id,
             ))
         session.commit()
@@ -1828,24 +2578,26 @@ def aplicar_bst_lote(
     for numero in dados.numeros_matriz:
         sanidade = Sanidade(
             numero_matriz=numero, data_aplicacao=dados.data_aplicacao, produto=dados.produto,
-            dose=dados.dose, unidade=dados.unidade, responsavel=dados.responsavel, atividade="BST",
+            dose=dose_individual, unidade=dados.unidade, responsavel=dados.responsavel, atividade="BST",
             usuario_id=usuario_id, natureza="preventivo", fazenda_id=fazenda_id,
         )
         session.add(sanidade)
         session.flush()
-        if dados.dose and dados.unidade:
+        if dose_individual and dados.unidade:
             # Antes esta baixa não gravava MovimentoEstoque nenhum — saldo caía
             # sem deixar rastro no histórico/RMCA (ver auditoria).
             estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=dados.produto)
             avisos.extend(estoque_baixa.baixar(
-                session, item=estoque_item, quantidade=dados.dose, unidade=dados.unidade, data=dados.data_aplicacao,
+                session, item=estoque_item, quantidade=dose_individual, unidade=dados.unidade, data=dados.data_aplicacao,
                 fazenda_id=fazenda_id, observacao=f"BST — matriz {numero}", usuario_id=usuario_id,
                 origem_tipo="bst", origem_id=sanidade.id, produto=dados.produto,
             ))
         # Nova aplicação de fato lançada — fecha o ciclo de "Reverter (voltar
         # a apta)": o animal deixa de ficar em bst_reanalise e volta a contar
         # normalmente pela avaliação de elegibilidade (ver agenda_engine.py).
-        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        animal = session.exec(
+            select(Animal).where(Animal.numero == numero, Animal.fazenda_id == fazenda_id)
+        ).first()
         if animal and animal.aguardando_nova_aplicacao_bst:
             animal.aguardando_nova_aplicacao_bst = False
             session.add(animal)
@@ -1870,7 +2622,10 @@ class MarcarInaptaBstIn(BaseModel):
 
 
 @router.post("/bst/marcar-inapta")
-def marcar_inapta_bst(dados: MarcarInaptaBstIn, session: Session = Depends(get_session)) -> dict:
+def marcar_inapta_bst(
+    dados: MarcarInaptaBstIn, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
     """Marca (ou reverte) animais como inaptos para a próxima aplicação de BST
     — ação distinta de aplicar: não lança nenhuma Sanidade nem mexe em
     estoque, só sinaliza para a Agenda/relatórios via Animal.excluir_bst.
@@ -1881,7 +2636,12 @@ def marcar_inapta_bst(dados: MarcarInaptaBstIn, session: Session = Depends(get_s
     limpa aguardando_nova_aplicacao_bst)."""
     atualizados = 0
     for numero in dados.numeros_matriz:
-        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        # BUG DE SEGURANÇA CORRIGIDO: sem o filtro de fazenda_id, qualquer
+        # usuário podia alternar a elegibilidade de BST de um animal de
+        # outra fazenda só enviando o número dele.
+        animal = session.exec(
+            select(Animal).where(Animal.numero == numero, Animal.fazenda_id == fazenda_id)
+        ).first()
         if not animal:
             continue
         animal.excluir_bst = dados.inapta
@@ -1892,7 +2652,7 @@ def marcar_inapta_bst(dados: MarcarInaptaBstIn, session: Session = Depends(get_s
     return {"atualizados": atualizados, "inapta": dados.inapta}
 
 
-def _desmarcar_protocolo_iatf_realizado(session: Session, evento_id: str) -> None:
+def _desmarcar_protocolo_iatf_realizado(session: Session, evento_id: str, fazenda_id: int | None = None) -> None:
     """
     Reverte um grupo (DATA PREVISTA, dia) do protocolo IATF marcado por
     engano — volta todas as aplicações do grupo para pendente (sem registro
@@ -1903,13 +2663,17 @@ def _desmarcar_protocolo_iatf_realizado(session: Session, evento_id: str) -> Non
     data_str, dia_str = resto.rsplit("_", 1)
     data_prevista, dia = date.fromisoformat(data_str), int(dia_str)
 
-    aplicacoes = session.exec(
-        select(ProtocoloIatfAplicacao).where(
-            ProtocoloIatfAplicacao.data_prevista == data_prevista,
-            ProtocoloIatfAplicacao.dia == dia,
-            ProtocoloIatfAplicacao.realizada == True,  # noqa: E712
-        )
-    ).all()
+    query = select(ProtocoloIatfAplicacao).where(
+        ProtocoloIatfAplicacao.data_prevista == data_prevista,
+        ProtocoloIatfAplicacao.dia == dia,
+        ProtocoloIatfAplicacao.realizada == True,  # noqa: E712
+    )
+    # BUG DE SEGURANÇA CORRIGIDO: mesmo raciocínio de _marcar_protocolo_iatf_realizado
+    # — sem este filtro, um (data_prevista, dia) coincidente com outro tenant
+    # permitia desconfirmar o protocolo IATF dele.
+    if fazenda_id is not None:
+        query = query.where(ProtocoloIatfAplicacao.fazenda_id == fazenda_id)
+    aplicacoes = session.exec(query).all()
     for ap in aplicacoes:
         ap.realizada = False
         ap.data_realizacao = None
@@ -1918,11 +2682,17 @@ def _desmarcar_protocolo_iatf_realizado(session: Session, evento_id: str) -> Non
 
 
 @router.get("/protocolo-iatf/concluidos")
-def listar_protocolo_iatf_concluidos(session: Session = Depends(get_session)) -> list[dict]:
+def listar_protocolo_iatf_concluidos(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     """Grupos (data prevista, dia) do protocolo IATF já confirmados — para desfazer, se marcado por engano."""
-    aplicacoes = session.exec(
-        select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.realizada == True)  # noqa: E712
-    ).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.realizada == True)  # noqa: E712
+    # BUG DE SEGURANÇA CORRIGIDO: sem este filtro, esta rota devolvia os
+    # protocolos IATF concluídos de TODAS as fazendas do sistema.
+    if fazenda_id is not None:
+        query = query.where(ProtocoloIatfAplicacao.fazenda_id == fazenda_id)
+    aplicacoes = session.exec(query).all()
     lancamentos_por_id = {l.id: l for l in session.exec(select(ProtocoloIatfLancamento)).all()}
     grupos: dict[tuple[date, int], list[ProtocoloIatfAplicacao]] = {}
     for ap in aplicacoes:
@@ -1948,11 +2718,17 @@ def listar_protocolo_iatf_concluidos(session: Session = Depends(get_session)) ->
 
 
 @router.get("/protocolo-inducao-lactacao/concluidos")
-def listar_protocolo_inducao_concluidos(session: Session = Depends(get_session)) -> list[dict]:
+def listar_protocolo_inducao_concluidos(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     """Grupos (lançamento, dia) da indução de lactação já confirmados — para desfazer, se marcado por engano."""
-    aplicacoes = session.exec(
-        select(ProtocoloInducaoAplicacao).where(ProtocoloInducaoAplicacao.realizada == True)  # noqa: E712
-    ).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(ProtocoloInducaoAplicacao).where(ProtocoloInducaoAplicacao.realizada == True)  # noqa: E712
+    # BUG DE SEGURANÇA CORRIGIDO: sem este filtro, esta rota devolvia as
+    # induções de lactação concluídas de TODAS as fazendas do sistema.
+    if fazenda_id is not None:
+        query = query.where(ProtocoloInducaoAplicacao.fazenda_id == fazenda_id)
+    aplicacoes = session.exec(query).all()
     lancamentos_por_id = {l.id: l for l in session.exec(select(ProtocoloInducaoLancamento)).all()}
     grupos: dict[tuple[int, int], list[ProtocoloInducaoAplicacao]] = {}
     for ap in aplicacoes:
@@ -1974,26 +2750,63 @@ def listar_protocolo_inducao_concluidos(session: Session = Depends(get_session))
     return resultado
 
 
+@router.get("/realizados")
+def listar_realizados(
+    de: date | None = None, ate: date | None = None,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    """Marcações genéricas de conclusão (EventoRealizado) num período —
+    alimenta o card "Concluídos no período" da Agenda. Cobre as pendências
+    que resolvem por aqui (sanidade avulsa, diária, pesagem, sugestão de
+    movimentação etc.); protocolo IATF e indução de lactação NÃO passam por
+    esta tabela — cada um grava a própria conclusão no modelo de origem (ver
+    GET /protocolo-iatf/concluidos e /protocolo-inducao-lactacao/concluidos),
+    que é quem tem o detalhe (animais, dia) que esta tabela não guarda."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(EventoRealizado)
+    if fazenda_id is not None:
+        query = query.where(EventoRealizado.fazenda_id.in_((fazenda_id, None)))
+    if de is not None:
+        query = query.where(EventoRealizado.marcado_em >= datetime.combine(de, datetime.min.time()))
+    if ate is not None:
+        query = query.where(EventoRealizado.marcado_em < datetime.combine(ate + timedelta(days=1), datetime.min.time()))
+    registros = session.exec(query.order_by(EventoRealizado.marcado_em.desc())).all()
+    return [{
+        "evento_id": r.evento_id,
+        "marcado_em": r.marcado_em.isoformat(),
+        "rotulo": _rotulo_evento_realizado(r.evento_id),
+    } for r in registros]
+
+
 @router.delete("/realizados/{evento_id}")
 def desmarcar_realizado(
     evento_id: str, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    """Desfaz a marcação de realizado — o evento volta a aparecer na agenda."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
+    """Desfaz a marcação de realizado — o evento volta a aparecer na agenda.
+
+    Dependência ESTRITA, como a de `marcar_realizado` logo acima. Esta rota
+    escreve: ela reverte aplicações para pendente em quatro famílias
+    (IATF, indução, protocolo personalizado e lida). Com a dependência
+    tolerante, um token sem "fid" entregava `fazenda_id=None` às quatro, e as
+    que filtravam dentro de `if fazenda_id is not None` passavam a rodar sem
+    recorte nenhum — desconfirmando a aplicação de outra fazenda, que volta
+    para a agenda dela como tarefa pendente que ninguém pediu.
+    """
     if evento_id.startswith(COMUNICADO_PREFIXOS):
         raise HTTPException(status_code=400, detail="Comunicados não podem ser excluídos — eles somem sozinhos no dia seguinte.")
     if evento_id.startswith("protocolo_iatf_"):
-        _desmarcar_protocolo_iatf_realizado(session, evento_id)
+        _desmarcar_protocolo_iatf_realizado(session, evento_id, fazenda_id=fazenda_id)
         return {"desmarcado": True}
     if evento_id.startswith("protocolo_inducao_"):
-        _desmarcar_protocolo_inducao_realizado(session, evento_id)
+        _desmarcar_protocolo_inducao_realizado(session, evento_id, fazenda_id=fazenda_id)
         return {"desmarcado": True}
     if evento_id.startswith(PREFIXO_PROTOCOLO_CUSTOM):
-        _desmarcar_protocolo_custom_realizado(session, evento_id)
+        _desmarcar_protocolo_custom_realizado(session, evento_id, fazenda_id=fazenda_id)
         return {"desmarcado": True}
     if evento_id.startswith(PREFIXO_LIDA):
-        _desmarcar_lida_realizado(session, evento_id)
+        _desmarcar_lida_realizado(session, evento_id, fazenda_id=fazenda_id)
         return {"desmarcado": True}
     if evento_id.startswith(_PREFIXO_CRONOGRAMA):
         raise HTTPException(

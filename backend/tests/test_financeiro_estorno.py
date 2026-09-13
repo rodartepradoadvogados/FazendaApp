@@ -47,7 +47,12 @@ def client(monkeypatch):
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
-    main.app.dependency_overrides[get_fazenda_atual_id] = lambda: None
+    # Sessão com a fazenda 1 já selecionada — é como o app real chega numa
+    # rota de fazenda desde a trava de tenant (fazenda/auth.py::
+    # exigir_fazenda_selecionada): havendo QUALQUER fazenda cadastrada, um
+    # token sem "fid" nem entra no router (409). Antes daqui saía None, o
+    # que hoje recusaria toda a suíte na porta.
+    main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 1
 
     with TestClient(main.app) as c:
         yield c, engine
@@ -73,7 +78,7 @@ class TestEstornarLancamento:
                 id=1, numero_lancamento="LC-2026-00001", descricao="Ração", tipo="despesa",
                 valor_total=100.0, valor_pago=100.0, data_pagamento=date(2026, 1, 5),
                 conta_bancaria="Banco X", numero_documento_pagamento="DOC-1", forma_pagamento="pix",
-                desconto_acrescimo=0.0, parcela_num=1, parcela_total=1, origem="manual",
+                desconto_acrescimo=0.0, parcela_num=1, parcela_total=1, origem="manual", fazenda_id=1,
             ))
             s.commit()
 
@@ -101,7 +106,7 @@ class TestEstornarLancamento:
         with _sessao(engine) as s:
             s.add(ContaGerencial(
                 id=1, numero_lancamento="LC-2026-00002", valor_total=50.0, valor_pago=50.0,
-                data_pagamento=date(2026, 1, 5), parcela_num=1, parcela_total=1, origem="manual",
+                data_pagamento=date(2026, 1, 5), parcela_num=1, parcela_total=1, origem="manual", fazenda_id=1,
             ))
             s.commit()
 
@@ -115,7 +120,7 @@ class TestEstornarLancamento:
     def test_estornar_lancamento_nunca_baixado_da_400(self, client):
         c, engine = client
         with _sessao(engine) as s:
-            s.add(ContaGerencial(id=1, numero_lancamento="LC-2026-00003", valor_total=50.0, parcela_num=1, parcela_total=1))
+            s.add(ContaGerencial(id=1, numero_lancamento="LC-2026-00003", valor_total=50.0, parcela_num=1, parcela_total=1, fazenda_id=1))
             s.commit()
 
         r = c.post("/financeiro/lancamentos/1/estornar", json={})
@@ -127,7 +132,7 @@ class TestEstornarLancamento:
             s.add(ContaGerencial(
                 id=1, numero_lancamento="LC-2026-00004", tipo_documento="Diária",
                 valor_total=100.0, valor_pago=100.0, data_pagamento=date(2026, 1, 5),
-                parcela_num=1, parcela_total=1,
+                parcela_num=1, parcela_total=1, fazenda_id=1,
             ))
             s.commit()
 
@@ -141,7 +146,7 @@ class TestEstornarLancamento:
             s.add(ContaGerencial(
                 id=1, numero_lancamento="LC-2026-00005", tipo_documento="Vale de funcionário",
                 valor_total=100.0, valor_pago=100.0, data_pagamento=date(2026, 1, 5),
-                parcela_num=1, parcela_total=1,
+                parcela_num=1, parcela_total=1, fazenda_id=1,
             ))
             s.commit()
 
@@ -155,7 +160,7 @@ class TestEstornarLancamento:
             s.add(ContaGerencial(
                 id=1, numero_lancamento="LC-2026-00006", tipo_documento="Vale avulso",
                 valor_total=100.0, valor_pago=100.0, data_pagamento=date(2026, 1, 5),
-                parcela_num=1, parcela_total=1,
+                parcela_num=1, parcela_total=1, fazenda_id=1,
             ))
             s.commit()
 
@@ -186,6 +191,7 @@ class TestEstornarComParcelasDeDiferenca:
         with _sessao(engine) as s:
             s.add(ContaGerencial(
                 id=1, numero_lancamento="LC-2026-00010", valor_total=100.0, parcela_num=1, parcela_total=1, origem="manual",
+                fazenda_id=1,
             ))
             s.commit()
 
@@ -238,7 +244,7 @@ class TestEstornoNaoEExclusao:
         with _sessao(engine) as s:
             s.add(ContaGerencial(
                 id=1, numero_lancamento="LC-2026-00020", valor_total=100.0, valor_pago=100.0,
-                data_pagamento=date(2026, 1, 5), parcela_num=1, parcela_total=1,
+                data_pagamento=date(2026, 1, 5), parcela_num=1, parcela_total=1, fazenda_id=1,
             ))
             s.commit()
 

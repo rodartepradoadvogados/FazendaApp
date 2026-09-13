@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Users, AlertTriangle, UserPlus, Check, Pencil, X, Newspaper, UserSquare2 } from "lucide-react";
 import Link from "next/link";
-import { fetchUsuarios, criarUsuario, atualizarUsuario, getUsuario, ehDono, fetchPessoas } from "@/lib/api";
+import { fetchUsuarios, criarUsuario, atualizarUsuario, getUsuario, ehDono, ehAdmin, fetchPessoas } from "@/lib/api";
 import { RelatorioAcessos, AuditoriaAtividade } from "@/components/AuditoriaAcessoView";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
@@ -35,6 +35,7 @@ export default function UsuariosPage() {
   const [podePublicarBlog, setPodePublicarBlog] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [editando, setEditando] = useState<any | null>(null);
+  const [mostrarInativos, setMostrarInativos] = useState(false);
 
   const carregar = () => fetchUsuarios().then(setUsuarios).catch((e) => setError(e.message));
   const carregarPessoas = () => fetchPessoas().then(setPessoas).catch(() => {});
@@ -72,10 +73,12 @@ export default function UsuariosPage() {
 
   // Coluna "Acesso" é um texto computado (papel/qtd. de módulos) — vira
   // campo derivado só para permitir ordenar por clique no cabeçalho.
-  const usuariosOrdenaveis = useMemo(() => (usuarios ?? []).map((u) => ({
-    ...u,
-    acessoOrdenacao: u.papel === "admin" ? "Administrador (tudo)" : `${(u.permissoes || []).length} módulos${(u.permissoes || []).includes("financeiro") ? "" : " · sem financeiro"}`,
-  })), [usuarios]);
+  const usuariosOrdenaveis = useMemo(() => (usuarios ?? [])
+    .filter((u) => mostrarInativos || u.ativo)
+    .map((u) => ({
+      ...u,
+      acessoOrdenacao: u.papel === "admin" ? "Administrador (tudo)" : `${(u.permissoes || []).length} módulos${(u.permissoes || []).includes("financeiro") ? "" : " · sem financeiro"}`,
+    })), [usuarios, mostrarInativos]);
   const { linhasOrdenadas: usuariosOrdenados, coluna, dir, ordenar } = useOrdenacao(usuariosOrdenaveis);
 
   return (
@@ -157,7 +160,12 @@ export default function UsuariosPage() {
 
         {/* Lista */}
         <div className="card">
-          <div className="card-header mb-3">Usuários cadastrados</div>
+          <div className="card-header mb-3 flex items-center justify-between">
+            <span>Usuários cadastrados</span>
+            <label className="flex items-center gap-2" style={{ fontSize: "0.75rem", fontWeight: 400, color: "var(--text-muted)", cursor: "pointer" }}>
+              <input type="checkbox" checked={mostrarInativos} onChange={(e) => setMostrarInativos(e.target.checked)} /> Incluir inativos
+            </label>
+          </div>
           {!usuarios ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : (
             <table className="fazenda-table">
               <thead><tr>
@@ -191,8 +199,11 @@ export default function UsuariosPage() {
         </div>
       </div>
 
-      {ehDono() && <div className="mt-4"><RelatorioAcessos defaultAberta={false} /></div>}
-      {ehDono() && <div className="mt-4"><AuditoriaAtividade defaultAberta={false} /></div>}
+      {/* Dono-equivalente OU administrador da fazenda atual — ampliado de
+          "só dono" a pedido explícito do usuário (mesmo critério do backend,
+          ver exigir_admin_ou_dono em fazenda/auth.py). */}
+      {(ehDono() || ehAdmin()) && <div className="mt-4"><RelatorioAcessos defaultAberta={false} /></div>}
+      {(ehDono() || ehAdmin()) && <div className="mt-4"><AuditoriaAtividade defaultAberta={false} /></div>}
 
       {editando && (
         <EditarUsuarioModal

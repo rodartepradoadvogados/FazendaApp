@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
-from fazenda.models import Animal, ContaGerencial, Estoque, ExameResultado, Fazenda, Lote
+from fazenda.models import Animal, ContaGerencial, ContratoFazenda, Estoque, ExameResultado, Fazenda, Lote
 from fazenda.models.sanidade import CalendarioSanitario, EventoSanitario
 from fazenda.rules.assistente import (
     _executar_tool,
@@ -45,7 +45,7 @@ class _Usuario:
 @pytest.fixture
 def client():
     import main
-    from fazenda.auth import get_current_user
+    from fazenda.auth import get_current_user, get_fazenda_atual_id
 
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine)
@@ -58,9 +58,16 @@ def client():
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _Usuario(papel="admin")
 
+    # Existindo fazenda cadastrada, `exigir_fazenda_selecionada` (main.py)
+    # recusa toda rota de fazenda cuja sessão não diga em qual delas está —
+    # e, com a fazenda selecionada, a trava de contrato ativo passa a valer
+    # (as duas eram puladas juntas pela mesma tolerância a "sem fazenda").
+    main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 1
+
     with Session(engine) as s:
-        s.add(Animal(numero="500", nome="Estrela", sexo="F", raca="Girolando"))
+        s.add(Animal(numero="500", nome="Estrela", sexo="F", raca="Girolando", fazenda_id=1))
         s.add(Fazenda(id=1, nome="Fazenda Teste"))
+        s.add(ContratoFazenda(fazenda_id=1, status="ativo"))
         s.commit()
 
     with TestClient(main.app) as c:
@@ -240,3 +247,31 @@ class TestFerramentas:
             resultado = _tool_consultar_estoque(s)
         assert resultado["qtd_abaixo_do_minimo"] == 1
         assert resultado["abaixo_do_minimo"][0]["nome"] == "Ração"
+
+
+class TestFerramentasIsolamentoFazenda:
+    """FURO DE MULTI-TENANT CORRIGIDO: `_tool_listar_lotes`/
+    `_tool_consultar_lote` liam `Lote` (e `_tool_consultar_indicadores` lia
+    `PesagemCorporal`) sem filtrar fazenda_id, com um comentário afirmando
+    (incorretamente, desde a Fase 4A) que essas tabelas "ainda não têm
+    fazenda_id" — o Assistente de uma fazenda via lotes/pesos de OUTRA."""
+
+    def test_listar_lotes_nao_mistura_fazendas(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Lote(codigo="09", nome="Lote da fazenda 1", fazenda_id=1))
+            s.add(Lote(codigo="09", nome="Lote da fazenda 2", fazenda_id=2))
+            s.commit()
+            resultado_f1 = _tool_listar_lotes(s, fazenda_id=1)
+            resultado_f2 = _tool_listar_lotes(s, fazenda_id=2)
+        assert resultado_f1["lotes"][0]["nome"] == "Lote da fazenda 1"
+        assert resultado_f2["lotes"][0]["nome"] == "Lote da fazenda 2"
+
+    def test_consultar_lote_nao_mistura_fazendas(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Lote(codigo="09", nome="Lote da fazenda 1", fazenda_id=1))
+            s.add(Lote(codigo="09", nome="Lote da fazenda 2", fazenda_id=2))
+            s.commit()
+            resultado_f2 = _tool_consultar_lote(s, "9", fazenda_id=2)
+        assert resultado_f2["nome"] == "Lote da fazenda 2"

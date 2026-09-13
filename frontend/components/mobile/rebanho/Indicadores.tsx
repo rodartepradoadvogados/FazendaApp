@@ -4,16 +4,19 @@
 // correspondente (via callback do pai); os demais quadros abrem uma lista de
 // animais por trás do número, só com os campos pertinentes ao indicador
 // (nunca Raça, nunca Nome ao lado de Número).
-import { useState } from "react";
-import { ChevronRight, Fence, Baby, Syringe, CalendarClock, HeartCrack, CheckCircle2, AlertTriangle, CalendarDays, Repeat, Droplet, Milk, FileDown } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ChevronRight, Fence, Baby, Syringe, CalendarClock, HeartCrack, CheckCircle2, AlertTriangle, CalendarDays, Repeat, Droplet, Milk, FileDown, Share2 } from "lucide-react";
 import { MobTitulo, MobVoltar } from "@/components/mobile/ui";
 import { CowIcon } from "@/components/CowIcon";
-import { fetchIndicadores, fetchAnimais, fetchRelatoriosManejo, fetchEstadosReprodutivos, formatDate, type EstadosReprodutivos, type EstadoReprodutivoAnimal } from "@/lib/api";
+import { fetchIndicadores, fetchAnimais, fetchRelatoriosManejo, fetchEstadosReprodutivos, formatDate, type EstadosReprodutivos, type EstadoReprodutivoAnimal, type IndicadoresProducao, type AnimalProducaoAoVivo, type ReproducaoCategoria } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
 import { FichaDetalhe } from "@/components/mobile/rebanho/Ficha";
-import { exportarPDF, type ColunaExport } from "@/lib/export";
+import { exportarPDF, type ColunaExport, type ModoEntregaExport } from "@/lib/export";
+import { ehApp } from "@/lib/nativo";
+import { producaoDe, origemDe } from "@/lib/producaoAnimal";
 
 type IndicadoresResp = {
+  data_referencia?: string;
   rebanho?: { total?: number | null };
   reproducao?: {
     prenhes?: number | null; inseminadas?: number | null; vazias?: number | null; aptas?: number | null;
@@ -24,14 +27,22 @@ type IndicadoresResp = {
     gestantes_detalhe?: { numero: string; dias_gestacao: number; parto_previsto: string }[];
     iep_por_matriz?: { numero: string; iep_dias: number; data_ultimo_parto: string }[];
   };
-  reproducao_categorias?: { todas?: { pev?: number | null } };
-  producao?: { del_medio?: number | null; producao_media_kg?: number | null };
+  // "todas" é `ReproducaoCategoria` (lib/api.ts) — cada contador pareado com o
+  // `_nums` do MESMO objeto. Os cartões "Gestantes"/"Vazias" leem os dois
+  // (valor E lista) daqui, não mais de `fetchEstadosReprodutivos()` — ver o
+  // comentário longo onde `drill === "gestantes"`/`"vazias"` é montado.
+  reproducao_categorias?: { todas?: ReproducaoCategoria };
+  producao?: IndicadoresProducao;
 };
 
+// `ult_cl_kg` é o campo congelado do CSV do Ideagri (parser aposentado);
+// `producao_kg`/`producao_origem` vêm ao vivo de fetchAnimais(). Partial
+// porque o backend desta etapa pode ainda não mandar os campos novos.
 type Animal = {
   numero: string; grupo_primario?: string | null; sit_rep?: string | null;
   del_dias?: number | null; ult_cl_kg?: number | null; categoria_abrev?: string | null;
-};
+} & Partial<AnimalProducaoAoVivo>;
+
 
 type ItemSecagem = { numero: string; grupo?: string | null; dias_para_secagem?: number | null; previsao_secagem?: string | null };
 
@@ -125,13 +136,23 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
   const [drill, setDrill] = useState<Drill | null>(null);
   const [numeroAberto, setNumeroAberto] = useState<string | null>(null);
   const [exportando, setExportando] = useState(false);
+  // "Compartilhar" (folha nativa do Android) só faz sentido dentro do app —
+  // no navegador é idêntico a "Exportar PDF" (mesmo <a download>).
+  const [mostrarCompartilhar, setMostrarCompartilhar] = useState(false);
+  useEffect(() => { ehApp().then(setMostrarCompartilhar); }, []);
 
   const animais = animaisReq.dados || [];
   const porNumero = new Map(animais.map((a) => [a.numero, a]));
   const categoriaDe = (numero: string) => porNumero.get(numero)?.categoria_abrev || porNumero.get(numero)?.grupo_primario || "—";
   const estadoAnimais = estadosReq.dados?.animais || [];
+  const estadoPorNumero = new Map(estadoAnimais.map((a) => [a.numero, a]));
   const dataRef = estadosReq.dados?.data_referencia || "";
   const contagemEstados = estadosReq.dados?.contagem || {};
+  // Data de referência do PRÓPRIO payload de indicadores (não a de
+  // `estadosReq`, um fetch à parte) — usada pelo drill de "Gestantes" abaixo,
+  // que agora lê tudo (valor, lista, datas) de `dados`.
+  const dataRefIndicadores = dados?.data_referencia || "";
+  const cat = dados?.reproducao_categorias?.todas;
 
   if (numeroAberto) {
     return <FichaDetalhe numero={numeroAberto} onVoltar={() => setNumeroAberto(null)} />;
@@ -148,31 +169,53 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
     // ordenadas por número do endpoint).
     let colunasExport: ColunaExport[] = [];
     let linhasExport: Record<string, unknown>[] = [];
+    // Só usado pelo drill "producao" — avisa quando a lista mistura dado ao
+    // vivo com dado congelado, para não deixar isso só implícito no asterisco.
+    let temProducaoCongelada = false;
 
     if (drill === "gestantes") {
-      // Estado AO VIVO (não Animal.sit_rep, congelado do CSV) — ver
-      // GET /indicadores/estados-reprodutivos. Não reordenar: o endpoint já
-      // devolve por número crescente.
-      const lista = estadoAnimais.filter((a) => a.estado === "gestante");
-      total = lista.length;
-      linhas = lista.map((g) => (
-        <LinhaAnimal key={g.numero} onVerAnimal={() => setNumeroAberto(g.numero)} campos={<>
-          <Pilula>{g.categoria}</Pilula>
-          <Campo label="Nº" valor={g.numero} />
-          <Campo label="Dias de gestação" valor={g.dias_gestacao ?? "—"} />
-          <Campo label="Dias para o parto" valor={diasAte(dataRef, g.parto_previsto) ?? "—"} />
-          <Campo label="Parto previsto" valor={formatDate(g.parto_previsto || "")} />
-        </>} />
-      ));
+      // Nº por trás do CARTÃO: `cat.prenhes_nums`, o MESMO campo que dá o
+      // valor mostrado no card "Gestantes" logo abaixo (`cat?.prenhes`) —
+      // não mais `fetchEstadosReprodutivos()`, um fetch e um cache offline
+      // à parte que podia estar desatualizado em relação a `dados` na hora
+      // do clique. Medido antes de mexer
+      // (backend/tests/test_indicadores_menu_prenhes_vazias.py): com os
+      // dois calculados na MESMA hora os dois critérios batem sempre
+      // (mesmo `estado == "gestante"`); o risco era só de tempo, não de
+      // regra — mas era exatamente o padrão que já causou dois defeitos
+      // reais, então a membresia passa a vir de um único lugar.
+      // `dias_gestacao`/`parto_previsto` continuam de `reproducao
+      // .gestantes_detalhe` — mesmo payload de `dados`, só que já existia
+      // pareado com `prenhes_nums` (os dois vêm do mesmo `numeros_gestantes
+      // _vivo` em rules/indicadores.py) e cobre exatamente esta lista.
+      const detalhePorNumero = new Map((rep.gestantes_detalhe || []).map((g) => [g.numero, g]));
+      const nums = [...new Set(cat?.prenhes_nums || [])].sort((a, b) => ordenarNumero({ numero: a }, { numero: b }));
+      total = nums.length;
+      linhas = nums.map((numero) => {
+        const g = detalhePorNumero.get(numero);
+        return (
+          <LinhaAnimal key={numero} onVerAnimal={() => setNumeroAberto(numero)} campos={<>
+            <Pilula>{categoriaDe(numero)}</Pilula>
+            <Campo label="Nº" valor={numero} />
+            <Campo label="Dias de gestação" valor={g?.dias_gestacao ?? "—"} />
+            <Campo label="Dias para o parto" valor={diasAte(dataRefIndicadores, g?.parto_previsto) ?? "—"} />
+            <Campo label="Parto previsto" valor={g?.parto_previsto ? formatDate(g.parto_previsto) : "—"} />
+          </>} />
+        );
+      });
       colunasExport = [
         { header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" },
         { header: "Dias de gestação", key: "dias_gestacao" }, { header: "Dias para o parto", key: "dias_parto" },
         { header: "Parto previsto", key: "parto_previsto" },
       ];
-      linhasExport = lista.map((g) => ({
-        numero: g.numero, categoria: g.categoria, dias_gestacao: g.dias_gestacao ?? "",
-        dias_parto: diasAte(dataRef, g.parto_previsto) ?? "", parto_previsto: formatDate(g.parto_previsto || ""),
-      }));
+      linhasExport = nums.map((numero) => {
+        const g = detalhePorNumero.get(numero);
+        return {
+          numero, categoria: categoriaDe(numero), dias_gestacao: g?.dias_gestacao ?? "",
+          dias_parto: diasAte(dataRefIndicadores, g?.parto_previsto) ?? "",
+          parto_previsto: g?.parto_previsto ? formatDate(g.parto_previsto) : "—",
+        };
+      });
     } else if (drill === "inseminadas") {
       const lista = estadoAnimais.filter((a) => a.estado === "inseminada");
       total = lista.length;
@@ -227,26 +270,40 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
       ];
       linhasExport = lista.map((a) => ({ numero: a.numero, categoria: a.categoria, del: a.del_dias ?? "" }));
     } else if (drill === "vazias") {
-      // Estado AO VIVO. "Vazia" aqui é o guarda-chuva de quem NÃO está prenhe,
-      // inseminada nem em protocolo — mesmo conjunto que o "Vaz.*" do CSV
-      // representava, para o número do card não mudar de significado.
-      const lista = estadoAnimais.filter((a) => ["vazia", "apta", "atrasada", "pev", "nao_apta"].includes(a.estado));
-      total = lista.length;
-      linhas = lista.map((a) => (
-        <LinhaAnimal key={a.numero} onVerAnimal={() => setNumeroAberto(a.numero)} campos={<>
-          <Pilula>{a.categoria}</Pilula>
-          <Campo label="Nº" valor={a.numero} />
-          <Campo label="Situação" valor={ROTULO_ESTADO[a.estado] || a.estado} />
-          <Campo label="Lote atual" valor={a.lote || "—"} />
-        </>} />
-      ));
+      // Nº por trás do CARTÃO: `cat.vazias_nums` — o mesmo guarda-chuva de 5
+      // estados (vazia/apta/atrasada/pev/nao_apta, sem `em_protocolo`) que o
+      // valor do card já usa (`cat?.vazias`), e o mesmo objeto: card e lista
+      // não podem mais divergir por lerem fetches diferentes. "Situação" e
+      // "Lote atual" continuam de `estadoAnimais`/`animais` — são só
+      // ENRIQUECIMENTO de exibição (o `_nums` não carrega esse detalhe), e
+      // degradam para "—" se esses dois ainda não carregaram, sem tirar nem
+      // acrescentar ninguém à lista.
+      const nums = [...new Set(cat?.vazias_nums || [])].sort((a, b) => ordenarNumero({ numero: a }, { numero: b }));
+      total = nums.length;
+      linhas = nums.map((numero) => {
+        const estado = estadoPorNumero.get(numero);
+        const lote = porNumero.get(numero)?.grupo_primario;
+        return (
+          <LinhaAnimal key={numero} onVerAnimal={() => setNumeroAberto(numero)} campos={<>
+            <Pilula>{categoriaDe(numero)}</Pilula>
+            <Campo label="Nº" valor={numero} />
+            <Campo label="Situação" valor={estado ? (ROTULO_ESTADO[estado.estado] || estado.estado) : "—"} />
+            <Campo label="Lote atual" valor={lote || "—"} />
+          </>} />
+        );
+      });
       colunasExport = [
         { header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" },
         { header: "Situação", key: "situacao" }, { header: "Lote atual", key: "lote" },
       ];
-      linhasExport = lista.map((a) => ({
-        numero: a.numero, categoria: a.categoria, situacao: ROTULO_ESTADO[a.estado] || a.estado, lote: a.lote || "—",
-      }));
+      linhasExport = nums.map((numero) => {
+        const estado = estadoPorNumero.get(numero);
+        const lote = porNumero.get(numero)?.grupo_primario;
+        return {
+          numero, categoria: categoriaDe(numero),
+          situacao: estado ? (ROTULO_ESTADO[estado.estado] || estado.estado) : "—", lote: lote || "—",
+        };
+      });
     } else if (drill === "aptas") {
       // Estado AO VIVO — ver GET /indicadores/estados-reprodutivos.
       const lista = estadoAnimais.filter((a) => a.estado === "apta");
@@ -347,29 +404,46 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
         previsao: s.previsao_secagem ? formatDate(s.previsao_secagem) : "—",
       }));
     } else if (drill === "producao") {
-      const lista = animais.filter((a) => (a.del_dias != null && a.del_dias >= 0) || (a.ult_cl_kg != null && a.ult_cl_kg > 0)).sort(ordenarNumero);
+      const lista = animais.filter((a) => (a.del_dias != null && a.del_dias >= 0) || (producaoDe(a) ?? 0) > 0).sort(ordenarNumero);
       total = lista.length;
-      linhas = lista.map((a) => (
-        <LinhaAnimal key={a.numero} onVerAnimal={() => setNumeroAberto(a.numero)} campos={<>
-          <Pilula>{categoriaDe(a.numero)}</Pilula>
-          <Campo label="Nº" valor={a.numero} />
-          <Campo label="DEL" valor={a.del_dias != null ? `${a.del_dias} dias` : "—"} />
-          <Campo label="Última produção" valor={a.ult_cl_kg != null ? `${val(a.ult_cl_kg)} L` : "—"} />
-        </>} />
-      ));
+      temProducaoCongelada = lista.some((a) => producaoDe(a) != null && origemDe(a) === "congelado");
+      linhas = lista.map((a) => {
+        const producao = producaoDe(a);
+        const congelado = origemDe(a) === "congelado";
+        return (
+          <LinhaAnimal key={a.numero} onVerAnimal={() => setNumeroAberto(a.numero)} campos={<>
+            <Pilula>{categoriaDe(a.numero)}</Pilula>
+            <Campo label="Nº" valor={a.numero} />
+            <Campo label="DEL" valor={a.del_dias != null ? `${a.del_dias} dias` : "—"} />
+            <Campo label="Última produção" valor={producao != null ? <>{val(producao)} L{congelado && <span style={{ color: "var(--mob-muted)" }}> *</span>}</> : "—"} />
+          </>} />
+        );
+      });
       colunasExport = [
         { header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" },
-        { header: "DEL", key: "del" }, { header: "Última produção", key: "producao" },
+        { header: "DEL", key: "del" }, { header: "Última produção", key: "producao" }, { header: "Origem", key: "origem" },
       ];
-      linhasExport = lista.map((a) => ({
-        numero: a.numero, categoria: categoriaDe(a.numero),
-        del: a.del_dias != null ? `${a.del_dias} dias` : "—", producao: a.ult_cl_kg != null ? `${val(a.ult_cl_kg)} L` : "—",
-      }));
+      linhasExport = lista.map((a) => {
+        const producao = producaoDe(a);
+        const congelado = origemDe(a) === "congelado";
+        return {
+          numero: a.numero, categoria: categoriaDe(a.numero),
+          del: a.del_dias != null ? `${a.del_dias} dias` : "—",
+          producao: producao != null ? `${val(producao)} L` : "—",
+          // Exportado à parte (não só no asterisco) — o PDF sai do celular e
+          // precisa contar a mesma história sozinho.
+          origem: producao == null ? "—" : congelado ? "Congelado (sem controle no app)" : "Controle",
+        };
+      });
     }
 
+    // "gestantes"/"vazias" saíram desta lista: sua MEMBRESIA (a lista em si)
+    // agora vem de `dados` (fetchIndicadores), não de `estadosReq` — só o
+    // enriquecimento de exibição (Situação/dias de gestação) ainda usa
+    // `estadosReq`, e degrada para "—" sem bloquear a lista se ele atrasar.
     const carregandoLista =
       (drill === "secagens" ? secagemReq.carregando && !secagemReq.dados
-        : ["gestantes", "inseminadas", "protocolo", "pev", "aptas", "atrasadas"].includes(drill) ? estadosReq.carregando && !estadosReq.dados
+        : ["inseminadas", "protocolo", "pev", "aptas", "atrasadas"].includes(drill) ? estadosReq.carregando && !estadosReq.dados
         : animaisReq.carregando && !animaisReq.dados) || (carregando && !dados);
 
     return (
@@ -385,25 +459,51 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
               <p style={{ fontSize: "0.8rem", color: "var(--mob-muted)" }}>
                 Total: {total} animal(is)
               </p>
-              <button
-                type="button"
-                disabled={exportando}
-                onClick={async () => {
-                  setExportando(true);
-                  try { await exportarPDF(DRILL_TITULO[drill], colunasExport, linhasExport, `rebanho_${drill}`); }
-                  catch { /* erro já mostrado ao usuário dentro de exportarPDF (lib/export.ts) */ }
-                  finally { setExportando(false); }
-                }}
-                style={{
-                  display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.76rem", fontWeight: 700,
-                  padding: "0.35rem 0.65rem", borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)",
-                  background: "var(--mob-surface)", color: "var(--mob-dourado-2)", opacity: exportando ? 0.6 : 1,
-                }}
-              >
-                <FileDown size={14} /> {exportando ? "Gerando…" : "Exportar PDF"}
-              </button>
+              <div style={{ display: "flex", gap: "0.4rem" }}>
+                <button
+                  type="button"
+                  disabled={exportando}
+                  onClick={async () => {
+                    setExportando(true);
+                    try { await exportarPDF(DRILL_TITULO[drill], colunasExport, linhasExport, `rebanho_${drill}`, "baixar" as ModoEntregaExport); }
+                    catch { /* erro já mostrado ao usuário dentro de exportarPDF (lib/export.ts) */ }
+                    finally { setExportando(false); }
+                  }}
+                  style={{
+                    display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.76rem", fontWeight: 700,
+                    padding: "0.35rem 0.65rem", borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)",
+                    background: "var(--mob-surface)", color: "var(--mob-dourado-2)", opacity: exportando ? 0.6 : 1,
+                  }}
+                >
+                  <FileDown size={14} /> {exportando ? "Gerando…" : "Exportar PDF"}
+                </button>
+                {mostrarCompartilhar && (
+                  <button
+                    type="button"
+                    disabled={exportando}
+                    onClick={async () => {
+                      setExportando(true);
+                      try { await exportarPDF(DRILL_TITULO[drill], colunasExport, linhasExport, `rebanho_${drill}`, "compartilhar"); }
+                      catch { /* erro já mostrado ao usuário dentro de exportarPDF (lib/export.ts) */ }
+                      finally { setExportando(false); }
+                    }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.76rem", fontWeight: 700,
+                      padding: "0.35rem 0.65rem", borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)",
+                      background: "var(--mob-surface)", color: "var(--mob-dourado-2)", opacity: exportando ? 0.6 : 1,
+                    }}
+                  >
+                    <Share2 size={14} /> Compartilhar
+                  </button>
+                )}
+              </div>
             </div>
             {linhas}
+            {drill === "producao" && temProducaoCongelada && (
+              <p style={{ fontSize: "0.7rem", color: "var(--mob-muted)", marginTop: "0.4rem" }}>
+                * sem controle leiteiro lançado no app ainda — valor parado da última importação.
+              </p>
+            )}
           </>
         )}
       </div>
@@ -413,7 +513,7 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
   // ── Painel de cards ──────────────────────────────────────────────────────
   const rep = dados?.reproducao || {};
   const pev = dados?.reproducao_categorias?.todas?.pev;
-  const prod = dados?.producao || {};
+  const prod: Partial<IndicadoresProducao> = dados?.producao || {};
   // Mesma chave de agrupamento usada em Lotes.tsx (grupo_primario, "(sem lote)"
   // quando vazio) — sem endpoint dedicado de contagem de lotes no backend.
   const totalLotes = new Set(animais.map((a) => a.grupo_primario || "(sem lote)")).size;
@@ -421,17 +521,33 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
   type Cartao = {
     chave: string; titulo: string; valor: string; onClick: () => void; icone: React.ReactNode;
     combo?: { valor: string; rotulo: string }[];
+    legenda?: string;
+    // "Atrasadas" é o único card do painel que sinaliza um problema, não uma
+    // contagem neutra — ganha destaque em âmbar pra não se confundir com os
+    // demais (ex.: "Lotes", "IEP médio"), que são só números de consulta.
+    atencao?: boolean;
   };
   const cartoes: Cartao[] = [
     { chave: "animais", titulo: "Animais", valor: val(animais.length || null), onClick: onAbrirAnimais, icone: <CowIcon size={20} color="var(--mob-dourado-2)" /> },
     { chave: "lotes", titulo: "Lotes", valor: val(totalLotes || null), onClick: onAbrirLotes, icone: <Fence size={20} /> },
-    { chave: "gestantes", titulo: "Gestantes", valor: val(rep.prenhes), onClick: () => setDrill("gestantes"), icone: <Baby size={20} /> },
+    // Valor de `cat.prenhes` (== `reproducao.prenhes`, mesmo critério e
+    // mesma população — ver medição no comentário do drill "gestantes"
+    // acima), mas lido do MESMO objeto que fornece `prenhes_nums` à lista
+    // do drill-down, não de um campo irmão que só por coincidência dá o
+    // mesmo número hoje.
+    { chave: "gestantes", titulo: "Gestantes", valor: val(cat?.prenhes ?? null), onClick: () => setDrill("gestantes"), icone: <Baby size={20} /> },
     { chave: "inseminadas", titulo: "Inseminadas", valor: val(rep.inseminadas), onClick: () => setDrill("inseminadas"), icone: <Syringe size={20} /> },
     { chave: "pev", titulo: "PEV", valor: val(pev), onClick: () => setDrill("pev"), icone: <CalendarClock size={20} /> },
-    { chave: "vazias", titulo: "Vazias", valor: val(rep.vazias), onClick: () => setDrill("vazias"), icone: <HeartCrack size={20} /> },
+    // `reproducao.vazias` é o catch-all do backend (tudo que não é gestante
+    // nem inseminada — inclusive quem está em protocolo); este card abre a
+    // lista dos 5 estados vazia/apta/atrasada/pev/nao_apta, e é
+    // `reproducao_categorias.todas.vazias`/`.vazias_nums` que conta e lista
+    // exatamente esses 5 — os dois lidos do mesmo `cat`, ver comentário no
+    // drill "vazias" acima.
+    { chave: "vazias", titulo: "Vazias", valor: val(cat?.vazias ?? null), onClick: () => setDrill("vazias"), icone: <HeartCrack size={20} /> },
     { chave: "aptas", titulo: "Aptas", valor: val(rep.aptas), onClick: () => setDrill("aptas"), icone: <CheckCircle2 size={20} /> },
     // Contagem AO VIVO (estado), não mais Animal.sit_rep — mesma fonte da lista de drill-down.
-    { chave: "atrasadas", titulo: "Atrasadas", valor: val(contagemEstados.atrasada ?? null), onClick: () => setDrill("atrasadas"), icone: <AlertTriangle size={20} /> },
+    { chave: "atrasadas", titulo: "Atrasadas", valor: val(contagemEstados.atrasada ?? null), onClick: () => setDrill("atrasadas"), icone: <AlertTriangle size={20} />, atencao: true },
     { chave: "protocolo", titulo: "IA atual (D0–D11)", valor: val(contagemEstados.em_protocolo ?? null), onClick: () => setDrill("protocolo"), icone: <Syringe size={20} /> },
     // Contagem também ao vivo, para bater com a lista que o card abre.
     { chave: "partoPrevisto", titulo: "Parto previsto", valor: val(estadoAnimais.filter((e) => {
@@ -447,6 +563,9 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
         { valor: prod.del_medio != null ? `${val(prod.del_medio)} d` : "—", rotulo: "DEL médio" },
         { valor: prod.producao_media_kg != null ? `${val(prod.producao_media_kg)} L` : "—", rotulo: "Produção média" },
       ],
+      // DEL médio agora é ao vivo (último parto, zera na secagem) — a base de
+      // cálculo muda de dia pra dia, então mostra sobre quantas vacas ele saiu.
+      legenda: prod.del_medio_animais != null ? `base: ${prod.del_medio_animais} vaca(s)` : undefined,
     },
   ];
 
@@ -463,8 +582,12 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.6rem" }}>
           {cartoes.map((c) => (
             <button key={c.chave} type="button" onClick={c.onClick}
-              className="mob-card" style={{ padding: "0.9rem 0.85rem", textAlign: "center", cursor: "pointer", border: "1px solid var(--mob-border)" }}>
-              <div style={{ color: "var(--mob-dourado-2)", display: "flex", justifyContent: "center", marginBottom: "0.35rem" }}>{c.icone}</div>
+              className="mob-card" style={{
+                padding: "0.9rem 0.85rem", textAlign: "center", cursor: "pointer",
+                border: c.atencao ? "1px solid color-mix(in srgb, var(--mob-ambar) 45%, var(--mob-border))" : "1px solid var(--mob-border)",
+                background: c.atencao ? "color-mix(in srgb, var(--mob-ambar) 7%, var(--mob-surface))" : undefined,
+              }}>
+              <div style={{ color: c.atencao ? "var(--mob-ambar)" : "var(--mob-dourado-2)", display: "flex", justifyContent: "center", marginBottom: "0.35rem" }}>{c.icone}</div>
               {c.combo ? (
                 <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
                   {c.combo.map((x) => (
@@ -476,11 +599,14 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
                 </div>
               ) : (
                 <>
-                  <div style={{ fontSize: "1.7rem", fontWeight: 800, lineHeight: 1.1, color: "var(--mob-text)" }}>{c.valor}</div>
+                  <div style={{ fontSize: "1.7rem", fontWeight: 800, lineHeight: 1.1, color: c.atencao ? "var(--mob-ambar)" : "var(--mob-text)" }}>{c.valor}</div>
                   <div style={{ fontSize: "0.76rem", color: "var(--mob-muted)", marginTop: "0.35rem", fontWeight: 600 }}>{c.titulo}</div>
                 </>
               )}
-              <div style={{ fontSize: "0.68rem", color: "var(--mob-dourado-2)", marginTop: "0.3rem", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.15rem" }}>
+              {c.legenda && (
+                <div style={{ fontSize: "0.62rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>{c.legenda}</div>
+              )}
+              <div style={{ fontSize: "0.68rem", color: c.atencao ? "var(--mob-ambar)" : "var(--mob-dourado-2)", marginTop: "0.3rem", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.15rem" }}>
                 ver lista <ChevronRight size={12} />
               </div>
             </button>

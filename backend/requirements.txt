@@ -8,12 +8,25 @@ python-dotenv>=1.0
 pydantic>=2.11
 pydantic-settings>=2.7
 pytest>=8.3
+# Paraleliza a suite: `-n auto --dist loadfile`. A suite inteira (4825 testes)
+# leva ~100 minutos em serie e fechou em 43 com 4 workers — a diferenca entre
+# esperar a tarde e esperar o cafe, para quem roda os testes antes de commitar.
+#
+# Use com `--dist loadfile` (por arquivo). Nao e obrigatorio — a suite tem
+# ZERO fixtures de escopo module/session e ZERO engines criados fora de
+# fixture (conferido em 06/09/2026), entao o padrao `load` tambem funciona.
+# `loadfile` fica porque evita repetir setup caro (schema + TestClient) e foi
+# a configuracao sob a qual o tempo e a memoria por worker foram medidos.
+pytest-xdist>=3.6
 httpx>=0.28
 aiosqlite>=0.20
 psycopg2-binary>=2.9
 openpyxl>=3.1
 anthropic>=0.90
 pypdf>=5.0
+pytesseract>=0.3.13
+pdf2image>=1.17
+Pillow>=11.0
 pywebpush>=2.0
 google-auth>=2.35
 python-dateutil>=2.9

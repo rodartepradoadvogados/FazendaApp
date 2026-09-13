@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
+from fazenda.auth import EMAIL_DONO
 from fazenda.models import Touro
 from fazenda.rules.touros import eh_planilha_rica, importar_touros_planilha_rica
 
@@ -155,6 +156,12 @@ def client():
         papel = "admin"
         ativo = True
         username = "teste"
+        # A manutenção do catálogo mudou para o Painel CowData (set/2026) e
+        # é gateada por área/permissão de Equipe CowData, com bypass do
+        # dono-equivalente pelo E-MAIL — por isso o usuário falso desta
+        # suíte precisa ter `email`. Ver painel_cowdata_touros.py.
+        email = EMAIL_DONO
+        pessoa_id = None
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
@@ -166,9 +173,13 @@ def client():
 
 
 class TestCadastroManual:
+    """Cadastro manual do catálogo — mora no Painel CowData desde set/2026
+    (era POST/PUT/DELETE /cadastro/touros, do lado da fazenda). A LEITURA
+    continua em GET /cadastro/touros e é conferida abaixo."""
+
     def test_criar_touro_so_com_naab_e_nome(self, client):
         c, _engine = client
-        resp = c.post("/cadastro/touros", json={"naab": "007HO33333", "nome": "Manual"})
+        resp = c.post("/painel-cowdata/touros", json={"naab": "007HO33333", "nome": "Manual"})
         assert resp.status_code == 200, resp.text
         corpo = resp.json()
         assert corpo["naab"] == "007HO33333"
@@ -177,12 +188,12 @@ class TestCadastroManual:
 
     def test_criar_touro_sem_nome_falha(self, client):
         c, _engine = client
-        resp = c.post("/cadastro/touros", json={"naab": "007HO44444", "nome": "  "})
+        resp = c.post("/painel-cowdata/touros", json={"naab": "007HO44444", "nome": "  "})
         assert resp.status_code == 400
 
     def test_criar_touro_com_dados_extra(self, client):
         c, _engine = client
-        resp = c.post("/cadastro/touros", json={
+        resp = c.post("/painel-cowdata/touros", json={
             "naab": "007HO55555", "nome": "ComExtra", "tpi": 3100,
             "dados_extra": [["Feed Saved", "24"], ["EFI", "12.3"]],
         })
@@ -192,22 +203,22 @@ class TestCadastroManual:
 
     def test_naab_duplicado_falha(self, client):
         c, _engine = client
-        c.post("/cadastro/touros", json={"naab": "007HO66666", "nome": "A"})
-        resp = c.post("/cadastro/touros", json={"naab": "007HO66666", "nome": "B"})
+        c.post("/painel-cowdata/touros", json={"naab": "007HO66666", "nome": "A"})
+        resp = c.post("/painel-cowdata/touros", json={"naab": "007HO66666", "nome": "B"})
         assert resp.status_code == 400
 
     def test_atualizar_touro(self, client):
         c, _engine = client
-        criado = c.post("/cadastro/touros", json={"naab": "007HO77777", "nome": "Original"}).json()
-        resp = c.put(f"/cadastro/touros/{criado['id']}", json={"naab": "007HO77777", "nome": "Editado", "tpi": 2900})
+        criado = c.post("/painel-cowdata/touros", json={"naab": "007HO77777", "nome": "Original"}).json()
+        resp = c.put(f"/painel-cowdata/touros/{criado['id']}", json={"naab": "007HO77777", "nome": "Editado", "tpi": 2900})
         assert resp.status_code == 200, resp.text
         assert resp.json()["nome"] == "Editado"
         assert resp.json()["tpi"] == 2900
 
     def test_excluir_touro(self, client):
         c, _engine = client
-        criado = c.post("/cadastro/touros", json={"naab": "007HO88888", "nome": "ParaExcluir"}).json()
-        resp = c.delete(f"/cadastro/touros/{criado['id']}")
+        criado = c.post("/painel-cowdata/touros", json={"naab": "007HO88888", "nome": "ParaExcluir"}).json()
+        resp = c.delete(f"/painel-cowdata/touros/{criado['id']}")
         assert resp.status_code == 200
         assert c.get("/cadastro/touros").status_code == 200
         naabs = [t["naab"] for t in c.get("/cadastro/touros").json()]
@@ -215,7 +226,7 @@ class TestCadastroManual:
 
     def test_campos_planilha_lista_rotulos_conhecidos(self, client):
         c, _engine = client
-        resp = c.get("/cadastro/touros/campos-planilha")
+        resp = c.get("/painel-cowdata/touros/campos-planilha")
         assert resp.status_code == 200
         rotulos = resp.json()
         assert "TPI" in rotulos
@@ -232,7 +243,7 @@ class TestCadastroManual:
             session.commit()
 
         monkeypatch.setattr("fazenda.rules.touros.bootstrap_touros_naab", _fake_bootstrap)
-        resp = c.post("/cadastro/touros/recarregar-catalogo")
+        resp = c.post("/painel-cowdata/touros/recarregar-catalogo")
         assert resp.status_code == 200, resp.text
         corpo = resp.json()
         assert corpo["touros_depois"] == corpo["touros_antes"] + 1
@@ -240,54 +251,35 @@ class TestCadastroManual:
 
 
 class TestProvaMediaSemen:
-    def test_media_ponderada_pelas_doses_do_botijao(self, client):
+    def test_simples_e_ponderada_entre_touros_com_dose_em_estoque(self, client):
         c, engine = client
-        from datetime import date
-        from fazenda.models import EstoqueSemen, Servico
+        from fazenda.models import EstoqueSemen
 
         with Session(engine) as s:
             s.add(Touro(naab="1HO001", nome="TOURO A", tpi=2900, leite_kg=800))
             s.add(Touro(naab="1HO002", nome="TOURO B", tpi=2700, leite_kg=600))
             s.add(EstoqueSemen(touro_nome="TOURO A", naab="1HO001", tipo="convencional", doses=3))
             s.add(EstoqueSemen(touro_nome="TOURO B", naab="1HO002", tipo="convencional", doses=1))
-            # Sêmen de touro de monta natural (tipo "fazenda") não entra na prova média do botijão.
+            # Sêmen de touro de monta natural (tipo "fazenda") não entra em nenhum dos dois recortes.
             s.add(EstoqueSemen(touro_nome="TOURO FAZENDA", tipo="fazenda", doses=99))
-            s.add(Servico(numero_matriz="1", data_servico=date(2026, 1, 10), reprodutor="TOURO A"))
-            s.add(Servico(numero_matriz="2", data_servico=date(2026, 1, 15), reprodutor="TOURO A"))
-            s.add(Servico(numero_matriz="3", data_servico=date(2026, 2, 1), reprodutor="TOURO B"))
+            # Zero doses em estoque: fora dos dois recortes (não é "pelo menos 1 dose").
+            s.add(Touro(naab="1HO099", nome="TOURO ZERADO", tpi=9999))
+            s.add(EstoqueSemen(touro_nome="TOURO ZERADO", naab="1HO099", tipo="convencional", doses=0))
             s.commit()
 
         resp = c.get("/cadastro/estoque-semen/prova-media")
         assert resp.status_code == 200, resp.text
         corpo = resp.json()
 
-        # Botijão: 3 doses do touro A (TPI 2900) + 1 dose do touro B (TPI 2700).
+        # Simples: cada touro pesa 1, tenha 1 dose ou 3 — (2900 + 2700) / 2 = 2800.
+        assert corpo["simples"]["touros_considerados"] == 2
+        assert corpo["simples"]["prova"]["tpi"] == 2800.0
+
+        # Ponderada: 3 doses do touro A (TPI 2900) + 1 dose do touro B (TPI 2700).
         # Média ponderada = (2900*3 + 2700*1) / 4 = 2850.
-        assert corpo["botijao"]["total_doses"] == 4
-        assert corpo["botijao"]["touros_considerados"] == 2
-        assert corpo["botijao"]["prova"]["tpi"] == 2850.0
-
-        # Serviços (sem filtro de período): 2 do touro A + 1 do touro B.
-        # Média ponderada = (2900*2 + 2700*1) / 3 = 2833.33.
-        assert corpo["servicos_periodo"]["total_doses"] == 3
-        assert corpo["servicos_periodo"]["prova"]["tpi"] == pytest.approx(2833.33, abs=0.01)
-
-    def test_filtro_de_periodo_nos_servicos(self, client):
-        c, engine = client
-        from datetime import date
-        from fazenda.models import EstoqueSemen, Servico
-
-        with Session(engine) as s:
-            s.add(Touro(naab="1HO003", nome="TOURO C", tpi=3000))
-            s.add(EstoqueSemen(touro_nome="TOURO C", naab="1HO003", tipo="convencional", doses=1))
-            s.add(Servico(numero_matriz="1", data_servico=date(2026, 1, 1), reprodutor="TOURO C"))
-            s.add(Servico(numero_matriz="2", data_servico=date(2026, 6, 1), reprodutor="TOURO C"))
-            s.commit()
-
-        resp = c.get("/cadastro/estoque-semen/prova-media", params={"de": "2026-05-01", "ate": "2026-12-31"})
-        assert resp.status_code == 200
-        corpo = resp.json()
-        assert corpo["servicos_periodo"]["total_doses"] == 1
+        assert corpo["ponderada"]["total_doses"] == 4
+        assert corpo["ponderada"]["touros_considerados"] == 2
+        assert corpo["ponderada"]["prova"]["tpi"] == 2850.0
 
     def test_touro_sem_prova_naquele_indicador_nao_entra_no_calculo(self, client):
         c, engine = client
@@ -301,5 +293,177 @@ class TestProvaMediaSemen:
         resp = c.get("/cadastro/estoque-semen/prova-media")
         assert resp.status_code == 200
         corpo = resp.json()
-        assert corpo["botijao"]["prova"]["tpi"] == 2500.0
-        assert corpo["botijao"]["prova"]["nm_dolar"] is None
+        assert corpo["ponderada"]["prova"]["tpi"] == 2500.0
+        assert corpo["ponderada"]["prova"]["nm_dolar"] is None
+        assert corpo["simples"]["prova"]["tpi"] == 2500.0
+        assert corpo["simples"]["prova"]["nm_dolar"] is None
+
+    def test_incluir_fazenda_traz_touro_de_monta_natural_cadastrado_no_naab(self, client):
+        # Touro da fazenda (monta natural) que TAMBÉM está no catálogo NAAB
+        # (ex.: foi comprado como sêmen antes de virar reprodutor natural) —
+        # por padrão fica de fora; com a flag, entra como qualquer outro.
+        c, engine = client
+        from fazenda.models import EstoqueSemen
+
+        with Session(engine) as s:
+            s.add(Touro(naab="1HO005", nome="TOURO FAZENDA", tpi=2000))
+            s.add(EstoqueSemen(touro_nome="TOURO FAZENDA", naab="1HO005", tipo="fazenda", doses=10))
+            s.commit()
+
+        resp_padrao = c.get("/cadastro/estoque-semen/prova-media")
+        assert resp_padrao.json()["ponderada"]["touros_considerados"] == 0
+
+        resp_incluindo = c.get("/cadastro/estoque-semen/prova-media", params={"incluir_fazenda": "true"})
+        corpo = resp_incluindo.json()
+        assert corpo["ponderada"]["touros_considerados"] == 1
+        assert corpo["ponderada"]["prova"]["tpi"] == 2000.0
+
+
+class TestProvaAoVivoSemen:
+    """"Prova ao vivo" (Estoque de Sêmen > Prova média) — os MESMOS
+    indicadores genéticos do catálogo (ver TestProvaMediaSemen), ponderados
+    pelo uso real (nº de serviços) de cada touro na fazenda, não pela taxa de
+    concepção/resultado reprodutivo do rebanho."""
+
+    def _touro_e_estoque(self, session, *, naab, nome, tipo="convencional", **provas):
+        from fazenda.models import EstoqueSemen
+
+        session.add(Touro(naab=naab, nome=nome, **provas))
+        session.add(EstoqueSemen(touro_nome=nome, naab=naab, tipo=tipo, doses=1))
+
+    def test_pondera_indicador_genetico_pelo_numero_de_servicos(self, client):
+        c, engine = client
+        from datetime import date
+        from fazenda.models import Servico
+
+        d = date(2026, 1, 10)
+        with Session(engine) as s:
+            self._touro_e_estoque(s, naab="1HO101", nome="TOURO A", tpi=3000)
+            self._touro_e_estoque(s, naab="1HO102", nome="TOURO B", tpi=2000)
+            # TOURO A usado em 3 serviços, TOURO B em 1 — a ponderação é pelo
+            # uso, não pelas doses em estoque (ambos têm 1 dose cadastrada).
+            s.add(Servico(numero_matriz="1", reprodutor="TOURO A", data_servico=d))
+            s.add(Servico(numero_matriz="2", reprodutor="TOURO A", data_servico=d))
+            s.add(Servico(numero_matriz="3", reprodutor="TOURO A", data_servico=d))
+            s.add(Servico(numero_matriz="4", reprodutor="TOURO B", data_servico=d))
+            s.commit()
+
+        resp = c.get("/cadastro/estoque-semen/prova-ao-vivo")
+        assert resp.status_code == 200, resp.text
+        corpo = resp.json()
+        # (3000*3 + 2000*1) / 4 = 2750 — não é mais taxa de concepção/serviços
+        # elegíveis/positivos, é o índice genético do catálogo.
+        assert corpo["prova"]["tpi"] == 2750.0
+        assert corpo["total_servicos"] == 4
+        assert corpo["touros_considerados"] == 2
+        touros = {t["touro"]: t["servicos"] for t in corpo["touros"]}
+        assert touros == {"TOURO A": 3, "TOURO B": 1}
+        assert "elegiveis" not in corpo
+        assert "taxa_concepcao" not in corpo
+
+    def test_servico_sem_touro_nao_entra(self, client):
+        c, engine = client
+        from datetime import date
+        from fazenda.models import Servico
+
+        with Session(engine) as s:
+            s.add(Servico(numero_matriz="1", data_servico=date(2026, 1, 1)))
+            s.commit()
+
+        resp = c.get("/cadastro/estoque-semen/prova-ao-vivo")
+        assert resp.status_code == 200
+        assert resp.json()["touros"] == []
+        assert resp.json()["touros_considerados"] == 0
+
+    def test_touro_sem_casamento_no_catalogo_nao_entra(self, client):
+        # Reprodutor usado nos serviços mas sem NAAB/catálogo cadastrado —
+        # não tem nenhum indicador genético para ponderar.
+        c, engine = client
+        from datetime import date
+        from fazenda.models import Servico
+
+        with Session(engine) as s:
+            s.add(Servico(numero_matriz="1", reprodutor="TOURO SEM CATALOGO", data_servico=date(2026, 1, 1)))
+            s.commit()
+
+        resp = c.get("/cadastro/estoque-semen/prova-ao-vivo")
+        assert resp.status_code == 200
+        assert resp.json()["touros"] == []
+        assert resp.json()["touros_considerados"] == 0
+
+    def test_touro_da_fazenda_fica_de_fora_por_padrao(self, client):
+        c, engine = client
+        from datetime import date
+        from fazenda.models import Servico
+
+        with Session(engine) as s:
+            self._touro_e_estoque(s, naab="1HO201", nome="TOURO FAZENDA", tipo="fazenda", tpi=1000)
+            # tipo_semen gravado no próprio serviço (monta natural).
+            s.add(Servico(numero_matriz="1", reprodutor="TOURO FAZENDA", tipo_semen="fazenda", data_servico=date(2026, 1, 1)))
+            s.commit()
+
+        resp_padrao = c.get("/cadastro/estoque-semen/prova-ao-vivo")
+        assert resp_padrao.json()["touros_considerados"] == 0
+        assert resp_padrao.json()["prova"]["tpi"] is None
+
+        resp_incluindo = c.get("/cadastro/estoque-semen/prova-ao-vivo", params={"incluir_fazenda": "true"})
+        corpo = resp_incluindo.json()
+        assert corpo["touros_considerados"] == 1
+        assert corpo["prova"]["tpi"] == 1000.0
+
+    def test_classifica_touro_da_fazenda_pelo_estoque_quando_servico_antigo_nao_tem_tipo_semen(self, client):
+        # Serviço antigo sem `tipo_semen` gravado — classifica pelo tipo
+        # cadastrado no Estoque de Sêmen com esse nome.
+        c, engine = client
+        from datetime import date
+        from fazenda.models import Servico
+
+        with Session(engine) as s:
+            self._touro_e_estoque(s, naab="1HO202", nome="TOURO FAZENDA ANTIGO", tipo="fazenda", tpi=1500)
+            s.add(Servico(numero_matriz="1", reprodutor="TOURO FAZENDA ANTIGO", data_servico=date(2026, 1, 1)))
+            s.commit()
+
+        resp = c.get("/cadastro/estoque-semen/prova-ao-vivo")
+        assert resp.json()["touros_considerados"] == 0
+
+    def test_filtro_categoria(self, client):
+        c, engine = client
+        from datetime import date
+        from fazenda.models import Servico
+
+        d = date(2026, 1, 1)
+        with Session(engine) as s:
+            self._touro_e_estoque(s, naab="1HO301", nome="TOURO A", tpi=2400)
+            s.add(Servico(numero_matriz="1", categoria="Vaca", reprodutor="TOURO A", data_servico=d))
+            s.add(Servico(numero_matriz="2", categoria="Novilha", reprodutor="TOURO A", data_servico=d))
+            s.commit()
+
+        resp = c.get("/cadastro/estoque-semen/prova-ao-vivo", params={"categoria": "vaca"})
+        assert resp.status_code == 200
+        corpo = resp.json()
+        assert corpo["total_servicos"] == 1
+        touros = {t["touro"]: t["servicos"] for t in corpo["touros"]}
+        assert touros == {"TOURO A": 1}
+
+    def test_filtro_ano_nascimento_e_periodo(self, client):
+        c, engine = client
+        from datetime import date
+        from fazenda.models import Servico
+
+        with Session(engine) as s:
+            self._touro_e_estoque(s, naab="1HO302", nome="TOURO A", tpi=2400)
+            s.add(Servico(numero_matriz="1", reprodutor="TOURO A", data_nasc_matriz=date(2022, 3, 1),
+                          data_servico=date(2026, 1, 10)))
+            s.add(Servico(numero_matriz="2", reprodutor="TOURO A", data_nasc_matriz=date(2023, 3, 1),
+                          data_servico=date(2026, 1, 10)))
+            s.add(Servico(numero_matriz="1", reprodutor="TOURO A", data_nasc_matriz=date(2022, 3, 1),
+                          data_servico=date(2026, 6, 1)))
+            s.commit()
+
+        resp = c.get("/cadastro/estoque-semen/prova-ao-vivo", params={"ano_nascimento": 2022})
+        assert resp.status_code == 200
+        assert resp.json()["total_servicos"] == 2
+
+        resp2 = c.get("/cadastro/estoque-semen/prova-ao-vivo", params={"ano_nascimento": 2022, "de": "2026-01-01", "ate": "2026-03-01"})
+        assert resp2.status_code == 200
+        assert resp2.json()["total_servicos"] == 1

@@ -16,7 +16,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from fazenda.api.routers.animais import _del_dias_ao_vivo
-from fazenda.rules.bst import ResultadoBST, avaliar_bst
+from fazenda.rules.bst import GRUPOS_LACTACAO, ResultadoBST, avaliar_bst
 from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules.gestation import calcular_parto_provavel
 from fazenda.rules.iatf import (
@@ -28,11 +28,22 @@ from fazenda.rules.iatf import (
 from fazenda.rules.parametros import (
     dias_contas_a_pagar_agenda as _dias_contas_a_pagar_padrao,
     dias_reinseminacao_referencia as _dias_reinseminacao_referencia,
+    get_param,
     gestacao_dias_referencia,
+    idade_apta_min_meses as _idade_apta_min_meses,
+    idade_max_1a_cobertura_meses as _idade_max_1a_cobertura_meses,
     intervalo_bst as _intervalo_bst_padrao,
     intervalo_visita_reprodutiva as _intervalo_visita_reprodutiva_padrao,
     periodo_seco_dias,
+    peso_apta_min as _peso_apta_min,
+    pev_dias as _pev_dias,
     pre_parto_max,
+)
+from fazenda.rules.estado_reprodutivo import (
+    ATRASADA as _E_ATRASADA,
+    GESTANTE as _E_GESTANTE,
+    INSEMINADA as _E_INSEMINADA,
+    estados_ao_vivo,
 )
 from fazenda.rules.perda_prenhez import retoque_esta_resolvido
 from fazenda.rules.scratch_pev import calcular_pev, calcular_scratch
@@ -48,6 +59,14 @@ def _del_projetado_bst(del_atual: int | None, proxima_visita_bst: date | None, h
     if del_atual is None or proxima_visita_bst is None:
         return None
     return del_atual + (proxima_visita_bst - hoje).days
+
+
+# Com quanta antecedência o descarte previsto entra na Agenda. Não reaproveita
+# `dias_contas_a_pagar` (padrão 10) de propósito: aquele prazo é de fluxo de
+# caixa, e descarte se organiza com semanas — comprador, transporte, lote de
+# venda. Trinta dias dá tempo de arranjar isso sem encher a agenda de hoje com
+# coisa de dois meses adiante.
+DIAS_HORIZONTE_DESCARTE = 30
 
 
 @dataclass
@@ -131,6 +150,25 @@ class AgendaEngine:
         proxima_visita_bst_real: date | None = None,
         lotes: list[dict] | None = None,
         secagens: list[dict] | None = None,
+        pedidos_documentos_vencendo: list[dict] | None = None,
+        pedidos_entrega_prevista: list[dict] | None = None,
+        pessoas_documentos_vencendo: list[dict] | None = None,
+        inducoes_cio: list[dict] | None = None,
+        # Entram para o estado reprodutivo AO VIVO decidir candidatas a IATF e
+        # "PEV encerra" — antes os dois liam `sit_rep`, o texto congelado do
+        # GERAL.csv. Sem `aplicacoes_iatf` o estado EM_PROTOCOLO nunca sai e a
+        # vaca com D0 implantado hoje volta a ser oferecida; sem
+        # `peso_por_animal` a novilha nulípara nunca é apta por peso. Ambos com
+        # default vazio para não quebrar chamador nenhum.
+        aplicacoes_iatf: list[dict] | None = None,
+        peso_por_animal: dict[str, float] | None = None,
+        # Histórico COMPLETO de serviços, só para a classificação ao vivo.
+        # `servicos` continua sendo o recorte `ult_ocorrencia == 1`, porque o
+        # alerta de retoque varre essa lista e dispararia para serviços antigos
+        # se ela virasse o histórico. `classificar_animal` faz o próprio
+        # recorte "posterior ao último parto"; com só o registro marcado, o
+        # vigente correto pode ficar de fora quando a marcação está velha.
+        servicos_historico: list[dict] | None = None,
     ) -> AgendaResult:
         """
         Calcula toda a agenda para uma data de referência.
@@ -152,6 +190,28 @@ class AgendaEngine:
             secagens: Lista de dicts com campos do modelo Secagem — usada para
                 calcular o DEL de cada animal AO VIVO (ver `_del_dias_ao_vivo`),
                 em vez do `Animal.del_dias` congelado no último GERAL.csv.
+            pedidos_documentos_vencendo: Anexos de Pedido (orçamento/ordem de
+                serviço) com `data_validade`, já filtrados em agenda.py para
+                pedidos "aberto"/"parcialmente_atendido" — dispara alerta 2
+                dias antes do vencimento (ver PedidoAnexo/PUT /pedidos/{id}/anexos).
+            pedidos_entrega_prevista: Pedidos "aberto"/"parcialmente_atendido"
+                com `data_prevista` de entrega, já filtrados em agenda.py —
+                dispara lembrete "já chegou?" sem piso nem teto de data (mesmo
+                racional do Pré-parto/Secagem abaixo): fica visível antes E
+                depois de `data_prevista`, até a entrega ser de fato marcada
+                em PedidoItem.quantidade_entregue (ver PUT
+                /pedidos/{id}/itens/{item_id}/entrega).
+            pessoas_documentos_vencendo: Anexos de Pessoa da categoria
+                "Contrato de trabalho por prazo determinado" com
+                `data_validade`, já filtrados em agenda.py para pessoa ativa —
+                dispara alerta 15 dias antes do vencimento (mais antecedência
+                que Pedido: decidir renovar/encerrar um vínculo de trabalho
+                precisa de mais prazo do que aprovar um orçamento — ver
+                PessoaAnexo/POST /cadastro/pessoas/{id}/anexos).
+            inducoes_cio: Aplicações de indução de cio (Sanidade com
+                atividade=ATIVIDADE_INDUCAO_CIO) dos últimos dias — dispara
+                "observar cio" na janela de 2 a 5 dias após a aplicação,
+                enquanto o cio ainda não foi aproveitado (ver reproducao.py).
 
         Returns:
             AgendaResult com todos os blocos da agenda calculados.
@@ -171,6 +231,15 @@ class AgendaEngine:
         grupos_ja_pre_parto = {
             f"{l['codigo']} - {l['nome']}" for l in (lotes or []) if l.get("pre_parto")
         }
+        # Códigos de lote (2 dígitos) que contam como lactação para o BST —
+        # mesma correção de fazenda.rules.indicadores: sem isto, ficava preso
+        # em GRUPOS_LACTACAO (01/02/03) mesmo quando o cadastro de Lote
+        # (status_lactacao == "lactacao") diz que um lote renumerado/novo
+        # também é lactação — vaca lactante nesse lote nunca entrava na
+        # elegibilidade nem na lista de excluídos do BST.
+        codigos_lactacao = {
+            l.get("codigo") for l in (lotes or []) if l.get("status_lactacao") == "lactacao"
+        } or set(GRUPOS_LACTACAO)
 
         # Índices auxiliares
         servico_por_animal: dict[str, dict] = {
@@ -197,18 +266,78 @@ class AgendaEngine:
             if n and d and s.get("motivo") == "rotina" and (n not in ult_secagem_rotina_por_animal or d > ult_secagem_rotina_por_animal[n]):
                 ult_secagem_rotina_por_animal[n] = d
 
+        # ── ESTADO REPRODUTIVO AO VIVO
+        # Recalculado dos registros, é o que decide as candidatas a IATF e o
+        # aviso "PEV encerra" mais abaixo. Antes os dois liam `Animal.sit_rep`,
+        # congelado no último GERAL.csv: vaca que engravidasse pelo app seguia
+        # sendo oferecida para protocolo até o próximo upload.
+        no_programa = [
+            a for a in animais
+            if a.get("ativo", True)
+            and not a.get("a_descartar")
+            and not (a.get("data_baixa") and a["data_baixa"] <= data_referencia)
+        ]
+        estados_vivos = estados_ao_vivo(
+            no_programa,
+            hoje=data_referencia,
+            partos=partos,
+            servicos=servicos_historico if servicos_historico is not None else servicos,
+            aplicacoes_iatf=aplicacoes_iatf or [],
+            pev_dias=_pev_dias(),
+            del_max_1o_servico=int(get_param("meta_del_max_1o_servico", 100) or 100),
+            peso_por_animal=peso_por_animal or {},
+            idade_apta_dias=int(_idade_apta_min_meses() * 30.44),
+            idade_atraso_dias=int(_idade_max_1a_cobertura_meses() * 30.44),
+            peso_apta_kg=_peso_apta_min(),
+            # `dias_atraso_apos_aptidao`/`datas_ficou_apta_por_animal` (o
+            # segundo gatilho de ATRASADA da novilha, dias desde que ELA
+            # ficou apta) não são passados aqui de propósito: exigem o
+            # histórico COMPLETO de pesagem (não só a última, que é tudo que
+            # este motor recebe), e este alerta já cobre o gatilho de idade
+            # (novilha) e o de DEL (vaca) sem essa dependência nova. A
+            # novilha que só ficaria atrasada pelo segundo gatilho continua
+            # visível nas Listas/no card configurável da Agenda Reprodutiva
+            # — só ainda não dispara este alerta proativo.
+        )
+
+        # ── ATRASADAS — alerta persistente (reaparece todo dia até a matriz
+        # ser servida ou marcada a descartar): vaca passou do DEL máximo para
+        # o 1º serviço, ou novilha passou do teto de idade para a 1ª
+        # cobertura, sem novo serviço. Mesmo estado ATRASADA que já alimenta
+        # as Listas de Rebanho e o card configurável da Agenda Reprodutiva —
+        # ver `fazenda.rules.estado_reprodutivo`.
+        categoria_por_animal = {
+            a["numero"]: (a.get("categoria_abrev") or a.get("categoria_completa") or "").lower()
+            for a in no_programa
+        }
+        for numero_atrasada, est_atrasada in estados_vivos.items():
+            if est_atrasada.get("estado") != _E_ATRASADA:
+                continue
+            eh_vaca_atrasada = "vaca" in categoria_por_animal.get(numero_atrasada, "")
+            if eh_vaca_atrasada:
+                del_dias_atraso = est_atrasada.get("del_dias")
+                descricao_atraso = f"Vazia atrasada — {del_dias_atraso} dias pós-parto sem novo serviço"
+            else:
+                descricao_atraso = "Novilha atrasada — apta e vazia há tempo demais sem serviço"
+            eventos.append(AgendaItem(
+                data=data_referencia,
+                categoria="Reprodutivo",
+                descricao=descricao_atraso,
+                numero_animal=numero_atrasada,
+            ))
+
         # 1. CANDIDATAS IATF
+        # `no_programa` já aplicou a regra R1 (a_descartar e baixa datada), que
+        # `classificar_animal` não consulta sozinho.
         iatf_input = [
             {
                 "numero_matriz": a["numero"],
                 "sit_rep": a.get("sit_rep"),
-                "del_dias": a.get("del_dias"),
                 "diagnostico_ultimo": servico_por_animal.get(a["numero"], {}).get("diagnostico"),
             }
-            for a in animais
-            if a.get("ativo", True)
+            for a in no_programa
         ]
-        candidatas = selecionar_candidatas_iatf(iatf_input)
+        candidatas = selecionar_candidatas_iatf(iatf_input, estados_vivos)
         result.candidatas_iatf = candidatas
         if candidatas:
             result.necessidade_iatf = calcular_necessidade_hormonios(len(candidatas))
@@ -230,6 +359,20 @@ class AgendaEngine:
         # fazenda nunca lançou nenhuma aplicação de BST ainda.
         if proxima_visita_bst_real is not None:
             result.proxima_visita_bst = proxima_visita_bst_real
+
+        # Antes `proxima_visita_iatf` só existia como dado de referência (texto
+        # discreto no rodapé da Agenda) — o funcionário não tinha nenhum item
+        # acionável para se organizar. Vira card na lista de eventos igual aos
+        # demais (Pré-parto/Secagem/PEV): sem piso de data, para continuar
+        # aparecendo (e cair em "Atrasados") se a visita não acontecer no dia
+        # previsto — ela só sai da lista quando um novo serviço reprodutivo é
+        # lançado (o que recalcula a data para a próxima rodada, ver acima).
+        if result.proxima_visita_iatf is not None:
+            eventos.append(AgendaItem(
+                data=result.proxima_visita_iatf,
+                categoria="Reprodutivo",
+                descricao=f"Visita reprodutiva — dia de diagnóstico/IATF do rebanho (a cada {intervalo_visita_reprodutiva} dias)",
+            ))
 
         # 1b. RETOQUE — diagnóstico positivo marcado para reconfirmar entra na
         # agenda no dia da próxima visita reprodutiva (data do diagnóstico + meta de
@@ -442,7 +585,11 @@ class AgendaEngine:
                     ))
 
             # ── PEV (45 dias após parto)
-            if data_parto_real and sit_rep not in ("Ges.", "Ins."):
+            # A exclusão de gestante/inseminada sai do estado AO VIVO. Com o
+            # `sit_rep` congelado, a vaca que engravidasse pelo app continuava
+            # recebendo "PEV encerra — liberar p/ inseminar" até o próximo CSV.
+            estado_vivo = (estados_vivos.get(numero) or {}).get("estado")
+            if data_parto_real and estado_vivo not in (_E_GESTANTE, _E_INSEMINADA):
                 res_pev = calcular_pev(numero, data_parto_real, data_referencia)
                 if not res_pev.liberado:
                     eventos.append(AgendaItem(
@@ -475,7 +622,7 @@ class AgendaEngine:
             # reanálise na próxima aplicação (indicador amarelo no front).
             if animal.get("excluir_bst") or animal.get("aguardando_nova_aplicacao_bst"):
                 cod = (grupo or "").strip()[:2]
-                if cod in ("01", "02", "03"):
+                if cod in codigos_lactacao:
                     res_bst = avaliar_bst(
                         numero_matriz=numero,
                         grupo_primario=grupo,
@@ -484,6 +631,7 @@ class AgendaEngine:
                         data_referencia=data_referencia,
                         del_atual=del_dias,
                         del_projetado=_del_projetado_bst(del_dias, result.proxima_visita_bst, data_referencia),
+                        codigos_lactacao=codigos_lactacao,
                     )
                     res_bst.motivo_exclusao = (
                         "Excluída manualmente do BST — revisar na próxima aplicação"
@@ -507,19 +655,46 @@ class AgendaEngine:
                     data_referencia=data_referencia,
                     del_atual=del_dias,
                     del_projetado=_del_projetado_bst(del_dias, result.proxima_visita_bst, data_referencia),
+                    codigos_lactacao=codigos_lactacao,
                 )
                 if res_bst.elegivel:
                     bst_elegiveis.append(res_bst)
                 else:
-                    # Excluídos do BST: apenas lactantes (01/02/03) que não cumprem os
-                    # requisitos — não faz sentido listar a fazenda inteira.
+                    # Excluídos do BST: apenas lactantes (cadastro real de Lote, ou
+                    # 01/02/03 sem cadastro) que não cumprem os requisitos — não faz
+                    # sentido listar a fazenda inteira.
                     cod = (grupo or "").strip()[:2]
-                    if cod in ("01", "02", "03"):
+                    if cod in codigos_lactacao:
                         bst_excluidos.append(res_bst)
 
         result.bst_elegiveis = bst_elegiveis
         result.bst_excluidos = bst_excluidos
         result.bst_reanalise = bst_reanalise
+
+        # 3b. INDUÇÃO DE CIO (PGF2α/Cloprostenol) — aplicada nos últimos dias
+        # do PEV pra estimular o cio (não é IATF nem diagnóstico, ver
+        # fazenda/api/routers/reproducao.py::ATIVIDADE_INDUCAO_CIO). Observar
+        # cio na janela de 2 a 5 dias após a aplicação — pára de avisar assim
+        # que o cio já foi aproveitado (serviço mais recente do animal em
+        # data >= aplicação).
+        for inducao in (inducoes_cio or []):
+            numero = inducao.get("numero_matriz")
+            data_aplicacao = inducao.get("data_aplicacao")
+            if not numero or not data_aplicacao:
+                continue
+            data_servico_recente = servico_por_animal.get(numero, {}).get("data_servico")
+            if data_servico_recente and data_servico_recente >= data_aplicacao:
+                continue
+            janela_ini = data_aplicacao + timedelta(days=2)
+            janela_fim = data_aplicacao + timedelta(days=5)
+            if not (janela_ini <= data_referencia <= janela_fim):
+                continue
+            eventos.append(AgendaItem(
+                data=data_referencia,
+                categoria="Reprodutivo",
+                descricao=f"Observar cio — indução aplicada em {data_aplicacao.strftime('%d/%m/%Y')} ({inducao.get('produto', 'PGF2α')}), esperado em 2 a 5 dias",
+                numero_animal=numero,
+            ))
 
         # 4. PESAGENS RECORRENTES
         # Terça mais próxima (bezerros, a cada 15 dias)
@@ -572,6 +747,115 @@ class AgendaEngine:
                 categoria="Gestão/Financeiro",
                 descricao=f"Comprar {item['nome']} — estoque abaixo do mínimo ({qtd} de {minimo} {item.get('unidade') or ''})",
             ))
+
+        # 5c. PEDIDOS — orçamento/ordem de serviço vencendo (2 dias antes),
+        # enquanto o pedido segue aberto/parcialmente atendido (já filtrado
+        # em agenda.py, ver PedidoAnexo).
+        for doc in (pedidos_documentos_vencendo or []):
+            validade = doc.get("data_validade")
+            if not validade:
+                continue
+            alerta_em = validade - timedelta(days=2)
+            if not (data_referencia <= alerta_em <= limite_contas):
+                continue
+            eventos.append(AgendaItem(
+                data=alerta_em,
+                categoria="Gestão/Financeiro",
+                descricao=f"{doc.get('categoria', 'Documento')} do pedido {doc.get('numero_pedido', '')} vence em {validade.strftime('%d/%m/%Y')} — pedido ainda {doc.get('status_label', 'em aberto')}",
+                observacao=doc.get("fornecedor_cliente"),
+                ref=doc.get("numero_pedido"),
+                link=f"/pedidos?id={doc.get('pedido_id')}" if doc.get("pedido_id") else None,
+            ))
+
+        # 5c-bis. PEDIDOS — entrega prevista, "já chegou?" (persistente, mesmo
+        # racional do Pré-parto/Secagem acima: sem piso nem teto de data). Não
+        # é a mesma coisa que o bloco 5c acima (documento vencendo, com janela
+        # de 2 dias) — aqui não há prazo-limite, é conferência física: o
+        # alerta usa a própria `data_prevista` (sem reancorar em hoje) para
+        # que o front classifique sozinho em "Atrasados" quando ela passa, e
+        # só some quando o pedido some da lista (entrega marcada em
+        # PedidoItem.quantidade_entregue muda o status calculado — ver
+        # pedido_status.py — ou pedido cancelado), nunca pela data ter passado.
+        for pedido in (pedidos_entrega_prevista or []):
+            data_prevista = pedido.get("data_prevista")
+            if not data_prevista:
+                continue
+            numero_pedido = pedido.get("numero_pedido", "")
+            eventos.append(AgendaItem(
+                data=data_prevista,
+                categoria="Gestão/Financeiro",
+                descricao=(
+                    f"Pedido {numero_pedido} — entrega prevista para "
+                    f"{data_prevista.strftime('%d/%m/%Y')}. Já foi entregue? Marque a entrega no pedido."
+                ),
+                observacao=pedido.get("fornecedor_cliente"),
+                ref=numero_pedido,
+                link=f"/pedidos?id={pedido.get('pedido_id')}" if pedido.get("pedido_id") else None,
+            ))
+
+        # 5d. PESSOAS — contrato de trabalho por prazo determinado vencendo
+        # (15 dias antes — mais antecedência que Pedido: decidir renovar ou
+        # encerrar um vínculo de trabalho precisa de mais prazo do que
+        # aprovar um orçamento), pessoa ainda ativa (já filtrado em
+        # agenda.py, ver PessoaAnexo).
+        for doc in (pessoas_documentos_vencendo or []):
+            validade = doc.get("data_validade")
+            if not validade:
+                continue
+            alerta_em = validade - timedelta(days=15)
+            if not (data_referencia <= alerta_em <= limite_contas):
+                continue
+            eventos.append(AgendaItem(
+                data=alerta_em,
+                categoria="Gestão/Financeiro",
+                descricao=f"{doc.get('categoria', 'Documento')} de {doc.get('pessoa_nome', '')} vence em {validade.strftime('%d/%m/%Y')}",
+                ref=str(doc.get("pessoa_id")) if doc.get("pessoa_id") else None,
+                link="/configuracoes?aba=cadastro&sub=pessoas",
+            ))
+
+        # 5e. DESCARTE PREVISTO — animal marcado "a descartar" com data de
+        # saída planejada (Animal.descarte_previsto_em, opcional). Sem este
+        # evento a data ficava só guardada no cadastro: ninguém era lembrado
+        # quando ela chegava, e o animal seguia comendo.
+        #
+        # Duas âncoras, de propósito:
+        #   - previsão FUTURA -> evento na própria data prevista;
+        #   - previsão VENCIDA -> evento reancorado em HOJE, e continua
+        #     aparecendo todo dia até a baixa ser lançada.
+        #
+        # A segunda âncora existe porque `AgendaItem.cor` é por CATEGORIA, não
+        # por atraso — a Agenda não tem mecanismo de "vencido". Deixar o evento
+        # na data original faria ele sumir da lista exatamente quando passa a
+        # importar, que é o oposto de um lembrete. Quando a baixa é lançada o
+        # animal deixa de ser `ativo` e o evento some sozinho, sem estado extra.
+        for a_ in animais:
+            if not a_.get("ativo") or not a_.get("a_descartar"):
+                continue
+            previsto = a_.get("descarte_previsto_em")
+            if not previsto:
+                continue  # sem previsão é estado legítimo, não pendência
+            numero = a_.get("numero")
+            if previsto >= data_referencia:
+                if previsto > data_referencia + timedelta(days=DIAS_HORIZONTE_DESCARTE):
+                    continue
+                eventos.append(AgendaItem(
+                    data=previsto,
+                    categoria="Gestão/Financeiro",
+                    descricao=f"Descarte previsto — {numero}",
+                    numero_animal=numero,
+                    link="/rebanho",
+                ))
+            else:
+                eventos.append(AgendaItem(
+                    data=data_referencia,
+                    categoria="Gestão/Financeiro",
+                    descricao=(
+                        f"Descarte VENCIDO — {numero} "
+                        f"(previsto para {previsto.strftime('%d/%m/%Y')}, ainda no rebanho)"
+                    ),
+                    numero_animal=numero,
+                    link="/rebanho",
+                ))
 
         # 6. EVENTOS MANUAIS
         for ev in eventos_manuais:

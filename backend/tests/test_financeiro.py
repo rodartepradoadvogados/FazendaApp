@@ -12,7 +12,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento, seed_parametros_financeiros
-from fazenda.models import CentroCusto, ContaCorrente, ContaGerencial, Estoque, LancamentoItem, MovimentoEstoque, ParametroFazenda, PlanoContaGerencial
+from fazenda.models import CentroCusto, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, LancamentoItem, MovimentoEstoque, ParametroFazenda, PlanoContaGerencial
 from fazenda.rules.nfe_xml import parse_nfe_xml
 
 NFE_SIMPLES = """<?xml version="1.0" encoding="UTF-8"?>
@@ -251,6 +251,129 @@ class TestCentroCustoObrigatorio:
             conta = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == r.json()["numero_lancamento"])).first()
             assert conta.centro_custo == "Arrendamento"
 
+
+class TestCentroCustoPorItem:
+    """Uma nota com vários itens pode distribuir cada item para um centro de
+    custo diferente do da nota (ex.: um boleto que cobre insumos de mais de
+    um centro) — ver LancamentoItem.centro_custo, mesmo padrão do já
+    existente codigo_conta_gerencial por item."""
+
+    def test_item_sem_override_fica_nulo(self, client):
+        c, engine = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "centro_custo": "Pecuária Leiteira",
+            "itens": [{"produto": "Ração concentrada", "valor_total": 500.0}],
+        })
+        assert r.status_code == 201
+        with Session(engine) as s:
+            from sqlmodel import select
+            item = s.exec(select(LancamentoItem).where(LancamentoItem.numero_lancamento == r.json()["numero_lancamento"])).first()
+            assert item.centro_custo is None
+
+    def test_item_com_override_diferente_do_centro_da_nota(self, client):
+        c, engine = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "centro_custo": "Pecuária Leiteira",
+            "itens": [
+                {"produto": "Ração concentrada", "valor_total": 500.0},
+                {"produto": "Adubo", "valor_total": 300.0, "centro_custo": "Agricultura"},
+            ],
+        })
+        assert r.status_code == 201
+        with Session(engine) as s:
+            from sqlmodel import select
+            itens = s.exec(select(LancamentoItem).where(LancamentoItem.numero_lancamento == r.json()["numero_lancamento"])).all()
+            por_produto = {i.produto: i.centro_custo for i in itens}
+            assert por_produto["Ração concentrada"] is None
+            assert por_produto["Adubo"] == "Agricultura"
+            # O centro de custo da NOTA continua o mesmo — só o item mudou.
+            conta = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == r.json()["numero_lancamento"])).first()
+            assert conta.centro_custo == "Pecuária Leiteira"
+
+    def test_listar_lancamentos_traz_o_centro_de_custo_do_item(self, client):
+        c, _ = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "centro_custo": "Pecuária Leiteira",
+            "itens": [{"produto": "Adubo", "valor_total": 300.0, "centro_custo": "Agricultura"}],
+        })
+        numero = r.json()["numero_lancamento"]
+        lista = c.get("/financeiro/lancamentos").json()
+        lanc = next(l for l in lista["lancamentos"] if l["numero_lancamento"] == numero)
+        assert lanc["itens"][0]["centro_custo"] == "Agricultura"
+
+    def test_listar_lancamentos_traz_o_tipo_item(self, client):
+        """A edição do lançamento (frontend) precisa saber se cada item é
+        produto ou serviço pra checar o item contra o catálogo certo
+        (Estoque × ServicoCadastro) — sem isso, não dava pra distinguir."""
+        c, _ = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [
+                {"produto": "Ração concentrada", "tipo_item": "produto", "valor_total": 500.0},
+                {"produto": "Frete", "tipo_item": "servico", "valor_total": 150.0},
+            ],
+        })
+        numero = r.json()["numero_lancamento"]
+        lista = c.get("/financeiro/lancamentos").json()
+        lanc = next(l for l in lista["lancamentos"] if l["numero_lancamento"] == numero)
+        por_produto = {i["produto"]: i["tipo_item"] for i in lanc["itens"]}
+        assert por_produto == {"Ração concentrada": "produto", "Frete": "servico"}
+
+    def test_dre_rateia_pelo_centro_de_custo_do_item(self, client):
+        """A nota nasce em "Pecuária Leiteira", mas um item de R$ 300 tem
+        override pra "Agricultura" — o DRE filtrado por cada centro só pode
+        contar a fatia correspondente, nunca a nota inteira nos dois."""
+        c, _ = client
+        c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "centro_custo": "Pecuária Leiteira", "data_competencia": "2026-07-05",
+            "itens": [
+                {"produto": "Ração concentrada", "valor_total": 700.0},
+                {"produto": "Adubo", "valor_total": 300.0, "centro_custo": "Agricultura"},
+            ],
+        })
+        params = {"data_inicio": "2026-07-01", "data_fim": "2026-07-31"}
+        pl = c.get("/financeiro/dre", params={**params, "centro_custo": "Pecuária Leiteira"}).json()
+        agro = c.get("/financeiro/dre", params={**params, "centro_custo": "Agricultura"}).json()
+        sem_filtro = c.get("/financeiro/dre", params=params).json()
+        assert pl["despesas_total"] == 700.0
+        assert agro["despesas_total"] == 300.0
+        assert sem_filtro["despesas_total"] == 1000.0
+
+    def test_dre_nao_perde_valor_quando_itens_da_nota_somam_zero(self, client):
+        """Nota com valor_total > 0, mas cujos LancamentoItem (import legado
+        com preço unitário zerado, item de ajuste, etc.) somam 0 — sem
+        fallback, `_registros_dre_para_cascata` batia em
+        `total_itens <= 0: continue` e o valor da nota SUMIA da cascata
+        inteira: não entrava em nenhuma linha nem em `nao_classificado`,
+        enquanto os campos legados (`despesas_total`) continuavam contando
+        com ele. A DRE promete nunca fingir que fecha (todo valor aparece em
+        algum lugar) — este é o caso que quebrava essa garantia."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(ContaGerencial(
+                numero_lancamento="LC-2026-90001", codigo_conta="3.03", tipo="despesa",
+                valor_total=100.0, data_competencia=date(2026, 6, 5),
+            ))
+            s.add(LancamentoItem(
+                numero_lancamento="LC-2026-90001", produto="Item com preço zerado",
+                valor_total=0.0, codigo_conta_gerencial="3.03",
+            ))
+            s.commit()
+
+        r = c.get("/financeiro/dre", params={"data_inicio": "2026-01-01", "data_fim": "2026-12-31"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["despesas_total"] == 100.0
+
+        total_cascata = sum(l["valor"] for l in body["cascata"] if not l["eh_subtotal"])
+        # O valor não classificado tem que cobrir exatamente o que sumiria —
+        # nenhum real pode desaparecer sem aparecer em algum lugar.
+        assert round(total_cascata + body["nao_classificado"]["total"], 2) == 100.0
+        assert body["nao_classificado"]["total"] == 100.0
+        assert body["nao_classificado"]["contas"] == [{"codigo": "3.03", "nome": "3.03", "valor": 100.0}]
+
+
+class TestDescontoAcrescimo:
     def test_desconto_reduz_o_valor_liquido(self, client):
         c, _ = client
         r = c.post("/financeiro/lancamentos", json={
@@ -344,6 +467,58 @@ class TestNumeroOsOrcamentoENumeroBoleto:
         assert r2.status_code == 200
         assert r2.json()["numero_os_orcamento"] == "ORC-55"
         assert r2.json()["numero_boleto"] == "999"
+
+
+class TestContextoFornecedor:
+    """GET /financeiro/contexto-fornecedor — coluna de histórico na tela de
+    lançamento (ver FormFinanceiro): em aberto, último lançamento, últimos
+    lançamentos e documentos já anexados a alguma nota daquele fornecedor."""
+
+    def test_sem_nome_devolve_vazio(self, client):
+        c, _ = client
+        r = c.get("/financeiro/contexto-fornecedor", params={"nome": ""})
+        assert r.status_code == 200
+        assert r.json() == {"em_aberto": 0.0, "ultimo_lancamento": None, "ultimos_lancamentos": [], "documentos_anexados": []}
+
+    def test_fornecedor_sem_lancamentos_devolve_vazio(self, client):
+        c, _ = client
+        r = c.get("/financeiro/contexto-fornecedor", params={"nome": "Fornecedor Fantasma"})
+        assert r.status_code == 200
+        assert r.json()["ultimos_lancamentos"] == []
+
+    def test_em_aberto_soma_so_o_que_nao_foi_pago(self, client):
+        c, _ = client
+        c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "fornecedor_cliente": "Comigo",
+            "itens": [{"produto": "Ração", "valor_total": 1000.0}], "data_emissao": "2026-08-01",
+        })
+        pago = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "fornecedor_cliente": "Comigo",
+            "itens": [{"produto": "Sal mineral", "valor_total": 300.0}], "data_emissao": "2026-07-01",
+        }).json()
+        lanc_id = pago["ids"][0]
+        c.put(f"/financeiro/lancamentos/{lanc_id}/pagar", json={"data_pagamento": "2026-07-05", "valor_pago": 300.0})
+
+        r = c.get("/financeiro/contexto-fornecedor", params={"nome": "Comigo"})
+        corpo = r.json()
+        assert corpo["em_aberto"] == 1000.0
+        assert corpo["ultimo_lancamento"] == "2026-08-01"
+        assert len(corpo["ultimos_lancamentos"]) == 2
+        pagos = {l["valor"]: l["pago"] for l in corpo["ultimos_lancamentos"]}
+        assert pagos == {1000.0: False, 300.0: True}
+
+    def test_documentos_anexados_do_fornecedor(self, client):
+        c, _ = client
+        numero = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "fornecedor_cliente": "Comigo",
+            "itens": [{"produto": "Ração", "valor_total": 500.0}],
+        }).json()["numero_lancamento"]
+        c.post(f"/financeiro/lancamentos/{numero}/anexos", files={"file": ("nf.pdf", b"conteudo", "application/pdf")})
+
+        r = c.get("/financeiro/contexto-fornecedor", params={"nome": "Comigo"})
+        docs = r.json()["documentos_anexados"]
+        assert len(docs) == 1
+        assert docs[0]["nome_arquivo"] == "nf.pdf"
 
 
 class TestAnexosLancamento:
@@ -676,6 +851,64 @@ class TestBaixaLote:
                    files={"file": ("comp.pdf", b"x", "application/pdf")}, data={"lancamento_ids": ""})
         assert r.status_code == 400
 
+    # --- Mais de um comprovante no mesmo lote (o banco às vezes emite mais
+    # de um recibo para a mesma remessa) ---
+    def test_varios_comprovantes_em_lote_ficam_todos_vinculados_a_cada_nota(self, client):
+        c, _ = client
+        id1 = self._criar_lancamento(c, 500.0)
+        id2 = self._criar_lancamento(c, 700.0)
+
+        r = c.post(
+            "/financeiro/lancamentos/anexos-lote",
+            files=[
+                ("file", ("remessa.pdf", b"%PDF-1.4 remessa", "application/pdf")),
+                ("file", ("extrato.png", b"png-bytes", "image/png")),
+            ],
+            data={"lancamento_ids": f"{id1},{id2}"},
+        )
+        assert r.status_code == 201, r.text
+        corpo = r.json()
+        assert corpo["anexados"] == 4  # 2 arquivos x 2 lançamentos
+        assert corpo["arquivos"] == ["remessa.pdf", "extrato.png"]
+        assert corpo["nome_arquivo"] == "remessa.pdf"  # compat: primeiro arquivo
+
+        for lid in (id1, id2):
+            anexos = c.get(f"/financeiro/lancamentos/por-id/{lid}/anexos").json()
+            assert sorted(a["nome_arquivo"] for a in anexos) == ["extrato.png", "remessa.pdf"]
+
+    def test_varios_comprovantes_em_lote_cada_arquivo_sobe_uma_vez_so(self, client):
+        c, engine = client
+        id1 = self._criar_lancamento(c, 100.0)
+        id2 = self._criar_lancamento(c, 200.0)
+        c.post(
+            "/financeiro/lancamentos/anexos-lote",
+            files=[
+                ("file", ("a.pdf", b"conteudo-a", "application/pdf")),
+                ("file", ("b.pdf", b"conteudo-b", "application/pdf")),
+            ],
+            data={"lancamento_ids": f"{id1},{id2}"},
+        )
+        from fazenda.models.financeiro import LancamentoAnexo
+        with Session(engine) as s:
+            anexos = s.exec(select(LancamentoAnexo)).all()
+        assert len(anexos) == 4  # 2 arquivos x 2 lançamentos
+        caminhos = {a.caminho_storage for a in anexos}
+        assert len(caminhos) == 2  # um caminho por ARQUIVO, não um por linha
+
+    def test_comprovante_unico_em_lote_continua_funcionando(self, client):
+        """Regressão: quem manda um único arquivo (campo "file" de sempre)
+        continua funcionando exatamente como antes."""
+        c, _ = client
+        id1 = self._criar_lancamento(c, 500.0)
+        r = c.post("/financeiro/lancamentos/anexos-lote",
+                   files={"file": ("comprovante.pdf", b"%PDF-1.4 comprovante", "application/pdf")},
+                   data={"lancamento_ids": str(id1)})
+        assert r.status_code == 201, r.text
+        corpo = r.json()
+        assert corpo["anexados"] == 1
+        assert corpo["arquivos"] == ["comprovante.pdf"]
+        assert corpo["nome_arquivo"] == "comprovante.pdf"
+
     def test_lancamento_com_comprovante_marcado_na_listagem(self, client):
         c, _ = client
         id1 = self._criar_lancamento(c, 100.0)
@@ -848,6 +1081,64 @@ class TestRmca:
         assert fisico["rmca"] == 9000.0
         assert fisico["itens"][0]["ingrediente"] == "Ração concentrada"
 
+    def test_itens_fisicos_trazem_preco_por_kg_das_3_fontes_do_simulador(self, client):
+        # Item embalado em saca de 30kg: preço padrão do cadastro é por SACA
+        # (R$90/saca), e a última compra (Entrada de compra mais recente)
+        # também — o Simulador de cenários (frontend) precisa dos dois já
+        # convertidos pra R$/kg, na mesma resolução de embalagem usada na
+        # baixa da Alimentação (resolver_kg_por_unidade).
+        c, engine = client
+        with Session(engine) as s:
+            self._marcar_contas(s)
+            item = Estoque(nome="Racao Teck Milk", quantidade=1000, unidade="saca 30kg", valor_unitario=90.0,
+                            conta_gerencial_despesa_padrao="3.01.01")
+            s.add(item)
+            s.commit()
+            s.refresh(item)
+            estoque_id = item.id
+            # Compra mais antiga (não deve vencer) e a mais recente (deve vencer).
+            s.add(MovimentoEstoque(nome_item="Racao Teck Milk", movimento="Entrada de compra", quantidade=10,
+                                    unidade="saca 30kg", data_movimento=date(2026, 1, 5), valor_unitario=84.0,
+                                    estoque_id=estoque_id))
+            s.add(MovimentoEstoque(nome_item="Racao Teck Milk", movimento="Entrada de compra", quantidade=10,
+                                    unidade="saca 30kg", data_movimento=date(2026, 1, 18), valor_unitario=96.0,
+                                    estoque_id=estoque_id))
+            s.add(MovimentoEstoque(nome_item="Racao Teck Milk", movimento="Saída de ajuste", quantidade=5,
+                                    unidade="saca 30kg", data_movimento=date(2026, 1, 20), valor_unitario=90.0,
+                                    estoque_id=estoque_id))
+            s.commit()
+
+        r = c.get("/financeiro/rmca", params={"data_inicio": "2026-01-01", "data_fim": "2026-01-31"})
+        assert r.status_code == 200
+        item_json = r.json()["fisico"]["itens"][0]
+        assert item_json["preco_padrao_kg"] == 3.0       # R$90 / 30kg
+        assert item_json["preco_ultima_compra_kg"] == 3.2  # R$96 (compra de 18/01, mais recente) / 30kg
+        assert item_json["quantidade_kg"] == 150.0  # 5 sacas baixadas * 30kg
+
+    def test_preco_medio_litro_leite_usa_competencia_mais_recente_com_entrega(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            self._marcar_contas(s)
+            s.add(EntregaLeiteMensal(competencia="2026-01", quantidade_litros=30000, unidade="L"))
+            s.commit()
+        c.post("/financeiro/lancamentos", json={
+            "tipo": "receita",
+            "itens": [{"produto": "Leite", "codigo_conta_gerencial": "2.01.01.01", "valor_total": 90000.0}],
+            "data_competencia": "2026-01-15",
+        })
+        r = c.get("/financeiro/rmca", params={"data_inicio": "2026-01-01", "data_fim": "2026-01-31"})
+        preco = r.json()["preco_medio_litro_leite"]
+        assert preco["competencia"] == "2026-01"
+        assert preco["litros"] == 30000.0
+        assert preco["preco_por_litro"] == 3.0
+
+    def test_preco_medio_litro_leite_none_sem_entrega_registrada(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            self._marcar_contas(s)
+        r = c.get("/financeiro/rmca", params={"data_inicio": "2026-01-01", "data_fim": "2026-01-31"})
+        assert r.json()["preco_medio_litro_leite"] is None
+
     def test_versao_fisica_exclui_item_fora_da_conta_gerencial_alimentacao(self, client):
         c, engine = client
         with Session(engine) as s:
@@ -916,6 +1207,66 @@ class TestBaixaLoteDetalhada:
         c, engine = client
         r = c.put("/financeiro/lancamentos/baixa-lote-detalhada", json={"itens": []})
         assert r.status_code == 400
+
+    # --- Diferença de valor por linha: desconto/acréscimo (padrão) x saldo
+    # avulso (parcelas_diferenca, mesmo mecanismo da baixa individual) ---
+    def test_diferenca_por_linha_sem_parcelas_diferenca_continua_virando_desconto(self, client):
+        """Regressão: sem optar por parcelar, o comportamento de sempre
+        (desconto/acréscimo direto na própria nota) continua intacto."""
+        c, engine = client
+        id1 = self._criar(c, 1000.0)
+        r = c.put("/financeiro/lancamentos/baixa-lote-detalhada", json={"itens": [
+            {"lancamento_id": id1, "data_pagamento": "2026-07-08", "valor_pago": 800.0, "forma_pagamento": "pix"},
+        ]})
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["parcelas_diferenca_criadas"] == []
+        lancs = {l["id"]: l for l in c.get("/financeiro/lancamentos").json()["lancamentos"]}
+        assert lancs[id1]["desconto_acrescimo"] == -200.0
+        assert lancs[id1]["parcela_total"] == 1  # nenhuma parcela nova criada
+
+    def test_diferenca_por_linha_com_saldo_avulso_cria_nova_parcela_e_zera_desconto(self, client):
+        c, engine = client
+        id1 = self._criar(c, 1000.0)
+        id2 = self._criar(c, 500.0)  # paga integralmente — não deve gerar nada extra
+        r = c.put("/financeiro/lancamentos/baixa-lote-detalhada", json={"itens": [
+            {
+                "lancamento_id": id1, "data_pagamento": "2026-07-08", "valor_pago": 800.0, "forma_pagamento": "pix",
+                "parcelas_diferenca": [{"data_vencimento": "2026-08-08", "valor": 200.0}],
+            },
+            {"lancamento_id": id2, "data_pagamento": "2026-07-08", "valor_pago": 500.0, "forma_pagamento": "pix"},
+        ]})
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["baixados"] == 2
+        novas = corpo["parcelas_diferenca_criadas"]
+        assert len(novas) == 1
+        assert novas[0]["valor_total"] == 200.0
+        assert novas[0]["data_vencimento"] == "2026-08-08"
+        assert novas[0]["data_pagamento"] is None  # nasce em aberto
+        assert novas[0]["parcela_num"] == 2 and novas[0]["parcela_total"] == 2
+
+        lancs = {l["id"]: l for l in c.get("/financeiro/lancamentos").json()["lancamentos"]}
+        assert lancs[id1]["valor_pago"] == 800.0
+        assert lancs[id1]["desconto_acrescimo"] == 0  # diferença reparcelada, não perdoada
+        assert lancs[id1]["parcela_total"] == 2
+        # A outra nota do mesmo lote, sem diferença, não é afetada.
+        assert lancs[id2]["desconto_acrescimo"] == 0.0
+        assert lancs[id2]["parcela_total"] == 1
+
+    def test_diferenca_por_linha_soma_das_parcelas_precisa_bater(self, client):
+        c, engine = client
+        id1 = self._criar(c, 1000.0)
+        r = c.put("/financeiro/lancamentos/baixa-lote-detalhada", json={"itens": [
+            {
+                "lancamento_id": id1, "data_pagamento": "2026-07-08", "valor_pago": 800.0, "forma_pagamento": "pix",
+                "parcelas_diferenca": [{"data_vencimento": "2026-08-08", "valor": 150.0}],  # deveria ser 200
+            },
+        ]})
+        assert r.status_code == 400
+        # Nada deve ter sido alterado — a validação falhou antes de qualquer commit.
+        lancs = {l["id"]: l for l in c.get("/financeiro/lancamentos").json()["lancamentos"]}
+        assert lancs[id1]["valor_pago"] is None
 
 
 class TestReciboLancamento:

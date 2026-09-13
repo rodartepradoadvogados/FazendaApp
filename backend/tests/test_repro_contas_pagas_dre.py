@@ -124,12 +124,19 @@ def test_repro_dre_nao_e_bug_de_classificacao_e_sim_filtro_de_periodo(client):
     (antes do fix: hoje-hoje; depois: mês corrente), replicado aqui."""
     c, engine = client
     pessoa_id = _criar_pessoa(engine, "Valéria Bonfim")
-    # Poucos dias atrás (dentro do mês corrente) — o cenário realista de
-    # "acabei de fechar a rescisão e fui olhar a DRE". Um desligamento que
-    # cruze para o mês anterior continua exigindo period picker manual
-    # mesmo com o fix (comportamento esperado de qualquer relatório por
-    # competência — não é o que o bug relatado descreve).
-    data_deslig = (date.today() - timedelta(days=3)).isoformat()
+    # "Hoje" sintético fixo (dia 15 de um mês qualquer), não o `date.today()`
+    # real: este teste é aritmética pura em Python replicando o cálculo
+    # client-side de financeiro/page.tsx — nada aqui chama um endpoint cuja
+    # resposta dependa do relógio real —, então usar uma data fixa evita
+    # que o teste dependa de EM QUE DIA DO MÊS a suíte é rodada. Com
+    # `date.today()` de verdade, rodar a suíte no dia 1-3 do mês real
+    # quebrava o cenário: `data_competencia` é sempre normalizada pro dia 1
+    # do mês (ver rh_contratos.py), então "hoje" sendo também dia 1 colide
+    # com ela e as duas janelas ("hoje-hoje" e "mês corrente") viram a
+    # mesma — nenhuma data consegue ao mesmo tempo "ficar poucos dias atrás
+    # de hoje" E "cair no mês corrente" quando hoje É o dia 1.
+    hoje_ref = date(2026, 6, 15)
+    data_deslig = (hoje_ref - timedelta(days=3)).isoformat()
 
     r = c.post("/cadastro/rescisoes", json={
         "pessoa_id": pessoa_id, "tipo_rescisao": "sem_justa_causa",
@@ -147,8 +154,8 @@ def test_repro_dre_nao_e_bug_de_classificacao_e_sim_filtro_de_periodo(client):
     assert conta["tipo_documento"] == "Rescisão"
     assert conta["centro_custo"] == "Pecuária Leiteira"  # bate com o default do filtro de centro do DRE
 
-    hoje = date.today().isoformat()
-    inicio_mes = date.today().replace(day=1).isoformat()
+    hoje = hoje_ref.isoformat()
+    inicio_mes = hoje_ref.replace(day=1).isoformat()
 
     # Predicado da aba DRE (financeiro/page.tsx: campoData = r.data_competencia)
     def na_dre(inicio: str, fim: str) -> bool:

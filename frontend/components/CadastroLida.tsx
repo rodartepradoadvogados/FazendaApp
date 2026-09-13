@@ -1,6 +1,6 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { ClipboardList, Plus, Pencil, AlertTriangle, Check, X, Trash2, Search } from "lucide-react";
+import { ClipboardList, Plus, Pencil, AlertTriangle, Trash2, Search } from "lucide-react";
 import {
   fetchLidas, criarLida, atualizarLida, excluirLida, fetchEstoque,
   type Lida, type EtapaLida,
@@ -9,6 +9,7 @@ import { UNIDADES_PROTOCOLO } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
 import { normalizarBusca as normalizar } from "@/lib/busca";
+import { WizardProtocolo, type PassoWizard } from "@/components/protocolos/WizardProtocolo";
 
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
@@ -68,19 +69,21 @@ export default function CadastroLida() {
     catch (e: any) { setError(e.message); }
   };
 
-  const salvar = async () => {
-    if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return; }
+  // Devolve true só quando salvou de verdade — sinal que o wizard usa para
+  // limpar o rascunho do localStorage (ver WizardProtocolo.onConcluir).
+  const salvar = async (): Promise<boolean> => {
+    if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return false; }
     if (form.modo === "frequencia") {
-      if (!form.frequencia_dias || form.frequencia_dias <= 0) { setMsg("Informe a cada quantos dias esta lida se repete."); return; }
-      if (!form.descricao_evento.trim()) { setMsg("Descreva o que fazer nesta lida."); return; }
+      if (!form.frequencia_dias || form.frequencia_dias <= 0) { setMsg("Informe a cada quantos dias esta lida se repete."); return false; }
+      if (!form.descricao_evento.trim()) { setMsg("Descreva o que fazer nesta lida."); return false; }
       if (form.dar_baixa_estoque && !(form.insumo_padrao.trim() && form.insumo_dose && form.insumo_unidade)) {
-        setMsg("Para dar baixa no estoque, informe o produto, a dose e a unidade."); return;
+        setMsg("Para dar baixa no estoque, informe o produto, a dose e a unidade."); return false;
       }
     } else {
-      if (form.etapas.some((e) => e.dia_inicio < 0)) { setMsg("O dia de uma etapa não pode ser negativo."); return; }
-      if (form.etapas.some((e) => !e.descricao_evento.trim())) { setMsg("Descreva o que fazer em cada etapa."); return; }
+      if (form.etapas.some((e) => e.dia_inicio < 0)) { setMsg("O dia de uma etapa não pode ser negativo."); return false; }
+      if (form.etapas.some((e) => !e.descricao_evento.trim())) { setMsg("Descreva o que fazer em cada etapa."); return false; }
       if (form.dar_baixa_estoque && form.etapas.some((e) => e.insumo_padrao && !(e.insumo_dose && e.insumo_unidade))) {
-        setMsg("Para dar baixa no estoque, informe dose e unidade do insumo de cada etapa que tiver um."); return;
+        setMsg("Para dar baixa no estoque, informe dose e unidade do insumo de cada etapa que tiver um."); return false;
       }
     }
     setSalvando(true); setMsg(null);
@@ -105,8 +108,10 @@ export default function CadastroLida() {
       else if (typeof editando === "number") await atualizarLida(editando, dados);
       setEditando(null);
       await carregar();
+      return true;
     } catch (e: any) {
       setMsg(e.message || "Erro ao salvar");
+      return false;
     } finally {
       setSalvando(false);
     }
@@ -117,73 +122,72 @@ export default function CadastroLida() {
   const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(filtrados);
 
   return (
-    <div className="card">
-      <div className="card-header mb-3 flex items-center justify-between">
-        <span className="flex items-center gap-2"><ClipboardList size={16} /> Lida — tarefas gerais da fazenda</span>
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
-          <Plus size={14} /> Nova
-        </button>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        <div className="card">
+          <div className="card-header mb-3 flex items-center justify-between">
+            <span className="flex items-center gap-2"><ClipboardList size={16} /> Lida — tarefas gerais da fazenda</span>
+            <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
+              <Plus size={14} /> Nova
+            </button>
+          </div>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+            Trabalho da fazenda que não é protocolo de animal — limpar um cocho a cada tantos dias, acompanhar uma obra
+            com foto diária, manutenção. Sem Tipo produtivo/reprodutivo/sanitário: fica sempre fora desses filtros da
+            Central de Protocolos, mas aparece normalmente na Agenda e no Acompanhamento/Histórico.
+          </p>
+
+          {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+          {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+          {itens && (
+            <>
+              <div style={{ position: "relative", marginBottom: "0.8rem" }}>
+                <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+                <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar lida…" />
+              </div>
+              <div className="overflow-x-auto">
+                <table className="fazenda-table">
+                  <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><th>Modo</th><th>Detalhe</th><th></th></tr></thead>
+                  <tbody>
+                    {linhasOrdenadas.map((l) => (
+                      <tr key={l.id}>
+                        <td style={{ fontWeight: 700 }}>{l.nome}{!l.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativa)</span>}</td>
+                        <td style={{ fontSize: "0.78rem" }}>{l.modo === "frequencia" ? "Por frequência" : "Por período"}</td>
+                        <td style={{ fontSize: "0.78rem" }}>
+                          {l.modo === "frequencia" ? `A cada ${l.frequencia_dias} dias` : `D0 a D${l.duracao_dias ?? "?"}`}
+                        </td>
+                        <td style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: "0.4rem" }}>
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(l)}>
+                            <Pencil size={13} /> Editar
+                          </button>
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => excluir(l)}>
+                            <Trash2 size={13} /> Excluir
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!itens.length && !editando && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma lida cadastrada ainda.</td></tr>}
+                    {!!itens.length && !filtrados.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
       </div>
-      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-        Trabalho da fazenda que não é protocolo de animal — limpar um cocho a cada tantos dias, acompanhar uma obra
-        com foto diária, manutenção. Sem Tipo produtivo/reprodutivo/sanitário: fica sempre fora desses filtros da
-        Central de Protocolos, mas aparece normalmente na Agenda e no Acompanhamento/Histórico.
-      </p>
-
-      {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
-      {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-
-      {editando === "novo" && (
-        <FormLida
-          form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-          acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa} estoque={estoque}
-        />
-      )}
-
-      {itens && (
-        <>
-          <div style={{ position: "relative", marginBottom: "0.8rem" }}>
-            <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
-            <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar lida…" />
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        {editando !== null ? (
+          <FormLida
+            key={editando} form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg} editando={editando}
+            acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa} estoque={estoque}
+          />
+        ) : (
+          <div className="card" style={{ textAlign: "center", padding: "2.2rem 1rem" }}>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione uma lida para editar, ou clique em Nova.</p>
           </div>
-          <div className="overflow-x-auto">
-            <table className="fazenda-table">
-              <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><th>Modo</th><th>Detalhe</th><th></th></tr></thead>
-              <tbody>
-                {linhasOrdenadas.map((l) => (
-                  <Fragment key={l.id}>
-                    <tr>
-                      <td style={{ fontWeight: 700 }}>{l.nome}{!l.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativa)</span>}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{l.modo === "frequencia" ? "Por frequência" : "Por período"}</td>
-                      <td style={{ fontSize: "0.78rem" }}>
-                        {l.modo === "frequencia" ? `A cada ${l.frequencia_dias} dias` : `D0 a D${l.duracao_dias ?? "?"}`}
-                      </td>
-                      <td style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: "0.4rem" }}>
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(l)}>
-                          <Pencil size={13} /> Editar
-                        </button>
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => excluir(l)}>
-                          <Trash2 size={13} /> Excluir
-                        </button>
-                      </td>
-                    </tr>
-                    {editando === l.id && (
-                      <tr><td colSpan={4} style={{ padding: 0 }}>
-                        <FormLida
-                          form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-                          acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa} estoque={estoque}
-                        />
-                      </td></tr>
-                    )}
-                  </Fragment>
-                ))}
-                {!itens.length && !editando && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma lida cadastrada ainda.</td></tr>}
-                {!!itens.length && !filtrados.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -233,126 +237,204 @@ function SeletorInsumo({ valor, dose, unidade, onChange, estoque }: {
   );
 }
 
-function FormLida({ form, setForm, onSalvar, onCancelar, salvando, msg, acrescentarEtapa, removerEtapa, atualizarEtapa, estoque }: {
+// Wizard de 4 etapas (T5) para a Lida — divisão escolhida:
+//  1. Identificação — nome, ativa e o modo (frequência x período): esta
+//     escolha muda toda a forma do restante do formulário, por isso precisa
+//     vir logo na 1ª etapa, antes de qualquer outro campo.
+//  2. Critérios (quando dispara) — "a cada quantos dias" (frequência) ou o
+//     dia inicial do cronograma (período): o equivalente, aqui, a "quando
+//     esta lida entra na Agenda".
+//  3. Roteiro — o que fazer de fato: a tarefa única + insumo (frequência) ou
+//     a lista de etapas (período), mais os toggles de baixa de
+//     estoque/financeiro (parâmetros de como o insumo do roteiro é
+//     consumido) e a observação.
+//  4. Revisão — resumo antes de gravar.
+function FormLida({ form, setForm, onSalvar, onCancelar, salvando, msg, editando, acrescentarEtapa, removerEtapa, atualizarEtapa, estoque }: {
   form: LidaForm; setForm: (f: LidaForm) => void;
-  onSalvar: () => void; onCancelar: () => void; salvando: boolean; msg: string | null;
+  onSalvar: () => Promise<boolean>; onCancelar: () => void; salvando: boolean; msg: string | null; editando: number | "novo";
   acrescentarEtapa: () => void; removerEtapa: (idx: number) => void; atualizarEtapa: (idx: number, patch: Partial<EtapaLida>) => void;
   estoque: EstoqueItem[];
 }) {
+  const passos: PassoWizard<LidaForm>[] = [
+    {
+      id: "identificacao", titulo: "Identificação",
+      validar: (f) => (!f.nome.trim() ? "Nome é obrigatório." : null),
+      render: ({ form: f, setForm: sf }) => (
+        <div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Nome</label>
+              <input style={inputStyle} value={f.nome} onChange={(e) => sf({ ...f, nome: e.target.value })} placeholder="ex.: Limpar cocho de água" autoFocus /></div>
+            <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+              <input type="checkbox" checked={f.ativo} onChange={(e) => sf({ ...f, ativo: e.target.checked })} /> Ativa</label></div>
+          </div>
+          <div className="grid grid-cols-2 gap-2" style={{ maxWidth: 460 }}>
+            {(["frequencia", "periodo"] as const).map((m) => {
+              const ativo = f.modo === m;
+              return (
+                <button key={m} type="button" onClick={() => sf({ ...f, modo: m })}
+                  style={{ textAlign: "left", padding: "0.6rem 0.75rem", borderRadius: "var(--r-sm)", cursor: "pointer",
+                    border: `1px solid ${ativo ? "var(--dourado)" : "var(--border)"}`,
+                    background: ativo ? "var(--pill-active-bg)" : "transparent",
+                    color: ativo ? "var(--dourado-light)" : "var(--text)" }}>
+                  <span style={{ display: "block", fontWeight: 700, fontSize: "0.85rem" }}>{m === "frequencia" ? "Por frequência" : "Por período"}</span>
+                  <span style={{ display: "block", fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
+                    {m === "frequencia" ? "Repete a cada N dias, entre início e fim" : "Uma etapa por dia (D0, D1…)"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: "criterios", titulo: "Critérios",
+      validar: (f) => (f.modo === "frequencia" && (!f.frequencia_dias || f.frequencia_dias <= 0) ? "Informe a cada quantos dias esta lida se repete." : null),
+      render: ({ form: f, setForm: sf }) => (
+        f.modo === "frequencia" ? (
+          <div><label style={labelStyle}>A cada quantos dias</label>
+            <input type="number" min={1} style={{ ...inputStyle, maxWidth: 200 }} value={f.frequencia_dias ?? ""} onChange={(e) => sf({ ...f, frequencia_dias: e.target.value ? Number(e.target.value) : null })} />
+            <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Essa é a recorrência que entra na Agenda — o que fazer a cada vez vem na próxima etapa.</p>
+          </div>
+        ) : (
+          <div><label style={labelStyle}>Dia inicial</label>
+            <select style={{ ...inputStyle, maxWidth: 200 }} value={f.dia_inicial} onChange={(e) => sf({ ...f, dia_inicial: Number(e.target.value) })}>
+              <option value={0}>D0</option><option value={1}>D1</option>
+            </select>
+            <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>O roteiro dia a dia (etapas) vem na próxima etapa.</p>
+          </div>
+        )
+      ),
+    },
+    {
+      id: "roteiro", titulo: "Roteiro",
+      validar: (f) => {
+        if (f.modo === "frequencia") {
+          if (!f.descricao_evento.trim()) return "Descreva o que fazer nesta lida.";
+          if (f.dar_baixa_estoque && !(f.insumo_padrao.trim() && f.insumo_dose && f.insumo_unidade)) return "Para dar baixa no estoque, informe o produto, a dose e a unidade.";
+        } else {
+          if (f.etapas.some((e) => e.dia_inicio < 0)) return "O dia de uma etapa não pode ser negativo.";
+          if (f.etapas.some((e) => !e.descricao_evento.trim())) return "Descreva o que fazer em cada etapa.";
+          if (f.dar_baixa_estoque && f.etapas.some((e) => e.insumo_padrao && !(e.insumo_dose && e.insumo_unidade))) return "Para dar baixa no estoque, informe dose e unidade do insumo de cada etapa que tiver um.";
+        }
+        return null;
+      },
+      render: ({ form: f, setForm: sf }) => (
+        <div>
+          {f.modo === "frequencia" ? (
+            <>
+              <div className="mb-3"><label style={labelStyle}>O que fazer</label>
+                <input style={inputStyle} value={f.descricao_evento} onChange={(e) => sf({ ...f, descricao_evento: e.target.value })} placeholder="ex.: Limpar cocho de água" /></div>
+              <div className="mb-3" style={{ maxWidth: 460 }}>
+                <SeletorInsumo
+                  valor={f.insumo_padrao} dose={f.insumo_dose} unidade={f.insumo_unidade}
+                  onChange={(patch) => sf({ ...f, ...patch } as LidaForm)}
+                  estoque={estoque}
+                />
+              </div>
+              <label className="flex items-center gap-2 mb-2" style={{ fontSize: "0.78rem" }}>
+                <input type="checkbox" checked={f.foto_obrigatoria} onChange={(e) => sf({ ...f, foto_obrigatoria: e.target.checked })} /> Exigir foto ao confirmar
+              </label>
+            </>
+          ) : (
+            <>
+              <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.4rem" }}>Etapas</p>
+              <div className="space-y-2 mb-2">
+                {f.etapas.map((e, idx) => (
+                  <div key={idx} style={{ background: "var(--surface)", padding: "0.6rem", borderRadius: "var(--r-sm)", marginBottom: "0.4rem" }}>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
+                      <div><label style={labelStyle}>Dia início</label><input type="number" min={0} style={inputStyle} value={e.dia_inicio} onChange={(ev) => atualizarEtapa(idx, { dia_inicio: Number(ev.target.value) })} /></div>
+                      <div><label style={labelStyle}>Dia fim (opcional)</label><input type="number" min={0} style={inputStyle} value={e.dia_fim ?? ""} onChange={(ev) => atualizarEtapa(idx, { dia_fim: ev.target.value ? Number(ev.target.value) : null })} placeholder="repete até este dia" /></div>
+                      <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>O que fazer</label>
+                        <input style={inputStyle} value={e.descricao_evento} onChange={(ev) => atualizarEtapa(idx, { descricao_evento: ev.target.value })} placeholder="ex.: Enviar foto da cerca" /></div>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="flex items-center gap-2" style={{ fontSize: "0.76rem" }}>
+                        <input type="checkbox" checked={e.foto_obrigatoria} onChange={(ev) => atualizarEtapa(idx, { foto_obrigatoria: ev.target.checked })} /> Exigir foto
+                      </label>
+                      {f.etapas.length > 1 && <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => removerEtapa(idx)}><Trash2 size={13} /></button>}
+                    </div>
+                    <div style={{ marginTop: "0.4rem", maxWidth: 460 }}>
+                      <SeletorInsumo
+                        valor={e.insumo_padrao || ""} dose={e.insumo_dose ?? null} unidade={e.insumo_unidade || ""}
+                        onChange={(patch) => atualizarEtapa(idx, patch)}
+                        estoque={estoque}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem", marginBottom: "0.8rem" }} onClick={acrescentarEtapa}>
+                <Plus size={14} /> Acrescentar etapa
+              </button>
+            </>
+          )}
+
+          <div className="mb-3"><label style={labelStyle}>Observação (opcional)</label>
+            <input style={inputStyle} value={f.observacao} onChange={(e) => sf({ ...f, observacao: e.target.value })} placeholder="Contexto geral" /></div>
+
+          <div style={{ borderTop: "1px solid var(--border)", paddingTop: "0.6rem" }}>
+            <label className="flex items-center gap-2 mb-2" style={{ fontSize: "0.78rem" }}>
+              <input type="checkbox" checked={f.dar_baixa_estoque} onChange={(e) => sf({ ...f, dar_baixa_estoque: e.target.checked })} />
+              Dar baixa no estoque ao confirmar (usa a dose/unidade do insumo informado)
+            </label>
+            <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+              <input type="checkbox" checked={f.vincular_financeiro} onChange={(e) => sf({ ...f, vincular_financeiro: e.target.checked })} />
+              Vincular ao financeiro
+            </label>
+            {f.vincular_financeiro && (
+              <p style={{ fontSize: "0.7rem", color: "var(--amber)", marginTop: "0.2rem" }}>
+                A intenção fica salva, mas a geração automática do lançamento financeiro ainda não está implementada — por enquanto, lance manualmente em Financeiro.
+              </p>
+            )}
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: "revisao", titulo: "Revisão",
+      render: ({ form: f }) => (
+        <div>
+          <p style={{ fontSize: "0.82rem", marginBottom: "0.6rem" }}>
+            <strong>{f.nome || "(sem nome)"}</strong>{!f.ativo && <span style={{ color: "var(--text-muted)" }}> (inativa)</span>}
+          </p>
+          {f.modo === "frequencia" ? (
+            <ul style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.9, paddingLeft: "1.1rem" }}>
+              <li>A cada {f.frequencia_dias ?? "?"} dias</li>
+              <li>O que fazer: {f.descricao_evento || "—"}</li>
+              <li>Insumo: {f.insumo_padrao || "—"}{f.insumo_dose ? ` — ${f.insumo_dose} ${f.insumo_unidade || ""}` : ""}</li>
+            </ul>
+          ) : (
+            <table className="fazenda-table">
+              <thead><tr><th>Dia</th><th>O que fazer</th></tr></thead>
+              <tbody>
+                {f.etapas.map((e, idx) => (
+                  <tr key={idx}><td>D{e.dia_inicio}{e.dia_fim != null ? `–D${e.dia_fim}` : ""}</td><td>{e.descricao_evento || "—"}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
+            Dar baixa no estoque: {f.dar_baixa_estoque ? "Sim" : "Não"} · Vincular ao financeiro: {f.vincular_financeiro ? "Sim" : "Não"}
+          </p>
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-        <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Nome</label>
-          <input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder="ex.: Limpar cocho de água" /></div>
-        <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
-          <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativa</label></div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2 mb-3" style={{ maxWidth: 460 }}>
-        {(["frequencia", "periodo"] as const).map((m) => {
-          const ativo = form.modo === m;
-          return (
-            <button key={m} type="button" onClick={() => setForm({ ...form, modo: m })}
-              style={{ textAlign: "left", padding: "0.6rem 0.75rem", borderRadius: "var(--r-sm)", cursor: "pointer",
-                border: `1px solid ${ativo ? "var(--dourado)" : "var(--border)"}`,
-                background: ativo ? "var(--pill-active-bg)" : "transparent",
-                color: ativo ? "var(--dourado-light)" : "var(--text)" }}>
-              <span style={{ display: "block", fontWeight: 700, fontSize: "0.85rem" }}>{m === "frequencia" ? "Por frequência" : "Por período"}</span>
-              <span style={{ display: "block", fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
-                {m === "frequencia" ? "Repete a cada N dias, entre início e fim" : "Uma etapa por dia (D0, D1…)"}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      {form.modo === "frequencia" ? (
-        <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-            <div><label style={labelStyle}>A cada quantos dias</label>
-              <input type="number" min={1} style={inputStyle} value={form.frequencia_dias ?? ""} onChange={(e) => setForm({ ...form, frequencia_dias: e.target.value ? Number(e.target.value) : null })} /></div>
-            <div style={{ gridColumn: "span 3" }}><label style={labelStyle}>O que fazer</label>
-              <input style={inputStyle} value={form.descricao_evento} onChange={(e) => setForm({ ...form, descricao_evento: e.target.value })} placeholder="ex.: Limpar cocho de água" /></div>
-          </div>
-          <div className="mb-3" style={{ maxWidth: 460 }}>
-            <SeletorInsumo
-              valor={form.insumo_padrao} dose={form.insumo_dose} unidade={form.insumo_unidade}
-              onChange={(patch) => setForm({ ...form, ...patch } as LidaForm)}
-              estoque={estoque}
-            />
-          </div>
-          <label className="flex items-center gap-2 mb-2" style={{ fontSize: "0.78rem" }}>
-            <input type="checkbox" checked={form.foto_obrigatoria} onChange={(e) => setForm({ ...form, foto_obrigatoria: e.target.checked })} /> Exigir foto ao confirmar
-          </label>
-        </>
-      ) : (
-        <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-            <div><label style={labelStyle}>Dia inicial</label>
-              <select style={inputStyle} value={form.dia_inicial} onChange={(e) => setForm({ ...form, dia_inicial: Number(e.target.value) })}>
-                <option value={0}>D0</option><option value={1}>D1</option>
-              </select></div>
-          </div>
-          <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.4rem" }}>Etapas</p>
-          <div className="space-y-2 mb-2">
-            {form.etapas.map((e, idx) => (
-              <div key={idx} style={{ background: "var(--surface)", padding: "0.6rem", borderRadius: "var(--r-sm)", marginBottom: "0.4rem" }}>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
-                  <div><label style={labelStyle}>Dia início</label><input type="number" min={0} style={inputStyle} value={e.dia_inicio} onChange={(ev) => atualizarEtapa(idx, { dia_inicio: Number(ev.target.value) })} /></div>
-                  <div><label style={labelStyle}>Dia fim (opcional)</label><input type="number" min={0} style={inputStyle} value={e.dia_fim ?? ""} onChange={(ev) => atualizarEtapa(idx, { dia_fim: ev.target.value ? Number(ev.target.value) : null })} placeholder="repete até este dia" /></div>
-                  <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>O que fazer</label>
-                    <input style={inputStyle} value={e.descricao_evento} onChange={(ev) => atualizarEtapa(idx, { descricao_evento: ev.target.value })} placeholder="ex.: Enviar foto da cerca" /></div>
-                </div>
-                <div className="flex items-center justify-between gap-2">
-                  <label className="flex items-center gap-2" style={{ fontSize: "0.76rem" }}>
-                    <input type="checkbox" checked={e.foto_obrigatoria} onChange={(ev) => atualizarEtapa(idx, { foto_obrigatoria: ev.target.checked })} /> Exigir foto
-                  </label>
-                  {form.etapas.length > 1 && <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => removerEtapa(idx)}><Trash2 size={13} /></button>}
-                </div>
-                <div style={{ marginTop: "0.4rem", maxWidth: 460 }}>
-                  <SeletorInsumo
-                    valor={e.insumo_padrao || ""} dose={e.insumo_dose ?? null} unidade={e.insumo_unidade || ""}
-                    onChange={(patch) => atualizarEtapa(idx, patch)}
-                    estoque={estoque}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-          <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem", marginBottom: "0.8rem" }} onClick={acrescentarEtapa}>
-            <Plus size={14} /> Acrescentar etapa
-          </button>
-        </>
-      )}
-
-      <div className="mb-3"><label style={labelStyle}>Observação (opcional)</label>
-        <input style={inputStyle} value={form.observacao} onChange={(e) => setForm({ ...form, observacao: e.target.value })} placeholder="Contexto geral" /></div>
-
-      <div style={{ borderTop: "1px solid var(--border)", paddingTop: "0.6rem", marginBottom: "0.6rem" }}>
-        <label className="flex items-center gap-2 mb-2" style={{ fontSize: "0.78rem" }}>
-          <input type="checkbox" checked={form.dar_baixa_estoque} onChange={(e) => setForm({ ...form, dar_baixa_estoque: e.target.checked })} />
-          Dar baixa no estoque ao confirmar (usa a dose/unidade do insumo informado)
-        </label>
-        <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
-          <input type="checkbox" checked={form.vincular_financeiro} onChange={(e) => setForm({ ...form, vincular_financeiro: e.target.checked })} />
-          Vincular ao financeiro
-        </label>
-        {form.vincular_financeiro && (
-          <p style={{ fontSize: "0.7rem", color: "var(--amber)", marginTop: "0.2rem" }}>
-            A intenção fica salva, mas a geração automática do lançamento financeiro ainda não está implementada — por enquanto, lance manualmente em Financeiro.
-          </p>
-        )}
-      </div>
-
-      {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
-      <div className="flex items-center gap-2">
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={onSalvar} disabled={salvando}>
-          <Check size={14} /> {salvando ? "Salvando…" : "Salvar"}
-        </button>
-        <button className="btn-ghost" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={onCancelar}>
-          <X size={14} /> Cancelar
-        </button>
-      </div>
+      <WizardProtocolo<LidaForm>
+        chaveRascunho={editando === "novo" ? "wizard-protocolo:lida" : null}
+        form={form} setForm={setForm}
+        ehVazio={(f) => !f.nome.trim() && !f.descricao_evento.trim() && f.etapas.every((e) => !e.descricao_evento.trim())}
+        passos={passos}
+        onCancelar={onCancelar}
+        onConcluir={onSalvar}
+        salvando={salvando}
+        rotuloConcluir="Salvar"
+        erro={msg}
+      />
     </div>
   );
 }

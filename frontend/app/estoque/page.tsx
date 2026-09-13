@@ -26,7 +26,8 @@ const COLUNAS_ESTOQUE = [
 const COLUNAS_MOVIMENTOS = [
   { header: "Data", key: "data_movimento" }, { header: "Item", key: "nome_item" },
   { header: "Movimento", key: "movimento" }, { header: "Quantidade", key: "quantidade" },
-  { header: "Unidade", key: "unidade" }, { header: "Observação", key: "observacao" },
+  { header: "Unidade", key: "unidade" }, { header: "Embalagem", key: "embalagem" },
+  { header: "Observação", key: "observacao" },
 ];
 
 const COLUNAS_POR_PRODUTO = [
@@ -46,8 +47,10 @@ type MovimentoRow = MovimentoEstoqueRow & { origem_tipo?: string | null; pedido_
 // e no resumo por produto, sem precisar de um endpoint novo.
 // "Entrada de compra" faltava aqui — compra de produto/sêmen (Financeiro ou
 // Comprar sêmen) já gerava esse movimento no backend, mas sumia dos 3 mapas
-// abaixo porque nenhum deles reconhecia o tipo como entrada.
-const MOVIMENTOS_ENTRADA = ["Entrada de ajuste", "Entrada de cortesia", "Entrada de compra"];
+// abaixo porque nenhum deles reconhecia o tipo como entrada. "Saldo inicial"
+// é o mesmo caso: o cadastro de um item de Estoque com saldo > 0 gera esse
+// movimento (ver criar_item_estoque em fazenda/api/routers/estoque.py).
+const MOVIMENTOS_ENTRADA = ["Entrada de ajuste", "Entrada de cortesia", "Entrada de compra", "Saldo inicial"];
 const MOVIMENTOS_SAIDA = ["Aplicação", "Saída de ajuste", "Doação"];
 
 type Item = {
@@ -176,13 +179,28 @@ function EstoqueInventario() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-            <Indicador categoria="geral" valor={filtrados.length} rotulo="Itens (filtro)" />
-            <Indicador categoria="geral" valor={formatBRL(valorTotal)} cor="var(--dourado-light)" rotulo="Valor em estoque" />
-            <Indicador categoria="geral" valor={abaixo} cor={abaixo ? "var(--red)" : "var(--green-light)"} rotulo="Abaixo do mínimo"
-              onClick={() => setModalAbaixo(true)} title="Ver quais produtos estão abaixo do mínimo" />
-            <Indicador categoria="geral" valor={categorias.length} rotulo="Categorias"
-              onClick={() => setModalCategorias(true)} title="Ver as categorias e quantos itens cada uma tem" />
+          {/* Valor em estoque já era o único KPI marcado em dourado — vira a
+              métrica-âncora. Abaixo do mínimo e Categorias continuam clicáveis
+              (mesmos modais de antes), só em tamanho de apoio. Mesmos 4 números. */}
+          <div className="card mb-4" style={{ padding: "1.1rem 1.3rem" }}>
+            <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Valor em estoque</div>
+            <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--dourado-light)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+              {formatBRL(valorTotal)}
+            </div>
+            <div style={{ display: "flex", gap: "1.6rem", marginTop: ".9rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{filtrados.length}</div>
+                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Itens (filtro)</div>
+              </div>
+              <div onClick={() => setModalAbaixo(true)} title="Ver quais produtos estão abaixo do mínimo" style={{ cursor: "pointer" }}>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, color: abaixo ? "var(--red)" : "var(--green-light)", fontVariantNumeric: "tabular-nums" }}>{abaixo}</div>
+                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Abaixo do mínimo</div>
+              </div>
+              <div onClick={() => setModalCategorias(true)} title="Ver as categorias e quantos itens cada uma tem" style={{ cursor: "pointer" }}>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{categorias.length}</div>
+                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Categorias</div>
+              </div>
+            </div>
           </div>
 
           <div className="card mb-4">
@@ -424,9 +442,19 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            <Indicador categoria="geral" valor={filtrados.length} rotulo="Movimentos (filtro)" />
-            <Indicador categoria="geral" valor={totalQtd.toLocaleString("pt-BR")} cor={corQtd} rotulo="Quantidade total" />
+          {/* Quantidade total já era o único KPI com cor (verde nas entradas,
+              vermelho nas saídas) — vira métrica-âncora. Mesmos 2 números de antes. */}
+          <div className="card mb-4" style={{ padding: "1.1rem 1.3rem" }}>
+            <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Quantidade total</div>
+            <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: corQtd, marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+              {totalQtd.toLocaleString("pt-BR")}
+            </div>
+            <div style={{ display: "flex", gap: "1.6rem", marginTop: ".9rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{filtrados.length}</div>
+                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Movimentos (filtro)</div>
+              </div>
+            </div>
           </div>
 
           <div className="card">
@@ -444,6 +472,7 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
                   <ThOrdenavel label="Item" campo="nome_item" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
                   <ThOrdenavel label="Movimento" campo="movimento" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
                   <ThOrdenavel label="Qtd" campo="quantidade" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <th>Embalagem</th>
                   <th>Observação</th>
                   {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
                   <th style={{ textAlign: "right" }}>Ações</th>
@@ -460,6 +489,7 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
                       <td style={{ fontWeight: 600, fontSize: "0.82rem" }}>{m.nome_item}</td>
                       <td style={{ fontSize: "0.78rem" }}>{m.movimento}</td>
                       <td style={{ textAlign: "right" }}>{m.quantidade} {m.unidade || ""}</td>
+                      <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.embalagem || "—"}</td>
                       <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.observacao || "—"}</td>
                       {admin && <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.usuario_nome ?? "—"}</td>}
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>

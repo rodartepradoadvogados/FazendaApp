@@ -1,8 +1,14 @@
 "use client";
-import { Fragment, useEffect, useMemo, useState } from "react";
-import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplet, Droplets, Syringe, ChevronDown, ChevronRight, Pencil, Trash2, Check, X, Table2, Info } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplet, Droplets, Syringe, ChevronDown, ChevronRight, Pencil, Trash2, Check, X, Table2, Info, Sprout } from "lucide-react";
 import { LineChart as RechartsLineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, CartesianGrid } from "recharts";
-import { fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais, fetchAgenda, fetchRelatorioBst, fetchRelatorioPesagemCorporal, fetchPesagens, atualizarPesagem, type PesagemLinha, confirmarExclusao, formatDate, ehAdmin } from "@/lib/api";
+import {
+  fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais, fetchAgenda, fetchRelatorioBst,
+  fetchRelatorioPesagemCorporal, fetchPesagens, atualizarPesagem, type PesagemLinha, confirmarExclusao, formatDate, ehAdmin,
+  fetchEquivalenteMaduro, type RelatorioEquivalenteMaduro,
+} from "@/lib/api";
+import { CalculadoraEquivalenteMaduro } from "@/components/CalculadoraEquivalenteMaduro";
+import { PilulaConfianca, NotaExplicativaEM } from "@/components/TrioEquivalenteMaduro";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
@@ -140,7 +146,15 @@ type RelatorioControleEntrega = {
 // e por isso "sumiam" — ninguém achava Qualidade do leite fora de dentro da
 // aba Produção leiteira). Continuam no MESMO componente (não em arquivos
 // separados) para não duplicar os hooks/fetches — só o que renderiza muda.
-export function ProducaoLeiteira({ secao = "controle" }: { secao?: "controle" | "qualidade" | "entrega" } = {}) {
+export function ProducaoLeiteira({ secao = "controle", animaisSelExterno, setAnimaisSelExterno }: {
+  secao?: "controle" | "qualidade" | "entrega";
+  // Seleção de animais (relatório de qualidade por vaca) controlada de fora —
+  // Histórico > Produção sobe esse estado pro container das sub-abas pra
+  // sobreviver à troca entre elas. Omitido (uso do módulo Produção autônomo em
+  // app/producao/page.tsx) cai num estado interno, comportamento de sempre.
+  animaisSelExterno?: Set<string>;
+  setAnimaisSelExterno?: Dispatch<SetStateAction<Set<string>>>;
+} = {}) {
   const mostrarControle = secao === "controle";
   const mostrarQualidade = secao === "qualidade";
   const mostrarEntrega = secao === "entrega";
@@ -181,7 +195,9 @@ export function ProducaoLeiteira({ secao = "controle" }: { secao?: "controle" | 
   // amostras individuais, igual ao comportamento de sempre. Selecionar uma ou
   // mais restringe às vacas escolhidas (ex.: acompanhar uma vaca específica
   // com histórico de mastite, sem misturar com o resto do rebanho no gráfico).
-  const [qlAnimaisSel, setQlAnimaisSel] = useState<Set<string>>(new Set());
+  const [qlAnimaisSelInterno, setQlAnimaisSelInterno] = useState<Set<string>>(new Set());
+  const qlAnimaisSel = animaisSelExterno ?? qlAnimaisSelInterno;
+  const setQlAnimaisSel = setAnimaisSelExterno ?? setQlAnimaisSelInterno;
 
   useEffect(() => {
     if (!mostrarQualidade) return;
@@ -475,14 +491,42 @@ export function ProducaoLeiteira({ secao = "controle" }: { secao?: "controle" | 
             </div>
 
             {ucRegistros.length > 0 && (
-              <div className={`grid grid-cols-2 md:grid-cols-3 ${ucTemTerceiraOrdenha ? "lg:grid-cols-7" : "lg:grid-cols-6"} gap-4 mb-3`}>
-                <Indicador categoria="producao" valor={`${ucMedia} kg`} cor="var(--green-light)" rotulo={`Média do ${ucLabelEscopo}`} />
-                <Indicador categoria="producao" valor={`${ucMenor ?? "—"} kg`} rotulo="Menor" />
-                <Indicador categoria="producao" valor={`${ucMediaManha || "—"} kg`} rotulo="Média ordenha — manhã" />
-                {ucTemTerceiraOrdenha && <Indicador categoria="producao" valor={`${ucMediaTarde || "—"} kg`} rotulo="Média ordenha — tarde" />}
-                <Indicador categoria="producao" valor={`${ucMediaNoite || "—"} kg`} rotulo="Média ordenha — noite" />
-                <Indicador categoria="producao" valor={ucNumerosEscopo.size} rotulo="Vacas no filtro" />
-                <Indicador categoria="producao" valor={ucRegistros.length} rotulo="Controles no filtro" />
+              // Média do escopo já era o único KPI marcado em verde — vira a
+              // métrica-âncora em vez de competir em pé de igualdade com os outros
+              // 5-6 números, que continuam do lado, menores. Mesmos dados de antes.
+              <div className="card mb-3" style={{ padding: "1.1rem 1.3rem" }}>
+                <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Média do {ucLabelEscopo}</div>
+                <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--green-light)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+                  {ucMedia} kg
+                </div>
+                <div style={{ display: "flex", gap: "1.6rem", marginTop: ".9rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ucMenor ?? "—"} kg</div>
+                    <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Menor</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ucMediaManha || "—"} kg</div>
+                    <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Média ordenha — manhã</div>
+                  </div>
+                  {ucTemTerceiraOrdenha && (
+                    <div>
+                      <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ucMediaTarde || "—"} kg</div>
+                      <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Média ordenha — tarde</div>
+                    </div>
+                  )}
+                  <div>
+                    <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ucMediaNoite || "—"} kg</div>
+                    <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Média ordenha — noite</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ucNumerosEscopo.size}</div>
+                    <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Vacas no filtro</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ucRegistros.length}</div>
+                    <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Controles no filtro</div>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -759,11 +803,28 @@ export function ProducaoLeiteira({ secao = "controle" }: { secao?: "controle" | 
               </p>
             )}
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-              <Indicador categoria="producao" valor={ce.controle_projetado_kg != null ? `${ce.controle_projetado_kg.toLocaleString("pt-BR")} kg` : "—"} rotulo="Controle projetado" />
-              <Indicador categoria="producao" valor={ce.entrega_projetada_kg != null ? `${ce.entrega_projetada_kg.toLocaleString("pt-BR")} kg` : "—"} rotulo="Entregue projetado" />
-              <Indicador categoria="producao" valor={ce.nao_entregue_kg != null ? `${ce.nao_entregue_kg.toLocaleString("pt-BR")} kg` : "—"} cor="var(--dourado-light)" rotulo="Não entregue" />
-              <Indicador categoria="producao" valor={ce.receita_projetada != null ? ce.receita_projetada.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—"} rotulo={`Receita média${ce.preco_medio_kg != null ? ` (${ce.preco_medio_kg.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}/kg)` : ""}`} />
+            {/* Não entregue já era o único KPI marcado em dourado — é o que mais
+                pede atenção (produção que ainda falta escoar). Vira métrica-âncora;
+                os outros 3 continuam, só menores, mesmos dados de antes. */}
+            <div className="card mb-3" style={{ padding: "1.1rem 1.3rem" }}>
+              <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Não entregue</div>
+              <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--dourado-light)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+                {ce.nao_entregue_kg != null ? `${ce.nao_entregue_kg.toLocaleString("pt-BR")} kg` : "—"}
+              </div>
+              <div style={{ display: "flex", gap: "1.6rem", marginTop: ".9rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+                <div>
+                  <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ce.controle_projetado_kg != null ? `${ce.controle_projetado_kg.toLocaleString("pt-BR")} kg` : "—"}</div>
+                  <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Controle projetado</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ce.entrega_projetada_kg != null ? `${ce.entrega_projetada_kg.toLocaleString("pt-BR")} kg` : "—"}</div>
+                  <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Entregue projetado</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ce.receita_projetada != null ? ce.receita_projetada.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—"}</div>
+                  <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Receita média{ce.preco_medio_kg != null ? ` (${ce.preco_medio_kg.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}/kg)` : ""}</div>
+                </div>
+              </div>
             </div>
 
             <div className="overflow-x-auto">
@@ -1420,7 +1481,7 @@ export function HistoricoInducaoLactacao() {
   );
 }
 
-type AbaProducao = "leiteira" | "pesagens" | "secagem" | "inducao" | "qualidade" | "entrega" | "bst";
+type AbaProducao = "leiteira" | "pesagens" | "secagem" | "inducao" | "qualidade" | "entrega" | "bst" | "equivalente-maduro";
 export const ABAS_PRODUCAO = [
   { id: "leiteira" as const, label: "Controle leiteiro", icon: Milk, title: "Série histórica, curva de lactação e ranking por vaca" },
   { id: "pesagens" as const, label: "Pesagem corporal", icon: Scale, title: "Histórico de pesagem corporal — GMD/GPD por animal, lote ou rebanho" },
@@ -1429,7 +1490,206 @@ export const ABAS_PRODUCAO = [
   { id: "qualidade" as const, label: "Qualidade do leite", icon: FlaskConical, title: "CCS, CBT, gordura, proteína, sólidos e ESD — série histórica" },
   { id: "entrega" as const, label: "Venda mensal do leite", icon: TrendingUp, title: "Controle leiteiro × entregue ao laticínio, por período" },
   { id: "bst" as const, label: "BST", icon: Droplets, title: "Dados gerenciais e filtros de aplicação de BST (somatotropina bovina)" },
+  {
+    id: "equivalente-maduro" as const, label: "Equivalente Maduro", icon: Sprout,
+    title: "Produz hoje × produzirá na maturidade, por animal — ajuste pela ordem de parto calibrado no próprio rebanho",
+  },
 ];
+
+// ---------------------------------------------------------------------------
+// Equivalente maduro — redesign "padronização por vaca" (ver nota no topo de
+// `fazenda/rules/equivalente_maduro.py`). Fatores fixos de tabela (Holandês,
+// sempre) + confiança por medição — sem mínimo de lactações do rebanho para
+// o trio principal. As 3 colunas do grupo EM (média/dia, projeção 305,
+// diferença) ficam visualmente agrupadas com um tingimento leve, mesmo
+// idioma de `color-mix` que o app já usa para destacar célula/linha (ver
+// severidade em NaoConformidades.tsx). O painel de aferição (fator
+// observado no rebanho × fator de tabela) é colapsável, abaixo da tabela —
+// puramente informativo. A nota explicativa permanente
+// (`NotaExplicativaEM`) fica sempre visível, é outra coisa.
+// ---------------------------------------------------------------------------
+const TINT_GRUPO_EM = "color-mix(in srgb, var(--dourado, var(--amber)) 8%, transparent)";
+
+const COLUNAS_EQUIVALENTE_MADURO = [
+  { header: "Vaca", key: "numero_matriz" }, { header: "Ordem parto", key: "ordem_parto" },
+  { header: "DEL atual", key: "del_atual" }, { header: "Faltam p/ maturidade", key: "faltam_partos_maturidade" },
+  { header: "Média/dia atual (kg)", key: "media_dia_atual" }, { header: "Média/dia histórica (kg)", key: "producao_dia_historica_kg" },
+  { header: "Projeção 305 (kg)", key: "producao_hoje_kg" }, { header: "Confiança", key: "confianca_nivel" },
+  { header: "EM — Média/dia (kg)", key: "media_dia_em" }, { header: "EM — Projeção 305 (kg)", key: "producao_maturidade_kg" },
+  { header: "EM — Diferença (kg)", key: "diferenca_kg" },
+];
+
+function BadgeEM({ cor, children, title }: { cor: string; children: React.ReactNode; title?: string }) {
+  return (
+    <span title={title} style={{
+      fontSize: "0.65rem", color: cor, background: `color-mix(in srgb, ${cor} 14%, transparent)`,
+      borderRadius: "999px", padding: "0.05rem 0.45rem", whiteSpace: "nowrap", fontWeight: 600,
+    }}>
+      {children}
+    </span>
+  );
+}
+
+/** Painel de aferição — comparação fator observado no rebanho × fator fixo
+ * de tabela, por classe. Nunca altera o trio principal (esse já usa a
+ * tabela); serve só para o dono decidir se a tabela ainda representa bem
+ * este rebanho. */
+function PainelAfericaoEM({ painel }: { painel: RelatorioEquivalenteMaduro["painel_afericao"] }) {
+  const rotulo: Record<number, string> = { 1: "1ª cria", 2: "2ª cria", 3: "Madura (3ª+)" };
+  return (
+    <SecaoRecolhivel titulo="Painel de aferição — fator observado no rebanho × fator de tabela" defaultAberta={false}>
+      <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: "0 0 0.75rem" }}>
+        Compara o fator FIXO de tabela (Holandês, usado no cálculo acima) com o que as lactações encerradas deste
+        próprio rebanho vêm mostrando — só para conferência. Nunca muda o número do trio principal.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="fazenda-table" style={{ margin: 0 }}>
+          <thead><tr>
+            <th>Classe</th><th style={{ textAlign: "right" }}>Lactações encerradas</th>
+            <th style={{ textAlign: "right" }}>Fator observado no rebanho</th>
+            <th style={{ textAlign: "right" }}>Fator da tabela (Holandês)</th>
+            <th style={{ textAlign: "right" }}>Divergência</th>
+          </tr></thead>
+          <tbody>
+            {painel.map((l) => (
+              <tr key={l.classe}>
+                <td style={{ fontWeight: 600 }}>{rotulo[l.classe] ?? `Classe ${l.classe}`}</td>
+                <td style={{ textAlign: "right" }}>{l.n_lactacoes}</td>
+                <td style={{ textAlign: "right" }}>
+                  {l.fator_observado != null ? l.fator_observado.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : "—"}
+                </td>
+                <td style={{ textAlign: "right", fontWeight: 600 }}>{l.fator_tabela.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td>
+                <td style={{ textAlign: "right", color: l.divergencia_pct == null ? "var(--text-muted)" : Math.abs(l.divergencia_pct) > 10 ? "var(--amber)" : "var(--text-muted)" }}>
+                  {l.divergencia_pct == null ? "—" : `${l.divergencia_pct > 0 ? "+" : ""}${l.divergencia_pct.toLocaleString("pt-BR")}%`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </SecaoRecolhivel>
+  );
+}
+
+export function EquivalenteMaduroView() {
+  const [dados, setDados] = useState<RelatorioEquivalenteMaduro | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  useEffect(() => {
+    fetchEquivalenteMaduro().then(setDados).catch((e) => setErro(e.message));
+  }, []);
+
+  const animais = dados?.animais ?? [];
+  const ordEM = useOrdenacao(animais);
+  const badgeStyleEM: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)", background: "var(--surface-2)", borderRadius: "999px", padding: "0.1rem 0.55rem", whiteSpace: "nowrap" };
+
+  return (
+    <div className="px-6 pt-6 space-y-4">
+      {erro && <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {erro}.</span></div>}
+      <div className="card">
+        <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+          <span className="flex items-center gap-2"><Sprout size={14} /> Equivalente maduro — quem ainda vai crescer</span>
+          <span className="flex items-center gap-2">
+            <span style={badgeStyleEM}>{animais.length} animais</span>
+            <ExportarBotoes
+              titulo="Equivalente maduro" nomeArquivoBase="equivalente_maduro"
+              colunas={COLUNAS_EQUIVALENTE_MADURO}
+              linhas={animais.map((a) => ({
+                ...a,
+                media_dia_atual: a.producao_hoje_kg != null ? Math.round((a.producao_hoje_kg / 305) * 10) / 10 : null,
+                media_dia_em: a.sem_base ? null : Math.round(((a.ja_maduro ? a.producao_hoje_kg : a.producao_maturidade_kg) ?? 0) / 305 * 10) / 10,
+                confianca_nivel: a.confianca_nivel ?? "—",
+              }))}
+            />
+          </span>
+        </div>
+        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+          Ajusta a produção de 305 dias (Test Interval Method) pela ordem de parto DERIVADA na data de cada lactação —
+          não a contagem atual de partos do animal. Qualquer vaca com pelo menos 2 controles utilizáveis na lactação
+          atual recebe o número — inclusive uma primípara de poucos dias em leite. Ordene por diferença decrescente
+          para ver quem ainda tem mais a crescer — a mesma lista ao contrário é candidata a descarte.
+        </p>
+        <div className="overflow-x-auto" style={{ maxHeight: "560px" }}>
+          <table className="fazenda-table" style={{ margin: 0 }}>
+            <thead>
+              <tr>
+                <th rowSpan={2}>Vaca</th>
+                <th rowSpan={2}>Ordem parto</th>
+                <th rowSpan={2} style={{ textAlign: "right" }}>DEL atual</th>
+                <th rowSpan={2}>Faltam p/ maturidade</th>
+                <th rowSpan={2} style={{ textAlign: "right" }}>Média/dia atual</th>
+                <th rowSpan={2} style={{ textAlign: "right" }}>Média/dia histórica</th>
+                <th rowSpan={2} style={{ textAlign: "right" }}>Projeção 305</th>
+                <th rowSpan={2}>Confiança</th>
+                <th colSpan={3} style={{ textAlign: "center", background: TINT_GRUPO_EM }}>Equivalente maduro</th>
+              </tr>
+              <tr>
+                <th style={{ textAlign: "right", background: TINT_GRUPO_EM }}>Média/dia</th>
+                <th style={{ textAlign: "right", background: TINT_GRUPO_EM }}>Projeção 305</th>
+                <th style={{ textAlign: "right", background: TINT_GRUPO_EM }}>Diferença</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ordEM.linhasOrdenadas.map((a, i) => {
+                const mediaAtual = a.producao_hoje_kg != null ? a.producao_hoje_kg / 305 : null;
+                const emKg = a.sem_base ? null : a.ja_maduro ? a.producao_hoje_kg : a.producao_maturidade_kg;
+                const mediaEm = emKg != null ? emKg / 305 : null;
+                const ordemDesconhecida = a.sem_base && a.classe == null;
+                return (
+                  <tr key={`${a.numero_matriz}-${i}`}>
+                    <td>
+                      <div style={{ fontWeight: 700 }}>{a.numero_matriz}</div>
+                      <div style={{ display: "flex", gap: "0.3rem", flexWrap: "wrap", marginTop: "0.2rem" }}>
+                        {ordemDesconhecida && <BadgeEM cor="var(--amber)">ordem de parto desconhecida</BadgeEM>}
+                        {a.secagem_precoce && <BadgeEM cor="var(--text-muted)" title="Lactação encerrada bem antes dos 305 dias">encerrada precoce</BadgeEM>}
+                        {a.estimada && a.del_ultimo_controle != null && (
+                          <BadgeEM cor="var(--text-muted)" title="Trecho após este DEL é projeção pela curva de referência, não medição">
+                            último controle DEL {a.del_ultimo_controle}
+                          </BadgeEM>
+                        )}
+                      </div>
+                    </td>
+                    <td>{a.ordem_parto != null ? `${a.ordem_parto}ª` : "—"}</td>
+                    <td style={{ textAlign: "right" }}>{a.del_atual ?? "—"}</td>
+                    <td>{a.faltam_partos_maturidade == null ? "—" : a.faltam_partos_maturidade === 0 ? "madura" : `${a.faltam_partos_maturidade} parto(s)`}</td>
+                    <td style={{ textAlign: "right" }}>{mediaAtual != null ? mediaAtual.toLocaleString("pt-BR", { maximumFractionDigits: 1 }) : "—"}</td>
+                    <td style={{ textAlign: "right", color: "var(--text-muted)" }}>
+                      {a.producao_dia_historica_kg != null ? a.producao_dia_historica_kg.toLocaleString("pt-BR", { maximumFractionDigits: 1 }) : "—"}
+                    </td>
+                    <td style={{ textAlign: "right" }}>{a.producao_hoje_kg?.toLocaleString("pt-BR") ?? "—"}</td>
+                    <td><PilulaConfianca nivel={a.confianca_nivel} fracao={a.confianca_fracao} /></td>
+                    <td style={{ textAlign: "right", background: TINT_GRUPO_EM }}>
+                      {mediaEm != null ? mediaEm.toLocaleString("pt-BR", { maximumFractionDigits: 1 }) : "—"}
+                    </td>
+                    <td style={{ textAlign: "right", fontWeight: 600, background: TINT_GRUPO_EM }}>
+                      {a.sem_base ? "—" : a.ja_maduro ? a.producao_hoje_kg?.toLocaleString("pt-BR") : a.producao_maturidade_kg?.toLocaleString("pt-BR")}
+                    </td>
+                    <td style={{ textAlign: "right", background: TINT_GRUPO_EM, color: (a.diferenca_kg ?? 0) > 0 ? "var(--amber)" : "var(--text-muted)" }}>
+                      {a.sem_base ? (
+                        <span style={{ fontStyle: "italic", fontSize: "0.75rem" }}>
+                          {ordemDesconhecida ? "sem fator — ordem desconhecida" : "sem base para ajustar"}
+                        </span>
+                      ) : a.ja_maduro ? (
+                        <span style={{ fontStyle: "italic", fontSize: "0.75rem", color: "var(--text-muted)" }}>já está na maturidade</span>
+                      ) : (
+                        `${(a.diferenca_kg ?? 0) > 0 ? "+" : ""}${a.diferenca_kg?.toLocaleString("pt-BR")}`
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {!animais.length && <tr><td colSpan={11} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma lactação registrada ainda.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        <NotaExplicativaEM />
+      </div>
+
+      {dados?.painel_afericao && <PainelAfericaoEM painel={dados.painel_afericao} />}
+
+      <CalculadoraEquivalenteMaduro />
+    </div>
+  );
+}
 
 export default function ProducaoPage() {
   const [aba, setAba] = useState<AbaProducao>("leiteira");
@@ -1441,6 +1701,7 @@ export default function ProducaoPage() {
     case "pesagens": return <RelatoriosPesagemView />;
     case "secagem": return <HistoricoSecagensProducao />;
     case "inducao": return <HistoricoInducaoLactacao />;
+    case "equivalente-maduro": return <EquivalenteMaduroView />;
     case "qualidade": return <ProducaoLeiteira secao="qualidade" />;
     case "entrega": return <ProducaoLeiteira secao="entrega" />;
     default: return <ProducaoLeiteira secao="controle" />;

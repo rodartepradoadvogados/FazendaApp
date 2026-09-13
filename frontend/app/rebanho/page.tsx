@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, Sparkles, Skull, ShoppingCart, FileText, Dna, BarChart3, History } from "lucide-react";
+import { AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, Sparkles, Skull, ShoppingCart, FileText, Dna, BarChart3 } from "lucide-react";
 import { CowIcon } from "@/components/CowIcon";
 import { IndicadoresGerais } from "@/app/indicadores/page";
 import { fetchAnimais, fetchEstratificacaoRebanho, fetchEstadosReprodutivos, marcarADescartar, type Estratificacao, type EstadosReprodutivos, type EstadoReprodutivoAnimal } from "@/lib/api";
@@ -11,7 +11,6 @@ import SugestoesMovimentacao from "@/components/SugestoesMovimentacao";
 import BaixarAnimal from "@/components/BaixarAnimal";
 import FichaAnimal from "@/components/FichaAnimal";
 import RebanhoTouros from "@/components/RebanhoTouros";
-import HistoricoMovimentacoes from "@/components/HistoricoMovimentacoes";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { MultiFiltro, Indicador } from "@/components/ui";
 import { GrupoLotePicker } from "@/components/GrupoLotePicker";
@@ -19,20 +18,28 @@ import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { casaBusca } from "@/lib/busca";
+import { producaoDe, origemDe } from "@/lib/producaoAnimal";
 
 const COLUNAS_REBANHO = [
   { header: "Nº", key: "numero" }, { header: "Grupo", key: "grupo_primario" },
   { header: "Categoria", key: "categoria" }, { header: "Raça", key: "raca" },
   { header: "Sit. Rep.", key: "sit_rep" }, { header: "DEL", key: "del_dias" },
-  { header: "Últ. CL (kg)", key: "ult_cl_kg" },
+  { header: "Últ. CL (kg)", key: "ult_cl_kg" }, { header: "Origem da produção", key: "origem_producao" },
 ];
 
 type Animal = {
   numero: string; grupo_primario: string | null; categoria_abrev: string | null;
   categoria_completa: string | null; raca: string | null; sit_rep: string | null;
-  del_dias: number | null; ult_cl_kg: number | null; diagnostico: string | null;
+  del_dias: number | null;
+  /** @deprecated Campo congelado do CSV do Ideagri — prefira `producao_kg`. */
+  ult_cl_kg: number | null;
+  diagnostico: string | null;
+  // Produção AO VIVO (AnimalProducaoAoVivo, lib/api.ts) — cai para `ult_cl_kg`
+  // enquanto o backend novo não estiver publicado.
+  producao_kg?: number | null; producao_data?: string | null; producao_origem?: "controle" | "congelado" | null;
   a_descartar?: boolean; sexo?: string | null; observacoes?: string | null;
 };
+
 
 const SIT_CORES: Record<string, string> = {
   "Ges.": "var(--green-light)", "Vaz. apt.": "var(--blue)", "Vaz. atr.": "var(--red)",
@@ -48,6 +55,14 @@ const SIT_CORES: Record<string, string> = {
 const ROTULO_ESTADO: Record<string, string> = {
   gestante: "Gestante", inseminada: "Inseminada", em_protocolo: "Em protocolo (IA atual)",
   pev: "PEV", apta: "Apta", atrasada: "Atrasada", nao_apta: "Não apta", vazia: "Vazia",
+};
+// Cores do donut de Situação Reprodutiva — as mesmas 6 fatias e cores da Capa
+// (app/page.tsx, SIT_CORES), à parte da paleta acima (que é por rótulo de
+// estado ao vivo cru, usada nas tabelas desta página).
+const SIT_CORES_DONUT: Record<string, string> = {
+  Prenhes: "var(--green-light)", Inseminadas: "var(--dourado-light)",
+  "Em protocolo": "var(--vinho-light, #416180)",
+  PEV: "var(--amber)", "A inseminar": "var(--blue)", Vazias: "var(--red)",
 };
 // Rótulo do estado ao vivo de um animal a partir do mapa numero→estado — animal
 // sem estado (ex.: macho) devolve undefined, que os chamadores tratam como "—".
@@ -88,15 +103,30 @@ function EstratificacaoRebanho({ animais }: { animais: Animal[] }) {
   return (
     <div className="card mb-4">
       <div className="card-header mb-3 flex items-center gap-2"><CowIcon size={14} /> Composição do rebanho ({d.total} fêmeas)</div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
-        <Indicador categoria="geral" valor={`${d.pct_lactacao_sobre_vacas}%`} cor="var(--green-light)" rotulo="% de vacas em lactação"
-          onClick={() => abrir("Vacas em lactação", d.numeros?.vacas_lactacao)} />
-        <Indicador categoria="geral" valor={`${d.pct_lactacao_sobre_total}%`} rotulo="% de vacas em lactação em relação ao rebanho"
-          onClick={() => abrir("Vacas em lactação", d.numeros?.vacas_lactacao)} />
-        <Indicador categoria="geral" valor={d.estratos.vacas_lactacao} rotulo="Vacas em lactação"
-          onClick={() => abrir("Vacas em lactação", d.numeros?.vacas_lactacao)} />
-        <Indicador categoria="geral" valor={d.vacas_total} rotulo="Vacas (adultas)"
-          onClick={() => abrir("Vacas (adultas)", d.numeros_vacas_total)} />
+      {/* % de vacas em lactação já era o único KPI marcado em verde — vira
+          métrica-âncora. Os outros 3 continuam, só menores, e todos seguem
+          clicáveis (mesmas listas de animais de antes). */}
+      <div style={{ padding: "0 0 .9rem", display: "flex", alignItems: "center", gap: "2rem", flexWrap: "wrap" }}>
+        <div onClick={() => abrir("Vacas em lactação", d.numeros?.vacas_lactacao)} style={{ cursor: "pointer" }}>
+          <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>% de vacas em lactação</div>
+          <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--green-light)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+            {d.pct_lactacao_sobre_vacas}%
+          </div>
+        </div>
+        <div style={{ flex: 1, display: "flex", justifyContent: "flex-end", gap: "1.8rem", flexWrap: "wrap" }}>
+          <div onClick={() => abrir("Vacas em lactação", d.numeros?.vacas_lactacao)} style={{ cursor: "pointer", textAlign: "right" }}>
+            <div style={{ fontSize: "1.1rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{d.pct_lactacao_sobre_total}%</div>
+            <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em" }}>% em relação ao rebanho</div>
+          </div>
+          <div onClick={() => abrir("Vacas em lactação", d.numeros?.vacas_lactacao)} style={{ cursor: "pointer", textAlign: "right" }}>
+            <div style={{ fontSize: "1.1rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{d.estratos.vacas_lactacao}</div>
+            <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em" }}>Vacas em lactação</div>
+          </div>
+          <div onClick={() => abrir("Vacas (adultas)", d.numeros_vacas_total)} style={{ cursor: "pointer", textAlign: "right" }}>
+            <div style={{ fontSize: "1.1rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{d.vacas_total}</div>
+            <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em" }}>Vacas (adultas)</div>
+          </div>
+        </div>
       </div>
       {/* Barra empilhada 100% — cada fatia clicável abre os animais daquela categoria */}
       <div style={{ display: "flex", height: 26, borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
@@ -226,10 +256,11 @@ function RebanhoDescarte() {
 // independente em cada grupo (cada instância deste componente tem seu
 // próprio estado de ordenação via useOrdenacao).
 function TabelaGrupoAnimais({ lista, femeasApenas, estadosPorNumero }: { lista: Animal[]; femeasApenas: boolean; estadosPorNumero: Map<string, EstadoReprodutivoAnimal> }) {
-  // Enriquece com o rótulo do estado ao vivo só para poder ordenar pela coluna
-  // "Sit. Rep." — useOrdenacao ordena por um campo do próprio objeto.
+  // Enriquece com o rótulo do estado ao vivo e a produção ao vivo (com
+  // fallback) só para poder ordenar pelas colunas "Sit. Rep." e "Últ. CL" —
+  // useOrdenacao ordena por um campo do próprio objeto.
   const comRotulo = useMemo(
-    () => lista.map((a) => ({ ...a, sitRepAoVivo: rotuloEstadoDoAnimal(a.numero, estadosPorNumero) ?? null })),
+    () => lista.map((a) => ({ ...a, sitRepAoVivo: rotuloEstadoDoAnimal(a.numero, estadosPorNumero) ?? null, producaoAoVivo: producaoDe(a) })),
     [lista, estadosPorNumero]
   );
   const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(comRotulo);
@@ -242,7 +273,7 @@ function TabelaGrupoAnimais({ lista, femeasApenas, estadosPorNumero }: { lista: 
         <ThOrdenavel label="Raça" campo="raca" coluna={coluna} dir={dir} ordenar={ordenar} />
         <ThOrdenavel label="Sit. Rep." campo="sitRepAoVivo" coluna={coluna} dir={dir} ordenar={ordenar} />
         <ThOrdenavel label="DEL" campo="del_dias" coluna={coluna} dir={dir} ordenar={ordenar} alinhar="right" />
-        <ThOrdenavel label="Últ. CL" campo="ult_cl_kg" coluna={coluna} dir={dir} ordenar={ordenar} alinhar="right" />
+        <ThOrdenavel label="Últ. CL" campo="producaoAoVivo" coluna={coluna} dir={dir} ordenar={ordenar} alinhar="right" />
       </tr></thead>
       <tbody>
         {linhasOrdenadas.map((a) => (
@@ -253,7 +284,10 @@ function TabelaGrupoAnimais({ lista, femeasApenas, estadosPorNumero }: { lista: 
             <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
             <td><span style={{ color: SIT_CORES[a.sitRepAoVivo || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sitRepAoVivo || "—"}</span></td>
             <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
-            <td style={{ textAlign: "right", fontWeight: 600 }}>{a.ult_cl_kg ? a.ult_cl_kg.toFixed(1) : "—"}</td>
+            <td style={{ textAlign: "right", fontWeight: 600, color: a.producao_origem === "congelado" ? "var(--text-muted)" : undefined }}
+              title={a.producao_origem === "congelado" ? "Valor do último CSV importado — nenhum controle leiteiro lançado no app para este animal" : undefined}>
+              {a.producaoAoVivo ? `${a.producaoAoVivo.toFixed(1)}${a.producao_origem === "congelado" ? " *" : ""}` : "—"}
+            </td>
           </tr>
         ))}
       </tbody>
@@ -333,11 +367,38 @@ function RebanhoVisaoGeral() {
     return Array.from(by.entries()).map(([grupo, n]) => ({ grupo, n })).sort((a, b) => a.grupo.localeCompare(b.grupo));
   }, [filtrados]);
 
-  const porSit = useMemo(() => {
-    const by = new Map<string, number>();
-    filtrados.forEach((a) => { const s = rotuloEstadoDoAnimal(a.numero, estadosPorNumero) || "(sem)"; by.set(s, (by.get(s) ?? 0) + 1); });
-    return Array.from(by.entries()).map(([sit, n]) => ({ sit, n }));
-  }, [filtrados, estadosPorNumero]);
+  // Situação Reprodutiva (donut) — mesmo gráfico da Capa (app/page.tsx),
+  // repetido aqui: mesma partição em 6 fatias, mesmas cores, mesmo alternador
+  // Todas/Vacas/Novilhas. A diferença é a base: aqui parte de `filtrados`
+  // (já filtrado por grupo/situação/busca desta página), não do rebanho
+  // inteiro — por isso respeita a mesma regra do banner acima ("este filtro
+  // comanda os resultados de toda a página abaixo").
+  const [catRepChart, setCatRepChart] = useState<"todas" | "vaca" | "novilha">("todas");
+  const filtradosParaChartRep = useMemo(
+    () => catRepChart === "todas" ? filtrados : filtrados.filter((a) => (a.categoria_abrev || "").toLowerCase() === catRepChart),
+    [filtrados, catRepChart]
+  );
+  const donutRep = useMemo(() => {
+    // Mesmo agrupamento que o backend usa para o donut da Capa (ver
+    // `_reproducao_categorias` em backend/fazenda/rules/indicadores.py):
+    // pev/em_protocolo/gestante/inseminada mantêm o nome; apta+atrasada
+    // viram "A inseminar"; vazia+nao_apta viram "Vazias". Sem estado (ex.:
+    // macho, se incluído) não entra em fatia nenhuma — mesma regra de lá.
+    const BUCKET_DE_ESTADO: Record<string, string> = {
+      gestante: "Prenhes", inseminada: "Inseminadas", em_protocolo: "Em protocolo",
+      pev: "PEV", apta: "A inseminar", atrasada: "A inseminar", vazia: "Vazias", nao_apta: "Vazias",
+    };
+    const por = new Map<string, Animal[]>();
+    filtradosParaChartRep.forEach((a) => {
+      const estado = estadoDe(a.numero);
+      const bucket = estado ? BUCKET_DE_ESTADO[estado] : undefined;
+      if (!bucket) return;
+      (por.get(bucket) ?? por.set(bucket, []).get(bucket)!).push(a);
+    });
+    return ["Prenhes", "Inseminadas", "Em protocolo", "PEV", "A inseminar", "Vazias"]
+      .map((nome) => ({ nome, v: por.get(nome)?.length ?? 0, animais: por.get(nome) ?? [] }))
+      .filter((x) => x.v > 0);
+  }, [filtradosParaChartRep, estadosPorNumero]);
 
   const grupoLista = useMemo(() => {
     const by = new Map<string, Animal[]>();
@@ -351,7 +412,13 @@ function RebanhoVisaoGeral() {
   // estado ao vivo, não mais o texto cru do CSV.
   const linhasParaExportar = useMemo(
     () => (ordenarPorNumeracao ? porNumero : grupoLista.flatMap(([, lista]) => lista))
-      .map((a) => ({ ...a, categoria: a.categoria_abrev || a.categoria_completa, sit_rep: rotuloEstadoDoAnimal(a.numero, estadosPorNumero) || null })),
+      .map((a) => ({
+        ...a, categoria: a.categoria_abrev || a.categoria_completa, sit_rep: rotuloEstadoDoAnimal(a.numero, estadosPorNumero) || null,
+        // `ult_cl_kg` fica sobrescrito pelo valor AO VIVO (com fallback) para a
+        // planilha exportada não perder a distinção do congelado.
+        ult_cl_kg: producaoDe(a),
+        origem_producao: a.producao_origem === "congelado" ? "CSV importado (congelado)" : a.producao_origem === "controle" ? "Controle leiteiro" : "",
+      })),
     [ordenarPorNumeracao, porNumero, grupoLista, estadosPorNumero]
   );
 
@@ -423,17 +490,36 @@ function RebanhoVisaoGeral() {
               </ResponsiveContainer>
             </div>
             <div className="card">
-              <div className="card-header mb-3">Situação Reprodutiva <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>(clique para ver os animais)</span></div>
-              <ResponsiveContainer width="100%" height={240}>
-                <PieChart>
-                  <Pie data={porSit} dataKey="n" nameKey="sit" cx="50%" cy="50%" outerRadius={80} label={(e: any) => `${e.sit} (${e.n})`} labelLine={false} fontSize={10}
-                    style={{ cursor: "pointer" }}
-                    onClick={(e: any) => { const sit = e?.sit; if (!sit) return; setModal({ title: `Situação: ${sit}`, list: filtrados.filter((a) => (rotuloDe(a.numero) || "(sem)") === sit) }); }}>
-                    {porSit.map((s, i) => <Cell key={i} fill={SIT_CORES[s.sit] || "var(--text-muted)"} />)}
-                  </Pie>
-                  <Tooltip contentStyle={tip} />
-                </PieChart>
-              </ResponsiveContainer>
+              <div className="card-header mb-2 flex flex-wrap items-center gap-2">
+                Situação Reprodutiva <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>(clique para ver os animais)</span>
+                <div style={{ marginLeft: "auto", display: "flex", gap: "0.25rem" }}>
+                  {([["todas", "Todas"], ["vaca", "Vacas"], ["novilha", "Novilhas"]] as const).map(([k, lbl]) => (
+                    <button key={k} onClick={() => setCatRepChart(k)} title={`Ver situação reprodutiva — ${lbl}`}
+                      style={{ fontSize: "0.7rem", padding: "0.2rem 0.6rem", borderRadius: "999px", cursor: "pointer",
+                        border: "1px solid " + (catRepChart === k ? "var(--dourado)" : "var(--border)"),
+                        background: catRepChart === k ? "var(--dourado)" : "transparent",
+                        color: catRepChart === k ? "#1a1a1a" : "var(--text-muted)", fontWeight: catRepChart === k ? 700 : 400 }}>
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {donutRep.length ? (
+                <ResponsiveContainer width="100%" height={240}>
+                  <PieChart>
+                    <Pie data={donutRep} dataKey="v" nameKey="nome" cx="50%" cy="50%" innerRadius={45} outerRadius={80} label={(e: any) => `${e.nome} (${e.v})`} labelLine={false} fontSize={10}
+                      style={{ cursor: "pointer" }}
+                      onClick={(e: any) => {
+                        const nome = e?.name; if (!nome) return;
+                        const grupo = donutRep.find((s) => s.nome === nome);
+                        if (grupo) setModal({ title: nome, list: grupo.animais });
+                      }}>
+                      {donutRep.map((s, i) => <Cell key={i} fill={SIT_CORES_DONUT[s.nome]} />)}
+                    </Pie>
+                    <Tooltip contentStyle={tip} />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem dados reprodutivos para esse filtro.</p>}
             </div>
           </div>
 
@@ -486,7 +572,10 @@ function RebanhoVisaoGeral() {
                         <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
                         <td><span style={{ color: SIT_CORES[rotuloDe(a.numero) || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{rotuloDe(a.numero) || "—"}</span></td>
                         <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
-                        <td style={{ textAlign: "right", fontWeight: 600 }}>{a.ult_cl_kg ? a.ult_cl_kg.toFixed(1) : "—"}</td>
+                        <td style={{ textAlign: "right", fontWeight: 600, color: a.producao_origem === "congelado" ? "var(--text-muted)" : undefined }}
+                          title={a.producao_origem === "congelado" ? "Valor do último CSV importado — nenhum controle leiteiro lançado no app para este animal" : undefined}>
+                          {producaoDe(a) ? `${(producaoDe(a) as number).toFixed(1)}${a.producao_origem === "congelado" ? " *" : ""}` : "—"}
+                        </td>
                       </tr>
                     ))}
                     {!porNumero.length && <tr><td colSpan={femeasApenas ? 7 : 8} style={{ color: "var(--text-muted)", fontSize: "0.85rem", padding: "0.75rem" }}>Nenhum animal no filtro.</td></tr>}
@@ -528,8 +617,8 @@ function RebanhoVisaoGeral() {
 
 // Movimentar/Comprar/Baixar ficam apenas em Lançamentos › Animais — aqui o
 // Rebanho é só consulta (visão, ficha e sugestões).
-type Aba = "visao" | "descarte" | "sugestoes" | "ficha" | "touros" | "movimentacoes" | "indicadores";
-const ABAS_VALIDAS: Aba[] = ["visao", "descarte", "sugestoes", "ficha", "touros", "movimentacoes", "indicadores"];
+type Aba = "visao" | "descarte" | "sugestoes" | "ficha" | "touros" | "indicadores";
+const ABAS_VALIDAS: Aba[] = ["visao", "descarte", "sugestoes", "ficha", "touros", "indicadores"];
 
 const ABAS_REBANHO = [
   { id: "visao", label: "Rebanho", icon: CowIcon, title: "Visão geral do rebanho por grupo" },
@@ -537,7 +626,6 @@ const ABAS_REBANHO = [
   { id: "ficha", label: "Ficha do animal", icon: FileText, title: "Ficha completa e editável de um animal" },
   { id: "touros", label: "Touros", icon: Dna, title: "Filtro de touros: fazenda, estoque de sêmen ou banco NAAB" },
   { id: "sugestoes", label: "Sugestões de movimentação", icon: Sparkles, title: "Sugestões automáticas de movimentação" },
-  { id: "movimentacoes", label: "Movimentações", icon: History, title: "Histórico de transferências entre lotes" },
   { id: "indicadores", label: "Indicadores", icon: BarChart3, title: "Indicadores do rebanho: composição, eficiência reprodutiva e produção" },
 ] as const satisfies readonly { id: Aba; label: string; icon: any; title: string }[];
 
@@ -568,7 +656,6 @@ export default function RebanhoPage() {
         {aba === "sugestoes" && <div className="p-6"><SugestoesMovimentacao /></div>}
         {aba === "ficha" && <FichaAnimal numeroInicial={fichaNumeroInicial} />}
         {aba === "touros" && <RebanhoTouros onAbrirFicha={(numero) => { setFichaNumeroInicial(numero); trocarAba("ficha"); }} />}
-        {aba === "movimentacoes" && <HistoricoMovimentacoes />}
         {aba === "indicadores" && <IndicadoresGerais />}
       </div>
     </div>

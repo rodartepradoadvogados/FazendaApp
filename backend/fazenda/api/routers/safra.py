@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_fazenda_atual_id
+from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import Safra
 from fazenda.rules.auditoria import fazenda_id_seguro
@@ -62,10 +62,9 @@ def listar_safras(
 
 @router.post("/")
 def criar_safra(
-    dados: SafraIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    dados: SafraIn, fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
 ) -> dict:
     _validar(dados)
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     query_existente = select(Safra).where(Safra.nome == nome)
     if fazenda_id is not None:

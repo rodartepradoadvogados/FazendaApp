@@ -8,7 +8,6 @@ Extraído do antigo `cadastro.py` monolítico.
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from typing import Optional
 
@@ -16,14 +15,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_fazenda_atual_id
+from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.api.routers.estoque import sincronizar_item_estoque_semen
 from fazenda.models import EstoqueSemen, SeedFlag, Servico, Touro
 from fazenda.parsers.utils import parse_date
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.parametros import minimos_semen_por_tipo
-from fazenda.rules.touros import calcular_prova_media
+from fazenda.rules.reproducao_analise import analisar_servicos
+from fazenda.rules.touros import calcular_prova_ao_vivo, calcular_prova_media, casar_touro
 
 router = APIRouter()
 
@@ -170,6 +170,33 @@ def atualizar_estoque_semen_202607(session: Session, fazenda_id: int | None = No
     session.commit()
 
 
+def _buscar_semen_da_fazenda(session: Session, item_id: int, fazenda_id: int | None) -> EstoqueSemen | None:
+    """Carrega UM item de estoque de sêmen por id JÁ FILTRANDO por fazenda na
+    própria consulta (mesmo helper e mesmo motivo de
+    agenda.py::_buscar_da_fazenda).
+
+    Antes era `session.get()` seguido de
+    `if fazenda_id is not None and item.fazenda_id != fazenda_id` — o padrão
+    tolerante que a auditoria aponta como causa raiz: o recorte por fazenda
+    dependia de o token trazer "fid", e um token sem ele DESLIGAVA o
+    isolamento em vez de restringi-lo. Aqui isso valia edição e EXCLUSÃO do
+    inventário de sêmen alheio (doses, valor unitário, canecas — informação
+    comercial de genética de concorrente, a mesma que o achado 52 já tratou
+    do lado da leitura). Filtrando na consulta, "de outra fazenda" e "sem
+    fazenda" (órfão do backfill 029227481e9e) caem no mesmo não encontrado.
+
+    `fazenda_id is None` só acontece onde o multi-fazenda não está
+    provisionado (tabela `fazenda` vazia — suíte de testes e instalação
+    anterior à f1a2b3c4d5e6); em qualquer ambiente com fazenda cadastrada a
+    trava de porta (exigir_fazenda_selecionada, montada no router de cadastro
+    em main.py) já recusou a requisição antes. Tratado explicitamente, não
+    por omissão."""
+    query = select(EstoqueSemen).where(EstoqueSemen.id == item_id)
+    if fazenda_id is not None:
+        query = query.where(EstoqueSemen.fazenda_id == fazenda_id)
+    return session.exec(query).first()
+
+
 class EstoqueSemenIn(BaseModel):
     touro_nome: str
     codigo: str | None = None
@@ -228,9 +255,8 @@ def semen_disponivel(
 @router.post("/estoque-semen")
 def criar_estoque_semen(
     dados: EstoqueSemenIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.touro_nome.strip():
         raise HTTPException(status_code=400, detail="Informe o nome do touro")
     if dados.tipo not in TIPOS_SEMEN:
@@ -258,8 +284,8 @@ def atualizar_estoque_semen(
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    item = session.get(EstoqueSemen, item_id)
-    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+    item = _buscar_semen_da_fazenda(session, item_id, fazenda_id)
+    if not item:
         raise HTTPException(status_code=404, detail="Registro de sêmen não encontrado")
     if dados.tipo not in TIPOS_SEMEN:
         raise HTTPException(status_code=400, detail=f"Tipo inválido (aceitos: {', '.join(TIPOS_SEMEN)})")
@@ -283,99 +309,110 @@ def excluir_estoque_semen(
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    item = session.get(EstoqueSemen, item_id)
-    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+    item = _buscar_semen_da_fazenda(session, item_id, fazenda_id)
+    if not item:
         raise HTTPException(status_code=404, detail="Registro de sêmen não encontrado")
     session.delete(item)
     session.commit()
     return {"excluido": True}
 
 
-def _casar_touro(estoque_item: EstoqueSemen, touro_por_naab: dict, touro_por_nome: dict) -> Optional[Touro]:
-    """Mesma lógica de casamento de _baixar_dose_semen (reproducao.py): por
-    NAAB/código do estoque primeiro, senão pelo nome do touro."""
-    naab = (estoque_item.naab or estoque_item.codigo or "").strip().upper()
-    if naab and naab in touro_por_naab:
-        return touro_por_naab[naab]
-    nome = (estoque_item.touro_nome or "").strip().lower()
-    return touro_por_nome.get(nome)
-
-
 @router.get("/estoque-semen/prova-media")
 def prova_media_semen(
-    de: Optional[str] = None, ate: Optional[str] = None, session: Session = Depends(get_session),
+    incluir_fazenda: bool = False,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
-    Prova média ponderada pela quantidade de doses de sêmen — metodologia:
-    para cada indicador de prova (PTA leite/gordura/proteína, TPI, NM$, tipo,
-    úbere, pernas, CCS, fertilidade das filhas, facilidade de parto), calcula
-    a média ponderada soma(indicador × doses) / soma(doses) entre os touros
-    considerados (só entram touros casados com o catálogo de provas; um touro
-    sem determinado indicador não entra no cálculo DAQUELE indicador, não
-    zera a média do grupo). Mesma lógica de índice ponderado usada por provas
-    genéticas oficiais (ex.: o PTI combina produção e tipo numa razão fixa) —
-    aqui a ponderação é pela quantidade de sêmen, não por um peso fixo entre
-    índices.
-
-    Dois recortes:
-    - "botijao": todo o estoque de sêmen da fazenda (peso = doses em estoque
-      hoje, tipo convencional/sexado — sêmen "fazenda"/monta natural não
-      entra, não tem prova).
-    - "servicos_periodo": só os serviços/IA já registrados no período
-      informado (de/ate, opcional — sem os dois, considera todo o histórico),
-      peso = nº de serviços por touro (cada serviço = 1 dose usada).
+    Prova média GENÉTICA (índices/PTA do catálogo, não a performance
+    realizada no rebanho — para isso ver GET /estoque-semen/prova-ao-vivo)
+    dos touros com sêmen em estoque hoje (doses > 0). Por padrão, sêmen
+    "fazenda"/monta natural fica de fora (não tem prova de central de
+    genética) — `incluir_fazenda=true` inclui mesmo assim (só entra se esse
+    touro também estiver cadastrado no catálogo NAAB). Dois recortes:
+    - "simples": média simples entre os touros com pelo menos 1 dose em
+      estoque — cada touro pesa 1, tenha 1 dose ou 20.
+    - "ponderada": média ponderada pela quantidade de doses de cada touro —
+      soma(indicador × doses) / soma(doses). Mesma lógica de índice
+      ponderado usada por provas genéticas oficiais (ex.: o TPI combina
+      produção e tipo numa razão fixa) — aqui quem pondera é a quantidade
+      de sêmen, não uma razão fixa entre índices.
+    Em ambos, um touro sem determinado indicador não entra no cálculo
+    DAQUELE indicador — não zera a média do grupo (ver calcular_prova_media).
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     touros = session.exec(select(Touro)).all()
     touro_por_naab = {(t.naab or "").strip().upper(): t for t in touros}
     touro_por_nome = {(t.nome or "").strip().lower(): t for t in touros if t.nome}
 
-    estoque = [e for e in session.exec(select(EstoqueSemen)).all() if e.ativo and e.tipo != "fazenda"]
-    pares_botijao: list[tuple[Touro, int]] = []
+    q_estoque = select(EstoqueSemen)
+    if fazenda_id is not None:
+        q_estoque = q_estoque.where(EstoqueSemen.fazenda_id == fazenda_id)
+    estoque = [e for e in session.exec(q_estoque).all() if e.ativo and (incluir_fazenda or e.tipo != "fazenda")]
+    pares: list[tuple[Touro, int]] = []
     for e in estoque:
         if (e.doses or 0) <= 0:
             continue
-        touro = _casar_touro(e, touro_por_naab, touro_por_nome)
+        touro = casar_touro(e, touro_por_naab, touro_por_nome)
         if touro:
-            pares_botijao.append((touro, e.doses))
-    total_doses_botijao = sum(p for _, p in pares_botijao)
-
-    de_d = parse_date(de) if de else None
-    ate_d = parse_date(ate) if ate else None
-    servicos = session.exec(select(Servico)).all()
-    contagem_por_reprodutor: dict[str, int] = {}
-    for s in servicos:
-        if not s.reprodutor:
-            continue
-        if de_d and (not s.data_servico or s.data_servico < de_d):
-            continue
-        if ate_d and (not s.data_servico or s.data_servico > ate_d):
-            continue
-        chave = s.reprodutor.strip().lower()
-        contagem_por_reprodutor[chave] = contagem_por_reprodutor.get(chave, 0) + 1
-
-    estoque_por_nome = {(e.touro_nome or "").strip().lower(): e for e in session.exec(select(EstoqueSemen)).all()}
-    pares_servicos: list[tuple[Touro, int]] = []
-    for nome, qtd in contagem_por_reprodutor.items():
-        item_estoque = estoque_por_nome.get(nome)
-        touro = (_casar_touro(item_estoque, touro_por_naab, touro_por_nome) if item_estoque
-                 else touro_por_nome.get(nome))
-        if touro:
-            pares_servicos.append((touro, qtd))
-    total_doses_servicos = sum(p for _, p in pares_servicos)
+            pares.append((touro, e.doses))
+    total_doses = sum(p for _, p in pares)
 
     return {
-        "botijao": {
-            "prova": calcular_prova_media(pares_botijao),
-            "total_doses": total_doses_botijao,
-            "touros_considerados": len(pares_botijao),
+        "simples": {
+            "prova": calcular_prova_media([(t, 1) for t, _ in pares]),
+            "touros_considerados": len(pares),
         },
-        "servicos_periodo": {
-            "prova": calcular_prova_media(pares_servicos),
-            "total_doses": total_doses_servicos,
-            "touros_considerados": len(pares_servicos),
-            "de": de, "ate": ate,
+        "ponderada": {
+            "prova": calcular_prova_media(pares),
+            "total_doses": total_doses,
+            "touros_considerados": len(pares),
         },
     }
+
+
+@router.get("/estoque-semen/prova-ao-vivo")
+def prova_ao_vivo_semen(
+    categoria: Optional[str] = None, ano_nascimento: Optional[int] = None,
+    de: Optional[str] = None, ate: Optional[str] = None, incluir_fazenda: bool = False,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """
+    "Prova ao vivo" — os MESMOS indicadores genéticos do catálogo usados na
+    prova média (GET /estoque-semen/prova-media: leite, gordura, proteína,
+    TPI, NM$, tipo/úbere/pernas composto, CCS, fertilidade das filhas,
+    facilidade de parto), só que ponderados pelo USO REAL do touro na
+    fazenda (nº de serviços em que ele foi de fato usado) em vez das doses
+    hoje em estoque — daí "ao vivo". NÃO é taxa de concepção/resultado
+    reprodutivo (isso é do cruzamento touro+matriz+manejo, não prova do
+    touro; ver fazenda.rules.reproducao_analise para essa métrica, usada em
+    Análise reprodutiva). Filtros opcionais, só limitam quais serviços
+    contam como uso: categoria (vaca/novilha/todas), ano de nascimento da
+    matriz, e período da inseminação (de/ate, sobre a data do serviço). Por
+    padrão exclui touros da própria fazenda (`incluir_fazenda=true` inclui).
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    touros = session.exec(select(Touro)).all()
+    touro_por_naab = {(t.naab or "").strip().upper(): t for t in touros}
+    touro_por_nome = {(t.nome or "").strip().lower(): t for t in touros if t.nome}
+
+    q_estoque = select(EstoqueSemen)
+    if fazenda_id is not None:
+        q_estoque = q_estoque.where(EstoqueSemen.fazenda_id == fazenda_id)
+    estoque_por_nome = {(e.touro_nome or "").strip().lower(): e for e in session.exec(q_estoque).all()}
+
+    q_servicos = select(Servico)
+    if fazenda_id is not None:
+        q_servicos = q_servicos.where(Servico.fazenda_id == fazenda_id)
+    servicos = [s.model_dump() for s in session.exec(q_servicos).all()]
+    registros = analisar_servicos(servicos)
+    de_d = parse_date(de) if de else None
+    ate_d = parse_date(ate) if ate else None
+    resultado = calcular_prova_ao_vivo(
+        registros, touro_por_naab, touro_por_nome, estoque_por_nome,
+        categoria=categoria, ano_nascimento=ano_nascimento,
+        periodo_de=de_d, periodo_ate=ate_d, incluir_fazenda=incluir_fazenda,
+    )
+    return {**resultado, "categoria": categoria or "todas", "ano_nascimento": ano_nascimento, "de": de, "ate": ate}
 
 
 # ── Catálogo genético de touros (NAAB/provas) ───────────────────────────────
@@ -387,113 +424,26 @@ def listar_touros(session: Session = Depends(get_session)) -> list[dict]:
     touros.sort(key=lambda t: (-(t.tpi if t.tpi is not None else -1e9), (t.nome or t.naab)))
     return [t.model_dump() for t in touros]
 
-
-@router.post("/touros/recarregar-catalogo")
-def recarregar_catalogo_touros(session: Session = Depends(get_session)) -> dict:
-    """Reimporta o catálogo NAAB completo empacotado no servidor (upsert por
-    NAAB — nunca apaga touros existentes). Serve de botão de autoatendimento
-    caso a carga automática na inicialização não tenha rodado por algum
-    motivo (ex.: banco criado antes deste recurso existir)."""
-    from fazenda.rules.touros import bootstrap_touros_naab
-    antes = len(session.exec(select(Touro)).all())
-    bootstrap_touros_naab(session, forcar=True)
-    depois = len(session.exec(select(Touro)).all())
-    return {"touros_antes": antes, "touros_depois": depois}
-
-
-@router.get("/touros/campos-planilha")
-def campos_planilha_touros() -> list[str]:
-    """Rótulos originais das colunas do catálogo completo (Alta Genetics),
-    para o cadastro manual oferecer "preencher com os campos da planilha"
-    sem o usuário ter que lembrar/digitar cada nome."""
-    from fazenda.rules.touros import CURADOS_POR_CABECALHO
-    return [cabecalho for _campo, cabecalho, _num in CURADOS_POR_CABECALHO if _campo != "naab"]
-
-
-class TouroIn(BaseModel):
-    naab: str
-    nome: str
-    nome_completo: Optional[str] = None
-    raca: Optional[str] = None
-    central: Optional[str] = None
-    leite_kg: Optional[float] = None
-    gordura_kg: Optional[float] = None
-    gordura_pct: Optional[float] = None
-    proteina_kg: Optional[float] = None
-    proteina_pct: Optional[float] = None
-    tpi: Optional[float] = None
-    nm_dolar: Optional[float] = None
-    tipo_composto: Optional[float] = None
-    ubere_composto: Optional[float] = None
-    pernas_composto: Optional[float] = None
-    ccs_score: Optional[float] = None
-    fertilidade_filhas: Optional[float] = None
-    facilidade_parto: Optional[float] = None
-    fonte: Optional[str] = None
-    rodada_prova: Optional[str] = None
-    observacao: Optional[str] = None
-    dados_extra: Optional[list[list[str]]] = None  # [[rótulo, valor], ...] — demais dados da planilha
-
-
-@router.post("/touros")
-def criar_touro(dados: TouroIn, session: Session = Depends(get_session)) -> dict:
-    """Cadastro manual de um touro. Só o código NAAB e o nome são
-    obrigatórios — todo o resto (inclusive campos extras da planilha do
-    fornecedor) é opcional."""
-    naab = dados.naab.strip().upper()
-    if not naab:
-        raise HTTPException(status_code=400, detail="Informe o código NAAB")
-    if not dados.nome.strip():
-        raise HTTPException(status_code=400, detail="Informe o nome do touro")
-    if session.exec(select(Touro).where(Touro.naab == naab)).first():
-        raise HTTPException(status_code=400, detail=f"Já existe um touro cadastrado com o NAAB {naab}")
-    from fazenda.rules.naab import central_por_codigo_naab
-
-    campos = dados.model_dump(exclude={"naab", "dados_extra"})
-    touro = Touro(naab=naab, **campos)
-    if not touro.central:
-        touro.central = central_por_codigo_naab(naab)
-    if dados.dados_extra:
-        touro.dados_extra = json.dumps(dados.dados_extra, ensure_ascii=False)
-    session.add(touro)
-    session.commit()
-    session.refresh(touro)
-    return touro.model_dump()
-
-
-@router.put("/touros/{touro_id}")
-def atualizar_touro(touro_id: int, dados: TouroIn, session: Session = Depends(get_session)) -> dict:
-    t = session.get(Touro, touro_id)
-    if not t:
-        raise HTTPException(status_code=404, detail="Touro não encontrado")
-    naab = dados.naab.strip().upper()
-    if not naab:
-        raise HTTPException(status_code=400, detail="Informe o código NAAB")
-    if not dados.nome.strip():
-        raise HTTPException(status_code=400, detail="Informe o nome do touro")
-    outro = session.exec(select(Touro).where(Touro.naab == naab)).first()
-    if outro and outro.id != touro_id:
-        raise HTTPException(status_code=400, detail=f"Já existe outro touro cadastrado com o NAAB {naab}")
-    for campo, valor in dados.model_dump(exclude={"dados_extra"}).items():
-        setattr(t, campo, valor)
-    t.naab = naab
-    if dados.dados_extra is not None:
-        t.dados_extra = json.dumps(dados.dados_extra, ensure_ascii=False) if dados.dados_extra else None
-    from datetime import datetime
-    t.atualizado_em = datetime.utcnow()
-    session.add(t)
-    session.commit()
-    session.refresh(t)
-    return t.model_dump()
-
-
-@router.delete("/touros/{touro_id}")
-def excluir_touro(touro_id: int, session: Session = Depends(get_session)) -> dict:
-    t = session.get(Touro, touro_id)
-    if not t:
-        raise HTTPException(status_code=404, detail="Touro não encontrado")
-    session.delete(t)
-    session.commit()
-    return {"excluido": True}
-
-
+# ── MANUTENÇÃO DO CATÁLOGO: SAIU DAQUI (furo de segurança, set/2026) ────────
+# `POST/PUT/DELETE /cadastro/touros`, `POST /cadastro/touros/recarregar-
+# catalogo` e `GET /cadastro/touros/campos-planilha` moraram aqui até
+# set/2026 e agora vivem em fazenda/api/routers/painel_cowdata_touros.py,
+# sob a permissão "editar touros NAAB" do cadastro de equipe do Painel
+# CowData.
+#
+# O QUE ESTAVA ERRADO. `Touro` é catálogo GLOBAL — não tem `fazenda_id`, é
+# uma tabela só, lida por todas as fazendas-cliente. As rotas de escrita,
+# porém, estavam montadas no router da fazenda e protegidas por
+# `exigir_admin`, que é a proteção certa para o dado de UMA fazenda: o
+# administrador de qualquer fazenda-cliente podia reescrever ou apagar o
+# catálogo que todas as outras usavam. Elas foram REMOVIDAS em vez de
+# passarem a recusar — uma rota que só recusa continua montada e volta a
+# abrir sozinha se alguém trocar a dependência dela por engano.
+#
+# A LEITURA NÃO MUDOU: `GET /cadastro/touros` (router_touros_leitura, acima)
+# continua igual, e com ela tudo que a fazenda faz com touro — listagem e
+# busca, prova média (`/estoque-semen/prova-media`), prova ao vivo/estudo de
+# touros (`/estoque-semen/prova-ao-vivo`), seleção na inseminação inclusive
+# de touro fora do estoque, sugestão de acasalamento
+# (relatorio_acasalamento.py), grau de sangue/genética (rules/genetica.py),
+# ficha do animal (animais.py) e compra de sêmen (compra_semen.py).

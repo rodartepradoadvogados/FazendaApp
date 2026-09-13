@@ -132,6 +132,7 @@ class TestDiagnosticoExamePositivoNegativoIndefinido:
         with Session(engine) as s:
             animal = s.exec(select(Animal).where(Animal.numero == "101")).first()
             assert animal.a_descartar is True
+            assert animal.a_descartar_em == date.today()
 
     def test_negativo_nao_marca_a_descartar(self, client):
         c, engine = client
@@ -146,6 +147,7 @@ class TestDiagnosticoExamePositivoNegativoIndefinido:
         with Session(engine) as s:
             animal = s.exec(select(Animal).where(Animal.numero == "102")).first()
             assert animal.a_descartar is False
+            assert animal.a_descartar_em is None
 
     def test_indefinido_grava_resultado(self, client):
         c, _ = client
@@ -239,3 +241,141 @@ class TestDiagnosticoExamePositivoNegativoIndefinido:
         r2 = c.get("/sanidade/exames/resultados", params={"data_de": "2026-01-01", "data_ate": "2026-01-31"})
         assert len(r2.json()) == 1
         assert r2.json()[0]["numero_matriz"] == "101"
+
+
+@pytest.fixture
+def client_operador():
+    """Mesmo setup de `client`, mas com um usuário sem papel admin — para
+    cobrir o fluxo de solicitação de exclusão pendente de aprovação."""
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+
+    def _get_session_override():
+        with Session(engine) as session:
+            yield session
+
+    import main
+    from fazenda.auth import get_current_user
+
+    class _FakeUser:
+        id = 2
+        papel = "operador"
+        ativo = True
+        username = "operador"
+        permissoes = "cadastro,parametros,sanidade,producao,reproducao"
+
+    main.app.dependency_overrides[database.get_session] = _get_session_override
+    main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+
+    with TestClient(main.app) as c:
+        with Session(engine) as s:
+            s.add(Animal(numero="101", sexo="F", ativo=True))
+            s.commit()
+        yield c, engine
+
+    main.app.dependency_overrides.clear()
+
+
+class TestEditarExcluirResultadoExame:
+    """"Tentei editar bula de medicamento... [e] mudar o diagnóstico de um
+    exame realizado ou excluir um exame realizado" (pedido do usuário,
+    01/09/2026) — o relatório de exames (GET /sanidade/exames/resultados)
+    era só leitura; PUT edita, DELETE (via /exclusoes) segue a mesma
+    auditoria/permissão do resto do sistema (rules/exclusao_tipos/sanidade.py)."""
+
+    def _lancar_positivo(self, c, numero="101") -> tuple[int, int]:
+        ev_id = _criar_evento_exame(c)
+        r = c.post("/sanidade/calendario/cadastrar-preventivo", json={
+            "evento_sanitario_id": ev_id, "data_evento": date.today().isoformat(), "animais": [numero],
+            "frequencia_valor": 0, "resultado_exame": "positivo",
+        })
+        resultado_id = r.json()["resultado_exame"]["ids"][0]
+        return ev_id, resultado_id
+
+    def test_editar_troca_diagnostico_e_desfaz_a_descartar(self, client):
+        c, engine = client
+        _, resultado_id = self._lancar_positivo(c)
+        with Session(engine) as s:
+            assert s.exec(select(Animal).where(Animal.numero == "101")).first().a_descartar is True
+
+        r = c.put(f"/sanidade/exames/resultados/{resultado_id}", json={"resultado": "negativo"})
+        assert r.status_code == 200, r.text
+        assert r.json()["resultado"] == "negativo"
+        with Session(engine) as s:
+            animal = s.exec(select(Animal).where(Animal.numero == "101")).first()
+            assert animal.a_descartar is False
+            assert animal.a_descartar_em is None
+
+    def test_editar_para_positivo_marca_a_descartar(self, client):
+        c, engine = client
+        ev_id = _criar_evento_exame(c)
+        r = c.post("/sanidade/calendario/cadastrar-preventivo", json={
+            "evento_sanitario_id": ev_id, "data_evento": date.today().isoformat(), "animais": ["101"],
+            "frequencia_valor": 0, "resultado_exame": "negativo",
+        })
+        resultado_id = r.json()["resultado_exame"]["ids"][0]
+
+        r = c.put(f"/sanidade/exames/resultados/{resultado_id}", json={"resultado": "positivo"})
+        assert r.status_code == 200, r.text
+        with Session(engine) as s:
+            assert s.exec(select(Animal).where(Animal.numero == "101")).first().a_descartar is True
+
+    def test_editar_recalcula_banda(self, client):
+        c, _ = client
+        exame = c.post("/cadastro/exames", json={
+            "nome": "CCS", "tipo_resultado": "numerico", "faixa_min": 100, "faixa_max": 400,
+        }).json()
+        ev_id = _criar_evento_exame(c, exame["id"])
+        r = c.post("/sanidade/calendario/cadastrar-preventivo", json={
+            "evento_sanitario_id": ev_id, "data_evento": date.today().isoformat(), "animais": ["101"],
+            "frequencia_valor": 0, "resultado_numerico": 550,
+        })
+        resultado_id = r.json()["resultado_exame"]["ids"][0]
+        assert c.get("/sanidade/exames/resultados").json()[0]["banda"] == "acima"
+
+        r = c.put(f"/sanidade/exames/resultados/{resultado_id}", json={"valor_numerico": 200})
+        assert r.status_code == 200, r.text
+        assert r.json()["banda"] == "dentro"
+
+    def test_editar_resultado_invalido_da_400(self, client):
+        c, _ = client
+        _, resultado_id = self._lancar_positivo(c)
+        r = c.put(f"/sanidade/exames/resultados/{resultado_id}", json={"resultado": "duvidoso"})
+        assert r.status_code == 400
+
+    def test_editar_id_inexistente_da_404(self, client):
+        c, _ = client
+        r = c.put("/sanidade/exames/resultados/999999", json={"veterinario": "Dr. Novo"})
+        assert r.status_code == 404
+
+    def test_admin_exclui_direto_e_desfaz_a_descartar(self, client):
+        c, engine = client
+        _, resultado_id = self._lancar_positivo(c)
+        r = c.post("/exclusoes/confirmar", json={"tipo": "exame_resultado", "id": str(resultado_id)})
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "excluido"
+        assert c.get("/sanidade/exames/resultados").json() == []
+        with Session(engine) as s:
+            animal = s.exec(select(Animal).where(Animal.numero == "101")).first()
+            assert animal.a_descartar is False
+
+    def test_excluir_id_inexistente_da_404(self, client):
+        c, _ = client
+        r = c.post("/exclusoes/confirmar", json={"tipo": "exame_resultado", "id": "999999"})
+        assert r.status_code == 404
+
+    def test_operador_gera_solicitacao_pendente(self, client_operador):
+        c, engine = client_operador
+        _, resultado_id = self._lancar_positivo(c)
+        r = c.post("/exclusoes/confirmar", json={"tipo": "exame_resultado", "id": str(resultado_id)})
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "solicitado"
+        # Nada foi excluído nem revertido ainda — só o admin aprovando.
+        assert len(c.get("/sanidade/exames/resultados").json()) == 1
+        with Session(engine) as s:
+            assert s.exec(select(Animal).where(Animal.numero == "101")).first().a_descartar is True
+
+    def test_exame_resultado_aparece_no_tipos(self, client):
+        c, _ = client
+        tipos = {t["id"] for t in c.get("/exclusoes/tipos").json()}
+        assert "exame_resultado" in tipos

@@ -14,6 +14,13 @@ proprietário (`exigir_dono`). Opera sempre sobre a ÚNICA fazenda marcada
 Reaproveita os modelos Pessoa/FolhaPagamento (mesmo formato da folha de
 pagamento de qualquer fazenda-cliente), mas por endpoints NOVOS e isolados —
 nenhuma alteração nos routers tenant-facing já testados.
+
+RLS (auditoria de 11/09/2026, ver docs/security-audit/roteiro-seguranca.md):
+toda rota que lê/escreve `Pessoa`/`FolhaPagamento`/`CobrancaAsaas` (a
+fazenda lógica da CowData nunca é a fazenda selecionada no token — não há
+uma, aqui) usa `Depends(get_session_manutencao)`, não `get_session`. As
+quatro rotas de `LancamentoCowData` (sem `fazenda_id`) continuam com
+`get_session` normal — não são afetadas por RLS.
 """
 from __future__ import annotations
 
@@ -26,12 +33,13 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_area_painel_cowdata, exigir_dono, hash_senha
-from fazenda.database import get_session
+from fazenda.auth import eh_email_dono_equivalente, exigir_area_painel_cowdata, exigir_dono, hash_senha
+from fazenda.database import get_session, get_session_manutencao
 from fazenda.models import CobrancaAsaas, Fazenda, FolhaPagamento, Pessoa, SeedFlag, TipoPessoa, Usuario
 from fazenda.models.cowdata_interno import LancamentoCowData
 from fazenda.models.equipe_cowdata_acesso import (
-    AREAS_PAINEL_COWDATA, NIVEIS_SIGILO_EQUIPE_COWDATA, NIVEL_SIGILO_PADRAO, PermissaoEquipeCowData,
+    AREAS_PAINEL_COWDATA, CAMPOS_PERMISSAO_EDICAO_PAINEL_COWDATA, NIVEIS_SIGILO_EQUIPE_COWDATA,
+    NIVEL_SIGILO_PADRAO, PermissaoEquipeCowData,
 )
 from fazenda.models.multitenant import EmpresaOperadora
 from fazenda.rules.contrato_equipe_render import nome_arquivo_contrato, render_contrato_equipe
@@ -156,7 +164,7 @@ def listar_tipos_vinculo(_: Usuario = Depends(exigir_area_painel_cowdata("equipe
 
 
 @router.get("/equipe/cargos")
-def listar_cargos(_: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)) -> list[str]:
+def listar_cargos(_: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao)) -> list[str]:
     fazenda_id = _fazenda_cowdata_id(session)
     tipos = session.exec(
         select(TipoPessoa).where(TipoPessoa.fazenda_id == fazenda_id, TipoPessoa.ativo == True)  # noqa: E712
@@ -165,7 +173,7 @@ def listar_cargos(_: Usuario = Depends(exigir_area_painel_cowdata("equipe")), se
 
 
 @router.get("/equipe/pessoas")
-def listar_equipe(_: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)) -> list[dict]:
+def listar_equipe(_: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao)) -> list[dict]:
     fazenda_id = _fazenda_cowdata_id(session)
     pessoas = session.exec(select(Pessoa).where(Pessoa.fazenda_id == fazenda_id)).all()
     return [_pessoa_publica(p) for p in sorted(pessoas, key=lambda p: p.nome)]
@@ -173,7 +181,7 @@ def listar_equipe(_: Usuario = Depends(exigir_area_painel_cowdata("equipe")), se
 
 @router.get("/equipe/consultores")
 def listar_consultores_cowdata(
-    _: Usuario = Depends(exigir_area_painel_cowdata("fazendas")), session: Session = Depends(get_session)
+    _: Usuario = Depends(exigir_area_painel_cowdata("fazendas")), session: Session = Depends(get_session_manutencao)
 ) -> list[dict]:
     """Membros ATIVOS da Equipe CowData com cargo Consultor que já têm login
     próprio ATIVO — é a lista do seletor "Consultor CowData" ao definir o
@@ -210,7 +218,7 @@ def listar_consultores_cowdata(
 
 @router.post("/equipe/pessoas")
 def criar_membro_equipe(
-    dados: PessoaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
+    dados: PessoaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao)
 ) -> dict:
     fazenda_id = _fazenda_cowdata_id(session)
     cargo_existe = session.exec(
@@ -261,7 +269,7 @@ def _pessoa_equipe_ou_404(session: Session, pessoa_id: int) -> Pessoa:
 
 @router.put("/equipe/pessoas/{pessoa_id}")
 def editar_membro_equipe(
-    pessoa_id: int, dados: PessoaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
+    pessoa_id: int, dados: PessoaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao)
 ) -> dict:
     pessoa = _pessoa_equipe_ou_404(session, pessoa_id)
     _validar_vinculo(dados)
@@ -302,7 +310,7 @@ def baixar_contrato_membro(
     objeto_servico: str | None = None, dia_pagamento: int | None = None, vigencia: str | None = None,
     representante_nome: str | None = None, representante_cpf: str | None = None,
     cidade_foro: str | None = None, estado_foro: str | None = None,
-    _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session),
+    _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao),
 ) -> Response:
     """Minuta do contrato do membro — CLT quando `tipo_vinculo="funcionario"`,
     prestação de serviços quando `"pj"`. O corpo vem do cadastro (nome, RG,
@@ -332,7 +340,7 @@ def baixar_contrato_membro(
 
 @router.delete("/equipe/pessoas/{pessoa_id}")
 def excluir_membro_equipe(
-    pessoa_id: int, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
+    pessoa_id: int, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao)
 ) -> dict:
     pessoa = _pessoa_equipe_ou_404(session, pessoa_id)
     session.delete(pessoa)
@@ -367,6 +375,17 @@ class UsuarioEquipeCowDataIn(BaseModel):
     pode_emitir_cobrancas: bool = False
     pode_vincular_usuarios: bool = False
     pode_cadastrar_usuarios: bool = False
+    # As sete permissões de EDIÇÃO dentro do próprio Painel CowData
+    # (set/2026, ver PERMISSOES_EDICAO_PAINEL_COWDATA). Default False em
+    # todas, como o resto: um client desatualizado que não mandar os campos
+    # nunca abre acesso — só fecha.
+    pode_editar_cadastros_globais: bool = False
+    pode_editar_touros_naab: bool = False
+    pode_editar_farmacia: bool = False
+    pode_consultar_usuarios: bool = False
+    pode_editar_usuarios: bool = False
+    pode_controlar_acesso_usuarios: bool = False
+    pode_editar_news: bool = False
 
 
 def _validar_areas(areas: list[str]) -> None:
@@ -393,6 +412,7 @@ def _usuario_equipe_publico(usuario: Usuario, perm: PermissaoEquipeCowData) -> d
         "pode_emitir_cobrancas": perm.pode_emitir_cobrancas,
         "pode_vincular_usuarios": perm.pode_vincular_usuarios,
         "pode_cadastrar_usuarios": perm.pode_cadastrar_usuarios,
+        **{campo: getattr(perm, campo) for campo in CAMPOS_PERMISSAO_EDICAO_PAINEL_COWDATA},
     }
 
 
@@ -416,11 +436,40 @@ def _aplicar_subpermissoes(perm: PermissaoEquipeCowData, dados: UsuarioEquipeCow
         perm.pode_emitir_cobrancas = False
         perm.pode_vincular_usuarios = False
         perm.pode_cadastrar_usuarios = False
+    # As SETE permissões de edição do próprio Painel CowData ficam FORA do
+    # `if` acima de propósito: `pode_acessar_fazendas` é o portão de entrar
+    # na fazenda-cliente, e estas sete são sobre o painel interno — pendurar
+    # uma coisa na outra criaria uma dependência que o dono não pediu (ex.:
+    # um editor de News teria de "poder acessar fazendas" para publicar).
+    for campo in CAMPOS_PERMISSAO_EDICAO_PAINEL_COWDATA:
+        setattr(perm, campo, getattr(dados, campo))
+
+
+def _aplicar_permissao_news(usuario: Usuario, dados: UsuarioEquipeCowDataIn) -> None:
+    """Espelha "Editar News" na flag `Usuario.pode_publicar_materias_blog`.
+
+    O gate real das rotas de matéria é `fazenda.auth.exigir_pode_publicar`,
+    que para um membro da Equipe CowData exige a flag antiga E a permissão
+    nova (camada a mais, nunca caminho alternativo). Se a tela de equipe só
+    gravasse a permissão, a caixa "Editar News" ficaria marcada e mesmo
+    assim daria 403 pela flag desligada — uma armadilha. Como esta rota é
+    `exigir_dono`, quem marca a caixa é o proprietário, o mesmo que
+    concederia a flag à mão.
+
+    Exceção: um login DONO-EQUIVALENTE nunca tem a flag apagada por aqui.
+    `exigir_pode_publicar` cobra a flag de todo mundo, inclusive do dono (é
+    ela que `seed_permissao_publicar_dono` concede), então desmarcar a caixa
+    ao editar a própria ficha tiraria do proprietário o acesso ao blog —
+    e não é isso que "desmarcar uma permissão de equipe" quer dizer.
+    """
+    if eh_email_dono_equivalente(usuario.email) and not dados.pode_editar_news:
+        return
+    usuario.pode_publicar_materias_blog = dados.pode_editar_news
 
 
 @router.get("/equipe/pessoas/{pessoa_id}/usuario")
 def obter_usuario_equipe(
-    pessoa_id: int, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    pessoa_id: int, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session_manutencao)
 ) -> Optional[dict]:
     pessoa = _pessoa_equipe_ou_404(session, pessoa_id)
     usuario = session.exec(select(Usuario).where(Usuario.pessoa_id == pessoa.id)).first()
@@ -437,8 +486,23 @@ def _permissao_equipe_cowdata_ou_vazia(session: Session, usuario_id: int) -> Per
 
 @router.post("/equipe/pessoas/{pessoa_id}/usuario")
 def criar_usuario_equipe(
-    pessoa_id: int, dados: UsuarioEquipeCowDataIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    pessoa_id: int, dados: UsuarioEquipeCowDataIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session_manutencao)
 ) -> dict:
+    """Login de um membro da própria equipe CowData (suporte/consultoria).
+
+    EXCEÇÃO DECLARADA à regra "todo usuário nasce dentro de uma fazenda" (ver
+    auth.py::_fazenda_do_novo_usuario): este usuário sai daqui SEM
+    `UsuarioFazenda`, de propósito, e é por isso que ele tem endpoint próprio
+    em vez de passar por POST /auth/usuarios. Ele não é usuário de tenant
+    nenhum — a Pessoa dele vive na fazenda "lógica" da CowData
+    (`eh_empresa_cowdata`, ver seed_cowdata_empresa), que nunca é uma
+    fazenda-cliente. Zero vínculos aqui é a resposta certa, não um descuido:
+    o login dele cai na escolha "Painel CowData" (ver _opcoes_de_conta) com
+    token sem "fid", e `exigir_fazenda_selecionada` mantém esse token fora de
+    qualquer rota de dado de fazenda. Ele só entra numa fazenda-cliente pelo
+    Cofre de acesso (cofre_acesso.py), que carimba o "fid" da fazenda
+    visitada com motivo, protocolo, expiração e auditoria — o controle que a
+    conta com vínculo permanente justamente não teria."""
     pessoa = _pessoa_equipe_ou_404(session, pessoa_id)
     if session.exec(select(Usuario).where(Usuario.pessoa_id == pessoa.id)).first():
         raise HTTPException(status_code=400, detail="Este membro já tem um usuário de login — edite as permissões em vez de criar outro.")
@@ -453,6 +517,7 @@ def criar_usuario_equipe(
         username=dados.username, nome=pessoa.nome, email=dados.email,
         senha_hash=hash_senha(dados.senha), papel="operador", pessoa_id=pessoa.id, ativo=dados.ativo,
     )
+    _aplicar_permissao_news(usuario, dados)
     session.add(usuario)
     session.commit()
     session.refresh(usuario)
@@ -467,7 +532,7 @@ def criar_usuario_equipe(
 
 @router.put("/equipe/pessoas/{pessoa_id}/usuario")
 def editar_usuario_equipe(
-    pessoa_id: int, dados: UsuarioEquipeCowDataIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    pessoa_id: int, dados: UsuarioEquipeCowDataIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session_manutencao)
 ) -> dict:
     pessoa = _pessoa_equipe_ou_404(session, pessoa_id)
     usuario = session.exec(select(Usuario).where(Usuario.pessoa_id == pessoa.id)).first()
@@ -484,6 +549,7 @@ def editar_usuario_equipe(
     usuario.ativo = dados.ativo
     if dados.senha and dados.senha.strip():
         usuario.senha_hash = hash_senha(dados.senha)
+    _aplicar_permissao_news(usuario, dados)
     session.add(usuario)
 
     perm = _permissao_equipe_cowdata_ou_vazia(session, usuario.id)
@@ -531,7 +597,7 @@ def _folha_publica(f: FolhaPagamento) -> dict:
 
 @router.get("/equipe/pessoas/{pessoa_id}/folha")
 def listar_folha_membro(
-    pessoa_id: int, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
+    pessoa_id: int, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao)
 ) -> list[dict]:
     _pessoa_equipe_ou_404(session, pessoa_id)
     lancamentos = session.exec(select(FolhaPagamento).where(FolhaPagamento.pessoa_id == pessoa_id)).all()
@@ -540,7 +606,7 @@ def listar_folha_membro(
 
 @router.post("/equipe/pessoas/{pessoa_id}/folha")
 def lancar_folha_membro(
-    pessoa_id: int, dados: FolhaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
+    pessoa_id: int, dados: FolhaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao)
 ) -> dict:
     fazenda_id = _fazenda_cowdata_id(session)
     _pessoa_equipe_ou_404(session, pessoa_id)
@@ -571,7 +637,7 @@ def _folha_equipe_ou_404(session: Session, folha_id: int) -> FolhaPagamento:
 
 @router.put("/equipe/folha/{folha_id}")
 def editar_folha_membro(
-    folha_id: int, dados: FolhaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
+    folha_id: int, dados: FolhaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao)
 ) -> dict:
     folha = _folha_equipe_ou_404(session, folha_id)
     folha.competencia = dados.competencia
@@ -588,7 +654,7 @@ def editar_folha_membro(
 
 
 @router.delete("/equipe/folha/{folha_id}")
-def excluir_folha_membro(folha_id: int, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)) -> dict:
+def excluir_folha_membro(folha_id: int, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session_manutencao)) -> dict:
     folha = _folha_equipe_ou_404(session, folha_id)
     session.delete(folha)
     session.commit()
@@ -745,7 +811,7 @@ def _movimentos_periodo(session: Session, de: date, ate: date) -> list[dict]:
 
 @router.get("/financeiro/resumo")
 def resumo_financeiro(
-    de: date, ate: date, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session)
+    de: date, ate: date, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session_manutencao)
 ) -> dict:
     movimentos = _movimentos_periodo(session, de, ate)
     receita = sum(m["valor"] for m in movimentos if m["tipo"] == "receita")
@@ -755,7 +821,7 @@ def resumo_financeiro(
 
 @router.get("/financeiro/livro-caixa")
 def livro_caixa(
-    de: date, ate: date, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session)
+    de: date, ate: date, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session_manutencao)
 ) -> list[dict]:
     movimentos = _movimentos_periodo(session, de, ate)
     saldo = 0.0
@@ -768,7 +834,7 @@ def livro_caixa(
 
 @router.get("/financeiro/fluxo-caixa")
 def fluxo_caixa(
-    de: date, ate: date, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session)
+    de: date, ate: date, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session_manutencao)
 ) -> list[dict]:
     """Agrupado por mês (entradas/saídas/saldo do mês/saldo acumulado) —
     distinto do livro-caixa (lançamento a lançamento)."""
@@ -795,7 +861,7 @@ def fluxo_caixa(
 
 
 @router.get("/financeiro/dre")
-def dre(ano: int, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session)) -> dict:
+def dre(ano: int, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session_manutencao)) -> dict:
     """DRE simplificado do ano: receita total, despesas por categoria e
     resultado — mesma base de dados do livro-caixa/fluxo-caixa, só reagrupada."""
     de, ate = date(ano, 1, 1), date(ano, 12, 31)

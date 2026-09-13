@@ -1,16 +1,17 @@
 "use client";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
-  Trash2, Droplet, CalendarClock, Wheat, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Dna, Gauge,
+  Trash2, Droplet, CalendarClock, Wheat, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Dna, Gauge, Zap,
 } from "lucide-react";
-import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade } from "@/lib/api";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, fetchParametros } from "@/lib/api";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
 // Formulários grandes de cada sub-aba: dynamic() para que o navegador só baixe
 // o código da sub-aba realmente aberta, em vez de tudo de uma vez com a página.
 const FormFinanceiro = dynamic(() => import("@/components/FormFinanceiro").then((m) => m.FormFinanceiro), { ssr: false });
+const FormFinanceiroSimplificado = dynamic(() => import("@/components/FormFinanceiroSimplificado").then((m) => m.FormFinanceiroSimplificado), { ssr: false });
 const FormExclusao = dynamic(() => import("@/components/FormExclusao").then((m) => m.FormExclusao), { ssr: false });
 const FormPesagemCorporal = dynamic(() => import("@/components/FormPesagemCorporal").then((m) => m.FormPesagemCorporal), { ssr: false });
 const MovimentarAnimais = dynamic(() => import("@/components/MovimentarAnimais"), { ssr: false });
@@ -23,21 +24,28 @@ const FormEntregaLeite = dynamic(() => import("@/components/FormEntregaLeite").t
 const FormInducaoLactacao = dynamic(() => import("@/components/FormInducaoLactacao").then((m) => m.FormInducaoLactacao), { ssr: false });
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
-import { IDADE_MIN_SERVICO } from "@/components/lancamentos/_shared";
+import { inaptidaoServico, useIdadeMinServico } from "@/components/lancamentos/_shared";
+import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
+import { PedidosEmAbertoCard } from "@/components/lancamentos/PedidosEmAbertoCard";
+import { type PrefillPedido } from "@/components/FormFinanceiro";
 // Formulários por tipo de lançamento (reprodutivo/produção/sanidade/dieta/
 // estoque) — extraídos para components/lancamentos/*, mesmo motivo do bloco
 // de dynamic() acima (code-splitting: só baixa o formulário da sub-aba aberta).
 const FormProtocoloIatf = dynamic(() => import("@/components/lancamentos/FormProtocoloIatf").then((m) => m.FormProtocoloIatf), { ssr: false });
 const FormInseminacao = dynamic(() => import("@/components/lancamentos/FormInseminacao").then((m) => m.FormInseminacao), { ssr: false });
+const FormInducaoCio = dynamic(() => import("@/components/lancamentos/FormInducaoCio").then((m) => m.FormInducaoCio), { ssr: false });
 const FormDiagnostico = dynamic(() => import("@/components/lancamentos/FormDiagnostico").then((m) => m.FormDiagnostico), { ssr: false });
 const FormParto = dynamic(() => import("@/components/lancamentos/FormParto").then((m) => m.FormParto), { ssr: false });
 const FormControle = dynamic(() => import("@/components/lancamentos/FormControle").then((m) => m.FormControle), { ssr: false });
 const FormSanidade = dynamic(() => import("@/components/lancamentos/FormSanidade").then((m) => m.FormSanidade), { ssr: false });
-const FormCalendarioSanitario = dynamic(() => import("@/components/lancamentos/FormCalendarioSanitario").then((m) => m.FormCalendarioSanitario), { ssr: false });
+const FormAplicarCalendarioSanitario = dynamic(() => import("@/components/lancamentos/FormAplicarCalendarioSanitario").then((m) => m.FormAplicarCalendarioSanitario), { ssr: false });
 const FormPreventivoAplicacao = dynamic(() => import("@/components/lancamentos/FormPreventivoAplicacao").then((m) => m.FormPreventivoAplicacao), { ssr: false });
 const BstLancamentoView = dynamic(() => import("@/components/lancamentos/FormProtocoloSanitario").then((m) => m.BstLancamentoView), { ssr: false });
 const FormProtocoloSanitario = dynamic(() => import("@/components/lancamentos/FormProtocoloSanitario").then((m) => m.FormProtocoloSanitario), { ssr: false });
-const FormAlimentacaoDieta = dynamic(() => import("@/components/lancamentos/FormAlimentacaoDieta").then((m) => m.FormAlimentacaoDieta), { ssr: false });
+// A dieta em si (CadastrarNovaDieta) mudou de casa para Insumos e sanidade >
+// Alimentação > "Lançar nova dieta" (ver app/alimentacao/page.tsx) — aqui
+// ficou só o lançamento diário de consumo/sobra que consome essa dieta.
+const ConsumoAlimento = dynamic(() => import("@/components/lancamentos/ConsumoAlimento").then((m) => m.ConsumoAlimento), { ssr: false });
 const FormEstoque = dynamic(() => import("@/components/lancamentos/FormEstoque").then((m) => m.FormEstoque), { ssr: false });
 const FormAjusteSaldoEstoque = dynamic(() => import("@/components/lancamentos/FormAjusteSaldoEstoque").then((m) => m.FormAjusteSaldoEstoque), { ssr: false });
 
@@ -53,12 +61,25 @@ const FormAjusteSaldoEstoque = dynamic(() => import("@/components/lancamentos/Fo
 const cod = (g: string | null | undefined) => (g && /^\d\d/.test(g) ? g.slice(0, 2) : "");
 const LACT = ["01", "02", "03"];
 
+// Redesign "Cooperativa" (T2, mockup 1e) — sub-tipos que abrem numa gaveta
+// lateral (~330px) em vez do card cheio de sempre: todo o conteúdo físico de
+// components/lancamentos/* (reprodutivo, produção, sanidade, alimentação,
+// estoque). Financeiro (T4, duas colunas — outro agente mexendo em paralelo)
+// e os demais sub-tipos (Pesagem, Secagem, Indução de lactação, Qualidade do
+// leite, Venda mensal, Animais, Excluir lançamento) ficam de fora de propósito
+// — continuam exatamente como eram, no card cheio abaixo.
+const GAVETA_LEAFS = new Set([
+  "protocolo_iatf", "inseminacao", "diagnostico", "parto", "inducao_cio", "controle",
+  "sanidade_aplicacao", "preventivo_aplicacao", "calendario_sanitario", "bst", "protocolo_sanitario",
+  "alimentacao_dieta", "estoque_entradas_saidas", "estoque_ajuste_saldo",
+]);
+
 // Tipos de lançamento, agrupados: alguns grupos (Reprodutivo, Produção) têm uma
 // camada inferior de sub-tipos, para economizar abas no menu.
 // Ordem alfabética pelo label (ignorando acento), com "Excluir lançamento"
 // sempre por último — não é alfabético de propósito (é a ação mais perigosa).
 const TIPOS_GRUPOS = [
-  { id: "alimentacao_dieta", label: "Alimentação", icon: Wheat, desc: "Dieta por lote: plano programado, real oferecido e histórico de abertura/encerramento.", leaf: "alimentacao_dieta" },
+  { id: "alimentacao_dieta", label: "Alimentação", icon: Wheat, desc: "Consumo diário por lote (nº de animais ou kg direto) e sobra de cocho — só os alimentos da dieta ativa do lote.", leaf: "alimentacao_dieta" },
   {
     id: "animais", label: "Animais", icon: ArrowRightLeft,
     desc: "Movimentar animais entre lotes, comprar/vender ou dar baixa (morte/descarte).",
@@ -112,6 +133,7 @@ const TIPOS_GRUPOS = [
       { id: "inseminacao", label: "Inseminação", icon: Heart, desc: "Registrar a inseminação/cobertura em si — cio natural ou de um protocolo já agendado." },
       { id: "diagnostico", label: "Diagnóstico de gestação", icon: Stethoscope, desc: "Resultado do toque / diagnóstico de prenhez." },
       { id: "parto", label: "Parto / nascimento", icon: Baby, desc: "Registro de parto, da cria e do manejo de colostro." },
+      { id: "inducao_cio", label: "Indução de cio", icon: Zap, desc: "Estímulo hormonal (PGF2α/Cloprostenol) para a vaca entrar em cio em 2 a 5 dias — sem misturar com protocolo IATF, inseminação ou diagnóstico." },
     ],
   },
   {
@@ -122,7 +144,7 @@ const TIPOS_GRUPOS = [
         id: "sanidade_curativa", label: "Curativa", icon: HeartPulse,
         desc: "Tratamento curativo: aplicações de medicamento e protocolos sanitários.",
         subs: [
-          { id: "sanidade_aplicacao", label: "Aplicações", icon: Syringe, desc: "Aplicação de medicamento curativo — por animal, categoria, vários animais ou lote." },
+          { id: "sanidade_aplicacao", label: "Avulso", icon: Syringe, desc: "Aplicação avulsa de medicamento curativo — por animal, categoria, vários animais ou lote." },
           { id: "protocolo_sanitario", label: "Protocolo sanitário", icon: ClipboardList, desc: "Aplicar um protocolo cadastrado (mastite e outros) a um animal — gera um evento na Agenda por dia (D1, D2...)." },
         ],
       },
@@ -130,8 +152,8 @@ const TIPOS_GRUPOS = [
         id: "sanidade_preventiva", label: "Preventiva", icon: Shield,
         desc: "Manejo preventivo: aplicações preventivas e calendário sanitário.",
         subs: [
-          { id: "preventivo_aplicacao", label: "Aplicações", icon: Syringe, desc: "Aplicar um preventivo (vacina/exame) a animais, categoria ou lote — registra e alimenta o calendário." },
-          { id: "calendario_sanitario", label: "Calendário sanitário", icon: CalendarClock, desc: "Regra recorrente (sazonal/de rebanho ou por fase fisiológica): evento, frequência, produto e dosagem." },
+          { id: "preventivo_aplicacao", label: "Avulso", icon: Syringe, desc: "Aplicar um preventivo (vacina/exame) sem vínculo com um protocolo do calendário — por animal, categoria ou lote." },
+          { id: "calendario_sanitario", label: "Calendário sanitário", icon: CalendarClock, desc: "Aplicar um protocolo já cadastrado no calendário (vacina ou exame) — escolha o protocolo e lance para os animais." },
         ],
       },
     ],
@@ -161,16 +183,82 @@ const TIPOS_LEAFS = TIPOS_GRUPOS.flatMap((g) =>
 
 export default function LancamentosPage() {
   const [sel, setSel] = useState("protocolo_iatf");
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [sujo, setSujo] = useState(false);
+  // Gaveta lateral (T2, mockup 1e) — SÓ abre com o usuário clicando em "Abrir
+  // lançamento" (botão logo abaixo); fechada, a tela só mostra essa faixa no
+  // lugar do formulário. Trocar de aba (inclusive o valor inicial de `sel` no
+  // primeiro carregamento de /lancamentos) sempre FECHA a gaveta — nunca abre
+  // sozinha, mesmo que a aba de destino seja uma GAVETA_LEAF; do contrário a
+  // tela nasce direto dentro do formulário e trava a navegação (usuário não
+  // enxerga a lista de abas por trás). `formKey` força o formulário a nascer
+  // de novo (só ao clicar "Salvar e próximo" no rodapé, nunca sozinho, senão
+  // descartaria trabalho em andamento) e `mensagemSalva` controla esse rodapé.
+  const ehGaveta = GAVETA_LEAFS.has(sel);
+  const [gavetaAberta, setGavetaAberta] = useState(false);
+  const [formKey, setFormKey] = useState(0);
+  const [mensagemSalva, setMensagemSalva] = useState<string | null>(null);
+  // Pré-preenchimento vindo do card "Pedidos em aberto" (Financeiro > Lançar)
+  // — mesmo mecanismo/shape que app/pedidos/page.tsx já usa no ícone "$
+  // Lançar em Financeiro" (ver PrefillPedido em components/FormFinanceiro.tsx).
+  // Trocar de sub-aba sempre limpa (mesmo raciocínio de `mensagemSalva`
+  // acima): nunca deixa o pré-preenchimento de despesa vazar pra receita ou
+  // vice-versa.
+  const [prefillPedido, setPrefillPedido] = useState<PrefillPedido | null>(null);
+  useEffect(() => {
+    setGavetaAberta(false);
+    setMensagemSalva(null);
+    setPrefillPedido(null);
+  }, [sel]);
+  const fecharGaveta = useCallback(() => {
+    if (sujo && !window.confirm("Você tem certeza que quer sair dessa página? Os dados não salvos serão perdidos.")) return;
+    setSujo(false);
+    setMensagemSalva(null);
+    setGavetaAberta(false);
+  }, [sujo]);
   // Contas a pagar também permite compra de sêmen — em vez de duplicar o
   // fluxo, reusa o mesmo formulário/endpoint de Lançamentos > Animais >
   // Compra/Venda > Comprar sêmen (mesma CompraSemen + baixa/soma de doses).
-  const [despesaCompraSemen, setDespesaCompraSemen] = useState(false);
+  // "Lançamento simplificado" (despesa e receita): fornecedor/cliente + itens
+  // + data única + conta bancária, sem os campos avançados do formulário
+  // completo (ver FormFinanceiroSimplificado.tsx).
+  const [modoDespesa, setModoDespesa] = useState<"generico" | "compra_semen" | "simplificado">("generico");
+  const [modoReceita, setModoReceita] = useState<"generico" | "simplificado">("generico");
+  // "Finalizar pedido" (card "Pedidos em aberto") força o modo de volta pra
+  // "genérico" — só ele aceita a prop `prefillPedido` — antes de guardar o
+  // pré-preenchimento.
+  const finalizarPedidoDespesa = useCallback((p: PrefillPedido) => {
+    setModoDespesa("generico");
+    setPrefillPedido(p);
+  }, [setModoDespesa, setPrefillPedido]);
+  const finalizarPedidoReceita = useCallback((p: PrefillPedido) => {
+    setModoReceita("generico");
+    setPrefillPedido(p);
+  }, [setModoReceita, setPrefillPedido]);
   // Atalho vindo da Agenda (ex.: "Ir para Inseminação" de um lembrete D11 de protocolo IATF).
   useEffect(() => {
     const ir = new URLSearchParams(window.location.search).get("ir");
     if (ir && TIPOS_LEAFS.some((t) => t.id === ir)) setSel(ir);
   }, []);
+
+  // modo_lancamento_alimentacao (Configurações > Parâmetros > Alimentação):
+  // "nao_lancar" tira a aba de Alimentação do menu por completo (item D10) —
+  // não é só esconder o formulário, é a aba mesma que não deve aparecer.
+  const [modoAlimentacao, setModoAlimentacao] = useState<string | null>(null);
+  useEffect(() => {
+    fetchParametros()
+      .then((d) => {
+        const itens: any[] = d?.grupos?.alimentacao?.itens ?? [];
+        setModoAlimentacao(String(itens.find((i) => i.chave === "modo_lancamento_alimentacao")?.valor ?? "fornecido_sobra"));
+      })
+      .catch(() => setModoAlimentacao("fornecido_sobra"));
+  }, []);
+  // Se a aba estava aberta e o parâmetro virou "nao_lancar" embaixo do
+  // usuário (ou o link "ir=" de outra tela apontava pra cá), sai dela —
+  // nunca deixa a tela de consumo visível com o modo desligado.
+  useEffect(() => {
+    if (sel === "alimentacao_dieta" && modoAlimentacao === "nao_lancar") setSel("protocolo_iatf");
+  }, [sel, modoAlimentacao]);
   const trocarTipo = useCallback((novoId: string) => {
     if (novoId === sel) return;
     if (sujo && !window.confirm("Você tem certeza que quer sair dessa página? Os dados não salvos serão perdidos.")) return;
@@ -190,15 +278,70 @@ export default function LancamentosPage() {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [sujo]);
+
+  // "Sujo" genérico (fallback para os formulários que não sabem se avisar
+  // sozinhos, como FormFinanceiro faz via `onSujo`): em vez de marcar sujo em
+  // QUALQUER evento de mudança — o que nunca desmarcava, mesmo apagando tudo
+  // de volta —, compara os campos do formulário atual contra o instantâneo
+  // ("baseline") tirado assim que a sub-aba abriu. Valor padrão de nascença
+  // (ex.: "Data do controle" já vem com hoje, "Modalidade" já vem com uma
+  // opção marcada) não conta como trabalho do usuário — mesmo raciocínio do
+  // caso do centro de custo em FormFinanceiro, só que aqui genérico, porque
+  // a maioria dos formulários de Lançamentos não expõe seu próprio `sujo`.
+  const cardRef = useRef<HTMLDivElement>(null);
+  const baselineRef = useRef<string[]>([]);
+  const valorDoCampo = (el: Element): string => {
+    if (el instanceof HTMLInputElement) return el.type === "checkbox" || el.type === "radio" ? String(el.checked) : el.value;
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return el.value;
+    return "";
+  };
+  const capturarBaseline = useCallback(() => {
+    const el = cardRef.current;
+    baselineRef.current = el ? Array.from(el.querySelectorAll("input, textarea, select")).map(valorDoCampo) : [];
+  }, []);
+  // Recaptura a baseline sempre que a sub-aba muda — é o formulário NOVO que
+  // acabou de nascer que serve de referência, nunca o antigo. Para as sub-abas
+  // de gaveta, o formulário só existe de verdade quando ela está aberta (o
+  // `{gavetaAberta && <Form.../>}` abaixo) e nasce de novo a cada `formKey` —
+  // as duas entram nas dependências para recapturar no momento certo.
+  useEffect(() => { capturarBaseline(); }, [sel, gavetaAberta, formKey, capturarBaseline]);
+  const verificarSujo = useCallback(() => {
+    if (sel === "exclusao") return;
+    const el = cardRef.current;
+    if (!el) return;
+    const atuais = Array.from(el.querySelectorAll("input, textarea, select")).map(valorDoCampo);
+    const mudou = atuais.length !== baselineRef.current.length || atuais.some((v, i) => v !== baselineRef.current[i]);
+    setSujo(mudou);
+  }, [sel]);
+
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
   const [servicos, setServicos] = useState<any[]>([]);
   const [produtosSanidade, setProdutosSanidade] = useState<string[]>([]);
-  useEffect(() => {
+  const recarregarListasBase = useCallback(() => {
     fetchAnimais().then(setAnimais).catch(() => {});
     fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
     fetchServicosAnalise().then((d) => setServicos(d.servicos || [])).catch(() => {});
     fetchSanidade().then((d) => setProdutosSanidade(Array.from(new Set((d.aplicacoes || d.registros || []).map((r: any) => r.produto).filter(Boolean))).sort() as string[])).catch(() => {});
+  }, []);
+  useEffect(() => { recarregarListasBase(); }, [recarregarListasBase]);
+  // Disparado por qualquer Form* da gaveta assim que salva com sucesso (prop
+  // `onSalvo`) — mostra o rodapé "Salvar e próximo"/"Concluir" e já atualiza
+  // as listas (saldo de estoque, animais) para o próximo lançamento em
+  // sequência já refletir o que acabou de mudar.
+  const aoSalvarNaGaveta = useCallback(() => {
+    setMensagemSalva("Lançamento salvo com sucesso.");
+    recarregarListasBase();
+  }, [recarregarListasBase]);
+  const salvarEProximo = useCallback(() => {
+    setMensagemSalva(null);
+    setSujo(false);
+    setFormKey((k) => k + 1);
+  }, []);
+  const concluirGaveta = useCallback(() => {
+    setMensagemSalva(null);
+    setSujo(false);
+    setGavetaAberta(false);
   }, []);
 
   // Última IA/cobertura por matriz (para o diagnóstico puxar automático).
@@ -220,21 +363,41 @@ export default function LancamentosPage() {
     return Array.from(porChave.values()).sort();
   }, [animais]);
   const lotesLact = useMemo(() => lotes.filter((l) => LACT.includes(cod(l))), [lotes]);
-  // Fêmeas aptas a serviço: idade >= 13 meses (mantém as sem idade informada, por segurança).
-  const aptasServico = useMemo(() => animais.filter((a) => {
-    const idade = (a as any).idade_meses;
-    return idade == null || idade >= IDADE_MIN_SERVICO;
-  }), [animais]);
+  // Aptidão a serviço: a lista passa a mostrar TODAS as fêmeas, com as
+  // inaptas em cinza e o motivo ao lado (ver `motivosInaptidao` abaixo), em
+  // vez de escondê-las.
+  //
+  // Antes, este bloco filtrava por `idade_meses >= 13` — um número cravado no
+  // código do front, diferente do parâmetro real da fazenda (15 meses) e
+  // inexistente no backend, que aceitava qualquer coisa que chegasse pela
+  // API. A trava de verdade agora é do backend (409 com o motivo, ver
+  // `backend/fazenda/rules/aptidao.py`); aqui só se ANTECIPA o veredito, com
+  // o parâmetro de verdade, para o usuário não descobrir depois de preencher
+  // o formulário inteiro. Sumir com a vaca da lista era pior que recusá-la:
+  // não explicava nada e ainda parecia bug de cadastro.
+  const idadeMinServico = useIdadeMinServico();
+  const motivosInaptidao = useMemo(() => {
+    const m = new Map<string, string>();
+    animais.forEach((a) => {
+      const i = inaptidaoServico(a, idadeMinServico);
+      if (i) m.set(a.numero, i.rotulo);
+    });
+    return m;
+  }, [animais, idadeMinServico]);
   const tipo = TIPOS_LEAFS.find((t) => t.id === sel)!;
 
   // Piloto do drill-down: a Sidebar desenha esta árvore (grupo → sub-grupo →
   // folha) no lugar da lista de módulos enquanto Lançamentos estiver aberto.
-  const subNavTree: SubNavNode[] = useMemo(() => TIPOS_GRUPOS.map((g) => ({
-    id: g.leaf ?? g.id, label: g.label, icon: g.icon,
-    children: g.grupos
-      ? g.grupos.map((sg) => ({ id: sg.id, label: sg.label, icon: sg.icon, children: sg.subs.map(paraSubNavNode) }))
-      : g.subs?.map(paraSubNavNode),
-  })), []);
+  // Alimentação some da árvore quando o modo de lançamento for "nao_lancar"
+  // (item D10) — filtra aqui, no ponto único que a Sidebar de fato lê.
+  const subNavTree: SubNavNode[] = useMemo(() => TIPOS_GRUPOS
+    .filter((g) => !(g.id === "alimentacao_dieta" && modoAlimentacao === "nao_lancar"))
+    .map((g) => ({
+      id: g.leaf ?? g.id, label: g.label, icon: g.icon,
+      children: g.grupos
+        ? g.grupos.map((sg) => ({ id: sg.id, label: sg.label, icon: sg.icon, children: sg.subs.map(paraSubNavNode) }))
+        : g.subs?.map(paraSubNavNode),
+    })), [modoAlimentacao]);
   useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: sel, onSelect: trocarTipo }), [subNavTree, sel, trocarTipo]));
 
   return (
@@ -258,17 +421,17 @@ export default function LancamentosPage() {
           ) : sel === "diagnostico" ? (
             <><strong style={{ color: "var(--text)" }}>Diagnóstico já grava de verdade.</strong> Um resultado marcado para retoque entra na agenda automaticamente.</>
           ) : sel === "estoque_entradas_saidas" ? (
-            <><strong style={{ color: "var(--text)" }}>Estoque já grava de verdade.</strong> Entradas e saídas lançadas aqui atualizam a quantidade do item na hora.</>
+            <><strong style={{ color: "var(--text)" }}>Estoque já grava de verdade.</strong> Entradas e saídas lançadas aqui atualizam a quantidade do item na hora. Aqui é lugar de ajuste, cortesia ou lançamento que faltou — não de aplicação em animais nem de outros lançamentos, que têm sub-aba própria.</>
           ) : sel === "estoque_ajuste_saldo" ? (
-            <><strong style={{ color: "var(--text)" }}>Ajuste de saldo já grava de verdade.</strong> Informe a quantidade que você contou de verdade no estoque — o sistema compara com o saldo cadastrado e lança sozinho a entrada ou a saída da diferença.</>
+            <><strong style={{ color: "var(--text)" }}>Ajuste de saldo já grava de verdade.</strong> Informe a quantidade que você contou de verdade no estoque — o sistema compara com o saldo cadastrado e lança sozinho a entrada ou a saída da diferença. Aqui é lugar de ajuste, cortesia ou lançamento que faltou — não de aplicação nem de outros lançamentos, que têm sub-aba própria.</>
           ) : sel === "alimentacao_dieta" ? (
-            <><strong style={{ color: "var(--text)" }}>Dieta já grava de verdade.</strong> Só uma dieta fica ativa por lote; ao encerrar, você pode lançar a próxima na hora. A data prevista de encerramento entra na Agenda para análise.</>
+            <><strong style={{ color: "var(--text)" }}>Consumo já grava de verdade.</strong> Dá baixa em estoque na hora. Só oferece os alimentos da dieta ativa do lote — fora da dieta ou sem saldo só entra se o cadastro do lote permitir.</>
           ) : sel === "sanidade_aplicacao" ? (
             <><strong style={{ color: "var(--text)" }}>Sanidade já grava de verdade.</strong> Aceita vários produtos por lançamento; a baixa de estoque só acontece quando a unidade escolhida bate com a do estoque.</>
           ) : sel === "preventivo_aplicacao" ? (
-            <><strong style={{ color: "var(--text)" }}>Preventivo já grava de verdade.</strong> Escolha o evento preventivo (vacina/exame), o lote/categoria e marque os animais — registra o calendário e, se for vacina/tratamento, a aplicação com baixa de estoque. Exame não baixa estoque.</>
+            <><strong style={{ color: "var(--text)" }}>Avulso já grava de verdade.</strong> Escolha o evento preventivo (vacina/exame), o lote/categoria e marque os animais — sem vínculo com um protocolo do calendário; se for vacina/tratamento, aplica com baixa de estoque. Exame não baixa estoque.</>
           ) : sel === "calendario_sanitario" ? (
-            <><strong style={{ color: "var(--text)" }}>Calendário sanitário já grava de verdade.</strong> Cada regra recorrente vira pendência na Agenda (dá baixa) e aparece na aba Sanidade &gt; Preventivo, com filtro por data e por evento.</>
+            <><strong style={{ color: "var(--text)" }}>Calendário sanitário já grava de verdade.</strong> Aqui só se aplica um protocolo já cadastrado (Central de Protocolos &gt; Cadastro &gt; Sanitário &gt; Preventivo) — escolha-o, confira o resumo e lance para os animais.</>
           ) : sel === "bst" ? (
             <><strong style={{ color: "var(--text)" }}>BST — somatotropina bovina.</strong> Vacas aptas e excluídas do dia, com a próxima visita de BST.</>
           ) : sel === "protocolo_sanitario" ? (
@@ -287,64 +450,132 @@ export default function LancamentosPage() {
             <><strong style={{ color: "var(--text)" }}>Protocolo IATF já grava de verdade.</strong> Agenda só os passos hormonais (D0/D7/D9/D11) na Agenda — a inseminação em si é lançada à parte, na sub-aba Inseminação.</>
           ) : sel === "inseminacao" ? (
             <><strong style={{ color: "var(--text)" }}>Inseminação já grava de verdade.</strong> Registra a cobertura/IA (cio natural ou vinda de um protocolo IATF já agendado) e calcula a ordem/intervalo de tentativas.</>
+          ) : sel === "inducao_cio" ? (
+            <><strong style={{ color: "var(--text)" }}>Indução de cio já grava de verdade.</strong> Gera histórico (sem tocar em Servico/Protocolo IATF) e um lembrete "Observar cio" na Agenda entre 2 e 5 dias depois da aplicação — some sozinho assim que a inseminação for lançada.</>
           ) : null}
         </p>
       </div>
 
-      <div className="card" onChange={() => sel !== "exclusao" && setSujo(true)}>
-        <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
-        {sel === "protocolo_iatf" && <FormProtocoloIatf animais={aptasServico} />}
-        {sel === "inseminacao" && <FormInseminacao animais={aptasServico} />}
-        {sel === "diagnostico" && <FormDiagnostico animais={animais} ultServico={ultServico} />}
-        {sel === "parto" && <FormParto animais={animais} lotes={lotes} />}
-        {sel === "controle" && <FormControle animais={animais} lotesLact={lotesLact} />}
-        {sel === "pesagem" && <FormPesagemCorporal animais={animais} lotes={lotes} />}
-        {sel === "secagem" && <FormSecagem animais={animais} estoque={estoque} produtos={produtosSanidade} />}
-        {sel === "inducao_lactacao" && <FormInducaoLactacao animais={animais} />}
-        {sel === "qualidade_leite" && <FormQualidadeLeite animais={animais} />}
-        {sel === "entrega_leite" && <FormEntregaLeite />}
-        {sel === "sanidade_aplicacao" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} />}
-        {sel === "preventivo_aplicacao" && <FormPreventivoAplicacao animais={animais} lotes={lotes} estoque={estoque} />}
-        {sel === "calendario_sanitario" && <FormCalendarioSanitario estoque={estoque} />}
-        {sel === "bst" && <BstLancamentoView />}
-        {sel === "protocolo_sanitario" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
-        {sel === "financeiro_despesa" && (
-          <>
-            <div className="flex flex-wrap gap-2 mb-4">
-              <button type="button" className={despesaCompraSemen ? "btn-secondary" : "btn-primary"} style={{ fontSize: "0.8rem" }}
-                onClick={() => setDespesaCompraSemen(false)}>
-                Lançamento genérico
-              </button>
-              <button type="button" className={despesaCompraSemen ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
-                onClick={() => setDespesaCompraSemen(true)}>
-                Compra de sêmen
-              </button>
-            </div>
-            {despesaCompraSemen ? (
-              <>
-                <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "1rem" }}>
-                  Mesmo formulário de Lançamentos &gt; Animais &gt; Compra/Venda &gt; Comprar sêmen — a compra soma as
-                  doses no Estoque de sêmen e gera a conta a pagar (3.01.02.01 — Sêmen) automaticamente.
-                </p>
-                <CompraSemenForm />
-              </>
-            ) : (
-              <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSujo={setSujo} />
-            )}
-          </>
+      {ehGaveta ? (
+        <div className="card">
+          <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
+          <button type="button" className="btn-primary" onClick={() => setGavetaAberta(true)}>
+            <tipo.icon size={14} /> Abrir lançamento
+          </button>
+        </div>
+      ) : (
+        <div className="card" ref={cardRef} onChange={verificarSujo}>
+          <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
+          {sel === "pesagem" && <FormPesagemCorporal animais={animais} lotes={lotes} />}
+          {sel === "secagem" && <FormSecagem animais={animais} estoque={estoque} produtos={produtosSanidade} />}
+          {sel === "inducao_lactacao" && <FormInducaoLactacao animais={animais} />}
+          {sel === "qualidade_leite" && <FormQualidadeLeite animais={animais} />}
+          {sel === "entrega_leite" && <FormEntregaLeite />}
+          {sel === "financeiro_despesa" && (
+            <>
+              <PedidosEmAbertoCard tipo="despesa" onFinalizar={finalizarPedidoDespesa} />
+              <div className="flex flex-wrap gap-2 mb-4">
+                <button type="button" className={modoDespesa === "generico" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
+                  onClick={() => setModoDespesa("generico")}>
+                  Lançamento genérico
+                </button>
+                <button type="button" className={modoDespesa === "simplificado" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
+                  onClick={() => setModoDespesa("simplificado")}>
+                  Lançamento simplificado
+                </button>
+                <button type="button" className={modoDespesa === "compra_semen" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
+                  onClick={() => setModoDespesa("compra_semen")}>
+                  Compra de sêmen
+                </button>
+              </div>
+              {modoDespesa === "compra_semen" ? (
+                <>
+                  <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "1rem" }}>
+                    Mesmo formulário de Lançamentos &gt; Animais &gt; Compra/Venda &gt; Comprar sêmen — a compra soma as
+                    doses no Estoque de sêmen e gera a conta a pagar (3.01.02.01 — Sêmen) automaticamente.
+                  </p>
+                  <CompraSemenForm />
+                </>
+              ) : modoDespesa === "simplificado" ? (
+                <>
+                  <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "1rem" }}>
+                    Fornecedor, item(ns) e valor, uma única data (nasce pago) e a conta bancária — sem desconto/acréscimo,
+                    parcelamento, anexo ou vínculo com Pedido/Patrimônio/vale. Usa o centro de custo padrão configurado em
+                    Parâmetros financeiros.
+                  </p>
+                  <FormFinanceiroSimplificado tipo="despesa" onSujo={setSujo} />
+                </>
+              ) : (
+                <FormFinanceiro tipo="despesa" responsaveis={nomesResponsaveis} onSujo={setSujo} prefillPedido={prefillPedido} />
+              )}
+            </>
+          )}
+          {sel === "financeiro_receita" && (
+            <>
+              <PedidosEmAbertoCard tipo="receita" onFinalizar={finalizarPedidoReceita} />
+              <div className="flex flex-wrap gap-2 mb-4">
+                <button type="button" className={modoReceita === "generico" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
+                  onClick={() => setModoReceita("generico")}>
+                  Lançamento genérico
+                </button>
+                <button type="button" className={modoReceita === "simplificado" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
+                  onClick={() => setModoReceita("simplificado")}>
+                  Lançamento simplificado
+                </button>
+              </div>
+              {modoReceita === "simplificado" ? (
+                <>
+                  <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "1rem" }}>
+                    Cliente, item(ns) e valor, uma única data (nasce recebido) e a conta bancária — sem desconto/acréscimo,
+                    parcelamento, anexo ou vínculo com Pedido/Patrimônio/vale. Usa o centro de custo padrão configurado em
+                    Parâmetros financeiros.
+                  </p>
+                  <FormFinanceiroSimplificado tipo="receita" onSujo={setSujo} />
+                </>
+              ) : (
+                <FormFinanceiro tipo="receita" responsaveis={nomesResponsaveis} onSujo={setSujo} prefillPedido={prefillPedido} />
+              )}
+            </>
+          )}
+          {sel === "mover_animais" && <MovimentarAnimais />}
+          {sel === "comprar_animal" && <CompraVendaAnimalForm modo="compra" animais={animais} />}
+          {sel === "comprar_semen" && <CompraSemenForm />}
+          {sel === "vender_animal" && <CompraVendaAnimalForm modo="venda" animais={animais} />}
+          {sel === "baixar_animal" && <BaixarAnimal />}
+          {sel === "exclusao" && <FormExclusao />}
+        </div>
+      )}
+
+      <GavetaLancamento
+        aberto={ehGaveta && gavetaAberta}
+        onFechar={fecharGaveta}
+        titulo={tipo.label}
+        icone={tipo.icon}
+        mensagemSalva={mensagemSalva}
+        onSalvarProximo={salvarEProximo}
+        onConcluir={concluirGaveta}
+      >
+        {ehGaveta && gavetaAberta && (
+          <div ref={cardRef} onChange={verificarSujo}>
+            {sel === "protocolo_iatf" && <FormProtocoloIatf key={formKey} animais={animais} motivosInaptidao={motivosInaptidao} idadeMinServico={idadeMinServico} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "inseminacao" && <FormInseminacao key={formKey} animais={animais} motivosInaptidao={motivosInaptidao} idadeMinServico={idadeMinServico} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "diagnostico" && <FormDiagnostico key={formKey} animais={animais} ultServico={ultServico} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "parto" && <FormParto key={formKey} animais={animais} lotes={lotes} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "inducao_cio" && <FormInducaoCio key={formKey} animais={animais} estoque={estoque} motivosInaptidao={motivosInaptidao} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "controle" && <FormControle key={formKey} animais={animais} lotesLact={lotesLact} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "sanidade_aplicacao" && <FormSanidade key={formKey} animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "preventivo_aplicacao" && <FormPreventivoAplicacao key={formKey} animais={animais} lotes={lotes} estoque={estoque} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "calendario_sanitario" && <FormAplicarCalendarioSanitario key={formKey} animais={animais} lotes={lotes} estoque={estoque} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "bst" && <BstLancamentoView key={formKey} />}
+            {sel === "protocolo_sanitario" && <FormProtocoloSanitario key={formKey} animais={animais} estoque={estoque} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "alimentacao_dieta" && <ConsumoAlimento key={formKey} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "estoque_entradas_saidas" && <FormEstoque key={formKey} estoque={estoque} onIrParaFinanceiro={irParaFinanceiroAposEstoque} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "estoque_ajuste_saldo" && <FormAjusteSaldoEstoque key={formKey} estoque={estoque} onSalvo={aoSalvarNaGaveta} />}
+          </div>
         )}
-        {sel === "financeiro_receita" && <FormFinanceiro tipo="receita" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
-        {sel === "estoque_entradas_saidas" && <FormEstoque estoque={estoque} onIrParaFinanceiro={irParaFinanceiroAposEstoque} />}
-        {sel === "estoque_ajuste_saldo" && <FormAjusteSaldoEstoque estoque={estoque} />}
-        {sel === "mover_animais" && <MovimentarAnimais />}
-        {sel === "comprar_animal" && <CompraVendaAnimalForm modo="compra" animais={animais} />}
-        {sel === "comprar_semen" && <CompraSemenForm />}
-        {sel === "vender_animal" && <CompraVendaAnimalForm modo="venda" animais={animais} />}
-        {sel === "baixar_animal" && <BaixarAnimal />}
-        {sel === "alimentacao_dieta" && <FormAlimentacaoDieta />}
-        {sel === "exclusao" && <FormExclusao />}
-      </div>
+      </GavetaLancamento>
     </div>
   );
 }

@@ -426,20 +426,24 @@ def test_boleto_parcelado_nao_pergunta_avulso(client, monkeypatch):
     assert "2/6" in ultima["text"]
 
 
-def test_sem_chave_de_api_avisa_usuario_com_mensagem_clara(client, monkeypatch):
+def test_falha_na_leitura_do_documento_avisa_usuario_com_mensagem_clara(client, monkeypatch):
     """Regressão: os outros testes deste arquivo sempre trocam
     `_ler_documento_pendente` por um stub — o que significa que o caminho real
-    (baixar o arquivo do Telegram e chamar `ler_documento`, que depende de
-    ANTHROPIC_API_KEY) nunca era exercitado pela suíte, e um problema de
-    configuração da chave em produção não seria pego pelo CI. Este teste usa a
-    função de verdade (só a chamada de rede ao Telegram é simulada) e confirma
-    que, sem a chave, o usuário recebe o aviso claro (não uma mensagem genérica
-    de erro) e o pendente é descartado — igual ao caminho do Financeiro
-    (ver test_leitura_documento.py::test_sem_chave_de_api_retorna_503)."""
+    (baixar o arquivo do Telegram e chamar `ler_documento`, que faz OCR via
+    Tesseract) nunca era exercitado pela suíte, e uma falha do pipeline de OCR
+    em produção (ex.: nixpacks.toml não instalou o binário `tesseract`) não
+    seria pega pelo CI. Este teste usa a função de verdade (só a chamada de
+    rede ao Telegram e o OCR em si são simulados — mockar `pytesseract` evita
+    precisar do binário instalado neste ambiente de teste) e confirma que,
+    quando a leitura falha, o usuário recebe um aviso claro (não trava, não
+    vaza um erro genérico ilegível) e o pendente é descartado — igual ao
+    caminho do Financeiro (ver
+    test_leitura_documento.py::test_falha_do_binario_tesseract_vira_valueerror_nao_500)."""
     c, engine, enviados = client
     monkeypatch.setattr(telegram, "_ler_documento_pendente", _ler_documento_pendente_real)
     monkeypatch.setattr(telegram, "_baixar_arquivo", lambda file_id: b"%PDF-1.4")
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr("pdf2image.convert_from_bytes", lambda conteudo: [object()])
+    monkeypatch.setattr("pytesseract.image_to_string", lambda img, lang=None: (_ for _ in ()).throw(OSError("tesseract não encontrado")))
 
     _enviar_documento(c)
     with Session(engine) as s:
@@ -447,6 +451,80 @@ def test_sem_chave_de_api_avisa_usuario_com_mensagem_clara(client, monkeypatch):
     _callback(c, f"lanc:{pid}:despesa")
 
     ultima = enviados[-1]
-    assert "ANTHROPIC_API_KEY" in ultima["text"]
+    assert "Não consegui ler o documento" in ultima["text"]
     with Session(engine) as s:
         assert s.exec(select(TelegramPendente)).first() is None
+
+
+# ---------------------------------------------------------------------------
+# GET /telegram/status — achado de severidade baixa da auditoria de 02/09/2026
+# ---------------------------------------------------------------------------
+class TestStatusExigeAdmin:
+    """A rota de diagnóstico era PÚBLICA: sem dependência de autenticação no
+    endpoint e sem proteção no `include_router` (o router do Telegram é montado
+    cru em main.py, porque o webhook precisa mesmo ser aberto — quem chama é o
+    Telegram, não um usuário logado). Ela devolvia `chats_liberados`, a
+    allow-list inteira de `TELEGRAM_ALLOWED_CHAT_IDS`, para qualquer um na
+    internet.
+
+    POR QUE ADMIN, E NÃO "PARAR DE DEVOLVER A LISTA": a lista é o conteúdo útil
+    do diagnóstico — é com ela que o administrador confere se o chat de um
+    funcionário novo entrou. Tirá-la deixaria a rota sem serventia e empurraria
+    a conferência para os logs do servidor. E autenticar sem exigir admin
+    também não bastava: saber quais chats podem lançar documento financeiro é
+    reconhecimento útil para quem já tem (ou adivinhou) o segredo do webhook, e
+    não é assunto de operador. `exigir_admin` é o mesmo gate dos outros
+    diagnósticos administrativos do sistema.
+
+    O webhook NÃO foi tocado: ele continua público e validado pelo segredo do
+    cabeçalho — o último teste desta classe é quem garante isso.
+    """
+
+    def _login(self, engine, username: str, papel: str) -> dict:
+        from fazenda.auth import criar_token, hash_senha
+
+        with Session(engine) as s:
+            s.add(Usuario(username=username, nome=username, senha_hash=hash_senha("x"), papel=papel, ativo=True))
+            s.commit()
+        return {"Authorization": f"Bearer {criar_token(username)}"}
+
+    def test_sem_autenticacao_nao_devolve_a_allow_list(self, client):
+        c, _engine, _enviados = client
+        r = c.get("/telegram/status")
+        assert r.status_code == 401, (
+            f"a rota de diagnóstico voltou a ser pública. Resposta: {r.status_code} {r.text[:200]}"
+        )
+        assert str(CHAT) not in r.text, "a allow-list de chats vazou no corpo da recusa"
+
+    def test_operador_comum_nao_devolve_a_allow_list(self, client):
+        c, engine, _enviados = client
+        r = c.get("/telegram/status", headers=self._login(engine, "operador-tg", "operador"))
+        assert r.status_code == 403, f"Resposta: {r.status_code} {r.text[:200]}"
+        assert str(CHAT) not in r.text
+
+    def test_admin_continua_vendo_o_diagnostico(self, client):
+        """Contraprova: a correção não pode ter matado a rota. É este caminho
+        que o administrador usa para conferir se o chat foi liberado."""
+        c, engine, _enviados = client
+        r = c.get("/telegram/status", headers=self._login(engine, "admin-tg", "admin"))
+        assert r.status_code == 200, r.text
+        corpo = r.json()
+        assert corpo["chats_liberados"] == [CHAT]
+        assert corpo["ligado"] is True
+        assert corpo["segredo_configurado"] is True
+        assert "token" not in str(corpo).lower() or "token-teste" not in str(corpo), (
+            "o diagnóstico passou a devolver o próprio token do bot"
+        )
+
+    def test_webhook_continua_publico(self, client):
+        """A outra metade do achado: fechar o diagnóstico não podia fechar o
+        webhook junto. Quem chama `/telegram/webhook` é o Telegram, sem
+        Authorization nenhum — a segurança dele é o segredo do cabeçalho."""
+        c, _engine, _enviados = client
+        upd = {"message": {"chat": {"id": CHAT}, "text": "oi"}}
+        r = c.post("/telegram/webhook", json=upd, headers=_hdr())
+        assert r.status_code == 200, (
+            f"o webhook do Telegram parou de aceitar chamada sem login. Resposta: {r.status_code} {r.text[:200]}"
+        )
+        # E o segredo continua sendo cobrado.
+        assert c.post("/telegram/webhook", json=upd).status_code in (401, 403)

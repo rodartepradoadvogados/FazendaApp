@@ -20,7 +20,7 @@ from sqlmodel import Session, select
 
 from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
-from fazenda.models import Animal, EstoqueSemen, Parto, Secagem, Servico
+from fazenda.models import Animal, EstoqueSemen, Parto, PesagemCorporal, ProtocoloIatfAplicacao, Secagem, Servico
 from fazenda.rules import relatorios_gerenciais as rg
 
 router = APIRouter(prefix="/relatorios", tags=["relatorios"])
@@ -45,14 +45,50 @@ def _dados(session: Session, fazenda_id: int | None = None):
     return animais, servicos, partos, secagens
 
 
+def _dados_estado_vivo(session: Session, fazenda_id: int | None = None):
+    """As duas cargas extras que só o estado reprodutivo ao vivo usa.
+
+    Ficam fora de `_dados` de propósito: os seis endpoints de gráfico desta
+    rota pedem só `servicos`/`partos` e pagariam duas varreduras de tabela
+    inteira para jogar o resultado fora.
+    """
+    # SEM filtro de `realizada`: a linha de D0 já está realizada quando o
+    # implante foi colocado — sem ela o estado EM_PROTOCOLO nunca sai (ver
+    # mesmo padrão em agenda.py::calcular_agenda).
+    query_iatf = select(ProtocoloIatfAplicacao)
+    query_pesagens = select(PesagemCorporal)
+    if fazenda_id is not None:
+        query_iatf = query_iatf.where(ProtocoloIatfAplicacao.fazenda_id == fazenda_id)
+        query_pesagens = query_pesagens.where(PesagemCorporal.fazenda_id == fazenda_id)
+    aplicacoes_iatf = [ap.model_dump() for ap in session.exec(query_iatf).all()]
+    # Peso vivo mais recente por matriz — entra na aptidão da novilha
+    # nulípara no estado ao vivo (mesmo padrão de agenda.py e reproducao.py).
+    peso_por_animal: dict[str, float] = {}
+    ultima_pesagem: dict[str, date] = {}
+    for pes in session.exec(query_pesagens).all():
+        if pes.numero_matriz not in ultima_pesagem or pes.data_pesagem > ultima_pesagem[pes.numero_matriz]:
+            ultima_pesagem[pes.numero_matriz] = pes.data_pesagem
+            peso_por_animal[pes.numero_matriz] = pes.peso_kg
+    return aplicacoes_iatf, peso_por_animal
+
+
 @router.get("/manejo")
 def relatorios_manejo(
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
     session: Session = Depends(get_session),
 ) -> dict:
     animais, servicos, partos, secagens = _dados(session, fazenda_id)
-    semen = [s.model_dump() for s in session.exec(select(EstoqueSemen)).all()]
-    return rg.relatorios_manejo(animais, servicos, partos, semen, date.today(), secagens=secagens)
+    aplicacoes_iatf, peso_por_animal = _dados_estado_vivo(session, fazenda_id)
+    # BUG DE SEGURANÇA CORRIGIDO: sem o filtro, este relatório de manejo
+    # trazia o estoque de sêmen (touro/NAAB/doses) de TODAS as fazendas —
+    # mesma classe de vazamento já corrigida em relatorio_acasalamento.py
+    # (ver tests/test_isolamento_relatorios_fornecedor.py).
+    query_semen = select(EstoqueSemen)
+    if fazenda_id is not None:
+        query_semen = query_semen.where(EstoqueSemen.fazenda_id == fazenda_id)
+    semen = [s.model_dump() for s in session.exec(query_semen).all()]
+    return rg.relatorios_manejo(animais, servicos, partos, semen, date.today(), secagens=secagens,
+                                 aplicacoes_iatf=aplicacoes_iatf, peso_por_animal=peso_por_animal)
 
 
 @router.get("/gerencial/distribuicao-del")
@@ -122,5 +158,5 @@ def gerencial_fluxo_lactacao(
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
     session: Session = Depends(get_session),
 ) -> dict:
-    animais, servicos, partos, _ = _dados(session, fazenda_id)
-    return rg.fluxo_lactacao(animais, servicos, partos, date.today(), meses)
+    animais, servicos, partos, secagens = _dados(session, fazenda_id)
+    return rg.fluxo_lactacao(animais, servicos, partos, date.today(), meses, secagens=secagens)

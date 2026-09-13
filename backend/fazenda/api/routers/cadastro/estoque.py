@@ -14,8 +14,9 @@ from sqlmodel import Session, select
 from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    CategoriaEstoque, Estoque, EstoqueSemen, FinalidadeEstoque, Fornecedor, LocalArmazenamento, PlanoContaGerencial,
-    SeedFlag, UnidadeEmbalagemEstoque, UnidadeEstoque, UnidadeMedidaEmbalagemEstoque,
+    CategoriaEstoque, CategoriaMedicamento, ClassificacaoMedicamento, Estoque, EstoqueSemen, FinalidadeEstoque,
+    Fornecedor, Laboratorio, LocalArmazenamento, PlanoContaGerencial, SeedFlag, UnidadeEmbalagemEstoque,
+    UnidadeEstoque, UnidadeMedidaEmbalagemEstoque,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
 from ._comum import _crud_nome_ativo
@@ -179,11 +180,27 @@ def atualizar_meta_estoque(
     item_id: int, dados: EstoqueMetaIn, session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     item = session.get(Estoque, item_id)
     if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
-    if dados.fornecedor_id is not None and not session.get(Fornecedor, dados.fornecedor_id):
-        raise HTTPException(status_code=400, detail="Fornecedor não encontrado")
+    # BUG DE SEGURANÇA CORRIGIDO: `session.get(...)` só confere que o id EXISTE,
+    # não que é DA FAZENDA de quem está editando — um item da fazenda A podia
+    # ser gravado apontando fornecedor_id/estoque_semen_id de outra fazenda
+    # (Fornecedor e EstoqueSemen são dado da fazenda, nunca catálogo global —
+    # ver `atualizar_fornecedor` acima, que já faz a checagem certa). O caso
+    # do `estoque_semen_id` era o mais grave: toda movimentação normal do item
+    # (ver `estoque.py::_criar_movimento_estoque`/editar movimento) soma/subtrai
+    # doses direto no EstoqueSemen apontado, sem checar tenant de novo — deixar
+    # passar aqui dava escrita persistente no estoque de sêmen de outro cliente.
+    if dados.fornecedor_id is not None:
+        fornecedor = session.get(Fornecedor, dados.fornecedor_id)
+        if not fornecedor or (fazenda_id is not None and fornecedor.fazenda_id != fazenda_id):
+            raise HTTPException(status_code=400, detail="Fornecedor não encontrado")
+    if dados.estoque_semen_id is not None:
+        touro = session.get(EstoqueSemen, dados.estoque_semen_id)
+        if not touro or (fazenda_id is not None and touro.fazenda_id != fazenda_id):
+            raise HTTPException(status_code=400, detail="Estoque de sêmen não encontrado")
     item.unidade_embalagem = dados.unidade_embalagem
     item.medida_embalagem = dados.medida_embalagem
     item.quantidade_embalagem = dados.quantidade_embalagem
@@ -206,6 +223,17 @@ def atualizar_meta_estoque(
 # e Unidade de Medida — antes listas fixas em Python/TypeScript ou texto
 # livre sem sugestão (local_armazenamento), agora cadastráveis (mesmo padrão
 # "nome + ativo" de Raça/MotivoBaixa, ver `_crud_nome_ativo`).
+#
+# Categoria/Finalidade/Unidade/Unidade de embalagem/Unidade de medida de
+# embalagem são CATÁLOGO GLOBAL (`global_compartilhado=True` abaixo — mesmo
+# padrão de Laboratorio/CategoriaMedicamento/PrincipioAtivo/Doenca, ver
+# `_comum.py::_crud_nome_ativo` e `rules/visibilidade.py::visivel`): a
+# listagem enxerga a global MAIS a própria; criar sempre nasce com
+# fazenda_id da fazenda atual (personalização por cima do padrão), nunca
+# global — só o Painel CowData cria linha global. Local de Armazenamento
+# fica de fora disso: é dado DA FAZENDA (nasce do texto livre já digitado
+# em Estoque/EstoqueSemen, nunca teve lista padrão), então continua
+# `com_fazenda=True` simples (filtro estrito), sem `global_compartilhado`.
 # ---------------------------------------------------------------------------
 SEED_CATEGORIAS_ESTOQUE = [
     "Ração e insumos alimentares", "Sêmen e genética", "Medicamentos e produtos veterinários",
@@ -218,35 +246,64 @@ SEED_UNIDADES_EMBALAGEM_ESTOQUE = ["Saca", "Pote", "Frasco", "Pacote", "Bag", "F
 SEED_UNIDADES_MEDIDA_EMBALAGEM_ESTOQUE = ["kg/saca", "litros/garrafa", "mililitros/frasco", "unidades/fardo", "potes/caixa", "unidades"]
 
 
+def _seed_catalogo_global(session: Session, model, nomes: list[str]) -> None:
+    """Semeia `nomes` como linhas GLOBAIS (`fazenda_id` nulo) de `model`,
+    idempotente por NOME entre as linhas já globais — nunca pelo "a tabela
+    inteira está vazia" (bug real de produção: rodava só a primeira vez pro
+    banco inteiro, então a 2ª fazenda cadastrada abria o cadastro de
+    estoque e encontrava tudo em branco, sem erro nenhum). Cada fazenda
+    continua livre pra criar as suas por cima (personalização), sem nunca
+    tocar nas globais — mesmo modelo já usado por PrincipioAtivo/Doenca."""
+    existentes = {
+        m.nome for m in session.exec(select(model).where(model.fazenda_id.is_(None))).all()
+    }
+    for nome in nomes:
+        if nome not in existentes:
+            session.add(model(nome=nome, fazenda_id=None))
+
+
+def _seed_locais_armazenamento(session: Session) -> None:
+    """Local de armazenamento é DADO DA FAZENDA, não catálogo (não tem lista
+    padrão — nasce só do texto livre já digitado em Estoque/EstoqueSemen).
+    Por isso, ao contrário dos 5 catálogos acima, cada nome nasce com o
+    MESMO `fazenda_id` do item de estoque de onde veio (nunca global) —
+    idempotente por (nome, fazenda_id), o par que a unique constraint da
+    tabela já protege."""
+    pares: set[tuple[str, int | None]] = set()
+    for e in session.exec(select(Estoque)).all():
+        if e.local_armazenamento and e.local_armazenamento.strip():
+            pares.add((e.local_armazenamento.strip(), e.fazenda_id))
+    for e in session.exec(select(EstoqueSemen)).all():
+        if e.local_armazenamento and e.local_armazenamento.strip():
+            pares.add((e.local_armazenamento.strip(), e.fazenda_id))
+    if not pares:
+        return
+    existentes = {(l.nome, l.fazenda_id) for l in session.exec(select(LocalArmazenamento)).all()}
+    for nome, fazenda_id in sorted(pares, key=lambda p: (p[0], p[1] if p[1] is not None else -1)):
+        if (nome, fazenda_id) not in existentes:
+            session.add(LocalArmazenamento(nome=nome, fazenda_id=fazenda_id))
+
+
 def seed_cadastros_estoque(session: Session) -> None:
-    """Cria os cadastros de apoio ao item de estoque padrão (categoria,
-    finalidade, unidade, unidade de embalagem, unidade de medida) se as
-    tabelas ainda estiverem vazias (idempotente) — mesma lista que já era
-    hardcoded em CATEGORIAS_ESTOQUE/FINALIDADES_ESTOQUE/UNIDADES/etc, agora
-    cadastrável e editável em Configurações > Cadastro > Estoque.
-    Local de armazenamento não tem lista padrão — semeado a partir dos
-    valores já digitados em Estoque/EstoqueSemen (auto-preenche o cadastro
-    com o que o usuário já vinha usando como texto livre)."""
-    if not session.exec(select(CategoriaEstoque)).first():
-        for nome in SEED_CATEGORIAS_ESTOQUE:
-            session.add(CategoriaEstoque(nome=nome))
-    if not session.exec(select(FinalidadeEstoque)).first():
-        for nome in SEED_FINALIDADES_ESTOQUE:
-            session.add(FinalidadeEstoque(nome=nome))
-    if not session.exec(select(UnidadeEstoque)).first():
-        for nome in SEED_UNIDADES_ESTOQUE:
-            session.add(UnidadeEstoque(nome=nome))
-    if not session.exec(select(UnidadeEmbalagemEstoque)).first():
-        for nome in SEED_UNIDADES_EMBALAGEM_ESTOQUE:
-            session.add(UnidadeEmbalagemEstoque(nome=nome))
-    if not session.exec(select(UnidadeMedidaEmbalagemEstoque)).first():
-        for nome in SEED_UNIDADES_MEDIDA_EMBALAGEM_ESTOQUE:
-            session.add(UnidadeMedidaEmbalagemEstoque(nome=nome))
-    if not session.exec(select(LocalArmazenamento)).first():
-        nomes = {e.local_armazenamento.strip() for e in session.exec(select(Estoque)).all() if e.local_armazenamento and e.local_armazenamento.strip()}
-        nomes |= {e.local_armazenamento.strip() for e in session.exec(select(EstoqueSemen)).all() if e.local_armazenamento and e.local_armazenamento.strip()}
-        for nome in sorted(nomes):
-            session.add(LocalArmazenamento(nome=nome))
+    """Cadastros de apoio ao item de estoque (Configurações > Cadastro >
+    Estoque). Dois grupos bem diferentes aqui (decisão do dono do produto,
+    04/09/2026, depois do bug real de "2ª fazenda abre o cadastro e acha
+    tudo vazio" — ver `_seed_catalogo_global`):
+
+    - Categoria/Finalidade/Unidade/Unidade de embalagem/Unidade de medida de
+      embalagem: CATÁLOGO GLOBAL (`fazenda_id` nulo = padrão de todo mundo),
+      mesmo modelo de PrincipioAtivo/Doenca — cada fazenda pode criar as
+      suas por cima, mas a lista padrão nunca é atribuída a uma fazenda
+      específica (isso a faria sumir pra qualquer cliente futuro).
+    - Local de armazenamento: dado DA FAZENDA (texto livre já digitado em
+      Estoque/EstoqueSemen) — nunca global, ver `_seed_locais_armazenamento`.
+    """
+    _seed_catalogo_global(session, CategoriaEstoque, SEED_CATEGORIAS_ESTOQUE)
+    _seed_catalogo_global(session, FinalidadeEstoque, SEED_FINALIDADES_ESTOQUE)
+    _seed_catalogo_global(session, UnidadeEstoque, SEED_UNIDADES_ESTOQUE)
+    _seed_catalogo_global(session, UnidadeEmbalagemEstoque, SEED_UNIDADES_EMBALAGEM_ESTOQUE)
+    _seed_catalogo_global(session, UnidadeMedidaEmbalagemEstoque, SEED_UNIDADES_MEDIDA_EMBALAGEM_ESTOQUE)
+    _seed_locais_armazenamento(session)
     session.commit()
 
 
@@ -256,32 +313,52 @@ router.post("/locais-armazenamento")(_criar_local_armazenamento)
 router.put("/locais-armazenamento/{item_id}")(_atualizar_local_armazenamento)
 router.delete("/locais-armazenamento/{item_id}")(_excluir_local_armazenamento)
 
-_listar_categorias_estoque, _criar_categoria_estoque, _atualizar_categoria_estoque, _excluir_categoria_estoque = _crud_nome_ativo(CategoriaEstoque, com_fazenda=True)
+_listar_categorias_estoque, _criar_categoria_estoque, _atualizar_categoria_estoque, _excluir_categoria_estoque = _crud_nome_ativo(CategoriaEstoque, com_fazenda=True, global_compartilhado=True)
 router.get("/categorias-estoque")(_listar_categorias_estoque)
 router.post("/categorias-estoque")(_criar_categoria_estoque)
 router.put("/categorias-estoque/{item_id}")(_atualizar_categoria_estoque)
 router.delete("/categorias-estoque/{item_id}")(_excluir_categoria_estoque)
 
-_listar_finalidades_estoque, _criar_finalidade_estoque, _atualizar_finalidade_estoque, _excluir_finalidade_estoque = _crud_nome_ativo(FinalidadeEstoque, com_fazenda=True)
+_listar_finalidades_estoque, _criar_finalidade_estoque, _atualizar_finalidade_estoque, _excluir_finalidade_estoque = _crud_nome_ativo(FinalidadeEstoque, com_fazenda=True, global_compartilhado=True)
 router.get("/finalidades-estoque")(_listar_finalidades_estoque)
 router.post("/finalidades-estoque")(_criar_finalidade_estoque)
 router.put("/finalidades-estoque/{item_id}")(_atualizar_finalidade_estoque)
 router.delete("/finalidades-estoque/{item_id}")(_excluir_finalidade_estoque)
 
-_listar_unidades_estoque, _criar_unidade_estoque, _atualizar_unidade_estoque, _excluir_unidade_estoque = _crud_nome_ativo(UnidadeEstoque, com_fazenda=True)
+_listar_unidades_estoque, _criar_unidade_estoque, _atualizar_unidade_estoque, _excluir_unidade_estoque = _crud_nome_ativo(UnidadeEstoque, com_fazenda=True, global_compartilhado=True)
 router.get("/unidades-estoque")(_listar_unidades_estoque)
 router.post("/unidades-estoque")(_criar_unidade_estoque)
 router.put("/unidades-estoque/{item_id}")(_atualizar_unidade_estoque)
 router.delete("/unidades-estoque/{item_id}")(_excluir_unidade_estoque)
 
-_listar_unidades_embalagem_estoque, _criar_unidade_embalagem_estoque, _atualizar_unidade_embalagem_estoque, _excluir_unidade_embalagem_estoque = _crud_nome_ativo(UnidadeEmbalagemEstoque, com_fazenda=True)
+_listar_unidades_embalagem_estoque, _criar_unidade_embalagem_estoque, _atualizar_unidade_embalagem_estoque, _excluir_unidade_embalagem_estoque = _crud_nome_ativo(UnidadeEmbalagemEstoque, com_fazenda=True, global_compartilhado=True)
 router.get("/unidades-embalagem-estoque")(_listar_unidades_embalagem_estoque)
 router.post("/unidades-embalagem-estoque")(_criar_unidade_embalagem_estoque)
 router.put("/unidades-embalagem-estoque/{item_id}")(_atualizar_unidade_embalagem_estoque)
 router.delete("/unidades-embalagem-estoque/{item_id}")(_excluir_unidade_embalagem_estoque)
 
-_listar_unidades_medida_embalagem_estoque, _criar_unidade_medida_embalagem_estoque, _atualizar_unidade_medida_embalagem_estoque, _excluir_unidade_medida_embalagem_estoque = _crud_nome_ativo(UnidadeMedidaEmbalagemEstoque, com_fazenda=True)
+_listar_unidades_medida_embalagem_estoque, _criar_unidade_medida_embalagem_estoque, _atualizar_unidade_medida_embalagem_estoque, _excluir_unidade_medida_embalagem_estoque = _crud_nome_ativo(UnidadeMedidaEmbalagemEstoque, com_fazenda=True, global_compartilhado=True)
 router.get("/unidades-medida-embalagem-estoque")(_listar_unidades_medida_embalagem_estoque)
 router.post("/unidades-medida-embalagem-estoque")(_criar_unidade_medida_embalagem_estoque)
 router.put("/unidades-medida-embalagem-estoque/{item_id}")(_atualizar_unidade_medida_embalagem_estoque)
 router.delete("/unidades-medida-embalagem-estoque/{item_id}")(_excluir_unidade_medida_embalagem_estoque)
+
+# Laboratório / Categoria (medicamento) / Classificação do medicamento — mesmo
+# padrão dos cadastros acima, mas `global_compartilhado=True` (ver _comum.py):
+# o que o Painel CowData cadastra em /painel-cowdata/farmacia/{laboratorios,
+# categorias-medicamento,classificacoes-medicamento} vira padrão automático
+# aqui, sem precisar recadastrar por fazenda (pedido do usuário, 01/09/2026).
+_listar_laboratorios, _criar_laboratorio, _atualizar_laboratorio, _ = _crud_nome_ativo(Laboratorio, com_fazenda=True, global_compartilhado=True)
+router.get("/laboratorios")(_listar_laboratorios)
+router.post("/laboratorios")(_criar_laboratorio)
+router.put("/laboratorios/{item_id}")(_atualizar_laboratorio)
+
+_listar_categorias_medicamento, _criar_categoria_medicamento, _atualizar_categoria_medicamento, _ = _crud_nome_ativo(CategoriaMedicamento, com_fazenda=True, global_compartilhado=True)
+router.get("/categorias-medicamento")(_listar_categorias_medicamento)
+router.post("/categorias-medicamento")(_criar_categoria_medicamento)
+router.put("/categorias-medicamento/{item_id}")(_atualizar_categoria_medicamento)
+
+_listar_classificacoes_medicamento, _criar_classificacao_medicamento, _atualizar_classificacao_medicamento, _ = _crud_nome_ativo(ClassificacaoMedicamento, com_fazenda=True, global_compartilhado=True)
+router.get("/classificacoes-medicamento")(_listar_classificacoes_medicamento)
+router.post("/classificacoes-medicamento")(_criar_classificacao_medicamento)
+router.put("/classificacoes-medicamento/{item_id}")(_atualizar_classificacao_medicamento)

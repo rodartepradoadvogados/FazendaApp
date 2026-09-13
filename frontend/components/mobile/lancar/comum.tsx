@@ -18,6 +18,13 @@ export type Animal = {
   sit_rep?: string | null;
   del_dias?: number | null;
   sexo?: string | null;
+  // FONTE ÚNICA de "está em lactação" (GET /animais/, calculado da tabela
+  // Lactacao — ver backend/fazenda/rules/lactacao.py). O app de campo não
+  // filtrava NADA no controle leiteiro: deixava lançar leite de bezerra, de
+  // novilha e de vaca seca, e o registro entrava na produção do rebanho.
+  // Opcional só para o intervalo em que o app roda contra um backend antigo.
+  em_lactacao?: boolean;
+  lactacao_inicio?: string | null;
 };
 export type EstoqueItem = {
   nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null; estocavel?: boolean | null;

@@ -19,6 +19,15 @@ class Animal(SQLModel, table=True):
     """Foto atual de cada animal — alimentado pelo GERAL.csv."""
 
     __tablename__ = "animal"
+    # Unicidade de `numero` é POR FAZENDA, não global (ver migração
+    # animal_numero_unico_por_fazenda) — duas fazendas diferentes têm cada
+    # uma, legitimamente, uma vaca "100". `numero` sozinho continua indexado
+    # (não único) logo abaixo, porque boa parte do código ainda busca só por
+    # ele, sem filtrar fazenda (ver relatório da "fundação" multi-tenant,
+    # PR desta migração — auditoria completa dos pontos que assumem `numero`
+    # como identificador global; não corrigidos aqui, fora de escopo desta
+    # frente).
+    __table_args__ = (UniqueConstraint("numero", "fazenda_id", name="uq_animal_numero_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
     # Piloto conservador de multi-fazenda (ver fazenda/models/multitenant.py):
@@ -27,7 +36,7 @@ class Animal(SQLModel, table=True):
     # o endpoint de listagem (GET /animais) e o de cadastro (POST .../animais)
     # o consideram por enquanto.
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
-    numero: str = Field(index=True, unique=True)
+    numero: str = Field(index=True)
     data_nasc: Optional[date] = None
     idade_meses: Optional[float] = None
     grupo_primario: Optional[str] = None
@@ -81,6 +90,33 @@ class Animal(SQLModel, table=True):
     # de todas as ações reprodutivas (IATF, inseminação, candidatas) — marcada
     # para descarte futuro sem dar baixa definitiva.
     a_descartar: bool = False
+    # Data em que a marcação acima passou a valer — ausente em `a_descartar`
+    # (que é só o booleano "sim/não", sem quando). Sem esta data o motor do
+    # programa reprodutivo (fazenda/rules/programa_reprodutivo.py) não
+    # conseguia reconstruir o passado: um animal marcado hoje sumia de TODOS
+    # os ciclos históricos, inclusive dos em que estava ativo. NULL cobre dois
+    # casos que não dá pra distinguir: nunca foi marcado, OU foi marcado antes
+    # de esta coluna existir (ver migração c576e514aa3e — a coluna nasceu sem
+    # backfill retroativo de propósito). Sempre gravada/limpa junto com
+    # `a_descartar` (ver marcar_a_descartar em api/routers/baixas.py).
+    a_descartar_em: Optional[date] = None
+    # QUANDO SE PRETENDE tirar o animal do rebanho — o plano físico da saída
+    # (a boiada, o caminhão, a próxima venda). NÃO confundir com as duas linhas
+    # acima, e a confusão é o risco real deste trio:
+    #
+    #   a_descartar          -> a decisão vale hoje? (booleano)
+    #   a_descartar_em       -> QUANDO SE DECIDIU. É esta que o motor do
+    #                           programa reprodutivo lê (`descartada_em`), e a
+    #                           partir dela o animal sai do denominador.
+    #   descarte_previsto_em -> QUANDO SE PRETENDE FAZER. Opcional, e não
+    #                           influencia cálculo reprodutivo nenhum.
+    #
+    # Opcional de propósito: nem toda decisão de descarte nasce com data
+    # marcada, e ficar em branco é um estado legítimo — não uma pendência.
+    # Quando preenchida, vira evento na Agenda (ver agenda_engine.py) para a
+    # data não ficar só na cabeça de quem decidiu. Limpa junto com as outras
+    # duas ao desmarcar.
+    descarte_previsto_em: Optional[date] = None
     # Marca manual: nunca entra nas listas de candidatas/excluídos do BST
     # (ex.: vaca com contraindicação), independente dos critérios automáticos.
     excluir_bst: bool = False
@@ -115,6 +151,26 @@ class Lote(SQLModel, table=True):
     ativo: bool = True
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
+    # ---- Permissões do lançamento de consumo de alimento (Lançamentos >
+    # Alimentação). Ambas nascem FALSE de propósito: o padrão restritivo é o
+    # seguro, porque cada uma desliga uma checagem que existe para pegar erro
+    # de digitação no curral. Quem precisa da exceção liga por lote, que é onde
+    # a exceção de fato acontece — o lote de transição que recebe um alimento
+    # fora da dieta, o silo que acabou e será reposto hoje.
+    permitir_fora_da_dieta: bool = False
+    permitir_sem_estoque: bool = False
+
+    # ---- Como a dieta deste lote afeta o Estoque (proposta aceita pelo
+    # proprietário: "automática pela dieta" / "pelo consumo real" / "sem
+    # baixa"). Valores válidos: "automatica" (baixa dia a dia pelo PLANO —
+    # `_dar_baixa_automatica`), "consumo_real" (só baixa quando alguém lança
+    # o consumo de verdade em "Consumo diário e sobra" — `lancar_consumo`) ou
+    # "sem_baixa" (a dieta é só plano/receita, nunca mexe em estoque).
+    # "consumo_real" nasce padrão porque é o ÚNICO mecanismo que já funciona
+    # hoje de ponta a ponta — todo lote existente antes desta coluna continua
+    # se comportando exatamente como antes.
+    modo_baixa_estoque: str = "consumo_real"
+
     # ---- Critérios de seleção de animais (cumulativos/E lógico) — usados na
     # prévia de "quantos animais atendem" e, na sequência, nas sugestões
     # automáticas de movimentação entre lotes. Cada campo None = não filtra.
@@ -136,9 +192,11 @@ class Lote(SQLModel, table=True):
     idade_dias_max: Optional[int] = None
     novilhas_inseminadas: Optional[bool] = None
     novilhas_gestantes: Optional[bool] = None
-    # Situação reprodutiva ("vazia"|"inseminada"|"prenha") — mesmos 3 valores e
-    # mesma derivação de Animal.sit_rep que CategoriaManejo.situacao_reprodutiva
-    # (ver fazenda.api.routers.recria._situacao_reprodutiva_3).
+    # Situação reprodutiva ("vazia"|"vazia_atrasada"|"inseminada"|"prenha") —
+    # mesmos valores e mesma derivação AO VIVO que
+    # CategoriaManejo.situacao_reprodutiva (ver
+    # fazenda.api.routers.recria._situacao_reprodutiva_3); "vazia" também casa
+    # com a atrasada, por retrocompatibilidade.
     situacao_reprodutiva: Optional[str] = None
     dias_gestacao_min: Optional[int] = None
     dias_gestacao_max: Optional[int] = None
@@ -247,6 +305,11 @@ class Raca(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
+    # Nota didática curta (ex.: "Zebuína indiana, referência mundial em
+    # leite entre as raças zebuínas — a base leiteira do Girolando.") — mostrada
+    # como subtítulo no seletor da ficha do animal, para quem não conhece a
+    # raça de cor não precisar sair da tela para pesquisar.
+    nota: Optional[str] = None
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
@@ -267,6 +330,10 @@ class GrauSangue(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
+    # Nota didática curta explicando a sigla/fração (ex.: "PO = Puro de
+    # Origem — animal registrado, sem cruzamento.") — mesma finalidade da
+    # nota de Raça, acima.
+    nota: Optional[str] = None
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     fracao_holandes: Optional[float] = None
     ativo: bool = True

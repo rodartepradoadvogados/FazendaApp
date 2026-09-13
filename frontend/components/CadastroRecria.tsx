@@ -99,6 +99,7 @@ const PRESETS_CATEGORIA: { label: string; descricao: string; dados: Partial<Cate
   { label: "Pós-parto - PEV", descricao: "Do parto até 45 dias após o parto", dados: { nome: "Pós-parto - PEV", dias_pos_parto_max: 45 } },
   { label: "Liberada/apta", descricao: "Mais de 45 dias após o parto, vazia e não inseminada", dados: { nome: "Liberada/apta", situacao_reprodutiva: "vazia", dias_pos_parto_min: 46 } },
   { label: "Vazia atrasada", descricao: "Vazia, > 45 dias pós-parto e ≥ 30 dias sem novo serviço", dados: { nome: "Vazia atrasada", situacao_reprodutiva: "vazia", dias_pos_parto_min: 46, dias_desde_servico_min: 30 } },
+  { label: "Novilha vazia em atraso", descricao: "Vazia e já passou da idade máxima para a 1ª cobertura (16 meses)", dados: { nome: "Novilha vazia em atraso", situacao_reprodutiva: "vazia_atrasada", dia_min: 487 } },
   { label: "Inseminada", descricao: "Entre a data do serviço/monta e o diagnóstico reprodutivo", dados: { nome: "Inseminada", situacao_reprodutiva: "inseminada" } },
 ];
 
@@ -158,7 +159,8 @@ function SecCategorias() {
           <label style={lbl}>Situação reprodutiva</label>
           <select style={input} value={form.situacao_reprodutiva ?? ""} onChange={(e) => setForm({ ...form, situacao_reprodutiva: (e.target.value || null) as CategoriaManejo["situacao_reprodutiva"] })}>
             <option value="">— não filtra —</option>
-            <option value="vazia">Vazia</option>
+            <option value="vazia">Vazia (inclui em atraso)</option>
+            <option value="vazia_atrasada">Vazia em atraso</option>
             <option value="inseminada">Inseminada</option>
             <option value="prenha">Prenha</option>
           </select>

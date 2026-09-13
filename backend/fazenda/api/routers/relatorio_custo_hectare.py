@@ -22,9 +22,10 @@ from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import ContaGerencial
 from fazenda.rules.auditoria import fazenda_id_seguro
+from fazenda.rules.centro_custo import valor_gerencial_por_centro_custo
 from fazenda.rules.custo_hectare import calcular_custo_por_hectare
 from fazenda.rules.parametros import area_total_hectares
-from fazenda.rules.vale_item import ajuste_vale_por_conta, valor_gerencial
+from fazenda.rules.vale_item import ajuste_vale_por_conta
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
 
@@ -50,15 +51,16 @@ def custo_por_hectare(
     if fazenda_id is not None:
         query = query.where(ContaGerencial.fazenda_id == fazenda_id)
     contas = session.exec(query).all()
-    filtradas = [
-        c for c in contas
-        if c.data_competencia and data_inicio <= c.data_competencia <= data_fim
-        and (centro_custo is None or c.centro_custo == centro_custo)
-    ]
+    periodo = [c for c in contas if c.data_competencia and data_inicio <= c.data_competencia <= data_fim]
     # Vale de funcionário/empreiteiro lançado a partir de um item não é
     # despesa da fazenda — ver rules/vale_item.py.
-    ajustes = ajuste_vale_por_conta(session, filtradas, None)
-    despesas_total = sum(valor_gerencial(c, ajustes) for c in filtradas if c.tipo == "despesa")
+    ajustes = ajuste_vale_por_conta(session, periodo, fazenda_id)
+    # Item com centro de custo próprio (override) é rateado entre os centros
+    # dos itens em vez de cair inteiro no centro de custo da nota — ver
+    # valor_gerencial_por_centro_custo.
+    valores = valor_gerencial_por_centro_custo(session, periodo, centro_custo, ajustes)
+    filtradas = periodo if centro_custo is None else [c for c in periodo if valores.get(c.id, 0.0) != 0]
+    despesas_total = sum(valores.get(c.id, 0.0) for c in filtradas if c.tipo == "despesa")
     area = area_total_hectares()
 
     return {

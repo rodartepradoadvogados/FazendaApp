@@ -78,9 +78,9 @@ class TestSubscribeEndpoint:
 
     def test_subscribe_com_mesmo_endpoint_atualiza_em_vez_de_duplicar(self, app, engine):
         c = _client_as(app, _FakeUsuario())
-        payload = {"endpoint": "https://push.exemplo/1", "keys": {"p256dh": "p1", "auth": "a1"}}
+        payload = {"endpoint": "https://fcm.googleapis.com/fcm/send/1", "keys": {"p256dh": "p1", "auth": "a1"}}
         c.post("/push/subscribe", json=payload)
-        payload2 = {"endpoint": "https://push.exemplo/1", "keys": {"p256dh": "p2", "auth": "a2"}}
+        payload2 = {"endpoint": "https://fcm.googleapis.com/fcm/send/1", "keys": {"p256dh": "p2", "auth": "a2"}}
         r = c.post("/push/subscribe", json=payload2)
         assert r.status_code == 200
 
@@ -97,8 +97,8 @@ class TestSubscribeEndpoint:
 
     def test_unsubscribe_remove_todas_as_subscriptions_do_usuario(self, app, engine):
         c = _client_as(app, _FakeUsuario())
-        c.post("/push/subscribe", json={"endpoint": "https://push.exemplo/1", "keys": {"p256dh": "p1", "auth": "a1"}})
-        c.post("/push/subscribe", json={"endpoint": "https://push.exemplo/2", "keys": {"p256dh": "p2", "auth": "a2"}})
+        c.post("/push/subscribe", json={"endpoint": "https://fcm.googleapis.com/fcm/send/1", "keys": {"p256dh": "p1", "auth": "a1"}})
+        c.post("/push/subscribe", json={"endpoint": "https://updates.push.services.mozilla.com/wpush/v2/2", "keys": {"p256dh": "p2", "auth": "a2"}})
 
         r = c.request("DELETE", "/push/subscribe", json={})
         assert r.status_code == 200
@@ -110,23 +110,75 @@ class TestSubscribeEndpoint:
 
     def test_unsubscribe_com_endpoint_remove_so_aquela_subscription(self, app, engine):
         c = _client_as(app, _FakeUsuario())
-        c.post("/push/subscribe", json={"endpoint": "https://push.exemplo/1", "keys": {"p256dh": "p1", "auth": "a1"}})
-        c.post("/push/subscribe", json={"endpoint": "https://push.exemplo/2", "keys": {"p256dh": "p2", "auth": "a2"}})
+        c.post("/push/subscribe", json={"endpoint": "https://fcm.googleapis.com/fcm/send/1", "keys": {"p256dh": "p1", "auth": "a1"}})
+        c.post("/push/subscribe", json={"endpoint": "https://updates.push.services.mozilla.com/wpush/v2/2", "keys": {"p256dh": "p2", "auth": "a2"}})
 
-        r = c.request("DELETE", "/push/subscribe", json={"endpoint": "https://push.exemplo/1"})
+        r = c.request("DELETE", "/push/subscribe", json={"endpoint": "https://fcm.googleapis.com/fcm/send/1"})
         assert r.status_code == 200
         assert r.json()["removidas"] == 1
 
         with Session(engine) as session:
             subs = session.exec(select(PushSubscription).where(PushSubscription.usuario_id == 1)).all()
             assert len(subs) == 1
-            assert subs[0].endpoint == "https://push.exemplo/2"
+            assert subs[0].endpoint == "https://updates.push.services.mozilla.com/wpush/v2/2"
 
     def test_chave_publica_nao_exige_login(self, app):
         c = TestClient(app)  # sem dependency_override de get_current_user
         r = c.get("/push/chave-publica")
         assert r.status_code == 200
         assert r.json()["chave_publica"] == push_module.VAPID_PUBLIC_KEY
+
+
+# ---------------------------------------------------------------------------
+# SSRF (CWE-918, F-E-01): POST /push/subscribe não pode virar um jeito de
+# fazer o backend requisitar qualquer host que o cliente mandar — só os
+# serviços de entrega de Web Push conhecidos (ver _endpoint_de_push_valido em
+# push.py). Cobre tanto o PoC do achado (metadata da cloud / rede interna do
+# Railway) quanto os 4 provedores legítimos, pra garantir que a trava não
+# quebrou ninguém de verdade.
+# ---------------------------------------------------------------------------
+class TestSubscribeEndpointSsrf:
+    @pytest.mark.parametrize("endpoint_malicioso", [
+        "http://169.254.169.254/computeMetadata/v1/",       # metadata da cloud (GCP/AWS)
+        "https://169.254.169.254/computeMetadata/v1/",
+        "http://127.0.0.1:5432/",                            # loopback / Postgres local
+        "http://localhost:8000/admin",
+        "http://postgres.railway.internal:5432/",           # rede interna do Railway
+        "http://10.0.0.5:5432/x",                            # rede privada RFC1918
+        "https://attacker.example.com/coleta",              # host arbitrário qualquer
+        "ftp://fcm.googleapis.com/fcm/send/1",              # host certo, esquema errado
+    ])
+    def test_endpoint_fora_do_allowlist_e_recusado(self, app, engine, endpoint_malicioso):
+        c = _client_as(app, _FakeUsuario())
+        r = c.post("/push/subscribe", json={
+            "endpoint": endpoint_malicioso, "keys": {"p256dh": "p1", "auth": "a1"},
+        })
+        assert r.status_code == 422
+
+        with Session(engine) as session:
+            # O ponto central do achado: nada disto pode chegar a ser
+            # persistido (persistir = o próximo GET /notificacoes/ do mesmo
+            # atacante dispara o POST server-side contra este endpoint).
+            assert session.exec(select(PushSubscription)).all() == []
+
+    @pytest.mark.parametrize("endpoint_legitimo", [
+        "https://fcm.googleapis.com/fcm/send/abc123",
+        "https://updates.push.services.mozilla.com/wpush/v2/xyz",
+        "https://web.push.apple.com/algumacoisa",
+        "https://wns2-par3p.notify.windows.com/w/xyz",
+        "https://notify.windows.com/w/xyz",
+    ])
+    def test_endpoint_de_servico_de_push_legitimo_e_aceito(self, app, engine, endpoint_legitimo):
+        c = _client_as(app, _FakeUsuario())
+        r = c.post("/push/subscribe", json={
+            "endpoint": endpoint_legitimo, "keys": {"p256dh": "p1", "auth": "a1"},
+        })
+        assert r.status_code == 200
+
+        with Session(engine) as session:
+            subs = session.exec(select(PushSubscription).where(PushSubscription.usuario_id == 1)).all()
+            assert len(subs) == 1
+            assert subs[0].endpoint == endpoint_legitimo
 
 
 # ---------------------------------------------------------------------------

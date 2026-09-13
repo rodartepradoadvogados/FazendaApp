@@ -68,7 +68,7 @@ def relatorio_nao_conformidades(
     from fazenda.api.routers.indicadores import calcular_indicadores_fazenda
     from fazenda.api.routers.recria import reproducao_idade_parto, reproducao_taxa_prenhez
     from fazenda.api.routers.relatorio_custo_hectare import custo_por_hectare
-    from fazenda.api.routers.relatorios import _dados as _dados_manejo
+    from fazenda.api.routers.relatorios import _dados as _dados_manejo, _dados_estado_vivo
 
     hoje = date.today()
     itens: list[dict] = []
@@ -148,7 +148,15 @@ def relatorio_nao_conformidades(
                 "sublabel": "Mês corrente", "valor": litro["custo_por_litro"], "unidade": "R$/L",
                 "rota": "/financeiro", "rota_label": "Ver no Financeiro",
             })
-        hectare = custo_por_hectare(data_inicio=ini_mes, data_fim=hoje, centro_custo=None, session=session)
+        # BUG DE SEGURANÇA CORRIGIDO: faltava passar `fazenda_id` aqui (as duas
+        # chamadas vizinhas, `calcular_rmca_view` e `custo_litro_leite` acima,
+        # já passam). `custo_por_hectare` é uma rota FastAPI cujo parâmetro tem
+        # default `Depends(get_fazenda_atual_id)` — chamada direto como função
+        # Python, sem o argumento, o parâmetro recebe o objeto `Depends(...)`
+        # em vez de um int, e `fazenda_id_seguro()` (relatorio_custo_hectare.py)
+        # o converte em None — desligando o filtro por tenant e somando a
+        # ContaGerencial de TODAS as fazendas no R$/ha exibido aqui.
+        hectare = custo_por_hectare(data_inicio=ini_mes, data_fim=hoje, centro_custo=None, session=session, fazenda_id=fazenda_id)
         if hectare.get("custo_por_hectare") is not None:
             sem_meta.append({
                 "chave": "custo_hectare", "dominio": "financeiro", "label": "Custo por hectare",
@@ -162,10 +170,20 @@ def relatorio_nao_conformidades(
     # marcação informativa de estágio, não um problema a corrigir. ----
     if tem_modulo(user, "reproducao"):
         animais, servicos, partos, secagens = _dados_manejo(session, fazenda_id)
-        semen = [s.model_dump() for s in session.exec(select(EstoqueSemen)).all()]
-        manejo = rg.relatorios_manejo(animais, servicos, partos, semen, hoje, secagens=secagens)
+        aplicacoes_iatf, peso_por_animal = _dados_estado_vivo(session, fazenda_id)
+        # BUG DE SEGURANÇA CORRIGIDO: mesmo vazamento de relatorios.py — sem
+        # filtro, trazia o estoque de sêmen de todas as fazendas.
+        query_semen = select(EstoqueSemen)
+        if fazenda_id is not None:
+            query_semen = query_semen.where(EstoqueSemen.fazenda_id == fazenda_id)
+        semen = [s.model_dump() for s in session.exec(query_semen).all()]
+        manejo = rg.relatorios_manejo(animais, servicos, partos, semen, hoje, secagens=secagens,
+                                       aplicacoes_iatf=aplicacoes_iatf, peso_por_animal=peso_por_animal)
         for chave_lista, label in (
-            ("a_inseminar", "Vacas atrasadas para inseminar"),
+            # "Atrasadas", não "Vacas atrasadas": a lista semaforizada conta
+            # novilha em atraso para a 1ª cobertura junto com a vaca que
+            # passou do DEL máximo (ver rules/relatorios_gerenciais.py).
+            ("a_inseminar", "Atrasadas para inseminar"),
             ("inseminados", "Inseminadas sem diagnóstico há muito tempo"),
             ("a_tocar", "Toque atrasado"),
             ("a_reconfirmar", "Reconfirmação atrasada"),

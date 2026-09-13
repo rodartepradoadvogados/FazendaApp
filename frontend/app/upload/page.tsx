@@ -38,6 +38,7 @@ export default function UploadPage() {
       if (res.servicos !== undefined)  partes.push(`${res.servicos} serviços`);
       if (res.partos !== undefined)    partes.push(`${res.partos} partos`);
       if (res.registros !== undefined) partes.push(`${res.registros} registros`);
+      if (res.ignorados) partes.push(`${res.ignorados} ignorado(s) sem lactação aberta`);
       setEstados(p => ({ ...p, [tipo]: { status: "ok", msg: partes.join(" · ") || "Importado com sucesso" } }));
     } catch (e: any) {
       setEstados(p => ({ ...p, [tipo]: { status: "error", msg: e.message } }));

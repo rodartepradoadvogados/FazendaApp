@@ -1,0 +1,24 @@
+[
+  {
+    "manchete": "Classe III do leite nos EUA sobe pela primeira vez no verão e chega a US$ 16,64/cwt em agosto",
+    "resumo": "O preço da Classe III do leite nos Estados Unidos subiu US$ 1,12 por hundredweight em agosto de 2026, para US$ 16,64, encerrando a sequência de recuos do verão americano, enquanto as Classes II e IV caíram no mesmo mês, segundo anúncio oficial do USDA. Dados: USDA (Agricultural Marketing Service).",
+    "materia": "O Departamento de Agricultura dos Estados Unidos (USDA) anunciou, em 2 de setembro, os preços finais das classes de leite referentes a agosto de 2026 dentro do sistema federal de ordens de comercialização (Federal Milk Marketing Orders). A Classe III, usada principalmente na fabricação de queijos, fechou o mês a US$ 16,64 por hundredweight (cwt, equivalente a 45,36 kg), alta de US$ 1,12 em relação a julho — a primeira subida da classe desde maio. Já a Classe II caiu US$ 3,18, para US$ 18,71, e a Classe IV recuou US$ 0,98, para US$ 17,36.\n\nO movimento reflete a divergência entre os componentes que formam cada classe. O preço da proteína, usado no cálculo da Classe III, subiu para US$ 2,8281 por libra-peso em agosto — o maior valor do ano —, elevando o preço do leite desnatado daquela classe. Já o preço da gordura do leite, que pesa nas quatro classes, recuou para US$ 1,5107 por libra-peso, e o valor dos sólidos não gordurosos também cedeu, pressionando as Classes II e IV para baixo.\n\nApesar da alta mensal, a Classe III de agosto segue abaixo do nível de um ano antes (US$ 17,24 em agosto de 2025) e bem distante do pico de US$ 22,78 atingido pela Classe II em junho de 2026. Como boa parte do leite processado nos EUA é precificada pela Classe III ou IV, essas oscilações mensais do USDA costumam anteceder, com defasagem, movimentos nos preços internacionais de queijo e leite em pó que também chegam ao mercado brasileiro.",
+    "link": "/news#milknews-2026-09-08-01",
+    "data_publicacao": "2026-09-08",
+    "fontes": [
+      "https://www.ams.usda.gov/mnreports/dymclassprices.pdf",
+      "https://www.indexbox.io/blog/usda-dairy-market-report-mixed-cash-dairy-movements-for-week-of-august-31-to-september-4-2026/"
+    ]
+  },
+  {
+    "manchete": "Fonterra sinaliza dividendo forte e mantém previsão de leite entre NZ$ 9,60 e NZ$ 9,80/kg antes do balanço",
+    "resumo": "A cooperativa neozelandesa Fonterra sinalizou que deve fechar o ano fiscal 2026 com lucro por ação no topo da faixa de orientação de NZ$ 0,60 a NZ$ 0,70 e confirmou a manutenção da previsão de pagamento aos produtores entre NZ$ 9,60 e NZ$ 9,80 por kg de sólidos de leite na temporada já encerrada, com resultado final em 24 de setembro. Dados: Fonterra (Farmers Weekly NZ).",
+    "materia": "A Fonterra, maior processadora de leite da Nova Zelândia e uma das maiores cooperativas leiteiras do mundo, informou em 2 de setembro que espera declarar lucro por ação (EPS) subjacente próximo ao topo da faixa de orientação de NZ$ 0,60 a NZ$ 0,70 quando divulgar o resultado financeiro completo do ano fiscal 2026, em 24 de setembro. Segundo a cooperativa, o desempenho sólido ao longo do exercício sustenta a expectativa de um dividendo robusto aos produtores-acionistas.\n\nA Fonterra também confirmou que o preço final pago pelo leite da temporada 2025/26, já encerrada, deve permanecer dentro da faixa estreita anunciada anteriormente, entre NZ$ 9,60 e NZ$ 9,80 por kg de sólidos de leite (milksolids), com valor definitivo também a ser fechado em 24 de setembro. Para a temporada 2026/27, em curso, a cooperativa mantém uma faixa de previsão ainda ampla, de NZ$ 8,00 a NZ$ 10,50 por kg de sólidos, com ponto médio em NZ$ 9,25.\n\nA política da cooperativa prevê distribuir entre 60% e 80% do lucro anual aos produtores-acionistas, e a Fonterra já pagou um dividendo intermediário de NZ$ 0,24 por ação ao longo do exercício. Como a Nova Zelândia é a maior exportadora mundial de lácteos, a trajetória do preço pago pela Fonterra costuma servir de referência para o mercado internacional, inclusive para as cotações usadas como parâmetro em leilões como o Global Dairy Trade.",
+    "link": "/news#milknews-2026-09-08-02",
+    "data_publicacao": "2026-09-08",
+    "fontes": [
+      "https://www.farmersweekly.co.nz/markets/dairy-markets/fonterra-signals-strong-dividend-ahead-of-full-year-result/",
+      "https://en.edairynews.com/fonterra-signals-strong-dividend-ahead-of-full-year-financial-result/"
+    ]
+  }
+]

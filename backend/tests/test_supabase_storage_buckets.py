@@ -27,6 +27,27 @@ def _configurar_supabase(monkeypatch):
     monkeypatch.setattr(settings, "supabase_bucket", "documentos-fiscais")
     monkeypatch.setattr(settings, "supabase_bucket_fotos", "fotos-campo")
     monkeypatch.setattr(settings, "supabase_bucket_financeiro", "anexos-financeiro")
+    monkeypatch.setattr(settings, "supabase_bucket_news_fotos", "fotos-news-banco")
+
+
+class TestNomeSeguroStorage:
+    """Nome de arquivo com acento/espaço/parênteses é a regra (não a
+    exceção) em anexo de documento — o Supabase Storage rejeita esses
+    caracteres na KEY do objeto com "400 Invalid Key" (bug real reportado em
+    produção no anexo de documento de Pessoa)."""
+
+    def test_remove_acento_e_espaco(self):
+        assert storage.nome_seguro_storage("Currículo João.pdf") == "Curriculo_Joao.pdf"
+
+    def test_remove_parenteses_e_travessao(self):
+        assert storage.nome_seguro_storage("RG (frente) - cópia.jpg") == "RG_frente_-_copia.jpg"
+
+    def test_nome_ja_seguro_fica_igual(self):
+        assert storage.nome_seguro_storage("contrato_2026.pdf") == "contrato_2026.pdf"
+
+    def test_nome_vazio_ou_so_caracteres_invalidos_vira_arquivo(self):
+        assert storage.nome_seguro_storage("") == "arquivo"
+        assert storage.nome_seguro_storage("🎉🎊") == "arquivo"
 
 
 def test_sem_config_nao_faz_nada(monkeypatch):
@@ -56,7 +77,7 @@ def test_bucket_ausente_e_criado(monkeypatch):
     monkeypatch.setattr(httpx, "get", lambda *a, **k: _RespostaFalsa(404, "Bucket not found"))
     monkeypatch.setattr(httpx, "post", post_fake)
     storage.garantir_buckets()
-    assert set(criados) == {"documentos-fiscais", "fotos-campo", "anexos-financeiro"}
+    assert set(criados) == {"documentos-fiscais", "fotos-campo", "anexos-financeiro", "fotos-news-banco"}
 
 
 def test_falha_de_rede_nao_lanca(monkeypatch):

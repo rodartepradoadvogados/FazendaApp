@@ -20,7 +20,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import (
-    Alimento, Animal, ContratoFazenda, ContratoFazendaModulo, DietaLancamento, Fazenda, Lote, Pessoa, Usuario,
+    Alimento, Animal, ContratoFazenda, ContratoFazendaModulo, ControleLeiteiro, DietaLancamento, Fazenda, Lote, Pessoa, Usuario,
     UsuarioFazenda,
 )
 from fazenda.models.planos import MODULOS_COMERCIAIS
@@ -301,6 +301,29 @@ class TestContextoLote:
         assert corpo["dias_gestacao"] is None
         assert "dias_gestacao" not in corpo["campos_estimados"]
 
+    def test_producao_estimada_vem_do_controle_leiteiro_ao_vivo(self, client):
+        """Mesmo bug/fix de Alimentação > Nova dieta (ver
+        test_alimentacao.py): Animal.ult_cl_kg sozinho fica congelado na
+        data do último CSV importado — precisa refletir o controle leiteiro
+        mais recente de verdade, lançado pelo próprio app."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Lote(codigo="03", nome="Lactação", fazenda_id=1))
+            s.add(Animal(numero="L1", sexo="F", ativo=True, grupo_primario="03 - Lactação",
+                          fazenda_id=1, ult_cl_kg=20.0, data_ult_leite=date(2026, 7, 8)))
+            s.add(Animal(numero="L2", sexo="F", ativo=True, grupo_primario="03 - Lactação",
+                          fazenda_id=1, ult_cl_kg=18.0, data_ult_leite=date(2026, 7, 8)))
+            # Controle leiteiro lançado pelo app, bem mais recente.
+            s.add(ControleLeiteiro(numero_matriz="L1", data_controle=date(2026, 8, 13), producao_kg=36.0, fazenda_id=1))
+            s.add(ControleLeiteiro(numero_matriz="L2", data_controle=date(2026, 8, 13), producao_kg=28.0, fazenda_id=1))
+            s.commit()
+
+        _como(13)
+        r = c.get("/formulacao/contexto/3")
+        assert r.status_code == 200, r.text
+        corpo = r.json()
+        assert corpo["producao_leite_kg_dia"] == 32.0  # (36+28)/2, não (20+18)/2
+
 
 class TestAplicarNaDieta:
     def test_aplicar_cria_lancamento_com_vinculo(self, client):
@@ -379,6 +402,112 @@ class TestBibliotecaDeAlimentos:
         assert r.status_code == 200
         assert len(r.json()["categorias"]) == 11
         assert len(r.json()["biblioteca_semente"]) == 12
+
+
+class TestImportacaoPorProduto:
+    """Fase 2 do plano de correção de Alimentação (01/09/2026): uma família de
+    Alimento (ex.: "Concentrado proteico") pode ter vários produtos de
+    Estoque vinculados, cada um com sua própria composição — GET /alimentos
+    lista esses produtos por família e GET /alimentos/{id}/resolver aceita
+    um `estoque_id` para tentar a composição do produto específico antes de
+    cair para o nível de família."""
+
+    def _criar_estoque(self, engine, *, nome: str, alimento_id: int, fazenda_id: int = 1) -> int:
+        from fazenda.models import Estoque
+        with Session(engine) as s:
+            item = Estoque(nome=nome, alimento_id=alimento_id, fazenda_id=fazenda_id, finalidade="Ração/Alimento", ativo=True)
+            s.add(item)
+            s.commit()
+            s.refresh(item)
+            return item.id
+
+    def test_listar_marca_estoque_vinculado_e_sem_composicao_por_produto(self, client):
+        c, engine = client
+        _como(13)
+        with Session(engine) as s:
+            alimento_id = s.exec(select(Alimento).where(Alimento.nome == "Farelo de soja")).first().id
+        produto1_id = self._criar_estoque(engine, nome="Farelo de soja Cargill", alimento_id=alimento_id)
+        produto2_id = self._criar_estoque(engine, nome="Farelo de soja Bunge", alimento_id=alimento_id)
+
+        # Só o produto 1 recebe composição própria — o 2 continua "sem
+        # composição" mesmo a família já tendo alguma entrada.
+        c.post("/formulacao/alimentos", json={
+            "alimento_id": alimento_id, "estoque_id": produto1_id, "nome": "Farelo de soja Cargill",
+            "categoria_nasem": "Concentrado proteico", "conc_pct": 100.0, "valores": {"pb_pct": 48.0},
+        })
+
+        r = c.get("/formulacao/alimentos")
+        assert r.status_code == 200
+        farelo = next(a for a in r.json()["cadastrados"] if a["nome"] == "Farelo de soja")
+        vinculados = {p["id"]: p for p in farelo["estoque_vinculado"]}
+        assert set(vinculados) == {produto1_id, produto2_id}
+        assert vinculados[produto1_id]["sem_composicao"] is False
+        assert vinculados[produto2_id]["sem_composicao"] is True
+
+    def test_resolver_com_estoque_id_usa_composicao_do_produto(self, client):
+        c, engine = client
+        _como(13)
+        with Session(engine) as s:
+            alimento_id = s.exec(select(Alimento).where(Alimento.nome == "Farelo de soja")).first().id
+        produto_id = self._criar_estoque(engine, nome="Farelo de soja Cargill", alimento_id=alimento_id)
+        c.post("/formulacao/alimentos", json={
+            "alimento_id": alimento_id, "estoque_id": produto_id, "nome": "Farelo de soja Cargill",
+            "categoria_nasem": "Concentrado proteico", "conc_pct": 100.0, "valores": {"pb_pct": 48.0},
+        })
+
+        r = c.get(f"/formulacao/alimentos/{alimento_id}/resolver?estoque_id={produto_id}")
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["origem"] == "biblioteca"
+        assert corpo["estoque_id"] == produto_id
+        assert corpo["produto_nome"] == "Farelo de soja Cargill"
+        assert corpo["valores"]["pb_pct"] == 48.0
+
+    def test_resolver_com_estoque_sem_composicao_cai_para_familia_ou_template(self, client):
+        c, engine = client
+        _como(13)
+        with Session(engine) as s:
+            alimento_id = s.exec(select(Alimento).where(Alimento.nome == "Farelo de soja")).first().id
+        produto_sem_composicao_id = self._criar_estoque(engine, nome="Farelo de soja genérico", alimento_id=alimento_id)
+
+        r = c.get(f"/formulacao/alimentos/{alimento_id}/resolver?estoque_id={produto_sem_composicao_id}")
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["origem"] == "template"
+        # Preserva estoque_id/produto_nome mesmo caindo no template — a grade
+        # continua sabendo qual produto comercial foi escolhido.
+        assert corpo["estoque_id"] == produto_sem_composicao_id
+        assert corpo["produto_nome"] == "Farelo de soja genérico"
+
+    def test_salvar_simulacao_preserva_estoque_id_e_produto_nome_no_item(self, client):
+        c, engine = client
+        _como(13)
+        with Session(engine) as s:
+            alimento_id = s.exec(select(Alimento).where(Alimento.nome == "Farelo de soja")).first().id
+        produto_id = self._criar_estoque(engine, nome="Farelo de soja Cargill", alimento_id=alimento_id)
+
+        sim_id = c.post("/formulacao/simulacoes", json={"nome": "Com produto"}).json()["id"]
+        payload = {
+            **DIETA_MINIMA,
+            "itens": [
+                {**DIETA_MINIMA["itens"][0]},
+                {
+                    **DIETA_MINIMA["itens"][1], "alimento_id": alimento_id, "estoque_id": produto_id,
+                    "produto_nome": "Farelo de soja Cargill", "origem": "biblioteca",
+                },
+            ],
+        }
+        r = c.put(f"/formulacao/simulacoes/{sim_id}", json=payload)
+        assert r.status_code == 200
+        item = next(i for i in r.json()["itens"] if i["nome"] == "Farelo de soja")
+        assert item["estoque_id"] == produto_id
+        assert item["produto_nome"] == "Farelo de soja Cargill"
+
+        # Sobrevive a um GET novo (persistido de verdade, não só no retorno do PUT).
+        relido = c.get(f"/formulacao/simulacoes/{sim_id}").json()
+        item_relido = next(i for i in relido["itens"] if i["nome"] == "Farelo de soja")
+        assert item_relido["estoque_id"] == produto_id
+        assert item_relido["produto_nome"] == "Farelo de soja Cargill"
 
 
 class TestBibliotecaMestreCowData:

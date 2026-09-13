@@ -15,18 +15,23 @@ from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id, g
 from fazenda.database import get_session
 from fazenda.ordenacao import chave_numero
 from fazenda.models import (
-    Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, CronogramaSanitario, CronogramaSanitarioAnimal,
+    Animal, AplicacaoAgendada, CalendarioSanitario, CalendarioSanitarioChecklistItem, ChecklistItem, ColostragemBezerra,
+    CronogramaSanitario, CronogramaSanitarioAnimal,
     Doenca, Estoque, EventoRealizado,
-    EventoSanitario, ExameDefinicao, ExameResultado, IndicacaoTerapeutica, MedicamentoComercial,
+    EventoSanitario, ExameDefinicao, ExameResultado, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque,
     Parto, Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
-    ProtocoloSanitarioLancamento, QualidadeLeite, Sanidade, Usuario,
+    ProtocoloSanitarioLancamento, ProtocoloSanitarioLote, QualidadeLeite, Sanidade, Usuario,
 )
 from fazenda.api.routers.baixas import ADescartarIn, marcar_a_descartar
 from fazenda.api.routers.cadastro import GATILHOS_EVENTO
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
-from fazenda.rules.calendario_sanitario import proxima_ocorrencia
+from fazenda.rules.calendario_sanitario import proxima_ocorrencia, proxima_ocorrencia_a_partir_de
 from fazenda.rules.calendario_visao import montar_calendario_visual
 from fazenda.rules.cronograma_sanitario import cronograma_aberto
+from fazenda.rules.checklist_sanitario import (
+    alerta_clinico_ativo, checklist_customizado_da_regra, estado_ocorrencia, materializar_checklist,
+    salvar_checklist_da_regra,
+)
 from fazenda.rules.cura_protocolo import protocolo_terminado
 from fazenda.rules.estoque_baixa import (
     baixar as _estoque_baixar, carencia_para_item, devolver as _estoque_devolver,
@@ -34,6 +39,8 @@ from fazenda.rules.estoque_baixa import (
 )
 from fazenda.rules.eventos_sanitarios import ROTULOS_GATILHO, _datas_gatilho
 from fazenda.rules.farmacia import resumo_principios
+from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
+from fazenda.rules.parto import eh_parto_produtivo
 from fazenda.rules.unidades import unidades_compativeis
 from fazenda.rules.visibilidade import visivel
 
@@ -117,8 +124,11 @@ def listar_aplicacoes(
 ) -> dict:
     """Aplicações achatadas para o dashboard interativo (filtra no cliente)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    # Aborto não conta como parto na ordem exibida (ver fazenda/rules/parto.py).
     partos_por_numero: dict[str, int] = {}
     for p in session.exec(select(Parto)).all():
+        if not eh_parto_produtivo(p):
+            continue
         partos_por_numero[p.numero_matriz] = partos_por_numero.get(p.numero_matriz, 0) + 1
     # Lote/categoria ATUAIS do animal (a Sanidade não guarda o lote histórico de
     # quando o produto foi aplicado — mesma limitação já aceita para ordem_parto
@@ -207,6 +217,10 @@ class ItemAplicacaoIn(BaseModel):
     # apresentação (marca/tamanho) do mesmo princípio no estoque, o front manda
     # o id do item escolhido para abater do recipiente certo.
     estoque_id: int | None = None
+    # "Qual lote/frasco de compra?" (Fase G, 01/09/2026) — dentro do MESMO
+    # item de estoque escolhido acima, quando há mais de um lote em aberto.
+    # Sem isso, a baixa cai em FIFO automático (lote mais antigo primeiro).
+    lote_id: int | None = None
 
 
 class AplicacaoIn(BaseModel):
@@ -324,7 +338,7 @@ def registrar_aplicacao(
                 session, item=estoque_item, quantidade=item.quantidade, unidade=item.unidade, data=dados.data_aplicacao,
                 fazenda_id=fazenda_id, observacao=f"Aplicação em {numero} — Sanidade",
                 usuario_id=usuario_id_seguro(user), origem_tipo="sanidade", origem_id=sanidade.id,
-                produto=item.produto,
+                produto=item.produto, lote_id=item.lote_id,
             ))
 
     session.commit()
@@ -334,6 +348,7 @@ def registrar_aplicacao(
 def _ajustar_estoque_por_aplicacao(
     session: Session, produto: str | None, dose: float | None, unidade: str | None,
     fazenda_id: int | None, sinal: int, observacao: str, origem_id: int | None = None,
+    estoque_id: int | None = None, lote_id: int | None = None,
 ) -> list[str]:
     """Devolve (sinal=+1) ou baixa (sinal=-1) `dose` de `produto` no estoque —
     usado para estornar/reaplicar a baixa quando uma aplicação é editada ou
@@ -341,16 +356,38 @@ def _ajustar_estoque_por_aplicacao(
     portões da baixa original (ver fazenda.rules.estoque_baixa.movimentar) —
     sem isso um estorno criaria estoque fantasma para uma baixa que nunca
     aconteceu. Devolve os avisos gerados (lista vazia se nada precisou avisar).
-    """
+
+    `estoque_id`, quando informado, força o MESMO frasco que a baixa original
+    usou — sem ele, `_resolver_item_estoque` cai no fallback por nome e, se
+    houver mais de um frasco cadastrado com o mesmo produto (comum em
+    Farmácia — lotes/validades diferentes), pode devolver/rebaixar num frasco
+    diferente do que a aplicação de fato consumiu. `lote_id` (Fase G,
+    01/09/2026) é o mesmo princípio, um nível abaixo: o lote/frasco de compra
+    específico que a baixa original consumiu dentro desse item."""
     if not produto or dose is None or not unidade:
         return []
-    estoque_item = _resolver_item_estoque(session, fazenda_id=fazenda_id, produto=produto)
+    estoque_item = _resolver_item_estoque(session, fazenda_id=fazenda_id, produto=produto, estoque_id=estoque_id)
     fn = _estoque_devolver if sinal > 0 else _estoque_baixar
     return fn(
         session, item=estoque_item, quantidade=dose, unidade=unidade, data=date.today(),
         fazenda_id=fazenda_id, observacao=observacao, origem_tipo="sanidade", origem_id=origem_id,
-        produto=produto,
+        produto=produto, lote_id=lote_id,
     )
+
+
+def _frasco_da_ultima_aplicacao(session: Session, sanidade_id: int) -> tuple[int | None, int | None]:
+    """(`estoque_id`, `lote_id`) que a baixa mais recente desta Sanidade de
+    fato usou (lido do próprio rastro em MovimentoEstoque, que `estoque_baixa.
+    movimentar` grava — ver a nota em `_ajustar_estoque_por_aplicacao`).
+    "Mais recente" porque uma aplicação pode já ter sido editada antes: cada
+    edição grava um novo par estorno/rebaixa com o mesmo origem_id."""
+    mov = session.exec(
+        select(MovimentoEstoque).where(
+            MovimentoEstoque.origem_tipo == "sanidade", MovimentoEstoque.origem_id == sanidade_id,
+            MovimentoEstoque.movimento == "Aplicação",
+        ).order_by(MovimentoEstoque.id.desc())
+    ).first()
+    return (mov.estoque_id, mov.lote_id) if mov else (None, None)
 
 
 class EditarAplicacaoIn(BaseModel):
@@ -379,7 +416,7 @@ def editar_aplicacao(
     fecha o desvio óbvio de chamar o endpoint direto sem passar pela tela."""
     s = session.get(Sanidade, aplicacao_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
+    if not s or (s.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Aplicação não encontrada")
 
     campos = dados.model_dump(exclude_unset=True)
@@ -402,9 +439,12 @@ def editar_aplicacao(
     # em lote de registrar_aplicacao).
     mexe_estoque = any(c in campos for c in ("produto", "dose", "unidade"))
     if mexe_estoque:
+        produto_antigo = s.produto
+        estoque_id_antigo, lote_id_antigo = _frasco_da_ultima_aplicacao(session, s.id)
         _ajustar_estoque_por_aplicacao(
-            session, s.produto, s.dose, s.unidade, fazenda_id, +1,
-            f"Estorno por edição da aplicação #{s.id} — Sanidade", origem_id=s.id,
+            session, produto_antigo, s.dose, s.unidade, fazenda_id, +1,
+            f"Estorno por edição da aplicação #{s.id} — Sanidade", origem_id=s.id, estoque_id=estoque_id_antigo,
+            lote_id=lote_id_antigo,
         )
 
     for campo, valor in campos.items():
@@ -413,9 +453,17 @@ def editar_aplicacao(
     session.add(s)
 
     if mexe_estoque:
+        # Produto não mudou: continua no MESMO frasco que a baixa original
+        # usava — não deixa a rebaixa "escolher" outro frasco do mesmo
+        # produto por conta própria. Produto mudou: não há frasco antigo
+        # válido pro produto novo, resolve por nome mesmo (comportamento de
+        # sempre).
+        estoque_id_novo = estoque_id_antigo if s.produto == produto_antigo else None
+        lote_id_novo = lote_id_antigo if s.produto == produto_antigo else None
         avisos.extend(_ajustar_estoque_por_aplicacao(
             session, s.produto, s.dose, s.unidade, fazenda_id, -1,
-            f"Aplicação editada #{s.id} — Sanidade", origem_id=s.id,
+            f"Aplicação editada #{s.id} — Sanidade", origem_id=s.id, estoque_id=estoque_id_novo,
+            lote_id=lote_id_novo,
         ))
 
     session.commit()
@@ -439,11 +487,13 @@ def excluir_aplicacao(
     _ajustar_estoque_por_aplicacao."""
     s = session.get(Sanidade, aplicacao_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
+    if not s or (s.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Aplicação não encontrada")
+    estoque_id_excluida, lote_id_excluida = _frasco_da_ultima_aplicacao(session, s.id)
     _ajustar_estoque_por_aplicacao(
         session, s.produto, s.dose, s.unidade, fazenda_id, +1,
         f"Estorno por exclusão da aplicação #{s.id} — Sanidade", origem_id=s.id,
+        estoque_id=estoque_id_excluida, lote_id=lote_id_excluida,
     )
     session.delete(s)
     session.commit()
@@ -464,7 +514,7 @@ def marcar_cura_aplicacao(
     (não um protocolo multi-dia). Alimenta o relatório Taxa de cura."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     s = session.get(Sanidade, aplicacao_id)
-    if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
+    if not s or (s.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Aplicação não encontrada")
     s.curada = dados.curada
     session.add(s)
@@ -606,25 +656,38 @@ def relatorio_taxa_cura(
 # Calendário sanitário — regras recorrentes (sazonal/de rebanho ou por fase
 # fisiológica), cadastradas aqui e acompanhadas com filtro por período/evento.
 # ---------------------------------------------------------------------------
-def _nomes(session: Session) -> tuple[dict[int, str], dict[int, str], dict[int, str], dict[int, str | None], dict[int, str | None]]:
+def _nomes(
+    session: Session,
+) -> tuple[dict[int, str], dict[int, str], dict[int, str], dict[int, str | None], dict[int, str | None], dict[int, str]]:
     evs = session.exec(select(EventoSanitario)).all()
     eventos = {e.id: e.nome for e in evs}
     categorias = {e.id: e.categoria_preventiva for e in evs}
     servicos_financeiro = {e.id: e.servico_financeiro for e in evs}
+    tipos_agendamento = {e.id: e.tipo_agendamento for e in evs}
     doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
     principios = {p.id: p.nome for p in session.exec(select(PrincipioAtivo)).all()}
-    return eventos, doencas, principios, categorias, servicos_financeiro
+    return eventos, doencas, principios, categorias, servicos_financeiro, tipos_agendamento
 
 
-def _ultimo_evento_por_produto(session: Session) -> dict[str, dict]:
+def _ultimo_evento_por_produto(session: Session, fazenda_id: int | None) -> dict[str, dict]:
     """Data (isoformat) e id da aplicação Sanidade (natureza=preventivo) mais
     recente por produto (chave em minúsculo) — usado para achar "o último
     evento já lançado" de uma regra do calendário sanitário, no popup de
-    Aplicações (ver GET /sanidade/calendario, campos ultimo_evento_data/id)."""
+    Aplicações (ver GET /sanidade/calendario, campos ultimo_evento_data/id).
+
+    BUG DE SEGURANÇA CORRIGIDO (achado 28): a consulta varria `Sanidade` de
+    TODAS as fazendas e o casamento é por NOME DE PRODUTO — texto livre com
+    vocabulário compartilhado ("Ivomec", "Bovigold", "Cálcio"), então a
+    colisão entre clientes é o caso normal, não a exceção. O resultado
+    entregava a cada tenant a DATA da última aplicação daquele produto na
+    fazenda vizinha (dado de manejo/sanidade dela) e, junto, o `id` da linha
+    Sanidade alheia em `ultimo_evento_id` — id de outro tenant servido de
+    bandeja para a próxima rota que aceitasse um id."""
     mapa: dict[str, dict] = {}
-    registros = session.exec(
-        select(Sanidade).where(Sanidade.natureza == "preventivo", Sanidade.data_aplicacao.is_not(None))
-    ).all()
+    query = select(Sanidade).where(Sanidade.natureza == "preventivo", Sanidade.data_aplicacao.is_not(None))
+    if fazenda_id is not None:
+        query = query.where(Sanidade.fazenda_id == fazenda_id)
+    registros = session.exec(query).all()
     for r in registros:
         chave = (r.produto or "").strip().lower()
         if not chave:
@@ -636,15 +699,88 @@ def _ultimo_evento_por_produto(session: Session) -> dict[str, dict]:
     return mapa
 
 
+def _checklist_por_regra(session: Session, fazenda_id: int | None) -> dict[int, list[dict]]:
+    """Checklist customizado (passo 4 do wizard novo, seção 3.7.0) por
+    `calendario_sanitario_id` — usado só para PRÉ-PREENCHER a edição de uma
+    regra no wizard (lista vazia = regra ainda usa o template do tipo
+    dinamicamente, nunca passou pelo wizard novo)."""
+    query = select(CalendarioSanitarioChecklistItem).order_by(CalendarioSanitarioChecklistItem.ordem)
+    if fazenda_id is not None:
+        query = query.where(CalendarioSanitarioChecklistItem.fazenda_id == fazenda_id)
+    mapa: dict[int, list[dict]] = {}
+    for item in session.exec(query).all():
+        mapa.setdefault(item.calendario_sanitario_id, []).append(
+            {"chave": item.chave, "nome": item.nome, "ordem": item.ordem}
+        )
+    return mapa
+
+
+def _cronograma_aberto_por_regra(session: Session, calendario_ids: list[int]) -> dict[int, date]:
+    """`data_evento` do cronograma ABERTO/AGENDADO de cada regra (no máximo 1
+    por regra, ver `cronograma_sanitario.cronograma_aberto`) — a fonte real
+    da "próxima ocorrência" para regra com `usa_cronograma=True` (ver uso em
+    `_serializar`, bug relatado pelo usuário em 12/09/2026)."""
+    if not calendario_ids:
+        return {}
+    linhas = session.exec(
+        select(CronogramaSanitario)
+        .where(CronogramaSanitario.calendario_sanitario_id.in_(calendario_ids))
+        .where(CronogramaSanitario.status.in_(("aberto", "agendado")))
+        .order_by(CronogramaSanitario.data_evento)
+    ).all()
+    mapa: dict[int, date] = {}
+    for c in linhas:
+        mapa.setdefault(c.calendario_sanitario_id, c.data_evento)
+    return mapa
+
+
 def _serializar(
     c: CalendarioSanitario, eventos: dict, doencas: dict, principios: dict,
     categorias: dict | None = None, ultimos_por_produto: dict[str, dict] | None = None,
-    servicos_financeiro: dict | None = None,
+    servicos_financeiro: dict | None = None, checklist_por_regra: dict[int, list[dict]] | None = None,
+    tipos_agendamento: dict[int, str] | None = None, cronograma_aberto_por_regra: dict[int, date] | None = None,
 ) -> dict:
     categorias = categorias or {}
     ultimos_por_produto = ultimos_por_produto or {}
     servicos_financeiro = servicos_financeiro or {}
+    checklist_por_regra = checklist_por_regra or {}
+    tipos_agendamento = tipos_agendamento or {}
+    cronograma_aberto_por_regra = cronograma_aberto_por_regra or {}
     ultimo = ultimos_por_produto.get((c.produto or "").strip().lower()) if c.produto else None
+    # Regra por evento de vida (gatilho por animal, ex.: Brucelose B19 no
+    # nascimento) não tem uma "próxima ocorrência" única — `data_evento`/
+    # `frequencia_valor/unidade` aqui são só valores vestigiais que o wizard
+    # nunca expõe nesse modo (ficam em "hoje"/"1 mês"). Aplicar a fórmula
+    # periódica a eles produzia uma data sem relação nenhuma com o gatilho
+    # real, divergindo da data de verdade mostrada em Ocorrências/Cronogramas
+    # — bug relatado pelo usuário em 12/09/2026 (critique). `proxima_ocorrencia`
+    # continua calculada (mantém ordenação/filtro por período estáveis nesta
+    # lista), mas `proxima_ocorrencia_por_animal=True` avisa o frontend para
+    # não mostrar essa data como se fosse real.
+    por_animal = tipos_agendamento.get(c.evento_sanitario_id) == "evento"
+    # Regra com `usa_cronograma=True` (qualquer tipo, não só evento de vida):
+    # a data de verdade da próxima aplicação é a do cronograma ABERTO, não a
+    # fórmula periódica sobre `data_evento`. As duas leituras dessa mesma
+    # regra divergiam por um ciclo inteiro só no 1º ciclo — `cronograma_aberto()`
+    # trata `data_evento` como "a data da PRÓXIMA aplicação" ao criar o 1º
+    # cronograma, enquanto a fórmula abaixo sempre tratou a mesma data como
+    # "a da ÚLTIMA", somando a frequência de novo por cima (bug relatado pelo
+    # usuário em 12/09/2026, reproduzido com uma regra por época recém-criada
+    # com "Usar cronograma sanitário" marcado). Sem cronograma aberto ainda
+    # (regra nova, a Agenda nunca rodou para ela), usa o mesmo valor que
+    # `cronograma_aberto()` usaria ao criar o 1º cronograma agora: a própria
+    # `data_evento`, não `data_evento + frequência`.
+    if c.usa_cronograma:
+        proxima = cronograma_aberto_por_regra.get(c.id, c.data_evento)
+    else:
+        # Mesmo raciocínio do branch acima, pelo caminho comum (achado na
+        # verificação E2E de 12/09/2026): `data_evento` é a 1ª ocorrência, não
+        # a última — se ela ainda não aconteceu, ela MESMA é a próxima, sem
+        # somar a frequência por cima (antes pulava sempre o 1º ciclo de
+        # qualquer regra nova, já que `data_evento` é tipicamente hoje/futuro
+        # ao cadastrar). `proxima_ocorrencia` sozinha (usada em todo o resto
+        # do arquivo) fica reservada para rolar uma série já em andamento.
+        proxima = proxima_ocorrencia_a_partir_de(c.data_evento, c.frequencia_valor, c.frequencia_unidade, date.today())
     return {
         **c.model_dump(),
         "evento_sanitario_nome": eventos.get(c.evento_sanitario_id, "—"),
@@ -652,9 +788,11 @@ def _serializar(
         "servico_financeiro": servicos_financeiro.get(c.evento_sanitario_id),
         "doenca_nome": doencas.get(c.doenca_id) if c.doenca_id else None,
         "principio_ativo_nome": principios.get(c.principio_ativo_id) if c.principio_ativo_id else None,
-        "proxima_ocorrencia": proxima_ocorrencia(c.data_evento, c.frequencia_valor, c.frequencia_unidade).isoformat(),
+        "proxima_ocorrencia": proxima.isoformat(),
+        "proxima_ocorrencia_por_animal": por_animal,
         "ultimo_evento_data": ultimo["data"] if ultimo else None,
         "ultimo_evento_id": ultimo["id"] if ultimo else None,
+        "checklist_itens": checklist_por_regra.get(c.id, []),
     }
 
 
@@ -670,13 +808,21 @@ def listar_calendario(
     (esse fica em /sanidade/aplicacoes).
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
-    ultimos = _ultimo_evento_por_produto(session)
+    eventos, doencas, principios, categorias, servicos_financeiro, tipos_agendamento = _nomes(session)
+    ultimos = _ultimo_evento_por_produto(session, fazenda_id)
+    checklist_por_regra = _checklist_por_regra(session, fazenda_id)
     query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
     regras = session.exec(query).all()
-    saida = [_serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro) for c in regras]
+    cronograma_aberto_por_regra = _cronograma_aberto_por_regra(session, [c.id for c in regras])
+    saida = [
+        _serializar(
+            c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro, checklist_por_regra,
+            tipos_agendamento, cronograma_aberto_por_regra,
+        )
+        for c in regras
+    ]
     if evento_sanitario_id is not None:
         saida = [s for s in saida if s["evento_sanitario_id"] == evento_sanitario_id]
     if data_inicio:
@@ -684,6 +830,12 @@ def listar_calendario(
     if data_fim:
         saida = [s for s in saida if s["proxima_ocorrencia"] <= data_fim]
     return sorted(saida, key=lambda s: s["proxima_ocorrencia"])
+
+
+class ChecklistItemRegraIn(BaseModel):
+    chave: str = "custom"
+    nome: str
+    ordem: int = 0
 
 
 class CalendarioSanitarioIn(BaseModel):
@@ -710,15 +862,65 @@ class CalendarioSanitarioIn(BaseModel):
     # "Já foi realizado?" — quando a 1ª ocorrência é hoje/passada e já aconteceu,
     # marca o evento como realizado (some da Agenda). Não é campo do modelo.
     realizado: bool = False
+    # Passo 4 do wizard novo (seção 3.7.0 do redesenho) — checklist congelado
+    # para esta regra. `None` (padrão) = não veio do wizard novo, não altera
+    # nenhuma customização já existente; lista (mesmo vazia) = substitui por
+    # completo (ver rules.checklist_sanitario.salvar_checklist_da_regra).
+    checklist_itens: list[ChecklistItemRegraIn] | None = None
 
 
-def _validar_calendario(dados: CalendarioSanitarioIn, session: Session) -> None:
-    if not session.get(EventoSanitario, dados.evento_sanitario_id):
+def _validar_calendario(dados: CalendarioSanitarioIn, session: Session, fazenda_id: int | None) -> None:
+    """FURO NOVO CORRIGIDO (varredura de hoje) — mesma família do achado 29,
+    que só foi fechado em `cadastrar_preventivo`.
+
+    Os três ids abaixo vêm do CORPO da requisição e eram validados só por
+    EXISTÊNCIA: `session.get(...)` e pronto. `EventoSanitario` é cadastro
+    POR FAZENDA (a listagem em cadastro/sanitario.py filtra por
+    `fazenda_id ==`), e os ids são inteiros pequenos e sequenciais. A
+    fazenda 2 criava/editava uma regra de calendário dela apontando para o
+    `evento_sanitario_id` da fazenda 1 — e a própria resposta de
+    POST/PUT /sanidade/calendario devolvia `evento_sanitario_nome`,
+    `categoria_preventiva` e `servico_financeiro` daquele evento alheio
+    (ver `_serializar`), que é como o vazamento se materializava sem a
+    atacante nunca tocar numa rota da vítima. Pior: a regra ficava
+    permanentemente apontada para um cadastro de outro cliente, então toda
+    projeção de agenda e todo relatório da fazenda 2 passava a exibir o
+    nome do protocolo da fazenda 1.
+
+    Evento sanitário: `==` estrito — não existe evento "de todo mundo", e o
+    NULL (linha órfã do seed legado de cadastro/sanitario.py, e da migração
+    029227481e9e) tem que cair no mesmo 400 que o de outra fazenda; era
+    justamente a tolerância a NULL que deixava o registro de ninguém ser de
+    qualquer um.
+
+    Doença e princípio ativo: `visivel()` — esses DOIS são catálogo, nascem
+    globais (`fazenda_id` nulo) semeados igual para todo produtor. Aqui o
+    `==` estrito seria o bug oposto (a fazenda com `fid` no token não
+    conseguiria usar nenhuma doença padrão); o que `visivel()` recusa é
+    exatamente o que precisa recusar: a linha de OUTRA fazenda.
+
+    `fazenda_id is None` só em ambiente sem multi-fazenda provisionado
+    (tabela `fazenda` vazia) — ali não há tenant a isolar, e a trava de
+    porta (auth.py::exigir_fazenda_selecionada) já recusou antes em
+    qualquer instalação real. Tratado explicitamente, não por omissão."""
+    ev = session.get(EventoSanitario, dados.evento_sanitario_id)
+    if not ev or (fazenda_id is not None and ev.fazenda_id != fazenda_id):
         raise HTTPException(status_code=400, detail="Evento sanitário não encontrado")
-    if dados.doenca_id is not None and not session.get(Doenca, dados.doenca_id):
-        raise HTTPException(status_code=400, detail="Doença não encontrada")
-    if dados.principio_ativo_id is not None and not session.get(PrincipioAtivo, dados.principio_ativo_id):
-        raise HTTPException(status_code=400, detail="Princípio ativo não encontrado")
+    if dados.doenca_id is not None:
+        doenca = session.exec(
+            visivel(select(Doenca).where(Doenca.id == dados.doenca_id), Doenca, fazenda_id)
+        ).first()
+        if not doenca:
+            raise HTTPException(status_code=400, detail="Doença não encontrada")
+    if dados.principio_ativo_id is not None:
+        pa = session.exec(
+            visivel(
+                select(PrincipioAtivo).where(PrincipioAtivo.id == dados.principio_ativo_id),
+                PrincipioAtivo, fazenda_id,
+            )
+        ).first()
+        if not pa:
+            raise HTTPException(status_code=400, detail="Princípio ativo não encontrado")
     if dados.frequencia_unidade not in FREQUENCIAS:
         raise HTTPException(status_code=400, detail=f"Frequência inválida (use: {', '.join(FREQUENCIAS)})")
     if dados.frequencia_valor <= 0:
@@ -741,10 +943,10 @@ def _marcar_calendario_realizado(session: Session, c: CalendarioSanitario) -> No
 
 @router.post("/calendario")
 def criar_calendario(
-    dados: CalendarioSanitarioIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: CalendarioSanitarioIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    _validar_calendario(dados, session)
-    c = CalendarioSanitario(**dados.model_dump(exclude={"realizado"}), fazenda_id=fazenda_id)
+    _validar_calendario(dados, session, fazenda_id)
+    c = CalendarioSanitario(**dados.model_dump(exclude={"realizado", "checklist_itens"}), fazenda_id=fazenda_id)
     session.add(c)
     session.commit()
     session.refresh(c)
@@ -755,9 +957,18 @@ def criar_calendario(
     # seguintes continuam pendentes normalmente.
     if dados.realizado:
         _marcar_calendario_realizado(session, c)
-    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
-    ultimos = _ultimo_evento_por_produto(session)
-    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro)
+    if dados.checklist_itens is not None:
+        salvar_checklist_da_regra(
+            session, c.id, [(i.chave, i.nome, i.ordem) for i in dados.checklist_itens], fazenda_id,
+        )
+    eventos, doencas, principios, categorias, servicos_financeiro, tipos_agendamento = _nomes(session)
+    ultimos = _ultimo_evento_por_produto(session, fazenda_id)
+    checklist_por_regra = _checklist_por_regra(session, fazenda_id)
+    cronograma_aberto_por_regra = _cronograma_aberto_por_regra(session, [c.id])
+    return _serializar(
+        c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro, checklist_por_regra,
+        tipos_agendamento, cronograma_aberto_por_regra,
+    )
 
 
 @router.put("/calendario/{calendario_id}")
@@ -767,31 +978,87 @@ def atualizar_calendario(
 ) -> dict:
     c = session.get(CalendarioSanitario, calendario_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
+    if not c or (c.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
-    _validar_calendario(dados, session)
-    for campo, valor in dados.model_dump(exclude={"realizado"}).items():
+    _validar_calendario(dados, session, fazenda_id)
+    for campo, valor in dados.model_dump(exclude={"realizado", "checklist_itens"}).items():
         setattr(c, campo, valor)
     session.add(c)
     session.commit()
     session.refresh(c)
     if dados.realizado:
         _marcar_calendario_realizado(session, c)
-    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
-    ultimos = _ultimo_evento_por_produto(session)
-    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro)
+    if dados.checklist_itens is not None:
+        salvar_checklist_da_regra(
+            session, c.id, [(i.chave, i.nome, i.ordem) for i in dados.checklist_itens], fazenda_id,
+        )
+    eventos, doencas, principios, categorias, servicos_financeiro, tipos_agendamento = _nomes(session)
+    ultimos = _ultimo_evento_por_produto(session, fazenda_id)
+    checklist_por_regra = _checklist_por_regra(session, fazenda_id)
+    cronograma_aberto_por_regra = _cronograma_aberto_por_regra(session, [c.id])
+    return _serializar(
+        c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro, checklist_por_regra,
+        tipos_agendamento, cronograma_aberto_por_regra,
+    )
 
 
 @router.delete("/calendario/{calendario_id}")
 def excluir_calendario(
     calendario_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    """Exclui uma regra do calendário sanitário (e suas ocorrências somem da Agenda)."""
+    """Exclui uma regra do calendário sanitário (e suas ocorrências somem da Agenda).
+
+    Apaga também os `CronogramaSanitario` (e os `ChecklistItem`/
+    `CronogramaSanitarioAnimal` de cada um) e os `CalendarioSanitarioChecklistItem`
+    da regra — nenhum dos quatro FKs tem cascade no banco (SQLite nesta suíte
+    não aplica `ON DELETE`), então sem isto eles ficavam órfãos. Achado real
+    (verificação E2E de 12/09/2026): uma regra nova criada depois reaproveitou
+    o ID de uma regra excluída (SQLite sem AUTOINCREMENT reaproveita o maior ID
+    livre) e "herdou" visualmente cronogramas/animais/checklist que nunca foram
+    dela — em Postgres o ID não se repete, mas os órfãos ficariam do mesmo jeito,
+    só sem reaparecer em outra regra."""
     c = session.get(CalendarioSanitario, calendario_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
+    if not c or (c.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
+    cronogramas = session.exec(
+        select(CronogramaSanitario).where(CronogramaSanitario.calendario_sanitario_id == calendario_id)
+    ).all()
+    for cron in cronogramas:
+        for item in session.exec(select(ChecklistItem).where(ChecklistItem.cronograma_id == cron.id)).all():
+            session.delete(item)
+        for animal in session.exec(select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id == cron.id)).all():
+            session.delete(animal)
+        session.delete(cron)
+    for item in session.exec(
+        select(CalendarioSanitarioChecklistItem).where(CalendarioSanitarioChecklistItem.calendario_sanitario_id == calendario_id)
+    ).all():
+        session.delete(item)
+    evento_sanitario_id = c.evento_sanitario_id
     session.delete(c)
+    session.flush()  # a regra já não conta na consulta abaixo, sem precisar de commit ainda
+    # Achado real (reverificação E2E de 13/09/2026): o wizard (antes desta
+    # correção) gravava a MESMA periodicidade também no EventoSanitario
+    # (tipo_agendamento="epoca") — excluir a regra não apagava essa cópia, e
+    # a pendência "ressuscitava" na Agenda (texto genérico, sem categoria-
+    # alvo) pelo fallback legado em eventos_agenda(), mesmo com a regra já
+    # fora de "Regras cadastradas". O wizard não grava mais essa cópia (ver
+    # FormCalendarioSanitario.tsx::salvar), mas dados já gravados antes desta
+    # correção (ou pela tela legada) continuam por aí — limpa aqui, na única
+    # regra que ainda os referenciava, em vez de uma migração de backfill.
+    outra_regra_ativa = session.exec(
+        select(CalendarioSanitario)
+        .where(CalendarioSanitario.evento_sanitario_id == evento_sanitario_id)
+        .where(CalendarioSanitario.ativo == True)  # noqa: E712
+    ).first()
+    if not outra_regra_ativa:
+        ev = session.get(EventoSanitario, evento_sanitario_id)
+        if ev and ev.tipo_agendamento == "epoca":
+            ev.tipo_agendamento = "nenhum"
+            ev.data_primeiro = None
+            ev.frequencia_valor = None
+            ev.frequencia_unidade = None
+            session.add(ev)
     session.commit()
     return {"excluido": True, "id": calendario_id}
 
@@ -860,15 +1127,24 @@ class NovoCronogramaIn(BaseModel):
 
 @router.post("/cronogramas")
 def criar_cronograma_manual(
-    dados: NovoCronogramaIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: NovoCronogramaIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Cria (ou devolve, se já existir) o cronograma em aberto de uma regra —
     para o card Cronogramas > "Novo cronograma", quando o usuário quer
     adiantar o 1º ciclo sem esperar a Agenda criar sozinha. Sempre vinculado a
     uma regra existente com usa_cronograma=True — nunca um cronograma solto."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
+    # BUG DE SEGURANÇA CORRIGIDO (achado 31): esta era a última das seis
+    # rotas de escrita de sanidade ainda na dependência TOLERANTE; as outras
+    # cinco (criar_calendario, registrar_colostragem, POST
+    # /agendamentos-pesagem, /eventos-sanitarios e /exames) já migraram.
+    # A checagem de posse do calendário abaixo é estrita e sempre foi, mas não
+    # cobria o caso "token sem fid + regra órfã": os dois lados caíam em None,
+    # o `!=` dava falso e `cronograma_aberto` gravava um CronogramaSanitario
+    # também órfão — mais uma linha invisível na Agenda de todo mundo, que é
+    # exatamente o incidente do "D6 sumindo". Recusar na porta com 409 é mais
+    # barato que caçar o órfão depois.
     calendario = session.get(CalendarioSanitario, dados.calendario_sanitario_id)
-    if not calendario or (fazenda_id is not None and calendario.fazenda_id != fazenda_id):
+    if not calendario or (calendario.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
     if not calendario.usa_cronograma:
         raise HTTPException(status_code=400, detail="Esta regra não está marcada para usar cronograma sanitário — ative em Regras cadastradas antes de criar um cronograma.")
@@ -877,6 +1153,155 @@ def criar_cronograma_manual(
     eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
     return _serializar_cronograma(session, cron, calendarios, eventos, pessoas)
+
+
+def _tipo_evento(evento: EventoSanitario | None) -> str:
+    return (evento.categoria_preventiva if evento else None) or "vacina"
+
+
+@router.get("/ocorrencias")
+def listar_ocorrencias(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Tela 1 do redesenho do evento sanitário — Calendário Sanitário (lista),
+    docs/redesenho-evento-sanitario.md seção 3.2.1. 1 linha por Regra ativa,
+    com a Ocorrência (CronogramaSanitario) mais recente e o estado computado
+    (provavel/em_edicao/confirmado/realizado, ver
+    rules.checklist_sanitario.estado_ocorrencia).
+
+    Indicadores de financeiro e adesão (seção 3.2.1) ainda não entram aqui —
+    dependem do widget financeiro (Fase 3) e de histórico suficiente de
+    Realizado para a métrica fazer sentido; não é omissão silenciosa, é
+    escopo desta fase (Fase 2, telas 1-2)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
+    regras = session.exec(query).all()
+
+    eventos = {e.id: e for e in session.exec(select(EventoSanitario)).all()}
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    hoje = date.today()
+
+    linhas = []
+    for regra in regras:
+        evento = eventos.get(regra.evento_sanitario_id)
+        cron = session.exec(
+            select(CronogramaSanitario)
+            .where(CronogramaSanitario.calendario_sanitario_id == regra.id)
+            .order_by(CronogramaSanitario.criado_em.desc())
+        ).first()
+        if cron is None:
+            # Regra que nunca passou pela Agenda (ex.: usa_cronograma=False
+            # e a fazenda não tem a flag usar_ocorrencia_universal ligada) —
+            # "provável" pura, sem linha própria nem contagem de animais.
+            linhas.append({
+                "calendario_sanitario_id": regra.id, "cronograma_id": None,
+                "evento_sanitario_nome": evento.nome if evento else "—", "tipo": _tipo_evento(evento),
+                "categoria_alvo": regra.categoria_alvo, "data_prevista": regra.data_evento.isoformat(),
+                "estado": "provavel", "animais_incluidos": 0, "animais_sugeridos": 0,
+                "veterinario_nome": None, "atraso_dias": max(0, (hoje - regra.data_evento).days),
+                "alerta_clinico": False,
+            })
+            continue
+        animais = session.exec(
+            select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id == cron.id)
+        ).all()
+        contagem = {"sugerido": 0, "incluido": 0, "excluido": 0, "aplicado": 0}
+        for a in animais:
+            contagem[a.status] = contagem.get(a.status, 0) + 1
+        estado = estado_ocorrencia(session, cron)
+        linhas.append({
+            "calendario_sanitario_id": regra.id, "cronograma_id": cron.id,
+            "evento_sanitario_nome": evento.nome if evento else "—", "tipo": _tipo_evento(evento),
+            "categoria_alvo": regra.categoria_alvo, "data_prevista": cron.data_evento.isoformat(),
+            "estado": estado,
+            "animais_incluidos": contagem["incluido"] + contagem["aplicado"], "animais_sugeridos": contagem["sugerido"],
+            "veterinario_nome": pessoas.get(cron.veterinario_pessoa_id) if cron.veterinario_pessoa_id else None,
+            "atraso_dias": max(0, (hoje - cron.data_evento).days) if estado != "realizado" else 0,
+            "alerta_clinico": alerta_clinico_ativo(session, cron.id),
+        })
+
+    return {
+        "indicadores": {
+            "vencidas": sum(1 for l in linhas if l["atraso_dias"] > 0 and l["estado"] != "realizado"),
+            "provaveis_30d": sum(
+                1 for l in linhas if l["estado"] == "provavel" and (date.fromisoformat(l["data_prevista"]) - hoje).days <= 30
+            ),
+            "confirmadas_aguardando": sum(1 for l in linhas if l["estado"] == "confirmado"),
+            "alerta_clinico_ativo": sum(1 for l in linhas if l["alerta_clinico"]),
+        },
+        "linhas": linhas,
+    }
+
+
+def _estoque_info_ocorrencia(session: Session, regra: CalendarioSanitario | None, fazenda_id: int | None) -> dict | None:
+    """Aviso de saldo do produto vinculado à regra, para o item "estoque" do
+    checklist deixar de ser um clique sem informação nenhuma (pedido do
+    usuário em 12/09/2026). NÃO é o cálculo preciso "dá pra aplicar em todos
+    os incluídos" (dosagem é texto livre — "2 mL a 5 mL conforme bula" — sem
+    unidade normalizada por animal para multiplicar); é só o saldo atual do
+    produto, honesto quanto ao que de fato verifica."""
+    if not regra or not (regra.produto or "").strip():
+        return None
+    query = select(Estoque).where(Estoque.nome == regra.produto)
+    if fazenda_id is not None:
+        query = query.where(Estoque.fazenda_id == fazenda_id)
+    item = session.exec(query).first()
+    if not item:
+        return {"produto": regra.produto, "encontrado": False, "saldo": None, "unidade": None}
+    return {"produto": regra.produto, "encontrado": True, "saldo": item.quantidade, "unidade": item.unidade}
+
+
+@router.get("/ocorrencias/{cronograma_id}")
+def detalhe_ocorrencia(
+    cronograma_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Tela 2 do redesenho do evento sanitário — Detalhe da Ocorrência,
+    docs/redesenho-evento-sanitario.md seção 3.2.2 (abas Animais e Checklist
+    nesta fase; Resumo/Histórico ficam para a próxima parte da Fase 2)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    cron = session.get(CronogramaSanitario, cronograma_id)
+    if not cron or (fazenda_id is not None and cron.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Ocorrência não encontrada")
+    regra = session.get(CalendarioSanitario, cron.calendario_sanitario_id)
+    evento = session.get(EventoSanitario, regra.evento_sanitario_id) if regra else None
+    vet = session.get(Pessoa, cron.veterinario_pessoa_id) if cron.veterinario_pessoa_id else None
+
+    animais = session.exec(
+        select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id == cron.id)
+        .order_by(CronogramaSanitarioAnimal.numero_matriz)
+    ).all()
+    checklist = materializar_checklist(session, cron, evento) if evento else []
+
+    return {
+        "cronograma_id": cron.id, "calendario_sanitario_id": regra.id if regra else None,
+        "evento_sanitario_nome": evento.nome if evento else "—", "tipo": _tipo_evento(evento),
+        "categoria_alvo": regra.categoria_alvo if regra else None,
+        "data_prevista": cron.data_evento.isoformat(),
+        "estado": estado_ocorrencia(session, cron),
+        "checklist_desconsiderado": cron.checklist_desconsiderado,
+        "checklist_desconsiderado_motivo": cron.checklist_desconsiderado_motivo,
+        "veterinario_nome": vet.nome if vet else None,
+        "alerta_clinico": alerta_clinico_ativo(session, cron.id),
+        "estoque": _estoque_info_ocorrencia(session, regra, fazenda_id),
+        "animais": [
+            {
+                "id": a.id, "numero_matriz": a.numero_matriz, "status": a.status,
+                "data_sugestao": a.data_sugestao.isoformat(),
+                "data_decisao": a.data_decisao.isoformat() if a.data_decisao else None,
+            }
+            for a in animais
+        ],
+        "checklist": [
+            {
+                "id": item.id, "chave": item.chave, "nome": item.nome, "status": item.status,
+                "resposta": item.resposta, "observacao": item.observacao,
+                "respondido_em": item.respondido_em.isoformat() if item.respondido_em else None,
+            }
+            for item in sorted(checklist, key=lambda i: i.ordem)
+        ],
+    }
 
 
 @router.get("/calendario/eventos-vida")
@@ -896,6 +1321,7 @@ def relatorio_eventos_vida(
     data_inicio: str = "",
     data_fim: str = "",
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
     Relatório "quais animais entrarão em determinado calendário sanitário" —
@@ -907,11 +1333,21 @@ def relatorio_eventos_vida(
     do cadastro) ou um `gatilho` avulso (exploração livre, sem precisar
     cadastrar o evento sanitário antes).
     """
+    # BUG DE SEGURANÇA CORRIGIDO: a rota inteira rodava sem NENHUM filtro de
+    # fazenda — nem o `evento_sanitario_id` (per-tenant, uq (nome, fazenda_id))
+    # comparava posse, nem o Animal.numero == chave nem `_datas_gatilho`
+    # recebiam fazenda_id (ficava None por posição, desligando o `_da_fazenda`
+    # interno). Resultado: qualquer cliente lia o rebanho e o calendário de
+    # manejo de TODAS as fazendas do SaaS. Mesmo padrão tolerante do resto do
+    # projeto — token sem fazenda resolvida (Painel CowData) continua sem
+    # filtro, deliberadamente.
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome_evento = None
     sexo_alvo = None
+    ev: EventoSanitario | None = None
     if evento_sanitario_id is not None:
         ev = session.get(EventoSanitario, evento_sanitario_id)
-        if not ev:
+        if not ev or (fazenda_id is not None and ev.fazenda_id != fazenda_id):
             raise HTTPException(status_code=400, detail="Evento sanitário não encontrado")
         if ev.tipo_agendamento != "evento" or not ev.gatilho:
             raise HTTPException(status_code=400, detail="Este evento sanitário não está agendado por evento de vida")
@@ -921,23 +1357,53 @@ def relatorio_eventos_vida(
     if not gatilho or gatilho not in GATILHOS_EVENTO:
         raise HTTPException(status_code=400, detail=f"Gatilho inválido (use: {', '.join(GATILHOS_EVENTO)})")
 
-    animais = {a.numero: a for a in session.exec(select(Animal)).all()}
+    query_animais = select(Animal)
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+    animais = {a.numero: a for a in session.exec(query_animais).all()}
     hoje = date.today()
+
+    # "Quem está na janela" — após o gatilho, a janela de aplicação é definida
+    # pelo prazo cadastrado em EventoSanitario (janela_de/janela_ate). Só se
+    # aplica quando o relatório foi chamado por evento_sanitario_id (a janela
+    # é uma propriedade da regra, não do gatilho avulso).
+    tem_janela = ev is not None and ev.janela_de_valor is not None and ev.janela_ate_valor is not None
+
+    def _janela(d: date) -> tuple[date, date]:
+        return (
+            proxima_ocorrencia(d, ev.janela_de_valor, ev.janela_de_unidade),
+            proxima_ocorrencia(d, ev.janela_ate_valor, ev.janela_ate_unidade),
+        )
+
     linhas = []
-    for numero, quando in _datas_gatilho(session, gatilho, gatilho_lote, gatilho_idade_meses, 0, sexo_alvo):
+    for numero, quando in _datas_gatilho(session, gatilho, gatilho_lote, gatilho_idade_meses, 0, sexo_alvo, fazenda_id):
         if data_inicio and quando.isoformat() < data_inicio:
             continue
         if data_fim and quando.isoformat() > data_fim:
             continue
         a = animais.get(numero)
-        linhas.append({
+        linha = {
             "numero_matriz": numero,
             "nome": a.nome if a else None,
             "grupo_primario": a.grupo_primario if a else None,
             "categoria": (a.categoria_abrev or a.categoria_completa) if a else None,
             "data_evento": quando.isoformat(),
             "dias_restantes": (quando - hoje).days,
-        })
+        }
+        if tem_janela:
+            ini, fim = _janela(quando)
+            if hoje < ini:
+                situacao = "ainda_nao"
+            elif hoje <= fim:
+                situacao = "na_janela"
+            else:
+                situacao = "fora_da_janela"
+            linha.update({
+                "janela_inicio": ini.isoformat(), "janela_fim": fim.isoformat(),
+                "situacao_janela": situacao, "dias_para_fechar_janela": (fim - hoje).days,
+                "acao_fora_janela": ev.acao_fora_janela if ev else None,
+            })
+        linhas.append(linha)
     linhas.sort(key=lambda x: x["data_evento"])
     return {"gatilho": gatilho, "rotulo": ROTULOS_GATILHO.get(gatilho, gatilho), "evento_sanitario_nome": nome_evento, "animais": linhas}
 
@@ -1005,8 +1471,13 @@ def cadastrar_preventivo(
     user: Usuario = Depends(get_current_user),
     fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
+    # BUG DE SEGURANÇA CORRIGIDO: nem o evento sanitário nem a regra do
+    # calendário (ambos per-tenant, uq (nome, fazenda_id)) comparavam posse —
+    # um id sequencial de outra fazenda vazava o cadastro sanitário alheio
+    # inteiro (produto/dose/via/doença) na resposta, e uma regra nova nascia
+    # apontando pro evento_sanitario_id de outro cliente.
     ev = session.get(EventoSanitario, dados.evento_sanitario_id)
-    if not ev:
+    if not ev or ev.fazenda_id != fazenda_id:
         raise HTTPException(status_code=400, detail="Evento sanitário não encontrado")
     if dados.frequencia_unidade not in FREQUENCIAS:
         raise HTTPException(status_code=400, detail=f"Frequência inválida (use: {', '.join(FREQUENCIAS)})")
@@ -1057,7 +1528,11 @@ def cadastrar_preventivo(
     # pendência original na Agenda nunca sumir.
     if dados.calendario_id is not None:
         regra = session.get(CalendarioSanitario, dados.calendario_id)
-        if not regra or regra.evento_sanitario_id != ev.id:
+        # A checagem original só comparava `regra.evento_sanitario_id == ev.id`
+        # — coerência entre os dois objetos, nunca posse. Como `ev` já é da
+        # própria fazenda (checado acima), a regra alheia (mesmo evento_id,
+        # outra fazenda_id) passava e voltava serializada inteira na resposta.
+        if not regra or regra.evento_sanitario_id != ev.id or regra.fazenda_id != fazenda_id:
             raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
     else:
         regra = None
@@ -1129,9 +1604,13 @@ def cadastrar_preventivo(
             )
         resultado_exame = {"resultado": dados.resultado_exame, "banda": banda, "animais": len(dados.animais), "ids": exame_resultado_ids}
 
-    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
+    eventos, doencas, principios, categorias, servicos_financeiro, tipos_agendamento = _nomes(session)
+    cronograma_aberto_por_regra = _cronograma_aberto_por_regra(session, [regra.id]) if regra else {}
     return {
-        "regra": _serializar(regra, eventos, doencas, principios, categorias, servicos_financeiro=servicos_financeiro) if regra else None,
+        "regra": _serializar(
+            regra, eventos, doencas, principios, categorias, servicos_financeiro=servicos_financeiro,
+            tipos_agendamento=tipos_agendamento, cronograma_aberto_por_regra=cronograma_aberto_por_regra,
+        ) if regra else None,
         "aplicacao": aplicacao,
         "resultado_exame": resultado_exame,
     }
@@ -1145,7 +1624,8 @@ def listar_resultados_exame(
 ) -> list[dict]:
     """Relatório de resultados de exames (positivo/negativo/indefinido ou
     numérico) lançados via calendário sanitário preventivo — ver
-    cadastrar_preventivo. Só leitura, para acompanhamento."""
+    cadastrar_preventivo. Editar/excluir um resultado individual são as
+    rotas abaixo (PUT/DELETE via /exclusoes)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     query = select(ExameResultado).order_by(ExameResultado.data_exame.desc(), ExameResultado.id.desc())
     if fazenda_id is not None:
@@ -1165,6 +1645,63 @@ def listar_resultados_exame(
         d["evento_sanitario_nome"] = eventos.get(r.evento_sanitario_id)
         saida.append(d)
     return saida
+
+
+class EditarResultadoExameIn(BaseModel):
+    data_exame: date | None = None
+    resultado: str | None = None
+    valor_numerico: float | None = None
+    veterinario: str | None = None
+    observacao: str | None = None
+
+
+@router.put("/exames/resultados/{resultado_id}")
+def editar_resultado_exame(
+    resultado_id: int, dados: EditarResultadoExameIn,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Corrige o diagnóstico/valor de um exame preventivo já lançado — antes
+    desta rota, o relatório era só leitura e o único jeito de corrigir um
+    resultado errado era apagar e relançar manualmente o calendário inteiro.
+    Se o resultado mudar de/para "positivo", ajusta "A descartar" do animal
+    do mesmo jeito que o lançamento original faz (ver cadastrar_preventivo)
+    — nunca deixa a marcação automática dessincronizada do diagnóstico que a
+    gerou."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    r = session.get(ExameResultado, resultado_id)
+    if not r or (r.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Resultado de exame não encontrado")
+
+    campos = dados.model_dump(exclude_unset=True)
+    if campos.get("resultado") is not None and campos["resultado"] not in RESULTADOS_EXAME:
+        raise HTTPException(status_code=400, detail=f"Resultado inválido (use: {', '.join(RESULTADOS_EXAME)})")
+
+    resultado_anterior = r.resultado
+    for campo, valor in campos.items():
+        setattr(r, campo, valor)
+    if "valor_numerico" in campos or "resultado" in campos:
+        exame_def = session.get(ExameDefinicao, r.exame_definicao_id) if r.exame_definicao_id else None
+        r.banda = _banda_numerica(exame_def, r.valor_numerico) if r.valor_numerico is not None else None
+    session.add(r)
+    session.commit()
+
+    if r.resultado != resultado_anterior and (r.resultado == "positivo" or resultado_anterior == "positivo"):
+        ev = session.get(EventoSanitario, r.evento_sanitario_id)
+        marcar_a_descartar(
+            ADescartarIn(
+                animais=[r.numero_matriz],
+                descartar=(r.resultado == "positivo"),
+                observacao=f"Exame {ev.nome}: positivo" if ev and r.resultado == "positivo" else None,
+            ),
+            session=session,
+            fazenda_id=fazenda_id,
+        )
+
+    session.refresh(r)
+    eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
+    d = r.model_dump()
+    d["evento_sanitario_nome"] = eventos.get(r.evento_sanitario_id)
+    return d
 
 
 # ---------------------------------------------------------------------------
@@ -1235,8 +1772,12 @@ def lancar_protocolo(
     dados: ProtocoloLancamentoIn, response: Response, session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
+    # BUG DE SEGURANÇA CORRIGIDO: ProtocoloSanitario é per-tenant (uq (nome,
+    # fazenda_id)) e o id é sequencial — sem comparar posse, um cliente lançava
+    # (e via aplicado/baixado) o molde terapêutico de outro cliente (produtos,
+    # doses), com o nome dele denormalizado no lançamento e ecoado na resposta.
     protocolo = session.get(ProtocoloSanitario, dados.protocolo_id)
-    if not protocolo:
+    if not protocolo or protocolo.fazenda_id != fazenda_id:
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
     etapas = session.exec(
         select(ProtocoloSanitarioEtapa).where(ProtocoloSanitarioEtapa.protocolo_id == dados.protocolo_id).order_by(ProtocoloSanitarioEtapa.dia)
@@ -1308,15 +1849,42 @@ def lancar_protocolo(
     lancamentos_criados = []
     avisos: list[str] = []
     pulados: list[str] = []
+    # Cabeçalho do lote (ProtocoloSanitarioLote) — criado uma única vez para
+    # esta chamada, na hora do primeiro animal de fato novo (uma chamada só
+    # com animais já lançados — puro retry — não deve deixar um lote vazio
+    # para trás). É o que dá ao Sanitário a mesma grade dia×animal com
+    # marcar/desfazer/cancelar/encerrar que as outras 4 famílias já têm na
+    # Central de Protocolos (ver ProtocoloSanitarioLote e central_protocolos.py).
+    lote: ProtocoloSanitarioLote | None = None
+    dia_final_etapas = max(e.dia for e in etapas)
     for numero in numeros:
         if numero in numeros_existentes:
             pulados.append(numero)
             continue
+        if lote is None:
+            lote = ProtocoloSanitarioLote(
+                protocolo_id=dados.protocolo_id,
+                nome_protocolo=gerar_nome_lancamento(
+                    protocolo.nome, dados.data_inicio, protocolo.dia_inicial, dia_final_etapas,
+                ),
+                data_inicio=dados.data_inicio, responsavel=dados.responsavel, observacao=dados.observacao,
+                usuario_id=usuario_id_seguro(user), fazenda_id=fazenda_id,
+            )
+            session.add(lote)
+            session.commit()
+            session.refresh(lote)
         del_no_caso = None
         ccs_ultima = None
         recidiva = None
         if protocolo.eh_mastite:
-            animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+            # FURO DE MULTI-TENANT CORRIGIDO: sem o filtro de fazenda_id, uma
+            # colisão de numero com outra fazenda (numero deixou de ser único
+            # globalmente — ver Animal.numero) gravava o DEL de um animal
+            # ALHEIO como snapshot do caso de mastite deste lançamento.
+            query_animal_mastite = select(Animal).where(Animal.numero == numero)
+            if fazenda_id is not None:
+                query_animal_mastite = query_animal_mastite.where(Animal.fazenda_id == fazenda_id)
+            animal = session.exec(query_animal_mastite).first()
             del_no_caso = animal.del_dias if animal else None
             # Última CCS do animal (ou do tanque, na falta) — snapshot do caso.
             query_ccs = select(QualidadeLeite).where(QualidadeLeite.numero_matriz == numero, QualidadeLeite.ccs != None)  # noqa: E711
@@ -1328,13 +1896,17 @@ def lancar_protocolo(
             tetos_novos = set(dados.tetos_afetados)
             if tetos_novos:
                 limite = dados.data_inicio - timedelta(days=DIAS_RECIDIVA_MASTITE)
-                anteriores = session.exec(
-                    select(ProtocoloSanitarioLancamento).where(
-                        ProtocoloSanitarioLancamento.numero_matriz == numero,
-                        ProtocoloSanitarioLancamento.data_inicio >= limite,
-                        ProtocoloSanitarioLancamento.data_inicio < dados.data_inicio,
-                    )
-                ).all()
+                # BUG DE SEGURANÇA CORRIGIDO: sem o filtro de fazenda_id, uma
+                # colisão de numero_matriz com outra fazenda vazava data e
+                # tetos de um caso de mastite ALHEIO no aviso de recidiva.
+                query_anteriores = select(ProtocoloSanitarioLancamento).where(
+                    ProtocoloSanitarioLancamento.numero_matriz == numero,
+                    ProtocoloSanitarioLancamento.data_inicio >= limite,
+                    ProtocoloSanitarioLancamento.data_inicio < dados.data_inicio,
+                )
+                if fazenda_id is not None:
+                    query_anteriores = query_anteriores.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
+                anteriores = session.exec(query_anteriores).all()
                 for ant in anteriores:
                     tetos_ant = set((ant.tetos_afetados or "").split(",")) if ant.tetos_afetados else set()
                     if tetos_novos & tetos_ant:
@@ -1347,6 +1919,7 @@ def lancar_protocolo(
                         break
         lancamento = ProtocoloSanitarioLancamento(
             protocolo_id=dados.protocolo_id, numero_matriz=numero, data_inicio=dados.data_inicio,
+            lote_id=lote.id,
             responsavel=dados.responsavel, observacao=dados.observacao,
             classificacao_mastite=dados.classificacao_mastite,
             grau_mastite=dados.grau_mastite, agente=dados.agente,
@@ -1363,6 +1936,7 @@ def lancar_protocolo(
             data_prevista = dados.data_inicio + timedelta(days=etapa.dia - protocolo.dia_inicial)
             session.add(ProtocoloSanitarioAplicacao(
                 lancamento_id=lancamento.id, etapa_id=etapa.id, data_prevista=data_prevista,
+                dia=etapa.dia, numero_matriz=numero,
                 produto=produto_por_etapa.get(etapa.id), fazenda_id=fazenda_id,
             ))
         session.commit()
@@ -1399,14 +1973,16 @@ def contexto_mastite(
     """DEL atual, última CCS e último CMT do animal — preenchidos automaticamente
     ao abrir um caso de mastite."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+    query_animal = select(Animal).where(Animal.numero == numero)
     query_ccs = select(QualidadeLeite).where(QualidadeLeite.numero_matriz == numero, QualidadeLeite.ccs != None)  # noqa: E711
     query_caso = select(ProtocoloSanitarioLancamento).where(
         ProtocoloSanitarioLancamento.numero_matriz == numero, ProtocoloSanitarioLancamento.resultado_cmt != None  # noqa: E711
     )
     if fazenda_id is not None:
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
         query_ccs = query_ccs.where(QualidadeLeite.fazenda_id == fazenda_id)
         query_caso = query_caso.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
+    animal = session.exec(query_animal).first()
     ult_ccs = session.exec(query_ccs.order_by(QualidadeLeite.data_coleta.desc())).first()
     ult_caso = session.exec(query_caso.order_by(ProtocoloSanitarioLancamento.data_inicio.desc())).first()
     return {
@@ -1426,7 +2002,7 @@ class MarcarCuraIn(BaseModel):
 def _marcar_cura_protocolo(lancamento_id: int, curada: bool, session: Session, fazenda_id: int | None) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     lanc = session.get(ProtocoloSanitarioLancamento, lancamento_id)
-    if not lanc or (fazenda_id is not None and lanc.fazenda_id != fazenda_id):
+    if not lanc or (lanc.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Lançamento de protocolo sanitário não encontrado")
     lanc.curada = curada
     session.add(lanc)
@@ -1536,11 +2112,10 @@ def registrar_colostragem(
     dados: ColostragemIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Grava (ou atualiza) o registro de colostragem/teste de sangue de uma
     cria — uma linha por animal, chamada pela calculadora de Parto/nascimento."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     query_animal = select(Animal).where(Animal.numero == dados.numero_animal)
     if fazenda_id is not None:
         query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)

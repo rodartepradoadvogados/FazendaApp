@@ -274,6 +274,79 @@ class TestCalendarioDiaria:
 
 
 # ---------------------------------------------------------------------------
+# Meia diária — dias_meia_diaria conta metade do valor de uma diária cheia.
+# ---------------------------------------------------------------------------
+class TestMeiaDiaria:
+    def test_marcar_meia_diaria_conta_metade_do_valor(self, client):
+        c, engine = client
+        pessoa_id = _diarista(c)
+        inicio = date.today() - timedelta(days=4)
+        diaria_id = _criar_diaria(c, pessoa_id, 4, valor=100.0)  # 5 dias corridos
+        meia = date.today() - timedelta(days=2)
+        r = c.put(f"/cadastro/diarias/{diaria_id}/dias", json={
+            "periodo_inicio": inicio.isoformat(), "periodo_fim": date.today().isoformat(),
+            "dias_meia_diaria": [meia.isoformat()],
+        })
+        assert r.status_code == 200, r.text
+        dados = r.json()
+        # 4 dias cheios + 1 meia diária = 4.5 diárias -> 450,00
+        assert dados["numero_diarias"] == 4.5
+        assert dados["total_ate_hoje"] == 450.0
+        assert dados["dias_folga"] == 0
+        assert dados["dias_meia_diaria"] == 1
+
+    def test_get_dias_marca_meia_diaria_e_soma_valor_periodo(self, client):
+        c, engine = client
+        pessoa_id = _diarista(c)
+        inicio = date.today() - timedelta(days=4)
+        diaria_id = _criar_diaria(c, pessoa_id, 4, valor=100.0)
+        meia = date.today() - timedelta(days=2)
+        c.put(f"/cadastro/diarias/{diaria_id}/dias", json={
+            "periodo_inicio": inicio.isoformat(), "periodo_fim": date.today().isoformat(),
+            "dias_meia_diaria": [meia.isoformat()],
+        })
+        r = c.get(f"/cadastro/diarias/{diaria_id}/dias")
+        dados = r.json()
+        dia_meia = next(d for d in dados["dias"] if d["data"] == meia.isoformat())
+        assert dia_meia["meia_diaria"] is True
+        assert dia_meia["trabalhado"] is False
+        assert dados["resumo_periodo"]["dias_meia_diaria"] == 1
+        assert dados["resumo_periodo"]["dias_trabalhados"] == 4
+        assert dados["resumo_periodo"]["valor_periodo"] == 450.0
+
+    def test_mesma_data_em_folga_e_meia_diaria_da_400(self, client):
+        c, engine = client
+        pessoa_id = _diarista(c)
+        inicio = date.today() - timedelta(days=4)
+        diaria_id = _criar_diaria(c, pessoa_id, 4)
+        dia = date.today() - timedelta(days=2)
+        r = c.put(f"/cadastro/diarias/{diaria_id}/dias", json={
+            "periodo_inicio": inicio.isoformat(), "periodo_fim": date.today().isoformat(),
+            "dias_nao_trabalhados": [dia.isoformat()], "dias_meia_diaria": [dia.isoformat()],
+        })
+        assert r.status_code == 400
+
+    def test_combina_folga_e_meia_diaria_no_mesmo_periodo(self, client):
+        c, engine = client
+        pessoa_id = _diarista(c)
+        inicio = date.today() - timedelta(days=4)
+        diaria_id = _criar_diaria(c, pessoa_id, 4, valor=100.0)  # 5 dias corridos
+        folga = date.today() - timedelta(days=3)
+        meia = date.today() - timedelta(days=1)
+        r = c.put(f"/cadastro/diarias/{diaria_id}/dias", json={
+            "periodo_inicio": inicio.isoformat(), "periodo_fim": date.today().isoformat(),
+            "dias_nao_trabalhados": [folga.isoformat()], "dias_meia_diaria": [meia.isoformat()],
+        })
+        assert r.status_code == 200, r.text
+        dados = r.json()
+        # 3 dias cheios + 1 folga + 1 meia diária = 3.5 diárias -> 350,00
+        assert dados["numero_diarias"] == 3.5
+        assert dados["total_ate_hoje"] == 350.0
+        assert dados["dias_folga"] == 1
+        assert dados["dias_meia_diaria"] == 1
+
+
+# ---------------------------------------------------------------------------
 # 10-11: convivência com auditoria legada já respondida.
 # ---------------------------------------------------------------------------
 class TestConviveComAuditoriaLegada:

@@ -60,6 +60,7 @@ class ContaGerencial(SQLModel, table=True):
     numero_boleto: Optional[str] = None
     responsavel: Optional[str] = None
     centro_custo: Optional[str] = None
+    classificacao: Optional[str] = None  # nome de uma ClassificacaoLancamento cadastrada (ex.: Medicamentos)
     tipo: Optional[str] = None
     origem: Optional[str] = "csv"  # "csv" (upload) | "manual" (lançamento pela tela)
     # Desconto/acréscimo negociado NA NOTA (produtos → valor bruto → líquido pago/recebido).
@@ -98,6 +99,11 @@ class LancamentoItem(SQLModel, table=True):
     data_competencia: Optional[date] = None  # herdado, p/ DRE por conta
     codigo_conta_gerencial: Optional[str] = None
     nome_conta_gerencial: Optional[str] = None
+    # Override do centro de custo da nota (ContaGerencial.centro_custo) SÓ
+    # para este item — permite que uma nota com vários itens (um boleto,
+    # uma compra) distribua cada item para um centro de custo diferente.
+    # None (a maioria dos itens) = usa o centro de custo da nota inteira.
+    centro_custo: Optional[str] = None
     produto: str
     tipo_item: Optional[str] = None  # "produto" | "servico" — escolha exclusiva no lançamento
     descricao: Optional[str] = None
@@ -127,6 +133,18 @@ class LancamentoItem(SQLModel, table=True):
 # metadados e o caminho. `conteudo` (bytes direto no Postgres) é o formato
 # ANTIGO, mantido só para ler anexos já existentes — todo anexo novo usa
 # `caminho_storage`, nunca os dois ao mesmo tempo.
+#
+# Também é o anexo do COMPROVANTE DE PAGAMENTO de `ValeFuncionario` e
+# `ValeAvulso` (ver fazenda/api/routers/cadastro/rh_folha.py, rotas
+# /vales/{tipo}/{id}/comprovante) — reaproveitado em vez de uma tabela nova
+# porque o mecanismo (Storage + categoria "Comprovante" + metadados) é
+# idêntico; só a chave de vínculo muda. `numero_lancamento` continua sendo
+# o vínculo de todo anexo "de lançamento" de verdade, mas um vale nem
+# sempre tem um `ContaGerencial` por trás (forma_pagamento
+# "desconto_integral_folha"/"desconto_proximo_pagamento" não move caixa —
+# ver `_sincronizar_conta_vale`): por isso `numero_lancamento` virou
+# opcional e ganhou os dois FKs abaixo, mutuamente exclusivos com ele e
+# entre si (exatamente um dos três vínculos preenchido, nunca mais de um).
 # ---------------------------------------------------------------------------
 class LancamentoAnexo(SQLModel, table=True):
     __tablename__ = "lancamento_anexo"
@@ -134,7 +152,12 @@ class LancamentoAnexo(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     # Piloto conservador de multi-fazenda — ver ContaGerencial.fazenda_id acima.
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
-    numero_lancamento: str = Field(index=True)
+    numero_lancamento: Optional[str] = Field(default=None, index=True)
+    # Comprovante de vale — exatamente um preenchido quando o anexo é de
+    # vale (o outro fica None), e os dois None quando o anexo é de um
+    # lançamento normal (`numero_lancamento` preenchido nesse caso).
+    vale_funcionario_id: Optional[int] = Field(default=None, foreign_key="vale_funcionario.id", index=True)
+    vale_avulso_id: Optional[int] = Field(default=None, foreign_key="vale_avulso.id", index=True)
     nome_arquivo: str
     mime_type: str
     tamanho_bytes: int
@@ -194,6 +217,22 @@ class PlanoContaGerencial(SQLModel, table=True):
     # popup de vínculo sanitário/reprodutivo em FormFinanceiro.
     pede_vinculo_sanitario_reprodutivo: Optional[bool] = None
 
+    # Em qual das 15 linhas da DRE Gerencial em cascata esta conta se
+    # classifica (ver fazenda.rules.dre.LINHAS_DRE_VALIDAS) — None = ainda
+    # não classificada (aparece em GET /financeiro/dre/conferencia) OU herda
+    # a linha do ancestral mais próximo que tiver uma (código por prefixo,
+    # ver fazenda.rules.dre.resolver_linha_dre). Gravado só por PUT
+    # /financeiro/plano-contas/{codigo}/linha-dre (admin), nunca pelo
+    # POST/PUT genérico de plano de contas — ver ADR no router.
+    #
+    # Um valor especial, "NAO_ENTRA_NA_DRE", existe para conta que
+    # LEGITIMAMENTE fica fora do resultado (ex.: principal de financiamento,
+    # transferência entre contas, aporte de sócio) — ver o ADR grande no
+    # topo de fazenda/rules/dre.py sobre por que principal de financiamento
+    # NUNCA é despesa (só o juros é) e por isso nunca pode cair na linha de
+    # depreciação nem em nenhuma outra linha de despesa.
+    linha_dre: Optional[str] = None
+
 
 # ---------------------------------------------------------------------------
 # Conta corrente (Configurações > Parâmetros financeiros) — antes era uma
@@ -216,6 +255,39 @@ class ContaCorrente(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Transferência entre contas correntes (Configurações > Parâmetros
+# financeiros > Conta corrente, botão "Transferir entre contas") — move
+# dinheiro de uma conta cadastrada para outra, refletindo no saldo calculado
+# das duas (ver calcular_saldos_contas_correntes em
+# fazenda/api/routers/financeiro.py).
+#
+# Tabela dedicada em vez de reaproveitar ContaGerencial com um novo tipo
+# "transferencia": ContaGerencial carrega dezenas de campos que não fazem
+# sentido aqui (parcela, boleto, patrimônio, pedido...) e o `tipo` do
+# lançamento é assumido "receita"/"despesa" em vários pontos do sistema (DRE
+# — agrupamento por_conta trata qualquer tipo != "receita" como despesa —,
+# validação de POST/PUT /financeiro/lancamentos etc.); um tipo novo ali
+# arriscaria vazar a transferência pros relatórios de despesa/receita sem
+# cada ponto do sistema saber filtrar. Uma linha por transferência já liga
+# as duas pontas (origem e destino) sozinha, sem precisar de um par de
+# registros linkados por um `transferencia_par_id`.
+# ---------------------------------------------------------------------------
+class TransferenciaContas(SQLModel, table=True):
+    __tablename__ = "transferencia_contas"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    # Piloto conservador de multi-fazenda — ver ContaCorrente.fazenda_id acima.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    conta_origem_id: int = Field(foreign_key="conta_corrente.id", index=True)
+    conta_destino_id: int = Field(foreign_key="conta_corrente.id", index=True)
+    valor: float
+    data: date
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+
+
+# ---------------------------------------------------------------------------
 # Centro de custo (Configurações > Parâmetros financeiros) — antes era só
 # sugestão (distinct dos valores já usados em ContaGerencial.centro_custo).
 # ---------------------------------------------------------------------------
@@ -231,6 +303,13 @@ class CentroCusto(SQLModel, table=True):
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     nome: str = Field(index=True)
     ativo: bool = True
+    # Centro de custo usado automaticamente no Lançamento simplificado
+    # (Lançamentos > Financeiro > Contas a pagar/receber) — no máximo 1
+    # marcado por fazenda; ao marcar um, os demais da mesma fazenda são
+    # desmarcados na mesma transação (ver `_desmarcar_outros_centro_custo_
+    # padrao` em fazenda/api/routers/financeiro.py). Sem nenhum marcado, o
+    # formulário simplificado bloqueia o salvamento em vez de adivinhar.
+    padrao: bool = Field(default=False)
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -258,6 +337,21 @@ class FormaPagamentoCadastro(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     # Piloto conservador de multi-fazenda (Fase 3B) — ver PlanoContaGerencial.fazenda_id acima.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome: str = Field(index=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ClassificacaoLancamento(SQLModel, table=True):
+    """Classificação livre de uma conta a pagar/receber (ex.: Medicamentos,
+    Ração, Manutenção) — Configurações > Parâmetros financeiros, mesmo padrão
+    de TipoDocumento/FormaPagamentoCadastro, cadastrável na hora do lançamento."""
+
+    __tablename__ = "classificacao_lancamento"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_classificacao_lancamento_nome_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     nome: str = Field(index=True)
     ativo: bool = True
@@ -351,6 +445,11 @@ class Pedido(SQLModel, table=True):
     status: str = "aberto"  # "aberto" | "parcialmente_atendido" | "atendido" | "cancelado"
     observacao: Optional[str] = None
     responsavel: Optional[str] = None
+    # Rastreio — preenchido quando o status vira "parcialmente_atendido" e o
+    # usuário confirma que o pedido já foi enviado (ver PUT /pedidos/{id}/rastreio).
+    enviado: Optional[bool] = None
+    codigo_rastreio: Optional[str] = None
+    link_rastreio: Optional[str] = None
     # Rastro de onde este pedido nasceu, se veio de "Importar para Pedidos"
     # em Orçamento/Planejamento financeiro (ver planejamento.py).
     origem_tipo: Optional[str] = None  # "orcamento" | "planejamento_financeiro"
@@ -375,8 +474,44 @@ class PedidoItem(SQLModel, table=True):
     valor_unitario_estimado: Optional[float] = None
     valor_total_estimado: float
     # Quanto desse item já foi coberto por lançamentos/movimentos vinculados.
+    # Dirige o status ATUAL do Pedido (ver pedidos.py::atualizar_status_por_*)
+    # — dinheiro lançado ou estoque baixado, não entrega física.
     quantidade_atendida: float = 0
     valor_atendido: float = 0
+    # Quanto desse item já foi CONFIRMADO como fisicamente entregue — só
+    # escrito por uma ação explícita de "marcar entrega" (ainda não
+    # implementada), nunca por lançamento financeiro nem movimento de
+    # estoque. Paralelo e independente de quantidade_atendida/valor_atendido
+    # de propósito: é a base do novo cálculo de status em
+    # fazenda.rules.pedido_status.calcular_status_pedido, que nenhum router
+    # ainda chama (ver comentário da migração f1a2b3c4d5e6).
+    quantidade_entregue: float = 0
+
+
+CATEGORIAS_PEDIDO_ANEXO = ["Orçamento", "Ordem de serviço", "Outro documento"]
+
+
+class PedidoAnexo(SQLModel, table=True):
+    """Documento anexado a um Pedido — orçamento, ordem de serviço ou outro
+    documento (ver CATEGORIAS_PEDIDO_ANEXO). Mesmo padrão de armazenamento
+    de LancamentoAnexo (conteúdo no Supabase Storage, só metadados aqui),
+    mas com `data_validade` própria: é dela que a Agenda tira o alerta de
+    vencimento (2 dias antes, ver fazenda/rules/agenda_engine.py) enquanto
+    o pedido segue "aberto" ou "parcialmente_atendido"."""
+
+    __tablename__ = "pedido_anexo"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    pedido_id: int = Field(foreign_key="pedido.id", index=True)
+    nome_arquivo: str
+    mime_type: str
+    tamanho_bytes: int
+    categoria: str  # um de CATEGORIAS_PEDIDO_ANEXO
+    data_validade: Optional[date] = None
+    caminho_storage: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 # ---------------------------------------------------------------------------
@@ -390,18 +525,55 @@ class Patrimonio(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     # Piloto conservador de multi-fazenda (Fase 3D) — ver PlanoContaGerencial.fazenda_id acima.
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    # Código do bem, "PAT-0001", sequencial POR FAZENDA (Onda 2). É o
+    # identificador que a pessoa usa para falar do bem ("baixa o PAT-0007"):
+    # `nome` se repete ("Trator") e `id` é número de banco, que muda se o
+    # dado for reimportado. Opcional porque todo o legado nasceu sem ele —
+    # ver o backfill em POST /patrimonio/codigos-gerar.
+    codigo: Optional[str] = Field(default=None, index=True)
     tipo: Optional[str] = None
     nome: str
     numero: Optional[str] = None
     atividade_cultura: Optional[str] = None
     data_imobilizacao: Optional[date] = None
     metodo_depreciacao: Optional[str] = None
-    vida_util: Optional[str] = None  # texto livre (ex.: "7 Anos")
+    vida_util: Optional[str] = None  # texto livre LEGADO (ex.: "7 Anos") — ver abaixo
+    # Vida útil ESTRUTURADA (Onda 2), preenchida pelos steppers do
+    # formulário. Tem precedência sobre o texto livre acima em
+    # rules.patrimonio.vida_util_em_anos — o texto continua existindo só
+    # para reler o que foi importado antes desta onda, e foi a origem do
+    # erro de 12x da Onda 1 ("10 anos e 6 meses" lido como 0,83 ano).
+    vida_util_anos: Optional[int] = None
+    vida_util_meses: Optional[int] = None
     valor_residual: Optional[float] = None
     quantidade: Optional[float] = None
     unidade: Optional[str] = None
     valor_total: Optional[float] = None
+    # False (padrão) preserva o comportamento histórico: valor_total JÁ é o
+    # valor do lote inteiro. True = valor_total é o valor de UMA unidade, e a
+    # base de qualquer cálculo (depreciação, valor de mercado inicial, KPIs)
+    # passa a ser valor_total * quantidade — ver rules.patrimonio.
+    # valor_base_aquisicao, a ÚNICA função que deve ler estes dois campos
+    # juntos (nenhum outro ponto deve ler valor_total cru).
+    valor_por_unidade: bool = False
+    # --- Baixa (Onda 2) --------------------------------------------------
+    # `data_baixa` sozinha dizia QUANDO o bem saiu, nunca POR QUÊ nem POR
+    # QUANTO — e sem o valor recebido não há como apurar ganho/perda de
+    # capital, que é resultado do exercício e vai para a linha OUTRAS
+    # RECEITAS E DESPESAS da DRE. Ver rules.patrimonio.resultado_baixa.
     data_baixa: Optional[date] = None
+    motivo_baixa: Optional[str] = None  # rules.patrimonio.MOTIVOS_BAIXA_VALIDOS
+    valor_baixa: Optional[float] = None  # valor recebido; só nos motivos com venda
+    # --- Parâmetros dos métodos acelerados / por uso (Onda 2) -------------
+    # Multiplicador do saldo decrescente; None = FATOR_SALDO_DECRESCENTE_PADRAO (2,
+    # "em dobro"). Só lido quando metodo_depreciacao = SALDO_DECRESCENTE.
+    fator_saldo_decrescente: Optional[float] = None
+    # Só lidos quando metodo_depreciacao = UNIDADES_PRODUZIDAS: o total que o
+    # bem produz na vida inteira e quanto já foi consumido. Preenchidos à mão
+    # — o sistema não rastreia horímetro (ver ADR em rules/patrimonio.py).
+    unidades_vida_util_total: Optional[float] = None
+    unidades_consumidas: Optional[float] = None
+    unidade_uso: Optional[str] = None  # "horas", "km", "fardos"...
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
     # True (padrão) = deprecia normalmente (calcular_depreciacao). False =

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="CowData">
+  <title>CowData</title>
+  <!-- Texto em CONTORNOS a partir da Barlow Bold (fonte real da marca):
+       formas, não texto — não depende de a fonte estar instalada em quem
+       abrir o arquivo. Símbolo "A Curva" no tile marinho/dourado, única
+       identidade aprovada (ver frontend/components/brand/CowDataMark.tsx). -->
+  <g>
+  <defs>
+    <linearGradient id="cowdata-curva" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%" stop-color="#8A6D2F"/>
+      <stop offset="100%" stop-color="#C9A44C"/>
+    </linearGradient>
+  </defs>
+  <rect width="120" height="120" rx="28" fill="#0A1F36"/>
+  <rect x="4.5" y="4.5" width="111" height="111" rx="24" fill="none" stroke="#C9A44C" stroke-opacity="0.3" stroke-width="1.3"/>
+  <line x1="16" y1="92" x2="104" y2="92" stroke="#416180" stroke-width="1.4"/>
+  <path d="M18 92 C30 88 38 50 52 44 C60 41 63 41 70 45 C84 52 90 82 102 90" fill="none" stroke="url(#cowdata-curva)" stroke-width="5.5" stroke-linecap="round"/>
+  <circle cx="58" cy="42.5" r="4.4" fill="#F3E7D3"/>
+  <circle cx="58" cy="42.5" r="7.6" fill="none" stroke="#C9A44C" stroke-width="1.4"/>
+  </g>
+</svg>

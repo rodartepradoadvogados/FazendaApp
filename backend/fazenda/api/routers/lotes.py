@@ -12,7 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_fazenda_atual_id
+from fazenda.api.routers.recria import _parametros_estado_vivo
+from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import Animal, CategoriaManejo, Lote, Parto, PesagemCorporal, Sanidade, Secagem, Servico
 from fazenda.rules.auditoria import fazenda_id_seguro
@@ -85,6 +86,18 @@ class LoteIn(BaseModel):
     categoria_manejo_ids: str | None = None
     excluir_da_sugestao: bool = False
     ativo: bool = True
+    # Permissões do lançamento de consumo de alimento. Nascem False (o padrão
+    # restritivo é o seguro), mas PRECISAM ser editáveis por aqui: sem isto o
+    # lote fica preso no padrão para sempre, porque não há outro caminho na
+    # aplicação para ligá-las — só editando o banco à mão.
+    permitir_fora_da_dieta: bool = False
+    permitir_sem_estoque: bool = False
+    # Como a dieta deste lote afeta o Estoque — "automatica" (baixa dia a dia
+    # pelo plano), "consumo_real" (só baixa quando alguém lança o consumo de
+    # verdade) ou "sem_baixa" (a dieta é só plano/receita). Nasce
+    # "consumo_real" (padrão restritivo/compatível — ver Lote.modo_baixa_estoque)
+    # e, como as duas flags acima, precisa ser editável por aqui.
+    modo_baixa_estoque: str = "consumo_real"
 
 
 def _validar_faixas(dados: LoteIn) -> None:
@@ -163,6 +176,9 @@ def _aplicar_campos(lote: Lote, dados: LoteIn) -> None:
     lote.categoria_manejo_ids = dados.categoria_manejo_ids
     lote.excluir_da_sugestao = dados.excluir_da_sugestao
     lote.ativo = dados.ativo
+    lote.permitir_fora_da_dieta = dados.permitir_fora_da_dieta
+    lote.permitir_sem_estoque = dados.permitir_sem_estoque
+    lote.modo_baixa_estoque = dados.modo_baixa_estoque
 
 
 @router.get("/")
@@ -203,9 +219,8 @@ def listar_lotes(
 
 @router.post("/")
 def criar_lote(
-    dados: LoteIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    dados: LoteIn, fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     _validar_faixas(dados)
     _validar_flags_unicos(session, dados, lote_id=None, fazenda_id=fazenda_id)
     codigo = _normalizar_codigo(dados.codigo)
@@ -340,11 +355,14 @@ def coletar_dados_criterios(session: Session, fazenda_id: int | None = None) -> 
 
     peso_por_animal: dict[str, float] = {}
     ultima_data: dict[str, date] = {}
+    pesagens_por_animal: dict[str, list[tuple[date, float]]] = {}
     for p in session.exec(query_pesagem).all():
         atual = ultima_data.get(p.numero_matriz)
         if not atual or p.data_pesagem > atual:
             ultima_data[p.numero_matriz] = p.data_pesagem
             peso_por_animal[p.numero_matriz] = p.peso_kg
+        if p.data_pesagem and p.peso_kg:
+            pesagens_por_animal.setdefault(p.numero_matriz, []).append((p.data_pesagem, p.peso_kg))
 
     partos_obj_por_animal: dict[str, list] = {}
     for p in session.exec(query_parto).all():
@@ -356,15 +374,30 @@ def coletar_dados_criterios(session: Session, fazenda_id: int | None = None) -> 
 
     categorias_ativas = list(session.exec(select(CategoriaManejo).where(CategoriaManejo.ativo == True)).all())  # noqa: E712
 
+    # Os 4 parâmetros que o estado reprodutivo ao vivo precisa (ver
+    # rules.estado_reprodutivo.classificar_animal, chamado dentro de
+    # recria._contexto_categoria) — lidos uma vez aqui, não a cada animal:
+    # `animal_atende_criterios`/`sugerir_movimentacoes` rodam em loop (às
+    # vezes um por animal por lote), e cada leitura de parâmetro abre uma
+    # sessão de banco própria (mesmo cuidado do calendário sanitário).
+    pev_dias, del_max_1o_servico, idade_apta_dias, peso_apta_kg, idade_atraso_dias, dias_atraso_apos_aptidao = (
+        _parametros_estado_vivo()
+    )
+
     return {
         "animais": animais,
         "servicos_por_animal": servicos_por_animal,
         "sanidades_por_animal": sanidades_por_animal,
         "peso_por_animal": peso_por_animal,
+        "pesagens_por_animal": pesagens_por_animal,
         "servicos_obj_por_animal": servicos_obj_por_animal,
         "partos_obj_por_animal": partos_obj_por_animal,
         "secagens_obj_por_animal": secagens_obj_por_animal,
         "categorias_ativas": categorias_ativas,
+        "pev_dias": pev_dias, "del_max_1o_servico": del_max_1o_servico,
+        "idade_apta_dias": idade_apta_dias, "peso_apta_kg": peso_apta_kg,
+        "idade_atraso_dias": idade_atraso_dias,
+        "dias_atraso_apos_aptidao": dias_atraso_apos_aptidao,
     }
 
 

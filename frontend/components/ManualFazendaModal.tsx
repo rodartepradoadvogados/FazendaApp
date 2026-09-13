@@ -7,8 +7,9 @@
 // cadastro de sugestões. Posicionamento (fixed no topo, ao lado do News) é
 // do container pai — ver .site-top-actions em globals.css.
 import { useEffect, useState } from "react";
-import { BookOpen, Download, TrendingUp, TrendingDown, Activity, Sparkles, AlertTriangle, X } from "lucide-react";
+import { BookOpen, Download, Share2, TrendingUp, TrendingDown, Activity, Sparkles, AlertTriangle, X } from "lucide-react";
 import { fetchManualFazenda, baixarPdfManualFazenda, type ManualFazenda } from "@/lib/api";
+import { ehApp } from "@/lib/nativo";
 
 const fmtDia = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("pt-BR");
 
@@ -46,12 +47,22 @@ function ManualFazendaModal({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [aba, setAba] = useState<Aba>("rotina");
   const [exportando, setExportando] = useState(false);
+  const [compartilhando, setCompartilhando] = useState(false);
+  // "Compartilhar" só existe dentro do app (folha nativa do Android) — no
+  // navegador é idêntico a "Exportar PDF" (mesmo <a download>).
+  const [mostrarCompartilhar, setMostrarCompartilhar] = useState(false);
+  useEffect(() => { ehApp().then(setMostrarCompartilhar); }, []);
 
   useEffect(() => { fetchManualFazenda().then(setManual).catch((e) => setError(e.message)); }, []);
 
   const exportarPDF = async () => {
     setExportando(true);
-    try { await baixarPdfManualFazenda(); } catch (e: any) { setError(e.message); } finally { setExportando(false); }
+    try { await baixarPdfManualFazenda("baixar"); } catch (e: any) { setError(e.message); } finally { setExportando(false); }
+  };
+
+  const compartilharPDF = async () => {
+    setCompartilhando(true);
+    try { await baixarPdfManualFazenda("compartilhar"); } catch (e: any) { setError(e.message); } finally { setCompartilhando(false); }
   };
 
   return (
@@ -67,10 +78,16 @@ function ManualFazendaModal({ onClose }: { onClose: () => void }) {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={exportarPDF} disabled={exportando || !manual} title="Exportar PDF"
+            <button onClick={exportarPDF} disabled={exportando || !manual} title="Baixar PDF"
               style={{ display: "flex", alignItems: "center", gap: "0.35rem", background: "rgba(255,255,255,0.14)", border: "1px solid rgba(255,255,255,0.28)", color: "var(--dourado-light)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", fontSize: "0.78rem", fontWeight: 600, cursor: exportando ? "wait" : "pointer" }}>
               <Download size={14} /> {exportando ? "Gerando…" : "Exportar PDF"}
             </button>
+            {mostrarCompartilhar && (
+              <button onClick={compartilharPDF} disabled={compartilhando || !manual} title="Compartilhar PDF"
+                style={{ display: "flex", alignItems: "center", gap: "0.35rem", background: "rgba(255,255,255,0.14)", border: "1px solid rgba(255,255,255,0.28)", color: "var(--dourado-light)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", fontSize: "0.78rem", fontWeight: 600, cursor: compartilhando ? "wait" : "pointer" }}>
+                <Share2 size={14} /> {compartilhando ? "Abrindo…" : "Compartilhar"}
+              </button>
+            )}
             <button onClick={onClose} aria-label="Fechar" style={{ background: "none", border: "none", color: "var(--dourado-light)", cursor: "pointer", padding: "0.3rem" }}>
               <X size={18} />
             </button>
@@ -182,7 +199,10 @@ function AbaResultado({ manual }: { manual: ManualFazenda }) {
     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
       <CardResultado valor={r.total_animais} label="Total de animais" />
       <CardResultado valor={r.vacas_lactacao} label="Vacas em lactação" />
-      <CardResultado valor={r.taxa_prenhez_pct != null ? `${r.taxa_prenhez_pct}%` : null} label="Taxa de prenhez" />
+      {/* "Fêmeas prenhas", não "Taxa de prenhez": é inventário (% do rebanho
+          apto prenhe hoje), não a taxa formal PREG/PG ELIG do BREDSUM — mesmo
+          rótulo da Capa e das outras telas que mostram taxa_prenhez_pct. */}
+      <CardResultado valor={r.taxa_prenhez_pct != null ? `${r.taxa_prenhez_pct}%` : null} label="Fêmeas prenhas" />
       <CardResultado valor={r.taxa_concepcao_pct != null ? `${r.taxa_concepcao_pct}%` : null} label="Taxa de concepção" />
       <CardResultado valor={r.taxa_servico_pct != null ? `${r.taxa_servico_pct}%` : null} label="Taxa de serviço" />
       <CardResultado valor={r.producao_media_kg != null ? `${r.producao_media_kg} kg` : null} label="Produção média/vaca" />

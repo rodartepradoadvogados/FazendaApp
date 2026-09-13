@@ -252,14 +252,14 @@ class TestExclusaoMovimentoLoteAprovacao:
             assert sol is not None
             sol_id = sol.id
             # `confirmar()` (exclusoes.py) chama `_alvos` ANTES de checar o
-            # papel do usuário — o efeito colateral de `_alvos_movimento_lote`
-            # (mudar o lote do animal) já é commitado mesmo na solicitação de
-            # um operador; só o DELETE do MovimentoLote em si fica pendente de
-            # aprovação. Mesmo comportamento (não específico deste tipo) que
-            # os demais tipos com efeito colateral em `_alvos` (compra_semen,
-            # fornecedor, ...) já têm hoje — ver comentário em exclusoes.py.
+            # papel do usuário, e `_alvos_movimento_lote` tem efeito colateral
+            # (devolver o animal ao lote de origem). Uma mera SOLICITAÇÃO não
+            # pode carregar esse efeito: o `session.rollback()` do ramo de
+            # operador descarta a reversão antes de gravar a
+            # `SolicitacaoExclusao`. Logo, aqui o animal continua no lote de
+            # destino — a reversão só acontece quando o admin aprovar.
             animal = s.exec(select(Animal).where(Animal.numero == "9006")).first()
-            assert animal.grupo_primario == "LOTE-A"
+            assert animal.grupo_primario == "LOTE-B"
             # O movimento em si ainda existe — só a solicitação foi criada.
             assert s.exec(select(MovimentoLote)).first() is not None
 
@@ -269,8 +269,8 @@ class TestExclusaoMovimentoLoteAprovacao:
         assert r.json()["aprovado"] is True
 
         with _sessao(engine) as s:
-            # `_alvos` roda de novo na aprovação — é idempotente: o animal já
-            # estava em LOTE-A, continua em LOTE-A.
+            # `_alvos` roda de novo na aprovação — é aí que a reversão de
+            # lote é de fato commitada, junto com o DELETE do movimento.
             animal = s.exec(select(Animal).where(Animal.numero == "9006")).first()
             assert animal.grupo_primario == "LOTE-A"
             assert s.exec(select(MovimentoLote)).all() == []

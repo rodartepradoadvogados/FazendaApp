@@ -1,14 +1,24 @@
 """
 Cronograma sanitário — motor de estado do workflow dinâmico de acompanhamento
-de uma regra do calendário sanitário (CalendarioSanitario) marcada
-`usa_cronograma=True`.
+de uma regra do calendário sanitário (CalendarioSanitario). É a "Ocorrência"
+do redesenho do evento sanitário (docs/redesenho-evento-sanitario.md, seção
+1) — entidade generalizada, não uma tabela nova.
+
+Hoje só roda para regra marcada `usa_cronograma=True`. Atrás da feature flag
+por fazenda `usar_ocorrencia_universal` (R-1 do redesenho, Fase 1), passa a
+rodar para TODA regra ativa — comportamento inalterado (False) até a fazenda
+ligar explicitamente.
 
 Duas trilhas independentes, que se encontram na aplicação:
   (1) trilha do animal — CronogramaSanitarioAnimal: todo dia, animais que
-      batem o critério do EventoSanitario (idade/gatilho, ver
-      fazenda.rules.eventos_sanitarios) entram "sugeridos" no cronograma
+      batem o critério do EventoSanitario entram "sugeridos" no cronograma
       ABERTO da regra; o funcionário aprova ("incluido") ou recusa
-      ("excluido") pela Agenda.
+      ("excluido") pela Agenda. Regra por EVENTO DE VIDA é alimentada por
+      `fazenda.rules.eventos_sanitarios` (gatilho por animal, já existia).
+      Regra por ÉPOCA (`EventoSanitario.tipo_agendamento != "evento"`) é
+      alimentada aqui mesmo, via `fazenda.rules.projecao_categoria` (R-2) —
+      projeta quem vai estar na categoria-alvo na data prevista da
+      Ocorrência, não em quem está na categoria HOJE.
   (2) trilha do agendamento — os campos do próprio CronogramaSanitario:
       decide COM QUEM (veterinário cadastrado como Pessoa, ou equipe
       própria) e QUANDO a aplicação acontece. Sem decisão, a Agenda cobra
@@ -26,7 +36,9 @@ from sqlmodel import Session, select
 
 from fazenda.models import CalendarioSanitario, CronogramaSanitario, CronogramaSanitarioAnimal, Pessoa
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
-from fazenda.rules.parametros import cronograma_sanitario_dias_aviso
+from fazenda.rules.checklist_sanitario import materializar_checklist
+from fazenda.rules.parametros import cronograma_sanitario_dias_aviso, usar_ocorrencia_universal
+from fazenda.rules.projecao_categoria import animais_projetados_na_categoria
 
 PREFIXO_CRONOGRAMA = "cronograma_sanitario_"
 
@@ -117,6 +129,36 @@ def sugerir_animais_em_lote(session: Session, calendario: CalendarioSanitario, n
     session.commit()
 
 
+def incluir_animal_manual(
+    session: Session, cronograma: CronogramaSanitario, numero_matriz: str, hoje: date,
+) -> CronogramaSanitarioAnimal:
+    """Inclusão manual, fora da janela de aplicação — bug relatado pelo
+    usuário em 12/09/2026 ("não tem como colocar animal fora da janela"): a
+    trilha do animal (sugerir_animal/sugerir_animais_em_lote) só cria linha
+    para quem bate o critério automático (idade/gatilho/categoria projetada).
+    Um animal fora desse critério nunca ganhava linha nenhuma, então nunca
+    aparecia pra decidir. Aqui a linha nasce direto "incluido" (pula
+    "sugerido" — não houve sugestão automática nenhuma para aceitar/recusar),
+    igual ao efeito final de `decidir_animal(incluir=True)`."""
+    if cronograma.status in ("concluido", "cancelado"):
+        raise CronogramaError("Este cronograma já foi encerrado — não é possível incluir animal")
+    existente = session.exec(
+        select(CronogramaSanitarioAnimal)
+        .where(CronogramaSanitarioAnimal.cronograma_id == cronograma.id)
+        .where(CronogramaSanitarioAnimal.numero_matriz == numero_matriz)
+    ).first()
+    if existente:
+        raise CronogramaError(f"Matriz {numero_matriz} já está neste cronograma ({existente.status})")
+    linha = CronogramaSanitarioAnimal(
+        cronograma_id=cronograma.id, numero_matriz=numero_matriz, status="incluido",
+        data_sugestao=hoje, data_decisao=hoje, fazenda_id=cronograma.fazenda_id,
+    )
+    session.add(linha)
+    session.commit()
+    session.refresh(linha)
+    return linha
+
+
 def decidir_animal(session: Session, cronograma_animal_id: int, incluir: bool, hoje: date) -> CronogramaSanitarioAnimal:
     linha = session.get(CronogramaSanitarioAnimal, cronograma_animal_id)
     if not linha:
@@ -124,6 +166,29 @@ def decidir_animal(session: Session, cronograma_animal_id: int, incluir: bool, h
     if linha.status != "sugerido":
         raise CronogramaError("Este animal já foi decidido")
     linha.status = "incluido" if incluir else "excluido"
+    linha.data_decisao = hoje
+    session.add(linha)
+    session.commit()
+    session.refresh(linha)
+    return linha
+
+
+def remover_animal(session: Session, cronograma_animal_id: int, hoje: date) -> CronogramaSanitarioAnimal:
+    """Remove um animal já incluído (ou ainda sugerido) do cronograma — pedido
+    do usuário em 13/09/2026 ("adicionar OU remover animais manualmente"):
+    `decidir_animal` só decide uma linha "sugerido" pela primeira vez (nunca
+    desfaz), e a inclusão manual (`incluir_animal_manual`) não tinha
+    contrapartida nenhuma para tirar o animal de volta. Vira "excluido",
+    igual ao efeito de recusar uma sugestão — nunca em animal já aplicado
+    (isso já virou aplicação de verdade, com baixa de estoque)."""
+    linha = session.get(CronogramaSanitarioAnimal, cronograma_animal_id)
+    if not linha:
+        raise CronogramaError("Animal não encontrado no cronograma")
+    if linha.status == "aplicado":
+        raise CronogramaError("Este animal já foi aplicado — não é possível remover")
+    if linha.status == "excluido":
+        raise CronogramaError("Este animal já está excluído")
+    linha.status = "excluido"
     linha.data_decisao = hoje
     session.add(linha)
     session.commit()
@@ -176,6 +241,39 @@ def adiar(session: Session, cronograma: CronogramaSanitario, nova_data: date, mo
     return cronograma
 
 
+def reabrir(session: Session, cronograma: CronogramaSanitario, motivo: str | None = None) -> CronogramaSanitario:
+    """"Reabrir" de verdade — Fase 0, passo 4 do redesenho do evento
+    sanitário (docs/redesenho-evento-sanitario.md, seção 3.3: "Confirmado →
+    Em edição", a qualquer momento, sem limite, até Realizado). Igual a
+    `adiar()` na devolução ao estado editável (modo/veterinário zerados,
+    status "aberto"), mas SEM mudar `data_evento` nem gravar `data_original`
+    — `adiar` sempre muda a data; `reabrir` nunca muda.
+
+    Só permitido a partir de "agendado" (o único estado hoje que corresponde
+    ao "Confirmado" do redesenho — decisão de modo já tomada, aguardando a
+    data). Nunca a partir de "concluido": esse é o "Realizado" do redesenho,
+    terminal quanto ao registro em Sanidade — reabrir de lá quebraria a
+    arquitetura travada com o usuário (seção 1, ponto 2 do documento).
+    Reabrir um cronograma já "aberto" é idempotente (no-op, exceto o
+    motivo)."""
+    if cronograma.status == "concluido":
+        raise CronogramaError("Este cronograma já foi aplicado — não é possível reabrir (só \"Adicionar observação\")")
+    if cronograma.status == "cancelado":
+        raise CronogramaError("Este cronograma foi cancelado — não é possível reabrir")
+    if cronograma.status == "aberto":
+        return cronograma
+    cronograma.modo_execucao = None
+    cronograma.veterinario_pessoa_id = None
+    cronograma.status = "aberto"
+    if motivo:
+        cronograma.observacao = (f"{cronograma.observacao} | " if cronograma.observacao else "") + f"Reaberto: {motivo}"
+    cronograma.atualizado_em = datetime.utcnow()
+    session.add(cronograma)
+    session.commit()
+    session.refresh(cronograma)
+    return cronograma
+
+
 def animais_por_status(session: Session, cronograma_id: int, status: str) -> list[CronogramaSanitarioAnimal]:
     return session.exec(
         select(CronogramaSanitarioAnimal)
@@ -209,6 +307,17 @@ def concluir(session: Session, cronograma: CronogramaSanitario, animais_aplicado
     session.commit()
 
 
+def _regra_e_por_epoca(calendario: CalendarioSanitario, eventos_por_id: dict) -> bool:
+    """True quando a regra é do tipo "época" (frequência/categoria, sem
+    gatilho por animal) — o único caso que precisa do motor de projeção
+    (R-2). Regra por evento de vida (`EventoSanitario.tipo_agendamento ==
+    "evento"`) já tem sugestão própria, alimentada por
+    fazenda.rules.eventos_sanitarios; nunca passa por aqui, mesmo com a flag
+    `usar_ocorrencia_universal` ligada."""
+    evento = eventos_por_id.get(calendario.evento_sanitario_id)
+    return evento is None or evento.tipo_agendamento != "evento"
+
+
 # ---------------------------------------------------------------------------
 # Eventos da Agenda — as 4 pendências do desenho (ver docs/plano no chat):
 # animal sugerido (incluir/excluir), decisão de modo (recém-criado),
@@ -216,7 +325,12 @@ def concluir(session: Session, cronograma: CronogramaSanitario, animais_aplicado
 # (dia do evento, modo já definido).
 # ---------------------------------------------------------------------------
 def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_id: int | None = None) -> list[dict]:
-    query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True).where(CalendarioSanitario.usa_cronograma == True)  # noqa: E712
+    query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
+    # `usa_cronograma` continua filtrando por padrão (comportamento de
+    # sempre); com a flag ligada para a fazenda (R-1), toda regra ativa passa
+    # a ter Ocorrência — o campo deixa de ser opt-in.
+    if not usar_ocorrencia_universal():
+        query = query.where(CalendarioSanitario.usa_cronograma == True)  # noqa: E712
     if fazenda_id is not None:
         query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
     regras = {c.id: c for c in session.exec(query).all()}
@@ -257,6 +371,38 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
     for calendario_id, calendario in regras.items():
         if calendario_id not in regras_com_cronograma:
             cronogramas.append(cronograma_aberto(session, calendario))
+
+    # Checklist da Ocorrência (Fase 1, passo 7) — materializa (idempotente,
+    # nunca duplica/reseta) assim que o cronograma existe, no mesmo espírito
+    # de "nasce no ato" do comentário acima. Puramente aditivo: só cria linha
+    # numa tabela nova que ninguém lê ainda fora deste redesenho — sem flag.
+    for cron in cronogramas:
+        evento = eventos_por_id.get(regras[cron.calendario_sanitario_id].evento_sanitario_id)
+        if evento is not None:
+            materializar_checklist(session, cron, evento)
+
+    # Trilha do animal (1) para regras por ÉPOCA — só sob a flag (R-1): usa o
+    # motor de projeção (R-2, fazenda.rules.projecao_categoria) para sugerir
+    # quem vai bater a categoria-alvo na data PREVISTA de cada cronograma
+    # aberto, não em quem bate hoje. Regra por evento de vida continua sendo
+    # alimentada por fazenda.rules.eventos_sanitarios (gatilho por animal, já
+    # existia antes deste redesenho) — nunca duplicada aqui.
+    # `coletar_dados_criterios` (rebanho inteiro + histórico reprodutivo) só
+    # é buscado se existir ao menos 1 regra por época com cronograma aberto —
+    # 1 consulta pesada por carregamento da Agenda, nunca uma por regra.
+    if usar_ocorrencia_universal():
+        cronogramas_epoca = [
+            c for c in cronogramas
+            if _regra_e_por_epoca(regras[c.calendario_sanitario_id], eventos_por_id)
+        ]
+        if cronogramas_epoca:
+            from fazenda.api.routers.lotes import coletar_dados_criterios
+            dados_criterios = coletar_dados_criterios(session, fazenda_id)
+            for cron in cronogramas_epoca:
+                calendario = regras[cron.calendario_sanitario_id]
+                numeros = animais_projetados_na_categoria(calendario.categoria_alvo or "", cron.data_evento, dados_criterios)
+                if numeros:
+                    sugerir_animais_em_lote(session, calendario, numeros, hoje)
 
     # Trilhas do animal (1) e de aplicação (3) abaixo, em lote para TODOS os
     # cronogramas de uma vez — antes eram 2 SELECTs por cronograma aberto

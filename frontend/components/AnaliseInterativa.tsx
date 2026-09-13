@@ -92,10 +92,10 @@ export default function AnaliseInterativa({ ini, fim, filtros }: AnaliseInterati
   const toggle = (key: string) =>
     setSelecionadas((p) => (p.includes(key) ? p.filter((k) => k !== key) : [...p, key]));
 
-  const { rotulos, seriesPorMetrica } = useMemo(() => {
-    if (!dados) return { rotulos: [] as string[], seriesPorMetrica: {} as Record<string, (number | null)[]> };
+  const { rotulos, seriesPorMetrica, janelaCompleta } = useMemo(() => {
+    if (!dados) return { rotulos: [] as string[], seriesPorMetrica: {} as Record<string, (number | null)[]>, janelaCompleta: [] as boolean[] };
     if (eixo === "mes") {
-      return { rotulos: dados.meses, seriesPorMetrica: dados.series };
+      return { rotulos: dados.meses, seriesPorMetrica: dados.series, janelaCompleta: dados.janela_dg_completa };
     }
     const seriesPorMetrica: Record<string, (number | null)[]> = {};
     let rotulos: string[] = [];
@@ -105,13 +105,18 @@ export default function AnaliseInterativa({ ini, fim, filtros }: AnaliseInterati
       rotulos = anos;
       seriesPorMetrica[m.key] = valores;
     }
-    return { rotulos, seriesPorMetrica };
+    // Um ano só está com a janela de diagnóstico fechada se TODOS os meses que
+    // o compõem estiverem — um único mês em apuração já enviesa a média anual
+    // da concepção do mesmo jeito que enviesaria a mensal.
+    const janelaCompleta = rotulos.map((ano) =>
+      dados.meses.every((m, i) => m.slice(0, 4) !== ano || dados.janela_dg_completa[i]));
+    return { rotulos, seriesPorMetrica, janelaCompleta };
   }, [dados, eixo]);
 
   const normalizar = selecionadas.length > 1;
   const chartData = useMemo(() => {
     return rotulos.map((r, i) => {
-      const linha: Record<string, any> = { rotulo: eixo === "mes" ? rotuloMes(r) : r };
+      const linha: Record<string, any> = { rotulo: eixo === "mes" ? rotuloMes(r) : r, __completo: janelaCompleta[i] };
       selecionadas.forEach((key) => {
         const serie = seriesPorMetrica[key] || [];
         const v = serie[i];
@@ -123,9 +128,23 @@ export default function AnaliseInterativa({ ini, fim, filtros }: AnaliseInterati
       });
       return linha;
     });
-  }, [rotulos, selecionadas, seriesPorMetrica, normalizar, eixo]);
+  }, [rotulos, selecionadas, seriesPorMetrica, normalizar, eixo, janelaCompleta]);
 
   const metricaPorKey = (key: string) => METRICAS.find((m) => m.key === key)!;
+
+  // Taxa de concepção depende de diagnóstico (regra dos 28 dias, R7) — o
+  // ponto mais recente quase sempre está "em apuração" e ainda vai subir.
+  // Mesmo padrão já usado em Ciclos de 21 dias: esmaecer o ponto em vez de
+  // escondê-lo (o valor calculado continua correto, só ainda não é final).
+  const haPontoEmApuracao = selecionadas.includes("taxa_concepcao") && janelaCompleta.some((c) => !c);
+  const pontoConcepcao = (props: any) => {
+    const { cx, cy, stroke, index } = props;
+    if (cx == null || cy == null) return <g key={`dot-${index}`} />;
+    const completo = chartData[index]?.__completo !== false;
+    return completo
+      ? <circle key={`dot-${index}`} cx={cx} cy={cy} r={2} fill={stroke} />
+      : <circle key={`dot-${index}`} cx={cx} cy={cy} r={3} fill="var(--surface)" stroke={stroke} strokeWidth={1.5} opacity={0.55} />;
+  };
 
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 
@@ -162,6 +181,12 @@ export default function AnaliseInterativa({ ini, fim, filtros }: AnaliseInterati
         </p>
       )}
 
+      {haPontoEmApuracao && (
+        <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginBottom: "0.5rem", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+          <Info size={12} /> Ponto(s) esmaecidos da Taxa de concepção: janela de diagnóstico (28 dias) ainda aberta — o valor ainda deve subir, não compare com meses fechados.
+        </p>
+      )}
+
       {!dados && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {dados && !selecionadas.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione ao menos uma métrica.</p>}
@@ -183,7 +208,8 @@ export default function AnaliseInterativa({ ini, fim, filtros }: AnaliseInterati
             />
             <Legend wrapperStyle={{ fontSize: "0.75rem" }} formatter={(key: string) => metricaPorKey(key.replace("__norm", "")).label} />
             {selecionadas.map((key) => (
-              <Line key={key} type="monotone" dataKey={normalizar ? `${key}__norm` : key} stroke={corDaMetrica(key)} strokeWidth={2} dot={{ r: 2 }} connectNulls />
+              <Line key={key} type="monotone" dataKey={normalizar ? `${key}__norm` : key} stroke={corDaMetrica(key)} strokeWidth={2}
+                dot={key === "taxa_concepcao" ? pontoConcepcao : { r: 2 }} connectNulls />
             ))}
           </LineChart>
         </ResponsiveContainer>

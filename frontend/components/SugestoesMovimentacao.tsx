@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { Sparkles, AlertTriangle, Check, X } from "lucide-react";
 import { fetchSugestoesMovimentacao, criarMovimentacao, fetchMotivosMovimentacao, fetchAnimais } from "@/lib/api";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { casaBusca } from "@/lib/busca";
 
@@ -21,6 +21,7 @@ function FormMover({ sugestao, motivos, onFeito, onCancelar }: { sugestao: Suges
   const [responsavel, setResponsavel] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
 
   async function confirmar() {
     setSalvando(true); setErro(null);
@@ -48,7 +49,7 @@ function FormMover({ sugestao, motivos, onFeito, onCancelar }: { sugestao: Suges
       </select>
       <select style={selStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
         <option value="">Responsável…</option>
-        {RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}
+        {nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}
       </select>
       <button onClick={confirmar} disabled={salvando} className="btn-primary" title="Confirmar a movimentação deste animal" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", display: "flex", alignItems: "center", gap: "0.3rem" }}>
         <Check size={13} /> {salvando ? "Movendo…" : "Confirmar"}
@@ -82,17 +83,23 @@ export default function SugestoesMovimentacao() {
   }
   useEffect(carregar, []);
 
-  if (error) return <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>;
-  if (!dados) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
-
-  const opcoesLote = Array.from(new Set(dados.sugestoes.map((s) => s.lote_atual).filter(Boolean))) as string[];
-  const opcoesCategoria = Array.from(new Set(dados.sugestoes.map((s) => categoriaPorAnimal[s.numero_matriz]).filter(Boolean)));
-  const sugestoesFiltradas = dados.sugestoes.filter((s) =>
+  // `useOrdenacao` é um hook de verdade (useState/useMemo por dentro), então
+  // tem que rodar em toda renderização — nunca depois de um retorno
+  // condicional (error/!dados), senão a 1ª renderização (dados ainda null)
+  // pula essas chamadas e a 2ª (já com dados) as adiciona, quebrando a ordem
+  // dos hooks entre renders.
+  const sugestoes = dados?.sugestoes ?? [];
+  const opcoesLote = Array.from(new Set(sugestoes.map((s) => s.lote_atual).filter(Boolean))) as string[];
+  const opcoesCategoria = Array.from(new Set(sugestoes.map((s) => categoriaPorAnimal[s.numero_matriz]).filter(Boolean)));
+  const sugestoesFiltradas = sugestoes.filter((s) =>
     casaBusca(s.numero_matriz, fAnimal) &&
     (!fLote || s.lote_atual === fLote) &&
     (!fCategoria || categoriaPorAnimal[s.numero_matriz] === fCategoria)
   );
   const ord = useOrdenacao(sugestoesFiltradas);
+
+  if (error) return <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>;
+  if (!dados) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
 
   return (
     <div className="card">

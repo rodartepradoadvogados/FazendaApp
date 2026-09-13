@@ -14,11 +14,13 @@ from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, ControleLeiteiro, Doenca, Lote, OcorrenciaClinica, Parto, PesagemCorporal, ProtocoloIatfAplicacao,
-    Sanidade, Servico,
+    Sanidade, Secagem, Servico,
 )
 from fazenda.rules.estado_reprodutivo import classificar_animal
 from fazenda.rules.indicadores import calcular_indicadores
-from fazenda.rules.parametros import get_param, idade_apta_min_meses, peso_apta_min, pev_dias
+from fazenda.rules.parametros import (
+    get_param, idade_apta_min_meses, idade_max_1a_cobertura_meses, peso_apta_min, pev_dias,
+)
 from fazenda.rules.visibilidade import visivel
 
 router = APIRouter(prefix="/indicadores", tags=["indicadores"])
@@ -199,7 +201,27 @@ def _resumo_relatorio_personalizado(
     animais_dump = [a.model_dump() for a in animais_rows]
     servicos_dump = [s.model_dump() for s in servicos_rows]
     partos_dump = [p.model_dump() for p in partos_rows]
-    ind = calcular_indicadores(animais_dump, servicos_dump, partos_dump, data_ref=hoje)
+    # Mesma carga do painel de Indicadores (ver `_contexto_calculo`): sem
+    # peso/lotes/IATF o motor de ciclos de 21 dias roda degradado e as taxas
+    # deste resumo — taxa_concepcao_pct inclusive — sairiam diferentes das da
+    # tela de Indicadores, ou vazias.
+    peso_por_animal, lotes, aplicacoes_iatf = _contexto_calculo(session, fazenda_id)
+    # Controles/secagens pelo mesmo motivo do comentário acima: este resumo
+    # hoje só lê o bloco `reproducao`, mas roda o motor INTEIRO. Sem eles o
+    # DEL ao vivo sai sem saber quem já secou — e o dia em que alguém trouxer
+    # um número de produção para este painel, ele nasceria degradado e
+    # discordando de Indicadores > Gerais, sem nada no código denunciando.
+    query_controles = select(ControleLeiteiro)
+    query_secagens = select(Secagem)
+    if fazenda_id is not None:
+        query_controles = query_controles.where(ControleLeiteiro.fazenda_id == fazenda_id)
+        query_secagens = query_secagens.where(Secagem.fazenda_id == fazenda_id)
+    ind = calcular_indicadores(
+        animais_dump, servicos_dump, partos_dump, data_ref=hoje,
+        peso_por_animal=peso_por_animal, lotes=lotes, aplicacoes_iatf=aplicacoes_iatf,
+        controles=[c.model_dump() for c in session.exec(query_controles).all()],
+        secagens=[sg.model_dump() for sg in session.exec(query_secagens).all()],
+    )
     rep = ind.get("reproducao", {})
 
     vacas_nums = {p.get("numero_matriz") for p in partos_dump if p.get("numero_matriz")}
@@ -261,6 +283,55 @@ def _resumo_relatorio_personalizado(
     }
 
 
+def _contexto_calculo(
+    session: Session, fazenda_id: int | None
+) -> tuple[dict[str, float], list[dict], list[dict]]:
+    """Os três insumos que `calcular_indicadores` precisa ALÉM de
+    animais/serviços/partos: peso vivo por matriz, lotes e aplicações de IATF.
+
+    Extraído de `calcular_indicadores_fazenda` para o Relatório personalizado
+    reusar a MESMA carga — ele chamava `calcular_indicadores` sem nenhum dos
+    três, o que degrada o motor de ciclos de 21 dias (sem IATF não há
+    "em protocolo"; sem peso não há elegibilidade de 1ª cobertura) e, agora
+    que `taxa_concepcao_pct` vem desse motor, faria o campo do resumo cair
+    para `None` na tela.
+    """
+    # Peso vivo mais recente por matriz (mesmo padrão de
+    # routers/reproducao.py e routers/lotes.py:coletar_dados_criterios) — só
+    # usado para a elegibilidade de 1ª cobertura ("aptas").
+    peso_por_animal: dict[str, float] = {}
+    ultima_data: dict[str, date] = {}
+    query_pesagem = select(PesagemCorporal)
+    if fazenda_id is not None:
+        query_pesagem = query_pesagem.where(PesagemCorporal.fazenda_id == fazenda_id)
+    for p in session.exec(query_pesagem).all():
+        atual = ultima_data.get(p.numero_matriz)
+        if not atual or p.data_pesagem > atual:
+            ultima_data[p.numero_matriz] = p.data_pesagem
+            peso_por_animal[p.numero_matriz] = p.peso_kg
+
+    # BUG DE SEGURANÇA CORRIGIDO (achado 54): esta era a única das três
+    # consultas desta função sem filtro de fazenda — `PesagemCorporal` acima e
+    # `ProtocoloIatfAplicacao` abaixo sempre filtraram. O Lote carrega o nome
+    # e a janela de DEL que classificam a vaca na Capa e no relatório
+    # personalizado: sem o filtro, a lista trazia os lotes de TODOS os
+    # tenants, e como o casamento com o animal é por `grupo_primario` (texto
+    # livre, e "Lactação"/"Secas"/"Novilhas" é o vocabulário de todo mundo), a
+    # janela de DEL da fazenda vizinha reclassificava o rebanho daqui.
+    query_lotes = select(Lote)
+    if fazenda_id is not None:
+        query_lotes = query_lotes.where(Lote.fazenda_id == fazenda_id)
+    lotes = [l.model_dump() for l in session.exec(query_lotes).all()]
+    # Aplicações de IATF entram para o estado reprodutivo ao vivo enxergar
+    # "em protocolo" — sem elas, a Capa classificaria como apta uma vaca que
+    # o Rebanho mostra em protocolo, criando divergência entre as telas.
+    query_iatf = select(ProtocoloIatfAplicacao)
+    if fazenda_id is not None:
+        query_iatf = query_iatf.where(ProtocoloIatfAplicacao.fazenda_id == fazenda_id)
+    aplicacoes_iatf = [ap.model_dump() for ap in session.exec(query_iatf).all()]
+    return peso_por_animal, lotes, aplicacoes_iatf
+
+
 def calcular_indicadores_fazenda(session: Session, fazenda_id: int | None, data: date | None = None) -> dict:
     """Mesma carga de dados e cálculo do endpoint GET /indicadores/, extraída
     para função própria — reaproveitada por fazenda/api/routers/alertas_indicador.py
@@ -281,28 +352,7 @@ def calcular_indicadores_fazenda(session: Session, fazenda_id: int | None, data:
     servicos = [s.model_dump() for s in session.exec(query_servicos).all()]
     partos = [p.model_dump() for p in session.exec(query_partos).all()]
 
-    # Peso vivo mais recente por matriz (mesmo padrão de
-    # routers/reproducao.py e routers/lotes.py:coletar_dados_criterios) — só
-    # usado aqui para a elegibilidade de 1ª cobertura ("aptas").
-    peso_por_animal: dict[str, float] = {}
-    ultima_data: dict[str, date] = {}
-    query_pesagem = select(PesagemCorporal)
-    if fazenda_id is not None:
-        query_pesagem = query_pesagem.where(PesagemCorporal.fazenda_id == fazenda_id)
-    for p in session.exec(query_pesagem).all():
-        atual = ultima_data.get(p.numero_matriz)
-        if not atual or p.data_pesagem > atual:
-            ultima_data[p.numero_matriz] = p.data_pesagem
-            peso_por_animal[p.numero_matriz] = p.peso_kg
-
-    lotes = [l.model_dump() for l in session.exec(select(Lote)).all()]
-    # Aplicações de IATF entram para o estado reprodutivo ao vivo enxergar
-    # "em protocolo" — sem elas, a Capa classificaria como apta uma vaca que
-    # o Rebanho mostra em protocolo, criando divergência entre as telas.
-    query_iatf = select(ProtocoloIatfAplicacao)
-    if fazenda_id is not None:
-        query_iatf = query_iatf.where(ProtocoloIatfAplicacao.fazenda_id == fazenda_id)
-    aplicacoes_iatf = [ap.model_dump() for ap in session.exec(query_iatf).all()]
+    peso_por_animal, lotes, aplicacoes_iatf = _contexto_calculo(session, fazenda_id)
     # Controles leiteiros lançados no sistema — é deles que sai a produção
     # do painel. Antes o número vinha só de `Animal.ult_cl_kg`, escrito
     # exclusivamente pelo parser do CSV do Ideagri: quem lançava pelo app via
@@ -311,9 +361,16 @@ def calcular_indicadores_fazenda(session: Session, fazenda_id: int | None, data:
     if fazenda_id is not None:
         query_controles = query_controles.where(ControleLeiteiro.fazenda_id == fazenda_id)
     controles = [c.model_dump() for c in session.exec(query_controles).all()]
+    # Secagens — alimentam o DEL AO VIVO do card "DEL médio" (ver
+    # `del_dias_ao_vivo` em rules.producao_leiteira): sem elas, uma vaca já
+    # seca continuaria contando dias de lactação a partir do parto.
+    query_secagens = select(Secagem)
+    if fazenda_id is not None:
+        query_secagens = query_secagens.where(Secagem.fazenda_id == fazenda_id)
+    secagens = [s.model_dump() for s in session.exec(query_secagens).all()]
     return calcular_indicadores(
         animais, servicos, partos, data_ref=data, peso_por_animal=peso_por_animal,
-        lotes=lotes, aplicacoes_iatf=aplicacoes_iatf, controles=controles,
+        lotes=lotes, aplicacoes_iatf=aplicacoes_iatf, controles=controles, secagens=secagens,
     )
 
 
@@ -382,6 +439,7 @@ def estados_reprodutivos(
     pev = pev_dias()
     del_max = int(get_param("meta_del_max_1o_servico", 100) or 100)
     idade_apta = int(idade_apta_min_meses() * 30.44)
+    idade_atraso = int(idade_max_1a_cobertura_meses() * 30.44)
     peso_apta = peso_apta_min()
 
     resultado = []
@@ -401,6 +459,7 @@ def estados_reprodutivos(
             idade_dias=idade,
             peso_kg=peso_por.get(a.numero),
             idade_apta_dias=idade_apta,
+            idade_atraso_dias=idade_atraso,
             peso_apta_kg=peso_apta,
             raca=a.raca,
         )
@@ -421,5 +480,6 @@ def estados_reprodutivos(
         "animais": resultado,
         "contagem": por_estado,
         "parametros": {"pev_dias": pev, "del_max_1o_servico": del_max,
-                       "idade_apta_dias": idade_apta, "peso_apta_kg": peso_apta},
+                       "idade_apta_dias": idade_apta, "peso_apta_kg": peso_apta,
+                       "idade_atraso_dias": idade_atraso},
     }

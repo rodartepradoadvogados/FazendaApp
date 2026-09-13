@@ -53,7 +53,7 @@ export function CowDataMark({
       <rect x="4.5" y="4.5" width="111" height="111" rx="24" fill="none" stroke={golds.ring} strokeOpacity="0.3" strokeWidth="1.3" />
       <line x1="16" y1="92" x2="104" y2="92" stroke={golds.linha} strokeWidth="1.4" />
       <path d={PATH_CURVA} fill="none" stroke={`url(#${gradId})`} strokeWidth="5.5" strokeLinecap="round" />
-      <circle cx="58" cy="42.5" r="4.4" fill="#F3E7D3" />
+      <circle cx="58" cy="42.5" r="4.4" fill="#FFFFFF" />
       <circle cx="58" cy="42.5" r="7.6" fill="none" stroke={golds.ring} strokeWidth="1.4" />
     </svg>
   );

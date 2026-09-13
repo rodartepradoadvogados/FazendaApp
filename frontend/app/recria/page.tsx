@@ -5,9 +5,10 @@
 // Crescimento compara o peso real com a faixa-alvo. "Registrar caso" é o
 // lançamento rápido que alimenta tudo.
 import { useEffect, useMemo, useState } from "react";
-import { Baby, Activity, TrendingUp, PlusCircle, Trash2, AlertTriangle, Heart, Wheat, Download } from "lucide-react";
+import { Baby, Activity, TrendingUp, PlusCircle, Trash2, AlertTriangle, Heart, Wheat, Download, Share2 } from "lucide-react";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
-import { exportarFichaPDF, type SecaoFicha } from "@/lib/export";
+import { exportarFichaPDF, type SecaoFicha, type ModoEntregaExport } from "@/lib/export";
+import { ehApp } from "@/lib/nativo";
 import { UploadPlanilha } from "@/components/UploadPlanilha";
 import { SecaoRecolhivel } from "@/components/ui";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
@@ -47,11 +48,15 @@ export default function RecriaPage() {
   const [aba, setAba] = useState<Aba>("saude");
   const [gerando, setGerando] = useState(false);
   const [erroDossie, setErroDossie] = useState<string | null>(null);
+  // "Compartilhar" (folha nativa do Android) só faz sentido dentro do app —
+  // no navegador é idêntico a "Exportar Dossiê" (mesmo <a download>).
+  const [mostrarCompartilhar, setMostrarCompartilhar] = useState(false);
+  useEffect(() => { ehApp().then(setMostrarCompartilhar); }, []);
 
   const subNavTree: SubNavNode[] = useMemo(() => ABAS.map((a) => ({ id: a.id, label: a.label, icon: a.icon })), []);
   useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba, onSelect: (id: string) => setAba(id as Aba) }), [subNavTree, aba]));
 
-  async function exportarDossie() {
+  async function exportarDossie(modo: ModoEntregaExport) {
     setGerando(true); setErroDossie(null);
     try {
       const d = await fetchRecriaDossie();
@@ -69,6 +74,7 @@ export default function RecriaPage() {
         `Bezerras e novilhas · gerado em ${new Date(d.gerado_em + "T00:00:00").toLocaleDateString("pt-BR")}`,
         secoes,
         "dossie_recria",
+        modo,
       );
     } catch (e: any) {
       setErroDossie(e.message || "Não foi possível gerar o dossiê.");
@@ -84,10 +90,18 @@ export default function RecriaPage() {
             Acompanhamento de bezerras e novilhas: em que idade cada doença mais aparece (o <strong>ponto crítico</strong>), a incidência por fase e o crescimento em peso.
           </p>
         </div>
-        <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", whiteSpace: "nowrap" }}
-          onClick={exportarDossie} disabled={gerando} title="Gerar o Dossiê Zootécnico completo (saúde, crescimento e reprodução) em PDF">
-          <Download size={14} /> {gerando ? "Gerando…" : "Exportar Dossiê (PDF)"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", whiteSpace: "nowrap" }}
+            onClick={() => exportarDossie("baixar")} disabled={gerando} title="Gerar o Dossiê Zootécnico completo (saúde, crescimento e reprodução) em PDF">
+            <Download size={14} /> {gerando ? "Gerando…" : "Exportar Dossiê (PDF)"}
+          </button>
+          {mostrarCompartilhar && (
+            <button className="btn-ghost" style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", whiteSpace: "nowrap" }}
+              onClick={() => exportarDossie("compartilhar")} disabled={gerando} title="Compartilhar o Dossiê Zootécnico">
+              <Share2 size={14} /> Compartilhar
+            </button>
+          )}
+        </div>
       </div>
       {erroDossie && <div className="alert-critico mb-3" style={{ fontSize: "0.82rem" }}><AlertTriangle size={16} /><span>{erroDossie}</span></div>}
       <div style={{ marginTop: "1rem" }}>
@@ -333,7 +347,7 @@ function AbaReproducao() {
   const anoAtras = () => { const x = new Date(); x.setFullYear(x.getFullYear() - 1); return x.toISOString().slice(0, 10); };
   const [ini, setIni] = useState(anoAtras());
   const [fim, setFim] = useState(hoje());
-  const [ciclos, setCiclos] = useState<any | null>(null);
+  const [ciclos, setCiclos] = useState<Awaited<ReturnType<typeof fetchRecriaTaxaPrenhez>> | null>(null);
   useEffect(() => { fetchRecriaIdadeParto().then(setD).catch(() => setD(null)); }, []);
   const calcularPrenhez = () => fetchRecriaTaxaPrenhez(ini, fim).then(setCiclos).catch(() => setCiclos(null));
   useEffect(() => { calcularPrenhez(); }, []);
@@ -419,13 +433,21 @@ function AbaReproducao() {
             )}
             <div style={{ overflowX: "auto" }}>
               <table className="fazenda-table">
-                <thead><tr><th>Ciclo</th><th>Período</th><th>Elegíveis</th><th>Servidos</th><th>Prenhes</th><th>Tx. Serviço</th><th>Tx. Concepção</th><th>Tx. Prenhez</th></tr></thead>
+                {/* "Elegíveis p/ prenhez" precisa aparecer: a Tx. Prenhez é
+                    prenhes ÷ elegíveis-p/-prenhez, não prenhes ÷ elegíveis. Os
+                    dois diferem quando há baixa na janela de diagnóstico, e sem
+                    a coluna os números não reconciliam na tela. */}
+                <thead><tr><th>Ciclo</th><th>Período</th><th title="Elegíveis para inseminação: aptas em pelo menos 11 dos 21 dias">Elegíveis</th><th>Servidos</th><th title="Elegíveis para prenhez: das elegíveis, as que seguiam no rebanho no fim da janela de diagnóstico">Eleg. prenhez</th><th>Prenhes</th><th>Tx. Serviço</th><th>Tx. Concepção</th><th title="Prenhes ÷ elegíveis para prenhez. Não é serviço × concepção.">Tx. Prenhez</th></tr></thead>
                 <tbody>
-                  {ciclos.ciclos.map((c: any) => (
-                    <tr key={c.ciclo}>
+                  {ciclos.ciclos.map((c) => (
+                    <tr key={c.ciclo} style={{ opacity: c.janela_dg_completa ? 1 : 0.65 }}
+                      title={c.janela_dg_completa ? undefined : "Janela de diagnóstico ainda aberta: a prenhez e a concepção deste ciclo ainda vão subir."}>
                       <td style={{ fontWeight: 600 }}>{c.ciclo}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{c.inicio.split("-").reverse().join("/")}–{c.fim.split("-").reverse().join("/")}</td>
-                      <td>{c.elegiveis}</td><td>{c.servidos}</td><td>{c.prenhes}</td>
+                      <td style={{ fontSize: "0.78rem" }}>
+                        {c.inicio.split("-").reverse().join("/")}–{c.fim.split("-").reverse().join("/")}
+                        {!c.janela_dg_completa && <span style={{ marginLeft: "0.35rem", fontSize: "0.68rem", color: "var(--text-muted)" }}>(em apuração)</span>}
+                      </td>
+                      <td>{c.elegiveis}</td><td>{c.servidos}</td><td>{c.pg_elig}</td><td>{c.prenhes}</td>
                       <td>{c.taxa_servico != null ? `${c.taxa_servico}%` : "—"}</td>
                       <td>{c.taxa_concepcao != null ? `${c.taxa_concepcao}%` : "—"}</td>
                       <td><strong>{c.taxa_prenhez != null ? `${c.taxa_prenhez}%` : "—"}</strong></td>

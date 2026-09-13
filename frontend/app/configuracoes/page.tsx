@@ -1,29 +1,23 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Settings, SlidersHorizontal, Upload, Layers, FileSpreadsheet, Wallet, Palette, Newspaper, CheckCheck, ExternalLink, ShieldCheck } from "lucide-react";
-import { podeModulo, ehAdmin, ehDono, podePublicarMaterias, ehContratanteAdministrador } from "@/lib/api";
-import ParametrosPage from "@/app/parametros/page";
+import { Settings, Layers, FileSpreadsheet, Palette, CheckCheck, ExternalLink, ShieldCheck } from "lucide-react";
+import { podeModulo, ehAdmin, ehDono, ehContratanteAdministrador } from "@/lib/api";
 import UploadPage from "@/app/upload/page";
 import Cadastro, { ABAS_CADASTRO, type AbaCadastro } from "@/components/Cadastro";
 import { ABAS_CADASTRO_SANITARIO, type AbaCadastroSanitario } from "@/components/CadastroSanitario";
 import { ABAS_CENTRAL_SEMEN, type AbaCentralSemen } from "@/components/CentralSemen";
 import { ABAS_CADASTRO_ESTOQUE, type AbaCadastroEstoque } from "@/components/CadastroEstoque";
 import ImportarDados from "@/components/ImportarDados";
-import ParametrosFinanceiros from "@/components/ParametrosFinanceiros";
-import NewsAdmin from "@/components/NewsAdmin";
 import { AprovacoesView } from "@/components/AprovacoesView";
 import { AuditoriaCowDataView } from "@/components/AuditoriaCowDataView";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
-type Aba = "cadastro" | "parametros" | "upload" | "importar" | "news" | "aprovacoes" | "auditoria-cowdata" | "aparencia";
-type AbaParametros = "gerais" | "financeiro";
-// Sub-abas de "Parâmetros" — "financeiro" só entra se o módulo financeiro estiver liberado (checado no useMemo abaixo).
-const ABAS_PARAMETROS: [AbaParametros, string, any][] = [
-  ["gerais", "Parâmetros gerais", SlidersHorizontal],
-  ["financeiro", "Parâmetros financeiros", Wallet],
-];
+// "Parâmetros" e "News" viraram abas de primeiro nível de Administração
+// (17/08/2026, pedido explícito do usuário) — ver app/parametros/page.tsx e
+// app/news-admin/page.tsx. Não vivem mais aqui dentro.
+type Aba = "cadastro" | "upload" | "importar" | "aprovacoes" | "auditoria-cowdata" | "aparencia";
 
 export default function ConfiguracoesPage() {
   const [aba, setAba] = useState<Aba | null>(null);
@@ -35,14 +29,10 @@ export default function ConfiguracoesPage() {
   const [sanitarioAba, setSanitarioAba] = useState<AbaCadastroSanitario>("eventos");
   const [centralSemenAba, setCentralSemenAba] = useState<AbaCentralSemen>("estoque-semen");
   const [estoqueAba, setEstoqueAba] = useState<AbaCadastroEstoque>("itens");
-  const [parametrosAba, setParametrosAba] = useState<AbaParametros>("gerais");
-  const temFinanceiro = podeModulo("financeiro");
-  const abasParametrosVisiveis = useMemo(() => ABAS_PARAMETROS.filter(([id]) => id !== "financeiro" || temFinanceiro), [temFinanceiro]);
 
   useEffect(() => {
     const abas: { id: Aba; label: string; icon: any; title: string }[] = [];
     if (podeModulo("parametros")) abas.push({ id: "cadastro", label: "Cadastro", icon: Layers, title: "Cadastros de animais, lotes, pessoas..." });
-    if (podeModulo("parametros")) abas.push({ id: "parametros", label: "Parâmetros", icon: SlidersHorizontal, title: "Parâmetros da fazenda e financeiros" });
     // A aba "Upload CSV" (importação dos CSV do Ideagri) fica OCULTA: a
     // fazenda migrou para o CowData e o local de importação passou a ser
     // "Importar dados". A rota /upload e o backend continuam de pé de
@@ -51,11 +41,17 @@ export default function ConfiguracoesPage() {
     // aposentar o fluxo sem mexer em dado nenhum. Para reativar, basta
     // devolver esta linha.
     if (podeModulo("upload")) abas.push({ id: "importar", label: "Importar dados", icon: FileSpreadsheet, title: "Importação manual de dados históricos" });
-    if (podePublicarMaterias()) abas.push({ id: "news", label: "News", icon: Newspaper, title: "Publicação e aprovação de matérias do blog de notícias de pecuária leiteira" });
     if (ehAdmin()) abas.push({ id: "aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram" });
     // Logo abaixo de Aprovações, só para o contratante-administrador (quem
     // contratou o plano) — pedido explícito do usuário.
     if (ehContratanteAdministrador()) abas.push({ id: "auditoria-cowdata", label: "Auditoria CowData", icon: ShieldCheck, title: "Acessos de suporte da CowData a esta fazenda, e compromissos de confiança/LGPD" });
+    // A aba "Ordem de Parto" (reconstrução de Parto.ordem_parto e do derivado
+    // em ControleLeiteiro) era uma ferramenta PONTUAL de correção do dado
+    // histórico importado do Ideagri — rodou, corrigiu 107 registros e saiu de
+    // cena em 27/08/2026. Os endpoints do backend continuam de pé (ver
+    // producao.py, seções de reconstrução de ordem de parto) caso uma nova
+    // importação legada volte a exigir a correção; para reativar a tela, basta
+    // devolver esta aba e os dois componentes de View.
     // Sempre disponível — mesmo para quem não tem nenhum outro módulo liberado.
     abas.push({ id: "aparencia", label: "Aparência", icon: Palette, title: "Tema e paleta de cores — preferência pessoal" });
     setAbasVisiveis(abas);
@@ -77,8 +73,7 @@ export default function ConfiguracoesPage() {
     if (a.id === "cadastro") {
       return {
         id: a.id, label: a.label, icon: a.icon,
-        // "usuarios" é restrito a administradores dentro de Cadastro.
-        children: ABAS_CADASTRO.filter(([cid]) => cid !== "usuarios" || ehAdmin()).map(([cid, clabel, cIcon]) => ({
+        children: ABAS_CADASTRO.map(([cid, clabel, cIcon]) => ({
           id: cid, label: clabel, icon: cIcon,
           children: cid === "sanitario" ? ABAS_CADASTRO_SANITARIO.map(([sid, slabel, sIcon]) => ({ id: sid, label: slabel, icon: sIcon }))
             : cid === "central-semen" ? ABAS_CENTRAL_SEMEN.map(([sid, slabel, sIcon]) => ({ id: sid, label: slabel, icon: sIcon }))
@@ -87,25 +82,17 @@ export default function ConfiguracoesPage() {
         })),
       };
     }
-    if (a.id === "parametros") {
-      return {
-        id: a.id, label: a.label, icon: a.icon,
-        children: abasParametrosVisiveis.map(([pid, plabel, pIcon]) => ({ id: pid, label: plabel, icon: pIcon })),
-      };
-    }
     return { id: a.id, label: a.label, icon: a.icon };
-  }), [abasVisiveis, abasParametrosVisiveis]);
+  }), [abasVisiveis]);
   const activeId = aba === "cadastro" ? (cadastroAba === "sanitario" ? sanitarioAba : cadastroAba === "central-semen" ? centralSemenAba : cadastroAba === "estoque" ? estoqueAba : cadastroAba)
-    : aba === "parametros" ? parametrosAba
     : (aba ?? "");
   const onSelect = useCallback((id: string) => {
     if (abasVisiveis.some((a) => a.id === id)) { setAba(id as Aba); return; }
     if (ABAS_CADASTRO_SANITARIO.some(([sid]) => sid === id)) { setAba("cadastro"); setCadastroAba("sanitario"); setSanitarioAba(id as AbaCadastroSanitario); return; }
     if (ABAS_CENTRAL_SEMEN.some(([sid]) => sid === id)) { setAba("cadastro"); setCadastroAba("central-semen"); setCentralSemenAba(id as AbaCentralSemen); return; }
     if (ABAS_CADASTRO_ESTOQUE.some(([sid]) => sid === id)) { setAba("cadastro"); setCadastroAba("estoque"); setEstoqueAba(id as AbaCadastroEstoque); return; }
-    if (abasParametrosVisiveis.some(([pid]) => pid === id)) { setAba("parametros"); setParametrosAba(id as AbaParametros); return; }
     setAba("cadastro"); setCadastroAba(id as AbaCadastro);
-  }, [abasVisiveis, abasParametrosVisiveis]);
+  }, [abasVisiveis]);
   useSubNavRegister(useMemo(() => (aba ? { tree: subNavTree, activeId, onSelect } : null), [subNavTree, activeId, aba, onSelect]));
 
   if (!aba) {
@@ -148,11 +135,8 @@ export default function ConfiguracoesPage() {
             abaEstoque={estoqueAba} onAbaEstoqueChange={setEstoqueAba}
           />
         )}
-        {aba === "parametros" && parametrosAba === "gerais" && <ParametrosPage />}
-        {aba === "parametros" && parametrosAba === "financeiro" && temFinanceiro && <ParametrosFinanceiros />}
         {aba === "upload" && <UploadPage />}
         {aba === "importar" && <ImportarDados />}
-        {aba === "news" && <NewsAdmin />}
         {aba === "aprovacoes" && <div className="px-6"><AprovacoesView /></div>}
         {aba === "auditoria-cowdata" && <div className="px-6"><AuditoriaCowDataView /></div>}
       </div>

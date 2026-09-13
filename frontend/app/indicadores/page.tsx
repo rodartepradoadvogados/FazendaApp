@@ -1,16 +1,16 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target, RefreshCw, LineChart, Baby } from "lucide-react";
-import { fetchIndicadores, fetchAnimais, fetchControles, podeModulo } from "@/lib/api";
+import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target, RefreshCw, LineChart, Baby, Gauge as GaugeIcon, ChevronDown, ChevronRight } from "lucide-react";
+import { fetchIndicadores, fetchAnimais, podeModulo, type IndicadoresResposta, type ReproducaoCategoria } from "@/lib/api";
+import { cartao, cartaoDeMapas } from "@/lib/cartaoDrillDown";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
-import { Modal } from "@/components/Modal";
 import RelatoriosGerenciais from "@/components/RelatoriosGerenciais";
 import RelatorioBezerras from "@/components/RelatorioBezerras";
 import NaoConformidades from "@/components/NaoConformidades";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { Indicador } from "@/components/ui";
-import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { Gauge } from "@/components/Gauge";
 
 function pct(v: number | null | undefined) { return v === null || v === undefined ? "—" : `${v}%`; }
 function num(v: number | null | undefined, suf = "") { return v === null || v === undefined ? "—" : `${v}${suf}`; }
@@ -18,33 +18,17 @@ const cod = (g: string | null | undefined) => (g && /^\d\d/.test(g) ? g.slice(0,
 const LACTACAO = ["01", "02", "03"];
 
 export function IndicadoresGerais() {
-  const [ind, setInd] = useState<any>(null);
+  const [ind, setInd] = useState<IndicadoresResposta | null>(null);
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [recarregando, setRecarregando] = useState(false);
   const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
   const [catRep, setCatRep] = useState<"todas" | "vaca" | "novilha">("todas");
-  const [ultimoControle, setUltimoControle] = useState<{ data: string; linhas: any[] } | null | undefined>(undefined);
-  const [controleAberto, setControleAberto] = useState(false);
-  const ordControle = useOrdenacao(ultimoControle?.linhas ?? []);
-
-  // Último controle leiteiro do rebanho — busca só quando o card é clicado
-  // pela 1ª vez (undefined = ainda não buscado, null = buscado e sem dados).
-  const abrirUltimoControle = async () => {
-    if (ultimoControle === undefined) {
-      try {
-        const { controles } = await fetchControles();
-        const dataMax = controles.reduce((m: string | null, c: any) => (!m || (c.data && c.data > m) ? c.data : m), null as string | null);
-        const linhas = dataMax
-          ? controles.filter((c: any) => c.data === dataMax).sort((a: any, b: any) => a.numero.localeCompare(b.numero, undefined, { numeric: true }))
-          : [];
-        setUltimoControle(dataMax ? { data: dataMax, linhas } : null);
-      } catch {
-        setUltimoControle(null);
-      }
-    }
-    setControleAberto(true);
-  };
+  // Card "Eficiência Reprodutiva" (medidores + benchmark) — migrou da Capa
+  // para cá no redesign T1 (mockup 1b): a Capa passou a abrir pela tarefa do
+  // dia, e este card (denso, de comparação com meta/país) ficou mais em casa
+  // aqui, ao lado dos demais indicadores. Nenhum dado novo, só mudou de tela.
+  const [benchAberto, setBenchAberto] = useState(false);
 
   const carregar = () => {
     setRecarregando(true);
@@ -55,8 +39,13 @@ export function IndicadoresGerais() {
   useEffect(() => { carregar(); }, []);
 
   const reb = ind?.rebanho, rep = ind?.reproducao, prod = ind?.producao;
-  const repCats: any = ind?.reproducao_categorias || { todas: rep };
-  const repSel: any = repCats[catRep] || rep;
+  // Sem `reproducao_categorias` (payload de cache antigo), cai de volta no
+  // bloco `reproducao` — que não tem TODOS os `_nums` de `ReproducaoCategoria`
+  // (não existe `prenhes_nums` solto, só `prenhes_programa_nums`, o
+  // numerador do programa). O cast só nomeia essa lacuna que já existia aqui
+  // (antes escondida atrás de `any`); em produção `reproducao_categorias`
+  // sempre vem preenchido, então este ramo é só rede de segurança.
+  const repSel = (ind?.reproducao_categorias?.[catRep] || rep) as ReproducaoCategoria | undefined;
   const grupos: [string, number][] = reb ? Object.entries(reb.distribuicao_grupos) : [];
   const maxGrupo = grupos.reduce((m, [, n]) => Math.max(m, n), 0) || 1;
 
@@ -80,13 +69,50 @@ export function IndicadoresGerais() {
     ? new Date(rep.concepcao_desde + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" })
     : "01/01/2026";
 
-  const porCategoria = (a: AnimalRow) => catRep === "todas" ? true : catRep === "vaca" ? !!a.data_ult_parto : !a.data_ult_parto;
+  // O rótulo do card leva a data do controle junto: sem ela, "produção do dia"
+  // é uma frase que não diz de qual dia — e é a falta dessa data que escondia
+  // a vaca controlada em março entrando na mesma soma de quem foi ordenhada
+  // ontem.
+  const dataControleLabel = prod?.data_controle
+    ? new Date(prod.data_controle + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })
+    : null;
+  const rotuloProducaoDia = dataControleLabel ? `Produção do dia · ${dataControleLabel}` : "Produção do dia · sem controle lançado";
+  const tituloModalControleDia = dataControleLabel ? `Controle leiteiro — ${dataControleLabel}` : "Controle leiteiro do dia";
+
+  // Cada linha é um Cartao (lib/cartaoDrillDown.ts): valor e `nums` saem das
+  // DUAS chaves do MESMO `repSel`, então não tem como uma linha nova aqui
+  // abrir a lista de outro contador por engano — o TypeScript recusa a
+  // chamada se a chave de `nums` não existir em `ReproducaoCategoria`. O
+  // recorte vaca/novilha vem de graça, porque `repSel` já é o objeto certo
+  // (sai do registro de Parto no backend, não de `data_ult_parto`).
   const linhasRep = useMemo(() => [
-    { label: "Fêmeas aptas", v: repSel?.aptas, cor: undefined, nums: repSel?.aptas_nums },
-    { label: "Prenhes", v: repSel?.prenhes, cor: "var(--green-light)", f: (a: AnimalRow) => a.sit_rep === "Ges." && porCategoria(a) },
-    { label: "Vazias", v: repSel?.vazias, cor: "var(--amber)", f: (a: AnimalRow) => (a.sit_rep || "").startsWith("Vaz.") && porCategoria(a) },
-    { label: "Inseminadas (aguard. diagnóstico)", v: repSel?.inseminadas, cor: "var(--blue)", f: (a: AnimalRow) => a.sit_rep === "Ins." && porCategoria(a) },
-  ], [repSel, catRep]);
+    cartao({ origem: repSel, titulo: "Fêmeas aptas", conta: "aptas", nums: "aptas_nums" }),
+    cartao({ origem: repSel, titulo: "Prenhes", conta: "prenhes", nums: "prenhes_nums", cor: "var(--green-light)" }),
+    cartao({ origem: repSel, titulo: "Vazias", conta: "vazias", nums: "vazias_nums", cor: "var(--amber)" }),
+    cartao({ origem: repSel, titulo: "Inseminadas (aguard. diagnóstico)", conta: "inseminadas", nums: "inseminadas_nums", cor: "var(--blue)" }),
+  ], [repSel]);
+
+  const linhasPartosPrevistos = [
+    { label: "Próximos 30 dias", key: "em_30_dias" as const },
+    { label: "Próximos 60 dias", key: "em_60_dias" as const },
+    { label: "Próximos 90 dias", key: "em_90_dias" as const },
+  ];
+
+  // Mesmo mecanismo dos dois cards acima: valor (a taxa) e `nums` (o
+  // drill-down) saem das duas chaves do MESMO `rep`. O valor é uma TAXA
+  // (denominador = programa reprodutivo) e o drill-down abre o NUMERADOR
+  // (`prenhes_programa_nums`/`vazias_programa_nums`) — os dois de propósito,
+  // documentado em indicadores.py; ver docstring de lib/cartaoDrillDown.ts
+  // sobre por que isso não é o mesmo bug que este módulo evita.
+  const cFemeasPrenhas = cartao({ origem: rep, titulo: "Fêmeas prenhas", conta: "taxa_prenhez_pct", nums: "prenhes_programa_nums", formatar: pct });
+  const cVazias = cartao({ origem: rep, titulo: "Vazias", conta: "perc_vazias_pct", nums: "vazias_programa_nums", formatar: pct });
+
+  // Benchmark reprodutivo (nosso valor × meta × média do país) — mesmo motor
+  // que alimentava os medidores da Capa antes do redesign T1.
+  const benchCats: any = ind?.benchmark_categorias || { todas: (ind as any)?.benchmark || [] };
+  const bench: any[] = benchCats[catRep] || benchCats.todas || [];
+  const bm = (k: string) => bench.find((b: any) => b.chave === k) || {};
+  const fmtBench = (b: any) => (b?.valor == null ? "—" : `${b.valor}${b.unidade ? (b.unidade === "%" ? "%" : " " + b.unidade) : ""}`);
 
   return (
     <div className="p-6 animate-in">
@@ -105,26 +131,123 @@ export function IndicadoresGerais() {
 
       {ind && <>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <Indicador categoria="reprodutivo" cor="var(--green-light)" valor={pct(rep?.taxa_prenhez_pct)}
-            rotulo={<>Fêmeas prenhas<span style={{ ...legenda, display: "block" }}>% das fêmeas aptas, hoje</span></>}
-            onClick={() => abrir("Fêmeas prenhas", (a) => a.sit_rep === "Ges.")} />
+          <Indicador categoria="reprodutivo" cor="var(--green-light)" valor={cFemeasPrenhas.valor}
+            rotulo={<>Fêmeas prenhas<span style={{ ...legenda, display: "block" }}>% do rebanho no programa reprodutivo, hoje</span></>}
+            onClick={() => abrirNums(cFemeasPrenhas.titulo, cFemeasPrenhas.nums)} />
           <Indicador categoria="reprodutivo" cor="var(--blue)" valor={pct(rep?.taxa_concepcao_pct)}
             rotulo={<>Concepção / serviço<span style={{ ...legenda, display: "block" }}>serviços desde {desdeLabel}</span></>} />
           <Indicador categoria="reprodutivo" cor="var(--amber)" valor={num(rep?.iep_meses, " m")}
             rotulo={<>IEP médio<span style={{ ...legenda, display: "block" }}>todo o histórico</span></>} />
-          <Indicador categoria="reprodutivo" cor="var(--dourado-light)" valor={pct(rep?.perc_vazias_pct)}
+          <Indicador categoria="reprodutivo" cor="var(--dourado-light)" valor={cVazias.valor}
             rotulo={<>Vazias<span style={{ ...legenda, display: "block" }}>situação atual</span></>}
-            onClick={() => abrir("Vazias", (a) => (a.sit_rep || "").startsWith("Vaz."))} />
+            onClick={() => abrirNums(cVazias.titulo, cVazias.nums)} />
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <Indicador categoria="producao" cor="var(--green-light)" valor={num(prod?.producao_total_dia_kg, " kg")}
-            rotulo="Produção/dia (últ. controle)" extra={<Milk size={16} style={{ color: "var(--text-muted)" }} />}
-            onClick={abrirUltimoControle} />
-          <Indicador categoria="producao" cor="var(--dourado-light)" valor={num(prod?.producao_media_kg, " kg")} rotulo="Média por vaca" />
-          <Indicador categoria="producao" cor="var(--dourado-light)" valor={num(prod?.del_medio)} rotulo="DEL médio (dias)" />
-          <Indicador categoria="producao" cor="var(--dourado-light)" valor={num(reb?.vacas_lactacao)} rotulo="Vacas em lactação atual"
-            onClick={() => abrir("Vacas em lactação atual", (a) => LACTACAO.includes(cod(a.grupo_primario) || "") )} />
+        {/* Produção do dia é o número que o dono olha primeiro todo dia — vira a
+            âncora da tela em vez de disputar o mesmo tamanho dos outros 3 dados
+            de produção, que continuam do lado, só menores. O card abre a
+            própria lista que ele soma (`controle_nums`, via abrirNums — o
+            mesmo mecanismo dos cards reprodutivos), então os dois números
+            nunca mais divergem por construção. */}
+        <div className="card mb-6" style={{ padding: "1.1rem 1.4rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "2.2rem", flexWrap: "wrap" }}>
+            <div style={{ cursor: "pointer" }} onClick={() => abrirNums(tituloModalControleDia, prod?.controle_nums)}>
+              <div style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.13em", textTransform: "uppercase", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                <Milk size={13} /> {rotuloProducaoDia}
+              </div>
+              <div style={{ fontFamily: "var(--font-heading)", fontSize: "3rem", fontWeight: 800, lineHeight: 1, color: "var(--green-light)", marginTop: "0.25rem", fontVariantNumeric: "tabular-nums" }}>
+                {dataControleLabel ? num(prod?.producao_total_dia_kg, " kg") : "—"}
+              </div>
+              {/* Cobertura: o número sozinho esconde se faltou ordenhar alguém
+                  antes de o dono concluir que a produção caiu. */}
+              {dataControleLabel && (
+                <div style={legenda}>{num(prod?.vacas_no_controle)} de {num(prod?.vacas_lactacao)} lactantes</div>
+              )}
+            </div>
+            <div style={{ flex: 1, display: "flex", justifyContent: "flex-end", gap: "2rem", flexWrap: "wrap" }}>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: "1.15rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{num(prod?.producao_media_kg, " kg")}</div>
+                <div style={{ fontSize: "0.64rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Média/vaca</div>
+              </div>
+              <div style={{ textAlign: "right", ...clickable }} onClick={() => abrir("Vacas em lactação atual", (a) => LACTACAO.includes(cod(a.grupo_primario) || "") )}>
+                <div style={{ fontSize: "1.15rem", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: animais.length ? "var(--dourado-light)" : undefined }}>{num(reb?.vacas_lactacao)}</div>
+                <div style={{ fontSize: "0.64rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Em lactação</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: "1.15rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{num(prod?.del_medio)}</div>
+                <div style={{ fontSize: "0.64rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>DEL médio{prod?.del_medio != null ? ` · de ${prod.del_medio_animais}` : ""}</div>
+              </div>
+            </div>
+          </div>
+          {/* Acumulado antigo (último controle de CADA vaca, qualquer data) —
+              não pode simplesmente sumir da tela quando o significado do card
+              muda, senão quem olhava esse número perde a referência sem aviso. */}
+          {!!prod?.ultimo_por_animal && prod.ultimo_por_animal.producao_total_kg > 0 && (
+            <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>
+              Acumulado do último controle de cada vaca: {num(prod.ultimo_por_animal.producao_total_kg, " kg")}
+              {prod.ultimo_por_animal.congelado > 0 && (
+                <>
+                  {" — "}
+                  <span style={{ cursor: "pointer", textDecoration: "underline" }}
+                    onClick={() => abrirNums("Ainda no valor congelado do CSV importado", prod.ultimo_por_animal.congelado_nums)}>
+                    {prod.ultimo_por_animal.congelado} ainda do CSV importado
+                  </span>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Medidores reprodutivos (modelo velocímetro) — migrou da Capa para
+            cá no redesign T1 (mockup 1b, ver globals.css/page.tsx da Capa). */}
+        <div className="card mb-6">
+          <div className="card-header mb-3 flex flex-wrap items-center gap-2"><GaugeIcon size={15} /> Eficiência Reprodutiva
+            <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>· ciclos de 21 dias desde {desdeLabel} (média ponderada) · Prenhez = prenhes ÷ elegíveis do ciclo</span>
+            <div style={{ marginLeft: "auto", display: "flex", gap: "0.25rem" }}>
+              {([["todas", "Todas"], ["vaca", "Vacas"], ["novilha", "Novilhas"]] as const).map(([k, lbl]) => (
+                <button key={k} onClick={() => setCatRep(k)} title={`Ver eficiência reprodutiva — ${lbl}`}
+                  style={{ fontSize: "0.7rem", padding: "0.2rem 0.6rem", borderRadius: "999px", cursor: "pointer",
+                    border: "1px solid " + (catRep === k ? "var(--dourado)" : "var(--border)"),
+                    background: catRep === k ? "var(--dourado)" : "transparent",
+                    color: catRep === k ? "#1a1a1a" : "var(--text-muted)", fontWeight: catRep === k ? 700 : 400 }}>
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <Gauge titulo="Taxa de Serviço" value={bm("taxa_servico").valor} meta={bm("taxa_servico").meta} mediaPais={bm("taxa_servico").media_pais} maiorMelhor={bm("taxa_servico").maior_melhor ?? true} />
+            <Gauge titulo="Taxa de Concepção" value={bm("taxa_concepcao").valor} meta={bm("taxa_concepcao").meta} mediaPais={bm("taxa_concepcao").media_pais} maiorMelhor={bm("taxa_concepcao").maior_melhor ?? true} />
+            <Gauge titulo="Taxa de Prenhez" value={bm("taxa_prenhez_ciclo").valor} meta={bm("taxa_prenhez_ciclo").meta} mediaPais={bm("taxa_prenhez_ciclo").media_pais} maiorMelhor={bm("taxa_prenhez_ciclo").maior_melhor ?? true} />
+          </div>
+          <button onClick={() => setBenchAberto((v) => !v)}
+            style={{ marginTop: "0.6rem", width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.5rem 0.2rem", background: "none", border: "none", borderTop: "1px solid var(--border)", color: "var(--dourado-light)", cursor: "pointer", fontSize: "0.8rem", fontWeight: 600 }}>
+            {benchAberto ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            Comparar com metas e média do país <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>· {catRep === "todas" ? "todas as fêmeas" : catRep === "vaca" ? "vacas" : "novilhas"}</span>
+          </button>
+          {benchAberto && (
+            <div className="overflow-x-auto">
+              <table className="fazenda-table" style={{ marginTop: "0.4rem" }}>
+                <thead><tr><th>Indicador</th><th style={{ textAlign: "right" }}>Nosso</th><th style={{ textAlign: "right" }}>Meta</th><th style={{ textAlign: "right" }}>Média país</th></tr></thead>
+                <tbody>
+                  {bench.map((b: any) => {
+                    const ok = b.valor != null && b.meta != null && (b.maior_melhor ? b.valor >= b.meta : b.valor <= b.meta);
+                    return (
+                      <tr key={b.chave}>
+                        <td>{b.label}</td>
+                        <td style={{ textAlign: "right", fontWeight: 700, color: b.valor == null ? "var(--text-muted)" : ok ? "var(--green-light)" : "var(--amber)" }}>{fmtBench(b)}</td>
+                        <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{b.meta != null ? `${b.meta}${b.unidade === "%" ? "%" : b.unidade ? " " + b.unidade : ""}` : "—"}</td>
+                        <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{b.media_pais != null ? `${b.media_pais}${b.unidade === "%" ? "%" : b.unidade ? " " + b.unidade : ""}` : "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <p style={{ fontSize: "0.66rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+                Estimativas a partir dos serviços e diagnósticos carregados. Metas ajustáveis em <a href="/parametros" style={{ color: "var(--dourado-light)" }}>Parâmetros</a>.
+              </p>
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -144,10 +267,10 @@ export function IndicadoresGerais() {
             </div>
             <table className="fazenda-table">
               <tbody>
-                {linhasRep.map((r: any) => (
-                  <tr key={r.label} onClick={() => r.nums !== undefined ? abrirNums(r.label, r.nums) : abrir(r.label, r.f)} style={clickable} className={animais.length ? "row-clickable" : ""}>
-                    <td style={{ color: animais.length ? "var(--dourado-light)" : undefined }}>{r.label}</td>
-                    <td style={{ fontWeight: 700, textAlign: "right", color: r.cor }}>{num(r.v)}</td>
+                {linhasRep.map((r) => (
+                  <tr key={r.titulo} onClick={() => abrirNums(r.titulo, r.nums)} style={clickable} className={animais.length ? "row-clickable" : ""}>
+                    <td style={{ color: animais.length ? "var(--dourado-light)" : undefined }}>{r.rotulo}</td>
+                    <td style={{ fontWeight: 700, textAlign: "right", color: r.cor }}>{r.valor}</td>
                   </tr>
                 ))}
               </tbody>
@@ -156,16 +279,18 @@ export function IndicadoresGerais() {
             <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginBottom: "0.4rem" }}>A coluna à direita é a <strong>quantidade de fêmeas</strong> com parto previsto no período{dica}.</p>
             <table className="fazenda-table">
               <tbody>
-                {[
-                  { label: "Próximos 30 dias", key: "em_30_dias" },
-                  { label: "Próximos 60 dias", key: "em_60_dias" },
-                  { label: "Próximos 90 dias", key: "em_90_dias" },
-                ].map((r) => (
-                  <tr key={r.key} onClick={() => abrirNums(`Partos previstos — ${r.label.toLowerCase()}`, rep?.partos_previstos_nums?.[r.key])} style={clickable} className={animais.length ? "row-clickable" : ""}>
-                    <td style={{ color: animais.length ? "var(--dourado-light)" : undefined }}>{r.label}</td>
-                    <td style={{ fontWeight: 700, textAlign: "right" }}>{num(rep?.partos_previstos?.[r.key])}</td>
-                  </tr>
-                ))}
+                {/* `cartaoDeMapas`: a MESMA chave (`r.key`) indexa `partos_previstos`
+                    e `partos_previstos_nums` uma única vez — não tem como o valor
+                    sair de um período e a lista abrir de outro. */}
+                {linhasPartosPrevistos.map((r) => {
+                  const c = cartaoDeMapas(`Partos previstos — ${r.label.toLowerCase()}`, rep?.partos_previstos, rep?.partos_previstos_nums, r.key);
+                  return (
+                    <tr key={r.key} onClick={() => abrirNums(c.titulo, c.nums)} style={clickable} className={animais.length ? "row-clickable" : ""}>
+                      <td style={{ color: animais.length ? "var(--dourado-light)" : undefined }}>{r.label}</td>
+                      <td style={{ fontWeight: 700, textAlign: "right" }}>{c.valor}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -188,40 +313,6 @@ export function IndicadoresGerais() {
       </>}
 
       {modal && <AnimalModal title={modal.title} animais={modal.list} onClose={() => setModal(null)} />}
-
-      {controleAberto && (
-        <Modal title="Último controle leiteiro" onClose={() => setControleAberto(false)} width="640px">
-          {ultimoControle === undefined && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-          {ultimoControle === null && <p style={{ color: "var(--text-muted)" }}>Nenhum controle leiteiro lançado ainda.</p>}
-          {ultimoControle && (
-            <>
-              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
-                {new Date(ultimoControle.data + "T00:00:00").toLocaleDateString("pt-BR")} — {ultimoControle.linhas.length} {ultimoControle.linhas.length !== 1 ? "animais" : "animal"}
-              </p>
-              <table className="fazenda-table">
-                <thead>
-                  <tr>
-                    <ThOrdenavel label="Nº" campo="numero" coluna={ordControle.coluna} dir={ordControle.dir} ordenar={ordControle.ordenar} />
-                    <ThOrdenavel label="Lote" campo="grupo_primario" coluna={ordControle.coluna} dir={ordControle.dir} ordenar={ordControle.ordenar} />
-                    <ThOrdenavel label="Produção (kg)" campo="producao_kg" coluna={ordControle.coluna} dir={ordControle.dir} ordenar={ordControle.ordenar} alinhar="right" />
-                    <ThOrdenavel label="DEL" campo="del" coluna={ordControle.coluna} dir={ordControle.dir} ordenar={ordControle.ordenar} alinhar="right" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {ordControle.linhasOrdenadas.map((c: any) => (
-                    <tr key={c.numero}>
-                      <td style={{ fontWeight: 700 }}>{c.numero}</td>
-                      <td style={{ fontSize: "0.75rem" }}>{c.grupo_primario || "—"}</td>
-                      <td style={{ textAlign: "right", fontWeight: 600 }}>{c.producao_kg != null ? c.producao_kg.toFixed(1) : "—"}</td>
-                      <td style={{ textAlign: "right" }}>{c.del ?? "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-        </Modal>
-      )}
     </div>
   );
 }

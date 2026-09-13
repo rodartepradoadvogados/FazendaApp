@@ -69,6 +69,24 @@ class TestCriarPesagens:
         })
         assert r.json()["criados"] == 0
 
+    def test_reenviar_o_mesmo_animal_no_mesmo_dia_atualiza_em_vez_de_duplicar(self, client):
+        """#68/#72 — mesma proteção de test_producao_controles.py, aqui para
+        pesagem corporal: upsert por (numero_matriz, data_pesagem)."""
+        client.post("/producao/pesagens", json={
+            "data_pesagem": "2026-01-01",
+            "entradas": [{"numero_matriz": "301", "peso_kg": 300}],
+        })
+        r2 = client.post("/producao/pesagens", json={
+            "data_pesagem": "2026-01-01",
+            "entradas": [{"numero_matriz": "301", "peso_kg": 305}],
+        })
+        assert r2.json()["criados"] == 1
+
+        r = client.get("/producao/pesagens")
+        registros_301 = [p for p in r.json()["pesagens"] if p["numero_matriz"] == "301"]
+        assert len(registros_301) == 1
+        assert registros_301[0]["peso_kg"] == 305
+
 
 class TestRelatorioPesagens:
     def _lancar(self, client, data, numero, peso):

@@ -312,6 +312,7 @@ export default function FazendasAdmin() {
 
   async function suspender() {
     if (selecionada == null) return;
+    if (!confirm("Suspender esta fazenda? Nenhum módulo fica acessível até reaprovar.")) return;
     setAprovando(true); setErro(null); setMsg(null);
     try {
       const ct = await suspenderContratoFazenda(selecionada);

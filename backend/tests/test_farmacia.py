@@ -473,3 +473,32 @@ class TestSomatotropinaBST:
             item = s.exec(select(Estoque).where(Estoque.nome == "Lactotropin")).one()
             assert item.principio_ativo_id == pa.id
             assert item.quantidade == 3, "corrigir a grafia não pode mexer no saldo"
+
+
+class TestLinkBulaValidacao:
+    """Achado P3 #3 da auditoria de segurança: link_bula vira <a href> no
+    frontend — um esquema como javascript: executaria no clique."""
+
+    def test_rejeita_esquema_nao_http(self, client):
+        c, engine = client
+        r = c.post("/farmacia/principios", json={"nome": "Princípio Link"})
+        assert r.status_code == 201
+        principio_id = r.json()["id"]
+
+        r = c.post("/farmacia/medicamentos", json={
+            "principio_ativo_id": principio_id, "nome_comercial": "Marca Link",
+            "link_bula": "javascript:alert(document.cookie)",
+        })
+        assert r.status_code == 422
+
+    def test_aceita_link_https(self, client):
+        c, engine = client
+        r = c.post("/farmacia/principios", json={"nome": "Princípio Link 2"})
+        principio_id = r.json()["id"]
+
+        r = c.post("/farmacia/medicamentos", json={
+            "principio_ativo_id": principio_id, "nome_comercial": "Marca Link 2",
+            "link_bula": "https://bula.exemplo.com.br/marca-link-2",
+        })
+        assert r.status_code == 201
+        assert r.json()["link_bula"] == "https://bula.exemplo.com.br/marca-link-2"

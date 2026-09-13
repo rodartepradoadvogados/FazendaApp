@@ -113,7 +113,17 @@ def montar_calendario_visual(session: Session, fazenda_id: int | None, data_inic
             continue
 
         if ev.tipo_agendamento == "evento" and ev.gatilho:
-            gatilhos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, ev.offset_dias or 0, ev.sexo_alvo)
+            # Mesma regra de fonte usada na Agenda de verdade (ver
+            # eventos_sanitarios.eventos_agenda) — a janela de aplicação,
+            # quando cadastrada, decide a data; senão cai no offset antigo.
+            if ev.janela_de_valor is not None and ev.janela_de_unidade is not None:
+                offset_valor, offset_unidade = ev.janela_de_valor, ev.janela_de_unidade
+            else:
+                offset_valor, offset_unidade = (ev.offset_dias or 0), "dias"
+            gatilhos = _datas_gatilho(
+                session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, offset_valor, ev.sexo_alvo,
+                offset_unidade=offset_unidade,
+            )
             por_data: dict[date, set[str]] = {}
             for numero, quando in gatilhos:
                 if data_inicio <= quando <= data_fim:

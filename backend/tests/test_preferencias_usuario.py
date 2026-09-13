@@ -41,11 +41,14 @@ def client():
     main.app.dependency_overrides.clear()
 
 
-def test_paleta_padrao_e_vinho(client):
+def test_paleta_padrao_e_nula(client):
+    # Sem preferência salva, o backend não deve forçar nenhuma paleta —
+    # senão o login sobrescreveria a paleta atual do navegador de todo
+    # usuário que nunca mexeu em Configurações > Aparência.
     c, _ = client
     r = c.get("/auth/me")
     assert r.status_code == 200
-    assert r.json()["paleta"] == "vinho"
+    assert r.json()["paleta"] is None
 
 
 def test_salvar_e_persistir_paleta_verde(client):

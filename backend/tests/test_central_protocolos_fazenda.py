@@ -39,7 +39,8 @@ from fazenda.models import (
     ProtocoloCustomizado, ProtocoloCustomizadoAplicacao, ProtocoloCustomizadoLancamento,
     ProtocoloIatfAplicacao, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento,
-    ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioLancamento,
+    ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
+    ProtocoloSanitarioLancamento, ProtocoloSanitarioLote,
 )
 
 # Data prevista no futuro — se a única etapa já tivesse vencido, o lançamento
@@ -161,35 +162,51 @@ def _criar_lida(engine, fazenda_id):
 
 def _criar_sanitario(engine, fazenda_id):
     with Session(engine) as s:
-        molde = ProtocoloSanitario(nome=f"Sanitário Legado {fazenda_id}", fazenda_id=fazenda_id)
+        molde = ProtocoloSanitario(nome=f"Sanitário Legado {fazenda_id}", dia_inicial=0, fazenda_id=fazenda_id)
         s.add(molde)
         s.commit()
         s.refresh(molde)
+        etapa = ProtocoloSanitarioEtapa(
+            protocolo_id=molde.id, dia=0, produto="Borgal", dosagem=40.0, unidade="ml", fazenda_id=fazenda_id,
+        )
+        s.add(etapa)
+        s.commit()
+        s.refresh(etapa)
+        lote = ProtocoloSanitarioLote(
+            protocolo_id=molde.id, nome_protocolo="Sanitário Legado", data_inicio=date.today(),
+            ativo=True, fazenda_id=fazenda_id,
+        )
+        s.add(lote)
+        s.commit()
+        s.refresh(lote)
         l = ProtocoloSanitarioLancamento(
-            protocolo_id=molde.id, numero_matriz="700", data_inicio=date.today(), fazenda_id=fazenda_id,
+            protocolo_id=molde.id, numero_matriz="700", data_inicio=date.today(),
+            lote_id=lote.id, fazenda_id=fazenda_id,
         )
         s.add(l)
         s.commit()
         s.refresh(l)
         s.add(ProtocoloSanitarioAplicacao(
-            lancamento_id=l.id, etapa_id=1, data_prevista=DATA_FUTURA, realizada=False, fazenda_id=fazenda_id,
+            lancamento_id=l.id, etapa_id=etapa.id, dia=0, numero_matriz="700",
+            data_prevista=DATA_FUTURA, realizada=False, fazenda_id=fazenda_id,
         ))
         s.commit()
-        return l.id
+        return lote.id
 
 
-# Origens com detalhe/ações pela Central (sanitário fica fora — ver
-# _ORIGENS_COM_ACAO em central_protocolos.py, é lançado por animal e se
-# resolve pela Agenda).
+# Origens com detalhe/ações pela Central — as 5 famílias.
 CRIADORES_COM_ACAO = {
     "iatf": _criar_iatf,
     "inducao": _criar_inducao,
     "customizado": _criar_customizado,
     "lida": _criar_lida,
+    "sanitario": _criar_sanitario,
 }
 
-# Todas as 5 origens agregadas pela Central — usado só nos testes de listagem.
-CRIADORES_TODOS = {**CRIADORES_COM_ACAO, "sanitario": _criar_sanitario}
+# Mesmo conjunto hoje (ver histórico do PR que unificou o Sanitário) —
+# mantido como alias porque outros testes deste arquivo referenciam
+# CRIADORES_TODOS para os casos de listagem.
+CRIADORES_TODOS = CRIADORES_COM_ACAO
 
 
 # ────────────────── Listagem — filtro estrito, NULL incluído ────────────────

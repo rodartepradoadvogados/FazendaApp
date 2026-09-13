@@ -18,6 +18,38 @@ import { usePainelCowDataEstilos } from "@/lib/painelCowDataTema";
 
 type Categoria = { chave: string; label: string };
 
+// Agrupamento visual das categorias em seções (pedido do dono, 12/09/2026) —
+// só organiza a exibição das abas; a chave de cada categoria continua sendo
+// a mesma que o backend usa (painel_cowdata_cadastros.py::_CATEGORIAS +
+// "metodo_servico"). Uma categoria nova no backend sem seção aqui cai num
+// grupo "Outros" no fim, em vez de sumir da tela.
+const SECOES_CADASTROS: { titulo: string; chaves: string[] }[] = [
+  { titulo: "Manejo", chaves: ["motivo_baixa", "motivo_movimentacao"] },
+  { titulo: "Raças", chaves: ["raca", "grau_sangue"] },
+  { titulo: "Reprodução", chaves: ["tipo_servico", "metodo_servico"] },
+  {
+    titulo: "Estoque",
+    chaves: [
+      "estoque_local", "estoque_categoria", "estoque_finalidade",
+      "estoque_unidade", "estoque_unidade_embalagem", "estoque_unidade_medida_embalagem",
+    ],
+  },
+];
+
+function agruparCategoriasPorSecao(categorias: Categoria[]): { titulo: string; itens: Categoria[] }[] {
+  const porChave = new Map(categorias.map((c) => [c.chave, c]));
+  const usadas = new Set<string>();
+  const grupos = SECOES_CADASTROS.map((secao) => {
+    const itens = secao.chaves
+      .map((chave) => { usadas.add(chave); return porChave.get(chave); })
+      .filter((c): c is Categoria => !!c);
+    return { titulo: secao.titulo, itens };
+  }).filter((g) => g.itens.length > 0);
+  const restantes = categorias.filter((c) => !usadas.has(c.chave));
+  if (restantes.length) grupos.push({ titulo: "Outros", itens: restantes });
+  return grupos;
+}
+
 export default function CadastrosGlobaisCowData() {
   const { cor: COR, inputStyle, labelStyle, btnPrimario, btnGhost } = usePainelCowDataEstilos();
   const [categorias, setCategorias] = useState<Categoria[]>([]);
@@ -143,18 +175,27 @@ export default function CadastrosGlobaisCowData() {
         Motivos, raças, grau de sangue, unidades de estoque e tipos/métodos de serviço reprodutivo — aplique em todas as fazendas de uma vez, ou só nas selecionadas.
       </p>
 
-      {/* Abas de categoria */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "1.1rem" }}>
-        {categorias.map((c) => (
-          <button key={c.chave} type="button" onClick={() => setCategoriaAtiva(c.chave)}
-            style={{
-              padding: "0.4rem 0.75rem", borderRadius: "999px", fontSize: "0.78rem", fontWeight: 600, cursor: "pointer",
-              border: `1px solid ${categoriaAtiva === c.chave ? COR.dourado : COR.borda}`,
-              background: categoriaAtiva === c.chave ? "rgba(107,127,153,0.18)" : "transparent",
-              color: categoriaAtiva === c.chave ? COR.texto : COR.mudo,
-            }}>
-            {c.label}
-          </button>
+      {/* Abas de categoria, agrupadas em seções */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", marginBottom: "1.1rem" }}>
+        {agruparCategoriasPorSecao(categorias).map((secao) => (
+          <div key={secao.titulo} style={{ display: "flex", alignItems: "baseline", gap: "0.6rem", flexWrap: "wrap" }}>
+            <span style={{ fontSize: "0.72rem", fontWeight: 700, color: COR.mudo, textTransform: "uppercase", letterSpacing: "0.03em", minWidth: "5.5rem" }}>
+              {secao.titulo}
+            </span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+              {secao.itens.map((c) => (
+                <button key={c.chave} type="button" onClick={() => setCategoriaAtiva(c.chave)}
+                  style={{
+                    padding: "0.4rem 0.75rem", borderRadius: "999px", fontSize: "0.78rem", fontWeight: 600, cursor: "pointer",
+                    border: `1px solid ${categoriaAtiva === c.chave ? COR.dourado : COR.borda}`,
+                    background: categoriaAtiva === c.chave ? "rgba(107,127,153,0.18)" : "transparent",
+                    color: categoriaAtiva === c.chave ? COR.texto : COR.mudo,
+                  }}>
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          </div>
         ))}
       </div>
 

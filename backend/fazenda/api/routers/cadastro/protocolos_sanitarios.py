@@ -16,14 +16,15 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
+from fazenda.auth import exigir_admin_ou_dono, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    Doenca, PrincipioAtivo, ProtocoloIatf, ProtocoloIatfEtapa, ProtocoloIatfLancamento,
+    Doenca, MedicamentoComercial, PrincipioAtivo, ProtocoloIatf, ProtocoloIatfEtapa, ProtocoloIatfLancamento,
     ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa, ProtocoloInducaoLancamento, ProtocoloSanitario,
-    ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, SeedFlag,
+    ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, SeedFlag, Usuario,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
+from fazenda.rules.dose_protocolo import MODOS_DOSE_VALIDOS, interpretar_unidade_legada
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +54,15 @@ class ProtocoloEtapaIn(BaseModel):
     dia: int
     criterio_tipo: str = "medicamento"  # medicamento | principio_ativo | classificacao
     produto: str  # medicamento OU o valor do critério (princípio ativo / classificação)
+    # "fixa" (padrão — é o legado inteiro): `dosagem` é a dose pronta.
+    # "por_peso": `dosagem` é a dose A CADA `dose_referencia_kg` de peso vivo
+    # — ver rules.dose_protocolo. Etapa importada de planilha nunca envia
+    # estes dois campos, então o default precisa reproduzir exatamente o
+    # que a etapa sempre foi: fixa, sem referência de peso.
+    modo_dose: str = "fixa"
     dosagem: float
     unidade: str
+    dose_referencia_kg: float | None = None
     via: str | None = None
     observacao: str | None = None  # nota livre (ex.: "Se necessário", "10ml por orelha")
 
@@ -91,6 +99,16 @@ def _validar_etapas(etapas: list[ProtocoloEtapaIn]) -> None:
             )
         if e.dosagem <= 0:
             raise HTTPException(status_code=400, detail="A dosagem de cada etapa deve ser positiva")
+        if e.modo_dose not in MODOS_DOSE_VALIDOS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Modo de dose inválido — use um de: {', '.join(MODOS_DOSE_VALIDOS)}",
+            )
+        if e.modo_dose == "por_peso" and not (e.dose_referencia_kg and e.dose_referencia_kg > 0):
+            raise HTTPException(
+                status_code=400,
+                detail="Dose por peso vivo precisa do peso de referência (ex.: 15 em \"2 mL a cada 15 kg\")",
+            )
         if e.via and e.via not in VIAS_APLICACAO:
             raise HTTPException(status_code=400, detail=f"Via inválida — use uma de: {', '.join(VIAS_APLICACAO)}")
         if e.criterio_tipo not in CRITERIOS_MEDICAMENTO:
@@ -164,7 +182,7 @@ def atualizar_protocolo_sanitario(
 ) -> dict:
     protocolo = session.get(ProtocoloSanitario, protocolo_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
+    if not protocolo or (protocolo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
     nome = dados.nome.strip()
     if not nome:
@@ -197,7 +215,7 @@ def excluir_protocolo_sanitario(
 ) -> dict:
     protocolo = session.get(ProtocoloSanitario, protocolo_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
+    if not protocolo or (protocolo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
     ja_lancado = session.exec(
         select(ProtocoloSanitarioLancamento).where(ProtocoloSanitarioLancamento.protocolo_id == protocolo_id)
@@ -216,6 +234,120 @@ def excluir_protocolo_sanitario(
     session.commit()
     return {"excluido": True}
 
+
+
+class ItemMigracaoDose(BaseModel):
+    etapa_id: int
+    protocolo_id: int
+    protocolo_nome: str
+    produto: str
+    unidade_atual: str
+    unidade_nova: str
+    dose_referencia_kg: float
+    origem: str  # "texto_da_unidade" | "bula_medicamento_comercial"
+    divergencia: str | None = None
+
+
+@router.post("/protocolos-sanitarios/dose-migrar")
+def migrar_dose_protocolos_sanitarios(
+    confirmar: bool = False, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+    _: Usuario = Depends(exigir_admin_ou_dono),
+) -> dict:
+    """Backfill report-first (mesmo padrão de /patrimonio/depreciavel-corrigir
+    e das reconstruções de ordem_parto): separa a referência de peso vivo que
+    hoje está embutida como TEXTO em `ProtocoloSanitarioEtapa.unidade`
+    (ex.: "ml / 15kg PV") para os campos estruturados `modo_dose` +
+    `dose_referencia_kg` — ver rules.dose_protocolo. NUNCA GRAVA nada até
+    `confirmar=true`.
+
+    Quando o produto da etapa bate pelo nome com um `MedicamentoComercial`
+    que TEM `dose_referencia_kg` preenchido na bula, a bula manda — é o caso
+    do Banamine, cadastrado a 40 kg no protocolo sanitário "Pneumonia —
+    Protocolo A" mas a 45 kg na bula (Flunixina Meglumina, 2 mL/45 kg PV);
+    ninguém percebeu a divergência porque os dois números nunca foram lidos
+    juntos até este backfill existir. Produto sem bula confiável (ex.: Aliv V,
+    que está com `dose_referencia_kg=None` no catálogo — ver o alerta
+    "REVISAR CATÁLOGO" nele) usa o número que já estava escrito no texto da
+    própria etapa, sem inventar nada.
+
+    BUG DE SEGURANÇA CORRIGIDO (achado 33), duas coisas de uma vez:
+
+    1. Não havia gate de papel algum — qualquer usuário com o módulo
+       sanitário liberado podia disparar `confirmar=true`, que reescreve
+       `modo_dose`/`unidade`/`dose_referencia_kg` de toda etapa que casar. É
+       uma reescrita irreversível de posologia (a dose que a pessoa vai
+       aplicar na vaca), não um relatório. Agora exige `exigir_admin_ou_dono`,
+       o mesmo gate das outras reconstruções em massa do sistema
+       (producao.py::reconstruir_ordem_parto e as irmãs).
+    2. Usava a dependência TOLERANTE para uma escrita em massa. O `if
+       fazenda_id is not None` logo abaixo é o padrão tolerante do sistema:
+       com `fazenda_id` resolvendo None o `where` inteiro sumia e a varredura
+       passava a colher — e reescrever — a etapa de TODAS as fazendas de uma
+       vez. `get_fazenda_id_escrita` recusa com 409 antes de chegar aqui."""
+    query = select(ProtocoloSanitarioEtapa, ProtocoloSanitario.nome).join(
+        ProtocoloSanitario, ProtocoloSanitario.id == ProtocoloSanitarioEtapa.protocolo_id
+    ).where(ProtocoloSanitarioEtapa.modo_dose == "fixa")
+    if fazenda_id is not None:
+        query = query.where(ProtocoloSanitarioEtapa.fazenda_id == fazenda_id)
+    candidatas = session.exec(query).all()
+
+    # Bula por nome comercial normalizado — só entram as com referência de
+    # peso realmente preenchida (produto "a revisar" no catálogo não pode
+    # corrigir o que já está escrito no protocolo).
+    bulas = session.exec(
+        select(MedicamentoComercial).where(MedicamentoComercial.dose_base == "por_kg_pv")
+    ).all()
+    bula_por_nome = {
+        b.nome_comercial.strip().lower(): b for b in bulas if b.dose_referencia_kg and b.dose_referencia_kg > 0
+    }
+
+    itens: list[ItemMigracaoDose] = []
+    for etapa, protocolo_nome in candidatas:
+        modo, unidade_limpa, referencia_texto = interpretar_unidade_legada(etapa.unidade)
+        if modo != "por_peso":
+            continue  # etapa de dose fixa de verdade (ex.: "10 mL" do Aliv V neste protocolo) — nada a migrar
+
+        bula = bula_por_nome.get((etapa.produto or "").strip().lower())
+        if bula:
+            referencia_final = bula.dose_referencia_kg
+            origem = "bula_medicamento_comercial"
+            divergencia = (
+                f"Protocolo tinha {referencia_texto:g} kg; bula de {bula.nome_comercial} usa {bula.dose_referencia_kg:g} kg — aplicando a bula."
+                if referencia_texto and abs(referencia_texto - bula.dose_referencia_kg) > 0.01
+                else None
+            )
+        else:
+            referencia_final = referencia_texto
+            origem = "texto_da_unidade"
+            divergencia = None
+
+        itens.append(ItemMigracaoDose(
+            etapa_id=etapa.id, protocolo_id=etapa.protocolo_id, protocolo_nome=protocolo_nome,
+            produto=etapa.produto, unidade_atual=etapa.unidade, unidade_nova=unidade_limpa,
+            dose_referencia_kg=referencia_final, origem=origem, divergencia=divergencia,
+        ))
+
+    if not confirmar:
+        return {
+            "total": len(itens), "aplicado": False,
+            "divergencias": sum(1 for i in itens if i.divergencia),
+            "itens": [i.model_dump() for i in itens],
+        }
+
+    por_id = {etapa.id: etapa for etapa, _nome in candidatas}
+    for item in itens:
+        etapa = por_id[item.etapa_id]
+        etapa.modo_dose = "por_peso"
+        etapa.unidade = item.unidade_nova
+        etapa.dose_referencia_kg = item.dose_referencia_kg
+        session.add(etapa)
+    session.commit()
+    return {
+        "total": len(itens), "aplicado": True,
+        "divergencias": sum(1 for i in itens if i.divergencia),
+        "itens": [i.model_dump() for i in itens],
+    }
 
 def _upsert_protocolo_sanitario(
     session: Session, nome: str, etapas: list[dict], *, doenca_id: int | None = None, eh_mastite: bool | None = None,
@@ -528,7 +660,7 @@ def atualizar_protocolo_inducao(
 ) -> dict:
     protocolo = session.get(ProtocoloInducaoLactacao, protocolo_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
+    if not protocolo or (protocolo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
     nome = dados.nome.strip()
     if not nome:
@@ -562,7 +694,7 @@ def excluir_protocolo_inducao(
     caminho recomendado é desativar (`ativo=False`), não apagar histórico."""
     protocolo = session.get(ProtocoloInducaoLactacao, protocolo_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
+    if not protocolo or (protocolo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
     ja_lancado = session.exec(
         select(ProtocoloInducaoLancamento).where(ProtocoloInducaoLancamento.protocolo_id == protocolo_id)
@@ -677,7 +809,7 @@ def atualizar_protocolo_iatf_cadastrado(
 ) -> dict:
     protocolo = session.get(ProtocoloIatf, protocolo_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
+    if not protocolo or (protocolo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
     nome = dados.nome.strip()
     if not nome:
@@ -705,7 +837,7 @@ def excluir_protocolo_iatf_cadastrado(
 ) -> dict:
     protocolo = session.get(ProtocoloIatf, protocolo_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
+    if not protocolo or (protocolo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
     ja_lancado = session.exec(
         select(ProtocoloIatfLancamento).where(ProtocoloIatfLancamento.protocolo_id == protocolo_id)

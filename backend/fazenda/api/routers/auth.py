@@ -5,6 +5,7 @@ Endpoints: POST /auth/login · GET /auth/me · GET/POST /auth/usuarios
 """
 from __future__ import annotations
 
+import html
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,13 +15,15 @@ from sqlmodel import Session, select
 from datetime import datetime, timedelta
 
 from fazenda.auth import (
-    DESBLOQUEIO_VALIDADE_S, EMAIL_DONO, MODULOS, criar_token, criar_token_desbloqueio, eh_consultor_cowdata,
-    eh_email_dono_equivalente, eh_membro_equipe_cowdata, exigir_dono, get_current_user, get_fazenda_atual_id,
-    get_suporte_do_token, hash_senha, token_manter_conectado, verificar_senha,
+    DESBLOQUEIO_VALIDADE_S, EMAIL_DONO, FECHO_ORDEM_E_SUPORTE, MODULOS, criar_token,
+    criar_token_desbloqueio, eh_consultor_cowdata,
+    eh_email_dono_equivalente, eh_membro_equipe_cowdata, exigir_admin_ou_dono, exigir_dono, get_current_user,
+    get_fazenda_atual_id, get_fazenda_id_escrita, get_suporte_do_token, hash_senha, multifazenda_provisionado,
+    token_manter_conectado, verificar_senha,
 )
 from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
 from fazenda.config import settings
-from fazenda.database import get_session
+from fazenda.database import get_session, sessao_sem_recorte_de_fazenda
 from fazenda.models import ContratoFazendaModulo, Fazenda, LoginAcesso, Pessoa, Usuario, UsuarioFazenda
 from fazenda.rules.email import enviar_email
 
@@ -51,10 +54,16 @@ class LoginIn(BaseModel):
 class NovoUsuario(BaseModel):
     username: str
     senha: str
-    # Uma das duas: pessoa_id (funcionário/consultor da fazenda, já cadastrado
-    # em Configurações > Cadastro > Pessoas) ou nome (conta sem vínculo com
-    # nenhuma fazenda — ex.: equipe da própria CowData, criada em Painel
-    # CowData > Equipe — ver _validar_pessoa_ou_nome).
+    # `pessoa_id` — a pessoa (funcionário/consultor) JÁ cadastrada dentro de
+    # uma fazenda, em Configurações > Cadastro > Pessoas. É o único caminho
+    # aceito num ambiente com fazenda cadastrada: o usuário nasce vinculado à
+    # fazenda dessa pessoa (ver _fazenda_do_novo_usuario e criar_usuario).
+    # `nome` é o resto do caminho antigo "conta sem fazenda nenhuma" (nome
+    # livre, sem Pessoa) — ver _validar_pessoa_ou_nome. Continua aqui só para
+    # a edição retroativa de contas legadas e para instalação ainda sem
+    # nenhuma fazenda; a criação por ele é RECUSADA assim que existe fazenda
+    # no banco. Conta da própria equipe CowData não passa mais por aqui: ela
+    # tem endpoint próprio (Painel CowData > Equipe).
     pessoa_id: int | None = None
     nome: str | None = None
     papel: str = "operador"
@@ -85,7 +94,13 @@ def _publico(u: Usuario, session: Session | None = None) -> dict:
     pessoa_nome = None
     pessoa_tipo = None
     if u.pessoa_id and session is not None:
-        pessoa = session.get(Pessoa, u.pessoa_id)
+        # sessao_sem_recorte_de_fazenda, não `session` direto: é a Pessoa
+        # DESTE usuário, um id já conhecido — segurança real. Pela `session`
+        # (RLS-bound), sob RLS isto nega em silêncio sempre que chamado
+        # antes de uma fazenda selecionada (login) — incidente de
+        # 11/09/2026, ver docs/security-audit/roteiro-seguranca.md.
+        with sessao_sem_recorte_de_fazenda(session) as sm:
+            pessoa = sm.get(Pessoa, u.pessoa_id)
         pessoa_nome = pessoa.nome if pessoa else None
         # CSV de TipoPessoa.nome (ex.: "Empreiteiro" ou "Funcionário,Diarista")
         # — usado no app de campo (frontend/lib/api.ts::ehOperadorRestrito)
@@ -99,7 +114,11 @@ def _publico(u: Usuario, session: Session | None = None) -> dict:
         perm = session.exec(select(PermissaoEquipeCowData).where(PermissaoEquipeCowData.usuario_id == u.id)).first()
         areas_cowdata = [a for a in (perm.areas or "").split(",") if a] if perm else []
     return {"id": u.id, "username": u.username, "nome": u.nome, "papel": u.papel,
-            "permissoes": perms, "ativo": u.ativo, "paleta": u.paleta or "vinho",
+            # None quando o usuário nunca escolheu paleta — o frontend só deve
+            # sobrescrever o que já está no navegador quando houver preferência
+            # de fato salva (ver login() em frontend/lib/api.ts). Um fallback
+            # fixo aqui reescreveria a paleta atual de todo mundo a cada login.
+            "permissoes": perms, "ativo": u.ativo, "paleta": u.paleta,
             "email": u.email, "eh_dono": eh_email_dono_equivalente(u.email),
             "pode_publicar_materias_blog": u.pode_publicar_materias_blog,
             "pessoa_id": u.pessoa_id, "pessoa_nome": pessoa_nome, "pessoa_tipo": pessoa_tipo,
@@ -144,10 +163,79 @@ def _validar_pessoa_ou_nome(session: Session, pessoa_id: int | None, nome: str |
     return None, nome_limpo
 
 
+# Texto único da recusa da trava "todo usuário nasce dentro de uma fazenda"
+# (ver _fazenda_do_novo_usuario). Mora numa constante porque é a ÚNICA
+# explicação que quem tenta o caminho errado recebe — e porque o teste de
+# regressão cobra este texto, para ninguém trocá-lo por um "dados inválidos"
+# genérico sem perceber que está apagando a instrução.
+ERRO_USUARIO_SEM_FAZENDA = (
+    "Não é possível criar um usuário fora de uma fazenda. " + FECHO_ORDEM_E_SUPORTE
+)
+
+
+def _fazenda_do_novo_usuario(session: Session, pessoa_id: int | None, fazenda_id_escrita: int | None) -> int | None:
+    """A que fazenda o usuário que está nascendo agora vai ficar vinculado —
+    ou uma recusa, quando não existe resposta.
+
+    POR QUE ISTO EXISTE: até aqui, POST /auth/usuarios gravava o `Usuario` e
+    nunca criava o `UsuarioFazenda` (ver fazenda/models/multitenant.py). O
+    resultado era uma conta sem fazenda nenhuma, e é justamente esse estado
+    que abre o furo de isolamento: o login de quem tem 0 vínculos emite token
+    SEM a claim "fid" (ver login()), e o sistema inteiro isola tenant pelo
+    padrão tolerante `if fazenda_id is not None: query = query.where(...)` —
+    um token sem "fid" não restringe nada, ele DESLIGA o recorte por fazenda
+    em toda rota que segue esse padrão. Ou seja: criar usuário órfão não é um
+    detalhe de cadastro, é fabricar a chave que abre as outras fazendas.
+
+    A REGRA DO DONO, textual: "não pode ser possível criar usuário sem
+    fazenda. O CowData cria a fazenda, daí depois cria uma pessoa lá dentro,
+    cria o usuário dela... depois disso, sempre se cria pessoa dentro de uma
+    fazenda e depois usuário." Fazenda → pessoa → usuário, nessa ordem.
+
+    Como a fazenda é resolvida, em ordem:
+    1. Ambiente SEM nenhuma fazenda cadastrada (`multifazenda_provisionado`
+       False) devolve None e nada é vinculado — não há tenant a isolar nem
+       fazenda a que vincular, e é o mesmo corte que `resolver_fazenda_id_
+       escrita` e `exigir_fazenda_selecionada` já usam para separar "legado
+       tolerado" de "recusa". Todo ambiente de produção tem fazenda, então lá
+       a trava está sempre ligada.
+    2. A fazenda da PESSOA escolhida — ela é a resposta certa por definição
+       (o usuário É aquela pessoa), e é o mesmo recorte que GET /auth/usuarios
+       usa para listar (join em Pessoa.fazenda_id). Sem pessoa nenhuma
+       (caminho de `nome` livre), recusa: é exatamente "criar usuário sem
+       fazenda".
+    3. Pessoa legada com `fazenda_id` nulo (cadastrada antes do backfill de
+       multi-fazenda) cai na fazenda de ESCRITA da sessão de quem está
+       criando — a mesma fazenda em que a tela de Controle de Acesso está
+       aberta. É um caminho real que não pode ser bloqueado (não há tela para
+       corrigir `Pessoa.fazenda_id` retroativamente), e ele continua não
+       produzindo órfão, que é o ponto. Se nem isso resolver, recusa.
+    """
+    if not multifazenda_provisionado(session):
+        return None
+    pessoa = session.get(Pessoa, pessoa_id) if pessoa_id is not None else None
+    if pessoa is None:
+        raise HTTPException(status_code=400, detail=ERRO_USUARIO_SEM_FAZENDA)
+    fazenda_id = pessoa.fazenda_id or fazenda_id_escrita
+    if fazenda_id is None:
+        raise HTTPException(status_code=400, detail=ERRO_USUARIO_SEM_FAZENDA)
+    return fazenda_id
+
+
 def _fazendas_vinculadas(session: Session, usuario_id: int) -> list[Fazenda]:
-    vinculos = session.exec(select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == usuario_id)).all()
-    fazendas = [session.get(Fazenda, v.fazenda_id) for v in vinculos]
-    return [f for f in fazendas if f and f.ativa]
+    """`sessao_sem_recorte_de_fazenda`, não a `session` recebida direto —
+    de propósito, e não um descuido. Esta função existe exatamente para
+    ENUMERAR AS FAZENDAS deste usuário ANTES de qualquer uma estar
+    selecionada (chamada por login()/`_opcoes_de_conta`, sem contexto de
+    fazenda ainda) — sob RLS, a mesma consulta pela `session` da requisição
+    nega tudo em silêncio (nenhuma linha bate com um contexto que ainda não
+    existe). `usuario_id` já é o recorte de segurança real (mesmo
+    raciocínio das rotinas de fundo, roteiro-seguranca.md seção 2) —
+    incidente de 11/09/2026 que derrubou o login em produção."""
+    with sessao_sem_recorte_de_fazenda(session) as sm:
+        vinculos = sm.exec(select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == usuario_id)).all()
+        fazendas = [sm.get(Fazenda, v.fazenda_id) for v in vinculos]
+        return [f for f in fazendas if f and f.ativa]
 
 
 def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None, session: Session | None = None) -> dict:
@@ -170,17 +258,29 @@ def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None, session:
     # bug real encontrado em produção). `session=None` (ex.: contexto sem
     # banco à mão) devolve lista vazia — o frontend trata ausência do campo
     # como "sem restrição conhecida", nunca escondendo por engano.
+    #
+    # A leitura em si vai por `sessao_sem_recorte_de_fazenda`, não pela
+    # `session` recebida direto: esta função é chamada tanto com fazenda já
+    # selecionada (GET /auth/me, contexto bate) quanto ANTES de selecionar
+    # (login()/selecionar_fazenda(), sem contexto nenhum ainda) — sob RLS,
+    # o segundo caso negava em silêncio (incidente de 11/09/2026). O filtro
+    # explícito em `fazenda_id == f.id` já é o recorte de segurança real.
     modulos: list[str] = []
     if session is not None:
-        modulos = sorted(
-            m.modulo for m in session.exec(
-                select(ContratoFazendaModulo).where(
-                    ContratoFazendaModulo.fazenda_id == f.id, ContratoFazendaModulo.ativo == True,  # noqa: E712
-                )
-            ).all()
-        )
+        with sessao_sem_recorte_de_fazenda(session) as sm:
+            modulos = sorted(
+                m.modulo for m in sm.exec(
+                    select(ContratoFazendaModulo).where(
+                        ContratoFazendaModulo.fazenda_id == f.id, ContratoFazendaModulo.ativo == True,  # noqa: E712
+                    )
+                ).all()
+            )
     return {
         "id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf,
+        # Fazenda de demonstração/sandbox (ver Fazenda.eh_teste) — o
+        # frontend usa isto pra desenhar a tarja de teste, nunca escondida
+        # por trás de um campo ausente (default False, igual ao model).
+        "eh_teste": f.eh_teste,
         "vinculo_contador": bool(vinculo and vinculo.contador),
         "vinculo_consultor": bool(vinculo and vinculo.consultor),
         "vinculo_contratante": bool(vinculo and vinculo.contratante),
@@ -189,9 +289,41 @@ def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None, session:
 
 
 def _vinculo(session: Session, usuario_id: int, fazenda_id: int) -> UsuarioFazenda | None:
-    return session.exec(
-        select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == usuario_id, UsuarioFazenda.fazenda_id == fazenda_id)
-    ).first()
+    """`sessao_sem_recorte_de_fazenda`, não a `session` recebida direto —
+    chamada tanto com fazenda já selecionada (GET /auth/me, contexto bate)
+    quanto ANTES de selecionar (login()/selecionar_fazenda()), onde sob RLS
+    a mesma consulta pela `session` da requisição negava em silêncio
+    (incidente de 11/09/2026). `usuario_id`+`fazenda_id`, os dois explícitos
+    no filtro, já são o recorte de segurança real."""
+    with sessao_sem_recorte_de_fazenda(session) as sm:
+        return sm.exec(
+            select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == usuario_id, UsuarioFazenda.fazenda_id == fazenda_id)
+        ).first()
+
+
+def _opcoes_de_conta(session: Session, user: Usuario) -> tuple[list[Fazenda], bool, list[dict]]:
+    """Único lugar que decide QUAIS contas um usuário pode escolher — usado
+    tanto por POST /auth/login (no instante da autenticação) quanto por
+    GET /auth/contas-disponiveis (a qualquer momento depois, ver "Trocar de
+    conta" no menu e a pergunta a cada abertura do app). Extraído para cá
+    porque as duas rotas têm que enxergar EXATAMENTE a mesma lista sempre —
+    duas cópias do mesmo critério (dono-equivalente/Equipe CowData +
+    fazendas vinculadas) são duas chances de um dia divergirem uma da outra.
+
+    Devolve (fazendas, mostrar_opcao_cowdata, opcoes) — login() ainda
+    precisa de `fazendas`/`mostrar_opcao_cowdata` à parte para decidir a
+    auto-seleção (só ele faz isso; contas-disponiveis não auto-seleciona
+    nada, só lista)."""
+    fazendas = _fazendas_vinculadas(session, user.id)
+    eh_admin_cowdata = eh_email_dono_equivalente(user.email) and len(fazendas) >= 1
+    eh_membro_cowdata = not eh_email_dono_equivalente(user.email) and eh_membro_equipe_cowdata(session, user)
+    mostrar_opcao_cowdata = eh_admin_cowdata or eh_membro_cowdata
+    opcoes = [_fazenda_publica(f, session=session) for f in fazendas]
+    if mostrar_opcao_cowdata:
+        # Sentinela id=0 (fazendas de verdade começam em 1) — ver comentário
+        # equivalente em login(), abaixo.
+        opcoes.append({"id": 0, "nome": "Painel CowData", "cowdata": True})
+    return fazendas, mostrar_opcao_cowdata, opcoes
 
 
 @router.post("/login")
@@ -217,16 +349,10 @@ def login(dados: LoginIn, session: Session = Depends(get_session)) -> dict:
     # CowData — sem isso (dono-equivalente sem nenhum UsuarioFazenda gravado,
     # só o bypass por e-mail) mantém o comportamento de sempre, pra nunca
     # arriscar travar quem só tinha esse acesso indireto.
-    fazendas = _fazendas_vinculadas(session, user.id)
-    eh_admin_cowdata = eh_email_dono_equivalente(user.email) and len(fazendas) >= 1
-    # Membro da Equipe CowData com login próprio (ago/2026, ver
-    # eh_membro_equipe_cowdata) — mesma tela de escolha do dono, mas SEM a
-    # trava "len(fazendas) >= 1": ao contrário do dono (que sempre tem o
-    # bypass por e-mail como rede de segurança), um membro comum da equipe
-    # pode legitimamente não ter NENHUMA fazenda vinculada e mesmo assim
-    # precisa cair no Painel CowData, não ficar sem destino nenhum.
-    eh_membro_cowdata = not eh_email_dono_equivalente(user.email) and eh_membro_equipe_cowdata(session, user)
-    mostrar_opcao_cowdata = eh_admin_cowdata or eh_membro_cowdata
+    # Membro da Equipe CowData com login próprio (ago/2026): mesma tela de
+    # escolha do dono, mas sem exigir nenhuma fazenda vinculada — ver
+    # docstring de _opcoes_de_conta.
+    fazendas, mostrar_opcao_cowdata, opcoes = _opcoes_de_conta(session, user)
     fazenda_auto = fazendas[0] if (len(fazendas) == 1 and not mostrar_opcao_cowdata) else None
     resposta = {
         "token": criar_token(user.username, fazenda_id=fazenda_auto.id if fazenda_auto else None, manter_conectado=dados.manter_conectado),
@@ -235,14 +361,14 @@ def login(dados: LoginIn, session: Session = Depends(get_session)) -> dict:
     if fazenda_auto:
         resposta["fazenda_atual"] = _fazenda_publica(fazenda_auto, _vinculo(session, user.id, fazenda_auto.id), session)
     if len(fazendas) > 1 or mostrar_opcao_cowdata:
+        # O frontend reconhece a entrada sintética "Painel CowData" (id=0)
+        # pelo campo "cowdata" e, ao escolher, só navega pro Painel usando o
+        # token já emitido acima (fid=None), sem chamar /auth/selecionar-
+        # fazenda (essa "fazenda" não existe) — ver POST /auth/entrar-
+        # painel-cowdata para o caso de reentrar nela DEPOIS de já ter
+        # escolhido uma fazenda (token com fid), que este bypass aqui não
+        # cobre.
         resposta["selecao_fazenda_necessaria"] = True
-        opcoes = [_fazenda_publica(f, session=session) for f in fazendas]
-        if mostrar_opcao_cowdata:
-            # Sentinela id=0 (fazendas de verdade começam em 1) — o frontend
-            # reconhece pelo campo "cowdata" e, ao escolher, só navega pro
-            # Painel CowData usando o token já emitido acima (fid=None), sem
-            # chamar /auth/selecionar-fazenda (essa "fazenda" não existe).
-            opcoes.append({"id": 0, "nome": "Painel CowData", "cowdata": True})
         resposta["fazendas_disponiveis"] = opcoes
     return resposta
 
@@ -276,10 +402,16 @@ def selecionar_fazenda(
     get_fazenda_atual_id, usado pelos endpoints que já filtram por fazenda).
     Preserva a validade longa do "Manter conectado" do login original —
     senão quem marcou a opção era jogado de volta para as 12h padrão assim
-    que escolhia a fazenda."""
-    vinculo = session.exec(
-        select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == user.id, UsuarioFazenda.fazenda_id == dados.fazenda_id)
-    ).first()
+    que escolhia a fazenda.
+
+    A busca do vínculo é `_vinculo(...)`, não uma consulta própria — reusa a
+    mesma leitura por `engine_manutencao` (ver docstring de `_vinculo`):
+    neste ponto o token ainda não tem "fid" nenhum (é o token que POST
+    /auth/login emitiu sem auto-selecionar), então não há contexto de RLS
+    que bata com `dados.fazenda_id` — era exatamente aqui que a troca de
+    fazenda recusava com 403 mesmo para quem estava genuinamente vinculado
+    (incidente de 11/09/2026)."""
+    vinculo = _vinculo(session, user.id, dados.fazenda_id)
     if not vinculo:
         raise HTTPException(status_code=403, detail="Você não está vinculado a esta fazenda")
     fazenda = session.get(Fazenda, dados.fazenda_id)
@@ -289,6 +421,66 @@ def selecionar_fazenda(
         "token": criar_token(user.username, fazenda_id=fazenda.id, manter_conectado=manter_conectado),
         "fazenda_atual": _fazenda_publica(fazenda, vinculo, session),
     }
+
+
+@router.get("/contas-disponiveis")
+def contas_disponiveis(user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> dict:
+    """Mesma lista (e o MESMO critério, ver _opcoes_de_conta) que POST
+    /auth/login devolve em "fazendas_disponiveis" — só que chamável a
+    qualquer momento depois do login, não só no instante dele. Alimenta a
+    tela-eixo "Trocar de conta" (frontend: /escolher-conta), tanto quando o
+    app pergunta sozinho a cada abertura (só faz sentido perguntar se há
+    mais de 1 opção — decisão do FRONTEND, ver comentário abaixo) quanto
+    quando a pessoa pede pra trocar pelo menu.
+
+    Devolve a lista mesmo com 0 ou 1 opção — de propósito: esta rota só
+    LISTA, nunca decide "vale a pena perguntar" (isso é regra de produto,
+    não de dado, e já mora no frontend em dois lugares com critérios
+    ligeiramente diferentes — abrir o app exige >1 opção; o menu "Trocar de
+    conta" está sempre disponível, mesmo para quem só tem uma conta).
+    Replicar aqui a regra "só quando > 1" duplicaria a decisão — e uma
+    cópia a mais é só mais uma chance de divergir da outra."""
+    _, _, opcoes = _opcoes_de_conta(session, user)
+    return {"opcoes": opcoes}
+
+
+@router.post("/entrar-painel-cowdata")
+def entrar_painel_cowdata(
+    user: Usuario = Depends(get_current_user), session: Session = Depends(get_session),
+    manter_conectado: bool = Depends(token_manter_conectado),
+) -> dict:
+    """Reemite o token do usuário SEM a claim "fid" — o formato de token que
+    o Painel CowData espera (ver get_fazenda_atual_id/criar_token).
+
+    Por que este endpoint precisa existir: ao ESCOLHER "Painel CowData" no
+    instante do login, o frontend não chama nada — só navega usando o
+    token que POST /auth/login já emitiu (que nunca tem "fid" quando a
+    opção Painel CowData aparece, ver login() acima). Mas quem já ENTROU
+    numa fazenda antes (token COM "fid" gravado) e depois pede para trocar
+    para o Painel CowData pelo meio da sessão (ver "Trocar de conta") tem
+    um token que não serve — precisa de um novo, sem "fid", e é isso que
+    esta rota emite.
+
+    RESTRIÇÃO DE SEGURANÇA — NÃO RELAXAR: um token sem "fid" desliga o
+    filtro por fazenda em várias rotas ainda não migradas para
+    get_fazenda_id_escrita (achado de uma auditoria de segurança em
+    andamento, ver docs/security-audit/achados.json — token sem fazenda
+    selecionada tolera leitura/escrita cross-tenant em várias rotas). Por
+    isso esta rota só emite esse tipo de token para quem já tinha o
+    critério que hoje decide se a opção "Painel CowData" aparece no login
+    (dono-equivalente OU membro da Equipe CowData) — nunca para um usuário
+    comum, mesmo autenticado: alargar esse caminho para qualquer um seria
+    abrir, por uma porta nova, exatamente o buraco que a auditoria
+    encontrou. Ver test_entrar_painel_cowdata.py::
+    test_usuario_comum_recebe_403.
+
+    Preserva a validade longa do "Manter conectado", igual a
+    selecionar_fazenda acima — trocar de conta no meio de uma sessão longa
+    não pode jogar quem marcou a opção de volta pras 12h padrão."""
+    pode_entrar = eh_email_dono_equivalente(user.email) or eh_membro_equipe_cowdata(session, user)
+    if not pode_entrar:
+        raise HTTPException(status_code=403, detail="Acesso restrito à administração da CowData")
+    return {"token": criar_token(user.username, fazenda_id=None, manter_conectado=manter_conectado)}
 
 
 class EsqueciSenhaVerificarIn(BaseModel):
@@ -327,9 +519,14 @@ def esqueci_senha_enviar(dados: EsqueciSenhaEnviarIn, session: Session = Depends
     session.add(user)
     session.commit()
     link = f"{settings.frontend_base_url}/redefinir-senha?token={user.reset_senha_token}"
+    # BUG DE SEGURANÇA CORRIGIDO: nome/username são texto livre no cadastro
+    # (ver _validar_pessoa_ou_nome) — sem escape, um valor tipo
+    # "<img src=x onerror=...>" executava no cliente de e-mail.
+    nome_seguro = html.escape(user.nome or user.username)
+    username_seguro = html.escape(user.username)
     corpo_html = f"""
-        <p>Olá, {user.nome or user.username}!</p>
-        <p>Recebemos um pedido para redefinir a senha do seu login <strong>{user.username}</strong> no sistema da fazenda.</p>
+        <p>Olá, {nome_seguro}!</p>
+        <p>Recebemos um pedido para redefinir a senha do seu login <strong>{username_seguro}</strong> no sistema da fazenda.</p>
         <p><a href="{link}">Clique aqui para definir uma nova senha</a></p>
         <p>Esse link vale por 1 hora. Se você não pediu essa redefinição, pode ignorar este e-mail.</p>
     """
@@ -390,7 +587,12 @@ def listar_usuarios(
     QUALQUER cliente da plataforma na lista da direita (bug real encontrado
     em produção). Token sem fazenda selecionada (legado) mantém o
     comportamento antigo, sem filtro — mesmo "sem retroatividade" do resto
-    do piloto de multi-fazenda."""
+    do piloto de multi-fazenda — mas só enquanto não houver fazenda nenhuma
+    cadastrada; havendo, o "sem retroatividade" viraria justamente o furo
+    que a linha acima descreve, então a rota recusa (mesma regra de
+    /usuarios/acessos logo abaixo)."""
+    if fazenda_id is None and multifazenda_provisionado(session):
+        raise HTTPException(status_code=400, detail="Nenhuma fazenda selecionada")
     query = select(Usuario)
     if fazenda_id is not None:
         query = query.join(Pessoa, Pessoa.id == Usuario.pessoa_id).where(Pessoa.fazenda_id == fazenda_id)
@@ -398,12 +600,37 @@ def listar_usuarios(
 
 
 @router.get("/usuarios/acessos")
-def listar_acessos(_: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> list[dict]:
-    """Relatório de últimos acessos — restrito ao proprietário (ver exigir_dono).
-    Traz os 3 logins mais recentes de cada usuário (histórico completo em
-    LoginAcesso; Usuario.ultimo_login guarda só o mais recente, mantido por
-    compatibilidade com o resto do sistema)."""
-    usuarios = session.exec(select(Usuario)).all()
+def listar_acessos(
+    _: Usuario = Depends(exigir_admin_ou_dono),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session),
+) -> list[dict]:
+    """Relatório de últimos acessos — dono-equivalente OU administrador da
+    fazenda atual (ver exigir_admin_ou_dono; pedido explícito do usuário
+    ago/2026, ampliando o que antes era só `exigir_dono`).
+
+    Escopado à fazenda ATUAL, mesmo padrão e mesmo motivo de `listar_usuarios`
+    acima: sem o filtro, um administrador de UMA fazenda-cliente veria o
+    histórico de login de TODAS as outras (bug de vazamento entre clientes,
+    não só de UX) — `exigir_dono` sozinho nunca precisou disso porque só o
+    proprietário da plataforma passava por aqui; `exigir_admin_ou_dono` abre
+    a um público bem maior (qualquer administrador de qualquer fazenda-cliente),
+    então o filtro deixa de ser opcional."""
+    # FURO CORRIGIDO (auditoria F-A-02): o filtro por fazenda era condicional
+    # (`if fazenda_id is not None`), então um token SEM fazenda selecionada
+    # devolvia o banco inteiro — username (que é o identificador de login),
+    # papel e telemetria de acesso de todos os clientes da plataforma, para
+    # qualquer administrador de qualquer fazenda. Esta rota vive em
+    # auth.router, que de propósito NÃO passa por exigir_fazenda_selecionada
+    # (é onde mora o login), então a recusa é feita aqui, com a mesma regra
+    # (ver fazenda/auth.py::multifazenda_provisionado) e o mesmo precedente
+    # de cofre_acesso.py::listar_auditoria_da_fazenda.
+    if fazenda_id is None and multifazenda_provisionado(session):
+        raise HTTPException(status_code=400, detail="Nenhuma fazenda selecionada")
+    query = select(Usuario)
+    if fazenda_id is not None:
+        query = query.join(Pessoa, Pessoa.id == Usuario.pessoa_id).where(Pessoa.fazenda_id == fazenda_id)
+    usuarios = session.exec(query).all()
     resultado = []
     for u in sorted(usuarios, key=lambda u: (u.ultimo_login is None, u.ultimo_login or datetime.min), reverse=True):
         ultimos = session.exec(
@@ -428,22 +655,55 @@ def listar_modulos(_: Usuario = Depends(get_current_user)) -> list[str]:
 
 
 @router.post("/usuarios")
-def criar_usuario(dados: NovoUsuario, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> dict:
+def criar_usuario(
+    dados: NovoUsuario, _: Usuario = Depends(exigir_dono),
+    fazenda_id_escrita: int | None = Depends(get_fazenda_id_escrita),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Cria o login de uma pessoa JÁ cadastrada dentro de uma fazenda — e
+    cria o vínculo `UsuarioFazenda` no MESMO commit.
+
+    O vínculo junto não é enfeite: um `Usuario` sem nenhuma fazenda é o
+    estado que desliga o isolamento entre clientes (o raciocínio completo
+    está em _fazenda_do_novo_usuario). Por isso ele entra na mesma transação
+    — `flush()` para o INSERT resolver o `id` sem fechar a transação, e um
+    único `commit()` no fim. Validar a entrada e gravar em dois commits não
+    bastaria: falhando o segundo, o usuário órfão já estaria no banco, que é
+    exatamente o que esta rota não pode mais produzir.
+
+    Fazenda de escrita (`get_fazenda_id_escrita`, padrão da casa para toda
+    rota que grava) entra só como resposta para a pessoa legada sem
+    `fazenda_id`; ela também é quem recusa com 409 uma sessão que não sabe em
+    que fazenda está — mesma exigência que GET /auth/usuarios (a tela de
+    Controle de Acesso) já faz do outro lado."""
     if session.exec(select(Usuario).where(Usuario.username == dados.username)).first():
         raise HTTPException(status_code=400, detail="Usuário já existe")
     pessoa_id, nome = _validar_pessoa_ou_nome(session, dados.pessoa_id, dados.nome)
+    fazenda_do_vinculo = _fazenda_do_novo_usuario(session, pessoa_id, fazenda_id_escrita)
     perms = "" if dados.papel == "admin" else ",".join(m for m in dados.permissoes if m in MODULOS)
     novo = Usuario(username=dados.username, nome=nome, pessoa_id=pessoa_id, senha_hash=hash_senha(dados.senha),
                    papel=dados.papel, permissoes=perms, email=(dados.email or "").strip() or None,
                    pode_publicar_materias_blog=dados.pode_publicar_materias_blog)
     session.add(novo)
+    session.flush()  # resolve novo.id sem encerrar a transação — o vínculo vai no mesmo commit
+    if fazenda_do_vinculo is not None:
+        # Vínculo simples de propósito (contratante=False): a trava aqui é
+        # contra usuário órfão, não um jeito de distribuir o papel de
+        # contratante — esse é sempre uma atribuição deliberada, por
+        # POST /fazendas/{id}/vincular-usuario ou pelo Painel CowData
+        # (ver painel_cowdata_usuarios.py::_garantir_vinculo).
+        session.add(UsuarioFazenda(usuario_id=novo.id, fazenda_id=fazenda_do_vinculo))
     session.commit()
     session.refresh(novo)
     return _publico(novo, session)
 
 
 @router.put("/usuarios/{user_id}")
-def editar_usuario(user_id: int, dados: EditarUsuario, admin: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> dict:
+def editar_usuario(
+    user_id: int, dados: EditarUsuario, admin: Usuario = Depends(exigir_dono),
+    fazenda_id_escrita: int | None = Depends(get_fazenda_id_escrita),
+    session: Session = Depends(get_session),
+) -> dict:
     u = session.get(Usuario, user_id)
     if not u:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
@@ -455,6 +715,18 @@ def editar_usuario(user_id: int, dados: EditarUsuario, admin: Usuario = Depends(
         pessoa = _validar_pessoa_do_usuario(session, dados.pessoa_id, ignorar_usuario_id=u.id)
         u.pessoa_id = pessoa.id
         u.nome = pessoa.nome
+        # Mesmo furo que POST /auth/usuarios já fechou (ver
+        # _fazenda_do_novo_usuario): vincular um login a uma Pessoa sem criar
+        # o UsuarioFazenda correspondente fabrica exatamente o mesmo usuário
+        # órfão — só que por aqui, no futuro, não na criação. Caso real de
+        # produção (12/09/2026): um funcionário ficou preso em "fazenda não
+        # selecionada" em toda tela porque seu login foi ligado à Pessoa dele
+        # só depois de criado, e nenhum UsuarioFazenda nasceu nesse momento.
+        fazenda_do_vinculo = _fazenda_do_novo_usuario(session, pessoa.id, fazenda_id_escrita)
+        if fazenda_do_vinculo is not None and not session.exec(
+            select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == u.id, UsuarioFazenda.fazenda_id == fazenda_do_vinculo)
+        ).first():
+            session.add(UsuarioFazenda(usuario_id=u.id, fazenda_id=fazenda_do_vinculo))
     if dados.papel is not None:
         u.papel = dados.papel
     if dados.permissoes is not None:
@@ -500,7 +772,18 @@ def salvar_preferencias(dados: PreferenciasIn, user: Usuario = Depends(get_curre
     novo_email = EMAIL_DONO if dados.reivindicar_proprietario else dados.email
     if novo_email is not None:
         novo_email = novo_email.strip() or None
-        if novo_email and novo_email.lower() == EMAIL_DONO:
+        if novo_email and eh_email_dono_equivalente(novo_email):
+            # BUG DE SEGURANÇA CORRIGIDO: a checagem antiga comparava só com
+            # EMAIL_DONO (`== EMAIL_DONO`), não com o conjunto completo
+            # EMAILS_DONO_EQUIVALENTE — qualquer usuário autenticado, de
+            # qualquer papel, conseguia virar dono-equivalente só enviando o
+            # OUTRO e-mail da lista (nunca o literal EMAIL_DONO), pulando as
+            # duas travas abaixo por inteiro. Auto-atendimento continua
+            # existindo só para EMAIL_DONO (via reivindicar_proprietario ou
+            # digitando o valor certo) — o(s) outro(s) e-mail(is)
+            # equivalente(s) nunca são atribuíveis por aqui.
+            if novo_email.lower() != EMAIL_DONO:
+                raise HTTPException(status_code=403, detail="Este e-mail não pode ser definido por aqui.")
             if user.papel != "admin":
                 raise HTTPException(status_code=403, detail="Somente um administrador pode assumir o e-mail do proprietário")
             dono_atual = session.exec(select(Usuario).where(Usuario.email == EMAIL_DONO)).first()

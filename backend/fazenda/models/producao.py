@@ -149,7 +149,72 @@ class Secagem(SQLModel, table=True):
     motivo: str  # doente | baixa_producao | comportamento | mastite | casco | rotina | outros
     escore_condicao_corporal: Optional[float] = None  # 1 a 5, passo 0,25
     observacao: Optional[str] = None
+    # Resposta explícita de "aplicar vacina pré-parto?" no momento da secagem
+    # (ver POST /producao/secagem) — None é dado legado/sem resposta; True/
+    # False fica gravado no histórico da vaca mesmo quando a resposta é "não"
+    # (nesse caso não gera pendência nenhuma na Agenda, só o registro aqui).
+    vacina_pre_parto: Optional[bool] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Lactacao(SQLModel, table=True):
+    """
+    Uma lactação da matriz — o período entre o evento que a abriu (parto,
+    aborto ou indução) e a secagem que a fechou.
+
+    ## A entidade que faltava
+
+    Até aqui o sistema NÃO TINHA lactação: cada tela inferia "está em
+    lactação" do seu próprio jeito — existir um `Parto`, `Animal.del_dias >
+    0` (campo congelado, zerado no instante do parto e nunca mais
+    atualizado), ou o código do lote começar com 01/02/03. O resultado foi o
+    bug que originou esta tabela: uma matriz com aborto lançado, lactação
+    aberta pelo popup, já no lote de lactação e com controle leiteiro
+    lançado continuava aparecendo como "novilha gestante, sem parto" —
+    porque nenhuma dessas inferências concordava com as outras.
+
+    Com a lactação materializada, "esta vaca está em lactação em D?" e "qual
+    o DEL dela em D?" viram uma consulta só, com resposta única (ver
+    `fazenda.rules.lactacao`).
+
+    ## Campos que merecem explicação
+
+    * `data_inicio` — a data REAL do evento, aceita retroativa. É daqui que
+      sai o DEL ao vivo (`hoje - data_inicio`), e é por isso que o
+      endpoint de encerramento de gestação exige a data do evento: o
+      caminho antigo (`POST /reproducao/animais/{n}/abrir-lactacao`) nem
+      recebia data, gravava `del_dias = 0` e contaminava a curva de
+      lactação do rebanho com DEL 0 em toda vaca que pariu pelo app.
+    * `origem` — "parto" | "aborto" | "inducao" | "importacao". Distingue o
+      que abriu a lactação; "importacao" é o backfill a partir dos partos
+      que já existiam no banco antes desta tabela.
+    * `parto_id` — o `Parto` correspondente, quando existe. A partir do
+      endpoint único, TODO fim de gestação cria um `Parto` (inclusive o
+      aborto, com `ordem_parto` NULL — ver `fazenda.rules.parto`), então na
+      prática só as lactações por indução ficam sem ele.
+    * `numero_lactacao` — ordem da lactação NA MATRIZ (1ª, 2ª, …). Não é a
+      mesma coisa que `Parto.ordem_parto`: um aborto abre lactação sem
+      avançar a ordem de parto, e uma indução abre lactação sem parto
+      nenhum.
+    * `data_fim`/`secagem_id` — NULL enquanto a lactação está ABERTA. É
+      esse NULL que o controle leiteiro exige (ver POST /producao/controles).
+    """
+
+    __tablename__ = "lactacao"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    animal_id: Optional[int] = Field(default=None, foreign_key="animal.id", index=True)
+    numero_matriz: str = Field(index=True)
+    data_inicio: date = Field(index=True)
+    origem: str = Field(default="parto")  # parto | aborto | inducao | importacao
+    parto_id: Optional[int] = Field(default=None, foreign_key="parto.id", index=True)
+    numero_lactacao: int = Field(default=1)
+    data_fim: Optional[date] = Field(default=None, index=True)
+    secagem_id: Optional[int] = Field(default=None, foreign_key="secagem.id", index=True)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    observacao: Optional[str] = None
 
 
 class FaixaBonificacaoQualidade(SQLModel, table=True):

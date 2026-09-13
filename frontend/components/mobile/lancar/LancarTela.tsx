@@ -1,11 +1,15 @@
 "use client";
 // Tela LANÇAR (lançamento rápido) do app de campo. Busca grande no topo que
-// "fixa" um animal num chip; seis blocos grandes que abrem sub-telas com
-// mini-formulários. Todo envio passa por enviarOuEnfileirar (offline-first).
+// "fixa" um animal num chip; SEIS blocos grandes (os destinos de maior uso
+// real no dia a dia de campo) abrem sub-telas com mini-formulários; o resto
+// — administrativo (Financeiro/Estoque) e as ações irreversíveis (Baixar/
+// Excluir, que continuam existindo, só não na tela principal) — mora na
+// gaveta "Mais opções". Todo envio passa por enviarOuEnfileirar (offline-first).
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
-import { Activity, Milk, Syringe, Wheat, ArrowLeftRight, Skull, Search, X, ChevronRight, Landmark, Boxes, Trash2, ListChecks } from "lucide-react";
-import { MobTitulo, MobBloco, MobVoltar } from "@/components/mobile/ui";
+import Link from "next/link";
+import { Activity, Milk, Syringe, Wheat, ArrowLeftRight, Skull, Search, X, ChevronRight, Landmark, Boxes, Trash2, ListChecks, MoreHorizontal, Sun } from "lucide-react";
+import { MobTitulo, MobBloco, MobVoltar, MobGaveta } from "@/components/mobile/ui";
 import { fetchAnimais, podeModulo } from "@/lib/api";
 import { type Animal, useCache, filtrarAnimais, rotuloAnimal } from "./comum";
 
@@ -43,9 +47,20 @@ export function LancarTela() {
   // Sanitário) abre direto em Financeiro > Contas a pagar — o `?servico=`
   // que vem junto é lido pelo próprio FormFinanceiro (ver components/
   // FormFinanceiro.tsx), não precisa ser tratado aqui.
-  const [tela, setTela] = useState<Tela | null>(() => (
-    typeof window !== "undefined" && window.location.hash === "#financeiro" ? "financeiro" : null
-  ));
+  // "Ver quem está na janela" (Menu > Calendário Sanitário) — abre direto em
+  // Sanidade > Preventiva > Aplicação, evento e modo "Na janela" já prontos
+  // (ver FormSanidade > PreventivoAplicacao), sem repetir os toques normais.
+  const deepLinkJanelaEventoId = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("ir") === "sanidade_janela"
+      ? new URLSearchParams(window.location.search).get("evento_sanitario_id")
+      : null
+    : null;
+  const [tela, setTela] = useState<Tela | null>(() => {
+    if (typeof window === "undefined") return null;
+    if (window.location.hash === "#financeiro") return "financeiro";
+    if (deepLinkJanelaEventoId) return "sanidade";
+    return null;
+  });
   const [fixado, setFixado] = useState<Animal | null>(null);
   // Ao "gerar movimentação financeira" no Balanço de estoque, guarda qual
   // pílula (despesa/receita) o Financeiro deve abrir já selecionada. Fica
@@ -58,6 +73,9 @@ export function LancarTela() {
   // servidor) — evita vazar os blocos de Financeiro/Estoque antes da hora.
   const [montado, setMontado] = useState(false);
   useEffect(() => { setMontado(true); }, []);
+  // Gaveta "Mais opções" — tudo que NÃO está entre os 6 blocos principais
+  // (ver comentário na tela principal, abaixo).
+  const [maisOpcoes, setMaisOpcoes] = useState(false);
 
   // ── Sub-tela aberta ────────────────────────────────────────────────────────
   if (tela) {
@@ -66,7 +84,7 @@ export function LancarTela() {
         {tela !== "financeiro" && tela !== "estoque" && <MobVoltar titulo={TITULOS[tela]} onVoltar={() => setTela(null)} />}
         {tela === "reprodutivo" && <FormReprodutivo animais={animais.dados} animalFixado={fixado?.numero || null} />}
         {tela === "producao" && <FormProducao animais={animais.dados} animalFixado={fixado?.numero || null} />}
-        {tela === "sanidade" && <FormSanidade animais={animais.dados} animalFixado={fixado?.numero || null} />}
+        {tela === "sanidade" && <FormSanidade animais={animais.dados} animalFixado={fixado?.numero || null} deepLinkEventoId={deepLinkJanelaEventoId} />}
         {tela === "alimentacao" && <FormAlimentacao />}
         {tela === "protocolos" && <FormProtocolos animais={animais.dados} animalFixado={fixado?.numero || null} />}
         {tela === "movimentar" && <Movimentar />}
@@ -88,48 +106,97 @@ export function LancarTela() {
   }
 
   // ── Tela principal ─────────────────────────────────────────────────────────
+  // Os 6 blocos abaixo são os destinos MAIS usados no dia a dia de campo —
+  // reprodutivo e produção decidem o que fazer com a vaca hoje, sanidade e
+  // alimentação vêm logo atrás em frequência real, protocolos e movimentar
+  // fecham a rotina de curral. O resto (Financeiro/Estoque — administrativo,
+  // não é decisão de curral — e Baixar/Excluir — irreversíveis, propositalmente
+  // fora do alcance do toque mais comum) foi para a gaveta "Mais opções":
+  // continuam existindo e alcançáveis, só não competem com o que se usa toda
+  // hora pelo mesmo espaço de tela/toque. Baixar/Excluir moram SEMPRE lá
+  // dentro (nunca voltam pra tela principal), então o botão "Mais opções"
+  // sempre tem pelo menos essas duas — não é condicional a nenhuma permissão.
   return (
     <div>
       <MobTitulo>Lançamento Rápido</MobTitulo>
+
+      {/* Atalho pro Modo Curral (T6) — visão ampliada/alto-contraste das
+          tarefas de hoje + os mesmos 3 lançamentos mais frequentes abaixo,
+          pensada pra quando o aparelho está sendo usado dentro do curral. */}
+      <Link href="/app/curral" className="mob-linha" style={{ marginBottom: "0.9rem", color: "var(--mob-dourado)", fontWeight: 700 }}>
+        <Sun size={20} /> Abrir Modo Curral
+        <ChevronRight size={18} style={{ marginLeft: "auto", color: "var(--mob-muted)" }} />
+      </Link>
 
       {fixado
         ? <ChipAnimal animal={fixado} onSoltar={() => setFixado(null)} />
         : <BuscaAnimal animais={animais.dados} onEscolher={setFixado} />}
 
-      {/* Mais usados — blocos maiores, no topo (achado da crítica: a grade
-          plana de 10 escolhas forçava um scan completo antes de cada
-          lançamento, ver docs/agents/design-implementation.md §5,
-          lancar-rapido.html). */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.7rem", marginTop: "0.4rem" }}>
-        <MobBloco destaque icone={<Milk size={22} />} label="Produção (Leite)" onClick={() => setTela("producao")} />
-        <MobBloco destaque icone={<Syringe size={22} />} label="Sanidade" onClick={() => setTela("sanidade")} />
-        <MobBloco destaque icone={<Activity size={22} />} label="Reprodutivo" onClick={() => setTela("reprodutivo")} />
+      {/* Os 3 destinos de maior frequência de uso real (rotina diária de
+          campo) ganham um bloco maior, empilhado, acima da grade normal —
+          menos rolagem pro toque mais comum. */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", marginTop: "0.4rem" }}>
+        <MobBloco variante="grande" icone={<Activity size={24} />} label="Reprodutivo" onClick={() => setTela("reprodutivo")} />
+        <MobBloco variante="grande" icone={<Milk size={24} />} label="Produção (Leite)" onClick={() => setTela("producao")} />
+        <MobBloco variante="grande" icone={<Syringe size={24} />} label="Sanidade" onClick={() => setTela("sanidade")} />
       </div>
 
-      <div style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--mob-muted)", margin: "1rem 0 0.5rem" }}>
-        Outras ações
-      </div>
+      <div className="mob-secao">Outros lançamentos frequentes</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.7rem" }}>
         <MobBloco icone={<Wheat size={22} />} label="Alimentação" onClick={() => setTela("alimentacao")} />
         <MobBloco icone={<ListChecks size={22} />} label="Protocolos" onClick={() => setTela("protocolos")} />
         <MobBloco icone={<ArrowLeftRight size={22} />} label="Movimentar" onClick={() => setTela("movimentar")} />
-        {montado && podeModulo("financeiro") && (
-          <MobBloco icone={<Landmark size={22} />} label="Financeiro" onClick={() => { setTipoFinanceiroInicial(undefined); setTela("financeiro"); }} />
-        )}
-        {montado && podeModulo("estoque") && (
-          <MobBloco icone={<Boxes size={22} />} label="Balanço de estoque" onClick={() => setTela("estoque")} />
-        )}
       </div>
 
-      {/* Zona de risco — as 2 ações irreversíveis, isoladas do resto (mesmo
-          achado da crítica). */}
-      <div className="mob-zona-risco" style={{ marginTop: "1rem" }}>
-        <div className="mob-zona-risco-titulo">⚠ Ações irreversíveis</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.7rem" }}>
-          <MobBloco icone={<Skull size={22} />} label="Baixar animal" cor="var(--mob-vermelho)" onClick={() => setTela("baixar")} />
-          <MobBloco icone={<Trash2 size={22} />} label="Excluir lançamento" cor="var(--mob-vermelho)" onClick={() => setTela("exclusao")} />
+      {/* Gaveta "Mais opções" — Financeiro/Balanço de estoque (administrativo,
+          não é decisão de curral) e, SEMPRE aqui dentro (nunca na tela
+          principal), Baixar animal/Excluir lançamento — irreversíveis. */}
+      <button type="button" className="mob-linha" style={{ marginTop: "0.9rem", justifyContent: "center", fontWeight: 700 }}
+        onClick={() => setMaisOpcoes(true)}>
+        <MoreHorizontal size={20} style={{ color: "var(--mob-muted)" }} />
+        Mais opções
+      </button>
+
+      <MobGaveta aberto={maisOpcoes} titulo="Mais opções" onFechar={() => setMaisOpcoes(false)}>
+        {montado && (podeModulo("financeiro") || podeModulo("estoque")) && (
+          <>
+            <div className="mob-secao" style={{ marginTop: 0 }}>Administrativo</div>
+            {/* Itens entram em cascata (--i escalona o atraso, ver
+                .mob-item-cascata em globals.css) — o "índice de posição" é
+                fixo por slot (Financeiro=0, Estoque=1) mesmo que um dos dois
+                não apareça, então a ordem visual nunca inverte o efeito. */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.7rem", marginBottom: "1.1rem" }}>
+              {montado && podeModulo("financeiro") && (
+                <div className="mob-item-cascata" style={{ "--i": 0 } as React.CSSProperties}>
+                  <MobBloco icone={<Landmark size={22} />} label="Financeiro" onClick={() => { setTipoFinanceiroInicial(undefined); setMaisOpcoes(false); setTela("financeiro"); }} />
+                </div>
+              )}
+              {montado && podeModulo("estoque") && (
+                <div className="mob-item-cascata" style={{ "--i": 1 } as React.CSSProperties}>
+                  <MobBloco icone={<Boxes size={22} />} label="Balanço de estoque" onClick={() => { setMaisOpcoes(false); setTela("estoque"); }} />
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Ações realmente destrutivas/irreversíveis — separadas estruturalmente
+            do resto da grade, não só pela cor do ícone (ver .mob-bloco .icone),
+            pra não ficarem lado a lado com um toque comum do dia a dia. */}
+        <div className="mob-secao" style={{ color: "var(--mob-vermelho)" }}>Ações irreversíveis</div>
+        <div style={{
+          display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.7rem", padding: "0.6rem", borderRadius: "var(--r-app)",
+          border: "1px solid color-mix(in srgb, var(--mob-vermelho) 35%, transparent)",
+          background: "color-mix(in srgb, var(--mob-vermelho) 6%, transparent)",
+        }}>
+          <div className="mob-item-cascata" style={{ "--i": 2 } as React.CSSProperties}>
+            <MobBloco icone={<Skull size={22} />} label="Baixar animal" cor="var(--mob-vermelho)" onClick={() => { setMaisOpcoes(false); setTela("baixar"); }} />
+          </div>
+          <div className="mob-item-cascata" style={{ "--i": 3 } as React.CSSProperties}>
+            <MobBloco icone={<Trash2 size={22} />} label="Excluir lançamento" cor="var(--mob-vermelho)" onClick={() => { setMaisOpcoes(false); setTela("exclusao"); }} />
+          </div>
         </div>
-      </div>
+      </MobGaveta>
     </div>
   );
 }
@@ -176,7 +243,7 @@ function ChipAnimal({ animal, onSoltar }: { animal: Animal; onSoltar: () => void
         {rotuloAnimal(animal) && <span style={{ display: "block", fontSize: "0.8rem", opacity: 0.85, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rotuloAnimal(animal)}</span>}
       </span>
       <button type="button" onClick={onSoltar} aria-label="Soltar animal"
-        style={{ width: 48, height: 48, borderRadius: "var(--r-app)", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.16)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        style={{ width: 56, height: 56, borderRadius: "var(--r-app)", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.16)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <X size={18} />
       </button>
     </div>

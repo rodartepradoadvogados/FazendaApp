@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Search, X, ChevronDown, UserPlus } from "lucide-react";
 import { AnimalRow } from "./AnimalModal";
 import { Modal } from "./Modal";
@@ -14,7 +14,7 @@ import { casaBusca } from "@/lib/busca";
  * (como era em Inseminação/Diagnóstico) ou de overlays reimplementados a cada
  * tela. Mesmo visual do `AnimalPicker` (seleção única), com checkboxes.
  */
-export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, placeholder = "Selecionar animais…", titulo = "Escolher animais", permitirNovoAnimal = false }: {
+export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, placeholder = "Selecionar animais…", titulo = "Escolher animais", permitirNovoAnimal = false, abrirAoMudar, motivosInaptidao, ocultarFiltroLote = false }: {
   animais: AnimalRow[];
   selecionados: Set<string>;
   onToggle: (numero: string) => void;
@@ -26,6 +26,22 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
   // estar no cadastro. Os animais criados aqui somam-se localmente à lista
   // recebida por prop (persistem até a tela ser recarregada/recém-buscada).
   permitirNovoAnimal?: boolean;
+  // Abre o seletor sozinho sempre que este valor mudar (ex.: a assinatura do(s)
+  // lote(s) escolhido(s) num picker de lote acima) — em vez de depender do
+  // usuário notar e clicar o botão pra revisar quem entrou na seleção. Usado
+  // quando a lista de `animais` vem de uma escolha em lote e o usuário precisa
+  // confirmar explicitamente se quer todos, nenhum ou só alguns.
+  abrirAoMudar?: string | number;
+  // numero -> motivo de inaptidão. Marca o animal EM CINZA, com o motivo ao
+  // lado do número, em vez de escondê-lo da lista (era o que Lançamentos
+  // fazia com as fêmeas abaixo da idade mínima — e ninguém entendia por que a
+  // vaca "sumiu"). Continua selecionável de propósito: a decisão final é do
+  // backend, que aceita uma confirmação explícita nos casos limítrofes.
+  motivosInaptidao?: Map<string, string>;
+  // Esconde o select "Todos os lotes" de dentro do modal — usado por telas que
+  // já têm um filtro de Lote próprio no topo (ex.: Histórico > Reprodução,
+  // Serviços/IAS unificado) para não duplicar o mesmo filtro em dois lugares.
+  ocultarFiltroLote?: boolean;
 }) {
   const [aberto, setAberto] = useState(false);
   const [busca, setBusca] = useState("");
@@ -33,6 +49,11 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
   const [novoAnimalAberto, setNovoAnimalAberto] = useState(false);
   const [extras, setExtras] = useState<AnimalRow[]>([]);
   const { rotuloDe } = useEstadosReprodutivos();
+
+  useEffect(() => {
+    if (abrirAoMudar === undefined) return;
+    setAberto(true); setBusca(""); setFiltroLote("");
+  }, [abrirAoMudar]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const animaisComExtras = useMemo(() => {
     if (!extras.length) return animais;
@@ -75,6 +96,23 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
         <ChevronDown size={15} style={{ flexShrink: 0, color: "var(--text-muted)" }} />
       </button>
 
+      {/* Chips de conferência — quais números exatos foram marcados, sem
+          precisar reabrir o modal. Clicável pra desmarcar um de cada vez,
+          mesmo padrão visual usado em FormInducaoCio.tsx. */}
+      {selecionados.size > 0 && (
+        <div className="mt-2" style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
+          {Array.from(selecionados).sort().map((n) => (
+            <span key={n} onClick={() => onToggle(n)} title="Clique para remover da seleção" style={{
+              fontSize: "0.74rem", background: "var(--surface-2)", border: "1px solid var(--border)",
+              borderRadius: "999px", padding: "0.12rem 0.55rem", fontWeight: 600, cursor: "pointer",
+              display: "inline-flex", alignItems: "center", gap: "0.25rem",
+            }}>
+              {n} <X size={10} style={{ opacity: 0.6 }} />
+            </span>
+          ))}
+        </div>
+      )}
+
       {aberto && (
         // Sem fechar ao clicar fora — clique perdido no fundo enquanto se
         // marca vários animais fechava a janela e derrubava a seleção em
@@ -93,7 +131,7 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
                 <input autoFocus value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por número, grupo, categoria…"
                   style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem 0.45rem 2rem", fontSize: "0.85rem" }} />
               </div>
-              {lotes.length > 1 && (
+              {!ocultarFiltroLote && lotes.length > 1 && (
                 <select value={filtroLote} onChange={(e) => setFiltroLote(e.target.value)} title="Filtrar por lote"
                   style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem" }}>
                   <option value="">Todos os lotes</option>
@@ -114,15 +152,24 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
             </div>
             <div style={{ overflowY: "auto" }}>
               <table className="fazenda-table">
-                <thead><tr><th></th>{colunas.map((c) => <th key={c.header}>{c.header}</th>)}</tr></thead>
+                <thead><tr><th></th>{colunas.map((c) => <th key={c.header}>{c.header}</th>)}{motivosInaptidao ? <th>Aptidão</th> : null}</tr></thead>
                 <tbody>
-                  {filtrados.map((a) => (
-                    <tr key={a.numero} onClick={() => onToggle(a.numero)} style={{ cursor: "pointer" }} className="row-clickable">
+                  {filtrados.map((a) => {
+                    const inapto = motivosInaptidao?.get(a.numero);
+                    return (
+                    <tr key={a.numero} onClick={() => onToggle(a.numero)} title={inapto || undefined}
+                      style={{ cursor: "pointer", opacity: inapto ? 0.55 : undefined }} className="row-clickable">
                       <td><input type="checkbox" checked={selecionados.has(a.numero)} onChange={() => onToggle(a.numero)} onClick={(e) => e.stopPropagation()} /></td>
-                      {colunas.map((c) => <td key={c.header} style={{ fontSize: "0.8rem" }}>{c.render(a)}</td>)}
+                      {colunas.map((c) => <td key={c.header} style={{ fontSize: "0.8rem", color: inapto ? "var(--text-muted)" : undefined }}>{c.render(a)}</td>)}
+                      {motivosInaptidao ? (
+                        <td style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontStyle: inapto ? "italic" : undefined }}>
+                          {inapto || "—"}
+                        </td>
+                      ) : null}
                     </tr>
-                  ))}
-                  {!filtrados.length && <tr><td colSpan={colunas.length + 1} style={{ color: "var(--text-muted)", padding: "1rem" }}>Nenhum animal encontrado.</td></tr>}
+                    );
+                  })}
+                  {!filtrados.length && <tr><td colSpan={colunas.length + (motivosInaptidao ? 2 : 1)} style={{ color: "var(--text-muted)", padding: "1rem" }}>Nenhum animal encontrado.</td></tr>}
                 </tbody>
               </table>
             </div>

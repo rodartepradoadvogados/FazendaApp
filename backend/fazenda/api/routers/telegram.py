@@ -31,9 +31,10 @@ import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlmodel import Session, select
 
+from fazenda.auth import exigir_admin
 from fazenda.config import settings
 from fazenda.database import get_session
-from fazenda.models import LancamentoPendente, TelegramPendente, TelegramSessao
+from fazenda.models import LancamentoPendente, TelegramPendente, TelegramSessao, Usuario
 from fazenda.rules import telegram_fluxos as fx
 
 router = APIRouter(prefix="/telegram", tags=["telegram"])
@@ -235,7 +236,11 @@ async def telegram_webhook(
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ) -> dict:
     # Segurança: só aceita chamadas que trazem o segredo combinado no setWebhook.
-    if settings.telegram_webhook_secret and x_telegram_bot_api_secret_token != settings.telegram_webhook_secret:
+    # Fail-closed (mesmo padrão de zapsign.py): se TELEGRAM_WEBHOOK_SECRET não
+    # estiver configurado, recusa TODA chamada em vez de deixar passar sem
+    # segredo — evitar que um erro de configuração operacional (esquecer de
+    # setar a env var) abra o webhook para qualquer chamada externa.
+    if not settings.telegram_webhook_secret or x_telegram_bot_api_secret_token != settings.telegram_webhook_secret:
         raise HTTPException(status_code=403, detail="Segredo inválido")
 
     update = await request.json()
@@ -682,8 +687,13 @@ def registrar_webhook_telegram() -> None:
 
 
 @router.get("/status")
-def telegram_status() -> dict:
-    """Diagnóstico rápido (sem expor o token) — útil para o administrador."""
+def telegram_status(_admin: Usuario = Depends(exigir_admin)) -> dict:
+    """Diagnóstico rápido (sem expor o token) — útil para o administrador.
+
+    BUG DE SEGURANÇA CORRIGIDO: antes não exigia autenticação — qualquer um
+    que descobrisse a URL via podia ver a allow-list de chats liberados
+    (chats_liberados) sem precisar de login. Agora exige admin, igual ao
+    restante dos diagnósticos administrativos do sistema."""
     return {
         "ligado": bool(settings.telegram_bot_token),
         "webhook_base": settings.public_base_url or None,

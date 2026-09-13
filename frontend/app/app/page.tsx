@@ -6,11 +6,11 @@
 // site desktop (POST/DELETE /agenda/realizados). Funciona offline: a lista vem
 // do cache e o "realizado" entra na fila de envio.
 // ─────────────────────────────────────────────────────────────────────────────
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ChevronRight, ChevronLeft, Check } from "lucide-react";
-import { MobCard, MobTitulo, MobCheck, MobAviso, RotuloCategoria, IconeCategoria, corCategoria } from "@/components/mobile/ui";
+import { MobCard, MobTitulo, MobCheck, MobAviso, RotuloCategoria, IconeCategoria, corCategoria, MobBarraProgresso } from "@/components/mobile/ui";
 import { fetchAgenda, fetchApresentacaoDieta, fetchPrincipiosAtivos, fetchEventosSanitarios, fetchLotes, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, today, type ApresentacaoDieta } from "@/lib/api";
 import { fetchComCache, cacheEm, enviarOuEnfileirar, useOnline } from "@/lib/offline";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -138,6 +138,9 @@ type Evento = {
   aptas?: string[] | null;
   incluir_proximo?: string[] | null;
   inaptas?: string[] | null;
+  // Diarista ativa sem folga marcada hoje (tipo diaria_trabalho) — id da
+  // Diaria para o PUT /cadastro/diarias/{id}/dias, ver decidirDiaria.
+  diaria_id?: number | null;
 };
 
 // Um grupo de aplicações do mesmo protocolo/dia/data (lote) — para oferecer
@@ -572,6 +575,44 @@ export default function AgendaMovel() {
     }
   }
 
+  // "Confirmar" / "Meia diária" / "Não teve" — cartão de diarista ativo sem
+  // folga marcada hoje (tipo diaria_trabalho, ver eventos_diaria_trabalho em
+  // agenda.py). Chama DIRETO o mesmo endpoint que o calendário "Dias
+  // trabalhados" do Controle de diárias usa (salvar_dias_diaria em
+  // rh_contratos.py), igual ao site (decidirDiaria em app/agenda/page.tsx):
+  // "Confirmar" grava o dia sem exceção (dia cheio, padrão do calendário
+  // esparso); "Meia diária" grava a exceção de meia diária; "Não teve" grava
+  // uma folga explícita. Depois marca o evento como realizado (mesmo
+  // mecanismo de sempre) pra calar o lembrete de hoje na Agenda — necessário
+  // mesmo em "Confirmar", que não grava nenhuma linha em DiariaDia (sem
+  // linha = dia trabalhado) e por isso não some sozinho do próximo fetch.
+  async function decidirDiaria(e: Evento, decisao: "contar" | "meia" | "descartar") {
+    if (!e.diaria_id) return;
+    setAviso(null);
+    setFeitos((p) => new Set(p).add(e.id));
+    try {
+      await enviarOuEnfileirar(`/cadastro/diarias/${e.diaria_id}/dias`, {
+        periodo_inicio: e.data, periodo_fim: e.data,
+        dias_nao_trabalhados: decisao === "descartar" ? [e.data] : [],
+        dias_meia_diaria: decisao === "meia" ? [e.data] : [],
+      }, `Diária — ${resumo(e)}`, "PUT");
+      const r = await enviarOuEnfileirar("/agenda/realizados", { evento_id: e.id }, `Concluir: ${resumo(e)}`, "POST");
+      if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+      else setAviso({
+        tipo: "ok",
+        msg: decisao === "contar" ? "Diária confirmada."
+          : decisao === "meia" ? "Meia diária registrada — hoje vale metade do valor no Controle de diárias."
+          : "Sem diária hoje — virou folga no Controle de diárias.",
+      });
+    } catch (err) {
+      setFeitos((p) => { const n = new Set(p); n.delete(e.id); return n; });
+      // 409 = o período já tem pagamento registrado (ver salvar_dias_diaria);
+      // o cartão só cobre "hoje" e não tem contexto pra oferecer o "confirmar
+      // mesmo assim" com segurança — a mensagem do backend já explica isso.
+      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
+    }
+  }
+
   // Lista de pessoas carregada sob demanda (1ª vez que um cartão "modo" abre
   // a escolha de veterinário) — reaproveitada por todos os cartões da tela.
   function carregarPessoas() {
@@ -891,6 +932,11 @@ export default function AgendaMovel() {
                     {it.numero_animal}
                   </div>
                 ))}
+                {/* Barra de progresso de verdade (não um spinner genérico) —
+                    confirmarSanLote confirma uma matriz de cada vez (loop com
+                    await), então `feitasCount` sobe item a item durante a
+                    confirmação em lote, e esta barra acompanha ao vivo. */}
+                {feitasCount > 0 && <MobBarraProgresso feitos={feitasCount} total={g.itens.length} rotulo="Aplicando" />}
                 <button type="button" className="mob-btn" style={{ marginTop: "0.7rem" }} disabled={tudoFeito} onClick={() => confirmarSanLote(g)}>
                   Confirmar todas ({g.itens.length - feitasCount} pendente{g.itens.length - feitasCount !== 1 ? "s" : ""})
                 </button>
@@ -922,6 +968,39 @@ export default function AgendaMovel() {
 
   function renderRenderavel(r: Renderavel, alt: 0 | 1) {
     return r.kind === "grupo" ? renderGrupoSanitario(r.g, alt) : renderCartao(r.e, alt);
+  }
+
+  // Data do item, pra saber se está atrasado — mesma checagem `data < hoje`
+  // usada dentro de cada renderCartao/renderGrupoSanitario pra colorir o
+  // filete lateral do cartão (ver .mob-card[data-estado] em globals.css).
+  function dataRenderavel(r: Renderavel): string {
+    return r.kind === "grupo" ? r.g.data : r.e.data;
+  }
+
+  // Lista do dia (Hoje + atrasadas, já ordenada com as atrasadas primeiro —
+  // ver `eventos` acima): agrupa visualmente as duas faixas com um rótulo de
+  // seção, uma vez cada, na fronteira entre atrasada e hoje. O filete lateral
+  // vermelho do cartão já marca cada item individualmente; isso aqui é só pra
+  // quem está rolando rápido não precisar ler cartão por cartão pra notar que
+  // trocou de faixa.
+  function renderListaDoDia(evs: Evento[]) {
+    let faixaAnterior: "atrasada" | "hoje" | null = null;
+    return montarLista(evs).map((r, i) => {
+      const atrasado = dataRenderavel(r) < hoje;
+      const faixaAtual = atrasado ? "atrasada" : "hoje";
+      const mostrarRotulo = faixaAtual !== faixaAnterior;
+      faixaAnterior = faixaAtual;
+      return (
+        <Fragment key={i}>
+          {mostrarRotulo && (
+            <div className="mob-secao" style={atrasado ? { color: "var(--mob-vermelho)" } : undefined}>
+              {atrasado ? "Atrasada" : "Hoje"}
+            </div>
+          )}
+          {renderRenderavel(r, (i % 2) as 0 | 1)}
+        </Fragment>
+      );
+    });
   }
 
   function renderCartao(e: Evento, alt: 0 | 1) {
@@ -1663,6 +1742,35 @@ export default function AgendaMovel() {
       );
     }
 
+    // Diarista ativa sem folga marcada hoje: 3 ações diretas, sem passar pelo
+    // Financeiro (ver decidirDiaria acima e o mesmo cartão no site).
+    if (e.tipo === "diaria_trabalho" && e.diaria_id) {
+      return (
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }} estado={feito ? "feito" : atrasada ? "atrasado" : "normal"}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.85rem", marginBottom: feito ? 0 : "0.7rem" }}>
+            <IconeCategoria chave={chave} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <RotuloCategoria chave={chave} rotulo={rotulo} />
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>
+                {e.descricao}
+              </div>
+              {e.observacao && (
+                <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>{e.observacao}</div>
+              )}
+            </div>
+            {feito && <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Registrado</span>}
+          </div>
+          {!feito && (
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <button type="button" className="mob-btn" style={{ flex: 1, fontSize: "0.8rem" }} onClick={() => decidirDiaria(e, "contar")}>Confirmar</button>
+              <button type="button" className="mob-btn mob-btn-sec" style={{ flex: 1, fontSize: "0.8rem", color: "var(--mob-ambar)" }} onClick={() => decidirDiaria(e, "meia")}>Meia diária</button>
+              <button type="button" className="mob-btn mob-btn-sec" style={{ flex: 1, fontSize: "0.8rem", color: "var(--mob-vermelho)" }} onClick={() => decidirDiaria(e, "descartar")}>Não teve</button>
+            </div>
+          )}
+        </MobCard>
+      );
+    }
+
     const { principal, detalhe } = linhas(e);
     return (
       <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }} estado={feito ? "feito" : atrasada ? "atrasado" : "normal"}>
@@ -1759,7 +1867,7 @@ export default function AgendaMovel() {
               </p>
             </div>
           ) : (
-            montarLista(eventos).map((r, i) => renderRenderavel(r, (i % 2) as 0 | 1))
+            renderListaDoDia(eventos)
           )}
 
           {/* Consulta antecipada: os dois dias seguintes, recolhidos. */}

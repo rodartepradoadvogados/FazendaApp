@@ -4,9 +4,9 @@
 // ver proposta aprovada) — conteúdo vive no Supabase Storage, ver
 // backend/fazenda/api/routers/documentos.py.
 import { useEffect, useState } from "react";
-import { Download, Trash2, UploadCloud } from "lucide-react";
+import { Download, UploadCloud } from "lucide-react";
 import {
-  fetchCategoriasDocumento, fetchDocumentos, enviarDocumento, baixarDocumento, excluirDocumento,
+  fetchCategoriasDocumento, fetchDocumentos, enviarDocumento, baixarDocumento,
   type DocumentoArquivado,
 } from "@/lib/api";
 import { CORES_CONTADOR } from "@/app/contador/layout";
@@ -166,10 +166,6 @@ export function PainelDocumentos() {
                     <button type="button" onClick={() => baixarDocumento(d.id, d.nome_original)} title="Baixar"
                       style={{ background: "none", border: "none", color: C.cobreClaro, cursor: "pointer", display: "flex" }}>
                       <Download size={15} />
-                    </button>
-                    <button type="button" onClick={() => { if (confirm("Excluir este documento?")) excluirDocumento(d.id).then(recarregar); }} title="Excluir"
-                      style={{ background: "none", border: "none", color: C.negativo, cursor: "pointer", display: "flex" }}>
-                      <Trash2 size={15} />
                     </button>
                   </td>
                 </tr>

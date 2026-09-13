@@ -18,7 +18,9 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import ControleLeiteiro, Estoque, LancamentoPendente, MovimentoEstoque, Sanidade
+from fazenda.models import (
+    Animal, ControleLeiteiro, Estoque, Lactacao, LancamentoPendente, MovimentoEstoque, Sanidade,
+)
 
 
 @pytest.fixture
@@ -40,6 +42,10 @@ def client():
         username = "teste"
         permissoes = ""
         pode_publicar_materias_blog = True
+        # `exigir_pode_publicar` passou a olhar se o usuário é da Equipe
+        # CowData (pessoa_id -> Pessoa -> Fazenda.eh_empresa_cowdata) para
+        # cobrar também a permissão "Editar News" — este falso não é.
+        pessoa_id = None
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeAdmin()
@@ -71,6 +77,10 @@ def client_sem_permissao_noticia():
         username = "teste"
         permissoes = ""
         pode_publicar_materias_blog = False
+        # `exigir_pode_publicar` passou a olhar se o usuário é da Equipe
+        # CowData (pessoa_id -> Pessoa -> Fazenda.eh_empresa_cowdata) para
+        # cobrar também a permissão "Editar News" — este falso não é.
+        pessoa_id = None
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeAdminSemNoticia()
@@ -100,6 +110,10 @@ def client_fazenda():
         username = "teste"
         permissoes = ""
         pode_publicar_materias_blog = True
+        # `exigir_pode_publicar` passou a olhar se o usuário é da Equipe
+        # CowData (pessoa_id -> Pessoa -> Fazenda.eh_empresa_cowdata) para
+        # cobrar também a permissão "Editar News" — este falso não é.
+        pessoa_id = None
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeAdmin()
@@ -149,6 +163,16 @@ class TestDesfazerRejeitado:
 class TestDesfazerAprovadoControleLeiteiro:
     def test_aprovado_controle_leiteiro_desfazer_apaga_e_volta_a_pendente(self, client):
         c, engine = client
+        # Aprovar um controle leiteiro cai no mesmo caminho de gravação do
+        # lançamento direto, que passou a exigir uma `Lactacao` ABERTA na data
+        # do controle (ver rules/lactacao.py) — é dela que sai o DEL. Sem isso
+        # a aprovação é recusada, que é justamente o comportamento desejado:
+        # aprovar não deve ser uma porta dos fundos para gravar leite de uma
+        # matriz que não está lactando.
+        with Session(engine) as s:
+            s.add(Animal(numero="321", ativo=True, sexo="F"))
+            s.add(Lactacao(numero_matriz="321", data_inicio=date(2025, 12, 1), origem="parto"))
+            s.commit()
         pid = _criar_pendente(engine, tipo="controle_leiteiro", dados={
             "numero_matriz": "321", "data_controle": "2026-02-01", "ordenhas": [12, 9],
         })

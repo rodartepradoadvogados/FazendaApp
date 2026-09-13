@@ -19,7 +19,7 @@ from sqlmodel import Session, select
 from fazenda.auth import (
     eh_email_dono_equivalente, exigir_contratante_ou_dono, exigir_dono, get_current_user, get_fazenda_atual_id,
 )
-from fazenda.database import get_session
+from fazenda.database import get_session, sessao_sem_recorte_de_fazenda
 from fazenda.models import (
     CentroCusto, ContaCorrente, ContratoAnexo, ContratoAssinaturaZapSign, ContratoFazenda, ContratoFazendaModulo,
     EmpresaOperadora, Fazenda, PrecoModulo, Usuario, UsuarioFazenda,
@@ -30,7 +30,7 @@ from fazenda.models.planos import (
 from fazenda.rules.contrato_render import render_contrato
 from fazenda.rules import zapsign
 from fazenda.api.routers.cadastro.servicos import seed_tipos_metodos_servico
-from fazenda.api.routers.cadastro.pessoas import seed_tipo_geral, seed_tipos_pessoa
+from fazenda.api.routers.cadastro.pessoas import seed_tipo_geral, seed_tipos_papel_administrativo, seed_tipos_pessoa
 from fazenda.api.routers.cadastro.animais import seed_motivos_baixa, seed_motivos_venda, seed_racas_grau_sangue
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 from fazenda.api.routers.recria import seed_recria
@@ -48,6 +48,9 @@ def _publico(f: Fazenda) -> dict:
         "tipo_documento": f.tipo_documento, "documento": f.documento, "endereco": f.endereco, "cep": f.cep,
         "representante_nome": f.representante_nome, "representante_cpf": f.representante_cpf,
         "exige_aprovacao_suporte": f.exige_aprovacao_suporte,
+        # Fazenda de demonstração/sandbox (ver Fazenda.eh_teste) — exposto
+        # aqui pro admin (painel de Fazendas) poder ver/alternar a flag.
+        "eh_teste": f.eh_teste,
     }
 
 
@@ -79,6 +82,7 @@ def provisionar_fazenda_nova(session: Session, fazenda_id: int) -> None:
     # tentativa de cadastrar uma pessoa falha com "Tipo inválido".
     seed_tipos_pessoa(session, fazenda_id=fazenda_id)
     seed_tipo_geral(session, fazenda_id=fazenda_id)
+    seed_tipos_papel_administrativo(session, fazenda_id=fazenda_id)
     # Vocabulário mínimo de Rebanho/Lote (motivos de baixa/venda/movimentação,
     # raças e graus de sangue) — sem isso os seletores desses cadastros nascem
     # vazios e a fazenda não consegue nem registrar uma baixa/venda simples.
@@ -121,6 +125,7 @@ class FazendaEditarIn(BaseModel):
     representante_nome: str | None = None
     representante_cpf: str | None = None
     exige_aprovacao_suporte: bool | None = None
+    eh_teste: bool | None = None
 
 
 class VincularUsuarioIn(BaseModel):
@@ -162,10 +167,18 @@ def listar_fazendas(_: Usuario = Depends(exigir_dono), session: Session = Depend
 @router.get("/minhas")
 def minhas_fazendas(user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> list[dict]:
     """Fazendas vinculadas ao usuário logado — usado pela tela de "trocar de
-    fazenda" (o login já devolve a mesma lista quando há mais de uma)."""
-    vinculos = session.exec(select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == user.id)).all()
-    fazendas = [session.get(Fazenda, v.fazenda_id) for v in vinculos]
-    return [_publico(f) for f in fazendas if f and f.ativa]
+    fazenda" (o login já devolve a mesma lista quando há mais de uma).
+
+    Lê por `sessao_sem_recorte_de_fazenda`, não pela `session` da
+    requisição direto: esta rota ENUMERA as fazendas do usuário — o mesmo
+    padrão de `api/routers/auth.py::_fazendas_vinculadas`, mesmo incidente
+    de 11/09/2026 (sob RLS, sem uma fazenda já selecionada no token desta
+    requisição, a consulta pela sessão comum nega tudo em silêncio).
+    `usuario_id` já é o recorte de segurança real."""
+    with sessao_sem_recorte_de_fazenda(session) as sm:
+        vinculos = sm.exec(select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == user.id)).all()
+        fazendas = [sm.get(Fazenda, v.fazenda_id) for v in vinculos]
+        return [_publico(f) for f in fazendas if f and f.ativa]
 
 
 @router.post("/")
@@ -220,6 +233,8 @@ def editar_fazenda(
         fazenda.representante_cpf = dados.representante_cpf.strip() or None
     if dados.exige_aprovacao_suporte is not None:
         fazenda.exige_aprovacao_suporte = dados.exige_aprovacao_suporte
+    if dados.eh_teste is not None:
+        fazenda.eh_teste = dados.eh_teste
     session.add(fazenda)
     session.commit()
     session.refresh(fazenda)

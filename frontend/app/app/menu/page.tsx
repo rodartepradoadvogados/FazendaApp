@@ -17,12 +17,12 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
+  Stethoscope, Syringe, CalendarDays, CalendarRange, Wheat, FileBarChart, Gauge,
   LogOut, CheckCheck, Heart, ShieldPlus, Landmark,
   Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Monitor, WifiOff,
-  Milk, FlaskConical, Droplet, Droplets, Scale, ListChecks, ChevronRight, ChevronDown,
+  Milk, FlaskConical, Droplet, Droplets, Scale, ListChecks, ChevronRight, ChevronDown, Sun, ClipboardCheck,
 } from "lucide-react";
-import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ehOperadorRestrito, ROTA_MODULO } from "@/lib/api";
+import { getUsuario, podeModulo, ehAdmin, ehDono, ehOperadorRestrito, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, descartarPendente, lerCache } from "@/lib/offline";
 import { MobTitulo, MobVoltar, MobConfirmModal } from "@/components/mobile/ui";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
@@ -30,6 +30,7 @@ import AgendaVet from "@/components/mobile/menu/AgendaVet";
 import ProtocolosIatf from "@/components/mobile/menu/ProtocolosIatf";
 import CalendarioSanitario from "@/components/mobile/menu/CalendarioSanitario";
 import AplicacoesSanidade from "@/components/mobile/menu/AplicacoesSanidade";
+import Cronogramas from "@/components/mobile/menu/Cronogramas";
 import PlanoAlimentacao from "@/components/mobile/menu/PlanoAlimentacao";
 import LancarDieta from "@/components/mobile/menu/LancarDieta";
 import ConsultarDietas from "@/components/mobile/menu/ConsultarDietas";
@@ -55,7 +56,10 @@ import News from "@/components/mobile/menu/News";
 import Assistente from "@/components/mobile/menu/Assistente";
 import RemediosPorDoenca from "@/components/mobile/menu/RemediosPorDoenca";
 import Sincronizacao from "@/components/mobile/menu/Sincronizacao";
+import Ciclos21Dias from "@/components/mobile/menu/Ciclos21Dias";
 
+type SubKey = "agendaVet" | "iatf" | "ciclos21" | "calendario" | "cronogramas" | "aplicacoes" | "remedios" | "plano" | "lancarDieta" | "consultarDietas" | "necessidadeMensal" | "manejo" | "indicadores" | "aprovacoes"
+  | "fluxoCaixa" | "dre" | "rmca" | "extrato" | "ultimosControles" | "qualidadeLeite" | "secagens" | "bstHistorico" | "pesagemHistorico";
 type SecaoKey = "reproducao" | "sanidade" | "alimentacao" | "producao" | "gestao" | "financeiro";
 type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode; soAdmin?: boolean; cor?: string };
 type Grupo = { secao: SecaoKey; titulo: string; cor: string; iconeSecao: React.ReactNode; itens: Item[] };
@@ -65,21 +69,32 @@ type Grupo = { secao: SecaoKey; titulo: string; cor: string; iconeSecao: React.R
 // 26) porque agora ilustra uma linha de lista, não mais um quadrado grande.
 const GRUPOS: Grupo[] = [
   { secao: "reproducao", titulo: "Reprodução", cor: "var(--cat-reproducao)", iconeSecao: <Heart size={26} />, itens: [
-    { chave: "agendaVet", titulo: "Agenda Reprodutiva", subtitulo: "Listas do rebanho para a visita", rota: "/relatorios", icone: <Stethoscope size={20} /> },
+    { chave: "agendaVet", titulo: "Agenda Reprodutiva", subtitulo: "Listas do rebanho + busca por parâmetro", rota: "/relatorios", icone: <Stethoscope size={20} /> },
     { chave: "iatf", titulo: "Protocolos IATF", subtitulo: "Inseminação em tempo fixo — vacas em andamento (D0/D7/D9/D11)", rota: "/reproducao", icone: <Syringe size={20} /> },
+    // Entra em Reprodução, primeiro nível, e não pendurado dentro de Gestão >
+    // Indicadores: é a medida de eficiência reprodutiva do padrão da área
+    // (BREDSUM\E), não mais um número de consulta rápida. Quem está no curral
+    // procura isto por "reprodução".
+    { chave: "ciclos21", titulo: "Ciclos de 21 dias", subtitulo: "Eficiência reprodutiva ciclo a ciclo", rota: "/ciclos-21-dias", icone: <CalendarRange size={20} /> },
   ] },
   { secao: "sanidade", titulo: "Sanidade", cor: "var(--cat-sanidade)", iconeSecao: <ShieldPlus size={26} />, itens: [
-    { chave: "calendario", titulo: "Calendário Sanitário", subtitulo: "Próximos eventos (90 dias)", rota: "/sanidade", icone: <CalendarDays size={20} /> },
-    { chave: "aplicacoes", titulo: "Aplicações", subtitulo: "Medicamentos aplicados — editar/excluir", rota: "/sanidade", icone: <Syringe size={20} />, soAdmin: true },
+    { chave: "calendario", titulo: "Calendário Sanitário", subtitulo: "Próximos eventos e já aplicados", rota: "/sanidade", icone: <CalendarDays size={20} /> },
+    { chave: "cronogramas", titulo: "Acompanhamento", subtitulo: "Cronogramas em aberto — incluir/excluir, decidir veterinário", rota: "/sanidade", icone: <ClipboardCheck size={20} /> },
+    { chave: "aplicacoes", titulo: "Histórico", subtitulo: "Preventivo (vacina/exame) e curativo", rota: "/sanidade", icone: <Syringe size={20} /> },
     { chave: "remedios", titulo: "Remédios por Doença", subtitulo: "Consulta rápida + substitutos indicados", rota: "/sanidade", icone: <FlaskConical size={20} /> },
   ] },
+  // Os 4 itens abaixo não levam `cor` própria de propósito: sem override,
+  // LinhaMenu cai em `i.cor || g.cor` (ver render, mais abaixo) e herda
+  // --cat-alimentacao da seção — antes cada item tinha uma cor solta
+  // (laranja/verde/azul/roxo) sem relação com a categoria, o "aleatório"
+  // relatado pelo usuário.
   { secao: "alimentacao", titulo: "Alimentação", cor: "var(--cat-alimentacao)", iconeSecao: <Wheat size={26} />, itens: [
-    { chave: "plano", titulo: "Plano por Lote", subtitulo: "Consumo por lote e ingrediente", rota: "/alimentacao", icone: <Wheat size={20} />, cor: "var(--mob-laranja)" },
-    { chave: "lancarDieta", titulo: "Lançar nova dieta", subtitulo: "Cadastrar dieta do lote (produtos, datas)", rota: "/alimentacao", icone: <NotebookPen size={20} />, cor: "var(--mob-verde)" },
-    { chave: "consultarDietas", titulo: "Consultar dietas", subtitulo: "Dietas por lote, com datas de início e fim", rota: "/alimentacao", icone: <ClipboardList size={20} />, cor: "var(--mob-azul)" },
-    { chave: "necessidadeMensal", titulo: "Necessidade Mensal", subtitulo: "Consumo do mês em quilos e em sacas", rota: "/alimentacao", icone: <CalendarClock size={20} />, cor: "var(--mob-roxo)" },
+    { chave: "plano", titulo: "Plano por Lote", subtitulo: "Consumo por lote e ingrediente", rota: "/alimentacao", icone: <Wheat size={20} /> },
+    { chave: "lancarDieta", titulo: "Lançar nova dieta", subtitulo: "Cadastrar dieta do lote (produtos, datas)", rota: "/alimentacao", icone: <NotebookPen size={20} /> },
+    { chave: "consultarDietas", titulo: "Consultar dietas", subtitulo: "Dietas por lote, com datas de início e fim", rota: "/alimentacao", icone: <ClipboardList size={20} /> },
+    { chave: "necessidadeMensal", titulo: "Necessidade Mensal", subtitulo: "Consumo do mês em quilos e em sacas", rota: "/alimentacao", icone: <CalendarClock size={20} /> },
   ] },
-  { secao: "producao", titulo: "Produção", cor: "var(--mob-azul)", iconeSecao: <Milk size={26} />, itens: [
+  { secao: "producao", titulo: "Produção", cor: "var(--cat-producao)", iconeSecao: <Milk size={26} />, itens: [
     { chave: "ultimosControles", titulo: "Últimos controles leiteiros", subtitulo: "Produção por controle, mais recente primeiro", rota: "/producao", icone: <Milk size={20} /> },
     { chave: "qualidadeLeite", titulo: "Qualidade do leite", subtitulo: "CCS, CBT, gordura, proteína — por período", rota: "/producao", icone: <FlaskConical size={20} /> },
     { chave: "secagens", titulo: "Secagens", subtitulo: "Histórico de secagens, motivo e ECC", rota: "/reproducao", icone: <Droplet size={20} /> },
@@ -102,7 +117,9 @@ const GRUPOS: Grupo[] = [
 const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactNode> = {
   agendaVet: AgendaVet,
   iatf: ProtocolosIatf,
+  ciclos21: Ciclos21Dias,
   calendario: CalendarioSanitario,
+  cronogramas: Cronogramas,
   aplicacoes: AplicacoesSanidade,
   remedios: RemediosPorDoenca,
   plano: PlanoAlimentacao,
@@ -138,9 +155,16 @@ const CHAVES_STAT = {
 } as const;
 
 function statIatf(): string | null {
-  const dados = lerCache<{ animais: unknown[] }[]>(CHAVES_STAT.iatf);
+  const dados = lerCache<{ animais: unknown[]; concluido?: boolean }[]>(CHAVES_STAT.iatf);
   if (!dados) return null;
-  return `${dados.length} em andamento`;
+  // `dados` inclui protocolos com `concluido: true` (mantidos por mais um
+  // ciclo pelo endpoint — ver reproducao.py::listar_protocolos_iatf_ativos —
+  // para mostrar a próxima visita). Contar `dados.length` cru rotulava TODOS
+  // como "em andamento" no subtítulo do Menu, mesmo quando a própria
+  // sub-tela (ProtocolosIatf.tsx) os mostrava como "Concluído" ao abrir —
+  // a inconsistência lista×detalhe reportada. Precisa filtrar aqui também.
+  const emAndamento = dados.filter((p) => !p.concluido).length;
+  return `${emAndamento} em andamento`;
 }
 
 function statUltimosControles(): string | null {
@@ -176,7 +200,9 @@ function statEstoque(): string | null {
  *  próprio ícone NUNCA é apagado/dessaturado — instrução explícita do
  *  stakeholder). min-height 60px (acima do piso geral de 48px do app) foi a
  *  condição do próprio stakeholder para aprovar esta lista mais densa,
- *  mantendo o uso a uma mão no curral. A linha inteira é o alvo de toque. */
+ *  mantendo o uso a uma mão no curral. A linha inteira é o alvo de toque.
+ *  Sem moldura/fundo/margem próprios — vive dentro do card da seção
+ *  (SecaoRetratil, abaixo), separada das vizinhas por um filete superior. */
 function LinhaMenu({ icone, titulo, subtitulo, cor, onClick }: {
   icone: React.ReactNode; titulo: string; subtitulo?: string; cor?: string; onClick: () => void;
 }) {
@@ -185,15 +211,19 @@ function LinhaMenu({ icone, titulo, subtitulo, cor, onClick }: {
     <button type="button" onClick={onClick}
       style={{
         display: "flex", alignItems: "center", gap: "0.85rem", width: "100%",
-        minHeight: 60, padding: "0.6rem 1rem", marginBottom: "0.55rem",
-        background: "var(--mob-surface)", border: "1px solid var(--mob-border)",
-        borderRadius: "var(--r-app)", boxShadow: "var(--mob-sombra)",
+        minHeight: 60, padding: "0.6rem 1rem",
+        background: "transparent", border: "none", borderTop: "1px solid var(--mob-border)",
         color: "var(--mob-text)", textAlign: "left", cursor: "pointer",
       }}>
+      {/* "Selo sólido + espinha" (04/09/2026): o card da SEÇÃO (SecaoRetratil,
+          abaixo) já leva a cor cheia no próprio selo — aqui, no item de
+          dentro, o círculo fica neutro (cinza sutil, sempre a mesma
+          intensidade em qualquer categoria) e só o ÍCONE herda a cor, pra não
+          repetir o mesmo tingimento do card em cada linha de novo. */}
       <span style={{
         width: 40, height: 40, borderRadius: "50%", flexShrink: 0,
         display: "flex", alignItems: "center", justifyContent: "center",
-        background: `color-mix(in srgb, ${corIcone} 16%, transparent)`, color: corIcone,
+        background: "color-mix(in srgb, var(--mob-text) 7%, transparent)", color: corIcone,
       }}>
         {icone}
       </span>
@@ -212,17 +242,72 @@ function LinhaMenu({ icone, titulo, subtitulo, cor, onClick }: {
 
 const CHAVE_SECOES_COLAPSADAS = "mob_menu_secoes_colapsadas";
 
-/** Título de seção clicável (retrátil) — mesmo rótulo do .mob-secao de sempre,
- *  agora com seta de estado; lembra a escolha do usuário entre visitas
- *  (localStorage, chave CHAVE_SECOES_COLAPSADAS). */
-function SecaoRetratil({ chave, titulo, colapsada, onAlternar, children }: {
+// Todas as seções nascem RECOLHIDAS na 1ª visita (sem nada salvo ainda em
+// localStorage) — antes o padrão era o conjunto vazio (tudo expandido de
+// cara), o que fazia a tela inicial do Menu já nascer com todos os itens de
+// todas as seções visíveis, exigindo bastante rolagem. Cada seção expandida
+// pelo usuário continua salva entre visitas, como já era (ver alternarSecao).
+const SECOES_PADRAO_COLAPSADAS = ["protocolos-restrito", "reproducao", "sanidade", "alimentacao", "producao", "gestao", "financeiro", "modulos", "administracao", "app"];
+
+/** Card de seção, clicável e retrátil (layout "1B"): o rótulo em CAIXA ALTA
+ *  de sempre agora é o cabeçalho de um card próprio — molduras/fundo iguais
+ *  ao dos outros cards do app —, com os itens (LinhaMenu) dentro dele quando
+ *  expandido, separados por um filete, não mais soltos em cards individuais.
+ *  Lembra a escolha do usuário entre visitas (localStorage, chave
+ *  CHAVE_SECOES_COLAPSADAS).
+ *
+ *  Quando `cor`/`icone` são passados (grupos de GRUPOS, que já carregam
+ *  iconeSecao), o cabeçalho ganha um selo de ícone de 52px com a cor CHEIA da
+ *  categoria (fundo sólido, ícone branco — não mais um "banho" translúcido no
+ *  cartão inteiro) e a contagem de itens no lugar do rótulo em caixa alta; o
+ *  card reaproveita `.mob-tint` (mesma técnica de Rebanho > Lotes) só para o
+ *  filete de 4px na borda esquerda — fundo/borda do card continuam neutros
+ *  ("Selo sólido + espinha", 04/09/2026 — banho de cor a 14% no cartão
+ *  inteiro lia como pastel/infantil no claro e não diferenciava o card da
+ *  seção dos itens de dentro, que usavam a mesma técnica). Seções sem cor
+ *  própria (Módulos, Administração, App) continuam no cabeçalho neutro de
+ *  sempre. */
+function SecaoRetratil({ chave, titulo, colapsada, onAlternar, children, cor, icone, contagem }: {
   chave: string; titulo: string; colapsada: boolean; onAlternar: (chave: string) => void; children: React.ReactNode;
+  cor?: string; icone?: React.ReactNode; contagem?: number;
 }) {
   return (
-    <div>
-      <button type="button" className="mob-secao-retratil" aria-expanded={!colapsada} onClick={() => onAlternar(chave)}>
-        <span>{titulo}</span>
-        {colapsada ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+    <div className={cor ? "mob-secao-card mob-tint" : "mob-secao-card"} style={cor ? { ["--tint-cor" as any]: cor } : undefined}>
+      <button type="button" aria-expanded={!colapsada} onClick={() => onAlternar(chave)}
+        style={cor ? {
+          width: "100%", display: "flex", alignItems: "center", gap: "0.9rem",
+          padding: "1rem 1.1rem", minHeight: 76, background: "transparent", border: "none", cursor: "pointer", textAlign: "left",
+        } : {
+          width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem",
+          padding: "0.85rem 1rem", background: "transparent", border: "none", cursor: "pointer", textAlign: "left",
+          fontSize: "var(--mob-fs-rotulo)", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase",
+          color: "var(--mob-muted)",
+        }}>
+        {cor ? (
+          <>
+            <span style={{
+              width: 52, height: 52, borderRadius: "50%", flexShrink: 0,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: cor, color: "#fff",
+            }}>
+              {icone}
+            </span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", fontWeight: 800, fontSize: "1.02rem", color: "var(--mob-text)" }}>{titulo}</span>
+              {typeof contagem === "number" && (
+                <span style={{ display: "block", fontSize: "0.76rem", color: "var(--mob-muted)", marginTop: "0.1rem" }}>
+                  {contagem} {contagem === 1 ? "item" : "itens"}
+                </span>
+              )}
+            </span>
+            {colapsada ? <ChevronRight size={18} style={{ color: "var(--mob-muted)", flexShrink: 0 }} /> : <ChevronDown size={18} style={{ color: "var(--mob-muted)", flexShrink: 0 }} />}
+          </>
+        ) : (
+          <>
+            <span>{titulo}</span>
+            {colapsada ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+          </>
+        )}
       </button>
       {!colapsada && children}
     </div>
@@ -233,12 +318,12 @@ export default function Pagina() {
   const router = useRouter();
   const montado = typeof window !== "undefined";
   const [secoesColapsadas, setSecoesColapsadas] = useState<Set<string>>(() => {
-    if (typeof window === "undefined") return new Set();
+    if (typeof window === "undefined") return new Set(SECOES_PADRAO_COLAPSADAS);
     try {
       const salvo = window.localStorage.getItem(CHAVE_SECOES_COLAPSADAS);
-      return salvo ? new Set(JSON.parse(salvo)) : new Set();
+      return salvo ? new Set(JSON.parse(salvo)) : new Set(SECOES_PADRAO_COLAPSADAS);
     } catch {
-      return new Set();
+      return new Set(SECOES_PADRAO_COLAPSADAS);
     }
   });
   // Telas de tela cheia fora do inventário SUBTELAS (módulos, administração,
@@ -250,7 +335,6 @@ export default function Pagina() {
     return window.location.hash === "#calendario-sanitario" ? "calendario" : null;
   });
   const fila = usePendentes();
-  const [confirmarSair, setConfirmarSair] = useState(false);
   const [confirmarDescartarId, setConfirmarDescartarId] = useState<string | null>(null);
 
   function alternarSecao(chave: string) {
@@ -375,18 +459,28 @@ export default function Pagina() {
   // Item "Protocolos" definido à parte porque, para o operador restrito (ver
   // `restrito` acima), ele sai daqui e vira a 1ª seção do menu inteiro —
   // para todo mundo mais, fica exatamente onde sempre esteve, dentro de Módulos.
-  const itemProtocolos = { id: "protocolos" as const, titulo: "Protocolos", subtitulo: "Protocolos sanitários e reprodutivos", icone: <ListChecks size={20} />, cor: "var(--mob-roxo)" };
+  // Protocolos (IATF + sanitário + produtivo, ver COR_TIPO em
+  // components/mobile/menu/Protocolos.tsx) e Portal (comunicação interna)
+  // não pertencem a um único módulo — Protocolos cruza Reprodução e
+  // Sanidade, Portal não é um módulo de fazenda. Em vez de forçar um
+  // --cat-* que só contaria metade da história, os dois usam o dourado
+  // "sem categoria" que já é o padrão do app quando nenhuma cor é passada
+  // (ver corIcone em LinhaMenu, abaixo) — neutro, não aleatório.
+  const itemProtocolos = { id: "protocolos" as const, titulo: "Protocolos", subtitulo: "Protocolos sanitários e reprodutivos", icone: <ListChecks size={20} />, cor: "var(--mob-dourado-2)" };
   const modulosOpcoes = [
     ...(montado && podeModulo("estoque") ? [{ id: "estoque" as const, titulo: "Estoque", subtitulo: statEstoqueValor || "Alimentação, medicamentos, sêmen…", icone: <Boxes size={20} />, cor: "var(--cat-estoque)" }] : []),
     ...(montado && podeModulo("recria") ? [{ id: "recria" as const, titulo: "Recria", subtitulo: "Bezerras e novilhas em recria", icone: <Baby size={20} />, cor: "var(--cat-recria)" }] : []),
     ...(!restrito ? [itemProtocolos] : []),
-    { id: "portal" as const, titulo: "Portal", subtitulo: "Comunicação interna e fotos do campo", icone: <MessageSquare size={20} />, cor: "var(--mob-roxo)" },
+    { id: "portal" as const, titulo: "Portal", subtitulo: "Comunicação interna e fotos do campo", icone: <MessageSquare size={20} />, cor: "var(--mob-dourado-2)" },
   ];
 
   // Administração — "Controle de Acesso" só para o proprietário (ver
   // ehDono()); já reúne últimos acessos + auditoria de atividade, então não
   // há uma aba separada para isso. "Painel CowData" é a exceção que navega
-  // de verdade (ver comentário no topo do arquivo).
+  // de verdade (ver comentário no topo do arquivo). Controle de Acesso é um
+  // módulo de fazenda de verdade (--cat-acesso); Painel CowData e Assistente
+  // Virtual não são — são administração da própria CowData/ferramenta, então
+  // ficam no dourado institucional (--mob-dourado) em vez de um --cat-* forçado.
   const administracaoOpcoes = [
     ...(montado && ehDono() ? [{ id: "controleAcesso" as const, titulo: "Controle de Acesso", subtitulo: "Usuários, acessos e auditoria", icone: <Users size={20} />, cor: "var(--cat-acesso)" }] : []),
     ...(montado && ehDono() ? [{ id: "painelCowData" as const, titulo: "Painel CowData", subtitulo: "Administração da CowData (proprietário)", icone: <Building2 size={20} />, cor: "var(--mob-dourado)" }] : []),
@@ -413,7 +507,8 @@ export default function Pagina() {
       )}
 
       {grupos.map((g) => (
-        <SecaoRetratil key={g.secao} chave={g.secao} titulo={g.titulo} colapsada={secoesColapsadas.has(g.secao)} onAlternar={alternarSecao}>
+        <SecaoRetratil key={g.secao} chave={g.secao} titulo={g.titulo} colapsada={secoesColapsadas.has(g.secao)} onAlternar={alternarSecao}
+          cor={g.cor} icone={g.iconeSecao} contagem={g.itens.length}>
           {g.itens.map((i) => (
             <LinhaMenu key={i.chave} icone={i.icone} titulo={i.titulo} subtitulo={statsSub[i.chave] || i.subtitulo}
               cor={i.cor || g.cor} onClick={() => setSub(i.chave)} />
@@ -438,6 +533,7 @@ export default function Pagina() {
       )}
 
       <SecaoRetratil chave="app" titulo="App" colapsada={secoesColapsadas.has("app")} onAlternar={alternarSecao}>
+        <LinhaMenu icone={<Sun size={20} />} titulo="Modo Curral" subtitulo="Telas grandes e alto contraste para o curral" cor="var(--mob-dourado)" onClick={() => router.push("/app/curral")} />
         <LinhaMenu icone={<Palette size={20} />} titulo="Aparência" subtitulo="Tema claro ou escuro" cor="var(--mob-dourado)" onClick={() => setTela("aparencia")} />
         <LinhaMenu icone={<WifiOff size={20} />} titulo="Sincronização" subtitulo={fila.length > 0 ? `${fila.length} pendente${fila.length > 1 ? "s" : ""}` : "Fila em dia"} cor={fila.length > 0 ? "var(--mob-ambar)" : "var(--mob-dourado)"} onClick={() => setTela("sincronizacao")} />
         {/* Escape hatch para as áreas que só existem no site (Configurações,
@@ -447,7 +543,15 @@ export default function Pagina() {
             mostra a navegação normal do site, em "modo desktop" espremido na
             tela do celular — aceitável para uso ocasional/administrativo. */}
         <LinhaMenu icone={<Monitor size={20} />} titulo="Site completo" subtitulo="Abrir a versão completa do site" cor="var(--mob-azul)" onClick={() => router.push("/")} />
-        <LinhaMenu icone={<LogOut size={20} />} titulo="Sair / trocar de usuário" subtitulo="Encerrar a sessão neste aparelho" cor="var(--mob-vermelho)" onClick={() => setConfirmarSair(true)} />
+        {/* Leva pra tela-eixo de escolha de conta (ver components/
+            EscolherConta.tsx) — NÃO desconecta por si só; "Sair da conta" é
+            um botão à parte, discreto, dentro daquela tela (mesmo padrão do
+            site, ver Sidebar.tsx). Trocar de conta é o que se faz todo dia
+            (o dono entre fazendas, o suporte entre fazenda-cliente e Painel
+            CowData); sair é raro — por isso não é mais este item, e o ícone
+            deixa de ser vermelho (alarme, coerente com "sair" de verdade)
+            e volta ao dourado neutro dos outros itens desta seção. */}
+        <LinhaMenu icone={<LogOut size={20} />} titulo="Trocar de conta" subtitulo="Outra fazenda, o Painel CowData, ou sair" cor="var(--mob-dourado)" onClick={() => router.push("/escolher-conta")} />
       </SecaoRetratil>
 
       {/* Rodapé */}
@@ -465,19 +569,6 @@ export default function Pagina() {
           onConfirmar={() => { descartarPendente(confirmarDescartarId); setConfirmarDescartarId(null); }}
         >
           Este lançamento ainda não foi enviado ao servidor. Descartar apaga o registro para sempre — não é possível desfazer.
-        </MobConfirmModal>
-      )}
-
-      {/* Sair — também destrutivo o bastante (encerra a sessão no aparelho)
-          para pedir confirmação antes de agir. */}
-      {confirmarSair && (
-        <MobConfirmModal
-          titulo="Sair do app?"
-          textoConfirmar="Sair"
-          onCancelar={() => setConfirmarSair(false)}
-          onConfirmar={() => logout()}
-        >
-          Você vai precisar entrar de novo para continuar usando o app neste aparelho.
         </MobConfirmModal>
       )}
     </div>

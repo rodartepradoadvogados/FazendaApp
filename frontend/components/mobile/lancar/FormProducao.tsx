@@ -13,7 +13,44 @@ import { MobCampo, MobAviso, MobVoltar } from "@/components/mobile/ui";
 import { BotoesEscolha, GradeAcoes, type Animal, useEnvio, useRascunho, hoje, SeletorAnimal, RascunhoAviso } from "./comum";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
 import { fetchAgenda, fetchEstoque, fetchSanidade } from "@/lib/api";
-import { fetchComCache } from "@/lib/offline";
+import { fetchComCache, enviarOuEnfileirar } from "@/lib/offline";
+
+// Wrappers que trocam o authFetch direto dos formulários (compartilhados com
+// o desktop) pela fila offline (enviarOuEnfileirar) — só usados aqui, no
+// envoltório mobile; o desktop continua chamando a função de lib/api.ts
+// direto (valor padrão de cada prop `salvar*`/`aplicarBst`/`marcarInapta`).
+async function salvarPesagensOffline(dados: { data_pesagem: string; entradas: { numero_matriz: string; peso_kg: number }[] }) {
+  const { enviado, resposta } = await enviarOuEnfileirar("/producao/pesagens", dados, `Pesagem corporal — ${dados.entradas.length} animal(is)`);
+  return { criados: resposta?.criados ?? dados.entradas.length, enviado };
+}
+async function salvarSecagemOffline(dados: Record<string, unknown> & { numero_matriz: string }) {
+  const { enviado, resposta } = await enviarOuEnfileirar("/producao/secagem", dados, `Secagem — ${dados.numero_matriz}`);
+  return { lote_sugerido: resposta?.lote_sugerido, enviado };
+}
+async function salvarMovimentacaoOffline(dados: { data_movimento: string; motivo?: string; lote_destino_codigo: string; animais: string[]; origem?: string }) {
+  const { enviado, resposta } = await enviarOuEnfileirar("/movimentacoes/mover", dados, `Movimentação — ${dados.animais.join(", ")} → ${dados.lote_destino_codigo}`);
+  return { movidos: resposta?.movidos ?? 0, nao_encontrados: resposta?.nao_encontrados ?? [], enviado };
+}
+async function salvarInducaoOffline(dados: { protocolo_id: number; animais: string[]; data_d0: string; responsavel?: string; observacao?: string }) {
+  const { enviado, resposta } = await enviarOuEnfileirar("/producao/inducao-lactacao", dados, `Indução de lactação — ${dados.animais.length} animal(is)`);
+  return { criado: resposta?.criado, aviso: resposta?.aviso, animais: resposta?.animais ?? dados.animais.length, eventos_criados: resposta?.eventos_criados ?? 0, enviado };
+}
+async function salvarQualidadeOffline(dados: { data_coleta: string; numero_matriz: string | null }) {
+  const { enviado } = await enviarOuEnfileirar("/producao/qualidade-leite", dados, `Qualidade do leite — ${dados.data_coleta}`);
+  return { enviado };
+}
+async function salvarEntregaOffline(dados: { competencia: string }) {
+  const { enviado } = await enviarOuEnfileirar("/producao/entrega-leite", dados, `Entrega de leite — ${dados.competencia}`);
+  return { enviado };
+}
+async function aplicarBstOffline(dados: { numeros_matriz: string[] }) {
+  const { enviado } = await enviarOuEnfileirar("/agenda/bst/aplicar", dados, `BST — ${dados.numeros_matriz.length} animal(is)`);
+  return { enviado };
+}
+async function marcarInaptaBstOffline(dados: { numeros_matriz: string[]; inapta?: boolean }) {
+  const { enviado } = await enviarOuEnfileirar("/agenda/bst/marcar-inapta", dados, `BST — marcar ${dados.inapta ? "inapta" : "apta"} (${dados.numeros_matriz.length})`);
+  return { enviado };
+}
 
 // Cada sub-aba só baixa seu próprio formulário quando aberta pela 1ª vez —
 // importante em conexão de campo, onde o app roda mais.
@@ -31,7 +68,7 @@ const TITULOS_SUB: Record<Sub, string> = {
   inducao: "Indução de lactação", qualidade: "Qualidade do leite", entrega: "Venda mensal do leite", bst: "BST",
 };
 
-export function FormProducao({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
+export function FormProducao({ animais, animalFixado, restringirA }: { animais: Animal[]; animalFixado: string | null; restringirA?: Sub[] }) {
   const [sub, setSub] = useState<Sub | null>(null);
   const [agenda, setAgenda] = useState<any>(null);
   const carregarAgenda = () => {
@@ -56,20 +93,19 @@ export function FormProducao({ animais, animalFixado }: { animais: Animal[]; ani
   }, [sub, estoqueCarregado]);
 
   if (!sub) {
-    return (
-      <GradeAcoes
-        opcoes={[
-          { id: "controle", label: "Controle leiteiro", icone: <Milk size={28} />, cor: "var(--mob-azul)" },
-          { id: "pesagem", label: "Pesagem corporal", icone: <Scale size={28} />, cor: "var(--mob-roxo)" },
-          { id: "secagem", label: "Secagem", icone: <Moon size={28} />, cor: "var(--mob-amarelo)" },
-          { id: "inducao", label: "Indução de lactação", icone: <Pill size={28} />, cor: "var(--mob-verde)" },
-          { id: "qualidade", label: "Qualidade do leite", icone: <TestTube size={28} />, cor: "var(--mob-laranja)" },
-          { id: "entrega", label: "Venda mensal do leite", icone: <Truck size={28} />, cor: "var(--mob-vermelho)" },
-          { id: "bst", label: "BST", icone: <Zap size={28} />, cor: "var(--mob-dourado-2)" },
-        ]}
-        onEscolher={(id) => setSub(id as Sub)}
-      />
-    );
+    // `restringirA` (opcional): usado pelo Modo Curral para mostrar só
+    // controle/pesagem/secagem/BST — sem o prop (undefined), comportamento
+    // idêntico ao de hoje, as 7 opções completas usadas por Lançar (LancarTela.tsx).
+    const opcoes = [
+      { id: "controle", label: "Controle leiteiro", icone: <Milk size={28} />, cor: "var(--mob-azul)" },
+      { id: "pesagem", label: "Pesagem corporal", icone: <Scale size={28} />, cor: "var(--mob-roxo)" },
+      { id: "secagem", label: "Secagem", icone: <Moon size={28} />, cor: "var(--mob-amarelo)" },
+      { id: "inducao", label: "Indução de lactação", icone: <Pill size={28} />, cor: "var(--mob-verde)" },
+      { id: "qualidade", label: "Qualidade do leite", icone: <TestTube size={28} />, cor: "var(--mob-laranja)" },
+      { id: "entrega", label: "Venda mensal do leite", icone: <Truck size={28} />, cor: "var(--mob-vermelho)" },
+      { id: "bst", label: "BST", icone: <Zap size={28} />, cor: "var(--mob-dourado-2)" },
+    ].filter((o) => !restringirA || restringirA.includes(o.id as Sub));
+    return <GradeAcoes opcoes={opcoes} onEscolher={(id) => setSub(id as Sub)} />;
   }
 
   return (
@@ -78,32 +114,37 @@ export function FormProducao({ animais, animalFixado }: { animais: Animal[]; ani
       {sub === "controle" && <ControleLeiteiro animais={animais} animalFixado={animalFixado} />}
       {sub === "pesagem" && (
         <div className="mob-form-embutido">
-          <FormPesagemCorporal animais={animais as any} lotes={lotesDe(animais)} />
+          <FormPesagemCorporal animais={animais as any} lotes={lotesDe(animais)} salvarPesagens={salvarPesagensOffline} />
         </div>
       )}
       {sub === "secagem" && (
         <div className="mob-form-embutido">
-          <FormSecagem animais={animais as any} estoque={estoque} produtos={produtosSanidade} />
+          <FormSecagem
+            animais={animais as any} estoque={estoque} produtos={produtosSanidade}
+            salvarSecagem={salvarSecagemOffline as any} salvarMovimentacao={salvarMovimentacaoOffline as any}
+          />
         </div>
       )}
       {sub === "inducao" && (
         <div className="mob-form-embutido">
-          <FormInducaoLactacao animais={animais as any} />
+          <FormInducaoLactacao animais={animais as any} salvarInducao={salvarInducaoOffline} />
         </div>
       )}
       {sub === "qualidade" && (
         <div className="mob-form-embutido">
-          <FormQualidadeLeite animais={animais as any} />
+          <FormQualidadeLeite animais={animais as any} salvarQualidade={salvarQualidadeOffline as any} />
         </div>
       )}
       {sub === "entrega" && (
         <div className="mob-form-embutido">
-          <FormEntregaLeite />
+          <FormEntregaLeite salvarEntrega={salvarEntregaOffline as any} />
         </div>
       )}
       {sub === "bst" && (
         <div className="mob-form-embutido">
-          {agenda ? <PainelLancarBst agenda={agenda} onAtualizado={carregarAgenda} /> : <p style={{ color: "var(--mob-muted)", fontSize: "0.9rem" }}>Carregando…</p>}
+          {agenda ? (
+            <PainelLancarBst agenda={agenda} onAtualizado={carregarAgenda} aplicarBst={aplicarBstOffline} marcarInapta={marcarInaptaBstOffline} />
+          ) : <p style={{ color: "var(--mob-muted)", fontSize: "0.9rem" }}>Carregando…</p>}
         </div>
       )}
     </>
@@ -140,11 +181,23 @@ function ControleLeiteiro({ animais, animalFixado }: { animais: Animal[]; animal
 
   const total = (Number(o1) || 0) + (Number(o2) || 0) + (Number(o3) || 0);
 
+  /**
+   * Só quem tem lactação ABERTA hoje — mesma fonte única que o backend usa
+   * para aceitar o lançamento (`em_lactacao`, calculado da tabela `Lactacao`;
+   * ver backend/fazenda/rules/lactacao.py).
+   *
+   * Este app não filtrava NADA: a lista de animais vinha inteira, e dava para
+   * lançar controle leiteiro de bezerra, de novilha ou de vaca seca — o
+   * registro ia direto para a produção do rebanho e para a curva de lactação.
+   * `em_lactacao === undefined` (app novo contra backend antigo) mantém o
+   * comportamento antigo, para a tela não ficar vazia durante o deploy.
+   */
+  const emLactacao = useMemo(() => animais.filter((a) => a.em_lactacao !== false), [animais]);
   const lotes = useMemo(
-    () => Array.from(new Set(animais.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-    [animais],
+    () => Array.from(new Set(emLactacao.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    [emLactacao],
   );
-  const vacasDoLote = useMemo(() => (lote ? animais.filter((a) => a.grupo_primario === lote) : []), [animais, lote]);
+  const vacasDoLote = useMemo(() => (lote ? emLactacao.filter((a) => a.grupo_primario === lote) : []), [emLactacao, lote]);
   const setOrdVaca = (numero: string, idx: 0 | 1 | 2, valor: string) => {
     const arr: [string, string, string] = [...(porVaca[numero] || ["", "", ""])];
     arr[idx] = valor;
@@ -198,8 +251,8 @@ function ControleLeiteiro({ animais, animalFixado }: { animais: Animal[]; animal
       </MobCampo>
 
       {modo === "vaca" ? (
-        <MobCampo label="Vaca (nº / nome)">
-          <SeletorAnimal animais={animais} valor={animal} onChange={setAnimal} placeholder="Buscar vaca…" />
+        <MobCampo label="Vaca em lactação (nº / nome)">
+          <SeletorAnimal animais={emLactacao} valor={animal} onChange={setAnimal} placeholder="Buscar vaca em lactação…" />
         </MobCampo>
       ) : (
         <MobCampo label="Lote">

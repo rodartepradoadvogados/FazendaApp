@@ -14,9 +14,10 @@ import dynamic from "next/dynamic";
 import { CalendarClock, Pill, Bandage, ListChecks } from "lucide-react";
 import { MobCampo, MobVoltar, MobAviso } from "@/components/mobile/ui";
 import {
-  fetchEstoque, fetchProtocolosCustomizadosParaLancar, fetchPessoas,
+  fetchEstoque, fetchProtocolosCustomizadosParaLancar,
   type ProtocoloCustomizado,
 } from "@/lib/api";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import {
   type Animal, type EstoqueItem, useCache, useEnvio, useRascunho, hoje,
   GradeAcoes, BotoesEscolha, SeletorAnimal, RascunhoAviso,
@@ -79,7 +80,7 @@ export function FormProtocolos({ animais, animalFixado }: { animais: Animal[]; a
 function ProtocoloCustomizadoApp({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   const [protocolos, setProtocolos] = useState<ProtocoloCustomizado[]>([]);
-  const [pessoas, setPessoas] = useState<{ id?: number; nome: string; ativo?: boolean }[]>([]);
+  const { pessoas: pessoasAtivas } = usePessoasAtivas();
   // Rascunho — protocolo + alvo escolhidos (docs/agents/
   // design-implementation.md §5, acabamento-de-campo.html).
   const rascunho = useRascunho<{ protocoloId: string; alvo: "animal" | "fazenda"; matriz: string }>(
@@ -95,7 +96,6 @@ function ProtocoloCustomizadoApp({ animais, animalFixado }: { animais: Animal[];
   const [responsavel, setResponsavel] = useState("");
 
   useEffect(() => { fetchProtocolosCustomizadosParaLancar().then(setProtocolos).catch(() => setProtocolos([])); }, []);
-  useEffect(() => { fetchPessoas().then(setPessoas as any).catch(() => setPessoas([])); }, []);
 
   const protocolo = protocolos.find((p) => String(p.id) === protocoloId);
   const rotuloDia = protocolo?.dia_inicial === 1 ? "D1" : "D0";
@@ -117,8 +117,6 @@ function ProtocoloCustomizadoApp({ animais, animalFixado }: { animais: Animal[];
       { ok: "Protocolo lançado — as etapas entram na agenda." },
     );
   }
-
-  const pessoasAtivas = pessoas.filter((p) => p.ativo !== false);
 
   return (
     <>

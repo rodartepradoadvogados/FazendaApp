@@ -23,6 +23,16 @@ class Estoque(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     categoria: Optional[str] = None
+    # Vínculo direto com CategoriaAlimento (Configurações > Cadastro >
+    # Alimentação > Categorias) — Fase P1 do refactor Alimento/Estoque.
+    # Distinto de `categoria` acima (texto livre, sem FK) e de
+    # `Alimento.categoria_alimento_id` (categoria do CONCEITO nutricional):
+    # este campo deixa um item de Estoque ser categorizado sem precisar
+    # primeiro passar pelo cadastro de Alimento — ver PUT
+    # /alimentacao/estoque/{estoque_id}/categoria. Puramente aditivo: a
+    # categorização indireta via Alimento continua funcionando do mesmo
+    # jeito (ver seção `produtos_sem_categoria` do relatório de conferência).
+    categoria_alimento_id: Optional[int] = Field(default=None, foreign_key="categoria_alimento.id")
     # Finalidade de uso do item — distinta de `categoria` (texto livre): um
     # enum fechado (ver rules.categorias.FINALIDADES_ESTOQUE) que decide se o
     # item pode aparecer nos seletores de "aplicação de medicamento"/hormônio
@@ -75,7 +85,15 @@ class Estoque(SQLModel, table=True):
     # tratado como "não desativado"/"não pediu lembrete", nunca como erro.
     ativo: Optional[bool] = None
     observacao: Optional[str] = None
-    carencia_dias: Optional[int] = None  # período de carência (leite/carne) após uso, em dias
+    carencia_dias: Optional[int] = None  # período de carência (leite/carne) após uso, em dias — legado, ver split abaixo
+    # Split leite/carne (compatibiliza com MedicamentoComercial.carencia_leite_dias/
+    # carencia_carne_dias — ver rules/carencia.py) + flag "não usar em vaca em
+    # lactação", pedido do usuário (01/09/2026) junto da carência do leite.
+    # `carencia_dias` acima continua existindo por compatibilidade com quem já lê
+    # esse campo; estes dois passam a ser a fonte de verdade a partir de agora.
+    carencia_leite_dias: Optional[int] = None
+    carencia_carne_dias: Optional[int] = None
+    proibido_lactacao: Optional[bool] = None
     centro_custo_padrao: Optional[str] = None
     conta_gerencial_despesa_padrao: Optional[str] = None  # código do plano de contas (ex.: "3.01.01.01")
     conta_gerencial_receita_padrao: Optional[str] = None
@@ -121,6 +139,140 @@ class Estoque(SQLModel, table=True):
     # EstoqueSemen.tipo/CompraSemen.tipo, mas cadastrável aqui direto (antes só
     # existia na compra de sêmen). None = não é sêmen ou ainda não informado.
     tipo_semen: Optional[str] = None
+
+
+class EstoquePrincipioAtivo(SQLModel, table=True):
+    """Vínculo N-para-N entre item de Estoque (do tenant) e princípio ativo —
+    generaliza `Estoque.principio_ativo_id` (escalar, mantido como o
+    "princípio principal" por compatibilidade) para medicamento combinado.
+
+    `fazenda_id` (migração 697b23118c3c, feita junto com o motor de
+    replicação Fazenda -> Fazenda): sempre igual ao
+    `Estoque.fazenda_id` referenciado (herdado no backfill, nunca dado
+    independente) — sem ele, `replicacao_fazenda.py` (que descobre o que
+    copiar procurando `fazenda_id` na tabela) não enxergava este vínculo e a
+    Fazenda Teste ficava com o item de estoque copiado mas sem
+    princípio(s) ativo(s), diferença silenciosa entre sandbox e produção."""
+
+    __tablename__ = "estoque_principio_ativo"
+    __table_args__ = (UniqueConstraint("estoque_id", "principio_ativo_id", name="uq_estoque_principio"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    estoque_id: int = Field(foreign_key="estoque.id", index=True)
+    principio_ativo_id: int = Field(foreign_key="principio_ativo.id", index=True)
+    # Espelha (e mantém sincronizado com) Estoque.principio_ativo_id — exatamente
+    # 1 linha por item tem principal=True.
+    principal: bool = False
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+class LoteEstoque(SQLModel, table=True):
+    """Um lote/frasco COMPRADO de um item de Estoque — pedido do usuário
+    (01/09/2026): "registrar/comprar um medicamento escolhendo um tamanho de
+    frasco/embalagem específico com sua própria dosagem, rastrear múltiplos
+    lotes de tamanhos diferentes do mesmo medicamento em estoque, e — ao
+    aplicar — escolher explicitamente de qual frasco/lote a dose saiu, ou,
+    se nenhum for escolhido, baixar automaticamente do lote mais antigo
+    primeiro (FIFO)."
+
+    Puramente ADITIVO sobre o que já existia: `Estoque.quantidade` continua
+    sendo o saldo agregado (somado a partir de `quantidade_restante` de todos
+    os lotes do item) — ninguém que só lê o agregado precisa saber que lotes
+    existem. Um item que nunca teve um lote aberto continua se comportando
+    exatamente como antes (ver `rules/estoque_baixa.py::movimentar`) — a
+    granularidade por lote só passa a valer para quem decidir usá-la.
+
+    Limitação conhecida e documentada: uma DEVOLUÇÃO (sinal=+1) sem
+    `lote_id` explícito — ex.: estorno genérico de uma baixa antiga que não
+    conseguiu recuperar de qual lote específico veio — é distribuída de volta
+    pelos lotes com espaço (do mais recente pro mais antigo), não
+    necessariamente no lote exato de onde a baixa original saiu. Fluxos que já
+    guardam o rastro exato (ex.: edição/exclusão de aplicação em Sanidade, que
+    lê `MovimentoEstoque.lote_id` da baixa original) reaproveitam o lote certo
+    — ver `sanidade.py::_lote_da_ultima_aplicacao`."""
+
+    __tablename__ = "lote_estoque"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    estoque_id: int = Field(foreign_key="estoque.id", index=True)
+    numero_lote: Optional[str] = None
+    data_compra: date
+    quantidade_comprada: float
+    quantidade_restante: float
+    valor_unitario: Optional[float] = None
+    observacao: Optional[str] = None
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    # De qual tamanho de embalagem (ApresentacaoEmbalagemEstoque) este lote
+    # veio — pedido do usuário (04/09/2026): comprar "Agrovet frasco de
+    # 100ml" sem precisar de um item de Estoque à parte pra cada tamanho.
+    # None = lote sem embalagem específica associada (comportamento de
+    # sempre — item sem nenhuma embalagem cadastrada, ou lote aberto antes
+    # desta feature existir).
+    apresentacao_id: Optional[int] = Field(default=None, foreign_key="apresentacao_embalagem_estoque.id", index=True)
+
+
+class ApresentacaoEmbalagemEstoque(SQLModel, table=True):
+    """Um tamanho de embalagem cadastrado para UM item de Estoque (Medicamento)
+    — pedido do usuário (04/09/2026): "eu quero comprar um Agrovet de 50ml e
+    um Agrovet de 100ml, não preciso ter que cadastrar 2 produtos". Antes
+    disso, cada tamanho de frasco de um medicamento precisava ser um item de
+    `Estoque` inteiro à parte (mesmo `principio_ativo_id`, cadastros
+    duplicados) — esta tabela deixa um ÚNICO item de Estoque ter N tamanhos.
+
+    Só guarda o NÚMERO (`quantidade`) — ex.: 50, 100 — nunca uma unidade
+    própria: a unidade é sempre `Estoque.medida_embalagem` do item PAI, lida
+    ao vivo sempre que a embalagem é exibida (nunca copiada pra cá). Isso é
+    proposital — o usuário pediu explicitamente cuidado para não "puxar
+    automaticamente" um valor fixo tipo "ml" ou "frasco": a única unidade que
+    conta é a que estiver de fato cadastrada em `medida_embalagem` para
+    aquele item, seja ela qual for (ml/frasco, L/galão, dose/seringa...). Se
+    o item mudar `medida_embalagem` depois, todas as suas embalagens já
+    cadastradas refletem a mudança automaticamente, sem precisar reeditar
+    cada uma (não há cópia pra ficar desatualizada).
+
+    `LoteEstoque.apresentacao_id` (opcional) marca de qual destes tamanhos
+    veio cada lote de compra — ver rules/estoque_baixa.py. Puramente
+    aditivo: um item sem nenhuma embalagem cadastrada continua se
+    comportando exatamente como antes (compra/baixa direto no agregado)."""
+
+    __tablename__ = "apresentacao_embalagem_estoque"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    estoque_id: int = Field(foreign_key="estoque.id", index=True)
+    quantidade: float
+    ativa: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class EstoqueAliasMesclado(SQLModel, table=True):
+    """Registro de mesclagem de itens de Estoque (ver POST
+    /estoque/{sobrevivente_id}/mesclar): o item "perdedor" NÃO é excluído nem
+    seu nome é reescrito por cima do histórico (Sanidade.produto, protocolos,
+    financeiro...) — isso apagaria a carência que valia para aquele
+    lançamento no passado (duas marcas do mesmo princípio podem ter carências
+    diferentes; ver docstring de MedicamentoComercial em models/sanidade.py).
+    Em vez disso, o nome antigo vira um ALIAS que aponta pro item
+    sobrevivente, com a carência do perdedor CONGELADA no momento da
+    mesclagem — quem hoje resolve item/carência por nome (ver
+    rules/estoque_baixa.py) passa a também consultar esta tabela antes de
+    concluir que o item "sumiu"."""
+
+    __tablename__ = "estoque_alias_mesclado"
+    __table_args__ = (UniqueConstraint("fazenda_id", "nome_perdedor", name="uq_alias_mesclado_fazenda_nome"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome_perdedor: str = Field(index=True)
+    estoque_perdedor_id: int = Field(foreign_key="estoque.id", index=True)
+    estoque_sobrevivente_id: int = Field(foreign_key="estoque.id", index=True)
+    carencia_leite_dias_congelada: Optional[int] = None
+    carencia_carne_dias_congelada: Optional[int] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +374,33 @@ class Fornecedor(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+class FornecedorClienteApelido(SQLModel, table=True):
+    """Apelido aprendido: o nome de fornecedor/cliente como aparece BRUTO num
+    documento (razão social completa da NF-e, texto lido por OCR) nem sempre
+    bate com o nome do cadastro (ex.: nota vem com "COOP.AGRO.PROD.R.S.
+    GOIANO - COMIGO", cadastro tem só "COMIGO"). Quando a leitura automática
+    de documento não encontra correspondência exata no cadastro (ver
+    fazenda.rules.casamento_cadastro), o usuário pode ensinar o sistema a
+    reconhecer aquele nome bruto — da próxima vez, resolve direto para
+    `nome_canonico`, sem precisar corrigir de novo.
+
+    Por fazenda — o apelido de um tenant nunca pode resolver o nome de outro
+    (mesmo texto bruto pode significar fornecedores diferentes em fazendas
+    diferentes)."""
+
+    __tablename__ = "fornecedor_cliente_apelido"
+    __table_args__ = (UniqueConstraint("nome_bruto", "fazenda_id", name="uq_apelido_nome_bruto_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    # Normalizado (mesma função de fazenda.rules.casamento_cadastro) antes de
+    # gravar e antes de comparar — evita duplicar apelido por causa de
+    # diferença de maiúscula/acento/espaço.
+    nome_bruto: str = Field(index=True)
+    nome_canonico: str
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 # ---------------------------------------------------------------------------
 # Movimento de estoque (histórico de entradas/saídas lançadas manualmente)
 # ---------------------------------------------------------------------------
@@ -238,6 +417,12 @@ class MovimentoEstoque(SQLModel, table=True):
     unidade: Optional[str] = None
     data_movimento: date
     observacao: Optional[str] = None
+    # Preço do item NO MOMENTO deste movimento (snapshot de Estoque.valor_unitario
+    # ao gravar) — sem isso, o custo físico do RMCA (rules/rmca.py) multiplicava
+    # todo o histórico pelo preço ATUAL do item, reescrevendo retroativamente o
+    # custo de meses cujo preço já mudou. None em movimentos antigos (de antes
+    # desta coluna existir) — quem lê cai no preço atual como aproximação.
+    valor_unitario: Optional[float] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     # Vínculo opcional ao Pedido de compra que esta entrada física está
@@ -259,6 +444,14 @@ class MovimentoEstoque(SQLModel, table=True):
     # Id do lançamento (Sanidade, ProtocoloSanitarioAplicacao, Servico...) que
     # gerou este movimento — junto de `origem_tipo`, dá o rastro completo.
     origem_id: Optional[int] = None
+    # Qual lote/frasco (LoteEstoque) este movimento afetou — None quando o
+    # item nunca teve lote aberto (comportamento legado, só mexe no agregado)
+    # OU quando a baixa/devolução por FIFO acabou tocando mais de um lote na
+    # mesma chamada (caso raro: dose maior que o que sobrava no lote mais
+    # antigo) — nesse caso o LEDGER por lote continua correto (cada lote foi
+    # decrementado certinho), só a atribuição desta UMA linha de movimento
+    # fica ambígua entre os lotes tocados. Ver rules/estoque_baixa.py.
+    lote_id: Optional[int] = Field(default=None, foreign_key="lote_estoque.id", index=True)
 
 
 class EstoqueSemen(SQLModel, table=True):

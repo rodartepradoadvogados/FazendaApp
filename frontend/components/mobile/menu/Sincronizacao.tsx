@@ -3,8 +3,8 @@
 // pendentes e erros técnicos para diagnóstico quando a rede falha.
 import { useMemo, useState } from "react";
 import { WifiOff, RefreshCw, Trash2, AlertCircle, CheckCircle } from "lucide-react";
-import { MobVoltar, MobCard } from "@/components/mobile/ui";
-import { usePendentes, sincronizar, descartarPendente, useOnline } from "@/lib/offline";
+import { MobVoltar, MobCard, MobBarraProgresso } from "@/components/mobile/ui";
+import { usePendentes, sincronizar, descartarPendente, useOnline, useSincProgresso } from "@/lib/offline";
 import { Carregando, Vazio } from "@/components/mobile/menu/comum";
 
 function formatarData(iso?: string | null): string {
@@ -60,7 +60,7 @@ const estiloInfo: React.CSSProperties = {
   gridTemplateColumns: "1fr 1fr",
   gap: "0.5rem",
   fontSize: "0.85rem",
-  color: "var(--mob-text-secondary)",
+  color: "var(--mob-muted)",
   marginTop: "0.5rem",
 };
 
@@ -73,7 +73,7 @@ const estiloBotoes: React.CSSProperties = {
 const estiloBotao: React.CSSProperties = {
   flex: 1,
   padding: "0.5rem",
-  background: "var(--mob-primary)",
+  background: "var(--mob-acao)",
   color: "white",
   border: "none",
   borderRadius: 6,
@@ -86,6 +86,9 @@ export default function Sincronizacao({ onVoltar }: { onVoltar: () => void }) {
   const online = useOnline();
   const pendentes_items = usePendentes();
   const [sincronizando, setSincronizando] = useState(false);
+  // Progresso REAL da rodada em andamento (feitos/total) — ver useSincProgresso
+  // em lib/offline.ts; usado pela barra abaixo em vez de só um spinner.
+  const progresso = useSincProgresso();
   const [excluindo, setExcluindo] = useState<string | null>(null);
 
   const grupos = useMemo(() => {
@@ -119,7 +122,7 @@ export default function Sincronizacao({ onVoltar }: { onVoltar: () => void }) {
 
   return (
     <>
-      <MobVoltar onVoltar={onVoltar} />
+      <MobVoltar titulo="Sincronização" onVoltar={onVoltar} />
       <div style={{ padding: "1rem" }}>
         <h2 style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "1.2rem", marginBottom: "1rem" }}>
           <WifiOff size={24} /> Sincronização Offline
@@ -144,7 +147,7 @@ export default function Sincronizacao({ onVoltar }: { onVoltar: () => void }) {
                 cursor: sincronizando ? "not-allowed" : "pointer",
                 width: "auto",
                 padding: "0.5rem 1rem",
-                background: "var(--mob-primary)",
+                background: "var(--mob-acao)",
               }}
             >
               {sincronizando ? (
@@ -160,11 +163,12 @@ export default function Sincronizacao({ onVoltar }: { onVoltar: () => void }) {
               )}
             </button>
           </div>
-          <p style={{ margin: "0.5rem 0 0 0", fontSize: "0.85rem", color: "var(--mob-text-secondary)" }}>
+          <p style={{ margin: "0.5rem 0 0 0", fontSize: "0.85rem", color: "var(--mob-muted)" }}>
             {pendentes_items.length === 0
               ? "Nenhum lançamento aguardando envio."
               : `${pendentes_items.length} lançamento(s) aguardando sincronização.`}
           </p>
+          {progresso && <MobBarraProgresso feitos={progresso.feitos} total={progresso.total} rotulo="Enviando" />}
         </div>
 
         {/* Blocos por status */}
@@ -178,7 +182,7 @@ export default function Sincronizacao({ onVoltar }: { onVoltar: () => void }) {
                 <div key={item.id} style={estiloCard}>
                   <div style={estiloHeader}>
                     <span style={{ fontWeight: 600 }}>{item.descricao || "Sem descrição"}</span>
-                    <span style={{ fontSize: "0.8rem", color: "var(--mob-text-secondary)" }}>Tentativa {item.tentativas || 0}</span>
+                    <span style={{ fontSize: "0.8rem", color: "var(--mob-muted)" }}>Tentativa {item.tentativas || 0}</span>
                   </div>
                   <div style={estiloInfo}>
                     <div>

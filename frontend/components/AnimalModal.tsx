@@ -11,10 +11,30 @@ export type AnimalRow = {
   raca?: string | null;
   sit_rep?: string | null;
   del_dias?: number | null;
+  /** @deprecated Campo congelado do CSV do Ideagri — prefira `producao_kg`. */
   ult_cl_kg?: number | null;
+  // Produção AO VIVO (ver AnimalProducaoAoVivo em lib/api.ts): do último
+  // ControleLeiteiro lançado no app, caindo para `ult_cl_kg` só enquanto o
+  // backend novo não estiver publicado.
+  producao_kg?: number | null;
+  producao_data?: string | null;
+  producao_origem?: "controle" | "congelado" | null;
   data_ult_servico_pos?: string | null;
   data_ult_parto?: string | null;
   a_descartar?: boolean;
+  // FONTE ÚNICA de "está em lactação" (GET /animais/, calculado da tabela
+  // Lactacao — ver backend/fazenda/rules/lactacao.py). Substitui os dois
+  // critérios divergentes que as telas de lançamento usavam antes: "o código
+  // do lote é 01/02/03" e "del_dias > 0" (campo congelado). Opcional só para
+  // o intervalo em que o front novo roda contra um backend antigo.
+  em_lactacao?: boolean;
+  lactacao_inicio?: string | null;
+  // Vêm do cadastro (GET /animais/) e sustentam a marcação visual de
+  // inaptidão a serviço na tela de Lançamentos (ver lib/aptidao.ts).
+  idade_meses?: number | null;
+  data_nasc?: string | null;
+  sexo?: string | null;
+  ativo?: boolean;
 };
 
 const SIT_CORES: Record<string, string> = {
@@ -50,6 +70,10 @@ function repro(a: AnimalRow, estado: string | undefined) {
 /** Modal que lista os animais por trás de um número (drill-down). */
 export function AnimalModal({ title, animais, onClose }: { title: string; animais: AnimalRow[]; onClose: () => void }) {
   const temRepro = animais.some((a) => a.data_ult_servico_pos || a.data_ult_parto);
+  // Só aparece quando a lista traz produção (nem todo drill-down é sobre
+  // vacas em lactação) — quando aparece, aproveita para já vir com a origem:
+  // "*" marca quem ainda está no valor congelado do CSV, sem controle no app.
+  const temProducao = animais.some((a) => a.producao_kg != null);
   const { porNumero, rotuloDe } = useEstadosReprodutivos();
   const ord = useOrdenacao(animais);
   return (
@@ -70,11 +94,13 @@ export function AnimalModal({ title, animais, onClose }: { title: string; animai
                 <ThOrdenavel label="Categoria" campo="categoria_abrev" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
                 <th>Sit. Rep.</th>
                 <ThOrdenavel label="DEL" campo="del_dias" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                {temProducao && <ThOrdenavel label="Produção (kg)" campo="producao_kg" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />}
                 {temRepro && <><th style={{ textAlign: "right" }}>Gest.</th><th style={{ textAlign: "right" }}>P/ parto</th><th>Parto prov.</th><th style={{ textAlign: "right" }}>PEV</th></>}
               </tr></thead>
               <tbody>
                 {ord.linhasOrdenadas.map((a) => {
                   const r = repro(a, porNumero.get(a.numero)?.estado);
+                  const congelado = a.producao_origem === "congelado";
                   return (
                     <tr key={a.numero}>
                       <td style={{ fontWeight: 700 }}>{a.numero}</td>
@@ -82,6 +108,12 @@ export function AnimalModal({ title, animais, onClose }: { title: string; animai
                       <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
                       <td><span style={{ color: SIT_CORES[rotuloDe(a.numero)] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{rotuloDe(a.numero)}</span></td>
                       <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
+                      {temProducao && (
+                        <td style={{ textAlign: "right", fontWeight: 600, color: congelado ? "var(--text-muted)" : undefined }}
+                          title={congelado ? "Valor do último CSV importado — nenhum controle leiteiro lançado no app para este animal" : undefined}>
+                          {a.producao_kg != null ? `${a.producao_kg.toFixed(1)}${congelado ? " *" : ""}` : "—"}
+                        </td>
+                      )}
                       {temRepro && <>
                         <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{r.gestacao != null ? `${r.gestacao}d` : "—"}</td>
                         <td style={{ textAlign: "right", fontSize: "0.78rem", color: r.paraParto != null && r.paraParto <= 30 ? "var(--green-light)" : undefined }}>{r.paraParto != null ? `${r.paraParto}d` : "—"}</td>

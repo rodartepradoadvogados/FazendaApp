@@ -59,6 +59,13 @@ class Servico(SQLModel, table=True):
     # existe para a Agenda poder dizer "detectada pela nova inseminação em
     # dd/mm" no card de pendência de motivo.
     origem_perda_prenhez: Optional[str] = None  # reinseminacao | None (manual)
+    # O Servico (a NOVA inseminação) que, ao ser lançado, disparou a detecção
+    # automática acima — só gravado quando origem_perda_prenhez="reinseminacao".
+    # Sem este vínculo, excluir aquela nova inseminação (ex.: lançamento
+    # duplicado por engano) não tinha como desfazer a perda que ela mesma
+    # causou: o estorno de exclusoes.py (`_reverter_perda_prenhez_causada_pelos_alvos`)
+    # usa esta FK para achar o que reverter.
+    perda_causada_por_servico_id: Optional[int] = Field(default=None, foreign_key="servico.id")
     pev_dias: Optional[int] = None
     del_servico: Optional[int] = None
     ult_ocorrencia: Optional[int] = None
@@ -269,6 +276,16 @@ class Parto(SQLModel, table=True):
     # costuma ser freemartin (infértil) — informação útil no descarte precoce.
     gemelar_sexo: Optional[str] = None
     retencao_placenta: Optional[bool] = None
+    # True SÓ para o aborto que abre lactação (resposta "sim" ao popup de
+    # abertura de lactação, no encerramento de gestação) — a informação de
+    # que ESTE aborto específico abriu lactação vive na `Lactacao.origem`
+    # (ORIGEM_ABORTO), não em Parto; este campo é a cópia gravada uma única
+    # vez, no momento da criação do Parto, para que `rules.parto.
+    # eh_parto_produtivo` continue sendo função PURA (sem Session, sem
+    # consultar Lactacao) e ainda assim saiba tratar esse caso como
+    # produtivo. Sempre False para parto normal/natimorto (que já são
+    # produtivos por `tipo_parto`) e para aborto sem abertura de lactação.
+    abriu_lactacao: bool = Field(default=False)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 

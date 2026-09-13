@@ -18,11 +18,13 @@ import time
 from fastapi import Depends, Header, HTTPException, Request
 from sqlmodel import Session, select
 
-from fazenda.database import get_session
+from fazenda.database import get_session, sessao_sem_recorte_de_fazenda
 from fazenda.models import (
     ContratoFazenda, ContratoFazendaModulo, Fazenda, Pessoa, SeedFlag, Usuario, UsuarioFazenda,
 )
-from fazenda.models.equipe_cowdata_acesso import NIVEL_SIGILO_PADRAO, PermissaoEquipeCowData
+from fazenda.models.equipe_cowdata_acesso import (
+    CAMPOS_PERMISSAO_EDICAO_PAINEL_COWDATA, NIVEL_SIGILO_PADRAO, PermissaoEquipeCowData,
+)
 
 # Segredo que assina TODO token de sessão. O valor abaixo é público (está no
 # repositório) e serve só para desenvolvimento/teste — quem o conhece consegue
@@ -34,10 +36,16 @@ SECRET = os.environ.get("AUTH_SECRET", SECRET_DEV)
 
 
 def _rodando_em_producao() -> bool:
-    """Produção = tem banco Postgres configurado e não é execução de teste.
-    O Railway injeta DATABASE_URL; local/teste usa SQLite ou FAZENDA_TESTING."""
+    """Produção = ambiente Railway chamado "production". RAILWAY_ENVIRONMENT_NAME
+    é injetada automaticamente pelo Railway em todo serviço — é a fonte direta,
+    em vez de deduzir pelo tipo de banco configurado. Só cai no heurístico antigo
+    (Postgres configurado) se essa variável não existir (deploy fora do Railway),
+    pra nunca afrouxar a proteção que já existia."""
     if os.environ.get("FAZENDA_TESTING"):
         return False
+    ambiente_railway = os.environ.get("RAILWAY_ENVIRONMENT_NAME")
+    if ambiente_railway is not None:
+        return ambiente_railway == "production"
     return os.environ.get("DATABASE_URL", "").startswith(("postgres://", "postgresql://"))
 
 
@@ -245,6 +253,56 @@ def get_fazenda_atual_id(
     return dados.get("fid") if dados else None
 
 
+# Texto único da recusa "esta escrita não tem fazenda a que pertencer" — a
+# ponta de ESCRITA da mesma trava que `routers/auth.py::ERRO_USUARIO_SEM_FAZENDA`
+# guarda na CRIAÇÃO DE USUÁRIO, e mora numa constante pelo mesmo motivo: é a
+# única explicação que a pessoa travada recebe, e o teste de regressão cobra
+# este texto para ninguém trocá-lo por um "não foi possível salvar" genérico.
+#
+# A REGRA DO DONO, textual: "Fazenda chegar vazia, tem que dar erro e pedido de
+# acionamento do suporte CowData. Isso só é resolvido se tiver uma fazenda
+# cadastrada, a pessoa cadastrada e usuário atribuído a uma pessoa cadastrada
+# dentro de uma fazenda." Por isso a mensagem manda acionar o SUPORTE e não
+# "peça a um administrador": nenhuma tela do lado do cliente conserta um
+# usuário sem vínculo nenhum — quem cria fazenda e amarra pessoa→usuário é a
+# CowData. Mandar a pessoa procurar o próprio administrador era mandá-la a um
+# lugar onde não existe botão.
+#
+# Só vale para o caso "nenhum vínculo": quem tem DUAS fazendas e não escolheu
+# uma continua recebendo a instrução de sair e entrar de novo, logo abaixo —
+# esse a própria pessoa resolve em dez segundos, e chamar o suporte para isso
+# seria ruído.
+# FECHO PADRÃO DAS TRÊS RECUSAS POR FALTA DE FAZENDA.
+#
+# São três recusas com CAUSAS diferentes — criar usuário fora de fazenda
+# (`routers/auth.py::ERRO_USUARIO_SEM_FAZENDA`), usuário sem vínculo nenhum
+# tentando gravar (`ERRO_ESCRITA_SEM_FAZENDA`) e operação que não sabe em que
+# fazenda acontece (`ERRO_OPERACAO_SEM_FAZENDA`). A primeira frase de cada uma
+# diz a causa, e por isso continua diferente: colapsá-las numa mensagem só
+# tornaria o texto vago justamente onde ele existe para orientar.
+#
+# O FECHO, esse é o mesmo nos três — porque a saída é a mesma, e porque o
+# usuário precisa reconhecer o caminho independentemente de por onde esbarrou
+# nele. A ordem vem da regra do dono, textual: "isso só é resolvido se tiver
+# uma fazenda cadastrada, a pessoa cadastrada e usuário atribuído a uma pessoa
+# cadastrada dentro de uma fazenda".
+#
+# "Acione o suporte CowData" e não "peça a um administrador": nenhuma tela do
+# lado do cliente conserta um usuário sem vínculo nenhum — quem cria fazenda e
+# amarra pessoa->usuário é a CowData. Mandar a pessoa procurar o próprio
+# administrador era mandá-la a um lugar onde não existe botão.
+FECHO_ORDEM_E_SUPORTE = (
+    "A ordem é sempre esta: primeiro a fazenda cadastrada, depois a pessoa dentro dela "
+    "(Configurações > Cadastro > Pessoas) e só então o usuário dessa pessoa. Se não conseguir "
+    "concluir, acione o suporte CowData."
+)
+
+ERRO_ESCRITA_SEM_FAZENDA = (
+    "Seu usuário não está vinculado a nenhuma fazenda, e nada pode ser gravado fora de uma "
+    "fazenda. " + FECHO_ORDEM_E_SUPORTE
+)
+
+
 def resolver_fazenda_id_escrita(session: Session, user: Usuario, fazenda_id_do_token: int | None) -> int | None:
     """Resolve a fazenda de um lançamento novo — em qualquer ambiente onde o
     multi-fazenda está de fato provisionado (tabela `fazenda` com pelo menos
@@ -271,26 +329,37 @@ def resolver_fazenda_id_escrita(session: Session, user: Usuario, fazenda_id_do_t
        (é o caso de toda a suíte de testes que não monta cenário de
        multi-fazenda, e seria o de qualquer instalação anterior à migração
        f1a2b3c4d5e6). Havendo QUALQUER fazenda cadastrada, recusa com 409 em
-       vez de adivinhar — o usuário precisa sair e entrar de novo para que o
-       login emita um token já com a fazenda escolhida.
+       vez de adivinhar — e as duas recusas dizem coisas diferentes de
+       propósito: quem tem MAIS DE UMA fazenda só precisa sair e entrar de
+       novo (o login reemite o token já com a fazenda escolhida), enquanto
+       quem não tem NENHUMA recebe `ERRO_ESCRITA_SEM_FAZENDA`, que manda
+       acionar o suporte CowData — não há tela do lado do cliente que crie o
+       vínculo que falta.
     """
     if fazenda_id_do_token is not None:
         return fazenda_id_do_token
-    fazendas = sorted({
-        fid for fid in session.exec(
-            select(UsuarioFazenda.fazenda_id).where(UsuarioFazenda.usuario_id == user.id)
-        ).all()
-    })
+    # `sessao_sem_recorte_de_fazenda`, não a `session` recebida direto — bug
+    # relatado em 12/09/2026 (funcionário travado logo após o login,
+    # "Não foi possível carregar a agenda" em toda tela): sob RLS, ESTA
+    # consulta acontece ANTES de qualquer fazenda selecionada (é o que ela
+    # está tentando descobrir), então a sessão comum tem `app.fazenda_id`
+    # NULO — e a política nega a linha de QUALQUER `UsuarioFazenda`, mesmo o
+    # vínculo único e real do usuário. `fazendas` saía sempre vazio, mesmo
+    # para quem tem exatamente 1 fazenda — o caminho comum de auto-seleção
+    # abaixo nunca era alcançado. Mesmo padrão já usado por
+    # `eh_membro_equipe_cowdata` (mesmo arquivo) para o mesmíssimo problema.
+    with sessao_sem_recorte_de_fazenda(session) as s:
+        fazendas = sorted({
+            fid for fid in s.exec(
+                select(UsuarioFazenda.fazenda_id).where(UsuarioFazenda.usuario_id == user.id)
+            ).all()
+        })
     if len(fazendas) == 1:
         return fazendas[0]
     if session.exec(select(Fazenda.id).limit(1)).first() is None:
         return None
     if not fazendas:
-        raise HTTPException(
-            status_code=409,
-            detail="Seu usuário não está vinculado a nenhuma fazenda. Peça a um administrador para "
-                   "vincular seu acesso a uma fazenda antes de lançar dados.",
-        )
+        raise HTTPException(status_code=409, detail=ERRO_ESCRITA_SEM_FAZENDA)
     raise HTTPException(
         status_code=409,
         detail="Sua sessão não tem uma fazenda selecionada e seu usuário tem acesso a mais de uma. "
@@ -331,6 +400,18 @@ def get_suporte_do_token(
     return {"ativo": True, "sessao_id": dados.get("ssid"), "nivel_sigilo": dados.get("nsig") or NIVEL_SIGILO_PADRAO}
 
 
+def exigir_sessao_suporte(authorization: str | None = Header(default=None)) -> dict:
+    """Dependência que EXIGE modo suporte CowData ativo (o oposto de todo o
+    resto do sistema) — usada só por `POST /estoque/{id}/restaurar-padrao`
+    (pedido explícito do usuário: "restaurar padrão CowData... apenas por
+    meio de acesso do suporte CowData", pra fechar a mão-dupla — um tenant
+    não pode desfazer sozinho uma personalização que ele mesmo escolheu)."""
+    info = get_suporte_do_token(authorization)
+    if not info["ativo"]:
+        raise HTTPException(status_code=403, detail="Esta ação só pode ser feita durante uma sessão de suporte CowData")
+    return info
+
+
 def token_manter_conectado(
     authorization: str | None = Header(default=None),
 ) -> bool:
@@ -366,6 +447,17 @@ def exigir_admin(user: Usuario = Depends(get_current_user)) -> Usuario:
     return user
 
 
+def exigir_admin_ou_dono(user: Usuario = Depends(get_current_user)) -> Usuario:
+    """Igual a `exigir_admin`, mas também deixa passar o dono-equivalente
+    (ver `eh_email_dono_equivalente`) mesmo que o `papel` gravado não seja
+    literalmente "admin" — usado por ferramentas administrativas pontuais
+    (ex.: reconstrução de ordem de parto) onde bloquear o próprio dono da
+    fazenda por causa de um `papel` divergente seria o bug, não a proteção."""
+    if user.papel != "admin" and not eh_email_dono_equivalente(user.email):
+        raise HTTPException(status_code=403, detail="Requer administrador")
+    return user
+
+
 def exigir_dono(user: Usuario = Depends(get_current_user)) -> Usuario:
     """Restringe a quem tem acesso equivalente ao do proprietário (ver
     EMAILS_DONO_EQUIVALENTE), por e-mail cadastrado. Independente de
@@ -380,14 +472,26 @@ def eh_membro_equipe_cowdata(session: Session, user: Usuario) -> bool:
     (Pessoa cadastrada na fazenda interna eh_empresa_cowdata=True — ver
     painel_cowdata.py). Não confundir com dono-equivalente: um membro comum
     da equipe (Financeiro, Comercial, Consultor...) não é dono, só ganha
-    acesso ao que a PermissaoEquipeCowData dele liberar."""
+    acesso ao que a PermissaoEquipeCowData dele liberar.
+
+    As duas leituras abaixo vão por `sessao_sem_recorte_de_fazenda(session)`,
+    não direto pela `session` — incidente de 11/09/2026: isto é uma
+    checagem de IDENTIDADE (a Pessoa deste usuário mora na fazenda interna
+    da CowData, quase nunca a fazenda hoje selecionada na sessão — no
+    login, nenhuma ainda está selecionada), não um dado da fazenda atual.
+    Sob RLS, ler pela `session` da requisição nega isto em silêncio sempre
+    que a fazenda interna da CowData não é a do contexto corrente — foi o
+    que derrubou a tela de login/seleção de fazenda em produção.
+    `usuario_id`/`pessoa_id` já são o recorte de segurança real aqui (mesmo
+    raciocínio das rotinas de fundo, ver roteiro-seguranca.md seção 2)."""
     if not user.pessoa_id:
         return False
-    pessoa = session.get(Pessoa, user.pessoa_id)
-    if not pessoa or not pessoa.fazenda_id:
-        return False
-    fazenda = session.get(Fazenda, pessoa.fazenda_id)
-    return bool(fazenda and fazenda.eh_empresa_cowdata)
+    with sessao_sem_recorte_de_fazenda(session) as s:
+        pessoa = s.get(Pessoa, user.pessoa_id)
+        if not pessoa or not pessoa.fazenda_id:
+            return False
+        fazenda = s.get(Fazenda, pessoa.fazenda_id)
+        return bool(fazenda and fazenda.eh_empresa_cowdata)
 
 
 def _permissao_equipe_cowdata(session: Session, usuario_id: int) -> PermissaoEquipeCowData | None:
@@ -431,6 +535,58 @@ def exigir_area_painel_cowdata(area: str):
     return _dep
 
 
+def tem_permissao_painel_cowdata(session: Session, user: Usuario, permissao: str) -> bool:
+    """Este usuário tem UMA das sete permissões de EDIÇÃO do Painel CowData
+    (ver PERMISSOES_EDICAO_PAINEL_COWDATA em
+    fazenda/models/equipe_cowdata_acesso.py)?
+
+    Dono-equivalente sempre sim — mesmo bypass de
+    `exigir_area_painel_cowdata`: o dono nunca teve linha em
+    PermissaoEquipeCowData nem precisa ter. Qualquer outro sem linha gravada
+    (ou com a permissão desligada) é NÃO — nunca abrir acesso por omissão,
+    que é a decisão explícita da migração ("ninguém ganha nada").
+
+    Usado como função (e não só como dependência) porque uma das rotas
+    precisa checar a permissão no MEIO do handler, dependendo dos campos que
+    o corpo do pedido tenta mexer — ver painel_cowdata_usuarios.py."""
+    if permissao not in CAMPOS_PERMISSAO_EDICAO_PAINEL_COWDATA:
+        raise ValueError(f"Permissão desconhecida do Painel CowData: {permissao}")
+    if eh_email_dono_equivalente(user.email):
+        return True
+    perm = _permissao_equipe_cowdata(session, user.id)
+    return bool(perm and getattr(perm, permissao, False))
+
+
+def exigir_permissao_painel_cowdata(area: str, permissao: str):
+    """Fábrica de dependência para as rotas de ESCRITA do Painel CowData:
+    exige a ÁREA (eixo "areas", que responde "ele VÊ esta parte do painel?")
+    E a permissão booleana de edição (eixo "o que ele pode FAZER").
+
+    As duas, sempre — nunca uma OU outra. A permissão nova é uma camada A
+    MAIS por cima da checagem de área que já existia, e não um caminho
+    alternativo que a contorne: sem a área, nem chega a olhar a permissão.
+
+    É isso que dá a assimetria pedida pelo dono (set/2026): a rota de
+    LEITURA continua só com `exigir_area_painel_cowdata(area)` — consulta é
+    livre para quem tem a área —, e só a de escrita passa por aqui."""
+
+    def _dep(user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> Usuario:
+        if eh_email_dono_equivalente(user.email):
+            return user
+        perm = _permissao_equipe_cowdata(session, user.id)
+        if not perm or area not in (perm.areas or "").split(","):
+            raise HTTPException(status_code=403, detail="Sem permissão para esta área do Painel CowData")
+        if not getattr(perm, permissao, False):
+            raise HTTPException(
+                status_code=403,
+                detail="Sem permissão para editar aqui — a consulta continua liberada. "
+                       "Peça ao proprietário para marcar esta permissão no cadastro de equipe.",
+            )
+        return user
+
+    return _dep
+
+
 def exigir_contratante_ou_dono(
     user: Usuario = Depends(get_current_user),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -453,12 +609,29 @@ def exigir_contratante_ou_dono(
     return user
 
 
-def exigir_pode_publicar(user: Usuario = Depends(get_current_user)) -> Usuario:
+def exigir_pode_publicar(
+    user: Usuario = Depends(get_current_user), session: Session = Depends(get_session),
+) -> Usuario:
     """Permissão específica para publicar/gerenciar matérias do blog (News) e
     confirmar a revisão de publicação definitiva. Independente de papel/admin
-    — igual exigir_dono, um admin comum não passa por aqui sem a flag."""
+    — igual exigir_dono, um admin comum não passa por aqui sem a flag.
+
+    "Edição de News" (set/2026) entra aqui como camada A MAIS, nunca como
+    caminho alternativo: para um MEMBRO DA EQUIPE COWDATA a flag antiga
+    (`Usuario.pode_publicar_materias_blog`) continua sendo exigida e, além
+    dela, agora também `pode_editar_news` do cadastro de equipe. Quem não é
+    da Equipe CowData (usuário de fazenda-cliente com a flag) não muda em
+    nada — o gate dele continua sendo só a flag.
+
+    Quem cadastra o login da equipe marca uma coisa só na tela (Painel
+    CowData > Equipe > "Editar News"): a rota que grava a permissão espelha
+    a marcação na flag do Usuario (ver painel_cowdata.py::
+    _aplicar_permissao_news), justamente para que o "E" acima não vire uma
+    armadilha em que a caixa está marcada e mesmo assim não funciona."""
     if not user.pode_publicar_materias_blog:
         raise HTTPException(status_code=403, detail="Sem permissão para publicar matérias no blog")
+    if eh_membro_equipe_cowdata(session, user) and not tem_permissao_painel_cowdata(session, user, "pode_editar_news"):
+        raise HTTPException(status_code=403, detail="Sem permissão para editar News no Painel CowData")
     return user
 
 
@@ -561,14 +734,22 @@ def eh_consultor_cowdata(session: Session, usuario: Usuario) -> bool:
 
     É o que distingue o CONSULTOR COWDATA do consultor externo convidado
     pelo próprio cliente — os dois usam `UsuarioFazenda.consultor` para o
-    vínculo com a fazenda, então o vínculo sozinho não diferencia."""
+    vínculo com a fazenda, então o vínculo sozinho não diferencia.
+
+    Mesma razão de `eh_membro_equipe_cowdata` para ler por
+    `sessao_sem_recorte_de_fazenda(session)`: a Pessoa deste usuário mora
+    na fazenda interna da CowData, não na fazenda-cliente hoje selecionada
+    (é justamente aqui, em exigir_admin_ou_consultor_fazenda, que as duas
+    fazendas são diferentes por definição) — sob RLS, ler pela sessão da
+    requisição nega isto em silêncio."""
     if not usuario.pessoa_id:
         return False
-    pessoa = session.get(Pessoa, usuario.pessoa_id)
-    if not pessoa or (pessoa.tipo or "") != "Consultor":
-        return False
-    fazenda = session.get(Fazenda, pessoa.fazenda_id) if pessoa.fazenda_id else None
-    return bool(fazenda and fazenda.eh_empresa_cowdata)
+    with sessao_sem_recorte_de_fazenda(session) as s:
+        pessoa = s.get(Pessoa, usuario.pessoa_id)
+        if not pessoa or (pessoa.tipo or "") != "Consultor":
+            return False
+        fazenda = s.get(Fazenda, pessoa.fazenda_id) if pessoa.fazenda_id else None
+        return bool(fazenda and fazenda.eh_empresa_cowdata)
 
 
 def exigir_admin_ou_consultor_fazenda():
@@ -655,6 +836,223 @@ def exigir_contrato_ativo():
     return _dep
 
 
+def multifazenda_provisionado(session: Session) -> bool:
+    """Este ambiente tem multi-fazenda de fato em uso? (= a tabela `fazenda`
+    tem pelo menos uma linha). É a linha divisória usada por
+    `resolver_fazenda_id_escrita`, por `exigir_fazenda_selecionada` e pelas
+    rotas que precisam recusar um token sem fazenda por conta própria: com
+    zero fazendas não há tenant a isolar (instalação anterior à migração
+    f1a2b3c4d5e6, e a maior parte da suíte de testes); com qualquer fazenda
+    cadastrada — todo ambiente de produção — a falta de fazenda no token
+    deixa de ser "legado tolerado" e passa a ser recusa."""
+    return session.exec(select(Fazenda.id).limit(1)).first() is not None
+
+
+# ---------------------------------------------------------------------------
+# Recusa explícita quando a operação chega SEM fazenda
+#
+# A REGRA DO DONO, textual: "Fazenda chegar vazia, tem que dar erro e pedido de
+# acionamento do suporte CowData. Isso só é resolvido se tiver uma fazenda
+# cadastrada, a pessoa cadastrada e usuário atribuído a uma pessoa cadastrada
+# dentro de uma fazenda."
+#
+# Ou seja: `fazenda_id=None` dentro de uma rotina que APAGA ou REESCREVE dado
+# deixa de ser "atende sem recorte" e passa a ser "não atende". O padrão
+# tolerante herdado do piloto de multi-fazenda
+# (`if fazenda_id is not None: query = query.where(...)`) faz exatamente o
+# contrário do que parece: sem fazenda no token ele não restringe nada, ele
+# DESLIGA o isolamento — e numa rotina de exclusão isso significa apagar o
+# lançamento de outro inquilino que por acaso tenha o mesmo
+# `numero_lancamento` (a numeração é sequencial por ano, não é chave global).
+# ---------------------------------------------------------------------------
+ERRO_OPERACAO_SEM_FAZENDA = (
+    "Não foi possível identificar em qual fazenda esta operação aconteceria, então ela foi "
+    "recusada e nada foi alterado. Saia e entre novamente para escolher a fazenda. "
+    + FECHO_ORDEM_E_SUPORTE
+)
+
+
+def exigir_fazenda_da_operacao(session: Session, fazenda_id: int | None) -> int | None:
+    """A fazenda em que esta operação acontece — ou uma RECUSA, quando não há
+    resposta. Devolve o próprio `fazenda_id` para poder ser usada em linha
+    (`fazenda_id = exigir_fazenda_da_operacao(session, fazenda_id)`).
+
+    É a versão "dentro do corpo da função" de `exigir_fazenda_selecionada`,
+    para as rotinas que já estão fundo adentro do endpoint (e para as regras
+    de `fazenda/rules/`, que não são dependências de rota e por isso nunca
+    passariam por uma `Depends`). Usa EXATAMENTE o mesmo corte que
+    `resolver_fazenda_id_escrita` e `exigir_fazenda_selecionada`:
+
+    - Tabela `fazenda` VAZIA (`multifazenda_provisionado` False): devolve
+      None e a operação segue. Não há tenant a isolar — toda linha do banco
+      tem `fazenda_id` nulo, então o recorte incondicional
+      `Modelo.fazenda_id == None` (que em SQL vira `IS NULL`) casa exatamente
+      o conjunto certo. É o caso de instalação anterior à migração
+      f1a2b3c4d5e6 e o da maior parte da suíte de testes.
+    - QUALQUER fazenda cadastrada — todo ambiente de produção — sem fazenda
+      resolvida: recusa com `ERRO_OPERACAO_SEM_FAZENDA`, que é a única
+      explicação que o usuário travado recebe e por isso ensina o caminho
+      inteiro (fazenda → pessoa → usuário → suporte CowData).
+
+    409, e não 400/403, pelo mesmo motivo de `exigir_fazenda_selecionada`: não
+    é dado inválido nem falta de permissão, é um conflito de estado da sessão
+    que o usuário resolve reentrando (ou o suporte resolve completando o
+    cadastro). Deliberadamente SEM o cabeçalho `X-Fazenda-Nao-Selecionada`:
+    ele manda o frontend para /escolher-conta, e quem cai aqui pode não ter
+    fazenda nenhuma para escolher — o laço esconderia justamente a mensagem
+    que manda acionar o suporte.
+    """
+    if fazenda_id is not None:
+        return fazenda_id
+    if not multifazenda_provisionado(session):
+        return None
+    raise HTTPException(status_code=409, detail=ERRO_OPERACAO_SEM_FAZENDA)
+
+
+def exigir_fazenda_selecionada():
+    """Dependência de router: RECUSA qualquer requisição cujo token não diga
+    em que fazenda ela acontece.
+
+    É a trava que faltava para a causa raiz da auditoria (F-A-01, F-B-01,
+    F-B-02, F-A-03). O sistema inteiro isola tenant pelo padrão tolerante
+    `if fazenda_id is not None: query = query.where(Modelo.fazenda_id == ...)`
+    — herdado do piloto de multi-fazenda, quando havia uma fazenda só e
+    "sem fid" queria dizer "antes da migração". Com mais de uma fazenda-
+    cliente no banco, esse `if` inverte de sentido: um token SEM "fid" não
+    restringe nada, ele DESLIGA o isolamento em toda rota que segue o padrão
+    — leitura e escrita, em todos os módulos ao mesmo tempo.
+
+    Corrigir rota por rota seria interminável e frágil (são centenas de
+    consultas, e cada rota nova nasceria com o mesmo risco). A trava certa é
+    na porta: se a requisição vai mexer em dado de fazenda, o token tem que
+    dizer QUAL fazenda. Não dizendo, ela não entra — e aí não importa quantas
+    consultas lá dentro seguem o padrão tolerante.
+
+    Três formas de um token chegar sem "fid", todas reais (ver
+    routers/auth.py::login):
+      1. usuário com 2+ fazendas que não chamou /auth/selecionar-fazenda;
+      2. membro da Equipe CowData (o login sempre oferece a escolha a ele);
+      3. token legado/"manter conectado" emitido antes do multi-fazenda.
+    Nenhuma delas tem por que operar dentro de uma fazenda: (1) e (3) só
+    precisam escolher a fazenda, (2) tem que entrar pelo Cofre de acesso —
+    que é justamente o controle de suporte (motivo, protocolo, expiração,
+    auditoria, nível de sigilo) que o login normal contornava, porque o token
+    saía sem "fid" E sem "suporte" e o bloqueio de modo suporte (main.py) só
+    olha a claim "suporte". A sessão de suporte legítima continua passando
+    aqui: o token do Cofre carimba o `fid` da fazenda visitada
+    (routers/cofre_acesso.py).
+
+    A escape hatch é a mesma — e pela mesma razão — de
+    `resolver_fazenda_id_escrita`: se a tabela `fazenda` está VAZIA, o
+    multi-fazenda não está provisionado neste ambiente e não há tenant a
+    isolar (é o caso da suíte de testes que não monta cenário multi-fazenda,
+    e o de qualquer instalação anterior à migração f1a2b3c4d5e6). Havendo
+    QUALQUER fazenda cadastrada — todo ambiente de produção —, recusa.
+
+    Deliberadamente NÃO resolve sozinha a fazenda do usuário de vínculo único
+    (como `resolver_fazenda_id_escrita` faz na escrita). Resolver aqui não
+    consertaria nada: o endpoint continuaria lendo `None` do token via
+    `get_fazenda_atual_id` e as consultas continuariam sem filtro. Ou o token
+    diz a fazenda, ou a requisição não entra."""
+    def _dep(
+        fazenda_id: int | None = Depends(get_fazenda_atual_id),
+        session: Session = Depends(get_session),
+        user: Usuario = Depends(get_current_user),
+    ) -> None:
+        if fazenda_id is not None:
+            return
+        if not multifazenda_provisionado(session):
+            return
+        # Duas situações diferentes chegam aqui, e mandar as duas para a tela
+        # de escolha é útil só numa delas.
+        #
+        # Quem TEM fazenda e apenas não escolheu qual resolve sozinho: escolhe
+        # e entra. Quem NÃO TEM fazenda nenhuma não tem o que escolher — a
+        # tela de escolha viria vazia, e a orientação de "sair e entrar de
+        # novo" o deixaria num laço, repetindo a mesma coisa sem entender por
+        # quê e sem saber que precisa falar com alguém.
+        #
+        # O vínculo é criado pela CowData, e só por ela: cria a fazenda,
+        # cadastra a pessoa nela e liga o usuário a essa pessoa (ver
+        # routers/auth.py::criar_usuario, que desde o PR #729 recusa criar
+        # usuário sem `UsuarioFazenda`). Por isso a saída para este caso é o
+        # suporte, e não uma ação na tela.
+        #
+        # Membro da Equipe CowData fica de fora desta mensagem de propósito:
+        # ele legitimamente não tem fazenda vinculada e entra pelo Cofre de
+        # acesso (routers/cofre_acesso.py), que carimba o `fid` da fazenda
+        # visitada. Mandá-lo ao suporte seria mandá-lo a si mesmo.
+        #
+        # A decisão sai do usuário COMO ELE ESTÁ NO BANCO, e não do objeto que
+        # a dependência entregou. Não é preciosismo: metade da suíte substitui
+        # `get_current_user` por um dublê mínimo (id, papel, ativo, username,
+        # email) e `eh_membro_equipe_cowdata` lê `pessoa_id`, que o dublê não
+        # tem — 15 testes de outras áreas quebraram assim na primeira versão
+        # desta guarda. Lendo do banco, a checagem vale igual em produção e
+        # não obriga cada dublê da suíte a crescer junto com ela.
+        usuario = session.get(Usuario, getattr(user, "id", None))
+        if usuario is not None and not eh_membro_equipe_cowdata(session, usuario) \
+                and not eh_email_dono_equivalente(usuario.email):
+            # `sessao_sem_recorte_de_fazenda`, não a `session` recebida —
+            # mesmo bug de `resolver_fazenda_id_escrita` acima (relatado em
+            # 12/09/2026): sob RLS, sem fazenda selecionada ainda,
+            # `app.fazenda_id` está NULO nesta sessão, e a política nega
+            # QUALQUER linha de `UsuarioFazenda` — inclusive o vínculo real
+            # do usuário. `tem_vinculo` saía sempre None (nunca encontrado),
+            # então TODO usuário sem "fid" no token caía na mensagem "fale
+            # com o suporte" (sem o cabeçalho de redirecionamento), mesmo
+            # tendo vínculo de verdade com exatamente 1 fazenda — o
+            # `authFetch` do frontend nunca mandava a pessoa para
+            # /escolher-conta, e ela ficava presa vendo erro em toda tela.
+            with sessao_sem_recorte_de_fazenda(session) as s:
+                tem_vinculo = s.exec(
+                    select(UsuarioFazenda.fazenda_id).where(UsuarioFazenda.usuario_id == usuario.id)
+                ).first()
+            if tem_vinculo is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Seu acesso ainda não está liberado para nenhuma fazenda. "
+                           "Fale com o suporte da CowData para concluir seu cadastro.",
+                    # SEM o cabeçalho X-Fazenda-Nao-Selecionada: ele é o que faz
+                    # o frontend mandar o usuário para /escolher-conta, e é
+                    # justamente para lá que esta pessoa NÃO deve ir. Sem o
+                    # cabeçalho, a mensagem aparece como está escrita aqui.
+                    headers={"X-Conta-Sem-Fazenda": "1"},
+                )
+        raise HTTPException(
+            status_code=409,
+            # `detail` como objeto (não string) — mesmo padrão já usado pelos
+            # 409 de confirmação do RH (ver mensagemErroApi em lib/api.ts,
+            # que já sabe ler `detail.mensagem`). `codigo` é o sinal que
+            # sobrevive quando o CABEÇALHO abaixo não chega ao JS: no app
+            # Android empacotado (Capacitor, capacitor.config.ts ->
+            # CapacitorHttp:{enabled:true}), toda requisição passa pela ponte
+            # nativa (OkHttp) em vez do fetch da WebView, e essa ponte nem
+            # sempre repassa cabeçalhos de resposta CUSTOMIZADOS pro objeto
+            # Response que o JS enxerga — bug relatado em 12/09/2026
+            # (funcionário preso na Agenda com "Não foi possível carregar",
+            # em vez de cair em /escolher-conta; causa: token antigo sem
+            # "fid", provavelmente de antes do vínculo dele existir/mudar).
+            # authFetch lê o cabeçalho primeiro (caminho rápido, navegador
+            # normal) e cai para `detail.codigo` do corpo como reforço.
+            detail={
+                "mensagem": "Sua sessão não tem uma fazenda selecionada. Saia e entre novamente para "
+                            "escolher em qual fazenda deseja trabalhar.",
+                "codigo": "fazenda_nao_selecionada",
+            },
+            # 409 já é usado como status de negócio em várias rotas (conflito
+            # de sincronização, lançamento duplicado...), então o frontend não
+            # pode reagir ao status sozinho. Este cabeçalho é a marca que
+            # distingue ESTA recusa das outras: authFetch (lib/api.ts) a
+            # reconhece e manda o usuário para /escolher-conta em vez de
+            # mostrar um erro cru. Precisa estar em expose_headers do CORS
+            # (main.py) para o JS conseguir lê-lo — mas ver `codigo` acima
+            # para quando o cabeçalho não chega.
+            headers={"X-Fazenda-Nao-Selecionada": "1"},
+        )
+    return _dep
+
+
 def fazenda_tem_modulo_contratado(session: Session, fazenda_id: int | None, modulo: str) -> bool:
     """A FAZENDA (não o usuário) tem este módulo comercial contratado e
     ativo? Mesma regra usada por `exigir_modulo_contratado` (dependência de
@@ -719,6 +1117,15 @@ def seed_admin(session: Session) -> None:
     valor padrão escrito no código, que é público no repositório: qualquer
     instalação que subisse sem ADMIN_PASS ficava com a senha do dono conhecida
     por quem lesse o fonte.
+
+    EXCEÇÃO DECLARADA à regra "todo usuário nasce dentro de uma fazenda" (ver
+    fazenda/api/routers/auth.py::_fazenda_do_novo_usuario): este admin nasce
+    sem `UsuarioFazenda` porque nasce ANTES de existir qualquer fazenda — é o
+    bootstrap da instalação, o login que vai criar a primeira fazenda. Ele é o
+    proprietário da plataforma (EMAIL_DONO), não usuário de tenant nenhum, e
+    ganha vínculo depois, ao ser vinculado à fazenda que criar (ver
+    POST /fazendas/{id}/vincular-usuario). Roda uma única vez, só com a tabela
+    `usuario` vazia.
     """
     existe = session.exec(select(Usuario)).first()
     if existe:

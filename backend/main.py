@@ -8,15 +8,15 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from fazenda.auth import (
     bloquear_escrita_contador, exigir_admin_ou_consultor_fazenda, exigir_contrato_ativo, exigir_modulo,
-    exigir_modulo_contratado, exigir_modulo_qualquer, exigir_segredo_de_producao, get_current_user, seed_admin,
+    exigir_fazenda_selecionada, exigir_modulo_contratado, exigir_modulo_qualquer, exigir_segredo_de_producao,
+    get_current_user, seed_admin,
     seed_email_dono_backfill, seed_email_dono_correcao_202607c, seed_permissao_publicar_dono,
 )
-from fazenda.database import create_db_and_tables, engine, get_session
+from fazenda.database import create_db_and_tables, engine, engine_manutencao, get_session  # noqa: F401 — `engine` não é lido aqui, mas dezenas de testes fazem monkeypatch.setattr(main, "engine", ...)
 from fazenda.models import IdempotenciaChave
 from fazenda.api.routers import (
     agenda,
@@ -47,6 +47,7 @@ from fazenda.api.routers import (
     financeiro,
     formulacao_dietas,
     fotos,
+    fotos_news,
     importar,
     indicadores,
     lida,
@@ -59,7 +60,10 @@ from fazenda.api.routers import (
     onboarding,
     painel_cowdata,
     painel_cowdata_cadastros,
+    painel_cowdata_farmacia,
     painel_cowdata_parametros,
+    painel_cowdata_sincronizacao,
+    painel_cowdata_touros,
     painel_cowdata_usuarios,
     parametros,
     pedidos,
@@ -100,7 +104,8 @@ from fazenda.api.routers.cadastro import (
     seed_servicos, seed_semen_categorias,
     seed_estoque_semen_inicial, configurar_calendario_sanitario_padrao, atualizar_estoque_semen_202607,
     seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico, seed_protocolos_sanitarios_curativos, seed_racas_grau_sangue,
-    sindicar_conta_gerencial_estoque, seed_tipos_pessoa, seed_tipo_geral, seed_inducao_lactacao_ativos1_d0,
+    sindicar_conta_gerencial_estoque, seed_tipos_pessoa, seed_tipo_geral, seed_tipos_papel_administrativo,
+    seed_inducao_lactacao_ativos1_d0,
     seed_cadastros_estoque,
 )
 from fazenda.api.routers.estoque import (
@@ -119,7 +124,7 @@ from fazenda.rules.recria_doenca import backfill_doenca_catalogo
 from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
 from fazenda.rules.backup import executar_backup_se_necessario
-from fazenda.rules.manual_fazenda import enviar_manual_semanal_se_necessario
+from fazenda.rules.manual_fazenda import enviar_manual_semanal_todas_fazendas
 from fazenda.rules.supabase_storage import garantir_buckets
 from fazenda.api.routers.push import despachar_agenda_do_dia, despachar_push_pendentes
 
@@ -147,7 +152,12 @@ _INTERVALO_VERIFICACAO_MANUAL_SEMANAL_SEGUNDOS = 30 * 60
 async def _loop_backup_automatico() -> None:
     while True:
         try:
-            with Session(engine) as session:
+            # `engine_manutencao`, e não `engine`: o backup é a única rotina do
+            # sistema que precisa ler o banco INTEIRO, sem recorte de fazenda.
+            # Sem DATABASE_URL_MANUTENCAO configurada as duas são o mesmo
+            # objeto e nada muda; com o RLS ligado, é por ela que o backup
+            # enxerga o dado (ver fazenda/database.py::_montar_engine_manutencao).
+            with Session(engine_manutencao) as session:
                 executar_backup_se_necessario(session)
         except Exception:
             pass  # nunca deixa essa tarefa de fundo derrubar o resto da aplicação
@@ -157,7 +167,19 @@ async def _loop_backup_automatico() -> None:
 async def _loop_despacho_push() -> None:
     while True:
         try:
-            with Session(engine) as session:
+            # `engine_manutencao`, e não `engine`: as duas funções abaixo
+            # enumeram usuários/fazendas de TODO o sistema (push.py::
+            # usuarios_com_canal_push não filtra por fazenda) e só DEPOIS
+            # resolvem a fazenda de cada um (Usuario.pessoa_id → Pessoa.
+            # fazenda_id) para filtrar em Python — nessa ordem, sob RLS a
+            # própria busca da fazenda do usuário ficaria cega (Pessoa tem
+            # fazenda_id, e não há como saber o contexto certo ANTES de
+            # descobrir a fazenda). O recorte por fazenda já é feito
+            # explicitamente em Python (fazenda_id=fazenda_id repassado a
+            # calcular_agenda/montar_itens_notificacoes) — RLS aqui seria
+            # redundante, não a defesa principal, mesmo desenho de
+            # `_loop_backup_automatico` acima.
+            with Session(engine_manutencao) as session:
                 despachar_push_pendentes(session)
                 # "Agenda do dia": resumo 1x/dia (não 1 push por item) — dedup
                 # por usuário+dia em despachar_agenda_do_dia já evita reenvio
@@ -171,8 +193,20 @@ async def _loop_despacho_push() -> None:
 async def _loop_manual_fazenda_semanal() -> None:
     while True:
         try:
-            with Session(engine) as session:
-                enviar_manual_semanal_se_necessario(session)
+            # `engine_manutencao`, e não `engine`: `fazendas_do_envio_semanal`
+            # enumera TODAS as fazendas-cliente antes de saber qual está
+            # sendo processada, e o recorte por fazenda já é feito
+            # explicitamente em Python dentro do laço (ver
+            # enviar_manual_semanal_todas_fazendas) — mesmo desenho de
+            # `_loop_backup_automatico`/`_loop_despacho_push` acima.
+            with Session(engine_manutencao) as session:
+                # UM manual por fazenda-cliente, cada um com o recorte da sua
+                # (ver enviar_manual_semanal_todas_fazendas). Chamar
+                # `enviar_manual_semanal_se_necessario(session)` aqui, sem
+                # fazenda, montava o manual sem recorte e mandava para todos
+                # os admins ativos de todas as fazendas — vazamento por
+                # e-mail, que sai do sistema e não se desfaz.
+                enviar_manual_semanal_todas_fazendas(session)
         except Exception:
             pass  # nunca deixa essa tarefa de fundo derrubar o resto da aplicação
         await asyncio.sleep(_INTERVALO_VERIFICACAO_MANUAL_SEMANAL_SEGUNDOS)
@@ -194,7 +228,14 @@ async def lifespan(app: FastAPI):
     if os.environ.get("FAZENDA_TESTING"):
         yield
         return
-    with Session(engine) as session:
+    # Conexão de DONO, e não a de sempre: sob RLS a `DATABASE_URL` é um role
+    # contido pela política, e política de fazenda não devolve erro — devolve
+    # VAZIO. Um seed que roda contido não falha: ele lê zero linhas, conclui
+    # que o dado não existe e o cria de novo, a cada boot. Sem
+    # `DATABASE_URL_MANUTENCAO` definida, `engine_manutencao` É a `engine`
+    # (ver database.py::_montar_engine_manutencao) — então isto não muda nada
+    # em ambiente que não a tenha.
+    with Session(engine_manutencao) as session:
         seed_admin(session)
         seed_email_dono_backfill(session)
         seed_email_dono_correcao_202607c(session)
@@ -218,6 +259,10 @@ async def lifespan(app: FastAPI):
         # "Geral" libera Portal > Comunicação > Delegar tarefa (#515) a quem não
         # tem um papel técnico específico (Veterinário/Zootecnista) nem é admin.
         seed_tipo_geral(session, fazenda_id=1)
+        # Backfill de Administrador/Contador (ago/2026) — cobre a fazenda #1
+        # do piloto legado mesmo que o seed original já tenha rodado antes
+        # desses dois tipos existirem (ver seed_tipos_papel_administrativo).
+        seed_tipos_papel_administrativo(session, fazenda_id=1)
         seed_pessoas(session)
         # Identidade de cadastro para o robô de automação (Telegram/MilkNews) —
         # permite vincular um usuário de sistema a essa pessoa, como qualquer outra.
@@ -361,16 +406,6 @@ ALLOWED_ORIGINS = [
 # incluindo os deploys de branch: <projeto>-git-<hash>-<time>.vercel.app).
 _VERCEL_PREVIEW_REGEX = r"^https://fazenda-?app[a-z0-9-]*\.vercel\.app$"
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=_VERCEL_PREVIEW_REGEX,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
 @app.middleware("http")
 async def _carimbar_fazenda_atual(request, call_next):
     """Carimba a fazenda do token no contexto do request, para
@@ -418,6 +453,10 @@ _PREFIXOS_RH_MODO_SUPORTE = (
     "/cadastro/empreitadas",
     "/cadastro/contratos",
     "/cadastro/diarias",
+    # BUG DE SEGURANÇA CORRIGIDO: /cadastro/pessoas guarda salario_base, CPF e
+    # anexos de documentos pessoais (RG, holerite, contrato...) — tão
+    # sensível quanto o resto do RH acima, mas tinha ficado de fora da lista.
+    "/cadastro/pessoas",
 )
 
 # Prefixos de rota tratados como "dados sensíveis" em modo suporte (ver
@@ -427,7 +466,13 @@ _PREFIXOS_RH_MODO_SUPORTE = (
 # abaixo — escrita nesses domínios continua proibida em modo suporte mesmo
 # para quem enxerga tudo, porque a trava aqui é "ação destrutiva/financeira
 # não é coisa de sessão de suporte", não "confiança").
-_PREFIXOS_SENSIVEIS_MODO_SUPORTE = ("/financeiro", "/planejamento", "/chamados", "/cobranca", "/asaas") + _PREFIXOS_RH_MODO_SUPORTE
+# "/upload" entra aqui (auditoria F-A-05) porque POST /upload/{tipo} não é
+# "mandar um arquivo": os _upsert_* de upload.py APAGAM o conjunto inteiro do
+# escopo antes de inserir o CSV (plano de contas gerenciais, curva ABC,
+# rebanho, estoque, patrimônio...). É a ação mais destrutiva do sistema, e
+# estava passando batido em modo suporte — exatamente o tipo de coisa que
+# "sessão de suporte não faz", em qualquer nível de sigilo.
+_PREFIXOS_SENSIVEIS_MODO_SUPORTE = ("/financeiro", "/planejamento", "/chamados", "/cobranca", "/asaas", "/upload") + _PREFIXOS_RH_MODO_SUPORTE
 
 # Nível de sigilo por conta (#132) — quais grupos de prefixo ficam bloqueados
 # também para LEITURA (GET) em modo suporte, abaixo do nível carimbado no
@@ -513,6 +558,34 @@ async def _bloquear_modo_suporte(request, call_next):
             # do cliente" — não teria sentido poluir a auditoria dele com o
             # próprio encerramento do acesso.
             eh_encerramento = path.startswith("/painel-cowdata/cofre/sessoes/") and path.endswith("/encerrar")
+
+            # BUG DE SEGURANÇA CORRIGIDO: POST .../sessoes/{id}/encerrar só
+            # gravava sessao.encerrada_em no banco — o token JWT já emitido
+            # continuava validando normalmente (a claim "suporte" não é
+            # reconferida aqui contra o banco) até a própria expiração do
+            # JWT. Ou seja, "encerrar" pelo Painel CowData não cortava o
+            # acesso de fato. Agora, toda vez que o token carrega "ssid",
+            # confere no banco se a sessão ainda está ativa (não encerrada,
+            # não expirada) antes de deixar a requisição passar.
+            ssid = dados.get("ssid")
+            if ssid is not None:
+                from datetime import datetime as _datetime
+
+                from fazenda.models.cofre_acesso import SessaoAcessoSuporte
+
+                with _sessao_idempotencia(request) as _sessao_bd:
+                    sessao_atual = _sessao_bd.get(SessaoAcessoSuporte, ssid)
+                sessao_valida = (
+                    sessao_atual is not None
+                    and sessao_atual.encerrada_em is None
+                    and sessao_atual.expira_em > _datetime.utcnow()
+                )
+                if not sessao_valida:
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": "Esta sessão de suporte foi encerrada ou expirou. Abra uma nova sessão no Painel CowData."},
+                    )
+
             mensagem_bloqueio: str | None = None
 
             if request.method == "GET":
@@ -528,7 +601,18 @@ async def _bloquear_modo_suporte(request, call_next):
                         "Para consultar isso, é preciso uma sessão com nível de sigilo mais alto."
                     )
             else:
-                bloquear = request.method == "DELETE" or (
+                # Mesclagem de Estoque (POST .../mesclar) é bloqueada por
+                # SUFIXO exato de rota, nunca acrescentando "/estoque" à
+                # lista de prefixos acima — isso bloquearia também toda
+                # edição legítima de Estoque em modo suporte (ex.: corrigir
+                # cadastro a pedido do cliente). "Restaurar padrão" (o
+                # oposto — reverter uma personalização ao padrão CowData) é
+                # deliberadamente PERMITIDO aqui: é a única ação de escrita
+                # em Estoque que só EXISTE em modo suporte (ver
+                # `fazenda.auth.exigir_sessao_suporte`), então não faz
+                # sentido também bloqueá-la neste middleware.
+                eh_mesclagem_estoque = request.method == "POST" and path.rstrip("/").endswith("/mesclar")
+                bloquear = request.method == "DELETE" or eh_mesclagem_estoque or (
                     request.method in ("POST", "PUT", "PATCH")
                     and any(path.startswith(p) for p in _PREFIXOS_SENSIVEIS_MODO_SUPORTE)
                 )
@@ -561,7 +645,15 @@ def _sessao_idempotencia(request):
     gravando a chave de idempotência no banco de desenvolvimento de verdade
     por baixo do pano, em vez do banco isolado do teste."""
     fabrica = request.app.dependency_overrides.get(get_session, get_session)
-    gerador = fabrica()
+    # `get_session` passou a receber `authorization` (Header do FastAPI) para
+    # marcar session.info["fazenda_id"] — chamando fora da injeção de
+    # dependência normal (como aqui), o valor padrão do parâmetro não é
+    # resolvido pelo FastAPI e fica sendo o próprio marcador `Header(...)`,
+    # não uma string (AttributeError: 'Header' object has no attribute
+    # 'lower' dentro de get_fazenda_atual_id). Repassar o cabeçalho cru
+    # resolve — mas só quando `fabrica` é a função real: os overrides de
+    # teste (dependency_overrides) continuam sem parâmetro nenhum.
+    gerador = fabrica(request.headers.get("authorization")) if fabrica is get_session else fabrica()
     session = next(gerador)
     try:
         yield session
@@ -641,6 +733,14 @@ async def _idempotencia(request, call_next):
         texto = None  # resposta binária (ex.: PDF) — fora do que este cache assume; segue sem gravar
 
     if texto is not None:
+        # Best-effort: a resposta original já reflete um pedido processado com
+        # SUCESSO (o commit de verdade, da rota, já aconteceu) — gravar o
+        # cache de idempotência é só uma otimização por cima disso. Um
+        # `except IntegrityError` sozinho aqui deixava escapar qualquer OUTRO
+        # erro (ex.: uma conexão soltando com o Postgres em produção) direto
+        # pra fora do middleware, derrubando a resposta inteira — o navegador
+        # via "Failed to fetch" mesmo com o lançamento já salvo (bug real,
+        # relatado em 01/09/2026 no pagamento de Contas a Pagar).
         try:
             with _sessao_idempotencia(request) as session:
                 session.add(IdempotenciaChave(
@@ -648,10 +748,56 @@ async def _idempotencia(request, call_next):
                     status_code=response.status_code, resposta_json=texto,
                 ))
                 session.commit()
-        except IntegrityError:
-            pass  # corrida rara entre duas tentativas concorrentes com a mesma chave — a primeira grava, esta é descartada
+        except Exception:
+            pass
 
     return Response(content=corpo, status_code=response.status_code, media_type=response.headers.get("content-type"))
+
+
+# CORS PRECISA ser o middleware registrado por ÚLTIMO aqui (add_middleware
+# embrulha os que já existem — o último registrado vira o mais EXTERNO da
+# pilha, o mais próximo do cliente). Bug real relatado pelo usuário
+# (05/09/2026): "Sem conexão com a API" em TODA baixa do Financeiro, mesmo
+# com o backend respondendo 200 OK em 100% das tentativas (confirmado nos
+# logs de produção do Railway) — porque o CORS estava registrado ANTES dos
+# middlewares acima e por isso ficava mais INTERNO que eles. `_idempotencia`
+# (o mais externo, antes desta correção) reconstrói a resposta com
+# `Response(content=..., status_code=..., media_type=...)` — tanto ao gravar
+# uma resposta nova no cache quanto ao devolver um cache-hit — e esse objeto
+# novo não carrega os headers `Access-Control-Allow-*` que o CORSMiddleware,
+# por estar mais para dentro, já tinha acrescentado. Sem esses headers, o
+# navegador trata qualquer resposta 2xx de um POST/PUT/PATCH com
+# `Idempotency-Key` (todo lançamento/baixa do Financeiro manda esse header)
+# como falha de CORS — `fetch()` rejeita com `TypeError: Failed to fetch`,
+# e o frontend traduz isso para "Sem conexão com a API" (ver `netError` em
+# lib/api.ts) mesmo com o lançamento já salvo. Registrando o CORS por
+# último, ele vira a camada mais externa de todas e garante que TUDO que sai
+# — inclusive respostas encurtadas por outros middlewares (ex.: o bloqueio
+# de modo suporte, que também retornava direto sem passar pelo CORS) —
+# sempre passa pela injeção dos headers de CORS. Ver
+# tests/test_idempotencia.py::TestIdempotenciaMantemCorsHeaders.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=_VERCEL_PREVIEW_REGEX,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    # Cabeçalho de resposta que o JS precisa conseguir ler: sem expose_headers
+    # o navegador esconde do fetch() qualquer header fora da lista segura por
+    # padrão. É o que permite ao frontend distinguir o 409 de "sua sessão não
+    # tem fazenda selecionada" (ver fazenda/auth.py::exigir_fazenda_selecionada)
+    # dos outros 409 de negócio e levar o usuário à tela de escolha de conta.
+    #
+    # X-Conta-Sem-Fazenda marca o 409 do OUTRO caso: usuário que não tem
+    # fazenda nenhuma vinculada. Ele NÃO leva à tela de escolha — ali não
+    # haveria o que escolher —, e o `authFetch` (lib/api.ts) só redireciona
+    # quando vê o cabeçalho de cima, então esta resposta chega à tela como
+    # mensagem, que é o desejado. Fica exposto para o frontend poder um dia
+    # dar a esse caso um tratamento próprio, e para aparecer na aba de rede
+    # quando o suporte for investigar um acesso que não abre.
+    expose_headers=["X-Fazenda-Nao-Selecionada", "X-Conta-Sem-Fazenda"],
+)
 
 # Auth (aberto) + rotas de dados (exigem login).
 app.include_router(auth.router)
@@ -671,10 +817,35 @@ app.include_router(painel_cowdata_parametros.router)
 # Usuários de UMA fazenda-cliente por vez, sem entrar via modo suporte —
 # mesmo padrão exigir_area_painel_cowdata("cadastros").
 app.include_router(painel_cowdata_usuarios.router)
+# Farmácia padrão CowData (categorias/princípios ativos/medicamentos) —
+# catálogo global + fan-out de Estoque para toda fazenda-cliente, mesmo
+# padrão exigir_area_painel_cowdata("farmacia").
+app.include_router(painel_cowdata_farmacia.router)
+# Catálogo GLOBAL de touros NAAB (`Touro`, sem fazenda_id): a manutenção
+# (criar/editar/excluir/recarregar/importar planilha) mora só aqui, sob a
+# permissão "editar touros NAAB" do cadastro de equipe — antes morava no
+# router de cadastro da fazenda sob `exigir_admin`, e o administrador de
+# qualquer fazenda-cliente reescrevia o catálogo de todas. A LEITURA da
+# fazenda não mudou de lugar (cadastro.router_touros_leitura, mais abaixo).
+app.include_router(painel_cowdata_touros.router)
 # Cofre de acesso: mesmo padrão exigir_dono — ver fazenda/api/routers/cofre_acesso.py.
 app.include_router(cofre_acesso.router)
+# Sincronizar sandbox (Fazenda de Teste = cópia da fazenda-cliente real) —
+# mesmo padrão exigir_area_painel_cowdata("fazendas"). Ver
+# fazenda/rules/replicacao_fazenda.py para a rotina destrutiva de verdade.
+app.include_router(painel_cowdata_sincronizacao.router)
 
-_protegido = [Depends(get_current_user)]
+# TRAVA DE TENANT (auditoria F-A-01/F-B-01/F-B-02/F-A-03): a requisição só
+# entra numa rota de fazenda se o token disser EM QUAL fazenda ela acontece.
+# Sem isso, um token sem "fid" faz todo o `if fazenda_id is not None: ...where
+# (fazenda_id == ...)` do sistema virar no-op e o isolamento entre clientes
+# desliga inteiro — ver fazenda/auth.py::exigir_fazenda_selecionada, que
+# explica os 3 jeitos reais de obter um token assim e por que nenhum deles
+# tem o que fazer dentro de uma fazenda. Vem em TODO router de tenant abaixo;
+# de propósito NÃO está nos routers do Painel CowData/auth/fazendas montados
+# mais acima, que operam sem fazenda selecionada por definição.
+_fazenda_selecionada = [Depends(exigir_fazenda_selecionada())]
+_protegido = [Depends(get_current_user)] + _fazenda_selecionada
 # Trava por PLANO CONTRATADO (fazenda/tenant) — soma-se à permissão por
 # usuário (exigir_modulo/exigir_modulo_qualquer) já usada abaixo. Token sem
 # "fid" (legado) pula a checagem, como o resto do piloto de multi-fazenda —
@@ -685,9 +856,15 @@ app.include_router(animais.router, dependencies=_protegido + [Depends(exigir_mod
 # Upload/Importar CSV e áreas transversais (Agenda, Indicadores, Parâmetros)
 # não pertencem a um módulo comercial específico — exigem só que a fazenda
 # tenha ALGUM contrato ativo (Rebanho é obrigatório em todo plano).
-app.include_router(upload.router, dependencies=_protegido + _contrato_ativo)
+# FURO CORRIGIDO (auditoria F-A-05): faltava exigir_modulo("upload") — o
+# módulo existe (fazenda/auth.py::MODULOS) e o router irmão logo abaixo
+# (importar.router) sempre o exigiu. Sem ele, um operador com permissoes=
+# "capa" podia POST /upload/plano_conta_gerencial e substituir o plano de
+# contas inteiro da fazenda, porque cada _upsert_* de upload.py apaga tudo
+# antes de inserir. A assimetria entre os dois routers irmãos era o bug.
+app.include_router(upload.router, dependencies=[Depends(exigir_modulo("upload"))] + _contrato_ativo + _fazenda_selecionada)
 # Importar dados (Configurações) reaproveita a mesma permissão do Upload CSV.
-app.include_router(importar.router, dependencies=[Depends(exigir_modulo("upload"))] + _contrato_ativo)
+app.include_router(importar.router, dependencies=[Depends(exigir_modulo("upload"))] + _contrato_ativo + _fazenda_selecionada)
 app.include_router(agenda.router, dependencies=_protegido + _contrato_ativo)
 # Protocolos customizados: lançar/listar ativos/cancelar exige só acesso
 # normal ao sistema (mesma regra da Agenda) — editar o MOLDE do protocolo
@@ -709,18 +886,18 @@ app.include_router(filtros_salvos.router, dependencies=_protegido)
 # Contador) já tem permissoes=["financeiro"] pelo cadastro normal do usuário
 # — sem essa trava adicional, ele conseguiria escrever em qualquer endpoint
 # destes 4 routers, não só ler (ver fazenda/auth.py::bloquear_escrita_contador).
-app.include_router(financeiro.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
-app.include_router(cartao_credito.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
-app.include_router(relatorio_custo_hectare.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
-app.include_router(relatorio_custo_producao.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
-app.include_router(relatorio_custo_safra.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
+app.include_router(financeiro.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
+app.include_router(cartao_credito.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
+app.include_router(relatorio_custo_hectare.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
+app.include_router(relatorio_custo_producao.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
+app.include_router(relatorio_custo_safra.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 # Planejamento (Orçamento/Planejamento financeiro) é uma sub-aba de Financeiro
 # na permissão do usuário, mas um módulo comercial PRÓPRIO no contrato (Silver
 # não inclui, Gold/Diamond incluem — "financeiro completo"). Pedidos também é
 # módulo próprio (não mexe em Estoque/Financeiro sozinho — só quando um
 # lançamento/movimento é vinculado a ele).
-app.include_router(planejamento.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("planejamento")), Depends(bloquear_escrita_contador())])
-app.include_router(pedidos.router, dependencies=[Depends(exigir_modulo("pedidos")), Depends(exigir_modulo_contratado("pedidos"))])
+app.include_router(planejamento.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("planejamento")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
+app.include_router(pedidos.router, dependencies=[Depends(exigir_modulo("pedidos")), Depends(exigir_modulo_contratado("pedidos"))] + _fazenda_selecionada)
 # Arquivo fiscal-contábil (Documentos) — SEM bloquear_escrita_contador: o
 # contador pode arquivar documentos livremente (decisão do usuário), só a
 # escrita em Financeiro/Planejamento/Chamados fica atrás do cadeado. Este
@@ -729,7 +906,7 @@ app.include_router(pedidos.router, dependencies=[Depends(exigir_modulo("pedidos"
 # administrador que a Central de Documentos precisa (ver abaixo) é sobre a
 # TELA DE CONSULTA unificada, decidida dentro de central_documentos.py, não
 # aqui — apertar aqui quebraria o upload do contador.
-app.include_router(documentos.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro"))])
+app.include_router(documentos.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro"))] + _fazenda_selecionada)
 # Central de Documentos (Administração) — busca unificada e só-leitura sobre
 # documentos.router (fiscal, admin-only) + anexos de lançamento (financeiro,
 # quem tem o módulo) — cada tier de acesso é decidido DENTRO do endpoint
@@ -738,7 +915,7 @@ app.include_router(documentos.router, dependencies=[Depends(exigir_modulo("finan
 app.include_router(central_documentos.router, dependencies=_protegido + _contrato_ativo)
 # Chamados (suporte) — mesmo padrão de financeiro: contador só escreve
 # (abrir chamado) com o cadeado destravado.
-app.include_router(chamados.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
+app.include_router(chamados.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 app.include_router(indicadores.router, dependencies=_protegido + _contrato_ativo)
 # Alertas de indicador — preferência pessoal do usuário (config de "avise-me
 # se X passar de Y"), sem gate de módulo contratado.
@@ -756,12 +933,12 @@ app.include_router(alimentacao.router, dependencies=_protegido + [Depends(exigir
 # ROTA_MODULO — ver fazenda/auth.py::exigir_admin_ou_consultor_fazenda.
 app.include_router(
     formulacao_dietas.router,
-    dependencies=[Depends(exigir_admin_ou_consultor_fazenda()), Depends(exigir_modulo_contratado("formulacao_dietas"))],
+    dependencies=[Depends(exigir_admin_ou_consultor_fazenda()), Depends(exigir_modulo_contratado("formulacao_dietas"))] + _fazenda_selecionada,
 )
 app.include_router(producao.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("produtivo"))])
 app.include_router(reproducao.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("reprodutivo"))])
 app.include_router(relatorio_acasalamento.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("reprodutivo"))])
-app.include_router(relatorios.router, dependencies=[Depends(exigir_modulo("reproducao")), Depends(exigir_modulo_contratado("reprodutivo"))])
+app.include_router(relatorios.router, dependencies=[Depends(exigir_modulo("reproducao")), Depends(exigir_modulo_contratado("reprodutivo"))] + _fazenda_selecionada)
 app.include_router(estoque.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("estoque"))])
 app.include_router(farmacia.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("sanitario"))])
 app.include_router(sanidade.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("sanitario"))])
@@ -772,20 +949,20 @@ app.include_router(recria.router, dependencies=_protegido + [Depends(exigir_modu
 # cadastro.router é um cadastro-base amplo (fornecedores, pessoas, tipos,
 # serviços, farmácia...) usado por vários módulos comerciais ao mesmo tempo —
 # fica com a trava transversal (contrato ativo), não um módulo específico.
-app.include_router(lotes.router, dependencies=[Depends(exigir_modulo("parametros")), Depends(exigir_modulo_contratado("rebanho"))])
-app.include_router(safra.router, dependencies=[Depends(exigir_modulo("parametros")), Depends(exigir_modulo_contratado("agricultura"))])
-app.include_router(cadastro.router, dependencies=[Depends(exigir_modulo("parametros"))] + _contrato_ativo)
+app.include_router(lotes.router, dependencies=[Depends(exigir_modulo("parametros")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
+app.include_router(safra.router, dependencies=[Depends(exigir_modulo("parametros")), Depends(exigir_modulo_contratado("agricultura"))] + _fazenda_selecionada)
+app.include_router(cadastro.router, dependencies=[Depends(exigir_modulo("parametros"))] + _contrato_ativo + _fazenda_selecionada)
 # Leitura do banco de touros: Rebanho > Touros também consulta este catálogo
 # (módulo "rebanho"), então aceita "parametros" OU "rebanho" — só a listagem,
 # não o cadastro/edição (que fica no router acima, exigindo "parametros").
-app.include_router(cadastro.router_touros_leitura, dependencies=[Depends(exigir_modulo_qualquer("parametros", "rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
-app.include_router(movimentacoes.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
-app.include_router(baixas.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
-app.include_router(compra_animal.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
-app.include_router(compra_semen.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
-app.include_router(venda_animal.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
-app.include_router(relatorio_compra_venda_animal.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
-app.include_router(relatorio_compra_semen.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
+app.include_router(cadastro.router_touros_leitura, dependencies=[Depends(exigir_modulo_qualquer("parametros", "rebanho")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
+app.include_router(movimentacoes.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
+app.include_router(baixas.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
+app.include_router(compra_animal.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
+app.include_router(compra_semen.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
+app.include_router(venda_animal.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
+app.include_router(relatorio_compra_venda_animal.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
+app.include_router(relatorio_compra_semen.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
 # Exclusões: qualquer usuário logado pode buscar/solicitar; excluir de fato,
 # aprovar e rejeitar são restritos a administradores (gate por rota, dentro
 # do próprio router — ver exclusoes.py).
@@ -826,6 +1003,10 @@ app.include_router(aprovacoes.router)
 # exigir_pode_publicar) — por isso este router NÃO leva o _protegido global,
 # nem a trava de contrato (o blog é compartilhado entre todas as fazendas).
 app.include_router(news.router)
+# Banco de fotos do Milknews: cada rota já exige exigir_pode_publicar
+# internamente (mesma permissão de News acima) — global, sem trava de
+# fazenda_id/contrato, igual ao router de News que ele ilustra.
+app.include_router(fotos_news.router)
 # Assistente Claude (protótipo): aberto a qualquer usuário logado — já
 # restrito à fazenda #1 (FAZENDA_ID_PILOTO, ver assistente.py), então a trava
 # de contrato aqui é redundante hoje, mas evita reabrir um buraco se essa

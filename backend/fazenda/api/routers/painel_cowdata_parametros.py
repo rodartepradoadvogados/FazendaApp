@@ -22,6 +22,14 @@ criada dali em diante já nascer com o novo valor — é o único caso em que
 essa seção mexe na linha global. Selecionar fazendas específicas nunca toca
 a linha global, só cria/atualiza a linha daquelas fazendas (mesmo padrão de
 Cadastros globais).
+
+RLS (auditoria de 11/09/2026, ver docs/security-audit/roteiro-seguranca.md):
+`listar_parametros`/`aplicar_parametro` usam `Depends(get_session_manutencao)`
+— mesmo motivo de painel_cowdata_cadastros.py. `parametro_fazenda` é
+catálogo global no DDL de RLS (leitura da linha `fazenda_id IS NULL`
+funcionaria mesmo sem isto), mas a ESCRITA dessa mesma linha e toda leitura/
+escrita das linhas por fazenda não têm essa exceção — sem a correção,
+`aplicar_parametro` falharia com 500 na primeira fazenda do laço.
 """
 from __future__ import annotations
 
@@ -33,7 +41,7 @@ from sqlmodel import Session, select
 
 from fazenda.api.routers.painel_cowdata_cadastros import _fazendas_alvo, _fazendas_ativas
 from fazenda.auth import exigir_area_painel_cowdata
-from fazenda.database import get_session
+from fazenda.database import get_session, get_session_manutencao
 from fazenda.models import ParametroFazenda, Usuario
 from fazenda.rules.parametros import GRUPO_TITULOS
 
@@ -65,7 +73,8 @@ def listar_fazendas_alvo(
 
 @router.get("/")
 def listar_parametros(
-    _: Usuario = Depends(exigir_area_painel_cowdata("cadastros")), session: Session = Depends(get_session),
+    _: Usuario = Depends(exigir_area_painel_cowdata("cadastros")),
+    session: Session = Depends(get_session_manutencao),
 ) -> dict:
     """Visão agregada: valor padrão global de cada chave + quais fazendas já
     personalizaram (para o usuário saber que "aplicar em todas" não vai
@@ -101,7 +110,8 @@ class AplicarParametroIn(BaseModel):
 @router.put("/{chave}")
 def aplicar_parametro(
     chave: str, dados: AplicarParametroIn,
-    _: Usuario = Depends(exigir_area_painel_cowdata("cadastros")), session: Session = Depends(get_session),
+    _: Usuario = Depends(exigir_area_painel_cowdata("cadastros")),
+    session: Session = Depends(get_session_manutencao),
 ) -> dict:
     global_row = session.exec(
         select(ParametroFazenda).where(ParametroFazenda.chave == chave, ParametroFazenda.fazenda_id.is_(None))

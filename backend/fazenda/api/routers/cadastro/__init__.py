@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from fazenda.auth import exigir_modulo_contratado
+from fazenda.auth import bloquear_escrita_contador, exigir_modulo, exigir_modulo_contratado
 
 from . import (
     animais,
@@ -31,6 +31,9 @@ from . import (
     protocolos_sanitarios,
     rh_contratos,
     rh_folha,
+    rh_folha_pagar,
+    rh_folha_rubricas,
+    rh_vale_acoes,
     rh_vale_item,
     sanitario,
     servicos,
@@ -43,7 +46,9 @@ from .genetica import (
     seed_estoque_semen_inicial,
     seed_semen_categorias,
 )
-from .pessoas import seed_pessoa_robo_milknews, seed_pessoas, seed_tipo_geral, seed_tipos_pessoa
+from .pessoas import (
+    seed_pessoa_robo_milknews, seed_pessoas, seed_tipo_geral, seed_tipos_papel_administrativo, seed_tipos_pessoa,
+)
 from .protocolos_sanitarios import (
     seed_inducao_lactacao_ativos1_d0,
     seed_protocolos_inducao_lactacao,
@@ -71,10 +76,51 @@ router.include_router(servicos.router)
 # já tratado como financeiro-adjacente em main.py::_PREFIXOS_RH_MODO_SUPORTE
 # (bloqueio de escrita/leitura em modo suporte) — esta trava só estende essa
 # mesma decisão para o módulo contratado.
-_exige_financeiro = [Depends(exigir_modulo_contratado("financeiro"))]
+#
+# `exigir_modulo_contratado` só confere se a FAZENDA (tenant) contratou o
+# módulo — não confere se o USUÁRIO logado tem a permissão "financeiro" (o
+# frontend esconde a tela de Folha de Pagamento de quem só tem "parametros",
+# mas sem `exigir_modulo` aqui o backend deixava passar: um operador com
+# "parametros" e sem "financeiro" conseguia ler/editar folha, rescisão, vale
+# e pagamento de diária/empreita chamando a API direto).
+#
+# BUG DE SEGURANÇA CORRIGIDO: faltava `bloquear_escrita_contador()` aqui.
+# O vínculo `contador` (Painel do Contador, ver
+# fazenda/models/multitenant.py::UsuarioFazenda) é documentado como
+# "só enxerga Financeiro, sempre em modo leitura/exportação" — mas o Painel
+# do Contador só funciona com os módulos 'parametros'+'financeiro' (a mesma
+# combinação exigida acima para RH/Folha), então na prática todo contador
+# tinha acesso de ESCRITA às rotas de folha/rescisão/vale/diária/contrato de
+# trabalho: nada aqui checava o vínculo `contador`, diferente de
+# financeiro.router/cartao_credito.router/etc. em main.py, que já aplicam
+# `Depends(bloquear_escrita_contador())` no próprio include_router. Mesma
+# trava, mesmo lugar (dependência de router, não de endpoint individual) —
+# sem inventar mecanismo novo.
+_exige_financeiro = [
+    Depends(exigir_modulo("financeiro")),
+    Depends(exigir_modulo_contratado("financeiro")),
+    Depends(bloquear_escrita_contador()),
+]
 router.include_router(rh_folha.router, dependencies=_exige_financeiro)
 router.include_router(rh_contratos.router, dependencies=_exige_financeiro)
+# Rubricas do holerite — vencimentos e descontos acrescentados a uma
+# competência (ver rh_folha_rubricas.py). Montado DEPOIS de rh_folha
+# porque os dois moram sob /folha-pagamento: nenhum caminho colide (aqui
+# todos têm três segmentos, /folha-pagamento/{id}/rubricas e
+# /folha-pagamento/rubricas/...), e a ordem deixa isso explícito.
+router.include_router(rh_folha_rubricas.router, dependencies=_exige_financeiro)
+# Pagar a folha lançando valor distinto numa verba, com a decisão sobre a
+# diferença (ver rh_folha_pagar.py). Montado DEPOIS de rh_folha pelo mesmo
+# motivo das rubricas: os dois moram sob /folha-pagamento/{id} e nenhum
+# caminho colide (aqui só /folha-pagamento/{id}/pagar).
+router.include_router(rh_folha_pagar.router, dependencies=_exige_financeiro)
 router.include_router(rh_vale_item.router, dependencies=_exige_financeiro)
+# Ações do dono sobre um vale já lançado (reparcelar/abater/desconsiderar/
+# cancelar) — montado DEPOIS de rh_folha de propósito: ambos moram sob
+# /cadastro/vales/{id}, e o router que chega primeiro é o que resolve as
+# rotas que ele declara. Nenhum caminho colide (aqui só /vales/{id}/acoes),
+# mas a ordem deixa isso explícito.
+router.include_router(rh_vale_acoes.router, dependencies=_exige_financeiro)
 
 __all__ = [
     "router",
@@ -85,6 +131,7 @@ __all__ = [
     "seed_pessoa_robo_milknews",
     "seed_tipos_pessoa",
     "seed_tipo_geral",
+    "seed_tipos_papel_administrativo",
     "seed_motivos_baixa",
     "seed_motivos_venda",
     "seed_racas_grau_sangue",

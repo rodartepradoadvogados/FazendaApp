@@ -9,9 +9,10 @@ import { useEffect, useRef, useState } from "react";
 import { PlusCircle, Sun, Moon, CloudUpload } from "lucide-react";
 import { aplicarTema } from "@/components/ThemeSwitcher";
 import { fetchAgenda, today } from "@/lib/api";
-import { iniciarSincronizacaoAutomatica, useConectividadeReal, usePendentes } from "@/lib/offline";
+import { iniciarSincronizacaoAutomatica, useConectividadeReal, usePendentes, useSincProgresso } from "@/lib/offline";
 import { ajustarStatusBar, esconderSplash, registrarBotaoVoltar, registrarPushNativo } from "@/lib/nativo";
 import { InstalarApp } from "@/components/mobile/InstalarApp";
+import { ConexaoFaixa } from "@/components/mobile/ConexaoFaixa";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { NewsIcon } from "@/components/mobile/NewsIcon";
@@ -29,15 +30,40 @@ const ABAS = [
   { href: "/app/menu", label: "Menu", cor: "var(--mob-nav-menu)" },
 ];
 
+// Índice da aba a que `caminho` pertence (-1 se não for nenhuma das 4 — ex.:
+// /app/curral, aberto pelo link "Modo Curral" dentro de Lançar, não é aba).
+function indiceAba(caminho: string): number {
+  return ABAS.findIndex(({ href }) => (href === "/app" ? caminho === "/app" : caminho.startsWith(href)));
+}
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const router = useRouter();
   const pathRef = useRef(path);
   pathRef.current = path;
+
+  // Direção da troca de aba (para o conteúdo deslizar do lado certo — ver
+  // .mob-troca-aba em globals.css): comparamos a aba do caminho ANTERIOR com
+  // a do caminho atual durante a própria renderização (padrão documentado do
+  // React para "guardar informação do render anterior" com useRef, sem
+  // useEffect — dispensável aqui e evitaria só o primeiro quadro do slide).
+  // Troca dentro da MESMA aba (ex.: abrir a ficha de um animal em Rebanho)
+  // não desliza — só transições entre as 4 abas da barra.
+  const caminhoAnteriorRef = useRef(path);
+  const direcaoRef = useRef<"direita" | "esquerda" | null>(null);
+  if (caminhoAnteriorRef.current !== path) {
+    const abaAnterior = indiceAba(caminhoAnteriorRef.current);
+    const abaAtual = indiceAba(path);
+    direcaoRef.current = abaAnterior === -1 || abaAtual === -1 || abaAnterior === abaAtual
+      ? null
+      : abaAtual > abaAnterior ? "direita" : "esquerda";
+    caminhoAnteriorRef.current = path;
+  }
   // Ping real ao servidor (não só a rádio do aparelho, que pode dizer
   // "conectado" mesmo com nosso servidor inalcançável — ver lib/offline.ts).
   const online = useConectividadeReal();
   const fila = usePendentes();
+  const progressoSync = useSincProgresso();
   const [escuro, setEscuro] = useState(false);
   // Cabeçalho FIXO (não some ao rolar). Medimos a altura real — que varia com a
   // faixa de segurança do topo (notch) — para reservar o mesmo espaço abaixo.
@@ -61,7 +87,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     medir();
     window.addEventListener("resize", medir);
     return () => window.removeEventListener("resize", medir);
-  }, [fila.length]);
+    // progressoSync entra na dependência porque a faixa de conexão (dentro do
+    // cabeçalho) muda de altura conforme o estado (lasquinha fina vs. barra
+    // de sincronização com 2 linhas) — sem isso o espaçador ficava com a
+    // altura antiga e o conteúdo passava por baixo do cabeçalho.
+  }, [fila.length, progressoSync]);
 
   // Service worker (abrir offline) + sincronização automática da fila.
   useEffect(() => {
@@ -127,7 +157,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="mob">
       {/* Cabeçalho marinho institucional — FIXO no topo (não some ao rolar no celular). */}
-      <header ref={headerRef} style={{ background: "var(--mob-header)", color: "var(--mob-header-fg)", padding: "calc(0.9rem + env(safe-area-inset-top)) 1.1rem 0.9rem", borderRadius: "var(--r-app)", position: "fixed", top: "var(--suporte-banner-h, 0px)", left: 0, right: 0, zIndex: 40 }}>
+      <header ref={headerRef} style={{ background: "var(--mob-header)", color: "var(--mob-header-fg)", padding: "calc(0.9rem + env(safe-area-inset-top)) 1.1rem 0.9rem", borderRadius: "var(--r-app)", position: "fixed", top: "var(--faixas-topo-h, 0px)", left: 0, right: 0, zIndex: 40 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 560, margin: "0 auto" }}>
           <div>
             <p style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
@@ -166,24 +196,38 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   window.dispatchEvent(new CustomEvent("app-abrir-news"));
                 }
               }}
-              style={{ width: 48, height: 48, borderRadius: "50%", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}>
+              style={{ width: 56, height: 56, borderRadius: "50%", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}>
               <NewsIcon size={19} color="var(--mob-header-fg)" />
             </Link>
             <button type="button" onClick={alternarTema} aria-label={escuro ? "Mudar para tema claro" : "Mudar para tema escuro"}
-              style={{ width: 48, height: 48, borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              style={{ width: 56, height: 56, borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
               {escuro ? <Sun size={17} /> : <Moon size={17} />}
             </button>
           </div>
+        </div>
+
+        {/* Faixa de conexão — DoD T6: indicador persistente do estado
+            online/offline/sincronizando da fila (lib/offline.ts). Fica DENTRO
+            do cabeçalho fixo de propósito: o próprio `alturaHeader` acima já
+            mede a altura total do cabeçalho (ref no <header>), então o
+            espaçador abaixo dele se ajusta sozinho sem nenhuma outra conta de
+            posição fixa. */}
+        <div style={{ maxWidth: 560, margin: "0 auto" }}>
+          <ConexaoFaixa online={online} pendentes={fila.length} progresso={progressoSync} />
         </div>
       </header>
 
       {/* Espaçador da altura do cabeçalho fixo — evita que o conteúdo comece por baixo dele. */}
       <div aria-hidden="true" style={{ height: alturaHeader }} />
 
-      {/* Conteúdo da aba */}
+      {/* Conteúdo da aba — chaveado pelo caminho para remontar (e disparar de
+          novo a animação de entrada) a cada navegação; a classe de direção só
+          entra quando a troca foi de fato entre duas das 4 abas da barra. */}
       <main className="mob-conteudo">
         <InstalarApp />
-        {children}
+        <div key={path} className={direcaoRef.current ? `mob-troca-aba ${direcaoRef.current}` : undefined}>
+          {children}
+        </div>
       </main>
 
       {/* Navegação inferior (zona do polegar) */}

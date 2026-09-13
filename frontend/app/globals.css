@@ -16,7 +16,13 @@
   --gold:      #E0A63C;
   --gold-deep: #B9831F;
   --gold-pale: #F0C874;
-  --cream:     #F3E7D3;
+  /* Era o creme quente #F3E7D3 da paleta "vinho" original — a área pública
+     (institucional/PublicShell) e o resto do produto migraram para o visual
+     marinho/dourado (redesign "Direção B") e não usam mais essa cor; o token
+     virou um neutro claro (sem tingimento) para quem ainda referenciar
+     var(--cream) não herdar creme por engano. dietas/DietasLayout.tsx
+     redefine este token localmente para o mesmo tom, à parte deste bloco. */
+  --cream:     #F5F6F4;
   --pasture:   #4E7A5A;
 
   /* Cores de categoria — fixas por módulo em TODO o produto (Agenda,
@@ -29,6 +35,21 @@
   --cat-estoque:     #C98A2A;
   --cat-recria:      #B0894A;
   --cat-acesso:      #9A5560;
+  /* Mesmo azul já usado para "Produção" fora deste bloco (--blue, Agenda,
+     badge-producao) — nomeado aqui como token de categoria para completar o
+     conjunto --cat-* (Produção não tinha um até então) sem introduzir uma
+     cor nova à identidade. */
+  --cat-producao:    #1E6FA8;
+
+  /* Soma das tarjas fixas do topo (SuporteBanner.tsx + FazendaTesteBanner.tsx)
+     — cada uma publica só a PRÓPRIA altura (0px quando ausente) via JS em
+     --suporte-banner-h/--fazenda-teste-banner-h (ver os dois componentes);
+     todo elemento que precisa descer pra não ficar por baixo delas (body,
+     .site-top-actions, barra mobile da Sidebar, cabeçalho do app móvel,
+     TabsShell, InsightsLayout...) soma este único token em vez de repetir o
+     calc(...+...) em cada arquivo — um 3º banner fixo no futuro só precisa
+     entrar nesta soma, sem tocar em mais nada. */
+  --faixas-topo-h: calc(var(--suporte-banner-h, 0px) + var(--fazenda-teste-banner-h, 0px));
 }
 
 /* ── Design system tokens ──
@@ -57,15 +78,23 @@
   --border:      color-mix(in srgb, var(--vinho) 22%, #2A1A20);
   --text:        #F0E8EC;
   --text-muted:  #9B8A91;
-  --green:       #2E7D52;
-  --green-light: #4CAF80;
+  /* Redesign "Cooperativa" (Direção B): verde de "feito"/dentro-da-meta
+     unificado na família --pasture (#4E7A5A) — antes --green-light (mint
+     #4CAF80) e --verde-neon (lima #00FF9D) eram dois verdes diferentes
+     competindo pelo mesmo significado. --green fica um tom mais escuro da
+     mesma família, para uso em preenchimento/borda onde --green-light entra
+     como texto/valor. */
+  --green:       color-mix(in srgb, var(--pasture) 80%, black);
+  --green-light: var(--pasture);
   --chumbo:      #37474F;
-  --red:         #C0392B;
+  --red:         #A8341C;
   --amber:       #D97706;
   --blue:        #1E6FA8;
-  /* Verde luminoso/neon — para tendências positivas, "online" e metas batidas. */
-  --verde-neon:  #00FF9D;
-  --verde-glow:  drop-shadow(0 0 5px rgba(0, 255, 157, 0.55));
+  /* Verde neon sai do SITE (vira a mesma --pasture, sem glow — um verde fosco
+     não "brilha"); o app de campo mantém seu neon próprio e independente em
+     --mob-verde-neon (ver bloco .mob mais abaixo), que este bloco não toca. */
+  --verde-neon:  var(--pasture);
+  --verde-glow:  none;
   /* Cromados (cabeçalhos) — vinho no escuro. */
   --card-header-bg: linear-gradient(135deg, var(--vinho), var(--vinho-dark));
   --card-header-fg: var(--dourado-light);
@@ -109,19 +138,21 @@
   --fin-pagamento-bg: rgba(46, 125, 82, 0.20);
 }
 
-/* ── Tema CLARO — minimalista, fundo cinza claro, painéis brancos ── */
+/* ── Tema CLARO — branco neutro (sem viés bege/creme), painéis brancos ──
+   Trocado do creme original (Direção B) a pedido explícito do usuário —
+   mesma estrutura de tokens, só a base neutra deixou de ter viés amarelo. */
 :root[data-theme="claro"] {
   color-scheme: light;
-  --bg:          #F4F6F9;
+  --bg:          #F1F1EF;
   --surface:     #FFFFFF;
-  --surface-2:   #F9FAFB;
-  --border:      #DCE3EA;
+  --surface-2:   #E9E9E6;
+  --border:      #DBDBD7;
   /* Borda mais forte — contorno de campo, botão secundário, moldura de
-     tabela. Só existe no claro (proposta "Institucional"); nos outros temas,
-     todo uso cai no fallback var(--border-strong, var(--border)). */
-  --border-strong: #C3CDD8;
-  --text:        #1F2937;
-  --text-muted:  #6B7280;
+     tabela. Só existe no claro/misto; no escuro, todo uso cai no fallback
+     var(--border-strong, var(--border)). */
+  --border-strong: #C7C7C2;
+  --text:        #1E1B18;
+  --text-muted:  #6E665C;
   --card-header-bg: var(--surface);
   --card-header-fg: var(--vinho);
   --thead-bg:    #F1F4F8;
@@ -142,9 +173,10 @@
   /* Contorno do grupo de sub-abas aberto — vinho no claro (fundo branco). */
   --sidebar-subnav-outline: var(--vinho);
   --sidebar-subnav-outline-bg: rgba(94, 26, 46, 0.06);
-  /* Fundo da faixa de sub-abas — palha na paleta vinho (padrão); a paleta
-     verde troca para cinza claro (ver bloco data-paleta="verde" abaixo). */
-  --sidebar-subnav-bg: #F1E8CE;
+  /* Fundo da faixa de sub-abas — cinza neutro na paleta vinho (padrão),
+     mesmo tom de --surface-2; a paleta verde usa um cinza levemente
+     azulado próprio (ver bloco data-paleta="verde" abaixo). */
+  --sidebar-subnav-bg: #E9E9E6;
   /* No claro, a aba ativa vira vinho sólido com texto dourado-claro (alto
      contraste); os ícones de seção usam o vinho para se lerem sobre o branco. */
   --pill-active-bg: var(--vinho);
@@ -165,12 +197,13 @@
 /* ── Tema MISTO — conteúdo claro, barra lateral vinho sólido ── */
 :root[data-theme="misto"] {
   color-scheme: light;
-  --bg:          #F3F4F6;
+  --bg:          #F1F1EF;
   --surface:     #FFFFFF;
-  --surface-2:   #F9FAFB;
-  --border:      #E5E7EB;
-  --text:        #1F2937;
-  --text-muted:  #6B7280;
+  --surface-2:   #E9E9E6;
+  --border:      #DBDBD7;
+  --border-strong: #C7C7C2;
+  --text:        #1E1B18;
+  --text-muted:  #6E665C;
   --card-header-bg: var(--surface);
   --card-header-fg: var(--vinho);
   --thead-bg:    #F3F4F6;
@@ -247,55 +280,59 @@
   --dourado:     #2E7D52;
   --dourado-light: #4ADE80;
   --sidebar-subnav-bg: #E4E7EB;
-  --sidebar-subnav-muted: var(--chumbo);
+  /* --sidebar-subnav-muted NÃO é redefinido aqui (era var(--chumbo), texto
+     escuro pensado para o fundo claro de --sidebar-subnav-bg — mas esse
+     token nunca chegou a ser aplicado em nenhum componente; o rail usa
+     var(--sidebar-bg), que aqui é o verde escuro acima). Herda
+     --sidebar-muted (translúcido claro), a mesma cor que já funciona bem
+     no misto padrão (vinho) sobre fundo escuro — antes ficava cinza-chumbo
+     em cima de verde escuro, quase ilegível. */
 }
 
 /* ── PALETA "Azul" — mesma dimensão independente do tema descrita acima na
    paleta "Verde"; azul-escuro (navy) como cor de marca, azul claro só nos
    poucos destaques pontuais (--dourado-light), nunca como fundo. */
 :root[data-theme="escuro"][data-paleta="azul"] {
-  /* Mesma direção "Institucional" do claro (ver bloco abaixo), adaptada ao
-     fundo escuro: marinho mais claro que o do claro (precisa se destacar do
-     --bg quase preto, não escurecer ainda mais), azul-aço mais claro para
-     continuar lendo como dado sobre fundo escuro, ouro claro assume o papel
-     de "ouro escurecido" (o par --dourado/--dourado-light do claro existe
-     pelo contraste no CLARO — no escuro o mais claro dos dois já è o que
-     rende contraste suficiente pros dois usos). */
-  --vinho:       #1B3A5C; /* marinho — navegação, títulos, estrutura */
-  --vinho-light: #5B85A8; /* azul-aço — série de dados primária, hovers */
-  --vinho-dark:  #081627; /* marinho profundo — selo da marca, gradientes */
-  --dourado:     #C9A44C; /* ouro — números de destaque, réguas, "salvar" */
-  --dourado-light: #E3C077; /* ouro claro — sobre fundo marinho (wordmark, aba ativa) */
-  --sidebar-active-bg: rgba(27, 58, 92, 0.4);
-  --pill-active-bg: rgba(27, 58, 92, 0.4);
+  /* Redesign "Cooperativa" (Direção B) — mesmos 5 tons do claro/misto abaixo,
+     usados aqui como PREENCHIMENTO (gradiente de header/sidebar, não texto
+     sobre fundo escuro), por isso funcionam iguais: marinho profundo e
+     dourado claro por cima já são o par de alto contraste do resto do produto. */
+  --vinho:       #0B2038; /* marinho — navegação, títulos, estrutura */
+  --vinho-light: #2C4A6B; /* marinho médio — série de dados primária, hovers */
+  --vinho-dark:  #071A2E; /* marinho profundo — selo da marca, gradientes */
+  --dourado:     #B9831F; /* dourado — números de destaque, réguas, "salvar" */
+  --dourado-light: #E0A63C; /* dourado claro — sobre fundo marinho (wordmark, aba ativa) */
+  --sidebar-active-bg: rgba(11, 32, 56, 0.4);
+  --pill-active-bg: rgba(11, 32, 56, 0.4);
 }
 :root[data-theme="claro"][data-paleta="azul"] {
-  /* Direção "Institucional" (proposta 1A): cor reservada à estrutura, não ao
-     dado — marinho na navegação/estrutura, uma família de azul-aço nos
-     gráficos, ouro escurecido só em números de destaque e réguas finas. */
-  --vinho:       #0E2A47; /* marinho — navegação, títulos, estrutura */
-  --vinho-light: #416180; /* azul-aço — série de dados primária, hovers */
-  --vinho-dark:  #0A1F36; /* marinho profundo — selo da marca, gradientes */
-  --dourado:     #8A6D2F; /* ouro escurecido — números de destaque, réguas, "salvar" */
-  --dourado-light: #C9A44C; /* ouro claro — sobre fundo marinho (wordmark, aba ativa) */
-  /* BUG corrigido: --sidebar-active-bg escureceu (marinho sólido) mas
-     --sidebar-active-fg continuava herdando var(--vinho) do bloco claro base
-     (linha ~137) — também marinho escuro, texto ilegível sobre o próprio
-     fundo. Aba ativa agora tem texto claro (dourado, mesmo tratamento do
-     tema misto/escuro para pílula ativa sobre fundo marinho sólido). */
-  --sidebar-active-bg: #17385A;
+  /* Redesign "Cooperativa" (Direção B): cor reservada à estrutura, não ao
+     dado — marinho na navegação/estrutura, marinho médio nos gráficos,
+     dourado só em números de destaque, réguas finas e ação de gravar. */
+  --vinho:       #0B2038; /* marinho — navegação, títulos, estrutura */
+  --vinho-light: #2C4A6B; /* marinho médio — série de dados primária, hovers */
+  --vinho-dark:  #071A2E; /* marinho profundo — selo da marca, gradientes */
+  --dourado:     #B9831F; /* dourado — números de destaque, réguas, "salvar" */
+  --dourado-light: #E0A63C; /* dourado claro — sobre fundo marinho (wordmark, aba ativa) */
+  --sidebar-active-bg: #12283F;
   --sidebar-active-fg: var(--dourado-light);
-  --sidebar-subnav-outline-bg: rgba(14, 42, 71, 0.06);
-  --sidebar-subnav-bg: #E4E7EB;
+  --sidebar-subnav-outline-bg: rgba(11, 32, 56, 0.06);
+  --sidebar-subnav-bg: #EDE7D8;
 }
 :root[data-theme="misto"][data-paleta="azul"] {
-  --vinho:       #153A66;
-  --vinho-light: #2563EB;
-  --vinho-dark:  #0D2340;
-  --dourado:     #2563EB;
-  --dourado-light: #7DD3FC;
-  --sidebar-subnav-bg: #E4E7EB;
-  --sidebar-subnav-muted: var(--chumbo);
+  /* Antes um azul-royal saturado (#2563EB), destoando do marinho/dourado do
+     claro/escuro — unificado na mesma identidade "Cooperativa" (a sidebar
+     sólida do misto já é var(--vinho), então vira marinho sólido + dourado
+     claro na aba ativa, coerente com o resto do produto). */
+  --vinho:       #0B2038;
+  --vinho-light: #2C4A6B;
+  --vinho-dark:  #071A2E;
+  --dourado:     #B9831F;
+  --dourado-light: #E0A63C;
+  --sidebar-subnav-bg: #EDE7D8;
+  /* --sidebar-subnav-muted NÃO é redefinido aqui — mesmo motivo do bloco
+     misto+verde acima: herda --sidebar-muted (translúcido claro), legível
+     sobre o marinho escuro real da barra (var(--sidebar-bg)). */
 }
 
 /* ── Tailwind custom colors via CSS vars ── */
@@ -336,14 +373,15 @@
   box-sizing: border-box;
 }
 
-/* Tipografia — Barlow (corpo) + Barlow Condensed (títulos/rótulos/números)
-   no SITE; o app de campo (/app, ver .mob abaixo) continua em Inter, sem
-   mudança nenhuma — o redesign visual desta rodada é só do site. Exposta
+/* Tipografia — redesign "Cooperativa" (Direção B): família única Archivo
+   (corpo E títulos/rótulos/números, pesos diferentes fazem a hierarquia) no
+   SITE, substituindo Barlow/Barlow Condensed. O app de campo (/app, ver .mob
+   abaixo) continua em Inter, sem mudança nesta rodada — só o site. Exposta
    como token (não hardcoded) para o .mob poder sobrescrever por herança de
    CSS custom property, em vez de precisar de um seletor por elemento. */
 :root {
-  --font-body: var(--font-barlow), 'Inter', sans-serif;
-  --font-heading: var(--font-barlow-condensed), 'Inter', sans-serif;
+  --font-body: var(--font-archivo), 'Inter', sans-serif;
+  --font-heading: var(--font-archivo), 'Inter', sans-serif;
 }
 .mob {
   --font-body: var(--font-inter), sans-serif;
@@ -354,16 +392,24 @@ body {
   background-color: var(--bg);
   color: var(--text);
   font-family: var(--font-body);
-  /* Empurra TODA a tela (conteúdo em fluxo normal) para baixo da faixa
-     vermelha de sessão de suporte (ver SuporteBanner.tsx), que é
-     position:fixed e por isso não reserva espaço sozinha. A variável é
-     publicada pelo próprio SuporteBanner via JS (mede a altura real, que
-     varia com quebra de linha) e some (0px) fora do modo suporte. */
-  padding-top: var(--suporte-banner-h, 0px);
+  /* Empurra TODA a tela (conteúdo em fluxo normal) para baixo das tarjas
+     fixas do topo (sessão de suporte e/ou Fazenda Teste — ver
+     SuporteBanner.tsx/FazendaTesteBanner.tsx), que são position:fixed e por
+     isso não reservam espaço sozinhas. --faixas-topo-h soma as duas alturas
+     publicadas via JS (cada uma mede a própria, que varia com quebra de
+     linha) e some (0px) quando nenhuma das duas está ativa. */
+  padding-top: var(--faixas-topo-h, 0px);
 }
 
 h1, h2, h3, h4, .card-header, .kpi-value {
   font-family: var(--font-heading);
+}
+/* Escala "Cooperativa": títulos em 700/800 com leve aperto de letras — a
+   única família (Archivo) carrega a hierarquia pelo peso, não por ser uma
+   fonte diferente da do corpo. */
+h1, h2, h3, h4 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 /* Cursivo usado só no "milk" da marca d'água da tela de login (ver
@@ -409,13 +455,14 @@ textarea:focus-visible, [tabindex]:focus-visible {
   --shadow-sm: 0 1px 4px rgba(20, 30, 45, 0.10);
 }
 
-/* ── Cards ── */
+/* ── Cards ──
+   Densidade "Cooperativa" (Direção B): 13px de padding, era 20px (1.25rem). */
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   box-shadow: var(--shadow-sm);
-  padding: 1.25rem;
+  padding: 13px;
 }
 
 .card-header {
@@ -449,7 +496,7 @@ textarea:focus-visible, [tabindex]:focus-visible {
   background: var(--thead-bg);
 }
 .fazenda-table thead th {
-  padding: 0.6rem 0.875rem;
+  padding: 8px 10px;
   text-align: left;
   color: var(--thead-fg);
   font-family: var(--font-heading);
@@ -466,11 +513,44 @@ textarea:focus-visible, [tabindex]:focus-visible {
 }
 .fazenda-table tbody tr:hover { background: var(--surface-2); }
 .fazenda-table tbody td {
-  padding: 0.55rem 0.875rem;
+  padding: 8px 10px;
   color: var(--text);
 }
 /* Zebra removida (proposta "Institucional") — a separação entre linhas passa
    a ser só o filete de 1px (.fazenda-table tbody tr já tem border-bottom). */
+
+/* Tabela compacta — usada no resultado dos cards configuráveis da Agenda
+   Reprodutiva (CardsAgendaReprodutivaConfiguraveis.tsx), onde a tabela
+   precisa caber bem numa coluna de ~50% da largura da tela (2 tabelas lado
+   a lado). Mesma lógica visual da .fazenda-table, com padding/fonte menores
+   e cabeçalhos mais estreitos. */
+.tabela-compacta {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.76rem;
+}
+.tabela-compacta thead tr { background: var(--thead-bg); }
+.tabela-compacta thead th {
+  padding: 5px 6px;
+  text-align: left;
+  color: var(--thead-fg);
+  font-family: var(--font-heading);
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-strong, var(--border));
+}
+.tabela-compacta tbody tr {
+  border-bottom: 1px solid var(--border);
+}
+.tabela-compacta tbody tr:hover { background: var(--surface-2); }
+.tabela-compacta tbody td {
+  padding: 5px 6px;
+  color: var(--text);
+  white-space: nowrap;
+}
 
 /* ── Botões ──
    Proposta "Institucional" (1A): CTA primário vira marinho sólido com texto
@@ -579,7 +659,7 @@ textarea:focus-visible, [tabindex]:focus-visible {
   border-left: 3px solid var(--vinho);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-sm);
-  padding: 1.25rem;
+  padding: 13px;
   position: relative;
   overflow: hidden;
 }
@@ -701,6 +781,136 @@ textarea:focus-visible, [tabindex]:focus-visible {
   .skeleton { animation: none; background: var(--border); }
 }
 
+/* ── Microinterações (04/09/2026) — vocabulário comum de movimento ──────────
+   Duração por escala do elemento: 120-180ms pra feedback imediato (check,
+   validação), 200-280ms pra elementos entrando/saindo (linha, popup),
+   300-360ms pra painéis grandes (gaveta, folha inferior). Sempre com
+   `prefers-reduced-motion` coberto — ver bloco no fim desta seção. */
+
+/* Traço de "check" se desenhando — usar num <path> de <svg> com
+   stroke-dasharray igual ao comprimento do traço (medir com getTotalLength()
+   ou aproximar; 20 cobre um check simples de ~24x24 com folga). Alternar a
+   classe `.check-marcado` no elemento pai risca o traço. */
+.check-tracado {
+  stroke-dasharray: 20; stroke-dashoffset: 20;
+  transition: stroke-dashoffset 0.18s ease-out;
+}
+.check-marcado .check-tracado { stroke-dashoffset: 0; }
+
+/* Flash verde breve no fundo de uma linha ao confirmar uma ação (marcar como
+   feito) — pisca e volta ao normal sozinho, não fica "pintado". */
+@keyframes flash-sucesso {
+  0% { background-color: transparent; }
+  30% { background-color: color-mix(in srgb, var(--green, var(--mob-verde, #0b7a4b)) 28%, transparent); }
+  100% { background-color: transparent; }
+}
+.flash-sucesso { animation: flash-sucesso 0.6s ease-out; }
+
+/* Gêmeo dourado do flash acima, para LOCALIZAR — "é este, aqui". Usado quando
+   a origem de um desconto aparece a partir do clique na linha do holerite: a
+   resposta é momentânea (o usuário já está olhando), então precisa ser um
+   pisco e não um destaque permanente. É a única animação da folha que carrega
+   informação que nada mais na tela carrega — ela é o desempate que antes
+   terminava em palpite. */
+@keyframes flash-localizado {
+  0% { background-color: transparent; }
+  30% { background-color: color-mix(in srgb, var(--dourado-light, #E0A63C) 26%, transparent); }
+  100% { background-color: transparent; }
+}
+.flash-localizado { animation: flash-localizado 0.6s ease-out; }
+
+/* Colapso de linha de lista — o "sumir desaparecendo" que recolhe o espaço
+   em vez de deixar buraco. Envolver o conteúdo real da linha num wrapper com
+   esta classe; alternar `.linha-saindo` anima a saída (senão os vizinhos
+   pulam pro lugar instantaneamente); `.linha-entrando`, removida um quadro
+   depois de montada, anima a entrada. Técnica: grid-template-rows 1fr→0fr —
+   não depende de medir altura em JS. */
+.linha-colapsavel {
+  display: grid; grid-template-rows: 1fr;
+  transition: grid-template-rows 0.24s ease-in, opacity 0.2s ease-in, margin 0.24s ease-in;
+}
+.linha-colapsavel > * { overflow: hidden; min-height: 0; }
+.linha-colapsavel.linha-saindo { grid-template-rows: 0fr; opacity: 0; margin-block: 0 !important; }
+.linha-colapsavel.linha-entrando { opacity: 0; transform: translateY(8px); }
+.linha-colapsavel:not(.linha-entrando) { transition: grid-template-rows 0.24s ease-in, opacity 0.2s ease-in, margin 0.24s ease-in, transform 0.22s ease-out; transform: translateY(0); }
+
+/* Painel expansível inline (05/09/2026) — mesmo truque de grid-template-rows
+   do colapso de linha acima, mas usado ao contrário: telas como Farmácia e
+   Pessoas mostram o formulário de edição/cadastro dentro do próprio fluxo
+   (sem gaveta lateral, sem modal) — hoje aparece/some instantaneamente.
+   Por padrão fechado (0fr); ganha `.painel-expansivel-aberto` quando o
+   formulário deve aparecer. */
+.painel-expansivel {
+  display: grid; grid-template-rows: 0fr;
+  transition: grid-template-rows 0.26s ease-out, opacity 0.22s ease-out;
+  opacity: 0;
+}
+.painel-expansivel > * { overflow: hidden; min-height: 0; }
+.painel-expansivel.painel-expansivel-aberto { grid-template-rows: 1fr; opacity: 1; }
+
+/* Popup central (ver components/Modal.tsx) — fundo escurece, caixa entra com
+   escala+fade e uma pitada de mola; saída é o inverso, mais rápido. */
+@keyframes popup-fundo-entra { from { opacity: 0; } to { opacity: 1; } }
+@keyframes popup-caixa-entra { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: scale(1); } }
+.popup-fundo { animation: popup-fundo-entra 0.2s ease-out; }
+.popup-fundo.popup-saindo { animation: popup-fundo-entra 0.16s ease-in reverse; }
+.popup-caixa { animation: popup-caixa-entra 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+.popup-caixa.popup-saindo { animation: popup-caixa-entra 0.16s ease-in reverse; }
+
+/* Toast (ver components/Toast.tsx) — desliza+aparece vindo do topo, some
+   sozinho depois de um tempo ou ao ser fechado. Fica ABAIXO da faixa fixa de
+   News/Tema/Sino (mesma folga de segurança do .notification-panel acima). */
+.toast-container {
+  position: fixed; z-index: 150; display: flex; flex-direction: column; gap: 0.5rem;
+  top: calc(env(safe-area-inset-top, 0px) + 4rem + var(--faixas-topo-h, 0px));
+  left: 50%; transform: translateX(-50%); align-items: center;
+}
+@keyframes toast-entra { from { opacity: 0; transform: translateY(-14px); } to { opacity: 1; transform: translateY(0); } }
+.toast-item { animation: toast-entra 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+.toast-item.toast-saindo { animation: toast-entra 0.18s ease-in reverse; }
+
+@media (prefers-reduced-motion: reduce) {
+  .check-tracado { transition: none; }
+  .flash-sucesso { animation: none; }
+  .flash-localizado { animation: none; }
+  .linha-colapsavel, .linha-colapsavel.linha-entrando, .linha-colapsavel:not(.linha-entrando) { transition: none; transform: none; }
+  .painel-expansivel { transition: none; }
+  .popup-fundo, .popup-fundo.popup-saindo, .popup-caixa, .popup-caixa.popup-saindo { animation: none; }
+  .toast-item, .toast-item.toast-saindo { animation: none; }
+}
+
+/* Gaveta lateral de lançamento (ver components/lancamentos/GavetaLancamento.tsx)
+   — desliza mudando `right`, nunca `transform`: um ancestral com transform cria
+   um novo bloco de posicionamento e os pickers/popups internos (AnimalPickerModal,
+   Modal, LotePicker...), todos position:fixed cobrindo a tela toda, passariam a
+   caber só dentro dos 330px da gaveta em vez da tela — o próprio bug que este
+   componente existe para evitar. */
+.gaveta-lancamento-painel { transition: right 0.22s ease; }
+@media (prefers-reduced-motion: reduce) {
+  .gaveta-lancamento-painel { transition: none; }
+}
+/* Começa abaixo da faixa fixa de News/Tema/Sino (.site-top-actions, z-index
+   60) — mesmo offset do .notification-panel abaixo, que já resolve o mesmo
+   conflito: a gaveta precisa ficar ACIMA da Sidebar (por isso zIndex 65 >
+   z-50 da Sidebar), mas cobrir também aquela faixa deixaria tema/sino/News
+   inalcançáveis toda vez que uma sub-aba de lançamento abrir sozinha. */
+.gaveta-lancamento-scrim, .gaveta-lancamento-painel {
+  top: calc(env(safe-area-inset-top, 0px) + 4rem);
+}
+@media (max-width: 767px) {
+  .gaveta-lancamento-scrim, .gaveta-lancamento-painel {
+    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 3.2rem);
+  }
+}
+/* Os formulários de components/lancamentos/* usam grids Tailwind
+   (grid-cols-2/3/4, md:/lg:grid-cols-N) que reagem à largura da JANELA, não
+   à da gaveta. Enquanto a gaveta tinha ~330px fixos, isso espremia cada
+   campo (um <select> de opções virava "Sel", "Cor"...) e por isso havia aqui
+   uma força de 1 coluna só. A gaveta agora abre com 65–75% da tela (ver
+   GavetaLancamento.tsx) — largura real o bastante para os mesmos grids
+   md:/lg: caberem lado a lado sem cramping, então a força foi removida: os
+   ~40 grids espalhados pelos formulários voltam a funcionar como desenhados. */
+
 /* Verde luminoso com brilho — para tendências positivas e metas batidas. */
 .glow-verde { color: var(--verde-neon) !important; filter: var(--verde-glow); }
 
@@ -749,19 +959,19 @@ html, body { max-width: 100%; overflow-x: hidden; }
    própria faixa de segurança do topo, ver Sidebar.tsx) em vez de sobrepor o
    logotipo. */
 /* Substitui a utilitária md:h-screen (100vh fixo) da casca padrão da fazenda
-   (ver AuthShell.tsx): com a faixa de suporte somando padding-top no <body>,
-   um filho de 100vh sem desconto ficaria mais alto que a viewport visível e
-   o rodapé (md:overflow-hidden) cortaria ~a altura da faixa. Só entra a
-   partir do breakpoint md, mesmo threshold do md:h-screen que substitui. */
+   (ver AuthShell.tsx): com as tarjas fixas do topo somando padding-top no
+   <body>, um filho de 100vh sem desconto ficaria mais alto que a viewport
+   visível e o rodapé (md:overflow-hidden) cortaria ~a altura delas. Só entra
+   a partir do breakpoint md, mesmo threshold do md:h-screen que substitui. */
 @media (min-width: 768px) {
   .farm-shell-h {
-    height: calc(100vh - var(--suporte-banner-h, 0px));
+    height: calc(100vh - var(--faixas-topo-h, 0px));
   }
 }
 
 .site-top-actions {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 1rem + var(--suporte-banner-h, 0px));
+  top: calc(env(safe-area-inset-top, 0px) + 1rem + var(--faixas-topo-h, 0px));
   right: calc(env(safe-area-inset-right, 0px) + 1.25rem);
   z-index: 60;
   display: inline-flex;
@@ -771,7 +981,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
 }
 @media (max-width: 767px) {
   .site-top-actions {
-    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 0.5rem + var(--suporte-banner-h, 0px));
+    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 0.5rem + var(--faixas-topo-h, 0px));
     right: calc(env(safe-area-inset-right, 0px) + 0.6rem);
   }
 }
@@ -798,16 +1008,20 @@ html, body { max-width: 100%; overflow-x: hidden; }
 }
 
 /* Painel do sino (NotificationBell) — mesma lógica de segurança de topo do
-   .site-top-actions, mas com offset maior (abre ABAIXO da faixa de botões). */
+   .site-top-actions, mas com offset maior (abre ABAIXO da faixa de botões).
+   Somava tudo MENOS as tarjas fixas: com a faixa de suporte (rara, só durante
+   um atendimento) o painel só encostava nela de vez em quando e ninguém
+   reclamou; a tarja de Fazenda Teste é PERMANENTE, então o mesmo vão passaria
+   a esconder o topo do painel o tempo todo naquela fazenda. */
 .notification-panel {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 4rem);
+  top: calc(env(safe-area-inset-top, 0px) + 4rem + var(--faixas-topo-h, 0px));
   right: calc(env(safe-area-inset-right, 0px) + 1.25rem);
   z-index: 61;
 }
 @media (max-width: 767px) {
   .notification-panel {
-    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 3.2rem);
+    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 3.2rem + var(--faixas-topo-h, 0px));
     right: calc(env(safe-area-inset-right, 0px) + 0.6rem);
   }
 }
@@ -852,6 +1066,22 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-vinho-fixo: #0E2A47;
   --mob-verde-fixo: #047857;
 
+  /* Card de SEÇÃO do Menu (.mob-secao-card, nível 1 — a categoria/grupo) vs.
+     .mob-card comum (nível 2 — os itens dentro dela, ou os cartões de
+     qualquer sub-tela aberta a partir do Menu, ambos "sub-cards que abrem só
+     ao clicar"): sem tokens próprios os dois caem no mesmo --mob-surface/
+     --mob-border e ficam indistinguíveis (relato do usuário — "tudo
+     misturado"). Claro: tom levemente mais escuro que o branco do .mob-card
+     (mesmo --mob-surface-2 já usado para o 2º tom de .mob-card-b, mas aqui
+     como identidade fixa da seção, não alternância). Escuro: mantém a
+     mesma superfície (nada de tingir sem cor de categoria) e ganha um
+     contorno dourado — a marca "neutra" já usada pelos itens sem --cat-*
+     (Portal, Protocolos, seção "App") — 2px para não sumir no OLED.
+     Seções com `cor` (SecaoRetratil) continuam sobrepostas por .mob-tint,
+     que já resolve a mesma distinção com a cor da categoria. */
+  --mob-secao-bg:     var(--mob-surface-2);
+  --mob-secao-border: var(--mob-border);
+
   --r-app: 0px;                    /* cantos retos institucionais — pílulas usam 999px, círculos 50% */
   --mob-aco:            #416180;   /* azul-aço — filete de estado "normal" na Agenda */
   --mob-nav-inativa:    #62707E;
@@ -893,6 +1123,11 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-vinho-fixo: #1B3A5C;
   --mob-verde-fixo: #00E08C;
 
+  /* Ver comentário no bloco claro (.mob) — mesma superfície do .mob-card
+     comum (sem tingir à toa), diferenciada por um contorno dourado. */
+  --mob-secao-bg:     var(--mob-surface);
+  --mob-secao-border: var(--mob-dourado-2);
+
   --mob-aco:         #5B85A8;
   --mob-nav-inativa: #8A96A4;
   --mob-nav-agenda:  #7FB6DC;
@@ -919,6 +1154,19 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .mob-card[data-estado="normal"]   { border-left-color: var(--mob-aco); }
 .mob-card[data-estado="feito"]    { border-left-color: var(--mob-verde); }
 
+/* Card de seção do Menu (app de campo) — mesma base do .mob-card, mas sem o
+   filete de estado (data-estado) à esquerda, que é exclusivo da Agenda.
+   Combinado com .mob-tint (abaixo) quando a seção tem cor de categoria. */
+.mob-secao-card {
+  background: var(--mob-secao-bg);
+  border: 1px solid var(--mob-secao-border);
+  border-radius: var(--r-app);
+  box-shadow: var(--mob-sombra);
+  margin-bottom: 0.7rem;
+  overflow: hidden;
+}
+:root[data-theme="escuro"] .mob-secao-card { border-width: 2px; }
+
 /* Alternância de cor dos cartões em sequência (Agenda, Ficha do animal;
    Rebanho > Animais via .mob-linha): .mob-card-a = 1º, 3º, 5º... fica no
    fundo padrão (herda de .mob-card/.mob-linha, sem regra própria); .mob-card-b
@@ -927,29 +1175,19 @@ html, body { max-width: 100%; overflow-x: hidden; }
    como decoração — a cor fica reservada ao filete de estado (data-estado). */
 .mob-card-b, .mob-linha.mob-card-b { background: var(--mob-surface-2); }
 
-/* Agenda do Veterinário (Menu): caixas com fundo translúcido da cor da
-   PALETA ativa no claro (--mob-acao já segue a paleta escolhida), sem
-   atrapalhar a leitura; no escuro, o fundo volta ao normal e só o contorno
-   fica na cor da paleta. */
-.mob-card-vet {
-  background: color-mix(in srgb, var(--mob-acao) 14%, var(--mob-surface));
-  border-color: color-mix(in srgb, var(--mob-acao) 32%, var(--mob-border));
-}
-:root[data-theme="escuro"] .mob-card-vet {
-  background: var(--mob-surface);
-  border: 2px solid var(--mob-acao);
-}
-
-/* Tinta genérica por categoria (Rebanho > Lotes: Composição/Indicadores) —
-   mesmo tratamento do .mob-card-vet acima, mas com a cor vinda de
-   --tint-cor (setada inline por lote/situação reprodutiva) em vez de fixa. */
+/* Tinta genérica por categoria (Menu > seções; Rebanho > Lotes: Composição/
+   Indicadores) — cor vinda de --tint-cor (setada inline por categoria/lote/
+   situação reprodutiva).
+   "Selo sólido + espinha" (04/09/2026, redesenho pedido pelo usuário —
+   relato de "tudo pintado da mesma cor, meio infantil"): o preenchimento de
+   fundo a 14%/32% no cartão INTEIRO foi trocado por só um filete de 4px na
+   borda esquerda — a cor continua identificando a categoria, mas mora num
+   traço fino, não numa lavagem grande de pastel atrás do texto. Só toca
+   border-left (nunca `border`/`background` inteiros) de propósito: quem usa
+   esta classe (.mob-secao-card, .mob-card via MobCard) já tem seu próprio
+   fundo/borda neutros — este filete só se soma por cima, nunca substitui. */
 .mob-tint {
-  background: color-mix(in srgb, var(--tint-cor, var(--mob-muted)) 14%, var(--mob-surface));
-  border-color: color-mix(in srgb, var(--tint-cor, var(--mob-muted)) 32%, var(--mob-border));
-}
-:root[data-theme="escuro"] .mob-tint {
-  background: var(--mob-surface);
-  border: 2px solid var(--tint-cor, var(--mob-muted));
+  border-left: 4px solid var(--tint-cor, var(--mob-muted));
 }
 
 /* Inputs grandes (dedo no campo, fonte ≥16px para o iPhone não dar zoom). */
@@ -965,9 +1203,10 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .mob-input:focus { outline: 2px solid var(--mob-acao); outline-offset: -1px; }
 :root[data-theme="escuro"] .mob-input { background: var(--mob-surface-2); }
 
-/* Check circular grande da Agenda — vira verde luminoso ao concluir. */
+/* Check circular grande da Agenda — vira verde luminoso ao concluir. 56px:
+   piso de alvo de toque do app (redesign T6 — nunca abaixo disto; era 48px). */
 .mob-check {
-  width: 48px; height: 48px; border-radius: 50%;
+  width: 56px; height: 56px; border-radius: 50%;
   border: 2px solid var(--mob-border);
   background: transparent;
   color: var(--mob-muted);
@@ -1005,7 +1244,8 @@ html, body { max-width: 100%; overflow-x: hidden; }
   padding-bottom: env(safe-area-inset-bottom);
 }
 .mob-nav a {
-  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  min-height: 56px; /* alvo de toque mínimo do app (ver DoD de redesign — nunca abaixo disto) */
   padding: 0.55rem 0 0.5rem; font-size: 0.8rem; font-weight: 700;
   color: var(--mob-nav-inativa); text-decoration: none;
 }
@@ -1024,6 +1264,55 @@ html, body { max-width: 100%; overflow-x: hidden; }
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.28);
 }
 .mob-nav a .mob-nav-icone.mob-nav-lancar { background: var(--mob-nav-lancar); color: #fff; }
+
+/* ── Microinterações de navegação e ações rápidas (04/09/2026) ──────────────
+   Troca de aba na barra inferior (.mob-conteudo > .mob-troca-aba, aplicada em
+   app/app/layout.tsx): o conteúdo novo desliza no sentido de quem entrou —
+   veio de uma aba à direita? entra deslizando da direita; à esquerda? da
+   esquerda. Evitamos `transform` de propósito (mesmo motivo documentado acima
+   em .gaveta-lancamento-painel): esta div envolve a TELA inteira da aba, que
+   pode conter modais/pickers position:fixed (AnimalPickerModal, Modal…) — um
+   ancestral com `transform` os prenderia dentro da largura da tela em vez da
+   viewport inteira. `margin-left` desloca sem criar esse bloco de
+   posicionamento novo. */
+@keyframes mob-troca-aba-direita { from { margin-left: 28px; opacity: 0.4; } to { margin-left: 0; opacity: 1; } }
+@keyframes mob-troca-aba-esquerda { from { margin-left: -28px; opacity: 0.4; } to { margin-left: 0; opacity: 1; } }
+.mob-troca-aba.direita { animation: mob-troca-aba-direita 0.22s ease-out; }
+.mob-troca-aba.esquerda { animation: mob-troca-aba-esquerda 0.22s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .mob-troca-aba.direita, .mob-troca-aba.esquerda { animation: none; }
+}
+
+/* Cascata de itens dentro de um menu que acabou de abrir (ex.: os blocos de
+   "Mais opções" do Lançamento Rápido) — cada item usa a variável --i (índice)
+   para escalonar o atraso. Leaf-level (um botão), sem risco de esconder
+   modal fixo por baixo, então aqui `transform: translateY` é seguro — mesmo
+   padrão de .animate-in acima, só que mais rápido/escalonado. */
+@keyframes mob-item-cascata { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.mob-item-cascata {
+  /* display:block + width:100% — sem isto o <div> teria virado um item de
+     grid "encolhido" ao conteúdo, diferente do <button> direto que ele
+     substituiu (que a grade esticava por padrão). */
+  display: block; width: 100%;
+  animation: mob-item-cascata 0.18s ease-out both;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mob-item-cascata { animation: none; }
+}
+
+/* Folha inferior (MobGaveta, components/mobile/ui.tsx) — hoje já abre
+   ancorada embaixo (flex + align-items:flex-end + cantos superiores
+   arredondados), só faltava a entrada animada. Desliza via `bottom` (não
+   `transform`, mesmo cuidado de .gaveta-lancamento-painel — a gaveta é
+   reaproveitada por telas que podem crescer com formulários próprios amanhã)
+   partindo de bem abaixo da viewport; o scrim ganha overflow:hidden só para
+   não deixar a folha "vazar" um instante durante o `bottom: -100vh` inicial. */
+.folha-inferior-painel { animation: folha-inferior-entra 0.24s ease-out; }
+@keyframes folha-inferior-entra { from { bottom: -100vh; } to { bottom: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .folha-inferior-painel { animation: none; }
+}
 
 /* Botões-bloco do Lançamento Rápido (fat finger). */
 .mob-bloco {
@@ -1045,55 +1334,39 @@ html, body { max-width: 100%; overflow-x: hidden; }
   color: var(--c, var(--mob-dourado-2));
 }
 
-/* Blocos em destaque (mais usados) do Lançar — maiores que os demais, no
-   topo da grade, em vez de 8-10 blocos todos do mesmo tamanho (achado da
-   crítica do app de campo, ver
-   docs/agents/design-implementation.md §5, lancar-rapido.html). */
-.mob-bloco--destaque {
-  min-height: 7.5rem;
-  font-size: 0.95rem;
+/* Variante "grande" — os destinos de maior frequência de uso real do
+   Lançamento Rápido (Reprodutivo/Produção/Sanidade) ganham uma linha
+   horizontal mais alta que a largura, empilhada acima da grade 2×N normal,
+   em vez de disputar o mesmo tamanho de quadrado que "Excluir lançamento". */
+.mob-bloco-grande {
+  flex-direction: row; justify-content: flex-start; gap: 0.9rem;
+  min-height: 4.5rem; padding: 0 1.1rem; font-size: 0.95rem;
 }
-.mob-bloco--destaque .icone {
-  width: 34px; height: 34px;
-}
-/* Zona de risco — "Baixar animal"/"Excluir lançamento" isoladas do resto da
-   grade, com borda tracejada, em vez de misturadas com ações rotineiras
-   (mesmo achado). */
-.mob-zona-risco {
-  border: 1.5px dashed var(--mob-vermelho);
-  border-radius: var(--r-app);
-  padding: 0.7rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-.mob-zona-risco-titulo {
-  font-size: 0.72rem; font-weight: 700; color: var(--mob-vermelho);
-  text-transform: uppercase; letter-spacing: 0.06em;
-  display: flex; align-items: center; gap: 0.4rem;
-}
+.mob-bloco-grande .icone { width: 32px; height: 32px; }
 
-/* Botão de ação principal, largura total. */
+/* Botão de ação principal, largura total. min-height 56px: piso de alvo de
+   toque do app (redesign T6 — nunca abaixo disto; era ~44-48px pelo padding). */
 .mob-btn {
   width: 100%; border: none; border-radius: var(--r-app); cursor: pointer;
-  padding: 0.95rem 1rem; font-size: 1rem; font-weight: 700;
+  min-height: 56px; padding: 0.95rem 1rem; font-size: 1rem; font-weight: 700;
   background: var(--mob-acao); color: var(--mob-acao-fg);
   display: flex; align-items: center; justify-content: center; gap: 0.5rem;
 }
 .mob-btn:disabled { opacity: 0.55; }
 .mob-btn-2 {
   width: 100%; border: 1px solid var(--mob-border); border-radius: var(--r-app); cursor: pointer;
-  padding: 0.9rem 1rem; font-size: 0.95rem; font-weight: 600;
+  min-height: 56px; padding: 0.9rem 1rem; font-size: 0.95rem; font-weight: 600;
   background: var(--mob-surface); color: var(--mob-text);
   display: flex; align-items: center; justify-content: center; gap: 0.5rem;
 }
 .mob-btn.mob-btn-sec { background: var(--mob-surface); color: var(--mob-text); border: 1px solid var(--mob-border); }
 
-/* Pílulas de sub-aba (Ficha do Animal / Movimentar / Baixar). Padding vertical
-   calibrado para >= 44px de altura de toque (dedo sujo/com luva no curral). */
+/* Pílulas de sub-aba (Ficha do Animal / Movimentar / Baixar). min-height 56px:
+   piso de alvo de toque do app (redesign T6 — era >= 44px/48px antes; dedo
+   sujo/com luva no curral só ficou mais folgado, nunca mais apertado). */
 .mob-pill {
   padding: 0.8rem 1.1rem; border-radius: 999px; cursor: pointer;
-  font-size: 0.9rem; font-weight: 700; min-height: 48px;
+  font-size: 0.9rem; font-weight: 700; min-height: 56px;
   border: 1px solid var(--mob-border); background: var(--mob-surface); color: var(--mob-text);
 }
 .mob-pill.ativa { background: var(--mob-vinho); border-color: var(--mob-vinho); color: #F8E9B0; }
@@ -1116,10 +1389,11 @@ html, body { max-width: 100%; overflow-x: hidden; }
   text-transform: uppercase; color: var(--mob-muted); text-align: left;
 }
 
-/* Linha de lista com seta. */
+/* Linha de lista com seta. min-height 56px: piso de alvo de toque do app
+   (redesign T6 — nunca abaixo disto). */
 .mob-linha {
   display: flex; align-items: center; gap: 0.75rem; width: 100%;
-  padding: 0.95rem 1rem; background: var(--mob-surface);
+  min-height: 56px; padding: 0.95rem 1rem; background: var(--mob-surface);
   border: 1px solid var(--mob-border); border-radius: var(--r-app);
   color: var(--mob-text); text-align: left; cursor: pointer;
   box-shadow: var(--mob-sombra); text-decoration: none;
@@ -1136,5 +1410,173 @@ html, body { max-width: 100%; overflow-x: hidden; }
   min-height: 48px;
 }
 .mob-form-embutido button {
-  min-height: 48px;
+  min-height: 56px; /* piso de alvo de toque do app (redesign T6) — era 48px */
 }
+
+/* ── Faixa de conexão (cabeçalho fixo — ver ConexaoFaixa.tsx) ────────────── */
+.mob-faixa-conexao {
+  display: flex; align-items: center; gap: 0.4rem;
+  font-size: 0.74rem; font-weight: 700;
+  padding: 0.4rem 1.1rem; margin-top: 0.6rem;
+  border-radius: var(--r-app);
+}
+.mob-faixa-offline {
+  background: rgba(220, 38, 38, 0.22); color: #FFD9D9;
+}
+.mob-faixa-pendente {
+  background: rgba(255, 255, 255, 0.14); color: var(--mob-dourado-pale);
+}
+.mob-faixa-sync {
+  flex-direction: column; align-items: stretch; gap: 0.3rem;
+  background: rgba(255, 255, 255, 0.14); color: var(--mob-dourado-pale);
+}
+.mob-faixa-sync-topo { display: flex; align-items: center; justify-content: space-between; }
+/* Lasquinha fina persistente — estado "tudo em dia" (online, fila vazia):
+   nunca desaparece por completo, só recolhe ao mínimo. */
+.mob-faixa-ok {
+  height: 3px; margin-top: 0.5rem; padding: 0;
+  background: var(--mob-verde-neon); opacity: 0.55;
+}
+
+/* Barra de progresso genérica (MobBarraProgresso, em ui.tsx) — sincronização
+   e qualquer operação em lote (ex.: confirmar protocolo em lote na Agenda). */
+.mob-faixa-progresso, .mob-progresso {
+  width: 100%; height: 6px; border-radius: 999px; overflow: hidden;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+}
+/* `.mob-progresso` sozinho (fora da faixa de conexão, que já define sua
+   própria `color`) precisa de uma cor própria pra currentColor não herdar
+   do texto ao redor sem querer. */
+.mob-progresso { color: var(--mob-acao); }
+.mob-faixa-progresso-preenchido, .mob-progresso-preenchido {
+  height: 100%; border-radius: 999px; background: currentColor;
+  transition: width 0.25s ease;
+}
+
+/* ── Modo Curral (components/mobile/ModoCurral.tsx) ───────────────────────
+   Visão ampliada/alto-contraste de "o que fazer agora" para uso dentro do
+   curral: fonte maior que o resto do app, contornos mais grossos (2px, não
+   1px), e alvo de toque de 72px — acima do piso geral de 56px do app —
+   porque aqui a suposição é sol forte + luva + uma mão só, não só "dedo
+   grosso" (`.curral-alvo` sobe o corpo do texto de --mob-fs-body 16px pra
+   ~17px, sem mexer na fonte-família — continua Inter, decisão já registrada
+   em app/layout.tsx). */
+.curral-alvo { font-size: 1.05rem; }
+.curral-secao {
+  font-size: 0.8rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--mob-muted); margin: 1.3rem 0 0.6rem;
+}
+.curral-card {
+  display: flex; align-items: center; gap: 0.8rem; min-height: 72px;
+  padding: 0.8rem 0.9rem; border-radius: var(--r-app);
+  background: var(--mob-surface); border: 2px solid var(--mob-border); border-left-width: 6px;
+  box-shadow: var(--mob-sombra);
+}
+.curral-card-icone {
+  width: 48px; height: 48px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.curral-card-texto { flex: 1; min-width: 0; }
+.curral-card-titulo { display: block; font-weight: 800; font-size: 1.1rem; color: var(--mob-text); }
+.curral-card-sub { display: block; font-size: 0.85rem; color: var(--mob-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.curral-check {
+  width: 72px; height: 72px; border-radius: 50%; flex-shrink: 0; cursor: pointer;
+  border: 3px solid var(--mob-verde); background: color-mix(in srgb, var(--mob-verde) 12%, transparent); color: var(--mob-verde);
+  display: flex; align-items: center; justify-content: center;
+}
+.curral-check:active { background: var(--mob-verde); color: var(--mob-verde-fg, #fff); }
+.curral-abrir {
+  width: 72px; height: 72px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid var(--mob-border); background: var(--mob-surface-2); color: var(--mob-text);
+  display: flex; align-items: center; justify-content: center; text-decoration: none;
+}
+
+/* Deslizar para concluir/ocultar (04/09/2026) — cada linha vira um wrapper
+   .linha-colapsavel (ver globals.css acima) que segura o fundo revelado
+   (verde à direita = concluir, vermelho à esquerda = ocultar por agora) atrás
+   do .curral-card, que desliza por cima seguindo o dedo. */
+.curral-swipe-fundo {
+  position: absolute; inset: 0; border-radius: var(--r-app);
+  display: flex; align-items: center; padding: 0 1.1rem;
+  font-weight: 800; color: #fff; opacity: 0;
+}
+.curral-swipe-fundo-d { background: var(--mob-verde); justify-content: flex-start; }
+.curral-swipe-fundo-e { background: var(--mob-vermelho); justify-content: flex-end; }
+.curral-card.curral-swipe-front {
+  position: relative; z-index: 1; touch-action: pan-y; will-change: transform;
+  transition: transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2), background-color 0.28s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .curral-card.curral-swipe-front { transition: background-color 0.28s ease-out; }
+}
+/* "Fazer agora" — quadrado grande e único (maior que qualquer outro bloco
+   desta tela) que ABRE a lista de pendências de hoje numa sub-tela, em vez
+   de expô-la sempre aberta na tela principal (redesign pedido pelo
+   usuário — a lista sempre visível competia com "Lançar rápido" e a tela
+   inteira virava rolagem). Sem abrir, o quadrado já precisa dizer o que
+   importa: quantas pendências há hoje, e — o dado que mais pesa pra quem
+   está no curral decidir se toca aqui primeiro — se alguma está atrasada
+   (`data-estado="atrasado"`, acento --mob-vermelho na borda/ícone/contador).
+   Sem pendência nenhuma, cai no mesmo verde de "tudo em dia" que
+   `.curral-vazio` já usa alhures. */
+.curral-fazer {
+  display: flex; align-items: center; gap: 1.1rem; width: 100%; min-height: 132px;
+  padding: 1.2rem 1.3rem; border-radius: var(--r-app); cursor: pointer;
+  border: 2px solid var(--mob-border); background: var(--mob-surface); color: var(--mob-text);
+  box-shadow: var(--mob-sombra); text-align: left;
+}
+.curral-fazer-icone {
+  width: 64px; height: 64px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--mob-dourado-2) 16%, transparent); color: var(--mob-dourado-2);
+}
+.curral-fazer-texto { flex: 1; min-width: 0; }
+.curral-fazer-titulo { display: block; font-weight: 800; font-size: 1.2rem; }
+.curral-fazer-contador { display: block; font-size: 0.95rem; font-weight: 700; margin-top: 0.25rem; color: var(--mob-muted); }
+.curral-fazer[data-estado="vazio"] .curral-fazer-icone { background: color-mix(in srgb, var(--mob-verde) 16%, transparent); color: var(--mob-verde); }
+.curral-fazer[data-estado="vazio"] .curral-fazer-contador { color: var(--mob-verde); }
+.curral-fazer[data-estado="atrasado"] {
+  border-color: var(--mob-vermelho);
+  background: color-mix(in srgb, var(--mob-vermelho) 8%, var(--mob-surface));
+}
+.curral-fazer[data-estado="atrasado"] .curral-fazer-icone { background: color-mix(in srgb, var(--mob-vermelho) 18%, transparent); color: var(--mob-vermelho); }
+.curral-fazer[data-estado="atrasado"] .curral-fazer-contador { color: var(--mob-vermelho); font-weight: 800; }
+.curral-fazer:active { background: var(--mob-surface-2); }
+
+/* "Lançar rápido" — 3 quadrados coloridos por módulo (Reprodução/Produção/
+   Sanitário), mesma "identidade por cor de módulo" já usada este mês em
+   outras telas do app (ex.: grade do Menu, app/app/menu/page.tsx) — reusa a
+   técnica de tingimento --tint-cor/.mob-tint em vez de inventar paleta
+   própria. Cada um abre um formulário restrito às opções de maior uso no
+   curral (ver ModoCurral.tsx) — a versão completa continua em Lançar. */
+.curral-modulos-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.7rem; }
+.curral-modulo {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.6rem;
+  aspect-ratio: 1; border-radius: var(--r-app); cursor: pointer; padding: 0.6rem 0.4rem;
+  border: 2px solid color-mix(in srgb, var(--tint-cor, var(--mob-muted)) 45%, var(--mob-border));
+  background: color-mix(in srgb, var(--tint-cor, var(--mob-muted)) 14%, var(--mob-surface));
+  box-shadow: var(--mob-sombra); color: var(--mob-text); font-weight: 800; font-size: 0.92rem; text-align: center;
+}
+.curral-modulo-icone {
+  width: 46px; height: 46px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--tint-cor, var(--mob-muted)) 26%, transparent); color: var(--tint-cor, var(--mob-muted));
+}
+.curral-modulo:active { background: color-mix(in srgb, var(--tint-cor, var(--mob-muted)) 24%, var(--mob-surface)); }
+:root[data-theme="escuro"] .curral-modulo {
+  background: var(--mob-surface); border: 2px solid var(--tint-cor, var(--mob-muted));
+}
+.curral-mais {
+  display: flex; align-items: center; justify-content: center; gap: 0.3rem;
+  min-height: 56px; margin-top: 1.2rem; color: var(--mob-muted); font-weight: 700; text-decoration: none;
+}
+.curral-vazio {
+  text-align: center; padding: 2rem 1rem; color: var(--mob-verde);
+  border: 2px dashed color-mix(in srgb, var(--mob-verde) 40%, transparent); border-radius: var(--r-app);
+}
+.curral-vazio p { color: var(--mob-text); font-weight: 800; font-size: 1.05rem; margin-top: 0.5rem; }
+.curral-aviso {
+  padding: 0.8rem 0.9rem; border-radius: var(--r-app); font-weight: 700; font-size: 0.92rem; margin-bottom: 1rem;
+}
+.curral-aviso-offline { background: color-mix(in srgb, var(--mob-ambar) 16%, transparent); border: 2px solid var(--mob-ambar); color: var(--mob-ambar); }
+.curral-aviso-erro { background: color-mix(in srgb, var(--mob-vermelho) 14%, transparent); border: 2px solid var(--mob-vermelho); color: var(--mob-vermelho); }

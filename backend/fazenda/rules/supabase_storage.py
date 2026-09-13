@@ -26,6 +26,8 @@ levanta RuntimeError com mensagem clara — não falha silenciosamente.
 from __future__ import annotations
 
 import logging
+import re
+import unicodedata
 
 import httpx
 
@@ -34,8 +36,28 @@ from fazenda.config import settings
 logger = logging.getLogger(__name__)
 
 
+def nome_seguro_storage(nome_arquivo: str) -> str:
+    """Sanitiza um nome de arquivo para uso dentro da KEY do Supabase
+    Storage — o Storage recusa key com acento ou outro caractere fora de
+    [A-Za-z0-9._-] com "400 Invalid Key" (nome de arquivo com acento,
+    espaço, parênteses etc. é a regra, não a exceção, em anexo de
+    documento/comprovante). Só afeta o caminho salvo no bucket — o nome de
+    exibição (guardado no banco, mostrado ao usuário) continua o original."""
+    sem_acento = unicodedata.normalize("NFKD", nome_arquivo or "").encode("ascii", "ignore").decode()
+    seguro = re.sub(r"[^A-Za-z0-9._-]+", "_", sem_acento).strip("_")
+    return seguro or "arquivo"
+
+
 def habilitado() -> bool:
     return bool(settings.supabase_url and settings.supabase_service_key)
+
+
+def url_publica(caminho: str, *, bucket: str) -> str:
+    """URL pública direta de um arquivo num bucket PÚBLICO (hoje só
+    settings.supabase_bucket_news_fotos — ver garantir_buckets) — usada como
+    valor literal de NoticiaNews.imagem, renderizado em <img src> sem login
+    (a página pública do blog não pode chamar um endpoint autenticado)."""
+    return f"{settings.supabase_url.rstrip('/')}/storage/v1/object/public/{bucket}/{caminho}"
 
 
 def _exigir_config(bucket: str | None) -> tuple[str, str, str]:
@@ -109,7 +131,12 @@ def garantir_buckets() -> None:
         return
     url = settings.supabase_url.rstrip("/")
     service_key = settings.supabase_service_key
-    for bucket in {settings.supabase_bucket, settings.supabase_bucket_fotos, settings.supabase_bucket_financeiro}:
+    buckets_publicos = {settings.supabase_bucket_news_fotos}
+    buckets = {
+        settings.supabase_bucket, settings.supabase_bucket_fotos, settings.supabase_bucket_financeiro,
+        settings.supabase_bucket_news_fotos,
+    }
+    for bucket in buckets:
         try:
             resp = httpx.get(f"{url}/storage/v1/bucket/{bucket}", headers=_headers(service_key), timeout=15)
             if resp.status_code == 200:
@@ -117,7 +144,7 @@ def garantir_buckets() -> None:
             resp = httpx.post(
                 f"{url}/storage/v1/bucket",
                 headers=_headers(service_key, "application/json"),
-                json={"id": bucket, "name": bucket, "public": False},
+                json={"id": bucket, "name": bucket, "public": bucket in buckets_publicos},
                 timeout=15,
             )
             if resp.status_code >= 300:

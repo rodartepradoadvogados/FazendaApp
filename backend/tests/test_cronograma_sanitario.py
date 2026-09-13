@@ -134,6 +134,138 @@ class TestTrilhaDoAnimal:
         assert r.status_code == 400
 
 
+class TestIncluirAnimalForaDaJanela:
+    """Bug relatado pelo usuário em 12/09/2026: um animal que não bate o
+    critério automático da regra (idade/gatilho/categoria projetada) nunca
+    ganha linha "sugerido" — sem jeito nenhum de incluí-lo manualmente."""
+
+    def test_inclui_animal_que_nunca_seria_sugerido(self, client):
+        c, engine = client
+        _, calendario_id = _criar_evento_e_calendario(c)
+        with Session(engine) as s:
+            # Muito nova pro gatilho "novilha_apta aos 3 meses" — nunca entraria como sugestão.
+            s.add(Animal(numero="950", data_nasc=HOJE - timedelta(days=10), sexo="F", ativo=True))
+            s.commit()
+        assert not any(e["numero_animal"] == "950" for e in _agenda(c, "cronograma_sanitario_animal"))
+
+        cronograma_id = _agenda(c, "cronograma_sanitario_modo")[0]["cronograma_id"]
+        r = c.post("/agenda/realizados", json={
+            "evento_id": f"cronograma_sanitario_incluir_manual_{cronograma_id}", "numero_matriz": "950",
+        })
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            linha = s.exec(
+                __import__("sqlmodel").select(CronogramaSanitarioAnimal)
+                .where(CronogramaSanitarioAnimal.cronograma_id == cronograma_id)
+                .where(CronogramaSanitarioAnimal.numero_matriz == "950")
+            ).first()
+            assert linha is not None
+            assert linha.status == "incluido"
+
+    def test_animal_inexistente_da_404(self, client):
+        c, engine = client
+        _criar_evento_e_calendario(c)
+        cronograma_id = _agenda(c, "cronograma_sanitario_modo")[0]["cronograma_id"]
+        r = c.post("/agenda/realizados", json={
+            "evento_id": f"cronograma_sanitario_incluir_manual_{cronograma_id}", "numero_matriz": "999999",
+        })
+        assert r.status_code == 404
+
+    def test_animal_ja_no_cronograma_da_400(self, client):
+        c, engine = client
+        _criar_evento_e_calendario(c)
+        with Session(engine) as s:
+            s.add(Animal(numero="951", data_nasc=HOJE - timedelta(days=95), sexo="F", ativo=True))
+            s.commit()
+        sugestao = _agenda(c, "cronograma_sanitario_animal")[0]
+        cronograma_id = sugestao["cronograma_id"]
+        c.post("/agenda/realizados", json={"evento_id": sugestao["id"], "incluir": True})
+
+        r = c.post("/agenda/realizados", json={
+            "evento_id": f"cronograma_sanitario_incluir_manual_{cronograma_id}", "numero_matriz": "951",
+        })
+        assert r.status_code == 400
+
+    def test_sem_numero_matriz_da_400(self, client):
+        c, engine = client
+        _criar_evento_e_calendario(c)
+        cronograma_id = _agenda(c, "cronograma_sanitario_modo")[0]["cronograma_id"]
+        r = c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_incluir_manual_{cronograma_id}"})
+        assert r.status_code == 400
+
+
+class TestRemoverAnimal:
+    """Pedido do usuário em 13/09/2026: "adicionar OU remover animais
+    manualmente" — `decidir_animal` só decide uma sugestão pela primeira vez
+    (nunca desfaz) e a inclusão manual não tinha contrapartida nenhuma para
+    tirar o animal de volta."""
+
+    def test_remove_animal_incluido_manualmente(self, client):
+        c, engine = client
+        _, calendario_id = _criar_evento_e_calendario(c)
+        with Session(engine) as s:
+            s.add(Animal(numero="960", data_nasc=HOJE - timedelta(days=10), sexo="F", ativo=True))
+            s.commit()
+        cronograma_id = _agenda(c, "cronograma_sanitario_modo")[0]["cronograma_id"]
+        c.post("/agenda/realizados", json={
+            "evento_id": f"cronograma_sanitario_incluir_manual_{cronograma_id}", "numero_matriz": "960",
+        })
+        with Session(engine) as s:
+            from sqlmodel import select
+            linha = s.exec(
+                select(CronogramaSanitarioAnimal)
+                .where(CronogramaSanitarioAnimal.cronograma_id == cronograma_id)
+                .where(CronogramaSanitarioAnimal.numero_matriz == "960")
+            ).first()
+            linha_id = linha.id
+
+        r = c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_remover_animal_{linha_id}"})
+        assert r.status_code == 200, r.text
+        with Session(engine) as s:
+            assert s.get(CronogramaSanitarioAnimal, linha_id).status == "excluido"
+
+    def test_remove_animal_ainda_sugerido(self, client):
+        c, engine = client
+        _criar_evento_e_calendario(c)
+        with Session(engine) as s:
+            s.add(Animal(numero="961", data_nasc=HOJE - timedelta(days=95), sexo="F", ativo=True))
+            s.commit()
+        sugestao = _agenda(c, "cronograma_sanitario_animal")[0]
+        linha_id = sugestao["cronograma_animal_id"]
+
+        r = c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_remover_animal_{linha_id}"})
+        assert r.status_code == 200, r.text
+        with Session(engine) as s:
+            assert s.get(CronogramaSanitarioAnimal, linha_id).status == "excluido"
+
+    def test_remove_animal_ja_aplicado_da_400(self, client):
+        c, engine = client
+        _criar_evento_e_calendario(c)
+        with Session(engine) as s:
+            s.add(Animal(numero="962", data_nasc=HOJE - timedelta(days=95), sexo="F", ativo=True))
+            s.commit()
+            linha = CronogramaSanitarioAnimal(
+                cronograma_id=1, numero_matriz="962", status="aplicado", data_sugestao=HOJE, data_decisao=HOJE,
+            )
+            s.add(linha); s.commit(); linha_id = linha.id
+
+        r = c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_remover_animal_{linha_id}"})
+        assert r.status_code == 400
+
+    def test_remove_animal_ja_removido_da_400(self, client):
+        c, engine = client
+        _criar_evento_e_calendario(c)
+        with Session(engine) as s:
+            s.add(Animal(numero="963", data_nasc=HOJE - timedelta(days=95), sexo="F", ativo=True))
+            s.commit()
+        sugestao = _agenda(c, "cronograma_sanitario_animal")[0]
+        linha_id = sugestao["cronograma_animal_id"]
+        c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_remover_animal_{linha_id}"})
+
+        r = c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_remover_animal_{linha_id}"})
+        assert r.status_code == 400
+
 class TestTrilhaDoAgendamento:
     def test_cronograma_recem_criado_pede_decisao_de_modo(self, client):
         c, engine = client

@@ -28,6 +28,12 @@ def client(monkeypatch):
         s.add(Usuario(username="sememail", nome="Sem Email", senha_hash=hash_senha("123"), papel="operador", ativo=True))
         s.add(Usuario(username="inativo", nome="Inativo", senha_hash=hash_senha("123"), papel="operador",
                        email="inativo@example.com", ativo=False))
+        # Nome com HTML: `Usuario.nome` é texto livre digitado por quem cadastra
+        # (ver routers/auth.py::_validar_pessoa_ou_nome) e vai interpolado no
+        # corpo do e-mail de redefinição — ver TestEscapeDoNome, no fim deste
+        # arquivo.
+        s.add(Usuario(username="xss", nome='<script>alert(1)</script>', senha_hash=hash_senha("123"),
+                       papel="operador", email="xss@example.com", ativo=True))
         s.commit()
 
     def _get_session_override():
@@ -161,3 +167,47 @@ class TestRedefinir:
             token = s.exec(select(Usuario).where(Usuario.username == "joao")).first().reset_senha_token
         r = c.post("/auth/redefinir-senha", json={"token": token, "nova_senha": "ab"})
         assert r.status_code == 400
+
+
+class TestEscapeDoNome:
+    """Achado de severidade baixa da auditoria de 02/09/2026
+    (docs/security-audit/achados.json): `user.nome` ia cru para dentro do HTML
+    do e-mail de redefinição.
+
+    É majoritariamente self-XSS — o e-mail sai só para o endereço cadastrado da
+    própria pessoa, e para explorá-lo alguém já teria que ter cadastrado um nome
+    malicioso para ela. Mas o nome é texto livre, o destino é HTML, e "texto de
+    usuário não escapado em HTML" não deixa de ser isso por o alvo ser
+    inconveniente. O escape mora em `routers/auth.py::esqueci_senha_enviar`.
+    """
+
+    def test_nome_com_html_sai_escapado_no_corpo_do_email(self, client):
+        c, _engine, enviados = client
+        r = c.post("/auth/esqueci-senha/enviar", json={"username": "xss"})
+        assert r.status_code == 200, r.text
+
+        corpo = enviados[-1]["corpo_html"]
+        assert "<script>" not in corpo, (
+            "o nome do usuário entrou cru no HTML do e-mail — o cliente de e-mail que renderiza "
+            f"HTML executaria isso. Corpo: {corpo[:300]}"
+        )
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in corpo, (
+            "o nome sumiu do e-mail em vez de aparecer escapado — escapar não é apagar; "
+            f"a pessoa continua tendo que se reconhecer na mensagem. Corpo: {corpo[:300]}"
+        )
+
+    def test_o_link_de_redefinicao_continua_no_email(self, client):
+        """Contraprova: o escape não pode ter estragado o e-mail. Sem o link,
+        o fluxo inteiro morre e o teste de cima passaria assim mesmo."""
+        c, engine, enviados = client
+        c.post("/auth/esqueci-senha/enviar", json={"username": "xss"})
+        with Session(engine) as s:
+            token = s.exec(select(Usuario).where(Usuario.username == "xss")).first().reset_senha_token
+        assert f"/redefinir-senha?token={token}" in enviados[-1]["corpo_html"]
+
+    def test_nome_comum_nao_e_alterado(self, client):
+        """Segunda contraprova: nome sem HTML nenhum sai idêntico — o escape
+        não pode acentuar/deformar o nome de quem não fez nada."""
+        c, _engine, enviados = client
+        c.post("/auth/esqueci-senha/enviar", json={"username": "joao"})
+        assert "Olá, João!" in enviados[-1]["corpo_html"]

@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import Animal, CalendarioSanitario, Estoque, MovimentoLote, PrincipioAtivo, Sanidade
+from fazenda.models import Animal, CalendarioSanitario, Estoque, MovimentoLote, Parto, PrincipioAtivo, Sanidade
 
 
 @pytest.fixture
@@ -154,6 +154,77 @@ class TestAgendaPorEvento:
         eventos = _agenda_sanidade(c)
         assert not any(e["numero_animal"] == "03M" for e in eventos)
         assert any(e["numero_animal"] == "404" for e in eventos)
+
+
+class TestGatilhoNovilhaApta:
+    """O gatilho `novilha_apta` é "a novilha atingiu a idade-alvo configurada
+    no cadastro do evento" — não a aptidão reprodutiva da regra 7 (que exige
+    idade_apta_min_meses E peso_apta_min). O rótulo da tela é "Aptidão
+    (novilha atingir certa idade)" e a semente do sistema traz Brucelose
+    RB51 aos 13 meses, abaixo do idade_apta_min_meses padrão (15): amarrar
+    este gatilho aos parâmetros de aptidão apagaria a vacina de brucelose da
+    Agenda, e exigir peso apagaria o gatilho inteiro em fazenda que não pesa.
+
+    O que É defeito, e o que estes testes fixam: o filtro antigo era só
+    "fêmea ativa com data de nascimento", então agendava manejo de NOVILHA
+    para vaca que já pariu e para animal marcado a descartar."""
+
+    def _cadastrar(self, c, gatilho_idade_meses: int = 13):
+        c.post("/cadastro/eventos-sanitarios", json={
+            "nome": "Exame de entrada em reprodução", "tipo_agendamento": "evento", "gatilho": "novilha_apta",
+            "gatilho_idade_meses": gatilho_idade_meses, "produto_padrao": "ExameX", "dose_padrao": 1, "unidade_padrao": "un",
+        })
+
+    def test_novilha_na_idade_alvo_recebe(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="801", data_nasc=HOJE - timedelta(days=400), sexo="F", ativo=True))
+            s.commit()
+        self._cadastrar(c)
+        assert any(e["numero_animal"] == "801" for e in _agenda_sanidade(c))
+
+    def test_sem_pesagem_registrada_recebe_do_mesmo_jeito(self, client):
+        """Sentinela: peso NÃO faz parte deste gatilho. A "801" acima também
+        não tem pesagem — este teste existe para que uma tentativa futura de
+        exigir peso aqui quebre com a razão escrita, em vez de silenciosamente
+        esvaziar a Agenda de brucelose em fazenda que não pesa animal."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="806", data_nasc=HOJE - timedelta(days=400), sexo="F", ativo=True))
+            s.commit()
+        self._cadastrar(c)
+        assert any(e["numero_animal"] == "806" for e in _agenda_sanidade(c))
+
+    def test_idade_alvo_abaixo_do_parametro_de_aptidao_continua_valendo(self, client):
+        """A idade-alvo é a do CADASTRO, não `idade_apta_min_meses()` (padrão
+        15). Aos 4 meses — a idade legal da vacina de brucelose — o evento
+        tem de aparecer."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="807", data_nasc=HOJE - timedelta(days=130), sexo="F", ativo=True))
+            s.commit()
+        self._cadastrar(c, gatilho_idade_meses=4)
+        assert any(e["numero_animal"] == "807" for e in _agenda_sanidade(c))
+
+    def test_vaca_multipara_nao_recebe(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            # Vaca com Parto registrado já não é novilha — não faz sentido
+            # reagendar nela um manejo de novilha. Antes da correção, o
+            # gatilho só olhava sexo+ativo+data_nasc.
+            s.add(Animal(numero="804", data_nasc=HOJE - timedelta(days=1500), sexo="F", ativo=True))
+            s.add(Parto(numero_matriz="804", data_parto=HOJE - timedelta(days=100)))
+            s.commit()
+        self._cadastrar(c)
+        assert not any(e["numero_animal"] == "804" for e in _agenda_sanidade(c))
+
+    def test_marcada_a_descartar_nao_recebe(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="805", data_nasc=HOJE - timedelta(days=400), sexo="F", ativo=True, a_descartar=True))
+            s.commit()
+        self._cadastrar(c)
+        assert not any(e["numero_animal"] == "805" for e in _agenda_sanidade(c))
 
 
 class TestAplicacaoAgendadaNaAgenda:
@@ -375,3 +446,132 @@ class TestCondicaoExclusaoMutua:
             "condicao_evento_id": 99999,
         })
         assert r.status_code == 400
+
+
+class TestJanelaDeAplicacao:
+    """Janela de aplicação (de/até/ação ao sair) — reportado pelo usuário
+    2026-09-10 como redundante com "Dias após o gatilho" (offset_dias): os
+    dois pareciam pedir a mesma coisa porque, de fato, calculavam a mesma
+    coisa por dois caminhos diferentes — e "Dias após o gatilho" nunca soube
+    contar em meses. Decisão do usuário: a janela ("de") vira a fonte real de
+    quando o item entra na Agenda, substituindo offset_dias quando cadastrada
+    (offset_dias continua valendo, sem mudança nenhuma, para quem nunca
+    configurou janela). E "ação ao sair da janela" passa a valer de verdade:
+    "sair" encerra a pendência, "manter" nunca some sozinha."""
+
+    def test_janela_de_prevalece_sobre_offset_dias(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="901", data_nasc=HOJE - timedelta(days=120), sexo="F"))
+            s.commit()
+        c.post("/cadastro/eventos-sanitarios", json={
+            "nome": "Vacina com janela", "tipo_agendamento": "evento", "gatilho": "nascimento",
+            "offset_dias": 30,  # se ainda fosse usado, o gatilho cairia 90 dias atrás do previsto abaixo
+            "janela_de_valor": 120, "janela_de_unidade": "dias",
+            "produto_padrao": "VacinaJanela", "dose_padrao": 2, "unidade_padrao": "ml",
+        })
+        meus = [e for e in _agenda_sanidade(c) if e["numero_animal"] == "901"]
+        assert len(meus) == 1
+        # nasceu há 120 dias + janela_de 120 dias = data prevista = hoje
+        assert meus[0]["data"] == HOJE.isoformat()
+
+    def test_janela_de_em_meses_usa_calendario_de_verdade(self, client):
+        """`_somar_meses` (calendário real) em vez de uma aproximação de 30
+        dias — nasceu há exatamente 4 meses corridos, janela de 4 meses deve
+        cair em HOJE, não numa data alguns dias fora por causa de meses com
+        tamanhos diferentes."""
+        c, engine = client
+        nascimento = HOJE.replace(year=HOJE.year if HOJE.month > 4 else HOJE.year - 1, month=(HOJE.month - 4) or 12) if HOJE.month > 4 else HOJE
+        # Monta a data de nascimento como "4 meses corridos atrás de hoje" (o
+        # próprio inverso de _somar_meses), sem reimplementar a lib de datas.
+        from fazenda.rules.calendario_sanitario import _somar_meses
+        m = HOJE.month - 4
+        ano = HOJE.year
+        while m <= 0:
+            m += 12
+            ano -= 1
+        import calendar as _cal
+        dia = min(HOJE.day, _cal.monthrange(ano, m)[1])
+        nascimento = date(ano, m, dia)
+        assert _somar_meses(nascimento, 4) == HOJE  # sanidade da massa de teste
+
+        with Session(engine) as s:
+            s.add(Animal(numero="902", data_nasc=nascimento, sexo="F"))
+            s.commit()
+        c.post("/cadastro/eventos-sanitarios", json={
+            "nome": "Vacina 4 meses", "tipo_agendamento": "evento", "gatilho": "nascimento",
+            "janela_de_valor": 4, "janela_de_unidade": "meses",
+            "produto_padrao": "Vacina4M", "dose_padrao": 1, "unidade_padrao": "ml",
+        })
+        meus = [e for e in _agenda_sanidade(c) if e["numero_animal"] == "902"]
+        assert len(meus) == 1
+        assert meus[0]["data"] == HOJE.isoformat()
+
+    def test_sem_janela_offset_dias_continua_funcionando(self, client):
+        """Evento sem janela nenhuma (o caso de sempre) não muda em nada."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="903", data_nasc=HOJE - timedelta(days=150), sexo="F"))
+            s.commit()
+        c.post("/cadastro/eventos-sanitarios", json={
+            "nome": "Vacina sem janela", "tipo_agendamento": "evento", "gatilho": "nascimento",
+            "offset_dias": 150,
+            "produto_padrao": "VacinaSemJanela", "dose_padrao": 1, "unidade_padrao": "ml",
+        })
+        meus = [e for e in _agenda_sanidade(c) if e["numero_animal"] == "903"]
+        assert len(meus) == 1
+        assert meus[0]["data"] == HOJE.isoformat()
+
+    def test_acao_sair_encerra_pendencia_fora_da_janela(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            # Nasceu há 100 dias: janela 60-90 dias (a partir do gatilho)
+            # já fechou há 10 dias — mas a data em que o item ficou devido
+            # (nascimento + 60 = há 40 dias) continua dentro da janela padrão
+            # de visibilidade da Agenda (120 dias passado/180 futuro), pra
+            # isolar o efeito de "sair" do filtro de visibilidade geral (que
+            # é outra coisa, não relacionada à janela de aplicação).
+            s.add(Animal(numero="904", data_nasc=HOJE - timedelta(days=100), sexo="F"))
+            s.commit()
+        c.post("/cadastro/eventos-sanitarios", json={
+            "nome": "Vacina com saida", "tipo_agendamento": "evento", "gatilho": "nascimento",
+            "janela_de_valor": 60, "janela_de_unidade": "dias",
+            "janela_ate_valor": 90, "janela_ate_unidade": "dias", "acao_fora_janela": "sair",
+            "produto_padrao": "VacinaSai", "dose_padrao": 1, "unidade_padrao": "ml",
+        })
+        assert not any(e["numero_animal"] == "904" for e in _agenda_sanidade(c))
+
+    def test_acao_manter_nao_encerra_pendencia_fora_da_janela(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            # Mesmo cenário do teste de "sair" acima (janela já fechou há 10
+            # dias, mas dentro da janela de visibilidade padrão da Agenda) —
+            # só muda a ação: "manter" nunca expira sozinha.
+            s.add(Animal(numero="905", data_nasc=HOJE - timedelta(days=100), sexo="F"))
+            s.commit()
+        c.post("/cadastro/eventos-sanitarios", json={
+            "nome": "Vacina com manter", "tipo_agendamento": "evento", "gatilho": "nascimento",
+            "janela_de_valor": 60, "janela_de_unidade": "dias",
+            "janela_ate_valor": 90, "janela_ate_unidade": "dias", "acao_fora_janela": "manter",
+            "produto_padrao": "VacinaManter", "dose_padrao": 1, "unidade_padrao": "ml",
+        })
+        meus = [e for e in _agenda_sanidade(c) if e["numero_animal"] == "905"]
+        assert len(meus) == 1
+        assert meus[0]["acao_fora_janela"] == "manter"
+
+    def test_dentro_da_janela_carrega_dias_para_fechar(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            # Nasceu há 150 dias: dentro da janela 120-240, faltam 90 dias pra fechar.
+            s.add(Animal(numero="906", data_nasc=HOJE - timedelta(days=150), sexo="F"))
+            s.commit()
+        c.post("/cadastro/eventos-sanitarios", json={
+            "nome": "Vacina notificar", "tipo_agendamento": "evento", "gatilho": "nascimento",
+            "janela_de_valor": 120, "janela_de_unidade": "dias",
+            "janela_ate_valor": 240, "janela_ate_unidade": "dias", "acao_fora_janela": "notificar",
+            "produto_padrao": "VacinaNotif", "dose_padrao": 1, "unidade_padrao": "ml",
+        })
+        meus = [e for e in _agenda_sanidade(c) if e["numero_animal"] == "906"]
+        assert len(meus) == 1
+        assert meus[0]["dias_para_fechar_janela"] == 90
+        assert meus[0]["janela_fim"] == (HOJE + timedelta(days=90)).isoformat()

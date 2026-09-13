@@ -1,9 +1,17 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Wheat, ChevronDown, ChevronRight, ListOrdered, PieChart, CalendarClock, Package } from "lucide-react";
+import dynamic from "next/dynamic";
+import { AlertTriangle, Wheat, ChevronDown, ChevronRight, ListOrdered, PieChart, CalendarClock, Package, FileSpreadsheet, FileText, NotebookPen } from "lucide-react";
 import { fetchAlimentacao, fetchNecessidadeMensal, fetchEstadoBaixaAlimentacao } from "@/lib/api";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { MultiFiltro } from "@/components/ui";
+import { exportarMultiExcel, exportarFichaPDF, type SecaoFicha } from "@/lib/export";
+// A dieta em si (CadastrarNovaDieta) mudou de casa para cá — pedido original:
+// "tirar alimentação [de Lançamentos] e colocar dentro de Insumos e Sanidade
+// - Alimentação, mas com o nome de Lançar nova dieta". Continua o mesmo
+// componente único (histórico de dietas, registrar real, comparativo), só
+// muda quem o monta — ver components/lancamentos/FormAlimentacaoDieta.tsx.
+const FormAlimentacaoDieta = dynamic(() => import("@/components/lancamentos/FormAlimentacaoDieta").then((m) => m.FormAlimentacaoDieta), { ssr: false });
 
 const TRATOS = 2; // 2 tratos por dia
 const fmt = (v: number) => Number(v.toFixed(2)).toLocaleString("pt-BR");
@@ -76,9 +84,64 @@ function PlanoPorLote({ a }: { a: any }) {
   const porLote: any[] = a?.por_lote ?? [];
   const [abertos, setAbertos] = useState<Set<number>>(new Set());
   const toggle = (l: number) => setAbertos((p) => { const n = new Set(p); n.has(l) ? n.delete(l) : n.add(l); return n; });
+
+  // Seleção de lote(s) pra exportação — vazio = todos (mesmo padrão do
+  // filtro de Consumo Diário acima).
+  const [lotesExport, setLotesExport] = useState<string[]>([]);
+  const lotesOpcoes = useMemo(() => porLote.map((l) => String(l.lote)), [porLote]);
+  const [exportando, setExportando] = useState(false);
+
+  function secoesParaExportar(): SecaoFicha[] {
+    const alvo = lotesExport.length ? porLote.filter((l) => lotesExport.includes(String(l.lote))) : porLote;
+    return alvo.map((l) => ({
+      titulo: `Lote ${l.lote} — ${l.categoria} (${l.efetivo} cab.)`,
+      colunas: [
+        { header: "Ingrediente", key: "ingrediente" },
+        { header: "Por cabeça", key: "por_cabeca" },
+        { header: "Lote/dia", key: "lote_dia" },
+        { header: "Lote/trato", key: "lote_trato" },
+      ],
+      linhas: (l.itens || []).map((i: any) => ({
+        ingrediente: i.ingrediente,
+        por_cabeca: `${fmt(i.por_cabeca)} ${i.unidade}`,
+        lote_dia: `${fmt(i.consumo_dia)} ${i.unidade}`,
+        lote_trato: `${fmt(i.consumo_dia / TRATOS)} ${i.unidade}`,
+      })),
+    }));
+  }
+
+  async function exportar(formato: "pdf" | "excel") {
+    setExportando(true);
+    try {
+      const secoes = secoesParaExportar();
+      const subtitulo = lotesExport.length ? `Lote(s): ${lotesExport.join(", ")}` : "Todos os lotes";
+      if (formato === "pdf") await exportarFichaPDF("Plano por Lote", subtitulo, secoes, "plano_por_lote");
+      else await exportarMultiExcel("Plano por Lote", secoes, "plano_por_lote");
+    } catch {
+      // erro já mostrado ao usuário dentro de exportarFichaPDF/exportarMultiExcel (lib/export.ts)
+    } finally {
+      setExportando(false);
+    }
+  }
+
   return (
     <div className="card">
-      <div className="card-header mb-3">Plano por Lote <span style={{ fontWeight: 400, fontSize: "0.72rem", color: "var(--text-muted)" }}>(clique para expandir)</span></div>
+      <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.6rem" }}>
+        <span>Plano por Lote <span style={{ fontWeight: 400, fontSize: "0.72rem", color: "var(--text-muted)" }}>(clique para expandir)</span></span>
+        <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+          <div style={{ minWidth: "12rem" }}>
+            <MultiFiltro label="Lote(s) a exportar" opcoes={lotesOpcoes} selecionados={lotesExport} onChange={setLotesExport} />
+          </div>
+          <button type="button" className="btn-secondary" style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem" }}
+            disabled={exportando || !porLote.length} onClick={() => exportar("excel")}>
+            <FileSpreadsheet size={14} /> Excel
+          </button>
+          <button type="button" className="btn-secondary" style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem" }}
+            disabled={exportando || !porLote.length} onClick={() => exportar("pdf")}>
+            <FileText size={14} /> PDF
+          </button>
+        </div>
+      </div>
       <div className="space-y-2">
         {porLote.map((l) => {
           const aberto = abertos.has(l.lote);
@@ -156,18 +219,29 @@ function NecessidadeMensal() {
   );
 }
 
+// Item D1 da sessão 3: "Lançar nova dieta" entra ANTES de "Consumo Diário" —
+// é o cadastro/plano da dieta em si (o lançamento do CONSUMO do dia a dia
+// ficou em Lançamentos > Alimentação, ver components/lancamentos/ConsumoAlimento.tsx).
 const ABAS = [
+  ["nova_dieta", "Lançar nova dieta", NotebookPen],
   ["consumo", "Consumo Diário", ListOrdered],
   ["lote", "Plano por Lote", PieChart],
   ["mensal", "Necessidade mensal", CalendarClock],
 ] as const;
 
 export default function AlimentacaoPage() {
-  const [aba, setAba] = useState<(typeof ABAS)[number][0]>("consumo");
+  const [aba, setAba] = useState<(typeof ABAS)[number][0]>("nova_dieta");
   const [a, setA] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => { fetchAlimentacao().then(setA).catch((e) => setError(e.message)); }, []);
+
+  // Link "Ir para Dieta" da Agenda manda ?lote=NN — abre direto na aba de
+  // dieta, que é quem sabe ler esse parâmetro (abre a seção de encerrar do
+  // lote). Continua funcionando de graça se algum dia apontar pra cá também.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("lote")) setAba("nova_dieta");
+  }, []);
 
   const subNavTree: SubNavNode[] = useMemo(() => ABAS.map(([id, label, Icon]) => ({ id, label, icon: Icon })), []);
   useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba, onSelect: (id: string) => setAba(id as (typeof ABAS)[number][0]) }), [subNavTree, aba]));
@@ -179,11 +253,16 @@ export default function AlimentacaoPage() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Dieta por lote cruzada com o efetivo — consumo por cabeça, por lote/dia e por lote/trato ({TRATOS} tratos/dia).</p>
       </div>
 
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados de alimentação</a>.</span></div>}
+      {/* Erro de fetchAlimentacao só diz respeito às 3 abas que dependem dela
+          (consumo/plano/necessidade) — a aba de dieta usa fetchDietas por
+          conta própria e não deve mostrar um aviso que não é dela. */}
+      {error && aba !== "nova_dieta" && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados de alimentação</a>.</span></div>}
 
       <StatusBaixa />
 
-      {!a && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {aba === "nova_dieta" && <FormAlimentacaoDieta />}
+
+      {!a && !error && aba !== "nova_dieta" && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
       {a && aba === "consumo" && <ConsumoDiario a={a} error={error} />}
       {a && aba === "lote" && <PlanoPorLote a={a} />}
       {aba === "mensal" && <NecessidadeMensal />}

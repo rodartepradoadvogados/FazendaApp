@@ -39,7 +39,12 @@ export function BuscaAnimal({
 
   useEffect(() => {
     let vivo = true;
-    fetchComCache<AnimalMob[]>("animais", () => fetchAnimais()).then(({ dados }) => {
+    // Chave de cache PRÓPRIA ("animais_todos"), não a "animais" compartilhada
+    // pelas telas de ação reprodutiva/produtiva (Modo Curral, Lançar, Lotes,
+    // Indicadores) — aquelas continuam só-fêmeas de propósito (bezerro/touro
+    // não entra em controle leiteiro nem protocolo). Esta busca é "achar
+    // qualquer animal da fazenda" (Ficha, drill-down) — machos incluídos.
+    fetchComCache<AnimalMob[]>("animais_todos", () => fetchAnimais({ incluirMachos: true })).then(({ dados }) => {
       if (vivo && dados) setAnimais(dados);
     });
     return () => { vivo = false; };
@@ -62,7 +67,7 @@ export function BuscaAnimal({
           {selecionado && <span style={{ display: "block", fontSize: "0.78rem", color: "var(--mob-muted)" }}>{subtituloAnimal(selecionado)}</span>}
         </span>
         <button type="button" onClick={() => { onEscolher(""); setBusca(""); }} aria-label="Trocar animal"
-          style={{ width: 48, height: 48, borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)", background: "var(--mob-surface)", color: "var(--mob-text)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer" }}>
+          style={{ width: 56, height: 56, borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)", background: "var(--mob-surface)", color: "var(--mob-text)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer" }}>
           <X size={18} />
         </button>
       </div>

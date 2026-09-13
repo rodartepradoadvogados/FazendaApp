@@ -111,7 +111,7 @@ def eventos_agenda(
 
 def marcar_realizado(
     session: Session, evento_id: str, animais: list[str] | None = None,
-    data_realizacao: date | None = None,
+    data_realizacao: date | None = None, fazenda_id: int | None = None,
 ) -> None:
     """Marca as aplicações de um grupo (lançamento, dia) como realizadas.
     Sem `animais`, marca o grupo inteiro; com `animais`, só esse subconjunto.
@@ -124,13 +124,17 @@ def marcar_realizado(
     lancamento_id_str, dia_str = resto.rsplit("_", 1)
     lancamento_id, dia = int(lancamento_id_str), int(dia_str)
 
-    aplicacoes = session.exec(
-        select(ProtocoloCustomizadoAplicacao).where(
-            ProtocoloCustomizadoAplicacao.lancamento_id == lancamento_id,
-            ProtocoloCustomizadoAplicacao.dia == dia,
-            ProtocoloCustomizadoAplicacao.realizada == False,  # noqa: E712
-        )
-    ).all()
+    query = select(ProtocoloCustomizadoAplicacao).where(
+        ProtocoloCustomizadoAplicacao.lancamento_id == lancamento_id,
+        ProtocoloCustomizadoAplicacao.dia == dia,
+        ProtocoloCustomizadoAplicacao.realizada == False,  # noqa: E712
+    )
+    # BUG DE SEGURANÇA CORRIGIDO: sem este filtro, qualquer fazenda-cliente
+    # podia confirmar o protocolo customizado de outro tenant só adivinhando
+    # o lancamento_id (inteiro pequeno e sequencial).
+    if fazenda_id is not None:
+        query = query.where(ProtocoloCustomizadoAplicacao.fazenda_id == fazenda_id)
+    aplicacoes = session.exec(query).all()
     if animais is not None:
         alvo = set(animais)
         aplicacoes = [a for a in aplicacoes if a.numero_matriz in alvo]
@@ -143,7 +147,7 @@ def marcar_realizado(
     session.commit()
 
 
-def desmarcar_realizado(session: Session, evento_id: str) -> None:
+def desmarcar_realizado(session: Session, evento_id: str, fazenda_id: int | None = None) -> None:
     """Reverte o grupo inteiro (sem registro de qual subconjunto foi
     confirmado, reverter tudo é o único comportamento coerente) — mesma
     justificativa de _desmarcar_protocolo_iatf_realizado."""
@@ -151,13 +155,14 @@ def desmarcar_realizado(session: Session, evento_id: str) -> None:
     lancamento_id_str, dia_str = resto.rsplit("_", 1)
     lancamento_id, dia = int(lancamento_id_str), int(dia_str)
 
-    aplicacoes = session.exec(
-        select(ProtocoloCustomizadoAplicacao).where(
-            ProtocoloCustomizadoAplicacao.lancamento_id == lancamento_id,
-            ProtocoloCustomizadoAplicacao.dia == dia,
-            ProtocoloCustomizadoAplicacao.realizada == True,  # noqa: E712
-        )
-    ).all()
+    query = select(ProtocoloCustomizadoAplicacao).where(
+        ProtocoloCustomizadoAplicacao.lancamento_id == lancamento_id,
+        ProtocoloCustomizadoAplicacao.dia == dia,
+        ProtocoloCustomizadoAplicacao.realizada == True,  # noqa: E712
+    )
+    if fazenda_id is not None:
+        query = query.where(ProtocoloCustomizadoAplicacao.fazenda_id == fazenda_id)
+    aplicacoes = session.exec(query).all()
     for ap in aplicacoes:
         ap.realizada = False
         ap.data_realizacao = None

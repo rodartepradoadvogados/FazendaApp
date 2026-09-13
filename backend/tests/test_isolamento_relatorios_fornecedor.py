@@ -30,8 +30,8 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from fazenda.models import (
     Animal, CalendarioSanitario, CompraAnimal, ContaGerencial, ContratoFazenda, ContratoFazendaModulo,
-    CronogramaSanitario, CronogramaSanitarioAnimal, EntregaLeiteMensal, EstoqueSemen, EventoSanitario, Fazenda,
-    Fornecedor, Sanidade,
+    CronogramaSanitario, CronogramaSanitarioAnimal, EntregaLeiteMensal, Estoque, EstoqueSemen, EventoSanitario,
+    Fazenda, Fornecedor, MovimentoEstoque, Sanidade,
 )
 from fazenda.models.planos import MODULOS_COMERCIAIS
 
@@ -73,6 +73,16 @@ def client(monkeypatch):
             fazenda_id=1, touro_nome="TOURO SIGILOSO F1", naab="7HO-F1",
             doses=42, tipo="convencional", ativo=True,
         ))
+        # RMCA físico (A-2) — item + baixa de alimentação da fazenda 1, que não
+        # pode entrar no custo físico calculado para a fazenda 2.
+        s.add(Estoque(
+            id=1, fazenda_id=1, nome="Silagem F1", valor_unitario=1000.0,
+            conta_gerencial_despesa_padrao="3.01.01.01",
+        ))
+        s.add(MovimentoEstoque(
+            fazenda_id=1, nome_item="Silagem F1", movimento="Saída de ajuste",
+            quantidade=50.0, unidade="kg", data_movimento=date(2026, 7, 15),
+        ))
         # Cronograma sanitário da fazenda 1 — alvo do IDOR de escrita.
         s.add(EventoSanitario(id=1, fazenda_id=1, nome="Vacina F1"))
         s.add(CalendarioSanitario(
@@ -99,6 +109,14 @@ def client(monkeypatch):
             valor_total=7.0, data_competencia=date(2026, 7, 5), fazenda_id=2,
         ))
         s.add(EntregaLeiteMensal(fazenda_id=2, competencia="2026-07", quantidade_litros=1000.0))
+        s.add(Estoque(
+            id=2, fazenda_id=2, nome="Silagem F2", valor_unitario=10.0,
+            conta_gerencial_despesa_padrao="3.01.01.01",
+        ))
+        s.add(MovimentoEstoque(
+            fazenda_id=2, nome_item="Silagem F2", movimento="Saída de ajuste",
+            quantidade=5.0, unidade="kg", data_movimento=date(2026, 7, 16),
+        ))
         s.add(Animal(numero="F2-VACA", fazenda_id=2, ativo=True))
         s.add(EstoqueSemen(
             fazenda_id=2, touro_nome="Touro proprio F2", naab="7HO-F2",
@@ -190,6 +208,48 @@ class TestG4CustoLitroLeite:
         r = c.get("/financeiro/custo-litro-leite", params={"data_inicio": "2026-07-01", "data_fim": "2026-07-31"})
         assert r.status_code == 200, r.text
         assert r.json()["litros"] == 1000.0
+
+
+class TestA2RmcaFisico:
+    """Gauntlet A-2: GET /financeiro/rmca calculava o custo físico a partir
+    de MovimentoEstoque e Estoque sem NENHUM filtro de fazenda — a mesma
+    classe de vazamento do G4 (custo-litro-leite) logo acima, só que sem o
+    filtro que aquele já tinha ganhado."""
+
+    def test_movimento_e_item_da_fazenda_1_nao_entram_no_custo_fisico_da_fazenda_2(self, client):
+        c, _ = client
+        _como_fazenda(2)
+        r = c.get("/financeiro/rmca", params={"data_inicio": "2026-07-01", "data_fim": "2026-07-31"})
+        assert r.status_code == 200, r.text
+        # Só a baixa própria (5 kg × R$10 = 50,00) — não os 50.000,00 da fazenda 1.
+        assert r.json()["fisico"]["custo_alimentacao"] == 50.0
+
+    def test_fazenda_1_continua_vendo_o_proprio_custo_fisico(self, client):
+        c, _ = client
+        _como_fazenda(1)
+        r = c.get("/financeiro/rmca", params={"data_inicio": "2026-07-01", "data_fim": "2026-07-31"})
+        assert r.status_code == 200, r.text
+        assert r.json()["fisico"]["custo_alimentacao"] == 50000.0
+
+
+class TestPutEstoqueItemIdor:
+    """Achado adicional durante a verificação do gauntlet (não estava na
+    lista original de 27): PUT /estoque/{item_id} fazia `session.get(Estoque,
+    item_id)` sem NENHUMA checagem de fazenda — diferente do DELETE irmão,
+    que já checava. Qualquer fazenda logada, sabendo o id, editava o item de
+    estoque de outra."""
+
+    def test_editar_item_de_outra_fazenda_da_404(self, client):
+        c, _ = client
+        _como_fazenda(2)
+        r = c.put("/estoque/1", json={"nome": "Sequestrado"})
+        assert r.status_code == 404, r.text
+
+    def test_dono_do_item_continua_editando(self, client):
+        c, _ = client
+        _como_fazenda(1)
+        r = c.put("/estoque/1", json={"nome": "Silagem F1 renomeada"})
+        assert r.status_code == 200, r.text
 
 
 class TestG5AcasalamentoVazaEstoqueDeSemen:
