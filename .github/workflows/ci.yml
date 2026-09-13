@@ -185,6 +185,7 @@ jobs:
         tests/test_migracao_fks_compostas.py
         tests/test_contexto_fazenda_sessao.py
         tests/test_login_sob_rls.py
+        tests/test_rls_vinculo_sem_contexto_de_fazenda.py
         tests/test_sincronizacao_sob_rls.py
         tests/test_painel_cowdata_massa_sob_rls.py
     services:
