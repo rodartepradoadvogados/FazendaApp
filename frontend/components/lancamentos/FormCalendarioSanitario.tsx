@@ -8,6 +8,7 @@ import {
   type ChecklistTemplateItemDTO,
 } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
+import { VIAS_APLICACAO } from "@/lib/constants";
 import { EstoquePicker } from "@/components/EstoquePicker";
 import { SecaoRecolhivel, MultiFiltro } from "@/components/ui";
 import { Campo, inputStyle, nota, type EstoqueItem, unidadesCompativeis } from "@/components/lancamentos/comumForms";
@@ -443,7 +444,14 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3" style={{ paddingTop: "0.75rem", borderTop: "1px solid var(--border)" }}>
               <Campo label="Produto padrão (opcional)"><EstoquePicker itens={estoque} value={f.produtoPadrao} onChange={(v) => sf({ ...f, produtoPadrao: v })} /></Campo>
               <Campo label="Dose padrão (opcional)"><input type="number" style={inputStyle} value={f.dosePadrao} onChange={(e) => sf({ ...f, dosePadrao: e.target.value })} /></Campo>
-              <Campo label="Via padrão (opcional)"><input style={inputStyle} value={f.viaPadrao} onChange={(e) => sf({ ...f, viaPadrao: e.target.value })} placeholder="ex.: subcutânea" /></Campo>
+              <Campo label="Via padrão (opcional)">
+                <select style={inputStyle} value={f.viaPadrao} onChange={(e) => sf({ ...f, viaPadrao: e.target.value })}>
+                  <option value="">—</option>
+                  {/* Regra antiga com via em texto livre (antes desta correção) continua aparecendo, mesmo fora da lista fixa. */}
+                  {!VIAS_APLICACAO.includes(f.viaPadrao) && f.viaPadrao && <option value={f.viaPadrao}>{f.viaPadrao}</option>}
+                  {VIAS_APLICACAO.map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </Campo>
               <p style={{ gridColumn: "1 / -1", fontSize: "0.7rem", color: "var(--text-muted)" }}>Opcionais — a regra (próximo passo) e a realização ainda podem sobrescrever.</p>
             </div>
           )}

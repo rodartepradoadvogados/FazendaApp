@@ -1855,6 +1855,17 @@ def _decidir_cronograma_animal(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def _remover_animal_cronograma(
+    session: Session, evento_id: str, fazenda_id: int | None = None
+) -> None:
+    linha_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}remover_animal_"))
+    _exigir_da_fazenda(session.get(CronogramaSanitarioAnimal, linha_id), fazenda_id, "Animal do cronograma")
+    try:
+        _cronograma_sanitario_rules.remover_animal(session, linha_id, date.today())
+    except CronogramaError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 def _incluir_animal_manual(
     session: Session, evento_id: str, numero_matriz: str | None, fazenda_id: int | None = None
 ) -> None:
@@ -2458,6 +2469,9 @@ def marcar_realizado(
             session, dados.evento_id, dados.animais, fazenda_id=fazenda_id, usuario_id=usuario_id,
         )
         return {"marcado": True, "avisos": avisos}
+    if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}remover_animal_"):
+        _remover_animal_cronograma(session, dados.evento_id, fazenda_id)
+        return {"marcado": True}
     if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}animal_"):
         _decidir_cronograma_animal(session, dados.evento_id, dados.incluir, fazenda_id)
         return {"marcado": True}

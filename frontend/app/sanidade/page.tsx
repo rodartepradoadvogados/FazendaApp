@@ -9,8 +9,8 @@ import {
   fetchResultadosExame, atualizarResultadoExame, type ExameResultado,
   fetchMedicamentos, fetchPessoas, cadastrarPreventivo,
   fetchRastreabilidadeSanitaria, type LinhaRastreabilidadeSanitaria,
-  fetchOcorrencias, fetchDetalheOcorrencia, marcarEventoRealizado,
-  type EstadoOcorrencia, type LinhaOcorrencia, type IndicadoresOcorrencias, type DetalheOcorrencia,
+  fetchOcorrencias, fetchDetalheOcorrencia, marcarEventoRealizado, fetchAnimais,
+  type EstadoOcorrencia, type LinhaOcorrencia, type IndicadoresOcorrencias, type DetalheOcorrencia, type AnimalOcorrencia,
   type ChecklistItemOcorrencia, type RealizadoExtras,
 } from "@/lib/api";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -22,6 +22,7 @@ import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { MultiFiltro, TabBar, Indicador, SecaoRecolhivel } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
+import { AnimalPicker } from "@/components/AnimalPicker";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import type { AnimalRow } from "@/components/AnimalModal";
 import { HistoricoPreventivoView } from "@/components/sanidade/HistoricoPreventivoView";
@@ -989,11 +990,49 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar }: { cronogramaId: numbe
   const [aba, setAba] = useState<"animais" | "checklist">("checklist");
   const [salvandoItem, setSalvandoItem] = useState<number | null>(null);
   const [horarioValor, setHorarioValor] = useState<Record<number, string>>({});
+  const [salvandoAnimal, setSalvandoAnimal] = useState<number | "novo" | null>(null);
+  const [animalNovo, setAnimalNovo] = useState("");
+  const [animaisCadastro, setAnimaisCadastro] = useState<AnimalRow[]>([]);
 
   const carregar = useCallback(() => {
     fetchDetalheOcorrencia(cronogramaId).then(setDet).catch((e) => setErro(e.message));
   }, [cronogramaId]);
   useEffect(carregar, [carregar]);
+  useEffect(() => { fetchAnimais().then(setAnimaisCadastro).catch(() => {}); }, []);
+
+  // Inclusão/exclusão/remoção de animal — pedido do usuário em 13/09/2026
+  // ("montar o front pra adicionar ou remover animais manualmente"): o motor
+  // (decidir_animal/incluir_animal_manual/remover_animal, em
+  // fazenda/rules/cronograma_sanitario.py) já existia; faltava só o botão.
+  async function decidirAnimal(animalId: number, incluir: boolean) {
+    setSalvandoAnimal(animalId); setErro(null);
+    try {
+      await marcarEventoRealizado(`cronograma_sanitario_animal_${animalId}`, undefined, undefined, { incluir });
+      carregar();
+    } catch (e: any) { setErro(e.message); }
+    finally { setSalvandoAnimal(null); }
+  }
+
+  async function removerAnimal(a: AnimalOcorrencia) {
+    if (!window.confirm(`Remover a matriz ${a.numero_matriz} desta ocorrência?`)) return;
+    setSalvandoAnimal(a.id); setErro(null);
+    try {
+      await marcarEventoRealizado(`cronograma_sanitario_remover_animal_${a.id}`);
+      carregar();
+    } catch (e: any) { setErro(e.message); }
+    finally { setSalvandoAnimal(null); }
+  }
+
+  async function incluirAnimalManual() {
+    if (!animalNovo) return;
+    setSalvandoAnimal("novo"); setErro(null);
+    try {
+      await marcarEventoRealizado(`cronograma_sanitario_incluir_manual_${cronogramaId}`, undefined, undefined, { numero_matriz: animalNovo });
+      setAnimalNovo("");
+      carregar();
+    } catch (e: any) { setErro(e.message); }
+    finally { setSalvandoAnimal(null); }
+  }
 
   async function agir(itemId: number, extras: RealizadoExtras) {
     setSalvandoItem(itemId);
@@ -1072,8 +1111,17 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar }: { cronogramaId: numbe
 
       {aba === "animais" && (
         <div className="card">
+          <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+            <div style={{ minWidth: 260, flex: "1 1 260px" }}>
+              <AnimalPicker animais={animaisCadastro} value={animalNovo} onChange={setAnimalNovo} placeholder="Incluir animal manualmente…" />
+            </div>
+            <button className="btn-secondary" style={{ fontSize: "0.78rem" }} disabled={!animalNovo || salvandoAnimal === "novo"} onClick={incluirAnimalManual}>
+              {salvandoAnimal === "novo" ? "Incluindo…" : "+ Incluir"}
+            </button>
+          </div>
+          {erro && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>{erro}</span></div>}
           <table className="fazenda-table">
-            <thead><tr><th>Nº</th><th>Status</th><th>Sugerido em</th><th>Decidido em</th></tr></thead>
+            <thead><tr><th>Nº</th><th>Status</th><th>Sugerido em</th><th>Decidido em</th><th></th></tr></thead>
             <tbody>
               {det.animais.map((a) => (
                 <tr key={a.id}>
@@ -1081,9 +1129,21 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar }: { cronogramaId: numbe
                   <td style={{ fontSize: "0.78rem" }}>{{ sugerido: "Sugerido", incluido: "Incluído", excluido: "Excluído", aplicado: "Aplicado" }[a.status]}</td>
                   <td style={{ fontSize: "0.78rem" }}>{formatDate(a.data_sugestao)}</td>
                   <td style={{ fontSize: "0.78rem" }}>{a.data_decisao ? formatDate(a.data_decisao) : "—"}</td>
+                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                    {a.status === "sugerido" ? (
+                      <span className="flex items-center gap-2" style={{ justifyContent: "flex-end" }}>
+                        <button className="btn-secondary" disabled={salvandoAnimal === a.id} style={{ fontSize: "0.72rem" }} onClick={() => decidirAnimal(a.id, true)}>Incluir</button>
+                        <button className="btn-ghost" disabled={salvandoAnimal === a.id} style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => decidirAnimal(a.id, false)}>Excluir</button>
+                      </span>
+                    ) : a.status === "incluido" ? (
+                      <button className="btn-ghost" disabled={salvandoAnimal === a.id} style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => removerAnimal(a)}>
+                        {salvandoAnimal === a.id ? "Removendo…" : "Remover"}
+                      </button>
+                    ) : null}
+                  </td>
                 </tr>
               ))}
-              {!det.animais.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum animal ainda.</td></tr>}
+              {!det.animais.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum animal ainda — inclua um manualmente acima.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1401,12 +1461,21 @@ function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro }: { ca
   const [novaRegraId, setNovaRegraId] = useState("");
   const [criando, setCriando] = useState(false);
   const [msgNovo, setMsgNovo] = useState<string | null>(null);
+  // Abre o detalhe da ocorrência (Animais/Checklist) ao clicar numa linha —
+  // pedido do usuário em 13/09/2026: reaproveita o mesmo `DetalheOcorrenciaView`
+  // já usado por `OcorrenciasView` (tela escondida), sem reexibir aquela tela
+  // inteira — só o essencial (consultar/incluir/remover animal) pela aba real.
+  const [aberto, setAberto] = useState<number | null>(null);
 
   const carregar = useCallback(() => {
     fetchCronogramasSanitarios(calendarioIdInicial ? { calendarioId: calendarioIdInicial } : undefined)
       .then(setCronogramas).catch((e) => setError(e.message));
   }, [calendarioIdInicial]);
   useEffect(() => { carregar(); }, [carregar]);
+
+  if (aberto != null) {
+    return <DetalheOcorrenciaView cronogramaId={aberto} onVoltar={() => { setAberto(null); carregar(); }} />;
+  }
   useEffect(() => {
     fetchCalendarioSanitario().then((rs: RegraCalendario[]) => setRegrasCronograma(rs.filter((r) => r.usa_cronograma))).catch(() => {});
   }, []);
@@ -1493,11 +1562,11 @@ function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro }: { ca
             <ThOrdenavel label="Data prevista" campo="data_evento" coluna={coluna} dir={dir} ordenar={ordenar} />
             <ThOrdenavel label="Status" campo="status" coluna={coluna} dir={dir} ordenar={ordenar} />
             <ThOrdenavel label="Veterinário" campo="veterinario_nome" coluna={coluna} dir={dir} ordenar={ordenar} />
-            <th>Sugerido</th><th>Incluído</th><th>Excluído</th><th>Aplicado</th>
+            <th>Sugerido</th><th>Incluído</th><th>Excluído</th><th>Aplicado</th><th></th>
           </tr></thead>
           <tbody>
             {linhasOrdenadas.map((c) => (
-              <tr key={c.id}>
+              <tr key={c.id} className="clickable" style={{ cursor: "pointer" }} onClick={() => setAberto(c.id)} title="Ver/incluir/remover animais desta ocorrência">
                 <td style={{ fontWeight: 700 }}>{c.evento_sanitario_nome}</td>
                 <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{c.categoria_alvo || "—"}</td>
                 <td style={{ fontSize: "0.78rem" }}>{formatDate(c.data_evento)}{c.data_original && c.data_original !== c.data_evento ? <span style={{ color: "var(--text-muted)", fontSize: "0.68rem" }}> (adiado, era {formatDate(c.data_original)})</span> : null}</td>
@@ -1507,9 +1576,10 @@ function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro }: { ca
                 <td style={{ fontSize: "0.78rem", textAlign: "center" }}>{c.animais_contagem?.incluido ?? 0}</td>
                 <td style={{ fontSize: "0.78rem", textAlign: "center" }}>{c.animais_contagem?.excluido ?? 0}</td>
                 <td style={{ fontSize: "0.78rem", textAlign: "center" }}>{c.animais_contagem?.aplicado ?? 0}</td>
+                <td><ChevronRight size={16} style={{ color: "var(--text-muted)" }} /></td>
               </tr>
             ))}
-            {!linhasOrdenadas.length && <tr><td colSpan={9} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum cronograma no filtro.</td></tr>}
+            {!linhasOrdenadas.length && <tr><td colSpan={10} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum cronograma no filtro.</td></tr>}
           </tbody>
         </table>
       </div>
