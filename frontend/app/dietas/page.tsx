@@ -38,7 +38,7 @@ export default function ListaSimulacoesPage() {
       status: (filtroStatus as StatusSimulacao) || undefined,
     })
       .then(setItens)
-      .catch((e) => setErro(e.message));
+      .catch((e) => { setItens([]); setErro(e.message); });
   }
 
   useEffect(() => { carregar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filtroLote, filtroStatus]);

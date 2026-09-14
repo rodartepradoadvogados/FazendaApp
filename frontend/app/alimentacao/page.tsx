@@ -253,10 +253,10 @@ export default function AlimentacaoPage() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Dieta por lote cruzada com o efetivo — consumo por cabeça, por lote/dia e por lote/trato ({TRATOS} tratos/dia).</p>
       </div>
 
-      {/* Erro de fetchAlimentacao só diz respeito às 3 abas que dependem dela
-          (consumo/plano/necessidade) — a aba de dieta usa fetchDietas por
-          conta própria e não deve mostrar um aviso que não é dela. */}
-      {error && aba !== "nova_dieta" && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados de alimentação</a>.</span></div>}
+      {/* Erro de fetchAlimentacao só diz respeito às 2 abas que dependem dela
+          (consumo/lote). A aba de dieta usa fetchDietas e a de necessidade
+          mensal usa fetchNecessidadeMensal, cada uma com erro próprio. */}
+      {error && (aba === "consumo" || aba === "lote") && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados de alimentação</a>.</span></div>}
 
       <StatusBaixa />
 

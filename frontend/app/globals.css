@@ -49,7 +49,7 @@
      TabsShell, InsightsLayout...) soma este único token em vez de repetir o
      calc(...+...) em cada arquivo — um 3º banner fixo no futuro só precisa
      entrar nesta soma, sem tocar em mais nada. */
-  --faixas-topo-h: calc(var(--suporte-banner-h, 0px) + var(--fazenda-teste-banner-h, 0px));
+  --faixas-topo-h: calc(var(--suporte-banner-h, 0px) + var(--fazenda-teste-banner-h, 0px) + var(--offline-banner-h, 0px));
 }
 
 /* ── Design system tokens ──
@@ -966,6 +966,17 @@ html, body { max-width: 100%; overflow-x: hidden; }
 @media (min-width: 768px) {
   .farm-shell-h {
     height: calc(100vh - var(--faixas-topo-h, 0px));
+  }
+}
+/* Mobile (<768px): a casca não trava em altura fixa — o drawer é fixed e o
+   conteúdo rola naturalmente. min-height:100dvh cobre a viewport dinâmica
+   (a barra do navegador móvel encolhe/expande); o padding-bottom com
+   safe-area-inset-bottom evita que o rodapé fique atrás da barra de gestos
+   em telas com indicador de home. */
+@media (max-width: 767px) {
+  .farm-shell-h {
+    min-height: 100dvh;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 }
 
