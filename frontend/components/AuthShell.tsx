@@ -16,6 +16,7 @@ import { NewsShell } from "@/components/news/NewsShell";
 import { SubNavTabs } from "@/components/SubNavTabs";
 import { SuporteBanner } from "@/components/SuporteBanner";
 import { FazendaTesteBanner } from "@/components/FazendaTesteBanner";
+import { OfflineBanner } from "@/components/OfflineBanner";
 
 // Rotas públicas: acessíveis sem login, sem redirecionar para /login.
 // News é o blog da fazenda — leitura livre para qualquer visitante,
@@ -97,7 +98,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // pelo próprio atalho na Sidebar, numa aba nova de verdade do navegador
   // (ver Sidebar.tsx). Painel CowData e Painel do Contador são checados à
   // parte acima: têm a própria casca bespoke, não a desta.
-  const ROTAS_INSIGHTS = ["/indicadores", "/relatorios", "/analise-relatorios", "/usuarios", "/portal", "/configuracoes", "/parametros", "/news-admin"];
+  const ROTAS_INSIGHTS = ["/indicadores", "/relatorios", "/analise-relatorios", "/usuarios", "/portal", "/configuracoes", "/parametros", "/news-admin", "/documentos-central"];
   const ehInsightsPortal = ROTAS_INSIGHTS.some((r) => path === r || path.startsWith(r + "/"));
   // Portal "Formulação de Dietas" (/dietas): casca própria
   // (components/dietas/DietasLayout.tsx via app/dietas/layout.tsx), nunca a
@@ -402,6 +403,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
           arquivo). */}
       <FazendaTesteBanner />
       <SuporteBanner />
+      <OfflineBanner />
       {conteudo}
     </>
   );

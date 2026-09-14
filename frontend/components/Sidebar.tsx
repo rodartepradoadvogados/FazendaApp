@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Calendar,
   Heart,
@@ -118,6 +118,10 @@ export function Sidebar() {
   const path = usePathname();
   const [online, setOnline] = useState<boolean | null>(null);
   const [aberto, setAberto] = useState(false); // drawer no mobile
+  const botaoMenuRef = useRef<HTMLButtonElement>(null);
+  const fecharMenuRef = useRef<HTMLButtonElement>(null);
+  const asideRef = useRef<HTMLElement>(null);
+  const jaMontouRef = useRef(false);
   // Recolher a barra inteira (só desktop) para ícones — preferência do
   // usuário, persistida entre sessões. Começa expandida (false) para não
   // "piscar" recolhida no primeiro paint; sincroniza com o localStorage já
@@ -208,6 +212,33 @@ export function Sidebar() {
   // Fecha o menu ao trocar de página (no mobile).
   useEffect(() => { setAberto(false); }, [path]);
 
+  // A11y do drawer: Esc fecha; Tab cicla o foco dentro dele (focus-trap);
+  // foco inicial vai para o botão fechar e, ao fechar, volta ao hambúrguer.
+  useEffect(() => {
+    if (!aberto) return;
+    const aside = asideRef.current;
+    const aoTeclar = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { setAberto(false); return; }
+      if (e.key !== "Tab" || !aside) return;
+      const focaveis = Array.from(aside.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      ));
+      if (!focaveis.length) return;
+      const primeiro = focaveis[0];
+      const ultimo = focaveis[focaveis.length - 1];
+      if (e.shiftKey && document.activeElement === primeiro) { e.preventDefault(); ultimo.focus(); }
+      else if (!e.shiftKey && document.activeElement === ultimo) { e.preventDefault(); primeiro.focus(); }
+    };
+    document.addEventListener("keydown", aoTeclar);
+    return () => document.removeEventListener("keydown", aoTeclar);
+  }, [aberto]);
+
+  useEffect(() => {
+    if (!jaMontouRef.current) { jaMontouRef.current = true; return; }
+    if (aberto) fecharMenuRef.current?.focus();
+    else botaoMenuRef.current?.focus();
+  }, [aberto]);
+
   const statusLabel =
     online === null ? "Verificando..." : online ? "API conectada" : "API offline";
   const statusColor =
@@ -229,7 +260,8 @@ export function Sidebar() {
           paddingTop: "env(safe-area-inset-top, 0px)",
           background: "var(--sidebar-bg)", borderBottom: "1px solid var(--sidebar-border)",
         }}>
-        <button onClick={() => setAberto(true)} aria-label="Abrir menu" title="Abrir o menu de navegação"
+        <button ref={botaoMenuRef} onClick={() => setAberto(true)} aria-label="Abrir menu" title="Abrir o menu de navegação"
+          aria-expanded={aberto} aria-controls="menu-mobile"
           style={{ background: "none", border: "none", color: "var(--sidebar-fg)", cursor: "pointer", display: "flex" }}>
           <Menu size={22} />
         </button>
@@ -250,15 +282,16 @@ export function Sidebar() {
         // abrir o menu (a barra fixa de fora, acima, já tinha essa proteção —
         // ver comentário mais abaixo — mas o CONTEÚDO do drawer em si não
         // tinha). No desktop o valor é 0 (sem notch), então não muda nada lá.
-        style={{ background: "var(--sidebar-bg)", borderRight: "1px solid var(--sidebar-border)", position: "relative", paddingTop: "env(safe-area-inset-top, 0px)" }}
+        style={{ background: "var(--sidebar-bg)", borderRight: "1px solid var(--sidebar-border)", paddingTop: "env(safe-area-inset-top, 0px)" }}
         // Recolhida só vale a partir do breakpoint md — no mobile o drawer
         // sempre abre na largura cheia (w-56 base), independente da
         // preferência de recolher salva (essa é só para a barra fixa do
         // desktop; no mobile o menu já fecha inteiro depois de navegar).
-        className={`w-56 ${recolhida ? "md:w-[52px]" : "md:w-[196px]"} flex flex-col flex-shrink-0 h-full fixed md:static inset-y-0 left-0 z-50 transform transition-[width,transform] duration-200 ${aberto ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}
+        ref={asideRef} id="menu-mobile" role="dialog" aria-modal="true" aria-label="Menu de navegação"
+        className={`w-56 ${recolhida ? "md:w-[52px]" : "md:w-[196px]"} flex flex-col flex-shrink-0 h-full fixed md:relative inset-y-0 left-0 z-50 transform transition-[width,transform] duration-200 ${aberto ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}
       >
       {/* Botão fechar — só no mobile */}
-      <button onClick={() => setAberto(false)} aria-label="Fechar menu" title="Fechar o menu de navegação"
+      <button ref={fecharMenuRef} onClick={() => setAberto(false)} aria-label="Fechar menu" title="Fechar o menu de navegação"
         className="md:hidden"
         style={{ position: "absolute", top: 12, right: 12, background: "none", border: "none", color: "var(--sidebar-muted)", cursor: "pointer" }}>
         <X size={20} />

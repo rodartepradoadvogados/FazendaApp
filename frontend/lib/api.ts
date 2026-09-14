@@ -1317,15 +1317,37 @@ export function authFetch(url: string, opts: RequestInit = {}): Promise<Response
       if (precisaEscolherConta) location.href = "/escolher-conta";
     }
     return res;
+  }).catch((e) => {
+    // Falha de rede (fetch rejeitado) — NÃO é HTTP: a requisição nem chegou a
+    // receber resposta. Diferente do 401 acima, aqui a sessão NÃO é descartada:
+    // só avisamos a UI (banner de "sem conexão" via evento) e re-propaga o erro
+    // tipado para quem chamou. Não toca em getToken()/logout() nem no 409.
+    const erro = netError(e);
+    if (erro instanceof NetworkError && typeof window !== "undefined") {
+      window.dispatchEvent(new Event("cowdata:offline"));
+    }
+    throw erro;
   });
+}
+
+// Erro tipado para "a rede caiu" (fetch rejeitado), distinto de HTTP 4xx/5xx.
+// Estende TypeError (e não Error) de propósito: os loops de retry existentes
+// (fetchComRetry) checam `instanceof TypeError` para decidir se vale tentar de
+// novo — NetworkError precisa continuar entrando nesse grupo.
+export class NetworkError extends TypeError {
+  constructor(mensagem: string) {
+    super(mensagem);
+    this.name = "NetworkError";
+  }
 }
 
 // Traduz o "Failed to fetch" (erro de rede do navegador) numa mensagem acionável.
 // Esse erro NÃO é HTTP — significa que a requisição não chegou a receber resposta:
 // API fora do ar, NEXT_PUBLIC_API_URL não configurada/errada, ou CORS bloqueado.
 function netError(e: unknown): Error {
+  if (e instanceof NetworkError) return e;
   if (e instanceof TypeError) {
-    return new Error(
+    return new NetworkError(
       `Sem conexão com a API (${API}). ` +
         `Verifique se o backend está no ar e se NEXT_PUBLIC_API_URL aponta para ele (e se o CORS libera este site).`
     );
