@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>colorize-historico-reproducao-producao</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+:root{
+  --bg:#F4F6F9; --surface:#FFFFFF; --surface-2:#F9FAFB;
+  --border:#DCE3EA; --border-strong:#C3CDD8;
+  --text:#1F2937; --text-muted:#6B7280;
+  --vinho:#0E2A47; --vinho-light:#416180; --vinho-dark:#0A1F36;
+  --dourado:#8A6D2F; --dourado-light:#C9A44C;
+  --green:#2E7D52; --green-light:#4CAF80; --red:#C0392B; --amber:#D97706; --blue:#1E6FA8;
+  --cat-reproducao:#8B7FF0; --cat-sanidade:#4E7A5A; --cat-alimentacao:#E0A63C;
+  --cat-gestao:#5B8FB0; --cat-financeiro:#7A2233; --cat-estoque:#C98A2A;
+  --cat-recria:#B0894A; --cat-acesso:#9A5560; --cat-producao:#1E6FA8;
+  --r-sm:2px; --r-md:2px; --r-lg:2px; --shadow-sm:0 1px 4px rgba(20,30,45,.10);
+  --review-bg:#EDEFF2; --review-fg:#3A4250; --review-border:#D6DAE1; --review-accent:#0E2A47;
+}
+body{margin:0;background:var(--review-bg);color:var(--text);font-family:'Barlow',Inter,sans-serif;
+  padding-inline:max(16px,calc((100vw - 1180px)/2));padding-block:20px 48px}
+h1,h2,h3,.section-label{font-family:'Barlow Condensed',Inter,sans-serif}
+.review-bar{max-width:1180px;margin:0 auto 18px;padding:.85rem 1.1rem;background:var(--review-bg);border:1px solid var(--review-border);border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+.review-tag{font-size:.68rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--review-fg)}
+.review-tag b{color:var(--review-accent)}
+.review-switch{display:inline-flex;border:1px solid var(--review-border);border-radius:999px;padding:3px;gap:2px;background:var(--surface)}
+.review-switch button{font-family:'Barlow Condensed',Inter,sans-serif;font-weight:700;font-size:.85rem;padding:.4rem 1.1rem;border-radius:999px;border:none;cursor:pointer;background:transparent;color:var(--text-muted)}
+.review-switch button.active{background:var(--vinho);color:#fff}
+.review-note{max-width:1180px;margin:0 auto 18px;font-size:.82rem;color:var(--review-fg);line-height:1.5}
+.review-note b{color:var(--review-accent)}
+.review-note code{background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:.05rem .35rem;font-size:.78rem}
+.stage{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:1.1rem}
+.card-plain{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:1.2rem 1.3rem}
+.section-label{font-size:.68rem;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--text-muted);margin:0 0 .7rem;display:flex;align-items:center;gap:.5rem}
+.section-label .rule{flex:1;height:1px;background:var(--border)}
+.state-panel{display:none}.state-panel.active{display:block}
+.muted{color:var(--text-muted)} .small{font-size:.78rem} .foot{margin-top:.5rem;font-size:.76rem;color:var(--text-muted);line-height:1.45}
+.b{font-weight:700} .tnum{font-variant-numeric:tabular-nums}
+.kpi-mini{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--vinho);border-radius:var(--r-sm);padding:.55rem .7rem}
+.kpi-mini .v{font-size:1.15rem;font-weight:800;color:var(--vinho);font-variant-numeric:tabular-nums;line-height:1}
+.kpi-mini .l{font-family:'Barlow Condensed';font-size:.62rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);margin-top:.18rem}
+.kpi-mini.destaque{border-left-color:var(--dourado)} .kpi-mini.destaque .v{color:var(--dourado)}
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.6rem}
+.kpi-chip{width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--c,var(--dourado)) 16%,transparent);color:var(--c,var(--dourado));font-size:.7rem;font-weight:800}
+.filters{display:flex;gap:.7rem;flex-wrap:wrap;align-items:flex-end}
+.field{display:flex;flex-direction:column;gap:.28rem;font-size:.8rem}
+.field label{font-family:'Barlow Condensed';font-size:.66rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted)}
+.field input,.field select{background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-sm);padding:.45rem .6rem;font-size:.85rem;color:var(--text);font-family:inherit}
+.btn{display:inline-flex;align-items:center;gap:.4rem;border-radius:var(--r-sm);padding:.45rem 1rem;font-size:.85rem;font-weight:600;cursor:pointer;font-family:inherit;border:1px solid transparent}
+.btn-primary{background:var(--vinho);color:#fff;border-color:var(--vinho)}
+.btn-primary-gold{background:var(--dourado);color:#fff;border-color:var(--dourado)}
+.btn-ghost{background:transparent;color:var(--text-muted);border-color:var(--border)}
+.badge{display:inline-flex;align-items:center;gap:.3rem;font-size:.74rem;font-weight:600;padding:.12rem .5rem;border-radius:999px}
+.badge.ok{background:rgba(46,125,82,.14);color:var(--green);border:1px solid var(--green)}
+.badge.warn{background:rgba(217,119,6,.14);color:var(--amber);border:1px solid var(--amber)}
+.badge.bad{background:rgba(192,57,43,.14);color:var(--red);border:1px solid var(--red)}
+.tabs{display:flex;gap:.4rem;margin-bottom:.7rem;flex-wrap:wrap}
+.tab{font-family:'Barlow Condensed';font-size:.78rem;font-weight:700;padding:.35rem .9rem;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer}
+.tab.ativa{background:var(--vinho);border-color:var(--vinho);color:var(--dourado-light)}
+/* colorize helpers */
+.swatch{display:inline-flex;align-items:center;gap:.5rem;border:1px solid var(--border);border-radius:var(--r-sm);padding:.4rem .6rem;background:var(--surface);font-size:.78rem}
+.swatch .chip{width:18px;height:18px;border-radius:4px;flex-shrink:0}
+.roles{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:.5rem}
+.role-card{border:1px solid var(--border);border-radius:var(--r-sm);padding:.6rem .7rem;background:var(--surface)}
+.role-card .rn{font-family:'Barlow Condensed';font-weight:700;font-size:.76rem;letter-spacing:.08em;text-transform:uppercase;margin-bottom:.3rem}
+.role-card .rd{font-size:.76rem;color:var(--text-muted);line-height:1.4}
+.ctable{width:100%;border-collapse:collapse;font-size:.8rem}
+.ctable th{background:var(--surface-2);text-align:left;padding:5px 8px;font-family:'Barlow Condensed';font-size:.64rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--vinho);border-bottom:1px solid var(--border-strong)}
+.ctable td{padding:6px 8px;border-bottom:1px solid var(--border)}
+.pal-row{display:grid;grid-template-columns:repeat(3,1fr);gap:.7rem}
+.pal-col{border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden}
+.pal-head{font-family:'Barlow Condensed';font-weight:700;font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;color:#fff;padding:.5rem .7rem;display:flex;align-items:center;justify-content:space-between}
+.pal-body{padding:.7rem;background:var(--surface);display:flex;flex-direction:column;gap:.45rem}
+.pal-sw{display:flex;gap:.35rem;align-items:center;font-size:.74rem}
+.pal-dot{width:16px;height:16px;border-radius:4px}
+.ratio{font-family:ui-monospace,monospace;font-size:.74rem}
+.pass{color:var(--green);font-weight:700} .fail{color:var(--red);font-weight:700}
+</style>
+</head>
+<body>
+<div class="review-bar">
+  <span class="review-tag">Colorize (Etapa 2) &middot; <b>Histórico — token de categoria no KPI</b></span>
+  <div class="review-switch" role="tablist">
+    <button class="stbtn active" data-state="atual">Polido</button>
+    <button class="stbtn" data-state="proposta">Colorizado</button>
+  </div>
+</div>
+<p class="review-note" id="note-atual">Polido: KPI reprodutivo ainda com azul de Produção.</p>
+<p class="review-note" id="note-proposta" hidden>Colorizado: roxo reprodutivo no chip/filete; ouro só no destaque.</p>
+<div class="stage">
+  <div class="state-panel active" id="panel-atual">
+<div class="card-plain"><div class="section-label">1. KPI reprodutivo com token de Produção (azul)<span class="rule"></span></div>
+  <div class="kpi-row" style="max-width:560px">
+    <div class="kpi-mini" style="border-left-color:var(--blue)"><div class="v" style="color:var(--blue)">41%</div><div class="l">Concepção/serviço</div></div>
+    <div class="kpi-mini"><div class="v">17,2</div><div class="l">DEL</div></div>
+  </div>
+  <p class="foot">Azul = &ldquo;Produção&rdquo;. Um indicador reprodutivo usando azul quebra o mapeamento de categoria.</p>
+</div></div>
+  <div class="state-panel" id="panel-proposta">
+<div class="card-plain"><div class="section-label">1. KPI na categoria certa + ouro só no destaque<span class="rule"></span></div>
+  <div class="kpi-row" style="max-width:560px">
+    <div class="kpi-mini" style="border-left-color:var(--cat-reproducao)"><div class="v" style="color:var(--cat-reproducao)">41%</div><div class="l"><span class="kpi-chip" style="--c:var(--cat-reproducao)">&#9830;</span> Concepção/serviço</div></div>
+    <div class="kpi-mini"><div class="v">17,2</div><div class="l">DEL</div></div>
+  </div>
+  <p class="foot">Reprodutivo = roxo <code>#8B7FF0</code> (chip + filete). Azul fica só em Produção. Ouro (destaque) só em indicadores reprodutivos/IATF que merecem ênfase.</p>
+</div></div>
+</div>
+
+<script>
+var buttons=Array.prototype.slice.call(document.querySelectorAll('.stbtn'));
+var panels={atual:document.getElementById('panel-atual'),proposta:document.getElementById('panel-proposta')};
+var notes={atual:document.getElementById('note-atual'),proposta:document.getElementById('note-proposta')};
+function setState(s){buttons.forEach(function(b){b.classList.toggle('active',b.dataset.state===s)});
+Object.keys(panels).forEach(function(k){panels[k].classList.toggle('active',k===s)});
+Object.keys(notes).forEach(function(k){notes[k].hidden=k!==s});}
+buttons.forEach(function(b){b.addEventListener('click',function(){setState(b.dataset.state)})});
+</script>
+
+</body>
+</html>

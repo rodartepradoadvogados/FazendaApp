@@ -198,6 +198,9 @@ export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico =
     : [];
   const diaFinal = moldeSelecionado ? diaInseminacao(diasHormonioMolde) : DIA_INSEMINACAO_PADRAO;
   const nomeProtocolo = nomeAutoIatf(d0, nomeBase, diaFinal);
+  // Mesma conta de `salvar()` abaixo — recap e estado do botão sempre em
+  // sincronia com o que realmente será enviado.
+  const totalAnimaisSelecionados = emLote ? (vinculoProtocolo === "lote" ? selLote.size : sel.size) : (um ? 1 : 0);
   // Hormônios efetivamente enviados: do molde (etapa por etapa, direto —
   // mesma resolução de estoque por princípio ativo que já acontece na Agenda
   // ao confirmar o dia) quando um molde foi escolhido; digitados na hora
@@ -404,10 +407,21 @@ export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico =
           )}
         </>
       )}
+      {modo === "novo" && (
+        <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+          <table className="fazenda-table">
+            <tbody>
+              <tr><td>Animais selecionados</td><td style={{ fontWeight: 700, textAlign: "right" }}>{totalAnimaisSelecionados}</td></tr>
+              <tr><td>Protocolo</td><td style={{ fontWeight: 700, textAlign: "right" }}>{nomeProtocolo || nomeBase}</td></tr>
+              <tr><td>Início (D0)</td><td style={{ fontWeight: 700, textAlign: "right" }}>{d0 ? addDias(d0, 0) : "—"}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      )}
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={() => salvar()} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        <button className="btn-primary" onClick={() => salvar()} disabled={salvando || totalAnimaisSelecionados === 0}>{salvando ? "Salvando…" : "Salvar"}</button>
         {podeForcar && (
           <button className="btn-secondary" onClick={() => salvar(true)} disabled={salvando}
             title="Lança o protocolo assumindo a situação descrita acima">

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>animate-sistema</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+:root{
+  --bg:#F4F6F9; --surface:#FFFFFF; --surface-2:#F9FAFB;
+  --border:#DCE3EA; --border-strong:#C3CDD8;
+  --text:#1F2937; --text-muted:#6B7280;
+  --vinho:#0E2A47; --vinho-light:#416180; --vinho-dark:#0A1F36;
+  --dourado:#8A6D2F; --dourado-light:#C9A44C;
+  --green:#2E7D52; --green-light:#4CAF80; --red:#C0392B; --amber:#D97706; --blue:#1E6FA8;
+  --r-sm:2px; --r-md:2px; --r-lg:2px; --shadow-sm:0 1px 4px rgba(20,30,45,.10);
+  --review-bg:#EDEFF2; --review-fg:#3A4250; --review-border:#D6DAE1; --review-accent:#0E2A47;
+  --font-body:'Archivo',Inter,sans-serif; --font-heading:'Archivo',Inter,sans-serif;
+  --ease-out:cubic-bezier(0.16,1,0.3,1);
+}
+body{margin:0;background:var(--review-bg);color:var(--text);font-family:var(--font-body);
+  padding-inline:max(16px,calc((100vw - 1180px)/2));padding-block:20px 48px}
+.review-bar{max-width:1180px;margin:0 auto 18px;padding:.85rem 1.1rem;background:var(--review-bg);border:1px solid var(--review-border);border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+.review-tag{font-size:.68rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--review-fg)}
+.review-tag b{color:var(--review-accent)}
+.review-switch{display:inline-flex;border:1px solid var(--review-border);border-radius:999px;padding:3px;gap:2px;background:var(--surface)}
+.review-switch button{font-family:var(--font-heading);font-weight:700;font-size:.85rem;padding:.4rem 1.1rem;border-radius:999px;border:none;cursor:pointer;background:transparent;color:var(--text-muted)}
+.review-switch button.active{background:var(--vinho);color:#fff}
+.review-note{max-width:1180px;margin:0 auto 18px;font-size:.82rem;color:var(--review-fg);line-height:1.5}
+.review-note b{color:var(--review-accent)}
+.review-note code{background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:.05rem .35rem;font-size:.78rem}
+.stage{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:1.1rem}
+.card-plain{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:1.2rem 1.3rem}
+.section-label{font-family:var(--font-heading);font-size:.68rem;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--text-muted);margin:0 0 .7rem;display:flex;align-items:center;gap:.5rem}
+.section-label .rule{flex:1;height:1px;background:var(--border)}
+.state-panel{display:none}.state-panel.active{display:block}
+.muted{color:var(--text-muted)} .small{font-size:.78rem} .foot{margin-top:.5rem;font-size:.76rem;color:var(--text-muted);line-height:1.45}
+.b{font-weight:700}
+/* tabela */
+.tbl{width:100%;border-collapse:collapse;font-size:.82rem;background:var(--surface)}
+.tbl th{background:var(--surface-2);text-align:left;padding:6px 8px;font-family:var(--font-heading);font-size:.64rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--vinho);border-bottom:1px solid var(--border-strong)}
+.tbl td{padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text)}
+/* demos animadas */
+.demo{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:1rem;position:relative;overflow:hidden}
+.demo-btn{display:inline-flex;align-items:center;gap:.4rem;border-radius:var(--r-sm);padding:.45rem 1rem;font-size:.85rem;font-weight:600;cursor:pointer;font-family:inherit;border:1px solid transparent;background:var(--vinho);color:#fff;transition:background .15s}
+.demo-btn:hover{background:color-mix(in srgb,var(--vinho) 85%,black)}
+.skeleton{height:3rem;border-radius:var(--r-sm);background:linear-gradient(90deg,var(--border) 25%,var(--surface-2) 50%,var(--border) 75%);background-size:200% 100%;animation:sk 1.6s ease-in-out infinite}
+.skeleton.parado{animation:none;background:var(--border)}
+@keyframes sk{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.pulse-dot{width:8px;height:8px;border-radius:50%;background:var(--green-light);display:inline-block;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.fade-in{opacity:0;transform:translateY(8px)}
+.fade-in.go{opacity:1;transform:translateY(0);transition:opacity .3s var(--ease-out),transform .3s var(--ease-out)}
+.row{display:flex;align-items:center;gap:.6rem;padding:.6rem .7rem;border:1px solid var(--border);border-radius:var(--r-sm);margin-bottom:.4rem}
+.row.flash{animation:flash .6s ease-out}
+@keyframes flash{0%{background:transparent}30%{background:color-mix(in srgb,var(--green) 28%,transparent)}100%{background:transparent}}
+.checkbox{width:22px;height:22px;border-radius:50%;border:2px solid var(--border-strong);display:inline-flex;align-items:center;justify-content:center;color:transparent;transition:all .18s;cursor:pointer}
+.checkbox.feito{border-color:var(--green);color:var(--green);background:rgba(46,125,82,.1)}
+.checkbox svg path{stroke-dasharray:20;stroke-dashoffset:20;transition:stroke-dashoffset .18s ease-out}
+.checkbox.feito svg path{stroke-dashoffset:0}
+.acc{border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden;margin-bottom:.4rem}
+.acc-h{background:var(--surface-2);padding:.5rem .7rem;font-family:var(--font-heading);font-weight:700;font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;cursor:pointer;display:flex;justify-content:space-between;align-items:center}
+.acc-h .chev{transition:transform .22s var(--ease-out)}
+.acc.aberto .chev{transform:rotate(180deg)}
+.acc-b{display:grid;grid-template-rows:0fr;transition:grid-template-rows .24s var(--ease-out),opacity .2s ease-out;opacity:0}
+.acc.aberto .acc-b{grid-template-rows:1fr;opacity:1}
+.acc-b>div{overflow:hidden;min-height:0}
+.modal-back{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:50}
+.modal-back.visivel{display:flex}
+.modal-caixa{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);box-shadow:var(--shadow-sm);padding:1.2rem;max-width:400px;width:90%}
+.modal-back.visivel .modal-caixa{animation:pop .22s var(--ease-out)}
+@keyframes pop{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}
+.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:var(--vinho);color:#fff;padding:.6rem 1rem;border-radius:var(--r-sm);font-size:.85rem;display:none;z-index:60;box-shadow:var(--shadow-sm)}
+.toast.visivel{display:block;animation:toast-in .22s var(--ease-out)}
+@keyframes toast-in{from{opacity:0;transform:translate(-50%,-14px)}to{opacity:1;transform:translate(-50%,0)}}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:320px;background:var(--surface);border-left:1px solid var(--border);box-shadow:var(--shadow-sm);transform:translateX(100%);transition:transform .24s var(--ease-out);z-index:55;padding:1rem}
+.drawer.aberto{transform:translateX(0)}
+.sheen{position:absolute;inset:0;background:linear-gradient(105deg,transparent 40%,rgba(255,255,255,.35) 50%,transparent 60%);transform:translateX(-100%)}
+.sheen.go{animation:sheen 0.9s var(--ease-out)}
+@keyframes sheen{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+/* meta card */
+.meta-card{border:1px solid var(--border);border-left:3px solid var(--dourado);border-radius:var(--r-sm);padding:1rem;background:var(--surface);position:relative;overflow:hidden}
+.meta-card.ouro{box-shadow:0 3px 12px rgba(138,109,47,.35)}
+@media (prefers-reduced-motion:reduce){
+  .skeleton{animation:none;background:var(--border)}
+  .pulse-dot{animation:none}
+  .fade-in{opacity:1;transform:none}
+  .acc-b{transition:none}
+  .drawer{transition:none}
+  .modal-back.visivel .modal-caixa{animation:none}
+  .toast.visivel{animation:none}
+  .sheen.go{animation:none;transform:none}
+  .checkbox svg path{transition:none}
+  .row.flash{animation:none}
+}
+</style>
+</head>
+<body>
+<div class="review-bar">
+  <span class="review-tag">Animate (Etapa 2) &middot; <b>Sistema de movimento (tese + taxonomia + tempo + foco)</b></span>
+  <div class="review-switch" role="tablist">
+    <button class="stbtn active" data-state="atual">Typeset</button>
+    <button class="stbtn" data-state="proposta">Animado</button>
+  </div>
+</div>
+<p class="review-note" id="note-atual">Typeset: movimento solto, sem princípio, sem escala de duração/easing.</p>
+<p class="review-note" id="note-proposta" hidden>Animado: tese (feedback/estado/continuidade + 1 foco), 5 tipos, escala de tempo, easing, reduced-motion, No-Lift.</p>
+<div class="stage">
+  <div class="state-panel active" id="panel-atual">
+<div class="card-plain"><div class="section-label">1. Movimento sem tese<span class="rule"></span></div>
+  <div class="small muted">Animações soltas (fade, shimmer, pop) sem um princípio único — cada tela escolhe à mão, sem escala de duração nem easing definido. Hover às vezes &ldquo;levanta&rdquo;, às vezes não.</div>
+</div></div>
+  <div class="state-panel" id="panel-proposta">
+<div class="card-plain"><div class="section-label">1. Tese de movimento<span class="rule"></span></div>
+  <div class="b" style="font-size:1.05rem;font-family:var(--font-heading)">Movimento = feedback, estado e continuidade. Um único momento autoral. Nunca decoração.</div>
+  <p class="foot" style="margin-top:.5rem">Cada animação tem um trabalho: confirmar uma ação, tornar um estado legível ou preservar a continuidade numa mudança de layout. O site ganha interatividade sem &ldquo;dívida de animação&rdquo; — e a única exceção à regra No-Lift (o card de meta batida) é o momento autoral que a tela inteira ganha.</p>
+</div>
+<div class="card-plain"><div class="section-label">2. Taxonomia — os 5 tipos que cabem (poucas, cobrindo tudo)<span class="rule"></span></div>
+  <table class="tbl"><thead><tr><th>Tipo</th><th>Trabalho</th><th>Vocabulário existente</th><th>Duração</th></tr></thead><tbody>
+    <tr><td class="b">Feedback</td><td>confirmar uma ação</td><td><code>.check-tracado</code> · <code>.flash-sucesso</code> · <code>.toast-*</code></td><td>100–150ms</td></tr>
+    <tr><td class="b">Estado</td><td>tornar legível (loading/notificação)</td><td><code>.skeleton</code> · <code>.pulse-dot</code></td><td>contínuo</td></tr>
+    <tr><td class="b">Continuidade</td><td>explicar mudança de layout/navegação</td><td><code>.linha-colapsavel</code> · <code>.painel-expansivel</code> · <code>.popup-*</code> · <code>.gaveta-*</code> · <code>.folha-inferior</code></td><td>200–500ms</td></tr>
+    <tr><td class="b">Revelação</td><td>entrada de conteúdo</td><td><code>.animate-in</code> · <code>.mob-item-cascata</code></td><td>200–300ms</td></tr>
+    <tr><td class="b">Momento focal</td><td>um acento autoral, merecido</td><td><code>meta-batida</code> (sheen, já aprovado no lote 1)</td><td>500–800ms</td></tr>
+  </tbody></table>
+  <p class="foot">Cinco tipos cobrem todo o site; cada um reusa um vocabulário que já existe — nada de técnica nova empilhada por espetáculo.</p>
+</div>
+<div class="card-plain"><div class="section-label">3. Escala de tempo + easing<span class="rule"></span></div>
+  <table class="tbl"><thead><tr><th>Faixa</th><th>Uso</th></tr></thead><tbody>
+    <tr><td>100–150ms</td><td>feedback imediato (check, flash, toast)</td></tr>
+    <tr><td>150–300ms</td><td>mudança de estado rotineira (fade, tab)</td></tr>
+    <tr><td>300–500ms</td><td>layout/overlay/transição de view (gaveta, modal, folha)</td></tr>
+    <tr><td>500–800ms</td><td>entrada focal autoral (sheen da meta batida)</td></tr>
+  </tbody></table>
+  <p class="foot">Easing de chegada <code>cubic-bezier(0.16, 1, 0.3, 1)</code> (desaceleração natural); saída sempre mais rápida que a entrada; nada de bounce/elástico por reflexo.</p>
+</div>
+<div class="card-plain"><div class="section-label">4. O momento autoral — card de meta batida (única exceção à No-Lift)<span class="rule"></span></div>
+  <div class="meta-card ouro" style="max-width:340px"><div class="section-label" style="color:var(--dourado)">Meta batida</div><div style="font-size:2rem;font-weight:800;color:var(--dourado);font-variant-numeric:tabular-nums">9 dias</div><div class="small muted">sem baixa por sanidade</div></div>
+  <p class="foot">Elevação de 3px + sombra dourada + um sheen que passa UMA vez ao carregar — o único ponto de &ldquo;festa&rdquo; da tela. A exceção é documentada no código e não se generaliza.</p>
+</div>
+<div class="card-plain"><div class="section-label">5. Regras de disciplina<span class="rule"></span></div>
+  <ul style="margin:0;padding-left:1.1rem;font-size:.85rem;line-height:1.7">
+    <li><b>No-Lift</b>: hover muda só cor (~15% mais escuro), nunca <code>translateY</code> nem sombra maior.</li>
+    <li><b>prefers-reduced-motion</b>: reduz/remove movimento espacial mas preserva opacidade, cor e estado — feedback de confirmação continua legível.</li>
+    <li>Conteúdo visível no estado padrão (falha de script nunca esconde a página).</li>
+    <li>Nada de animar <code>width/height/top/left/margin</code> — usa transform/grid.</li>
+    <li>Loops não essenciais param fora da tela.</li>
+  </ul>
+</div></div>
+</div>
+
+<script>
+var buttons=Array.prototype.slice.call(document.querySelectorAll('.stbtn'));
+var panels={atual:document.getElementById('panel-atual'),proposta:document.getElementById('panel-proposta')};
+var notes={atual:document.getElementById('note-atual'),proposta:document.getElementById('note-proposta')};
+function setState(s){buttons.forEach(function(b){b.classList.toggle('active',b.dataset.state===s)});
+Object.keys(panels).forEach(function(k){panels[k].classList.toggle('active',k===s)});
+Object.keys(notes).forEach(function(k){notes[k].hidden=k!==s});}
+buttons.forEach(function(b){b.addEventListener('click',function(){setState(b.dataset.state)})});
+</script>
+
+
+</body>
+</html>

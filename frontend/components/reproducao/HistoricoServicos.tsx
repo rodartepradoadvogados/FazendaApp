@@ -4,9 +4,9 @@
 // sub-aba única "Reprodução" (animal, data/ciclo, ordem de parto/tentativa,
 // método, diagnóstico), cada foco pré-filtrando/ajustando o que faz sentido.
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import { AlertTriangle, Filter, Pencil, Trash2, X } from "lucide-react";
+import { Filter, Pencil, Trash2, X } from "lucide-react";
 import { fetchServicosAnalise, atualizarServico, fetchInseminadores, fetchAnimais, ehAdmin, confirmarExclusao } from "@/lib/api";
-import { TabBar, MultiFiltro, Indicador } from "@/components/ui";
+import { TabBar, MultiFiltro, Indicador, TelaSkeleton, ErroCarregamento } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
@@ -261,9 +261,9 @@ export default function HistoricoServicos({ foco, titulo, descricao, animaisSel,
         <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>{descricao}</p>
       </div>
 
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados reprodutivos</a>.</span></div>}
+      {error && <ErroCarregamento mensagem={`Não foi possível carregar: ${error}.`} onRetry={carregar} linkHref="/configuracoes?aba=importar" linkLabel="Importar dados reprodutivos" />}
       {avisoExclusao && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{avisoExclusao}</p>}
-      {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {!regs && !error && <TelaSkeleton kpis={0} />}
 
       {regs && <>
         <div className="card mb-4">
@@ -336,7 +336,7 @@ export default function HistoricoServicos({ foco, titulo, descricao, animaisSel,
           // igualdade com Registros/Prenhezes/Perdas, que continuam do lado, menores.
           <div className="card mb-4" style={{ padding: "1.1rem 1.3rem" }}>
             <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Concepção / serviço</div>
-            <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--blue)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+            <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--cat-reproducao)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
               {taxa === null ? "—" : `${taxa}%`}
             </div>
             <div style={{ display: "flex", gap: "1.6rem", marginTop: ".9rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>

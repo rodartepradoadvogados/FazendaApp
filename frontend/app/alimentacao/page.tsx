@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { AlertTriangle, Wheat, ChevronDown, ChevronRight, ListOrdered, PieChart, CalendarClock, Package, FileSpreadsheet, FileText, NotebookPen } from "lucide-react";
 import { fetchAlimentacao, fetchNecessidadeMensal, fetchEstadoBaixaAlimentacao } from "@/lib/api";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
-import { MultiFiltro } from "@/components/ui";
+import { MultiFiltro, TelaSkeleton } from "@/components/ui";
 import { exportarMultiExcel, exportarFichaPDF, type SecaoFicha } from "@/lib/export";
 // A dieta em si (CadastrarNovaDieta) mudou de casa para cá — pedido original:
 // "tirar alimentação [de Lançamentos] e colocar dentro de Insumos e Sanidade
@@ -185,7 +185,7 @@ function NecessidadeMensal() {
   useEffect(() => { fetchNecessidadeMensal().then(setDados).catch((e) => setError(e.message)); }, []);
 
   if (error) return <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>;
-  if (!dados) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
+  if (!dados) return <TelaSkeleton />;
 
   const itens: any[] = dados.itens ?? [];
   return (
@@ -262,7 +262,7 @@ export default function AlimentacaoPage() {
 
       {aba === "nova_dieta" && <FormAlimentacaoDieta />}
 
-      {!a && !error && aba !== "nova_dieta" && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {!a && !error && aba !== "nova_dieta" && <TelaSkeleton kpis={0} />}
       {a && aba === "consumo" && <ConsumoDiario a={a} error={error} />}
       {a && aba === "lote" && <PlanoPorLote a={a} />}
       {aba === "mensal" && <NecessidadeMensal />}

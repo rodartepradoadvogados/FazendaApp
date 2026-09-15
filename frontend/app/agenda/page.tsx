@@ -20,7 +20,7 @@ import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import { Indicador, SecaoRecolhivel } from "@/components/ui";
+import { Indicador, SecaoRecolhivel, TelaSkeleton } from "@/components/ui";
 import { PainelLancarBst } from "@/components/PainelLancarBst";
 import { casaBusca } from "@/lib/busca";
 import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
@@ -2108,16 +2108,16 @@ export default function AgendaPage() {
           agora numa única linha compacta em vez do cartão empilhado — só
           reestilizado, nenhum estado/handler mudou. */}
       <div className="card mb-4 flex items-center flex-wrap" style={{ padding: "0.5rem 0.7rem", gap: "0.6rem" }}>
-        <span style={{ display: "flex", alignItems: "center", gap: "0.35rem", color: "var(--text-muted)", fontSize: "0.72rem", fontWeight: 600 }}><Filter size={13} /> Período</span>
-        <input type="date" value={de} onChange={e => setDe(e.target.value)} style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", color: "var(--text)", fontSize: "0.78rem" }} />
+        <label htmlFor="agenda-filtro-de" style={{ display: "flex", alignItems: "center", gap: "0.35rem", color: "var(--text-muted)", fontSize: "0.72rem", fontWeight: 600 }}><Filter size={13} /> Período</label>
+        <input id="agenda-filtro-de" type="date" aria-label="Data inicial do período" value={de} onChange={e => setDe(e.target.value)} style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", color: "var(--text)", fontSize: "0.78rem" }} />
         <span style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>–</span>
-        <input type="date" value={ate} onChange={e => setAte(e.target.value)} style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", color: "var(--text)", fontSize: "0.78rem" }} />
-        <select value={fCat} onChange={e => setFCat(e.target.value)} style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", color: "var(--text)", fontSize: "0.78rem" }}>
+        <input id="agenda-filtro-ate" type="date" aria-label="Data final do período" value={ate} onChange={e => setAte(e.target.value)} style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", color: "var(--text)", fontSize: "0.78rem" }} />
+        <select id="agenda-filtro-categoria" aria-label="Categoria" value={fCat} onChange={e => setFCat(e.target.value)} style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", color: "var(--text)", fontSize: "0.78rem" }}>
           <option value="">Categoria: todas</option>{CATEGORIAS.map(c => <option key={c}>{c}</option>)}
         </select>
         <div style={{ flex: 1, minWidth: "160px", display: "flex", alignItems: "center", gap: "0.4rem", border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem" }}>
           <Search size={13} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-          <input value={filtro} onChange={e => setFiltro(e.target.value)} placeholder="Nº do animal, descrição…"
+          <input id="agenda-filtro-busca" aria-label="Buscar por número do animal ou descrição" value={filtro} onChange={e => setFiltro(e.target.value)} placeholder="Nº do animal, descrição…"
             style={{ border: "none", background: "none", outline: "none", color: "var(--text)", fontSize: "0.78rem", width: "100%" }} />
         </div>
         <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600 }}>{eventosHoje.length + eventosProximos.length + eventosPendentes.length} eventos</span>
@@ -2164,7 +2164,7 @@ export default function AgendaPage() {
           lista logo abaixo (estado listaAtiva); "Alertas de estoque" rola até
           a seção de Estoque, no final da página. */}
       {loading && !agenda ? (
-        <div className="mb-4"><p style={{ color: "var(--text-muted)", padding: "1rem" }}>Carregando…</p></div>
+        <TelaSkeleton />
       ) : agenda && (
         calendarioAberto ? (
           // Calendário mensal por cima dos indicadores (C3-C4) — mesmo
@@ -2460,7 +2460,7 @@ export default function AgendaPage() {
           </div>
         </div>
         {loading ? (
-          <p style={{ color: "var(--text-muted)", padding: "2rem", textAlign: "center" }}>Carregando agenda...</p>
+          <TelaSkeleton kpis={0} />
         ) : (
           <div style={{ marginTop: "0.75rem" }}>
             <div className="flex items-center gap-2" style={{ color: "var(--dourado-light)", fontWeight: 700, fontSize: "0.8rem", margin: "0.6rem 0" }}>

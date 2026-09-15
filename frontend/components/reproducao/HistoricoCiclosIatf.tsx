@@ -8,6 +8,7 @@ import { AlertTriangle, CalendarClock, Check, CheckCircle2, History, Syringe } f
 import { fetchProtocolosIatfAtivos, fetchCandidatasIatfProjetadas, type CandidataIatfProjetada } from "@/lib/api";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { TelaSkeleton, ErroCarregamento } from "@/components/ui";
 
 type GrupoIatf = {
   lancamento_id: number;
@@ -65,19 +66,26 @@ export default function HistoricoCiclosIatf() {
   const { rotuloDe } = useEstadosReprodutivos();
   const ordCandidatas = useOrdenacao(candidatas?.candidatas ?? []);
 
-  useEffect(() => {
+  const carregar = () => {
+    setError(null);
     fetchProtocolosIatfAtivos().then(setGrupos).catch((e) => setError(e.message));
     fetchCandidatasIatfProjetadas().then(setCandidatas).catch((e) => setError(e.message));
-  }, []);
+  };
+  useEffect(carregar, []);
 
-  if (error) return <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>;
-  if (!grupos || !candidatas) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
+  if (error) return <ErroCarregamento mensagem={`Não foi possível carregar: ${error}.`} onRetry={carregar} />;
+  if (!grupos || !candidatas) return <TelaSkeleton kpis={0} />;
 
   const atuais = grupos.filter((g) => !g.concluido);
   const passados = grupos.filter((g) => g.concluido).sort((a, b) => (b.data_d11 || "").localeCompare(a.data_d11 || ""));
 
   return (
     <div>
+      <div className="mb-4">
+        <h2 className="text-lg font-bold">Ciclos de IATF</h2>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Protocolos em andamento e histórico de ciclos de inseminação em tempo fixo.</p>
+      </div>
+
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center gap-2"><Syringe size={16} style={{ color: "var(--dourado-light)" }} /> IATF atual</div>
         {!atuais.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo IATF em andamento.</p>}

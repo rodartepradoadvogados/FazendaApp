@@ -12,7 +12,7 @@ import BaixarAnimal from "@/components/BaixarAnimal";
 import FichaAnimal from "@/components/FichaAnimal";
 import RebanhoTouros from "@/components/RebanhoTouros";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
-import { MultiFiltro, Indicador } from "@/components/ui";
+import { MultiFiltro, Indicador, TelaSkeleton } from "@/components/ui";
 import { GrupoLotePicker } from "@/components/GrupoLotePicker";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -201,12 +201,15 @@ function CaixaADescartar({ animais, aoAtualizar, estadosPorNumero }: { animais: 
               <thead><tr><th></th><th>Nº</th><th>Grupo</th><th>Categoria</th><th>Sit. Rep.</th><th>Motivo</th></tr></thead>
               <tbody>
                 {marcados.map((a) => (
-                  <tr key={a.numero} style={{ cursor: "pointer" }} onClick={() => toggle(a.numero)}>
+                  <tr key={a.numero} style={{ cursor: "pointer" }} onClick={() => toggle(a.numero)}
+                    tabIndex={0} role="checkbox" aria-checked={sel.has(a.numero)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(a.numero); } }}
+                    className="linha-selecionavel">
                     <td><input type="checkbox" checked={sel.has(a.numero)} onChange={() => toggle(a.numero)} onClick={(e) => e.stopPropagation()} /></td>
                     <td style={{ fontWeight: 700 }}>{a.numero}</td>
                     <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.grupo_primario || "—"}</td>
                     <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
-                    <td><span style={{ color: SIT_CORES[rotuloEstadoDoAnimal(a.numero, estadosPorNumero) || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{rotuloEstadoDoAnimal(a.numero, estadosPorNumero) || "—"}</span></td>
+                    <td><span style={{ color: SIT_CORES[rotuloEstadoDoAnimal(a.numero, estadosPorNumero) || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{rotuloEstadoDoAnimal(a.numero, estadosPorNumero) ? `● ${rotuloEstadoDoAnimal(a.numero, estadosPorNumero)}` : "—"}</span></td>
                     <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.observacoes || "—"}</td>
                   </tr>
                 ))}
@@ -245,7 +248,7 @@ function RebanhoDescarte() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Animais marcados para descarte, com o motivo (quando informado).</p>
       </div>
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
-      {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {!regs && !error && <TelaSkeleton kpis={0} />}
       {regs && <CaixaADescartar animais={regs} aoAtualizar={carregar} estadosPorNumero={estadosPorNumero} />}
     </div>
   );
@@ -282,7 +285,7 @@ function TabelaGrupoAnimais({ lista, femeasApenas, estadosPorNumero }: { lista: 
             <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
             {!femeasApenas && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.sexo || "—"}</td>}
             <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
-            <td><span style={{ color: SIT_CORES[a.sitRepAoVivo || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sitRepAoVivo || "—"}</span></td>
+            <td><span style={{ color: SIT_CORES[a.sitRepAoVivo || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sitRepAoVivo ? `● ${a.sitRepAoVivo}` : "—"}</span></td>
             <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
             <td style={{ textAlign: "right", fontWeight: 600, color: a.producao_origem === "congelado" ? "var(--text-muted)" : undefined }}
               title={a.producao_origem === "congelado" ? "Valor do último CSV importado — nenhum controle leiteiro lançado no app para este animal" : undefined}>
@@ -433,15 +436,12 @@ function RebanhoVisaoGeral() {
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importar dados</a>.</span></div>}
-      {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {!regs && !error && <TelaSkeleton kpis={0} />}
 
       {regs && (
         <>
-          <div className="card mb-4" style={{
-            background: "color-mix(in srgb, var(--dourado) 14%, var(--surface))",
-            border: "1px solid var(--dourado)",
-          }}>
-            <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} style={{ color: "var(--dourado)" }} /> Filtros</div>
+          <div className="card mb-4">
+            <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} style={{ color: "var(--text-muted)" }} /> Filtros</div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               <GrupoLotePicker label="Grupo / lote" opcoes={opc((a) => a.grupo_primario)} selecionados={fGrupo} onChange={setFGrupo} />
               <MultiFiltro label="Situação rep." opcoes={opc((a) => rotuloDe(a.numero) ?? null)} selecionados={fSit} onChange={setFSit} />
@@ -570,7 +570,7 @@ function RebanhoVisaoGeral() {
                         <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
                         {!femeasApenas && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.sexo || "—"}</td>}
                         <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
-                        <td><span style={{ color: SIT_CORES[rotuloDe(a.numero) || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{rotuloDe(a.numero) || "—"}</span></td>
+                        <td><span style={{ color: SIT_CORES[rotuloDe(a.numero) || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{rotuloDe(a.numero) ? `● ${rotuloDe(a.numero)}` : "—"}</span></td>
                         <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
                         <td style={{ textAlign: "right", fontWeight: 600, color: a.producao_origem === "congelado" ? "var(--text-muted)" : undefined }}
                           title={a.producao_origem === "congelado" ? "Valor do último CSV importado — nenhum controle leiteiro lançado no app para este animal" : undefined}>

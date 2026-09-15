@@ -29,18 +29,18 @@ colors:
   cat-acesso: "#9A5560"
 typography:
   display:
-    fontFamily: "Barlow Condensed, Inter, sans-serif"
+    fontFamily: "Archivo, Inter, sans-serif"
     fontWeight: 700
-    letterSpacing: "0.04em"
+    letterSpacing: "-0.02em"
   title:
-    fontFamily: "Barlow Condensed, Inter, sans-serif"
+    fontFamily: "Archivo, Inter, sans-serif"
     fontWeight: 700
   body:
-    fontFamily: "Barlow, Inter, sans-serif"
+    fontFamily: "Archivo, Inter, sans-serif"
     fontWeight: 400
     lineHeight: 1.5
   label:
-    fontFamily: "Barlow Condensed, Inter, sans-serif"
+    fontFamily: "Archivo, Inter, sans-serif"
     fontSize: "0.6875rem"
     fontWeight: 600
     letterSpacing: "0.13em"
@@ -129,18 +129,21 @@ Reprodutivo `#8B7FF0` · Sanidade `#4E7A5A` · Alimentação `#E0A63C` · Gestã
 
 ## Typography
 
-**Display/Heading Font:** Barlow Condensed (com fallback Inter, sans-serif)
-**Body Font:** Barlow (com fallback Inter, sans-serif)
+**Display/Heading Font:** Archivo (com fallback Inter, sans-serif)
+**Body Font:** Archivo (com fallback Inter, sans-serif) — mesma família do heading; a hierarquia vem do peso, não de uma segunda família.
 **Fontes de uso único:** Dancing Script (só o "milk" cursivo da marca d'água do login); Sora 700/800 (tipografia de manual de marca, hoje só no Milk News, disponível para expansão futura).
-**App de campo:** Inter para tudo — deliberadamente diferente do site, sem herdar Barlow.
+**App de campo:** Inter para tudo — deliberadamente diferente do site, sem herdar Archivo.
 
-**Character:** Barlow Condensed nos títulos/rótulos/números dá o tom "relatório impresso" (condensado, maiúsculo, letter-spacing largo); Barlow no corpo mantém legibilidade em tabelas densas sem competir com os rótulos.
+**Character:** Archivo em peso 700-800 nos títulos/rótulos/números dá o tom "relatório impresso" (maiúsculo, letter-spacing largo nos rótulos); o mesmo Archivo em peso 400 no corpo mantém legibilidade em tabelas densas sem competir com os rótulos — uma família única, hierarquia só por peso/tamanho/tracking.
 
 ### Hierarchy
-- **Title** (700, `.card-header`/`h1-h4`): título de card e de página — Barlow Condensed.
+- **Título de página** (700, 1.75rem, letter-spacing -0.02em): `h1` — Archivo.
+- **Title** (700, `.card-header`/`h2-h4`, 0.8rem, +0.04em, caixa alta): título de card — Archivo.
 - **KPI Value** (800, ~2rem, tabular-nums): valor de indicador — a maior ênfase numérica da tela.
-- **Body** (400, ~0.875rem): texto de tabela e conteúdo corrido — Barlow.
+- **Body** (400, ~0.875rem, entrelinha 1.5): texto de tabela e conteúdo corrido — Archivo, medida confortável (45–75ch) em parágrafos longos.
 - **Label** (600, 0.6875rem, letter-spacing 0.13em, uppercase): cabeçalho de tabela e rótulo de KPI — sempre maiúsculo e espaçado, nunca peso menor que 600.
+- **Metadata** (400, 0.75rem, cor mudo): timestamp, legenda secundária.
+- Texto claro sobre fundo marinho sólido compensa nos 3 eixos: entrelinha um pouco maior, tracking um tiquinho a mais, um passo de peso acima do que teria sobre fundo claro.
 
 ### Named Rules
 **The All-Caps Label Rule.** Todo rótulo estrutural (cabeçalho de tabela, label de KPI, seção) é maiúsculo, condensado e com letter-spacing largo (≥0.06em) — é o que empresta o "ar de relatório" à tela.
@@ -162,6 +165,26 @@ Cantos quase retos em toda a superfície de dados: `--r-sm/md/lg = 2px` no site 
 
 ### Named Rules
 **The Almost-Square Rule.** Se não é uma pílula de navegação/filtro ou um círculo de ícone, o raio é 2px (site) ou 0px (app de campo). Nunca um meio-termo "moderno" de 8-16px.
+
+## Motion
+
+**Tese:** movimento = feedback, estado e continuidade. Um único momento autoral. Nunca decoração.
+
+Cinco tipos cobrem todo o site, cada um reusando vocabulário que já existe no código — nenhuma técnica nova só por espetáculo:
+
+| Tipo | Trabalho | Vocabulário | Duração |
+|---|---|---|---|
+| Feedback | confirmar uma ação | `.check-tracado` · `.flash-sucesso` · `.toast-*` | 100–150ms |
+| Estado | tornar legível (loading/notificação) | `.skeleton` · `.pulse-dot` | contínuo |
+| Continuidade | explicar mudança de layout/navegação | `.linha-colapsavel` · `.painel-expansivel` · `.popup-*` · `.gaveta-*` · `.folha-inferior` | 200–500ms |
+| Revelação | entrada de conteúdo | `.animate-in` · `.mob-item-cascata` | 200–300ms |
+| Momento focal | um acento autoral, merecido | `meta-batida` (sheen, lote 1) | 500–800ms |
+
+Easing de chegada `cubic-bezier(0.16, 1, 0.3, 1)` (desaceleração natural); saída sempre mais rápida que a entrada; nada de bounce/elástico por reflexo.
+
+### Named Rules
+**The One Focal Moment Rule.** O card de "meta batida" (elevação de 3px + sombra dourada + sheen que passa uma única vez ao carregar) é a ÚNICA exceção documentada à No-Lift Rule — o único ponto de "festa" da tela. Não generalizar: qualquer outro card que "queira" o mesmo tratamento é o sinal de que o momento focal parou de ser raro.
+**The Reduced-Motion Rule.** `prefers-reduced-motion: reduce` reduz/remove movimento espacial (transform, deslizar, sheen) mas preserva opacidade, cor e estado — o feedback de confirmação continua legível sem a animação. Nunca animar `width/height/top/left/margin`; sempre `transform`/`opacity`.
 
 ## Components
 

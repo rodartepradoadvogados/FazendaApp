@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>animate-exemplos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+:root{
+  --bg:#F4F6F9; --surface:#FFFFFF; --surface-2:#F9FAFB;
+  --border:#DCE3EA; --border-strong:#C3CDD8;
+  --text:#1F2937; --text-muted:#6B7280;
+  --vinho:#0E2A47; --vinho-light:#416180; --vinho-dark:#0A1F36;
+  --dourado:#8A6D2F; --dourado-light:#C9A44C;
+  --green:#2E7D52; --green-light:#4CAF80; --red:#C0392B; --amber:#D97706; --blue:#1E6FA8;
+  --r-sm:2px; --r-md:2px; --r-lg:2px; --shadow-sm:0 1px 4px rgba(20,30,45,.10);
+  --review-bg:#EDEFF2; --review-fg:#3A4250; --review-border:#D6DAE1; --review-accent:#0E2A47;
+  --font-body:'Archivo',Inter,sans-serif; --font-heading:'Archivo',Inter,sans-serif;
+  --ease-out:cubic-bezier(0.16,1,0.3,1);
+}
+body{margin:0;background:var(--review-bg);color:var(--text);font-family:var(--font-body);
+  padding-inline:max(16px,calc((100vw - 1180px)/2));padding-block:20px 48px}
+.review-bar{max-width:1180px;margin:0 auto 18px;padding:.85rem 1.1rem;background:var(--review-bg);border:1px solid var(--review-border);border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+.review-tag{font-size:.68rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--review-fg)}
+.review-tag b{color:var(--review-accent)}
+.review-switch{display:inline-flex;border:1px solid var(--review-border);border-radius:999px;padding:3px;gap:2px;background:var(--surface)}
+.review-switch button{font-family:var(--font-heading);font-weight:700;font-size:.85rem;padding:.4rem 1.1rem;border-radius:999px;border:none;cursor:pointer;background:transparent;color:var(--text-muted)}
+.review-switch button.active{background:var(--vinho);color:#fff}
+.review-note{max-width:1180px;margin:0 auto 18px;font-size:.82rem;color:var(--review-fg);line-height:1.5}
+.review-note b{color:var(--review-accent)}
+.review-note code{background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:.05rem .35rem;font-size:.78rem}
+.stage{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:1.1rem}
+.card-plain{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:1.2rem 1.3rem}
+.section-label{font-family:var(--font-heading);font-size:.68rem;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--text-muted);margin:0 0 .7rem;display:flex;align-items:center;gap:.5rem}
+.section-label .rule{flex:1;height:1px;background:var(--border)}
+.state-panel{display:none}.state-panel.active{display:block}
+.muted{color:var(--text-muted)} .small{font-size:.78rem} .foot{margin-top:.5rem;font-size:.76rem;color:var(--text-muted);line-height:1.45}
+.b{font-weight:700}
+/* tabela */
+.tbl{width:100%;border-collapse:collapse;font-size:.82rem;background:var(--surface)}
+.tbl th{background:var(--surface-2);text-align:left;padding:6px 8px;font-family:var(--font-heading);font-size:.64rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--vinho);border-bottom:1px solid var(--border-strong)}
+.tbl td{padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text)}
+/* demos animadas */
+.demo{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:1rem;position:relative;overflow:hidden}
+.demo-btn{display:inline-flex;align-items:center;gap:.4rem;border-radius:var(--r-sm);padding:.45rem 1rem;font-size:.85rem;font-weight:600;cursor:pointer;font-family:inherit;border:1px solid transparent;background:var(--vinho);color:#fff;transition:background .15s}
+.demo-btn:hover{background:color-mix(in srgb,var(--vinho) 85%,black)}
+.skeleton{height:3rem;border-radius:var(--r-sm);background:linear-gradient(90deg,var(--border) 25%,var(--surface-2) 50%,var(--border) 75%);background-size:200% 100%;animation:sk 1.6s ease-in-out infinite}
+.skeleton.parado{animation:none;background:var(--border)}
+@keyframes sk{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.pulse-dot{width:8px;height:8px;border-radius:50%;background:var(--green-light);display:inline-block;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.fade-in{opacity:0;transform:translateY(8px)}
+.fade-in.go{opacity:1;transform:translateY(0);transition:opacity .3s var(--ease-out),transform .3s var(--ease-out)}
+.row{display:flex;align-items:center;gap:.6rem;padding:.6rem .7rem;border:1px solid var(--border);border-radius:var(--r-sm);margin-bottom:.4rem}
+.row.flash{animation:flash .6s ease-out}
+@keyframes flash{0%{background:transparent}30%{background:color-mix(in srgb,var(--green) 28%,transparent)}100%{background:transparent}}
+.checkbox{width:22px;height:22px;border-radius:50%;border:2px solid var(--border-strong);display:inline-flex;align-items:center;justify-content:center;color:transparent;transition:all .18s;cursor:pointer}
+.checkbox.feito{border-color:var(--green);color:var(--green);background:rgba(46,125,82,.1)}
+.checkbox svg path{stroke-dasharray:20;stroke-dashoffset:20;transition:stroke-dashoffset .18s ease-out}
+.checkbox.feito svg path{stroke-dashoffset:0}
+.acc{border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden;margin-bottom:.4rem}
+.acc-h{background:var(--surface-2);padding:.5rem .7rem;font-family:var(--font-heading);font-weight:700;font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;cursor:pointer;display:flex;justify-content:space-between;align-items:center}
+.acc-h .chev{transition:transform .22s var(--ease-out)}
+.acc.aberto .chev{transform:rotate(180deg)}
+.acc-b{display:grid;grid-template-rows:0fr;transition:grid-template-rows .24s var(--ease-out),opacity .2s ease-out;opacity:0}
+.acc.aberto .acc-b{grid-template-rows:1fr;opacity:1}
+.acc-b>div{overflow:hidden;min-height:0}
+.modal-back{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:50}
+.modal-back.visivel{display:flex}
+.modal-caixa{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);box-shadow:var(--shadow-sm);padding:1.2rem;max-width:400px;width:90%}
+.modal-back.visivel .modal-caixa{animation:pop .22s var(--ease-out)}
+@keyframes pop{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}
+.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:var(--vinho);color:#fff;padding:.6rem 1rem;border-radius:var(--r-sm);font-size:.85rem;display:none;z-index:60;box-shadow:var(--shadow-sm)}
+.toast.visivel{display:block;animation:toast-in .22s var(--ease-out)}
+@keyframes toast-in{from{opacity:0;transform:translate(-50%,-14px)}to{opacity:1;transform:translate(-50%,0)}}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:320px;background:var(--surface);border-left:1px solid var(--border);box-shadow:var(--shadow-sm);transform:translateX(100%);transition:transform .24s var(--ease-out);z-index:55;padding:1rem}
+.drawer.aberto{transform:translateX(0)}
+.sheen{position:absolute;inset:0;background:linear-gradient(105deg,transparent 40%,rgba(255,255,255,.35) 50%,transparent 60%);transform:translateX(-100%)}
+.sheen.go{animation:sheen 0.9s var(--ease-out)}
+@keyframes sheen{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+/* meta card */
+.meta-card{border:1px solid var(--border);border-left:3px solid var(--dourado);border-radius:var(--r-sm);padding:1rem;background:var(--surface);position:relative;overflow:hidden}
+.meta-card.ouro{box-shadow:0 3px 12px rgba(138,109,47,.35)}
+@media (prefers-reduced-motion:reduce){
+  .skeleton{animation:none;background:var(--border)}
+  .pulse-dot{animation:none}
+  .fade-in{opacity:1;transform:none}
+  .acc-b{transition:none}
+  .drawer{transition:none}
+  .modal-back.visivel .modal-caixa{animation:none}
+  .toast.visivel{animation:none}
+  .sheen.go{animation:none;transform:none}
+  .checkbox svg path{transition:none}
+  .row.flash{animation:none}
+}
+</style>
+</head>
+<body>
+<div class="review-bar">
+  <span class="review-tag">Animate (Etapa 2) &middot; <b>Exemplos interativos dos 5 tipos</b></span>
+  <div class="review-switch" role="tablist">
+    <button class="stbtn active" data-state="atual">Typeset</button>
+    <button class="stbtn" data-state="proposta">Animado</button>
+  </div>
+</div>
+<p class="review-note" id="note-atual">Typeset: estados estáticos, ações sem feedback animado.</p>
+<p class="review-note" id="note-proposta" hidden>Animado: feedback (check+flash), estado (skeleton+pulse), continuidade (acordeão/modal/gaveta), revelação, sheen focal.</p>
+<div class="stage">
+  <div class="state-panel active" id="panel-atual">
+<div class="card-plain"><div class="section-label">Estados estáticos, sem feedback animado<span class="rule"></span></div>
+  <div class="small muted">Ações acontecem &ldquo;de repente&rdquo;: marcar feito, salvar, abrir/fechar painel e modal — tudo sem transição, sem confirmar o que mudou.</div>
+</div></div>
+  <div class="state-panel" id="panel-proposta">
+<div class="card-plain"><div class="section-label">1. Feedback — check se desenha + flash na linha<span class="rule"></span></div>
+  <div class="demo">
+    <div class="row" id="row1"><span class="checkbox" id="ck1" onclick="marcar(this)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg></span><span>Tarefa — vacinar lote 03</span></div>
+    <button class="demo-btn" onclick="marcar(document.getElementById('ck1'))">Marcar como feito</button>
+  </div>
+</div>
+<div class="card-plain"><div class="section-label">2. Estado — skeleton (loading) + ponto de notificação<span class="rule"></span></div>
+  <div class="demo"><div class="skeleton" style="margin-bottom:.5rem"></div><span class="pulse-dot"></span> <span class="small muted">3 notificações não lidas</span></div>
+</div>
+<div class="card-plain"><div class="section-label">3. Continuidade — acordeão / modal / gaveta<span class="rule"></span></div>
+  <div class="demo" style="margin-bottom:.5rem">
+    <div class="acc" id="acc1"><div class="acc-h" onclick="this.parentElement.classList.toggle('aberto')"><span>Hoje — 12 itens</span><span class="chev">&#9660;</span></div><div class="acc-b"><div style="padding:.6rem .7rem">Conteúdo do dia expande/colapsa com continuidade — o espaço &ldquo;some desaparecendo&rdquo;, não some de uma vez.</div></div></div>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+      <button class="demo-btn" onclick="abrirModal()">Abrir modal</button>
+      <button class="demo-btn" onclick="abrirDrawer()">Abrir gaveta</button>
+      <button class="demo-btn" onclick="mostrarToast()">Salvar (toast)</button>
+    </div>
+  </div>
+</div>
+<div class="card-plain"><div class="section-label">4. Revelação — entrada escalonada de conteúdo<span class="rule"></span></div>
+  <div class="demo"><button class="demo-btn" onclick="revelar()">Revelar seções</button>
+    <div id="rev1" class="fade-in" style="margin-top:.6rem">Seção 1</div>
+    <div id="rev2" class="fade-in">Seção 2</div>
+    <div id="rev3" class="fade-in">Seção 3</div>
+  </div>
+</div>
+<div class="card-plain"><div class="section-label">5. Momento focal — sheen da meta batida<span class="rule"></span></div>
+  <div class="demo"><button class="demo-btn" onclick="replaySheen()">Repetir sheen</button>
+    <div class="meta-card ouro" style="max-width:300px;margin-top:.6rem"><div class="section-label" style="color:var(--dourado)">Meta batida</div><div style="font-size:2rem;font-weight:800;color:var(--dourado)">9 dias</div><div id="sheen-el" class="sheen"></div></div>
+  </div>
+</div>
+
+<div class="modal-back" id="modal1"><div class="modal-caixa"><div class="b" style="font-family:var(--font-heading)">Confirmação</div><div class="small muted" style="margin:.4rem 0 .8rem">Aplicar protocolo em 124 animais?</div><div style="display:flex;gap:.5rem;justify-content:flex-end"><button class="demo-btn" style="background:transparent;color:var(--text-muted);border:1px solid var(--border)" onclick="fecharModal()">Cancelar</button><button class="demo-btn" style="background:var(--dourado)" onclick="fecharModal()">Confirmar</button></div></div></div>
+<div class="drawer" id="drawer1"><div class="b" style="font-family:var(--font-heading);margin-bottom:.5rem">Lançamento rápido</div><div class="small muted">Gaveta desliza pela borda — muda <code>right</code>, nunca <code>transform</code> (para não prender popups internos).</div><button class="demo-btn" style="margin-top:.6rem" onclick="fecharDrawer()">Fechar</button></div>
+<div class="toast" id="toast1">Salvo com sucesso</div>
+
+<script>
+function marcar(el){el.classList.add('feito');var r=el.closest('.row');if(r){r.classList.remove('flash');void r.offsetWidth;r.classList.add('flash');}}
+function abrirModal(){document.getElementById('modal1').classList.add('visivel');}
+function fecharModal(){document.getElementById('modal1').classList.remove('visivel');}
+function abrirDrawer(){document.getElementById('drawer1').classList.add('aberto');}
+function fecharDrawer(){document.getElementById('drawer1').classList.remove('aberto');}
+function mostrarToast(){var t=document.getElementById('toast1');t.classList.add('visivel');setTimeout(function(){t.classList.remove('visivel')},2200);}
+function revelar(){['rev1','rev2','rev3'].forEach(function(id,i){var e=document.getElementById(id);e.classList.remove('go');void e.offsetWidth;setTimeout(function(){e.classList.add('go')},i*80);});}
+function replaySheen(){var s=document.getElementById('sheen-el');s.classList.remove('go');void s.offsetWidth;s.classList.add('go');}
+</script>
+</div>
+</div>
+
+<script>
+var buttons=Array.prototype.slice.call(document.querySelectorAll('.stbtn'));
+var panels={atual:document.getElementById('panel-atual'),proposta:document.getElementById('panel-proposta')};
+var notes={atual:document.getElementById('note-atual'),proposta:document.getElementById('note-proposta')};
+function setState(s){buttons.forEach(function(b){b.classList.toggle('active',b.dataset.state===s)});
+Object.keys(panels).forEach(function(k){panels[k].classList.toggle('active',k===s)});
+Object.keys(notes).forEach(function(k){notes[k].hidden=k!==s});}
+buttons.forEach(function(b){b.addEventListener('click',function(){setState(b.dataset.state)})});
+</script>
+
+
+</body>
+</html>

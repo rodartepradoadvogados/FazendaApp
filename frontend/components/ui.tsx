@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronRight, Check, Cog, HeartPulse, Milk, Wallet, Syringe, BarChart3 } from "lucide-react";
+import { ChevronDown, Check, Cog, HeartPulse, Milk, Wallet, Syringe, BarChart3, AlertTriangle } from "lucide-react";
 
 /**
  * Indicador — cartão de KPI com um círculo de ícone colorido por categoria,
@@ -65,6 +65,60 @@ export function Indicador({
       <div className="kpi-chip"><Icon size={15} /></div>
       <p className="kpi-value" style={{ fontSize: "1.4rem", color: corValor }}>{valor}</p>
       <p className="kpi-label flex items-center gap-1 flex-wrap" style={corLabel ? { color: corLabel } : undefined}>{rotulo}{extra}</p>
+    </div>
+  );
+}
+
+/** TelaSkeleton — placeholder de carregamento genérico (título + cards + tabela),
+ * no formato real do conteúdo, no lugar do texto solto "Carregando…" — achado
+ * T3 (transversal), ver docs/agents/design-mockups/t3-skeleton-universal.html. */
+export function TelaSkeleton({
+  kpis = 4, tabela = true, className = "", label = "Carregando painel",
+}: { kpis?: number; tabela?: boolean; className?: string; label?: string }) {
+  return (
+    <div className={className} role="status" aria-busy="true" aria-live="polite" aria-label={label}>
+      <div className="skeleton" style={{ height: "1.3rem", width: "34%", marginBottom: "0.9rem" }} />
+      {kpis > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+          {Array.from({ length: kpis }).map((_, i) => (
+            <div key={i} className="skeleton" style={{ height: "5rem" }} />
+          ))}
+        </div>
+      )}
+      {tabela && <div className="skeleton" style={{ height: "10rem" }} />}
+    </div>
+  );
+}
+
+/** ErroCarregamento — mesmo cartão de erro (problema + recuperação) em toda
+ * tela, no lugar do "Sem dados: <mensagem crua da API>." sem saída — achado
+ * do lote 2 ("erro fragmentado em variações"). `onRetry` refaz a mesma busca
+ * que falhou; `linkHref`/`linkLabel` cobre o caso de recuperação por
+ * navegação (ex.: ir importar o dado que falta) em vez de tentar de novo. */
+export function ErroCarregamento({
+  mensagem, onRetry, linkHref, linkLabel,
+}: { mensagem: string; onRetry?: () => void; linkHref?: string; linkLabel?: string }) {
+  return (
+    <div className="alert-critico mb-4">
+      <AlertTriangle size={18} />
+      <span>
+        {mensagem}
+        {onRetry && (
+          <>
+            {" · "}
+            <button type="button" onClick={onRetry}
+              style={{ background: "none", border: "none", padding: 0, font: "inherit", color: "var(--dourado-light)", textDecoration: "underline", cursor: "pointer" }}>
+              Tentar novamente
+            </button>
+          </>
+        )}
+        {linkHref && (
+          <>
+            {" · "}
+            <a href={linkHref} style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>{linkLabel}</a>
+          </>
+        )}
+      </span>
     </div>
   );
 }
@@ -245,13 +299,15 @@ export function TabBar<T extends string>({
   onChange: (id: T) => void;
 }) {
   return (
-    <div className="flex items-center gap-2 mb-4" style={{ flexWrap: "wrap" }}>
+    <div className="flex items-center gap-2 mb-4" role="tablist" style={{ flexWrap: "wrap" }}>
       {abas.map((aba) => {
         const Icon = aba.icon;
         const ativo = aba.id === ativa;
         return (
           <button
             key={aba.id}
+            role="tab"
+            aria-selected={ativo}
             onClick={() => onChange(aba.id)}
             title={aba.title || aba.label}
             style={{
@@ -320,12 +376,15 @@ export function SecaoRecolhivel({
 }) {
   const [abertaLocal, setAbertaLocal] = useState(defaultAberta);
   const aberta = abertaControlada ?? abertaLocal;
+  const regionId = useId();
 
   return (
     <div className="card mb-4">
       <button
         onClick={() => (onAlternar ? onAlternar() : setAbertaLocal((a) => !a))}
         title={descricao || (aberta ? "Clique para recolher" : "Clique para expandir")}
+        aria-expanded={aberta}
+        aria-controls={regionId}
         style={{
           width: "100%",
           background: "none",
@@ -336,11 +395,7 @@ export function SecaoRecolhivel({
         }}
       >
         <div className="flex items-center gap-2">
-          {aberta ? (
-            <ChevronDown size={15} style={{ color: "var(--accent-icon)" }} />
-          ) : (
-            <ChevronRight size={15} style={{ color: "var(--accent-icon)" }} />
-          )}
+          <ChevronDown size={15} style={{ color: "var(--accent-icon)", transition: "transform 0.15s ease", transform: aberta ? "rotate(0deg)" : "rotate(-90deg)" }} />
           {Icon && <Icon size={14} />}
           <span className="card-header" style={{ margin: 0 }}>
             {titulo}
@@ -348,7 +403,7 @@ export function SecaoRecolhivel({
           {badge != null && <span style={{ marginLeft: "auto" }}>{badge}</span>}
         </div>
       </button>
-      {aberta && <div className="mt-3">{children}</div>}
+      {aberta && <div id={regionId} role="region" aria-label={titulo} className="mt-3">{children}</div>}
     </div>
   );
 }

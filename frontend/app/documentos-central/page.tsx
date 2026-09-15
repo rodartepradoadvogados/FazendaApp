@@ -8,6 +8,7 @@
 // visibilidade no cliente.
 import { useEffect, useMemo, useState } from "react";
 import { FileSearch, Filter, ExternalLink, Landmark, Wallet } from "lucide-react";
+import { TelaSkeleton } from "@/components/ui";
 import { fetchCentralDocumentos, abrirLinhaCentralDocumento, formatDate, type LinhaCentralDocumento } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
@@ -85,7 +86,7 @@ export default function CentralDocumentosPage() {
           <span>Documentos</span>
           <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{linhas?.length ?? 0} no filtro</span>
         </div>
-        {!linhas && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+        {!linhas && !error && <TelaSkeleton kpis={0} />}
         {linhas && (
           <div className="overflow-x-auto">
             <table className="fazenda-table">

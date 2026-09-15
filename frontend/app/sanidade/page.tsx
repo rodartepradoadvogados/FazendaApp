@@ -19,7 +19,7 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
-import { MultiFiltro, TabBar, Indicador, SecaoRecolhivel } from "@/components/ui";
+import { MultiFiltro, TabBar, Indicador, SecaoRecolhivel, TelaSkeleton } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
@@ -529,7 +529,7 @@ function RelatorioResultadosExameView({ eventos }: { eventos: EventoPrev[] }) {
       </div>
 
       {erro && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {erro}.</span></div>}
-      {!linhas && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {!linhas && !erro && <TelaSkeleton kpis={0} />}
 
       {linhas && !porData.length && (
         <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum resultado no filtro.</p>
@@ -795,7 +795,7 @@ function CalendarioVisualView({ onAbrirCronograma }: { onAbrirCronograma: (calen
       </div>
 
       {erro && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>{erro}</span></div>}
-      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {!dados && !erro && <TelaSkeleton kpis={0} />}
 
       {dados && visualizacao === "lista" && (
         dados.janelas.length === 0
@@ -952,7 +952,7 @@ function OcorrenciasView() {
       )}
 
       {erro && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>{erro}</span></div>}
-      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {!dados && !erro && <TelaSkeleton kpis={0} />}
 
       {dados && (
         <div className="card">
@@ -1099,7 +1099,7 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar, abaInicial }: { cronogr
       <div className="alert-critico"><AlertTriangle size={18} /><span>{erro}</span></div>
     </div>
   );
-  if (!det) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
+  if (!det) return <TelaSkeleton kpis={0} />;
 
   const progresso = det.checklist.length
     ? Math.round(det.checklist.filter((i) => i.status !== "pendente").length / det.checklist.length * 100)
@@ -1425,7 +1425,7 @@ export function CalendarioSanitarioView({ modoInicial, cronogramaIdInicial }: { 
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
-      {!regras && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {!regras && !error && <TelaSkeleton kpis={0} />}
 
       {regras && (
         <div className="card">
@@ -1941,7 +1941,7 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
   return (
     <>
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados sanitários</a>.</span></div>}
-      {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {!regs && !error && <TelaSkeleton kpis={0} />}
 
       {regs && <>
         <div className="card mb-4">
@@ -2299,7 +2299,7 @@ function DoencaMotivoView() {
 
       <div className="card">
         <div className="card-header mb-3 flex items-center gap-2"><HeartPulse size={16} /> Doença / Motivo dos tratamentos</div>
-        {!regs ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : !grupos.length ? (
+        {!regs ? <TelaSkeleton kpis={0} /> : !grupos.length ? (
           <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{filtroAtivo ? "Nenhum caso encontrado com esses filtros." : "Nenhum tratamento curativo lançado ainda."}</p>
         ) : (
           <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
@@ -2411,7 +2411,7 @@ function ProtocolosSanitariosView() {
 
       <div className="card">
         <div className="card-header mb-3 flex items-center gap-2"><ListChecks size={16} /> Protocolos sanitários lançados ({filtrados.length})</div>
-        {!lancs ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : !filtrados.length ? (
+        {!lancs ? <TelaSkeleton kpis={0} /> : !filtrados.length ? (
           <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo lançado com esses filtros.</p>
         ) : (
           <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
@@ -2571,7 +2571,7 @@ function TaxaCuraView() {
         </div>
       </div>
 
-      {!dados ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : (
+      {!dados ? <TelaSkeleton kpis={0} /> : (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
             <Indicador categoria="sanidade" valor={totalFiltro} rotulo="Casos avaliados" />
