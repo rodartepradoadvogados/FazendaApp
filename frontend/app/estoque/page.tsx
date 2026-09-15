@@ -12,7 +12,7 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import NovoItemEstoque, { type ItemEstoqueEditando } from "@/components/NovoItemEstoque";
 import { EstoquePicker } from "@/components/EstoquePicker";
-import { Indicador } from "@/components/ui";
+import { Indicador, TelaSkeleton, ErroCarregamento } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { casaBusca } from "@/lib/busca";
 
@@ -75,8 +75,9 @@ function EstoqueInventario() {
   const [modalAbaixo, setModalAbaixo] = useState(false);
   const [modalCategorias, setModalCategorias] = useState(false);
   const [editando, setEditando] = useState<ItemEstoqueEditando | null>(null);
+  const [criandoNovo, setCriandoNovo] = useState(false);
 
-  const carregar = () => fetchEstoque().then((d) => setItens(d.itens)).catch((e) => setError(e.message));
+  const carregar = () => { setError(null); fetchEstoque().then((d) => setItens(d.itens)).catch((e) => setError(e.message)); };
 
   useEffect(() => {
     carregar();
@@ -125,8 +126,8 @@ function EstoqueInventario() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Saldo atual de cada item — filtre por categoria, busque ou veja só o que está abaixo do mínimo.</p>
       </div>
 
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os itens de estoque</a>.</span></div>}
-      {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {error && <ErroCarregamento erro={error} onRetry={carregar} linkHref="/configuracoes?aba=importar" linkLabel="Importe os itens de estoque" />}
+      {!itens && !error && <TelaSkeleton blocos={[{ altura: "5.5rem" }, { altura: "9rem" }, { altura: "14rem" }]} label="Carregando estoque" />}
 
       {/* Hormônios IATF (necessidade vs estoque) */}
       {horm.length > 0 && (
@@ -224,6 +225,10 @@ function EstoqueInventario() {
                 <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{filtrados.length} no filtro</span>
                 <ExportarBotoes titulo="Estoque" nomeArquivoBase="estoque" colunas={COLUNAS_ESTOQUE}
                   linhas={filtrados.map((i) => ({ ...i, status: i.abaixo_minimo ? "ABAIXO DO MÍNIMO" : "OK" }))} />
+                <button onClick={() => setCriandoNovo(true)} className="btn-primary" title="Cadastrar um novo item de estoque"
+                  style={{ fontSize: "0.78rem", padding: "0.35rem 0.7rem" }}>
+                  + Novo item
+                </button>
               </div>
             </div>
             <div className="overflow-x-auto">
@@ -311,6 +316,15 @@ function EstoqueInventario() {
             editando={editando}
             onCriado={() => { setEditando(null); carregar(); }}
             onCancelar={() => setEditando(null)}
+          />
+        </Modal>
+      )}
+
+      {criandoNovo && (
+        <Modal title="Novo item de estoque" onClose={() => setCriandoNovo(false)} width="960px">
+          <NovoItemEstoque
+            onCriado={() => { setCriandoNovo(false); carregar(); }}
+            onCancelar={() => setCriandoNovo(false)}
           />
         </Modal>
       )}
@@ -411,9 +425,9 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>{descricao}</p>
       </div>
 
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {error && <ErroCarregamento erro={error} onRetry={carregar} />}
       {avisoExclusao && <div className="alert-aviso mb-4"><AlertTriangle size={18} /><span>{avisoExclusao}</span></div>}
-      {!movimentos && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {!movimentos && !error && <TelaSkeleton blocos={[{ altura: "3.5rem" }, { altura: "12rem" }]} label="Carregando movimentos" />}
 
       {movimentos && (
         <>
@@ -568,10 +582,12 @@ function EstoquePorProduto() {
   const [ate, setAte] = useState("");
   const [busca, setBusca] = useState("");
 
-  useEffect(() => {
+  const carregar = () => {
+    setError(null);
     fetchMovimentosEstoque().then((d) => setMovimentos(d.movimentos)).catch((e) => setError(e.message));
     fetchEstoque().then((d) => setItens(d.itens)).catch(() => {});
-  }, []);
+  };
+  useEffect(carregar, []);
 
   const noPeriodo = useMemo(() => {
     if (!movimentos) return [];
@@ -600,8 +616,8 @@ function EstoquePorProduto() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Total de entradas e saídas de cada produto no período — o saldo movimentado é a diferença entre as duas.</p>
       </div>
 
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
-      {!movimentos && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {error && <ErroCarregamento erro={error} onRetry={carregar} />}
+      {!movimentos && !error && <TelaSkeleton blocos={[{ altura: "3.5rem" }, { altura: "12rem" }]} label="Carregando estoque por produto" />}
 
       {movimentos && (
         <>
