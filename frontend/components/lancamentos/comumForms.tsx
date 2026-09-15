@@ -24,7 +24,15 @@ export const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--tex
 export const nota: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)", marginLeft: "0.35rem" };
 
 export function Campo({ label, children, full }: { label: string; children: React.ReactNode; full?: boolean }) {
-  return <div style={{ gridColumn: full ? "1 / -1" : undefined }}><label style={lbl}>{label}</label>{children}</div>;
+  const idGerado = React.useId();
+  const id = React.isValidElement(children) ? ((children.props as any).id ?? idGerado) : undefined;
+  const conteudo = React.isValidElement(children) && id ? React.cloneElement(children as React.ReactElement<any>, { id }) : children;
+  return (
+    <div style={{ gridColumn: full ? "1 / -1" : undefined }}>
+      <label htmlFor={id} style={lbl}>{label}</label>
+      {conteudo}
+    </div>
+  );
 }
 
 // Subtítulo de seção dentro de um formulário.
