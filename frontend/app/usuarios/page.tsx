@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Users, AlertTriangle, UserPlus, Check, Pencil, X, Newspaper, UserSquare2 } from "lucide-react";
+import { Users, AlertTriangle, UserPlus, Check, Pencil, X, Newspaper, UserSquare2, Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
 import { fetchUsuarios, criarUsuario, atualizarUsuario, getUsuario, ehDono, ehAdmin, fetchPessoas } from "@/lib/api";
 import { RelatorioAcessos, AuditoriaAtividade } from "@/components/AuditoriaAcessoView";
@@ -20,6 +20,42 @@ const TODOS = MODULOS.map((m) => m.key);
 
 const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
+
+// Força aproximada só pra dar um retorno imediato de digitação — a validação
+// de verdade (tamanho mínimo etc.) continua no backend.
+function forcaSenha(s: string): { label: string; cor: string } | null {
+  if (!s) return null;
+  let pontos = 0;
+  if (s.length >= 8) pontos++;
+  if (s.length >= 12) pontos++;
+  if (/[a-z]/.test(s) && /[A-Z]/.test(s)) pontos++;
+  if (/\d/.test(s)) pontos++;
+  if (/[^A-Za-z0-9]/.test(s)) pontos++;
+  if (pontos <= 1) return { label: "fraca", cor: "var(--red)" };
+  if (pontos <= 3) return { label: "média", cor: "var(--amber)" };
+  return { label: "forte", cor: "var(--green)" };
+}
+
+/** CampoSenha — mesmo input de sempre, só com mostrar/ocultar + força. */
+function CampoSenha({ id, value, onChange, autoComplete = "new-password" }: {
+  id: string; value: string; onChange: (v: string) => void; autoComplete?: string;
+}) {
+  const [mostrar, setMostrar] = useState(false);
+  const forca = forcaSenha(value);
+  return (
+    <div>
+      <div style={{ display: "flex", gap: "0.4rem" }}>
+        <input id={id} style={{ ...inp, flex: 1 }} type={mostrar ? "text" : "password"} autoComplete={autoComplete}
+          value={value} onChange={(e) => onChange(e.target.value)} />
+        <button type="button" className="btn-ghost" style={{ padding: "0 0.6rem" }}
+          onClick={() => setMostrar((m) => !m)} aria-label={mostrar ? "Ocultar senha" : "Mostrar senha"}>
+          {mostrar ? <EyeOff size={15} /> : <Eye size={15} />}
+        </button>
+      </div>
+      {forca && <p style={{ fontSize: "0.7rem", color: forca.cor, marginTop: "0.25rem" }}>Força: {forca.label}</p>}
+    </div>
+  );
+}
 
 export default function UsuariosPage() {
   const [usuarios, setUsuarios] = useState<any[] | null>(null);
@@ -114,7 +150,7 @@ export default function UsuariosPage() {
               </p>
             </div>
             <div><label style={lbl}>E-mail (opcional)</label><input style={inp} type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
-            <div><label style={lbl}>Senha</label><input style={inp} type="text" value={senha} onChange={(e) => setSenha(e.target.value)} /></div>
+            <div><label style={lbl} htmlFor="novo-usuario-senha">Senha</label><CampoSenha id="novo-usuario-senha" value={senha} onChange={setSenha} /></div>
             <div><label style={lbl}>Tipo</label>
               <select style={inp} value={papel} onChange={(e) => setPapel(e.target.value as any)}>
                 <option value="admin">Administrador (acesso total + gerencia usuários)</option>
@@ -273,7 +309,7 @@ function EditarUsuarioModal({ usuario, souEu, pessoas, usuarios, onClose, onSalv
             </select>
           </div>
           <div><label style={lbl}>E-mail (opcional)</label><input style={inp} type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
-          <div><label style={lbl}>Nova senha (deixe em branco para manter)</label><input style={inp} value={novaSenha} onChange={(e) => setNovaSenha(e.target.value)} /></div>
+          <div><label style={lbl} htmlFor="editar-usuario-senha">Nova senha (deixe em branco para manter)</label><CampoSenha id="editar-usuario-senha" value={novaSenha} onChange={setNovaSenha} /></div>
           <div><label style={lbl}>Tipo</label>
             <select style={inp} value={papel} onChange={(e) => setPapel(e.target.value as any)}>
               <option value="admin">Administrador (acesso total + gerencia usuários)</option>
