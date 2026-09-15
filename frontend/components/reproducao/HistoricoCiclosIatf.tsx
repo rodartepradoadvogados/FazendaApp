@@ -81,6 +81,11 @@ export default function HistoricoCiclosIatf() {
 
   return (
     <div>
+      <div className="mb-4">
+        <h2 className="text-lg font-bold">Ciclos de IATF</h2>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Protocolos em andamento e histórico de ciclos de inseminação em tempo fixo.</p>
+      </div>
+
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center gap-2"><Syringe size={16} style={{ color: "var(--dourado-light)" }} /> IATF atual</div>
         {!atuais.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo IATF em andamento.</p>}

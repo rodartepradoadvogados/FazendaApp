@@ -515,6 +515,7 @@ textarea:focus-visible, [tabindex]:focus-visible {
 .fazenda-table tbody td {
   padding: 8px 10px;
   color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 /* Linha de tabela clicável (ex.: seleção em massa no Rebanho) — paridade de
    teclado com o clique do mouse: filete dourado igual ao dos cards de KPI,
