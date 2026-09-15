@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronRight, Check, Cog, HeartPulse, Milk, Wallet, Syringe, BarChart3 } from "lucide-react";
+import { ChevronDown, Check, Cog, HeartPulse, Milk, Wallet, Syringe, BarChart3 } from "lucide-react";
 
 /**
  * Indicador — cartão de KPI com um círculo de ícone colorido por categoria,
@@ -72,18 +72,20 @@ export function Indicador({
 /** TelaSkeleton — placeholder de carregamento genérico (título + cards + tabela),
  * no formato real do conteúdo, no lugar do texto solto "Carregando…" — achado
  * T3 (transversal), ver docs/agents/design-mockups/t3-skeleton-universal.html. */
-export function TelaSkeleton({ kpis = 4, tabela = true, className = "" }: { kpis?: number; tabela?: boolean; className?: string }) {
+export function TelaSkeleton({
+  kpis = 4, tabela = true, className = "", label = "Carregando painel",
+}: { kpis?: number; tabela?: boolean; className?: string; label?: string }) {
   return (
-    <div className={className}>
-      <div className="skeleton" style={{ height: "1.4rem", width: "34%", marginBottom: "0.9rem" }} />
+    <div className={className} role="status" aria-busy="true" aria-live="polite" aria-label={label}>
+      <div className="skeleton" style={{ height: "1.3rem", width: "34%", marginBottom: "0.9rem" }} />
       {kpis > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
           {Array.from({ length: kpis }).map((_, i) => (
-            <div key={i} className="skeleton" style={{ height: "4.6rem" }} />
+            <div key={i} className="skeleton" style={{ height: "5rem" }} />
           ))}
         </div>
       )}
-      {tabela && <div className="skeleton" style={{ height: "9rem" }} />}
+      {tabela && <div className="skeleton" style={{ height: "10rem" }} />}
     </div>
   );
 }
@@ -339,12 +341,15 @@ export function SecaoRecolhivel({
 }) {
   const [abertaLocal, setAbertaLocal] = useState(defaultAberta);
   const aberta = abertaControlada ?? abertaLocal;
+  const regionId = useId();
 
   return (
     <div className="card mb-4">
       <button
         onClick={() => (onAlternar ? onAlternar() : setAbertaLocal((a) => !a))}
         title={descricao || (aberta ? "Clique para recolher" : "Clique para expandir")}
+        aria-expanded={aberta}
+        aria-controls={regionId}
         style={{
           width: "100%",
           background: "none",
@@ -355,11 +360,7 @@ export function SecaoRecolhivel({
         }}
       >
         <div className="flex items-center gap-2">
-          {aberta ? (
-            <ChevronDown size={15} style={{ color: "var(--accent-icon)" }} />
-          ) : (
-            <ChevronRight size={15} style={{ color: "var(--accent-icon)" }} />
-          )}
+          <ChevronDown size={15} style={{ color: "var(--accent-icon)", transition: "transform 0.15s ease", transform: aberta ? "rotate(0deg)" : "rotate(-90deg)" }} />
           {Icon && <Icon size={14} />}
           <span className="card-header" style={{ margin: 0 }}>
             {titulo}
@@ -367,7 +368,7 @@ export function SecaoRecolhivel({
           {badge != null && <span style={{ marginLeft: "auto" }}>{badge}</span>}
         </div>
       </button>
-      {aberta && <div className="mt-3">{children}</div>}
+      {aberta && <div id={regionId} role="region" aria-label={titulo} className="mt-3">{children}</div>}
     </div>
   );
 }
