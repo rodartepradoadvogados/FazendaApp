@@ -440,11 +440,8 @@ function RebanhoVisaoGeral() {
 
       {regs && (
         <>
-          <div className="card mb-4" style={{
-            background: "color-mix(in srgb, var(--dourado) 14%, var(--surface))",
-            border: "1px solid var(--dourado)",
-          }}>
-            <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} style={{ color: "var(--dourado)" }} /> Filtros</div>
+          <div className="card mb-4">
+            <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} style={{ color: "var(--text-muted)" }} /> Filtros</div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               <GrupoLotePicker label="Grupo / lote" opcoes={opc((a) => a.grupo_primario)} selecionados={fGrupo} onChange={setFGrupo} />
               <MultiFiltro label="Situação rep." opcoes={opc((a) => rotuloDe(a.numero) ?? null)} selecionados={fSit} onChange={setFSit} />

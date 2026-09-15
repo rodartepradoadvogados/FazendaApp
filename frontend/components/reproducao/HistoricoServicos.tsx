@@ -336,7 +336,7 @@ export default function HistoricoServicos({ foco, titulo, descricao, animaisSel,
           // igualdade com Registros/Prenhezes/Perdas, que continuam do lado, menores.
           <div className="card mb-4" style={{ padding: "1.1rem 1.3rem" }}>
             <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Concepção / serviço</div>
-            <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--blue)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+            <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--cat-reproducao)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
               {taxa === null ? "—" : `${taxa}%`}
             </div>
             <div style={{ display: "flex", gap: "1.6rem", marginTop: ".9rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
