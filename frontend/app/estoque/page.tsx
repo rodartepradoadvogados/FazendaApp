@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Filter, Pencil, Trash2, ArrowDownToLine, ArrowUpFromLine, Repeat, Boxes, X } from "lucide-react";
+import { AlertTriangle, Filter, Pencil, Trash2, ArrowDownToLine, ArrowUpFromLine, Repeat, Boxes, X, Plus } from "lucide-react";
 import {
   fetchEstoque, fetchAgenda, formatBRL, fetchMovimentosEstoque, atualizarMovimentoEstoque, confirmarExclusao,
   ehAdmin, formatDate, type MovimentoEstoqueRow,
@@ -12,7 +12,7 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import NovoItemEstoque, { type ItemEstoqueEditando } from "@/components/NovoItemEstoque";
 import { EstoquePicker } from "@/components/EstoquePicker";
-import { Indicador, TelaSkeleton } from "@/components/ui";
+import { Indicador, TelaSkeleton, ErroCarregamento } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { casaBusca } from "@/lib/busca";
 
@@ -75,8 +75,9 @@ function EstoqueInventario() {
   const [modalAbaixo, setModalAbaixo] = useState(false);
   const [modalCategorias, setModalCategorias] = useState(false);
   const [editando, setEditando] = useState<ItemEstoqueEditando | null>(null);
+  const [criandoNovo, setCriandoNovo] = useState(false);
 
-  const carregar = () => fetchEstoque().then((d) => setItens(d.itens)).catch((e) => setError(e.message));
+  const carregar = () => { setError(null); fetchEstoque().then((d) => setItens(d.itens)).catch((e) => setError(e.message)); };
 
   useEffect(() => {
     carregar();
@@ -120,12 +121,17 @@ function EstoqueInventario() {
 
   return (
     <div className="p-6 animate-in">
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold flex items-center gap-2"><Boxes size={22} style={{ color: "var(--dourado)" }} /> Inventário / Saldo de estoque</h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Saldo atual de cada item — filtre por categoria, busque ou veja só o que está abaixo do mínimo.</p>
+      <div className="mb-4 flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Boxes size={22} style={{ color: "var(--dourado)" }} /> Inventário / Saldo de estoque</h1>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Saldo atual de cada item — filtre por categoria, busque ou veja só o que está abaixo do mínimo.</p>
+        </div>
+        <button type="button" className="btn-primary" style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }} onClick={() => setCriandoNovo(true)}>
+          <Plus size={15} /> Novo item
+        </button>
       </div>
 
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os itens de estoque</a>.</span></div>}
+      {error && <ErroCarregamento mensagem={`Não foi possível carregar o estoque: ${error}.`} onRetry={carregar} linkHref="/configuracoes?aba=importar" linkLabel="Importar itens de estoque" />}
       {!itens && !error && <TelaSkeleton kpis={0} />}
 
       {/* Hormônios IATF (necessidade vs estoque) */}
@@ -314,6 +320,15 @@ function EstoqueInventario() {
           />
         </Modal>
       )}
+
+      {criandoNovo && (
+        <Modal title="Novo item de estoque" onClose={() => setCriandoNovo(false)} width="960px">
+          <NovoItemEstoque
+            onCriado={() => { setCriandoNovo(false); carregar(); }}
+            onCancelar={() => setCriandoNovo(false)}
+          />
+        </Modal>
+      )}
     </div>
   );
 }
@@ -345,7 +360,7 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
   const [ocupado, setOcupado] = useState<number | null>(null);
   const [avisoExclusao, setAvisoExclusao] = useState<string | null>(null);
 
-  const carregar = () => fetchMovimentosEstoque().then((d) => setMovimentos(d.movimentos as MovimentoRow[])).catch((e) => setError(e.message));
+  const carregar = () => { setError(null); fetchMovimentosEstoque().then((d) => setMovimentos(d.movimentos as MovimentoRow[])).catch((e) => setError(e.message)); };
 
   useEffect(() => {
     carregar();
@@ -411,7 +426,7 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>{descricao}</p>
       </div>
 
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {error && <ErroCarregamento mensagem={`Não foi possível carregar: ${error}.`} onRetry={carregar} />}
       {avisoExclusao && <div className="alert-aviso mb-4"><AlertTriangle size={18} /><span>{avisoExclusao}</span></div>}
       {!movimentos && !error && <TelaSkeleton kpis={0} />}
 
@@ -568,10 +583,12 @@ function EstoquePorProduto() {
   const [ate, setAte] = useState("");
   const [busca, setBusca] = useState("");
 
-  useEffect(() => {
+  const carregar = () => {
+    setError(null);
     fetchMovimentosEstoque().then((d) => setMovimentos(d.movimentos)).catch((e) => setError(e.message));
     fetchEstoque().then((d) => setItens(d.itens)).catch(() => {});
-  }, []);
+  };
+  useEffect(carregar, []);
 
   const noPeriodo = useMemo(() => {
     if (!movimentos) return [];
@@ -600,7 +617,7 @@ function EstoquePorProduto() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Total de entradas e saídas de cada produto no período — o saldo movimentado é a diferença entre as duas.</p>
       </div>
 
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {error && <ErroCarregamento mensagem={`Não foi possível carregar: ${error}.`} onRetry={carregar} />}
       {!movimentos && !error && <TelaSkeleton kpis={0} />}
 
       {movimentos && (
