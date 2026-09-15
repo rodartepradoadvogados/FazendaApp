@@ -7,6 +7,7 @@ import {
 } from "@/lib/api";
 import { imagemMateria } from "@/lib/newsVisual";
 import { BancoFotosNews } from "@/components/BancoFotosNews";
+import { TelaSkeleton } from "@/components/ui";
 
 const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
@@ -261,7 +262,7 @@ export default function NewsAdmin() {
             )}
           </div>
 
-          {!materias && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+          {!materias && !error && <TelaSkeleton blocos={[{ altura: "3.5rem" }, { altura: "10rem" }]} label="Carregando matérias" />}
 
           {materias && materiasPublicadas.length === 0 && (
             <p style={{ color: "var(--text-muted)" }}>Nenhuma matéria publicada ainda.</p>
@@ -334,7 +335,7 @@ export default function NewsAdmin() {
 
           {bancoAberto && <BancoFotosNews onClose={() => setBancoAberto(false)} />}
 
-          {!materias && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+          {!materias && !error && <TelaSkeleton blocos={[{ altura: "3.5rem" }, { altura: "10rem" }]} label="Carregando matérias" />}
 
           {materias && pendentesRevisao.length === 0 && (
             <p style={{ color: "var(--text-muted)" }}>Nenhuma matéria aguardando revisão definitiva.</p>

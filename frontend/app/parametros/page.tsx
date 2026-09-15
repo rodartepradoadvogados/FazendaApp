@@ -8,6 +8,7 @@ import AlertasIndicador from "@/components/AlertasIndicador";
 import ParametrosFinanceiros from "@/components/ParametrosFinanceiros";
 import { GruposParametrosCards } from "@/components/GruposParametrosCards";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
+import { TelaSkeleton, ErroCarregamento } from "@/components/ui";
 
 // Parâmetros virou aba de primeiro nível de Administração (17/08/2026,
 // pedido explícito do usuário) — antes era sub-aba dentro de Configurações
@@ -238,8 +239,8 @@ function CadastroFaixasBonificacaoQualidade({ podeEditar }: { podeEditar: boolea
         {!podeEditar && " Somente administradores podem cadastrar ou editar faixas."}
       </p>
 
-      {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
-      {!faixas && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {error && <ErroCarregamento erro={error} onRetry={carregar} />}
+      {!faixas && !error && <TelaSkeleton blocos={[{ altura: "10rem" }]} label="Carregando faixas de bonificação" />}
 
       {podeEditar && editando === "novo" && FormFaixa}
 

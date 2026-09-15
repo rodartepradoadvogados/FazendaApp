@@ -5,6 +5,7 @@ import Link from "next/link";
 import { fetchUsuarios, criarUsuario, atualizarUsuario, getUsuario, ehDono, ehAdmin, fetchPessoas } from "@/lib/api";
 import { RelatorioAcessos, AuditoriaAtividade } from "@/components/AuditoriaAcessoView";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { TelaSkeleton, ErroCarregamento } from "@/components/ui";
 
 const MODULOS = [
   { key: "capa", label: "Capa" }, { key: "indicadores", label: "Indicadores" }, { key: "agenda", label: "Agenda" },
@@ -31,7 +32,9 @@ export default function UsuariosPage() {
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [papel, setPapel] = useState<"admin" | "operador">("operador");
-  const [perms, setPerms] = useState<Set<string>>(new Set(TODOS));
+  // Menor privilégio: usuário novo nasce só com a Capa, não com todos os
+  // módulos (incl. Financeiro) pré-marcados — quem cria escolhe o acesso.
+  const [perms, setPerms] = useState<Set<string>>(new Set(["capa"]));
   const [podePublicarBlog, setPodePublicarBlog] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [editando, setEditando] = useState<any | null>(null);
@@ -58,13 +61,17 @@ export default function UsuariosPage() {
         permissoes: papel === "admin" ? TODOS : Array.from(perms), pode_publicar_materias_blog: podePublicarBlog,
       });
       setMsg(`Usuário "${username}" criado.`);
-      setUsername(""); setPessoaId(""); setEmail(""); setSenha(""); setPapel("operador"); setPerms(new Set(TODOS)); setPodePublicarBlog(false);
+      setUsername(""); setPessoaId(""); setEmail(""); setSenha(""); setPapel("operador"); setPerms(new Set(["capa"])); setPodePublicarBlog(false);
       carregar(); carregarPessoas();
     } catch (e: any) { setError(e.message); }
     finally { setSalvando(false); }
   };
 
   const toggleAtivo = async (u: any) => {
+    // Desativar é a ação sensível aqui (tira o acesso de alguém) — mesma
+    // rede de segurança que excluir faixa de bonificação/rejeitar matéria já
+    // tinham; reativar não precisa de confirmação.
+    if (u.ativo && !window.confirm(`Desativar o usuário "${u.username}"? Ele perde o acesso ao sistema até ser reativado.`)) return;
     try { await atualizarUsuario(u.id, { ativo: !u.ativo }); carregar(); }
     catch (e: any) { setError(e.message); }
   };
@@ -113,7 +120,7 @@ export default function UsuariosPage() {
               </p>
             </div>
             <div><label style={lbl}>E-mail (opcional)</label><input style={inp} type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
-            <div><label style={lbl}>Senha</label><input style={inp} type="text" value={senha} onChange={(e) => setSenha(e.target.value)} /></div>
+            <div><label style={lbl}>Senha</label><input style={inp} type="password" autoComplete="new-password" value={senha} onChange={(e) => setSenha(e.target.value)} /></div>
             <div><label style={lbl}>Tipo</label>
               <select style={inp} value={papel} onChange={(e) => setPapel(e.target.value as any)}>
                 <option value="admin">Administrador (acesso total + gerencia usuários)</option>
@@ -166,7 +173,7 @@ export default function UsuariosPage() {
               <input type="checkbox" checked={mostrarInativos} onChange={(e) => setMostrarInativos(e.target.checked)} /> Incluir inativos
             </label>
           </div>
-          {!usuarios ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : (
+          {!usuarios ? <TelaSkeleton blocos={[{ altura: "3.5rem" }, { altura: "10rem" }]} label="Carregando usuários" /> : (
             <table className="fazenda-table">
               <thead><tr>
                 <ThOrdenavel label="Login" campo="username" coluna={coluna} dir={dir} ordenar={ordenar} />
@@ -236,6 +243,7 @@ function EditarUsuarioModal({ usuario, souEu, pessoas, usuarios, onClose, onSalv
   const toggle = (k: string) => setPerms((p) => { const s = new Set(p); s.has(k) ? s.delete(k) : s.add(k); return s; });
 
   const salvar = async () => {
+    if (usuario.ativo && !ativo && !window.confirm(`Desativar o usuário "${usuario.username}"? Ele perde o acesso ao sistema até ser reativado.`)) return;
     setSalvando(true); setErro(null);
     try {
       await atualizarUsuario(usuario.id, {
@@ -272,7 +280,7 @@ function EditarUsuarioModal({ usuario, souEu, pessoas, usuarios, onClose, onSalv
             </select>
           </div>
           <div><label style={lbl}>E-mail (opcional)</label><input style={inp} type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
-          <div><label style={lbl}>Nova senha (deixe em branco para manter)</label><input style={inp} value={novaSenha} onChange={(e) => setNovaSenha(e.target.value)} /></div>
+          <div><label style={lbl}>Nova senha (deixe em branco para manter)</label><input style={inp} type="password" autoComplete="new-password" value={novaSenha} onChange={(e) => setNovaSenha(e.target.value)} /></div>
           <div><label style={lbl}>Tipo</label>
             <select style={inp} value={papel} onChange={(e) => setPapel(e.target.value as any)}>
               <option value="admin">Administrador (acesso total + gerencia usuários)</option>

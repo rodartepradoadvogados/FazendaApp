@@ -11,6 +11,7 @@ import { FileSearch, Filter, ExternalLink, Landmark, Wallet } from "lucide-react
 import { fetchCentralDocumentos, abrirLinhaCentralDocumento, formatDate, type LinhaCentralDocumento } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
+import { TelaSkeleton, ErroCarregamento } from "@/components/ui";
 
 const CATEGORIAS = ["Nota fiscal", "Fatura", "Boleto", "Ordem de serviço", "Comprovante", "Orçamento", "Recibo", "Contrato", "Outros"];
 
@@ -60,7 +61,7 @@ export default function CentralDocumentosPage() {
         </p>
       </div>
 
-      {error && <div className="alert-critico mb-4"><span>Sem dados: {error}.</span></div>}
+      {error && <ErroCarregamento erro={error} onRetry={carregar} />}
 
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
@@ -85,7 +86,7 @@ export default function CentralDocumentosPage() {
           <span>Documentos</span>
           <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{linhas?.length ?? 0} no filtro</span>
         </div>
-        {!linhas && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+        {!linhas && !error && <TelaSkeleton blocos={[{ altura: "5.5rem" }, { altura: "12rem" }]} label="Carregando documentos" />}
         {linhas && (
           <div className="overflow-x-auto">
             <table className="fazenda-table">
