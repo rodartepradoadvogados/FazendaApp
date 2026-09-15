@@ -166,6 +166,26 @@ Cantos quase retos em toda a superfície de dados: `--r-sm/md/lg = 2px` no site 
 ### Named Rules
 **The Almost-Square Rule.** Se não é uma pílula de navegação/filtro ou um círculo de ícone, o raio é 2px (site) ou 0px (app de campo). Nunca um meio-termo "moderno" de 8-16px.
 
+## Motion
+
+**Tese:** movimento = feedback, estado e continuidade. Um único momento autoral. Nunca decoração.
+
+Cinco tipos cobrem todo o site, cada um reusando vocabulário que já existe no código — nenhuma técnica nova só por espetáculo:
+
+| Tipo | Trabalho | Vocabulário | Duração |
+|---|---|---|---|
+| Feedback | confirmar uma ação | `.check-tracado` · `.flash-sucesso` · `.toast-*` | 100–150ms |
+| Estado | tornar legível (loading/notificação) | `.skeleton` · `.pulse-dot` | contínuo |
+| Continuidade | explicar mudança de layout/navegação | `.linha-colapsavel` · `.painel-expansivel` · `.popup-*` · `.gaveta-*` · `.folha-inferior` | 200–500ms |
+| Revelação | entrada de conteúdo | `.animate-in` · `.mob-item-cascata` | 200–300ms |
+| Momento focal | um acento autoral, merecido | `meta-batida` (sheen, lote 1) | 500–800ms |
+
+Easing de chegada `cubic-bezier(0.16, 1, 0.3, 1)` (desaceleração natural); saída sempre mais rápida que a entrada; nada de bounce/elástico por reflexo.
+
+### Named Rules
+**The One Focal Moment Rule.** O card de "meta batida" (elevação de 3px + sombra dourada + sheen que passa uma única vez ao carregar) é a ÚNICA exceção documentada à No-Lift Rule — o único ponto de "festa" da tela. Não generalizar: qualquer outro card que "queira" o mesmo tratamento é o sinal de que o momento focal parou de ser raro.
+**The Reduced-Motion Rule.** `prefers-reduced-motion: reduce` reduz/remove movimento espacial (transform, deslizar, sheen) mas preserva opacidade, cor e estado — o feedback de confirmação continua legível sem a animação. Nunca animar `width/height/top/left/margin`; sempre `transform`/`opacity`.
+
 ## Components
 
 ### Buttons
