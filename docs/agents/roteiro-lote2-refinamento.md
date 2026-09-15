@@ -94,11 +94,18 @@ Produzir os mockups HTML da Etapa 1 (T3 + 9 telas), um de cada vez ou em lote, p
 
 Componente `TelaSkeleton` criado em `components/ui.tsx`, aplicado nas 11 telas do lote (Agenda, Central de Protocolos, Sanidade, Rebanho, Estoque, Ciclos de 21 dias, Insights/Indicadores, Administração/Usuários/Parâmetros/Documentos Central, Histórico/Produção + componentes de Reprodução, Alimentação, Dietas) no lugar de "Carregando…"/"Calculando…". `npx tsc --noEmit` limpo. Verificação no navegador não foi possível: o gate de sessão do `AuthShell` (`estado !== "logado"`) não resolveu localmente mesmo com token forjado, em qualquer rota testada (inclusive a Capa, não tocada nesta rodada) — pré-existente, não relacionado a este commit.
 
-### Etapa 2 — `polish` — EM ANDAMENTO (9 de 10 mockups concluídos, commits em `claude/lote2-refinamento-design`)
+### Etapa 2 — pipeline completo (`polish` → `colorize` → `typeset` → `animate`) — CONCLUÍDA
 
-Concluídos e commitados (npx tsc --noEmit limpo em cada um): T3 (`942c7149`), Agenda (`942c7149`), Lançamentos (`460eeacb`), Protocolos+Sanidade (`934157b1`), Rebanho (`a1817528`), Histórico+Reprodução+Produção (`68577668`), Ciclo de 21 dias (`7b61f104`), Estoque (`f84f1adb`), Insights (`24d15e83`).
+Todos os 20 mockups da Etapa 2 revalidados/aplicados, commits em `claude/lote2-refinamento-design`, `npx tsc --noEmit` limpo em cada um:
 
-**PENDENTE — próximo passo imediato: `polish-administracao.html`** (`docs/agents/design-mockups/etapa2-polish/polish-administracao.html`). Ainda não lido/aplicado. Depois dele, seguir para `colorize` (5 mockups em `etapa2-colorize/`), `typeset` (3 em `etapa2-typeset/`) e `animate` (2 em `etapa2-animate/`), nessa ordem, por superfície, sempre com `npx tsc --noEmit` antes de cada commit — ver método completo na seção "Etapa 2" acima. `delight`/`overdrive` ficam gated, não iniciar sem pedido explícito do usuário.
+- **polish** (10/10): T3 (`942c7149`), Agenda (`942c7149`), Lançamentos (`460eeacb`), Protocolos+Sanidade (`934157b1`), Rebanho (`a1817528`), Histórico+Reprodução+Produção (`68577668`), Ciclo de 21 dias (`7b61f104`), Estoque (`f84f1adb`), Insights (`24d15e83`), Administração (`7956bcd1`).
+- **colorize** (5/5, commit `36de622b`): Rebanho (painel de filtros deixa de ser dourado) e Histórico (KPI "Concepção/serviço" volta ao token reprodutivo) corrigidos; sistema/Agenda/Insights revalidados — já corretos ou achado não localizado no código atual.
+- **typeset** (3/3, commit `80c68366`): DESIGN.md atualizado de Barlow para Archivo (YAML + prosa); Histórico > Ciclos de IATF ganha título+descrição (só essa sub-aba não tinha); `.fazenda-table` ganha `tabular-nums` global.
+- **animate** (2/2, commit `697470d6`): nova seção `## Motion` no DESIGN.md (tese, taxonomia de 5 tipos, escala de tempo, easing, regras nomeadas) — vocabulário todo já existia no código, nenhuma mudança de comportamento.
+
+**`delight` e `overdrive` ficam GATED — não iniciar sem pedido explícito do usuário** (playbook completo mais abaixo, seção "Onde paramos + delight e overdrive").
+
+**Próximo passo sugerido:** abrir PR desta branch (`claude/lote2-refinamento-design`) para o dono revisar/mergear, e então seguir para a Etapa 3 (5 itens adiados) e Etapa 4 (decisão dos componentes órfãos do login) — ambas ainda não iniciadas.
 
 Padrões já estabelecidos nesta etapa, reaproveitáveis nas próximas telas:
 - `TelaSkeleton` (components/ui.tsx) — já tem role=status/aria-busy/altura sem CLS.
