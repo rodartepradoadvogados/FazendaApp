@@ -1,5 +1,5 @@
 "use client";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, cloneElement, isValidElement, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2, Camera } from "lucide-react";
 import {
   fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, fetchPlanoContas, criarLancamentoFinanceiro, importarXmlFinanceiro,
@@ -30,7 +30,15 @@ const inputStyle: React.CSSProperties = {
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 
 function Campo({ label, children, full }: { label: string; children: React.ReactNode; full?: boolean }) {
-  return <div style={{ gridColumn: full ? "1 / -1" : undefined }}><label style={lbl}>{label}</label>{children}</div>;
+  const idGerado = useId();
+  const id = isValidElement(children) ? ((children.props as any).id ?? idGerado) : undefined;
+  const conteudo = isValidElement(children) && id ? cloneElement(children as React.ReactElement<any>, { id }) : children;
+  return (
+    <div style={{ gridColumn: full ? "1 / -1" : undefined }}>
+      <label htmlFor={id} style={lbl}>{label}</label>
+      {conteudo}
+    </div>
+  );
 }
 
 type Parcela = {
