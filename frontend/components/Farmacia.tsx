@@ -12,6 +12,7 @@
 // fazenda" (POST/DELETE .../personalizar) continua disponível pra quem
 // prefere clonar antes de editar, mas deixou de ser pré-requisito.
 import { useEffect, useMemo, useState } from "react";
+import { TelaSkeleton, ErroCarregamento } from "@/components/ui";
 import {
   Search, Lock, Pencil, ChevronDown, ChevronRight, AlertTriangle, Ban, ExternalLink, RotateCcw, Check, X,
   Beaker, Building2, Pill, Syringe, Tags, GitCompareArrows, Stethoscope, Link2, PlusCircle,
@@ -940,10 +941,10 @@ export function CatalogoFarmacia({ contextoGlobal, somenteLeitura }: { contextoG
             )}
           </div>
 
-          {erro && <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{erro}</p>}
-          {!catalogo ? (
-            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
-          ) : lista.length === 0 ? (
+          {erro && <ErroCarregamento erro={erro} onRetry={carregar} />}
+          {!catalogo && !erro ? (
+            <TelaSkeleton blocos={[{ altura: "3.5rem" }, { altura: "10rem" }]} label="Carregando catálogo" />
+          ) : !catalogo ? null : lista.length === 0 ? (
             <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma indicação encontrada.</p>
           ) : (
             <div className="space-y-2">

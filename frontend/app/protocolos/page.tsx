@@ -18,7 +18,7 @@ import { exportarFolhaCampoPDF, exportarFolhaCampoExcel } from "@/lib/folhaProto
 import type { AnimalRow } from "@/components/AnimalModal";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
 import { UNIDADES_PROTOCOLO } from "@/lib/constants";
-import { TabBar } from "@/components/ui";
+import { TabBar, TelaSkeleton, ErroCarregamento } from "@/components/ui";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import type { ColunaExport } from "@/lib/export";
 import { WizardProtocolo, type PassoWizard } from "@/components/protocolos/WizardProtocolo";
@@ -1021,14 +1021,14 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <div className="mb-3">
-        <label style={labelStyle}>Buscar por nome do protocolo</label>
-        <input style={inputStyle} list={datalistId} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="ex.: mastite, IATF…" />
+        <label htmlFor={datalistId + "-input"} style={labelStyle}>Buscar por nome do protocolo</label>
+        <input id={datalistId + "-input"} style={inputStyle} list={datalistId} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="ex.: mastite, IATF…" />
         <datalist id={datalistId}>
           {nomesConhecidos.map((n) => <option key={n} value={n} />)}
         </datalist>
       </div>
 
-      {erro && <div className="alert-critico mb-3"><span>Sem dados: {erro}.</span></div>}
+      {erro && <ErroCarregamento erro={erro} onRetry={() => setRecarga((n) => n + 1)} />}
       {linhas && (
         <div className="flex items-center justify-between mb-2">
           <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{linhasFiltradas.length} protocolo(s)</span>
@@ -1038,7 +1038,8 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
       </div>
 
       <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
-      {!linhas ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : (
+      {!linhas && !erro && <TelaSkeleton blocos={[{ altura: "3.5rem" }, { altura: "12rem" }]} label="Carregando protocolos" />}
+      {linhas && (
         <>
           <div className="overflow-x-auto">
             <table className="fazenda-table">
