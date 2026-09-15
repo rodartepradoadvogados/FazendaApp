@@ -1,8 +1,9 @@
 "use client";
+import { useId } from "react";
 import { TabBar } from "@/components/ui";
 
 const campoStyle: React.CSSProperties = {
-  width: "100%", padding: "0.4rem 0.6rem", borderRadius: 6, fontSize: "0.85rem",
+  width: "100%", padding: "0.4rem 0.6rem", borderRadius: "var(--r-sm)", fontSize: "0.85rem",
   background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)",
 };
 
@@ -22,20 +23,23 @@ export function FiltroCiclo21Dias({
   nCiclos: number; setNCiclos: (v: number) => void;
   categoria: string; setCategoria: (v: string) => void;
 }) {
+  const idAncora = useId();
+  const idNCiclos = useId();
+  const idCategoria = useId();
   return (
     <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
       <div>
-        <label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Data de referência</label>
-        <input type="date" value={ancora} onChange={(e) => setAncora(e.target.value)} style={campoStyle} />
+        <label htmlFor={idAncora} style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Data de referência</label>
+        <input id={idAncora} type="date" value={ancora} onChange={(e) => setAncora(e.target.value)} style={campoStyle} />
       </div>
       <div>
-        <label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Nº de ciclos</label>
-        <input type="number" min={1} max={26} value={nCiclos}
+        <label htmlFor={idNCiclos} style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Nº de ciclos</label>
+        <input id={idNCiclos} type="number" min={1} max={26} value={nCiclos}
           onChange={(e) => setNCiclos(Math.min(26, Math.max(1, Number(e.target.value) || 1)))} style={campoStyle} />
       </div>
       <div>
-        <label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Categoria</label>
-        <select value={categoria} onChange={(e) => setCategoria(e.target.value)} style={campoStyle}>
+        <label htmlFor={idCategoria} style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Categoria</label>
+        <select id={idCategoria} value={categoria} onChange={(e) => setCategoria(e.target.value)} style={campoStyle}>
           <option value="todas">Todas</option>
           <option value="vaca">Vacas</option>
           <option value="novilha">Novilhas</option>

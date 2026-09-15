@@ -1,9 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
-import { CalendarRange, AlertTriangle, Info } from "lucide-react";
+import { CalendarRange, Info } from "lucide-react";
 import { fetchCiclos21Dias, formatDate, type CiclosResposta, type CicloReprodutivo } from "@/lib/api";
-import { SecaoRecolhivel, Indicador } from "@/components/ui";
+import { SecaoRecolhivel, Indicador, TelaSkeleton, ErroCarregamento } from "@/components/ui";
 import { FiltroCiclo21Dias } from "@/components/FiltroCiclo21Dias";
+import { Modal } from "@/components/Modal";
 
 /**
  * Risco de prenhez em ciclos de 21 dias — o BREDSUM\E do DairyComp.
@@ -120,6 +121,7 @@ export default function Ciclos21DiasPage() {
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [detalhe, setDetalhe] = useState<CicloReprodutivo | null>(null);
+  const [tentativa, setTentativa] = useState(0);
 
   useEffect(() => {
     let cancelado = false;
@@ -129,7 +131,7 @@ export default function Ciclos21DiasPage() {
       .catch((e) => { if (!cancelado) { setDados(null); setErro(e.message); } })
       .finally(() => { if (!cancelado) setCarregando(false); });
     return () => { cancelado = true; };
-  }, [ancora, modo, nCiclos, categoria]);
+  }, [ancora, modo, nCiclos, categoria, tentativa]);
 
   return (
     <div>
@@ -161,14 +163,8 @@ export default function Ciclos21DiasPage() {
 
       {dados && !carregando && <Legenda />}
 
-      {erro && (
-        <div className="card" style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start",
-          background: "rgba(220,38,38,0.1)", border: "1px solid var(--red)", marginBottom: "1rem" }}>
-          <AlertTriangle size={16} style={{ color: "var(--red)", marginTop: 2 }} />
-          <span style={{ fontSize: "0.85rem" }}>{erro}</span>
-        </div>
-      )}
-      {carregando && <p style={{ color: "var(--text-muted)" }}>Calculando…</p>}
+      {erro && <ErroCarregamento erro={erro} onRetry={() => setTentativa((t) => t + 1)} />}
+      {carregando && <TelaSkeleton blocos={[{ altura: "3.5rem" }, { altura: "8rem" }, { altura: "12rem" }]} label="Calculando ciclos de 21 dias" />}
 
       {dados && !carregando && (
         <>
@@ -259,43 +255,32 @@ export default function Ciclos21DiasPage() {
 
       {/* ---------------- Drill-down: quem entrou em cada balde ---------------- */}
       {detalhe && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex",
-          alignItems: "center", justifyContent: "center", zIndex: 90, padding: "1rem" }}>
-          <div className="card" style={{ width: 780, maxWidth: "96vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="card-header" style={{ margin: 0 }}>
-                Ciclo {detalhe.ciclo} — {formatDate(detalhe.inicio)} a {formatDate(detalhe.fim)}
-              </div>
-              <button onClick={() => setDetalhe(null)} className="btn-ghost">Fechar</button>
-            </div>
-            <div style={{ overflowY: "auto" }}>
-              {([
-                ["Elegíveis para inseminação (Apt)", detalhe.animais.br_elig],
-                ["Inseminadas no ciclo (Ins.)", detalhe.animais.bred],
-                ["Elegíveis para prenhez (Apt Real)", detalhe.animais.pg_elig],
-                ["Confirmadas prenhes (Posit.)", detalhe.animais.preg],
-              ] as const).map(([titulo, nums]) => (
-                <div key={titulo} style={{ marginBottom: "0.9rem" }}>
-                  <p style={{ fontSize: "0.78rem", fontWeight: 700, marginBottom: "0.35rem" }}>
-                    {titulo} <span style={{ color: "var(--dourado-light)", fontWeight: 400 }}>({nums.length})</span>
-                  </p>
-                  {nums.length ? (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
-                      {nums.map((n) => (
-                        <span key={n} style={{ fontSize: "0.74rem", background: "var(--surface-2)",
-                          border: "1px solid var(--border)", borderRadius: 999, padding: "0.12rem 0.55rem", fontWeight: 600 }}>
-                          {n}
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Nenhum animal.</p>
-                  )}
+        <Modal title={`Ciclo ${detalhe.ciclo} — ${formatDate(detalhe.inicio)} a ${formatDate(detalhe.fim)}`} onClose={() => setDetalhe(null)} width="780px">
+          {([
+            ["Elegíveis para inseminação (Apt)", detalhe.animais.br_elig],
+            ["Inseminadas no ciclo (Ins.)", detalhe.animais.bred],
+            ["Elegíveis para prenhez (Apt Real)", detalhe.animais.pg_elig],
+            ["Confirmadas prenhes (Posit.)", detalhe.animais.preg],
+          ] as const).map(([titulo, nums]) => (
+            <div key={titulo} style={{ marginBottom: "0.9rem" }}>
+              <p style={{ fontSize: "0.78rem", fontWeight: 700, marginBottom: "0.35rem" }}>
+                {titulo} <span style={{ color: "var(--dourado-light)", fontWeight: 400 }}>({nums.length})</span>
+              </p>
+              {nums.length ? (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
+                  {nums.map((n) => (
+                    <span key={n} style={{ fontSize: "0.74rem", background: "var(--surface-2)",
+                      border: "1px solid var(--border)", borderRadius: 999, padding: "0.12rem 0.55rem", fontWeight: 600 }}>
+                      {n}
+                    </span>
+                  ))}
                 </div>
-              ))}
+              ) : (
+                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Nenhum animal.</p>
+              )}
             </div>
-          </div>
-        </div>
+          ))}
+        </Modal>
       )}
     </div>
   );
