@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>historico-reproducao-producao</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+:root{
+  --bg:#F4F6F9; --surface:#FFFFFF; --surface-2:#F9FAFB;
+  --border:#DCE3EA; --border-strong:#C3CDD8;
+  --text:#1F2937; --text-muted:#6B7280;
+  --vinho:#0E2A47; --vinho-light:#416180; --vinho-dark:#0A1F36;
+  --dourado:#8A6D2F; --dourado-light:#C9A44C;
+  --green:#2E7D52; --green-light:#4CAF80; --red:#C0392B; --amber:#D97706; --blue:#1E6FA8;
+  --cat-reproducao:#8B7FF0; --cat-sanidade:#4E7A5A; --cat-alimentacao:#E0A63C;
+  --cat-gestao:#5B8FB0; --cat-financeiro:#7A2233; --cat-estoque:#C98A2A;
+  --cat-recria:#B0894A; --cat-acesso:#9A5560; --cat-producao:#1E6FA8;
+  --r-sm:2px; --r-md:2px; --r-lg:2px; --shadow-sm:0 1px 4px rgba(20,30,45,.10);
+  --review-bg:#EDEFF2; --review-fg:#3A4250; --review-border:#D6DAE1; --review-accent:#0E2A47;
+}
+body{margin:0;background:var(--review-bg);color:var(--text);font-family:'Barlow',Inter,sans-serif;
+  padding-inline:max(16px,calc((100vw - 1180px)/2));padding-block:20px 48px}
+h1,h2,h3,.section-label{font-family:'Barlow Condensed',Inter,sans-serif}
+.review-bar{max-width:1180px;margin:0 auto 18px;padding:.85rem 1.1rem;background:var(--review-bg);border:1px solid var(--review-border);border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+.review-tag{font-size:.68rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--review-fg)}
+.review-tag b{color:var(--review-accent)}
+.review-switch{display:inline-flex;border:1px solid var(--review-border);border-radius:999px;padding:3px;gap:2px;background:var(--surface)}
+.review-switch button{font-family:'Barlow Condensed',Inter,sans-serif;font-weight:700;font-size:.85rem;padding:.4rem 1.1rem;border-radius:999px;border:none;cursor:pointer;background:transparent;color:var(--text-muted)}
+.review-switch button.active{background:var(--vinho);color:#fff}
+.review-note{max-width:1180px;margin:0 auto 18px;font-size:.82rem;color:var(--review-fg);line-height:1.5}
+.review-note b{color:var(--review-accent)}
+.review-note code{background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:.05rem .35rem;font-size:.78rem}
+.stage{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:1.1rem}
+.card-plain{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:1.2rem 1.3rem}
+.section-label{font-size:.68rem;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--text-muted);margin:0 0 .7rem;display:flex;align-items:center;gap:.5rem}
+.section-label .rule{flex:1;height:1px;background:var(--border)}
+.state-panel{display:none}.state-panel.active{display:block}
+.muted{color:var(--text-muted)} .small{font-size:.78rem} .foot{margin-top:.5rem;font-size:.76rem;color:var(--text-muted);line-height:1.45}
+.b{font-weight:700}
+/* componentes do produto (tokens reais) */
+.kpi-mini{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--vinho);border-radius:var(--r-sm);padding:.55rem .7rem}
+.kpi-mini .v{font-size:1.15rem;font-weight:800;color:var(--vinho);font-variant-numeric:tabular-nums;line-height:1}
+.kpi-mini .l{font-family:'Barlow Condensed';font-size:.62rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);margin-top:.18rem}
+.kpi-mini.destaque{border-left-color:var(--dourado)} .kpi-mini.destaque .v{color:var(--dourado)}
+.kpi-mini.errado{border-left-color:var(--blue)} .kpi-mini.errado .v{color:var(--blue)}
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.6rem}
+.kpi-group{margin-bottom:.7rem}
+.kpi-group .gh{font-family:'Barlow Condensed';font-size:.7rem;font-weight:700;letter-spacing:.11em;text-transform:uppercase;color:var(--dourado);border-bottom:1px solid var(--border);padding-bottom:.25rem;margin-bottom:.45rem}
+.field{display:flex;flex-direction:column;gap:.28rem;font-size:.8rem}
+.field label{font-family:'Barlow Condensed';font-size:.66rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted)}
+.field input,.field select{background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-sm);padding:.45rem .6rem;font-size:.85rem;color:var(--text);font-family:inherit}
+.filters{display:flex;gap:.7rem;flex-wrap:wrap}
+.acc-item{border:1px solid var(--border);border-radius:var(--r-sm);margin-bottom:.4rem;overflow:hidden}
+.acc-head{background:var(--surface-2);padding:.5rem .7rem;font-family:'Barlow Condensed';font-weight:700;font-size:.8rem;letter-spacing:.05em;text-transform:uppercase;color:var(--text);display:flex;justify-content:space-between;align-items:center}
+.acc-body{padding:.6rem .7rem;font-size:.82rem;color:var(--text-muted);border-top:1px solid var(--border)}
+.tbl{width:100%;border-collapse:collapse;font-size:.82rem;background:var(--surface)}
+.tbl th{background:var(--surface-2);text-align:left;padding:6px 8px;font-family:'Barlow Condensed';font-size:.64rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--vinho);border-bottom:1px solid var(--border-strong)}
+.tbl td{padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text)}
+.badge{display:inline-flex;align-items:center;gap:.3rem;font-size:.74rem;font-weight:600;padding:.12rem .5rem;border-radius:999px}
+.badge.ok{background:rgba(46,125,82,.14);color:var(--green);border:1px solid var(--green)}
+.badge.warn{background:rgba(217,119,6,.14);color:var(--amber);border:1px solid var(--amber)}
+.badge.bad{background:rgba(192,57,43,.14);color:var(--red);border:1px solid var(--red)}
+.btn{display:inline-flex;align-items:center;gap:.4rem;border-radius:var(--r-sm);padding:.45rem 1rem;font-size:.85rem;font-weight:600;cursor:pointer;font-family:inherit;border:1px solid transparent}
+.btn-primary{background:var(--vinho);color:#fff;border-color:var(--vinho)}
+.btn-primary-gold{background:var(--dourado);color:#fff;border-color:var(--dourado)}
+.btn-ghost{background:transparent;color:var(--text-muted);border-color:var(--border)}
+.btn-secondary{background:var(--surface-2);color:var(--text-muted);border-color:var(--border-strong)}
+.empty-state{border:1.5px dashed var(--border);border-radius:var(--r-sm);padding:1.5rem 1rem;text-align:center;color:var(--text-muted);font-size:.84rem;background:var(--surface-2)}
+.alert-critico{background:rgba(192,57,43,.13);border:1px solid var(--red);border-radius:var(--r-sm);padding:.7rem .9rem;display:flex;gap:.55rem;align-items:flex-start;color:var(--red);font-size:.85rem}
+.err-raw{font-family:ui-monospace,monospace;font-size:.76rem;color:var(--red);background:rgba(192,57,43,.08);border:1px solid var(--red);border-radius:var(--r-sm);padding:.6rem .8rem;white-space:pre-wrap}
+.skeleton{border-radius:var(--r-sm);background:linear-gradient(90deg,var(--border) 25%,var(--surface-2) 50%,var(--border) 75%);background-size:200% 100%;animation:sk 1.6s ease-in-out infinite}
+@keyframes sk{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.tabs{display:flex;gap:.4rem;margin-bottom:.7rem;flex-wrap:wrap}
+.tab{font-family:'Barlow Condensed';font-size:.78rem;font-weight:700;padding:.35rem .9rem;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer}
+.tab.ativa{background:var(--vinho);border-color:var(--vinho);color:var(--dourado-light)}
+</style>
+</head>
+<body>
+<div class="review-bar">
+  <span class="review-tag">Revisão de proposta &middot; <b>Histórico + Reprodução + Produção &middot; 24/40 &middot; tokens + error-states</b></span>
+  <div class="review-switch" role="tablist">
+    <button class="stbtn active" data-state="atual">Atual</button>
+    <button class="stbtn" data-state="proposta">Proposta</button>
+  </div>
+</div>
+<p class="review-note" id="note-atual"><b>Hoje:</b> KPI &ldquo;Concepção/serviço&rdquo; com token de cor trocado, erro fragmentado em 3+ variações na mesma jornada.</p>
+<p class="review-note" id="note-proposta" hidden><b>Proposta:</b> token correto, um único componente de erro por status-code.</p>
+<div class="stage">
+  <div class="state-panel active" id="panel-atual">
+<div class="card-plain">
+  <div class="section-label">1. Token de cor trocado no KPI<span class="rule"></span></div>
+  <div class="kpi-row" style="max-width:520px">
+    <div class="kpi-mini errado"><div class="v">41%</div><div class="l">Concepção/serviço</div></div>
+    <div class="kpi-mini"><div class="v">17,2</div><div class="l">DEL</div></div>
+  </div>
+  <p class="foot">O KPI &ldquo;Concepção/serviço&rdquo; usa <code>var(--blue)</code> &mdash; token de <b>Produção</b>, categoria errada para um indicador reprodutivo.</p>
+</div>
+<div class="card-plain">
+  <div class="section-label">2. Erro fragmentado em 3+ variações<span class="rule"></span></div>
+  <div class="err-raw" style="margin-bottom:.4rem">Failed to fetch — BST</div>
+  <div class="small muted" style="margin-bottom:.4rem">CiclosIatf: seção inteira descartada silenciosamente.</div>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:.7rem">
+    <span class="badge bad" style="margin-bottom:.4rem">Erro</span>
+    <div class="small muted">Equivalente Maduro mostra erro e estado vazio ao mesmo tempo.</div>
+  </div>
+</div>
+</div>
+  <div class="state-panel" id="panel-proposta">
+<div class="card-plain">
+  <div class="section-label">1. Token de cor correto<span class="rule"></span></div>
+  <div class="kpi-row" style="max-width:520px">
+    <div class="kpi-mini destaque"><div class="v">41%</div><div class="l">Concepção/serviço</div></div>
+    <div class="kpi-mini"><div class="v">17,2</div><div class="l">DEL</div></div>
+  </div>
+  <p class="foot">Indicador reprodutivo volta ao token de categoria correto; <code>var(--blue)</code> continua sendo &ldquo;Produção&rdquo; (&ldquo;decisão explícita e não muda&rdquo;).</p>
+</div>
+<div class="card-plain">
+  <div class="section-label">2. Um único componente de erro por status-code<span class="rule"></span></div>
+  <div class="alert-critico"><span>&#9888;</span><div><b>Não foi possível carregar a reprodução.</b><br><span class="small">O servidor não respondeu. <a href="#" style="color:var(--dourado)">Tentar novamente</a></span></div></div>
+  <p class="foot">A mesma jornada passa a ter uma única variação de erro por status-code (401/403/404/429/500), com retry — sem seção descartada, sem erro+vazio simultâneos.</p>
+</div>
+</div>
+</div>
+
+<script>
+var buttons=Array.prototype.slice.call(document.querySelectorAll('.stbtn'));
+var panels={atual:document.getElementById('panel-atual'),proposta:document.getElementById('panel-proposta')};
+var notes={atual:document.getElementById('note-atual'),proposta:document.getElementById('note-proposta')};
+function setState(s){buttons.forEach(function(b){b.classList.toggle('active',b.dataset.state===s)});
+Object.keys(panels).forEach(function(k){panels[k].classList.toggle('active',k===s)});
+Object.keys(notes).forEach(function(k){notes[k].hidden=k!==s});}
+buttons.forEach(function(b){b.addEventListener('click',function(){setState(b.dataset.state)})});
+</script>
+
+</body>
+</html>

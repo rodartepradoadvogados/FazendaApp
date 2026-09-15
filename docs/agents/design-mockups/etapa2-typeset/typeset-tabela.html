@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>typeset-tabela</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+:root{
+  --bg:#F4F6F9; --surface:#FFFFFF; --surface-2:#F9FAFB;
+  --border:#DCE3EA; --border-strong:#C3CDD8;
+  --text:#1F2937; --text-muted:#6B7280;
+  --vinho:#0E2A47; --vinho-light:#416180; --vinho-dark:#0A1F36;
+  --dourado:#8A6D2F; --dourado-light:#C9A44C;
+  --green:#2E7D52; --green-light:#4CAF80; --red:#C0392B; --amber:#D97706; --blue:#1E6FA8;
+  --cat-reproducao:#8B7FF0; --cat-sanidade:#4E7A5A; --cat-alimentacao:#E0A63C;
+  --cat-gestao:#5B8FB0; --cat-financeiro:#7A2233; --cat-estoque:#C98A2A;
+  --cat-recria:#B0894A; --cat-acesso:#9A5560; --cat-producao:#1E6FA8;
+  --r-sm:2px; --r-md:2px; --r-lg:2px; --shadow-sm:0 1px 4px rgba(20,30,45,.10);
+  --review-bg:#EDEFF2; --review-fg:#3A4250; --review-border:#D6DAE1; --review-accent:#0E2A47;
+  --font-body:'Archivo',Inter,sans-serif; --font-heading:'Archivo',Inter,sans-serif;
+}
+body{margin:0;background:var(--review-bg);color:var(--text);font-family:var(--font-body);
+  padding-inline:max(16px,calc((100vw - 1180px)/2));padding-block:20px 48px}
+.review-bar{max-width:1180px;margin:0 auto 18px;padding:.85rem 1.1rem;background:var(--review-bg);border:1px solid var(--review-border);border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+.review-tag{font-size:.68rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--review-fg)}
+.review-tag b{color:var(--review-accent)}
+.review-switch{display:inline-flex;border:1px solid var(--review-border);border-radius:999px;padding:3px;gap:2px;background:var(--surface)}
+.review-switch button{font-family:var(--font-heading);font-weight:700;font-size:.85rem;padding:.4rem 1.1rem;border-radius:999px;border:none;cursor:pointer;background:transparent;color:var(--text-muted)}
+.review-switch button.active{background:var(--vinho);color:#fff}
+.review-note{max-width:1180px;margin:0 auto 18px;font-size:.82rem;color:var(--review-fg);line-height:1.5}
+.review-note b{color:var(--review-accent)}
+.review-note code{background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:.05rem .35rem;font-size:.78rem}
+.stage{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:1.1rem}
+.card-plain{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:1.2rem 1.3rem}
+.section-label{font-family:var(--font-heading);font-size:.68rem;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--text-muted);margin:0 0 .7rem;display:flex;align-items:center;gap:.5rem}
+.section-label .rule{flex:1;height:1px;background:var(--border)}
+.state-panel{display:none}.state-panel.active{display:block}
+.muted{color:var(--text-muted)} .small{font-size:.78rem} .foot{margin-top:.5rem;font-size:.76rem;color:var(--text-muted);line-height:1.45}
+.b{font-weight:700} .tnum{font-variant-numeric:tabular-nums}
+/* espécime de papéis */
+.spec{display:flex;flex-direction:column;gap:1rem}
+.spec-row{display:flex;gap:1rem;align-items:baseline;border-bottom:1px solid var(--border);padding-bottom:.6rem}
+.spec-row .meta{width:160px;flex-shrink:0;font-size:.72rem;color:var(--text-muted);font-family:ui-monospace,monospace}
+.spec-row .sample{flex:1}
+.page-title{font-family:var(--font-heading);font-weight:700;font-size:1.75rem;letter-spacing:-0.02em;line-height:1.1}
+.card-title{font-family:var(--font-heading);font-weight:700;font-size:0.8rem;letter-spacing:0.04em;text-transform:uppercase;color:var(--vinho)}
+.kpi-value{font-family:var(--font-heading);font-weight:800;font-size:2rem;line-height:1;color:var(--vinho);font-variant-numeric:tabular-nums}
+.label-role{font-family:var(--font-heading);font-weight:600;font-size:0.6875rem;letter-spacing:0.13em;text-transform:uppercase;color:var(--text-muted)}
+.body-role{font-weight:400;font-size:0.875rem;line-height:1.5}
+.cell-role{font-size:0.875rem;font-variant-numeric:tabular-nums}
+.meta-role{font-size:0.75rem;color:var(--text-muted)}
+/* labels: antes vs depois */
+.label-before{font-size:.8rem;color:var(--text-muted)}
+.label-after{font-family:var(--font-heading);font-weight:600;font-size:.6875rem;letter-spacing:.13em;text-transform:uppercase;color:var(--text-muted)}
+/* medida */
+.measure-demo{border:1px dashed var(--border-strong);padding:.8rem;max-width:34rem}
+.measure-bad{max-width:56rem;border:1px dashed var(--border-strong);padding:.8rem}
+.tbl{width:100%;border-collapse:collapse;font-size:.875rem;background:var(--surface)}
+.tbl th{background:var(--surface-2);text-align:left;padding:6px 8px;font-family:var(--font-heading);font-size:.6875rem;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--vinho);border-bottom:1px solid var(--border-strong)}
+.tbl td{padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text);font-variant-numeric:tabular-nums}
+.tabs{display:flex;gap:.4rem;margin-bottom:.7rem;flex-wrap:wrap}
+.tab{font-family:var(--font-heading);font-size:.78rem;font-weight:700;padding:.35rem .9rem;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer;white-space:nowrap}
+.tab.ativa{background:var(--vinho);border-color:var(--vinho);color:var(--dourado-light)}
+.tabbar-scroll{display:flex;gap:.4rem;overflow-x:auto;padding-bottom:.3rem}
+.tabbar-scroll .tab{flex-shrink:0}
+.tabbar-cut{display:flex;gap:.4rem;overflow:hidden;white-space:nowrap}
+.tabbar-cut .tab{flex-shrink:0}
+</style>
+</head>
+<body>
+<div class="review-bar">
+  <span class="review-tag">Typeset (Etapa 2) &middot; <b>Tabela — cabeçalho caps + tabular-nums + truncagem</b></span>
+  <div class="review-switch" role="tablist">
+    <button class="stbtn active" data-state="atual">Colorizado</button>
+    <button class="stbtn" data-state="proposta">Typeset</button>
+  </div>
+</div>
+<p class="review-note" id="note-atual">Colorizado: números sem alinhamento; cabeçalho sem tratamento; conteúdo longo transborda.</p>
+<p class="review-note" id="note-proposta" hidden>Typeset: cabeçalho caps + tracking; tabular-nums à direita; ellipsis em longo.</p>
+<div class="stage">
+  <div class="state-panel active" id="panel-atual">
+<div class="card-plain"><div class="section-label">1. Tabela sem tabular-nums / rótulos em caixa baixa<span class="rule"></span></div>
+  <table class="tbl" style="font-variant-numeric:normal"><thead><tr><th>animal</th><th>del</th><th>produção</th></tr></thead><tbody>
+    <tr><td>#1234</td><td>17.2</td><td>1,240</td></tr><tr><td>#1235</td><td>18.9</td><td>1,118</td></tr>
+  </tbody></table>
+  <p class="foot">Coluna numérica sem alinhamento de dígitos; cabeçalho sem o tratamento de rótulo institucional.</p>
+</div></div>
+  <div class="state-panel" id="panel-proposta">
+<div class="card-plain"><div class="section-label">1. Tabela institucional — cabeçalho caps + tabular-nums<span class="rule"></span></div>
+  <table class="tbl"><thead><tr><th>Animal</th><th style="text-align:right">DEL</th><th style="text-align:right">Produção</th></tr></thead><tbody>
+    <tr><td>#1234</td><td style="text-align:right">17,2</td><td style="text-align:right">1.240</td></tr><tr><td>#1235</td><td style="text-align:right">18,9</td><td style="text-align:right">1.118</td></tr>
+  </tbody></table>
+  <p class="foot">Cabeçalho maiúsculo + letter-spacing largo; números à direita com <code>tabular-nums</code> (dígitos alinham na vertical); linhas separadas só pelo filete de 1px — sem zebra.</p>
+</div>
+<div class="card-plain"><div class="section-label">2. Conteúdo longo — truncar, nunca transbordar<span class="rule"></span></div>
+  <div style="max-width:360px">
+    <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border:1px solid var(--border);border-radius:var(--r-sm);padding:.5rem .6rem;font-size:.875rem">Nome de fazenda muito comprido que precisa caber na célula sem empurrar a coluna vizinha</div>
+  </div>
+  <p class="foot"><code>line-clamp</code>/ellipsis para nomes e descrições longas; a tabela rola no próprio card quando larga, nunca a página inteira.</p>
+</div></div>
+</div>
+
+<script>
+var buttons=Array.prototype.slice.call(document.querySelectorAll('.stbtn'));
+var panels={atual:document.getElementById('panel-atual'),proposta:document.getElementById('panel-proposta')};
+var notes={atual:document.getElementById('note-atual'),proposta:document.getElementById('note-proposta')};
+function setState(s){buttons.forEach(function(b){b.classList.toggle('active',b.dataset.state===s)});
+Object.keys(panels).forEach(function(k){panels[k].classList.toggle('active',k===s)});
+Object.keys(notes).forEach(function(k){notes[k].hidden=k!==s});}
+buttons.forEach(function(b){b.addEventListener('click',function(){setState(b.dataset.state)})});
+</script>
+
+</body>
+</html>
