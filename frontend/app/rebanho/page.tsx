@@ -12,7 +12,7 @@ import BaixarAnimal from "@/components/BaixarAnimal";
 import FichaAnimal from "@/components/FichaAnimal";
 import RebanhoTouros from "@/components/RebanhoTouros";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
-import { MultiFiltro, Indicador } from "@/components/ui";
+import { MultiFiltro, Indicador, TelaSkeleton, ErroCarregamento } from "@/components/ui";
 import { GrupoLotePicker } from "@/components/GrupoLotePicker";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -48,7 +48,7 @@ const SIT_CORES: Record<string, string> = {
   // códigos antigos do CSV acima para não quebrar as cores já em uso.
   "Gestante": "var(--green-light)", "Inseminada": "var(--dourado-light)",
   "Em protocolo (IA atual)": "var(--vinho-light)", "PEV": "var(--amber)",
-  "Apta": "var(--blue)", "Atrasada": "var(--red)", "Não apta": "#8A6a3a", "Vazia": "var(--text-muted)",
+  "Apta": "var(--blue)", "Atrasada": "var(--red)", "Não apta": "var(--dourado)", "Vazia": "var(--text-muted)",
 };
 // Estado reprodutivo AO VIVO (GET /indicadores/estados-reprodutivos) — substitui
 // o Animal.sit_rep congelado do último CSV importado. Ver EstadoReprodutivoAnimal em lib/api.ts.
@@ -129,7 +129,7 @@ function EstratificacaoRebanho({ animais }: { animais: Animal[] }) {
         </div>
       </div>
       {/* Barra empilhada 100% — cada fatia clicável abre os animais daquela categoria */}
-      <div style={{ display: "flex", height: 26, borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
+      <div style={{ display: "flex", height: 26, borderRadius: "var(--r-sm)", overflow: "hidden", border: "1px solid var(--border)" }}>
         {dados.map((x) => (
           <div key={x.label} title={`${x.label}: ${x.n} (${x.pct}%) — clique para ver os animais`}
             style={{ width: `${x.pct}%`, background: x.cor, minWidth: x.pct > 0 ? 2 : 0, cursor: "pointer" }}
@@ -244,8 +244,8 @@ function RebanhoDescarte() {
         <h1 className="text-2xl font-bold flex items-center gap-2"><Skull size={22} style={{ color: "var(--red)" }} /> Animais a descartar</h1>
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Animais marcados para descarte, com o motivo (quando informado).</p>
       </div>
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
-      {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {error && <ErroCarregamento erro={error} onRetry={carregar} />}
+      {!regs && !error && <TelaSkeleton blocos={[{ altura: "1.3rem", largura: "34%" }, { altura: "9rem" }]} label="Carregando animais a descartar" />}
       {regs && <CaixaADescartar animais={regs} aoAtualizar={carregar} estadosPorNumero={estadosPorNumero} />}
     </div>
   );
@@ -432,16 +432,13 @@ function RebanhoVisaoGeral() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Fêmeas do rebanho — filtre por grupo, situação reprodutiva ou número.</p>
       </div>
 
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importar dados</a>.</span></div>}
-      {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {error && <ErroCarregamento erro={error} onRetry={carregar} linkHref="/configuracoes?aba=importar" linkLabel="Importar dados" />}
+      {!regs && !error && <TelaSkeleton blocos={[{ altura: "5.5rem" }, { altura: "9rem" }, { altura: "10rem" }]} label="Carregando rebanho" />}
 
       {regs && (
         <>
-          <div className="card mb-4" style={{
-            background: "color-mix(in srgb, var(--dourado) 14%, var(--surface))",
-            border: "1px solid var(--dourado)",
-          }}>
-            <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} style={{ color: "var(--dourado)" }} /> Filtros</div>
+          <div className="card mb-4">
+            <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} style={{ color: "var(--text-muted)" }} /> Filtros</div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               <GrupoLotePicker label="Grupo / lote" opcoes={opc((a) => a.grupo_primario)} selecionados={fGrupo} onChange={setFGrupo} />
               <MultiFiltro label="Situação rep." opcoes={opc((a) => rotuloDe(a.numero) ?? null)} selecionados={fSit} onChange={setFSit} />

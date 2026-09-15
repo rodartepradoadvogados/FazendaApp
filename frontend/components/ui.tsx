@@ -2,7 +2,86 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronRight, Check, Cog, HeartPulse, Milk, Wallet, Syringe, BarChart3 } from "lucide-react";
+import { ChevronDown, ChevronRight, Check, Cog, HeartPulse, Milk, Wallet, Syringe, BarChart3, AlertTriangle } from "lucide-react";
+
+/**
+ * TelaSkeleton — placeholder de carregamento no formato real do conteúdo
+ * (título/cards/tabela), no lugar do "Carregando…" solto usado antes.
+ * `blocos` deixa cada tela reservar a altura real de cada seção (título,
+ * linha de KPIs, tabela) para não pular o layout (CLS) quando o dado chega;
+ * sem informar, usa um formato genérico de título+cards+tabela.
+ */
+export function TelaSkeleton({
+  blocos,
+  label = "Carregando conteúdo",
+}: {
+  blocos?: Array<{ altura?: string | number; largura?: string | number }>;
+  label?: string;
+}) {
+  const lista = blocos ?? [
+    { altura: "1.3rem", largura: "34%" },
+    { altura: "4.4rem" },
+    { altura: "9rem" },
+  ];
+  return (
+    <div
+      role="status"
+      aria-busy="true"
+      aria-live="polite"
+      aria-label={label}
+      style={{ display: "flex", flexDirection: "column", gap: "0.8rem" }}
+    >
+      {lista.map((b, i) => (
+        <div key={i} className="skeleton" style={{ height: b.altura ?? "1.5rem", width: b.largura ?? "100%" }} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * ErroCarregamento — bloco de erro unificado (substitui as variações de
+ * "Sem dados: {erro}." espalhadas pelas telas). `onRetry` mostra um botão
+ * "Tentar novamente"; `linkHref`/`linkLabel` mantém o link de recuperação
+ * (ex.: importar dados) quando a tela já tinha um.
+ */
+export function ErroCarregamento({
+  erro,
+  onRetry,
+  linkHref,
+  linkLabel,
+}: {
+  erro: string;
+  onRetry?: () => void;
+  linkHref?: string;
+  linkLabel?: string;
+}) {
+  return (
+    <div className="alert-critico mb-4">
+      <AlertTriangle size={18} />
+      <span>
+        Sem dados: {erro}.
+        {linkHref && linkLabel && (
+          <>
+            {" "}
+            <a href={linkHref} style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>{linkLabel}</a>.
+          </>
+        )}
+        {onRetry && (
+          <>
+            {" "}
+            <button
+              type="button"
+              onClick={onRetry}
+              style={{ background: "none", border: "none", padding: 0, color: "var(--dourado-light)", textDecoration: "underline", cursor: "pointer", font: "inherit" }}
+            >
+              Tentar novamente
+            </button>
+          </>
+        )}
+      </span>
+    </div>
+  );
+}
 
 /**
  * Indicador — cartão de KPI com um círculo de ícone colorido por categoria,

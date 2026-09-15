@@ -40,8 +40,8 @@ export type AnimalRow = {
 const SIT_CORES: Record<string, string> = {
   "Ges.": "var(--green-light)", "Vaz. apt.": "var(--blue)", "Vaz. atr.": "var(--red)",
   "Vaz. pev": "var(--amber)", "Ins.": "var(--dourado-light)",
-  Gestante: "var(--green-light)", Inseminada: "var(--dourado-light)", "Em protocolo (IA atual)": "var(--dourado-light)",
-  PEV: "var(--amber)", Apta: "var(--blue)", Atrasada: "var(--red)", "Não apta": "var(--text-muted)", Vazia: "var(--blue)",
+  Gestante: "var(--green-light)", Inseminada: "var(--dourado-light)", "Em protocolo (IA atual)": "var(--vinho-light)",
+  PEV: "var(--amber)", Apta: "var(--blue)", Atrasada: "var(--red)", "Não apta": "var(--dourado)", Vazia: "var(--text-muted)",
 };
 
 // Estados "vazia" ao vivo — equivalem ao antigo prefixo textual "Vaz." usado
