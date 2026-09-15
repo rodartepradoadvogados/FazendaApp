@@ -12,7 +12,7 @@ import { PilulaConfianca, NotaExplicativaEM } from "@/components/TrioEquivalente
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
-import { SecaoRecolhivel, MultiFiltro, Indicador, TabBar } from "@/components/ui";
+import { SecaoRecolhivel, MultiFiltro, Indicador, TabBar, TelaSkeleton, ErroCarregamento } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
@@ -1296,7 +1296,8 @@ export function RelatoriosBstView() {
   const th: React.CSSProperties = { textAlign: "left", padding: "0.4rem 0.6rem", fontSize: "0.72rem", textTransform: "uppercase", color: "var(--text-muted)", borderBottom: "1px solid var(--border)" };
   const td: React.CSSProperties = { padding: "0.4rem 0.6rem", fontSize: "0.82rem", borderBottom: "1px solid var(--border)" };
 
-  if (erro) return <p style={{ color: "var(--red)" }}>{erro}</p>;
+  if (erro) return <div className="px-6 pt-6"><ErroCarregamento erro={erro} onRetry={carregar} /></div>;
+  if (!historico) return <div className="px-6 pt-6"><TelaSkeleton blocos={[{ altura: "5.5rem" }, { altura: "12rem" }]} label="Carregando BST" /></div>;
 
   return (
     <div className="px-6 pt-6 space-y-4">
@@ -1443,7 +1444,9 @@ export function HistoricoSecagensProducao() {
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Droplet size={22} style={{ color: "var(--dourado-light)" }} /> Secagem
         </h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Histórico de secagens — data, motivo, ECC e observação.</p>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
+          Histórico de secagens — data, motivo, ECC e observação. Mesma lista de Histórico &gt; Reprodução &gt; Secagens.
+        </p>
       </div>
       <HistoricoSecagens />
     </div>
@@ -1574,17 +1577,21 @@ function PainelAfericaoEM({ painel }: { painel: RelatorioEquivalenteMaduro["pain
 export function EquivalenteMaduroView() {
   const [dados, setDados] = useState<RelatorioEquivalenteMaduro | null>(null);
   const [erro, setErro] = useState<string | null>(null);
-  useEffect(() => {
+  const carregar = () => {
+    setErro(null);
     fetchEquivalenteMaduro().then(setDados).catch((e) => setErro(e.message));
-  }, []);
+  };
+  useEffect(carregar, []);
 
   const animais = dados?.animais ?? [];
   const ordEM = useOrdenacao(animais);
   const badgeStyleEM: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)", background: "var(--surface-2)", borderRadius: "999px", padding: "0.1rem 0.55rem", whiteSpace: "nowrap" };
 
+  if (erro) return <div className="px-6 pt-6"><ErroCarregamento erro={erro} onRetry={carregar} /></div>;
+  if (!dados) return <div className="px-6 pt-6"><TelaSkeleton blocos={[{ altura: "3.5rem" }, { altura: "16rem" }]} label="Carregando equivalente maduro" /></div>;
+
   return (
     <div className="px-6 pt-6 space-y-4">
-      {erro && <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {erro}.</span></div>}
       <div className="card">
         <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
           <span className="flex items-center gap-2"><Sprout size={14} /> Equivalente maduro — quem ainda vai crescer</span>

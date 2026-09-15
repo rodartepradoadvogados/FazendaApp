@@ -62,7 +62,7 @@ export default function HistoricoPage() {
       <div className="p-6 animate-in">
         <div className="mb-4">
           <h1 className="text-2xl font-bold flex items-center gap-2"><Heart size={22} style={{ color: "var(--dourado)" }} /> Reprodução</h1>
-          <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Histórico de partos, IAs, secagens, serviços, diagnósticos reprodutivos e perda de prenhez.</p>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Histórico de partos, IAs, secagens, serviços, diagnósticos reprodutivos, perda de prenhez e ciclos de IATF.</p>
         </div>
         {abaVisao === "partos" ? <HistoricoPartos />
           : abaVisao === "secagens" ? <HistoricoSecagens />
