@@ -12,7 +12,7 @@ import { PilulaConfianca, NotaExplicativaEM } from "@/components/TrioEquivalente
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
-import { SecaoRecolhivel, MultiFiltro, Indicador, TabBar, TelaSkeleton } from "@/components/ui";
+import { SecaoRecolhivel, MultiFiltro, Indicador, TabBar, TelaSkeleton, ErroCarregamento } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
@@ -273,10 +273,12 @@ export function ProducaoLeiteira({ secao = "controle", animaisSelExterno, setAni
     fetchRelatorioControleEntrega(ceIni || undefined, ceFim || undefined).then(setCe).catch((e) => setCeErro(e.message));
   }, [mostrarEntrega, ceIni, ceFim]);
 
-  useEffect(() => {
+  const carregarControles = () => {
     if (!mostrarControle) return;
+    setError(null);
     fetchControles().then((d) => setRegs(d.controles)).catch((e) => setError(e.message));
-  }, [mostrarControle]);
+  };
+  useEffect(carregarControles, [mostrarControle]);
 
   const delMin = fDelMin === "" ? null : Number(fDelMin);
   const delMax = fDelMax === "" ? null : Number(fDelMax);
@@ -445,7 +447,7 @@ export function ProducaoLeiteira({ secao = "controle", animaisSelExterno, setAni
 
       {mostrarControle && (
       <>
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe o controle leiteiro</a>.</span></div>}
+      {error && <ErroCarregamento mensagem={`Não foi possível carregar: ${error}.`} onRetry={carregarControles} linkHref="/configuracoes?aba=importar" linkLabel="Importar controle leiteiro" />}
       {!regs && !error && <TelaSkeleton kpis={0} />}
 
       {regs && (
@@ -1113,7 +1115,7 @@ export function RelatoriosPesagemView() {
 
   return (
     <div className="px-6 pt-6 space-y-4">
-      {erro && <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {erro}.</span></div>}
+      {erro && <ErroCarregamento mensagem={`Não foi possível carregar: ${erro}.`} onRetry={carregarRelatorio} />}
       <div className="card">
         <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
           <span className="flex items-center gap-2"><Scale size={14} /> Relatório de crescimento (GMD / GPD)</span>
@@ -1574,9 +1576,8 @@ function PainelAfericaoEM({ painel }: { painel: RelatorioEquivalenteMaduro["pain
 export function EquivalenteMaduroView() {
   const [dados, setDados] = useState<RelatorioEquivalenteMaduro | null>(null);
   const [erro, setErro] = useState<string | null>(null);
-  useEffect(() => {
-    fetchEquivalenteMaduro().then(setDados).catch((e) => setErro(e.message));
-  }, []);
+  const carregar = () => { setErro(null); fetchEquivalenteMaduro().then(setDados).catch((e) => setErro(e.message)); };
+  useEffect(carregar, []);
 
   const animais = dados?.animais ?? [];
   const ordEM = useOrdenacao(animais);
@@ -1584,7 +1585,7 @@ export function EquivalenteMaduroView() {
 
   return (
     <div className="px-6 pt-6 space-y-4">
-      {erro && <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {erro}.</span></div>}
+      {erro && <ErroCarregamento mensagem={`Não foi possível carregar: ${erro}.`} onRetry={carregar} />}
       <div className="card">
         <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
           <span className="flex items-center gap-2"><Sprout size={14} /> Equivalente maduro — quem ainda vai crescer</span>

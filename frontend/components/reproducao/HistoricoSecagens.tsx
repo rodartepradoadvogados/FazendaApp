@@ -3,9 +3,9 @@
 // filtros aplicáveis da sub-aba Reprodução (animal, data/ciclo) + motivo,
 // análogo ao MultiFiltro de Diagnóstico/Motivo das outras abas.
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Filter, Pencil, Trash2, X } from "lucide-react";
+import { Filter, Pencil, Trash2, X } from "lucide-react";
 import { fetchSecagensHistorico, atualizarSecagem, fetchAnimais, confirmarExclusao, ehAdmin } from "@/lib/api";
-import { TabBar, MultiFiltro, TelaSkeleton } from "@/components/ui";
+import { TabBar, MultiFiltro, TelaSkeleton, ErroCarregamento } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
@@ -150,7 +150,7 @@ export default function HistoricoSecagens() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Todas as secagens do rebanho — filtre por animal, data/ciclo reprodutivo e motivo.</p>
       </div>
 
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {error && <ErroCarregamento mensagem={`Não foi possível carregar: ${error}.`} onRetry={carregar} />}
       {avisoExclusao && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{avisoExclusao}</p>}
       {!regs && !error && <TelaSkeleton kpis={0} />}
 

@@ -74,6 +74,7 @@ function SubNavTabsLinha({ nos, primaria, subNav, pathname, caminho }: {
 }) {
   return (
     <div
+      role="tablist"
       style={{
         display: "flex", gap: primaria ? "0.15rem" : "0.15rem", overflowX: "auto", whiteSpace: "nowrap",
         background: primaria ? undefined : "var(--surface-2)",
@@ -107,6 +108,8 @@ function SubNavTabButton({ node, primaria, ativo, subNav, pathname }: {
   return (
     <button
       type="button"
+      role="tab"
+      aria-selected={ativo}
       onClick={aoClicar}
       title={node.label}
       style={{

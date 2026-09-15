@@ -4,9 +4,9 @@
 // sub-aba única "Reprodução" (animal, data/ciclo, ordem de parto/tentativa,
 // método, diagnóstico), cada foco pré-filtrando/ajustando o que faz sentido.
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import { AlertTriangle, Filter, Pencil, Trash2, X } from "lucide-react";
+import { Filter, Pencil, Trash2, X } from "lucide-react";
 import { fetchServicosAnalise, atualizarServico, fetchInseminadores, fetchAnimais, ehAdmin, confirmarExclusao } from "@/lib/api";
-import { TabBar, MultiFiltro, Indicador, TelaSkeleton } from "@/components/ui";
+import { TabBar, MultiFiltro, Indicador, TelaSkeleton, ErroCarregamento } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
@@ -261,7 +261,7 @@ export default function HistoricoServicos({ foco, titulo, descricao, animaisSel,
         <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>{descricao}</p>
       </div>
 
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados reprodutivos</a>.</span></div>}
+      {error && <ErroCarregamento mensagem={`Não foi possível carregar: ${error}.`} onRetry={carregar} linkHref="/configuracoes?aba=importar" linkLabel="Importar dados reprodutivos" />}
       {avisoExclusao && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{avisoExclusao}</p>}
       {!regs && !error && <TelaSkeleton kpis={0} />}
 

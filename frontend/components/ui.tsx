@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Check, Cog, HeartPulse, Milk, Wallet, Syringe, BarChart3 } from "lucide-react";
+import { ChevronDown, Check, Cog, HeartPulse, Milk, Wallet, Syringe, BarChart3, AlertTriangle } from "lucide-react";
 
 /**
  * Indicador — cartão de KPI com um círculo de ícone colorido por categoria,
@@ -86,6 +86,39 @@ export function TelaSkeleton({
         </div>
       )}
       {tabela && <div className="skeleton" style={{ height: "10rem" }} />}
+    </div>
+  );
+}
+
+/** ErroCarregamento — mesmo cartão de erro (problema + recuperação) em toda
+ * tela, no lugar do "Sem dados: <mensagem crua da API>." sem saída — achado
+ * do lote 2 ("erro fragmentado em variações"). `onRetry` refaz a mesma busca
+ * que falhou; `linkHref`/`linkLabel` cobre o caso de recuperação por
+ * navegação (ex.: ir importar o dado que falta) em vez de tentar de novo. */
+export function ErroCarregamento({
+  mensagem, onRetry, linkHref, linkLabel,
+}: { mensagem: string; onRetry?: () => void; linkHref?: string; linkLabel?: string }) {
+  return (
+    <div className="alert-critico mb-4">
+      <AlertTriangle size={18} />
+      <span>
+        {mensagem}
+        {onRetry && (
+          <>
+            {" · "}
+            <button type="button" onClick={onRetry}
+              style={{ background: "none", border: "none", padding: 0, font: "inherit", color: "var(--dourado-light)", textDecoration: "underline", cursor: "pointer" }}>
+              Tentar novamente
+            </button>
+          </>
+        )}
+        {linkHref && (
+          <>
+            {" · "}
+            <a href={linkHref} style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>{linkLabel}</a>
+          </>
+        )}
+      </span>
     </div>
   );
 }
@@ -266,13 +299,15 @@ export function TabBar<T extends string>({
   onChange: (id: T) => void;
 }) {
   return (
-    <div className="flex items-center gap-2 mb-4" style={{ flexWrap: "wrap" }}>
+    <div className="flex items-center gap-2 mb-4" role="tablist" style={{ flexWrap: "wrap" }}>
       {abas.map((aba) => {
         const Icon = aba.icon;
         const ativo = aba.id === ativa;
         return (
           <button
             key={aba.id}
+            role="tab"
+            aria-selected={ativo}
             onClick={() => onChange(aba.id)}
             title={aba.title || aba.label}
             style={{

@@ -8,7 +8,7 @@ import { AlertTriangle, CalendarClock, Check, CheckCircle2, History, Syringe } f
 import { fetchProtocolosIatfAtivos, fetchCandidatasIatfProjetadas, type CandidataIatfProjetada } from "@/lib/api";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import { TelaSkeleton } from "@/components/ui";
+import { TelaSkeleton, ErroCarregamento } from "@/components/ui";
 
 type GrupoIatf = {
   lancamento_id: number;
@@ -66,12 +66,14 @@ export default function HistoricoCiclosIatf() {
   const { rotuloDe } = useEstadosReprodutivos();
   const ordCandidatas = useOrdenacao(candidatas?.candidatas ?? []);
 
-  useEffect(() => {
+  const carregar = () => {
+    setError(null);
     fetchProtocolosIatfAtivos().then(setGrupos).catch((e) => setError(e.message));
     fetchCandidatasIatfProjetadas().then(setCandidatas).catch((e) => setError(e.message));
-  }, []);
+  };
+  useEffect(carregar, []);
 
-  if (error) return <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>;
+  if (error) return <ErroCarregamento mensagem={`Não foi possível carregar: ${error}.`} onRetry={carregar} />;
   if (!grupos || !candidatas) return <TelaSkeleton kpis={0} />;
 
   const atuais = grupos.filter((g) => !g.concluido);
