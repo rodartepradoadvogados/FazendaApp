@@ -1,5 +1,5 @@
 "use client";
-import React from "react";
+import React, { useId } from "react";
 
 /* ───────────────────────── Tipos e utilitários compartilhados pelos
    formulários de Lançamentos (site) — extraídos de app/lancamentos/page.tsx
@@ -23,8 +23,19 @@ export const inputStyle: React.CSSProperties = {
 export const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 export const nota: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)", marginLeft: "0.35rem" };
 
+// Gera um `id` (useId()) e o injeta no filho (input/select/textarea) via
+// cloneElement, associando o <label> por htmlFor — sem isso, label e campo
+// eram irmãos soltos sem vínculo programático (achado da crítica do lote 2,
+// propagado em ~20 formulários que usam este componente). Se o filho já vier
+// com `id` próprio, esse id é respeitado; children que não são um único
+// elemento React (ex.: fragmento com campo + texto auxiliar) ficam sem
+// htmlFor — o caso comum de um único input/select/textarea é o que importa.
 export function Campo({ label, children, full }: { label: string; children: React.ReactNode; full?: boolean }) {
-  return <div style={{ gridColumn: full ? "1 / -1" : undefined }}><label style={lbl}>{label}</label>{children}</div>;
+  const idGerado = useId();
+  const ehElemento = React.isValidElement<{ id?: string }>(children);
+  const id = ehElemento ? (children.props.id ?? idGerado) : undefined;
+  const filho = ehElemento ? React.cloneElement(children, { id }) : children;
+  return <div style={{ gridColumn: full ? "1 / -1" : undefined }}><label htmlFor={id} style={lbl}>{label}</label>{filho}</div>;
 }
 
 // Subtítulo de seção dentro de um formulário.

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { cloneElement, isValidElement, useEffect, useId, useMemo, useState } from "react";
 import { Scale } from "lucide-react";
 import { criarPesagensCorporais, fetchRelatorioPesagemCorporal, formatDate, baixarModeloPesagemCorporal, importarPesagemCorporalPlanilha } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -23,7 +23,11 @@ const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted
 const nota: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)", marginLeft: "0.35rem" };
 
 function Campo({ label, children, full }: { label: string; children: React.ReactNode; full?: boolean }) {
-  return <div style={full ? { gridColumn: "1 / -1" } : undefined}><label style={lbl}>{label}</label>{children}</div>;
+  const idGerado = useId();
+  const ehElemento = isValidElement<{ id?: string }>(children);
+  const id = ehElemento ? (children.props.id ?? idGerado) : undefined;
+  const filho = ehElemento ? cloneElement(children, { id }) : children;
+  return <div style={full ? { gridColumn: "1 / -1" } : undefined}><label htmlFor={id} style={lbl}>{label}</label>{filho}</div>;
 }
 
 type Linha = {

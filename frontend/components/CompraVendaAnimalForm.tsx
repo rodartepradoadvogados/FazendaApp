@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { cloneElement, isValidElement, useEffect, useId, useMemo, useState } from "react";
 import { ShoppingCart, Tag, Check, AlertTriangle } from "lucide-react";
 import {
   fetchFornecedores, fetchPlanoContas, fetchOpcoesFinanceiro, fetchMotivosVenda,
@@ -24,7 +24,11 @@ const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted
 const hoje = () => new Date().toISOString().split("T")[0];
 
 function Campo({ label, children, full }: { label: string; children: React.ReactNode; full?: boolean }) {
-  return <div style={{ gridColumn: full ? "1 / -1" : undefined }}><label style={lbl}>{label}</label>{children}</div>;
+  const idGerado = useId();
+  const ehElemento = isValidElement<{ id?: string }>(children);
+  const id = ehElemento ? (children.props.id ?? idGerado) : undefined;
+  const filho = ehElemento ? cloneElement(children, { id }) : children;
+  return <div style={{ gridColumn: full ? "1 / -1" : undefined }}><label htmlFor={id} style={lbl}>{label}</label>{filho}</div>;
 }
 
 // Ramos do plano de contas onde a compra/venda de animal deve ser lançada —

@@ -1,13 +1,14 @@
 "use client";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Check, AlertTriangle, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Check, AlertTriangle, X, Syringe } from "lucide-react";
 import { adicionarAnimaisIatf, criarProtocoloIatf, fetchLancamentosIatf, fetchProtocolosIatfAtivos, fetchProtocolosIatfCadastrados, formatDate, removerAnimalIatf } from "@/lib/api";
 import type { HormonioIatf, ProtocoloIatfMolde } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { EditorHormoniosIatf } from "@/components/EditorHormoniosIatf";
-import { TabBar } from "@/components/ui";
+import { TabBar, EstadoVazio } from "@/components/ui";
+import { Modal } from "@/components/Modal";
 import { Campo, inputStyle, lbl, nota } from "@/components/lancamentos/comumForms";
 import { SelectAnimal, addDias, IDADE_MIN_SERVICO_PADRAO } from "@/components/lancamentos/_shared";
 import { ErroApi } from "@/lib/api";
@@ -112,11 +113,7 @@ function ProtocolosIatfAtivos({ recarregarRef }: { recarregarRef: React.MutableR
   }
 
   if (!ativos || !ativos.length) {
-    return (
-      <div className="card" style={{ textAlign: "center", padding: "2.2rem 1rem" }}>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo IATF em andamento.</p>
-      </div>
-    );
+    return <EstadoVazio icon={Syringe}>Nenhum protocolo IATF em andamento.</EstadoVazio>;
   }
   return (
     <div className="card" style={{ background: "var(--surface-2)" }}>
@@ -176,6 +173,7 @@ export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico =
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+  const [mostrarRecap, setMostrarRecap] = useState(false);
   const recarregarAtivosRef = useRef(() => {});
   const toggle = (n: string) => setSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
   const toggleLote = (n: string) => setSelLote((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
@@ -212,9 +210,38 @@ export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico =
     if (modo === "existente") fetchLancamentosIatf().then(setExistentes).catch(() => setExistentes([]));
   }, [modo]);
 
+  const animaisAlvo = emLote ? Array.from(vinculoProtocolo === "lote" ? selLote : sel) : (um ? [um] : []);
+
+  // Debitado por animal (ver EditorHormoniosIatf/backend) — soma por produto
+  // para o recap de confirmação abaixo (P0: "Salvar" único sem recapitulação
+  // de nº de animais/estoque a debitar, achado da crítica do lote 2).
+  const resumoHormonios = useMemo(() => {
+    const porProduto = new Map<string, { dose: number; unidade: string }>();
+    hormoniosEfetivos.forEach((h) => {
+      if (!h.dose) return;
+      const atual = porProduto.get(h.produto) || { dose: 0, unidade: h.unidade || "" };
+      atual.dose += h.dose;
+      porProduto.set(h.produto, atual);
+    });
+    return Array.from(porProduto.entries()).map(([produto, { dose, unidade }]) => ({
+      produto, doseTotalPorAnimal: dose, unidade, doseTotalGeral: dose * animaisAlvo.length,
+    }));
+  }, [hormoniosEfetivos, animaisAlvo.length]);
+
+  function iniciarSalvar() {
+    setErro(null); setSucesso(null); setPodeForcar(false);
+    if (!animaisAlvo.length) { setErro(emLote ? "Selecione ao menos um animal." : "Selecione a matriz."); return; }
+    if (modo === "novo") {
+      if (!d0) { setErro("Informe a data do D0."); return; }
+      setMostrarRecap(true);
+      return;
+    }
+    if (!existenteId) { setErro("Selecione o protocolo existente."); return; }
+    salvar();
+  }
+
   async function salvar(forcar = false) {
     setErro(null); setSucesso(null); setPodeForcar(false);
-    const animaisAlvo = emLote ? Array.from(vinculoProtocolo === "lote" ? selLote : sel) : (um ? [um] : []);
     if (!animaisAlvo.length) { setErro(emLote ? "Selecione ao menos um animal." : "Selecione a matriz."); return; }
     setSalvando(true);
     try {
@@ -407,7 +434,7 @@ export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico =
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={() => salvar()} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        <button className="btn-primary" onClick={iniciarSalvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
         {podeForcar && (
           <button className="btn-secondary" onClick={() => salvar(true)} disabled={salvando}
             title="Lança o protocolo assumindo a situação descrita acima">
@@ -417,6 +444,39 @@ export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico =
       </div>
       </div>
       </div>
+
+      {mostrarRecap && (
+        <Modal title="Confirmar protocolo IATF" onClose={() => setMostrarRecap(false)} width="480px">
+          <p style={{ fontSize: "0.85rem", marginBottom: "0.8rem" }}>
+            <strong>{nomeProtocolo}</strong> será agendado para <strong>{animaisAlvo.length} animal(is)</strong>, com eventos D0 a D{diaFinal} na Agenda.
+          </p>
+          {resumoHormonios.length > 0 ? (
+            <>
+              <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.4rem" }}>Estoque a debitar (soma de todas as etapas × animais selecionados):</p>
+              <table className="fazenda-table" style={{ margin: "0 0 0.8rem" }}>
+                <thead><tr><th>Produto</th><th style={{ textAlign: "right" }}>Dose/animal</th><th style={{ textAlign: "right" }}>Total a debitar</th></tr></thead>
+                <tbody>
+                  {resumoHormonios.map((h) => (
+                    <tr key={h.produto}>
+                      <td style={{ fontSize: "0.82rem" }}>{h.produto}</td>
+                      <td style={{ textAlign: "right", fontSize: "0.82rem" }}>{h.doseTotalPorAnimal} {h.unidade}</td>
+                      <td style={{ textAlign: "right", fontWeight: 700, fontSize: "0.82rem" }}>{h.doseTotalGeral} {h.unidade}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          ) : (
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.8rem" }}>Nenhum hormônio com dose informada — o débito de estoque acontece ao confirmar cada etapa na Agenda.</p>
+          )}
+          <div className="flex justify-end gap-2">
+            <button className="btn-ghost" onClick={() => setMostrarRecap(false)}>Cancelar</button>
+            <button className="btn-primary" disabled={salvando} onClick={() => { setMostrarRecap(false); salvar(); }}>
+              {salvando ? "Salvando…" : "Confirmar e salvar"}
+            </button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
