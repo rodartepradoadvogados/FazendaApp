@@ -105,7 +105,9 @@ Todos os 20 mockups da Etapa 2 revalidados/aplicados, commits em `claude/lote2-r
 
 **`delight` e `overdrive` ficam GATED — não iniciar sem pedido explícito do usuário** (playbook completo mais abaixo, seção "Onde paramos + delight e overdrive").
 
-**Próximo passo sugerido:** abrir PR desta branch (`claude/lote2-refinamento-design`) para o dono revisar/mergear, e então seguir para a Etapa 3 (5 itens adiados) e Etapa 4 (decisão dos componentes órfãos do login) — ambas ainda não iniciadas.
+**PR aberto para revisão: [#780](https://github.com/rodartepradoadvogados/FazendaApp/pull/780)** (`claude/lote2-refinamento-design` → `main`, 16 commits, 59 arquivos). Os 30 mockups do lote (Etapa 1 + Etapa 2) foram versionados junto (commit `c7699b4a`), mesmo padrão do lote 1.
+
+**Próximo passo:** aguardar review/merge do PR #780; depois seguir para a Etapa 3 (5 itens adiados) e Etapa 4 (decisão dos componentes órfãos do login) — ambas ainda não iniciadas.
 
 Padrões já estabelecidos nesta etapa, reaproveitáveis nas próximas telas:
 - `TelaSkeleton` (components/ui.tsx) — já tem role=status/aria-busy/altura sem CLS.
