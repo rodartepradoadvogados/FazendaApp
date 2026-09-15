@@ -247,11 +247,10 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
           inteira (pedido explícito do usuário para consertar). */}
       <div style={{ display: "flex", alignItems: "stretch", flex: 1, minHeight: 0 }}>
         {subNav && (
-          <aside style={{
+          <aside className="insights-rail" style={{
             width: railRecolhida ? "3.2rem" : "15rem", flexShrink: 0, padding: railRecolhida ? "1rem 0.4rem" : "1rem 0.8rem",
             background: "var(--sidebar-bg)", borderRight: "1px solid var(--sidebar-border)",
             height: "100%", overflowY: "auto", overflowX: "hidden",
-            transition: "width 0.2s, padding 0.2s",
           }}>
             <button type="button" onClick={alternarRailRecolhida}
               aria-label={railRecolhida ? "Expandir menu" : "Recolher menu"}

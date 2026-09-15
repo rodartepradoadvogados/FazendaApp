@@ -24,7 +24,7 @@ type Lista = { chave: string; rotulo: string; grupo: string; itens: { id: string
 type ResultadoUnico = { escolhidas: Lista[]; linhas: { numero: string; presente_em: string }[] };
 type ResultadoDiferenca = { lista: Lista; linhas: { numero: string }[] };
 
-const card: React.CSSProperties = { background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: "1rem 1.1rem" };
+const card: React.CSSProperties = { background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem 1.1rem" };
 const chip = (ativo: boolean): React.CSSProperties => ({
   display: "inline-flex", alignItems: "center", gap: "0.35rem", padding: "0.35rem 0.7rem", borderRadius: 999,
   border: "1px solid var(--border)", background: ativo ? "var(--pill-active-bg)" : "var(--surface-2)",

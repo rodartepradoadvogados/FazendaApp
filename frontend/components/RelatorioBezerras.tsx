@@ -1,12 +1,13 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Filter, Baby, AlertTriangle } from "lucide-react";
+import { Filter, Baby } from "lucide-react";
 import { fetchAnimais, fetchRelatorioBezerras, ehAdmin } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { TelaSkeleton, ErroCarregamento } from "@/components/ui";
 
 type LinhaBezerra = {
   numero: string; nome: string | null; sexo: string | null; categoria_abrev: string | null;
@@ -52,18 +53,20 @@ export default function RelatorioBezerras() {
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [dados, setDados] = useState<LinhaBezerra[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [tentativa, setTentativa] = useState(0);
   const admin = ehAdmin();
 
   useEffect(() => { fetchAnimais().then(setAnimais).catch(() => {}); }, []);
 
   useEffect(() => {
+    setErro(null);
     const filtros: { faixaEtaria?: string; numero?: string; lote?: string; numeros?: string[] } = {};
     if (faixaEtaria) filtros.faixaEtaria = faixaEtaria;
     if (modo === "animal" && numeroFiltro) filtros.numero = numeroFiltro;
     if (modo === "lote" && loteFiltro) filtros.lote = loteFiltro;
     if (modo === "selecao" && selecionados.size) filtros.numeros = Array.from(selecionados);
     fetchRelatorioBezerras(filtros).then(setDados).catch((e) => setErro(e.message));
-  }, [faixaEtaria, modo, numeroFiltro, loteFiltro, selecionados]);
+  }, [faixaEtaria, modo, numeroFiltro, loteFiltro, selecionados, tentativa]);
 
   const lotes = useMemo(
     () => Array.from(new Set(animais.map((a) => a.grupo_primario).filter(Boolean))).sort() as string[],
@@ -133,8 +136,8 @@ export default function RelatorioBezerras() {
         )}
       </div>
 
-      {erro && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {erro}.</span></div>}
-      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {erro && <ErroCarregamento erro={erro} onRetry={() => setTentativa((t) => t + 1)} />}
+      {!dados && !erro && <TelaSkeleton blocos={[{ altura: "3.5rem" }, { altura: "12rem" }]} label="Carregando relatório de bezerras" />}
 
       {dados && (
         <div className="card">

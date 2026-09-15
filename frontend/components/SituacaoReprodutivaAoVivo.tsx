@@ -1,11 +1,11 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Activity, RefreshCw, AlertTriangle, Baby, Syringe, ListChecks, HeartCrack,
+  Activity, RefreshCw, Baby, Syringe, ListChecks, HeartCrack,
   CheckCircle2, AlertOctagon, CalendarDays, Repeat, Milk,
 } from "lucide-react";
 import { fetchEstadosReprodutivos, fetchIndicadores, fetchAnimais, type EstadosReprodutivos, type EstadoReprodutivoAnimal } from "@/lib/api";
-import { SecaoRecolhivel } from "@/components/ui";
+import { SecaoRecolhivel, TelaSkeleton, ErroCarregamento } from "@/components/ui";
 import { BarraExport, TabelaManejo, fmtData, estiloNum, estiloMudo, type Col } from "@/components/RelatoriosManejo";
 import { producaoDe, origemDe } from "@/lib/producaoAnimal";
 
@@ -166,13 +166,8 @@ export default function SituacaoReprodutivaAoVivo() {
         </button>
       </div>
 
-      {error && (
-        <div className="alert-critico mb-4">
-          <AlertTriangle size={18} />
-          <span>Não foi possível carregar a situação reprodutiva: {error}</span>
-        </div>
-      )}
-      {carregando && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {error && <ErroCarregamento erro={error} onRetry={carregar} />}
+      {carregando && <TelaSkeleton blocos={[{ altura: "3.5rem" }, { altura: "12rem" }]} label="Carregando situação reprodutiva" />}
 
       {estados && (
         <>

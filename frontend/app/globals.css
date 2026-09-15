@@ -1312,6 +1312,15 @@ html, body { max-width: 100%; overflow-x: hidden; }
   .mob-item-cascata { animation: none; }
 }
 
+/* Rail de sub-navegação de Insights (recolher/expandir) — ver
+   components/insights/InsightsLayout.tsx. Faltava o guard de
+   reduced-motion (achado do detector do lote 2); a transição em si (width/
+   padding, layout thrash) fica para a passada `animate` do Impeccable. */
+.insights-rail { transition: width 0.2s, padding 0.2s; }
+@media (prefers-reduced-motion: reduce) {
+  .insights-rail { transition: none; }
+}
+
 /* Folha inferior (MobGaveta, components/mobile/ui.tsx) — hoje já abre
    ancorada embaixo (flex + align-items:flex-end + cantos superiores
    arredondados), só faltava a entrada animada. Desliza via `bottom` (não

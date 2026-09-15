@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { AlertOctagon, AlertTriangle, CheckCircle2, PartyPopper } from "lucide-react";
 import { fetchNaoConformidades, NaoConformidadeItem, NaoConformidadeSemMeta, NaoConformidadesResp } from "@/lib/api";
-import { SecaoRecolhivel } from "@/components/ui";
+import { SecaoRecolhivel, TelaSkeleton, ErroCarregamento } from "@/components/ui";
 
 const DOMINIO_LABEL: Record<string, string> = {
   reproducao: "Reprodução", recria: "Recria", financeiro: "Financeiro", manejo: "Manejo",
@@ -92,16 +92,18 @@ export default function NaoConformidades() {
   const [dominio, setDominio] = useState<string>("todos");
   const [mostrarTudo, setMostrarTudo] = useState(false);
 
+  const [tentativa, setTentativa] = useState(0);
   useEffect(() => {
     let vivo = true;
+    setErro(null);
     fetchNaoConformidades()
       .then((d) => { if (vivo) setDados(d); })
       .catch((e) => { if (vivo) setErro(e?.message || "Erro ao carregar"); });
     return () => { vivo = false; };
-  }, []);
+  }, [tentativa]);
 
-  if (erro) return <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{erro}</p>;
-  if (!dados) return <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>;
+  if (erro) return <ErroCarregamento erro={erro} onRetry={() => setTentativa((t) => t + 1)} />;
+  if (!dados) return <TelaSkeleton blocos={[{ altura: "3.5rem" }, { altura: "10rem" }]} label="Carregando não conformidades" />;
 
   const naoConformes = dados.itens.filter((i) => i.status !== "ok");
   const visiveis = dados.itens.filter((i) => (mostrarTudo || i.status !== "ok") && (dominio === "todos" || i.dominio === dominio));

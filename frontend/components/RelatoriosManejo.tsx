@@ -2,11 +2,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import {
-  ClipboardList, RefreshCw, AlertTriangle, Hourglass, Syringe, CalendarClock,
+  ClipboardList, RefreshCw, Hourglass, Syringe, CalendarClock,
   Stethoscope, HeartPulse, MilkOff, Baby, FlaskConical, Droplets,
 } from "lucide-react";
 import { fetchRelatoriosManejo, fetchAnimais, fetchEstoque, fetchSanidade } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
+import { TelaSkeleton, ErroCarregamento } from "@/components/ui";
 import { SecaoRecolhivel } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -278,13 +279,8 @@ export default function RelatoriosManejo() {
       )}
 
       {/* Erro / carregando */}
-      {error && (
-        <div className="alert-critico mb-4">
-          <AlertTriangle size={18} />
-          <span>Não foi possível carregar os relatórios de manejo: {error}</span>
-        </div>
-      )}
-      {loading && !dados && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {error && <ErroCarregamento erro={error} onRetry={carregar} />}
+      {loading && !dados && <TelaSkeleton blocos={[{ altura: "3.5rem" }, { altura: "12rem" }]} label="Carregando listas de trabalho" />}
 
       {dados && (
         <>
@@ -579,7 +575,7 @@ export default function RelatoriosManejo() {
       {secandoMatriz && (
         <Modal title={`Secar matriz ${secandoMatriz}`} onClose={() => setSecandoMatriz(null)}>
           {!dadosSecagem ? (
-            <p style={{ color: "var(--text-muted)" }}>Carregando…</p>
+            <TelaSkeleton blocos={[{ altura: "8rem" }]} label="Carregando dados da secagem" />
           ) : (
             <FormSecagem animais={dadosSecagem.animais} estoque={dadosSecagem.estoque} produtos={dadosSecagem.produtos} numeroInicial={secandoMatriz} />
           )}

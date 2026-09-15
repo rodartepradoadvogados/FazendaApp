@@ -9,7 +9,7 @@ import RelatoriosGerenciais from "@/components/RelatoriosGerenciais";
 import RelatorioBezerras from "@/components/RelatorioBezerras";
 import NaoConformidades from "@/components/NaoConformidades";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
-import { Indicador } from "@/components/ui";
+import { Indicador, TelaSkeleton, ErroCarregamento } from "@/components/ui";
 import { Gauge } from "@/components/Gauge";
 
 function pct(v: number | null | undefined) { return v === null || v === undefined ? "—" : `${v}%`; }
@@ -126,8 +126,8 @@ export function IndicadoresGerais() {
         </button>
       </div>
 
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados</a>.</span></div>}
-      {!ind && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {error && <ErroCarregamento erro={error} onRetry={carregar} linkHref="/configuracoes?aba=importar" linkLabel="Importe os dados" />}
+      {!ind && !error && <TelaSkeleton blocos={[{ altura: "5.5rem" }, { altura: "9rem" }, { altura: "14rem" }]} label="Carregando indicadores" />}
 
       {ind && <>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">

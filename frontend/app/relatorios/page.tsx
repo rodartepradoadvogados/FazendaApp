@@ -17,8 +17,18 @@ import AgendaVeterinarioPage from "@/app/reproducao/AgendaVeterinario";
 // Reprodutiva.
 type Aba = "trabalho" | "reprodutivo_vivo" | "gerenciais" | "vet";
 
+const ABAS_VALIDAS: Aba[] = ["trabalho", "reprodutivo_vivo", "gerenciais", "vet"];
+
 export default function RelatoriosPage() {
-  const [aba, setAba] = useState<Aba>("trabalho");
+  // Respeita ?sub=... (deep-link direto pra uma sub-aba, ex.: "Situação
+  // reprodutiva (ao vivo)") — mesmo padrão de leitura única no mount usado em
+  // app/configuracoes/page.tsx; sem isso, atualizar a página ou compartilhar
+  // o link sempre caía na primeira aba.
+  const [aba, setAba] = useState<Aba>(() => {
+    if (typeof window === "undefined") return "trabalho";
+    const sub = new URLSearchParams(window.location.search).get("sub");
+    return sub && (ABAS_VALIDAS as string[]).includes(sub) ? (sub as Aba) : "trabalho";
+  });
   const [temVet, setTemVet] = useState(false);
   // Cada usuário logado tem suas próprias permissões — reavalia sempre que a
   // página monta (evita mostrar abas de uma sessão anterior de outro usuário).

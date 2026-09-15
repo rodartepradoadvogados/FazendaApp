@@ -7,7 +7,7 @@ import {
   XAxis, YAxis, ZAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine,
   CartesianGrid, Legend,
 } from "recharts";
-import { SecaoRecolhivel } from "@/components/ui";
+import { SecaoRecolhivel, TelaSkeleton, ErroCarregamento } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { fetchRelatorioGerencial } from "@/lib/api";
 
@@ -50,17 +50,19 @@ function Desc({ children }: { children: React.ReactNode }) {
   );
 }
 function Carregando() {
-  return <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>;
+  return <TelaSkeleton blocos={[{ altura: "1.3rem", largura: "34%" }, { altura: "16rem" }]} label="Carregando relatório" />;
 }
-function ErroMsg({ msg }: { msg: string }) {
-  return <p style={{ color: "var(--red)", opacity: 0.85, fontSize: "0.85rem" }}>{msg}</p>;
+function ErroMsg({ msg, onRetry }: { msg: string; onRetry?: () => void }) {
+  return <ErroCarregamento erro={msg} onRetry={onRetry} />;
 }
 
-// Hook: busca um relatório gerencial e refaz quando os parâmetros mudam.
+// Hook: busca um relatório gerencial e refaz quando os parâmetros mudam (ou
+// quando `refetch()` é chamado — ex.: botão "Tentar novamente" do ErroMsg).
 function useGerencial(nome: string, params?: Record<string, string | number>) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tentativa, setTentativa] = useState(0);
   const chave = JSON.stringify(params || {});
   useEffect(() => {
     let vivo = true;
@@ -71,8 +73,9 @@ function useGerencial(nome: string, params?: Record<string, string | number>) {
       .catch((e) => { if (vivo) { setError(e?.message || "Erro ao carregar dados"); setLoading(false); } });
     return () => { vivo = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nome, chave]);
-  return { data, loading, error };
+  }, [nome, chave, tentativa]);
+  const refetch = () => setTentativa((t) => t + 1);
+  return { data, loading, error, refetch };
 }
 
 // Extrai os números de um rótulo de faixa (ex.: "8-14" → [8, 14]).
@@ -92,7 +95,7 @@ function CardDistribuicaoDel() {
   const [ordem, setOrdem] = useState(1);
   const [delMin, setDelMin] = useState(0);
   const [delMax, setDelMax] = useState(350);
-  const { data, loading, error } = useGerencial("distribuicao-del", { ordem, del_min: delMin, del_max: delMax });
+  const { data, loading, error, refetch } = useGerencial("distribuicao-del", { ordem, del_min: delMin, del_max: delMax });
 
   const pontos: any[] = (data?.pontos || []).map((p: any, i: number) => ({ ...p, x: i + 1 }));
   const ordTabela = useOrdenacao<any>(data?.tabela || []);
@@ -125,7 +128,7 @@ function CardDistribuicaoDel() {
         </div>
       </div>
 
-      {loading ? <Carregando /> : error ? <ErroMsg msg={error} /> : (
+      {loading ? <Carregando /> : error ? <ErroMsg msg={error} onRetry={refetch} /> : (
         <>
           <ResponsiveContainer width="100%" height={300}>
             <ScatterChart margin={{ top: 12, right: 20, bottom: 8, left: 0 }}>
@@ -200,7 +203,7 @@ function TooltipPrenhez({ active, payload, label }: any) {
 function CardPrenhezesPorDel() {
   const [delMin, setDelMin] = useState(0);
   const [delMax, setDelMax] = useState(400);
-  const { data, loading, error } = useGerencial("prenhezes-por-del", { del_min: delMin, del_max: delMax });
+  const { data, loading, error, refetch } = useGerencial("prenhezes-por-del", { del_min: delMin, del_max: delMax });
 
   return (
     <>
@@ -221,7 +224,7 @@ function CardPrenhezesPorDel() {
         </div>
       </div>
 
-      {loading ? <Carregando /> : error ? <ErroMsg msg={error} /> : (
+      {loading ? <Carregando /> : error ? <ErroMsg msg={error} onRetry={refetch} /> : (
         <ResponsiveContainer width="100%" height={300}>
           <ComposedChart data={(data?.barras || []) as any} margin={{ top: 12, right: 12, bottom: 8, left: 0 }}>
             <CartesianGrid stroke="var(--border)" vertical={false} />
@@ -257,7 +260,7 @@ function TooltipSimples({ active, payload, label, chave, rotulo }: any) {
   );
 }
 function CardDiasDiagnostico() {
-  const { data, loading, error } = useGerencial("dias-diagnostico");
+  const { data, loading, error, refetch } = useGerencial("dias-diagnostico");
   const min = data?.ideal_min;
   const max = data?.ideal_max;
 
@@ -269,7 +272,7 @@ function CardDiasDiagnostico() {
         concentrações na faixa ideal indicam rotina de checagem cumprida.
       </Desc>
 
-      {loading ? <Carregando /> : error ? <ErroMsg msg={error} /> : (
+      {loading ? <Carregando /> : error ? <ErroMsg msg={error} onRetry={refetch} /> : (
         <>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={(data?.barras || []) as any} margin={{ top: 12, right: 12, bottom: 8, left: 0 }}>
@@ -298,11 +301,11 @@ function CardDiasDiagnostico() {
 
 // ── Cards 4 e 5: BarChart de serviços por faixa (com pct no tooltip) ──
 function CardBarrasFaixa({ nome, desc }: { nome: string; desc: React.ReactNode }) {
-  const { data, loading, error } = useGerencial(nome);
+  const { data, loading, error, refetch } = useGerencial(nome);
   return (
     <>
       <Desc>{desc}</Desc>
-      {loading ? <Carregando /> : error ? <ErroMsg msg={error} /> : (
+      {loading ? <Carregando /> : error ? <ErroMsg msg={error} onRetry={refetch} /> : (
         <>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={(data?.barras || []) as any} margin={{ top: 12, right: 12, bottom: 8, left: 0 }}>
@@ -340,7 +343,7 @@ function TooltipTaxa({ active, payload, label }: any) {
   );
 }
 function CardTaxaServicoPrenhez() {
-  const { data, loading, error } = useGerencial("taxa-servico-prenhez");
+  const { data, loading, error, refetch } = useGerencial("taxa-servico-prenhez");
   return (
     <>
       <Desc>
@@ -348,7 +351,7 @@ function CardTaxaServicoPrenhez() {
         prenhezes — com o acumulado de vacas prenhas por faixa de DEL.
       </Desc>
 
-      {loading ? <Carregando /> : error ? <ErroMsg msg={error} /> : (
+      {loading ? <Carregando /> : error ? <ErroMsg msg={error} onRetry={refetch} /> : (
         <>
           <ResponsiveContainer width="100%" height={300}>
             <ComposedChart data={(data?.linhas || []) as any} margin={{ top: 12, right: 12, bottom: 8, left: 0 }}>
@@ -389,7 +392,7 @@ function TooltipFluxo({ active, payload, label }: any) {
 }
 function CardFluxoLactacao() {
   const [meses, setMeses] = useState(8);
-  const { data, loading, error } = useGerencial("fluxo-lactacao", { meses });
+  const { data, loading, error, refetch } = useGerencial("fluxo-lactacao", { meses });
   const ordLinhas = useOrdenacao<any>(data?.linhas || []);
 
   return (
@@ -408,7 +411,7 @@ function CardFluxoLactacao() {
         </div>
       </div>
 
-      {loading ? <Carregando /> : error ? <ErroMsg msg={error} /> : (
+      {loading ? <Carregando /> : error ? <ErroMsg msg={error} onRetry={refetch} /> : (
         <>
           <p style={{ color: "var(--dourado-light)", fontWeight: 700, fontSize: "0.9rem", margin: "0 0 0.6rem" }}>
             Vacas em lactação hoje: {data?.lactacao_inicial}
