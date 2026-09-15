@@ -201,12 +201,15 @@ function CaixaADescartar({ animais, aoAtualizar, estadosPorNumero }: { animais: 
               <thead><tr><th></th><th>Nº</th><th>Grupo</th><th>Categoria</th><th>Sit. Rep.</th><th>Motivo</th></tr></thead>
               <tbody>
                 {marcados.map((a) => (
-                  <tr key={a.numero} style={{ cursor: "pointer" }} onClick={() => toggle(a.numero)}>
+                  <tr key={a.numero} style={{ cursor: "pointer" }} onClick={() => toggle(a.numero)}
+                    tabIndex={0} role="checkbox" aria-checked={sel.has(a.numero)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(a.numero); } }}
+                    className="linha-selecionavel">
                     <td><input type="checkbox" checked={sel.has(a.numero)} onChange={() => toggle(a.numero)} onClick={(e) => e.stopPropagation()} /></td>
                     <td style={{ fontWeight: 700 }}>{a.numero}</td>
                     <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.grupo_primario || "—"}</td>
                     <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
-                    <td><span style={{ color: SIT_CORES[rotuloEstadoDoAnimal(a.numero, estadosPorNumero) || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{rotuloEstadoDoAnimal(a.numero, estadosPorNumero) || "—"}</span></td>
+                    <td><span style={{ color: SIT_CORES[rotuloEstadoDoAnimal(a.numero, estadosPorNumero) || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{rotuloEstadoDoAnimal(a.numero, estadosPorNumero) ? `● ${rotuloEstadoDoAnimal(a.numero, estadosPorNumero)}` : "—"}</span></td>
                     <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.observacoes || "—"}</td>
                   </tr>
                 ))}
@@ -282,7 +285,7 @@ function TabelaGrupoAnimais({ lista, femeasApenas, estadosPorNumero }: { lista: 
             <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
             {!femeasApenas && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.sexo || "—"}</td>}
             <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
-            <td><span style={{ color: SIT_CORES[a.sitRepAoVivo || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sitRepAoVivo || "—"}</span></td>
+            <td><span style={{ color: SIT_CORES[a.sitRepAoVivo || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sitRepAoVivo ? `● ${a.sitRepAoVivo}` : "—"}</span></td>
             <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
             <td style={{ textAlign: "right", fontWeight: 600, color: a.producao_origem === "congelado" ? "var(--text-muted)" : undefined }}
               title={a.producao_origem === "congelado" ? "Valor do último CSV importado — nenhum controle leiteiro lançado no app para este animal" : undefined}>
@@ -570,7 +573,7 @@ function RebanhoVisaoGeral() {
                         <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
                         {!femeasApenas && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.sexo || "—"}</td>}
                         <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
-                        <td><span style={{ color: SIT_CORES[rotuloDe(a.numero) || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{rotuloDe(a.numero) || "—"}</span></td>
+                        <td><span style={{ color: SIT_CORES[rotuloDe(a.numero) || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{rotuloDe(a.numero) ? `● ${rotuloDe(a.numero)}` : "—"}</span></td>
                         <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
                         <td style={{ textAlign: "right", fontWeight: 600, color: a.producao_origem === "congelado" ? "var(--text-muted)" : undefined }}
                           title={a.producao_origem === "congelado" ? "Valor do último CSV importado — nenhum controle leiteiro lançado no app para este animal" : undefined}>
