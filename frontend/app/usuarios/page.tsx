@@ -5,6 +5,7 @@ import Link from "next/link";
 import { fetchUsuarios, criarUsuario, atualizarUsuario, getUsuario, ehDono, ehAdmin, fetchPessoas } from "@/lib/api";
 import { RelatorioAcessos, AuditoriaAtividade } from "@/components/AuditoriaAcessoView";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { TelaSkeleton } from "@/components/ui";
 
 const MODULOS = [
   { key: "capa", label: "Capa" }, { key: "indicadores", label: "Indicadores" }, { key: "agenda", label: "Agenda" },
@@ -166,7 +167,7 @@ export default function UsuariosPage() {
               <input type="checkbox" checked={mostrarInativos} onChange={(e) => setMostrarInativos(e.target.checked)} /> Incluir inativos
             </label>
           </div>
-          {!usuarios ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : (
+          {!usuarios ? <TelaSkeleton kpis={0} /> : (
             <table className="fazenda-table">
               <thead><tr>
                 <ThOrdenavel label="Login" campo="username" coluna={coluna} dir={dir} ordenar={ordenar} />

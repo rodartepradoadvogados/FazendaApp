@@ -4,7 +4,7 @@ import { HeartPulse, AlertTriangle, Filter } from "lucide-react";
 import { fetchServicosAnalise, fetchInseminadores, ehAdmin } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import { SecaoRecolhivel, MultiFiltro, Indicador } from "@/components/ui";
+import { SecaoRecolhivel, MultiFiltro, Indicador, TelaSkeleton } from "@/components/ui";
 import { estiloSexado } from "@/lib/constants";
 import AnaliseInterativa from "@/components/AnaliseInterativa";
 
@@ -122,7 +122,7 @@ export default function AnaliseReprodutivaPage() {
           <span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados reprodutivos</a>.</span>
         </div>
       )}
-      {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {!regs && !error && <TelaSkeleton kpis={0} />}
 
       {regs && (
         <>

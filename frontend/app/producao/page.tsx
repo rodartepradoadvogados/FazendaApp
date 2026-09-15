@@ -12,7 +12,7 @@ import { PilulaConfianca, NotaExplicativaEM } from "@/components/TrioEquivalente
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
-import { SecaoRecolhivel, MultiFiltro, Indicador, TabBar } from "@/components/ui";
+import { SecaoRecolhivel, MultiFiltro, Indicador, TabBar, TelaSkeleton } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
@@ -446,7 +446,7 @@ export function ProducaoLeiteira({ secao = "controle", animaisSelExterno, setAni
       {mostrarControle && (
       <>
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe o controle leiteiro</a>.</span></div>}
-      {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {!regs && !error && <TelaSkeleton kpis={0} />}
 
       {regs && (
         <>
@@ -578,7 +578,7 @@ export function ProducaoLeiteira({ secao = "controle", animaisSelExterno, setAni
             {qualidadeErro ? (
               <div className="alert-critico"><AlertTriangle size={16} /><span>Não foi possível carregar a qualidade do leite: {qualidadeErro}.</span></div>
             ) : !qualidade ? (
-              <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
+              <TelaSkeleton kpis={0} />
             ) : (
               <>
                 <div className="card mb-4">
@@ -776,7 +776,7 @@ export function ProducaoLeiteira({ secao = "controle", animaisSelExterno, setAni
             {ceErro ? (
               <div className="alert-critico"><AlertTriangle size={16} /><span>Não foi possível carregar: {ceErro}.</span></div>
             ) : !ce ? (
-              <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
+              <TelaSkeleton kpis={0} />
             ) : (
             <>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
@@ -1145,7 +1145,7 @@ export function RelatoriosPesagemView() {
         </div>
 
         {carregando ? (
-          <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Carregando…</p>
+          <TelaSkeleton kpis={0} />
         ) : (
           <div className="overflow-x-auto" style={{ maxHeight: "560px" }}>
             <table className="fazenda-table">

@@ -12,7 +12,7 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import NovoItemEstoque, { type ItemEstoqueEditando } from "@/components/NovoItemEstoque";
 import { EstoquePicker } from "@/components/EstoquePicker";
-import { Indicador } from "@/components/ui";
+import { Indicador, TelaSkeleton } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { casaBusca } from "@/lib/busca";
 
@@ -126,7 +126,7 @@ function EstoqueInventario() {
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os itens de estoque</a>.</span></div>}
-      {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {!itens && !error && <TelaSkeleton kpis={0} />}
 
       {/* Hormônios IATF (necessidade vs estoque) */}
       {horm.length > 0 && (
@@ -413,7 +413,7 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
       {avisoExclusao && <div className="alert-aviso mb-4"><AlertTriangle size={18} /><span>{avisoExclusao}</span></div>}
-      {!movimentos && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {!movimentos && !error && <TelaSkeleton kpis={0} />}
 
       {movimentos && (
         <>
@@ -601,7 +601,7 @@ function EstoquePorProduto() {
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
-      {!movimentos && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {!movimentos && !error && <TelaSkeleton kpis={0} />}
 
       {movimentos && (
         <>

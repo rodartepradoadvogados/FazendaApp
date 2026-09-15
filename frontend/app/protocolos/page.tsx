@@ -18,7 +18,7 @@ import { exportarFolhaCampoPDF, exportarFolhaCampoExcel } from "@/lib/folhaProto
 import type { AnimalRow } from "@/components/AnimalModal";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
 import { UNIDADES_PROTOCOLO } from "@/lib/constants";
-import { TabBar } from "@/components/ui";
+import { TabBar, TelaSkeleton } from "@/components/ui";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import type { ColunaExport } from "@/lib/export";
 import { WizardProtocolo, type PassoWizard } from "@/components/protocolos/WizardProtocolo";
@@ -1038,7 +1038,7 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
       </div>
 
       <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
-      {!linhas ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : (
+      {!linhas ? <TelaSkeleton kpis={0} /> : (
         <>
           <div className="overflow-x-auto">
             <table className="fazenda-table">

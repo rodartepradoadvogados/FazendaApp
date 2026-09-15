@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { AlertTriangle, Filter, Pencil, Trash2, X } from "lucide-react";
 import { fetchServicosAnalise, atualizarServico, fetchInseminadores, fetchAnimais, ehAdmin, confirmarExclusao } from "@/lib/api";
-import { TabBar, MultiFiltro, Indicador } from "@/components/ui";
+import { TabBar, MultiFiltro, Indicador, TelaSkeleton } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
@@ -263,7 +263,7 @@ export default function HistoricoServicos({ foco, titulo, descricao, animaisSel,
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados reprodutivos</a>.</span></div>}
       {avisoExclusao && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{avisoExclusao}</p>}
-      {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {!regs && !error && <TelaSkeleton kpis={0} />}
 
       {regs && <>
         <div className="card mb-4">

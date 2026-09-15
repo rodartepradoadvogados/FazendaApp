@@ -69,6 +69,25 @@ export function Indicador({
   );
 }
 
+/** TelaSkeleton — placeholder de carregamento genérico (título + cards + tabela),
+ * no formato real do conteúdo, no lugar do texto solto "Carregando…" — achado
+ * T3 (transversal), ver docs/agents/design-mockups/t3-skeleton-universal.html. */
+export function TelaSkeleton({ kpis = 4, tabela = true, className = "" }: { kpis?: number; tabela?: boolean; className?: string }) {
+  return (
+    <div className={className}>
+      <div className="skeleton" style={{ height: "1.4rem", width: "34%", marginBottom: "0.9rem" }} />
+      {kpis > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+          {Array.from({ length: kpis }).map((_, i) => (
+            <div key={i} className="skeleton" style={{ height: "4.6rem" }} />
+          ))}
+        </div>
+      )}
+      {tabela && <div className="skeleton" style={{ height: "9rem" }} />}
+    </div>
+  );
+}
+
 /** Estado vazio com ícone — substitui o texto solto usado hoje quando um
  * gráfico ou lista não tem dados, deixando claro que a tela está correta. */
 export function EstadoVazio({ icon, children }: { icon?: any; children: React.ReactNode }) {

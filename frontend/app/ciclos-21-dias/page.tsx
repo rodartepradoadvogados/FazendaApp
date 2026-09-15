@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { CalendarRange, AlertTriangle, Info } from "lucide-react";
 import { fetchCiclos21Dias, formatDate, type CiclosResposta, type CicloReprodutivo } from "@/lib/api";
-import { SecaoRecolhivel, Indicador } from "@/components/ui";
+import { SecaoRecolhivel, Indicador, TelaSkeleton } from "@/components/ui";
 import { FiltroCiclo21Dias } from "@/components/FiltroCiclo21Dias";
 
 /**
@@ -168,7 +168,7 @@ export default function Ciclos21DiasPage() {
           <span style={{ fontSize: "0.85rem" }}>{erro}</span>
         </div>
       )}
-      {carregando && <p style={{ color: "var(--text-muted)" }}>Calculando…</p>}
+      {carregando && <TelaSkeleton kpis={3} />}
 
       {dados && !carregando && (
         <>

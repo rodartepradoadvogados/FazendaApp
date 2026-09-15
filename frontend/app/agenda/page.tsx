@@ -20,7 +20,7 @@ import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import { Indicador, SecaoRecolhivel } from "@/components/ui";
+import { Indicador, SecaoRecolhivel, TelaSkeleton } from "@/components/ui";
 import { PainelLancarBst } from "@/components/PainelLancarBst";
 import { casaBusca } from "@/lib/busca";
 import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
@@ -2164,7 +2164,7 @@ export default function AgendaPage() {
           lista logo abaixo (estado listaAtiva); "Alertas de estoque" rola até
           a seção de Estoque, no final da página. */}
       {loading && !agenda ? (
-        <div className="mb-4"><p style={{ color: "var(--text-muted)", padding: "1rem" }}>Carregando…</p></div>
+        <TelaSkeleton />
       ) : agenda && (
         calendarioAberto ? (
           // Calendário mensal por cima dos indicadores (C3-C4) — mesmo
@@ -2460,7 +2460,7 @@ export default function AgendaPage() {
           </div>
         </div>
         {loading ? (
-          <p style={{ color: "var(--text-muted)", padding: "2rem", textAlign: "center" }}>Carregando agenda...</p>
+          <TelaSkeleton kpis={0} />
         ) : (
           <div style={{ marginTop: "0.75rem" }}>
             <div className="flex items-center gap-2" style={{ color: "var(--dourado-light)", fontWeight: 700, fontSize: "0.8rem", margin: "0.6rem 0" }}>

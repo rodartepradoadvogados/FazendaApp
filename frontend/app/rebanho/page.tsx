@@ -12,7 +12,7 @@ import BaixarAnimal from "@/components/BaixarAnimal";
 import FichaAnimal from "@/components/FichaAnimal";
 import RebanhoTouros from "@/components/RebanhoTouros";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
-import { MultiFiltro, Indicador } from "@/components/ui";
+import { MultiFiltro, Indicador, TelaSkeleton } from "@/components/ui";
 import { GrupoLotePicker } from "@/components/GrupoLotePicker";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -245,7 +245,7 @@ function RebanhoDescarte() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Animais marcados para descarte, com o motivo (quando informado).</p>
       </div>
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
-      {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {!regs && !error && <TelaSkeleton kpis={0} />}
       {regs && <CaixaADescartar animais={regs} aoAtualizar={carregar} estadosPorNumero={estadosPorNumero} />}
     </div>
   );
@@ -433,7 +433,7 @@ function RebanhoVisaoGeral() {
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importar dados</a>.</span></div>}
-      {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {!regs && !error && <TelaSkeleton kpis={0} />}
 
       {regs && (
         <>

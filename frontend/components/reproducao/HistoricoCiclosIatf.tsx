@@ -8,6 +8,7 @@ import { AlertTriangle, CalendarClock, Check, CheckCircle2, History, Syringe } f
 import { fetchProtocolosIatfAtivos, fetchCandidatasIatfProjetadas, type CandidataIatfProjetada } from "@/lib/api";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { TelaSkeleton } from "@/components/ui";
 
 type GrupoIatf = {
   lancamento_id: number;
@@ -71,7 +72,7 @@ export default function HistoricoCiclosIatf() {
   }, []);
 
   if (error) return <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>;
-  if (!grupos || !candidatas) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
+  if (!grupos || !candidatas) return <TelaSkeleton kpis={0} />;
 
   const atuais = grupos.filter((g) => !g.concluido);
   const passados = grupos.filter((g) => g.concluido).sort((a, b) => (b.data_d11 || "").localeCompare(a.data_d11 || ""));
