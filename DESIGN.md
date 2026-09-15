@@ -29,18 +29,18 @@ colors:
   cat-acesso: "#9A5560"
 typography:
   display:
-    fontFamily: "Barlow Condensed, Inter, sans-serif"
-    fontWeight: 700
+    fontFamily: "Archivo, Inter, sans-serif"
+    fontWeight: 800
     letterSpacing: "0.04em"
   title:
-    fontFamily: "Barlow Condensed, Inter, sans-serif"
+    fontFamily: "Archivo, Inter, sans-serif"
     fontWeight: 700
   body:
-    fontFamily: "Barlow, Inter, sans-serif"
+    fontFamily: "Archivo, Inter, sans-serif"
     fontWeight: 400
     lineHeight: 1.5
   label:
-    fontFamily: "Barlow Condensed, Inter, sans-serif"
+    fontFamily: "Archivo, Inter, sans-serif"
     fontSize: "0.6875rem"
     fontWeight: 600
     letterSpacing: "0.13em"
@@ -129,17 +129,16 @@ Reprodutivo `#8B7FF0` · Sanidade `#4E7A5A` · Alimentação `#E0A63C` · Gestã
 
 ## Typography
 
-**Display/Heading Font:** Barlow Condensed (com fallback Inter, sans-serif)
-**Body Font:** Barlow (com fallback Inter, sans-serif)
+**Display/Heading/Body Font:** Archivo (com fallback Inter, sans-serif) — família única para corpo E títulos, pesos 400/500/600/700/800, diferenciada por PESO, não por família. Substituiu o par Barlow/Barlow Condensed no redesign "Cooperativa" (Direção B).
 **Fontes de uso único:** Dancing Script (só o "milk" cursivo da marca d'água do login); Sora 700/800 (tipografia de manual de marca, hoje só no Milk News, disponível para expansão futura).
-**App de campo:** Inter para tudo — deliberadamente diferente do site, sem herdar Barlow.
+**App de campo:** Inter para tudo — deliberadamente diferente do site, sem herdar Archivo.
 
-**Character:** Barlow Condensed nos títulos/rótulos/números dá o tom "relatório impresso" (condensado, maiúsculo, letter-spacing largo); Barlow no corpo mantém legibilidade em tabelas densas sem competir com os rótulos.
+**Character:** uma família única simplifica o carregamento e dá consistência entre título e corpo; a hierarquia vem do peso (800 nos valores de KPI, 700 nos títulos, 600 maiúsculo/espaçado nos rótulos, 400 no corpo) e do letter-spacing dos rótulos, não de trocar de fonte.
 
 ### Hierarchy
-- **Title** (700, `.card-header`/`h1-h4`): título de card e de página — Barlow Condensed.
+- **Title** (700, `.card-header`/`h1-h4`): título de card e de página — Archivo.
 - **KPI Value** (800, ~2rem, tabular-nums): valor de indicador — a maior ênfase numérica da tela.
-- **Body** (400, ~0.875rem): texto de tabela e conteúdo corrido — Barlow.
+- **Body** (400, ~0.875rem): texto de tabela e conteúdo corrido — Archivo.
 - **Label** (600, 0.6875rem, letter-spacing 0.13em, uppercase): cabeçalho de tabela e rótulo de KPI — sempre maiúsculo e espaçado, nunca peso menor que 600.
 
 ### Named Rules

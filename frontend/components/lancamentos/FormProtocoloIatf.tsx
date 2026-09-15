@@ -471,7 +471,7 @@ export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico =
           )}
           <div className="flex justify-end gap-2">
             <button className="btn-ghost" onClick={() => setMostrarRecap(false)}>Cancelar</button>
-            <button className="btn-primary" disabled={salvando} onClick={() => { setMostrarRecap(false); salvar(); }}>
+            <button className="btn-primary-gold" disabled={salvando} onClick={() => { setMostrarRecap(false); salvar(); }}>
               {salvando ? "Salvando…" : "Confirmar e salvar"}
             </button>
           </div>

@@ -427,7 +427,9 @@ export function SecaoRecolhivel({
           {badge != null && <span style={{ marginLeft: "auto" }}>{badge}</span>}
         </div>
       </button>
-      {aberta && <div className="mt-3">{children}</div>}
+      <div className={"painel-expansivel" + (aberta ? " painel-expansivel-aberto" : "")}>
+        <div className="mt-3">{children}</div>
+      </div>
     </div>
   );
 }
