@@ -3,6 +3,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { Skull, AlertTriangle, Check, Search, X } from "lucide-react";
 import { fetchAnimais, fetchOpcoesBaixa, criarBaixaAnimal, fetchFornecedores, marcarADescartar, fetchBaixas, ehAdmin } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
+import { Modal } from "@/components/Modal";
 import ComissaoCorretagemForm from "./ComissaoCorretagemForm";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
@@ -68,6 +69,13 @@ export default function BaixarAnimal() {
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
+  // Delight (Etapa 2, lote 2) — "despedir um animal": confirmação sóbria só
+  // para a baixa DEFINITIVA (irreversível); "A descartar" segue ativa no
+  // rebanho, não é uma despedida. O mockup usa "{nome} — {tag}", mas este
+  // sistema não guarda nome de animal — só o número (`numero`, ver `Animal`
+  // abaixo) — por isso a cópia usa o número como identidade, sem inventar
+  // um nome que não existe nos dados reais.
+  const [confirmandoBaixa, setConfirmandoBaixa] = useState(false);
   const admin = ehAdmin();
 
   const [historico, setHistorico] = useState<Baixa[] | null>(null);
@@ -161,6 +169,8 @@ export default function BaixarAnimal() {
     if (motivo === "venda" && pagarComissao && (!corretorNome.trim() || !valorComissao)) {
       setMsg({ tipo: "erro", texto: "Informe o corretor e o valor da comissão." }); return;
     }
+    if (!confirmandoBaixa) { setConfirmandoBaixa(true); return; }
+    setConfirmandoBaixa(false);
 
     setSalvando(true);
     try {
@@ -425,6 +435,22 @@ export default function BaixarAnimal() {
           <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={salvar} disabled={salvando}>
             <Check size={14} /> {salvando ? "Salvando…" : modo === "a_descartar" ? `Marcar ${selecionados.size || ""} como "A descartar"` : `Baixar ${selecionados.size || ""} animal(is)`}
           </button>
+
+          {confirmandoBaixa && (
+            <Modal title="Confirmar baixa" onClose={() => setConfirmandoBaixa(false)} width="440px">
+              <p style={{ fontSize: "0.9rem", marginBottom: "0.9rem" }}>
+                {listaSelecionados.length === 1
+                  ? `Dar baixa no animal nº "${listaSelecionados[0]}"? Isso encerra o histórico produtivo do animal.`
+                  : `Dar baixa em ${listaSelecionados.length} animais? Isso encerra o histórico produtivo de cada um.`}
+              </p>
+              <div className="flex items-center gap-2" style={{ justifyContent: "flex-end" }}>
+                <button className="btn-ghost" onClick={() => setConfirmandoBaixa(false)}>Cancelar</button>
+                <button className="btn-primary" onClick={salvar} disabled={salvando}>
+                  {salvando ? "Salvando…" : "Confirmar baixa"}
+                </button>
+              </div>
+            </Modal>
+          )}
         </div>
       )}
 

@@ -19,6 +19,7 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { casaBusca } from "@/lib/busca";
 import { producaoDe, origemDe } from "@/lib/producaoAnimal";
+import { SIT_CORES } from "@/lib/constants";
 
 const COLUNAS_REBANHO = [
   { header: "Nº", key: "numero" }, { header: "Grupo", key: "grupo_primario" },
@@ -41,15 +42,9 @@ type Animal = {
 };
 
 
-const SIT_CORES: Record<string, string> = {
-  "Ges.": "var(--green-light)", "Vaz. apt.": "var(--blue)", "Vaz. atr.": "var(--red)",
-  "Vaz. pev": "var(--amber)", "Ins.": "var(--dourado-light)",
-  // Rótulos do estado reprodutivo AO VIVO (ver ROTULO_ESTADO) — somados aos
-  // códigos antigos do CSV acima para não quebrar as cores já em uso.
-  "Gestante": "var(--green-light)", "Inseminada": "var(--dourado-light)",
-  "Em protocolo (IA atual)": "var(--vinho-light)", "PEV": "var(--amber)",
-  "Apta": "var(--blue)", "Atrasada": "var(--red)", "Não apta": "#8A6a3a", "Vazia": "var(--text-muted)",
-};
+// SIT_CORES mora em lib/constants.ts (evita import circular com
+// components/FichaAnimal.tsx, que também a usa desde o morph "linha →
+// ficha" — overdrive, Etapa 2 lote 2 — e é importado por este arquivo).
 // Estado reprodutivo AO VIVO (GET /indicadores/estados-reprodutivos) — substitui
 // o Animal.sit_rep congelado do último CSV importado. Ver EstadoReprodutivoAnimal em lib/api.ts.
 const ROTULO_ESTADO: Record<string, string> = {
@@ -258,7 +253,10 @@ function RebanhoDescarte() {
 // parte para poder ordenar por coluna (clique no cabeçalho) de forma
 // independente em cada grupo (cada instância deste componente tem seu
 // próprio estado de ordenação via useOrdenacao).
-function TabelaGrupoAnimais({ lista, femeasApenas, estadosPorNumero }: { lista: Animal[]; femeasApenas: boolean; estadosPorNumero: Map<string, EstadoReprodutivoAnimal> }) {
+function TabelaGrupoAnimais({ lista, femeasApenas, estadosPorNumero, onAbrirFicha }: {
+  lista: Animal[]; femeasApenas: boolean; estadosPorNumero: Map<string, EstadoReprodutivoAnimal>;
+  onAbrirFicha: (a: Animal, statusLabel: string | null, linhaEl: HTMLElement) => void;
+}) {
   // Enriquece com o rótulo do estado ao vivo e a produção ao vivo (com
   // fallback) só para poder ordenar pelas colunas "Sit. Rep." e "Últ. CL" —
   // useOrdenacao ordena por um campo do próprio objeto.
@@ -280,12 +278,18 @@ function TabelaGrupoAnimais({ lista, femeasApenas, estadosPorNumero }: { lista: 
       </tr></thead>
       <tbody>
         {linhasOrdenadas.map((a) => (
-          <tr key={a.numero}>
-            <td style={{ fontWeight: 700 }}>{a.numero}</td>
+          // Overdrive (Etapa 2, lote 2) — "a ficha nasce da linha": clique
+          // leva à aba Ficha do animal já com o número buscado; `data-vt`
+          // marca os 2 elementos de identidade reais (nº + status ao vivo —
+          // este sistema não tem "nome" de exibição consistente em nenhuma
+          // outra tela, sempre usa o número) que ganham `view-transition-
+          // name` dinamicamente SÓ na linha clicada (ver abrirFichaComMorph).
+          <tr key={a.numero} className="row-clickable" style={{ cursor: "pointer" }} onClick={(e) => onAbrirFicha(a, a.sitRepAoVivo, e.currentTarget)}>
+            <td data-vt="tag" style={{ fontWeight: 700 }}>{a.numero}</td>
             <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
             {!femeasApenas && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.sexo || "—"}</td>}
             <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
-            <td><span style={{ color: SIT_CORES[a.sitRepAoVivo || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sitRepAoVivo ? `● ${a.sitRepAoVivo}` : "—"}</span></td>
+            <td data-vt="cat"><span style={{ color: SIT_CORES[a.sitRepAoVivo || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sitRepAoVivo ? `● ${a.sitRepAoVivo}` : "—"}</span></td>
             <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
             <td style={{ textAlign: "right", fontWeight: 600, color: a.producao_origem === "congelado" ? "var(--text-muted)" : undefined }}
               title={a.producao_origem === "congelado" ? "Valor do último CSV importado — nenhum controle leiteiro lançado no app para este animal" : undefined}>
@@ -298,7 +302,7 @@ function TabelaGrupoAnimais({ lista, femeasApenas, estadosPorNumero }: { lista: 
   );
 }
 
-function RebanhoVisaoGeral() {
+function RebanhoVisaoGeral({ onAbrirFicha }: { onAbrirFicha: (a: Animal, statusLabel: string | null, linhaEl: HTMLElement) => void }) {
   const [regs, setRegs] = useState<Animal[] | null>(null);
   const [estados, setEstados] = useState<EstadosReprodutivos | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -564,13 +568,13 @@ function RebanhoVisaoGeral() {
                   </tr></thead>
                   <tbody>
                     {pagPorNumero.linhasPagina.map((a) => (
-                      <tr key={a.numero}>
-                        <td style={{ fontWeight: 700 }}>{a.numero}</td>
+                      <tr key={a.numero} className="row-clickable" style={{ cursor: "pointer" }} onClick={(e) => onAbrirFicha(a, rotuloDe(a.numero) ?? null, e.currentTarget)}>
+                        <td data-vt="tag" style={{ fontWeight: 700 }}>{a.numero}</td>
                         <td style={{ fontSize: "0.75rem" }}>{a.grupo_primario || "—"}</td>
                         <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
                         {!femeasApenas && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.sexo || "—"}</td>}
                         <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
-                        <td><span style={{ color: SIT_CORES[rotuloDe(a.numero) || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{rotuloDe(a.numero) ? `● ${rotuloDe(a.numero)}` : "—"}</span></td>
+                        <td data-vt="cat"><span style={{ color: SIT_CORES[rotuloDe(a.numero) || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{rotuloDe(a.numero) ? `● ${rotuloDe(a.numero)}` : "—"}</span></td>
                         <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
                         <td style={{ textAlign: "right", fontWeight: 600, color: a.producao_origem === "congelado" ? "var(--text-muted)" : undefined }}
                           title={a.producao_origem === "congelado" ? "Valor do último CSV importado — nenhum controle leiteiro lançado no app para este animal" : undefined}>
@@ -597,7 +601,7 @@ function RebanhoVisaoGeral() {
                       </button>
                       {aberto && (
                         <div className="overflow-x-auto">
-                          <TabelaGrupoAnimais lista={lista} femeasApenas={femeasApenas} estadosPorNumero={estadosPorNumero} />
+                          <TabelaGrupoAnimais lista={lista} femeasApenas={femeasApenas} estadosPorNumero={estadosPorNumero} onAbrirFicha={onAbrirFicha} />
                         </div>
                       )}
                     </div>
@@ -635,6 +639,13 @@ export default function RebanhoPage() {
   const [visaoKey, setVisaoKey] = useState(0);
   // Número pré-selecionado ao abrir a ficha a partir de Touros (clique num touro da fazenda que também é um Animal cadastrado).
   const [fichaNumeroInicial, setFichaNumeroInicial] = useState<string | undefined>(undefined);
+  // Overdrive (Etapa 2, lote 2) — "a ficha nasce da linha" (View Transitions,
+  // direção B): contexto do animal clicado na tabela do Rebanho, repassado
+  // para a Ficha pintar de imediato o mesmo status colorido da linha de
+  // origem (sem esperar seu próprio fetch), com o MESMO nome de
+  // view-transition-name que a linha ganhou — é isso que faz o número e o
+  // status "deslizarem" da tabela até o cabeçalho da ficha.
+  const [fichaContextoInicial, setFichaContextoInicial] = useState<{ numero: string; statusLabel: string | null } | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -645,16 +656,35 @@ export default function RebanhoPage() {
   }, []);
 
   const trocarAba = useCallback((k: Aba) => { if (k === "visao") setVisaoKey((v) => v + 1); setAba(k); }, []);
+
+  // Overdrive — morph "linha → ficha" via View Transitions (same-document,
+  // aba trocada em memória, não rota nova). `view-transition-name` só entra
+  // na linha CLICADA (nunca em todas de uma vez — nomes duplicados quebram
+  // a captura) e é limpo depois, sucesso ou não. Fallback obrigatório sem a
+  // API ou com prefers-reduced-motion: troca direta, sem nenhum morph.
+  const abrirFichaComMorph = useCallback((a: Animal, statusLabel: string | null, linhaEl: HTMLElement) => {
+    const ir = () => { setFichaContextoInicial({ numero: a.numero, statusLabel }); setFichaNumeroInicial(a.numero); trocarAba("ficha"); };
+    const semSuporte = typeof document === "undefined" || typeof (document as any).startViewTransition !== "function"
+      || (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+    if (semSuporte) { ir(); return; }
+    const tagEl = linhaEl.querySelector<HTMLElement>('[data-vt="tag"]');
+    const catEl = linhaEl.querySelector<HTMLElement>('[data-vt="cat"]');
+    if (tagEl) tagEl.style.viewTransitionName = "vt-rebanho-tag";
+    if (catEl) catEl.style.viewTransitionName = "vt-rebanho-cat";
+    const limpar = () => { if (tagEl) tagEl.style.viewTransitionName = ""; if (catEl) catEl.style.viewTransitionName = ""; };
+    const transicao = (document as any).startViewTransition(ir);
+    transicao.finished.then(limpar, limpar);
+  }, [trocarAba]);
   const subNavTree: SubNavNode[] = useMemo(() => ABAS_REBANHO.map((a) => ({ id: a.id, label: a.label, icon: a.icon })), []);
   useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba, onSelect: trocarAba as (id: string) => void }), [subNavTree, aba, trocarAba]));
 
   return (
     <div className="px-6 pt-6">
       <div style={{ margin: "0 -1.5rem" }}>
-        {aba === "visao" && <RebanhoVisaoGeral key={visaoKey} />}
+        {aba === "visao" && <RebanhoVisaoGeral key={visaoKey} onAbrirFicha={abrirFichaComMorph} />}
         {aba === "descarte" && <RebanhoDescarte />}
         {aba === "sugestoes" && <div className="p-6"><SugestoesMovimentacao /></div>}
-        {aba === "ficha" && <FichaAnimal numeroInicial={fichaNumeroInicial} />}
+        {aba === "ficha" && <FichaAnimal numeroInicial={fichaNumeroInicial} contextoInicial={fichaContextoInicial} />}
         {aba === "touros" && <RebanhoTouros onAbrirFicha={(numero) => { setFichaNumeroInicial(numero); trocarAba("ficha"); }} />}
         {aba === "indicadores" && <IndicadoresGerais />}
       </div>

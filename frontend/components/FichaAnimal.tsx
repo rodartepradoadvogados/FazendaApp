@@ -12,7 +12,7 @@ import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { ListaFechadaPicker, type OpcaoListaFechada } from "@/components/ListaFechadaPicker";
 import { SecaoRecolhivel, TabBar } from "@/components/ui";
-import { estiloSexado, rotuloOrigemMovimentoLote } from "@/lib/constants";
+import { estiloSexado, rotuloOrigemMovimentoLote, SIT_CORES } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { CurvaLactacao, type FaixaReferencia, type PontoWood } from "@/components/CurvaLactacao";
@@ -629,7 +629,14 @@ function CampoEdit({ label, children, destaque }: { label: string; children: Rea
   return <div><label style={destaque ? { ...labelStyle, color: "var(--red)", fontWeight: 700 } : labelStyle}>{label}{destaque ? " — pendente" : ""}</label>{children}</div>;
 }
 
-export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string } = {}) {
+export default function FichaAnimal({ numeroInicial, contextoInicial }: {
+  numeroInicial?: string;
+  // Overdrive (Etapa 2, lote 2) — contexto vindo da linha clicada no
+  // Rebanho (app/rebanho/page.tsx), para o cabeçalho já nascer com o mesmo
+  // status colorido da linha de origem, sem esperar o fetch próprio desta
+  // ficha, e com o MESMO nome de view-transition-name que a linha ganhou.
+  contextoInicial?: { numero: string; statusLabel: string | null } | null;
+} = {}) {
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [numero, setNumero] = useState("");
   const [ficha, setFicha] = useState<Ficha | null>(null);
@@ -906,7 +913,24 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
           <div className="card" style={cardStyle}>
             <div className="card-header mb-3 flex items-center justify-between">
               <span>
-                {String(a.nome || a.numero)} <span style={{ color: "var(--dourado-light)", fontWeight: 400 }}>(nº {String(a.numero)})</span>
+                {String(a.nome || a.numero)}{" "}
+                {/* Overdrive (Etapa 2, lote 2) — âncoras do morph "linha →
+                    ficha": mesmo view-transition-name que a linha ganhou
+                    dinamicamente em app/rebanho/page.tsx (abrirFichaComMorph),
+                    guardado por @supports (navegador sem suporte ignora e
+                    segue sem nenhum efeito visual). O pill de status só
+                    aparece quando `contextoInicial` bate com o animal atual
+                    — é o dado real que veio junto da linha clicada; sem ele,
+                    nenhum status é inventado aqui. */}
+                <span data-vt-ficha="tag" style={{ color: "var(--dourado-light)", fontWeight: 400 }}>(nº {String(a.numero)})</span>
+                {contextoInicial && contextoInicial.numero === String(a.numero) && contextoInicial.statusLabel && (
+                  <span data-vt-ficha="cat" style={{
+                    marginLeft: "0.5rem", fontWeight: 600, fontSize: "0.78rem",
+                    color: SIT_CORES[contextoInicial.statusLabel] || "var(--text-muted)",
+                  }}>
+                    ● {contextoInicial.statusLabel}
+                  </span>
+                )}
                 {ehAdmin() && (
                   <button
                     className="btn-ghost" title={cadeadoNumeroAberto ? "Travar correção de número/brinco" : "Destravar correção de número/brinco (admin)"}

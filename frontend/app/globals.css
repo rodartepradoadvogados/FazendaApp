@@ -729,6 +729,20 @@ textarea:focus-visible, [tabindex]:focus-visible {
   font-size: 0.875rem;
 }
 
+/* ── Recuperação de erro (delight, Etapa 2 lote 2) ── linha discreta, mais
+   leve que .alert-critico de propósito: confirma o retorno sem alarme. */
+.alert-recuperado {
+  border-left: 3px solid var(--green);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--green) 8%, transparent);
+  padding: 0.5rem 0.7rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text);
+  font-size: 0.83rem;
+}
+
 /* ── Upload dropzone ── */
 .dropzone {
   border: 2px dashed var(--border);
@@ -898,6 +912,26 @@ textarea:focus-visible, [tabindex]:focus-visible {
 .gaveta-lancamento-painel { transition: right 0.22s ease; }
 @media (prefers-reduced-motion: reduce) {
   .gaveta-lancamento-painel { transition: none; }
+}
+
+/* ── Overdrive (Etapa 2, lote 2) — morph "a ficha nasce da linha" ──────────
+   View Transitions, direção B. `[data-vt-ficha]` (Ficha do animal,
+   components/FichaAnimal.tsx) fica com o nome FIXO, guardado por @supports —
+   ela é única na página, então não corre o risco de nome duplicado. Os
+   elementos `[data-vt]` da LINHA (app/rebanho/page.tsx) NUNCA levam nome por
+   CSS — ganham `view-transition-name` dinamicamente só na linha clicada
+   (ver abrirFichaComMorph) e o perdem depois; se estivesse aqui, toda linha
+   da tabela teria o mesmo nome ao mesmo tempo e quebraria a captura. Sem
+   suporte no navegador, `@supports` nunca aplica e a troca de aba continua
+   igual a hoje — nenhuma tarefa depende do efeito. */
+@supports (view-transition-name: none) {
+  [data-vt-ficha="tag"] { view-transition-name: vt-rebanho-tag; }
+  [data-vt-ficha="cat"] { view-transition-name: vt-rebanho-cat; }
+}
+::view-transition-group(vt-rebanho-tag),
+::view-transition-group(vt-rebanho-cat) {
+  animation-duration: 0.45s;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }
 /* Começa abaixo da faixa fixa de News/Tema/Sino (.site-top-actions, z-index
    60) — mesmo offset do .notification-panel abaixo, que já resolve o mesmo
