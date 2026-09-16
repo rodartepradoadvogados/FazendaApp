@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Check, Cog, HeartPulse, Milk, Wallet, Syringe, BarChart3, AlertTriangle } from "lucide-react";
+import { ChevronDown, Check, Cog, HeartPulse, Milk, Wallet, Syringe, BarChart3, AlertTriangle, CheckCircle2 } from "lucide-react";
 
 /**
  * Indicador — cartão de KPI com um círculo de ícone colorido por categoria,
@@ -119,6 +119,40 @@ export function ErroCarregamento({
           </>
         )}
       </span>
+    </div>
+  );
+}
+
+/** Acompanha o mesmo `erro` passado para `ErroCarregamento` e, quando ele
+ * volta a `null` depois de ter existido (ou seja, o "Tentar novamente" deu
+ * certo), devolve por alguns segundos "Voltou — dados atualizados às
+ * HH:MM." — delight (Etapa 2, lote 2): confirma o retorno com carimbo de
+ * tempo real, sem piada, reduz o estresse de quem ficou bloqueado. Não
+ * dispara no carregamento inicial (só quando havia erro de verdade antes). */
+export function useAvisoRecuperado(erro: string | null): string | null {
+  const [aviso, setAviso] = useState<string | null>(null);
+  const tinhaErroRef = useRef(false);
+  useEffect(() => {
+    if (erro) { tinhaErroRef.current = true; setAviso(null); return; }
+    if (!tinhaErroRef.current) return;
+    tinhaErroRef.current = false;
+    const agora = new Date();
+    const hhmm = `${String(agora.getHours()).padStart(2, "0")}:${String(agora.getMinutes()).padStart(2, "0")}`;
+    setAviso(`Voltou — dados atualizados às ${hhmm}.`);
+    const t = setTimeout(() => setAviso(null), 6000);
+    return () => clearTimeout(t);
+  }, [erro]);
+  return aviso;
+}
+
+/** Renderiza o texto de `useAvisoRecuperado` — linha discreta (`.alert-recuperado`),
+ * mais leve que `ErroCarregamento` de propósito. */
+export function AvisoRecuperado({ texto }: { texto: string | null }) {
+  if (!texto) return null;
+  return (
+    <div className="alert-recuperado mb-4 animate-in">
+      <CheckCircle2 size={15} />
+      <span>{texto}</span>
     </div>
   );
 }

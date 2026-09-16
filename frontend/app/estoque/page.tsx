@@ -12,7 +12,7 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import NovoItemEstoque, { type ItemEstoqueEditando } from "@/components/NovoItemEstoque";
 import { EstoquePicker } from "@/components/EstoquePicker";
-import { Indicador, TelaSkeleton, ErroCarregamento } from "@/components/ui";
+import { Indicador, TelaSkeleton, ErroCarregamento, AvisoRecuperado, useAvisoRecuperado } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { casaBusca } from "@/lib/busca";
 
@@ -76,6 +76,7 @@ function EstoqueInventario() {
   const [modalCategorias, setModalCategorias] = useState(false);
   const [editando, setEditando] = useState<ItemEstoqueEditando | null>(null);
   const [criandoNovo, setCriandoNovo] = useState(false);
+  const avisoRecuperado = useAvisoRecuperado(error);
 
   const carregar = () => { setError(null); fetchEstoque().then((d) => setItens(d.itens)).catch((e) => setError(e.message)); };
 
@@ -132,6 +133,7 @@ function EstoqueInventario() {
       </div>
 
       {error && <ErroCarregamento mensagem={`Não foi possível carregar o estoque: ${error}.`} onRetry={carregar} linkHref="/configuracoes?aba=importar" linkLabel="Importar itens de estoque" />}
+      <AvisoRecuperado texto={avisoRecuperado} />
       {!itens && !error && <TelaSkeleton kpis={0} />}
 
       {/* Hormônios IATF (necessidade vs estoque) */}
@@ -155,7 +157,28 @@ function EstoqueInventario() {
         </div>
       )}
 
-      {itens && (
+      {itens && itens.length === 0 && (
+        // Delight (Etapa 2, lote 2) — próxima ação PRIMEIRO (CTA dourado +
+        // chips de exemplo que já preenchem a categoria); a voz de campo
+        // entra como segunda linha. Resolve "Estoque sem ponto de entrada".
+        <div className="empty-state" style={{ textAlign: "center" }}>
+          <Boxes size={22} />
+          <div className="mt-1" style={{ fontWeight: 700, fontSize: "1rem", color: "var(--text)" }}>Nenhum item de estoque ainda</div>
+          <div className="mt-1">Comece pelo que a fazenda usa todo dia.</div>
+          <div className="flex items-center justify-center gap-2 mt-2" style={{ flexWrap: "wrap" }}>
+            {["Ração", "Medicamento", "Sêmen", "Sal mineral"].map((chip) => (
+              <span key={chip} style={{ fontSize: "0.76rem", fontWeight: 600, padding: "0.2rem 0.6rem", borderRadius: 999, border: "1px solid var(--border-strong)", background: "var(--surface)", color: "var(--text-muted)" }}>
+                {chip}
+              </span>
+            ))}
+          </div>
+          <button type="button" className="btn-primary-gold mt-3" style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }} onClick={() => setCriandoNovo(true)}>
+            <Plus size={15} /> Cadastrar primeiro item
+          </button>
+        </div>
+      )}
+
+      {itens && itens.length > 0 && (
         <>
           <div className="card mb-4">
             <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
@@ -359,6 +382,7 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
   const [editObs, setEditObs] = useState("");
   const [ocupado, setOcupado] = useState<number | null>(null);
   const [avisoExclusao, setAvisoExclusao] = useState<string | null>(null);
+  const avisoRecuperado = useAvisoRecuperado(error);
 
   const carregar = () => { setError(null); fetchMovimentosEstoque().then((d) => setMovimentos(d.movimentos as MovimentoRow[])).catch((e) => setError(e.message)); };
 
@@ -427,6 +451,7 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
       </div>
 
       {error && <ErroCarregamento mensagem={`Não foi possível carregar: ${error}.`} onRetry={carregar} />}
+      <AvisoRecuperado texto={avisoRecuperado} />
       {avisoExclusao && <div className="alert-aviso mb-4"><AlertTriangle size={18} /><span>{avisoExclusao}</span></div>}
       {!movimentos && !error && <TelaSkeleton kpis={0} />}
 
@@ -582,6 +607,7 @@ function EstoquePorProduto() {
   const [de, setDe] = useState("");
   const [ate, setAte] = useState("");
   const [busca, setBusca] = useState("");
+  const avisoRecuperado = useAvisoRecuperado(error);
 
   const carregar = () => {
     setError(null);
@@ -618,6 +644,7 @@ function EstoquePorProduto() {
       </div>
 
       {error && <ErroCarregamento mensagem={`Não foi possível carregar: ${error}.`} onRetry={carregar} />}
+      <AvisoRecuperado texto={avisoRecuperado} />
       {!movimentos && !error && <TelaSkeleton kpis={0} />}
 
       {movimentos && (
