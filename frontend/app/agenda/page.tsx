@@ -558,6 +558,36 @@ export default function AgendaPage() {
   // uma partição por data de `eventosFuturos`, mesma lista/mesmo filtro.
   const eventosHoje = useMemo(() => eventosFuturos.filter((e: any) => e.data === hoje), [eventosFuturos, hoje]);
   const eventosProximos = useMemo(() => eventosFuturos.filter((e: any) => e.data > hoje), [eventosFuturos, hoje]);
+  // "Fechar o dia" (delight) — contagem BRUTA de pendências de hoje, sem os
+  // filtros de categoria/período/busca (fCat/de/ate/filtro) que só afetam o
+  // que é MOSTRADO, não se o dia está de fato fechado. Um `useEffect` que
+  // observa essa contagem cair de >0 para 0 pega a última tarefa concluída
+  // por QUALQUER um dos vários fluxos de conclusão do arquivo (marcarRealizado,
+  // aplicarCronogramaLote, confirmarCura, descartarPendencia etc.) sem precisar
+  // instrumentar cada handler — todos chamam `carregar()` no final, que
+  // recarrega `agenda` e recalcula esta contagem. `totalHojeRef` guarda o
+  // MAIOR valor visto para "hoje" (a agenda só lista pendências, as
+  // concluídas somem da lista) — é o "N" de "N de N concluídas"; reseta
+  // quando a data muda.
+  const pendenciasHojeBrutas = useMemo(
+    () => (agenda?.eventos || []).filter((e: any) => !e.comunicado && e.data === hoje).length,
+    [agenda, hoje],
+  );
+  const pendenciasHojeAnteriorRef = useRef<number | null>(null);
+  const totalHojeRef = useRef<{ dia: string; total: number }>({ dia: hoje, total: 0 });
+  const [diaFechado, setDiaFechado] = useState<{ total: number } | null>(null);
+  useEffect(() => {
+    if (totalHojeRef.current.dia !== hoje) totalHojeRef.current = { dia: hoje, total: 0 };
+    if (pendenciasHojeBrutas > totalHojeRef.current.total) totalHojeRef.current.total = pendenciasHojeBrutas;
+
+    const anterior = pendenciasHojeAnteriorRef.current;
+    if (anterior != null && anterior > 0 && pendenciasHojeBrutas === 0) {
+      setDiaFechado({ total: totalHojeRef.current.total });
+    } else if (pendenciasHojeBrutas > 0) {
+      setDiaFechado(null);
+    }
+    pendenciasHojeAnteriorRef.current = pendenciasHojeBrutas;
+  }, [pendenciasHojeBrutas, hoje]);
   const eventosPendentes = useMemo(
     () => eventosBase.filter((e: any) => e.data < hoje),
     [eventosBase, hoje],
@@ -2470,6 +2500,16 @@ export default function AgendaPage() {
               <div className="space-y-2 mb-3">{renderEventos(eventosHoje)}</div>
             ) : (
               <p style={{ color: "var(--text-muted)", padding: "0.75rem", textAlign: "center", fontSize: "0.82rem" }}>Nada para hoje.</p>
+            )}
+            {diaFechado && diaFechado.total > 0 && (
+              // Delight (Etapa 2, lote 2) — só na ÚLTIMA pendência de hoje;
+              // cada check individual continua só com o flash já existente.
+              <div className="animate-in mb-3" style={{
+                padding: "0.55rem 0.7rem", borderLeft: "3px solid var(--dourado)", background: "var(--surface-2)",
+                fontSize: "0.85rem", fontVariantNumeric: "tabular-nums",
+              }}>
+                Dia fechado — {diaFechado.total} de {diaFechado.total} concluídas.
+              </div>
             )}
             {eventosProximos.length > 0 && (
               <>

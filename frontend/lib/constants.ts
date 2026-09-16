@@ -2,6 +2,20 @@
 // ver lib/usePessoasAtivas.ts (busca Pessoa ativas do cadastro, em vez da
 // antiga lista estática RESPONSAVEIS que morava aqui e ignorava Pessoa.ativo).
 
+// Cor por rótulo de situação reprodutiva (códigos antigos do CSV congelado +
+// rótulos do estado AO VIVO, ver ROTULO_ESTADO em app/rebanho/page.tsx).
+// Mora aqui (não em app/rebanho/page.tsx) porque components/FichaAnimal.tsx
+// também usa — pega o mesmo pill de status da linha de origem no morph
+// "linha → ficha" (overdrive, Etapa 2 lote 2) — e rebanho/page.tsx importa
+// FichaAnimal, então export ali criaria import circular.
+export const SIT_CORES: Record<string, string> = {
+  "Ges.": "var(--green-light)", "Vaz. apt.": "var(--blue)", "Vaz. atr.": "var(--red)",
+  "Vaz. pev": "var(--amber)", "Ins.": "var(--dourado-light)",
+  "Gestante": "var(--green-light)", "Inseminada": "var(--dourado-light)",
+  "Em protocolo (IA atual)": "var(--vinho-light)", "PEV": "var(--amber)",
+  "Apta": "var(--blue)", "Atrasada": "var(--red)", "Não apta": "#8A6a3a", "Vazia": "var(--text-muted)",
+};
+
 // Rótulo amigável da origem de um MovimentoLote (Rebanho > Movimentação de
 // lote, na Ficha do animal) — ver os valores possíveis e o porquê de cada um
 // em fazenda.models.animais.MovimentoLote.origem (backend). `null`/valor
