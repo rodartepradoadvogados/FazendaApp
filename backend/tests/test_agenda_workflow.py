@@ -29,6 +29,27 @@ class TestChaveEvento:
         assert base.chave != outra_data.chave
         assert base.chave != outro_animal.chave
 
+    def test_chave_muda_com_origem_id_diferente(self):
+        """Bug relatado pelo usuário em 16/09/2026: dois eventos MANUAIS com a
+        mesma data/categoria/descrição e sem animal vinculado geravam a MESMA
+        chave (sem `origem_id`, o hash só olhava esses 4 campos) — marcar um
+        como realizado marcava os dois juntos, silenciosamente. `origem_id`
+        (o id real de AgendaManual) desambigua; eventos automáticos (sem
+        origem_id, sempre None) continuam com o hash de antes."""
+        um = AgendaItem(data=date(2026, 3, 1), categoria="Atividades", descricao="Evento manual", origem_id=1)
+        outro = AgendaItem(data=date(2026, 3, 1), categoria="Atividades", descricao="Evento manual", origem_id=2)
+        assert um.chave != outro.chave
+
+    def test_chave_sem_origem_id_preserva_o_hash_de_sempre(self):
+        """Eventos automáticos (nunca têm origem_id) não podem trocar de
+        chave com esta correção — resetaria todo "realizado" já gravado.
+        Confere contra o cálculo manual da fórmula de sempre (4 campos, sem
+        nenhum sufixo novo)."""
+        import hashlib
+        auto = AgendaItem(data=date(2026, 3, 1), categoria="Reprodutivo", descricao="Scratch", numero_animal="123")
+        esperado_de_sempre = hashlib.sha1(b"2026-03-01|Reprodutivo|Scratch|123").hexdigest()[:16]
+        assert auto.chave == esperado_de_sempre
+
 
 @pytest.fixture
 def client():
@@ -92,6 +113,27 @@ class TestMarcarRealizado:
 
         eventos2 = c.get("/agenda/", params={"data": "2026-01-01"}).json()["eventos"]
         assert any(e["descricao"] == "Evento reversível" for e in eventos2)
+
+    def test_dois_eventos_manuais_identicos_tem_ids_distintos(self, client):
+        """Bug relatado pelo usuário em 16/09/2026: dois eventos manuais com a
+        mesma data/categoria/descrição e sem animal vinculado colidiam na
+        mesma `chave` — marcar um como realizado marcava os dois juntos."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(AgendaManual(data_evento=date(2026, 3, 1), descricao="Evento igual", categoria="Atividades"))
+            s.add(AgendaManual(data_evento=date(2026, 3, 1), descricao="Evento igual", categoria="Atividades"))
+            s.commit()
+
+        eventos = c.get("/agenda/", params={"data": "2026-01-01"}).json()["eventos"]
+        iguais = [e for e in eventos if e["descricao"] == "Evento igual"]
+        assert len(iguais) == 2
+        assert iguais[0]["id"] != iguais[1]["id"]
+
+        c.post("/agenda/realizados", json={"evento_id": iguais[0]["id"]})
+
+        eventos2 = c.get("/agenda/", params={"data": "2026-01-01"}).json()["eventos"]
+        restantes = [e for e in eventos2 if e["descricao"] == "Evento igual"]
+        assert len(restantes) == 1
 
     def test_marcar_duas_vezes_e_idempotente(self, client):
         c, engine = client

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Target, RefreshCw, Skull, Newspaper, Search, CheckCircle2, ArrowRight, Plus } from "lucide-react";
+import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Target, RefreshCw, Skull, Newspaper, Search } from "lucide-react";
 import {
   fetchIndicadores, fetchAgenda, fetchProducao, fetchResultadoMesRecente, fetchEstoque, fetchAnimais, fetchBaixas, formatBRL,
   fetchNotaCapa, podeModulo, today, getToken, type NotaCapa, type IndicadoresReproducao, type ReproducaoCategoria,
@@ -190,16 +190,18 @@ function Capa() {
     // `data` de referência passada. Não-bloqueante e silencioso: se falhar,
     // as setas de tendência simplesmente não aparecem, sem afetar o resto
     // da Capa (docs/agents/design-implementation.md §5, meta-batida.html).
+    //
+    // Só `fetchIndicadores` — `fetchAgenda` (removido em 16/09/2026) rodava
+    // de novo TODO o motor da agenda (~15 consultas + regras de negócio do
+    // rebanho inteiro, incluindo geração de recorrências/auditorias com
+    // side-effect de escrita) só para extrair 1 número (candidatas IATF de 7
+    // dias atrás) — o achado de lentidão relatado pelo usuário. A seta de
+    // tendência daquele KPI específico fica sem comparação (Delta já trata
+    // `anterior == null` como "não mostrar a seta", sem quebrar nada).
     const seteDiasAtras = new Date();
     seteDiasAtras.setDate(seteDiasAtras.getDate() - 7);
     const dataAnteriorStr = seteDiasAtras.toISOString().slice(0, 10);
-    Promise.allSettled([fetchIndicadores(dataAnteriorStr), fetchAgenda(dataAnteriorStr)])
-      .then(([indAnt, agAnt]) => {
-        setDAnterior({
-          ind: indAnt.status === "fulfilled" ? indAnt.value : null,
-          ag: agAnt.status === "fulfilled" ? agAnt.value : null,
-        });
-      });
+    fetchIndicadores(dataAnteriorStr).then((indAnt) => setDAnterior({ ind: indAnt })).catch(() => {});
   };
 
   useEffect(() => { carregar(); }, []);
@@ -229,7 +231,6 @@ function Capa() {
   // Comparativo de 7 dias — mesma forma dos valores atuais, calculada sobre
   // o recálculo real do backend (ver `carregar`, acima).
   const rebAnt = dAnterior?.ind?.rebanho, repAnt = dAnterior?.ind?.reproducao, prodAnt = dAnterior?.ind?.producao;
-  const candidatasIatfAnt: number | null = dAnterior?.ag?.totais?.candidatas_iatf ?? null;
   const semDados = !d.ind && !d.ag;
 
   // Benchmark reprodutivo (nosso valor × meta × média do país), por categoria
@@ -251,17 +252,11 @@ function Capa() {
   const implanteFalta = implante && !implante.suficiente;
   const contasPagar = d.ag?.totais?.contas_a_pagar ?? 0;
 
-  // Bloco "Hoje" (redesign T1, mockup 1b): tudo que precisa ser feito hoje —
-  // o que já está atrasado (data < hoje) mais o que vence hoje — mesma fonte
-  // que a Agenda usa (d.ag.eventos), só um recorte mais curto pra Capa. Ação
-  // de fato (marcar realizado etc.) continua só na Agenda — aqui é resumo +
-  // atalho, não duplica a lógica de baixa por tipo de evento.
+  // implante/contasPagar (bloco "Fora do esperado" abaixo) ainda dependem de
+  // d.ag — a lista de tarefas/compromissos que vinha junto (redesign T1,
+  // mockup 1b) foi removida a pedido do dono em 16/09/2026: a Agenda fica só
+  // na Agenda, sem prévia duplicada na Capa.
   const hoje = today();
-  const eventosAtivos: any[] = (d.ag?.eventos || []).filter((e: any) => !e.comunicado);
-  const tarefasAtrasadas = eventosAtivos.filter((e: any) => e.data < hoje);
-  const tarefasDeHoje = eventosAtivos.filter((e: any) => e.data === hoje);
-  const tarefasHoje = [...tarefasAtrasadas, ...tarefasDeHoje];
-  const TAREFAS_VISIVEIS = 4;
 
   const serieProd = (d.prod?.serie_temporal || []).slice(-12).map((s: any) => ({
     mes: s.data ? new Date(s.data + "T00:00:00").toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }).replace(".", "") : "",
@@ -358,73 +353,34 @@ function Capa() {
         />
       )}
 
-      {/* Bloco "Hoje" (redesign T1, mockup 1b): abre pela tarefa do dia em vez
-          do módulo — tarefas de hoje/atrasadas à esquerda (mesma fonte que a
-          Agenda usa), "Fora do esperado" (os 3 alertas que antes eram uma
-          faixa solta) à direita. Ação de cada item continua só na Agenda. */}
-      <div className="card mb-5" style={{ borderLeft: "3px solid var(--vinho)", padding: 0 }}>
-        <div className="flex items-center gap-3 flex-wrap" style={{ padding: "0.7rem 0.9rem", borderBottom: "1px solid var(--border)" }}>
-          <span className="card-header" style={{ margin: 0 }}>Hoje</span>
-          <span style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-muted)" }}>
-            {tarefasHoje.length} tarefa{tarefasHoje.length === 1 ? "" : "s"}
-            {tarefasAtrasadas.length > 0 && <> · <span style={{ color: "var(--red)" }}>{tarefasAtrasadas.length} atrasada{tarefasAtrasadas.length === 1 ? "" : "s"}</span></>}
-          </span>
-          <div style={{ marginLeft: "auto", display: "flex", gap: "0.5rem" }}>
-            <a href="/agenda" className="btn-ghost" style={{ fontSize: "0.78rem", padding: "0.35rem 0.7rem" }}>Ver agenda completa</a>
-            <a href="/lancamentos" className="btn-ghost" style={{ fontSize: "0.78rem", padding: "0.35rem 0.7rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}><Plus size={13} /> Lançar</a>
-          </div>
+      {/* "Fora do esperado" (redesign T1, mockup 1b) — os 3 alertas de
+          estoque/financeiro que antes eram uma faixa solta. A lista de
+          tarefas/compromissos do dia que vinha ao lado foi removida a
+          pedido do dono em 16/09/2026 — Agenda só na Agenda, sem prévia
+          duplicada na Capa. Ação de cada alerta continua só no módulo dele. */}
+      <div className="card mb-5" style={{ borderLeft: "3px solid var(--vinho)" }}>
+        <div className="flex items-center gap-3 flex-wrap mb-3" style={{ padding: 0 }}>
+          <span className="card-header" style={{ margin: 0 }}>Fora do esperado</span>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_236px]">
-          <div style={{ padding: "0.6rem 0.9rem", display: "flex", flexDirection: "column", gap: "0.4rem", borderRight: "1px solid var(--border)" }}>
-            {tarefasHoje.length ? (
-              <>
-                {tarefasHoje.slice(0, TAREFAS_VISIVEIS).map((ev: any, i: number) => {
-                  const atrasado = ev.data < hoje;
-                  return (
-                    <a key={ev.id ?? i} href="/agenda"
-                      className="flex items-center gap-3"
-                      style={{ padding: "0.5rem 0.6rem", border: "1px solid var(--border)", borderLeft: `3px solid ${atrasado ? "var(--red)" : "var(--dourado)"}`, borderRadius: "var(--r-sm)", textDecoration: "none" }}>
-                      <span style={{ flex: 1 }}>
-                        <span style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "var(--text)" }}>{ev.numero_animal ? `${ev.numero_animal} · ` : ""}{ev.descricao}</span>
-                        <span style={{ display: "block", fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                          {ev.categoria}{atrasado ? ` · atrasado desde ${new Date(ev.data + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}` : ""}
-                        </span>
-                      </span>
-                      <span style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--dourado-light)", display: "flex", alignItems: "center", gap: "0.2rem", flexShrink: 0 }}>Abrir <ArrowRight size={12} /></span>
-                    </a>
-                  );
-                })}
-                {tarefasHoje.length > TAREFAS_VISIVEIS && (
-                  <a href="/agenda" style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--vinho, var(--dourado-light))", paddingLeft: "0.2rem" }}>
-                    + {tarefasHoje.length - TAREFAS_VISIVEIS} tarefa{tarefasHoje.length - TAREFAS_VISIVEIS === 1 ? "" : "s"} de hoje
-                  </a>
-                )}
-              </>
-            ) : (
-              <EstadoVazio icon={CheckCircle2}>Nada pendente para hoje.</EstadoVazio>
-            )}
-          </div>
-          <div style={{ padding: "0.6rem 0.9rem", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-            <span className="card-header" style={{ fontSize: "0.66rem", margin: 0 }}>Fora do esperado</span>
-            {implanteFalta && (
-              <div className="flex items-start gap-2" style={{ background: "rgba(168,52,28,0.08)", borderLeft: "3px solid var(--red)", padding: "0.45rem 0.5rem", fontSize: "0.76rem" }}>
-                <Syringe size={13} style={{ color: "var(--red)", marginTop: "0.1rem", flexShrink: 0 }} /> Implante em falta: {Math.ceil(implante.falta)} p/ IATF
-              </div>
-            )}
-            {contasPagar > 0 && (
-              <div className="flex items-start gap-2" style={{ background: "rgba(185,131,31,0.1)", borderLeft: "3px solid var(--amber)", padding: "0.45rem 0.5rem", fontSize: "0.76rem" }}>
-                <TrendingDown size={13} style={{ color: "var(--amber)", marginTop: "0.1rem", flexShrink: 0 }} /> {contasPagar} conta(s) a pagar (10 dias)
-              </div>
-            )}
-            {!!abaixoMin && abaixoMin > 0 && (
-              <div className="flex items-start gap-2" style={{ background: "rgba(168,52,28,0.08)", borderLeft: "3px solid var(--red)", padding: "0.45rem 0.5rem", fontSize: "0.76rem" }}>
-                <Package size={13} style={{ color: "var(--red)", marginTop: "0.1rem", flexShrink: 0 }} /> {abaixoMin} item(ns) abaixo do mínimo
-              </div>
-            )}
-            {!implanteFalta && !(contasPagar > 0) && !(!!abaixoMin && abaixoMin > 0) && (
-              <span style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>Nada fora do esperado.</span>
-            )}
-          </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+          {implanteFalta && (
+            <div className="flex items-start gap-2" style={{ background: "rgba(168,52,28,0.08)", borderLeft: "3px solid var(--red)", padding: "0.45rem 0.5rem", fontSize: "0.76rem" }}>
+              <Syringe size={13} style={{ color: "var(--red)", marginTop: "0.1rem", flexShrink: 0 }} /> Implante em falta: {Math.ceil(implante.falta)} p/ IATF
+            </div>
+          )}
+          {contasPagar > 0 && (
+            <div className="flex items-start gap-2" style={{ background: "rgba(185,131,31,0.1)", borderLeft: "3px solid var(--amber)", padding: "0.45rem 0.5rem", fontSize: "0.76rem" }}>
+              <TrendingDown size={13} style={{ color: "var(--amber)", marginTop: "0.1rem", flexShrink: 0 }} /> {contasPagar} conta(s) a pagar (10 dias)
+            </div>
+          )}
+          {!!abaixoMin && abaixoMin > 0 && (
+            <div className="flex items-start gap-2" style={{ background: "rgba(168,52,28,0.08)", borderLeft: "3px solid var(--red)", padding: "0.45rem 0.5rem", fontSize: "0.76rem" }}>
+              <Package size={13} style={{ color: "var(--red)", marginTop: "0.1rem", flexShrink: 0 }} /> {abaixoMin} item(ns) abaixo do mínimo
+            </div>
+          )}
+          {!implanteFalta && !(contasPagar > 0) && !(!!abaixoMin && abaixoMin > 0) && (
+            <span style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>Nada fora do esperado.</span>
+          )}
         </div>
       </div>
 
@@ -473,7 +429,7 @@ function Capa() {
         />
       )}
       <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-5">
-        <KPI v={<>{d.ag?.totais?.candidatas_iatf ?? "—"}<Delta atual={d.ag?.totais?.candidatas_iatf} anterior={candidatasIatfAnt} /></>} l="Candidatas IATF · 7 dias" cat="reprodutivo"
+        <KPI v={d.ag?.totais?.candidatas_iatf ?? "—"} l="Candidatas IATF · 7 dias" cat="reprodutivo"
           podeClicar={candidatasList.length > 0}
           onClick={() => setModal({ title: "Candidatas IATF", list: candidatasList })} />
         <KPI v={bm("taxa_prenhez_ciclo").valor != null ? `${bm("taxa_prenhez_ciclo").valor}%` : "—"} l="Prenhez / 21 dias" cat="reprodutivo" podeClicar={false} />
