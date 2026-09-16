@@ -193,3 +193,89 @@ Conclusão: **a crítica do lote 2 foi feita contra um estado anterior do códig
 - Disciplina: 60fps (se <50, simplificar); progressive enhancement com fallback funcional; lazy-init de recursos pesados; testar em dispositivo médio real; NUNCA jank em mid-range, NUNCA API bleeding-edge sem fallback, NUNCA som sem opt-in, NUNCA mascarar fundamento fraco com ambição técnica, NUNCA empilhar múltiplos momentos extraordinários.
 
 Verificação (ambos): teste "wow" (reação de quem não viu), teste de remoção (sentiu falta?), teste de dispositivo, teste de contexto (faz sentido para a marca e a audiência).
+
+---
+
+## delight + overdrive — IMPLEMENTADOS (16/09/2026)
+
+Pedido explícito do dono (prompt "delight + overdrive (direção B) · lote 2",
+mockups aprovados em `etapa2-delight/` e `etapa2-overdrive/` — arquivos e
+prompt lidos direto do Drive, pasta `agents`; não foram re-serializados
+para o repo porque a leitura via API do Drive devolve uma representação em
+markdown escapado, não o HTML original byte-a-byte, e recriá-lo do zero
+arriscava corromper o mockup fonte — os 4 arquivos e o prompt continuam
+íntegros no Drive, linkados abaixo pelo conteúdo já extraído nesta seção).
+
+**PR #780 já estava mesclado quando este trabalho começou** — branch
+`claude/lote2-refinamento-design` reiniciada a partir do `main` atual antes
+de qualquer commit novo (mesmo padrão de outras rotinas desta conta).
+
+### delight — 5/5 momentos implementados, cópia exata dos mockups
+1. **Fechar o dia (Agenda)** — commit `50249ad2`. "Dia fechado — N de N
+   concluídas." na última pendência real de hoje (contagem sem os filtros
+   de categoria/período/busca, que só afetam o que é mostrado).
+2. **Concluir protocolo (Ciclo de 21 dias)** — commit `c6c70fcd`. Ação real
+   é "Encerrar protocolo" em `app/protocolos/page.tsx` (não em
+   `app/ciclos-21-dias/page.tsx`, que é só leitura/BREDSUM — achado que
+   corrigiu a premissa original do prompt). "Protocolo concluído — N
+   vaca(s) sincronizada(s). Próxima avaliação em 21 dias." **só para
+   origem IATF** — sanitário/indução/customizado/lida não são sincronização
+   e não usam a frase (desvio deliberado, evita terminologia errada).
+3. **Recuperar de erro (ErroCarregamento)** — commit `043fc8c9`. Novo hook
+   `useAvisoRecuperado` + componente `AvisoRecuperado` em `components/ui.tsx`
+   — "Voltou — dados atualizados às HH:MM." nos 3 chamadores existentes
+   (todos em `app/estoque/page.tsx`).
+4. **Começar módulo vazio (Estoque)** — mesmo commit `043fc8c9`. Estado
+   vazio com CTA dourado "Cadastrar primeiro item" + chips de exemplo
+   quando o inventário tem 0 itens.
+5. **Despedir um animal (Rebanho)** — commit `5e608125`. A ação de baixa
+   mora em `app/lancamentos/page.tsx` → `components/BaixarAnimal.tsx`, não
+   em `app/rebanho/page.tsx` (achado que corrigiu a premissa original do
+   prompt — `BaixarAnimal` é importado mas nunca usado em `rebanho/page.tsx`).
+   Modal de confirmação sóbrio (marinho, nunca dourado) só na baixa
+   DEFINITIVA; "Marcar A descartar" continua salvando direto. **Desvio**: a
+   cópia usa "{nome} — {tag}", mas Animal não tem nome de exibição
+   consistente nesta base real (campo opcional, esparsamente preenchido,
+   nunca mostrado em nenhuma listagem) — usa só o número.
+
+### overdrive — direção B (View Transitions), morph Rebanho implementado
+Commit `6cc850c8`. Morph "linha → ficha" na tabela principal do Rebanho
+(ambos os modos: agrupado por lote e "por número"), com fallback obrigatório
+(sem a API ou com `prefers-reduced-motion`) e `@supports` guardando os
+nomes fixos do lado da Ficha.
+
+**Desvios do mockup**:
+- Não existia clique "linha → ficha" na tabela principal do Rebanho antes
+  deste commit (só existia em Touros, via `onAbrirFicha`) — implementado do
+  zero, reaproveitando o mesmo padrão (`fichaNumeroInicial` + `trocarAba`).
+- Não existia rota separada `/rebanho/[numero]` — é troca de aba dentro do
+  mesmo componente (same-document), não navegação de rota.
+- **2 elementos morfam, não 3**: tag (número) + pill de status reprodutivo
+  ao vivo. O "nome" do mockup foi substituído pelo pill de status (mesmo
+  motivo do item 5 do delight — Animal não tem nome de exibição
+  consistente). `SIT_CORES` movido de `app/rebanho/page.tsx` para
+  `lib/constants.ts` para evitar import circular com `FichaAnimal.tsx`.
+- O pill de status na Ficha só aparece quando a navegação veio deste morph
+  (contexto real passado pela linha clicada); uma visita direta à ficha
+  (busca manual, `?numero=`) não mostra pill — evita inventar/buscar dado
+  novo fora do escopo.
+- Extensão a Lançamentos (valor+descrição) e Protocolo (título+status),
+  sugerida no mockup como "reutilizável", **não implementada** — o prompt
+  autorizava isso só "se couber no escopo"; ficou fora.
+
+### Verificação
+`npx tsc --noEmit` e `npm run build` limpos em cada commit. Verificado num
+navegador real (Playwright/chromium), temas claro/escuro/misto + mobile
+390px: os 5 momentos de delight e o morph funcionam conforme especificado
+(screenshots + spy de `startViewTransition`); único item não testável foi o
+estado vazio do Estoque (a fazenda de teste já tinha 17 itens cadastrados).
+Confirmado: sem uso indevido de ouro, sem lift no hover, cantos 2px
+preservados, console sem erros novos.
+
+**Bug pré-existente encontrado** (não é regressão deste trabalho, não
+corrigido aqui): `AgendaItem.chave` em
+`backend/fazenda/rules/agenda_engine.py` gera a chave de um evento manual
+da Agenda via hash de `data|categoria|descricao|numero_animal`, sem o id da
+linha — dois eventos manuais com texto/data idênticos (sem animal vinculado)
+colidem na mesma chave, e concluir um conclui os dois juntos. Reportado ao
+dono separadamente.
