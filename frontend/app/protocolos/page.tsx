@@ -615,9 +615,19 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
 
   async function confirmarEncerrar() {
     setSalvando(true); setErro(null);
+    // Nº de animais capturado ANTES de `carregar()` reatribuir `det` — a
+    // mensagem de conclusão (delight, Etapa 2 lote 2) precisa do total real
+    // deste lote, não um valor fixo.
+    const totalAnimais = det?.animais.length ?? 0;
     try {
       await encerrarProtocolo(origem, origemId, motivo);
       setEncerrando(false); setMotivo("");
+      // Cópia específica de IATF (sincronização → avaliação de prenhez em 21
+      // dias, o "Ciclo de 21 dias") — outras origens (sanitário/indução/
+      // customizado/lida) não são sincronização e não usam esta frase.
+      if (origem === "iatf") {
+        setAviso(`Protocolo concluído — ${totalAnimais} vaca${totalAnimais === 1 ? "" : "s"} sincronizada${totalAnimais === 1 ? "" : "s"}. Próxima avaliação em 21 dias.`);
+      }
       await carregar(); onMudou();
     } catch (e: any) { setErro(e.message); }
     finally { setSalvando(false); }
