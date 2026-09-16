@@ -82,11 +82,25 @@ class AgendaItem:
     tipo_evento: str | None = None  # Compra, Venda, Serviço, Outro (só em eventos manuais)
     apenas_admin: bool = False  # evento visível somente para o administrador
     link: str | None = None  # rota interna de instruções/ação
+    # Id real da linha de origem (hoje só preenchido para eventos manuais,
+    # AgendaManual.id) — sem isso, dois eventos manuais com mesma data +
+    # categoria + descrição + sem animal vinculado geram O MESMO hash em
+    # `chave` (bug relatado pelo usuário em 16/09/2026: marcar um como
+    # realizado marcava os dois juntos, silenciosamente). `None` para
+    # eventos automáticos preserva o hash de sempre (nenhum "realizado" já
+    # gravado é invalidado); só eventos manuais mudam de chave nesta correção.
+    origem_id: int | str | None = None
 
     @property
     def chave(self) -> str:
-        """Hash estável do evento — identidade usada para marcar 'realizado'."""
+        """Hash estável do evento — identidade usada para marcar 'realizado'.
+        Sem `origem_id` (todo evento automático, e qualquer manual antigo já
+        gravado antes desta correção), o hash é IDÊNTICO ao de sempre — só
+        eventos manuais com origem_id disponível ganham o sufixo que
+        desambigua duplicatas."""
         bruto = f"{self.data.isoformat()}|{self.categoria}|{self.descricao}|{self.numero_animal or ''}"
+        if self.origem_id is not None:
+            bruto += f"|{self.origem_id}"
         return hashlib.sha1(bruto.encode()).hexdigest()[:16]
 
     @property
@@ -872,6 +886,7 @@ class AgendaEngine:
                     tipo_evento=ev.get("tipo_evento"),
                     apenas_admin=bool(ev.get("apenas_admin")),
                     link=ev.get("link"),
+                    origem_id=ev.get("id"),
                 ))
 
         # Ordena todos os eventos por data
