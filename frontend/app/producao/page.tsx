@@ -1298,7 +1298,9 @@ export function RelatoriosBstView() {
   const th: React.CSSProperties = { textAlign: "left", padding: "0.4rem 0.6rem", fontSize: "0.72rem", textTransform: "uppercase", color: "var(--text-muted)", borderBottom: "1px solid var(--border)" };
   const td: React.CSSProperties = { padding: "0.4rem 0.6rem", fontSize: "0.82rem", borderBottom: "1px solid var(--border)" };
 
-  if (erro) return <p style={{ color: "var(--red)" }}>{erro}</p>;
+  // Achado do lote 2: erro cru (texto vermelho solto), diferente do padrão
+  // ErroCarregamento (com retry) já usado nas outras 3 seções desta mesma tela.
+  if (erro) return <ErroCarregamento mensagem={`Não foi possível carregar: ${erro}.`} onRetry={carregar} />;
 
   return (
     <div className="px-6 pt-6 space-y-4">
@@ -1583,9 +1585,13 @@ export function EquivalenteMaduroView() {
   const ordEM = useOrdenacao(animais);
   const badgeStyleEM: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)", background: "var(--surface-2)", borderRadius: "999px", padding: "0.1rem 0.55rem", whiteSpace: "nowrap" };
 
+  // Achado do lote 2: o erro aparecia junto com a tabela vazia (0 animais) ao
+  // mesmo tempo — igual às outras seções desta tela, agora sai da tela inteira
+  // em vez de conviver com um estado vazio que não é o real motivo da lista vazia.
+  if (erro) return <ErroCarregamento mensagem={`Não foi possível carregar: ${erro}.`} onRetry={carregar} />;
+
   return (
     <div className="px-6 pt-6 space-y-4">
-      {erro && <ErroCarregamento mensagem={`Não foi possível carregar: ${erro}.`} onRetry={carregar} />}
       <div className="card">
         <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
           <span className="flex items-center gap-2"><Sprout size={14} /> Equivalente maduro — quem ainda vai crescer</span>
