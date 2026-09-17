@@ -13,6 +13,10 @@ import {
   type FazendaCadastroCowData, type PessoaUsuarioCowData, type UsuarioCowData,
 } from "@/lib/api";
 import { usePainelCowDataEstilos } from "@/lib/painelCowDataTema";
+// Achado do lote 2: senha em type="text" cru, sem autocomplete — reaproveita
+// o mesmo CampoSenha (mostrar/ocultar + força + autocomplete) da tela da
+// fazenda em vez de duplicar o bug numa segunda tela de criar/editar usuário.
+import { CampoSenha } from "@/app/usuarios/page";
 
 // Mesma lista de módulos da tela da fazenda (Configurações > Cadastro >
 // Pessoas > Controle de Acesso, ver app/usuarios/page.tsx) — precisa ficar
@@ -43,7 +47,9 @@ export default function UsuariosPorFazendaCowData() {
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [papel, setPapel] = useState<"admin" | "operador">("operador");
-  const [perms, setPerms] = useState<Set<string>>(new Set(TODOS));
+  // Achado do lote 2 (mesmo do app/usuarios/page.tsx): nascia com todos os
+  // módulos marcados, incluindo Financeiro — menor privilégio por padrão.
+  const [perms, setPerms] = useState<Set<string>>(new Set(["capa"]));
   const [salvando, setSalvando] = useState(false);
 
   const [editandoId, setEditandoId] = useState<number | null>(null);
@@ -61,7 +67,7 @@ export default function UsuariosPorFazendaCowData() {
   useEffect(() => {
     if (fazendaId === "") return;
     carregar(fazendaId);
-    setPessoaId(""); setUsername(""); setEmail(""); setSenha(""); setPapel("operador"); setPerms(new Set(TODOS)); setMsg(null);
+    setPessoaId(""); setUsername(""); setEmail(""); setSenha(""); setPapel("operador"); setPerms(new Set(["capa"])); setMsg(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fazendaId]);
 
@@ -86,7 +92,7 @@ export default function UsuariosPorFazendaCowData() {
         papel, permissoes: papel === "admin" ? TODOS : Array.from(perms),
       });
       setMsg(`Usuário "${username}" criado.`);
-      setPessoaId(""); setUsername(""); setEmail(""); setSenha(""); setPapel("operador"); setPerms(new Set(TODOS));
+      setPessoaId(""); setUsername(""); setEmail(""); setSenha(""); setPapel("operador"); setPerms(new Set(["capa"]));
       carregar(fazendaId);
     } catch (e: any) { setErro(e.message); }
     finally { setSalvando(false); }
@@ -132,7 +138,7 @@ export default function UsuariosPorFazendaCowData() {
               </div>
               <div><label style={labelStyle}>Usuário (login)</label><input style={{ ...inputStyle, width: "100%" }} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" /></div>
               <div><label style={labelStyle}>E-mail</label><input style={{ ...inputStyle, width: "100%" }} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="preenchido a partir do cadastro da pessoa, editável" /></div>
-              <div><label style={labelStyle}>Senha</label><input style={{ ...inputStyle, width: "100%" }} type="text" value={senha} onChange={(e) => setSenha(e.target.value)} /></div>
+              <div><label style={labelStyle} htmlFor="painel-cowdata-novo-usuario-senha">Senha</label><CampoSenha id="painel-cowdata-novo-usuario-senha" value={senha} onChange={setSenha} /></div>
               <div>
                 <label style={labelStyle}>Tipo</label>
                 <select style={{ ...inputStyle, width: "100%" }} value={papel} onChange={(e) => setPapel(e.target.value as any)}>
@@ -239,7 +245,7 @@ function LinhaUsuario({ u, fazendaId, aberto, onAbrir, onSalvo }: {
       {aberto && (
         <div style={{ padding: "0.8rem", borderTop: `1px solid ${COR.borda}` }} className="space-y-3">
           <div><label style={labelStyle}>E-mail</label><input style={{ ...inputStyle, width: "100%" }} type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
-          <div><label style={labelStyle}>Nova senha (deixe em branco para manter)</label><input style={{ ...inputStyle, width: "100%" }} type="text" value={senha} onChange={(e) => setSenha(e.target.value)} /></div>
+          <div><label style={labelStyle} htmlFor="painel-cowdata-editar-usuario-senha">Nova senha (deixe em branco para manter)</label><CampoSenha id="painel-cowdata-editar-usuario-senha" value={senha} onChange={setSenha} /></div>
           <div>
             <label style={labelStyle}>Tipo</label>
             <select style={{ ...inputStyle, width: "100%" }} value={papel} onChange={(e) => setPapel(e.target.value as any)}>

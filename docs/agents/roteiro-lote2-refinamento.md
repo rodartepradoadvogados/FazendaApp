@@ -278,4 +278,59 @@ corrigido aqui): `AgendaItem.chave` em
 da Agenda via hash de `data|categoria|descricao|numero_animal`, sem o id da
 linha — dois eventos manuais com texto/data idênticos (sem animal vinculado)
 colidem na mesma chave, e concluir um conclui os dois juntos. Reportado ao
-dono separadamente.
+dono separadamente. **Corrigido em 16/09/2026** (commit `74d36472`, PR
+[#783](https://github.com/rodartepradoadvogados/FazendaApp/pull/783)) — ver
+seção seguinte.
+
+---
+
+## Etapa 1 — 9 superfícies: revalidação + implementação CONCLUÍDA (17/09/2026)
+
+Pedido do dono: "Vamos começar pelas 9 superfícies do lote 2, tela a tela."
+Cada tela foi revalidada contra o código atual em `main` (pós PR #781 e
+#783) antes de qualquer edição — vários achados da crítica original já
+tinham sido corrigidos por trabalho anterior (polish/colorize/delight) e
+saíram da fila sem gerar commit. Branch `claude/lote2-etapa1-telas`
+(reiniciada a partir do `main` atual, mesmo padrão de outras rotinas desta
+conta), `npx tsc --noEmit` limpo em cada commit, verificação em navegador
+real (Playwright/chromium, login `teste_local`) para cada tela, temas
+claro/escuro conferidos.
+
+| # | Tela | Nota | Commit | Status |
+|---|---|---|---|---|
+| 1 | Agenda | 22/40 | `a4dd05e4` | KPIs agrupados por assunto (Reprodução/Sanidade/Geral); "Hoje" nasce expandido no acordeão da timeline (mecanismo de colapso por dia já existia, só o padrão estava errado). Achado dos 4 filtros sem rótulo já resolvido em passada anterior. |
+| 2 | Lançamentos | 31/40 | `36c75986` | `FormFinanceiro`: os 6 campos mais usados de "Dados da nota" ficam sempre visíveis, os outros 11 atrás de um toggle "Mais detalhes" (abre sozinho quando vem de um pedido). `FormProtocoloIatf`: empty-state da gaveta IATF passa a usar `EstadoVazio`. `Campo` sem `htmlFor`/`id` já resolvido em passada anterior. |
+| 3 | Central de Protocolos + Sanidade | 27/40 | `fe4ef0b0` (+ recap em `36c75986`) | `WizardProtocolo` volta a 2px/`shadow-sm` (era 14px + sombra pesada). "Salvar sem recap" resolvido via o mesmo recap "Animais selecionados/Protocolo" já existente no modo "Novo protocolo", estendido ao modo "Adicionar a protocolo existente". Navegação em 3 níveis da Sanidade **não mexida** — arquivo de ~2900 linhas, fora do orçamento de risco desta rodada (ver "Pendências" abaixo). |
+| 4 | Rebanho | 27/40 | `56c7b5bd` | `AnimalModal.tsx` tinha `SIT_CORES` local com cores diferentes do mapa compartilhado (`lib/constants.ts`) — "Vazia"/"Não apta"/"Em protocolo" pintados diferente entre tabela e modal do mesmo animal. Removido o mapa duplicado. Painel de filtros dourado já resolvido em passada anterior (colorize, `36de622b`). |
+| 5 | Histórico + Reprodução + Produção | 24/40 | `0b163dd8` | Seção BST de Produção mostrava erro cru (`<p>` vermelho sem retry); Equivalente Maduro mostrava erro E tabela vazia ao mesmo tempo. Ambos agora usam `ErroCarregamento` (retry) e Equivalente Maduro retorna só o erro, sem o card por baixo. Token de cor do KPI "Concepção/serviço" já resolvido em passada anterior (colorize, `36de622b`). |
+| 6 | Ciclo de 21 dias | 22/40 | `cf8fc85c` | Erro sem retry → `ErroCarregamento` + função `tentarNovamente`. Tooltip `title` morto em toque nas barras Apt/Ins./Apt Real/Posit. removido (a Legenda, sempre visível, já cobre a mesma explicação — mesma lição que o comentário da própria `Legenda()` já registrava). Modal "Detalhe do ciclo" já usa o `Modal` compartilhado (Esc/role=dialog/foco) — não precisou de mudança. |
+| 7 | Estoque | 24/40 | _(nenhum)_ | Revalidado, ambos os achados **já resolvidos** pelo delight da Etapa 2 (commit `043fc8c9`): botão "Novo item" no cabeçalho + estado vazio com CTA "Cadastrar primeiro item" e chips de exemplo. Nenhuma mudança necessária. |
+| 8 | Insights | 25/40 | _(nenhum)_ | Revalidado: `/indicadores` tem conteúdo real (Indicadores Gerais, Não Conformidades, Recria, bezerras) — não é uma aba vazia. "Listas de trabalho" e "Situação reprodutiva (ao vivo)" são dois componentes distintos (`RelatoriosManejo` × `SituacaoReprodutivaAoVivo`), não uma duplicata literal. `border-radius:12px` do `CombinadorListas` já está em `var(--r-sm)`. Confirma achado já registrado numa passada anterior ("não confirmados no código atual"). |
+| 9 | Administração | 22/40 | `4c78003e` | Senha em `type="text"` cru em `painel-cowdata/usuarios/page.tsx` (a tela irmã `app/usuarios/page.tsx` já usava `CampoSenha` mascarado) — `CampoSenha` exportado e reaproveitado nas duas telas. Usuário novo nascia com todos os módulos marcados (incl. Financeiro) nas duas telas — passa a nascer só com "Capa". `PortalView.tsx` engolia erro de rede em "Pendentes" (`.catch(()=>{})`), mostrando falso "Nada pendente" — agora guarda o erro e mostra `ErroCarregamento`. |
+
+### Pendência registrada (não implementada nesta rodada)
+
+**Sanidade — navegação em 3 níveis aninhados** (achado #2 da tela 3,
+Central de Protocolos + Sanidade): `frontend/app/sanidade/page.tsx` tem
+~2900 linhas e uma hierarquia real de abas → sub-abas → modos (4 → 5 → 5).
+Reestruturar essa navegação (proposta do mockup: `<details>` colapsáveis)
+sem quebrar nenhum dos fluxos existentes exige uma revisão muito mais
+profunda do que o restante desta rodada — fica como item para uma rodada
+dedicada, não é um bug simples de token/estado como os demais.
+
+### Verificação
+
+`npx tsc --noEmit` limpo a cada commit. Verificado em navegador real
+(Playwright/chromium) contra o dev server local, login `teste_local`,
+temas claro/escuro e (para Agenda/Lançamentos/Protocolos) mobile 390px —
+todas as 7 telas com commit tiveram passe confirmado ao vivo, exceto os
+dois achados de Administração sobre `type="password"`/menor privilégio:
+a conta de teste é `admin`, mas as duas telas de cadastro de usuário
+exigem papel `dono` (já existe um "dono" definido no banco de teste) —
+confirmados por revisão de código (mesmo componente `CampoSenha` e mesmo
+padrão `new Set(["capa"])`, ambos já exercitados ao vivo nas outras
+telas), não foi forçado acesso além do que a conta de teste permite. O
+3º achado de Administração (Portal engolindo erro) foi confirmado ao vivo
+com falha de rede simulada.
+
+**Branch `claude/lote2-etapa1-telas` → PR aberto para `main`.**

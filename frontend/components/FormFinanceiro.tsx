@@ -1,6 +1,6 @@
 "use client";
 import { Fragment, cloneElement, isValidElement, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2, Camera } from "lucide-react";
+import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2, Camera, ChevronDown, ChevronRight } from "lucide-react";
 import {
   fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, fetchPlanoContas, criarLancamentoFinanceiro, importarXmlFinanceiro,
   lerDocumentoFinanceiro, formatBRL, fetchPedidos, fetchPossiveisDuplicados, anexarArquivoLancamento, type LancamentoParecido,
@@ -315,6 +315,13 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const [centroCusto, setCentroCusto] = useState(CENTRO_CUSTO_PADRAO);
   const [classificacao, setClassificacao] = useState("");
   const [novaClassificacaoAberta, setNovaClassificacaoAberta] = useState(false);
+  // Progressive disclosure (achado do lote 2: 20+ campos expostos de uma vez em
+  // "Dados da nota") — os campos menos usados ficam atrás deste toggle,
+  // fechado por padrão; os mais usados (fornecedor, centro de custo,
+  // classificação, datas) continuam sempre visíveis. Começa aberto quando vem
+  // de um pedido (prefillPedido preenche "Vincular a um pedido", que mora
+  // nesta seção — sem isto, o vínculo ficaria escondido do usuário).
+  const [maisDetalhesNotaAberto, setMaisDetalhesNotaAberto] = useState(() => !!prefillPedido);
   const [novaClassificacaoNome, setNovaClassificacaoNome] = useState("");
   const [salvandoClassificacao, setSalvandoClassificacao] = useState(false);
   const [fornecedor, setFornecedor] = useState("");
@@ -365,6 +372,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   useEffect(() => {
     if (!prefillPedido) return;
     setPedidoId(String(prefillPedido.id));
+    setMaisDetalhesNotaAberto(true);
     setPedidosAbertos((prev) => (prev.some((p) => p.id === prefillPedido.id) ? prev : [
       ...prev,
       { id: prefillPedido.id, numero_pedido: `Pedido #${prefillPedido.id}`, fornecedor_cliente: prefillPedido.fornecedorCliente || null, valor_total_estimado: prefillPedido.itens.reduce((a, i) => a + i.valor_total_estimado, 0) },
@@ -1257,6 +1265,31 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             </div>
           )}
         </Campo>
+        <Campo label="Data de emissão"><input type="date" style={inputStyle} value={dataEmissao} onChange={(e) => handleDataEmissaoChange(e.target.value)} /></Campo>
+        {!parcelado && (
+          <Campo label="Data de vencimento">
+            <input type="date" style={inputStyle} value={dataVencimento} onChange={(e) => setDataVencimento(e.target.value)} />
+            <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginTop: "0.2rem" }}>
+              Usada para lançar em Contas a pagar e na Agenda.
+            </span>
+          </Campo>
+        )}
+        <div>
+          <label style={lbl}>Valor líquido da nota</label>
+          <div style={{ ...inputStyle, fontWeight: 700, color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</div>
+        </div>
+      </div>
+
+      {/* Progressive disclosure (achado do lote 2) — responsável, tipo/número
+          de documento, datas de entrega/pedido, vínculo a pedido, entrega e
+          desconto/acréscimo são preenchidos com menos frequência do que os
+          campos acima; ficam atrás deste toggle em vez de sempre expostos. */}
+      <button type="button" className="btn-ghost" onClick={() => setMaisDetalhesNotaAberto((a) => !a)}
+        aria-expanded={maisDetalhesNotaAberto} style={{ fontSize: "0.76rem", marginTop: "0.6rem", padding: "0.3rem 0.2rem" }}>
+        {maisDetalhesNotaAberto ? <ChevronDown size={13} /> : <ChevronRight size={13} />} Mais detalhes
+      </button>
+      {maisDetalhesNotaAberto && (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3" style={{ marginTop: "0.6rem" }}>
         <Campo label="Responsável pelo lançamento">
           <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
             <option value="">Selecione…</option>
@@ -1285,15 +1318,6 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
               : "Linha digitável do boleto único deste lançamento (opcional)."}
           </span>
         </Campo>
-        <Campo label="Data de emissão"><input type="date" style={inputStyle} value={dataEmissao} onChange={(e) => handleDataEmissaoChange(e.target.value)} /></Campo>
-        {!parcelado && (
-          <Campo label="Data de vencimento">
-            <input type="date" style={inputStyle} value={dataVencimento} onChange={(e) => setDataVencimento(e.target.value)} />
-            <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginTop: "0.2rem" }}>
-              Usada para lançar em Contas a pagar e na Agenda.
-            </span>
-          </Campo>
-        )}
         <Campo label="Data prevista de entrada"><input type="date" style={inputStyle} value={dataPrevistaEntrada} onChange={(e) => setDataPrevistaEntrada(e.target.value)} /></Campo>
         <Campo label="Data do pedido"><input type="date" style={inputStyle} value={dataPedido} onChange={(e) => setDataPedido(e.target.value)} /></Campo>
         <Campo label="Vincular a um pedido (opcional)">
@@ -1315,11 +1339,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         </Campo>
         <Campo label="Desconto (R$)"><CampoMoeda style={inputStyle} value={Number(desconto) || 0} onChange={(v) => setDesconto(v ? String(v) : "")} /></Campo>
         <Campo label="Acréscimo (R$)"><CampoMoeda style={inputStyle} value={Number(acrescimo) || 0} onChange={(v) => setAcrescimo(v ? String(v) : "")} /></Campo>
-        <div>
-          <label style={lbl}>Valor líquido da nota</label>
-          <div style={{ ...inputStyle, fontWeight: 700, color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</div>
-        </div>
       </div>
+      )}
       {(Number(desconto) > 0 || Number(acrescimo) > 0) && (
         <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
           Bruto dos produtos: {formatBRL(valorBruto)}

@@ -1,13 +1,13 @@
 "use client";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Check, AlertTriangle, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Check, AlertTriangle, X, HeartPulse } from "lucide-react";
 import { adicionarAnimaisIatf, criarProtocoloIatf, fetchLancamentosIatf, fetchProtocolosIatfAtivos, fetchProtocolosIatfCadastrados, formatDate, removerAnimalIatf } from "@/lib/api";
 import type { HormonioIatf, ProtocoloIatfMolde } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { EditorHormoniosIatf } from "@/components/EditorHormoniosIatf";
-import { TabBar } from "@/components/ui";
+import { TabBar, EstadoVazio } from "@/components/ui";
 import { Campo, inputStyle, lbl, nota } from "@/components/lancamentos/comumForms";
 import { SelectAnimal, addDias, IDADE_MIN_SERVICO_PADRAO } from "@/components/lancamentos/_shared";
 import { ErroApi } from "@/lib/api";
@@ -112,11 +112,9 @@ function ProtocolosIatfAtivos({ recarregarRef }: { recarregarRef: React.MutableR
   }
 
   if (!ativos || !ativos.length) {
-    return (
-      <div className="card" style={{ textAlign: "center", padding: "2.2rem 1rem" }}>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo IATF em andamento.</p>
-      </div>
-    );
+    // Achado do lote 2: empty-state da gaveta IATF fora do padrão (texto solto
+    // em vez do padrão .empty-state já usado em outras telas, ex.: Estoque).
+    return <EstadoVazio icon={HeartPulse}>Nenhum protocolo IATF em andamento.</EstadoVazio>;
   }
   return (
     <div className="card" style={{ background: "var(--surface-2)" }}>
@@ -414,6 +412,19 @@ export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico =
               <tr><td>Animais selecionados</td><td style={{ fontWeight: 700, textAlign: "right" }}>{totalAnimaisSelecionados}</td></tr>
               <tr><td>Protocolo</td><td style={{ fontWeight: 700, textAlign: "right" }}>{nomeProtocolo || nomeBase}</td></tr>
               <tr><td>Início (D0)</td><td style={{ fontWeight: 700, textAlign: "right" }}>{d0 ? addDias(d0, 0) : "—"}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+      {/* Achado do lote 2: "Salvar" sem recapitulação — mesmo recap do modo
+          "novo" acima, aqui para "adicionar a protocolo existente" (também um
+          lote inteiro de animais entrando de uma vez num protocolo em curso). */}
+      {modo === "existente" && existenteId && (
+        <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+          <table className="fazenda-table">
+            <tbody>
+              <tr><td>Animais selecionados</td><td style={{ fontWeight: 700, textAlign: "right" }}>{totalAnimaisSelecionados}</td></tr>
+              <tr><td>Protocolo</td><td style={{ fontWeight: 700, textAlign: "right" }}>{existentes.find((l) => String(l.lancamento_id) === existenteId)?.nome_protocolo || "—"}</td></tr>
             </tbody>
           </table>
         </div>

@@ -142,7 +142,10 @@ export default function AgendaPage() {
     { header: "Grupo", render: (a: AnimalRow) => a.grupo_primario || "—" },
     { header: "Categoria", render: (a: AnimalRow) => a.categoria_abrev || a.categoria_completa || "—" },
   ];
-  const [datasAbertas, setDatasAbertas] = useState<Set<string>>(new Set());
+  // Hoje começa aberto (achado do lote 2: timeline não pode nascer 100%
+  // colapsada — quem abre a Agenda quer ver o dia de hoje sem precisar
+  // clicar); os demais dias (Próximos/Atrasados) começam fechados.
+  const [datasAbertas, setDatasAbertas] = useState<Set<string>>(() => new Set([today()]));
   const toggleData = (d: string) => setDatasAbertas(p => { const n = new Set(p); n.has(d) ? n.delete(d) : n.add(d); return n; });
   // Painéis recolhíveis (candidatas IATF, BST aptos, BST excluídos) — começam recolhidos.
   const [paineis, setPaineis] = useState<Set<string>>(new Set());
@@ -2221,54 +2224,67 @@ export default function AgendaPage() {
             {renderCalendario()}
           </div>
         ) : (
-        <div ref={bstIndicadoresRef} className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
-          <Indicador categoria="reprodutivo" cor="var(--blue)" valor={candidatas.length} rotulo="Candidatas à próxima IATF"
-            onClick={() => toggleLista("iatf")} podeClicar={candidatas.length > 0}
-            extra={candidatas.length > 0 && (listaAtiva.has("iatf") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
+        <div ref={bstIndicadoresRef} className="mb-2">
+          {/* Chunking por assunto (achado do lote 2: 8 indicadores numa faixa
+              só, sem hierarquia). Mesmos indicadores, agora com um rótulo de
+              grupo acima de cada bloco — a cor do círculo já indicava a
+              categoria, o rótulo deixa isso explícito também no texto. */}
+          <p style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "0.4rem" }}>Reprodução</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <Indicador categoria="reprodutivo" cor="var(--blue)" valor={candidatas.length} rotulo="Candidatas à próxima IATF"
+              onClick={() => toggleLista("iatf")} podeClicar={candidatas.length > 0}
+              extra={candidatas.length > 0 && (listaAtiva.has("iatf") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
 
-          <Indicador categoria="reprodutivo" cor="var(--green-light)" valor={`${animaisIatfAtual.length} animal(is)`} rotulo="IATF atual"
-            onClick={() => toggleLista("iatfAtual")} podeClicar={animaisIatfAtual.length > 0}
-            title="Animais com alguma etapa (D0/D7/D9/D11) ainda em aberto — só passa de zero durante o protocolo, do D0 até a inseminação (D11)"
-            extra={animaisIatfAtual.length > 0 && (listaAtiva.has("iatfAtual") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
+            <Indicador categoria="reprodutivo" cor="var(--green-light)" valor={`${animaisIatfAtual.length} animal(is)`} rotulo="IATF atual"
+              onClick={() => toggleLista("iatfAtual")} podeClicar={animaisIatfAtual.length > 0}
+              title="Animais com alguma etapa (D0/D7/D9/D11) ainda em aberto — só passa de zero durante o protocolo, do D0 até a inseminação (D11)"
+              extra={animaisIatfAtual.length > 0 && (listaAtiva.has("iatfAtual") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
 
-          <Indicador categoria="reprodutivo" cor={grupoUltimaIatf ? undefined : "var(--text-muted)"} rotulo="Última IATF"
-            onClick={() => toggleLista("iatfUltima")} podeClicar={!!grupoUltimaIatf}
-            valor={grupoUltimaIatf ? (
-              <>
-                <span style={{ display: "block", fontSize: "0.86rem", fontWeight: 700, color: "var(--dourado-light)", lineHeight: 1.35 }}>
-                  D0 {fmtCurtaAno(grupoUltimaIatf.data_d0)} · D11 {fmtCurtaAno(grupoUltimaIatf.data_d11)}
-                </span>
-                <span style={{ display: "block", fontSize: "1.15rem", fontWeight: 800, marginTop: "0.1rem", color: "var(--text)" }}>{grupoUltimaIatf.animais.length} animal(is)</span>
-              </>
-            ) : "—"}
-            extra={!!grupoUltimaIatf && (listaAtiva.has("iatfUltima") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
+            <Indicador categoria="reprodutivo" cor={grupoUltimaIatf ? undefined : "var(--text-muted)"} rotulo="Última IATF"
+              onClick={() => toggleLista("iatfUltima")} podeClicar={!!grupoUltimaIatf}
+              valor={grupoUltimaIatf ? (
+                <>
+                  <span style={{ display: "block", fontSize: "0.86rem", fontWeight: 700, color: "var(--dourado-light)", lineHeight: 1.35 }}>
+                    D0 {fmtCurtaAno(grupoUltimaIatf.data_d0)} · D11 {fmtCurtaAno(grupoUltimaIatf.data_d11)}
+                  </span>
+                  <span style={{ display: "block", fontSize: "1.15rem", fontWeight: 800, marginTop: "0.1rem", color: "var(--text)" }}>{grupoUltimaIatf.animais.length} animal(is)</span>
+                </>
+              ) : "—"}
+              extra={!!grupoUltimaIatf && (listaAtiva.has("iatfUltima") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
+          </div>
 
-          <Indicador categoria="sanidade" cor="var(--green-light)" rotulo="BST aptos"
-            onClick={() => toggleLista("bstAptos")} podeClicar={bstAptos.length > 0}
-            valor={<>
-              {bstAptos.length}
-              {proxBST && <span style={{ display: "block", fontSize: "0.7rem", fontWeight: 400, color: "var(--text-muted)" }}>Próx. aplicação: {proxBST}</span>}
-            </>}
-            extra={bstAptos.length > 0 && (listaAtiva.has("bstAptos") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
+          <p style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "0.4rem" }}>Sanidade</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <Indicador categoria="sanidade" cor="var(--green-light)" rotulo="BST aptos"
+              onClick={() => toggleLista("bstAptos")} podeClicar={bstAptos.length > 0}
+              valor={<>
+                {bstAptos.length}
+                {proxBST && <span style={{ display: "block", fontSize: "0.7rem", fontWeight: 400, color: "var(--text-muted)" }}>Próx. aplicação: {proxBST}</span>}
+              </>}
+              extra={bstAptos.length > 0 && (listaAtiva.has("bstAptos") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
 
-          <Indicador categoria="sanidade" cor="var(--amber)" valor={bstExcl.length} rotulo="BST excluídos"
-            onClick={() => toggleLista("bstExcl")} podeClicar={bstExcl.length > 0}
-            extra={bstExcl.length > 0 && (listaAtiva.has("bstExcl") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
+            <Indicador categoria="sanidade" cor="var(--amber)" valor={bstExcl.length} rotulo="BST excluídos"
+              onClick={() => toggleLista("bstExcl")} podeClicar={bstExcl.length > 0}
+              extra={bstExcl.length > 0 && (listaAtiva.has("bstExcl") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
 
-          <Indicador categoria="sanidade" cor="var(--blue)" valor={bstNuncaAplicados.length} rotulo="Incluir no próximo BST"
-            onClick={() => toggleLista("bstNunca")} podeClicar={bstNuncaAplicados.length > 0}
-            extra={bstNuncaAplicados.length > 0 && (listaAtiva.has("bstNunca") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
+            <Indicador categoria="sanidade" cor="var(--blue)" valor={bstNuncaAplicados.length} rotulo="Incluir no próximo BST"
+              onClick={() => toggleLista("bstNunca")} podeClicar={bstNuncaAplicados.length > 0}
+              extra={bstNuncaAplicados.length > 0 && (listaAtiva.has("bstNunca") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
+          </div>
 
-          <Indicador categoria="geral" cor={eventosPendentes.length > 0 ? "var(--red)" : undefined}
-            corLabel={eventosPendentes.length > 0 ? "var(--red)" : undefined} borda={eventosPendentes.length > 0 ? "var(--red)" : undefined}
-            valor={eventosPendentes.length} rotulo="Pendências"
-            onClick={() => toggleLista("pendencias")} podeClicar={eventosPendentes.length > 0}
-            extra={eventosPendentes.length > 0 && (listaAtiva.has("pendencias") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
+          <p style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "0.4rem" }}>Geral</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Indicador categoria="geral" cor={eventosPendentes.length > 0 ? "var(--red)" : undefined}
+              corLabel={eventosPendentes.length > 0 ? "var(--red)" : undefined} borda={eventosPendentes.length > 0 ? "var(--red)" : undefined}
+              valor={eventosPendentes.length} rotulo="Pendências"
+              onClick={() => toggleLista("pendencias")} podeClicar={eventosPendentes.length > 0}
+              extra={eventosPendentes.length > 0 && (listaAtiva.has("pendencias") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
 
-          <Indicador categoria="geral" cor="var(--amber)" valor={estoqueAlertasTotal} rotulo="Alertas de estoque"
-            onClick={() => abrirAlertasEstoque()} podeClicar={estoqueAlertasTotal > 0}
-            title="Ver o detalhe dos alertas de estoque, no final da página"
-            extra={estoqueAlertasTotal > 0 && <PackageSearch size={11} />} />
+            <Indicador categoria="geral" cor="var(--amber)" valor={estoqueAlertasTotal} rotulo="Alertas de estoque"
+              onClick={() => abrirAlertasEstoque()} podeClicar={estoqueAlertasTotal > 0}
+              title="Ver o detalhe dos alertas de estoque, no final da página"
+              extra={estoqueAlertasTotal > 0 && <PackageSearch size={11} />} />
+          </div>
         </div>
         )
       )}

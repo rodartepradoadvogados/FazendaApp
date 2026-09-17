@@ -198,8 +198,8 @@ export function WizardProtocolo<F>({
     // (do stepper até Cancelar/Voltar/Continuar) é UM campo de lançamento
     // fechado, separado do resto da tela, e não só mais uma seção da página.
     <div style={{
-      border: "1px solid var(--border)", borderRadius: 14,
-      background: "var(--surface-2)", boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
+      border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
+      background: "var(--surface-2)", boxShadow: "var(--shadow-sm)",
       padding: "1.1rem 1.2rem",
     }}>
       <div style={{
