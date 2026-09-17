@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { MessageSquarePlus, Mail, ClipboardCheck, Send, CheckCircle2, ArrowLeft, DownloadCloud } from "lucide-react";
-import { TabBar } from "@/components/ui";
+import { TabBar, ErroCarregamento } from "@/components/ui";
 import { PortalMencaoInput } from "@/components/PortalMencaoInput";
 import {
   ABAS_PORTAL, ehAdmin,
@@ -23,11 +23,15 @@ export function PortalView() {
   const [destinatarios, setDestinatarios] = useState<PortalDestinatario[]>([]);
   const [podeDelegar, setPodeDelegar] = useState(false);
   const [pendentes, setPendentes] = useState<PortalMensagem[]>([]);
+  // Achado do lote 2: erro de rede aqui ficava indistinguível de "sem
+  // pendências" (o .catch(()=>{}) engolia o erro e pendentes continuava []).
+  const [erroPendentes, setErroPendentes] = useState<string | null>(null);
 
   const carregar = () => {
     fetchPortalDestinatarios().then(setDestinatarios).catch(() => {});
     fetchPortalPermissoes().then((d) => setPodeDelegar(d.pode_delegar_tarefa)).catch(() => {});
-    fetchPortalMensagensPendentes().then(setPendentes).catch(() => {});
+    setErroPendentes(null);
+    fetchPortalMensagensPendentes().then(setPendentes).catch((e) => setErroPendentes(e.message));
   };
   useEffect(() => { carregar(); }, []);
 
@@ -65,7 +69,9 @@ export function PortalView() {
 
             <div className="mt-6">
               <div className="card-header" style={{ marginBottom: "0.5rem" }}>Pendentes de você resolver</div>
-              {pendentes.length === 0 ? (
+              {erroPendentes ? (
+                <ErroCarregamento mensagem={`Não foi possível carregar as pendências: ${erroPendentes}.`} onRetry={carregar} />
+              ) : pendentes.length === 0 ? (
                 <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nada pendente no Portal.</p>
               ) : (
                 <div className="space-y-2">

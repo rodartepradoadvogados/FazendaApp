@@ -36,8 +36,10 @@ function forcaSenha(s: string): { label: string; cor: string } | null {
   return { label: "forte", cor: "var(--green)" };
 }
 
-/** CampoSenha — mesmo input de sempre, só com mostrar/ocultar + força. */
-function CampoSenha({ id, value, onChange, autoComplete = "new-password" }: {
+/** CampoSenha — mesmo input de sempre, só com mostrar/ocultar + força.
+ * Exportado porque painel-cowdata/usuarios/page.tsx reaproveita (mesmo
+ * bug do lote 2: senha em type="text" cru, sem autocomplete). */
+export function CampoSenha({ id, value, onChange, autoComplete = "new-password" }: {
   id: string; value: string; onChange: (v: string) => void; autoComplete?: string;
 }) {
   const [mostrar, setMostrar] = useState(false);
@@ -68,7 +70,11 @@ export default function UsuariosPage() {
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [papel, setPapel] = useState<"admin" | "operador">("operador");
-  const [perms, setPerms] = useState<Set<string>>(new Set(TODOS));
+  // Achado do lote 2: usuário novo nascia com TODOS os módulos marcados,
+  // incluindo Financeiro — violava menor privilégio. Começa só com "Capa"
+  // (o mínimo pra logar e ver alguma tela; mesmo alvo do botão "Limpar"
+  // abaixo); quem cria escolhe o resto, ou clica "Acesso total" se for o caso.
+  const [perms, setPerms] = useState<Set<string>>(new Set(["capa"]));
   const [podePublicarBlog, setPodePublicarBlog] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [editando, setEditando] = useState<any | null>(null);
@@ -95,7 +101,7 @@ export default function UsuariosPage() {
         permissoes: papel === "admin" ? TODOS : Array.from(perms), pode_publicar_materias_blog: podePublicarBlog,
       });
       setMsg(`Usuário "${username}" criado.`);
-      setUsername(""); setPessoaId(""); setEmail(""); setSenha(""); setPapel("operador"); setPerms(new Set(TODOS)); setPodePublicarBlog(false);
+      setUsername(""); setPessoaId(""); setEmail(""); setSenha(""); setPapel("operador"); setPerms(new Set(["capa"])); setPodePublicarBlog(false);
       carregar(); carregarPessoas();
     } catch (e: any) { setError(e.message); }
     finally { setSalvando(false); }
