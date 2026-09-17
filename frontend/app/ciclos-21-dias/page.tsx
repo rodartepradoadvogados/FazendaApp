@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { CalendarRange, AlertTriangle, Info } from "lucide-react";
 import { fetchCiclos21Dias, formatDate, NetworkError, type CiclosResposta, type CicloReprodutivo } from "@/lib/api";
-import { SecaoRecolhivel, Indicador, TelaSkeleton } from "@/components/ui";
+import { SecaoRecolhivel, Indicador, TelaSkeleton, ErroCarregamento } from "@/components/ui";
 import { FiltroCiclo21Dias } from "@/components/FiltroCiclo21Dias";
 import { Modal } from "@/components/Modal";
 
@@ -95,8 +95,12 @@ function Pares({ c }: { c: CicloReprodutivo }) {
               <span>{p.titulo}</span>
               <span>{p.taxa === null ? "—" : `${p.taxa.toFixed(1)}%`}</span>
             </div>
+            {/* Achado do lote 2: este `title` era um tooltip morto em toque
+                (mesma lição que o comentário da própria Legenda() acima já
+                registra) — removido; a Legenda, sempre visível, já cobre
+                a mesma explicação de Apt/Ins./Apt Real/Posit. sem depender de hover. */}
             {[p.den, p.num].map((e, i) => (
-              <div key={e.rotulo} style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: i ? "0.25rem" : 0 }} title={e.ajuda}>
+              <div key={e.rotulo} style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: i ? "0.25rem" : 0 }}>
                 <span style={{ fontSize: "0.68rem", width: 56, color: "var(--text-muted)", fontWeight: 600 }}>{e.rotulo}</span>
                 <div style={{ flex: 1, background: "var(--surface)", borderRadius: 4, height: 14, overflow: "hidden" }}>
                   <div style={{ width: `${Math.min(100, (e.n / base) * 100)}%`,
@@ -141,6 +145,21 @@ export default function Ciclos21DiasPage() {
     return () => { cancelado = true; };
   }, [ancora, modo, nCiclos, categoria]);
 
+  // Achado do lote 2: erro sem saída (sem retry) — "Tentar novamente" só
+  // re-executa o mesmo fetch dos parâmetros atuais, sem precisar mudar
+  // ancora/modo/nCiclos/categoria pra reacionar o useEffect acima.
+  const tentarNovamente = () => {
+    setCarregando(true); setErro(null); setOffline(false);
+    fetchCiclos21Dias(ancora, modo, nCiclos, categoria)
+      .then(setDados)
+      .catch((e) => {
+        setDados(null);
+        if (e instanceof NetworkError) setOffline(true);
+        else setErro(e.message);
+      })
+      .finally(() => setCarregando(false));
+  };
+
   return (
     <div>
       <h1 style={{ display: "flex", alignItems: "center", gap: "0.6rem", fontSize: "1.6rem", fontWeight: 700 }}>
@@ -178,13 +197,7 @@ export default function Ciclos21DiasPage() {
           <span style={{ fontSize: "0.85rem" }}>Você está sem conexão. Os dados não puderam ser atualizados agora.</span>
         </div>
       )}
-      {erro && (
-        <div className="card" style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start",
-          background: "rgba(220,38,38,0.1)", border: "1px solid var(--red)", marginBottom: "1rem" }}>
-          <AlertTriangle size={16} style={{ color: "var(--red)", marginTop: 2 }} />
-          <span style={{ fontSize: "0.85rem" }}>{erro}</span>
-        </div>
-      )}
+      {erro && <ErroCarregamento mensagem={`Não foi possível carregar o ciclo de 21 dias: ${erro}.`} onRetry={tentarNovamente} />}
       {carregando && <TelaSkeleton kpis={3} />}
 
       {dados && !carregando && (
