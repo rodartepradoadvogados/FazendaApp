@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { FileSpreadsheet, FileText } from "lucide-react";
 import { exportarExcel, exportarPDF } from "@/lib/export";
-import { ItemGrade, Resultado, SimulacaoCabecalho } from "@/lib/dietas";
+import { ItemGrade, Resultado, SimulacaoCabecalho, proporcaoMsFecha100 } from "@/lib/dietas";
 
 const COR_SITUACAO: Record<string, string> = { adequado: "var(--green-light)", deficit: "var(--red)", excesso: "var(--amber)" };
 const ROTULO_SITUACAO: Record<string, string> = { adequado: "Adequado", deficit: "Déficit", excesso: "Excesso" };
@@ -117,7 +117,9 @@ export function RelatorioFinal({
         <button type="button" className="btn-secondary" disabled={salvando} onClick={onSalvar}>
           {salvando ? "Salvando…" : "Salvar simulação"}
         </button>
-        <button type="button" className="btn-primary-gold" disabled={!resultado || itens.length === 0} onClick={onAbrirAplicar}>
+        <button type="button" className="btn-primary-gold" onClick={onAbrirAplicar}
+          disabled={!resultado || itens.length === 0 || !proporcaoMsFecha100(itens)}
+          title={!proporcaoMsFecha100(itens) ? "A soma da proporção na MS dos ingredientes precisa fechar 100% antes de aplicar" : undefined}>
           Aplicar na dieta atual
         </button>
       </div>

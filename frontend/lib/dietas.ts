@@ -262,6 +262,22 @@ export function itemGradeVazio(categoria: CategoriaNasem = "Outros"): ItemGrade 
   return item;
 }
 
+// Mesma tolerância já usada no aviso visual da grade (Etapa 1,
+// GradeAlimentos.tsx) — soma da proporção na MS de todos os ingredientes.
+// Achado do lote 2 (item adiado de propósito): a soma diferente de 100% só
+// esquentava a cor do aviso na grade, sem nada impedindo "Aplicar" com uma
+// dieta que não fecha 100% da matéria seca.
+export const TOLERANCIA_SOMA_PROPORCAO_MS_PCT = 0.5;
+
+export function somaProporcaoMs(itens: ItemGrade[]): number {
+  return itens.reduce((s, i) => s + (i.proporcao_ms_pct || 0), 0);
+}
+
+export function proporcaoMsFecha100(itens: ItemGrade[]): boolean {
+  if (itens.length === 0) return true; // grade vazia: outro botão (`itens.length === 0`) já bloqueia
+  return Math.abs(somaProporcaoMs(itens) - 100) <= TOLERANCIA_SOMA_PROPORCAO_MS_PCT;
+}
+
 // ── Resultado do motor (POST /calcular, campo `resultado` da simulação) ──
 export type MineralBalanco = { nome: string; unidade: string; fornecido_absorvido: number; exigencia: number; balanco: number };
 
