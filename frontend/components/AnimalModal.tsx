@@ -2,6 +2,7 @@
 import { X } from "lucide-react";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { SIT_CORES } from "@/lib/constants";
 
 export type AnimalRow = {
   numero: string;
@@ -37,12 +38,11 @@ export type AnimalRow = {
   ativo?: boolean;
 };
 
-const SIT_CORES: Record<string, string> = {
-  "Ges.": "var(--green-light)", "Vaz. apt.": "var(--blue)", "Vaz. atr.": "var(--red)",
-  "Vaz. pev": "var(--amber)", "Ins.": "var(--dourado-light)",
-  Gestante: "var(--green-light)", Inseminada: "var(--dourado-light)", "Em protocolo (IA atual)": "var(--dourado-light)",
-  PEV: "var(--amber)", Apta: "var(--blue)", Atrasada: "var(--red)", "Não apta": "var(--text-muted)", Vazia: "var(--blue)",
-};
+// Achado do lote 2: este modal tinha seu próprio SIT_CORES local, com cores
+// diferentes das de lib/constants.ts (ex.: "Vazia" azul aqui vs. cinza-muted
+// lá; "Não apta" cinza aqui vs. dourado-escuro lá) — mesmo status pintado
+// diferente na tabela do Rebanho e no modal do mesmo animal. Removido em
+// favor da fonte única já usada por rebanho/page.tsx e FichaAnimal.tsx.
 
 // Estados "vazia" ao vivo — equivalem ao antigo prefixo textual "Vaz." usado
 // para decidir se calcula PEV (dias desde o último parto).
