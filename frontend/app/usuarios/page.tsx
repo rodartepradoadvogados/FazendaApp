@@ -107,7 +107,11 @@ export default function UsuariosPage() {
     finally { setSalvando(false); }
   };
 
+  // Achado do lote 2 (item adiado de propósito): desativar tirava o acesso
+  // do usuário sem nenhuma pausa de confirmação — só na reativação (ação
+  // reversível e de baixo risco) não pedimos confirmação.
   const toggleAtivo = async (u: any) => {
+    if (u.ativo && !window.confirm(`Desativar o usuário "${u.username}"? Ele perde o acesso ao sistema imediatamente.`)) return;
     try { await atualizarUsuario(u.id, { ativo: !u.ativo }); carregar(); }
     catch (e: any) { setError(e.message); }
   };
