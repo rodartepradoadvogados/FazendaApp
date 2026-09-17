@@ -17,6 +17,7 @@ import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ManualFazendaButton } from "@/components/ManualFazendaModal";
 import { InstalarSite } from "@/components/InstalarSite";
+import { CowIcon } from "@/components/CowIcon";
 import { LandingPublica } from "@/components/landing/LandingPublica";
 import { ehAppDeCampo } from "@/lib/nativo";
 
@@ -103,6 +104,7 @@ function Delta({ atual, anterior, sufixo = "", casasDecimais = 0 }: { atual: num
 // pública (T8); a divisão em dois componentes existe só por isso, nenhuma
 // lógica interna da Capa mudou.
 function Capa() {
+  const router = useRouter();
   const [d, setD] = useState<any>(null);
   // Comparativo de 7 dias — recalculado de verdade pelo backend (data_ref),
   // nunca fabricado no cliente (achado da crítica original: inventar
@@ -162,6 +164,9 @@ function Capa() {
     const achados = animais.filter((a) => a.numero.toLowerCase().includes(termo));
     setModal({ title: `Busca — "${busca.trim()}"`, list: achados });
   };
+  // Botão da vaquinha na busca: abre a lista completa da fazenda pra
+  // selecionar, sem precisar digitar nada antes.
+  const abrirListaAnimais = () => { if (animais.length) setModal({ title: "Todos os animais", list: animais }); };
 
   const carregar = () => {
     setRecarregando(true);
@@ -313,11 +318,14 @@ function Capa() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <form onSubmit={buscarAnimal} className="flex items-center gap-2"
-            style={{ border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", minWidth: "180px", background: "var(--surface)" }}>
+            style={{ border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", minWidth: "198px", background: "var(--surface)" }}>
             <Search size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
             <input ref={buscaRef} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar animal…"
               style={{ border: "none", background: "none", outline: "none", fontSize: "0.78rem", color: "var(--text)", width: "100%" }} />
-            <span style={{ fontSize: "0.62rem", fontWeight: 600, border: "1px solid var(--border)", borderRadius: "4px", padding: "0.05rem 0.3rem", color: "var(--text-muted)", flexShrink: 0 }}>⌘K</span>
+            <button type="button" onClick={abrirListaAnimais} title="Ver todos os animais da fazenda" aria-label="Ver todos os animais da fazenda"
+              style={{ display: "flex", alignItems: "center", background: "none", border: "none", padding: 0, cursor: "pointer", flexShrink: 0 }}>
+              <CowIcon size={17} color="var(--text-muted)" />
+            </button>
           </form>
           <InstalarSite />
           <ManualFazendaButton />
@@ -537,7 +545,10 @@ function Capa() {
         </div>
       </div>
 
-      {modal && <AnimalModal title={modal.title} animais={modal.list} onClose={() => setModal(null)} />}
+      {modal && (
+        <AnimalModal title={modal.title} animais={modal.list} onClose={() => setModal(null)}
+          onSelecionarAnimal={(numero) => { setModal(null); router.push(`/rebanho?numero=${numero}`); }} />
+      )}
       {modalDescartados && (
         <div onClick={() => setModalDescartados(null)}
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "1rem" }}>

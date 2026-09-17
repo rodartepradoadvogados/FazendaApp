@@ -67,8 +67,12 @@ function repro(a: AnimalRow, estado: string | undefined) {
   return { gestacao, paraParto, partoData, pev };
 }
 
-/** Modal que lista os animais por trás de um número (drill-down). */
-export function AnimalModal({ title, animais, onClose }: { title: string; animais: AnimalRow[]; onClose: () => void }) {
+/** Modal que lista os animais por trás de um número (drill-down). Quando
+ * `onSelecionarAnimal` é informado, cada linha abre a ficha completa do
+ * animal (mesmo padrão "row-clickable" das tabelas de Rebanho). */
+export function AnimalModal({ title, animais, onClose, onSelecionarAnimal }: {
+  title: string; animais: AnimalRow[]; onClose: () => void; onSelecionarAnimal?: (numero: string) => void;
+}) {
   const temRepro = animais.some((a) => a.data_ult_servico_pos || a.data_ult_parto);
   // Só aparece quando a lista traz produção (nem todo drill-down é sobre
   // vacas em lactação) — quando aparece, aproveita para já vir com a origem:
@@ -102,7 +106,9 @@ export function AnimalModal({ title, animais, onClose }: { title: string; animai
                   const r = repro(a, porNumero.get(a.numero)?.estado);
                   const congelado = a.producao_origem === "congelado";
                   return (
-                    <tr key={a.numero}>
+                    <tr key={a.numero} className={onSelecionarAnimal ? "row-clickable" : undefined}
+                      style={onSelecionarAnimal ? { cursor: "pointer" } : undefined}
+                      onClick={onSelecionarAnimal ? () => onSelecionarAnimal(a.numero) : undefined}>
                       <td style={{ fontWeight: 700 }}>{a.numero}</td>
                       <td style={{ fontSize: "0.75rem" }}>{a.grupo_primario || "—"}</td>
                       <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
