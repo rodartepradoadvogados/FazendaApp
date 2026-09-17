@@ -380,7 +380,28 @@ aqui.
 3. ~~5 itens adiados de propósito~~ — **concluído** (esta seção).
 4. ~~Decisão pendente (componentes órfãos do login)~~ — **concluída** (componentes descartados, comentário atualizado em `login/page.tsx`).
 
-Pendência aberta fora desta ordem: navegação em 3 níveis da Sanidade
-(`frontend/app/sanidade/page.tsx`, achado #2 da tela "Central de
-Protocolos + Sanidade") — ver seção "Etapa 1", registrada para uma
-rodada dedicada.
+Pendência da seção "Etapa 1" (navegação em 3 níveis da Sanidade) —
+**revalidada e resolvida sem código** (17/09/2026):
+
+Ao investigar a fundo pra montar o mockup dedicado, a premissa original
+não se sustentava mais contra o código atual. Os 2 níveis externos
+(Curativa/Preventiva/Rastreabilidade/Catálogo → sub-abas) não são mais
+"abas soltas empilhadas" — passaram a usar `SubNavTabs`/`SubNavContext`,
+o sistema de sub-navegação genérico já usado em praticamente toda tela
+com sub-áreas do site (Rebanho, Lançamentos, Produção, Financeiro etc.):
+uma linha fixa no topo por nível ao longo do caminho ativo, não uma
+árvore aberta inteira de uma vez. Não é um problema específico da
+Sanidade — é o padrão arquitetural do app inteiro, resolvido por um
+redesenho geral, não por este lote.
+
+O que resta de fato empilhado é bem mais estreito do que os "4→5→5"
+originais: só dentro de Preventiva → Calendário sanitário existe uma
+3ª barra de abas *dentro da página* (`CalendarioSanitarioView`, `modo`)
+com 4 pílulas (Calendário/Regras cadastradas/Cronogramas/Resultados de
+exames — a 5ª, "Ocorrências", está desligada por decisão do dono desde
+12/09/2026). Decisão do dono (17/09/2026): considerar resolvido sem
+mockup/código — 3 fileiras de abas só nesse canto específico não
+justifica o risco de tocar num arquivo de ~2900 linhas.
+
+**Lote 2 encerrado.** Todas as 4 etapas da ordem de execução e a
+pendência fora de ordem estão concluídas ou resolvidas.
