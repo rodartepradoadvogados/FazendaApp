@@ -140,6 +140,15 @@ const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "folha", label: "Fechamento da folha", icon: Users, desc: "Lançar, conferir e pagar a folha do mês — para só consultar/imprimir, use Contas > Holerites e recibos" },
   { id: "recorrentes", label: "Lançamentos recorrentes", icon: Repeat, desc: "Contas que se repetem todo mês (energia, internet, aluguel...) — cadastre uma vez, gere só com o valor do período" },
 ];
+// Views de AÇÃO (lançar) não dependem de já existir lançamento nenhum no
+// banco — pelo contrário, é por elas que o PRIMEIRO lançamento é criado.
+// Antes, com `regs.length === 0`, a tela só mostrava "Nenhum lançamento
+// financeiro no banco" e nunca renderizava nenhuma dessas views — uma
+// fazenda nova, ou qualquer ambiente com o financeiro zerado, não tinha
+// como lançar a primeira nota pela UI. Views de RELATÓRIO/CONSULTA
+// continuam exigindo dado existente, o que faz sentido (não tem o que
+// mostrar de fato).
+const ACOES_IDS = new Set<Rel>(ACOES.map((a) => a.id));
 const PLANEJAMENTO: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "orcamento", label: "Orçamento", icon: Target, desc: "Planilha orçamentária por conta gerencial/centro de custo/mês, comparada ao realizado" },
   { id: "planejamento_financeiro", label: "Planejamento financeiro", icon: TrendingUp, desc: "Cenários (otimista/realista/pessimista) com projeção de fluxo de caixa" },
@@ -720,18 +729,19 @@ export default function FinanceiroPage() {
       {error && <div className="alert-critico mb-4"><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os lançamentos financeiros</a>.</span></div>}
       {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
-      {regs && regs.length === 0 && !error && (
+      {regs && regs.length === 0 && !error && !ACOES_IDS.has(rel) && (
         <div className="card" style={{ textAlign: "center", padding: "3rem" }}>
           <BarChart3 size={38} style={{ color: "var(--text-muted)", margin: "0 auto 1rem" }} />
           <p style={{ color: "var(--text-muted)" }}>Nenhum lançamento financeiro no banco.</p>
           <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginTop: "0.5rem" }}>
-            Suba o <strong>CONTA_GERENCIAL.csv</strong> na tela de <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importar dados</a>.
+            Suba o <strong>CONTA_GERENCIAL.csv</strong> na tela de <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importar dados</a>,
+            ou lance direto por <strong>Ações</strong> aqui do lado.
             Se você já subiu e sumiu, o banco de produção não está persistindo — confira o Postgres no Railway.
           </p>
         </div>
       )}
 
-      {regs && regs.length > 0 && <>
+      {regs && (regs.length > 0 || ACOES_IDS.has(rel)) && <>
         {rel === "caixa_real" ? <CaixaRealView />
           : rel === "patrimonio" ? <PatrimonioView />
           : rel === "cartao_credito" ? <CartaoCreditoView />
