@@ -333,4 +333,75 @@ telas), não foi forçado acesso além do que a conta de teste permite. O
 3º achado de Administração (Portal engolindo erro) foi confirmado ao vivo
 com falha de rede simulada.
 
-**Branch `claude/lote2-etapa1-telas` → PR aberto para `main`.**
+**Branch `claude/lote2-etapa1-telas` → PR [#784](https://github.com/rodartepradoadvogados/FazendaApp/pull/784), mesclado em 17/09/2026.**
+
+---
+
+## Etapa 3 — 5 itens adiados de propósito: CONCLUÍDA (17/09/2026)
+
+Pedido do dono: "Vamos para a próxima etapa" (após o merge do PR #784).
+Branch `claude/lote2-etapa3-itens-adiados`, reiniciada a partir do `main`
+atual. Dos 5 itens listados originalmente, 2 já tinham saído junto com o
+PR #784 (mesmo achado repetido na tabela por-tela de Administração); os
+outros 3 foram implementados aqui.
+
+| # | Item | Commit | Status |
+|---|---|---|---|
+| 1 | `confirm()` antes de desativar usuário | `998aab69` | Implementado — `toggleAtivo` em `app/usuarios/page.tsx` pede confirmação só ao desativar (reativar continua instantâneo). |
+| 2 | `type="password"` nos campos de senha | `4c78003e` (PR #784) | Já resolvido junto de Administração (tela 9/9) — mesmo achado, `CampoSenha` reaproveitado no Painel CowData. |
+| 3 | Propagar erro hoje engolido no Portal (`.catch(()=>{})`) | `4c78003e` (PR #784) | Já resolvido junto de Administração (tela 9/9) — `PortalView.tsx` para de mostrar falso "Nada pendente". |
+| 4 | Erro tipado em `dietas.ts` (hoje "Failed to fetch" cru) | _(nenhum)_ | Revalidado: `authFetch` (lib/api.ts) já traduz "Failed to fetch" via `netError()`/`NetworkError` automaticamente para QUALQUER chamador, `dietas.ts` inclusive — todas as chamadas do arquivo já passam por `authFetch`. Achado não se confirma mais no código atual; nenhuma mudança necessária. |
+| 5 | Validação de soma=100% na composição da dieta antes de aplicar | `4472a095` | O aviso visual (âmbar) na grade de ingredientes já existia, mas nada travava "Aplicar na dieta atual". Extraída `proporcaoMsFecha100()` (mesma tolerância ±0,5pp do aviso) para `lib/dietas.ts`, reaproveitada para desabilitar o botão nas Etapas 4 (Balanço) e 10 (Relatório final), com `title` explicando o motivo. |
+
+### Verificação
+
+`npx tsc --noEmit` limpo em cada commit. Verificado em navegador real
+(Playwright/chromium): confirm() testado (cancelar mantém ativo, aceitar
+desativa, reativar não pede confirmação); soma=100% testado com
+50%+50%=100% habilitando o botão e 30%+30%=60% desabilitando, em ambas as
+etapas do wizard. `teste_local` (admin) não alcança `/usuarios` nem
+`/dietas` (as duas exigem papel `dono`/módulo à-la-carte contratado) —
+a verificação usou a conta `dono` já semeada no banco de teste local
+(senha resetada só no `dev.db` local, descartável) e uma linha de
+contrato de módulo inserida só no `dev.db` local, nenhuma mudança em
+código ou nos dados reais. Sem erros novos de console; achado um gap de
+tema escuro pré-existente no wizard de Dietas, não relacionado a esta
+mudança — registrado como sugestão de tarefa separada, não corrigido
+aqui.
+
+**Branch `claude/lote2-etapa3-itens-adiados` → PR aberto para `main`.**
+
+---
+
+## Ordem de execução — status final
+
+1. ~~Refinamento por tela (9 superfícies) + T3~~ — **concluído** (PR #781, #783, #784).
+2. ~~Pipeline completo do Impeccable~~ — **concluído** (PR #780, delight+overdrive em 16/09).
+3. ~~5 itens adiados de propósito~~ — **concluído** (esta seção).
+4. ~~Decisão pendente (componentes órfãos do login)~~ — **concluída** (componentes descartados, comentário atualizado em `login/page.tsx`).
+
+Pendência da seção "Etapa 1" (navegação em 3 níveis da Sanidade) —
+**revalidada e resolvida sem código** (17/09/2026):
+
+Ao investigar a fundo pra montar o mockup dedicado, a premissa original
+não se sustentava mais contra o código atual. Os 2 níveis externos
+(Curativa/Preventiva/Rastreabilidade/Catálogo → sub-abas) não são mais
+"abas soltas empilhadas" — passaram a usar `SubNavTabs`/`SubNavContext`,
+o sistema de sub-navegação genérico já usado em praticamente toda tela
+com sub-áreas do site (Rebanho, Lançamentos, Produção, Financeiro etc.):
+uma linha fixa no topo por nível ao longo do caminho ativo, não uma
+árvore aberta inteira de uma vez. Não é um problema específico da
+Sanidade — é o padrão arquitetural do app inteiro, resolvido por um
+redesenho geral, não por este lote.
+
+O que resta de fato empilhado é bem mais estreito do que os "4→5→5"
+originais: só dentro de Preventiva → Calendário sanitário existe uma
+3ª barra de abas *dentro da página* (`CalendarioSanitarioView`, `modo`)
+com 4 pílulas (Calendário/Regras cadastradas/Cronogramas/Resultados de
+exames — a 5ª, "Ocorrências", está desligada por decisão do dono desde
+12/09/2026). Decisão do dono (17/09/2026): considerar resolvido sem
+mockup/código — 3 fileiras de abas só nesse canto específico não
+justifica o risco de tocar num arquivo de ~2900 linhas.
+
+**Lote 2 encerrado.** Todas as 4 etapas da ordem de execução e a
+pendência fora de ordem estão concluídas ou resolvidas.

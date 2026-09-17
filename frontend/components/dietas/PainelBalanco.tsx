@@ -5,7 +5,7 @@
 // também precisam do mesmo `resultado` — evita recalcular a mesma dieta em
 // paralelo para cada etapa que o usuário visita.
 import { Loader2 } from "lucide-react";
-import { ItemGrade, Resultado } from "@/lib/dietas";
+import { ItemGrade, Resultado, proporcaoMsFecha100 } from "@/lib/dietas";
 import { ConsumoTotal } from "@/components/dietas/ConsumoTotal";
 
 function fmt(v: number | null | undefined, casas = 2): string {
@@ -84,7 +84,9 @@ export function PainelBalanco({
             <Loader2 size={13} className="animate-spin" /> calculando…
           </span>
         )}
-        <button type="button" className="btn-primary-gold" style={{ marginLeft: "auto" }} onClick={onAbrirAplicar} disabled={!resultado || itens.length === 0}>
+        <button type="button" className="btn-primary-gold" style={{ marginLeft: "auto" }} onClick={onAbrirAplicar}
+          disabled={!resultado || itens.length === 0 || !proporcaoMsFecha100(itens)}
+          title={!proporcaoMsFecha100(itens) ? "A soma da proporção na MS dos ingredientes precisa fechar 100% antes de aplicar" : undefined}>
           Aplicar na dieta atual
         </button>
       </div>

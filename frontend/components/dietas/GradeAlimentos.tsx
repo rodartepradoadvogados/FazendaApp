@@ -8,7 +8,7 @@ import { ChevronDown, ChevronUp, ExternalLink, Info, Library, Plus, Save, Trash2
 import {
   CAMPOS_GRADE_PRINCIPAL, CATEGORIAS_NASEM, CategoriaNasem, EntradaBiblioteca, GRUPOS_CAMPOS_NUTRICIONAIS,
   ItemGrade, ROTULOS_CAMPOS_NUTRICIONAIS, TemplatesResponse, itemGradeDaBiblioteca, itemGradeVazio,
-  listarAlimentos, listarTemplates, salvarAlimentoNaBiblioteca,
+  listarAlimentos, listarTemplates, salvarAlimentoNaBiblioteca, somaProporcaoMs, TOLERANCIA_SOMA_PROPORCAO_MS_PCT,
 } from "@/lib/dietas";
 import { ImportarAlimentoModal } from "@/components/dietas/ImportarAlimentoModal";
 
@@ -92,7 +92,7 @@ export function GradeAlimentos({ itens, onChange }: { itens: ItemGrade[]; onChan
     }
   }
 
-  const somaProporcao = useMemo(() => itens.reduce((s, i) => s + (i.proporcao_ms_pct || 0), 0), [itens]);
+  const somaProporcao = useMemo(() => somaProporcaoMs(itens), [itens]);
 
   return (
     <div>
@@ -106,7 +106,7 @@ export function GradeAlimentos({ itens, onChange }: { itens: ItemGrade[]; onChan
         <button type="button" className="btn-secondary" onClick={() => setBibliotecaAberta((v) => !v)}>
           <Library size={14} /> Biblioteca de referência {bibliotecaAberta ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
         </button>
-        <span style={{ marginLeft: "auto", fontSize: "0.8rem", color: somaProporcao > 100.5 || somaProporcao < 99.5 ? "var(--amber)" : "var(--text-muted)" }}>
+        <span style={{ marginLeft: "auto", fontSize: "0.8rem", color: Math.abs(somaProporcao - 100) > TOLERANCIA_SOMA_PROPORCAO_MS_PCT ? "var(--amber)" : "var(--text-muted)" }}>
           Soma da proporção na MS: <strong>{somaProporcao.toFixed(1)}%</strong>{Math.abs(somaProporcao - 100) > 0.5 && itens.length > 0 ? " (ajuste para 100%)" : ""}
         </span>
       </div>
