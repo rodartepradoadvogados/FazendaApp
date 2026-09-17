@@ -1,8 +1,10 @@
 "use client";
-import { X } from "lucide-react";
+import { useState } from "react";
+import { Search, X } from "lucide-react";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { SIT_CORES } from "@/lib/constants";
+import { casaBusca } from "@/lib/busca";
 
 export type AnimalRow = {
   numero: string;
@@ -79,7 +81,11 @@ export function AnimalModal({ title, animais, onClose, onSelecionarAnimal }: {
   // "*" marca quem ainda está no valor congelado do CSV, sem controle no app.
   const temProducao = animais.some((a) => a.producao_kg != null);
   const { porNumero, rotuloDe } = useEstadosReprodutivos();
-  const ord = useOrdenacao(animais);
+  const [busca, setBusca] = useState("");
+  const filtrados = animais.filter((a) =>
+    casaBusca(a.numero, busca) || casaBusca(a.grupo_primario, busca) || casaBusca(a.categoria_abrev, busca) || casaBusca(a.categoria_completa, busca)
+  );
+  const ord = useOrdenacao(filtrados);
   return (
     <div
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "1rem" }}
@@ -89,17 +95,28 @@ export function AnimalModal({ title, animais, onClose, onSelecionarAnimal }: {
           <div className="card-header" style={{ margin: 0 }}>{title} <span style={{ color: "var(--dourado-light)", fontWeight: 400 }}>({animais.length})</span></div>
           <button onClick={onClose} className="btn-ghost" aria-label="Fechar"><X size={16} /></button>
         </div>
+        <div className="flex items-center gap-2 mb-2"
+          style={{ border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", background: "var(--surface)" }}>
+          <Search size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+          <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por número, grupo ou categoria…"
+            style={{ border: "none", background: "none", outline: "none", fontSize: "0.78rem", color: "var(--text)", width: "100%" }} />
+        </div>
         <div style={{ overflowY: "auto" }}>
-          {animais.length ? (
+          {filtrados.length ? (
             <table className="fazenda-table">
               <thead><tr>
-                <ThOrdenavel label="Nº" campo="numero" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-                <ThOrdenavel label="Grupo" campo="grupo_primario" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-                <ThOrdenavel label="Categoria" campo="categoria_abrev" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-                <th>Sit. Rep.</th>
-                <ThOrdenavel label="DEL" campo="del_dias" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
-                {temProducao && <ThOrdenavel label="Produção (kg)" campo="producao_kg" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />}
-                {temRepro && <><th style={{ textAlign: "right" }}>Gest.</th><th style={{ textAlign: "right" }}>P/ parto</th><th>Parto prov.</th><th style={{ textAlign: "right" }}>PEV</th></>}
+                <ThOrdenavel label="Nº" campo="numero" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} sticky />
+                <ThOrdenavel label="Grupo" campo="grupo_primario" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} sticky />
+                <ThOrdenavel label="Categoria" campo="categoria_abrev" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} sticky />
+                <th style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--thead-bg)" }}>Sit. Rep.</th>
+                <ThOrdenavel label="DEL" campo="del_dias" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" sticky />
+                {temProducao && <ThOrdenavel label="Produção (kg)" campo="producao_kg" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" sticky />}
+                {temRepro && <>
+                  <th style={{ textAlign: "right", position: "sticky", top: 0, zIndex: 1, background: "var(--thead-bg)" }}>Gest.</th>
+                  <th style={{ textAlign: "right", position: "sticky", top: 0, zIndex: 1, background: "var(--thead-bg)" }}>P/ parto</th>
+                  <th style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--thead-bg)" }}>Parto prov.</th>
+                  <th style={{ textAlign: "right", position: "sticky", top: 0, zIndex: 1, background: "var(--thead-bg)" }}>PEV</th>
+                </>}
               </tr></thead>
               <tbody>
                 {ord.linhasOrdenadas.map((a) => {
@@ -131,7 +148,7 @@ export function AnimalModal({ title, animais, onClose, onSelecionarAnimal }: {
                 })}
               </tbody>
             </table>
-          ) : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", padding: "1rem" }}>Nenhum animal.</p>}
+          ) : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", padding: "1rem" }}>{busca ? "Nenhum animal encontrado." : "Nenhum animal."}</p>}
         </div>
       </div>
     </div>

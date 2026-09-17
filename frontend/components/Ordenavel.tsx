@@ -26,10 +26,19 @@ export function useOrdenacao<T extends Record<string, any>>(linhas: T[]) {
   return { linhasOrdenadas, coluna, dir, ordenar };
 }
 
-export function ThOrdenavel({ label, campo, coluna, dir, ordenar, alinhar }: { label: string; campo: string; coluna: string | null; dir: 1 | -1; ordenar: (c: string) => void; alinhar?: "left" | "right" | "center" }) {
+export function ThOrdenavel({ label, campo, coluna, dir, ordenar, alinhar, sticky }: {
+  label: string; campo: string; coluna: string | null; dir: 1 | -1; ordenar: (c: string) => void; alinhar?: "left" | "right" | "center";
+  /** Cabeçalho congelado ao rolar — usado em tabelas dentro de um popup/modal
+   * de rolagem própria (ex.: AnimalModal), onde a lista pode ser longa. */
+  sticky?: boolean;
+}) {
   const ativo = coluna === campo;
   return (
-    <th onClick={() => ordenar(campo)} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap", textAlign: alinhar }}>
+    <th onClick={() => ordenar(campo)}
+      style={{
+        cursor: "pointer", userSelect: "none", whiteSpace: "nowrap", textAlign: alinhar,
+        ...(sticky ? { position: "sticky", top: 0, zIndex: 1, background: "var(--thead-bg)" } : undefined),
+      }}>
       <span className="flex items-center gap-1" style={{ justifyContent: alinhar === "right" ? "flex-end" : undefined }}>
         {label}
         {ativo ? (dir === 1 ? <ChevronDown size={12} /> : <ChevronUp size={12} />) : null}
