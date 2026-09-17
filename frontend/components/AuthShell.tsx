@@ -10,6 +10,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { NewsButton } from "@/components/NewsButton";
+import { InstalarSite } from "@/components/InstalarSite";
 import AssistenteClaude from "@/components/AssistenteClaude";
 import { SectionBackground } from "@/components/SectionBackground";
 import { NewsShell } from "@/components/news/NewsShell";
@@ -62,6 +63,18 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   const [dentroDoApp, setDentroDoApp] = useState(false);
   useEffect(() => {
     import("@/lib/nativo").then(({ ehAppDeCampo }) => ehAppDeCampo()).then(setDentroDoApp).catch(() => {});
+  }, []);
+
+  // Registra o service worker pro site inteiro, não só o /app (ver
+  // app/app/layout.tsx, que faz o mesmo registro — chamar duas vezes é
+  // inofensivo, o navegador só devolve o registro já existente). Sem isso,
+  // quem instala o PWA do site completo no computador e nunca visita /app
+  // fica sem service worker ativo — e NotificationBell.tsx já depende de
+  // um registro existir (navigator.serviceWorker.ready) pra ativar push.
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
   }, []);
 
   // O app móvel (/app) tem casca própria (barra inferior, sem sidebar).
@@ -377,6 +390,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
             (ver app/page.tsx) — por isso não renderizam aqui nesse path. */}
         {path !== "/" && (
           <div className="site-top-actions" ref={topActionsRef}>
+            <InstalarSite />
             <NewsButton />
             <ThemeSwitcher />
             <NotificationBell />

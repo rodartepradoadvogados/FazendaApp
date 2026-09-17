@@ -16,6 +16,7 @@ import { NewsButton } from "@/components/NewsButton";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ManualFazendaButton } from "@/components/ManualFazendaModal";
+import { InstalarSite } from "@/components/InstalarSite";
 import { LandingPublica } from "@/components/landing/LandingPublica";
 import { ehAppDeCampo } from "@/lib/nativo";
 
@@ -318,6 +319,7 @@ function Capa() {
               style={{ border: "none", background: "none", outline: "none", fontSize: "0.78rem", color: "var(--text)", width: "100%" }} />
             <span style={{ fontSize: "0.62rem", fontWeight: 600, border: "1px solid var(--border)", borderRadius: "4px", padding: "0.05rem 0.3rem", color: "var(--text-muted)", flexShrink: 0 }}>⌘K</span>
           </form>
+          <InstalarSite />
           <ManualFazendaButton />
           <NewsButton />
           <ThemeSwitcher />
