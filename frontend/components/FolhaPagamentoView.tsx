@@ -2922,6 +2922,12 @@ function LancarGuiaFgtsDctfSection({ onLancado }: { onLancado: () => void }) {
 
   async function lerGuia(file: File) {
     setLendo(true); setMsg(null);
+    // O arquivo em si fica retido independente do resultado da leitura —
+    // antes, uma falha na OCR (scan ruim, PDF que o parser não entende,
+    // timeout numa conexão rural lenta) deixava `arquivoLido` nulo pra
+    // sempre, e "Lançar guia" seguia criando a conta a pagar sem anexar
+    // nada, sem avisar o usuário. Anexar não deveria depender de ler.
+    setArquivoLido(file);
     try {
       const d = await lerDocumentoFinanceiro(file);
       if (d.tipo_documento === "guia_dctf") setTipo("dctf");
@@ -2934,12 +2940,11 @@ function LancarGuiaFgtsDctfSection({ onLancado }: { onLancado: () => void }) {
       if (d.data_vencimento) setDataVencimento(d.data_vencimento);
       if (d.linha_digitavel) setLinhaDigitavel(d.linha_digitavel);
       setOrigem("leitura_automatica");
-      setArquivoLido(file);
       if (d.tipo_documento !== "guia_fgts" && d.tipo_documento !== "guia_dctf") {
         setMsg({ tipo: "erro", texto: "Este documento não parece uma guia de FGTS/DCTF — confira os campos preenchidos antes de lançar." });
       }
     } catch (e: any) {
-      setMsg({ tipo: "erro", texto: e.message || "Erro ao ler o documento" });
+      setMsg({ tipo: "erro", texto: `${e.message || "Erro ao ler o documento"} — o arquivo foi mantido para anexo; preencha os campos manualmente.` });
     } finally {
       setLendo(false);
     }
@@ -2959,16 +2964,23 @@ function LancarGuiaFgtsDctfSection({ onLancado }: { onLancado: () => void }) {
         valor_multa: parseFloat(valorMulta) || 0, valor_juros: parseFloat(valorJuros) || 0,
         data_vencimento: dataVencimento, linha_digitavel: linhaDigitavel || undefined, origem,
       });
+      let falhaAnexo: string | null = null;
       if (arquivoLido && guia.numero_lancamento) {
         // numero_documento = número do boleto/linha digitável — é o que torna
         // a guia arquivada pesquisável por esse número em Central de
         // Documentos e no filtro de Financeiro (pedido explícito do usuário).
-        await anexarArquivoLancamento(
-          guia.numero_lancamento, arquivoLido, tipo === "fgts" ? "Guia FGTS" : "Guia DCTF",
-          linhaDigitavel || undefined, dataVencimento || undefined,
-        ).catch(() => {});
+        try {
+          await anexarArquivoLancamento(
+            guia.numero_lancamento, arquivoLido, tipo === "fgts" ? "Guia FGTS" : "Guia DCTF",
+            linhaDigitavel || undefined, dataVencimento || undefined,
+          );
+        } catch (e: any) {
+          falhaAnexo = e.message || "erro desconhecido";
+        }
       }
-      setMsg({ tipo: "sucesso", texto: `Guia de ${tipo === "fgts" ? "FGTS" : "DCTF"} lançada em Contas a Pagar.` });
+      setMsg(falhaAnexo
+        ? { tipo: "erro", texto: `Guia de ${tipo === "fgts" ? "FGTS" : "DCTF"} lançada em Contas a Pagar, mas o arquivo NÃO foi anexado (${falhaAnexo}). Anexe manualmente pelo lançamento em Contas a Pagar.` }
+        : { tipo: "sucesso", texto: `Guia de ${tipo === "fgts" ? "FGTS" : "DCTF"} lançada em Contas a Pagar.` });
       setValorPrincipal(""); setValorMulta("0"); setValorJuros("0"); setDataVencimento(""); setLinhaDigitavel(""); setCodigoReceita("");
       setArquivoLido(null); setOrigem("manual");
       onLancado();
@@ -3000,7 +3012,7 @@ function LancarGuiaFgtsDctfSection({ onLancado }: { onLancado: () => void }) {
         compact
         accept="application/pdf,image/jpeg,image/png"
         disabled={lendo}
-        label={lendo ? "Lendo…" : "Arraste a guia aqui (PDF ou foto), ou"}
+        label={lendo ? "Lendo…" : arquivoLido ? `Arquivo selecionado: ${arquivoLido.name} — arraste outro para substituir, ou` : "Arraste a guia aqui (PDF ou foto), ou"}
         onFiles={(files) => lerGuia(files[0])}
       />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 mb-3">
