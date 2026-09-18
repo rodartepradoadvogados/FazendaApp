@@ -69,6 +69,42 @@ class TestPevExpira:
         assert r["estado"] == PEV
 
 
+class TestInducaoAbortoContaComoPartoVirtual:
+    """Vaca 422: entrou em protocolo de indução de lactação, concluiu em
+    26/08/2026 — sem `Parto` nenhum (indução não pare) — e continuava
+    ATRASADA (519 dias) porque `del_dias` vinha só de `partos`, que ela não
+    tem. `data_inicio_lactacao` é o "parto virtual": a matriz entrou em
+    ordenha e merece o mesmo descanso de PEV que uma vaca que pariu."""
+
+    def test_vaca_422_inducao_sem_parto_entra_em_pev(self):
+        r = _classificar(
+            "422",
+            partos=[],  # indução não gera Parto
+            data_inicio_lactacao=date(2026, 7, 20),  # 8 dias antes de HOJE (2026-07-28)
+        )
+        assert r["del_dias"] == 8
+        assert r["estado"] == PEV
+        assert r["estado"] != ATRASADA
+
+    def test_inducao_com_pev_vencido_libera_normalmente(self):
+        """Contraprova: passado o PEV, a mesma vaca vira APTA (ou ATRASADA se
+        passar do DEL máximo também) — a indução não trava para sempre."""
+        r = _classificar("422", partos=[], data_inicio_lactacao=date(2026, 5, 1))
+        assert r["del_dias"] == 88
+        assert r["estado"] == APTA
+
+    def test_parto_real_sempre_vence_a_lactacao_por_inducao(self):
+        """Se por algum motivo a matriz tem AMBOS (ex.: indução seguida de um
+        parto lançado depois), o parto real ancora — não a lactação."""
+        r = _classificar(
+            "422",
+            partos=[{"data_parto": date(2026, 7, 26)}],
+            data_inicio_lactacao=date(2026, 1, 1),
+        )
+        assert r["del_dias"] == 2
+        assert r["estado"] == PEV
+
+
 class TestInseminadaNaoEAtrasada:
     """Novilhas 43 e 09 apareciam em ATRASADAS mesmo estando inseminadas —
     'não tem o que fazer com ela, só esperar o dia de dar toque'."""
@@ -320,6 +356,27 @@ class TestEndpointEstadosReprodutivos:
         rep = indicadores["reproducao"]
         assert rep["prenhes"] == 0, "Capa ainda conta a vaca que ja pariu como prenhe"
         assert rep["inseminadas"] == 1, "Capa nao viu a inseminacao lancada"
+
+    def test_vaca_422_inducao_sem_parto_aparece_pev_nao_atrasada(self, client):
+        """Reproduz o bug real: vaca 422 concluiu protocolo de indução de
+        lactação em 26/08/2026 (Lactacao aberta, origem='inducao', sem
+        Parto) e continuava ATRASADA nas listas de Rebanho/Agenda — porque
+        este endpoint (que alimenta as duas telas, ver docstring da função)
+        não repassava `data_inicio_lactacao` para `classificar_animal`,
+        embora /agenda/ já tivesse sido corrigido para isso."""
+        from fazenda.models import Lactacao
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="422", sexo="F", ativo=True, sit_rep="Vaz. atr."))
+            s.add(Lactacao(numero_matriz="422", data_inicio=date(2026, 8, 26), origem="inducao"))
+            s.commit()
+
+        r = c.get("/indicadores/estados-reprodutivos", params={"data": "2026-09-05"})
+        assert r.status_code == 200, r.text
+        por_numero = {a["numero"]: a for a in r.json()["animais"]}
+        assert por_numero["422"]["del_dias"] == 10
+        assert por_numero["422"]["estado"] == PEV
+        assert por_numero["422"]["estado"] != ATRASADA
 
     def test_ordena_por_numero_do_brinco_crescente(self, client):
         """Toda listagem abre em ordem crescente de brinco (pedido do produtor)."""

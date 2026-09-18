@@ -52,10 +52,10 @@ def _animal(numero="100", **kw):
     return {**base, **kw}
 
 
-def _perfil(animal=None, partos=(), servicos=(), aplicacoes=()):
+def _perfil(animal=None, partos=(), servicos=(), aplicacoes=(), data_inicio_lactacao=None):
     return montar_perfil(
         animal or _animal(), partos=list(partos), servicos=list(servicos),
-        aplicacoes_iatf=list(aplicacoes),
+        aplicacoes_iatf=list(aplicacoes), data_inicio_lactacao=data_inicio_lactacao,
     )
 
 
@@ -129,6 +129,51 @@ class TestR2Suspensao:
         assert e.situacao == SUSPENSA
         assert e.apta is False
         assert e.motivo == MOTIVO_GESTANTE
+
+
+# ═════════════ Indução/aborto sem Parto — "parto virtual" (vaca 422) ════════
+class TestInducaoSemPartoNoProgramaReprodutivo:
+    """Vaca 422: indução de lactação concluída (Lactacao aberta, sem Parto).
+    O programa reprodutivo alimenta a sugestão de candidatas a IATF e o Ciclo
+    de 21 dias — sem `data_inicio_lactacao`, essa matriz não tinha parto NEM
+    DEL, então nunca entrava em SUSPENSA/PEV; e como `eh_vaca` também vinha só
+    de Parto, ela caía na aptidão de novilha nulípara por idade/peso assim que
+    o "PEV" (que nunca existiu) teria vencido — podendo ser sugerida para
+    IATF durante o próprio descanso pós-indução."""
+
+    def test_vaca_422_sem_parto_mas_com_lactacao_fica_suspensa_no_pev(self):
+        p = _perfil(partos=[], data_inicio_lactacao=date(2026, 1, 1))
+        e = _estado(p, date(2026, 1, 20))  # DEL 19 < PEV 45 — nunca pariu, mas está em lactação
+        assert e.situacao == SUSPENSA
+        assert e.apta is False
+        assert e.motivo == MOTIVO_DENTRO_PEV
+
+    def test_vaca_422_apos_pev_fica_apta_nao_novilha_impubere(self):
+        """Sem o fix, `eh_vaca=False` (sem Parto) jogava a matriz na regra de
+        idade/peso de novilha — aqui ela é NOVA e LEVE o bastante pra provar
+        que não é isso: se caísse em novilha, daria IMPUBERE, não apta."""
+        nova_e_leve = _animal(data_nasc=date(2025, 6, 1), peso_kg=200.0)
+        p = _perfil(nova_e_leve, partos=[], data_inicio_lactacao=date(2026, 1, 1))
+        e = estado_no_dia(p, date(2026, 3, 1), pev_dias=PEV, idade_apta_dias=450, peso_apta_kg=300.0)
+        assert e.situacao == ATIVA
+        assert e.apta is True
+
+    def test_data_inicio_lactacao_no_futuro_da_reconstrucao_nao_ancora(self):
+        """`estado_no_dia` reconstrói o passado — uma lactação que só abre
+        DEPOIS da data `d` não pode contar como parto virtual naquele dia.
+        Sem parto e sem lactação ainda válida, uma novilha jovem/leve continua
+        pelas regras de idade/peso de sempre (mesmo perfil do teste de R1)."""
+        nova = _animal(categoria_abrev="Novilha", data_nasc=date(2025, 6, 1), peso_kg=200.0)
+        p = _perfil(nova, partos=[], data_inicio_lactacao=date(2026, 3, 1))
+        e = estado_no_dia(p, date(2026, 1, 20), pev_dias=PEV, idade_apta_dias=450, peso_apta_kg=300.0)
+        assert e.situacao == INATIVA
+        assert e.motivo == MOTIVO_IMPUBERE
+
+    def test_parto_real_sempre_vence_a_lactacao_por_inducao(self):
+        p = _perfil(partos=[_parto(date(2026, 1, 1))], data_inicio_lactacao=date(2025, 6, 1))
+        e = _estado(p, date(2026, 1, 20))  # DEL do PARTO = 19, não da lactação antiga
+        assert e.situacao == SUSPENSA
+        assert e.motivo == MOTIVO_DENTRO_PEV
 
 
 # ═══════════════════ R3/R4 — disponibilidade e aptidão ══════════════════════

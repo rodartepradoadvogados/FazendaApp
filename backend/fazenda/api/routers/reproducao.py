@@ -160,12 +160,14 @@ def carregar_perfis_reprodutivos(
     query_partos = select(Parto)
     query_iatf = select(ProtocoloIatfAplicacao)
     query_pesagem = select(PesagemCorporal)
+    query_lactacao = select(Lactacao)
     if fazenda_id is not None:
         query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
         query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
         query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
         query_iatf = query_iatf.where(ProtocoloIatfAplicacao.fazenda_id == fazenda_id)
         query_pesagem = query_pesagem.where(PesagemCorporal.fazenda_id == fazenda_id)
+        query_lactacao = query_lactacao.where(Lactacao.fazenda_id == fazenda_id)
 
     femeas = [a for a in session.exec(query_animais).all() if not a.eh_semen and a.sexo != "M"]
 
@@ -178,6 +180,16 @@ def carregar_perfis_reprodutivos(
     iatf_por: dict[str, list] = {}
     for ap in session.exec(query_iatf).all():
         iatf_por.setdefault(ap.numero_matriz, []).append(ap)
+    # Lactações abertas sem Parto (indução, aborto) — "parto virtual" pro DEL
+    # e pro `eh_vaca` de `montar_perfil` (ver docstring lá). Mesma lógica de
+    # agenda.py/indicadores.py — quem tem parto real sempre vence.
+    inicio_lactacao_por: dict[str, date] = {}
+    for lact in session.exec(query_lactacao).all():
+        if lact.data_fim is not None:
+            continue
+        if lact.data_inicio is None:
+            continue
+        inicio_lactacao_por[lact.numero_matriz] = lact.data_inicio
 
     # Peso mais recente de cada animal — entra na aptidão da novilha nulípara.
     peso_por: dict[str, float] = {}
@@ -196,6 +208,7 @@ def carregar_perfis_reprodutivos(
             partos=partos_por.get(a.numero, []),
             servicos=servicos_por.get(a.numero, []),
             aplicacoes_iatf=iatf_por.get(a.numero, []),
+            data_inicio_lactacao=inicio_lactacao_por.get(a.numero),
         )
         if categoria != "todas" and perfil.categoria != categoria:
             continue
@@ -655,6 +668,20 @@ def agenda_reprodutiva_card(
     servicos = session.exec(query_servicos).all()
     partos = session.exec(query_partos).all()
 
+    query_lactacao = select(Lactacao)
+    if fazenda_id is not None:
+        query_lactacao = query_lactacao.where(Lactacao.fazenda_id == fazenda_id)
+    # Lactações abertas sem parto produtivo (indução, aborto com abertura): a
+    # data_inicio é o "parto virtual" para DEL/PEV em classificar_animal, mesma
+    # lógica de /agenda/ e /indicadores/estados-reprodutivos.
+    inicio_lactacao_por_animal: dict[str, date] = {}
+    for lact in session.exec(query_lactacao).all():
+        if lact.data_fim is not None and lact.data_fim <= hoje:
+            continue
+        if lact.data_inicio is None:
+            continue
+        inicio_lactacao_por_animal[lact.numero_matriz] = lact.data_inicio
+
     peso_por_animal: dict[str, float] = {}
     pesagens_por_animal: dict[str, list[tuple[date, float]]] = {}
     for p in session.exec(query_pesagens).all():
@@ -687,6 +714,7 @@ def agenda_reprodutiva_card(
         pev_dias=pev, del_max_1o_servico=del_max, peso_por_animal=peso_por_animal,
         idade_apta_dias=idade_apta_dias, idade_atraso_dias=idade_atraso_dias, peso_apta_kg=peso_apta_kg,
         dias_atraso_apos_aptidao=dias_atraso_apos_aptidao, datas_ficou_apta_por_animal=datas_ficou_apta,
+        inicio_lactacao_por_animal=inicio_lactacao_por_animal,
     )
 
     itens = avaliar_card(
@@ -2260,7 +2288,10 @@ def _del_em(perfil, d: date) -> int | None:
 
     Substitui a conta antiga de "DEL projetado" (`Animal.del_dias` congelado +
     dias até a visita), que herdava a defasagem do CSV e ainda somava dias a um
-    número que podia estar errado desde o começo."""
+    número que podia estar errado desde o começo.
+
+    Sem Parto (indução/aborto), `perfil.data_inicio_lactacao` serve de "parto
+    virtual" — mesma âncora de `estado_reprodutivo.classificar_animal`."""
     datas = []
     for p in perfil.partos:
         dp = p.get("data_parto") if isinstance(p, dict) else getattr(p, "data_parto", None)
@@ -2271,7 +2302,10 @@ def _del_em(perfil, d: date) -> int | None:
                 dp = None
         if dp and dp <= d:
             datas.append(dp)
-    return (d - max(datas)).days if datas else None
+    if datas:
+        return (d - max(datas)).days
+    dil = getattr(perfil, "data_inicio_lactacao", None)
+    return (d - dil).days if dil and dil <= d else None
 
 
 @router.get("/protocolo-iatf/candidatas")
