@@ -12,7 +12,7 @@ import { Milk, Scale, Moon, Pill, TestTube, Truck, Zap } from "lucide-react";
 import { MobCampo, MobAviso, MobVoltar } from "@/components/mobile/ui";
 import { BotoesEscolha, GradeAcoes, type Animal, useEnvio, useRascunho, hoje, SeletorAnimal, RascunhoAviso } from "./comum";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
-import { fetchAgenda, fetchEstoque, fetchSanidade } from "@/lib/api";
+import { fetchAgenda, fetchEstoque, fetchSanidade, fetchLotes } from "@/lib/api";
 import { fetchComCache, enviarOuEnfileirar } from "@/lib/offline";
 
 // Wrappers que trocam o authFetch direto dos formulários (compartilhados com
@@ -82,6 +82,7 @@ export function FormProducao({ animais, animalFixado, restringirA }: { animais: 
   const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
   const [produtosSanidade, setProdutosSanidade] = useState<string[]>([]);
   const [estoqueCarregado, setEstoqueCarregado] = useState(false);
+  const [lotesLact, setLotesLact] = useState<string[]>([]);
   useEffect(() => {
     if (sub !== "secagem" || estoqueCarregado) return;
     setEstoqueCarregado(true);
@@ -91,6 +92,20 @@ export function FormProducao({ animais, animalFixado, restringirA }: { animais: 
       fetchSanidade().then((d) => Array.from(new Set((d.aplicacoes || d.registros || []).map((r: any) => r.produto).filter(Boolean))).sort() as string[])
     ).then(({ dados }) => setProdutosSanidade(dados || []));
   }, [sub, estoqueCarregado]);
+
+  // Buscar lotes de lactação (status_lactacao === "lactacao") quando a aba controle é aberta
+  const [lotesLactCarregados, setLotesLactCarregados] = useState(false);
+  useEffect(() => {
+    if (sub !== "controle" || lotesLactCarregados) return;
+    setLotesLactCarregados(true);
+    fetchLotes({ incluirInativos: false }).then((lotes) => {
+      const lotesLactacao = lotes
+        .filter((l: any) => l.status_lactacao === "lactacao")
+        .map((l: any) => `${l.codigo} - ${l.nome}`)
+        .sort((a: string, b: string) => a.localeCompare(b, undefined, { numeric: true }));
+      setLotesLact(lotesLactacao);
+    }).catch(() => {});
+  }, [sub, lotesLactCarregados]);
 
   if (!sub) {
     // `restringirA` (opcional): usado pelo Modo Curral para mostrar só
@@ -114,7 +129,7 @@ export function FormProducao({ animais, animalFixado, restringirA }: { animais: 
       {sub === "controle" && <ControleLeiteiro animais={animais} animalFixado={animalFixado} />}
       {sub === "pesagem" && (
         <div className="mob-form-embutido">
-          <FormPesagemCorporal animais={animais as any} lotes={lotesDe(animais)} salvarPesagens={salvarPesagensOffline} />
+          <FormPesagemCorporal animais={animais as any} lotes={lotesLact} salvarPesagens={salvarPesagensOffline} />
         </div>
       )}
       {sub === "secagem" && (
@@ -193,10 +208,10 @@ function ControleLeiteiro({ animais, animalFixado }: { animais: Animal[]; animal
    * comportamento antigo, para a tela não ficar vazia durante o deploy.
    */
   const emLactacao = useMemo(() => animais.filter((a) => a.em_lactacao !== false), [animais]);
-  const lotes = useMemo(
-    () => Array.from(new Set(emLactacao.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-    [emLactacao],
-  );
+  // Usa lotesLact do pai (buscado do backend com status_lactacao === "lactacao")
+  // em vez de derivar dos animais atuais — assim lotes vazios configurados
+  // para lactação também aparecem.
+  const lotes = lotesLact;
   const vacasDoLote = useMemo(() => (lote ? emLactacao.filter((a) => a.grupo_primario === lote) : []), [emLactacao, lote]);
   const setOrdVaca = (numero: string, idx: 0 | 1 | 2, valor: string) => {
     const arr: [string, string, string] = [...(porVaca[numero] || ["", "", ""])];
