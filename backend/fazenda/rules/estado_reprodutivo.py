@@ -181,6 +181,7 @@ def classificar_animal(
     raca: str | None = None,
     dias_atraso_apos_aptidao: int | None = None,
     data_ficou_apta: date | None = None,
+    data_inicio_lactacao: date | None = None,
 ) -> dict:
     """Estado reprodutivo de UM animal, recalculado dos registros.
 
@@ -191,7 +192,11 @@ def classificar_animal(
     """
     datas_parto = sorted([d for d in (_d(_get(p, "data_parto")) for p in partos) if d])
     ultimo_parto = datas_parto[-1] if datas_parto else None
-    del_dias = (hoje - ultimo_parto).days if ultimo_parto else None
+    # Lactação sem parto (indução, aborto com abertura): a data de início da
+    # lactação é o "parto virtual" para efeito de DEL e PEV — a matriz entrou
+    # em ordenha, produziu leite e merece os mesmos pev_dias de descanso.
+    ancora = ultimo_parto or data_inicio_lactacao
+    del_dias = (hoje - ancora).days if ancora else None
 
     # Só o que veio DEPOIS do último parto conta para o ciclo atual — é isso
     # que faz um parto lançado hoje derrubar a gestação anterior.
@@ -199,7 +204,7 @@ def classificar_animal(
         s for s in servicos
         if (ds := _d(_get(s, "data_servico"))) is not None
         and ds <= hoje
-        and (ultimo_parto is None or ds > ultimo_parto)
+        and (ancora is None or ds > ancora)
     ]
     vigentes.sort(key=lambda s: _d(_get(s, "data_servico")))
     ultimo_servico = vigentes[-1] if vigentes else None
@@ -371,6 +376,7 @@ def estados_ao_vivo(
     peso_apta_kg: float | None = None,
     dias_atraso_apos_aptidao: int | None = None,
     datas_ficou_apta_por_animal: dict[str, date] | None = None,
+    inicio_lactacao_por_animal: dict[str, date] | None = None,
 ) -> dict[str, dict]:
     """`classificar_animal` em lote: devolve {numero -> dict completo}.
 
@@ -390,6 +396,7 @@ def estados_ao_vivo(
     """
     peso_por_animal = peso_por_animal or {}
     datas_ficou_apta_por_animal = datas_ficou_apta_por_animal or {}
+    inicio_lactacao_por_animal = inicio_lactacao_por_animal or {}
 
     servicos_por: dict[str, list] = {}
     for s in servicos:
@@ -428,5 +435,6 @@ def estados_ao_vivo(
             raca=_get(a, "raca"),
             dias_atraso_apos_aptidao=dias_atraso_apos_aptidao,
             data_ficou_apta=datas_ficou_apta_por_animal.get(numero),
+            data_inicio_lactacao=inicio_lactacao_por_animal.get(numero),
         )
     return resultado
