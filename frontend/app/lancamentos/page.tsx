@@ -5,7 +5,7 @@ import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
   Trash2, Droplet, CalendarClock, Wheat, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Dna, Gauge, Zap,
 } from "lucide-react";
-import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, fetchParametros } from "@/lib/api";
+import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, fetchParametros, fetchLotes } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
 // Formulários grandes de cada sub-aba: dynamic() para que o navegador só baixe
@@ -318,11 +318,13 @@ export default function LancamentosPage() {
   const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
   const [servicos, setServicos] = useState<any[]>([]);
   const [produtosSanidade, setProdutosSanidade] = useState<string[]>([]);
+  const [lotesCadastro, setLotesCadastro] = useState<{ codigo: string; rotulo: string; status_lactacao: string }[]>([]);
   const recarregarListasBase = useCallback(() => {
     fetchAnimais().then(setAnimais).catch(() => {});
     fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
     fetchServicosAnalise().then((d) => setServicos(d.servicos || [])).catch(() => {});
     fetchSanidade().then((d) => setProdutosSanidade(Array.from(new Set((d.aplicacoes || d.registros || []).map((r: any) => r.produto).filter(Boolean))).sort() as string[])).catch(() => {});
+    fetchLotes().then(setLotesCadastro).catch(() => {});
   }, []);
   useEffect(() => { recarregarListasBase(); }, [recarregarListasBase]);
   // Disparado por qualquer Form* da gaveta assim que salva com sucesso (prop
@@ -362,7 +364,17 @@ export default function LancamentosPage() {
     });
     return Array.from(porChave.values()).sort();
   }, [animais]);
-  const lotesLact = useMemo(() => lotes.filter((l) => LACT.includes(cod(l))), [lotes]);
+  // Códigos de lote marcados como lactação NO CADASTRO (Lote.status_lactacao)
+  // — mesma correção já usada em fazenda.rules.agenda_engine pro BST. Antes,
+  // `lotesLact` só reconhecia os códigos fixos 01/02/03; um lote renumerado
+  // ou novo (ex.: "Lote 4" cadastrado como lactação) nunca aparecia aqui,
+  // mesmo com vacas em lactação dentro dele. Cai no fixo só se o cadastro
+  // ainda não carregou.
+  const codigosLactacaoCadastro = useMemo(() => {
+    const s = new Set(lotesCadastro.filter((l) => l.status_lactacao === "lactacao").map((l) => l.codigo));
+    return s.size ? s : new Set(LACT);
+  }, [lotesCadastro]);
+  const lotesLact = useMemo(() => lotes.filter((l) => codigosLactacaoCadastro.has(cod(l))), [lotes, codigosLactacaoCadastro]);
   // Aptidão a serviço: a lista passa a mostrar TODAS as fêmeas, com as
   // inaptas em cinza e o motivo ao lado (ver `motivosInaptidao` abaixo), em
   // vez de escondê-las.
