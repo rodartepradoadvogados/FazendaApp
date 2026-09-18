@@ -2291,7 +2291,10 @@ def _del_em(perfil, d: date) -> int | None:
     número que podia estar errado desde o começo.
 
     Sem Parto (indução/aborto), `perfil.data_inicio_lactacao` serve de "parto
-    virtual" — mesma âncora de `estado_reprodutivo.classificar_animal`."""
+    virtual" — mesma âncora de `estado_reprodutivo.classificar_animal`. Entre
+    os dois (quando existem ambos), vale o MAIS RECENTE — um parto antigo, de
+    um ciclo de lactação já encerrado, não pode continuar ancorando o DEL
+    depois de uma indução bem mais nova ter reaberto a lactação da matriz."""
     datas = []
     for p in perfil.partos:
         dp = p.get("data_parto") if isinstance(p, dict) else getattr(p, "data_parto", None)
@@ -2302,10 +2305,10 @@ def _del_em(perfil, d: date) -> int | None:
                 dp = None
         if dp and dp <= d:
             datas.append(dp)
-    if datas:
-        return (d - max(datas)).days
     dil = getattr(perfil, "data_inicio_lactacao", None)
-    return (d - dil).days if dil and dil <= d else None
+    if dil and dil <= d:
+        datas.append(dil)
+    return (d - max(datas)).days if datas else None
 
 
 @router.get("/protocolo-iatf/candidatas")

@@ -189,15 +189,19 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
         grupo = a.get("grupo_primario")
         eh_vaca = _eh_vaca(num, parto_idx)
         dparto = _ultimo_parto(num, parto_idx)
-        # Lactação por indução/aborto (sem Parto real) — "parto virtual" só
-        # para PEV e "a inseminar" (itens 1/2 abaixo), mesma lógica de
-        # estado_reprodutivo.classificar_animal. NÃO usado por prenhez/
-        # secagem/reconfirmação mais abaixo, que exigem uma gestação/parto de
-        # verdade — sem isso a "Lista de trabalho" (Insights > Listas) tinha
-        # o mesmo bug da vaca 422: sem Parto, `dpp` ficava None, e ela nunca
-        # entrava em "Vacas no PEV" nem em "Vacas a inseminar" depois.
-        inicio_lact = None if dparto else inicio_lactacao_por_animal.get(num)
-        dpp = _dias(dparto, hoje) if dparto else (_dias(inicio_lact, hoje) if inicio_lact else None)  # dias pós-parto (ou pós-início de lactação por indução)
+        # Lactação por indução/aborto (sem Parto real, OU com um parto bem
+        # mais ANTIGO de um ciclo já encerrado) — "parto virtual" só para PEV
+        # e "a inseminar" (itens 1/2 abaixo), mesma lógica de
+        # estado_reprodutivo.classificar_animal (que usa a âncora MAIS
+        # RECENTE entre parto e início de lactação — um parto de 500+ dias
+        # atrás não pode continuar valendo depois de uma indução recente ter
+        # reaberto a lactação da matriz; era o bug real da vaca 422). NÃO
+        # usado por prenhez/secagem/reconfirmação mais abaixo, que exigem uma
+        # gestação/parto de verdade.
+        lact_animal = inicio_lactacao_por_animal.get(num)
+        inicio_lact = lact_animal if lact_animal and (not dparto or lact_animal > dparto) else None
+        ancora_dpp = inicio_lact or dparto
+        dpp = _dias(ancora_dpp, hoje) if ancora_dpp else None  # dias pós-parto (ou pós-início de lactação por indução)
         eh_vaca_dpp = eh_vaca or inicio_lact is not None
         us = _ultimo_servico(num, serv_idx)
         ups = _ultimo_servico_positivo(num, serv_idx, parto_idx)

@@ -93,9 +93,9 @@ class TestInducaoAbortoContaComoPartoVirtual:
         assert r["del_dias"] == 88
         assert r["estado"] == APTA
 
-    def test_parto_real_sempre_vence_a_lactacao_por_inducao(self):
-        """Se por algum motivo a matriz tem AMBOS (ex.: indução seguida de um
-        parto lançado depois), o parto real ancora — não a lactação."""
+    def test_parto_mais_recente_que_a_lactacao_vence(self):
+        """Se a matriz tem AMBOS (ex.: indução seguida de um parto lançado
+        depois), a âncora é a MAIS RECENTE — aqui, o parto."""
         r = _classificar(
             "422",
             partos=[{"data_parto": date(2026, 7, 26)}],
@@ -103,6 +103,22 @@ class TestInducaoAbortoContaComoPartoVirtual:
         )
         assert r["del_dias"] == 2
         assert r["estado"] == PEV
+
+    def test_lactacao_mais_recente_que_um_parto_antigo_vence(self):
+        """BUG REAL da vaca 422: um parto ANTIGO (ciclo de lactação já
+        encerrado há muito — aqui, 519 dias atrás) não pode continuar
+        ancorando o DEL depois de uma indução bem mais recente ter
+        reaberto a lactação. A âncora errada ("parto real sempre vence",
+        não importa a data) é o que a mantinha ATRASADA mesmo depois do
+        primeiro fix desta classe de bug."""
+        r = _classificar(
+            "422",
+            partos=[{"data_parto": date(2025, 2, 22)}],  # ~519 dias antes de HOJE (2026-07-28)
+            data_inicio_lactacao=date(2026, 7, 5),  # indução concluída há 23 dias
+        )
+        assert r["del_dias"] == 23
+        assert r["estado"] == PEV
+        assert r["estado"] != ATRASADA
 
 
 class TestInseminadaNaoEAtrasada:
