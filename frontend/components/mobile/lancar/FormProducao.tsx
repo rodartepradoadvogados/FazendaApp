@@ -126,7 +126,7 @@ export function FormProducao({ animais, animalFixado, restringirA }: { animais: 
   return (
     <>
       <MobVoltar titulo={TITULOS_SUB[sub]} onVoltar={() => setSub(null)} />
-      {sub === "controle" && <ControleLeiteiro animais={animais} animalFixado={animalFixado} />}
+      {sub === "controle" && <ControleLeiteiro animais={animais} animalFixado={animalFixado} lotesLact={lotesLact} />}
       {sub === "pesagem" && (
         <div className="mob-form-embutido">
           <FormPesagemCorporal animais={animais as any} lotes={lotesLact} salvarPesagens={salvarPesagensOffline} />
@@ -176,7 +176,7 @@ type DraftControleLeiteiro = {
   porVaca: Record<string, [string, string, string]>;
 };
 
-function ControleLeiteiro({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
+function ControleLeiteiro({ animais, animalFixado, lotesLact }: { animais: Animal[]; animalFixado: string | null; lotesLact: string[] }) {
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   // Rascunho único do formulário — no modo lote, pode ter várias vacas
   // pesadas antes de uma interrupção; perder isso no meio do curral custaria
@@ -273,7 +273,7 @@ function ControleLeiteiro({ animais, animalFixado }: { animais: Animal[]; animal
         <MobCampo label="Lote">
           <select className="mob-input" value={lote} onChange={(e) => setLote(e.target.value)}>
             <option value="">Selecione…</option>
-            {lotes.map((l) => <option key={l} value={l}>{l}</option>)}
+            {lotesLact.map((l: string) => <option key={l} value={l}>{l}</option>)}
           </select>
         </MobCampo>
       )}
