@@ -195,7 +195,16 @@ def classificar_animal(
     # Lactação sem parto (indução, aborto com abertura): a data de início da
     # lactação é o "parto virtual" para efeito de DEL e PEV — a matriz entrou
     # em ordenha, produziu leite e merece os mesmos pev_dias de descanso.
-    ancora = ultimo_parto or data_inicio_lactacao
+    #
+    # BUG CORRIGIDO: a âncora era `ultimo_parto or data_inicio_lactacao`, ou
+    # seja, "parto real sempre vence" — errado quando o parto é ANTIGO (de
+    # um ciclo de lactação já encerrado há muito, seca de verdade) e a
+    # indução é um evento bem mais recente (caso real: vaca 422, parto de
+    # ~519 dias atrás, indução concluída há ~3 semanas — a âncora antiga
+    # continuava usando o parto de 519 dias, o "parto virtual" da indução
+    # nunca tinha chance). A âncora certa é a MAIS RECENTE das duas — o
+    # evento que efetivamente reabriu a lactação atual da matriz.
+    ancora = max((d for d in (ultimo_parto, data_inicio_lactacao) if d is not None), default=None)
     del_dias = (hoje - ancora).days if ancora else None
 
     # Só o que veio DEPOIS do último parto conta para o ciclo atual — é isso

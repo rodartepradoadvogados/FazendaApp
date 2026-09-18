@@ -222,6 +222,24 @@ class TestManejo:
         assert a_inseminar["eh_vaca"] is True
         assert a_inseminar["cor"] == "vermelho"  # 120 dias > meta de 100 dias p/ 1ª IA
 
+    def test_vaca_422_parto_antigo_nao_trava_a_ancora_da_lactacao_recente(self, client):
+        """BUG REAL da vaca 422 (o que sobrevivia mesmo com Lactacao aberta):
+        um Parto de ~1 ano atrás (ciclo já encerrado) não pode continuar
+        ancorando `dpp` depois de uma indução recente ter reaberto a
+        lactação — a âncora tem que ser a MAIS RECENTE das duas."""
+        c, engine = client
+        hoje = _hoje()
+        with Session(engine) as s:
+            s.add(Animal(numero="422", sexo="F", ativo=True, sit_rep="Vaz. atr."))
+            s.add(Parto(numero_matriz="422", data_parto=hoje - timedelta(days=519), ordem_parto=3))
+            s.add(Lactacao(numero_matriz="422", data_inicio=hoje - timedelta(days=10), origem="inducao"))
+            s.commit()
+        r = c.get("/relatorios/manejo")
+        dados = r.json()
+        pev = next((x for x in dados["pev"] if x["numero"] == "422"), None)
+        assert pev is not None, "vaca 422 (parto antigo + indução recente) não apareceu em Vacas no PEV"
+        assert pev["dias_pos_parto"] == 10
+
 
 class TestGerencial:
     def _seed(self, engine):
