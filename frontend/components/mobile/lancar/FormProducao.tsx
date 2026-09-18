@@ -12,7 +12,7 @@ import { Milk, Scale, Moon, Pill, TestTube, Truck, Zap } from "lucide-react";
 import { MobCampo, MobAviso, MobVoltar } from "@/components/mobile/ui";
 import { BotoesEscolha, GradeAcoes, type Animal, useEnvio, useRascunho, hoje, SeletorAnimal, RascunhoAviso } from "./comum";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
-import { fetchAgenda, fetchEstoque, fetchSanidade } from "@/lib/api";
+import { fetchAgenda, fetchEstoque, fetchLotes, fetchSanidade } from "@/lib/api";
 import { fetchComCache, enviarOuEnfileirar } from "@/lib/offline";
 
 // Wrappers que trocam o authFetch direto dos formulários (compartilhados com
@@ -193,10 +193,26 @@ function ControleLeiteiro({ animais, animalFixado }: { animais: Animal[]; animal
    * comportamento antigo, para a tela não ficar vazia durante o deploy.
    */
   const emLactacao = useMemo(() => animais.filter((a) => a.em_lactacao !== false), [animais]);
-  const lotes = useMemo(
-    () => Array.from(new Set(emLactacao.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-    [emLactacao],
-  );
+
+  // Lotes do seletor: vêm do CADASTRO (status_lactacao == "lactacao"), não
+  // mais só dos grupo_primario que sobreviveram ao filtro de em_lactacao
+  // acima. Antes, um lote de lactação cadastrado corretamente (ex.: "Lote
+  // 4") sumia do seletor sempre que nenhuma vaca dele estivesse carregada
+  // com `em_lactacao === true` no momento — cadastro dizia uma coisa, a
+  // tela mostrava outra. Mesma fonte que fazenda.rules.agenda_engine já usa
+  // pro BST (`codigos_lactacao` a partir de Lote.status_lactacao).
+  const [lotesCadastro, setLotesCadastro] = useState<{ codigo: string; rotulo: string; status_lactacao: string }[]>([]);
+  useEffect(() => {
+    fetchComCache<{ codigo: string; rotulo: string; status_lactacao: string }[]>("lotes_cadastro", () => fetchLotes())
+      .then(({ dados }) => setLotesCadastro(dados || []));
+  }, []);
+  const lotes = useMemo(() => {
+    const doCadastro = lotesCadastro.filter((l) => l.status_lactacao === "lactacao").map((l) => l.rotulo);
+    if (doCadastro.length) return doCadastro.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    // Sem cadastro carregado ainda (offline na 1ª visita) — cai no que já
+    // temos localmente, pra tela não ficar vazia.
+    return Array.from(new Set(emLactacao.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [lotesCadastro, emLactacao]);
   const vacasDoLote = useMemo(() => (lote ? emLactacao.filter((a) => a.grupo_primario === lote) : []), [emLactacao, lote]);
   const setOrdVaca = (numero: string, idx: 0 | 1 | 2, valor: string) => {
     const arr: [string, string, string] = [...(porVaca[numero] || ["", "", ""])];
