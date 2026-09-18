@@ -467,9 +467,11 @@ def estados_reprodutivos(
             aplicacoes_iatf=iatf_por.get(a.numero, []),
             pev_dias=pev,
             del_max_1o_servico=del_max,
-            # "Vaca" = já pariu alguma vez; novilha nulípara segue a regra de
-            # idade+peso, não a de DEL.
-            eh_vaca=bool(partos_por.get(a.numero)),
+            # "Vaca" = já pariu alguma vez OU tem lactação aberta por indução/
+            # aborto (sem Parto) — sem o segundo braço, essa matriz caía na
+            # aptidão por idade/peso de novilha nulípara assim que o PEV
+            # (calculado a partir do "parto virtual" abaixo) vencesse.
+            eh_vaca=bool(partos_por.get(a.numero)) or a.numero in inicio_lactacao_por,
             idade_dias=idade,
             peso_kg=peso_por.get(a.numero),
             idade_apta_dias=idade_apta,

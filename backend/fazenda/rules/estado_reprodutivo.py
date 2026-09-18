@@ -387,7 +387,8 @@ def estados_ao_vivo(
     chama precisa de `del_dias` e `data_servico` junto. (`indicadores.py`
     tem uma variante que guarda só a string; esta é a versão rica.)
 
-    `eh_vaca` sai de ter parto registrado OU de "vaca" na categoria, mesma
+    `eh_vaca` sai de ter parto registrado, de "vaca" na categoria, OU de ter
+    lactação aberta por indução/aborto (`inicio_lactacao_por_animal`) — mesma
     convenção de `programa_reprodutivo.montar_perfil`.
 
     ATENÇÃO: `classificar_animal` NÃO consulta `a_descartar` nem `data_baixa`.
@@ -426,7 +427,7 @@ def estados_ao_vivo(
             aplicacoes_iatf=iatf_por.get(numero, []),
             pev_dias=pev_dias,
             del_max_1o_servico=del_max_1o_servico,
-            eh_vaca=bool(partos_do_animal) or "vaca" in categoria_txt,
+            eh_vaca=bool(partos_do_animal) or "vaca" in categoria_txt or numero in inicio_lactacao_por_animal,
             idade_dias=(hoje - nasc).days if nasc else None,
             peso_kg=peso_por_animal.get(numero) or _get(a, "peso_kg"),
             idade_apta_dias=idade_apta_dias,

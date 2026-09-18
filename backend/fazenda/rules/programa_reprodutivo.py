@@ -350,6 +350,10 @@ class PerfilAnimal:
     ativo: bool = True
     data_baixa: date | None = None
     categoria: str | None = None  # "vaca" | "novilha" — para o filtro da tela
+    # Lactação aberta sem Parto (indução, aborto) — "parto virtual" para DEL/
+    # PEV, mesma lógica de estado_reprodutivo.classificar_animal. Ver
+    # montar_perfil para por que também conta pra decidir `eh_vaca`.
+    data_inicio_lactacao: date | None = None
 
     def idade_dias_em(self, d: date) -> int | None:
         return (d - self.data_nasc).days if self.data_nasc else None
@@ -357,6 +361,7 @@ class PerfilAnimal:
 
 def montar_perfil(
     animal: Any, *, partos: list[Any], servicos: list[Any], aplicacoes_iatf: list[Any],
+    data_inicio_lactacao: date | None = None,
 ) -> PerfilAnimal:
     """Normaliza um `Animal` + seus registros num `PerfilAnimal`.
 
@@ -379,9 +384,15 @@ def montar_perfil(
     Efeito colateral aceito: uma vaca real cujo histórico de partos não foi
     importado é tratada como novilha. É a resposta honesta — sem parto não há
     DEL, e sem DEL não dá para dizer se ela está no PEV ou atrasada.
+
+    Exceção deliberada: `data_inicio_lactacao` (Lactacao aberta por indução ou
+    aborto, sem Parto) TAMBÉM conta como vaca. Não é o texto da categoria (a
+    divergência que o item 1 acima explica) — é a mesma tabela estruturada
+    que já dá o "parto virtual" pro DEL, então uma matriz induzida não cai na
+    aptidão por idade/peso de novilha nulípara assim que o PEV vence.
     """
     tem_parto = any(_d(_get(p, "data_parto")) for p in partos)
-    eh_vaca = tem_parto
+    eh_vaca = tem_parto or data_inicio_lactacao is not None
     return PerfilAnimal(
         numero=_get(animal, "numero"),
         partos=list(partos),
@@ -396,6 +407,7 @@ def montar_perfil(
         ativo=_get(animal, "ativo") is not False,
         data_baixa=_d(_get(animal, "data_baixa")),
         categoria="vaca" if eh_vaca else "novilha",
+        data_inicio_lactacao=data_inicio_lactacao,
     )
 
 
@@ -440,6 +452,20 @@ def estado_no_dia(
     if descartada_em(perfil, d):
         return EstadoDia(d, INATIVA, False, MOTIVO_A_DESCARTAR, _E_NAO_APTA)
 
+    # Só conta a lactação por indução/aborto como âncora se ela já tinha
+    # começado NA DATA reconstruída — `estado_no_dia` também olha o passado
+    # (ver docstring da função), e uma lactação que só abriu depois de `d`
+    # não existia ainda naquele dia. `perfil.eh_vaca` é uma foto fixa (feita
+    # com o dado de HOJE); para não puxar "vaca" de uma lactação que ainda
+    # nem tinha começado em `d`, recomputa aqui usando só o que já valia
+    # naquela data (parto real continua sem filtro por `d`, mesmo
+    # comportamento de sempre — quem filtra por `hoje` é classificar_animal).
+    data_inicio_lactacao = (
+        perfil.data_inicio_lactacao
+        if perfil.data_inicio_lactacao is not None and perfil.data_inicio_lactacao <= d
+        else None
+    )
+    eh_vaca = bool(perfil.partos) or data_inicio_lactacao is not None
     classificacao = classificar_animal(
         perfil.numero,
         hoje=d,
@@ -448,13 +474,14 @@ def estado_no_dia(
         aplicacoes_iatf=perfil.aplicacoes_iatf,
         pev_dias=pev_dias,
         del_max_1o_servico=del_max_1o_servico,
-        eh_vaca=perfil.eh_vaca,
+        eh_vaca=eh_vaca,
         idade_dias=perfil.idade_dias_em(d),
         peso_kg=perfil.peso_kg,
         idade_apta_dias=idade_apta_dias,
         idade_atraso_dias=idade_atraso_dias,
         peso_apta_kg=peso_apta_kg,
         raca=perfil.raca,
+        data_inicio_lactacao=data_inicio_lactacao,
     )
     estado = classificacao["estado"]
 
