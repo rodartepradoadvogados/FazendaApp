@@ -19,7 +19,7 @@ from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ChecklistItem, ColostragemBezerra, ConsumoAlimento,
     ConsumoSobra, ContaGerencial,
     CronogramaSanitario, CronogramaSanitarioAnimal, DietaLancamento, Diaria,
-    DiariaAuditoria, DiariaDia, Empreitada, EmpreitadaEtapa, Estoque, EstoqueSemen, EventoRealizado, Lote, MedicamentoComercial, Parto,
+    DiariaAuditoria, DiariaDia, Empreitada, EmpreitadaEtapa, Estoque, EstoqueSemen, EventoRealizado, Lactacao, Lote, MedicamentoComercial, Parto,
     PesagemCorporal, Patrimonio, Pedido, PedidoAnexo, Pessoa, PessoaAnexo, PortalMensagem, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
@@ -524,6 +524,19 @@ def calcular_agenda(
     # `secagens`) — sem isso, Secagem/Pré-parto e o DEL usado no BST ficavam
     # presos ao `Animal.del_dias` congelado no último GERAL.csv.
     secagens = [_model_to_dict(s) for s in session.exec(_da_fazenda(select(Secagem), Secagem)).all()]
+    # Lactações abertas: quando a origem é indução ou aborto (sem parto
+    # produtivo), a data_inicio é o "parto virtual" para efeito de DEL e PEV
+    # em estado_reprodutivo.classificar_animal.
+    inicio_lactacao_por_animal: dict[str, date] = {}
+    for lact in session.exec(_da_fazenda(select(Lactacao), Lactacao)).all():
+        if lact.data_fim is not None and lact.data_fim <= data:
+            continue  # lactação já fechada — a matriz não está mais nela
+        if lact.data_inicio is None:
+            continue
+        # Se a matriz tem um parto produtivo como âncora, a lactação é
+        # redundante — classificar_animal já calcula DEL do parto. Só
+        # interessa quando NÃO há parto (indução/aborto).
+        inicio_lactacao_por_animal[lact.numero_matriz] = lact.data_inicio
     estoque = [_model_to_dict(e) for e in session.exec(_da_fazenda(select(Estoque), Estoque)).all()]
     # Só a janela que agenda_engine.calcular() de fato usa (contas_a_pagar
     # filtra por data_referencia <= data_vencimento <= data_referencia+dias) —
@@ -703,6 +716,7 @@ def calcular_agenda(
         inducoes_cio=inducoes_cio,
         aplicacoes_iatf=aplicacoes_iatf_todas,
         peso_por_animal=peso_por_animal,
+        inicio_lactacao_por_animal=inicio_lactacao_por_animal,
         servicos_historico=servicos_todos,
     )
 

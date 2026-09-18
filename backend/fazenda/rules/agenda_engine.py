@@ -176,6 +176,10 @@ class AgendaEngine:
         # default vazio para não quebrar chamador nenhum.
         aplicacoes_iatf: list[dict] | None = None,
         peso_por_animal: dict[str, float] | None = None,
+        # Lactações abertas sem parto produtivo (indução, aborto com abertura):
+        # a data de início de cada uma é o "parto virtual" para efeito de DEL
+        # e PEV em `estado_reprodutivo.classificar_animal`. {numero_matriz -> data_inicio}.
+        inicio_lactacao_por_animal: dict[str, date] | None = None,
         # Histórico COMPLETO de serviços, só para a classificação ao vivo.
         # `servicos` continua sendo o recorte `ult_ocorrencia == 1`, porque o
         # alerta de retoque varre essa lista e dispararia para serviços antigos
@@ -303,6 +307,7 @@ class AgendaEngine:
             idade_apta_dias=int(_idade_apta_min_meses() * 30.44),
             idade_atraso_dias=int(_idade_max_1a_cobertura_meses() * 30.44),
             peso_apta_kg=_peso_apta_min(),
+            inicio_lactacao_por_animal=inicio_lactacao_por_animal,
             # `dias_atraso_apos_aptidao`/`datas_ficou_apta_por_animal` (o
             # segundo gatilho de ATRASADA da novilha, dias desde que ELA
             # ficou apta) não são passados aqui de propósito: exigem o
