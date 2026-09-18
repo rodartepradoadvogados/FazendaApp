@@ -15,7 +15,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, ParametroFazenda, Parto, PesagemCorporal, Servico
+from fazenda.models import Animal, Lactacao, ParametroFazenda, Parto, PesagemCorporal, Servico
 
 HOJE = date(2026, 7, 8)
 IDADE_APTA_DIAS = 457  # 15 meses — default de idade_apta_min_meses
@@ -81,6 +81,12 @@ def _add_parto(engine, numero, dias_atras):
         s.commit()
 
 
+def _add_lactacao(engine, numero, dias_atras, origem="inducao"):
+    with Session(engine) as s:
+        s.add(Lactacao(numero_matriz=numero, data_inicio=HOJE - timedelta(days=dias_atras), origem=origem))
+        s.commit()
+
+
 def _set_parametro(engine, chave, valor):
     with Session(engine) as s:
         s.add(ParametroFazenda(
@@ -120,6 +126,23 @@ class TestPev:
         assert r.json()["total"] == 0
         r2 = _card(c, situacao="pev", periodos=[[30, 44]])
         assert r2.json()["total"] == 1
+
+    def test_vaca_422_inducao_sem_parto_entra_em_pev_no_card(self, client):
+        """Mesmo bug real de test_estado_reprodutivo.py, agora no card da
+        Agenda Reprodutiva: vaca 422 concluiu indução de lactação (sem
+        Parto) e tinha que aparecer no card PEV, não ATRASADA."""
+        c, engine = client
+        _add_animal(engine, "422", "Vaca", idade_dias=2000, grupo_primario="Lote 1")
+        _add_lactacao(engine, "422", 10, origem="inducao")
+        r = _card(c, situacao="pev")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["total"] == 1
+        assert body["itens"][0]["numero_matriz"] == "422"
+        assert body["itens"][0]["del_dias"] == 10
+
+        r_atrasada = _card(c, situacao="vazia_atrasada")
+        assert r_atrasada.json()["total"] == 0
 
 
 class TestInseminada:

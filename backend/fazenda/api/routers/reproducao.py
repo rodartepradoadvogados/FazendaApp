@@ -655,6 +655,20 @@ def agenda_reprodutiva_card(
     servicos = session.exec(query_servicos).all()
     partos = session.exec(query_partos).all()
 
+    query_lactacao = select(Lactacao)
+    if fazenda_id is not None:
+        query_lactacao = query_lactacao.where(Lactacao.fazenda_id == fazenda_id)
+    # Lactações abertas sem parto produtivo (indução, aborto com abertura): a
+    # data_inicio é o "parto virtual" para DEL/PEV em classificar_animal, mesma
+    # lógica de /agenda/ e /indicadores/estados-reprodutivos.
+    inicio_lactacao_por_animal: dict[str, date] = {}
+    for lact in session.exec(query_lactacao).all():
+        if lact.data_fim is not None and lact.data_fim <= hoje:
+            continue
+        if lact.data_inicio is None:
+            continue
+        inicio_lactacao_por_animal[lact.numero_matriz] = lact.data_inicio
+
     peso_por_animal: dict[str, float] = {}
     pesagens_por_animal: dict[str, list[tuple[date, float]]] = {}
     for p in session.exec(query_pesagens).all():
@@ -687,6 +701,7 @@ def agenda_reprodutiva_card(
         pev_dias=pev, del_max_1o_servico=del_max, peso_por_animal=peso_por_animal,
         idade_apta_dias=idade_apta_dias, idade_atraso_dias=idade_atraso_dias, peso_apta_kg=peso_apta_kg,
         dias_atraso_apos_aptidao=dias_atraso_apos_aptidao, datas_ficou_apta_por_animal=datas_ficou_apta,
+        inicio_lactacao_por_animal=inicio_lactacao_por_animal,
     )
 
     itens = avaliar_card(

@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, ControleLeiteiro, Doenca, Lote, OcorrenciaClinica, Parto, PesagemCorporal, ProtocoloIatfAplicacao,
+    Animal, ControleLeiteiro, Doenca, Lactacao, Lote, OcorrenciaClinica, Parto, PesagemCorporal, ProtocoloIatfAplicacao,
     Sanidade, Secagem, Servico,
 )
 from fazenda.rules.estado_reprodutivo import classificar_animal
@@ -408,12 +408,14 @@ def estados_reprodutivos(
     query_partos = select(Parto)
     query_iatf = select(ProtocoloIatfAplicacao)
     query_pesagem = select(PesagemCorporal)
+    query_lactacao = select(Lactacao)
     if fazenda_id is not None:
         query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
         query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
         query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
         query_iatf = query_iatf.where(ProtocoloIatfAplicacao.fazenda_id == fazenda_id)
         query_pesagem = query_pesagem.where(PesagemCorporal.fazenda_id == fazenda_id)
+        query_lactacao = query_lactacao.where(Lactacao.fazenda_id == fazenda_id)
 
     femeas = [a for a in session.exec(query_animais).all() if not a.eh_semen and a.sexo != "M"]
 
@@ -428,6 +430,18 @@ def estados_reprodutivos(
     iatf_por: dict[str, list] = {}
     for ap in session.exec(query_iatf).all():
         iatf_por.setdefault(ap.numero_matriz, []).append(ap)
+    # Lactações abertas: quando a origem é indução ou aborto (sem parto
+    # produtivo), a data_inicio é o "parto virtual" para efeito de DEL e PEV
+    # em classificar_animal — mesma lógica de /agenda/ (agenda.py). Sem isso
+    # este endpoint (que alimenta as listas de Rebanho do app e do site, ver
+    # docstring acima) ficava com o DEL congelado em None e pulava PEV.
+    inicio_lactacao_por: dict[str, date] = {}
+    for lact in session.exec(query_lactacao).all():
+        if lact.data_fim is not None and lact.data_fim <= data:
+            continue
+        if lact.data_inicio is None:
+            continue
+        inicio_lactacao_por[lact.numero_matriz] = lact.data_inicio
 
     peso_por: dict[str, float] = {}
     ultima: dict[str, date] = {}
@@ -462,6 +476,7 @@ def estados_reprodutivos(
             idade_atraso_dias=idade_atraso,
             peso_apta_kg=peso_apta,
             raca=a.raca,
+            data_inicio_lactacao=inicio_lactacao_por.get(a.numero),
         )
         estado["categoria"] = a.categoria_abrev or a.grupo_primario or "—"
         estado["lote"] = a.grupo_primario
