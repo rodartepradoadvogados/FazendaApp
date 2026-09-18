@@ -169,9 +169,18 @@ class TestInducaoSemPartoNoProgramaReprodutivo:
         assert e.situacao == INATIVA
         assert e.motivo == MOTIVO_IMPUBERE
 
-    def test_parto_real_sempre_vence_a_lactacao_por_inducao(self):
+    def test_parto_mais_recente_que_a_lactacao_vence(self):
         p = _perfil(partos=[_parto(date(2026, 1, 1))], data_inicio_lactacao=date(2025, 6, 1))
-        e = _estado(p, date(2026, 1, 20))  # DEL do PARTO = 19, não da lactação antiga
+        e = _estado(p, date(2026, 1, 20))  # DEL do PARTO (mais recente) = 19
+        assert e.situacao == SUSPENSA
+        assert e.motivo == MOTIVO_DENTRO_PEV
+
+    def test_lactacao_mais_recente_que_um_parto_antigo_vence(self):
+        """BUG REAL da vaca 422: um parto de ~1 ano atrás não pode continuar
+        ancorando o DEL depois de uma indução recente ter reaberto a
+        lactação — a âncora é a MAIS RECENTE das duas, não sempre o parto."""
+        p = _perfil(partos=[_parto(date(2025, 1, 1))], data_inicio_lactacao=date(2026, 1, 10))
+        e = _estado(p, date(2026, 1, 20))  # DEL da LACTAÇÃO (mais recente) = 10
         assert e.situacao == SUSPENSA
         assert e.motivo == MOTIVO_DENTRO_PEV
 
