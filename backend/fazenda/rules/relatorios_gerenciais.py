@@ -140,7 +140,8 @@ def _ultima_secagem(numero: str, secagens_por_animal: dict[str, list[dict]]) -> 
 def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[dict],
                       semen: list[dict], hoje: date, secagens: list[dict] | None = None,
                       aplicacoes_iatf: list[dict] | None = None,
-                      peso_por_animal: dict[str, float] | None = None) -> dict:
+                      peso_por_animal: dict[str, float] | None = None,
+                      inicio_lactacao_por_animal: dict[str, date] | None = None) -> dict:
     pev = int(get_param("pev_dias", 45) or 45)
     meta_1a = int(get_param("meta_del_max_1o_servico", 100) or 100)
     dias_toque = int(get_param("dias_toque", 30) or 30)
@@ -176,17 +177,28 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
         idade_apta_dias=int(_idade_apta_min_meses() * 30.44),
         idade_atraso_dias=int(_idade_max_1a_cobertura_meses() * 30.44),
         peso_apta_kg=_peso_apta_min(),
+        inicio_lactacao_por_animal=inicio_lactacao_por_animal,
     )
 
     l_pev, l_inseminar, l_inseminados, l_tocar, l_reconfirmar = [], [], [], [], []
     l_prenhes, l_secagem, l_partos = [], [], []
 
+    inicio_lactacao_por_animal = inicio_lactacao_por_animal or {}
     for a in femeas:
         num = a["numero"]
         grupo = a.get("grupo_primario")
         eh_vaca = _eh_vaca(num, parto_idx)
         dparto = _ultimo_parto(num, parto_idx)
-        dpp = _dias(dparto, hoje) if dparto else None  # dias pós-parto
+        # Lactação por indução/aborto (sem Parto real) — "parto virtual" só
+        # para PEV e "a inseminar" (itens 1/2 abaixo), mesma lógica de
+        # estado_reprodutivo.classificar_animal. NÃO usado por prenhez/
+        # secagem/reconfirmação mais abaixo, que exigem uma gestação/parto de
+        # verdade — sem isso a "Lista de trabalho" (Insights > Listas) tinha
+        # o mesmo bug da vaca 422: sem Parto, `dpp` ficava None, e ela nunca
+        # entrava em "Vacas no PEV" nem em "Vacas a inseminar" depois.
+        inicio_lact = None if dparto else inicio_lactacao_por_animal.get(num)
+        dpp = _dias(dparto, hoje) if dparto else (_dias(inicio_lact, hoje) if inicio_lact else None)  # dias pós-parto (ou pós-início de lactação por indução)
+        eh_vaca_dpp = eh_vaca or inicio_lact is not None
         us = _ultimo_servico(num, serv_idx)
         ups = _ultimo_servico_positivo(num, serv_idx, parto_idx)
         # `ups` já garante vigência (mais recente, positivo, sem perda) — não
@@ -216,14 +228,14 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
         reconfirmada_efetiva = bool(ups and (ups.get("data_reconfirmacao") or not eh_vaca))
 
         # 1) Vacas no PEV (0-45 DPP)
-        if eh_vaca and dpp is not None and 0 <= dpp <= pev:
+        if eh_vaca_dpp and dpp is not None and 0 <= dpp <= pev:
             cor = "vermelho" if dpp <= 14 else "amarelo" if dpp <= 29 else "verde"
             l_pev.append({"numero": num, "grupo": grupo, "dias_pos_parto": dpp,
                           "data_parto": dparto, "cor": cor})
 
         # 2) Vacas a inseminar (terminou PEV e não está prenhe nem aguardando diagnóstico)
         precisa_inseminar = (not prenhe and not inseminada and not tem_servico_aberto) and (
-            (eh_vaca and dpp is not None and dpp >= pev) or (not eh_vaca and vazia)
+            (eh_vaca_dpp and dpp is not None and dpp >= pev) or (not eh_vaca_dpp and vazia)
         )
         # Corte de `a_descartar` só entra AQUI, não nas demais listas. Esta é
         # a única lista que pede uma AÇÃO (oferecer a vaca para serviço) que
@@ -233,7 +245,7 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
         # "previsão de partos" perderia trabalho real que ainda precisa
         # acontecer antes dela sair do rebanho.
         if precisa_inseminar and not a.get("a_descartar"):
-            if eh_vaca and dpp is not None:
+            if eh_vaca_dpp and dpp is not None:
                 if dpp > meta_1a or vazia and dpp > meta_1a:
                     cor = "vermelho"
                 elif dpp >= meta_1a - 15:
@@ -254,7 +266,7 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
                 # máxima para a 1ª cobertura e segue vazia.
                 cor = "vermelho" if estado_vivo == ATRASADA else "verde"
             l_inseminar.append({"numero": num, "grupo": grupo, "dias_pos_parto": dpp,
-                                 "eh_vaca": eh_vaca, "situacao": ROTULOS.get(estado_vivo, "—"), "cor": cor})
+                                 "eh_vaca": eh_vaca_dpp, "situacao": ROTULOS.get(estado_vivo, "—"), "cor": cor})
 
         # 3) Animais inseminados (aguardando diagnóstico)
         aguardando = inseminada or tem_servico_aberto

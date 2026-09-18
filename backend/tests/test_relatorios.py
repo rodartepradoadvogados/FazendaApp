@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, EstoqueSemen, ParametroFazenda, Parto, Secagem, Servico
+from fazenda.models import Animal, EstoqueSemen, Lactacao, ParametroFazenda, Parto, Secagem, Servico
 
 
 @pytest.fixture
@@ -187,6 +187,40 @@ class TestManejo:
         secagem = r.json()["secagem"]
         assert not any(x["numero"] == "701" for x in secagem)
         assert any(x["numero"] == "702" for x in secagem)
+
+    def test_vaca_422_inducao_sem_parto_entra_em_pev_e_depois_a_inseminar(self, client):
+        """Vaca 422: indução de lactação concluída (Lactacao aberta, sem
+        Parto) — sem `data_inicio_lactacao`, `dpp` ficava None (dparto
+        também None) e ela nunca entrava em "Vacas no PEV" nem, depois,
+        em "Vacas a inseminar" nesta Lista de trabalho (Insights >
+        Listas), mesmo já corrigida em /indicadores/ e /reproducao/."""
+        c, engine = client
+        hoje = _hoje()
+        with Session(engine) as s:
+            s.add(Animal(numero="422", sexo="F", ativo=True, sit_rep="Vaz. atr."))
+            s.add(Lactacao(numero_matriz="422", data_inicio=hoje - timedelta(days=10), origem="inducao"))
+            s.commit()
+        r = c.get("/relatorios/manejo")
+        dados = r.json()
+        pev = next((x for x in dados["pev"] if x["numero"] == "422"), None)
+        assert pev is not None, "vaca 422 (indução, sem parto) não apareceu em Vacas no PEV"
+        assert pev["dias_pos_parto"] == 10
+        assert not any(x["numero"] == "422" for x in dados["a_inseminar"])
+
+    def test_vaca_422_apos_pev_vencido_aparece_a_inseminar(self, client):
+        c, engine = client
+        hoje = _hoje()
+        with Session(engine) as s:
+            s.add(Animal(numero="422", sexo="F", ativo=True, sit_rep="Vaz. atr."))
+            s.add(Lactacao(numero_matriz="422", data_inicio=hoje - timedelta(days=120), origem="inducao"))
+            s.commit()
+        r = c.get("/relatorios/manejo")
+        dados = r.json()
+        assert not any(x["numero"] == "422" for x in dados["pev"])
+        a_inseminar = next((x for x in dados["a_inseminar"] if x["numero"] == "422"), None)
+        assert a_inseminar is not None, "vaca 422 passou do PEV mas não apareceu em Vacas a inseminar"
+        assert a_inseminar["eh_vaca"] is True
+        assert a_inseminar["cor"] == "vermelho"  # 120 dias > meta de 100 dias p/ 1ª IA
 
 
 class TestGerencial:
