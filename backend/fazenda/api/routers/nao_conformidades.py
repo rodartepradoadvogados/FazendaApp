@@ -170,7 +170,14 @@ def relatorio_nao_conformidades(
     # marcação informativa de estágio, não um problema a corrigir. ----
     if tem_modulo(user, "reproducao"):
         animais, servicos, partos, secagens = _dados_manejo(session, fazenda_id)
-        aplicacoes_iatf, peso_por_animal = _dados_estado_vivo(session, fazenda_id)
+        # BUG CORRIGIDO: _dados_estado_vivo passou a devolver 3 valores desde
+        # a correção da vaca 422 (indução de lactação sem Parto, PR #796/797)
+        # — este chamador nunca foi atualizado e sempre lançava
+        # `ValueError: too many values to unpack` (500 no widget de Não
+        # Conformidades para quem tem módulo "reprodução"). Também passa
+        # `inicio_lactacao_por_animal` adiante para `rg.relatorios_manejo`,
+        # mesmo padrão já usado em relatorios.py::relatorios_manejo.
+        aplicacoes_iatf, peso_por_animal, inicio_lactacao_por_animal = _dados_estado_vivo(session, fazenda_id)
         # BUG DE SEGURANÇA CORRIGIDO: mesmo vazamento de relatorios.py — sem
         # filtro, trazia o estoque de sêmen de todas as fazendas.
         query_semen = select(EstoqueSemen)
@@ -178,7 +185,8 @@ def relatorio_nao_conformidades(
             query_semen = query_semen.where(EstoqueSemen.fazenda_id == fazenda_id)
         semen = [s.model_dump() for s in session.exec(query_semen).all()]
         manejo = rg.relatorios_manejo(animais, servicos, partos, semen, hoje, secagens=secagens,
-                                       aplicacoes_iatf=aplicacoes_iatf, peso_por_animal=peso_por_animal)
+                                       aplicacoes_iatf=aplicacoes_iatf, peso_por_animal=peso_por_animal,
+                                       inicio_lactacao_por_animal=inicio_lactacao_por_animal)
         for chave_lista, label in (
             # "Atrasadas", não "Vacas atrasadas": a lista semaforizada conta
             # novilha em atraso para a 1ª cobertura junto com a vaca que
