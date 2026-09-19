@@ -50,7 +50,7 @@ function FaixaFiltro({ titulo, unidade, min, max, onMin, onMax }: {
   return (
     <div>
       <p style={label}>{titulo}{unidade ? ` (${unidade})` : ""}</p>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
         <input type="number" placeholder="de" value={min} onChange={(e) => onMin(e.target.value)} style={numInput} />
         <span style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>até</span>
         <input type="number" placeholder="até" value={max} onChange={(e) => onMax(e.target.value)} style={numInput} />
@@ -295,7 +295,7 @@ export default function CombinadorListas() {
           Configure um ou mais parâmetros para filtrar o rebanho. Com 2 ou mais parâmetros ativos, escolha como cruzá-los.
         </p>
 
-        <div style={{ display: "grid", gap: "0.9rem", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}>
+        <div style={{ display: "grid", gap: "0.9rem", gridTemplateColumns: "repeat(auto-fill, minmax(232px, 1fr))" }}>
           <div>
             <p style={label}>Lote</p>
             <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
@@ -318,7 +318,7 @@ export default function CombinadorListas() {
                 <button key={u} type="button" style={{ ...chip(idadeUnidade === u), fontSize: "0.72rem", padding: "0.2rem 0.5rem" }} onClick={() => setIdadeUnidade(u)}>{u}</button>
               ))}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
               <input type="number" placeholder="de" value={idadeMin} onChange={(e) => setIdadeMin(e.target.value)} style={numInput} />
               <span style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>até</span>
               <input type="number" placeholder="até" value={idadeMax} onChange={(e) => setIdadeMax(e.target.value)} style={numInput} />
