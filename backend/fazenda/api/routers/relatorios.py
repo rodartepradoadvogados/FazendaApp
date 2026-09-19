@@ -223,16 +223,21 @@ def combinador_listas(
         if s.numero_matriz:
             secagens_idx.setdefault(s.numero_matriz, []).append(s)
     ult_peso: dict[str, float] = {}
+    ult_data_pesagem: dict[str, date] = {}
     pesagens_idx: dict[str, list[tuple[date, float]]] = {}
     for p in session.exec(query_pesagens).all():
         if p.peso_kg:
             ult_peso[p.numero_matriz] = p.peso_kg  # ordenado asc — a última pesagem prevalece
             if p.data_pesagem:
                 pesagens_idx.setdefault(p.numero_matriz, []).append((p.data_pesagem, p.peso_kg))
+                ult_data_pesagem[p.numero_matriz] = p.data_pesagem
     ult_producao: dict[str, float] = {}
+    ult_data_producao: dict[str, date] = {}
     for c in session.exec(query_controles).all():
         if c.producao_kg is not None:
             ult_producao[c.numero_matriz] = c.producao_kg  # ordenado asc — o último controle prevalece
+            if c.data_controle:
+                ult_data_producao[c.numero_matriz] = c.data_controle
     # Lactações abertas sem Parto (indução, aborto) — mesmo "parto virtual"
     # já usado em agenda.py/indicadores.py/relatorios.py::_dados_estado_vivo.
     inicio_lactacao_por_animal: dict[str, date] = {}
@@ -261,6 +266,8 @@ def combinador_listas(
             peso_apta_kg=peso_apta_kg, idade_atraso_dias=idade_atraso_dias,
             dias_atraso_apos_aptidao=dias_atraso_apos_aptidao,
             data_inicio_lactacao=inicio_lactacao_por_animal.get(a.numero),
+            data_ultima_pesagem=ult_data_pesagem.get(a.numero),
+            data_ultima_producao=ult_data_producao.get(a.numero),
         )
         animais_saida.append(ctx)
         if a.grupo_primario:

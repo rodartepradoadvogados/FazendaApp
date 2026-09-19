@@ -11,7 +11,9 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, EstoqueSemen, Lactacao, ParametroFazenda, Parto, Secagem, Servico
+from fazenda.models import (
+    Animal, ControleLeiteiro, EstoqueSemen, Lactacao, ParametroFazenda, Parto, PesagemCorporal, Secagem, Servico,
+)
 
 
 @pytest.fixture
@@ -554,3 +556,24 @@ class TestCombinadorListas:
         vaca = next(a for a in dados["animais"] if a["numero"] == "422")
         assert vaca["situacao_produtiva"] == "lactacao"
         assert vaca["dias_pos_parto"] == 35
+
+    def test_traz_data_da_ultima_pesagem_e_producao(self, client):
+        """As colunas dinâmicas "Peso"/"Produção" do Combinador de Listas
+        mostram valor + data — o endpoint precisa expor os dois, não só o
+        valor mais recente (já usado pelo filtro de faixa)."""
+        c, engine = client
+        hoje = _hoje()
+        with Session(engine) as s:
+            s.add(Animal(numero="951", sexo="F", ativo=True, categoria_abrev="Vaca",
+                          data_nasc=hoje - timedelta(days=1800)))
+            s.add(PesagemCorporal(numero_matriz="951", data_pesagem=hoje - timedelta(days=20), peso_kg=580))
+            s.add(PesagemCorporal(numero_matriz="951", data_pesagem=hoje - timedelta(days=5), peso_kg=590))
+            s.add(ControleLeiteiro(numero_matriz="951", data_controle=hoje - timedelta(days=3), producao_kg=20))
+            s.add(ControleLeiteiro(numero_matriz="951", data_controle=hoje - timedelta(days=1), producao_kg=22))
+            s.commit()
+        dados = c.get("/relatorios/combinador-listas").json()
+        vaca = next(a for a in dados["animais"] if a["numero"] == "951")
+        assert vaca["peso_kg"] == 590
+        assert vaca["dias_desde_pesagem"] == 5
+        assert vaca["producao_kg"] == 22
+        assert vaca["dias_desde_producao"] == 1

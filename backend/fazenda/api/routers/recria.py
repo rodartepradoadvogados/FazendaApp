@@ -700,6 +700,7 @@ def _contexto_categoria(
         "dias_gestacao": dias_gestacao, "dias_desde_servico": dias_desde_servico,
         "dias_para_parto": dias_para_parto, "dias_pos_parto": dias_pos_parto,
         "situacao_produtiva": situacao_produtiva,
+        "data_ficou_apta": data_ficou_apta,
     }
 
 

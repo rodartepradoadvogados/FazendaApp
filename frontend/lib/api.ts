@@ -1892,6 +1892,10 @@ export type AnimalCombinador = {
   dias_gestacao: number | null;
   dias_desde_servico: number | null;
   situacao_reprodutiva: "vazia" | "vazia_atrasada" | "inseminada" | "prenha" | null;
+  dias_desde_pesagem: number | null;
+  dias_desde_producao: number | null;
+  dias_desde_aptidao: number | null;
+  apta: boolean | null;
 };
 export type CombinadorListasData = {
   animais: AnimalCombinador[];

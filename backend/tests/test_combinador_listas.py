@@ -22,7 +22,8 @@ HOJE = date(2026, 9, 19)
 
 def _ctx(numero, *, data_nasc=None, raca="Holandes", lote="LOTE 1", categoria_abrev=None,
          peso=550.0, producao_kg=None, sit_rep=None, servicos=None, partos=None, secagens=None,
-         pesagens=None, categorias_cadastro=None, data_inicio_lactacao=None):
+         pesagens=None, categorias_cadastro=None, data_inicio_lactacao=None,
+         data_ultima_pesagem=None, data_ultima_producao=None):
     return contexto_animal_combinador(
         numero=numero, data_nasc=data_nasc, raca=raca, lote=lote, categoria_abrev=categoria_abrev,
         peso=peso, producao_kg=producao_kg, sit_rep=sit_rep, hoje=HOJE,
@@ -31,6 +32,7 @@ def _ctx(numero, *, data_nasc=None, raca="Holandes", lote="LOTE 1", categoria_ab
         pev_dias=45, del_max_1o_servico=90, idade_apta_dias=420, peso_apta_kg=280,
         idade_atraso_dias=450, dias_atraso_apos_aptidao=30,
         data_inicio_lactacao=data_inicio_lactacao,
+        data_ultima_pesagem=data_ultima_pesagem, data_ultima_producao=data_ultima_producao,
     )
 
 
@@ -197,3 +199,55 @@ class TestCombinacoesIncompativeis:
         ctx = _ctx("13", data_nasc=HOJE - timedelta(days=200), categoria_abrev="Bezerra")
         assert ctx["categoria_etaria"] == "bezerra"
         assert ctx["situacao_reprodutiva"] is None
+
+
+class TestColunasDinamicasCampos:
+    """Campos que só existem para alimentar as colunas dinâmicas do
+    resultado do Combinador (Peso/Produção com data, e "Apta desde"/apta) —
+    ver frontend/components/CombinadorListas.tsx."""
+
+    def test_dias_desde_pesagem_e_producao(self):
+        ctx = _ctx(
+            "14", peso=610.0, producao_kg=28.0,
+            data_ultima_pesagem=HOJE - timedelta(days=12),
+            data_ultima_producao=HOJE - timedelta(days=1),
+        )
+        assert ctx["dias_desde_pesagem"] == 12
+        assert ctx["dias_desde_producao"] == 1
+
+    def test_sem_data_de_pesagem_ou_producao_fica_none(self):
+        ctx = _ctx("15", peso=610.0, producao_kg=None)
+        assert ctx["dias_desde_pesagem"] is None
+        assert ctx["dias_desde_producao"] is None
+
+    def test_novilha_apta_dentro_do_prazo(self):
+        """Passou da idade E do peso de aptidão há 10 dias, sem serviço —
+        ainda dentro da folga de dias_atraso_apos_aptidao (30d) e abaixo do
+        teto de idade_atraso_dias (450d): estado é APTA, não ATRASADA."""
+        ctx = _ctx(
+            "16", data_nasc=HOJE - timedelta(days=430), categoria_abrev="Novilha",
+            pesagens=[(HOJE - timedelta(days=400), 300.0)],
+        )
+        assert ctx["dias_desde_aptidao"] == 10
+        assert ctx["apta"] is True
+
+    def test_novilha_atrasada_depois_de_apta(self):
+        """480 dias de idade > idade_atraso_dias (450d): ATRASADA — a coluna
+        "Apta desde" tem que sinalizar apta=False (bolinha "Inapto")."""
+        ctx = _ctx(
+            "17", data_nasc=HOJE - timedelta(days=480), categoria_abrev="Novilha",
+            pesagens=[(HOJE - timedelta(days=460), 300.0)],
+        )
+        assert ctx["dias_desde_aptidao"] == 60
+        assert ctx["apta"] is False
+
+    def test_novilha_que_nunca_atingiu_peso_de_aptidao_fica_none(self):
+        """Nenhuma pesagem bateu peso_apta_kg (280kg) — data_ficou_apta
+        indefinida (não é erro: é "ainda não dá para afirmar"), a coluna
+        mostra "—", não uma bolinha vermelha."""
+        ctx = _ctx(
+            "18", data_nasc=HOJE - timedelta(days=480), categoria_abrev="Novilha",
+            pesagens=[(HOJE - timedelta(days=460), 250.0)],
+        )
+        assert ctx["dias_desde_aptidao"] is None
+        assert ctx["apta"] is None

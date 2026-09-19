@@ -67,6 +67,7 @@ from typing import Any
 
 from fazenda.api.routers.recria import _contexto_categoria, classificar_categoria
 from fazenda.models import CategoriaManejo
+from fazenda.rules.estado_reprodutivo import ATRASADA
 
 
 def categoria_etaria(categoria_abrev: str | None) -> str | None:
@@ -110,8 +111,15 @@ def contexto_animal_combinador(
     idade_atraso_dias: int | None,
     dias_atraso_apos_aptidao: int | None,
     data_inicio_lactacao: date | None,
+    data_ultima_pesagem: date | None = None,
+    data_ultima_producao: date | None = None,
 ) -> dict:
-    """Atributos filtráveis de UM animal para o Combinador de Listas."""
+    """Atributos filtráveis de UM animal para o Combinador de Listas.
+
+    `data_ultima_pesagem`/`data_ultima_producao`: só para as colunas "Peso"/
+    "Produção" do resultado ao vivo mostrarem também a data do último
+    lançamento (não só o valor) — o próprio filtro de faixa já usa apenas
+    `peso`/`producao_kg`."""
     dias = (hoje - data_nasc).days if data_nasc else None
     ctx = _contexto_categoria(
         dias, peso, sit_rep, hoje, servicos, partos, secagens, raca=raca, numero=numero,
@@ -121,6 +129,7 @@ def contexto_animal_combinador(
         data_inicio_lactacao=data_inicio_lactacao,
     )
     categoria_nome = classificar_categoria(ctx, categorias_cadastro) if categorias_cadastro else None
+    data_ficou_apta = ctx["data_ficou_apta"]
     return {
         "numero": numero,
         "lote": lote,
@@ -135,4 +144,15 @@ def contexto_animal_combinador(
         "dias_gestacao": ctx["dias_gestacao"],
         "dias_desde_servico": ctx["dias_desde_servico"],
         "situacao_reprodutiva": ctx["situacao_reprodutiva_viva"],
+        "dias_desde_pesagem": (hoje - data_ultima_pesagem).days if data_ultima_pesagem else None,
+        "dias_desde_producao": (hoje - data_ultima_producao).days if data_ultima_producao else None,
+        # "Apta desde" (coluna do Combinador) — a mesma data que
+        # estado_reprodutivo.classificar_animal já usa para o gatilho de
+        # ATRASADA por tempo. None = ainda não alcançou idade/peso de
+        # aptidão (bezerra/recria), não é um "erro de dado".
+        "dias_desde_aptidao": (hoje - data_ficou_apta).days if data_ficou_apta else None,
+        # True = já apta (ou além: inseminada/prenha); False = alcançou a
+        # aptidão mas está ATRASADA (nunca foi coberta a tempo); None = não
+        # se aplica (ainda não chegou a data de aptidão).
+        "apta": None if data_ficou_apta is None else ctx["estado_vivo"] != ATRASADA,
     }
