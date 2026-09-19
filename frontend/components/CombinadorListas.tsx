@@ -506,7 +506,7 @@ export default function CombinadorListas() {
                   {loteVisiveis.map((l) => (
                     <ChipComContagem key={l.valor} label={l.valor} ativo={lotes.includes(l.valor)} contagem={l.contagem} compacto onClick={() => toggleEm(lotes, setLotes, l.valor)} />
                   ))}
-                  {loteRestantes > 0 && (
+                  {(loteExpandido || loteRestantes > 0) && loteFiltrados.length > 8 && (
                     <button type="button" style={{ ...chip(false, true), border: "1px dashed var(--border)" }} onClick={() => setLoteExpandido((v) => !v)}>
                       {loteExpandido ? "Mostrar menos" : `Mostrar mais (${loteRestantes})`}
                     </button>
@@ -538,7 +538,7 @@ export default function CombinadorListas() {
                   {cadastroVisiveis.map((c) => (
                     <ChipComContagem key={c.valor} label={c.valor} ativo={categoriaCadastro.includes(c.valor)} contagem={c.contagem} compacto onClick={() => toggleEm(categoriaCadastro, setCategoriaCadastro, c.valor)} />
                   ))}
-                  {cadastroRestantes > 0 && (
+                  {(cadastroExpandido || cadastroRestantes > 0) && cadastroFiltrados.length > 8 && (
                     <button type="button" style={{ ...chip(false, true), border: "1px dashed var(--border)" }} onClick={() => setCadastroExpandido((v) => !v)}>
                       {cadastroExpandido ? "Mostrar menos" : `Mostrar mais (${cadastroRestantes})`}
                     </button>
