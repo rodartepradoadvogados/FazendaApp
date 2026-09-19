@@ -593,6 +593,7 @@ def _contexto_categoria(
     idade_atraso_dias: int | None = None,
     data_nasc: date | None = None, pesagens: list[tuple[date, float]] | None = None,
     dias_atraso_apos_aptidao: int | None = None,
+    data_inicio_lactacao: date | None = None,
 ) -> dict:
     """Monta o contexto de classificação de um animal a partir dos lançamentos
     já feitos (serviço/IA, parto, secagem) — mesma referência de cálculo de
@@ -611,7 +612,17 @@ def _contexto_categoria(
     de ATRASADA da novilha (dias desde que ELA ficou apta, em paralelo ao
     teto de idade) — opcionais porque nem todo chamador tem o histórico à
     mão; ausentes, o gatilho simplesmente não dispara (só o teto de idade
-    vale), sem quebrar nada."""
+    vale), sem quebrar nada.
+
+    `data_inicio_lactacao`: Lactacao aberta sem Parto (indução/aborto) —
+    opcional, padrão None (comportamento idêntico ao de antes para quem não
+    passa), porque por ora só o chamador novo (Combinador de Listas) lê essa
+    tabela; composicao_categorias/ficha do animal/lote_criterios continuam
+    sem ela. Sem isso, uma vaca induzida sem parto real nunca teria
+    `situacao_produtiva`/`dias_pos_parto` computados — mesma classe do bug da
+    vaca 422 (já corrigida em relatorios_gerenciais.py e
+    estado_reprodutivo.classificar_animal; este ponto de reuso ainda estava
+    pendente)."""
     if pev_dias is None or del_max_1o_servico is None or idade_apta_dias is None or peso_apta_kg is None:
         _pev, _del_max, _idade_apta, _peso_apta, _idade_atraso, _dias_pos_apt = _parametros_estado_vivo()
         pev_dias = pev_dias if pev_dias is not None else _pev
@@ -641,13 +652,18 @@ def _contexto_categoria(
 
     ult_parto = max((p.data_parto for p in partos if p.data_parto), default=None)
     ult_secagem = max((s.data_secagem for s in secagens if s.data_secagem), default=None)
-    if ult_secagem and (not ult_parto or ult_secagem > ult_parto):
+    # Âncora do início da lactação atual: parto real OU, se mais recente (ou
+    # se não há parto nenhum — indução/aborto), a Lactacao aberta manualmente
+    # — nunca o parto sozinho, senão uma lactação induzida mais nova que o
+    # último parto real ficava invisível aqui (mesmo bug da vaca 422).
+    ancora_lactacao = max((d for d in (ult_parto, data_inicio_lactacao) if d is not None), default=None)
+    if ult_secagem and (not ancora_lactacao or ult_secagem > ancora_lactacao):
         situacao_produtiva = "seca"
-    elif ult_parto:
+    elif ancora_lactacao:
         situacao_produtiva = "lactacao"
     else:
-        situacao_produtiva = None  # novilha — nunca pariu, não se aplica
-    dias_pos_parto = (hoje - ult_parto).days if ult_parto else None
+        situacao_produtiva = None  # novilha — nunca pariu nem foi induzida, não se aplica
+    dias_pos_parto = (hoje - ancora_lactacao).days if ancora_lactacao else None
 
     # Estado reprodutivo AO VIVO — mesmo motor canônico das regras R1-R9 do
     # programa reprodutivo (estado_reprodutivo.classificar_animal), em vez do
@@ -670,10 +686,11 @@ def _contexto_categoria(
     estado_vivo = classificar_animal(
         numero or "", hoje=hoje, partos=partos, servicos=servicos, aplicacoes_iatf=[],
         pev_dias=pev_dias, del_max_1o_servico=del_max_1o_servico,
-        eh_vaca=bool(ult_parto), idade_dias=dias, peso_kg=peso,
+        eh_vaca=bool(ancora_lactacao), idade_dias=dias, peso_kg=peso,
         idade_apta_dias=idade_apta_dias, peso_apta_kg=peso_apta_kg,
         idade_atraso_dias=idade_atraso_dias, raca=raca,
         dias_atraso_apos_aptidao=dias_atraso_apos_aptidao, data_ficou_apta=data_ficou_apta,
+        data_inicio_lactacao=data_inicio_lactacao,
     )["estado"]
 
     return {

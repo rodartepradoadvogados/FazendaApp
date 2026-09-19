@@ -1876,6 +1876,33 @@ export async function fetchRelatoriosManejo() {
   if (!res.ok) throw new Error(`Relatórios de manejo error: ${res.status}`);
   return res.json();
 }
+
+// ── Combinador de Listas (Insights > Listas) ──
+export type AnimalCombinador = {
+  numero: string;
+  lote: string | null;
+  categoria_etaria: "vaca" | "novilha" | "bezerra" | null;
+  categoria_cadastro: string | null;
+  idade_dias: number | null;
+  peso_kg: number | null;
+  producao_kg: number | null;
+  situacao_produtiva: "lactacao" | "seca" | null;
+  dias_pos_parto: number | null;
+  dias_para_parto: number | null;
+  dias_gestacao: number | null;
+  dias_desde_servico: number | null;
+  situacao_reprodutiva: "vazia" | "vazia_atrasada" | "inseminada" | "prenha" | null;
+};
+export type CombinadorListasData = {
+  animais: AnimalCombinador[];
+  lotes: string[];
+  categorias_cadastro: { id: number; nome: string; ordem: number }[];
+};
+export async function fetchCombinadorListas(): Promise<CombinadorListasData> {
+  const res = await authFetch(`${API}/relatorios/combinador-listas`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Combinador de listas error: ${res.status}`);
+  return res.json();
+}
 export async function fetchRelatorioGerencial(nome: string, params?: Record<string, string | number>) {
   const qs = new URLSearchParams();
   Object.entries(params || {}).forEach(([k, v]) => qs.set(k, String(v)));

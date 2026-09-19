@@ -512,3 +512,45 @@ class TestNovilhaAtrasadaNaListaAInseminar:
         dados = c.get("/relatorios/manejo").json()
         item = next(x for x in dados["a_inseminar"] if x["numero"] == "942")
         assert item["cor"] == "verde"
+
+
+class TestCombinadorListas:
+    """GET /relatorios/combinador-listas — dados-base do novo Combinador de
+    Listas (Insights > Listas), ver fazenda/rules/combinador_listas.py."""
+
+    def test_traz_atributos_por_animal_lotes_e_categorias(self, client):
+        c, engine = client
+        hoje = _hoje()
+        with Session(engine) as s:
+            s.add(Animal(numero="950", sexo="F", ativo=True, categoria_abrev="Vaca",
+                          grupo_primario="LOTE 1", data_nasc=hoje - timedelta(days=1800)))
+            s.add(Parto(numero_matriz="950", data_parto=hoje - timedelta(days=40)))
+            s.add(Animal(numero="951", sexo="F", ativo=True, categoria_abrev="Novilha",
+                          grupo_primario="LOTE 2", data_nasc=hoje - timedelta(days=500)))
+            s.add(Animal(numero="952", sexo="M", ativo=True, eh_semen=True))  # excluído (macho/sêmen)
+            s.commit()
+        dados = c.get("/relatorios/combinador-listas").json()
+        numeros = {a["numero"] for a in dados["animais"]}
+        assert numeros == {"950", "951"}
+        assert set(dados["lotes"]) == {"LOTE 1", "LOTE 2"}
+        vaca = next(a for a in dados["animais"] if a["numero"] == "950")
+        assert vaca["situacao_produtiva"] == "lactacao"
+        assert vaca["dias_pos_parto"] == 40
+        assert vaca["categoria_etaria"] == "vaca"
+        assert vaca["lote"] == "LOTE 1"
+
+    def test_vaca_induzida_sem_parto_aparece_em_lactacao(self, client):
+        """Mesma classe do bug da vaca 422 — agora coberta também no
+        Combinador de Listas (ver TestContextoAnimalCombinador em
+        tests/test_combinador_listas.py para a cobertura unitária)."""
+        c, engine = client
+        hoje = _hoje()
+        with Session(engine) as s:
+            s.add(Animal(numero="422", sexo="F", ativo=True, categoria_abrev="Vaca",
+                          data_nasc=hoje - timedelta(days=2000)))
+            s.add(Lactacao(numero_matriz="422", data_inicio=hoje - timedelta(days=35), data_fim=None))
+            s.commit()
+        dados = c.get("/relatorios/combinador-listas").json()
+        vaca = next(a for a in dados["animais"] if a["numero"] == "422")
+        assert vaca["situacao_produtiva"] == "lactacao"
+        assert vaca["dias_pos_parto"] == 35
