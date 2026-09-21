@@ -125,6 +125,16 @@ class Animal(SQLModel, table=True):
     # NOVA aplicação de BST é lançada para o animal (ver aplicar_bst_lote).
     # Até lá fica na lista "Incluir no próximo BST" (bst_reanalise).
     aguardando_nova_aplicacao_bst: bool = False
+    # Marcado ao confirmar "Entrou em lactação?" de um protocolo de indução
+    # de lactação (POST /producao/inducao-lactacao/.../confirmar, campo
+    # incluir_bst) — o protocolo de indução já aplica BST nele mesmo, então
+    # o animal entra direto em "Incluir no próximo BST" (junto com
+    # aguardando_nova_aplicacao_bst=True) sem esperar o DEL mínimo normal.
+    # Só existe para o front distinguir esse caso com a notinha "(ind.lact.)"
+    # (ver agenda_engine.py); limpa junto com aguardando_nova_aplicacao_bst
+    # assim que uma aplicação real de BST é lançada, ou se marcada como
+    # inapta manualmente.
+    bst_pendente_inducao_lactacao: bool = False
 
 
 # ---------------------------------------------------------------------------

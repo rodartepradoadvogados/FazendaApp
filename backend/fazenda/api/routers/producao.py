@@ -1997,6 +1997,11 @@ def listar_inducao_lactacao_ativos(
 class ConfirmarInducaoLactacaoIn(BaseModel):
     entrou_em_lactacao: bool
     data_inicio: date | None = None  # override da data sugerida (última etapa) — ver inducao_concluida
+    # Pergunta extra ao confirmar: o protocolo de indução já aplica BST nela
+    # mesmo, então marcar aqui já deixa o animal em "Incluir no próximo BST"
+    # (bst_reanalise) sem esperar o DEL mínimo normal — ver
+    # fazenda.models.animais.Animal.bst_pendente_inducao_lactacao.
+    incluir_bst: bool = False
 
 
 @router.post("/inducao-lactacao/{lancamento_id}/{numero_matriz}/confirmar")
@@ -2058,6 +2063,22 @@ def confirmar_inducao_lactacao(
     regras_lactacao.sincronizar_del_do_animal(
         session, numero_matriz=numero_matriz, fazenda_id=fazenda_id,
     )
+
+    # Pergunta extra: o protocolo de indução já aplica BST nela mesmo, então
+    # "sim" já deixa o animal em "Incluir no próximo BST" (bst_reanalise, ver
+    # agenda_engine.py) sem esperar o DEL mínimo normal — a notinha
+    # "(ind.lact.)" na lista de BST é o que avisa o motivo pra quem for
+    # lançar a próxima aplicação.
+    if dados.incluir_bst:
+        query_animal = select(Animal).where(Animal.numero == numero_matriz)
+        if fazenda_id is not None:
+            query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+        animal = session.exec(query_animal).first()
+        if animal:
+            animal.aguardando_nova_aplicacao_bst = True
+            animal.bst_pendente_inducao_lactacao = True
+            session.add(animal)
+
     session.commit()
     return {"entrou_em_lactacao": True, "lactacao_id": lactacao.id}
 

@@ -39,6 +39,12 @@ class ResultadoBST:
     # último parto ou sem próxima aplicação agendada) — ver `agenda_engine.py`.
     del_atual: int | None = None
     del_projetado: int | None = None
+    # True só para quem caiu em bst_reanalise via `Animal.
+    # bst_pendente_inducao_lactacao` (protocolo de indução de lactação que já
+    # aplica BST nele mesmo) — o front usa isto pra mostrar a notinha
+    # "(ind.lact.)", em vez de tentar reconhecer o caso pelo texto de
+    # `motivo_exclusao`. Ver agenda_engine.py.
+    origem_inducao_lactacao: bool = False
 
 
 def avaliar_bst(
