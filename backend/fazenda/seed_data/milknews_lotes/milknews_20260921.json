@@ -1,0 +1,36 @@
+[
+  {
+    "manchete": "Danone vai fechar fábrica de leite em Ochsenfurt, na Alemanha, e concentra produção em Fulda",
+    "resumo": "A Danone anunciou o fechamento da fábrica de leite de Ochsenfurt, na Baviera, no quarto trimestre de 2026, eliminando cerca de 230 postos de trabalho. A empresa cita utilização da capacidade industrial hoje na metade do nível registrado em 2019 e custos acima da média das demais unidades da companhia na Europa. Dados: ESM Magazine.",
+    "materia": "A Danone anunciou que vai fechar a fábrica de leite de Ochsenfurt, na Baviera, no quarto trimestre de 2026, eliminando cerca de 230 postos de trabalho. Segundo a empresa, a unidade opera hoje com metade da capacidade utilizada em 2019, e os custos de produção no local superam a média das demais fábricas da Danone na Europa — uma combinação que a companhia considera insustentável mesmo após investimentos recentes na planta.\n\nA produção será concentrada na fábrica de Fulda, também na Alemanha, que hoje emprega cerca de 600 pessoas e é dedicada a fórmulas infantis e nutrição médica. O reforço em Fulda integra a estratégia global \"Renew Danone\", de reorganização das operações industriais da companhia no país.\n\nPara os funcionários de Ochsenfurt, a Danone prevê realocação para outras unidades sempre que possível, além de programas de requalificação profissional. Para quem não puder ser reaproveitado, a empresa negociará com o conselho de trabalhadores (Works Council) um plano social que deve incluir aposentadoria antecipada e mecanismos de transição previdenciária.",
+    "link": "/news#milknews-2026-09-21-01",
+    "data_publicacao": "2026-09-21",
+    "fontes": [
+      "https://www.esmmagazine.com/supply-chain/danone-restructures-production-in-germany-with-planned-closure-of-milk-factory-286226",
+      "https://dairynews.today/news/danone-to-shut-ochsenfurt-dairy-plant-by-2026-amid-german-restructuring.html",
+      "https://www.gamaconsumer.com/germany-danone-close-ochsenfurt-factory/"
+    ]
+  },
+  {
+    "manchete": "Estudo brasileiro estima herdabilidade da mastite subclínica em vacas Girolando a pasto",
+    "resumo": "Pesquisa com 748 lactações de 279 vacas Girolando do rebanho do Instituto Federal do Triângulo Mineiro, em Uberaba (MG), estimou herdabilidade baixa a moderada (0,13 a 0,15) para mastite subclínica nos quartos do úbere, com correlação genética entre quartos acima de 0,80. Dados: JDS Communications.",
+    "materia": "Um estudo conduzido com o rebanho de pesquisa do Instituto Federal de Educação, Ciência e Tecnologia do Triângulo Mineiro (IFTM), em Uberaba (MG), estimou parâmetros genéticos para a ocorrência de mastite subclínica em vacas Girolando criadas a pasto. A pesquisa, publicada na JDS Communications, analisou 748 lactações de 279 vacas nascidas entre 2012 e 2024, avaliando separadamente cada um dos quatro quartos do úbere.\n\nOs resultados apontaram herdabilidade baixa a moderada para a mastite subclínica, entre 0,13 e 0,15 conforme o quarto avaliado, e repetibilidade moderada, entre 0,35 e 0,41. As correlações genéticas entre os diferentes quartos do úbere foram altas, superiores a 0,80, o que indica uma base genética em grande parte compartilhada entre eles; já as correlações fenotípicas ficaram entre 0,50 e 0,59.\n\nPara os autores, a herdabilidade baixa a moderada indica que fatores ambientais pesam mais do que a genética na ocorrência da doença, o que torna o progresso genético isolado mais lento. Na prática, isso reforça que o manejo — rotina de ordenha, higiene e ambiente das vacas — tende a ter impacto mais imediato sobre a mastite subclínica do que a seleção genética isolada, sem descartar o valor de incluir o caráter em programas de melhoramento de longo prazo.",
+    "link": "/news#milknews-2026-09-21-02",
+    "data_publicacao": "2026-09-21",
+    "fontes": [
+      "https://pmc.ncbi.nlm.nih.gov/articles/PMC13464183/",
+      "https://pubmed.ncbi.nlm.nih.gov/42592437/"
+    ]
+  },
+  {
+    "manchete": "Custo de produção de leite sobe 4,13% no ano no Brasil e supera a inflação, aponta Embrapa",
+    "resumo": "O Índice de Custos de Produção de Leite (ICPLeite/Embrapa), calculado com propriedades de Minas Gerais, subiu 1,47% em agosto e acumula alta de 4,13% nos oito primeiros meses de 2026 — acima da inflação oficial de 3,11% no período. Minerais (+10,89%) e concentrados (+3,35%) puxaram o avanço em agosto. Dados: Embrapa/ICPLeite.",
+    "materia": "O Índice de Custos de Produção de Leite (ICPLeite), calculado pela Embrapa com base em propriedades rurais de Minas Gerais, subiu 1,47% em agosto ante julho, o segundo mês seguido de alta expressiva. No acumulado de janeiro a agosto de 2026, o custo de produção avança 4,13%, superando a inflação oficial do período, de 3,11%, segundo o IBGE.\n\nO grupo de minerais teve a maior alta em agosto, de 10,89%, enquanto o grupo concentrado — que reúne itens usados na alimentação dos animais, como ração e milho — avançou 3,35% no mês. Em 12 meses até agosto, o índice acumula alta de 3,73%.\n\nA Embrapa associa o cenário a uma pressão dupla sobre a margem dos produtores: custos em trajetória de alta e expectativa de recuo nos preços pagos pelo leite no segundo semestre, o que tende a estreitar ainda mais a rentabilidade da atividade até o verão.",
+    "link": "/news#milknews-2026-09-21-03",
+    "data_publicacao": "2026-09-21",
+    "fontes": [
+      "https://www.cnnbrasil.com.br/agro/custo-de-producao-de-leite-sobe-413-no-ano-e-pressiona-margem-do-produtor/",
+      "https://arede.info/a-forca-do-agro/672550/custo-de-producao-de-leite-sobe-413-no-ano-e-pressiona-produtores"
+    ]
+  }
+]
