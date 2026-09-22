@@ -744,14 +744,40 @@ def dar_baixa(
     # funcionado, sem gravar nada. Antes só o ramo `iatf` checava (ele já
     # precisava da aplicação em mãos para montar a chave do evento, que é
     # por data prevista); agora vale para as quatro.
-    alvo = next(
-        (a for a in _aplicacoes_do_lancamento(session, origem, origem_id) if a.dia == dados.dia),
-        None,
-    )
+    aplicacoes_lancamento = _aplicacoes_do_lancamento(session, origem, origem_id)
+    alvo = next((a for a in aplicacoes_lancamento if a.dia == dados.dia), None)
     if alvo is None:
         raise HTTPException(status_code=404, detail="Este dia não existe neste lançamento.")
 
     if origem == "iatf":
+        # O dia de inseminação (o maior `dia` do lançamento — nem sempre 11,
+        # ver fazenda.rules.protocolo_iatf.dia_inseminacao) NUNCA pode ser
+        # confirmado por aqui. "Dar baixa" só marca `realizada=True` +
+        # Sanidade + estoque (mesmo bloco usado pelos dias de hormônio) — não
+        # cria nenhum Servico. Sem o Servico, `estado_reprodutivo.
+        # classificar_animal` nunca reconhece a matriz como "Inseminada": a
+        # janela D0–D11 fecha, e ela cai direto em Atrasada mesmo com o
+        # protocolo 100% "concluído" na Central — foi exatamente o bug
+        # relatado (animais com IATF concluído aparecendo atrasados na
+        # Agenda). A Agenda já acerta isso escondendo "Confirmar realizado"
+        # no dia de inseminação e oferecendo só "Ir para Inseminação"
+        # (POST /reproducao/servicos, que cria o Servico e fecha a etapa
+        # sozinho); a Central precisa da mesma trava.
+        # Só há "dia de inseminação" quando o lançamento tem MAIS de um dia
+        # distinto (hormônio(s) + inseminação) — um lançamento com um único
+        # dia (ex.: dado legado/sintético sem etapas de hormônio) não é um
+        # protocolo IATF de verdade nesse sentido, então não há o que travar.
+        dias_lancamento = {a.dia for a in aplicacoes_lancamento}
+        maior_dia_lancamento = max(dias_lancamento)
+        if len(dias_lancamento) > 1 and dados.dia == maior_dia_lancamento:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Este é o dia de inseminação — não dá para confirmar por aqui. "
+                    "Registre o serviço em Reprodução › Inseminação (com touro/sêmen), "
+                    "que fecha esta etapa automaticamente."
+                ),
+            )
         # O evento IATF é chaveado por (data prevista, dia); `lancamento_id`
         # impede que a baixa atinja outro lote com o mesmo D0.
         avisos = _marcar_protocolo_iatf_realizado(
