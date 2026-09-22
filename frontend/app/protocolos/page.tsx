@@ -657,6 +657,12 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
   const pendentesDoDia = diaBaixa == null ? [] :
     det.animais.filter((a) => a.celulas.some((c) => c.dia === diaBaixa && !c.realizada));
 
+  // Dia de inseminação do lançamento IATF = o maior `dia` (nem sempre 11,
+  // ver fazenda.rules.protocolo_iatf.dia_inseminacao) — "dar baixa" nele não
+  // registra o Servico (touro/sêmen), então nunca deve ser oferecido aqui
+  // (ver bloqueio equivalente no backend, central_protocolos.dar_baixa).
+  const diaInseminacaoIatf = origem === "iatf" && det.dias.length > 1 ? Math.max(...det.dias.map((d) => d.dia)) : null;
+
   return (
     <Modal title={det.nome} onClose={onFechar} width="960px">
       <div className="flex items-center gap-4 mb-3" style={{ flexWrap: "wrap", fontSize: "0.82rem" }}>
@@ -773,13 +779,23 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
         <div className="mt-3">
           <label style={labelStyle}>Dar baixa de um dia</label>
           <div className="flex gap-2" style={{ flexWrap: "wrap" }}>
-            {det.dias.filter((d) => d.realizadas < d.total).map((d) => (
+            {det.dias.filter((d) => d.realizadas < d.total && d.dia !== diaInseminacaoIatf).map((d) => (
               <button key={d.dia} type="button" className="btn-ghost" style={{ fontSize: "0.78rem" }}
                       onClick={() => abrirBaixa(d.dia)}>
                 {d.rotulo} — faltam {d.total - d.realizadas}
               </button>
             ))}
           </div>
+          {/* Dia de inseminação (IATF) — nunca "dar baixa" aqui: isso só marca
+              a etapa e não registra o Servico (touro/sêmen), que é o que
+              tira a matriz de "Atrasada" depois que o protocolo termina.
+              Backend recusa (400) se tentar; melhor nem oferecer o botão. */}
+          {diaInseminacaoIatf != null && det.dias.some((d) => d.dia === diaInseminacaoIatf && d.realizadas < d.total) && (
+            <p style={{ fontSize: "0.76rem", color: "var(--amber)", marginTop: "0.4rem" }}>
+              O dia de inseminação não confirma por aqui — registre o serviço em Reprodução › Inseminação
+              (com touro/sêmen), que fecha esta etapa automaticamente.
+            </p>
+          )}
         </div>
       )}
 
