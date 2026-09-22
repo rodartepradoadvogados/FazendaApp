@@ -207,6 +207,11 @@ export default function AgendaPage() {
   // protocolo), editável antes de confirmar "Sim". Mesmo padrão de estado
   // por eventoId de cronogramaAdiarData acima.
   const [lactacaoInducaoData, setLactacaoInducaoData] = useState<Record<string, string>>({});
+  // "Incluir nos aptos ao BST?" — o protocolo de indução já aplica BST no
+  // animal, então confirmar isto aqui marca `Animal.
+  // bst_pendente_inducao_lactacao`, que entra direto em "Incluir no próximo
+  // BST" com a notinha "(ind.lact.)" (ver PainelLancarBst.tsx).
+  const [inducaoIncluirBst, setInducaoIncluirBst] = useState<Record<string, boolean>>({});
 
   const [cronogramaAplicarAbertos, setCronogramaAplicarAbertos] = useState<Set<string>>(new Set());
   const toggleCronogramaAplicar = (id: string) => setCronogramaAplicarAbertos(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -802,7 +807,7 @@ export default function AgendaPage() {
     try {
       if (entrouEmLactacao) {
         const dataInicio = lactacaoInducaoData[e.id] || e.data_sugerida || undefined;
-        await confirmarLactacaoInducao(e.lancamento_id, e.numero_matriz, true, dataInicio);
+        await confirmarLactacaoInducao(e.lancamento_id, e.numero_matriz, true, dataInicio, !!inducaoIncluirBst[e.id]);
       }
       await marcarEventoRealizado(e.id);
       await carregar();
@@ -1307,6 +1312,14 @@ export default function AgendaPage() {
                                     <button className="btn-ghost" style={{ color: "var(--green-light)", padding: "0.1rem 0.4rem" }} disabled={marcando.has(e.id)} onClick={() => confirmarLactacaoInducaoAgenda(e, true)}>Sim</button>
                                     <button className="btn-ghost" style={{ color: "var(--red)", padding: "0.1rem 0.4rem" }} disabled={marcando.has(e.id)} onClick={() => confirmarLactacaoInducaoAgenda(e, false)}>Não</button>
                                   </span>
+                                  <label className="flex items-center gap-1" style={{ fontSize: "0.68rem", color: "var(--text-muted, #6b7280)", cursor: "pointer" }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={inducaoIncluirBst[e.id] ?? true}
+                                      onChange={(ev) => setInducaoIncluirBst((p) => ({ ...p, [e.id]: ev.target.checked }))}
+                                    />
+                                    Incluir nos aptos ao BST (protocolo já aplicou)
+                                  </label>
                                 </div>
                               ) : ehBstAplicacao ? (
                                 <button className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirListasBst()}>

@@ -2118,6 +2118,7 @@ def _baixar_aplicacao_agendada(
         animal = session.exec(query_animal).first()
         if animal and animal.aguardando_nova_aplicacao_bst:
             animal.aguardando_nova_aplicacao_bst = False
+            animal.bst_pendente_inducao_lactacao = False
             session.add(animal)
 
     avisos: list[str] = []
@@ -2614,6 +2615,7 @@ def aplicar_bst_lote(
         ).first()
         if animal and animal.aguardando_nova_aplicacao_bst:
             animal.aguardando_nova_aplicacao_bst = False
+            animal.bst_pendente_inducao_lactacao = False
             session.add(animal)
     session.commit()
 
@@ -2660,6 +2662,11 @@ def marcar_inapta_bst(
             continue
         animal.excluir_bst = dados.inapta
         animal.aguardando_nova_aplicacao_bst = False if dados.inapta else True
+        # Marcar como inapta manualmente cancela a origem "indução de
+        # lactação" — a notinha "(ind.lact.)" só faz sentido enquanto o
+        # animal está mesmo pendente de inclusão por causa do protocolo.
+        if dados.inapta:
+            animal.bst_pendente_inducao_lactacao = False
         session.add(animal)
         atualizados += 1
     session.commit()

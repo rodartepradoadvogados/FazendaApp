@@ -64,7 +64,14 @@ export function TabelasStatusBst({ agenda, selecionados, onToggle }: { agenda: a
                     <span title="Retirada do BST — revisar antes de incluir de novo" style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: "var(--amber)" }} />
                   )}
                 </td>
-                <td style={{ ...td, fontWeight: 700 }}>{b.numero_matriz}</td>
+                <td style={{ ...td, fontWeight: 700 }}>
+                  {b.numero_matriz}
+                  {b.origem_inducao_lactacao && (
+                    <span title="Entrou no BST pelo protocolo de indução de lactação" style={{ marginLeft: 4, fontWeight: 400, fontSize: "0.72rem", color: "var(--blue)" }}>
+                      (ind.lact.)
+                    </span>
+                  )}
+                </td>
                 <td style={td}>{b.grupo || "—"}</td>
                 {verDel !== "projetado" && <td style={{ ...td, textAlign: "right" }}>{b.del_atual ?? "—"}</td>}
                 {verDel !== "atual" && <td style={{ ...td, textAlign: "right" }}>{b.del_projetado ?? "—"}</td>}
@@ -349,7 +356,7 @@ export function PainelLancarBst({
             <Ban size={14} /> Marcar como inapta
           </button>
           <button className="btn-ghost" disabled={!selecionados.size || ocupado} onClick={reverterInapta} title="Volta para a lista &quot;Incluir no próximo BST&quot; — só conta como apta de novo após uma nova aplicação">
-            <XIcon size={14} /> Reverter (incluir de novo)
+            <XIcon size={14} /> Marcar como Apta (incluir no próximo BST)
           </button>
         </div>
       </div>

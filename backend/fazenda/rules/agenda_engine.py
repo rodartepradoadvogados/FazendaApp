@@ -640,8 +640,15 @@ class AgendaEngine:
             # por critério automático" — vai para uma lista à parte, de
             # reanálise na próxima aplicação (indicador amarelo no front).
             if animal.get("excluir_bst") or animal.get("aguardando_nova_aplicacao_bst"):
+                # `bst_pendente_inducao_lactacao` ignora o filtro de grupo de
+                # lactação abaixo de propósito: a animal acabou de confirmar
+                # "entrou em lactação" pelo protocolo de indução (ver
+                # producao.py::confirmar_inducao_lactacao) e `grupo_primario`
+                # só atualiza no próximo GERAL.csv — sem isto, ela cairia fora
+                # daqui até o Ideagri alcançar o app, o oposto do pedido.
+                pendente_inducao = bool(animal.get("bst_pendente_inducao_lactacao"))
                 cod = (grupo or "").strip()[:2]
-                if cod in codigos_lactacao:
+                if cod in codigos_lactacao or pendente_inducao:
                     res_bst = avaliar_bst(
                         numero_matriz=numero,
                         grupo_primario=grupo,
@@ -652,11 +659,13 @@ class AgendaEngine:
                         del_projetado=_del_projetado_bst(del_dias, result.proxima_visita_bst, data_referencia),
                         codigos_lactacao=codigos_lactacao,
                     )
-                    res_bst.motivo_exclusao = (
-                        "Excluída manualmente do BST — revisar na próxima aplicação"
-                        if animal.get("excluir_bst")
-                        else "Revertida do BST — aguardando nova aplicação para voltar a apta"
-                    )
+                    if animal.get("excluir_bst"):
+                        res_bst.motivo_exclusao = "Excluída manualmente do BST — revisar na próxima aplicação"
+                    elif pendente_inducao:
+                        res_bst.motivo_exclusao = "Indução de lactação — protocolo já aplicou BST, incluída para a próxima aplicação"
+                        res_bst.origem_inducao_lactacao = True
+                    else:
+                        res_bst.motivo_exclusao = "Revertida do BST — aguardando nova aplicação para voltar a apta"
                     bst_reanalise.append(res_bst)
             else:
                 # DEL projetado para a data da PRÓXIMA aplicação de BST (não o DEL de
