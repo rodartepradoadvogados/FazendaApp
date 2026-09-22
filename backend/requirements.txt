@@ -1,6 +1,15 @@
 fastapi>=0.115
 uvicorn[standard]>=0.32
-sqlmodel>=0.0.22
+# <0.0.45: a partir da 0.0.45 o sqlmodel passou a REJEITAR datetime "naive"
+# (sem tzinfo) em qualquer coluna `datetime` na hora de gravar (mesmo em
+# colunas TIMESTAMP WITHOUT TIME ZONE) — o app inteiro usa datetime.utcnow()
+# e datetime.strptime(...) (naive) como padrao em dezenas de lugares, então
+# essa mudança quebra qualquer INSERT/UPDATE com um desses campos. Foi o que
+# derrubou o deploy de produção (Application startup failed — INSERT em
+# noticia_news via publicar_lotes_milknews no boot). Não remover este teto
+# sem antes migrar os campos datetime do app para timezone-aware (ou anotar
+# os que devem continuar naive com NaiveDatetime).
+sqlmodel>=0.0.22,<0.0.45
 sqlalchemy>=2.0
 alembic>=1.14
 python-multipart>=0.0.12
