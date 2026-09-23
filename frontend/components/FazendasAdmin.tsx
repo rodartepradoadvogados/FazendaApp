@@ -414,7 +414,7 @@ export default function FazendasAdmin() {
                   style={{ textAlign: "left", padding: "0.5rem 0.7rem", borderRadius: "var(--r-sm)", cursor: "pointer",
                     border: "1px solid " + (selecionada === f.id ? "var(--dourado)" : "var(--border)"),
                     background: selecionada === f.id ? "rgba(212,160,23,0.12)" : "transparent", color: "var(--text)", fontSize: "0.83rem" }}>
-                  <div style={{ fontWeight: 600 }}>{f.nome}</div>
+                  <div style={{ fontWeight: 600 }}>{f.nome} <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>(ID: {f.id})</span></div>
                   {(f.cidade || f.uf) && <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{[f.cidade, f.uf].filter(Boolean).join(" / ")}</div>}
                 </button>
               ))}
@@ -424,7 +424,7 @@ export default function FazendasAdmin() {
 
         {selecionada != null && (
           <div className="card" style={{ flex: "1 1 300px", minWidth: "280px" }}>
-            <div className="card-header mb-2">Dados da fazenda</div>
+            <div className="card-header mb-2">Dados da fazenda <span style={{ fontWeight: 400, fontSize: "0.75rem", color: "var(--text-muted)" }}>(ID: {selecionada})</span></div>
             <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginBottom: "0.6rem" }}>
               Nome, endereço, CPF/CNPJ e representante — usados como padrão no contrato-modelo e na cobrança.
             </p>
