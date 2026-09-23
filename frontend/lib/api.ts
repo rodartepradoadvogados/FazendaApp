@@ -8984,6 +8984,13 @@ export type ItemDietaDoLote = {
   quantidade: number; unidade: string;          // quantidade programada
   por_cabeca: number | null;                    // já resolvido pelo backend
   converte_para_kg: boolean;                    // false = fica fora do rateio da sobra
+  // Base da tabela gerencial "kg do vagão" (lançamento por Quantidade direta):
+  // quanto este alimento pesa no total da dieta do LOTE (não por cabeça) e
+  // sua fatia % — null quando a unidade não converte para kg (mesmo critério
+  // de `converte_para_kg`), caso em que o item continua sendo lançado à mão.
+  quantidade_total_lote: number | null;
+  kg_total: number | null;
+  percentual_dieta: number | null;
 };
 export type ConsumoDoDia = {
   lote: number; data: string; num_animais: number | null;
@@ -9004,7 +9011,7 @@ export type RespostaConsumo = {
   avisos: string[];
 };
 
-export async function fetchDietaDoLote(lote: number): Promise<{ itens: ItemDietaDoLote[]; base_quantidade: string } | null> {
+export async function fetchDietaDoLote(lote: number): Promise<{ itens: ItemDietaDoLote[]; base_quantidade: string; kg_total_dieta: number } | null> {
   const res = await authFetch(`${API}/alimentacao/consumo/dieta-do-lote?lote=${lote}`, { cache: "no-store" });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Dieta do lote error: ${res.status}`);
@@ -9017,7 +9024,7 @@ export async function fetchConsumoDoDia(lote: number, data: string): Promise<Con
 }
 export async function lancarConsumo(dados: {
   lote: number; data: string; num_animais?: number | null;
-  origem: "animais" | "kg"; itens: ConsumoItemIn[];
+  origem: "animais" | "kg" | "vagao"; kg_vagao?: number | null; itens: ConsumoItemIn[];
 }): Promise<RespostaConsumo> {
   const res = await authFetch(`${API}/alimentacao/consumo`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

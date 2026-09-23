@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Wheat, Users, Scale, PlusCircle, Trash2, CheckCircle2, TriangleAlert, Info, Loader2 } from "lucide-react";
+import { Wheat, Users, Scale, PlusCircle, Trash2, CheckCircle2, TriangleAlert, Info, Loader2, Truck } from "lucide-react";
 import {
   fetchLotes, fetchAlimentos, fetchParametros,
   fetchDietaDoLote, fetchConsumoDoDia, lancarConsumo, lancarSobra,
@@ -11,16 +11,28 @@ import { UNIDADES } from "@/components/lancamentos/_shared";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Lançamentos > Alimentação — consumo diário e sobra de cocho (sessão 3,
-   Frente D). Antes esta aba lançava a DIETA (CadastrarNovaDieta, que mudou
-   de casa para Insumos e sanidade > Alimentação > "Lançar nova dieta" — ver
-   app/alimentacao/page.tsx). Agora é aqui que o funcionário registra o que
-   de fato foi fornecido no cocho, lote por lote, todo dia.
+   Frente D; redesenho de 23/09/2026). Antes esta aba lançava a DIETA
+   (CadastrarNovaDieta, que mudou de casa para Insumos e sanidade >
+   Alimentação > "Lançar nova dieta" — ver app/alimentacao/page.tsx). Agora é
+   aqui que o funcionário registra o que de fato foi fornecido no cocho, lote
+   por lote, todo dia — em DUAS sub-abas, refletindo o fluxo real: o
+   funcionário mede a sobra de ONTEM primeiro, lança, e só depois abastece o
+   vagão de hoje.
 
    "Lote" aqui é o INT de DietaLancamento.lote (mesma linguagem do endpoint),
    não o "01 - Nome" de Animal.grupo_primario usado nos outros Form* desta
    pasta — por isso a lista de lotes vem de fetchLotes() (cadastro de lotes,
    Lote.codigo/nome), não do array `lotes` calculado a partir dos animais.
    A ponte entre os dois mundos é `Number(lote.codigo)` ⇄ `f"{lote:02d}"`.
+
+   Modo "Quantidade direta" (23/09/2026): o funcionário não digita mais o kg
+   de CADA alimento — ele informa só o kg TOTAL ofertado no vagão, e a
+   quantidade de cada alimento é derivada da % dele na dieta cadastrada
+   (calculada no SERVIDOR, nunca no cliente — ver origem "vagao" em
+   lancarConsumo/POST /alimentacao/consumo, mesma postura de "não confiar no
+   cliente" que o modo "por nº de animais" já tinha). Só os itens cuja
+   unidade não converte para kg (litro, dose, unidade) continuam com input
+   manual — não tem como saber que fração de um vagão em quilos é "1 dose".
    ───────────────────────────────────────────────────────────────────── */
 
 type LoteCadastro = {
@@ -37,7 +49,9 @@ type ItemExtra = { alimento: string; quantidade: string; unidade: string };
 const itemExtraVazio = (): ItemExtra => ({ alimento: "", quantidade: "", unidade: "kg" });
 
 const fmt = (v: number) => Number(v.toFixed(2)).toLocaleString("pt-BR");
-const hoje = () => new Date().toISOString().slice(0, 10);
+const hojeIso = () => new Date().toISOString().slice(0, 10);
+const ontemIso = () => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); };
+const fmtDataBR = (iso: string) => { const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; };
 
 export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
   const [lotesCadastro, setLotesCadastro] = useState<LoteCadastro[] | null>(null);
@@ -70,17 +84,31 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
       .catch(() => setModo("fornecido_sobra"));
   }, []);
 
+  const [subTab, setSubTab] = useState<"fornecimento" | "sobra">("fornecimento");
   const [loteCodigo, setLoteCodigo] = useState("");
-  const [data, setData] = useState(hoje);
+  const [data, setData] = useState(hojeIso);
   const [origem, setOrigem] = useState<"animais" | "kg">("animais");
   const [numAnimais, setNumAnimais] = useState("");
+  const [kgVagao, setKgVagao] = useState("");
+  // Só para os itens da dieta que NÃO convertem para kg (percentual_dieta
+  // null) — os demais são derivados de `kgVagao`, não digitados aqui.
   const [quantidadesKg, setQuantidadesKg] = useState<Record<string, string>>({});
   const [extras, setExtras] = useState<ItemExtra[]>([]);
+
+  // Sobra tem data PRÓPRIA (item novo, 23/09/2026): em regra é o dia
+  // ANTERIOR ao do fornecimento (o funcionário mede a sobra de ontem antes
+  // de abastecer o vagão de hoje) — por isso o padrão é "ontem", não "hoje"
+  // como o card de fornecimento.
+  const [dataSobra, setDataSobra] = useState(ontemIso);
   const [kgSobra, setKgSobra] = useState("");
 
   // undefined = ainda carregando · null = lote sem dieta ativa (404 do backend)
-  const [dietaInfo, setDietaInfo] = useState<{ itens: ItemDietaDoLote[]; base_quantidade: string } | null | undefined>(undefined);
+  const [dietaInfo, setDietaInfo] = useState<{ itens: ItemDietaDoLote[]; base_quantidade: string; kg_total_dieta: number } | null | undefined>(undefined);
   const [consumoHoje, setConsumoHoje] = useState<ConsumoDoDia | null>(null);
+  // Consumo do DIA DA SOBRA (pode ser diferente do dia do fornecimento acima)
+  // — é contra ELE que o percentual de sobra é calculado, já que sobra e
+  // fornecido têm de ser do mesmo dia para o percentual fazer sentido.
+  const [consumoDiaSobra, setConsumoDiaSobra] = useState<ConsumoDoDia | null>(null);
 
   const [enviando, setEnviando] = useState(false);
   const [enviandoSobra, setEnviandoSobra] = useState(false);
@@ -94,20 +122,36 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
   const loteSel = loteCodigo ? Number(loteCodigo) : null;
 
   useEffect(() => {
-    if (!loteSel) { setDietaInfo(undefined); setConsumoHoje(null); return; }
+    if (!loteSel) { setDietaInfo(undefined); return; }
     let cancelado = false;
     setDietaInfo(undefined);
-    setConsumoHoje(null);
     fetchDietaDoLote(loteSel).then((d) => { if (!cancelado) setDietaInfo(d); }).catch(() => { if (!cancelado) setDietaInfo(null); });
+    return () => { cancelado = true; };
+  }, [loteSel]);
+
+  useEffect(() => {
+    if (!loteSel) { setConsumoHoje(null); return; }
+    let cancelado = false;
     fetchConsumoDoDia(loteSel, data).then((d) => { if (!cancelado) setConsumoHoje(d); }).catch(() => { if (!cancelado) setConsumoHoje(null); });
     return () => { cancelado = true; };
   }, [loteSel, data]);
 
+  useEffect(() => {
+    if (!loteSel) { setConsumoDiaSobra(null); return; }
+    let cancelado = false;
+    fetchConsumoDoDia(loteSel, dataSobra).then((d) => { if (!cancelado) setConsumoDiaSobra(d); }).catch(() => { if (!cancelado) setConsumoDiaSobra(null); });
+    return () => { cancelado = true; };
+  }, [loteSel, dataSobra]);
+
   const itensDieta = dietaInfo?.itens ?? [];
+  // Itens da dieta sem conversão para kg — ficam fora da tabela automática
+  // (Fornecimento) e fora do rateio de sobra (Sobra de cocho), sempre pelo
+  // mesmo critério (`converte_para_kg`/`percentual_dieta` null).
+  const itensSemConversao = itensDieta.filter((it) => !it.converte_para_kg);
 
   function selecionarLote(codigo: string) {
     setLoteCodigo(codigo);
-    setNumAnimais(""); setQuantidadesKg({}); setExtras([]); setKgSobra("");
+    setNumAnimais(""); setQuantidadesKg({}); setExtras([]); setKgVagao(""); setKgSobra("");
     setErro(null); setAvisos([]); setSucesso(null); setErroSobra(null); setSucessoSobra(null);
   }
 
@@ -125,7 +169,10 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
             .filter((it) => it.por_cabeca != null)
             .map((it) => ({ alimento: it.alimento, alimento_id: it.alimento_id, unidade: it.unidade, quantidade: Number((it.por_cabeca! * n).toFixed(3)) }));
     } else {
-      base = itensDieta
+      // "Quantidade direta": só os itens SEM conversão para kg entram como
+      // item explícito — os demais são resolvidos no servidor a partir de
+      // `kgVagao` (origem "vagao", ver enviarConsumo).
+      base = itensSemConversao
         .filter((it) => Number(quantidadesKg[it.alimento]) > 0)
         .map((it) => ({ alimento: it.alimento, alimento_id: it.alimento_id, unidade: it.unidade, quantidade: Number(quantidadesKg[it.alimento]) }));
     }
@@ -140,14 +187,20 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
     if (!loteSel) { setErro("Selecione um lote."); return; }
     if (dietaInfo === null) { setErro("Este lote não tem dieta ativa — cadastre uma em Insumos e sanidade > Alimentação > Lançar nova dieta."); return; }
     if (origem === "animais" && !(Number(numAnimais) > 0)) { setErro("Informe o número de animais."); return; }
+    if (origem === "kg" && !(Number(kgVagao) > 0)) { setErro("Informe o kg total ofertado no vagão."); return; }
     const itens = montarItens();
-    if (!itens.length) { setErro("Informe ao menos um alimento com quantidade."); return; }
+    if (origem === "animais" && !itens.length) { setErro("Informe ao menos um alimento com quantidade."); return; }
     setEnviando(true);
     try {
-      const resp = await lancarConsumo({ lote: loteSel, data, num_animais: origem === "animais" ? Number(numAnimais) : null, origem, itens });
+      const resp = await lancarConsumo({
+        lote: loteSel, data, num_animais: origem === "animais" ? Number(numAnimais) : null,
+        origem: origem === "kg" ? "vagao" : "animais",
+        kg_vagao: origem === "kg" ? Number(kgVagao) : null,
+        itens,
+      });
       setAvisos(resp.avisos || []);
       setSucesso("Consumo lançado.");
-      setNumAnimais(""); setQuantidadesKg({}); setExtras([]);
+      setNumAnimais(""); setQuantidadesKg({}); setExtras([]); setKgVagao("");
       setConsumoHoje(await fetchConsumoDoDia(loteSel, data));
       onSalvo?.();
     } catch (e: any) {
@@ -160,8 +213,8 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
     }
   }
 
-  const kgFornecidoHoje = consumoHoje?.kg_fornecido_total ?? 0;
-  const previewPct = kgSobra !== "" && kgFornecidoHoje > 0 ? (Number(kgSobra) / kgFornecidoHoje) * 100 : null;
+  const kgFornecidoDiaSobra = consumoDiaSobra?.kg_fornecido_total ?? 0;
+  const previewPct = kgSobra !== "" && kgFornecidoDiaSobra > 0 ? (Number(kgSobra) / kgFornecidoDiaSobra) * 100 : null;
   const statusFaixa = (pct: number | null): "abaixo" | "dentro" | "acima" | null => {
     if (pct == null) return null;
     if (pct < paramAlim.min) return "abaixo";
@@ -177,10 +230,10 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
     if (!(kg >= 0)) { setErroSobra("Informe a sobra em kg."); return; }
     setEnviandoSobra(true);
     try {
-      await lancarSobra({ lote: loteSel, data, kg_sobra: kg });
+      await lancarSobra({ lote: loteSel, data: dataSobra, kg_sobra: kg });
       setSucessoSobra("Sobra registrada.");
       setKgSobra("");
-      setConsumoHoje(await fetchConsumoDoDia(loteSel, data));
+      setConsumoDiaSobra(await fetchConsumoDoDia(loteSel, dataSobra));
       onSalvo?.();
     } catch (e: any) {
       setErroSobra(e.message || "Erro ao lançar sobra.");
@@ -188,8 +241,6 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
       setEnviandoSobra(false);
     }
   }
-
-  const itensSemConversao = itensDieta.filter((it) => !it.converte_para_kg);
 
   // Item D10 — "nao_lancar" já esconde a aba inteira lá em cima (Lançamentos
   // > Alimentação some do menu, ver app/lancamentos/page.tsx); a mensagem
@@ -214,12 +265,15 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
     );
   }
 
+  const kgVagaoNum = Number(kgVagao) || 0;
+  const itensComPercentual = itensDieta.filter((it) => it.percentual_dieta != null);
+
   return (
     <div className="space-y-4">
       <div className="card">
-        <div className="card-header mb-3 flex items-center gap-2"><Wheat size={15} /> Consumo do dia</div>
+        <div className="card-header mb-3 flex items-center gap-2"><Wheat size={15} /> Alimentação — consumo do dia</div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+        <div style={{ maxWidth: "20rem", marginBottom: "0.8rem" }}>
           <Campo label="Lote">
             <select style={inputStyle} value={loteCodigo} onChange={(e) => selecionarLote(e.target.value)}>
               <option value="">Selecione...</option>
@@ -227,9 +281,6 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
                 <option key={l.id} value={l.codigo}>{l.codigo} - {l.nome}</option>
               ))}
             </select>
-          </Campo>
-          <Campo label="Data">
-            <input type="date" style={inputStyle} value={data} onChange={(e) => setData(e.target.value)} />
           </Campo>
         </div>
 
@@ -241,20 +292,37 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
           </p>
         )}
 
-        {!loteSel && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Escolha um lote para ver a dieta ativa.</p>}
+        {!loteSel && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Escolha um lote para lançar.</p>}
 
-        {loteSel && dietaInfo === undefined && (
+        {loteSel && (
+          <div className="flex flex-wrap gap-2 mb-3">
+            <button type="button" className={subTab === "fornecimento" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => setSubTab("fornecimento")}>
+              <Truck size={14} /> Fornecimento
+            </button>
+            <button type="button" className={subTab === "sobra" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => setSubTab("sobra")}>
+              <Scale size={14} /> Sobra de cocho
+            </button>
+          </div>
+        )}
+
+        {loteSel && subTab === "fornecimento" && dietaInfo === undefined && (
           <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
             <Loader2 size={14} className="animate-spin" /> Carregando dieta do lote...
           </p>
         )}
 
-        {loteSel && dietaInfo === null && (
+        {loteSel && subTab === "fornecimento" && dietaInfo === null && (
           <div className="alert-critico"><TriangleAlert size={16} /><span>Este lote não tem dieta ativa. Cadastre em Insumos e sanidade &gt; Alimentação &gt; Lançar nova dieta.</span></div>
         )}
 
-        {loteSel && dietaInfo && (
+        {loteSel && subTab === "fornecimento" && dietaInfo && (
           <>
+            <div style={{ maxWidth: "12rem", marginBottom: "0.8rem" }}>
+              <Campo label="Data do fornecimento">
+                <input type="date" style={inputStyle} value={data} onChange={(e) => setData(e.target.value)} />
+              </Campo>
+            </div>
+
             <div className="flex flex-wrap gap-2 mb-3">
               <button type="button" className={origem === "animais" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => setOrigem("animais")}>
                 <Users size={14} /> Por nº de animais
@@ -272,46 +340,103 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
                   </Campo>
                 </div>
                 <p style={nota}>Cada alimento é a quantidade por cabeça da dieta × o nº de animais informado.</p>
+
+                <div className="overflow-x-auto mt-2">
+                  <table className="fazenda-table">
+                    <thead><tr><th>Alimento</th><th style={{ textAlign: "right" }}>Calculado</th><th></th></tr></thead>
+                    <tbody>
+                      {itensDieta.map((it) => {
+                        const calc = Number(numAnimais) > 0 && it.por_cabeca != null ? Number(numAnimais) * it.por_cabeca : null;
+                        return (
+                          <tr key={it.alimento}>
+                            <td style={{ fontSize: "0.85rem" }}>{it.alimento}</td>
+                            <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                              {calc != null ? <strong>{fmt(calc)} {it.unidade}</strong> : <span style={{ color: "var(--text-muted)" }}>—</span>}
+                            </td>
+                            <td></td>
+                          </tr>
+                        );
+                      })}
+                      {!itensDieta.length && <tr><td colSpan={3} style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Dieta sem itens programados.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
               </>
             ) : (
-              <p style={nota}>Informe a quantidade fornecida de cada alimento, na unidade programada na dieta.</p>
-            )}
+              <>
+                <div style={{ maxWidth: "14rem", marginBottom: "0.6rem" }}>
+                  <Campo label="Kg totais ofertados no vagão">
+                    <input type="number" inputMode="decimal" min={0} style={inputStyle} value={kgVagao} onChange={(e) => setKgVagao(e.target.value)} />
+                  </Campo>
+                </div>
+                <p style={nota}>
+                  A quantidade de cada alimento é calculada automaticamente pela % dele na dieta cadastrada do lote — não é preciso
+                  digitar alimento por alimento.
+                </p>
 
-            <div className="overflow-x-auto mt-2">
-              <table className="fazenda-table">
-                <thead><tr><th>Alimento</th><th style={{ textAlign: "right" }}>{origem === "animais" ? "Calculado" : "Fornecido"}</th><th></th></tr></thead>
-                <tbody>
-                  {itensDieta.map((it) => {
-                    const calc = origem === "animais" && Number(numAnimais) > 0 && it.por_cabeca != null
-                      ? Number(numAnimais) * it.por_cabeca
-                      : null;
-                    return (
-                      <tr key={it.alimento}>
-                        <td style={{ fontSize: "0.85rem" }}>
-                          {it.alimento}
-                          {!it.converte_para_kg && (
-                            <span title="Unidade sem conversão para kg — fica fora do rateio da sobra" style={{ marginLeft: "0.4rem", fontSize: "0.66rem", color: "var(--amber)", whiteSpace: "nowrap" }}>
-                              fora do rateio de sobra
-                            </span>
-                          )}
-                        </td>
-                        <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                          {origem === "animais" ? (
-                            calc != null ? <strong>{fmt(calc)} {it.unidade}</strong> : <span style={{ color: "var(--text-muted)" }}>—</span>
-                          ) : (
-                            <input type="number" inputMode="decimal" style={{ ...inputStyle, width: "7rem", textAlign: "right", display: "inline-block" }}
-                              value={quantidadesKg[it.alimento] ?? ""} placeholder="0"
-                              onChange={(e) => setQuantidadesKg((p) => ({ ...p, [it.alimento]: e.target.value }))} />
-                          )}
-                        </td>
-                        <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{origem === "kg" ? it.unidade : ""}</td>
+                {/* Tabela gerencial e automática (item novo, 23/09/2026): atualiza
+                    ao vivo a partir do kg do vagão, sem nenhum lançamento —
+                    é só a conta da dieta aplicada ao total informado. */}
+                <div className="overflow-x-auto mt-2">
+                  <table className="fazenda-table">
+                    <thead>
+                      <tr>
+                        <th>Alimento</th>
+                        <th style={{ textAlign: "right" }}>Total dieta (kg)</th>
+                        <th style={{ textAlign: "right" }}>Total dieta (%)</th>
+                        <th style={{ textAlign: "right" }}>Fornecido (kg)</th>
+                        <th style={{ textAlign: "right" }}>Fornecido (%)</th>
                       </tr>
-                    );
-                  })}
-                  {!itensDieta.length && <tr><td colSpan={3} style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Dieta sem itens programados.</td></tr>}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody>
+                      {itensComPercentual.map((it) => {
+                        const fornecidoKg = kgVagaoNum > 0 ? kgVagaoNum * (it.percentual_dieta! / 100) : 0;
+                        return (
+                          <tr key={it.alimento}>
+                            <td style={{ fontSize: "0.85rem" }}>{it.alimento}</td>
+                            <td style={{ textAlign: "right" }}>{it.kg_total != null ? fmt(it.kg_total) : "—"}</td>
+                            <td style={{ textAlign: "right" }}>{fmt(it.percentual_dieta!)}%</td>
+                            <td style={{ textAlign: "right" }}><strong>{fmt(fornecidoKg)}</strong></td>
+                            <td style={{ textAlign: "right" }}>{fmt(it.percentual_dieta!)}%</td>
+                          </tr>
+                        );
+                      })}
+                      {!itensComPercentual.length && (
+                        <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Nenhum alimento desta dieta converte para kg — lance manualmente abaixo.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Itens sem conversão para kg (litro, dose, unidade...) — não
+                    dá pra saber a fração do vagão que representam, então
+                    continuam com input manual, como já era antes. */}
+                {itensSemConversao.length > 0 && (
+                  <div className="mt-3">
+                    <p style={{ ...nota, marginLeft: 0, display: "flex", alignItems: "flex-start", gap: "0.3rem" }}>
+                      <Info size={12} style={{ flexShrink: 0, marginTop: "0.15rem" }} />
+                      Itens sem conversão para kg — lance a quantidade de cada um manualmente:
+                    </p>
+                    <table className="fazenda-table">
+                      <thead><tr><th>Alimento</th><th style={{ textAlign: "right" }}>Fornecido</th><th></th></tr></thead>
+                      <tbody>
+                        {itensSemConversao.map((it) => (
+                          <tr key={it.alimento}>
+                            <td style={{ fontSize: "0.85rem" }}>{it.alimento}</td>
+                            <td style={{ textAlign: "right" }}>
+                              <input type="number" inputMode="decimal" style={{ ...inputStyle, width: "7rem", textAlign: "right", display: "inline-block" }}
+                                value={quantidadesKg[it.alimento] ?? ""} placeholder="0"
+                                onChange={(e) => setQuantidadesKg((p) => ({ ...p, [it.alimento]: e.target.value }))} />
+                            </td>
+                            <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{it.unidade}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            )}
 
             {/* Fora da dieta — só oferecido quando o lote permite (item D8: a
                 tela explica a política antes de o usuário tentar e levar 409). */}
@@ -362,7 +487,7 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
             {consumoHoje && consumoHoje.itens.length > 0 && (
               <div className="mt-4">
                 <p style={{ fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--dourado-light)", marginBottom: "0.4rem" }}>
-                  Já lançado hoje ({fmt(consumoHoje.kg_fornecido_total)} kg no total)
+                  Já lançado em {fmtDataBR(data)} ({fmt(consumoHoje.kg_fornecido_total)} kg no total)
                 </p>
                 <div className="overflow-x-auto">
                   <table className="fazenda-table" style={{ margin: 0 }}>
@@ -378,47 +503,64 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
             )}
           </>
         )}
-      </div>
 
-      {/* Item D5: card separado para a sobra — kg totais do lote no dia,
-          rateio por alimento fica para o relatório (fora desta tela). */}
-      <div className="card">
-        <div className="card-header mb-3 flex items-center gap-2"><Scale size={15} /> Sobra de cocho</div>
-
-        {!loteSel ? (
-          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione um lote no card acima.</p>
-        ) : (
+        {loteSel && subTab === "sobra" && (
           <>
+            <div style={{ maxWidth: "12rem", marginBottom: "0.4rem" }}>
+              <Campo label="Data da sobra">
+                <input type="date" style={inputStyle} value={dataSobra} onChange={(e) => { setDataSobra(e.target.value); setKgSobra(""); setErroSobra(null); setSucessoSobra(null); }} />
+              </Campo>
+            </div>
+
+            {/* Nota fixa (item novo, 23/09/2026): fundo escuro/preto e texto
+                em "ATENÇÃO" dourado escuro SEMPRE, nos três modos de tema
+                (claro/misto/escuro) — pedido explícito do produtor, por isso
+                cores fixas em vez dos tokens de tema (--amber/--surface)
+                usados no resto da tela. Não "corrija" para var(...) achando
+                que é inconsistência. */}
+            <div style={{ marginTop: "0.2rem", marginBottom: "0.9rem", padding: "0.7rem 0.9rem", borderRadius: "var(--r-sm)", background: "#161616", border: "1px solid #3a2f14" }}>
+              <p style={{ margin: 0, fontSize: "0.72rem", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: "#B8860B" }}>
+                Atenção
+              </p>
+              <p style={{ margin: "0.35rem 0 0", fontSize: "0.8rem", color: "#f2f2f2", lineHeight: 1.5 }}>
+                O lançamento da sobra de cocho se refere, em regra, à data do dia anterior à do fornecimento.<br />
+                Hoje: {fmtDataBR(hojeIso())}<br />
+                Sobra de cocho - ontem: {fmtDataBR(ontemIso())}
+              </p>
+            </div>
+
             <div style={{ maxWidth: "12rem", marginBottom: "0.6rem" }}>
               <Campo label="Sobra (kg totais)">
                 <input type="number" inputMode="decimal" min={0} style={inputStyle} value={kgSobra} onChange={(e) => setKgSobra(e.target.value)} />
               </Campo>
             </div>
-            <p style={nota}>Lançar de novo hoje substitui o valor anterior — sobra é a medição do dia, não soma.</p>
+            <p style={nota}>Lançar de novo na mesma data substitui o valor anterior — sobra é a medição do dia, não soma.</p>
 
             {/* Item D6: percentual calculado + status da faixa, antes mesmo
                 de o usuário confirmar — é a mesma conta que gera o alerta na
-                central e na agenda (Frente C), só que aqui é prévia. */}
+                central e na agenda (Frente C), só que aqui é prévia. Sempre
+                em relação ao fornecido NA DATA DA SOBRA, não na data do card
+                de fornecimento (podem ser dias diferentes). */}
             {previewPct != null && (
               <p style={{ fontSize: "0.85rem", marginTop: "0.5rem", display: "flex", alignItems: "center", gap: "0.4rem", color: corFaixa(statusFaixa(previewPct)) }}>
                 {statusFaixa(previewPct) === "dentro" ? <CheckCircle2 size={15} /> : <TriangleAlert size={15} />}
-                <strong>{fmt(previewPct)}%</strong> do fornecido
+                <strong>{fmt(previewPct)}%</strong> do fornecido em {fmtDataBR(dataSobra)}
                 {statusFaixa(previewPct) === "dentro" && " — dentro da faixa aceitável"}
                 {statusFaixa(previewPct) === "abaixo" && ` — abaixo do mínimo (${paramAlim.min}%)`}
                 {statusFaixa(previewPct) === "acima" && ` — acima do máximo (${paramAlim.max}%)`}
               </p>
             )}
-            {previewPct == null && kgSobra !== "" && kgFornecidoHoje === 0 && (
-              <p style={{ ...nota, marginLeft: 0 }}>Sem consumo lançado hoje ainda — não dá para calcular o percentual.</p>
+            {previewPct == null && kgSobra !== "" && kgFornecidoDiaSobra === 0 && (
+              <p style={{ ...nota, marginLeft: 0 }}>Sem consumo lançado em {fmtDataBR(dataSobra)} ainda — não dá para calcular o percentual.</p>
             )}
             <p style={nota}>Alvo: {paramAlim.alvo}% · aceitável entre {paramAlim.min}% e {paramAlim.max}%.</p>
 
-            {consumoHoje?.sobra_kg != null && (
+            {consumoDiaSobra?.sobra_kg != null && (
               <p style={{ fontSize: "0.8rem", marginTop: "0.4rem", color: "var(--text-muted)" }}>
-                Já registrado hoje: <strong style={{ color: "var(--text)" }}>{fmt(consumoHoje.sobra_kg)} kg</strong>
-                {consumoHoje.sobra_pct != null && ` (${fmt(consumoHoje.sobra_pct)}%)`}
-                {consumoHoje.dentro_da_faixa === true && <span style={{ color: "var(--green-light)" }}> — dentro da faixa</span>}
-                {consumoHoje.dentro_da_faixa === false && <span style={{ color: "var(--amber)" }}> — fora da faixa (veja a central de alertas)</span>}
+                Já registrado em {fmtDataBR(dataSobra)}: <strong style={{ color: "var(--text)" }}>{fmt(consumoDiaSobra.sobra_kg)} kg</strong>
+                {consumoDiaSobra.sobra_pct != null && ` (${fmt(consumoDiaSobra.sobra_pct)}%)`}
+                {consumoDiaSobra.dentro_da_faixa === true && <span style={{ color: "var(--green-light)" }}> — dentro da faixa</span>}
+                {consumoDiaSobra.dentro_da_faixa === false && <span style={{ color: "var(--amber)" }}> — fora da faixa (veja a central de alertas)</span>}
               </p>
             )}
 

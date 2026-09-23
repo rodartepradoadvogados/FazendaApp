@@ -316,7 +316,10 @@ class ConsumoAlimento(SQLModel, table=True):
     # depois por que o número era aquele — o lote muda de tamanho todo dia.
     num_animais: Optional[int] = None
     # "animais" = derivado do nº de cabeças × quantidade por cabeça da dieta;
-    # "kg" = digitado direto pelo funcionário.
+    # "kg" = digitado direto pelo funcionário, um valor por alimento;
+    # "vagao" = funcionário informa só o kg TOTAL do vagão, e a quantidade de
+    # CADA alimento é derivada da % dele na dieta cadastrada (calculada em
+    # quilos no servidor — ver `_percentuais_dieta`, routers/alimentacao.py).
     origem: str = "kg"
     # Alimento que não está na dieta ativa do lote, aceito porque o lote tem a
     # flag `permitir_fora_da_dieta`. Marcado para o relatório poder separar o

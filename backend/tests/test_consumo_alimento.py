@@ -113,9 +113,11 @@ class TestDietaDoLote:
         assert r.status_code == 200, r.text
         corpo = r.json()
         assert corpo["base_quantidade"] == "total"
+        assert corpo["kg_total_dieta"] == 40.0
         assert corpo["itens"] == [{
             "alimento": "Silagem", "alimento_id": None, "quantidade": 40.0, "unidade": "kg",
             "por_cabeca": 20.0, "converte_para_kg": True,
+            "quantidade_total_lote": 40.0, "kg_total": 40.0, "percentual_dieta": 100.0,
         }]
 
     def test_404_quando_lote_nao_tem_dieta_ativa(self, client):
@@ -274,6 +276,116 @@ class TestLancamentoConsumo:
             assert movimento is not None
             assert movimento.origem_id == registro.id
             assert movimento.quantidade == 40.0
+
+
+class TestLancamentoConsumoVagao:
+    """Lançamento "Quantidade direta" via kg total do vagão (item novo,
+    23/09/2026): o funcionário informa só o kg TOTAL ofertado, e a
+    quantidade de CADA alimento que converte para kg é derivada da % dele na
+    dieta — calculada no SERVIDOR (origem "vagao"), nunca confiando no valor
+    que o cliente já mostrou na tabela gerencial."""
+
+    def _seed_dieta_mista(self, engine, fazenda_id: int = 1):
+        """Lote 01, 2 animais, dieta "total/dia" com 3 itens: Silagem 40kg
+        (40% da dieta em kg), Concentrado 2 sacas de 30kg = 60kg (60% da
+        dieta), e um Aditivo em "dose" (não converte p/ kg, fica de fora do
+        rateio — só entra lançado à mão)."""
+        with Session(engine) as s:
+            s.add(Lote(codigo="01", fazenda_id=fazenda_id, nome="Alta"))
+            s.add(Animal(numero=f"{fazenda_id}-1-A", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True, fazenda_id=fazenda_id))
+            s.add(Animal(numero=f"{fazenda_id}-1-B", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True, fazenda_id=fazenda_id))
+            dieta = DietaLancamento(lote=1, fazenda_id=fazenda_id, data_abertura=HOJE, base_quantidade="total")
+            s.add(dieta)
+            s.commit()
+            s.refresh(dieta)
+            s.add(DietaItemProgramado(fazenda_id=fazenda_id, dieta_lancamento_id=dieta.id, alimento="Silagem", quantidade=40.0, unidade="kg"))
+            s.add(DietaItemProgramado(fazenda_id=fazenda_id, dieta_lancamento_id=dieta.id, alimento="Concentrado", quantidade=2.0, unidade="saca 30kg"))
+            s.add(DietaItemProgramado(fazenda_id=fazenda_id, dieta_lancamento_id=dieta.id, alimento="Aditivo", quantidade=4.0, unidade="dose"))
+            s.add(Estoque(nome="Silagem", fazenda_id=fazenda_id, quantidade=1000.0, unidade="kg"))
+            s.add(Estoque(nome="Concentrado", fazenda_id=fazenda_id, quantidade=100.0, unidade="saca 30kg"))
+            s.add(Estoque(nome="Aditivo", fazenda_id=fazenda_id, quantidade=50.0, unidade="dose"))
+            s.commit()
+
+    def test_dieta_do_lote_devolve_percentual_e_kg_total(self, client):
+        c, engine, _ = client
+        self._seed_dieta_mista(engine)
+        corpo = c.get("/alimentacao/consumo/dieta-do-lote?lote=1").json()
+        assert corpo["kg_total_dieta"] == 100.0  # 40 (silagem) + 60 (2 sacas de 30kg)
+        por_alimento = {it["alimento"]: it for it in corpo["itens"]}
+        assert por_alimento["Silagem"]["kg_total"] == 40.0
+        assert por_alimento["Silagem"]["percentual_dieta"] == 40.0
+        assert por_alimento["Concentrado"]["quantidade_total_lote"] == 2.0  # 2 sacas, não kg
+        assert por_alimento["Concentrado"]["kg_total"] == 60.0
+        assert por_alimento["Concentrado"]["percentual_dieta"] == 60.0
+        assert por_alimento["Aditivo"]["kg_total"] is None
+        assert por_alimento["Aditivo"]["percentual_dieta"] is None
+
+    def test_vagao_rateia_por_kg_e_converte_de_volta_pra_unidade_do_item(self, client):
+        c, engine, _ = client
+        self._seed_dieta_mista(engine)
+        r = c.post("/alimentacao/consumo", json={
+            "lote": 1, "data": HOJE.isoformat(), "origem": "vagao", "kg_vagao": 50,
+            "itens": [{"alimento": "Aditivo", "quantidade": 2, "unidade": "dose"}],
+        })
+        assert r.status_code == 201, r.text
+
+        corpo = c.get(f"/alimentacao/consumo?lote=1&data={HOJE.isoformat()}").json()
+        por_alimento = {it["alimento"]: it for it in corpo["itens"]}
+        # 50kg no vagão, 40%/60% da dieta: 20kg de silagem, 30kg de
+        # concentrado — convertido de volta pra "saca 30kg" (30/30 = 1 saca).
+        assert por_alimento["Silagem"]["quantidade"] == 20.0
+        assert por_alimento["Silagem"]["unidade"] == "kg"
+        assert por_alimento["Concentrado"]["quantidade"] == 1.0
+        assert por_alimento["Concentrado"]["unidade"] == "saca 30kg"
+        # Aditivo não converte p/ kg — veio do valor manual enviado, intacto.
+        assert por_alimento["Aditivo"]["quantidade"] == 2.0
+        assert por_alimento["Aditivo"]["unidade"] == "dose"
+
+        with Session(engine) as s:
+            silagem = s.exec(select(Estoque).where(Estoque.nome == "Silagem")).first()
+            concentrado = s.exec(select(Estoque).where(Estoque.nome == "Concentrado")).first()
+            aditivo = s.exec(select(Estoque).where(Estoque.nome == "Aditivo")).first()
+            assert silagem.quantidade == 980.0     # 1000 - 20
+            assert concentrado.quantidade == 99.0   # 100 - 1
+            assert aditivo.quantidade == 48.0        # 50 - 2
+
+    def test_vagao_ignora_conta_do_cliente_e_recalcula_no_servidor(self, client):
+        """O front pode mandar `itens` com valores absurdos para os alimentos
+        que a dieta já cobre — o servidor tem que ignorá-los e recalcular do
+        `kg_vagao`, a mesma postura de "animais" (nunca confiar no cliente)."""
+        c, engine, _ = client
+        self._seed_dieta_mista(engine)
+        r = c.post("/alimentacao/consumo", json={
+            "lote": 1, "data": HOJE.isoformat(), "origem": "vagao", "kg_vagao": 50,
+            "itens": [
+                {"alimento": "Silagem", "quantidade": 9999, "unidade": "kg"},  # deve ser ignorado
+                {"alimento": "Aditivo", "quantidade": 2, "unidade": "dose"},
+            ],
+        })
+        assert r.status_code == 201, r.text
+        corpo = c.get(f"/alimentacao/consumo?lote=1&data={HOJE.isoformat()}").json()
+        por_alimento = {it["alimento"]: it for it in corpo["itens"]}
+        assert por_alimento["Silagem"]["quantidade"] == 20.0  # não 9999 nem a soma com 9999
+
+    def test_kg_vagao_obrigatorio_e_positivo(self, client):
+        c, engine, _ = client
+        self._seed_dieta_mista(engine)
+        for kg_vagao in (None, 0, -5):
+            r = c.post("/alimentacao/consumo", json={
+                "lote": 1, "data": HOJE.isoformat(), "origem": "vagao", "kg_vagao": kg_vagao, "itens": [],
+            })
+            assert r.status_code == 400, r.text
+
+    def test_vagao_sem_itens_manuais_ainda_lanca_os_proporcionais(self, client):
+        c, engine, _ = client
+        self._seed_dieta_mista(engine)
+        r = c.post("/alimentacao/consumo", json={
+            "lote": 1, "data": HOJE.isoformat(), "origem": "vagao", "kg_vagao": 10, "itens": [],
+        })
+        assert r.status_code == 201, r.text
+        corpo = c.get(f"/alimentacao/consumo?lote=1&data={HOJE.isoformat()}").json()
+        alimentos = {it["alimento"] for it in corpo["itens"]}
+        assert alimentos == {"Silagem", "Concentrado"}  # Aditivo não veio manual — fica de fora
 
 
 class TestFlagsDoLote:
