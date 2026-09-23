@@ -694,9 +694,9 @@ class TestBaldesDrillDown:
     """
 
     HOJE = date(2026, 7, 5)
-    BALDES = ("prenhes", "vazias", "inseminadas", "pev", "a_inseminar", "nao_classificadas", "em_protocolo")
-    # As 6 que particionam a categoria (vazias é catch-all e se sobrepõe às demais).
-    FATIAS = ("prenhes", "inseminadas", "em_protocolo", "pev", "a_inseminar", "nao_classificadas")
+    BALDES = ("prenhes", "vazias", "inseminadas", "pev", "a_inseminar", "nao_classificadas", "em_protocolo", "nao_aptas")
+    # As 7 que particionam a categoria (vazias é catch-all e se sobrepõe às demais).
+    FATIAS = ("prenhes", "inseminadas", "em_protocolo", "pev", "a_inseminar", "nao_classificadas", "nao_aptas")
 
     def _dados(self):
         hoje = self.HOJE
@@ -743,10 +743,13 @@ class TestBaldesDrillDown:
         assert set(todas["inseminadas_nums"]) == {"20"}
         assert set(todas["pev_nums"]) == {"30"}
         assert set(todas["a_inseminar_nums"]) == {"40", "70"}   # atrasada + novilha apta
-        assert set(todas["nao_classificadas_nums"]) == {"50"}   # novilha impúbere
+        assert set(todas["nao_classificadas_nums"]) == set()    # legado "vazia" — não ocorre no caminho ao vivo
+        assert set(todas["nao_aptas_nums"]) == {"50"}            # novilha impúbere — balde próprio, fora de "vazias"
         assert set(todas["em_protocolo_nums"]) == {"60"}
-        # `vazias` é o guarda-chuva de 5 estados e NÃO inclui "em protocolo".
-        assert set(todas["vazias_nums"]) == {"30", "40", "50", "70"}
+        # `vazias` é o guarda-chuva de 4 estados (pev/apta/atrasada/vazia) e
+        # NÃO inclui "em protocolo" nem "nao_apta" (novilha impúbere não é
+        # "vazia" — é "ainda não apta", balde separado).
+        assert set(todas["vazias_nums"]) == {"30", "40", "70"}
         # Recorte vaca/novilha vem do registro de Parto, não de `data_ult_parto`.
         assert set(cats["vaca"]["em_protocolo_nums"]) == {"60"}
         assert cats["novilha"]["em_protocolo_nums"] == []
