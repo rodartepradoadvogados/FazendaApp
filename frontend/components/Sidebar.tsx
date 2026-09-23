@@ -164,6 +164,10 @@ export function Sidebar() {
   // fixo de sempre, mantido como fallback para quem nunca teve mais de uma
   // fazenda vinculada (ninguém percebe diferença nenhuma).
   const [fazendaNome, setFazendaNome] = useState("Jairo Nasser");
+  // ID da fazenda selecionada — mostrado ao lado do nome (pedido explícito:
+  // ajuda a equipe CowData a identificar a fazenda ao pedir suporte/ao
+  // rodar a sincronização da Fazenda Teste em Painel CowData > Fazendas).
+  const [fazendaId, setFazendaId] = useState<number | null>(null);
 
   useEffect(() => {
     // Filtra o menu conforme as permissões do usuário logado. "/historico"
@@ -176,6 +180,7 @@ export function Sidebar() {
     setDono(ehDono());
     setTemConfiguracoes(podeModulo("parametros") || podeModulo("upload") || ehAdmin());
     setFazendaNome(getFazendaAtual()?.nome || "Jairo Nasser");
+    setFazendaId(getFazendaAtual()?.id ?? null);
     // Atalho "Insights" (ver botão no rodapé) — só aparece para quem tem
     // acesso a pelo meno um item do grupo (ver InsightsLayout.tsx:
     // Indicadores e Relatórios usam o módulo "indicadores"; Listas usa
@@ -266,7 +271,7 @@ export function Sidebar() {
           <Menu size={22} />
         </button>
         <CowDataWordmark size="0.85rem" cowColor="var(--sidebar-fg)" />
-        <span style={{ color: "var(--sidebar-muted)", fontSize: "0.7rem" }}>· {fazendaNome}</span>
+        <span style={{ color: "var(--sidebar-muted)", fontSize: "0.7rem" }}>· {fazendaNome}{fazendaId != null ? ` (ID: ${fazendaId})` : ""}</span>
       </div>
       {/* Espaçador: reserva a altura da barra fixa (incluindo a faixa de segurança
           do topo) para o conteúdo não ficar por baixo dela. */}
@@ -320,7 +325,7 @@ export function Sidebar() {
             <>
               <CowDataWordmark size="1.05rem" cowColor="var(--sidebar-fg)" />
               <p style={{ color: "var(--sidebar-logo-sub)", fontSize: "0.6rem", lineHeight: 1.2 }}>
-                {fazendaNome}
+                {fazendaNome}{fazendaId != null ? ` (ID: ${fazendaId})` : ""}
               </p>
             </>
           )}
