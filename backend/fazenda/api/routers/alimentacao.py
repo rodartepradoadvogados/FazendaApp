@@ -33,7 +33,7 @@ from fazenda.rules.producao_leiteira import ultimo_controle_por_animal, com_fall
 from fazenda.rules import estoque_baixa
 from fazenda.rules.farmacia import pode_baixar_estoque
 from fazenda.rules.parametros import get_param
-from fazenda.rules.unidades import converte_para_kg, kg_equivalente
+from fazenda.rules.unidades import converte_para_kg, de_kg_para_unidade, kg_equivalente
 
 # Nº de tratos por dia (fornecimentos). Hoje são 2.
 NUM_TRATOS = 2
@@ -2033,6 +2033,38 @@ def _linha_item_dieta(it: DietaItemProgramado, dieta_base_quantidade: str | None
     }
 
 
+def _percentuais_dieta(
+    itens: list[DietaItemProgramado], dieta_base_quantidade: str | None, n_animais: int,
+) -> tuple[list[dict], float]:
+    """Kg total (para o LOTE INTEIRO, não por cabeça) e % de cada item na
+    dieta — base do lançamento "kg do vagão" (Lançamentos > Alimentação): o
+    total ofertado no vagão é repartido pela MESMA proporção da dieta
+    cadastrada, em quilos (mesma ideia já usada no rateio de sobra por
+    alimento). Item cuja unidade não converte para kg (`kg_equivalente`
+    devolve `None` — litro, dose, unidade) entra com `kg_total`/`percentual`
+    em `None` e fica de fora do rateio: não dá para saber que fração de um
+    vagão em quilos é "1 dose" de um aditivo.
+
+    Devolve (linhas na MESMA ordem de `itens`, kg_total_dieta)."""
+    linhas = []
+    kg_total_dieta = 0.0
+    for it in itens:
+        qtd_fisica = _quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct)
+        base_efetiva = _base_efetiva(it.base_quantidade, dieta_base_quantidade)
+        total_lote, _ = _totais_item(qtd_fisica, base_efetiva, n_animais)
+        kg_total = kg_equivalente(total_lote, it.unidade) if total_lote is not None else None
+        if kg_total is not None:
+            kg_total_dieta += kg_total
+        linhas.append({"item": it, "quantidade_total_lote": total_lote, "kg_total": kg_total})
+    kg_total_dieta = round(kg_total_dieta, 4)
+    for linha in linhas:
+        linha["percentual_dieta"] = (
+            round(linha["kg_total"] / kg_total_dieta * 100, 4)
+            if linha["kg_total"] is not None and kg_total_dieta > 0 else None
+        )
+    return linhas, kg_total_dieta
+
+
 def _resolver_estoque_item(
     session: Session, fazenda_id: int | None, alimento: str, estoque_por_alimento: dict[str, list[dict]],
 ) -> Estoque | None:
@@ -2095,8 +2127,9 @@ def dieta_do_lote_consumo(
         raise HTTPException(status_code=404, detail=f"Lote {lote:02d} não tem dieta ativa")
     n = len(_animais_do_lote(session, lote, fazenda_id))
     itens = _itens_dieta_lancamento(session, dieta.id, fazenda_id)
+    percentuais, kg_total_dieta = _percentuais_dieta(itens, dieta.base_quantidade, n)
     linhas = []
-    for it in itens:
+    for it, p in zip(itens, percentuais):
         qtd_fisica = _quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct)
         base_efetiva = _base_efetiva(it.base_quantidade, dieta.base_quantidade)
         por_cabeca = _por_cabeca(qtd_fisica, base_efetiva, n)
@@ -2105,8 +2138,14 @@ def dieta_do_lote_consumo(
             "quantidade": it.quantidade, "unidade": it.unidade,
             "por_cabeca": round(por_cabeca, 4) if por_cabeca is not None else None,
             "converte_para_kg": converte_para_kg(it.unidade),
+            # Base da tabela gerencial "kg do vagão" (Lançamentos > Alimentação):
+            # quanto este alimento pesa no total da dieta do LOTE (não por
+            # cabeça) e sua fatia % — None quando a unidade não converte p/ kg.
+            "quantidade_total_lote": round(p["quantidade_total_lote"], 4) if p["quantidade_total_lote"] is not None else None,
+            "kg_total": round(p["kg_total"], 4) if p["kg_total"] is not None else None,
+            "percentual_dieta": p["percentual_dieta"],
         })
-    return {"itens": linhas, "base_quantidade": dieta.base_quantidade or "total"}
+    return {"itens": linhas, "base_quantidade": dieta.base_quantidade or "total", "kg_total_dieta": kg_total_dieta}
 
 
 @router.get("/consumo")
@@ -2175,8 +2214,15 @@ class ConsumoIn(BaseModel):
     lote: int
     data: date
     num_animais: int | None = None
-    origem: str  # "animais" (por cabeça × dieta) | "kg" (digitado direto)
-    itens: list[ConsumoItemIn]
+    origem: str  # "animais" (por cabeça × dieta) | "kg" (digitado direto) | "vagao" (kg total do vagão)
+    # "vagao": kg total ofertado no vagão — a quantidade de cada alimento da
+    # dieta que CONVERTE para kg é derivada da % dele na dieta (servidor,
+    # nunca confiando em conta feita no cliente — mesmo espírito de "animais").
+    kg_vagao: float | None = None
+    # "animais"/"vagao": só os itens que a tela NÃO consegue derivar sozinha —
+    # alimentos fora da dieta e, em "vagao", os da dieta que não convertem
+    # para kg (digitados à mão). "kg": todos os itens, um valor por alimento.
+    itens: list[ConsumoItemIn] = []
 
 
 @router.post("/consumo", status_code=201)
@@ -2186,12 +2232,55 @@ def lancar_consumo(
 ) -> dict:
     """B1/B4/B5/B6/B7/B8: grava um ou mais ConsumoAlimento de um lote num dia,
     dá baixa em estoque pelo motor único e propaga os avisos da baixa."""
-    if dados.origem not in ("animais", "kg"):
-        raise HTTPException(status_code=400, detail='"origem" deve ser "animais" ou "kg"')
-    if not dados.itens:
-        raise HTTPException(status_code=400, detail="Informe ao menos um alimento")
+    if dados.origem not in ("animais", "kg", "vagao"):
+        raise HTTPException(status_code=400, detail='"origem" deve ser "animais", "kg" ou "vagao"')
     if dados.origem == "animais" and not dados.num_animais:
         raise HTTPException(status_code=400, detail='Informe "num_animais" para lançar por cabeça')
+    if dados.origem == "vagao" and not (dados.kg_vagao and dados.kg_vagao > 0):
+        raise HTTPException(status_code=400, detail='Informe "kg_vagao" (kg total ofertado) para lançar por vagão')
+
+    dieta_para_vagao = _dieta_ativa_do_lote(session, dados.lote, fazenda_id) if dados.origem == "vagao" else None
+    itens_efetivos = list(dados.itens)
+    if dados.origem == "vagao" and dieta_para_vagao is not None:
+        # Recalcula no servidor a partir do kg total informado — nunca confia
+        # na tabela gerencial que o front já mostrou (a mesma postura de
+        # "animais", que também nunca confia no valor calculado no cliente).
+        n_animais_vagao = len(_animais_do_lote(session, dados.lote, fazenda_id))
+        itens_dieta_vagao = _itens_dieta_lancamento(session, dieta_para_vagao.id, fazenda_id)
+        percentuais, _ = _percentuais_dieta(itens_dieta_vagao, dieta_para_vagao.base_quantidade, n_animais_vagao)
+        itens_proporcionais = []
+        alimentos_proporcionais_ids: set[int] = set()
+        alimentos_proporcionais_nomes: set[str] = set()
+        for linha in percentuais:
+            if linha["percentual_dieta"] is None:
+                continue  # não converte p/ kg — vem digitado à mão em dados.itens
+            it = linha["item"]
+            kg_item = dados.kg_vagao * linha["percentual_dieta"] / 100
+            quantidade_unidade = de_kg_para_unidade(kg_item, it.unidade)
+            if quantidade_unidade is None:
+                continue
+            itens_proporcionais.append(ConsumoItemIn(
+                alimento=it.alimento, alimento_id=it.alimento_id,
+                quantidade=round(quantidade_unidade, 4), unidade=it.unidade,
+            ))
+            if it.alimento_id is not None:
+                alimentos_proporcionais_ids.add(it.alimento_id)
+            alimentos_proporcionais_nomes.add((it.alimento or "").strip().lower())
+        # Qualquer item que o cliente tenha mandado para um alimento JÁ
+        # coberto pela conta proporcional é descartado — só o valor calculado
+        # no servidor vale. Sem isto, `obter_consumo` (que soma por alimento)
+        # somaria os dois valores no mesmo lançamento.
+        itens_manuais_validos = [
+            item_in for item_in in itens_efetivos
+            if not (
+                (item_in.alimento_id is not None and item_in.alimento_id in alimentos_proporcionais_ids)
+                or (item_in.alimento_id is None and (item_in.alimento or "").strip().lower() in alimentos_proporcionais_nomes)
+            )
+        ]
+        itens_efetivos = itens_proporcionais + itens_manuais_validos
+
+    if not itens_efetivos:
+        raise HTTPException(status_code=400, detail="Informe ao menos um alimento")
 
     query_lote = select(Lote).where(Lote.codigo == f"{dados.lote:02d}")
     if fazenda_id is not None:
@@ -2216,7 +2305,7 @@ def lancar_consumo(
     estoque_por_alimento, _ = _estoque_por_alimento(session, fazenda_id)
 
     avisos: list[str] = []
-    for item_in in dados.itens:
+    for item_in in itens_efetivos:
         item_dieta = _item_da_dieta(itens_dieta, item_in.alimento, item_in.alimento_id)
         fora_da_dieta = item_dieta is None
         if fora_da_dieta and not permitir_fora_da_dieta:

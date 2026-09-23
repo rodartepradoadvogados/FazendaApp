@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from fazenda.rules.unidades import UNIDADES_SEM_MASSA, converte_para_kg, kg_equivalente
+from fazenda.rules.unidades import UNIDADES_SEM_MASSA, converte_para_kg, de_kg_para_unidade, kg_equivalente
 
 
 class TestConversaoParaQuilos:
@@ -80,3 +80,36 @@ class TestConverteParaKg:
         """As duas funções não podem divergir — seria pior que ter só uma."""
         for u in ["kg", "g", "saca 30kg", "saca 60kg", *UNIDADES_SEM_MASSA, "inventada"]:
             assert converte_para_kg(u) == (kg_equivalente(1, u) is not None), u
+
+
+class TestDeKgParaUnidade:
+    """Inverso de `kg_equivalente` — usado pelo lançamento "kg do vagão"
+    (Lançamentos > Alimentação) para converter a fatia em quilos de volta pra
+    unidade do item ANTES de gravar, porque `pode_dar_baixa_direta` só aceita
+    igualdade exata de unidade com o Estoque."""
+
+    @pytest.mark.parametrize(
+        "kg,unidade,esperado",
+        [
+            (10, "kg", 10.0),
+            (2.5, "kg", 2.5),
+            (0.5, "g", 500.0),
+            (30, "saca 30kg", 1.0),
+            (120, "saca 60kg", 2.0),
+        ],
+    )
+    def test_inverso_de_kg_equivalente(self, kg, unidade, esperado):
+        assert de_kg_para_unidade(kg, unidade) == pytest.approx(esperado)
+
+    def test_ida_e_volta_bate_pra_qualquer_unidade_de_massa(self):
+        for unidade in ("kg", "g", "saca 30kg", "saca 60kg"):
+            for quantidade in (0, 1, 3.5, 100):
+                kg = kg_equivalente(quantidade, unidade)
+                assert de_kg_para_unidade(kg, unidade) == pytest.approx(quantidade)
+
+    @pytest.mark.parametrize("unidade", sorted(UNIDADES_SEM_MASSA))
+    def test_unidade_sem_massa_devolve_none(self, unidade):
+        assert de_kg_para_unidade(10, unidade) is None
+
+    def test_kg_nulo_devolve_none(self):
+        assert de_kg_para_unidade(None, "kg") is None

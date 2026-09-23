@@ -112,3 +112,19 @@ def converte_para_kg(unidade: str | None) -> bool:
     """Se a unidade tem conversão para quilos. Serve às telas, que precisam
     marcar o item ANTES de haver quantidade lançada."""
     return (unidade or "").strip().lower() in _FATORES_KG
+
+
+def de_kg_para_unidade(kg: float | None, unidade: str | None) -> float | None:
+    """Inverso de `kg_equivalente` — quantos `unidade` equivalem a `kg`
+    quilos. Usada pelo lançamento de consumo "kg do vagão" (Lançamentos >
+    Alimentação): o total do vagão é repartido pela dieta EM QUILOS, mas cada
+    `ConsumoAlimento` precisa ser gravado na unidade do próprio item — é ela
+    que casa, byte a byte, com `Estoque.unidade` em `pode_dar_baixa_direta`
+    (só compara igualdade exata, sem equivalência entre unidades). `None`
+    nas mesmas condições de `kg_equivalente` (unidade sem conversão)."""
+    if kg is None:
+        return None
+    fator = _FATORES_KG.get((unidade or "").strip().lower())
+    if not fator:
+        return None
+    return float(kg) / fator
