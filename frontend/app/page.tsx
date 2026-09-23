@@ -25,6 +25,7 @@ const SIT_CORES: Record<string, string> = {
   Prenhes: "var(--green-light)", Inseminadas: "var(--dourado-light)",
   "Em protocolo": "var(--vinho-light, #416180)",
   PEV: "var(--amber)", "A inseminar": "var(--blue)", Vazias: "var(--red)",
+  "Não aptas": "var(--text-muted, #8a8a8a)",
 };
 
 const LACTACAO = ["01", "02", "03"];
@@ -276,9 +277,12 @@ function Capa() {
   // `reproducao`, que não tem todos os `_nums` de `ReproducaoCategoria` — o
   // cast só nomeia essa lacuna pré-existente.
   const repSel = (d.ind?.reproducao_categorias?.[catRep] || rep) as ReproducaoCategoria | undefined;
-  // As 6 fatias são uma partição do rebanho da categoria (por isso somam o
+  // As 7 fatias são uma partição do rebanho da categoria (por isso somam o
   // total): "Em protocolo" entrou justamente porque não cabia em nenhuma das
-  // outras — sem ela o donut ficava faltando animais.
+  // outras — sem ela o donut ficava faltando animais. "Não aptas" tem fatia
+  // própria (pedido do produtor, 23/09/2026): novilha que ainda não bateu
+  // idade/peso mínimos não é "vazia" — é uma leitura de aptidão, não de
+  // situação reprodutiva, e misturá-la em "Vazias" inflava a fatia.
   const donutRep = repSel ? [
     { nome: "Prenhes", v: repSel.prenhes, nums: repSel.prenhes_nums },
     { nome: "Inseminadas", v: repSel.inseminadas, nums: repSel.inseminadas_nums },
@@ -286,6 +290,7 @@ function Capa() {
     { nome: "PEV", v: repSel.pev, nums: repSel.pev_nums },
     { nome: "A inseminar", v: repSel.a_inseminar, nums: repSel.a_inseminar_nums },
     { nome: "Vazias", v: repSel.nao_classificadas, nums: repSel.nao_classificadas_nums },
+    { nome: "Não aptas", v: repSel.nao_aptas, nums: repSel.nao_aptas_nums },
   ].filter((x) => x.v > 0) : [];
 
   const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", color: "var(--text)", fontSize: "0.8rem" };

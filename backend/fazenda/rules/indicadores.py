@@ -757,6 +757,7 @@ def _reproducao_categorias(
         a_inseminar_nums: list[str] = []
         nao_classificadas_nums: list[str] = []
         em_protocolo_nums: list[str] = []
+        nao_aptas_nums: list[str] = []
         # Detalhamento usado pelo gráfico de Situação Reprodutiva da Capa —
         # Prenhas/Inseminadas/PEV/A inseminar são o padrão; qualquer sit_rep
         # fora desse padrão (em branco ou não reconhecido) cai em
@@ -767,9 +768,21 @@ def _reproducao_categorias(
         # não entrava em fatia nenhuma do donut da Capa — nem em `vazias` (que
         # o exclui de propósito), nem em pev/a_inseminar/nao_classificadas — e
         # por isso as fatias não fechavam o rebanho da categoria. Com ele,
-        # prenhes+inseminadas+em_protocolo+pev+a_inseminar+nao_classificadas
-        # é uma partição exata do subset.
-        pev = a_inseminar = nao_classificadas = em_protocolo = 0
+        # prenhes+inseminadas+em_protocolo+pev+a_inseminar+nao_classificadas+
+        # nao_aptas é uma partição exata do subset.
+        #
+        # `nao_aptas` — balde PRÓPRIO, separado de `nao_classificadas` (pedido
+        # do produtor, 23/09/2026): a novilha nao_apta (ainda não bateu
+        # idade/peso mínimos de 1ª cobertura) não tem "situação reprodutiva"
+        # nenhuma pra falar a verdade — ela nem é candidata a serviço ainda.
+        # Jogá-la dentro de "Vazias"/"nao_classificadas" inflava o donut da
+        # Capa (novilha imatura contada junto de quem já está apta e vazia).
+        # Balde à parte preserva a partição exata (nada desaparece do total)
+        # e dá ao frontend uma fatia própria ("Não aptas") em vez de escondê-la
+        # dentro de "Vazias". Só ocorre em novilha nulípara (nunca em vaca —
+        # ver estado_reprodutivo.classificar_animal), então nunca aparece na
+        # categoria "vaca".
+        pev = a_inseminar = nao_classificadas = em_protocolo = nao_aptas = 0
         for a in subset:
             numero = a.get("numero")
             estado = (estados or {}).get(numero)
@@ -778,13 +791,25 @@ def _reproducao_categorias(
                 # nem inseminada nem em protocolo — mesmo conjunto que o
                 # "Vaz.*" do CSV representava, para o número do card não
                 # mudar de significado.
+                #
+                # NAO_APTA fica de fora de propósito (pedido do produtor,
+                # 23/09/2026): "vazia" é uma leitura reprodutiva — só faz
+                # sentido para quem já está em condições de ser avaliada
+                # (apta/atrasada/pev). Uma novilha nao_apta (ainda não bateu
+                # idade/peso mínimos) não é "vazia", é "ainda não apta" — a
+                # métrica é de aptidão, não de reprodução, e contá-la em
+                # "Vazias" inflava o card (ex.: 20 novilhas vazias na Capa
+                # quando boa parte só ainda não tinha idade/peso pra ser
+                # avaliada). NAO_APTA só ocorre em novilha nulípara (nunca em
+                # vaca — ver estado_reprodutivo.classificar_animal), então
+                # esta mudança nunca afeta a contagem de vacas.
                 if estado == "gestante":
                     prenhes += 1
                     prenhes_nums.append(numero)
                 elif estado == "inseminada":
                     inseminadas += 1
                     inseminadas_nums.append(numero)
-                elif estado in ("vazia", "apta", "atrasada", "pev", "nao_apta"):
+                elif estado in ("vazia", "apta", "atrasada", "pev"):
                     vazias += 1
                     vazias_nums.append(numero)
                 if estado == "pev":
@@ -793,9 +818,12 @@ def _reproducao_categorias(
                 elif estado in ("apta", "atrasada"):
                     a_inseminar += 1
                     a_inseminar_nums.append(numero)
-                elif estado in ("vazia", "nao_apta"):
+                elif estado == "vazia":
                     nao_classificadas += 1
                     nao_classificadas_nums.append(numero)
+                elif estado == "nao_apta":
+                    nao_aptas += 1
+                    nao_aptas_nums.append(numero)
                 elif estado == "em_protocolo":
                     em_protocolo += 1
                     em_protocolo_nums.append(numero)
@@ -863,12 +891,13 @@ def _reproducao_categorias(
             "aptas": len(aptas_nums), "prenhes": prenhes, "vazias": vazias, "inseminadas": inseminadas,
             "aptas_nums": aptas_nums,
             "pev": pev, "a_inseminar": a_inseminar, "nao_classificadas": nao_classificadas,
-            "em_protocolo": em_protocolo,
+            "em_protocolo": em_protocolo, "nao_aptas": nao_aptas,
             "prenhes_nums": prenhes_nums, "vazias_nums": vazias_nums,
             "inseminadas_nums": inseminadas_nums, "pev_nums": pev_nums,
             "a_inseminar_nums": a_inseminar_nums,
             "nao_classificadas_nums": nao_classificadas_nums,
             "em_protocolo_nums": em_protocolo_nums,
+            "nao_aptas_nums": nao_aptas_nums,
         }
     return resultado
 

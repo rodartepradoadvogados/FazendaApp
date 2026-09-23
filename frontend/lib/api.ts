@@ -1646,6 +1646,7 @@ export type ReproducaoCategoria = {
   a_inseminar: number; a_inseminar_nums: string[];
   nao_classificadas: number; nao_classificadas_nums: string[];
   em_protocolo: number; em_protocolo_nums: string[];
+  nao_aptas: number; nao_aptas_nums: string[];
 };
 
 // Bloco "reproducao" de GET /indicadores/ (mesmo módulo). `prenhes_programa_nums`
