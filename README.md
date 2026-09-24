@@ -99,6 +99,7 @@ Acesse: http://localhost:3000
 | `DATABASE_URL` | `sqlite:///./fazenda.db` | URL do banco. Trocar por `postgresql://...` no deploy |
 | `SECRET_KEY` | `change-me` | Chave secreta para JWT (futuro) |
 | `ENVIRONMENT` | `development` | `development` ou `production` |
+| `FIRECRAWL_API_KEY` | (vazio) | Busca na web / leitura de páginas públicas (`fazenda/rules/firecrawl.py`). Vazio = desligado (fail-closed) |
 
 ## Endpoints principais
 

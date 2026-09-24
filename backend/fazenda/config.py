@@ -103,6 +103,14 @@ class Settings(BaseSettings):
     fcm_service_account_json: str = ""
     fcm_project_id: str = ""  # opcional: por padrão sai do project_id do JSON acima
 
+    # Firecrawl (busca na web + leitura de páginas/PDFs públicos em markdown) —
+    # deixado pronto "para eventual necessidade" (ex.: cotação do leite e
+    # notícias do MilkNews, catálogo de touro em página de central). Vazio =
+    # desligado: rules/firecrawl.py recusa toda chamada (fail-closed), nunca
+    # tenta o plano gratuito anônimo. Chave em firecrawl.dev > API Keys.
+    firecrawl_api_key: str = ""
+    firecrawl_api_url: str = "https://api.firecrawl.dev/v2"  # só muda em instância auto-hospedada
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
