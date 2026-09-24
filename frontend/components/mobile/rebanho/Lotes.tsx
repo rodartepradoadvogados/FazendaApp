@@ -4,13 +4,15 @@
 // por lote, calculadas aqui mesmo a partir da mesma lista de animais — não
 // existe endpoint dedicado no backend para isso).
 import { useEffect, useMemo, useState } from "react";
-import { PieChart, Gauge } from "lucide-react";
+import { PieChart, Gauge, FileDown, Share2 } from "lucide-react";
 import { fetchAnimais, type AnimalProducaoAoVivo } from "@/lib/api";
 import { fetchComCache } from "@/lib/offline";
 import { MobCard, MobVoltar } from "@/components/mobile/ui";
 import { GradeAcoes } from "@/components/mobile/lancar/comum";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 import { producaoDe, origemDe } from "@/lib/producaoAnimal";
+import { exportarPDF, exportarFichaPDF, type ColunaExport, type ModoEntregaExport } from "@/lib/export";
+import { ehApp } from "@/lib/nativo";
 
 // `ult_cl_kg` é o campo congelado do CSV do Ideagri (parser aposentado);
 // `producao_kg`/`producao_origem` vêm ao vivo de fetchAnimais(). Partial
@@ -49,6 +51,75 @@ function corLote(lote: string): string {
   return "var(--mob-vinho)";
 }
 
+// Nome de arquivo a partir do nome do lote (sem acento/espaço/símbolo) —
+// cada lote exportado precisa de um nome de arquivo próprio, senão dois
+// exports seguidos (lotes diferentes, mesma data) sobrescreveriam um ao outro.
+function slugLote(lote: string): string {
+  return lote.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").toLowerCase() || "lote";
+}
+
+const COLUNAS_COMPOSICAO: ColunaExport[] = [
+  { header: "Nº", key: "numero" },
+  { header: "Nome", key: "nome" },
+  { header: "Categoria", key: "categoria" },
+  { header: "Raça", key: "raca" },
+  { header: "Situação", key: "situacao" },
+  { header: "DEL", key: "del" },
+  { header: "Últ. CL (kg)", key: "cl" },
+];
+
+function linhasComposicao(lista: AnimalLote[], rotuloDe: (numero: string) => string): Record<string, unknown>[] {
+  return lista.map((a) => {
+    const producao = producaoDe(a);
+    return {
+      numero: a.numero,
+      nome: a.nome || "—",
+      categoria: a.categoria_abrev || a.categoria_completa || "—",
+      raca: a.raca || "—",
+      situacao: rotuloDe(a.numero) !== "—" ? rotuloDe(a.numero) : "—",
+      del: a.del_dias ?? "—",
+      cl: producao != null ? `${producao.toFixed(1)}${origemDe(a) === "congelado" ? " *" : ""}` : "—",
+    };
+  });
+}
+
+/** Botão(ões) de exportar PDF — "Exportar PDF" sempre; "Compartilhar" (folha
+ *  nativa do Android) só dentro do app, onde faz sentido distinto de baixar. */
+function BotoesExportar({ exportando, mostrarCompartilhar, onExportar }: {
+  exportando: boolean; mostrarCompartilhar: boolean; onExportar: (modo: ModoEntregaExport) => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: "0.4rem" }}>
+      <button
+        type="button"
+        disabled={exportando}
+        onClick={() => onExportar("baixar")}
+        style={{
+          display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.76rem", fontWeight: 700,
+          padding: "0.35rem 0.65rem", borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)",
+          background: "var(--mob-surface)", color: "var(--mob-dourado-2)", opacity: exportando ? 0.6 : 1,
+        }}
+      >
+        <FileDown size={14} /> {exportando ? "Gerando…" : "Exportar PDF"}
+      </button>
+      {mostrarCompartilhar && (
+        <button
+          type="button"
+          disabled={exportando}
+          onClick={() => onExportar("compartilhar")}
+          style={{
+            display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.76rem", fontWeight: 700,
+            padding: "0.35rem 0.65rem", borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)",
+            background: "var(--mob-surface)", color: "var(--mob-dourado-2)", opacity: exportando ? 0.6 : 1,
+          }}
+        >
+          <Share2 size={14} /> Compartilhar
+        </button>
+      )}
+    </div>
+  );
+}
+
 function useAnimaisPorLote() {
   const [animais, setAnimais] = useState<AnimalLote[]>([]);
   const [carregando, setCarregando] = useState(true);
@@ -76,12 +147,36 @@ function useAnimaisPorLote() {
 function Composicao() {
   const { porLote, carregando, total } = useAnimaisPorLote();
   const { rotuloDe } = useEstadosReprodutivos();
+  const [exportando, setExportando] = useState(false);
+  const [mostrarCompartilhar, setMostrarCompartilhar] = useState(false);
+  useEffect(() => { ehApp().then(setMostrarCompartilhar); }, []);
+
   if (carregando) return <p style={{ color: "var(--mob-muted)" }}>Carregando…</p>;
   if (!total) return <p style={{ color: "var(--mob-muted)", fontSize: "0.85rem" }}>Nenhum animal encontrado.</p>;
   const algumCongelado = porLote.some(([, lista]) => lista.some((a) => producaoDe(a) != null && origemDe(a) === "congelado"));
 
+  async function exportarTodosOsLotes(modo: ModoEntregaExport) {
+    setExportando(true);
+    try {
+      const secoes = porLote.map(([lote, lista]) => ({ titulo: lote, colunas: COLUNAS_COMPOSICAO, linhas: linhasComposicao(lista, rotuloDe) }));
+      await exportarFichaPDF("Composição do Rebanho", "Todos os lotes", secoes, "composicao_lotes", modo);
+    } catch { /* erro já mostrado ao usuário dentro de exportarFichaPDF (lib/export.ts) */ }
+    finally { setExportando(false); }
+  }
+
+  async function exportarUmLote(lote: string, lista: AnimalLote[], modo: ModoEntregaExport) {
+    setExportando(true);
+    try {
+      await exportarPDF(lote, COLUNAS_COMPOSICAO, linhasComposicao(lista, rotuloDe), `composicao_${slugLote(lote)}`, modo);
+    } catch { /* erro já mostrado ao usuário dentro de exportarPDF (lib/export.ts) */ }
+    finally { setExportando(false); }
+  }
+
   return (
     <div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.7rem" }}>
+        <BotoesExportar exportando={exportando} mostrarCompartilhar={mostrarCompartilhar} onExportar={exportarTodosOsLotes} />
+      </div>
       {porLote.map(([lote, lista]) => (
         <details key={lote} style={{ marginBottom: "0.7rem" }}>
           {/* `border` inline sobrepõe qualquer regra de classe (inclusive
@@ -93,6 +188,12 @@ function Composicao() {
             <span style={{ fontSize: "0.78rem", color: "var(--mob-muted)", fontWeight: 700 }}>{lista.length} animal(is)</span>
           </summary>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.5rem" }}>
+            {/* Só fica visível quando o <details> está aberto — o próprio
+                navegador esconde este bloco (menos o <summary>) quando
+                fechado, então não precisa de estado próprio de "aberto". */}
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <BotoesExportar exportando={exportando} mostrarCompartilhar={mostrarCompartilhar} onExportar={(modo) => exportarUmLote(lote, lista, modo)} />
+            </div>
             {lista.map((a) => (
               <MobCard key={a.numero} className="mob-tint" style={{ ["--tint-cor" as any]: SIT_COR[rotuloDe(a.numero)] || "var(--mob-muted)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
