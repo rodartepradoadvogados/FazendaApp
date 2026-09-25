@@ -32,7 +32,19 @@ import { OfflineBanner } from "@/components/OfflineBanner";
 // para essa rota específica (que, ao contrário delas, também é válida
 // LOGADA — por isso não pode ganhar o mesmo `return <>{children}</>}`
 // incondicional daquelas duas, só o condicional a seguir).
-const ROTA_PUBLICA = (p: string) => p === "/" || p === "/login" || p === "/news" || p.startsWith("/news/") || p.startsWith("/sobre/");
+const ROTA_PUBLICA = (p: string) =>
+  p === "/" ||
+  p === "/login" ||
+  p === "/news" ||
+  p.startsWith("/news/") ||
+  p.startsWith("/sobre/") ||
+  // Páginas sem login por token (link enviado por e-mail/WhatsApp, não por
+  // sessão de usuário) — resolvidas pelo próprio token no backend, nunca
+  // pela sessão do navegador. /redefinir-senha era um gap pré-existente
+  // (nunca esteve aqui, então sempre caiu no bounce pra /login).
+  p === "/redefinir-senha" ||
+  p.startsWith("/cotacao/") ||
+  p.startsWith("/pedido-confirmacao/");
 
 /**
  * Porta de entrada: só mostra o sistema para quem estiver logado.
@@ -289,8 +301,17 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   }, [path]); // path: Manual da Fazenda só em "/", muda a largura da faixa
 
   // /sobre/* já vem com a própria casca pública (PublicPage) — igual /login,
-  // não precisa da sidebar do sistema, esteja a pessoa logada ou não.
-  if (path === "/login" || path.startsWith("/sobre/")) return <>{children}</>;
+  // não precisa da sidebar do sistema, esteja a pessoa logada ou não. Mesmo
+  // caso para as páginas de token (/redefinir-senha, /cotacao/[token],
+  // /pedido-confirmacao/[token]) — resolvidas pelo token na própria página,
+  // nunca pela sessão do navegador (quem abre o link pode nem ter conta).
+  if (
+    path === "/login" ||
+    path.startsWith("/sobre/") ||
+    path === "/redefinir-senha" ||
+    path.startsWith("/cotacao/") ||
+    path.startsWith("/pedido-confirmacao/")
+  ) return <>{children}</>;
 
   // "/" pública (T8): visitante SEM login não é redirecionado para /login
   // (ver ROTA_PUBLICA acima) — em vez disso vê a landing pública, com a

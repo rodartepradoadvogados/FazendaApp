@@ -47,6 +47,9 @@ def _publico(f: Fazenda) -> dict:
         "id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf, "ativa": f.ativa,
         "tipo_documento": f.tipo_documento, "documento": f.documento, "endereco": f.endereco, "cep": f.cep,
         "representante_nome": f.representante_nome, "representante_cpf": f.representante_cpf,
+        # Dados de faturamento enviados ao fornecedor no "pedido formal" da
+        # Cotação de Preços (ver api/routers/cotacoes.py/publico.py).
+        "inscricao_estadual": f.inscricao_estadual, "telefone": f.telefone, "email": f.email,
         "exige_aprovacao_suporte": f.exige_aprovacao_suporte,
         # Fazenda de demonstração/sandbox (ver Fazenda.eh_teste) — exposto
         # aqui pro admin (painel de Fazendas) poder ver/alternar a flag.
@@ -124,6 +127,9 @@ class FazendaEditarIn(BaseModel):
     cep: str | None = None
     representante_nome: str | None = None
     representante_cpf: str | None = None
+    inscricao_estadual: str | None = None
+    telefone: str | None = None
+    email: str | None = None
     exige_aprovacao_suporte: bool | None = None
     eh_teste: bool | None = None
 
@@ -231,6 +237,12 @@ def editar_fazenda(
         fazenda.representante_nome = dados.representante_nome.strip() or None
     if dados.representante_cpf is not None:
         fazenda.representante_cpf = dados.representante_cpf.strip() or None
+    if dados.inscricao_estadual is not None:
+        fazenda.inscricao_estadual = dados.inscricao_estadual.strip() or None
+    if dados.telefone is not None:
+        fazenda.telefone = dados.telefone.strip() or None
+    if dados.email is not None:
+        fazenda.email = dados.email.strip() or None
     if dados.exige_aprovacao_suporte is not None:
         fazenda.exige_aprovacao_suporte = dados.exige_aprovacao_suporte
     if dados.eh_teste is not None:

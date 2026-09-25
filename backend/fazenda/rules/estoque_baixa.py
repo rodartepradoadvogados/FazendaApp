@@ -445,6 +445,16 @@ def movimentar(
             f'Estoque de "{item.nome}" ficou negativo (saldo: {item.quantidade:g} {item.unidade or ""}). '
             f'Registre a entrada/compra que faltou.'
         )
+    elif item.abaixo_minimo:
+        # Antes, cruzar o mínimo (sem ficar negativo) atualizava o flag
+        # `abaixo_minimo` em silêncio — só aparecia depois, na Agenda/Capa/
+        # tela de Estoque. Quem lê `avisos_estoque` no momento do movimento
+        # (ex.: "Marcar entrega" de um Pedido) passa a ver isto na hora,
+        # não só depois de sair da tela.
+        avisos.append(
+            f'Estoque de "{item.nome}" ficou abaixo do mínimo (saldo: {item.quantidade:g}, '
+            f'mínimo: {item.estoque_minimo:g} {item.unidade or ""}).'
+        )
     return avisos
 
 

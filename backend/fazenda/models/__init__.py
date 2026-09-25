@@ -201,6 +201,14 @@ from .multitenant import (
     UsuarioFazenda,
     EmpresaOperadora,
 )
+from .cotacao import (
+    Cotacao,
+    CotacaoItem,
+    CotacaoFornecedor,
+    CotacaoResposta,
+    PedidoConfirmacao,
+    FornecedorCategoria,
+)
 from .planos import (
     PrecoModulo,
     ContratoFazenda,
@@ -288,6 +296,12 @@ __all__ = [
     "Fazenda",
     "UsuarioFazenda",
     "EmpresaOperadora",
+    "Cotacao",
+    "CotacaoItem",
+    "CotacaoFornecedor",
+    "CotacaoResposta",
+    "PedidoConfirmacao",
+    "FornecedorCategoria",
     "PrecoModulo",
     "ContratoFazenda",
     "ContratoFazendaModulo",

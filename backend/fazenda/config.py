@@ -111,6 +111,19 @@ class Settings(BaseSettings):
     firecrawl_api_key: str = ""
     firecrawl_api_url: str = "https://api.firecrawl.dev/v2"  # só muda em instância auto-hospedada
 
+    # WhatsApp via Evolution API — conector NÃO-OFICIAL (Baileys/QR code, o
+    # mesmo mecanismo do WhatsApp Web), usado pelo módulo de Cotação de
+    # Preços com Fornecedores para disparar cotação/pedido formal. Decisão
+    # registrada com o usuário: viola os Termos de Serviço do WhatsApp, com
+    # risco real de banimento do número conectado (sem recurso) — recomendado
+    # validar com um número não crítico antes de usar o número principal da
+    # fazenda. Ver rules/whatsapp_evolution.py. Vazio = desligado (fail-closed,
+    # mesmo espírito de firecrawl_api_key acima). evolution_instance é o nome
+    # da instância/sessão já conectada (QR code escaneado) no servidor Evolution.
+    evolution_api_url: str = ""
+    evolution_api_key: str = ""
+    evolution_instance: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

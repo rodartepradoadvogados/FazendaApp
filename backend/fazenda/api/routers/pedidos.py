@@ -9,6 +9,7 @@ lançada e vinculada a este pedido.
 from __future__ import annotations
 
 import logging
+import secrets
 from datetime import date, datetime
 from typing import Optional
 
@@ -21,15 +22,25 @@ from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_
 from fazenda.config import settings
 from fazenda.database import get_session
 from fazenda.models import (
-    CATEGORIAS_PEDIDO_ANEXO, ContaGerencial, Fornecedor, MovimentoEstoque, Pedido, PedidoAnexo, PedidoItem, ServicoCadastro, Usuario,
+    CATEGORIAS_PEDIDO_ANEXO, ContaGerencial, Fazenda, Fornecedor, MovimentoEstoque, Pedido, PedidoAnexo,
+    PedidoConfirmacao, PedidoItem, ServicoCadastro, Usuario,
 )
 from fazenda.rules import estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro
+from fazenda.rules.email import enviar_email
 from fazenda.rules.validacao import link_http_seguro
 from fazenda.rules.centro_custo import mapear_centro_custo
 from fazenda.rules.pedido_status import STATUS_CANCELADO, calcular_status_pedido
 from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo, nome_seguro_storage
 from fazenda.rules.visibilidade import visivel
+from fazenda.rules.whatsapp_evolution import enviar_whatsapp
+
+# Import tardio de propósito: `_proximo_numero_pedido` (abaixo) é reaproveitado
+# por fazenda.rules.cotacao.gerar_pedidos_da_cotacao (mesmo padrão que
+# planejamento.py::importar_para_pedido já usa) — se este módulo importasse
+# fazenda.rules.cotacao no topo, fecharia um ciclo (cotacao -> pedidos ->
+# cotacao). Nada aqui precisa de rules.cotacao, então o ciclo nem existe na
+# prática; só documentando o motivo de não importar por cima.
 
 router = APIRouter(prefix="/pedidos", tags=["pedidos"])
 
@@ -503,6 +514,62 @@ def marcar_entrega_item_pedido(
         "avisos_estoque": avisos_estoque,
         "item": {"id": item.id, "quantidade_entregue": item.quantidade_entregue},
     }
+
+
+class DisparoPedidoFormalIn(BaseModel):
+    mensagem: Optional[str] = None  # None = usa o texto padrão sugerido
+
+
+@router.post("/{pedido_id}/confirmacao")
+def disparar_pedido_formal(
+    pedido_id: int, dados: DisparoPedidoFormalIn = DisparoPedidoFormalIn(),
+    session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """"Disparar pedido formal" — pede ao fornecedor que confirme o pedido já
+    fechado (não reabre preço, só pede previsão de entrega), levando junto os
+    dados de faturamento da fazenda (Fazenda.nome/tipo_documento/documento/
+    endereco/inscricao_estadual — ver PedidoConfirmacao). O fornecedor
+    responde pela página pública (ver publico.py), sem login."""
+    pedido = session.get(Pedido, pedido_id)
+    if not pedido or (fazenda_id is not None and pedido.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+    if pedido.status == STATUS_CANCELADO:
+        raise HTTPException(status_code=400, detail="Pedido cancelado não aceita disparo de confirmação")
+    if not pedido.fornecedor_cliente:
+        raise HTTPException(status_code=400, detail="Este pedido não tem fornecedor/cliente definido")
+
+    fazenda = session.get(Fazenda, fazenda_id)
+    nome_fazenda = fazenda.nome if fazenda else "a fazenda"
+    fornecedor = session.exec(
+        select(Fornecedor).where(Fornecedor.nome == pedido.fornecedor_cliente, Fornecedor.fazenda_id == fazenda_id)
+    ).first()
+
+    token = secrets.token_urlsafe(32)
+    confirmacao = PedidoConfirmacao(pedido_id=pedido.id, token_publico=token, fazenda_id=fazenda_id)
+    session.add(confirmacao)
+    session.commit()
+    session.refresh(confirmacao)
+
+    link = f"{settings.frontend_base_url}/pedido-confirmacao/{token}"
+    texto = dados.mensagem or (
+        f"Olá! A {nome_fazenda} confirmou o pedido {pedido.numero_pedido} com sua empresa. "
+        f"Confirme o recebimento e a previsão de entrega pelo link: {link}"
+    )
+    erro: str | None = None
+    if fornecedor and fornecedor.email:
+        try:
+            enviar_email(fornecedor.email, f"Pedido {pedido.numero_pedido} — {nome_fazenda}", f"<p>{texto}</p>")
+        except RuntimeError as e:
+            erro = str(e)
+    if fornecedor and fornecedor.telefone:
+        try:
+            enviar_whatsapp(fornecedor.telefone, texto)
+        except RuntimeError as e:
+            erro = str(e) if erro is None else f"{erro}; {e}"
+    if not fornecedor or (not fornecedor.email and not fornecedor.telefone):
+        erro = f'Fornecedor "{pedido.fornecedor_cliente}" não tem e-mail nem telefone cadastrado — o link abaixo pode ser enviado manualmente.'
+
+    return {"token": token, "link": link, "erro": erro}
 
 
 # Tamanho máximo por anexo — mesmo limite de LancamentoAnexo (ver financeiro.py).

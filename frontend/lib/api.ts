@@ -187,7 +187,7 @@ export const ROTA_MODULO: Record<string, string> = {
   "/reproducao": "reproducao", "/analise-reprodutiva": "analise", "/relatorios": "reproducao", "/rebanho": "rebanho",
   "/ciclos-21-dias": "reproducao",
   "/producao": "producao", "/alimentacao": "alimentacao", "/sanidade": "sanidade", "/recria": "recria",
-  "/financeiro": "financeiro", "/estoque": "estoque", "/pedidos": "pedidos", "/parametros": "parametros", "/upload": "upload",
+  "/financeiro": "financeiro", "/estoque": "estoque", "/pedidos": "pedidos", "/cotacoes": "pedidos", "/parametros": "parametros", "/upload": "upload",
   "/analise-relatorios": "indicadores",
 };
 
@@ -542,6 +542,9 @@ export type Fazenda = {
   id: number; nome: string; cidade?: string | null; uf?: string | null; ativa: boolean;
   tipo_documento?: "cpf" | "cnpj" | null; documento?: string | null; endereco?: string | null; cep?: string | null;
   representante_nome?: string | null; representante_cpf?: string | null;
+  // Dados de faturamento enviados ao fornecedor no "pedido formal" da
+  // Cotação de Preços com Fornecedores (ver PedidoConfirmacao/publico.py).
+  inscricao_estadual?: string | null; telefone?: string | null; email?: string | null;
   exige_aprovacao_suporte?: boolean;
 };
 export type ModuloComercial =
@@ -579,7 +582,9 @@ export async function criarFazenda(dados: { nome: string; cidade?: string; uf?: 
 export async function atualizarFazenda(fazendaId: number, dados: {
   nome?: string; cidade?: string; uf?: string;
   tipo_documento?: string; documento?: string; endereco?: string; cep?: string;
-  representante_nome?: string; representante_cpf?: string; exige_aprovacao_suporte?: boolean;
+  representante_nome?: string; representante_cpf?: string;
+  inscricao_estadual?: string; telefone?: string; email?: string;
+  exige_aprovacao_suporte?: boolean;
 }): Promise<Fazenda> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar fazenda"); }
@@ -7919,6 +7924,162 @@ export function urlAnexoPedido(anexoId: number): string {
 export async function excluirAnexoPedido(anexoId: number) {
   const res = await authFetch(`${API}/pedidos/anexos/${anexoId}`, { method: "DELETE" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir anexo"); }
+  return res.json();
+}
+
+// "Disparar pedido formal" — pede ao fornecedor vencedor que confirme o
+// pedido já fechado (não reabre preço, só previsão de entrega), levando
+// junto os dados de faturamento da fazenda. Devolve o link público gerado
+// (ver publico.py) — mesmo padrão de token do reset de senha.
+export async function dispararPedidoFormal(pedidoId: number, mensagem?: string): Promise<{ token: string; link: string; erro: string | null }> {
+  const res = await authFetch(`${API}/pedidos/${pedidoId}/confirmacao`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mensagem: mensagem || null }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao disparar pedido formal"); }
+  return res.json();
+}
+
+// ── Cotação de Preços com Fornecedores ──────────────────────────────────
+// Pede preço a vários fornecedores por categoria, compara as respostas, e
+// gera Pedidos reais (mesmo módulo comercial "pedidos") com os vencedores.
+export type CotacaoItemPayload = { estoque_id?: number | null; produto: string; quantidade: number; unidade?: string | null };
+export type CotacaoFornecedorPayload = { fornecedor_id: number; canal: "email" | "whatsapp" | "ambos" };
+export type CotacaoPayload = {
+  categoria: string; modo?: "completo" | "expresso"; prazo_resposta: string; observacao?: string | null;
+  itens: CotacaoItemPayload[]; fornecedores: CotacaoFornecedorPayload[];
+};
+export type CotacaoResumo = {
+  id: number; numero_cotacao: string; categoria: string; modo: string; prazo_resposta: string; status: string;
+  observacao?: string | null; criado_em: string; total_fornecedores: number; total_respondidos: number;
+};
+export type CotacaoFornecedorRow = {
+  id: number; fornecedor_id: number; fornecedor_nome: string | null; canal: string; token_publico: string;
+  status_envio: string; enviado_em?: string | null; visualizado_em?: string | null; respondido_em?: string | null;
+};
+export type CotacaoItemRow = { id: number; estoque_id: number | null; produto: string; quantidade: number; unidade: string | null };
+export type CotacaoRespostaRow = {
+  id: number; cotacao_fornecedor_id: number; cotacao_item_id: number; recusado: boolean;
+  preco_unitario: number | null; frete_incluso: boolean | null; valor_frete: number | null;
+  prazo_entrega_dias: number | null; condicao_pagamento: string | null; observacao: string | null; vencedor: boolean;
+};
+export type CotacaoDetalhe = CotacaoResumo & {
+  itens: CotacaoItemRow[]; fornecedores: CotacaoFornecedorRow[]; respostas: CotacaoRespostaRow[];
+};
+
+export async function fetchFornecedoresSugeridos(categoria: string): Promise<any[]> {
+  const res = await authFetch(`${API}/cotacoes/opcoes/fornecedores-sugeridos?categoria=${encodeURIComponent(categoria)}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Fornecedores sugeridos error: ${res.status}`);
+  return res.json();
+}
+export async function fetchCotacoes(status?: string): Promise<CotacaoResumo[]> {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+  const res = await authFetch(`${API}/cotacoes/${qs}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Cotações error: ${res.status}`);
+  return res.json();
+}
+export async function fetchCotacao(id: number): Promise<CotacaoDetalhe> {
+  const res = await authFetch(`${API}/cotacoes/${id}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Cotação error: ${res.status}`);
+  return res.json();
+}
+export async function criarCotacao(dados: CotacaoPayload): Promise<{ id: number; numero_cotacao: string }> {
+  const res = await authFetch(`${API}/cotacoes/`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar cotação"); }
+  return res.json();
+}
+export async function excluirCotacao(id: number) {
+  const res = await authFetch(`${API}/cotacoes/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir cotação"); }
+}
+export async function dispararCotacao(id: number, mensagem?: string): Promise<{ status: string; erros: string[] }> {
+  const res = await authFetch(`${API}/cotacoes/${id}/disparar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mensagem: mensagem || null }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao disparar cotação"); }
+  return res.json();
+}
+export async function marcarVencedoresCotacao(id: number, escolhas: { cotacao_item_id: number; cotacao_fornecedor_id: number }[]): Promise<{ status: string }> {
+  const res = await authFetch(`${API}/cotacoes/${id}/vencedores`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(escolhas),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao marcar vencedores"); }
+  return res.json();
+}
+export async function gerarPedidosCotacao(id: number): Promise<{ pedidos: { id: number; numero_pedido: string }[] }> {
+  const res = await authFetch(`${API}/cotacoes/${id}/gerar-pedidos`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao gerar pedidos"); }
+  return res.json();
+}
+export async function cancelarCotacao(id: number): Promise<{ status: string }> {
+  const res = await authFetch(`${API}/cotacoes/${id}/cancelar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cancelar cotação"); }
+  return res.json();
+}
+
+// Categoria N:N de Fornecedor (Cadastro > Estoque) — um fornecedor pode ter
+// mais de uma; usada pela sugestão automática acima.
+export async function fetchCategoriasFornecedor(fornecedorId: number): Promise<{ id: number; categoria: string }[]> {
+  const res = await authFetch(`${API}/cadastro/fornecedores/${fornecedorId}/categorias`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Categorias do fornecedor error: ${res.status}`);
+  return res.json();
+}
+export async function adicionarCategoriaFornecedor(fornecedorId: number, categoria: string) {
+  const res = await authFetch(`${API}/cadastro/fornecedores/${fornecedorId}/categorias`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ categoria }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao adicionar categoria"); }
+  return res.json();
+}
+export async function removerCategoriaFornecedor(fornecedorId: number, categoriaId: number) {
+  const res = await authFetch(`${API}/cadastro/fornecedores/${fornecedorId}/categorias/${categoriaId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao remover categoria"); }
+}
+
+// ── Páginas públicas (sem login) — fornecedor responde cotação/confirma pedido formal ──
+export type CotacaoPublicaItem = {
+  id: number; produto: string; quantidade: number; unidade: string | null;
+  resposta: CotacaoRespostaRow | null;
+};
+export type CotacaoPublicaView = {
+  nome_fazenda: string; numero_cotacao: string; categoria: string; prazo_resposta: string; status: string;
+  itens: CotacaoPublicaItem[];
+};
+export async function fetchCotacaoPublica(token: string): Promise<CotacaoPublicaView> {
+  const res = await fetch(`${API}/cotacao-publica/${token}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Link inválido ou expirado."); }
+  return res.json();
+}
+export type RespostaCotacaoPublicaPayload = {
+  cotacao_item_id: number; recusado?: boolean; preco_unitario?: number | null; frete_incluso?: boolean | null;
+  valor_frete?: number | null; prazo_entrega_dias?: number | null; condicao_pagamento?: string | null; observacao?: string | null;
+};
+export async function responderCotacaoPublica(token: string, respostas: RespostaCotacaoPublicaPayload[]): Promise<void> {
+  const res = await fetch(`${API}/cotacao-publica/${token}/responder`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(respostas),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Não foi possível enviar sua resposta."); }
+}
+
+export type PedidoConfirmacaoPublicaView = {
+  numero_pedido: string; status: string;
+  itens: { produto: string; quantidade: number | null; valor_total_estimado: number }[];
+  fazenda: {
+    nome: string; tipo_documento: string | null; documento: string | null; inscricao_estadual: string | null;
+    endereco: string | null; telefone: string | null; email: string | null;
+  } | null;
+};
+export async function fetchPedidoConfirmacaoPublica(token: string): Promise<PedidoConfirmacaoPublicaView> {
+  const res = await fetch(`${API}/pedido-confirmacao-publica/${token}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Link inválido ou expirado."); }
+  return res.json();
+}
+export async function confirmarPedidoPublico(token: string, dados: { previsao_entrega?: string | null; observacao?: string | null; recusado?: boolean }): Promise<{ status: string }> {
+  const res = await fetch(`${API}/pedido-confirmacao-publica/${token}/confirmar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Não foi possível confirmar o pedido."); }
   return res.json();
 }
 

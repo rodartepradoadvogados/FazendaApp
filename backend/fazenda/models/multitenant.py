@@ -63,6 +63,16 @@ class Fazenda(SQLModel, table=True):
     cep: Optional[str] = None
     representante_nome: Optional[str] = None
     representante_cpf: Optional[str] = None
+    # Dados de faturamento enviados automaticamente ao fornecedor no "pedido
+    # formal" da Cotação de Preços (ver api/routers/cotacoes.py) — reaproveita
+    # os campos acima (nome/tipo_documento/documento/endereco) e só acrescenta
+    # o que faltava pra emitir NF: inscrição estadual (só relevante quando
+    # tipo_documento="cnpj" — pessoa física não tem) e um contato próprio da
+    # fazenda (hoje só o usuário logado tinha telefone/e-mail, nunca a
+    # fazenda). Todos opcionais/aditivos, mesmo espírito dos campos acima.
+    inscricao_estadual: Optional[str] = None
+    telefone: Optional[str] = None
+    email: Optional[str] = None
 
     # Política de acesso de suporte da CowData aos dados desta fazenda (ver
     # fazenda/api/routers/cofre_acesso.py). False (padrão): pedido de acesso
