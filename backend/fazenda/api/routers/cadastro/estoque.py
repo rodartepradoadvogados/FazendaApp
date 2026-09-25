@@ -15,8 +15,8 @@ from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     CategoriaEstoque, CategoriaMedicamento, ClassificacaoMedicamento, Estoque, EstoqueSemen, FinalidadeEstoque,
-    Fornecedor, Laboratorio, LocalArmazenamento, PlanoContaGerencial, SeedFlag, UnidadeEmbalagemEstoque,
-    UnidadeEstoque, UnidadeMedidaEmbalagemEstoque,
+    Fornecedor, FornecedorCategoria, Laboratorio, LocalArmazenamento, PlanoContaGerencial, SeedFlag,
+    UnidadeEmbalagemEstoque, UnidadeEstoque, UnidadeMedidaEmbalagemEstoque,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
 from ._comum import _crud_nome_ativo
@@ -87,6 +87,68 @@ def atualizar_fornecedor(
     session.refresh(f)
     return f.model_dump()
 
+
+# ---------------------------------------------------------------------------
+# Categorias N:N de fornecedor (Fase Cotação de Preços) — `Fornecedor.
+# categoria` (texto único) continua existindo por compatibilidade; esta
+# tabela é o que a sugestão automática de fornecedores por categoria, na
+# Cotação, de fato lê. Um fornecedor pode ter mais de uma.
+# ---------------------------------------------------------------------------
+class FornecedorCategoriaIn(BaseModel):
+    categoria: str
+
+
+def _fornecedor_da_fazenda(session: Session, fornecedor_id: int, fazenda_id: int | None) -> Fornecedor:
+    f = session.get(Fornecedor, fornecedor_id)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not f or (fazenda_id is not None and f.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Fornecedor não encontrado")
+    return f
+
+
+@router.get("/fornecedores/{fornecedor_id}/categorias")
+def listar_categorias_fornecedor(
+    fornecedor_id: int, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
+    f = _fornecedor_da_fazenda(session, fornecedor_id, fazenda_id)
+    linhas = session.exec(select(FornecedorCategoria).where(FornecedorCategoria.fornecedor_id == f.id)).all()
+    return [c.model_dump() for c in linhas]
+
+
+@router.post("/fornecedores/{fornecedor_id}/categorias", status_code=201)
+def adicionar_categoria_fornecedor(
+    fornecedor_id: int, dados: FornecedorCategoriaIn,
+    fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
+) -> dict:
+    f = _fornecedor_da_fazenda(session, fornecedor_id, fazenda_id)
+    categoria = dados.categoria.strip()
+    if not categoria:
+        raise HTTPException(status_code=400, detail="Categoria é obrigatória")
+    existente = session.exec(
+        select(FornecedorCategoria).where(
+            FornecedorCategoria.fornecedor_id == f.id, FornecedorCategoria.categoria == categoria,
+        )
+    ).first()
+    if existente:
+        return existente.model_dump()
+    linha = FornecedorCategoria(fornecedor_id=f.id, categoria=categoria, fazenda_id=f.fazenda_id)
+    session.add(linha)
+    session.commit()
+    session.refresh(linha)
+    return linha.model_dump()
+
+
+@router.delete("/fornecedores/{fornecedor_id}/categorias/{categoria_id}", status_code=204)
+def remover_categoria_fornecedor(
+    fornecedor_id: int, categoria_id: int,
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> None:
+    f = _fornecedor_da_fazenda(session, fornecedor_id, fazenda_id)
+    linha = session.get(FornecedorCategoria, categoria_id)
+    if not linha or linha.fornecedor_id != f.id:
+        raise HTTPException(status_code=404, detail="Categoria não encontrada")
+    session.delete(linha)
+    session.commit()
 
 
 # ---------------------------------------------------------------------------

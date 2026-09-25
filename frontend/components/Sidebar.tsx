@@ -23,6 +23,7 @@ import {
   ExternalLink,
   FlaskConical,
   LineChart,
+  FileSearch,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { checkHealth, getUsuario, getFazendaAtual, podeModulo, ehAdmin, ehDono, podeFormularDietas, ROTA_MODULO } from "@/lib/api";
@@ -96,6 +97,7 @@ const links = [
   { href: "/estoque",     label: "Estoque",      icon: Package,       title: "Estoque de insumos — quantidades, valores e itens abaixo do mínimo", grupo: "Insumos e sanidade" },
   // ── Financeiro ──
   { href: "/financeiro",  label: "Controle Financeiro", icon: BarChart3, title: "Controle Financeiro — contas a pagar/receber, folha e indicadores", grupo: "Financeiro" },
+  { href: "/cotacoes",    label: "Cotações",     icon: FileSearch,    title: "Cotação de Preços com Fornecedores — compara respostas e gera Pedidos com os vencedores", grupo: "Financeiro" },
   { href: "/pedidos",     label: "Pedidos",      icon: ShoppingCart,  title: "Pedidos — intenção de compra/venda; só reflete em Estoque/Financeiro quando a nota fiscal/recibo é vinculada", grupo: "Financeiro" },
 ];
 

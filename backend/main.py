@@ -38,6 +38,7 @@ from fazenda.api.routers import (
     cofre_acesso,
     compra_animal,
     compra_semen,
+    cotacoes,
     documentos,
     estoque,
     exclusoes,
@@ -71,6 +72,7 @@ from fazenda.api.routers import (
     portal,
     producao,
     protocolos_customizados,
+    publico,
     push,
     recria,
     relatorio_acasalamento,
@@ -801,6 +803,11 @@ app.add_middleware(
 
 # Auth (aberto) + rotas de dados (exigem login).
 app.include_router(auth.router)
+# Páginas públicas sem login (fornecedor responde cotação/confirma pedido
+# formal por token) — mesmo espírito de auth.router acima: aberto de
+# propósito, cada endpoint resolve a fazenda pelo próprio token, nunca por
+# parâmetro do cliente (ver docstring de publico.py).
+app.include_router(publico.router)
 # Fazendas: gerencia os próprios contratos/planos — não leva a trava de
 # módulo contratado (seria circular).
 app.include_router(fazendas.router)
@@ -898,6 +905,10 @@ app.include_router(relatorio_custo_safra.router, dependencies=[Depends(exigir_mo
 # lançamento/movimento é vinculado a ele).
 app.include_router(planejamento.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("planejamento")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 app.include_router(pedidos.router, dependencies=[Depends(exigir_modulo("pedidos")), Depends(exigir_modulo_contratado("pedidos"))] + _fazenda_selecionada)
+# Cotação de Preços com Fornecedores — reaproveita o módulo comercial
+# "pedidos" já cadastrado (é a mesma trava de acesso; gerar_pedidos_da_cotacao
+# cria Pedido/PedidoItem de verdade) em vez de um módulo contratável novo.
+app.include_router(cotacoes.router, dependencies=[Depends(exigir_modulo("pedidos")), Depends(exigir_modulo_contratado("pedidos"))] + _fazenda_selecionada)
 # Arquivo fiscal-contábil (Documentos) — SEM bloquear_escrita_contador: o
 # contador pode arquivar documentos livremente (decisão do usuário), só a
 # escrita em Financeiro/Planejamento/Chamados fica atrás do cadeado. Este

@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ShoppingCart, Filter, Plus, Pencil, Trash2, ChevronDown, ChevronRight, Receipt, Package, AlertTriangle, Truck, CreditCard, FileText, Upload, X, XCircle, CircleDollarSign, PackageCheck } from "lucide-react";
+import { ShoppingCart, Filter, Plus, Pencil, Trash2, ChevronDown, ChevronRight, Receipt, Package, AlertTriangle, Truck, CreditCard, FileText, Upload, X, XCircle, CircleDollarSign, PackageCheck, Send } from "lucide-react";
 import {
   fetchPedidos, fetchPedido, criarPedido, atualizarPedido, atualizarStatusPedido, excluirPedido, fetchOpcoesPedidos,
   fetchCentrosCusto, fetchPlanoContas, fetchEstoque, fetchFornecedores, formatBRL, formatDate,
   CATEGORIAS_PEDIDO_ANEXO, anexarArquivoPedido, listarAnexosPedido, excluirAnexoPedido, urlAnexoPedido, type AnexoPedido,
   marcarEntregaItemPedido, type EntregaItemPedidoResultado,
+  dispararPedidoFormal,
   type PedidoPayload, type PedidoItemPayload,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
@@ -57,6 +58,11 @@ export default function PedidosPage() {
   const [opcoes, setOpcoes] = useState<{ fornecedores: string[]; clientes: string[]; servicos: string[] }>({ fornecedores: [], clientes: [], servicos: [] });
   const [centros, setCentros] = useState<string[]>([]);
   const [planoContas, setPlanoContas] = useState<ContaPlano[]>([]);
+  // Saldo/mínimo atual de cada item de Estoque, por nome — usado só para
+  // mostrar "antes → depois" ao marcar entrega (ver MarcarEntregaItem);
+  // nunca decide nada sozinho, é a mesma leitura que a tela de Estoque já
+  // expõe, só antecipada pro momento da ação.
+  const [estoquePorNome, setEstoquePorNome] = useState<Record<string, { quantidade: number; estoque_minimo: number | null; unidade: string | null }>>({});
 
   const [tipoFiltro, setTipoFiltro] = useState("");
   const [statusFiltro, setStatusFiltro] = useState("");
@@ -112,6 +118,11 @@ export default function PedidosPage() {
     fetchOpcoesPedidos().then(setOpcoes).catch(() => {});
     fetchCentrosCusto().then((d) => setCentros(d.filter((c: any) => c.ativo).map((c: any) => c.nome))).catch(() => {});
     fetchPlanoContas().then(setPlanoContas).catch(() => {});
+    fetchEstoque().then((d: any) => {
+      const mapa: Record<string, { quantidade: number; estoque_minimo: number | null; unidade: string | null }> = {};
+      (d.itens || []).forEach((i: any) => { mapa[i.nome] = { quantidade: i.quantidade ?? 0, estoque_minimo: i.estoque_minimo ?? null, unidade: i.unidade ?? null }; });
+      setEstoquePorNome(mapa);
+    }).catch(() => {});
   }, []);
 
   const todosFornecedoresClientes = useMemo(() => Array.from(new Set([...opcoes.fornecedores, ...opcoes.clientes])).sort(), [opcoes]);
@@ -217,7 +228,8 @@ export default function PedidosPage() {
                   <PedidoLinha key={p.id} pedido={p} destacado={flashId === p.id}
                     expandido={expandido === p.id} onToggle={() => setExpandido(expandido === p.id ? null : p.id)}
                     onEditar={() => setEditando(p)} onExcluir={() => excluir(p.id)} onMudarStatus={(s) => mudarStatus(p.id, s)}
-                    onAtualizado={() => sincronizarAposMudanca(p.id)} nomesResponsaveis={nomesResponsaveis} />
+                    onAtualizado={() => sincronizarAposMudanca(p.id)} nomesResponsaveis={nomesResponsaveis}
+                    estoquePorNome={estoquePorNome} />
                 )
               ))}
               {pedidos && !pedidos.length && <tr><td colSpan={10} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1.5rem" }}>Nenhum pedido encontrado.</td></tr>}
@@ -262,9 +274,10 @@ function LinhaPedidoSaindo({ pedido }: { pedido: PedidoRow }) {
   );
 }
 
-function PedidoLinha({ pedido, destacado, expandido, onToggle, onEditar, onExcluir, onMudarStatus, onAtualizado, nomesResponsaveis }: {
+function PedidoLinha({ pedido, destacado, expandido, onToggle, onEditar, onExcluir, onMudarStatus, onAtualizado, nomesResponsaveis, estoquePorNome }: {
   pedido: PedidoRow; destacado?: boolean; expandido: boolean; onToggle: () => void; onEditar: () => void; onExcluir: () => void; onMudarStatus: (s: string) => void;
   onAtualizado: () => void; nomesResponsaveis: string[];
+  estoquePorNome: Record<string, { quantidade: number; estoque_minimo: number | null; unidade: string | null }>;
 }) {
   const [detalhe, setDetalhe] = useState<{ lancamentos: any[]; movimentos_estoque: any[] } | null>(null);
   const recarregarDetalhe = () => fetchPedido(pedido.id).then(setDetalhe).catch(() => {});
@@ -280,6 +293,25 @@ function PedidoLinha({ pedido, destacado, expandido, onToggle, onEditar, onExclu
   // (botão "Lançar pagamento"/ícone $ da linha) não passa por aqui: nesse
   // caso o usuário já sabe o que quer lançar.
   const [pendenciasAbertura, setPendenciasAbertura] = useState<string[]>([]);
+
+  // "Disparar pedido formal" — pede ao fornecedor que confirme o pedido já
+  // fechado (não reabre preço, só previsão de entrega), levando junto os
+  // dados de faturamento da fazenda (Configurações > Fazenda). Gera um link
+  // público (ver /pedido-confirmacao/[token]) — mostrado aqui pra poder
+  // reenviar manualmente se o fornecedor não tiver e-mail/telefone cadastrado.
+  const [disparandoConfirmacao, setDisparandoConfirmacao] = useState(false);
+  const [linkConfirmacao, setLinkConfirmacao] = useState<{ link: string; erro: string | null } | null>(null);
+  async function dispararConfirmacao() {
+    setDisparandoConfirmacao(true);
+    try {
+      const r = await dispararPedidoFormal(pedido.id);
+      setLinkConfirmacao({ link: r.link, erro: r.erro });
+    } catch (e: any) {
+      setLinkConfirmacao({ link: "", erro: e.message });
+    } finally {
+      setDisparandoConfirmacao(false);
+    }
+  }
 
   // Cancelamento é a única transição de status que continua manual — todas
   // as outras (parcial/atendido) nascem de "marcar entrega" (ver ação por
@@ -347,7 +379,8 @@ function PedidoLinha({ pedido, destacado, expandido, onToggle, onEditar, onExclu
                         <td style={{ textAlign: "right", fontSize: "0.8rem" }}>{formatBRL(i.valor_total_estimado)}</td>
                         <td style={{ textAlign: "right", fontSize: "0.8rem", color: "var(--green-light)" }}>{formatBRL(i.valor_atendido)}</td>
                         <td style={{ textAlign: "right" }}>
-                          <MarcarEntregaItem pedidoId={pedido.id} item={i} desabilitado={pedido.status === "cancelado"} onEntregaMarcada={entregaMarcada} />
+                          <MarcarEntregaItem pedidoId={pedido.id} item={i} desabilitado={pedido.status === "cancelado"} onEntregaMarcada={entregaMarcada}
+                            estoqueAtual={i.tipo_item === "produto" ? (estoquePorNome[i.produto_servico] ?? null) : null} />
                         </td>
                       </tr>
                     ))}
@@ -389,11 +422,27 @@ function PedidoLinha({ pedido, destacado, expandido, onToggle, onEditar, onExclu
                     {pedido.link_rastreio && <a href={pedido.link_rastreio} target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)" }}>rastrear</a>}
                   </div>
                 )}
-                <button className="btn-secondary" style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.78rem", marginLeft: "auto" }}
+                {pedido.tipo === "compra" && pedido.status !== "cancelado" && (
+                  <button className="btn-secondary" style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.78rem" }}
+                    disabled={disparandoConfirmacao} onClick={dispararConfirmacao} title="Pede ao fornecedor que confirme o pedido e a previsão de entrega, com os dados de faturamento da fazenda">
+                    <Send size={14} /> {disparandoConfirmacao ? "Disparando…" : "Disparar pedido formal"}
+                  </button>
+                )}
+                <button className="btn-secondary" style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.78rem", marginLeft: pedido.tipo === "compra" ? 0 : "auto" }}
                   onClick={() => { setPendenciasAbertura([]); setAbrirPagamento(true); }}>
                   <CreditCard size={14} /> Lançar pagamento
                 </button>
               </div>
+              {linkConfirmacao && (
+                <div className="card" style={{ padding: "0.6rem 0.8rem", fontSize: "0.78rem", background: "var(--surface)" }}>
+                  {linkConfirmacao.erro && <p style={{ color: "var(--amber)", marginBottom: linkConfirmacao.link ? "0.4rem" : 0 }}>{linkConfirmacao.erro}</p>}
+                  {linkConfirmacao.link && (
+                    <p style={{ color: "var(--text-muted)" }}>
+                      Link de confirmação: <a href={linkConfirmacao.link} target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)" }}>{linkConfirmacao.link}</a>
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </td>
         </tr>
@@ -442,8 +491,13 @@ const LABEL_PENDENCIA: Record<string, string> = {
 // já dá entrada automática em Estoque no backend (Decisão A1); aqui só
 // mostra o resultado (avisos) e repassa pro pai decidir se abre o formulário
 // de conclusão (`onEntregaMarcada`, ver `pendencias`).
-function MarcarEntregaItem({ pedidoId, item, desabilitado, onEntregaMarcada }: {
+function MarcarEntregaItem({ pedidoId, item, desabilitado, onEntregaMarcada, estoqueAtual }: {
   pedidoId: number; item: PedidoItemRow; desabilitado: boolean; onEntregaMarcada: (r: EntregaItemPedidoResultado) => void;
+  // Saldo/mínimo ATUAL do item de Estoque (mesmo nome do produto do pedido)
+  // — null quando o item não é "produto", ou quando o nome não bate com
+  // nenhum item cadastrado (mesmo casamento por nome que o backend já faz
+  // em estoque_baixa.resolver_item; se não bate lá, também não bate aqui).
+  estoqueAtual: { quantidade: number; estoque_minimo: number | null; unidade: string | null } | null;
 }) {
   const [valor, setValor] = useState(String(item.quantidade_entregue ?? 0));
   const [salvando, setSalvando] = useState(false);
@@ -465,6 +519,17 @@ function MarcarEntregaItem({ pedidoId, item, desabilitado, onEntregaMarcada }: {
     }
   }
 
+  // Prévia de "antes → depois" — mesma conta que o backend faz de verdade em
+  // estoque_baixa.movimentar (só entra em estoque quando o delta é positivo;
+  // correção pra baixo não mexe em Estoque, então não faz sentido prever
+  // nada ali). Puramente informativo: o saldo real só muda ao confirmar.
+  const quantidadeDigitada = Number(valor);
+  const delta = !Number.isNaN(quantidadeDigitada) ? quantidadeDigitada - (item.quantidade_entregue ?? 0) : 0;
+  const preview = estoqueAtual && delta > 0 ? {
+    depois: estoqueAtual.quantidade + delta,
+    abaixoDoMinimo: estoqueAtual.estoque_minimo != null && (estoqueAtual.quantidade + delta) < estoqueAtual.estoque_minimo,
+  } : null;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.15rem" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
@@ -485,6 +550,12 @@ function MarcarEntregaItem({ pedidoId, item, desabilitado, onEntregaMarcada }: {
           <PackageCheck size={16} />
         </button>
       </div>
+      {preview && (
+        <span style={{ fontSize: "0.68rem", color: preview.abaixoDoMinimo ? "var(--amber)" : "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
+          Estoque: {estoqueAtual!.quantidade} → {preview.depois}{estoqueAtual!.unidade ? ` ${estoqueAtual!.unidade}` : ""}
+          {preview.abaixoDoMinimo ? " — fica abaixo do mínimo" : ""}
+        </span>
+      )}
       {erro && <span style={{ fontSize: "0.68rem", color: "var(--red)" }}>{erro}</span>}
     </div>
   );
