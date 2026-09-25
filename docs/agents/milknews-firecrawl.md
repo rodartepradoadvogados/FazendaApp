@@ -136,17 +136,16 @@ aparece em `/news` depois que alguém do CowData marca "revisado final"**
 
 ---
 
-## 5. Divergência entre documentos que o dono precisa decidir
+## 5. Frequência e merge: decisões do dono
 
-`SKILL.md` e `docs/milknews-rotina-publicacao.md` discordam:
+**Frequência (decidida em 25/09/2026): matéria diária.** Todo dia de execução, o robô publica
+**de 1 a 3 posts** quando houver pauta verificada. A regra de ouro não muda: **nunca force post sem
+dupla verificação**. Se num dia nada passar na verificação, o robô não publica e explica o motivo no
+relatório da execução. Um dia sem post é exceção a ser justificada, não rotina.
 
-| Ponto | `SKILL.md` | `milknews-rotina-publicacao.md` |
-|---|---|---|
-| Frequência | 3 a 5 posts por semana; dias sem post são normais | todo dia, mínimo 1 e máximo 3 |
-| Merge | só abre PR | abre o PR **e mergeia** |
-
-**Até o dono decidir, o robô segue o `SKILL.md`**, que é a versão que a Routine lê. Não force post
-em dia sem pauta verificada.
+**Merge:** a decidir. `SKILL.md` diz "só abre PR"; `docs/milknews-rotina-publicacao.md` diz "abre
+e mergeia". Na primeira execução depois deste documento, o robô **pergunta ao dono** qual vale e
+registra a resposta no `SKILL.md` (ver `docs/agents/MISSAO-milknews.md`, Etapa 1).
 
 ---
 
