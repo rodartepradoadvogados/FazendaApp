@@ -11,13 +11,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_sessao_suporte, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
+from fazenda.auth import exigir_admin, exigir_sessao_suporte, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    Alimento, AlimentoNutricional, ApresentacaoEmbalagemEstoque, CategoriaMedicamento, CompraSemen,
-    DietaSimulacaoItem, Estoque, EstoqueAliasMesclado, EstoqueCategoriaMedicamento, EstoqueClassificacaoMedicamento,
-    EstoquePrincipioAtivo, EstoqueSemen, Fornecedor, LoteEstoque, MedicamentoComercial, MovimentoEstoque,
-    PrincipioAtivo, SeedFlag, TabelaNutricionalProduto, Usuario,
+    Alimento, AlimentoNutricional, ApresentacaoEmbalagemEstoque, CategoriaMedicamento, ClassificacaoCowData,
+    CompraSemen, DietaSimulacaoItem, Estoque, EstoqueAliasMesclado, EstoqueCategoriaMedicamento,
+    EstoqueClassificacaoMedicamento, EstoquePrincipioAtivo, EstoqueSemen, Fazenda, Fornecedor, LoteEstoque,
+    MedicamentoComercial, MovimentoEstoque, PrecoBaseSugerido, PrincipioAtivo, ProdutoPadrao, SeedFlag,
+    TabelaNutricionalProduto, Usuario,
 )
 from fazenda.rules.alimentacao import resolver_kg_por_unidade
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
@@ -1403,3 +1404,76 @@ def editar_movimento_estoque(
     session.refresh(item)
 
     return {**mov.model_dump(), "saldo_item": item.quantidade}
+
+
+# ---------------------------------------------------------------------------
+# Preços de referência CowData — leitura pública filtrada, NUNCA escrita. A
+# muralha de privacidade é estrutural: este dict nunca inclui campo nenhum
+# de fornecedor (nem id, nem nome) — ver docstring de
+# fazenda/models/catalogo_cowdata.py e fazenda/api/routers/
+# painel_cowdata_cotacoes.py, onde o fornecedor de fato aparece.
+# ---------------------------------------------------------------------------
+@router.get("/precos-referencia-cowdata")
+def precos_referencia_cowdata(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if fazenda_id is not None:
+        fazenda = session.get(Fazenda, fazenda_id)
+        if fazenda and not fazenda.mostrar_precos_referencia_cowdata:
+            return []
+    produtos = session.exec(select(ProdutoPadrao).where(ProdutoPadrao.ativo == True)).all()  # noqa: E712
+    if not produtos:
+        return []
+    classificacoes = {c.id: c.nome for c in session.exec(select(ClassificacaoCowData)).all()}
+    resultado = []
+    for produto in produtos:
+        preco = session.exec(
+            select(PrecoBaseSugerido)
+            .where(PrecoBaseSugerido.produto_padrao_id == produto.id, PrecoBaseSugerido.publicado == True)  # noqa: E712
+            .order_by(PrecoBaseSugerido.atribuido_em.desc())
+        ).first()
+        if not preco:
+            continue
+        resultado.append({
+            "produto_padrao_id": produto.id,
+            "nome": produto.nome,
+            "classificacao": classificacoes.get(produto.classificacao_id),
+            "unidade": preco.unidade or produto.unidade,
+            "valor": preco.valor,
+            "regiao": preco.regiao,
+            "atribuido_em": preco.atribuido_em,
+        })
+    resultado.sort(key=lambda r: r["nome"])
+    return resultado
+
+
+class ConfigPrecosReferenciaIn(BaseModel):
+    mostrar: bool
+
+
+@router.get("/precos-referencia-cowdata/config")
+def obter_config_precos_referencia_cowdata(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    fazenda = session.get(Fazenda, fazenda_id) if fazenda_id is not None else None
+    return {"mostrar_precos_referencia_cowdata": fazenda.mostrar_precos_referencia_cowdata if fazenda else True}
+
+
+@router.put("/precos-referencia-cowdata/config")
+def configurar_precos_referencia_cowdata(
+    dados: ConfigPrecosReferenciaIn, fazenda_id: int | None = Depends(get_fazenda_id_escrita),
+    _: Usuario = Depends(exigir_admin), session: Session = Depends(get_session),
+) -> dict:
+    """Opt-out por fazenda (nunca obrigatório) — mesmo espírito de
+    Fazenda.exige_aprovacao_suporte: um interruptor simples, sem passar pelo
+    sistema de Parâmetros (que é sobre metas zootécnicas/financeiras, não
+    sobre visibilidade de uma tela)."""
+    fazenda = session.get(Fazenda, fazenda_id)
+    if not fazenda:
+        raise HTTPException(status_code=404, detail="Fazenda não encontrada")
+    fazenda.mostrar_precos_referencia_cowdata = dados.mostrar
+    session.add(fazenda)
+    session.commit()
+    return {"mostrar_precos_referencia_cowdata": fazenda.mostrar_precos_referencia_cowdata}

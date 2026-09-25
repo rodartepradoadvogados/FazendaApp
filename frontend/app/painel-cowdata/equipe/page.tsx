@@ -427,7 +427,7 @@ const LOGIN_VAZIO = {
   // do dono: "ninguém ganha nada; você libera depois".
   pode_editar_cadastros_globais: false, pode_editar_touros_naab: false, pode_editar_farmacia: false,
   pode_consultar_usuarios: false, pode_editar_usuarios: false, pode_controlar_acesso_usuarios: false,
-  pode_editar_news: false,
+  pode_editar_news: false, pode_editar_cotacoes: false,
 };
 
 // Login + permissões do membro no próprio Painel CowData — pedido explícito
@@ -462,6 +462,7 @@ function LoginEquipe({ pessoa }: { pessoa: PessoaCowData }) {
       pode_editar_usuarios: usuario.pode_editar_usuarios,
       pode_controlar_acesso_usuarios: usuario.pode_controlar_acesso_usuarios,
       pode_editar_news: usuario.pode_editar_news,
+      pode_editar_cotacoes: usuario.pode_editar_cotacoes,
     } : { ...LOGIN_VAZIO, email: pessoa.emails[0] || "" });
     setErro(null);
     setEditando(true);

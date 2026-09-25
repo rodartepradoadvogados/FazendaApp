@@ -12,7 +12,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type CSSProperties } from "react";
 import {
   LayoutGrid, CreditCard, Building2, Wallet, Users, Bot, Lock, ShieldCheck, ArrowLeft, Menu, X, ListChecks, Dna, Pill, UserCog,
-  SlidersHorizontal, Newspaper, Sun, Moon, SunMoon,
+  SlidersHorizontal, Newspaper, Sun, Moon, SunMoon, FileSearch,
 } from "lucide-react";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
@@ -36,7 +36,7 @@ import CofreMobile from "@/components/painel-cowdata/mobile/CofreMobile";
 // aparecia no formulário de equipe (lib/api.ts) — quem tinha "cadastros"
 // via o item e tomava 403 na primeira chamada. Agora o menu, o formulário e
 // a rota falam da mesma área.
-const AREAS_ENFORCADAS: AreaPainelCowData[] = ["equipe", "financeiro", "cofre", "cadastros", "farmacia"];
+const AREAS_ENFORCADAS: AreaPainelCowData[] = ["equipe", "financeiro", "cofre", "cadastros", "farmacia", "cotacoes"];
 
 // `area` casa com AREAS_PAINEL_COWDATA (backend) — dono vê tudo; um membro
 // da Equipe CowData com login próprio (ver lib/api.ts::temAreaPainelCowData)
@@ -87,6 +87,10 @@ export const GRUPOS: { titulo: string; itens: { href: string; label: string; ico
       // componente da sub-aba Farmácia dos Cadastros da fazenda, chamado sem
       // fazenda selecionada (ver app/painel-cowdata/farmacia/page.tsx).
       { href: "/painel-cowdata/farmacia", label: "Farmácia", icon: Pill, area: "farmacia" },
+      // Cotação de preços com os fornecedores da PRÓPRIA CowData + catálogo
+      // de produtos-padrão/preços-base sugeridos (nunca mostra fornecedor
+      // fora daqui) — ver painel_cowdata_cotacoes.py.
+      { href: "/painel-cowdata/cotacoes", label: "Cotações", icon: FileSearch, area: "cotacoes" },
       // Diferente dos itens acima, este NUNCA "aplica em várias fazendas de
       // uma vez" — login é sempre de uma fazenda só, escolhida explicitamente
       // (ver app/painel-cowdata/usuarios/page.tsx).

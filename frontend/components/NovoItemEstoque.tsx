@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Plus, X } from "lucide-react";
 import {
   criarItemEstoque, atualizarItemEstoque, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPrincipiosAtivos,
@@ -8,6 +8,7 @@ import {
   fetchUnidadesEmbalagemEstoqueCadastro, fetchUnidadesMedidaEmbalagemEstoqueCadastro, fetchLocaisArmazenamento,
   fetchLaboratoriosCadastro, criarLaboratorioCadastro, fetchCategoriasMedicamentoCadastro, fetchClassificacoesMedicamentoCadastro,
   fetchLotesEstoque, abrirLoteEstoque, fetchEmbalagensEstoque, criarEmbalagemEstoque, removerEmbalagemEstoque,
+  fetchPrecosReferenciaCowData, type PrecoReferenciaCowData,
   type ItemCadastroSimples, type LoteEstoque, type ApresentacaoEmbalagemEstoque,
 } from "@/lib/api";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
@@ -210,9 +211,16 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
   // primeiro que já existia — a animação não muda quando o estado é gravado).
   const [entrandoId, setEntrandoId] = useState<number | null>(null);
   const [saindoEmbalagem, setSaindoEmbalagem] = useState<Set<number>>(new Set());
+  // Preço-base sugerido pela CowData (Cadastro > Estoque > Preços de
+  // referência CowData) — só uma dica ao lado de Valor unitário, nunca
+  // preenche nem trava o campo. Casamento simples (substring, sem acento)
+  // pelo nome digitado; a lista inteira já vem filtrada/publicada pelo
+  // backend (nunca inclui fornecedor).
+  const [precosReferencia, setPrecosReferencia] = useState<PrecoReferenciaCowData[]>([]);
 
   useEffect(() => {
     fetchFornecedores().then(setFornecedores).catch(() => {});
+    fetchPrecosReferenciaCowData().then(setPrecosReferencia).catch(() => {});
     fetchOpcoesFinanceiro().then((d) => setCentrosCusto(d.centros_custo || [])).catch(() => {});
     fetchPlanoContas().then(setPlanoContas).catch(() => {});
     fetchPrincipiosAtivos().then((lista: PrincipioAtivo[]) => setPrincipiosAtivos(lista.filter((p) => p.ativo !== false))).catch(() => {});
@@ -234,6 +242,12 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
   }, []);
 
   const set = (patch: Partial<typeof vazio>) => setForm((p) => ({ ...p, ...patch }));
+
+  const dicaPrecoReferencia = useMemo(() => {
+    const nome = form.nome.trim().toLowerCase();
+    if (nome.length < 3) return null;
+    return precosReferencia.find((p) => p.nome.toLowerCase().includes(nome) || nome.includes(p.nome.toLowerCase())) || null;
+  }, [form.nome, precosReferencia]);
 
   useEffect(() => {
     if (prefill) set({ nome: prefill.nome, finalidade: prefill.finalidade || "Ração/Alimento" });
@@ -626,7 +640,16 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         {form.estocavel && (
           <div><label style={labelStyle}>Estoque mínimo</label><input type="number" style={inputStyle} value={form.estoque_minimo} onChange={(e) => set({ estoque_minimo: e.target.value })} /></div>
         )}
-        <div><label style={labelStyle}>Valor unitário (R$)</label><CampoMoeda style={inputStyle} value={Number(form.valor_unitario) || 0} onChange={(v) => set({ valor_unitario: v ? String(v) : "" })} /></div>
+        <div>
+          <label style={labelStyle}>Valor unitário (R$)</label>
+          <CampoMoeda style={inputStyle} value={Number(form.valor_unitario) || 0} onChange={(v) => set({ valor_unitario: v ? String(v) : "" })} />
+          {dicaPrecoReferencia && (
+            <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
+              Referência CowData: {dicaPrecoReferencia.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+              {dicaPrecoReferencia.unidade ? ` / ${dicaPrecoReferencia.unidade}` : ""} em {new Date(dicaPrecoReferencia.atribuido_em).toLocaleDateString("pt-BR")} — não preenche sozinho.
+            </span>
+          )}
+        </div>
         <div><label style={labelStyle}>Centro de custo padrão</label>
           <select style={inputStyle} value={form.centro_custo_padrao} onChange={(e) => set({ centro_custo_padrao: e.target.value })}>
             <option value="">Selecione…</option>

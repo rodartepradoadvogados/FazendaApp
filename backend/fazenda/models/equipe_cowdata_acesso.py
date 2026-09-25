@@ -55,6 +55,13 @@ AREAS_PAINEL_COWDATA = [
     # fazenda) para todas as fazendas-cliente — ver
     # fazenda.api.routers.painel_cowdata_farmacia.
     "farmacia",
+    # Cotação de preços com os fornecedores da própria CowData e catálogo de
+    # produtos-padrão/preços-base sugeridos — ver
+    # fazenda.api.routers.painel_cowdata_cotacoes e
+    # fazenda/models/catalogo_cowdata.py. Quem vê aqui: dono e qualquer
+    # membro da equipe com a área liberada (ex.: comercial, sócio) — não há
+    # papel/cargo especial, é a mesma concessão individual de sempre.
+    "cotacoes",
 ]
 
 # Nível de sigilo por conta — QUANTO de uma fazenda-cliente um membro da
@@ -91,6 +98,7 @@ PERMISSOES_EDICAO_PAINEL_COWDATA: list[tuple[str, str, str]] = [
     ("pode_editar_cadastros_globais", "cadastros", "Editar cadastros globais"),
     ("pode_editar_touros_naab", "cadastros", "Editar touros NAAB"),
     ("pode_editar_farmacia", "farmacia", "Editar Farmácia"),
+    ("pode_editar_cotacoes", "cotacoes", "Editar Cotações"),
     ("pode_consultar_usuarios", "cadastros", "Consultar usuários"),
     ("pode_editar_usuarios", "cadastros", "Editar usuários"),
     ("pode_controlar_acesso_usuarios", "cadastros", "Controle de acesso de usuários CowData"),
@@ -139,6 +147,7 @@ class PermissaoEquipeCowData(SQLModel, table=True):
     pode_editar_cadastros_globais: bool = False
     pode_editar_touros_naab: bool = False
     pode_editar_farmacia: bool = False
+    pode_editar_cotacoes: bool = False
     pode_consultar_usuarios: bool = False
     pode_editar_usuarios: bool = False
     pode_controlar_acesso_usuarios: bool = False
