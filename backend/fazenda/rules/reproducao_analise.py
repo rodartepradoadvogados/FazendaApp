@@ -85,6 +85,12 @@ def analisar_servicos(servicos: list[dict]) -> list[dict]:
             "data_servico": ds if isinstance(ds, date) else None,
             "del_servico": _del_servico(ds, s.get("data_ult_parto")),
             "diagnostico": diag,
+            # Data do 1º toque (exame de gestação) — distinta de "data"/
+            # "data_servico" (a IA/cobertura em si) e de "data_reconfirmacao"
+            # (2º exame, abaixo). Faltava aqui: o Histórico > Reprodução >
+            # Diagnósticos só mostrava a data do SERVIÇO, nunca a data em que o
+            # diagnóstico foi de fato lançado (pedido do produtor, set/2026).
+            "data_diagnostico": s["data_diagnostico"].isoformat() if isinstance(s.get("data_diagnostico"), date) else None,
             # "reinseminacao" = o sistema concluiu que não pegou porque veio
             # uma nova tentativa, não porque alguém tocou a vaca. A tela marca
             # essa diferença para o veterinário não achar que houve exame.
