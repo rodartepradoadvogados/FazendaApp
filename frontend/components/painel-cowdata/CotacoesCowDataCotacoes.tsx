@@ -46,7 +46,13 @@ export default function CotacoesCowDataCotacoes() {
   useEffect(() => { carregar(); }, []);
 
   async function criar() {
-    if (!novoTitulo.trim()) return;
+    // `criando` reentrada: sem isto, o Enter no input (onKeyDown abaixo) e o
+    // clique no botão podiam disparar duas chamadas quase simultâneas antes
+    // do primeiro `setCriando(true)` ser aplicado ao DOM (ex.: repetição de
+    // tecla do teclado ao segurar Enter) — cada uma criando sua própria
+    // cotação. `disabled={criando}` no botão só cobre o mouse; o teclado
+    // chama `criar()` direto.
+    if (criando || !novoTitulo.trim()) return;
     setCriando(true); setErro(null);
     try {
       const c = await criarCotacaoCowData(novoTitulo.trim());
@@ -66,8 +72,22 @@ export default function CotacoesCowDataCotacoes() {
     <div>
       <div className="flex gap-2 mb-4">
         <input style={{ ...inputStyle, flex: 1, maxWidth: "360px" }} placeholder="Título da nova cotação (ex.: Concentrados energéticos — out/2026)"
-          value={novoTitulo} onChange={(e) => setNovoTitulo(e.target.value)} onKeyDown={(e) => e.key === "Enter" && criar()} />
-        <button style={btnPrimario} disabled={criando} onClick={criar}><Plus size={14} /> Nova cotação</button>
+          value={novoTitulo} onChange={(e) => setNovoTitulo(e.target.value)} onKeyDown={(e) => e.key === "Enter" && criar()} disabled={criando} />
+        {/* Feedback visual do estado "criando" — antes o botão ficava
+            visualmente IDÊNTICO enquanto `disabled` (mesmo dourado, mesmo
+            `cursor: pointer` fixo no estilo, sem texto/ícone de carregamento):
+            reproduzido com Playwright, o clique único já criava a cotação e
+            navegava certo, mas sem NENHUM sinal visual disso — quem clicasse
+            numa rede mais lenta via a mesma tela parada e, sem saber que o
+            pedido já estava em voo, clicava de novo (e de novo), até o
+            primeiro pedido finalmente responder e a tela mudar. Os cliques
+            extras já eram no-ops (o `disabled` nativo bloqueia), mas pareciam
+            "só funcionar depois de várias tentativas". Root cause real:
+            ausência de feedback, não falha no clique em si. */}
+        <button style={{ ...btnPrimario, opacity: criando ? 0.6 : 1, cursor: criando ? "not-allowed" : "pointer" }}
+          disabled={criando} onClick={criar}>
+          <Plus size={14} /> {criando ? "Criando…" : "Nova cotação"}
+        </button>
       </div>
       {erro && <p style={{ color: "var(--red)", fontSize: "0.78rem", marginBottom: "0.6rem" }}>{erro}</p>}
       <div style={{ background: COR.painel, border: `1px solid ${COR.borda}`, borderRadius: "var(--r)", overflow: "hidden" }}>

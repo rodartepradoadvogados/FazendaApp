@@ -238,3 +238,95 @@ class TestFluxoCompleto:
 
         cfg2 = c.get("/estoque/precos-referencia-cowdata/config")
         assert cfg2.json()["mostrar_precos_referencia_cowdata"] is False
+
+
+class TestExcluirClassificacaoEFinalidade:
+    """DELETE /classificacoes/{id} e /finalidades/{id} — bloqueia (409) quando
+    ainda referenciado por fornecedor/produto-padrão/item de cotação, exclui
+    de fato quando não há nenhum uso. Ver painel_cowdata_cotacoes.py::
+    _usos_classificacao/_usos_finalidade."""
+
+    def test_renomear_classificacao(self, client):
+        c, _ = client
+        classificacao = c.post("/painel-cowdata/cotacoes/classificacoes", json={"nome": "Antigo nome"}).json()
+        r = c.put(f"/painel-cowdata/cotacoes/classificacoes/{classificacao['id']}", json={"nome": "Novo nome", "ativo": True})
+        assert r.status_code == 200
+        assert r.json()["nome"] == "Novo nome"
+        assert c.get("/painel-cowdata/cotacoes/classificacoes").json()[0]["nome"] == "Novo nome"
+
+    def test_excluir_classificacao_sem_uso(self, client):
+        c, _ = client
+        classificacao = c.post("/painel-cowdata/cotacoes/classificacoes", json={"nome": "Descartável"}).json()
+        r = c.delete(f"/painel-cowdata/cotacoes/classificacoes/{classificacao['id']}")
+        assert r.status_code == 200, r.text
+        assert c.get("/painel-cowdata/cotacoes/classificacoes").json() == []
+
+    def test_excluir_classificacao_404(self, client):
+        c, _ = client
+        r = c.delete("/painel-cowdata/cotacoes/classificacoes/999999")
+        assert r.status_code == 404
+
+    def test_excluir_classificacao_bloqueada_por_produto_padrao(self, client):
+        c, _ = client
+        classificacao = c.post("/painel-cowdata/cotacoes/classificacoes", json={"nome": "Em uso"}).json()
+        c.post("/painel-cowdata/cotacoes/produtos", json={"nome": "Produto X", "classificacao_id": classificacao["id"], "finalidade_ids": []})
+        r = c.delete(f"/painel-cowdata/cotacoes/classificacoes/{classificacao['id']}")
+        assert r.status_code == 409
+        assert "produto" in r.json()["detail"].lower()
+        # segue existindo
+        assert len(c.get("/painel-cowdata/cotacoes/classificacoes").json()) == 1
+
+    def test_excluir_classificacao_bloqueada_por_fornecedor(self, client):
+        c, _ = client
+        classificacao = c.post("/painel-cowdata/cotacoes/classificacoes", json={"nome": "Em uso fornecedor"}).json()
+        c.post("/painel-cowdata/cotacoes/fornecedores", json={"nome": "Forn X", "classificacao_ids": [classificacao["id"]], "finalidade_ids": []})
+        r = c.delete(f"/painel-cowdata/cotacoes/classificacoes/{classificacao['id']}")
+        assert r.status_code == 409
+        assert "fornecedor" in r.json()["detail"].lower()
+
+    def test_excluir_classificacao_bloqueada_por_item_de_cotacao(self, client):
+        c, _ = client
+        classificacao = c.post("/painel-cowdata/cotacoes/classificacoes", json={"nome": "Em uso item"}).json()
+        cot = c.post("/painel-cowdata/cotacoes", json={"titulo": "Cotação X"}).json()
+        c.post(f"/painel-cowdata/cotacoes/{cot['id']}/itens", json={"modo": "classificacao", "classificacao_id": classificacao["id"]})
+        r = c.delete(f"/painel-cowdata/cotacoes/classificacoes/{classificacao['id']}")
+        assert r.status_code == 409
+        assert "cotação" in r.json()["detail"].lower() or "item" in r.json()["detail"].lower()
+
+    def test_renomear_finalidade(self, client):
+        c, _ = client
+        finalidade = c.post("/painel-cowdata/cotacoes/finalidades", json={"nome": "Velho"}).json()
+        r = c.put(f"/painel-cowdata/cotacoes/finalidades/{finalidade['id']}", json={"nome": "Novo", "ativo": True})
+        assert r.status_code == 200
+        assert r.json()["nome"] == "Novo"
+
+    def test_excluir_finalidade_sem_uso(self, client):
+        c, _ = client
+        finalidade = c.post("/painel-cowdata/cotacoes/finalidades", json={"nome": "Descartável"}).json()
+        r = c.delete(f"/painel-cowdata/cotacoes/finalidades/{finalidade['id']}")
+        assert r.status_code == 200, r.text
+        assert c.get("/painel-cowdata/cotacoes/finalidades").json() == []
+
+    def test_excluir_finalidade_404(self, client):
+        c, _ = client
+        r = c.delete("/painel-cowdata/cotacoes/finalidades/999999")
+        assert r.status_code == 404
+
+    def test_excluir_finalidade_bloqueada_por_produto_padrao(self, client):
+        c, _ = client
+        finalidade = c.post("/painel-cowdata/cotacoes/finalidades", json={"nome": "Em uso"}).json()
+        c.post("/painel-cowdata/cotacoes/produtos", json={"nome": "Produto Y", "finalidade_ids": [finalidade["id"]]})
+        r = c.delete(f"/painel-cowdata/cotacoes/finalidades/{finalidade['id']}")
+        assert r.status_code == 409
+        assert "produto" in r.json()["detail"].lower()
+
+    def test_excluir_requer_permissao_de_edicao(self, client):
+        c, engine = client
+        classificacao = c.post("/painel-cowdata/cotacoes/classificacoes", json={"nome": "Protegida"}).json()
+        with Session(engine) as s:
+            s.add(Usuario(id=2, username="comercial", nome="Comercial", senha_hash="x", papel="admin", email="comercial@x.com"))
+            s.add(PermissaoEquipeCowData(usuario_id=2, areas="cotacoes"))  # sem pode_editar_cotacoes
+            s.commit()
+        _como_usuario(_FakeUser(id=2, email="comercial@x.com"))
+        r = c.delete(f"/painel-cowdata/cotacoes/classificacoes/{classificacao['id']}")
+        assert r.status_code == 403

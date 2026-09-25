@@ -31,7 +31,21 @@ export default function CotacoesCowDataProdutos() {
   const [classificacoes, setClassificacoes] = useState<ClassificacaoCowData[]>([]);
   const [finalidades, setFinalidades] = useState<FinalidadeCowData[]>([]);
   const [fornecedores, setFornecedores] = useState<FornecedorCowData[]>([]);
+  // Barra de filtro no topo — pedido do dono (set/2026): "os botões devem
+  // seguir a ordem: novo produto-padrão, selecionar produto/classificação/
+  // finalidade, nova caixa de seleção do que se selecionou, buscar por
+  // nome (só se for por produto-padrão)". Mesmo seletor de "modo" já usado
+  // pra adicionar item a uma cotação (CotacoesCowDataCotacoes.tsx), agora
+  // reaproveitado aqui como filtro da LISTAGEM — não é um seletor de como
+  // criar o produto-padrão (isso continua sendo só um nome + os campos do
+  // modal "Novo produto-padrão" abaixo, que não muda). Cada modo mostra sua
+  // própria caixa de seleção (lista de produtos/classificações/finalidades)
+  // e só o modo "produto" também mostra a busca por nome (adicional à
+  // seleção — digitar filtra igual escolher da lista).
+  const [modoFiltro, setModoFiltro] = useState<"produto" | "classificacao" | "finalidade">("produto");
   const [filtroClassificacao, setFiltroClassificacao] = useState<number | "">("");
+  const [filtroFinalidade, setFiltroFinalidade] = useState<number | "">("");
+  const [filtroProdutoId, setFiltroProdutoId] = useState<number | "">("");
   const [busca, setBusca] = useState("");
 
   const [editando, setEditando] = useState<number | null>(null);
@@ -44,13 +58,14 @@ export default function CotacoesCowDataProdutos() {
   const [produtoPreco, setProdutoPreco] = useState<ProdutoPadrao | null>(null);
 
   async function carregar() {
+    const filtroServidor = modoFiltro === "classificacao" && filtroClassificacao ? { classificacao_id: filtroClassificacao as number } : undefined;
     const [p, c, f, forn] = await Promise.all([
-      fetchProdutosPadrao(filtroClassificacao ? { classificacao_id: filtroClassificacao as number } : undefined),
+      fetchProdutosPadrao(filtroServidor),
       fetchClassificacoesCowData(), fetchFinalidadesCowData(), fetchFornecedoresCowData(),
     ]);
     setProdutos(p); setClassificacoes(c); setFinalidades(f); setFornecedores(forn);
   }
-  useEffect(() => { carregar(); }, [filtroClassificacao]);
+  useEffect(() => { carregar(); }, [modoFiltro, filtroClassificacao]);
 
   useEffect(() => {
     if (!aberto || !form.nome.trim() || form.nome.trim().length < 3) { setDuplicatas([]); return; }
@@ -62,10 +77,21 @@ export default function CotacoesCowDataProdutos() {
 
   const produtosFiltrados = useMemo(() => {
     if (!produtos) return [];
-    if (!busca.trim()) return produtos;
-    const b = busca.trim().toLowerCase();
-    return produtos.filter((p) => p.nome.toLowerCase().includes(b));
-  }, [produtos, busca]);
+    let lista = produtos;
+    // "classificacao" já veio filtrado do servidor (carregar() acima); os
+    // outros dois modos filtram aqui em cima da lista carregada.
+    if (modoFiltro === "finalidade" && filtroFinalidade) {
+      lista = lista.filter((p) => p.finalidades.some((f) => f.id === filtroFinalidade));
+    }
+    if (modoFiltro === "produto") {
+      if (filtroProdutoId) lista = lista.filter((p) => p.id === filtroProdutoId);
+      if (busca.trim()) {
+        const b = busca.trim().toLowerCase();
+        lista = lista.filter((p) => p.nome.toLowerCase().includes(b));
+      }
+    }
+    return lista;
+  }, [produtos, modoFiltro, filtroFinalidade, filtroProdutoId, busca]);
 
   function abrirNovo() { setEditando(null); setForm(FORM_VAZIO); setAberto(true); setErro(null); setDuplicatas([]); }
   function abrirEdicao(p: ProdutoPadrao) {
@@ -89,13 +115,49 @@ export default function CotacoesCowDataProdutos() {
 
   return (
     <div>
+      {/* 1. Novo produto-padrão */}
       <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
         <button style={btnPrimario} onClick={abrirNovo}><Plus size={14} /> Novo produto-padrão</button>
-        <input style={{ ...inputStyle, minWidth: "220px" }} placeholder="Buscar por nome…" value={busca} onChange={(e) => setBusca(e.target.value)} />
-        <select style={inputStyle} value={filtroClassificacao} onChange={(e) => setFiltroClassificacao(e.target.value ? Number(e.target.value) : "")}>
-          <option value="">Todas as classificações</option>
-          {classificacoes.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-        </select>
+      </div>
+
+      {/* 2. Selecionar: produto / classificação / finalidade */}
+      <div className="flex gap-2 mb-2" style={{ flexWrap: "wrap" }}>
+        {(["produto", "classificacao", "finalidade"] as const).map((m) => (
+          <button key={m}
+            onClick={() => { setModoFiltro(m); setFiltroClassificacao(""); setFiltroFinalidade(""); setFiltroProdutoId(""); setBusca(""); }}
+            style={{
+              fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "var(--r-sm)", cursor: "pointer", fontWeight: 700,
+              border: `1px solid ${modoFiltro === m ? COR.dourado : COR.borda}`, background: modoFiltro === m ? COR.dourado : "transparent",
+              color: modoFiltro === m ? COR.bg : COR.mudo,
+            }}>
+            {m === "produto" ? "Por produto" : m === "classificacao" ? "Por classificação" : "Por finalidade"}
+          </button>
+        ))}
+      </div>
+
+      {/* 3. Caixa de seleção do que foi escolhido acima + 4. busca por nome (só em "produto") */}
+      <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+        {modoFiltro === "produto" && (
+          <select style={{ ...inputStyle, minWidth: "220px" }} value={filtroProdutoId} onChange={(e) => setFiltroProdutoId(e.target.value ? Number(e.target.value) : "")}>
+            <option value="">Todos os produtos</option>
+            {produtos.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+          </select>
+        )}
+        {modoFiltro === "classificacao" && (
+          <select style={{ ...inputStyle, minWidth: "220px" }} value={filtroClassificacao} onChange={(e) => setFiltroClassificacao(e.target.value ? Number(e.target.value) : "")}>
+            <option value="">Todas as classificações</option>
+            {classificacoes.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+          </select>
+        )}
+        {modoFiltro === "finalidade" && (
+          <select style={{ ...inputStyle, minWidth: "220px" }} value={filtroFinalidade} onChange={(e) => setFiltroFinalidade(e.target.value ? Number(e.target.value) : "")}>
+            <option value="">Todas as finalidades</option>
+            {finalidades.map((f) => <option key={f.id} value={f.id}>{f.nome}</option>)}
+          </select>
+        )}
+        {modoFiltro === "produto" && (
+          <input style={{ ...inputStyle, minWidth: "220px" }} placeholder="Buscar por nome…" value={busca} onChange={(e) => setBusca(e.target.value)} />
+        )}
       </div>
 
       <div style={{ background: COR.painel, border: `1px solid ${COR.borda}`, borderRadius: "var(--r)", overflow: "hidden" }}>
