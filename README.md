@@ -100,6 +100,7 @@ Acesse: http://localhost:3000
 | `SECRET_KEY` | `change-me` | Chave secreta para JWT (futuro) |
 | `ENVIRONMENT` | `development` | `development` ou `production` |
 | `FIRECRAWL_API_KEY` | (vazio) | Busca na web / leitura de páginas públicas (`fazenda/rules/firecrawl.py`). Vazio = desligado (fail-closed) |
+| `TYPESAFE_API_KEY` | (vazio) | API da TypeSafe (julgamentos tipados: classificação, pontuação, extração). Ainda sem uso no código; só no backend (Railway > Variables). Integração futura deve ser fail-closed sem ela |
 
 ## Endpoints principais
 
