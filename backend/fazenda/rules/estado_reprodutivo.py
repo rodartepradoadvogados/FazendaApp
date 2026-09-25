@@ -238,10 +238,25 @@ def classificar_animal(
         base["dias_desde_servico"] = (hoje - ds).days if ds else None
 
         diagnostico = (_get(ultimo_servico, "diagnostico") or "").strip().upper()
+        # A reconfirmação (2º exame, ~60 dias do serviço — ver
+        # `POST /reproducao/diagnostico` e `POST /reproducao/reconfirmacao`) é
+        # gravada em campos PRÓPRIOS (`diagnostico_reconfirmacao`) para não
+        # sobrescrever a data/resultado do 1º toque — mas por isso mesmo é o
+        # resultado mais NOVO sobre este serviço quando existe, e prevalece
+        # sobre o 1º toque. Sem isto, uma reconfirmação POSITIVA sobre um 1º
+        # toque NEGATIVO/INDEFINIDO (toque cedo demais, refeito depois) nunca
+        # tirava a matriz de "vazia atrasada" — ela ficava presa no resultado
+        # velho para sempre, mesmo prenhe confirmada (caso real: vaca 070,
+        # relato do produtor, set/2026). O inverso (reconfirmação NEGATIVA
+        # sobre 1º toque POSITIVO) também prevalece — sem uma perda de
+        # prenhez explícita (`data_perda_prenhez`) registrada à parte, é o
+        # melhor dado disponível de que a prenhez não vingou.
+        diagnostico_reconfirmacao = (_get(ultimo_servico, "diagnostico_reconfirmacao") or "").strip().upper()
+        diagnostico_efetivo = diagnostico_reconfirmacao or diagnostico
         perdeu = _d(_get(ultimo_servico, "data_perda_prenhez")) is not None
 
-        # 1. GESTANTE — prenhez confirmada e ainda de pé.
-        if diagnostico == _POSITIVO and not perdeu:
+        # 1. GESTANTE — prenhez confirmada (1º toque ou reconfirmação) e ainda de pé.
+        if diagnostico_efetivo == _POSITIVO and not perdeu:
             base["dias_gestacao"] = (hoje - ds).days if ds else None
             base["parto_previsto"] = (
                 (ds + timedelta(days=dias_gestacao_da_raca(raca, DIAS_GESTACAO))).isoformat() if ds else None
@@ -250,7 +265,7 @@ def classificar_animal(
 
         # 2. INSEMINADA — serviço feito, resultado ainda em aberto. Vence
         #    ATRASADA: não há o que fazer com ela além de esperar o toque.
-        if diagnostico not in (_POSITIVO, _NEGATIVO) and not perdeu:
+        if diagnostico_efetivo not in (_POSITIVO, _NEGATIVO) and not perdeu:
             return {**base, "estado": INSEMINADA}
 
     # 3. EM_PROTOCOLO — dentro de D0–D11 e sem serviço neste ciclo.

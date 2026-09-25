@@ -925,6 +925,11 @@ class ServicoEditIn(BaseModel):
     data_diagnostico: date | None = None
     diagnostico: str | None = None
     metodo_diagnostico: str | None = None
+    # 2º exame (reconfirmação) — editáveis aqui pelo mesmo motivo do resto do
+    # formulário: a tela de Histórico > Reprodução > Diagnósticos precisa
+    # poder corrigir qualquer dado da linha, não só o 1º toque.
+    data_reconfirmacao: date | None = None
+    diagnostico_reconfirmacao: str | None = None
     data_perda_prenhez: date | None = None
     motivo_perda_prenhez: str | None = None
 
@@ -1010,6 +1015,7 @@ def atualizar_servico(
     # (reabrir o serviço), o que não pode é gravar texto que ninguém lê.
     for campo, opcoes, rotulo in (
         ("diagnostico", DIAGNOSTICOS_VALIDOS, "Diagnóstico"),
+        ("diagnostico_reconfirmacao", DIAGNOSTICOS_VALIDOS, "Diagnóstico da reconfirmação"),
         ("metodo_diagnostico", METODOS_DIAGNOSTICO_VALIDOS, "Método de diagnóstico"),
     ):
         if campos.get(campo) is None:

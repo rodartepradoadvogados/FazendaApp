@@ -387,3 +387,58 @@ class TestRetoqueNaAgenda:
         r = c.get("/agenda/", params={"data": "2026-08-14"})
         eventos = r.json()["eventos"]
         assert not any(e["numero_animal"] == "401" and "Retoque" in e["descricao"] for e in eventos)
+
+
+class TestHistoricoDiagnosticosExpoeDatas:
+    """Histórico > Reprodução > Diagnósticos pedia data do 1º toque
+    (`data_diagnostico`) e da reconfirmação — `GET /reproducao/servicos`
+    (consumido por `analisar_servicos`) só devolvia a data do SERVIÇO,
+    nunca a do diagnóstico em si (pedido do produtor, set/2026)."""
+
+    def test_data_diagnostico_aparece_no_historico(self, client):
+        client.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-07-01", "resultado": "negativo",
+        })
+        r = client.get("/reproducao/servicos")
+        assert r.status_code == 200
+        servico = next(s for s in r.json()["servicos"] if s["numero"] == "401")
+        assert servico["data_diagnostico"] == "2026-07-01"
+        assert servico["data"] == "2026-06-01"  # data do serviço, distinta
+
+    def test_reconfirmacao_tambem_aparece_no_historico(self, client):
+        client.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-07-01", "resultado": "retoque",
+        })
+        client.post("/reproducao/reconfirmacao", json={
+            "numero_matriz": "401", "data_reconfirmacao": "2026-08-25", "resultado": "positivo",
+        })
+        r = client.get("/reproducao/servicos")
+        servico = next(s for s in r.json()["servicos"] if s["numero"] == "401")
+        assert servico["data_diagnostico"] == "2026-07-01"
+        assert servico["data_reconfirmacao"] == "2026-08-25"
+        assert servico["diagnostico_reconfirmacao"] == "POSITIVO"
+
+
+class TestEditarReconfirmacaoPorPut:
+    """`PUT /reproducao/servicos/{id}` precisa poder corrigir qualquer dado
+    da linha de Diagnósticos, inclusive os campos da reconfirmação — antes só
+    dava para corrigir o 1º toque (data_diagnostico/diagnostico)."""
+
+    def test_edita_data_e_resultado_da_reconfirmacao(self, client):
+        client.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-07-01", "resultado": "retoque",
+        })
+        servico_id = client.get("/reproducao/servicos").json()["servicos"][0]["id"]
+        r = client.put(f"/reproducao/servicos/{servico_id}", json={
+            "data_reconfirmacao": "2026-09-04", "diagnostico_reconfirmacao": "negativo",
+        })
+        assert r.status_code == 200
+        assert r.json()["data_reconfirmacao"] == "2026-09-04"
+        assert r.json()["diagnostico_reconfirmacao"] == "NEGATIVO"
+        # 1º toque preservado — a edição da reconfirmação não apaga o toque.
+        assert r.json()["diagnostico"] == "POSITIVO"
+
+    def test_diagnostico_reconfirmacao_invalido_da_400(self, client):
+        servico_id = client.get("/reproducao/servicos").json()["servicos"][0]["id"]
+        r = client.put(f"/reproducao/servicos/{servico_id}", json={"diagnostico_reconfirmacao": "talvez"})
+        assert r.status_code == 400

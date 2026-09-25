@@ -1782,6 +1782,7 @@ export async function fetchCiclos21Dias(
 type ServicoEditPayload = {
   data_servico?: string; tipo_servico?: string; reprodutor?: string; tipo_semen?: string; inseminador?: string;
   data_diagnostico?: string; diagnostico?: string; metodo_diagnostico?: string;
+  data_reconfirmacao?: string; diagnostico_reconfirmacao?: string;
   data_perda_prenhez?: string; motivo_perda_prenhez?: string;
 };
 export async function atualizarServico(id: number, dados: ServicoEditPayload) {

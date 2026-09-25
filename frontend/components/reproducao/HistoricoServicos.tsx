@@ -25,6 +25,9 @@ export type Serv = {
   tipo_semen?: string | null; inseminador?: string | null;
   data: string | null; del_servico: number | null; data_d0?: string | null;
   diagnostico: string | null; diagnosticado: boolean; positivo: boolean; perda: boolean;
+  // Data do 1º toque (exame de gestação) — distinta de "data" (a IA/cobertura
+  // em si) e de "data_reconfirmacao" (2º exame, abaixo).
+  data_diagnostico?: string | null;
   // "reinseminacao" quando o NEGATIVO foi concluído pelo sistema (veio uma
   // nova tentativa para a matriz), e não porque alguém tocou a vaca.
   origem_diagnostico?: string | null;
@@ -111,7 +114,9 @@ export default function HistoricoServicos({ foco, titulo, descricao, animaisSel,
   const [editando, setEditando] = useState<Serv | null>(null);
   const [editVals, setEditVals] = useState({
     data: "", tipoServico: "", touro: "", inseminador: "",
-    dataDiagnostico: "", diagnostico: "", dataPerda: "", motivoPerda: "aborto",
+    dataDiagnostico: "", diagnostico: "",
+    dataReconfirmacao: "", diagnosticoReconfirmacao: "",
+    dataPerda: "", motivoPerda: "aborto",
   });
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
   const [erroEdicao, setErroEdicao] = useState<string | null>(null);
@@ -122,7 +127,8 @@ export default function HistoricoServicos({ foco, titulo, descricao, animaisSel,
     setEditVals({
       data: s.data || "", tipoServico: s.tipo_servico === "(sem tipo)" ? "" : s.tipo_servico,
       touro: s.touro === "(sem touro)" ? "" : s.touro, inseminador: s.inseminador === "(sem inseminador)" ? "" : (s.inseminador || ""),
-      dataDiagnostico: s.data || "", diagnostico: s.diagnostico || "",
+      dataDiagnostico: s.data_diagnostico || "", diagnostico: s.diagnostico || "",
+      dataReconfirmacao: s.data_reconfirmacao || "", diagnosticoReconfirmacao: s.diagnostico_reconfirmacao || "",
       dataPerda: s.data_perda || "", motivoPerda: s.motivo_perda || "aborto",
     });
     setErroEdicao(null);
@@ -133,7 +139,10 @@ export default function HistoricoServicos({ foco, titulo, descricao, animaisSel,
     setSalvandoEdicao(true); setErroEdicao(null);
     try {
       if (foco === "diagnosticos") {
-        await atualizarServico(editando.id, { data_diagnostico: editVals.dataDiagnostico || undefined, diagnostico: editVals.diagnostico || undefined });
+        await atualizarServico(editando.id, {
+          data_diagnostico: editVals.dataDiagnostico || undefined, diagnostico: editVals.diagnostico || undefined,
+          data_reconfirmacao: editVals.dataReconfirmacao || undefined, diagnostico_reconfirmacao: editVals.diagnosticoReconfirmacao || undefined,
+        });
       } else if (foco === "perdas") {
         await atualizarServico(editando.id, { data_perda_prenhez: editVals.dataPerda || undefined, motivo_perda_prenhez: editVals.motivoPerda || undefined });
       } else {
@@ -368,16 +377,21 @@ export default function HistoricoServicos({ foco, titulo, descricao, animaisSel,
                 <ThOrdenavel label="Tipo" campo="tipo_servico" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
                 <ThOrdenavel label="Método" campo="metodo_ia" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
                 <ThOrdenavel label="Diagnóstico" campo="diagnostico" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
+                {foco === "diagnosticos" && <>
+                  <ThOrdenavel label="Data diagnóstico" campo="data_diagnostico" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
+                  <ThOrdenavel label="Data reconfirmação" campo="data_reconfirmacao" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
+                </>}
                 <ThOrdenavel label="Ord. parto" campo="ordem_parto" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} alinhar="right" />
                 <ThOrdenavel label="Tentativa" campo="ordem_tentativa" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} alinhar="right" />
                 <ThOrdenavel label="DEL" campo="del_servico" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} alinhar="right" />
                 <ThOrdenavel label="Touro" campo="touro" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
                 {foco === "perdas" && <><th style={{ textAlign: "left" }}>Data da perda</th><th style={{ textAlign: "left" }}>Motivo</th></>}
                 {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
+                <th></th>
               </tr></thead>
               <tbody>
                 {pagServ.linhasPagina.map((s) => (
-                  <tr key={`${s.numero}-${s.data}`} onClick={() => abrirEdicao(s)}
+                  <tr key={s.id} onClick={() => abrirEdicao(s)}
                     style={{ ...estiloSexado(s.tipo_semen), cursor: "pointer" }}
                     title={s.tipo_semen === "sexado" ? "Inseminação com sêmen sexado — clique para editar" : "Clique para editar"}>
                     <td style={{ fontWeight: 700 }}>{s.numero}</td>
@@ -406,6 +420,10 @@ export default function HistoricoServicos({ foco, titulo, descricao, animaisSel,
                         <div style={{ fontSize: "0.68rem", color: "var(--amber)", marginTop: "0.15rem" }}>Aguardando retoque</div>
                       ) : null}
                     </td>
+                    {foco === "diagnosticos" && <>
+                      <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(s.data_diagnostico ?? null)}</td>
+                      <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(s.data_reconfirmacao ?? null)}</td>
+                    </>}
                     <td style={{ textAlign: "right" }}>{s.ordem_parto ?? "—"}</td>
                     <td style={{ textAlign: "right" }}>{s.ordem_tentativa ?? "—"}</td>
                     <td style={{ textAlign: "right" }}>{s.del_servico ?? "—"}</td>
@@ -415,6 +433,15 @@ export default function HistoricoServicos({ foco, titulo, descricao, animaisSel,
                       <td style={{ fontSize: "0.78rem" }}>{s.motivo_perda ? (MOTIVO_LABEL[s.motivo_perda] || s.motivo_perda) : "—"}</td>
                     </>}
                     {admin && <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{s.usuario_nome ?? "—"}</td>}
+                    <td>
+                      <button
+                        className="btn-ghost" title="Editar esta linha" aria-label="Editar"
+                        onClick={(e) => { e.stopPropagation(); abrirEdicao(s); }}
+                        style={{ padding: "0.25rem", display: "flex", alignItems: "center" }}
+                      >
+                        <Pencil size={13} />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -440,6 +467,15 @@ export default function HistoricoServicos({ foco, titulo, descricao, animaisSel,
                   <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Diagnóstico</label>
                     <select style={selStyle} value={editVals.diagnostico} onChange={(e) => setEditVals((v) => ({ ...v, diagnostico: e.target.value }))}>
                       <option value="">—</option><option value="POSITIVO">Positivo</option><option value="NEGATIVO">Negativo</option><option value="INDEFINIDO">Indefinido</option>
+                    </select></div>
+                  <div style={{ borderTop: "1px solid var(--border)", paddingTop: "0.6rem", marginTop: "0.2rem" }}>
+                    <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>2º exame (reconfirmação, ~60 dias do serviço)</p>
+                    <label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Data da reconfirmação</label>
+                    <input type="date" style={selStyle} value={editVals.dataReconfirmacao} onChange={(e) => setEditVals((v) => ({ ...v, dataReconfirmacao: e.target.value }))} />
+                  </div>
+                  <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Diagnóstico da reconfirmação</label>
+                    <select style={selStyle} value={editVals.diagnosticoReconfirmacao} onChange={(e) => setEditVals((v) => ({ ...v, diagnosticoReconfirmacao: e.target.value }))}>
+                      <option value="">—</option><option value="POSITIVO">Positivo</option><option value="NEGATIVO">Negativo</option>
                     </select></div>
                 </>
               ) : foco === "perdas" ? (

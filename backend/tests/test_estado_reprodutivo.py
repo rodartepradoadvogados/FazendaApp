@@ -237,6 +237,72 @@ class TestDiagnosticoNegativoLiberaAnimal:
         assert r["estado"] != GESTANTE
 
 
+class TestReconfirmacaoPrevaleceSobre1oToque:
+    """Vaca 070: 1º toque (`diagnostico`) NEGATIVO em 04/09/2026 sobre a IA de
+    05/08/2026; reconfirmação (`diagnostico_reconfirmacao`, ver
+    `POST /reproducao/diagnostico` e `POST /reproducao/reconfirmacao`) POSITIVA
+    em 25/09/2026 — gravada em campos PRÓPRIOS para não apagar a data/resultado
+    do 1º toque. `classificar_animal` só olhava `diagnostico`, então a
+    reconfirmação positiva nunca tirava a vaca de "Vazia atrasada — 107 dias
+    pós-parto sem novo serviço" na Agenda, mesmo prenhe confirmada (relato do
+    produtor, set/2026)."""
+
+    HOJE = date(2026, 9, 25)
+
+    def test_reconfirmacao_positiva_sobre_1o_toque_negativo_vira_gestante(self):
+        r = _classificar(
+            "070", hoje=self.HOJE,
+            partos=[{"data_parto": date(2026, 6, 10)}],
+            servicos=[{
+                "data_servico": date(2026, 8, 5),
+                "diagnostico": "NEGATIVO", "data_diagnostico": date(2026, 9, 4),
+                "diagnostico_reconfirmacao": "POSITIVO", "data_reconfirmacao": date(2026, 9, 25),
+            }],
+        )
+        assert r["estado"] == GESTANTE
+        assert r["dias_gestacao"] == 51
+
+    def test_reconfirmacao_positiva_sobre_1o_toque_indefinido_vira_gestante(self):
+        r = _classificar(
+            "071", hoje=self.HOJE,
+            partos=[{"data_parto": date(2026, 6, 10)}],
+            servicos=[{
+                "data_servico": date(2026, 8, 5),
+                "diagnostico": "INDEFINIDO", "data_diagnostico": date(2026, 9, 4),
+                "diagnostico_reconfirmacao": "POSITIVO", "data_reconfirmacao": date(2026, 9, 25),
+            }],
+        )
+        assert r["estado"] == GESTANTE
+
+    def test_reconfirmacao_negativa_sobre_1o_toque_positivo_sai_de_gestante(self):
+        r = _classificar(
+            "072", hoje=self.HOJE,
+            partos=[{"data_parto": date(2026, 6, 10)}],
+            servicos=[{
+                "data_servico": date(2026, 8, 5),
+                "diagnostico": "POSITIVO", "data_diagnostico": date(2026, 9, 4),
+                "diagnostico_reconfirmacao": "NEGATIVO", "data_reconfirmacao": date(2026, 9, 25),
+            }],
+        )
+        assert r["estado"] != GESTANTE
+
+    def test_perda_de_prenhez_explicita_ainda_vence_reconfirmacao_positiva(self):
+        """Uma perda de prenhez lançada à parte (aborto após reconfirmação, por
+        exemplo) continua sendo o dado mais forte — não é o caso relatado, mas
+        a rede de segurança já existente (`perdeu`) não pode quebrar."""
+        r = _classificar(
+            "073", hoje=self.HOJE,
+            partos=[{"data_parto": date(2026, 6, 10)}],
+            servicos=[{
+                "data_servico": date(2026, 8, 5),
+                "diagnostico": "NEGATIVO", "data_diagnostico": date(2026, 9, 4),
+                "diagnostico_reconfirmacao": "POSITIVO", "data_reconfirmacao": date(2026, 9, 10),
+                "data_perda_prenhez": date(2026, 9, 20),
+            }],
+        )
+        assert r["estado"] != GESTANTE
+
+
 class TestDescreverServico:
     def test_iatf(self):
         assert "IATF" in descrever_servico({"tipo_servico": "IA", "protocolo": "IATF 9 dias"})
