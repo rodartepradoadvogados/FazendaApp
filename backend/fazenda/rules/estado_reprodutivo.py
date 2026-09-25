@@ -241,18 +241,30 @@ def classificar_animal(
         # A reconfirmação (2º exame, ~60 dias do serviço — ver
         # `POST /reproducao/diagnostico` e `POST /reproducao/reconfirmacao`) é
         # gravada em campos PRÓPRIOS (`diagnostico_reconfirmacao`) para não
-        # sobrescrever a data/resultado do 1º toque — mas por isso mesmo é o
-        # resultado mais NOVO sobre este serviço quando existe, e prevalece
-        # sobre o 1º toque. Sem isto, uma reconfirmação POSITIVA sobre um 1º
-        # toque NEGATIVO/INDEFINIDO (toque cedo demais, refeito depois) nunca
-        # tirava a matriz de "vazia atrasada" — ela ficava presa no resultado
-        # velho para sempre, mesmo prenhe confirmada (caso real: vaca 070,
-        # relato do produtor, set/2026). O inverso (reconfirmação NEGATIVA
-        # sobre 1º toque POSITIVO) também prevalece — sem uma perda de
-        # prenhez explícita (`data_perda_prenhez`) registrada à parte, é o
-        # melhor dado disponível de que a prenhez não vingou.
+        # sobrescrever a data/resultado do 1º toque. Isso corta nos dois
+        # sentidos, então o efetivo é sempre o exame de DATA MAIS RECENTE
+        # entre os dois — nunca "reconfirmação sempre vence": um 1º toque
+        # REFEITO depois de uma reconfirmação já lançada (ex.: reconfirmação
+        # negativa cedo demais, revista e corrigida com um novo toque
+        # positivo) grava só em `diagnostico`/`data_diagnostico` — a
+        # reconfirmação antiga não é limpa automaticamente — então preferir
+        # cegamente `diagnostico_reconfirmacao` prendia a matriz no exame
+        # VELHO. Dois casos reais confirmados (vaca 070, relato do produtor,
+        # set/2026): (a) 1º toque NEGATIVO cedo, reconfirmação POSITIVA
+        # depois — reconfirmação (mais nova) vence; (b) reconfirmação
+        # NEGATIVA registrada, depois um novo toque POSITIVO mais recente —
+        # o toque novo vence. Sem data em algum dos dois lados (dado legado),
+        # `date.min` garante que o lado com data conhecida vence; sem data
+        # nenhuma, o 1º toque desempata (ordem de inserção do `max`).
         diagnostico_reconfirmacao = (_get(ultimo_servico, "diagnostico_reconfirmacao") or "").strip().upper()
-        diagnostico_efetivo = diagnostico_reconfirmacao or diagnostico
+        data_diagnostico = _d(_get(ultimo_servico, "data_diagnostico"))
+        data_reconfirmacao = _d(_get(ultimo_servico, "data_reconfirmacao"))
+        candidatos_diagnostico: list[tuple[date, str]] = []
+        if diagnostico:
+            candidatos_diagnostico.append((data_diagnostico or date.min, diagnostico))
+        if diagnostico_reconfirmacao:
+            candidatos_diagnostico.append((data_reconfirmacao or date.min, diagnostico_reconfirmacao))
+        diagnostico_efetivo = max(candidatos_diagnostico, key=lambda c: c[0])[1] if candidatos_diagnostico else ""
         perdeu = _d(_get(ultimo_servico, "data_perda_prenhez")) is not None
 
         # 1. GESTANTE — prenhez confirmada (1º toque ou reconfirmação) e ainda de pé.
