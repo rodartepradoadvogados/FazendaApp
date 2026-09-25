@@ -542,12 +542,22 @@ def calcular_agenda(
     # filtra por data_referencia <= data_vencimento <= data_referencia+dias) —
     # antes lia a tabela inteira (todo o histórico de contas da fazenda) e
     # descartava o resto em Python a cada chamada da Agenda.
+    #
+    # `tipo == "despesa"` é o mesmo filtro de GET /financeiro/contas-a-pagar —
+    # sem ele, uma RECEITA (ex.: venda de leite cru) com vencimento na janela
+    # e ainda sem baixa total entrava aqui e o card "5. CONTAS A PAGAR" a
+    # rotulava (texto fixo "Conta a pagar: ...") como se fosse uma despesa em
+    # aberto — vira um alarme falso, permanente, para toda receita a receber
+    # (relato do produtor: "LEITE CRU REFRIGERADO" preso na Agenda mesmo já
+    # recebido — a baixa da receita não muda o fato de ela nunca ter devido
+    # entrar nesta lista).
     contas = [
         _model_to_dict(c) for c in session.exec(
             _da_fazenda(
                 select(ContaGerencial).where(
                     ContaGerencial.data_vencimento >= data,
                     ContaGerencial.data_vencimento <= data + timedelta(days=dias),
+                    ContaGerencial.tipo == "despesa",
                 ),
                 ContaGerencial,
             )

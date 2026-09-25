@@ -286,6 +286,24 @@ class TestReconfirmacaoPrevaleceSobre1oToque:
         )
         assert r["estado"] != GESTANTE
 
+    def test_1o_toque_refeito_depois_de_reconfirmacao_vence_por_data(self):
+        """O inverso do caso 070 original: uma reconfirmação NEGATIVA foi
+        lançada cedo (04/09), e depois a matriz foi tocada de novo — um novo
+        1º toque POSITIVO mais recente (25/09) — sem que a reconfirmação
+        velha fosse limpa (o backend não faz isso automaticamente). O exame
+        de data mais recente (o toque novo) precisa vencer, não a
+        reconfirmação desatualizada."""
+        r = _classificar(
+            "074", hoje=self.HOJE,
+            partos=[{"data_parto": date(2026, 6, 10)}],
+            servicos=[{
+                "data_servico": date(2026, 8, 5),
+                "diagnostico": "POSITIVO", "data_diagnostico": date(2026, 9, 25),
+                "diagnostico_reconfirmacao": "NEGATIVO", "data_reconfirmacao": date(2026, 9, 4),
+            }],
+        )
+        assert r["estado"] == GESTANTE
+
     def test_perda_de_prenhez_explicita_ainda_vence_reconfirmacao_positiva(self):
         """Uma perda de prenhez lançada à parte (aborto após reconfirmação, por
         exemplo) continua sendo o dado mais forte — não é o caso relatado, mas
