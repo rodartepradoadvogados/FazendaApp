@@ -81,6 +81,12 @@ class Fazenda(SQLModel, table=True):
     # acesso (Painel CowData → solicitar acesso a esta fazenda).
     exige_aprovacao_suporte: bool = False
 
+    # Preços de referência que a CowData atribui a produtos-padrão do
+    # catálogo próprio (ver fazenda/models/catalogo_cowdata.py) — visível por
+    # padrão em Cadastro > Estoque; a fazenda pode desligar (opt-out), nunca
+    # é obrigatório. Nunca escreve em Estoque.valor_unitario.
+    mostrar_precos_referencia_cowdata: bool = True
+
     # Marca a fazenda-sandbox de testes (hoje a única linha com True é
     # "Fazenda Teste", id=2) — espelha eh_empresa_cowdata acima, mas pro
 class EmpresaOperadora(SQLModel, table=True):

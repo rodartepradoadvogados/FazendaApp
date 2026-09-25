@@ -743,7 +743,7 @@ export const fetchConsultoresCowData = (): Promise<ConsultorCowData[]> => _pcGet
 
 // Login + permissões de um membro no próprio Painel CowData (ago/2026) —
 // ver AREAS_PAINEL_COWDATA no backend. Restrito ao dono (não ao membro logado).
-export const AREAS_PAINEL_COWDATA = ["cockpit", "assinaturas", "fazendas", "financeiro", "equipe", "produto", "cofre", "confianca", "cadastros", "farmacia"] as const;
+export const AREAS_PAINEL_COWDATA = ["cockpit", "assinaturas", "fazendas", "financeiro", "equipe", "produto", "cofre", "confianca", "cadastros", "farmacia", "cotacoes"] as const;
 export type AreaPainelCowData = typeof AREAS_PAINEL_COWDATA[number];
 export const LABEL_AREA_PAINEL_COWDATA: Record<AreaPainelCowData, string> = {
   cockpit: "Cockpit", assinaturas: "Assinaturas", fazendas: "Fazendas", financeiro: "Financeiro",
@@ -753,6 +753,7 @@ export const LABEL_AREA_PAINEL_COWDATA: Record<AreaPainelCowData, string> = {
   // painel_cowdata_farmacia.py nasceu, mas faltava aqui — sem ela o dono não
   // tinha como conceder a área e todo membro batia em 403 na Farmácia.
   farmacia: "Farmácia CowData",
+  cotacoes: "Cotações",
 };
 // Nível de sigilo (#132) — quanto de uma fazenda-cliente este membro enxerga
 // numa sessão de suporte (Cofre de acesso), eixo à parte de "áreas" (o que
@@ -782,7 +783,7 @@ export type UsuarioEquipeCowData = {
   // área; estas só liberam a escrita.
   pode_editar_cadastros_globais: boolean; pode_editar_touros_naab: boolean; pode_editar_farmacia: boolean;
   pode_consultar_usuarios: boolean; pode_editar_usuarios: boolean; pode_controlar_acesso_usuarios: boolean;
-  pode_editar_news: boolean;
+  pode_editar_news: boolean; pode_editar_cotacoes: boolean;
 };
 export type UsuarioEquipeCowDataIn = {
   username: string; email: string; senha?: string | null; ativo?: boolean; areas: string[];
@@ -792,16 +793,16 @@ export type UsuarioEquipeCowDataIn = {
   pode_vincular_usuarios?: boolean; pode_cadastrar_usuarios?: boolean;
   pode_editar_cadastros_globais?: boolean; pode_editar_touros_naab?: boolean; pode_editar_farmacia?: boolean;
   pode_consultar_usuarios?: boolean; pode_editar_usuarios?: boolean; pode_controlar_acesso_usuarios?: boolean;
-  pode_editar_news?: boolean;
+  pode_editar_news?: boolean; pode_editar_cotacoes?: boolean;
 };
-// As sete permissões de EDIÇÃO no Painel CowData, na ordem em que o dono as
+// As permissões de EDIÇÃO no Painel CowData, na ordem em que o dono as
 // pediu. `livre` marca aquelas cujo CONSULTAR não depende de permissão
 // nenhuma — a tela precisa dizer isso em voz alta para ninguém achar que
 // desmarcar a caixa esconde a informação.
 export type CampoPermissaoEdicaoCowData =
   | "pode_editar_cadastros_globais" | "pode_editar_touros_naab" | "pode_editar_farmacia"
   | "pode_consultar_usuarios" | "pode_editar_usuarios" | "pode_controlar_acesso_usuarios"
-  | "pode_editar_news";
+  | "pode_editar_news" | "pode_editar_cotacoes";
 export const PERMISSOES_EDICAO_PAINEL_COWDATA: {
   campo: CampoPermissaoEdicaoCowData; rotulo: string; ajuda: string; consultaLivre: boolean;
 }[] = [
@@ -826,6 +827,9 @@ export const PERMISSOES_EDICAO_PAINEL_COWDATA: {
   { campo: "pode_editar_news", rotulo: "Pode editar News?",
     ajuda: "Publicar, editar, excluir e revisar matérias do blog, e gerenciar as fotos delas.",
     consultaLivre: false },
+  { campo: "pode_editar_cotacoes", rotulo: "Pode editar Cotações?",
+    ajuda: "Cadastrar fornecedores/classificações/finalidades da CowData, cotar produtos-padrão e atribuir/publicar preços-base sugeridos. Quem for comercial ou sócio e for cotizar precisa desta permissão.",
+    consultaLivre: true },
 ];
 
 export const fetchUsuarioEquipeCowData = (pessoaId: number): Promise<UsuarioEquipeCowData | null> => _pcGet(`/equipe/pessoas/${pessoaId}/usuario`);
@@ -9262,3 +9266,143 @@ export type ValeAlimentacaoEnquadramentoIn = {
   vale_alimentacao_forma?: FormaValeAlimentacao;
   vale_alimentacao_natureza_travada_salarial?: boolean;
 };
+
+// ---------------------------------------------------------------------------
+// Painel CowData > Cotações — cotação de preços com os fornecedores da
+// PRÓPRIA CowData (nunca os de uma fazenda-cliente) e catálogo de
+// produtos-padrão/preços-base sugeridos. Ver backend/fazenda/api/routers/
+// painel_cowdata_cotacoes.py e fazenda/models/catalogo_cowdata.py.
+// Nomes deliberadamente com sufixo "CowData" — nunca colidir com os tipos de
+// Cotação de UMA fazenda (mais acima neste arquivo: Cotacao, CotacaoItem…).
+// ---------------------------------------------------------------------------
+export type ClassificacaoCowData = { id: number; nome: string; ativo: boolean };
+export type FinalidadeCowData = { id: number; nome: string; ativo: boolean };
+
+export const fetchClassificacoesCowData = (): Promise<ClassificacaoCowData[]> => _pcGet(`/cotacoes/classificacoes`);
+export const criarClassificacaoCowData = (nome: string): Promise<ClassificacaoCowData> => _pcSend(`/cotacoes/classificacoes`, "POST", { nome });
+export const editarClassificacaoCowData = (id: number, d: { nome: string; ativo: boolean }): Promise<ClassificacaoCowData> => _pcSend(`/cotacoes/classificacoes/${id}`, "PUT", d);
+
+export const fetchFinalidadesCowData = (): Promise<FinalidadeCowData[]> => _pcGet(`/cotacoes/finalidades`);
+export const criarFinalidadeCowData = (nome: string): Promise<FinalidadeCowData> => _pcSend(`/cotacoes/finalidades`, "POST", { nome });
+export const editarFinalidadeCowData = (id: number, d: { nome: string; ativo: boolean }): Promise<FinalidadeCowData> => _pcSend(`/cotacoes/finalidades/${id}`, "PUT", d);
+
+export type FornecedorCowData = {
+  id: number; nome: string; cnpj_cpf: string | null; telefone: string | null; email: string | null;
+  observacoes: string | null; ativo: boolean;
+  classificacoes: { id: number; nome: string }[]; finalidades: { id: number; nome: string }[];
+};
+export type FornecedorCowDataIn = {
+  nome: string; cnpj_cpf?: string | null; telefone?: string | null; email?: string | null; observacoes?: string | null;
+  ativo?: boolean; classificacao_ids: number[]; finalidade_ids: number[];
+};
+export const fetchFornecedoresCowData = (): Promise<FornecedorCowData[]> => _pcGet(`/cotacoes/fornecedores`);
+export const criarFornecedorCowData = (d: FornecedorCowDataIn): Promise<FornecedorCowData> => _pcSend(`/cotacoes/fornecedores`, "POST", d);
+export const editarFornecedorCowData = (id: number, d: FornecedorCowDataIn): Promise<FornecedorCowData> => _pcSend(`/cotacoes/fornecedores/${id}`, "PUT", d);
+
+export type ProdutoPadrao = {
+  id: number; nome: string; unidade: string | null; classificacao_id: number | null; classificacao_nome: string | null;
+  medicamento_comercial_id: number | null; ativo: boolean; finalidades: { id: number; nome: string }[];
+  preco_atual: { valor: number; unidade: string | null; atribuido_em: string; regiao: string | null } | null;
+};
+export type ProdutoPadraoDetalhe = ProdutoPadrao & { historico_precos: PrecoBaseSugerido[] };
+export type ProdutoPadraoIn = {
+  nome: string; unidade?: string | null; classificacao_id?: number | null; medicamento_comercial_id?: number | null;
+  finalidade_ids: number[]; ativo?: boolean;
+};
+export type SugestaoDuplicataProduto = { id: number; nome: string; score: number };
+
+export const fetchProdutosPadrao = (params?: { classificacao_id?: number; busca?: string }): Promise<ProdutoPadrao[]> => {
+  const qs = new URLSearchParams();
+  if (params?.classificacao_id != null) qs.set("classificacao_id", String(params.classificacao_id));
+  if (params?.busca) qs.set("busca", params.busca);
+  const query = qs.toString();
+  return _pcGet(`/cotacoes/produtos${query ? `?${query}` : ""}`);
+};
+export const checarDuplicataProdutoPadrao = (nome: string, classificacaoId?: number | null): Promise<SugestaoDuplicataProduto[]> => {
+  const qs = new URLSearchParams({ nome });
+  if (classificacaoId != null) qs.set("classificacao_id", String(classificacaoId));
+  return _pcGet(`/cotacoes/produtos/checar-duplicata?${qs.toString()}`);
+};
+export const fetchProdutoPadrao = (id: number): Promise<ProdutoPadraoDetalhe> => _pcGet(`/cotacoes/produtos/${id}`);
+export const criarProdutoPadrao = (d: ProdutoPadraoIn): Promise<ProdutoPadrao> => _pcSend(`/cotacoes/produtos`, "POST", d);
+export const editarProdutoPadrao = (id: number, d: ProdutoPadraoIn): Promise<ProdutoPadrao> => _pcSend(`/cotacoes/produtos/${id}`, "PUT", d);
+
+export type PrecoBaseSugerido = {
+  id: number; produto_padrao_id: number; valor: number; unidade: string | null; regiao: string | null;
+  origem: "cotacao" | "manual"; cotacao_cowdata_item_id: number | null; fornecedor_escolhido_id: number | null;
+  fornecedor_escolhido_nome: string | null; eh_media: boolean;
+  participantes_media: { fornecedor_cowdata_id: number; fornecedor_nome: string; valor_informado: number | null }[];
+  observacao: string | null; publicado: boolean; publicado_em: string | null; usuario_id: number; atribuido_em: string;
+};
+export type AtribuirPrecoIn = {
+  valor: number; unidade?: string | null; regiao?: string | null; origem: "cotacao" | "manual";
+  cotacao_cowdata_item_id?: number | null; fornecedor_escolhido_id?: number | null; eh_media?: boolean;
+  participantes_media?: { fornecedor_cowdata_id: number; valor_informado?: number | null }[];
+  observacao?: string | null; publicar: boolean;
+};
+export const atribuirPrecoProdutoPadrao = (produtoId: number, d: AtribuirPrecoIn): Promise<PrecoBaseSugerido> =>
+  _pcSend(`/cotacoes/produtos/${produtoId}/atribuir-preco`, "POST", d);
+export const publicarPrecoBaseSugerido = (precoId: number, publicado: boolean): Promise<PrecoBaseSugerido> =>
+  _pcSend(`/cotacoes/precos/${precoId}/publicar`, "PUT", { publicado });
+
+export type CotacaoCowDataResumo = { id: number; titulo: string; status: string; usuario_id: number; criado_em: string; atualizado_em: string; fechada_em: string | null };
+export type CotacaoCowDataItem = {
+  id: number; cotacao_cowdata_id: number; modo: "produto" | "classificacao" | "finalidade";
+  produto_padrao_id: number | null; classificacao_id: number | null; finalidade_id: number | null;
+  descricao_livre: string | null; rotulo: string;
+};
+export type CotacaoCowDataResposta = {
+  id: number; cotacao_cowdata_item_id: number; fornecedor_cowdata_id: number; valor: number | null;
+  condicao_pagamento: string | null; prazo_entrega_dias: number | null; observacao: string | null;
+  recusado: boolean; registrado_em: string;
+};
+export type CotacaoCowDataDetalhe = CotacaoCowDataResumo & {
+  itens: CotacaoCowDataItem[]; fornecedores: { id: number; nome: string }[]; respostas: CotacaoCowDataResposta[];
+};
+export type ItemCowDataIn = {
+  modo: "produto" | "classificacao" | "finalidade"; produto_padrao_id?: number | null;
+  classificacao_id?: number | null; finalidade_id?: number | null; descricao_livre?: string | null;
+};
+export type RespostaCowDataIn = {
+  valor?: number | null; condicao_pagamento?: string | null; prazo_entrega_dias?: number | null;
+  observacao?: string | null; recusado?: boolean;
+};
+
+export const fetchCotacoesCowData = (): Promise<CotacaoCowDataResumo[]> => _pcGet(`/cotacoes`);
+export const criarCotacaoCowData = (titulo: string): Promise<CotacaoCowDataDetalhe> => _pcSend(`/cotacoes`, "POST", { titulo });
+export const fetchCotacaoCowData = (id: number): Promise<CotacaoCowDataDetalhe> => _pcGet(`/cotacoes/${id}`);
+export const adicionarItemCotacaoCowData = (cotacaoId: number, d: ItemCowDataIn): Promise<CotacaoCowDataDetalhe> => _pcSend(`/cotacoes/${cotacaoId}/itens`, "POST", d);
+export const removerItemCotacaoCowData = (cotacaoId: number, itemId: number): Promise<CotacaoCowDataDetalhe> => _pcSend(`/cotacoes/${cotacaoId}/itens/${itemId}`, "DELETE");
+export const adicionarFornecedoresCotacaoCowData = (cotacaoId: number, fornecedorIds: number[]): Promise<CotacaoCowDataDetalhe> =>
+  _pcSend(`/cotacoes/${cotacaoId}/fornecedores`, "POST", { fornecedor_ids: fornecedorIds });
+export const removerFornecedorCotacaoCowData = (cotacaoId: number, fornecedorId: number): Promise<CotacaoCowDataDetalhe> =>
+  _pcSend(`/cotacoes/${cotacaoId}/fornecedores/${fornecedorId}`, "DELETE");
+export const registrarRespostaCotacaoCowData = (cotacaoId: number, itemId: number, fornecedorId: number, d: RespostaCowDataIn): Promise<CotacaoCowDataDetalhe> =>
+  _pcSend(`/cotacoes/${cotacaoId}/itens/${itemId}/respostas/${fornecedorId}`, "PUT", d);
+export const fecharCotacaoCowData = (id: number): Promise<CotacaoCowDataDetalhe> => _pcSend(`/cotacoes/${id}/fechar`, "POST");
+export const cancelarCotacaoCowData = (id: number): Promise<CotacaoCowDataDetalhe> => _pcSend(`/cotacoes/${id}/cancelar`, "POST");
+
+// Leitura pública (filtrada) para a fazenda — Cadastro > Estoque > "Preços de
+// referência CowData". Nunca inclui fornecedor: a resposta nem carrega o
+// campo (muralha estrutural, ver backend).
+export type PrecoReferenciaCowData = {
+  produto_padrao_id: number; nome: string; classificacao: string | null; unidade: string | null;
+  valor: number; regiao: string | null; atribuido_em: string;
+};
+export async function fetchPrecosReferenciaCowData(): Promise<PrecoReferenciaCowData[]> {
+  const res = await authFetch(`${API}/estoque/precos-referencia-cowdata`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Preços de referência CowData error: ${res.status}`);
+  return res.json();
+}
+export async function fetchConfigPrecosReferenciaCowData(): Promise<{ mostrar_precos_referencia_cowdata: boolean }> {
+  const res = await authFetch(`${API}/estoque/precos-referencia-cowdata/config`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Config preços de referência CowData error: ${res.status}`);
+  return res.json();
+}
+export async function configurarPrecosReferenciaCowData(mostrar: boolean): Promise<{ mostrar_precos_referencia_cowdata: boolean }> {
+  const res = await authFetch(`${API}/estoque/precos-referencia-cowdata/config`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mostrar }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro (${res.status})`); }
+  return res.json();
+}

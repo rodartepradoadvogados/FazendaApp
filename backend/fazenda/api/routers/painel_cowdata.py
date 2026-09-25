@@ -386,6 +386,7 @@ class UsuarioEquipeCowDataIn(BaseModel):
     pode_editar_usuarios: bool = False
     pode_controlar_acesso_usuarios: bool = False
     pode_editar_news: bool = False
+    pode_editar_cotacoes: bool = False
 
 
 def _validar_areas(areas: list[str]) -> None:

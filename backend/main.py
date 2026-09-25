@@ -61,6 +61,7 @@ from fazenda.api.routers import (
     onboarding,
     painel_cowdata,
     painel_cowdata_cadastros,
+    painel_cowdata_cotacoes,
     painel_cowdata_farmacia,
     painel_cowdata_parametros,
     painel_cowdata_sincronizacao,
@@ -828,6 +829,11 @@ app.include_router(painel_cowdata_usuarios.router)
 # catálogo global + fan-out de Estoque para toda fazenda-cliente, mesmo
 # padrão exigir_area_painel_cowdata("farmacia").
 app.include_router(painel_cowdata_farmacia.router)
+# Cotação de preços com os fornecedores da própria CowData + catálogo de
+# produtos-padrão/preços-base sugeridos — mesmo padrão
+# exigir_area_painel_cowdata("cotacoes"). Leitura pública (filtrada, sem
+# fornecedor) para as fazendas mora em estoque.py, não aqui.
+app.include_router(painel_cowdata_cotacoes.router)
 # Catálogo GLOBAL de touros NAAB (`Touro`, sem fazenda_id): a manutenção
 # (criar/editar/excluir/recarregar/importar planilha) mora só aqui, sob a
 # permissão "editar touros NAAB" do cadastro de equipe — antes morava no
