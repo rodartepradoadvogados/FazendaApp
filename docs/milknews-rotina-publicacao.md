@@ -1,15 +1,27 @@
 # Rotina automática /milknews → publicação na aba News
 
+> **Especificação vigente:** este documento descreve o mecanismo de dados (arquivo por lote) e o
+> fecho da rotina. A fonte de verdade para as regras editoriais, de coleta e de verificação é
+> `.claude/skills/milknews/SKILL.md` — a Routine deve invocá-la integralmente. Este arquivo existe
+> para quem não tem a skill disponível; nesse caso, siga também
+> `docs/agents/milknews-firecrawl.md`.
+
 **Onde isto roda:** cria uma **rotina agendada no claude.ai/code** (agente *Farm app access*),
 não uma tarefa local de desktop. A rotina parte sempre de um clone fresco, tem acesso de escrita
 ao repo e `gh` para abrir/mergear PR — só assim o timer dispara com o PC do usuário desligado.
 
 **Sob demanda:** o mesmo texto abaixo pode ser colado num chat *Farm app access* para rodar na hora.
 
-**Cadência (decisão 23/07/2026):** rodar **todos os dias**. Publicar **no mínimo 1 e no máximo 3**
-matérias por dia — nunca mais que 3, nunca zero num dia em que rodar.
+**Cadência (decisão 23/07/2026, confirmada em 25/09/2026):** rodar **todos os dias**. Publicar
+**no mínimo 1 e no máximo 3** matérias por dia com pauta verificada — nunca mais que 3, e nunca
+forçando post num dia sem pauta que passe na dupla verificação (dia sem post é exceção legítima,
+não falha).
 
-**Modo:** hands-off — a rotina **faz o merge sozinha**. O conteúdo vai ao ar sem revisão humana.
+**Modo (decisão do dono, 26/09/2026): hands-off com trava de teste.** A rotina **faz o merge
+sozinha**, mas só depois que `pytest backend/tests/test_milknews_lotes_formato.py` passar verde
+para o lote novo — lote que quebra o teste de formato não é mergeado. Essa trava não substitui
+revisão editorial humana: o post só aparece em `/news` depois que alguém do CowData marca
+"revisado final" em cada matéria (Painel CowData → News → matérias).
 
 ---
 
@@ -39,11 +51,13 @@ Passos:
 2. **Dupla checagem antes de escrever qualquer coisa:**
    - **Repetição:** liste as `manchete` de TODOS os `.json` já em `seed_data/milknews_lotes/` e
      confirme que a pauta do dia não repete nenhuma.
-   - **Veracidade:** todo número/fato sai de busca na web com fonte conferida (o conhecimento do
-     modelo é anterior à data corrente — nunca escrever cotação/decisão de memória). Prefira 2
-     fontes independentes para números sensíveis (tarifas, resoluções, cotações). O que não for
-     verificável não é publicado. `cepea.org.br` e Canal Rural costumam bloquear fetch automatizado
-     (403) — usar MilkPoint, CNA, LegisWeb, IBGE ou a fonte oficial como alternativa.
+   - **Veracidade:** todo número/fato sai da leitura da página de verdade via **Firecrawl**
+     (`/scrape`, conforme `docs/agents/milknews-firecrawl.md`) — o conhecimento do modelo é
+     anterior à data corrente, nunca escrever cotação/decisão de memória, e resultado de `/search`
+     (snippet) não conta como fonte lida. **Todo número precisa de 2 fontes independentes lidas**;
+     divergindo entre si, o dado não é publicado. `cepea.org.br` e Canal Rural bloqueiam fetch
+     automatizado comum (403) — o Firecrawl normalmente passa; sem `FIRECRAWL_API_KEY` disponível,
+     use o plano B do mesmo documento (coleta pelo próprio agente) e diga isso no PR.
 
 3. Redija de **1 a 3 posts**. Cada item do JSON tem os campos:
    `manchete`, `resumo`, `materia`, `link`, `data_publicacao`, `fontes` (lista de URLs).
@@ -68,7 +82,9 @@ Passos:
 6. Commit: `News/milknews: <manchete principal> (<N> posts)`. Push no branch
    `claude/milknews-<AAAA-MM-DD>`.
 
-7. Abra PR para `main` e **faça o merge** (hands-off). Apague o branch depois.
+7. Abra PR para `main`. **Antes de mergear, rode `pytest backend/tests/test_milknews_lotes_formato.py`**
+   contra o lote novo: só verde autoriza o merge. **Faça o merge** você mesmo (hands-off) só depois
+   disso; se o teste falhar, não mergeie — corrija o lote ou não publique. Apague o branch depois.
 
 8. O merge dispara o deploy (Railway/Vercel); o seed `publicar_lotes_milknews` roda 1x no próximo
    boot e publica as matérias. A aba News mostra por padrão só os últimos 3 dias — por isso publicar

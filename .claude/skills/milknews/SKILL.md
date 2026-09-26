@@ -20,6 +20,17 @@ revisão; **esta termina em pull request**. Todo o resto — as regras de
 verificação — é idêntico, e é a parte que não pode ser afrouxada por estar
 rodando sozinha. Sozinha é justamente quando não há ninguém para pegar o erro.
 
+## Coleta
+
+A leitura das fontes abaixo é feita pelo **Firecrawl** (`/scrape` para ler a página
+de verdade — inclusive PDF — e `/search` só para descoberta), conforme
+`docs/agents/milknews-firecrawl.md`. O Firecrawl passa em sites que hoje bloqueiam
+acesso automatizado comum (Cepea, Canal Rural, USDA AMS). Teto de **25 chamadas por
+execução**; consulte o saldo de créditos (`/v2/team/credit-usage`) antes de começar.
+Sem `FIRECRAWL_API_KEY` no ambiente, ou com a API fora do ar, siga o plano B do
+mesmo documento (coleta pelo próprio agente, mesmas regras de verificação) e diga
+no PR que o Firecrawl não estava disponível.
+
 ## Fontes
 
 - **Cotação/mercado (primária)**: Cepea/Esalq — https://www.cepea.esalq.usp.br/br/indicador/leite.aspx e https://www.cepea.org.br/br/indicador/leite.aspx
@@ -95,11 +106,32 @@ seed do blog.
 Commit e **pull request**. O corpo do PR diz, para cada número publicado, quais
 fontes o sustentam — é o que permite a alguém auditar sem refazer a pesquisa.
 
+**Merge (decisão do dono, 26/09/2026): hands-off com trava de teste.** A Routine
+mergeia o PR sozinha, mas só depois de `pytest backend/tests/test_milknews_lotes_formato.py`
+passar verde para o lote novo. Lote que quebra o teste de formato **não é
+mergeado**: corrija ou não publique. Essa trava não substitui a revisão editorial —
+o post só aparece em `/news` depois que alguém do CowData marca **"revisado
+final"** em cada matéria (Painel CowData → News → matérias); o merge automático
+não pula essa camada.
+
 Se nada verificou, **não abrir PR**: relatar o impasse e encerrar. Uma execução
 que termina sem publicar nada é um resultado legítimo e frequente.
 
 ## Cadência
 
-3 a 5 posts por semana, variando entre mercado/cotação, notícia setorial,
-técnica e científica. Rodando diariamente, é esperado — e correto — que alguns
-dias não rendam post.
+**Matéria diária** (decisão do dono, 25/09/2026): publicar de **1 a 3 posts por
+dia**, variando entre mercado/cotação, notícia setorial, técnica e científica.
+A regra de ouro não muda: **nunca force post sem dupla verificação**. Dia sem
+pauta verificada é dia sem post, com o motivo explicado no relatório da
+execução — exceção a ser justificada, não rotina.
+
+## Atribuição: catálogo de touros NAAB
+
+Segunda atribuição desta skill: manter o catálogo de touros NAAB do Painel
+CowData atualizado, consultando as provas oficiais (CDCB e as centrais de
+genética) pelo Firecrawl. Especificação completa, credenciais e regras de
+gravação em `docs/agents/naab-catalogo-firecrawl.md`.
+
+**Antes de gravar qualquer coisa no banco:** execute só a Fase 0 desse documento
+(viabilidade, somente leitura) e entregue o relatório de viabilidade ao dono. Só
+prossiga para a Fase 1 (atualização) com um "pode seguir" explícito dele.
