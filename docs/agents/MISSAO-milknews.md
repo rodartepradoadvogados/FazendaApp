@@ -66,14 +66,18 @@ chamadas; 2 fontes lidas por número; lote validado pelo `pytest`; PR listando a
 > final'** em cada matéria (Painel CowData → News → matérias). Quem vai fazer isso todo dia?"
 
 ## Etapa 3: catálogo NAAB, só viabilidade primeiro 🛑
-1. **Guie o dono na preparação** (uma vez):
-   > 1. Painel CowData → **Equipe** → novo usuário `robo-milknews`, com a área **Cadastros** e
-   >    **somente** a permissão "editar touros NAAB" (não dê perfil de dono).
-   > 2. No mesmo ambiente da Etapa 0 → Environment variables, adicione:
-   >    - `COWDATA_API_URL`: endereço do backend no Railway (o mesmo de `NEXT_PUBLIC_API_URL` na
-   >      Vercel do frontend);
-   >    - `COWDATA_ROBO_USUARIO` e `COWDATA_ROBO_SENHA`: do usuário do item 1.
-   > 3. Me avise.
+1. **Preparação já feita pelo dono em 26/09/2026. Só confira, sem imprimir valores:**
+   - usuário `robo-milk-news` criado no Painel CowData (área Cadastros + "editar touros NAAB"),
+     com login testado pelo dono;
+   - no seu ambiente: `COWDATA_API_URL` (= `https://fazendaapp-production.up.railway.app`, o
+     backend que o site usa), `COWDATA_ROBO_USUARIO` e `COWDATA_ROBO_SENHA`.
+
+   Teste `POST $COWDATA_API_URL/auth/login` e `GET $COWDATA_API_URL/painel-cowdata/touros`.
+   - Se o login falhar, peça ao dono para conferir usuário e senha no ambiente (nomes exatos, com
+     `COWDATA` junto).
+   - Se a lista de touros der 403, peça para marcar a área **Cadastros** no usuário.
+   - **Recomende ao dono tirar do usuário o que ele não usa** ("editar News" e áreas além de
+     Cadastros): o MilkNews publica por PR, não pelo painel.
 2. Execute **apenas a Fase 0** de `docs/agents/naab-catalogo-firecrawl.md` (só leitura; nenhuma
    escrita no banco).
 3. **🛑 Entregue o relatório de viabilidade** (viável / parcial / inviável; quais fontes servem
