@@ -58,8 +58,9 @@
 
 ## 2. Credenciais (o dono configura; nunca vão para o repositório)
 
-1. **Usuário dedicado do robô** no CowData, por exemplo `robo-milknews` (o código já esconde esse
-   nome das listagens em `portal.py`). Membro da equipe CowData com a área **cadastros** e
+1. **Usuário dedicado do robô** no CowData: `robo-milk-news` (criado pelo dono em 26/09/2026; o
+   sistema não aceitou `robo-milknews`). Observação: `portal.py` esconde das listagens só o nome
+   antigo `robo-milknews`. O novo aparece nas listas de usuários, o que é inofensivo. Membro da equipe CowData com a área **cadastros** e
    **somente** a permissão `pode_editar_touros_naab`. Não dê "dono".
 2. No ambiente do Claude Code usado pela Routine do MilkNews (claude.ai → Environments →
    Environment variables), cadastrar:
