@@ -43,18 +43,45 @@ Verifique `test -n "$FIRECRAWL_API_KEY"` (sem imprimir o valor). Se faltar, guie
 
 Com a chave presente, consulte o saldo (`/v2/team/credit-usage`) e informe ao dono.
 
-## Etapa 1: atualizar a sua própria skill 🛑
-1. **🛑 Pergunte ao dono:**
-   > "Depois de preparar o lote do dia, eu devo (a) só abrir o PR para você mergear, ou (b) abrir e
-   > mergear sozinho? Hoje o SKILL.md diz (a) e o documento da rotina diz (b)."
+## Etapa 1: atualizar a sua própria skill e o prompt da Routine 🛑
+**Fato apurado em 26/09/2026:** a Routine "Milknews: matéria diária" (08:00 UTC, sessão nova a cada
+disparo) **não invoca a skill**. O prompt dela traz instruções próprias:
+- pesquisa por WebSearch/WebFetch;
+- 1 a 3 matérias por dia;
+- **abre o PR e mergeia sozinha (hands-off)**.
+
+Por isso as duas mudanças abaixo são necessárias.
+
+1. **🛑 Confirme com o dono a política de merge:**
+   > "Hoje a Routine abre o PR do lote e **mergeia sozinha**. Mantemos assim (recomendado: o lote
+   > passa pelo teste de formato antes, e o post só aparece depois do 'revisado final'), ou prefere
+   > que eu só abra o PR?"
 2. Com a resposta, abra um PR que:
-   - atualize `.claude/skills/milknews/SKILL.md`: **frequência diária (1 a 3 posts, nunca
-     forçar)**, **coleta via Firecrawl** conforme `docs/agents/milknews-firecrawl.md` (com
-     referência explícita ao arquivo), **política de merge** escolhida e a **atribuição NAAB**
-     apontando para `docs/agents/naab-catalogo-firecrawl.md`;
-   - ajuste `docs/milknews-rotina-publicacao.md` para não contradizer o `SKILL.md`.
-3. Esse PR (de instrução, não de lote) **sempre** é mergeado pelo dono. Mande o link e peça:
+   - atualize `.claude/skills/milknews/SKILL.md`:
+     - **frequência diária** (1 a 3 posts, nunca forçar; dia sem pauta verificada = sem post, com
+       explicação);
+     - **coleta via Firecrawl** conforme `docs/agents/milknews-firecrawl.md` (com referência
+       explícita ao arquivo);
+     - **política de merge** escolhida;
+     - **atribuição NAAB** apontando para `docs/agents/naab-catalogo-firecrawl.md`;
+   - ajuste `docs/milknews-rotina-publicacao.md` para ficar igual ao `SKILL.md`.
+3. Esse PR (de instrução, não de lote) **sempre** é mergeado pelo dono. Mande o link e peça
    "confira e mergeie".
+4. **🛑 Depois do merge, guie o dono a trocar o prompt da Routine** (quem clica é ele):
+   > claude.ai/code → **Routines** → "Milknews: matéria diária" → editar → apague o prompt atual e
+   > cole:
+   >
+   > "Rode o ciclo diário do robô MilkNews no repositório rodartepradoadvogados/FazendaApp
+   > seguindo **integralmente** a skill `.claude/skills/milknews/SKILL.md` (invoque pela Skill tool;
+   > se não aparecer, leia o arquivo) e `docs/agents/milknews-firecrawl.md`. Use o Firecrawl
+   > (variável de ambiente FIRECRAWL_API_KEY) para ler as fontes. Tudo em português do Brasil com
+   > acentuação completa. Sessão nova a cada disparo."
+   >
+   > Salve. Não crie Routine nova e não apague a atual: só troque o prompt.
+
+   Ofereça-se também para atualizar da mesma forma a Routine semanal "Milknews: checar fonte do
+   simulador de preço do leite": ela hoje evita o WebFetch por causa de 403, e o Firecrawl resolve
+   isso.
 
 ## Etapa 2: rotina diária com Firecrawl
 A partir do merge da Etapa 1, cada execução segue `docs/agents/milknews-firecrawl.md`:
