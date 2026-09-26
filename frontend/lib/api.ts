@@ -9282,10 +9282,12 @@ export type FinalidadeCowData = { id: number; nome: string; ativo: boolean };
 export const fetchClassificacoesCowData = (): Promise<ClassificacaoCowData[]> => _pcGet(`/cotacoes/classificacoes`);
 export const criarClassificacaoCowData = (nome: string): Promise<ClassificacaoCowData> => _pcSend(`/cotacoes/classificacoes`, "POST", { nome });
 export const editarClassificacaoCowData = (id: number, d: { nome: string; ativo: boolean }): Promise<ClassificacaoCowData> => _pcSend(`/cotacoes/classificacoes/${id}`, "PUT", d);
+export const excluirClassificacaoCowData = (id: number): Promise<{ ok: boolean }> => _pcSend(`/cotacoes/classificacoes/${id}`, "DELETE");
 
 export const fetchFinalidadesCowData = (): Promise<FinalidadeCowData[]> => _pcGet(`/cotacoes/finalidades`);
 export const criarFinalidadeCowData = (nome: string): Promise<FinalidadeCowData> => _pcSend(`/cotacoes/finalidades`, "POST", { nome });
 export const editarFinalidadeCowData = (id: number, d: { nome: string; ativo: boolean }): Promise<FinalidadeCowData> => _pcSend(`/cotacoes/finalidades/${id}`, "PUT", d);
+export const excluirFinalidadeCowData = (id: number): Promise<{ ok: boolean }> => _pcSend(`/cotacoes/finalidades/${id}`, "DELETE");
 
 export type FornecedorCowData = {
   id: number; nome: string; cnpj_cpf: string | null; telefone: string | null; email: string | null;

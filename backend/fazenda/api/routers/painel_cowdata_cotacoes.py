@@ -81,6 +81,55 @@ def editar_classificacao(id: int, dados: NomeIn, _: Usuario = _dep_edicao, sessi
     return linha.model_dump()
 
 
+def _usos_classificacao(session: Session, id: int) -> list[str]:
+    """Tudo que ainda referencia esta classificação — mesmo espírito de
+    `excluir_item_estoque` (estoque.py): nomeia cada uso pro 409, nunca
+    cascateia. Dado compartilhado por todo o catálogo (fornecedores,
+    produtos-padrão, itens de cotação já registrados) — apagar em silêncio
+    deixaria FK órfã ou trocaria o sentido de linhas antigas."""
+    usos = []
+    n_forn = len(session.exec(select(FornecedorCowDataClassificacao).where(FornecedorCowDataClassificacao.classificacao_id == id)).all())
+    if n_forn:
+        usos.append(f"{n_forn} fornecedor(es)")
+    n_prod = len(session.exec(select(ProdutoPadrao).where(ProdutoPadrao.classificacao_id == id)).all())
+    if n_prod:
+        usos.append(f"{n_prod} produto(s)-padrão")
+    n_item = len(session.exec(select(CotacaoCowDataItem).where(CotacaoCowDataItem.classificacao_id == id)).all())
+    if n_item:
+        usos.append(f"{n_item} item(ns) de cotação")
+    return usos
+
+
+def _usos_finalidade(session: Session, id: int) -> list[str]:
+    usos = []
+    n_forn = len(session.exec(select(FornecedorCowDataFinalidade).where(FornecedorCowDataFinalidade.finalidade_id == id)).all())
+    if n_forn:
+        usos.append(f"{n_forn} fornecedor(es)")
+    n_prod = len(session.exec(select(ProdutoPadraoFinalidade).where(ProdutoPadraoFinalidade.finalidade_id == id)).all())
+    if n_prod:
+        usos.append(f"{n_prod} produto(s)-padrão")
+    n_item = len(session.exec(select(CotacaoCowDataItem).where(CotacaoCowDataItem.finalidade_id == id)).all())
+    if n_item:
+        usos.append(f"{n_item} item(ns) de cotação")
+    return usos
+
+
+@router.delete("/classificacoes/{id}")
+def excluir_classificacao(id: int, _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao)) -> dict:
+    linha = session.get(ClassificacaoCowData, id)
+    if not linha:
+        raise HTTPException(status_code=404, detail="Classificação não encontrada")
+    usos = _usos_classificacao(session, id)
+    if usos:
+        raise HTTPException(
+            status_code=409,
+            detail=f'Não é possível excluir "{linha.nome}" — ainda em uso por {", ".join(usos)}. Desative em vez de excluir.',
+        )
+    session.delete(linha)
+    session.commit()
+    return {"ok": True}
+
+
 @router.get("/finalidades")
 def listar_finalidades(_: Usuario = _dep, session: Session = Depends(get_session_manutencao)) -> list[dict]:
     linhas = session.exec(select(FinalidadeCowData).order_by(FinalidadeCowData.nome)).all()
@@ -113,6 +162,22 @@ def editar_finalidade(id: int, dados: NomeIn, _: Usuario = _dep_edicao, session:
     session.commit()
     session.refresh(linha)
     return linha.model_dump()
+
+
+@router.delete("/finalidades/{id}")
+def excluir_finalidade(id: int, _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao)) -> dict:
+    linha = session.get(FinalidadeCowData, id)
+    if not linha:
+        raise HTTPException(status_code=404, detail="Finalidade não encontrada")
+    usos = _usos_finalidade(session, id)
+    if usos:
+        raise HTTPException(
+            status_code=409,
+            detail=f'Não é possível excluir "{linha.nome}" — ainda em uso por {", ".join(usos)}. Desative em vez de excluir.',
+        )
+    session.delete(linha)
+    session.commit()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
