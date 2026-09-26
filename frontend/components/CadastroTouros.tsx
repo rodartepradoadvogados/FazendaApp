@@ -11,6 +11,35 @@ import { casaBusca } from "@/lib/busca";
 const fmt = (v?: number | null, dec = 0) =>
   v === null || v === undefined || Number.isNaN(v) ? "—" : v.toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
 
+// Alternância kg ⇄ libras (só exibição — o banco sempre guarda kg; nada é
+// gravado nem convertido no schema). Preferência do usuário fica só no
+// navegador (localStorage), tentada com try/catch: pode falhar em navegação
+// privada, e a tela funciona normalmente mesmo sem persistir a escolha.
+export type UnidadePeso = "kg" | "lb";
+const CHAVE_UNIDADE_PESO_TOUROS = "cowdata:touros:unidade-peso";
+const LB_POR_KG = 0.453592;
+
+function unidadePesoSalva(): UnidadePeso {
+  try {
+    const v = window.localStorage.getItem(CHAVE_UNIDADE_PESO_TOUROS);
+    return v === "lb" ? "lb" : "kg";
+  } catch {
+    return "kg";
+  }
+}
+
+function salvarUnidadePeso(u: UnidadePeso) {
+  try {
+    window.localStorage.setItem(CHAVE_UNIDADE_PESO_TOUROS, u);
+  } catch {
+    // navegação privada ou storage bloqueado — só não persiste a preferência.
+  }
+}
+
+// Converte um valor guardado em kg para a unidade de exibição escolhida.
+const paraUnidade = (kg: number | null | undefined, unidade: UnidadePeso): number | null | undefined =>
+  unidade === "lb" && kg !== null && kg !== undefined ? Math.round((kg / LB_POR_KG) * 10) / 10 : kg;
+
 export const CAMPO_VAZIO: TouroIn = {
   naab: "", nome: "", nome_completo: "", raca: "", central: "",
   leite_kg: null, gordura_kg: null, gordura_pct: null, proteina_kg: null, proteina_pct: null,
@@ -193,6 +222,17 @@ export default function CadastroTouros({ contexto = "fazenda" }: { contexto?: Co
   const [fonteImport, setFonteImport] = useState("");
   const [rodadaImport, setRodadaImport] = useState("");
   const [importando, setImportando] = useState(false);
+  // Unidade de exibição de Leite/Gordura/Proteína — kg (o que o banco
+  // guarda) ou libras, só para quem prefere ler a prova em lb (padrão do
+  // catálogo americano da NAAB). Começa em "kg" no servidor (SSR) e só lê a
+  // preferência salva depois de montar, para não divergir entre servidor e
+  // cliente na primeira renderização.
+  const [unidadePeso, setUnidadePeso] = useState<UnidadePeso>("kg");
+  useEffect(() => { setUnidadePeso(unidadePesoSalva()); }, []);
+  function alternarUnidadePeso(u: UnidadePeso) {
+    setUnidadePeso(u);
+    salvarUnidadePeso(u);
+  }
 
   async function importarPlanilha(file: File) {
     setImportando(true);
@@ -327,6 +367,19 @@ export default function CadastroTouros({ contexto = "fazenda" }: { contexto?: Co
         <button onClick={carregar} className="btn-secondary" style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
           <RefreshCw size={14} /> Atualizar
         </button>
+        <div title="Unidade de exibição de Leite/Gordura/Proteína (o banco continua em kg)"
+          style={{ display: "flex", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
+          {(["kg", "lb"] as UnidadePeso[]).map((u) => (
+            <button key={u} onClick={() => alternarUnidadePeso(u)}
+              style={{
+                padding: "0.4rem 0.7rem", fontSize: "0.78rem", fontWeight: 700, border: "none", cursor: "pointer",
+                background: unidadePeso === u ? "var(--dourado)" : "var(--surface)",
+                color: unidadePeso === u ? "var(--bg)" : "var(--text-muted)",
+              }}>
+              {u}
+            </button>
+          ))}
+        </div>
         <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>{filtrados.length} touro(s)</span>
       </div>
 
@@ -350,9 +403,9 @@ export default function CadastroTouros({ contexto = "fazenda" }: { contexto?: Co
                 <ThOrdenavel label="Nome" campo="nome" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
                 <ThOrdenavel label="Central" campo="central" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
                 <ThOrdenavel label="Raça" campo="raca" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-                <ThOrdenavel label="Leite (kg)" campo="leite_kg" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
-                <ThOrdenavel label="Gord." campo="gordura_kg" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
-                <ThOrdenavel label="Prot." campo="proteina_kg" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                <ThOrdenavel label={`Leite (${unidadePeso})`} campo="leite_kg" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                <ThOrdenavel label={`Gord. (${unidadePeso})`} campo="gordura_kg" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                <ThOrdenavel label={`Prot. (${unidadePeso})`} campo="proteina_kg" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
                 <ThOrdenavel label="TPI" campo="tpi" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
                 <ThOrdenavel label="NM$" campo="nm_dolar" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
                 <ThOrdenavel label="Fert. filhas" campo="fertilidade_filhas" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
@@ -380,9 +433,9 @@ export default function CadastroTouros({ contexto = "fazenda" }: { contexto?: Co
                       <td style={td}>{t.nome || "—"}</td>
                       <td style={td}>{t.central || "—"}</td>
                       <td style={td}>{t.raca || "—"}</td>
-                      <td style={{ ...td, textAlign: "right" }}>{fmt(t.leite_kg)}</td>
-                      <td style={{ ...td, textAlign: "right" }}>{fmt(t.gordura_kg)}</td>
-                      <td style={{ ...td, textAlign: "right" }}>{fmt(t.proteina_kg)}</td>
+                      <td style={{ ...td, textAlign: "right" }}>{fmt(paraUnidade(t.leite_kg, unidadePeso), unidadePeso === "lb" ? 1 : 0)}</td>
+                      <td style={{ ...td, textAlign: "right" }}>{fmt(paraUnidade(t.gordura_kg, unidadePeso), unidadePeso === "lb" ? 1 : 0)}</td>
+                      <td style={{ ...td, textAlign: "right" }}>{fmt(paraUnidade(t.proteina_kg, unidadePeso), unidadePeso === "lb" ? 1 : 0)}</td>
                       <td style={{ ...td, textAlign: "right", fontWeight: 600 }}>{fmt(t.tpi)}</td>
                       <td style={{ ...td, textAlign: "right" }}>{t.nm_dolar == null ? "—" : `$${fmt(t.nm_dolar)}`}</td>
                       <td style={{ ...td, textAlign: "right" }}>{fmt(t.fertilidade_filhas, 1)}</td>

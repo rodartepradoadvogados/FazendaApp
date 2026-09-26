@@ -133,52 +133,98 @@ com:
 
 ---
 
-## 4. Fase 1: atualização (só depois da aprovação)
+## 4. Fase 1: atualização (implementada em 26/09/2026, aprovada pelo dono)
+
+**Mudança de desenho em relação ao rascunho original desta seção:** em vez de ler touro a touro
+pelo Firecrawl (CDCB + catálogo da central), uma investigação confirmou que a própria NAAB publica
+em `https://www.naab-css.org/database-files` um arquivo ZIP oficial — link de texto **"Complete
+List of All Active (A), Foreign (F) and Genomic (G) AI Bulls"** — com o catálogo genético
+**completo** de todos os touros de IA ativamente comercializados nos EUA. Esse ZIP é lido por HTTP
+comum (`httpx`), sem Firecrawl e sem bloqueio de bot, e contém um único arquivo `.txt` que, apesar
+do nome, é um CSV comum (vírgula, texto entre aspas, número sem aspas), uma linha por touro. O
+Firecrawl fica **reservado** para uma eventual segunda confirmação pontual de um touro específico
+que tenha mudado bastante (ex.: TPI mudou centenas de pontos) — não é obrigatório nesta primeira
+versão, e nenhuma automação desta fase o chama.
+
+Implementação: `backend/fazenda/rules/naab_aiss.py` (download, parsing, mapeamento, comparação) e
+`backend/fazenda/rules/touros.py::aplicar_atualizacoes_confirmadas` (gravação). Testes com duas
+linhas reais do arquivo, validadas campo a campo contra as páginas públicas de dois touros
+(TIMETRAVELER/200HO13678, central Semex, e SABOTAGE/796HO10329, central United Sires): ver
+`backend/tests/test_naab_aiss.py`.
 
 ### 4.1 Frequência
-- **Rodada nova:** o CDCB publica provas em **abril, agosto e dezembro**. O robô verifica se há
-  rodada nova uma vez por semana e atualiza **só quando a rodada mudar**. Isso economiza créditos.
-- Fora da rodada: só touros novos pedidos pelo dono ou pela equipe.
+- O robô verifica **uma vez por semana** se o arquivo AISS mudou (nome do arquivo/rodada) e roda a
+  comparação (`comparar_catalogo`) sempre que verificar — não só quando a rodada trimestral do CDCB
+  (abril/agosto/dezembro) muda, porque o arquivo da NAAB também recebe correções fora dessas datas.
+- Fora da rodada trimestral: a comparação ainda roda toda semana; o volume de mudanças detectadas é
+  que tende a ser pequeno.
 
-### 4.2 Dupla verificação (mesma filosofia do MilkNews)
-- Cada touro atualizado precisa ter os valores confirmados em **duas fontes independentes lidas**
-  (ex.: CDCB + catálogo da central dona do prefixo).
-- Havendo divergência num campo, prevalece o **CDCB** (fonte oficial da avaliação). O valor da
-  central vai para `observacao` como "divergência: <campo> central=<x>".
-- Touro sem nenhuma fonte oficial legível **não é atualizado**. Entra no relatório.
-- Código NAAB normalizado: maiúsculas, sem espaços, com o prefixo numérico no `NAAB_STUDS`. Prefixo
-  desconhecido → não grava, relata.
+### 4.2 Comparação semanal — SÓ LEITURA, sem gravar nada sozinho
+`fazenda.rules.naab_aiss.comparar_catalogo(session, linhas_aiss)` nunca chama
+`session.add`/`session.commit`. Ela devolve um `RelatorioNaab` com três listas:
 
-### 4.3 Gravação no CowData
-1. Monte um CSV em `/tmp/naab/touros_<rodada>.csv` com cabeçalhos reconhecidos por `APELIDOS`:
-   ```
-   naab,nome,raca,central,milk kg,fat kg,fat pct,protein kg,protein pct,tpi,nm,ptat,udc,flc,scs,dpr,sce
-   ```
-   Convenção de unidades: o modelo guarda **kg**. Se a fonte der lbs, converta
-   (1 lb = 0,453592 kg) e registre a conversão no relatório.
-2. Login:
-   `POST $COWDATA_API_URL/auth/login` → token em memória (nunca em arquivo).
-3. Importação:
-   ```bash
-   curl -sS -X POST "$COWDATA_API_URL/painel-cowdata/touros/importar" \
-     -H "Authorization: Bearer $TOKEN" \
-     -F "file=@/tmp/naab/touros_<rodada>.csv" \
-     -F "fonte=CDCB + <central> via Firecrawl (robô MilkNews)" \
-     -F "rodada=<Mmm/AAAA>"
-   ```
-4. Confirmação: `GET /painel-cowdata/touros` e confira, por amostragem de pelo menos 5 touros, que
-   os valores gravados batem com o CSV.
+- **Alterados**: touro já cadastrado cujo NAAB está no AISS e cujos campos curados (leite, gordura,
+  proteína, TPI, NM$, PTAT, UDC, FLC, SCS, DPR, SCE) mudaram além de uma tolerância de
+  arredondamento (0,01) — só os campos que de fato mudaram, com antes/depois.
+- **Saídos**: touro cadastrado cujo NAAB **não** aparece mais no AISS baixado — item **só com NAAB
+  e nome**, sem prova nenhuma (pedido explícito do dono). "Saiu" **nunca apaga nem esconde** o
+  touro automaticamente: é sempre uma nota no relatório, para o dono decidir. Se o dono já decidiu
+  mantê-lo (`marcar_mantido`, que grava `"[NAAB] mantido por decisão do dono em DD/MM/AAAA: <motivo>"`
+  em `Touro.observacao`, sem apagar o que já havia lá), o touro **não** volta a aparecer em "saídos"
+  nas semanas seguintes.
+- **Novos**: linha do AISS cujo NAAB não existe em nenhum touro do banco — **de todas as centrais,
+  sem filtro** (pedido explícito do dono: ele quer ver touro novo de qualquer central). Traz a prova
+  completa mapeada. Uma rodada com uma lista grande de novos ainda devolve os dados completos —
+  quem exibe o relatório decide como resumir para o dono, os dados nunca são truncados aqui.
 
-**Proibido:** `DELETE`, `PUT` que zere campos, `POST /recarregar-catalogo` (reimporta a planilha
-embutida da Alta e pode sobrescrever dados mais novos) e gravar touro sem as duas fontes.
+### 4.3 Aprovação — sempre por mensagem no chat, nunca automática
+**Não existe gravação automática nem PR de dados nesta fase.** O robô manda o relatório da
+comparação semanal ao dono **no chat** (não abre PR — isso é diferente da política do lote diário
+do MilkNews) e só grava no banco depois que o dono responde aprovando, indicando quais NAABs
+confirmar (pode ser "todos os alterados e novos", uma lista específica, etc.).
 
-### 4.4 Relatório de cada execução
-Enviar ao dono (ou registrar no PR do MilkNews do dia):
-- rodada;
-- quantos touros atualizados, criados e pulados, **com o motivo**;
-- divergências;
-- créditos gastos;
-- as URLs lidas por touro (no mínimo por amostragem).
+Com a aprovação:
+```python
+from fazenda.rules.touros import aplicar_atualizacoes_confirmadas
+
+resultado = aplicar_atualizacoes_confirmadas(
+    session, naabs_confirmados, linhas_aiss, fonte="NAAB AISS", rodada="Ago/2026",
+)
+```
+`aplicar_atualizacoes_confirmadas` filtra `linhas_aiss` para só os NAABs confirmados, mapeia com
+`naab_aiss.mapear_para_touro` e delega o upsert (por NAAB, nunca apaga) para o mesmo núcleo que
+`importar_touros` usa — sem lógica de upsert duplicada entre os dois caminhos.
+
+Para um touro que "saiu" e o dono decide manter mesmo assim:
+```python
+from fazenda.rules.naab_aiss import marcar_mantido
+
+marcar_mantido(session, naab, motivo="genética boa, mantém no plantel")
+```
+
+### 4.4 Unidades e mapeamento
+O arquivo AISS traz produção em **libras** (`PTA Milk`, `PTA Fat Pounds`, `PTA Protein Pounds`) —
+`mapear_para_touro` converte para kg (1 lb = 0,453592 kg, arredondado a 2 casas) antes de gravar em
+`leite_kg`/`gordura_kg`/`proteina_kg`. Campo ausente na linha de origem (string vazia após o
+parsing) nunca vira `0.0` — fica de fora do dict mapeado, mesmo espírito de "só grava o que está
+presente" de `importar_touros`. `central` é derivada do prefixo do NAAB por
+`fazenda.rules.naab.central_por_codigo_naab` — a mesma função já usada pelo resto do sistema.
+
+### 4.5 Frontend
+O Painel CowData (`frontend/components/CadastroTouros.tsx`, usado tanto em modo "painel" quanto em
+modo "fazenda" — só leitura) ganhou um alternador kg ⇄ lb para as colunas Leite/Gordura/Proteína —
+só exibição (o banco continua em kg), preferência guardada em `localStorage` do navegador.
+
+**Proibido, sem exceção:** `DELETE`, `PUT` que zere campos, `POST /recarregar-catalogo` (reimporta a
+planilha embutida da Alta e pode sobrescrever dados mais novos) e gravar qualquer touro sem
+aprovação explícita do dono no chat.
+
+### 4.6 Relatório de cada execução
+Enviar ao dono no chat:
+- rodada (extraída do nome do arquivo AISS baixado, quando reconhecível);
+- quantos touros comparados, quantos alterados/saídos/novos;
+- a lista de alterados e de novos (resumida se for grande) e de saídos (só NAAB + nome);
+- pergunta objetiva: quais confirmar para gravar.
 
 ---
 
@@ -188,10 +234,15 @@ Enviar ao dono (ou registrar no PR do MilkNews do dia):
 - **Campos novos** no `Touro` (registro, nome comercial, data da prova): migração Alembic no padrão
   do repositório (`backend/alembic/versions/`, docstring explicando o porquê).
 - **Endpoint de upsert em lote por JSON:** hoje só existe o upload de CSV/XLSX.
+- **Segunda confirmação pontual pelo Firecrawl** (CDCB/central) para um touro específico com mudança
+  grande — reservada, não implementada nesta fase (ver seção 4).
 
 ## 6. Checklist
-- [ ] Fase 0 entregue e **aprovada pelo dono** antes de qualquer escrita.
+- [ ] Fase 0 entregue e **aprovada pelo dono** antes de qualquer escrita (histórico — já concluída).
 - [ ] Usuário do robô só com `pode_editar_touros_naab`.
-- [ ] Toda atualização com 2 fontes lidas; divergências anotadas; CDCB prevalece.
-- [ ] Só upsert via `/importar`; nada apagado.
+- [ ] `comparar_catalogo` roda toda semana e **nunca** grava sozinha — só leitura.
+- [ ] Relatório mandado ao dono **no chat**; gravação só depois de aprovação explícita por NAAB.
+- [ ] "Saiu" nunca apaga automaticamente; `marcar_mantido` evita repetir a mesma nota toda semana.
+- [ ] "Novo" cobre todas as centrais, sem filtro.
+- [ ] Só upsert via `aplicar_atualizacoes_confirmadas`/`importar_touros`; nada apagado.
 - [ ] Nenhuma credencial ou token em arquivo, log, commit ou PR.
