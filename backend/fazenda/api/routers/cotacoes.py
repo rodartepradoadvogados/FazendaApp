@@ -67,16 +67,25 @@ def _cotacao_da_fazenda(session: Session, cotacao_id: int, fazenda_id: int | Non
 # ---------------------------------------------------------------------------
 @router.get("/opcoes/fornecedores-sugeridos")
 def fornecedores_sugeridos(
-    categoria: str, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    categoria: str, incluir_inativos: bool = False,
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
 ) -> list[dict]:
     """Fornecedores DESTA fazenda vinculados à categoria (FornecedorCategoria)
-    — usado pra pré-marcar a lista na tela de Nova cotação."""
+    — usado pra pré-marcar a lista na tela de Nova cotação.
+
+    `incluir_inativos` (pedido do dono, set/2026): por padrão só sugere
+    fornecedor ATIVO — mas pode haver cotação pontual com um fornecedor que
+    não é de costume comprar (ex.: um fanned-out do catálogo CowData, ainda
+    não ativado), daí a fazenda pode pedir a lista completa da categoria,
+    ativo ou não."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     query = (
         select(Fornecedor)
         .join(FornecedorCategoria, FornecedorCategoria.fornecedor_id == Fornecedor.id)
-        .where(FornecedorCategoria.categoria == categoria, Fornecedor.ativo == True)  # noqa: E712
+        .where(FornecedorCategoria.categoria == categoria)
     )
+    if not incluir_inativos:
+        query = query.where(Fornecedor.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query = query.where(Fornecedor.fazenda_id == fazenda_id)
     fornecedores = session.exec(query.order_by(Fornecedor.nome)).all()

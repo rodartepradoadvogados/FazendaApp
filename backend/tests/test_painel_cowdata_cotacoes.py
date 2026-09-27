@@ -19,10 +19,12 @@ import tempfile
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{tempfile.mktemp(suffix='.db')}")
 
 import pytest
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from fazenda.auth import EMAIL_DONO, get_current_user, get_fazenda_atual_id
-from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Fazenda, PermissaoEquipeCowData, Usuario
+from fazenda.models import (
+    ContratoFazenda, ContratoFazendaModulo, Fazenda, Fornecedor, PermissaoEquipeCowData, Usuario,
+)
 from fazenda.models.planos import MODULOS_COMERCIAIS
 
 
@@ -330,3 +332,137 @@ class TestExcluirClassificacaoEFinalidade:
         _como_usuario(_FakeUser(id=2, email="comercial@x.com"))
         r = c.delete(f"/painel-cowdata/cotacoes/classificacoes/{classificacao['id']}")
         assert r.status_code == 403
+
+
+class TestCamposDeLocalizacaoESite:
+    def test_cadastro_aceita_endereco_cidade_estado_cep_site(self, client):
+        c, _ = client
+        f = c.post("/painel-cowdata/cotacoes/fornecedores", json={
+            "nome": "Fornecedor Completo", "endereco": "Rua X, 100", "cidade": "Rio Verde", "estado": "GO",
+            "cep": "75915-000", "site": "www.exemplo.com.br",
+        }).json()
+        assert f["endereco"] == "Rua X, 100"
+        assert f["cidade"] == "Rio Verde"
+        assert f["estado"] == "GO"
+        assert f["cep"] == "75915-000"
+        assert f["site"] == "www.exemplo.com.br"
+
+
+class TestContatosDoFornecedor:
+    def test_criar_editar_excluir_contato(self, client):
+        c, _ = client
+        f = c.post("/painel-cowdata/cotacoes/fornecedores", json={"nome": "Fornecedor Com Contato"}).json()
+        r = c.post(f"/painel-cowdata/cotacoes/fornecedores/{f['id']}/contatos", json={
+            "nome": "Fulano", "cargo": "Vendedor", "telefone": "(11) 1111-1111", "email": "fulano@x.com",
+        })
+        assert r.status_code == 201, r.text
+        contato = r.json()
+
+        listado = c.get("/painel-cowdata/cotacoes/fornecedores").json()
+        alvo = next(x for x in listado if x["id"] == f["id"])
+        assert len(alvo["contatos"]) == 1
+        assert alvo["contatos"][0]["nome"] == "Fulano"
+
+        r2 = c.put(f"/painel-cowdata/cotacoes/fornecedores/{f['id']}/contatos/{contato['id']}", json={
+            "nome": "Fulano Editado", "cargo": "Representante",
+        })
+        assert r2.status_code == 200
+        assert r2.json()["nome"] == "Fulano Editado"
+
+        r3 = c.delete(f"/painel-cowdata/cotacoes/fornecedores/{f['id']}/contatos/{contato['id']}")
+        assert r3.status_code == 200
+        listado2 = c.get("/painel-cowdata/cotacoes/fornecedores").json()
+        assert next(x for x in listado2 if x["id"] == f["id"])["contatos"] == []
+
+    def test_permite_mais_de_um_contato(self, client):
+        c, _ = client
+        f = c.post("/painel-cowdata/cotacoes/fornecedores", json={"nome": "Fornecedor Dois Contatos"}).json()
+        c.post(f"/painel-cowdata/cotacoes/fornecedores/{f['id']}/contatos", json={"nome": "Vendedor 1"})
+        c.post(f"/painel-cowdata/cotacoes/fornecedores/{f['id']}/contatos", json={"nome": "Representante 1"})
+        listado = c.get("/painel-cowdata/cotacoes/fornecedores").json()
+        assert len(next(x for x in listado if x["id"] == f["id"])["contatos"]) == 2
+
+    def test_contato_404_em_fornecedor_errado(self, client):
+        c, _ = client
+        f1 = c.post("/painel-cowdata/cotacoes/fornecedores", json={"nome": "F1"}).json()
+        f2 = c.post("/painel-cowdata/cotacoes/fornecedores", json={"nome": "F2"}).json()
+        contato = c.post(f"/painel-cowdata/cotacoes/fornecedores/{f1['id']}/contatos", json={"nome": "X"}).json()
+        r = c.put(f"/painel-cowdata/cotacoes/fornecedores/{f2['id']}/contatos/{contato['id']}", json={"nome": "Y"})
+        assert r.status_code == 404
+
+
+class TestFanOutFornecedorParaFazendas:
+    """Mesmo padrão do fan-out de medicamentos da Farmácia
+    (painel_cowdata_farmacia.py::_fan_out_medicamento) — todo fornecedor-padrão
+    passa a existir (inativo) no cadastro de Fornecedor de cada
+    fazenda-cliente ativa."""
+
+    def test_criar_fornecedor_fanout_para_fazenda_ativa(self, client):
+        c, engine = client
+        f = c.post("/painel-cowdata/cotacoes/fornecedores", json={
+            "nome": "Fornecedor Fanout", "cnpj_cpf": "11.111.111/0001-11", "telefone": "(11) 2222-2222",
+        }).json()
+        with Session(engine) as s:
+            criado = s.exec(select(Fornecedor).where(Fornecedor.fazenda_id == 1, Fornecedor.nome == "Fornecedor Fanout")).first()
+        assert criado is not None
+        assert criado.ativo is False
+        assert criado.fornecedor_cowdata_id == f["id"]
+        assert criado.cnpj_cpf == "11.111.111/0001-11"
+
+    def test_fanout_nunca_sobrescreve_fornecedor_ja_existente_na_fazenda(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Fornecedor(nome="Já Cadastrado", fazenda_id=1, tipo="fornecedor", ativo=True, observacoes="original"))
+            s.commit()
+        c.post("/painel-cowdata/cotacoes/fornecedores", json={"nome": "Já Cadastrado"})
+        with Session(engine) as s:
+            linhas = s.exec(select(Fornecedor).where(Fornecedor.fazenda_id == 1, Fornecedor.nome == "Já Cadastrado")).all()
+        assert len(linhas) == 1
+        assert linhas[0].observacoes == "original"  # não foi tocado
+        assert linhas[0].fornecedor_cowdata_id is None  # não casou automaticamente — vínculo manual, se quiser
+
+    def test_fanout_pula_fazenda_cowdata_interna(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Fazenda(id=2, nome="CowData Interna", eh_empresa_cowdata=True))
+            s.commit()
+        c.post("/painel-cowdata/cotacoes/fornecedores", json={"nome": "Fornecedor Sem CowData Interna"})
+        with Session(engine) as s:
+            achou = s.exec(select(Fornecedor).where(Fornecedor.fazenda_id == 2)).first()
+        assert achou is None
+
+    def test_editar_fornecedor_nao_repropaga_fanout(self, client):
+        c, engine = client
+        f = c.post("/painel-cowdata/cotacoes/fornecedores", json={"nome": "Fornecedor Editável"}).json()
+        with Session(engine) as s:
+            criado = s.exec(select(Fornecedor).where(Fornecedor.fazenda_id == 1, Fornecedor.nome == "Fornecedor Editável")).first()
+            criado.ativo = True  # fazenda já ativou/personalizou
+            s.add(criado)
+            s.commit()
+        c.put(f"/painel-cowdata/cotacoes/fornecedores/{f['id']}", json={"nome": "Fornecedor Editável", "telefone": "novo"})
+        with Session(engine) as s:
+            depois = s.exec(select(Fornecedor).where(Fornecedor.fazenda_id == 1, Fornecedor.nome == "Fornecedor Editável")).first()
+        assert depois.ativo is True  # preservado — editar não repropaga
+        assert depois.telefone is None  # não foi tocado pelo PUT do cadastro global
+
+    def test_reexecutar_fanout_alcanca_fazenda_nova(self, client):
+        c, engine = client
+        f = c.post("/painel-cowdata/cotacoes/fornecedores", json={"nome": "Fornecedor Retroativo"}).json()
+        with Session(engine) as s:
+            s.add(Fazenda(id=3, nome="Fazenda Nova"))
+            s.commit()
+        r = c.post(f"/painel-cowdata/cotacoes/fornecedores/{f['id']}/fanout")
+        assert r.status_code == 200
+        assert r.json()["criados"] == 1  # só a fazenda 3, a 1 já tinha
+        with Session(engine) as s:
+            criado = s.exec(select(Fornecedor).where(Fornecedor.fazenda_id == 3, Fornecedor.nome == "Fornecedor Retroativo")).first()
+        assert criado is not None
+        assert criado.ativo is False
+
+    def test_fanout_e_informativo_na_listagem(self, client):
+        c, engine = client
+        f = c.post("/painel-cowdata/cotacoes/fornecedores", json={"nome": "Fornecedor Info"}).json()
+        listado = c.get("/painel-cowdata/cotacoes/fornecedores").json()
+        alvo = next(x for x in listado if x["id"] == f["id"])
+        assert alvo["fan_out_total_fazendas"] == 1
+        assert alvo["fan_out_fazendas_ativas"] == 0

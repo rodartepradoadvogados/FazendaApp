@@ -15,8 +15,8 @@ from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     CategoriaEstoque, CategoriaMedicamento, ClassificacaoMedicamento, Estoque, EstoqueSemen, FinalidadeEstoque,
-    Fornecedor, FornecedorCategoria, Laboratorio, LocalArmazenamento, PlanoContaGerencial, SeedFlag,
-    UnidadeEmbalagemEstoque, UnidadeEstoque, UnidadeMedidaEmbalagemEstoque,
+    Fornecedor, FornecedorCategoria, FornecedorCowData, Laboratorio, LocalArmazenamento, PlanoContaGerencial,
+    SeedFlag, UnidadeEmbalagemEstoque, UnidadeEstoque, UnidadeMedidaEmbalagemEstoque,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
 from ._comum import _crud_nome_ativo
@@ -38,6 +38,13 @@ class FornecedorIn(BaseModel):
     email: str | None = None
     observacoes: str | None = None
     ativo: bool = True
+    # Vínculo opcional com o catálogo de Fornecedores-padrão do Painel
+    # CowData (fazenda.models.catalogo_cowdata.FornecedorCowData) — o
+    # fan-out já preenche isso automaticamente ao criar; este campo também
+    # permite a fazenda VINCULAR manualmente um fornecedor que ela mesma já
+    # tinha cadastrado (nome digitado diferente, então o fan-out não casou
+    # sozinho) ao mesmo fornecedor-padrão, evitando duplicata.
+    fornecedor_cowdata_id: int | None = None
 
 
 @router.get("/fornecedores")
@@ -49,6 +56,19 @@ def listar_fornecedores(
     if fazenda_id is not None:
         query = query.where(Fornecedor.fazenda_id == fazenda_id)
     return [f.model_dump() for f in session.exec(query.order_by(Fornecedor.nome)).all()]
+
+
+@router.get("/fornecedores-padrao")
+def listar_fornecedores_padrao_cowdata(session: Session = Depends(get_session)) -> list[dict]:
+    """Lista mínima (só id/nome) do catálogo de Fornecedores-padrão do
+    Painel CowData — usada só para a fazenda VINCULAR um fornecedor próprio
+    já cadastrado a um destes (ver `FornecedorIn.fornecedor_cowdata_id`).
+    Não expõe contato/observações/classificação internas do Painel CowData
+    — a fazenda já recebe esses dados pelo próprio fan-out, quando existe."""
+    linhas = session.exec(
+        select(FornecedorCowData).where(FornecedorCowData.ativo == True).order_by(FornecedorCowData.nome)  # noqa: E712
+    ).all()
+    return [{"id": f.id, "nome": f.nome} for f in linhas]
 
 
 @router.post("/fornecedores")

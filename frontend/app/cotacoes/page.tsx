@@ -125,6 +125,11 @@ function FormNovaCotacao({ onSalvo, onCancelar }: { onSalvo: (id: number) => voi
   const [produtosEstoque, setProdutosEstoque] = useState<EstoqueItemPicker[]>([]);
   const [fornecedoresCadastro, setFornecedoresCadastro] = useState<any[]>([]);
   const [sugeridosIds, setSugeridosIds] = useState<Set<number>>(new Set());
+  // Pedido do dono (set/2026): pode haver cotação pontual com um fornecedor
+  // que não é de costume comprar (ex.: um fanned-out do catálogo CowData,
+  // ainda não ativado) — a lista de sugestões por categoria normalmente só
+  // traz ativo.
+  const [incluirInativos, setIncluirInativos] = useState(false);
   const [selecionados, setSelecionados] = useState<Record<number, CotacaoFornecedorPayload>>({});
   const [abrirNovoFornecedor, setAbrirNovoFornecedor] = useState(false);
   const [salvando, setSalvando] = useState(false);
@@ -139,7 +144,7 @@ function FormNovaCotacao({ onSalvo, onCancelar }: { onSalvo: (id: number) => voi
   }, []);
 
   useEffect(() => {
-    fetchFornecedoresSugeridos(categoria).then((sugeridos) => {
+    fetchFornecedoresSugeridos(categoria, incluirInativos).then((sugeridos) => {
       const ids = new Set<number>(sugeridos.map((f: any) => f.id));
       setSugeridosIds(ids);
       setSelecionados((prev) => {
@@ -148,7 +153,7 @@ function FormNovaCotacao({ onSalvo, onCancelar }: { onSalvo: (id: number) => voi
         return novo;
       });
     }).catch(() => {});
-  }, [categoria]);
+  }, [categoria, incluirInativos]);
 
   function alternarFornecedor(id: number) {
     setSelecionados((prev) => {
@@ -240,11 +245,18 @@ function FormNovaCotacao({ onSalvo, onCancelar }: { onSalvo: (id: number) => voi
       </div>
 
       <div>
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center justify-between mb-2" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
           <label style={{ ...labelStyle, margin: 0 }}>
             Fornecedores sugeridos pela categoria "{categoria}"
           </label>
-          <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => setAbrirNovoFornecedor(true)}>+ Novo fornecedor</button>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-1" style={{ fontSize: "0.75rem", color: "var(--text-muted)", cursor: "pointer" }}
+              title="Pode haver cotação pontual com um fornecedor que não é de costume comprar">
+              <input type="checkbox" checked={incluirInativos} onChange={(e) => setIncluirInativos(e.target.checked)} />
+              Incluir fornecedores inativos
+            </label>
+            <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => setAbrirNovoFornecedor(true)}>+ Novo fornecedor</button>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="fazenda-table">
@@ -256,7 +268,10 @@ function FormNovaCotacao({ onSalvo, onCancelar }: { onSalvo: (id: number) => voi
                 return (
                   <tr key={id}>
                     <td><input type="checkbox" checked={marcado} onChange={() => alternarFornecedor(id)} /></td>
-                    <td style={{ fontSize: "0.82rem" }}>{f?.nome ?? `#${id}`}</td>
+                    <td style={{ fontSize: "0.82rem" }}>
+                      {f?.nome ?? `#${id}`}
+                      {f && !f.ativo && <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}> (inativo)</span>}
+                    </td>
                     <td>
                       <select style={inputStyle} disabled={!marcado} value={selecionados[id]?.canal || "email"}
                         onChange={(e) => mudarCanal(id, e.target.value as any)}>

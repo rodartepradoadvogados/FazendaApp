@@ -26,9 +26,9 @@ from fazenda.auth import exigir_area_painel_cowdata, exigir_permissao_painel_cow
 from fazenda.database import get_session_manutencao
 from fazenda.models import (
     ClassificacaoCowData, CotacaoCowData, CotacaoCowDataFornecedor, CotacaoCowDataItem,
-    CotacaoCowDataResposta, FinalidadeCowData, FornecedorCowData, FornecedorCowDataClassificacao,
-    FornecedorCowDataFinalidade, PrecoBaseSugerido, PrecoBaseSugeridoParticipanteMedia, ProdutoPadrao,
-    ProdutoPadraoFinalidade, Usuario,
+    CotacaoCowDataResposta, Fazenda, FinalidadeCowData, Fornecedor, FornecedorCowData,
+    FornecedorCowDataClassificacao, FornecedorCowDataContato, FornecedorCowDataFinalidade, PrecoBaseSugerido,
+    PrecoBaseSugeridoParticipanteMedia, ProdutoPadrao, ProdutoPadraoFinalidade, Usuario,
 )
 from fazenda.rules.cotacao_cowdata import rotulo_item_cotacao_cowdata, sugestoes_duplicata
 
@@ -36,6 +36,12 @@ router = APIRouter(prefix="/painel-cowdata/cotacoes", tags=["painel-cowdata-cota
 
 _dep = Depends(exigir_area_painel_cowdata("cotacoes"))
 _dep_edicao = Depends(exigir_permissao_painel_cowdata("cotacoes", "pode_editar_cotacoes"))
+
+
+def _fazendas_cliente_ativas(session: Session) -> list[Fazenda]:
+    return session.exec(
+        select(Fazenda).where(Fazenda.eh_empresa_cowdata == False, Fazenda.ativa == True)  # noqa: E712
+    ).all()
 
 
 # ---------------------------------------------------------------------------
@@ -188,10 +194,22 @@ class FornecedorCowDataIn(BaseModel):
     cnpj_cpf: str | None = None
     telefone: str | None = None
     email: str | None = None
+    site: str | None = None
+    endereco: str | None = None
+    cidade: str | None = None
+    estado: str | None = None
+    cep: str | None = None
     observacoes: str | None = None
     ativo: bool = True
     classificacao_ids: list[int] = []
     finalidade_ids: list[int] = []
+
+
+class FornecedorCowDataContatoIn(BaseModel):
+    nome: str
+    cargo: str | None = None
+    telefone: str | None = None
+    email: str | None = None
 
 
 def _montar_fornecedor_dict(session: Session, f: FornecedorCowData) -> dict:
@@ -208,10 +226,69 @@ def _montar_fornecedor_dict(session: Session, f: FornecedorCowData) -> dict:
         .join(FornecedorCowDataFinalidade, FornecedorCowDataFinalidade.finalidade_id == FinalidadeCowData.id)
         .where(FornecedorCowDataFinalidade.fornecedor_cowdata_id == f.id)
     ).all()
+    contatos = session.exec(
+        select(FornecedorCowDataContato)
+        .where(FornecedorCowDataContato.fornecedor_cowdata_id == f.id)
+        .order_by(FornecedorCowDataContato.id)
+    ).all()
+    # "fan_out_fazendas": quantas fazendas-cliente já têm este fornecedor no
+    # próprio cadastro (Fornecedor.fornecedor_cowdata_id == f.id), e quantas
+    # já ATIVARAM — mesmo espírito informativo de _montar_medicamento_dict
+    # (painel_cowdata_farmacia.py), pro Painel CowData acompanhar o alcance
+    # do fan-out sem precisar entrar em cada fazenda.
+    fanout = session.exec(select(Fornecedor).where(Fornecedor.fornecedor_cowdata_id == f.id)).all()
     dados = f.model_dump()
     dados["classificacoes"] = [{"id": c.id, "nome": c.nome} for c in classificacoes]
     dados["finalidades"] = [{"id": ff.id, "nome": ff.nome} for ff in finalidades]
+    dados["contatos"] = [
+        {"id": c.id, "nome": c.nome, "cargo": c.cargo, "telefone": c.telefone, "email": c.email} for c in contatos
+    ]
+    dados["fan_out_total_fazendas"] = len(fanout)
+    dados["fan_out_fazendas_ativas"] = sum(1 for x in fanout if x.ativo)
     return dados
+
+
+def _criar_item_fanout_fornecedor(session: Session, fornecedor: FornecedorCowData, fazenda_id: int) -> Fornecedor | None:
+    """Mesmo padrão de `_criar_item_fanout` (painel_cowdata_farmacia.py):
+    casa por NOME EXATO dentro da fazenda — se já existir algo com esse
+    nome (cadastrado pela própria fazenda ou por um fan-out anterior), nunca
+    sobrescreve, devolve None."""
+    existente = session.exec(
+        select(Fornecedor).where(Fornecedor.nome == fornecedor.nome, Fornecedor.fazenda_id == fazenda_id)
+    ).first()
+    if existente:
+        return None
+    endereco_bits = [fornecedor.endereco, fornecedor.cidade, fornecedor.estado, fornecedor.cep]
+    endereco_txt = ", ".join(b for b in endereco_bits if b)
+    partes_obs = []
+    if endereco_txt:
+        partes_obs.append(f"Endereço: {endereco_txt}")
+    if fornecedor.site:
+        partes_obs.append(f"Site: {fornecedor.site}")
+    if fornecedor.observacoes:
+        partes_obs.append(fornecedor.observacoes)
+    partes_obs.append(
+        "Cadastro sincronizado do catálogo de Fornecedores-padrão do Painel CowData — "
+        "inativo por padrão; ative para usar nas suas próprias cotações."
+    )
+    return Fornecedor(
+        nome=fornecedor.nome, fazenda_id=fazenda_id, tipo="fornecedor", cnpj_cpf=fornecedor.cnpj_cpf,
+        telefone=fornecedor.telefone, email=fornecedor.email, observacoes=" | ".join(partes_obs),
+        ativo=False, fornecedor_cowdata_id=fornecedor.id,
+    )
+
+
+def _fan_out_fornecedor(session: Session, fornecedor: FornecedorCowData) -> dict:
+    criados, ja_existiam = 0, 0
+    for fazenda in _fazendas_cliente_ativas(session):
+        item = _criar_item_fanout_fornecedor(session, fornecedor, fazenda.id)
+        if item is None:
+            ja_existiam += 1
+            continue
+        session.add(item)
+        criados += 1
+    session.commit()
+    return {"criados": criados, "ja_existiam": ja_existiam}
 
 
 def _definir_vinculos_fornecedor(session: Session, fornecedor_id: int, classificacao_ids: list[int], finalidade_ids: list[int]) -> None:
@@ -237,6 +314,7 @@ def criar_fornecedor(dados: FornecedorCowDataIn, _: Usuario = _dep_edicao, sessi
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
     f = FornecedorCowData(
         nome=dados.nome.strip(), cnpj_cpf=dados.cnpj_cpf, telefone=dados.telefone, email=dados.email,
+        site=dados.site, endereco=dados.endereco, cidade=dados.cidade, estado=dados.estado, cep=dados.cep,
         observacoes=dados.observacoes, ativo=dados.ativo,
     )
     session.add(f)
@@ -244,6 +322,10 @@ def criar_fornecedor(dados: FornecedorCowDataIn, _: Usuario = _dep_edicao, sessi
     session.refresh(f)
     _definir_vinculos_fornecedor(session, f.id, dados.classificacao_ids, dados.finalidade_ids)
     session.commit()
+    # Fan-out (pedido do dono, set/2026, mesmo padrão da Farmácia): todo
+    # fornecedor-padrão novo passa a existir também no cadastro de
+    # Fornecedor de cada fazenda-cliente ativa, sempre inativo.
+    _fan_out_fornecedor(session, f)
     return _montar_fornecedor_dict(session, f)
 
 
@@ -253,11 +335,74 @@ def editar_fornecedor(id: int, dados: FornecedorCowDataIn, _: Usuario = _dep_edi
     if not f:
         raise HTTPException(status_code=404, detail="Fornecedor não encontrado")
     f.nome = dados.nome.strip() or f.nome
-    f.cnpj_cpf, f.telefone, f.email, f.observacoes, f.ativo = dados.cnpj_cpf, dados.telefone, dados.email, dados.observacoes, dados.ativo
+    f.cnpj_cpf, f.telefone, f.email = dados.cnpj_cpf, dados.telefone, dados.email
+    f.site, f.endereco, f.cidade, f.estado, f.cep = dados.site, dados.endereco, dados.cidade, dados.estado, dados.cep
+    f.observacoes, f.ativo = dados.observacoes, dados.ativo
     session.add(f)
     _definir_vinculos_fornecedor(session, f.id, dados.classificacao_ids, dados.finalidade_ids)
     session.commit()
+    # Mesma regra da Farmácia (docstring de `PUT /medicamentos/{id}`): editar
+    # NÃO repropaga pro fan-out já feito — cada fazenda que já ativou/
+    # personalizou o item mantém o que tem. Fazenda nova/nunca alcançada usa
+    # o botão de reexecutar abaixo.
     return _montar_fornecedor_dict(session, f)
+
+
+@router.post("/fornecedores/{id}/fanout")
+def reexecutar_fanout_fornecedor(id: int, _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao)) -> dict:
+    """Reexecuta o fan-out deste fornecedor — pega fazendas novas (criadas
+    depois do fornecedor) ou nunca alcançadas. Idempotente: nunca sobrescreve
+    um Fornecedor já existente na fazenda (mesmo casamento por nome exato)."""
+    f = session.get(FornecedorCowData, id)
+    if not f:
+        raise HTTPException(status_code=404, detail="Fornecedor não encontrado")
+    return _fan_out_fornecedor(session, f)
+
+
+@router.post("/fornecedores/{id}/contatos", status_code=201)
+def criar_contato_fornecedor(
+    id: int, dados: FornecedorCowDataContatoIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),
+) -> dict:
+    if not session.get(FornecedorCowData, id):
+        raise HTTPException(status_code=404, detail="Fornecedor não encontrado")
+    if not dados.nome.strip():
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    contato = FornecedorCowDataContato(
+        fornecedor_cowdata_id=id, nome=dados.nome.strip(), cargo=dados.cargo,
+        telefone=dados.telefone, email=dados.email,
+    )
+    session.add(contato)
+    session.commit()
+    session.refresh(contato)
+    return {"id": contato.id, "nome": contato.nome, "cargo": contato.cargo, "telefone": contato.telefone, "email": contato.email}
+
+
+@router.put("/fornecedores/{id}/contatos/{contato_id}")
+def editar_contato_fornecedor(
+    id: int, contato_id: int, dados: FornecedorCowDataContatoIn, _: Usuario = _dep_edicao,
+    session: Session = Depends(get_session_manutencao),
+) -> dict:
+    contato = session.get(FornecedorCowDataContato, contato_id)
+    if not contato or contato.fornecedor_cowdata_id != id:
+        raise HTTPException(status_code=404, detail="Contato não encontrado")
+    if not dados.nome.strip():
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    contato.nome, contato.cargo, contato.telefone, contato.email = dados.nome.strip(), dados.cargo, dados.telefone, dados.email
+    session.add(contato)
+    session.commit()
+    return {"id": contato.id, "nome": contato.nome, "cargo": contato.cargo, "telefone": contato.telefone, "email": contato.email}
+
+
+@router.delete("/fornecedores/{id}/contatos/{contato_id}")
+def excluir_contato_fornecedor(
+    id: int, contato_id: int, _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),
+) -> dict:
+    contato = session.get(FornecedorCowDataContato, contato_id)
+    if not contato or contato.fornecedor_cowdata_id != id:
+        raise HTTPException(status_code=404, detail="Contato não encontrado")
+    session.delete(contato)
+    session.commit()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
