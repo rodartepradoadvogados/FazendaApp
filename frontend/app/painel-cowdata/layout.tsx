@@ -12,7 +12,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type CSSProperties } from "react";
 import {
   LayoutGrid, CreditCard, Building2, Wallet, Users, Bot, Lock, ShieldCheck, ArrowLeft, Menu, X, ListChecks, Dna, Pill, UserCog,
-  SlidersHorizontal, Newspaper, Sun, Moon, SunMoon, FileSearch,
+  SlidersHorizontal, Newspaper, Sun, Moon, SunMoon, FileSearch, Truck,
 } from "lucide-react";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
@@ -91,6 +91,11 @@ export const GRUPOS: { titulo: string; itens: { href: string; label: string; ico
       // de produtos-padrão/preços-base sugeridos (nunca mostra fornecedor
       // fora daqui) — ver painel_cowdata_cotacoes.py.
       { href: "/painel-cowdata/cotacoes", label: "Cotações", icon: FileSearch, area: "cotacoes" },
+      // Cadastro dos fornecedores da PRÓPRIA CowData — antes vivia como
+      // sub-aba interna de Cotações; promovido a item próprio do menu
+      // lateral (pedido do usuário, set/2026). Mesma área "cotacoes" —
+      // continua exclusivo desta tela, nunca exposto a nenhuma fazenda.
+      { href: "/painel-cowdata/fornecedores", label: "Fornecedores-padrão", icon: Truck, area: "cotacoes" },
       // Diferente dos itens acima, este NUNCA "aplica em várias fazendas de
       // uma vez" — login é sempre de uma fazenda só, escolhida explicitamente
       // (ver app/painel-cowdata/usuarios/page.tsx).

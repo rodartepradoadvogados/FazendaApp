@@ -16,7 +16,7 @@ function msgErro(e: unknown): string {
   return e instanceof Error ? e.message : "Erro inesperado";
 }
 
-const VAZIO = { nome: "", cnpj_cpf: "", telefone: "", email: "", observacoes: "", classificacao_ids: [] as number[], finalidade_ids: [] as number[] };
+const VAZIO = { nome: "", cnpj_cpf: "", telefone: "", email: "", observacoes: "", ativo: true, classificacao_ids: [] as number[], finalidade_ids: [] as number[] };
 
 export default function CotacoesCowDataFornecedores() {
   const { cor: COR, inputStyle, labelStyle, btnPrimario, btnGhost } = usePainelCowDataEstilos();
@@ -40,6 +40,7 @@ export default function CotacoesCowDataFornecedores() {
     setEditando(f.id);
     setForm({
       nome: f.nome, cnpj_cpf: f.cnpj_cpf || "", telefone: f.telefone || "", email: f.email || "", observacoes: f.observacoes || "",
+      ativo: f.ativo,
       classificacao_ids: f.classificacoes.map((c) => c.id), finalidade_ids: f.finalidades.map((x) => x.id),
     });
     setAberto(true); setErro(null);
@@ -130,6 +131,10 @@ export default function CotacoesCowDataFornecedores() {
                 <label style={labelStyle}>Observações</label>
                 <textarea style={{ ...inputStyle, width: "100%", minHeight: "60px" }} value={form.observacoes} onChange={(e) => setForm({ ...form, observacoes: e.target.value })} />
               </div>
+              <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.82rem", color: COR.texto, cursor: "pointer" }}>
+                <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} />
+                Ativo
+              </label>
               {erro && <p style={{ color: "var(--red)", fontSize: "0.78rem" }}>{erro}</p>}
               <button style={btnPrimario} disabled={salvando} onClick={salvar}>{salvando ? "Salvando…" : "Salvar"}</button>
             </div>

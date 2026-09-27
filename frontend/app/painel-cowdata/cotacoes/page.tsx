@@ -4,17 +4,18 @@
 // catálogo de produtos-padrão, visível às fazendas como referência em
 // Cadastro > Estoque. Ver backend/fazenda/api/routers/painel_cowdata_cotacoes.py.
 import { useState } from "react";
-import { ClipboardList, Package, Tags, Truck } from "lucide-react";
+import { ClipboardList, Package, Tags } from "lucide-react";
 import { usePainelCowDataEstilos } from "@/lib/painelCowDataTema";
 import CotacoesCowDataCotacoes from "@/components/painel-cowdata/CotacoesCowDataCotacoes";
 import CotacoesCowDataProdutos from "@/components/painel-cowdata/CotacoesCowDataProdutos";
-import CotacoesCowDataFornecedores from "@/components/painel-cowdata/CotacoesCowDataFornecedores";
 import CotacoesCowDataClassificacoes from "@/components/painel-cowdata/CotacoesCowDataClassificacoes";
 
+// "Fornecedores" era uma aba interna aqui — promovida a item próprio do
+// menu lateral (/painel-cowdata/fornecedores, ver layout.tsx::GRUPOS),
+// pedido do usuário, set/2026.
 const ABAS = [
   { chave: "cotacoes", label: "Cotações", icone: ClipboardList },
   { chave: "produtos", label: "Produtos-padrão", icone: Package },
-  { chave: "fornecedores", label: "Fornecedores", icone: Truck },
   { chave: "vocabulario", label: "Classificações e finalidades", icone: Tags },
 ] as const;
 type Aba = (typeof ABAS)[number]["chave"];
@@ -46,7 +47,6 @@ export default function CotacoesCowDataPage() {
       </div>
       {aba === "cotacoes" && <CotacoesCowDataCotacoes />}
       {aba === "produtos" && <CotacoesCowDataProdutos />}
-      {aba === "fornecedores" && <CotacoesCowDataFornecedores />}
       {aba === "vocabulario" && <CotacoesCowDataClassificacoes />}
     </div>
   );
