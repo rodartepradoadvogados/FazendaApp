@@ -23,6 +23,7 @@ from sqlmodel import Session, select
 from fazenda.models import EstoqueSemen, SeedFlag, Touro
 from fazenda.parsers.utils import parse_float
 from fazenda.rules.naab import central_por_codigo_naab
+from fazenda.rules.naab_aiss import mapear_para_touro
 
 logger = logging.getLogger(__name__)
 
@@ -243,49 +244,34 @@ def importar_touros_planilha_rica(session: Session, content: bytes, fonte: str |
     return {"criados": criados, "atualizados": atualizados, "erros": erros}
 
 
-def importar_touros(session: Session, linhas: list[dict], fonte: str | None, rodada: str | None) -> dict:
-    """Upsert dos touros por código NAAB. Atualiza só os campos presentes na
-    planilha; nunca apaga touros que já existem. Retorna resumo."""
+def _upsert_touros_por_naab(session: Session, linhas_mapeadas: list[dict], fonte: str | None, rodada: str | None) -> dict:
+    """Núcleo do upsert por código NAAB, comum a `importar_touros` (que
+    mapeia colunas de planilha por apelido ANTES de chegar aqui) e a
+    `aplicar_atualizacoes_confirmadas` (catálogo AISS da NAAB, já mapeado por
+    `fazenda.rules.naab_aiss.mapear_para_touro`). Cada item de
+    `linhas_mapeadas` já usa os NOMES DE CAMPO do modelo `Touro` como chave
+    (ex.: `{"naab": "007HO123", "leite_kg": 30.5, ...}`) — nada de apelido de
+    planilha aqui. Atualiza só os campos presentes (valor vazio/None é
+    ignorado, nunca zera); nunca apaga touro existente."""
     from datetime import datetime
 
-    if not linhas:
-        return {"criados": 0, "atualizados": 0, "erros": ["Planilha vazia ou ilegível."]}
-    mapa = _mapear_colunas(list(linhas[0].keys()))
-    if "naab" not in mapa:
-        return {"criados": 0, "atualizados": 0, "erros": [
-            "Não encontrei a coluna do código NAAB. Renomeie a coluna do código para 'NAAB' e tente de novo."
-        ]}
-
-    logger.info("Importando catálogo de touros (CSV/planilha simples): %d linhas, fonte=%s", len(linhas), fonte)
-
-    # Mesmo motivo do importador de planilha rica: uma única query para
-    # carregar todos os touros existentes evita um SELECT (+ flush) por linha.
     existentes: dict[str, Touro] = {t.naab: t for t in session.exec(select(Touro)).all()}
 
     criados = atualizados = 0
-    erros: list[str] = []
-    for i, row in enumerate(linhas, start=2):
-        naab = (row.get(mapa["naab"]) or "").strip().upper()
+    for mapa in linhas_mapeadas:
+        naab = (mapa.get("naab") or "").strip().upper()
         if not naab:
             continue
         touro = existentes.get(naab)
         novo = touro is None
         if novo:
             touro = Touro(naab=naab)
-            existentes[naab] = touro  # protege contra NAAB duplicado na mesma planilha
-        for campo, coluna in mapa.items():
-            if campo == "naab":
+            existentes[naab] = touro  # protege contra NAAB duplicado na mesma remessa
+        for campo, valor in mapa.items():
+            if campo == "naab" or valor is None or valor == "":
                 continue
-            valor = (row.get(coluna) or "").strip()
-            if valor == "":
-                continue
-            if campo in CAMPOS_NUM:
-                v = parse_float(valor)
-                if v is not None:
-                    setattr(touro, campo, v)
-            else:
-                setattr(touro, campo, valor)
-        # Central: usa a da planilha; se faltar, deriva do código NAAB.
+            setattr(touro, campo, valor)
+        # Central: usa a da remessa; se faltar, deriva do código NAAB.
         if not touro.central:
             touro.central = central_por_codigo_naab(naab)
         if fonte:
@@ -297,8 +283,71 @@ def importar_touros(session: Session, linhas: list[dict], fonte: str | None, rod
         criados += 1 if novo else 0
         atualizados += 0 if novo else 1
     session.commit()
-    logger.info("Catálogo de touros importado: %d criados, %d atualizados", criados, atualizados)
-    return {"criados": criados, "atualizados": atualizados, "erros": erros}
+    return {"criados": criados, "atualizados": atualizados, "erros": []}
+
+
+def importar_touros(session: Session, linhas: list[dict], fonte: str | None, rodada: str | None) -> dict:
+    """Upsert dos touros por código NAAB. Atualiza só os campos presentes na
+    planilha; nunca apaga touros que já existem. Retorna resumo."""
+    if not linhas:
+        return {"criados": 0, "atualizados": 0, "erros": ["Planilha vazia ou ilegível."]}
+    mapa_colunas = _mapear_colunas(list(linhas[0].keys()))
+    if "naab" not in mapa_colunas:
+        return {"criados": 0, "atualizados": 0, "erros": [
+            "Não encontrei a coluna do código NAAB. Renomeie a coluna do código para 'NAAB' e tente de novo."
+        ]}
+
+    logger.info("Importando catálogo de touros (CSV/planilha simples): %d linhas, fonte=%s", len(linhas), fonte)
+
+    # Mapeia cada linha da planilha (apelido de coluna -> valor) para o
+    # formato que `_upsert_touros_por_naab` espera (nome de campo do modelo
+    # -> valor já convertido), sem tocar no banco ainda.
+    linhas_mapeadas: list[dict] = []
+    for row in linhas:
+        item: dict = {}
+        for campo, coluna in mapa_colunas.items():
+            if campo == "naab":
+                item["naab"] = (row.get(coluna) or "").strip().upper()
+                continue
+            valor = (row.get(coluna) or "").strip()
+            if valor == "":
+                continue
+            if campo in CAMPOS_NUM:
+                v = parse_float(valor)
+                if v is not None:
+                    item[campo] = v
+            else:
+                item[campo] = valor
+        linhas_mapeadas.append(item)
+
+    resultado = _upsert_touros_por_naab(session, linhas_mapeadas, fonte, rodada)
+    logger.info("Catálogo de touros importado: %d criados, %d atualizados", resultado["criados"], resultado["atualizados"])
+    return resultado
+
+
+def aplicar_atualizacoes_confirmadas(
+    session: Session, naabs_confirmados: list[str], linhas_aiss: list[dict], fonte: str, rodada: str,
+) -> dict:
+    """Aplica ao banco só os touros do catálogo AISS da NAAB (linhas cruas de
+    `fazenda.rules.naab_aiss.ler_catalogo_aiss`) cujo código está em
+    `naabs_confirmados` — a lista que o DONO aprovou no chat depois de ver o
+    relatório de `fazenda.rules.naab_aiss.comparar_catalogo`. Mapeia cada
+    linha confirmada com `mapear_para_touro` e delega o upsert (por NAAB,
+    nunca apaga) para o MESMO núcleo usado por `importar_touros` — nenhuma
+    lógica de upsert duplicada entre os dois caminhos."""
+    confirmados = {(n or "").strip().upper() for n in naabs_confirmados}
+    linhas_mapeadas: list[dict] = []
+    for linha in linhas_aiss:
+        mapa = mapear_para_touro(linha)
+        naab = mapa.get("naab")
+        if naab and naab in confirmados:
+            linhas_mapeadas.append(mapa)
+
+    logger.info(
+        "Aplicando atualizações NAAB confirmadas pelo dono: %d de %d touro(s) do catálogo AISS, fonte=%s, rodada=%s",
+        len(linhas_mapeadas), len(confirmados), fonte, rodada,
+    )
+    return _upsert_touros_por_naab(session, linhas_mapeadas, fonte, rodada)
 
 
 def bootstrap_touros_naab(session: Session, forcar: bool = False) -> None:
