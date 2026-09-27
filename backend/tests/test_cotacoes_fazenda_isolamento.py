@@ -208,6 +208,22 @@ class TestIsolamentoAutenticado:
         sugestoes = c.get("/cotacoes/opcoes/fornecedores-sugeridos", params={"categoria": "Ração e insumos alimentares"}).json()
         assert [f["id"] for f in sugestoes] == [2]
 
+    def test_sugestao_ignora_inativo_por_padrao_mas_flag_inclui(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Fornecedor(id=3, fazenda_id=1, nome="Fornecedor Inativo", tipo="fornecedor", ativo=False))
+            s.add(FornecedorCategoria(fornecedor_id=3, categoria="Ração e insumos alimentares", fazenda_id=1))
+            s.commit()
+        _como_fazenda(1)
+        sem_flag = c.get("/cotacoes/opcoes/fornecedores-sugeridos", params={"categoria": "Ração e insumos alimentares"}).json()
+        assert [f["id"] for f in sem_flag] == [1]  # inativo não aparece por padrão
+
+        com_flag = c.get(
+            "/cotacoes/opcoes/fornecedores-sugeridos",
+            params={"categoria": "Ração e insumos alimentares", "incluir_inativos": True},
+        ).json()
+        assert sorted(f["id"] for f in com_flag) == [1, 3]  # inativo aparece quando pedido explicitamente
+
     def test_nao_pode_criar_cotacao_com_fornecedor_de_outra_fazenda(self, client):
         c, _ = client
         _como_fazenda(1)

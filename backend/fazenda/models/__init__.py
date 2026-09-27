@@ -214,6 +214,7 @@ from .catalogo_cowdata import (
     FinalidadeCowData,
     FornecedorCowData,
     FornecedorCowDataClassificacao,
+    FornecedorCowDataContato,
     FornecedorCowDataFinalidade,
     ProdutoPadrao,
     ProdutoPadraoFinalidade,

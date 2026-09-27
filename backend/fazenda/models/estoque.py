@@ -372,6 +372,18 @@ class Fornecedor(SQLModel, table=True):
     observacoes: Optional[str] = None
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Vínculo com o catálogo de fornecedores-padrão do Painel CowData
+    # (fazenda.models.catalogo_cowdata.FornecedorCowData) — preenchido
+    # automaticamente pelo fan-out (nasce inativo, mesmo espírito do
+    # fan-out de medicamentos em Estoque.medicamento_comercial_id — ver
+    # painel_cowdata_farmacia.py) OU manualmente pela fazenda, para vincular
+    # um fornecedor já cadastrado por ela (nome digitado diferente do
+    # fan-out) ao mesmo fornecedor-padrão, evitando duplicata. Puramente
+    # informativo do lado da fazenda: NUNCA expõe nada além do que o
+    # próprio fan-out já copiou pra este registro (nome/cnpj/telefone/
+    # email/site/endereço) — a muralha de preço-base sugerido
+    # (PrecoBaseSugerido.fornecedor_escolhido_id) é outra coisa, intocada.
+    fornecedor_cowdata_id: Optional[int] = Field(default=None, foreign_key="fornecedor_cowdata.id", index=True)
 
 
 class FornecedorClienteApelido(SQLModel, table=True):

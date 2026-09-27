@@ -84,8 +84,31 @@ class FornecedorCowData(SQLModel, table=True):
     cnpj_cpf: Optional[str] = None
     telefone: Optional[str] = None
     email: Optional[str] = None
+    site: Optional[str] = None
+    endereco: Optional[str] = None
+    cidade: Optional[str] = None
+    estado: Optional[str] = None  # UF
+    cep: Optional[str] = None
     observacoes: Optional[str] = None
     ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FornecedorCowDataContato(SQLModel, table=True):
+    """Pessoa de contato de UM fornecedor (vendedor, representante etc.) —
+    um fornecedor pode ter zero ou mais (pedido do usuário: "possibilidade
+    de acrescentar vendedores, representantes..."). Sem vínculo com nenhuma
+    fazenda — é dado interno do Painel CowData, igual ao resto deste
+    módulo."""
+
+    __tablename__ = "fornecedor_cowdata_contato"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fornecedor_cowdata_id: int = Field(foreign_key="fornecedor_cowdata.id", index=True)
+    nome: str
+    cargo: Optional[str] = None  # texto livre — "Vendedor", "Representante técnico" etc.
+    telefone: Optional[str] = None
+    email: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 

@@ -1,17 +1,23 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
 import { Truck, Plus, Pencil, AlertTriangle, Check, X, Search } from "lucide-react";
-import { fetchFornecedores, criarFornecedor, atualizarFornecedor } from "@/lib/api";
+import { fetchFornecedores, criarFornecedor, atualizarFornecedor, fetchFornecedoresPadraoCowData } from "@/lib/api";
 import { maskTelefone, maskCpfCnpj } from "@/lib/masks";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { normalizarBusca as normalizar } from "@/lib/busca";
 
 type Fornecedor = {
   id: number; nome: string; tipo: string; categoria: string | null; cnpj_cpf: string | null; telefone: string | null;
-  email: string | null; observacoes: string | null; ativo: boolean;
+  email: string | null; observacoes: string | null; ativo: boolean; fornecedor_cowdata_id: number | null;
 };
-type Form = { nome: string; tipo: string; categoria: string; cnpj_cpf: string; telefone: string; email: string; observacoes: string; ativo: boolean };
-const formVazio: Form = { nome: "", tipo: "fornecedor", categoria: "", cnpj_cpf: "", telefone: "", email: "", observacoes: "", ativo: true };
+type Form = {
+  nome: string; tipo: string; categoria: string; cnpj_cpf: string; telefone: string; email: string; observacoes: string;
+  ativo: boolean; fornecedor_cowdata_id: number | null;
+};
+const formVazio: Form = {
+  nome: "", tipo: "fornecedor", categoria: "", cnpj_cpf: "", telefone: "", email: "", observacoes: "", ativo: true,
+  fornecedor_cowdata_id: null,
+};
 
 const TIPOS = [
   { v: "fornecedor", l: "Fornecedor" },
@@ -39,7 +45,10 @@ const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(-
 
 function paraPayload(f: Form) {
   const s = (v: string) => (v.trim() === "" ? undefined : v.trim());
-  return { nome: f.nome.trim(), tipo: f.tipo, categoria: s(f.categoria), cnpj_cpf: s(f.cnpj_cpf), telefone: s(f.telefone), email: s(f.email), observacoes: s(f.observacoes), ativo: f.ativo };
+  return {
+    nome: f.nome.trim(), tipo: f.tipo, categoria: s(f.categoria), cnpj_cpf: s(f.cnpj_cpf), telefone: s(f.telefone),
+    email: s(f.email), observacoes: s(f.observacoes), ativo: f.ativo, fornecedor_cowdata_id: f.fornecedor_cowdata_id,
+  };
 }
 
 export default function CadastroFornecedores() {
@@ -50,13 +59,20 @@ export default function CadastroFornecedores() {
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
+  const [fornecedoresPadrao, setFornecedoresPadrao] = useState<{ id: number; nome: string }[]>([]);
 
   const carregar = () => fetchFornecedores().then(setItens).catch((e) => setError(e.message));
-  useEffect(() => { carregar(); }, []);
+  useEffect(() => {
+    carregar();
+    fetchFornecedoresPadraoCowData().then(setFornecedoresPadrao).catch(() => setFornecedoresPadrao([]));
+  }, []);
 
   const abrirNovo = () => { setForm(formVazio); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (f: Fornecedor) => {
-    setForm({ nome: f.nome, tipo: f.tipo, categoria: f.categoria ?? "", cnpj_cpf: f.cnpj_cpf ?? "", telefone: f.telefone ?? "", email: f.email ?? "", observacoes: f.observacoes ?? "", ativo: f.ativo });
+    setForm({
+      nome: f.nome, tipo: f.tipo, categoria: f.categoria ?? "", cnpj_cpf: f.cnpj_cpf ?? "", telefone: f.telefone ?? "",
+      email: f.email ?? "", observacoes: f.observacoes ?? "", ativo: f.ativo, fornecedor_cowdata_id: f.fornecedor_cowdata_id,
+    });
     setEditando(f.id); setMsg(null);
   };
   const cancelar = () => { setEditando(null); setMsg(null); };
@@ -95,7 +111,7 @@ export default function CadastroFornecedores() {
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
-      {editando === "novo" && <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg} />}
+      {editando === "novo" && <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg} fornecedoresPadrao={fornecedoresPadrao} />}
 
       {itens && (
         <>
@@ -118,7 +134,13 @@ export default function CadastroFornecedores() {
               {linhasOrdenadas.map((f) => (
                 <Fragment key={f.id}>
                   <tr>
-                    <td style={{ fontWeight: 700 }}>{f.nome}{!f.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
+                    <td style={{ fontWeight: 700 }}>
+                      {f.nome}
+                      {!f.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}
+                      {!!f.fornecedor_cowdata_id && (
+                        <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }} title="Vinculado a um fornecedor-padrão do catálogo CowData"> (vinculado)</span>
+                      )}
+                    </td>
                     <td style={{ textTransform: "capitalize" }}>{f.tipo}</td>
                     <td style={{ fontSize: "0.78rem" }}>{f.categoria || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{f.cnpj_cpf || "—"}</td>
@@ -132,7 +154,7 @@ export default function CadastroFornecedores() {
                   </tr>
                   {editando === f.id && (
                     <tr><td colSpan={7} style={{ padding: 0 }}>
-                      <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg} />
+                      <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg} fornecedoresPadrao={fornecedoresPadrao} />
                     </td></tr>
                   )}
                 </Fragment>
@@ -148,8 +170,9 @@ export default function CadastroFornecedores() {
   );
 }
 
-function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg }: {
+function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg, fornecedoresPadrao }: {
   form: Form; setForm: (f: Form) => void; onSalvar: () => void; onCancelar: () => void; salvando: boolean; msg: string | null;
+  fornecedoresPadrao: { id: number; nome: string }[];
 }) {
   return (
     <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
@@ -171,6 +194,20 @@ function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg }: {
           <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativo</label></div>
         <div style={{ gridColumn: "1 / -1" }}><label style={labelStyle}>Observações</label>
           <textarea style={{ ...inputStyle, minHeight: "2.4rem" }} value={form.observacoes} onChange={(e) => setForm({ ...form, observacoes: e.target.value })} /></div>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <label style={labelStyle}>Vincular a fornecedor-padrão CowData (opcional)</label>
+          <select
+            style={inputStyle}
+            value={form.fornecedor_cowdata_id ?? ""}
+            onChange={(e) => setForm({ ...form, fornecedor_cowdata_id: e.target.value ? Number(e.target.value) : null })}
+          >
+            <option value="">Nenhum</option>
+            {fornecedoresPadrao.map((f) => <option key={f.id} value={f.id}>{f.nome}</option>)}
+          </select>
+          <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>
+            Use quando este fornecedor que você cadastrou já é um dos fornecedores-padrão da CowData (nome digitado diferente) — evita duplicar o cadastro.
+          </p>
+        </div>
       </div>
       {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
       <div className="flex items-center gap-2">

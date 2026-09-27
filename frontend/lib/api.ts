@@ -2223,18 +2223,27 @@ export async function fetchFornecedores() {
   if (!res.ok) throw new Error(`Fornecedores error: ${res.status}`);
   return res.json();
 }
-export async function criarFornecedor(dados: { nome: string; tipo: string; categoria?: string; cnpj_cpf?: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean }) {
+export async function criarFornecedor(dados: { nome: string; tipo: string; categoria?: string; cnpj_cpf?: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean; fornecedor_cowdata_id?: number | null }) {
   const res = await authFetch(`${API}/cadastro/fornecedores`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar fornecedor"); }
   return res.json();
 }
-export async function atualizarFornecedor(id: number, dados: { nome: string; tipo: string; categoria?: string; cnpj_cpf?: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean }) {
+export async function atualizarFornecedor(id: number, dados: { nome: string; tipo: string; categoria?: string; cnpj_cpf?: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean; fornecedor_cowdata_id?: number | null }) {
   const res = await authFetch(`${API}/cadastro/fornecedores/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar fornecedor"); }
+  return res.json();
+}
+// Lista mínima (id/nome) do catálogo de Fornecedores-padrão do Painel
+// CowData, só para a fazenda VINCULAR um fornecedor próprio já cadastrado a
+// um destes (ver Fornecedor.fornecedor_cowdata_id) — não expõe contato/
+// observações internas do Painel CowData.
+export async function fetchFornecedoresPadraoCowData(): Promise<{ id: number; nome: string }[]> {
+  const res = await authFetch(`${API}/cadastro/fornecedores-padrao`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Fornecedores-padrão error: ${res.status}`);
   return res.json();
 }
 
@@ -7971,8 +7980,9 @@ export type CotacaoDetalhe = CotacaoResumo & {
   itens: CotacaoItemRow[]; fornecedores: CotacaoFornecedorRow[]; respostas: CotacaoRespostaRow[];
 };
 
-export async function fetchFornecedoresSugeridos(categoria: string): Promise<any[]> {
-  const res = await authFetch(`${API}/cotacoes/opcoes/fornecedores-sugeridos?categoria=${encodeURIComponent(categoria)}`, { cache: "no-store" });
+export async function fetchFornecedoresSugeridos(categoria: string, incluirInativos?: boolean): Promise<any[]> {
+  const qs = `?categoria=${encodeURIComponent(categoria)}${incluirInativos ? "&incluir_inativos=true" : ""}`;
+  const res = await authFetch(`${API}/cotacoes/opcoes/fornecedores-sugeridos${qs}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Fornecedores sugeridos error: ${res.status}`);
   return res.json();
 }
@@ -9289,18 +9299,32 @@ export const criarFinalidadeCowData = (nome: string): Promise<FinalidadeCowData>
 export const editarFinalidadeCowData = (id: number, d: { nome: string; ativo: boolean }): Promise<FinalidadeCowData> => _pcSend(`/cotacoes/finalidades/${id}`, "PUT", d);
 export const excluirFinalidadeCowData = (id: number): Promise<{ ok: boolean }> => _pcSend(`/cotacoes/finalidades/${id}`, "DELETE");
 
+export type FornecedorCowDataContato = { id: number; nome: string; cargo: string | null; telefone: string | null; email: string | null };
+export type FornecedorCowDataContatoIn = { nome: string; cargo?: string | null; telefone?: string | null; email?: string | null };
 export type FornecedorCowData = {
   id: number; nome: string; cnpj_cpf: string | null; telefone: string | null; email: string | null;
+  site: string | null; endereco: string | null; cidade: string | null; estado: string | null; cep: string | null;
   observacoes: string | null; ativo: boolean;
   classificacoes: { id: number; nome: string }[]; finalidades: { id: number; nome: string }[];
+  contatos: FornecedorCowDataContato[];
+  fan_out_total_fazendas: number; fan_out_fazendas_ativas: number;
 };
 export type FornecedorCowDataIn = {
-  nome: string; cnpj_cpf?: string | null; telefone?: string | null; email?: string | null; observacoes?: string | null;
-  ativo?: boolean; classificacao_ids: number[]; finalidade_ids: number[];
+  nome: string; cnpj_cpf?: string | null; telefone?: string | null; email?: string | null;
+  site?: string | null; endereco?: string | null; cidade?: string | null; estado?: string | null; cep?: string | null;
+  observacoes?: string | null; ativo?: boolean; classificacao_ids: number[]; finalidade_ids: number[];
 };
 export const fetchFornecedoresCowData = (): Promise<FornecedorCowData[]> => _pcGet(`/cotacoes/fornecedores`);
 export const criarFornecedorCowData = (d: FornecedorCowDataIn): Promise<FornecedorCowData> => _pcSend(`/cotacoes/fornecedores`, "POST", d);
 export const editarFornecedorCowData = (id: number, d: FornecedorCowDataIn): Promise<FornecedorCowData> => _pcSend(`/cotacoes/fornecedores/${id}`, "PUT", d);
+export const reexecutarFanoutFornecedorCowData = (id: number): Promise<{ criados: number; ja_existiam: number }> =>
+  _pcSend(`/cotacoes/fornecedores/${id}/fanout`, "POST");
+export const criarContatoFornecedorCowData = (fornecedorId: number, d: FornecedorCowDataContatoIn): Promise<FornecedorCowDataContato> =>
+  _pcSend(`/cotacoes/fornecedores/${fornecedorId}/contatos`, "POST", d);
+export const editarContatoFornecedorCowData = (fornecedorId: number, contatoId: number, d: FornecedorCowDataContatoIn): Promise<FornecedorCowDataContato> =>
+  _pcSend(`/cotacoes/fornecedores/${fornecedorId}/contatos/${contatoId}`, "PUT", d);
+export const excluirContatoFornecedorCowData = (fornecedorId: number, contatoId: number): Promise<{ ok: boolean }> =>
+  _pcSend(`/cotacoes/fornecedores/${fornecedorId}/contatos/${contatoId}`, "DELETE");
 
 export type ProdutoPadrao = {
   id: number; nome: string; unidade: string | null; classificacao_id: number | null; classificacao_nome: string | null;
