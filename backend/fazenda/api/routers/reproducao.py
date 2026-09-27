@@ -1164,18 +1164,33 @@ def registrar_diagnostico(
     if not servico:
         raise HTTPException(status_code=404, detail=f"Nenhum serviço encontrado para a matriz {dados.numero_matriz}")
 
-    # 3º lançamento sobre a mesma prenhez: toque (data_diagnostico) e retoque
-    # (data_reconfirmacao) já confirmados POSITIVO, sem perda registrada ainda.
-    # Não sobra slot de diagnóstico livre — é interpretado como aborto (perda
-    # de prenhez), não como um novo toque sobrescrevendo o anterior.
-    if servico.diagnostico_reconfirmacao is not None and servico.data_perda_prenhez is None:
-        servico.data_perda_prenhez = dados.data_diagnostico
-        servico.motivo_perda_prenhez = "aborto"
-        session.add(servico)
-        session.commit()
-        session.refresh(servico)
+    # 3º lançamento sobre a mesma prenhez: toque (data_diagnostico) E retoque
+    # (data_reconfirmacao) JÁ preenchidos, sem perda registrada ainda — não
+    # sobra slot de diagnóstico livre pra gravar este novo exame.
+    #
+    # BUG CORRIGIDO (relato do produtor, vacas 070/149/215, set/2026): a
+    # condição antiga exigia só `diagnostico_reconfirmacao is not None`, sem
+    # checar `diagnostico is not None` — uma reconfirmação lançada direto
+    # sobre um serviço ainda aberto (fluxo legado de `POST /reconfirmacao`,
+    # sem 1º toque prévio) já deixava `diagnostico_reconfirmacao` preenchido
+    # com `diagnostico` ainda None, e essa era só a 1ª informação real, não a
+    # 3ª. O 1º toque genuíno, lançado depois, caía neste ramo por engano.
+    #
+    # Além disso, o ramo marcava "aborto" incondicionalmente, mesmo quando o
+    # NOVO exame vinha POSITIVO (reconfirmação de rotina antes do parto,
+    # ex.: vacas 149/215) — perda de prenhez só faz sentido quando o novo
+    # resultado é adverso (negativo/indefinido); um novo positivo é apenas
+    # uma reconfirmação redundante, sem slot para gravar, mas SEM perda.
+    if servico.diagnostico is not None and servico.diagnostico_reconfirmacao is not None and servico.data_perda_prenhez is None:
+        se_perdeu = dados.resultado in ("negativo", "indefinido")
+        if se_perdeu:
+            servico.data_perda_prenhez = dados.data_diagnostico
+            servico.motivo_perda_prenhez = "aborto"
+            session.add(servico)
+            session.commit()
+            session.refresh(servico)
         resultado = servico.model_dump()
-        resultado["aborto_detectado"] = True
+        resultado["aborto_detectado"] = se_perdeu
         return resultado
 
     # 1º toque já resolvido (POSITIVO/NEGATIVO/INDEFINIDO) e ainda sem
