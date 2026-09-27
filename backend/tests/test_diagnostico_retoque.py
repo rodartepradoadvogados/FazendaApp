@@ -306,6 +306,60 @@ class TestTerceiroLancamentoViraAborto:
         assert r.status_code == 200
         assert not r.json().get("aborto_detectado")
 
+    def test_terceiro_lancamento_positivo_nao_vira_aborto(self, client_com_engine):
+        """Regressão (relato do produtor, vacas 149/215, set/2026): o 3º
+        exame pode ser só uma reconfirmação de rotina, ainda POSITIVA — não é
+        uma perda. O ramo antigo marcava aborto incondicionalmente, mesmo sem
+        nenhum resultado adverso, e a marca ficava presa pra sempre (bloqueava
+        GESTANTE) mesmo com toque e retoque genuinamente positivos."""
+        c, engine = client_com_engine
+        with Session(engine) as s:
+            s.add(Servico(
+                numero_matriz="401", data_servico=date(2026, 3, 1),
+                data_diagnostico=date(2026, 4, 1), diagnostico="POSITIVO",
+                data_reconfirmacao=date(2026, 5, 1), diagnostico_reconfirmacao="POSITIVO",
+            ))
+            s.commit()
+
+        r = c.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-07-01", "resultado": "retoque",
+        })
+        assert r.status_code == 200
+        corpo = r.json()
+        assert not corpo.get("aborto_detectado")
+        assert corpo["data_perda_prenhez"] is None
+        assert corpo["motivo_perda_prenhez"] is None
+        # nem o toque nem a reconfirmação genuínos foram tocados
+        assert corpo["data_diagnostico"] == "2026-04-01"
+        assert corpo["data_reconfirmacao"] == "2026-05-01"
+
+    def test_reconfirmacao_direta_sem_1o_toque_depois_toque_real_nao_vira_aborto(self, client_com_engine):
+        """Regressão (relato do produtor, vaca 070, set/2026): uma
+        reconfirmação lançada DIRETO (fluxo legado, `POST /reconfirmacao`
+        sem 1º toque prévio) deixa `diagnostico_reconfirmacao` preenchido com
+        `diagnostico` ainda None — é só 1 lançamento real, não 3. O 1º toque
+        genuíno, lançado depois, não pode cair no ramo de aborto só porque
+        `diagnostico_reconfirmacao` já não era None."""
+        c, engine = client_com_engine
+        with Session(engine) as s:
+            s.add(Servico(numero_matriz="401", data_servico=date(2026, 8, 5)))
+            s.commit()
+
+        r0 = c.post("/reproducao/reconfirmacao", json={
+            "numero_matriz": "401", "data_reconfirmacao": "2026-09-04", "resultado": "negativo",
+        })
+        assert r0.status_code == 200
+
+        r = c.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-09-25", "resultado": "retoque",
+        })
+        assert r.status_code == 200
+        corpo = r.json()
+        assert not corpo.get("aborto_detectado")
+        assert corpo["data_perda_prenhez"] is None
+        assert corpo["diagnostico"] == "POSITIVO"
+        assert corpo["data_diagnostico"] == "2026-09-25"
+
 
 class TestAbrirLactacao:
     def test_abre_lactacao_zera_del_dias(self, client_com_engine):

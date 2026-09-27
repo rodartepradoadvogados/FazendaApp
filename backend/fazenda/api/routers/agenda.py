@@ -1730,12 +1730,16 @@ def calcular_agenda(
     # depende do opt-in "exibir necessidade de compra na agenda" por item, que
     # só vira um evento cronológico simples em Gestão/Financeiro). Aqui é uma
     # visão de "informações" da Agenda, incondicional para quem tem acesso ao
-    # módulo de estoque. Só considera itens estocáveis (None/True).
+    # módulo de estoque. Só considera itens estocáveis (None/True) e ATIVOS —
+    # um item desativado (ex.: BANAMINE 100ML descontinuado, relato do
+    # produtor, set/2026) não deveria voltar a pedir compra todo dia só
+    # porque o saldo residual ficou abaixo do mínimo cadastrado; desativar já
+    # significa "não repor este item".
     estoque_negativo = []
     estoque_abaixo_minimo = []
     if tem_estoque:
         for item in estoque:
-            if item.get("estocavel") is False:
+            if item.get("estocavel") is False or item.get("ativo") is False:
                 continue
             qtd = item.get("quantidade")
             if qtd is None:

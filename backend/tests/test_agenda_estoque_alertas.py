@@ -55,6 +55,7 @@ def setup():
         s.add(Estoque(nome="Ração Milho", quantidade=100.0, estoque_minimo=200.0, unidade="kg"))
         s.add(Estoque(nome="Sal Mineral", quantidade=300.0, estoque_minimo=200.0, unidade="kg"))
         s.add(Estoque(nome="Item Não Estocável", quantidade=-10.0, unidade="unidade", estocavel=False))
+        s.add(Estoque(nome="Banamine 100ml", quantidade=1.0, estoque_minimo=10.0, unidade="ml", ativo=False))
         s.commit()
 
     yield main.app
@@ -78,6 +79,7 @@ def test_admin_ve_negativo_e_abaixo_minimo(setup):
     assert abaixo == {"Ração Milho"}
     assert "Sal Mineral" not in abaixo  # 300 >= 200, dentro do normal
     assert "Item Não Estocável" not in negativos  # não participa de baixa/controle
+    assert "Banamine 100ml" not in abaixo  # desativado — não pede reposição diária
 
 
 def test_operador_sem_modulo_estoque_nao_ve_nada(setup):
