@@ -1,4 +1,19 @@
 fastapi>=0.115
+# <1.0: a Starlette lançou 1.0 (nunca tinha saído do 0.x) por volta de
+# 26/09/2026, e a versão nova quebra starlette.testclient.TestClient neste
+# ambiente — qualquer teste que dependa dele (ex.:
+# tests/test_idempotencia.py::test_reenvio_com_mesma_chave_nao_duplica) fica
+# preso indefinidamente dentro de anyio.from_thread.call/handle_request, sem
+# nenhum progresso, até estourar o timeout de 60 min do job "Suite de testes
+# do backend" (visto no PR #828 — o suspeito inicial foi uma versão nova do
+# `anthropic`, descartado depois de reproduzir o mesmo travamento com
+# `anthropic` fixado e sem nenhuma dependência dele instalada; confirmado
+# isolando a variável: SÓ trocar Starlette 1.7.0 por 0.52.1 — a última 0.x —
+# resolve, com o resto do ambiente idêntico). `fastapi>=0.115` não trava a
+# Starlette; sem este pin, um `pip install` novo sempre puxa a 1.x mais
+# recente. Manter <1.0 até investigar a causa raiz do TestClient com a 1.x
+# (ou até a Starlette soltar um fix).
+starlette>=0.46.0,<1.0
 uvicorn[standard]>=0.32
 # <0.0.45: a partir da 0.0.45 o sqlmodel passou a REJEITAR datetime "naive"
 # (sem tzinfo) em qualquer coluna `datetime` na hora de gravar (mesmo em
