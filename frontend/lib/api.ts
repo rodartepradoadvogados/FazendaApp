@@ -4559,6 +4559,19 @@ export async function restaurarCatalogoPrincipios(): Promise<{ criados: number; 
   return res.json();
 }
 
+// Mesmo padrão do botão acima, para o catálogo de INDICAÇÕES (Doença/manejo
+// + vínculo com princípios, `rules.farmacia_indicacoes_seed`) — é o que
+// alimenta o seletor "Remédios por Doença" (Sanidade) e o card de cada
+// indicação nesta mesma tela. Existe para o dono da CowData conseguir
+// consertar o catálogo em produção sem depender de redeploy.
+export async function restaurarCatalogoIndicacoes(): Promise<{
+  doencas_criadas: number; doencas_total: number; indicacoes_criadas: number; indicacoes_total: number;
+}> {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/indicacoes/restaurar-catalogo`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao restaurar catálogo de indicações"); }
+  return res.json();
+}
+
 const _doencas = _crudNomeAtivo("doencas", "Doença");
 export const fetchDoencas = _doencas.listar;
 export const criarDoenca = _doencas.criar;
