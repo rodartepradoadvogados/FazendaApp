@@ -5,9 +5,11 @@
 // um ciclo — mas a preocupação muda: mostra a data da próxima visita
 // (D11 + intervalo de visita reprodutiva) e as candidatas herd-wide ao
 // próximo repasse (mesmo critério da Agenda) — ver tarefa #369.
-import { AlertTriangle, Check } from "lucide-react";
-import { MobVoltar, MobCard } from "@/components/mobile/ui";
-import { fetchProtocolosIatfAtivos, formatDate } from "@/lib/api";
+import { useState } from "react";
+import { AlertTriangle, Check, Printer } from "lucide-react";
+import { MobVoltar, MobCard, MobAviso } from "@/components/mobile/ui";
+import { fetchProtocolosIatfAtivos, fetchDetalheProtocolo, formatDate } from "@/lib/api";
+import { exportarFolhaCampoPDF } from "@/lib/folhaProtocolo";
 import { useCarregar, AvisoCopia, Carregando, Vazio, NumAnimal } from "@/components/mobile/menu/comum";
 
 type AnimalStatus = { numero_matriz: string; etapa_atual: string; data_etapa_atual: string | null; d0_confirmado?: boolean };
@@ -19,11 +21,29 @@ type Protocolo = {
 
 export default function ProtocolosIatf({ onVoltar }: { onVoltar: () => void }) {
   const { dados, doCache, carregando } = useCarregar<Protocolo[]>("menu_iatf_ativos", fetchProtocolosIatfAtivos);
+  const [exportandoId, setExportandoId] = useState<number | null>(null);
+  const [erroExport, setErroExport] = useState<string | null>(null);
+
+  // A lista aqui só tem o status resumido (AnimalStatus); a folha de campo
+  // precisa da grade completa animal × dia, então busca o detalhe (mesmo
+  // endpoint da Central de Protocolos, origem "iatf") só na hora de exportar.
+  async function exportarFolha(lancamentoId: number) {
+    setExportandoId(lancamentoId); setErroExport(null);
+    try {
+      const det = await fetchDetalheProtocolo("iatf", lancamentoId);
+      await exportarFolhaCampoPDF(det);
+    } catch (e: any) {
+      setErroExport(e?.message || "Não foi possível gerar a folha de campo.");
+    } finally {
+      setExportandoId(null);
+    }
+  }
 
   return (
     <div>
       <MobVoltar titulo="Protocolos IATF" onVoltar={onVoltar} />
       <AvisoCopia chave="menu_iatf_ativos" mostrar={doCache} />
+      {erroExport && <MobAviso tipo="erro">{erroExport}</MobAviso>}
 
       {carregando && !dados ? (
         <Carregando />
@@ -38,6 +58,12 @@ export default function ProtocolosIatf({ onVoltar }: { onVoltar: () => void }) {
               <span style={{ fontWeight: 800, fontSize: "1rem" }}>{p.nome_protocolo || "Protocolo IATF"}</span>
               <span style={{ fontSize: "0.76rem", color: "var(--mob-muted)", flexShrink: 0 }}>D0 · {formatDate(p.data_d0)}</span>
             </div>
+
+            <button type="button" className="mob-btn mob-btn-sec" style={{ marginBottom: "0.6rem" }}
+                    onClick={() => exportarFolha(p.lancamento_id)} disabled={exportandoId === p.lancamento_id}>
+              <Printer size={16} style={{ marginRight: "0.4rem", verticalAlign: "-0.2em" }} />
+              {exportandoId === p.lancamento_id ? "Gerando…" : "Folha de campo (PDF)"}
+            </button>
 
             {p.concluido ? (
               <div>
