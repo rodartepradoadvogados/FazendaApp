@@ -25,21 +25,37 @@ import { formatBRL } from "@/lib/api";
 // continua vigente (nenhuma norma a revogou) e nenhuma norma posterior —
 // incluindo a IN 55/2020, já registrada acima — alterou os limites de CCS
 // (500.000 CS/mL), CBT/CPP (300.000 UFC/mL) nem os teores mínimos de
-// gordura/proteína usados como base de bonificação. A página da Embrapa
-// continua descrevendo os mesmos indicadores (CCS, CBT, gordura, proteína)
-// remetendo à IN 76. Nenhuma divergência entre as fontes; rótulo mantido sem
-// alteração — só a data de checagem avança.
+// gordura/proteína usados como base de bonificação.
+//
+// Checagem de 28/09/2026: a IN 76/2018 continua vigente e com os mesmos
+// limites (CCS 500.000 CS/mL, CBT/CPP 300.000 UFC/mL, gordura mín. 3,0%,
+// proteína mín. 2,9%). Duas mudanças de fonte nesta rodada, ambas por
+// indisponibilidade real, não por divergência de conteúdo:
+// 1) O link antigo do in.gov.br passou a devolver 403 para leitura
+//    automatizada; trocado pelo espelho oficial do próprio MAPA no SISLEGIS
+//    (wikisda.agricultura.gov.br), lido com sucesso e com o texto integral
+//    da IN 76/2018 (Art. 5º e Art. 7º confirmam os limites acima).
+// 2) O portal Embrapa Ater+ Digital está fora do ar até 25/10/2026 por
+//    período de Defeso Eleitoral (bloqueio institucional, não é queda
+//    técnica). A página alternativa da Embrapa (Ageitec, embrapa.br) sobre
+//    CCS existe, mas descreve um cronograma da IN 51/2002 (norma já
+//    substituída pela IN 76/2018) e não cita o limite atual — por isso não
+//    foi usada como fonte, para não citar número desatualizado. Substituída
+//    pela reportagem da MilkPoint especificamente sobre a IN 76/2018, que
+//    corrobora os mesmos quatro números lidos no texto oficial do MAPA.
+// Nenhuma divergência de conteúdo entre as fontes lidas; a troca de link é
+// só para manter as duas fontes realmente acessíveis e lidas.
 const FONTES_BONIFICACAO = [
   {
-    nome: "MAPA — Instrução Normativa nº 76/2018",
-    url: "https://www.in.gov.br/materia/-/asset_publisher/Kujrw0TZC2Mb/content/id/52750137/do1-2018-11-30-instrucao-normativa-n-76-de-26-de-novembro-de-2018-52749894IN%2076",
+    nome: "MAPA — Instrução Normativa nº 76/2018 (SISLEGIS)",
+    url: "https://wikisda.agricultura.gov.br/dipoa_baselegal/in_76-2018_rtiq_leite.pdf",
   },
   {
-    nome: "Embrapa — Indicadores de qualidade do leite",
-    url: "https://www.atermaisdigital.cnptia.embrapa.br/web/bovino-de-leite/indicadores-de-qualidade-do-leite",
+    nome: "MilkPoint — Resumão das INs 76 e 77 de qualidade do leite",
+    url: "https://www.milkpoint.com.br/colunas/rafael-fagnani/resumao-das-ins-76-e-77-elas-estao-chegando-212785/",
   },
 ] as const;
-const FONTES_ATUALIZADO_EM = "22/09/2026";
+const FONTES_ATUALIZADO_EM = "28/09/2026";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Simulador ILUSTRATIVO de preço do leite — para a página pública de login.
