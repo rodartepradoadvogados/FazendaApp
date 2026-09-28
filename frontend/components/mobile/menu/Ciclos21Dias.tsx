@@ -158,6 +158,13 @@ export default function Ciclos21Dias({ onVoltar }: { onVoltar: () => void }) {
   const [ancora, setAncora] = useState(hojeISO());
   const [modo, setModo] = useState<"inicio" | "fim">("fim");
   const [nCiclos, setNCiclos] = useState(6);
+  // Texto digitado livremente no campo — separado do número usado na busca
+  // (`nCiclos`) para o usuário poder apagar o dígito atual e digitar outro
+  // sem o campo "prender" um mínimo (ex.: trocar "1" por "5" sem passar por
+  // "15"). Só vira `nCiclos` de verdade quando já é um inteiro válido
+  // (1–26); ao sair do campo (onBlur), volta a refletir `nCiclos` — cobre
+  // tanto deixar vazio quanto digitar algo fora da faixa.
+  const [nCiclosTexto, setNCiclosTexto] = useState("6");
   const [categoria, setCategoria] = useState<Categoria>("todas");
   const [detalhe, setDetalhe] = useState<CicloReprodutivo | null>(null);
 
@@ -189,8 +196,14 @@ export default function Ciclos21Dias({ onVoltar }: { onVoltar: () => void }) {
         </label>
         <label>
           <span style={rotuloLbl}>Nº de ciclos</span>
-          <input type="number" inputMode="numeric" min={1} max={26} className="mob-input" value={nCiclos}
-            onChange={(e) => setNCiclos(Math.min(26, Math.max(1, Number(e.target.value) || 1)))} />
+          <input type="number" inputMode="numeric" min={1} max={26} className="mob-input" value={nCiclosTexto}
+            onChange={(e) => {
+              const texto = e.target.value;
+              setNCiclosTexto(texto);
+              const n = parseInt(texto, 10);
+              if (Number.isFinite(n) && n >= 1 && n <= 26) setNCiclos(n);
+            }}
+            onBlur={() => setNCiclosTexto(String(nCiclos))} />
         </label>
       </div>
 
