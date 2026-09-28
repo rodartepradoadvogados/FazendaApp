@@ -199,6 +199,35 @@ def restaurar_catalogo_principios(_: Usuario = _dep_edicao, session: Session = D
     return {"criados": total - antes, "total": total}
 
 
+@router.post("/indicacoes/restaurar-catalogo")
+def restaurar_catalogo_indicacoes(_: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao)) -> dict:
+    """(Re)semeia o catálogo base de INDICAÇÕES terapêuticas (`rules.
+    farmacia_indicacoes_seed.INDICACOES`/`MARCAS`, via `rules.farmacia.
+    seed_indicacoes`) — as ~30 `Doenca`/manejo do documento base e o vínculo
+    N-para-N com os princípios que tratam cada uma (`IndicacaoTerapeutica`,
+    com prioridade clínica), além do enriquecimento de bula das marcas.
+
+    Add-missing e idempotente, mesmo padrão de `restaurar_catalogo_
+    principios` acima: só cria o que falta, nunca sobrescreve prioridade/nota
+    já editada à mão. Existe para o dono da CowData poder consertar o
+    catálogo de "Remédios por Doença" em produção SEM depender de um
+    redeploy — hoje esse seed só roda sozinho a cada boot do backend
+    (`main.py::bootstrap_farmacia`), e não há botão nenhum para disparar de
+    novo sob demanda caso o catálogo tenha ficado incompleto (ex.: boot que
+    rodou antes deste seed existir, ou banco criado à mão)."""
+    from fazenda.rules.farmacia import seed_indicacoes
+
+    antes_doencas = len(session.exec(select(Doenca)).all())
+    antes_indicacoes = len(session.exec(select(IndicacaoTerapeutica)).all())
+    seed_indicacoes(session)
+    total_doencas = len(session.exec(select(Doenca)).all())
+    total_indicacoes = len(session.exec(select(IndicacaoTerapeutica)).all())
+    return {
+        "doencas_criadas": total_doencas - antes_doencas, "doencas_total": total_doencas,
+        "indicacoes_criadas": total_indicacoes - antes_indicacoes, "indicacoes_total": total_indicacoes,
+    }
+
+
 @router.put("/principios/{principio_id}")
 def atualizar_principio_global(
     principio_id: int, dados: PrincipioGlobalIn, _: Usuario = _dep_edicao, session: Session = Depends(get_session_manutencao),

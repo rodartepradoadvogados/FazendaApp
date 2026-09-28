@@ -16,12 +16,20 @@ const inp: React.CSSProperties = {
 /**
  * Banco de fotos do Milknews — pastas + fotos guardadas no Supabase Storage
  * (bucket público, ver backend/fazenda/api/routers/fotos_news.py), gerido
- * direto na aba Aprovações. Dois modos, mesmo componente:
+ * direto na aba Aprovações (site) e no seletor de imagem do News do app
+ * mobile (frontend/components/mobile/menu/News.tsx). Dois modos, mesmo
+ * componente:
  *  - gestão pura (onSelecionar ausente): criar/excluir pasta, enviar/excluir foto;
  *  - seletor (onSelecionar presente): mesma UI + botão "Usar esta foto" em
  *    cada card, chamado ao escolher a ilustração de uma matéria pendente.
+ *
+ * `compacto` (tela estreita do app mobile): a lista de pastas, que no site
+ * fica numa coluna fixa de 200px ao lado da grade de fotos, empilha acima
+ * dela em vez de dividir uma largura que não sobra no celular; a grade de
+ * fotos também ganha colunas menores. O resto (busca, upload, exclusão) é
+ * o mesmo componente, sem duplicação.
  */
-export function BancoFotosNews({ onClose, onSelecionar }: { onClose: () => void; onSelecionar?: (url: string) => void }) {
+export function BancoFotosNews({ onClose, onSelecionar, compacto }: { onClose: () => void; onSelecionar?: (url: string) => void; compacto?: boolean }) {
   const [pastas, setPastas] = useState<PastaFotoNews[] | null>(null);
   const [pastaAtiva, setPastaAtiva] = useState<number | "todas" | null>("todas");
   const [fotos, setFotos] = useState<FotoNews[] | null>(null);
@@ -98,9 +106,9 @@ export function BancoFotosNews({ onClose, onSelecionar }: { onClose: () => void;
     <Modal title={onSelecionar ? "Escolher foto do banco" : "Banco de fotos — Milknews"} onClose={onClose} width="900px">
       {erro && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.6rem" }}>{erro}</p>}
 
-      <div className="flex gap-4" style={{ alignItems: "flex-start" }}>
+      <div className="flex gap-4" style={{ alignItems: "flex-start", flexDirection: compacto ? "column" : "row" }}>
         {/* Pastas */}
-        <div style={{ width: 200, flexShrink: 0 }}>
+        <div style={compacto ? { width: "100%", maxHeight: "9rem", overflowY: "auto" } : { width: 200, flexShrink: 0 }}>
           <button
             className="btn-ghost"
             style={{ width: "100%", justifyContent: "flex-start", fontSize: "0.82rem", fontWeight: pastaAtiva === "todas" ? 700 : 500 }}
@@ -172,7 +180,7 @@ export function BancoFotosNews({ onClose, onSelecionar }: { onClose: () => void;
             </div>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "0.7rem" }}>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${compacto ? 108 : 140}px, 1fr))`, gap: "0.7rem" }}>
             {(fotos || []).map((f) => (
               <div key={f.id} className="card" style={{ padding: "0.5rem", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
                 <div style={{ aspectRatio: "4/3", borderRadius: "var(--r-sm)", overflow: "hidden", background: "var(--surface-2)" }}>

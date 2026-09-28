@@ -4,7 +4,7 @@
 // app/layout.tsx e app/menu/page.tsx); escrever/editar/excluir/revisar exigem
 // a permissão "publicar matérias no blog" (podePublicarMaterias()), igual ao site.
 import { useMemo, useState } from "react";
-import { Newspaper, Link as LinkIcon, CalendarDays, Plus, X, Check, Trash2, ShieldCheck, AlertTriangle, Pencil, Ban } from "lucide-react";
+import { Newspaper, Link as LinkIcon, CalendarDays, Plus, X, Check, Trash2, ShieldCheck, AlertTriangle, Pencil, Ban, Image as ImageIcon, ImageOff } from "lucide-react";
 import { MobVoltar, MobCard, MobCampo } from "@/components/mobile/ui";
 import {
   fetchTodasMaterias, fetchNoticias, criarMateriaBlog, atualizarMateriaBlog, excluirMateriaBlog, revisarPublicacaoFinal, podePublicarMaterias,
@@ -12,6 +12,7 @@ import {
 } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
 import { imagemMateria } from "@/lib/newsVisual";
+import { BancoFotosNews } from "@/components/BancoFotosNews";
 
 function formatarData(iso?: string | null): string {
   if (!iso) return "";
@@ -61,8 +62,10 @@ export default function News({ onVoltar }: { onVoltar: () => void }) {
   const [editManchete, setEditManchete] = useState("");
   const [editCorpo, setEditCorpo] = useState("");
   const [editFontes, setEditFontes] = useState<string[]>([""]);
+  const [editImagem, setEditImagem] = useState("");
   const [editSalvando, setEditSalvando] = useState(false);
   const [editErro, setEditErro] = useState<string | null>(null);
+  const [bancoFotosAberto, setBancoFotosAberto] = useState(false);
 
   const materias = useMemo(() => {
     if (!dados) return [];
@@ -114,6 +117,8 @@ export default function News({ onVoltar }: { onVoltar: () => void }) {
     setEditManchete(n.manchete);
     setEditCorpo(n.materia || n.resumo || "");
     setEditFontes(n.fontes && n.fontes.length ? n.fontes : [""]);
+    setEditImagem(n.imagem || "");
+    setBancoFotosAberto(false);
     setEditErro(null);
   };
 
@@ -127,6 +132,7 @@ export default function News({ onVoltar }: { onVoltar: () => void }) {
         materia: n.materia != null ? editCorpo.trim() : undefined,
         resumo: n.materia == null ? editCorpo.trim() : undefined,
         fontes: editFontes.map((f) => f.trim()).filter(Boolean),
+        imagem: editImagem.trim(),
       });
       setEditandoId(null);
       setMsg(`Matéria "${editManchete.trim()}" atualizada.`);
@@ -320,12 +326,40 @@ export default function News({ onVoltar }: { onVoltar: () => void }) {
                           <Plus size={14} /> Adicionar fonte
                         </button>
                       </MobCampo>
+                      <MobCampo label="Foto de ilustração — opcional (sem foto, entra o fundo temático padrão)">
+                        <div className="flex items-center gap-3">
+                          <div style={{ width: 84, height: 63, borderRadius: "var(--r-app)", overflow: "hidden", background: "var(--mob-surface-2)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            {editImagem ? (
+                              <img src={editImagem} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                            ) : (
+                              <ImageOff size={18} style={{ color: "var(--mob-muted)", opacity: 0.6 }} />
+                            )}
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", flex: 1, minWidth: 0 }}>
+                            <button type="button" className="mob-btn-2" onClick={() => setBancoFotosAberto(true)}>
+                              <ImageIcon size={15} /> Escolher do banco de fotos
+                            </button>
+                            {editImagem && (
+                              <button type="button" className="mob-btn-2" onClick={() => setEditImagem("")}>
+                                <X size={15} /> Remover foto
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        {bancoFotosAberto && (
+                          <BancoFotosNews
+                            compacto
+                            onClose={() => setBancoFotosAberto(false)}
+                            onSelecionar={(url) => { setEditImagem(url); setBancoFotosAberto(false); }}
+                          />
+                        )}
+                      </MobCampo>
                       {editErro && <p style={{ color: "var(--mob-vermelho)", fontSize: "0.8rem" }}>{editErro}</p>}
                       <div className="flex items-center gap-2">
                         <button type="button" className="mob-btn" onClick={() => salvarEdicao(n)} disabled={editSalvando}>
                           <Check size={16} /> {editSalvando ? "Salvando…" : "Salvar edição"}
                         </button>
-                        <button type="button" className="mob-btn-2" onClick={() => setEditandoId(null)}>Cancelar</button>
+                        <button type="button" className="mob-btn-2" onClick={() => { setEditandoId(null); setBancoFotosAberto(false); }}>Cancelar</button>
                       </div>
                     </div>
                   ) : (

@@ -138,6 +138,7 @@ function DetalheProtocoloApp({ origem, origemId, onVoltar }: {
   const [diaBaixa, setDiaBaixa] = useState<number | null>(null);
   const [dataBaixa, setDataBaixa] = useState("");
   const [animaisFora, setAnimaisFora] = useState<string[]>([]);
+  const [exportando, setExportando] = useState(false);
 
   const cache = useCarregar<DetalheCentralProtocolo>(
     `menu_protocolo_${origem}_${origemId}`, () => fetchDetalheProtocolo(origem, origemId),
@@ -186,6 +187,21 @@ function DetalheProtocoloApp({ origem, origemId, onVoltar }: {
     } finally { setSalvando(false); }
   }
 
+  // Sem isto, um erro na geração do PDF (ex.: dado incompleto vindo do cache
+  // offline) virava rejeição de promise não tratada: o clique não fazia
+  // NADA visível, sem alerta nenhum — pior ainda que um erro explícito.
+  async function exportarFolha() {
+    if (!d) return;
+    setExportando(true); setErro(null);
+    try {
+      await exportarFolhaCampoPDF(d);
+    } catch (e: any) {
+      setErro(e?.message || "Não foi possível gerar a folha de campo.");
+    } finally {
+      setExportando(false);
+    }
+  }
+
   if (cache.carregando && !d) return (<div><MobVoltar titulo="Protocolo" onVoltar={onVoltar} /><Carregando /></div>);
   if (!d) return (
     <div><MobVoltar titulo="Protocolo" onVoltar={onVoltar} />
@@ -219,9 +235,9 @@ function DetalheProtocoloApp({ origem, origemId, onVoltar }: {
           para imprimir e o funcionário ir anotando à caneta, no curral. */}
       {diaBaixa == null && (
         <button type="button" className="mob-btn mob-btn-sec" style={{ marginBottom: "0.9rem" }}
-                onClick={() => exportarFolhaCampoPDF(d)}>
+                onClick={exportarFolha} disabled={exportando}>
           <Printer size={16} style={{ marginRight: "0.4rem", verticalAlign: "-0.2em" }} />
-          Folha de campo (PDF)
+          {exportando ? "Gerando…" : "Folha de campo (PDF)"}
         </button>
       )}
 

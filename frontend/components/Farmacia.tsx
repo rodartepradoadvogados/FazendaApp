@@ -19,6 +19,7 @@ import {
 import {
   fetchIndicacoesCatalogo, personalizarIndicacao,
   atualizarMarcaFarmacia, atualizarVinculoIndicacao, fetchFarmaciaDetalhe, restaurarCatalogoPrincipios,
+  restaurarCatalogoIndicacoes,
   fetchFarmaciaPrincipios, definirEstoqueMinimoFarmacia,
   fetchPrincipiosFarmaciaCowData, fetchCategoriasMedicamentoFarmaciaCowData,
   fetchClassificacoesMedicamentoFarmaciaCowData, fetchLaboratoriosFarmaciaCowData,
@@ -832,6 +833,8 @@ export function CatalogoFarmacia({ contextoGlobal, somenteLeitura }: { contextoG
   const [soPersonalizadas, setSoPersonalizadas] = useState(false);
   const [restaurando, setRestaurando] = useState(false);
   const [msgRestaurar, setMsgRestaurar] = useState<string | null>(null);
+  const [restaurandoIndicacoes, setRestaurandoIndicacoes] = useState(false);
+  const [msgRestaurarIndicacoes, setMsgRestaurarIndicacoes] = useState<string | null>(null);
   // Seção 2 — só existe dentro do Painel CowData (contextoGlobal); a
   // fazenda continua vendo só o browse por indicação (Fase F vai extrair
   // isso pra Sanidade, somente leitura). Começa em "indicacoes" (Seção 1),
@@ -851,6 +854,25 @@ export function CatalogoFarmacia({ contextoGlobal, somenteLeitura }: { contextoG
       setMsgRestaurar(e.message || "Erro ao restaurar catálogo");
     } finally {
       setRestaurando(false);
+    }
+  };
+
+  // Mesmo botão, para o catálogo de INDICAÇÕES (Doença/manejo + vínculo com
+  // princípios) — separado do de princípios acima porque são dois seeds
+  // diferentes (`seed_farmacia` × `seed_indicacoes`), cada um cobrindo uma
+  // lacuna diferente do catálogo (ver rules/farmacia.py).
+  const restaurarIndicacoes = async () => {
+    setRestaurandoIndicacoes(true); setMsgRestaurarIndicacoes(null);
+    try {
+      const r = await restaurarCatalogoIndicacoes();
+      await carregar();
+      setMsgRestaurarIndicacoes(
+        `Indicações restauradas: ${r.doencas_criadas} doença(s)/manejo(s) e ${r.indicacoes_criadas} vínculo(s) adicionados — ${r.doencas_total} doenças e ${r.indicacoes_total} vínculos no total.`
+      );
+    } catch (e: any) {
+      setMsgRestaurarIndicacoes(e.message || "Erro ao restaurar catálogo de indicações");
+    } finally {
+      setRestaurandoIndicacoes(false);
     }
   };
 
@@ -904,14 +926,22 @@ export function CatalogoFarmacia({ contextoGlobal, somenteLeitura }: { contextoG
                 : "Uma indicação (doença ou finalidade de manejo) por card, com os princípios ativos indicados — em ordem de prioridade — e as marcas comerciais de cada um, com bula e carência. O catálogo é o mesmo padrão para todas as fazendas — dose e carência são só um ponto de partida: edite qualquer campo que uma cópia é criada automaticamente só para a sua fazenda, sem afetar as demais."}
             </p>
             {!somenteLeitura && (
-              <button className="btn-ghost" style={{ fontSize: "0.75rem", display: "inline-flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}
-                onClick={restaurar} disabled={restaurando}
-                title="(Re)carrega o catálogo padrão de princípios ativos (documento base) — só adiciona o que estiver faltando, nunca sobrescreve edições.">
-                <RotateCcw size={13} /> {restaurando ? "Restaurando…" : "Restaurar catálogo"}
-              </button>
+              <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+                <button className="btn-ghost" style={{ fontSize: "0.75rem", display: "inline-flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}
+                  onClick={restaurar} disabled={restaurando}
+                  title="(Re)carrega o catálogo padrão de princípios ativos (documento base) — só adiciona o que estiver faltando, nunca sobrescreve edições.">
+                  <RotateCcw size={13} /> {restaurando ? "Restaurando…" : "Restaurar catálogo"}
+                </button>
+                <button className="btn-ghost" style={{ fontSize: "0.75rem", display: "inline-flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}
+                  onClick={restaurarIndicacoes} disabled={restaurandoIndicacoes}
+                  title="(Re)carrega o catálogo padrão de indicações (doença/manejo + vínculo com princípios, que alimenta 'Remédios por Doença') — só adiciona o que estiver faltando, nunca sobrescreve prioridade/nota já editada.">
+                  <RotateCcw size={13} /> {restaurandoIndicacoes ? "Restaurando…" : "Restaurar indicações"}
+                </button>
+              </div>
             )}
           </div>
           {msgRestaurar && <p style={{ color: "var(--green-light)", fontSize: "0.78rem", marginBottom: "0.6rem" }}>{msgRestaurar}</p>}
+          {msgRestaurarIndicacoes && <p style={{ color: "var(--green-light)", fontSize: "0.78rem", marginBottom: "0.6rem" }}>{msgRestaurarIndicacoes}</p>}
 
           <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
             <div style={{ position: "relative", flex: "1 1 240px", maxWidth: 340 }}>
