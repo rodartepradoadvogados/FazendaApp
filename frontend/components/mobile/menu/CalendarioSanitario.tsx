@@ -11,13 +11,17 @@
 // PreventivoHistoricoLista (mesma lista de Histórico > Preventivo).
 //
 // "Ver quem está na janela" (novo): para eventos agendados POR EVENTO DE VIDA
-// (gatilho — ex.: novilha apta, pré-parto), abre em Lançar > Sanidade >
-// Preventiva > Aplicação já no modo "Na janela", pronto para selecionar quem
-// recebe e agendar — em vez de decidir/incluir animal só pela Agenda.
+// (gatilho — ex.: novilha apta, pré-parto), mostra AQUI MESMO (mesmo padrão de
+// "drill" de Indicadores.tsx) a lista de quem está na janela deste evento —
+// só depois oferece ir para Lançar > Sanidade > Preventiva > Aplicação, já no
+// modo "Na janela" e com o evento escolhido, pronto para selecionar quem
+// recebe e agendar. Antes o botão pulava direto pra tela de Lançamentos sem
+// mostrar ninguém primeiro — a lista existia lá, mas só aparecia depois de
+// rolar por Evento/Data/Medicamento, então parecia que "não abria lista".
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { MobVoltar, MobCard } from "@/components/mobile/ui";
-import { fetchCalendarioVisao, fetchEventosSanitarios, formatDate, type JanelaCalendario, type JanelaCalendarioEvento } from "@/lib/api";
+import { MobVoltar, MobCard, MobAviso } from "@/components/mobile/ui";
+import { fetchCalendarioVisao, fetchEventosSanitarios, fetchRelatorioEventosVida, formatDate, type JanelaCalendario, type JanelaCalendarioEvento } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
 import { MobPill, LinhaPills } from "@/components/mobile/lancar/comum";
 import { PreventivoHistoricoLista } from "@/components/mobile/menu/HistoricoPreventivo";
@@ -43,6 +47,20 @@ export default function CalendarioSanitario({ onVoltar }: { onVoltar: () => void
       .then((d: any[]) => setElegiveis(new Set(d.filter((e) => e.tipo_agendamento === "evento" && e.gatilho).map((e) => e.id))))
       .catch(() => {});
   }, []);
+
+  // Drill "Ver quem está na janela" — abre a lista aqui, por dentro da
+  // própria sub-tela (ver JanelaAnimais abaixo), em vez de navegar direto.
+  const [janelaAberta, setJanelaAberta] = useState<{ id: number; nome: string } | null>(null);
+  if (janelaAberta) {
+    return (
+      <JanelaAnimais
+        eventoId={janelaAberta.id}
+        eventoNome={janelaAberta.nome}
+        onVoltar={() => setJanelaAberta(null)}
+        onLancar={() => router.push(`/app/lancar?ir=sanidade_janela&evento_sanitario_id=${janelaAberta.id}`)}
+      />
+    );
+  }
 
   return (
     <div>
@@ -90,7 +108,13 @@ export default function CalendarioSanitario({ onVoltar }: { onVoltar: () => void
                   </span>
                 </div>
                 {j.eventos.map((o) => (
-                  <LinhaEvento key={`${o.calendario_sanitario_id}-${o.data}`} evento={o} router={router} elegivelJanela={elegiveis.has(o.evento_sanitario_id)} />
+                  <LinhaEvento
+                    key={`${o.calendario_sanitario_id}-${o.data}`}
+                    evento={o}
+                    router={router}
+                    elegivelJanela={elegiveis.has(o.evento_sanitario_id)}
+                    onVerJanela={() => setJanelaAberta({ id: o.evento_sanitario_id, nome: o.evento_sanitario_nome })}
+                  />
                 ))}
               </MobCard>
             ))
@@ -101,8 +125,8 @@ export default function CalendarioSanitario({ onVoltar }: { onVoltar: () => void
   );
 }
 
-function LinhaEvento({ evento: o, router, elegivelJanela }: {
-  evento: JanelaCalendarioEvento; router: ReturnType<typeof useRouter>; elegivelJanela: boolean;
+function LinhaEvento({ evento: o, router, elegivelJanela, onVerJanela }: {
+  evento: JanelaCalendarioEvento; router: ReturnType<typeof useRouter>; elegivelJanela: boolean; onVerJanela: () => void;
 }) {
   return (
     <div style={{ padding: "0.45rem 0", borderTop: "1px solid var(--mob-border)" }}>
@@ -125,7 +149,7 @@ function LinhaEvento({ evento: o, router, elegivelJanela }: {
           {elegivelJanela && (
             <button
               type="button"
-              onClick={() => router.push(`/app/lancar?ir=sanidade_janela&evento_sanitario_id=${o.evento_sanitario_id}`)}
+              onClick={onVerJanela}
               style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--mob-dourado-2)", background: "none", border: "none", padding: 0 }}
             >
               Ver quem está na janela →
@@ -142,6 +166,65 @@ function LinhaEvento({ evento: o, router, elegivelJanela }: {
           )}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+// ── "Ver quem está na janela" — lista de quem está na janela deste evento,
+// ANTES de ir para o lançamento (mesmo padrão de "drill" de Indicadores.tsx:
+// mostra a lista aqui dentro; só o botão do fim navega, e já leva o evento
+// escolhido — ver deep-link `ir=sanidade_janela` em FormSanidade.tsx).
+function JanelaAnimais({ eventoId, eventoNome, onVoltar, onLancar }: {
+  eventoId: number; eventoNome: string; onVoltar: () => void; onLancar: () => void;
+}) {
+  const [dados, setDados] = useState<{ animais: { numero_matriz: string; nome: string | null; situacao_janela?: string; dias_para_fechar_janela?: number | null }[] } | null>(null);
+  const [carregando, setCarregando] = useState(true);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    let vivo = true;
+    setCarregando(true); setErro(null);
+    fetchRelatorioEventosVida({ eventoSanitarioId: eventoId })
+      .then((r: any) => { if (vivo) setDados(r); })
+      .catch((e) => { if (vivo) setErro(e instanceof Error ? e.message : "Erro ao carregar a janela."); })
+      .finally(() => { if (vivo) setCarregando(false); });
+    return () => { vivo = false; };
+  }, [eventoId]);
+
+  const lista = dados?.animais || [];
+
+  return (
+    <div>
+      <MobVoltar titulo={eventoNome} onVoltar={onVoltar} />
+      {carregando ? (
+        <Carregando />
+      ) : erro ? (
+        <MobAviso tipo="erro">{erro}</MobAviso>
+      ) : !lista.length ? (
+        <Vazio>Nenhum animal na janela agora.</Vazio>
+      ) : (
+        <>
+          <p style={{ fontSize: "0.8rem", color: "var(--mob-muted)", marginBottom: "0.6rem" }}>
+            {lista.length} animal(is) na janela
+          </p>
+          {lista.map((a) => (
+            <div key={a.numero_matriz} className="mob-card" style={{ padding: "0.75rem 0.9rem", marginBottom: "0.5rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
+              <span style={{ fontWeight: 800, fontSize: "1.05rem", minWidth: "3rem" }}>{a.numero_matriz}</span>
+              <span style={{ flex: 1, minWidth: 0, fontSize: "0.82rem", color: "var(--mob-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {a.nome || "—"}
+              </span>
+              {a.situacao_janela === "na_janela" && a.dias_para_fechar_janela != null && (
+                <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--mob-dourado-2)", flexShrink: 0 }}>
+                  fecha em {a.dias_para_fechar_janela}d
+                </span>
+              )}
+            </div>
+          ))}
+          <button type="button" className="mob-btn" style={{ marginTop: "0.8rem" }} onClick={onLancar}>
+            Lançar aplicação para estes animais →
+          </button>
+        </>
+      )}
     </div>
   );
 }
