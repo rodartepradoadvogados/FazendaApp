@@ -6,17 +6,53 @@
 // p/ prenhez) → PREG (prenhes). O que muda aqui é só a apresentação: em vez
 // da tabela de 8 colunas do site, cada ciclo vira um cartão com duas barras
 // empilhadas (Serviço e Prenhez) — a mesma leitura, cabendo na largura de um
-// celular. Categoria (Todas/Vacas/Novilhas) é a única alavanca oferecida;
-// data de referência fica fixa em hoje e a janela em 6 ciclos — o mesmo ponto
-// de partida do site, sem exigir teclado numérico nem seletor de data no curral.
+// celular. Filtros equivalentes aos da versão de mesa (ver FiltroCiclo21Dias):
+// data de referência (âncora), se ela é o início do 1º ciclo ou o fim do
+// último, quantos ciclos e categoria. Exportação Excel/PDF do relatório já
+// filtrado — mesmas colunas da tabela da versão de mesa (app/ciclos-21-dias) —
+// via ExportarBotoes/lib/export.ts, o mesmo mecanismo usado nas demais
+// sub-telas do Menu (ex.: RelatoriosManejo.tsx).
 import { useState } from "react";
 import { ChevronRight, Info } from "lucide-react";
 import { MobVoltar, MobCard } from "@/components/mobile/ui";
 import { fetchCiclos21Dias, formatDate, type CiclosResposta, type CicloReprodutivo } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
+import { ExportarBotoes } from "@/components/ExportarBotoes";
+import type { ColunaExport } from "@/lib/export";
 
 type Categoria = "todas" | "vaca" | "novilha";
 const ROTULO_CATEGORIA: Record<Categoria, string> = { todas: "Todas", vaca: "Vacas", novilha: "Novilhas" };
+
+const rotuloLbl: React.CSSProperties = { display: "block", fontSize: "0.72rem", color: "var(--mob-muted)", fontWeight: 600, marginBottom: "0.25rem" };
+
+// Colunas/linhas do relatório exportado — mesmos campos da tabela de 8
+// colunas da versão de mesa (app/ciclos-21-dias/page.tsx), para que o
+// arquivo baixado no app conte a mesma história que o do site.
+const COLUNAS_EXPORT: ColunaExport[] = [
+  { header: "Ciclo", key: "ciclo" },
+  { header: "Período", key: "periodo" },
+  { header: "Apt", key: "apt" },
+  { header: "Ins.", key: "ins" },
+  { header: "Serviço", key: "servico" },
+  { header: "Apt Real", key: "apt_real" },
+  { header: "Posit.", key: "posit" },
+  { header: "Prenhez", key: "prenhez" },
+  { header: "Concepção", key: "concepcao" },
+];
+
+function pctExport(v: number | null): string {
+  return v == null ? "—" : `${v.toFixed(1)}%`;
+}
+
+function linhaExport(c: CicloReprodutivo): Record<string, unknown> {
+  return {
+    ciclo: c.ciclo,
+    periodo: `${formatDate(c.inicio)} – ${formatDate(c.fim)}${!c.janela_dg_completa ? " (em apuração)" : ""}`,
+    apt: c.br_elig, ins: c.bred, servico: pctExport(c.taxa_servico),
+    apt_real: c.pg_elig, posit: c.preg,
+    prenhez: pctExport(c.taxa_prenhez), concepcao: pctExport(c.taxa_concepcao),
+  };
+}
 
 // Data local, NÃO `toISOString()` (UTC) — no Brasil (UTC−3) a tela abriria com
 // a data de amanhã depois das 21h. Mesma função da versão de mesa.
@@ -116,35 +152,83 @@ function DetalheCiclo({ c, onVoltar }: { c: CicloReprodutivo; onVoltar: () => vo
 }
 
 export default function Ciclos21Dias({ onVoltar }: { onVoltar: () => void }) {
+  // Mesmos 4 filtros da versão de mesa (FiltroCiclo21Dias): data de
+  // referência livre (âncora), se ela é o início do 1º ciclo ou o fim do
+  // último, quantos ciclos (1–26, mesmo limite do site) e categoria.
+  const [ancora, setAncora] = useState(hojeISO());
+  const [modo, setModo] = useState<"inicio" | "fim">("fim");
+  const [nCiclos, setNCiclos] = useState(6);
   const [categoria, setCategoria] = useState<Categoria>("todas");
   const [detalhe, setDetalhe] = useState<CicloReprodutivo | null>(null);
-  const ancora = hojeISO();
 
-  // Chave de cache inclui a categoria — cada filtro guarda sua própria cópia
-  // offline, igual ao padrão já usado em Recria > Saúde (curva por doença).
-  // `erro` de useCarregar não é checado aqui de propósito — o mesmo padrão
-  // das demais sub-telas do Menu (ver comum.tsx): se sobrou uma cópia salva
-  // (mesmo que velha), ela aparece com o aviso "Cópia de…"; só falta mesmo
-  // conteúdo quando nunca houve cache nenhum.
+  // Chave de cache inclui todos os filtros — cada combinação guarda sua
+  // própria cópia offline, igual ao padrão já usado em Recria > Saúde (curva
+  // por doença). `erro` de useCarregar não é checado aqui de propósito — o
+  // mesmo padrão das demais sub-telas do Menu (ver comum.tsx): se sobrou uma
+  // cópia salva (mesmo que velha), ela aparece com o aviso "Cópia de…"; só
+  // falta mesmo conteúdo quando nunca houve cache nenhum.
+  const chaveCache = `menu_ciclos21dias_${categoria}_${modo}_${nCiclos}_${ancora}`;
   const { dados, doCache, carregando } = useCarregar<CiclosResposta>(
-    `menu_ciclos21dias_${categoria}`,
-    () => fetchCiclos21Dias(ancora, "fim", 6, categoria),
+    chaveCache,
+    () => fetchCiclos21Dias(ancora, modo, nCiclos, categoria),
   );
 
   if (detalhe) return <DetalheCiclo c={detalhe} onVoltar={() => setDetalhe(null)} />;
 
+  const linhasExport = (dados?.ciclos || []).map(linhaExport);
+
   return (
     <div>
       <MobVoltar titulo="Ciclos de 21 dias" onVoltar={onVoltar} />
-      <AvisoCopia chave={`menu_ciclos21dias_${categoria}`} mostrar={doCache} />
+      <AvisoCopia chave={chaveCache} mostrar={doCache} />
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginBottom: "0.9rem" }}>
-        {(Object.keys(ROTULO_CATEGORIA) as Categoria[]).map((k) => (
-          <button key={k} type="button" className={`mob-pill${categoria === k ? " ativa" : ""}`} onClick={() => setCategoria(k)}>
-            {ROTULO_CATEGORIA[k]}
-          </button>
-        ))}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.6rem", marginBottom: "0.6rem" }}>
+        <label>
+          <span style={rotuloLbl}>Data de referência</span>
+          <input type="date" className="mob-input" value={ancora} onChange={(e) => setAncora(e.target.value)} />
+        </label>
+        <label>
+          <span style={rotuloLbl}>Nº de ciclos</span>
+          <input type="number" inputMode="numeric" min={1} max={26} className="mob-input" value={nCiclos}
+            onChange={(e) => setNCiclos(Math.min(26, Math.max(1, Number(e.target.value) || 1)))} />
+        </label>
       </div>
+
+      <div style={{ marginBottom: "0.6rem" }}>
+        <span style={rotuloLbl}>A data escolhida é o…</span>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <button type="button" className={`mob-pill${modo === "inicio" ? " ativa" : ""}`} style={{ flex: 1 }}
+            onClick={() => setModo("inicio")} title="A data escolhida é o primeiro dia do 1º ciclo — conta para frente">
+            Início
+          </button>
+          <button type="button" className={`mob-pill${modo === "fim" ? " ativa" : ""}`} style={{ flex: 1 }}
+            onClick={() => setModo("fim")} title="A data escolhida é o último dia do último ciclo — conta para trás">
+            Fim
+          </button>
+        </div>
+      </div>
+
+      <div style={{ marginBottom: "0.9rem" }}>
+        <span style={rotuloLbl}>Categoria</span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+          {(Object.keys(ROTULO_CATEGORIA) as Categoria[]).map((k) => (
+            <button key={k} type="button" className={`mob-pill${categoria === k ? " ativa" : ""}`} onClick={() => setCategoria(k)}>
+              {ROTULO_CATEGORIA[k]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {dados && !!dados.ciclos?.length && (
+        <div className="flex items-center justify-end" style={{ marginBottom: "0.7rem" }}>
+          <ExportarBotoes
+            titulo={`Ciclos de 21 dias — ${ROTULO_CATEGORIA[categoria]}`}
+            colunas={COLUNAS_EXPORT}
+            linhas={linhasExport}
+            nomeArquivoBase="ciclos21dias"
+          />
+        </div>
+      )}
 
       {carregando && !dados ? (
         <Carregando />
