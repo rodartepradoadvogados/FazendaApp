@@ -308,10 +308,13 @@ function PainelCancelar({ ctx, onVoltar, onFeito }: { ctx: ContextoAplicar; onVo
   const [motivo, setMotivo] = useState("");
   const [outro, setOutro] = useState("");
   const [destino, setDestino] = useState<"espera" | "naoSeAplica">("espera");
+  const [conta, setConta] = useState<"manter" | "cancelar">("manter");
   const [tentou, setTentou] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const texto = textoMotivo(motivo, outro);
+  // Item financeiro do checklist já resolvido = há custo/conta combinados para este agendamento.
+  const temFinanceiro = ctx.checklist.itens.some((i) => i.chave === "financeiro" && i.status === "cumprido");
   const daJanela = ctx.animais.filter((a) => a.origem === "janela").length;
   const fora = ctx.animais.length - daJanela;
 
@@ -319,7 +322,7 @@ function PainelCancelar({ ctx, onVoltar, onFeito }: { ctx: ContextoAplicar; onVo
     setTentou(true);
     if (!texto) return;
     setSalvando(true); setErro(null);
-    try { await cancelarAgendamentoPreventivo(ctx.cronograma_id, texto, destino); onFeito(); }
+    try { await cancelarAgendamentoPreventivo(ctx.cronograma_id, texto, destino, temFinanceiro ? conta : undefined); onFeito(); }
     catch (e: any) { setErro(e.message || "Erro ao cancelar"); } finally { setSalvando(false); }
   }
   return (
@@ -334,6 +337,13 @@ function PainelCancelar({ ctx, onVoltar, onFeito }: { ctx: ContextoAplicar; onVo
       {motivo === "Outro motivo" && <input style={inputStyle} aria-label="Descreva o motivo" placeholder="Descreva o motivo" value={outro} onChange={(e) => setOutro(e.target.value)} />}
       <Chips idBase="cn-d" rotulo="O que fazer com os animais" opcoes={["Voltam à lista de espera", "Desconsiderar"]} valor={destino === "espera" ? "Voltam à lista de espera" : "Desconsiderar"}
              onChange={(v) => setDestino(v === "Desconsiderar" ? "naoSeAplica" : "espera")} />
+      {temFinanceiro && (
+        <>
+          <Chips idBase="cn-c" rotulo="Conta a pagar deste agendamento" opcoes={["Manter a conta", "Cancelar a conta"]} valor={conta === "manter" ? "Manter a conta" : "Cancelar a conta"}
+                 onChange={(v) => setConta(v === "Cancelar a conta" ? "cancelar" : "manter")} />
+          <p style={notaStyle}>A escolha fica registrada no histórico; o vínculo com o Financeiro chega na etapa financeira.</p>
+        </>
+      )}
       {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
       <div style={{ display: "flex", gap: "0.5rem" }}>
         <button type="button" className="btn-primary" style={{ background: "var(--red)" }} disabled={salvando} onClick={cancelar}><Ban size={14} /> {salvando ? "Cancelando…" : "Cancelar agendamento"}</button>
