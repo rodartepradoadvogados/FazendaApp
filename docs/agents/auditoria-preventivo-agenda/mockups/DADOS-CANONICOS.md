@@ -119,3 +119,37 @@ Portanto a Agenda de hoje tem **4 tarefas de protocolo**: IATF Recria 2 Dia 9; M
 **Relógio fixo dos mockups:** terça 29/09/2026, **14:05** (mesmo em M1 e M2). **Formatos:** "há 8 dias" (por extenso), "Dia 4", dinheiro `R$ 1.234,56`, volumes `92 mL`, datas `dd/mm/aaaa`; CSV com 2 casas decimais.
 **Sidebar:** item **"Protocolos"** nos dois; sub-marca sob o logo: **Fazenda Estreito Ponte de Pedra**; usuário Jairo Nasser no rodapé. Corpo de texto 16 px (desktop e mobile); h1 28 px.
 **Ligação entre mockups:** os itens "Agenda" (no M1) e "Protocolos" / "Sanidade › Vacinas e exames" (no M2) são **links reais** entre `agenda.html` e `vacinas-protocolos.html` (mesma pasta), com as rotas corretas por hash. "Abrir origem"/"Iniciar protocolo" usam esses links.
+
+---
+
+## Extensão (rodada 4) — regras que eliminam as contradições restantes
+
+**1. Modelo de estado único por animal × item aplicável** (fonte de TODOS os números de cobertura, carteira, Calendário, Histórico e comprovante). Estados: `Em dia` · `Prevista` (data futura, dentro do prazo) · `Atrasada` · `Sem registro` (aplicável, sem nenhuma dose e prazo vencido) · `Não se aplica` · `Reagente` · `Inconclusivo`.
+- **Animal "em dia"** = nenhum item aplicável em `Atrasada`, `Sem registro`, `Reagente` ou `Inconclusivo`. (`Prevista` e `Não se aplica` não penalizam.)
+- **Semente do conjunto de dados:** todo animal tem **histórico registrado** (inclusive as sorologias e TB anuais do Histórico) para todos os itens aplicáveis, **exceto** os casos explícitos abaixo. Portanto **não existe "Sem registro" espalhado**: aparece só onde o cenário manda (nenhum, na semente base).
+- **Animais NÃO em dia = 32:** 22 (Clostridioses dose 2, Recria 2: 5201–5222) + 6 (Raiva reforço: 2101, 2117, 2133, 2140, 2152, 2166) + 3 (reteste TB: 4201 Serena, 4207 Estrela [`Inconclusivo`], 4215 Bonita) + 1 (4101 Mimosa, IBR/BVD `Atrasada`) → **119 de 151 em dia = 79%**. Se o fluxo registra 4207 como **reagente**, ela continua fora do "em dia" (a cobertura não muda).
+- **Bezerras B19 (6104–6109)** e **Leptospirose (5218–5222)** estão `Prevista` (não penalizam). 4401 Baunilha, 6104 Neblina etc.: itens que não se aplicam = `Não se aplica` (nunca "undefined").
+- **Percentuais por vacina são CALCULADOS** da mesma tabela (nenhum fixo, nenhum "44 de 50"); a frase da tela é **gerada dos contadores**: "119 de 151 animais em dia · 32 com pendência atrasada (22 + 6 + 3 + 1)". Sem texto "82 sem registro". O bloco por lote soma exatamente 151 e 119.
+- **Reteste TB `Inconclusivo`** (4207): nunca "Em dia"; fora do comprovante até o reteste (60 dias).
+
+**2. Etapas dos protocolos (idênticas em M1 e M2; Dia 0 = início):**
+- IATF: Dia 0, 7, 9 (implante/hormônios), 11 (inseminação).
+- Mastite (ceftiofur): **diária**, Dia 0–4. Hoje (29/09) = Dia 3.
+- Adaptação pré-parto: **diária**, Dia 0–6 → Dia 4, 5, 6 = 29/09, 30/09, 01/10.
+- Indução de lactação: **Dia 0, 3, 7, 10, 14, 17, 20** (Dia 0 = 22/09 → hoje Dia 7; próximas 02/10, 06/10, 09/10, 12/10). Nada de tarefa diária na Agenda além dessas datas.
+- "Etapas hoje" no M1 = **4** e a Agenda tem as mesmas **4** tarefas de protocolo.
+
+**3. Reprodução:** as 11 candidatas (4219–4229) têm **DEL de 62 a 135** e são exatamente as **11 elegíveis de 28** do Lote 02 no Novo protocolo (as outras 17: 8 em IATF ativo, 3 com reteste de TB, 6 fora dos critérios — cada uma com o motivo).
+
+**4. Tuberculina:** lote **TU-2608**, validade 31/01/2027, saldo **100 doses**, via intradérmica — nos dois mockups. **Vias permitidas por produto** (nunca livre): Aftosa SC · B19 SC · Clostridioses SC · Raiva IM · IBR/BVD IM · Leptospirose SC · Ivermectina SC · Ceftiofur IM · Tuberculina intradérmica. Trocar a via é impossível para vacina; só produto com mais de uma via aprovada oferece seletor + aviso.
+
+**5. Regras de auditoria de "adiar":**
+- **Adiar simples** (para amanhã/data): 2 toques, sem motivo obrigatório; o log grava **"sem motivo informado"** (honesto) e permite complementar.
+- **Motivo obrigatório** (escolha explícita, nada pré-marcado): Não vou fazer · Pular aplicação de programa oficial · Excluir tarefa.
+- **"Adiar tudo para amanhã e fechar":** pede **um motivo único** (obrigatório, aviso "vale para N tarefas") e **não move tarefas críticas** — etapas de IATF, leitura de exame, parto provável e tratamento em curso — que ficam listadas como "não adiáveis: N" para resolver uma a uma.
+- Tarefa **excluída** entra no CSV/log com motivo. **Movimentação** de animal registra lote de origem e destino.
+
+**6. Modelos de protocolo:** cada protocolo lançado **guarda uma cópia das etapas** (versão); editar um modelo cria **v2 só para novos lançamentos**. O log mostra **quem/quando/o quê**; Inativar pede motivo; Desfazer diz "Reativado".
+
+**7. Textos:** "Etapa **atrasada**" (não "vencida"); "Custo" (não "Custo realizado"); "Scratch" **só dentro do ⓘ**; "145,2 mL" (vírgula); exames em "animais/exames" (não "doses"); mastite avisa **descarte de leite** durante o tratamento e carência de carne; carência aparece no **resumo compacto** do Registrar; wizard de vacina pede carência.
+**8. Sino:** mesmo valor nos dois mockups (**3**). Título de protocolo: **"Inseminação programada (IATF) · Recria 2"** nos dois.

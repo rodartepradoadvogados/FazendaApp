@@ -134,3 +134,24 @@ Causas remanescentes: (1) dados divergentes entre M1 e M2 (92×96 mL, brincos, d
 - M2e Gaveta Reprodução: seleção múltipla + "Iniciar protocolo com N vacas" → **link real** ao Novo protocolo do M1 com lote/vacas pré-selecionados; coluna Lote e Motivo.
 - M2f Secagem mostra o lote de origem; rótulo "Checar retorno ao cio (14 dias)" (Scratch só dentro do ⓘ).
 - M2g "Concluídos hoje" e "Dia fechado" com a mesma conta.
+
+---
+
+## Rodada 3 — resultado
+
+| Persona | M1 | M2 | P0 | Situação |
+|---|---|---|---|---|
+| Zootecnista | 87,5% (=R2) | 80% (=R2) | 0 | 2 P1: Cobertura contradiz "82 sem registro"; M2 com etapas de protocolo em dias que o M1 não tem; "undefined" na carteira |
+| Veterinário | **93,75%** (87,5) | 87,5% (=R2) | 0 | TB positivo resolvido de ponta a ponta; 1 P1 na Cobertura; falso "sem registro" numa sorologia do Histórico |
+| Peão | 90% (=R2) | **75%** (83,3) | 0 | Toast M2 estreito a 390 px; Adiar virou 5 toques com o motivo obrigatório |
+| Produtor | 90% (=R2) | **92%** (83) | 0 | tabela de Cobertura estoura a 1440 px; 11 candidatas × 15 elegíveis |
+| Cooperativa | 75% (=R2) | 87,5% (=R2) | **1** | KPI "80% em dia" conta "sem registro" como em dia; modelo editado altera protocolos em andamento; "Adiar tudo" com motivo que ninguém escolheu |
+| Pesquisador | **93%** (86) | 92% (=R2) | 0 | drawer "Registrar" ainda diferente entre M1 e M2; "Desfazer última" do M2 desfaz tudo |
+| **Média** | **88,2%** (era 86,0) | **85,7%** (era 85,6) | 1 | **Não passou** → rodada 4 (última) |
+
+Causas remanescentes, todas com fonte única de correção na extensão da rodada 4 dos dados canônicos: (1) Cobertura sem modelo de estado único; (2) etapas dos protocolos divergentes; (3) gaveta "Registrar" duplicada em vez de idêntica; (4) conflito auditabilidade × velocidade no Adiar; (5) modelos sem versão; (6) detalhes de layout (toast M2, tabela de Cobertura, FAB, cards altos).
+
+## Lista única — Rodada 4 (última)
+**Ambos:** (a) modelo de estado único por animal × item e cobertura **calculada** (extensão §1); (b) etapas dos protocolos idênticas (§2), 11 elegíveis de 28 (§3), TU-2608 nos dois, vias por produto (§4), sino 3, título de protocolo (§8); (c) **gaveta "Registrar" e o toast são o MESMO código nos dois**: o construtor do M2 copia literalmente o drawer e o toast do M1 (HTML/CSS/JS), incluindo o exame com Custo e Via; (d) "Desfazer só a última" com rótulo verdadeiro e desabilitado quando não desfazível; (e) textos da extensão §7; (f) "undefined" impossível (`Não se aplica`).
+**M1:** modelo com versão/snapshot e log com quem/quando, Inativar com motivo (§6); Cobertura sem estouro a 1440 px e sem contradição; carteira com 4207 `Inconclusivo`; comprovante funcional (pré-visualização); calendário com coluna "Para quem" legível; mobile: Atrasadas compactas para o "Hoje" aparecer sem duas telas de rolagem; Esc após F5; "Outro" não pré-selecionado; leitura TB padrão = inoculação + 72 h; "pular" do checklist gera log; carência no resumo compacto.
+**M2:** Adiar simples em 2 toques sem motivo obrigatório; "Adiar tudo" com motivo único e sem tarefas críticas (§5); toast largo a 390 px (mesmo componente); cards de tarefa sem título em 4 linhas (ação abaixo do texto); FAB sem cobrir ⋯ (padding inferior e FAB 44 px); links reais na gaveta de detalhes; tarefa excluída e movimentação no CSV/log; plural correto ("1 peso registrado").
