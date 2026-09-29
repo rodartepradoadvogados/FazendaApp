@@ -1,17 +1,17 @@
 <!doctype html>
 <!--
   MOCKUP CLICÁVEL nº 2 — Agenda do CowData/FazendaApp (rodada 1). Contrato: docs/agents/auditoria-preventivo-agenda/02-proposta.md §1, §2, §5.
-  Arquivo único, sem backend. Dados plausíveis (fazenda leiteira BR), "hoje" fixo = terça, 29/09/2026; estado persistido em localStorage (F5 preserva).
+  Arquivo único, sem backend. Dados: mockups/DADOS-CANONICOS.md (Fazenda Estreito Ponte de Pedra, mesmos dados do mockup de Vacinas/Protocolos), "hoje" fixo = terça, 29/09/2026; estado persistido em localStorage (F5 preserva).
   Rotas (hash): #/agenda?visao=hoje|semana|mes &agrupar=tarefa|lote|categoria &filtro=atrasadas|hoje &cat=rep,san,… &q=texto &dia=AAAA-MM-DD &mes=AAAA-MM
-                &gaveta=confirmar|inseminar|registrar|pesagem|bst|reproducao|estoque|gestao|nova|editar|movimentacao|detalhes|adiar|nao|fechardia|excluir &t=ID_DA_TAREFA &aba=…
+                &gaveta=confirmar|inseminar|registrar|exame|pesagem|bst|reproducao|estoque|historico|gestao|nova|editar|movimentacao|detalhes|adiar|nao|fechardia|excluir &t=ID_DA_TAREFA &aba=…
   Barra escura no topo = revisão (fora do produto): tema claro/misto/escuro, "Simular erro de rede", cenários, 1ª carga.
 -->
 <html lang="pt-BR" data-theme="claro">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,viewport-fit=cover">
 <title>Agenda · CowData (mockup 2)</title>
-<meta name="description" content="Mockup clicável do redesenho da Agenda do CowData: Hoje dominante, três números, gavetas, Desfazer e Dia fechado.">
+<meta name="description" content="Mockup clicável (rodada 2) do redesenho da Agenda do CowData: Hoje dominante, três números, gavetas, Desfazer e Dia fechado.">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -144,7 +144,7 @@ input,select,textarea{caret-color:var(--dourado)}
 .mbar{display:none}
 .scrim-m{display:none}
 .top-actions{position:fixed;top:calc(var(--rev-h) + 1rem);right:1.25rem;z-index:60;display:inline-flex;align-items:center;gap:.5rem}
-.top-actions .news{display:inline-flex;align-items:center;gap:.35rem;padding:.4rem .8rem;border-radius:999px;background:var(--vinho);border:1px solid var(--vinho-light);color:#C9A44C;font-weight:700;font-size:.78rem;text-decoration:none;box-shadow:0 2px 6px rgba(0,0,0,.25);white-space:nowrap}
+.top-actions .news{display:inline-flex;align-items:center;gap:.35rem;padding:.4rem .8rem;border-radius:999px;background:var(--vinho);border:1px solid var(--vinho-light);color:#C9A44C;font-weight:700;font-size:.78rem;text-decoration:none;white-space:nowrap}
 .btn-ghost{background:transparent;color:var(--text-muted);border:1px solid var(--border);padding:.5rem 1rem;border-radius:var(--r-sm);font-size:.875rem;transition:all .2s}
 .btn-ghost:hover{background:var(--surface-2);color:var(--text)}
 .top-actions .tema{display:inline-flex;align-items:center;gap:.4rem;padding:.4rem .7rem;font-size:.78rem;background:var(--surface-2)}
@@ -156,7 +156,7 @@ main#main{flex:1;min-width:0;overflow-y:auto;position:relative}
 /* ── Página ── */
 .page{padding:16px 24px 48px;max-width:1440px;margin:0 auto;padding-top:48px}
 .pgh{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px}
-.pgh h1{font-size:1.5rem;display:flex;align-items:center;gap:8px;line-height:1.3}
+.pgh h1{font-size:1.75rem;display:flex;align-items:center;gap:8px;line-height:1.3}
 .pgh h1 svg{color:var(--dourado)}
 .pgh .sub{color:var(--text-muted);font-size:.9375rem;margin-top:2px}
 .pgh .sub b{color:var(--text);font-weight:600}
@@ -201,6 +201,13 @@ main#main{flex:1;min-width:0;overflow-y:auto;position:relative}
 /* barra de visão */
 .bar{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px;margin-bottom:16px;display:flex;flex-direction:column;gap:10px}
 .bar .r1,.bar .r2{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.bar .r1{flex-wrap:nowrap}
+.bar:not(.abre) .r2{display:none}
+.bar .r2{border-top:1px solid var(--border);padding-top:10px;gap:20px}
+.bar .r2 .grp{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.agr select{min-height:44px;padding:0 10px;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-sm);font-size:.9375rem;font-weight:600}
+.fsum{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.filtros-b{gap:6px}
 .seg2{display:inline-flex;border:1px solid var(--border-strong);border-radius:999px;overflow:hidden;background:var(--surface)}
 .seg2 button{background:transparent;border:0;min-height:44px;padding:0 18px;font-size:.875rem;font-weight:600;color:var(--text-muted);display:inline-flex;align-items:center;gap:6px}
 .seg2 button[aria-pressed=true]{background:var(--pill-active-bg);color:var(--pill-active-fg);font-weight:700}
@@ -219,8 +226,6 @@ main#main{flex:1;min-width:0;overflow-y:auto;position:relative}
 .chip.gav{border-style:dashed;color:var(--text)}
 .chip.gav:hover{border-style:solid}
 .sep{width:1px;align-self:stretch;background:var(--border);margin:0 4px}
-.r2 .chips:last-child{margin-left:auto}
-.filtros-t{display:none}
 .avisofiltro{display:flex;align-items:center;gap:8px;font-size:.875rem;color:var(--text-muted)}
 
 /* comunicados */
@@ -270,8 +275,10 @@ main#main{flex:1;min-width:0;overflow-y:auto;position:relative}
 .pl.ok{color:var(--ok-fg);background:color-mix(in srgb,var(--ok-fg) 10%,transparent)}
 .pl.wa{color:var(--warn-fg);background:color-mix(in srgb,var(--warn-fg) 10%,transparent)}
 .pl.in{color:var(--info-fg);background:color-mix(in srgb,var(--info-fg) 10%,transparent)}
-.acts{display:flex;align-items:center;gap:6px;flex-shrink:0}
-.btn-feito{min-width:120px}
+.acts{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.btn-feito{min-width:120px;background:var(--vinho);border-color:var(--vinho);color:#fff}
+.btn-feito:hover{background:color-mix(in srgb,var(--vinho) 85%,black);border-color:color-mix(in srgb,var(--vinho) 85%,black)}
+:root[data-theme="escuro"] .btn-feito,:root:not([data-theme]) .btn-feito{background:var(--vinho-light);border-color:var(--vinho-light)}
 .more{width:44px;height:44px;display:inline-flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:var(--r-sm);color:var(--text-muted)}
 .more:hover,.more[aria-expanded=true]{background:var(--surface-2);border-color:var(--border);color:var(--text)}
 .vazio-sec{padding:16px;color:var(--text-muted);font-size:.875rem}
@@ -392,7 +399,7 @@ main#main{flex:1;min-width:0;overflow-y:auto;position:relative}
 #ov>*{pointer-events:auto}
 .scrim{position:absolute;inset:0;background:var(--overlay);animation:fade .18s ease-out}
 @keyframes fade{from{opacity:0}to{opacity:1}}
-.drawer{position:absolute;top:0;right:0;bottom:0;width:min(560px,100vw);background:var(--surface);border-left:1px solid var(--border-strong);display:flex;flex-direction:column;animation:slide .22s cubic-bezier(.16,1,.3,1);box-shadow:-2px 0 12px rgba(20,30,45,.18)}
+.drawer{position:absolute;top:0;right:0;bottom:0;width:min(560px,100vw);background:var(--surface);border-left:1px solid var(--border-strong);display:flex;flex-direction:column;animation:slide .22s cubic-bezier(.16,1,.3,1);}
 @keyframes slide{from{transform:translateX(40px);opacity:.4}to{transform:none;opacity:1}}
 .drawer.wide{width:min(720px,100vw)}
 .dh{display:flex;align-items:flex-start;gap:12px;padding:16px 16px 12px 20px;border-bottom:1px solid var(--border)}
@@ -446,12 +453,12 @@ main#main{flex:1;min-width:0;overflow-y:auto;position:relative}
 .bigcnt{font-size:.875rem;color:var(--text-muted)}
 
 /* dialog central / sheet */
-.dlg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(480px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-sm);box-shadow:0 6px 24px rgba(20,30,45,.28);animation:pop .18s cubic-bezier(.16,1,.3,1);display:flex;flex-direction:column}
+.dlg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(480px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-sm);animation:pop .18s cubic-bezier(.16,1,.3,1);display:flex;flex-direction:column}
 @keyframes pop{from{opacity:0;transform:translate(-50%,-48%)}to{opacity:1;transform:translate(-50%,-50%)}}
 .dlg .db{padding:16px 20px}
 
 /* menu popover */
-.menu{position:fixed;z-index:120;min-width:230px;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-sm);box-shadow:0 4px 16px rgba(20,30,45,.22);padding:4px}
+.menu{position:fixed;z-index:120;min-width:230px;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-sm);padding:4px}
 .menu button{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:0 12px;background:transparent;border:0;text-align:left;font-size:.9375rem;border-radius:var(--r-sm);color:var(--text)}
 .menu button:hover,.menu button:focus-visible{background:var(--surface-2)}
 .menu button.dg{color:var(--alert-fg)}
@@ -460,7 +467,7 @@ main#main{flex:1;min-width:0;overflow-y:auto;position:relative}
 
 /* toasts */
 #toasts{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:150;display:flex;flex-direction:column;gap:8px;align-items:center;width:min(560px,calc(100vw - 24px));pointer-events:none}
-.toast{pointer-events:auto;width:100%;display:flex;align-items:center;gap:12px;background:var(--vinho-dark);color:#fff;border:1px solid var(--vinho-light);border-radius:var(--r-sm);padding:6px 6px 6px 14px;min-height:52px;box-shadow:0 4px 16px rgba(0,0,0,.3);animation:tin .22s cubic-bezier(.16,1,.3,1);font-size:.9375rem}
+.toast{pointer-events:auto;width:100%;display:flex;align-items:center;gap:12px;background:var(--vinho-dark);color:#fff;border:1px solid var(--vinho-light);border-radius:var(--r-sm);padding:6px 6px 6px 14px;min-height:52px;animation:tin .22s cubic-bezier(.16,1,.3,1);font-size:.9375rem}
 :root[data-theme="escuro"] .toast,:root:not([data-theme]) .toast{background:#16283c}
 @keyframes tin{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
 .toast.err{border-color:#e8837a}
@@ -531,6 +538,7 @@ main#main{flex:1;min-width:0;overflow-y:auto;position:relative}
   .num{padding:8px 10px;min-height:0}
   .num .v{font-size:1.5rem}
   .num .v small{font-size:.875rem}
+  .num .v small{font-size:.75rem;white-space:nowrap}
   .num .lbl{letter-spacing:.03em;font-size:12px;gap:4px}
   .num .lbl .ic{display:none}
   .num .lg-d{display:none}.num .lg-m{display:inline}
@@ -542,7 +550,10 @@ main#main{flex:1;min-width:0;overflow-y:auto;position:relative}
   .filtros-t{display:flex;padding:0 12px}
   .hoje>.hd .meta{display:none}
   .hoje>.hd .btn.sm .lg-d{display:none}
-  .bar:not(.abre) .agr,.bar:not(.abre) .busca,.bar:not(.abre) .r2{display:none}
+  .bar .r1{flex-wrap:wrap}
+  .bar:not(.abre) .agr,.bar:not(.abre) .busca{display:none}
+  .busca{flex:1 1 100%}.agr{flex:1 1 100%}.agr select{flex:1}
+  .bar .r2{gap:12px}
   .agr{flex-wrap:wrap}
   .busca{flex:1 1 100%}
   .card>.hd{padding:10px 12px;min-height:48px}
@@ -582,15 +593,75 @@ main#main{flex:1;min-width:0;overflow-y:auto;position:relative}
 
 abbr[title]{text-decoration:underline dotted;text-underline-offset:3px;cursor:help}
 
+/* ── rodada 2 ── */
+.hdr-r{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.sub-d{font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-muted)}
+.mut{color:var(--text-muted)}
+.gchip{display:inline-flex;align-items:center;gap:10px;min-height:44px;padding:0 14px;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-sm);color:var(--text);font-size:.9375rem;text-align:left}
+.gchip:hover{background:var(--surface-2)}
+.gchip svg:first-child{color:var(--cat-gestao)}
+#gchip{margin:-4px 0 16px}#gchip:empty{display:none}
+.callout.banner{margin-bottom:16px;align-items:center;flex-wrap:wrap}
+.callout.banner span{flex:1;min-width:200px}
+.dsub{font-size:.875rem;color:var(--text-muted);margin-top:4px}
+.sumbox{font-size:.9375rem;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:12px;line-height:1.5}
+.ck2{display:flex;align-items:center;gap:10px;min-height:44px;margin-top:6px;font-weight:600;cursor:pointer}
+.ck2 input{width:22px;height:22px;accent-color:var(--vinho-light)}
+.callout.warn{border-color:color-mix(in srgb,var(--warn-fg) 45%,var(--border))}
+.glb{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;margin:-14px -8px -14px 0;vertical-align:middle;background:transparent;border:0;color:var(--info-fg);border-radius:50%;padding:0;position:relative}
+
+.glb:hover{background:var(--surface-2)}
+.pop{position:fixed;z-index:130;width:min(340px,calc(100vw - 16px));background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-sm);padding:12px 14px;font-size:.9375rem;display:flex;flex-direction:column;gap:8px}
+.pop p{margin:0}
+.ar2{flex-wrap:wrap;padding:6px 12px;gap:8px 10px}
+.ar2 .an{min-width:52px}
+.ar2 .inf{margin-left:0;margin-right:auto;text-align:left}
+.alist .ar .un{color:var(--text-muted);margin-left:6px}
+.tbl tr.estorn td:not(:first-child),.tbl tr.estorn td:first-child{color:var(--text-muted);text-decoration:line-through}
+.tbl tr.estorn .pl{text-decoration:none}
+.ins-l li .falta.aviso{color:var(--warn-fg)}
+.btn-fdia{width:100%;white-space:nowrap}
+#print{display:none}
+@media print{
+  body>*:not(#print){display:none!important}
+  #print{display:block!important;color:#000;background:#fff;padding:12mm;font-family:Arial,sans-serif;font-size:10pt}
+  #print h1{font-size:14pt;margin:0 0 4px}#print p{margin:0 0 8px}
+  #print table{width:100%;border-collapse:collapse}#print th,#print td{border:1px solid #999;padding:3px 5px;text-align:left;vertical-align:top}
+}
+@media (max-width:767px){
+  .rt .tt{font-size:1rem}
+  .rt .mt{font-size:.875rem}
+  .btn-feito{font-size:1rem;min-width:84px}
+  .acts{gap:8px}
+  .drawer,.drawer.wide{overflow-y:auto;display:block}
+  .db{overflow:visible;flex:none}
+  .alist{max-height:none;overflow:visible}
+  .twrap{max-height:none}
+  .df{position:sticky;bottom:0}
+  .fld input,.fld select,.fld textarea,.agr select{min-height:44px;font-size:1rem}
+  .alist .ar select,.alist .ar input.kg{min-height:44px;font-size:1rem}
+  .gchip{width:100%}
+  .pop{font-size:1rem}
+  .sumbox,.callout,.hint{font-size:.9375rem}
+}
+
+.toast .m{min-width:0}
+.toast .m>span{min-width:0;overflow-wrap:anywhere}
+.toast button{flex-shrink:0}
+@media (max-width:767px){
+  #toasts{left:12px;right:12px;width:auto;transform:none}
+  .toast{width:100%}
+}
+
 </style>
 </head>
 <body>
 <div id="rev" role="region" aria-label="Barra de revisão do mockup (fora do produto)">
-  <b>Revisão · Agenda · mockup nº 2 · rodada 1</b>
+  <b>Revisão · Agenda · mockup nº 2 · rodada 2</b>
   <span class="grp lg">Tema</span>
   <div class="seg" data-seg="tema" role="group" aria-label="Tema"><button data-tema="claro" data-v="claro" aria-pressed="false">Claro</button><button data-tema="misto" data-v="misto" aria-pressed="false">Misto</button><button data-tema="escuro" data-v="escuro" aria-pressed="false">Escuro</button></div>
   <label class="sw"><input type="checkbox" id="rv-erro"><span class="tr" aria-hidden="true"></span>Simular erro de rede</label>
-  <span class="grp"><label for="rv-cen" class="lg">Cenário</label><select id="rv-cen"><option value="normal">Dia normal (4 atrasadas)</option><option value="quase">Quase fechado (2 restantes)</option><option value="vazio">Dia vazio</option></select><button class="rb" id="rv-reset">Reiniciar dados</button></span>
+  <span class="grp"><label for="rv-cen" class="lg">Cenário</label><select id="rv-cen"><option value="normal">Dia normal (4 atrasadas)</option><option value="quase">Quase fechado (2 restantes)</option><option value="fechado">Dia fechado (tudo feito)</option><option value="vazio">Dia vazio</option></select><button class="rb" id="rv-reset">Reiniciar dados</button></span>
   <button class="rb" id="rv-load">Ver 1ª carga (skeleton)</button>
 </div>
 <div class="scrim-m" id="scrimM"></div>
@@ -601,13 +672,16 @@ abbr[title]{text-decoration:underline dotted;text-underline-offset:3px;cursor:he
   <main id="main">
     <div class="page">
       <header class="pgh" id="hdr"></header>
+      <div id="banner"></div>
       <section class="nums" id="nums" aria-label="Resumo da agenda"></section>
+      <div id="gchip"></div>
       <div class="bar" id="bar"></div>
       <div class="lay"><div><div id="mainc"></div><div id="comun" style="margin-top:16px"></div></div><aside class="lat" id="lat" aria-label="Painel lateral"></aside></div>
     </div>
   </main>
 </div>
 <div id="ov"></div>
+<div id="print"></div>
 <div id="toasts" role="status" aria-live="polite" aria-atomic="false"></div>
 <script>
 'use strict';
@@ -617,8 +691,9 @@ const $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function ic(n,s=16,cls=''){return `<svg class="ic ${cls}" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[n]||''}</svg>`}
 const reduce=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
+const isMob=()=>matchMedia('(max-width:767px)').matches;
 
-/* ───────── datas (fuso local America/Sao_Paulo; "hoje" fixo do mockup) ───────── */
+/* ───────── datas ("hoje" fixo = terça, 29/09/2026 — DADOS-CANONICOS.md) ───────── */
 const HOJE='2026-09-29';
 const dt=s=>{const [y,m,d]=s.split('-').map(Number);return new Date(Date.UTC(y,m-1,d))};
 const iso=d=>d.toISOString().slice(0,10);
@@ -630,10 +705,14 @@ const MES=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto
 const wd=s=>dt(s).getUTCDay();
 const p2=n=>String(n).padStart(2,'0');
 const fmt=s=>{const d=dt(s);return `${p2(d.getUTCDate())}/${p2(d.getUTCMonth()+1)}`};
+const fmtBR=s=>{const d=dt(s);return `${p2(d.getUTCDate())}/${p2(d.getUTCMonth()+1)}/${d.getUTCFullYear()}`};
+const parseBR=v=>{const m=String(v).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);if(!m)return null;const d=new Date(Date.UTC(+m[3],+m[2]-1,+m[1]));return d.getUTCMonth()===+m[2]-1?iso(d):null};
 const fmtLong=s=>{const d=dt(s);return `${DOW[wd(s)].replace('-feira','')}, ${d.getUTCDate()} de ${MES[d.getUTCMonth()]}`};
 const rel=s=>{const n=diff(s,HOJE);return n===0?'hoje':n===1?'amanhã':n===-1?'ontem':fmtLong(s)};
 const hm=()=>{const d=new Date();return `${p2(d.getHours())}:${p2(d.getMinutes())}`};
 const brl=n=>'R$ '+n.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const nfmt=n=>(Math.round(n*100)/100).toLocaleString('pt-BR');
+const plu=(q,u)=>u==='mL'||u==='un'||u==='ml'||q===1?u:u+'s';
 
 /* ───────── categorias (8 cores fixas --cat-* + produção) ───────── */
 const CATS={
@@ -650,130 +729,178 @@ const CATS={
 const CAT_CHIPS=['rep','san','pro','rec','ali','est','ati'];
 const catVar=c=>`var(${(CATS[c]||CATS.ati).v})`;
 
-/* ───────── lotes, estoque ───────── */
-const L1='Lote 01 – Alta',L2='Lote 02 – Média',L3='Lote 03 – Baixa',LPP='Pré-parto',LR1='Recria 1',LR2='Recria 2',LBZ='Bezerreiro';
-const LOTES=[L1,L2,L3,LPP,LR1,LR2,LBZ];
+/* ───────── fazenda, lotes, pessoas (DADOS-CANONICOS) ───────── */
+const FAZENDA='Fazenda Estreito Ponte de Pedra';
+const L1='Lote 01 – Alta produção',L2='Lote 02 – Média',L3='Lote 03 – Baixa',LPP='Pré-parto',LSE='Secas',LR1='Recria 1',LR2='Recria 2',LBZ='Bezerreiro';
+const LOTES=[[L1,24],[L2,28],[L3,19],[LPP,9],[LSE,14],[LR1,20],[LR2,22],[LBZ,15]];
+const PESSOAS=[
+  {id:'jn',nome:'Jairo Nasser',fn:'gestor'},
+  {id:'pm',nome:'Dr. Paulo Menezes',fn:'veterinário',crmv:'CRMV-MG 12345',vet:1},
+  {id:'ca',nome:'Cícero Alves',fn:'tratador'},
+  {id:'ml',nome:'Marcos Lima',fn:'tratador'}
+];
+const USER='Jairo Nasser';
+const pessoaTxt=p=>`${p.nome} (${p.fn}${p.crmv?', '+p.crmv:''})`;
 const BR=(a,n,st=3)=>Array.from({length:n},(_,i)=>String(a+i*st));
+
+/* ───────── estoque em frascos (DADOS-CANONICOS) ───────── */
 const EST0={
-  e1:{nome:'Ivomec 1% (ivermectina)',un:'ml',saldo:400,min:200,preco:.42,carL:0,carC:35,prox:180,fr:[{id:'a',t:'Lote IV2405 · val. 08/2027'},{id:'b',t:'Lote IV2311 · val. 12/2026'}]},
-  e2:{nome:'Vacina aftosa (bivalente)',un:'dose',saldo:60,min:100,preco:1.35,carL:0,carC:0,prox:180,fr:[{id:'a',t:'Lote AF2407 · val. 11/2026'}]},
-  e3:{nome:'Prostaglandina (PGF)',un:'frasco',saldo:3,min:4,preco:38,fr:[{id:'a',t:'Lote CL2409 · val. 03/2027 · 2 frascos'},{id:'b',t:'Lote CL2311 · val. 11/2026 · vence primeiro · 1 frasco'}]},
-  e4:{nome:'Ovulação (GnRH)',un:'frasco',saldo:5,min:4,preco:52,fr:[{id:'a',t:'Lote GN2408 · val. 05/2027'}]},
-  e5:{nome:'Lactotropin (somatotropina, BST)',un:'dose',saldo:28,min:30,preco:19.8,fr:[{id:'a',t:'Lote BS2406 · val. 02/2027'}]},
-  e6:{nome:'Dispositivo P4 + benzoato',un:'dose',saldo:10,min:8,preco:24,fr:[{id:'a',t:'Lote P42409 · val. 06/2027'}]},
-  e7:{nome:'Antibiótico de secagem (bisnaga)',un:'bisnaga',saldo:30,min:20,preco:11.5,fr:[{id:'a',t:'Lote SC2406 · val. 04/2027'}]},
-  e8:{nome:'Cefalônio intramamário',un:'bisnaga',saldo:6,min:10,preco:14,carL:4,carC:0,prox:0,fr:[{id:'a',t:'Lote CF2410 · val. 01/2028'}]},
-  e9:{nome:'Sêmen — palhetas (Jatobá / Tornado)',un:'palheta',saldo:14,min:12,preco:65,fr:[{id:'a',t:'Jatobá · botijão 2 · 14 palhetas'},{id:'b',t:'Tornado · botijão 2 · 3 palhetas'}]},
-  e10:{nome:'Vacina brucelose B19',un:'dose',saldo:12,min:8,preco:6.9,carL:0,carC:0,prox:0,fr:[{id:'a',t:'Lote B192408 · val. 12/2026'}]}
+  afo:{nome:'Aftosa',un:'dose',preco:3.10,dose:2,via:'SC',carL:0,carC:0,prog:1,min:100,fr:[{f:'AF-2609',val:'2026-10-15',s:60},{f:'AF-2611',val:'2027-04-30',s:200}]},
+  b19:{nome:'Brucelose B19',un:'dose',preco:6.40,dose:2,via:'SC',carL:0,carC:0,prog:1,vet:1,min:10,fr:[{f:'BR-2604',val:'2027-06-30',s:20}]},
+  clo:{nome:'Clostridioses',un:'dose',preco:1.90,dose:5,via:'SC',carL:0,carC:0,min:60,fr:[{f:'CL-2608',val:'2027-03-31',s:120}]},
+  rai:{nome:'Raiva',un:'dose',preco:2.80,dose:2,via:'IM',carL:0,carC:0,min:20,fr:[{f:'RA-2607',val:'2027-02-28',s:30}]},
+  ibr:{nome:'IBR/BVD',un:'dose',preco:4.20,dose:5,via:'IM',carL:0,carC:0,min:20,fr:[{f:'IB-2606',val:'2027-02-15',s:40}]},
+  ive:{nome:'Ivermectina 1%',un:'mL',preco:.42,porPeso:1,via:'SC',carL:'não usar em lactação',carC:35,min:300,fr:[{f:'IV-2605',val:'2026-09-20',s:500},{f:'IV-2610',val:'2027-12-31',s:1000}]},
+  imp:{nome:'Implante Sincrogest',un:'un',preco:24,min:30,fr:[{f:'SG-2607',val:'2027-11-30',s:30}]},
+  sdi:{nome:'Sincrodiol (benzoato)',un:'mL',fml:50,preco:1.9,min:100,fr:[{f:'SD-2606',val:'2027-10-31',s:150}]},
+  sfo:{nome:'Sincroforte (buserelina)',un:'mL',fml:20,preco:5.6,min:60,fr:[{f:'SF-2606',val:'2027-10-31',s:40}]},
+  est:{nome:'Estron (cloprostenol)',un:'mL',fml:60,preco:1.1,min:120,fr:[{f:'ES-2607',val:'2027-11-30',s:120}]},
+  scp:{nome:'SincroCP (cipionato)',un:'mL',fml:50,preco:1.6,min:100,fr:[{f:'CP-2606',val:'2027-10-31',s:50}]},
+  cef:{nome:'Ceftiofur',un:'mL',fml:100,preco:1.2,dose:10,via:'IM',carL:4,carC:4,min:50,fr:[{f:'CF-5510',val:'2027-03-31',s:40}]},
+  sem:{nome:'Sêmen (palhetas)',un:'palheta',preco:65,min:20,fr:[{f:'Botijão 2 · Jatobá',val:'',s:14}]},
+  bst:{nome:'Somatotropina (BST)',un:'dose',preco:19.8,min:30,fr:[{f:'BS-2606',val:'2027-02-28',s:60}]}
 };
+const estSaldo=e=>e.fr.reduce((s,f)=>s+f.s,0);
+function saldoTxt(e){const s=estSaldo(e);return `${nfmt(s)} ${plu(s,e.un)}${e.fml?` (${nfmt(s/e.fml)} ${s/e.fml===1?'frasco':'frascos'})`:''}`}
+const vencido=f=>f.val&&f.val<HOJE;
+const venceEm=f=>f.val?diff(f.val,HOJE):999;
+const frTxt=(e,f)=>`${f.f}${f.val?` · val. ${fmtBR(f.val)}`:''} · saldo ${nfmt(f.s)} ${e.un}${vencido(f)?' · VENCIDO':venceEm(f)<=30&&venceEm(f)>=0?` · vence em ${venceEm(f)} d`:''}`;
+
+/* ───────── glossário (ⓘ por toque/foco) ───────── */
+const GLOS={
+  IATF:'Inseminação artificial em tempo fixo: protocolo hormonal com dias marcados (Dia 0, 7, 9 e 11) para inseminar sem observar o cio.',
+  Scratch:'Checagem de retorno ao cio: 14 dias após a inseminação (parâmetro da fazenda). Se a vaca voltou ao cio, não emprenhou.',
+  PEV:'Período de espera voluntário: dias após o parto em que a vaca não é inseminada (45 dias nesta fazenda).',
+  BST:'Somatotropina bovina, hormônio que aumenta a produção de leite. Só vacas com DEL a partir de 60.',
+  DEL:'Dias em leite: dias desde o último parto.',
+  CMT:'Teste de mastite (California Mastitis Test) feito na ordenha.',
+  TB:'Tuberculose: exame com tuberculina PPD. A leitura é feita 72 horas depois da inoculação.'
+};
+const GLOS_RE=[['IATF',/\bIATF\b/],['Scratch',/\bScratch\b/],['PEV',/\bPEV\b/],['BST',/\bBST\b/],['DEL',/\bDEL\b/],['CMT',/\bCMT\b/],['TB',/\bTB\b/]];
 
 /* ───────── tipos de tarefa ───────── */
+const S_INS=(id,q,txt)=>({id,q,txt});
 const KIND={
-  iatf1:{cat:'rep',t:'Inseminação programada — 1º dia (IATF)',g:'confirmar',noun:'vacas',crit:1,orig:'Protocolos › Inseminação programada (IATF)',ins:n=>({id:'e6',q:n,txt:`Dispositivo P4 + benzoato: ${n} doses`})},
-  iatf7:{cat:'rep',t:'Inseminação programada — 7º dia (IATF)',g:'confirmar',noun:'vacas',crit:1,orig:'Protocolos › Inseminação programada (IATF)',ins:n=>{const q=Math.ceil(n/6);return{id:'e3',q,txt:`Prostaglandina (PGF): ${q} frasco${q>1?'s':''}`}}},
-  iatf9:{cat:'rep',t:'Inseminação programada — 9º dia (IATF)',g:'confirmar',noun:'vacas',crit:1,orig:'Protocolos › Inseminação programada (IATF)',ins:n=>{const q=Math.ceil(n/3);return{id:'e4',q,txt:`Ovulação (GnRH): ${q} frascos`}}},
-  iatf11:{cat:'rep',t:'Inseminação programada — 11º dia (IATF)',g:'inseminar',btn:'Inseminar',noun:'vacas',crit:1,orig:'Protocolos › Inseminação programada (IATF)',ins:n=>({id:'e9',q:n,txt:`Sêmen: ${n} palhetas (1 por vaca)`})},
-  bst:{cat:'pro',t:'Somatotropina (BST) — aplicação do ciclo',g:'bst',noun:'vacas aptas',orig:'Reprodução › BST · ciclo de 14 dias',ins:n=>({id:'e5',q:n,txt:`Lactotropin: ${n} doses`})},
-  vac:{cat:'san',t:'Vacina contra aftosa — aplicação prevista',g:'registrar',noun:'novilhas',dose:1,un:'dose',via:'Subcutânea',prods:['e2'],orig:'Sanidade › Vacinas e exames › Aftosa (campanha)',ins:n=>({id:'e2',q:n,txt:`Vacina aftosa: ${n} doses`})},
-  vermi:{cat:'san',t:'Vermifugação (Ivomec 1%) — aplicação prevista',g:'registrar',noun:'novilhas',dose:2,un:'ml',via:'Subcutânea',prods:['e1'],orig:'Sanidade › Vacinas e exames › Vermifugação semestral',ins:n=>({id:'e1',q:n*2,txt:`Ivomec 1%: ${n*2} ml`})},
-  brucela:{cat:'san',t:'Vacina contra brucelose (B19) — aplicação prevista',g:'registrar',noun:'bezerras',dose:1,un:'dose',via:'Subcutânea',prods:['e10'],orig:'Sanidade › Vacinas e exames › Brucelose B19 (fêmeas 3–8 meses)',ins:n=>({id:'e10',q:n,txt:`Vacina B19: ${n} doses`})},
-  mast:{cat:'san',t:'Tratamento de mastite — 3º dia (cefalônio)',g:'registrar',noun:'vaca',dose:1,un:'bisnaga',via:'Intramamária',prods:['e8'],orig:'Sanidade › Curativa › Mastite clínica (aberta em 27/09)',ins:n=>({id:'e8',q:n,txt:`Cefalônio: ${n} bisnaga`})},
-  secagem:{cat:'rep',t:'Secagem — parar a ordenha (60 d antes do parto)',noun:'vacas',bulk:1,orig:'Reprodução › Gestações · parto previsto em 28/11',ins:n=>({id:'e7',q:n*4,txt:`Antibiótico de secagem: ${n*4} bisnagas`})},
-  parto:{cat:'rep',t:'Parto provável — preparar e observar',noun:'vaca',crit:1,bulk:1,orig:'Reprodução › Gestações · Holandês, 280 d',sub:'Previsão de parto: 30/09'},
-  cio14:{cat:'rep',t:'Checar retorno ao cio (14 d pós-inseminação)',noun:'vacas',bulk:1,orig:'Reprodução › Inseminações',sub:'Sem retorno: segue como prenhe provável'},
-  pev:{cat:'rep',t:'Fim do período de espera (PEV)',noun:'vacas',bulk:1,orig:'Reprodução › Parâmetros · PEV de 45 dias',sub:'Liberada para inseminar'},
-  pesagem:{cat:'rec',t:'Pesagem de bezerros (terça)',g:'pesagem',btn:'Lançar pesos',noun:'bezerros',orig:'Recria › Pesagens · toda terça-feira'},
-  pesleite:{cat:'pro',t:'Pesagem de leite (controle leiteiro)',noun:'vacas',bulk:1,orig:'Produção › Controle leiteiro · toda quinta-feira'},
-  desmama:{cat:'rec',t:'Desmama (90 dias)',noun:'bezerros',bulk:1,orig:'Recria › Desmama · 90 dias de idade'},
-  cmt:{cat:'san',t:'Teste CMT — ordenha da tarde',bulk:1,orig:'Sanidade › Rotinas de ordenha (CMT semanal)'}
+  iatf0:{cat:'rep',t:p=>`IATF ${p} — Dia 0`,g:'confirmar',noun:'animais',crit:1,orig:'Protocolos › Em andamento › IATF',sub:'Colocar implante · 2 mL Sincrodiol · 2,5 mL Sincroforte por animal',
+    ins:n=>[S_INS('imp',n,`Implante Sincrogest: ${n} un`),S_INS('sdi',2*n,`Sincrodiol: ${nfmt(2*n)} mL`),S_INS('sfo',2.5*n,`Sincroforte: ${nfmt(2.5*n)} mL`)]},
+  iatf7:{cat:'rep',t:p=>`IATF ${p} — Dia 7`,g:'confirmar',noun:'animais',crit:1,orig:'Protocolos › Em andamento › IATF',sub:'2 mL Estron (cloprostenol) por animal',ins:n=>[S_INS('est',2*n,`Estron: ${nfmt(2*n)} mL`)]},
+  iatf9:{cat:'rep',t:p=>`IATF ${p} — Dia 9`,g:'confirmar',noun:'novilhas',crit:1,orig:'Protocolos › Em andamento › IATF',sub:'Retirar implante · 2 mL Estron · 1 mL SincroCP por animal',ins:n=>[S_INS('est',2*n,`Estron: ${nfmt(2*n)} mL`),S_INS('scp',n,`SincroCP: ${nfmt(n)} mL`)]},
+  iatf11:{cat:'rep',t:p=>`IATF ${p} — Dia 11: inseminar`,g:'inseminar',noun:'animais',crit:1,orig:'Protocolos › Em andamento › IATF',sub:'1 palheta de sêmen por animal',ins:n=>[S_INS('sem',n,`Sêmen: ${n} palhetas`)]},
+  bst:{cat:'pro',t:()=>'Somatotropina (BST) — aplicação do ciclo',g:'bst',noun:'vacas aptas',orig:'Reprodução › BST · ciclo de 14 dias · DEL a partir de 60',ins:n=>[S_INS('bst',n,`Somatotropina: ${n} doses`)]},
+  rai:{cat:'san',t:()=>'Raiva — reforço',g:'registrar',noun:'animais',prod:'rai',prog:0,orig:'Sanidade › Vacinas e exames › Raiva (anual)',ins:n=>[S_INS('rai',n,`Raiva: ${n} doses`)]},
+  clo2:{cat:'san',t:()=>'Clostridioses — dose 2 (30 dias após a dose 1)',g:'registrar',noun:'animais',prod:'clo',orig:'Sanidade › Vacinas e exames › Clostridioses (dose 1 em 26/08)',ins:n=>[S_INS('clo',n,`Clostridioses: ${n} doses`)]},
+  ibr:{cat:'san',t:()=>'IBR/BVD — vacinação semestral',g:'registrar',noun:'vacas',prod:'ibr',orig:'Sanidade › Vacinas e exames › IBR/BVD (semestral)',ins:n=>[S_INS('ibr',n,`IBR/BVD: ${n} doses`)]},
+  b19:{cat:'san',t:()=>'Brucelose B19 — dose única',g:'registrar',noun:'bezerras elegíveis (3–8 meses)',prod:'b19',prog:1,vet:1,orig:'Sanidade › Vacinas e exames › B19 (fêmeas de 3 a 8 meses)',ins:n=>[S_INS('b19',n,`B19: ${n} doses`)]},
+  afo:{cat:'san',t:()=>'Aftosa — data definida pela defesa sanitária estadual',g:'registrar',noun:'animais',prod:'afo',prog:1,orig:'Sanidade › Vacinas e exames › Aftosa (anual, data editável)',ins:n=>[S_INS('afo',n,`Aftosa: ${n} doses`)]},
+  vermi:{cat:'san',t:()=>'Vermifugação (ivermectina 1%)',g:'registrar',noun:'novilhas',prod:'ive',peso:240,orig:'Sanidade › Vacinas e exames › Vermifugação (a cada 90 dias)',ins:n=>[S_INS('ive',Math.round(n*240/50),`Ivermectina 1%: ${nfmt(Math.round(n*240/50))} mL`)]},
+  mast:{cat:'san',t:()=>'Tratamento de mastite clínica — dia 4 de 5 (ceftiofur)',g:'registrar',noun:'vacas',prod:'cef',orig:'Protocolos › Em andamento › Tratamento de mastite clínica (iniciado em 26/09)',sub:'Carência: leite e carne até 04/10',ins:n=>[S_INS('cef',10*n,`Ceftiofur: ${10*n} mL`)]},
+  tb:{cat:'san',t:()=>'Exame TB — reteste (inconclusivo em 31/03)',g:'exame',noun:'animais',orig:'Sanidade › Vacinas e exames › Exame TB (tuberculina PPD)',sub:'Inocular hoje; leitura em 72 h'},
+  tbl:{cat:'san',t:()=>'Exame TB — ler o resultado (72 h)',g:'exame',noun:'animais',orig:'Sanidade › Vacinas e exames › Exame TB'},
+  secagem:{cat:'rep',t:()=>'Secagem — parar a ordenha (60 dias antes do parto)',noun:'vacas',bulk:1,orig:'Reprodução › Gestações'},
+  parto:{cat:'rep',t:()=>'Parto provável — preparar e observar',noun:'vacas',crit:1,bulk:1,orig:'Reprodução › Gestações · Girolando 287 d',sub:'Previsão de parto: 30/09'},
+  cio14:{cat:'rep',t:()=>'Checar retorno ao cio (Scratch, 14 dias)',noun:'vacas',bulk:1,orig:'Reprodução › Inseminações',sub:'Parâmetro da fazenda: 14 dias após a inseminação'},
+  pev:{cat:'rep',t:()=>'Fim do período de espera voluntário (PEV)',noun:'vacas',bulk:1,orig:'Reprodução › Parâmetros · PEV de 45 dias',sub:'Liberadas para inseminar'},
+  diag:{cat:'rep',t:()=>'Diagnóstico de gestação (30 dias)',noun:'vacas',bulk:1,orig:'Reprodução › Inseminações'},
+  pesagem:{cat:'rec',t:()=>'Pesagem de bezerros (terça)',g:'pesagem',noun:'bezerros',orig:'Recria › Pesagens · toda terça-feira'},
+  pesleite:{cat:'pro',t:()=>'Pesagem de leite (controle leiteiro, quinta)',noun:'vacas',bulk:1,orig:'Produção › Controle leiteiro · toda quinta-feira'},
+  desmama:{cat:'rec',t:()=>'Desmama (90 dias)',noun:'bezerros',bulk:1,orig:'Recria › Desmama · 90 dias de idade'},
+  cmt:{cat:'san',t:()=>'Teste CMT — ordenha da tarde',bulk:1,orig:'Sanidade › Rotinas de ordenha'},
+  adapt:{cat:'rep',t:()=>'Adaptação pré-parto — dia 4 de 7 (protocolo próprio)',noun:'vacas',bulk:1,orig:'Protocolos › Em andamento › Adaptação pré-parto'},
+  ind:{cat:'pro',t:()=>'Indução de lactação — aplicação do dia',noun:'novilhas',bulk:1,orig:'Protocolos › Em andamento › Indução de lactação'}
 };
 function refresh(t){
   const k=KIND[t.kind];if(!k||!t.animais)return;
   const n=t.animais.length;t.n=n;
-  if(t.noun_ov)t.noun=t.noun_ov;
-  const noun=t.noun||k.noun||'animais';
-  if(t.quem_fix)t.quem=t.quem_fix;else t.quem=n?`${n} ${n===1&&noun.endsWith('s')?noun.slice(0,-1):noun} · ${t.lote}`:t.lote;
-  if(k.ins&&n)t.ins=k.ins(n);
+  const noun=t.noun_ov||k.noun||'animais';
+  t.quem=t.quem_fix?t.quem_fix:(n?`${n} ${n===1&&noun.endsWith('s')?noun.replace(/s$/,'').replace('animai','animal'):noun} · ${t.lote}`:t.lote);
+  if(k.ins&&n)t.insL=k.ins(n);
 }
 function mk(id,kind,off,o={}){
   const k=KIND[kind];
-  const t={id,kind,data:add(HOJE,off),cat:k.cat,titulo:o.titulo||k.t,trilho:'campo',res:'realizar',gaveta:k.g||'',btn:k.btn||'',
-    lote:o.lote||null,animais:o.animais||[],bulk:k.bulk?1:0,crit:k.crit?1:0,origem:k.orig,sub:k.sub||'',st:'p',
-    dose:k.dose,un:k.un,via:k.via,prods:k.prods,noun_ov:o.noun,quem_fix:o.quem_fix};
+  const t={id,kind,data:add(HOJE,off),cat:k.cat,titulo:o.titulo||k.t(o.proto||''),trilho:'campo',res:'realizar',gaveta:k.g||'',
+    lote:o.lote||null,animais:o.animais||[],bulk:k.bulk?1:0,crit:k.crit?1:0,origem:k.orig,sub:o.sub||k.sub||'',st:'p',
+    prod:k.prod,prog:k.prog?1:0,vet:k.vet?1:0,proto:o.proto||'',noun_ov:o.noun,quem_fix:o.quem_fix,peso:k.peso};
   refresh(t);
   if(kind==='cmt'){t.quem=o.lote+' · ordenha da tarde';t.animais=[]}
   return t;
 }
 function seedTasks(){
   const T=[];
-  T.push(mk('t1','cio14',-3,{animais:['4417','4523','4388'],lote:L2}));
-  T.push(mk('t2','vermi',-2,{animais:BR(6201,12),lote:LR2}));
-  T.push(mk('t3','desmama',-1,{animais:['9120','9134'],lote:LBZ,noun:'bezerras'}));
-  T.push(mk('t4','pev',-1,{animais:['4302'],lote:L1}));
-  T.push(mk('t5','iatf1',0,{animais:BR(4410,8),lote:L2}));
-  T.push(mk('t6','iatf7',0,{animais:BR(4301,12),lote:L1}));
-  T.push(mk('t7','iatf9',0,{animais:BR(4502,6),lote:L3}));
-  T.push(mk('t8','iatf11',0,{animais:BR(4225,6),lote:L3}));
-  T.push(mk('t9','bst',0,{animais:BR(4100,26),lote:L1}));
-  T.push(mk('t10','vac',0,{animais:BR(6100,38),lote:LR2}));
-  T.push(mk('t11','mast',0,{animais:['4471'],lote:L1}));
-  T.push(mk('t12','secagem',0,{animais:['4239','4244','4251'],lote:L3}));
-  T.push(mk('t13','cio14',0,{animais:BR(4340,5),lote:L2}));
-  T.push(mk('t14','pev',0,{animais:['4310','4312'],lote:L1}));
-  T.push(mk('t15','pesagem',0,{animais:BR(9201,14),lote:LBZ}));
-  T.push(mk('t16','desmama',0,{animais:['9140','9143'],lote:LBZ}));
-  T.push(mk('t17','parto',0,{animais:['4390'],lote:LPP}));
-  T.push(mk('t18','cmt',0,{lote:L1}));
-  T.push({id:'m1',kind:'manual',data:HOJE,cat:'ati',titulo:'Conferir a cerca do piquete 4',trilho:'campo',res:'realizar',gaveta:'',btn:'',lote:null,animais:[],bulk:1,crit:0,manual:1,quem:'Piquete 4',origem:'Tarefa manual · criada por Jairo em 27/09',st:'p',obs:''});
+  /* atrasadas (4): as 3 sanitárias do calendário + 1 pesagem */
+  T.push(mk('t1','rai',-2,{animais:BR(2101,6,7),lote:L3}));
+  T.push(mk('t2','clo2',-4,{animais:BR(4124,22,4),lote:LR2}));
+  T.push(mk('t3','tb',-8,{animais:['2164','2172','2189'],lote:L2}));
+  T.push(mk('t4','pesleite',-5,{animais:BR(2200,24,3),lote:L1,noun:'vacas'}));
+  T[3].quem_fix=`${L1} · 24 vacas`;
+  /* hoje (15 de campo) */
+  T.push(mk('t5','iatf9',0,{animais:BR(4160,12,2),lote:LR2,proto:'Recria 2'}));
+  T.push(mk('t6','mast',0,{animais:['2301','2318','2325'],lote:L1}));
+  T.push(mk('t7','vermi',0,{animais:BR(4200,20,3),lote:LR1}));
+  T.push(mk('t8','bst',0,{animais:BR(2400,19,3),lote:L1}));
+  T.push(mk('t9','pesagem',0,{animais:BR(5101,15,2),lote:LBZ}));
+  T.push(mk('t10','secagem',0,{animais:['2412','2417'],lote:LSE}));
+  T.push(mk('t11','parto',0,{animais:['2601','2609'],lote:LPP}));
+  T.push(mk('t12','cio14',0,{animais:BR(2510,5,3),lote:L2}));
+  T.push(mk('t13','pev',0,{animais:['2330','2334'],lote:L1}));
+  T.push(mk('t14','desmama',0,{animais:['5088','5093'],lote:LBZ}));
+  T.push(mk('t15','adapt',0,{animais:BR(2620,9,2),lote:LPP}));
+  T.push(mk('t16','ind',0,{animais:['4131','4150'],lote:LR2}));
+  T.push(mk('t17','diag',0,{animais:BR(2340,4,3),lote:L1}));
+  T.push(mk('t18','cmt',0,{lote:L2}));
+  T.push({id:'m1',kind:'manual',data:HOJE,cat:'ati',titulo:'Conferir a cerca do piquete 4',trilho:'campo',res:'realizar',gaveta:'',lote:null,animais:[],bulk:1,crit:0,manual:1,quem:'Piquete 4',origem:'Tarefa manual · criada por Jairo Nasser em 27/09',st:'p',obs:''});
   /* alertas e decisões (não contam para o Dia fechado) */
-  T.push({id:'a1',kind:'dieta',data:HOJE,cat:'ali',titulo:'Análise de dieta — encerramento do Lote 01 – Alta',trilho:'alerta',res:'navegar',btn:'Ir para Dieta',gaveta:'',lote:L1,animais:[],quem:'Lote 01 – Alta · 26 vacas',origem:'Alimentação › Dieta › Lote 01 – Alta',destino:'Alimentação › Dieta › Lote 01 – Alta',st:'p',sub:'A dieta atual encerra em 01/10'});
-  T.push({id:'a2',kind:'mov',data:HOJE,cat:'rec',titulo:'Sugestão de movimentação — novilha 6015',trilho:'alerta',res:'decidir',btn:'Decidir',gaveta:'movimentacao',lote:LR2,animais:['6015'],quem:'Recria 2 → Lote 02 – Média',origem:'Recria › Regras de transição por peso',st:'p',sub:'382 kg · atingiu o peso mínimo do lote (360 kg)'});
-  /* trilho Gestão: só resumo na Agenda */
-  T.push({id:'g1',kind:'conta',data:HOJE,cat:'fin',titulo:'Conta a pagar — Ração concentrada (Nutripec)',trilho:'gestao',res:'navegar',btn:'Ir para Financeiro',quem:'Vence hoje · R$ 12.480,00',destino:'Controle Financeiro › A pagar',origem:'Financeiro',st:'p',animais:[]});
-  T.push({id:'g2',kind:'compra',data:HOJE,cat:'est',titulo:'Comprar item abaixo do mínimo — Ivomec 1%',trilho:'gestao',res:'navegar',btn:'Abrir pedido',quem:'Saldo 400 ml · mínimo 200 ml (cobre 7 dias)',destino:'Pedidos › Novo pedido (Ivomec 1%)',origem:'Estoque',st:'p',animais:[]});
-  T.push({id:'g3',kind:'patrimonio',data:HOJE,cat:'ges',titulo:'Patrimônio — manutenção do trator MF 275 vence em 05/10',trilho:'gestao',res:'informativo',btn:'Dispensar',quem:'Só informativo: registre a manutenção em Patrimônio',destino:'Patrimônio › Máquinas',origem:'Patrimônio',st:'p',animais:[]});
-  /* amanhã e próximos dias */
-  const F=(off,kind,lote,ani,noun)=>{T.push(mk('f'+(++fseq),kind,off,{animais:ani,lote,noun}))};let fseq=0;
-  F(1,'iatf1',L3,BR(4620,10));F(1,'vac',LR1,BR(6300,41));F(1,'parto',LPP,['4402']);F(1,'cio14',L2,['4441','4459','4462']);F(1,'secagem',L3,['4260','4266']);
-  F(2,'iatf9',L1,BR(4301,12));F(2,'iatf11',L3,BR(4502,6));F(2,'pesleite',L1,BR(4100,26));F(2,'pev',L1,['4318','4320','4325']);
-  F(3,'brucela',LR1,BR(9300,9),'bezerras');F(3,'cio14',L2,BR(4470,4));F(3,'cmt',L1,[]);
-  F(4,'iatf11',L1,BR(4301,12));F(4,'desmama',LBZ,BR(9150,3));
-  F(5,'cio14',L2,['4480','4483']);
-  F(6,'iatf7',L2,BR(4410,8));F(6,'vermi',LR1,BR(6400,15));
-  F(7,'pesagem',LBZ,BR(9201,14));F(7,'parto',LPP,['4415']);F(7,'iatf7',L3,BR(4620,10));
-  F(8,'iatf9',L2,BR(4410,8));F(9,'iatf9',L3,BR(4620,10));F(9,'pesleite',L1,BR(4100,26));F(9,'secagem',L3,['4270','4275']);
-  F(10,'iatf11',L2,BR(4410,8));F(11,'iatf11',L3,BR(4620,10));F(11,'cio14',L2,['4490','4493','4496']);
-  F(12,'cmt',L1,[]);F(14,'bst',L1,BR(4100,26));F(14,'pesagem',LBZ,BR(9201,14));F(16,'pesleite',L1,BR(4100,26));F(16,'parto',LPP,['4420']);
-  F(18,'secagem',L3,['4280','4283']);F(19,'cio14',L2,['4500','4503']);F(20,'desmama',LBZ,BR(9160,4));F(21,'pesagem',LBZ,BR(9201,14));
-  F(22,'parto',LPP,['4430']);F(23,'pesleite',L1,BR(4100,26));F(25,'vac',LR2,BR(6100,38));F(28,'pesagem',LBZ,BR(9201,14));F(30,'pesleite',L1,BR(4100,26));F(30,'bst',L1,BR(4100,26));
-  /* histórico (só alimenta as bolinhas do mini-calendário e do mês) */
-  const ks=['cio14','iatf7','pesagem','vac','pev','cmt','pesleite','secagem','iatf9','desmama'];
-  for(let o=-28;o<=-4;o++){
-    const n=1+((o*o+3)%3);
-    for(let i=0;i<n;i++){const kd=ks[(Math.abs(o)*3+i*7)%ks.length];const t=mk('h'+Math.abs(o)+i,kd,o,{animais:['x'],lote:L1});t.hist=1;t.st='f';t.feitoEm=t.data;T.push(t)}
-  }
+  T.push({id:'a1',kind:'dieta',data:HOJE,cat:'ali',titulo:'Análise de dieta — encerramento da dieta do Lote 01',trilho:'alerta',res:'navegar',btn:'Ir para Dieta',lote:L1,animais:[],quem:'Lote 01 – Alta produção · 24 vacas',origem:'Alimentação › Dieta › Lote 01',destino:'Alimentação › Dieta › Lote 01 – Alta produção',st:'p',sub:'A dieta atual encerra em 01/10'});
+  T.push({id:'a2',kind:'mov',data:HOJE,cat:'rec',titulo:'Sugestão de movimentação — novilha 4109',trilho:'alerta',res:'decidir',btn:'Decidir',gaveta:'movimentacao',lote:LR2,animais:['4109'],quem:'Recria 2 → Lote 03 – Baixa',origem:'Recria › Regras de transição por peso',st:'p',sub:'382 kg · atingiu o peso mínimo do lote (360 kg)'});
+  /* trilho Gestão */
+  T.push({id:'g1',kind:'conta',data:HOJE,cat:'fin',titulo:'Conta a pagar — Fornecedor Agro Vet',trilho:'gestao',res:'navegar',btn:'Ir para Financeiro',quem:'Vence hoje · R$ 12.480,00',valor:12480,destino:'Controle Financeiro › A pagar',origem:'Financeiro',st:'p',animais:[]});
+  T.push({id:'g2',kind:'compra',data:HOJE,cat:'est',titulo:'Compra de implantes (Sincrogest no mínimo)',trilho:'gestao',res:'navegar',btn:'Abrir pedido',quem:'Saldo 30 un · mínimo 30 un',destino:'Pedidos › Novo pedido (implantes)',origem:'Estoque',st:'p',animais:[]});
+  T.push({id:'g3',kind:'doc',data:HOJE,cat:'ges',titulo:'Documento fiscal pendente',trilho:'gestao',res:'informativo',btn:'Dispensar',quem:'Nota do fornecedor Agro Vet sem lançamento',destino:'Financeiro › Documentos',origem:'Financeiro',st:'p',animais:[]});
+  /* próximos dias */
+  let fs=0;const F=(off,kind,lote,ani,o={})=>{T.push(mk('f'+(++fs),kind,off,{animais:ani,lote,...o}))};
+  F(1,'parto',LPP,['2611']);F(1,'cio14',L2,['2520','2523','2527']);F(1,'pev',L1,['2338','2341']);
+  F(2,'iatf11',LR2,BR(4160,12,2),{proto:'Recria 2'});F(2,'ibr',LSE,BR(2700,14,3));F(2,'pesleite',L1,BR(2200,24,3),{quem_fix:`${L1} · 24 vacas`});
+  F(3,'b19',LBZ,BR(5111,6,3),{noun:'bezerras elegíveis (3–8 meses)'});F(3,'cio14',L2,BR(2530,4,3));
+  F(4,'desmama',LBZ,BR(5100,3,2));F(4,'cmt',L1,[]);
+  F(5,'iatf7',L2,BR(2540,8,3),{proto:'Lote 02 – Média'});
+  F(6,'secagem',LSE,['2420','2425']);
+  F(7,'pesagem',LBZ,BR(5101,15,2));F(7,'iatf9',L2,BR(2540,8,3),{proto:'Lote 02 – Média'});F(7,'parto',LPP,['2615']);
+  F(9,'iatf11',L2,BR(2540,8,3),{proto:'Lote 02 – Média'});F(9,'pesleite',L1,BR(2200,24,3),{quem_fix:`${L1} · 24 vacas`});
+  F(11,'cio14',L2,['2550','2553','2556']);F(12,'cmt',L1,[]);
+  F(14,'bst',L1,BR(2400,19,3));F(14,'pesagem',LBZ,BR(5101,15,2));F(16,'pesleite',L1,BR(2200,24,3),{quem_fix:`${L1} · 24 vacas`});F(16,'parto',LPP,['2618']);
+  F(19,'secagem',LSE,['2430','2433']);F(21,'pesagem',LBZ,BR(5101,15,2));F(23,'pesleite',L1,BR(2200,24,3),{quem_fix:`${L1} · 24 vacas`});
+  F(28,'pesagem',LBZ,BR(5101,15,2));F(30,'pesleite',L1,BR(2200,24,3),{quem_fix:`${L1} · 24 vacas`});
+  F(37,'afo',null,[],{quem_fix:'136 animais (data definida pela defesa sanitária estadual · editável)'});
+  T[T.length-1].animais=[];T[T.length-1].insL=[S_INS('afo',136,'Aftosa: 136 doses')];
+  /* histórico (só alimenta as bolinhas do calendário) */
+  const ks=['cio14','pesagem','pev','cmt','pesleite','secagem','desmama'];
+  for(let o=-28;o<=-9;o++){const n=1+((o*o+3)%3);for(let i=0;i<n;i++){const kd=ks[(Math.abs(o)*3+i*7)%ks.length];const t=mk('h'+Math.abs(o)+i,kd,o,{animais:['x'],lote:L1});t.hist=1;t.st='f';t.feitoEm=t.data;T.push(t)}}
   return T;
 }
 
 
 /* ───────── estado (persistido; F5 preserva) ───────── */
-const KEY='cowdata-agenda-mock2-r1';
+const KEY='cowdata-agenda-mock2-r2';
 let S;
 function seed(){
   const est={};for(const k in EST0)est[k]={...EST0[k],fr:EST0[k].fr.map(f=>({...f}))};
-  const bstAptos=BR(4100,26);
-  S={v:1,tasks:seedTasks(),est,seq:100,comunic:true,
-    bst:{aptos:bstAptos,excl:[
-      {n:'4188',motivo:'Menos de 60 dias em leite (DEL 41)'},{n:'4191',motivo:'Mastite em tratamento'},{n:'4197',motivo:'Prenhe de 8 meses (secagem próxima)'},
-      {n:'4203',motivo:'Menos de 60 dias em leite (DEL 52)'},{n:'4206',motivo:'Produção abaixo de 18 L/dia'},{n:'4212',motivo:'Mastite em tratamento'},
-      {n:'4215',motivo:'Menos de 60 dias em leite (DEL 35)'},{n:'4224',motivo:'Prenhe de 8 meses (secagem próxima)'},{n:'4230',motivo:'Produção abaixo de 18 L/dia'},{n:'4233',motivo:'Excluída manualmente'}],
-      incluir:['4206','4230','4233','4197','4224']},
+  S={v:2,tasks:seedTasks(),est,seq:100,comunic:true,log:[],
+    bst:{aptos:BR(2400,19,3),excl:[
+      {n:'2301',motivo:'DEL 41 (menos de 60 dias em leite)'},{n:'2318',motivo:'DEL 52 (menos de 60 dias em leite)'},
+      {n:'2325',motivo:'Mastite em tratamento'},{n:'2352',motivo:'DEL 35 (menos de 60 dias em leite)'},{n:'2358',motivo:'Excluída manualmente pelo veterinário'}],incluir:[]},
     agend:[],cand:null};
 }
-function load(){try{const j=localStorage.getItem(KEY);if(j){const o=JSON.parse(j);if(o&&o.v===1){S=o;return}}}catch(e){}seed()}
+function load(){try{const j=localStorage.getItem(KEY);if(j){const o=JSON.parse(j);if(o&&o.v===2){S=o;return}}}catch(e){}seed()}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
 const byId=id=>S.tasks.find(t=>t.id===id);
 const clone=o=>JSON.parse(JSON.stringify(o));
+const pessoa=id=>PESSOAS.find(p=>p.id===id)||PESSOAS[0];
+
+/* log de auditoria imutável: nunca apaga; estorno cria nova entrada e risca a original */
+function lg(o){
+  const e={id:++S.seq,dia:HOJE,hora:hm(),quem:USER,...o};
+  S.log.push(e);save();return e;
+}
+const lgQuando=e=>`${fmt(e.dia)} ${e.hora}`;
 
 /* ───────── consultas ───────── */
 const isCampo=t=>t.trilho==='campo';
@@ -785,16 +912,22 @@ function counts(){
   const g={};hj.forEach(t=>{const k=base(t);g[k]=g[k]||{p:0,f:0};g[k][t.st]++});
   const ks=Object.values(g);
   const N=ks.filter(x=>x.p===0&&x.f>0).length,M=ks.length;
+  const hojePend=ks.filter(x=>x.p>0).length;
   const px=S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.data>HOJE&&t.data<=add(HOJE,7));
   const restam=at.length+hj.filter(t=>t.st==='p').length;
-  return {at:at.length,N,M,px:px.length,pxCrit:px.filter(t=>t.crit).length,restam,maxAt:at.reduce((m,t)=>Math.max(m,diff(HOJE,t.data)),0)};
+  return {at:at.length,N,M,hojePend,px:px.length,pxCrit:px.filter(t=>t.crit).length,restam,maxAt:at.reduce((m,t)=>Math.max(m,diff(HOJE,t.data)),0)};
 }
 function needs(){
   const lim=add(HOJE,7),m={};
-  S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.data<=lim&&t.ins).forEach(t=>{m[t.ins.id]=(m[t.ins.id]||0)+t.ins.q});
-  return Object.entries(m).map(([id,q])=>({id,need:q,have:S.est[id].saldo,falta:q-Math.max(0,S.est[id].saldo)})).filter(x=>x.falta>0).sort((a,b)=>b.falta-a.falta);
+  S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.data<=lim&&t.insL).forEach(t=>t.insL.forEach(i=>{m[i.id]=(m[i.id]||0)+i.q}));
+  return Object.entries(m).map(([id,q])=>{const have=Math.max(0,estSaldo(S.est[id]));return {id,need:q,have,falta:q-have}}).filter(x=>x.falta>0).sort((a,b)=>b.falta-a.falta);
 }
-const abaixoMin=()=>Object.entries(S.est).filter(([k,e])=>e.saldo<e.min).map(([id,e])=>({id,...e}));
+const abaixoMin=()=>Object.entries(S.est).filter(([k,e])=>estSaldo(e)<e.min).map(([id,e])=>({id,...e,saldo:estSaldo(e)}));
+function avisosValidade(){
+  const out=[];
+  Object.entries(S.est).forEach(([id,e])=>e.fr.forEach(f=>{if(!f.val)return;if(vencido(f))out.push({id,f,tipo:'vencido'});else if(venceEm(f)<=30)out.push({id,f,tipo:'vence'})}));
+  return out;
+}
 function match(t){
   if(R.cat.length&&!R.cat.includes(t.cat))return false;
   if(R.q){const q=R.q.toLowerCase();const hay=(t.titulo+' '+(t.quem||'')+' '+(t.lote||'')+' '+(t.animais||[]).join(' ')+' '+(CATS[t.cat]?.n||'')).toLowerCase();if(!hay.includes(q))return false}
@@ -828,7 +961,7 @@ function buildHash(r){
   if(r.aba)p.set('aba',r.aba);
   const s=p.toString();return '#/agenda'+(s?'?'+s:'');
 }
-let ui={loading:true,erroCarga:false,erroRede:false,amanha:false,concl:false,sel:false,selIds:new Set(),run:null,updAt:Date.now()-2*60000,barAberta:false,spin:false,opener:null,mini:'',D:{},focusNext:null,dispBanner:false};
+let ui={loading:true,erroRede:false,dispBanner:false,amanha:false,concl:false,sel:false,selIds:new Set(),run:null,updAt:Date.now()-2*60000,filtrosAberto:false,spin:false,opener:null,mini:'',D:{},dedup:0};
 function go(patch,opt={}){
   const nr={...R,...patch};
   if(patch.visao&&patch.visao!==R.visao&&!('dia' in patch))nr.dia='';
@@ -855,14 +988,14 @@ function buildShell(){
   $('#sb').innerHTML=`
    <button class="fechar" id="sbX" aria-label="Fechar menu">${ic('x',20)}</button>
    <button class="recolher" data-a="stub" data-l="Recolher menu" aria-label="Recolher menu" title="Recolher menu">${ic('chevrons-left',12)}</button>
-   <div class="logo"><div>${MARK}<span class="wm"><span class="c">Cow</span><span class="d">Data</span></span><p class="fz">Jairo Nasser</p></div></div>
+   <div class="logo"><div>${MARK}<span class="wm"><span class="c">Cow</span><span class="d">Data</span></span><p class="fz">Estreito Ponte de Pedra</p></div></div>
    <nav aria-label="Navegação principal"><div class="navin">${NAV.map(([g,its])=>`<div><p class="gl">${g}</p>${its.map(([l,i,h])=>`<a class="nl" href="${h||'#/agenda'}" ${h?'aria-current="page"':''} data-a="${h?'nada':'stub'}" data-l="${l}" title="${l}">${i==='cow'?COW:ic(i,16)}${l}</a>`).join('')}</div>`).join('')}</div></nav>
    <div class="portal"><a href="#/agenda" data-a="stub" data-l="Insights">${ic('chart-line',16)}<span>Insights</span>${ic('external-link',12)}</a></div>
    <div class="portal"><a href="#/agenda" data-a="stub" data-l="Administração">${ic('building-2',16)}<span>Administração</span>${ic('external-link',12)}</a></div>
    <div class="foot"><div class="st"><span class="pulse-dot"></span>API conectada</div>
-    <div class="us"><div>${ic('circle-user',13)} Usuário de teste (local)</div><button data-a="stub" data-l="Trocar de conta">${ic('log-out',12)} Trocar de conta</button></div><p>v1.0.0 · Sprint 1</p></div>`;
+    <div class="us"><div>${ic('circle-user',13)} Jairo Nasser</div><button data-a="stub" data-l="Trocar de conta">${ic('log-out',12)} Trocar de conta</button></div><p>v1.0.0 · Sprint 1</p></div>`;
   $('#mbar').innerHTML=`<button class="mb" id="sbOpen" aria-label="Abrir menu" aria-expanded="false" aria-controls="sb">${ic('menu',22)}</button>
-   <span class="wm"><span class="c">Cow</span><span class="d">Data</span></span><span class="fz">· Jairo Nasser</span>
+   <span class="wm"><span class="c">Cow</span><span class="d">Data</span></span><span class="fz">· Estreito Ponte de Pedra</span>
    <div class="mt"><button data-a="tema" aria-label="Alternar tema">${ic('sun',16)}</button><button data-a="stub" data-l="Notificações" aria-label="Notificações: 23">${ic('bell',18)}<span class="n">23</span></button></div>`;
   $('#topact').innerHTML=`<a class="news" href="#/agenda" data-a="stub" data-l="News" title="News — notícias de pecuária leiteira">${ic('newspaper',15)}News</a>
    <button class="btn-ghost tema" data-a="tema" id="temaBtn" title="Alternar tema"></button>
@@ -878,60 +1011,67 @@ function setTema(t){document.documentElement.setAttribute('data-theme',t);try{lo
 
 /* ───────── cabeçalho e 3 números ───────── */
 function updLabel(){const m=Math.max(0,Math.round((Date.now()-ui.updAt)/60000));return m<1?'Atualizado agora':`Atualizado há ${m} min`}
+function updHora(){const d=new Date(ui.updAt);return `${p2(d.getHours())}:${p2(d.getMinutes())}`}
 function renderHdr(){
-  $('#hdr').innerHTML=`<div><h1>${ic('calendar',24)}Agenda</h1><p class="sub"><b class="dl">${fmtLong(HOJE)} de 2026</b><b class="ds">ter, 29/09/2026</b><span class="fz"> · Fazenda Jairo Nasser</span></p></div>
-   <div class="pgacts"><button class="btn pri" data-a="nova" data-fk="nova">${ic('plus',16)}Nova tarefa</button>
+  $('#hdr').innerHTML=`<div><h1>${ic('calendar',28)}Agenda</h1><p class="sub"><b class="dl">${fmtLong(HOJE)} de 2026</b><b class="ds">ter, 29/09/2026</b><span class="fz"> · ${FAZENDA}</span></p></div>
+   <div class="pgacts"><button class="btn gold" data-a="nova" data-fk="nova">${ic('plus',16)}Nova tarefa</button>
    <button class="btn" data-a="exportar" data-fk="exportar" aria-haspopup="menu" aria-expanded="false">${ic('download',16)}Exportar</button>
    <button class="upd" data-a="atualizar" id="updBtn" title="Recarregar a agenda">${ic('refresh-cw',14,ui.spin?'spin':'')}<span>${ui.spin?'Atualizando…':updLabel()}</span></button></div>`;
 }
 function renderNums(){
-  const c=counts(),off=ui.erroCarga||ui.loading;
+  const c=counts(),off=ui.loading;
   const V=x=>off?'—':x;
-  const at=c.at,pctv=c.M?c.N/c.M:0;
+  const pctv=c.M?c.N/c.M:0;
   $('#nums').innerHTML=`
-   <button class="num at ${at?'':'zero'}" data-a="filtro" data-f="atrasadas" aria-pressed="${R.filtro==='atrasadas'}" aria-label="Atrasadas: ${V(at)}. Mostrar só as atrasadas">
-     <span class="lbl">${at?ic('triangle-alert',13):ic('circle-check',13)}Atrasadas</span><span class="v">${V(at)}</span>
-     <span class="s">${off?'':at?`a mais antiga: há ${c.maxAt} ${c.maxAt===1?'dia':'dias'}`:'nenhuma pendente'}</span></button>
-   <button class="num ho" data-a="filtro" data-f="hoje" aria-pressed="${R.filtro==='hoje'}" aria-label="Hoje: ${c.N} de ${c.M} feitas. Mostrar só as de hoje">
-     <span class="lbl">${ic('calendar-check',13)}Hoje</span><span class="v">${off?'—':`${c.N}<small>de ${c.M}</small>`}</span>
-     <span class="s">${off?'':c.restam===0&&c.M>0?'Dia fechado':`${Math.max(0,c.M-c.N)} de hoje por fazer`}</span>
+   <button class="num at ${c.at?'':'zero'}" data-a="filtro" data-f="atrasadas" aria-pressed="${R.filtro==='atrasadas'}" aria-label="Atrasadas: ${V(c.at)}. Mostrar só as atrasadas">
+     <span class="lbl">${c.at?ic('triangle-alert',13):ic('circle-check',13)}Atrasadas</span><span class="v">${V(c.at)}</span>
+     <span class="s">${off?'':c.at?`a mais antiga: há ${c.maxAt} ${c.maxAt===1?'dia':'dias'}`:'nenhuma'}</span></button>
+   <button class="num ho" data-a="filtro" data-f="hoje" aria-pressed="${R.filtro==='hoje'}" aria-label="Hoje: ${c.hojePend} por fazer, ${c.N} de ${c.M} feitas. Mostrar só as de hoje">
+     <span class="lbl">${ic('calendar-check',13)}Hoje</span><span class="v">${V(c.hojePend)}<small>por fazer</small></span>
+     <span class="s">${off?'':c.restam===0&&c.M>0?'Dia fechado':`${c.N} de ${c.M} feitas`}</span>
      ${off?'':`<span class="prog" aria-hidden="true"><i style="transform:scaleX(${pctv})"></i></span>`}</button>
    <button class="num px" data-a="visao" data-v="semana" aria-label="Próximos 7 dias: ${V(c.px)} tarefas. Abrir visão semana">
      <span class="lbl">${ic('calendar-days',13)}<span class="lg-d">Próximos 7 dias</span><span class="lg-m">7 dias</span></span><span class="v">${V(c.px)}</span>
      <span class="s">${off?'':c.pxCrit?`${c.pxCrit} críticas (IATF, partos)`:'sem críticas'}</span></button>`;
+  const g=S.tasks.filter(t=>pend(t)&&t.trilho==='gestao');
+  const conta=g.find(t=>t.kind==='conta');
+  $('#gchip').innerHTML=off||!g.length?'':`<button class="gchip" data-a="gav" data-gv="gestao" data-fk="gav:gestao-chip">${ic('landmark',16)}<span><b>Gestão:</b> ${conta?`1 conta vence hoje · ${brl(conta.valor)}`:'sem contas hoje'}${g.length>(conta?1:0)?` · +${g.length-(conta?1:0)} ${g.length-(conta?1:0)===1?'item':'itens'}`:''}</span>${ic('chevron-right',16)}</button>`;
 }
 
-/* ───────── barra de visão ───────── */
+/* ───────── barra de visão: 4 controles ───────── */
 function renderBar(){
-  const nf=(R.cat.length?1:0)+(R.q?1:0)+(R.agrupar!=='tarefa'?1:0);
-  const bar=$('#bar');bar.className='bar'+(ui.barAberta?' abre':'');
+  const nf=(R.cat.length?1:0)+(R.q?1:0);
+  const bar=$('#bar');bar.className='bar'+(ui.filtrosAberto?' abre':'');
+  const act=R.cat.length||R.q||R.filtro;
   bar.innerHTML=`<div class="r1">
     <div class="seg2" role="group" aria-label="Visão">${[['hoje','Hoje'],['semana','Semana'],['mes','Mês']].map(([v,l])=>`<button data-a="visao" data-v="${v}" aria-pressed="${R.visao===v}">${l}</button>`).join('')}</div>
-    ${R.visao==='hoje'?`<div class="agr" role="group" aria-label="Agrupar por"><span class="lbl">Agrupar</span><div class="seg2 sm">${[['tarefa','Tarefa'],['lote','Lote'],['categoria','Categoria']].map(([v,l])=>`<button data-a="agrupar" data-g="${v}" aria-pressed="${R.agrupar===v}">${l}</button>`).join('')}</div></div>`:''}
+    ${R.visao==='hoje'?`<label class="agr"><span class="lbl">Agrupar</span><select id="agr" aria-label="Agrupar por"><option value="tarefa" ${R.agrupar==='tarefa'?'selected':''}>Tarefa</option><option value="lote" ${R.agrupar==='lote'?'selected':''}>Lote</option><option value="categoria" ${R.agrupar==='categoria'?'selected':''}>Categoria</option></select></label>`:''}
+    <button class="btn filtros-b" data-a="filtros" aria-expanded="${ui.filtrosAberto}" aria-controls="fpanel" data-fk="filtros">${ic('list-filter',16)}Filtros${nf?` (${nf})`:''} ${ic(ui.filtrosAberto?'chevron-down':'chevron-right',14)}</button>
     <div class="busca">${ic('search',16)}<label class="sr" for="q">Buscar tarefa, animal ou lote</label><input id="q" type="search" placeholder="Nº do animal, lote, tarefa…" value="${esc(R.q)}" autocomplete="off"></div>
-    <button class="btn ghost filtros-t" data-a="barra" aria-expanded="${ui.barAberta}">${ic('list-filter',16)}Filtros${nf?` (${nf})`:''} ${ic(ui.barAberta?'chevron-down':'chevron-right',14)}</button>
    </div>
-   <div class="r2"><div class="chips" role="group" aria-label="Categorias">${CAT_CHIPS.map(c=>`<button class="chip" style="--c:${catVar(c)}" data-a="cat" data-c="${c}" aria-pressed="${R.cat.includes(c)}"><i class="dot"></i>${CATS[c].n}</button>`).join('')}
-    ${R.cat.length||R.q||R.filtro?`<button class="btn ghost sm" data-a="limpar">${ic('x',14)}Limpar filtros</button>`:''}</div>
-    <span class="sep" aria-hidden="true"></span>
-    <div class="chips" role="group" aria-label="Painéis">${[['reproducao','Reprodução'],['bst','BST'],['estoque','Estoque']].map(([g,l])=>`<button class="chip gav" data-a="gav" data-gv="${g}" data-fk="gav:${g}">${l} ${ic('chevron-right',14)}</button>`).join('')}</div></div>`;
+   <div class="r2" id="fpanel"><div class="grp"><span class="lbl">Categorias</span><div class="chips" role="group" aria-label="Categorias">${CAT_CHIPS.map(c=>`<button class="chip" style="--c:${catVar(c)}" data-a="cat" data-c="${c}" aria-pressed="${R.cat.includes(c)}"><i class="dot"></i>${CATS[c].n}</button>`).join('')}</div></div>
+    <div class="grp"><span class="lbl">Painéis</span><div class="chips" role="group" aria-label="Painéis">${[['reproducao','Reprodução'],['bst','BST'],['estoque','Estoque']].map(([g,l])=>`<button class="chip gav" data-a="gav" data-gv="${g}" data-fk="gav:${g}">${l} ${ic('chevron-right',14)}</button>`).join('')}</div></div>${act?`<button class="btn ghost sm" data-a="limpar">Limpar filtros</button>`:''}</div>
+   ${act&&!ui.filtrosAberto?`<div class="fsum"><span class="lbl">Filtrando</span>${R.filtro?`<button class="chip" style="--c:var(--vinho-light)" data-a="filtro" data-f="${R.filtro}">${R.filtro==='atrasadas'?'Só atrasadas':'Só de hoje'} ${ic('x',12)}</button>`:''}${R.cat.map(c=>`<button class="chip" style="--c:${catVar(c)}" data-a="cat" data-c="${c}" aria-label="Remover filtro ${CATS[c].n}"><i class="dot"></i>${CATS[c].n} ${ic('x',12)}</button>`).join('')}${R.q?`<span class="chip" style="--c:var(--vinho-light)">“${esc(R.q)}”</span>`:''}<button class="btn ghost sm" data-a="limpar">Limpar filtros</button></div>`:''}`;
 }
 function renderComun(){
   const el=$('#comun');
-  if(!S.comunic||ui.erroCarga||ui.loading){el.innerHTML='';return}
+  if(!S.comunic||ui.loading){el.innerHTML='';return}
   el.innerHTML=`<div class="comun" role="region" aria-label="Comunicados"><span class="t">${ic('info',16)}<span><b>2 comunicados:</b> nova dieta do Lote 01 vale a partir de 01/10 · alerta de sobra no Lote 03 (+12%)</span></span>
-   <button class="btn ghost sm" data-a="stub" data-l="Alimentação › Dieta › Lote 01 – Alta">Ir para Dieta</button>
+   <button class="btn ghost sm" data-a="stub" data-l="Alimentação › Dieta › Lote 01 – Alta produção">Ir para Dieta</button>
    <button class="btn ghost sm" data-a="dispensar-com" aria-label="Dispensar comunicados">${ic('x',14)}Dispensar</button></div>`;
+}
+function renderBanner(){
+  const el=$('#banner');
+  el.innerHTML=ui.dispBanner?`<div class="callout warn banner" role="alert">${ic('wifi-off',18)}<span><b>Sem conexão</b> · dados de ${updHora()} · você continua conectado e o que fizer fica guardado neste aparelho.</span><button class="btn sm" data-a="retry" data-fk="retry">${ic('refresh-cw',14,ui.spin?'spin':'')}Tentar de novo</button></div>`:'';
 }
 
 /* ───────── linha de tarefa ───────── */
 function prim(t){
-  if(t.res==='navegar')return {l:t.btn||'Abrir',i:'arrow-right',cls:'pri',a:'nav'};
-  if(t.res==='informativo')return {l:t.btn||'Dispensar',i:'check',cls:'',a:'nav'};
-  if(t.res==='decidir')return {l:t.btn||'Decidir',i:'shuffle',cls:'pri',a:'gaveta'};
-  if(t.gaveta==='inseminar'||t.gaveta==='pesagem')return {l:t.btn,i:t.gaveta==='pesagem'?'scale':'syringe',cls:'gold',a:'gaveta'};
-  if(t.gaveta)return {l:'Feito',i:'check',cls:'gold',a:'gaveta',ch:1};
-  return {l:'Feito',i:'check',cls:'gold',a:'feito'};
+  if(t.res==='navegar')return {l:t.btn||'Abrir',i:'arrow-right',a:'nav'};
+  if(t.res==='informativo')return {l:t.btn||'Dispensar',i:'check',a:'nav'};
+  if(t.res==='decidir')return {l:'Decidir',i:'shuffle',a:'gaveta'};
+  if(t.gaveta)return {l:'Feito',i:'check',a:'gaveta',ch:1};
+  return {l:'Feito',i:'check',a:'feito'};
 }
 function pills(t){
   let h='';
@@ -939,24 +1079,31 @@ function pills(t){
   if(pend(t)&&d>0)h+=`<span class="pl at">${ic('triangle-alert',12)}Atrasada · há ${d} ${d===1?'dia':'dias'}</span>`;
   if(t.adiadaDe&&pend(t))h+=`<span class="pl wa">${ic('clock',12)}Adiada de ${fmt(t.adiadaDe)}</span>`;
   if(t.manual)h+=`<span class="pl man">Manual${t.serie?' · repete':''}</span>`;
-  if(t.splitDe===undefined&&t.parcial)h+=`<span class="pl in">${ic('info',12)}${t.n} restantes</span>`;
+  if(t.parcial&&pend(t))h+=`<span class="pl in">${ic('info',12)}${t.animais.length} restantes</span>`;
   return h;
 }
-const ABBR={'IATF':'Inseminação artificial em tempo fixo','PEV':'Período voluntário de espera (dias sem inseminar após o parto)','BST':'Somatotropina bovina','CMT':'California Mastitis Test (teste de mastite)','DEL':'Dias em leite'};
-function abbr(h){return h.replace(/\b(IATF|PEV|BST|CMT)\b/g,(m)=>`<abbr title="${ABBR[m]}">${m}</abbr>`)}
+function glBtn(t){
+  const txt=t.titulo+' '+(t.sub||'');const ks=GLOS_RE.filter(([k,re])=>re.test(txt)).map(x=>x[0]);
+  if(!ks.length)return '';
+  return `<button class="glb" data-a="gl" data-k="${ks.join(',')}" aria-label="O que significa ${ks.join(', ')}?" aria-haspopup="true" aria-expanded="false">${ic('info',14)}</button>`;
+}
+const insTxt=t=>(t.insL||[]).map(i=>i.txt).join(' · ');
 function rowHTML(t,o={}){
   const p=prim(t),c=CATS[t.cat]||CATS.ati;
-  const dd=t.animais&&t.animais.length&&t.kind==='iatf11'?(t.iaFeitas&&t.iaFeitas.length?`${t.iaFeitas.length} de ${t.animais.length} inseminadas`:''):'';
+  const dd=t.kind==='iatf11'&&t.iaFeitas&&t.iaFeitas.length?`${t.iaFeitas.length} de ${t.animais.length} inseminadas`:'';
+  const ins=insTxt(t);
   return `<article class="row${o.novo?' novo':''}" data-id="${t.id}" data-row="${t.id}" style="--c:${catVar(t.cat)}" tabindex="0" aria-label="${esc(t.titulo)}. ${esc(t.quem||'')}. Enter abre detalhes, F marca Feito.">
    <label class="ck" style="${t.bulk?'':'visibility:hidden'}"><input type="checkbox" data-a="ck" data-id="${t.id}" ${t.bulk?'':'disabled'} ${ui.selIds.has(t.id)?'checked':''} aria-label="Selecionar ${esc(t.titulo)}"></label>
    <span class="cic" title="${c.n}">${ic(c.i,17)}</span>
-   <div class="rt"><div class="tt">${abbr(esc(t.titulo))}</div>
-    <div class="mt"><span class="cat-m" style="color:var(--text-muted)">${ic(c.i,14)}<span class="sr">${c.n}</span></span>${t.quem?`<span>${esc(t.quem)}</span>`:''}${t.ins?`<span class="ins">${ic('package-open',13)}${esc(t.ins.txt)}</span>`:''}${dd?`<span class="ins">${ic('syringe',13)}${dd}</span>`:''}${t.sub?`<span>${esc(t.sub)}</span>`:''}${t.obs?`<span>${esc(t.obs)}</span>`:''}${pills(t)}</div></div>
-   <div class="acts"><button class="btn ${p.cls} btn-feito" data-a="prim" data-id="${t.id}" data-fk="p:${t.id}" aria-label="${p.l}${p.ch?' — abre a confirmação':''}: ${esc(t.titulo)}">${ic(p.i,16)}<span>${p.l}</span>${p.ch?ic('chevron-right',14):''}</button>
+   <div class="rt"><div class="tt">${esc(t.titulo)}${glBtn(t)}</div>
+    <div class="mt"><span class="cat-m" style="color:var(--text-muted)">${ic(c.i,14)}<span class="sr">${c.n}</span></span>${t.quem?`<span>${esc(t.quem)}</span>`:''}${dd?`<span class="ins">${ic('syringe',13)}${dd}</span>`:''}${t.sub?`<span>${esc(t.sub)}</span>`:''}${t.obs?`<span>${esc(t.obs)}</span>`:''}</div>
+    ${ins?`<div class="mt"><span class="ins">${ic('package-open',13)}${esc(ins)}</span></div>`:''}
+    <div class="mt">${pills(t)}</div></div>
+   <div class="acts"><button class="btn btn-feito" data-a="prim" data-id="${t.id}" data-fk="p:${t.id}" aria-label="${p.l}${p.ch?' — abre a gaveta':''}: ${esc(t.titulo)}">${ic(p.i,16)}<span>${p.l}</span>${p.ch?ic('chevron-right',14):''}</button>
     <button class="more" data-a="menu" data-id="${t.id}" data-fk="m:${t.id}" aria-haspopup="menu" aria-expanded="false" aria-label="Mais ações: ${esc(t.titulo)}">${ic('ellipsis',20)}</button></div></article>`;
 }
+const CAT_ORDER=['rep','pro','san','rec','ali','est','ges','fin','ati'];
 function groupBlock(list,by){
-  if(by==='tarefa')return list.map(t=>rowHTML(t)).join('');
   const key=by==='lote'?t=>t.lote||'Sem lote específico':t=>t.cat;
   const g={};list.forEach(t=>{(g[key(t)]=g[key(t)]||[]).push(t)});
   const keys=Object.keys(g).sort((a,b)=>by==='lote'?a.localeCompare(b,'pt'):CAT_ORDER.indexOf(a)-CAT_ORDER.indexOf(b));
@@ -964,16 +1111,22 @@ function groupBlock(list,by){
     const arr=g[k].sort((a,b)=>a.data===b.data?ord(a,b):(a.data>b.data?1:-1));
     const an=arr.reduce((s,t)=>s+(t.animais?t.animais.length:0),0);
     const at=arr.filter(t=>diff(HOJE,t.data)>0).length;
-    const head=by==='lote'?`<span class="cic" style="--c:var(--cat-recria)">${ic('users',16)}</span><b>${esc(k)}</b><span class="n">${arr.length} ${arr.length===1?'tarefa':'tarefas'}${an?` · ${an} animais`:''}${at?` · ${at} atrasada${at>1?'s':''}`:''}</span>`
+    const tot=by==='lote'?(LOTES.find(l=>l[0]===k)||[0,0])[1]:0;
+    const head=by==='lote'?`<span class="cic" style="--c:var(--cat-recria)">${ic('users',16)}</span><b>${esc(k)}</b><span class="n">${tot?`${tot} animais no lote · `:''}${arr.length} ${arr.length===1?'tarefa':'tarefas'}${at?` · ${at} atrasada${at>1?'s':''}`:''}</span>`
       :`<span class="cic" style="--c:${catVar(k)}">${ic(CATS[k].i,16)}</span><b>${CATS[k].n}</b><span class="n">${arr.length} ${arr.length===1?'tarefa':'tarefas'}${at?` · ${at} atrasada${at>1?'s':''}`:''}</span>`;
     return `<div class="gh" role="heading" aria-level="3">${head}</div>${arr.map(t=>rowHTML(t)).join('')}`;
   }).join('');
 }
-const CAT_ORDER=['rep','pro','san','rec','ali','est','ges','fin','ati'];
 
 /* ───────── visão Hoje ───────── */
-function proxima(depois){
-  return S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.data>depois).sort(ord)[0];
+function proxima(depois){return S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.data>depois).sort(ord)[0]}
+function fechadoExtra(){
+  const conta=S.tasks.find(t=>pend(t)&&t.kind==='conta');
+  const dec=S.tasks.filter(t=>pend(t)&&t.trilho==='alerta').length;
+  const bits=[];
+  if(conta)bits.push(`1 conta vence hoje (${brl(conta.valor)})`);
+  if(dec)bits.push(`${dec} ${dec===1?'decisão pendente':'decisões pendentes'}`);
+  return bits.length?`<div class="callout" style="margin-top:8px">${ic('landmark',16)}<span>Ainda hoje, fora do campo: ${bits.join(' · ')}.</span></div>`:'';
 }
 function viewHoje(){
   const dia=R.dia||HOJE,ehHoje=dia===HOJE,c=counts();
@@ -984,10 +1137,10 @@ function viewHoje(){
   const gest=all.filter(t=>pend(t)&&t.trilho==='gestao'&&(ehHoje?t.data<=add(HOJE,7):t.data===dia));
   const fAt=atras.filter(match),fHj=doDia.filter(match),fAl=alertas.filter(match);
   const showAt=R.filtro!=='hoje',showHj=R.filtro!=='atrasadas';
-  const doneDia=all.filter(t=>t.st!=='p'&&isCampo(t)&&(ehHoje?t.feitoEm===HOJE:t.data===dia&&t.feitoEm===HOJE));
+  const doneDia=all.filter(t=>t.st!=='p'&&isCampo(t)&&t.feitoEm===HOJE);
   const totalDia=atras.length+doDia.length+alertas.length+all.filter(t=>isCampo(t)&&t.data===dia&&t.st!=='p').length;
   const restam=atras.length+doDia.length;
-  const dataTitulo=ehHoje?`<span class="d">· ${fmtLong(HOJE)}</span>`:`<span class="d">· ${fmtLong(dia)}</span>`;
+  const dataTitulo=`<span class="d">· ${fmtLong(dia)}</span>`;
   let body='';
   const lista=[...(showAt?fAt:[]),...(showHj?fHj:[])];
   const fech=ehHoje&&restam===0&&c.M>0;
@@ -995,15 +1148,15 @@ function viewHoje(){
   if(fech){
     const pr=proxima(HOJE);
     body+=`<div class="fechado" role="status"><div class="big">${ic('circle-check',28)}Dia fechado — ${c.N} de ${c.M}</div>
-     <p>Todas as tarefas de campo de hoje foram feitas${lastHora()?` (última às ${lastHora()})`:''}. ${pr?`Próxima tarefa: <b>${rel(pr.data)}</b> · ${esc(pr.titulo)}.`:'Nada mais agendado.'}</p>
+     <p>Todas as tarefas de campo de hoje foram resolvidas${lastHora()?` (última às ${lastHora()})`:''}. ${pr?`Próxima tarefa: <b>${rel(pr.data)}</b> · ${esc(pr.titulo)}.`:'Nada mais agendado.'}</p>${fechadoExtra()}
      <div class="btns"><button class="btn" data-a="visao" data-v="semana">${ic('calendar-days',16)}Ver semana</button><button class="btn ghost" data-a="nova">${ic('plus',16)}Nova tarefa</button></div></div>`;
   }else if(totalDia===0||(restam===0&&!ehHoje&&!doneDia.length&&!alertas.length)){
     const pr=proxima(dia);
     body+=`<div class="vazio"><div class="big">${ic('inbox',22)}Nada para fazer ${ehHoje?'hoje':'em '+fmtLong(dia)}</div>
-     <p>${pr?`Próxima tarefa: <b>${rel(pr.data)}</b> · ${esc(pr.titulo)}${pr.quem?' · '+esc(pr.quem):''}.`:'Não há tarefas agendadas à frente.'}</p>
-     <div class="btns"><button class="btn pri" data-a="visao" data-v="semana">${ic('calendar-days',16)}Ver semana</button><button class="btn" data-a="nova">${ic('plus',16)}Nova tarefa</button>${ehHoje?'':`<button class="btn ghost" data-a="dia" data-d="${HOJE}">Voltar para hoje</button>`}</div></div>`;
+     <p>${pr?`Próxima tarefa: <b>${rel(pr.data)}</b> · ${esc(pr.titulo)}${pr.quem?' · '+esc(pr.quem):''}.`:'Não há tarefas agendadas à frente.'}</p>${ehHoje?fechadoExtra():''}
+     <div class="btns"><button class="btn" data-a="visao" data-v="semana">${ic('calendar-days',16)}Ver semana</button><button class="btn ghost" data-a="nova">${ic('plus',16)}Nova tarefa</button>${ehHoje?'':`<button class="btn ghost" data-a="dia" data-d="${HOJE}">Voltar para hoje</button>`}</div></div>`;
   }else if(!lista.length&&!fAl.length&&(R.cat.length||R.q||R.filtro)){
-    body+=`<div class="vazio"><div class="big">${ic('search',22)}Nenhuma tarefa com esses filtros</div><p>Há ${restam} tarefa${restam===1?'':'s'} de campo pendente${restam===1?'':'s'} fora do filtro.</p><div class="btns"><button class="btn pri" data-a="limpar">Limpar filtros</button></div></div>`;
+    body+=`<div class="vazio"><div class="big">${ic('search',22)}Nenhuma tarefa com esses filtros</div><p>Há ${restam} tarefa${restam===1?'':'s'} de campo por fazer fora do filtro.</p><div class="btns"><button class="btn pri" data-a="limpar">Limpar filtros</button></div></div>`;
   }else{
     if(R.agrupar==='tarefa'){
       if(showAt&&fAt.length)body+=`<div class="sec at">${ic('triangle-alert',14)}Atrasadas<span class="n">${fAt.length}</span></div>`+fAt.map(t=>rowHTML(t)).join('');
@@ -1011,26 +1164,28 @@ function viewHoje(){
     }else body+=groupBlock(lista,R.agrupar);
   }
   if(fAl.length&&R.filtro==='')body+=`<div class="sec">${ic('circle-alert',14)}Alertas e decisões — não contam para o Dia fechado<span class="n">${fAl.length}</span></div>`+fAl.map(t=>rowHTML(t)).join('');
-  if(gest.length&&ehHoje)body+=`<button class="gest" data-a="gav" data-gv="gestao" data-fk="gav:gestao">${ic('landmark',18)}<b>${gest.length} itens de gestão</b><span>contas, compras e patrimônio — fora da lista de campo</span><span class="mut">Ver ${ic('chevron-right',16)}</span></button>`;
-  const meta=ehHoje?`${restam} de campo pendente${restam===1?'':'s'}${atras.length?` · ${atras.length} atrasada${atras.length===1?'':'s'}`:''}`:`${doDia.length} de campo`;
+  if(gest.length&&ehHoje)body+=`<button class="gest" data-a="gav" data-gv="gestao" data-fk="gav:gestao">${ic('landmark',18)}<b>${gest.length} itens de gestão</b><span>contas, compras e documentos — fora da lista de campo</span><span class="mut">Ver ${ic('chevron-right',16)}</span></button>`;
+  const tot=c.at+c.hojePend;
+  const meta=ehHoje?(restam?`<b>${tot} por fazer</b> = ${c.hojePend} de hoje + ${c.at} atrasadas`:`0 por fazer`):`${doDia.length} de campo`;
   const selBtn=lista.some(t=>t.bulk)?`<button class="btn sm ${ui.sel?'pri':''}" data-a="selmode" aria-pressed="${ui.sel}" aria-label="${ui.sel?'Sair da seleção':'Selecionar várias'}">${ic('square-check',15)}<span>${ui.sel?'Sair da seleção':'Selecionar várias'}</span></button>`:'';
-  let html=`<section class="card hoje ${ui.sel?'sel':''}" id="hojeCard" aria-label="Hoje"><div class="hd"><h2>${ic('calendar-check',18)}Hoje ${dataTitulo}</h2><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span class="meta">${meta}</span>${selBtn}${ehHoje?'':`<button class="btn sm ghost" data-a="dia" data-d="${HOJE}">Voltar para hoje</button>`}</div></div>${body}</section>`;
+  let html=`<section class="card hoje ${ui.sel?'sel':''}" id="hojeCard" aria-label="Hoje"><div class="hd"><h2>${ic('calendar-check',18)}Hoje ${dataTitulo}</h2><div class="hdr-r"><span class="meta">${meta}</span>${selBtn}${ehHoje?'':`<button class="btn sm ghost" data-a="dia" data-d="${HOJE}">Voltar para hoje</button>`}</div></div>${body}</section>`;
   if(ehHoje){
     const am=all.filter(t=>pend(t)&&t.trilho!=='gestao'&&t.data===add(HOJE,1)&&match(t)).sort(ord);
     const cc=all.filter(t=>t.st!=='p'&&t.feitoEm===HOJE&&t.trilho!=='gestao'&&!t.hist);
-    html+=`<section class="card colapsa"><button class="ch" data-a="tg-am" aria-expanded="${ui.amanha}" aria-controls="am-b">${ic('chevron-right',16,'cv')}Amanhã <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-muted)">· ${fmtLong(add(HOJE,1))}</span><span class="cnt">${am.length} ${am.length===1?'tarefa':'tarefas'}</span></button>${ui.amanha?`<div class="body" id="am-b">${am.length?am.map(t=>rowHTML(t)).join(''):'<p class="vazio-sec">Nada agendado para amanhã.</p>'}</div>`:''}</section>`;
-    html+=`<section class="card colapsa"><div class="chw"><button class="ch" data-a="tg-cc" aria-expanded="${ui.concl}" aria-controls="cc-b">${ic('chevron-right',16,'cv')}Concluídos hoje<span class="cnt">${cc.length}</span></button>${cc.length>1?`<button class="btn sm ghost" data-a="desf-todos">${ic('undo-2',14)}Desfazer todos</button>`:''}</div>${ui.concl?`<div class="body" id="cc-b">${cc.length?cc.sort((a,b)=>(b.hora||'')>(a.hora||'')?1:-1).map(concRow).join(''):'<p class="vazio-sec">Nada concluído ainda hoje.</p>'}</div>`:''}</section>`;
+    html+=`<section class="card colapsa"><button class="ch" data-a="tg-am" aria-expanded="${ui.amanha}" aria-controls="am-b">${ic('chevron-right',16,'cv')}Amanhã <span class="sub-d">· ${fmtLong(add(HOJE,1))}</span><span class="cnt">${am.length} ${am.length===1?'tarefa':'tarefas'}</span></button>${ui.amanha?`<div class="body" id="am-b">${am.length?am.map(t=>rowHTML(t)).join(''):'<p class="vazio-sec">Nada agendado para amanhã.</p>'}</div>`:''}</section>`;
+    html+=`<section class="card colapsa"><div class="chw"><button class="ch" data-a="tg-cc" aria-expanded="${ui.concl}" aria-controls="cc-b">${ic('chevron-right',16,'cv')}Concluídos hoje<span class="cnt">${cc.length}</span></button><button class="btn sm ghost" data-a="gav" data-gv="historico" data-fk="gav:historico">${ic('file-text',14)}Histórico do dia</button>${cc.length>1?`<button class="btn sm ghost" data-a="desf-todos">${ic('undo-2',14)}Desfazer todos</button>`:''}</div>${ui.concl?`<div class="body" id="cc-b">${cc.length?cc.sort((a,b)=>(b.hora||'')>(a.hora||'')?1:-1).map(concRow).join(''):'<p class="vazio-sec">Nada concluído ainda hoje.</p>'}</div>`:''}</section>`;
   }
   return html;
 }
 function lastHora(){const l=S.tasks.filter(t=>t.st==='f'&&t.feitoEm===HOJE&&t.hora).sort((a,b)=>a.hora>b.hora?-1:1)[0];return l?l.hora:''}
 function concRow(t){
-  const nao=t.st==='n';
-  return `<div class="rowc" data-row="c:${t.id}"><span class="${nao?'':'ico-ok'}">${ic(nao?'x':'circle-check',20)}</span><div class="rt"><div class="tt">${abbr(esc(t.titulo))}</div><div class="mt"><span>${nao?`Não vou fazer${t.motivo?' — '+esc(t.motivo):''}`:`Feito${t.hora?' às '+t.hora:''}`}${t.quem?' · '+esc(t.quem):''}</span></div></div><button class="btn sm ghost" data-a="desf" data-id="${t.id}">${ic('undo-2',14)}Desfazer</button></div>`;
+  const nao=t.st==='n';const r=t.reg||{};
+  const det=nao?`Não vou fazer · ${esc(t.motivo||'')}${t.obsNao?' · '+esc(t.obsNao):''}`:`Feita às ${t.hora||''} por ${esc(t.porQuem||USER)}${r.frasco?` · Frasco ${esc(r.frasco)}`:''}${r.custo?` · ${brl(r.custo)}`:''}`;
+  return `<div class="rowc" data-row="c:${t.id}"><span class="${nao?'':'ico-ok'}">${ic(nao?'x':'circle-check',20)}</span><div class="rt"><div class="tt">${esc(t.titulo)}</div><div class="mt"><span>${det}</span>${t.quem?`<span>${esc(t.quem)}</span>`:''}</div></div><button class="btn sm ghost" data-a="desf" data-id="${t.id}">${ic('undo-2',14)}Desfazer</button></div>`;
 }
 function selBar(lista){
   const el=lista.filter(t=>t.bulk),n=ui.selIds.size;
-  if(ui.run){const r=ui.run;return `<div class="selbar" role="status"><div class="pg"><small>${r.pausa?`Parou em ${r.i} de ${r.ids.length} — sem conexão.`:`Dando Feito… ${r.i} de ${r.ids.length}`}</small><div class="prog"><i style="transform:scaleX(${r.i/r.ids.length})"></i></div></div>${r.pausa?`<button class="btn gold" data-a="retomar">${ic('refresh-cw',15)}Retomar</button><button class="btn ghost" data-a="selcancel">Cancelar o resto</button>`:''}</div>`}
+  if(ui.run){const r=ui.run;return `<div class="selbar" role="status"><div class="pg"><small>${r.pausa?`Parou em ${r.i} de ${r.ids.length} — sem conexão.`:`Marcando como feitas… ${r.i} de ${r.ids.length}`}</small><div class="prog"><i style="transform:scaleX(${r.i/r.ids.length})"></i></div></div>${r.pausa?`<button class="btn gold" data-a="retomar">${ic('refresh-cw',15)}Retomar</button><button class="btn ghost" data-a="selcancel">Cancelar o resto</button>`:''}</div>`}
   return `<div class="selbar"><span><b>${n}</b> selecionada${n===1?'':'s'}</span><button class="btn ghost sm" data-a="selall">Selecionar as ${el.length} elegíveis</button><span style="flex:1"></span><button class="btn gold" data-a="selrun" ${n?'':'disabled'}>${ic('check',16)}Feito em ${n||''}</button><button class="btn ghost" data-a="selcancel">Cancelar</button></div>`;
 }
 
@@ -1073,110 +1228,125 @@ function viewMes(){
    <div class="leg">${CAT_CHIPS.map(k=>`<span style="--c:${catVar(k)}"><i></i>${CATS[k].n}</span>`).join('')}<span>${ic('triangle-alert',13)}dia com tarefas atrasadas</span><span>número = tarefas pendentes (dias passados: feitas)</span></div></div></section>`;
 }
 
-/* ───────── estados: carregando, erro ───────── */
+
+/* ───────── estados: carregando ───────── */
 function viewSkeleton(){
   const r=`<div class="skr"><div class="sk" style="width:32px;height:32px;border-radius:50%"></div><div style="flex:1"><div class="sk" style="height:14px;width:60%;margin-bottom:8px"></div><div class="sk" style="height:12px;width:40%"></div></div><div class="sk" style="height:44px;width:96px"></div></div>`;
   return `<section class="card hoje" aria-busy="true" aria-label="Carregando a agenda"><div class="hd"><div class="sk" style="height:20px;width:220px"></div></div>${r.repeat(6)}</section>`;
 }
-function viewErro(){
-  return `<section class="card"><div class="vazio erro" role="alert"><div class="big">${ic('wifi-off',24)}Não foi possível carregar a agenda</div>
-   <p>Sem conexão com o servidor. Suas tarefas continuam salvas e você continua conectado — nada foi perdido. Tente de novo quando o sinal voltar.</p>
-   <div class="btns"><button class="btn pri" data-a="retry" data-fk="retry" ${ui.spin?'disabled':''}>${ic('refresh-cw',16,ui.spin?'spin':'')}${ui.spin?'Tentando…':'Tentar de novo'}</button></div></div></section>`;
-}
 function renderMain(){
   const m=$('#mainc');
   if(ui.loading){m.innerHTML=viewSkeleton();return}
-  if(ui.erroCarga){m.innerHTML=viewErro();return}
-  const banner=ui.dispBanner?`<div class="callout warn" role="alert" style="margin-bottom:12px">${ic('wifi-off',18)}<span>Sem conexão — mostrando os dados de ${updLabel().replace('Atualizado ','')}. <button class="btn sm" data-a="atualizar" style="margin-left:8px">Tentar de novo</button></span></div>`:'';
-  m.innerHTML=banner+(R.visao==='semana'?viewSemana():R.visao==='mes'?viewMes():viewHoje());
+  m.innerHTML=(R.visao==='semana'?viewSemana():R.visao==='mes'?viewMes():viewHoje());
 }
-
 /* ───────── lateral ───────── */
 function miniCal(){
   const ym=ui.mini||(R.dia||HOJE).slice(0,7);const [y,m]=ym.split('-').map(Number);
   const cells=monthCells(ym);
   return `<section class="card mini" aria-label="Mini-calendário"><div class="mh"><b>${MES[m-1][0].toUpperCase()+MES[m-1].slice(1)} ${y}</b><span style="display:flex"><button data-a="mini" data-m="${iso(new Date(Date.UTC(y,m-2,1))).slice(0,7)}" aria-label="Mês anterior">${ic('chevron-left',16)}</button><button data-a="mini" data-m="${iso(new Date(Date.UTC(y,m,1))).slice(0,7)}" aria-label="Próximo mês">${ic('chevron-right',16)}</button></span></div>
    <div class="mg">${['D','S','T','Q','Q','S','S'].map(d=>`<div class="wd" aria-hidden="true">${d}</div>`).join('')}${cells.map(d=>{const i=dayInfo(d);const out=d.slice(0,7)!==ym;
-    return `<button class="${out?'out':''} ${d===HOJE?'hoje-d':''} ${(R.dia||'')===d&&R.visao==='hoje'?'sel-d':''} ${i.atr?'atr-d':''}" data-a="dia" data-d="${d}" aria-label="${fmtLong(d)}: ${i.pd.length} pendentes"><span>${dt(d).getUTCDate()}</span><span class="dots">${i.cats.slice(0,4).map(c=>`<i style="--c:${catVar(c)}"></i>`).join('')}</span></button>`}).join('')}</div></section>`;
+    return `<button class="${out?'out':''} ${d===HOJE?'hoje-d':''} ${(R.dia||'')===d&&R.visao==='hoje'?'sel-d':''} ${i.atr?'atr-d':''}" data-a="dia" data-d="${d}" aria-label="${fmtLong(d)}: ${i.pd.length} por fazer"><span>${dt(d).getUTCDate()}</span><span class="dots">${i.cats.slice(0,4).map(c=>`<i style="--c:${catVar(c)}"></i>`).join('')}</span></button>`}).join('')}</div></section>`;
 }
 function insumoCard(){
-  const nd=needs();
+  const nd=needs(),av=avisosValidade();
+  const li=[];
+  nd.slice(0,3).forEach(x=>li.push(`<li><div class="nm">${esc(S.est[x.id].nome)}<small>precisa ${nfmt(x.need)} · tem ${nfmt(x.have)} ${S.est[x.id].un}</small></div><span class="falta">falta ${nfmt(x.falta)}</span></li>`));
+  av.forEach(a=>{const e=S.est[a.id];li.push(`<li><div class="nm">${esc(e.nome)} · ${a.f.f}<small>${a.tipo==='vencido'?`vencido em ${fmtBR(a.f.val)}`:`vence em ${venceEm(a.f)} dias (${fmtBR(a.f.val)})`}</small></div><span class="falta ${a.tipo==='vencido'?'':'aviso'}">${a.tipo==='vencido'?'vencido':'atenção'}</span></li>`)});
   return `<section class="card"><div class="hd"><h2>${ic('package-open',16)}Precisa de insumo</h2><span class="meta">próx. 7 dias</span></div>
-   ${nd.length?`<ul class="ins-l">${nd.slice(0,4).map(x=>`<li><div class="nm">${esc(S.est[x.id].nome)}<small>precisa ${x.need} · tem ${Math.max(0,x.have)} ${S.est[x.id].un}</small></div><span class="falta">falta ${x.falta}</span></li>`).join('')}</ul>
-   <div class="pd"><button class="btn sm" data-a="gav" data-gv="estoque" data-fk="gav:estoque-l">Ver estoque ${ic('chevron-right',14)}</button></div>`:`<div class="pd"><p style="font-size:.875rem;color:var(--text-muted)">${ic('circle-check',14)} O estoque cobre as tarefas dos próximos 7 dias.</p></div>`}</section>`;
+   ${li.length?`<ul class="ins-l">${li.join('')}</ul><div class="pd"><button class="btn sm" data-a="gav" data-gv="estoque" data-fk="gav:estoque-l">Ver estoque ${ic('chevron-right',14)}</button></div>`:`<div class="pd"><p style="font-size:.875rem;color:var(--text-muted)">${ic('circle-check',14)} O estoque cobre as tarefas dos próximos 7 dias.</p></div>`}</section>`;
 }
 function fdiaCard(){
   const c=counts(),fech=c.restam===0&&c.M>0;
   return `<section class="card fdia"><div class="hd"><h2>${ic('calendar-check',16)}Fechar o dia</h2></div><div class="pd">
    ${fech?`<div class="st ok">${ic('circle-check',18)}Dia fechado — ${c.N} de ${c.M}</div><p>Todas as tarefas de campo foram resolvidas. Desfazer qualquer uma reabre o dia.</p>`
    :`<div class="st">${c.restam?`Faltam <b>${c.restam}</b> tarefa${c.restam===1?'':'s'} de campo (${c.N} de ${c.M} de hoje feitas${c.at?`; ${c.at} atrasada${c.at===1?'':'s'}`:''}).`:'Nenhuma tarefa de campo hoje.'}</div><p>Alertas, decisões e itens de gestão não contam.</p>`}
-   <button class="btn ${fech?'':'pri'}" style="width:100%" data-a="fechardia" data-fk="fechardia" ${fech||(!c.restam&&!c.M)?'disabled':''}>${ic('calendar-check',16)}${fech?'Dia fechado':'Fechar o dia'}</button></div></section>`;
+   <button class="btn ${fech?'':'pri'} btn-fdia" data-a="fechardia" data-fk="fechardia" ${fech||(!c.restam&&!c.M)?'disabled':''}>${ic('calendar-check',16)}${fech?'Dia fechado':'Fechar o dia'}</button></div></section>`;
 }
-function renderLat(){const full=R.visao!=='hoje'&&!ui.loading&&!ui.erroCarga;$('.lay').classList.toggle('full',full);$('#lat').innerHTML=ui.erroCarga?'':ui.loading?`<div class="card"><div class="sk" style="height:260px"></div></div>`:(full?'':miniCal())+insumoCard()+fdiaCard()}
+function renderLat(){const full=R.visao!=='hoje'&&!ui.loading;$('.lay').classList.toggle('full',full);$('#lat').innerHTML=ui.loading?`<div class="card"><div class="sk" style="height:260px"></div></div>`:(full?'':miniCal())+insumoCard()+fdiaCard()}
 function renderAll(){
-  renderHdr();renderNums();renderBar();renderComun();renderMain();renderLat();renderOverlay();
+  renderHdr();renderNums();renderBar();renderBanner();renderComun();renderMain();renderLat();renderOverlay();
 }
 
 
-/* ───────── ações de dados (otimistas, com Desfazer) ───────── */
+const PROX={rai:365,clo:365,ibr:182,afo:365,ive:90};
+/* ───────── ações de dados (otimistas; Desfazer estorna sem apagar) ───────── */
 function nextRowId(id){const rows=$$('#hojeCard .row');const i=rows.findIndex(r=>r.dataset.id===id);const n=rows[i+1]||rows[i-1];return n?n.dataset.id:null}
+const custoDe=cons=>cons.reduce((s,c)=>s+c.q*S.est[c.id].preco,0);
 function feito(id,o={}){
   const t=byId(id);if(!t)return null;
   const tot=t.animais.length,ani=o.animais&&o.animais.length&&o.animais.length<tot?o.animais:null;
-  let rid=id;const q=o.q!=null?o.q:(t.ins?t.ins.q:0);
+  const cons=o.consumo||[];const reg=o.reg||{};
+  const quemP=pessoa(reg.quem);
+  let target=t;
   if(ani){
-    const cp=clone(t);cp.id=id+'~'+(++S.seq);cp.animais=ani;cp.st='f';cp.feitoEm=HOJE;cp.hora=hm();cp.splitDe=id;
-    cp.n=ani.length;cp.quem=`${ani.length} ${(t.noun||KIND[t.kind].noun)} · ${t.lote}`;
-    cp.consumo=t.ins?{id:t.ins.id,q}:null;cp.ins=t.ins?{...t.ins,q}:null;if(cp.ins)cp.ins.txt=t.ins.txt.replace(/\d+/,q);
-    t.animais=t.animais.filter(a=>!ani.includes(a));t.parcial=1;t.iaFeitas=[];refresh(t);
-    S.tasks.push(cp);rid=cp.id;if(cp.consumo)S.est[cp.consumo.id].saldo-=q;
-  }else{
-    t.st='f';t.feitoEm=HOJE;t.hora=hm();if(t.ins&&q){t.consumo={id:t.ins.id,q};S.est[t.ins.id].saldo-=q}
+    const cp=clone(t);cp.id=id+'~'+(++S.seq);cp.animais=ani;cp.splitDe=id;cp.parcial=0;
+    t.animais=t.animais.filter(a=>!ani.includes(a));t.parcial=1;t.iaFeitas=[];
+    const q0=t.animais.length;refresh(t);refresh(cp);target=cp;S.tasks.push(cp);
   }
-  ui.selIds.delete(id);save();return rid;
+  target.st='f';target.feitoEm=HOJE;target.hora=hm();target.porQuem=quemP.nome;
+  cons.forEach(c=>{const fr=S.est[c.id].fr.find(x=>x.f===c.f);if(fr)fr.s-=c.q});
+  target.consumo=cons;
+  const custo=reg.custo!=null&&reg.custo!==''?reg.custo:custoDe(cons);
+  target.reg={...reg,frasco:cons.map(c=>c.f).join(', '),custo:custo||0,quem:reg.quem};
+  const e=lg({tid:target.id,titulo:target.titulo,lote:target.lote,acao:'Feito',cat:target.cat,quemFez:quemP.nome,frasco:target.reg.frasco,dose:reg.doseTxt||'',via:reg.via||'',custo:target.reg.custo,ciente:reg.ciente?1:0,animais:target.animais.length,dataReal:reg.dataReal||HOJE,obs:reg.obs||''});
+  target.logId=e.id;ui.selIds.delete(id);save();return target.id;
 }
-function desfazer(id,silent){
+function desfazer(id){
   const t=byId(id);if(!t)return;
-  if(t.st==='f'&&t.consumo)S.est[t.consumo.id].saldo+=t.consumo.q;
-  if(t.st==='f'&&t.splitDe){const o=byId(t.splitDe);if(o){o.animais=o.animais.concat(t.animais);o.parcial=o.animais.length<(t.n+o.animais.length-t.animais.length)?o.parcial:0;refresh(o);if(!S.tasks.some(x=>x.splitDe===o.id&&x.id!==t.id))o.parcial=0;S.tasks=S.tasks.filter(x=>x.id!==id);save();return}}
-  t.st='p';delete t.feitoEm;delete t.hora;delete t.motivo;delete t.consumo;if(t.kind==='iatf11')t.iaFeitas=[];
+  if(t.st==='f'){
+    (t.consumo||[]).forEach(c=>{const fr=S.est[c.id].fr.find(x=>x.f===c.f);if(fr)fr.s+=c.q});
+    const orig=S.log.find(x=>x.id===t.logId);if(orig)orig.estornada=true;
+    lg({tid:t.id,titulo:t.titulo,lote:t.lote,acao:'Estornada',estorna:t.logId,frasco:t.reg?t.reg.frasco:''});
+    if(t.splitDe){const o=byId(t.splitDe);if(o){o.animais=o.animais.concat(t.animais);refresh(o);if(!S.tasks.some(x=>x.splitDe===o.id&&x.id!==t.id&&x.st==='f'))o.parcial=0;S.tasks=S.tasks.filter(x=>x.id!==id);save();return}}
+  }else if(t.st==='n'){
+    lg({tid:t.id,titulo:t.titulo,lote:t.lote,acao:'Reaberta',obs:'Desfez “Não vou fazer”'});
+  }
+  t.st='p';delete t.feitoEm;delete t.hora;delete t.motivo;delete t.obsNao;delete t.consumo;delete t.reg;delete t.porQuem;if(t.kind==='iatf11')t.iaFeitas=[];
   save();
 }
-function naoVou(id,motivo){const t=byId(id);t.st='n';t.feitoEm=HOJE;t.hora=hm();t.motivo=motivo;ui.selIds.delete(id);save()}
-function adiar(id,nd){const t=byId(id);t.adiadaDe=t.adiadaDe||t.data;t._antes=t.data;t.data=nd;ui.selIds.delete(id);save()}
-function desfazerAdiar(id){const t=byId(id);if(!t)return;t.data=t._antes||t.adiadaDe;if(t.data===t.adiadaDe)delete t.adiadaDe;delete t._antes;save()}
+function naoVou(id,motivo,obs){const t=byId(id);t.st='n';t.feitoEm=HOJE;t.hora=hm();t.motivo=motivo;t.obsNao=obs||'';t.porQuem=USER;ui.selIds.delete(id);lg({tid:id,titulo:t.titulo,lote:t.lote,acao:'Não vou fazer',motivo,obs:obs||''});save()}
+function adiar(id,nd,silent){const t=byId(id);t.adiadaDe=t.adiadaDe||t.data;t._antes=t.data;const de=t.data;t.data=nd;ui.selIds.delete(id);lg({tid:id,titulo:t.titulo,lote:t.lote,acao:'Adiada',obs:`De ${fmtBR(de)} para ${fmtBR(nd)}`});save()}
+function desfazerAdiar(id){const t=byId(id);if(!t)return;t.data=t._antes||t.adiadaDe;if(t.data===t.adiadaDe)delete t.adiadaDe;delete t._antes;lg({tid:id,titulo:t.titulo,lote:t.lote,acao:'Adiamento desfeito'});save()}
 
-/* ───────── toasts ───────── */
-let toasts=[];
+/* ───────── toast único (nunca empilha) ───────── */
+let TK=null,fkAgg=null;
 function toast(o){
-  const id=++S.seq;const t={id,msg:o.msg,err:o.err,undo:o.undo,left:o.undo?10:6,label:o.label||'Desfazer',act:o.act};
-  toasts.push(t);if(toasts.length>3){const x=toasts.shift();clearInterval(x.iv)}
-  t.iv=setInterval(()=>{t.left--;if(t.left<=0){clearInterval(t.iv);toasts=toasts.filter(x=>x!==t);renderToasts()}else{const b=$(`[data-toast="${id}"] .cd`);if(b)b.textContent=t.undo||t.act?` (${t.left} s)`:''}},1000);
-  renderToasts();return t;
+  if(TK)clearInterval(TK.iv);
+  TK={msg:o.msg,err:o.err,undo:o.undo,label:o.label||'Desfazer',act:o.act,left:o.undo?10:7};
+  TK.iv=setInterval(()=>{TK.left--;if(TK.left<=0){clearInterval(TK.iv);TK=null;fkAgg=null;renderToasts()}else{const b=$('#toasts .cd');if(b)b.textContent=` (${TK.left} s)`}},1000);
+  renderToasts();
 }
+function killToast(){if(TK)clearInterval(TK.iv);TK=null;renderToasts()}
 function renderToasts(){
-  $('#toasts').innerHTML=toasts.map(t=>`<div class="toast ${t.err?'err':''}" data-toast="${t.id}">${t.undo&&!reduce()?'<i class="tb"></i>':''}<span class="m">${ic(t.err?'circle-alert':'circle-check',18)}<span>${esc(t.msg)}</span></span>
-   ${t.undo?`<button data-a="toast-undo" data-tid="${t.id}">${ic('undo-2',15)}${t.label}<span class="cd"> (${t.left} s)</span></button>`:''}${t.act?`<button data-a="toast-act" data-tid="${t.id}">${t.label}</button>`:''}<button class="xx" data-a="toast-x" data-tid="${t.id}" aria-label="Fechar aviso">${ic('x',16)}</button></div>`).join('');
+  const t=TK;
+  $('#toasts').innerHTML=t?`<div class="toast ${t.err?'err':''}">${t.undo&&!reduce()?'<i class="tb"></i>':''}<span class="m">${ic(t.err?'circle-alert':'circle-check',18)}<span>${esc(t.msg)}</span></span>
+   ${t.undo?`<button data-a="toast-undo">${ic('undo-2',15)}${t.label}<span class="cd"> (${t.left} s)</span></button>`:''}${t.act?`<button data-a="toast-act">${t.label}</button>`:''}<button class="xx" data-a="toast-x" aria-label="Fechar aviso">${ic('x',16)}</button></div>`:'';
 }
 function feitoToast(rid,extra){
-  const t=byId(rid);const nome=t?t.titulo:'tarefa';
-  toast({msg:`Feito · ${nome}${extra?' · '+extra:''}`,undo:()=>{desfazer(rid);afterMut()}});
+  const t=byId(rid);
+  if(!fkAgg||!TK)fkAgg={ids:[]};
+  fkAgg.ids.push(rid);
+  const n=fkAgg.ids.length;
+  const msg=n===1?`Feito · ${t?t.titulo:'tarefa'}${extra?' · '+extra:''}`:`${n} tarefas feitas`;
+  toast({msg,label:n>1?'Desfazer última':'Desfazer',undo:()=>{const last=fkAgg.ids.pop();desfazer(last);afterMut();if(fkAgg.ids.length){const k=fkAgg;feitoToastRefresh(k)}else{fkAgg=null}}});
 }
-function afterMut(){renderNums();renderMain();renderLat();if(R.gaveta)renderOverlay()}
+function feitoToastRefresh(k){
+  const n=k.ids.length;
+  const t=byId(k.ids[n-1]);
+  toast({msg:n===1?`Feito · ${t?t.titulo:'tarefa'}`:`${n} tarefas feitas`,label:n>1?'Desfazer última':'Desfazer',undo:()=>{const last=k.ids.pop();desfazer(last);afterMut();if(k.ids.length)feitoToastRefresh(k);else fkAgg=null}});
+  fkAgg=k;
+}
+function afterMut(){renderNums();renderMain();renderLat();renderBanner();if(R.gaveta&&!['confirmar','registrar','pesagem','exame','bst'].includes(R.gaveta))renderOverlay()}
 function stub(dest){toast({msg:`Simulação: abriria ${dest}. A navegação entre módulos não faz parte deste mockup.`})}
 
-/* Feito direto (linha sem gaveta) com animação e foco */
+/* Feito direto (linha sem gaveta): espaço da linha mantido ≥250 ms (anti-toque duplo) */
 function feitoDireto(id){
   const row=$(`.row[data-id="${id}"]`);const nx=nextRowId(id);
-  const run=()=>{
-    if(ui.erroRede){
-      if(row)row.classList.remove('saindo');
-      toast({err:1,msg:'Não foi possível registrar. Nada foi alterado — tente de novo.',act:1,label:'Tentar de novo'});ui._retry=()=>feitoDireto(id);
-      return;
-    }
-    const rid=feito(id);afterMut();feitoToast(rid);focusRow(nx);
-  };
-  if(row&&!reduce()){row.classList.add('saindo');setTimeout(run,170)}else run();
+  if(ui.erroRede){toast({err:1,msg:'Sem conexão: não foi possível registrar. Nada foi alterado.',act:1,label:'Tentar de novo'});ui._retry=()=>feitoDireto(id);return}
+  if(row){row.classList.add('saindo');row.querySelectorAll('button').forEach(b=>b.disabled=true)}
+  setTimeout(()=>{
+    const rid=feito(id,{reg:{quem:'jn'}});afterMut();feitoToast(rid);focusRow(nx);
+  },row?260:0);
 }
 function focusRow(id){
   const el=id&&($(`[data-fk="p:${id}"]`)||$(`.row[data-id="${id}"]`))||$('#hojeCard .btn-feito')||$('#main');
@@ -1184,36 +1354,29 @@ function focusRow(id){
 }
 
 /* ───────── overlays: gavetas e diálogos ───────── */
-const GAV_TITULOS={reproducao:'Reprodução',bst:'BST — somatotropina',estoque:'Estoque',nova:'Nova tarefa',editar:'Editar tarefa',gestao:'Itens de gestão',movimentacao:'Sugestão de movimentação',detalhes:'Detalhes da tarefa'};
 function closeOv(back){
   if(R.gaveta){
     if(history.state&&history.state.ov&&back!==false)history.back();
     else go({gaveta:'',t:'',aba:''});
   }
 }
-function openGav(gaveta,t,extra={},push=true){
-  const el=document.activeElement;ui.opener=el&&el.dataset&&el.dataset.fk?el.dataset.fk:null;
-  ui.D={};
-  const nr={...R,gaveta,t:t||'',aba:extra.aba||''};
-  history.pushState({ov:1},'',buildHash(nr));parseHash();renderOverlay();
-}
 function renderOverlay(){
   const ov=$('#ov');const g=R.gaveta;
-  const prevKey=ov.dataset.key;const key=g+'|'+R.t;
+  const prevKey=ov.dataset.key;const key=g+'|'+R.t+'|'+R.aba;
   if(!g){
+    ui.Dkey=undefined;
     if(ov.innerHTML){ov.innerHTML='';ov.dataset.key='';$('#shell').inert=false;
       const k=ui.opener;let el=k&&$(`[data-fk="${CSS.escape(k)}"]`);if(!el)el=$('#hojeCard .btn-feito');if(el)el.focus({preventScroll:true});ui.opener=null}
     return;
   }
+  if(ui.Dkey!==key){ui.D={};ui.Dkey=key}
   const t=R.t?byId(R.t):null;
   const dialogs=['adiar','nao','fechardia','excluir'];
   let html='';
-  try{
-    html=dialogs.includes(g)?dlgHTML(g,t):drawerHTML(g,t);
-  }catch(e){console.error(e);html=''}
+  try{html=dialogs.includes(g)?dlgHTML(g,t):drawerHTML(g,t)}catch(e){console.error(e);html=''}
   if(!html){R.gaveta='';history.replaceState(null,'',buildHash({...R,gaveta:'',t:''}));ov.innerHTML='';$('#shell').inert=false;return}
   const same=prevKey===key&&ov.innerHTML;
-  const st=same?($('.db',ov)||{}).scrollTop:0;
+  const st=same?(($('.db',ov)||{}).scrollTop||0):0;
   ov.innerHTML=`<div class="scrim" data-a="ov-x"></div>${html}`;ov.dataset.key=key;
   $('#shell').inert=true;
   const d=$('[role=dialog]',ov);
@@ -1231,19 +1394,20 @@ function trapKeys(e){
   if(e.shiftKey&&(document.activeElement===a||!d.contains(document.activeElement))){e.preventDefault();z.focus()}
   else if(!e.shiftKey&&(document.activeElement===z||!d.contains(document.activeElement))){e.preventDefault();a.focus()}
 }
-function dHead(kk,titulo,sub){return `<div class="dh"><div style="flex:1"><span class="kk">${kk}</span><h2 id="dtitle">${titulo}</h2>${sub?`<p style="font-size:.875rem;color:var(--text-muted);margin-top:4px">${sub}</p>`:''}</div><button class="x" data-a="ov-x" aria-label="Fechar">${ic('x',22)}</button></div>`}
+function dHead(kk,titulo,sub){return `<div class="dh"><div style="flex:1"><span class="kk">${kk}</span><h2 id="dtitle">${titulo}</h2>${sub?`<p class="dsub">${sub}</p>`:''}</div><button class="x" data-a="ov-x" aria-label="Fechar">${ic('x',22)}</button></div>`}
 function drawerHTML(g,t){
-  const need=['confirmar','inseminar','registrar','pesagem','movimentacao','detalhes','editar'];
+  const need=['confirmar','inseminar','registrar','pesagem','exame','movimentacao','detalhes','editar'];
   if(need.includes(g)&&!t)return '';
-  const D=ui.D;
   let inner='',wide='';
   if(g==='confirmar')inner=drConfirmar(t);
   else if(g==='inseminar')inner=drInseminar(t);
   else if(g==='registrar')inner=drRegistrar(t);
   else if(g==='pesagem')inner=drPesagem(t);
+  else if(g==='exame')inner=drExame(t);
   else if(g==='bst'){inner=drBst(t);wide='wide'}
   else if(g==='reproducao'){inner=drRepro();wide='wide'}
   else if(g==='estoque'){inner=drEstoque();wide='wide'}
+  else if(g==='historico'){inner=drHistorico();wide='wide'}
   else if(g==='gestao')inner=drGestao();
   else if(g==='nova'||g==='editar')inner=drForm(t);
   else if(g==='movimentacao')inner=drMov(t);
@@ -1252,219 +1416,313 @@ function drawerHTML(g,t){
   return `<aside class="drawer ${wide}" role="dialog" aria-modal="true" aria-labelledby="dtitle">${inner}</aside>`;
 }
 const chipCat=c=>`<span class="cic" style="--c:${catVar(c)};width:28px;height:28px">${ic(CATS[c].i,15)}</span>`;
-const plu=(q,u)=>u==='ml'||q===1?u:u+'s';
-function aniInfo(n,t){const d=40+(parseInt(n,10)*7)%260;return t.cat==='rec'?`${2+(parseInt(n,10)*3)%9} meses`:`DEL ${d}`}
+function aniInfo(n,t){const k=parseInt(n,10);if(/Recria|Bezerreiro/.test(t.lote||''))return `${(/Bezerreiro/.test(t.lote)?2:10)+(k*3)%(/Bezerreiro/.test(t.lote)?9:12)} meses`;return `DEL ${60+(k*7)%240}`}
+const dateField=(id,v,extra='')=>`<input id="${id}" type="text" inputmode="numeric" placeholder="dd/mm/aaaa" maxlength="10" value="${esc(v)}" autocomplete="off" ${extra}>`;
+const pessoaOpts=(sel)=>PESSOAS.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${esc(pessoaTxt(p))}</option>`).join('');
+function frOpts(e,sel,nome){return e.fr.map(f=>`<option value="${esc(f.f)}" ${f.f===sel?'selected':''}>${nome?esc(e.nome)+' · ':''}${esc(frTxt(e,f))}</option>`).join('')}
+function frDefault(e,q){const ok=e.fr.filter(f=>!vencido(f)&&f.s>0);return (ok.find(f=>f.s>=q)||ok[0]||e.fr[0]).f}
+function avisosFrasco(e,f,q){
+  const av=[];
+  if(!f)return av;
+  if(f.s<q)av.push(['warn','triangle-alert',`<b>Estoque insuficiente.</b> O frasco ${esc(f.f)} tem ${nfmt(f.s)} ${plu(f.s,e.un)} e a tarefa usa ${nfmt(q)}. Você pode registrar assim mesmo: o saldo fica negativo e aparece como alerta em Estoque.`]);
+  if(vencido(f))av.push(['warn','triangle-alert',`<b>Frasco vencido.</b> O frasco ${esc(f.f)} venceu em ${fmtBR(f.val)}. Registrar com este frasco exige ciência.`,'ciente']);
+  else if(venceEm(f)<=30)av.push(['','info',`<b>Vence em ${venceEm(f)} dias.</b> O frasco ${esc(f.f)} vence em ${fmtBR(f.val)}. Use primeiro, se ainda houver aplicação prevista.`]);
+  return av;
+}
+const avHTML=av=>av.map(a=>`<div class="callout ${a[0]}">${ic(a[1],16)}<span>${a[2]}${a[3]==='ciente'?`<label class="ck2"><input type="checkbox" id="rg-ciente" data-a="in-ciente" ${ui.D.ciente?'checked':''}> Ciente, usar assim mesmo</label>`:''}</span></div>`).join('');
 
-/* Confirmar (IATF 1º/7º/9º): frasco + subconjunto */
+/* ── Confirmar (IATF Dia 0/7/9): frascos por insumo + animais + aplicador + data real ── */
 function drConfirmar(t){
-  const D=ui.D;if(!D.sel){D.sel=new Set(t.animais);D.fr=D.fr||'a'}
-  const e=S.est[t.ins.id];
-  return dHead('Confirmar',esc(t.titulo),`${esc(t.lote)} · ${t.animais.length} ${t.animais.length===1?'animal':'animais'}`)+
+  const D=ui.D;if(!D.sel){D.sel=new Set(t.animais);D.fr={};t.insL.forEach(i=>D.fr[i.id]=frDefault(S.est[i.id],i.q));D.quem='ca';D.dt=fmtBR(HOJE);D.reprog=1}
+  return dHead('Confirmar',esc(t.titulo),`${esc(t.lote)} · ${t.animais.length} ${t.animais.length===1?'animal':'animais'} · ${esc(t.sub||'')}`)+
   `<div class="db">
-   <div class="fld"><span class="lb" id="lbfr">Qual frasco?</span><div class="opts" role="radiogroup" aria-labelledby="lbfr">${e.fr.map((f,i)=>`<label class="opt"><input type="radio" name="fr" value="${f.id}" data-a="in-fr" ${D.fr===f.id?'checked':''} ${i===0?'data-autofocus':''}><span><span class="o1">${esc(e.nome)}</span><span class="o2" style="display:block">${esc(f.t)}</span></span></label>`).join('')}</div></div>
+   ${t.insL.map(i=>{const e=S.est[i.id];return `<div class="fld"><label for="fr-${i.id}">${esc(e.nome)}: frasco</label><select id="fr-${i.id}" data-a="in-frI" data-v="${i.id}">${frOpts(e,D.fr[i.id])}</select></div>`}).join('')}
+   <div id="cf-av"></div>
    <div class="fld"><div class="tools"><span class="lb">Animais que receberam</span><button class="btn sm ghost" data-a="ck-all" data-v="1">Todas</button><button class="btn sm ghost" data-a="ck-all" data-v="0">Nenhuma</button><span class="c" id="cnt" aria-live="polite"></span></div>
     <div class="alist" role="group" aria-label="Animais">${t.animais.map(a=>`<div class="ar"><label><input type="checkbox" data-a="ck-a" value="${a}" ${D.sel.has(a)?'checked':''}> <b>${a}</b></label><span class="inf">${aniInfo(a,t)}</span></div>`).join('')}</div>
-    <p class="hint" style="font-size:.8125rem;color:var(--text-muted)">Quem não receber hoje continua na Agenda como “restantes”.</p></div>
-  </div>
-  <div class="df"><div class="sum" id="sum" aria-live="polite"></div><button class="btn ghost" data-a="ov-x">Cancelar</button><button class="btn gold" data-a="ok-confirmar" id="okb">${ic('check',16)}<span id="oktx">Feito</span></button></div>`;
+    <span class="hint">Quem não receber hoje continua na Agenda como “restantes”.</span></div>
+   <div class="g2"><div class="fld"><label for="cf-q">Quem aplicou</label><select id="cf-q" data-a="in-quem" data-autofocus>${pessoaOpts(D.quem)}</select></div>
+    <div class="fld"><label for="cf-d">Data real</label>${dateField('cf-d',D.dt)}<span class="err" id="cf-de" role="alert" hidden>${ic('circle-alert',14)}Use dd/mm/aaaa.</span></div></div>
+   <div id="cf-rp"></div><div class="sumbox" id="sum" aria-live="polite"></div></div>
+  <div class="df"><button class="btn ghost" data-a="ov-x">Cancelar</button><button class="btn gold" data-a="ok-confirmar" id="okb">${ic('check',16)}<span id="oktx">Feito</span></button></div>`;
+}
+function calcConfirmar(t){
+  const D=ui.D,n=D.sel.size,N=t.animais.length;
+  const cons=t.insL.map(i=>({id:i.id,f:D.fr[i.id],q:n===N?i.q:(n?Math.max(1,Math.ceil(i.q*n/N)):0)}));
+  return cons;
 }
 function updConfirmar(t){
-  const D=ui.D,n=D.sel.size,N=t.animais.length,e=S.est[t.ins.id];
-  const q=n===N?t.ins.q:Math.max(n?1:0,Math.ceil(t.ins.q*n/N));
+  const D=ui.D,n=D.sel.size,N=t.animais.length;const cons=calcConfirmar(t);D.cons=cons;
   $('#cnt').textContent=`${n} de ${N} selecionadas`;
-  $('#sum').innerHTML=n?`Baixa de <b>${q} ${plu(q,e.un)}</b> · saldo restante <b>${e.saldo-q}</b>${e.saldo-q<e.min?` <span style="color:var(--warn-fg)">(abaixo do mínimo de ${e.min})</span>`:''}${n<N?` · <b>${N-n}</b> ficam na Agenda`:''}`:'Marque ao menos um animal.';
-  $('#okb').disabled=!n;$('#oktx').textContent=n?`Feito em ${n} ${n===1?'animal':'animais'}`:'Feito';
-  D.q=q;
+  const av=[];let need=false;
+  cons.forEach(c=>{const e=S.est[c.id],f=e.fr.find(x=>x.f===c.f);avisosFrasco(e,f,c.q).forEach(a=>{if(a[3])need=true;av.push([a[0],a[1],a[2],a[3]])})});
+  D.needCiente=need;
+  $('#cf-av').innerHTML=avHTML(av.map((a,i)=>i&&a[3]&&av.slice(0,i).some(x=>x[3])?[a[0],a[1],a[2],'']:a));
+  const iso0=parseBR(D.dt);const dOk=!!iso0&&iso0<=HOJE;$('#cf-de').hidden=dOk;
+  const delta=dOk?diff(iso0,t.data):0;D.delta=delta;
+  const sib=S.tasks.filter(x=>pend(x)&&x.proto&&x.proto===t.proto&&x.id!==t.id&&x.data>t.data&&/^IATF/.test(x.titulo));
+  $('#cf-rp').innerHTML=delta!==0&&sib.length?`<label class="opt"><input type="checkbox" id="cf-rep" data-a="in-reprog" ${D.reprog?'checked':''}><span><span class="o1">Reprogramar as próximas etapas</span><span class="o2" style="display:block">${sib.map(x=>x.titulo.replace(/^IATF [^—]+— /,'')+' de '+fmt(x.data)+' para '+fmt(add(x.data,delta))).join(' · ')}</span></span></label>`:'';
+  $('#sum').innerHTML=n?`<b>Saída de estoque:</b> ${cons.map(c=>`${nfmt(c.q)} ${S.est[c.id].un==='un'?'un':S.est[c.id].un} de ${esc(S.est[c.id].nome)} (${esc(c.f)}, saldo ${nfmt(S.est[c.id].fr.find(f=>f.f===c.f).s)} → ${nfmt(S.est[c.id].fr.find(f=>f.f===c.f).s-c.q)})`).join(' · ')} · <b>Custo previsto ${brl(custoDe(cons))}</b>${n<N?` · <b>${N-n}</b> ficam na Agenda`:''}`:'Marque ao menos um animal.';
+  $('#okb').disabled=!n||!dOk||(need&&!D.ciente);$('#oktx').textContent=n?`Feito em ${n} ${n===1?'animal':'animais'}`:'Feito';
 }
-/* Inseminação por animal (11º dia) */
+
+/* ── Inseminação por animal (Dia 11) ── */
 function drInseminar(t){
-  const D=ui.D;t.iaFeitas=t.iaFeitas||[];
-  const e=S.est.e9;
-  return dHead('Inseminação por animal',esc(t.titulo),`${esc(t.lote)} · ${t.iaFeitas.length} de ${t.animais.length} inseminadas`)+
-  `<div class="db"><div class="g2"><div class="fld"><label for="ins-ia">Inseminador</label><select id="ins-ia" data-autofocus><option>Carlos (vaqueiro)</option><option>Dr. Paulo (veterinário)</option></select></div>
-   <div class="fld"><label for="ins-dt">Data da inseminação</label><input id="ins-dt" type="date" value="${HOJE}" max="${HOJE}"></div></div>
-   <div class="alist" role="group" aria-label="Animais do 11º dia">${t.animais.map(a=>{const f=t.iaFeitas.includes(a);return `<div class="ar" style="flex-wrap:wrap;padding:6px 12px"><b style="min-width:52px">${a}</b><span class="inf" style="margin:0 auto 0 0;text-align:left">${aniInfo(a,t)}</span>${f?`<span class="pl ok">${ic('check',12)}Inseminada</span><button class="btn sm ghost" data-a="ia-undo" data-a2="${a}" data-v="${a}">${ic('undo-2',14)}Desfazer</button>`:`<label class="sr" for="sm-${a}">Sêmen para ${a}</label><select id="sm-${a}" data-sm="${a}"><option>Jatobá (palheta)</option><option>Tornado (palheta)</option></select><button class="btn sm gold" data-a="ia-ok" data-v="${a}">Inseminar</button>`}</div>`}).join('')}</div>
-   <div class="callout">${ic('info',16)}<span>Cada inseminação baixa 1 palheta do botijão (saldo: <b id="semSaldo">${e.saldo}</b>) e vira <b>serviço</b> no histórico da vaca. O 11º dia conclui quando todas forem inseminadas.</span></div></div>
+  t.iaFeitas=t.iaFeitas||[];const e=S.est.sem;const D=ui.D;if(!D.quem)D.quem='pm';
+  return dHead('Inseminação',esc(t.titulo),`${esc(t.lote)} · ${t.iaFeitas.length} de ${t.animais.length} inseminadas`)+
+  `<div class="db"><div class="g2"><div class="fld"><label for="ins-ia">Inseminador</label><select id="ins-ia" data-a="in-quem" data-autofocus>${pessoaOpts(D.quem)}</select></div>
+   <div class="fld"><label for="ins-dt">Data da inseminação</label>${dateField('ins-dt',fmtBR(HOJE))}</div></div>
+   <div class="alist" role="group" aria-label="Animais do Dia 11">${t.animais.map(a=>{const f=t.iaFeitas.includes(a);return `<div class="ar ar2"><b class="an">${a}</b><span class="inf">${aniInfo(a,t)}</span>${f?`<span class="pl ok">${ic('check',12)}Inseminada</span><button class="btn sm ghost" data-a="ia-undo" data-v="${a}">${ic('undo-2',14)}Desfazer</button>`:`<label class="sr" for="sm-${a}">Sêmen para ${a}</label><select id="sm-${a}" data-sm="${a}"><option>Jatobá (palheta)</option><option>Tornado (palheta)</option></select><button class="btn sm gold" data-a="ia-ok" data-v="${a}">Inseminar</button>`}</div>`}).join('')}</div>
+   <div class="callout">${ic('info',16)}<span>Cada inseminação usa 1 palheta do botijão (saldo: <b id="semSaldo">${estSaldo(e)}</b>) e vira <b>serviço</b> no histórico da vaca. O Dia 11 fica feito quando todas forem inseminadas.</span></div></div>
    <div class="df"><button class="btn ghost" data-a="ov-x">Fechar</button></div>`;
 }
-/* Registrar aplicação (única porta de escrita da sanidade) */
+
+/* ── Registrar aplicação (mesma gaveta do M1: frasco, aplicador, via, dose, data real) ── */
 function drRegistrar(t){
-  const D=ui.D;if(!D.init){D.init=1;D.prod=t.prods[0];D.fr='a';D.dose=t.dose;D.dt=HOJE}
-  const opts=t.prods.map(p=>`<option value="${p}" ${D.prod===p?'selected':''}>${esc(S.est[p].nome)}</option>`).join('');
-  const e=S.est[D.prod];
-  return dHead('Registrar aplicação',esc(t.titulo),'Única porta de escrita da sanidade — o que você registra aqui vira histórico e baixa de estoque.')+
+  const D=ui.D,e=S.est[t.prod];
+  if(!D.init){D.init=1;D.n=t.animais.length;D.fr=frDefault(e,D.n);D.quem=t.vet?'pm':'ca';D.dt=fmtBR(HOJE);D.via=e.via;D.peso=t.peso||0;D.ciente=false;D.custo='';
+    D.dose=e.porPeso?(D.peso/50):e.dose;}
+  const vetTask=t.vet;
+  return dHead('Registrar aplicação',esc(t.titulo),`${esc(t.quem||'')}`)+
   `<div class="db">
-   <div class="fld"><span class="lb">Quem</span><div class="callout">${ic('users',16)}<span><b>${t.animais.length} ${t.animais.length===1?'animal':'animais'}</b> · ${esc(t.lote)}<br><span style="color:var(--text-muted)">${t.animais.slice(0,10).join(' · ')}${t.animais.length>10?` … +${t.animais.length-10}`:''}</span></span></div></div>
-   <div class="g2"><div class="fld"><label for="rg-p">Produto</label><select id="rg-p" data-a="in-prod" data-autofocus>${opts}</select></div>
-    <div class="fld"><label for="rg-f">Frasco / lote</label><select id="rg-f" data-a="in-frasco">${e.fr.map(f=>`<option value="${f.id}">${esc(f.t)}</option>`).join('')}</select></div></div>
-   <div class="g2"><div class="fld"><label for="rg-d">Dose por animal (${t.un})</label><input id="rg-d" type="number" min="0" step="0.5" value="${D.dose}" inputmode="decimal"></div>
-    <div class="fld"><label for="rg-v">Via</label><select id="rg-v"><option ${t.via==='Subcutânea'?'selected':''}>Subcutânea</option><option ${t.via==='Intramamária'?'selected':''}>Intramamária</option><option>Intramuscular</option><option>Oral</option></select></div></div>
-   <div class="g2"><div class="fld"><label for="rg-dt">Data real</label><input id="rg-dt" type="date" value="${HOJE}" max="${HOJE}"></div>
-    <div class="fld"><label for="rg-q">Quem aplicou</label><select id="rg-q"><option>Carlos (vaqueiro)</option><option>Dr. Paulo (veterinário)</option><option>Marcos (tratador)</option></select></div></div>
+   <div class="fld"><span class="lb">Quem</span><div class="callout">${ic('users',16)}<span><b>${t.animais.length} ${t.animais.length===1?'animal':'animais'}</b> · ${esc(t.lote||'')}<br><span class="mut">${t.animais.slice(0,10).join(' · ')}${t.animais.length>10?` … +${t.animais.length-10}`:''}</span></span></div></div>
+   ${vetTask?`<div class="callout warn">${ic('triangle-alert',16)}<span><b>Aplicação exclusiva de veterinário cadastrado.</b> Fêmeas de 3 a 8 meses; confira a idade das bezerras antes de aplicar (aviso, não bloqueia).</span></div>`:''}
+   <div class="fld"><label for="rg-f">Produto e frasco (estoque)</label><select id="rg-f" data-a="in-frasco" data-autofocus>${frOpts(e,D.fr,1)}</select><span class="hint">${esc(e.nome)} · ${e.dose?`${e.dose} mL ${e.via} por animal`:'dose por peso'}</span></div>
+   <div id="rg-av"></div>
+   ${e.porPeso?`<div class="g2"><div class="fld"><label for="rg-p">Peso médio do lote (kg)</label><input id="rg-p" type="text" inputmode="decimal" value="${D.peso}"><span class="hint">Dose por peso: 1 mL a cada 50 kg</span></div>
+    <div class="fld"><label for="rg-d">Dose por animal (mL)</label><input id="rg-d" type="text" inputmode="decimal" value="${nfmt(D.dose)}" readonly></div></div>`
+   :`<div class="g2"><div class="fld"><label for="rg-d">Dose por animal (mL)</label><input id="rg-d" type="text" inputmode="decimal" value="${nfmt(D.dose)}"></div>
+    <div class="fld"><label for="rg-v">Via</label><select id="rg-v"><option ${D.via==='SC'?'selected':''}>SC</option><option ${D.via==='IM'?'selected':''}>IM</option><option>IV</option><option>Oral</option></select></div></div>`}
+   ${e.porPeso?`<div class="fld"><label for="rg-v">Via</label><select id="rg-v"><option selected>SC</option><option>IM</option><option>Oral</option></select></div>`:''}
+   <div class="g2"><div class="fld"><label for="rg-dt">Data real</label>${dateField('rg-dt',D.dt)}<span class="err" id="rg-de" role="alert" hidden>${ic('circle-alert',14)}Use dd/mm/aaaa, até hoje.</span></div>
+    <div class="fld"><label for="rg-q">Quem aplicou</label><select id="rg-q" data-a="in-quem">${pessoaOpts(D.quem)}</select></div></div>
    <div class="fld"><label for="rg-c">Custo (opcional)</label><input id="rg-c" type="text" inputmode="decimal" placeholder="calculado pelo estoque" aria-describedby="rg-ch"><span class="hint" id="rg-ch">Deixe em branco para usar o custo médio do estoque.</span></div>
-   <div id="rg-w"></div></div>
-   <div class="df"><div class="sum" id="sum" aria-live="polite"></div><button class="btn ghost" data-a="ov-x">Cancelar</button><button class="btn gold" data-a="ok-registrar">${ic('check',16)}Registrar aplicação</button></div>`;
+   <div class="sumbox" id="sum" aria-live="polite"></div></div>
+   <div class="df"><button class="btn ghost" data-a="ov-x">Cancelar</button><button class="btn gold" data-a="ok-registrar" id="okb">${ic('check',16)}Registrar aplicação</button></div>`;
 }
 function updRegistrar(t){
-  const D=ui.D,e=S.est[D.prod],n=t.animais.length,dose=parseFloat($('#rg-d').value)||0,q=Math.round(dose*n*100)/100;
-  D.q=q;D.dose=dose;const dt0=$('#rg-dt').value||HOJE;
-  const partes=[`<b>${n} ${n===1?'animal':'animais'}</b>`,`${q} ${plu(q,e.un)} (${dose} por animal)`,`estoque restante <b>${Math.round((e.saldo-q)*100)/100}</b>`];
-  if(e.prox)partes.push(`próxima dose <b>${fmt(add(dt0,e.prox))}</b>`);
-  if(e.carL)partes.push(`leite em carência até <b>${fmt(add(dt0,e.carL))}</b>`);else partes.push('sem carência de leite');
-  if(e.carC)partes.push(`carne em carência até <b>${fmt(add(dt0,e.carC))}</b>`);
-  partes.push(`<b>${brl(q*e.preco)}</b>`);
-  $('#sum').innerHTML=partes.join(' · ');
-  $('#rg-w').innerHTML=e.saldo<q?`<div class="callout warn">${ic('triangle-alert',16)}<span><b>Estoque insuficiente</b> (saldo ${e.saldo}, precisa ${q}). Isto não trava o registro: o saldo ficará negativo e aparece como alerta em Estoque.</span></div>`:'';
+  const D=ui.D,e=S.est[t.prod],n=t.animais.length;
+  if(e.porPeso){D.peso=parseFloat(String($('#rg-p').value).replace(',','.'))||0;D.dose=D.peso/50}
+  else D.dose=parseFloat(String($('#rg-d').value).replace(',','.'))||0;
+  const q=e.un==='dose'?n:Math.round(D.dose*n*100)/100;D.q=q;
+  const f=e.fr.find(x=>x.f===D.fr);
+  const av=avisosFrasco(e,f,q);
+  const pp=S.est[t.prod];
+  if(t.vet&&!pessoa(D.quem).vet)av.push(['warn','triangle-alert','<b>Aplicador sem registro de veterinário.</b> A B19 exige veterinário cadastrado. O registro não é bloqueado.']);
+  D.needCiente=av.some(a=>a[3]);
+  $('#rg-av').innerHTML=avHTML(av);
+  const iso0=parseBR($('#rg-dt').value);D.dtIso=iso0;const dOk=!!iso0&&iso0<=HOJE;$('#rg-de').hidden=dOk;
+  const base=dOk?iso0:HOJE;const parts=[`<b>${n} ${n===1?'animal':'animais'}</b>`,`Saída de estoque: <b>${nfmt(q)} ${plu(q,e.un)}</b> (frasco ${esc(D.fr)}: saldo ${nfmt(f.s)} → ${nfmt(f.s-q)})`];
+  if(t.kind==='clo2')parts.push(`dose 2 concluída; reforço anual previsto para <b>${fmtBR(add(base,365))}</b>`);
+  else if(PROX[t.prod])parts.push(`próxima aplicação prevista: <b>${fmtBR(add(base,PROX[t.prod]))}</b>`);
+  else if(t.kind==='b19')parts.push('dose única: sem próxima aplicação');
+  const ub=t.kind==='mast'?'2026-09-30':base;
+  if(e.carL!==undefined){parts.push(typeof e.carL==='string'?`leite: <b>${e.carL}</b>`:e.carL?`leite em carência até <b>${fmtBR(add(ub,e.carL))}</b>`:'leite: sem carência');
+    parts.push(e.carC?`carne em carência até <b>${fmtBR(add(ub,e.carC))}</b>`:'carne: sem carência')}
+  const typed=String($('#rg-c').value).replace(',','.');const custo=typed!==''&&!isNaN(parseFloat(typed))?parseFloat(typed):q*e.preco;D.custoV=custo;
+  parts.push(`<b>Custo previsto ${brl(custo)}</b>`);
+  $('#sum').innerHTML=parts.join(' · ');
+  $('#okb').disabled=!dOk||(D.needCiente&&!D.ciente)||q<=0;
 }
-/* Pesagem */
+
+/* ── Exame (TB): registrar inoculação / ler resultado ── */
+function drExame(t){
+  const D=ui.D,leitura=t.kind==='tbl';if(!D.init){D.init=1;D.quem='pm';D.dt=fmtBR(HOJE);D.res={};t.animais.forEach(a=>D.res[a]='')}
+  return dHead(leitura?'Ler exame':'Registrar exame',esc(t.titulo),esc(t.quem||''))+
+  `<div class="db">${leitura?`<div class="callout">${ic('info',16)}<span>Inoculação em ${fmtBR(add(t.data,-3))}. Registre o resultado de cada animal.</span></div>
+   <div class="alist" role="group" aria-label="Resultado por animal">${t.animais.map(a=>`<div class="ar ar2"><b class="an">${a}</b><label class="sr" for="rs-${a}">Resultado de ${a}</label><select id="rs-${a}" data-a="in-res" data-v="${a}"><option value="">Escolher…</option><option value="neg">Negativo</option><option value="pos">Positivo (reagente)</option><option value="inc">Inconclusivo</option></select></div>`).join('')}</div>
+   <div id="ex-av"></div><div class="fld"><label for="ex-l">Nº do laudo (opcional)</label><input id="ex-l" type="text" autocomplete="off"></div>`
+   :`<div class="callout">${ic('info',16)}<span>Exame TB (tuberculina PPD): inoculação hoje. A <b>leitura é feita em 72 horas</b> (${fmtBR(add(HOJE,3))}); criamos essa tarefa na Agenda.</span></div>
+   <div class="fld"><span class="lb">Animais</span><div class="callout">${ic('users',16)}<span>${t.animais.join(' · ')} · ${esc(t.lote)}</span></div></div>`}
+   <div class="g2"><div class="fld"><label for="ex-q">${leitura?'Quem leu':'Quem inoculou'}</label><select id="ex-q" data-a="in-quem" data-autofocus>${pessoaOpts(D.quem)}</select></div>
+    <div class="fld"><label for="ex-d">Data ${leitura?'da leitura':'da inoculação'}</label>${dateField('ex-d',D.dt)}<span class="err" id="ex-de" role="alert" hidden>${ic('circle-alert',14)}Use dd/mm/aaaa.</span></div></div>
+   <div class="sumbox" id="sum" aria-live="polite"></div></div>
+   <div class="df"><button class="btn ghost" data-a="ov-x">Cancelar</button><button class="btn gold" data-a="ok-exame" id="okb">${ic('check',16)}${leitura?'Registrar resultados':'Registrar exame'}</button></div>`;
+}
+function updExame(t){
+  const D=ui.D,leitura=t.kind==='tbl';const iso0=parseBR($('#ex-d').value);const ok=!!iso0&&iso0<=HOJE;$('#ex-de').hidden=ok;
+  if(!leitura){$('#sum').innerHTML=`Leitura prevista para <b>${fmtBR(add(iso0||HOJE,3))}</b> · ${t.animais.length} animais`;$('#okb').disabled=!ok;return}
+  const pos=Object.keys(D.res).filter(a=>D.res[a]==='pos'),inc=Object.keys(D.res).filter(a=>D.res[a]==='inc'),vazio=Object.keys(D.res).filter(a=>!D.res[a]);
+  $('#ex-av').innerHTML=(pos.length?`<div class="callout warn" role="alert">${ic('triangle-alert',16)}<span><b>Animal reagente: ${pos.join(', ')}.</b> Notifique o serviço veterinário oficial. Registramos cada reagente identificado; não há contagem anônima por lote.</span></div>`:'')+(inc.length?`<div class="callout">${ic('info',16)}<span>Inconclusivo: agendamos o reteste em 60 dias (${fmtBR(add(HOJE,60))}) para ${inc.join(', ')}.</span></div>`:'');
+  $('#sum').innerHTML=`${t.animais.length-vazio.length} de ${t.animais.length} resultados informados${pos.length?` · <b>${pos.length} reagente${pos.length>1?'s':''}</b>`:''}`;
+  $('#okb').disabled=!ok||vazio.length>0;
+}
+
+/* ── Pesagem ── */
 function drPesagem(t){
   const D=ui.D;if(!D.p)D.p={};
   return dHead('Pesagem',esc(t.titulo),`${esc(t.lote)} · ${t.animais.length} bezerros`)+
-  `<div class="db"><div class="fld"><label for="pz-dt">Data da pesagem</label><input id="pz-dt" type="date" value="${HOJE}" max="${HOJE}"></div>
-   <div class="alist" role="group" aria-label="Pesos">${t.animais.map((a,i)=>`<div class="ar"><label for="kg-${a}"><b>${a}</b></label><span class="inf" style="margin-right:8px">${aniInfo(a,t)}</span><input class="kg" id="kg-${a}" data-a="in-kg" data-v="${a}" type="number" min="0" inputmode="decimal" placeholder="kg" value="${D.p[a]||''}" ${i===0?'data-autofocus':''}><span style="color:var(--text-muted)">kg</span></div>`).join('')}</div>
-   <p class="hint" style="font-size:.8125rem;color:var(--text-muted)">Sem peso? Deixe em branco — o animal continua na Agenda como “restante”.</p></div>
-   <div class="df"><div class="sum" id="sum" aria-live="polite"></div><button class="btn ghost" data-a="ov-x">Cancelar</button><button class="btn gold" data-a="ok-pesagem" id="okb">${ic('check',16)}<span id="oktx">Lançar pesos</span></button></div>`;
+  `<div class="db"><div class="fld"><label for="pz-dt">Data da pesagem</label>${dateField('pz-dt',fmtBR(HOJE))}</div>
+   <div class="alist" role="group" aria-label="Pesos">${t.animais.map((a,i)=>`<div class="ar"><label for="kg-${a}"><b>${a}</b></label><span class="inf" style="margin-right:8px">${aniInfo(a,t)}</span><input class="kg" id="kg-${a}" data-a="in-kg" data-v="${a}" type="text" inputmode="decimal" placeholder="0,0" aria-label="Peso de ${a} em kg" value="${D.p[a]||''}" ${i===0?'data-autofocus':''}><span class="un">kg</span></div>`).join('')}</div>
+   <span class="hint">Sem peso? Deixe em branco: o animal continua na Agenda como “restante”.</span>
+   <div class="sumbox" id="sum" aria-live="polite"></div></div>
+   <div class="df"><button class="btn ghost" data-a="ov-x">Cancelar</button><button class="btn gold" data-a="ok-pesagem" id="okb">${ic('check',16)}<span id="oktx">Registrar pesos</span></button></div>`;
 }
+const num=v=>parseFloat(String(v).replace(',','.'));
 function updPesagem(t){
-  const D=ui.D,f=Object.keys(D.p).filter(a=>parseFloat(D.p[a])>0),N=t.animais.length;
-  const med=f.length?Math.round(f.reduce((s,a)=>s+parseFloat(D.p[a]),0)/f.length*10)/10:0;
-  $('#sum').innerHTML=f.length?`<b>${f.length}</b> de ${N} pesados · peso médio <b>${med} kg</b>${f.length<N?` · ${N-f.length} ficam na Agenda`:''}`:'Digite ao menos um peso.';
-  $('#okb').disabled=!f.length;$('#oktx').textContent=f.length?`Lançar ${f.length} peso${f.length>1?'s':''}`:'Lançar pesos';
+  const D=ui.D,f=Object.keys(D.p).filter(a=>num(D.p[a])>0),N=t.animais.length;
+  const med=f.length?Math.round(f.reduce((s,a)=>s+num(D.p[a]),0)/f.length*10)/10:0;
+  $('#sum').innerHTML=f.length?`<b>${f.length}</b> de ${N} pesados · peso médio <b>${nfmt(med)} kg</b>${f.length<N?` · ${N-f.length} ficam na Agenda`:''}`:'Digite ao menos um peso.';
+  $('#okb').disabled=!f.length;$('#oktx').textContent=f.length?`Registrar ${f.length} peso${f.length>1?'s':''}`:'Registrar pesos';
 }
-/* BST */
+
+/* ── BST (aptas: DEL ≥ 60) ── */
+const delDe=n=>60+(parseInt(n,10)*7)%200;
 function drBst(t){
   const D=ui.D,b=S.bst,aba=R.aba||'lancar';
   if(!D.sel)D.sel=new Set(b.aptos);
-  const tabs=`<div class="tabs" role="tablist" aria-label="BST">${[['lancar','Lançar'],['aptos',`Aptos (${b.aptos.length})`],['excl',`Excluídos (${b.excl.length})`]].map(([k,l])=>`<button class="chip" style="--c:var(--cat-producao)" role="tab" aria-selected="${aba===k}" aria-pressed="${aba===k}" data-a="aba" data-v="${k}">${l}</button>`).join('')}</div>`;
+  const tabs=`<div class="tabs" role="tablist" aria-label="BST">${[['lancar','Lançar'],['aptos',`Aptas (${b.aptos.length})`],['excl',`Excluídas (${b.excl.length})`]].map(([k,l])=>`<button class="chip" style="--c:var(--cat-producao)" role="tab" aria-selected="${aba===k}" aria-pressed="${aba===k}" data-a="aba" data-v="${k}">${l}</button>`).join('')}</div>`;
   let body='';
   if(aba==='lancar'){
-    body=t?`<div class="g2"><div class="fld"><label for="bs-dt">Data</label><input id="bs-dt" type="date" value="${HOJE}" max="${HOJE}"></div><div class="fld"><label for="bs-p">Produto e dose</label><select id="bs-p"><option>Lactotropin · 500 mg (1 dose)</option></select></div></div>
+    body=t?`<div class="callout">${ic('info',16)}<span>Só entram vacas com <b>DEL a partir de 60</b> (regra da fazenda). As que não atendem estão em “Excluídas”.</span></div>
+     <div class="g2"><div class="fld"><label for="bs-dt">Data</label>${dateField('bs-dt',fmtBR(HOJE))}</div><div class="fld"><label for="bs-q">Quem aplicou</label><select id="bs-q" data-a="in-quem">${pessoaOpts('ca')}</select></div></div>
      <div class="fld"><div class="tools"><span class="lb">Vacas que recebem</span><button class="btn sm ghost" data-a="ck-all" data-v="1">Todas</button><button class="btn sm ghost" data-a="ck-all" data-v="0">Nenhuma</button><span class="c" id="cnt" aria-live="polite"></span></div>
-     <div class="alist" role="group" aria-label="Vacas aptas">${b.aptos.map(a=>`<div class="ar"><label><input type="checkbox" data-a="ck-a" value="${a}" ${D.sel.has(a)?'checked':''}> <b>${a}</b></label><span class="inf">${aniInfo(a,t)}</span></div>`).join('')}</div></div>
-     <div class="callout">${ic('info',16)}<span>Próxima aplicação prevista para <b>${fmt(add(HOJE,14))}</b> (ciclo de 14 dias). Vacas não marcadas ficam na Agenda de hoje.</span></div>`
-     :`<div class="callout">${ic('circle-check',16)}<span>Não há lançamento de BST pendente hoje. Próximo ciclo: <b>${fmt(add(HOJE,14))}</b>.</span></div>`;
+     <div class="alist" role="group" aria-label="Vacas aptas">${b.aptos.map(a=>`<div class="ar"><label><input type="checkbox" data-a="ck-a" value="${a}" ${D.sel.has(a)?'checked':''}> <b>${a}</b></label><span class="inf">DEL ${delDe(a)}</span></div>`).join('')}</div></div>
+     <div class="callout">${ic('info',16)}<span>Próxima aplicação prevista para <b>${fmtBR(add(HOJE,14))}</b> (ciclo de 14 dias). Vacas não marcadas ficam na Agenda de hoje.</span></div><div class="sumbox" id="sum" aria-live="polite"></div>`
+     :`<div class="callout">${ic('circle-check',16)}<span>Não há lançamento de BST por fazer hoje. Próximo ciclo: <b>${fmtBR(add(HOJE,14))}</b>.</span></div>`;
   }else if(aba==='aptos'){
-    body=`<div class="twrap"><table class="tbl"><thead><tr><th>Vaca</th><th>DEL</th><th class="r">Leite (L/dia)</th><th>Última aplicação</th></tr></thead><tbody>${b.aptos.map(a=>{const n=parseInt(a,10);return `<tr><td><b>${a}</b></td><td>${70+(n*7)%200}</td><td class="r">${(22+(n%17)).toFixed(1).replace('.',',')}</td><td>${fmt(add(HOJE,-14-(n%2)))}</td></tr>`}).join('')}</tbody></table></div>`;
+    body=`<div class="twrap"><table class="tbl"><thead><tr><th>Vaca</th><th>DEL</th><th class="r">Leite (L/dia)</th><th>Última aplicação</th></tr></thead><tbody>${b.aptos.map(a=>{const n=parseInt(a,10);return `<tr><td><b>${a}</b></td><td>${delDe(a)}</td><td class="r">${(22+(n%17)).toFixed(1).replace('.',',')}</td><td>${fmtBR(add(HOJE,-14-(n%2)))}</td></tr>`}).join('')}</tbody></table></div>`;
   }else{
-    body=`<div class="callout warn">${ic('info',16)}<span>Excluídas não recebem BST neste ciclo. Use <b>Incluir no próximo BST</b> para reverter a exclusão — ${b.incluir.length} vacas já marcadas.</span></div><div class="twrap"><table class="tbl"><thead><tr><th>Vaca</th><th>Motivo da exclusão</th><th></th></tr></thead><tbody>${b.excl.map(x=>{const on=b.incluir.includes(x.n);return `<tr><td><b>${x.n}</b></td><td>${esc(x.motivo)}</td><td class="r"><button class="btn sm ${on?'':'ghost'}" data-a="bst-inc" data-v="${x.n}" aria-pressed="${on}">${on?ic('check',14)+'Incluída':'Incluir no próximo BST'}</button></td></tr>`}).join('')}</tbody></table></div>`;
+    body=`<div class="callout warn">${ic('info',16)}<span>Excluídas não recebem BST neste ciclo. Só quem foi excluída por outro motivo que não DEL abaixo de 60 pode entrar no próximo ciclo.</span></div><div class="twrap"><table class="tbl"><thead><tr><th>Vaca</th><th>Motivo da exclusão</th><th></th></tr></thead><tbody>${b.excl.map(x=>{const on=b.incluir.includes(x.n);const del=/^DEL/.test(x.motivo);return `<tr><td><b>${x.n}</b></td><td>${esc(x.motivo)}</td><td class="r">${del?'<span class="mut">DEL abaixo de 60</span>':`<button class="btn sm ${on?'':'ghost'}" data-a="bst-inc" data-v="${x.n}" aria-pressed="${on}">${on?ic('check',14)+'Incluída':'Incluir no próximo ciclo'}</button>`}</td></tr>`}).join('')}</tbody></table></div>`;
   }
-  return dHead('Painel BST',esc(t?t.titulo:'BST — somatotropina'),`${b.aptos.length} aptas · ${b.excl.length} excluídas · ${b.incluir.length} para o próximo ciclo`)+
-    `<div class="db">${tabs}${body}</div>`+(aba==='lancar'&&t?`<div class="df"><div class="sum" id="sum" aria-live="polite"></div><button class="btn ghost" data-a="ov-x">Cancelar</button><button class="btn gold" data-a="ok-bst" id="okb">${ic('check',16)}<span id="oktx">Lançar BST</span></button></div>`:`<div class="df"><button class="btn ghost" data-a="ov-x">Fechar</button></div>`);
+  return dHead('BST',esc(t?t.titulo:'BST — somatotropina'),`${b.aptos.length} aptas (DEL ≥ 60) · ${b.excl.length} excluídas`)+
+    `<div class="db">${tabs}${body}</div>`+(aba==='lancar'&&t?`<div class="df"><button class="btn ghost" data-a="ov-x">Cancelar</button><button class="btn gold" data-a="ok-bst" id="okb">${ic('check',16)}<span id="oktx">Lançar BST</span></button></div>`:`<div class="df"><button class="btn ghost" data-a="ov-x">Fechar</button></div>`);
 }
 function updBst(t){
-  const D=ui.D,n=D.sel.size,N=S.bst.aptos.length,e=S.est.e5;
+  const D=ui.D,n=D.sel.size,N=S.bst.aptos.length,e=S.est.bst;
   $('#cnt').textContent=`${n} de ${N} selecionadas`;
-  $('#sum').innerHTML=n?`<b>${n} doses</b> · estoque restante <b>${e.saldo-n}</b>${e.saldo<n?` <span style="color:var(--warn-fg)">(saldo insuficiente: não trava)</span>`:''} · próxima aplicação <b>${fmt(add(HOJE,14))}</b>${n<N?` · ${N-n} ficam na Agenda`:''}`:'Marque ao menos uma vaca.';
+  $('#sum').innerHTML=n?`<b>${n} doses</b> · saldo do frasco BS-2606: ${nfmt(estSaldo(e))} → ${nfmt(estSaldo(e)-n)}${estSaldo(e)<n?' (saldo insuficiente: não trava)':''} · próxima aplicação <b>${fmtBR(add(HOJE,14))}</b>${n<N?` · ${N-n} ficam na Agenda`:''} · <b>Custo previsto ${brl(n*e.preco)}</b>`:'Marque ao menos uma vaca.';
   $('#okb').disabled=!n;$('#oktx').textContent=n?`Lançar BST em ${n} vaca${n>1?'s':''}`:'Lançar BST';
 }
-/* Reprodução */
+
+/* ── Reprodução: Iniciar protocolo (abre Novo protocolo pré-preenchido) ── */
 function candidatas(){
   if(S.cand)return S.cand;
-  const est=['Vazia · pós-parto','Vazia · retorno ao cio','Vazia · repetidora','Aberta · pós-PEV'];
-  S.cand=Array.from({length:22},(_,i)=>({n:String(4600+i*4),del:52+((i*13)%90),estado:est[i%4],motivo:i%3?'Fora do PEV (45 d) e ciclando':'Repetidora — 2 inseminações sem prenhez'}));return S.cand;
+  const est=['Vazia · pós-PEV','Vazia · retorno ao cio','Repetidora (2 inseminações sem prenhez)','Vazia · pós-PEV'];
+  const lotes=[L2,L1,L3,L2];
+  S.cand=Array.from({length:22},(_,i)=>({n:String(2560+i*4),lote:lotes[i%4],del:52+((i*13)%90),motivo:est[i%4]}));return S.cand;
 }
 function drRepro(){
   const aba=R.aba||'cand';const c=candidatas();
-  const tabs=`<div class="tabs" role="tablist" aria-label="Reprodução">${[['cand',`Candidatas à próxima IATF (${c.length})`],['atual','IATF atual'],['ult','Última IATF']].map(([k,l])=>`<button class="chip" style="--c:var(--cat-reproducao)" role="tab" aria-selected="${aba===k}" aria-pressed="${aba===k}" data-a="aba" data-v="${k}">${l}</button>`).join('')}</div>`;
+  const tabs=`<div class="tabs" role="tablist" aria-label="Reprodução">${[['cand',`Candidatas à IATF (${c.length})`],['atual','IATF atual'],['ult','Última IATF']].map(([k,l])=>`<button class="chip" style="--c:var(--cat-reproducao)" role="tab" aria-selected="${aba===k}" aria-pressed="${aba===k}" data-a="aba" data-v="${k}">${l}</button>`).join('')}</div>`;
   let b='';
-  if(aba==='cand')b=`<div class="twrap"><table class="tbl"><thead><tr><th>Vaca</th><th>DEL</th><th>Estado</th><th></th></tr></thead><tbody>${c.map(x=>{const ag=S.agend.includes(x.n);return `<tr><td><b>${x.n}</b></td><td>${x.del}</td><td>${x.estado}</td><td class="r"><button class="btn sm ${ag?'ghost':''}" data-a="agendar" data-v="${x.n}" ${ag?'disabled':''}>${ag?ic('check',14)+'Agendada · amanhã':ic('calendar-plus',14)+'Agendar 1º dia'}</button></td></tr>`}).join('')}</tbody></table></div>`;
-  else if(aba==='atual'){
-    const lots=S.tasks.filter(t=>!t.hist&&t.kind&&/^iatf/.test(t.kind)&&t.data>=HOJE&&t.data<=add(HOJE,2)&&t.st!=='n');
-    b=`<div class="twrap"><table class="tbl"><thead><tr><th>Lote</th><th>Etapa</th><th>Animais</th><th>Quando</th><th>Estado</th></tr></thead><tbody>${lots.map(t=>`<tr><td>${esc(t.lote)}</td><td>${esc(t.titulo.replace('Inseminação programada — ',''))}</td><td class="r">${t.animais.length+(t.st==='f'?0:0)}</td><td>${rel(t.data)}</td><td>${t.st==='f'?'<span class="pl ok">Feito</span>':'<span class="pl wa">Pendente</span>'}</td></tr>`).join('')}</tbody></table></div>`;
-  }else b=`<dl class="kv"><dt>Data</dt><dd>15/09/2026 (11º dia)</dd><dt>Lote</dt><dd>${L2} · 6 vacas</dd><dt>Sêmen</dt><dd>Jatobá (4) · Tornado (2)</dd><dt>Retorno ao cio</dt><dd>Checar em 29/09 — está na Agenda de hoje</dd><dt>Diagnóstico</dt><dd>Previsto para 15/10 (30 d)</dd></dl>`;
-  return dHead('Reprodução','Reprodução',`${c.length} candidatas · IATF em andamento`)+`<div class="db">${tabs}${b}</div><div class="df"><button class="btn ghost" data-a="ov-x">Fechar</button></div>`;
+  if(aba==='cand')b=`<div class="twrap"><table class="tbl"><thead><tr><th>Vaca</th><th>Lote</th><th>DEL</th><th>Motivo</th><th></th></tr></thead><tbody>${c.map(x=>`<tr><td><b>${x.n}</b></td><td>${esc(x.lote)}</td><td>${x.del}</td><td>${esc(x.motivo)}</td><td class="r"><button class="btn sm" data-a="iniciar-proto" data-v="${x.n}" data-l="${esc(x.lote)}">Iniciar protocolo ${ic('chevron-right',14)}</button></td></tr>`).join('')}</tbody></table></div><span class="hint">“Iniciar protocolo” abre o Novo protocolo já com o lote e o modelo IATF (Dia 0, 7, 9 e 11) preenchidos; não cria tarefa por vaca.</span>`;
+  else if(aba==='atual')b=`<div class="twrap"><table class="tbl"><thead><tr><th>Protocolo</th><th>Animais</th><th>Dia 0</th><th>Hoje</th><th>Próxima etapa</th></tr></thead><tbody><tr><td>IATF Recria 2</td><td class="r">12</td><td>20/09</td><td><b>Dia 9</b> (retirar implante + Estron + SincroCP)</td><td>Dia 11 em 01/10</td></tr><tr><td>IATF Lote 02 – Média</td><td class="r">8</td><td>27/09</td><td>Dia 2</td><td>Dia 7 em 04/10</td></tr></tbody></table></div>`;
+  else b=`<dl class="kv"><dt>Protocolo</dt><dd>IATF Lote 02 – Média (rodada anterior)</dd><dt>Dia 11</dt><dd>15/09/2026 · 5 vacas inseminadas</dd><dt>Sêmen</dt><dd>Jatobá (3) · Tornado (2)</dd><dt>Retorno ao cio</dt><dd>Checar hoje (Scratch, 14 dias): está na Agenda</dd><dt>Diagnóstico</dt><dd>Previsto para 15/10/2026 (30 dias)</dd></dl>`;
+  return dHead('Reprodução','Reprodução',`${c.length} candidatas · 2 protocolos IATF em andamento`)+`<div class="db">${tabs}${b}</div><div class="df"><button class="btn ghost" data-a="ov-x">Fechar</button></div>`;
 }
 function drEstoque(){
-  const ab=abaixoMin(),nd=needs();
-  return dHead('Estoque','Insumos abaixo do mínimo',`${ab.length} itens · ${nd.length} não cobrem os próximos 7 dias`)+
-  `<div class="db"><div class="twrap"><table class="tbl"><thead><tr><th>Insumo</th><th class="r">Saldo</th><th class="r">Mínimo</th><th class="r">Precisa 7 d</th><th></th></tr></thead><tbody>${ab.map(x=>{const n=nd.find(y=>y.id===x.id);return `<tr><td>${esc(x.nome)}</td><td class="r" style="color:var(--alert-fg);font-weight:700">${Math.round(x.saldo*100)/100} ${x.un}</td><td class="r">${x.min}</td><td class="r">${n?n.need:'—'}</td><td class="r"><button class="btn sm" data-a="stub" data-l="Pedidos › Novo pedido (${esc(x.nome)})">Comprar</button></td></tr>`}).join('')}${ab.length?'':'<tr><td colspan="5">Nenhum item abaixo do mínimo.</td></tr>'}</tbody></table></div>
-  <div class="callout">${ic('info',16)}<span>Estoque baixo <b>avisa, nunca trava</b>: você pode dar Feito mesmo sem saldo; o item fica negativo e sobe aqui.</span></div></div><div class="df"><button class="btn ghost" data-a="ov-x">Fechar</button></div>`;
+  const ab=abaixoMin(),nd=needs(),av=avisosValidade();
+  return dHead('Estoque','Insumos e validade',`${ab.length} abaixo do mínimo · ${av.length} com aviso de validade`)+
+  `<div class="db">${av.length?`<div class="callout warn">${ic('triangle-alert',16)}<span>${av.map(a=>`<b>${esc(S.est[a.id].nome)} ${a.f.f}</b> ${a.tipo==='vencido'?'vencido em '+fmtBR(a.f.val):'vence em '+venceEm(a.f)+' dias ('+fmtBR(a.f.val)+')'}`).join(' · ')}. Estoque baixo e validade <b>avisam, nunca travam</b>.</span></div>`:''}
+   <div class="twrap"><table class="tbl"><thead><tr><th>Insumo</th><th class="r">Saldo</th><th class="r">Mínimo</th><th class="r">Precisa 7 d</th><th></th></tr></thead><tbody>${Object.entries(S.est).map(([id,e])=>{const s=estSaldo(e);const n=nd.find(y=>y.id===id);const low=s<e.min;return `<tr><td>${esc(e.nome)}<div class="mut" style="font-size:.8125rem">${e.fr.map(f=>esc(f.f)+(f.val?' · val. '+fmtBR(f.val):'')).join(' · ')}</div></td><td class="r" style="${low?'color:var(--alert-fg);font-weight:700':''}">${nfmt(s)} ${e.un}</td><td class="r">${nfmt(e.min)}</td><td class="r">${n?nfmt(n.need):'—'}</td><td class="r">${low?`<button class="btn sm" data-a="stub" data-l="Pedidos › Novo pedido (${esc(e.nome)})">Comprar</button>`:''}</td></tr>`}).join('')}</tbody></table></div></div><div class="df"><button class="btn ghost" data-a="ov-x">Fechar</button></div>`;
+}
+function drHistorico(){
+  const L=S.log.slice().reverse();
+  return dHead('Histórico','Histórico do dia',`${L.length} registro${L.length===1?'':'s'} · nada é apagado: o estorno cria uma nova entrada`)+
+  `<div class="db">${L.length?`<div class="twrap"><table class="tbl"><thead><tr><th>Quando</th><th>Quem</th><th>O quê</th><th>Detalhes</th></tr></thead><tbody>${L.map(logRow).join('')}</tbody></table></div>`:`<div class="callout">${ic('info',16)}<span>Ainda não há registros hoje.</span></div>`}</div><div class="df"><button class="btn ghost" data-a="ov-x">Fechar</button></div>`;
+}
+function logDet(e){
+  const b=[];
+  if(e.acao==='Feito'){if(e.frasco)b.push('frasco '+e.frasco);if(e.dose)b.push(e.dose);if(e.via)b.push('via '+e.via);if(e.quemFez)b.push('aplicou '+e.quemFez);if(e.custo)b.push(brl(e.custo));if(e.ciente)b.push('ciente: frasco vencido');if(e.dataReal&&e.dataReal!==HOJE)b.push('data real '+fmtBR(e.dataReal))}
+  else if(e.acao==='Estornada')b.push('estorno da entrada de '+lgQuandoById(e.estorna));
+  else{if(e.motivo)b.push('motivo: '+e.motivo);if(e.obs)b.push(e.obs)}
+  return b.join(' · ');
+}
+const lgQuandoById=id=>{const e=S.log.find(x=>x.id===id);return e?lgQuando(e):'—'};
+function logRow(e){
+  return `<tr class="${e.estornada?'estorn':''}"><td>${lgQuando(e)}</td><td>${esc(e.quem)}</td><td>${e.acao==='Estornada'?'Estornada por '+esc(e.quem):esc(e.acao)} · ${esc(e.titulo||'')}${e.estornada?' <span class="pl man">estornada</span>':''}</td><td>${esc(logDet(e))}</td></tr>`;
 }
 function drGestao(){
   const g=S.tasks.filter(t=>pend(t)&&t.trilho==='gestao');
-  return dHead('Trilho Gestão','Itens de gestão',`Fora da lista de campo e do Dia fechado.`)+
-  `<div class="db">${g.length?g.map(t=>`<div class="card" style="box-shadow:none"><div class="pd" style="padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">${chipCat(t.cat)}<div style="flex:1;min-width:180px"><div style="font-weight:600">${esc(t.titulo)}</div><div style="font-size:.8125rem;color:var(--text-muted)">${esc(t.quem)}</div></div><button class="btn sm ${t.res==='informativo'?'ghost':''}" data-a="gestao-ok" data-id="${t.id}">${t.res==='informativo'?'Dispensar':t.btn}</button></div></div>`).join(''):`<div class="callout">${ic('circle-check',16)}<span>Nenhum item de gestão pendente.</span></div>`}</div><div class="df"><button class="btn ghost" data-a="ov-x">Fechar</button></div>`;
+  return dHead('Gestão','Itens de gestão','Ficam fora da lista de campo e do Dia fechado.')+
+  `<div class="db">${g.length?g.map(t=>`<div class="card" style="box-shadow:none"><div class="pd" style="padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">${chipCat(t.cat)}<div style="flex:1;min-width:180px"><div style="font-weight:600">${esc(t.titulo)}</div><div class="mut" style="font-size:.875rem">${esc(t.quem)}</div></div><button class="btn sm ${t.res==='informativo'?'ghost':''}" data-a="gestao-ok" data-id="${t.id}">${t.res==='informativo'?'Dispensar':t.btn}</button></div></div>`).join(''):`<div class="callout">${ic('circle-check',16)}<span>Nenhum item de gestão por fazer.</span></div>`}</div><div class="df"><button class="btn ghost" data-a="ov-x">Fechar</button></div>`;
 }
 function drMov(t){
-  const D=ui.D;
-  return dHead('Decisão',esc(t.titulo),'Sugestão automática por peso — nada muda até você decidir.')+
-  `<div class="db"><dl class="kv"><dt>Animal</dt><dd><b>6015</b> · novilha</dd><dt>Peso</dt><dd>382 kg (mínimo do lote de destino: 360 kg)</dd><dt>De</dt><dd>${LR2}</dd><dt>Sugestão</dt><dd><b>${L2}</b></dd></dl>
-   <div class="fld"><label for="mv-l">Ou escolher outro lote</label><select id="mv-l" data-autofocus>${LOTES.map(l=>`<option ${l===L2?'selected':''}>${l}</option>`).join('')}</select></div></div>
-   <div class="df"><button class="btn ghost" data-a="mov-nao">Agora não</button><button class="btn gold" data-a="mov-ok">${ic('check',16)}Mover novilha 6015</button></div>`;
+  return dHead('Decisão',esc(t.titulo),'Sugestão automática por peso; nada muda até você decidir.')+
+  `<div class="db"><dl class="kv"><dt>Animal</dt><dd><b>4109</b> · novilha</dd><dt>Peso</dt><dd>382 kg (mínimo do lote de destino: 360 kg)</dd><dt>De</dt><dd>${LR2}</dd><dt>Sugestão</dt><dd><b>${L3}</b></dd></dl>
+   <div class="fld"><label for="mv-l">Ou escolher outro lote</label><select id="mv-l" data-autofocus>${LOTES.map(l=>`<option ${l[0]===L3?'selected':''}>${l[0]}</option>`).join('')}</select></div></div>
+   <div class="df"><button class="btn ghost" data-a="mov-nao">Agora não</button><button class="btn gold" data-a="mov-ok">${ic('check',16)}Mover novilha 4109</button></div>`;
 }
 function drDetalhes(t){
   const c=CATS[t.cat]||CATS.ati,d=diff(HOJE,t.data),p=prim(t);
-  return dHead(c.n,esc(t.titulo),`${rel(t.data)===fmtLong(t.data)?fmtLong(t.data):rel(t.data)+' · '+fmtLong(t.data)}${pend(t)&&d>0?` · atrasada há ${d} ${d===1?'dia':'dias'}`:''}`)+
-  `<div class="db"><dl class="kv"><dt>Estado</dt><dd>${t.st==='f'?`<span class="pl ok">Feito${t.hora?' às '+t.hora:''}</span>`:t.st==='n'?`<span class="pl man">Não vou fazer — ${esc(t.motivo||'')}</span>`:d>0?`<span class="pl at">${ic('triangle-alert',12)}Atrasada</span>`:'<span class="pl in">Prevista</span>'}</dd>
-   <dt>Para quem</dt><dd>${esc(t.quem||'—')}</dd>${t.ins?`<dt>Insumo</dt><dd>${esc(t.ins.txt)} · saldo ${Math.round(S.est[t.ins.id].saldo*100)/100}</dd>`:''}${t.sub?`<dt>Nota</dt><dd>${esc(t.sub)}</dd>`:''}${t.obs?`<dt>Obs.</dt><dd>${esc(t.obs)}</dd>`:''}</dl>
+  const hist=S.log.filter(e=>e.tid===t.id||e.tid===t.splitDe||(t.id&&String(e.tid).startsWith(t.id+'~'))).slice().reverse();
+  const estado=t.st==='f'?`<span class="pl ok">Feita${t.hora?' às '+t.hora:''}${t.porQuem?' por '+esc(t.porQuem):''}</span>`:t.st==='n'?`<span class="pl man">Não vou fazer · ${esc(t.motivo||'')}</span>`:d>0?`<span class="pl at">${ic('triangle-alert',12)}Atrasada</span>`:t.adiadaDe?`<span class="pl wa">Adiada de ${fmt(t.adiadaDe)}</span>`:'<span class="pl in">A fazer</span>';
+  return dHead(c.n,esc(t.titulo),`${fmtLong(t.data)}${pend(t)&&d>0?` · atrasada há ${d} ${d===1?'dia':'dias'}`:''}`)+
+  `<div class="db"><dl class="kv"><dt>Estado</dt><dd>${estado}</dd>
+   <dt>Para quem</dt><dd>${esc(t.quem||'—')}</dd>${t.insL?`<dt>Insumo</dt><dd>${esc(insTxt(t))}</dd>`:''}${t.sub?`<dt>Nota</dt><dd>${esc(t.sub)}</dd>`:''}${t.obs?`<dt>Obs.</dt><dd>${esc(t.obs)}</dd>`:''}</dl>
    ${t.animais&&t.animais.length?`<div><div class="sect-t">${ic('users',14)}Animais (${t.animais.length})</div><div class="alist">${t.animais.map(a=>`<div class="ar"><b>${a}</b><span class="inf">${esc(t.lote||'')} · ${aniInfo(a,t)}</span></div>`).join('')}</div></div>`:''}
-   <div><div class="sect-t">${ic('arrow-right',14)}Origem</div><p style="font-size:.9375rem">${esc(t.origem||'—')}</p><button class="btn sm" style="margin-top:8px" data-a="stub" data-l="${esc(t.origem||'')}">Abrir origem</button></div></div>
-   ${pend(t)?`<div class="df"><button class="btn ghost" data-a="dlg" data-g="nao" data-id="${t.id}">Não vou fazer</button><button class="btn" data-a="dlg" data-g="adiar" data-id="${t.id}">Adiar</button><button class="btn ${p.cls||''}" data-a="prim" data-id="${t.id}" data-autofocus>${ic(p.i,16)}${p.l}</button></div>`:`<div class="df"><button class="btn ghost" data-a="ov-x">Fechar</button></div>`}`;
+   <div><div class="sect-t">${ic('file-text',14)}Histórico (quem e quando)</div>${hist.length?`<div class="twrap"><table class="tbl"><tbody>${hist.map(logRow).join('')}</tbody></table></div>`:'<p class="mut">Sem registros ainda.</p>'}</div>
+   <div><div class="sect-t">${ic('arrow-right',14)}Origem</div><p>${esc(t.origem||'—')}</p><button class="btn sm" style="margin-top:8px" data-a="stub" data-l="${esc(t.origem||'')}">Abrir origem</button></div></div>
+   ${pend(t)?`<div class="df"><button class="btn ghost" data-a="dlg" data-g="nao" data-id="${t.id}">Não vou fazer</button><button class="btn" data-a="dlg" data-g="adiar" data-id="${t.id}">Adiar</button><button class="btn btn-feito" data-a="prim" data-id="${t.id}" data-autofocus>${ic(p.i,16)}${p.l}</button></div>`:`<div class="df"><button class="btn ghost" data-a="ov-x">Fechar</button></div>`}`;
 }
 /* Nova / editar tarefa manual */
 function drForm(t){
-  const ed=R.gaveta==='editar'&&t;const D=ui.D;
+  const ed=R.gaveta==='editar'&&t;
   const v=ed?t:{titulo:'',data:R.dia||HOJE,cat:'ati',lote:'',obs:''};
   return dHead(ed?'Editar':'Tarefa manual',ed?'Editar tarefa':'Nova tarefa',ed?'Só esta tarefa é alterada.':'Aparece na lista do dia escolhido e conta no Dia fechado.')+
   `<form id="fnova" novalidate><div class="db">
    <div class="fld"><label for="f-t">O que precisa ser feito</label><input id="f-t" type="text" value="${esc(v.titulo)}" placeholder="Ex.: Ligar para o veterinário e confirmar a visita" data-autofocus aria-describedby="f-te"><span class="err" id="f-te" role="alert" hidden>${ic('circle-alert',14)}Diga o que precisa ser feito.</span></div>
-   <div class="g2"><div class="fld"><label for="f-d">Data</label><input id="f-d" type="date" value="${v.data}" min="${ed?'':HOJE}"></div>
+   <div class="g2"><div class="fld"><label for="f-d">Data</label>${dateField('f-d',fmtBR(v.data))}<span class="err" id="f-de" role="alert" hidden>${ic('circle-alert',14)}Use dd/mm/aaaa.</span></div>
     <div class="fld"><label for="f-c">Categoria</label><select id="f-c">${Object.entries(CATS).filter(([k])=>!['ges','fin'].includes(k)).map(([k,c])=>`<option value="${k}" ${v.cat===k?'selected':''}>${c.n}</option>`).join('')}</select></div></div>
-   <div class="g2"><div class="fld"><label for="f-l">Para quem</label><select id="f-l"><option value="">Nenhum (geral da fazenda)</option>${LOTES.map(l=>`<option ${v.lote===l?'selected':''}>${l}</option>`).join('')}</select></div>
-    <div class="fld"><label for="f-a">Animal (brinco, opcional)</label><input id="f-a" type="text" inputmode="numeric" value="${ed&&t.animais&&t.animais[0]?esc(t.animais[0]):''}" placeholder="Ex.: 4417"></div></div>
-   ${ed?'':`<div class="g2"><div class="fld"><label for="f-r">Repetir a cada</label><input id="f-r" type="number" min="0" value="0" inputmode="numeric"><span class="hint">0 = não repete</span></div><div class="fld"><label for="f-ru">Unidade</label><select id="f-ru"><option value="d">dias</option><option value="m">meses</option></select></div></div>`}
+   <div class="g2"><div class="fld"><label for="f-l">Para quem</label><select id="f-l"><option value="">Nenhum (geral da fazenda)</option>${LOTES.map(l=>`<option ${v.lote===l[0]?'selected':''}>${l[0]}</option>`).join('')}</select></div>
+    <div class="fld"><label for="f-a">Animal (brinco, opcional)</label><input id="f-a" type="text" inputmode="numeric" value="${ed&&t.animais&&t.animais[0]?esc(t.animais[0]):''}" placeholder="Ex.: 4160"></div></div>
+   ${ed?'':`<div class="g2"><div class="fld"><label for="f-r">Repetir a cada</label><input id="f-r" type="text" inputmode="numeric" value="0"><span class="hint">0 = não repete</span></div><div class="fld"><label for="f-ru">Unidade</label><select id="f-ru"><option value="d">dias</option><option value="m">meses</option></select></div></div>`}
    <div class="fld"><label for="f-o">Observação</label><textarea id="f-o" rows="3">${esc(v.obs||'')}</textarea></div></div>
    <div class="df">${ed?`<button type="button" class="btn danger" data-a="dlg" data-g="excluir" data-id="${t.id}" style="margin-right:auto">${ic('trash-2',16)}Excluir</button>`:''}<button type="button" class="btn ghost" data-a="ov-x">Cancelar</button><button type="submit" class="btn gold">${ic('check',16)}${ed?'Salvar alterações':'Criar tarefa'}</button></div></form>`;
 }
-/* Diálogos: Adiar, Não vou fazer, Fechar o dia, Excluir */
+/* Diálogos */
+const MOTIVOS=['Sem insumo','Animal fora do lote','Adiada por manejo','Decisão do veterinário','Outro'];
 function dlgShell(kk,titulo,body,foot){return `<div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dtitle">${dHead(kk,titulo)}<div class="db">${body}</div><div class="df">${foot}</div></div>`}
 function dlgHTML(g,t){
   const D=ui.D;
   if(g==='adiar'){
     if(!t)return '';const ja=t.data===HOJE;const atr=t.data<HOJE;if(!D.opt)D.opt=atr?'hoje':'amanha';
     return dlgShell('Adiar',esc(t.titulo),`<div class="opts" role="radiogroup" aria-label="Adiar para">
-     <label class="opt"><input type="radio" name="ad" value="hoje" ${D.opt==='hoje'?'checked':''} ${ja?'disabled':''} data-a="in-ad"><span><span class="o1">Hoje</span><span class="o2" style="display:block">${ja?'A tarefa já é de hoje':atr?'Trazer a atrasada para hoje ('+fmt(HOJE)+')':'Trazer para hoje'}</span></span></label>
+     <label class="opt"><input type="radio" name="ad" value="hoje" ${D.opt==='hoje'?'checked':''} ${ja?'disabled':''} data-a="in-ad"><span><span class="o1">Hoje</span><span class="o2" style="display:block">${ja?'A tarefa já é de hoje':atr?'Trazer a atrasada para hoje ('+fmtBR(HOJE)+')':'Trazer para hoje'}</span></span></label>
      <label class="opt"><input type="radio" name="ad" value="amanha" ${D.opt==='amanha'?'checked':''} data-a="in-ad" data-autofocus><span><span class="o1">Amanhã</span><span class="o2" style="display:block">${fmtLong(add(HOJE,1))}</span></span></label>
-     <label class="opt"><input type="radio" name="ad" value="data" ${D.opt==='data'?'checked':''} data-a="in-ad"><span style="flex:1"><span class="o1">Escolher data</span><input id="ad-d" type="date" min="${add(HOJE,ja?1:0)}" value="${D.dt||add(HOJE,3)}" style="display:block;margin-top:8px;min-height:44px;width:100%;padding:0 12px;border:1px solid var(--border-strong);border-radius:var(--r-sm);background:var(--surface)" aria-label="Nova data"></span></label></div>`,
+     <label class="opt"><input type="radio" name="ad" value="data" ${D.opt==='data'?'checked':''} data-a="in-ad"><span style="flex:1"><span class="o1">Escolher data</span><span class="fld" style="display:flex;margin-top:8px">${dateField('ad-d',D.dt||fmtBR(add(HOJE,3)))}</span><span class="err" id="ad-e" role="alert" hidden>${ic('circle-alert',14)}Use dd/mm/aaaa, a partir de hoje.</span></span></label></div>`,
      `<button class="btn ghost" data-a="ov-x">Cancelar</button><button class="btn gold" data-a="ok-adiar" data-id="${t.id}">${ic('clock',16)}Adiar</button>`);
   }
   if(g==='nao'){
-    if(!t)return '';if(!D.mot)D.mot='Sem insumo no estoque';
-    const ms=['Sem insumo no estoque','Animal saiu, morreu ou foi vendido','Já foi feito por fora','Não se aplica a este lote','Outro motivo'];
-    return dlgShell('Não vou fazer',esc(t.titulo),`<div class="opts" role="radiogroup" aria-label="Motivo">${ms.map((m,i)=>`<label class="opt"><input type="radio" name="mo" value="${m}" data-a="in-mo" ${D.mot===m?'checked':''} ${i===0?'data-autofocus':''}><span class="o1">${m}</span></label>`).join('')}</div>
-     <div class="fld" id="mo-o" ${D.mot==='Outro motivo'?'':'hidden'}><label for="mo-t">Qual?</label><input id="mo-t" type="text"></div>
-     <p class="hint" style="font-size:.8125rem;color:var(--text-muted)">A tarefa sai da lista sem contar como feita. Dá para desfazer em “Concluídos hoje”.</p>`,
-     `<button class="btn ghost" data-a="ov-x">Cancelar</button><button class="btn danger" data-a="ok-nao" data-id="${t.id}">Não vou fazer</button>`);
+    if(!t)return '';
+    const prog=t.prog||t.kind==='b19'||t.kind==='afo';
+    return dlgShell('Não vou fazer',esc(t.titulo),`${prog?`<div class="callout warn">${ic('triangle-alert',16)}<span><b>Vacina de programa oficial.</b> O motivo é obrigatório e fica registrado no histórico.</span></div>`:''}<div class="opts" role="radiogroup" aria-label="Motivo">${MOTIVOS.map((m,i)=>`<label class="opt"><input type="radio" name="mo" value="${m}" data-a="in-mo" ${D.mot===m?'checked':''} ${i===0?'data-autofocus':''}><span class="o1">${m}</span></label>`).join('')}</div>
+     <div class="fld" id="mo-o" ${D.mot==='Outro'?'':'hidden'}><label for="mo-t">Qual?</label><input id="mo-t" type="text" autocomplete="off"></div>
+     <div class="fld"><label for="mo-obs">Observação (opcional)</label><textarea id="mo-obs" rows="2"></textarea></div>
+     <p class="hint">A tarefa sai da lista sem contar como feita. Dá para desfazer em “Concluídos hoje”; nada é apagado do histórico.</p>`,
+     `<button class="btn ghost" data-a="ov-x">Cancelar</button><button class="btn danger" data-a="ok-nao" data-id="${t.id}" id="okb" ${D.mot?'':'disabled'}>Não vou fazer</button>`);
   }
   if(g==='fechardia'){
     const c=counts();
     return dlgShell('Fechar o dia',c.restam?`Ainda restam ${c.restam} tarefa${c.restam===1?'':'s'} de campo`:'Fechar o dia',
-     c.restam?`<p>Hoje: <b>${c.N} de ${c.M}</b> feitas${c.at?` e ${c.at} atrasada${c.at===1?'':'s'}`:''}. O que fazer com o que sobrou?</p><ul style="margin:12px 0 0;padding-left:18px;color:var(--text-muted);font-size:.9375rem">${S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.data<=HOJE&&!t.hist).slice(0,5).map(t=>`<li>${esc(t.titulo)}</li>`).join('')}${c.restam>5?`<li>+ ${c.restam-5} outras</li>`:''}</ul>`:'<p>Não há pendências de campo.</p>',
+     c.restam?`<p>Hoje: <b>${c.N} de ${c.M}</b> feitas${c.at?` e ${c.at} atrasada${c.at===1?'':'s'}`:''}. O que fazer com o que sobrou?</p><ul style="margin:12px 0 0;padding-left:18px;color:var(--text-muted);font-size:.9375rem">${S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.data<=HOJE&&!t.hist).slice(0,5).map(t=>`<li>${esc(t.titulo)}</li>`).join('')}${c.restam>5?`<li>+ ${c.restam-5} outras</li>`:''}</ul>${fechadoExtra()}`:'<p>Não há tarefas de campo por fazer.</p>',
      `<button class="btn ghost" data-a="ov-x">Voltar às tarefas</button>${c.restam?`<button class="btn gold" data-a="ok-fechar">${ic('clock',16)}Adiar tudo para amanhã e fechar</button>`:''}`);
   }
   if(g==='excluir'){
     if(!t)return '';
-    return dlgShell('Excluir',`Excluir “${esc(t.titulo)}”?`,`<p>Esta tarefa manual será removida da Agenda. ${t.serie?'Ela faz parte de uma série que se repete.':'Não dá para desfazer.'}</p>`,
+    return dlgShell('Excluir',`Excluir “${esc(t.titulo)}”?`,`<p>Esta tarefa manual será removida da Agenda. O histórico guarda quem excluiu e quando. ${t.serie?'Ela faz parte de uma série que se repete.':''}</p>`,
      `<button class="btn ghost" data-a="ov-x" data-autofocus>Cancelar</button>${t.serie?`<button class="btn danger" data-a="ok-excluir" data-id="${t.id}" data-v="serie">Esta e as próximas</button>`:''}<button class="btn danger" data-a="ok-excluir" data-id="${t.id}" data-v="um">${ic('trash-2',16)}Excluir${t.serie?' só esta':''}</button>`);
   }
   return '';
 }
 function wireOv(){
-  const t=R.t?byId(R.t):null,D=ui.D,g=R.gaveta;
+  const t=R.t?byId(R.t):null,g=R.gaveta;
   if(g==='confirmar'&&t)updConfirmar(t);
   if(g==='registrar'&&t)updRegistrar(t);
   if(g==='pesagem'&&t)updPesagem(t);
-  if(g==='bst'&&$('#okb')&&t)updBst(t);else if(g==='bst'&&t&&R.aba==='lancar'&&$('#cnt'))updBst(t);
+  if(g==='exame'&&t)updExame(t);
+  if(g==='bst'&&t&&(R.aba||'lancar')==='lancar')updBst(t);
   const f=$('#fnova');if(f)f.addEventListener('submit',e=>{e.preventDefault();salvarForm(t)});
 }
 
 
 /* ───────── menus popover ───────── */
 let menuEl=null,menuBtn=null;
-function closeMenu(focus){if(menuEl){menuEl.remove();menuEl=null}if(menuBtn){menuBtn.setAttribute('aria-expanded','false');if(focus)menuBtn.focus();menuBtn=null}}
-function openMenu(btn,items){
+function closeMenu(focus){if(menuEl){menuEl.remove();menuEl=null}if(menuBtn){menuBtn.setAttribute('aria-expanded','false');if(focus&&document.contains(menuBtn))menuBtn.focus();menuBtn=null}}
+function openMenu(btn,items,cls){
   closeMenu();menuBtn=btn;btn.setAttribute('aria-expanded','true');
-  const m=document.createElement('div');m.className='menu';m.setAttribute('role','menu');
+  const m=document.createElement('div');m.className='menu'+(cls?' '+cls:'');m.setAttribute('role','menu');
   m.innerHTML=items.map(i=>i==='-'?'<hr>':`<button role="menuitem" class="${i.dg?'dg':''}" data-mi="${i.k}" data-id="${i.id||''}">${ic(i.i,16)}${i.l}</button>`).join('');
   document.body.appendChild(m);menuEl=m;
   const r=btn.getBoundingClientRect(),w=m.offsetWidth,h=m.offsetHeight;
@@ -1475,13 +1733,29 @@ function openMenu(btn,items){
 }
 function menuTask(btn,id){
   const t=byId(id);const it=[];
-  it.push({k:'adiar',id,i:'clock',l:'Adiar…'},{k:'nao',id,i:'x',l:'Não vou fazer…'});
+  it.push({k:'adiar1',id,i:'clock',l:t.data<=HOJE?'Adiar p/ amanhã':'Adiar 1 dia'},{k:'adiar',id,i:'calendar-plus',l:'Escolher data…'},{k:'nao',id,i:'x',l:'Não vou fazer…'});
+  it.push('-');
   if(t.animais&&t.animais.length)it.push({k:'ver',id,i:'users',l:'Ver animais'});
   it.push({k:'origem',id,i:'arrow-right',l:'Abrir origem'});
   if(t.manual){it.push('-',{k:'editar',id,i:'pencil',l:'Editar tarefa'},{k:'excluir',id,i:'trash-2',l:'Excluir tarefa',dg:1})}
   openMenu(btn,it);
 }
+/* glossário: popover por toque/foco */
+let popEl=null,popBtn=null;
+function closePop(focus){if(popEl){popEl.remove();popEl=null}if(popBtn){popBtn.setAttribute('aria-expanded','false');if(focus&&document.contains(popBtn))popBtn.focus();popBtn=null}}
+function openPop(btn){
+  closePop();closeMenu();popBtn=btn;btn.setAttribute('aria-expanded','true');
+  const ks=btn.dataset.k.split(',');
+  const p=document.createElement('div');p.className='pop';p.setAttribute('role','dialog');p.setAttribute('aria-label','Glossário');
+  p.innerHTML=ks.map(k=>`<p><b>${k}</b> — ${esc(GLOS[k])}</p>`).join('')+`<button class="btn sm" data-a="pop-x">Entendi</button>`;
+  document.body.appendChild(p);popEl=p;
+  const r=btn.getBoundingClientRect(),w=p.offsetWidth,h=p.offsetHeight;
+  let x=Math.max(8,Math.min(r.left,innerWidth-w-8));let y=r.bottom+6;if(y+h>innerHeight-8)y=Math.max(8,r.top-h-6);
+  p.style.left=x+'px';p.style.top=y+'px';
+  $('button',p).focus();
+}
 document.addEventListener('keydown',e=>{
+  if(popEl&&e.key==='Escape'){e.preventDefault();e.stopPropagation();closePop(true);return}
   if(menuEl){
     const bs=$$('button',menuEl),i=bs.indexOf(document.activeElement);
     if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closeMenu(true);return}
@@ -1495,21 +1769,23 @@ document.addEventListener('keydown',e=>{
 function salvarForm(t){
   const ed=R.gaveta==='editar'&&t;
   const titulo=$('#f-t').value.trim();
+  const data=parseBR($('#f-d').value);
+  $('#f-de').hidden=!!data;
   if(!titulo){$('#f-t').setAttribute('aria-invalid','true');$('#f-te').hidden=false;$('#f-t').focus();return}
-  const data=$('#f-d').value||HOJE,cat=$('#f-c').value,lote=$('#f-l').value||null,an=$('#f-a').value.trim(),obs=$('#f-o').value.trim();
+  if(!data){$('#f-d').focus();return}
+  const cat=$('#f-c').value,lote=$('#f-l').value||null,an=$('#f-a').value.trim(),obs=$('#f-o').value.trim();
   const quem=an?`Animal ${an}${lote?' · '+lote:''}`:(lote||'Geral da fazenda');
-  if(ed){Object.assign(t,{titulo,data,cat,lote,animais:an?[an]:[],quem,obs});save();closeOvThen(()=>{afterMut();toast({msg:`Tarefa atualizada · ${titulo}`})});return}
+  if(ed){Object.assign(t,{titulo,data,cat,lote,animais:an?[an]:[],quem,obs});lg({tid:t.id,titulo,acao:'Editada'});save();closeOvThen(()=>{afterMut();toast({msg:`Tarefa atualizada · ${titulo}`})});return}
   const rep=parseInt($('#f-r').value,10)||0,un=$('#f-ru').value;
-  const novas=[];const mkT=(d,i)=>({id:'m'+(++S.seq),kind:'manual',data:d,cat,titulo,trilho:'campo',res:'realizar',gaveta:'',btn:'',lote,animais:an?[an]:[],bulk:1,crit:0,manual:1,quem,obs,origem:'Tarefa manual · criada por Jairo agora',st:'p',serie:rep?('s'+S.seq):undefined,isNew:1});
-  novas.push(mkT(data,0));
-  if(rep>0){for(let i=1;i<=3;i++){const d=un==='d'?add(data,rep*i):iso(new Date(Date.UTC(dt(data).getUTCFullYear(),dt(data).getUTCMonth()+rep*i,dt(data).getUTCDate())));novas.push(mkT(d,i))}novas.forEach(n=>n.serie=novas[0].serie||('s'+S.seq))}
-  S.tasks.push(...novas);save();
+  const novas=[];const mkT=(d)=>({id:'m'+(++S.seq),kind:'manual',data:d,cat,titulo,trilho:'campo',res:'realizar',gaveta:'',lote,animais:an?[an]:[],bulk:1,crit:0,manual:1,quem,obs,origem:'Tarefa manual · criada por Jairo Nasser agora',st:'p'});
+  novas.push(mkT(data));
+  if(rep>0){for(let i=1;i<=3;i++){const d=un==='d'?add(data,rep*i):iso(new Date(Date.UTC(dt(data).getUTCFullYear(),dt(data).getUTCMonth()+rep*i,dt(data).getUTCDate())));novas.push(mkT(d))}const sr='s'+S.seq;novas.forEach(n=>n.serie=sr)}
+  S.tasks.push(...novas);lg({tid:novas[0].id,titulo,acao:'Criada',obs:`Para ${fmtBR(data)}${rep?`, repete a cada ${rep} ${un==='d'?'dias':'meses'}`:''}`});save();
   const ids=novas.map(n=>n.id);
-  closeOvThen(()=>{afterMut();toast({msg:`Tarefa criada para ${rel(data)}${rep?` · repete a cada ${rep} ${un==='d'?'dias':'meses'}`:''}`,undo:()=>{S.tasks=S.tasks.filter(t=>!ids.includes(t.id));save();afterMut()},label:'Desfazer'});
+  closeOvThen(()=>{afterMut();toast({msg:`Tarefa criada para ${rel(data)}${rep?` · repete a cada ${rep} ${un==='d'?'dias':'meses'}`:''}`,undo:()=>{S.tasks=S.tasks.filter(t=>!ids.includes(t.id));lg({tid:ids[0],titulo,acao:'Excluída',obs:'Criação desfeita'});save();afterMut()},label:'Desfazer'});
     const r=$(`.row[data-id="${ids[0]}"]`);if(r){r.classList.add('novo');r.scrollIntoView({block:'nearest',behavior:reduce()?'auto':'smooth'})}});
 }
 function closeOvThen(fn){
-  ui.opener=ui.opener||null;
   if(history.state&&history.state.ov){const h=()=>{window.removeEventListener('popstate',h);setTimeout(fn,0)};window.addEventListener('popstate',h);history.back()}
   else{go({gaveta:'',t:'',aba:''});fn()}
 }
@@ -1523,28 +1799,21 @@ function abrirGav(g,id,aba){
   ui.D={};const nr={...R,gaveta:g,t:id||'',aba:aba||''};
   (R.gaveta?history.replaceState.bind(history):history.pushState.bind(history))({ov:1},'',buildHash(nr));parseHash();renderOverlay();
 }
-function concluirDentro(fn){ // fecha overlay e roda fn depois
-  closeOvThen(fn);
-}
 
 /* ───────── ação principal de uma linha ───────── */
 function primaria(id){
   const t=byId(id);if(!t)return;
   const p=prim(t);
   if(p.a==='nav'){
-    if(t.res==='informativo'){const nx=nextRowId(id);t.st='n';t.feitoEm=HOJE;t.motivo='Dispensado';t.hora=hm();save();afterMut();toast({msg:`Dispensado · ${t.titulo}`,undo:()=>{desfazer(id);afterMut()}});return}
+    if(t.res==='informativo'){naoVou(id,'Dispensado',''); afterMut();toast({msg:`Dispensado · ${t.titulo}`,undo:()=>{desfazer(id);afterMut()}});return}
     stub(t.destino||t.origem);return;
   }
-  if(p.a==='gaveta'){
-    const g=t.gaveta;
-    if(g==='bst'){abrirGav('bst',id,'lancar');return}
-    abrirGav(g,id);return;
-  }
+  if(p.a==='gaveta'){abrirGav(t.gaveta,id,t.gaveta==='bst'?'lancar':'');return}
   feitoDireto(id);
 }
 
 /* ───────── seleção em lote com progresso ───────── */
-async function rodarLote(){
+function rodarLote(){
   const ids=[...ui.selIds].filter(i=>byId(i)&&pend(byId(i)));if(!ids.length)return;
   ui.run={ids,i:0,pausa:false,feitos:[]};rodaPasso();
 }
@@ -1553,36 +1822,75 @@ function rodaPasso(){
   const passo=()=>{
     if(!ui.run)return;
     if(r.i>=r.ids.length){
-      const feitos=r.feitos.slice();ui.run=null;ui.sel=false;ui.selIds.clear();afterMut();
+      const feitos=r.feitos.slice();ui.run=null;ui.sel=false;ui.selIds.clear();fkAgg=null;afterMut();
       toast({msg:`${feitos.length} tarefas feitas em lote`,undo:()=>{feitos.forEach(i=>desfazer(i));afterMut()},label:'Desfazer todas'});
       const b=$('#hojeCard .btn-feito');if(b)b.focus({preventScroll:true});return;
     }
     if(ui.erroRede){r.pausa=true;renderMain();return}
-    const id=r.ids[r.i];const rid=feito(id);r.feitos.push(rid);r.i++;
-    renderNums();renderLat();updateSelbar();
+    const id=r.ids[r.i];const rid=feito(id,{reg:{quem:'jn'}});r.feitos.push(rid);r.i++;
+    renderNums();renderLat();renderMain();
     setTimeout(passo,reduce()?30:260);
   };
-  updateSelbar();setTimeout(passo,200);
+  renderMain();setTimeout(passo,200);
 }
-function updateSelbar(){renderMain()}
+
+/* ───────── exportar: respeita Visão e Filtros; inclui concluídas ───────── */
+function escopoExport(){
+  const v=R.visao;let ini,fim;
+  if(v==='semana'){ini=HOJE;fim=add(HOJE,6)}
+  else if(v==='mes'){const ym=R.mes||HOJE.slice(0,7);ini=ym+'-01';const [y,m]=ym.split('-').map(Number);fim=add(iso(new Date(Date.UTC(y,m,1))),-1)}
+  else{ini=R.dia||HOJE;fim=ini}
+  const linhas=[];
+  const inEsc=d=>d>=ini&&d<=fim||(v==='hoje'&&!R.dia&&d<HOJE&&R.filtro!=='hoje');
+  S.tasks.filter(t=>!t.hist&&t.trilho!=='gestao'&&match(t)&&(R.filtro!=='atrasadas'||(t.data<HOJE))&&(R.filtro!=='hoje'||t.data===HOJE)).forEach(t=>{
+    if(t.st==='p'&&inEsc(t.data)){
+      const d=diff(HOJE,t.data);
+      linhas.push({data:t.data,sit:d>0?`Atrasada há ${d} d`:t.adiadaDe?`Adiada de ${fmtBR(t.adiadaDe)}`:'A fazer',cat:CATS[t.cat].n,tarefa:t.titulo,quem:t.quem||'',ins:insTxt(t),porQuem:'',hora:'',motivo:'',frasco:'',dose:'',via:'',custo:''});
+    }
+  });
+  S.log.filter(e=>['Feito','Não vou fazer','Estornada'].includes(e.acao)).forEach(e=>{
+    const t=byId(e.tid);const tt=t||{};
+    if(t&&!(match(t)))return;
+    const dTask=t?t.data:e.dia;if(!(dTask>=ini&&dTask<=fim)&&!(v==='hoje'&&e.dia>=ini&&e.dia<=fim))return;
+    linhas.push({data:dTask,sit:e.acao==='Feito'?(e.estornada?'Feita (estornada depois)':'Feita'):e.acao==='Estornada'?'Estorno':'Não vou fazer',cat:CATS[e.cat||(t&&t.cat)||'ati'].n,tarefa:e.titulo,quem:tt.quem||e.lote||'',ins:'',porQuem:e.quemFez||e.quem,hora:`${fmt(e.dia)} ${e.hora}`,motivo:e.motivo||e.obs||'',frasco:e.frasco||'',dose:e.dose||'',via:e.via||'',custo:e.custo?String(e.custo).replace('.',','):''});
+  });
+  linhas.sort((a,b)=>a.data>b.data?1:a.data<b.data?-1:0);
+  return {ini,fim,linhas};
+}
+const COLS=[['data','Data'],['sit','Situação'],['cat','Categoria'],['tarefa','Tarefa'],['quem','Para quem'],['ins','Insumo previsto'],['porQuem','Quem fez'],['hora','Quando'],['motivo','Motivo / observação'],['frasco','Frasco (lote)'],['dose','Dose'],['via','Via'],['custo','Custo (R$)']];
+function exportarCSV(){
+  const {ini,fim,linhas}=escopoExport();
+  const csv='﻿'+[COLS.map(c=>c[1])].concat(linhas.map(l=>COLS.map(c=>c[0]==='data'?fmtBR(l.data):l[c[0]]))).map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(';')).join('\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download=`agenda-${R.visao}-${ini}${fim!==ini?'_a_'+fim:''}.csv`;document.body.appendChild(a);a.click();a.remove();
+  toast({msg:`Exportado: ${a.download} (${linhas.length} linhas, com concluídas)`});
+}
+function montaPrint(){
+  const {ini,fim,linhas}=escopoExport();
+  const filtros=[R.cat.length?'categorias: '+R.cat.map(c=>CATS[c].n).join(', '):'',R.q?'busca: “'+R.q+'”':'',R.filtro?'filtro: '+R.filtro:''].filter(Boolean).join(' · ')||'sem filtros';
+  $('#print').innerHTML=`<h1>Agenda — ${FAZENDA}</h1><p>Visão ${R.visao} · ${fmtBR(ini)}${fim!==ini?' a '+fmtBR(fim):''} · ${filtros} · emitido em ${fmtBR(HOJE)} ${hm()} por ${USER}</p>
+   <table><thead><tr>${COLS.filter(c=>!['ins','via'].includes(c[0])).map(c=>`<th>${c[1]}</th>`).join('')}</tr></thead><tbody>${linhas.map(l=>`<tr>${COLS.filter(c=>!['ins','via'].includes(c[0])).map(c=>`<td>${esc(c[0]==='data'?fmtBR(l.data):l[c[0]])}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+window.addEventListener('beforeprint',montaPrint);
 
 /* ───────── delegação de cliques ───────── */
 document.addEventListener('click',e=>{
   const a=e.target.closest('[data-a],[data-mi]');
   if(menuEl&&!e.target.closest('.menu')&&!(a&&a.dataset.a==='menu'&&a===menuBtn))closeMenu();
+  if(popEl&&!e.target.closest('.pop')&&!(a&&a.dataset.a==='gl'))closePop();
   if(!a)return;
   if(a.dataset.mi){menuItem(a.dataset.mi,a.dataset.id);return}
   const id=a.dataset.id,act=a.dataset.a;
   switch(act){
     case 'stub':e.preventDefault();stub(a.dataset.l);break;
     case 'nada':e.preventDefault();break;
+    case 'gl':if(popBtn===a)closePop();else openPop(a);break;
+    case 'pop-x':closePop(true);break;
     case 'tema':{const o=['claro','misto','escuro'];const t=document.documentElement.getAttribute('data-theme')||'escuro';setTema(o[(o.indexOf(t)+1)%3]);break}
     case 'visao':go({visao:a.dataset.v,filtro:''});ui.mini='';break;
-    case 'agrupar':go({agrupar:a.dataset.g});break;
     case 'filtro':go({visao:'hoje',filtro:R.filtro===a.dataset.f?'':a.dataset.f,dia:''});break;
+    case 'filtros':ui.filtrosAberto=!ui.filtrosAberto;renderBar();break;
     case 'cat':{const c=a.dataset.c;const s=new Set(R.cat);s.has(c)?s.delete(c):s.add(c);go({cat:[...s]},{only:'list'});renderBar();break}
     case 'limpar':go({cat:[],q:'',filtro:''});break;
-    case 'barra':ui.barAberta=!ui.barAberta;renderBar();break;
     case 'dia':go({visao:'hoje',dia:a.dataset.d===HOJE?'':a.dataset.d,filtro:''});break;
     case 'mes':go({mes:a.dataset.m});break;
     case 'mini':ui.mini=a.dataset.m;renderLat();break;
@@ -1598,13 +1906,13 @@ document.addEventListener('click',e=>{
     case 'dispensar-com':S.comunic=false;save();renderComun();break;
     case 'prim':{
       const t=byId(id);
-      if(R.gaveta==='detalhes'){const p=prim(t);if(p.a==='gaveta'){abrirGav(t.gaveta,id,t.gaveta==='bst'?'lancar':'');}else{closeOvThen(()=>primaria(id))}}
+      if(R.gaveta==='detalhes'){const p=prim(t);if(p.a==='gaveta'){abrirGav(t.gaveta,id,t.gaveta==='bst'?'lancar':'')}else{closeOvThen(()=>primaria(id))}}
       else primaria(id);break}
     case 'menu':if(menuBtn===a){closeMenu()}else menuTask(a,id);break;
     case 'tg-am':ui.amanha=!ui.amanha;renderMain();break;
     case 'tg-cc':ui.concl=!ui.concl;renderMain();break;
-    case 'desf':{desfazer(id);afterMut();toast({msg:'Tarefa reaberta na lista de hoje'});break}
-    case 'desf-todos':{const ids=S.tasks.filter(t=>t.st!=='p'&&t.feitoEm===HOJE&&!t.hist&&t.trilho!=='gestao').map(t=>t.id);ids.forEach(i=>desfazer(i));afterMut();toast({msg:`${ids.length} tarefas reabertas`});break}
+    case 'desf':{desfazer(id);afterMut();toast({msg:'Feita estornada: a tarefa voltou à lista de hoje. O histórico guarda as duas entradas.'});break}
+    case 'desf-todos':{const ids=S.tasks.filter(t=>t.st!=='p'&&t.feitoEm===HOJE&&!t.hist&&t.trilho!=='gestao').map(t=>t.id);ids.forEach(i=>desfazer(i));afterMut();toast({msg:`${ids.length} tarefas estornadas`});break}
     case 'selmode':ui.sel=!ui.sel;ui.selIds.clear();ui.run=null;renderMain();break;
     case 'selall':{S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.bulk&&(t.data<=HOJE)&&match(t)&&(R.filtro!=='atrasadas'||t.data<HOJE)&&(R.filtro!=='hoje'||t.data===HOJE)).forEach(t=>ui.selIds.add(t.id));renderMain();break}
     case 'selcancel':ui.sel=false;ui.selIds.clear();ui.run=null;renderMain();break;
@@ -1614,63 +1922,76 @@ document.addEventListener('click',e=>{
     case 'fechardia':abrirDlg('fechardia','');break;
     case 'dlg':abrirDlg(a.dataset.g,id);break;
     case 'ov-x':closeOv();break;
-    case 'toast-undo':{const t=toasts.find(x=>x.id==a.dataset.tid);if(t){clearInterval(t.iv);toasts=toasts.filter(x=>x!==t);renderToasts();t.undo()}break}
-    case 'toast-act':{const t=toasts.find(x=>x.id==a.dataset.tid);if(t){clearInterval(t.iv);toasts=toasts.filter(x=>x!==t);renderToasts();if(ui._retry)ui._retry()}break}
-    case 'toast-x':{const t=toasts.find(x=>x.id==a.dataset.tid);if(t){clearInterval(t.iv);toasts=toasts.filter(x=>x!==t);renderToasts()}break}
-    /* drawers */
-    case 'in-fr':ui.D.fr=a.value;break;
+    case 'toast-undo':{if(TK&&TK.undo){const f=TK.undo;clearInterval(TK.iv);TK=null;renderToasts();f()}break}
+    case 'toast-act':{if(TK){clearInterval(TK.iv);TK=null;renderToasts();if(ui._retry)ui._retry()}break}
+    case 'toast-x':killToast();break;
+    /* gavetas */
+    case 'in-frI':{ui.D.fr[a.dataset.v]=a.value;updConfirmar(byId(R.t));break}
+    case 'in-quem':ui.D.quem=a.value;if(R.gaveta==='registrar')updRegistrar(byId(R.t));break;
+    case 'in-reprog':ui.D.reprog=a.checked;break;
+    case 'in-ciente':ui.D.ciente=a.checked;if(R.gaveta==='registrar')updRegistrar(byId(R.t));else updConfirmar(byId(R.t));break;
+    case 'in-frasco':ui.D.fr=a.value;updRegistrar(byId(R.t));break;
+    case 'in-res':ui.D.res[a.dataset.v]=a.value;updExame(byId(R.t));break;
     case 'ck-a':{const D=ui.D;a.checked?D.sel.add(a.value):D.sel.delete(a.value);const t=byId(R.t);if(R.gaveta==='confirmar')updConfirmar(t);else updBst(t);break}
     case 'ck-all':{const t=byId(R.t);const D=ui.D;const src=R.gaveta==='bst'?S.bst.aptos:t.animais;D.sel=new Set(a.dataset.v==='1'?src:[]);$$('#ov input[data-a=ck-a]').forEach(c=>c.checked=a.dataset.v==='1');if(R.gaveta==='confirmar')updConfirmar(t);else updBst(t);break}
-    case 'ok-confirmar':{const t=byId(R.t),D=ui.D;const sel=[...D.sel];const q=D.q;const rid=t.id;
-      const e=S.est[t.ins.id];
+    case 'ok-confirmar':{
+      const t=byId(R.t),D=ui.D;const sel=[...D.sel];const cons=D.cons;const rid=t.id;const delta=D.delta||0;const rep=D.reprog;const q=D.quem;const dIso=parseBR(D.dt);
+      const sib=S.tasks.filter(x=>pend(x)&&x.proto&&x.proto===t.proto&&x.id!==t.id&&x.data>t.data&&/^IATF/.test(x.titulo));
       closeOvThen(()=>{
-        if(ui.erroRede){toast({err:1,msg:'Não foi possível registrar. Nada foi alterado — tente de novo.'});return}
-        const nid=feito(rid,{animais:sel,q});afterMut();feitoToast(nid,sel.length<t.animais.length+0?'':'')});break}
-    case 'ok-registrar':{const t=byId(R.t),D=ui.D;const q=D.q,prod=D.prod;const rid=t.id;
+        if(ui.erroRede){toast({err:1,msg:'Sem conexão: não foi possível registrar. Nada foi alterado.'});return}
+        const nid=feito(rid,{animais:sel,consumo:cons,reg:{quem:q,dataReal:dIso,ciente:cons.some(c=>vencido(S.est[c.id].fr.find(f=>f.f===c.f)))}});
+        if(delta&&rep)sib.forEach(x=>{x.data=add(x.data,delta);lg({tid:x.id,titulo:x.titulo,acao:'Reprogramada',obs:`Deslocada ${delta>0?'+':''}${delta} dia(s) após a data real de ${t.titulo}`})});
+        afterMut();feitoToast(nid,cons.map(c=>c.f).join(', '))});break}
+    case 'ok-registrar':{const t=byId(R.t),D=ui.D;const e=S.est[t.prod];const q=D.q,fr=D.fr;const rid=t.id;const reg={quem:D.quem,dataReal:D.dtIso,via:$('#rg-v')?$('#rg-v').value:e.via,doseTxt:`${nfmt(D.dose)} mL/animal`,custo:D.custoV,ciente:D.needCiente&&D.ciente,obs:''};
       closeOvThen(()=>{
-        if(ui.erroRede){toast({err:1,msg:'Não foi possível registrar. Nada foi alterado — tente de novo.'});return}
-        const tt=byId(rid);tt.ins={id:prod,q,txt:tt.ins.txt};
-        const nid=feito(rid,{q});byId(nid).consumo={id:prod,q};afterMut();feitoToast(nid,`baixa de ${q} ${S.est[prod].un}`)});break}
-    case 'in-prod':{ui.D.prod=a.value;const t=byId(R.t);const e=S.est[a.value];$('#rg-f').innerHTML=e.fr.map(f=>`<option value="${f.id}">${esc(f.t)}</option>`).join('');updRegistrar(t);break}
-    case 'in-kg':{ui.D.p[a.dataset.v]=a.value;updPesagem(byId(R.t));break}
-    case 'ok-pesagem':{const t=byId(R.t),D=ui.D;const f=Object.keys(D.p).filter(x=>parseFloat(D.p[x])>0);const rid=t.id;
+        if(ui.erroRede){toast({err:1,msg:'Sem conexão: não foi possível registrar. Nada foi alterado.'});return}
+        const nid=feito(rid,{consumo:[{id:t.prod,f:fr,q}],reg});afterMut();feitoToast(nid,`frasco ${fr}`)});break}
+    case 'ok-exame':{const t=byId(R.t),D=ui.D;const rid=t.id;const res={...D.res};const leitura=t.kind==='tbl';const q=D.quem;const lote=t.lote,an=t.animais.slice();
       closeOvThen(()=>{
-        if(ui.erroRede){toast({err:1,msg:'Não foi possível registrar. Nada foi alterado — tente de novo.'});return}
-        const nid=feito(rid,{animais:f,q:0});afterMut();feitoToast(nid,`${f.length} pesos lançados`)});break}
+        if(ui.erroRede){toast({err:1,msg:'Sem conexão: não foi possível registrar. Nada foi alterado.'});return}
+        const nid=feito(rid,{reg:{quem:q,obs:leitura?Object.entries(res).map(([a,r])=>a+': '+({neg:'negativo',pos:'POSITIVO (reagente)',inc:'inconclusivo'}[r])).join('; '):''}});
+        if(!leitura){const n=mk('l'+(++S.seq),'tbl',3,{animais:an,lote});n.quem_fix=`${an.length} animais · ${lote}`;n.quem=n.quem_fix;S.tasks.push(n)}
+        else{const inc=Object.keys(res).filter(a=>res[a]==='inc');if(inc.length){const n=mk('r'+(++S.seq),'tb',60,{animais:inc,lote});n.titulo='Exame TB — reteste (inconclusivo em '+fmt(HOJE)+')';S.tasks.push(n)}}
+        save();afterMut();feitoToast(nid,leitura?'resultados registrados':`leitura em ${fmt(add(HOJE,3))}`)});break}
+    case 'ok-pesagem':{const t=byId(R.t),D=ui.D;const f=Object.keys(D.p).filter(x=>num(D.p[x])>0);const rid=t.id;const obs=f.map(x=>x+': '+nfmt(num(D.p[x]))+' kg').join('; ');
+      closeOvThen(()=>{
+        if(ui.erroRede){toast({err:1,msg:'Sem conexão: não foi possível registrar. Nada foi alterado.'});return}
+        const nid=feito(rid,{animais:f,reg:{quem:'ca',obs}});afterMut();feitoToast(nid,`${f.length} pesos registrados`)});break}
     case 'ok-bst':{const t=byId(R.t),D=ui.D;const sel=[...D.sel];const rid=t.id;
       closeOvThen(()=>{
-        if(ui.erroRede){toast({err:1,msg:'Não foi possível registrar. Nada foi alterado — tente de novo.'});return}
-        const nid=feito(rid,{animais:sel,q:sel.length});afterMut();feitoToast(nid,`${sel.length} doses`)});break}
+        if(ui.erroRede){toast({err:1,msg:'Sem conexão: não foi possível registrar. Nada foi alterado.'});return}
+        const nid=feito(rid,{animais:sel,consumo:[{id:'bst',f:'BS-2606',q:sel.length}],reg:{quem:'ca'}});afterMut();feitoToast(nid,`${sel.length} doses`)});break}
     case 'aba':abrirGav(R.gaveta,R.t,a.dataset.v);break;
     case 'bst-inc':{const n=a.dataset.v,l=S.bst.incluir;const i=l.indexOf(n);i>=0?l.splice(i,1):l.push(n);save();abrirGav(R.gaveta,R.t,'excl');break}
-    case 'agendar':{const n=a.dataset.v;S.agend.push(n);const t=mk('f'+(++S.seq),'iatf1',1,{animais:[n],lote:L2});t.quem=`1 vaca · ${L2} · brinco ${n}`;S.tasks.push(t);save();renderAllKeepOv();toast({msg:`Vaca ${n} agendada · 1º dia da inseminação programada amanhã`,undo:()=>{S.agend=S.agend.filter(x=>x!==n);S.tasks=S.tasks.filter(x=>x.id!==t.id);save();renderAllKeepOv()}});break}
-    case 'ia-ok':{const t=byId(R.t);const n=a.dataset.v;t.iaFeitas=t.iaFeitas||[];t.iaFeitas.push(n);S.est.e9.saldo--;save();
-      if(t.iaFeitas.length>=t.animais.length){t.st='f';t.feitoEm=HOJE;t.hora=hm();t.consumo={id:'e9',q:t.animais.length};save();const rid=t.id;closeOvThen(()=>{afterMut();feitoToast(rid,`${t.animais.length} inseminadas`)})}
+    case 'iniciar-proto':stub(`Protocolos › Novo protocolo, já com o lote “${a.dataset.l}” e o modelo IATF (Dia 0, 7, 9 e 11) preenchidos`);break;
+    case 'ia-ok':{const t=byId(R.t);const n=a.dataset.v;t.iaFeitas=t.iaFeitas||[];t.iaFeitas.push(n);const fr=S.est.sem.fr[0];fr.s--;lg({tid:t.id,titulo:t.titulo,lote:t.lote,acao:'Feito',cat:t.cat,quemFez:pessoa(ui.D.quem||'pm').nome,frasco:fr.f,obs:'Inseminação da vaca '+n});save();
+      if(t.iaFeitas.length>=t.animais.length){t.st='f';t.feitoEm=HOJE;t.hora=hm();t.porQuem=pessoa(ui.D.quem||'pm').nome;t.consumo=[{id:'sem',f:fr.f,q:t.animais.length}];t.reg={frasco:fr.f,custo:t.animais.length*S.est.sem.preco};const rid=t.id;const e=lg({tid:t.id,titulo:t.titulo,lote:t.lote,acao:'Feito',cat:t.cat,quemFez:t.porQuem,frasco:fr.f,custo:t.reg.custo,obs:'Dia 11 concluído'});t.logId=e.id;save();closeOvThen(()=>{afterMut();feitoToast(rid,`${t.animais.length} inseminadas`)})}
       else{renderOverlay();afterMut()}break}
-    case 'ia-undo':{const t=byId(R.t);t.iaFeitas=t.iaFeitas.filter(x=>x!==a.dataset.v);S.est.e9.saldo++;save();renderOverlay();afterMut();break}
-    case 'gestao-ok':{const t=byId(id);t.st='n';t.feitoEm=HOJE;t.motivo=t.res==='informativo'?'Dispensado':'Aberto no módulo';t.hora=hm();save();afterMut();if(t.res!=='informativo')stub(t.destino);renderOverlay();break}
-    case 'mov-ok':{const t=byId(R.t);const lote=$('#mv-l').value;t.st='f';t.feitoEm=HOJE;t.hora=hm();t.quem=`Recria 2 → ${lote}`;save();const rid=t.id;closeOvThen(()=>{afterMut();feitoToast(rid,`novilha 6015 movida para ${lote}`)});break}
-    case 'mov-nao':{const t=byId(R.t);const rid=t.id;closeOvThen(()=>{adiar(rid,add(HOJE,7));afterMut();toast({msg:'Sem decisão agora · a sugestão volta em 7 dias',undo:()=>{desfazerAdiar(rid);afterMut()}})});break}
+    case 'ia-undo':{const t=byId(R.t);t.iaFeitas=t.iaFeitas.filter(x=>x!==a.dataset.v);S.est.sem.fr[0].s++;lg({tid:t.id,titulo:t.titulo,acao:'Estornada',obs:'Inseminação da vaca '+a.dataset.v+' estornada'});save();renderOverlay();afterMut();break}
+    case 'gestao-ok':{const t=byId(id);t.st='n';t.feitoEm=HOJE;t.motivo=t.res==='informativo'?'Dispensado':'Aberto no módulo';t.hora=hm();lg({tid:id,titulo:t.titulo,acao:'Não vou fazer',motivo:t.motivo});save();afterMut();if(t.res!=='informativo')stub(t.destino);renderOverlay();break}
+    case 'mov-ok':{const t=byId(R.t);const lote=$('#mv-l').value;const rid=t.id;closeOvThen(()=>{const tt=byId(rid);tt.quem=`Recria 2 → ${lote}`;const nid=feito(rid,{reg:{quem:'jn'},animais:[]});afterMut();feitoToast(nid,`novilha 4109 movida para ${lote}`)});break}
+    case 'mov-nao':{const t=byId(R.t);const rid=t.id;closeOvThen(()=>{adiar(rid,add(HOJE,7));afterMut();toast({msg:'Sem decisão agora: a sugestão volta em 7 dias',undo:()=>{desfazerAdiar(rid);afterMut()}})});break}
     case 'in-ad':ui.D.opt=a.value;break;
-    case 'ok-adiar':{const t=byId(id);const o=ui.D.opt||'amanha';let nd=o==='hoje'?HOJE:o==='amanha'?add(HOJE,1):($('#ad-d').value||add(HOJE,1));
-      if(nd<HOJE)nd=HOJE;const rid=id;
-      closeOvThen(()=>{const nx=nextRowId(rid);adiar(rid,nd);afterMut();toast({msg:`Adiada para ${rel(nd)} (${fmt(nd)}) · ${t.titulo}`,undo:()=>{desfazerAdiar(rid);afterMut()}});focusRow(nx)});break}
-    case 'in-mo':{ui.D.mot=a.value;$('#mo-o').hidden=a.value!=='Outro motivo';break}
-    case 'ok-nao':{const o=ui.D.mot||'Sem insumo no estoque';const mt=o==='Outro motivo'?($('#mo-t').value.trim()||o):o;const rid=id;
-      closeOvThen(()=>{const nx=nextRowId(rid);const tt=byId(rid);naoVou(rid,mt);afterMut();toast({msg:`Não vou fazer · ${tt.titulo}`,undo:()=>{desfazer(rid);afterMut()}});focusRow(nx)});break}
+    case 'ok-adiar':{const t=byId(id);const o=ui.D.opt||'amanha';let nd;
+      if(o==='hoje')nd=HOJE;else if(o==='amanha')nd=add(HOJE,1);else{nd=parseBR($('#ad-d').value);if(!nd||nd<HOJE){$('#ad-e').hidden=false;$('#ad-d').focus();break}}
+      const rid=id;
+      closeOvThen(()=>{const nx=nextRowId(rid);adiar(rid,nd);afterMut();toast({msg:`Adiada para ${rel(nd)} (${fmtBR(nd)}) · ${t.titulo}`,undo:()=>{desfazerAdiar(rid);afterMut()}});focusRow(nx)});break}
+    case 'in-mo':{ui.D.mot=a.value;$('#mo-o').hidden=a.value!=='Outro';$('#okb').disabled=false;break}
+    case 'ok-nao':{const o=ui.D.mot;if(!o)break;const mt=o==='Outro'?($('#mo-t').value.trim()||'Outro'):o;const obs=$('#mo-obs').value.trim();const rid=id;
+      closeOvThen(()=>{const nx=nextRowId(rid);const tt=byId(rid);naoVou(rid,mt,obs);afterMut();toast({msg:`Não vou fazer · ${tt.titulo}`,undo:()=>{desfazer(rid);afterMut()}});focusRow(nx)});break}
     case 'ok-fechar':{const ids=S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.data<=HOJE&&!t.hist).map(t=>t.id);
-      closeOvThen(()=>{ids.forEach(i=>{const t=byId(i);t.adiadaDe=t.adiadaDe||t.data;t._antes=t.data;t.data=add(HOJE,1)});save();afterMut();
+      closeOvThen(()=>{ids.forEach(i=>adiar(i,add(HOJE,1)));afterMut();
         const c=counts();toast({msg:`Dia fechado — ${c.N} de ${c.M} · ${ids.length} adiadas para amanhã`,undo:()=>{ids.forEach(desfazerAdiar);afterMut()}})});break}
     case 'ok-excluir':{const t=byId(id);const v=a.dataset.v;const sr=t.serie;
-      closeOvThen(()=>{const nx=nextRowId(id);S.tasks=S.tasks.filter(x=>v==='serie'&&sr?!(x.serie===sr&&x.data>=t.data):x.id!==id);save();afterMut();toast({msg:`Tarefa excluída${v==='serie'?' (e as próximas da série)':''}`});focusRow(nx)});break}
+      closeOvThen(()=>{const nx=nextRowId(id);S.tasks=S.tasks.filter(x=>v==='serie'&&sr?!(x.serie===sr&&x.data>=t.data):x.id!==id);lg({tid:id,titulo:t.titulo,acao:'Excluída',obs:v==='serie'?'Esta e as próximas da série':''});save();afterMut();toast({msg:`Tarefa excluída${v==='serie'?' (e as próximas da série)':''}`});focusRow(nx)});break}
   }
 });
-function renderSelBarOnly(){const sb=$('.selbar');if(sb){const l=[];const tmp=document.createElement('div');tmp.innerHTML=selBar([...S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.bulk)]);sb.replaceWith(tmp.firstElementChild)}}
-function renderAllKeepOv(){const k=$('#ov').innerHTML;renderHdr();renderNums();renderMain();renderLat();renderOverlay()}
+function renderSelBarOnly(){const sb=$('.selbar');if(sb){const tmp=document.createElement('div');tmp.innerHTML=selBar(S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.bulk));sb.replaceWith(tmp.firstElementChild)}}
 function menuItem(k,id){
   closeMenu();
   const t=byId(id);
-  if(k==='adiar'){ui.opener='m:'+id;abrirDlg('adiar',id)}
+  if(k==='adiar1'){const nx=nextRowId(id);const nd=add(t.data>HOJE?t.data:HOJE,1);adiar(id,nd);afterMut();toast({msg:`Adiada para ${rel(nd)} (${fmtBR(nd)}) · ${t.titulo}`,undo:()=>{desfazerAdiar(id);afterMut()}});focusRow(nx)}
+  else if(k==='adiar'){ui.opener='m:'+id;abrirDlg('adiar',id)}
   else if(k==='nao'){ui.opener='m:'+id;abrirDlg('nao',id)}
   else if(k==='ver'){ui.opener='m:'+id;abrirGav('detalhes',id,'')}
   else if(k==='origem'){stub(t.origem||'a origem da tarefa')}
@@ -1679,43 +2000,31 @@ function menuItem(k,id){
   else if(k==='xls')exportarCSV();
   else if(k==='pdf'){window.print()}
 }
-function exportarCSV(){
-  const dia=R.dia||HOJE;
-  const rows=S.tasks.filter(t=>!t.hist&&t.st==='p'&&t.data<=dia&&(t.trilho!=='gestao')&&(R.visao!=='hoje'||t.data<=dia)).sort(ord);
-  const l=[['Data','Categoria','Tarefa','Para quem','Insumo','Situação']].concat(rows.map(t=>[fmt(t.data),CATS[t.cat].n,t.titulo,t.quem||'',t.ins?t.ins.txt:'',t.data<HOJE?`Atrasada há ${diff(HOJE,t.data)} d`:'Pendente']));
-  const csv='﻿'+l.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(';')).join('\n');
-  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download=`agenda-${dia}.csv`;document.body.appendChild(a);a.click();a.remove();
-  toast({msg:`Exportado: agenda-${dia}.csv (${rows.length} tarefas)`});
-}
 
 /* ───────── inputs, teclado ───────── */
 document.addEventListener('input',e=>{
   const el=e.target;
-  if(el.id==='q'){clearTimeout(ui._qt);ui._qt=setTimeout(()=>{go({q:el.value.trim()},{only:'list'});renderBar2()},180)}
-  if(el.id==='rg-d'&&R.gaveta==='registrar')updRegistrar(byId(R.t));
-  if(el.id==='rg-dt'&&R.gaveta==='registrar')updRegistrar(byId(R.t));
-  if(el.dataset.a==='in-kg'){ui.D.p[el.dataset.v]=el.value;updPesagem(byId(R.t))}
+  if(el.id==='q'){clearTimeout(ui._qt);ui._qt=setTimeout(()=>{go({q:el.value.trim()},{only:'list'});renderBarKeep()},180)}
+  if(R.gaveta==='registrar'&&['rg-d','rg-dt','rg-c','rg-p','rg-v'].includes(el.id))updRegistrar(byId(R.t));
+  if(R.gaveta==='confirmar'&&el.id==='cf-d'){ui.D.dt=el.value;updConfirmar(byId(R.t))}
+  if(R.gaveta==='exame'&&el.id==='ex-d')updExame(byId(R.t));
+  if(el.dataset&&el.dataset.a==='in-kg'){ui.D.p[el.dataset.v]=el.value;updPesagem(byId(R.t))}
   if(el.id==='f-t'&&el.value.trim()){el.removeAttribute('aria-invalid');const x=$('#f-te');if(x)x.hidden=true}
 });
-function renderBar2(){/* mantém o foco do campo de busca: atualiza só o resto da barra */
-  const chips=$('.r2');if(chips){const f=document.activeElement;const tmp=document.createElement('div');const keep=f&&f.id==='q';renderBarKeep()}
-}
 function renderBarKeep(){
   const q=$('#q');const pos=q?q.selectionStart:0;const had=document.activeElement===q;
   renderBar();const nq=$('#q');if(had&&nq){nq.focus();nq.setSelectionRange(pos,pos)}
 }
 document.addEventListener('change',e=>{
   const el=e.target;
-  if(el.dataset&&el.dataset.a&&['in-fr','in-ad','in-mo','in-prod','ck-a','ck'].includes(el.dataset.a)){
-    // handled via click delegation; ensure radios via change
-  }
-  if(el.id==='rg-f')ui.D.frasco=el.value;
+  if(el.id==='agr')go({agrupar:el.value});
+  if(el.tagName==='SELECT'&&el.dataset.a)el.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+  if(el.id==='cf-q'||el.id==='rg-q'||el.id==='ex-q'){ui.D.quem=el.value;if(R.gaveta==='registrar')updRegistrar(byId(R.t))}
 });
 document.addEventListener('keydown',e=>{
   if(R.gaveta){trapKeys(e)}
-  if(menuEl)return;
-  const t=e.target;
-  const tag=t.tagName;
+  if(menuEl||popEl)return;
+  const t=e.target;const tag=t.tagName;
   if((e.key==='f'||e.key==='F')&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!R.gaveta&&!['INPUT','TEXTAREA','SELECT'].includes(tag)){
     const row=t.closest&&t.closest('.row');
     if(row){e.preventDefault();primaria(row.dataset.id)}
@@ -1726,28 +2035,29 @@ document.addEventListener('keydown',e=>{
 });
 document.addEventListener('click',e=>{
   const r=e.target.closest('.row');
-  if(r&&!e.target.closest('button,a,label,input,select')){ui.opener='p:'+r.dataset.id;abrirGav('detalhes',r.dataset.id)}
+  if(r&&!e.target.closest('button,a,label,input,select')&&!R.gaveta){ui.opener='p:'+r.dataset.id;abrirGav('detalhes',r.dataset.id)}
 });
 
-/* ───────── atualizar / erro de carga ───────── */
+/* ───────── atualizar / sem conexão ───────── */
 function atualizar(){
-  if(ui.spin)return;ui.spin=true;renderHdr();
+  if(ui.spin)return;ui.spin=true;renderHdr();renderBanner();
   setTimeout(()=>{
     ui.spin=false;
-    if(ui.erroRede){ui.dispBanner=true;renderHdr();renderMain();return}
-    ui.dispBanner=false;ui.updAt=Date.now();renderHdr();renderMain();toast({msg:'Agenda atualizada — a lista não foi recarregada do zero.'});
+    if(ui.erroRede){ui.dispBanner=true;renderHdr();renderBanner();return}
+    ui.dispBanner=false;ui.updAt=Date.now();renderHdr();renderBanner();renderMain();toast({msg:'Agenda atualizada; a lista não foi recarregada do zero.'});
   },700);
 }
-function carregar(){ui.loading=true;ui.erroCarga=false;renderNums();renderMain();renderLat();renderComun();
-  setTimeout(()=>{ui.loading=false;ui.erroCarga=!!ui.erroRede;if(!ui.erroCarga)ui.updAt=Date.now();renderAll()},reduce()?150:900)}
-function retry(){ui.spin=true;renderMain();setTimeout(()=>{ui.spin=false;if(ui.erroRede){renderMain();toast({err:1,msg:'Continua sem conexão. Suas tarefas estão salvas.'})}else{carregar()}},700)}
+function carregar(){ui.loading=true;renderNums();renderMain();renderLat();renderComun();renderBanner();
+  setTimeout(()=>{ui.loading=false;ui.dispBanner=!!ui.erroRede;if(!ui.erroRede)ui.updAt=Date.now();renderAll()},reduce()?150:900)}
+function retry(){atualizar()}
 
 /* ───────── barra de revisão ───────── */
 function scenario(k){
   seed();
-  if(k==='quase'){S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.data<=HOJE).forEach((t,i,a)=>{if(i<a.length-2){t.st='f';t.feitoEm=HOJE;t.hora='0'+(6+i%3)+':'+p2(10+i*3)}})}
+  if(k==='quase'){S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.data<=HOJE).forEach((t,i,a)=>{if(i<a.length-2){t.st='f';t.feitoEm=HOJE;t.hora='0'+(6+i%3)+':'+p2(10+i*3);t.porQuem=USER}})}
+  if(k==='fechado'){S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.data<=HOJE).forEach((t,i)=>{t.st='f';t.feitoEm=HOJE;t.hora='0'+(6+i%3)+':'+p2(10+i*2);t.porQuem=USER})}
   if(k==='vazio'){S.tasks=S.tasks.filter(t=>!(t.data<=HOJE&&!t.hist&&(t.trilho!=='gestao')))}
-  save();ui.selIds.clear();ui.sel=false;ui.run=null;toasts.forEach(t=>clearInterval(t.iv));toasts=[];renderToasts();
+  save();ui.selIds.clear();ui.sel=false;ui.run=null;fkAgg=null;killToast();
   go({gaveta:'',t:'',aba:'',dia:'',filtro:'',cat:[],q:'',visao:'hoje'});
 }
 document.getElementById('rev').addEventListener('click',e=>{
@@ -1757,7 +2067,7 @@ document.getElementById('rev').addEventListener('click',e=>{
   if(b.id==='rv-load'){carregar()}
 });
 document.getElementById('rv-cen').addEventListener('change',e=>scenario(e.target.value));
-document.getElementById('rv-erro').addEventListener('change',e=>{ui.erroRede=e.target.checked;carregar()});
+document.getElementById('rv-erro').addEventListener('change',e=>{ui.erroRede=e.target.checked;ui.dispBanner=ui.erroRede;renderBanner();renderHdr()});
 
 /* sidebar mobile */
 function abreSb(){$('#sb').classList.add('open');$('#scrimM').classList.add('on');$('#sbOpen').setAttribute('aria-expanded','true');$('#sb').setAttribute('role','dialog');$('#sb').setAttribute('aria-modal','true');$('#sbX').focus()}
