@@ -297,6 +297,23 @@ class TestCriarAgendamento:
         assert sugeridos == ["2"]
 
 
+class TestCalendarioVisaoComAgendamento:
+    def test_agendamento_nao_cria_lista_de_espera_vazia_duplicada(self, ctx):
+        c, engine = ctx
+        with Session(engine) as s:
+            _animal(s, "1")
+            cal = _regra(s, data_evento=HOJE)
+            _espera(s, cal, ["1"], data_evento=HOJE)
+        ag = _criar(c, cal, animais_janela=["1"]).json()
+        ini, fim = HOJE.isoformat(), (HOJE + timedelta(days=30)).isoformat()
+        r = c.get("/sanidade/calendario/visao", params={"data_inicio": ini, "data_fim": fim})
+        assert r.status_code == 200, r.text
+        eventos = [e for j in r.json()["janelas"] for e in j["eventos"] if e["calendario_sanitario_id"] == cal]
+        assert [e["cronograma"]["id"] for e in eventos] == [ag["id"]]
+        with Session(engine) as s:
+            assert len(s.exec(select(CronogramaSanitario)).all()) == 1
+
+
 class TestAdiarECancelar:
     def _ag(self, c, engine):
         with Session(engine) as s:

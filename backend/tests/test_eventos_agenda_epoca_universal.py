@@ -87,13 +87,16 @@ class TestEventosAgendaEpocaUniversal:
 
     def test_flag_ligada_nao_toca_regra_por_evento_de_vida(self, cenario):
         """Regra por evento de vida (tipo_agendamento == "evento") não pode
-        ganhar sugestão pelo caminho novo — continua exclusiva de
-        fazenda.rules.eventos_sanitarios, mesmo com a flag ligada."""
+        ganhar sugestão pela PROJEÇÃO DE CATEGORIA (caminho da época) — só pelo
+        gatilho do próprio evento (fazenda.rules.eventos_sanitarios). Aqui o
+        gatilho (aptidão aos 24 meses) ainda não chegou para o animal 55, que
+        JÁ está na categoria "Novilha": nada de lista de espera. O caso em que
+        o gatilho chega está em test_lista_espera_agendamento.py."""
         engine, _ = cenario
         with Session(engine) as s:
             s.add(ParametroFazenda(chave="usar_ocorrencia_universal", fazenda_id=None, grupo="sanidade",
                                     label="Universalizar Ocorrência", valor="true", tipo="bool"))
-            evento_vida = EventoSanitario(nome="Brucelose B19", tipo_agendamento="evento", gatilho="nascimento")
+            evento_vida = EventoSanitario(nome="Brucelose B19", tipo_agendamento="evento", gatilho="novilha_apta", gatilho_idade_meses=24)
             s.add(evento_vida)
             s.commit()
             s.refresh(evento_vida)
