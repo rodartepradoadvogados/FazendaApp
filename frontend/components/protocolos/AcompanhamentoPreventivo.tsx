@@ -1,0 +1,404 @@
+"use client";
+// Protocolos › Acompanhamento (sanitário preventivo): o que já está agendado.
+// Fatia 8 do planejamento unificado; mockup fluxo-completo (proto-acomp.js).
+//
+// Só o AGENDAMENTO aparece aqui (a lista de espera fica em Aplicar e nunca na
+// Agenda). Aplicar abre a MESMA gaveta que a Agenda abre no dia; adiar exige
+// motivo em chips; cancelar exige motivo e diz o que fazer com os animais;
+// rascunho ("Em montagem") continua de onde parou.
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, ArrowRight, Ban, CalendarClock, CalendarPlus, Check, Clock, ListChecks, Pencil, Search, Syringe } from "lucide-react";
+import {
+  adiarAgendamentoPreventivo, cancelarAgendamentoPreventivo, confirmarRascunhoAgendamento, editarChecklistAgendamento,
+  fetchAcompanhamentoPreventivo, fetchContextoAplicar,
+  type AcompanhamentoPreventivo as Dados, type AgendamentoAcompanhamento, type ContextoAplicar, type ItemChecklistAg,
+} from "@/lib/api";
+import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
+import { Indicador, TelaSkeleton } from "@/components/ui";
+import { GavetaAplicar } from "./GavetaAplicar";
+import {
+  ChecklistItensExistentes, ChecklistMontagem, checklistParaPayload, checklistVazio, validarChecklist, type ChecklistDraft,
+} from "./ChecklistAgendamento";
+import {
+  Chips, ChecklistSelo, dataCurta, diaSemana, EstadoAgPill, ForaJanelaBadge, hojeIso, inputStyle, labelStyle, maisDiasIso,
+  MOTIVOS_ADIAR, MOTIVOS_CANCELAR, notaStyle, plural, textoMotivo, dataHoraCurta,
+} from "./preventivoComum";
+
+type Painel = { tipo: "detalhe" | "aplicar" | "montar"; id: number } | null;
+
+export function AcompanhamentoPreventivo({ onIrLista, onVerConcluidos }: { onIrLista: () => void; onVerConcluidos: () => void }) {
+  const [dados, setDados] = useState<Dados | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [recarga, setRecarga] = useState(0);
+  const [protocolo, setProtocolo] = useState("");
+  const [estado, setEstado] = useState("");
+  const [busca, setBusca] = useState("");
+  const [painel, setPainel] = useState<Painel>(null);
+  const recarregar = useCallback(() => setRecarga((n) => n + 1), []);
+
+  useEffect(() => {
+    let vivo = true;
+    fetchAcompanhamentoPreventivo().then((d) => { if (vivo) { setDados(d); setErro(null); } })
+      .catch((e) => { if (vivo) setErro(e.message || "Erro ao carregar o acompanhamento"); });
+    return () => { vivo = false; };
+  }, [recarga]);
+
+  const protocolos = useMemo(() => {
+    const m = new Map<number, string>();
+    (dados?.agendamentos || []).forEach((a) => m.set(a.calendario_sanitario_id, a.protocolo_nome));
+    return Array.from(m.entries());
+  }, [dados]);
+
+  const lista = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    const ordem: Record<string, number> = { atrasado: 0, hoje: 1, adiado: 2, agendado: 3, em_montagem: 4 };
+    return (dados?.agendamentos || [])
+      .filter((a) => (!protocolo || String(a.calendario_sanitario_id) === protocolo) && (!estado || a.estado_visual === estado)
+        && (!q || `${a.protocolo_nome} ${a.lotes.join(" ")} ${a.responsavel.nome}`.toLowerCase().includes(q)))
+      .sort((a, b) => (ordem[a.estado_visual] - ordem[b.estado_visual]) || `${a.data_evento} ${a.hora || ""}`.localeCompare(`${b.data_evento} ${b.hora || ""}`));
+  }, [dados, protocolo, estado, busca]);
+
+  if (erro) return <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>{erro}</span></div>;
+  if (!dados) return <TelaSkeleton kpis={3} />;
+
+  return (
+    <div className="le-raiz">
+      <div style={{ display: "flex", justifyContent: "space-between", gap: "0.8rem", flexWrap: "wrap", alignItems: "flex-start", marginBottom: "0.9rem" }}>
+        <div>
+          <h2 style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--dourado-light)" }}>Acompanhamento do preventivo</h2>
+          <p style={notaStyle}>O que já está agendado. Aplique aqui ou pela Agenda, no dia da aplicação.</p>
+        </div>
+        <button type="button" className="btn-secondary" onClick={onIrLista}><ListChecks size={14} /> Lista de espera</button>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+        <Indicador categoria="sanidade" icon={Clock} valor={dados.totais.hoje} rotulo="Hoje · para aplicar" cor={dados.totais.hoje ? "var(--amber)" : undefined}
+                   onClick={() => setEstado(estado === "hoje" ? "" : "hoje")} title="Filtrar os de hoje" />
+        <Indicador categoria="sanidade" icon={AlertTriangle} valor={dados.totais.atrasados} rotulo="Atrasados · passou o dia, ninguém aplicou" cor={dados.totais.atrasados ? "var(--red)" : undefined}
+                   onClick={() => setEstado(estado === "atrasado" ? "" : "atrasado")} title="Filtrar os atrasados" />
+        <Indicador categoria="sanidade" icon={CalendarClock} valor={dados.totais.agendados} rotulo="Agendados · ao todo, incluindo hoje"
+                   onClick={() => setEstado(estado === "agendado" ? "" : "agendado")} title="Filtrar os agendados" />
+      </div>
+
+      <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.8rem", alignItems: "center" }}>
+        <div style={{ flex: "0 1 240px" }}>
+          <label className="sr-only" htmlFor="ac-p">Protocolo</label>
+          <select id="ac-p" style={inputStyle} value={protocolo} onChange={(e) => setProtocolo(e.target.value)}>
+            <option value="">Todos os protocolos</option>
+            {protocolos.map(([id, nome]) => <option key={id} value={id}>{nome}</option>)}
+          </select>
+        </div>
+        <div style={{ flex: "0 1 200px" }}>
+          <label className="sr-only" htmlFor="ac-e">Estado</label>
+          <select id="ac-e" style={inputStyle} value={estado} onChange={(e) => setEstado(e.target.value)}>
+            <option value="">Todos os estados</option>
+            <option value="em_montagem">Em montagem</option><option value="agendado">Agendado</option><option value="hoje">Hoje</option>
+            <option value="atrasado">Atrasado</option><option value="adiado">Adiado</option>
+          </select>
+        </div>
+        <div style={{ position: "relative", flex: "1 1 220px" }}>
+          <Search size={14} style={{ position: "absolute", left: 8, top: 11, color: "var(--text-muted)" }} />
+          <input type="search" aria-label="Buscar protocolo, lote ou responsável" style={{ ...inputStyle, paddingLeft: 28 }} placeholder="Buscar protocolo, lote ou responsável…" value={busca} onChange={(e) => setBusca(e.target.value)} />
+        </div>
+      </div>
+
+      {!lista.length ? (
+        <div className="card" style={{ textAlign: "center", padding: "2rem 1rem" }}>
+          <CalendarClock size={28} style={{ color: "var(--text-muted)", margin: "0 auto 0.6rem" }} />
+          <p style={{ fontWeight: 700 }}>{dados.agendamentos.length ? "Nada com esses filtros" : "Nada agendado"}</p>
+          <p style={{ ...notaStyle, margin: "0.3rem 0 0.9rem" }}>{dados.agendamentos.length ? "Tire um filtro para ver o resto." : "Veja a lista de espera para montar o primeiro agendamento."}</p>
+          {!dados.agendamentos.length && <button type="button" className="btn-primary-gold" onClick={onIrLista}><ListChecks size={14} /> Ver lista de espera</button>}
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="fazenda-table" aria-label="Agendamentos do preventivo">
+            <thead><tr><th>Estado</th><th>Protocolo</th><th>Para quem</th><th>Data e hora</th><th>Responsável</th><th>Checklist</th><th><span className="sr-only">Ações</span></th></tr></thead>
+            <tbody>
+              {lista.map((a) => (
+                <tr key={a.id} tabIndex={0} style={{ cursor: "pointer" }} onClick={() => setPainel({ tipo: "detalhe", id: a.id })}
+                    onKeyDown={(e) => { if (e.key === "Enter") setPainel({ tipo: "detalhe", id: a.id }); }} aria-label={`Abrir ${a.protocolo_nome}`}
+                    className={a.estado_visual === "atrasado" ? "row-atrasada" : undefined}>
+                  <td><EstadoAgPill estado={a.estado_visual} /></td>
+                  <td>
+                    <b style={{ fontSize: "0.85rem" }}>{a.protocolo_nome}</b>
+                    <span style={{ ...notaStyle, display: "block" }}>{a.lotes.length > 2 ? `${a.lotes.length} lotes` : a.lotes.join(", ") || "—"}</span>
+                  </td>
+                  <td style={{ fontSize: "0.82rem" }}>
+                    {a.animais_total} {plural(a.animais_total, "animal", "animais")}
+                    {a.animais_fora_janela > 0 && <div><ForaJanelaBadge n={a.animais_fora_janela} /></div>}
+                  </td>
+                  <td style={{ fontSize: "0.82rem" }}>
+                    {diaSemana(a.data_evento)} {dataCurta(a.data_evento).slice(0, 5)}
+                    <span style={{ ...notaStyle, display: "block" }}>
+                      {a.hora || "sem hora"}{a.estado_visual === "adiado" && a.data_antes_do_adiamento ? ` · antes ${dataCurta(a.data_antes_do_adiamento).slice(0, 5)}` : ""}
+                    </span>
+                  </td>
+                  <td style={{ fontSize: "0.82rem" }}>{a.responsavel.nome}{a.responsavel.crmv && <span style={{ ...notaStyle, display: "block" }}>{a.responsavel.crmv}</span>}</td>
+                  <td><ChecklistSelo ck={a.checklist} /></td>
+                  <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: "nowrap" }}>
+                    {a.status === "em_montagem" ? (
+                      <button type="button" className="btn-secondary" onClick={() => setPainel({ tipo: "montar", id: a.id })}><Pencil size={14} /> Continuar montando</button>
+                    ) : (
+                      <button type="button" className={a.data_evento > (dados.hoje || hojeIso()) ? "btn-secondary" : "btn-primary-gold"} onClick={() => setPainel({ tipo: "aplicar", id: a.id })}>
+                        <Syringe size={14} /> {a.data_evento > (dados.hoje || hojeIso()) ? "Aplicar antes" : "Aplicar"}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div role="note" style={{ ...notaStyle, display: "flex", flexWrap: "wrap", gap: "0.4rem 1rem", margin: "0.7rem 0" }}>
+            <span style={{ color: "var(--green-light)" }}>Checklist resolvido</span><span style={{ color: "var(--amber)" }}>Itens pendentes: aplicar pede só a ciência</span>
+            <span style={{ color: "var(--red)" }}>Veterinário não confirmou</span><span style={{ color: "var(--amber)" }}>Fora da janela: incluído por conta da fazenda</span>
+          </div>
+        </div>
+      )}
+
+      {painel?.tipo === "aplicar" && (
+        <GavetaAplicar cronogramaId={painel.id} canal="Protocolos" onFechar={() => setPainel(null)} onMudou={recarregar}
+                       onVerConcluidos={onVerConcluidos} />
+      )}
+      {painel && painel.tipo !== "aplicar" && (
+        <GavetaAgendamento
+          id={painel.id} modoInicial={painel.tipo} onFechar={() => setPainel(null)} onMudou={recarregar}
+          onAplicar={() => setPainel({ tipo: "aplicar", id: painel.id })}
+        />
+      )}
+    </div>
+  );
+}
+
+// ───────────────────────── detalhe / adiar / cancelar / continuar ─────────────────────────
+type Acao = "adiar" | "cancelar" | null;
+
+function GavetaAgendamento({ id, modoInicial, onFechar, onMudou, onAplicar }: {
+  id: number; modoInicial: "detalhe" | "montar"; onFechar: () => void; onMudou: () => void; onAplicar: () => void;
+}) {
+  const [ctx, setCtx] = useState<ContextoAplicar | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [aba, setAba] = useState<"animais" | "checklist" | "historico">("animais");
+  const [acao, setAcao] = useState<Acao>(null);
+  const [montando, setMontando] = useState(modoInicial === "montar");
+  const carregar = useCallback(() => { fetchContextoAplicar(id).then(setCtx).catch((e) => setErro(e.message)); }, [id]);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const titulo = montando ? "Continuar montando" : "Agendamento";
+  return (
+    <GavetaLancamento aberto onFechar={onFechar} titulo={titulo} icone={CalendarClock}>
+      {erro && <div className="alert-critico mb-3"><AlertTriangle size={16} /><span>{erro}</span></div>}
+      {!ctx && !erro && <TelaSkeleton kpis={0} />}
+      {ctx && montando && <ContinuarMontando ctx={ctx} onFeito={() => { onMudou(); onFechar(); }} onVoltar={() => { setMontando(false); carregar(); }} />}
+      {ctx && !montando && (
+        <div className="le-raiz" style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
+          <div>
+            <h2 style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--dourado-light)" }}>{ctx.protocolo_nome}</h2>
+            <p style={notaStyle}>{diaSemana(ctx.data_evento)} {dataCurta(ctx.data_evento)}{ctx.hora ? ` ${ctx.hora}` : ""} · {ctx.animais.length} {plural(ctx.animais.length, "animal", "animais")} · {ctx.responsavel.nome}{ctx.responsavel.crmv ? ` (${ctx.responsavel.crmv})` : ""}</p>
+          </div>
+          <ul style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "0.6rem", listStyle: "none", margin: 0, padding: 0 }}>
+            <li className="card" style={{ padding: "0.5rem 0.7rem" }}><span style={notaStyle}>Responsável</span><b style={{ display: "block", fontSize: "0.9rem" }}>{ctx.responsavel.nome}</b></li>
+            <li className="card" style={{ padding: "0.5rem 0.7rem" }}><span style={notaStyle}>Checklist</span><b style={{ display: "block" }}>{ctx.checklist.resolvidos}/{ctx.checklist.total}</b></li>
+            <li className="card" style={{ padding: "0.5rem 0.7rem" }}><span style={notaStyle}>Produto</span><b style={{ display: "block", fontSize: "0.9rem" }}>{ctx.produto || "—"}</b></li>
+          </ul>
+          <p style={notaStyle}>Dose: {ctx.dose_texto}{ctx.via ? ` · via ${ctx.via}` : ""}. {ctx.carencia.texto}.</p>
+
+          {acao === "adiar" && <PainelAdiar ctx={ctx} onVoltar={() => setAcao(null)} onFeito={() => { onMudou(); onFechar(); }} />}
+          {acao === "cancelar" && <PainelCancelar ctx={ctx} onVoltar={() => setAcao(null)} onFeito={() => { onMudou(); onFechar(); }} />}
+
+          <div role="tablist" aria-label="Detalhe do agendamento" style={{ display: "flex", gap: "0.4rem", borderBottom: "1px solid var(--border)" }}>
+            {([["animais", "Animais"], ["checklist", "Checklist"], ["historico", "Histórico"]] as const).map(([k, n]) => (
+              <button key={k} type="button" role="tab" aria-selected={aba === k} onClick={() => setAba(k)}
+                      style={{ padding: "0.5rem 0.9rem", background: "transparent", border: "none", cursor: "pointer", fontSize: "0.85rem", fontWeight: aba === k ? 700 : 500,
+                               color: aba === k ? "var(--dourado-light)" : "var(--text-muted)", borderBottom: aba === k ? "2px solid var(--dourado)" : "2px solid transparent" }}>{n}</button>
+            ))}
+          </div>
+          {aba === "animais" && (
+            <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+              {ctx.animais.map((a) => (
+                <li key={a.numero_matriz} style={{ display: "flex", gap: "0.6rem", alignItems: "center", padding: "0.5rem 0", borderBottom: "1px solid var(--border)" }}>
+                  <span style={{ flex: 1 }}><b>{a.numero_matriz}{a.nome ? ` ${a.nome}` : ""}</b><span style={{ ...notaStyle, display: "block" }}>{a.lote || "Sem lote"}{a.motivo ? ` · ${a.motivo}` : ""}</span></span>
+                  {a.origem === "fora_janela" ? <ForaJanelaBadge n={1} /> : <span style={{ color: "var(--green-light)", fontSize: "0.75rem", fontWeight: 700 }}><Check size={12} style={{ display: "inline" }} /> Na janela</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+          {aba === "checklist" && <AbaChecklist id={id} itens={ctx.checklist.itens} onMudou={() => { carregar(); onMudou(); }} />}
+          {aba === "historico" && (
+            ctx.log.length ? (
+              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                {ctx.log.slice().reverse().map((l) => (
+                  <li key={l.id} style={{ padding: "0.5rem 0", borderBottom: "1px solid var(--border)", fontSize: "0.85rem" }}>
+                    <b>{l.acao}</b>
+                    {l.detalhe && <span style={{ ...notaStyle, display: "block" }}>{l.detalhe}</span>}
+                    {l.motivo && <span style={{ ...notaStyle, display: "block" }}>Motivo: {l.motivo}</span>}
+                    <span style={{ ...notaStyle, display: "block" }}>{l.usuario_nome || "Sistema"} · {dataHoraCurta(l.criado_em)}{l.canal ? ` · ${l.canal}` : ""}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : <p style={notaStyle}>Sem registros ainda.</p>
+          )}
+
+          <div style={{ position: "sticky", bottom: "-0.9rem", margin: "0 -0.9rem -0.9rem", padding: "0.75rem 0.9rem", background: "var(--surface)", borderTop: "1px solid var(--border)", display: "flex", gap: "0.6rem", flexWrap: "wrap", zIndex: 2 }}>
+            {ctx.estado === "agendado" && <button type="button" className="btn-primary-gold" onClick={onAplicar}><Syringe size={14} /> Aplicar</button>}
+            {ctx.estado === "em_montagem" && <button type="button" className="btn-primary-gold" onClick={() => setMontando(true)}><Pencil size={14} /> Continuar montando</button>}
+            {ctx.estado === "agendado" && <button type="button" className="btn-secondary" onClick={() => setAcao("adiar")}><Clock size={14} /> Adiar</button>}
+            <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => setAcao("cancelar")}><Ban size={14} /> Cancelar…</button>
+          </div>
+        </div>
+      )}
+    </GavetaLancamento>
+  );
+}
+
+function AbaChecklist({ id, itens, onMudou }: { id: number; itens: ItemChecklistAg[]; onMudou: () => void }) {
+  const [ocupado, setOcupado] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  return (
+    <div>
+      <ChecklistItensExistentes itens={itens} ocupado={ocupado} onAcao={async (item, acao, motivo) => {
+        setOcupado(true); setErro(null);
+        try { await editarChecklistAgendamento(id, { itens: [{ item_id: item.id, acao, motivo: motivo || null }] }); onMudou(); }
+        catch (e: any) { setErro(e.message || "Erro ao salvar o checklist"); } finally { setOcupado(false); }
+      }} />
+      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.82rem", marginTop: "0.5rem" }}>{erro}</p>}
+      <p style={{ ...notaStyle, marginTop: "0.6rem" }}>Nada aqui bloqueia a aplicação: o que ficar pendente pede só a ciência na hora de Aplicar.</p>
+    </div>
+  );
+}
+
+function PainelAdiar({ ctx, onVoltar, onFeito }: { ctx: ContextoAplicar; onVoltar: () => void; onFeito: () => void }) {
+  const base = ctx.data_evento > hojeIso() ? ctx.data_evento : hojeIso();
+  const [quando, setQuando] = useState<"amanha" | "sete" | "outra">("amanha");
+  const [outra, setOutra] = useState("");
+  const [motivo, setMotivo] = useState("");
+  const [outro, setOutro] = useState("");
+  const [tentou, setTentou] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const nova = quando === "amanha" ? maisDiasIso(1, base) : quando === "sete" ? maisDiasIso(7, base) : outra;
+  const texto = textoMotivo(motivo, outro);
+
+  async function adiar() {
+    setTentou(true);
+    if (!nova || !texto) return;
+    setSalvando(true); setErro(null);
+    try { await adiarAgendamentoPreventivo(ctx.cronograma_id, { nova_data: nova, motivo: texto }); onFeito(); }
+    catch (e: any) { setErro(e.message || "Erro ao adiar"); } finally { setSalvando(false); }
+  }
+  return (
+    <div className="card" role="group" aria-label="Adiar" style={{ display: "flex", flexDirection: "column", gap: "0.8rem", borderLeft: "4px solid var(--dourado)" }}>
+      <h3 className="card-header">Adiar agendamento</h3>
+      <Chips idBase="ad-q" rotulo="Nova data" opcoes={["Amanhã", "+ 7 dias", "Escolher data"]} valor={quando === "amanha" ? "Amanhã" : quando === "sete" ? "+ 7 dias" : "Escolher data"}
+             onChange={(v) => setQuando(v === "Amanhã" ? "amanha" : v === "+ 7 dias" ? "sete" : "outra")} />
+      {quando === "outra" ? <input type="date" style={{ ...inputStyle, width: "auto" }} aria-label="Nova data" value={outra} min={hojeIso()} onChange={(e) => setOutra(e.target.value)} />
+        : <p style={notaStyle}>Nova data: <b>{dataCurta(nova)}</b></p>}
+      <Chips idBase="ad-m" rotulo="Por que adiar? (obrigatório)" opcoes={MOTIVOS_ADIAR} valor={motivo} onChange={setMotivo} erro={tentou && !texto ? "Escolha o motivo." : null} />
+      {motivo === "Outro" && <input style={inputStyle} aria-label="O que aconteceu" placeholder="O que aconteceu? (obrigatório)" value={outro} onChange={(e) => setOutro(e.target.value)} />}
+      <p style={{ ...notaStyle, display: "flex", gap: 6 }}><ArrowRight size={13} style={{ marginTop: 2, flexShrink: 0 }} />Os animais, o checklist e o responsável ficam como estão; só a data muda. A Agenda acompanha.</p>
+      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
+      <div style={{ display: "flex", gap: "0.5rem" }}>
+        <button type="button" className="btn-primary" disabled={salvando} onClick={adiar}><Clock size={14} /> {salvando ? "Adiando…" : "Adiar"}</button>
+        <button type="button" className="btn-ghost" onClick={onVoltar}>Voltar</button>
+      </div>
+    </div>
+  );
+}
+
+function PainelCancelar({ ctx, onVoltar, onFeito }: { ctx: ContextoAplicar; onVoltar: () => void; onFeito: () => void }) {
+  const [motivo, setMotivo] = useState("");
+  const [outro, setOutro] = useState("");
+  const [destino, setDestino] = useState<"espera" | "naoSeAplica">("espera");
+  const [tentou, setTentou] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const texto = textoMotivo(motivo, outro);
+  const daJanela = ctx.animais.filter((a) => a.origem === "janela").length;
+  const fora = ctx.animais.length - daJanela;
+
+  async function cancelar() {
+    setTentou(true);
+    if (!texto) return;
+    setSalvando(true); setErro(null);
+    try { await cancelarAgendamentoPreventivo(ctx.cronograma_id, texto, destino); onFeito(); }
+    catch (e: any) { setErro(e.message || "Erro ao cancelar"); } finally { setSalvando(false); }
+  }
+  return (
+    <div className="card" role="group" aria-label="Cancelar agendamento" style={{ display: "flex", flexDirection: "column", gap: "0.8rem", borderLeft: "4px solid var(--red)" }}>
+      <h3 className="card-header">Cancelar agendamento</h3>
+      <p style={{ ...notaStyle, display: "flex", gap: 6, color: "var(--amber)" }}>
+        <AlertTriangle size={14} style={{ marginTop: 2, flexShrink: 0 }} />
+        Cancelar {destino === "espera" ? `devolve os ${daJanela} animais da janela à lista de espera` : "desconsidera todos os animais (eles não voltam à lista de espera)"}
+        {fora ? `, e libera os ${fora} de fora da janela` : ""}, e mantém o histórico. Nada foi baixado do estoque.
+      </p>
+      <Chips idBase="cn-m" rotulo="Motivo (obrigatório)" opcoes={MOTIVOS_CANCELAR} valor={motivo} onChange={setMotivo} erro={tentou && !texto ? "Escolha o motivo." : null} />
+      {motivo === "Outro motivo" && <input style={inputStyle} aria-label="Descreva o motivo" placeholder="Descreva o motivo" value={outro} onChange={(e) => setOutro(e.target.value)} />}
+      <Chips idBase="cn-d" rotulo="O que fazer com os animais" opcoes={["Voltam à lista de espera", "Desconsiderar"]} valor={destino === "espera" ? "Voltam à lista de espera" : "Desconsiderar"}
+             onChange={(v) => setDestino(v === "Desconsiderar" ? "naoSeAplica" : "espera")} />
+      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
+      <div style={{ display: "flex", gap: "0.5rem" }}>
+        <button type="button" className="btn-primary" style={{ background: "var(--red)" }} disabled={salvando} onClick={cancelar}><Ban size={14} /> {salvando ? "Cancelando…" : "Cancelar agendamento"}</button>
+        <button type="button" className="btn-ghost" onClick={onVoltar}>Voltar</button>
+      </div>
+    </div>
+  );
+}
+
+// Rascunho ("Em montagem"): define data, hora, responsável e checklist e confirma.
+function ContinuarMontando({ ctx, onFeito, onVoltar }: { ctx: ContextoAplicar; onFeito: () => void; onVoltar: () => void }) {
+  const [data, setData] = useState(ctx.data_evento >= hojeIso() ? ctx.data_evento : hojeIso());
+  const [hora, setHora] = useState(ctx.hora || "");
+  const [quem, setQuem] = useState<"propria" | "veterinario">(ctx.responsavel.modo === "veterinario" ? "veterinario" : "propria");
+  const [vetId, setVetId] = useState(ctx.responsavel.pessoa_id ? String(ctx.responsavel.pessoa_id) : "");
+  const [ck, setCk] = useState<ChecklistDraft>(checklistVazio());
+  const [tentou, setTentou] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const veterinarios = ctx.pessoas.filter((p) => p.veterinario);
+  const erroCk = validarChecklist(ck);
+
+  async function confirmar() {
+    setTentou(true); setErro(null);
+    if (!data) { setErro("Escolha a data."); return; }
+    if (quem === "veterinario" && !vetId) { setErro("Escolha o veterinário."); return; }
+    if (erroCk) { setErro(erroCk); return; }
+    setSalvando(true);
+    try {
+      await confirmarRascunhoAgendamento(ctx.cronograma_id, {
+        data_evento: data, hora: hora || null, modo_execucao: quem, veterinario_pessoa_id: quem === "veterinario" ? Number(vetId) : null,
+        checklist: checklistParaPayload(ck),
+      });
+      onFeito();
+    } catch (e: any) { setErro(e.message || "Erro ao confirmar o agendamento"); } finally { setSalvando(false); }
+  }
+  return (
+    <div className="le-raiz" style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
+      <div>
+        <h2 style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--dourado-light)" }}>{ctx.protocolo_nome}</h2>
+        <p style={notaStyle}>Rascunho com {ctx.animais.length} {plural(ctx.animais.length, "animal", "animais")}. Defina quando e com quem e confirme: só então entra na Agenda.</p>
+      </div>
+      <div className="card" style={{ display: "flex", flexDirection: "column", gap: "0.8rem" }}>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label htmlFor="cm-data" style={labelStyle}>Data</label><input id="cm-data" type="date" style={inputStyle} value={data} onChange={(e) => setData(e.target.value)} /></div>
+          <div><label htmlFor="cm-hora" style={labelStyle}>Hora</label><input id="cm-hora" type="time" style={inputStyle} value={hora} onChange={(e) => setHora(e.target.value)} /></div>
+        </div>
+        <Chips idBase="cm-quem" rotulo="Quem faz" opcoes={["Veterinário", "Equipe própria"]} valor={quem === "veterinario" ? "Veterinário" : "Equipe própria"} onChange={(v) => { setQuem(v === "Veterinário" ? "veterinario" : "propria"); }} />
+        {quem === "veterinario" && (
+          <div>
+            <label htmlFor="cm-vet" style={labelStyle}>Veterinário</label>
+            <select id="cm-vet" style={inputStyle} value={vetId} onChange={(e) => setVetId(e.target.value)}>
+              <option value="">Escolha o veterinário</option>
+              {veterinarios.map((v) => <option key={v.id} value={v.id}>{v.nome}{v.crmv ? ` (${v.crmv})` : ""}</option>)}
+            </select>
+          </div>
+        )}
+      </div>
+      <h3 style={{ fontSize: "0.9rem", fontWeight: 700 }}>Checklist</h3>
+      <ChecklistMontagem draft={ck} onChange={setCk} veterinarios={veterinarios} produto={ctx.produto} dataEvento={data} hora={hora} tentou={tentou} />
+      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.85rem" }}>{erro}</p>}
+      <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+        <button type="button" className="btn-primary-gold" disabled={salvando} onClick={confirmar}><CalendarPlus size={14} /> {salvando ? "Confirmando…" : "Confirmar agendamento"}</button>
+        <button type="button" className="btn-ghost" onClick={onVoltar}>Voltar</button>
+      </div>
+    </div>
+  );
+}

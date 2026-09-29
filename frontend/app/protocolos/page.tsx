@@ -36,6 +36,8 @@ const FormAplicarCalendarioSanitario = dynamic(() => import("@/components/lancam
 // Acompanhamento/Histórico do calendário sanitário — MESMOS componentes já
 // usados em Sanidade > Preventiva (Calendário/Cronogramas e Histórico
 // agrupado por vacina/exame). Nada de tabela ou endpoint paralelo.
+const AcompanhamentoPreventivo = dynamic(() => import("@/components/protocolos/AcompanhamentoPreventivo").then((m) => m.AcompanhamentoPreventivo), { ssr: false });
+const ConcluidosPreventivo = dynamic(() => import("@/components/protocolos/ConcluidosPreventivo").then((m) => m.ConcluidosPreventivo), { ssr: false });
 const CalendarioSanitarioAcompanhamento = dynamic(() => import("@/app/sanidade/page").then((m) => m.CalendarioSanitarioView), { ssr: false });
 // Lista de espera do preventivo + assistente "Criar agendamento" (fatia 7).
 const ListaEsperaPreventivo = dynamic(() => import("@/components/protocolos/ListaEsperaPreventivo").then((m) => m.ListaEsperaPreventivo), { ssr: false });
@@ -1134,8 +1136,28 @@ type AbaProtocolos = "cadastro" | "aplicar" | "acompanhamento" | "concluidos";
 const ABAS_LEGADO: Record<string, AbaProtocolos> = { lancamento: "aplicar", historico: "concluidos" };
 const ABAS_PROTOCOLOS: AbaProtocolos[] = ["cadastro", "aplicar", "acompanhamento", "concluidos"];
 
+// Acompanhamento e Concluídos: o sanitário preventivo (vacina/vermífugo) tem tela
+// própria (agendamentos, gaveta Aplicar, estorno); IATF, indução, curativo e
+// protocolo próprio seguem nas listas de sempre, escolhidas pelo chip.
+type TipoAbaLista = "preventivo" | "outros";
+function EscolhaTipoLista({ tipo, onChange }: { tipo: TipoAbaLista; onChange: (t: TipoAbaLista) => void }) {
+  return (
+    <TabBar<TipoAbaLista>
+      abas={[
+        { id: "preventivo", label: "Sanitário preventivo", title: "Vacina e vermífugo agendados" },
+        { id: "outros", label: "IATF, indução, curativo e próprio", title: "Os demais protocolos" },
+      ]}
+      ativa={tipo}
+      onChange={onChange}
+    />
+  );
+}
+
 export default function ProtocolosPage() {
   const [aba, setAba] = useState<AbaProtocolos>("acompanhamento");
+  const [tipoAcomp, setTipoAcomp] = useState<TipoAbaLista>("preventivo");
+  const [tipoConcl, setTipoConcl] = useState<TipoAbaLista>("preventivo");
+  const [concluidoInicial, setConcluidoInicial] = useState<number | null>(null);
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
   useEffect(() => {
@@ -1162,6 +1184,8 @@ export default function ProtocolosPage() {
     const abaQs = new URLSearchParams(window.location.search).get("aba");
     const abaId = abaQs ? (ABAS_LEGADO[abaQs] ?? abaQs) : null;
     if (abaId && (ABAS_PROTOCOLOS as string[]).includes(abaId)) setAba(abaId as AbaProtocolos);
+    const conc = new URLSearchParams(window.location.search).get("concluido");
+    if (conc && Number(conc) > 0) { setAba("concluidos"); setConcluidoInicial(Number(conc)); }
   }, []);
 
   return (
@@ -1185,8 +1209,20 @@ export default function ProtocolosPage() {
 
       {aba === "cadastro" && <CadastroTab estoque={estoque} />}
       {aba === "aplicar" && <LancamentoTab animais={animais} estoque={estoque} lotes={lotes} onIrAcompanhamento={() => setAba("acompanhamento")} />}
-      {aba === "acompanhamento" && <ListaProtocolos historico={false} />}
-      {aba === "concluidos" && <ListaProtocolos historico />}
+      {aba === "acompanhamento" && (
+        <>
+          <EscolhaTipoLista tipo={tipoAcomp} onChange={setTipoAcomp} />
+          {tipoAcomp === "preventivo"
+            ? <AcompanhamentoPreventivo onIrLista={() => setAba("aplicar")} onVerConcluidos={() => { setTipoConcl("preventivo"); setAba("concluidos"); }} />
+            : <ListaProtocolos historico={false} />}
+        </>
+      )}
+      {aba === "concluidos" && (
+        <>
+          <EscolhaTipoLista tipo={tipoConcl} onChange={setTipoConcl} />
+          {tipoConcl === "preventivo" ? <ConcluidosPreventivo idInicial={concluidoInicial} /> : <ListaProtocolos historico />}
+        </>
+      )}
     </div>
   );
 }
