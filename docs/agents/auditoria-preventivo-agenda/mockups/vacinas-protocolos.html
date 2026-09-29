@@ -590,6 +590,14 @@ table.ft{width:100%;border-collapse:collapse;font-size:1rem}
  .cards td.acts{flex-wrap:wrap}
  .cards td.acts .btn{flex:1 1 auto;min-width:0}
 }
+
+/* REPASSE:START — estilos da detecção de cio de repasse */
+.rb select{background:#1E1B18;color:#F5EEF1;border:1px solid rgba(255,255,255,.25);border-radius:2px;height:28px;font-size:12px}
+.rep-card .card-h{display:flex;justify-content:space-between;align-items:center;gap:.6rem;flex-wrap:wrap}
+.rep-card details summary{list-style:none}
+.rep-card details summary::-webkit-details-marker{display:none}
+#rp-prev{font-weight:600;line-height:1.4}
+/* REPASSE:END */
 </style>
 </head>
 <body>
@@ -599,6 +607,7 @@ table.ft{width:100%;border-collapse:collapse;font-size:1rem}
   <span class="grp" role="group" aria-label="Tema"><button type="button" data-tema="claro" aria-pressed="true">Claro</button><button type="button" data-tema="misto" aria-pressed="false">Misto</button><button type="button" data-tema="escuro" aria-pressed="false">Escuro</button></span>
   <label><input type="checkbox" role="switch" id="sw-nova"> Simular fazenda nova</label>
   <label><input type="checkbox" role="switch" id="sw-off"> Simular sem conexão</label>
+  <label>Configuração de repasse <select id="sw-rep"><option value="padrao">Padrão (Scratch, 14 dias, 1 vez, Agenda)</option><option value="desligada">Desligada</option><option value="personalizada">Personalizada (outro produto, 21 dias, repetir)</option><option value="custom" hidden>Alterada na tela</option></select></label>
   <button type="button" class="btn-r" id="rb-reset">Reiniciar dados</button>
   <details><summary class="btn-r">Roteiro de teste</summary><div class="roteiro"><b>Fluxos para conferir</b><ol>
     <li>Calendário: clique em Atrasadas e Esta semana (faixa de 3 números); troque Lista, Mês e Ano; clique num dia do mês.</li>
@@ -843,6 +852,21 @@ function cobVac(vid, lote) {
   const em = ok + prev; return { tot, em, ok, prev, atras, sem, pct: tot ? Math.round(em / tot * 100) : null };
 }
 function cobCelula(vid, lid) { return cobVac(vid, lid); }
+
+/* Detecção de cio de repasse: categoria de produto + configuração ÚNICA por fazenda (o M2 copia este bloco) */
+const CATEGORIAS = ['Vacina', 'Antiparasitário', 'Hormônio', 'Detecção de cio de repasse', 'Outros'];
+const CAT_REPASSE = 'Detecção de cio de repasse';
+const REPASSE_PRODUTOS = [
+  { id: 'scr', prod: 'Scratch (detector de cio)', un: 'un', fr: [{ f: 'SC-2608', val: '2027-08-31', saldo: 120 }] },
+  { id: 'adb', prod: 'Adesivo detector de cio (marca B)', un: 'un', fr: [{ f: 'AB-2609', val: '2027-10-31', saldo: 80 }] }
+];
+const REPASSE_PADRAO = { usar: true, prod: 'scr', quem: 'todas', dias: 14, repetir: false, cada: 7, vezes: 3, ate: 'vezes', agenda: true, aviso: 1, prio: 'rotina', baixa: true, cancelar: 'negativo' };
+const REPASSE_PERSONALIZADA = { usar: true, prod: 'adb', quem: 'todas', dias: 21, repetir: true, cada: 7, vezes: 3, ate: 'vezes', agenda: true, aviso: 2, prio: 'importante', baixa: true, cancelar: 'negativo' };
+const REPASSE_DESLIGADA = Object.assign({}, REPASSE_PADRAO, { usar: false });
+/* estado: cfg (regra), cats (reclassificações), catlog e log (quem/quando/antes→depois), checks (checagens já criadas nos protocolos) */
+let REP = { cenario: 'padrao', cfg: clone(REPASSE_PADRAO), cats: {}, catlog: [], log: [], checks: [] };
+const CAT_BASE = { imp: 'Hormônio', sd: 'Hormônio', sf: 'Hormônio', es: 'Hormônio', cp: 'Hormônio', estrog: 'Hormônio', dexa: 'Hormônio', atb: 'Outros', anion: 'Outros', scr: CAT_REPASSE, adb: 'Outros', ver: 'Antiparasitário' };
+const catDe = id => REP.cats[id] || CAT_BASE[id] || 'Vacina';
 /* DADOS:END */
 function audit(a, acao, o = {}) {
   const e = Object.assign({ id: 'ev' + (++SAN.evs), t: nowT(), quem: USUARIO, acao, apl: a ? a.id : null, vac: a ? a.vac : null, lote: a ? a.lote : null, n: a ? nEf(a) : 0, motivo: '', estornado: false }, o);
@@ -963,10 +987,19 @@ const HORM = [
   { id: 'estrog', prod: 'Estradiol + progesterona (indução)', un: 'mL', fr: [{ f: 'EP-2608', val: '2027-05-31', saldo: 90 }] },
   { id: 'dexa', prod: 'Dexametasona 0,2%', un: 'mL', fr: [{ f: 'DX-2607', val: '2027-08-31', saldo: 100 }] },
   { id: 'anion', prod: 'Sal aniônico (saco 25 kg)', un: 'un', fr: [{ f: 'SA-2609', val: '2027-10-31', saldo: 16 }] }
-];
+].concat(REPASSE_PRODUTOS);
 const hormOf = id => HORM.find(h => h.id === id);
 const saldoTxt = (H, s) => H.frasco ? `${num(s)} mL (${(s / H.frasco).toFixed(1).replace('.', ',')} frascos)` : `${num(s)} ${H.un}`;
 const diaLbl = d => 'Dia ' + d;
+/* Checagens de repasse já criadas pelos protocolos de inseminação lançados, segundo a regra vigente */
+function seedChecks() {
+  REP.checks = []; const c = REP.cfg; if (!c.usar || c.quem === 'monta') return;
+  PRO.lista.filter(p => p.estado !== 'engano' && p.estado !== 'interrompido').forEach(p => { const m = modeloDe(p); const e = m.etapas.find(x => x.insem); if (!e) return; addChecks(p, etapaData(p, e), c); });
+}
+function addChecks(p, insem, c) {
+  const tot = c.repetir ? (c.ate === 'vezes' ? Math.max(1, +c.vezes || 1) : 3) : 1;
+  for (let k = 0; k < tot; k++) { const d = addD(insem, (+c.dias || 14) + k * (+c.cada || 7)); if (d >= HI) REP.checks.push({ id: 'ck' + REP.checks.length + '-' + p.id, proto: p.id, n: p.animais.length, data: d, prod: c.prod, baixa: !!c.baixa, estado: 'futura' }); }
+}
 function snapModelo(m) { return ({ id: m.id, nome: m.nome, tipo: m.tipo, versao: m.versao, carLeite: m.carLeite || 0, carCarne: m.carCarne || 0, etapas: clone(m.etapas) }); }
 function seedProtocolos() {
   const P = { seq: 10, aud: [] };
@@ -1017,13 +1050,13 @@ function protoStats(p) {
   return { tot, feitas, atras, prox, proxTxt, dias: ult, diaAtual, atrasado: p.estado === 'andamento' && atras > 0 };
 }
 function emProtocolo(id) { return PRO.lista.find(p => p.estado === 'andamento' && p.animais.includes(id)); }
-function reservado(h) { let r = 0; PRO.lista.filter(p => p.estado === 'andamento').forEach(p => { const m = modeloDe(p); m.etapas.forEach((e, i) => e.prods.forEach(x => { if (x.h === h) r += x.q * p.animais.filter(a => !p.baixas[a + ':' + i]).length; })); }); return Math.round(r * 10) / 10; }
+function reservado(h) { let r = 0; REP.checks.filter(c => c.estado === 'futura' && c.baixa && c.prod === h).forEach(c => { r += c.n; }); PRO.lista.filter(p => p.estado === 'andamento').forEach(p => { const m = modeloDe(p); m.etapas.forEach((e, i) => e.prods.forEach(x => { if (x.h === h) r += x.q * p.animais.filter(a => !p.baixas[a + ':' + i]).length; })); }); return Math.round(r * 10) / 10; }
 
 /* Exposição para reutilização (M2): animais, itens, doses, frascos, vias e a função de estado animal × item */
 window.DADOS_M1 = { get animais() { return ANIMAIS; }, get itens() { return SAN.vacinas; }, get doses() { return SAN.doses; }, get exames() { return SAN.exames; }, get frascos() { return SAN.est; }, vias: VIAS_PERMITIDAS, estado: (an, v) => statusAV(an, v), cobertura: cobGlobal };
 /* ═════════ Núcleo: rota, casca, gaveta, menu, toast ═════════ */
 const ROUTES = {};
-const DK = ['prevista', 'registrar', 'animal', 'falta', 'nova', 'passo', 'editar', 'proto', 'modelo', 'imprimir', 'pimprimir', 'corrigir', 'inativar', 'comprovante', 'minativar'];
+const DK = ['prevista', 'registrar', 'animal', 'falta', 'nova', 'passo', 'editar', 'proto', 'modelo', 'imprimir', 'pimprimir', 'corrigir', 'inativar', 'comprovante', 'minativar', 'repasse', 'classificar'];
 const R = { path: '', q: new URLSearchParams() };
 let UI = { drKey: null };
 let lastVK = null, lastPath = null;
@@ -1155,7 +1188,7 @@ function closeDrawerDom(silent) {
   const k = DR.openerKey, op = DR.opener; DR.key = null; DR.opener = null; DR.openerKey = null; UI.drKey = null;
   if (!silent) { let el = (op && op !== document.body && document.contains(op)) ? op : (k ? $(`[data-fk="${k}"]`) : null); const alvo = el || $(`#view [data-fk^="row-"]`) || $('#view h1') || $('#main'); if (alvo && alvo.tabIndex < 0 && !alvo.matches('a,button,input,select,textarea,[tabindex]')) alvo.tabIndex = -1; alvo.focus({ preventScroll: true }); }
 }
-function closeDrawer() { const patch = {}; DK.forEach(k => { patch[k] = null; }); setQ(patch); }
+function closeDrawer() { if (qv('repasse') || qv('classificar')) { UI.rp = null; UI.rpBk = null; return setQ({ repasse: null, classificar: null }); } const patch = {}; DK.forEach(k => { patch[k] = null; }); setQ(patch); }
 function drawerHead(kicker, title, meta, opts = {}) {
   return `<div class="dr-h"><div style="min-width:0"><div class="k">${esc(kicker)}</div><h2>${title}</h2><div class="meta">${meta || ''}</div></div>
   <button type="button" class="icon-btn" data-act="dr-close" data-first aria-label="Fechar" title="Fechar (Esc)">${ic('x', 's20')}</button></div>`;
@@ -1173,7 +1206,9 @@ function renderDrawer(force) {
     else if (q.get('inativar')) spec = drInativar(q.get('inativar'));
     else if (q.get('nova') || q.get('editar')) spec = drWizard();
   } else if (R.path.startsWith('/protocolos')) {
-    if (q.get('pimprimir')) spec = printProtoSpec(q.get('pimprimir'));
+    if (q.get('repasse')) spec = drRepasse();
+    else if (q.get('classificar')) spec = drClassificar();
+    else if (q.get('pimprimir')) spec = printProtoSpec(q.get('pimprimir'));
     else if (q.get('proto')) spec = drProto(q.get('proto'));
     else if (q.get('minativar') && R.path === '/protocolos/modelos') spec = drInativarModelo(q.get('minativar'));
     else if (q.get('modelo') && R.path === '/protocolos/modelos') spec = drModelo();
@@ -1220,7 +1255,7 @@ function toast(msg, o = {}) {
 /* TOAST:END */
 /* Glossário por toque ou foco (botão ⓘ) */
 const GL = {
-  scratch: 'Retorno ao cio (Scratch): a fazenda confere se a vaca inseminada voltou a manifestar cio 14 dias depois. É um parâmetro da fazenda.',
+  scratch: 'Detecção de cio de repasse: a fazenda confere se a vaca inseminada voltou a manifestar cio, usando um produto detector (por exemplo, o Scratch). O prazo da primeira checagem, se repete e se aparece na Agenda são regras da fazenda; o prazo biológico usual de retorno ao cio é de 18 a 24 dias.',
   pev: 'Fim do período de espera voluntário (PEV): 45 dias após o parto, em que a fazenda não insemina a vaca.',
   del: 'Dias em leite (DEL): quantos dias se passaram desde o último parto.',
   iatf: 'Inseminação artificial em tempo fixo (IATF): protocolo hormonal com dias marcados, sem precisar detectar o cio.',
@@ -2169,7 +2204,7 @@ function drProto(id) {
   if (UI.pAct === 'engano') acao = `<div class="inline-panel" role="group" aria-label="Lançado por engano"><h3>Marcar como lançado por engano</h3><p>O lançamento deixa de valer: o estoque usado nas etapas feitas volta e as tarefas saem da Agenda. Ele continua visível em Lançado por engano, para auditoria.</p><div class="fld"><label for="pen">O que aconteceu (obrigatório)</label><input id="pen" class="inp" data-in="pmot" data-fk="pen" placeholder="Ex.: lote errado" value="${esc(UI.pmot || '')}">${UI.pTent && !(UI.pmot || '').trim() ? `<span class="err">${ic('warn', 's14')}Escreva o que aconteceu.</span>` : ''}</div><div class="actions">${btn('btn-danger', 'x', 'Marcar como lançado por engano', 'data-act="pfim" data-v="engano"')}${btn('btn-ghost', '', 'Cancelar', 'data-act="pact" data-v=""')}</div></div>`;
   if (UI.pAct === 'reabrir') acao = `<div class="inline-panel" role="group" aria-label="Reabrir protocolo"><h3>Reabrir este protocolo</h3><p>Volta para Em andamento com as marcações que já existem. Nada é debitado agora.</p><div class="actions">${btn('btn-gold', 'rotate', 'Reabrir', 'data-act="pfim" data-v="andamento"')}${btn('btn-ghost', '', 'Cancelar', 'data-act="pact" data-v=""')}</div></div>`;
   const todas = ativo && s.tot > 0 && s.feitas === s.tot && !UI.pAct ? `<div class="aviso green">${ic('ok')}<div class="txt"><b>Todas as etapas foram feitas.</b> Encerre o protocolo para tirá-lo da lista de andamento.</div><div class="acts">${btn('btn-gold', '', 'Encerrar', 'data-act="pact" data-v="encerrar"')}</div></div>` : '';
-  const insem = m.etapas.some(e => e.insem) && ativo ? `<div class="aviso blue">${ic('info')}<div class="txt">No Dia 11, a inseminação é registrada em Reprodução. Depois dela entra a tarefa <b>Checar retorno ao cio (14 dias)</b> ${gl('scratch', 'retorno ao cio')}: parâmetro da fazenda.</div><div class="acts">${btn('btn-sec', 'arrow', 'Ir para Reprodução', 'data-act="fora" data-n="Reprodução › Serviços (com os animais do dia)"')}</div></div>` : '';
+  const insem = m.etapas.some(e => e.insem) && ativo ? `<div class="aviso blue">${ic('info')}<div class="txt">No Dia ${m.etapas.find(e => e.insem).d}, a inseminação é registrada em Reprodução.</div><div class="acts">${btn('btn-sec', 'arrow', 'Ir para Reprodução', 'data-act="fora" data-n="Reprodução › Serviços (com os animais do dia)"')}</div></div>${repBloco(p.animais.length, (() => { const ck = REP.checks.filter(k => k.proto === p.id && k.estado === 'futura'); return ck.length ? `<div class="sub2">Checagens já criadas para este protocolo: ${ck.map(k => k.n + ' ' + pl(k.n, 'vaca', 'vacas') + ' em ' + br(k.data)).join('; ')}.</div>` : ''; })())}` : '';
   const motivo = p.motivo && !ativo && p.estado !== 'concluido' ? `<div class="aviso amber">${ic('info')}<div class="txt"><b>${p.estado === 'engano' ? 'Lançado por engano' : 'Interrompido'}:</b> ${esc(p.motivo)}</div></div>` : '';
   const hoje = ativo && s.atras === 0 && s.prox === HI ? `<div class="aviso amber">${ic('clock')}<div class="txt"><b>Hoje é ${diaLbl(m.etapas.find((e, i) => etapaData(p, e) === HI && p.animais.some(a => !p.baixas[a + ':' + i])).d, m)}:</b> ${esc(s.proxTxt)}.</div></div>` : '';
   const histo = p.log.length ? `<h3 style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);margin:0 0 .3rem">Histórico do protocolo</h3><ul class="list aud">${p.log.slice().reverse().map(x => `<li class="${x.estornado ? 'estorn' : ''}"><span>${ic('history', 's14')}</span><div class="grow"><b>${esc(x.txt)}</b><div class="sub2">${esc(x.quem)} · ${dh(x.t)}</div>${x.estornado ? `<div class="sub2"><span class="st estornada">${ic('undo', 's12')}Estornada por ${esc(x.estornado.quem.split(' (')[0])} em ${dh(x.estornado.t)}</span></div>` : ''}</div></li>`).join('')}</ul>` : '';
@@ -2275,7 +2310,7 @@ ROUTES['/protocolos/novo'] = () => {
     <ul class="list" style="margin-top:.4rem">${an.map(a => { const e = elegivel(a, m); return `<li><label class="chk grow" style="align-items:flex-start"><input type="checkbox" data-ch="npan" data-id="${a.id}" ${n.sel.includes(a.id) ? 'checked' : ''} ${e.ok ? '' : 'disabled'}><span><b>${esc(a.brinco)} ${esc(a.nome)}</b><br><span class="sub2">${esc(e.why)}</span></span></label>${e.ok ? `<span class="st registrada">${ic('ok', 's14')}Elegível</span>` : `<span class="st pulada" style="text-decoration:none">${ic('ban', 's14')}Indisponível</span>`}</li>`; }).join('')}</ul></div>
     ${n.err ? `<p class="err" style="margin-top:.6rem">${ic('warn', 's14')}Selecione ao menos um animal.</p>` : ''}`;
   } else {
-    const m = modeloOf(n.modelo); const q = n.sel.length; const prods = {}; m.etapas.forEach(e => e.prods.forEach(x => { prods[x.h] = (prods[x.h] || 0) + x.q * q; }));
+    const m = modeloOf(n.modelo); const q = n.sel.length; const prods = {}; m.etapas.forEach(e => e.prods.forEach(x => { prods[x.h] = (prods[x.h] || 0) + x.q * q; })); if (m.tipo === 'iatf' && REP.cfg.usar && REP.cfg.quem !== 'monta' && REP.cfg.baixa && REP.cfg.prod && prodOf(REP.cfg.prod)) prods[REP.cfg.prod] = (prods[REP.cfg.prod] || 0) + repUnidades(REP.cfg, q);
     const dias = m.etapas.map(e => addD(n.d0, e.d)); const iatf = m.tipo === 'iatf';
     const linhas = Object.keys(prods).map(h => { const H = hormOf(h); const tot = H.fr.reduce((x, f) => x + f.saldo, 0); const rs = reservado(h); const prec = Math.round(prods[h] * 10) / 10; const dep = Math.round((tot - rs - prec) * 10) / 10; return `<tr><td>${esc(H.prod)}</td><td class="num">${qTxt(prec, H.un)}</td><td class="num">${saldoTxt(H, tot)}</td><td class="num">${qTxt(rs, H.un)}</td><td class="num"><span class="${dep < 0 ? 'st atrasada' : ''}" style="${dep < 0 ? '' : 'font-weight:700'}">${dep < 0 ? ic('warn', 's14') : ''}${qTxt(dep, H.un)}</span></td></tr>`; }).join('');
     const falta = Object.keys(prods).filter(h => hormOf(h).fr.reduce((x, f) => x + f.saldo, 0) - reservado(h) < prods[h]);
@@ -2284,6 +2319,7 @@ ROUTES['/protocolos/novo'] = () => {
     <div class="resumo"><h3>Animais</h3><b style="font-size:1.6rem;font-variant-numeric:tabular-nums">${q}</b> <span class="hint">${pl(q, 'animal', 'animais')} · ${esc(loteNome(n.lote))} · ${esc(m.nome)} · ${diaLbl(m.etapas[0].d, m)} em ${br(n.d0)}</span></div>
     ${Object.keys(prods).length ? `<div class="tw"><table class="ft"><caption class="sr">Produtos a usar e estoque previsto</caption><thead><tr><th>Produto</th><th class="num">Precisa</th><th class="num">Em estoque</th><th class="num">Já reservado</th><th class="num">Sobra</th></tr></thead><tbody>${linhas}</tbody></table></div><p class="hint">“Já reservado” é o que os protocolos abertos ainda vão usar. O uso acontece a cada etapa feita.</p>` : `<div class="box">Este modelo não usa produto do estoque.</div>`}
     ${falta.length ? `<div class="aviso amber">${ic('warn')}<div class="txt"><b>Estoque abaixo do necessário</b> para ${falta.map(h => esc(hormOf(h).prod)).join(', ')}. Pode lançar assim mesmo; compre antes do dia da etapa.</div></div>` : ''}
+    ${iatf ? repBloco(q) : ''}
     ${carP ? `<div class="aviso blue">${ic('info')}<div class="txt"><b>Descarte o leite das vacas tratadas durante o tratamento.</b> <b>Carência ${gl('carencia', 'carência')}:</b> depois do último dia (${br(carP.fim)}), leite em carência até ${br(addD(carP.fim, m.carLeite))} e carne até ${br(addD(carP.fim, m.carCarne))}.</div></div>` : ''}
     </div><div style="display:flex;flex-direction:column;gap:1rem"><div class="box"><h3>${ic('calendar', 's14')}Na Agenda</h3><p><b>${m.etapas.length} ${pl(m.etapas.length, 'dia de tarefa', 'dias de tarefa')}</b> para o lote, com ${Math.round(m.etapas.length * q)} marcações no total.</p><ul class="list">${m.etapas.map((e, i) => `<li style="min-height:40px"><span class="st prevista" style="min-width:6.5rem;justify-content:center">${br(dias[i])}</span><span class="grow">${diaLbl(e.d, m)} · ${esc(e.acao)}</span></li>`).join('')}</ul></div>
     ${iatf ? `<label class="sel-row" style="align-items:center"><input type="checkbox" data-ch="npcomp" ${n.comp ? 'checked' : ''} data-fk="comp"><span><b>Confirmo o compromisso com os dias do protocolo.</b><br><span class="sub2">Vou fazer cada etapa no dia previsto e inseminar no ${diaLbl(m.etapas[m.etapas.length - 1].d, m)}. Atrasar uma etapa compromete a taxa de prenhez.</span></span></label>${n.err && !n.comp ? `<p class="err">${ic('warn', 's14')}Confirme o compromisso para lançar.</p>` : ''}` : ''}</div></div>`;
@@ -2303,7 +2339,7 @@ ACT['np-cancel'] = () => { UI.np = null; nav('/protocolos'); };
 ACT['np-lancar'] = () => {
   const n = UI.np; const m = modeloOf(n.modelo); if (m.tipo === 'iatf' && !n.comp) { n.err = true; refresh(); return; }
   const l = loteOf(n.lote); const p = { id: 'pr' + (++PRO.seq), nome: `${m.tipo === 'iatf' ? 'Inseminação programada' : m.nome.replace(/ \(.*\)| · .*/, '')} · ${l.nome} · ${diaLbl(m.etapas[0].d, m)} em ${br(n.d0).slice(0, 5)}`, modelo: n.modelo, snap: snapModelo(m), lote: n.lote, animais: n.sel.slice(), d0: n.d0, estado: 'andamento', baixas: {}, log: [], shift: {} };
-  logP(p, `Lançou o protocolo para ${p.animais.length} animais (modelo v${m.versao})`); PRO.lista.unshift(p); m.usado++; UI.np = null; nav('/protocolos', { proto: p.id }); toast(`Protocolo lançado · ${m.etapas.length} dias de tarefa na Agenda · ${p.animais.length} animais.`);
+  logP(p, `Lançou o protocolo para ${p.animais.length} animais (modelo v${m.versao})`); if (m.tipo === 'iatf' && REP.cfg.usar && REP.cfg.quem !== 'monta') { const ie = p.snap.etapas.find(x => x.insem); if (ie) addChecks(p, etapaData(p, ie), REP.cfg); } PRO.lista.unshift(p); m.usado++; UI.np = null; nav('/protocolos', { proto: p.id }); toast(`Protocolo lançado · ${m.etapas.length} dias de tarefa na Agenda · ${p.animais.length} animais.`);
 };
 
 /* ═════════ Modelos ═════════ */
@@ -2313,7 +2349,7 @@ ROUTES['/protocolos/modelos'] = () => {
     <td data-c="estado"><span class="st ${m.ativo ? 'ativo' : 'inativo'}">${ic(m.ativo ? 'ok' : 'ban', 's14')}${m.ativo ? 'Ativo' : 'Inativo'}</span></td>
     <td class="acts">${bt('btn-sec sm', 'pencil', 'Editar', `data-act="md-edit" data-id="${m.id}" data-fk="me-${m.id}" aria-label="Editar ${esc(m.nome)}"`)}${bt('btn-ghost sm', 'copy', 'Duplicar', `data-act="md-dup" data-id="${m.id}" aria-label="Duplicar ${esc(m.nome)}"`)}${bt('btn-ghost sm', 'power', m.ativo ? 'Inativar' : 'Ativar', `data-act="md-tog" data-id="${m.id}" aria-label="${m.ativo ? 'Inativar' : 'Ativar'} ${esc(m.nome)}"`)}</td></tr>`).join('');
   return pgHead('list-checks', 'Modelos de protocolo', 'O roteiro de cada protocolo: as etapas, os dias e os produtos. Tarefas da fazenda, como a limpeza de bebedouros, também ficam aqui.', acts) +
-    `<div class="tw cards-w"><table class="ft cards"><caption class="sr">Modelos de protocolo</caption><thead><tr><th>Nome</th><th>Tipo</th><th>Etapas</th><th>Usado por</th><th>Versão</th><th>Situação</th><th><span class="sr">Ações</span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    repCartao() + `<div class="tw cards-w"><table class="ft cards"><caption class="sr">Modelos de protocolo</caption><thead><tr><th>Nome</th><th>Tipo</th><th>Etapas</th><th>Usado por</th><th>Versão</th><th>Situação</th><th><span class="sr">Ações</span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 };
 ACT['md-dup'] = t => { const m = modeloOf(t.dataset.id); const c = clone(m); c.id = 'm' + (++PRO.seq); c.nome = m.nome + ' (cópia)'; c.ativo = false; c.usado = 0; c.versao = 1; c.hist = [{ v: 1, t: nowT(), quem: USUARIO, txt: 'Criado como cópia de «' + m.nome + '» (v1)' }]; m.hist.push({ v: m.versao, t: nowT(), quem: USUARIO, txt: 'Duplicado como «' + c.nome + '»' }); PRO.modelos.push(c); refresh(); toast(`Duplicado: «${c.nome}» começa inativo. Edite e ative quando estiver pronto.`); };
 ACT['md-tog'] = t => { const m = modeloOf(t.dataset.id); if (m.ativo) { UI.mi = { motivo: '', tent: false }; nav('/protocolos/modelos', { minativar: m.id }); return; }
@@ -2373,6 +2409,137 @@ ACT['md-save'] = () => {
   else PRO.modelos.push({ id: 'm' + (++PRO.seq), nome: w.nome, tipo: w.tipo, ativo: true, usado: 0, versao: 1, hist: [{ v: 1, t: nowT(), quem: USUARIO, txt: 'Modelo criado (v1)' }], carLeite: w.carLeite, carCarne: w.carCarne, etapas: et });
   const nome = w.nome; nav('/protocolos/modelos', {}); refresh(); toast(`Modelo «${nome}» salvo.`);
 };
+/* REPASSE:START — Detecção de cio de repasse: configuração única por fazenda + classificar produto (autocontido; depende de DADOS, do toast e de $, esc, opts, bt, ic, br, num, pl) */
+seedChecks();
+const repBr = d => br(d).slice(0, 5);
+const REP_QUEM = [['todas', 'Todas as inseminações'], ['iatf', 'Só inseminação programada (IATF)'], ['monta', 'Só monta natural']];
+const REP_AVISO = [[0, 'No dia'], [1, '1 dia antes'], [2, '2 dias antes']];
+const REP_CANC = [['negativo', 'Diagnóstico negativo (padrão da fazenda)'], ['qualquer', 'Qualquer diagnóstico'], ['nunca', 'Nunca cancelar']];
+const todosProdutos = () => SAN.est.map(e => ({ id: e.id, prod: e.prod, un: e.un, fr: e.fr })).concat(HORM.map(h => ({ id: h.id, prod: h.prod, un: h.un, fr: h.fr })));
+const prodOf = id => todosProdutos().find(p => p.id === id) || null;
+const prodsCat = cat => todosProdutos().filter(p => catDe(p.id) === cat);
+const nomeRep = () => { const p = prodOf(REP.cfg.prod); return p ? p.prod : 'produto não escolhido'; };
+const avisoTxt = a => (REP_AVISO.find(x => +x[0] === +a) || [0, 'No dia'])[1].toLowerCase();
+const repTotal = c => c.repetir ? (c.ate === 'vezes' ? Math.max(1, +c.vezes || 1) : 3) : 1;
+const repDatas = (c, base) => { const t = repTotal(c); const o = []; for (let k = 0; k < t; k++) o.push(addD(base, (+c.dias || 0) + k * (+c.cada || 0))); return o; };
+function repFuturas() { return REP.checks.filter(c => c.estado === 'futura').reduce((s, c) => s + c.n, 0); }
+function repUnidades(c, n) { return c.baixa ? n * (c.ate === 'diag' && c.repetir ? 1 : repTotal(c)) : 0; }
+/* Frase de consequência usada no Novo protocolo, no drawer do protocolo e na pré-visualização */
+function repLinha(c, n) {
+  if (!c.usar) return 'Detecção de repasse desligada: nenhuma checagem de retorno ao cio será criada.';
+  if (c.quem === 'monta') return 'Detecção de repasse só para monta natural: esta inseminação programada não gera checagem.';
+  const p = prodOf(c.prod); const nome = p ? p.prod : 'produto não escolhido'; const u = repUnidades(c, n);
+  return `Repasse: ${nome} em ${c.dias} dias${c.repetir ? `, repetindo a cada ${c.cada} dias ${c.ate === 'vezes' ? 'até ' + c.vezes + ' vezes' : 'até o diagnóstico de gestação'}` : ''} · ${c.baixa ? num(u) + ' ' + pl(u, 'unidade', 'unidades') + (c.ate === 'diag' && c.repetir ? ' por checagem' : '') : 'sem desconto no estoque'} · ${c.agenda ? 'aparece na Agenda ' + avisoTxt(c.aviso) : 'não aparece na Agenda'}`;
+}
+function repPreview(c) {
+  const n = 11; if (!c.usar || c.quem === 'monta') return repLinha(c, n);
+  const ds = repDatas(c, HI); const p = prodOf(c.prod); const nome = p ? p.prod : 'produto não escolhido'; const u = repUnidades(c, n);
+  return `Para as inseminações de hoje (${n} vacas), ${ds.length > 1 && c.ate === 'vezes' ? 'as checagens ficam em ' + ds.map(repBr).join(', ') : 'a primeira checagem fica em ' + repBr(ds[0]) + (c.repetir ? ', repetindo a cada ' + c.cada + ' dias até o diagnóstico de gestação' : '')} — ${c.baixa ? 'consome ' + num(u) + ' ' + pl(u, 'unidade', 'unidades') + ' de ' + nome + (c.ate === 'diag' && c.repetir ? ' por checagem' : '') : 'sem desconto no estoque'} — ${c.agenda ? 'aparece na Agenda ' + avisoTxt(c.aviso) : 'não aparece na Agenda'}.`;
+}
+function repResumoCfg(c) {
+  if (!c.usar) return 'Não usar. A fazenda não faz checagem de retorno ao cio pelo sistema.';
+  const q = REP_QUEM.find(x => x[0] === c.quem)[1];
+  return `${nomeRepDe(c)} · ${q} · primeira checagem ${c.dias} dias após a inseminação${c.repetir ? ', repete a cada ' + c.cada + ' dias ' + (c.ate === 'vezes' ? 'até ' + c.vezes + ' vezes' : 'até o diagnóstico de gestação') : ''}`;
+}
+const nomeRepDe = c => { const p = prodOf(c.prod); return p ? p.prod : 'produto não escolhido'; };
+function repDiff(a, b) {
+  const o = []; const sn = v => v ? 'Sim' : 'Não'; const lab = (l, k) => (l.find(x => String(x[0]) === String(k)) || [0, k])[1];
+  if (a.usar !== b.usar) o.push(`Usar detecção: ${sn(a.usar)} → ${sn(b.usar)}`);
+  if (a.prod !== b.prod) o.push(`Produto: ${nomeRepDe(a)} → ${nomeRepDe(b)}`);
+  if (a.quem !== b.quem) o.push(`Quem entra: ${lab(REP_QUEM, a.quem)} → ${lab(REP_QUEM, b.quem)}`);
+  if (+a.dias !== +b.dias) o.push(`Primeira checagem: ${a.dias} → ${b.dias} dias`);
+  if (a.repetir !== b.repetir || (b.repetir && (+a.cada !== +b.cada || a.ate !== b.ate || +a.vezes !== +b.vezes))) o.push(`Repetir: ${a.repetir ? 'a cada ' + a.cada + ' dias' : 'não'} → ${b.repetir ? 'a cada ' + b.cada + ' dias, ' + (b.ate === 'vezes' ? 'até ' + b.vezes + ' vezes' : 'até o diagnóstico') : 'não'}`);
+  if (a.agenda !== b.agenda) o.push(`Mostrar na Agenda: ${sn(a.agenda)} → ${sn(b.agenda)}`);
+  if (+a.aviso !== +b.aviso) o.push(`Aviso: ${avisoTxt(a.aviso)} → ${avisoTxt(b.aviso)}`);
+  if (a.prio !== b.prio) o.push(`Prioridade: ${a.prio} → ${b.prio}`);
+  if (a.baixa !== b.baixa) o.push(`Desconto no estoque: ${sn(a.baixa)} → ${sn(b.baixa)}`);
+  if (a.cancelar !== b.cancelar) o.push(`Cancelar quando: ${lab(REP_CANC, a.cancelar)} → ${lab(REP_CANC, b.cancelar)}`);
+  return o;
+}
+const repCritico = (a, b) => a.usar && (!b.usar || a.prod !== b.prod || +a.dias !== +b.dias || a.repetir !== b.repetir || +a.cada !== +b.cada || +a.vezes !== +b.vezes || a.ate !== b.ate);
+function repErros(c) {
+  const e = {}; if (c.usar) { if (!prodOf(c.prod) || catDe(c.prod) !== CAT_REPASSE) e.prod = 'Escolha o produto da categoria Detecção de cio de repasse.'; if (!(+c.dias >= 1)) e.dias = 'Informe quantos dias após a inseminação (1 ou mais).'; if (c.repetir) { if (!(+c.cada >= 1)) e.cada = 'Informe de quantos em quantos dias repete.'; if (c.ate === 'vezes' && !(+c.vezes >= 2)) e.vezes = 'Informe 2 vezes ou mais.'; } } return e;
+}
+/* Cartão fixo em Protocolos › Modelos */
+function repCartao() {
+  const c = REP.cfg; const p = prodOf(c.prod); const fr = p ? p.fr.reduce((s, f) => s + f.saldo, 0) : 0; const nf = repFuturas();
+  return `<!-- REPASSE-CONFIG:START --><section class="card rep-card" aria-labelledby="h-rep" style="margin-bottom:1rem"><div class="card-h"><span id="h-rep">${ic('target', 's14')} Detecção de cio de repasse ${gl('scratch', 'detecção de cio de repasse')}</span><span class="st ${c.usar ? 'registrada' : 'pulada'}" style="text-transform:none;letter-spacing:0">${ic(c.usar ? 'ok' : 'ban', 's14')}${c.usar ? 'Em uso' : 'Desligada'}</span></div>
+  <div style="padding:.9rem 1rem;display:flex;flex-direction:column;gap:.6rem"><p style="margin:0"><b>${esc(repResumoCfg(c))}</b></p>
+  ${c.usar ? `<p class="sub2" style="margin:0">${p ? `Saldo de ${esc(p.prod)}: ${num(fr)} ${p.un} · ` : ''}${c.agenda ? 'Na Agenda ' + avisoTxt(c.aviso) + ' · prioridade ' + c.prio : 'Fora da Agenda'} · ${c.baixa ? 'desconta 1 unidade por vaca ao marcar Feito' : 'sem desconto no estoque'} · cancela com ${esc(REP_CANC.find(x => x[0] === c.cancelar)[1].replace(' (padrão da fazenda)', '').toLowerCase())}</p>` : ''}
+  <p class="sub2" style="margin:0">Uma regra por fazenda. ${nf ? `${nf} ${pl(nf, 'checagem futura já criada', 'checagens futuras já criadas')} nos protocolos.` : 'Nenhuma checagem futura criada.'}</p>
+  <div class="actions">${bt('btn-primary', 'pencil', 'Configurar', 'data-act="rp-abrir" data-fk="rp-cfg"')}${bt('btn-sec', 'list-checks', 'Classificar produtos', 'data-act="rp-classif"')}</div>
+  <details><summary style="cursor:pointer;min-height:44px;display:flex;align-items:center">Histórico da regra (${REP.log.length + REP.catlog.length})</summary>${REP.log.length + REP.catlog.length ? `<ul class="list aud">${REP.log.concat(REP.catlog).sort((x, y) => x.t < y.t ? 1 : -1).map(h => `<li><span>${ic('history', 's14')}</span><div class="grow"><b>${esc(h.txt)}</b><div class="sub2">${esc(h.quem.split(' (')[0])} · ${dh(h.t)}</div></div></li>`).join('')}</ul>` : '<p class="sub2">Nenhuma alteração ainda.</p>'}</details></div></section><!-- REPASSE-CONFIG:END -->`;
+}
+/* Linha "Configurar" reutilizada no Novo protocolo e no protocolo IATF */
+function repBloco(n, extra = '') {
+  const c = REP.cfg; const off = !c.usar || c.quem === 'monta';
+  return `<div class="aviso ${off ? 'amber' : 'blue'}" role="status">${ic(off ? 'ban' : 'info')}<div class="txt"><b>${off ? '' : 'Depois da inseminação · '}${esc(repLinha(c, n))}</b>${extra}<div class="actions" style="margin-top:.4rem">${bt('btn-sec sm', 'pencil', 'Configurar', 'data-act="rp-abrir" data-fk="rp-cfg"')}</div></div></div>`;
+}
+/* Drawer de configuração */
+function rpInit() {
+  if (UI.rp && UI.rpKey === 'rp') return; UI.rpKey = 'rp';
+  UI.rp = UI.rpBk ? UI.rpBk : Object.assign(clone(REP.cfg), { tent: false, pergunta: false, escolha: '' }); UI.rpBk = null;
+}
+function rpChips(k, lista, atual, t = 's') { return `<div class="chips" role="radiogroup">${lista.map(([v, l]) => `<label class="chip"><input type="radio" name="rp-${k}" value="${esc(v)}" data-ch="rpf" data-k="${k}" data-t="${t}" ${String(atual) === String(v) ? 'checked' : ''}>${esc(l)}</label>`).join('')}</div>`; }
+function drRepasse() {
+  rpInit(); const c = UI.rp; UI.drKey = 'rp'; const E = c.tent ? repErros(c) : {}; const er = k => E[k] ? `<span class="err" id="e-${k}">${ic('warn', 's14')}${E[k]}</span>` : '';
+  const lista = prodsCat(CAT_REPASSE); const p = prodOf(c.prod);
+  const fr = p ? p.fr : [];
+  const prodBox = c.usar ? `<div class="fld"><label for="rpp">Produto vinculado</label>${lista.length ? `<select id="rpp" class="sel" data-ch="rpf" data-k="prod" data-t="s" ${E.prod ? 'aria-invalid="true"' : ''}>${opts(lista.map(x => [x.id, x.prod]), c.prod, 'Escolha o produto')}</select>` : `<div class="aviso amber">${ic('warn')}<div class="txt">Nenhum produto está na categoria Detecção de cio de repasse. Classifique um produto do estoque.</div></div>`}${er('prod')}
+    ${p && catDe(c.prod) === CAT_REPASSE ? `<div class="sub2">${fr.map(f => `Lote ${esc(f.f)} · validade ${br(f.val)}${vencido(f) ? ' (vencido)' : venceEm(f) <= 30 ? ' (vence em ' + venceEm(f) + ' dias)' : ''} · saldo ${num(f.saldo)} ${p.un}`).join('<br>')}</div>` : ''}
+    <button type="button" class="linkbtn" data-act="rp-classif">Classificar outro produto nesta categoria</button></div>` : '';
+  const corpo = `<div class="fld"><label id="l-rpu">Usar detecção de repasse?</label>${rpChips('usar', [[1, 'Sim'], [0, 'Não']], c.usar ? 1 : 0, 'b')}</div>
+  ${c.usar ? `${prodBox}
+  <div class="fld"><label id="l-rpq">Quem entra</label>${rpChips('quem', REP_QUEM, c.quem)}</div>
+  <div class="fld"><label for="rpd">Primeira checagem: dias após a inseminação</label><input id="rpd" class="inp" type="number" min="1" value="${c.dias}" data-in="rpn" data-k="dias" style="max-width:140px" ${E.dias ? 'aria-invalid="true"' : ''}>${er('dias')}<span class="hint">Regra da fazenda; o prazo biológico usual de retorno ao cio é 18 a 24 dias. A fazenda decide.</span></div>
+  <div class="fld"><label id="l-rpr">Repetir a checagem?</label>${rpChips('repetir', [[0, 'Não'], [1, 'A cada N dias']], c.repetir ? 1 : 0, 'b')}
+    ${c.repetir ? `<div class="g2" style="margin-top:.4rem"><div class="fld"><label for="rpc">Repetir a cada (dias)</label><input id="rpc" class="inp" type="number" min="1" value="${c.cada}" data-in="rpn" data-k="cada" ${E.cada ? 'aria-invalid="true"' : ''}>${er('cada')}</div><div class="fld"><label id="l-rpa">Até quando</label>${rpChips('ate', [['vezes', 'Até X vezes'], ['diag', 'Até o diagnóstico de gestação']], c.ate)}${c.ate === 'vezes' ? `<label class="sr" for="rpv">Número de vezes</label><input id="rpv" class="inp" type="number" min="2" value="${c.vezes}" data-in="rpn" data-k="vezes" style="max-width:140px;margin-top:.3rem" ${E.vezes ? 'aria-invalid="true"' : ''}>${er('vezes')}` : ''}</div></div>` : ''}</div>
+  <div class="fld"><label id="l-rpg">Mostrar na Agenda?</label>${rpChips('agenda', [[1, 'Sim'], [0, 'Não']], c.agenda ? 1 : 0, 'b')}
+    ${c.agenda ? `<div class="g2" style="margin-top:.4rem"><div class="fld"><label for="rpav">Aviso com antecedência</label><select id="rpav" class="sel" data-ch="rpf" data-k="aviso" data-t="n">${opts(REP_AVISO, c.aviso)}</select></div><div class="fld"><label id="l-rpi">Prioridade</label>${rpChips('prio', [['rotina', 'Rotina'], ['importante', 'Importante']], c.prio)}</div></div>` : ''}</div>
+  <div class="fld"><label id="l-rpb">Descontar do estoque ao marcar Feito</label>${rpChips('baixa', [[1, 'Sim: 1 unidade por vaca'], [0, 'Não']], c.baixa ? 1 : 0, 'b')}</div>
+  <div class="fld"><label id="l-rpx">Cancelar a checagem quando houver</label>${rpChips('cancelar', REP_CANC, c.cancelar)}</div>` : ''}`;
+  const nf = repFuturas(); const antigo = REP.cfg;
+  const perg = c.pergunta ? `<div class="inline-panel" role="group" aria-label="Checagens já criadas"><h3>O que fazer com as ${nf} ${pl(nf, 'checagem futura', 'checagens futuras')} já criadas?</h3><p class="hint">Você mudou uma regra que afeta o que já está nos protocolos. Escolha uma opção.</p><div class="chips" role="radiogroup">${[['manter', 'Manter as existentes'], ['remover', `Remover as ${nf} futuras`]].map(([v, l]) => `<label class="chip"><input type="radio" name="rp-esc" value="${v}" data-ch="rpesc" ${c.escolha === v ? 'checked' : ''}>${l}</label>`).join('')}</div>${c.tent2 && !c.escolha ? `<span class="err">${ic('warn', 's14')}Escolha o que fazer com as checagens já criadas.</span>` : ''}</div>` : '';
+  const html = '<!-- REPASSE-CONFIG:START -->' + drawerHead('Configuração da fazenda', 'Detecção de cio de repasse', `<span>Uma regra por fazenda · ${esc(repResumoCfg(antigo).slice(0, 60))}…</span>`) + `<div class="dr-b"><div class="box" aria-live="polite"><h3>${ic('eye', 's14')}Como fica</h3><p id="rp-prev" style="margin:0">${esc(repPreview(c))}</p></div>${corpo}${perg}</div><div class="dr-f">${bt('btn-gold', 'check', 'Salvar configuração', 'data-act="rp-ok" data-fk="rp-ok"')}${bt('btn-ghost', '', 'Cancelar', 'data-act="dr-close"')}</div>` + '<!-- REPASSE-CONFIG:END -->';
+  return { key: 'rp', cls: 'wide', label: 'Detecção de cio de repasse', html };
+}
+function rpAtualiza() { const b = $('#rp-prev'); if (b && UI.rp) b.textContent = repPreview(UI.rp); }
+IN.rpf = (v, t) => { const k = t.dataset.k; const ty = t.dataset.t; UI.rp[k] = ty === 'b' ? v === '1' : ty === 'n' ? +v : v; if (k === 'usar' && UI.rp.usar && !UI.rp.prod) UI.rp.prod = (prodsCat(CAT_REPASSE)[0] || {}).id || ''; UI.rp.pergunta = false; UI.rp.escolha = ''; renderDrawer(true); };
+IN.rpn = (v, t) => { UI.rp[t.dataset.k] = v === '' ? '' : +v; rpAtualiza(); };
+IN.rpesc = v => { UI.rp.escolha = v; renderDrawer(true); };
+ACT['rp-abrir'] = () => setQ({ repasse: '1', classificar: null });
+ACT['rp-classif'] = () => { if (UI.rp) UI.rpBk = clone(UI.rp); setQ({ classificar: '1', repasse: null }); };
+ACT['rp-voltar'] = () => setQ({ classificar: null, repasse: '1' });
+ACT['rp-ok'] = () => {
+  const c = UI.rp; const E = repErros(c); if (Object.keys(E).length) { c.tent = true; renderDrawer(true); return; }
+  const antes = REP.cfg; const novo = {}; Object.keys(REPASSE_PADRAO).forEach(k => { novo[k] = c[k]; }); novo.dias = +novo.dias; novo.cada = +novo.cada; novo.vezes = +novo.vezes; novo.aviso = +novo.aviso;
+  const mud = repDiff(antes, novo); if (!mud.length) { UI.rp = null; setQ({ repasse: null }); toast('Nada mudou na regra de repasse.', { icon: 'info' }); return; }
+  const nf = repFuturas();
+  if (repCritico(antes, novo) && nf > 0 && !c.escolha) { c.pergunta = true; c.tent2 = true; renderDrawer(true); const r = $('input[name=rp-esc]'); if (r) r.focus(); return; }
+  let extra = ''; if (repCritico(antes, novo) && nf > 0) { if (c.escolha === 'remover') { REP.checks.forEach(k => { if (k.estado === 'futura') k.estado = 'removida'; }); extra = ` · ${nf} ${pl(nf, 'checagem futura removida', 'checagens futuras removidas')}`; } else extra = ` · ${nf} ${pl(nf, 'checagem futura mantida', 'checagens futuras mantidas')}`; }
+  REP.log.push({ t: nowT(), quem: USUARIO, txt: mud.join('; ') + extra }); REP.cfg = novo; REP.cenario = 'custom'; const sel = $('#sw-rep'); if (sel) sel.value = 'custom';
+  UI.rp = null; setQ({ repasse: null }); refresh(); toast('Configuração de repasse salva.', { icon: 'ok' });
+};
+/* Drawer Classificar produto */
+function drClassificar() {
+  UI.drKey = 'rc'; const err = UI.rcErr; const ps = todosProdutos().filter(p => catDe(p.id) !== 'Vacina' || SAN.est.some(e => e.id === p.id));
+  const linhas = ps.map(p => { const tot = p.fr.reduce((s, f) => s + f.saldo, 0); const uso = REP.cfg.usar && p.id === REP.cfg.prod; return `<li style="align-items:flex-start;flex-wrap:wrap"><div class="grow" style="min-width:180px"><b>${esc(p.prod)}</b><div class="sub2">Saldo ${num(tot)} ${p.un}${uso ? ' · ligado à regra de repasse' : ''}</div>${err === p.id ? `<span class="err">${ic('warn', 's14')}Este produto está ligado à regra de repasse. Troque o produto vinculado antes de mudar a categoria.</span>` : ''}</div><div class="fld" style="min-width:220px"><label class="sr" for="rc-${p.id}">Categoria de ${esc(p.prod)}</label><select id="rc-${p.id}" class="sel" data-ch="rpcat" data-id="${p.id}">${opts(CATEGORIAS.map(x => [x, x]), catDe(p.id))}</select></div></li>`; }).join('');
+  const hist = REP.catlog.slice().reverse().slice(0, 5).map(h => `<li><span>${ic('history', 's14')}</span><div class="grow"><b>${esc(h.txt)}</b><div class="sub2">${esc(h.quem.split(' (')[0])} · ${dh(h.t)}</div></div></li>`).join('');
+  return { key: 'rc', cls: 'wide', label: 'Classificar produto', html: drawerHead('Estoque', 'Classificar produto', '<span>Escolha a categoria de cada produto</span>') + `<div class="dr-b"><p class="hint">A categoria Detecção de cio de repasse define quais produtos podem ser vinculados à regra de repasse. Toda mudança fica no registro.</p><ul class="list">${linhas}</ul>${hist ? `<div class="box"><h3>${ic('history', 's14')}Últimas classificações</h3><ul class="list aud">${hist}</ul></div>` : ''}</div><div class="dr-f">${bt('btn-primary', 'left', 'Voltar à configuração', 'data-act="rp-voltar"')}${bt('btn-ghost', '', 'Fechar', 'data-act="dr-close"')}</div>` };
+}
+IN.rpcat = (v, t) => {
+  const id = t.dataset.id; const p = prodOf(id); const antes = catDe(id); if (v === antes) return;
+  if (REP.cfg.usar && id === REP.cfg.prod && v !== CAT_REPASSE) { UI.rcErr = id; renderDrawer(true); return; }
+  UI.rcErr = null; REP.cats[id] = v; const h = { t: nowT(), quem: USUARIO, txt: `${p.prod}: ${antes} → ${v}` }; REP.catlog.push(h); renderDrawer(true); refresh();
+  toast(`${p.prod} agora está em ${v}.`, { acao: 'Desfazer', fn: () => { REP.cats[id] = antes; REP.catlog.push({ t: nowT(), quem: USUARIO, txt: `${p.prod}: ${v} → ${antes} (desfeito)` }); renderDrawer(true); refresh(); }, desfeito: `${p.prod} voltou para ${antes}.` });
+};
+/* Cenários da barra de revisão */
+function repCenario(c) {
+  REP.cenario = c; REP.cats = {}; REP.catlog = []; REP.log = [];
+  if (c === 'desligada') REP.cfg = clone(REPASSE_DESLIGADA); else if (c === 'personalizada') { REP.cfg = clone(REPASSE_PERSONALIZADA); REP.cats.adb = CAT_REPASSE; } else REP.cfg = clone(REPASSE_PADRAO);
+  seedChecks(); UI.rp = null; UI.rpBk = null;
+}
+/* REPASSE:END */
 /* ═════════ Boot ═════════ */
 function initChrome() {
   $('#mbtn').addEventListener('click', () => toggleSb(true));
@@ -2384,7 +2551,8 @@ function initChrome() {
   $('#skip').addEventListener('click', () => $('#main').focus());
   const sw = $('#sw-nova');
   sw.addEventListener('change', () => { lsSet('cowdata-mock-nova', sw.checked ? '1' : '0'); SAN = sw.checked ? seedVazio() : seedSanidade(); UI = { drKey: null }; nav('/sanidade/vacinas', {}, true); refresh(); toast(sw.checked ? 'Simulando uma fazenda nova: calendário vazio.' : 'Dados de demonstração restaurados.', { icon: 'info' }); });
-  $('#rb-reset').addEventListener('click', () => { SAN = sw.checked ? seedVazio() : seedSanidade(); PRO = seedProtocolos(); UI = { drKey: null }; lsDel('cowdata:rascunho-vacina:f1:u1'); refresh(); toast('Dados da demonstração reiniciados.', { icon: 'rotate' }); });
+  $('#rb-reset').addEventListener('click', () => { SAN = sw.checked ? seedVazio() : seedSanidade(); PRO = seedProtocolos(); repCenario('padrao'); const sr2 = $('#sw-rep'); if (sr2) sr2.value = 'padrao'; UI = { drKey: null }; lsDel('cowdata:rascunho-vacina:f1:u1'); refresh(); toast('Dados da demonstração reiniciados.', { icon: 'rotate' }); });
+  const sr = $('#sw-rep'); sr.addEventListener('change', () => { if (sr.value !== 'custom') { repCenario(sr.value); refresh(); toast('Configuração de repasse: ' + sr.options[sr.selectedIndex].text + '.', { icon: 'info' }); } });
   const so = $('#sw-off'); so.addEventListener('change', () => { NET.off = so.checked; refresh(); });
   const t = lsGet('cowdata-mock-tema'); setTema(CICLO.includes(t) ? t : 'claro');
   if (lsGet('cowdata-mock-nova') === '1') { sw.checked = true; SAN = seedVazio(); }
