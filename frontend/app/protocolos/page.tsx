@@ -358,7 +358,7 @@ type TipoCadastro = typeof TIPOS_CADASTRO[number]["id"];
 // campo a mais no mesmo formulário.
 const SUBS_SANITARIO = [
   { id: "curativo", label: "Curativo", desc: "Cronograma de etapas em dias fixos (D0/D1/D2…)" },
-  { id: "preventivo", label: "Preventivo", desc: "Calendário sanitário — regra recorrente (frequência ou evento de vida)" },
+  { id: "preventivo", label: "Preventivo", desc: "Vacina ou exame com janela de aplicação (frequência ou evento de vida)" },
 ] as const;
 type SubSanitario = typeof SUBS_SANITARIO[number]["id"];
 
@@ -421,7 +421,7 @@ type TipoLancamento = typeof TIPOS_LANCAMENTO[number]["id"];
 // sanitário).
 const SUBS_SANITARIO_LANCAMENTO = [
   { id: "curativo", label: "Curativo", desc: "Aplicar um protocolo cadastrado (cronograma de dias fixos)" },
-  { id: "preventivo", label: "Preventivo", desc: "Aplicar uma vacina/exame do calendário sanitário já cadastrado" },
+  { id: "preventivo", label: "Preventivo", desc: "Vacina ou exame de um protocolo já cadastrado (janela de aplicação)" },
 ] as const;
 
 function LancamentoTab({ animais, estoque, lotes }: { animais: AnimalRow[]; estoque: EstoqueItem[]; lotes: string[] }) {
@@ -430,14 +430,14 @@ function LancamentoTab({ animais, estoque, lotes }: { animais: AnimalRow[]; esto
 
   return (
     <div>
-      <SeletorTipoProtocolo titulo="Qual protocolo você quer lançar?" tipos={TIPOS_LANCAMENTO} tipo={tipo} onChange={setTipo} />
+      <SeletorTipoProtocolo titulo="O que você quer aplicar?" tipos={TIPOS_LANCAMENTO} tipo={tipo} onChange={setTipo} />
 
       {tipo === "sanitario" && (
         <SeletorTipoProtocolo titulo="Curativo ou preventivo?" tipos={SUBS_SANITARIO_LANCAMENTO} tipo={subSanitario} onChange={setSubSanitario} />
       )}
 
       <div className="card mb-3">
-        <div className="card-header mb-2">Lançar {TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label.toLowerCase()}</div>
+        <div className="card-header mb-2">Aplicar {TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label.toLowerCase()}</div>
         {tipo === "iatf" && <FormProtocoloIatf animais={animais} />}
         {tipo === "inducao" && <FormInducaoLactacao animais={animais} />}
         {tipo === "sanitario" && subSanitario === "curativo" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
@@ -1114,8 +1114,16 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
 }
 
 // ─────────────────────────── Página ───────────────────────────
+// Vocabulário do fluxo aprovado (mockup fluxo-completo): Cadastro › Aplicar ›
+// Acompanhamento › Concluídos. "Aplicar" era "Lançamento" e "Concluídos" era
+// "Histórico"; os ids antigos (?aba=lancamento / ?aba=historico) continuam
+// valendo como atalho para não quebrar links já salvos.
+type AbaProtocolos = "cadastro" | "aplicar" | "acompanhamento" | "concluidos";
+const ABAS_LEGADO: Record<string, AbaProtocolos> = { lancamento: "aplicar", historico: "concluidos" };
+const ABAS_PROTOCOLOS: AbaProtocolos[] = ["cadastro", "aplicar", "acompanhamento", "concluidos"];
+
 export default function ProtocolosPage() {
-  const [aba, setAba] = useState<"cadastro" | "lancamento" | "acompanhamento" | "historico">("acompanhamento");
+  const [aba, setAba] = useState<AbaProtocolos>("acompanhamento");
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
   useEffect(() => {
@@ -1140,32 +1148,33 @@ export default function ProtocolosPage() {
   // padrão do "ir=" de Lançamentos.
   useEffect(() => {
     const abaQs = new URLSearchParams(window.location.search).get("aba");
-    if (abaQs && ["cadastro", "lancamento", "acompanhamento", "historico"].includes(abaQs)) setAba(abaQs as typeof aba);
+    const abaId = abaQs ? (ABAS_LEGADO[abaQs] ?? abaQs) : null;
+    if (abaId && (ABAS_PROTOCOLOS as string[]).includes(abaId)) setAba(abaId as AbaProtocolos);
   }, []);
 
   return (
     <div className="p-6">
       <h1 className="text-xl font-bold mb-1" style={{ color: "var(--dourado-light)" }}>Central de Protocolos</h1>
       <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginBottom: "1.2rem" }}>
-        IATF, Sanitário, Indução de Lactação e Customizado — cadastro, lançamento, acompanhamento e histórico num só lugar.
-        Os 4 tipos podem ser lançados por aqui; IATF, Indução e Sanitário continuam também disponíveis em Lançamentos — é o mesmo lançamento, dois caminhos.
+        Cadastre o protocolo, aplique, acompanhe o que está agendado e consulte os concluídos — vacinas, exames, IATF, indução de lactação e protocolos próprios num só lugar.
+        Vacina e exame (preventivo) são aplicados só aqui; IATF, Indução e Sanitário curativo continuam também em Lançamentos — é o mesmo lançamento, dois caminhos.
       </p>
 
-      <TabBar<"cadastro" | "lancamento" | "acompanhamento" | "historico">
+      <TabBar<AbaProtocolos>
         abas={[
-          { id: "cadastro", label: "Cadastro", title: "Moldes de cada protocolo" },
-          { id: "lancamento", label: "Lançamento", title: "Lançar IATF, indução, sanitário ou customizado" },
-          { id: "acompanhamento", label: "Acompanhamento", title: "Protocolos em andamento, dos 4 tipos" },
-          { id: "historico", label: "Histórico", title: "Concluídos e cancelados, com exportação" },
+          { id: "cadastro", label: "Cadastro", title: "Moldes de cada protocolo, com a janela de aplicação" },
+          { id: "aplicar", label: "Aplicar", title: "Aplicar vacina, exame, IATF, indução, curativo ou protocolo próprio" },
+          { id: "acompanhamento", label: "Acompanhamento", title: "O que já está agendado ou em andamento" },
+          { id: "concluidos", label: "Concluídos", title: "Aplicados e cancelados, com exportação" },
         ]}
         ativa={aba}
         onChange={setAba}
       />
 
       {aba === "cadastro" && <CadastroTab estoque={estoque} />}
-      {aba === "lancamento" && <LancamentoTab animais={animais} estoque={estoque} lotes={lotes} />}
+      {aba === "aplicar" && <LancamentoTab animais={animais} estoque={estoque} lotes={lotes} />}
       {aba === "acompanhamento" && <ListaProtocolos historico={false} />}
-      {aba === "historico" && <ListaProtocolos historico />}
+      {aba === "concluidos" && <ListaProtocolos historico />}
     </div>
   );
 }

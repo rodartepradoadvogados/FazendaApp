@@ -86,7 +86,7 @@ const links = [
   { href: "/",            label: "Capa",        icon: Home,          title: "Capa — visão geral da fazenda", grupo: "Ciclo diário" },
   { href: "/agenda",      label: "Agenda",       icon: Calendar,      title: "Agenda de atividades do dia — pendências e eventos a cumprir", grupo: "Ciclo diário" },
   { href: "/lancamentos", label: "Lançamentos",  icon: ClipboardList, title: "Lançamentos — registrar eventos e dados do dia a dia", grupo: "Ciclo diário" },
-  { href: "/protocolos",  label: "Central de Protocolos", icon: ListChecks, title: "Central de Protocolos — cadastro, lançamento, acompanhamento e histórico de IATF, Sanitário, Indução de Lactação e Customizado", grupo: "Ciclo diário" },
+  { href: "/protocolos",  label: "Central de Protocolos", icon: ListChecks, title: "Central de Protocolos — cadastro, aplicação, acompanhamento e concluídos de vacinas, exames, IATF, Indução de Lactação e Customizado", grupo: "Ciclo diário" },
   // ── Manejo do rebanho ──
   { href: "/rebanho",     label: "Rebanho",      icon: CowIcon,       title: "Rebanho — animais, movimentações entre lotes e ficha do animal", grupo: "Manejo do rebanho" },
   { href: "/historico",   label: "Histórico",    icon: Heart,         title: "Histórico — Reprodução (serviços, diagnósticos, partos) e Produção (controle leiteiro, secagem, BST)", grupo: "Manejo do rebanho" },
