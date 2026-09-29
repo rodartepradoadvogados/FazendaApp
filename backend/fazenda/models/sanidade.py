@@ -804,6 +804,42 @@ class CronogramaSanitarioLog(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Vinculo financeiro/compras do agendamento preventivo (fatia 9 do planejamento
+# unificado, secao 7). Uma linha liga o agendamento a UM alvo ja existente no
+# Financeiro ou em Compras:
+#   pagamento -- lancamento ja pago (ContaGerencial com data_pagamento) que cobre
+#                o produto; `valor` e o quanto dele foi atribuido a este agendamento;
+#   conta     -- conta a pagar (ContaGerencial em aberto) nascida do protocolo
+#                (produto x dose ou honorario do veterinario);
+#   cotacao / pedido -- "Comunicar compra" do insumo que falta.
+# `alvo_id` nao tem FK de proposito: o alvo pode ser apagado/cancelado depois e
+# o vinculo guarda a foto (fornecedor, valor, vencimento) para o historico.
+# Nada e apagado: desvincular/cancelar so muda `estado` e grava quem/quando/por que.
+# ---------------------------------------------------------------------------
+class CronogramaSanitarioVinculo(SQLModel, table=True):
+    __tablename__ = "cronograma_sanitario_vinculo"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    cronograma_id: int = Field(foreign_key="cronograma_sanitario.id", index=True)
+    tipo: str = Field(index=True)                         # pagamento | conta | cotacao | pedido
+    alvo_id: int = Field(index=True)                      # id do lancamento / cotacao / pedido
+    numero_lancamento: Optional[str] = None               # LC-AAAA-NNNNN (pagamento/conta) ou numero da cotacao/pedido
+    estado: str = Field(default="ativo", index=True)      # ativo | desvinculado | cancelado
+    valor: Optional[float] = None                         # vinculado (pagamento) ou previsto (conta)
+    modo: Optional[str] = None                            # pagamento: proporcional | inteiro
+    subtipo: Optional[str] = None                         # conta: honorario | produto
+    rotulo: Optional[str] = None                          # fornecedor / servico (foto na hora)
+    descricao: Optional[str] = None
+    vencimento: Optional[date] = None
+    criado_por_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    encerrado_por_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    encerrado_em: Optional[datetime] = None
+    motivo_encerramento: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
 # Checklist da Ocorrência — Fase 0, passo 3 do redesenho do evento sanitário
 # (docs/redesenho-evento-sanitario.md, seção 7). `CronogramaSanitario` É a
 # "Ocorrência" do redesenho (entidade generalizada, ver seção 1 do
