@@ -14,6 +14,9 @@ ver rules.cronograma_sanitario.reabrir). Comportamento especial por `chave`
     exige `observacao` (justificativa) — sempre cumprido, nunca pulado por
     responder (pular é recusar responder, outro caminho).
   - "horario": exige `resposta` (valor "HH:MM" não vazio) para confirmar.
+  - "carencia": aviso — nunca bloqueia. Só existe no checklist do Curativo
+    (template "curativo"); o prazo de leite/carne vem do catálogo do
+    medicamento (`rules.carencia`), a UI apenas mostra e pede a ciência.
   - "lotes": não tem valor próprio — "cumprido" é só "revisei a tela".
   - "financeiro"/"custom": sem exigência própria além do status.
 """
@@ -36,6 +39,37 @@ class ChecklistError(Exception):
 # reaproveita o de "vacina" (mesmos campos/fluxo, seção 3.7.0 do redesenho).
 def tipo_template_do_evento(evento: EventoSanitario) -> str:
     return "exame" if evento.categoria_preventiva == "exame" else "vacina"
+
+
+# Chave do item de carência (aviso, nunca bloqueia — ver docstring do módulo).
+CHAVE_CARENCIA = "carencia"
+
+# Template do Curativo (tratamento de um animal ou lote — mastite, vermifugação
+# curativa etc.). Ponto de partida em código: vale enquanto a fazenda não tem
+# linhas próprias `tipo="curativo"` em `ChecklistTemplateItem` (não há migração
+# de seed; a fazenda pode personalizar depois pelo mesmo cadastro do template).
+# "carencia" vem do catálogo do medicamento, não digitada.
+TEMPLATE_PADRAO_CURATIVO: tuple[tuple[str, str, int], ...] = (
+    ("estoque", "Estoque suficiente?", 1),
+    (CHAVE_CARENCIA, "Carência de leite e carne conferida", 2),
+    ("lotes", "Lotes de manejo atuais", 3),
+)
+
+
+def carencia_agregada(carencias: list[dict]) -> dict:
+    """Pior caso da carência de vários medicamentos (o leite/carne só liberam
+    quando o ÚLTIMO produto liberar). Recebe blocos de `rules.carencia.carencia_dict`.
+    Prazo `None` continua `None` (nunca vira 0): só soma o que foi informado;
+    `informada` diz se ao menos um produto tem dado de carência."""
+    leites = [c["leite_dias"] for c in carencias if c.get("leite_dias") is not None]
+    carnes = [c["carne_dias"] for c in carencias if c.get("carne_dias") is not None]
+    proibido = any(c.get("proibido_lactacao") for c in carencias)
+    return {
+        "leite_dias": max(leites) if leites else None,
+        "carne_dias": max(carnes) if carnes else None,
+        "proibido_lactacao": proibido,
+        "informada": bool(leites or carnes or proibido),
+    }
 
 
 class _ItemFonte:
@@ -80,6 +114,8 @@ def template_do_tipo(session: Session, tipo: str, fazenda_id: int | None) -> lis
         if atual is None or (atual.fazenda_id is None and item.fazenda_id is not None):
             por_chave[item.chave] = item
     ordenados = sorted(por_chave.values(), key=lambda i: i.ordem)
+    if not ordenados and tipo == "curativo":
+        return [_ItemFonte(chave, nome, ordem) for chave, nome, ordem in TEMPLATE_PADRAO_CURATIVO]
     return [_ItemFonte(i.chave, i.nome, i.ordem) for i in ordenados]
 
 

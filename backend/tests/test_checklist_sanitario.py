@@ -14,7 +14,10 @@ from fazenda.models import (
     CalendarioSanitario, CalendarioSanitarioChecklistItem, ChecklistTemplateItem, CronogramaSanitario, EventoSanitario,
 )
 from fazenda.rules.checklist_sanitario import (
+    CHAVE_CARENCIA,
     ChecklistError,
+    TEMPLATE_PADRAO_CURATIVO,
+    carencia_agregada,
     checklist_completo,
     checklist_customizado_da_regra,
     confirmado,
@@ -305,3 +308,36 @@ class TestChecklistCompletoEConfirmado:
         session.commit()
         with pytest.raises(ChecklistError, match="já foi realizada"):
             desconsiderar_cronograma(session, cron, None, AGORA)
+
+
+class TestCarenciaCurativo:
+    def test_template_curativo_padrao_tem_item_carencia(self, session):
+        itens = template_do_tipo(session, "curativo", None)
+        assert [i.chave for i in itens] == [c for c, _, _ in TEMPLATE_PADRAO_CURATIVO]
+        assert CHAVE_CARENCIA in [i.chave for i in itens]
+        assert [i.ordem for i in itens] == sorted(i.ordem for i in itens)
+
+    def test_template_curativo_da_fazenda_vence_o_padrao_em_codigo(self, session):
+        session.add(ChecklistTemplateItem(tipo="curativo", chave="carencia", nome="Carência ok?", ordem=1, fazenda_id=7))
+        session.commit()
+        itens = template_do_tipo(session, "curativo", 7)
+        assert [(i.chave, i.nome) for i in itens] == [("carencia", "Carência ok?")]
+        # outra fazenda continua no padrão
+        assert len(template_do_tipo(session, "curativo", 8)) == len(TEMPLATE_PADRAO_CURATIVO)
+
+    def test_vacina_e_exame_nao_ganham_item_carencia(self, session):
+        for tipo in ("vacina", "exame"):
+            assert CHAVE_CARENCIA not in [i.chave for i in template_do_tipo(session, tipo, None)]
+
+    def test_carencia_agregada_pega_o_pior_caso_e_nunca_vira_zero(self):
+        r = carencia_agregada([
+            {"leite_dias": 3, "carne_dias": None, "proibido_lactacao": False},
+            {"leite_dias": 5, "carne_dias": 28, "proibido_lactacao": False},
+        ])
+        assert r == {"leite_dias": 5, "carne_dias": 28, "proibido_lactacao": False, "informada": True}
+        vazio = carencia_agregada([{"leite_dias": None, "carne_dias": None, "proibido_lactacao": False}])
+        assert vazio["leite_dias"] is None and vazio["carne_dias"] is None and vazio["informada"] is False
+
+    def test_carencia_agregada_proibido_lactacao_conta_como_informada(self):
+        r = carencia_agregada([{"leite_dias": None, "carne_dias": None, "proibido_lactacao": True}])
+        assert r["proibido_lactacao"] is True and r["informada"] is True

@@ -4679,7 +4679,7 @@ export async function excluirExame(id: number) {
 // de Cadastro (seção 3.7.0), Central de Protocolos > Cadastro > Sanitário >
 // Preventivo.
 export type ChecklistTemplateItemDTO = { chave: string; nome: string; ordem: number };
-export async function fetchChecklistTemplate(tipo: "vacina" | "exame"): Promise<ChecklistTemplateItemDTO[]> {
+export async function fetchChecklistTemplate(tipo: "vacina" | "exame" | "curativo"): Promise<ChecklistTemplateItemDTO[]> {
   const res = await authFetch(`${API}/cadastro/checklist-template?tipo=${tipo}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Template de checklist error: ${res.status}`);
   return res.json();
