@@ -24,6 +24,7 @@ import { Indicador, SecaoRecolhivel, TelaSkeleton } from "@/components/ui";
 import { PainelLancarBst } from "@/components/PainelLancarBst";
 import { casaBusca } from "@/lib/busca";
 import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
+import { GavetaAplicar } from "@/components/protocolos/GavetaAplicar";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
 // Mesmos dois formulários de components/lancamentos/* que a tela de Lançamentos
 // abre na gaveta (ver GAVETA_LEAFS em app/lancamentos/page.tsx) — aqui abrem
@@ -213,18 +214,9 @@ export default function AgendaPage() {
   // BST" com a notinha "(ind.lact.)" (ver PainelLancarBst.tsx).
   const [inducaoIncluirBst, setInducaoIncluirBst] = useState<Record<string, boolean>>({});
 
-  const [cronogramaAplicarAbertos, setCronogramaAplicarAbertos] = useState<Set<string>>(new Set());
-  const toggleCronogramaAplicar = (id: string) => setCronogramaAplicarAbertos(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const [cronogramaAplicarChecks, setCronogramaAplicarChecks] = useState<Record<string, Set<string>>>({});
-  const abrirCronogramaAplicar = (id: string, animais: string[]) => {
-    setCronogramaAplicarChecks((p) => (p[id] ? p : { ...p, [id]: new Set(animais) }));
-    toggleCronogramaAplicar(id);
-  };
-  const toggleAnimalCronogramaAplicar = (id: string, numero: string) => setCronogramaAplicarChecks((p) => {
-    const atual = new Set(p[id] || []);
-    atual.has(numero) ? atual.delete(numero) : atual.add(numero);
-    return { ...p, [id]: atual };
-  });
+  // Aplicar um agendamento preventivo: gaveta única (a mesma de Protocolos ›
+  // Acompanhamento), aberta pelo id do cronograma do evento da Agenda.
+  const [gavetaAplicarId, setGavetaAplicarId] = useState<number | null>(null);
 
   // "Incluir animal fora da janela de aplicação" (bug relatado pelo usuário
   // em 12/09/2026: só entra na lista quem bate o critério automático da
@@ -296,27 +288,6 @@ export default function AgendaPage() {
       setCronogramaNovoVetNome((p) => ({ ...p, [e.id]: "" }));
     } catch (err: any) { mostrarFeedback(err.message || "Erro ao cadastrar veterinário", true); }
     finally { setCronogramaCriandoVet((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
-  };
-
-  const aplicarCronogramaLote = async (e: any) => {
-    setMarcando((p) => new Set(p).add(e.id));
-    try {
-      await marcarEventoRealizado(e.id);
-      await carregar();
-      mostrarFeedback("Aplicação registrada para todos os animais incluídos.");
-    } catch (err: any) { mostrarFeedback(err.message, true); }
-    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
-  };
-
-  const aplicarCronogramaIndividual = async (e: any) => {
-    const checks = cronogramaAplicarChecks[e.id] || new Set(e.animais);
-    setMarcando((p) => new Set(p).add(e.id));
-    try {
-      await marcarEventoRealizado(e.id, Array.from(checks));
-      await carregar();
-      mostrarFeedback(`Aplicação registrada em ${checks.size} animal(is).`);
-    } catch (err: any) { mostrarFeedback(err.message, true); }
-    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
   };
 
   // Indução de lactação: mesmo padrão do protocolo IATF (grupo lançamento+dia
@@ -1641,52 +1612,31 @@ export default function AgendaPage() {
                       );
                     }
                     if (linha.tipo === "cronograma_aplicar") {
+                      // Só o AGENDAMENTO entra na Agenda, no dia. "Aplicar" abre a MESMA
+                      // gaveta de Protocolos › Acompanhamento (mesmo endpoint, canal "Agenda").
                       const e = linha.e;
-                      const abertoCron = cronogramaAplicarAbertos.has(e.id);
-                      const checks = cronogramaAplicarChecks[e.id] || new Set(e.animais);
+                      const pendCk = (e.checklist_total ?? 0) - (e.checklist_resolvidos ?? 0);
                       return (
-                        <React.Fragment key={`cron-aplicar-${i}`}>
-                          <tr style={{ cursor: "pointer" }} onClick={() => abrirCronogramaAplicar(e.id, e.animais)}>
-                            {tdAccent(e.categoria)}
-                            <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{e.animais.length} animal(is)</td>
-                            <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>
-                              {abertoCron ? <ChevronDown size={12} style={{ display: "inline", marginRight: "0.3rem" }} /> : <ChevronRight size={12} style={{ display: "inline", marginRight: "0.3rem" }} />}
-                              {e.descricao}{mostrarAtraso && pillAtraso(e.data)}
-                            </td>
-                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
-                            <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>
-                            <td onClick={(ev) => ev.stopPropagation()}>
-                              <button className="btn-primary" style={{ fontSize: "0.68rem" }} disabled={marcando.has(e.id)} onClick={() => aplicarCronogramaLote(e)}>
-                                <Check size={11} /> Aplicar em lote
-                              </button>
-                            </td>
-                          </tr>
-                          {abertoCron && (
-                            <tr style={{ background: "var(--surface-2)" }}>
-                              <td></td>
-                              <td colSpan={5}>
-                                <div style={{ padding: "0.5rem 0" }}>
-                                  <table className="fazenda-table" style={{ margin: 0 }}>
-                                    <thead><tr><th></th><th>Nº</th></tr></thead>
-                                    <tbody>
-                                      {e.animais.map((numero: string) => (
-                                        <tr key={numero}>
-                                          <td><input type="checkbox" checked={checks.has(numero)} onChange={() => toggleAnimalCronogramaAplicar(e.id, numero)} /></td>
-                                          <td style={{ fontWeight: 700 }}>{numero}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                  <div className="flex items-center gap-2 mt-2">
-                                    <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id) || !checks.size} onClick={() => aplicarCronogramaIndividual(e)}>
-                                      <Check size={12} /> Individualizado ({checks.size}/{e.animais.length})
-                                    </button>
-                                  </div>
-                                </div>
-                              </td>
-                            </tr>
-                          )}
-                        </React.Fragment>
+                        <tr key={`cron-aplicar-${i}`} style={{ cursor: "pointer" }} onClick={() => setGavetaAplicarId(e.cronograma_id)}>
+                          {tdAccent(e.categoria)}
+                          <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{e.animais.length} animal(is)</td>
+                          <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>
+                            {e.descricao}{mostrarAtraso && pillAtraso(e.data)}
+                            {pendCk > 0 && (
+                              <span title="Aplicar não é bloqueado: pede só a ciência dos itens pendentes"
+                                    style={{ marginLeft: "0.5rem", fontSize: "0.68rem", fontWeight: 700, color: "var(--amber)", background: "rgba(217,119,6,0.12)", padding: "0.05rem 0.45rem", borderRadius: 999, whiteSpace: "nowrap" }}>
+                                checklist pendente · {e.checklist_resolvidos}/{e.checklist_total}
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
+                          <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>agendamento</td>
+                          <td onClick={(ev) => ev.stopPropagation()}>
+                            <button className="btn-primary-gold" style={{ fontSize: "0.72rem" }} onClick={() => setGavetaAplicarId(e.cronograma_id)}>
+                              <Syringe size={12} /> Aplicar
+                            </button>
+                          </td>
+                        </tr>
                       );
                     }
                     if (linha.tipo === "inducao") {
@@ -2788,6 +2738,13 @@ export default function AgendaPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {gavetaAplicarId != null && (
+        <GavetaAplicar
+          cronogramaId={gavetaAplicarId} canal="Agenda" onFechar={() => setGavetaAplicarId(null)}
+          onMudou={() => { carregar(); }}
+        />
       )}
 
       {/* Gaveta lateral (T2, mockup 1e) — Preventivo/Avulso e Inseminação
