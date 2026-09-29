@@ -107,3 +107,40 @@ class TestAplicacaoAgendadaGravaFazendaId:
             sanidade = s.exec(select(Sanidade).where(Sanidade.numero_matriz == "9002")).first()
             assert sanidade is not None
             assert sanidade.fazenda_id == 1
+
+
+class TestPreventivoNaoVazaParaAgenda:
+    """R1/R2 (planejamento unificado): animal sugerido (lista de espera) nunca
+    é tarefa da Agenda, e GET /agenda não escreve. Cenário completo em
+    test_agenda_preventivo_lista_espera.py; aqui só o contrato com este fixture."""
+
+    def test_sugerido_fora_da_agenda_e_get_sem_escrita(self, client):
+        from fazenda.models import CalendarioSanitario, CronogramaSanitario, CronogramaSanitarioAnimal, EventoSanitario
+        c, engine = client
+        with Session(engine) as s:
+            ev = EventoSanitario(nome="Vacina Z", tipo_agendamento="epoca", fazenda_id=1)
+            s.add(ev); s.commit(); s.refresh(ev)
+            cal = CalendarioSanitario(
+                evento_sanitario_id=ev.id, categoria_alvo="Novilha", frequencia_valor=6, frequencia_unidade="meses",
+                data_evento=HOJE, usa_cronograma=True, fazenda_id=1,
+            )
+            s.add(cal); s.commit(); s.refresh(cal)
+            cron = CronogramaSanitario(calendario_sanitario_id=cal.id, data_evento=HOJE, fazenda_id=1)
+            s.add(cron); s.commit(); s.refresh(cron)
+            s.add(CronogramaSanitarioAnimal(cronograma_id=cron.id, numero_matriz="7001", data_sugestao=HOJE, fazenda_id=1))
+            s.commit()
+
+        def _snapshot():
+            with Session(engine) as s:
+                return (
+                    [(x.id, x.status, x.atualizado_em) for x in s.exec(select(CronogramaSanitario)).all()],
+                    [(x.id, x.status) for x in s.exec(select(CronogramaSanitarioAnimal)).all()],
+                )
+
+        antes = _snapshot()
+        r1 = c.get("/agenda/", params={"data": HOJE.isoformat()}).json()
+        r2 = c.get("/agenda/", params={"data": HOJE.isoformat()}).json()
+        assert _snapshot() == antes
+        for r in (r1, r2):
+            assert not [e for e in r["eventos"] if str(e["id"]).startswith("cronograma_sanitario_")]
+            assert [x["quantidade"] for x in r["lista_espera_sanitaria"]] == [1]

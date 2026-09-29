@@ -80,6 +80,7 @@ def _criar_evento_e_calendario(c, dias_ate_evento: int = 30) -> tuple[int, int]:
 
 
 def _agenda(c) -> list[dict]:
+    c.post("/agenda/materializar", params={"data": HOJE.isoformat()})
     r = c.get("/agenda/", params={"data": HOJE.isoformat()})
     assert r.status_code == 200, r.text
     return r.json()["eventos"]

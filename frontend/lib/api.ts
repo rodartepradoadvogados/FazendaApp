@@ -1411,7 +1411,16 @@ export async function checkHealth(): Promise<boolean> {
   }
 }
 
+// GET /agenda é somente leitura; quem cria cronogramas/lista de espera/
+// recorrências é este POST (idempotente), chamado por fetchAgenda antes de ler
+// (mesmo efeito de antes, sem escrita dentro do GET).
+export async function materializarAgenda(data?: string): Promise<void> {
+  const qs = data ? `?data=${encodeURIComponent(data)}` : "";
+  await authFetch(`${API}/agenda/materializar${qs}`, { method: "POST", cache: "no-store" }).catch(() => undefined);
+}
+
 export async function fetchAgenda(data?: string, dias?: number) {
+  await materializarAgenda(data);
   const qs = new URLSearchParams();
   if (data) qs.set("data", data);
   if (dias) qs.set("dias", String(dias));

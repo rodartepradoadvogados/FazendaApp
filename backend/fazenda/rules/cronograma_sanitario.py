@@ -34,8 +34,8 @@ from datetime import date, datetime, timedelta
 
 from sqlmodel import Session, select
 
-from fazenda.models import CalendarioSanitario, CronogramaSanitario, CronogramaSanitarioAnimal, Pessoa
-from fazenda.rules.calendario_sanitario import proxima_ocorrencia
+from fazenda.models import CalendarioSanitario, CronogramaSanitario, CronogramaSanitarioAnimal, Pessoa, Sanidade
+from fazenda.rules.calendario_sanitario import _somar_meses, proxima_ocorrencia
 from fazenda.rules.checklist_sanitario import materializar_checklist
 from fazenda.rules.parametros import cronograma_sanitario_dias_aviso, usar_ocorrencia_universal
 from fazenda.rules.projecao_categoria import animais_projetados_na_categoria
@@ -324,7 +324,82 @@ def _regra_e_por_epoca(calendario: CalendarioSanitario, eventos_por_id: dict) ->
 # confirmar-ou-adiar (obrigatório, N dias antes, ainda em branco) e aplicar
 # (dia do evento, modo já definido).
 # ---------------------------------------------------------------------------
-def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_id: int | None = None) -> list[dict]:
+def _inicio_do_ciclo(cron: CronogramaSanitario, calendario: CalendarioSanitario) -> date:
+    """Começo do ciclo que termina na data prevista da Ocorrência (data prevista
+    menos UMA frequência da regra). Aplicação do produto da regra a partir daqui
+    já cobre a época — o animal não volta para a lista de espera."""
+    n, un = calendario.frequencia_valor, calendario.frequencia_unidade
+    if un == "dias":
+        return cron.data_evento - timedelta(days=n)
+    return _somar_meses(cron.data_evento, -(n * 12 if un == "anos" else n))
+
+
+def _ja_vacinados_no_ciclo(
+    session: Session, cron: CronogramaSanitario, calendario: CalendarioSanitario, produto: str | None, numeros: list[str],
+) -> set[str]:
+    """Animais (entre `numeros`) com aplicação do produto da regra dentro do
+    ciclo da Ocorrência — não viram "sugerido" (dedupe da época)."""
+    if not produto or not numeros:
+        return set()
+    desde = _inicio_do_ciclo(cron, calendario)
+    alvo = produto.strip().lower()
+    query = (
+        select(Sanidade.numero_matriz, Sanidade.produto)
+        .where(Sanidade.numero_matriz.in_(numeros))
+        .where(Sanidade.data_aplicacao >= desde)
+    )
+    if calendario.fazenda_id is not None:
+        query = query.where(Sanidade.fazenda_id == calendario.fazenda_id)
+    linhas = session.exec(query).all()
+    return {n for n, prod in linhas if (prod or "").strip().lower() == alvo}
+
+
+def resumo_lista_espera(session: Session, fazenda_id: int | None = None) -> list[dict]:
+    """Atalho da Agenda para Protocolos (R1): quantos animais estão na lista de
+    espera ("sugerido") de cada cronograma em aberto. NÃO é tarefa — a Agenda
+    só mostra o número e leva para Protocolos, onde se decide/agenda."""
+    query = (
+        select(CronogramaSanitario, CalendarioSanitario)
+        .join(CalendarioSanitario, CalendarioSanitario.id == CronogramaSanitario.calendario_sanitario_id)
+        .where(CronogramaSanitario.status.in_(_ABERTOS))
+        .where(CalendarioSanitario.ativo == True)  # noqa: E712
+    )
+    if fazenda_id is not None:
+        query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
+    pares = session.exec(query).all()
+    if not pares:
+        return []
+    contagem: dict[int, int] = {}
+    for linha in session.exec(
+        select(CronogramaSanitarioAnimal)
+        .where(CronogramaSanitarioAnimal.cronograma_id.in_([c.id for c, _ in pares]))
+        .where(CronogramaSanitarioAnimal.status == "sugerido")
+    ).all():
+        contagem[linha.cronograma_id] = contagem.get(linha.cronograma_id, 0) + 1
+    from fazenda.models import EventoSanitario
+    nomes = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
+    return [
+        {
+            "cronograma_id": c.id, "evento_sanitario_id": cal.evento_sanitario_id,
+            "evento_nome": nomes.get(cal.evento_sanitario_id, "Evento sanitário"),
+            "categoria_alvo": cal.categoria_alvo, "data_evento": c.data_evento.isoformat(),
+            "quantidade": contagem[c.id],
+        }
+        for c, cal in pares if contagem.get(c.id)
+    ]
+
+
+def eventos_agenda(
+    session: Session, hoje: date, realizados: set[str], fazenda_id: int | None = None, escrever: bool = False,
+) -> list[dict]:
+    """Tarefas da Agenda vindas do cronograma sanitário: SÓ o agendamento
+    (status "agendado", modo/data definidos) no dia da aplicação (R2). Animal na
+    janela/lista de espera e cronograma "aberto" (sem decisão) NUNCA são
+    tarefa (R1) — ver `resumo_lista_espera`.
+
+    `escrever=False` (padrão, usado por GET /agenda) só lê. Criar cronograma,
+    materializar checklist e sugerir animais (`escrever=True`) é papel de
+    `materializar` (POST /agenda/materializar)."""
     query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
     # `usa_cronograma` continua filtrando por padrão (comportamento de
     # sempre); com a flag ligada para a fazenda (R-1), toda regra ativa passa
@@ -368,15 +443,16 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
         .where(CronogramaSanitario.status.in_(_ABERTOS))
     ).all()
     regras_com_cronograma = {c.calendario_sanitario_id for c in cronogramas}
-    for calendario_id, calendario in regras.items():
-        if calendario_id not in regras_com_cronograma:
-            cronogramas.append(cronograma_aberto(session, calendario))
+    if escrever:
+        for calendario_id, calendario in regras.items():
+            if calendario_id not in regras_com_cronograma:
+                cronogramas.append(cronograma_aberto(session, calendario))
 
     # Checklist da Ocorrência (Fase 1, passo 7) — materializa (idempotente,
     # nunca duplica/reseta) assim que o cronograma existe, no mesmo espírito
     # de "nasce no ato" do comentário acima. Puramente aditivo: só cria linha
     # numa tabela nova que ninguém lê ainda fora deste redesenho — sem flag.
-    for cron in cronogramas:
+    for cron in (cronogramas if escrever else []):
         evento = eventos_por_id.get(regras[cron.calendario_sanitario_id].evento_sanitario_id)
         if evento is not None:
             materializar_checklist(session, cron, evento)
@@ -390,7 +466,7 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
     # `coletar_dados_criterios` (rebanho inteiro + histórico reprodutivo) só
     # é buscado se existir ao menos 1 regra por época com cronograma aberto —
     # 1 consulta pesada por carregamento da Agenda, nunca uma por regra.
-    if usar_ocorrencia_universal():
+    if escrever and usar_ocorrencia_universal():
         cronogramas_epoca = [
             c for c in cronogramas
             if _regra_e_por_epoca(regras[c.calendario_sanitario_id], eventos_por_id)
@@ -401,6 +477,10 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
             for cron in cronogramas_epoca:
                 calendario = regras[cron.calendario_sanitario_id]
                 numeros = animais_projetados_na_categoria(calendario.categoria_alvo or "", cron.data_evento, dados_criterios)
+                ev_regra = eventos_por_id.get(calendario.evento_sanitario_id)
+                produto = calendario.produto or (ev_regra.produto_padrao if ev_regra else None)
+                vacinados = _ja_vacinados_no_ciclo(session, cron, calendario, produto, numeros)
+                numeros = [n for n in numeros if n not in vacinados]
                 if numeros:
                     sugerir_animais_em_lote(session, calendario, numeros, hoje)
 
@@ -413,12 +493,9 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
     animais_cronograma = session.exec(
         select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id.in_(cronograma_ids))
     ).all() if cronograma_ids else []
-    sugeridos_por_cronograma: dict[int, list[CronogramaSanitarioAnimal]] = {}
     incluidos_por_cronograma: dict[int, list[CronogramaSanitarioAnimal]] = {}
     for linha in animais_cronograma:
-        if linha.status == "sugerido":
-            sugeridos_por_cronograma.setdefault(linha.cronograma_id, []).append(linha)
-        elif linha.status == "incluido":
+        if linha.status == "incluido":
             incluidos_por_cronograma.setdefault(linha.cronograma_id, []).append(linha)
 
     saida: list[dict] = []
@@ -428,71 +505,39 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
         nome = ev.nome if ev else "Evento sanitário"
         alvo = calendario.categoria_alvo or "rebanho"
 
-        # (1) Trilha do animal — UM card resumo por cronograma (não mais um
-        # por animal): pedido do usuário em 13/09/2026, uma regra com vários
-        # animais entrando na janela poluía a Agenda com um card idêntico por
-        # matriz. A decisão individual (incluir/excluir cada um) continua
-        # existindo — só que agora só dentro do detalhe do cronograma (aba
-        # Animais, Sanidade > Preventiva > Cronogramas), não mais direto na
-        # Agenda. Sem checagem de `realizados` aqui de propósito: este card
-        # não é uma pendência que se "marca como feita" à parte — ele
-        # simplesmente reflete quantos animais ainda estão "sugerido" agora;
-        # decidir cada um (que continua usando `cronograma_sanitario_animal_
-        # {id}` internamente) já tira o animal dessa contagem sozinho.
-        sugeridos = sugeridos_por_cronograma.get(cron.id, [])
-        if sugeridos:
-            saida.append({
-                "id": f"{PREFIXO_CRONOGRAMA}sugeridos_{cron.id}",
-                "data": min(l.data_sugestao for l in sugeridos).isoformat(), "categoria": "sanidade",
-                "descricao": f"{len(sugeridos)} animal(is) na janela de aplicação — {nome} ({alvo})",
-                "numero_animal": None,
-                "observacao": "Clique para ver os animais e decidir incluir ou excluir cada um.",
-                "fonte": "auto", "cor": "var(--dourado)", "ref": None,
-                "tipo": "cronograma_sanitario_sugeridos",
-                "cronograma_id": cron.id, "evento_sanitario_id": calendario.evento_sanitario_id,
-                "quantidade_sugeridos": len(sugeridos),
-            })
+        # Trilha do animal (sugerido = lista de espera) e cronograma "aberto"
+        # (sem modo/data decididos) NÃO viram tarefa (R1/R2): a Agenda só
+        # mostra o resumo `resumo_lista_espera`. Só o agendamento entra, no dia.
+        if cron.status != "agendado" or hoje < cron.data_evento:
+            continue
 
-        # (2) Trilha do agendamento — 1 card por cronograma aberto, com
-        # urgência crescente conforme a data se aproxima sem decisão.
-        if cron.status == "aberto":
-            urgente = hoje >= (cron.data_evento - timedelta(days=dias_aviso))
-            eid = f"{PREFIXO_CRONOGRAMA}modo_{cron.id}"
-            if eid not in realizados:
-                if urgente:
-                    desc = f"{nome} previsto para {cron.data_evento.strftime('%d/%m/%Y')} — ainda sem veterinário nem aplicação própria confirmada"
-                    obs = "Confirme como vai ser aplicado ou adie a data — obrigatório antes do dia previsto."
-                else:
-                    desc = f"{nome} — cronograma criado para {cron.data_evento.strftime('%d/%m/%Y')}"
-                    obs = "Como vai ser aplicado: veterinário agendado, equipe própria, ou decide depois?"
-                saida.append({
-                    "id": eid, "data": (cron.data_evento - timedelta(days=dias_aviso) if urgente else cron.criado_em.date()).isoformat(),
-                    "categoria": "sanidade", "descricao": desc, "numero_animal": None,
-                    "observacao": obs, "fonte": "auto",
-                    "cor": "var(--red)" if urgente else "var(--dourado)", "ref": None,
-                    "tipo": "cronograma_sanitario_urgente" if urgente else "cronograma_sanitario_modo",
-                    "cronograma_id": cron.id, "evento_sanitario_id": calendario.evento_sanitario_id,
-                    "categoria_alvo": alvo, "data_evento": cron.data_evento.isoformat(),
-                })
-
-        # (3) Dia do evento chegou, com modo já definido — aplicar.
-        elif cron.status == "agendado" and hoje >= cron.data_evento:
-            eid = f"{PREFIXO_CRONOGRAMA}aplicar_{cron.id}"
-            if eid in realizados:
-                continue
-            incluidos = incluidos_por_cronograma.get(cron.id, [])
-            vet = pessoas_por_id.get(cron.veterinario_pessoa_id) if cron.veterinario_pessoa_id else None
-            quem = f"com {vet.nome}" if vet else "pela equipe própria"
-            saida.append({
-                "id": eid, "data": cron.data_evento.isoformat(), "categoria": "sanidade",
-                "descricao": f"Aplicar {nome} hoje — {quem}",
-                "numero_animal": None,
-                "observacao": f"{len(incluidos)} animal(is) incluído(s) — aplicar em lote ou individualizado.",
-                "fonte": "auto", "cor": "var(--dourado)", "ref": None,
-                "tipo": "cronograma_sanitario_aplicar",
-                "cronograma_id": cron.id, "evento_sanitario_id": calendario.evento_sanitario_id,
-                "animais": [l.numero_matriz for l in incluidos],
-                "modo_execucao": cron.modo_execucao, "veterinario": vet.nome if vet else None,
-            })
+        # Dia do agendamento chegou, com modo já definido — aplicar.
+        eid = f"{PREFIXO_CRONOGRAMA}aplicar_{cron.id}"
+        if eid in realizados:
+            continue
+        incluidos = incluidos_por_cronograma.get(cron.id, [])
+        vet = pessoas_por_id.get(cron.veterinario_pessoa_id) if cron.veterinario_pessoa_id else None
+        quem = f"com {vet.nome}" if vet else "pela equipe própria"
+        saida.append({
+            "id": eid, "data": cron.data_evento.isoformat(), "categoria": "sanidade",
+            "descricao": f"Aplicar {nome} hoje — {quem}",
+            "numero_animal": None,
+            "observacao": f"{len(incluidos)} animal(is) incluído(s) — aplicar em lote ou individualizado.",
+            "fonte": "auto", "cor": "var(--dourado)", "ref": None,
+            "tipo": "cronograma_sanitario_aplicar",
+            "cronograma_id": cron.id, "evento_sanitario_id": calendario.evento_sanitario_id,
+            "animais": [l.numero_matriz for l in incluidos],
+            "modo_execucao": cron.modo_execucao, "veterinario": vet.nome if vet else None,
+        })
 
     return saida
+
+
+def materializar(session: Session, hoje: date, fazenda_id: int | None = None) -> None:
+    """Parte que ESCREVE do que a Agenda antes fazia dentro do GET: cria o
+    cronograma aberto de cada regra, materializa o checklist e coloca animais
+    na lista de espera ("sugerido"). Idempotente. Chamado por
+    POST /agenda/materializar — nunca por GET."""
+    from fazenda.rules.eventos_sanitarios import eventos_agenda as _eventos_sanitarios_agenda
+    eventos_agenda(session, hoje, set(), fazenda_id, escrever=True)
+    _eventos_sanitarios_agenda(session, hoje, set(), fazenda_id, escrever=True)

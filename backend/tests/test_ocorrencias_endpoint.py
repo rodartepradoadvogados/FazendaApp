@@ -92,7 +92,7 @@ class TestListarOcorrencias:
     def test_carregar_agenda_materializa_e_aparece_como_provavel_com_cronograma(self, client):
         c, _ = client
         _criar_regra(c, dias_ate_evento=15)
-        c.get("/agenda/", params={"data": HOJE.isoformat()})  # materializa o cronograma + checklist
+        c.post("/agenda/materializar", params={"data": HOJE.isoformat()})  # materializa o cronograma + checklist
 
         r = c.get("/sanidade/ocorrencias")
         linhas = r.json()["linhas"]
@@ -102,7 +102,7 @@ class TestListarOcorrencias:
     def test_indicador_vencidas_conta_atraso_nao_realizado(self, client):
         c, _ = client
         _criar_regra(c, dias_ate_evento=-10)  # já venceu
-        c.get("/agenda/", params={"data": HOJE.isoformat()})
+        c.post("/agenda/materializar", params={"data": HOJE.isoformat()})
         r = c.get("/sanidade/ocorrencias")
         assert r.json()["indicadores"]["vencidas"] == 1
 
@@ -111,7 +111,7 @@ class TestDetalheOcorrencia:
     def test_detalhe_traz_checklist_materializado(self, client):
         c, _ = client
         _criar_regra(c, dias_ate_evento=15)
-        c.get("/agenda/", params={"data": HOJE.isoformat()})
+        c.post("/agenda/materializar", params={"data": HOJE.isoformat()})
         cron_id = c.get("/sanidade/ocorrencias").json()["linhas"][0]["cronograma_id"]
 
         r = c.get(f"/sanidade/ocorrencias/{cron_id}")
@@ -124,7 +124,7 @@ class TestDetalheOcorrencia:
     def test_estado_avanca_para_em_edicao_ao_cumprir_um_item(self, client):
         c, _ = client
         _criar_regra(c, dias_ate_evento=15)
-        c.get("/agenda/", params={"data": HOJE.isoformat()})
+        c.post("/agenda/materializar", params={"data": HOJE.isoformat()})
         cron_id = c.get("/sanidade/ocorrencias").json()["linhas"][0]["cronograma_id"]
         item_id = c.get(f"/sanidade/ocorrencias/{cron_id}").json()["checklist"][0]["id"]
 
@@ -135,7 +135,7 @@ class TestDetalheOcorrencia:
     def test_estado_confirmado_ao_completar_checklist(self, client):
         c, _ = client
         _criar_regra(c, dias_ate_evento=15)
-        c.get("/agenda/", params={"data": HOJE.isoformat()})
+        c.post("/agenda/materializar", params={"data": HOJE.isoformat()})
         cron_id = c.get("/sanidade/ocorrencias").json()["linhas"][0]["cronograma_id"]
         itens = c.get(f"/sanidade/ocorrencias/{cron_id}").json()["checklist"]
         for item in itens:
@@ -147,7 +147,7 @@ class TestDetalheOcorrencia:
     def test_estado_confirmado_via_desconsiderar(self, client):
         c, _ = client
         _criar_regra(c, dias_ate_evento=15)
-        c.get("/agenda/", params={"data": HOJE.isoformat()})
+        c.post("/agenda/materializar", params={"data": HOJE.isoformat()})
         cron_id = c.get("/sanidade/ocorrencias").json()["linhas"][0]["cronograma_id"]
 
         c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_desconsiderar_{cron_id}"})
@@ -170,7 +170,7 @@ class TestEstoqueInfoOcorrencia:
     def test_produto_nao_encontrado_no_estoque(self, client):
         c, _ = client
         _criar_regra(c, dias_ate_evento=15)
-        c.get("/agenda/", params={"data": HOJE.isoformat()})
+        c.post("/agenda/materializar", params={"data": HOJE.isoformat()})
         cron_id = c.get("/sanidade/ocorrencias").json()["linhas"][0]["cronograma_id"]
 
         dados = c.get(f"/sanidade/ocorrencias/{cron_id}").json()
@@ -183,7 +183,7 @@ class TestEstoqueInfoOcorrencia:
             s.add(Estoque(nome="VACINA BRUCELOSE B19", quantidade=0, unidade="ml"))
             s.commit()
         _criar_regra(c, dias_ate_evento=15)
-        c.get("/agenda/", params={"data": HOJE.isoformat()})
+        c.post("/agenda/materializar", params={"data": HOJE.isoformat()})
         cron_id = c.get("/sanidade/ocorrencias").json()["linhas"][0]["cronograma_id"]
 
         dados = c.get(f"/sanidade/ocorrencias/{cron_id}").json()
@@ -196,7 +196,7 @@ class TestEstoqueInfoOcorrencia:
             s.add(Estoque(nome="VACINA BRUCELOSE B19", quantidade=48, unidade="ml"))
             s.commit()
         _criar_regra(c, dias_ate_evento=15)
-        c.get("/agenda/", params={"data": HOJE.isoformat()})
+        c.post("/agenda/materializar", params={"data": HOJE.isoformat()})
         cron_id = c.get("/sanidade/ocorrencias").json()["linhas"][0]["cronograma_id"]
 
         dados = c.get(f"/sanidade/ocorrencias/{cron_id}").json()

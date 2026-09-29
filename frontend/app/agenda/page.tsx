@@ -2196,6 +2196,14 @@ export default function AgendaPage() {
         <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Não foi possível carregar a agenda: {erro}</span></div>
       )}
 
+      {/* Lista de espera do preventivo: só atalho para Protocolos, NÃO é tarefa (R1). */}
+      {(agenda?.lista_espera_sanitaria || []).length > 0 && (
+        <div className="mb-4" style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+          {(agenda.lista_espera_sanitaria as any[]).reduce((s, r) => s + (r.quantidade || 0), 0)} animal(is) na lista de espera do preventivo —{" "}
+          <a href="/protocolos" onClick={(ev) => { ev.preventDefault(); router.push("/protocolos"); }} style={{ textDecoration: "underline" }}>abrir em Protocolos</a>
+        </div>
+      )}
+
       {/* Feedback transitório de ações (sucesso em verde, erro em vermelho) */}
       {feedback && (
         <div className="mb-4" style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.82rem", padding: "0.5rem 0.9rem", borderRadius: "var(--r-sm)",

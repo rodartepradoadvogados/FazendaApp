@@ -448,6 +448,23 @@ def seed_lembrete_touros(session: Session) -> None:
     session.commit()
 
 
+@router.post("/materializar")
+def materializar_agenda(
+    data: date = date.today(),
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Parte que ESCREVE da Agenda (idempotente): gera recorrências e
+    auditorias de diária e materializa cronogramas/checklist/lista de espera do
+    preventivo. Existe para que `GET /agenda` seja somente leitura."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    _gerar_agenda_recorrente(session)
+    _gerar_auditorias_diarias(session)
+    _cronograma_sanitario_rules.materializar(session, data, fazenda_id)
+    return {"ok": True}
+
+
 @router.get("/")
 def calcular_agenda(
     data: date = date.today(),
@@ -463,8 +480,10 @@ def calcular_agenda(
     Retorna candidatas IATF, checagem de hormônios, BST e todos os eventos.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    _gerar_agenda_recorrente(session)
-    _gerar_auditorias_diarias(session)
+    # SOMENTE LEITURA: nenhuma escrita neste endpoint. O que antes era
+    # gerado aqui (recorrências, auditorias de diária, cronogramas/checklist/
+    # lista de espera do preventivo) agora é feito por POST /agenda/materializar,
+    # que a tela chama antes de ler.
     # Toda a base da agenda é escopada pela fazenda atual — sem isso a tela
     # mais usada do sistema misturava animal, serviço, parto, estoque e
     # financeiro de fazendas diferentes no mesmo cálculo.
@@ -1772,6 +1791,8 @@ def calcular_agenda(
         "estoque_negativo": estoque_negativo,
         "estoque_abaixo_minimo": estoque_abaixo_minimo,
         "eventos": eventos_visiveis,
+        # Atalho para Protocolos (R1) — NÃO é tarefa, por isso fica fora de `eventos`.
+        "lista_espera_sanitaria": _cronograma_sanitario_rules.resumo_lista_espera(session, fazenda_id) if "sanidade" in modulos else [],
         "diaria_auditorias_pendentes": diaria_auditorias_pendentes,
         "totais": {
             "candidatas_iatf": len(result.candidatas_iatf) if tem_reproducao else 0,
