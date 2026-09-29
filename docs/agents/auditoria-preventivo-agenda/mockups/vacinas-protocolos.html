@@ -583,6 +583,13 @@ table.ft{width:100%;border-collapse:collapse;font-size:1rem}
 
 .matrix td:nth-last-child(-n+3){white-space:nowrap}
 @media (min-width:768px){.ft thead th{padding-left:9px;padding-right:9px;letter-spacing:.08em}.ft td[data-c=prod]{max-width:170px}}
+
+@media (max-width:767px){
+ .filters>.tabbar,.filters .tabbar{flex-wrap:wrap!important;width:100%}
+ .filters .tabbar .tabpill{flex:1 1 calc(50% - .35rem);white-space:normal;min-height:44px}
+ .cards td.acts{flex-wrap:wrap}
+ .cards td.acts .btn{flex:1 1 auto;min-width:0}
+}
 </style>
 </head>
 <body>
@@ -922,7 +929,7 @@ const estadoPill = a => { const e = estadoVis(a), u = ESTADO_UI[e]; return `<spa
 function quemTxt(a) {
   const n = nEf(a);
   if (a.lote === 'todos') return `${num(n)} animais · ${n >= 151 ? 'Todos os lotes' : 'Todos os lotes, exceto Bezerreiro'}`;
-  const l = loteOf(a.lote); return `${num(n)} ${a.animaisTxt ? 'animais' : n === 1 ? l.termo.replace(/s$/, '') : l.termo}${a.lote === 'bz' && a.vac === 'b19' ? ' elegíveis (3–8 m)' : ''} · ${l.nome}`;
+  const l = loteOf(a.lote); return `${num(n)} ${(a.animaisTxt && (a.exame || a.vac === 'tb')) ? 'animais' : n === 1 ? l.termo.replace(/s$/, '') : l.termo}${a.lote === 'bz' && a.vac === 'b19' ? ' elegíveis (3–8 m)' : ''} · ${l.nome}`;
 }
 function carTxt(v, loteId) {
   const p = [];
@@ -1491,7 +1498,7 @@ ACT.imprimir = () => setQ({ imprimir: '1' });
 function semDados(titulo, icone, msg, acts) {
   return pgHead(icone, titulo, '', '') + `<div class="empty">${ic(icone, 's28 ico')}<h2>${msg.t}</h2><p>${msg.p}</p><div class="actions" style="justify-content:center">${acts}</div></div>`;
 }
-function frasePend(g) { const p = g.partes.map(x => x.n).join(' + '); return `${g.ok} de ${g.total} animais em dia${g.at ? ` · ${g.at} com pendência atrasada (${p})` : ''}`; }
+function frasePend(g) { const p = g.partes.map(x => x.n).join(' + '); return `${g.ok} de ${g.total} animais em dia${g.at ? ` · ${g.at} com vacina ou exame atrasado (${p})` : ''}`; }
 const cobIcon = p => cobCor(p) === 'ok' ? 'ok' : 'warn';
 const pendentesAnimal = an => statusAnimal(an);
 const ST_PILL = a => a.st === 'ok' ? `<span class="st registrada">${ic('ok', 's14')}Em dia</span>` : a.st === 'atrasada' ? `<span class="st atrasada">${ic('warn', 's14')}Atrasada${a.prox ? ' desde ' + br(a.prox) : ''}</span>` : a.st === 'reagente' ? `<span class="st atrasada">${ic('warn', 's14')}Reagente — notificar serviço veterinário oficial</span>` : a.st === 'inconclusivo' ? `<span class="st vence">${ic('clock', 's14')}Inconclusivo · reteste ${a.prox ? 'até ' + br(a.prox) : 'em 60 dias'}</span>` : a.st === 'prevista' ? `<span class="st prevista">${ic('dashed', 's14')}Prevista${a.prox ? ' · ' + br(a.prox) : ''}</span>` : a.st === 'na' ? `<span class="st pulada" style="text-decoration:none">${ic('ban', 's14')}${esc(a.txt || 'Não se aplica')}</span>` : `<span class="st vence">${ic('clock', 's14')}Sem registro${a.prox ? ' · prevista ' + br(a.prox) : ''}</span>`;
@@ -1537,7 +1544,8 @@ IN.fa = debounce(v => setQ({ a: v || null }, true), 180);
 ACT.por = t => setQ({ por: t.dataset.v === 'vacina' ? null : t.dataset.v, a: null }, true);
 ACT.falta = t => setQ({ falta: t.dataset.v });
 ACT.animal = t => setQ({ animal: t.dataset.id, comprovante: null });
-ACT.comprovante = () => { if (qv('por') !== 'animal') nav('/sanidade/vacinas/cobertura', { por: 'animal', lote: qv('lote') }); toast('Escolha o animal na lista e abra a carteira para ver o comprovante.', { icon: 'info' }); };
+ACT.comprovante = () => setQ({ animal: null, comprovante: 'escolher' });
+ACT.comprovanteOld = () => { if (qv('por') !== 'animal') nav('/sanidade/vacinas/cobertura', { por: 'animal', lote: qv('lote') }); toast('Escolha o animal na lista e abra a carteira para ver o comprovante.', { icon: 'info' }); };
 function carenciaBloco() {
   const leite = SAN.car.filter(c => c.tipo === 'leite'), carne = SAN.car.filter(c => c.tipo === 'carne');
   const sum = l => l.reduce((s, c) => s + c.n, 0); const maxd = l => l.reduce((m, c) => c.ate > m ? c.ate : m, '');
@@ -1561,11 +1569,12 @@ function histItens() {
   }).sort((x, y) => x.t < y.t ? 1 : x.t > y.t ? -1 : evNum(y) - evNum(x));
 }
 const brl2 = v => v == null ? '' : Number(v).toFixed(2).replace('.', ',');
-const CSV_COLS = ['Nº', 'Quando', 'Registrado por', 'O quê', 'Vacina ou exame', 'Para quem', 'Animais', 'Aplicador', 'Lote do frasco', 'Dose', 'Via', 'Custo (R$)', 'Motivo', 'Resultado', 'Animal reagente', 'Exceção', 'Situação'];
+const CSV_COLS = ['Nº', 'Quando', 'Registrado por', 'O quê', 'Vacina ou exame', 'Para quem', 'Animais', 'Aplicador', 'Lote do frasco', 'Dose', 'Via', 'Custo (R$)', 'Data da leitura (TB)', 'Motivo', 'Resultado', 'Animal reagente', 'Exceção', 'Situação'];
+function histQuem(e, v) { if (v && v.exame) return e.n + ' ' + pl(e.n, 'animal', 'animais'); const l = e.lote && e.lote !== 'todos' ? loteOf(e.lote) : null; const t = l ? l.termo : 'animais'; return e.n + ' ' + (e.n === 1 ? t.replace(/s$/, '') : t); }
 function csvLinha(e) { const v = e.vac ? (SAN.vacinas.find(x => x.id === e.vac) || VACINAS0.find(x => x.id === e.vac)) : null;
   const reag = (e.resultados || []).filter(r => r.res === 'Positivo').map(r => { const x = animalOf(r.a); return lbl(x) + (r.laudo ? ' (laudo ' + r.laudo + ')' : ''); }).join(' | ');
   const sit = e.estornado ? 'Estornada por ' + e.estornado.quem + ' em ' + dh(e.estornado.t) : e.corrigido ? 'Corrigida (substituída por #' + e.corrigido.ref.replace('ev', '') + ')' : 'Válida';
-  return [evNum(e), dh(e.t), e.quem, e.acao, v ? v.nome : '', e.lote ? loteNome(e.lote) : '', e.n || '', e.aplicador || '', e.frasco || '', e.doses != null ? String(e.doses).replace('.', ',') : '', e.via || '', e.custo != null ? brl2(e.custo) : '', e.motivo || '', e.result || '', reag, (e.excecao || []).join(' | '), sit]; }
+  return [evNum(e), dh(e.t), e.quem, e.acao, v ? v.nome : '', e.lote ? loteNome(e.lote) : '', e.n || '', e.aplicador || '', e.frasco || '', e.doses != null ? String(e.doses).replace('.', ',') : '', e.via || '', e.custo != null ? brl2(e.custo) : '', e.leitura || '', e.motivo || '', e.result || '', reag, (e.excecao || []).join(' | '), sit]; }
 ROUTES['/sanidade/vacinas/historico'] = () => {
   if (!SAN.vacinas.length && !SAN.aud.length) return semDados('Histórico de aplicações e exames', 'history', { t: 'Ainda não há registros', p: 'Cada aplicação registrada e cada resultado de exame aparecem aqui, com quem fez, quando, o frasco e o custo.' }, bt('btn-gold', 'calendar', 'Ir para o calendário', 'data-act="go" data-to="/sanidade/vacinas"'));
   const it = histItens(); const p = Math.max(1, Math.min(Math.ceil(it.length / HPAGE), +qv('p') || 1)); const pg = it.slice((p - 1) * HPAGE, p * HPAGE);
@@ -1587,9 +1596,9 @@ ROUTES['/sanidade/vacinas/historico'] = () => {
     const reag = (e.resultados || []).filter(r => r.res === 'Positivo');
     return `<tr class="rowc ${estor || corr ? 'estorn' : ''}"><td data-c="data" data-l=""><b>${br(e.t.slice(0, 10))}</b><div class="sub2">${e.t.slice(11, 16)} · #${evNum(e)}</div></td><td data-c="nome" data-l="Registrado por"><div class="nm">${esc(e.quem.split(' (')[0])}</div><div class="sub2">${esc((e.quem.match(/\((.*)\)/) || [, ''])[1])}</div></td>
       <td data-c="estado">${pill}${(e.excecao || []).map(x => `<div style="margin-top:3px"><span class="st vence">${ic('warn', 's12')}${esc(x)}</span></div>`).join('')}</td>
-      <td data-c="quem"><b>${v ? esc(v.nome) : 'Calendário'}</b>${e.lote ? `<div class="sub2">${e.n ? e.n + ' · ' : ''}${esc(loteNome(e.lote))}</div>` : ''}${e.motivo ? `<div class="sub2">Motivo: ${esc(e.motivo)}</div>` : ''}${estor ? `<div class="sub2">Estornada por ${esc(e.estornado.quem.split(' (')[0])} em ${dh(e.estornado.t)}</div>` : ''}${reag.map(r => `<div class="sub2" style="color:var(--st-red)"><b>Reagente: ${esc(lbl(animalOf(r.a)))}${r.laudo ? ' · laudo ' + esc(r.laudo) : ''}</b> — notificar serviço veterinário oficial</div>`).join('')}</td>
+      <td data-c="quem"><b>${v ? esc(v.nome) : 'Calendário'}</b>${e.lote ? `<div class="sub2">${e.n ? histQuem(e, v) + ' · ' : ''}${esc(loteNome(e.lote))}${ex && e.n ? ' · ' + e.n + ' ' + pl(e.n, 'exame', 'exames') : ''}</div>` : ''}${e.motivo ? `<div class="sub2">Motivo: ${esc(e.motivo)}</div>` : ''}${estor ? `<div class="sub2">Estornada por ${esc(e.estornado.quem.split(' (')[0])} em ${dh(e.estornado.t)}</div>` : ''}${reag.map(r => `<div class="sub2" style="color:var(--st-red)"><b>Reagente: ${esc(lbl(animalOf(r.a)))}${r.laudo ? ' · laudo ' + esc(r.laudo) : ''}</b> — notificar serviço veterinário oficial</div>`).join('')}</td>
       <td data-c="x" data-l="Aplicador">${e.aplicador ? esc(e.aplicador.split(' (')[0]) + `<div class="sub2">${esc((e.aplicador.match(/\((.*)\)/) || [, ''])[1])}</div>` : '—'}</td>
-      <td data-c="prod" data-l="Lote do frasco">${e.frasco ? `<b>${esc(e.frasco)}</b><div class="sub2">${e.doses} ${v && v.porPeso ? 'mL' : pl(e.doses, 'dose', 'doses')}${e.via ? ' · ' + esc(e.via) : ''}</div>` : '—'}${e.result ? `<div class="sub2"><b>${esc(e.result)}</b></div>` : ''}</td>
+      <td data-c="prod" data-l="Lote do frasco">${e.frasco ? `<b>${esc(e.frasco)}</b><div class="sub2">${ex ? num(e.n || e.doses) + ' ' + pl(e.n || e.doses, 'exame', 'exames') : v && v.porPeso ? num(e.doses) + ' mL' : num(e.doses) + ' ' + pl(e.doses, 'dose', 'doses')}${e.via ? ' · ' + esc(e.via) : ''}</div>` : '—'}${e.result ? `<div class="sub2"><b>${esc(e.result)}</b></div>` : ''}${e.leitura ? `<div class="sub2">Leitura clínica em ${esc(e.leitura)}</div>` : ''}</td>
       <td data-c="car" data-l="Custo" class="num">${e.custo != null && e.custo > 0 ? R$(e.custo) : '—'}</td><td class="acts">${podeCorrigir ? bt('btn-ghost sm', 'pencil', 'Corrigir', `data-act="corrigir" data-id="${e.id}" data-fk="cor-${e.id}" aria-label="Corrigir registro #${evNum(e)} de ${v ? esc(v.nome) : ''}"`) : ''}</td></tr>`; }).join('');
   const filt = qv('de') || qv('ate') || qv('lote') || qv('vacina') || qv('a') || qv('tipo') || qv('apl') || qv('fr');
   return pgHead('history', 'Histórico de aplicações e exames', 'Trilha de auditoria: quem registrou, quem aplicou, quando, com qual frasco, e o que foi estornado ou corrigido. Nada é apagado.', acts) + filtros +
@@ -1754,7 +1763,7 @@ function rgInit(id) {
   const av = id === 'avulsa'; const a = av ? null : aplById(id); const pre = UI.avPre || {};
   const vac = av ? (pre.vac || SAN.vacinas.filter(v => v.ativo && !v.exame)[0].id) : a.vac; const v = SAN.vacinas.find(x => x.id === vac);
   const lote = av ? (pre.lote || v.alvo[0]) : a.lote; const e = estOf(vac); const fr = fefo(e);
-  UI.rg = { key: id, vac, lote, n: av ? (lote === 'todos' ? 136 : loteOf(lote).n) : nEf(a), frasco: fr ? fr.f : '', dose: v.dose.split('·')[0].trim(), via: v.via, data: 'hoje', dataOutra: HI, hora: '14:05', aplicador: (v.soVet ? PESSOAS[1] : PESSOAS[2]), custo: '', ciente: false, res: {}, laudo: '', leituraData: (a && a.leitura) ? a.leitura.leituraEm.slice(0, 10) : HI, leituraHora: (a && a.leitura) ? a.leitura.leituraEm.slice(11, 16) : '14:05', justif: '', resumoAberto: false };
+  UI.rg = { key: id, vac, lote, n: av ? (lote === 'todos' ? 136 : loteOf(lote).n) : nEf(a), frasco: fr ? fr.f : '', dose: v.dose.split('·')[0].trim(), via: v.via, data: 'hoje', dataOutra: HI, hora: '14:05', aplicador: (v.soVet ? PESSOAS[1] : ''), custo: '', ciente: false, res: {}, laudo: '', leituraData: (a && a.leitura) ? a.leitura.leituraEm.slice(0, 10) : HI, leituraHora: (a && a.leitura) ? a.leitura.leituraEm.slice(11, 16) : '14:05', justif: '', resumoAberto: false };
   UI.avPre = null;
 }
 function rgCalc() {
@@ -1762,15 +1771,16 @@ function rgCalc() {
   const e = estOf(g.vac); const n = Math.max(0, +g.n || 0); const q = qtdUso(v, g.lote, n);
   const exame = !!v.exame; const fase = exame ? (a && a.leitura ? 'leitura' : (v.leituraH ? 'inoculacao' : 'coleta')) : 'aplicacao';
   const al = fase === 'leitura' ? { parts: [], falta: 0 } : alocar(e, q, g.frasco); const fr = e ? e.fr.find(f => f.f === g.frasco) : null;
-  const dataReg = g.data === 'hoje' ? HI : g.dataOutra;
+  const dataReg = fase === 'leitura' ? g.leituraData : (g.data === 'hoje' ? HI : g.dataOutra);
+  const leituraFutura = fase === 'leitura' && (g.leituraData + ' ' + g.leituraHora) > (HI + ' 14:05');
   let prx = null, prxTxt = '';
   if (exame) { prx = fase === 'inoculacao' ? 0 : 365; prxTxt = fase === 'inoculacao' ? `leitura em ${v.leituraH} h: ${br(addD(dataReg, 3))} às ${g.hora}` : 'anual (reteste em 60 dias se inconclusivo)'; }
-  else if (v.multi) { const ds = ((a && a.ids) || []).length ? ultimasDoses(a.ids[0], 'clo') : []; if (ds.length === 1 || (a && a.doseTxt === 'dose 1')) { prx = 30; prxTxt = 'dose 2 em ' + br(addD(dataReg, 30)) + ' (30 dias após a dose 1)'; } else { prx = 365; prxTxt = 'reforço anual em ' + br(addM(dataReg, 12)); } }
+  else if (v.multi) { const ds = ((a && a.ids) || []).length ? ultimasDoses(a.ids[0], 'clo') : []; const ehD1 = a && a.doseTxt ? a.doseTxt === 'dose 1' : ds.length === 0; if (ehD1) { prx = 30; prxTxt = 'dose 2 em ' + br(addD(dataReg, 30)) + ' (30 dias após a dose 1)'; } else { prx = 365; prxTxt = 'reforço anual em ' + br(addM(dataReg, 12)); } }
   else if (v.intervalo > 0) { prx = v.intervalo; prxTxt = br(v.dias ? addD(dataReg, v.dias) : addM(dataReg, v.meses || 12)); } else prxTxt = 'dose única: sem próxima dose';
   const custoAuto = exame ? n * v.custo : q * v.custo; const custo = g.custo !== '' && !isNaN(parseFloat(String(g.custo).replace(',', '.'))) ? parseFloat(String(g.custo).replace(',', '.')) : custoAuto;
   const lact = g.lote === 'todos' || (loteOf(g.lote) && loteOf(g.lote).lact);
   const antes72 = fase === 'leitura' && (g.leituraData + ' ' + g.leituraHora) < a.leitura.leituraEm;
-  let erro = ''; if (n < 1) erro = 'Informe ao menos 1 animal.'; else if (!dataReg) erro = 'Escolha a data real.'; else if (dataReg > HI) erro = 'A data real não pode ser futura. Se for outro dia, use Mudar data na aplicação prevista.';
+  let erro = ''; if (n < 1) erro = 'Informe ao menos 1 animal.'; else if (leituraFutura) erro = `A leitura ainda não pode ser registrada: ela vale a partir de ${dh(g.leituraData + ' ' + g.leituraHora)}. Para ler antes, ajuste a data e justifique.`; else if (!dataReg) erro = 'Escolha a data real.'; else if (!g.aplicador) erro = 'Escolha quem aplicou.'; else if (dataReg > HI) erro = 'A data real não pode ser futura. Se for outro dia, use Mudar data na aplicação prevista.';
   else if (!fr && e && fase !== 'leitura') erro = 'Escolha o frasco.';
   else if (fr && vencido(fr) && !g.ciente && fase !== 'leitura') erro = 'Frasco vencido: marque a ciência para usar assim mesmo.';
   else if (fase === 'leitura' && Object.keys(g.res).length < aplAnimais(a).length) erro = 'Informe o resultado de cada animal.';
@@ -1790,7 +1800,7 @@ function rgResumo() {
   if (g.via !== c.v.via && !c.exame && viasDe(c.v.prod || c.v.id).length > 1) av.push(['amber', 'warn', `<b>Via diferente da padrão.</b> A bula indica via ${esc(c.v.via)}. Confira antes de salvar; a troca fica registrada.`]);
   if (!c.e && !c.exame) av.push(['blue', 'info', `Este item não tem produto no estoque. O registro segue sem saída de estoque.`]);
   if (c.antes72) av.push(['amber', 'warn', `<b>Leitura antes de 72 h da inoculação.</b> Escreva a justificativa abaixo; ela fica registrada.`]);
-  if (c.erro && !/ciência|resultado|Escolha o frasco|justificativa/.test(c.erro)) av.push(['red', 'warn', `<b>${esc(c.erro)}</b>`]);
+  if (c.erro && !/ciência|resultado|Escolha o frasco|justificativa\.$|Escolha quem aplicou/.test(c.erro)) av.push(['red', 'warn', `<b>${esc(c.erro)}</b>`]);
   const restante = c.e ? c.e.fr.filter(f => !vencido(f)).reduce((s, f) => s + Math.max(0, f.saldo - (c.al.parts.find(p => p.f === f.f) || { q: 0 }).q), 0) : null;
   const dividido = c.al.parts.length > 1 ? c.al.parts.map(p => `${p.f}: ${fmtQ(p.q, un)}`).join(' + ') : '';
   let itens;
@@ -1818,7 +1828,7 @@ function drRegistrar(id) {
   const quem = av ? `<div class="g2"><div class="fld"><label for="rvac">Vacina ou vermífugo</label><select id="rvac" class="sel" data-ch="rgvac" data-fk="rvac">${opts(SAN.vacinas.filter(x => x.ativo && !x.exame).map(x => [x.id, x.nome]), g.vac)}</select></div><div class="fld"><label for="rlote">Lote</label><select id="rlote" class="sel" data-ch="rglote" data-fk="rlote">${opts(v.alvo.map(l => [l, loteOf(l).nome]).concat([['todos', 'Todos os lotes']]), g.lote)}</select></div></div><div class="fld"><label for="rn">Quantos animais</label><input id="rn" class="inp" type="number" min="1" value="${g.n}" data-in="rgn" data-fk="rn"></div><p class="hint">Para exames, use Registrar exame na linha do calendário.</p>`
     : `<div class="box"><h3>${ic('cow', 's14')}Quem recebe</h3><b>${esc(quemTxt(a))}</b><div class="sub2">${esc(v.nome)}${a.doseTxt ? ' · ' + esc(a.doseTxt) : ''} · prevista para ${br(a.data)}. Para tirar ou incluir animais, use a aba Animais da aplicação.</div><div style="margin-top:.4rem"><button type="button" class="linkbtn" data-act="apl-tab" data-id="${id}" data-tab="animais">Ver animais</button></div></div>`;
   const frOpts = (e ? (g.frasco ? '' : '<option value="">Escolha o frasco</option>') + e.fr.map(f => `<option value="${esc(f.f)}" ${f.f === g.frasco ? 'selected' : ''}>${esc(f.f)} · validade ${br(f.val)} · saldo ${fmtQ(f.saldo, e.un)}${vencido(f) ? ' · VENCIDO' : venceEm(f) <= 30 ? ' · vence em ' + venceEm(f) + ' dias' : ''}</option>`).join('') : '<option value="">Sem produto no estoque</option>');
-  const aplic = `<div class="fld"><label for="rquem">Quem aplicou</label><select id="rquem" class="sel" data-ch="rgquem">${opts(PESSOAS.map(p => [p, p]), g.aplicador)}</select></div>`;
+  const aplic = `<div class="fld"><label for="rquem">Quem aplicou</label><select id="rquem" class="sel" data-ch="rgquem">${opts(PESSOAS.map(p => [p, p]), g.aplicador, 'Escolha quem aplicou')}</select></div>`;
   const regpor = `<div class="fld"><label for="rregpor">Registrado por</label><input id="rregpor" class="inp" value="${esc(USUARIO)}" readonly aria-readonly="true"></div>`;
   const dataF = `<fieldset style="border:0;padding:0;margin:0"><legend class="lbl" style="margin-bottom:.3rem">${fase === 'inoculacao' ? 'Data e hora da inoculação' : 'Data e hora'}</legend><div class="chips"><label class="chip"><input type="radio" name="rdt" value="hoje" data-ch="rgdata" ${g.data === 'hoje' ? 'checked' : ''}>Hoje · ${br(HI)}</label><label class="chip"><input type="radio" name="rdt" value="outra" data-ch="rgdata" ${g.data === 'outra' ? 'checked' : ''}>Outra data</label>${g.data === 'outra' ? `<input class="inp" style="width:auto" type="date" aria-label="Outra data" value="${g.dataOutra}" max="${HI}" data-in="rgdt" data-fk="rdt2">` : ''}<input class="inp" style="width:auto" type="time" aria-label="Hora" value="${g.hora}" data-in="rghora"></div></fieldset>`;
   let campos;
@@ -1856,7 +1866,7 @@ ACT['rg-ok'] = () => {
   if (c.av) a = criarApl(g.vac, g.lote, c.n, c.dataReg, 'prevista', { avulsa: true, ids: (g.lote === 'todos' ? ANIMAIS.filter(x => x.lote !== 'bz') : animaisDoLote(g.lote)).slice(0, c.n).map(x => x.id) });
   const prev = a.estado; const frCod = c.al.parts.map(p => p.f).join(' + ') || (c.fr ? c.fr.f : '');
   const excecao = []; if (v.soVet && !ehVet(g.aplicador)) excecao.push('Aplicador não veterinário'); if (c.fr && vencido(c.fr) && g.ciente) excecao.push('Frasco vencido com ciência'); if (g.via !== v.via && !c.exame && viasDe(v.prod || v.id).length > 1) excecao.push('Via diferente da padrão'); if (c.antes72) excecao.push('Leitura antes de 72 h (justificada)');
-  const det = { frasco: frCod, doses: c.q, via: g.via, aplicador: g.aplicador, custo: c.custo, excecao, animaisIds: aplAnimais(a) };
+  const det = { leitura: c.fase === 'leitura' ? dh(c.dataReg + ' ' + g.leituraHora) : '', frasco: frCod, doses: c.q, via: g.via, aplicador: g.aplicador, custo: c.custo, excecao, animaisIds: aplAnimais(a) };
   const est = c.e; c.al.parts.forEach(p => { const f = est.fr.find(x => x.f === p.f); f.saldo = Math.round((f.saldo - p.q) * 10) / 10; });
   const ids = aplAnimais(a);
   if (c.fase === 'inoculacao') {
@@ -1909,11 +1919,19 @@ function drAnimal(id) {
 }
 ACT.comprov = t => setQ({ animal: null, comprovante: t.dataset.id });
 function drComprovante(id) {
-  const an = animalOf(id); if (!an) return null; UI.drKey = 'cv:' + id; const l = statusAnimal(an);
-  if (l.some(x => PEND.includes(x.st))) return null;
+  UI.drKey = 'cv:' + id;
+  if (id === 'escolher') {
+    const ops = ANIMAIS.map(x => [x.id, `${lbl(x)} · ${loteOf(x.lote).nome}`]);
+    return { key: 'cv:escolher', label: 'Comprovante de animal em dia', html: drawerHead('Comprovante de animal em dia', 'Escolha o animal', '') + `<div class="dr-b"><p class="hint">O comprovante só sai para animal em dia. Escolha o animal para ver a pré-visualização; se houver item atrasado, aparece o que falta.</p><div class="fld"><label for="cvs">Animal</label><select id="cvs" class="sel" data-ch="cvsel" data-fk="cvs">${opts(ops, '', 'Escolha o animal')}</select></div></div><div class="dr-f"><span class="sp"></span>${bt('btn-ghost', '', 'Fechar', 'data-act="dr-close"')}</div>` };
+  }
+  const an = animalOf(id); if (!an) return null; const l = statusAnimal(an); const pend = l.filter(x => PEND.includes(x.st));
+  const troca = bt('btn-ghost', 'left', 'Trocar animal', 'data-act="comprov-troca"');
+  if (pend.length) return { key: 'cv:' + id, label: 'Comprovante de animal em dia', html: drawerHead('Comprovante de animal em dia', esc(lbl(an)), `<span class="st atrasada">${ic('warn', 's14')}Ainda não está em dia</span>`) + `<div class="dr-b"><div class="aviso amber" role="status">${ic('warn')}<div class="txt"><b>O comprovante não sai agora.</b> Falta resolver:</div></div><ul class="list">${pend.map(x => `<li><div class="grow"><b>${esc(x.v.nome)}</b></div>${ST_PILL(x)}</li>`).join('')}</ul></div><div class="dr-f">${troca}${bt('btn-ghost', 'eye', 'Ver carteira', `data-act="animal" data-id="${id}"`)}<span class="sp"></span>${bt('btn-ghost', '', 'Fechar', 'data-act="dr-close"')}</div>` };
   const rows = l.map(x => `<tr><td data-l="Item">${esc(x.v.nome)}</td><td data-l="Última dose">${x.ult ? br(x.ult) : 'a aplicar'}</td><td data-l="Próxima">${x.prox ? br(x.prox) : x.st === 'prevista' ? 'prevista' : 'dose única'}</td></tr>`).join('');
-  return { key: 'cv:' + id, label: 'Comprovante de animal em dia', html: drawerHead('Comprovante de animal em dia', esc(lbl(an)), `<span class="st registrada">${ic('ok', 's14')}Em dia em ${br(HI)}</span>`) + `<div class="dr-b"><div class="paper" role="group" aria-label="Pré-visualização do comprovante"><h3 style="margin:0 0 .2rem">Comprovante de vacinação e exames</h3><p class="sub2" style="margin:0 0 .6rem">Fazenda Estreito Ponte de Pedra · emitido em ${br(HI)} às 14:05 por ${esc(USUARIO.split(' (')[0])}</p><dl class="kv"><dt>Animal</dt><dd>${esc(lbl(an))} · ${esc(an.raca)}</dd><dt>Lote</dt><dd>${esc(loteOf(an.lote).nome)}</dd></dl><table class="ft"><thead><tr><th>Vacina ou exame</th><th>Última dose</th><th>Próxima</th></tr></thead><tbody>${rows}</tbody></table><p class="sub2" style="margin-top:.6rem">Declaração gerada a partir dos registros da fazenda; não substitui a GTA.</p></div></div><div class="dr-f">${bt('btn-gold', 'download', 'Baixar PDF', `data-act="comprov-pdf" data-id="${id}"`)}${bt('btn-ghost', 'left', 'Voltar à carteira', `data-act="animal" data-id="${id}"`)}<span class="sp"></span>${bt('btn-ghost', '', 'Fechar', 'data-act="dr-close"')}</div>` };
+  return { key: 'cv:' + id, label: 'Comprovante de animal em dia', html: drawerHead('Comprovante de animal em dia', esc(lbl(an)), `<span class="st registrada">${ic('ok', 's14')}Em dia em ${br(HI)}</span>`) + `<div class="dr-b"><div class="paper" role="group" aria-label="Pré-visualização do comprovante"><h3 style="margin:0 0 .2rem">Comprovante de vacinação e exames</h3><p class="sub2" style="margin:0 0 .6rem">Fazenda Estreito Ponte de Pedra · emitido em ${br(HI)} às 14:05 por ${esc(USUARIO.split(' (')[0])}</p><dl class="kv"><dt>Animal</dt><dd>${esc(lbl(an))} · ${esc(an.raca)}</dd><dt>Lote</dt><dd>${esc(loteOf(an.lote).nome)}</dd></dl><table class="ft"><thead><tr><th>Vacina ou exame</th><th>Última dose</th><th>Próxima</th></tr></thead><tbody>${rows}</tbody></table><p class="sub2" style="margin-top:.6rem">Declaração gerada a partir dos registros da fazenda; não substitui a GTA.</p></div></div><div class="dr-f">${bt('btn-gold', 'download', 'Baixar PDF', `data-act="comprov-pdf" data-id="${id}"`)}${troca}<span class="sp"></span>${bt('btn-ghost', '', 'Fechar', 'data-act="dr-close"')}</div>` };
 }
+IN.cvsel = v => { if (v) setQ({ comprovante: v }); };
+ACT['comprov-troca'] = () => setQ({ comprovante: 'escolher' });
 ACT['comprov-pdf'] = t => toast(`Comprovante de ${lbl(animalOf(t.dataset.id))} baixado (PDF).`, { icon: 'download' });
 
 /* ── Quem falta ── */
@@ -1982,6 +2000,10 @@ ACT['print-go'] = () => toast('Documento enviado para a impressora.', { icon: 'p
 
 /* ═════════ Wizard "Cadastrar vacina" (3 passos, em gaveta, validado por passo) ═════════ */
 const MARCOS = ['', 'Bezerra com 3 meses', 'Parto', '30 dias antes do parto', 'Secagem'];
+function wzRef(w) { const p = VACINAS0.find(x => x.id === w.prod); return p && !p.exame ? p : null; }
+function wzCarHint(w) { const r = wzRef(w); return r ? `Preenchido pelo cadastro de ${esc(r.nome)}: leite ${r.leiteProibido ? 'não usar em lactação' : r.carLeite ? r.carLeite + ' dias' : 'sem carência'} · carne ${r.carCarne ? r.carCarne + ' dias' : 'sem carência'}. Você pode editar.` : 'Vale a bula do produto. Use 0 quando não há carência.'; }
+function wzCarAviso(w) { const r = wzRef(w); if (!r) return ''; const menor = (+w.carLeite || 0) < (r.carLeite || 0) || (+w.carCarne || 0) < (r.carCarne || 0); return menor ? `<div class="aviso amber" role="status">${ic('warn')}<div class="txt"><b>Carência menor que a do produto.</b> A bula de ${esc(r.nome)} indica leite ${r.carLeite || 0} dias e carne ${r.carCarne || 0} dias. Confira antes de salvar.</div></div>` : ''; }
+IN.wzcar = (v, t) => { UI.wz[t.dataset.k] = +v; UI.wz.carTocada = true; const b = $('#wz-carwarn'); if (b) b.innerHTML = wzCarAviso(UI.wz); };
 function wzBlank() { return { carLeite: 0, carCarne: 0, nome: '', tipo: 'Vacina', prod: '', dose: '', lotes: [], marco: '', quando: 'cada', n: 6, unit: 'meses', meses: [], offMarco: 0, multi: false, doses: [{ rot: 'Dose 1', off: 0 }, { rot: 'Dose 2', off: 30 }], reforco: 'anual', inicio: addD(HI, 7), passo: 1, editId: null, motivo: '' }; }
 function wzInit() {
   const ed = qv('editar'); const key = 'wz:' + (ed || 'nova');
@@ -2024,7 +2046,7 @@ function drWizard() {
     corpo = `<div class="fld"><label for="wn">Nome</label><input id="wn" class="inp" value="${esc(w.nome)}" placeholder="Ex.: Leptospirose, reforço" data-in="wzf" data-k="nome" data-fk="wn" ${E.nome ? 'aria-invalid="true" aria-describedby="e-nome"' : ''}>${er('nome')}</div>
     <fieldset style="border:0;padding:0;margin:0"><legend class="lbl" style="margin-bottom:.3rem">Tipo</legend><div class="chips">${['Vacina', 'Exame', 'Antiparasitário'].map(t => `<label class="chip"><input type="radio" name="wt" value="${t}" data-ch="wzr" data-k="tipo" ${w.tipo === t ? 'checked' : ''}>${t}</label>`).join('')}</div></fieldset>
     <div class="g2"><div class="fld"><label for="wp">Produto do estoque</label><select id="wp" class="sel" data-ch="wzf" data-k="prod">${opts(SAN.est.map(e => [e.id, e.prod]).concat([['outro', 'Outro (cadastrar depois no Estoque)']]), w.prod, 'Escolha o produto')}</select></div><div class="fld"><label for="wd">Dose e via</label><input id="wd" class="inp" value="${esc(w.dose)}" placeholder="Ex.: 2 mL · subcutânea" data-in="wzf" data-k="dose"></div></div>
-    <div class="g2"><div class="fld"><label for="wcl">Carência do leite (dias)</label><input id="wcl" class="inp" type="number" min="0" value="${w.carLeite}" data-in="wzn" data-k="carLeite"></div><div class="fld"><label for="wcc">Carência da carne (dias)</label><input id="wcc" class="inp" type="number" min="0" value="${w.carCarne}" data-in="wzn" data-k="carCarne"></div></div><span class="hint">Vale a bula do produto. Use 0 quando não há carência.</span>
+    <div class="g2"><div class="fld"><label for="wcl">Carência do leite (dias)</label><input id="wcl" class="inp" type="number" min="0" value="${w.carLeite}" data-in="wzcar" data-k="carLeite"></div><div class="fld"><label for="wcc">Carência da carne (dias)</label><input id="wcc" class="inp" type="number" min="0" value="${w.carCarne}" data-in="wzcar" data-k="carCarne"></div></div><span class="hint" id="wz-carhint">${wzCarHint(w)}</span><div id="wz-carwarn">${wzCarAviso(w)}</div>
     <fieldset style="border:0;padding:0;margin:0"><legend class="lbl" style="margin-bottom:.3rem">Quem entra</legend><div class="chips">${LOTES.map(l => `<label class="chip"><input type="checkbox" data-ch="wzlote" data-id="${l.id}" ${w.lotes.includes(l.id) ? 'checked' : ''}>${esc(l.nome)} · ${l.n}</label>`).join('')}</div>${er('lotes')}</fieldset>
     <div class="fld"><label for="wm">Marco do animal (opcional)</label><select id="wm" class="sel" data-ch="wzf" data-k="marco">${opts(MARCOS.slice(1).map(m => [m, m]), w.marco, 'Nenhum: vale para todos do lote')}</select><span class="hint">Ex.: “bezerra com 3 meses” faz cada animal entrar sozinho quando chegar lá.</span></div>`;
   } else if (p === 2) {
@@ -2048,7 +2070,7 @@ function drWizard() {
   const foot = `${p > 1 ? bt('btn-ghost', 'left', 'Voltar', 'data-act="wz-back"') : ''}<span class="sp"></span>${bt('btn-ghost', '', 'Fechar', 'data-act="dr-close"')}${p < 3 ? bt('btn-primary', 'arrow', 'Continuar', 'data-act="wz-next" data-fk="wz-next"') : bt('btn-gold', 'check', ed ? 'Salvar alterações' : 'Salvar no calendário', `data-act="wz-save" data-fk="wz-save" ${semNome ? 'disabled' : ''}`)}`;
   return { key: 'wz', cls: 'wide', label: ed ? 'Editar vacina' : 'Cadastrar vacina', html: drawerHead(ed ? 'Editar vacina' : 'Cadastrar vacina', `Passo ${p} de 3 · ${steps[p - 1]}`, '') + `<div class="dr-b">${stepper}${SAN.draft && !ed && p === 1 && !UI.wzDraftOk ? `<div class="faixa" role="status" style="margin:0">${ic('info', 's18')}<span>Retomamos seu rascunho.</span><span class="sp"></span>${bt('btn-ghost sm', 'x', 'Descartar', 'data-act="wz-descartar"')}</div>` : ''}${corpo}</div><div class="dr-f">${foot}</div>` };
 }
-IN.wzf = (v, t) => { UI.wz[t.dataset.k] = v; if (t.tagName === 'SELECT') { if (t.dataset.k === 'prod') { const vv = VACINAS0.find(x => x.id === v); if (vv && !UI.wz.dose) UI.wz.dose = vv.dose; } renderDrawer(true); } };
+IN.wzf = (v, t) => { UI.wz[t.dataset.k] = v; if (t.tagName === 'SELECT') { if (t.dataset.k === 'prod') { const vv = VACINAS0.find(x => x.id === v); if (vv && !UI.wz.dose) UI.wz.dose = vv.dose; if (vv && !vv.exame && !UI.wz.carTocada) { UI.wz.carLeite = vv.carLeite || 0; UI.wz.carCarne = vv.carCarne || 0; } } renderDrawer(true); } };
 IN.wzn = (v, t) => { UI.wz[t.dataset.k] = +v; };
 IN.wzr = (v, t) => { UI.wz[t.dataset.k] = v; renderDrawer(true); };
 IN.wzd = (v, t) => { UI.wz.doses[+t.dataset.i][t.dataset.k] = t.dataset.k === 'off' ? +v : v; };
@@ -2147,7 +2169,7 @@ function drProto(id) {
   if (UI.pAct === 'engano') acao = `<div class="inline-panel" role="group" aria-label="Lançado por engano"><h3>Marcar como lançado por engano</h3><p>O lançamento deixa de valer: o estoque usado nas etapas feitas volta e as tarefas saem da Agenda. Ele continua visível em Lançado por engano, para auditoria.</p><div class="fld"><label for="pen">O que aconteceu (obrigatório)</label><input id="pen" class="inp" data-in="pmot" data-fk="pen" placeholder="Ex.: lote errado" value="${esc(UI.pmot || '')}">${UI.pTent && !(UI.pmot || '').trim() ? `<span class="err">${ic('warn', 's14')}Escreva o que aconteceu.</span>` : ''}</div><div class="actions">${btn('btn-danger', 'x', 'Marcar como lançado por engano', 'data-act="pfim" data-v="engano"')}${btn('btn-ghost', '', 'Cancelar', 'data-act="pact" data-v=""')}</div></div>`;
   if (UI.pAct === 'reabrir') acao = `<div class="inline-panel" role="group" aria-label="Reabrir protocolo"><h3>Reabrir este protocolo</h3><p>Volta para Em andamento com as marcações que já existem. Nada é debitado agora.</p><div class="actions">${btn('btn-gold', 'rotate', 'Reabrir', 'data-act="pfim" data-v="andamento"')}${btn('btn-ghost', '', 'Cancelar', 'data-act="pact" data-v=""')}</div></div>`;
   const todas = ativo && s.tot > 0 && s.feitas === s.tot && !UI.pAct ? `<div class="aviso green">${ic('ok')}<div class="txt"><b>Todas as etapas foram feitas.</b> Encerre o protocolo para tirá-lo da lista de andamento.</div><div class="acts">${btn('btn-gold', '', 'Encerrar', 'data-act="pact" data-v="encerrar"')}</div></div>` : '';
-  const insem = m.etapas.some(e => e.insem) && ativo ? `<div class="aviso blue">${ic('info')}<div class="txt">No Dia 11, a inseminação é registrada em Reprodução. Depois dela entra a tarefa <b>Checar retorno ao cio (Scratch, 14 dias)</b> ${gl('scratch', 'retorno ao cio (Scratch)')}: parâmetro da fazenda.</div><div class="acts">${btn('btn-sec', 'arrow', 'Ir para Reprodução', 'data-act="fora" data-n="Reprodução › Serviços (com os animais do dia)"')}</div></div>` : '';
+  const insem = m.etapas.some(e => e.insem) && ativo ? `<div class="aviso blue">${ic('info')}<div class="txt">No Dia 11, a inseminação é registrada em Reprodução. Depois dela entra a tarefa <b>Checar retorno ao cio (14 dias)</b> ${gl('scratch', 'retorno ao cio')}: parâmetro da fazenda.</div><div class="acts">${btn('btn-sec', 'arrow', 'Ir para Reprodução', 'data-act="fora" data-n="Reprodução › Serviços (com os animais do dia)"')}</div></div>` : '';
   const motivo = p.motivo && !ativo && p.estado !== 'concluido' ? `<div class="aviso amber">${ic('info')}<div class="txt"><b>${p.estado === 'engano' ? 'Lançado por engano' : 'Interrompido'}:</b> ${esc(p.motivo)}</div></div>` : '';
   const hoje = ativo && s.atras === 0 && s.prox === HI ? `<div class="aviso amber">${ic('clock')}<div class="txt"><b>Hoje é ${diaLbl(m.etapas.find((e, i) => etapaData(p, e) === HI && p.animais.some(a => !p.baixas[a + ':' + i])).d, m)}:</b> ${esc(s.proxTxt)}.</div></div>` : '';
   const histo = p.log.length ? `<h3 style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);margin:0 0 .3rem">Histórico do protocolo</h3><ul class="list aud">${p.log.slice().reverse().map(x => `<li class="${x.estornado ? 'estorn' : ''}"><span>${ic('history', 's14')}</span><div class="grow"><b>${esc(x.txt)}</b><div class="sub2">${esc(x.quem)} · ${dh(x.t)}</div>${x.estornado ? `<div class="sub2"><span class="st estornada">${ic('undo', 's12')}Estornada por ${esc(x.estornado.quem.split(' (')[0])} em ${dh(x.estornado.t)}</span></div>` : ''}</div></li>`).join('')}</ul>` : '';
@@ -2164,12 +2186,12 @@ function marcarPainel(p, m) {
     const av = fr.saldo < uso ? `<div class="aviso amber" role="status">${ic('warn')}<div class="txt"><b>Saldo do frasco ${esc(fr.f)}: ${qTxt(fr.saldo, H.un)}</b> para ${qTxt(uso, H.un)}. Pode confirmar assim mesmo; o saldo fica negativo.</div></div>` : '';
     const vv = vencido(fr) ? `<div class="aviso red" role="alert">${ic('warn')}<div class="txt"><b>Frasco vencido em ${br(fr.val)}.</b> É preciso ciência para usar assim mesmo.</div></div>` : venceEm(fr) <= 30 ? `<div class="aviso amber" role="status">${ic('warn')}<div class="txt"><b>Validade próxima:</b> vence em ${venceEm(fr)} dias (${br(fr.val)}).</div></div>` : '';
     return `<fieldset style="border:0;padding:0;margin:0;display:flex;flex-direction:column;gap:.4rem"><legend class="lbl" style="margin-bottom:.3rem">${esc(H.prod)} · ${qTxt(x.q, H.un)} por animal · total ${qTxt(uso, H.un)}</legend>${H.fr.map(f => `<label class="frasco ${vencido(f) ? 'vencido' : ''}"><input type="radio" name="fr-${x.h}" value="${esc(f.f)}" data-ch="pfr" data-h="${x.h}" ${UI.pFr[x.h] === f.f ? 'checked' : ''}><span><b>${esc(f.f)}</b> · validade ${br(f.val)} · saldo ${qTxt(f.saldo, H.un)}${vencido(f) ? ' · <b style="color:var(--st-red)">vencido</b>' : ''}</span></label>`).join('')}${av}${vv}</fieldset>`; }).join('');
-  const real = UI.pData || HI; const dif = diff(real, dt); const carLast = carProto(p, m) && i === m.etapas.length - 1;
-  const ok = !venc || UI.pCiente;
+  const real = UI.pData || HI; const piso = pisoBaixa(p, i, c.col || UI.pTodos ? pend : [c.a]); const antes = piso && real < piso; const dif = diff(real, dt); const carLast = carProto(p, m) && i === m.etapas.length - 1;
+  const ok = (!venc || UI.pCiente) && !antes;
   return `<div class="inline-panel" role="group" aria-label="Marcar como feita"><h3>${dl} (${br(dt)}) · ${c.col ? q + ' ' + pl(q, 'animal pendente', 'animais pendentes') : esc(lbl(animalOf(c.a)))}</h3><p>${esc(e.acao)}</p>${fs || `<p class="hint">Esta etapa não usa produto do estoque.</p>`}
    ${venc ? `<label class="chk"><input type="checkbox" data-ch="pciente" ${UI.pCiente ? 'checked' : ''} data-fk="pciente"><span><b>Ciente, usar assim mesmo.</b> A ciência fica registrada com meu nome e a hora.</span></label>` : ''}
    ${!c.col && pend.length > 1 ? `<label class="chk"><input type="checkbox" data-ch="ptodos" ${UI.pTodos ? 'checked' : ''}>Aplicar a todos os ${pend.length} animais pendentes desta etapa</label>` : ''}
-   <div class="g2"><div class="fld"><label for="pdt">Data real</label><input id="pdt" class="inp" type="date" value="${real}" max="${HI}" data-in="pdata"></div><div class="fld"><label for="pqm">Quem aplicou</label><select id="pqm" class="sel" data-ch="ppor">${opts(PESSOAS.map(x => [x, x]), UI.pPor || PESSOAS[2])}</select></div></div>
+   <div class="g2"><div class="fld"><label for="pdt">Data real</label><input id="pdt" class="inp" type="date" value="${real}" ${piso ? `min="${piso}"` : ''} max="${HI}" data-in="pdata" ${antes ? 'aria-invalid="true"' : ''}>${antes ? `<span class="err">${ic('warn', 's14')}A data real não pode ser antes de ${br(piso)}, quando a etapa anterior foi feita.</span>` : piso ? `<span class="hint">Não pode ser antes de ${br(piso)} (etapa anterior já feita).</span>` : ''}</div><div class="fld"><label for="pqm">Quem aplicou</label><select id="pqm" class="sel" data-ch="ppor">${opts(PESSOAS.map(x => [x, x]), UI.pPor || PESSOAS[2])}</select></div></div>
    ${dif !== 0 && i < m.etapas.length - 1 ? `<label class="chk"><input type="checkbox" data-ch="prepro" ${UI.pRepro !== false ? 'checked' : ''}>Reprogramar as etapas seguintes ${dif > 0 ? dif + ' ' + pl(dif, 'dia', 'dias') + ' para frente' : -dif + ' ' + pl(-dif, 'dia', 'dias') + ' para trás'}</label>` : ''}
    ${carLast ? `<div class="aviso blue">${ic('info')}<div class="txt">Esta é a última etapa: a carência de leite e de carne começa a contar a partir de <b>${br(real)}</b>.</div></div>` : ''}
    <div class="actions">${bt('btn-gold sm', 'check', `Confirmar (${q})`, `data-act="pbaixa" data-fk="pbaixa" ${ok ? '' : 'aria-disabled="true"'}`)}${bt('btn-ghost sm', '', 'Cancelar', 'data-act="pcell-x"')}</div></div>`;
@@ -2179,13 +2201,14 @@ ACT.pcol = t => { UI.pCell = { col: true, i: +t.dataset.i }; UI.pFr = null; UI.p
 ACT['pcell-x'] = () => { UI.pCell = null; renderDrawer(true); };
 IN.pfr = (v, t) => { UI.pFr[t.dataset.h] = v; UI.pCiente = false; renderDrawer(true); };
 IN.ptodos = c => { UI.pTodos = c; renderDrawer(true); }; IN.ppor = v => { UI.pPor = v; }; IN.pdata = v => { UI.pData = v || HI; renderDrawer(true); }; IN.prepro = c => { UI.pRepro = c; }; IN.pciente = c => { UI.pCiente = c; renderDrawer(true); };
+function pisoBaixa(p, i, animais) { let mx = null; if (i > 0) animais.forEach(a => { const b = p.baixas[a + ':' + (i - 1)]; if (b && (!mx || b.data > mx)) mx = b.data; }); return mx; }
 ACT.pbaixa = () => {
   const p = protoOf(qv('proto')); const m = modeloDe(p); const c = UI.pCell; const i = c.i; const e = m.etapas[i];
   const pend = p.animais.filter(a => !p.baixas[a + ':' + i]); const alvo = c.col || UI.pTodos ? pend : [c.a]; const por = UI.pPor || PESSOAS[2]; const cods = []; const usos = [];
   let venc = false; e.prods.forEach(x => { const H = hormOf(x.h); const fr = H.fr.find(f => f.f === (UI.pFr || {})[x.h]) || H.fr[0]; if (vencido(fr)) venc = true; });
   if (venc && !UI.pCiente) { renderDrawer(true); const b = $('#pciente'); return; }
   e.prods.forEach(x => { const H = hormOf(x.h); const fr = H.fr.find(f => f.f === (UI.pFr || {})[x.h]) || H.fr[0]; const uso = Math.round(x.q * alvo.length * 10) / 10; fr.saldo = Math.round((fr.saldo - uso) * 10) / 10; cods.push(fr.f); usos.push({ fr, uso }); });
-  const real = UI.pData || HI; const prev = etapaData(p, e); const hora = agora().h; const dif = diff(real, prev);
+  const real = UI.pData || HI; const piso = pisoBaixa(p, i, alvo); if (piso && real < piso) { renderDrawer(true); return; } const prev = etapaData(p, e); const hora = agora().h; const dif = diff(real, prev);
   alvo.forEach(a => { p.baixas[a + ':' + i] = { por, frasco: cods.join(' + ') || '—', data: real, hora, prevista: prev }; });
   let shifted = 0; if (dif !== 0 && UI.pRepro !== false && i < m.etapas.length - 1) { p.shift[i + 1] = (p.shift[i + 1] || 0) + dif; shifted = dif; }
   const ev = logP(p, `Marcou ${diaLbl(e.d, m)} como feita para ${alvo.length} ${pl(alvo.length, 'animal', 'animais')} · ${por.split(' (')[0]} · frasco ${cods.join(' + ') || '—'}${venc ? ' · ciente do frasco vencido' : ''}${shifted ? ' · etapas seguintes reprogramadas ' + (shifted > 0 ? '+' : '') + shifted + ' dias' : ''}`);
@@ -2193,7 +2216,7 @@ ACT.pbaixa = () => {
   UI.pCell = null; UI.pCiente = false; refresh();
   toast(`${diaLbl(e.d, m)} feita · ${alvo.length} ${pl(alvo.length, 'animal', 'animais')}${cods.length ? ' · frasco ' + cods.join(' + ') : ''}`, { acao: 'Desfazer', fn: () => desfazMarca(snap) });
 };
-function desfazMarca(s) { s.alvo.forEach(a => { delete s.p.baixas[a + ':' + s.i]; }); s.usos.forEach(u => { u.fr.saldo = Math.round((u.fr.saldo + u.uso) * 10) / 10; }); if (s.shifted) s.p.shift[s.i + 1] -= s.shifted; s.ev.estornado = { quem: USUARIO, t: nowT() }; logP(s.p, 'Estornou a marcação de ' + diaLbl(modeloOf(s.p.modelo).etapas[s.i].d, modeloOf(s.p.modelo)), { ref: s.ev.id }); refresh(); }
+function desfazMarca(s) { s.alvo.forEach(a => { delete s.p.baixas[a + ':' + s.i]; }); s.usos.forEach(u => { u.fr.saldo = Math.round((u.fr.saldo + u.uso) * 10) / 10; }); if (s.shifted) s.p.shift[s.i + 1] -= s.shifted; s.ev.estornado = { quem: USUARIO, t: nowT() }; logP(s.p, 'Estornou a marcação de ' + diaLbl(modeloDe(s.p).etapas[s.i].d, modeloDe(s.p)), { ref: s.ev.id }); refresh(); }
 ACT.pdesf = () => { const p = protoOf(qv('proto')); const m = modeloDe(p); const c = UI.pCell; const e = m.etapas[c.i]; const b = p.baixas[c.a + ':' + c.i]; const usos = e.prods.map((x, k) => { const H = hormOf(x.h); const cod = (b.frasco || '').split(' + ')[k]; return { fr: H.fr.find(f => f.f === cod), uso: x.q }; }).filter(u => u.fr); const ev = p.log.slice().reverse().find(x => !x.estornado && x.txt.startsWith('Marcou ' + diaLbl(e.d, m))) || { id: null }; UI.pCell = null; desfazMarca({ p, i: c.i, alvo: [c.a], usos, shifted: 0, ev }); };
 ACT.pact = t => { UI.pAct = t.dataset.v || null; UI.pmot = ''; UI.pTent = false; renderDrawer(true); const f = $('#drawer-root .inline-panel select, #drawer-root .inline-panel input, #drawer-root .inline-panel button'); if (f && UI.pAct) f.focus(); };
 IN.pmot = v => { UI.pmot = v; };
