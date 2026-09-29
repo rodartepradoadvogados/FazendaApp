@@ -4993,6 +4993,52 @@ export async function fetchDetalheOcorrencia(cronogramaId: number): Promise<Deta
   return res.json();
 }
 
+// ── Lista de espera do preventivo + "Criar agendamento" (fatia 7, R1–R9) ──
+// GET/POST /sanidade/cronogramas/lista-espera|agendamentos — ver
+// fazenda/api/routers/sanidade.py. Só o agendamento entra na Agenda, no dia.
+export type SituacaoEspera = "atrasada" | "na_janela";
+export type AnimalListaEspera = {
+  linha_id: number; cronograma_id: number; numero_matriz: string; nome: string | null; lote: string | null;
+  sexo: string | null; situacao: SituacaoEspera; dias_atraso: number; devida: string;
+  janela_fim: string | null; fecha_em: number | null; desde: string; motivo_entrada: string;
+};
+export type GrupoListaEspera = {
+  calendario_id: number; evento_sanitario_id: number; protocolo_nome: string; categoria_alvo: string | null;
+  tipo: "vacina" | "exame" | "tratamento"; produto: string | null; dose: number | null; unidade: string | null;
+  via: string | null; lotes: string[]; janela_de: string; janela_ate: string | null; quantidade: number;
+  atrasadas: number; dias_atraso: number; fecha_em: number | null; situacao: SituacaoEspera;
+  animais: AnimalListaEspera[];
+};
+export type ListaEspera = {
+  total: number; atrasadas: number; fecham_7d: number; agendamentos_ativos: number; grupos: GrupoListaEspera[];
+};
+export async function fetchListaEspera(): Promise<ListaEspera> {
+  const res = await authFetch(`${API}/sanidade/cronogramas/lista-espera`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Lista de espera error: ${res.status}`);
+  return res.json();
+}
+export type NovoAgendamentoPayload = {
+  calendario_sanitario_id: number; animais_janela: string[];
+  animais_fora: { numero_matriz: string; motivo: string }[];
+  data_evento: string; hora?: string | null; modo_execucao?: "veterinario" | "propria" | null;
+  veterinario_pessoa_id?: number | null; observacao?: string | null; rascunho?: boolean;
+};
+async function _postSanidade<T>(caminho: string, corpo: unknown, rotulo: string): Promise<T> {
+  const res = await authFetch(`${API}${caminho}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `${rotulo} error: ${res.status}`); }
+  return res.json();
+}
+export const criarAgendamentoPreventivo = (p: NovoAgendamentoPayload) =>
+  _postSanidade<{ id: number; status: string; data_evento: string; hora: string | null }>("/sanidade/cronogramas/agendamentos", p, "Criar agendamento");
+export const adiarAgendamentoPreventivo = (id: number, p: { nova_data: string; hora?: string | null; motivo?: string | null }) =>
+  _postSanidade<{ id: number }>(`/sanidade/cronogramas/${id}/adiar`, p, "Adiar agendamento");
+export const cancelarAgendamentoPreventivo = (id: number, motivo: string) =>
+  _postSanidade<{ id: number; devolvidos: number }>(`/sanidade/cronogramas/${id}/cancelar`, { motivo }, "Cancelar agendamento");
+export const desconsiderarListaEspera = (p: { calendario_sanitario_id: number; animais: string[]; motivo: string }) =>
+  _postSanidade<{ desconsiderados: number }>("/sanidade/cronogramas/lista-espera/desconsiderar", p, "Desconsiderar");
+
 export type JanelaCalendarioEvento = {
   calendario_sanitario_id: number; evento_sanitario_id: number; evento_sanitario_nome: string;
   categoria_alvo: string | null; categoria_preventiva: string | null; servico_financeiro: string | null;

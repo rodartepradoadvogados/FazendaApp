@@ -37,6 +37,8 @@ const FormAplicarCalendarioSanitario = dynamic(() => import("@/components/lancam
 // usados em Sanidade > Preventiva (Calendário/Cronogramas e Histórico
 // agrupado por vacina/exame). Nada de tabela ou endpoint paralelo.
 const CalendarioSanitarioAcompanhamento = dynamic(() => import("@/app/sanidade/page").then((m) => m.CalendarioSanitarioView), { ssr: false });
+// Lista de espera do preventivo + assistente "Criar agendamento" (fatia 7).
+const ListaEsperaPreventivo = dynamic(() => import("@/components/protocolos/ListaEsperaPreventivo").then((m) => m.ListaEsperaPreventivo), { ssr: false });
 const HistoricoPreventivoView = dynamic(() => import("@/components/sanidade/HistoricoPreventivoView").then((m) => m.HistoricoPreventivoView), { ssr: false });
 // Editores de cadastro reaproveitados de Configurações > Cadastro — MESMO
 // componente, mesmo endpoint, mesmos protocolos. Ver comentário em TIPOS_CADASTRO.
@@ -343,7 +345,7 @@ function SeletorTipoProtocolo<T extends string>({ titulo, tipos, tipo, onChange 
 // mesmo endpoint, mesmos protocolos já cadastrados. Não há cópia nem tabela
 // paralela: cadastrar aqui ou lá é indiferente.
 const TIPOS_CADASTRO = [
-  { id: "sanitario", label: "Sanitário", desc: "Curativo (cronograma de dias) ou Preventivo (calendário sanitário — regra recorrente)" },
+  { id: "sanitario", label: "Sanitário", desc: "Curativo (cronograma de dias) ou Preventivo (vacina, exame, vermífugo ou detecção de cio de repasse)" },
   { id: "iatf", label: "IATF", desc: "Hormônios em dias livres (D0/D7/D9 ou outro espaçamento)" },
   { id: "inducao", label: "Indução de lactação", desc: "Medicamento, implante e manejo por dia" },
   { id: "customizado", label: "Customizado", desc: "Roteiro livre de etapas, para qualquer rotina" },
@@ -358,7 +360,7 @@ type TipoCadastro = typeof TIPOS_CADASTRO[number]["id"];
 // campo a mais no mesmo formulário.
 const SUBS_SANITARIO = [
   { id: "curativo", label: "Curativo", desc: "Cronograma de etapas em dias fixos (D0/D1/D2…)" },
-  { id: "preventivo", label: "Preventivo", desc: "Vacina ou exame com janela de aplicação (frequência ou evento de vida)" },
+  { id: "preventivo", label: "Preventivo", desc: "Vacina, exame, vermífugo ou detecção de cio de repasse, com janela de aplicação" },
 ] as const;
 type SubSanitario = typeof SUBS_SANITARIO[number]["id"];
 
@@ -424,9 +426,9 @@ const SUBS_SANITARIO_LANCAMENTO = [
   { id: "preventivo", label: "Preventivo", desc: "Vacina ou exame de um protocolo já cadastrado (janela de aplicação)" },
 ] as const;
 
-function LancamentoTab({ animais, estoque, lotes }: { animais: AnimalRow[]; estoque: EstoqueItem[]; lotes: string[] }) {
+function LancamentoTab({ animais, estoque, lotes, onIrAcompanhamento }: { animais: AnimalRow[]; estoque: EstoqueItem[]; lotes: string[]; onIrAcompanhamento?: () => void }) {
   const [tipo, setTipo] = useState<TipoLancamento>("sanitario");
-  const [subSanitario, setSubSanitario] = useState<SubSanitario>("curativo");
+  const [subSanitario, setSubSanitario] = useState<SubSanitario>("preventivo");
 
   return (
     <div>
@@ -436,21 +438,29 @@ function LancamentoTab({ animais, estoque, lotes }: { animais: AnimalRow[]; esto
         <SeletorTipoProtocolo titulo="Curativo ou preventivo?" tipos={SUBS_SANITARIO_LANCAMENTO} tipo={subSanitario} onChange={setSubSanitario} />
       )}
 
+      {tipo === "sanitario" && subSanitario === "preventivo" && (
+        <ListaEsperaPreventivo
+          animais={animais} onAbrirAcompanhamento={onIrAcompanhamento}
+          avulsa={<FormAplicarCalendarioSanitario animais={animais} lotes={lotes} estoque={estoque} />}
+        />
+      )}
+
+      {!(tipo === "sanitario" && subSanitario === "preventivo") && (
       <div className="card mb-3">
         <div className="card-header mb-2">Aplicar {TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label.toLowerCase()}</div>
         {tipo === "iatf" && <FormProtocoloIatf animais={animais} />}
         {tipo === "inducao" && <FormInducaoLactacao animais={animais} />}
         {tipo === "sanitario" && subSanitario === "curativo" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
-        {tipo === "sanitario" && subSanitario === "preventivo" && <FormAplicarCalendarioSanitario animais={animais} lotes={lotes} estoque={estoque} />}
         {tipo === "customizado" && <FormProtocoloCustomizado animais={animais as any} />}
         {tipo === "lida" && <FormLida animais={animais as any} />}
       </div>
+      )}
 
       <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
         {tipo === "customizado" || tipo === "lida"
           ? `${TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label} só é lançado aqui — não existe em Lançamentos.`
           : tipo === "sanitario" && subSanitario === "preventivo"
-            ? "Vacina e exame só são aplicados aqui (e na Agenda, no dia) — não existem mais em Lançamentos nem em Sanidade."
+            ? "Vacina e exame só são agendados e aplicados aqui (e na Agenda, no dia) — não existem mais em Lançamentos nem em Sanidade."
             : "Mesmo lançamento de Lançamentos — lance aqui ou lá, dá no mesmo registro."}
       </p>
     </div>
@@ -1174,7 +1184,7 @@ export default function ProtocolosPage() {
       />
 
       {aba === "cadastro" && <CadastroTab estoque={estoque} />}
-      {aba === "aplicar" && <LancamentoTab animais={animais} estoque={estoque} lotes={lotes} />}
+      {aba === "aplicar" && <LancamentoTab animais={animais} estoque={estoque} lotes={lotes} onIrAcompanhamento={() => setAba("acompanhamento")} />}
       {aba === "acompanhamento" && <ListaProtocolos historico={false} />}
       {aba === "concluidos" && <ListaProtocolos historico />}
     </div>

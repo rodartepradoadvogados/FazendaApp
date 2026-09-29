@@ -1635,3 +1635,6 @@ html, body { max-width: 100%; overflow-x: hidden; }
 }
 .curral-aviso-offline { background: color-mix(in srgb, var(--mob-ambar) 16%, transparent); border: 2px solid var(--mob-ambar); color: var(--mob-ambar); }
 .curral-aviso-erro { background: color-mix(in srgb, var(--mob-vermelho) 14%, transparent); border: 2px solid var(--mob-vermelho); color: var(--mob-vermelho); }
+
+/* Lista de espera do preventivo (Protocolos › Aplicar): botões com ícone + texto na mesma linha. */
+.le-raiz .btn-ghost, .le-raiz .btn-secondary { display: inline-flex; align-items: center; gap: 0.4rem; }
