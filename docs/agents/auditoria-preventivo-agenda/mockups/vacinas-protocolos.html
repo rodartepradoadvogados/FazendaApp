@@ -59,7 +59,7 @@
 
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;max-width:100%;overflow-x:hidden}
-body{background:var(--bg);color:var(--text);font-family:var(--font-body);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+body{background:var(--bg);color:var(--text);font-family:var(--font-body);font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
 h1,h2,h3,h4{font-family:var(--font-body);font-weight:700;letter-spacing:-.02em;margin:0;text-wrap:balance}
 p{margin:0}
 button{font:inherit;color:inherit}
@@ -145,7 +145,7 @@ svg.i.s12{width:12px;height:12px}svg.i.s14{width:14px;height:14px}svg.i.s18{widt
 .actions{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
 
 /* ── Botões (paridade com .btn-primary / .btn-primary-gold / .btn-ghost / .btn-secondary) ── */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:.5rem;min-height:44px;padding:.5rem 1.1rem;border-radius:var(--r-sm);font-size:.875rem;font-weight:600;cursor:pointer;transition:background .15s,border-color .15s,color .15s;border:1px solid transparent;text-decoration:none;white-space:nowrap}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:.5rem;min-height:44px;padding:.5rem 1.1rem;border-radius:var(--r-sm);font-size:1rem;font-weight:600;cursor:pointer;transition:background .15s,border-color .15s,color .15s;border:1px solid transparent;text-decoration:none;white-space:nowrap}
 .btn-primary{background:var(--vinho);color:#fff;border-color:var(--vinho)}
 .btn-primary:hover{background:color-mix(in srgb,var(--vinho) 85%,black)}
 :root[data-theme="escuro"] .btn-primary{border-color:var(--vinho-light);background:var(--vinho-light)}
@@ -158,7 +158,7 @@ svg.i.s12{width:12px;height:12px}svg.i.s14{width:14px;height:14px}svg.i.s18{widt
 .btn-danger{background:transparent;color:var(--alert-fg);border-color:color-mix(in srgb,var(--alert-fg) 55%,transparent)}
 .btn-danger:hover{background:color-mix(in srgb,var(--alert-fg) 10%,transparent)}
 .btn[disabled],.btn[aria-disabled="true"]{opacity:.5;cursor:not-allowed}
-.btn.sm{min-height:44px;padding:.35rem .8rem;font-size:.8125rem}
+.btn.sm{min-height:44px;padding:.35rem .8rem;font-size:.9375rem}
 .icon-btn{width:44px;height:44px;display:inline-flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:var(--r-sm);color:var(--text-muted);cursor:pointer;padding:0}
 .icon-btn:hover{background:var(--surface-2);color:var(--text);border-color:var(--border)}
 .linkbtn{background:none;border:0;padding:.85rem .2rem;margin:-.85rem 0;color:var(--vinho-light);text-decoration:underline;text-underline-offset:3px;cursor:pointer;font-size:inherit;display:inline-block}
@@ -167,7 +167,7 @@ svg.i.s12{width:12px;height:12px}svg.i.s14{width:14px;height:14px}svg.i.s18{widt
 /* ── Formulários ── */
 .fld{display:flex;flex-direction:column;gap:.3rem;min-width:0}
 .fld>label,.lbl{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted)}
-.inp,.sel{min-height:44px;padding:.5rem .7rem;background:var(--surface);color:var(--text);border:1px solid var(--border-strong);border-radius:var(--r-sm);font:inherit;font-size:.875rem;width:100%;min-width:0}
+.inp,.sel{min-height:44px;padding:.5rem .7rem;background:var(--surface);color:var(--text);border:1px solid var(--border-strong);border-radius:var(--r-sm);font:inherit;font-size:1rem;width:100%;min-width:0}
 .inp::placeholder{color:var(--text-muted);opacity:.85}
 textarea.inp{min-height:72px;resize:vertical}
 .inp[aria-invalid="true"]{border-color:var(--alert-fg)}
@@ -210,7 +210,7 @@ textarea.inp{min-height:72px;resize:vertical}
 
 /* ── Tabela (fazenda-table) ── */
 .tw{overflow-x:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm)}
-table.ft{width:100%;border-collapse:collapse;font-size:.875rem}
+table.ft{width:100%;border-collapse:collapse;font-size:1rem}
 .ft thead tr{background:var(--thead-bg)}
 .ft thead th{padding:9px 12px;text-align:left;color:var(--thead-fg);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.11em;white-space:nowrap;border-bottom:1px solid var(--border-strong)}
 .ft tbody tr{border-bottom:1px solid var(--border);transition:background .15s}
@@ -344,11 +344,12 @@ table.ft{width:100%;border-collapse:collapse;font-size:.875rem}
 .menu hr{border:0;border-top:1px solid var(--border);margin:.2rem 0}
 
 /* Toasts */
-.toasts{position:fixed;z-index:500;bottom:1rem;left:1rem;display:flex;flex-direction:column-reverse;gap:.5rem;align-items:flex-start;width:min(520px,calc(100vw - 2rem));pointer-events:none}
+.toasts{position:fixed;z-index:500;bottom:1rem;left:1rem;display:flex;flex-direction:column-reverse;gap:.5rem;align-items:flex-start;width:min(560px,92vw);min-width:280px;pointer-events:none}
 .toast{pointer-events:auto;display:flex;align-items:center;gap:.8rem;background:var(--vinho);color:#fff;border:1px solid var(--vinho-light);border-radius:var(--r-sm);padding:.6rem .6rem .6rem 1rem;font-size:.875rem;animation:toast .22s cubic-bezier(.16,1,.3,1);width:100%}
 :root[data-theme="escuro"] .toast{background:#0F2A48;border-color:var(--dourado)}
 .toast svg.ok{color:#7FC79A}
-.toast .msg{flex:1}
+.toast{min-width:280px}
+.toast .msg{flex:1;overflow-wrap:normal;word-break:normal;hyphens:none}
 .toast button{background:transparent;color:#E0A63C;border:1px solid rgba(224,166,60,.6);border-radius:var(--r-sm);min-height:44px;padding:0 .9rem;font-weight:700;cursor:pointer;white-space:nowrap}
 .toast button:hover{background:rgba(224,166,60,.15)}
 .toast .x{border:0;color:#fff;padding:0;width:44px}
@@ -416,7 +417,7 @@ table.ft{width:100%;border-collapse:collapse;font-size:.875rem}
   .top-actions{display:none}
   .subnav{position:sticky;top:calc(var(--rb-h) + var(--mtop-h));padding:0 .5rem}
   .page{padding:1rem 1rem 3rem}
-  .pg-head h1{font-size:1.4rem}
+  .pg-head h1{font-size:1.75rem}
   .pg-head .actions{width:100%}
   .pg-head .actions .btn{flex:1 1 auto}
   .strip{grid-template-columns:1fr}
@@ -459,7 +460,7 @@ table.ft{width:100%;border-collapse:collapse;font-size:.875rem}
  .strip .num{font-size:1.5rem}
  .filters .sel{flex:1 1 calc(50% - .3rem);min-width:0;width:auto}
  .pg-head .actions .btn-sec,.pg-head .actions .btn-ghost{flex:1 1 calc(50% - .3rem);white-space:normal;font-size:1rem}
-  .resumo li{font-size:12px}.resumo li b{font-size:.9rem}.resumo .fr{display:none}.resumo{padding:.6rem .7rem}
+  .resumo li{font-size:12px}.resumo li b{font-size:.9rem}.resumo{padding:.6rem .7rem}
  .dr-f .btn{flex:1 1 auto}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -498,8 +499,6 @@ table.ft{width:100%;border-collapse:collapse;font-size:.875rem}
  .hide-m{display:none!important}.hm{display:none}
  .filters>.tabbar{flex:1 1 auto;width:auto;flex-wrap:nowrap}.filters>.tabbar .tabpill{padding:.4rem .5rem;flex:1}
  .fbtn{flex:0 0 auto}
- .cards tbody{display:flex;flex-direction:column}
- .gx-hoje{order:0}.gx-atras{order:1}.gx-sem{order:2}.gx-prox{order:3}.gx-feitas{order:4}
  .cards td.acts{gap:12px!important}
  .cards td.acts .btn-primary,.cards td.acts .btn-sec{flex:1}
  body{font-size:16px}
@@ -524,6 +523,39 @@ table.ft{width:100%;border-collapse:collapse;font-size:.875rem}
 
 [hidden]{display:none!important}
 .filters .fld .sel{flex:none;min-width:0;width:100%}
+
+.show-m{display:none!important}
+.resumo-c{padding:0;border:1px solid var(--border-strong);background:var(--surface-2);border-radius:2px}
+.resumo-c summary{list-style:none;cursor:pointer;display:flex;flex-direction:column;gap:.2rem;padding:.6rem .9rem;min-height:44px}
+.resumo-c summary::-webkit-details-marker{display:none}
+.resumo-c .lbl{font-size:12px}
+.resumo-c .linha{font-weight:600;font-size:.9375rem;font-variant-numeric:tabular-nums;line-height:1.35}
+.resumo-c .ver{color:var(--text-muted);font-size:.875rem;display:inline-flex;gap:.3rem;align-items:center}
+.resumo-c ul{padding:.4rem .9rem .2rem;margin:0}
+.resumo-c .fr{padding:0 .9rem .7rem;margin-top:.4rem}
+.resumo-c[open] .ver svg{transform:rotate(180deg)}
+.reag .chk{min-height:44px}
+.paper .box0{width:16px;height:16px}
+@media (max-width:767px){
+ .show-m{display:inline-flex!important}
+ .mais-h{flex:0 0 auto;min-width:44px}
+ .resumo-c .lbl,.pager,.grade thead th small,.grade thead th small.ac{font-size:.875rem}
+ .paper{padding:1rem .8rem}
+ .paper table,.paper tbody{display:block;width:100%}
+ .paper thead{display:none}
+ .paper tr{display:block;border:1px solid #888;margin:.5rem 0;padding:.4rem .6rem}
+ .paper td{display:block;border:0;padding:2px 0;font-size:1rem;text-align:left!important;width:auto!important}
+ .paper td[data-l]::before{content:attr(data-l) ": ";font-weight:700;text-transform:uppercase;font-size:.75rem;letter-spacing:.05em}
+ .mtop .bell{position:relative;width:44px;height:44px;border-radius:50%;background:var(--surface);border:1px solid var(--sidebar-border);display:flex;align-items:center;justify-content:center;color:var(--sidebar-muted);padding:0;flex:none}
+ .mtop .bell b{position:absolute;top:-2px;right:-2px;min-width:18px;height:18px;border-radius:9px;background:#A8341C;color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center;padding:0 4px}
+ .toasts{left:.5rem;right:.5rem;width:auto;min-width:0}
+ .has-drawer .toasts{bottom:96px}
+ .toast{flex-wrap:wrap;padding:.6rem}
+ .toast .msg{flex:1 1 calc(100% - 44px)}
+ .toast .ac{flex:1 1 auto}
+ .toast .x{margin-left:auto}
+ .toast{min-width:0}
+}
 </style>
 </head>
 <body>
@@ -546,8 +578,8 @@ table.ft{width:100%;border-collapse:collapse;font-size:.875rem}
     <li>Ligue “Simular fazenda nova” para ver o estado vazio.</li></ol></div></details>
 </div>
 <div class="shell">
-  <div class="mtop"><button type="button" class="icon-btn" id="mbtn" aria-label="Abrir menu" title="Abrir o menu de navegação"><svg class="i s20" viewBox="0 0 24 24" aria-hidden="true"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg></button><span class="w">Cow<b>Data</b></span><span class="f">· Estreito Ponte de Pedra (ID: 1)</span>
-    <button type="button" class="tema icon-btn" style="width:auto;padding:0 .5rem;gap:.3rem"></button></div>
+  <div class="mtop"><button type="button" class="icon-btn" id="mbtn" aria-label="Abrir menu" title="Abrir o menu de navegação"><svg class="i s20" viewBox="0 0 24 24" aria-hidden="true"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg></button><span class="w">Cow<b>Data</b></span><span class="f">· Fazenda Estreito Ponte de Pedra</span>
+    <button type="button" class="tema icon-btn" style="width:auto;padding:0 .5rem;gap:.3rem"></button><button type="button" class="bell" aria-label="Notificações: 3 novas"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><b>3</b></button></div>
   <aside class="sb" id="sb" aria-label="Menu de navegação"></aside>
   <div class="sb-scrim" id="sb-scrim" hidden></div>
   <div class="mainwrap">
@@ -640,7 +672,7 @@ const br = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) :
 const isMob = () => window.matchMedia && window.matchMedia('(max-width:767px)').matches;
 const brc = s => isMob() ? br(s) : s.slice(8, 10) + '/' + s.slice(5, 7);
 let MIN0 = 0; const T0 = Date.now();
-const agora = () => { const m = 14 * 60 + 5 + Math.floor((Date.now() - T0) / 60000) + MIN0; return { d: HI, h: pad(Math.floor(m / 60) % 24) + ':' + pad(m % 60) }; };
+const agora = () => ({ d: HI, h: '14:05' });
 const dh = t => br(t.slice(0, 10)) + ' ' + t.slice(11, 16);
 const nowT = () => { const a = agora(); return a.d + ' ' + a.h; };
 const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
@@ -649,53 +681,66 @@ const DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const R$ = v => 'R$ ' + Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const num = v => Number(v).toLocaleString('pt-BR');
 const pl = (n, s, p) => n === 1 ? s : p;
-const rel = (dt) => { const d = diff(dt, HI); return d === 0 ? 'hoje' : d === 1 ? 'amanhã' : d === -1 ? 'ontem' : d < 0 ? `há ${-d} d` : `em ${d} d`; };
+const rel = (dt) => { const d = diff(dt, HI); return d === 0 ? 'hoje' : d === 1 ? 'amanhã' : d === -1 ? 'há 1 dia' : d < 0 ? `há ${-d} dias` : `em ${d} dias`; };
 const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
 const lsDel = k => { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } };
 const clone = o => JSON.parse(JSON.stringify(o));
 
-/* ═════════ Dados canônicos (DADOS-CANONICOS.md): Fazenda Estreito Ponte de Pedra · 29/09/2026 ═════════ */
+/* ═════════ Dados canônicos (DADOS-CANONICOS.md, extensão rodada 3): Fazenda Estreito Ponte de Pedra · 29/09/2026 14:05 ═════════ */
 const LOTES = [
-  { id: 'l1', nome: 'Lote 01 – Alta produção', n: 24, termo: 'vacas', lact: true, peso: 580 },
-  { id: 'l2', nome: 'Lote 02 – Média', n: 28, termo: 'vacas', lact: true, peso: 570 },
-  { id: 'l3', nome: 'Lote 03 – Baixa', n: 19, termo: 'vacas', lact: true, peso: 560 },
-  { id: 'pp', nome: 'Pré-parto', n: 9, termo: 'vacas', lact: false, peso: 600 },
-  { id: 'se', nome: 'Secas', n: 14, termo: 'vacas', lact: false, peso: 590 },
-  { id: 'r1', nome: 'Recria 1', n: 20, termo: 'novilhas', lact: false, peso: 230 },
-  { id: 'r2', nome: 'Recria 2', n: 22, termo: 'novilhas', lact: false, peso: 330 },
-  { id: 'bz', nome: 'Bezerreiro', n: 15, termo: 'bezerras', lact: false, peso: 90 }
+  { id: 'l1', slug: 'lote01', nome: 'Lote 01 – Alta produção', n: 24, termo: 'vacas', lact: true, peso: 580 },
+  { id: 'l2', slug: 'lote02', nome: 'Lote 02 – Média', n: 28, termo: 'vacas', lact: true, peso: 570 },
+  { id: 'l3', slug: 'lote03', nome: 'Lote 03 – Baixa', n: 19, termo: 'vacas', lact: true, peso: 560 },
+  { id: 'pp', slug: 'preparto', nome: 'Pré-parto', n: 9, termo: 'vacas', lact: false, peso: 600 },
+  { id: 'se', slug: 'secas', nome: 'Secas', n: 14, termo: 'vacas', lact: false, peso: 590 },
+  { id: 'r1', slug: 'recria1', nome: 'Recria 1', n: 20, termo: 'novilhas', lact: false, peso: 230 },
+  { id: 'r2', slug: 'recria2', nome: 'Recria 2', n: 22, termo: 'novilhas', lact: false, peso: 330 },
+  { id: 'bz', slug: 'bezerreiro', nome: 'Bezerreiro', n: 15, termo: 'bezerras', lact: false, peso: 90 }
 ];
 const loteOf = id => LOTES.find(l => l.id === id);
 const loteNome = id => id === 'todos' ? 'Todos os lotes' : loteOf(id).nome;
-const NOMES = ['Mimosa', 'Estrela', 'Jabuticaba', 'Pintada', 'Bonita', 'Serena', 'Fartura', 'Cereja', 'Manga', 'Ternura', 'Aurora', 'Beleza', 'Canela', 'Dengosa', 'Faceira', 'Gaivota', 'Hortência', 'Iracema', 'Jandira', 'Lua', 'Malhada', 'Nuvem', 'Orquídea', 'Princesa', 'Quirera', 'Rosita', 'Safira', 'Tulipa', 'Uva', 'Violeta', 'Amora', 'Baunilha', 'Caramelo', 'Dália', 'Esmeralda', 'Fada', 'Girassol', 'Hera', 'Ipê', 'Jasmim'];
+const rng = (a, b, skip = []) => { const o = []; for (let i = a; i <= b; i++) if (!skip.includes(i)) o.push(i); return o; };
+const BRINCOS = {
+  l1: [4101, 4105, 4108, 4112, 4115, 4118, 4120, 4124, 4127, 4129, 4131, 4134, 4138, 4141, 4143, 4147, 4150, 4153, 4156, 4158, 4160, 4162, 4165, 4168],
+  l2: rng(4201, 4229, [4209]), l3: [2101, 2105, 2109, 2113, 2117, 2121, 2125, 2129, 2133, 2137, 2140, 2144, 2148, 2152, 2156, 2160, 2164, 2166, 2170],
+  pp: rng(4301, 4309), se: rng(4401, 4414), r1: rng(5101, 5120), r2: rng(5201, 5222), bz: rng(6101, 6115)
+};
+const NOMES = ['Pintada', 'Bonita2', 'Jabuticaba', 'Fartura', 'Cereja', 'Manga', 'Ternura', 'Aurora', 'Beleza', 'Canela', 'Dengosa', 'Faceira', 'Gaivota', 'Hortência', 'Iracema', 'Jandira', 'Lua', 'Malhada', 'Nuvem', 'Orquídea', 'Princesa', 'Quirera', 'Rosita', 'Safira', 'Tulipa', 'Uva', 'Violeta', 'Amora', 'Baunilha', 'Caramelo', 'Dália', 'Esmeralda', 'Fada', 'Girassol', 'Hera', 'Ipê', 'Jasmim', 'Lírio', 'Meiga', 'Neblina', 'Oliva', 'Palmira', 'Rainha', 'Sereia', 'Tereza', 'Umbela', 'Vitória', 'Zaira'];
+const FIXOS = { 4101: 'Mimosa', 4201: 'Serena', 4207: 'Estrela', 4215: 'Bonita' };
 const RACAS = ['Girolando 5/8', 'Girolando 3/4', 'Girolando 1/2', 'Girolando 7/8', 'Holandês', 'Girolando 5/8'];
 const ANIMAIS = (() => {
-  const base = { l1: 4100, l2: 4200, l3: 4300, pp: 3100, se: 3200, r1: 2400, r2: 2100, bz: 5100 }; const out = [];
-  LOTES.forEach((l, li) => { for (let i = 0; i < l.n; i++) {
-    const b = base[l.id] + i * 3 + 1; const lact = l.lact; const del = lact ? ((i * 37 + li * 11) % 250) + 20 : null;
-    const prenhe = l.id === 'pp' || l.id === 'se' ? true : lact ? (del > 90 && i % 3 !== 0) : false;
-    out.push({ id: 'x' + b, brinco: String(b), nome: NOMES[(i * 7 + li * 5) % NOMES.length], raca: RACAS[(i + li) % RACAS.length], lote: l.id, del, prenhe });
-  } });
+  const out = []; let k = 0;
+  LOTES.forEach((l, li) => BRINCOS[l.id].forEach((b, i) => {
+    const lact = l.lact; let del = lact ? ((i * 37 + li * 11) % 200) + 60 : null; let prenhe = l.id === 'pp' || l.id === 'se' ? true : lact ? (del > 110 && i % 3 !== 0) : false;
+    if (b === 4160) del = 40; if (b === 4124) del = 48; if (b === 4201) del = 31; if (l.id === 'l2' && b >= 4210) { prenhe = false; del = 80 + i * 4; }
+    const cat = ['r1', 'r2', 'bz'].includes(l.id) ? (l.id === 'bz' ? 'bezerra' : 'novilha') : 'vaca';
+    const an = { id: 'x' + b, brinco: String(b), nome: FIXOS[b] || NOMES[k++ % NOMES.length].replace('2', ''), raca: RACAS[(i + li) % RACAS.length], lote: l.id, del, prenhe, cat };
+    if (l.id === 'r1') { an.idadeM = 9 + (i % 4); an.peso = 210 + i * 2; } if (l.id === 'r2') { an.idadeM = 15 + (i % 4); an.peso = i < 12 ? 330 + i : 296 + (i - 12) * 2; } if (l.id === 'bz') { an.idadeM = (b >= 6104 && b <= 6109) ? 4 + (b % 3) : (b <= 6103 ? 2 : 6 + (b % 3)); an.peso = 70 + i * 3; }
+    out.push(an);
+  }));
   return out;
 })();
 const animalOf = id => ANIMAIS.find(a => a.id === id);
+const animalPorBrinco = b => ANIMAIS.find(a => a.brinco === String(b));
 const animaisDoLote = id => ANIMAIS.filter(a => a.lote === id);
+const idsBr = arr => arr.map(b => 'x' + b);
 const lbl = a => `${a.brinco} ${a.nome}`;
 const PESSOAS = ['Jairo Nasser (gestor)', 'Dr. Paulo Menezes (veterinário, CRMV-MG 12345)', 'Cícero Alves (tratador)', 'Marcos Lima (tratador)'];
 const ehVet = p => /veterinário/.test(p);
 const USUARIO = PESSOAS[0];
+const B19_ELEG = idsBr(rng(6104, 6109));
 
 const VACINAS0 = [
-  { id: 'afo', nome: 'Aftosa', tipo: 'Vacina', prod: 'afo', dose: '2 mL · subcutânea', alvo: ['l1', 'l2', 'l3', 'pp', 'se', 'r1', 'r2'], freq: 'Anual · data da defesa sanitária estadual (editável)', intervalo: 365, carLeite: 0, carCarne: 0, ativo: true, marco: '', custo: 3.10, oficial: true },
-  { id: 'b19', nome: 'Brucelose B19', tipo: 'Vacina', prod: 'b19', dose: '2 mL · subcutânea', alvo: ['bz', 'r1', 'r2'], freq: 'Dose única · fêmeas de 3 a 8 meses', intervalo: 0, carLeite: 0, carCarne: 0, ativo: true, marco: 'Bezerra com 3 meses', custo: 6.40, oficial: true, soVet: true },
-  { id: 'clo', nome: 'Clostridioses', tipo: 'Vacina', prod: 'clo', dose: '5 mL · subcutânea', alvo: ['l1', 'l2', 'l3', 'pp', 'r1', 'r2'], freq: 'Dose 1 → dose 2 (30 dias após a dose 1) → reforço anual', intervalo: 365, carLeite: 0, carCarne: 0, ativo: true, marco: '', multi: true, custo: 1.90 },
-  { id: 'rai', nome: 'Raiva', tipo: 'Vacina', prod: 'rai', dose: '2 mL · intramuscular', alvo: ['l1', 'l2', 'l3', 'pp', 'se', 'r1', 'r2', 'bz'], freq: 'Anual', intervalo: 365, carLeite: 0, carCarne: 0, ativo: true, marco: '', custo: 2.80 },
-  { id: 'ibr', nome: 'IBR/BVD', tipo: 'Vacina', prod: 'ibr', dose: '5 mL · intramuscular', alvo: ['l1', 'l2', 'l3', 'pp', 'se'], freq: 'Semestral', intervalo: 182, carLeite: 0, carCarne: 0, ativo: true, marco: '', custo: 4.20 },
-  { id: 'lep', nome: 'Leptospirose', tipo: 'Vacina', prod: 'lep', dose: '2 mL · subcutânea', alvo: ['l1', 'l2', 'l3', 'pp', 'se', 'r1', 'r2', 'bz'], freq: 'Semestral', intervalo: 182, carLeite: 0, carCarne: 0, ativo: true, marco: '', custo: 2.10 },
-  { id: 'ver', nome: 'Vermifugação (ivermectina 1%)', tipo: 'Antiparasitário', prod: 'ver', dose: '1 mL por 50 kg · subcutânea (peso médio do lote)', alvo: ['r1', 'r2'], freq: 'A cada 90 dias', intervalo: 90, carLeite: 0, leiteProibido: true, carCarne: 35, ativo: true, marco: '', custo: 0.42, porPeso: 50, unid: 'mL' },
-  { id: 'tb', nome: 'Exame TB (tuberculina PPD)', tipo: 'Exame', prod: 'tb', dose: 'intradérmica · leitura em 72 h', alvo: ['l1', 'l2', 'l3', 'se'], freq: 'Anual · inconclusivo: reteste em 60 dias', intervalo: 365, carLeite: 0, carCarne: 0, ativo: true, marco: '', custo: 9.00, exame: true, leituraH: 72 },
-  { id: 'brc', nome: 'Exame de brucelose (sorologia)', tipo: 'Exame', prod: '', dose: 'coleta de sangue', alvo: ['l1', 'l2', 'l3'], freq: 'Anual', intervalo: 365, carLeite: 0, carCarne: 0, ativo: true, marco: '', custo: 14.00, exame: true, leituraH: 0 }
+  { id: 'afo', nome: 'Aftosa', tipo: 'Vacina', prod: 'afo', dose: '2 mL · subcutânea', via: 'subcutânea', alvo: ['l1', 'l2', 'l3', 'pp', 'se', 'r1', 'r2'], freq: 'Anual · data da defesa sanitária estadual (editável)', intervalo: 365, meses: 12, carLeite: 0, carCarne: 0, ativo: true, marco: '', custo: 3.10, oficial: true },
+  { id: 'b19', nome: 'Brucelose B19', tipo: 'Vacina', prod: 'b19', dose: '2 mL · subcutânea', via: 'subcutânea', alvo: ['bz', 'r1', 'r2'], freq: 'Dose única · fêmeas de 3 a 8 meses', intervalo: 0, meses: 0, carLeite: 0, carCarne: 0, ativo: true, marco: 'Bezerra com 3 meses', custo: 6.40, oficial: true, soVet: true },
+  { id: 'clo', nome: 'Clostridioses', tipo: 'Vacina', prod: 'clo', dose: '5 mL · subcutânea', via: 'subcutânea', alvo: ['l1', 'l2', 'l3', 'pp', 'r1', 'r2'], freq: 'Dose 1 → dose 2 (30 dias após a dose 1) → reforço anual', intervalo: 365, meses: 12, carLeite: 0, carCarne: 0, ativo: true, marco: '', multi: true, custo: 1.90 },
+  { id: 'rai', nome: 'Raiva', tipo: 'Vacina', prod: 'rai', dose: '2 mL · intramuscular', via: 'intramuscular', alvo: ['l1', 'l2', 'l3', 'pp', 'se', 'r1', 'r2', 'bz'], freq: 'Anual', intervalo: 365, meses: 12, carLeite: 0, carCarne: 0, ativo: true, marco: '', custo: 2.80 },
+  { id: 'ibr', nome: 'IBR/BVD', tipo: 'Vacina', prod: 'ibr', dose: '5 mL · intramuscular', via: 'intramuscular', alvo: ['l1', 'l2', 'l3', 'pp', 'se'], freq: 'Semestral', intervalo: 182, meses: 6, carLeite: 0, carCarne: 0, ativo: true, marco: '', custo: 4.20 },
+  { id: 'lep', nome: 'Leptospirose', tipo: 'Vacina', prod: 'lep', dose: '2 mL · subcutânea', via: 'subcutânea', alvo: ['l1', 'l2', 'l3', 'pp', 'se', 'r1', 'r2', 'bz'], freq: 'Semestral', intervalo: 182, meses: 6, carLeite: 0, carCarne: 0, ativo: true, marco: '', custo: 2.10 },
+  { id: 'ver', nome: 'Vermifugação (ivermectina 1%)', tipo: 'Antiparasitário', prod: 'ver', dose: '1 mL por 50 kg · subcutânea (peso médio do lote)', via: 'subcutânea', alvo: ['r1', 'r2'], freq: 'A cada 90 dias', intervalo: 90, dias: 90, carLeite: 0, leiteProibido: true, carCarne: 35, ativo: true, marco: '', custo: 0.42, porPeso: 50, unid: 'mL' },
+  { id: 'tb', nome: 'Exame TB (tuberculina PPD)', tipo: 'Exame', prod: 'tb', dose: 'intradérmica · leitura em 72 h', via: 'intradérmica', alvo: ['l1', 'l2', 'l3', 'se'], freq: 'Anual · inconclusivo: reteste em 60 dias', intervalo: 365, meses: 12, carLeite: 0, carCarne: 0, ativo: true, marco: '', custo: 9.00, exame: true, leituraH: 72, soVet: true },
+  { id: 'brc', nome: 'Exame de brucelose (sorologia)', tipo: 'Exame', prod: '', dose: 'coleta de sangue', via: 'coleta', alvo: ['l1', 'l2', 'l3'], freq: 'Anual', intervalo: 365, meses: 12, carLeite: 0, carCarne: 0, ativo: true, marco: '', custo: 14.00, exame: true, leituraH: 0 }
 ];
 const ESTOQUE0 = [
   { id: 'afo', prod: 'Aftosa', un: 'doses', fr: [{ f: 'AF-2609', val: '2026-10-15', saldo: 60 }, { f: 'AF-2611', val: '2027-04-30', saldo: 200 }] },
@@ -712,66 +757,108 @@ const venceEm = f => f ? diff(f.val, HI) : 999;
 const qtdUso = (v, loteId, n) => v.porPeso ? Math.round(n * (loteId === 'todos' ? 400 : loteOf(loteId).peso) / v.porPeso * 10) / 10 : n;
 const fmtQ = (q, un) => `${num(q)} ${un === 'doses' ? pl(q, 'dose', 'doses') : un}`;
 
+/* ── Regras de status por animal e vacina: TUDO calculado das doses registradas ── */
+function ultimasDoses(an, vac) { return SAN.doses.filter(d => d.a === (an.id || an) && d.vac === vac).map(d => d.data).sort(); }
+function aplicavel(an, v) {
+  if (!v.alvo.includes(an.lote)) return false;
+  if (v.id === 'b19') return ultimasDoses(an, 'b19').length > 0 || B19_ELEG.includes(an.id);
+  return true;
+}
+/* devolve {st: ok|atrasada|sem|na|reagente, ult, prox} */
+function statusAV(an, v) {
+  if (v.exame) return statusExame(an, v);
+  if (!aplicavel(an, v)) return { st: 'na', ult: null, prox: null, txt: v.id === 'b19' ? 'Não se aplica (fora da faixa de 3 a 8 meses)' : 'Não se aplica' };
+  const ds = ultimasDoses(an, v.id); const ult = ds[ds.length - 1] || null;
+  if (!ult) { const nx = SAN.apl.filter(a => a.vac === v.id && !feita(a) && aplAnimais(a).includes(an.id)).sort((x, y) => x.data < y.data ? -1 : 1)[0]; return { st: 'sem', ult: null, prox: nx ? nx.data : null, txt: 'Sem registro' }; }
+  let prox;
+  if (v.id === 'clo') prox = ds.length === 1 ? addD(ds[0], 30) : addM(ult, 12);
+  else if (v.id === 'b19') prox = null;
+  else if (v.dias) prox = addD(ult, v.dias); else prox = addM(ult, v.meses || 12);
+  if (prox && prox < HI) return { st: 'atrasada', ult, prox };
+  return { st: 'ok', ult, prox };
+}
+function statusExame(an, v) {
+  if (!v.alvo.includes(an.lote)) return { st: 'na', ult: null, prox: null };
+  const ex = SAN.exames.filter(e => e.a === an.id && e.vac === v.id).sort((x, y) => x.data < y.data ? -1 : 1); const last = ex[ex.length - 1];
+  if (!last) return { st: 'sem', ult: null, prox: null };
+  if (last.res === 'Positivo') return { st: 'reagente', ult: last.data, prox: null, laudo: last.laudo };
+  if (last.res === 'Inconclusivo') { const rt = last.reteste || addD(last.data, 60); return { st: rt < HI ? 'atrasada' : 'ok', ult: last.data, prox: rt, reteste: true }; }
+  const prox = addM(last.data, 12); return { st: prox < HI ? 'atrasada' : 'ok', ult: last.data, prox };
+}
+function statusAnimal(an) { const out = []; SAN.vacinas.forEach(v => { if (!v.ativo && !SAN.vacinas.length) return; const s = statusAV(an, v); if (s.st !== 'na') out.push(Object.assign({ v }, s)); }); return out; }
+const pendente = st => st.some(x => x.st === 'atrasada' || x.st === 'reagente');
+function cobGlobal(lote) {
+  const an = ANIMAIS.filter(a => !lote || a.lote === lote); if (!SAN.doses.length) return null;
+  let at = 0, sem = 0, reag = 0; an.forEach(a => { const st = statusAnimal(a); if (pendente(st)) at++; if (st.some(x => x.st === 'sem')) sem++; if (st.some(x => x.st === 'reagente')) reag++; });
+  return { total: an.length, ok: an.length - at, at, sem, reag, pct: Math.round((an.length - at) / an.length * 100) };
+}
+const cobPct = lote => { const g = cobGlobal(lote); return g ? g.pct : null; };
+const cobCor = p => p >= 95 ? 'ok' : p >= 85 ? 'amber' : 'red';
+function cobVac(vid, lote) {
+  const v = SAN.vacinas.find(x => x.id === vid); let tot = 0, em = 0, atras = 0, sem = 0;
+  ANIMAIS.forEach(a => { if (lote && a.lote !== lote) return; const s = statusAV(a, v); if (s.st === 'na') return; tot++; if (s.st === 'ok') em++; else if (s.st === 'sem') sem++; else atras++; });
+  return { tot, em, atras, sem, pct: tot ? Math.round(em / tot * 100) : null };
+}
+function cobCelula(vid, lid) { return cobVac(vid, lid); }
+function audit(a, acao, o = {}) {
+  const e = Object.assign({ id: 'ev' + (++SAN.evs), t: nowT(), quem: USUARIO, acao, apl: a ? a.id : null, vac: a ? a.vac : null, lote: a ? a.lote : null, n: a ? nEf(a) : 0, motivo: '', estornado: false }, o);
+  SAN.aud.push(e); if (a) a.log.push({ t: e.t, quem: e.quem, txt: acao + (e.motivo ? ' · ' + e.motivo : ''), ev: e.id }); return e;
+}
+const evNum = e => +String(e.id).replace('ev', '');
+
 function seedSanidade() {
-  const S = { vacinas: clone(VACINAS0), est: clone(ESTOQUE0), apl: [], cob: {}, car: [], aud: [], draft: null, seq: 0, evs: 0 };
+  const S = { vacinas: clone(VACINAS0), est: clone(ESTOQUE0), apl: [], doses: [], exames: [], reag: [], car: [], aud: [], draft: null, seq: 0, evs: 0 };
+  SAN = S; // status helpers usam SAN
   const mk = (vac, lote, n, data, estado = 'prevista', extra = {}) => {
     const a = Object.assign({ id: 'ap' + (++S.seq), vac, lote, n, data, estado, rem: {}, inc: {}, log: [], chk: { estoque: 'pend', quem: 'pend', fin: 'pend' }, prx: null }, extra);
     S.apl.push(a); return a;
   };
-  // Atrasadas
-  mk('rai', 'l3', 6, '2026-09-27', 'prevista', { doseTxt: 'reforço', animaisTxt: true });
-  mk('clo', 'r2', 22, '2026-09-25', 'prevista', { doseTxt: 'dose 2', prx: 365, animaisTxt: true });
-  mk('tb', 'l2', 3, '2026-09-21', 'prevista', { exame: true, reteste: 'Inconclusivo em 31/03/2026', animaisTxt: true });
-  // Hoje e esta semana
-  mk('ver', 'r1', 20, '2026-09-29'); mk('ibr', 'se', 14, '2026-10-01'); mk('b19', 'bz', 6, '2026-10-02', 'prevista', { doseTxt: 'bezerras de 3 a 8 meses' });
-  // Próximas
-  mk('afo', 'todos', 136, '2026-11-05', 'prevista', { doseTxt: 'data estadual, editável' }); mk('lep', 'todos', 151, '2026-11-15');
-  mk('ver', 'r2', 22, '2026-12-05'); mk('rai', 'l1', 24, '2027-03-15');
-  // Histórico (registradas) com quem/hora
-  const reg = (vac, lote, n, data, hora, por, fr, result, extra = {}) => {
+  const todos = ANIMAIS.filter(a => a.lote !== 'bz').map(a => a.id);
+  const add = (ids, vac, datas) => ids.forEach(id => datas.forEach(d => S.doses.push({ a: id, vac, data: d, ref: null })));
+  const de = l => ANIMAIS.filter(a => a.lote === l).map(a => a.id);
+  const RA6 = idsBr([2101, 2117, 2133, 2140, 2152, 2166]);
+  // Doses registradas (fonte única da cobertura e das carteiras)
+  add(todos, 'afo', ['2025-11-05']);
+  add(idsBr([6101, 6102, 6103, 6110, 6111, 6112, 6113, 6114, 6115]), 'b19', ['2026-08-14']); add(de('r1'), 'b19', ['2026-02-10']); add(idsBr(rng(5201, 5215)), 'b19', ['2026-01-20']);
+  add(de('r2'), 'clo', ['2026-08-26']); ['l1', 'l2', 'l3', 'pp', 'r1'].forEach(l => add(de(l), 'clo', ['2025-03-05', '2025-04-04', '2026-04-10']));
+  add(ANIMAIS.filter(a => !RA6.includes(a.id)).map(a => a.id), 'rai', ['2026-03-15']); add(RA6, 'rai', ['2025-09-27']);
+  add(ANIMAIS.filter(a => ['l1', 'l2', 'l3', 'pp'].includes(a.lote) && a.brinco !== '4101').map(a => a.id), 'ibr', ['2026-04-15']); add(['x4101'], 'ibr', ['2026-03-20']); add(de('se'), 'ibr', ['2026-04-01']);
+  add(ANIMAIS.filter(a => !idsBr(rng(5218, 5222)).includes(a.id)).map(a => a.id), 'lep', ['2026-05-15']);
+  add(de('r1'), 'ver', ['2026-07-01']); add(de('r2'), 'ver', ['2026-09-05']);
+  // Exames de TB (março): 3 inconclusivos no Lote 02 com reteste previsto para 21/09
+  ['l1', 'l2', 'l3', 'se'].forEach(l => de(l).forEach(id => { const inc = ['x4201', 'x4207', 'x4215'].includes(id); S.exames.push({ a: id, vac: 'tb', data: l === 'l2' ? '2026-03-31' : '2026-03-30', res: inc ? 'Inconclusivo' : 'Negativo', reteste: inc ? '2026-09-21' : null, laudo: '', ref: null }); }));
+  // Calendário
+  mk('rai', 'l3', 6, '2026-09-27', 'prevista', { doseTxt: 'reforço', animaisTxt: true, ids: RA6 });
+  mk('clo', 'r2', 22, '2026-09-25', 'prevista', { doseTxt: 'dose 2', prx: 365, animaisTxt: true, ids: de('r2') });
+  mk('tb', 'l2', 3, '2026-09-21', 'prevista', { exame: true, reteste: 'Inconclusivo em 31/03/2026', animaisTxt: true, ids: idsBr([4201, 4207, 4215]) });
+  mk('ver', 'r1', 20, '2026-09-29', 'prevista', { ids: de('r1') }); mk('ibr', 'se', 14, '2026-10-01', 'prevista', { ids: de('se') }); mk('b19', 'bz', 6, '2026-10-02', 'prevista', { doseTxt: 'bezerras de 3 a 8 meses', ids: B19_ELEG.slice() });
+  mk('afo', 'todos', 136, '2026-11-05', 'prevista', { doseTxt: 'data estadual, editável', ids: todos }); mk('lep', 'todos', 151, '2026-11-15', 'prevista', { ids: ANIMAIS.map(a => a.id) });
+  mk('ver', 'r2', 22, '2026-12-04', 'prevista', { ids: de('r2') }); mk('rai', 'l1', 24, '2027-03-15', 'prevista', { ids: de('l1') });
+  // Histórico (registradas): Registrado por = usuário; Aplicador = quem aplicou
+  const reg = (vac, lote, n, data, hora, por, fr, result, extra = {}, regPor = USUARIO) => {
     const v = VACINAS0.find(x => x.id === vac); const q = qtdUso(v, lote, n);
-    const a = mk(vac, lote, n, data, 'registrada', Object.assign({ reg: { data, hora, por, frasco: fr, frascoId: null, doses: q, custo: +(q * v.custo).toFixed(2), d1: 0, d2: 0, nextId: null, carIds: [], result: result || null, via: v.dose.split('·')[1] ? v.dose.split('·')[1].trim() : '' } }, extra));
-    S.aud.push({ id: 'ev' + (++S.evs), t: data + ' ' + hora, quem: por, acao: v.exame ? 'Registrou exame' : 'Registrou aplicação', apl: a.id, vac, lote, n, doses: q, custo: a.reg.custo, frasco: fr, via: a.reg.via, aplicador: por, motivo: '', result: result || null, estornado: false });
+    const a = mk(vac, lote, n, data, 'registrada', Object.assign({ reg: { data, hora, por, regPor, frasco: fr, frascoId: null, doses: q, custo: +(q * v.custo).toFixed(2), nextId: null, carIds: [], result: result || null, via: v.via } }, extra));
+    S.aud.push({ id: 'ev' + (++S.evs), t: data + ' ' + hora, quem: regPor, acao: v.exame ? 'Registrou exame' : 'Registrou aplicação', apl: a.id, vac, lote, n, doses: q, custo: a.reg.custo, frasco: fr, via: v.via, aplicador: por, motivo: '', result: result || null, estornado: false, excecao: v.soVet && !ehVet(por) ? ['Aplicador não veterinário'] : [] });
     return a;
   };
-  reg('afo', 'todos', 136, '2025-11-05', '07:40', PESSOAS[2], 'AF-2510');
-  reg('b19', 'bz', 9, '2026-08-14', '09:10', PESSOAS[1], 'BR-2604');
-  reg('clo', 'r2', 22, '2026-08-26', '08:20', PESSOAS[2], 'CL-2608', null, { doseTxt: 'dose 1' });
-  reg('clo', 'l1', 24, '2026-04-10', '07:55', PESSOAS[3], 'CL-2604', null, { doseTxt: 'reforço anual' });
-  reg('rai', 'l3', 6, '2025-09-27', '08:05', PESSOAS[2], 'RA-2508');
-  reg('rai', 'l1', 24, '2026-03-15', '07:30', PESSOAS[3], 'RA-2603');
-  reg('ibr', 'se', 14, '2026-04-01', '08:00', PESSOAS[3], 'IB-2603');
-  reg('ibr', 'l1', 24, '2026-03-20', '07:45', PESSOAS[3], 'IB-2603');
-  reg('lep', 'todos', 151, '2026-05-15', '07:30', PESSOAS[2], 'LE-2604');
-  reg('ver', 'r1', 20, '2026-07-01', '08:15', PESSOAS[2], 'IV-2604');
-  reg('ver', 'r2', 22, '2026-09-05', '08:40', PESSOAS[2], 'IV-2604');
-  reg('tb', 'l2', 28, '2026-03-31', '09:30', PESSOAS[1], 'TU-2603', 'Inconclusivo · 3 animais (reteste em 60 dias)', { exame: true });
-  reg('tb', 'l1', 24, '2026-03-30', '09:00', PESSOAS[1], 'TU-2603', 'Negativo · 24 animais');
-  reg('brc', 'l1', 24, '2026-02-10', '08:30', PESSOAS[1], 'coleta', 'Negativo · 24 animais');
-  // Cobertura por vacina × lote: {tot, em, atras (atrasadas), sem (ainda sem a dose)}
-  const c = (tot, em, atras = 0, sem = 0) => ({ tot, em, atras, sem });
-  const all = (ids) => { const o = {}; ids.forEach(l => { o[l] = c(loteOf(l).n, loteOf(l).n); }); return o; };
-  S.cob.afo = all(['l1', 'l2', 'l3', 'pp', 'se', 'r1', 'r2']);
-  S.cob.b19 = { bz: c(15, 9, 0, 6), r1: c(20, 20), r2: c(15, 15) };
-  S.cob.clo = Object.assign(all(['l1', 'l2', 'l3', 'pp', 'r1']), { r2: c(22, 0, 22, 0) });
-  S.cob.rai = Object.assign(all(['l1', 'l2', 'pp', 'se', 'r1', 'r2', 'bz']), { l3: c(19, 13, 6, 0) });
-  S.cob.ibr = Object.assign(all(['l2', 'l3', 'pp', 'se']), { l1: c(24, 23, 0, 1) });
-  S.cob.lep = Object.assign(all(['l1', 'l2', 'l3', 'pp', 'se', 'r1', 'r2']), { bz: c(15, 10, 0, 5) });
-  S.cob.ver = all(['r1', 'r2']);
-  S.cob.tb = { l2: c(3, 0, 3, 0) };
-  S.cob.brc = {};
-  // Carência ativa (mastite: ceftiofur, leite e carne 4 dias após o último dia)
+  reg('afo', 'todos', 136, '2025-11-05', '07:40', PESSOAS[2], 'AF-2510'); reg('b19', 'bz', 9, '2026-08-14', '09:10', PESSOAS[1], 'BR-2604', null, {}, PESSOAS[1]);
+  reg('clo', 'r2', 22, '2026-08-26', '08:20', PESSOAS[2], 'CL-2608', null, { doseTxt: 'dose 1' }); reg('clo', 'l1', 24, '2026-04-10', '07:55', PESSOAS[3], 'CL-2604', null, { doseTxt: 'reforço anual' });
+  reg('rai', 'l3', 6, '2025-09-27', '08:05', PESSOAS[2], 'RA-2508'); reg('rai', 'l1', 24, '2026-03-15', '07:30', PESSOAS[3], 'RA-2603');
+  reg('ibr', 'se', 14, '2026-04-01', '08:00', PESSOAS[3], 'IB-2603'); reg('ibr', 'l1', 23, '2026-04-15', '07:45', PESSOAS[3], 'IB-2604'); reg('lep', 'todos', 146, '2026-05-15', '07:30', PESSOAS[2], 'LE-2604');
+  reg('ver', 'r1', 20, '2026-07-01', '08:15', PESSOAS[2], 'IV-2604'); reg('ver', 'r2', 22, '2026-09-05', '08:40', PESSOAS[2], 'IV-2604');
+  reg('tb', 'l2', 28, '2026-03-31', '09:30', PESSOAS[1], 'TU-2603', 'Inconclusivo · 3 animais (4201, 4207, 4215)', { exame: true }, PESSOAS[1]); reg('tb', 'l1', 24, '2026-03-30', '09:00', PESSOAS[1], 'TU-2603', 'Negativo · 24 animais', { exame: true }, PESSOAS[1]);
+  reg('brc', 'l1', 24, '2026-02-10', '08:30', PESSOAS[1], 'coleta', 'Negativo · 24 animais', { exame: true }, PESSOAS[1]);
   S.car = [
     { id: 'c1', txt: 'Ceftiofur (mastite clínica)', lote: 'l1', n: 3, tipo: 'leite', ate: '2026-10-04', orig: null, nota: 'último dia de tratamento 30/09 + 4 dias' },
     { id: 'c2', txt: 'Ceftiofur (mastite clínica)', lote: 'l1', n: 3, tipo: 'carne', ate: '2026-10-04', orig: null, nota: 'último dia de tratamento 30/09 + 4 dias' }
   ];
   return S;
 }
-function seedVazio() { const S = seedSanidade(); S.vacinas = []; S.apl = []; S.cob = {}; S.car = []; S.aud = []; S.draft = null; return S; }
+function seedVazio() { const S = seedSanidade(); S.vacinas = []; S.apl = []; S.doses = []; S.exames = []; S.reag = []; S.car = []; S.aud = []; S.draft = null; return S; }
 const vacOf = a => SAN.vacinas.find(v => v.id === a.vac) || VACINAS0.find(v => v.id === a.vac);
 const aplById = id => SAN.apl.find(a => a.id === id);
 const estOf = vacId => { const v = SAN.vacinas.find(x => x.id === vacId) || VACINAS0.find(x => x.id === vacId); return v ? SAN.est.find(e => e.id === v.prod) : null; };
-const nEf = a => a.n - Object.keys(a.rem).length + Object.keys(a.inc).length;
+const nEf = a => aplAnimais(a).length;
 const feita = a => a.estado === 'registrada' || a.estado === 'pulada';
 function estadoVis(a) {
   if (a.estado === 'registrada') return 'registrada';
@@ -806,38 +893,20 @@ function carTxt(v, loteId) {
   if (v.carCarne) p.push('carne ' + v.carCarne + ' dias');
   return p.length ? p.join(' · ') : 'sem carência';
 }
-/* ── Cobertura: definição única = % de animais com TODAS as vacinas aplicáveis em dia ── */
-function atrasadosSet(lote) {
-  const s = new Set();
-  Object.keys(SAN.cob).forEach(v => Object.keys(SAN.cob[v]).forEach(l => { if (lote && l !== lote) return; const c = SAN.cob[v][l]; animaisDoLote(l).slice(0, c.atras).forEach(a => s.add(a.id)); }));
-  return s;
-}
-function cobGlobal(lote) {
-  const total = lote ? loteOf(lote).n : 151; const at = atrasadosSet(lote).size;
-  if (!SAN.apl.some(a => a.estado === 'registrada')) return null;
-  return { total, ok: total - at, at, pct: Math.round((total - at) / total * 100) };
-}
-const cobPct = lote => { const g = cobGlobal(lote); return g ? g.pct : null; };
-const cobCor = p => p >= 95 ? 'ok' : p >= 85 ? 'amber' : 'red';
-function cobVac(v, lote) { let tot = 0, em = 0, atras = 0, sem = 0; Object.keys(SAN.cob[v] || {}).forEach(l => { if (lote && l !== lote) return; const c = SAN.cob[v][l]; tot += c.tot; em += c.em; atras += c.atras; sem += c.sem; }); return { tot, em, atras, sem, pct: tot ? Math.round(em / tot * 100) : null }; }
 function aplAnimais(a) {
-  const base = a.lote === 'todos' ? ANIMAIS.filter(x => x.lote !== 'bz') : animaisDoLote(a.lote);
-  const ids = base.slice(0, a.n).map(x => x.id).filter(id => !(id in a.rem));
-  return ids.concat(Object.keys(a.inc));
+  const base = a.ids ? a.ids : (a.lote === 'todos' ? ANIMAIS.filter(x => x.lote !== 'bz') : animaisDoLote(a.lote)).slice(0, a.n).map(x => x.id);
+  return base.filter(id => !(id in a.rem)).concat(Object.keys(a.inc));
 }
-function audit(a, acao, o = {}) {
-  const e = Object.assign({ id: 'ev' + (++SAN.evs), t: nowT(), quem: USUARIO, acao, apl: a ? a.id : null, vac: a ? a.vac : null, lote: a ? a.lote : null, n: a ? nEf(a) : 0, motivo: '', estornado: false }, o);
-  SAN.aud.push(e); if (a) a.log.push({ t: e.t, quem: e.quem, txt: acao + (e.motivo ? ' · ' + e.motivo : ''), ev: e.id }); return e;
-}
-let SAN = seedSanidade();
+let SAN;
+SAN = seedSanidade();
 
-/* ═════════ Protocolos ═════════ */
+/* ═════════ Protocolos: TODOS contam Dia 0 = início ═════════ */
 const TIPOS_PROTO = {
-  iatf: { nome: 'Inseminação programada (IATF)', curto: 'Inseminação programada', icon: 'target', cat: 'reproducao' },
-  inducao: { nome: 'Indução de lactação', curto: 'Indução de lactação', icon: 'layers', cat: 'reproducao' },
-  tratamento: { nome: 'Tratamento (curativo)', curto: 'Tratamento curativo', icon: 'syringe', cat: 'sanidade' },
-  proprio: { nome: 'Protocolo próprio', curto: 'Protocolo próprio', icon: 'list-checks', cat: 'gestao' },
-  tarefa: { nome: 'Tarefa da fazenda', curto: 'Tarefa da fazenda', icon: 'clipboard-list', cat: 'recria' }
+  iatf: { nome: 'Inseminação programada (IATF)', curto: 'Inseminação programada', icon: 'target', cat: 'reproducao', slug: 'iatf' },
+  inducao: { nome: 'Indução de lactação', curto: 'Indução de lactação', icon: 'layers', cat: 'reproducao', slug: 'inducao' },
+  tratamento: { nome: 'Tratamento (curativo)', curto: 'Tratamento curativo', icon: 'syringe', cat: 'sanidade', slug: 'tratamento' },
+  proprio: { nome: 'Protocolo próprio', curto: 'Protocolo próprio', icon: 'list-checks', cat: 'gestao', slug: 'proprio' },
+  tarefa: { nome: 'Tarefa da fazenda', curto: 'Tarefa da fazenda', icon: 'clipboard-list', cat: 'recria', slug: 'tarefa' }
 };
 const HORM = [
   { id: 'imp', prod: 'Implante Sincrogest', un: 'un', fr: [{ f: 'SG-2607', val: '2027-11-30', saldo: 30 }] },
@@ -845,45 +914,45 @@ const HORM = [
   { id: 'sf', prod: 'Sincroforte (buserelina)', un: 'mL', fr: [{ f: 'SF-2606', val: '2027-10-31', saldo: 40 }], frasco: 20 },
   { id: 'es', prod: 'Estron (cloprostenol)', un: 'mL', fr: [{ f: 'ES-2607', val: '2027-11-30', saldo: 120 }], frasco: 60 },
   { id: 'cp', prod: 'SincroCP (cipionato)', un: 'mL', fr: [{ f: 'CP-2606', val: '2027-10-31', saldo: 50 }], frasco: 50 },
-  { id: 'atb', prod: 'Ceftiofur', un: 'mL', fr: [{ f: 'CF-2608', val: '2027-03-31', saldo: 200 }] },
+  { id: 'atb', prod: 'Ceftiofur', un: 'mL', fr: [{ f: 'CF-5510', val: '2027-03-31', saldo: 200 }] },
   { id: 'estrog', prod: 'Estradiol + progesterona (indução)', un: 'mL', fr: [{ f: 'EP-2608', val: '2027-05-31', saldo: 90 }] },
   { id: 'dexa', prod: 'Dexametasona 0,2%', un: 'mL', fr: [{ f: 'DX-2607', val: '2027-08-31', saldo: 100 }] },
   { id: 'anion', prod: 'Sal aniônico (saco 25 kg)', un: 'un', fr: [{ f: 'SA-2609', val: '2027-10-31', saldo: 16 }] }
 ];
 const hormOf = id => HORM.find(h => h.id === id);
 const saldoTxt = (H, s) => H.frasco ? `${num(s)} mL (${(s / H.frasco).toFixed(1).replace('.', ',')} frascos)` : `${num(s)} ${H.un}`;
-const diaLbl = (d, m) => 'Dia ' + (d + (m && m.base != null ? m.base : 0));
+const diaLbl = d => 'Dia ' + d;
 function seedProtocolos() {
   const P = { seq: 10, aud: [] };
   const et = (d, acao, prods = [], extra = {}) => Object.assign({ d, acao, prods }, extra);
+  const T = (quem, txt) => ({ v: 1, t: '2026-08-01 09:00', quem, txt });
   P.modelos = [
-    { id: 'm1', nome: 'Inseminação programada · Dia 0 ao Dia 11 (padrão)', tipo: 'iatf', ativo: true, usado: 3, base: 0, etapas: [
+    { id: 'm1', nome: 'Inseminação programada · Dia 0 ao Dia 11 (padrão)', tipo: 'iatf', ativo: true, usado: 3, versao: 1, hist: [T(PESSOAS[1], 'Modelo criado (v1)')], etapas: [
       et(0, 'Colocar o implante + Sincrodiol 2 mL + Sincroforte 2,5 mL', [{ h: 'imp', q: 1 }, { h: 'sd', q: 2 }, { h: 'sf', q: 2.5 }]),
       et(7, 'Estron 2 mL', [{ h: 'es', q: 2 }]),
       et(9, 'Retirar o implante + Estron 2 mL + SincroCP 1 mL', [{ h: 'es', q: 2 }, { h: 'cp', q: 1 }]),
       et(11, 'Inseminar (registrar em Reprodução)', [], { insem: true })] },
-    { id: 'm2', nome: 'Indução de lactação · 21 dias', tipo: 'inducao', ativo: true, usado: 1, base: 1, etapas: [
-      et(0, 'Estradiol + progesterona 5 mL', [{ h: 'estrog', q: 5 }]), et(3, 'Estradiol + progesterona 5 mL', [{ h: 'estrog', q: 5 }]), et(6, 'Estradiol + progesterona 5 mL', [{ h: 'estrog', q: 5 }]),
-      et(9, 'Dexametasona 5 mL', [{ h: 'dexa', q: 5 }]), et(13, 'Dexametasona 5 mL', [{ h: 'dexa', q: 5 }]), et(17, 'Dexametasona 5 mL', [{ h: 'dexa', q: 5 }]), et(20, 'Iniciar ordenha')] },
-    { id: 'm3', nome: 'Mastite clínica · ceftiofur por 5 dias', tipo: 'tratamento', ativo: true, usado: 6, base: 1, carLeite: 4, carCarne: 4, etapas: [0, 1, 2, 3, 4].map(d => et(d, 'Ceftiofur 5 mL intramuscular', [{ h: 'atb', q: 5 }])) },
-    { id: 'm4', nome: 'Adaptação pré-parto · 7 dias', tipo: 'proprio', ativo: true, usado: 2, base: 1, etapas: [
+    { id: 'm2', nome: 'Indução de lactação · 21 dias', tipo: 'inducao', ativo: true, usado: 1, versao: 1, hist: [T(PESSOAS[1], 'Modelo criado (v1)')], etapas: [
+      et(0, 'Estradiol + progesterona 5 mL', [{ h: 'estrog', q: 5 }]), et(3, 'Estradiol + progesterona 5 mL', [{ h: 'estrog', q: 5 }]), et(7, 'Estradiol + progesterona 5 mL', [{ h: 'estrog', q: 5 }]),
+      et(10, 'Dexametasona 5 mL', [{ h: 'dexa', q: 5 }]), et(14, 'Dexametasona 5 mL', [{ h: 'dexa', q: 5 }]), et(17, 'Dexametasona 5 mL', [{ h: 'dexa', q: 5 }]), et(20, 'Iniciar ordenha')] },
+    { id: 'm3', nome: 'Mastite clínica · ceftiofur por 5 dias', tipo: 'tratamento', ativo: true, usado: 6, versao: 1, hist: [T(PESSOAS[1], 'Modelo criado (v1)')], carLeite: 4, carCarne: 4, etapas: [0, 1, 2, 3, 4].map(d => et(d, 'Ceftiofur 5 mL intramuscular por vaca', [{ h: 'atb', q: 5 }])) },
+    { id: 'm4', nome: 'Adaptação pré-parto · 7 dias', tipo: 'proprio', ativo: true, usado: 2, versao: 1, hist: [T(USUARIO, 'Modelo criado (v1)')], etapas: [
       et(0, 'Iniciar sal aniônico na dieta', [{ h: 'anion', q: 1 }]), et(3, 'Medir o pH da urina'), et(6, 'Medir o pH da urina e encerrar a adaptação')] },
-    { id: 'm5', nome: 'Limpeza de bebedouros (semanal)', tipo: 'tarefa', ativo: true, usado: 12, base: 1, etapas: [et(0, 'Esvaziar, lavar e reabastecer')] },
-    { id: 'm6', nome: 'Inseminação programada curta · Dia 0 ao Dia 9', tipo: 'iatf', ativo: false, usado: 0, base: 0, etapas: [
+    { id: 'm5', nome: 'Limpeza de bebedouros (semanal)', tipo: 'tarefa', ativo: true, usado: 12, versao: 1, hist: [T(USUARIO, 'Modelo criado (v1)')], etapas: [et(0, 'Esvaziar, lavar e reabastecer')] },
+    { id: 'm6', nome: 'Inseminação programada curta · Dia 0 ao Dia 9', tipo: 'iatf', ativo: false, usado: 0, versao: 1, hist: [T(PESSOAS[1], 'Modelo criado (v1)')], etapas: [
       et(0, 'Colocar o implante + Sincrodiol 2 mL', [{ h: 'imp', q: 1 }, { h: 'sd', q: 2 }]), et(7, 'Retirar o implante + Estron 2 mL', [{ h: 'es', q: 2 }]), et(9, 'Inseminar (registrar em Reprodução)', [], { insem: true })] }
   ];
-  const pick = (lote, n, off = 0) => animaisDoLote(lote).slice(off, off + n).map(a => a.id);
   const mkp = (nome, modelo, lote, ids, d0, estado, extra = {}) => Object.assign({ id: 'pr' + (++P.seq), nome, modelo, lote, animais: ids, d0, estado, baixas: {}, log: [], shift: {} }, extra);
   const feito = (p, idx, por, data, hora = '08:10') => p.animais.forEach(id => { p.baixas[id + ':' + idx] = { por, frasco: '—', data, hora, prevista: data }; });
   P.lista = [];
-  let p = mkp('Inseminação programada · Recria 2 · Dia 0 em 20/09', 'm1', 'r2', pick('r2', 12), '2026-09-20', 'andamento'); feito(p, 0, PESSOAS[2], '2026-09-20'); feito(p, 1, PESSOAS[2], '2026-09-27'); P.lista.push(p);
-  p = mkp('Inseminação programada · Lote 02 – Média · Dia 0 em 27/09', 'm1', 'l2', pick('l2', 8, 6), '2026-09-27', 'andamento'); feito(p, 0, PESSOAS[3], '2026-09-27'); P.lista.push(p);
-  p = mkp('Tratamento de mastite clínica · 3 vacas do Lote 01 · início 26/09', 'm3', 'l1', pick('l1', 3, 2), '2026-09-26', 'andamento'); [0, 1, 2].forEach(i => feito(p, i, PESSOAS[1], addD('2026-09-26', i))); P.lista.push(p);
-  p = mkp('Adaptação pré-parto · Pré-parto · início 25/09', 'm4', 'pp', pick('pp', 9), '2026-09-25', 'andamento'); [0, 1].forEach(i => feito(p, i, PESSOAS[2], addD('2026-09-25', i * 3))); P.lista.push(p);
-  p = mkp('Indução de lactação · 2 novilhas · início 22/09', 'm2', 'r2', pick('r2', 2, 12), '2026-09-22', 'andamento'); [0, 1, 2].forEach(i => feito(p, i, PESSOAS[1], addD('2026-09-22', i * 3))); P.lista.push(p);
-  p = mkp('Inseminação programada · Lote 01 – Alta produção · Dia 0 em 08/09', 'm1', 'l1', pick('l1', 10, 8), '2026-09-08', 'concluido'); [0, 1, 2, 3].forEach(i => feito(p, i, PESSOAS[1], addD('2026-09-08', [0, 7, 9, 11][i]))); P.lista.push(p);
-  p = mkp('Indução de lactação · 2 novilhas · início 01/09', 'm2', 'r1', pick('r1', 2), '2026-09-01', 'interrompido', { motivo: 'Novilhas entraram em cio natural' }); [0, 1].forEach(i => feito(p, i, PESSOAS[1], addD('2026-09-01', i * 3))); P.lista.push(p);
-  p = mkp('Inseminação programada · Lote 03 – Baixa · Dia 0 em 27/09', 'm1', 'l3', pick('l3', 5), '2026-09-27', 'engano', { motivo: 'Lote errado: era para o Lote 02 – Média' }); P.lista.push(p);
+  let p = mkp('Inseminação programada · Recria 2 · Dia 0 em 20/09/2026', 'm1', 'r2', idsBr(rng(5201, 5212)), '2026-09-20', 'andamento'); feito(p, 0, PESSOAS[2], '2026-09-20'); feito(p, 1, PESSOAS[2], '2026-09-27'); P.lista.push(p);
+  p = mkp('Inseminação programada · Lote 02 – Média · Dia 0 em 27/09/2026', 'm1', 'l2', idsBr([4210, 4211, 4212, 4213, 4214, 4216, 4217, 4218]), '2026-09-27', 'andamento'); feito(p, 0, PESSOAS[3], '2026-09-27'); P.lista.push(p);
+  p = mkp('Tratamento de mastite clínica · 3 vacas do Lote 01 · início 26/09/2026', 'm3', 'l1', idsBr([4105, 4112, 4131]), '2026-09-26', 'andamento'); [0, 1, 2].forEach(i => feito(p, i, PESSOAS[1], addD('2026-09-26', i))); P.lista.push(p);
+  p = mkp('Adaptação pré-parto · Pré-parto · início 25/09/2026', 'm4', 'pp', idsBr(rng(4301, 4309)), '2026-09-25', 'andamento'); feito(p, 0, PESSOAS[2], '2026-09-25'); feito(p, 1, PESSOAS[2], '2026-09-28'); P.lista.push(p);
+  p = mkp('Indução de lactação · 2 novilhas · início 22/09/2026', 'm2', 'r1', idsBr([5108, 5117]), '2026-09-22', 'andamento'); [0, 1].forEach(i => feito(p, i, PESSOAS[1], addD('2026-09-22', [0, 3][i]))); P.lista.push(p);
+  p = mkp('Inseminação programada · Lote 01 – Alta produção · Dia 0 em 08/09/2026', 'm1', 'l1', idsBr([4108, 4115, 4118, 4120, 4127, 4129, 4134, 4138, 4141, 4143]), '2026-09-08', 'concluido'); [0, 1, 2, 3].forEach(i => feito(p, i, PESSOAS[1], addD('2026-09-08', [0, 7, 9, 11][i]))); P.lista.push(p);
+  p = mkp('Indução de lactação · 2 novilhas · início 01/09/2026', 'm2', 'r1', idsBr([5103, 5105]), '2026-09-01', 'interrompido', { motivo: 'Novilhas entraram em cio natural' }); [0, 1].forEach(i => feito(p, i, PESSOAS[1], addD('2026-09-01', i * 3))); P.lista.push(p);
+  p = mkp('Inseminação programada · Lote 03 – Baixa · Dia 0 em 27/09/2026', 'm1', 'l3', idsBr([2105, 2109, 2113, 2121, 2125]), '2026-09-27', 'engano', { motivo: 'Lote errado: era para o Lote 02 – Média' }); P.lista.push(p);
   return P;
 }
 let PRO = seedProtocolos();
@@ -895,7 +964,7 @@ function protoStats(p) {
   const m = modeloOf(p.modelo); const tot = p.animais.length * m.etapas.length; const feitas = Object.keys(p.baixas).length;
   let atras = 0, prox = null, proxTxt = '';
   m.etapas.forEach((e, i) => { const dt = etapaData(p, e); const pend = p.animais.filter(id => !p.baixas[id + ':' + i]).length; if (pend) { if (dt < HI) atras += pend; if (!prox || dt < prox) { prox = dt; proxTxt = e.acao; } } });
-  const b = m.base || 0; const ult = m.etapas[m.etapas.length - 1].d + b; const diaAtual = Math.max(b, Math.min(ult, diff(HI, p.d0) + b));
+  const ult = Math.max(1, m.etapas[m.etapas.length - 1].d); const diaAtual = Math.max(0, Math.min(ult, diff(HI, p.d0)));
   return { tot, feitas, atras, prox, proxTxt, dias: ult, diaAtual, atrasado: p.estado === 'andamento' && atras > 0 };
 }
 function emProtocolo(id) { return PRO.lista.find(p => p.estado === 'andamento' && p.animais.includes(id)); }
@@ -934,8 +1003,9 @@ function route() {
 function renderView() {
   const act = document.activeElement; const fk = act && $('#view').contains(act) ? (act.closest('[data-fk]') || {}).dataset?.fk : null;
   const scroll = $('#main').scrollTop;
-  $('#view').innerHTML = (NET.off ? netBanner() : '') + ROUTES[R.path]();
+  $('#view').innerHTML = (NET.off ? netBanner() : '') + (R.path.startsWith('/sanidade') ? reagBanner() : '') + ROUTES[R.path]();
   $('#main').scrollTop = scroll;
+  { const h1 = $('#view h1'); if (h1) h1.setAttribute('tabindex', '-1'); }
   if (fk) { const el = $(`#view [data-fk="${fk}"]`); if (el) { el.focus({ preventScroll: true }); if (el.setSelectionRange && el.type === 'search') { const n = el.value.length; el.setSelectionRange(n, n); } } }
 }
 function refresh() { renderView(); renderDrawer(true); renderChrome(); }
@@ -951,7 +1021,7 @@ function setTema(t) {
 
 /* ═════════ Casca: Sidebar, sub-nav ═════════ */
 const NAV = [
-  { g: 'Ciclo diário', items: [['Capa', 'home'], ['Agenda', 'calendar'], ['Lançamentos', 'clipboard-list'], ['Protocolos', 'list-checks', '/protocolos']] },
+  { g: 'Ciclo diário', items: [['Capa', 'home'], ['Agenda', 'calendar', 'agenda.html#/agenda'], ['Lançamentos', 'clipboard-list'], ['Protocolos', 'list-checks', '/protocolos']] },
   { g: 'Manejo do rebanho', items: [['Rebanho', 'cow'], ['Histórico', 'heart'], ['Ciclos de 21 dias', 'calendar']] },
   { g: 'Insumos e sanidade', items: [['Sanidade', 'syringe', '/sanidade/vacinas'], ['Alimentação', 'wheat'], ['Estoque', 'package']] },
   { g: 'Financeiro', items: [['Controle Financeiro', 'bar-chart'], ['Cotações', 'file-search'], ['Pedidos', 'cart']] }
@@ -962,13 +1032,13 @@ function renderSidebar() {
   const ativo = R.path.startsWith('/protocolos') ? 'Protocolos' : R.path.startsWith('/sanidade') ? 'Sanidade' : '';
   let h = `<button class="sb-collapse" data-act="fora" data-n="Recolher menu" aria-label="Recolher menu" title="Recolher menu">${ic('chevrons-left', 's12')}</button>
   <button class="sb-x" id="sbx" data-act="sbx" aria-label="Fechar menu">${ic('x', 's20')}</button>
-  <div class="sb-logo"><div class="in">${MARK}<div class="sb-word">Cow<b>Data</b></div><p class="sb-fz">Jairo Nasser</p></div></div>
+  <div class="sb-logo"><div class="in">${MARK}<div class="sb-word">Cow<b>Data</b></div><p class="sb-fz">Fazenda Estreito Ponte de Pedra</p></div></div>
   <nav class="sb-nav" aria-label="Menu principal">`;
   NAV.forEach(g => {
     h += `<div><p class="sb-grp">${esc(g.g)}</p>`;
     g.items.forEach(([n, icon, to]) => {
       const cur = n === ativo;
-      h += `<a href="${to ? href(to) : '#'}" ${cur ? 'aria-current="page"' : ''} ${to ? '' : `data-act="fora" data-n="${esc(n)}"`} title="${esc(n)}">${icon === 'cow' ? COW : ic(icon)}${esc(n)}</a>`;
+      const ext = to && to.includes('.html'); h += `<a href="${to ? (ext ? to : href(to)) : '#'}" ${cur ? 'aria-current="page"' : ''} ${to ? '' : `data-act="fora" data-n="${esc(n)}"`} title="${esc(n)}">${icon === 'cow' ? COW : ic(icon)}${esc(n)}</a>`;
     });
     h += `</div>`;
   });
@@ -1021,7 +1091,7 @@ function mountDrawer(spec) {
   root.innerHTML = overlay
     ? `<div class="print-ov" role="dialog" aria-modal="true" aria-label="${esc(spec.label)}">${spec.html}</div>`
     : `<div class="scrim" data-act="dr-close"></div><div class="drawer ${spec.cls || ''}" role="dialog" aria-modal="true" aria-label="${esc(spec.label)}">${spec.html}</div>`;
-  $('.shell').setAttribute('inert', '');
+  $('.shell').setAttribute('inert', ''); document.body.classList.add('has-drawer');
   const dlg = $('.drawer, .print-ov', root); const f = focusables(dlg); (f.find(e => e.dataset.first !== undefined) || f[0] || dlg).focus({ preventScroll: true });
 }
 function closeDrawerDom(silent) {
@@ -1029,9 +1099,9 @@ function closeDrawerDom(silent) {
   if (!DR.key) { root.innerHTML = ''; return; }
   if (DR.key.startsWith('wz')) wzOnClose();
   if (DR.key.startsWith('md')) mdOnClose();
-  root.innerHTML = ''; $('.shell').removeAttribute('inert');
+  root.innerHTML = ''; $('.shell').removeAttribute('inert'); document.body.classList.remove('has-drawer');
   const k = DR.openerKey, op = DR.opener; DR.key = null; DR.opener = null; DR.openerKey = null; UI.drKey = null;
-  if (!silent) { let el = (op && document.contains(op)) ? op : (k ? $(`[data-fk="${k}"]`) : null); (el || $('#main')).focus({ preventScroll: true }); }
+  if (!silent) { let el = (op && document.contains(op)) ? op : (k ? $(`[data-fk="${k}"]`) : null); (el || $(`#view [data-fk^="row-"]`) || $('#view h1') || $('#main')).focus({ preventScroll: true }); }
 }
 function closeDrawer() { const patch = {}; DK.forEach(k => { patch[k] = null; }); setQ(patch); }
 function drawerHead(kicker, title, meta, opts = {}) {
@@ -1052,7 +1122,7 @@ function renderDrawer(force) {
   } else if (R.path.startsWith('/protocolos')) {
     if (q.get('pimprimir')) spec = printProtoSpec(q.get('pimprimir'));
     else if (q.get('proto')) spec = drProto(q.get('proto'));
-    else if (q.get('modelo')) spec = drModelo();
+    else if (q.get('modelo') && R.path === '/protocolos/modelos') spec = drModelo();
   }
   if (!spec) { closeDrawerDom(); return; }
   mountDrawer(spec);
@@ -1082,9 +1152,9 @@ function toastRender() {
   if (!TS.el) { TS.el = document.createElement('div'); TS.el.className = 'toast'; box.appendChild(TS.el); }
   const n = TS.stack.length; const last = TS.stack[n - 1];
   const txt = TS.infoLeft > 0 ? TS.info : n > 1 ? `${n} ações feitas · última: ${last.msg}` : last.msg;
-  TS.el.innerHTML = `${ic(TS.icon || 'ok', 's18 ok')}<span class="msg">${esc(txt)}</span>${n ? `<button type="button" class="ac">Desfazer ${n > 1 ? 'última ' : ''}(${TS.left} s)</button>` : ''}<button type="button" class="x" aria-label="Dispensar aviso">${ic('x')}</button>`;
+  TS.el.innerHTML = `${ic(TS.icon || 'ok', 's18 ok')}<span class="msg">${esc(txt)}</span>${n ? `<button type="button" class="ac">${n > 1 ? 'Desfazer só a última' : 'Desfazer'} (${TS.left} s)</button>` : ''}<button type="button" class="x" aria-label="Dispensar aviso">${ic('x')}</button>`;
   $('.x', TS.el).addEventListener('click', () => { TS.stack = []; TS.infoLeft = 0; toastRender(); });
-  if (n) $('.ac', TS.el).addEventListener('click', () => { const e = TS.stack.pop(); TS.left = 10; e.fn && e.fn(); toastRender(); });
+  if (n) $('.ac', TS.el).addEventListener('click', () => { const e = TS.stack.pop(); TS.left = 10; e.fn && e.fn(); TS.info = 'Desfeito: ' + e.msg; TS.infoLeft = 4; TS.icon = 'undo'; toastRender(); });
 }
 function toast(msg, o = {}) {
   TS.icon = o.icon;
@@ -1169,8 +1239,14 @@ const opts = (list, val, ph) => (ph ? `<option value="">${esc(ph)}</option>` : '
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 const LOTE_OPTS = LOTES.map(l => [l.id, l.nome]);
 const NET = { off: false };
+function reagBanner() {
+  if (!SAN.reag.length) return '';
+  return SAN.reag.map(r => { const an = animalOf(r.a); return `<div class="aviso red reag" role="alert" style="margin-bottom:1rem">${ic('warn')}<div class="txt"><b>Reagente ao exame de TB: ${esc(lbl(an))}</b> (${esc(loteOf(an.lote).nome)})${r.laudo ? ' · laudo ' + esc(r.laudo) : ''}. Notifique o serviço veterinário oficial. Comprovante de animal em dia bloqueado.
+    <label class="chk" style="margin-top:.3rem"><input type="checkbox" data-ch="notif" data-id="${r.id}" ${r.notif ? 'checked disabled' : ''}><span>Notificação ao serviço veterinário oficial registrada${r.notif ? ` <b>por ${esc(r.notif.quem.split(' (')[0])} em ${dh(r.notif.t)}</b>` : ''}</span></label></div></div>`; }).join('');
+}
+IN.notif = (c, t) => { const r = SAN.reag.find(x => x.id === t.dataset.id); if (!c || r.notif) return; r.notif = { quem: USUARIO, t: nowT() }; audit(null, 'Registrou notificação ao serviço veterinário oficial', { motivo: lbl(animalOf(r.a)) }); refresh(); toast('Notificação registrada com seu nome e a hora.', { icon: 'ok' }); };
 const MOTIVOS_PULO = ['Sem insumo', 'Animal fora do lote', 'Adiada por manejo', 'Decisão do veterinário', 'Outro'];
-const gestaoChip = () => `<button type="button" class="chipg" data-act="fora" data-n="Controle Financeiro › Contas a pagar">${ic('wallet', 's14')}Gestão: 1 conta vence hoje<span class="hm">&nbsp;· R$ 12.480,00</span></button>`;
+const gestaoChip = () => ''; const _gestaoChipOff = () => `<button type="button" class="chipg" data-act="fora" data-n="Controle Financeiro › Contas a pagar">${ic('wallet', 's14')}Gestão: 1 conta vence hoje<span class="hm">&nbsp;· R$ 12.480,00</span></button>`;
 function netBanner() {
   return `<div class="faixa red" role="alert">${ic('wifioff', 's18')}<span><b>Sem conexão</b> · dados de 14:02. Você continua vendo o último estado conhecido.</span><span class="sp"></span>${bt('btn-sec sm', 'rotate', 'Tentar de novo', 'data-act="net-retry"')}</div>`;
 }
@@ -1244,7 +1320,7 @@ function listaHtml(g) {
 
 /* ── Calendário ── */
 ROUTES['/sanidade/vacinas'] = () => {
-  const acts = bt('btn-gold', 'plus', 'Registrar aplicação', 'data-act="reg-avulsa" data-fk="reg-avulsa"') + bt('btn-sec hide-m', 'file', 'Cadastrar vacina', 'data-act="go" data-to="/sanidade/vacinas/cadastro" data-q="nova=1"') + bt('btn-ghost hide-m', 'printer', 'Imprimir folha de campo', 'data-act="imprimir" data-fk="imprimir"');
+  const acts = bt('btn-gold', 'plus', 'Registrar aplicação', 'data-act="reg-avulsa" data-fk="reg-avulsa"') + bt('btn-sec hide-m', 'file', 'Cadastrar vacina', 'data-act="go" data-to="/sanidade/vacinas/cadastro" data-q="nova=1"') + bt('btn-ghost hide-m', 'printer', 'Imprimir folha de campo', 'data-act="imprimir" data-fk="imprimir"') + `<button type="button" class="btn btn-sec show-m mais-h" data-act="menu-head" data-menu data-fk="mh" aria-haspopup="menu" aria-label="Mais ações: cadastrar vacina e imprimir folha de campo">${ic('more', 's20')}<span>Mais</span></button>`;
   if (!SAN.vacinas.length) return calVazio(acts);
   const modo = qv('modo') || 'lista'; const lote = qv('lote'); const c = contagens(lote); const g0 = cobGlobal(lote); const cp = g0 ? g0.pct : null; const f = qv('filtro');
   const cc = cp == null ? 'amber' : cobCor(cp);
@@ -1266,8 +1342,10 @@ ROUTES['/sanidade/vacinas'] = () => {
   else if (modo === 'mes') corpo = viewMes() + (qv('dia') ? `<div class="result-line" style="margin-top:1rem"><span role="status">Dia <b style="color:var(--text)">${br(qv('dia'))}</b> · ${total} ${pl(total, 'aplicação', 'aplicações')}</span><button type="button" class="linkbtn" data-act="limpar-dia">Limpar dia</button></div>` + listaHtml(g) : '');
   else corpo = `<div class="result-line hide-m"><span role="status">${ativos.length ? `Filtro: <b style="color:var(--text)">${esc(ativos.join(' · '))}</b> · ` : ''}${total} ${pl(total, 'aplicação', 'aplicações')} na lista</span>${filtrado ? `<button type="button" class="linkbtn" data-act="limpar">Limpar filtros</button>` : `<span></span>`}</div>` + listaHtml(g);
   const draft = SAN.draft ? bannerRascunho() : '';
-  return pgHead('syringe', 'Vacinas e exames', 'O que precisa ser aplicado, em qual lote e até quando.', acts, gestaoChip()) + draft + strip + barra + corpo;
+  return pgHead('syringe', 'Vacinas e exames', 'O que precisa ser aplicado, em qual lote e até quando. Sequências por animal ficam em <button type="button" class="linkbtn" data-act="go" data-to="/protocolos">Protocolos › Em andamento</button>.', acts, gestaoChip()) + draft + strip + barra + corpo;
 };
+ACT['menu-head'] = t => openMenu(t, [{ lbl: 'Cadastrar vacina', icon: 'file', act: 'go', data: { to: '/sanidade/vacinas/cadastro', q: 'nova=1' } }, { lbl: 'Imprimir folha de campo', icon: 'printer', act: 'menu-imp' }]);
+ACT['menu-imp'] = () => { closeMenu(); setQ({ imprimir: '1' }); };
 ACT.tfil = () => { UI.filtOpen = !UI.filtOpen; refresh(); };
 ACT['lote-todos'] = () => setQ({ lote: null }, true);
 function calVazio(acts) {
@@ -1288,8 +1366,7 @@ ACT['modelo-fechar'] = () => { UI.modeloOpen = false; refresh(); };
 IN.modsel = (c, t) => { const id = t.dataset.id; UI.modeloSel = UI.modeloSel.filter(x => x !== id); if (c) UI.modeloSel.push(id); refresh(); };
 ACT['modelo-criar'] = () => {
   const ids = UI.modeloSel; const base = seedSanidade();
-  SAN.vacinas = base.vacinas.filter(v => ids.includes(v.id)); SAN.est = base.est; SAN.cob = {}; let k = 0;
-  SAN.vacinas.forEach(v => { SAN.cob[v.id] = clone(base.cob[v.id] || {}); Object.values(SAN.cob[v.id]).forEach(c => { c.sem += c.atras; c.atras = 0; c.em = 0; c.sem = c.tot; }); });
+  SAN.vacinas = base.vacinas.filter(v => ids.includes(v.id)); SAN.est = base.est; SAN.doses = []; SAN.exames = []; SAN.reag = []; let k = 0;
   SAN.apl = base.apl.filter(a => ids.includes(a.vac) && a.estado !== 'registrada').map(a => { const x = clone(a); if (x.data < HI) x.data = addD(HI, 3 + (k++)); x.id = 'ap' + (++SAN.seq); return x; });
   audit(null, 'Criou o calendário pelo modelo padrão', { motivo: SAN.vacinas.length + ' vacinas' });
   UI.modeloOpen = false; nav('/sanidade/vacinas', {}, true); refresh();
@@ -1362,44 +1439,36 @@ ACT['apl-tab'] = t => { closeMenu(); UI.tab = t.dataset.tab || 'animais'; UI.pan
 ACT['ver-regra'] = t => { closeMenu(); const a = aplById(t.dataset.id); nav('/sanidade/vacinas/cadastro', { editar: a.vac }); };
 ACT.imprimir = () => setQ({ imprimir: '1' });
 
-/* ═════════ Cobertura ═════════ */
+/* ═════════ Cobertura (calculada das doses registradas) ═════════ */
 function semDados(titulo, icone, msg, acts) {
   return pgHead(icone, titulo, '', '') + `<div class="empty">${ic(icone, 's28 ico')}<h2>${msg.t}</h2><p>${msg.p}</p><div class="actions" style="justify-content:center">${acts}</div></div>`;
 }
 const cobIcon = p => cobCor(p) === 'ok' ? 'ok' : 'warn';
-function pendentesAnimal(an) {
-  const out = []; const arr = animaisDoLote(an.lote); const idx = arr.findIndex(x => x.id === an.id);
-  SAN.vacinas.forEach(v => { const c = (SAN.cob[v.id] || {})[an.lote]; if (!c || v.exame && !c.atras && !c.sem) return;
-    const regs = SAN.apl.filter(a => a.vac === v.id && (a.lote === an.lote || a.lote === 'todos') && a.estado === 'registrada' && a.reg).sort((p, q) => p.reg.data < q.reg.data ? 1 : -1);
-    const ult = regs[0] ? regs[0].reg.data : null; const prox = SAN.apl.filter(a => a.vac === v.id && (a.lote === an.lote || a.lote === 'todos') && !feita(a)).sort((p, q) => p.data < q.data ? -1 : 1)[0];
-    let st = 'ok'; if (idx < c.atras) st = 'atrasada'; else if (idx >= arr.length - c.sem) st = 'sem';
-    if (st === 'sem' && !ult && !prox) st = 'nunca';
-    out.push({ v, st, ult, prox: prox ? prox.data : null });
-  });
-  return out;
-}
+const pendentesAnimal = an => statusAnimal(an);
+const ST_PILL = a => a.st === 'ok' ? `<span class="st registrada">${ic('ok', 's14')}Em dia</span>` : a.st === 'atrasada' ? `<span class="st atrasada">${ic('warn', 's14')}Atrasada${a.prox ? ' desde ' + br(a.prox) : ''}</span>` : a.st === 'reagente' ? `<span class="st atrasada">${ic('warn', 's14')}Reagente — notificar serviço veterinário oficial</span>` : `<span class="st vence">${ic('clock', 's14')}Sem registro${a.prox ? ' · prevista ' + br(a.prox) : ''}</span>`;
 ROUTES['/sanidade/vacinas/cobertura'] = () => {
   const acts = bt('btn-ghost', 'printer', 'Imprimir folha de campo', 'data-act="imprimir" data-fk="imprimir"') + bt('btn-sec', 'shield', 'Comprovante de animal em dia', 'data-act="comprovante"');
   if (!SAN.vacinas.length) return semDados('Cobertura vacinal', 'shield', { t: 'A cobertura aparece depois do calendário', p: 'Monte o calendário vacinal e registre as primeiras aplicações; aqui você verá quem está em dia por vacina, lote e animal.' }, bt('btn-gold', 'calendar', 'Montar calendário', 'data-act="go" data-to="/sanidade/vacinas"'));
   const por = qv('por') || 'vacina'; const lote = qv('lote'); const g = cobGlobal(lote);
   const cor = g ? cobCor(g.pct) : 'amber';
   const topo = `<div class="card pad" style="display:flex;gap:1.2rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem"><div><div class="lbl">Animais em dia${lote ? ' · ' + esc(loteNome(lote)) : ''}</div><div class="num" style="font-size:2.25rem;font-weight:800;line-height:1.1;letter-spacing:-.02em;color:var(--st-${cor === 'ok' ? 'green' : cor === 'amber' ? 'amber' : 'red'})">${g ? g.pct + '%' : '—'}</div></div>
-    <div style="flex:1;min-width:220px"><div class="bar ${cor === 'ok' ? '' : cor}" role="img" aria-label="${g ? g.pct : 0}% dos animais em dia" style="height:12px"><i style="width:${g ? g.pct : 0}%"></i></div><p class="hint" style="margin-top:.4rem"><b style="color:var(--text)">${g ? g.ok + ' de ' + g.total + ' animais' : 'Sem registros'}</b> com todas as vacinas aplicáveis em dia${g && g.at ? `; ${g.at} ${pl(g.at, 'animal tem', 'animais têm')} alguma atrasada.` : '.'} ${g && g.at ? `<button type="button" class="linkbtn" data-act="go" data-to="/sanidade/vacinas" data-q="filtro=atrasadas${lote ? '&lote=' + lote : ''}">Ver atrasadas</button>` : ''}</p></div></div>`;
+    <div style="flex:1;min-width:220px"><div class="bar ${cor === 'ok' ? '' : cor}" role="img" aria-label="${g ? g.pct : 0}% dos animais em dia" style="height:12px"><i style="width:${g ? g.pct : 0}%"></i></div><p class="hint" style="margin-top:.4rem"><b style="color:var(--text)">${g ? g.ok + ' de ' + g.total + ' animais' : 'Sem registros'}</b> em dia: todas as vacinas e exames aplicáveis registrados e nenhum atrasado${g && g.at ? `; ${g.at} ${pl(g.at, 'animal tem', 'animais têm')} algo atrasado ou reagente.` : '.'} ${g && g.at ? `<button type="button" class="linkbtn" data-act="go" data-to="/sanidade/vacinas" data-q="filtro=atrasadas${lote ? '&lote=' + lote : ''}">Ver atrasadas</button>` : ''}</p>
+    ${g && g.sem ? `<p class="hint">${ic('clock', 's14')} <b style="color:var(--text)">${g.sem} ${pl(g.sem, 'animal', 'animais')} sem registro</b> de alguma vacina (dose ainda a aplicar). “Sem registro” nunca conta como em dia na vacina.</p>` : ''}</div></div>`;
   const tabs = `<div class="filters"><div class="tabbar" role="group" aria-label="Agrupar cobertura">${[['vacina', 'Por vacina'], ['lote', 'Por lote'], ['animal', 'Por animal']].map(([v, l]) => `<button type="button" class="tabpill" data-act="por" data-v="${v}" aria-pressed="${por === v}">${l}</button>`).join('')}</div>
     <select class="sel" aria-label="Filtrar por lote (vale para a página inteira)" data-ch="flote">${opts(LOTE_OPTS, lote, 'Todos os lotes')}</select></div>`;
   let corpo = '';
   const lotesVis = LOTES.filter(l => !lote || l.id === lote);
   if (por === 'vacina') {
-    corpo = `<div class="tw"><table class="ft matrix"><caption class="sr">Cobertura por vacina e lote, em porcentagem de animais em dia</caption><thead><tr><th scope="col">Vacina ou exame</th>${lotesVis.map(l => `<th scope="col">${esc(l.nome.replace('Lote ', ''))}</th>`).join('')}<th scope="col">Animais em dia</th><th scope="col">Atrasadas</th><th scope="col">Ainda sem a dose</th></tr></thead><tbody>` + SAN.vacinas.filter(v => v.ativo).map(v => {
+    corpo = `<div class="tw"><table class="ft matrix"><caption class="sr">Cobertura por vacina e lote, em porcentagem de animais em dia</caption><thead><tr><th scope="col">Vacina ou exame</th>${lotesVis.map(l => `<th scope="col">${esc(l.nome.replace('Lote ', ''))}</th>`).join('')}<th scope="col">Animais em dia</th><th scope="col">Atrasadas</th><th scope="col">Sem registro</th></tr></thead><tbody>` + SAN.vacinas.filter(v => v.ativo).map(v => {
       const T = cobVac(v.id, lote); if (!T.tot) return '';
-      const cells = lotesVis.map(l => { const c = (SAN.cob[v.id] || {})[l.id]; if (!c) return `<td><span class="sr">não se aplica</span><span aria-hidden="true" style="color:var(--text-muted)">—</span></td>`; const p = Math.round(c.em / c.tot * 100); const k = cobCor(p);
-        return `<td><button type="button" class="cell ${k === 'ok' ? 'green' : k}" data-act="falta" data-v="${v.id}:${l.id}" aria-label="${v.nome}, ${l.nome}: ${p}% (${c.em} de ${c.tot} animais em dia)${c.atras ? ', ' + c.atras + ' atrasados' : ''}">${ic(cobIcon(p), 's14')}${p}%</button></td>`; }).join('');
-      return `<tr><th scope="row" style="text-align:left;text-transform:none;letter-spacing:0;font-size:.875rem;color:var(--text)"><div class="nm">${esc(v.nome)}</div><div class="sub2">${v.exame ? 'Exame · reteste' : v.tipo} · <b>${T.pct}%</b></div></th>${cells}<td><b>${T.em}</b> de ${T.tot} animais</td><td>${T.atras ? `<span class="st atrasada">${ic('warn', 's14')}${T.atras} ${pl(T.atras, 'animal', 'animais')}</span>` : '<span class="sub2">nenhum</span>'}</td><td>${T.sem ? `${T.sem} ${pl(T.sem, 'animal', 'animais')}` : '<span class="sub2">nenhum</span>'}</td></tr>`;
+      const cells = lotesVis.map(l => { const c = cobCelula(v.id, l.id); if (!c.tot) return `<td><span class="sr">não se aplica</span><span aria-hidden="true" style="color:var(--text-muted)">—</span></td>`; const p = c.pct; const k = cobCor(p);
+        return `<td><button type="button" class="cell ${k === 'ok' ? 'green' : k}" data-act="falta" data-v="${v.id}:${l.id}" aria-label="${v.nome}, ${l.nome}: ${p}% (${c.em} de ${c.tot} animais em dia)${c.atras ? ', ' + c.atras + ' atrasados' : ''}${c.sem ? ', ' + c.sem + ' sem registro' : ''}">${ic(cobIcon(p), 's14')}${p}%</button></td>`; }).join('');
+      return `<tr><th scope="row" style="text-align:left;text-transform:none;letter-spacing:0;font-size:.875rem;color:var(--text)"><div class="nm">${esc(v.nome)}</div><div class="sub2">${v.exame ? 'Exame' : v.tipo} · <b>${T.pct}%</b></div></th>${cells}<td><b>${T.em}</b> de ${T.tot} animais</td><td>${T.atras ? `<span class="st atrasada">${ic('warn', 's14')}${T.atras} ${pl(T.atras, 'animal', 'animais')}</span>` : '<span class="sub2">nenhum</span>'}</td><td>${T.sem ? `${T.sem} ${pl(T.sem, 'animal', 'animais')}` : '<span class="sub2">nenhum</span>'}</td></tr>`;
     }).join('') + `</tbody></table><div class="legend"><span class="ic-green">${ic('ok', 's14')}<span>95% ou mais</span></span><span class="ic-amber">${ic('warn', 's14')}<span>85% a 94%</span></span><span class="ic-red">${ic('warn', 's14')}<span>abaixo de 85%</span></span><span>Cada % é de animais em dia para aquela vacina. Toque numa célula para ver quem falta.</span></div></div>`;
   } else if (por === 'lote') {
-    corpo = `<div class="tw cards-w"><table class="ft cards"><caption class="sr">Cobertura por lote</caption><thead><tr><th>Lote</th><th class="num">Animais</th><th>Todas em dia</th><th>Vacinas com animais atrasados ou sem a dose</th></tr></thead><tbody>` + lotesVis.map(l => {
+    corpo = `<div class="tw cards-w"><table class="ft cards"><caption class="sr">Cobertura por lote</caption><thead><tr><th>Lote</th><th class="num">Animais</th><th>Todas em dia</th><th>Vacinas com animais atrasados ou sem registro</th></tr></thead><tbody>` + lotesVis.map(l => {
       const gl_ = cobGlobal(l.id); const pend = [];
-      SAN.vacinas.forEach(v => { const c = (SAN.cob[v.id] || {})[l.id]; if (c && (c.atras || c.sem)) pend.push(`<button type="button" class="chip" style="min-height:44px" data-act="falta" data-v="${v.id}:${l.id}">${ic('warn', 's14')}${esc(v.nome)} · ${c.atras ? c.atras + ' ' + pl(c.atras, 'atrasado', 'atrasados') : c.sem + ' sem a dose'}</button>`); });
+      SAN.vacinas.forEach(v => { const c = cobCelula(v.id, l.id); if (c.tot && (c.atras || c.sem)) pend.push(`<button type="button" class="chip" style="min-height:44px" data-act="falta" data-v="${v.id}:${l.id}">${ic('warn', 's14')}${esc(v.nome)} · ${c.atras ? c.atras + ' ' + pl(c.atras, 'atrasado', 'atrasados') : c.sem + ' sem registro'}</button>`); });
       const p = gl_ ? gl_.pct : 100; const k = cobCor(p);
       return `<tr class="rowc"><td data-c="nome"><div class="nm">${esc(l.nome)}</div></td><td class="num" data-c="x" data-l="Animais">${l.n}</td><td data-c="quem"><div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap"><div class="bar ${k === 'ok' ? '' : k}" style="width:110px"><i style="width:${p}%"></i></div><b>${p}%</b><span class="sub2">${gl_ ? gl_.ok + ' de ' + gl_.total + ' animais' : ''}</span>${p >= 100 ? `<span class="st registrada">${ic('ok', 's14')}Em dia</span>` : ''}</div></td><td data-c="prod">${pend.length ? `<div class="chips">${pend.join('')}</div>` : '<span class="sub2">Nenhuma</span>'}</td></tr>`;
     }).join('') + `</tbody></table></div>`;
@@ -1408,12 +1477,12 @@ ROUTES['/sanidade/vacinas/cobertura'] = () => {
     const tot = lista.length; lista = lista.slice(0, 30);
     corpo = `<div class="filters"><div class="search" style="max-width:420px"><label class="sr" for="qa">Buscar animal por brinco, nome ou lote</label>${ic('search')}<input id="qa" data-fk="qa" class="inp" type="search" placeholder="Buscar por brinco, nome ou lote" value="${esc(qv('a'))}" data-in="fa"></div><span class="hint" role="status">${tot} ${pl(tot, 'animal', 'animais')}${tot > 30 ? ' · mostrando 30' : ''}</span></div>
     <div class="tw cards-w"><table class="ft cards"><caption class="sr">Carteira de vacinação por animal</caption><thead><tr><th>Animal</th><th>Lote</th><th>Situação</th><th><span class="sr">Ação</span></th></tr></thead><tbody>` + lista.map(a => {
-      const p = pendentesAnimal(a); const at = p.filter(x => x.st === 'atrasada'); const sem = p.filter(x => x.st === 'sem' || x.st === 'nunca');
+      const p = statusAnimal(a); const at = p.filter(x => x.st === 'atrasada'); const rg = p.filter(x => x.st === 'reagente'); const sem = p.filter(x => x.st === 'sem');
       return `<tr class="lin" tabindex="0" data-act="animal" data-id="${a.id}" data-fk="an-${a.id}" aria-label="Abrir carteira de ${esc(lbl(a))}"><td data-c="nome"><div class="nm">${esc(a.brinco)} · ${esc(a.nome)}</div><div class="sub2">${esc(a.raca)}</div></td><td data-c="quem">${esc(loteOf(a.lote).nome)}</td>
-      <td data-c="estado">${at.length ? `<span class="st atrasada">${ic('warn', 's14')}${at.length} ${pl(at.length, 'vacina atrasada', 'vacinas atrasadas')}</span>` : sem.length ? `<span class="st vence">${ic('clock', 's14')}${sem.length} ${pl(sem.length, 'vacina ainda sem a dose', 'vacinas ainda sem a dose')}</span>` : `<span class="st registrada">${ic('ok', 's14')}Em dia</span>`}</td><td class="acts">${bt('btn-sec sm', 'eye', 'Carteira', `data-act="animal" data-id="${a.id}" aria-label="Abrir carteira de ${esc(lbl(a))}"`)}</td></tr>`;
+      <td data-c="estado" style="display:flex;gap:.3rem;flex-wrap:wrap">${rg.length ? `<span class="st atrasada">${ic('warn', 's14')}Reagente — notificar serviço veterinário oficial</span>` : ''}${at.length ? `<span class="st atrasada">${ic('warn', 's14')}${at.length} ${pl(at.length, 'atrasada', 'atrasadas')}</span>` : ''}${sem.length ? `<span class="st vence">${ic('clock', 's14')}${sem.length} sem registro</span>` : ''}${!rg.length && !at.length && !sem.length ? `<span class="st registrada">${ic('ok', 's14')}Em dia</span>` : ''}</td><td class="acts">${bt('btn-sec sm', 'eye', 'Carteira', `data-act="animal" data-id="${a.id}" aria-label="Abrir carteira de ${esc(lbl(a))}"`)}</td></tr>`;
     }).join('') + `</tbody></table></div>`;
   }
-  return pgHead('shield', 'Cobertura vacinal', 'Quem está em dia, por vacina, por lote e por animal. Em dia = tem todas as vacinas que se aplicam ao lote e nenhuma atrasada.', acts) + topo + tabs + corpo + carenciaBloco();
+  return pgHead('shield', 'Cobertura vacinal', 'Quem está em dia, por vacina, por lote e por animal. Tudo calculado das doses registradas.', acts) + topo + tabs + corpo + carenciaBloco();
 };
 IN.fa = debounce(v => setQ({ a: v || null }, true), 180);
 ACT.por = t => setQ({ por: t.dataset.v === 'vacina' ? null : t.dataset.v, a: null }, true);
@@ -1430,46 +1499,57 @@ function carenciaBloco() {
 
 /* ═════════ Histórico unificado (trilha de auditoria) ═════════ */
 const HPAGE = 8;
-const ACOES_HIST = { apl: ['Registrou aplicação', 'Registrou exame', 'Registrou inoculação', 'Registrou leitura'], alt: ['Estornou registro', 'Pulou aplicação', 'Desfez o pulo', 'Reabriu aplicação', 'Corrigiu registro', 'Inativou vacina', 'Reativou vacina', 'Mudou a data', 'Editou vacina', 'Criou o calendário pelo modelo padrão'] };
+const ACOES_HIST = { apl: ['Registrou aplicação', 'Registrou exame', 'Registrou inoculação', 'Registrou leitura'], alt: ['Estornou registro', 'Estornou inoculação', 'Pulou aplicação', 'Desfez o pulo', 'Reabriu aplicação', 'Corrigiu registro', 'Inativou vacina', 'Reativou vacina', 'Mudou a data', 'Editou vacina', 'Criou o calendário pelo modelo padrão', 'Registrou notificação ao serviço veterinário oficial'] };
 function histItens() {
-  const de = qv('de'), ate = qv('ate'), lote = qv('lote'), vac = qv('vacina'), s = qv('a').toLowerCase(), tipo = qv('tipo');
+  const de = qv('de'), ate = qv('ate'), lote = qv('lote'), vac = qv('vacina'), s = qv('a').toLowerCase(), tipo = qv('tipo'), apl = qv('apl'), fr = qv('fr').toLowerCase();
   return SAN.aud.filter(e => {
     const v = e.vac ? (SAN.vacinas.find(x => x.id === e.vac) || VACINAS0.find(x => x.id === e.vac)) : null; const d = e.t.slice(0, 10);
     if (de && d < de) return false; if (ate && d > ate) return false; if (lote && e.lote !== lote) return false; if (vac && e.vac !== vac) return false;
-    const ex = v && v.exame; if (tipo === 'exame' && !ex) return false; if (tipo === 'aplicacao' && (ex || !ACOES_HIST.apl.includes(e.acao))) return false; if (tipo === 'alteracao' && !ACOES_HIST.alt.includes(e.acao)) return false;
-    if (s) { const a = e.apl ? aplById(e.apl) : null; if (!a) return false; const an = (a.lote === 'todos' ? ANIMAIS : animaisDoLote(a.lote)).slice(0, a.n); if (!an.some(x => (x.brinco + ' ' + x.nome).toLowerCase().includes(s))) return false; }
+    if (apl && e.aplicador !== apl) return false; if (fr && !(e.frasco || '').toLowerCase().includes(fr)) return false;
+    const ex = v && v.exame; if (tipo === 'exame' && !ex) return false; if (tipo === 'aplicacao' && (ex || !ACOES_HIST.apl.includes(e.acao))) return false; if (tipo === 'alteracao' && !ACOES_HIST.alt.includes(e.acao)) return false; if (tipo === 'excecao' && !(e.excecao && e.excecao.length)) return false;
+    if (s) { const a = e.apl ? aplById(e.apl) : null; const ids = e.animaisIds || (a ? aplAnimais(a) : []); if (!ids.some(id => { const x = animalOf(id); return x && (x.brinco + ' ' + x.nome).toLowerCase().includes(s); })) return false; }
     return true;
-  }).sort((x, y) => x.t < y.t ? 1 : x.t > y.t ? -1 : 0);
+  }).sort((x, y) => x.t < y.t ? 1 : x.t > y.t ? -1 : evNum(y) - evNum(x));
 }
-const CSV_COLS = ['Quando', 'Quem', 'O quê', 'Vacina ou exame', 'Para quem', 'Animais', 'Frasco', 'Dose', 'Via', 'Aplicador', 'Custo (R$)', 'Motivo', 'Resultado', 'Situação'];
-function csvLinha(e) { const v = e.vac ? (SAN.vacinas.find(x => x.id === e.vac) || VACINAS0.find(x => x.id === e.vac)) : null; return [dh(e.t), e.quem, e.acao, v ? v.nome : '', e.lote ? loteNome(e.lote) : '', e.n || '', e.frasco || '', e.doses != null ? e.doses : '', e.via || '', e.aplicador || '', e.custo != null ? String(e.custo).replace('.', ',') : '', e.motivo || '', e.result || '', e.estornado ? 'Estornada por ' + e.estornado.quem + ' em ' + dh(e.estornado.t) : 'Válida']; }
+const brl2 = v => v == null ? '' : Number(v).toFixed(2).replace('.', ',');
+const CSV_COLS = ['Nº', 'Quando', 'Registrado por', 'O quê', 'Vacina ou exame', 'Para quem', 'Animais', 'Aplicador', 'Lote do frasco', 'Dose', 'Via', 'Custo (R$)', 'Motivo', 'Resultado', 'Animal reagente', 'Exceção', 'Situação'];
+function csvLinha(e) { const v = e.vac ? (SAN.vacinas.find(x => x.id === e.vac) || VACINAS0.find(x => x.id === e.vac)) : null;
+  const reag = (e.resultados || []).filter(r => r.res === 'Positivo').map(r => { const x = animalOf(r.a); return lbl(x) + (r.laudo ? ' (laudo ' + r.laudo + ')' : ''); }).join(' | ');
+  const sit = e.estornado ? 'Estornada por ' + e.estornado.quem + ' em ' + dh(e.estornado.t) : e.corrigido ? 'Corrigida (substituída por #' + e.corrigido.ref.replace('ev', '') + ')' : 'Válida';
+  return [evNum(e), dh(e.t), e.quem, e.acao, v ? v.nome : '', e.lote ? loteNome(e.lote) : '', e.n || '', e.aplicador || '', e.frasco || '', e.doses != null ? String(e.doses).replace('.', ',') : '', e.via || '', e.custo != null ? brl2(e.custo) : '', e.motivo || '', e.result || '', reag, (e.excecao || []).join(' | '), sit]; }
 ROUTES['/sanidade/vacinas/historico'] = () => {
   if (!SAN.vacinas.length && !SAN.aud.length) return semDados('Histórico de aplicações e exames', 'history', { t: 'Ainda não há registros', p: 'Cada aplicação registrada e cada resultado de exame aparecem aqui, com quem fez, quando, o frasco e o custo.' }, bt('btn-gold', 'calendar', 'Ir para o calendário', 'data-act="go" data-to="/sanidade/vacinas"'));
   const it = histItens(); const p = Math.max(1, Math.min(Math.ceil(it.length / HPAGE), +qv('p') || 1)); const pg = it.slice((p - 1) * HPAGE, p * HPAGE);
-  const mes = (qv('de') || HI).slice(0, 7); const totMes = it.filter(e => !e.estornado && e.custo != null && e.t.startsWith(mes)).reduce((s, e) => s + e.custo, 0);
+  const mes = (qv('de') || HI).slice(0, 7); const conta = e => !e.estornado && !e.corrigido && e.custo != null && e.custo > 0 && /Registrou (aplicação|exame|leitura)|Corrigiu/.test(e.acao); const totMes = it.filter(e => conta(e) && e.t.startsWith(mes)).reduce((s, e) => s + e.custo, 0);
   const acts = bt('btn-sec', 'download', 'Exportar', `data-act="menu-exp" data-menu data-fk="exp" aria-haspopup="menu"`);
   const filtros = `<div class="filters" role="group" aria-label="Filtros do histórico">
     <div class="fld" style="flex:0 1 150px"><label for="hde">De</label><input id="hde" class="inp" type="date" value="${qv('de')}" data-ch="hde"></div>
     <div class="fld" style="flex:0 1 150px"><label for="hate">Até</label><input id="hate" class="inp" type="date" value="${qv('ate')}" data-ch="hate"></div>
-    <div class="fld" style="flex:0 1 190px"><label for="hvac">Vacina ou exame</label><select id="hvac" class="sel" style="width:100%" data-ch="fvac">${opts(VACINAS0.map(v => [v.id, v.nome]), qv('vacina'), 'Todos')}</select></div>
-    <div class="fld" style="flex:0 1 190px"><label for="hlote">Lote</label><select id="hlote" class="sel" style="width:100%" data-ch="flote">${opts(LOTE_OPTS, qv('lote'), 'Todos')}</select></div>
-    <div class="fld" style="flex:0 1 190px"><label for="htipo">Tipo</label><select id="htipo" class="sel" style="width:100%" data-ch="htipo">${opts([['aplicacao', 'Aplicações'], ['exame', 'Exames'], ['alteracao', 'Estornos e alterações']], qv('tipo'), 'Tudo')}</select></div>
+    <div class="fld" style="flex:0 1 190px"><label for="hvac">Vacina ou exame</label><select id="hvac" class="sel" data-ch="fvac">${opts(VACINAS0.map(v => [v.id, v.nome]), qv('vacina'), 'Todos')}</select></div>
+    <div class="fld" style="flex:0 1 190px"><label for="hlote">Lote de animais</label><select id="hlote" class="sel" data-ch="flote">${opts(LOTE_OPTS, qv('lote'), 'Todos')}</select></div>
+    <div class="fld" style="flex:0 1 210px"><label for="hapl">Aplicador</label><select id="hapl" class="sel" data-ch="hapl">${opts(PESSOAS.map(x => [x, x.split(' (')[0]]), qv('apl'), 'Todos')}</select></div>
+    <div class="fld" style="flex:0 1 190px"><label for="hfr">Lote do frasco (recall)</label><input id="hfr" class="inp" data-fk="hfr" placeholder="Ex.: AF-2609" value="${esc(qv('fr'))}" data-in="hfr"></div>
+    <div class="fld" style="flex:0 1 210px"><label for="htipo">Tipo</label><select id="htipo" class="sel" data-ch="htipo">${opts([['aplicacao', 'Aplicações'], ['exame', 'Exames'], ['alteracao', 'Estornos e alterações'], ['excecao', 'Só exceções']], qv('tipo'), 'Tudo')}</select></div>
     <div class="fld" style="flex:1 1 200px"><label for="ha">Animal (brinco ou nome)</label><div class="search" style="flex:none">${ic('search')}<input id="ha" data-fk="ha" class="inp" type="search" placeholder="Ex.: 2164 ou Mimosa" value="${esc(qv('a'))}" data-in="fha"></div></div></div>`;
-  const rows = pg.map(e => { const v = e.vac ? (SAN.vacinas.find(x => x.id === e.vac) || VACINAS0.find(x => x.id === e.vac)) : null; const ex = v && v.exame; const estor = !!e.estornado;
+  const rows = pg.map(e => { const v = e.vac ? (SAN.vacinas.find(x => x.id === e.vac) || VACINAS0.find(x => x.id === e.vac)) : null; const ex = v && v.exame; const estor = !!e.estornado; const corr = !!e.corrigido;
     const icone = /Estornou/.test(e.acao) ? 'undo' : /Pulou/.test(e.acao) ? 'skip' : ex ? 'flask' : /Registrou/.test(e.acao) ? 'syringe' : 'pencil';
-    const podeCorrigir = /Registrou (aplicação|exame)/.test(e.acao) && !estor;
-    return `<tr class="rowc ${estor ? 'estorn' : ''}"><td data-c="data" data-l=""><b>${br(e.t.slice(0, 10))}</b><div class="sub2">${e.t.slice(11, 16)}</div></td><td data-c="nome"><div class="nm">${esc(e.quem.split(' (')[0])}</div><div class="sub2">${esc((e.quem.match(/\((.*)\)/) || [, ''])[1])}</div></td>
-      <td data-c="estado"><span class="st ${estor ? 'pulada' : /Estornou/.test(e.acao) ? 'estornada' : ex ? 'confirmada' : 'registrada'}">${ic(icone, 's14')}${estor ? 'Estornada' : esc(e.acao)}</span></td>
-      <td data-c="quem"><b>${v ? esc(v.nome) : 'Calendário'}</b>${e.lote ? `<div class="sub2">${e.n ? e.n + ' · ' : ''}${esc(loteNome(e.lote))}</div>` : ''}${e.motivo ? `<div class="sub2">Motivo: ${esc(e.motivo)}</div>` : ''}${estor ? `<div class="sub2">Estornada por ${esc(e.estornado.quem.split(' (')[0])} em ${dh(e.estornado.t)}</div>` : ''}</td>
-      <td data-c="prod" data-l="Frasco e dose">${e.frasco ? `${esc(e.frasco)} · ${e.doses} ${v && v.porPeso ? 'mL' : pl(e.doses, 'dose', 'doses')}${e.via ? ' · ' + esc(e.via) : ''}` : '—'}${e.result ? `<div class="sub2"><b>${esc(e.result)}</b></div>` : ''}</td>
-      <td data-c="x" data-l="Custo" class="num">${e.custo != null ? R$(e.custo) : '—'}</td><td class="acts">${podeCorrigir ? bt('btn-ghost sm', 'pencil', 'Corrigir', `data-act="corrigir" data-id="${e.id}" data-fk="cor-${e.id}" aria-label="Corrigir registro de ${v ? esc(v.nome) : ''} em ${br(e.t.slice(0, 10))}"`) : ''}</td></tr>`; }).join('');
-  const filt = qv('de') || qv('ate') || qv('lote') || qv('vacina') || qv('a') || qv('tipo');
-  return pgHead('history', 'Histórico de aplicações e exames', 'Trilha de auditoria: quem fez, quando, com qual frasco, e o que foi estornado. Nada é apagado.', acts) + filtros +
+    const podeCorrigir = /Registrou (aplicação|exame)/.test(e.acao) && !estor && !corr;
+    const pill = estor ? `<span class="st pulada">${ic('undo', 's14')}Estornada</span>` : corr ? `<span class="st estornada">${ic('pencil', 's14')}Corrigida (substituída por #${e.corrigido.ref.replace('ev', '')})</span>` : `<span class="st ${/Estornou/.test(e.acao) ? 'estornada' : ex ? 'confirmada' : 'registrada'}">${ic(icone, 's14')}${esc(e.acao)}</span>`;
+    const reag = (e.resultados || []).filter(r => r.res === 'Positivo');
+    return `<tr class="rowc ${estor || corr ? 'estorn' : ''}"><td data-c="data" data-l=""><b>${br(e.t.slice(0, 10))}</b><div class="sub2">${e.t.slice(11, 16)} · #${evNum(e)}</div></td><td data-c="nome" data-l="Registrado por"><div class="nm">${esc(e.quem.split(' (')[0])}</div><div class="sub2">${esc((e.quem.match(/\((.*)\)/) || [, ''])[1])}</div></td>
+      <td data-c="estado">${pill}${(e.excecao || []).map(x => `<div style="margin-top:3px"><span class="st vence">${ic('warn', 's12')}${esc(x)}</span></div>`).join('')}</td>
+      <td data-c="quem"><b>${v ? esc(v.nome) : 'Calendário'}</b>${e.lote ? `<div class="sub2">${e.n ? e.n + ' · ' : ''}${esc(loteNome(e.lote))}</div>` : ''}${e.motivo ? `<div class="sub2">Motivo: ${esc(e.motivo)}</div>` : ''}${estor ? `<div class="sub2">Estornada por ${esc(e.estornado.quem.split(' (')[0])} em ${dh(e.estornado.t)}</div>` : ''}${reag.map(r => `<div class="sub2" style="color:var(--st-red)"><b>Reagente: ${esc(lbl(animalOf(r.a)))}${r.laudo ? ' · laudo ' + esc(r.laudo) : ''}</b> — notificar serviço veterinário oficial</div>`).join('')}</td>
+      <td data-c="x" data-l="Aplicador">${e.aplicador ? esc(e.aplicador.split(' (')[0]) + `<div class="sub2">${esc((e.aplicador.match(/\((.*)\)/) || [, ''])[1])}</div>` : '—'}</td>
+      <td data-c="prod" data-l="Lote do frasco">${e.frasco ? `<b>${esc(e.frasco)}</b><div class="sub2">${e.doses} ${v && v.porPeso ? 'mL' : pl(e.doses, 'dose', 'doses')}${e.via ? ' · ' + esc(e.via) : ''}</div>` : '—'}${e.result ? `<div class="sub2"><b>${esc(e.result)}</b></div>` : ''}</td>
+      <td data-c="car" data-l="Custo" class="num">${e.custo != null && e.custo > 0 ? R$(e.custo) : '—'}</td><td class="acts">${podeCorrigir ? bt('btn-ghost sm', 'pencil', 'Corrigir', `data-act="corrigir" data-id="${e.id}" data-fk="cor-${e.id}" aria-label="Corrigir registro #${evNum(e)} de ${v ? esc(v.nome) : ''}"`) : ''}</td></tr>`; }).join('');
+  const filt = qv('de') || qv('ate') || qv('lote') || qv('vacina') || qv('a') || qv('tipo') || qv('apl') || qv('fr');
+  return pgHead('history', 'Histórico de aplicações e exames', 'Trilha de auditoria: quem registrou, quem aplicou, quando, com qual frasco, e o que foi estornado ou corrigido. Nada é apagado.', acts) + filtros +
     `<div class="result-line"><span role="status">${it.length} ${pl(it.length, 'registro', 'registros')}${filt ? ' com os filtros aplicados' : ''} · <b style="color:var(--text)">Custo realizado em ${MESES[+mes.slice(5) - 1]} de ${mes.slice(0, 4)}: ${R$(totMes)}</b></span>${filt ? `<button type="button" class="linkbtn" data-act="limpar">Limpar filtros</button>` : '<span></span>'}</div>
-    <div class="tw cards-w"><table class="ft cards"><caption class="sr">Histórico de aplicações e exames com quem e quando</caption><thead><tr><th>Quando</th><th>Quem</th><th>O quê</th><th>Vacina ou exame · para quem</th><th>Frasco, dose e via</th><th class="num">Custo</th><th><span class="sr">Ações</span></th></tr></thead><tbody>${rows || `<tr><td colspan="7" style="padding:2rem;text-align:center;color:var(--text-muted)">Nenhum registro com esses filtros.</td></tr>`}</tbody></table></div>
+    <div class="tw cards-w"><table class="ft cards"><caption class="sr">Histórico de aplicações e exames com quem registrou, quem aplicou e quando</caption><thead><tr><th>Quando e nº</th><th>Registrado por</th><th>O quê</th><th>Vacina ou exame · para quem</th><th>Aplicador</th><th>Lote do frasco, dose e via</th><th class="num">Custo</th><th><span class="sr">Ações</span></th></tr></thead><tbody>${rows || `<tr><td colspan="8" style="padding:2rem;text-align:center;color:var(--text-muted)">Nenhum registro com esses filtros.</td></tr>`}</tbody></table></div>
     <div class="pager"><span role="status">Página ${p} de ${Math.max(1, Math.ceil(it.length / HPAGE))}</span>${bt('btn-ghost sm', 'left', 'Anterior', `data-act="pag" data-d="-1" ${p <= 1 ? 'disabled' : ''}`)}${bt('btn-ghost sm', '', 'Próxima', `data-act="pag" data-d="1" ${p >= Math.ceil(it.length / HPAGE) ? 'disabled' : ''}`)}</div>`;
 };
-IN.hde = v => setQ({ de: v || null, p: null }, true); IN.hate = v => setQ({ ate: v || null, p: null }, true); IN.htipo = v => setQ({ tipo: v || null, p: null }, true);
+IN.hde = v => setQ({ de: v || null, p: null }, true); IN.hate = v => setQ({ ate: v || null, p: null }, true); IN.htipo = v => setQ({ tipo: v || null, p: null }, true); IN.hapl = v => setQ({ apl: v || null, p: null }, true);
+IN.hfr = debounce(v => setQ({ fr: v || null, p: null }, true), 180);
 IN.fha = debounce(v => setQ({ a: v || null, p: null }, true), 180);
 ACT.pag = t => { if (t.disabled) return; setQ({ p: Math.max(1, (+qv('p') || 1) + +t.dataset.d) }, true); };
 ACT['menu-exp'] = t => openMenu(t, [{ lbl: 'Planilha (CSV)', icon: 'file', act: 'exportar', data: { f: 'csv' } }, { lbl: 'PDF', icon: 'file', act: 'exportar', data: { f: 'pdf' } }]);
@@ -1477,8 +1557,9 @@ ACT.exportar = t => {
   closeMenu(); const it = histItens();
   if (t.dataset.f === 'pdf') { setQ({ imprimir: 'hist' }); return; }
   const csv = '﻿' + [CSV_COLS].concat(it.map(csvLinha)).map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(';')).join('\r\n');
+  window.__ultimoCSV = csv;
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); a.download = 'historico-vacinas-2026-09-29.csv'; document.body.appendChild(a); a.click(); a.remove();
-  toast(`Planilha gerada: ${it.length} ${pl(it.length, 'linha', 'linhas')}, respeitando os filtros, com quem, quando, motivo e frasco.`, { icon: 'download' });
+  toast(`Planilha gerada: ${it.length} ${pl(it.length, 'linha', 'linhas')}, respeitando os filtros, com quem registrou, quem aplicou, lote do frasco, exceções e reagentes.`, { icon: 'download' });
 };
 
 /* ═════════ Cadastro de vacinas ═════════ */
@@ -1498,7 +1579,7 @@ ROUTES['/sanidade/vacinas/cadastro'] = () => {
     `<div class="tw cards-w"><table class="ft cards"><caption class="sr">Vacinas e exames do calendário</caption><thead><tr><th>Nome</th><th>Tipo</th><th>Quem entra</th><th>Frequência</th><th>Próxima</th><th>Usada por</th><th>Situação</th><th><span class="sr">Ações</span></th></tr></thead><tbody>${rows}</tbody></table></div>
     <p class="hint" style="margin-top:.6rem">Excluir uma vacina só é possível pela via auditada, com um administrador. O número em “Usada por” mostra quantas aplicações dependem dela.</p>`;
 };
-ACT['vac-dup'] = t => { const v = SAN.vacinas.find(x => x.id === t.dataset.id); const c = clone(v); c.id = 'v' + (++SAN.seq); c.nome = v.nome + ' (cópia)'; c.ativo = false; SAN.vacinas.push(c); SAN.cob[c.id] = clone(SAN.cob[v.id] || {}); audit(null, 'Duplicou vacina', { motivo: c.nome }); refresh(); toast(`Duplicada: «${c.nome}» começa inativa. Edite e ative quando estiver pronta.`); };
+ACT['vac-dup'] = t => { const v = SAN.vacinas.find(x => x.id === t.dataset.id); const c = clone(v); c.id = 'v' + (++SAN.seq); c.nome = v.nome + ' (cópia)'; c.ativo = false; SAN.vacinas.push(c); audit(null, 'Duplicou vacina', { motivo: c.nome }); refresh(); toast(`Duplicada: «${c.nome}» começa inativa. Edite e ative quando estiver pronta.`); };
 ACT['vac-tog'] = t => {
   const v = SAN.vacinas.find(x => x.id === t.dataset.id);
   if (v.ativo) { setQ({ inativar: v.id }); return; }
@@ -1513,21 +1594,13 @@ const MOTIVOS_ESTORNO = ['Registrado por engano', 'Animais errados', 'Produto ou
 const drawerHeadCta = (k, t, m, cta) => `<div class="dr-h"><div style="min-width:0;flex:1"><div class="k">${esc(k)}</div><h2>${t}</h2><div class="meta">${m || ''}</div>${cta ? `<div style="margin-top:.7rem;display:flex;gap:.5rem;flex-wrap:wrap">${cta}</div>` : ''}</div><button type="button" class="icon-btn" data-act="dr-close" data-first aria-label="Fechar" title="Fechar (Esc)">${ic('x', 's20')}</button></div>`;
 const dhAgora = () => nowT();
 
-/* Cobertura: aplica/estorna o efeito de um registro nas células */
-function aplicaCob(a, resolvidos, paraSem) {
-  const cells = []; const v = a.vac; const alvos = a.lote === 'todos' ? Object.keys(SAN.cob[v] || {}) : [a.lote];
-  alvos.forEach(l => { const c = (SAN.cob[v] || {})[l]; if (!c) return; let n = a.lote === 'todos' ? c.atras + c.sem : resolvidos; let dA = Math.min(c.atras, n); n -= dA; let dS = Math.min(c.sem, n);
-    const mv = paraSem || 0; c.atras -= dA; c.sem -= dS; c.em += dA + dS - mv; if (mv) c.sem += mv; cells.push({ l, dA, dS, mv }); });
-  return cells;
-}
-function desfazCob(a, cells) { (cells || []).forEach(x => { const c = (SAN.cob[a.vac] || {})[x.l]; if (!c) return; c.atras += x.dA; c.sem += x.dS - (x.mv || 0); c.em -= x.dA + x.dS - (x.mv || 0); }); }
-
 /* Estorno: NUNCA apaga. Marca a entrada original como estornada e cria uma nova entrada de auditoria. */
 function estornar(a, motivo) {
   const r = a.reg; if (!r) return;
   const orig = SAN.aud.slice().reverse().find(e => e.apl === a.id && /Registrou (aplicação|exame|leitura)/.test(e.acao) && !e.estornado);
-  const est = estOf(a.vac); const fr = est && est.fr.find(f => f.f === r.frascoId); if (fr) fr.saldo += r.doses;
-  desfazCob(a, r.cells); if (r.nextId) SAN.apl = SAN.apl.filter(x => x.id !== r.nextId); if (r.retesteId) SAN.apl = SAN.apl.filter(x => x.id !== r.retesteId);
+  const est = estOf(a.vac); (r.parts || []).forEach(p => { const fr = est && est.fr.find(f => f.f === p.f); if (fr) fr.saldo = Math.round((fr.saldo + p.q) * 10) / 10; });
+  SAN.doses = SAN.doses.filter(d => d.ref !== a.id); SAN.exames = SAN.exames.filter(d => d.ref !== a.id); SAN.reag = SAN.reag.filter(d => d.ref !== a.id);
+  if (r.nextId) SAN.apl = SAN.apl.filter(x => x.id !== r.nextId); if (r.retesteId) SAN.apl = SAN.apl.filter(x => x.id !== r.retesteId);
   SAN.car = SAN.car.filter(x => x.orig !== a.id);
   const t = nowT(); if (orig) orig.estornado = { quem: USUARIO, t };
   audit(a, 'Estornou registro', { motivo: motivo || 'Desfeito logo após registrar', ref: orig ? orig.id : null, frasco: r.frasco, doses: r.doses, aplicador: r.por });
@@ -1619,56 +1692,74 @@ ACT['inc-ok'] = t => { const a = aplById(qv('prevista')); a.inc[t.dataset.id] = 
 IN.chk = (c, t) => { const a = aplById(t.dataset.id); a.chk[t.dataset.k] = c ? 'ok' : 'pend'; renderDrawer(true); };
 ACT['chk-pular'] = t => { const a = aplById(t.dataset.id); a.chk[t.dataset.k] = t.dataset.v; renderDrawer(true); };
 
-/* ── Registrar aplicação (e exame) ── */
-function fefo(e) { return e ? (e.fr.filter(f => !vencido(f) && f.saldo > 0).sort((x, y) => x.val < y.val ? -1 : 1)[0] || e.fr[0]) : null; }
+/* ── Registrar aplicação (e exame): rótulos idênticos aos do M2 ── */
+function fefo(e) { return e ? (e.fr.filter(f => !vencido(f) && f.saldo > 0).sort((x, y) => x.val < y.val ? -1 : 1)[0] || null) : null; }
+function alocar(e, q, first) {
+  if (!e) return { parts: [], falta: 0 }; const ordem = []; const f0 = e.fr.find(f => f.f === first); if (f0) ordem.push(f0);
+  e.fr.filter(f => f !== f0 && !vencido(f) && f.saldo > 0).sort((x, y) => x.val < y.val ? -1 : 1).forEach(f => ordem.push(f));
+  let rest = q; const parts = [];
+  ordem.forEach((f, i) => { if (rest <= 0) return; const disp = Math.max(0, f.saldo); const take = (i === 0 && vencido(f)) ? rest : Math.min(disp, rest); if (take > 0) { parts.push({ f: f.f, q: Math.round(take * 10) / 10, val: f.val }); rest = Math.round((rest - take) * 10) / 10; } });
+  return { parts, falta: Math.max(0, rest) };
+}
 function rgInit(id) {
   const av = id === 'avulsa'; const a = av ? null : aplById(id); const pre = UI.avPre || {};
   const vac = av ? (pre.vac || SAN.vacinas.filter(v => v.ativo && !v.exame)[0].id) : a.vac; const v = SAN.vacinas.find(x => x.id === vac);
   const lote = av ? (pre.lote || v.alvo[0]) : a.lote; const e = estOf(vac); const fr = fefo(e);
-  const ag = agora();
-  UI.rg = { key: id, vac, lote, n: av ? (lote === 'todos' ? 136 : loteOf(lote).n) : nEf(a), frasco: fr ? fr.f : '', dose: v.dose, data: 'hoje', dataOutra: HI, hora: ag.h, aplicador: v.soVet ? PESSOAS[1] : PESSOAS[2], custo: '', ciente: false, res: {}, laudo: '', leituraData: HI, leituraHora: ag.h };
+  UI.rg = { key: id, vac, lote, n: av ? (lote === 'todos' ? 136 : loteOf(lote).n) : nEf(a), frasco: fr ? fr.f : '', dose: v.dose.split('·')[0].trim(), via: v.via, data: 'hoje', dataOutra: HI, hora: '14:05', aplicador: (v.soVet ? PESSOAS[1] : PESSOAS[2]), custo: '', ciente: false, res: {}, laudo: '', leituraData: HI, leituraHora: '14:05', justif: '', resumoAberto: false };
   UI.avPre = null;
 }
 function rgCalc() {
   const g = UI.rg; const av = g.key === 'avulsa'; const a = av ? null : aplById(g.key); const v = SAN.vacinas.find(x => x.id === g.vac);
-  const e = estOf(g.vac); const fr = e ? e.fr.find(f => f.f === g.frasco) : null; const n = Math.max(0, +g.n || 0); const q = qtdUso(v, g.lote, n);
-  const dataReg = g.data === 'hoje' ? HI : g.dataOutra; const rest = fr ? Math.round((fr.saldo - q) * 10) / 10 : null;
+  const e = estOf(g.vac); const n = Math.max(0, +g.n || 0); const q = qtdUso(v, g.lote, n);
   const exame = !!v.exame; const fase = exame ? (a && a.leitura ? 'leitura' : (v.leituraH ? 'inoculacao' : 'coleta')) : 'aplicacao';
+  const al = fase === 'leitura' ? { parts: [], falta: 0 } : alocar(e, q, g.frasco); const fr = e ? e.fr.find(f => f.f === g.frasco) : null;
+  const dataReg = g.data === 'hoje' ? HI : g.dataOutra;
   let prx = null, prxTxt = '';
   if (exame) { prx = fase === 'inoculacao' ? 0 : 365; prxTxt = fase === 'inoculacao' ? `leitura em ${v.leituraH} h: ${br(addD(dataReg, 3))} às ${g.hora}` : 'anual (reteste em 60 dias se inconclusivo)'; }
-  else if (v.multi) { if (a && a.doseTxt === 'dose 1') { prx = 30; prxTxt = 'dose 2 em ' + br(addD(dataReg, 30)) + ' (30 dias após a dose 1)'; } else { prx = 365; prxTxt = 'reforço anual em ' + br(addD(dataReg, 365)); } }
-  else if (v.intervalo > 0) { prx = v.intervalo; prxTxt = br(addD(dataReg, v.intervalo)); } else prxTxt = 'dose única: sem próxima dose';
+  else if (v.multi) { const ds = ((a && a.ids) || []).length ? ultimasDoses(a.ids[0], 'clo') : []; if (ds.length === 1 || (a && a.doseTxt === 'dose 1')) { prx = 30; prxTxt = 'dose 2 em ' + br(addD(dataReg, 30)) + ' (30 dias após a dose 1)'; } else { prx = 365; prxTxt = 'reforço anual em ' + br(addM(dataReg, 12)); } }
+  else if (v.intervalo > 0) { prx = v.intervalo; prxTxt = br(v.dias ? addD(dataReg, v.dias) : addM(dataReg, v.meses || 12)); } else prxTxt = 'dose única: sem próxima dose';
   const custoAuto = exame ? n * v.custo : q * v.custo; const custo = g.custo !== '' && !isNaN(parseFloat(String(g.custo).replace(',', '.'))) ? parseFloat(String(g.custo).replace(',', '.')) : custoAuto;
   const lact = g.lote === 'todos' || (loteOf(g.lote) && loteOf(g.lote).lact);
+  const antes72 = fase === 'leitura' && (g.leituraData + ' ' + g.leituraHora) < a.leitura.leituraEm;
   let erro = ''; if (n < 1) erro = 'Informe ao menos 1 animal.'; else if (!dataReg) erro = 'Escolha a data real.'; else if (dataReg > HI) erro = 'A data real não pode ser futura. Se for outro dia, use Mudar data na aplicação prevista.';
-  else if (fr && vencido(fr) && !g.ciente) erro = 'Frasco vencido: marque a ciência para usar assim mesmo.';
+  else if (!fr && e && fase !== 'leitura') erro = 'Escolha o frasco.';
+  else if (fr && vencido(fr) && !g.ciente && fase !== 'leitura') erro = 'Frasco vencido: marque a ciência para usar assim mesmo.';
   else if (fase === 'leitura' && Object.keys(g.res).length < aplAnimais(a).length) erro = 'Informe o resultado de cada animal.';
-  return { a, av, v, e, fr, n, q, dataReg, rest, prx, prxTxt, custo, custoAuto, lact, erro, exame, fase };
+  else if (antes72 && !g.justif.trim()) erro = 'Leitura antes de 72 h: escreva a justificativa.';
+  return { a, av, v, e, fr, n, q, al, dataReg, prx, prxTxt, custo, custoAuto, lact, erro, exame, fase, antes72 };
 }
 function rgResumo() {
-  const c = rgCalc(); const g = UI.rg; const l = g.lote === 'todos' ? 'Todos os lotes' : loteOf(g.lote).nome; const termo = g.lote === 'todos' ? 'animais' : loteOf(g.lote).termo; const un = c.v.porPeso ? 'mL' : 'doses';
+  const c = rgCalc(); const g = UI.rg; const l = g.lote === 'todos' ? 'Todos os lotes' : loteOf(g.lote).nome; const termo = g.lote === 'todos' ? 'animais' : (c.a && c.a.animaisTxt ? 'animais' : loteOf(g.lote).termo); const un = c.e ? c.e.un : 'doses';
   const car = []; if (!c.exame) { if (c.v.carLeite && c.lact) car.push('leite até ' + br(addD(c.dataReg || HI, c.v.carLeite))); if (c.v.leiteProibido && c.lact) car.push('leite: não usar em lactação'); if (c.v.carCarne) car.push('carne até ' + br(addD(c.dataReg || HI, c.v.carCarne))); }
   const av = [];
-  if (c.fr && vencido(c.fr)) av.push(['red', 'warn', `<b>Frasco vencido.</b> O frasco ${esc(c.fr.f)} venceu em ${br(c.fr.val)}. É preciso ciência para usar assim mesmo; a ciência fica registrada.`, true]);
-  else if (c.fr && venceEm(c.fr) <= 30) av.push(['amber', 'warn', `<b>Validade próxima.</b> O frasco ${esc(c.fr.f)} vence em ${venceEm(c.fr)} dias (${br(c.fr.val)}). ${c.rest != null && c.rest < 0 ? 'Há outro frasco com validade maior na lista.' : ''}`]);
-  if (c.fr && c.rest < 0) av.push(['amber', 'warn', `<b>Estoque insuficiente.</b> O frasco ${esc(c.fr.f)} tem ${fmtQ(c.fr.saldo, c.e.un)} e a aplicação usa ${fmtQ(c.q, c.e.un)}. Faltam ${fmtQ(-c.rest, c.e.un)}. Pode registrar assim mesmo, ou escolher outro frasco.`]);
-  if (c.v.leiteProibido && c.lact) av.push(['red', 'warn', `<b>Ivermectina não deve ser usada em animais em lactação.</b> Confira o lote antes de registrar.`]);
-  if (c.v.soVet && !ehVet(g.aplicador)) av.push(['amber', 'warn', `<b>Brucelose B19: aplicação exclusiva de veterinário cadastrado.</b> Escolha o veterinário como aplicador.`]);
-  if (c.v.soVet) av.push(['blue', 'info', `Confira a faixa de 3 a 8 meses: só fêmeas dessa idade recebem a B19.`]);
-  if (!c.e && !c.exame) av.push(['blue', 'info', `Este item não tem produto no estoque. O registro segue sem baixa de estoque.`]);
-  if (c.erro && !/ciência|resultado/.test(c.erro)) av.push(['red', 'warn', `<b>${esc(c.erro)}</b>`]);
+  if (c.fr && vencido(c.fr)) av.push(['red', 'warn', `<b>Frasco vencido.</b> O frasco ${esc(c.fr.f)} venceu em ${br(c.fr.val)}. É preciso ciência para usar assim mesmo; a ciência fica registrada.`]);
+  else if (c.fr && venceEm(c.fr) <= 30) av.push(['amber', 'warn', `<b>Validade próxima.</b> O frasco ${esc(c.fr.f)} vence em ${venceEm(c.fr)} dias (${br(c.fr.val)}).${c.al.parts.length > 1 ? ' O restante sai do frasco seguinte.' : ''}`]);
+  if (c.al.falta > 0) av.push(['amber', 'warn', `<b>Estoque insuficiente.</b> Faltam ${fmtQ(c.al.falta, un)} para esta aplicação. O estoque não fica negativo: registre o que há e compre o restante.`]);
+  if (c.v.leiteProibido && c.lact) av.push(['red', 'warn', `<b>Ivermectina não deve ser usada em animais em lactação.</b> Confira o lote antes de salvar.`]);
+  if (c.v.soVet && !ehVet(g.aplicador)) av.push(['amber', 'warn', `<b>${c.v.exame ? 'Exame de TB' : 'Brucelose B19'}: aplicação exclusiva de médico veterinário habilitado.</b> Escolha o veterinário em Quem aplicou; se salvar assim, fica marcado como exceção.`]);
+  if (c.v.id === 'b19') av.push(['blue', 'info', `Confira a faixa de 3 a 8 meses: só fêmeas dessa idade recebem a B19.`]);
+  if (g.via !== c.v.via && !c.exame) av.push(['amber', 'warn', `<b>Via diferente da padrão.</b> A bula indica via ${esc(c.v.via)}. Confira antes de salvar; a troca fica registrada.`]);
+  if (!c.e && !c.exame) av.push(['blue', 'info', `Este item não tem produto no estoque. O registro segue sem saída de estoque.`]);
+  if (c.antes72) av.push(['amber', 'warn', `<b>Leitura antes de 72 h da inoculação.</b> Escreva a justificativa abaixo; ela fica registrada.`]);
+  if (c.erro && !/ciência|resultado|Escolha o frasco|justificativa/.test(c.erro)) av.push(['red', 'warn', `<b>${esc(c.erro)}</b>`]);
+  const restante = c.e ? c.e.fr.filter(f => !vencido(f)).reduce((s, f) => s + Math.max(0, f.saldo - (c.al.parts.find(p => p.f === f.f) || { q: 0 }).q), 0) : null;
+  const dividido = c.al.parts.length > 1 ? c.al.parts.map(p => `${p.f}: ${fmtQ(p.q, un)}`).join(' + ') : '';
   let itens;
-  if (c.fase === 'inoculacao') itens = [['Animais', `${num(c.n)} ${termo}`], ['Leitura', `${br(addD(c.dataReg || HI, 3))} ${g.hora}`], ['Estoque restante', c.rest == null ? 'sem baixa' : fmtQ(c.rest, c.e.un)], ['Próximo passo', 'registrar a leitura em 72 h'], ['Carência', 'não se aplica'], ['Custo previsto', R$(c.custo)]];
+  if (c.fase === 'inoculacao') itens = [['Animais', `${num(c.n)} ${termo}`], ['Leitura', `${br(addD(c.dataReg || HI, 3))} ${g.hora}`], ['Estoque restante', restante == null ? 'sem saída' : fmtQ(restante, un)], ['Próximo passo', 'salvar a leitura em 72 h'], ['Carência', 'não se aplica'], ['Custo', R$(c.custo)]];
   else if (c.fase === 'leitura') { const r = Object.values(g.res); const inc = r.filter(x => x === 'Inconclusivo').length; itens = [['Animais', `${num(c.n)} ${termo}`], ['Negativos', r.filter(x => x === 'Negativo').length], ['Reagentes', r.filter(x => x === 'Positivo').length], ['Inconclusivos', inc], ['Reteste', inc ? `${inc} ${pl(inc, 'animal', 'animais')} em ${br(addD(c.dataReg || HI, 60))}` : 'não precisa'], ['Custo', R$(c.custo)]]; }
-  else itens = [['Animais', `${num(c.n)} ${c.n === 1 ? termo.replace(/s$/, '') : termo}`], [c.v.porPeso ? 'Ivermectina' : c.exame ? 'Coletas' : 'Doses', c.v.porPeso ? `${num(c.q)} mL` : num(c.q)], ['Estoque restante', c.rest == null ? 'sem baixa' : fmtQ(c.rest, c.e.un)], ['Próxima dose', c.prxTxt], ['Carência', car.length ? car.join(' · ') : 'sem carência'], ['Custo realizado', R$(c.custo)]];
-  const res = `<div class="resumo" aria-live="polite"><h3>${c.fase === 'leitura' ? 'O que acontece ao registrar a leitura' : 'O que acontece ao confirmar'}</h3><ul>${itens.map(([k, v], i) => `<li>${k}<b class="${k === 'Estoque restante' && c.rest != null && c.rest < 0 ? 'warn' : ''}" ${String(v).length > 12 ? 'style="font-size:.9rem"' : ''}>${v}</b></li>`).join('')}</ul>
-    <p class="fr">${c.v.porPeso ? `Dose por peso: 1 mL por 50 kg × peso médio do lote (${g.lote === 'todos' ? 400 : loteOf(g.lote).peso} kg). ` : ''}${num(c.n)} ${termo} · ${esc(l)} · ${esc(c.v.nome)} em ${br(c.dataReg)}. O custo entra no Financeiro, no grupo <button type="button" class="linkbtn" data-act="fora" data-n="Financeiro › Sanidade">Sanidade</button>.</p></div>`;
+  else itens = [['Animais', `${num(c.n)} ${c.n === 1 ? termo.replace(/s$/, '') : termo}`], [c.v.porPeso ? 'Ivermectina' : c.exame ? 'Coletas' : 'Doses', c.v.porPeso ? `${num(c.q)} mL` : num(c.q)], ['Estoque restante', restante == null ? 'sem saída' : fmtQ(restante, un)], ['Próxima dose', c.prxTxt], ['Carência', car.length ? car.join(' · ') : 'sem carência'], ['Custo', R$(c.custo)]];
+  const linha = `${num(c.n)} ${termo} · ${c.v.porPeso ? num(c.q) + ' mL' : num(c.q) + ' ' + pl(c.q, 'dose', 'doses')} · restante ${restante == null ? '—' : fmtQ(restante, un)} · ${c.fase === 'inoculacao' ? 'leitura ' + br(addD(c.dataReg || HI, 3)) : 'próxima ' + c.prxTxt} · ${R$(c.custo)}`;
+  const res = `<details class="resumo resumo-c" ${g.resumoAberto ? 'open' : ''}><summary data-act="rg-toggle"><span class="lbl">${c.fase === 'leitura' ? 'O que acontece ao salvar a leitura' : 'O que acontece ao salvar'}</span><span class="linha">${esc(linha)}</span><span class="ver">${ic('down', 's14')}Detalhes</span></summary><ul>${itens.map(([k, v]) => `<li>${k}<b class="${k === 'Estoque restante' && restante != null && restante <= 0 ? 'warn' : ''}" ${String(v).length > 12 ? 'style="font-size:.95rem"' : ''}>${v}</b></li>`).join('')}</ul>
+    ${dividido ? `<p class="fr"><b>Frascos usados:</b> ${esc(dividido)}.</p>` : ''}<p class="fr">${c.v.porPeso ? `Dose por peso: 1 mL por 50 kg × peso médio do lote (${g.lote === 'todos' ? 400 : loteOf(g.lote).peso} kg). ` : ''}${num(c.n)} ${termo} · ${esc(l)} · ${esc(c.v.nome)} em ${br(c.dataReg)}. O custo entra no Financeiro, no grupo <button type="button" class="linkbtn" data-act="fora" data-n="Financeiro › Sanidade">Sanidade</button>.</p></details>`;
   return { res, av: av.map(([k, i, t]) => `<div class="aviso ${k}" role="${k === 'red' ? 'alert' : 'status'}">${ic(i)}<div class="txt">${t}</div></div>`).join(''), c };
 }
+ACT['rg-toggle'] = t => { const d = t.closest('details'); setTimeout(() => { UI.rg.resumoAberto = d.open; }, 0); };
 function rgUpdate() {
   const r = rgResumo(); const box = $('#rg-resumo'); if (!box) return;
-  const av = $('#rg-avisos'); if (av) av.innerHTML = r.av; box.innerHTML = r.res;
+  const av = $('#rg-avisos'); if (av) av.innerHTML = r.av; const abre = (($('details', box) && $('details', box).open) || UI.rg.resumoAberto); box.innerHTML = r.res; if (abre) $('details', box).open = true;
   const ci = $('#rg-ciencia'); if (ci) ci.hidden = !(r.c.fr && vencido(r.c.fr));
+  const jj = $('#rg-justif'); if (jj) jj.hidden = !r.c.antes72;
+  const vv = $('#rg-via-av'); if (vv) vv.hidden = !(UI.rg.via !== r.c.v.via);
   const b = $('#rg-ok'); if (b) { const bloq = !!r.c.erro; b.disabled = bloq; b.setAttribute('aria-disabled', String(bloq)); }
 }
 function drRegistrar(id) {
@@ -1677,60 +1768,67 @@ function drRegistrar(id) {
   const g = UI.rg; const av = id === 'avulsa'; const a = av ? null : aplById(id); const v = SAN.vacinas.find(x => x.id === g.vac); const e = estOf(g.vac); const c = rgCalc(); const fase = c.fase;
   const quem = av ? `<div class="g2"><div class="fld"><label for="rvac">Vacina ou vermífugo</label><select id="rvac" class="sel" data-ch="rgvac" data-fk="rvac">${opts(SAN.vacinas.filter(x => x.ativo && !x.exame).map(x => [x.id, x.nome]), g.vac)}</select></div><div class="fld"><label for="rlote">Lote</label><select id="rlote" class="sel" data-ch="rglote" data-fk="rlote">${opts(v.alvo.map(l => [l, loteOf(l).nome]).concat([['todos', 'Todos os lotes']]), g.lote)}</select></div></div><div class="fld"><label for="rn">Quantos animais</label><input id="rn" class="inp" type="number" min="1" value="${g.n}" data-in="rgn" data-fk="rn"></div><p class="hint">Para exames, use Registrar exame na linha do calendário.</p>`
     : `<div class="box"><h3>${ic('cow', 's14')}Quem recebe</h3><b>${esc(quemTxt(a))}</b><div class="sub2">${esc(v.nome)}${a.doseTxt ? ' · ' + esc(a.doseTxt) : ''} · prevista para ${br(a.data)}. Para tirar ou incluir animais, use a aba Animais da aplicação.</div><div style="margin-top:.4rem"><button type="button" class="linkbtn" data-act="apl-tab" data-id="${id}" data-tab="animais">Ver animais</button></div></div>`;
-  const frOpts = e ? e.fr.map(f => `<option value="${esc(f.f)}" ${f.f === g.frasco ? 'selected' : ''}>${esc(f.f)} · validade ${br(f.val)} · saldo ${fmtQ(f.saldo, e.un)}${vencido(f) ? ' · VENCIDO' : venceEm(f) <= 30 ? ' · vence em ' + venceEm(f) + ' dias' : ''}</option>`).join('') : '<option value="">Sem produto no estoque</option>';
-  const aplic = `<div class="fld"><label for="rquem">Aplicador (nome e função)</label><select id="rquem" class="sel" data-ch="rgquem">${opts(PESSOAS.map(p => [p, p]), g.aplicador)}</select></div>`;
-  const dataF = `<fieldset style="border:0;padding:0;margin:0"><legend class="lbl" style="margin-bottom:.3rem">${fase === 'inoculacao' ? 'Data e hora da inoculação' : 'Data real da aplicação'}</legend><div class="chips"><label class="chip"><input type="radio" name="rdt" value="hoje" data-ch="rgdata" ${g.data === 'hoje' ? 'checked' : ''}>Hoje · ${br(HI)}</label><label class="chip"><input type="radio" name="rdt" value="outra" data-ch="rgdata" ${g.data === 'outra' ? 'checked' : ''}>Outra data</label>${g.data === 'outra' ? `<input class="inp" style="width:auto" type="date" aria-label="Outra data" value="${g.dataOutra}" max="${HI}" data-in="rgdt" data-fk="rdt2">` : ''}<input class="inp" style="width:auto" type="time" aria-label="Hora" value="${g.hora}" data-in="rghora"></div></fieldset>`;
+  const frOpts = (e ? (g.frasco ? '' : '<option value="">Escolha o frasco</option>') + e.fr.map(f => `<option value="${esc(f.f)}" ${f.f === g.frasco ? 'selected' : ''}>${esc(f.f)} · validade ${br(f.val)} · saldo ${fmtQ(f.saldo, e.un)}${vencido(f) ? ' · VENCIDO' : venceEm(f) <= 30 ? ' · vence em ' + venceEm(f) + ' dias' : ''}</option>`).join('') : '<option value="">Sem produto no estoque</option>');
+  const aplic = `<div class="fld"><label for="rquem">Quem aplicou</label><select id="rquem" class="sel" data-ch="rgquem">${opts(PESSOAS.map(p => [p, p]), g.aplicador)}</select></div>`;
+  const regpor = `<div class="fld"><label for="rregpor">Registrado por</label><input id="rregpor" class="inp" value="${esc(USUARIO)}" readonly aria-readonly="true"></div>`;
+  const dataF = `<fieldset style="border:0;padding:0;margin:0"><legend class="lbl" style="margin-bottom:.3rem">${fase === 'inoculacao' ? 'Data e hora da inoculação' : 'Data e hora'}</legend><div class="chips"><label class="chip"><input type="radio" name="rdt" value="hoje" data-ch="rgdata" ${g.data === 'hoje' ? 'checked' : ''}>Hoje · ${br(HI)}</label><label class="chip"><input type="radio" name="rdt" value="outra" data-ch="rgdata" ${g.data === 'outra' ? 'checked' : ''}>Outra data</label>${g.data === 'outra' ? `<input class="inp" style="width:auto" type="date" aria-label="Outra data" value="${g.dataOutra}" max="${HI}" data-in="rgdt" data-fk="rdt2">` : ''}<input class="inp" style="width:auto" type="time" aria-label="Hora" value="${g.hora}" data-in="rghora"></div></fieldset>`;
+  const VIAS = ['subcutânea', 'intramuscular', 'intradérmica', 'endovenosa'];
   let campos;
   if (fase === 'leitura') {
     const ids = aplAnimais(a);
-    campos = `<div class="aviso blue">${ic('info')}<div class="txt">Inoculação em ${dh(a.leitura.inoc)} · <b>leitura prevista para ${dh(a.leitura.leituraEm)}</b> (72 h). ${g.leituraData + ' ' + g.leituraHora < a.leitura.leituraEm ? '<b>Ainda antes das 72 h:</b> confirme se a leitura já pode ser feita.' : ''}</div></div>
+    campos = `<div class="aviso blue">${ic('info')}<div class="txt">Inoculação em ${dh(a.leitura.inoc)} · <b>leitura a partir de ${dh(a.leitura.leituraEm)}</b> (72 h). Tuberculina: frasco ${esc(a.leitura.frasco)}.</div></div>
       <div class="fld"><label>Resultado por animal (obrigatório)</label><ul class="list">${ids.map(x => { const an = animalOf(x); return `<li><div class="grow"><b>${esc(lbl(an))}</b></div><select class="sel" style="width:170px" aria-label="Resultado de ${esc(lbl(an))}" data-ch="rgres" data-a="${x}"><option value="">Escolha</option>${['Negativo', 'Positivo', 'Inconclusivo'].map(o => `<option ${g.res[x] === o ? 'selected' : ''}>${o}</option>`).join('')}</select></li>`; }).join('')}</ul></div>
-      <div class="g2"><div class="fld"><label for="rlaudo">Nº do laudo (opcional)</label><input id="rlaudo" class="inp" value="${esc(g.laudo)}" data-in="rglaudo"></div>${aplic}</div><fieldset style="border:0;padding:0;margin:0"><legend class="lbl" style="margin-bottom:.3rem">Data e hora da leitura</legend><div class="chips"><input class="inp" style="width:auto" type="date" aria-label="Data da leitura" value="${g.leituraData}" max="${HI}" data-in="rgld"><input class="inp" style="width:auto" type="time" aria-label="Hora da leitura" value="${g.leituraHora}" data-in="rglh"></div></fieldset>`;
+      <div class="g2"><div class="fld"><label for="rlaudo">Nº do laudo (opcional)</label><input id="rlaudo" class="inp" value="${esc(g.laudo)}" data-in="rglaudo"></div>${aplic}</div>${regpor}<fieldset style="border:0;padding:0;margin:0"><legend class="lbl" style="margin-bottom:.3rem">Data e hora da leitura</legend><div class="chips"><input class="inp" style="width:auto" type="date" aria-label="Data da leitura" value="${g.leituraData}" max="${HI}" data-in="rgld"><input class="inp" style="width:auto" type="time" aria-label="Hora da leitura" value="${g.leituraHora}" data-in="rglh"></div></fieldset>
+      <div class="fld" id="rg-justif" ${c.antes72 ? '' : 'hidden'}><label for="rjust">Justificativa da leitura antes de 72 h (obrigatória)</label><input id="rjust" class="inp" value="${esc(g.justif)}" data-in="rgjust"></div>`;
   } else {
     campos = `<div class="fld"><label for="rfr">${c.exame ? 'Produto e frasco (tuberculina)' : 'Produto e frasco (estoque)'}</label><select id="rfr" class="sel" data-ch="rgfr" data-fk="rfr" ${e ? '' : 'disabled'}>${frOpts}</select><span class="hint">${e ? esc(e.prod) + (v.porPeso ? ' · usa o peso médio do lote' : '') : 'Este item não usa produto do estoque.'}</span></div>
       <label class="chk" id="rg-ciencia" hidden><input type="checkbox" data-ch="rgciente" ${g.ciente ? 'checked' : ''} data-fk="ciente"><span><b>Ciente, usar assim mesmo.</b> O frasco está vencido e a ciência fica registrada com meu nome e a hora.</span></label>
-      <div class="g2"><div class="fld"><label for="rdose">Dose e via</label><input id="rdose" class="inp" value="${esc(g.dose)}" data-in="rgdose"></div>${aplic}</div>${dataF}
-      <div class="fld"><label for="rcusto">Custo realizado (opcional)</label><input id="rcusto" class="inp" inputmode="decimal" placeholder="Calculado: ${R$(c.custoAuto)}" value="${esc(g.custo)}" data-in="rgcusto"><span class="hint">Deixe em branco para usar ${v.porPeso ? 'mL × preço do mL' : c.exame ? 'animais × preço do exame' : 'doses × preço da dose'}.</span></div>`;
+      <div class="g2"><div class="fld"><label for="rdose">Dose</label><input id="rdose" class="inp" value="${esc(g.dose)}" data-in="rgdose"></div><div class="fld"><label for="rvia">Via</label><select id="rvia" class="sel" data-ch="rgvia">${opts(VIAS.map(x => [x, x]), g.via)}</select><span class="hint" id="rg-via-av" ${g.via !== v.via ? '' : 'hidden'} style="color:var(--st-amber)">Via diferente da padrão (${esc(v.via)}).</span></div></div>
+      <div class="g2">${aplic}${regpor}</div>${dataF}
+      <div class="fld"><label for="rcusto">Custo</label><input id="rcusto" class="inp" inputmode="decimal" placeholder="Calculado: ${R$(c.custoAuto)}" value="${esc(g.custo)}" data-in="rgcusto"><span class="hint">Deixe em branco para usar ${v.porPeso ? 'mL × preço do mL' : c.exame ? 'animais × preço do exame' : 'doses × preço da dose'}.</span></div>`;
   }
-  const titulo = fase === 'leitura' ? 'Registrar leitura' : c.exame ? 'Registrar exame' : 'Registrar aplicação';
-  const body = `<div class="dr-b"><div id="rg-avisos" class="avs"></div>${quem}${campos}</div><div id="rg-resumo" class="dr-s"></div>`;
-  const rotOk = fase === 'inoculacao' ? 'Confirmar inoculação' : fase === 'leitura' ? 'Confirmar leitura' : c.exame ? 'Confirmar coleta' : 'Confirmar registro';
+  const titulo = fase === 'leitura' ? 'Registrar exame · leitura' : c.exame ? 'Registrar exame' : 'Registrar aplicação';
+  const body = `<div class="dr-b"><div id="rg-avisos" class="avs"></div><div id="rg-resumo"></div>${quem}${campos}</div>`;
+  const rotOk = c.exame ? 'Salvar exame' : 'Salvar registro';
   const foot = `${bt('btn-gold', 'check', rotOk, 'id="rg-ok" data-act="rg-ok" data-fk="rg-ok"')}${bt('btn-ghost', 'left', av ? 'Cancelar' : 'Voltar', av ? 'data-act="dr-close"' : `data-act="apl-tab" data-id="${id}" data-tab="animais"`)}`;
   setTimeout(rgUpdate, 0);
   return { key: 'r:' + id, label: titulo, html: drawerHeadCta(titulo, esc(v.nome) + (a && a.doseTxt ? ' · ' + esc(a.doseTxt) : ''), av ? '<span>Avulsa: sem aplicação prevista</span>' : `${estadoPill(a)}<span>${esc(quemTxt(a))}</span>`) + body + `<div class="dr-f">${foot}</div>` };
 }
 IN.rgn = v => { UI.rg.n = v; rgUpdate(); }; IN.rgdose = v => { UI.rg.dose = v; }; IN.rgquem = v => { UI.rg.aplicador = v; rgUpdate(); }; IN.rgdt = v => { UI.rg.dataOutra = v; rgUpdate(); }; IN.rghora = v => { UI.rg.hora = v; rgUpdate(); };
-IN.rgcusto = v => { UI.rg.custo = v; rgUpdate(); }; IN.rglaudo = v => { UI.rg.laudo = v; };
+IN.rgcusto = v => { UI.rg.custo = v; rgUpdate(); }; IN.rglaudo = v => { UI.rg.laudo = v; }; IN.rgjust = v => { UI.rg.justif = v; rgUpdate(); }; IN.rgvia = v => { UI.rg.via = v; rgUpdate(); };
 IN.rgfr = v => { UI.rg.frasco = v; UI.rg.ciente = false; renderDrawer(true); rgUpdate(); };
 IN.rgciente = c => { UI.rg.ciente = c; rgUpdate(); };
 IN.rgres = (v, t) => { if (v) UI.rg.res[t.dataset.a] = v; else delete UI.rg.res[t.dataset.a]; rgUpdate(); };
 IN.rgld = v => { UI.rg.leituraData = v; renderDrawer(true); }; IN.rglh = v => { UI.rg.leituraHora = v; renderDrawer(true); };
 IN.rgdata = v => { UI.rg.data = v; renderDrawer(true); rgUpdate(); };
-IN.rgvac = v => { const vv = SAN.vacinas.find(x => x.id === v); const fr = fefo(estOf(v)); Object.assign(UI.rg, { vac: v, lote: vv.alvo[0], n: loteOf(vv.alvo[0]).n, frasco: fr ? fr.f : '', dose: vv.dose, ciente: false }); renderDrawer(true); rgUpdate(); };
+IN.rgvac = v => { const vv = SAN.vacinas.find(x => x.id === v); const fr = fefo(estOf(v)); Object.assign(UI.rg, { vac: v, lote: vv.alvo[0], n: loteOf(vv.alvo[0]).n, frasco: fr ? fr.f : '', dose: vv.dose.split('·')[0].trim(), via: vv.via, ciente: false }); renderDrawer(true); rgUpdate(); };
 IN.rglote = v => { UI.rg.lote = v; UI.rg.n = v === 'todos' ? 136 : loteOf(v).n; renderDrawer(true); rgUpdate(); };
 ACT['rg-ok'] = () => {
-  const c = rgCalc(); if (c.erro) return; const g = UI.rg; let a = c.a; const v = c.v; const t0 = nowT();
-  if (c.av) a = criarApl(g.vac, g.lote, c.n, c.dataReg, 'prevista', { avulsa: true });
-  const prev = a.estado; const det = { frasco: c.fr ? c.fr.f : '', doses: c.q, via: (g.dose.split('·')[1] || '').trim(), aplicador: g.aplicador, custo: c.custo };
-  if (c.fr) c.fr.saldo = Math.round((c.fr.saldo - c.q) * 10) / 10;
+  const c = rgCalc(); if (c.erro) return; const g = UI.rg; let a = c.a; const v = c.v;
+  if (c.av) a = criarApl(g.vac, g.lote, c.n, c.dataReg, 'prevista', { avulsa: true, ids: (g.lote === 'todos' ? ANIMAIS.filter(x => x.lote !== 'bz') : animaisDoLote(g.lote)).slice(0, c.n).map(x => x.id) });
+  const prev = a.estado; const frCod = c.al.parts.map(p => p.f).join(' + ') || (c.fr ? c.fr.f : '');
+  const excecao = []; if (v.soVet && !ehVet(g.aplicador)) excecao.push('Aplicador não veterinário'); if (c.fr && vencido(c.fr) && g.ciente) excecao.push('Frasco vencido com ciência'); if (g.via !== v.via && !c.exame) excecao.push('Via diferente da padrão'); if (c.antes72) excecao.push('Leitura antes de 72 h (justificada)');
+  const det = { frasco: frCod, doses: c.q, via: g.via, aplicador: g.aplicador, custo: c.custo, excecao, animaisIds: aplAnimais(a) };
+  const est = c.e; c.al.parts.forEach(p => { const f = est.fr.find(x => x.f === p.f); f.saldo = Math.round((f.saldo - p.q) * 10) / 10; });
+  const ids = aplAnimais(a);
   if (c.fase === 'inoculacao') {
-    a.leitura = { inoc: c.dataReg + ' ' + g.hora, leituraEm: addD(c.dataReg, 3) + ' ' + g.hora, frasco: det.frasco, por: g.aplicador, doses: c.q, custo: c.custo, cancel: () => { a.leitura = null; if (c.fr) c.fr.saldo += c.q; } };
-    audit(a, 'Registrou inoculação', Object.assign(det, { motivo: 'leitura em 72 h: ' + dh(a.leitura.leituraEm), aplicador: g.aplicador }));
+    a.leitura = { inoc: c.dataReg + ' ' + g.hora, leituraEm: addD(c.dataReg, 3) + ' ' + g.hora, frasco: frCod, por: g.aplicador, doses: c.q, custo: c.custo, parts: c.al.parts };
+    audit(a, 'Registrou inoculação', Object.assign(det, { motivo: 'leitura em 72 h: ' + dh(a.leitura.leituraEm) }));
     UI.rg = null; UI.drKey = null; closeDrawer(); refresh();
-    toast(`Inoculação registrada · leitura em 72 h (${dh(a.leitura.leituraEm)})`, { acao: 'Desfazer', fn: () => { a.leitura.cancel(); const o = SAN.aud.slice().reverse().find(e => e.apl === a.id && e.acao === 'Registrou inoculação' && !e.estornado); if (o) o.estornado = { quem: USUARIO, t: nowT() }; audit(a, 'Estornou inoculação', { ref: o && o.id }); a.leitura = null; refresh(); } });
+    toast(`Inoculação registrada · leitura em 72 h (${dh(a.leitura.leituraEm)})`, { acao: 'Desfazer', fn: () => { a.leitura.parts.forEach(p => { const f = est.fr.find(x => x.f === p.f); f.saldo = Math.round((f.saldo + p.q) * 10) / 10; }); const o = SAN.aud.slice().reverse().find(e => e.apl === a.id && e.acao === 'Registrou inoculação' && !e.estornado); if (o) o.estornado = { quem: USUARIO, t: nowT() }; audit(a, 'Estornou inoculação', { ref: o && o.id }); a.leitura = null; refresh(); } });
     return;
   }
-  let cells, retesteId = null, nextId = null, result = null, inc = 0, pos = [];
+  let retesteId = null, nextId = null, result = null, inc = 0, pos = []; const resultados = [];
   if (c.fase === 'leitura' || c.fase === 'coleta') {
     const r = c.fase === 'leitura' ? g.res : {}; const vals = Object.values(r); inc = vals.filter(x => x === 'Inconclusivo').length; pos = Object.keys(r).filter(k => r[k] === 'Positivo');
     result = c.fase === 'leitura' ? ['Negativo', 'Positivo', 'Inconclusivo'].map(k => [k, vals.filter(x => x === k).length]).filter(x => x[1]).map(x => x[0] + ' · ' + x[1]).join(' · ') : 'Coleta enviada ao laboratório';
-    cells = aplicaCob(a, c.n, inc);
-    if (inc) { const rt = criarApl(a.vac, a.lote, inc, addD(c.dataReg, 60), 'prevista', { exame: true, reteste: 'Inconclusivo em ' + br(c.dataReg) }); retesteId = rt.id; }
-    if (c.prx && !inc && !c.av) { const nx = criarApl(a.vac, a.lote, a.n, addD(c.dataReg, c.prx), 'prevista', { exame: true }); nextId = nx.id; }
+    if (c.fase === 'leitura') ids.forEach(id => { resultados.push({ a: id, res: r[id], laudo: g.laudo }); SAN.exames.push({ a: id, vac: a.vac, data: c.dataReg, res: r[id], reteste: r[id] === 'Inconclusivo' ? addD(c.dataReg, 60) : null, laudo: g.laudo, ref: a.id }); });
+    if (inc) { const rt = criarApl(a.vac, a.lote, inc, addD(c.dataReg, 60), 'prevista', { exame: true, reteste: 'Inconclusivo em ' + br(c.dataReg), ids: Object.keys(r).filter(k => r[k] === 'Inconclusivo') }); retesteId = rt.id; }
+    if (c.prx && !inc && !c.av) { const nx = criarApl(a.vac, a.lote, a.n, addM(c.dataReg, 12), 'prevista', { exame: true, ids: ids.slice() }); nextId = nx.id; }
     a.resultados = r; a.laudo = g.laudo;
   } else {
-    cells = aplicaCob(a, c.n, 0);
-    if (c.prx > 0 && !c.av) { const nx = criarApl(a.vac, a.lote, a.n, addD(c.dataReg, c.prx), 'prevista', { doseTxt: v.multi ? (a.doseTxt === 'dose 1' ? 'dose 2' : 'reforço anual') : (a.doseTxt || ''), prx: a.doseTxt === 'dose 1' ? 365 : null }); nextId = nx.id; }
+    ids.forEach(id => SAN.doses.push({ a: id, vac: a.vac, data: c.dataReg, ref: a.id }));
+    if (c.prx > 0 && !c.av) { const nx = criarApl(a.vac, a.lote, a.n, v.multi ? (c.prx === 30 ? addD(c.dataReg, 30) : addM(c.dataReg, 12)) : (v.dias ? addD(c.dataReg, v.dias) : addM(c.dataReg, v.meses || 12)), 'prevista', { doseTxt: v.multi ? (c.prx === 30 ? 'dose 2' : 'reforço anual') : (a.doseTxt || ''), prx: null, ids: ids.slice(), animaisTxt: a.animaisTxt }); nextId = nx.id; }
   }
   const carIds = [];
   if (!c.exame) {
@@ -1738,59 +1836,62 @@ ACT['rg-ok'] = () => {
     if (v.carCarne) { const x = { id: 'c' + (++SAN.seq), txt: v.nome, lote: g.lote === 'todos' ? 'l1' : g.lote, n: c.n, tipo: 'carne', ate: addD(c.dataReg, v.carCarne), orig: a.id }; SAN.car.push(x); carIds.push(x.id); }
   }
   a.estado = 'registrada';
-  a.reg = { data: c.dataReg, hora: g.hora, por: g.aplicador, frasco: det.frasco || '—', frascoId: det.frasco || null, doses: c.q, custo: c.custo, cells, nextId, retesteId, carIds, prev, result, via: det.via, ciente: g.ciente };
-  audit(a, c.exame ? 'Registrou leitura' : 'Registrou aplicação', Object.assign(det, { result, motivo: g.ciente ? 'Ciente do frasco vencido' : '', n: c.n }));
+  a.reg = { data: c.dataReg, hora: g.hora, por: g.aplicador, regPor: USUARIO, frasco: frCod || '—', parts: c.al.parts, doses: c.q, custo: c.custo, nextId, retesteId, carIds, prev, result, via: g.via, ciente: g.ciente };
+  const ev = audit(a, c.exame ? 'Registrou exame' : 'Registrou aplicação', Object.assign(det, { result, resultados, n: c.n, motivo: [g.ciente && c.fr && vencido(c.fr) ? 'Ciente do frasco vencido' : '', c.antes72 ? 'Justificativa: ' + g.justif : ''].filter(Boolean).join(' · ') }));
+  pos.forEach(id => SAN.reag.push({ id: 'rg' + (++SAN.seq), a: id, laudo: g.laudo, data: c.dataReg, evId: ev.id, ref: a.id, notif: null }));
   UI.rg = null; UI.drKey = null; closeDrawer(); refresh();
   toast(`${c.exame ? 'Exame registrado' : 'Registrada'} · ${v.nome} · ${quemTxt(a)}`, { acao: 'Desfazer', fn: () => { estornar(a, 'Desfeito logo após registrar'); refresh(); } });
-  if (pos.length) setTimeout(() => toast(`Reagente identificado: ${pos.map(x => lbl(animalOf(x))).join(', ')}. Notifique o serviço veterinário oficial.`, { icon: 'warn', ms: 9000 }), 300);
 };
 
-/* ── Carteira do animal ── */
+/* ── Carteira do animal (calculada) ── */
 function drAnimal(id) {
   const an = animalOf(id); if (!an) return null; UI.drKey = 'a:' + id;
-  const l = pendentesAnimal(an); const at = l.filter(x => x.st === 'atrasada'); const sem = l.filter(x => x.st === 'sem' || x.st === 'nunca'); const nun = l.filter(x => x.st === 'nunca');
+  const l = statusAnimal(an); const at = l.filter(x => x.st === 'atrasada'); const rg = l.filter(x => x.st === 'reagente'); const sem = l.filter(x => x.st === 'sem');
   const rows = l.map(x => { const v = x.v;
-    const sit = x.st === 'ok' ? `<span class="st registrada">${ic('ok', 's14')}Em dia</span>` : x.st === 'nunca' ? `<span class="st atrasada">${ic('warn', 's14')}Nunca tomada</span>` : x.st === 'sem' ? `<span class="st vence">${ic('clock', 's14')}Ainda sem a dose</span>` : `<span class="st atrasada">${ic('warn', 's14')}Atrasada${x.prox ? ' desde ' + br(x.prox) : ''}</span>`;
     const prox = v.intervalo === 0 && x.st === 'ok' ? 'dose única' : x.prox ? br(x.prox) : '—';
-    return `<tr class="rowc"><td data-c="nome"><div class="nm">${esc(v.nome)}</div><div class="sub2">${v.tipo}${v.intervalo === 0 ? ' · dose única' : ''}</div></td><td data-c="x" data-l="Última">${x.ult ? br(x.ult) : '—'}</td><td data-c="data" data-l="Próxima">${prox}</td><td data-c="estado">${sit}</td></tr>`; }).join('');
-  const st = at.length ? `<span class="st atrasada">${ic('warn', 's14')}${at.length} ${pl(at.length, 'vacina atrasada', 'vacinas atrasadas')}</span>` : sem.length ? `<span class="st vence">${ic('clock', 's14')}${sem.length} ${pl(sem.length, 'vacina ainda sem a dose', 'vacinas ainda sem a dose')}</span>` : `<span class="st registrada">${ic('ok', 's14')}Em dia</span>`;
-  const pend = at.length + sem.length;
-  const foot = `${bt('btn-gold', 'shield', 'Emitir comprovante de animal em dia', `data-act="comprov" data-id="${id}" ${pend ? 'disabled' : ''}`)}${pend ? `<span class="hint" style="flex:1;min-width:180px">Só sai para animal em dia. Resolva o que está atrasado ou sem a dose.</span>` : '<span class="sp"></span>'}${bt('btn-ghost', '', 'Fechar', 'data-act="dr-close"')}`;
-  return { key: 'a:' + id, label: 'Carteira de vacinação de ' + lbl(an), html: drawerHead('Carteira de vacinação', esc(lbl(an)), `${st}<span>${esc(an.raca)} · ${esc(loteOf(an.lote).nome)}</span>`) + `<div class="dr-b"><p class="hint">Vacinas e exames que se aplicam ao lote do animal: a última dose conhecida, a próxima e a situação. A mesma carteira aparece na ficha do animal, em Rebanho.</p>
-    ${nun.length ? `<div class="aviso amber">${ic('warn')}<div class="txt"><b>${nun.length} ${pl(nun.length, 'vacina nunca tomada', 'vacinas nunca tomadas')}</b> por este animal (sem nenhum registro).</div></div>` : ''}
-    <div class="tw cards-w"><table class="ft cards"><caption class="sr">Carteira de vacinação</caption><thead><tr><th>Vacina ou exame</th><th>Última dose</th><th>Próxima</th><th>Situação</th></tr></thead><tbody>${rows}</tbody></table></div></div><div class="dr-f">${foot}</div>` };
+    return `<tr class="rowc"><td data-c="nome"><div class="nm">${esc(v.nome)}</div><div class="sub2">${v.tipo}${v.intervalo === 0 ? ' · dose única' : ''}</div></td><td data-c="x" data-l="Última dose">${x.ult ? br(x.ult) : '—'}</td><td data-c="data" data-l="Próxima">${prox}</td><td data-c="estado">${ST_PILL(x)}${x.laudo ? `<div class="sub2">laudo ${esc(x.laudo)}</div>` : ''}</td></tr>`; }).join('');
+  const nas = ANIMAIS.length && SAN.vacinas.filter(v => statusAV(an, v).st === 'na').map(v => `<li class="sub2">${esc(v.nome)}: ${statusAV(an, v).txt}</li>`).join('');
+  const st = rg.length ? `<span class="st atrasada">${ic('warn', 's14')}Reagente — notificar serviço veterinário oficial</span>` : at.length ? `<span class="st atrasada">${ic('warn', 's14')}${at.length} ${pl(at.length, 'atrasada', 'atrasadas')}</span>` : sem.length ? `<span class="st vence">${ic('clock', 's14')}${sem.length} sem registro</span>` : `<span class="st registrada">${ic('ok', 's14')}Em dia</span>`;
+  const bloq = rg.length || at.length || sem.length; const motivo = rg.length ? 'Animal reagente: comprovante bloqueado até a conclusão sanitária.' : at.length ? 'Só sai para animal em dia. Há vacina ou exame atrasado.' : 'Só sai para animal em dia. Há vacina sem registro.';
+  const foot = `${bt('btn-gold', 'shield', 'Emitir comprovante de animal em dia', `data-act="comprov" data-id="${id}" ${bloq ? 'disabled' : ''}`)}${bloq ? `<span class="hint" style="flex:1;min-width:180px">${motivo}</span>` : '<span class="sp"></span>'}${bt('btn-ghost', '', 'Fechar', 'data-act="dr-close"')}`;
+  return { key: 'a:' + id, label: 'Carteira de vacinação de ' + lbl(an), html: drawerHead('Carteira de vacinação', esc(lbl(an)), `${st}<span>${esc(an.raca)} · ${esc(loteOf(an.lote).nome)}</span>`) + `<div class="dr-b"><p class="hint">Calculada das doses registradas. “Sem registro” nunca é “Em dia”; data prevista passada é “Atrasada”. A mesma carteira aparece na ficha do animal, em Rebanho.</p>
+    ${rg.length ? `<div class="aviso red" role="alert">${ic('warn')}<div class="txt"><b>Reagente ao exame de TB.</b> Notifique o serviço veterinário oficial (banner no topo de Sanidade).</div></div>` : ''}
+    <div class="tw cards-w"><table class="ft cards"><caption class="sr">Carteira de vacinação</caption><thead><tr><th>Vacina ou exame</th><th>Última dose</th><th>Próxima</th><th>Situação</th></tr></thead><tbody>${rows}</tbody></table></div>${nas ? `<ul class="list" style="margin-top:.4rem">${nas}</ul>` : ''}</div><div class="dr-f">${foot}</div>` };
 }
 ACT.comprov = t => { const an = animalOf(t.dataset.id); toast(`Comprovante de ${lbl(an)} gerado (PDF).`, { icon: 'download' }); };
 
 /* ── Quem falta ── */
 function drFalta(k) {
-  const [vid, lid] = k.split(':'); const v = SAN.vacinas.find(x => x.id === vid); const c = v && (SAN.cob[vid] || {})[lid]; if (!c) return null; UI.drKey = 'f:' + k;
-  const arr = animaisDoLote(lid); const lista = arr.slice(0, c.atras).map(x => [x, 'atrasada']).concat(arr.slice(arr.length - c.sem).map(x => [x, 'sem'])).filter((x, i, s) => s.findIndex(y => y[0].id === x[0].id) === i);
-  const falta = c.atras + c.sem;
+  const [vid, lid] = k.split(':'); const v = SAN.vacinas.find(x => x.id === vid); if (!v) return null; UI.drKey = 'f:' + k;
+  const lista = animaisDoLote(lid).map(an => ({ an, s: statusAV(an, v) })).filter(x => x.s.st === 'atrasada' || x.s.st === 'reagente' || x.s.st === 'sem');
+  const at = lista.filter(x => x.s.st !== 'sem').length, sem = lista.filter(x => x.s.st === 'sem').length; const falta = lista.length; const tot = cobVac(vid, lid).tot;
   const alvo = SAN.apl.filter(a => a.vac === vid && (a.lote === lid || a.lote === 'todos') && !feita(a)).sort((x, y) => x.data < y.data ? -1 : 1)[0];
   const foot = falta ? `${bt('btn-gold', '', v.exame ? 'Registrar exame' : 'Registrar aplicação', `data-act="falta-reg" data-v="${k}" data-fk="falta-reg"`)}<span class="sp"></span>${bt('btn-ghost', '', 'Fechar', 'data-act="dr-close"')}` : `<span class="sp"></span>${bt('btn-ghost', '', 'Fechar', 'data-act="dr-close"')}`;
-  return { key: 'f:' + k, label: 'Quem falta: ' + v.nome, html: drawerHead('Quem falta', `${esc(v.nome)} · ${esc(loteOf(lid).nome)}`, falta ? `<span class="st atrasada">${ic('warn', 's14')}${c.atras ? c.atras + ' ' + pl(c.atras, 'animal atrasado', 'animais atrasados') : ''}${c.atras && c.sem ? ' · ' : ''}${c.sem ? c.sem + ' sem a dose' : ''} de ${c.tot}</span>` : `<span class="st registrada">${ic('ok', 's14')}Todos em dia</span>`) + `<div class="dr-b">${falta ? `<p class="hint">${alvo ? `Aplicação ${estadoVis(alvo) === 'atrasada' ? 'atrasada' : 'prevista'} para ${br(alvo.data)}.` : 'Sem aplicação prevista para este grupo: o registro será avulso.'} Toque num animal para ver a carteira.</p><ul class="list">${lista.map(([x, st]) => `<li><div class="grow"><b>${esc(lbl(x))}</b> <span class="sub2">· ${esc(x.raca)}</span><div class="sub2">${st === 'atrasada' ? 'Atrasada' : 'Ainda sem a dose'}</div></div>${bt('btn-ghost sm', 'eye', 'Carteira', `data-act="animal" data-id="${x.id}"`)}</li>`).join('')}</ul>` : `<div class="empty" style="padding:1.2rem">${ic('ok', 's28 ico')}<p>Nenhum animal deste lote está atrasado ou sem a dose de ${esc(v.nome)}.</p></div>`}</div><div class="dr-f">${foot}</div>` };
+  return { key: 'f:' + k, label: 'Quem falta: ' + v.nome, html: drawerHead('Quem falta', `${esc(v.nome)} · ${esc(loteOf(lid).nome)}`, falta ? `<span class="st atrasada">${ic('warn', 's14')}${at ? at + ' ' + pl(at, 'animal atrasado', 'animais atrasados') : ''}${at && sem ? ' · ' : ''}${sem ? sem + ' sem registro' : ''} de ${tot}</span>` : `<span class="st registrada">${ic('ok', 's14')}Todos em dia</span>`) + `<div class="dr-b">${falta ? `<p class="hint">${alvo ? `Aplicação ${estadoVis(alvo) === 'atrasada' ? 'atrasada' : 'prevista'} para ${br(alvo.data)}.` : 'Sem aplicação prevista para este grupo: o registro será avulso.'} Toque num animal para ver a carteira.</p><ul class="list">${lista.map(({ an, s }) => `<li><div class="grow"><b>${esc(lbl(an))}</b> <span class="sub2">· ${esc(an.raca)}</span><div>${ST_PILL(Object.assign({ v }, s))}</div></div>${bt('btn-ghost sm', 'eye', 'Carteira', `data-act="animal" data-id="${an.id}"`)}</li>`).join('')}</ul>` : `<div class="empty" style="padding:1.2rem">${ic('ok', 's28 ico')}<p>Nenhum animal deste lote está atrasado ou sem registro de ${esc(v.nome)}.</p></div>`}</div><div class="dr-f">${foot}</div>` };
 }
 ACT['falta-reg'] = t => { const [vid, lid] = t.dataset.v.split(':'); const a = SAN.apl.filter(x => x.vac === vid && (x.lote === lid || x.lote === 'todos') && !feita(x)).sort((p, q) => p.data < q.data ? -1 : 1)[0]; if (a) setQ({ falta: null, registrar: a.id }); else { UI.avPre = { vac: vid, lote: lid }; UI.rg = null; setQ({ falta: null, registrar: 'avulsa' }); } };
 
-/* ── Corrigir registro (via auditada) ── */
+/* ── Corrigir registro (via auditada): a original vira "Corrigida (substituída por #n)" ── */
 function drCorrigir(id) {
-  const ev = SAN.aud.find(e => e.id === id); if (!ev) return null; UI.drKey = 'c:' + id; const v = SAN.vacinas.find(x => x.id === ev.vac) || VACINAS0.find(x => x.id === ev.vac);
+  const ev = SAN.aud.find(e => e.id === id); if (!ev || ev.corrigido || ev.estornado) return null; UI.drKey = 'c:' + id; const v = SAN.vacinas.find(x => x.id === ev.vac) || VACINAS0.find(x => x.id === ev.vac);
   if (!UI.cor || UI.cor.id !== id) UI.cor = { id, doses: ev.doses, aplicador: ev.aplicador || PESSOAS[2], motivo: '', tent: false };
-  const c = UI.cor; const bad = c.tent && !c.motivo.trim();
-  return { key: 'c:' + id, label: 'Corrigir registro', html: drawerHead('Corrigir registro · via auditada', esc(v ? v.nome : 'Registro'), `<span>${dh(ev.t)} · ${esc(ev.quem.split(' (')[0])}</span>`) + `<div class="dr-b"><div class="aviso blue">${ic('info')}<div class="txt">Só o gestor corrige. O registro original <b>não é apagado</b>: ele fica marcado como corrigido e uma nova entrada guarda o valor novo, quem corrigiu e o motivo.</div></div>
-    <dl class="kv"><dt>Original</dt><dd>${ev.doses} ${v && v.porPeso ? 'mL' : 'doses'} · frasco ${esc(ev.frasco || '—')} · aplicador ${esc((ev.aplicador || '').split(' (')[0])}</dd></dl>
-    <div class="g2"><div class="fld"><label for="cd">Doses corretas</label><input id="cd" class="inp" type="number" step="0.1" min="0" value="${c.doses}" data-in="cordose"></div><div class="fld"><label for="ca">Aplicador correto</label><select id="ca" class="sel" data-ch="corapl">${opts(PESSOAS.map(p => [p, p]), c.aplicador)}</select></div></div>
-    <div class="fld"><label for="cm">Motivo da correção (obrigatório)</label><input id="cm" class="inp" value="${esc(c.motivo)}" data-in="cormot" data-fk="cm" ${bad ? 'aria-invalid="true"' : ''}>${bad ? `<span class="err">${ic('warn', 's14')}Escreva o motivo para corrigir.</span>` : ''}</div></div><div class="dr-f">${bt('btn-gold', 'check', 'Salvar correção', 'data-act="cor-ok"')}${bt('btn-ghost', '', 'Cancelar', 'data-act="dr-close"')}</div>` };
+  const c = UI.cor; const bad = c.tent && !c.motivo.trim(); const un = v && v.porPeso ? 'mL' : 'doses';
+  const novoCusto = v ? (v.exame ? ev.n * v.custo : c.doses * v.custo) : ev.custo;
+  return { key: 'c:' + id, label: 'Corrigir registro', html: drawerHead('Corrigir registro #' + evNum(ev) + ' · via auditada', esc(v ? v.nome : 'Registro'), `<span>${dh(ev.t)} · registrado por ${esc(ev.quem.split(' (')[0])}</span>`) + `<div class="dr-b"><div class="aviso blue">${ic('info')}<div class="txt">Só o gestor corrige. O registro original <b>não é apagado</b>: vira “Corrigida (substituída por #${SAN.evs + 1})” e não pode ser corrigido de novo. O custo é recalculado sem contar duas vezes.</div></div>
+    <dl class="kv"><dt>Original</dt><dd>${ev.doses} ${un} · lote do frasco ${esc(ev.frasco || '—')} · aplicador ${esc((ev.aplicador || '').split(' (')[0])} · ${R$(ev.custo || 0)}</dd></dl>
+    <div class="g2"><div class="fld"><label for="cd">${un === 'mL' ? 'Volume correto (mL)' : 'Doses corretas'}</label><input id="cd" class="inp" type="number" step="0.1" min="0" value="${c.doses}" data-in="cordose"></div><div class="fld"><label for="ca">Quem aplicou (correto)</label><select id="ca" class="sel" data-ch="corapl">${opts(PESSOAS.map(p => [p, p]), c.aplicador)}</select></div></div>
+    <div class="fld"><label for="cm">Motivo da correção (obrigatório)</label><input id="cm" class="inp" value="${esc(c.motivo)}" data-in="cormot" data-fk="cm" ${bad ? 'aria-invalid="true"' : ''}>${bad ? `<span class="err">${ic('warn', 's14')}Escreva o motivo para corrigir.</span>` : ''}</div><p class="hint">Custo depois da correção: <b>${R$(novoCusto)}</b> (antes ${R$(ev.custo || 0)}).</p></div><div class="dr-f">${bt('btn-gold', 'check', 'Salvar correção', 'data-act="cor-ok"')}${bt('btn-ghost', '', 'Cancelar', 'data-act="dr-close"')}</div>` };
 }
-IN.cordose = v => { UI.cor.doses = +v; }; IN.corapl = v => { UI.cor.aplicador = v; }; IN.cormot = v => { UI.cor.motivo = v; };
+IN.cordose = v => { UI.cor.doses = +v; renderDrawer(true); }; IN.corapl = v => { UI.cor.aplicador = v; }; IN.cormot = v => { UI.cor.motivo = v; };
 ACT.corrigir = t => { UI.cor = null; setQ({ corrigir: t.dataset.id }); };
 ACT['cor-ok'] = () => {
   const c = UI.cor; if (!c.motivo.trim()) { c.tent = true; renderDrawer(true); const i = $('#cm'); if (i) i.focus(); return; }
-  const ev = SAN.aud.find(e => e.id === c.id); const a = aplById(ev.apl); ev.corrigido = { quem: USUARIO, t: nowT() };
-  audit(a, 'Corrigiu registro', { motivo: c.motivo, ref: ev.id, doses: c.doses, aplicador: c.aplicador, frasco: ev.frasco, vac: ev.vac, lote: ev.lote, n: ev.n, custo: ev.custo });
-  if (a && a.reg) { a.reg.doses = c.doses; a.reg.por = c.aplicador; }
-  UI.cor = null; closeDrawer(); refresh(); toast('Correção registrada na trilha de auditoria. O original continua no histórico.', { icon: 'ok' });
+  const ev = SAN.aud.find(e => e.id === c.id); const a = aplById(ev.apl); const v = SAN.vacinas.find(x => x.id === ev.vac) || VACINAS0.find(x => x.id === ev.vac);
+  const custo = v ? +(v.exame ? ev.n * v.custo : c.doses * v.custo).toFixed(2) : ev.custo;
+  const novo = audit(a, 'Corrigiu registro', { motivo: c.motivo + ' (corrige #' + evNum(ev) + ')', ref: ev.id, doses: c.doses, aplicador: c.aplicador, frasco: ev.frasco, vac: ev.vac, lote: ev.lote, n: ev.n, custo, via: ev.via, result: ev.result, resultados: ev.resultados, excecao: ev.excecao, animaisIds: ev.animaisIds });
+  ev.corrigido = { quem: USUARIO, t: nowT(), ref: novo.id };
+  if (a && a.reg) { a.reg.doses = c.doses; a.reg.por = c.aplicador; a.reg.custo = custo; }
+  UI.cor = null; closeDrawer(); refresh(); toast(`Correção salva: o registro #${evNum(ev)} ficou “Corrigida (substituída por #${evNum(novo)})”.`, { icon: 'ok' });
 };
 
 /* ── Inativar vacina (com confirmação) ── */
@@ -1817,7 +1918,7 @@ function printSpec() {
   }
   const g = agrupar(SAN.apl.filter(a => vacOf(a).ativo)); const lista = g.atras.concat(g.hoje, g.sem);
   const porLote = {}; lista.forEach(a => { (porLote[a.lote] = porLote[a.lote] || []).push(a); });
-  const body = Object.keys(porLote).map(l => `<h3 style="margin:.9rem 0 .2rem;font-size:1rem;color:#111">${esc(loteNome(l))}</h3><table><thead><tr><th>Feito</th><th>Vacina ou exame</th><th>Animais</th><th>Data</th><th>Produto e frasco</th><th>Anotações</th></tr></thead><tbody>${porLote[l].map(a => `<tr><td><span class="box0"></span></td><td><b>${esc(vacOf(a).nome)}</b>${a.doseTxt ? '<br>' + esc(a.doseTxt) : ''}</td><td>${nEf(a)}</td><td>${br(a.data)}${estadoVis(a) === 'atrasada' ? '<br><b>ATRASADA</b>' : ''}</td><td>${esc(prodTxt(a))}<br>Frasco: ________</td><td style="width:22%"></td></tr>`).join('')}</tbody></table>`).join('');
+  const body = Object.keys(porLote).map(l => `<h3 style="margin:.9rem 0 .2rem;font-size:1rem;color:#111">${esc(loteNome(l))}</h3><table><thead><tr><th>Feito</th><th>Vacina ou exame</th><th>Animais</th><th>Data</th><th>Produto e frasco</th><th>Anotações</th></tr></thead><tbody>${porLote[l].map(a => `<tr><td data-l="Feito"><span class="box0"></span></td><td data-l="Vacina"><b>${esc(vacOf(a).nome)}</b>${a.doseTxt ? '<br>' + esc(a.doseTxt) : ''}</td><td data-l="Animais">${nEf(a)}</td><td data-l="Data">${br(a.data)}${estadoVis(a) === 'atrasada' ? ' <b>ATRASADA</b>' : ''}</td><td data-l="Produto">${esc(prodTxt(a))}<br>Frasco: ________</td><td data-l="Anotações" style="width:22%"></td></tr>`).join('')}</tbody></table>`).join('');
   return { key: 'print', print: true, label: 'Folha de campo: vacinas e exames', html: `<div class="print-bar"><span><b>Pré-visualização da folha de campo</b></span><span class="actions">${bt('btn-primary sm', 'printer', 'Imprimir', 'data-act="print-go" data-first')}${bt('btn-ghost sm', 'x', 'Fechar', 'data-act="dr-close"')}</span></div>
   <div class="paper"><h2>Folha de campo · Vacinas e exames</h2><div style="color:#444">Fazenda Estreito Ponte de Pedra · gerada em ${br(HI)} · atrasadas, hoje e esta semana</div>${body || '<p style="margin:1rem 0">Nada atrasado nem previsto para esta semana.</p>'}<div class="sign"><div>Responsável pela aplicação</div><div>Veterinário</div><div>Data</div></div></div>` };
 }
@@ -1913,7 +2014,7 @@ ACT['wz-save'] = () => {
   if (w.editId) { v = SAN.vacinas.find(x => x.id === w.editId); const n = previstasDe(v).length; Object.assign(v, { nome: w.nome, tipo: w.tipo, prod: w.prod, dose: w.dose || v.dose, alvo: w.lotes.slice(), marco: w.marco, freq: wzFreq(w), intervalo: dias, multi: w.multi }); audit(null, 'Editou vacina', { motivo: `${v.nome}: ${w.motivo} (${n} aplicações previstas atualizadas)`, vac: v.id }); }
   else {
     v = { id: 'v' + (++SAN.seq), nome: w.nome.trim(), tipo: w.tipo, prod: w.prod, dose: w.dose || 'dose a definir', alvo: w.lotes.slice(), freq: wzFreq(w), intervalo: dias, carLeite: 0, carCarne: 0, ativo: true, marco: w.marco, multi: w.multi, exame: w.tipo === 'Exame', custo: (VACINAS0.find(x => x.id === w.prod) || { custo: 5 }).custo };
-    SAN.vacinas.push(v); SAN.cob[v.id] = {}; w.lotes.forEach(l => { const t = loteOf(l).n; SAN.cob[v.id][l] = { tot: t, em: t, atras: 0, sem: 0 }; });
+    SAN.vacinas.push(v);
     dd.datas.forEach((d, i) => criarApl(v.id, w.lotes.length === 1 ? w.lotes[0] : 'todos', al, d, 'prevista', { doseTxt: w.multi && w.doses[i] ? w.doses[i].rot.toLowerCase() : '' }));
     audit(null, 'Cadastrou vacina', { motivo: v.nome, vac: v.id });
   }
@@ -1951,7 +2052,7 @@ ROUTES['/protocolos'] = () => {
   const grp = (cls, icon, t, arr) => arr.length ? `<tr class="grp"><td colspan="7"><div class="g ${cls}">${ic(icon, 's14')}${t}<span class="cnt">· ${arr.length}</span></div></td></tr>` + arr.map(row).join('') : '';
   const body = grp('red', 'warn', 'Atrasados', atras) + (atras.length ? grp('mut', 'clock', st === 'andamento' ? 'Em andamento' : 'Demais', resto) : resto.map(row).join(''));
   const tipos = [['', 'Todos'], ['iatf', 'Inseminação programada'], ['inducao', 'Indução de lactação'], ['tratamento', 'Tratamento curativo'], ['proprio', 'Protocolo próprio']];
-  return pgHead('list-checks', conc ? 'Protocolos concluídos' : 'Protocolos', 'Sequências por animal ou lote. A vacina recorrente do rebanho fica em Sanidade › Vacinas e exames.', acts, gestaoChip()) +
+  return pgHead('list-checks', conc ? 'Protocolos concluídos' : 'Protocolos', 'Sequências por animal ou lote. A vacina recorrente do rebanho fica em <button type="button" class="linkbtn" data-act="go" data-to="/sanidade/vacinas">Sanidade › Vacinas e exames</button>.', acts, gestaoChip()) +
     `<div class="strip" style="grid-template-columns:repeat(3,1fr)" role="group" aria-label="Resumo"><button type="button" data-act="pfil" data-k="status" data-v="andamento"><span class="num ${cAt ? 't-red' : ''}">${cAt}</span><span class="lab ${cAt ? 't-red' : ''}"><span class="lt">${ic(cAt ? 'warn' : 'ok', 's14')}Atrasados</span><small>com etapa vencida</small></span></button><button type="button" data-act="pfil" data-k="status" data-v="andamento"><span class="num t-amber">${hojeN}</span><span class="lab t-amber"><span class="lt">${ic('clock', 's14')}Etapas hoje</span><small>protocolos com etapa em ${br(HI)}</small></span></button><button type="button" data-act="pfil" data-k="status" data-v="andamento"><span class="num">${cAnd}</span><span class="lab"><span class="lt">${ic('list-checks', 's14')}Em andamento</span><small>no total</small></span></button></div>
     <div class="filters" role="group" aria-label="Filtros de protocolos"><div class="tabbar" role="group" aria-label="Tipo">${tipos.map(([v, t]) => `<button type="button" class="tabpill" data-act="pfil" data-k="tipo" data-v="${v}" aria-pressed="${tipo === v}">${t}</button>`).join('')}</div></div>
     <div class="filters"><select class="sel" aria-label="Filtrar por lote" data-ch="plote">${opts(LOTE_OPTS, lote, 'Todos os lotes')}</select>
@@ -2049,25 +2150,32 @@ ACT.pfim = t => {
 /* ── Folha de campo do protocolo ── */
 function printProtoSpec(id) {
   UI.drKey = 'pprint'; const lista = id === 'todos' ? PRO.lista.filter(p => p.estado === 'andamento') : [protoOf(id)].filter(Boolean);
-  const body = lista.map(p => { const m = modeloOf(p.modelo); return `<h3 style="margin:.9rem 0 .2rem;font-size:1rem;color:#111">${esc(p.nome)}</h3><div style="color:#444">${esc(loteNome(p.lote))} · ${diaLbl(m.etapas[0].d, m)} em ${br(p.d0)}</div><table><thead><tr><th>Animal</th>${m.etapas.map(e => `<th>${diaLbl(e.d, m)}<br>${br(etapaData(p, e))}</th>`).join('')}</tr></thead><tbody>${p.animais.map(a => `<tr><td><b>${esc(animalOf(a).brinco)}</b> ${esc(animalOf(a).nome)}</td>${m.etapas.map((e, i) => `<td style="text-align:center">${p.baixas[a + ':' + i] ? 'Feita' : '<span class="box0"></span>'}</td>`).join('')}</tr>`).join('')}</tbody></table>`; }).join('');
+  const body = lista.map(p => { const m = modeloOf(p.modelo); return `<h3 style="margin:.9rem 0 .2rem;font-size:1rem;color:#111">${esc(p.nome)}</h3><div style="color:#444">${esc(loteNome(p.lote))} · ${diaLbl(m.etapas[0].d, m)} em ${br(p.d0)}</div><table><thead><tr><th>Animal</th>${m.etapas.map(e => `<th>${diaLbl(e.d, m)}<br>${br(etapaData(p, e))}</th>`).join('')}</tr></thead><tbody>${p.animais.map(a => `<tr><td data-l="Animal"><b>${esc(animalOf(a).brinco)}</b> ${esc(animalOf(a).nome)}</td>${m.etapas.map((e, i) => `<td style="text-align:center" data-l="${diaLbl(e.d)}">${p.baixas[a + ':' + i] ? 'Feita' : '<span class="box0"></span>'}</td>`).join('')}</tr>`).join('')}</tbody></table>`; }).join('');
   return { key: 'pprint', print: true, label: 'Folha de campo: protocolos', html: `<div class="print-bar"><span><b>Pré-visualização da folha de campo</b></span><span class="actions">${bt('btn-primary sm', 'printer', 'Imprimir', 'data-act="print-go" data-first')}${bt('btn-ghost sm', 'x', 'Fechar', 'data-act="dr-close"')}</span></div><div class="paper"><h2>Folha de campo · Protocolos</h2><div style="color:#444">Fazenda Estreito Ponte de Pedra · ${br(HI)}</div>${body || '<p style="margin:1rem 0">Nenhum protocolo em andamento.</p>'}<div class="sign"><div>Responsável</div><div>Veterinário</div><div>Data</div></div></div>` };
 }
 
 /* ═════════ Novo protocolo (3 passos, com elegibilidade) ═════════ */
 function elegivel(an, m) {
   const outro = emProtocolo(an.id); if (outro) return { ok: false, why: `Já em protocolo: ${TIPOS_PROTO[modeloOf(outro.modelo).tipo].curto} (${loteNome(outro.lote)})` };
-  if (m.tipo === 'iatf' || m.tipo === 'inducao') {
-    if (an.prenhe) return { ok: false, why: 'Prenhe' };
-    if (an.del != null && an.del < 45) return { ok: false, why: `Ainda no período de espera (PEV): ${an.del} dias em leite` };
+  if (m.tipo === 'iatf') {
+    if (an.cat === 'novilha') { if (an.idadeM < 15) return { ok: false, why: `Novilha com ${an.idadeM} meses: precisa de 15 meses ou mais` }; if (an.peso < 320) return { ok: false, why: `Novilha com ${an.peso} kg: precisa de 320 kg ou mais` }; return { ok: true, why: `novilha · ${an.idadeM} meses · ${an.peso} kg` }; }
+    if (an.cat === 'vaca') { if (an.prenhe) return { ok: false, why: 'Prenhe' }; if (an.del != null && an.del < 45) return { ok: false, why: `Ainda no fim do período de espera voluntário (PEV): ${an.del} dias em leite` }; return { ok: true, why: an.del != null ? `${an.del} dias em leite · vazia` : 'vaca vazia' }; }
+    return { ok: false, why: 'Bezerra: fora do protocolo de inseminação' };
   }
-  return { ok: true, why: an.del != null ? `${an.del} dias em leite · vazia` : 'novilha vazia' };
+  if (m.tipo === 'inducao') { if (an.cat === 'bezerra') return { ok: false, why: 'Bezerra: fora da indução' }; return { ok: true, why: an.cat === 'novilha' ? `novilha · ${an.idadeM} meses · ${an.peso} kg` : `${an.del != null ? an.del + ' dias em leite' : 'vaca'}` }; }
+  return { ok: true, why: an.cat === 'novilha' ? `novilha · ${an.idadeM} meses` : an.cat === 'bezerra' ? 'bezerra' : (an.del != null ? an.del + ' dias em leite' : 'vaca') };
 }
+const modeloPorSlug = s => PRO.modelos.find(m => m.id === s) || PRO.modelos.find(m => m.ativo && TIPOS_PROTO[m.tipo].slug === s);
+const lotePorSlug = s => (LOTES.find(l => l.id === s || l.slug === s) || {}).id;
 function npInit() {
-  if (UI.np) return; const q = qv('modelo'); const lq = qv('lote');
-  UI.np = { passo: q ? 2 : 1, modelo: q || null, lote: lq || 'l2', sel: null, d0: HI, comp: false, err: false, selLote: null };
+  if (UI.np) return; const q = qv('modelo'); const m = q ? modeloPorSlug(q) : null; const lq = lotePorSlug(qv('lote')) || 'l2';
+  const an = qv('animais') ? qv('animais').split(',').map(b => animalPorBrinco(b.trim())).filter(Boolean).map(x => x.id) : null;
+  let passo = +qv('passo') || (m ? 2 : 1); if (!m) passo = 1;
+  UI.np = { passo, modelo: m ? m.id : null, lote: lq, sel: an, d0: qv('d0') || HI, comp: false, err: false, selLote: an ? lq : null };
 }
+function npSync() { const n = UI.np; const l = loteOf(n.lote); setQ({ modelo: n.modelo, lote: n.modelo ? l.slug : null, animais: n.sel && n.passo > 1 ? n.sel.map(id => animalOf(id).brinco).join(',') : null, d0: n.d0 !== HI ? n.d0 : null, passo: n.passo > 1 ? n.passo : null }, true); refresh(); }
 ROUTES['/protocolos/novo'] = () => {
-  npInit(); const n = UI.np; if (n.passo > 1 && !n.modelo) n.passo = 1; const tipo = qv('tipo');
+  npInit(); const n = UI.np; if (n.passo > 1 && !n.modelo) n.passo = 1; const tipo = qv('tipo'); if ((+qv('passo') || 1) !== n.passo) setTimeout(() => setQ({ passo: n.passo > 1 ? n.passo : null }, true), 0);
   const steps = ['Escolher o modelo', 'Animais e data', 'Conferir consequências']; const p = n.passo;
   const stepper = `<nav class="stepper" aria-label="Passos" style="margin-bottom:1rem"><ol>${steps.map((s, i) => `<li ${i + 1 === p ? 'aria-current="step"' : ''} class="${i + 1 < p ? 'done' : ''}"><span class="n">${i + 1 < p ? ic('check', 's12') : i + 1}</span>${s}</li>`).join('')}</ol></nav>`;
   let corpo = '';
@@ -2081,7 +2189,7 @@ ROUTES['/protocolos/novo'] = () => {
     const nEleg = an.filter(a => elegivel(a, m).ok).length;
     corpo = `<div class="g2" style="max-width:640px"><div class="fld"><label for="nl">Lote</label><select id="nl" class="sel" data-ch="nplote" data-fk="nl">${opts(LOTE_OPTS, n.lote)}</select></div><div class="fld"><label for="nd0">Data do ${diaLbl(m.etapas[0].d, m)}</label><input id="nd0" class="inp" type="date" value="${n.d0}" data-in="npd0"></div></div>
     <div class="box" style="margin-top:1rem;max-width:920px"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem"><b role="status">${n.sel.length} de ${an.length} ${pl(an.length, 'animal selecionado', 'animais selecionados')} · ${nEleg} ${pl(nEleg, 'elegível', 'elegíveis')}</b><span class="actions">${bt('btn-ghost sm', '', 'Selecionar elegíveis', 'data-act="np-todos" data-v="1"')}${bt('btn-ghost sm', '', 'Limpar', 'data-act="np-todos" data-v="0"')}</span></div>
-    ${m.tipo === 'iatf' || m.tipo === 'inducao' ? `<p class="hint" style="margin:.4rem 0">Elegível: vazia e fora do fim do período de espera voluntário (PEV) ${gl('pev', 'PEV')}, com dias em leite (DEL) ${gl('del', 'DEL')} de 45 ou mais.</p>` : ''}
+    ${m.tipo === 'iatf' ? `<div class="aviso blue" style="margin:.5rem 0">${ic('info')}<div class="txt"><b>Quem entra na inseminação programada:</b><br>Novilha: 15 meses ou mais e 320 kg ou mais, vazia.<br>Vaca: vazia (sem prenhez) e fora do fim do período de espera voluntário (PEV) ${gl('pev', 'PEV')}, com dias em leite (DEL) ${gl('del', 'DEL')} de 45 ou mais.<br>Quem já está em outro protocolo fica indisponível.</div></div>` : m.tipo === 'inducao' ? `<p class="hint" style="margin:.4rem 0">Indução: novilhas e vacas, exceto bezerras e quem já está em outro protocolo.</p>` : ''}
     <ul class="list" style="margin-top:.4rem">${an.map(a => { const e = elegivel(a, m); return `<li><label class="chk grow" style="align-items:flex-start"><input type="checkbox" data-ch="npan" data-id="${a.id}" ${n.sel.includes(a.id) ? 'checked' : ''} ${e.ok ? '' : 'disabled'}><span><b>${esc(a.brinco)} ${esc(a.nome)}</b><br><span class="sub2">${esc(e.why)}</span></span></label>${e.ok ? `<span class="st registrada">${ic('ok', 's14')}Elegível</span>` : `<span class="st pulada" style="text-decoration:none">${ic('ban', 's14')}Indisponível</span>`}</li>`; }).join('')}</ul></div>
     ${n.err ? `<p class="err" style="margin-top:.6rem">${ic('warn', 's14')}Selecione ao menos um animal.</p>` : ''}`;
   } else {
@@ -2101,14 +2209,14 @@ ROUTES['/protocolos/novo'] = () => {
   const foot = `<div class="actions" style="margin-top:1.2rem">${p > 1 ? bt('btn-ghost', 'left', 'Voltar', 'data-act="np-back"') : ''}${p < 3 ? bt('btn-primary', 'arrow', 'Continuar', 'data-act="np-next" data-fk="np-next"') : bt('btn-gold', 'check', 'Lançar protocolo', 'data-act="np-lancar" data-fk="np-lancar"')}${bt('btn-ghost', '', 'Cancelar', 'data-act="np-cancel"')}</div>`;
   return pgHead('list-checks', 'Novo protocolo', 'Escolha o modelo, os animais e a data. Antes de lançar, você vê o que vai acontecer.', '') + stepper + corpo + foot;
 };
-IN.npmod = v => { UI.np.modelo = v; UI.np.sel = null; UI.np.err = false; };
-IN.nplote = v => { UI.np.lote = v; UI.np.sel = null; refresh(); };
-IN.npd0 = v => { UI.np.d0 = v || HI; };
-IN.npan = (c, t) => { const s = UI.np.sel.filter(x => x !== t.dataset.id); if (c) s.push(t.dataset.id); UI.np.sel = s; UI.np.err = false; refresh(); };
+IN.npmod = v => { UI.np.modelo = v; UI.np.sel = null; UI.np.err = false; npSync(); };
+IN.nplote = v => { UI.np.lote = v; UI.np.sel = null; npSync(); };
+IN.npd0 = v => { UI.np.d0 = v || HI; npSync(); };
+IN.npan = (c, t) => { const s = UI.np.sel.filter(x => x !== t.dataset.id); if (c) s.push(t.dataset.id); UI.np.sel = s; UI.np.err = false; npSync(); };
 IN.npcomp = c => { UI.np.comp = c; UI.np.err = false; refresh(); };
-ACT['np-todos'] = t => { const m = modeloOf(UI.np.modelo); UI.np.sel = t.dataset.v === '1' ? animaisDoLote(UI.np.lote).filter(a => elegivel(a, m).ok).map(a => a.id) : []; refresh(); };
-ACT['np-next'] = () => { const n = UI.np; if (n.passo === 1 && !n.modelo) { n.err = true; refresh(); return; } if (n.passo === 2 && !n.sel.length) { n.err = true; refresh(); return; } n.err = false; n.passo++; refresh(); $('#main').scrollTop = 0; };
-ACT['np-back'] = () => { UI.np.passo--; UI.np.err = false; refresh(); };
+ACT['np-todos'] = t => { const m = modeloOf(UI.np.modelo); UI.np.sel = t.dataset.v === '1' ? animaisDoLote(UI.np.lote).filter(a => elegivel(a, m).ok).map(a => a.id) : []; npSync(); };
+ACT['np-next'] = () => { const n = UI.np; if (n.passo === 1 && !n.modelo) { n.err = true; refresh(); return; } if (n.passo === 2 && !(n.sel || []).length) { n.err = true; refresh(); return; } n.err = false; n.passo++; npSync(); $('#main').scrollTop = 0; };
+ACT['np-back'] = () => { UI.np.passo--; UI.np.err = false; npSync(); };
 ACT['np-cancel'] = () => { UI.np = null; nav('/protocolos'); };
 ACT['np-lancar'] = () => {
   const n = UI.np; const m = modeloOf(n.modelo); if (m.tipo === 'iatf' && !n.comp) { n.err = true; refresh(); return; }
@@ -2119,14 +2227,14 @@ ACT['np-lancar'] = () => {
 /* ═════════ Modelos ═════════ */
 ROUTES['/protocolos/modelos'] = () => {
   const acts = bt('btn-gold', 'plus', 'Novo modelo', 'data-act="md-novo" data-fk="md-novo"');
-  const rows = PRO.modelos.map(m => `<tr class="rowc"><td data-c="nome"><div class="nm">${esc(m.nome)}</div></td><td data-c="x" data-l="Tipo">${tipoBadge(m.tipo)}</td><td data-c="quem" data-l="Etapas">${m.etapas.length} ${pl(m.etapas.length, 'etapa', 'etapas')}: ${m.etapas.slice(0, 4).map(e => diaLbl(e.d, m)).join(', ')}${m.etapas.length > 4 ? '…' : ''}</td><td data-c="car" data-l="Usado por">${m.usado} ${pl(m.usado, 'lançamento', 'lançamentos')}</td>
+  const rows = PRO.modelos.map(m => `<tr class="rowc"><td data-c="nome"><div class="nm">${esc(m.nome)}</div></td><td data-c="x" data-l="Tipo">${tipoBadge(m.tipo)}</td><td data-c="quem" data-l="Etapas">${m.etapas.length} ${pl(m.etapas.length, 'etapa', 'etapas')}: ${m.etapas.slice(0, 4).map(e => diaLbl(e.d, m)).join(', ')}${m.etapas.length > 4 ? '…' : ''}</td><td data-c="car" data-l="Usado por">${m.usado} ${pl(m.usado, 'lançamento', 'lançamentos')}</td><td data-c="x" data-l="Versão">v${m.versao}<div class="sub2">${esc(m.hist[m.hist.length - 1].txt.slice(0, 40))}</div></td>
     <td data-c="estado"><span class="st ${m.ativo ? 'ativo' : 'inativo'}">${ic(m.ativo ? 'ok' : 'ban', 's14')}${m.ativo ? 'Ativo' : 'Inativo'}</span></td>
     <td class="acts">${bt('btn-sec sm', 'pencil', 'Editar', `data-act="md-edit" data-id="${m.id}" data-fk="me-${m.id}" aria-label="Editar ${esc(m.nome)}"`)}${bt('btn-ghost sm', 'copy', 'Duplicar', `data-act="md-dup" data-id="${m.id}" aria-label="Duplicar ${esc(m.nome)}"`)}${bt('btn-ghost sm', 'power', m.ativo ? 'Inativar' : 'Ativar', `data-act="md-tog" data-id="${m.id}" aria-label="${m.ativo ? 'Inativar' : 'Ativar'} ${esc(m.nome)}"`)}</td></tr>`).join('');
   return pgHead('list-checks', 'Modelos de protocolo', 'O roteiro de cada protocolo: as etapas, os dias e os produtos. Tarefas da fazenda, como a limpeza de bebedouros, também ficam aqui.', acts) +
-    `<div class="tw cards-w"><table class="ft cards"><caption class="sr">Modelos de protocolo</caption><thead><tr><th>Nome</th><th>Tipo</th><th>Etapas</th><th>Usado por</th><th>Situação</th><th><span class="sr">Ações</span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    `<div class="tw cards-w"><table class="ft cards"><caption class="sr">Modelos de protocolo</caption><thead><tr><th>Nome</th><th>Tipo</th><th>Etapas</th><th>Usado por</th><th>Versão</th><th>Situação</th><th><span class="sr">Ações</span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 };
-ACT['md-dup'] = t => { const m = modeloOf(t.dataset.id); const c = clone(m); c.id = 'm' + (++PRO.seq); c.nome = m.nome + ' (cópia)'; c.ativo = false; c.usado = 0; PRO.modelos.push(c); refresh(); toast(`Duplicado: «${c.nome}» começa inativo. Edite e ative quando estiver pronto.`); };
-ACT['md-tog'] = t => { const m = modeloOf(t.dataset.id); m.ativo = !m.ativo; refresh(); toast(`${m.nome} ${m.ativo ? 'ativado' : 'inativado'}.${m.ativo ? '' : ' Não aparece mais em Novo protocolo.'}`, { acao: 'Desfazer', fn: () => { m.ativo = !m.ativo; refresh(); } }); };
+ACT['md-dup'] = t => { const m = modeloOf(t.dataset.id); const c = clone(m); c.id = 'm' + (++PRO.seq); c.nome = m.nome + ' (cópia)'; c.ativo = false; c.usado = 0; c.versao = 1; c.hist = [{ v: 1, t: nowT(), quem: USUARIO, txt: 'Criado como cópia de «' + m.nome + '» (v1)' }]; m.hist.push({ v: m.versao, t: nowT(), quem: USUARIO, txt: 'Duplicado como «' + c.nome + '»' }); PRO.modelos.push(c); refresh(); toast(`Duplicado: «${c.nome}» começa inativo. Edite e ative quando estiver pronto.`); };
+ACT['md-tog'] = t => { const m = modeloOf(t.dataset.id); m.ativo = !m.ativo; m.hist.push({ v: m.versao, t: nowT(), quem: USUARIO, txt: m.ativo ? 'Ativado' : 'Inativado' }); refresh(); toast(`${m.nome} ${m.ativo ? 'ativado' : 'inativado'}.${m.ativo ? '' : ' Não aparece mais em Novo protocolo.'}`, { acao: 'Desfazer', fn: () => { m.ativo = !m.ativo; m.hist.push({ v: m.versao, t: nowT(), quem: USUARIO, txt: 'Estornou: ' + (m.ativo ? 'ativação' : 'inativação') }); refresh(); } }); };
 ACT['md-novo'] = () => nav('/protocolos/modelos', { modelo: 'novo', passo: 1 });
 ACT['md-edit'] = t => nav('/protocolos/modelos', { modelo: t.dataset.id, passo: 1 });
 function mdInit() {
@@ -2138,7 +2246,7 @@ function mdInit() {
 function mdOnClose() { UI.mdKey = null; UI.md = null; }
 function mdValida(w, p) { const e = {}; if (p >= 1) { if (!w.nome.trim()) e.nome = 'Dê um nome ao modelo.'; if (!w.tipo) e.tipo = 'O tipo é obrigatório: sem ele o protocolo some do filtro certo em Em andamento.'; } if (p >= 2) { if (w.etapas.some(x => !x.acao.trim())) e.et = 'Descreva o que fazer em cada etapa.'; else if (w.etapas.some(x => !(x.d >= 0))) e.et = 'O dia da etapa não pode ser negativo.'; } return e; }
 function drModelo() {
-  mdInit(); const w = UI.md; UI.drKey = 'md'; const p = w.passo; const E = UI.mdErr ? mdValida(w, p) : {}; const steps = ['Dados', 'Etapas', 'Conferir']; const base = w.tipo === 'iatf' ? 0 : 1; const mm = { base };
+  mdInit(); const w = UI.md; UI.drKey = 'md'; const p = w.passo; const E = UI.mdErr ? mdValida(w, p) : {}; const steps = ['Dados', 'Etapas', 'Conferir']; const mm = {};
   const stepper = `<nav class="stepper" aria-label="Passos"><ol>${steps.map((s, i) => `<li ${i + 1 === p ? 'aria-current="step"' : ''} class="${i + 1 < p ? 'done' : ''}"><span class="n">${i + 1 < p ? ic('check', 's12') : i + 1}</span>${s}</li>`).join('')}</ol></nav>`;
   const er = k => E[k] ? `<span class="err">${ic('warn', 's14')}${E[k]}</span>` : '';
   let corpo = '';
@@ -2146,12 +2254,12 @@ function drModelo() {
     <div class="fld"><label for="mt">Tipo</label><select id="mt" class="sel" data-ch="mdf" data-k="tipo" ${E.tipo ? 'aria-invalid="true"' : ''}>${opts(Object.keys(TIPOS_PROTO).map(k => [k, TIPOS_PROTO[k].nome]), w.tipo, 'Escolha o tipo (obrigatório)')}</select>${E.tipo ? er('tipo') : `<span class="hint">O tipo faz o protocolo aparecer no filtro certo em Em andamento.</span>`}</div>
     ${w.tipo === 'tratamento' ? `<div class="g2"><div class="fld"><label for="mcl">Carência do leite (dias após o último dia)</label><input id="mcl" class="inp" type="number" min="0" value="${w.carLeite || 0}" data-in="mdn" data-k="carLeite"></div><div class="fld"><label for="mcc">Carência da carne (dias após o último dia)</label><input id="mcc" class="inp" type="number" min="0" value="${w.carCarne || 0}" data-in="mdn" data-k="carCarne"></div></div>` : ''}
     <div class="fld"><label for="md">Descrição (opcional)</label><textarea id="md" class="inp" data-in="mdf" data-k="desc">${esc(w.desc)}</textarea></div>`;
-  else if (p === 2) corpo = `<p class="hint">Cada etapa é um dia depois do começo (${w.tipo === 'iatf' ? 'Dia 0 é o mesmo dia' : 'Dia 1 é o mesmo dia'}). Uma etapa pode usar vários produtos.</p>${er('et')}` + w.etapas.map((e, i) => `<div class="inline-panel"><div class="g2" style="grid-template-columns:100px 1fr;align-items:end"><div class="fld"><label for="ed${i}">Dias depois</label><input id="ed${i}" class="inp" type="number" min="0" value="${e.d}" data-in="mde" data-i="${i}" data-k="d"></div><div class="fld"><label for="ea${i}">O que fazer</label><input id="ea${i}" class="inp" value="${esc(e.acao)}" placeholder="Ex.: Estron 2 mL" data-in="mde" data-i="${i}" data-k="acao"></div></div>
+  else if (p === 2) corpo = `<p class="hint">Todos os protocolos contam Dia 0 = início. Uma etapa pode usar vários produtos.</p>${er('et')}` + w.etapas.map((e, i) => `<div class="inline-panel"><div class="g2" style="grid-template-columns:100px 1fr;align-items:end"><div class="fld"><label for="ed${i}">Dias depois</label><input id="ed${i}" class="inp" type="number" min="0" value="${e.d}" data-in="mde" data-i="${i}" data-k="d"></div><div class="fld"><label for="ea${i}">O que fazer</label><input id="ea${i}" class="inp" value="${esc(e.acao)}" placeholder="Ex.: Estron 2 mL" data-in="mde" data-i="${i}" data-k="acao"></div></div>
     ${e.prods.map((x, k) => `<div class="g2" style="grid-template-columns:1fr 110px auto;align-items:end"><div class="fld"><label for="ep${i}-${k}">Produto ${k + 1}</label><select id="ep${i}-${k}" class="sel" data-ch="mdp" data-i="${i}" data-k="${k}">${opts(HORM.map(h => [h.id, h.prod]), x.h)}</select></div><div class="fld"><label for="eq${i}-${k}">Por animal (${hormOf(x.h).un})</label><input id="eq${i}-${k}" class="inp" type="number" min="0" step="0.5" value="${x.q}" data-in="mdq" data-i="${i}" data-k="${k}"></div>${bt('btn-ghost sm', 'x', '<span class="sr">Remover produto ' + (k + 1) + '</span>', `data-act="md-px" data-i="${i}" data-k="${k}" aria-label="Remover produto ${k + 1} da etapa ${i + 1}"`)}</div>`).join('')}
     <div class="actions">${bt('btn-sec sm', 'plus', 'Adicionar produto', `data-act="md-pa" data-i="${i}"`)}${w.etapas.length > 1 ? bt('btn-ghost sm', 'x', 'Remover etapa ' + (i + 1), `data-act="md-etx" data-i="${i}"`) : ''}</div></div>`).join('') + `<div>${bt('btn-sec', 'plus', 'Adicionar etapa', 'data-act="md-eta" data-fk="md-eta"')}</div>`;
   else corpo = `<div class="resumo"><h3>Resumo</h3><dl class="kv"><dt>Nome</dt><dd><b>${esc(w.nome || '—')}</b></dd><dt>Tipo</dt><dd>${w.tipo ? esc(TIPOS_PROTO[w.tipo].nome) : '—'}</dd><dt>Etapas</dt><dd>${w.etapas.length}</dd>${w.carLeite || w.carCarne ? `<dt>Carência</dt><dd>leite ${w.carLeite} dias · carne ${w.carCarne} dias depois do último dia</dd>` : ''}</dl></div>
     <div class="box"><h3>${ic('calendar', 's14')}Linha do tempo</h3><ul class="list">${w.etapas.slice().sort((a, b) => a.d - b.d).map(e => `<li style="min-height:40px"><span class="st prevista" style="min-width:4.5rem;justify-content:center">${diaLbl(e.d, mm)}</span><span class="grow">${esc(e.acao || '(sem descrição)')}${e.prods.length ? ` <span class="sub2">· ${e.prods.map(x => esc(hormOf(x.h).prod) + ' ' + qTxt(x.q, hormOf(x.h).un)).join(' + ')}</span>` : ''}</span></li>`).join('')}</ul></div>
-    <div class="aviso blue">${ic('info')}<div class="txt"><b>Ao lançar este modelo</b> em um lote, entram ${w.etapas.length} ${pl(w.etapas.length, 'dia de tarefa', 'dias de tarefa')} na Agenda e os produtos saem do estoque a cada etapa feita.</div></div>`;
+    ${w.id ? `<div class="box"><h3>${ic('history', 's14')}Histórico de versões</h3><ul class="list aud">${modeloOf(w.id).hist.slice().reverse().map(h => `<li><span>${ic('history', 's14')}</span><div class="grow"><b>${esc(h.txt)}</b><div class="sub2">${esc(h.quem)} · ${dh(h.t)}</div></div></li>`).join('')}</ul></div>` : ''}<div class="aviso blue">${ic('info')}<div class="txt"><b>Ao lançar este modelo</b> em um lote, entram ${w.etapas.length} ${pl(w.etapas.length, 'dia de tarefa', 'dias de tarefa')} na Agenda e os produtos saem do estoque a cada etapa feita.</div></div>`;
   const foot = `${p > 1 ? bt('btn-ghost', 'left', 'Voltar', 'data-act="md-back"') : ''}<span class="sp"></span>${bt('btn-ghost', '', 'Fechar', 'data-act="dr-close"')}${p < 3 ? bt('btn-primary', 'arrow', 'Continuar', 'data-act="md-next" data-fk="md-next"') : bt('btn-gold', 'check', 'Salvar modelo', `data-act="md-save" data-fk="md-save" ${!w.nome.trim() || !w.tipo ? 'disabled' : ''}`)}`;
   return { key: 'md', cls: '', label: 'Modelo de protocolo', html: drawerHead(w.id ? 'Editar modelo' : 'Novo modelo', `Passo ${p} de 3 · ${steps[p - 1]}`, '') + `<div class="dr-b">${stepper}${corpo}</div><div class="dr-f">${foot}</div>` };
 }
@@ -2169,9 +2277,9 @@ ACT['md-next'] = () => { const w = UI.md; const E = mdValida(w, w.passo); if (Ob
 ACT['md-back'] = () => { UI.mdErr = false; mdGo(UI.md.passo - 1); };
 ACT['md-save'] = () => {
   const w = UI.md; if (Object.keys(mdValida(w, 2)).length) { UI.mdErr = true; mdGo(1); return; }
-  const base = w.tipo === 'iatf' ? 0 : 1; const et = w.etapas.slice().sort((a, b) => a.d - b.d);
-  if (w.id) { const m = modeloOf(w.id); Object.assign(m, { nome: w.nome, tipo: w.tipo, etapas: et, base, carLeite: w.carLeite, carCarne: w.carCarne }); }
-  else PRO.modelos.push({ id: 'm' + (++PRO.seq), nome: w.nome, tipo: w.tipo, ativo: true, usado: 0, base, carLeite: w.carLeite, carCarne: w.carCarne, etapas: et });
+  const et = w.etapas.slice().sort((a, b) => a.d - b.d);
+  if (w.id) { const m = modeloOf(w.id); const antes = m.etapas.length; Object.assign(m, { nome: w.nome, tipo: w.tipo, etapas: et, carLeite: w.carLeite, carCarne: w.carCarne }); m.versao++; m.hist.push({ v: m.versao, t: nowT(), quem: USUARIO, txt: `Editado (v${m.versao}): ${antes} → ${et.length} etapas; lançamentos antigos mantêm a v${m.versao - 1}` }); }
+  else PRO.modelos.push({ id: 'm' + (++PRO.seq), nome: w.nome, tipo: w.tipo, ativo: true, usado: 0, versao: 1, hist: [{ v: 1, t: nowT(), quem: USUARIO, txt: 'Modelo criado (v1)' }], carLeite: w.carLeite, carCarne: w.carCarne, etapas: et });
   const nome = w.nome; nav('/protocolos/modelos', {}); refresh(); toast(`Modelo «${nome}» salvo.`);
 };
 /* ═════════ Boot ═════════ */

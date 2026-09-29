@@ -73,7 +73,7 @@ Nomes de tela: "Dia 0", "Dia 7", "Dia 9", "Dia 11" (sem "1º/7º/9º/11º dia").
 | Próximas | Aftosa (data estadual, editável) | 136 animais | 05/11 |
 | Próximas | Leptospirose | 151 animais | 15/11 |
 
-**Cobertura:** 120 de 151 animais com **todas** as vacinas aplicáveis em dia = **79%** (31 animais com alguma pendência atrasada). Por vacina: Aftosa 100%, B19 88%, Clostridioses 82%, Raiva 96%, IBR/BVD 99%, Leptospirose 97%.
+**Cobertura:** **119 de 151** animais com **todas** as vacinas aplicáveis em dia = **79%** (32 animais com alguma pendência atrasada: 22 Clostridioses + 6 Raiva + 3 reteste TB + 1 IBR/BVD da 4101 Mimosa). *Regra:* "Sem registro" com aplicação **prevista no futuro** aparece como "Prevista" e não conta como atrasada. Por vacina: Aftosa 100%, B19 88%, Clostridioses 82%, Raiva 96%, IBR/BVD 99%, Leptospirose 97%.
 **Faixa do Calendário (M1):** Atrasadas **3** · Esta semana **3** (Vermifugação hoje + IBR/BVD + B19) · Cobertura **79%**.
 **Agenda (M2):** Atrasadas **4** (as 3 sanitárias acima + 1 pesagem) · Hoje **15** tarefas de campo · Próximos 7 dias conforme a lista; a Agenda contém as tarefas sanitárias acima com os **mesmos** nomes, contagens e datas.
 
