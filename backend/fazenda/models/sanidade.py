@@ -650,9 +650,18 @@ class CronogramaSanitario(SQLModel, table=True):
     #   decisão de modo) | "agendado" (modo definido, aguardando a data) |
     #   "aguardando_confirmacao" (passou o aviso de N dias antes sem decisão,
     #   Agenda cobrando confirmar/adiar) | "concluido" (aplicado) |
-    #   "cancelado".
+    #   "cancelado" | "em_montagem" (rascunho do assistente "Criar
+    #   agendamento" em Protocolos > Aplicar — ainda sem confirmar; não vira
+    #   tarefa da Agenda).
+    #   Lista de espera (R1) = animais "sugerido" do cronograma "aberto";
+    #   agendamento (R2) = cronograma "agendado" — só ele entra na Agenda.
     status: str = Field(default="aberto", index=True)
     observacao: Optional[str] = None
+    # Hora do agendamento ("HH:MM", opcional) — preenchida no assistente
+    # "Criar agendamento" (Protocolos > Aplicar) e ao adiar.
+    hora: Optional[str] = None
+    # Por que o agendamento foi cancelado (R9: cancelar devolve à lista de espera).
+    motivo_cancelamento: Optional[str] = None
     # "Desconsiderar cronograma" (redesenho do evento sanitário, seção 3.2.5)
     # — confirma a Ocorrência SEM passar pelo checklist, decisão por
     # Ocorrência (nunca muda a Regra). Independente de `status`/
@@ -684,6 +693,12 @@ class CronogramaSanitarioAnimal(SQLModel, table=True):
     data_sugestao: date
     data_decisao: Optional[date] = None
     data_aplicacao: Optional[date] = None
+    # "janela" (entrou pela lista de espera) | "fora_janela" (R6: incluído à
+    # mão fora da janela de aplicação, sempre com `motivo`).
+    origem: str = Field(default="janela")
+    # Fora da janela: por que foi incluído. Desconsiderar (lista de espera):
+    # por que foi tirado.
+    motivo: Optional[str] = None
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 

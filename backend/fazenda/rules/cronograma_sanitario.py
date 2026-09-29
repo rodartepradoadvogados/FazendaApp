@@ -30,11 +30,14 @@ a qualquer momento — ver `cronograma_aberto()`.
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta
 
 from sqlmodel import Session, select
 
-from fazenda.models import CalendarioSanitario, CronogramaSanitario, CronogramaSanitarioAnimal, Pessoa, Sanidade
+from fazenda.models import (
+    Animal, CalendarioSanitario, CronogramaSanitario, CronogramaSanitarioAnimal, EventoSanitario, Pessoa, Sanidade,
+)
 from fazenda.rules.calendario_sanitario import _somar_meses, proxima_ocorrencia
 from fazenda.rules.checklist_sanitario import materializar_checklist
 from fazenda.rules.parametros import cronograma_sanitario_dias_aviso, usar_ocorrencia_universal
@@ -42,7 +45,10 @@ from fazenda.rules.projecao_categoria import animais_projetados_na_categoria
 
 PREFIXO_CRONOGRAMA = "cronograma_sanitario_"
 
-_ABERTOS = ("aberto", "agendado")
+# "aberto" = lista de espera (R1) | "agendado" = agendamento (R2, único que vira
+# tarefa da Agenda) | "em_montagem" = rascunho do assistente "Criar agendamento".
+_ABERTOS = ("aberto", "agendado", "em_montagem")
+_HORA_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
 class CronogramaError(Exception):
@@ -50,17 +56,27 @@ class CronogramaError(Exception):
 
 
 def cronograma_aberto(session: Session, calendario: CalendarioSanitario) -> CronogramaSanitario:
-    """Devolve o cronograma em aberto da regra, criando um novo (com a
-    próxima data projetada) se não houver nenhum."""
+    """Devolve o cronograma "aberto" da regra — a LISTA DE ESPERA (R1) — criando
+    um novo (com a próxima data projetada) se não houver nenhum. Agendamentos
+    (status "agendado"/"em_montagem") convivem com ele: montar um agendamento
+    parcial deixa o resto da lista de espera no cronograma aberto."""
     existente = session.exec(
         select(CronogramaSanitario)
         .where(CronogramaSanitario.calendario_sanitario_id == calendario.id)
-        .where(CronogramaSanitario.status.in_(_ABERTOS))
+        .where(CronogramaSanitario.status == "aberto")
         .order_by(CronogramaSanitario.data_evento)
     ).first()
     if existente:
         return existente
 
+    # Ainda há agendamento em curso (mesmo ciclo): quem chega agora espera na
+    # mesma data devida, não na próxima ocorrência.
+    em_curso = session.exec(
+        select(CronogramaSanitario)
+        .where(CronogramaSanitario.calendario_sanitario_id == calendario.id)
+        .where(CronogramaSanitario.status.in_(_ABERTOS))
+        .order_by(CronogramaSanitario.data_evento)
+    ).first()
     ultimo = session.exec(
         select(CronogramaSanitario)
         .where(CronogramaSanitario.calendario_sanitario_id == calendario.id)
@@ -69,10 +85,12 @@ def cronograma_aberto(session: Session, calendario: CalendarioSanitario) -> Cron
     # Sem cronograma anterior: a 1ª ocorrência é a própria data_evento da
     # regra (mesma referência usada por _ocorrencias_recorrentes). Com um
     # anterior (concluído/cancelado), projeta a próxima a partir dele.
-    proxima = (
-        proxima_ocorrencia(ultimo.data_evento, calendario.frequencia_valor, calendario.frequencia_unidade)
-        if ultimo else calendario.data_evento
-    )
+    if em_curso:
+        proxima = em_curso.data_original or em_curso.data_evento
+    elif ultimo:
+        proxima = proxima_ocorrencia(ultimo.data_evento, calendario.frequencia_valor, calendario.frequencia_unidade)
+    else:
+        proxima = calendario.data_evento
     novo = CronogramaSanitario(
         calendario_sanitario_id=calendario.id, data_evento=proxima, fazenda_id=calendario.fazenda_id,
     )
@@ -82,18 +100,30 @@ def cronograma_aberto(session: Session, calendario: CalendarioSanitario) -> Cron
     return novo
 
 
+def _linhas_da_regra(
+    session: Session, calendario_id: int, numeros: list[str] | None = None,
+) -> list[tuple[CronogramaSanitarioAnimal, CronogramaSanitario]]:
+    """Linhas de animal (qualquer status) dos cronogramas ATIVOS da regra —
+    base do R8 (um animal em uma lista/agendamento ativo por protocolo) e da
+    dedupe da lista de espera."""
+    query = (
+        select(CronogramaSanitarioAnimal, CronogramaSanitario)
+        .join(CronogramaSanitario, CronogramaSanitario.id == CronogramaSanitarioAnimal.cronograma_id)
+        .where(CronogramaSanitario.calendario_sanitario_id == calendario_id)
+        .where(CronogramaSanitario.status.in_(_ABERTOS))
+    )
+    if numeros is not None:
+        query = query.where(CronogramaSanitarioAnimal.numero_matriz.in_(numeros))
+    return list(session.exec(query).all())
+
+
 def sugerir_animal(session: Session, calendario: CalendarioSanitario, numero_matriz: str, hoje: date) -> CronogramaSanitarioAnimal | None:
     """Garante uma linha "sugerido" para o animal no cronograma aberto da
     regra. Idempotente: devolve None (não gera pendência de novo) se o
     animal já tem linha nesse cronograma, em qualquer status."""
+    if _linhas_da_regra(session, calendario.id, [numero_matriz]):
+        return None  # R8: já está em alguma lista/agendamento ativo desta regra
     cron = cronograma_aberto(session, calendario)
-    existente = session.exec(
-        select(CronogramaSanitarioAnimal)
-        .where(CronogramaSanitarioAnimal.cronograma_id == cron.id)
-        .where(CronogramaSanitarioAnimal.numero_matriz == numero_matriz)
-    ).first()
-    if existente:
-        return None
     linha = CronogramaSanitarioAnimal(
         cronograma_id=cron.id, numero_matriz=numero_matriz, data_sugestao=hoje, fazenda_id=calendario.fazenda_id,
     )
@@ -112,25 +142,23 @@ def sugerir_animais_em_lote(session: Session, calendario: CalendarioSanitario, n
     — só que checando os já-existentes de uma vez e inserindo o resto junto."""
     if not numeros_matriz:
         return
+    # R8: quem já tem linha em QUALQUER cronograma ativo da regra (lista de
+    # espera, agendamento, rascunho) não entra de novo.
+    existentes = {l.numero_matriz for l, _ in _linhas_da_regra(session, calendario.id, list(numeros_matriz))}
+    pendentes = [n for n in dict.fromkeys(numeros_matriz) if n not in existentes]  # preserva ordem, sem duplicata
+    if not pendentes:
+        return
     cron = cronograma_aberto(session, calendario)
-    existentes = set(session.exec(
-        select(CronogramaSanitarioAnimal.numero_matriz)
-        .where(CronogramaSanitarioAnimal.cronograma_id == cron.id)
-        .where(CronogramaSanitarioAnimal.numero_matriz.in_(numeros_matriz))
-    ).all())
     novos = [
         CronogramaSanitarioAnimal(cronograma_id=cron.id, numero_matriz=n, data_sugestao=hoje, fazenda_id=calendario.fazenda_id)
-        for n in dict.fromkeys(numeros_matriz)  # preserva ordem e remove duplicata, por segurança
-        if n not in existentes
+        for n in pendentes
     ]
-    if not novos:
-        return
     session.add_all(novos)
     session.commit()
 
 
 def incluir_animal_manual(
-    session: Session, cronograma: CronogramaSanitario, numero_matriz: str, hoje: date,
+    session: Session, cronograma: CronogramaSanitario, numero_matriz: str, hoje: date, motivo: str | None = None,
 ) -> CronogramaSanitarioAnimal:
     """Inclusão manual, fora da janela de aplicação — bug relatado pelo
     usuário em 12/09/2026 ("não tem como colocar animal fora da janela"): a
@@ -152,6 +180,7 @@ def incluir_animal_manual(
     linha = CronogramaSanitarioAnimal(
         cronograma_id=cronograma.id, numero_matriz=numero_matriz, status="incluido",
         data_sugestao=hoje, data_decisao=hoje, fazenda_id=cronograma.fazenda_id,
+        origem="fora_janela", motivo=(motivo or "").strip() or None,
     )
     session.add(linha)
     session.commit()
@@ -220,18 +249,32 @@ def decidir_modo(
     return cronograma
 
 
-def adiar(session: Session, cronograma: CronogramaSanitario, nova_data: date, motivo: str | None) -> CronogramaSanitario:
+def adiar(
+    session: Session, cronograma: CronogramaSanitario, nova_data: date, motivo: str | None,
+    manter_agendamento: bool = False, hora: str | None = None,
+) -> CronogramaSanitario:
     """Reabre o ciclo de decisão com uma nova data — usado tanto a partir do
     aviso obrigatório de N dias antes quanto, por conveniência, a qualquer
     momento em que o cronograma ainda não tenha sido aplicado."""
     if cronograma.status == "concluido":
         raise CronogramaError("Este cronograma já foi aplicado — não é possível adiar")
+    if manter_agendamento:
+        # R9: adiar um AGENDAMENTO só muda quando; os animais, o responsável e o
+        # estado (agendado/em montagem) ficam como estão.
+        if cronograma.status not in ("agendado", "em_montagem", "aguardando_confirmacao"):
+            raise CronogramaError("Só um agendamento pode ser adiado (a lista de espera não tem data)")
+        if hora is not None and hora != "" and not _HORA_RE.match(hora):
+            raise CronogramaError("Hora inválida — use HH:MM")
     if cronograma.data_original is None:
         cronograma.data_original = cronograma.data_evento
     cronograma.data_evento = nova_data
-    cronograma.modo_execucao = None
-    cronograma.veterinario_pessoa_id = None
-    cronograma.status = "aberto"
+    if manter_agendamento:
+        if hora:
+            cronograma.hora = hora
+    else:
+        cronograma.modo_execucao = None
+        cronograma.veterinario_pessoa_id = None
+        cronograma.status = "aberto"
     if motivo:
         cronograma.observacao = (f"{cronograma.observacao} | " if cronograma.observacao else "") + f"Adiado: {motivo}"
     cronograma.atualizado_em = datetime.utcnow()
@@ -324,14 +367,21 @@ def _regra_e_por_epoca(calendario: CalendarioSanitario, eventos_por_id: dict) ->
 # confirmar-ou-adiar (obrigatório, N dias antes, ainda em branco) e aplicar
 # (dia do evento, modo já definido).
 # ---------------------------------------------------------------------------
+def _data_devida(cron: CronogramaSanitario) -> date:
+    """Data devida do ciclo do cronograma: para um agendamento remarcado/criado
+    com data diferente, é a data original (a do agendamento não desloca o ciclo)."""
+    return cron.data_original or cron.data_evento
+
+
 def _inicio_do_ciclo(cron: CronogramaSanitario, calendario: CalendarioSanitario) -> date:
     """Começo do ciclo que termina na data prevista da Ocorrência (data prevista
     menos UMA frequência da regra). Aplicação do produto da regra a partir daqui
     já cobre a época — o animal não volta para a lista de espera."""
     n, un = calendario.frequencia_valor, calendario.frequencia_unidade
+    devida = _data_devida(cron)
     if un == "dias":
-        return cron.data_evento - timedelta(days=n)
-    return _somar_meses(cron.data_evento, -(n * 12 if un == "anos" else n))
+        return devida - timedelta(days=n)
+    return _somar_meses(devida, -(n * 12 if un == "anos" else n))
 
 
 def _ja_vacinados_no_ciclo(
@@ -467,8 +517,13 @@ def eventos_agenda(
     # é buscado se existir ao menos 1 regra por época com cronograma aberto —
     # 1 consulta pesada por carregamento da Agenda, nunca uma por regra.
     if escrever and usar_ocorrencia_universal():
+        # Um cronograma de referência por regra: a lista de espera ("aberto") se
+        # houver; senão o agendamento em curso (a data devida do ciclo é a mesma).
+        por_regra: dict[int, CronogramaSanitario] = {}
+        for c in sorted(cronogramas, key=lambda c: (c.status != "aberto", c.data_evento)):
+            por_regra.setdefault(c.calendario_sanitario_id, c)
         cronogramas_epoca = [
-            c for c in cronogramas
+            c for c in por_regra.values()
             if _regra_e_por_epoca(regras[c.calendario_sanitario_id], eventos_por_id)
         ]
         if cronogramas_epoca:
@@ -476,7 +531,7 @@ def eventos_agenda(
             dados_criterios = coletar_dados_criterios(session, fazenda_id)
             for cron in cronogramas_epoca:
                 calendario = regras[cron.calendario_sanitario_id]
-                numeros = animais_projetados_na_categoria(calendario.categoria_alvo or "", cron.data_evento, dados_criterios)
+                numeros = animais_projetados_na_categoria(calendario.categoria_alvo or "", _data_devida(cron), dados_criterios)
                 ev_regra = eventos_por_id.get(calendario.evento_sanitario_id)
                 produto = calendario.produto or (ev_regra.produto_padrao if ev_regra else None)
                 vacinados = _ja_vacinados_no_ciclo(session, cron, calendario, produto, numeros)
@@ -520,7 +575,7 @@ def eventos_agenda(
         quem = f"com {vet.nome}" if vet else "pela equipe própria"
         saida.append({
             "id": eid, "data": cron.data_evento.isoformat(), "categoria": "sanidade",
-            "descricao": f"Aplicar {nome} hoje — {quem}",
+            "descricao": f"Aplicar {nome} hoje{f' às {cron.hora}' if cron.hora else ''} — {quem}",
             "numero_animal": None,
             "observacao": f"{len(incluidos)} animal(is) incluído(s) — aplicar em lote ou individualizado.",
             "fonte": "auto", "cor": "var(--dourado)", "ref": None,
@@ -528,6 +583,7 @@ def eventos_agenda(
             "cronograma_id": cron.id, "evento_sanitario_id": calendario.evento_sanitario_id,
             "animais": [l.numero_matriz for l in incluidos],
             "modo_execucao": cron.modo_execucao, "veterinario": vet.nome if vet else None,
+            "hora": cron.hora,
         })
 
     return saida
@@ -541,3 +597,364 @@ def materializar(session: Session, hoje: date, fazenda_id: int | None = None) ->
     from fazenda.rules.eventos_sanitarios import eventos_agenda as _eventos_sanitarios_agenda
     eventos_agenda(session, hoje, set(), fazenda_id, escrever=True)
     _eventos_sanitarios_agenda(session, hoje, set(), fazenda_id, escrever=True)
+
+
+# ---------------------------------------------------------------------------
+# Lista de espera, "Criar agendamento", adiar e cancelar (fatia 7, R1-R9).
+#
+# Sem tabela nova: a LISTA DE ESPERA de uma regra são os animais "sugerido" dos
+# cronogramas ativos dela (normalmente o cronograma "aberto"); o AGENDAMENTO é
+# um cronograma "agendado" (ou "em_montagem", rascunho). Criar agendamento move
+# os animais escolhidos para ele; cancelar devolve à lista de espera.
+# ---------------------------------------------------------------------------
+def _animais_da_fazenda(session: Session, fazenda_id: int | None, numeros: list[str] | None = None) -> dict[str, Animal]:
+    query = select(Animal)
+    if fazenda_id is not None:
+        query = query.where(Animal.fazenda_id == fazenda_id)
+    if numeros is not None:
+        query = query.where(Animal.numero.in_(numeros))
+    return {a.numero: a for a in session.exec(query).all()}
+
+
+def _datas_do_gatilho_por_animal(
+    session: Session, ev: EventoSanitario | None, hoje: date, fazenda_id: int | None, animais_cache: dict[str, Animal],
+) -> tuple[dict[str, date], dict[str, date]]:
+    """Regra por EVENTO DE VIDA: por animal, quando a janela abriu e quando fecha
+    (mesmo cálculo da Agenda). Regra por época devolve dois dicionários vazios —
+    ali a data devida é a do cronograma."""
+    if ev is None or ev.tipo_agendamento != "evento" or not ev.gatilho:
+        return {}, {}
+    from fazenda.rules.eventos_sanitarios import _datas_gatilho
+
+    tem_janela_de = ev.janela_de_valor is not None and ev.janela_de_unidade is not None
+    valor, unidade = (ev.janela_de_valor, ev.janela_de_unidade) if tem_janela_de else ((ev.offset_dias or 0), "dias")
+
+    def _por_animal(offset: int, un: str) -> dict[str, date]:
+        saida: dict[str, date] = {}
+        for numero, quando in _datas_gatilho(
+            session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, offset, ev.sexo_alvo, fazenda_id,
+            animais_cache=animais_cache, offset_unidade=un,
+        ):
+            atual = saida.get(numero)
+            # ocorrência mais recente que já passou (ou a única, se todas forem futuras)
+            if atual is None or (quando <= hoje and (atual > hoje or quando > atual)):
+                saida[numero] = quando
+        return saida
+
+    abre = _por_animal(valor, unidade)
+    fecha: dict[str, date] = {}
+    if tem_janela_de and ev.janela_ate_valor is not None and ev.janela_ate_unidade is not None:
+        fecha = _por_animal(ev.janela_ate_valor, ev.janela_ate_unidade)
+    return abre, fecha
+
+
+def lista_espera(
+    session: Session, hoje: date, fazenda_id: int | None = None, calendario_id: int | None = None,
+) -> dict:
+    """Lista de espera por protocolo (regra): quem está "sugerido", com a
+    situação de cada animal — "atrasada" (passou da data devida, a janela segue
+    aberta; `dias_atraso`) ou "na_janela" (`fecha_em` = dias até a janela
+    fechar, quando há janela cadastrada). Vendidos/baixados e animais que não
+    existem mais no rebanho ficam de fora."""
+    query = (
+        select(CronogramaSanitarioAnimal, CronogramaSanitario, CalendarioSanitario)
+        .join(CronogramaSanitario, CronogramaSanitario.id == CronogramaSanitarioAnimal.cronograma_id)
+        .join(CalendarioSanitario, CalendarioSanitario.id == CronogramaSanitario.calendario_sanitario_id)
+        .where(CronogramaSanitarioAnimal.status == "sugerido")
+        .where(CronogramaSanitario.status.in_(_ABERTOS))
+        .where(CalendarioSanitario.ativo == True)  # noqa: E712
+    )
+    if fazenda_id is not None:
+        query = query.where(CronogramaSanitario.fazenda_id == fazenda_id)
+    if calendario_id is not None:
+        query = query.where(CalendarioSanitario.id == calendario_id)
+    trios = session.exec(query).all()
+    vazio = {"total": 0, "atrasadas": 0, "fecham_7d": 0, "agendamentos_ativos": 0, "grupos": []}
+    query_ag = select(CronogramaSanitario).where(CronogramaSanitario.status.in_(("agendado", "em_montagem")))
+    if fazenda_id is not None:
+        query_ag = query_ag.where(CronogramaSanitario.fazenda_id == fazenda_id)
+    vazio["agendamentos_ativos"] = len(session.exec(query_ag).all())
+    if not trios:
+        return vazio
+
+    animais = _animais_da_fazenda(session, fazenda_id)
+    query_ev = select(EventoSanitario)
+    if fazenda_id is not None:
+        query_ev = query_ev.where(EventoSanitario.fazenda_id == fazenda_id)
+    eventos = {e.id: e for e in session.exec(query_ev).all()}
+
+    por_regra: dict[int, list[tuple[CronogramaSanitarioAnimal, CronogramaSanitario]]] = {}
+    regras: dict[int, CalendarioSanitario] = {}
+    for linha, cron, cal in trios:
+        a = animais.get(linha.numero_matriz)
+        if a is None or not a.ativo:
+            continue
+        por_regra.setdefault(cal.id, []).append((linha, cron))
+        regras[cal.id] = cal
+
+    grupos: list[dict] = []
+    for cal_id, linhas in por_regra.items():
+        cal = regras[cal_id]
+        ev = eventos.get(cal.evento_sanitario_id)
+        abre, fecha = _datas_do_gatilho_por_animal(session, ev, hoje, fazenda_id, animais)
+        itens: list[dict] = []
+        for linha, cron in linhas:
+            a = animais[linha.numero_matriz]
+            devida = abre.get(linha.numero_matriz) or _data_devida(cron)
+            fim = fecha.get(linha.numero_matriz)
+            atraso = max(0, (hoje - devida).days)
+            itens.append({
+                "linha_id": linha.id, "cronograma_id": cron.id, "numero_matriz": linha.numero_matriz,
+                "nome": a.nome, "lote": a.grupo_primario, "sexo": a.sexo,
+                "situacao": "atrasada" if atraso > 0 else "na_janela", "dias_atraso": atraso,
+                "devida": devida.isoformat(), "janela_fim": fim.isoformat() if fim else None,
+                "fecha_em": (fim - hoje).days if fim else None,
+                "desde": linha.data_sugestao.isoformat(),
+                "motivo_entrada": "Entrou na janela pela regra do protocolo",
+            })
+        itens.sort(key=lambda i: (-i["dias_atraso"], i["numero_matriz"]))
+        fechamentos = [i["fecha_em"] for i in itens if i["fecha_em"] is not None]
+        lotes = sorted({i["lote"] for i in itens if i["lote"]})
+        grupos.append({
+            "calendario_id": cal.id, "evento_sanitario_id": cal.evento_sanitario_id,
+            "protocolo_nome": ev.nome if ev else "Evento sanitário", "categoria_alvo": cal.categoria_alvo,
+            "tipo": (ev.categoria_preventiva if ev else None) or "vacina",
+            "produto": cal.produto or (ev.produto_padrao if ev else None),
+            "dose": ev.dose_padrao if ev else None, "unidade": ev.unidade_padrao if ev else None,
+            "via": ev.via_padrao if ev else None,
+            "lotes": lotes,
+            "janela_de": min(i["devida"] for i in itens),
+            "janela_ate": max((i["janela_fim"] for i in itens if i["janela_fim"]), default=None),
+            "quantidade": len(itens),
+            "atrasadas": sum(1 for i in itens if i["situacao"] == "atrasada"),
+            "dias_atraso": max(i["dias_atraso"] for i in itens),
+            "fecha_em": min(fechamentos) if fechamentos else None,
+            "situacao": "atrasada" if any(i["situacao"] == "atrasada" for i in itens) else "na_janela",
+            "animais": itens,
+        })
+    grupos.sort(key=lambda g: (-g["dias_atraso"], g["protocolo_nome"]))
+    todos = [i for g in grupos for i in g["animais"]]
+    return {
+        "total": len(todos),
+        "atrasadas": sum(1 for i in todos if i["situacao"] == "atrasada"),
+        "fecham_7d": sum(1 for i in todos if i["fecha_em"] is not None and 0 <= i["fecha_em"] <= 7),
+        "agendamentos_ativos": vazio["agendamentos_ativos"],
+        "grupos": grupos,
+    }
+
+
+def _upsert_linha(
+    session: Session, cronograma_id: int, numero: str, fazenda_id: int | None, **campos,
+) -> CronogramaSanitarioAnimal:
+    existente = session.exec(
+        select(CronogramaSanitarioAnimal)
+        .where(CronogramaSanitarioAnimal.cronograma_id == cronograma_id)
+        .where(CronogramaSanitarioAnimal.numero_matriz == numero)
+    ).first()
+    if existente is None:
+        existente = CronogramaSanitarioAnimal(
+            cronograma_id=cronograma_id, numero_matriz=numero, data_sugestao=campos.pop("data_sugestao", date.today()),
+            fazenda_id=fazenda_id,
+        )
+    for k, v in campos.items():
+        setattr(existente, k, v)
+    session.add(existente)
+    return existente
+
+
+def criar_agendamento(
+    session: Session, calendario: CalendarioSanitario, *, animais_janela: list[str],
+    animais_fora: list[tuple[str, str | None]], data_evento: date, hora: str | None, hoje: date,
+    modo_execucao: str | None = None, veterinario_pessoa_id: int | None = None,
+    observacao: str | None = None, rascunho: bool = False,
+) -> CronogramaSanitario:
+    """"Criar agendamento" a partir da lista de espera: os animais da janela
+    saem da lista e entram no agendamento; os de fora da janela entram marcados
+    ("fora_janela") com motivo obrigatório (R6). Um animal só pode estar em uma
+    lista/agendamento ativo por protocolo (R8). Todas as validações acontecem
+    antes de gravar qualquer coisa."""
+    janela = list(dict.fromkeys(n.strip() for n in animais_janela if (n or "").strip()))
+    fora: dict[str, str] = {}
+    for numero, motivo in animais_fora:
+        numero = (numero or "").strip()
+        if not numero:
+            continue
+        if not (motivo or "").strip():
+            raise CronogramaError(f"Informe o motivo para incluir o animal {numero} fora da janela")
+        fora[numero] = motivo.strip()
+    if not janela and not fora:
+        raise CronogramaError("Escolha pelo menos um animal para o agendamento")
+    repetidos = sorted(set(janela) & set(fora))
+    if repetidos:
+        raise CronogramaError(f"Animal {repetidos[0]} está na janela e fora da janela ao mesmo tempo")
+    if hora and not _HORA_RE.match(hora):
+        raise CronogramaError("Hora inválida — use HH:MM")
+    if not rascunho:
+        modo = modo_execucao or "propria"
+        if modo not in ("veterinario", "propria"):
+            raise CronogramaError("Modo inválido — use veterinario ou propria")
+        if modo == "veterinario":
+            if not veterinario_pessoa_id:
+                raise CronogramaError("Selecione o veterinário")
+            pessoa = session.get(Pessoa, veterinario_pessoa_id)
+            if not pessoa or not pessoa.ativo:
+                raise CronogramaError("Veterinário não encontrado")
+    else:
+        modo = None
+
+    animais_da_regra = _linhas_da_regra(session, calendario.id, janela + list(fora))
+    espera = {l.numero_matriz: (l, c) for l, c in animais_da_regra if l.status == "sugerido"}
+    ocupados = {l.numero_matriz: c for l, c in animais_da_regra if l.status in ("incluido", "aplicado")}
+    ativos = _animais_da_fazenda(session, calendario.fazenda_id, janela + list(fora))
+
+    for numero in janela:
+        if numero not in espera:
+            if numero in ocupados:
+                raise CronogramaError(f"Animal {numero} já está em outro agendamento deste protocolo")
+            raise CronogramaError(f"Animal {numero} não está na lista de espera deste protocolo")
+        a = ativos.get(numero)
+        if a is None or not a.ativo:
+            raise CronogramaError(f"Animal {numero} não está mais no rebanho (vendido/baixado)")
+    for numero in fora:
+        a = ativos.get(numero)
+        if a is None:
+            raise CronogramaError(f"Animal {numero} não encontrado")
+        if not a.ativo:
+            raise CronogramaError(f"Animal {numero} não está mais no rebanho (vendido/baixado)")
+        if numero in espera:
+            raise CronogramaError(f"Animal {numero} já está na lista de espera — inclua como animal da janela")
+        if numero in ocupados:
+            raise CronogramaError(f"Animal {numero} já está em outro agendamento deste protocolo")
+
+    origens = {espera[n][1].id: espera[n][1] for n in janela}
+    reaproveita: CronogramaSanitario | None = None
+    if len(origens) == 1:
+        origem = next(iter(origens.values()))
+        sugeridos_da_origem = session.exec(
+            select(CronogramaSanitarioAnimal)
+            .where(CronogramaSanitarioAnimal.cronograma_id == origem.id)
+            .where(CronogramaSanitarioAnimal.status == "sugerido")
+        ).all()
+        if origem.status == "aberto" and {l.numero_matriz for l in sugeridos_da_origem} <= set(janela):
+            reaproveita = origem
+    devida = (
+        next(iter(origens.values())).data_evento if len(origens) == 1
+        else (min(c.data_evento for c in origens.values()) if origens else data_evento)
+    )
+    agora = datetime.utcnow()
+    if reaproveita is not None:
+        cron = reaproveita
+        if cron.data_original is None and cron.data_evento != data_evento:
+            cron.data_original = cron.data_evento
+        cron.data_evento = data_evento
+    else:
+        cron = CronogramaSanitario(
+            calendario_sanitario_id=calendario.id, data_evento=data_evento,
+            data_original=devida if devida != data_evento else None, fazenda_id=calendario.fazenda_id,
+        )
+        session.add(cron)
+        session.flush()
+    cron.hora = hora or None
+    cron.modo_execucao = modo
+    cron.veterinario_pessoa_id = veterinario_pessoa_id if modo == "veterinario" else None
+    cron.status = "em_montagem" if rascunho else "agendado"
+    if observacao and observacao.strip():
+        cron.observacao = observacao.strip()
+    cron.atualizado_em = agora
+    session.add(cron)
+    session.flush()
+
+    for numero in janela:
+        linha = espera[numero][0]
+        if linha.cronograma_id != cron.id:
+            linha.cronograma_id = cron.id
+        linha.status = "incluido"
+        linha.origem = "janela"
+        linha.data_decisao = hoje
+        session.add(linha)
+    for numero, motivo in fora.items():
+        _upsert_linha(
+            session, cron.id, numero, calendario.fazenda_id, status="incluido", origem="fora_janela", motivo=motivo,
+            data_sugestao=hoje, data_decisao=hoje, data_aplicacao=None,
+        )
+    session.commit()
+    session.refresh(cron)
+    evento = session.get(EventoSanitario, calendario.evento_sanitario_id)
+    if evento is not None:
+        materializar_checklist(session, cron, evento)
+    return cron
+
+
+def cancelar(session: Session, cronograma: CronogramaSanitario, motivo: str | None, hoje: date) -> int:
+    """Cancela um agendamento (R9): os animais que vieram da janela voltam à
+    lista de espera como "sugerido"; os que foram incluídos fora da janela não
+    têm lista para onde voltar e ficam só no histórico do agendamento cancelado.
+    Devolve quantos animais voltaram para a lista de espera."""
+    if not (motivo or "").strip():
+        raise CronogramaError("Informe o motivo do cancelamento")
+    if cronograma.status == "concluido":
+        raise CronogramaError("Este agendamento já foi aplicado — não é possível cancelar")
+    if cronograma.status == "cancelado":
+        raise CronogramaError("Este agendamento já foi cancelado")
+    if cronograma.status == "aberto":
+        raise CronogramaError("Só um agendamento pode ser cancelado (a lista de espera não é cancelada)")
+    calendario = session.get(CalendarioSanitario, cronograma.calendario_sanitario_id)
+    incluidos = [
+        l for l in animais_por_status(session, cronograma.id, "incluido") if l.origem != "fora_janela"
+    ]
+    cronograma.status = "cancelado"
+    cronograma.motivo_cancelamento = motivo.strip()
+    cronograma.atualizado_em = datetime.utcnow()
+    session.add(cronograma)
+    session.flush()
+    if incluidos and calendario is not None:
+        espera = cronograma_aberto_ou_novo(session, calendario, _data_devida(cronograma))
+        for l in incluidos:
+            _upsert_linha(
+                session, espera.id, l.numero_matriz, cronograma.fazenda_id, status="sugerido", origem="janela",
+                motivo=None, data_sugestao=l.data_sugestao, data_decisao=None,
+            )
+    session.commit()
+    return len(incluidos)
+
+
+def cronograma_aberto_ou_novo(session: Session, calendario: CalendarioSanitario, data_devida: date) -> CronogramaSanitario:
+    """Cronograma "aberto" (lista de espera) da regra; se não houver, cria um na
+    data devida informada (e não na próxima ocorrência projetada)."""
+    existente = session.exec(
+        select(CronogramaSanitario)
+        .where(CronogramaSanitario.calendario_sanitario_id == calendario.id)
+        .where(CronogramaSanitario.status == "aberto")
+        .order_by(CronogramaSanitario.data_evento)
+    ).first()
+    if existente:
+        return existente
+    novo = CronogramaSanitario(
+        calendario_sanitario_id=calendario.id, data_evento=data_devida, fazenda_id=calendario.fazenda_id,
+    )
+    session.add(novo)
+    session.flush()
+    return novo
+
+
+def desconsiderar(
+    session: Session, calendario: CalendarioSanitario, numeros: list[str], motivo: str | None, hoje: date,
+) -> int:
+    """"Desconsiderar" animais da lista de espera (não se aplica), com motivo
+    obrigatório. Não os re-sugere no mesmo ciclo. Devolve quantos saíram."""
+    if not (motivo or "").strip():
+        raise CronogramaError("Informe o motivo para desconsiderar")
+    alvo = list(dict.fromkeys(n.strip() for n in numeros if (n or "").strip()))
+    if not alvo:
+        raise CronogramaError("Escolha pelo menos um animal")
+    sugeridos = {l.numero_matriz: l for l, _ in _linhas_da_regra(session, calendario.id, alvo) if l.status == "sugerido"}
+    ausentes = [n for n in alvo if n not in sugeridos]
+    if ausentes:
+        raise CronogramaError(f"Animal {ausentes[0]} não está na lista de espera deste protocolo")
+    for numero, linha in sugeridos.items():
+        linha.status = "excluido"
+        linha.motivo = motivo.strip()
+        linha.data_decisao = hoje
+        session.add(linha)
+    session.commit()
+    return len(sugeridos)

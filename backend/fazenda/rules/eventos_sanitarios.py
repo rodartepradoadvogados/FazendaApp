@@ -401,7 +401,15 @@ def eventos_agenda(
     # espera em vez de cobrar aplicação imediata (ver eventos_agenda_cronograma
     # em routers/agenda.py). Um evento sem regra vinculada (ou com regra
     # usa_cronograma=False) continua exatamente como sempre.
-    query_calendarios_cron = select(CalendarioSanitario).where(CalendarioSanitario.usa_cronograma == True)  # noqa: E712
+    # Decisão do dono (fatia 7): com a flag `usar_ocorrencia_universal` a regra
+    # por EVENTO DE VIDA também vai para a lista de espera (R1) e nunca gera a
+    # pendência antiga por animal — mesmo sem `usa_cronograma`, como já era
+    # para as regras por época. Evento sem regra ativa no calendário não tem
+    # cronograma onde esperar e segue o caminho antigo.
+    if usar_ocorrencia_universal():
+        query_calendarios_cron = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
+    else:
+        query_calendarios_cron = select(CalendarioSanitario).where(CalendarioSanitario.usa_cronograma == True)  # noqa: E712
     if fazenda_id is not None:
         query_calendarios_cron = query_calendarios_cron.where(CalendarioSanitario.fazenda_id == fazenda_id)
     calendarios_cronograma = {c.evento_sanitario_id: c for c in session.exec(query_calendarios_cron).all()}

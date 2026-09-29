@@ -27,7 +27,8 @@ from fazenda.api.routers.cadastro import GATILHOS_EVENTO
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia, proxima_ocorrencia_a_partir_de
 from fazenda.rules.calendario_visao import montar_calendario_visual
-from fazenda.rules.cronograma_sanitario import cronograma_aberto
+from fazenda.rules import cronograma_sanitario as cronograma_rules
+from fazenda.rules.cronograma_sanitario import CronogramaError, cronograma_aberto
 from fazenda.rules.checklist_sanitario import (
     alerta_clinico_ativo, checklist_customizado_da_regra, estado_ocorrencia, materializar_checklist,
     salvar_checklist_da_regra,
@@ -1092,7 +1093,10 @@ def _serializar_cronograma(session: Session, cron: CronogramaSanitario, calendar
         "categoria_alvo": calendario.categoria_alvo if calendario else None,
         "veterinario_nome": pessoas.get(cron.veterinario_pessoa_id) if cron.veterinario_pessoa_id else None,
         "animais_contagem": contagem,
-        "animais": [{"numero_matriz": a.numero_matriz, "status": a.status, "id": a.id} for a in animais],
+        "animais": [
+            {"numero_matriz": a.numero_matriz, "status": a.status, "id": a.id, "origem": a.origem, "motivo": a.motivo}
+            for a in animais
+        ],
     }
 
 
@@ -1153,6 +1157,139 @@ def criar_cronograma_manual(
     eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
     return _serializar_cronograma(session, cron, calendarios, eventos, pessoas)
+
+
+def _cronograma_da_fazenda(session: Session, cronograma_id: int, fazenda_id: int | None) -> CronogramaSanitario:
+    cron = session.get(CronogramaSanitario, cronograma_id)
+    if not cron or (fazenda_id is not None and cron.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Agendamento não encontrado")
+    return cron
+
+
+def _calendario_da_fazenda(session: Session, calendario_id: int, fazenda_id: int | None) -> CalendarioSanitario:
+    calendario = session.get(CalendarioSanitario, calendario_id)
+    if not calendario or (fazenda_id is not None and calendario.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Protocolo (regra do calendário sanitário) não encontrado")
+    return calendario
+
+
+def _serializar_um_cronograma(session: Session, cron: CronogramaSanitario) -> dict:
+    calendarios = {c.id: c for c in session.exec(select(CalendarioSanitario).where(CalendarioSanitario.id == cron.calendario_sanitario_id)).all()}
+    eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    return _serializar_cronograma(session, cron, calendarios, eventos, pessoas)
+
+
+@router.get("/cronogramas/lista-espera")
+def listar_lista_espera(
+    calendario_id: int | None = None,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Lista de espera do preventivo (R1): animais na janela de aplicação que
+    ainda não foram agendados, por protocolo — "atrasada há N dias" ou "na
+    janela". Vendidos/baixados ficam de fora. Não é tarefa da Agenda."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    return cronograma_rules.lista_espera(session, date.today(), fazenda_id, calendario_id)
+
+
+class AnimalForaJanelaIn(BaseModel):
+    numero_matriz: str
+    motivo: str | None = None
+
+
+class NovoAgendamentoIn(BaseModel):
+    calendario_sanitario_id: int
+    animais_janela: list[str] = []
+    animais_fora: list[AnimalForaJanelaIn] = []   # R6: motivo obrigatório
+    data_evento: date
+    hora: str | None = None                        # "HH:MM"
+    modo_execucao: str | None = None               # "veterinario" | "propria" (padrão)
+    veterinario_pessoa_id: int | None = None
+    observacao: str | None = None
+    rascunho: bool = False                         # True = fica "em_montagem" (não entra na Agenda)
+
+
+@router.post("/cronogramas/agendamentos")
+def criar_agendamento_preventivo(
+    dados: NovoAgendamentoIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """"Criar agendamento" (Protocolos > Aplicar): monta o agendamento a partir
+    da lista de espera, com animais da janela e animais fora da janela (com
+    motivo). Só o agendamento entra na Agenda, no dia (R2)."""
+    calendario = _calendario_da_fazenda(session, dados.calendario_sanitario_id, fazenda_id)
+    try:
+        cron = cronograma_rules.criar_agendamento(
+            session, calendario, animais_janela=dados.animais_janela,
+            animais_fora=[(a.numero_matriz, a.motivo) for a in dados.animais_fora],
+            data_evento=dados.data_evento, hora=dados.hora, hoje=date.today(), modo_execucao=dados.modo_execucao,
+            veterinario_pessoa_id=dados.veterinario_pessoa_id, observacao=dados.observacao, rascunho=dados.rascunho,
+        )
+    except CronogramaError as e:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    return _serializar_um_cronograma(session, cron)
+
+
+class AdiarAgendamentoIn(BaseModel):
+    nova_data: date
+    hora: str | None = None
+    motivo: str | None = None
+
+
+@router.post("/cronogramas/{cronograma_id}/adiar")
+def adiar_agendamento_preventivo(
+    cronograma_id: int, dados: AdiarAgendamentoIn,
+    session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Adiar (R9): muda a data/hora do agendamento e mantém os animais."""
+    cron = _cronograma_da_fazenda(session, cronograma_id, fazenda_id)
+    try:
+        cronograma_rules.adiar(session, cron, dados.nova_data, dados.motivo, manter_agendamento=True, hora=dados.hora)
+    except CronogramaError as e:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    return _serializar_um_cronograma(session, cron)
+
+
+class CancelarAgendamentoIn(BaseModel):
+    motivo: str
+
+
+@router.post("/cronogramas/{cronograma_id}/cancelar")
+def cancelar_agendamento_preventivo(
+    cronograma_id: int, dados: CancelarAgendamentoIn,
+    session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Cancelar (R9): o agendamento sai da Agenda e os animais da janela voltam
+    à lista de espera; o motivo fica registrado."""
+    cron = _cronograma_da_fazenda(session, cronograma_id, fazenda_id)
+    try:
+        devolvidos = cronograma_rules.cancelar(session, cron, dados.motivo, date.today())
+    except CronogramaError as e:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    return {**_serializar_um_cronograma(session, cron), "devolvidos": devolvidos}
+
+
+class DesconsiderarListaEsperaIn(BaseModel):
+    calendario_sanitario_id: int
+    animais: list[str]
+    motivo: str
+
+
+@router.post("/cronogramas/lista-espera/desconsiderar")
+def desconsiderar_lista_espera(
+    dados: DesconsiderarListaEsperaIn, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Desconsiderar animais da lista de espera (não se aplica), com motivo."""
+    calendario = _calendario_da_fazenda(session, dados.calendario_sanitario_id, fazenda_id)
+    try:
+        n = cronograma_rules.desconsiderar(session, calendario, dados.animais, dados.motivo, date.today())
+    except CronogramaError as e:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"desconsiderados": n}
 
 
 def _tipo_evento(evento: EventoSanitario | None) -> str:
