@@ -807,7 +807,7 @@ def _tipo_do_evento(evento: EventoSanitario | None) -> str:
 def _dose_texto(modo: dict) -> str:
     un = modo.get("unidade") or ""
     if modo["por_peso"]:
-        return f"{modo['dose_ref']:g} {un} por {modo['kg_ref']:g} kg de peso vivo, pelo peso de cada animal".strip()
+        return f"{modo['dose_ref']:g} {un} por {modo['kg_ref']:g} kg de peso vivo".strip()
     if modo.get("dose") is None:
         return "dose não cadastrada"
     return f"{modo['dose']:g} {un} por animal".strip()

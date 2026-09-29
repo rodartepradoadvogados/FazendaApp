@@ -1159,3 +1159,22 @@ class TestConfirmarRascunho:
         assert r.status_code == 400 and "montagem" in r.json()["detail"].lower()
         _USUARIO["fazenda"] = 2
         assert c.post(f"/sanidade/cronogramas/{ag}/confirmar", json={"data_evento": dia}).status_code == 404
+
+
+class TestCrmvDoVeterinario:
+    def test_cadastro_grava_o_crmv_e_a_gaveta_mostra_ao_escolher_quem_aplica(self, ctx):
+        c, engine = ctx
+        r = c.post("/cadastro/pessoas", json={"nome": "Dra. Ana", "tipos": ["Veterinário"], "crmv": "CRMV-SP 999"})
+        assert r.status_code == 200, r.text
+        assert r.json()["crmv"] == "CRMV-SP 999"
+        r2 = c.put(f"/cadastro/pessoas/{r.json()['id']}", json={"nome": "Dra. Ana", "tipos": ["Veterinário"], "crmv": "CRMV-SP 1000"})
+        assert r2.status_code == 200 and r2.json()["crmv"] == "CRMV-SP 1000"
+        with Session(engine) as s:
+            _estoque(s)
+            _animal(s, "1")
+            cal = _regra(s)
+            _espera(s, cal, ["1"])
+        ag = _agendar(c, cal, ["1"])["id"]
+        ctxo = c.get(f"/sanidade/cronogramas/{ag}/aplicar-contexto").json()
+        ana = next(p for p in ctxo["pessoas"] if p["nome"] == "Dra. Ana")
+        assert ana["crmv"] == "CRMV-SP 1000" and ana["veterinario"] is True

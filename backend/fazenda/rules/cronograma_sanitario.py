@@ -586,7 +586,7 @@ def eventos_agenda(
             "id": eid, "data": cron.data_evento.isoformat(), "categoria": "sanidade",
             "descricao": f"Aplicar {nome} hoje{f' às {cron.hora}' if cron.hora else ''} — {quem}",
             "numero_animal": None,
-            "observacao": f"{len(incluidos)} animal(is) incluído(s) — aplicar em lote ou individualizado.",
+            "observacao": f"{len(incluidos)} animal(is) incluído(s) — Aplicar abre a mesma gaveta de Protocolos.",
             "fonte": "auto", "cor": "var(--dourado)", "ref": None,
             "tipo": "cronograma_sanitario_aplicar",
             "cronograma_id": cron.id, "evento_sanitario_id": calendario.evento_sanitario_id,
