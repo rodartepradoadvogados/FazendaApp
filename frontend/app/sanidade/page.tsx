@@ -26,6 +26,7 @@ import { AnimalPicker } from "@/components/AnimalPicker";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import type { AnimalRow } from "@/components/AnimalModal";
 import { HistoricoPreventivoView } from "@/components/sanidade/HistoricoPreventivoView";
+import { FaixaPreventivoLeitura, LinkAbrirEmProtocolos } from "@/components/sanidade/FaixaPreventivoLeitura";
 import { PopupVinculoFinanceiro, type OrigemPopupVinculo } from "@/components/lancamentos/PopupVinculoFinanceiro";
 import CatalogoFarmaciaConsulta from "@/components/sanidade/CatalogoFarmaciaConsulta";
 import RemediosPorDoenca from "@/components/RemediosPorDoenca";
@@ -110,8 +111,8 @@ const ACAO_FORA_JANELA_LABEL_CURTO: Record<string, string> = { sair: "saiu", man
  * vida avulso (exploração livre, sem precisar cadastrar antes).
  */
 function RelatorioEventosVidaView({
-  eventoSanitarioIdInicial, dataIniInicial, dataFimInicial,
-}: { eventoSanitarioIdInicial?: number; dataIniInicial?: string; dataFimInicial?: string } = {}) {
+  eventoSanitarioIdInicial, dataIniInicial, dataFimInicial, somenteLeitura = false,
+}: { eventoSanitarioIdInicial?: number; dataIniInicial?: string; dataFimInicial?: string; somenteLeitura?: boolean } = {}) {
   const [eventos, setEventos] = useState<EventoPrev[]>([]);
   const [gatilhosVida, setGatilhosVida] = useState<{ gatilho: string; rotulo: string }[]>([]);
   const [eventoSanitarioId, setEventoSanitarioId] = useState(eventoSanitarioIdInicial ? String(eventoSanitarioIdInicial) : "");
@@ -202,7 +203,9 @@ function RelatorioEventosVidaView({
   // Agendamento em lote só faz sentido para vacina/tratamento (produto+dose) de
   // um evento já cadastrado — exame segue tendo seu próprio fluxo de
   // diagnóstico em Lançamentos > Sanitário > Preventivo.
-  const podeAgendar = !!eventoSanitarioId && categoriaPreventiva !== "exame" && categoriaPreventiva !== null;
+  // Em Sanidade (somenteLeitura) o agendamento em lote e o "Já foi aplicado
+  // agora" não existem: agendar e aplicar é em Protocolos/Agenda.
+  const podeAgendar = !somenteLeitura && !!eventoSanitarioId && categoriaPreventiva !== "exame" && categoriaPreventiva !== null;
 
   // Ao trocar de evento, pré-preenche produto/dose/unidade/veterinário com o
   // padrão cadastrado (editável na hora) e limpa a seleção anterior.
@@ -357,6 +360,13 @@ function RelatorioEventosVidaView({
             </table>
           </div>
 
+          {somenteLeitura && !!eventoSanitarioId && categoriaPreventiva !== null && (
+            <div style={{ marginTop: "1rem", borderTop: "1px solid var(--border)", paddingTop: "0.9rem", display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+              <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Para agendar ou aplicar estes animais, use Protocolos (janela de aplicação e lista de espera).</span>
+              <LinkAbrirEmProtocolos aba="aplicar" />
+            </div>
+          )}
+
           {podeAgendar && (
             <div style={{ marginTop: "1rem", borderTop: "1px solid var(--border)", paddingTop: "0.9rem" }}>
               <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.6rem" }}>
@@ -411,7 +421,7 @@ const COR_RESULTADO_EXAME: Record<string, string> = { positivo: "var(--red)", ne
  * seguem o mesmo fluxo auditado usado no resto de Sanidade: qualquer usuário
  * pode pedir a exclusão, admin exclui na hora (ver excluir() abaixo).
  */
-function RelatorioResultadosExameView({ eventos }: { eventos: EventoPrev[] }) {
+function RelatorioResultadosExameView({ eventos, somenteLeitura = false }: { eventos: EventoPrev[]; somenteLeitura?: boolean }) {
   const admin = ehAdmin();
   const [eventoId, setEventoId] = useState("");
   const [resultadoFiltro, setResultadoFiltro] = useState("");
@@ -569,7 +579,7 @@ function RelatorioResultadosExameView({ eventos }: { eventos: EventoPrev[] }) {
                                 </td>
                                 <td style={{ fontSize: "0.78rem" }}>{l.veterinario || "—"}</td>
                                 <td>
-                                  <div className="flex items-center gap-1">
+                                  {somenteLeitura ? null : <div className="flex items-center gap-1">
                                     <button className="btn-ghost" style={{ padding: "0.2rem 0.4rem" }} title="Editar"
                                       disabled={ocupado === l.id} onClick={() => (editId === l.id ? setEditId(null) : iniciarEdicao(l))}>
                                       <Pencil size={13} />
@@ -578,7 +588,7 @@ function RelatorioResultadosExameView({ eventos }: { eventos: EventoPrev[] }) {
                                       disabled={ocupado === l.id} onClick={() => excluir(l)}>
                                       <Trash2 size={13} />
                                     </button>
-                                  </div>
+                                  </div>}
                                 </td>
                               </tr>
                               {editId === l.id && (
@@ -669,7 +679,7 @@ function ultimoDiaMes(d: Date): string {
  * agrupamento"), com estimativa de animais e sinalização de "vale chamar o
  * veterinário" quando a soma bate o mínimo configurado.
  */
-function CalendarioVisualView({ onAbrirCronograma }: { onAbrirCronograma: (calendarioSanitarioId: number) => void }) {
+function CalendarioVisualView({ onAbrirCronograma, somenteLeitura = false }: { onAbrirCronograma: (calendarioSanitarioId: number) => void; somenteLeitura?: boolean }) {
   const [visualizacao, setVisualizacao] = useState<"lista" | "mes">("lista");
   const [mesAtual, setMesAtual] = useState(() => new Date());
   const [dados, setDados] = useState<{ janelas: JanelaCalendario[]; min_animais_agrupamento: number; janela_agrupamento_dias: number } | null>(null);
@@ -876,7 +886,7 @@ function CalendarioVisualView({ onAbrirCronograma }: { onAbrirCronograma: (calen
             <span style={{ fontWeight: 700 }}>Quais animais entram nesta janela</span>
             <button className="btn-secondary" style={{ fontSize: "0.72rem" }} onClick={() => setDrillDown(null)}>Fechar</button>
           </div>
-          <RelatorioEventosVidaView eventoSanitarioIdInicial={drillDown.eventoId} dataIniInicial={drillDown.ini} dataFimInicial={drillDown.fim} />
+          <RelatorioEventosVidaView eventoSanitarioIdInicial={drillDown.eventoId} dataIniInicial={drillDown.ini} dataFimInicial={drillDown.fim} somenteLeitura={somenteLeitura} />
         </div>
       )}
     </div>
@@ -996,7 +1006,7 @@ function OcorrenciasView() {
   );
 }
 
-function DetalheOcorrenciaView({ cronogramaId, onVoltar, abaInicial }: { cronogramaId: number; onVoltar: () => void; abaInicial?: "animais" | "checklist" }) {
+function DetalheOcorrenciaView({ cronogramaId, onVoltar, abaInicial, somenteLeitura = false }: { cronogramaId: number; onVoltar: () => void; abaInicial?: "animais" | "checklist"; somenteLeitura?: boolean }) {
   const [det, setDet] = useState<DetalheOcorrencia | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [aba, setAba] = useState<"animais" | "checklist">(abaInicial || "checklist");
@@ -1117,12 +1127,13 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar, abaInicial }: { cronogr
             <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>— {ROTULO_TIPO_REGRA[det.tipo] || det.tipo}</span>
           </div>
           <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-            {det.estado !== "realizado" && (
+            {somenteLeitura && det.estado !== "realizado" && <LinkAbrirEmProtocolos />}
+            {!somenteLeitura && det.estado !== "realizado" && (
               <button className="btn-secondary" style={{ fontSize: "0.75rem" }} onClick={() => setAdiarAberto((v) => !v)}>
                 Adiar / Agendar para uma data
               </button>
             )}
-            {det.estado !== "realizado" && det.estado !== "confirmado" && (
+            {!somenteLeitura && det.estado !== "realizado" && det.estado !== "confirmado" && (
               <button className="btn-secondary" style={{ fontSize: "0.75rem" }} onClick={desconsiderarCronograma}>
                 Desconsiderar cronograma
               </button>
@@ -1138,7 +1149,7 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar, abaInicial }: { cronogr
             Cronograma desconsiderado{det.checklist_desconsiderado_motivo ? ` — ${det.checklist_desconsiderado_motivo}` : ""}.
           </div>
         )}
-        {adiarAberto && (
+        {!somenteLeitura && adiarAberto && (
           <div className="mt-3" style={{ borderTop: "1px solid var(--border)", paddingTop: "0.6rem", maxWidth: 320 }}>
             <label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" }}>Nova data</label>
             <input type="date" style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
@@ -1167,6 +1178,7 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar, abaInicial }: { cronogr
 
       {aba === "animais" && (
         <div className="card">
+          {!somenteLeitura && (
           <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
             <div style={{ minWidth: 260, flex: "1 1 260px" }}>
               <AnimalPicker animais={animaisCadastro} value={animalNovo} onChange={setAnimalNovo} placeholder="Incluir animal manualmente…" />
@@ -1175,6 +1187,7 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar, abaInicial }: { cronogr
               {salvandoAnimal === "novo" ? "Incluindo…" : "+ Incluir"}
             </button>
           </div>
+          )}
           {erro && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>{erro}</span></div>}
           <table className="fazenda-table">
             <thead><tr><th>Nº</th><th>Status</th><th>Sugerido em</th><th>Decidido em</th><th></th></tr></thead>
@@ -1186,7 +1199,7 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar, abaInicial }: { cronogr
                   <td style={{ fontSize: "0.78rem" }}>{formatDate(a.data_sugestao)}</td>
                   <td style={{ fontSize: "0.78rem" }}>{a.data_decisao ? formatDate(a.data_decisao) : "—"}</td>
                   <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                    {a.status === "sugerido" ? (
+                    {somenteLeitura ? null : a.status === "sugerido" ? (
                       <span className="flex items-center gap-2" style={{ justifyContent: "flex-end" }}>
                         <button className="btn-secondary" disabled={salvandoAnimal === a.id} style={{ fontSize: "0.72rem" }} onClick={() => decidirAnimal(a.id, true)}>Incluir</button>
                         <button className="btn-ghost" disabled={salvandoAnimal === a.id} style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => decidirAnimal(a.id, false)}>Excluir</button>
@@ -1199,7 +1212,7 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar, abaInicial }: { cronogr
                   </td>
                 </tr>
               ))}
-              {!det.animais.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum animal ainda — inclua um manualmente acima.</td></tr>}
+              {!det.animais.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>{somenteLeitura ? "Nenhum animal ainda." : "Nenhum animal ainda — inclua um manualmente acima."}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1226,7 +1239,9 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar, abaInicial }: { cronogr
                 <div className="flex items-center justify-between" style={{ gap: "0.6rem", flexWrap: "wrap" }}>
                   <span style={{ fontWeight: 700, fontSize: "0.86rem" }}>{item.nome}</span>
 
-                  {jaRespondido ? (
+                  {somenteLeitura && !jaRespondido ? (
+                    <span style={{ fontSize: "0.72rem", fontWeight: 700, padding: "0.15rem 0.55rem", borderRadius: 999, color: "var(--amber)", background: "var(--surface-2)" }}>Pendente</span>
+                  ) : jaRespondido ? (
                     <span style={{
                       fontSize: "0.72rem", fontWeight: 700, padding: "0.15rem 0.55rem", borderRadius: 999,
                       color: item.status === "cumprido" ? "var(--green-light)" : "var(--text-muted)",
@@ -1325,7 +1340,10 @@ function DetalheOcorrenciaView({ cronogramaId, onVoltar, abaInicial }: { cronogr
 // Exportado — reaproveitado também em Central de Protocolos > Acompanhamento
 // > Sanitário > Preventivo (ver app/protocolos/page.tsx), mesmo componente,
 // mesmos endpoints: não há dado nem lógica duplicada entre as duas telas.
-export function CalendarioSanitarioView({ modoInicial, cronogramaIdInicial }: { modoInicial?: "calendario" | "cronogramas"; cronogramaIdInicial?: number | null } = {}) {
+// `somenteLeitura` — Sanidade › Preventiva só consulta (fluxo aprovado: vacina
+// e exame são agendados e aplicados em Protocolos/Agenda). Protocolos usa o
+// padrão (false) e mantém todas as ações.
+export function CalendarioSanitarioView({ modoInicial, cronogramaIdInicial, somenteLeitura = false }: { modoInicial?: "calendario" | "cronogramas"; cronogramaIdInicial?: number | null; somenteLeitura?: boolean } = {}) {
   const [modo, setModo] = useState<"calendario" | "regras" | "cronogramas" | "exames" | "ocorrencias">(modoInicial || "calendario");
   const [cronogramaFiltroCalendarioId, setCronogramaFiltroCalendarioId] = useState<number | null>(null);
   const [regras, setRegras] = useState<RegraCalendario[] | null>(null);
@@ -1377,7 +1395,7 @@ export function CalendarioSanitarioView({ modoInicial, cronogramaIdInicial }: { 
     <>
       <div style={{ marginBottom: "0.75rem" }}>
         <h2 className="text-lg font-bold flex items-center gap-2"><Shield size={18} style={{ color: "var(--dourado)" }} /> Preventivo (calendário sanitário)</h2>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Regras e próximas ocorrências de manejo preventivo (vacinas, exames e tratamentos). Para lançar um preventivo, use Lançamentos › Sanitário › Preventiva.</p>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Regras e próximas ocorrências de manejo preventivo (vacinas, exames e tratamentos). {somenteLeitura ? "Para agendar ou aplicar, use Protocolos ou a Agenda." : "Para agendar e aplicar vacina ou exame, use Protocolos › Aplicar."}</p>
       </div>
 
       <TabBar
@@ -1400,10 +1418,10 @@ export function CalendarioSanitarioView({ modoInicial, cronogramaIdInicial }: { 
       />
 
       {modo === "calendario" ? (
-        <CalendarioVisualView onAbrirCronograma={(id) => { setCronogramaFiltroCalendarioId(id); setModo("cronogramas"); }} />
+        <CalendarioVisualView somenteLeitura={somenteLeitura} onAbrirCronograma={(id) => { setCronogramaFiltroCalendarioId(id); setModo("cronogramas"); }} />
       ) : modo === "cronogramas" ? (
-        <CronogramasSanitariosView calendarioIdInicial={cronogramaFiltroCalendarioId} onLimparFiltro={() => setCronogramaFiltroCalendarioId(null)} cronogramaIdInicial={cronogramaIdInicial} />
-      ) : modo === "exames" ? <RelatorioResultadosExameView eventos={eventos} />
+        <CronogramasSanitariosView calendarioIdInicial={cronogramaFiltroCalendarioId} onLimparFiltro={() => setCronogramaFiltroCalendarioId(null)} cronogramaIdInicial={cronogramaIdInicial} somenteLeitura={somenteLeitura} />
+      ) : modo === "exames" ? <RelatorioResultadosExameView eventos={eventos} somenteLeitura={somenteLeitura} />
       : modo === "ocorrencias" ? <OcorrenciasView /> : (
       <>
       <div className="card mb-4">
@@ -1442,7 +1460,7 @@ export function CalendarioSanitarioView({ modoInicial, cronogramaIdInicial }: { 
                 <ThOrdenavel label="Doença" campo="doenca_nome" coluna={coluna} dir={dir} ordenar={ordenar} />
                 <th>Produto</th><th>Dosagem</th><th>Responsável</th><th>Frequência</th>
                 <ThOrdenavel label="Próxima ocorrência" campo="proxima_ocorrencia" coluna={coluna} dir={dir} ordenar={ordenar} />
-                {admin && <th style={{ textAlign: "right" }}>Ações</th>}
+                {(admin || somenteLeitura) && <th style={{ textAlign: "right" }}>{somenteLeitura ? "" : "Ações"}</th>}
               </tr></thead>
               <tbody>
                 {linhasOrdenadas.map((r) => {
@@ -1467,7 +1485,9 @@ export function CalendarioSanitarioView({ modoInicial, cronogramaIdInicial }: { 
                         ? <span title="Esta regra dispara por evento de vida — cada animal tem sua própria data, calculada quando atinge o gatilho. Veja em Ocorrências/Cronogramas.">Calculado por animal</span>
                         : formatDate(r.proxima_ocorrencia)}
                     </td>
-                    {admin && (
+                    {somenteLeitura ? (
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}><LinkAbrirEmProtocolos aba="cadastro" /></td>
+                    ) : admin && (
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                         <span style={{ display: "inline-flex", gap: "0.35rem", alignItems: "center" }}>
                           {servico && (
@@ -1481,7 +1501,7 @@ export function CalendarioSanitarioView({ modoInicial, cronogramaIdInicial }: { 
                   </tr>
                   );
                 })}
-                {!regrasFiltradas.length && <tr><td colSpan={admin ? 10 : 9} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma regra no filtro.</td></tr>}
+                {!regrasFiltradas.length && <tr><td colSpan={admin || somenteLeitura ? 10 : 9} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma regra no filtro.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -1508,7 +1528,7 @@ const STATUS_CRONOGRAMA_LABEL: Record<string, string> = {
 const STATUS_CRONOGRAMA_COR: Record<string, string> = {
   aberto: "var(--amber)", agendado: "var(--dourado-light)", concluido: "var(--green-light)", cancelado: "var(--text-muted)",
 };
-function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro, cronogramaIdInicial }: { calendarioIdInicial?: number | null; onLimparFiltro?: () => void; cronogramaIdInicial?: number | null } = {}) {
+function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro, cronogramaIdInicial, somenteLeitura = false }: { calendarioIdInicial?: number | null; onLimparFiltro?: () => void; cronogramaIdInicial?: number | null; somenteLeitura?: boolean } = {}) {
   const [cronogramas, setCronogramas] = useState<Cronograma[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusFiltro, setStatusFiltro] = useState<"todos" | "aberto" | "agendado" | "concluido" | "cancelado">("todos");
@@ -1570,7 +1590,7 @@ function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro, cronog
   // hooks entre renders e derruba o componente inteiro (bug real, achado na
   // reverificação E2E de 13/09/2026: "Rendered fewer hooks than expected").
   if (aberto != null) {
-    return <DetalheOcorrenciaView cronogramaId={aberto} abaInicial={abaInicialDetalhe} onVoltar={() => { setAberto(null); carregar(); }} />;
+    return <DetalheOcorrenciaView cronogramaId={aberto} abaInicial={abaInicialDetalhe} somenteLeitura={somenteLeitura} onVoltar={() => { setAberto(null); carregar(); }} />;
   }
 
   return (
@@ -1592,10 +1612,12 @@ function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro, cronog
             </button>
           ))}
         </div>
-        <button className="btn-primary" style={{ fontSize: "0.75rem" }} onClick={() => setNovoAberto((v) => !v)}>+ Novo cronograma</button>
+        {somenteLeitura
+          ? <LinkAbrirEmProtocolos />
+          : <button className="btn-primary" style={{ fontSize: "0.75rem" }} onClick={() => setNovoAberto((v) => !v)}>+ Novo cronograma</button>}
       </div>
 
-      {novoAberto && (
+      {!somenteLeitura && novoAberto && (
         <div className="card mb-3">
           <label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Regra vinculada (obrigatório)</label>
           <select
@@ -1633,7 +1655,7 @@ function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro, cronog
           </tr></thead>
           <tbody>
             {linhasOrdenadas.map((c) => (
-              <tr key={c.id} className="clickable" style={{ cursor: "pointer" }} onClick={() => { setAbaInicialDetalhe(undefined); setAberto(c.id); }} title="Ver/incluir/remover animais desta ocorrência">
+              <tr key={c.id} className="clickable" style={{ cursor: "pointer" }} onClick={() => { setAbaInicialDetalhe(undefined); setAberto(c.id); }} title={somenteLeitura ? "Ver animais e checklist desta ocorrência" : "Ver/incluir/remover animais desta ocorrência"}>
                 <td style={{ fontWeight: 700 }}>{c.evento_sanitario_nome} <span style={{ fontWeight: 400, fontSize: "0.68rem", color: "var(--text-muted)" }}>#{c.id}</span></td>
                 <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{c.categoria_alvo || "—"}</td>
                 <td style={{ fontSize: "0.78rem" }}>{formatDate(c.data_evento)}{c.data_original && c.data_original !== c.data_evento ? <span style={{ color: "var(--text-muted)", fontSize: "0.68rem" }}> (adiado, era {formatDate(c.data_original)})</span> : null}</td>
@@ -1667,6 +1689,10 @@ const CORES = ["var(--vinho-light, #416180)", "var(--dourado)", "var(--blue)", "
 const UNIDADES_APLIC = ["ml", "L", "unidade", "dose", "kg", "saca 30kg", "saca 60kg"];
 
 function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { natureza?: "curativo" | "preventivo"; autoEditarId?: number | null }) {
+  // Preventivo é SOMENTE LEITURA em Sanidade (editar/excluir aplicação
+  // preventiva não existe mais aqui — estorno e correção seguem em Protocolos).
+  // Curativo continua com editar/excluir (decisão do dono pendente).
+  const leitura = natureza === "preventivo";
   const [regs, setRegs] = useState<Aplic[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [avisoExclusao, setAvisoExclusao] = useState<string | null>(null);
@@ -1742,6 +1768,7 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
   }, [autoEditarId, regs]);
 
   const iniciarEdicao = (a: Aplic) => {
+    if (leitura) return;
     setEditId(a.id);
     setEditVals({
       data: a.data ?? "", produto: a.produto ?? "", dose: a.dose == null ? "" : String(a.dose),
@@ -2083,17 +2110,19 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
           descricao="Lista completa das aplicações que atendem aos filtros acima">
           {avisoExclusao && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{avisoExclusao}</p>}
           <div className="flex justify-between items-center mb-2" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+            {leitura ? <LinkAbrirEmProtocolos aba="concluidos" /> : (
             <button className="btn-ghost" style={{ fontSize: "0.78rem", color: "var(--red)" }}
               disabled={!selecionados.size || excluindoLote}
               onClick={() => excluirVarias(Array.from(selecionados))}>
               <Trash2 size={14} /> {excluindoLote ? "Excluindo…" : `Excluir selecionados (${selecionados.size})`}
             </button>
+            )}
             <ExportarBotoes titulo="Sanidade — Aplicações" nomeArquivoBase="sanidade" colunas={COLUNAS_SANIDADE} linhas={filtrados} />
           </div>
           <div>
             <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
               <table className="fazenda-table">
-                <thead><tr><th></th><th>Data</th><th>Animal</th><th>Produto</th><th>Categoria</th><th style={{ textAlign: "right" }}>Dose</th>{admin && <th style={{ textAlign: "left" }}>Usuário</th>}<th style={{ textAlign: "right" }}>Ações</th></tr></thead>
+                <thead><tr>{!leitura && <th></th>}<th>Data</th><th>Animal</th><th>Produto</th><th>Categoria</th><th style={{ textAlign: "right" }}>Dose</th>{admin && <th style={{ textAlign: "left" }}>Usuário</th>}{!leitura && <th style={{ textAlign: "right" }}>Ações</th>}</tr></thead>
                 <tbody>
                   {pagAplicacoes.linhasPagina.map((item) => {
                     if (item.tipo === "grupo") {
@@ -2105,13 +2134,13 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
                       if (!aberto) {
                         return (
                           <tr key={chave} style={{ background: "var(--surface-2)", cursor: "pointer" }} onClick={() => toggleExpandido(chave)}>
-                            <td onClick={(e) => e.stopPropagation()}>
+                            {!leitura && <td onClick={(e) => e.stopPropagation()}>
                               <input type="checkbox" checked={todasMarcadas} onChange={() => setSelecionados((prev) => {
                                 const n = new Set(prev);
                                 if (todasMarcadas) idsDoGrupo.forEach((id) => n.delete(id)); else idsDoGrupo.forEach((id) => n.add(id));
                                 return n;
                               })} />
-                            </td>
+                            </td>}
                             <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{primeira.data ? new Date(primeira.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
                             <td colSpan={2} style={{ fontWeight: 700 }}>
                               <span className="flex items-center gap-1"><ChevronRight size={13} /> {primeira.produto}{primeira.atividade ? ` — ${primeira.atividade}` : ""}
@@ -2120,35 +2149,35 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
                             <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{primeira.categoria}</td>
                             <td style={{ textAlign: "right" }}>{primeira.dose ?? "—"}{primeira.unidade ? ` ${primeira.unidade}` : ""}</td>
                             {admin && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{primeira.usuario_nome ?? "—"}</td>}
-                            <td style={{ textAlign: "right", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
+                            {!leitura && <td style={{ textAlign: "right", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
                               <button title={admin ? "Excluir todos deste lote" : "Solicitar exclusão de todos deste lote"} disabled={excluindoLote}
                                 onClick={() => excluirVarias(idsDoGrupo)}
                                 style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", padding: 2 }}>
                                 <Trash2 size={14} />
                               </button>
-                            </td>
+                            </td>}
                           </tr>
                         );
                       }
                       return (
                         <Fragment key={chave}>
                           <tr style={{ background: "var(--surface-2)", cursor: "pointer" }} onClick={() => toggleExpandido(chave)}>
-                            <td colSpan={admin ? 8 : 7} style={{ fontSize: "0.78rem", fontWeight: 600 }}>
+                            <td colSpan={(admin ? 8 : 7) - (leitura ? 2 : 0)} style={{ fontSize: "0.78rem", fontWeight: 600 }}>
                               <span className="flex items-center gap-1"><ChevronDown size={13} /> {primeira.produto}{primeira.atividade ? ` — ${primeira.atividade}` : ""} · {linhas.length} animais — clique para recolher</span>
                             </td>
                           </tr>
                           {linhas.map((a) => (
                             <tr key={a.id}>
-                              <td><input type="checkbox" checked={selecionados.has(a.id)} onChange={() => toggleSelecionado(a.id)} /></td>
+                              {!leitura && <td><input type="checkbox" checked={selecionados.has(a.id)} onChange={() => toggleSelecionado(a.id)} /></td>}
                               <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{a.data ? new Date(a.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
                               <td style={{ fontWeight: 700 }}>{a.numero}</td>
                               <td style={{ fontSize: "0.75rem" }}>{a.produto}</td>
                               <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{a.categoria}</td>
                               <td style={{ textAlign: "right" }}>{a.dose ?? "—"}{a.unidade ? ` ${a.unidade}` : ""}</td>
                               {admin && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.usuario_nome ?? "—"}</td>}
-                              <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                              {!leitura && <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                                 <button title={admin ? "Excluir" : "Solicitar exclusão"} disabled={ocupado === a.id} onClick={() => excluir(a)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", padding: 2 }}><Trash2 size={14} /></button>
-                              </td>
+                              </td>}
                             </tr>
                           ))}
                         </Fragment>
@@ -2161,21 +2190,21 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
                     return (
                     <Fragment key={a.id}>
                       <tr>
-                        <td><input type="checkbox" checked={selecionados.has(a.id)} onChange={() => toggleSelecionado(a.id)} /></td>
+                        {!leitura && <td><input type="checkbox" checked={selecionados.has(a.id)} onChange={() => toggleSelecionado(a.id)} /></td>}
                         <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{a.data ? new Date(a.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
                         <td style={{ fontWeight: 700 }}>{a.numero}</td>
                         <td style={{ fontSize: "0.75rem" }}>{a.produto}</td>
                         <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{a.categoria}</td>
                         <td style={{ textAlign: "right" }}>{a.dose ?? "—"}{a.unidade ? ` ${a.unidade}` : ""}</td>
                         {admin && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.usuario_nome ?? "—"}</td>}
-                        <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        {!leitura && <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                           {!editando && (
                             <span style={{ display: "inline-flex", gap: "0.3rem" }}>
                               {admin && <button title="Editar" onClick={() => iniciarEdicao(a)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 2 }}><Pencil size={14} /></button>}
                               <button title={admin ? "Excluir" : "Solicitar exclusão"} disabled={ocupado === a.id} onClick={() => excluir(a)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", padding: 2 }}><Trash2 size={14} /></button>
                             </span>
                           )}
-                        </td>
+                        </td>}
                       </tr>
                       {editando && (
                         <tr>
@@ -2825,7 +2854,7 @@ function RastreabilidadeSanitariaView() {
 type AbaSanidade = "curativa" | "preventiva" | "rastreabilidade" | "catalogo";
 const ABAS_SANIDADE = [
   { id: "curativa", label: "Curativa", icon: HeartPulse, title: "Tratamentos curativos: aplicações, doença/motivo e protocolos" },
-  { id: "preventiva", label: "Preventiva", icon: Shield, title: "Manejo preventivo: aplicações e calendário sanitário" },
+  { id: "preventiva", label: "Preventiva", icon: Shield, title: "Manejo preventivo (somente leitura): aplicações, calendário sanitário e histórico" },
   { id: "rastreabilidade", label: "Rastreabilidade", icon: Route, title: "Rastreabilidade sanitária/GTA: linha do tempo por animal ou por GTA" },
   { id: "catalogo", label: "Catálogo", icon: BookOpen, title: "Catálogo de farmácia mantido pelo Painel CowData — indicações, princípios ativos e marcas, com bula e carência (somente consulta)" },
 ] as const satisfies readonly { id: AbaSanidade; label: string; icon: any; title: string }[];
@@ -2841,7 +2870,7 @@ const ABAS_CURATIVA = [
 
 type AbaPreventiva = "aplicacoes" | "calendario" | "historico";
 const ABAS_PREVENTIVA = [
-  { id: "aplicacoes", label: "Aplicações", icon: ClipboardList, title: "Aplicações preventivas já lançadas" },
+  { id: "aplicacoes", label: "Aplicações", icon: ClipboardList, title: "Aplicações preventivas já registradas (somente leitura)" },
   { id: "calendario", label: "Calendário sanitário", icon: CalendarClock, title: "Calendário, regras cadastradas, cronogramas e resultados de exames" },
   { id: "historico", label: "Histórico", icon: History, title: "Vacinas e exames já realizados, agrupados por produto/exame, com filtros" },
 ] as const satisfies readonly { id: AbaPreventiva; label: string; icon: any; title: string }[];
@@ -2850,9 +2879,8 @@ export default function SanidadePage() {
   const [aba, setAba] = useState<AbaSanidade>("curativa");
   const [abaCur, setAbaCur] = useState<AbaCurativa>("curativo");
   const [abaPrev, setAbaPrev] = useState<AbaPreventiva>("aplicacoes");
-  // Vindo do popup "regra já agendada" em Lançamentos > Preventivo > Aplicações
-  // (link "editar/dar baixa no último evento lançado"): abre direto na aba certa.
-  const [autoEditarId, setAutoEditarId] = useState<number | null>(null);
+  // Vindo do link "editar/dar baixa no último evento lançado" (só consulta aqui
+  // — Sanidade preventiva é somente leitura): abre direto na aba certa.
   // Vindo de "Registrar cronograma deste evento" (Lançamentos > Sanitário >
   // Preventivo > Calendário sanitário): abre direto no card Cronogramas.
   const [modoPreventivoInicial, setModoPreventivoInicial] = useState<"calendario" | "cronogramas">("calendario");
@@ -2863,7 +2891,6 @@ export default function SanidadePage() {
     const qs = new URLSearchParams(window.location.search);
     if (qs.get("editar_aplicacao_id")) {
       setAba("preventiva"); setAbaPrev("aplicacoes");
-      setAutoEditarId(Number(qs.get("editar_aplicacao_id")));
     }
     if (qs.get("ir") === "cronogramas") {
       setAba("preventiva"); setAbaPrev("calendario");
@@ -2910,8 +2937,9 @@ export default function SanidadePage() {
       )}
       {aba === "preventiva" && (
         <>
-          {abaPrev === "aplicacoes" && <AplicacoesView natureza="preventivo" autoEditarId={autoEditarId} />}
-          {abaPrev === "calendario" && <CalendarioSanitarioView modoInicial={modoPreventivoInicial} cronogramaIdInicial={cronogramaIdInicial} />}
+          <FaixaPreventivoLeitura />
+          {abaPrev === "aplicacoes" && <AplicacoesView natureza="preventivo" />}
+          {abaPrev === "calendario" && <CalendarioSanitarioView somenteLeitura modoInicial={modoPreventivoInicial} cronogramaIdInicial={cronogramaIdInicial} />}
           {abaPrev === "historico" && <HistoricoPreventivoView />}
         </>
       )}
