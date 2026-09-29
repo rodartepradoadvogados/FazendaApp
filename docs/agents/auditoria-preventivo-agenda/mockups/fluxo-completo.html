@@ -610,7 +610,8 @@ table.ft{width:100%;border-collapse:collapse;font-size:1rem}
 .lnk{color:var(--vinho-light);text-decoration:underline;text-underline-offset:3px;display:inline-flex;align-items:center;gap:.3rem;min-height:44px;font-size:.875rem}
 :root[data-theme="escuro"] .lnk{color:var(--dourado-light)}
 .lnk.pad{padding:0 .2rem}
-.ft td .lnk,.ft td .linkbtn{min-height:0;margin:0;padding:0}
+.ft td .linkbtn{min-height:44px;margin:0;padding:0 .2rem}
+.ft td .lnk{min-width:44px;justify-content:center}
 .ft td.num a.lnk{justify-content:flex-end;min-height:44px}
 .g3{display:grid;grid-template-columns:repeat(3,1fr);gap:.8rem}
 .g4{display:grid;grid-template-columns:repeat(4,1fr);gap:.8rem}
@@ -670,11 +671,43 @@ table.ft{width:100%;border-collapse:collapse;font-size:1rem}
 .novo-card li .n{width:24px;height:24px;border-radius:50%;background:var(--pill-active-bg);color:var(--pill-active-fg);display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex:none}
 .paper .r{color:#a00}
 @media (max-width:767px){
-  .g3,.g4{grid-template-columns:1fr}.cols2{grid-template-columns:1fr}.wz-tipo{grid-template-columns:1fr}
+  .g3,.g4{grid-template-columns:minmax(0,1fr)}.cols2,.two{grid-template-columns:minmax(0,1fr)}.wz-tipo{grid-template-columns:minmax(0,1fr)}
   .rb select{max-width:150px}
   .sticky-bar{bottom:0}
   .selo,.fora-b,.tag{font-size:.875rem}
 }
+
+.ft td .selos{min-width:172px}
+@media (max-width:767px){.ft td .selos{min-width:0}}
+
+.rb{gap:.55rem}.rb #sw-rep{width:105px}.rb #rb-cen{width:120px}.rb .grp button{padding:0 .5rem}.rb #rb-prev,.rb #rb-next{padding:0 .5rem}
+
+.ap-anim>summary{cursor:pointer;min-height:44px;display:flex;align-items:center;gap:.5rem;padding:.4rem .7rem;border:1px solid var(--border-strong);border-radius:var(--r-sm);background:var(--surface-2);list-style:none}.ap-anim>summary::-webkit-details-marker{display:none}.ap-anim[open]>summary{margin-bottom:.4rem}
+
+body.rt-agenda .mainwrap{display:flex;flex-direction:column}
+body.rt-agenda .top-actions{position:static;padding:.4rem 1.25rem 0;justify-content:flex-end;display:flex;flex:none;background:var(--bg)}
+body.rt-agenda .app-main{flex:1;min-height:0;height:auto}
+@media (max-width:767px){body.rt-agenda .top-actions{display:none}}
+
+/* Rodada final: sidebar com fonte >=12px e alvos >=44px (mesma identidade) */
+.sb a{font-size:12px;min-height:44px;padding:0 12px;line-height:1.2}
+.sb-grp{font-size:12px;margin:.5rem 0 .2rem .6rem}
+.sb-fz{font-size:12px;line-height:1.25;white-space:normal}
+.sb-logo{padding:.6rem 1rem}
+.sb-collapse{width:44px;height:44px;right:-22px;top:.6rem;background:transparent;border:0}
+.sb-collapse::before{content:"";position:absolute;width:22px;height:22px;border-radius:50%;background:var(--sidebar-bg);border:1px solid var(--sidebar-border);z-index:-1}
+.sb-portal a{min-height:44px}
+.sb-foot{font-size:12px}.sb-foot .who{font-size:12px}.sb-foot button{font-size:12px;min-height:44px}
+
+.top-actions .news,.top-actions .tema{min-height:44px}.top-actions .bell{width:44px;height:44px}
+
+.icon-btn{flex:none;min-width:44px}.mtop .f{font-size:12px}
+@media (max-width:1100px){.two{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:767px){.btn{white-space:normal;text-align:center;height:auto}.dr-f .btn,.sticky-bar .btn{flex:1 1 auto}}
+
+/* Tokens semânticos consumidos pelo módulo Agenda (texto com contraste AA por tema) */
+:root,:root[data-theme="claro"],:root[data-theme="misto"]{--ok-fg:#256E48;--warn-fg:#8A4B00;--info-fg:#34536F;--foco:var(--focus)}
+:root[data-theme="escuro"]{--ok-fg:#7FC79A;--warn-fg:#F2B450;--info-fg:#9DBAD6;--foco:var(--focus)}
 /* AGENDA-CSS:START (Construtor Q) */
 /* agenda-modulo.css — TUDO escopado sob .ag-root. Consome os tokens do shell (--vinho, --dourado, --surface, --border, --cat-*…); não redefine nenhum. */
 .ag-root{position:relative;font-family:var(--font-body,'Archivo','Inter',system-ui,sans-serif);color:var(--text);font-size:15px;line-height:1.4;-webkit-font-smoothing:antialiased}
@@ -1060,14 +1093,14 @@ table.ft{width:100%;border-collapse:collapse;font-size:1rem}
 <body>
 <button type="button" class="skip" id="skip">Ir para o conteúdo</button>
 <div class="rb" role="region" aria-label="Barra de revisão do mockup (fora do app)">
-  <strong>Mockup R3</strong><span>Fluxo completo</span>
+  
   <span class="grp" role="group" aria-label="Tema"><button type="button" data-tema="claro" aria-pressed="true">Claro</button><button type="button" data-tema="misto" aria-pressed="false">Misto</button><button type="button" data-tema="escuro" aria-pressed="false">Escuro</button></span>
-  <label>Etapa do roteiro <select id="rb-etapa" aria-label="Etapa do roteiro: ir para a tela"></select></label>
+  <label>Etapa do roteiro <select id="rb-etapa" style="width:150px" aria-label="Etapa do roteiro: ir para a tela"></select></label>
   <span class="etapa-n" id="rb-etapa-n" aria-live="polite">Etapa — de —</span>
   <button type="button" class="btn-r" id="rb-prev" aria-label="Etapa anterior">◀</button><button type="button" class="btn-r" id="rb-next" aria-label="Próxima etapa">▶</button>
   <label><input type="checkbox" role="switch" id="sw-off"> Simular sem conexão</label>
-  <label>Configuração de repasse <select id="sw-rep"><option value="padrao">Padrão (Scratch, 14 dias, 1 vez, Agenda)</option><option value="desligada">Desligada</option><option value="personalizada">Personalizada (outro produto, 21 dias, repetir)</option><option value="custom" hidden>Alterada na tela</option></select></label>
-  <label>Cenário <select id="rb-cen"><option value="dia">Dia normal</option><option value="fio">Sem B19 cadastrado (fio)</option><option value="nova">Fazenda nova</option></select></label>
+  <label>Configuração de repasse <select id="sw-rep"><option value="padrao">Padrão</option><option value="desligada">Desligada</option><option value="personalizada">Personalizada</option><option value="custom" hidden>Alterada na tela</option></select></label>
+  <label><span class="sr">Cenário dos dados</span><select id="rb-cen" title="Cenário dos dados"><option value="dia">Dia normal</option><option value="fio">Sem B19 (fio)</option><option value="nova">Fazenda nova</option></select></label>
   <button type="button" class="btn-r" id="rb-reset">Reiniciar dados</button>
 </div>
 <div class="shell">
@@ -1091,7 +1124,7 @@ table.ft{width:100%;border-collapse:collapse;font-size:1rem}
    Store.state · Store.subscribe(fn) · Store.dispatch(type,payload) · Store.select.*  ·  window.Store · window.DADOS
    Toda action grava no log imutável (quem, hora, motivo, frasco). A lista de espera é CALCULADA (nunca digitada). */
 const Store = (() => {
-  const KEY = 'cowdata-fluxo-store-v1';
+  const KEY = 'cowdata-fluxo-store-v2';
   const HOJE = '2026-09-29', HORA = '14:05';
   const pad = n => String(n).padStart(2, '0');
   const D = s => { const [y, m, d] = String(s).slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d); };
@@ -1167,8 +1200,8 @@ const Store = (() => {
   const MOTIVOS_FORA = ['Aproveitar a visita do veterinário', 'Exigência de venda / GTA', 'Exposição ou leilão', 'Risco na região (surto)', 'Catch-up de categoria atrasada', 'Decisão do veterinário', 'Outro'];
   const CATEGORIAS = ['Vacina', 'Antiparasitário', 'Hormônio', 'Detecção de cio de repasse', 'Outros'];
   const CAT_REPASSE = 'Detecção de cio de repasse';
-  const REPASSE_PADRAO = { usar: true, prod: 'scr', quem: 'todas', dias: 14, repetir: false, cada: 7, vezes: 3, ate: 'vezes', agenda: true, aviso: 1, prio: 'rotina', baixa: true, cancelar: 'negativo' };
-  const REPASSE_PERSONALIZADA = { usar: true, prod: 'adb', quem: 'todas', dias: 21, repetir: true, cada: 7, vezes: 3, ate: 'vezes', agenda: true, aviso: 2, prio: 'importante', baixa: true, cancelar: 'negativo' };
+  const REPASSE_PADRAO = { usar: true, sku: 'scr', prod: 'Scratch (detector de cio)', quem: 'todas', dias: 14, repetir: false, cada: 7, vezes: 3, ate: 'vezes', agenda: true, aviso: 1, prio: 'rotina', baixa: true, cancelar: 'negativo' };
+  const REPASSE_PERSONALIZADA = { usar: true, sku: 'adb', prod: 'Adesivo detector de cio (marca B)', quem: 'todas', dias: 21, repetir: true, cada: 7, vezes: 3, ate: 'vezes', agenda: true, aviso: 2, prio: 'importante', baixa: true, cancelar: 'negativo' };
   const REPASSE_DESLIGADA = Object.assign({}, REPASSE_PADRAO, { usar: false });
 
   function estoqueSeed() {
@@ -1207,7 +1240,7 @@ const Store = (() => {
   function protocolosSeed() {
     const todasLact = ['l1', 'l2', 'l3', 'pp', 'se', 'r1', 'r2'];
     return [
-      P('aftosa', 'afo', { nome: 'Aftosa', quem: { sexo: 'todos', lotes: todasLact, idadeMin: null, idadeMax: null, condicao: 'Todo o rebanho, menos bezerreiro' }, janela: { regra: 'intervalo', intervaloDias: 365, abreAntes: 15, fechaDepois: 14, multidose: false, inicio: '' }, repete: 'Anual, na data da defesa sanitária estadual (editável)', cobertura: true }),
+      P('aftosa', 'afo', { nome: 'Aftosa', quem: { sexo: 'todos', lotes: todasLact, idadeMin: null, idadeMax: null, condicao: 'Todo o rebanho, menos bezerreiro' }, janela: { regra: 'intervalo', intervaloDias: 365, abreAntes: 15, fechaDepois: 14, multidose: false, inicio: '' }, repete: 'Anual (data da defesa estadual)', cobertura: true }),
       P('b19', 'b19', { nome: 'Brucelose B19', quem: { sexo: 'F', lotes: ['bz'], idadeMin: 3, idadeMax: 8, condicao: 'Fêmeas' }, janela: { regra: 'idade', abreAntes: 0, fechaDepois: 0, multidose: false, inicio: '', descricao: 'Abre aos 3 meses, fecha aos 8 meses' }, repete: 'Dose única', cobertura: true }),
       P('clostridioses', 'clo', { nome: 'Clostridioses', quem: { sexo: 'todos', lotes: ['l1', 'l2', 'l3', 'pp', 'r1', 'r2'], idadeMin: null, idadeMax: null, condicao: '' }, janela: { regra: 'intervalo', intervaloDias: 365, abreAntes: 0, fechaDepois: 30, multidose: true, inicio: '' }, repete: 'Dose 1 → dose 2 (+30 dias) → reforço anual', cobertura: true }),
       P('raiva', 'rai', { nome: 'Raiva', quem: { sexo: 'todos', lotes: todasLact, idadeMin: null, idadeMax: null, condicao: '' }, janela: { regra: 'intervalo', intervaloDias: 365, abreAntes: 15, fechaDepois: 30, multidose: false, inicio: '', rotuloRef: true }, repete: 'Anual (reforço)', cobertura: true }),
@@ -1273,18 +1306,18 @@ const Store = (() => {
     if (cenario === 'fio') protocolos = protocolos.filter(p => p.id !== 'b19');
     const { doses, exames } = cenario === 'nova' ? { doses: [], exames: [] } : historicoSeed(animais, protocolos);
     const S = {
-      v: 1, cenario, hoje: HOJE, hora: HORA, usuarioId: 'p1', seq: 100,
+      v: 2, cenario, hoje: HOJE, hora: HORA, usuarioId: 'p1', seq: 100,
       animais, lotes: LOTES, pessoas: clone(PESSOAS), estoque: estoqueSeed(), catalogo: clone(CATALOGO),
       protocolos, listaEspera: [], agendamentos: [], concluidos: [], doses, exames, reagentes: [], naoSeAplica: [], notasEspera: {},
       log: [], financeiro: { contasPagar: [], pagamentos: [] }, cotacoes: [], pedidos: [],
-      categorias: {}, repasse: { cfg: clone(REPASSE_PADRAO), cenario: 'padrao', checks: [] }, catlog: [], repLog: [], off: { ativo: false, pendentes: 0 }
+      categorias: {}, repasse: clone(REPASSE_PADRAO), repasseMeta: { cenario: 'padrao', checks: [] }, catlog: [], repLog: [], off: { ativo: false, pendentes: 0 }
     };
     S.concluidos = cenario === 'nova' ? [] : concluidosSeed(animais, protocolos, doses, exames);
-    S.financeiro.contasPagar.push({ id: 'cp-1', fornecedor: 'Agro Vet', descricao: 'Compra de implantes (gestão)', valor: 12480, venc: HOJE, estado: 'a_pagar', tipo: 'gestao', agId: null, criadoEm: '2026-09-10 09:00', criadoPor: 'p1' });
-    S.financeiro.contasPagar.push({ id: 'cp-2', fornecedor: 'Supri Rural', descricao: 'Documento fiscal pendente (gestão)', valor: 1840, venc: addD(HOJE, 6), estado: 'a_pagar', tipo: 'gestao', agId: null, criadoEm: '2026-09-12 10:00', criadoPor: 'p1' });
+    S.financeiro.contasPagar.push({ id: 'cp-1', fornecedor: 'Agro Vet', descricao: 'Compra de implantes (gestão)', valor: 12480, venc: HOJE, vencimento: HOJE, estado: 'a_pagar', tipo: 'gestao', agId: null, criadoEm: '2026-09-10 09:00', criadoPor: 'p1' });
+    S.financeiro.contasPagar.push({ id: 'cp-2', fornecedor: 'Supri Rural', descricao: 'Documento fiscal pendente (gestão)', valor: 1840, venc: addD(HOJE, 6), vencimento: addD(HOJE, 6), estado: 'a_pagar', tipo: 'gestao', agId: null, criadoEm: '2026-09-12 10:00', criadoPor: 'p1' });
     S.financeiro.pagamentos.push({ id: 'pg-1', fornecedor: 'Agro Vet', data: '2026-09-12', valor: 128, descricao: 'Vacinas B19 (20 doses)', produto: 'b19', doses: 20, vinculos: [] });
     S.financeiro.pagamentos.push({ id: 'pg-2', fornecedor: 'Agro Vet', data: '2026-08-20', valor: 620, descricao: 'Vacinas Clostridioses (326 doses)', produto: 'clo', doses: 326, vinculos: [] });
-    S.repasse.checks = [{ id: 'ck-1', proto: 'IATF Recria 2', n: 12, data: addD('2026-10-01', 14), estado: 'futura' }, { id: 'ck-2', proto: 'IATF Lote 02 – Média', n: 8, data: addD('2026-10-08', 14), estado: 'futura' }];
+    S.repasseMeta.checks = [{ id: 'ck-1', proto: 'IATF Recria 2', n: 12, data: addD('2026-10-01', 14), estado: 'futura' }, { id: 'ck-2', proto: 'IATF Lote 02 – Média', n: 8, data: addD('2026-10-08', 14), estado: 'futura' }];
     S.categorias = {};
     if (cenario === 'dia' || cenario === 'fio') semearAgendamentos(S, cenario);
     return S;
@@ -1307,7 +1340,7 @@ const Store = (() => {
       S.agendamentos.push(mk('ag-3', 'b19', addD(HOJE, 3), '08:00', 'p2', b19, {
         veterinario: { estado: 'ok', pessoaId: 'p2' }, estoque: { estado: 'ok', lote: 'BR-2604', qtd: 8 }, data: { estado: 'ok' }, manejo: { estado: 'pulado', motivo: 'Horário fixo' }, compra: { estado: 'pendente' }, pagamento: { estado: 'pendente' }, contaPagar: { estado: 'ok', contaId: 'cp-3', contaIds: ['cp-3'] }
       }));
-      S.financeiro.contasPagar.push({ id: 'cp-3', fornecedor: 'Dr. Paulo Menezes', descricao: 'Honorário — Vacinação B19 (Bezerreiro, ' + '02/10' + ')', valor: 350, venc: addD(HOJE, 13), estado: 'a_pagar', tipo: 'honorario', agId: 'ag-3', criadoEm: '2026-09-25 10:20', criadoPor: 'p1' });
+      S.financeiro.contasPagar.push({ id: 'cp-3', fornecedor: 'Dr. Paulo Menezes', descricao: 'Honorário — Vacinação B19 (Bezerreiro, ' + '02/10' + ')', valor: 350, venc: addD(HOJE, 13), vencimento: addD(HOJE, 13), estado: 'a_pagar', tipo: 'honorario', agId: 'ag-3', criadoEm: '2026-09-25 10:20', criadoPor: 'p1' });
     }
     // Aftosa (d): 136 animais = todo o rebanho menos Bezerreiro
     const todos = Object.values(S.animais).filter(a => a.lote !== 'bz').map(a => a.id);
@@ -1326,7 +1359,7 @@ const Store = (() => {
   const isFuturo = d => d > HOJE;
   function hydrate(o) { Object.keys(state).forEach(k => { delete state[k]; }); Object.assign(state, o); recalcula(); }
   function persist() { try { const c = Object.assign({}, state); localStorage.setItem(KEY, JSON.stringify(c)); } catch (e) { /* sem armazenamento */ } }
-  function load() { try { const t = localStorage.getItem(KEY); if (!t) return null; const o = JSON.parse(t); return o && o.v === 1 && o.animais ? o : null; } catch (e) { return null; } }
+  function load() { try { const t = localStorage.getItem(KEY); if (!t) return null; const o = JSON.parse(t); return o && o.v === 2 && o.animais && o.repasseMeta ? o : null; } catch (e) { return null; } }
   const nid = pre => pre + (++state.seq);
   const nome = id => (state.pessoas[id] || {}).nome || id;
   const proto = id => state.protocolos.find(p => p.id === id);
@@ -1631,12 +1664,13 @@ const Store = (() => {
   A.classificarProduto = ({ sku, categoria }) => {
     const est = state.estoque[sku]; if (!est) return erro('Produto não encontrado.');
     const antes = state.categorias[sku] || est.categoria; if (antes === categoria) return ok();
-    if (state.repasse.cfg.usar && sku === state.repasse.cfg.prod && categoria !== CAT_REPASSE) return erro('Este produto está ligado à regra de repasse. Troque o produto vinculado antes.');
+    if (state.repasse.usar && sku === state.repasse.sku && categoria !== CAT_REPASSE) return erro('Este produto está ligado à regra de repasse. Troque o produto vinculado antes.');
     state.categorias[sku] = categoria; const e = logar('Classificou produto', { detalhe: `${est.nome}: ${antes} → ${categoria}`, desfazivel: true }); state.catlog.push({ t: HOJE + ' ' + HORA, quem: nome(state.usuarioId), txt: `${est.nome}: ${antes} → ${categoria}` }); return ok({ logId: e.id, antes });
   };
   A.configurarRepasse = ({ cfg, cenario, remover = false, txt = '' }) => {
-    if (cenario) { state.repasse.cenario = cenario; state.repasse.cfg = clone(cenario === 'desligada' ? REPASSE_DESLIGADA : cenario === 'personalizada' ? REPASSE_PERSONALIZADA : REPASSE_PADRAO); if (cenario === 'personalizada') state.categorias.adb = CAT_REPASSE; else delete state.categorias.adb; state.repLog = []; state.catlog = []; return ok(); }
-    state.repasse.cfg = clone(cfg); state.repasse.cenario = 'custom'; if (remover) state.repasse.checks.forEach(c => { if (c.estado === 'futura') c.estado = 'removida'; });
+    const nomeDe = c => { const e = state.estoque[c.sku]; if (e) c.prod = e.nome; return c; };
+    if (cenario) { state.repasseMeta.cenario = cenario; state.repasse = clone(cenario === 'desligada' ? REPASSE_DESLIGADA : cenario === 'personalizada' ? REPASSE_PERSONALIZADA : REPASSE_PADRAO); if (cenario === 'personalizada') state.categorias.adb = CAT_REPASSE; else delete state.categorias.adb; state.repLog = []; state.catlog = []; return ok(); }
+    state.repasse = nomeDe(clone(cfg)); state.repasseMeta.cenario = 'custom'; if (remover) state.repasseMeta.checks.forEach(c => { if (c.estado === 'futura') c.estado = 'removida'; });
     state.repLog.push({ t: HOJE + ' ' + HORA, quem: nome(state.usuarioId), txt: txt || 'Configuração alterada' }); const e = logar('Configurou detecção de cio de repasse', { detalhe: txt }); return ok({ logId: e.id });
   };
   A.marcarNotificacao = ({ reagenteId, quem }) => { const r = state.reagentes.find(x => x.id === reagenteId); if (!r) return erro('Registro não encontrado.'); r.notif = { quem: quem || nome(state.usuarioId), t: HOJE + ' ' + HORA }; const e = logar('Registrou notificação ao serviço veterinário oficial', { detalhe: r.animalId }); return ok({ logId: e.id }); };
@@ -1710,6 +1744,7 @@ const Store = (() => {
     if (c.fase === 'leitura') { const r = Object.values(o.resultados); efeitos.push(`Resultado: ${r.filter(x => x === 'Negativo').length} negativos · ${r.filter(x => x === 'Positivo').length} reagentes · ${r.filter(x => x === 'Inconclusivo').length} inconclusivos`); if (r.includes('Inconclusivo')) efeitos.push('Reteste em 60 dias para os inconclusivos'); }
     if (nao.length) efeitos.push(`${nao.length} ${nao.length === 1 ? 'animal não aplicado' : 'animais não aplicados'}: voltam à lista de espera com aviso`);
     efeitos.push('Foi para Concluídos');
+    concl.efeitos = efeitos.slice();
     const e = logar(c.fase === 'leitura' ? 'Registrou leitura do exame' : p.tipo === 'exame' ? 'Aplicou (coleta)' : 'Aplicou', { agId: ag.id, protocoloId: p.id, frasco: lg, detalhe: `${c.ids.length} ${c.ids.length === 1 ? 'animal' : 'animais'} · ${p.nome}${c.q ? ' · ' + c.q + (p.porPeso ? ' mL' : ' doses') : ''} · ${R$s(custo)}`, motivo: [ciente && c.fr && vencido(c.fr) ? 'Ciente do frasco vencido' : '', o.cienteVet ? 'Ciência: aplicação sem veterinário habilitado' : '', o.justificativa || ''].filter(Boolean).join(' · '), desfazivel: true, concluidoId: cid });
     return ok({ logId: e.id, concluidoId: cid, fase: c.fase, efeitos, custo, nao: nao.length, proximaJanela: prox });
   };
@@ -1722,7 +1757,8 @@ const Store = (() => {
     return Object.assign(ap, { agId: r.id });
   };
   const ultimoLog = () => state.log[state.log.length - 1];
-  A.desfazer = ({ logId }) => {
+  A.desfazer = ({ logId, agId }) => {
+    if (!logId && agId) { const l = state.log.slice().reverse().find(x => x.agId === agId && x.desfazivel); logId = l ? l.id : null; }
     const e = state.log.find(l => l.id === logId); const sn = SNAPS[logId];
     if (!e || !sn || !e.desfazivel) return erro('Este registro não pode ser desfeito aqui.'); if (ultimoLog().id !== logId) return erro('Só a última ação pode ser desfeita.');
     const seqAtual = state.seq; const manter = e.concluidoId ? clone(state.concluidos.find(c => c.id === e.concluidoId)) : null; const logAtual = state.log; const off = state.off;
@@ -1816,7 +1852,7 @@ const Store = (() => {
   S.pagamentos = () => state.financeiro.pagamentos;
   S.pagamentosPara = agId => { const ag = agOf(agId); const p = proto(ag.protocoloId); return state.financeiro.pagamentos.filter(x => !p.produto || x.produto === p.produto).map(x => ({ pg: x, usado: x.vinculos.reduce((s, v) => s + v.valor, 0) })); };
   S.cotacoes = () => state.cotacoes; S.pedidos = () => state.pedidos;
-  S.repasse = () => state.repasse;
+  S.repasse = () => state.repasse; S.repasseMeta = () => state.repasseMeta;
   S.consequencia = agId => {
     const ag = agOf(agId); const p = proto(ag.protocoloId); const e = estoqueAg(ag); const ck = ag.checklist; const n = ag.animais.length; const fora = ag.animais.filter(x => x.origem === 'fora_janela');
     const linhas = [];
@@ -1968,7 +2004,7 @@ const fmtQ = (q, un) => `${num(q)} ${un === 'mL' ? 'mL' : pl(q, 'dose', 'doses')
 const R = { path: '', q: new URLSearchParams() };
 let UI = { drKey: null };
 const NET = { off: false };
-const DK = ['aplicar', 'de', 'resumo', 'agendamento', 'acao', 'concluido', 'revisar', 'animal', 'falta', 'nova', 'passo', 'editar', 'repasse', 'classificar', 'item', 'fora', 'comprovante', 'protocolo_dr', 'ficha'];
+const DK = ['aplicar', 'de', 'resumo', 'agendamento', 'acao', 'concluido', 'revisar', 'animal', 'falta', 'nova', 'wp', 'editar', 'repasse', 'classificar', 'item', 'fora', 'comprovante', 'protocolo_dr', 'ficha'];
 let lastVK = null, lastPath = null;
 function parseHash() {
   let h = location.hash.replace(/^#/, ''); if (!h || h === '/') h = '/protocolos/acompanhamento';
@@ -1992,7 +2028,7 @@ const ALIAS = { '/protocolos': '/protocolos/acompanhamento', '/sanidade': '/sani
 let agendaMontada = false;
 function unmountAgenda() { if (agendaMontada) { try { if (window.AgendaModule && AgendaModule.unmount) AgendaModule.unmount(); } catch (e) { /* ignora */ } agendaMontada = false; } }
 function route() {
-  const p = parseHash(); R.path = p.path; R.q = p.q;
+  const p = parseHash(); R.path = p.path; R.q = p.q; document.body.classList.toggle('rt-agenda', R.path === '/agenda');
   if (R.path === '/protocolos' && R.q.get('aba')) { const a = { cadastro: 'cadastro', aplicar: 'aplicar', acompanhamento: 'acompanhamento', concluidos: 'concluidos' }[R.q.get('aba')]; const o = Object.fromEntries(R.q); delete o.aba; return nav('/protocolos/' + (a || 'acompanhamento'), o, true); }
   if (ALIAS[R.path]) return nav(ALIAS[R.path], Object.fromEntries(R.q), true);
   if (R.path === '/lancamentos/sanitario/preventivo') { return nav('/protocolos/aplicar', { mudou: '1' }, true); }
@@ -2273,14 +2309,14 @@ function foraDoFoco(tipo) {
 function quemTxt(p) {
   const q = p.quem; const sx = q.sexo === 'F' ? 'Fêmeas' : q.sexo === 'M' ? 'Machos' : 'Todos os animais';
   const id = q.idadeMin != null || q.idadeMax != null ? ` de ${q.idadeMin ?? 0} a ${q.idadeMax ?? '—'} meses` : '';
-  const lt = q.lotes && q.lotes.length ? (q.lotes.length >= 7 ? 'todos os lotes' : q.lotes.map(l => loteNome(l).replace(/ –.*$/, '')).join(', ')) : 'todos os lotes';
+  const lt = q.lotes && q.lotes.length ? (q.lotes.length >= 6 ? 'todos os lotes' : q.lotes.map(l => loteNome(l).replace(/ –.*$/, '')).join(', ')) : 'todos os lotes';
   return `${sx}${id} · ${lt}`;
 }
 function janelaTxt(p) {
   const j = p.janela;
   if (j.regra === 'idade') return `Abre aos ${p.quem.idadeMin} meses, fecha aos ${p.quem.idadeMax} meses`;
   if (j.regra === 'reteste') return `Abre no dia do reteste (${j.intervaloDias} dias após o inconclusivo)`;
-  return `Abre ${j.abreAntes} ${pl(j.abreAntes, 'dia', 'dias')} antes da data devida e fecha ${j.fechaDepois} ${pl(j.fechaDepois, 'dia', 'dias')} depois`;
+  return `Abre ${j.abreAntes} d antes · fecha ${j.fechaDepois} d depois da data devida`;
 }
 const chkTxt = p => `${p.checklistModelo.length} ${pl(p.checklistModelo.length, 'item', 'itens')}${p.exigeVet ? ' · veterinário obrigatório' : ''}`;
 const ROT_TIPO = p => p.tipo === 'exame' ? `<span class="badge b-sanidade">${ic('flask', 's12')}Exame</span>` : `<span class="badge b-sanidade">${ic('syringe', 's12')}Vacina</span>`;
@@ -2296,24 +2332,22 @@ function cadastroLista() {
   const rows = ps.map(p => {
     const n = naJanelaAgora(p.id); const pj = prox.find(x => x.protocoloId === p.id);
     const na = n ? `<a class="lnk" href="${href('/protocolos/aplicar', { protocolo: p.id })}" data-fk="na-${p.id}"><b>${n}</b></a>` : (pj ? `<span class="sub2">0 · abre ${brs(pj.abre)} (${pj.n})</span>` : '<span class="sub2">0</span>');
-    return `<tr class="${p.ativo ? '' : 'inat'}" ${p.ativo ? '' : 'style="opacity:.6"'}>
-      <td data-c="nome"><div class="nm">${esc(p.nome)}</div><div class="sub2">${esc(doseTxtP(p))} · ${esc(p.via)}${p.exigeVet ? ' · veterinário obrigatório' : ''}</div></td>
-      <td data-c="prod" data-l="Tipo">${ROT_TIPO(p)}</td>
+    return `<tr class="rowc ${p.ativo ? '' : 'inat'}" ${p.ativo ? '' : 'style="opacity:.6"'}>
+      <td data-c="nome"><div class="nm">${esc(p.nome)}</div><div class="sub2">${ROT_TIPO(p)} ${esc(doseTxtP(p))} · ${esc(p.via)}</div><div class="sub2">${esc(chkTxt(p))}</div></td>
       <td data-c="quem" data-l="Quem entra">${esc(quemTxt(p))}</td>
       <td data-c="x" data-l="Janela de aplicação">${esc(janelaTxt(p))}</td>
       <td data-c="car" data-l="Repete">${esc(p.repete)}</td>
       <td data-c="x" data-l="Na janela agora" class="num">${na}</td>
-      <td data-c="car" data-l="Checklist">${esc(chkTxt(p))}</td>
       <td data-c="estado">${p.ativo ? pill('aplicado', 'Ativo').replace('registrada', 'ativo') : `<span class="st inativo">${ic('ban', 's14')}Inativo</span>`}</td>
       <td class="acts"><button type="button" class="icon-btn" aria-label="Mais ações de ${esc(p.nome)}" data-act="menu" data-m="cad" data-id="${p.id}" data-menu data-fk="mn-${p.id}">${ic('more')}</button></td></tr>`;
   }).join('');
-  return `<div class="${cardsTable()}"><table class="ft cards"><thead><tr><th>Protocolo</th><th>Tipo</th><th>Quem entra</th><th>Janela de aplicação ${gl('janela', 'janela de aplicação')}</th><th>Repete</th><th class="num">Na janela agora</th><th>Checklist</th><th>Estado</th><th><span class="sr">Ações</span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="${cardsTable()}"><table class="ft cards"><thead><tr class="rowc"><th>Protocolo</th><th>Quem entra</th><th>Janela de aplicação ${gl('janela', 'janela de aplicação')}</th><th>Repete</th><th class="num">Na janela agora</th><th>Estado</th><th><span class="sr">Ações</span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
-MENUS.cad = t => { const p = PROTO(t.dataset.id); return [{ lbl: 'Editar', icon: 'pencil', act: 'go', data: { to: '/protocolos/cadastro', q: 'editar=' + p.id + '&passo=1' } }, { lbl: 'Duplicar', icon: 'copy', act: 'cad-dup', data: { id: p.id } }, '-', p.ativo ? { lbl: 'Inativar…', icon: 'power', act: 'go', data: { to: '/protocolos/cadastro', q: 'inativar=' + p.id } } : { lbl: 'Reativar', icon: 'power', act: 'cad-react', data: { id: p.id } }, { lbl: 'Ver quem está na janela', icon: 'list-checks', act: 'go', data: { to: '/protocolos/aplicar', q: 'protocolo=' + p.id } }]; };
+MENUS.cad = t => { const p = PROTO(t.dataset.id); return [{ lbl: 'Editar', icon: 'pencil', act: 'go', data: { to: '/protocolos/cadastro', q: 'editar=' + p.id + '&wp=1' } }, { lbl: 'Duplicar', icon: 'copy', act: 'cad-dup', data: { id: p.id } }, '-', p.ativo ? { lbl: 'Inativar…', icon: 'power', act: 'go', data: { to: '/protocolos/cadastro', q: 'inativar=' + p.id } } : { lbl: 'Reativar', icon: 'power', act: 'cad-react', data: { id: p.id } }, { lbl: 'Ver quem está na janela', icon: 'list-checks', act: 'go', data: { to: '/protocolos/aplicar', q: 'protocolo=' + p.id } }]; };
 ACT['cad-dup'] = t => { closeMenu(); const p = clone(PROTO(t.dataset.id)); p.nome = p.nome + ' (cópia)'; delete p.id; const r = act('cadastrarProtocolo', p, x => `Cópia criada · ${p.nome} · ${x.naJanela} ${pl(x.naJanela, 'animal entra', 'animais entram')} na lista de espera`); };
 ACT['cad-react'] = t => { closeMenu(); act('alterarProtocolo', { id: t.dataset.id, patch: { ativo: true } }, 'Protocolo reativado.'); };
 function repCartao() {
-  const c = ST.repasse.cfg; const p = repProd(c.prod); const fr = p ? p.fr.reduce((s, f) => s + f.saldo, 0) : 0; const nf = repFuturas(); const log = ST.repLog.concat(ST.catlog);
+  const c = ST.repasse; const p = repProd(c.sku); const fr = p ? p.fr.reduce((s, f) => s + f.saldo, 0) : 0; const nf = repFuturas(); const log = ST.repLog.concat(ST.catlog);
   return `<section class="card rep-card" aria-labelledby="h-rep" style="margin:1.2rem 0"><div class="card-h"><span id="h-rep">${ic('target', 's14')} Detecção de cio de repasse ${gl('scratch', 'detecção de cio de repasse')}</span><span class="st ${c.usar ? 'registrada' : 'pulada'}" style="text-transform:none;letter-spacing:0">${ic(c.usar ? 'ok' : 'ban', 's14')}${c.usar ? 'Em uso' : 'Desligada'}</span></div>
   <div style="padding:.9rem 1rem;display:flex;flex-direction:column;gap:.6rem"><p style="margin:0"><b>${esc(repResumoCfg(c))}</b></p>
   ${c.usar ? `<p class="sub2" style="margin:0">${p ? `Saldo de ${esc(p.prod)}: ${num(fr)} ${p.un} · ` : ''}${c.agenda ? 'Na Agenda ' + avisoTxt(c.aviso) + ' · prioridade ' + c.prio : 'Fora da Agenda'} · ${c.baixa ? 'desconta 1 unidade por vaca ao marcar Feito' : 'sem desconto no estoque'} · cancela com ${esc(REP_CANC.find(x => x[0] === c.cancelar)[1].replace(' (padrão da fazenda)', '').toLowerCase())}</p>` : ''}
@@ -2355,6 +2389,7 @@ function wzFromProto(p) { const c = p.carencia || {}; return Object.assign(wzBla
 function wzInit() {
   if (UI.wz && UI.wzKey === (qv('editar') || 'nova')) return; UI.wzKey = qv('editar') || 'nova';
   const ed = qv('editar') ? PROTO(qv('editar')) : null; UI.wz = ed ? wzFromProto(ed) : (UI.wzRasc || wzBlank()); UI.wzRasc = null;
+  if (!ed && qv('preset') && DADOS.catalogo[qv('preset')]) { wzEscolheProduto(qv('preset')); if (qv('preset') === 'b19') { UI.wz.tipo = 'vacina'; } }
 }
 function wzEscolheProduto(cat) {
   const c = DADOS.catalogo[cat]; const w = UI.wz; if (!c) return;
@@ -2384,7 +2419,7 @@ function wzPreviaHtml() {
   return `Hoje esta janela alcança ${pv.n} ${pl(pv.n, 'animal', 'animais')}${pv.n <= 12 ? ' (' + nomes + ')' : ' (' + nomes + '…)'}.${pv.ate30 ? ` +${pv.ate30} completam a idade até ${brs(pv.proximos.filter(x => diff(x.abre, HI) <= 30).slice(-1)[0].abre)}.` : ''}`;
 }
 function drWizard() {
-  if (!(R.q.get('nova') || R.q.get('editar'))) return null; wzInit(); const w = UI.wz; const passo = Math.min(4, Math.max(1, +qv('passo') || w.passo)); w.passo = passo; UI.drKey = 'wz'; const E = w.tent ? wzErros(passo) : {};
+  if (!(R.q.get('nova') || R.q.get('editar'))) return null; wzInit(); const w = UI.wz; const passo = Math.min(4, Math.max(1, +qv('wp') || w.passo)); w.passo = passo; UI.drKey = 'wz'; const E = w.tent ? wzErros(passo) : {};
   const er = k => E[k] ? `<span class="err" id="e-${k}" role="alert">${ic('warn', 's14')}${E[k]}</span>` : '';
   const cats = CAT_LISTA().filter(k => DADOS.catalogo[k].tipo === w.tipo || (w.tipo === 'vacina' && DADOS.catalogo[k].tipo === 'vacina'));
   const cat = DADOS.catalogo[w.cat];
@@ -2421,10 +2456,10 @@ function drWizard() {
   return { key: 'wz', cls: 'wide', label: 'Cadastro de protocolo preventivo', html: drawerHead(w.editId ? 'Editar protocolo' : 'Novo protocolo preventivo', esc(w.nome || 'Cadastro de protocolo'), `<span>Passo ${passo} de 4 · ${WZ_PASSOS[passo - 1]}</span>`) + `<div class="dr-b">${stepper(WZ_PASSOS, passo)}${UI.wzErr ? avs('red', 'warn', esc(UI.wzErr)) : ''}${body}</div><div class="dr-f">${foot}</div>` };
 }
 DRAWERS.push(q => drWizard());
-ACT['wz-novo'] = () => { UI.wz = null; UI.wzKey = null; setQ({ nova: '1', passo: '1', editar: null }); };
-ACT['wz-rasc'] = () => { UI.wzRasc = rascunhoWz(); UI.wz = null; UI.wzKey = null; setQ({ nova: '1', passo: String((UI.wzRasc || {}).passo || 1) }); };
+ACT['wz-novo'] = () => { UI.wz = null; UI.wzKey = null; setQ({ nova: '1', wp: '1', editar: null }); };
+ACT['wz-rasc'] = () => { UI.wzRasc = rascunhoWz(); UI.wz = null; UI.wzKey = null; setQ({ nova: '1', wp: String((UI.wzRasc || {}).passo || 1) }); };
 ACT['wz-desc'] = () => { lsDel('cowdata-fluxo-rascunho-proto'); refresh(); };
-ACT['wz-go'] = t => { const w = UI.wz; const p = +t.dataset.p; if (p > w.passo) { const e = wzErros(w.passo); if (Object.keys(e).length) { w.tent = true; UI.wzErr = ''; renderDrawer(true); return; } } w.tent = false; UI.wzErr = ''; w.passo = p; setQ({ passo: String(p) }, true); renderDrawer(true); };
+ACT['wz-go'] = t => { const w = UI.wz; const p = +t.dataset.p; if (p > w.passo) { const e = wzErros(w.passo); if (Object.keys(e).length) { w.tent = true; UI.wzErr = ''; renderDrawer(true); return; } } w.tent = false; UI.wzErr = ''; w.passo = p; setQ({ wp: String(p) }, true); renderDrawer(true); };
 ACT['wz-cancel'] = () => { const w = UI.wz; if (w && !w.editId && (w.cat || w.nome)) { lsSet('cowdata-fluxo-rascunho-proto', JSON.stringify(w)); } UI.wz = null; UI.wzKey = null; closeDrawer(); refresh(); };
 ACT['wz-salvar'] = () => {
   const w = UI.wz; const e = wzErros(4); if (Object.keys(e).length) { w.tent = true; UI.wzErr = 'Volte e corrija: ' + Object.values(e).join(' '); renderDrawer(true); return; }
@@ -2465,9 +2500,9 @@ const avisoTxt = a => (REP_AVISO.find(x => +x[0] === +a) || [0, 'No dia'])[1].to
 const repTotal = c => c.repetir ? (c.ate === 'vezes' ? Math.max(1, +c.vezes || 1) : 3) : 1;
 const repBr = d => br(d).slice(0, 5);
 const repDatas = (c, base) => { const t = repTotal(c); const o = []; for (let k = 0; k < t; k++) o.push(addD(base, (+c.dias || 0) + k * (+c.cada || 0))); return o; };
-const repFuturas = () => ST.repasse.checks.filter(c => c.estado === 'futura').reduce((s, c) => s + c.n, 0);
+const repFuturas = () => ST.repasseMeta.checks.filter(c => c.estado === 'futura').reduce((s, c) => s + c.n, 0);
 const repUnidades = (c, n) => c.baixa ? n * (c.ate === 'diag' && c.repetir ? 1 : repTotal(c)) : 0;
-const nomeRepDe = c => { const p = repProd(c.prod); return p ? p.prod : 'produto não escolhido'; };
+const nomeRepDe = c => { const p = repProd(c.sku); return p ? p.prod : 'produto não escolhido'; };
 function repLinha(c, n) {
   if (!c.usar) return 'Detecção de repasse desligada: nenhuma checagem de retorno ao cio será criada.';
   if (c.quem === 'monta') return 'Detecção de repasse só para monta natural: esta inseminação programada não gera checagem.';
@@ -2487,7 +2522,7 @@ function repResumoCfg(c) {
 function repDiff(a, b) {
   const o = []; const sn = v => v ? 'Sim' : 'Não'; const lab = (l, k) => (l.find(x => String(x[0]) === String(k)) || [0, k])[1];
   if (a.usar !== b.usar) o.push(`Usar detecção: ${sn(a.usar)} → ${sn(b.usar)}`);
-  if (a.prod !== b.prod) o.push(`Produto: ${nomeRepDe(a)} → ${nomeRepDe(b)}`);
+  if (a.sku !== b.sku) o.push(`Produto: ${nomeRepDe(a)} → ${nomeRepDe(b)}`);
   if (a.quem !== b.quem) o.push(`Quem entra: ${lab(REP_QUEM, a.quem)} → ${lab(REP_QUEM, b.quem)}`);
   if (+a.dias !== +b.dias) o.push(`Primeira checagem: ${a.dias} → ${b.dias} dias`);
   if (a.repetir !== b.repetir || (b.repetir && (+a.cada !== +b.cada || a.ate !== b.ate || +a.vezes !== +b.vezes))) o.push(`Repetir: ${a.repetir ? 'a cada ' + a.cada + ' dias' : 'não'} → ${b.repetir ? 'a cada ' + b.cada + ' dias, ' + (b.ate === 'vezes' ? 'até ' + b.vezes + ' vezes' : 'até o diagnóstico') : 'não'}`);
@@ -2498,15 +2533,15 @@ function repDiff(a, b) {
   if (a.cancelar !== b.cancelar) o.push(`Cancelar quando: ${lab(REP_CANC, a.cancelar)} → ${lab(REP_CANC, b.cancelar)}`);
   return o;
 }
-const repCritico = (a, b) => a.usar && (!b.usar || a.prod !== b.prod || +a.dias !== +b.dias || a.repetir !== b.repetir || +a.cada !== +b.cada || +a.vezes !== +b.vezes || a.ate !== b.ate);
-function repErros(c) { const e = {}; if (c.usar) { if (!repProd(c.prod) || SEL.categoriaDe(c.prod) !== DADOS.catRepasse) e.prod = 'Escolha o produto da categoria Detecção de cio de repasse.'; if (!(+c.dias >= 1)) e.dias = 'Informe quantos dias após a inseminação (1 ou mais).'; if (c.repetir) { if (!(+c.cada >= 1)) e.cada = 'Informe de quantos em quantos dias repete.'; if (c.ate === 'vezes' && !(+c.vezes >= 2)) e.vezes = 'Informe 2 vezes ou mais.'; } } return e; }
-function rpInit() { if (UI.rp) return; UI.rp = UI.rpBk ? UI.rpBk : Object.assign(clone(ST.repasse.cfg), { tent: false, pergunta: false, escolha: '' }); UI.rpBk = null; }
+const repCritico = (a, b) => a.usar && (!b.usar || a.sku !== b.sku || +a.dias !== +b.dias || a.repetir !== b.repetir || +a.cada !== +b.cada || +a.vezes !== +b.vezes || a.ate !== b.ate);
+function repErros(c) { const e = {}; if (c.usar) { if (!repProd(c.sku) || SEL.categoriaDe(c.sku) !== DADOS.catRepasse) e.prod = 'Escolha o produto da categoria Detecção de cio de repasse.'; if (!(+c.dias >= 1)) e.dias = 'Informe quantos dias após a inseminação (1 ou mais).'; if (c.repetir) { if (!(+c.cada >= 1)) e.cada = 'Informe de quantos em quantos dias repete.'; if (c.ate === 'vezes' && !(+c.vezes >= 2)) e.vezes = 'Informe 2 vezes ou mais.'; } } return e; }
+function rpInit() { if (UI.rp) return; UI.rp = UI.rpBk ? UI.rpBk : Object.assign(clone(ST.repasse), { tent: false, pergunta: false, escolha: '' }); UI.rpBk = null; }
 function rpChips(k, lista, atual, t = 's') { return `<div class="chips" role="radiogroup">${lista.map(([v, l]) => `<label class="chip"><input type="radio" name="rp-${k}" value="${esc(v)}" data-ch="rpf" data-k="${k}" data-t="${t}" ${String(atual) === String(v) ? 'checked' : ''}>${esc(l)}</label>`).join('')}</div>`; }
 function drRepasse(q) {
   if (!q.get('repasse')) return null; rpInit(); const c = UI.rp; UI.drKey = 'rp'; const E = c.tent ? repErros(c) : {}; const er = k => E[k] ? `<span class="err" id="e-${k}">${ic('warn', 's14')}${E[k]}</span>` : '';
-  const lista = repProdsCat(DADOS.catRepasse); const p = repProd(c.prod); const fr = p ? p.fr : [];
-  const prodBox = c.usar ? `<div class="fld"><label for="rpp">Produto vinculado</label>${lista.length ? `<select id="rpp" class="sel" data-ch="rpf" data-k="prod" data-t="s" ${E.prod ? 'aria-invalid="true"' : ''}>${opts(lista.map(x => [x.id, x.prod]), c.prod, 'Escolha o produto')}</select>` : avs('amber', 'warn', 'Nenhum produto está na categoria Detecção de cio de repasse. Classifique um produto do estoque.')}${er('prod')}
-    ${p && SEL.categoriaDe(c.prod) === DADOS.catRepasse ? `<div class="sub2">${fr.map(f => `Lote ${esc(f.f)} · validade ${br(f.val)}${Store.vencido({ validade: f.val }) ? ' (vencido)' : diff(f.val, HI) <= 30 ? ' (vence em ' + diff(f.val, HI) + ' dias)' : ''} · saldo ${num(f.saldo)} ${p.un}`).join('<br>')}</div>` : ''}
+  const lista = repProdsCat(DADOS.catRepasse); const p = repProd(c.sku); const fr = p ? p.fr : [];
+  const prodBox = c.usar ? `<div class="fld"><label for="rpp">Produto vinculado</label>${lista.length ? `<select id="rpp" class="sel" data-ch="rpf" data-k="sku" data-t="s" ${E.prod ? 'aria-invalid="true"' : ''}>${opts(lista.map(x => [x.id, x.prod]), c.sku, 'Escolha o produto')}</select>` : avs('amber', 'warn', 'Nenhum produto está na categoria Detecção de cio de repasse. Classifique um produto do estoque.')}${er('prod')}
+    ${p && SEL.categoriaDe(c.sku) === DADOS.catRepasse ? `<div class="sub2">${fr.map(f => `Lote ${esc(f.f)} · validade ${br(f.val)}${Store.vencido({ validade: f.val }) ? ' (vencido)' : diff(f.val, HI) <= 30 ? ' (vence em ' + diff(f.val, HI) + ' dias)' : ''} · saldo ${num(f.saldo)} ${p.un}`).join('<br>')}</div>` : ''}
     <button type="button" class="linkbtn" data-act="rp-classif">Classificar outro produto nesta categoria</button></div>` : '';
   const corpo = `<div class="fld"><label id="l-rpu">Usar detecção de repasse?</label>${rpChips('usar', [[1, 'Sim'], [0, 'Não']], c.usar ? 1 : 0, 'b')}</div>
   ${c.usar ? `${prodBox}
@@ -2518,13 +2553,13 @@ function drRepasse(q) {
     ${c.agenda ? `<div class="g2" style="margin-top:.4rem"><div class="fld"><label for="rpav">Aviso com antecedência</label><select id="rpav" class="sel" data-ch="rpf" data-k="aviso" data-t="n">${opts(REP_AVISO, c.aviso)}</select></div><div class="fld"><label id="l-rpi">Prioridade</label>${rpChips('prio', [['rotina', 'Rotina'], ['importante', 'Importante']], c.prio)}</div></div>` : ''}</div>
   <div class="fld"><label id="l-rpb">Descontar do estoque ao marcar Feito</label>${rpChips('baixa', [[1, 'Sim: 1 unidade por vaca'], [0, 'Não']], c.baixa ? 1 : 0, 'b')}</div>
   <div class="fld"><label id="l-rpx">Cancelar a checagem quando houver</label>${rpChips('cancelar', REP_CANC, c.cancelar)}</div>` : ''}`;
-  const nf = repFuturas(); const antigo = ST.repasse.cfg;
+  const nf = repFuturas(); const antigo = ST.repasse;
   const perg = c.pergunta ? `<div class="inline-panel" role="group" aria-label="Checagens já criadas"><h3>O que fazer com as ${nf} ${pl(nf, 'checagem futura', 'checagens futuras')} já criadas?</h3><p class="hint">Você mudou uma regra que afeta o que já está nos protocolos. Escolha uma opção.</p><div class="chips" role="radiogroup">${[['manter', 'Manter as existentes'], ['remover', `Remover as ${nf} futuras`]].map(([v, l]) => `<label class="chip"><input type="radio" name="rp-esc" value="${v}" data-ch="rpesc" ${c.escolha === v ? 'checked' : ''}>${l}</label>`).join('')}</div>${c.tent2 && !c.escolha ? `<span class="err">${ic('warn', 's14')}Escolha o que fazer com as checagens já criadas.</span>` : ''}</div>` : '';
   return { key: 'rp', cls: 'wide', label: 'Detecção de cio de repasse', html: drawerHead('Configuração da fazenda', 'Detecção de cio de repasse', `<span>Uma regra por fazenda</span>`) + `<div class="dr-b"><div class="box" aria-live="polite"><h3>${ic('eye', 's14')}Como fica</h3><p id="rp-prev" style="margin:0">${esc(repPreview(c))}</p></div>${corpo}${perg}</div><div class="dr-f">${bt('btn-gold', 'check', 'Salvar configuração', 'data-act="rp-ok" data-fk="rp-ok"')}${bt('btn-ghost', '', 'Cancelar', 'data-act="dr-close"')}</div>` };
 }
 DRAWERS.push(drRepasse);
 function rpAtualiza() { const b = $('#rp-prev'); if (b && UI.rp) b.textContent = repPreview(UI.rp); }
-IN.rpf = (v, t) => { const k = t.dataset.k; const ty = t.dataset.t; UI.rp[k] = ty === 'b' ? v === '1' : ty === 'n' ? +v : v; if (k === 'usar' && UI.rp.usar && !UI.rp.prod) UI.rp.prod = (repProdsCat(DADOS.catRepasse)[0] || {}).id || ''; UI.rp.pergunta = false; UI.rp.escolha = ''; renderDrawer(true); };
+IN.rpf = (v, t) => { const k = t.dataset.k; const ty = t.dataset.t; UI.rp[k] = ty === 'b' ? v === '1' : ty === 'n' ? +v : v; if (k === 'usar' && UI.rp.usar && !UI.rp.sku) UI.rp.sku = (repProdsCat(DADOS.catRepasse)[0] || {}).id || ''; UI.rp.pergunta = false; UI.rp.escolha = ''; renderDrawer(true); };
 IN.rpn = (v, t) => { UI.rp[t.dataset.k] = v === '' ? '' : +v; rpAtualiza(); };
 IN.rpesc = v => { UI.rp.escolha = v; renderDrawer(true); };
 ACT['rp-abrir'] = () => setQ({ repasse: '1', classificar: null });
@@ -2532,7 +2567,7 @@ ACT['rp-classif'] = () => { if (UI.rp) UI.rpBk = clone(UI.rp); UI.rp = null; set
 ACT['rp-voltar'] = () => setQ({ classificar: null, repasse: '1' });
 ACT['rp-ok'] = () => {
   const c = UI.rp; const E = repErros(c); if (Object.keys(E).length) { c.tent = true; renderDrawer(true); return; }
-  const antes = ST.repasse.cfg; const novo = {}; Object.keys(DADOS.repassePadrao).forEach(k => { novo[k] = c[k]; }); novo.dias = +novo.dias; novo.cada = +novo.cada; novo.vezes = +novo.vezes; novo.aviso = +novo.aviso;
+  const antes = ST.repasse; const novo = {}; Object.keys(DADOS.repassePadrao).forEach(k => { novo[k] = c[k]; }); novo.dias = +novo.dias; novo.cada = +novo.cada; novo.vezes = +novo.vezes; novo.aviso = +novo.aviso;
   const mud = repDiff(antes, novo); if (!mud.length) { UI.rp = null; setQ({ repasse: null }); toast('Nada mudou na regra de repasse.', { icon: 'info' }); return; }
   const nf = repFuturas();
   if (repCritico(antes, novo) && nf > 0 && !c.escolha) { c.pergunta = true; c.tent2 = true; renderDrawer(true); const r = $('input[name=rp-esc]'); if (r) r.focus(); return; }
@@ -2540,9 +2575,9 @@ ACT['rp-ok'] = () => {
   UI.rp = null; Store.dispatch('configurarRepasse', { cfg: novo, remover, txt: mud.join('; ') + extra }); setQ({ repasse: null }); toast('Configuração de repasse salva.', { icon: 'ok' });
 };
 DRAWERS.push(q => {
-  if (!q.get('classificar')) return null; UI.drKey = 'rc'; const err = UI.rcErr; const cfg = ST.repasse.cfg;
+  if (!q.get('classificar')) return null; UI.drKey = 'rc'; const err = UI.rcErr; const cfg = ST.repasse;
   const ps = repProdutos().filter(p => SEL.categoriaDe(p.id) !== 'Vacina' || ['afo', 'b19', 'clo', 'rai', 'ibr', 'lep', 'tb'].includes(p.id));
-  const linhas = ps.map(p => { const tot = p.fr.reduce((s, f) => s + f.saldo, 0); const uso = cfg.usar && p.id === cfg.prod; return `<li style="align-items:flex-start;flex-wrap:wrap"><div class="grow" style="min-width:180px"><b>${esc(p.prod)}</b><div class="sub2">Saldo ${num(tot)} ${p.un}${uso ? ' · ligado à regra de repasse' : ''}</div>${err === p.id ? `<span class="err">${ic('warn', 's14')}Este produto está ligado à regra de repasse. Troque o produto vinculado antes de mudar a categoria.</span>` : ''}</div><div class="fld" style="min-width:220px"><label class="sr" for="rc-${p.id}">Categoria de ${esc(p.prod)}</label><select id="rc-${p.id}" class="sel" data-ch="rpcat" data-id="${p.id}">${opts(DADOS.categorias.map(x => [x, x]), SEL.categoriaDe(p.id))}</select></div></li>`; }).join('');
+  const linhas = ps.map(p => { const tot = p.fr.reduce((s, f) => s + f.saldo, 0); const uso = cfg.usar && p.id === cfg.sku; return `<li style="align-items:flex-start;flex-wrap:wrap"><div class="grow" style="min-width:180px"><b>${esc(p.prod)}</b><div class="sub2">Saldo ${num(tot)} ${p.un}${uso ? ' · ligado à regra de repasse' : ''}</div>${err === p.id ? `<span class="err">${ic('warn', 's14')}Este produto está ligado à regra de repasse. Troque o produto vinculado antes de mudar a categoria.</span>` : ''}</div><div class="fld" style="min-width:220px"><label class="sr" for="rc-${p.id}">Categoria de ${esc(p.prod)}</label><select id="rc-${p.id}" class="sel" data-ch="rpcat" data-id="${p.id}">${opts(DADOS.categorias.map(x => [x, x]), SEL.categoriaDe(p.id))}</select></div></li>`; }).join('');
   const hist = ST.catlog.slice().reverse().slice(0, 5).map(h => `<li><span>${ic('history', 's14')}</span><div class="grow"><b>${esc(h.txt)}</b><div class="sub2">${esc(h.quem)} · ${dh(h.t)}</div></div></li>`).join('');
   return { key: 'rc', cls: 'wide', label: 'Classificar produto', html: drawerHead('Estoque', 'Classificar produto', '<span>Escolha a categoria de cada produto</span>') + `<div class="dr-b"><p class="hint">A categoria Detecção de cio de repasse define quais produtos podem ser vinculados à regra de repasse. Toda mudança fica no registro.</p><ul class="list">${linhas}</ul>${hist ? `<div class="box"><h3>${ic('history', 's14')}Últimas classificações</h3><ul class="list aud">${hist}</ul></div>` : ''}</div><div class="dr-f">${bt('btn-primary', 'left', 'Voltar à configuração', 'data-act="rp-voltar"')}${bt('btn-ghost', '', 'Fechar', 'data-act="dr-close"')}</div>` };
 });
@@ -2555,7 +2590,7 @@ const situacaoPill = g => {
   if (g.fechaEm < 0) return pill('fechou', 'Janela fechou · decida');
   return `<span class="status-line">${pill('na_janela', `Na janela · ${g.fechaEm} dias restantes`)}${g.fechaEm <= 7 ? `<span class="st vence">${ic('clock', 's14')}Fecha em ${g.fechaEm} ${pl(g.fechaEm, 'dia', 'dias')}</span>` : ''}</span>`;
 };
-const grupoTitulo = g => g.protocolo.nome + (g.rotulo && !/^(dose única|aplicação|exame|primeira dose|reforço semestral|reforço anual)$/.test(g.rotulo) ? ' — ' + g.rotulo : (g.rotulo === 'reforço anual' && g.protocoloId === 'raiva' ? ' — reforço' : ''));
+const grupoTitulo = g => { const n = g.protocolo.nome; const r = g.rotulo; if (!r || /^(dose única|aplicação|exame|primeira dose|reforço semestral)$/.test(r)) return n; if (r === 'reforço anual') return g.protocoloId === 'raiva' ? n + ' — reforço' : n; return n.toLowerCase().includes(r.toLowerCase()) ? n : n + ' — ' + r; };
 function leFiltros() {
   const pid = qv('protocolo'); const sit = qv('situacao'); const lote = qv('lote'); const q = qv('q').toLowerCase();
   return { pid, sit, lote, q };
@@ -2595,9 +2630,9 @@ function leLista() {
       <td data-c="x" data-l="Janela">${brs(g.de)} → ${brs(g.ate)}</td>
       <td data-c="estado">${situacaoPill(g)}</td>
       <td class="num" data-c="x" data-l="Na espera"><b>${g.n}</b></td>
-      <td class="acts">${bt('btn-primary sm', 'calendar-plus', 'Montar cronograma', `data-act="mt-iniciar" data-p="${g.protocoloId}" data-fk="mc-${g.protocoloId}" onclick="event.stopPropagation()"`)}</td></tr>`).join('');
-    const fechadas = prox.filter(x => !grupos.some(g => g.protocoloId === x.protocoloId)).map(x => `<tr style="color:var(--text-muted)"><td data-c="nome"><div class="nm">${esc(PROTO(x.protocoloId).nome)}</div></td><td data-c="quem" data-l="Para quem">${x.n} ${pl(x.n, 'animal vai entrar', 'animais vão entrar')}</td><td data-c="x" data-l="Janela">abre ${brs(x.abre)}</td><td data-c="estado"><span class="st prevista">${ic('lock', 's14')}Janela ainda fechada</span></td><td class="num" data-c="x" data-l="Na espera">0</td><td class="acts"></td></tr>`).join('');
-    h += `<div class="${cardsTable()}"><table class="ft cards"><thead><tr><th>Protocolo</th><th>Para quem</th><th>Janela (abre → fecha)</th><th>Situação</th><th class="num">Na espera</th><th><span class="sr">Ação</span></th></tr></thead><tbody>${rows}${fechadas}</tbody></table>${legendaLE()}</div>`;
+      <td class="acts">${bt('btn-primary sm', 'calendar-plus', 'Montar cronograma', `data-act="mt-iniciar" data-p="${g.protocoloId}" data-fk="mc-${g.protocoloId}"`)}</td></tr>`).join('');
+    const fechadas = prox.filter(x => !grupos.some(g => g.protocoloId === x.protocoloId)).map(x => `<tr class="rowc" style="color:var(--text-muted)"><td data-c="nome"><div class="nm">${esc(PROTO(x.protocoloId).nome)}</div></td><td data-c="quem" data-l="Para quem">${x.n} ${pl(x.n, 'animal vai entrar', 'animais vão entrar')}</td><td data-c="x" data-l="Janela">abre ${brs(x.abre)}</td><td data-c="estado"><span class="st prevista">${ic('lock', 's14')}Janela ainda fechada</span></td><td class="num" data-c="x" data-l="Na espera">0</td><td class="acts"></td></tr>`).join('');
+    h += `<div class="${cardsTable()}"><table class="ft cards"><thead><tr class="rowc"><th>Protocolo</th><th>Para quem</th><th>Janela (abre → fecha)</th><th>Situação</th><th class="num">Na espera</th><th><span class="sr">Ação</span></th></tr></thead><tbody>${rows}${fechadas}</tbody></table>${legendaLE()}</div>`;
   }
   return h;
 }
@@ -2735,7 +2770,7 @@ ACT['fr-ok'] = t => {
   if (c.ag) { const r = act('incluirForaJanela', { agId: c.ag.id, animalId: u.sel, motivo: m }, false); if (r.ok === false) return; }
   else { const mt = mtInit(c); if (jan) mt.sel.add(u.sel); else if (!mt.fora.some(x => x.animalId === u.sel)) mt.fora.push({ animalId: u.sel, motivo: m }); }
   toast(`${lbl(u.sel)} incluído${jan ? '' : ' fora da janela'}.`, { icon: 'ok' });
-  if (t.dataset.outro) { UI.fr = { q: '', sel: '', motivo: '', outro: '', tent: false }; renderDrawer(true); refresh(); } else { UI.fr = null; setQ({ fora: null, pre: null }); }
+  if (t.dataset.outro) { UI.fr = { q: '', sel: '', motivo: '', outro: '', tent: false }; renderDrawer(true); refresh(); } else { UI.fr = null; setQ({ fora: null, pre: null }); renderView(); }
 };
 /* ───── Passo 2: quando e com quem ───── */
 function mtM2(c) {
@@ -2856,7 +2891,7 @@ function mtP4(c) {
   const lt = Array.from(new Set(ag.animais.map(x => loteNome(ANI(x.animalId).lote)))).join(', ');
   return `<div class="card pad" style="margin-bottom:1rem"><p style="margin:0;font-size:1.1rem;font-weight:700">${esc(p.nome)} — ${esc(lt)}</p><p class="sub2" style="margin:.2rem 0 0">${c.retro ? 'Aplicação já realizada em ' + br(ag.data) + ' às ' + esc(ag.hora) : dow(ag.data) + ' ' + br(ag.data) + ', ' + esc(ag.hora)} · ${esc(nomeCrmv(ag.responsavelId))}${fora.length ? ' · ' + foraBadge(fora.length) : ''}</p></div>
     <div class="box"><h3>${ic('eye', 's14')}O que acontece ao ${c.retro ? 'registrar' : 'agendar'}</h3><ul class="res-list">${cq.linhas.map(l => `<li class="${l.k}">${ic(l.k === 'ok' ? 'check' : 'warn', 's14')}<span>${esc(l.t)}</span></li>`).join('')}</ul><p class="sub2" style="margin-top:.6rem">Checklist: ${cq.resumo.resolvidos} de ${cq.resumo.total} resolvidos.</p></div>
-    <div class="sticky-bar"><button type="button" class="btn btn-ghost" data-act="go" data-to="/protocolos/aplicar/montar" data-q="ag=${ag.id}&passo=3${c.retro ? '&retro=1' : ''}">${ic('left')}Voltar e ajustar</button>${bt('btn-ghost', 'file', 'Salvar como rascunho', 'data-act="mt-rasc"')}${bt('btn-ghost', 'ban', 'Descartar cronograma', 'data-act="mt-descartar"')}<span class="sp"></span>${c.retro ? bt('btn-gold', 'check', 'Registrar como aplicada', 'data-act="mt-agendar" data-retro="1" data-fk="mt-ok"') : bt('btn-gold', 'calendar-check', 'Agendar', 'data-act="mt-agendar" data-fk="mt-ok"')}</div>`;
+    <div class="sticky-bar"><button type="button" class="btn btn-ghost" data-act="go" data-to="/protocolos/aplicar/montar" data-q="ag=${ag.id}&passo=3${c.retro ? '&retro=1' : ''}">${ic('left')}Voltar e ajustar</button>${bt('btn-ghost', 'file', 'Salvar como rascunho', 'data-act="mt-rasc"')}${bt('btn-ghost', 'ban', 'Descartar cronograma', 'data-act="mt-descartar"')}<span class="sp"></span>${c.retro ? bt('btn-gold', 'check', 'Aplicar como já realizada', 'data-act="mt-agendar" data-retro="1" data-fk="mt-ok"') : bt('btn-gold', 'calendar-check', 'Agendar', 'data-act="mt-agendar" data-fk="mt-ok"')}</div>`;
 }
 ACT['mt-descartar'] = () => { const ag = agAtual(); const r = act('cancelar', { agId: ag.id, motivo: 'Montagem descartada' }, r => `Cronograma descartado · ${r.devolvidos} ${pl(r.devolvidos, 'animal voltou', 'animais voltaram')} para a lista de espera.`); if (r.ok !== false) nav('/protocolos/aplicar', {}); };
 ACT['mt-agendar'] = t => {
@@ -2975,13 +3010,13 @@ ROUTES['/protocolos/acompanhamento'] = () => {
   const rows = lista.map(a => { const p = PROTO(a.protocoloId); const fora = a.animais.filter(x => x.origem === 'fora_janela').length; const r = SEL.checklistResumo(a); const vetNao = a.checklist.veterinario.estado === 'nao_confirmou';
     return `<tr class="lin ${a.estado === 'em_montagem' ? 'gx-atras' : ''}" tabindex="0" data-act="ag-ver" data-id="${a.id}" data-fk="row-${a.id}" aria-label="Abrir ${esc(p.nome)}">
       <td data-c="estado">${pillAg(a)}${vetNao ? `<div style="margin-top:.2rem"><span class="selo nao">${ic('x', 's12')}Vet não confirmou</span></div>` : ''}</td>
-      <td data-c="nome"><div class="nm">${esc(p.nome)}${faseTxt(a)}</div><div class="sub2">${esc(lotesDe(a).join(', '))}</div></td>
+      <td data-c="nome"><div class="nm">${esc(p.nome)}${faseTxt(a)}</div><div class="sub2">${esc(lotesDe(a).length > 2 ? lotesDe(a).length + ' lotes' : lotesDe(a).join(', '))}</div></td>
       <td data-c="quem" data-l="Para quem">${a.animais.length} ${pl(a.animais.length, 'animal', 'animais')} ${foraBadge(fora)}</td>
       <td data-c="data">${a.data ? `${dow(a.data)} ${brs(a.data)}<div class="sub2">${a.hora}${a.dataOriginal ? ' · antes ' + brs(a.dataOriginal) : ''}</div>` : '<span class="sub2">sem data</span>'}</td>
       <td data-c="x" data-l="Responsável">${a.responsavelId ? esc(nome(a.responsavelId)) : '—'}${(SEL.pessoa(a.responsavelId) || {}).crmv ? `<div class="sub2">${esc(SEL.pessoa(a.responsavelId).crmv)}</div>` : ''}</td>
       <td data-c="x" data-l="Checklist">${selos(a)}<div class="sub2">${r.resolvidos}/${r.total}</div></td>
-      <td class="acts">${botaoAplicar(a, 'onclick="event.stopPropagation()"')}<button type="button" class="icon-btn" aria-label="Mais ações de ${esc(p.nome)}" data-act="menu" data-m="ag" data-id="${a.id}" data-menu data-fk="mn-${a.id}" onclick="event.stopPropagation()">${ic('more')}</button></td></tr>`; }).join('');
-  h += `<div class="${cardsTable()}"><table class="ft cards"><thead><tr><th>Estado</th><th>Protocolo</th><th>Para quem</th><th>Data e hora</th><th>Responsável</th><th>Checklist</th><th><span class="sr">Ações</span></th></tr></thead><tbody>${rows}</tbody></table>
+      <td class="acts">${botaoAplicar(a)}<button type="button" class="icon-btn" aria-label="Mais ações de ${esc(p.nome)}" data-act="menu" data-m="ag" data-id="${a.id}" data-menu data-fk="mn-${a.id}">${ic('more')}</button></td></tr>`; }).join('');
+  h += `<div class="${cardsTable()}"><table class="ft cards"><thead><tr class="rowc"><th>Estado</th><th>Protocolo</th><th>Para quem</th><th>Data e hora</th><th>Responsável</th><th>Checklist</th><th><span class="sr">Ações</span></th></tr></thead><tbody>${rows}</tbody></table>
     <div class="legend"><span class="ic-green">${ic('check', 's14')}Resolvido</span><span class="ic-mut">${ic('dashed', 's14')}Pendente</span><span class="ic-amber">${ic('warn', 's14')}Revisar</span><span class="ic-red">${ic('x', 's14')}Veterinário não confirmou</span><span class="ic-amber">${ic('flag', 's14')}Fora da janela: incluído por conta da fazenda</span></div></div>`;
   return h;
 };
@@ -3116,7 +3151,7 @@ function drAplicar(q) {
   const aplic = `<div class="fld"><label for="ap-quem">${fase === 'leitura' ? 'Quem fez a leitura' : 'Quem aplicou'}</label><select id="ap-quem" class="sel" data-ch="apQuem" data-fk="ap-quem">${opts(SEL.pessoas().map(x => [x.id, x.nome + ' (' + x.funcao + (x.crmv ? ', ' + x.crmv : '') + ')']), u.aplicadorId, 'Escolha quem aplicou')}</select></div>`;
   const ciVet = p.exigeVet && !ehVet(u.aplicadorId) ? `<label class="chk"><input type="checkbox" data-ch="apCiVet" ${u.cienteVet ? 'checked' : ''}><span><b>Ciente: aplicação sem veterinário habilitado.</b> Fica marcado no comprovante, com meu nome e a hora.</span></label>` : '';
   const animais = `<div class="fld"><label>${fase === 'leitura' ? 'Resultado por animal (obrigatório)' : 'Animais: marque quem foi aplicado'}</label>${fase === 'leitura' ? `<ul class="list">${c.ag.animais.map(x => `<li><div class="grow"><b>${esc(lbl(x.animalId))}</b></div><select class="sel" style="width:170px" aria-label="Resultado de ${esc(lbl(x.animalId))}" data-ch="apRes" data-id="${x.animalId}"><option value="">Escolha</option>${['Negativo', 'Positivo', 'Inconclusivo'].map(o => `<option ${u.res[x.animalId] === o ? 'selected' : ''}>${o}</option>`).join('')}</select></li>`).join('')}</ul>`
-    : `<div class="card">${c.ag.animais.map(x => { const mk = u.marc.has(x.animalId); const an = ANI(x.animalId); const dose = p.porPeso ? num(SEL.lote(an.lote).peso / p.porPeso) + ' mL por ' + SEL.lote(an.lote).peso + ' kg' : p.dose; return `<div class="chk-row" style="flex-wrap:wrap"><label class="chk-lab"><input type="checkbox" data-ch="apMarc" data-id="${x.animalId}" ${mk ? 'checked' : ''} aria-label="Aplicado em ${esc(lbl(x.animalId))}"><span class="grow"><b>${esc(lbl(x.animalId))}</b><span class="sub2" style="display:block">${esc(loteNome(an.lote))} · ${esc(dose)}</span></span></label>${x.origem === 'fora_janela' ? `<span class="fora-b">${ic('flag', 's12')}Fora da janela</span>` : ''}${mk ? '' : `<div style="display:flex;gap:.5rem;flex-wrap:wrap;width:100%;padding:0 0 .5rem 2rem"><select class="sel" style="flex:1 1 180px" aria-label="Motivo de ${esc(lbl(x.animalId))} não ter sido aplicado" data-ch="apMot" data-id="${x.animalId}"><option value="">Motivo (obrigatório)</option>${['Vendido', 'Doente', 'Não localizado', 'Outro'].map(o => `<option ${u.motivo[x.animalId] === o ? 'selected' : ''}>${o}</option>`).join('')}</select><select class="sel" style="flex:1 1 200px" aria-label="Destino de ${esc(lbl(x.animalId))}" data-ch="apDest" data-id="${x.animalId}"><option value="espera" ${(u.destino[x.animalId] || 'espera') === 'espera' ? 'selected' : ''}>Volta à lista de espera</option><option value="naoSeAplica" ${u.destino[x.animalId] === 'naoSeAplica' ? 'selected' : ''}>Não se aplica</option></select></div>`}</div>`; }).join('')}</div><div class="sub2" style="margin-top:.3rem"><button type="button" class="linkbtn" data-act="ap-todos">${u.marc.size === c.ag.animais.length ? 'Desmarcar todos' : 'Marcar todos como aplicados'}</button>${c.nao.length ? ` · ${c.nao.length} ${pl(c.nao.length, 'animal fica fora', 'animais ficam fora')} e ${pl(c.nao.length, 'volta', 'voltam')} à lista de espera com aviso` : ''}</div>`}</div>`;
+    : `${c.ag.animais.length > 6 ? `<details class="ap-anim" ${u.animAberto || c.nao.length ? 'open' : ''}><summary data-act="ap-anim-t" data-fk="ap-anim"><b>${c.ids.length} de ${c.ag.animais.length} marcados como aplicados</b> · ver e ajustar os animais</summary>` : ''}<div class="card">${c.ag.animais.map(x => { const mk = u.marc.has(x.animalId); const an = ANI(x.animalId); const dose = p.porPeso ? num(SEL.lote(an.lote).peso / p.porPeso) + ' mL por ' + SEL.lote(an.lote).peso + ' kg' : p.dose; return `<div class="chk-row" style="flex-wrap:wrap"><label class="chk-lab"><input type="checkbox" data-ch="apMarc" data-id="${x.animalId}" data-fk="apm-${x.animalId}" ${mk ? 'checked' : ''} aria-label="Aplicado em ${esc(lbl(x.animalId))}"><span class="grow"><b>${esc(lbl(x.animalId))}</b><span class="sub2" style="display:block">${esc(loteNome(an.lote))} · ${esc(dose)}</span></span></label>${x.origem === 'fora_janela' ? `<span class="fora-b">${ic('flag', 's12')}Fora da janela</span>` : ''}${mk ? '' : `<div style="display:flex;gap:.5rem;flex-wrap:wrap;width:100%;padding:0 0 .5rem 2rem"><select class="sel" style="flex:1 1 180px" aria-label="Motivo de ${esc(lbl(x.animalId))} não ter sido aplicado" data-ch="apMot" data-id="${x.animalId}"><option value="">Motivo (obrigatório)</option>${['Vendido', 'Doente', 'Não localizado', 'Outro'].map(o => `<option ${u.motivo[x.animalId] === o ? 'selected' : ''}>${o}</option>`).join('')}</select><select class="sel" style="flex:1 1 200px" aria-label="Destino de ${esc(lbl(x.animalId))}" data-ch="apDest" data-id="${x.animalId}"><option value="espera" ${(u.destino[x.animalId] || 'espera') === 'espera' ? 'selected' : ''}>Volta à lista de espera</option><option value="naoSeAplica" ${u.destino[x.animalId] === 'naoSeAplica' ? 'selected' : ''}>Não se aplica</option></select></div>`}</div>`; }).join('')}</div><div class="sub2" style="margin-top:.3rem"><button type="button" class="linkbtn" data-act="ap-todos">${u.marc.size === c.ag.animais.length ? 'Desmarcar todos' : 'Marcar todos como aplicados'}</button>${c.nao.length ? ` · ${c.nao.length} ${pl(c.nao.length, 'animal fica fora', 'animais ficam fora')} e ${pl(c.nao.length, 'volta', 'voltam')} à lista de espera com aviso` : ''}</div>`}</div>`;
   let campos;
   if (fase === 'leitura') {
     campos = `${avs('blue', 'info', `Inoculação em ${dh(c.ag.inoculacao.em)} · <b>leitura a partir de ${dh(c.leituraEm)}</b> (72 h). Tuberculina: frasco ${esc(c.ag.inoculacao.frasco)}. Resultado positivo grava o reagente, mostra banner persistente e bloqueia o comprovante “animal em dia”.`)}${animais}<div class="g2"><div class="fld"><label for="ap-laudo">Nº do laudo (opcional)</label><input id="ap-laudo" class="inp" value="${esc(u.laudo)}" data-in="apLaudo"></div>${aplic}</div><fieldset style="border:0;padding:0;margin:0"><legend class="lbl" style="margin-bottom:.3rem">Data e hora da leitura</legend><div class="chips"><input class="inp" style="width:auto" type="date" aria-label="Data da leitura" value="${u.dataOutra}" max="${HI}" data-in="apDataO"><input class="inp" style="width:auto" type="time" aria-label="Hora da leitura" value="${u.hora}" data-in="apHora"></div></fieldset>${c.antes72 ? `<div class="fld"><label for="ap-j">Justificativa da leitura antes de 72 h (obrigatória)</label><input id="ap-j" class="inp" value="${esc(u.justif)}" data-in="apJust" data-fk="ap-j"></div>` : ''}`;
@@ -3154,15 +3189,17 @@ ACT['ap-ok'] = () => {
   const c = apCalc(); const u = UI.ap; if (c.erro) { const e = $('#ap-erro'); if (e) e.focus(); toast(c.erro, { icon: 'warn', ms: 6000 }); return; }
   const payload = { agId: u.agId, animaisAplicados: c.fase === 'leitura' ? [] : c.ids, frasco: u.frasco, aplicadorId: u.aplicadorId, ciente: u.ciente, cienteVet: u.cienteVet, data: c.fase === 'leitura' ? u.dataOutra : c.dataReal, hora: u.hora, custo: u.custo, motivosNao: u.motivo, destinosNao: u.destino, resultados: u.res, laudo: u.laudo, justificativa: u.justif };
   const p = c.p; const de = qv('de'); const lid0 = ST.log[ST.log.length - 1].id;
-  const r = act('aplicar', payload, x => x.fase === 'inoculacao' ? `Inoculação registrada · leitura em 72 h (${dh(x.leituraEm)})` : x.fase === 'leitura' ? `Leitura registrada · ${p.nome}` : `Aplicado · ${p.nome} · ${c.ids.length} ${pl(c.ids.length, 'animal', 'animais')}`, { aoDesfazer: () => { UI.ap = null; UI.resumo = null; if (qv('resumo')) closeDrawer(); } });
+  const daAgenda = de === 'agenda' && window.AgendaModule;   // a Agenda mostra o próprio toast agregado (com Desfazer só da última)
+  const r = act('aplicar', payload, daAgenda ? null : (x => x.fase === 'inoculacao' ? `Inoculação registrada · leitura em 72 h (${dh(x.leituraEm)})` : x.fase === 'leitura' ? `Leitura registrada · ${p.nome}` : `Aplicado · ${p.nome} · ${c.ids.length} ${pl(c.ids.length, 'animal', 'animais')}`), { aoDesfazer: () => { UI.ap = null; UI.resumo = null; if (qv('resumo')) closeDrawer(); } });
   if (r.ok === false) return; UI.ap = null;
-  if (r.fase === 'inoculacao') { setQ({ aplicar: null, de: null, agendamento: de === 'agenda' ? null : u.agId }); return; }
+  if (daAgenda) { setQ({ aplicar: null, de: null }); return; }
+  if (r.fase === 'inoculacao') { setQ({ aplicar: null, de: null, agendamento: u.agId }); return; }
   UI.resumo = { id: r.concluidoId, efeitos: r.efeitos, nao: r.nao, de }; setQ({ aplicar: null, de: de || null, resumo: r.concluidoId });
 };
 /* ───── Gaveta "Aplicação concluída" (o que o sistema fez sozinho) ───── */
 DRAWERS.unshift(q => {
   const id = q.get('resumo'); if (!id) return null; const cc = SEL.concluido(id); if (!cc) return null; const p = PROTO(cc.protocoloId); UI.drKey = 'rs:' + id;
-  const ef = UI.resumo && UI.resumo.id === id ? UI.resumo.efeitos : [`Aplicado em ${cc.animais.length} animais`, 'Foi para Concluídos'];
+  const ef = (UI.resumo && UI.resumo.id === id ? UI.resumo.efeitos : null) || cc.efeitos || [`Aplicado em ${cc.animais.length} animais`, 'Foi para Concluídos'];
   const nao = cc.naoAplicados || []; const de = q.get('de') || (UI.resumo && UI.resumo.de);
   return { key: 'rs:' + id, label: 'Aplicação concluída', html: drawerHead('Aplicação concluída', `${esc(p.nome)}`, `${pill('aplicado', 'Aplicado')}<span>${cc.animais.length} ${pl(cc.animais.length, 'animal', 'animais')} · ${br(cc.data)} ${esc(cc.hora)}</span>`) + `<div class="dr-b"><div class="novo-card"><h2>${ic('ok', 's20')}Aplicado · ${esc(p.nome)} · ${cc.animais.length} ${pl(cc.animais.length, 'animal', 'animais')} · ${br(cc.data)} ${esc(cc.hora)}</h2><p style="margin-top:.4rem"><b>O que o sistema fez sozinho</b></p><ul class="res-list" style="margin-top:.4rem">${ef.map(e => `<li class="ok">${ic('check', 's14')}<span>${esc(e)}</span></li>`).join('')}</ul></div>
     ${nao.length ? `<div class="box"><h3>${ic('undo', 's14')}${nao.length} ${pl(nao.length, 'animal não foi aplicado', 'animais não foram aplicados')}</h3><ul class="list">${nao.map(n => `<li><div class="grow"><b>${esc(lbl(n.animalId))}</b><div class="sub2">${esc(n.motivo)}</div></div><span class="tag">${n.destino === 'naoSeAplica' ? 'Não se aplica' : 'Voltou à lista de espera com aviso'}</span></li>`).join('')}</ul></div>` : ''}</div>
@@ -3176,6 +3213,8 @@ DRAWERS.unshift(q => {
   return { key: 'cp:' + id, print: true, label: 'Comprovante', html: `<div class="print-bar"><span><b>Comprovante · ${esc(p.nome)}</b> · ${br(cc.data)}</span><span><button type="button" class="btn btn-primary sm" data-act="cp-print">${ic('printer')}Imprimir</button> <button type="button" class="btn btn-ghost sm" data-act="dr-close" data-first>Fechar</button></span></div><div class="paper"><h2>Comprovante de ${p.tipo === 'exame' ? 'exame' : 'aplicação'} — ${esc(p.nome)}</h2><p>Fazenda Estreito Ponte de Pedra · ${br(cc.data)} ${esc(cc.hora)} · Aplicador: ${esc(nomeCrmv(cc.aplicadorId))} · Registrado por: ${esc(nome(cc.registradoPor))}</p><p>Frasco/lote: ${esc(cc.frasco)}${cc.partes && cc.partes[0] ? ' (validade ' + br(cc.partes[0].validade) + ')' : ''} · Via: ${esc(cc.via)} · Custo: ${R$(cc.custo)}</p>${cc.excecoes && cc.excecoes.length ? `<p class="r"><b>Exceções registradas:</b> ${esc(cc.excecoes.join('; '))}</p>` : ''}${cc.carencia && (cc.carencia.carneAte || cc.carencia.leiteAte) ? `<p>Carência: ${cc.carencia.carneAte ? 'carne até ' + br(cc.carencia.carneAte) : ''} ${cc.carencia.leiteAte ? 'leite até ' + br(cc.carencia.leiteAte) : ''}</p>` : ''}<table><thead><tr><th>Animal</th><th>Lote</th><th>Resultado / dose</th><th>Origem</th></tr></thead><tbody>${rows}</tbody></table><div class="sign"><div>Aplicador</div><div>Responsável técnico</div></div></div>` };
 });
 ACT['cp-print'] = () => toast('Abriria a impressão do navegador.', { icon: 'info' });
+
+ACT['ap-anim-t'] = t => { const d = t.closest('details'); setTimeout(() => { UI.ap.animAberto = d.open; }, 0); };
 
 /* ═════════ Protocolos › Concluídos (histórico imutável) ═════════ */
 const ST_CC = cc => cc.estado === 'estornada' ? pill('estornada', 'Estornada') : cc.estado === 'cancelado' ? pill('cancelado', cc.motivo && /^Pulou/.test(cc.motivo) ? 'Pulado' : 'Cancelado') : pill('aplicado', p2t(cc));
@@ -3202,22 +3241,20 @@ ROUTES['/protocolos/concluidos'] = () => {
   const l = ccLista(); if (!l.length) return h + vazio('history', 'Nada concluído neste período', 'Ajuste os filtros ou aplique um cronograma em Acompanhamento.', bt('btn-primary', 'clock', 'Ir para Acompanhamento', 'data-act="go" data-to="/protocolos/acompanhamento"'));
   if (vis === 'animal') {
     const rows = []; l.filter(c => !c.cancelado).forEach(c => c.animais.forEach(a => rows.push({ c, a })));
-    h += `<div class="result-line"><span>${rows.length} registros por animal</span></div><div class="${cardsTable()}"><table class="ft cards"><thead><tr><th>Data</th><th>Animal</th><th>Protocolo</th><th>Origem</th><th>Resultado / dose</th><th>Frasco</th><th>Estado</th></tr></thead><tbody>${rows.slice(0, 200).map(({ c, a }) => `<tr class="lin ${c.estado === 'estornada' ? 'estorn' : ''}" tabindex="0" data-act="setq" data-q_concluido="${c.id}" data-fk="row-${c.id}-${a.animalId}"><td data-c="data">${br(c.data)}</td><td data-c="nome"><div class="nm">${esc(lbl(a.animalId))}</div></td><td data-c="x" data-l="Protocolo">${esc(PROTO(c.protocoloId).nome)}</td><td data-c="x" data-l="Origem">${a.origem === 'fora_janela' ? foraBadge(1).replace('1 fora da janela', 'Fora da janela') : 'Na janela'}</td><td data-c="x" data-l="Resultado">${esc(a.resultado || (PROTO(c.protocoloId).porPeso ? num(a.dose) + ' mL' : PROTO(c.protocoloId).dose))}</td><td data-c="x" data-l="Frasco">${esc(c.frasco)}</td><td data-c="estado">${ST_CC(c)}</td></tr>`).join('')}</tbody></table></div>`;
+    h += `<div class="result-line"><span>${rows.length} registros por animal</span></div><div class="${cardsTable()}"><table class="ft cards"><thead><tr class="rowc"><th>Data</th><th>Animal</th><th>Protocolo</th><th>Origem</th><th>Resultado / dose</th><th>Frasco</th><th>Estado</th></tr></thead><tbody>${rows.slice(0, 200).map(({ c, a }) => `<tr class="lin ${c.estado === 'estornada' ? 'estorn' : ''}" tabindex="0" data-act="setq" data-q_concluido="${c.id}" data-fk="row-${c.id}-${a.animalId}"><td data-c="data">${br(c.data)}</td><td data-c="nome"><div class="nm">${esc(lbl(a.animalId))}</div></td><td data-c="x" data-l="Protocolo">${esc(PROTO(c.protocoloId).nome)}</td><td data-c="x" data-l="Origem">${a.origem === 'fora_janela' ? foraBadge(1).replace('1 fora da janela', 'Fora da janela') : 'Na janela'}</td><td data-c="x" data-l="Resultado">${esc(a.resultado || (PROTO(c.protocoloId).porPeso ? num(a.dose) + ' mL' : PROTO(c.protocoloId).dose))}</td><td data-c="x" data-l="Frasco">${esc(c.frasco)}</td><td data-c="estado">${ST_CC(c)}</td></tr>`).join('')}</tbody></table></div>`;
     return h;
   }
   const rows = l.map(c => { const p = PROTO(c.protocoloId); const napl = (c.naoAplicados || []).length;
     return `<tr class="lin ${c.estado === 'estornada' ? 'estorn' : ''}" tabindex="0" data-act="${c.cancelado ? 'ag-ver' : 'setq'}" data-q_concluido="${c.id}" data-id="${c.agId || ''}" data-fk="row-${c.id}" aria-label="Abrir ${esc(p.nome)} de ${br(c.data)}">
       <td data-c="data">${br(c.data)}<div class="sub2">${esc(c.hora || '')}</div></td>
       <td data-c="nome"><div class="nm">${esc(p.nome)}${c.rotulo && c.rotulo !== 'aplicação' && !c.cancelado ? ' · ' + esc(c.rotulo) : ''}</div><div class="sub2">${ST_CC(c)}${c.cancelado ? ' ' + esc(c.motivo || '') : ''}</div></td>
-      <td data-c="quem" data-l="Para quem">${c.animais.length} ${pl(c.animais.length, 'animal', 'animais')}</td>
-      <td data-c="x" data-l="Aplicados / não">${c.cancelado ? '—' : `${c.animais.length} / ${napl}`}</td>
-      <td data-c="x" data-l="Fora da janela">${c.foraJanelaN ? foraBadge(c.foraJanelaN) : '—'}</td>
+      <td data-c="quem" data-l="Para quem">${c.animais.length} ${pl(c.animais.length, 'animal', 'animais')}${c.cancelado ? '' : `<div class="sub2">${c.animais.length} aplicados · ${napl} não aplicados</div>`}${c.foraJanelaN ? `<div>${foraBadge(c.foraJanelaN)}</div>` : ''}</td>
       <td data-c="x" data-l="Responsável">${esc(nome(c.aplicadorId))}</td>
       <td data-c="prod" data-l="Frasco/lote">${esc(c.frasco)}</td>
       <td data-c="car" data-l="Carência">${esc(carTxtCC(c))}</td>
       <td class="num" data-c="x" data-l="Custo">${c.cancelado ? '—' : R$(c.custo)}</td>
-      <td class="acts">${c.cancelado ? '' : `<button type="button" class="btn btn-sec sm" data-act="setq" data-q_comprovante="${c.id}" onclick="event.stopPropagation()">${ic('printer', 's14')}Comprovante</button>`}</td></tr>`; }).join('');
-  h += `<div class="result-line"><span>${l.length} registros</span></div><div class="${cardsTable()}"><table class="ft cards"><thead><tr><th>Data</th><th>Protocolo</th><th>Para quem</th><th>Aplicados / não</th><th>Fora da janela</th><th>Responsável</th><th>Frasco/lote</th><th>Carência</th><th class="num">Custo</th><th><span class="sr">Ações</span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      <td class="acts">${c.cancelado ? '' : `<button type="button" class="btn btn-sec sm" data-act="setq" data-q_comprovante="${c.id}">${ic('printer', 's14')}Comprovante</button>`}</td></tr>`; }).join('');
+  h += `<div class="result-line"><span>${l.length} registros</span></div><div class="${cardsTable()}"><table class="ft cards"><thead><tr class="rowc"><th>Data</th><th>Protocolo</th><th>Para quem</th><th>Responsável</th><th>Frasco/lote</th><th>Carência</th><th class="num">Custo</th><th><span class="sr">Ações</span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
   return h;
 };
 IN.ccFora = c => setQ({ fora_: c ? '1' : null });
@@ -3235,7 +3272,7 @@ DRAWERS.push(q => {
   if (!UI.cd || UI.cd.id !== id) UI.cd = { id, tab: 'animais', obs: '', tent: false }; const u = UI.cd; UI.drKey = 'cd:' + id;
   const rg = SEL.reagentes().filter(r => r.concluidoId === id).map(r => r.animalId);
   let corpo = '';
-  if (u.tab === 'animais') corpo = `<div class="tw"><table class="ft"><thead><tr><th>Animal</th><th>Origem</th><th>Dose / resultado</th><th>Frasco</th><th>Quando</th><th>Quem aplicou</th></tr></thead><tbody>${cc.animais.map(a => `<tr><td><div class="nm">${esc(lbl(a.animalId))}</div><div class="sub2">${esc(loteNome(ANI(a.animalId).lote))}</div></td><td>${a.origem === 'fora_janela' ? foraBadge(1).replace('1 fora da janela', 'Fora da janela') + (a.motivo ? `<div class="sub2">${esc(a.motivo)}</div>` : '') : 'Na janela'}</td><td>${esc(a.resultado || (p.porPeso ? num(a.dose) + ' mL' : p.dose))}${rg.includes(a.animalId) ? ' <span class="st atrasada">' + ic('warn', 's12') + 'Reagente</span>' : ''}</td><td>${esc(cc.frasco)}</td><td>${br(cc.data)} ${esc(cc.hora)}</td><td>${esc(nome(cc.aplicadorId))}</td></tr>`).join('')}${(cc.naoAplicados || []).map(n => `<tr class="pulada"><td><div class="nm">${esc(lbl(n.animalId))}</div></td><td colspan="5">Não aplicado: ${esc(n.motivo)} · ${n.destino === 'naoSeAplica' ? 'não se aplica' : 'voltou à lista de espera'}</td></tr>`).join('')}</tbody></table></div>`;
+  if (u.tab === 'animais') corpo = `<div class="tw"><table class="ft"><thead><tr class="rowc"><th>Animal</th><th>Origem</th><th>Dose / resultado</th><th>Frasco</th><th>Quando</th><th>Quem aplicou</th></tr></thead><tbody>${cc.animais.map(a => `<tr class="rowc"><td><div class="nm">${esc(lbl(a.animalId))}</div><div class="sub2">${esc(loteNome(ANI(a.animalId).lote))}</div></td><td>${a.origem === 'fora_janela' ? foraBadge(1).replace('1 fora da janela', 'Fora da janela') + (a.motivo ? `<div class="sub2">${esc(a.motivo)}</div>` : '') : 'Na janela'}</td><td>${esc(a.resultado || (p.porPeso ? num(a.dose) + ' mL' : p.dose))}${rg.includes(a.animalId) ? ' <span class="st atrasada">' + ic('warn', 's12') + 'Reagente</span>' : ''}</td><td>${esc(cc.frasco)}</td><td>${br(cc.data)} ${esc(cc.hora)}</td><td>${esc(nome(cc.aplicadorId))}</td></tr>`).join('')}${(cc.naoAplicados || []).map(n => `<tr class="pulada"><td><div class="nm">${esc(lbl(n.animalId))}</div></td><td colspan="5">Não aplicado: ${esc(n.motivo)} · ${n.destino === 'naoSeAplica' ? 'não se aplica' : 'voltou à lista de espera'}</td></tr>`).join('')}</tbody></table></div>`;
   else if (u.tab === 'checklist') { const ck = cc.checklistSnap; corpo = ck ? `<ul class="list">${DADOS.checkKeys.filter(([k]) => p.checklistModelo.includes(k) || k === 'data').map(([k, n]) => `<li><div class="grow"><b>${esc(n)}</b>${ck[k] && ck[k].motivo ? `<div class="sub2">${esc(ck[k].motivo)}</div>` : ''}</div>${ckPill((ck[k] || {}).estado || 'pendente')}</li>`).join('')}</ul>` : '<p class="hint">Registro anterior ao novo fluxo: sem checklist.</p>'; }
   else if (u.tab === 'financeiro') { const f = cc.financeiro || {}; const pg = f.pagamentoId ? ST.financeiro.pagamentos.find(x => x.id === f.pagamentoId) : null; corpo = `<ul class="list"><li><div class="grow"><b>Custo do registro</b></div><b>${R$(cc.custo)}</b></li>${pg ? `<li><div class="grow"><b>Pagamento vinculado</b><div class="sub2">${esc(pg.fornecedor)} · ${br(pg.data)} · ${R$(pg.valor)}</div></div><a class="lnk" href="${href('/financeiro/contas-a-pagar')}">Ver lançamento</a></li>` : ''}${(f.contas || []).map(cid => { const c = ST.financeiro.contasPagar.find(x => x.id === cid); return c ? `<li><div class="grow"><b>Conta a pagar</b><div class="sub2">${esc(c.fornecedor)} · vence ${br(c.venc)}</div></div><b>${R$(c.valor)}</b></li>` : ''; }).join('')}${!pg && !(f.contas || []).length ? '<li class="sub2">Sem vínculo financeiro.</li>' : ''}</ul>`; }
   else { const lg = ST.log.filter(l => (cc.agId && l.agId === cc.agId) || l.concluidoId === id || (l.ref && ST.log.find(x => x.id === l.ref && x.concluidoId === id))); corpo = lg.length ? `<ul class="list aud">${lg.slice().reverse().map(l => `<li class="${l.acao.startsWith('Estorno') ? 'estorn' : ''}"><span>${ic('history', 's14')}</span><div class="grow"><b>${esc(l.acao)}</b>${l.detalhe ? `<div class="sub2">${esc(l.detalhe)}</div>` : ''}${l.motivo ? `<div class="sub2">Motivo: ${esc(l.motivo)}</div>` : ''}<div class="sub2">${esc(l.quem)} · ${dh(l.t)}${l.frasco ? ' · frasco ' + esc(l.frasco) : ''}</div></div></li>`).join('')}</ul>` : `<ul class="list aud"><li><span>${ic('history', 's14')}</span><div class="grow"><b>Registrado</b><div class="sub2">${esc(nome(cc.registradoPor))} · ${br(cc.data)} ${esc(cc.hora)}${cc.historico ? ' · registro do histórico da fazenda' : ''}</div></div></li></ul>`; }
@@ -3265,7 +3302,7 @@ function estadoCal(it) {
   if (it.tipo === 'agendado') return pill(it.estado.cod, it.estado.txt); if (it.tipo === 'em_montagem') return pill('em_montagem'); return `<span class="st prevista">${ic('lock', 's14')}Janela ainda fechada</span>`;
 }
 function calRow(it) { const p = PROTO(it.protocoloId); const tit = it.tipo === 'espera' ? p.nome + (it.rotulo && /dose 2|reteste|reforço$/.test(it.rotulo) ? ' — ' + it.rotulo : '') : p.nome; const qt = it.tipo === 'janela_futura' ? `${it.n} ${pl(it.n, 'animal vai entrar', 'animais vão entrar')}` : `${it.n} ${pl(it.n, 'animal', 'animais')}`;
-  return `<tr><td data-c="estado">${estadoCal(it)}</td><td data-c="nome"><div class="nm">${esc(tit)}</div></td><td data-c="quem" data-l="Para quem">${qt}</td><td data-c="data">${it.data ? (it.tipo === 'janela_futura' ? 'abre ' : '') + brs(it.data) : '—'}</td><td class="acts">${linkAcao(it)}</td></tr>`; }
+  return `<tr class="rowc"><td data-c="estado">${estadoCal(it)}</td><td data-c="nome"><div class="nm">${esc(tit)}</div></td><td data-c="quem" data-l="Para quem">${qt}</td><td data-c="data">${it.data ? (it.tipo === 'janela_futura' ? 'abre ' : '') + brs(it.data) : '—'}</td><td class="acts">${linkAcao(it)}</td></tr>`; }
 const sanVis = () => qv('visao') || 'lista';
 ROUTES['/sanidade/vacinas/calendario'] = () => {
   const tot = SEL.totaisListaEspera(); const cob = SEL.cobertura(); const ag = SEL.agendamentos({ estado: 'agendado' }).length; const vis = sanVis();
@@ -3276,7 +3313,7 @@ ROUTES['/sanidade/vacinas/calendario'] = () => {
   if (vis === 'mes') h += sanMes(); else if (vis === 'ano') h += sanAno();
   if (vis !== 'ano') {
     let l = calLinhas(); if (qv('dia')) l = l.filter(x => x.data === qv('dia')); if (qv('dia')) h += `<div class="result-line"><span>Mostrando o dia ${br(qv('dia'))}</span><button type="button" class="linkbtn" data-act="setq" data-q_dia="">Ver todos</button></div>`;
-    h += l.length ? `<div class="${cardsTable()}"><table class="ft cards"><thead><tr><th>Estado</th><th>Protocolo</th><th>Para quem</th><th>Data</th><th><span class="sr">Abrir</span></th></tr></thead><tbody>${l.map(calRow).join('')}</tbody></table>${sanLegenda()}</div>` : vazio('calendar', 'Nada neste dia', 'Sem janelas nem agendamentos.', '');
+    h += l.length ? `<div class="${cardsTable()}"><table class="ft cards"><thead><tr class="rowc"><th>Estado</th><th>Protocolo</th><th>Para quem</th><th>Data</th><th><span class="sr">Abrir</span></th></tr></thead><tbody>${l.map(calRow).join('')}</tbody></table>${sanLegenda()}</div>` : vazio('calendar', 'Nada neste dia', 'Sem janelas nem agendamentos.', '');
   }
   return h;
 };
@@ -3294,20 +3331,20 @@ function sanAno() {
   const ps = SEL.protocolos({ ativo: true }); const y = 2026; const M = {}; ps.forEach(p => { M[p.id] = Array(12).fill(0).map(() => ({ c: 0, a: 0 })); });
   ST.concluidos.filter(c => c.estado === 'aplicado' && c.data.slice(0, 4) === String(y) && M[c.protocoloId]).forEach(c => { M[c.protocoloId][+c.data.slice(5, 7) - 1].c++; });
   calLinhas().filter(x => x.data && x.data.slice(0, 4) === String(y) && M[x.protocoloId]).forEach(x => { M[x.protocoloId][+x.data.slice(5, 7) - 1].a++; });
-  return `<div class="tw" style="margin-bottom:1rem"><table class="ft matrix"><thead><tr><th>Protocolo</th>${MES3.map(n => `<th>${n}</th>`).join('')}</tr></thead><tbody>${ps.map(p => `<tr><td><b>${esc(p.nome)}</b></td>${M[p.id].map((c, i) => `<td class="${i === 8 ? 'mes-atual' : ''}">${c.c ? `<span class="cell green" title="${c.c} concluído(s)">${ic('ok', 's12')}${c.c}</span>` : ''}${c.a ? `<span class="cell blue" title="${c.a} previsto(s)">${ic('calendar', 's12')}${c.a}</span>` : ''}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+  return `<div class="tw" style="margin-bottom:1rem"><table class="ft matrix"><thead><tr class="rowc"><th>Protocolo</th>${MES3.map(n => `<th>${n}</th>`).join('')}</tr></thead><tbody>${ps.map(p => `<tr class="rowc"><td><b>${esc(p.nome)}</b></td>${M[p.id].map((c, i) => `<td class="${i === 8 ? 'mes-atual' : ''}">${c.c ? `<span class="cell green" title="${c.c} concluído(s)">${ic('ok', 's12')}${c.c}</span>` : ''}${c.a ? `<span class="cell blue" title="${c.a} previsto(s)">${ic('calendar', 's12')}${c.a}</span>` : ''}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 }
 ROUTES['/sanidade/vacinas/andamento'] = () => {
   let h = pgHead('clock', 'Sanidade · Preventivo', 'O que está em curso agora: lista de espera, cronogramas em montagem e agendados.', '') + faixaLeitura();
   const ags = SEL.emAcompanhamento(); const grupos = SEL.gruposEspera();
   if (!ags.length && !grupos.length) return h + vazio('ok', 'Nada em andamento', 'Sem lista de espera nem agendamentos.', '');
-  const rowsA = ags.map(a => { const p = PROTO(a.protocoloId); return `<tr><td data-c="estado">${pillAg(a)}</td><td data-c="nome"><div class="nm">${esc(p.nome)}${faseTxt(a)}</div><div class="sub2">${esc(lotesDe(a).join(', '))}</div></td><td data-c="quem" data-l="Para quem">${a.animais.length} animais ${foraBadge(a.animais.filter(x => x.origem === 'fora_janela').length)}</td><td data-c="data">${a.data ? brs(a.data) + ' ' + a.hora : '—'}</td><td data-c="x" data-l="Responsável">${esc(nome(a.responsavelId))}</td><td data-c="x" data-l="Estoque e financeiro">${selos(a)}</td><td class="acts">${a.estado === 'agendado' ? `<a class="lnk" href="${href('/agenda', { data: a.data })}">Abrir na Agenda ▸</a>` : `<a class="lnk" href="${href('/protocolos/acompanhamento', { agendamento: a.id })}">Abrir em Protocolos ▸</a>`}</td></tr>`; }).join('');
-  const rowsE = grupos.map(g => `<tr><td data-c="estado">${situacaoPill(g)}</td><td data-c="nome"><div class="nm">${esc(grupoTitulo(g))}</div><div class="sub2">${esc(g.lotes.join(', '))}</div></td><td data-c="quem" data-l="Para quem">${g.n} animais na espera</td><td data-c="data">${brs(g.devida)}</td><td data-c="x" data-l="Responsável">—</td><td data-c="x" data-l="Estoque">—</td><td class="acts"><a class="lnk" href="${href('/protocolos/aplicar', { protocolo: g.protocoloId })}">Abrir em Protocolos ▸</a></td></tr>`).join('');
-  return h + `<div class="${cardsTable()}"><table class="ft cards"><thead><tr><th>Estado</th><th>Protocolo</th><th>Para quem</th><th>Data</th><th>Responsável</th><th>Estoque · Financeiro</th><th><span class="sr">Abrir</span></th></tr></thead><tbody>${rowsA}${rowsE}</tbody></table>${sanLegenda()}</div>`;
+  const rowsA = ags.map(a => { const p = PROTO(a.protocoloId); return `<tr class="rowc"><td data-c="estado">${pillAg(a)}</td><td data-c="nome"><div class="nm">${esc(p.nome)}${faseTxt(a)}</div><div class="sub2">${esc(lotesDe(a).join(', '))}</div></td><td data-c="quem" data-l="Para quem">${a.animais.length} animais ${foraBadge(a.animais.filter(x => x.origem === 'fora_janela').length)}</td><td data-c="data">${a.data ? brs(a.data) + ' ' + a.hora : '—'}</td><td data-c="x" data-l="Responsável">${esc(nome(a.responsavelId))}</td><td data-c="x" data-l="Estoque e financeiro">${selos(a)}</td><td class="acts">${a.estado === 'agendado' ? `<a class="lnk" href="${href('/agenda', { data: a.data })}">Abrir na Agenda ▸</a>` : `<a class="lnk" href="${href('/protocolos/acompanhamento', { agendamento: a.id })}">Abrir em Protocolos ▸</a>`}</td></tr>`; }).join('');
+  const rowsE = grupos.map(g => `<tr class="rowc"><td data-c="estado">${situacaoPill(g)}</td><td data-c="nome"><div class="nm">${esc(grupoTitulo(g))}</div><div class="sub2">${esc(g.lotes.join(', '))}</div></td><td data-c="quem" data-l="Para quem">${g.n} animais na espera</td><td data-c="data">${brs(g.devida)}</td><td data-c="x" data-l="Responsável">—</td><td data-c="x" data-l="Estoque">—</td><td class="acts"><a class="lnk" href="${href('/protocolos/aplicar', { protocolo: g.protocoloId })}">Abrir em Protocolos ▸</a></td></tr>`).join('');
+  return h + `<div class="${cardsTable()}"><table class="ft cards"><thead><tr class="rowc"><th>Estado</th><th>Protocolo</th><th>Para quem</th><th>Data</th><th>Responsável</th><th>Estoque · Financeiro</th><th><span class="sr">Abrir</span></th></tr></thead><tbody>${rowsA}${rowsE}</tbody></table>${sanLegenda()}</div>`;
 };
 ROUTES['/sanidade/vacinas/concluidos'] = () => {
   let h = pgHead('history', 'Sanidade · Preventivo', 'Histórico do que já foi aplicado ou lido (espelho de Protocolos › Concluídos).', '') + faixaLeitura();
   const l = ST.concluidos.filter(c => c.estado !== 'estornada' || true).slice(0, 40); if (!l.length) return h + vazio('history', 'Nada concluído', '', '');
-  return h + `<div class="${cardsTable()}"><table class="ft cards"><thead><tr><th>Data</th><th>Protocolo</th><th>Para quem</th><th>Frasco/lote</th><th>Carência</th><th>Estado</th><th><span class="sr">Abrir</span></th></tr></thead><tbody>${l.map(c => `<tr class="${c.estado === 'estornada' ? 'estorn' : ''}"><td data-c="data">${br(c.data)}</td><td data-c="nome"><div class="nm">${esc(PROTO(c.protocoloId).nome)}${c.rotulo && c.rotulo !== 'aplicação' ? ' · ' + esc(c.rotulo) : ''}</div></td><td data-c="quem" data-l="Para quem">${c.animais.length} animais ${foraBadge(c.foraJanelaN)}</td><td data-c="prod" data-l="Frasco">${esc(c.frasco)}</td><td data-c="car" data-l="Carência">${esc(carTxtCC(c))}</td><td data-c="estado">${ST_CC(c)}</td><td class="acts"><a class="lnk" href="${href('/protocolos/concluidos', { concluido: c.id })}">Abrir em Protocolos ▸</a></td></tr>`).join('')}</tbody></table></div>`;
+  return h + `<div class="${cardsTable()}"><table class="ft cards"><thead><tr class="rowc"><th>Data</th><th>Protocolo</th><th>Para quem</th><th>Frasco/lote</th><th>Carência</th><th>Estado</th><th><span class="sr">Abrir</span></th></tr></thead><tbody>${l.map(c => `<tr class="rowc ${c.estado === 'estornada' ? 'estorn' : ''}"><td data-c="data">${br(c.data)}</td><td data-c="nome"><div class="nm">${esc(PROTO(c.protocoloId).nome)}${c.rotulo && c.rotulo !== 'aplicação' ? ' · ' + esc(c.rotulo) : ''}</div></td><td data-c="quem" data-l="Para quem">${c.animais.length} animais ${foraBadge(c.foraJanelaN)}</td><td data-c="prod" data-l="Frasco">${esc(c.frasco)}</td><td data-c="car" data-l="Carência">${esc(carTxtCC(c))}</td><td data-c="estado">${ST_CC(c)}</td><td class="acts"><a class="lnk" href="${href('/protocolos/concluidos', { concluido: c.id })}">Abrir em Protocolos ▸</a></td></tr>`).join('')}</tbody></table></div>`;
 };
 /* ───── Cobertura (modelo de estado único por animal × item) ───── */
 const frasePend = cob => `${cob.emDia} de ${cob.total} animais em dia${cob.partes.length ? ` · ${cob.total - cob.emDia} com pendência atrasada (${cob.partes.map(x => x.n).join(' + ')})` : ''}`;
@@ -3318,7 +3355,7 @@ ROUTES['/sanidade/vacinas/cobertura'] = () => {
   const ps = SEL.protocolos({ ativo: true }).filter(p => p.cobertura); const cel = {}; ps.forEach(p => { cel[p.id] = {}; }); const animais = Object.values(ST.animais).filter(a => a.ativo);
   animais.forEach(a => { ps.forEach(p => { const inf = SEL.infoItem(a.id, p.id); if (!inf || inf.status === 'na') return; const c = cel[p.id][a.lote] = cel[p.id][a.lote] || { t: 0, ok: 0 }; c.t++; if (!['atrasada', 'sem_registro', 'reagente', 'inconclusivo'].includes(inf.status)) c.ok++; }); });
   const th = ST.lotes.map(l => `<th title="${esc(l.nome)}">${esc(l.nome.replace(/ –.*$/, '').replace('Lote ', 'L'))}</th>`).join('');
-  h += `<div class="tw"><table class="ft matrix"><thead><tr><th>Protocolo</th>${th}<th>Total</th></tr></thead><tbody>${ps.map(p => { const t = cob.porProtocolo[p.id]; return `<tr><td><b>${esc(p.nome)}</b></td>${ST.lotes.map(l => { const c = cel[p.id][l.id]; if (!c) return '<td><span class="sub2">—</span></td>'; const pct = Math.round(c.ok / c.t * 100); return `<td><button type="button" class="cell ${pct === 100 ? 'green' : pct >= 80 ? 'amber' : 'red'}" data-act="setq" data-q_falta="${p.id}:${l.id}" aria-label="${esc(p.nome)}, ${esc(l.nome)}: ${pct}% em dia. Ver quem falta">${pct}%</button></td>`; }).join('')}<td><b>${t && t.aplic ? Math.round(t.emDia / t.aplic * 100) : 100}%</b></td></tr>`; }).join('')}</tbody></table></div>
+  h += `<div class="tw"><table class="ft matrix"><thead><tr class="rowc"><th>Protocolo</th>${th}<th>Total</th></tr></thead><tbody>${ps.map(p => { const t = cob.porProtocolo[p.id]; return `<tr class="rowc"><td><b>${esc(p.nome)}</b></td>${ST.lotes.map(l => { const c = cel[p.id][l.id]; if (!c) return '<td><span class="sub2">—</span></td>'; const pct = Math.round(c.ok / c.t * 100); return `<td><button type="button" class="cell ${pct === 100 ? 'green' : pct >= 80 ? 'amber' : 'red'}" data-act="setq" data-q_falta="${p.id}:${l.id}" aria-label="${esc(p.nome)}, ${esc(l.nome)}: ${pct}% em dia. Ver quem falta">${pct}%</button></td>`; }).join('')}<td><b>${t && t.aplic ? Math.round(t.emDia / t.aplic * 100) : 100}%</b></td></tr>`; }).join('')}</tbody></table></div>
   <div class="cols2" style="margin-top:1rem"><div class="box"><h3>${ic('cow', 's14')}Por lote (soma exata)</h3><ul class="list">${ST.lotes.map(l => { const x = cob.porLote[l.id]; return `<li><div class="grow"><b>${esc(l.nome)}</b></div><span>${x.emDia} de ${x.total} em dia</span></li>`; }).join('')}<li><div class="grow"><b>Total</b></div><b>${cob.emDia} de ${cob.total}</b></li></ul></div>
   <div class="box"><h3>${ic('warn', 's14')}Quem falta (carteira por animal)</h3>${cob.pendentes.length ? `<ul class="list">${cob.pendentes.slice(0, 8).map(x => `<li><div class="grow"><b>${esc(lbl(x.animalId))}</b><div class="sub2">${esc(loteNome(ANI(x.animalId).lote))} · ${x.itens.map(i => PROTO(i.protocoloId).nome + ': ' + STATUS_AV[i.status][2].toLowerCase()).join('; ')}</div></div><button type="button" class="linkbtn" data-act="setq" data-q_animal="${x.animalId}">Ver carteira</button></li>`).join('')}</ul>${cob.pendentes.length > 8 ? `<p class="hint">+ ${cob.pendentes.length - 8} animais. Use a matriz acima para ver por vacina e lote.</p>` : ''}` : '<p class="hint">Todo o rebanho está em dia.</p>'}<div class="actions" style="margin-top:.5rem">${bt('btn-primary sm', 'list-checks', 'Abrir em Protocolos', 'data-act="go" data-to="/protocolos/aplicar"')}</div></div></div>${carenciaBloco()}
   <div class="legend" style="margin-top:1rem;border:1px solid var(--border)"><span>Estados: </span>${['em_dia', 'prevista', 'atrasada', 'sem_registro', 'na', 'reagente', 'inconclusivo'].map(s => pillAV(s)).join('')}</div>`;
@@ -3337,7 +3374,7 @@ DRAWERS.push(q => {
 DRAWERS.push(q => {
   const id = q.get('animal'); if (!id) return null; const a = ANI(id); if (!a) return null; UI.drKey = 'an:' + id;
   const cart = SEL.carteira(id); const ags = SEL.agsDoAnimal(id); const rg = SEL.reagentes().filter(r => r.animalId === id);
-  return { key: 'an:' + id, cls: 'wide', label: 'Carteira do animal', html: drawerHead('Carteira de vacinas e exames', esc(lbl(id)), `<span>${esc(loteNome(a.lote))} · ${a.sexo === 'F' ? 'fêmea' : 'macho'} · ${idadeTxt(a)}</span>`) + `<div class="dr-b">${rg.length ? avs('red', 'warn', '<b>Reagente na TB.</b> Notificar o serviço veterinário oficial. O comprovante “animal em dia” fica bloqueado.') : ''}${ags.length ? avs('blue', 'info', `Este animal está em ${ags.length} ${pl(ags.length, 'agendamento', 'agendamentos')} (${ags.map(x => esc(PROTO(x.protocoloId).nome)).join(', ')}).`) : ''}<div class="tw"><table class="ft"><thead><tr><th>Item</th><th>Estado</th><th>Última</th><th>Próxima</th></tr></thead><tbody>${cart.map(x => `<tr><td><div class="nm">${esc(x.nome)}</div></td><td>${pillAV(x.status)}</td><td>${x.ultima ? br(x.ultima) : '—'}</td><td>${x.prox ? br(x.prox) : '—'}</td></tr>`).join('')}</tbody></table></div></div><div class="dr-f">${bt('btn-primary', 'list-checks', 'Abrir em Protocolos', 'data-act="go" data-to="/protocolos/aplicar"')}${bt('btn-ghost', '', 'Fechar', 'data-act="dr-close"')}</div>` };
+  return { key: 'an:' + id, cls: 'wide', label: 'Carteira do animal', html: drawerHead('Carteira de vacinas e exames', esc(lbl(id)), `<span>${esc(loteNome(a.lote))} · ${a.sexo === 'F' ? 'fêmea' : 'macho'} · ${idadeTxt(a)}</span>`) + `<div class="dr-b">${rg.length ? avs('red', 'warn', '<b>Reagente na TB.</b> Notificar o serviço veterinário oficial. O comprovante “animal em dia” fica bloqueado.') : ''}${ags.length ? avs('blue', 'info', `Este animal está em ${ags.length} ${pl(ags.length, 'agendamento', 'agendamentos')} (${ags.map(x => esc(PROTO(x.protocoloId).nome)).join(', ')}).`) : ''}<div class="tw"><table class="ft"><thead><tr class="rowc"><th>Item</th><th>Estado</th><th>Última</th><th>Próxima</th></tr></thead><tbody>${cart.map(x => `<tr class="rowc"><td><div class="nm">${esc(x.nome)}</div></td><td>${pillAV(x.status)}</td><td>${x.ultima ? br(x.ultima) : '—'}</td><td>${x.prox ? br(x.prox) : '—'}</td></tr>`).join('')}</tbody></table></div></div><div class="dr-f">${bt('btn-primary', 'list-checks', 'Abrir em Protocolos', 'data-act="go" data-to="/protocolos/aplicar"')}${bt('btn-ghost', '', 'Fechar', 'data-act="dr-close"')}</div>` };
 });
 
 /* ═════════ Lançamentos (sem o preventivo) e telas de apoio coerentes com a Store ═════════ */
@@ -3352,8 +3389,8 @@ ROUTES['/financeiro/contas-a-pagar'] = () => {
   const hoje = cps.filter(c => c.estado === 'a_pagar' && c.venc === HI).reduce((s, c) => s + c.valor, 0); const prot = cps.filter(c => c.agId && c.estado === 'a_pagar').reduce((s, c) => s + c.valor, 0);
   let h = pgHead('bar-chart', 'Controle Financeiro', 'Contas a pagar. As contas que nascem de um protocolo preventivo trazem o link para o agendamento.', '');
   h += strip([{ num: R$(hoje), lab: 'Vence hoje', sub: 'gestão', cls: 't-amber' }, { num: R$(prot), lab: 'Do preventivo', sub: 'honorário e produtos a pagar' }, { num: pgs.reduce((s, p) => s + p.vinculos.length, 0), lab: 'Pagamentos vinculados', sub: 'compras já pagas usadas em cronogramas' }]);
-  h += `<h2 class="col-h" style="margin:.4rem 0">Contas a pagar</h2><div class="${cardsTable()}"><table class="ft cards"><thead><tr><th>Vencimento</th><th>Fornecedor</th><th>Descrição</th><th>Origem</th><th class="num">Valor</th><th>Estado</th></tr></thead><tbody>${cps.map(c => `<tr data-fk="cp-${c.id}"><td data-c="data">${br(c.venc)}</td><td data-c="nome"><div class="nm">${esc(c.fornecedor)}</div></td><td data-c="x" data-l="Descrição">${esc(c.descricao)}${c.tipo === 'honorario' ? ' <span class="tag">honorário</span>' : c.tipo === 'produto' ? ' <span class="tag">produtos</span>' : ''}</td><td data-c="x" data-l="Origem">${c.agId ? linkAg(c.agId) : '<span class="sub2">gestão</span>'}</td><td class="num" data-c="x" data-l="Valor"><b>${R$(c.valor)}</b></td><td data-c="estado">${cpEstado(c)}</td></tr>`).join('')}</tbody></table></div>`;
-  h += `<h2 class="col-h" style="margin:1.4rem 0 .4rem">Pagamentos já realizados (vinculáveis a um cronograma)</h2><div class="${cardsTable()}"><table class="ft cards"><thead><tr><th>Data</th><th>Fornecedor</th><th>Descrição</th><th class="num">Valor</th><th>Vinculado a</th></tr></thead><tbody>${pgs.map(p => `<tr data-fk="pg-${p.id}"><td data-c="data">${br(p.data)}</td><td data-c="nome"><div class="nm">${esc(p.fornecedor)}</div></td><td data-c="x" data-l="Descrição">${esc(p.descricao)}</td><td class="num" data-c="x" data-l="Valor"><b>${R$(p.valor)}</b></td><td data-c="x" data-l="Vinculado a">${p.vinculos.length ? p.vinculos.map(v => `${linkAg(v.agId)} <span class="sub2">${R$(v.valor)} (${Math.round(v.valor / p.valor * 100)}%)</span>`).join('<br>') : '<span class="sub2">nenhum ainda</span>'}</td></tr>`).join('')}</tbody></table></div>`;
+  h += `<h2 class="col-h" style="margin:.4rem 0">Contas a pagar</h2><div class="${cardsTable()}"><table class="ft cards"><thead><tr class="rowc"><th>Vencimento</th><th>Fornecedor</th><th>Descrição</th><th>Origem</th><th class="num">Valor</th><th>Estado</th></tr></thead><tbody>${cps.map(c => `<tr class="rowc" data-fk="cp-${c.id}"><td data-c="data">${br(c.venc)}</td><td data-c="nome"><div class="nm">${esc(c.fornecedor)}</div></td><td data-c="x" data-l="Descrição">${esc(c.descricao)}${c.tipo === 'honorario' ? ' <span class="tag">honorário</span>' : c.tipo === 'produto' ? ' <span class="tag">produtos</span>' : ''}</td><td data-c="x" data-l="Origem">${c.agId ? linkAg(c.agId) : '<span class="sub2">gestão</span>'}</td><td class="num" data-c="x" data-l="Valor"><b>${R$(c.valor)}</b></td><td data-c="estado">${cpEstado(c)}</td></tr>`).join('')}</tbody></table></div>`;
+  h += `<h2 class="col-h" style="margin:1.4rem 0 .4rem">Pagamentos já realizados (vinculáveis a um cronograma)</h2><div class="${cardsTable()}"><table class="ft cards"><thead><tr class="rowc"><th>Data</th><th>Fornecedor</th><th>Descrição</th><th class="num">Valor</th><th>Vinculado a</th></tr></thead><tbody>${pgs.map(p => `<tr class="rowc" data-fk="pg-${p.id}"><td data-c="data">${br(p.data)}</td><td data-c="nome"><div class="nm">${esc(p.fornecedor)}</div></td><td data-c="x" data-l="Descrição">${esc(p.descricao)}</td><td class="num" data-c="x" data-l="Valor"><b>${R$(p.valor)}</b></td><td data-c="x" data-l="Vinculado a">${p.vinculos.length ? p.vinculos.map(v => `${linkAg(v.agId)} <span class="sub2">${R$(v.valor)} (${Math.round(v.valor / p.valor * 100)}%)</span>`).join('<br>') : '<span class="sub2">nenhum ainda</span>'}</td></tr>`).join('')}</tbody></table></div>`;
   return h;
 };
 /* ───── Estoque (saldo por frasco e validade; baixa ao aplicar) ───── */
@@ -3361,7 +3398,7 @@ ROUTES['/estoque'] = () => {
   const es = ST.estoque; const skus = Object.keys(es); let h = pgHead('package', 'Estoque', 'Saldo por frasco e validade. Aplicar um cronograma baixa aqui; o saldo nunca fica negativo.', '');
   const venc = skus.flatMap(k => es[k].lotes.filter(f => Store.vencido(f) && f.saldo > 0).map(f => k)).length; const prox = skus.flatMap(k => es[k].lotes.filter(f => !Store.vencido(f) && Store.venceEm(f) <= 30)).length;
   h += strip([{ num: skus.length, lab: 'Produtos', sub: 'no estoque' }, { num: venc, lab: 'Frascos vencidos', sub: 'exigem ciência ao usar', cls: venc ? 't-red' : '' }, { num: prox, lab: 'Vencem em 30 dias', sub: 'usar primeiro', cls: prox ? 't-amber' : '' }]);
-  h += `<div class="${cardsTable()}"><table class="ft cards"><thead><tr><th>Produto</th><th>Categoria</th><th>Frasco / lote</th><th>Validade</th><th class="num">Saldo</th><th>Situação</th></tr></thead><tbody>${skus.map(k => es[k].lotes.map((f, i) => `<tr data-fk="es-${k}-${f.lote}"><td data-c="nome">${i === 0 ? `<div class="nm">${esc(es[k].nome)}</div>` : ''}</td><td data-c="x" data-l="Categoria">${i === 0 ? esc(SEL.categoriaDe(k)) : ''}</td><td data-c="prod" data-l="Frasco">${esc(f.lote)}</td><td data-c="data">${br(f.validade)}</td><td class="num" data-c="x" data-l="Saldo"><b>${num(f.saldo)}</b> ${es[k].un}</td><td data-c="estado">${Store.vencido(f) ? `<span class="st atrasada">${ic('warn', 's14')}Vencido</span>` : Store.venceEm(f) <= 30 ? `<span class="st vence">${ic('clock', 's14')}Vence em ${Store.venceEm(f)} dias</span>` : `<span class="st registrada">${ic('ok', 's14')}Ok</span>`}</td></tr>`).join('')).join('')}</tbody></table></div>
+  h += `<div class="${cardsTable()}"><table class="ft cards"><thead><tr class="rowc"><th>Produto</th><th>Categoria</th><th>Frasco / lote</th><th>Validade</th><th class="num">Saldo</th><th>Situação</th></tr></thead><tbody>${skus.map(k => es[k].lotes.map((f, i) => `<tr class="rowc" data-fk="es-${k}-${f.lote}"><td data-c="nome">${i === 0 ? `<div class="nm">${esc(es[k].nome)}</div>` : ''}</td><td data-c="x" data-l="Categoria">${i === 0 ? esc(SEL.categoriaDe(k)) : ''}</td><td data-c="prod" data-l="Frasco">${esc(f.lote)}</td><td data-c="data">${br(f.validade)}</td><td class="num" data-c="x" data-l="Saldo"><b>${num(f.saldo)}</b> ${es[k].un}</td><td data-c="estado">${Store.vencido(f) ? `<span class="st atrasada">${ic('warn', 's14')}Vencido</span>` : Store.venceEm(f) <= 30 ? `<span class="st vence">${ic('clock', 's14')}Vence em ${Store.venceEm(f)} dias</span>` : `<span class="st registrada">${ic('ok', 's14')}Ok</span>`}</td></tr>`).join('')).join('')}</tbody></table></div>
   <p class="hint" style="margin-top:.8rem">Os pedidos e cotações que nascem dos cronogramas ficam em <a class="lnk pad" href="${href('/cotacoes')}">Cotações</a> e <a class="lnk pad" href="${href('/pedidos')}">Pedidos</a>.</p>`;
   return h;
 };
@@ -3369,15 +3406,89 @@ ROUTES['/estoque'] = () => {
 ROUTES['/cotacoes'] = () => {
   const cs = SEL.cotacoes(); let h = pgHead('file-search', 'Cotações', 'Pedidos de cotação. Os que nascem do checklist de um protocolo trazem o link para o agendamento.', '');
   if (!cs.length) return h + vazio('file-search', 'Nenhuma cotação', 'Comunique a compra no checklist de um cronograma para criar a primeira.', bt('btn-primary', 'clock', 'Ir para Acompanhamento', 'data-act="go" data-to="/protocolos/acompanhamento"'));
-  return h + `<div class="${cardsTable()}"><table class="ft cards"><thead><tr><th>Cotação</th><th>Produto</th><th class="num">Qtd</th><th>Fornecedor</th><th>Necessário até</th><th>Estado</th><th>Origem</th></tr></thead><tbody>${cs.map(c => `<tr data-fk="ct-${c.id}"><td data-c="nome"><div class="nm">${esc(c.id)}</div><div class="sub2">${dh(c.criadaEm)}</div></td><td data-c="x" data-l="Produto">${esc(c.produtoNome)}</td><td class="num" data-c="x" data-l="Qtd">${num(c.qtd)}</td><td data-c="x" data-l="Fornecedor">${esc(c.fornecedores.join(', '))}</td><td data-c="data">${c.necessarioAte ? br(c.necessarioAte) : '—'}</td><td data-c="estado">${c.estado === 'respondida' ? pill('aplicado', 'Respondida') : c.estado === 'em_andamento' ? `<span class="st andamento">${ic('clock', 's14')}Em andamento</span>` : `<span class="st confirmada">${ic('calendar-check', 's14')}Enviada</span>`}</td><td data-c="x" data-l="Origem">${c.agId ? linkAg(c.agId) : '—'}</td></tr>`).join('')}</tbody></table></div>`;
+  return h + `<div class="${cardsTable()}"><table class="ft cards"><thead><tr class="rowc"><th>Cotação</th><th>Produto</th><th class="num">Qtd</th><th>Fornecedor</th><th>Necessário até</th><th>Estado</th><th>Origem</th><th><span class="sr">Ação</span></th></tr></thead><tbody>${cs.map(c => `<tr class="rowc" data-fk="ct-${c.id}"><td data-c="nome"><div class="nm">${esc(c.id)}</div><div class="sub2">${dh(c.criadaEm)}</div></td><td data-c="x" data-l="Produto">${esc(c.produtoNome)}</td><td class="num" data-c="x" data-l="Qtd">${num(c.qtd)}</td><td data-c="x" data-l="Fornecedor">${esc(c.fornecedores.join(', '))}</td><td data-c="data">${c.necessarioAte ? br(c.necessarioAte) : '—'}</td><td data-c="estado">${c.estado === 'respondida' ? pill('aplicado', 'Respondida') : c.estado === 'em_andamento' ? `<span class="st andamento">${ic('clock', 's14')}Em andamento</span>` : `<span class="st confirmada">${ic('calendar-check', 's14')}Enviada</span>`}</td><td data-c="x" data-l="Origem">${c.agId ? linkAg(c.agId) : '—'}</td><td class="acts">${c.estado !== 'respondida' && c.agId ? bt('btn-sec sm', 'cart', 'Virar pedido', `data-act="ct-pedido" data-id="${c.id}" data-ag="${c.agId}"`) : ''}</td></tr>`).join('')}</tbody></table></div>`;
 };
+ACT['ct-pedido'] = t => act('criarPedido', { agId: t.dataset.ag, cotacaoId: t.dataset.id }, r => `Pedido ${r.id} criado a partir da cotação ${t.dataset.id}.`);
 ROUTES['/pedidos'] = () => {
   const ps = SEL.pedidos(); let h = pgHead('cart', 'Pedidos', 'Pedidos de compra. Os que nascem de uma cotação do checklist trazem o link para o agendamento.', '');
   if (!ps.length) return h + vazio('cart', 'Nenhum pedido ainda', 'Quando uma cotação de um cronograma virar pedido, ele aparece aqui.', bt('btn-sec', 'file-search', 'Ver cotações', 'data-act="go" data-to="/cotacoes"'));
-  return h + `<div class="${cardsTable()}"><table class="ft cards"><thead><tr><th>Pedido</th><th>Produto</th><th class="num">Qtd</th><th>Fornecedor</th><th>Cotação</th><th>Origem</th></tr></thead><tbody>${ps.map(p => `<tr><td data-c="nome"><div class="nm">${esc(p.id)}</div></td><td data-c="x" data-l="Produto">${esc(p.produtoNome)}</td><td class="num" data-c="x" data-l="Qtd">${num(p.qtd)}</td><td data-c="x" data-l="Fornecedor">${esc(p.fornecedor)}</td><td data-c="x" data-l="Cotação">${esc(p.cotacaoId)}</td><td data-c="x" data-l="Origem">${p.agId ? linkAg(p.agId) : '—'}</td></tr>`).join('')}</tbody></table></div>`;
+  return h + `<div class="${cardsTable()}"><table class="ft cards"><thead><tr class="rowc"><th>Pedido</th><th>Produto</th><th class="num">Qtd</th><th>Fornecedor</th><th>Cotação</th><th>Origem</th></tr></thead><tbody>${ps.map(p => `<tr class="rowc"><td data-c="nome"><div class="nm">${esc(p.id)}</div></td><td data-c="x" data-l="Produto">${esc(p.produtoNome)}</td><td class="num" data-c="x" data-l="Qtd">${num(p.qtd)}</td><td data-c="x" data-l="Fornecedor">${esc(p.fornecedor)}</td><td data-c="x" data-l="Cotação">${esc(p.cotacaoId)}</td><td data-c="x" data-l="Origem">${p.agId ? linkAg(p.agId) : '—'}</td></tr>`).join('')}</tbody></table></div>`;
 };
 
 /* ═════ STORYBOARD executável ═════ */
+/* ═════ STORYBOARD executável ═════
+   window.STORYBOARD = [{ n, titulo, bloco, hash, setup:[{type,payload}], nota }]
+   Para cada n: Roteiro.preparar(n) (ou Store.dispatch de cada item de setup, na ordem) e depois navegar até `hash`.
+   Tokens: "$ag" = id do último agendamento criado no setup; "$rN.chave" = campo `chave` do resultado da N-ésima action do setup. */
+(function () {
+  const rg = (a, b) => { const o = []; for (let i = a; i <= b; i++) o.push(String(i)); return o; };
+  const REI = c => ({ type: 'reiniciar', payload: { cenario: c } });
+  const CHK_ALL = ['veterinario', 'estoque', 'data', 'manejo', 'compra', 'pagamento', 'contaPagar'];
+  const B19 = { type: 'cadastrarProtocolo', payload: { nome: 'Brucelose B19', tipo: 'vacina', catalogo: 'b19', doenca: 'Brucelose', produto: 'b19', dose: '2 mL', via: 'subcutânea', vias: ['subcutânea'], carencia: { leite: 0, carne: 0 }, exigeVet: true, custoUn: 6.4, quem: { sexo: 'F', lotes: ['bz'], idadeMin: 3, idadeMax: 8, condicao: 'Fêmeas' }, janela: { regra: 'idade', intervaloDias: 365, abreAntes: 0, fechaDepois: 0, multidose: false, inicio: '' }, repete: 'Dose única', checklistModelo: CHK_ALL, checklistExtras: [], cobertura: true } };
+  const S1 = [REI('fio'), B19];                                   // B19 recém-cadastrado, 6 bezerras na lista de espera
+  const PID = 'brucelose-b19', FORA = 'Aproveitar a visita do veterinário';
+  const AG8 = { type: 'criarAgendamento', payload: { protocoloId: PID, animais: rg(6104, 6109).concat([{ animalId: '6110', motivo: FORA }, { animalId: '6112', motivo: FORA }]) } };
+  const MONT = { type: 'montagem', payload: { agId: '$ag', data: '2026-10-02', hora: '08:00', responsavelId: 'p2', tipoResp: 'veterinario' } };
+  const CK = (item, estado, dados = {}) => ({ type: 'checklist', payload: { agId: '$ag', item, estado, dados } });
+  const CK_OK = [CK('veterinario', 'ok', { pessoaId: 'p2' }), CK('estoque', 'ok', { lote: 'BR-2604' }), CK('manejo', 'ok')];
+  const APL1 = { type: 'aplicar', payload: { agId: 'ag-1', animaisAplicados: rg(5101, 5120), frasco: 'IV-2610', aplicadorId: 'p3' } };
+  const TB = [{ type: 'criarAgendamento', payload: { protocoloId: 'reteste-tb', animais: ['4201', '4207', '4215'] } }, { type: 'agendar', payload: { agId: '$ag', data: '2026-09-29', hora: '14:05', responsavelId: 'p2' } }];
+  const TB_INOC = { type: 'aplicar', payload: { agId: '$ag', animaisAplicados: ['4201', '4207', '4215'], frasco: 'TU-2608', aplicadorId: 'p2', data: '2026-09-26', hora: '14:05' } };
+  const TB_LEIT = { type: 'aplicar', payload: { agId: '$ag', resultados: { 4201: 'Negativo', 4207: 'Positivo', 4215: 'Negativo' }, aplicadorId: 'p2', data: '2026-09-29', hora: '14:05', laudo: 'L-2609' } };
+  const M = '#/protocolos/aplicar/montar';
+  const SB = [
+    { n: 1, titulo: 'Entrada em Protocolos (abre em Acompanhamento)', bloco: 'Central', hash: '#/protocolos', setup: [REI('dia')], nota: 'Sem “Visão geral” extra: Protocolos abre no Acompanhamento. Abas: Cadastro · Aplicar · Acompanhamento · Concluídos.' },
+    { n: 2, titulo: 'Cadastro › lista de protocolos preventivos', bloco: 'A · Cadastro', hash: '#/protocolos/cadastro', setup: [REI('fio')], nota: 'Cenário sem B19 cadastrado. Cartão “Detecção de cio de repasse” e demais tipos (IATF, Indução, Curativo, Próprio) abaixo da lista.' },
+    { n: 3, titulo: 'Cadastro › wizard passo 1: O que é', bloco: 'A · Cadastro', hash: '#/protocolos/cadastro?nova=1&wp=1&preset=b19', setup: [REI('fio')], nota: 'Vacina ou exame; produto do Catálogo; dose; via travada pelo produto; carência do catálogo; veterinário obrigatório liga sozinho na B19.' },
+    { n: 4, titulo: 'Cadastro › wizard passo 2: quem entra e quando (janela de aplicação)', bloco: 'A · Cadastro', hash: '#/protocolos/cadastro?nova=1&wp=2&preset=b19', setup: [REI('fio')], nota: 'Prévia viva: “Hoje esta janela alcança 6 animais”.' },
+    { n: 5, titulo: 'Cadastro › wizard passo 3: checklist-modelo', bloco: 'A · Cadastro', hash: '#/protocolos/cadastro?nova=1&wp=3&preset=b19', setup: [REI('fio')], nota: 'Itens ligados por padrão; cada um pulável na hora. O passo 4 (Conferir) é a tela 34.' },
+    { n: 6, titulo: 'Protocolo salvo · primeira entrada de animais', bloco: 'A · Cadastro', hash: '#/protocolos/cadastro?salvo=' + PID, setup: S1, nota: '“O que acontece agora”: 6 bezerras na lista de espera; nada vai para a Agenda até agendar.' },
+    { n: 7, titulo: 'Entrada automática na janela · revisão', bloco: 'B · Lista de espera', hash: '#/protocolos/aplicar?protocolo=' + PID + '&revisar=' + PID, setup: S1, nota: 'Por que cada animal entrou; “não se aplica” com motivo.' },
+    { n: 8, titulo: 'Aplicar › Lista de espera (agrupada por protocolo)', bloco: 'B · Lista de espera', hash: '#/protocolos/aplicar', setup: S1, nota: 'Totais calculados: aguardando, janela vencida, fecham em 7 dias. Botão “Montar cronograma” por grupo.' },
+    { n: 9, titulo: 'Lista de espera › detalhe de um protocolo (Raiva)', bloco: 'B · Lista de espera', hash: '#/protocolos/aplicar?protocolo=raiva', setup: [REI('dia')], nota: 'Escolher exatamente quais animais entram no cronograma.' },
+    { n: 10, titulo: 'Lista de espera › situações (na janela, vencida, fecha em breve, fechou)', bloco: 'B · Lista de espera', hash: '#/protocolos/aplicar', setup: [REI('dia')], nota: 'Legenda das quatro situações e o aviso “Lista de espera ≠ Agenda”.' },
+    { n: 11, titulo: 'Montar cronograma › passo 1: animais (na janela e fora da janela)', bloco: 'C · Cronograma e agendamento', hash: M + '?ag={ag}&passo=1', setup: S1.concat([AG8]), nota: '6 na janela + 2 fora da janela (6110 e 6112).' },
+    { n: 12, titulo: 'Incluir animal fora da janela (motivo obrigatório)', bloco: 'C · Cronograma e agendamento', hash: M + '?ag={ag}&passo=1&fora=1&pre=6111', setup: S1.concat([{ type: 'criarAgendamento', payload: { protocoloId: PID, animais: rg(6104, 6109) } }]), nota: 'Busca por brinco; cartão do animal com idade e janela; motivo escolhido; aviso que não bloqueia.' },
+    { n: 13, titulo: 'Montar cronograma › passo 2: quando e com quem', bloco: 'C · Cronograma e agendamento', hash: M + '?ag={ag}&passo=2', setup: S1.concat([AG8, MONT]), nota: 'Data com régua da janela, hora, veterinário (CRMV) ou equipe própria; prévia “Como fica na Agenda”.' },
+    { n: 14, titulo: 'Montar cronograma › passo 3: checklist', bloco: 'C · Cronograma e agendamento', hash: M + '?ag={ag}&passo=3', setup: S1.concat([AG8, MONT], CK_OK), nota: 'Veterinário, estoque, data, compra, pagamento, conta a pagar, manejo; nada bloqueia.' },
+    { n: 15, titulo: 'Checklist › estoque não cobre: comunicar compra', bloco: 'C · Cronograma e agendamento', hash: M + '?ag={ag}&passo=3&item=compra', setup: S1.concat([AG8, MONT, { type: 'ajustarEstoque', payload: { sku: 'b19', lote: 'BR-2604', saldo: 5 } }]), nota: 'Saldo 5, precisa de 8: faltam 3. Cria a cotação e marca o item como cumprido.' },
+    { n: 16, titulo: 'Checklist › financeiro: pagamento já realizado / conta a pagar', bloco: 'C · Cronograma e agendamento', hash: M + '?ag={ag}&passo=3&item=financeiro&aba=pag', setup: S1.concat([AG8, MONT]), nota: 'Vínculo proporcional ao pagamento de R$ 128,00 (20 doses); aba ao lado lança o honorário R$ 350,00.' },
+    { n: 17, titulo: 'Montar cronograma › passo 4: conferir e agendar', bloco: 'C · Cronograma e agendamento', hash: M + '?ag={ag}&passo=4', setup: S1.concat([AG8, MONT], CK_OK, [{ type: 'vincularPagamento', payload: { agId: '$ag', pagamentoId: 'pg-1' } }, { type: 'criarContaPagar', payload: { agId: '$ag', tipo: 'honorario', fornecedor: 'Dr. Paulo Menezes', descricao: 'Honorário — Brucelose B19 (Bezerreiro, 02/10)', valor: 350, venc: '2026-10-12' } }]), nota: 'Resumo de consequência antes de agendar.' },
+    { n: 18, titulo: 'Agendado! O que acontece agora', bloco: 'C · Cronograma e agendamento', hash: '#/protocolos/acompanhamento?novo={ag}', setup: S1.concat([AG8, MONT], CK_OK, [{ type: 'agendar', payload: { agId: '$ag', data: '2026-10-02', hora: '08:00', responsavelId: 'p2' } }]), nota: 'Foi para a Agenda; acompanha em Protocolos; quem sobrar continua na lista de espera. Toast com Desfazer.' },
+    { n: 19, titulo: 'Acompanhamento › o que já está agendado', bloco: 'D · Acompanhamento, Agenda e aplicar', hash: '#/protocolos/acompanhamento', setup: [REI('dia')], nota: 'Selos ✓Vet ✓Estoque ✓Data ◌Conta; Aplicar, Adiar, Cancelar, Reabrir.' },
+    { n: 20, titulo: 'Detalhe do agendamento (gaveta)', bloco: 'D · Acompanhamento, Agenda e aplicar', hash: '#/protocolos/acompanhamento?agendamento=ag-3', setup: [REI('dia')], nota: 'Animais (com “fora da janela” e motivo), checklist e histórico.' },
+    { n: 21, titulo: 'Agenda › o agendamento entra no dia (e a lista de espera não)', bloco: 'D · Acompanhamento, Agenda e aplicar', hash: '#/agenda', setup: [REI('dia')], nota: 'Hoje: Vermifugação Recria 1 (agendada). Raiva, Clostridioses e TB só existem na lista de espera e não aparecem aqui.' },
+    { n: 22, titulo: 'Aplicar (aberto em Protocolos › Acompanhamento)', bloco: 'D · Acompanhamento, Agenda e aplicar', hash: '#/protocolos/acompanhamento?aplicar=ag-1&de=acomp', setup: [REI('dia')], nota: 'Animais aplicados, frasco IV-2610 (o vencido nunca vem escolhido), dose por peso 4,6 mL, resumo de consequência.' },
+    { n: 23, titulo: 'Aplicar (aberto pela Agenda, no dia)', bloco: 'D · Acompanhamento, Agenda e aplicar', hash: '#/agenda?aplicar=ag-1&de=agenda', setup: [REI('dia')], nota: 'Mesma gaveta, mesmo resultado; “Aberto de: Agenda”.' },
+    { n: 24, titulo: 'Aplicar exame TB: inoculação (e leitura em 72 h)', bloco: 'D · Acompanhamento, Agenda e aplicar', hash: '#/protocolos/acompanhamento?aplicar={ag}&de=acomp', setup: [REI('dia')].concat(TB), nota: 'Etapa 1: inoculação com tuberculina TU-2608 e aplicador veterinário. A leitura vira novo agendamento (tela 42).' },
+    { n: 25, titulo: 'Aplicação concluída · resumo do que foi feito', bloco: 'D · Acompanhamento, Agenda e aplicar', hash: '#/protocolos/acompanhamento?resumo=$r1.concluidoId&de=acomp', setup: [REI('dia'), APL1], nota: 'Estoque baixado, carência de carne registrada, custo, próxima janela criada, foi para Concluídos.' },
+    { n: 26, titulo: 'Pendências pós-aplicação (quem não foi aplicado)', bloco: 'D · Acompanhamento, Agenda e aplicar', hash: '#/protocolos/acompanhamento?resumo=$r1.concluidoId&de=acomp', setup: [REI('dia'), { type: 'aplicar', payload: { agId: 'ag-1', animaisAplicados: rg(5101, 5118), frasco: 'IV-2610', aplicadorId: 'p3', motivosNao: { 5119: 'Não localizado', 5120: 'Doente' }, destinosNao: { 5119: 'espera', 5120: 'espera' } } }], nota: '5119 e 5120 voltam para a lista de espera com aviso “Não aplicado em 29/09 — motivo”.' },
+    { n: 27, titulo: 'Concluídos › histórico', bloco: 'E · Concluídos, Sanidade, Lançamentos', hash: '#/protocolos/concluidos', setup: [REI('dia'), APL1], nota: 'Filtros, “Fora da janela apenas”, exportar CSV real; a nova aplicação aparece no topo.' },
+    { n: 28, titulo: 'Detalhe de um concluído (imutável, só observação)', bloco: 'E · Concluídos, Sanidade, Lançamentos', hash: '#/protocolos/concluidos?concluido=$r1.concluidoId', setup: [REI('dia'), APL1], nota: 'Abas Animais, Checklist, Financeiro e Histórico; observação aditiva.' },
+    { n: 29, titulo: 'Sanidade › Preventivo › Calendário (somente leitura)', bloco: 'E · Concluídos, Sanidade, Lançamentos', hash: '#/sanidade/vacinas/calendario', setup: [REI('dia')], nota: 'Sem botão de aplicar; links “Abrir em Protocolos” e “Abrir na Agenda”.' },
+    { n: 30, titulo: 'Sanidade › Em andamento (somente leitura)', bloco: 'E · Concluídos, Sanidade, Lançamentos', hash: '#/sanidade/vacinas/andamento', setup: [REI('dia')], nota: 'Lista de espera, montagem e agendados.' },
+    { n: 31, titulo: 'Sanidade › Concluídos e Cobertura (somente leitura)', bloco: 'E · Concluídos, Sanidade, Lançamentos', hash: '#/sanidade/vacinas/cobertura', setup: [REI('dia')], nota: '119 de 151 animais em dia (79%); “quem falta” leva a Protocolos › Lista de espera.' },
+    { n: 32, titulo: 'Lançamentos › Sanitário sem preventivo', bloco: 'E · Concluídos, Sanidade, Lançamentos', hash: '#/lancamentos/sanitario/curativo', setup: [REI('dia')], nota: 'Aviso e link “Aplicar vacina ou exame → Protocolos”. O link antigo /preventivo redireciona.' },
+    { n: 33, titulo: 'Exceção: adiar um agendamento', bloco: 'F · Exceções', hash: '#/protocolos/acompanhamento?agendamento=ag-3&acao=adiar', setup: [REI('dia')], nota: 'Nova data (amanhã, +7 dias, escolher); motivo opcional (grava “sem motivo informado”). Cancelar (tela 35), pular (36), estoque insuficiente (15), veterinário pendente (37).' },
+    // ───── Complementos (não numerados no storyboard original) ─────
+    { n: 34, titulo: 'Cadastro › wizard passo 4: conferir', bloco: 'A · Cadastro', hash: '#/protocolos/cadastro?nova=1&wp=4&preset=b19', setup: [REI('fio')], nota: 'Resumo em linguagem de fazenda e “6 animais entram hoje na lista de espera”.' },
+    { n: 35, titulo: 'Exceção: cancelar agendamento (devolve à lista de espera)', bloco: 'F · Exceções', hash: '#/protocolos/acompanhamento?agendamento=ag-3&acao=cancelar', setup: [REI('dia')], nota: 'Devolve os animais da janela à lista de espera, libera os de fora da janela e mantém o histórico.' },
+    { n: 36, titulo: 'Exceção: pular esta rodada', bloco: 'F · Exceções', hash: '#/protocolos/acompanhamento?agendamento=ag-2&acao=pular', setup: [REI('dia')], nota: 'Motivo obrigatório em chips.' },
+    { n: 37, titulo: 'Exceção: veterinário pendente (selo vermelho)', bloco: 'F · Exceções', hash: '#/protocolos/acompanhamento', setup: [REI('dia'), { type: 'checklist', payload: { agId: 'ag-3', item: 'veterinario', estado: 'nao_confirmou', dados: { motivo: 'Dr. Paulo ainda não confirmou a data' } } }], nota: '“Vet não confirmou” em Acompanhamento, Agenda e Sanidade.' },
+    { n: 38, titulo: 'Caminho retroativo: aplicação já realizada', bloco: 'C · Cronograma e agendamento', hash: M + '?avulsa=1&retro=1&passo=1', setup: [REI('dia')], nota: 'Lança e aplica de uma vez, pela Lista de espera › “Aplicação já realizada”.' },
+    { n: 39, titulo: 'Sem conexão: dados de 14:05 e ações pendentes', bloco: 'F · Exceções', hash: '#/protocolos/acompanhamento', setup: [REI('dia'), { type: 'setOffline', payload: { ativo: true } }], nota: 'Faixa “Sem conexão”, o que for feito fica salvo no aparelho.' },
+    { n: 40, titulo: 'Cadastro › configuração da detecção de cio de repasse', bloco: 'A · Cadastro', hash: '#/protocolos/cadastro?repasse=1', setup: [REI('dia')], nota: 'Usar ou não, produto da categoria, frequência, mostrar na Agenda, descontar estoque.' },
+    { n: 41, titulo: 'Classificar produto (categoria de repasse)', bloco: 'A · Cadastro', hash: '#/protocolos/cadastro?classificar=1', setup: [REI('dia')], nota: 'A categoria define quais produtos podem ser vinculados à regra.' },
+    { n: 42, titulo: 'Exame TB: leitura em 72 h e reagente persistente', bloco: 'D · Acompanhamento, Agenda e aplicar', hash: '#/protocolos/acompanhamento?aplicar={ag}&de=acomp', setup: [REI('dia')].concat(TB, [TB_INOC]), nota: 'Inoculação em 26/09; leitura hoje (72 h). Resultado por animal; positivo grava reagente.' },
+    { n: 43, titulo: 'Reagente na TB: banner persistente e comprovante bloqueado', bloco: 'E · Concluídos, Sanidade, Lançamentos', hash: '#/protocolos/concluidos', setup: [REI('dia')].concat(TB, [TB_INOC, TB_LEIT]), nota: 'Banner com checkbox de notificação; 4207 fora do “em dia”; reteste 60 dias para inconclusivos.' },
+    { n: 44, titulo: 'Fazenda nova: sem protocolos', bloco: 'A · Cadastro', hash: '#/protocolos/cadastro', setup: [REI('nova')], nota: '“Usar modelo padrão brasileiro” ou criar o primeiro.' },
+    { n: 45, titulo: 'Carteira do animal (4207 Estrela)', bloco: 'E · Concluídos, Sanidade, Lançamentos', hash: '#/sanidade/vacinas/cobertura?animal=4207', setup: [REI('dia')], nota: 'Estado único por item: em dia, prevista, atrasada, sem registro, não se aplica, reagente, inconclusivo.' },
+    { n: 46, titulo: 'Contas a pagar: honorário e pagamento vinculado do cronograma', bloco: 'F · Apoio (Financeiro, Estoque, Cotações)', hash: '#/financeiro/contas-a-pagar', setup: S1.concat([AG8, MONT, { type: 'vincularPagamento', payload: { agId: '$ag', pagamentoId: 'pg-1' } }, { type: 'criarContaPagar', payload: { agId: '$ag', tipo: 'honorario', fornecedor: 'Dr. Paulo Menezes', descricao: 'Honorário — Brucelose B19 (Bezerreiro, 02/10)', valor: 350, venc: '2026-10-12' } }]), nota: 'Cada conta traz o link de volta ao agendamento.' },
+    { n: 47, titulo: 'Estoque: saldo por frasco e validade', bloco: 'F · Apoio (Financeiro, Estoque, Cotações)', hash: '#/estoque', setup: [REI('dia'), APL1], nota: 'Ivermectina IV-2610: 1.000 → 908 mL após aplicar.' },
+    { n: 48, titulo: 'Cotações: a cotação criada pela compra do checklist', bloco: 'F · Apoio (Financeiro, Estoque, Cotações)', hash: '#/cotacoes', setup: [REI('dia')], nota: 'Aftosa em andamento; link para o agendamento.' }
+  ];
+  window.STORYBOARD = SB;
+})();
 window.STORYBOARD_AGENDA = 
 {
  "_leia_me": "Storyboard da Agenda (construtor Q). Cada tela: {n,titulo,hash,viewport,setup,nota}. Convenção do runner: (1) Store.reset (dados canônicos v2); (2) executar 'setup' na ordem: itens com type 'ag.*' vão para window.AgendaModule.setup(item) e os demais para Store.dispatch(type,payload); (3) definir location.hash = hash (o módulo re-renderiza sozinho; 'ag.hash' faz o mesmo de forma síncrona); (4) capturar. A 1ª renderização é síncrona: não é preciso esperar timers. Tema claro por padrão (a tela 14 pode sair no escuro). 'nota' é a legenda de 1 linha com o clique que leva à próxima tela.",
@@ -4640,17 +4751,19 @@ window.AgendaModule={render,unmount,setup,snapshot,version:'1.0',
 })();
 /* AGENDA-JS:END */
 /* ═════════ Barra de revisão e boot ═════════ */
+/* Telas da Agenda (Construtor Q): n + 100; setup 'ag.*' vai para AgendaModule.setup, o resto para Store.dispatch */
+if (window.STORYBOARD_AGENDA && window.STORYBOARD_AGENDA.telas) { window.STORYBOARD_AGENDA.telas.forEach(t => window.STORYBOARD.push({ n: 100 + t.n, titulo: 'Agenda › ' + t.titulo, bloco: 'G · Agenda', hash: t.hash, viewport: t.viewport, setup: [{ type: 'reiniciar', payload: { cenario: 'dia' } }].concat(t.setup || []), nota: t.nota || '', variantes: t.variantes })); }
 const RB = { etapa: +(lsGet('cowdata-fluxo-etapa') || 0) };
 function renderRb() {
   const sb = window.STORYBOARD || []; const sel = $('#rb-etapa'); if (!sel) return;
   if (!sel.options.length) sel.innerHTML = '<option value="0">— escolha a tela —</option>' + sb.map(s => `<option value="${s.n}">${s.n}. ${esc(s.titulo)}</option>`).join('');
   sel.value = String(RB.etapa || 0);
   const tot = sb.length; $('#rb-etapa-n').textContent = RB.etapa ? `Etapa ${RB.etapa} de ${tot}` : `Etapa — de ${tot}`;
-  const rep = $('#sw-rep'); if (rep) { const c = ST.repasse.cenario; if ([...rep.options].some(o => o.value === c)) rep.value = c; }
+  const rep = $('#sw-rep'); if (rep) { const c = ST.repasseMeta.cenario; if ([...rep.options].some(o => o.value === c)) rep.value = c; }
   const cen = $('#rb-cen'); if (cen) cen.value = ST.cenario || 'dia'; const off = $('#sw-off'); if (off) off.checked = !!NET.off;
 }
 function resolvePayload(v, ctx) {
-  if (typeof v === 'string') { if (v === '$ag') return ctx.ag; if (/^\$r(\d+)\.(\w+)$/.test(v)) { const m = v.match(/^\$r(\d+)\.(\w+)$/); return (ctx.res[+m[1]] || {})[m[2]]; } return v.replace('{ag}', ctx.ag || ''); }
+  if (typeof v === 'string') { if (v === '$ag') return ctx.ag; if (/^\$r(\d+)\.(\w+)$/.test(v)) { const m = v.match(/^\$r(\d+)\.(\w+)$/); return (ctx.res[+m[1]] || {})[m[2]]; } return v.replace(/\$r(\d+)\.(\w+)/g, (x, i, k) => (ctx.res[+i] || {})[k]).replace('{ag}', ctx.ag || '').replace('$ag', ctx.ag || ''); }
   if (Array.isArray(v)) return v.map(x => resolvePayload(x, ctx));
   if (v && typeof v === 'object') { const o = {}; Object.keys(v).forEach(k => { o[k] = resolvePayload(v[k], ctx); }); return o; }
   return v;
@@ -4659,8 +4772,8 @@ function resolvePayload(v, ctx) {
 function preparar(n) {
   const it = (window.STORYBOARD || []).find(x => x.n === n); if (!it) return null;
   const ctx = { ag: null, res: [] }; UI = { drKey: null }; TS.stack = []; TS.infoLeft = 0;
-  it.setup.forEach((s, i) => { const p = resolvePayload(s.payload || {}, ctx); const r = Store.dispatch(s.type, p); ctx.res[i] = r; if (r && r.ok !== false && r.id && String(r.id).startsWith('ag-')) ctx.ag = r.id; if (r && r.ok === false) console.warn('setup', n, s.type, r.erro); });
-  NET.off = false; return resolvePayload(it.hash, ctx);
+  it.setup.forEach((s, i) => { const p = resolvePayload(s.payload || {}, ctx); if (String(s.type).startsWith('ag.')) { try { if (window.AgendaModule && AgendaModule.setup) AgendaModule.setup(s); } catch (e) { console.warn('ag.setup', e); } ctx.res[i] = { ok: true }; return; } const r = Store.dispatch(s.type, p); ctx.res[i] = r; if (r && r.ok !== false && r.id && String(r.id).startsWith('ag-')) ctx.ag = r.id; if (r && r.ok === false) console.warn('setup', n, s.type, r.erro); });
+  NET.off = !!ST.off.ativo; return resolvePayload(it.hash, ctx);
 }
 function irParaEtapa(n) { const h = preparar(n); if (!h) return; RB.etapa = n; lsSet('cowdata-fluxo-etapa', String(n)); lastVK = null; DR.key && closeDrawerDom(true); if (location.hash === h) route(); else location.hash = h; renderRb(); }
 window.Roteiro = { preparar, ir: irParaEtapa, lista: () => window.STORYBOARD };
