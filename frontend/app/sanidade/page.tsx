@@ -58,11 +58,11 @@ type RegraCalendario = {
   proxima_ocorrencia_por_animal?: boolean;
 };
 
-// vacina | exame | tratamento | legado (sem categoria — não é mais possível
+// vacina | exame | tratamento (mostrado como "Vermífugo") | legado (sem categoria — não é mais possível
 // cadastrar assim, só sobra em eventos antigos) | todos.
 const TIPOS_REGRA_FILTRO = [
   { v: "todos", l: "Todos" }, { v: "vacina", l: "Vacina" }, { v: "exame", l: "Exame" },
-  { v: "tratamento", l: "Tratamento" }, { v: "legado", l: "Legado (sem categoria)" },
+  { v: "tratamento", l: "Vermífugo" }, { v: "legado", l: "Legado (sem categoria)" },
 ] as const;
 function tipoRegra(r: { categoria_preventiva: string | null }): "vacina" | "exame" | "tratamento" | "legado" {
   if (r.categoria_preventiva === "exame") return "exame";
@@ -71,11 +71,11 @@ function tipoRegra(r: { categoria_preventiva: string | null }): "vacina" | "exam
   return "legado";
 }
 const ROTULO_TIPO_REGRA: Record<ReturnType<typeof tipoRegra>, string> = {
-  vacina: "Vacina", exame: "Exame", tratamento: "Tratamento", legado: "Legado (sem categoria)",
+  vacina: "Vacina", exame: "Exame", tratamento: "Vermífugo", legado: "Legado (sem categoria)",
 };
 
 const LABEL_FREQ: Record<string, string> = { dias: "dia(s)", meses: "mês(es)", anos: "ano(s)" };
-const LABEL_CAT_PREV: Record<string, string> = { vacina: "Vacina", exame: "Exame", tratamento: "Tratamento" };
+const LABEL_CAT_PREV: Record<string, string> = { vacina: "Vacina", exame: "Exame", tratamento: "Vermífugo" };
 
 type EventoPrev = {
   id: number; nome: string; categoria_preventiva: string | null; doenca_nome: string | null;
@@ -1395,7 +1395,7 @@ export function CalendarioSanitarioView({ modoInicial, cronogramaIdInicial, some
     <>
       <div style={{ marginBottom: "0.75rem" }}>
         <h2 className="text-lg font-bold flex items-center gap-2"><Shield size={18} style={{ color: "var(--dourado)" }} /> Preventivo (calendário sanitário)</h2>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Regras e próximas ocorrências de manejo preventivo (vacinas, exames e tratamentos). {somenteLeitura ? "Para agendar ou aplicar, use Protocolos ou a Agenda." : "Para agendar e aplicar vacina ou exame, use Protocolos › Aplicar."}</p>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Regras e próximas ocorrências de manejo preventivo (vacinas, exames e vermífugos). {somenteLeitura ? "Para agendar ou aplicar, use Protocolos ou a Agenda." : "Para agendar e aplicar vacina ou exame, use Protocolos › Aplicar."}</p>
       </div>
 
       <TabBar
