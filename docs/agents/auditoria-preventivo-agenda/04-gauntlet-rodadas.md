@@ -155,3 +155,34 @@ Causas remanescentes, todas com fonte única de correção na extensão da rodad
 **Ambos:** (a) modelo de estado único por animal × item e cobertura **calculada** (extensão §1); (b) etapas dos protocolos idênticas (§2), 11 elegíveis de 28 (§3), TU-2608 nos dois, vias por produto (§4), sino 3, título de protocolo (§8); (c) **gaveta "Registrar" e o toast são o MESMO código nos dois**: o construtor do M2 copia literalmente o drawer e o toast do M1 (HTML/CSS/JS), incluindo o exame com Custo e Via; (d) "Desfazer só a última" com rótulo verdadeiro e desabilitado quando não desfazível; (e) textos da extensão §7; (f) "undefined" impossível (`Não se aplica`).
 **M1:** modelo com versão/snapshot e log com quem/quando, Inativar com motivo (§6); Cobertura sem estouro a 1440 px e sem contradição; carteira com 4207 `Inconclusivo`; comprovante funcional (pré-visualização); calendário com coluna "Para quem" legível; mobile: Atrasadas compactas para o "Hoje" aparecer sem duas telas de rolagem; Esc após F5; "Outro" não pré-selecionado; leitura TB padrão = inoculação + 72 h; "pular" do checklist gera log; carência no resumo compacto.
 **M2:** Adiar simples em 2 toques sem motivo obrigatório; "Adiar tudo" com motivo único e sem tarefas críticas (§5); toast largo a 390 px (mesmo componente); cards de tarefa sem título em 4 linhas (ação abaixo do texto); FAB sem cobrir ⋯ (padding inferior e FAB 44 px); links reais na gaveta de detalhes; tarefa excluída e movimentação no CSV/log; plural correto ("1 peso registrado").
+
+---
+
+## Rodada 4 (última) — resultado
+
+| Persona | M1 | M2 | P0 | Observação |
+|---|---|---|---|---|
+| Zootecnista | 93,75% (87,5) | **100%** (80) | 0 | Baixa de protocolo aceita data anterior à etapa já feita |
+| Veterinário | 93,75% (93,75) | 87,5% (87,5) | 0 | **Clostridioses dose 2 → "próxima dose em 30 d" em vez de reforço anual (regressão)**; gaveta da Mastite ≠ drawer idêntico |
+| Peão | **100%** (90) | 91,7% (75) | 0 | Aprova os dois; FAB do assistente sobre o ⋯ no M2 |
+| Produtor | 90% (90) | **100%** (92) | 0 | Aprova; mesma regressão da Clostridioses |
+| Cooperativa | **91,7%** (75) | 87,5% (87,5) | 0 | N16 (P0 da R3) resolvido animal a animal; 2 P1: trilha não compartilhada entre os dois arquivos, Adiar/Não vou fazer disponíveis para etapas críticas no M2 |
+| Pesquisador | 93% (93) | 92% (92) | 0 | "Desfazer só a última" do M2 desfaz tudo; filtro de Protocolos cortado a 390 px no M1 |
+| **Média** | **93,7%** (86,0 → 88,2 → 93,7) | **93,1%** (85,6 → 85,7 → 93,1) | **0** | **Critério de saída atendido** |
+
+**Evolução da média:** M1 70,1 → 86,0 → 88,2 → **93,7** · M2 74,1 → 85,6 → 85,7 → **93,1**. Mínimo por persona na R4: 87,5% (≥ 80%). P0 aberto: 0.
+
+### Passada final (pós-banca, sem nova pontuação)
+Corrigidos de forma pontual, sem reavaliação pela banca: reforço anual da Clostridioses, filtro de Protocolos a 390 px, "Desfazer só a última" verdadeiro no M2, Adiar/Não vou fazer com aviso nas etapas críticas, rótulos residuais (exames em "exames", vírgula decimal, Scratch só no ⓘ), piso da data real na baixa de protocolo, carência pré-preenchida no wizard, aplicador padrão, leitura de TB com data futura, botão "Comprovante". O resultado está descrito na síntese (`05-sintese-e-roteiro.md`).
+
+### Pendências registradas (não bloqueiam a implementação)
+1. **Trilha compartilhada entre M1 e M2** é limitação do mockup (dois arquivos estáticos); em produção é um único backend.
+2. Baixa de protocolo (hormônios com frasco) deve entrar no **Histórico geral e no CSV** de auditoria.
+3. **Recall por lote do frasco** deve listar os brincos (hoje só conta).
+4. **Folha de campo** com brincos, CRMV/assinatura nomeada.
+5. Log de edição de tarefa/modelo com **antes → depois**.
+6. Gaveta da **Mastite** (protocolo de tratamento) unificada com o drawer "Registrar" — o modelo de aplicação ainda não cobre tratamento.
+7. Reprodução (M2): contagem visível fora do painel; DEL de 9 das 11 candidatas com diferença de até 3 dias entre M1 e M2 (dado de exemplo).
+8. Botões de 40 px fora do campo (Selecionar várias, Feito hoje, Ver estoque…) e sidebar 10 px (real) — subir para 12 px no produto.
+9. Scratch (14 d): parâmetro da fazenda; pendente uma pergunta ao dono sobre a janela biológica de retorno (18–24 d).
+10. Fora de escopo declarado: multi-fazenda, fluxo regulatório completo de exame positivo (notificação/interdição/GTA), calendário estadual de aftosa, impressão/PDF reais.
