@@ -7,10 +7,11 @@
 // motivo em chips; cancelar exige motivo e diz o que fazer com os animais;
 // rascunho ("Em montagem") continua de onde parou.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, Ban, CalendarClock, CalendarPlus, Check, Clock, ListChecks, Pencil, Search, Syringe, Undo2 } from "lucide-react";
+import { AlertTriangle, ArrowRight, Ban, CalendarClock, CalendarDays, CalendarPlus, Check, ChevronLeft, ChevronRight, Clock, ListChecks, ListOrdered, Pencil, Search, Syringe, Undo2 } from "lucide-react";
 import {
   adiarAgendamentoPreventivo, cancelarAgendamentoPreventivo, confirmarRascunhoAgendamento, editarChecklistAgendamento, ehAdmin,
-  estornarAplicacaoPreventiva, fetchAcompanhamentoPreventivo, fetchContextoAplicar,
+  estornarAplicacaoPreventiva, fetchAcompanhamentoPreventivo, fetchContextoAplicar, reabrirAgendamentoParaEditar, tirarAnimalDoAgendamento,
+  type MotivoTirarAnimal,
   type AcompanhamentoPreventivo as Dados, type AgendamentoAcompanhamento, type ContextoAplicar, type ItemChecklistAg,
 } from "@/lib/api";
 import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
@@ -36,6 +37,10 @@ export function AcompanhamentoPreventivo({ onIrLista, onVerConcluidos }: { onIrL
   const [estado, setEstado] = useState("");
   const [busca, setBusca] = useState("");
   const [painel, setPainel] = useState<Painel>(null);
+  const [visao, setVisao] = useState<"lista" | "calendario">(() => {
+    try { return localStorage.getItem("acomp_visao") === "calendario" ? "calendario" : "lista"; } catch { return "lista"; }
+  });
+  const escolherVisao = (v: "lista" | "calendario") => { setVisao(v); try { localStorage.setItem("acomp_visao", v); } catch { /* sem armazenamento: segue */ } };
   const recarregar = useCallback(() => setRecarga((n) => n + 1), []);
 
   useEffect(() => {
@@ -104,9 +109,17 @@ export function AcompanhamentoPreventivo({ onIrLista, onVerConcluidos }: { onIrL
           <Search size={14} style={{ position: "absolute", left: 8, top: 11, color: "var(--text-muted)" }} />
           <input type="search" aria-label="Buscar protocolo, lote ou responsável" style={{ ...inputStyle, paddingLeft: 28 }} placeholder="Buscar protocolo, lote ou responsável…" value={busca} onChange={(e) => setBusca(e.target.value)} />
         </div>
+        <div role="group" aria-label="Visão" style={{ display: "inline-flex", gap: 4 }}>
+          <button type="button" className={visao === "lista" ? "btn-secondary" : "btn-ghost"} aria-pressed={visao === "lista"} onClick={() => escolherVisao("lista")}><ListOrdered size={14} /> Lista</button>
+          <button type="button" className={visao === "calendario" ? "btn-secondary" : "btn-ghost"} aria-pressed={visao === "calendario"} data-testid="visao-calendario" onClick={() => escolherVisao("calendario")}><CalendarDays size={14} /> Calendário</button>
+        </div>
       </div>
 
-      {!lista.length ? (
+      {visao === "calendario" && (
+        <CalendarioAcompanhamento agendamentos={lista} hoje={dados.hoje || hojeIso()} onAbrir={(id) => setPainel({ tipo: "detalhe", id })} />
+      )}
+
+      {visao === "calendario" ? null : !lista.length ? (
         <div className="card" style={{ textAlign: "center", padding: "2rem 1rem" }}>
           <CalendarClock size={28} style={{ color: "var(--text-muted)", margin: "0 auto 0.6rem" }} />
           <p style={{ fontWeight: 700 }}>{dados.agendamentos.length ? "Nada com esses filtros" : "Nada agendado"}</p>
@@ -186,8 +199,74 @@ export function AcompanhamentoPreventivo({ onIrLista, onVerConcluidos }: { onIrL
   );
 }
 
+// ───────────────────────── visão Calendário (mês) ─────────────────────────
+const MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+const COR_ESTADO: Record<string, string> = { atrasado: "var(--red)", hoje: "var(--amber)", agendado: "var(--dourado-light)", adiado: "var(--text-muted)", em_montagem: "var(--amber)" };
+const isoDia = (a: number, m: number, d: number) => `${a}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+
+function CalendarioAcompanhamento({ agendamentos, hoje, onAbrir }: { agendamentos: AgendamentoAcompanhamento[]; hoje: string; onAbrir: (id: number) => void }) {
+  const [ano0, mes0] = hoje.split("-").map(Number);
+  const [ref, setRef] = useState({ ano: ano0, mes: mes0 - 1 });
+  const [sel, setSel] = useState<string>(hoje);
+  const porDia = useMemo(() => {
+    const m = new Map<string, AgendamentoAcompanhamento[]>();
+    agendamentos.forEach((a) => { const l = m.get(a.data_evento) || []; l.push(a); m.set(a.data_evento, l); });
+    return m;
+  }, [agendamentos]);
+  const primeiro = new Date(ref.ano, ref.mes, 1).getDay();
+  const dias = new Date(ref.ano, ref.mes + 1, 0).getDate();
+  const celulas: (number | null)[] = [...Array(primeiro).fill(null), ...Array.from({ length: dias }, (_, i) => i + 1)];
+  while (celulas.length % 7) celulas.push(null);
+  const mover = (d: number) => setRef((r) => { const t = new Date(r.ano, r.mes + d, 1); return { ano: t.getFullYear(), mes: t.getMonth() }; });
+  const doDia = porDia.get(sel) || [];
+  const noMes = agendamentos.filter((a) => a.data_evento.startsWith(`${ref.ano}-${String(ref.mes + 1).padStart(2, "0")}`)).length;
+  return (
+    <div className="card" data-testid="calendario-acompanhamento" style={{ padding: "0.8rem", marginBottom: "0.9rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.6rem" }}>
+        <button type="button" className="btn-ghost" aria-label="Mês anterior" onClick={() => mover(-1)}><ChevronLeft size={16} /></button>
+        <b style={{ flex: 1, textAlign: "center", fontSize: "0.95rem" }}>{MESES[ref.mes]} de {ref.ano} <span style={notaStyle}>· {noMes} {plural(noMes, "agendamento", "agendamentos")}</span></b>
+        <button type="button" className="btn-ghost" aria-label="Próximo mês" onClick={() => mover(1)}><ChevronRight size={16} /></button>
+      </div>
+      <div role="grid" aria-label="Agendamentos do mês" style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 4 }}>
+        {["dom", "seg", "ter", "qua", "qui", "sex", "sáb"].map((d) => <div key={d} role="columnheader" style={{ ...notaStyle, textAlign: "center", textTransform: "uppercase", fontSize: "0.68rem" }}>{d}</div>)}
+        {celulas.map((d, i) => {
+          if (d == null) return <div key={`v${i}`} />;
+          const iso = isoDia(ref.ano, ref.mes, d);
+          const ags = porDia.get(iso) || [];
+          const ativo = iso === sel;
+          return (
+            <button key={iso} type="button" role="gridcell" aria-selected={ativo} aria-label={`${d} de ${MESES[ref.mes]}: ${ags.length} ${plural(ags.length, "agendamento", "agendamentos")}`} onClick={() => setSel(iso)}
+                    style={{ minHeight: 56, padding: "0.25rem", textAlign: "left", cursor: "pointer", borderRadius: "var(--r-sm)", display: "flex", flexDirection: "column", gap: 2, overflow: "hidden",
+                             border: `1px solid ${ativo ? "var(--dourado)" : iso === hoje ? "var(--amber)" : "var(--border)"}`, background: ativo ? "var(--pill-active-bg)" : "var(--surface-2)", color: "var(--text)" }}>
+              <span style={{ fontSize: "0.75rem", fontWeight: iso === hoje ? 800 : 600 }}>{d}</span>
+              {ags.slice(0, 2).map((a) => <span key={a.id} className="hidden sm:block" style={{ fontSize: "0.66rem", lineHeight: 1.2, borderLeft: `3px solid ${COR_ESTADO[a.estado_visual]}`, paddingLeft: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.protocolo_nome}</span>)}
+              {ags.length > 2 && <span className="hidden sm:block" style={{ fontSize: "0.66rem", color: "var(--text-muted)" }}>+{ags.length - 2}</span>}
+              {ags.length > 0 && <span className="sm:hidden" style={{ fontSize: "0.7rem", fontWeight: 800, color: COR_ESTADO[ags[0].estado_visual] }}>● {ags.length}</span>}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ marginTop: "0.8rem" }}>
+        <b style={{ fontSize: "0.85rem" }}>{diaSemana(sel)} {dataCurta(sel)}</b>
+        {!doDia.length ? <p style={{ ...notaStyle, marginTop: 4 }}>Nada agendado neste dia.</p> : (
+          <ul style={{ listStyle: "none", margin: "0.4rem 0 0", padding: 0 }}>
+            {doDia.map((a) => (
+              <li key={a.id} style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap", padding: "0.5rem 0", borderTop: "1px solid var(--border)" }}>
+                <EstadoAgPill estado={a.estado_visual} />
+                <span style={{ flex: 1, minWidth: 150 }}><b style={{ fontSize: "0.85rem" }}>{a.protocolo_nome}</b>
+                  <span style={{ ...notaStyle, display: "block" }}>{a.hora || "sem hora"} · {a.animais_total} {plural(a.animais_total, "animal", "animais")} · {a.responsavel.nome}{a.fase ? ` · ${FASE_ROTULO[a.fase]}` : ""}</span></span>
+                <button type="button" className="btn-secondary" onClick={() => onAbrir(a.id)}>Abrir</button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ───────────────────────── detalhe / adiar / cancelar / continuar ─────────────────────────
-type Acao = "adiar" | "cancelar" | "estornarIno" | null;
+type Acao = "adiar" | "cancelar" | "estornarIno" | "reabrir" | null;
 
 function GavetaAgendamento({ id, modoInicial, onFechar, onMudou, onAplicar }: {
   id: number; modoInicial: "detalhe" | "montar"; onFechar: () => void; onMudou: () => void; onAplicar: () => void;
@@ -245,6 +324,7 @@ function GavetaAgendamento({ id, modoInicial, onFechar, onMudou, onAplicar }: {
             <PainelEstornarInoculacao aplicacaoId={ctx.exame.inoculacao.aplicacao_id} onVoltar={() => setAcao(null)} onFeito={() => { onMudou(); onFechar(); }} />
           )}
 
+          {acao === "reabrir" && <PainelReabrir ctx={ctx} onVoltar={() => setAcao(null)} onFeito={() => { onMudou(); setAcao(null); setMontando(true); carregar(); }} />}
           {acao === "adiar" && <PainelAdiar ctx={ctx} onVoltar={() => setAcao(null)} onFeito={() => { onMudou(); onFechar(); }} />}
           {acao === "cancelar" && <PainelCancelar ctx={ctx} onVoltar={() => setAcao(null)} onFeito={() => { onMudou(); onFechar(); }} />}
 
@@ -256,14 +336,7 @@ function GavetaAgendamento({ id, modoInicial, onFechar, onMudou, onAplicar }: {
             ))}
           </div>
           {aba === "animais" && (
-            <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-              {ctx.animais.map((a) => (
-                <li key={a.numero_matriz} style={{ display: "flex", gap: "0.6rem", alignItems: "center", padding: "0.5rem 0", borderBottom: "1px solid var(--border)" }}>
-                  <span style={{ flex: 1 }}><b>{a.numero_matriz}{a.nome ? ` ${a.nome}` : ""}</b><span style={{ ...notaStyle, display: "block" }}>{a.lote || "Sem lote"}{a.motivo ? ` · ${a.motivo}` : ""}</span></span>
-                  {a.origem === "fora_janela" ? <ForaJanelaBadge n={1} /> : <span style={{ color: "var(--green-light)", fontSize: "0.75rem", fontWeight: 700 }}><Check size={12} style={{ display: "inline" }} /> Na janela</span>}
-                </li>
-              ))}
-            </ul>
+            <AbaAnimais ctx={ctx} podeTirar={(ctx.estado === "agendado" || ctx.estado === "em_montagem") && !ctx.exame?.inoculacao} onMudou={() => { carregar(); onMudou(); }} />
           )}
           {aba === "checklist" && <AbaChecklist ctx={ctx} onMudou={() => { carregar(); onMudou(); }} />}
           {aba === "historico" && (
@@ -285,6 +358,7 @@ function GavetaAgendamento({ id, modoInicial, onFechar, onMudou, onAplicar }: {
             {ctx.estado === "agendado" && <button type="button" className="btn-primary-gold" onClick={onAplicar}><Syringe size={14} /> {ctx.exame ? VERBO_APLICAR[ctx.exame.fase] : "Aplicar"}</button>}
             {ctx.estado === "em_montagem" && <button type="button" className="btn-primary-gold" onClick={() => setMontando(true)}><Pencil size={14} /> Continuar montando</button>}
             {ctx.estado === "agendado" && <button type="button" className="btn-secondary" onClick={() => setAcao("adiar")}><Clock size={14} /> Adiar</button>}
+            {ctx.estado === "agendado" && !ctx.exame?.inoculacao && <button type="button" className="btn-secondary" data-testid="reabrir-editar" onClick={() => setAcao("reabrir")}><Pencil size={14} /> Reabrir para editar</button>}
             <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => setAcao("cancelar")}><Ban size={14} /> Cancelar…</button>
           </div>
         </div>
@@ -318,6 +392,89 @@ function AbaChecklist({ ctx, onMudou }: { ctx: ContextoAplicar; onMudou: () => v
                         readOnly={encerrado} onMudou={onMudou} />
       </div>
       <p style={notaStyle}>Nada aqui bloqueia a aplicação: o que ficar pendente pede só a ciência na hora de Aplicar.</p>
+    </div>
+  );
+}
+
+function PainelReabrir({ ctx, onVoltar, onFeito }: { ctx: ContextoAplicar; onVoltar: () => void; onFeito: () => void }) {
+  const [motivo, setMotivo] = useState("");
+  const [outro, setOutro] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  async function reabrir() {
+    setSalvando(true); setErro(null);
+    try { await reabrirAgendamentoParaEditar(ctx.cronograma_id, textoMotivo(motivo, outro) || null); onFeito(); }
+    catch (e: any) { setErro(e.message || "Erro ao reabrir"); } finally { setSalvando(false); }
+  }
+  return (
+    <div className="card" role="group" aria-label="Reabrir para editar" style={{ display: "flex", flexDirection: "column", gap: "0.8rem", borderLeft: "4px solid var(--dourado)" }}>
+      <h3 className="card-header">Reabrir para editar</h3>
+      <p style={{ ...notaStyle, display: "flex", gap: 6 }}><ArrowRight size={13} style={{ marginTop: 2, flexShrink: 0 }} />O agendamento volta para “Em montagem” e sai da Agenda até você confirmar de novo. Os animais, o checklist e a data ficam como estão.</p>
+      <Chips idBase="rb-m" rotulo="O que vai mudar? (opcional)" opcoes={["Trocar animais", "Trocar veterinário", "Mudar data ou hora", "Outro"]} valor={motivo} onChange={setMotivo} />
+      {motivo === "Outro" && <input style={inputStyle} aria-label="Descreva" placeholder="Descreva" value={outro} onChange={(e) => setOutro(e.target.value)} />}
+      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
+      <div style={{ display: "flex", gap: "0.5rem" }}>
+        <button type="button" className="btn-primary-gold" disabled={salvando} onClick={reabrir}><Pencil size={14} /> {salvando ? "Reabrindo…" : "Reabrir para editar"}</button>
+        <button type="button" className="btn-ghost" onClick={onVoltar}>Voltar</button>
+      </div>
+    </div>
+  );
+}
+
+const MOTIVOS_TIRAR: readonly MotivoTirarAnimal[] = ["Vendido", "Doente", "Não localizado", "Outro"];
+const DESTINO_TXT = { espera: "voltou à lista de espera", baixado: "ficou baixado (não volta à lista de espera)", saiu: "saiu do agendamento" } as const;
+
+/** Animais do agendamento; cada um pode ser tirado (motivo em chips): volta à lista de espera, ou fica "baixado" se vendido. */
+function AbaAnimais({ ctx, podeTirar, onMudou }: { ctx: ContextoAplicar; podeTirar: boolean; onMudou: () => void }) {
+  const [tirando, setTirando] = useState<string | null>(null);
+  const [motivo, setMotivo] = useState("");
+  const [outro, setOutro] = useState("");
+  const [tentou, setTentou] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
+  const ultimo = ctx.animais.length <= 1;
+
+  async function tirar(numero: string) {
+    setTentou(true);
+    if (!motivo || (motivo === "Outro" && !outro.trim())) return;
+    setSalvando(true); setErro(null);
+    try {
+      const r = await tirarAnimalDoAgendamento(ctx.cronograma_id, { numero_matriz: numero, motivo: motivo as MotivoTirarAnimal, motivo_outro: motivo === "Outro" ? outro.trim() : null });
+      setAviso(`Animal ${numero} ${DESTINO_TXT[r.destino]}.`); setTirando(null); setMotivo(""); setOutro(""); setTentou(false); onMudou();
+    } catch (e: any) { setErro(e.message || "Não foi possível tirar o animal"); } finally { setSalvando(false); }
+  }
+  return (
+    <div>
+      {aviso && <p role="status" style={{ color: "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.4rem" }}>{aviso}</p>}
+      <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+        {ctx.animais.map((a) => (
+          <li key={a.numero_matriz} style={{ padding: "0.5rem 0", borderBottom: "1px solid var(--border)" }}>
+            <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ flex: 1, minWidth: 140 }}><b>{a.numero_matriz}{a.nome ? ` ${a.nome}` : ""}</b><span style={{ ...notaStyle, display: "block" }}>{a.lote || "Sem lote"}{a.motivo ? ` · ${a.motivo}` : ""}</span></span>
+              {a.origem === "fora_janela" ? <ForaJanelaBadge n={1} /> : <span style={{ color: "var(--green-light)", fontSize: "0.75rem", fontWeight: 700 }}><Check size={12} style={{ display: "inline" }} /> Na janela</span>}
+              {podeTirar && (
+                <button type="button" className="btn-ghost" disabled={ultimo} title={ultimo ? "Último animal: cancele o agendamento" : undefined}
+                        aria-label={`Tirar ${a.numero_matriz} do agendamento`} onClick={() => { setTirando(tirando === a.numero_matriz ? null : a.numero_matriz); setMotivo(""); setOutro(""); setTentou(false); setErro(null); }}>
+                  <Ban size={14} /> Tirar…
+                </button>
+              )}
+            </div>
+            {tirando === a.numero_matriz && (
+              <div className="card" role="group" aria-label={`Tirar ${a.numero_matriz}`} style={{ marginTop: "0.5rem", padding: "0.7rem 0.9rem", display: "flex", flexDirection: "column", gap: "0.6rem", borderLeft: "4px solid var(--amber)" }}>
+                <Chips idBase={`tr-${a.numero_matriz}`} rotulo="Por que sai? (obrigatório)" opcoes={MOTIVOS_TIRAR} valor={motivo} onChange={setMotivo} erro={tentou && !motivo ? "Escolha o motivo." : null} />
+                {motivo === "Outro" && <input style={inputStyle} aria-label="Descreva o motivo" placeholder="Descreva o motivo" value={outro} onChange={(e) => setOutro(e.target.value)} />}
+                <p style={notaStyle}>{a.origem === "fora_janela" ? "Incluído fora da janela: só sai do agendamento (não há lista de espera para onde voltar)." : motivo === "Vendido" ? "Vendido: fica baixado, não volta à lista de espera." : "Da janela: volta à lista de espera, com o motivo."}</p>
+                {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
+                <div style={{ display: "flex", gap: "0.5rem" }}>
+                  <button type="button" className="btn-primary" disabled={salvando} onClick={() => tirar(a.numero_matriz)}><Ban size={14} /> {salvando ? "Tirando…" : "Tirar do agendamento"}</button>
+                  <button type="button" className="btn-ghost" onClick={() => setTirando(null)}>Voltar</button>
+                </div>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

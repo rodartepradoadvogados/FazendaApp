@@ -626,7 +626,7 @@ def eventos_agenda(
             from fazenda.rules.aplicacao_preventiva import eh_veterinario, pessoas_da_fazenda
             aplicadores = [
                 {"id": p.id, "nome": p.nome, "crmv": getattr(p, "crmv", None), "veterinario": eh_veterinario(p)}
-                for p in pessoas_da_fazenda(session, fazenda_id)
+                for p in pessoas_da_fazenda(session, fazenda_id) if "robo" not in (p.tipo or "").lower().replace("ô", "o")
             ]
         from fazenda.rules.aplicacao_preventiva import exige_veterinario as _exige_vet
         produto_ev = calendario.produto or (ev.produto_padrao if ev else None)
@@ -1045,6 +1045,104 @@ def confirmar_rascunho(
     session.commit()
     session.refresh(cronograma)
     return cronograma
+
+
+MOTIVOS_TIRAR_ANIMAL = ("Vendido", "Doente", "Não localizado", "Outro")
+
+
+def _tem_aplicacao_ativa(session: Session, cronograma_id: int) -> bool:
+    from fazenda.models import CronogramaSanitarioAplicacao
+    return session.exec(
+        select(CronogramaSanitarioAplicacao.id).where(CronogramaSanitarioAplicacao.cronograma_id == cronograma_id)
+        .where(CronogramaSanitarioAplicacao.estado == "aplicada")
+    ).first() is not None
+
+
+def reabrir_para_editar(session: Session, cronograma: CronogramaSanitario) -> CronogramaSanitario:
+    """"Reabrir para editar" (mockup, fatia 9b): um agendamento confirmado volta a "em montagem" — sai da Agenda, e os
+    animais, o checklist e a data ficam como estavam; ao confirmar de novo (Continuar montando) volta para a Agenda.
+    Não vale para o que já foi aplicado/cancelado nem para exame já inoculado (o registro em andamento não se desmonta)."""
+    if cronograma.status == "em_montagem":
+        raise CronogramaError("Este agendamento já está em montagem")
+    if cronograma.status == "concluido":
+        raise CronogramaError("Este agendamento já foi aplicado — não é possível reabrir")
+    if cronograma.status == "cancelado":
+        raise CronogramaError("Este agendamento foi cancelado — não é possível reabrir")
+    if cronograma.status != "agendado":
+        raise CronogramaError("Só um agendamento confirmado pode ser reaberto para editar")
+    if _tem_aplicacao_ativa(session, cronograma.id):
+        raise CronogramaError("Este exame já foi inoculado — não é possível reabrir: registre a leitura (ou estorne a inoculação)")
+    cronograma.status = "em_montagem"
+    cronograma.atualizado_em = datetime.utcnow()
+    session.add(cronograma)
+    session.commit()
+    session.refresh(cronograma)
+    return cronograma
+
+
+def tirar_animal(
+    session: Session, cronograma: CronogramaSanitario, numero: str, motivo: str | None, motivo_outro: str | None, hoje: date,
+) -> tuple[CronogramaSanitarioAnimal, str]:
+    """Tira um animal de um agendamento já criado (motivo em chips). Devolve (linha, destino):
+      "espera"  — animal da janela volta para a lista de espera do protocolo;
+      "baixado" — vendido (ou já fora do rebanho): fica só no histórico do agendamento, não volta para a lista;
+      "saiu"    — animal incluído fora da janela: não há lista para onde voltar, só sai.
+    Nunca o último animal (cancele o agendamento) nem em exame já inoculado/agendamento aplicado."""
+    if cronograma.status not in ("agendado", "em_montagem"):
+        raise CronogramaError("Só dá para tirar animal de um agendamento em montagem ou agendado")
+    if _tem_aplicacao_ativa(session, cronograma.id):
+        raise CronogramaError("Este exame já foi inoculado: o animal inoculado não sai do agendamento — registre o resultado da leitura")
+    motivo = (motivo or "").strip()
+    if motivo not in MOTIVOS_TIRAR_ANIMAL:
+        raise CronogramaError("Escolha o motivo para tirar o animal: " + ", ".join(MOTIVOS_TIRAR_ANIMAL))
+    texto = motivo
+    if motivo == "Outro":
+        texto = (motivo_outro or "").strip()
+        if not texto:
+            raise CronogramaError("Descreva o motivo (Outro)")
+    numero = (numero or "").strip()
+    linhas = animais_por_status(session, cronograma.id, "incluido")
+    linha = next((l for l in linhas if l.numero_matriz == numero), None)
+    if linha is None:
+        raise CronogramaError(f"Animal {numero} não está neste agendamento")
+    if len(linhas) <= 1:
+        raise CronogramaError("Este é o último animal do agendamento: cancele o agendamento em vez de tirá-lo")
+    calendario = session.get(CalendarioSanitario, cronograma.calendario_sanitario_id)
+    animal = session.exec(select(Animal).where(Animal.numero == numero).where(Animal.fazenda_id == cronograma.fazenda_id)).first()
+    baixado = motivo == "Vendido" or animal is None or not animal.ativo
+    if baixado:
+        linha.status = "excluido"
+        linha.motivo = f"Baixado: {texto}" if motivo != "Vendido" else "Baixado: vendido"
+        linha.data_decisao = hoje
+        destino = "baixado"
+    elif linha.origem == "fora_janela" or calendario is None:
+        linha.status = "excluido"
+        linha.motivo = texto
+        linha.data_decisao = hoje
+        destino = "saiu"
+    else:
+        espera = cronograma_aberto_ou_novo(session, calendario, _data_devida(cronograma))
+        ja = session.exec(
+            select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id == espera.id)
+            .where(CronogramaSanitarioAnimal.numero_matriz == numero)
+        ).first()
+        if ja is not None and ja.id != linha.id:
+            session.delete(ja)
+            session.flush()
+        linha.cronograma_id = espera.id
+        linha.status = "sugerido"
+        linha.origem = "janela"
+        linha.motivo = None
+        linha.data_decisao = None
+        linha.motivo_entrada = f"Saiu do agendamento de {cronograma.data_evento.strftime('%d/%m/%Y')}: {texto}"
+        destino = "espera"
+    cronograma.atualizado_em = datetime.utcnow()
+    session.add(linha)
+    session.add(cronograma)
+    session.commit()
+    session.refresh(linha)
+    session.refresh(cronograma)
+    return linha, destino
 
 
 def cronograma_aberto_ou_novo(session: Session, calendario: CalendarioSanitario, data_devida: date) -> CronogramaSanitario:

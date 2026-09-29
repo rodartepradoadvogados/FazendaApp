@@ -45,7 +45,7 @@ export function BannerReagentes({ aplicacaoId, onMudou, recarga = 0 }: { aplicac
 
   if (!itens || !itens.length) return null;
   const pend = itens.filter((i) => i.pendente_notificacao);
-  const abre = aberto ?? pend.length > 0;
+  const abre = aberto ?? true;   // aberto por padrão: o registro de quem/quando notificou fica sempre à vista
 
   async function registrar(i: ReagenteItem) {
     setSalvando(true); setErro(null);
@@ -85,7 +85,9 @@ export function BannerReagentes({ aplicacaoId, onMudou, recarga = 0 }: { aplicac
                     </button>
                   </>
                 ) : (
-                  <Pill cor="var(--green-light)" title={i.notificacao_ref || undefined}><Check size={12} />Notificado por {i.notificado_por || "—"} em {dataHoraCurta(i.notificado_em)}</Pill>
+                  <span title={i.notificacao_ref || undefined} style={{ display: "inline-flex", gap: 4, alignItems: "flex-start", fontSize: "0.78rem", fontWeight: 700, color: "var(--green-light)", flex: "1 1 100%" }}>
+                    <Check size={13} style={{ marginTop: 2, flexShrink: 0 }} />Notificado por {i.notificado_por || "—"} em {dataHoraCurta(i.notificado_em)}
+                  </span>
                 )}
               </div>
               {!i.pendente_notificacao && i.notificacao_ref && <span style={notaStyle}>Referência: {i.notificacao_ref}</span>}

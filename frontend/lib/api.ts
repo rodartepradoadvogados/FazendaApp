@@ -5069,6 +5069,11 @@ export const confirmarRascunhoAgendamento = (id: number, p: {
   data_evento: string; hora?: string | null; modo_execucao?: "veterinario" | "propria" | null; veterinario_pessoa_id?: number | null;
   checklist?: ChecklistAgendamentoPayload | null;
 }) => _postSanidade<{ id: number; status: string; data_evento: string; hora: string | null }>(`/sanidade/cronogramas/${id}/confirmar`, p, "Confirmar agendamento");
+export const reabrirAgendamentoParaEditar = (id: number, motivo?: string | null) =>
+  _postSanidade<{ id: number; status: string }>(`/sanidade/cronogramas/${id}/reabrir-para-editar`, { motivo: motivo || null }, "Reabrir para editar");
+export type MotivoTirarAnimal = "Vendido" | "Doente" | "Não localizado" | "Outro";
+export const tirarAnimalDoAgendamento = (id: number, p: { numero_matriz: string; motivo: MotivoTirarAnimal; motivo_outro?: string | null }) =>
+  _postSanidade<{ numero_matriz: string; destino: "espera" | "baixado" | "saiu" }>(`/sanidade/cronogramas/${id}/animais/remover`, p, "Tirar animal do agendamento");
 export const desconsiderarListaEspera = (p: { calendario_sanitario_id: number; animais: string[]; motivo: string }) =>
   _postSanidade<{ desconsiderados: number }>("/sanidade/cronogramas/lista-espera/desconsiderar", p, "Desconsiderar");
 

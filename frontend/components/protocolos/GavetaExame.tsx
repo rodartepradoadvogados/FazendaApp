@@ -11,7 +11,7 @@ import { AlertTriangle, Check, ChevronDown, Info } from "lucide-react";
 import { aplicarAgendamentoPreventivo, type AplicarAgendamentoPayload, type CanalAplicacao, type ContextoAplicar, type ResultadoAplicar, type ResultadoExame } from "@/lib/api";
 import { ResumoCustoFinanceiro } from "./FinanceiroAgendamento";
 import { dataHoraLocal, horasTxt, RESULTADOS_ROTULO } from "./exameComum";
-import { brl, dataCurta, diaSemana, hojeIso, inputStyle, labelStyle, notaStyle, num, plural } from "./preventivoComum";
+import { brl, dataCurta, diaSemana, hojeIso, inputStyle, labelStyle, notaStyle, plural } from "./preventivoComum";
 
 const horaAgora = () => {
   const d = new Date();

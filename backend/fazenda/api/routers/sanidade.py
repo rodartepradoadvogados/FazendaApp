@@ -1360,6 +1360,55 @@ class ConfirmarRascunhoIn(BaseModel):
     checklist: dict | None = None
 
 
+class ReabrirParaEditarIn(BaseModel):
+    motivo: str | None = None
+
+
+@router.post("/cronogramas/{cronograma_id}/reabrir-para-editar")
+def reabrir_agendamento_para_editar(
+    cronograma_id: int, dados: ReabrirParaEditarIn, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """"Reabrir para editar": o agendamento confirmado volta a "em montagem" (sai da Agenda; animais, checklist e data ficam)."""
+    cron = _cronograma_da_fazenda(session, cronograma_id, fazenda_id)
+    try:
+        cronograma_rules.reabrir_para_editar(session, cron)
+    except CronogramaError as e:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    aplicacao_rules.registrar_log(session, cron, "Reabriu para editar", user=user, motivo=(dados.motivo or "").strip() or None,
+                                  detalhe="Voltou para Em montagem: só volta para a Agenda quando for confirmado de novo")
+    session.commit()
+    return _serializar_um_cronograma(session, cron)
+
+
+class TirarAnimalIn(BaseModel):
+    numero_matriz: str
+    motivo: str | None = None            # chip: Vendido | Doente | Não localizado | Outro
+    motivo_outro: str | None = None      # texto, só quando o motivo é "Outro"
+
+
+@router.post("/cronogramas/{cronograma_id}/animais/remover")
+def tirar_animal_do_agendamento(
+    cronograma_id: int, dados: TirarAnimalIn, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Tira um animal de um agendamento já criado, com motivo em chips: volta para a lista de espera (janela), fica
+    "baixado" (vendido/fora do rebanho) ou só sai (incluído fora da janela). Nunca o último animal."""
+    cron = _cronograma_da_fazenda(session, cronograma_id, fazenda_id)
+    try:
+        linha, destino = cronograma_rules.tirar_animal(session, cron, dados.numero_matriz, dados.motivo, dados.motivo_outro, date.today())
+    except CronogramaError as e:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    rotulo = {"espera": "voltou à lista de espera", "baixado": "ficou baixado (não volta à lista)", "saiu": "saiu (incluído fora da janela)"}[destino]
+    motivo_txt = (dados.motivo_outro or "").strip() if dados.motivo == "Outro" else (dados.motivo or "")
+    aplicacao_rules.registrar_log(session, cron, "Tirou animal", user=user, motivo=motivo_txt,
+                                  detalhe=f"Animal {linha.numero_matriz} {rotulo}")
+    session.commit()
+    return {"numero_matriz": linha.numero_matriz, "destino": destino, "agendamento": _serializar_um_cronograma(session, cron)}
+
+
 @router.post("/cronogramas/{cronograma_id}/confirmar")
 def confirmar_rascunho_agendamento(
     cronograma_id: int, dados: ConfirmarRascunhoIn, session: Session = Depends(get_session),
