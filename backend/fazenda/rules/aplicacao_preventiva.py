@@ -131,23 +131,63 @@ def log_do_agendamento(session: Session, cronograma_id: int) -> list[dict]:
 
 
 # ───────────────────────────── checklist ─────────────────────────────
+def _compra_nao_necessaria(session: Session, cron: CronogramaSanitario, itens: list[ChecklistItem]) -> bool:
+    """Item de compra pendente que nao precisa de acao: o estoque foi desconsiderado ou o estoque cobre."""
+    est = next((i for i in itens if i.chave == "estoque"), None)
+    if est is not None and est.status == "pulado":
+        return True
+    from fazenda.rules import financeiro_preventivo as fin
+    try:
+        return bool(fin.necessidade(session, cron, cron.fazenda_id)["cobre"])
+    except AplicacaoError:
+        return False
+
+
+def _bloco_veterinario(session: Session, cron: CronogramaSanitario, itens: list[ChecklistItem]) -> dict | None:
+    """Quem foi confirmado como veterinario (Pessoa/CRMV), por quem e quando."""
+    vet = next((i for i in itens if i.chave == "vet"), None)
+    if vet is None and not cron.veterinario_pessoa_id:
+        return None
+    pessoa = session.get(Pessoa, cron.veterinario_pessoa_id) if cron.veterinario_pessoa_id else None
+    confirmado = bool(vet is not None and vet.status == "cumprido" and vet.resposta == "sim")
+    por = _nomes_usuarios(session, {vet.responsavel_usuario_id}).get(vet.responsavel_usuario_id) if vet is not None and vet.responsavel_usuario_id else None
+    return {
+        "estado": "confirmado" if confirmado else ("desconsiderado" if vet is not None and vet.status == "pulado" else "pendente"),
+        "pessoa_id": pessoa.id if pessoa else None, "nome": pessoa.nome if pessoa else None,
+        "crmv": getattr(pessoa, "crmv", None) if pessoa else None,
+        "confirmado_em": vet.respondido_em.isoformat() if confirmado and vet.respondido_em else None,
+        "registrado_por": por, "observacao": vet.observacao if vet is not None else None,
+    }
+
+
 def checklist_resumo(session: Session, cron: CronogramaSanitario) -> dict:
     """x/y do checklist do agendamento. Desconsiderado inteiro conta como
-    resolvido (e nao gera ciencia de pendentes)."""
+    resolvido (e nao gera ciencia de pendentes). Compra 'Nao necessaria'
+    (estoque desconsiderado ou que cobre) conta como resolvida."""
     itens = session.exec(
         select(ChecklistItem).where(ChecklistItem.cronograma_id == cron.id).order_by(ChecklistItem.ordem, ChecklistItem.id)
     ).all()
-    pendentes = [] if cron.checklist_desconsiderado else [i for i in itens if i.status == "pendente"]
-    resolvidos = len(itens) if cron.checklist_desconsiderado else sum(1 for i in itens if i.status != "pendente")
+    compra_ok = any(i.chave == "compra" and i.status == "pendente" for i in itens) and _compra_nao_necessaria(session, cron, itens)
+
+    def _pendente(i: ChecklistItem) -> bool:
+        if i.status != "pendente" or cron.checklist_desconsiderado:
+            return False
+        return not (i.chave == "compra" and compra_ok)
+
+    pendentes = [i for i in itens if _pendente(i)]
+    resolvidos = len(itens) if cron.checklist_desconsiderado else len(itens) - len(pendentes)
     vet = next((i for i in itens if i.chave == "vet"), None)
+
+    def _linha(i: ChecklistItem) -> dict:
+        derivado = i.chave == "compra" and i.status == "pendente" and compra_ok
+        return {"id": i.id, "chave": i.chave, "nome": i.nome, "status": "cumprido" if derivado else i.status,
+                "resposta": "nao_necessaria" if derivado else i.resposta, "observacao": i.observacao, "ordem": i.ordem}
+
     return {
         "total": len(itens), "resolvidos": resolvidos, "desconsiderado": bool(cron.checklist_desconsiderado),
         "vet_nao_confirmou": bool(vet and vet.resposta == "nao"),
-        "itens": [
-            {"id": i.id, "chave": i.chave, "nome": i.nome, "status": i.status, "resposta": i.resposta,
-             "observacao": i.observacao, "ordem": i.ordem}
-            for i in itens
-        ],
+        "veterinario": _bloco_veterinario(session, cron, list(itens)),
+        "itens": [_linha(i) for i in itens],
         "pendentes": [{"id": i.id, "chave": i.chave, "nome": i.nome} for i in pendentes],
     }
 
@@ -202,6 +242,14 @@ def aplicar_checklist(
         vet_pessoa = _pessoa_da_fazenda(session, vet.get("pessoa_id"), fazenda_id)
         if vet_pessoa is None:
             raise AplicacaoError("Veterinário não encontrado")
+    vet_quando: datetime | None = None
+    if vet and vet.get("estado") == "confirmado" and vet.get("quando"):
+        try:
+            vet_quando = datetime.fromisoformat(str(vet["quando"]).replace("Z", ""))
+        except ValueError:
+            raise AplicacaoError("Data e hora da confirmação do veterinário inválidas")
+        if vet_quando > agora + timedelta(minutes=5):
+            raise AplicacaoError("A confirmação com o veterinário não pode estar no futuro")
     if vet and vet.get("estado") == "desconsiderado":
         _motivo_obrigatorio(vet.get("motivo"), "o veterinário")
     est_item: Estoque | None = None
@@ -236,7 +284,17 @@ def aplicar_checklist(
                 cron.veterinario_pessoa_id = vet_pessoa.id
                 cron.modo_execucao = "veterinario"
                 if item is not None:
-                    checklist_rules.responder_veterinario(session, item.id, "sim", None, uid, agora, cron.fazenda_id)
+                    checklist_rules.responder_veterinario(session, item.id, "sim", None, uid, vet_quando or agora, cron.fazenda_id)
+                    if (vet.get("observacao") or "").strip():
+                        item = session.get(ChecklistItem, item.id)
+                        item.observacao = vet["observacao"].strip()
+                        session.add(item)
+                        session.commit()
+                quando_txt = (vet_quando or agora).strftime("%d/%m/%Y %H:%M")
+                registrar_log(
+                    session, cron, "Confirmou o veterinário", user=user, agora=agora,
+                    detalhe=f"{vet_pessoa.nome}{f' ({vet_pessoa.crmv})' if getattr(vet_pessoa, 'crmv', None) else ''} · confirmado em {quando_txt}",
+                )
             elif vet.get("estado") == "desconsiderado" and item is not None:
                 checklist_rules.marcar_pulado(session, item.id, vet["motivo"].strip(), uid, agora, cron.fazenda_id)
             elif vet.get("estado") == "pendente" and item is not None:
@@ -290,6 +348,15 @@ def aplicar_checklist(
     except ChecklistError as e:
         session.rollback()
         raise AplicacaoError(str(e))
+
+    # Fatia 9: compra/pagamento/conta a pagar. O estoque desconsiderado torna a compra "Nao necessaria".
+    from fazenda.rules import financeiro_preventivo as fin
+    if est or dados.get("financeiro"):
+        if evento is not None and cron.status in fin.STATUS_ATIVOS:
+            fin.garantir_itens_financeiros(session, cron, evento)
+        fin.sincronizar_itens(session, cron, user=user, agora=agora)
+    if dados.get("financeiro"):
+        fin.aplicar_payload_financeiro(session, cron, dados["financeiro"], user=user, fazenda_id=fazenda_id)
 
 
 # ───────────────────────────── dose e estoque ─────────────────────────────
@@ -434,7 +501,8 @@ def aplicar(session: Session, cron: CronogramaSanitario, dados: dict, *, user=No
         ).first()
         if existente is not None:
             session.refresh(cron)
-            return {"aplicacao": serializar_aplicacao(session, existente), "agendamento": cron, "avisos": [], "idempotente": True}
+            return {"aplicacao": serializar_aplicacao(session, existente), "agendamento": cron, "avisos": [], "idempotente": True,
+                    "financeiro": _financeiro_da_aplicacao(session, cron, existente, fazenda_id)}
 
     canal = dados.get("canal") or "Protocolos"
     if canal not in CANAIS:
@@ -669,8 +737,28 @@ def aplicar(session: Session, cron: CronogramaSanitario, dados: dict, *, user=No
         raise
     session.refresh(cron)
     session.refresh(ap)
-    return {"aplicacao": serializar_aplicacao(session, ap), "agendamento": cron, "avisos": avisos, "idempotente": False}
+    return {
+        "aplicacao": serializar_aplicacao(session, ap), "agendamento": cron, "avisos": avisos, "idempotente": False,
+        "financeiro": _financeiro_da_aplicacao(session, cron, ap, fazenda_id),
+    }
 
+
+
+def _financeiro_da_aplicacao(session: Session, cron: CronogramaSanitario, ap: CronogramaSanitarioAplicacao, fazenda_id: int | None,
+                             vinculos: list[dict] | None = None) -> dict:
+    """Custo da aplicacao (real, 'a informar' se nao ha) + contas/pagamentos/compras do agendamento."""
+    from fazenda.rules import financeiro_preventivo as fin
+    if vinculos is None:
+        vinculos = fin.vinculos_por_cronogramas(session, [cron.id], fazenda_id).get(cron.id, [])
+    motivo = None
+    if ap.custo is None:
+        if ap.estoque_desconsiderado and (ap.estoque_motivo or "").strip().lower() == fin.MOTIVO_FRASCO_VET:
+            motivo = "Frasco do veterinário: informe o custo do frasco"
+        else:
+            motivo = "Sem preço cadastrado para este produto"
+    bloco = fin.bloco_financeiro(vinculos, {"custo_previsto": ap.custo, "custo_a_informar": ap.custo is None, "custo_motivo": motivo})
+    bloco["custo"] = ap.custo
+    return bloco
 
 # ───────────────────────────── desfazer / estornar ─────────────────────────────
 def _reverter(session: Session, ap: CronogramaSanitarioAplicacao, cron: CronogramaSanitario, user, agora: datetime) -> None:
@@ -851,6 +939,8 @@ def acompanhamento(session: Session, fazenda_id: int | None, hoje: date | None =
     calendarios = {c.id: c for c in session.exec(select(CalendarioSanitario)).all()}
     eventos = {e.id: e for e in session.exec(select(EventoSanitario)).all()}
     saida = []
+    from fazenda.rules import financeiro_preventivo as fin
+    vinculos_lote = fin.vinculos_por_cronogramas(session, [c.id for c in crons], fazenda_id)
     for cron in crons:
         cal = calendarios.get(cron.calendario_sanitario_id)
         ev = eventos.get(cal.evento_sanitario_id) if cal else None
@@ -877,6 +967,7 @@ def acompanhamento(session: Session, fazenda_id: int | None, hoje: date | None =
             "responsavel": _responsavel(session, cron),
             "animais_total": len(linhas), "animais_fora_janela": sum(1 for l in linhas if l.origem == "fora_janela"),
             "lotes": lotes, "checklist": checklist_resumo(session, cron),
+            "financeiro": fin.bloco_financeiro(vinculos_lote.get(cron.id, []), fin.necessidade(session, cron, fazenda_id, hoje)),
             "exige_veterinario": exige_veterinario(ev, produto),
         })
     agendados = [i for i in saida if i["status"] == "agendado"]
@@ -909,6 +1000,8 @@ def concluidos(
     usuarios = _nomes_usuarios(session, {a.registrado_por_usuario_id for a in aps} | {a.estornado_por_usuario_id for a in aps})
     busca = _norm((q or "").strip())
     itens: list[dict] = []
+    from fazenda.rules import financeiro_preventivo as fin
+    vinculos_lote = fin.vinculos_por_cronogramas(session, list({a.cronograma_id for a in aps}), fazenda_id)
     for ap in aps:
         cron = session.get(CronogramaSanitario, ap.cronograma_id)
         if cron is None or (calendario_id is not None and cron.calendario_sanitario_id != calendario_id):
@@ -937,6 +1030,7 @@ def concluidos(
             "validade": _iso(ap.validade), "estoque_desconsiderado": ap.estoque_desconsiderado,
             "carencia_leite_ate": _iso(ap.carencia_leite_ate), "carencia_carne_ate": _iso(ap.carencia_carne_ate),
             "carencia_texto": ap.carencia_texto, "custo": ap.custo, "retroativo": ap.retroativo, "canal": ap.canal,
+            "financeiro": _financeiro_da_aplicacao(session, cron, ap, fazenda_id, vinculos_lote.get(cron.id, [])),
             "excecoes": excecoes, "com_excecao": bool(excecoes),
             "registrado_por": usuarios.get(ap.registrado_por_usuario_id), "registrado_em": ap.registrado_em.isoformat(),
             "motivo_estorno": ap.motivo_estorno, "tipo_estorno": ap.tipo_estorno,
@@ -950,7 +1044,9 @@ def concluidos(
             qc = qc.where(CronogramaSanitario.fazenda_id == fazenda_id)
         if calendario_id is not None:
             qc = qc.where(CronogramaSanitario.calendario_sanitario_id == calendario_id)
-        for cron in session.exec(qc).all():
+        cancelados = session.exec(qc).all()
+        vinculos_canc = fin.vinculos_por_cronogramas(session, [c.id for c in cancelados], fazenda_id)
+        for cron in cancelados:
             dia = cron.atualizado_em.date()
             if (de and dia < de) or (ate and dia > ate):
                 continue
@@ -965,6 +1061,7 @@ def concluidos(
                 "frasco": "—", "validade": None, "estoque_desconsiderado": False, "carencia_leite_ate": None,
                 "carencia_carne_ate": None, "carencia_texto": None, "custo": None, "retroativo": False, "canal": None,
                 "excecoes": [], "com_excecao": False, "registrado_por": None, "registrado_em": cron.atualizado_em.isoformat(),
+                "financeiro": fin.bloco_financeiro(vinculos_canc.get(cron.id, [])),
                 "motivo": cron.motivo_cancelamento, "motivo_estorno": None, "tipo_estorno": None, "estornado_por": None,
                 "estornado_em": None, "pode_desfazer": False, "desfazer_restante_s": 0,
             })
@@ -1000,12 +1097,14 @@ def detalhe_aplicacao(session: Session, aplicacao_id: int, fazenda_id: int | Non
         estornado_por=usuarios.get(ap.estornado_por_usuario_id), ciencia_usuario=usuarios.get(ap.ciencia_usuario_id),
         log=[l for l in log_do_agendamento(session, cron.id) if l["aplicacao_id"] in (None, ap.id)],
         checklist=checklist_resumo(session, cron), agendamento_status=cron.status,
+        financeiro=_financeiro_da_aplicacao(session, cron, ap, fazenda_id),
     )
     return d
 
 
 def contexto_aplicar(session: Session, cron: CronogramaSanitario, fazenda_id: int | None, hoje: date | None = None) -> dict:
     """Tudo o que a gaveta Aplicar precisa (a mesma em Protocolos e na Agenda)."""
+    from fazenda.rules import financeiro_preventivo as fin
     hoje = hoje or date.today()
     cal = session.get(CalendarioSanitario, cron.calendario_sanitario_id)
     ev = session.get(EventoSanitario, cal.evento_sanitario_id) if cal else None
@@ -1072,5 +1171,6 @@ def contexto_aplicar(session: Session, cron: CronogramaSanitario, fazenda_id: in
             for l, n in zip(linhas, numeros)
         ],
         "estoque": estoque, "pessoas": pessoas, "carencia": carencia, "checklist": checklist,
+        "financeiro": fin.resumo(session, cron, fazenda_id, hoje),
         "log": log_do_agendamento(session, cron.id), "desfazer_segundos": DESFAZER_SEGUNDOS, "hoje": hoje.isoformat(),
     }

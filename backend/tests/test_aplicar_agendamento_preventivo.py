@@ -862,7 +862,8 @@ class TestAcompanhamento:
         assert por[futuro["id"]]["estado_visual"] == "agendado" and por[rascunho["id"]]["estado_visual"] == "em_montagem"
         h = por[hoje["id"]]
         assert h["responsavel"]["nome"] == "Dr. Paulo" and h["responsavel"]["crmv"] == "CRMV-MG 12345"
-        assert h["checklist"]["total"] == 3 and h["checklist"]["resolvidos"] == 0 and h["animais_total"] == 1
+        # fatia 9: o agendamento de vacina traz o item de compra; com o estoque cobrindo ele ja nasce "Nao necessaria"
+        assert h["checklist"]["total"] == 4 and h["checklist"]["resolvidos"] == 1 and h["animais_total"] == 1
         assert h["protocolo_nome"] == "Brucelose B19" and h["exige_veterinario"] is True and h["lotes"] == ["Bezerreiro"]
         assert dados["totais"] == {"hoje": 1, "atrasados": 1, "agendados": 3}
 
@@ -952,7 +953,7 @@ class TestChecklistDoAgendamento:
         assert it["estoque"].status == "cumprido" and json.loads(it["estoque"].resposta) == {"estoque_id": est, "lote_id": lotes[0]}
         assert it["horario"].status == "cumprido" and it["horario"].resposta == "15:30"
         assert it["financeiro"].status == "pendente"
-        assert r.json()["checklist"]["resolvidos"] == 3 and r.json()["checklist"]["total"] == 4
+        assert r.json()["checklist"]["resolvidos"] == 4 and r.json()["checklist"]["total"] == 5   # + compra (Nao necessaria)
         with Session(engine) as s:
             assert s.get(CronogramaSanitario, ag).veterinario_pessoa_id == vet
 
@@ -1009,7 +1010,7 @@ class TestChecklistDoAgendamento:
         it = self._itens(engine, ag["id"])
         assert it["vet"].status == "cumprido" and it["estoque"].status == "cumprido" and it["horario"].status == "cumprido"
         assert it["custom"].nome == "Levar luvas"
-        assert ag["checklist"]["resolvidos"] == 3
+        assert ag["checklist"]["resolvidos"] == 4   # + compra (Nao necessaria)
 
     def test_checklist_de_agendamento_de_outra_fazenda_devolve_404(self, ctx):
         c, engine, cal, vet, est, lotes = self._cena(ctx)
@@ -1141,7 +1142,7 @@ class TestConfirmarRascunho:
             "data_evento": dia.isoformat(), "hora": "09:00", "modo_execucao": "veterinario", "veterinario_pessoa_id": vet,
             "checklist": {"veterinario": {"estado": "confirmado", "pessoa_id": vet}, "data": {"estado": "confirmado"}}})
         assert r.status_code == 200, r.text
-        assert r.json()["status"] == "agendado" and r.json()["hora"] == "09:00" and r.json()["checklist"]["resolvidos"] == 2
+        assert r.json()["status"] == "agendado" and r.json()["hora"] == "09:00" and r.json()["checklist"]["resolvidos"] == 3
         assert r.json()["veterinario_pessoa_id"] == vet
         no_dia = c.get("/agenda/", params={"data": dia.isoformat()}).json()
         assert [e for e in no_dia["eventos"] if e["id"] == f"cronograma_sanitario_aplicar_{ag}"]

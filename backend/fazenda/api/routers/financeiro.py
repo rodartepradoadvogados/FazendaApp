@@ -4459,6 +4459,13 @@ def contas_a_pagar(
         ):
             resultado.append({**c.model_dump(), "usuario_nome": nomes_usuarios.get(c.usuario_id)})
 
+    # Conta nascida de um agendamento preventivo (fatia 9): leva o link de volta ao agendamento.
+    if resultado:
+        from fazenda.rules.financeiro_preventivo import origem_preventivo_das_contas
+        origens = origem_preventivo_das_contas(session, [r["id"] for r in resultado])
+        for r in resultado:
+            r["origem_preventivo"] = origens.get(r["id"])
+
     return sorted(resultado, key=lambda x: x["data_vencimento"])
 
 

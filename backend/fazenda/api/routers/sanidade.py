@@ -28,6 +28,7 @@ from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia, proxima_ocorrencia_a_partir_de
 from fazenda.rules.calendario_visao import montar_calendario_visual
 from fazenda.rules import aplicacao_preventiva as aplicacao_rules
+from fazenda.rules import financeiro_preventivo as fin_rules
 from fazenda.rules import cronograma_sanitario as cronograma_rules
 from fazenda.rules.aplicacao_preventiva import AplicacaoError
 from fazenda.rules.cronograma_sanitario import CronogramaError, cronograma_aberto
@@ -1188,6 +1189,8 @@ def _serializar_um_cronograma(session: Session, cron: CronogramaSanitario) -> di
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
     dados = _serializar_cronograma(session, cron, calendarios, eventos, pessoas)
     dados["checklist"] = aplicacao_rules.checklist_resumo(session, cron)
+    vinculos = fin_rules.vinculos_por_cronogramas(session, [cron.id], cron.fazenda_id).get(cron.id, [])
+    dados["financeiro"] = fin_rules.bloco_financeiro(vinculos, fin_rules.necessidade(session, cron, cron.fazenda_id))
     return dados
 
 
@@ -1236,6 +1239,10 @@ def criar_agendamento_preventivo(
     da lista de espera, com animais da janela e animais fora da janela (com
     motivo). Só o agendamento entra na Agenda, no dia (R2)."""
     calendario = _calendario_da_fazenda(session, dados.calendario_sanitario_id, fazenda_id)
+    try:   # campos obrigatorios do financeiro ANTES de criar (evita agendamento pela metade)
+        fin_rules.validar_payload_financeiro((dados.checklist or {}).get("financeiro"))
+    except AplicacaoError as e:
+        raise _http(e)
     try:
         cron = cronograma_rules.criar_agendamento(
             session, calendario, animais_janela=dados.animais_janela,
@@ -1251,6 +1258,7 @@ def criar_agendamento_preventivo(
         detalhe=f"{len(dados.animais_janela) + len(dados.animais_fora)} animal(is) para {cron.data_evento.strftime('%d/%m/%Y')}",
     )
     session.commit()
+    fin_rules.garantir_itens_financeiros(session, cron, session.get(EventoSanitario, calendario.evento_sanitario_id))
     if dados.checklist:
         try:
             aplicacao_rules.aplicar_checklist(session, cron, dados.checklist, user=user, fazenda_id=fazenda_id)
@@ -1294,9 +1302,12 @@ class CancelarAgendamentoIn(BaseModel):
     motivo: str
     # O que fazer com os animais: voltam à lista de espera (padrão) ou são desconsiderados.
     destino_animais: str = "espera"
-    # Destino da conta a pagar vinculada ("manter" | "cancelar"). Os vínculos
-    # financeiros ainda não existem (fatias 9-10): hoje só fica registrado no log.
+    # Destino de cada vínculo financeiro ativo (fatia 9) — obrigatório quando o
+    # agendamento tem aquele tipo de vínculo: conta ("manter" | "cancelar"),
+    # pagamento ("manter" | "desvincular"), cotação ("manter" | "cancelar").
     destino_conta: str | None = None
+    destino_pagamento: str | None = None
+    destino_cotacao: str | None = None
 
 
 @router.post("/cronogramas/{cronograma_id}/cancelar")
@@ -1308,19 +1319,36 @@ def cancelar_agendamento_preventivo(
     """Cancelar (R9): o agendamento sai da Agenda e os animais da janela voltam
     à lista de espera; o motivo fica registrado."""
     cron = _cronograma_da_fazenda(session, cronograma_id, fazenda_id)
+    destinos = None
+    if cron.status in ("agendado", "em_montagem") and (dados.motivo or "").strip():
+        try:   # o destino de cada vínculo é escolhido ANTES de cancelar qualquer coisa
+            destinos = fin_rules.validar_destinos_cancelamento(session, cron, dados.model_dump())
+        except AplicacaoError as e:
+            raise _http(e)
     try:
         devolvidos = cronograma_rules.cancelar(session, cron, dados.motivo, date.today(), dados.destino_animais)
     except CronogramaError as e:
         session.rollback()
         raise HTTPException(status_code=400, detail=str(e))
+    linhas_fin: list[str] = []
+    if destinos is not None:
+        try:
+            linhas_fin = fin_rules.aplicar_destinos_cancelamento(
+                session, cron, destinos, dados.motivo.strip(), user=user, fazenda_id=fazenda_id,
+            )
+        except AplicacaoError as e:
+            session.rollback()
+            raise _http(e)
     aplicacao_rules.registrar_log(
         session, cron, "Cancelou", user=user, motivo=dados.motivo.strip(),
         detalhe=(f"{devolvidos} animal(is) de volta à lista de espera" if dados.destino_animais == "espera"
                  else "animais desconsiderados (não voltam à lista de espera)")
-        + (f" · conta a pagar: {dados.destino_conta}" if dados.destino_conta else ""),
+        + (f" · financeiro: {'; '.join(linhas_fin)}" if linhas_fin else "")
+        + (f" · conta a pagar: {dados.destino_conta}" if dados.destino_conta and not linhas_fin else ""),
     )
     session.commit()
-    return {**_serializar_um_cronograma(session, cron), "devolvidos": devolvidos}
+    fin_rules.sincronizar_itens(session, cron, user=user)
+    return {**_serializar_um_cronograma(session, cron), "devolvidos": devolvidos, "financeiro_resumo": linhas_fin}
 
 
 class ConfirmarRascunhoIn(BaseModel):
@@ -1349,6 +1377,8 @@ def confirmar_rascunho_agendamento(
         session, cron, "Agendou", user=user, detalhe=f"confirmado para {cron.data_evento.strftime('%d/%m/%Y')}",
     )
     session.commit()
+    _cal = session.get(CalendarioSanitario, cron.calendario_sanitario_id)
+    fin_rules.garantir_itens_financeiros(session, cron, session.get(EventoSanitario, _cal.evento_sanitario_id) if _cal else None)
     if dados.checklist:
         try:
             aplicacao_rules.aplicar_checklist(session, cron, dados.checklist, user=user, fazenda_id=fazenda_id)
@@ -1510,6 +1540,131 @@ def estornar_aplicacao_preventiva(
         session.rollback()
         raise _http(e)
     return _resposta_agendamento(session, resultado)
+
+
+# ---------------------------------------------------------------------------
+# Financeiro/compras do agendamento (fatia 9) — ver fazenda/rules/financeiro_preventivo.py
+# ---------------------------------------------------------------------------
+@router.get("/cronogramas/financeiro/previa")
+def previa_financeiro_do_assistente(
+    calendario_id: int, animais: str = "", session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Passo Checklist do assistente Criar agendamento: necessidade do insumo (dose x animais marcados),
+    custo previsto e pagamentos já feitos do mesmo produto — o agendamento ainda não existe."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    numeros = [n.strip() for n in animais.split(",") if n.strip()]
+    try:
+        return fin_rules.previa_do_assistente(session, calendario_id, numeros, fazenda_id)
+    except AplicacaoError as e:
+        raise _http(e)
+
+
+@router.get("/cronogramas/{cronograma_id}/financeiro")
+def financeiro_do_agendamento(
+    cronograma_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Necessidade do insumo (dose x animais), custo previsto ('a informar' se frasco do
+    veterinário), compra, pagamento e conta a pagar vinculados a este agendamento."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    cron = _cronograma_da_fazenda(session, cronograma_id, fazenda_id)
+    return fin_rules.resumo(session, cron, fazenda_id)
+
+
+@router.get("/cronogramas/{cronograma_id}/financeiro/pagamentos")
+def pagamentos_candidatos_agendamento(
+    cronograma_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Compras já pagas do mesmo produto, para vincular sem duplicar o lançamento."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    cron = _cronograma_da_fazenda(session, cronograma_id, fazenda_id)
+    return fin_rules.candidatos_pagamento(session, cron, fazenda_id)
+
+
+class ComprarIn(BaseModel):
+    modo: str = "cotacao"                     # "cotacao" | "pedido" | "ja_comprei"
+    quantidade: float | None = None           # padrão: o que falta (ou o que o agendamento usa)
+    fornecedor_ids: list[int] = []
+    fornecedor_nome: str | None = None        # pedido sem fornecedor cadastrado
+    necessario_ate: date | None = None
+    canal: str = "email"
+    disparar: bool = False                    # cotação: enviar já aos fornecedores escolhidos
+    observacao: str | None = None
+
+
+@router.post("/cronogramas/{cronograma_id}/financeiro/compra")
+def comunicar_compra_agendamento(
+    cronograma_id: int, dados: ComprarIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Comunicar compra: cria a cotação ou o pedido do insumo que falta (ou marca 'já comprei')."""
+    cron = _cronograma_da_fazenda(session, cronograma_id, fazenda_id)
+    try:
+        return fin_rules.comunicar_compra(session, cron, dados.model_dump(), user=user, fazenda_id=fazenda_id)
+    except AplicacaoError as e:
+        session.rollback()
+        raise _http(e)
+
+
+class VincularPagamentoIn(BaseModel):
+    pagamento_id: int
+    modo: str = "proporcional"                # "proporcional" | "inteiro"
+
+
+@router.post("/cronogramas/{cronograma_id}/financeiro/pagamento")
+def vincular_pagamento_agendamento(
+    cronograma_id: int, dados: VincularPagamentoIn, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Vincular um pagamento já realizado (lançamento pago do Financeiro) a este agendamento."""
+    cron = _cronograma_da_fazenda(session, cronograma_id, fazenda_id)
+    try:
+        return fin_rules.vincular_pagamento(session, cron, dados.pagamento_id, dados.modo, user=user, fazenda_id=fazenda_id)
+    except AplicacaoError as e:
+        session.rollback()
+        raise _http(e)
+
+
+class ContaPagarIn(BaseModel):
+    subtipo: str = "produto"                  # "produto" | "honorario"
+    fornecedor: str
+    valor: float | None = None                # produto: padrão = custo previsto
+    vencimento: date
+    descricao: str | None = None
+
+
+@router.post("/cronogramas/{cronograma_id}/financeiro/conta-pagar")
+def lancar_conta_pagar_agendamento(
+    cronograma_id: int, dados: ContaPagarIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Lança no Financeiro a conta a pagar decorrente do protocolo e a vincula ao agendamento."""
+    cron = _cronograma_da_fazenda(session, cronograma_id, fazenda_id)
+    try:
+        return fin_rules.lancar_conta_pagar(session, cron, dados.model_dump(mode="json"), user=user, fazenda_id=fazenda_id)
+    except AplicacaoError as e:
+        session.rollback()
+        raise _http(e)
+
+
+class EncerrarVinculoIn(BaseModel):
+    acao: str                                 # cancelar_conta | desvincular_pagamento | cancelar_cotacao
+    motivo: str
+
+
+@router.post("/cronogramas/{cronograma_id}/financeiro/vinculos/{vinculo_id}/encerrar")
+def encerrar_vinculo_agendamento(
+    cronograma_id: int, vinculo_id: int, dados: EncerrarVinculoIn, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Desvincular pagamento / cancelar conta a pagar / cancelar cotação, com motivo (fica no log)."""
+    cron = _cronograma_da_fazenda(session, cronograma_id, fazenda_id)
+    try:
+        vinc = fin_rules.encerrar_vinculo(session, cron, vinculo_id, dados.acao, dados.motivo, user=user, fazenda_id=fazenda_id)
+    except AplicacaoError as e:
+        session.rollback()
+        raise _http(e)
+    return {"vinculo": vinc, "resumo": fin_rules.resumo(session, cron, fazenda_id)}
 
 
 @router.put("/cronogramas/{cronograma_id}/checklist")
