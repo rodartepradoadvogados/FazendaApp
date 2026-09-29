@@ -324,7 +324,7 @@ def bloco_financeiro(vinculos: list[dict], nec: dict | None = None) -> dict:
         "contas_ativas": sum(1 for v in contas if v["estado"] == "ativo"),
         "pagamento_vinculado_total": _r2(sum(v["valor"] or 0 for v in pagamentos if v["estado"] == "ativo")),
         "tem_ativo": bool(ativos),
-        "link_contas_a_pagar": "/financeiro?aba=contas-a-pagar",
+        "link_contas_a_pagar": "/financeiro",
     }
     if nec is not None:
         bloco.update(custo_previsto=nec["custo_previsto"], custo_a_informar=nec["custo_a_informar"], custo_motivo=nec["custo_motivo"])
@@ -843,17 +843,22 @@ def validar_payload_financeiro(dados: dict | None) -> None:
             raise AplicacaoError("Informe o valor da conta a pagar")
 
 
-def origem_preventivo_das_contas(session: Session, conta_ids: list[int]) -> dict[int, dict]:
+def origem_preventivo_das_contas(session: Session, conta_ids: list[int] | None = None, fazenda_id: int | None = None) -> dict[int, dict]:
     """{ContaGerencial.id: {cronograma_id, protocolo, subtipo, data_evento}} das contas que nasceram de um
-    agendamento preventivo e ainda estao ativas — Financeiro > Contas a pagar mostra o link de volta."""
-    if not conta_ids:
-        return {}
-    linhas = session.exec(
+    agendamento preventivo e ainda estao ativas — Financeiro > Contas a pagar mostra o link de volta.
+    Sem `conta_ids`, devolve todas as da fazenda (poucas linhas: evita IN gigante no extrato)."""
+    q = (
         select(CronogramaSanitarioVinculo).where(CronogramaSanitarioVinculo.tipo == "conta")
-        .where(CronogramaSanitarioVinculo.estado == "ativo").where(CronogramaSanitarioVinculo.alvo_id.in_(conta_ids))
-    ).all()
+        .where(CronogramaSanitarioVinculo.estado == "ativo")
+    )
+    if fazenda_id is not None:
+        q = q.where(CronogramaSanitarioVinculo.fazenda_id == fazenda_id)
+    if conta_ids is not None:
+        if not conta_ids:
+            return {}
+        q = q.where(CronogramaSanitarioVinculo.alvo_id.in_(conta_ids))
     saida: dict[int, dict] = {}
-    for l in linhas:
+    for l in session.exec(q).all():
         cron = session.get(CronogramaSanitario, l.cronograma_id)
         if cron is None:
             continue

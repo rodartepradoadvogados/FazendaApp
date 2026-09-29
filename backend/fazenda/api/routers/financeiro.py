@@ -808,11 +808,16 @@ def listar_lancamentos(
         query_anexos = query_anexos.where(LancamentoAnexo.fazenda_id == fazenda_id)
     numeros_com_anexo = set(session.exec(query_anexos).all())
 
+    # Contas nascidas de um agendamento preventivo (fatia 9): link de volta ao agendamento.
+    from fazenda.rules.financeiro_preventivo import origem_preventivo_das_contas
+    origens_preventivo = origem_preventivo_das_contas(session, None, fazenda_id)
+
     registros = []
     for c in contas:
         dc = c.data_competencia
         dp = c.data_pagamento
         registros.append({
+            "origem_preventivo": origens_preventivo.get(c.id),
             "id": c.id,
             "numero_lancamento": c.numero_lancamento,
             "tipo": c.tipo,

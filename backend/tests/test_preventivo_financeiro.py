@@ -325,6 +325,13 @@ class TestContaAPagar:
         origem = c.get("/financeiro/contas-a-pagar", params={"dias": 10}).json()[0]["origem_preventivo"]
         assert origem["cronograma_id"] == ag and origem["protocolo"] == "Brucelose B19" and origem["subtipo"] == "produto"
 
+    def test_extrato_de_lancamentos_marca_a_origem_preventiva(self, cena):
+        c, ag = cena["c"], cena["ag"]
+        conta = _conta_pagar(c, ag).json()["vinculo"]
+        linhas = c.get("/financeiro/lancamentos").json()["lancamentos"]
+        origem = next(l for l in linhas if l["id"] == conta["alvo_id"])["origem_preventivo"]
+        assert origem["cronograma_id"] == ag and origem["protocolo"] == "Brucelose B19"
+
     def test_honorario_do_veterinario(self, cena):
         c, ag = cena["c"], cena["ag"]
         r = _conta_pagar(c, ag, subtipo="honorario", fornecedor="Dr. Paulo Menezes", valor=350)

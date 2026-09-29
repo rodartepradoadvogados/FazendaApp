@@ -16,6 +16,7 @@ import {
 } from "@/lib/api";
 import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
 import { TelaSkeleton } from "@/components/ui";
+import { ResumoCustoFinanceiro } from "./FinanceiroAgendamento";
 import {
   brl, Chips, dataCurta, diaSemana, hojeIso, inputStyle, labelStyle, MOTIVOS_CIENCIA, MOTIVOS_ESTOQUE, MOTIVOS_NAO_APLICADO,
   notaStyle, num, Pill, plural, textoMotivo,
@@ -182,7 +183,11 @@ function FormAplicar({ ctx, canal, chave, onAplicado, onFechar }: {
     } catch (e: any) { setErroServ(e.message || "Erro ao aplicar"); } finally { setSalvando(false); }
   }
 
-  const linhaResumo = `${aplicados.length} ${plural(aplicados.length, "animal", "animais")} · ${num(totalDose)} ${unPl(un, totalDose)} · restante ${restante == null ? "—" : `${num(restante)} ${unPl(un, restante)}`}${carenciaCarne ? ` · carne até ${dataCurta(carenciaCarne)}` : ""}${carenciaLeite ? ` · leite até ${dataCurta(carenciaLeite)}` : ""}`;
+  // Custo: o digitado; senão doses x preço do estoque; frasco do veterinário (estoque desconsiderado) = a informar.
+  const precoUn = ctx.financeiro?.necessidade.preco_unitario ?? null;
+  const custoConferir: number | null = custoNum != null ? custoNum : desconsiderar || precoUn == null ? null : Math.round(totalDose * precoUn * 100) / 100;
+  const custoMotivo = custoConferir != null ? null : desconsiderar ? "Frasco do veterinário: sem custo calculado" : (ctx.financeiro?.necessidade.custo_motivo || "Sem preço cadastrado para este produto");
+  const linhaResumo = `${aplicados.length} ${plural(aplicados.length, "animal", "animais")} · ${num(totalDose)} ${unPl(un, totalDose)} · restante ${restante == null ? "—" : `${num(restante)} ${unPl(un, restante)}`}${carenciaCarne ? ` · carne até ${dataCurta(carenciaCarne)}` : ""}${carenciaLeite ? ` · leite até ${dataCurta(carenciaLeite)}` : ""} · custo ${custoConferir != null ? brl(custoConferir) : "a informar"}${ctx.financeiro && ctx.financeiro.contas_ativas > 0 ? ` · conta a pagar ${brl(ctx.financeiro.conta_a_pagar_total)}` : ""}`;
   const boxAviso = (cor: string, texto: React.ReactNode, icone = <AlertTriangle size={15} />) => (
     <div role="status" style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", fontSize: "0.82rem", border: `1px solid ${cor}`, borderLeft: `4px solid ${cor}`, borderRadius: "var(--r-sm)", padding: "0.5rem 0.7rem", background: "var(--surface-2)" }}>
       <span style={{ color: cor, marginTop: 2, display: "inline-flex" }}>{icone}</span><span>{texto}</span>
@@ -226,8 +231,13 @@ function FormAplicar({ ctx, canal, chave, onAplicado, onFechar }: {
           <Item k={ctx.por_peso ? "Volume" : "Doses"} v={`${num(totalDose)} ${unPl(un, totalDose)}`} />
           <Item k="Estoque restante" v={restante == null ? "sem saída" : `${num(restante)} ${unPl(un, restante)}`} />
           <Item k="Carência" v={[carenciaCarne ? `carne até ${dataCurta(carenciaCarne)}` : "", carenciaLeite ? `leite até ${dataCurta(carenciaLeite)}` : "", ctx.carencia.proibido_lactacao ? "leite: não usar em lactação" : ""].filter(Boolean).join(" · ") || "sem carência informada"} />
-          <Item k="Custo" v={custoNum != null ? brl(custoNum) : desconsiderar ? "a informar" : "calculado pelo estoque"} />
+          <Item k={custoNum != null ? "Custo" : "Custo previsto"} v={custoConferir != null ? brl(custoConferir) : "a informar"} />
         </ul>
+        {ctx.financeiro && (
+          <div style={{ marginTop: "0.7rem" }}>
+            <ResumoCustoFinanceiro bloco={{ ...ctx.financeiro, custo_motivo: custoMotivo }} custo={custoConferir} rotuloCusto={custoNum != null ? "Custo" : "Custo previsto"} />
+          </div>
+        )}
         <p style={{ ...notaStyle, marginTop: "0.6rem" }}>{ctx.por_peso ? "Dose por peso: cada animal recebe pelo seu peso. " : ""}Cada animal vira uma linha em Sanidade e o registro vai para <b>Concluídos</b>.</p>
       </details>
 
@@ -473,6 +483,14 @@ function Concluida({ ctx, r, canal, desfeito, onDesfeito, onFechar, onVerConclui
           <li>{ap.estoque_desconsiderado ? `Estoque desconsiderado (${ap.estoque_motivo}): nada foi baixado.` : `Estoque baixado: ${num(ap.dose_total)} ${unPl(ap.unidade || "", ap.dose_total || 0)}${ap.lote_texto ? ` do lote ${ap.lote_texto}` : ""}.`}</li>
           {(ap.carencia_carne_ate || ap.carencia_leite_ate) && <li>Carência: {[ap.carencia_carne_ate ? `carne até ${dataCurta(ap.carencia_carne_ate)}` : "", ap.carencia_leite_ate ? `leite até ${dataCurta(ap.carencia_leite_ate)}` : ""].filter(Boolean).join(" · ")}.</li>}
           <li>Registrado por {ap.aplicador_nome ? `${ap.aplicador_nome} (aplicador)` : "—"} pelo canal {ap.canal}.</li>
+          <li>
+            <b>Custo:</b> {ap.custo != null ? brl(ap.custo) : <b style={{ color: "var(--amber)" }}>a informar</b>}
+            {ap.custo == null && r.financeiro?.custo_motivo ? ` (${r.financeiro.custo_motivo})` : ""}
+            {r.financeiro && r.financeiro.contas_ativas > 0 ? ` · conta a pagar lançada: ${brl(r.financeiro.conta_a_pagar_total)}`
+              : r.financeiro && r.financeiro.pagamento_vinculado_total > 0 ? " · vinculado ao pagamento já realizado"
+              : " · sem conta a pagar: lance em Contas a pagar"}
+            {" "}<a href={r.financeiro?.link_contas_a_pagar || "/financeiro"} className="lnk" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Ver contas a pagar</a>.
+          </li>
           {ap.ciencia_itens.length > 0 && <li>Ciência de {ap.ciencia_itens.length} {plural(ap.ciencia_itens.length, "item pendente", "itens pendentes")} gravada com o seu nome e a hora.</li>}
           <li>Foi para <b>Concluídos</b>{ap.excecoes.length ? `, com selo de exceção: ${ap.excecoes.join("; ")}` : ""}.</li>
         </ul>

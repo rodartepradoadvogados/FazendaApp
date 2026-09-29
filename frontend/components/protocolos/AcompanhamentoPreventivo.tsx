@@ -16,11 +16,12 @@ import {
 import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
 import { Indicador, TelaSkeleton } from "@/components/ui";
 import { GavetaAplicar } from "./GavetaAplicar";
+import { FinanceiroVivo } from "./FinanceiroAgendamento";
 import {
   ChecklistItensExistentes, ChecklistMontagem, checklistParaPayload, checklistVazio, validarChecklist, type ChecklistDraft,
 } from "./ChecklistAgendamento";
 import {
-  Chips, ChecklistSelo, dataCurta, diaSemana, EstadoAgPill, ForaJanelaBadge, hojeIso, inputStyle, labelStyle, maisDiasIso,
+  brl, Chips, ChecklistSelo, dataCurta, diaSemana, EstadoAgPill, ForaJanelaBadge, hojeIso, inputStyle, labelStyle, maisDiasIso,
   MOTIVOS_ADIAR, MOTIVOS_CANCELAR, notaStyle, plural, textoMotivo, dataHoraCurta,
 } from "./preventivoComum";
 
@@ -134,7 +135,15 @@ export function AcompanhamentoPreventivo({ onIrLista, onVerConcluidos }: { onIrL
                     </span>
                   </td>
                   <td style={{ fontSize: "0.82rem" }}>{a.responsavel.nome}{a.responsavel.crmv && <span style={{ ...notaStyle, display: "block" }}>{a.responsavel.crmv}</span>}</td>
-                  <td><ChecklistSelo ck={a.checklist} /></td>
+                  <td>
+                    <ChecklistSelo ck={a.checklist} />
+                    {a.financeiro && (a.financeiro.contas_ativas > 0 || a.financeiro.custo_previsto != null || a.financeiro.custo_a_informar) && (
+                      <span style={{ ...notaStyle, display: "block", marginTop: 2 }}>
+                        {a.financeiro.custo_previsto != null ? `Custo ${brl(a.financeiro.custo_previsto)}` : "Custo a informar"}
+                        {a.financeiro.contas_ativas > 0 ? ` · conta a pagar ${brl(a.financeiro.conta_a_pagar_total)}` : ""}
+                      </span>
+                    )}
+                  </td>
                   <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: "nowrap" }}>
                     {a.status === "em_montagem" ? (
                       <button type="button" className="btn-secondary" onClick={() => setPainel({ tipo: "montar", id: a.id })}><Pencil size={14} /> Continuar montando</button>
@@ -199,6 +208,18 @@ function GavetaAgendamento({ id, modoInicial, onFechar, onMudou, onAplicar }: {
             <li className="card" style={{ padding: "0.5rem 0.7rem" }}><span style={notaStyle}>Responsável</span><b style={{ display: "block", fontSize: "0.9rem" }}>{ctx.responsavel.nome}</b></li>
             <li className="card" style={{ padding: "0.5rem 0.7rem" }}><span style={notaStyle}>Checklist</span><b style={{ display: "block" }}>{ctx.checklist.resolvidos}/{ctx.checklist.total}</b></li>
             <li className="card" style={{ padding: "0.5rem 0.7rem" }}><span style={notaStyle}>Produto</span><b style={{ display: "block", fontSize: "0.9rem" }}>{ctx.produto || "—"}</b></li>
+            {ctx.financeiro && (
+              <li className="card" style={{ padding: "0.5rem 0.7rem" }}>
+                <span style={notaStyle}>Custo previsto</span>
+                <b style={{ display: "block", fontSize: "0.9rem", color: ctx.financeiro.custo_previsto == null ? "var(--amber)" : undefined }}>{brl(ctx.financeiro.custo_previsto)}</b>
+              </li>
+            )}
+            {ctx.financeiro && (
+              <li className="card" style={{ padding: "0.5rem 0.7rem" }}>
+                <span style={notaStyle}>Conta a pagar</span>
+                <b style={{ display: "block", fontSize: "0.9rem" }}>{ctx.financeiro.contas_ativas > 0 ? brl(ctx.financeiro.conta_a_pagar_total) : ctx.financeiro.pagamento_vinculado_total > 0 ? "pago (vinculado)" : "nenhuma"}</b>
+              </li>
+            )}
           </ul>
           <p style={notaStyle}>Dose: {ctx.dose_texto}{ctx.via ? ` · via ${ctx.via}` : ""}. {ctx.carencia.texto}.</p>
 
@@ -222,7 +243,7 @@ function GavetaAgendamento({ id, modoInicial, onFechar, onMudou, onAplicar }: {
               ))}
             </ul>
           )}
-          {aba === "checklist" && <AbaChecklist id={id} itens={ctx.checklist.itens} onMudou={() => { carregar(); onMudou(); }} />}
+          {aba === "checklist" && <AbaChecklist ctx={ctx} onMudou={() => { carregar(); onMudou(); }} />}
           {aba === "historico" && (
             ctx.log.length ? (
               <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
@@ -250,18 +271,31 @@ function GavetaAgendamento({ id, modoInicial, onFechar, onMudou, onAplicar }: {
   );
 }
 
-function AbaChecklist({ id, itens, onMudou }: { id: number; itens: ItemChecklistAg[]; onMudou: () => void }) {
+function AbaChecklist({ ctx, onMudou }: { ctx: ContextoAplicar; onMudou: () => void }) {
+  const id = ctx.cronograma_id;
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const encerrado = ctx.estado !== "agendado" && ctx.estado !== "em_montagem";
+  const veterinarios = ctx.pessoas.filter((p) => p.veterinario);
+  async function salvar(corpo: Parameters<typeof editarChecklistAgendamento>[1]) {
+    setOcupado(true); setErro(null);
+    try { await editarChecklistAgendamento(id, corpo); onMudou(); }
+    catch (e: any) { setErro(e.message || "Erro ao salvar o checklist"); } finally { setOcupado(false); }
+  }
   return (
-    <div>
-      <ChecklistItensExistentes itens={itens} ocupado={ocupado} onAcao={async (item, acao, motivo) => {
-        setOcupado(true); setErro(null);
-        try { await editarChecklistAgendamento(id, { itens: [{ item_id: item.id, acao, motivo: motivo || null }] }); onMudou(); }
-        catch (e: any) { setErro(e.message || "Erro ao salvar o checklist"); } finally { setOcupado(false); }
-      }} />
-      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.82rem", marginTop: "0.5rem" }}>{erro}</p>}
-      <p style={{ ...notaStyle, marginTop: "0.6rem" }}>Nada aqui bloqueia a aplicação: o que ficar pendente pede só a ciência na hora de Aplicar.</p>
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
+      <ChecklistItensExistentes
+        itens={ctx.checklist.itens} ocupado={ocupado} veterinario={ctx.checklist.veterinario} veterinarios={veterinarios}
+        onAcao={(item, acao, motivo) => salvar({ itens: [{ item_id: item.id, acao, motivo: motivo || null }] })}
+        onConfirmarVet={encerrado ? undefined : (v) => salvar({ veterinario: { estado: "confirmado", pessoa_id: v.pessoaId, quando: v.quando, observacao: v.nota } })}
+      />
+      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
+      <div>
+        <h3 style={{ fontSize: "0.9rem", fontWeight: 700, marginBottom: "0.2rem" }}>Compra e financeiro</h3>
+        <FinanceiroVivo cronogramaId={id} dataEvento={ctx.data_evento} vetNome={ctx.responsavel.modo === "veterinario" ? ctx.responsavel.nome : null}
+                        readOnly={encerrado} onMudou={onMudou} />
+      </div>
+      <p style={notaStyle}>Nada aqui bloqueia a aplicação: o que ficar pendente pede só a ciência na hora de Aplicar.</p>
     </div>
   );
 }
@@ -308,23 +342,40 @@ function PainelCancelar({ ctx, onVoltar, onFeito }: { ctx: ContextoAplicar; onVo
   const [motivo, setMotivo] = useState("");
   const [outro, setOutro] = useState("");
   const [destino, setDestino] = useState<"espera" | "naoSeAplica">("espera");
-  const [conta, setConta] = useState<"manter" | "cancelar">("manter");
+  const [conta, setConta] = useState<"manter" | "cancelar" | "">("");
+  const [pagamento, setPagamento] = useState<"manter" | "desvincular" | "">("");
+  const [cotacao, setCotacao] = useState<"manter" | "cancelar" | "">("");
   const [tentou, setTentou] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const texto = textoMotivo(motivo, outro);
-  // Item financeiro do checklist já resolvido = há custo/conta combinados para este agendamento.
-  const temFinanceiro = ctx.checklist.itens.some((i) => i.chave === "financeiro" && i.status === "cumprido");
+  const fin = ctx.financeiro;
+  const contas = (fin?.vinculos || []).filter((v) => v.tipo === "conta" && v.estado === "ativo");
+  const pagamentos = (fin?.vinculos || []).filter((v) => v.tipo === "pagamento" && v.estado === "ativo");
+  const cotacoes = (fin?.vinculos || []).filter((v) => v.tipo === "cotacao" && v.estado === "ativo");
+  const pedidos = (fin?.vinculos || []).filter((v) => v.tipo === "pedido" && v.estado === "ativo");
   const daJanela = ctx.animais.filter((a) => a.origem === "janela").length;
   const fora = ctx.animais.length - daJanela;
+  const faltaDestino = (contas.length > 0 && !conta) || (pagamentos.length > 0 && !pagamento) || (cotacoes.length > 0 && !cotacao);
 
   async function cancelar() {
     setTentou(true);
-    if (!texto) return;
+    if (!texto || faltaDestino) return;
     setSalvando(true); setErro(null);
-    try { await cancelarAgendamentoPreventivo(ctx.cronograma_id, texto, destino, temFinanceiro ? conta : undefined); onFeito(); }
-    catch (e: any) { setErro(e.message || "Erro ao cancelar"); } finally { setSalvando(false); }
+    try {
+      await cancelarAgendamentoPreventivo(ctx.cronograma_id, texto, destino, {
+        conta: contas.length ? (conta as "manter" | "cancelar") : undefined,
+        pagamento: pagamentos.length ? (pagamento as "manter" | "desvincular") : undefined,
+        cotacao: cotacoes.length ? (cotacao as "manter" | "cancelar") : undefined,
+      });
+      onFeito();
+    } catch (e: any) { setErro(e.message || "Erro ao cancelar"); } finally { setSalvando(false); }
   }
+  const lista = (vs: typeof contas, comValor = true) => (
+    <ul style={{ margin: "0 0 0.4rem", paddingLeft: "1.1rem", fontSize: "0.82rem" }}>
+      {vs.map((v) => <li key={v.id}>{v.rotulo || "—"}{comValor ? ` · ${brl(v.valor)}` : ""}{v.vencimento && v.tipo === "conta" ? ` · vence ${dataCurta(v.vencimento)}` : ""}{v.numero_lancamento ? ` · ${v.numero_lancamento}` : ""}{v.alvo?.paga ? " · já paga" : ""}</li>)}
+    </ul>
+  );
   return (
     <div className="card" role="group" aria-label="Cancelar agendamento" style={{ display: "flex", flexDirection: "column", gap: "0.8rem", borderLeft: "4px solid var(--red)" }}>
       <h3 className="card-header">Cancelar agendamento</h3>
@@ -337,13 +388,33 @@ function PainelCancelar({ ctx, onVoltar, onFeito }: { ctx: ContextoAplicar; onVo
       {motivo === "Outro motivo" && <input style={inputStyle} aria-label="Descreva o motivo" placeholder="Descreva o motivo" value={outro} onChange={(e) => setOutro(e.target.value)} />}
       <Chips idBase="cn-d" rotulo="O que fazer com os animais" opcoes={["Voltam à lista de espera", "Desconsiderar"]} valor={destino === "espera" ? "Voltam à lista de espera" : "Desconsiderar"}
              onChange={(v) => setDestino(v === "Desconsiderar" ? "naoSeAplica" : "espera")} />
-      {temFinanceiro && (
-        <>
-          <Chips idBase="cn-c" rotulo="Conta a pagar deste agendamento" opcoes={["Manter a conta", "Cancelar a conta"]} valor={conta === "manter" ? "Manter a conta" : "Cancelar a conta"}
-                 onChange={(v) => setConta(v === "Cancelar a conta" ? "cancelar" : "manter")} />
-          <p style={notaStyle}>A escolha fica registrada no histórico; o vínculo com o Financeiro chega na etapa financeira.</p>
-        </>
+      {contas.length > 0 && (
+        <div>
+          <span style={labelStyle}>Conta a pagar deste agendamento</span>
+          {lista(contas)}
+          <Chips idBase="cn-c" rotulo="O que fazer com a conta (obrigatório)" opcoes={["Manter a conta", "Cancelar a conta"]} valor={conta === "manter" ? "Manter a conta" : conta === "cancelar" ? "Cancelar a conta" : ""}
+                 onChange={(v) => setConta(v === "Cancelar a conta" ? "cancelar" : "manter")} erro={tentou && !conta ? "Escolha o destino da conta a pagar." : null} />
+          <p style={{ ...notaStyle, marginTop: "0.3rem" }}>{conta === "cancelar" ? "A conta sai de Contas a pagar e dos totais (fica registrada aqui como Cancelada). Se já foi paga, estorne a baixa antes." : "A conta continua em Contas a pagar."}</p>
+        </div>
       )}
+      {pagamentos.length > 0 && (
+        <div>
+          <span style={labelStyle}>Pagamento já realizado vinculado</span>
+          {lista(pagamentos)}
+          <Chips idBase="cn-p" rotulo="O que fazer com o vínculo (obrigatório)" opcoes={["Manter o vínculo", "Desvincular"]} valor={pagamento === "manter" ? "Manter o vínculo" : pagamento === "desvincular" ? "Desvincular" : ""}
+                 onChange={(v) => setPagamento(v === "Desvincular" ? "desvincular" : "manter")} erro={tentou && !pagamento ? "Escolha o destino do pagamento vinculado." : null} />
+          <p style={{ ...notaStyle, marginTop: "0.3rem" }}>O lançamento pago continua no Financeiro; só o vínculo com este agendamento muda.</p>
+        </div>
+      )}
+      {cotacoes.length > 0 && (
+        <div>
+          <span style={labelStyle}>Cotação deste agendamento</span>
+          {lista(cotacoes, false)}
+          <Chips idBase="cn-q" rotulo="O que fazer com a cotação (obrigatório)" opcoes={["Manter a cotação", "Cancelar a cotação"]} valor={cotacao === "manter" ? "Manter a cotação" : cotacao === "cancelar" ? "Cancelar a cotação" : ""}
+                 onChange={(v) => setCotacao(v === "Cancelar a cotação" ? "cancelar" : "manter")} erro={tentou && !cotacao ? "Escolha o destino da cotação." : null} />
+        </div>
+      )}
+      {pedidos.length > 0 && <p style={notaStyle}>O pedido {pedidos.map((p) => p.numero_lancamento).join(", ")} continua em Pedidos; cancele por lá se precisar.</p>}
       {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
       <div style={{ display: "flex", gap: "0.5rem" }}>
         <button type="button" className="btn-primary" style={{ background: "var(--red)" }} disabled={salvando} onClick={cancelar}><Ban size={14} /> {salvando ? "Cancelando…" : "Cancelar agendamento"}</button>
@@ -404,6 +475,10 @@ function ContinuarMontando({ ctx, onFeito, onVoltar }: { ctx: ContextoAplicar; o
       </div>
       <h3 style={{ fontSize: "0.9rem", fontWeight: 700 }}>Checklist</h3>
       <ChecklistMontagem draft={ck} onChange={setCk} veterinarios={veterinarios} produto={ctx.produto} dataEvento={data} hora={hora} tentou={tentou} />
+      <h3 style={{ fontSize: "0.9rem", fontWeight: 700 }}>Compra e financeiro</h3>
+      <div className="card" style={{ padding: "0.4rem 1rem" }}>
+        <FinanceiroVivo cronogramaId={ctx.cronograma_id} dataEvento={data} vetNome={veterinarios.find((v) => String(v.id) === (ck.vet.pessoaId || vetId))?.nome || null} />
+      </div>
       {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.85rem" }}>{erro}</p>}
       <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
         <button type="button" className="btn-primary-gold" disabled={salvando} onClick={confirmar}><CalendarPlus size={14} /> {salvando ? "Confirmando…" : "Confirmar agendamento"}</button>

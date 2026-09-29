@@ -12,6 +12,7 @@ import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
 import { Indicador, TelaSkeleton } from "@/components/ui";
 import type { ColunaExport } from "@/lib/export";
+import { ResumoCustoFinanceiro } from "./FinanceiroAgendamento";
 import {
   brl, Chips, dataCurta, dataHoraCurta, ForaJanelaBadge, inputStyle, MOTIVOS_ESTORNO, notaStyle, num, Pill, plural, textoMotivo,
 } from "./preventivoComum";
@@ -21,7 +22,7 @@ const COLUNAS: ColunaExport[] = [
   { header: "Estado", key: "estado" }, { header: "Animais aplicados", key: "aplicados" }, { header: "Não aplicados", key: "naoAplicados" },
   { header: "Fora da janela", key: "fora" }, { header: "Aplicador", key: "aplicador" }, { header: "Frasco/lote", key: "frasco" },
   { header: "Validade", key: "validade" }, { header: "Carência carne até", key: "carne" }, { header: "Carência leite até", key: "leite" },
-  { header: "Custo (R$)", key: "custo" }, { header: "Canal", key: "canal" }, { header: "Retroativo", key: "retro" },
+  { header: "Custo (R$)", key: "custo" }, { header: "Conta a pagar (R$)", key: "conta" }, { header: "Pagamento vinculado (R$)", key: "pagamento" }, { header: "Canal", key: "canal" }, { header: "Retroativo", key: "retro" },
   { header: "Exceções e ciências", key: "excecoes" }, { header: "Motivo do estorno", key: "motivoEstorno" },
 ];
 
@@ -65,7 +66,10 @@ export function ConcluidosPreventivo({ idInicial }: { idInicial?: number | null 
     data: dataCurta(i.data), hora: i.hora || "", protocolo: i.protocolo_nome, estado: i.estado === "estornada" ? "Estornada" : "Aplicado",
     aplicados: i.animais_aplicados, naoAplicados: i.animais_nao_aplicados, fora: i.fora_janela, aplicador: i.aplicador_nome || "",
     frasco: i.frasco, validade: dataCurta(i.validade), carne: dataCurta(i.carencia_carne_ate), leite: dataCurta(i.carencia_leite_ate),
-    custo: i.custo == null ? "a informar" : i.custo.toFixed(2).replace(".", ","), canal: i.canal || "", retro: i.retroativo ? "Sim" : "Não",
+    custo: i.custo == null ? "a informar" : i.custo.toFixed(2).replace(".", ","),
+    conta: i.financeiro && i.financeiro.contas_ativas > 0 ? i.financeiro.conta_a_pagar_total.toFixed(2).replace(".", ",") : "",
+    pagamento: i.financeiro && i.financeiro.pagamento_vinculado_total > 0 ? i.financeiro.pagamento_vinculado_total.toFixed(2).replace(".", ",") : "",
+    canal: i.canal || "", retro: i.retroativo ? "Sim" : "Não",
     excecoes: i.excecoes.join(" | "), motivoEstorno: i.motivo_estorno || "",
   })), [dados]);
 
@@ -144,7 +148,15 @@ export function ConcluidosPreventivo({ idInicial }: { idInicial?: number | null 
                   <td style={{ fontSize: "0.78rem" }}>
                     {i.estado === "estornada" ? "sem carência (estornada)" : [i.carencia_carne_ate ? `carne até ${dataCurta(i.carencia_carne_ate).slice(0, 5)}` : "", i.carencia_leite_ate ? `leite até ${dataCurta(i.carencia_leite_ate).slice(0, 5)}` : ""].filter(Boolean).join(" · ") || "—"}
                   </td>
-                  <td style={{ fontSize: "0.82rem", textAlign: "right" }}>{i.estado === "cancelado" ? "—" : brl(i.custo)}</td>
+                  <td style={{ fontSize: "0.82rem", textAlign: "right" }}>
+                    {i.estado === "cancelado" ? "—" : i.custo == null ? <span style={{ color: "var(--amber)", fontWeight: 700 }}>a informar</span> : brl(i.custo)}
+                    {i.financeiro && i.financeiro.contas_ativas > 0 && (
+                      <a href={i.financeiro.link_contas_a_pagar} onClick={(e) => e.stopPropagation()} className="lnk" title="Abrir Contas a pagar"
+                         style={{ ...notaStyle, display: "block", textDecoration: "underline", color: "var(--dourado-light)" }}>conta a pagar {brl(i.financeiro.conta_a_pagar_total)}</a>
+                    )}
+                    {i.financeiro && i.financeiro.pagamento_vinculado_total > 0 && <span style={{ ...notaStyle, display: "block" }}>pagamento vinculado {brl(i.financeiro.pagamento_vinculado_total)}</span>}
+                    {i.financeiro && i.financeiro.contas.some((c) => c.estado === "cancelado") && i.financeiro.contas_ativas === 0 && <span style={{ ...notaStyle, display: "block" }}>conta cancelada</span>}
+                  </td>
                   <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: "nowrap" }}>
                     {i.estado === "aplicada" && (
                       <button type="button" className="btn-ghost" disabled={!admin} onClick={() => setEstornando(i)}
@@ -191,8 +203,14 @@ function GavetaDetalhe({ id, admin, lista, onFechar, onEstornar }: { id: number;
           <ul style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "0.6rem", listStyle: "none", margin: 0, padding: 0 }}>
             <li className="card" style={{ padding: "0.5rem 0.7rem" }}><span style={notaStyle}>Aplicador</span><b style={{ display: "block", fontSize: "0.9rem" }}>{d.aplicador_nome || "—"}{d.aplicador_crmv ? ` (${d.aplicador_crmv})` : ""}</b></li>
             <li className="card" style={{ padding: "0.5rem 0.7rem" }}><span style={notaStyle}>Frasco / lote</span><b style={{ display: "block", fontSize: "0.9rem" }}>{d.lote_texto || (d.estoque_desconsiderado ? "sem baixa" : "—")}{d.validade ? ` · val. ${dataCurta(d.validade)}` : ""}</b></li>
-            <li className="card" style={{ padding: "0.5rem 0.7rem" }}><span style={notaStyle}>Custo</span><b style={{ display: "block" }}>{brl(d.custo)}</b></li>
+            <li className="card" style={{ padding: "0.5rem 0.7rem" }}><span style={notaStyle}>Custo</span><b style={{ display: "block", color: d.custo == null ? "var(--amber)" : undefined }}>{brl(d.custo)}</b></li>
           </ul>
+          {d.financeiro && (
+            <div className="card" style={{ padding: "0.6rem 0.9rem" }}>
+              <h3 className="card-header" style={{ marginBottom: "0.4rem" }}>Financeiro deste agendamento</h3>
+              <ResumoCustoFinanceiro bloco={d.financeiro} rotuloCusto="Custo" custo={d.custo} />
+            </div>
+          )}
           <p style={notaStyle}>
             {d.carencia_texto ? `${d.carencia_texto}. ` : ""}
             {d.carencia_carne_ate ? `Carne até ${dataCurta(d.carencia_carne_ate)}. ` : ""}{d.carencia_leite_ate ? `Leite até ${dataCurta(d.carencia_leite_ate)}. ` : ""}

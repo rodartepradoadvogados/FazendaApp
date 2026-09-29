@@ -19,6 +19,7 @@ import { Modal } from "@/components/Modal";
 import {
   ChecklistMontagem, checklistParaPayload, checklistVazio, resumoChecklistDraft, validarChecklist, type ChecklistDraft,
 } from "./ChecklistAgendamento";
+import { ConferirFinanceiro } from "./FinanceiroAgendamento";
 import { Indicador, TelaSkeleton } from "@/components/ui";
 import type { AnimalRow } from "@/components/AnimalModal";
 
@@ -453,6 +454,7 @@ function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCria
     ...daJanela.map((a) => a.lote).filter(Boolean) as string[],
     ...fora.map((f) => animais.find((a) => a.numero === f.numero)?.grupo_primario).filter(Boolean) as string[],
   ]));
+  const numerosAgendamento = [...daJanela.map((a) => a.numero_matriz), ...fora.map((f) => f.numero)];
   const vetSel = veterinarios.find((v) => String(v.id) === vetId);
   const responsavel = quem === "veterinario" ? (vetSel?.nome || "veterinário a escolher") : "equipe própria";
   const previa = `${diaSemana(data)} ${formatDate(data)} · ${hora || "sem hora"} · ${tituloGrupo(grupo)}${lotesDoAgendamento.length ? ` — ${lotesDoAgendamento.join(", ")}` : ""} · ${total} ${plural(total, "animal", "animais")} · ${responsavel}`;
@@ -477,7 +479,7 @@ function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCria
   async function agendar(rascunho = false) {
     setSalvando(true); setErro(null);
     try {
-      const r = await criarAgendamentoPreventivo({
+      const r: any = await criarAgendamentoPreventivo({
         calendario_sanitario_id: grupo.calendario_id,
         animais_janela: daJanela.map((a) => a.numero_matriz),
         animais_fora: fora.map((f) => ({ numero_matriz: f.numero, motivo: f.motivo })),
@@ -485,7 +487,13 @@ function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCria
         veterinario_pessoa_id: quem === "veterinario" ? Number(vetId) : null, observacao: obs.trim() || null,
         rascunho, checklist: checklistParaPayload(ck),
       });
-      onCriado(`${tituloGrupo(grupo)}: ${total} ${plural(total, "animal", "animais")} para ${formatDate(r.data_evento)}${r.hora ? ` às ${r.hora}` : ""}, ${responsavel}.`, r.data_evento, rascunho);
+      const fin = r.financeiro as import("@/lib/api").BlocoFinanceiro | undefined;
+      const extras = [
+        fin && fin.contas_ativas > 0 ? `Conta a pagar de ${fin.conta_a_pagar_total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} lançada em Financeiro.` : "",
+        fin && fin.compras.some((c) => c.estado === "ativo") ? "Compra comunicada em Cotações/Pedidos." : "",
+        fin && fin.pagamentos.some((p) => p.estado === "ativo") ? "Pagamento já realizado vinculado." : "",
+      ].filter(Boolean).join(" ");
+      onCriado(`${tituloGrupo(grupo)}: ${total} ${plural(total, "animal", "animais")} para ${formatDate(r.data_evento)}${r.hora ? ` às ${r.hora}` : ""}, ${responsavel}.${extras ? ` ${extras}` : ""}`, r.data_evento, rascunho);
     } catch (e: any) { setErro(e.message || "Erro ao criar o agendamento"); } finally { setSalvando(false); }
   }
 
@@ -600,7 +608,8 @@ function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCria
           <p style={{ ...notaStyle, marginBottom: "0.6rem" }}>
             O que precisa estar resolvido antes do dia. Nada aqui bloqueia o agendamento nem a aplicação: o que ficar pendente pede só a ciência na hora de Aplicar.
           </p>
-          <ChecklistMontagem draft={ck} onChange={setCk} veterinarios={veterinarios} produto={grupo.produto} dataEvento={data} hora={hora} tentou={tentouCk} />
+          <ChecklistMontagem draft={ck} onChange={setCk} veterinarios={veterinarios} produto={grupo.produto} dataEvento={data} hora={hora} tentou={tentouCk}
+                             calendarioId={grupo.calendario_id} animais={numerosAgendamento} />
         </div>
       )}
 
@@ -616,6 +625,7 @@ function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCria
               </ul>
             )}
           </div>
+          <ConferirFinanceiro calendarioId={grupo.calendario_id} animais={numerosAgendamento} draft={ck.financeiro} />
           <div className="card">
             <h3 className="card-header mb-2">O que acontece ao agendar</h3>
             <ul style={{ margin: 0, paddingLeft: "1.1rem", fontSize: "0.85rem", lineHeight: 1.6 }}>

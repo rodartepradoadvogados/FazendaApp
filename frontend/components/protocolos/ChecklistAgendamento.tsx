@@ -8,19 +8,31 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Check, Plus, RotateCcw, SkipForward, X } from "lucide-react";
 import {
-  fetchEstoque, fetchLotesEstoque, type ChecklistAgendamentoPayload, type ItemChecklistAg, type LoteEstoque,
+  fetchEstoque, fetchLotesEstoque, type ChecklistAgendamentoPayload, type ItemChecklistAg, type LoteEstoque, type VeterinarioChecklist,
 } from "@/lib/api";
-import { Chips, dataCurta, inputStyle, labelStyle, MOTIVOS_ESTOQUE, MOTIVOS_VET, notaStyle, textoMotivo } from "./preventivoComum";
+import { Chips, dataCurta, dataHoraCurta, inputStyle, labelStyle, MOTIVOS_ESTOQUE, MOTIVOS_VET, notaStyle, textoMotivo } from "./preventivoComum";
+import { financeiroParaPayload, financeiroVazio, FinanceiroRascunho, type FinanceiroDraft } from "./FinanceiroAgendamento";
+
+/** "agora" no formato do <input type="datetime-local"> (hora local). */
+export function agoraLocal(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+/** Hora local digitada -> instante em UTC (o servidor grava em UTC). */
+export const localParaUtcIso = (v: string): string | null => { const d = new Date(v); return isNaN(d.getTime()) ? null : d.toISOString(); };
 
 export type ChecklistDraft = {
-  vet: { estado: "pendente" | "confirmado" | "desconsiderado"; pessoaId: string; motivo: string; outro: string };
+  vet: { estado: "pendente" | "confirmado" | "desconsiderado"; pessoaId: string; motivo: string; outro: string; quando: string; nota: string };
+  financeiro: FinanceiroDraft;
   estoque: { estado: "pendente" | "vinculado" | "desconsiderado"; estoqueId: string; loteId: string; motivo: string; outro: string; lote: string; validade: string };
   data: boolean;
   extras: string[];
 };
 
 export const checklistVazio = (): ChecklistDraft => ({
-  vet: { estado: "pendente", pessoaId: "", motivo: "", outro: "" },
+  vet: { estado: "pendente", pessoaId: "", motivo: "", outro: "", quando: "", nota: "" },
+  financeiro: financeiroVazio(),
   estoque: { estado: "pendente", estoqueId: "", loteId: "", motivo: "", outro: "", lote: "", validade: "" },
   data: false,
   extras: [],
@@ -37,7 +49,11 @@ export function validarChecklist(d: ChecklistDraft): string | null {
 
 export function checklistParaPayload(d: ChecklistDraft): ChecklistAgendamentoPayload | null {
   const p: ChecklistAgendamentoPayload = {};
-  if (d.vet.estado === "confirmado") p.veterinario = { estado: "confirmado", pessoa_id: Number(d.vet.pessoaId) };
+  if (d.vet.estado === "confirmado") {
+    p.veterinario = { estado: "confirmado", pessoa_id: Number(d.vet.pessoaId), quando: d.vet.quando ? localParaUtcIso(d.vet.quando) : null, observacao: d.vet.nota.trim() || null };
+  }
+  const fin = financeiroParaPayload(d.financeiro);
+  if (fin) p.financeiro = fin;
   if (d.vet.estado === "desconsiderado") p.veterinario = { estado: "desconsiderado", motivo: textoMotivo(d.vet.motivo, d.vet.outro) };
   if (d.estoque.estado === "vinculado") {
     p.estoque = { estado: "vinculado", estoque_id: Number(d.estoque.estoqueId), lote_id: d.estoque.loteId ? Number(d.estoque.loteId) : null };
@@ -64,16 +80,25 @@ export function resumoChecklistDraft(d: ChecklistDraft, temHora: boolean): { res
   else if (d.estoque.estado === "desconsiderado") { resolvidos++; linhas.push("Estoque desconsiderado (sem baixa)"); }
   else linhas.push("Estoque: pendente");
   if (d.data && temHora) { resolvidos++; linhas.push("Data e hora confirmadas"); } else linhas.push("Data: pendente");
-  return { resolvidos, total: 3 + d.extras.filter((t) => t.trim()).length, linhas };
+  if (d.financeiro.compra) { resolvidos++; linhas.push(d.financeiro.compra.modo === "ja_comprei" ? "Compra: já comprei" : `Compra: ${d.financeiro.compra.modo === "pedido" ? "pedido" : "cotação"} a criar`); }
+  else if (d.estoque.estado === "desconsiderado") { resolvidos++; linhas.push("Compra: não necessária (estoque desconsiderado)"); }
+  else linhas.push("Compra: pendente");
+  if (d.financeiro.pagamento || d.financeiro.contas.length) {
+    resolvidos++;
+    linhas.push([d.financeiro.pagamento ? "pagamento já realizado a vincular" : "", d.financeiro.contas.length ? `${d.financeiro.contas.length} ${d.financeiro.contas.length === 1 ? "conta a pagar" : "contas a pagar"} a lançar` : ""].filter(Boolean).join(" e "));
+  } else linhas.push("Financeiro: pendente");
+  return { resolvidos, total: 5 + d.extras.filter((t) => t.trim()).length, linhas };
 }
 
 type PessoaVet = { id: number; nome: string; crmv?: string | null };
 
 export function ChecklistMontagem({
-  draft, onChange, veterinarios, produto, dataEvento, hora, tentou,
+  draft, onChange, veterinarios, produto, dataEvento, hora, tentou, calendarioId, animais,
 }: {
   draft: ChecklistDraft; onChange: (d: ChecklistDraft) => void; veterinarios: PessoaVet[];
   produto: string | null; dataEvento: string; hora: string; tentou?: boolean;
+  /** Assistente Criar agendamento: mostra o financeiro (compra, pagamento, conta a pagar) deste passo. */
+  calendarioId?: number; animais?: string[];
 }) {
   const [itens, setItens] = useState<any[]>([]);
   const [lotes, setLotes] = useState<LoteEstoque[]>([]);
@@ -109,13 +134,26 @@ export function ChecklistMontagem({
           onChange={(v) => set({ vet: { ...draft.vet, estado: v === "Confirmado" ? "confirmado" : v === "Desconsiderar" ? "desconsiderado" : "pendente" } })}
         />
         {draft.vet.estado === "confirmado" && (
-          <div>
-            <label htmlFor="ck-vet-p" style={labelStyle}>Veterinário</label>
-            <select id="ck-vet-p" style={inputStyle} value={draft.vet.pessoaId} onChange={(e) => set({ vet: { ...draft.vet, pessoaId: e.target.value } })}>
-              <option value="">Escolha o veterinário</option>
-              {veterinarios.map((v) => <option key={v.id} value={v.id}>{v.nome}{v.crmv ? ` (${v.crmv})` : ""}</option>)}
-            </select>
-            {!veterinarios.length && <p style={{ ...notaStyle, marginTop: "0.3rem" }}>Nenhum veterinário cadastrado. Cadastre em Configurações › Cadastro › Pessoas.</p>}
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="ck-vet-p" style={labelStyle}>Confirmado com (veterinário cadastrado em Pessoas)</label>
+                <select id="ck-vet-p" style={inputStyle} value={draft.vet.pessoaId} onChange={(e) => set({ vet: { ...draft.vet, pessoaId: e.target.value } })}>
+                  <option value="">Escolha o veterinário</option>
+                  {veterinarios.map((v) => <option key={v.id} value={v.id}>{v.nome}{v.crmv ? ` (${v.crmv})` : ""}</option>)}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="ck-vet-q" style={labelStyle}>Confirmado em (quando combinou)</label>
+                <input id="ck-vet-q" type="datetime-local" style={inputStyle} value={draft.vet.quando || agoraLocal()} max={agoraLocal()} onChange={(e) => set({ vet: { ...draft.vet, quando: e.target.value } })} />
+              </div>
+            </div>
+            <div>
+              <label htmlFor="ck-vet-n" style={labelStyle}>Como confirmou (opcional)</label>
+              <input id="ck-vet-n" style={inputStyle} value={draft.vet.nota} onChange={(e) => set({ vet: { ...draft.vet, nota: e.target.value } })} placeholder="ex.: por telefone, pelo WhatsApp" />
+            </div>
+            {!veterinarios.length && <p style={{ ...notaStyle, marginTop: "0.1rem" }}>Nenhum veterinário cadastrado. Cadastre em Configurações › Cadastro › Pessoas (com o CRMV).</p>}
+            {(() => { const v = veterinarios.find((x) => String(x.id) === draft.vet.pessoaId); return v ? <p style={{ ...notaStyle, margin: 0 }}>Fica registrado: {v.nome}{v.crmv ? ` · ${v.crmv}` : " · sem CRMV cadastrado"}, quem registrou e quando.</p> : null; })()}
           </div>
         )}
         {draft.vet.estado === "desconsiderado" && (
@@ -179,10 +217,22 @@ export function ChecklistMontagem({
         </label>
       </div>
 
+      {/* Financeiro: compra, pagamento já realizado, conta a pagar */}
+      {calendarioId != null && (
+        <div style={itemBox}>
+          {cab("Compra e financeiro", !!draft.financeiro.compra || !!draft.financeiro.pagamento || draft.financeiro.contas.length > 0)}
+          <FinanceiroRascunho
+            calendarioId={calendarioId} animais={animais || []} dataEvento={dataEvento}
+            vetNome={veterinarios.find((v) => String(v.id) === draft.vet.pessoaId)?.nome || null}
+            draft={draft.financeiro} onChange={(financeiro) => set({ financeiro })}
+          />
+        </div>
+      )}
+
       {/* Outros */}
       <div style={{ ...itemBox, borderBottom: "none" }}>
         {cab("Outros itens da fazenda", draft.extras.length > 0)}
-        <p style={notaStyle}>Compra/cotação e pagamento entram na etapa financeira. Os demais itens do checklist do protocolo ficam pendentes; você resolve no Acompanhamento.</p>
+        <p style={notaStyle}>Os demais itens do checklist do protocolo ficam pendentes; você resolve no Acompanhamento.</p>
         <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
           {draft.extras.map((t, i) => (
             <li key={i} style={{ display: "flex", gap: "0.5rem", alignItems: "center", padding: "0.2rem 0" }}>
@@ -202,15 +252,23 @@ export function ChecklistMontagem({
 }
 
 // ─────────────── itens já existentes (aba Checklist do agendamento) ───────────────
-export function ChecklistItensExistentes({ itens, onAcao, ocupado }: {
+export function ChecklistItensExistentes({ itens, onAcao, ocupado, veterinario, veterinarios, onConfirmarVet }: {
   itens: ItemChecklistAg[]; ocupado?: boolean;
   onAcao: (item: ItemChecklistAg, acao: "cumprir" | "pular" | "reabrir", motivo?: string) => void;
+  /** Veterinário já confirmado (Pessoa/CRMV, quem e quando) e como confirmar pelo próprio item. */
+  veterinario?: VeterinarioChecklist | null; veterinarios?: PessoaVet[];
+  onConfirmarVet?: (v: { pessoaId: number; quando: string | null; nota: string | null }) => void;
 }) {
   const [pulando, setPulando] = useState<number | null>(null);
   const [motivo, setMotivo] = useState("");
+  const [confirmandoVet, setConfirmandoVet] = useState(false);
+  const [vetId, setVetId] = useState("");
+  const [vetQuando, setVetQuando] = useState("");
+  const [vetNota, setVetNota] = useState("");
+  const visiveis = itens.filter((i) => i.chave !== "compra" && i.chave !== "financeiro");   // vivem no bloco Financeiro
   return (
     <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-      {itens.map((i) => (
+      {visiveis.map((i) => (
         <li key={i.id} style={{ padding: "0.55rem 0", borderBottom: "1px solid var(--border)" }}>
           <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
             <span style={{ color: i.status === "cumprido" ? "var(--green-light)" : i.status === "pulado" ? "var(--text-muted)" : "var(--amber)", display: "inline-flex" }}>
@@ -222,16 +280,49 @@ export function ChecklistItensExistentes({ itens, onAcao, ocupado }: {
                 {i.status === "cumprido" ? "Resolvido" : i.status === "pulado" ? `Desconsiderado${i.observacao ? `: ${i.observacao}` : ""}` : "Pendente"}
                 {i.chave === "horario" && i.resposta ? ` · ${i.resposta}` : ""}
               </span>
+              {i.chave === "vet" && veterinario?.estado === "confirmado" && (
+                <span style={{ ...notaStyle, display: "block", color: "var(--text)" }}>
+                  Confirmado com <b>{veterinario.nome || "veterinário"}</b>{veterinario.crmv ? ` (${veterinario.crmv})` : ""} em {dataHoraCurta(veterinario.confirmado_em)}
+                  {veterinario.registrado_por ? ` · registrado por ${veterinario.registrado_por}` : ""}{veterinario.observacao ? ` · ${veterinario.observacao}` : ""}
+                </span>
+              )}
             </span>
+            {i.chave === "vet" && onConfirmarVet && i.status !== "pulado" && (
+              <button type="button" className={i.status === "pendente" ? "btn-primary" : "btn-ghost"} disabled={ocupado} onClick={() => { setConfirmandoVet(true); setVetQuando(agoraLocal()); }}>
+                <Check size={14} /> {veterinario?.estado === "confirmado" ? "Confirmar de novo" : "Confirmar com o veterinário"}
+              </button>
+            )}
             {i.status === "pendente" ? (
               <>
-                <button type="button" className="btn-secondary" disabled={ocupado} onClick={() => onAcao(i, "cumprir")}><Check size={14} /> Resolver</button>
+                {!(i.chave === "vet" && onConfirmarVet) && <button type="button" className="btn-secondary" disabled={ocupado} onClick={() => onAcao(i, "cumprir")}><Check size={14} /> Resolver</button>}
                 <button type="button" className="btn-ghost" disabled={ocupado} onClick={() => { setPulando(i.id); setMotivo(""); }}><SkipForward size={14} /> Desconsiderar…</button>
               </>
             ) : (
               <button type="button" className="btn-ghost" disabled={ocupado} onClick={() => onAcao(i, "reabrir")}><RotateCcw size={14} /> Reabrir</button>
             )}
           </div>
+          {i.chave === "vet" && confirmandoVet && onConfirmarVet && (
+            <div className="card" style={{ marginTop: "0.5rem", padding: "0.6rem 0.8rem", display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="ckx-vet" style={labelStyle}>Confirmado com</label>
+                  <select id="ckx-vet" style={inputStyle} value={vetId} onChange={(e) => setVetId(e.target.value)}>
+                    <option value="">Escolha o veterinário</option>
+                    {(veterinarios || []).map((v) => <option key={v.id} value={v.id}>{v.nome}{v.crmv ? ` (${v.crmv})` : ""}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="ckx-q" style={labelStyle}>Confirmado em</label>
+                  <input id="ckx-q" type="datetime-local" style={inputStyle} value={vetQuando} max={agoraLocal()} onChange={(e) => setVetQuando(e.target.value)} />
+                </div>
+              </div>
+              <div><label htmlFor="ckx-n" style={labelStyle}>Como confirmou (opcional)</label><input id="ckx-n" style={inputStyle} value={vetNota} onChange={(e) => setVetNota(e.target.value)} placeholder="ex.: por telefone" /></div>
+              <div style={{ display: "flex", gap: "0.5rem" }}>
+                <button type="button" className="btn-primary" disabled={!vetId || ocupado} onClick={() => { onConfirmarVet({ pessoaId: Number(vetId), quando: vetQuando ? localParaUtcIso(vetQuando) : null, nota: vetNota.trim() || null }); setConfirmandoVet(false); }}>Confirmar</button>
+                <button type="button" className="btn-ghost" onClick={() => setConfirmandoVet(false)}>Voltar</button>
+              </div>
+            </div>
+          )}
           {pulando === i.id && (
             <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem", flexWrap: "wrap" }}>
               <input style={{ ...inputStyle, flex: "1 1 220px", width: "auto" }} aria-label={`Motivo para desconsiderar ${i.nome}`} placeholder="Motivo (obrigatório)" value={motivo} onChange={(e) => setMotivo(e.target.value)} />
@@ -241,7 +332,7 @@ export function ChecklistItensExistentes({ itens, onAcao, ocupado }: {
           )}
         </li>
       ))}
-      {!itens.length && <li style={notaStyle}>Este agendamento não tem itens no checklist.</li>}
+      {!visiveis.length && <li style={notaStyle}>Este agendamento não tem outros itens no checklist.</li>}
     </ul>
   );
 }

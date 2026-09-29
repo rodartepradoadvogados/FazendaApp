@@ -5017,8 +5017,21 @@ export async function fetchListaEspera(): Promise<ListaEspera> {
   if (!res.ok) throw new Error(`Lista de espera error: ${res.status}`);
   return res.json();
 }
+export type CompraPayload = {
+  modo: "cotacao" | "pedido" | "ja_comprei"; quantidade?: number | null; fornecedor_ids?: number[]; fornecedor_nome?: string | null;
+  necessario_ate?: string | null; disparar?: boolean; observacao?: string | null;
+};
+export type ContaPagarPayload = {
+  subtipo: "produto" | "honorario"; fornecedor: string; valor?: number | null; vencimento: string; descricao?: string | null;
+};
+export type FinanceiroChecklistPayload = {
+  compra?: CompraPayload | null;
+  pagamento?: { pagamento_id: number; modo: "proporcional" | "inteiro" } | null;
+  contas?: ContaPagarPayload[];
+};
 export type ChecklistAgendamentoPayload = {
-  veterinario?: { estado: "confirmado" | "desconsiderado" | "pendente"; pessoa_id?: number | null; motivo?: string | null };
+  veterinario?: { estado: "confirmado" | "desconsiderado" | "pendente"; pessoa_id?: number | null; motivo?: string | null; quando?: string | null; observacao?: string | null };
+  financeiro?: FinanceiroChecklistPayload;
   estoque?: { estado: "vinculado" | "desconsiderado" | "pendente"; estoque_id?: number | null; lote_id?: number | null; motivo?: string | null; lote?: string | null; validade?: string | null };
   data?: { estado: "confirmado" | "pendente" };
   extras?: { texto: string }[];
@@ -5039,11 +5052,17 @@ async function _postSanidade<T>(caminho: string, corpo: unknown, rotulo: string)
   return res.json();
 }
 export const criarAgendamentoPreventivo = (p: NovoAgendamentoPayload) =>
-  _postSanidade<{ id: number; status: string; data_evento: string; hora: string | null; checklist?: ResumoChecklist }>("/sanidade/cronogramas/agendamentos", p, "Criar agendamento");
+  _postSanidade<{ id: number; status: string; data_evento: string; hora: string | null; checklist?: ResumoChecklist; financeiro?: BlocoFinanceiro }>("/sanidade/cronogramas/agendamentos", p, "Criar agendamento");
 export const adiarAgendamentoPreventivo = (id: number, p: { nova_data: string; hora?: string | null; motivo: string }) =>
   _postSanidade<{ id: number }>(`/sanidade/cronogramas/${id}/adiar`, p, "Adiar agendamento");
-export const cancelarAgendamentoPreventivo = (id: number, motivo: string, destinoAnimais: "espera" | "naoSeAplica" = "espera", destinoConta?: "manter" | "cancelar") =>
-  _postSanidade<{ id: number; devolvidos: number }>(`/sanidade/cronogramas/${id}/cancelar`, { motivo, destino_animais: destinoAnimais, destino_conta: destinoConta ?? null }, "Cancelar agendamento");
+export type DestinosCancelamento = {
+  conta?: "manter" | "cancelar"; pagamento?: "manter" | "desvincular"; cotacao?: "manter" | "cancelar";
+};
+export const cancelarAgendamentoPreventivo = (id: number, motivo: string, destinoAnimais: "espera" | "naoSeAplica" = "espera", destinos: DestinosCancelamento = {}) =>
+  _postSanidade<{ id: number; devolvidos: number; financeiro_resumo?: string[] }>(`/sanidade/cronogramas/${id}/cancelar`, {
+    motivo, destino_animais: destinoAnimais, destino_conta: destinos.conta ?? null,
+    destino_pagamento: destinos.pagamento ?? null, destino_cotacao: destinos.cotacao ?? null,
+  }, "Cancelar agendamento");
 export const confirmarRascunhoAgendamento = (id: number, p: {
   data_evento: string; hora?: string | null; modo_execucao?: "veterinario" | "propria" | null; veterinario_pessoa_id?: number | null;
   checklist?: ChecklistAgendamentoPayload | null;
@@ -5055,13 +5074,68 @@ export const desconsiderarListaEspera = (p: { calendario_sanitario_id: number; a
 // A gaveta Aplicar é UMA só: Protocolos › Acompanhamento e a Agenda chamam o
 // mesmo POST /sanidade/cronogramas/{id}/aplicar (só muda o `canal`).
 export type ItemChecklistAg = {
-  id: number; chave: "estoque" | "vet" | "horario" | "lotes" | "financeiro" | "custom" | "carencia"; nome: string;
+  id: number; chave: "estoque" | "vet" | "horario" | "lotes" | "financeiro" | "compra" | "custom" | "carencia"; nome: string;
   status: "pendente" | "cumprido" | "pulado"; resposta: string | null; observacao: string | null; ordem: number;
+};
+export type VeterinarioChecklist = {
+  estado: "confirmado" | "desconsiderado" | "pendente"; pessoa_id: number | null; nome: string | null; crmv: string | null;
+  confirmado_em: string | null; registrado_por: string | null; observacao: string | null;
 };
 export type ResumoChecklist = {
   total: number; resolvidos: number; desconsiderado: boolean; vet_nao_confirmou: boolean;
+  veterinario?: VeterinarioChecklist | null;
   itens: ItemChecklistAg[]; pendentes: { id: number; chave: string; nome: string }[];
 };
+
+// ── Financeiro/compras do agendamento (fatia 9) ──
+export type NecessidadeInsumo = {
+  produto: string | null; estoque_id: number | null; estoque_encontrado: boolean; unidade: string | null; unidade_estoque: string | null;
+  animais: number; por_peso: boolean; dose_por_animal: number | null; precisa: number; aproximada: boolean;
+  saldo: number | null; falta: number; estoque_desconsiderado: boolean; estoque_motivo: string | null; cobre: boolean;
+  preco_unitario: number | null; custo_previsto: number | null; custo_a_informar: boolean; custo_motivo: string | null;
+};
+export type VinculoAg = {
+  id: number; cronograma_id: number; tipo: "pagamento" | "conta" | "cotacao" | "pedido"; alvo_id: number;
+  numero_lancamento: string | null; estado: "ativo" | "desvinculado" | "cancelado"; valor: number | null;
+  modo: string | null; subtipo: "honorario" | "produto" | null; rotulo: string | null; descricao: string | null;
+  vencimento: string | null; criado_por: string | null; criado_em: string; encerrado_por: string | null;
+  encerrado_em: string | null; motivo_encerramento: string | null;
+  alvo: { existe: boolean; paga?: boolean; status?: string | null; numero?: string | null; data_pagamento?: string | null; data_vencimento?: string | null } | null;
+};
+export type BlocoFinanceiro = {
+  contas: VinculoAg[]; pagamentos: VinculoAg[]; compras: VinculoAg[]; conta_a_pagar_total: number; contas_ativas: number;
+  pagamento_vinculado_total: number; tem_ativo: boolean; link_contas_a_pagar: string;
+  custo_previsto?: number | null; custo_a_informar?: boolean; custo_motivo?: string | null; custo?: number | null;
+};
+export type EstadoItemFin = "pendente" | "ok" | "nao_necessaria" | "desconsiderado" | "pulado";
+export type ResumoFinanceiroAg = BlocoFinanceiro & {
+  cronograma_id: number; necessidade: NecessidadeInsumo; vinculos: VinculoAg[];
+  compra: { estado: EstadoItemFin; item_id: number | null; observacao: string | null };
+  pagamento: { estado: EstadoItemFin }; conta_pagar: { estado: EstadoItemFin }; financeiro_item_id: number | null;
+};
+export type PagamentoCandidato = {
+  id: number; numero_lancamento: string | null; fornecedor: string | null; data_pagamento: string | null; valor: number;
+  descricao: string | null; doses: number | null; usado: number; resta: number; proporcional: number | null; ja_vinculado: boolean;
+};
+async function _getSanidade<T>(caminho: string, rotulo: string): Promise<T> {
+  const res = await authFetch(`${API}${caminho}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `${rotulo} error: ${res.status}`); }
+  return res.json();
+}
+export const fetchFinanceiroAgendamento = (id: number) => _getSanidade<ResumoFinanceiroAg>(`/sanidade/cronogramas/${id}/financeiro`, "Financeiro do agendamento");
+export const fetchPagamentosCandidatos = (id: number) =>
+  _getSanidade<{ produto: string | null; precisa: number; unidade: string | null; pagamentos: PagamentoCandidato[] }>(`/sanidade/cronogramas/${id}/financeiro/pagamentos`, "Pagamentos");
+export const fetchPreviaFinanceiro = (calendarioId: number, animais: string[]) =>
+  _getSanidade<{ produto: string | null; necessidade: NecessidadeInsumo; pagamentos: PagamentoCandidato[] }>(
+    `/sanidade/cronogramas/financeiro/previa?calendario_id=${calendarioId}&animais=${encodeURIComponent(animais.join(","))}`, "Prévia financeira");
+export const comunicarCompraAgendamento = (id: number, p: CompraPayload) =>
+  _postSanidade<{ modo: string; vinculo: VinculoAg | null; resumo: ResumoFinanceiroAg }>(`/sanidade/cronogramas/${id}/financeiro/compra`, p, "Comunicar compra");
+export const vincularPagamentoAgendamento = (id: number, pagamentoId: number, modo: "proporcional" | "inteiro") =>
+  _postSanidade<{ vinculo: VinculoAg; acima: boolean; resumo: ResumoFinanceiroAg }>(`/sanidade/cronogramas/${id}/financeiro/pagamento`, { pagamento_id: pagamentoId, modo }, "Vincular pagamento");
+export const lancarContaPagarAgendamento = (id: number, p: ContaPagarPayload) =>
+  _postSanidade<{ vinculo: VinculoAg; numero_lancamento: string; resumo: ResumoFinanceiroAg }>(`/sanidade/cronogramas/${id}/financeiro/conta-pagar`, p, "Lançar conta a pagar");
+export const encerrarVinculoAgendamento = (id: number, vinculoId: number, acao: "cancelar_conta" | "desvincular_pagamento" | "cancelar_cotacao", motivo: string) =>
+  _postSanidade<{ vinculo: VinculoAg; resumo: ResumoFinanceiroAg }>(`/sanidade/cronogramas/${id}/financeiro/vinculos/${vinculoId}/encerrar`, { acao, motivo }, "Encerrar vínculo");
 export type ResponsavelAg = { pessoa_id: number | null; nome: string; crmv: string | null; modo: string };
 export type EstadoVisualAg = "em_montagem" | "agendado" | "hoje" | "atrasado" | "adiado";
 export type AgendamentoAcompanhamento = {
@@ -5069,7 +5143,7 @@ export type AgendamentoAcompanhamento = {
   produto: string | null; status: string; estado_visual: EstadoVisualAg; data_evento: string; hora: string | null;
   data_original: string | null; data_antes_do_adiamento: string | null; motivo_adiamento: string | null;
   observacao: string | null; responsavel: ResponsavelAg; animais_total: number; animais_fora_janela: number;
-  lotes: string[]; checklist: ResumoChecklist; exige_veterinario: boolean;
+  lotes: string[]; checklist: ResumoChecklist; exige_veterinario: boolean; financeiro?: BlocoFinanceiro;
 };
 export type AcompanhamentoPreventivo = {
   hoje: string; agendamentos: AgendamentoAcompanhamento[]; totais: { hoje: number; atrasados: number; agendados: number };
@@ -5102,7 +5176,7 @@ export type ContextoAplicar = {
   };
   pessoas: PessoaAplicarCtx[];
   carencia: { leite_dias: number | null; carne_dias: number | null; proibido_lactacao: boolean; texto: string };
-  checklist: ResumoChecklist; log: EntradaLogAg[]; desfazer_segundos: number; hoje: string;
+  checklist: ResumoChecklist; financeiro?: ResumoFinanceiroAg; log: EntradaLogAg[]; desfazer_segundos: number; hoje: string;
 };
 export async function fetchContextoAplicar(cronogramaId: number): Promise<ContextoAplicar> {
   const res = await authFetch(`${API}/sanidade/cronogramas/${cronogramaId}/aplicar-contexto`, { cache: "no-store" });
@@ -5137,7 +5211,7 @@ export type AplicacaoPreventiva = {
 };
 export type ResultadoAplicar = {
   aplicacao: AplicacaoPreventiva; agendamento: { id: number; status: string }; avisos: string[]; idempotente: boolean;
-  desfazer_segundos: number;
+  desfazer_segundos: number; financeiro?: BlocoFinanceiro;
 };
 export const aplicarAgendamentoPreventivo = (id: number, p: AplicarAgendamentoPayload) =>
   _postSanidade<ResultadoAplicar>(`/sanidade/cronogramas/${id}/aplicar`, p, "Aplicar");
@@ -5160,7 +5234,7 @@ export type ItemConcluido = {
   aplicador_nome: string | null; aplicador_crmv: string | null; frasco: string; validade: string | null;
   estoque_desconsiderado: boolean; carencia_leite_ate: string | null; carencia_carne_ate: string | null;
   carencia_texto: string | null; custo: number | null; retroativo: boolean; canal: string | null; excecoes: string[];
-  com_excecao: boolean; registrado_por: string | null; registrado_em: string; motivo?: string | null;
+  com_excecao: boolean; registrado_por: string | null; registrado_em: string; motivo?: string | null; financeiro?: BlocoFinanceiro;
   motivo_estorno: string | null; tipo_estorno: string | null; estornado_por: string | null; estornado_em: string | null;
   pode_desfazer: boolean; desfazer_restante_s: number;
 };
@@ -5181,6 +5255,7 @@ export async function fetchConcluidosPreventivo(f?: { calendarioId?: number; de?
 export type DetalheAplicacao = AplicacaoPreventiva & {
   protocolo_nome: string; tipo: string; registrado_por: string | null; estornado_por: string | null;
   ciencia_usuario: string | null; log: EntradaLogAg[]; checklist: ResumoChecklist; agendamento_status: string;
+  financeiro?: BlocoFinanceiro;
 };
 export async function fetchDetalheAplicacao(id: number): Promise<DetalheAplicacao> {
   const res = await authFetch(`${API}/sanidade/cronogramas/aplicacoes/${id}`, { cache: "no-store" });
