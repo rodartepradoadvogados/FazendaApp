@@ -344,6 +344,7 @@ table.ft{width:100%;border-collapse:collapse;font-size:1rem}
 .menu hr{border:0;border-top:1px solid var(--border);margin:.2rem 0}
 
 /* Toasts */
+/* TOAST:START — CSS do toast agregado (desktop e mobile) */
 .toasts{position:fixed;z-index:500;bottom:1rem;left:1rem;display:flex;flex-direction:column-reverse;gap:.5rem;align-items:flex-start;width:min(560px,92vw);min-width:280px;pointer-events:none}
 .toast{pointer-events:auto;display:flex;align-items:center;gap:.8rem;background:var(--vinho);color:#fff;border:1px solid var(--vinho-light);border-radius:var(--r-sm);padding:.6rem .6rem .6rem 1rem;font-size:.875rem;animation:toast .22s cubic-bezier(.16,1,.3,1);width:100%}
 :root[data-theme="escuro"] .toast{background:#0F2A48;border-color:var(--dourado)}
@@ -353,6 +354,9 @@ table.ft{width:100%;border-collapse:collapse;font-size:1rem}
 .toast button{background:transparent;color:#E0A63C;border:1px solid rgba(224,166,60,.6);border-radius:var(--r-sm);min-height:44px;padding:0 .9rem;font-weight:700;cursor:pointer;white-space:nowrap}
 .toast button:hover{background:rgba(224,166,60,.15)}
 .toast .x{border:0;color:#fff;padding:0;width:44px}
+.toast button[disabled]{opacity:.7;cursor:not-allowed}
+@media (max-width:767px){.toasts{left:.5rem;right:.5rem;width:auto;min-width:0}.has-drawer .toasts{bottom:96px}.toast{flex-wrap:wrap;padding:.6rem;min-width:0}.toast .msg{flex:1 1 calc(100% - 44px)}.toast .ac{flex:1 1 auto}.toast .x{margin-left:auto}}
+/* TOAST:END */
 @keyframes toast{from{opacity:0;transform:translateY(12px)}}
 
 /* Protocolos — grade animal × dia */
@@ -525,6 +529,7 @@ table.ft{width:100%;border-collapse:collapse;font-size:1rem}
 .filters .fld .sel{flex:none;min-width:0;width:100%}
 
 .show-m{display:none!important}
+/* REGISTRAR:START — CSS do resumo compacto e do drawer Registrar */
 .resumo-c{padding:0;border:1px solid var(--border-strong);background:var(--surface-2);border-radius:2px}
 .resumo-c summary{list-style:none;cursor:pointer;display:flex;flex-direction:column;gap:.2rem;padding:.6rem .9rem;min-height:44px}
 .resumo-c summary::-webkit-details-marker{display:none}
@@ -534,6 +539,7 @@ table.ft{width:100%;border-collapse:collapse;font-size:1rem}
 .resumo-c ul{padding:.4rem .9rem .2rem;margin:0}
 .resumo-c .fr{padding:0 .9rem .7rem;margin-top:.4rem}
 .resumo-c[open] .ver svg{transform:rotate(180deg)}
+/* REGISTRAR:END */
 .reag .chk{min-height:44px}
 .paper .box0{width:16px;height:16px}
 @media (max-width:767px){
@@ -556,6 +562,27 @@ table.ft{width:100%;border-collapse:collapse;font-size:1rem}
  .toast .x{margin-left:auto}
  .toast{min-width:0}
 }
+
+/* Rodada 4 */
+.ft td.quem,.ft td[data-c=quem]{min-width:130px;white-space:normal;line-height:1.35}
+.matrix{table-layout:auto;width:100%}
+.matrix th,.matrix td{padding:4px 3px;font-size:.8125rem}
+.matrix th:first-child,.matrix td:first-child{min-width:130px;max-width:170px}
+.matrix thead th{white-space:normal;line-height:1.2;vertical-align:bottom}
+.matrix .cell{min-width:44px;padding:0 2px}
+.page{padding-bottom:6rem}
+.linkbtn{min-height:44px}
+@media (max-width:767px){
+ .page{padding-bottom:7rem}
+ .cards tr.lin.gx-atras{padding:.5rem .7rem;gap:.15rem .5rem}
+ .cards tr.lin.gx-atras td[data-c=prod],.cards tr.lin.gx-atras td[data-c=car],.cards tr.lin.gx-atras td[data-c=nome] .sub2{display:none}
+ .cards tr.lin td.acts{padding-right:52px;margin-top:.2rem}
+ .cards tr.lin td.acts .btn-primary{white-space:nowrap;min-width:0;padding:0 .6rem}
+ .matrix th:first-child,.matrix td:first-child{min-width:110px}
+}
+
+.matrix td:nth-last-child(-n+3){white-space:nowrap}
+@media (min-width:768px){.ft thead th{padding-left:9px;padding-right:9px;letter-spacing:.08em}.ft td[data-c=prod]{max-width:170px}}
 </style>
 </head>
 <body>
@@ -592,7 +619,7 @@ table.ft{width:100%;border-collapse:collapse;font-size:1rem}
 </div>
 <button type="button" class="fab" data-act="fora" data-n="Assistente" aria-label="Abrir o assistente" title="Assistente"><svg class="i s20" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/></svg></button>
 <div id="drawer-root"></div><div id="menu-root"></div>
-<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+<!-- TOAST:START --><div class="toasts" id="toasts" role="status" aria-live="polite"></div><!-- TOAST:END -->
 <script>
 'use strict';
 /* ═════════ Ícones (lucide, SVG inline) ═════════ */
@@ -687,6 +714,7 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ign
 const lsDel = k => { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } };
 const clone = o => JSON.parse(JSON.stringify(o));
 
+/* DADOS:START — dataset e modelo de estado reutilizáveis (o M2 copia este bloco inteiro até o marcador de fim) */
 /* ═════════ Dados canônicos (DADOS-CANONICOS.md, extensão rodada 3): Fazenda Estreito Ponte de Pedra · 29/09/2026 14:05 ═════════ */
 const LOTES = [
   { id: 'l1', slug: 'lote01', nome: 'Lote 01 – Alta produção', n: 24, termo: 'vacas', lact: true, peso: 580 },
@@ -706,14 +734,14 @@ const BRINCOS = {
   l2: rng(4201, 4229, [4209]), l3: [2101, 2105, 2109, 2113, 2117, 2121, 2125, 2129, 2133, 2137, 2140, 2144, 2148, 2152, 2156, 2160, 2164, 2166, 2170],
   pp: rng(4301, 4309), se: rng(4401, 4414), r1: rng(5101, 5120), r2: rng(5201, 5222), bz: rng(6101, 6115)
 };
-const NOMES = ['Pintada', 'Bonita2', 'Jabuticaba', 'Fartura', 'Cereja', 'Manga', 'Ternura', 'Aurora', 'Beleza', 'Canela', 'Dengosa', 'Faceira', 'Gaivota', 'Hortência', 'Iracema', 'Jandira', 'Lua', 'Malhada', 'Nuvem', 'Orquídea', 'Princesa', 'Quirera', 'Rosita', 'Safira', 'Tulipa', 'Uva', 'Violeta', 'Amora', 'Baunilha', 'Caramelo', 'Dália', 'Esmeralda', 'Fada', 'Girassol', 'Hera', 'Ipê', 'Jasmim', 'Lírio', 'Meiga', 'Neblina', 'Oliva', 'Palmira', 'Rainha', 'Sereia', 'Tereza', 'Umbela', 'Vitória', 'Zaira'];
-const FIXOS = { 4101: 'Mimosa', 4201: 'Serena', 4207: 'Estrela', 4215: 'Bonita' };
+const NOMES = ['Pintada', 'Jabuticaba', 'Fartura', 'Cereja', 'Manga', 'Ternura', 'Aurora', 'Beleza', 'Canela', 'Dengosa', 'Faceira', 'Gaivota', 'Hortência', 'Iracema', 'Jandira', 'Lua', 'Malhada', 'Nuvem', 'Orquídea', 'Princesa', 'Quirera', 'Rosita', 'Safira', 'Tulipa', 'Uva', 'Violeta', 'Amora', 'Caramelo', 'Dália', 'Esmeralda', 'Fada', 'Girassol', 'Hera', 'Ipê', 'Jasmim', 'Lírio', 'Meiga', 'Oliva', 'Palmira', 'Rainha', 'Sereia', 'Tereza', 'Umbela', 'Vitória', 'Zaira'];
+const FIXOS = { 4101: 'Mimosa', 4201: 'Serena', 4207: 'Estrela', 4215: 'Bonita', 4401: 'Baunilha', 6104: 'Neblina' };
 const RACAS = ['Girolando 5/8', 'Girolando 3/4', 'Girolando 1/2', 'Girolando 7/8', 'Holandês', 'Girolando 5/8'];
 const ANIMAIS = (() => {
   const out = []; let k = 0;
   LOTES.forEach((l, li) => BRINCOS[l.id].forEach((b, i) => {
     const lact = l.lact; let del = lact ? ((i * 37 + li * 11) % 200) + 60 : null; let prenhe = l.id === 'pp' || l.id === 'se' ? true : lact ? (del > 110 && i % 3 !== 0) : false;
-    if (b === 4160) del = 40; if (b === 4124) del = 48; if (b === 4201) del = 31; if (l.id === 'l2' && b >= 4210) { prenhe = false; del = 80 + i * 4; }
+    if (b === 4160) del = 40; if (b === 4124) del = 48; if (l.id === 'l2') { if (b >= 4219) { prenhe = false; del = 62 + Math.round((b - 4219) * 7.3); } else if (b >= 4210) { prenhe = false; del = 90 + (b - 4210) * 5; } else if ([4202, 4203, 4205, 4208].includes(b)) { prenhe = true; del = 150 + b % 10; } else if (b === 4204) { prenhe = false; del = 38; } else if (b === 4206) { prenhe = false; del = 30; } else { prenhe = false; del = 120; } }
     const cat = ['r1', 'r2', 'bz'].includes(l.id) ? (l.id === 'bz' ? 'bezerra' : 'novilha') : 'vaca';
     const an = { id: 'x' + b, brinco: String(b), nome: FIXOS[b] || NOMES[k++ % NOMES.length].replace('2', ''), raca: RACAS[(i + li) % RACAS.length], lote: l.id, del, prenhe, cat };
     if (l.id === 'r1') { an.idadeM = 9 + (i % 4); an.peso = 210 + i * 2; } if (l.id === 'r2') { an.idadeM = 15 + (i % 4); an.peso = i < 12 ? 330 + i : 296 + (i - 12) * 2; } if (l.id === 'bz') { an.idadeM = (b >= 6104 && b <= 6109) ? 4 + (b % 3) : (b <= 6103 ? 2 : 6 + (b % 3)); an.peso = 70 + i * 3; }
@@ -752,24 +780,29 @@ const ESTOQUE0 = [
   { id: 'ver', prod: 'Ivermectina 1%', un: 'mL', fr: [{ f: 'IV-2605', val: '2026-09-20', saldo: 500 }, { f: 'IV-2610', val: '2027-12-31', saldo: 1000 }] },
   { id: 'tb', prod: 'Tuberculina PPD', un: 'doses', fr: [{ f: 'TU-2608', val: '2027-01-31', saldo: 100 }] }
 ];
+/* Vias permitidas por produto: nunca livre. Só produto com mais de uma via aprovada oferece seletor. */
+const VIAS_PERMITIDAS = { afo: ['subcutânea'], b19: ['subcutânea'], clo: ['subcutânea'], rai: ['intramuscular'], ibr: ['intramuscular'], lep: ['subcutânea'], ver: ['subcutânea'], atb: ['intramuscular'], tb: ['intradérmica'], brc: ['coleta de sangue'] };
+const viasDe = id => VIAS_PERMITIDAS[id] || ['subcutânea'];
 const vencido = f => f && f.val < HI;
 const venceEm = f => f ? diff(f.val, HI) : 999;
 const qtdUso = (v, loteId, n) => v.porPeso ? Math.round(n * (loteId === 'todos' ? 400 : loteOf(loteId).peso) / v.porPeso * 10) / 10 : n;
 const fmtQ = (q, un) => `${num(q)} ${un === 'doses' ? pl(q, 'dose', 'doses') : un}`;
 
-/* ── Regras de status por animal e vacina: TUDO calculado das doses registradas ── */
+/* ── Modelo de estado ÚNICO por animal × item aplicável (fonte de cobertura, carteira, comprovante e blocos por lote) ──
+   Estados: ok (Em dia) · prevista · atrasada · sem (aplicável, sem dose e prazo vencido) · na · reagente · inconclusivo.
+   Animal "em dia" = nenhum item em atrasada, sem, reagente ou inconclusivo. */
 function ultimasDoses(an, vac) { return SAN.doses.filter(d => d.a === (an.id || an) && d.vac === vac).map(d => d.data).sort(); }
 function aplicavel(an, v) {
   if (!v.alvo.includes(an.lote)) return false;
   if (v.id === 'b19') return ultimasDoses(an, 'b19').length > 0 || B19_ELEG.includes(an.id);
   return true;
 }
-/* devolve {st: ok|atrasada|sem|na|reagente, ult, prox} */
+const NA_TXT = { b19: 'Não se aplica (fora da faixa de 3 a 8 meses)' };
 function statusAV(an, v) {
   if (v.exame) return statusExame(an, v);
-  if (!aplicavel(an, v)) return { st: 'na', ult: null, prox: null, txt: v.id === 'b19' ? 'Não se aplica (fora da faixa de 3 a 8 meses)' : 'Não se aplica' };
+  if (!aplicavel(an, v)) return { st: 'na', ult: null, prox: null, txt: NA_TXT[v.id] || 'Não se aplica' };
   const ds = ultimasDoses(an, v.id); const ult = ds[ds.length - 1] || null;
-  if (!ult) { const nx = SAN.apl.filter(a => a.vac === v.id && !feita(a) && aplAnimais(a).includes(an.id)).sort((x, y) => x.data < y.data ? -1 : 1)[0]; return { st: 'sem', ult: null, prox: nx ? nx.data : null, txt: 'Sem registro' }; }
+  if (!ult) { const nx = SAN.apl.filter(a => a.vac === v.id && !feita(a) && aplAnimais(a).includes(an.id)).sort((x, y) => x.data < y.data ? -1 : 1)[0]; if (nx && nx.data >= HI) return { st: 'prevista', ult: null, prox: nx.data }; return { st: 'sem', ult: null, prox: nx ? nx.data : null }; }
   let prox;
   if (v.id === 'clo') prox = ds.length === 1 ? addD(ds[0], 30) : addM(ult, 12);
   else if (v.id === 'b19') prox = null;
@@ -778,28 +811,32 @@ function statusAV(an, v) {
   return { st: 'ok', ult, prox };
 }
 function statusExame(an, v) {
-  if (!v.alvo.includes(an.lote)) return { st: 'na', ult: null, prox: null };
+  if (!v.alvo.includes(an.lote)) return { st: 'na', ult: null, prox: null, txt: 'Não se aplica' };
   const ex = SAN.exames.filter(e => e.a === an.id && e.vac === v.id).sort((x, y) => x.data < y.data ? -1 : 1); const last = ex[ex.length - 1];
   if (!last) return { st: 'sem', ult: null, prox: null };
   if (last.res === 'Positivo') return { st: 'reagente', ult: last.data, prox: null, laudo: last.laudo };
-  if (last.res === 'Inconclusivo') { const rt = last.reteste || addD(last.data, 60); return { st: rt < HI ? 'atrasada' : 'ok', ult: last.data, prox: rt, reteste: true }; }
+  if (last.res === 'Inconclusivo') return { st: 'inconclusivo', ult: last.data, prox: last.reteste || addD(last.data, 60), laudo: last.laudo };
   const prox = addM(last.data, 12); return { st: prox < HI ? 'atrasada' : 'ok', ult: last.data, prox };
 }
-function statusAnimal(an) { const out = []; SAN.vacinas.forEach(v => { if (!v.ativo && !SAN.vacinas.length) return; const s = statusAV(an, v); if (s.st !== 'na') out.push(Object.assign({ v }, s)); }); return out; }
-const pendente = st => st.some(x => x.st === 'atrasada' || x.st === 'reagente');
+function statusAnimal(an) { const out = []; SAN.vacinas.forEach(v => { const s = statusAV(an, v); if (s.st !== 'na') out.push(Object.assign({ v }, s)); }); return out; }
+const PEND = ['atrasada', 'sem', 'reagente', 'inconclusivo'];
+const pendente = st => st.some(x => PEND.includes(x.st));
 function cobGlobal(lote) {
   const an = ANIMAIS.filter(a => !lote || a.lote === lote); if (!SAN.doses.length) return null;
-  let at = 0, sem = 0, reag = 0; an.forEach(a => { const st = statusAnimal(a); if (pendente(st)) at++; if (st.some(x => x.st === 'sem')) sem++; if (st.some(x => x.st === 'reagente')) reag++; });
-  return { total: an.length, ok: an.length - at, at, sem, reag, pct: Math.round((an.length - at) / an.length * 100) };
+  let at = 0, reag = 0; const causas = {};
+  an.forEach(a => { const st = statusAnimal(a); if (pendente(st)) at++; st.forEach(x => { if (PEND.includes(x.st)) causas[x.v.id] = (causas[x.v.id] || 0) + 1; if (x.st === 'reagente') reag++; }); });
+  const partes = Object.keys(causas).map(id => ({ id, nome: SAN.vacinas.find(v => v.id === id).nome, n: causas[id] })).sort((x, y) => y.n - x.n);
+  return { total: an.length, ok: an.length - at, at, reag, partes, pct: Math.round((an.length - at) / an.length * 100) };
 }
 const cobPct = lote => { const g = cobGlobal(lote); return g ? g.pct : null; };
 const cobCor = p => p >= 95 ? 'ok' : p >= 85 ? 'amber' : 'red';
 function cobVac(vid, lote) {
-  const v = SAN.vacinas.find(x => x.id === vid); let tot = 0, em = 0, atras = 0, sem = 0;
-  ANIMAIS.forEach(a => { if (lote && a.lote !== lote) return; const s = statusAV(a, v); if (s.st === 'na') return; tot++; if (s.st === 'ok') em++; else if (s.st === 'sem') sem++; else atras++; });
-  return { tot, em, atras, sem, pct: tot ? Math.round(em / tot * 100) : null };
+  const v = SAN.vacinas.find(x => x.id === vid); let tot = 0, ok = 0, prev = 0, atras = 0, sem = 0;
+  ANIMAIS.forEach(a => { if (lote && a.lote !== lote) return; const s = statusAV(a, v); if (s.st === 'na') return; tot++; if (s.st === 'ok') ok++; else if (s.st === 'prevista') prev++; else if (s.st === 'sem') sem++; else atras++; });
+  const em = ok + prev; return { tot, em, ok, prev, atras, sem, pct: tot ? Math.round(em / tot * 100) : null };
 }
 function cobCelula(vid, lid) { return cobVac(vid, lid); }
+/* DADOS:END */
 function audit(a, acao, o = {}) {
   const e = Object.assign({ id: 'ev' + (++SAN.evs), t: nowT(), quem: USUARIO, acao, apl: a ? a.id : null, vac: a ? a.vac : null, lote: a ? a.lote : null, n: a ? nEf(a) : 0, motivo: '', estornado: false }, o);
   SAN.aud.push(e); if (a) a.log.push({ t: e.t, quem: e.quem, txt: acao + (e.motivo ? ' · ' + e.motivo : ''), ev: e.id }); return e;
@@ -827,6 +864,7 @@ function seedSanidade() {
   add(de('r1'), 'ver', ['2026-07-01']); add(de('r2'), 'ver', ['2026-09-05']);
   // Exames de TB (março): 3 inconclusivos no Lote 02 com reteste previsto para 21/09
   ['l1', 'l2', 'l3', 'se'].forEach(l => de(l).forEach(id => { const inc = ['x4201', 'x4207', 'x4215'].includes(id); S.exames.push({ a: id, vac: 'tb', data: l === 'l2' ? '2026-03-31' : '2026-03-30', res: inc ? 'Inconclusivo' : 'Negativo', reteste: inc ? '2026-09-21' : null, laudo: '', ref: null }); }));
+  ['l1', 'l2', 'l3'].forEach(l => de(l).forEach(id => S.exames.push({ a: id, vac: 'brc', data: '2026-02-10', res: 'Negativo', reteste: null, laudo: '', ref: null })));
   // Calendário
   mk('rai', 'l3', 6, '2026-09-27', 'prevista', { doseTxt: 'reforço', animaisTxt: true, ids: RA6 });
   mk('clo', 'r2', 22, '2026-09-25', 'prevista', { doseTxt: 'dose 2', prx: 365, animaisTxt: true, ids: de('r2') });
@@ -922,12 +960,13 @@ const HORM = [
 const hormOf = id => HORM.find(h => h.id === id);
 const saldoTxt = (H, s) => H.frasco ? `${num(s)} mL (${(s / H.frasco).toFixed(1).replace('.', ',')} frascos)` : `${num(s)} ${H.un}`;
 const diaLbl = d => 'Dia ' + d;
+function snapModelo(m) { return ({ id: m.id, nome: m.nome, tipo: m.tipo, versao: m.versao, carLeite: m.carLeite || 0, carCarne: m.carCarne || 0, etapas: clone(m.etapas) }); }
 function seedProtocolos() {
   const P = { seq: 10, aud: [] };
   const et = (d, acao, prods = [], extra = {}) => Object.assign({ d, acao, prods }, extra);
   const T = (quem, txt) => ({ v: 1, t: '2026-08-01 09:00', quem, txt });
   P.modelos = [
-    { id: 'm1', nome: 'Inseminação programada · Dia 0 ao Dia 11 (padrão)', tipo: 'iatf', ativo: true, usado: 3, versao: 1, hist: [T(PESSOAS[1], 'Modelo criado (v1)')], etapas: [
+    { id: 'm1', nome: 'Inseminação programada (IATF) · Dia 0 ao Dia 11 (padrão)', tipo: 'iatf', ativo: true, usado: 3, versao: 1, hist: [T(PESSOAS[1], 'Modelo criado (v1)')], etapas: [
       et(0, 'Colocar o implante + Sincrodiol 2 mL + Sincroforte 2,5 mL', [{ h: 'imp', q: 1 }, { h: 'sd', q: 2 }, { h: 'sf', q: 2.5 }]),
       et(7, 'Estron 2 mL', [{ h: 'es', q: 2 }]),
       et(9, 'Retirar o implante + Estron 2 mL + SincroCP 1 mL', [{ h: 'es', q: 2 }, { h: 'cp', q: 1 }]),
@@ -936,8 +975,8 @@ function seedProtocolos() {
       et(0, 'Estradiol + progesterona 5 mL', [{ h: 'estrog', q: 5 }]), et(3, 'Estradiol + progesterona 5 mL', [{ h: 'estrog', q: 5 }]), et(7, 'Estradiol + progesterona 5 mL', [{ h: 'estrog', q: 5 }]),
       et(10, 'Dexametasona 5 mL', [{ h: 'dexa', q: 5 }]), et(14, 'Dexametasona 5 mL', [{ h: 'dexa', q: 5 }]), et(17, 'Dexametasona 5 mL', [{ h: 'dexa', q: 5 }]), et(20, 'Iniciar ordenha')] },
     { id: 'm3', nome: 'Mastite clínica · ceftiofur por 5 dias', tipo: 'tratamento', ativo: true, usado: 6, versao: 1, hist: [T(PESSOAS[1], 'Modelo criado (v1)')], carLeite: 4, carCarne: 4, etapas: [0, 1, 2, 3, 4].map(d => et(d, 'Ceftiofur 5 mL intramuscular por vaca', [{ h: 'atb', q: 5 }])) },
-    { id: 'm4', nome: 'Adaptação pré-parto · 7 dias', tipo: 'proprio', ativo: true, usado: 2, versao: 1, hist: [T(USUARIO, 'Modelo criado (v1)')], etapas: [
-      et(0, 'Iniciar sal aniônico na dieta', [{ h: 'anion', q: 1 }]), et(3, 'Medir o pH da urina'), et(6, 'Medir o pH da urina e encerrar a adaptação')] },
+    { id: 'm4', nome: 'Adaptação pré-parto · diária, Dia 0 ao Dia 6', tipo: 'proprio', ativo: true, usado: 2, versao: 1, hist: [T(USUARIO, 'Modelo criado (v1)')], etapas: [
+      et(0, 'Iniciar sal aniônico na dieta', [{ h: 'anion', q: 1 }]), et(1, 'Oferecer o sal aniônico na dieta'), et(2, 'Oferecer o sal aniônico na dieta'), et(3, 'Medir o pH da urina'), et(4, 'Oferecer o sal aniônico na dieta'), et(5, 'Oferecer o sal aniônico na dieta'), et(6, 'Medir o pH da urina e encerrar a adaptação')] },
     { id: 'm5', nome: 'Limpeza de bebedouros (semanal)', tipo: 'tarefa', ativo: true, usado: 12, versao: 1, hist: [T(USUARIO, 'Modelo criado (v1)')], etapas: [et(0, 'Esvaziar, lavar e reabastecer')] },
     { id: 'm6', nome: 'Inseminação programada curta · Dia 0 ao Dia 9', tipo: 'iatf', ativo: false, usado: 0, versao: 1, hist: [T(PESSOAS[1], 'Modelo criado (v1)')], etapas: [
       et(0, 'Colocar o implante + Sincrodiol 2 mL', [{ h: 'imp', q: 1 }, { h: 'sd', q: 2 }]), et(7, 'Retirar o implante + Estron 2 mL', [{ h: 'es', q: 2 }]), et(9, 'Inseminar (registrar em Reprodução)', [], { insem: true })] }
@@ -945,33 +984,39 @@ function seedProtocolos() {
   const mkp = (nome, modelo, lote, ids, d0, estado, extra = {}) => Object.assign({ id: 'pr' + (++P.seq), nome, modelo, lote, animais: ids, d0, estado, baixas: {}, log: [], shift: {} }, extra);
   const feito = (p, idx, por, data, hora = '08:10') => p.animais.forEach(id => { p.baixas[id + ':' + idx] = { por, frasco: '—', data, hora, prevista: data }; });
   P.lista = [];
-  let p = mkp('Inseminação programada · Recria 2 · Dia 0 em 20/09/2026', 'm1', 'r2', idsBr(rng(5201, 5212)), '2026-09-20', 'andamento'); feito(p, 0, PESSOAS[2], '2026-09-20'); feito(p, 1, PESSOAS[2], '2026-09-27'); P.lista.push(p);
-  p = mkp('Inseminação programada · Lote 02 – Média · Dia 0 em 27/09/2026', 'm1', 'l2', idsBr([4210, 4211, 4212, 4213, 4214, 4216, 4217, 4218]), '2026-09-27', 'andamento'); feito(p, 0, PESSOAS[3], '2026-09-27'); P.lista.push(p);
+  let p = mkp('Inseminação programada (IATF) · Recria 2 · Dia 0 em 20/09/2026', 'm1', 'r2', idsBr(rng(5201, 5212)), '2026-09-20', 'andamento'); feito(p, 0, PESSOAS[2], '2026-09-20'); feito(p, 1, PESSOAS[2], '2026-09-27'); P.lista.push(p);
+  p = mkp('Inseminação programada (IATF) · Lote 02 – Média · Dia 0 em 27/09/2026', 'm1', 'l2', idsBr([4210, 4211, 4212, 4213, 4214, 4216, 4217, 4218]), '2026-09-27', 'andamento'); feito(p, 0, PESSOAS[3], '2026-09-27'); P.lista.push(p);
   p = mkp('Tratamento de mastite clínica · 3 vacas do Lote 01 · início 26/09/2026', 'm3', 'l1', idsBr([4105, 4112, 4131]), '2026-09-26', 'andamento'); [0, 1, 2].forEach(i => feito(p, i, PESSOAS[1], addD('2026-09-26', i))); P.lista.push(p);
-  p = mkp('Adaptação pré-parto · Pré-parto · início 25/09/2026', 'm4', 'pp', idsBr(rng(4301, 4309)), '2026-09-25', 'andamento'); feito(p, 0, PESSOAS[2], '2026-09-25'); feito(p, 1, PESSOAS[2], '2026-09-28'); P.lista.push(p);
+  p = mkp('Adaptação pré-parto · Pré-parto · início 25/09/2026', 'm4', 'pp', idsBr(rng(4301, 4309)), '2026-09-25', 'andamento'); [0, 1, 2, 3].forEach(i => feito(p, i, PESSOAS[2], addD('2026-09-25', i))); P.lista.push(p);
   p = mkp('Indução de lactação · 2 novilhas · início 22/09/2026', 'm2', 'r1', idsBr([5108, 5117]), '2026-09-22', 'andamento'); [0, 1].forEach(i => feito(p, i, PESSOAS[1], addD('2026-09-22', [0, 3][i]))); P.lista.push(p);
-  p = mkp('Inseminação programada · Lote 01 – Alta produção · Dia 0 em 08/09/2026', 'm1', 'l1', idsBr([4108, 4115, 4118, 4120, 4127, 4129, 4134, 4138, 4141, 4143]), '2026-09-08', 'concluido'); [0, 1, 2, 3].forEach(i => feito(p, i, PESSOAS[1], addD('2026-09-08', [0, 7, 9, 11][i]))); P.lista.push(p);
+  p = mkp('Inseminação programada (IATF) · Lote 01 – Alta produção · Dia 0 em 08/09/2026', 'm1', 'l1', idsBr([4108, 4115, 4118, 4120, 4127, 4129, 4134, 4138, 4141, 4143]), '2026-09-08', 'concluido'); [0, 1, 2, 3].forEach(i => feito(p, i, PESSOAS[1], addD('2026-09-08', [0, 7, 9, 11][i]))); P.lista.push(p);
   p = mkp('Indução de lactação · 2 novilhas · início 01/09/2026', 'm2', 'r1', idsBr([5103, 5105]), '2026-09-01', 'interrompido', { motivo: 'Novilhas entraram em cio natural' }); [0, 1].forEach(i => feito(p, i, PESSOAS[1], addD('2026-09-01', i * 3))); P.lista.push(p);
-  p = mkp('Inseminação programada · Lote 03 – Baixa · Dia 0 em 27/09/2026', 'm1', 'l3', idsBr([2105, 2109, 2113, 2121, 2125]), '2026-09-27', 'engano', { motivo: 'Lote errado: era para o Lote 02 – Média' }); P.lista.push(p);
+  p = mkp('Inseminação programada (IATF) · Lote 03 – Baixa · Dia 0 em 27/09/2026', 'm1', 'l3', idsBr([2105, 2109, 2113, 2121, 2125]), '2026-09-27', 'engano', { motivo: 'Lote errado: era para o Lote 02 – Média' }); P.lista.push(p);
+  P.lista.forEach(x => { x.snap = snapModelo(P.modelos.find(m => m.id === x.modelo)); });
   return P;
 }
 let PRO = seedProtocolos();
 const modeloOf = id => PRO.modelos.find(m => m.id === id);
+/* Cada protocolo lançado guarda uma cópia (snapshot) das etapas do modelo na versão do lançamento. */
+const modeloDe = p => p.snap || modeloOf(p.modelo);
 const protoOf = id => PRO.lista.find(p => p.id === id);
 const shiftDe = (p, i) => { let s = 0; Object.keys(p.shift || {}).forEach(k => { if (+k <= i) s += p.shift[k]; }); return s; };
-const etapaData = (p, e) => { const m = modeloOf(p.modelo); const i = m.etapas.indexOf(e); return addD(p.d0, e.d + shiftDe(p, i)); };
+const etapaData = (p, e) => { const m = modeloDe(p); const i = m.etapas.indexOf(e); return addD(p.d0, e.d + shiftDe(p, i)); };
 function protoStats(p) {
-  const m = modeloOf(p.modelo); const tot = p.animais.length * m.etapas.length; const feitas = Object.keys(p.baixas).length;
+  const m = modeloDe(p); const tot = p.animais.length * m.etapas.length; const feitas = Object.keys(p.baixas).length;
   let atras = 0, prox = null, proxTxt = '';
   m.etapas.forEach((e, i) => { const dt = etapaData(p, e); const pend = p.animais.filter(id => !p.baixas[id + ':' + i]).length; if (pend) { if (dt < HI) atras += pend; if (!prox || dt < prox) { prox = dt; proxTxt = e.acao; } } });
   const ult = Math.max(1, m.etapas[m.etapas.length - 1].d); const diaAtual = Math.max(0, Math.min(ult, diff(HI, p.d0)));
   return { tot, feitas, atras, prox, proxTxt, dias: ult, diaAtual, atrasado: p.estado === 'andamento' && atras > 0 };
 }
 function emProtocolo(id) { return PRO.lista.find(p => p.estado === 'andamento' && p.animais.includes(id)); }
-function reservado(h) { let r = 0; PRO.lista.filter(p => p.estado === 'andamento').forEach(p => { const m = modeloOf(p.modelo); m.etapas.forEach((e, i) => e.prods.forEach(x => { if (x.h === h) r += x.q * p.animais.filter(a => !p.baixas[a + ':' + i]).length; })); }); return Math.round(r * 10) / 10; }
+function reservado(h) { let r = 0; PRO.lista.filter(p => p.estado === 'andamento').forEach(p => { const m = modeloDe(p); m.etapas.forEach((e, i) => e.prods.forEach(x => { if (x.h === h) r += x.q * p.animais.filter(a => !p.baixas[a + ':' + i]).length; })); }); return Math.round(r * 10) / 10; }
+
+/* Exposição para reutilização (M2): animais, itens, doses, frascos, vias e a função de estado animal × item */
+window.DADOS_M1 = { get animais() { return ANIMAIS; }, get itens() { return SAN.vacinas; }, get doses() { return SAN.doses; }, get exames() { return SAN.exames; }, get frascos() { return SAN.est; }, vias: VIAS_PERMITIDAS, estado: (an, v) => statusAV(an, v), cobertura: cobGlobal };
 /* ═════════ Núcleo: rota, casca, gaveta, menu, toast ═════════ */
 const ROUTES = {};
-const DK = ['prevista', 'registrar', 'animal', 'falta', 'nova', 'passo', 'editar', 'proto', 'modelo', 'imprimir', 'pimprimir', 'corrigir', 'inativar'];
+const DK = ['prevista', 'registrar', 'animal', 'falta', 'nova', 'passo', 'editar', 'proto', 'modelo', 'imprimir', 'pimprimir', 'corrigir', 'inativar', 'comprovante', 'minativar'];
 const R = { path: '', q: new URLSearchParams() };
 let UI = { drKey: null };
 let lastVK = null, lastPath = null;
@@ -1101,7 +1146,7 @@ function closeDrawerDom(silent) {
   if (DR.key.startsWith('md')) mdOnClose();
   root.innerHTML = ''; $('.shell').removeAttribute('inert'); document.body.classList.remove('has-drawer');
   const k = DR.openerKey, op = DR.opener; DR.key = null; DR.opener = null; DR.openerKey = null; UI.drKey = null;
-  if (!silent) { let el = (op && document.contains(op)) ? op : (k ? $(`[data-fk="${k}"]`) : null); (el || $(`#view [data-fk^="row-"]`) || $('#view h1') || $('#main')).focus({ preventScroll: true }); }
+  if (!silent) { let el = (op && op !== document.body && document.contains(op)) ? op : (k ? $(`[data-fk="${k}"]`) : null); const alvo = el || $(`#view [data-fk^="row-"]`) || $('#view h1') || $('#main'); if (alvo && alvo.tabIndex < 0 && !alvo.matches('a,button,input,select,textarea,[tabindex]')) alvo.tabIndex = -1; alvo.focus({ preventScroll: true }); }
 }
 function closeDrawer() { const patch = {}; DK.forEach(k => { patch[k] = null; }); setQ(patch); }
 function drawerHead(kicker, title, meta, opts = {}) {
@@ -1117,11 +1162,13 @@ function renderDrawer(force) {
     else if (q.get('animal')) spec = drAnimal(q.get('animal'));
     else if (q.get('falta')) spec = drFalta(q.get('falta'));
     else if (q.get('corrigir')) spec = drCorrigir(q.get('corrigir'));
+    else if (q.get('comprovante')) spec = drComprovante(q.get('comprovante'));
     else if (q.get('inativar')) spec = drInativar(q.get('inativar'));
     else if (q.get('nova') || q.get('editar')) spec = drWizard();
   } else if (R.path.startsWith('/protocolos')) {
     if (q.get('pimprimir')) spec = printProtoSpec(q.get('pimprimir'));
     else if (q.get('proto')) spec = drProto(q.get('proto'));
+    else if (q.get('minativar') && R.path === '/protocolos/modelos') spec = drInativarModelo(q.get('minativar'));
     else if (q.get('modelo') && R.path === '/protocolos/modelos') spec = drModelo();
   }
   if (!spec) { closeDrawerDom(); return; }
@@ -1139,30 +1186,31 @@ function openMenu(btn, items) {
   m.style.left = Math.max(8, Math.min(window.innerWidth - mw - 8, r.right - mw)) + 'px';
   m.style.top = (r.bottom + mh + 8 > window.innerHeight ? Math.max(8, r.top - mh - 4) : r.bottom + 4) + 'px';
   MENU = { el: m, btn };
-  const first = $('button', m); if (first) first.focus();
+  const first = $('button', m); if (first) first.focus({ preventScroll: true });
   btn.setAttribute('aria-expanded', 'true');
 }
 function closeMenu(refocus) { if (!MENU) return; MENU.btn.removeAttribute('aria-expanded'); MENU.el.remove(); const b = MENU.btn; MENU = null; if (refocus && document.contains(b)) b.focus(); }
 
-/* ═════════ Toast ═════════ */
+/* TOAST:START — componente de toast agregado (autocontido; depende só de $, ic, esc e do contêiner #toasts) */
 const TS = { el: null, stack: [], left: 0, info: '', infoLeft: 0, t: null };
 function toastRender() {
   const box = $('#toasts');
   if (!TS.stack.length && TS.infoLeft <= 0) { if (TS.el) { TS.el.remove(); TS.el = null; } clearInterval(TS.t); TS.t = null; return; }
   if (!TS.el) { TS.el = document.createElement('div'); TS.el.className = 'toast'; box.appendChild(TS.el); }
-  const n = TS.stack.length; const last = TS.stack[n - 1];
+  const n = TS.stack.length; const last = TS.stack[n - 1]; const pode = !n || !last.pode || last.pode();
   const txt = TS.infoLeft > 0 ? TS.info : n > 1 ? `${n} ações feitas · última: ${last.msg}` : last.msg;
-  TS.el.innerHTML = `${ic(TS.icon || 'ok', 's18 ok')}<span class="msg">${esc(txt)}</span>${n ? `<button type="button" class="ac">${n > 1 ? 'Desfazer só a última' : 'Desfazer'} (${TS.left} s)</button>` : ''}<button type="button" class="x" aria-label="Dispensar aviso">${ic('x')}</button>`;
+  TS.el.innerHTML = `${ic(TS.icon || 'ok', 's18 ok')}<span class="msg">${esc(txt)}</span>${n ? (pode ? `<button type="button" class="ac">${n > 1 ? 'Desfazer só a última' : 'Desfazer'} (${TS.left} s)</button>` : `<button type="button" class="ac" disabled aria-disabled="true" title="Este registro já foi alterado e não pode ser desfeito aqui">Não dá para desfazer</button>`) : ''}<button type="button" class="x" aria-label="Dispensar aviso">${ic('x')}</button>`;
   $('.x', TS.el).addEventListener('click', () => { TS.stack = []; TS.infoLeft = 0; toastRender(); });
-  if (n) $('.ac', TS.el).addEventListener('click', () => { const e = TS.stack.pop(); TS.left = 10; e.fn && e.fn(); TS.info = 'Desfeito: ' + e.msg; TS.infoLeft = 4; TS.icon = 'undo'; toastRender(); });
+  if (n && pode) $('.ac', TS.el).addEventListener('click', () => { const e = TS.stack.pop(); TS.left = 10; e.fn && e.fn(); TS.info = e.desfeito || ('Desfeito: ' + e.msg); TS.infoLeft = 4; TS.icon = 'undo'; toastRender(); });
 }
 function toast(msg, o = {}) {
   TS.icon = o.icon;
-  if (o.acao) { TS.stack.push({ msg, fn: o.fn }); TS.left = Math.ceil((o.ms || 10000) / 1000); TS.infoLeft = 0; }
+  if (o.acao) { TS.stack.push({ msg, fn: o.fn, pode: o.pode, desfeito: o.desfeito }); TS.left = Math.ceil((o.ms || 10000) / 1000); TS.infoLeft = 0; }
   else { TS.info = msg; TS.infoLeft = Math.ceil((o.ms || 4500) / 1000); }
   toastRender();
   if (!TS.t) TS.t = setInterval(() => { if (TS.stack.length) { TS.left--; if (TS.left <= 0) TS.stack = []; } if (TS.infoLeft > 0) TS.infoLeft--; toastRender(); }, 1000);
 }
+/* TOAST:END */
 /* Glossário por toque ou foco (botão ⓘ) */
 const GL = {
   scratch: 'Retorno ao cio (Scratch): a fazenda confere se a vaca inseminada voltou a manifestar cio 14 dias depois. É um parâmetro da fazenda.',
@@ -1172,7 +1220,7 @@ const GL = {
   carencia: 'Carência: dias em que o leite (ou a carne) do animal não pode ser vendido depois do produto. Vale a bula do produto cadastrado no Catálogo.'
 };
 const gl = (k, nome) => `<button type="button" class="ginfo" data-act="gl" data-menu data-k="${k}" aria-label="O que é ${esc(nome)}?" title="O que é ${esc(nome)}?">${ic('info', 's14')}</button>`;
-function actGl(t) { closeMenu(); const m = document.createElement('div'); m.className = 'menu pop'; m.setAttribute('role', 'dialog'); m.setAttribute('aria-label', 'Glossário'); m.tabIndex = -1; m.textContent = GL[t.dataset.k]; $('#menu-root').appendChild(m); const r = t.getBoundingClientRect(); m.style.left = Math.max(8, Math.min(innerWidth - m.offsetWidth - 8, r.left - 20)) + 'px'; m.style.top = Math.min(innerHeight - m.offsetHeight - 8, r.bottom + 6) + 'px'; MENU = { el: m, btn: t }; m.focus(); }
+function actGl(t) { closeMenu(); const m = document.createElement('div'); m.className = 'menu pop'; m.setAttribute('role', 'dialog'); m.setAttribute('aria-label', 'Glossário'); m.tabIndex = -1; m.textContent = GL[t.dataset.k]; $('#menu-root').appendChild(m); const r = t.getBoundingClientRect(); m.style.left = Math.max(8, Math.min(innerWidth - m.offsetWidth - 8, r.left - 20)) + 'px'; m.style.top = Math.min(innerHeight - m.offsetHeight - 8, r.bottom + 6) + 'px'; MENU = { el: m, btn: t }; m.focus({ preventScroll: true }); }
 
 /* ═════════ Ações (delegação de eventos) ═════════ */
 const ACT = {};
@@ -1443,32 +1491,33 @@ ACT.imprimir = () => setQ({ imprimir: '1' });
 function semDados(titulo, icone, msg, acts) {
   return pgHead(icone, titulo, '', '') + `<div class="empty">${ic(icone, 's28 ico')}<h2>${msg.t}</h2><p>${msg.p}</p><div class="actions" style="justify-content:center">${acts}</div></div>`;
 }
+function frasePend(g) { const p = g.partes.map(x => x.n).join(' + '); return `${g.ok} de ${g.total} animais em dia${g.at ? ` · ${g.at} com pendência atrasada (${p})` : ''}`; }
 const cobIcon = p => cobCor(p) === 'ok' ? 'ok' : 'warn';
 const pendentesAnimal = an => statusAnimal(an);
-const ST_PILL = a => a.st === 'ok' ? `<span class="st registrada">${ic('ok', 's14')}Em dia</span>` : a.st === 'atrasada' ? `<span class="st atrasada">${ic('warn', 's14')}Atrasada${a.prox ? ' desde ' + br(a.prox) : ''}</span>` : a.st === 'reagente' ? `<span class="st atrasada">${ic('warn', 's14')}Reagente — notificar serviço veterinário oficial</span>` : `<span class="st vence">${ic('clock', 's14')}Sem registro${a.prox ? ' · prevista ' + br(a.prox) : ''}</span>`;
+const ST_PILL = a => a.st === 'ok' ? `<span class="st registrada">${ic('ok', 's14')}Em dia</span>` : a.st === 'atrasada' ? `<span class="st atrasada">${ic('warn', 's14')}Atrasada${a.prox ? ' desde ' + br(a.prox) : ''}</span>` : a.st === 'reagente' ? `<span class="st atrasada">${ic('warn', 's14')}Reagente — notificar serviço veterinário oficial</span>` : a.st === 'inconclusivo' ? `<span class="st vence">${ic('clock', 's14')}Inconclusivo · reteste ${a.prox ? 'até ' + br(a.prox) : 'em 60 dias'}</span>` : a.st === 'prevista' ? `<span class="st prevista">${ic('dashed', 's14')}Prevista${a.prox ? ' · ' + br(a.prox) : ''}</span>` : a.st === 'na' ? `<span class="st pulada" style="text-decoration:none">${ic('ban', 's14')}${esc(a.txt || 'Não se aplica')}</span>` : `<span class="st vence">${ic('clock', 's14')}Sem registro${a.prox ? ' · prevista ' + br(a.prox) : ''}</span>`;
 ROUTES['/sanidade/vacinas/cobertura'] = () => {
   const acts = bt('btn-ghost', 'printer', 'Imprimir folha de campo', 'data-act="imprimir" data-fk="imprimir"') + bt('btn-sec', 'shield', 'Comprovante de animal em dia', 'data-act="comprovante"');
   if (!SAN.vacinas.length) return semDados('Cobertura vacinal', 'shield', { t: 'A cobertura aparece depois do calendário', p: 'Monte o calendário vacinal e registre as primeiras aplicações; aqui você verá quem está em dia por vacina, lote e animal.' }, bt('btn-gold', 'calendar', 'Montar calendário', 'data-act="go" data-to="/sanidade/vacinas"'));
   const por = qv('por') || 'vacina'; const lote = qv('lote'); const g = cobGlobal(lote);
   const cor = g ? cobCor(g.pct) : 'amber';
   const topo = `<div class="card pad" style="display:flex;gap:1.2rem;align-items:center;flex-wrap:wrap;margin-bottom:1rem"><div><div class="lbl">Animais em dia${lote ? ' · ' + esc(loteNome(lote)) : ''}</div><div class="num" style="font-size:2.25rem;font-weight:800;line-height:1.1;letter-spacing:-.02em;color:var(--st-${cor === 'ok' ? 'green' : cor === 'amber' ? 'amber' : 'red'})">${g ? g.pct + '%' : '—'}</div></div>
-    <div style="flex:1;min-width:220px"><div class="bar ${cor === 'ok' ? '' : cor}" role="img" aria-label="${g ? g.pct : 0}% dos animais em dia" style="height:12px"><i style="width:${g ? g.pct : 0}%"></i></div><p class="hint" style="margin-top:.4rem"><b style="color:var(--text)">${g ? g.ok + ' de ' + g.total + ' animais' : 'Sem registros'}</b> em dia: todas as vacinas e exames aplicáveis registrados e nenhum atrasado${g && g.at ? `; ${g.at} ${pl(g.at, 'animal tem', 'animais têm')} algo atrasado ou reagente.` : '.'} ${g && g.at ? `<button type="button" class="linkbtn" data-act="go" data-to="/sanidade/vacinas" data-q="filtro=atrasadas${lote ? '&lote=' + lote : ''}">Ver atrasadas</button>` : ''}</p>
-    ${g && g.sem ? `<p class="hint">${ic('clock', 's14')} <b style="color:var(--text)">${g.sem} ${pl(g.sem, 'animal', 'animais')} sem registro</b> de alguma vacina (dose ainda a aplicar). “Sem registro” nunca conta como em dia na vacina.</p>` : ''}</div></div>`;
+    <div style="flex:1;min-width:220px"><div class="bar ${cor === 'ok' ? '' : cor}" role="img" aria-label="${g ? g.pct : 0}% dos animais em dia" style="height:12px"><i style="width:${g ? g.pct : 0}%"></i></div><p class="hint" style="margin-top:.4rem"><b style="color:var(--text)">${g ? frasePend(g) : 'Sem registros'}</b>${g && g.at ? ` <button type="button" class="linkbtn" data-act="go" data-to="/sanidade/vacinas" data-q="filtro=atrasadas${lote ? '&lote=' + lote : ''}">Ver atrasadas</button>` : ''}</p>
+    </div></div>`;
   const tabs = `<div class="filters"><div class="tabbar" role="group" aria-label="Agrupar cobertura">${[['vacina', 'Por vacina'], ['lote', 'Por lote'], ['animal', 'Por animal']].map(([v, l]) => `<button type="button" class="tabpill" data-act="por" data-v="${v}" aria-pressed="${por === v}">${l}</button>`).join('')}</div>
     <select class="sel" aria-label="Filtrar por lote (vale para a página inteira)" data-ch="flote">${opts(LOTE_OPTS, lote, 'Todos os lotes')}</select></div>`;
   let corpo = '';
   const lotesVis = LOTES.filter(l => !lote || l.id === lote);
   if (por === 'vacina') {
-    corpo = `<div class="tw"><table class="ft matrix"><caption class="sr">Cobertura por vacina e lote, em porcentagem de animais em dia</caption><thead><tr><th scope="col">Vacina ou exame</th>${lotesVis.map(l => `<th scope="col">${esc(l.nome.replace('Lote ', ''))}</th>`).join('')}<th scope="col">Animais em dia</th><th scope="col">Atrasadas</th><th scope="col">Sem registro</th></tr></thead><tbody>` + SAN.vacinas.filter(v => v.ativo).map(v => {
+    corpo = `<div class="tw"><table class="ft matrix"><caption class="sr">Cobertura por vacina e lote, em porcentagem de animais em dia</caption><thead><tr><th scope="col">Vacina ou exame</th>${lotesVis.map(l => `<th scope="col">${esc(l.nome.replace('Lote ', ''))}</th>`).join('')}<th scope="col">Em dia</th><th scope="col">Atrasadas</th><th scope="col">Previstas</th></tr></thead><tbody>` + SAN.vacinas.filter(v => v.ativo).map(v => {
       const T = cobVac(v.id, lote); if (!T.tot) return '';
       const cells = lotesVis.map(l => { const c = cobCelula(v.id, l.id); if (!c.tot) return `<td><span class="sr">não se aplica</span><span aria-hidden="true" style="color:var(--text-muted)">—</span></td>`; const p = c.pct; const k = cobCor(p);
-        return `<td><button type="button" class="cell ${k === 'ok' ? 'green' : k}" data-act="falta" data-v="${v.id}:${l.id}" aria-label="${v.nome}, ${l.nome}: ${p}% (${c.em} de ${c.tot} animais em dia)${c.atras ? ', ' + c.atras + ' atrasados' : ''}${c.sem ? ', ' + c.sem + ' sem registro' : ''}">${ic(cobIcon(p), 's14')}${p}%</button></td>`; }).join('');
-      return `<tr><th scope="row" style="text-align:left;text-transform:none;letter-spacing:0;font-size:.875rem;color:var(--text)"><div class="nm">${esc(v.nome)}</div><div class="sub2">${v.exame ? 'Exame' : v.tipo} · <b>${T.pct}%</b></div></th>${cells}<td><b>${T.em}</b> de ${T.tot} animais</td><td>${T.atras ? `<span class="st atrasada">${ic('warn', 's14')}${T.atras} ${pl(T.atras, 'animal', 'animais')}</span>` : '<span class="sub2">nenhum</span>'}</td><td>${T.sem ? `${T.sem} ${pl(T.sem, 'animal', 'animais')}` : '<span class="sub2">nenhum</span>'}</td></tr>`;
+        return `<td><button type="button" class="cell ${k === 'ok' ? 'green' : k}" data-act="falta" data-v="${v.id}:${l.id}" aria-label="${v.nome}, ${l.nome}: ${p}% (${c.em} de ${c.tot} animais em dia)${c.atras ? ', ' + c.atras + ' atrasados' : ''}">${ic(cobIcon(p), 's14')}${p}%</button></td>`; }).join('');
+      return `<tr><th scope="row" style="text-align:left;text-transform:none;letter-spacing:0;font-size:.875rem;color:var(--text)"><div class="nm">${esc(v.nome)}</div><div class="sub2">${v.exame ? 'Exame' : v.tipo} · <b>${T.pct}%</b></div></th>${cells}<td><b>${T.em}</b> de ${T.tot}</td><td>${T.atras ? `<span class="st atrasada">${ic('warn', 's14')}${T.atras} ${pl(T.atras, 'animal', 'animais')}</span>` : '<span class="sub2">nenhum</span>'}</td><td>${T.prev ? `${T.prev} ${pl(T.prev, 'animal', 'animais')}` : '<span class="sub2">nenhum</span>'}</td></tr>`;
     }).join('') + `</tbody></table><div class="legend"><span class="ic-green">${ic('ok', 's14')}<span>95% ou mais</span></span><span class="ic-amber">${ic('warn', 's14')}<span>85% a 94%</span></span><span class="ic-red">${ic('warn', 's14')}<span>abaixo de 85%</span></span><span>Cada % é de animais em dia para aquela vacina. Toque numa célula para ver quem falta.</span></div></div>`;
   } else if (por === 'lote') {
-    corpo = `<div class="tw cards-w"><table class="ft cards"><caption class="sr">Cobertura por lote</caption><thead><tr><th>Lote</th><th class="num">Animais</th><th>Todas em dia</th><th>Vacinas com animais atrasados ou sem registro</th></tr></thead><tbody>` + lotesVis.map(l => {
+    corpo = `<div class="tw cards-w"><table class="ft cards"><caption class="sr">Cobertura por lote</caption><thead><tr><th>Lote</th><th class="num">Animais</th><th>Todas em dia</th><th>Vacinas com animais atrasados</th></tr></thead><tbody>` + lotesVis.map(l => {
       const gl_ = cobGlobal(l.id); const pend = [];
-      SAN.vacinas.forEach(v => { const c = cobCelula(v.id, l.id); if (c.tot && (c.atras || c.sem)) pend.push(`<button type="button" class="chip" style="min-height:44px" data-act="falta" data-v="${v.id}:${l.id}">${ic('warn', 's14')}${esc(v.nome)} · ${c.atras ? c.atras + ' ' + pl(c.atras, 'atrasado', 'atrasados') : c.sem + ' sem registro'}</button>`); });
+      SAN.vacinas.forEach(v => { const c = cobCelula(v.id, l.id); if (c.tot && c.atras) pend.push(`<button type="button" class="chip" style="min-height:44px" data-act="falta" data-v="${v.id}:${l.id}">${ic('warn', 's14')}${esc(v.nome)} · ${c.atras + ' ' + pl(c.atras, 'atrasado', 'atrasados')}</button>`); });
       const p = gl_ ? gl_.pct : 100; const k = cobCor(p);
       return `<tr class="rowc"><td data-c="nome"><div class="nm">${esc(l.nome)}</div></td><td class="num" data-c="x" data-l="Animais">${l.n}</td><td data-c="quem"><div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap"><div class="bar ${k === 'ok' ? '' : k}" style="width:110px"><i style="width:${p}%"></i></div><b>${p}%</b><span class="sub2">${gl_ ? gl_.ok + ' de ' + gl_.total + ' animais' : ''}</span>${p >= 100 ? `<span class="st registrada">${ic('ok', 's14')}Em dia</span>` : ''}</div></td><td data-c="prod">${pend.length ? `<div class="chips">${pend.join('')}</div>` : '<span class="sub2">Nenhuma</span>'}</td></tr>`;
     }).join('') + `</tbody></table></div>`;
@@ -1477,18 +1526,18 @@ ROUTES['/sanidade/vacinas/cobertura'] = () => {
     const tot = lista.length; lista = lista.slice(0, 30);
     corpo = `<div class="filters"><div class="search" style="max-width:420px"><label class="sr" for="qa">Buscar animal por brinco, nome ou lote</label>${ic('search')}<input id="qa" data-fk="qa" class="inp" type="search" placeholder="Buscar por brinco, nome ou lote" value="${esc(qv('a'))}" data-in="fa"></div><span class="hint" role="status">${tot} ${pl(tot, 'animal', 'animais')}${tot > 30 ? ' · mostrando 30' : ''}</span></div>
     <div class="tw cards-w"><table class="ft cards"><caption class="sr">Carteira de vacinação por animal</caption><thead><tr><th>Animal</th><th>Lote</th><th>Situação</th><th><span class="sr">Ação</span></th></tr></thead><tbody>` + lista.map(a => {
-      const p = statusAnimal(a); const at = p.filter(x => x.st === 'atrasada'); const rg = p.filter(x => x.st === 'reagente'); const sem = p.filter(x => x.st === 'sem');
+      const p = statusAnimal(a); const at = p.filter(x => x.st === 'atrasada'); const rg = p.filter(x => x.st === 'reagente'); const sem = p.filter(x => x.st === 'sem' || x.st === 'inconclusivo');
       return `<tr class="lin" tabindex="0" data-act="animal" data-id="${a.id}" data-fk="an-${a.id}" aria-label="Abrir carteira de ${esc(lbl(a))}"><td data-c="nome"><div class="nm">${esc(a.brinco)} · ${esc(a.nome)}</div><div class="sub2">${esc(a.raca)}</div></td><td data-c="quem">${esc(loteOf(a.lote).nome)}</td>
-      <td data-c="estado" style="display:flex;gap:.3rem;flex-wrap:wrap">${rg.length ? `<span class="st atrasada">${ic('warn', 's14')}Reagente — notificar serviço veterinário oficial</span>` : ''}${at.length ? `<span class="st atrasada">${ic('warn', 's14')}${at.length} ${pl(at.length, 'atrasada', 'atrasadas')}</span>` : ''}${sem.length ? `<span class="st vence">${ic('clock', 's14')}${sem.length} sem registro</span>` : ''}${!rg.length && !at.length && !sem.length ? `<span class="st registrada">${ic('ok', 's14')}Em dia</span>` : ''}</td><td class="acts">${bt('btn-sec sm', 'eye', 'Carteira', `data-act="animal" data-id="${a.id}" aria-label="Abrir carteira de ${esc(lbl(a))}"`)}</td></tr>`;
+      <td data-c="estado" style="display:flex;gap:.3rem;flex-wrap:wrap">${rg.length ? `<span class="st atrasada">${ic('warn', 's14')}Reagente — notificar serviço veterinário oficial</span>` : ''}${at.length ? `<span class="st atrasada">${ic('warn', 's14')}${at.length} ${pl(at.length, 'atrasada', 'atrasadas')}</span>` : ''}${sem.length ? `<span class="st vence">${ic('clock', 's14')}${sem.some(x => x.st === 'inconclusivo') ? 'Inconclusivo · reteste de TB' : sem.length + ' sem registro'}</span>` : ''}${!rg.length && !at.length && !sem.length ? `<span class="st registrada">${ic('ok', 's14')}Em dia</span>` : ''}</td><td class="acts">${bt('btn-sec sm', 'eye', 'Carteira', `data-act="animal" data-id="${a.id}" aria-label="Abrir carteira de ${esc(lbl(a))}"`)}</td></tr>`;
     }).join('') + `</tbody></table></div>`;
   }
-  return pgHead('shield', 'Cobertura vacinal', 'Quem está em dia, por vacina, por lote e por animal. Tudo calculado das doses registradas.', acts) + topo + tabs + corpo + carenciaBloco();
+  return pgHead('shield', 'Cobertura vacinal', 'Quem está em dia, por vacina, por lote e por animal. Tudo calculado da mesma tabela de doses e exames registrados.', acts) + topo + tabs + corpo + carenciaBloco();
 };
 IN.fa = debounce(v => setQ({ a: v || null }, true), 180);
 ACT.por = t => setQ({ por: t.dataset.v === 'vacina' ? null : t.dataset.v, a: null }, true);
 ACT.falta = t => setQ({ falta: t.dataset.v });
-ACT.animal = t => setQ({ animal: t.dataset.id });
-ACT.comprovante = () => { if (qv('por') !== 'animal') nav('/sanidade/vacinas/cobertura', { por: 'animal', lote: qv('lote') }); toast('Abra a carteira do animal para emitir o comprovante de animal em dia.', { icon: 'info' }); };
+ACT.animal = t => setQ({ animal: t.dataset.id, comprovante: null });
+ACT.comprovante = () => { if (qv('por') !== 'animal') nav('/sanidade/vacinas/cobertura', { por: 'animal', lote: qv('lote') }); toast('Escolha o animal na lista e abra a carteira para ver o comprovante.', { icon: 'info' }); };
 function carenciaBloco() {
   const leite = SAN.car.filter(c => c.tipo === 'leite'), carne = SAN.car.filter(c => c.tipo === 'carne');
   const sum = l => l.reduce((s, c) => s + c.n, 0); const maxd = l => l.reduce((m, c) => c.ate > m ? c.ate : m, '');
@@ -1544,7 +1593,7 @@ ROUTES['/sanidade/vacinas/historico'] = () => {
       <td data-c="car" data-l="Custo" class="num">${e.custo != null && e.custo > 0 ? R$(e.custo) : '—'}</td><td class="acts">${podeCorrigir ? bt('btn-ghost sm', 'pencil', 'Corrigir', `data-act="corrigir" data-id="${e.id}" data-fk="cor-${e.id}" aria-label="Corrigir registro #${evNum(e)} de ${v ? esc(v.nome) : ''}"`) : ''}</td></tr>`; }).join('');
   const filt = qv('de') || qv('ate') || qv('lote') || qv('vacina') || qv('a') || qv('tipo') || qv('apl') || qv('fr');
   return pgHead('history', 'Histórico de aplicações e exames', 'Trilha de auditoria: quem registrou, quem aplicou, quando, com qual frasco, e o que foi estornado ou corrigido. Nada é apagado.', acts) + filtros +
-    `<div class="result-line"><span role="status">${it.length} ${pl(it.length, 'registro', 'registros')}${filt ? ' com os filtros aplicados' : ''} · <b style="color:var(--text)">Custo realizado em ${MESES[+mes.slice(5) - 1]} de ${mes.slice(0, 4)}: ${R$(totMes)}</b></span>${filt ? `<button type="button" class="linkbtn" data-act="limpar">Limpar filtros</button>` : '<span></span>'}</div>
+    `<div class="result-line"><span role="status">${it.length} ${pl(it.length, 'registro', 'registros')}${filt ? ' com os filtros aplicados' : ''} · <b style="color:var(--text)">Custo em ${MESES[+mes.slice(5) - 1]} de ${mes.slice(0, 4)}: ${R$(totMes)}</b></span>${filt ? `<button type="button" class="linkbtn" data-act="limpar">Limpar filtros</button>` : '<span></span>'}</div>
     <div class="tw cards-w"><table class="ft cards"><caption class="sr">Histórico de aplicações e exames com quem registrou, quem aplicou e quando</caption><thead><tr><th>Quando e nº</th><th>Registrado por</th><th>O quê</th><th>Vacina ou exame · para quem</th><th>Aplicador</th><th>Lote do frasco, dose e via</th><th class="num">Custo</th><th><span class="sr">Ações</span></th></tr></thead><tbody>${rows || `<tr><td colspan="8" style="padding:2rem;text-align:center;color:var(--text-muted)">Nenhum registro com esses filtros.</td></tr>`}</tbody></table></div>
     <div class="pager"><span role="status">Página ${p} de ${Math.max(1, Math.ceil(it.length / HPAGE))}</span>${bt('btn-ghost sm', 'left', 'Anterior', `data-act="pag" data-d="-1" ${p <= 1 ? 'disabled' : ''}`)}${bt('btn-ghost sm', '', 'Próxima', `data-act="pag" data-d="1" ${p >= Math.ceil(it.length / HPAGE) ? 'disabled' : ''}`)}</div>`;
 };
@@ -1690,9 +1739,9 @@ IN.incq = v => {
 };
 ACT['inc-ok'] = t => { const a = aplById(qv('prevista')); a.inc[t.dataset.id] = UI.inco || ''; audit(a, 'Incluiu animal fora do grupo previsto', { motivo: lbl(animalOf(t.dataset.id)) + (UI.inco ? ': ' + UI.inco : '') }); UI.incOpen = false; UI.inco = ''; refresh(); toast('Animal incluído fora do grupo previsto.', { icon: 'info' }); };
 IN.chk = (c, t) => { const a = aplById(t.dataset.id); a.chk[t.dataset.k] = c ? 'ok' : 'pend'; renderDrawer(true); };
-ACT['chk-pular'] = t => { const a = aplById(t.dataset.id); a.chk[t.dataset.k] = t.dataset.v; renderDrawer(true); };
+ACT['chk-pular'] = t => { const a = aplById(t.dataset.id); a.chk[t.dataset.k] = t.dataset.v; if (t.dataset.v === 'pulado') audit(a, 'Pulou item do checklist', { motivo: ({ estoque: 'conferir estoque', quem: 'combinar quem aplica', fin: 'conferir custo' })[t.dataset.k] || t.dataset.k }); renderDrawer(true); };
 
-/* ── Registrar aplicação (e exame): rótulos idênticos aos do M2 ── */
+/* REGISTRAR:START — gaveta 'Registrar aplicação/exame' (autocontida: depende de DADOS, do toast e dos helpers $, esc, opts, bt, ic, br, R$, num, pl) */
 function fefo(e) { return e ? (e.fr.filter(f => !vencido(f) && f.saldo > 0).sort((x, y) => x.val < y.val ? -1 : 1)[0] || null) : null; }
 function alocar(e, q, first) {
   if (!e) return { parts: [], falta: 0 }; const ordem = []; const f0 = e.fr.find(f => f.f === first); if (f0) ordem.push(f0);
@@ -1705,7 +1754,7 @@ function rgInit(id) {
   const av = id === 'avulsa'; const a = av ? null : aplById(id); const pre = UI.avPre || {};
   const vac = av ? (pre.vac || SAN.vacinas.filter(v => v.ativo && !v.exame)[0].id) : a.vac; const v = SAN.vacinas.find(x => x.id === vac);
   const lote = av ? (pre.lote || v.alvo[0]) : a.lote; const e = estOf(vac); const fr = fefo(e);
-  UI.rg = { key: id, vac, lote, n: av ? (lote === 'todos' ? 136 : loteOf(lote).n) : nEf(a), frasco: fr ? fr.f : '', dose: v.dose.split('·')[0].trim(), via: v.via, data: 'hoje', dataOutra: HI, hora: '14:05', aplicador: (v.soVet ? PESSOAS[1] : PESSOAS[2]), custo: '', ciente: false, res: {}, laudo: '', leituraData: HI, leituraHora: '14:05', justif: '', resumoAberto: false };
+  UI.rg = { key: id, vac, lote, n: av ? (lote === 'todos' ? 136 : loteOf(lote).n) : nEf(a), frasco: fr ? fr.f : '', dose: v.dose.split('·')[0].trim(), via: v.via, data: 'hoje', dataOutra: HI, hora: '14:05', aplicador: (v.soVet ? PESSOAS[1] : PESSOAS[2]), custo: '', ciente: false, res: {}, laudo: '', leituraData: (a && a.leitura) ? a.leitura.leituraEm.slice(0, 10) : HI, leituraHora: (a && a.leitura) ? a.leitura.leituraEm.slice(11, 16) : '14:05', justif: '', resumoAberto: false };
   UI.avPre = null;
 }
 function rgCalc() {
@@ -1738,7 +1787,7 @@ function rgResumo() {
   if (c.v.leiteProibido && c.lact) av.push(['red', 'warn', `<b>Ivermectina não deve ser usada em animais em lactação.</b> Confira o lote antes de salvar.`]);
   if (c.v.soVet && !ehVet(g.aplicador)) av.push(['amber', 'warn', `<b>${c.v.exame ? 'Exame de TB' : 'Brucelose B19'}: aplicação exclusiva de médico veterinário habilitado.</b> Escolha o veterinário em Quem aplicou; se salvar assim, fica marcado como exceção.`]);
   if (c.v.id === 'b19') av.push(['blue', 'info', `Confira a faixa de 3 a 8 meses: só fêmeas dessa idade recebem a B19.`]);
-  if (g.via !== c.v.via && !c.exame) av.push(['amber', 'warn', `<b>Via diferente da padrão.</b> A bula indica via ${esc(c.v.via)}. Confira antes de salvar; a troca fica registrada.`]);
+  if (g.via !== c.v.via && !c.exame && viasDe(c.v.prod || c.v.id).length > 1) av.push(['amber', 'warn', `<b>Via diferente da padrão.</b> A bula indica via ${esc(c.v.via)}. Confira antes de salvar; a troca fica registrada.`]);
   if (!c.e && !c.exame) av.push(['blue', 'info', `Este item não tem produto no estoque. O registro segue sem saída de estoque.`]);
   if (c.antes72) av.push(['amber', 'warn', `<b>Leitura antes de 72 h da inoculação.</b> Escreva a justificativa abaixo; ela fica registrada.`]);
   if (c.erro && !/ciência|resultado|Escolha o frasco|justificativa/.test(c.erro)) av.push(['red', 'warn', `<b>${esc(c.erro)}</b>`]);
@@ -1747,8 +1796,8 @@ function rgResumo() {
   let itens;
   if (c.fase === 'inoculacao') itens = [['Animais', `${num(c.n)} ${termo}`], ['Leitura', `${br(addD(c.dataReg || HI, 3))} ${g.hora}`], ['Estoque restante', restante == null ? 'sem saída' : fmtQ(restante, un)], ['Próximo passo', 'salvar a leitura em 72 h'], ['Carência', 'não se aplica'], ['Custo', R$(c.custo)]];
   else if (c.fase === 'leitura') { const r = Object.values(g.res); const inc = r.filter(x => x === 'Inconclusivo').length; itens = [['Animais', `${num(c.n)} ${termo}`], ['Negativos', r.filter(x => x === 'Negativo').length], ['Reagentes', r.filter(x => x === 'Positivo').length], ['Inconclusivos', inc], ['Reteste', inc ? `${inc} ${pl(inc, 'animal', 'animais')} em ${br(addD(c.dataReg || HI, 60))}` : 'não precisa'], ['Custo', R$(c.custo)]]; }
-  else itens = [['Animais', `${num(c.n)} ${c.n === 1 ? termo.replace(/s$/, '') : termo}`], [c.v.porPeso ? 'Ivermectina' : c.exame ? 'Coletas' : 'Doses', c.v.porPeso ? `${num(c.q)} mL` : num(c.q)], ['Estoque restante', restante == null ? 'sem saída' : fmtQ(restante, un)], ['Próxima dose', c.prxTxt], ['Carência', car.length ? car.join(' · ') : 'sem carência'], ['Custo', R$(c.custo)]];
-  const linha = `${num(c.n)} ${termo} · ${c.v.porPeso ? num(c.q) + ' mL' : num(c.q) + ' ' + pl(c.q, 'dose', 'doses')} · restante ${restante == null ? '—' : fmtQ(restante, un)} · ${c.fase === 'inoculacao' ? 'leitura ' + br(addD(c.dataReg || HI, 3)) : 'próxima ' + c.prxTxt} · ${R$(c.custo)}`;
+  else itens = [['Animais', `${num(c.n)} ${c.n === 1 ? termo.replace(/s$/, '') : termo}`], [c.v.porPeso ? 'Ivermectina' : c.exame ? 'Exames' : 'Doses', c.v.porPeso ? `${num(c.q)} mL` : num(c.q)], ['Estoque restante', restante == null ? 'sem saída' : fmtQ(restante, un)], ['Próxima dose', c.prxTxt], ['Carência', car.length ? car.join(' · ') : 'sem carência'], ['Custo', R$(c.custo)]];
+  const linha = `${num(c.n)} ${termo} · ${c.v.porPeso ? num(c.q) + ' mL' : c.exame ? num(c.n) + ' ' + pl(c.n, 'exame', 'exames') : num(c.q) + ' ' + pl(c.q, 'dose', 'doses')} · restante ${restante == null ? '—' : fmtQ(restante, un)} · ${c.fase === 'inoculacao' ? 'leitura ' + br(addD(c.dataReg || HI, 3)) : 'próxima ' + c.prxTxt} · ${c.fase === 'aplicacao' ? 'carência: ' + (car.length ? car.join(', ') : 'nenhuma') + ' · ' : ''}${R$(c.custo)}`;
   const res = `<details class="resumo resumo-c" ${g.resumoAberto ? 'open' : ''}><summary data-act="rg-toggle"><span class="lbl">${c.fase === 'leitura' ? 'O que acontece ao salvar a leitura' : 'O que acontece ao salvar'}</span><span class="linha">${esc(linha)}</span><span class="ver">${ic('down', 's14')}Detalhes</span></summary><ul>${itens.map(([k, v]) => `<li>${k}<b class="${k === 'Estoque restante' && restante != null && restante <= 0 ? 'warn' : ''}" ${String(v).length > 12 ? 'style="font-size:.95rem"' : ''}>${v}</b></li>`).join('')}</ul>
     ${dividido ? `<p class="fr"><b>Frascos usados:</b> ${esc(dividido)}.</p>` : ''}<p class="fr">${c.v.porPeso ? `Dose por peso: 1 mL por 50 kg × peso médio do lote (${g.lote === 'todos' ? 400 : loteOf(g.lote).peso} kg). ` : ''}${num(c.n)} ${termo} · ${esc(l)} · ${esc(c.v.nome)} em ${br(c.dataReg)}. O custo entra no Financeiro, no grupo <button type="button" class="linkbtn" data-act="fora" data-n="Financeiro › Sanidade">Sanidade</button>.</p></details>`;
   return { res, av: av.map(([k, i, t]) => `<div class="aviso ${k}" role="${k === 'red' ? 'alert' : 'status'}">${ic(i)}<div class="txt">${t}</div></div>`).join(''), c };
@@ -1772,7 +1821,6 @@ function drRegistrar(id) {
   const aplic = `<div class="fld"><label for="rquem">Quem aplicou</label><select id="rquem" class="sel" data-ch="rgquem">${opts(PESSOAS.map(p => [p, p]), g.aplicador)}</select></div>`;
   const regpor = `<div class="fld"><label for="rregpor">Registrado por</label><input id="rregpor" class="inp" value="${esc(USUARIO)}" readonly aria-readonly="true"></div>`;
   const dataF = `<fieldset style="border:0;padding:0;margin:0"><legend class="lbl" style="margin-bottom:.3rem">${fase === 'inoculacao' ? 'Data e hora da inoculação' : 'Data e hora'}</legend><div class="chips"><label class="chip"><input type="radio" name="rdt" value="hoje" data-ch="rgdata" ${g.data === 'hoje' ? 'checked' : ''}>Hoje · ${br(HI)}</label><label class="chip"><input type="radio" name="rdt" value="outra" data-ch="rgdata" ${g.data === 'outra' ? 'checked' : ''}>Outra data</label>${g.data === 'outra' ? `<input class="inp" style="width:auto" type="date" aria-label="Outra data" value="${g.dataOutra}" max="${HI}" data-in="rgdt" data-fk="rdt2">` : ''}<input class="inp" style="width:auto" type="time" aria-label="Hora" value="${g.hora}" data-in="rghora"></div></fieldset>`;
-  const VIAS = ['subcutânea', 'intramuscular', 'intradérmica', 'endovenosa'];
   let campos;
   if (fase === 'leitura') {
     const ids = aplAnimais(a);
@@ -1783,7 +1831,7 @@ function drRegistrar(id) {
   } else {
     campos = `<div class="fld"><label for="rfr">${c.exame ? 'Produto e frasco (tuberculina)' : 'Produto e frasco (estoque)'}</label><select id="rfr" class="sel" data-ch="rgfr" data-fk="rfr" ${e ? '' : 'disabled'}>${frOpts}</select><span class="hint">${e ? esc(e.prod) + (v.porPeso ? ' · usa o peso médio do lote' : '') : 'Este item não usa produto do estoque.'}</span></div>
       <label class="chk" id="rg-ciencia" hidden><input type="checkbox" data-ch="rgciente" ${g.ciente ? 'checked' : ''} data-fk="ciente"><span><b>Ciente, usar assim mesmo.</b> O frasco está vencido e a ciência fica registrada com meu nome e a hora.</span></label>
-      <div class="g2"><div class="fld"><label for="rdose">Dose</label><input id="rdose" class="inp" value="${esc(g.dose)}" data-in="rgdose"></div><div class="fld"><label for="rvia">Via</label><select id="rvia" class="sel" data-ch="rgvia">${opts(VIAS.map(x => [x, x]), g.via)}</select><span class="hint" id="rg-via-av" ${g.via !== v.via ? '' : 'hidden'} style="color:var(--st-amber)">Via diferente da padrão (${esc(v.via)}).</span></div></div>
+      <div class="g2"><div class="fld"><label for="rdose">Dose</label><input id="rdose" class="inp" value="${esc(g.dose)}" data-in="rgdose"></div><div class="fld"><label for="rvia">Via</label>${viasDe(v.prod || v.id).length > 1 ? `<select id="rvia" class="sel" data-ch="rgvia">${opts(viasDe(v.prod || v.id).map(x => [x, x]), g.via)}</select><span class="hint" id="rg-via-av" ${g.via !== v.via ? '' : 'hidden'} style="color:var(--st-amber)">Via diferente da padrão (${esc(v.via)}).</span>` : `<input id="rvia" class="inp" value="${esc(viasDe(v.prod || v.id)[0])}" readonly aria-readonly="true"><span class="hint">Via aprovada para este produto; não pode ser trocada.</span>`}</div></div>
       <div class="g2">${aplic}${regpor}</div>${dataF}
       <div class="fld"><label for="rcusto">Custo</label><input id="rcusto" class="inp" inputmode="decimal" placeholder="Calculado: ${R$(c.custoAuto)}" value="${esc(g.custo)}" data-in="rgcusto"><span class="hint">Deixe em branco para usar ${v.porPeso ? 'mL × preço do mL' : c.exame ? 'animais × preço do exame' : 'doses × preço da dose'}.</span></div>`;
   }
@@ -1792,7 +1840,7 @@ function drRegistrar(id) {
   const rotOk = c.exame ? 'Salvar exame' : 'Salvar registro';
   const foot = `${bt('btn-gold', 'check', rotOk, 'id="rg-ok" data-act="rg-ok" data-fk="rg-ok"')}${bt('btn-ghost', 'left', av ? 'Cancelar' : 'Voltar', av ? 'data-act="dr-close"' : `data-act="apl-tab" data-id="${id}" data-tab="animais"`)}`;
   setTimeout(rgUpdate, 0);
-  return { key: 'r:' + id, label: titulo, html: drawerHeadCta(titulo, esc(v.nome) + (a && a.doseTxt ? ' · ' + esc(a.doseTxt) : ''), av ? '<span>Avulsa: sem aplicação prevista</span>' : `${estadoPill(a)}<span>${esc(quemTxt(a))}</span>`) + body + `<div class="dr-f">${foot}</div>` };
+  return { key: 'r:' + id, label: titulo, html: '<!-- REGISTRAR-DRAWER:START -->' + drawerHeadCta(titulo, esc(v.nome) + (a && a.doseTxt ? ' · ' + esc(a.doseTxt) : ''), av ? '<span>Avulsa: sem aplicação prevista</span>' : `${estadoPill(a)}<span>${esc(quemTxt(a))}</span>`) + body + `<div class="dr-f">${foot}</div>` + '<!-- REGISTRAR-DRAWER:END -->' };
 }
 IN.rgn = v => { UI.rg.n = v; rgUpdate(); }; IN.rgdose = v => { UI.rg.dose = v; }; IN.rgquem = v => { UI.rg.aplicador = v; rgUpdate(); }; IN.rgdt = v => { UI.rg.dataOutra = v; rgUpdate(); }; IN.rghora = v => { UI.rg.hora = v; rgUpdate(); };
 IN.rgcusto = v => { UI.rg.custo = v; rgUpdate(); }; IN.rglaudo = v => { UI.rg.laudo = v; }; IN.rgjust = v => { UI.rg.justif = v; rgUpdate(); }; IN.rgvia = v => { UI.rg.via = v; rgUpdate(); };
@@ -1807,7 +1855,7 @@ ACT['rg-ok'] = () => {
   const c = rgCalc(); if (c.erro) return; const g = UI.rg; let a = c.a; const v = c.v;
   if (c.av) a = criarApl(g.vac, g.lote, c.n, c.dataReg, 'prevista', { avulsa: true, ids: (g.lote === 'todos' ? ANIMAIS.filter(x => x.lote !== 'bz') : animaisDoLote(g.lote)).slice(0, c.n).map(x => x.id) });
   const prev = a.estado; const frCod = c.al.parts.map(p => p.f).join(' + ') || (c.fr ? c.fr.f : '');
-  const excecao = []; if (v.soVet && !ehVet(g.aplicador)) excecao.push('Aplicador não veterinário'); if (c.fr && vencido(c.fr) && g.ciente) excecao.push('Frasco vencido com ciência'); if (g.via !== v.via && !c.exame) excecao.push('Via diferente da padrão'); if (c.antes72) excecao.push('Leitura antes de 72 h (justificada)');
+  const excecao = []; if (v.soVet && !ehVet(g.aplicador)) excecao.push('Aplicador não veterinário'); if (c.fr && vencido(c.fr) && g.ciente) excecao.push('Frasco vencido com ciência'); if (g.via !== v.via && !c.exame && viasDe(v.prod || v.id).length > 1) excecao.push('Via diferente da padrão'); if (c.antes72) excecao.push('Leitura antes de 72 h (justificada)');
   const det = { frasco: frCod, doses: c.q, via: g.via, aplicador: g.aplicador, custo: c.custo, excecao, animaisIds: aplAnimais(a) };
   const est = c.e; c.al.parts.forEach(p => { const f = est.fr.find(x => x.f === p.f); f.saldo = Math.round((f.saldo - p.q) * 10) / 10; });
   const ids = aplAnimais(a);
@@ -1840,34 +1888,42 @@ ACT['rg-ok'] = () => {
   const ev = audit(a, c.exame ? 'Registrou exame' : 'Registrou aplicação', Object.assign(det, { result, resultados, n: c.n, motivo: [g.ciente && c.fr && vencido(c.fr) ? 'Ciente do frasco vencido' : '', c.antes72 ? 'Justificativa: ' + g.justif : ''].filter(Boolean).join(' · ') }));
   pos.forEach(id => SAN.reag.push({ id: 'rg' + (++SAN.seq), a: id, laudo: g.laudo, data: c.dataReg, evId: ev.id, ref: a.id, notif: null }));
   UI.rg = null; UI.drKey = null; closeDrawer(); refresh();
-  toast(`${c.exame ? 'Exame registrado' : 'Registrada'} · ${v.nome} · ${quemTxt(a)}`, { acao: 'Desfazer', fn: () => { estornar(a, 'Desfeito logo após registrar'); refresh(); } });
+  toast(`${c.exame ? 'Exame registrado' : 'Registrada'} · ${v.nome} · ${quemTxt(a)}`, { acao: 'Desfazer', pode: () => a.estado === 'registrada' && !ev.estornado && !ev.corrigido, fn: () => { estornar(a, 'Desfeito logo após registrar'); refresh(); } });
 };
+/* REGISTRAR:END */
 
 /* ── Carteira do animal (calculada) ── */
 function drAnimal(id) {
   const an = animalOf(id); if (!an) return null; UI.drKey = 'a:' + id;
-  const l = statusAnimal(an); const at = l.filter(x => x.st === 'atrasada'); const rg = l.filter(x => x.st === 'reagente'); const sem = l.filter(x => x.st === 'sem');
+  const l = statusAnimal(an); const at = l.filter(x => x.st === 'atrasada'); const rg = l.filter(x => x.st === 'reagente'); const sem = l.filter(x => x.st === 'sem'); const inc = l.filter(x => x.st === 'inconclusivo');
   const rows = l.map(x => { const v = x.v;
     const prox = v.intervalo === 0 && x.st === 'ok' ? 'dose única' : x.prox ? br(x.prox) : '—';
     return `<tr class="rowc"><td data-c="nome"><div class="nm">${esc(v.nome)}</div><div class="sub2">${v.tipo}${v.intervalo === 0 ? ' · dose única' : ''}</div></td><td data-c="x" data-l="Última dose">${x.ult ? br(x.ult) : '—'}</td><td data-c="data" data-l="Próxima">${prox}</td><td data-c="estado">${ST_PILL(x)}${x.laudo ? `<div class="sub2">laudo ${esc(x.laudo)}</div>` : ''}</td></tr>`; }).join('');
   const nas = ANIMAIS.length && SAN.vacinas.filter(v => statusAV(an, v).st === 'na').map(v => `<li class="sub2">${esc(v.nome)}: ${statusAV(an, v).txt}</li>`).join('');
-  const st = rg.length ? `<span class="st atrasada">${ic('warn', 's14')}Reagente — notificar serviço veterinário oficial</span>` : at.length ? `<span class="st atrasada">${ic('warn', 's14')}${at.length} ${pl(at.length, 'atrasada', 'atrasadas')}</span>` : sem.length ? `<span class="st vence">${ic('clock', 's14')}${sem.length} sem registro</span>` : `<span class="st registrada">${ic('ok', 's14')}Em dia</span>`;
-  const bloq = rg.length || at.length || sem.length; const motivo = rg.length ? 'Animal reagente: comprovante bloqueado até a conclusão sanitária.' : at.length ? 'Só sai para animal em dia. Há vacina ou exame atrasado.' : 'Só sai para animal em dia. Há vacina sem registro.';
+  const st = inc.length && !rg.length && !at.length ? `<span class="st vence">${ic('clock', 's14')}Inconclusivo · reteste de TB</span>` : rg.length ? `<span class="st atrasada">${ic('warn', 's14')}Reagente — notificar serviço veterinário oficial</span>` : at.length ? `<span class="st atrasada">${ic('warn', 's14')}${at.length} ${pl(at.length, 'atrasada', 'atrasadas')}</span>` : sem.length ? `<span class="st vence">${ic('clock', 's14')}${sem.length} sem registro</span>` : `<span class="st registrada">${ic('ok', 's14')}Em dia</span>`;
+  const bloq = rg.length || at.length || sem.length || inc.length; const motivo = rg.length ? 'Animal reagente: comprovante bloqueado até a conclusão sanitária.' : at.length ? 'Só sai para animal em dia. Há vacina ou exame atrasado.' : inc.length ? 'Exame de TB inconclusivo: o comprovante sai depois do reteste (60 dias).' : 'Só sai para animal em dia. Há vacina sem registro.';
   const foot = `${bt('btn-gold', 'shield', 'Emitir comprovante de animal em dia', `data-act="comprov" data-id="${id}" ${bloq ? 'disabled' : ''}`)}${bloq ? `<span class="hint" style="flex:1;min-width:180px">${motivo}</span>` : '<span class="sp"></span>'}${bt('btn-ghost', '', 'Fechar', 'data-act="dr-close"')}`;
-  return { key: 'a:' + id, label: 'Carteira de vacinação de ' + lbl(an), html: drawerHead('Carteira de vacinação', esc(lbl(an)), `${st}<span>${esc(an.raca)} · ${esc(loteOf(an.lote).nome)}</span>`) + `<div class="dr-b"><p class="hint">Calculada das doses registradas. “Sem registro” nunca é “Em dia”; data prevista passada é “Atrasada”. A mesma carteira aparece na ficha do animal, em Rebanho.</p>
+  return { key: 'a:' + id, label: 'Carteira de vacinação de ' + lbl(an), html: drawerHead('Carteira de vacinação', esc(lbl(an)), `${st}<span>${esc(an.raca)} · ${esc(loteOf(an.lote).nome)}</span>`) + `<div class="dr-b"><p class="hint">Calculada das doses e exames registrados. Só é “Em dia” quem não tem item atrasado, reagente ou inconclusivo. A mesma carteira aparece na ficha do animal, em Rebanho.</p>
     ${rg.length ? `<div class="aviso red" role="alert">${ic('warn')}<div class="txt"><b>Reagente ao exame de TB.</b> Notifique o serviço veterinário oficial (banner no topo de Sanidade).</div></div>` : ''}
     <div class="tw cards-w"><table class="ft cards"><caption class="sr">Carteira de vacinação</caption><thead><tr><th>Vacina ou exame</th><th>Última dose</th><th>Próxima</th><th>Situação</th></tr></thead><tbody>${rows}</tbody></table></div>${nas ? `<ul class="list" style="margin-top:.4rem">${nas}</ul>` : ''}</div><div class="dr-f">${foot}</div>` };
 }
-ACT.comprov = t => { const an = animalOf(t.dataset.id); toast(`Comprovante de ${lbl(an)} gerado (PDF).`, { icon: 'download' }); };
+ACT.comprov = t => setQ({ animal: null, comprovante: t.dataset.id });
+function drComprovante(id) {
+  const an = animalOf(id); if (!an) return null; UI.drKey = 'cv:' + id; const l = statusAnimal(an);
+  if (l.some(x => PEND.includes(x.st))) return null;
+  const rows = l.map(x => `<tr><td data-l="Item">${esc(x.v.nome)}</td><td data-l="Última dose">${x.ult ? br(x.ult) : 'a aplicar'}</td><td data-l="Próxima">${x.prox ? br(x.prox) : x.st === 'prevista' ? 'prevista' : 'dose única'}</td></tr>`).join('');
+  return { key: 'cv:' + id, label: 'Comprovante de animal em dia', html: drawerHead('Comprovante de animal em dia', esc(lbl(an)), `<span class="st registrada">${ic('ok', 's14')}Em dia em ${br(HI)}</span>`) + `<div class="dr-b"><div class="paper" role="group" aria-label="Pré-visualização do comprovante"><h3 style="margin:0 0 .2rem">Comprovante de vacinação e exames</h3><p class="sub2" style="margin:0 0 .6rem">Fazenda Estreito Ponte de Pedra · emitido em ${br(HI)} às 14:05 por ${esc(USUARIO.split(' (')[0])}</p><dl class="kv"><dt>Animal</dt><dd>${esc(lbl(an))} · ${esc(an.raca)}</dd><dt>Lote</dt><dd>${esc(loteOf(an.lote).nome)}</dd></dl><table class="ft"><thead><tr><th>Vacina ou exame</th><th>Última dose</th><th>Próxima</th></tr></thead><tbody>${rows}</tbody></table><p class="sub2" style="margin-top:.6rem">Declaração gerada a partir dos registros da fazenda; não substitui a GTA.</p></div></div><div class="dr-f">${bt('btn-gold', 'download', 'Baixar PDF', `data-act="comprov-pdf" data-id="${id}"`)}${bt('btn-ghost', 'left', 'Voltar à carteira', `data-act="animal" data-id="${id}"`)}<span class="sp"></span>${bt('btn-ghost', '', 'Fechar', 'data-act="dr-close"')}</div>` };
+}
+ACT['comprov-pdf'] = t => toast(`Comprovante de ${lbl(animalOf(t.dataset.id))} baixado (PDF).`, { icon: 'download' });
 
 /* ── Quem falta ── */
 function drFalta(k) {
   const [vid, lid] = k.split(':'); const v = SAN.vacinas.find(x => x.id === vid); if (!v) return null; UI.drKey = 'f:' + k;
-  const lista = animaisDoLote(lid).map(an => ({ an, s: statusAV(an, v) })).filter(x => x.s.st === 'atrasada' || x.s.st === 'reagente' || x.s.st === 'sem');
+  const lista = animaisDoLote(lid).map(an => ({ an, s: statusAV(an, v) })).filter(x => x.s.st === 'atrasada' || x.s.st === 'reagente' || x.s.st === 'sem' || x.s.st === 'inconclusivo');
   const at = lista.filter(x => x.s.st !== 'sem').length, sem = lista.filter(x => x.s.st === 'sem').length; const falta = lista.length; const tot = cobVac(vid, lid).tot;
   const alvo = SAN.apl.filter(a => a.vac === vid && (a.lote === lid || a.lote === 'todos') && !feita(a)).sort((x, y) => x.data < y.data ? -1 : 1)[0];
   const foot = falta ? `${bt('btn-gold', '', v.exame ? 'Registrar exame' : 'Registrar aplicação', `data-act="falta-reg" data-v="${k}" data-fk="falta-reg"`)}<span class="sp"></span>${bt('btn-ghost', '', 'Fechar', 'data-act="dr-close"')}` : `<span class="sp"></span>${bt('btn-ghost', '', 'Fechar', 'data-act="dr-close"')}`;
-  return { key: 'f:' + k, label: 'Quem falta: ' + v.nome, html: drawerHead('Quem falta', `${esc(v.nome)} · ${esc(loteOf(lid).nome)}`, falta ? `<span class="st atrasada">${ic('warn', 's14')}${at ? at + ' ' + pl(at, 'animal atrasado', 'animais atrasados') : ''}${at && sem ? ' · ' : ''}${sem ? sem + ' sem registro' : ''} de ${tot}</span>` : `<span class="st registrada">${ic('ok', 's14')}Todos em dia</span>`) + `<div class="dr-b">${falta ? `<p class="hint">${alvo ? `Aplicação ${estadoVis(alvo) === 'atrasada' ? 'atrasada' : 'prevista'} para ${br(alvo.data)}.` : 'Sem aplicação prevista para este grupo: o registro será avulso.'} Toque num animal para ver a carteira.</p><ul class="list">${lista.map(({ an, s }) => `<li><div class="grow"><b>${esc(lbl(an))}</b> <span class="sub2">· ${esc(an.raca)}</span><div>${ST_PILL(Object.assign({ v }, s))}</div></div>${bt('btn-ghost sm', 'eye', 'Carteira', `data-act="animal" data-id="${an.id}"`)}</li>`).join('')}</ul>` : `<div class="empty" style="padding:1.2rem">${ic('ok', 's28 ico')}<p>Nenhum animal deste lote está atrasado ou sem registro de ${esc(v.nome)}.</p></div>`}</div><div class="dr-f">${foot}</div>` };
+  return { key: 'f:' + k, label: 'Quem falta: ' + v.nome, html: drawerHead('Quem falta', `${esc(v.nome)} · ${esc(loteOf(lid).nome)}`, falta ? `<span class="st atrasada">${ic('warn', 's14')}${at ? at + ' ' + pl(at, 'animal atrasado', 'animais atrasados') : ''}${at && sem ? ' · ' : ''}${sem ? sem + ' sem registro' : ''} de ${tot}</span>` : `<span class="st registrada">${ic('ok', 's14')}Todos em dia</span>`) + `<div class="dr-b">${falta ? `<p class="hint">${alvo ? `Aplicação ${estadoVis(alvo) === 'atrasada' ? 'atrasada' : 'prevista'} para ${br(alvo.data)}.` : 'Sem aplicação prevista para este grupo: o registro será avulso.'} Toque num animal para ver a carteira.</p><ul class="list">${lista.map(({ an, s }) => `<li><div class="grow"><b>${esc(lbl(an))}</b> <span class="sub2">· ${esc(an.raca)}</span><div>${ST_PILL(Object.assign({ v }, s))}</div></div>${bt('btn-ghost sm', 'eye', 'Carteira', `data-act="animal" data-id="${an.id}"`)}</li>`).join('')}</ul>` : `<div class="empty" style="padding:1.2rem">${ic('ok', 's28 ico')}<p>Nenhum animal deste lote está atrasado em ${esc(v.nome)}.</p></div>`}</div><div class="dr-f">${foot}</div>` };
 }
 ACT['falta-reg'] = t => { const [vid, lid] = t.dataset.v.split(':'); const a = SAN.apl.filter(x => x.vac === vid && (x.lote === lid || x.lote === 'todos') && !feita(x)).sort((p, q) => p.data < q.data ? -1 : 1)[0]; if (a) setQ({ falta: null, registrar: a.id }); else { UI.avPre = { vac: vid, lote: lid }; UI.rg = null; setQ({ falta: null, registrar: 'avulsa' }); } };
 
@@ -1926,11 +1982,11 @@ ACT['print-go'] = () => toast('Documento enviado para a impressora.', { icon: 'p
 
 /* ═════════ Wizard "Cadastrar vacina" (3 passos, em gaveta, validado por passo) ═════════ */
 const MARCOS = ['', 'Bezerra com 3 meses', 'Parto', '30 dias antes do parto', 'Secagem'];
-function wzBlank() { return { nome: '', tipo: 'Vacina', prod: '', dose: '', lotes: [], marco: '', quando: 'cada', n: 6, unit: 'meses', meses: [], offMarco: 0, multi: false, doses: [{ rot: 'Dose 1', off: 0 }, { rot: 'Dose 2', off: 30 }], reforco: 'anual', inicio: addD(HI, 7), passo: 1, editId: null, motivo: '' }; }
+function wzBlank() { return { carLeite: 0, carCarne: 0, nome: '', tipo: 'Vacina', prod: '', dose: '', lotes: [], marco: '', quando: 'cada', n: 6, unit: 'meses', meses: [], offMarco: 0, multi: false, doses: [{ rot: 'Dose 1', off: 0 }, { rot: 'Dose 2', off: 30 }], reforco: 'anual', inicio: addD(HI, 7), passo: 1, editId: null, motivo: '' }; }
 function wzInit() {
   const ed = qv('editar'); const key = 'wz:' + (ed || 'nova');
   if (UI.wzKey === key && UI.wz) return; UI.wzKey = key; UI.wzErr = false; UI.wzSaved = false;
-  if (ed) { const v = SAN.vacinas.find(x => x.id === ed); UI.wz = Object.assign(wzBlank(), { nome: v.nome, tipo: v.tipo, prod: v.prod, dose: v.dose, lotes: v.alvo.slice(), marco: v.marco, editId: ed, n: v.intervalo >= 30 ? Math.round(v.intervalo / 30) : v.intervalo || 6, unit: v.intervalo >= 30 || !v.intervalo ? 'meses' : 'dias', multi: !!v.multi, quando: v.marco ? 'marco' : /estadual|época/.test(v.freq) ? 'epoca' : 'cada' }); }
+  if (ed) { const v = SAN.vacinas.find(x => x.id === ed); UI.wz = Object.assign(wzBlank(), { nome: v.nome, tipo: v.tipo, prod: v.prod, dose: v.dose, lotes: v.alvo.slice(), marco: v.marco, carLeite: v.carLeite || 0, carCarne: v.carCarne || 0, editId: ed, n: v.intervalo >= 30 ? Math.round(v.intervalo / 30) : v.intervalo || 6, unit: v.intervalo >= 30 || !v.intervalo ? 'meses' : 'dias', multi: !!v.multi, quando: v.marco ? 'marco' : /estadual|época/.test(v.freq) ? 'epoca' : 'cada' }); }
   else if (SAN.draft) UI.wz = clone(SAN.draft); else UI.wz = wzBlank();
   const w = UI.wz; const p = +qv('passo') || w.passo || 1; w.passo = (p > 1 && (!w.nome.trim() || !w.lotes.length)) ? 1 : p;
   if (+qv('passo') !== w.passo) setTimeout(() => setQ({ passo: w.passo }, true), 0);
@@ -1967,7 +2023,8 @@ function drWizard() {
   if (p === 1) {
     corpo = `<div class="fld"><label for="wn">Nome</label><input id="wn" class="inp" value="${esc(w.nome)}" placeholder="Ex.: Leptospirose, reforço" data-in="wzf" data-k="nome" data-fk="wn" ${E.nome ? 'aria-invalid="true" aria-describedby="e-nome"' : ''}>${er('nome')}</div>
     <fieldset style="border:0;padding:0;margin:0"><legend class="lbl" style="margin-bottom:.3rem">Tipo</legend><div class="chips">${['Vacina', 'Exame', 'Antiparasitário'].map(t => `<label class="chip"><input type="radio" name="wt" value="${t}" data-ch="wzr" data-k="tipo" ${w.tipo === t ? 'checked' : ''}>${t}</label>`).join('')}</div></fieldset>
-    <div class="g2"><div class="fld"><label for="wp">Produto do estoque</label><select id="wp" class="sel" data-ch="wzf" data-k="prod">${opts(SAN.est.map(e => [e.id, e.prod]).concat([['', 'Outro (cadastrar depois no Estoque)']]), w.prod)}</select></div><div class="fld"><label for="wd">Dose e via</label><input id="wd" class="inp" value="${esc(w.dose)}" placeholder="Ex.: 2 mL · subcutânea" data-in="wzf" data-k="dose"></div></div>
+    <div class="g2"><div class="fld"><label for="wp">Produto do estoque</label><select id="wp" class="sel" data-ch="wzf" data-k="prod">${opts(SAN.est.map(e => [e.id, e.prod]).concat([['outro', 'Outro (cadastrar depois no Estoque)']]), w.prod, 'Escolha o produto')}</select></div><div class="fld"><label for="wd">Dose e via</label><input id="wd" class="inp" value="${esc(w.dose)}" placeholder="Ex.: 2 mL · subcutânea" data-in="wzf" data-k="dose"></div></div>
+    <div class="g2"><div class="fld"><label for="wcl">Carência do leite (dias)</label><input id="wcl" class="inp" type="number" min="0" value="${w.carLeite}" data-in="wzn" data-k="carLeite"></div><div class="fld"><label for="wcc">Carência da carne (dias)</label><input id="wcc" class="inp" type="number" min="0" value="${w.carCarne}" data-in="wzn" data-k="carCarne"></div></div><span class="hint">Vale a bula do produto. Use 0 quando não há carência.</span>
     <fieldset style="border:0;padding:0;margin:0"><legend class="lbl" style="margin-bottom:.3rem">Quem entra</legend><div class="chips">${LOTES.map(l => `<label class="chip"><input type="checkbox" data-ch="wzlote" data-id="${l.id}" ${w.lotes.includes(l.id) ? 'checked' : ''}>${esc(l.nome)} · ${l.n}</label>`).join('')}</div>${er('lotes')}</fieldset>
     <div class="fld"><label for="wm">Marco do animal (opcional)</label><select id="wm" class="sel" data-ch="wzf" data-k="marco">${opts(MARCOS.slice(1).map(m => [m, m]), w.marco, 'Nenhum: vale para todos do lote')}</select><span class="hint">Ex.: “bezerra com 3 meses” faz cada animal entrar sozinho quando chegar lá.</span></div>`;
   } else if (p === 2) {
@@ -1981,7 +2038,7 @@ function drWizard() {
     }
   } else {
     const dd = wzDatas(w); const al = wzAlcance(w); const e = SAN.est.find(x => x.id === w.prod);
-    corpo = `<div class="resumo"><h3>Resumo</h3><dl class="kv"><dt>Nome</dt><dd><b>${esc(w.nome || '—')}</b> · ${w.tipo}</dd><dt>Produto</dt><dd>${e ? esc(e.prod) : 'a cadastrar no Estoque'} · ${esc(w.dose || 'dose a definir')}</dd><dt>Quem entra</dt><dd>${w.lotes.map(l => loteNome(l)).join(', ') || '—'}${w.marco ? ' · marco: ' + esc(w.marco) : ''}</dd><dt>Quando</dt><dd>${esc(wzFreq(w))}</dd></dl></div>
+    corpo = `<div class="resumo"><h3>Resumo</h3><dl class="kv"><dt>Nome</dt><dd><b>${esc(w.nome || '—')}</b> · ${w.tipo}</dd><dt>Produto</dt><dd>${e ? esc(e.prod) : 'a cadastrar no Estoque'} · ${esc(w.dose || 'dose a definir')}</dd><dt>Quem entra</dt><dd>${w.lotes.map(l => loteNome(l)).join(', ') || '—'}${w.marco ? ' · marco: ' + esc(w.marco) : ''}</dd><dt>Quando</dt><dd>${esc(wzFreq(w))}</dd><dt>Carência</dt><dd>leite ${w.carLeite ? w.carLeite + ' dias' : 'sem carência'} · carne ${w.carCarne ? w.carCarne + ' dias' : 'sem carência'}</dd></dl></div>
     <div class="resumo"><h3>Próximas ${dd.datas.length} datas${dd.est ? ' (estimadas)' : ''}</h3><ul style="grid-template-columns:repeat(${Math.max(1, dd.datas.length)},1fr)">${dd.datas.map((d, i) => `<li>${dd.rot ? esc(dd.rot[i] || '') : DOW[D(d).getDay()]}<b>${br(d)}</b></li>`).join('')}</ul>${dd.est ? '<p class="fr hint">Com marco do animal não há data fixa: cada animal entra quando chega ao marco.</p>' : ''}</div>
     <div class="resumo"><h3>Animais alcançados hoje</h3><b style="font-size:1.6rem;font-variant-numeric:tabular-nums">${al}</b> <span class="hint">${pl(al, 'animal', 'animais')}${w.marco ? ' que já atingiram o marco' : ' nos lotes escolhidos'}</span></div>
     ${ed ? `<div class="aviso amber">${ic('warn')}<div class="txt"><b>${previstasDe(SAN.vacinas.find(x => x.id === w.editId)).length} aplicações previstas serão atualizadas</b> no Calendário. Informe o motivo da alteração.</div></div><div class="fld"><label for="wmo">Motivo da alteração (obrigatório)</label><input id="wmo" class="inp" value="${esc(w.motivo)}" data-in="wzf" data-k="motivo" data-fk="wmo" ${err && !w.motivo.trim() ? 'aria-invalid="true"' : ''}>${err && !w.motivo.trim() ? `<span class="err">${ic('warn', 's14')}Escreva o motivo.</span>` : ''}</div>`
@@ -2011,9 +2068,9 @@ ACT['wz-save'] = () => {
   const dd = wzDatas(w); const al = wzAlcance(w);
   const dias = w.multi ? (w.reforco === 'anual' ? 365 : w.reforco === 'semestral' ? 182 : 0) : w.quando === 'cada' ? (w.unit === 'meses' ? 30 * w.n : w.n) : w.quando === 'epoca' ? 365 : 0;
   let v;
-  if (w.editId) { v = SAN.vacinas.find(x => x.id === w.editId); const n = previstasDe(v).length; Object.assign(v, { nome: w.nome, tipo: w.tipo, prod: w.prod, dose: w.dose || v.dose, alvo: w.lotes.slice(), marco: w.marco, freq: wzFreq(w), intervalo: dias, multi: w.multi }); audit(null, 'Editou vacina', { motivo: `${v.nome}: ${w.motivo} (${n} aplicações previstas atualizadas)`, vac: v.id }); }
+  if (w.editId) { v = SAN.vacinas.find(x => x.id === w.editId); const n = previstasDe(v).length; Object.assign(v, { carLeite: +w.carLeite || 0, carCarne: +w.carCarne || 0, nome: w.nome, tipo: w.tipo, prod: w.prod === 'outro' ? '' : w.prod, dose: w.dose || v.dose, alvo: w.lotes.slice(), marco: w.marco, freq: wzFreq(w), intervalo: dias, multi: w.multi }); audit(null, 'Editou vacina', { motivo: `${v.nome}: ${w.motivo} (${n} aplicações previstas atualizadas)`, vac: v.id }); }
   else {
-    v = { id: 'v' + (++SAN.seq), nome: w.nome.trim(), tipo: w.tipo, prod: w.prod, dose: w.dose || 'dose a definir', alvo: w.lotes.slice(), freq: wzFreq(w), intervalo: dias, carLeite: 0, carCarne: 0, ativo: true, marco: w.marco, multi: w.multi, exame: w.tipo === 'Exame', custo: (VACINAS0.find(x => x.id === w.prod) || { custo: 5 }).custo };
+    v = { id: 'v' + (++SAN.seq), nome: w.nome.trim(), tipo: w.tipo, prod: w.prod === 'outro' ? '' : w.prod, dose: w.dose || 'dose a definir', alvo: w.lotes.slice(), freq: wzFreq(w), intervalo: dias, carLeite: +w.carLeite || 0, carCarne: +w.carCarne || 0, ativo: true, marco: w.marco, multi: w.multi, exame: w.tipo === 'Exame', custo: (VACINAS0.find(x => x.id === w.prod) || { custo: 5 }).custo };
     SAN.vacinas.push(v);
     dd.datas.forEach((d, i) => criarApl(v.id, w.lotes.length === 1 ? w.lotes[0] : 'todos', al, d, 'prevista', { doseTxt: w.multi && w.doses[i] ? w.doses[i].rot.toLowerCase() : '' }));
     audit(null, 'Cadastrou vacina', { motivo: v.nome, vac: v.id });
@@ -2034,13 +2091,13 @@ const carProto = (p, m) => { if (!m.carLeite && !m.carCarne) return null; const 
 ROUTES['/protocolos'] = () => {
   const conc = qv('status') === 'concluido'; const tipo = qv('tipo'), lote = qv('lote'), st = qv('status') || 'andamento', s = qv('q').toLowerCase();
   const acts = bt('btn-gold', 'plus', 'Novo protocolo', 'data-act="go" data-to="/protocolos/novo" data-fk="novo"') + bt('btn-ghost', 'printer', 'Folha de campo', 'data-act="pimp" data-id="todos" data-fk="pimp"');
-  let l = PRO.lista.filter(p => { const m = modeloOf(p.modelo); return (!tipo || m.tipo === tipo) && (!lote || p.lote === lote) && (st === 'todos' || p.estado === st) && (!s || (p.nome + ' ' + loteNome(p.lote)).toLowerCase().includes(s)); });
+  let l = PRO.lista.filter(p => { const m = modeloDe(p); return (!tipo || m.tipo === tipo) && (!lote || p.lote === lote) && (st === 'todos' || p.estado === st) && (!s || (p.nome + ' ' + loteNome(p.lote)).toLowerCase().includes(s)); });
   const stat = p => protoStats(p);
   l.sort((a, b) => { const x = stat(a), y = stat(b); if (x.atrasado !== y.atrasado) return x.atrasado ? -1 : 1; return (x.prox || '9') < (y.prox || '9') ? -1 : 1; });
   const atras = l.filter(p => stat(p).atrasado), resto = l.filter(p => !stat(p).atrasado);
   const cAt = PRO.lista.filter(p => stat(p).atrasado).length, cAnd = PRO.lista.filter(p => p.estado === 'andamento').length;
   const hojeN = PRO.lista.filter(p => p.estado === 'andamento' && stat(p).prox === HI).length;
-  const row = p => { const m = modeloOf(p.modelo), s2 = stat(p); const pct = s2.tot ? Math.round(s2.feitas / s2.tot * 100) : 0;
+  const row = p => { const m = modeloDe(p), s2 = stat(p); const pct = s2.tot ? Math.round(s2.feitas / s2.tot * 100) : 0;
     return `<tr class="lin" tabindex="0" data-act="proto" data-id="${p.id}" data-fk="pr-${p.id}" aria-label="Abrir protocolo: ${esc(p.nome)}">
     <td data-c="nome"><div class="nm">${esc(p.nome)}</div><div style="margin-top:3px">${tipoBadge(m.tipo)}${m.tipo === 'iatf' ? gl('iatf', 'inseminação programada (IATF)') : ''}</div></td>
     <td data-c="quem" class="quem">${p.animais.length} ${pl(p.animais.length, 'animal', 'animais')} · ${esc(loteNome(p.lote))}</td>
@@ -2053,7 +2110,7 @@ ROUTES['/protocolos'] = () => {
   const body = grp('red', 'warn', 'Atrasados', atras) + (atras.length ? grp('mut', 'clock', st === 'andamento' ? 'Em andamento' : 'Demais', resto) : resto.map(row).join(''));
   const tipos = [['', 'Todos'], ['iatf', 'Inseminação programada'], ['inducao', 'Indução de lactação'], ['tratamento', 'Tratamento curativo'], ['proprio', 'Protocolo próprio']];
   return pgHead('list-checks', conc ? 'Protocolos concluídos' : 'Protocolos', 'Sequências por animal ou lote. A vacina recorrente do rebanho fica em <button type="button" class="linkbtn" data-act="go" data-to="/sanidade/vacinas">Sanidade › Vacinas e exames</button>.', acts, gestaoChip()) +
-    `<div class="strip" style="grid-template-columns:repeat(3,1fr)" role="group" aria-label="Resumo"><button type="button" data-act="pfil" data-k="status" data-v="andamento"><span class="num ${cAt ? 't-red' : ''}">${cAt}</span><span class="lab ${cAt ? 't-red' : ''}"><span class="lt">${ic(cAt ? 'warn' : 'ok', 's14')}Atrasados</span><small>com etapa vencida</small></span></button><button type="button" data-act="pfil" data-k="status" data-v="andamento"><span class="num t-amber">${hojeN}</span><span class="lab t-amber"><span class="lt">${ic('clock', 's14')}Etapas hoje</span><small>protocolos com etapa em ${br(HI)}</small></span></button><button type="button" data-act="pfil" data-k="status" data-v="andamento"><span class="num">${cAnd}</span><span class="lab"><span class="lt">${ic('list-checks', 's14')}Em andamento</span><small>no total</small></span></button></div>
+    `<div class="strip" style="grid-template-columns:repeat(3,1fr)" role="group" aria-label="Resumo"><button type="button" data-act="pfil" data-k="status" data-v="andamento"><span class="num ${cAt ? 't-red' : ''}">${cAt}</span><span class="lab ${cAt ? 't-red' : ''}"><span class="lt">${ic(cAt ? 'warn' : 'ok', 's14')}Atrasados</span><small>com etapa atrasada</small></span></button><button type="button" data-act="pfil" data-k="status" data-v="andamento"><span class="num t-amber">${hojeN}</span><span class="lab t-amber"><span class="lt">${ic('clock', 's14')}Etapas hoje</span><small>protocolos com etapa em ${br(HI)}</small></span></button><button type="button" data-act="pfil" data-k="status" data-v="andamento"><span class="num">${cAnd}</span><span class="lab"><span class="lt">${ic('list-checks', 's14')}Em andamento</span><small>no total</small></span></button></div>
     <div class="filters" role="group" aria-label="Filtros de protocolos"><div class="tabbar" role="group" aria-label="Tipo">${tipos.map(([v, t]) => `<button type="button" class="tabpill" data-act="pfil" data-k="tipo" data-v="${v}" aria-pressed="${tipo === v}">${t}</button>`).join('')}</div></div>
     <div class="filters"><select class="sel" aria-label="Filtrar por lote" data-ch="plote">${opts(LOTE_OPTS, lote, 'Todos os lotes')}</select>
     <select class="sel" aria-label="Filtrar por estado" data-ch="pstatus">${opts([['andamento', 'Em andamento'], ['concluido', 'Concluído'], ['interrompido', 'Interrompido'], ['engano', 'Lançado por engano'], ['todos', 'Todos os estados']], st)}</select>
@@ -2071,7 +2128,7 @@ const logP = (p, txt, o = {}) => { const e = Object.assign({ id: 'pl' + (++PRO.s
 
 /* ── Drawer do protocolo: grade animal × dia ── */
 function drProto(id) {
-  const p = protoOf(id); if (!p) return null; const m = modeloOf(p.modelo); const s = protoStats(p); if (UI.pDr !== id) { UI.pDr = id; UI.pCell = null; UI.pAct = null; } UI.drKey = 'pr:' + id;
+  const p = protoOf(id); if (!p) return null; const m = modeloDe(p); const s = protoStats(p); if (UI.pDr !== id) { UI.pDr = id; UI.pCell = null; UI.pAct = null; } UI.drKey = 'pr:' + id;
   const ativo = p.estado === 'andamento'; const car = carProto(p, m);
   const head = drawerHeadCta(TIPOS_PROTO[m.tipo].nome, esc(p.nome), `${s.atrasado ? `<span class="st atrasada">${ic('warn', 's14')}Atrasado · ${s.atras} ${pl(s.atras, 'marcação atrasada', 'marcações atrasadas')}</span>` : pillP(p)}<span>${diaLbl(m.etapas[0].d, m)} em ${br(p.d0)}</span><span>· ${p.animais.length} ${pl(p.animais.length, 'animal', 'animais')} · ${esc(loteNome(p.lote))}</span>`, '');
   const th = m.etapas.map((e, i) => { const dt = etapaData(p, e); const pend = p.animais.filter(a => !p.baixas[a + ':' + i]).length; return `<th scope="col"><div>${diaLbl(e.d, m)}</div><small>${br(dt)}</small><small class="ac">${esc(e.acao.length > 30 ? e.acao.slice(0, 29) + '…' : e.acao)}</small>${ativo && pend && !e.insem ? `<button type="button" class="linkbtn" style="font-size:12px;text-transform:none;letter-spacing:0" data-act="pcol" data-i="${i}" data-fk="col-${i}" aria-label="Marcar ${diaLbl(e.d, m)} como feita para os ${pend} animais">Marcar coluna como feita</button>` : ''}</th>`; }).join('');
@@ -2082,7 +2139,7 @@ function drProto(id) {
     return `<td><button type="button" class="gc ${k}" data-act="pcell" data-a="${a}" data-i="${i}" data-fk="c-${a}-${i}" aria-pressed="${!!sel}" aria-label="${esc(lbl(an))}, ${diaLbl(e.d, m)}, ${br(dt)}: ${txt}">${ic(icn, 's14')}<span>${txt}</span><small>${b ? br(b.data) : br(dt)}</small></button></td>`; }).join('') + '</tr>'; }).join('');
   const hormIds = Array.from(new Set(m.etapas.flatMap(e => e.prods.map(x => x.h))));
   const estBox = hormIds.length ? `<div class="box"><h3>${ic('flask', 's14')}Estoque dos produtos deste protocolo</h3><ul class="list">${hormIds.map(h => { const H = hormOf(h); const tot = H.fr.reduce((x, f) => x + f.saldo, 0); const r = reservado(h); return `<li style="min-height:36px"><span class="grow">${esc(H.prod)}</span><span style="text-align:right"><b>${saldoTxt(H, tot)}</b><div class="sub2">reservado por protocolos abertos: ${qTxt(r, H.un)}</div></span></li>`; }).join('')}</ul></div>` : '';
-  const carBox = car ? `<div class="box"><h3>${ic('clock', 's14')}Carência ${gl('carencia', 'carência')}</h3><p>Conta a partir do último dia do tratamento (<b>${br(car.fim)}</b>): leite em carência até <b>${br(car.leite)}</b> · carne até <b>${br(car.carne)}</b> (${m.carLeite} dias para o leite e ${m.carCarne} para a carne). Vale a bula do produto.</p></div>` : '';
+  const carBox = car ? `<div class="box"><h3>${ic('clock', 's14')}Carência ${gl('carencia', 'carência')}</h3><p>Conta a partir do último dia do tratamento (<b>${br(car.fim)}</b>): leite em carência até <b>${br(car.leite)}</b> · carne até <b>${br(car.carne)}</b> (${m.carLeite} dias para o leite e ${m.carCarne} para a carne). Vale a bula do produto.</p>${m.carLeite ? `<div class="aviso amber" role="status">${ic('warn')}<div class="txt"><b>Descarte o leite</b> das vacas tratadas durante o tratamento e até ${br(car.leite)}. A carne também não pode ser vendida até ${br(car.carne)}.</div></div>` : ''}</div>` : '';
   let acao = '';
   const btn = (c, ic_, t, a) => bt(c + ' sm', ic_, t, a);
   if (UI.pAct === 'encerrar') acao = `<div class="inline-panel" role="group" aria-label="Encerrar protocolo"><h3>Encerrar este protocolo?</h3><p>${s.tot - s.feitas ? `Ainda há <b>${s.tot - s.feitas} ${pl(s.tot - s.feitas, 'marcação prevista', 'marcações previstas')}</b>: elas ficam sem registro e as tarefas futuras saem da Agenda.` : 'Todas as etapas estão feitas. O protocolo passa para Concluído.'}</p><div class="actions">${btn('btn-gold', 'check', 'Encerrar protocolo', 'data-act="pfim" data-v="concluido"')}${btn('btn-ghost', '', 'Cancelar', 'data-act="pact" data-v=""')}</div></div>`;
@@ -2123,7 +2180,7 @@ ACT['pcell-x'] = () => { UI.pCell = null; renderDrawer(true); };
 IN.pfr = (v, t) => { UI.pFr[t.dataset.h] = v; UI.pCiente = false; renderDrawer(true); };
 IN.ptodos = c => { UI.pTodos = c; renderDrawer(true); }; IN.ppor = v => { UI.pPor = v; }; IN.pdata = v => { UI.pData = v || HI; renderDrawer(true); }; IN.prepro = c => { UI.pRepro = c; }; IN.pciente = c => { UI.pCiente = c; renderDrawer(true); };
 ACT.pbaixa = () => {
-  const p = protoOf(qv('proto')); const m = modeloOf(p.modelo); const c = UI.pCell; const i = c.i; const e = m.etapas[i];
+  const p = protoOf(qv('proto')); const m = modeloDe(p); const c = UI.pCell; const i = c.i; const e = m.etapas[i];
   const pend = p.animais.filter(a => !p.baixas[a + ':' + i]); const alvo = c.col || UI.pTodos ? pend : [c.a]; const por = UI.pPor || PESSOAS[2]; const cods = []; const usos = [];
   let venc = false; e.prods.forEach(x => { const H = hormOf(x.h); const fr = H.fr.find(f => f.f === (UI.pFr || {})[x.h]) || H.fr[0]; if (vencido(fr)) venc = true; });
   if (venc && !UI.pCiente) { renderDrawer(true); const b = $('#pciente'); return; }
@@ -2137,7 +2194,7 @@ ACT.pbaixa = () => {
   toast(`${diaLbl(e.d, m)} feita · ${alvo.length} ${pl(alvo.length, 'animal', 'animais')}${cods.length ? ' · frasco ' + cods.join(' + ') : ''}`, { acao: 'Desfazer', fn: () => desfazMarca(snap) });
 };
 function desfazMarca(s) { s.alvo.forEach(a => { delete s.p.baixas[a + ':' + s.i]; }); s.usos.forEach(u => { u.fr.saldo = Math.round((u.fr.saldo + u.uso) * 10) / 10; }); if (s.shifted) s.p.shift[s.i + 1] -= s.shifted; s.ev.estornado = { quem: USUARIO, t: nowT() }; logP(s.p, 'Estornou a marcação de ' + diaLbl(modeloOf(s.p.modelo).etapas[s.i].d, modeloOf(s.p.modelo)), { ref: s.ev.id }); refresh(); }
-ACT.pdesf = () => { const p = protoOf(qv('proto')); const m = modeloOf(p.modelo); const c = UI.pCell; const e = m.etapas[c.i]; const b = p.baixas[c.a + ':' + c.i]; const usos = e.prods.map((x, k) => { const H = hormOf(x.h); const cod = (b.frasco || '').split(' + ')[k]; return { fr: H.fr.find(f => f.f === cod), uso: x.q }; }).filter(u => u.fr); const ev = p.log.slice().reverse().find(x => !x.estornado && x.txt.startsWith('Marcou ' + diaLbl(e.d, m))) || { id: null }; UI.pCell = null; desfazMarca({ p, i: c.i, alvo: [c.a], usos, shifted: 0, ev }); };
+ACT.pdesf = () => { const p = protoOf(qv('proto')); const m = modeloDe(p); const c = UI.pCell; const e = m.etapas[c.i]; const b = p.baixas[c.a + ':' + c.i]; const usos = e.prods.map((x, k) => { const H = hormOf(x.h); const cod = (b.frasco || '').split(' + ')[k]; return { fr: H.fr.find(f => f.f === cod), uso: x.q }; }).filter(u => u.fr); const ev = p.log.slice().reverse().find(x => !x.estornado && x.txt.startsWith('Marcou ' + diaLbl(e.d, m))) || { id: null }; UI.pCell = null; desfazMarca({ p, i: c.i, alvo: [c.a], usos, shifted: 0, ev }); };
 ACT.pact = t => { UI.pAct = t.dataset.v || null; UI.pmot = ''; UI.pTent = false; renderDrawer(true); const f = $('#drawer-root .inline-panel select, #drawer-root .inline-panel input, #drawer-root .inline-panel button'); if (f && UI.pAct) f.focus(); };
 IN.pmot = v => { UI.pmot = v; };
 ACT.pfim = t => {
@@ -2150,16 +2207,18 @@ ACT.pfim = t => {
 /* ── Folha de campo do protocolo ── */
 function printProtoSpec(id) {
   UI.drKey = 'pprint'; const lista = id === 'todos' ? PRO.lista.filter(p => p.estado === 'andamento') : [protoOf(id)].filter(Boolean);
-  const body = lista.map(p => { const m = modeloOf(p.modelo); return `<h3 style="margin:.9rem 0 .2rem;font-size:1rem;color:#111">${esc(p.nome)}</h3><div style="color:#444">${esc(loteNome(p.lote))} · ${diaLbl(m.etapas[0].d, m)} em ${br(p.d0)}</div><table><thead><tr><th>Animal</th>${m.etapas.map(e => `<th>${diaLbl(e.d, m)}<br>${br(etapaData(p, e))}</th>`).join('')}</tr></thead><tbody>${p.animais.map(a => `<tr><td data-l="Animal"><b>${esc(animalOf(a).brinco)}</b> ${esc(animalOf(a).nome)}</td>${m.etapas.map((e, i) => `<td style="text-align:center" data-l="${diaLbl(e.d)}">${p.baixas[a + ':' + i] ? 'Feita' : '<span class="box0"></span>'}</td>`).join('')}</tr>`).join('')}</tbody></table>`; }).join('');
+  const body = lista.map(p => { const m = modeloDe(p); return `<h3 style="margin:.9rem 0 .2rem;font-size:1rem;color:#111">${esc(p.nome)}</h3><div style="color:#444">${esc(loteNome(p.lote))} · ${diaLbl(m.etapas[0].d, m)} em ${br(p.d0)}</div><table><thead><tr><th>Animal</th>${m.etapas.map(e => `<th>${diaLbl(e.d, m)}<br>${br(etapaData(p, e))}</th>`).join('')}</tr></thead><tbody>${p.animais.map(a => `<tr><td data-l="Animal"><b>${esc(animalOf(a).brinco)}</b> ${esc(animalOf(a).nome)}</td>${m.etapas.map((e, i) => `<td style="text-align:center" data-l="${diaLbl(e.d)}">${p.baixas[a + ':' + i] ? 'Feita' : '<span class="box0"></span>'}</td>`).join('')}</tr>`).join('')}</tbody></table>`; }).join('');
   return { key: 'pprint', print: true, label: 'Folha de campo: protocolos', html: `<div class="print-bar"><span><b>Pré-visualização da folha de campo</b></span><span class="actions">${bt('btn-primary sm', 'printer', 'Imprimir', 'data-act="print-go" data-first')}${bt('btn-ghost sm', 'x', 'Fechar', 'data-act="dr-close"')}</span></div><div class="paper"><h2>Folha de campo · Protocolos</h2><div style="color:#444">Fazenda Estreito Ponte de Pedra · ${br(HI)}</div>${body || '<p style="margin:1rem 0">Nenhum protocolo em andamento.</p>'}<div class="sign"><div>Responsável</div><div>Veterinário</div><div>Data</div></div></div>` };
 }
 
 /* ═════════ Novo protocolo (3 passos, com elegibilidade) ═════════ */
 function elegivel(an, m) {
-  const outro = emProtocolo(an.id); if (outro) return { ok: false, why: `Já em protocolo: ${TIPOS_PROTO[modeloOf(outro.modelo).tipo].curto} (${loteNome(outro.lote)})` };
+  const outro = emProtocolo(an.id); if (outro) return { ok: false, why: `Já em protocolo: ${TIPOS_PROTO[modeloDe(outro).tipo].curto} (${loteNome(outro.lote)})` };
+  const tbx = SAN.exames.filter(e => e.a === an.id && e.vac === 'tb').sort((x, y) => x.data < y.data ? -1 : 1).pop();
+  if (m.tipo === 'iatf' && tbx && tbx.res === 'Inconclusivo') return { ok: false, why: `Reteste de TB pendente (inconclusivo em ${br(tbx.data)})` };
   if (m.tipo === 'iatf') {
     if (an.cat === 'novilha') { if (an.idadeM < 15) return { ok: false, why: `Novilha com ${an.idadeM} meses: precisa de 15 meses ou mais` }; if (an.peso < 320) return { ok: false, why: `Novilha com ${an.peso} kg: precisa de 320 kg ou mais` }; return { ok: true, why: `novilha · ${an.idadeM} meses · ${an.peso} kg` }; }
-    if (an.cat === 'vaca') { if (an.prenhe) return { ok: false, why: 'Prenhe' }; if (an.del != null && an.del < 45) return { ok: false, why: `Ainda no fim do período de espera voluntário (PEV): ${an.del} dias em leite` }; return { ok: true, why: an.del != null ? `${an.del} dias em leite · vazia` : 'vaca vazia' }; }
+    if (an.cat === 'vaca') { if (an.prenhe) return { ok: false, why: 'Fora dos critérios: prenhe' }; if (an.del != null && an.del < 45) return { ok: false, why: `Fora dos critérios: ${an.del} dias em leite (mínimo 45)` }; return { ok: true, why: an.del != null ? `${an.del} dias em leite · vazia` : 'vaca vazia' }; }
     return { ok: false, why: 'Bezerra: fora do protocolo de inseminação' };
   }
   if (m.tipo === 'inducao') { if (an.cat === 'bezerra') return { ok: false, why: 'Bezerra: fora da indução' }; return { ok: true, why: an.cat === 'novilha' ? `novilha · ${an.idadeM} meses · ${an.peso} kg` : `${an.del != null ? an.del + ' dias em leite' : 'vaca'}` }; }
@@ -2202,7 +2261,7 @@ ROUTES['/protocolos/novo'] = () => {
     <div class="resumo"><h3>Animais</h3><b style="font-size:1.6rem;font-variant-numeric:tabular-nums">${q}</b> <span class="hint">${pl(q, 'animal', 'animais')} · ${esc(loteNome(n.lote))} · ${esc(m.nome)} · ${diaLbl(m.etapas[0].d, m)} em ${br(n.d0)}</span></div>
     ${Object.keys(prods).length ? `<div class="tw"><table class="ft"><caption class="sr">Produtos a usar e estoque previsto</caption><thead><tr><th>Produto</th><th class="num">Precisa</th><th class="num">Em estoque</th><th class="num">Já reservado</th><th class="num">Sobra</th></tr></thead><tbody>${linhas}</tbody></table></div><p class="hint">“Já reservado” é o que os protocolos abertos ainda vão usar. O uso acontece a cada etapa feita.</p>` : `<div class="box">Este modelo não usa produto do estoque.</div>`}
     ${falta.length ? `<div class="aviso amber">${ic('warn')}<div class="txt"><b>Estoque abaixo do necessário</b> para ${falta.map(h => esc(hormOf(h).prod)).join(', ')}. Pode lançar assim mesmo; compre antes do dia da etapa.</div></div>` : ''}
-    ${carP ? `<div class="aviso blue">${ic('info')}<div class="txt"><b>Carência ${gl('carencia', 'carência')}:</b> depois do último dia (${br(carP.fim)}), leite em carência até ${br(addD(carP.fim, m.carLeite))} e carne até ${br(addD(carP.fim, m.carCarne))}.</div></div>` : ''}
+    ${carP ? `<div class="aviso blue">${ic('info')}<div class="txt"><b>Descarte o leite das vacas tratadas durante o tratamento.</b> <b>Carência ${gl('carencia', 'carência')}:</b> depois do último dia (${br(carP.fim)}), leite em carência até ${br(addD(carP.fim, m.carLeite))} e carne até ${br(addD(carP.fim, m.carCarne))}.</div></div>` : ''}
     </div><div style="display:flex;flex-direction:column;gap:1rem"><div class="box"><h3>${ic('calendar', 's14')}Na Agenda</h3><p><b>${m.etapas.length} ${pl(m.etapas.length, 'dia de tarefa', 'dias de tarefa')}</b> para o lote, com ${Math.round(m.etapas.length * q)} marcações no total.</p><ul class="list">${m.etapas.map((e, i) => `<li style="min-height:40px"><span class="st prevista" style="min-width:6.5rem;justify-content:center">${br(dias[i])}</span><span class="grow">${diaLbl(e.d, m)} · ${esc(e.acao)}</span></li>`).join('')}</ul></div>
     ${iatf ? `<label class="sel-row" style="align-items:center"><input type="checkbox" data-ch="npcomp" ${n.comp ? 'checked' : ''} data-fk="comp"><span><b>Confirmo o compromisso com os dias do protocolo.</b><br><span class="sub2">Vou fazer cada etapa no dia previsto e inseminar no ${diaLbl(m.etapas[m.etapas.length - 1].d, m)}. Atrasar uma etapa compromete a taxa de prenhez.</span></span></label>${n.err && !n.comp ? `<p class="err">${ic('warn', 's14')}Confirme o compromisso para lançar.</p>` : ''}` : ''}</div></div>`;
   }
@@ -2220,8 +2279,8 @@ ACT['np-back'] = () => { UI.np.passo--; UI.np.err = false; npSync(); };
 ACT['np-cancel'] = () => { UI.np = null; nav('/protocolos'); };
 ACT['np-lancar'] = () => {
   const n = UI.np; const m = modeloOf(n.modelo); if (m.tipo === 'iatf' && !n.comp) { n.err = true; refresh(); return; }
-  const l = loteOf(n.lote); const p = { id: 'pr' + (++PRO.seq), nome: `${m.tipo === 'iatf' ? 'Inseminação programada' : m.nome.replace(/ \(.*\)| · .*/, '')} · ${l.nome} · ${diaLbl(m.etapas[0].d, m)} em ${br(n.d0).slice(0, 5)}`, modelo: n.modelo, lote: n.lote, animais: n.sel.slice(), d0: n.d0, estado: 'andamento', baixas: {}, log: [], shift: {} };
-  logP(p, `Lançou o protocolo para ${p.animais.length} animais`); PRO.lista.unshift(p); m.usado++; UI.np = null; nav('/protocolos', { proto: p.id }); toast(`Protocolo lançado · ${m.etapas.length} dias de tarefa na Agenda · ${p.animais.length} animais.`);
+  const l = loteOf(n.lote); const p = { id: 'pr' + (++PRO.seq), nome: `${m.tipo === 'iatf' ? 'Inseminação programada' : m.nome.replace(/ \(.*\)| · .*/, '')} · ${l.nome} · ${diaLbl(m.etapas[0].d, m)} em ${br(n.d0).slice(0, 5)}`, modelo: n.modelo, snap: snapModelo(m), lote: n.lote, animais: n.sel.slice(), d0: n.d0, estado: 'andamento', baixas: {}, log: [], shift: {} };
+  logP(p, `Lançou o protocolo para ${p.animais.length} animais (modelo v${m.versao})`); PRO.lista.unshift(p); m.usado++; UI.np = null; nav('/protocolos', { proto: p.id }); toast(`Protocolo lançado · ${m.etapas.length} dias de tarefa na Agenda · ${p.animais.length} animais.`);
 };
 
 /* ═════════ Modelos ═════════ */
@@ -2234,7 +2293,16 @@ ROUTES['/protocolos/modelos'] = () => {
     `<div class="tw cards-w"><table class="ft cards"><caption class="sr">Modelos de protocolo</caption><thead><tr><th>Nome</th><th>Tipo</th><th>Etapas</th><th>Usado por</th><th>Versão</th><th>Situação</th><th><span class="sr">Ações</span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 };
 ACT['md-dup'] = t => { const m = modeloOf(t.dataset.id); const c = clone(m); c.id = 'm' + (++PRO.seq); c.nome = m.nome + ' (cópia)'; c.ativo = false; c.usado = 0; c.versao = 1; c.hist = [{ v: 1, t: nowT(), quem: USUARIO, txt: 'Criado como cópia de «' + m.nome + '» (v1)' }]; m.hist.push({ v: m.versao, t: nowT(), quem: USUARIO, txt: 'Duplicado como «' + c.nome + '»' }); PRO.modelos.push(c); refresh(); toast(`Duplicado: «${c.nome}» começa inativo. Edite e ative quando estiver pronto.`); };
-ACT['md-tog'] = t => { const m = modeloOf(t.dataset.id); m.ativo = !m.ativo; m.hist.push({ v: m.versao, t: nowT(), quem: USUARIO, txt: m.ativo ? 'Ativado' : 'Inativado' }); refresh(); toast(`${m.nome} ${m.ativo ? 'ativado' : 'inativado'}.${m.ativo ? '' : ' Não aparece mais em Novo protocolo.'}`, { acao: 'Desfazer', fn: () => { m.ativo = !m.ativo; m.hist.push({ v: m.versao, t: nowT(), quem: USUARIO, txt: 'Estornou: ' + (m.ativo ? 'ativação' : 'inativação') }); refresh(); } }); };
+ACT['md-tog'] = t => { const m = modeloOf(t.dataset.id); if (m.ativo) { UI.mi = { motivo: '', tent: false }; nav('/protocolos/modelos', { minativar: m.id }); return; }
+  m.ativo = true; m.hist.push({ v: m.versao, t: nowT(), quem: USUARIO, txt: 'Reativado' }); refresh(); toast(`${m.nome} reativado. Volta a aparecer em Novo protocolo.`, { acao: 'Desfazer', fn: () => { m.ativo = false; m.hist.push({ v: m.versao, t: nowT(), quem: USUARIO, txt: 'Desfez a reativação (inativado de novo)' }); refresh(); }, desfeito: `${m.nome} inativado de novo.` }); };
+function drInativarModelo(id) {
+  const m = modeloOf(id); if (!m || !m.ativo) return null; UI.drKey = 'mi:' + id; if (!UI.mi) UI.mi = { motivo: '', tent: false }; const bad = UI.mi.tent && !UI.mi.motivo.trim();
+  return { key: 'mi:' + id, label: 'Inativar modelo', html: drawerHead('Inativar modelo', esc(m.nome), `<span>v${m.versao} · usado em ${m.usado} ${pl(m.usado, 'lançamento', 'lançamentos')}</span>`) + `<div class="dr-b"><div class="aviso blue">${ic('info')}<div class="txt">O modelo deixa de aparecer em Novo protocolo. Os protocolos já lançados continuam com a cópia das etapas que receberam.</div></div><div class="fld"><label for="mim">Motivo (obrigatório)</label><input id="mim" class="inp" value="${esc(UI.mi.motivo)}" data-in="mimot" data-fk="mim" ${bad ? 'aria-invalid="true"' : ''}>${bad ? `<span class="err">${ic('warn', 's14')}Escreva o motivo para inativar.</span>` : ''}</div></div><div class="dr-f">${bt('btn-danger', 'power', 'Inativar modelo', 'data-act="mi-ok"')}${bt('btn-ghost', '', 'Cancelar', 'data-act="dr-close"')}</div>` };
+}
+IN.mimot = v => { UI.mi.motivo = v; };
+ACT['mi-ok'] = () => { const m = modeloOf(qv('minativar')); if (!UI.mi.motivo.trim()) { UI.mi.tent = true; renderDrawer(true); const i = $('#mim'); if (i) i.focus(); return; }
+  const mot = UI.mi.motivo.trim(); m.ativo = false; m.hist.push({ v: m.versao, t: nowT(), quem: USUARIO, txt: 'Inativado · motivo: ' + mot }); UI.mi = null; closeDrawer(); refresh();
+  toast(`${m.nome} inativado. Não aparece mais em Novo protocolo.`, { acao: 'Desfazer', fn: () => { m.ativo = true; m.hist.push({ v: m.versao, t: nowT(), quem: USUARIO, txt: 'Reativado' }); refresh(); }, desfeito: `${m.nome} reativado.` }); };
 ACT['md-novo'] = () => nav('/protocolos/modelos', { modelo: 'novo', passo: 1 });
 ACT['md-edit'] = t => nav('/protocolos/modelos', { modelo: t.dataset.id, passo: 1 });
 function mdInit() {
@@ -2278,7 +2346,7 @@ ACT['md-back'] = () => { UI.mdErr = false; mdGo(UI.md.passo - 1); };
 ACT['md-save'] = () => {
   const w = UI.md; if (Object.keys(mdValida(w, 2)).length) { UI.mdErr = true; mdGo(1); return; }
   const et = w.etapas.slice().sort((a, b) => a.d - b.d);
-  if (w.id) { const m = modeloOf(w.id); const antes = m.etapas.length; Object.assign(m, { nome: w.nome, tipo: w.tipo, etapas: et, carLeite: w.carLeite, carCarne: w.carCarne }); m.versao++; m.hist.push({ v: m.versao, t: nowT(), quem: USUARIO, txt: `Editado (v${m.versao}): ${antes} → ${et.length} etapas; lançamentos antigos mantêm a v${m.versao - 1}` }); }
+  if (w.id) { const m = modeloOf(w.id); const antes = m.etapas.length; m.nome0 = m.nome; Object.assign(m, { nome: w.nome, tipo: w.tipo, etapas: et, carLeite: w.carLeite, carCarne: w.carCarne }); const dif = [w.nome !== m.nome0 && m.nome0 ? 'nome' : '', antes !== et.length ? `etapas ${antes} → ${et.length}` : 'etapas revisadas'].filter(Boolean).join(', '); m.versao++; m.hist.push({ v: m.versao, t: nowT(), quem: USUARIO, txt: `Editado (v${m.versao}): ${dif}. Vale só para novos lançamentos; os lançados mantêm a v${m.versao - 1}` }); }
   else PRO.modelos.push({ id: 'm' + (++PRO.seq), nome: w.nome, tipo: w.tipo, ativo: true, usado: 0, versao: 1, hist: [{ v: 1, t: nowT(), quem: USUARIO, txt: 'Modelo criado (v1)' }], carLeite: w.carLeite, carCarne: w.carCarne, etapas: et });
   const nome = w.nome; nav('/protocolos/modelos', {}); refresh(); toast(`Modelo «${nome}» salvo.`);
 };
