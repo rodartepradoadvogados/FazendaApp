@@ -15,7 +15,7 @@ import { normalizarBusca as normalizar } from "@/lib/busca";
 type Pessoa = {
   id: number; nome: string; tipos: string[]; telefones: string[]; emails: string[];
   cpf_cnpj: string | null; cep: string | null;
-  observacoes: string | null; ativo: boolean; salario_base: number | null; data_admissao: string | null;
+  observacoes: string | null; crmv?: string | null; ativo: boolean; salario_base: number | null; data_admissao: string | null;
   rg: string | null; data_nascimento: string | null; genero: string | null; estado_civil: string | null;
   endereco_rua: string | null; endereco_numero: string | null; endereco_bairro: string | null;
   endereco_cidade: string | null; endereco_uf: string | null;
@@ -27,7 +27,7 @@ type Pessoa = {
   vale_alimentacao_natureza_travada_salarial: boolean | null;
 };
 type Form = {
-  nome: string; tipos: string[]; telefones: string[]; emails: string[]; cpfCnpj: string; cep: string; observacoes: string; ativo: boolean;
+  nome: string; tipos: string[]; telefones: string[]; emails: string[]; cpfCnpj: string; cep: string; observacoes: string; crmv: string; ativo: boolean;
   salarioBase: string; dataAdmissao: string;
   rg: string; dataNascimento: string; genero: string; estadoCivil: string;
   enderecoRua: string; enderecoNumero: string; enderecoBairro: string; enderecoCidade: string; enderecoUf: string;
@@ -45,7 +45,7 @@ type Form = {
 };
 type AnexoStagedPessoa = { file: File; categoria: string; data_validade: string };
 const formVazio: Form = {
-  nome: "", tipos: ["Funcionário"], telefones: [], emails: [], cpfCnpj: "", cep: "", observacoes: "", ativo: true, salarioBase: "", dataAdmissao: "",
+  nome: "", tipos: ["Funcionário"], telefones: [], emails: [], cpfCnpj: "", cep: "", observacoes: "", crmv: "", ativo: true, salarioBase: "", dataAdmissao: "",
   rg: "", dataNascimento: "", genero: "", estadoCivil: "",
   enderecoRua: "", enderecoNumero: "", enderecoBairro: "", enderecoCidade: "", enderecoUf: "",
   // Nasce desligado e nos padrões conservadores do servidor ("mensal" não
@@ -72,7 +72,7 @@ function paraPayload(f: Form) {
     nome: f.nome.trim(), tipos: f.tipos,
     telefones: f.telefones.map((t) => t.trim()).filter(Boolean),
     emails: f.emails.map((e) => e.trim()).filter(Boolean),
-    cpf_cnpj: s(f.cpfCnpj), cep: s(f.cep), observacoes: s(f.observacoes),
+    cpf_cnpj: s(f.cpfCnpj), cep: s(f.cep), observacoes: s(f.observacoes), crmv: s(f.crmv),
     ativo: f.ativo, salario_base: f.salarioBase.trim() === "" ? undefined : parseFloat(f.salarioBase),
     data_admissao: s(f.dataAdmissao),
     rg: s(f.rg), data_nascimento: s(f.dataNascimento), genero: s(f.genero), estado_civil: s(f.estadoCivil),
@@ -152,7 +152,7 @@ export default function CadastroPessoas() {
   const abrirEdicao = (p: Pessoa) => {
     setForm({
       nome: p.nome, tipos: p.tipos.length ? p.tipos : ["Funcionário"], telefones: p.telefones ?? [], emails: p.emails ?? [],
-      cpfCnpj: p.cpf_cnpj ?? "", cep: p.cep ?? "", observacoes: p.observacoes ?? "",
+      cpfCnpj: p.cpf_cnpj ?? "", cep: p.cep ?? "", observacoes: p.observacoes ?? "", crmv: p.crmv ?? "",
       ativo: p.ativo, salarioBase: p.salario_base != null ? String(p.salario_base) : "", dataAdmissao: p.data_admissao ?? "",
       rg: p.rg ?? "", dataNascimento: p.data_nascimento ?? "", genero: p.genero ?? "", estadoCivil: p.estado_civil ?? "",
       enderecoRua: p.endereco_rua ?? "", enderecoNumero: p.endereco_numero ?? "", enderecoBairro: p.endereco_bairro ?? "",
@@ -466,6 +466,10 @@ function FormItem({
         <ListaContatoInput label="Emails" valores={form.emails} onChange={(v) => setForm({ ...form, emails: v })} placeholder="nome@exemplo.com" />
         <div><label style={labelStyle}>CPF/CNPJ</label>
           <input style={inputStyle} value={form.cpfCnpj} onChange={(e) => setForm({ ...form, cpfCnpj: maskCpfCnpj(e.target.value) })} /></div>
+        {form.tipos.includes("Veterinário") && (
+          <div><label style={labelStyle}>CRMV (registro do veterinário)</label>
+            <input style={inputStyle} value={form.crmv} placeholder="ex.: CRMV-MG 12345" onChange={(e) => setForm({ ...form, crmv: e.target.value })} /></div>
+        )}
         <div><label style={labelStyle}>RG</label>
           <input style={inputStyle} value={form.rg} onChange={(e) => setForm({ ...form, rg: e.target.value })} /></div>
         <div><label style={labelStyle}>Data de nascimento</label>

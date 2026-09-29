@@ -56,7 +56,7 @@ function PainelLotesEstoque({ estoqueId, embalagens, medidaEmbalagem }: {
   const [abrindo, setAbrindo] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [novo, setNovo] = useState({
-    apresentacao_id: "", quantidade: "", data_compra: new Date().toISOString().slice(0, 10), valor_unitario: "", numero_lote: "",
+    apresentacao_id: "", quantidade: "", data_compra: new Date().toISOString().slice(0, 10), valor_unitario: "", numero_lote: "", validade: "",
   });
 
   const carregar = () => fetchLotesEstoque(estoqueId).then(setLotes).catch((e: any) => setErro(e.message));
@@ -76,9 +76,10 @@ function PainelLotesEstoque({ estoqueId, embalagens, medidaEmbalagem }: {
         quantidade, data_compra: novo.data_compra,
         valor_unitario: novo.valor_unitario ? Number(novo.valor_unitario) : undefined,
         numero_lote: novo.numero_lote || undefined,
+        validade: novo.validade || undefined,
         apresentacao_id: novo.apresentacao_id ? Number(novo.apresentacao_id) : undefined,
       });
-      setNovo({ apresentacao_id: "", quantidade: "", data_compra: new Date().toISOString().slice(0, 10), valor_unitario: "", numero_lote: "" });
+      setNovo({ apresentacao_id: "", quantidade: "", data_compra: new Date().toISOString().slice(0, 10), valor_unitario: "", numero_lote: "", validade: "" });
       setAbrindo(false);
       carregar();
     } catch (e: any) {
@@ -128,6 +129,8 @@ function PainelLotesEstoque({ estoqueId, embalagens, medidaEmbalagem }: {
             <input type="number" style={inputStyle} value={novo.valor_unitario} onChange={(e) => setNovo((n) => ({ ...n, valor_unitario: e.target.value }))} /></div>
           <div><label style={labelStyle}>Nº do lote (opcional)</label>
             <input style={inputStyle} value={novo.numero_lote} onChange={(e) => setNovo((n) => ({ ...n, numero_lote: e.target.value }))} /></div>
+          <div><label style={labelStyle}>Validade (opcional)</label>
+            <input type="date" style={inputStyle} value={novo.validade} onChange={(e) => setNovo((n) => ({ ...n, validade: e.target.value }))} /></div>
           <div style={{ gridColumn: "1 / -1", display: "flex", gap: "0.4rem" }}>
             <button type="button" className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={salvando} onClick={salvarLote}>
               <Check size={12} /> {salvando ? "Salvando…" : "Salvar lote"}
@@ -155,6 +158,11 @@ function PainelLotesEstoque({ estoqueId, embalagens, medidaEmbalagem }: {
                 {l.numero_lote ? `Lote ${l.numero_lote}` : `Compra de ${l.data_compra}`}
               </strong>
               <span style={{ color: "var(--text-muted)" }}>comprado em {l.data_compra}</span>
+              {l.validade && (
+                <span style={{ color: l.validade < new Date().toISOString().slice(0, 10) ? "var(--red)" : "var(--text-muted)" }}>
+                  validade {l.validade.split("-").reverse().join("/")}{l.validade < new Date().toISOString().slice(0, 10) ? " (vencido)" : ""}
+                </span>
+              )}
               <span style={{ marginLeft: "auto" }}>
                 {l.quantidade_restante} / {l.quantidade_comprada} restante
                 {l.quantidade_restante <= 0 && " — esgotado"}

@@ -5017,11 +5017,19 @@ export async function fetchListaEspera(): Promise<ListaEspera> {
   if (!res.ok) throw new Error(`Lista de espera error: ${res.status}`);
   return res.json();
 }
+export type ChecklistAgendamentoPayload = {
+  veterinario?: { estado: "confirmado" | "desconsiderado" | "pendente"; pessoa_id?: number | null; motivo?: string | null };
+  estoque?: { estado: "vinculado" | "desconsiderado" | "pendente"; estoque_id?: number | null; lote_id?: number | null; motivo?: string | null; lote?: string | null; validade?: string | null };
+  data?: { estado: "confirmado" | "pendente" };
+  extras?: { texto: string }[];
+  itens?: { item_id: number; acao: "cumprir" | "pular" | "reabrir"; motivo?: string | null }[];
+};
 export type NovoAgendamentoPayload = {
   calendario_sanitario_id: number; animais_janela: string[];
   animais_fora: { numero_matriz: string; motivo: string }[];
   data_evento: string; hora?: string | null; modo_execucao?: "veterinario" | "propria" | null;
   veterinario_pessoa_id?: number | null; observacao?: string | null; rascunho?: boolean;
+  checklist?: ChecklistAgendamentoPayload | null;
 };
 async function _postSanidade<T>(caminho: string, corpo: unknown, rotulo: string): Promise<T> {
   const res = await authFetch(`${API}${caminho}`, {
@@ -5031,13 +5039,154 @@ async function _postSanidade<T>(caminho: string, corpo: unknown, rotulo: string)
   return res.json();
 }
 export const criarAgendamentoPreventivo = (p: NovoAgendamentoPayload) =>
-  _postSanidade<{ id: number; status: string; data_evento: string; hora: string | null }>("/sanidade/cronogramas/agendamentos", p, "Criar agendamento");
-export const adiarAgendamentoPreventivo = (id: number, p: { nova_data: string; hora?: string | null; motivo?: string | null }) =>
+  _postSanidade<{ id: number; status: string; data_evento: string; hora: string | null; checklist?: ResumoChecklist }>("/sanidade/cronogramas/agendamentos", p, "Criar agendamento");
+export const adiarAgendamentoPreventivo = (id: number, p: { nova_data: string; hora?: string | null; motivo: string }) =>
   _postSanidade<{ id: number }>(`/sanidade/cronogramas/${id}/adiar`, p, "Adiar agendamento");
-export const cancelarAgendamentoPreventivo = (id: number, motivo: string) =>
-  _postSanidade<{ id: number; devolvidos: number }>(`/sanidade/cronogramas/${id}/cancelar`, { motivo }, "Cancelar agendamento");
+export const cancelarAgendamentoPreventivo = (id: number, motivo: string, destinoAnimais: "espera" | "naoSeAplica" = "espera", destinoConta?: "manter" | "cancelar") =>
+  _postSanidade<{ id: number; devolvidos: number }>(`/sanidade/cronogramas/${id}/cancelar`, { motivo, destino_animais: destinoAnimais, destino_conta: destinoConta ?? null }, "Cancelar agendamento");
+export const confirmarRascunhoAgendamento = (id: number, p: {
+  data_evento: string; hora?: string | null; modo_execucao?: "veterinario" | "propria" | null; veterinario_pessoa_id?: number | null;
+  checklist?: ChecklistAgendamentoPayload | null;
+}) => _postSanidade<{ id: number; status: string; data_evento: string; hora: string | null }>(`/sanidade/cronogramas/${id}/confirmar`, p, "Confirmar agendamento");
 export const desconsiderarListaEspera = (p: { calendario_sanitario_id: number; animais: string[]; motivo: string }) =>
   _postSanidade<{ desconsiderados: number }>("/sanidade/cronogramas/lista-espera/desconsiderar", p, "Desconsiderar");
+
+// ── Acompanhamento, gaveta Aplicar, Concluídos, Desfazer/Estornar (fatia 8) ──
+// A gaveta Aplicar é UMA só: Protocolos › Acompanhamento e a Agenda chamam o
+// mesmo POST /sanidade/cronogramas/{id}/aplicar (só muda o `canal`).
+export type ItemChecklistAg = {
+  id: number; chave: "estoque" | "vet" | "horario" | "lotes" | "financeiro" | "custom" | "carencia"; nome: string;
+  status: "pendente" | "cumprido" | "pulado"; resposta: string | null; observacao: string | null; ordem: number;
+};
+export type ResumoChecklist = {
+  total: number; resolvidos: number; desconsiderado: boolean; vet_nao_confirmou: boolean;
+  itens: ItemChecklistAg[]; pendentes: { id: number; chave: string; nome: string }[];
+};
+export type ResponsavelAg = { pessoa_id: number | null; nome: string; crmv: string | null; modo: string };
+export type EstadoVisualAg = "em_montagem" | "agendado" | "hoje" | "atrasado" | "adiado";
+export type AgendamentoAcompanhamento = {
+  id: number; calendario_sanitario_id: number; protocolo_nome: string; tipo: "vacina" | "exame" | "tratamento";
+  produto: string | null; status: string; estado_visual: EstadoVisualAg; data_evento: string; hora: string | null;
+  data_original: string | null; data_antes_do_adiamento: string | null; motivo_adiamento: string | null;
+  observacao: string | null; responsavel: ResponsavelAg; animais_total: number; animais_fora_janela: number;
+  lotes: string[]; checklist: ResumoChecklist; exige_veterinario: boolean;
+};
+export type AcompanhamentoPreventivo = {
+  hoje: string; agendamentos: AgendamentoAcompanhamento[]; totais: { hoje: number; atrasados: number; agendados: number };
+};
+export async function fetchAcompanhamentoPreventivo(): Promise<AcompanhamentoPreventivo> {
+  const res = await authFetch(`${API}/sanidade/cronogramas/acompanhamento`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Acompanhamento error: ${res.status}`);
+  return res.json();
+}
+
+export type AnimalAplicarCtx = {
+  numero_matriz: string; nome: string | null; lote: string | null; origem: "janela" | "fora_janela"; motivo: string | null;
+  dose: number | null; peso_kg: number | null; peso_estimado: boolean; sem_peso: boolean;
+};
+export type LoteAplicarCtx = { id: number; numero_lote: string | null; saldo: number; validade: string | null; vencido: boolean; vence_em_dias: number | null };
+export type PessoaAplicarCtx = { id: number; nome: string; tipo: string | null; crmv: string | null; veterinario: boolean };
+export type EntradaLogAg = {
+  id: number; acao: string; canal: string | null; motivo: string | null; detalhe: string | null;
+  usuario_id: number | null; usuario_nome: string | null; criado_em: string; aplicacao_id: number | null;
+};
+export type ContextoAplicar = {
+  cronograma_id: number; estado: string; protocolo_nome: string; tipo: "vacina" | "exame" | "tratamento";
+  produto: string | null; via: string | null; unidade: string | null; por_peso: boolean; dose_ref: number | null; kg_ref: number | null; dose_texto: string;
+  exige_veterinario: boolean; data_evento: string; hora: string | null; responsavel: ResponsavelAg;
+  aplicador_sugerido_id: number | null; animais: AnimalAplicarCtx[];
+  estoque: {
+    encontrado: boolean; estoque_id: number | null; nome: string | null; unidade: string | null; saldo: number | null;
+    lotes: LoteAplicarCtx[]; lote_sugerido_id?: number | null;
+    checklist: { estado: "pendente" | "vinculado" | "desconsiderado"; estoque_id?: number; lote_id?: number; motivo?: string | null; lote?: string; validade?: string };
+  };
+  pessoas: PessoaAplicarCtx[];
+  carencia: { leite_dias: number | null; carne_dias: number | null; proibido_lactacao: boolean; texto: string };
+  checklist: ResumoChecklist; log: EntradaLogAg[]; desfazer_segundos: number; hoje: string;
+};
+export async function fetchContextoAplicar(cronogramaId: number): Promise<ContextoAplicar> {
+  const res = await authFetch(`${API}/sanidade/cronogramas/${cronogramaId}/aplicar-contexto`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Aplicar error: ${res.status}`); }
+  return res.json();
+}
+
+export type AplicarAgendamentoPayload = {
+  canal: "Protocolos" | "Agenda"; aplicador_pessoa_id: number; animais_aplicados: string[];
+  nao_aplicados?: { numero_matriz: string; motivo: string; destino: "espera" | "naoSeAplica" }[];
+  data_aplicacao?: string | null; hora?: string | null; estoque_id?: number | null; lote_id?: number | null;
+  ciente_vencido?: boolean; desconsiderar_estoque?: boolean; motivo_desconsiderar_estoque?: string | null;
+  lote_veterinario?: string | null; validade_veterinario?: string | null; pesos?: Record<string, number> | null;
+  custo?: number | null; ciencia_pendentes?: boolean; ciencia_motivo?: string | null; observacao?: string | null;
+  chave_idempotencia?: string | null;
+};
+export type AnimalAplicacao = {
+  numero_matriz: string; nome?: string | null; resultado: "aplicado" | "nao_aplicado"; origem: "janela" | "fora_janela";
+  motivo_origem: string | null; dose: number | null; unidade: string | null; peso_kg: number | null; peso_estimado: boolean;
+  motivo_nao: string | null; destino_nao: string | null;
+};
+export type AplicacaoPreventiva = {
+  id: number; cronograma_id: number; estado: "aplicada" | "estornada"; canal: string; aplicador_nome: string | null;
+  aplicador_crmv: string | null; data_aplicacao: string; hora: string | null; produto: string | null; unidade: string | null;
+  via: string | null; dose_total: number | null; lote_texto: string | null; validade: string | null;
+  estoque_desconsiderado: boolean; estoque_motivo: string | null; custo: number | null;
+  carencia_leite_ate: string | null; carencia_carne_ate: string | null; carencia_texto: string | null;
+  ciencia_itens: { chave: string; nome: string }[]; ciencia_motivo: string | null; ciencia_em: string | null;
+  retroativo: boolean; excecoes: string[]; tipo_estorno: "desfazer" | "estorno" | null; motivo_estorno: string | null;
+  estornado_em: string | null; registrado_em: string; pode_desfazer: boolean; desfazer_restante_s: number;
+  animais: AnimalAplicacao[];
+};
+export type ResultadoAplicar = {
+  aplicacao: AplicacaoPreventiva; agendamento: { id: number; status: string }; avisos: string[]; idempotente: boolean;
+  desfazer_segundos: number;
+};
+export const aplicarAgendamentoPreventivo = (id: number, p: AplicarAgendamentoPayload) =>
+  _postSanidade<ResultadoAplicar>(`/sanidade/cronogramas/${id}/aplicar`, p, "Aplicar");
+export const desfazerAplicacaoPreventiva = (aplicacaoId: number) =>
+  _postSanidade<{ aplicacao: AplicacaoPreventiva; agendamento: { id: number; status: string } }>(`/sanidade/cronogramas/aplicacoes/${aplicacaoId}/desfazer`, {}, "Desfazer");
+export const estornarAplicacaoPreventiva = (aplicacaoId: number, motivo: string) =>
+  _postSanidade<{ aplicacao: AplicacaoPreventiva; agendamento: { id: number; status: string } }>(`/sanidade/cronogramas/aplicacoes/${aplicacaoId}/estornar`, { motivo }, "Estornar");
+export async function editarChecklistAgendamento(id: number, p: ChecklistAgendamentoPayload) {
+  const res = await authFetch(`${API}/sanidade/cronogramas/${id}/checklist`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Checklist error: ${res.status}`); }
+  return res.json() as Promise<{ id: number; status: string; checklist: ResumoChecklist }>;
+}
+
+export type ItemConcluido = {
+  id: number | null; cronograma_id: number; calendario_sanitario_id: number; protocolo_nome: string;
+  tipo: "vacina" | "exame" | "tratamento"; produto: string | null; estado: "aplicada" | "estornada" | "cancelado";
+  data: string; hora: string | null; animais_aplicados: number; animais_nao_aplicados: number; fora_janela: number;
+  aplicador_nome: string | null; aplicador_crmv: string | null; frasco: string; validade: string | null;
+  estoque_desconsiderado: boolean; carencia_leite_ate: string | null; carencia_carne_ate: string | null;
+  carencia_texto: string | null; custo: number | null; retroativo: boolean; canal: string | null; excecoes: string[];
+  com_excecao: boolean; registrado_por: string | null; registrado_em: string; motivo?: string | null;
+  motivo_estorno: string | null; tipo_estorno: string | null; estornado_por: string | null; estornado_em: string | null;
+  pode_desfazer: boolean; desfazer_restante_s: number;
+};
+export type ConcluidosPreventivo = {
+  total: number; itens: ItemConcluido[]; resumo: { aplicados: number; animais: number; estornados: number };
+};
+export async function fetchConcluidosPreventivo(f?: { calendarioId?: number; de?: string; ate?: string; foraJanela?: boolean; q?: string }): Promise<ConcluidosPreventivo> {
+  const params = new URLSearchParams();
+  if (f?.calendarioId) params.set("calendario_id", String(f.calendarioId));
+  if (f?.de) params.set("de", f.de);
+  if (f?.ate) params.set("ate", f.ate);
+  if (f?.foraJanela) params.set("fora_janela", "true");
+  if (f?.q) params.set("q", f.q);
+  const res = await authFetch(`${API}/sanidade/cronogramas/concluidos?${params.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Concluídos error: ${res.status}`);
+  return res.json();
+}
+export type DetalheAplicacao = AplicacaoPreventiva & {
+  protocolo_nome: string; tipo: string; registrado_por: string | null; estornado_por: string | null;
+  ciencia_usuario: string | null; log: EntradaLogAg[]; checklist: ResumoChecklist; agendamento_status: string;
+};
+export async function fetchDetalheAplicacao(id: number): Promise<DetalheAplicacao> {
+  const res = await authFetch(`${API}/sanidade/cronogramas/aplicacoes/${id}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Aplicação error: ${res.status}`);
+  return res.json();
+}
 
 export type JanelaCalendarioEvento = {
   calendario_sanitario_id: number; evento_sanitario_id: number; evento_sanitario_nome: string;
@@ -5569,6 +5718,7 @@ export type LoteEstoque = {
   id: number; estoque_id: number; numero_lote: string | null; data_compra: string;
   quantidade_comprada: number; quantidade_restante: number; valor_unitario: number | null;
   observacao: string | null; ativo: boolean;
+  validade?: string | null;   // validade do frasco/lote (vencido exige ciência ao Aplicar)
   // De qual embalagem cadastrada (ApresentacaoEmbalagemEstoque) este lote
   // veio — `apresentacao_quantidade` é resolvida ao vivo pelo backend
   // (nunca copiada), sempre um NÚMERO puro: mostrar ao lado dele a unidade
@@ -5583,7 +5733,7 @@ export async function fetchLotesEstoque(estoqueId: number) {
 }
 export async function abrirLoteEstoque(estoqueId: number, dados: {
   quantidade: number; data_compra: string; valor_unitario?: number | null; numero_lote?: string | null;
-  observacao?: string | null; apresentacao_id?: number | null;
+  observacao?: string | null; apresentacao_id?: number | null; validade?: string | null;
 }) {
   const res = await authFetch(`${API}/estoque/${estoqueId}/lotes`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

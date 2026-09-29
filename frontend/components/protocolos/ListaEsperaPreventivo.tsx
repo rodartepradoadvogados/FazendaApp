@@ -16,6 +16,9 @@ import {
   type AnimalListaEspera, type GrupoListaEspera, type ListaEspera,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
+import {
+  ChecklistMontagem, checklistParaPayload, checklistVazio, resumoChecklistDraft, validarChecklist, type ChecklistDraft,
+} from "./ChecklistAgendamento";
 import { Indicador, TelaSkeleton } from "@/components/ui";
 import type { AnimalRow } from "@/components/AnimalModal";
 
@@ -104,7 +107,7 @@ function Legenda() {
   );
 }
 
-type Tela = { tipo: "lista" } | { tipo: "detalhe"; calId: number } | { tipo: "assistente"; calId: number; sel: string[] } | { tipo: "pronto"; resumo: string; dia: string };
+type Tela = { tipo: "lista" } | { tipo: "detalhe"; calId: number } | { tipo: "assistente"; calId: number; sel: string[] } | { tipo: "pronto"; resumo: string; dia: string; rascunho?: boolean };
 
 export function ListaEsperaPreventivo(props: {
   animais: AnimalRow[]; avulsa?: React.ReactNode; onAbrirAcompanhamento?: () => void;
@@ -140,16 +143,21 @@ function ListaEsperaConteudo({ animais, avulsa, onAbrirAcompanhamento }: {
       <AssistenteAgendamento
         grupo={grupo} preSelecionados={tela.sel} animais={animais}
         onSair={() => setTela({ tipo: "detalhe", calId: grupo.calendario_id })}
-        onCriado={(resumo, dia) => { recarregar(); setTela({ tipo: "pronto", resumo, dia }); }}
+        onCriado={(resumo, dia, rascunho) => { recarregar(); setTela({ tipo: "pronto", resumo, dia, rascunho }); }}
       />
     );
   }
   if (tela.tipo === "pronto") {
     return (
       <div className="card" role="status">
-        <div className="card-header mb-2 flex items-center gap-2"><CalendarCheck size={16} /> Agendamento criado</div>
+        <div className="card-header mb-2 flex items-center gap-2"><CalendarCheck size={16} /> {tela.rascunho ? "Rascunho salvo" : "Agendamento criado"}</div>
         <p style={{ fontSize: "0.9rem", marginBottom: "0.4rem" }}>{tela.resumo}</p>
-        <p style={notaStyle}>Ele entra na Agenda em {formatDate(tela.dia)}. Quem ficou na lista de espera continua aqui e não aparece na Agenda.</p>
+        <p style={notaStyle}>
+          {tela.rascunho
+            ? "O rascunho fica em Acompanhamento, como Em montagem. Só entra na Agenda depois de confirmado (Continuar montando)."
+            : <>Ele entra na Agenda em {formatDate(tela.dia)}.</>}
+          {" "}Quem ficou na lista de espera continua aqui e não aparece na Agenda.
+        </p>
         <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.9rem" }}>
           <button type="button" className="btn-primary-gold" onClick={() => setTela({ tipo: "lista" })}>Voltar à lista de espera</button>
           {onAbrirAcompanhamento && <button type="button" className="btn-secondary" onClick={onAbrirAcompanhamento}>Ver em Acompanhamento</button>}
@@ -411,14 +419,16 @@ function DesconsiderarModal({ grupo, animal, onFechar, onFeito }: {
 }
 
 // ─────────────────────────── Assistente "Criar agendamento" ───────────────────────────
-const PASSOS = ["Animais", "Quando e com quem", "Conferir e agendar"];
+const PASSOS = ["Animais", "Quando e com quem", "Checklist", "Conferir e agendar"];
 type ForaJanela = { numero: string; motivo: string };
 
 function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCriado }: {
   grupo: GrupoListaEspera; preSelecionados: string[]; animais: AnimalRow[];
-  onSair: () => void; onCriado: (resumo: string, dia: string) => void;
+  onSair: () => void; onCriado: (resumo: string, dia: string, rascunho?: boolean) => void;
 }) {
   const [passo, setPasso] = useState(1);
+  const [ck, setCk] = useState<ChecklistDraft>(checklistVazio());
+  const [tentouCk, setTentouCk] = useState(false);
   const [sel, setSel] = useState<Set<string>>(() => new Set(preSelecionados));
   const [fora, setFora] = useState<ForaJanela[]>([]);
   const [foraAberto, setForaAberto] = useState(false);
@@ -456,10 +466,15 @@ function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCria
       if (!data) { setErro("Escolha a data."); return; }
       if (quem === "veterinario" && !vetId) { setErro("Escolha o veterinário."); return; }
     }
-    setPasso((p) => Math.min(3, p + 1));
+    if (passo === 3) {
+      setTentouCk(true);
+      const e = validarChecklist(ck);
+      if (e) { setErro(e); return; }
+    }
+    setPasso((p) => Math.min(4, p + 1));
   }
 
-  async function agendar() {
+  async function agendar(rascunho = false) {
     setSalvando(true); setErro(null);
     try {
       const r = await criarAgendamentoPreventivo({
@@ -468,8 +483,9 @@ function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCria
         animais_fora: fora.map((f) => ({ numero_matriz: f.numero, motivo: f.motivo })),
         data_evento: data, hora: hora || null, modo_execucao: quem,
         veterinario_pessoa_id: quem === "veterinario" ? Number(vetId) : null, observacao: obs.trim() || null,
+        rascunho, checklist: checklistParaPayload(ck),
       });
-      onCriado(`${tituloGrupo(grupo)}: ${total} ${plural(total, "animal", "animais")} para ${formatDate(r.data_evento)}${r.hora ? ` às ${r.hora}` : ""}, ${responsavel}.`, r.data_evento);
+      onCriado(`${tituloGrupo(grupo)}: ${total} ${plural(total, "animal", "animais")} para ${formatDate(r.data_evento)}${r.hora ? ` às ${r.hora}` : ""}, ${responsavel}.`, r.data_evento, rascunho);
     } catch (e: any) { setErro(e.message || "Erro ao criar o agendamento"); } finally { setSalvando(false); }
   }
 
@@ -581,6 +597,15 @@ function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCria
 
       {passo === 3 && (
         <div>
+          <p style={{ ...notaStyle, marginBottom: "0.6rem" }}>
+            O que precisa estar resolvido antes do dia. Nada aqui bloqueia o agendamento nem a aplicação: o que ficar pendente pede só a ciência na hora de Aplicar.
+          </p>
+          <ChecklistMontagem draft={ck} onChange={setCk} veterinarios={veterinarios} produto={grupo.produto} dataEvento={data} hora={hora} tentou={tentouCk} />
+        </div>
+      )}
+
+      {passo === 4 && (
+        <div>
           <div className="card mb-3">
             <p style={{ fontSize: "1.05rem", fontWeight: 700 }}>{tituloGrupo(grupo)}{lotesDoAgendamento.length ? ` — ${lotesDoAgendamento.join(", ")}` : ""}</p>
             <p style={{ ...notaStyle, marginTop: "0.2rem" }}>{diaSemana(data)} {formatDate(data)}{hora ? `, ${hora}` : ""} · {responsavel}{obs.trim() ? ` · ${obs.trim()}` : ""}</p>
@@ -594,6 +619,7 @@ function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCria
           <div className="card">
             <h3 className="card-header mb-2">O que acontece ao agendar</h3>
             <ul style={{ margin: 0, paddingLeft: "1.1rem", fontSize: "0.85rem", lineHeight: 1.6 }}>
+              <li>Checklist: {resumoChecklistDraft(ck, !!hora).resolvidos} de {resumoChecklistDraft(ck, !!hora).total} resolvidos ({resumoChecklistDraft(ck, !!hora).linhas.join("; ")}).</li>
               <li>{total} {plural(total, "animal sai", "animais saem")} da lista de espera e {plural(total, "entra", "entram")} neste agendamento.</li>
               <li>O agendamento aparece na Agenda em {formatDate(data)}, com {responsavel}.</li>
               <li>Quem ficou na lista de espera segue lá, sem aparecer na Agenda.</li>
@@ -609,9 +635,12 @@ function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCria
         {passo > 1 && <button type="button" className="btn-ghost" onClick={() => { setErro(null); setPasso(passo - 1); }}><ArrowLeft size={14} /> Voltar</button>}
         <span style={{ flex: 1 }} />
         {passo === 1 && total === 0 && <span style={notaStyle}>Marque pelo menos 1 animal</span>}
-        {passo < 3
+        {passo < 4
           ? <button type="button" className="btn-primary" onClick={avancar} disabled={passo === 1 && total === 0}>Continuar <ArrowRight size={14} /></button>
-          : <button type="button" className="btn-primary-gold" onClick={agendar} disabled={salvando || total === 0}><CalendarCheck size={14} /> {salvando ? "Agendando…" : "Criar agendamento"}</button>}
+          : <>
+              <button type="button" className="btn-secondary" onClick={() => agendar(true)} disabled={salvando || total === 0} title="Guarda como Em montagem; só entra na Agenda depois de confirmado">Salvar como rascunho</button>
+              <button type="button" className="btn-primary-gold" onClick={() => agendar(false)} disabled={salvando || total === 0}><CalendarCheck size={14} /> {salvando ? "Agendando…" : "Criar agendamento"}</button>
+            </>}
       </div>
 
       {foraAberto && (
