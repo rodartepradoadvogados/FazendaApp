@@ -16,7 +16,7 @@ from fazenda.auth import (
 )
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ChecklistItem, ColostragemBezerra, ConsumoAlimento,
+    AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ChecklistItem, ColostragemBezerra, ConsumoAlimento, EventoSanitario,
     ConsumoSobra, ContaGerencial,
     CronogramaSanitario, CronogramaSanitarioAnimal, DietaLancamento, Diaria,
     DiariaAuditoria, DiariaDia, Empreitada, EmpreitadaEtapa, Estoque, EstoqueSemen, EventoRealizado, Lactacao, Lote, MedicamentoComercial, Parto,
@@ -1964,12 +1964,23 @@ def _aplicar_cronograma(
     usada por /sanidade/calendario/cadastrar-preventivo."""
     cronograma_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}aplicar_"))
     cronograma = _exigir_da_fazenda(session.get(CronogramaSanitario, cronograma_id), fazenda_id, "Cronograma")
+    # Caminho ANTIGO (mantido para dados e filas offline já existentes). O app do curral/mobile e a Agenda usam agora o
+    # endpoint único POST /sanidade/cronogramas/{id}/aplicar (grava em Concluídos e no log). Depois que o endpoint único
+    # aplicou, uma requisição antiga que ficou na fila não pode gravar de novo: 409, sem duplicar nada.
+    if cronograma.status == "concluido":
+        raise HTTPException(status_code=409, detail="Este agendamento já foi aplicado (veja em Protocolos › Concluídos)")
     if cronograma.status != "agendado":
         raise HTTPException(status_code=400, detail="Este cronograma ainda não tem veterinário/aplicação própria confirmado")
     calendario = _exigir_da_fazenda(
         session.get(CalendarioSanitario, cronograma.calendario_sanitario_id), fazenda_id,
         "Regra do calendário sanitário",
     )
+    _evento_do_caminho_antigo = session.get(EventoSanitario, calendario.evento_sanitario_id)
+    if _evento_do_caminho_antigo is not None and _evento_do_caminho_antigo.categoria_preventiva == "exame":
+        raise HTTPException(
+            status_code=400,
+            detail="Exame não se aplica por este caminho: use o aplicar único (Protocolos ou app) — inoculação, leitura e resultado por animal",
+        )
 
     incluidos = _cronograma_sanitario_rules.animais_por_status(session, cronograma.id, "incluido")
     alvo = set(animais) if animais else {l.numero_matriz for l in incluidos}

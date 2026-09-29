@@ -592,6 +592,9 @@ def eventos_agenda(
         for item in session.exec(select(ChecklistItem).where(ChecklistItem.cronograma_id.in_(cronograma_ids))).all():
             checklist_por_cron.setdefault(item.cronograma_id, []).append(item.status)
     desconsiderados = {c.id for c in cronogramas if c.checklist_desconsiderado}
+    # Quem pode aplicar (app do peão/Curral: aplicador obrigatório, escolhido por toque; funciona offline porque
+    # a lista viaja junto com a Agenda que o app guarda).
+    aplicadores: list[dict] | None = None
 
     saida: list[dict] = []
     for cron in cronogramas:
@@ -619,12 +622,23 @@ def eventos_agenda(
             fase_exame = exame_preventivo.fase_do_agendamento(session, cron)
             ino = exame_preventivo.inoculacao_ativa(session, cron.id) if fase_exame == "leitura" else None
             leitura_prevista = ino.leitura_prevista_em.isoformat() if ino else None
+        if aplicadores is None:
+            from fazenda.rules.aplicacao_preventiva import eh_veterinario, pessoas_da_fazenda
+            aplicadores = [
+                {"id": p.id, "nome": p.nome, "crmv": getattr(p, "crmv", None), "veterinario": eh_veterinario(p)}
+                for p in pessoas_da_fazenda(session, fazenda_id)
+            ]
+        from fazenda.rules.aplicacao_preventiva import exige_veterinario as _exige_vet
+        produto_ev = calendario.produto or (ev.produto_padrao if ev else None)
         verbo = "Registrar leitura de" if fase_exame == "leitura" else ("Coletar" if fase_exame == "coleta" else
                                                                        "Inocular" if fase_exame == "inoculacao" else "Aplicar")
         saida.append({
             "id": eid, "data": cron.data_evento.isoformat(), "categoria": "sanidade",
             "descricao": f"{verbo} {nome} hoje{f' às {cron.hora}' if cron.hora else ''} — {quem}",
             "fase": fase_exame, "exame_leitura_prevista_em": leitura_prevista,
+            "tipo_protocolo": (ev.categoria_preventiva if ev else None) or "vacina",
+            "exige_veterinario": _exige_vet(ev, produto_ev), "aplicadores": aplicadores,
+            "aplicador_sugerido_id": cron.veterinario_pessoa_id if cron.modo_execucao == "veterinario" else None,
             "numero_animal": None,
             "observacao": f"{len(incluidos)} animal(is) incluído(s) — Aplicar abre a mesma gaveta de Protocolos.",
             "fonte": "auto", "cor": "var(--dourado)", "ref": None,

@@ -756,6 +756,81 @@ class TestCanalEAgenda:
         assert ag["fase"] == "leitura" and ag["leitura_prevista_em"].startswith(HOJE.isoformat())
 
 
+class TestAppDoCurralEEmCaminhoAntigo:
+    """Fatia 9b, item B: o app do peao (Curral) usa o aplicar unico; o caminho antigo continua para dados existentes."""
+
+    def test_evento_da_agenda_traz_aplicadores_e_a_exigencia_de_veterinario(self, tb):
+        c = tb["c"]
+        dia = c.get("/agenda", params={"data": HOJE.isoformat()}).json()
+        ev = next(e for e in dia["eventos"] if e["id"] == f"cronograma_sanitario_aplicar_{tb['ag']}")
+        assert ev["tipo_protocolo"] == "exame" and ev["exige_veterinario"] is True and ev["fase"] == "inoculacao"
+        assert ev["aplicador_sugerido_id"] == tb["vet"]
+        nomes = {a["nome"]: a for a in ev["aplicadores"]}
+        assert nomes["Dr. Paulo"]["veterinario"] is True and nomes["Dr. Paulo"]["crmv"] == "CRMV-MG 12345"
+        assert nomes["Zeca"]["veterinario"] is False
+
+    def _vacina(self, ctx):
+        c, engine = ctx
+        with Session(engine) as s:
+            vet, peao = _pessoas(s)
+            est, lote = _estoque(s, "Raiva")
+            for n in ("1", "2"):
+                _animal(s, n)
+            cal = _regra(s, "Raiva", produto="Raiva", categoria="vacina", via="Subcutânea")
+            _espera(s, cal, ["1", "2"])
+        ag = _agendar(c, cal, ["1", "2"], vet=vet)
+        return {"c": c, "engine": engine, "ag": ag["id"], "vet": vet, "peao": peao, "est": est}
+
+    def test_apos_o_aplicar_unico_a_requisicao_antiga_da_fila_nao_duplica(self, ctx):
+        from fazenda.models import Sanidade
+        t = self._vacina(ctx)
+        c = t["c"]
+        r = _aplicar(c, t["ag"], canal="Curral", aplicador_pessoa_id=t["peao"], animais_aplicados=["1", "2"], estoque_id=t["est"])
+        assert r.status_code == 200, r.text
+        with Session(t["engine"]) as s:
+            antes = len(s.exec(select(Sanidade)).all())
+        velho = c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_aplicar_{t['ag']}"})
+        assert velho.status_code == 409 and "já foi aplicado" in velho.json()["detail"]
+        with Session(t["engine"]) as s:
+            assert len(s.exec(select(Sanidade)).all()) == antes
+            assert len(s.exec(select(CronogramaSanitarioAplicacao)).all()) == 1
+        assert _saldo(t["engine"], t["est"]) == 98
+
+    def test_caminho_antigo_ainda_aplica_vacina_de_dados_existentes(self, ctx):
+        from fazenda.models import Sanidade
+        t = self._vacina(ctx)
+        c = t["c"]
+        r = c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_aplicar_{t['ag']}"})
+        assert r.status_code == 200, r.text
+        with Session(t["engine"]) as s:
+            assert {x.numero_matriz for x in s.exec(select(Sanidade)).all()} == {"1", "2"}
+            assert s.get(CronogramaSanitario, t["ag"]).status == "concluido"
+
+    def test_caminho_antigo_recusa_exame(self, tb):
+        r = tb["c"].post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_aplicar_{tb['ag']}"})
+        assert r.status_code == 400 and "aplicar único" in r.json()["detail"]
+        assert _saldo(tb["engine"], tb["est"]) == 100
+
+    def test_curral_exige_aplicador_e_grava_no_log_e_em_concluidos(self, ctx):
+        t = self._vacina(ctx)
+        c = t["c"]
+        r = _aplicar(c, t["ag"], canal="Curral", animais_aplicados=["1", "2"], estoque_id=t["est"])
+        assert r.status_code == 422           # aplicador obrigatorio (1o toque simples, mas sem aplicador nao grava)
+        r = _aplicar(c, t["ag"], canal="Curral", aplicador_pessoa_id=t["peao"], animais_aplicados=["1", "2"], estoque_id=t["est"],
+                     chave_idempotencia="curral-1")
+        assert r.status_code == 200, r.text
+        item = c.get("/sanidade/cronogramas/concluidos").json()["itens"][0]
+        assert item["canal"] == "Curral" and item["aplicador_nome"] == "Zeca" and item["animais_aplicados"] == 2
+        with Session(t["engine"]) as s:
+            log = [l for l in s.exec(select(CronogramaSanitarioLog)).all() if l.acao == "Aplicou"]
+            assert len(log) == 1 and log[0].canal == "Curral"
+        # reenvio da fila (mesma chave) nao duplica
+        r2 = _aplicar(c, t["ag"], canal="Curral", aplicador_pessoa_id=t["peao"], animais_aplicados=["1", "2"], estoque_id=t["est"],
+                      chave_idempotencia="curral-1")
+        assert r2.status_code == 200 and r2.json()["idempotente"] is True
+        assert _saldo(t["engine"], t["est"]) == 98
+
+
 # ─────────────────────────────── B19 ───────────────────────────────
 class TestB19:
     def _b19(self, ctx, animais: list[tuple[str, str, int]]):
