@@ -887,6 +887,7 @@ class LoteEstoqueIn(BaseModel):
     data_compra: date
     valor_unitario: float | None = None
     numero_lote: str | None = None
+    validade: date | None = None   # validade do frasco/lote (aparece ao escolher o frasco no Aplicar)
     observacao: str | None = None
     # Qual embalagem cadastrada (ver ApresentacaoEmbalagemEstoque) este lote
     # representa — opcional, e só faz sentido quando o item tem embalagens
@@ -941,7 +942,7 @@ def abrir_lote_estoque(
     lote, avisos = abrir_lote(
         session, item=item, quantidade=quantidade_total, data_compra=dados.data_compra, fazenda_id=fazenda_id,
         valor_unitario=dados.valor_unitario, numero_lote=dados.numero_lote, observacao=dados.observacao,
-        usuario_id=user.id, apresentacao_id=dados.apresentacao_id,
+        usuario_id=user.id, apresentacao_id=dados.apresentacao_id, validade=dados.validade,
     )
     session.commit()
     session.refresh(lote)

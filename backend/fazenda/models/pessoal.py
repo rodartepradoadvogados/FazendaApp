@@ -53,6 +53,7 @@ class Pessoa(SQLModel, table=True):
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     nome: str = Field(index=True)
     tipo: str  # Funcionário | Veterinário | Zootecnista | Diarista | Prestador de serviços | ... (CSV de TipoPessoa.nome)
+    crmv: Optional[str] = None  # registro do veterinario (ex.: "CRMV-MG 12345"); mostrado ao escolher quem aplica
     telefone: Optional[str] = None  # legado — sempre o 1º item de `telefones`, mantido para quem lê Pessoa.email/telefone direto (ex.: destinatario_recibo)
     email: Optional[str] = None  # legado — sempre o 1º item de `emails`
     telefones: Optional[str] = None  # JSON: lista de strings — 0 a N telefones (mesmo padrão de NoticiaNews.fontes)

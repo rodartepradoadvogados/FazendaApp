@@ -553,6 +553,15 @@ def eventos_agenda(
         if linha.status == "incluido":
             incluidos_por_cronograma.setdefault(linha.cronograma_id, []).append(linha)
 
+    # Resumo do checklist (x/y) de cada agendamento — a Agenda mostra o selo
+    # "checklist pendente" (nunca some, nunca bloqueia; aplicar pede a ciência).
+    checklist_por_cron: dict[int, list[str]] = {}
+    if cronograma_ids:
+        from fazenda.models import ChecklistItem
+        for item in session.exec(select(ChecklistItem).where(ChecklistItem.cronograma_id.in_(cronograma_ids))).all():
+            checklist_por_cron.setdefault(item.cronograma_id, []).append(item.status)
+    desconsiderados = {c.id for c in cronogramas if c.checklist_desconsiderado}
+
     saida: list[dict] = []
     for cron in cronogramas:
         calendario = regras[cron.calendario_sanitario_id]
@@ -583,7 +592,10 @@ def eventos_agenda(
             "cronograma_id": cron.id, "evento_sanitario_id": calendario.evento_sanitario_id,
             "animais": [l.numero_matriz for l in incluidos],
             "modo_execucao": cron.modo_execucao, "veterinario": vet.nome if vet else None,
-            "hora": cron.hora,
+            "hora": cron.hora, "protocolo_nome": nome,
+            "checklist_total": len(checklist_por_cron.get(cron.id, [])),
+            "checklist_resolvidos": len(checklist_por_cron.get(cron.id, [])) if cron.id in desconsiderados
+            else sum(1 for st in checklist_por_cron.get(cron.id, []) if st != "pendente"),
         })
 
     return saida
@@ -885,13 +897,17 @@ def criar_agendamento(
     return cron
 
 
-def cancelar(session: Session, cronograma: CronogramaSanitario, motivo: str | None, hoje: date) -> int:
+def cancelar(
+    session: Session, cronograma: CronogramaSanitario, motivo: str | None, hoje: date, destino_animais: str = "espera",
+) -> int:
     """Cancela um agendamento (R9): os animais que vieram da janela voltam à
     lista de espera como "sugerido"; os que foram incluídos fora da janela não
     têm lista para onde voltar e ficam só no histórico do agendamento cancelado.
     Devolve quantos animais voltaram para a lista de espera."""
     if not (motivo or "").strip():
         raise CronogramaError("Informe o motivo do cancelamento")
+    if destino_animais not in ("espera", "naoSeAplica"):
+        raise CronogramaError("Destino dos animais inválido — use espera ou naoSeAplica")
     if cronograma.status == "concluido":
         raise CronogramaError("Este agendamento já foi aplicado — não é possível cancelar")
     if cronograma.status == "cancelado":
@@ -907,6 +923,16 @@ def cancelar(session: Session, cronograma: CronogramaSanitario, motivo: str | No
     cronograma.atualizado_em = datetime.utcnow()
     session.add(cronograma)
     session.flush()
+    if destino_animais == "naoSeAplica":
+        # "Desconsiderar": ninguém volta para a lista de espera; todos ficam
+        # marcados como excluídos, com o motivo do cancelamento.
+        for l in animais_por_status(session, cronograma.id, "incluido"):
+            l.status = "excluido"
+            l.motivo = motivo.strip()
+            l.data_decisao = hoje
+            session.add(l)
+        session.commit()
+        return 0
     if incluidos and calendario is not None:
         espera = cronograma_aberto_ou_novo(session, calendario, _data_devida(cronograma))
         for l in incluidos:
@@ -916,6 +942,37 @@ def cancelar(session: Session, cronograma: CronogramaSanitario, motivo: str | No
             )
     session.commit()
     return len(incluidos)
+
+
+def confirmar_rascunho(
+    session: Session, cronograma: CronogramaSanitario, data_evento: date, hora: str | None,
+    modo_execucao: str | None, veterinario_pessoa_id: int | None,
+) -> CronogramaSanitario:
+    """"Continuar montando": confirma um rascunho (em_montagem) como agendamento —
+    a partir daqui ele entra na Agenda no dia."""
+    if cronograma.status != "em_montagem":
+        raise CronogramaError("Só um agendamento em montagem pode ser confirmado")
+    if hora and not _HORA_RE.match(hora):
+        raise CronogramaError("Hora inválida — use HH:MM")
+    modo = modo_execucao or "propria"
+    if modo not in ("veterinario", "propria"):
+        raise CronogramaError("Modo inválido — use veterinario ou propria")
+    if modo == "veterinario":
+        pessoa = session.get(Pessoa, veterinario_pessoa_id) if veterinario_pessoa_id else None
+        if not pessoa or not pessoa.ativo:
+            raise CronogramaError("Selecione o veterinário")
+    if cronograma.data_original is None and cronograma.data_evento != data_evento:
+        cronograma.data_original = cronograma.data_evento
+    cronograma.data_evento = data_evento
+    cronograma.hora = hora or None
+    cronograma.modo_execucao = modo
+    cronograma.veterinario_pessoa_id = veterinario_pessoa_id if modo == "veterinario" else None
+    cronograma.status = "agendado"
+    cronograma.atualizado_em = datetime.utcnow()
+    session.add(cronograma)
+    session.commit()
+    session.refresh(cronograma)
+    return cronograma
 
 
 def cronograma_aberto_ou_novo(session: Session, calendario: CalendarioSanitario, data_devida: date) -> CronogramaSanitario:

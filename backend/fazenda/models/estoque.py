@@ -204,6 +204,8 @@ class LoteEstoque(SQLModel, table=True):
     valor_unitario: Optional[float] = None
     observacao: Optional[str] = None
     ativo: bool = True
+    # Validade do frasco/lote (aparece ao escolher o frasco no Aplicar; vencido exige ciencia).
+    validade: Optional[date] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     # De qual tamanho de embalagem (ApresentacaoEmbalagemEstoque) este lote
     # veio — pedido do usuário (04/09/2026): comprar "Agrovet frasco de

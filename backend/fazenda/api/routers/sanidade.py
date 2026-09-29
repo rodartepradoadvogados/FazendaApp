@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -16,8 +16,8 @@ from fazenda.database import get_session
 from fazenda.ordenacao import chave_numero
 from fazenda.models import (
     Animal, AplicacaoAgendada, CalendarioSanitario, CalendarioSanitarioChecklistItem, ChecklistItem, ColostragemBezerra,
-    CronogramaSanitario, CronogramaSanitarioAnimal,
-    Doenca, Estoque, EventoRealizado,
+    CronogramaSanitario, CronogramaSanitarioAnimal, CronogramaSanitarioAplicacao, CronogramaSanitarioAplicacaoAnimal,
+    CronogramaSanitarioLog, Doenca, Estoque, EventoRealizado,
     EventoSanitario, ExameDefinicao, ExameResultado, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque,
     Parto, Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
     ProtocoloSanitarioLancamento, ProtocoloSanitarioLote, QualidadeLeite, Sanidade, Usuario,
@@ -27,7 +27,9 @@ from fazenda.api.routers.cadastro import GATILHOS_EVENTO
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia, proxima_ocorrencia_a_partir_de
 from fazenda.rules.calendario_visao import montar_calendario_visual
+from fazenda.rules import aplicacao_preventiva as aplicacao_rules
 from fazenda.rules import cronograma_sanitario as cronograma_rules
+from fazenda.rules.aplicacao_preventiva import AplicacaoError
 from fazenda.rules.cronograma_sanitario import CronogramaError, cronograma_aberto
 from fazenda.rules.checklist_sanitario import (
     alerta_clinico_ativo, checklist_customizado_da_regra, estado_ocorrencia, materializar_checklist,
@@ -1026,6 +1028,13 @@ def excluir_calendario(
         select(CronogramaSanitario).where(CronogramaSanitario.calendario_sanitario_id == calendario_id)
     ).all()
     for cron in cronogramas:
+        # Aplicações do agendamento (registro, animais e trilha) — sem cascade no banco.
+        for log in session.exec(select(CronogramaSanitarioLog).where(CronogramaSanitarioLog.cronograma_id == cron.id)).all():
+            session.delete(log)
+        for ap in session.exec(select(CronogramaSanitarioAplicacao).where(CronogramaSanitarioAplicacao.cronograma_id == cron.id)).all():
+            for linha in session.exec(select(CronogramaSanitarioAplicacaoAnimal).where(CronogramaSanitarioAplicacaoAnimal.aplicacao_id == ap.id)).all():
+                session.delete(linha)
+            session.delete(ap)
         for item in session.exec(select(ChecklistItem).where(ChecklistItem.cronograma_id == cron.id)).all():
             session.delete(item)
         for animal in session.exec(select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id == cron.id)).all():
@@ -1177,7 +1186,13 @@ def _serializar_um_cronograma(session: Session, cron: CronogramaSanitario) -> di
     calendarios = {c.id: c for c in session.exec(select(CalendarioSanitario).where(CalendarioSanitario.id == cron.calendario_sanitario_id)).all()}
     eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
-    return _serializar_cronograma(session, cron, calendarios, eventos, pessoas)
+    dados = _serializar_cronograma(session, cron, calendarios, eventos, pessoas)
+    dados["checklist"] = aplicacao_rules.checklist_resumo(session, cron)
+    return dados
+
+
+def _http(e: AplicacaoError) -> HTTPException:
+    return HTTPException(status_code=e.status, detail=str(e))
 
 
 @router.get("/cronogramas/lista-espera")
@@ -1207,11 +1222,15 @@ class NovoAgendamentoIn(BaseModel):
     veterinario_pessoa_id: int | None = None
     observacao: str | None = None
     rascunho: bool = False                         # True = fica "em_montagem" (não entra na Agenda)
+    # Passo "Checklist" do assistente: veterinario/estoque/data/extras (ver
+    # ChecklistAgendamentoIn) — gravado junto, depois do agendamento existir.
+    checklist: dict | None = None
 
 
 @router.post("/cronogramas/agendamentos")
 def criar_agendamento_preventivo(
     dados: NovoAgendamentoIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
+    user: Usuario = Depends(get_current_user),
 ) -> dict:
     """"Criar agendamento" (Protocolos > Aplicar): monta o agendamento a partir
     da lista de espera, com animais da janela e animais fora da janela (com
@@ -1227,6 +1246,16 @@ def criar_agendamento_preventivo(
     except CronogramaError as e:
         session.rollback()
         raise HTTPException(status_code=400, detail=str(e))
+    aplicacao_rules.registrar_log(
+        session, cron, "Agendou" if not dados.rascunho else "Começou a montar", user=user,
+        detalhe=f"{len(dados.animais_janela) + len(dados.animais_fora)} animal(is) para {cron.data_evento.strftime('%d/%m/%Y')}",
+    )
+    session.commit()
+    if dados.checklist:
+        try:
+            aplicacao_rules.aplicar_checklist(session, cron, dados.checklist, user=user, fazenda_id=fazenda_id)
+        except AplicacaoError as e:
+            raise _http(e)
     return _serializar_um_cronograma(session, cron)
 
 
@@ -1240,35 +1269,92 @@ class AdiarAgendamentoIn(BaseModel):
 def adiar_agendamento_preventivo(
     cronograma_id: int, dados: AdiarAgendamentoIn,
     session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
+    user: Usuario = Depends(get_current_user),
 ) -> dict:
-    """Adiar (R9): muda a data/hora do agendamento e mantém os animais."""
+    """Adiar (R9): muda a data/hora do agendamento e mantém os animais. No
+    preventivo o motivo é obrigatório (chips na tela)."""
     cron = _cronograma_da_fazenda(session, cronograma_id, fazenda_id)
+    if not (dados.motivo or "").strip():
+        raise HTTPException(status_code=400, detail="Informe o motivo do adiamento")
+    antes = cron.data_evento
     try:
-        cronograma_rules.adiar(session, cron, dados.nova_data, dados.motivo, manter_agendamento=True, hora=dados.hora)
+        cronograma_rules.adiar(session, cron, dados.nova_data, dados.motivo.strip(), manter_agendamento=True, hora=dados.hora)
     except CronogramaError as e:
         session.rollback()
         raise HTTPException(status_code=400, detail=str(e))
+    aplicacao_rules.registrar_log(
+        session, cron, "Adiou", user=user, motivo=dados.motivo.strip(),
+        detalhe=f"de {antes.strftime('%d/%m/%Y')} para {dados.nova_data.strftime('%d/%m/%Y')}{f' às {dados.hora}' if dados.hora else ''}",
+    )
+    session.commit()
     return _serializar_um_cronograma(session, cron)
 
 
 class CancelarAgendamentoIn(BaseModel):
     motivo: str
+    # O que fazer com os animais: voltam à lista de espera (padrão) ou são desconsiderados.
+    destino_animais: str = "espera"
+    # Destino da conta a pagar vinculada ("manter" | "cancelar"). Os vínculos
+    # financeiros ainda não existem (fatias 9-10): hoje só fica registrado no log.
+    destino_conta: str | None = None
 
 
 @router.post("/cronogramas/{cronograma_id}/cancelar")
 def cancelar_agendamento_preventivo(
     cronograma_id: int, dados: CancelarAgendamentoIn,
     session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
+    user: Usuario = Depends(get_current_user),
 ) -> dict:
     """Cancelar (R9): o agendamento sai da Agenda e os animais da janela voltam
     à lista de espera; o motivo fica registrado."""
     cron = _cronograma_da_fazenda(session, cronograma_id, fazenda_id)
     try:
-        devolvidos = cronograma_rules.cancelar(session, cron, dados.motivo, date.today())
+        devolvidos = cronograma_rules.cancelar(session, cron, dados.motivo, date.today(), dados.destino_animais)
     except CronogramaError as e:
         session.rollback()
         raise HTTPException(status_code=400, detail=str(e))
+    aplicacao_rules.registrar_log(
+        session, cron, "Cancelou", user=user, motivo=dados.motivo.strip(),
+        detalhe=(f"{devolvidos} animal(is) de volta à lista de espera" if dados.destino_animais == "espera"
+                 else "animais desconsiderados (não voltam à lista de espera)")
+        + (f" · conta a pagar: {dados.destino_conta}" if dados.destino_conta else ""),
+    )
+    session.commit()
     return {**_serializar_um_cronograma(session, cron), "devolvidos": devolvidos}
+
+
+class ConfirmarRascunhoIn(BaseModel):
+    data_evento: date
+    hora: str | None = None
+    modo_execucao: str | None = None
+    veterinario_pessoa_id: int | None = None
+    checklist: dict | None = None
+
+
+@router.post("/cronogramas/{cronograma_id}/confirmar")
+def confirmar_rascunho_agendamento(
+    cronograma_id: int, dados: ConfirmarRascunhoIn, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita), user: Usuario = Depends(get_current_user),
+) -> dict:
+    """Continuar montando: confirma o rascunho (em montagem) como agendamento."""
+    cron = _cronograma_da_fazenda(session, cronograma_id, fazenda_id)
+    try:
+        cronograma_rules.confirmar_rascunho(
+            session, cron, dados.data_evento, dados.hora, dados.modo_execucao, dados.veterinario_pessoa_id,
+        )
+    except CronogramaError as e:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    aplicacao_rules.registrar_log(
+        session, cron, "Agendou", user=user, detalhe=f"confirmado para {cron.data_evento.strftime('%d/%m/%Y')}",
+    )
+    session.commit()
+    if dados.checklist:
+        try:
+            aplicacao_rules.aplicar_checklist(session, cron, dados.checklist, user=user, fazenda_id=fazenda_id)
+        except AplicacaoError as e:
+            raise _http(e)
+    return _serializar_um_cronograma(session, cron)
 
 
 class DesconsiderarListaEsperaIn(BaseModel):
@@ -1290,6 +1376,159 @@ def desconsiderar_lista_espera(
         session.rollback()
         raise HTTPException(status_code=400, detail=str(e))
     return {"desconsiderados": n}
+
+
+# ---------------------------------------------------------------------------
+# Aplicar um agendamento preventivo (fatia 8) — Protocolos > Acompanhamento e
+# a Agenda usam ESTE endpoint (só muda o `canal`). Ver
+# fazenda/rules/aplicacao_preventiva.py.
+# ---------------------------------------------------------------------------
+class NaoAplicadoIn(BaseModel):
+    numero_matriz: str
+    motivo: str | None = None
+    destino: str = "espera"                      # "espera" | "naoSeAplica"
+
+
+class AplicarAgendamentoIn(BaseModel):
+    canal: str = "Protocolos"                    # "Protocolos" | "Agenda"
+    aplicador_pessoa_id: int                     # obrigatório (B19/TB: só veterinário)
+    animais_aplicados: list[str] = []
+    nao_aplicados: list[NaoAplicadoIn] = []
+    data_aplicacao: date | None = None           # padrão hoje; nunca futura
+    hora: str | None = None
+    estoque_id: int | None = None                # produto/frasco do estoque
+    lote_id: int | None = None
+    ciente_vencido: bool = False
+    desconsiderar_estoque: bool = False          # frasco do veterinário: nada é baixado
+    motivo_desconsiderar_estoque: str | None = None
+    lote_veterinario: str | None = None
+    validade_veterinario: date | None = None
+    pesos: dict[str, float] | None = None
+    custo: float | None = None
+    ciencia_pendentes: bool = False
+    ciencia_motivo: str | None = None
+    observacao: str | None = None
+    chave_idempotencia: str | None = None
+
+
+def _resposta_agendamento(session: Session, resultado: dict) -> dict:
+    return {**resultado, "agendamento": _serializar_um_cronograma(session, resultado["agendamento"])}
+
+
+@router.get("/cronogramas/acompanhamento")
+def acompanhamento_preventivo(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Protocolos > Acompanhamento: o que já está agendado (ou em montagem),
+    com checklist x/y, responsável e estado. Lista de espera nunca entra."""
+    return aplicacao_rules.acompanhamento(session, fazenda_id_seguro(fazenda_id))
+
+
+@router.get("/cronogramas/concluidos")
+def concluidos_preventivo(
+    calendario_id: int | None = None, de: date | None = None, ate: date | None = None,
+    fora_janela: bool = False, q: str | None = None,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Protocolos > Concluídos: aplicações (com selo de exceção/retroativo,
+    inclusive as estornadas) e agendamentos cancelados."""
+    return aplicacao_rules.concluidos(
+        session, fazenda_id_seguro(fazenda_id), calendario_id=calendario_id, de=de, ate=ate, fora_janela=fora_janela, q=q,
+    )
+
+
+@router.get("/cronogramas/aplicacoes/{aplicacao_id}")
+def detalhe_aplicacao_preventiva(
+    aplicacao_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    try:
+        return aplicacao_rules.detalhe_aplicacao(session, aplicacao_id, fazenda_id_seguro(fazenda_id))
+    except AplicacaoError as e:
+        raise _http(e)
+
+
+@router.get("/cronogramas/{cronograma_id}/aplicar-contexto")
+def contexto_aplicar_agendamento(
+    cronograma_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Dados da gaveta Aplicar (a mesma em Protocolos e na Agenda)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    cron = _cronograma_da_fazenda(session, cronograma_id, fazenda_id)
+    return aplicacao_rules.contexto_aplicar(session, cron, fazenda_id)
+
+
+@router.post("/cronogramas/{cronograma_id}/aplicar")
+def aplicar_agendamento_preventivo(
+    cronograma_id: int, dados: AplicarAgendamentoIn, request: Request,
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Aplica o agendamento (total ou parcial): baixa de estoque, Sanidade,
+    carência, ciência dos pendentes, log com quem/quando/canal. Idempotente por
+    `chave_idempotencia` (ou cabeçalho Idempotency-Key)."""
+    cron = _cronograma_da_fazenda(session, cronograma_id, fazenda_id)
+    corpo = dados.model_dump()
+    corpo["chave_idempotencia"] = dados.chave_idempotencia or request.headers.get("idempotency-key")
+    try:
+        resultado = aplicacao_rules.aplicar(session, cron, corpo, user=user, fazenda_id=fazenda_id)
+    except AplicacaoError as e:
+        session.rollback()
+        raise _http(e)
+    return {**_resposta_agendamento(session, resultado), "desfazer_segundos": aplicacao_rules.DESFAZER_SEGUNDOS}
+
+
+@router.post("/cronogramas/aplicacoes/{aplicacao_id}/desfazer")
+def desfazer_aplicacao_preventiva(
+    aplicacao_id: int, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Desfazer: até 10 s depois de aplicar, sem motivo (depois, só Estornar)."""
+    try:
+        resultado = aplicacao_rules.desfazer(
+            session, aplicacao_id, user=user, fazenda_id=fazenda_id, admin=getattr(user, "papel", None) == "admin",
+        )
+    except AplicacaoError as e:
+        session.rollback()
+        raise _http(e)
+    return _resposta_agendamento(session, resultado)
+
+
+class EstornarAplicacaoIn(BaseModel):
+    motivo: str
+
+
+@router.post("/cronogramas/aplicacoes/{aplicacao_id}/estornar", dependencies=[Depends(exigir_admin)])
+def estornar_aplicacao_preventiva(
+    aplicacao_id: int, dados: EstornarAplicacaoIn, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Estornar (só administrador, motivo obrigatório): a original fica
+    preservada como Estornada; estoque e agendamento voltam."""
+    try:
+        resultado = aplicacao_rules.estornar(session, aplicacao_id, dados.motivo, user=user, fazenda_id=fazenda_id)
+    except AplicacaoError as e:
+        session.rollback()
+        raise _http(e)
+    return _resposta_agendamento(session, resultado)
+
+
+@router.put("/cronogramas/{cronograma_id}/checklist")
+def editar_checklist_agendamento(
+    cronograma_id: int, dados: dict, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Checklist do agendamento: veterinário confirmado/desconsiderado (motivo),
+    estoque vinculado/desconsiderado (motivo, lote/validade do veterinário),
+    data, itens existentes (cumprir/pular/reabrir) e itens extras."""
+    cron = _cronograma_da_fazenda(session, cronograma_id, fazenda_id)
+    if cron.status in ("concluido", "cancelado"):
+        raise HTTPException(status_code=400, detail="Este agendamento já foi encerrado — o checklist não muda mais")
+    try:
+        aplicacao_rules.aplicar_checklist(session, cron, dados, user=user, fazenda_id=fazenda_id)
+    except AplicacaoError as e:
+        session.rollback()
+        raise _http(e)
+    return _serializar_um_cronograma(session, cron)
 
 
 def _tipo_evento(evento: EventoSanitario | None) -> str:

@@ -258,7 +258,7 @@ def abrir_lote(
     session: Session, *, item: Estoque, quantidade: float, data_compra: date, fazenda_id: int | None,
     valor_unitario: float | None = None, numero_lote: str | None = None, observacao: str | None = None,
     usuario_id: int | None = None, apresentacao_id: int | None = None,
-    origem_tipo: str | None = None, origem_id: int | None = None,
+    origem_tipo: str | None = None, origem_id: int | None = None, validade: date | None = None,
 ) -> tuple[LoteEstoque, list[str]]:
     """Compra/entrada que abre um lote NOVO (pedido do usuário, 01/09/2026:
     "registrar/comprar um medicamento escolhendo um tamanho de frasco/
@@ -278,7 +278,7 @@ def abrir_lote(
     lote = LoteEstoque(
         fazenda_id=fazenda_id, estoque_id=item.id, numero_lote=numero_lote, data_compra=data_compra,
         quantidade_comprada=quantidade, quantidade_restante=0, valor_unitario=valor_unitario,
-        observacao=observacao, apresentacao_id=apresentacao_id,
+        observacao=observacao, apresentacao_id=apresentacao_id, validade=validade,
     )
     session.add(lote)
     session.flush()

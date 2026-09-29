@@ -703,6 +703,107 @@ class CronogramaSanitarioAnimal(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Aplicação de um agendamento preventivo (fatia 8 do planejamento unificado —
+# docs/agents/auditoria-preventivo-agenda/planejamento/06-planejamento-unificado.md,
+# secao 7). UM registro por aplicar (Protocolos > Acompanhamento e Agenda usam o
+# mesmo endpoint), com quem/quando/canal, frasco/lote/validade, ciencia dos
+# itens pendentes do checklist, carencia e, se preciso, o estorno — a original
+# nunca e apagada: vira "estornada". Alimenta Protocolos > Concluidos.
+# ---------------------------------------------------------------------------
+class CronogramaSanitarioAplicacao(SQLModel, table=True):
+    __tablename__ = "cronograma_sanitario_aplicacao"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    cronograma_id: int = Field(foreign_key="cronograma_sanitario.id", index=True)
+    # "aplicada" | "estornada" (original preservada; ver tipo_estorno).
+    estado: str = Field(default="aplicada", index=True)
+    # Onde foi aplicada: "Protocolos" | "Agenda".
+    canal: str = "Protocolos"
+    aplicador_pessoa_id: Optional[int] = Field(default=None, foreign_key="pessoa.id")
+    aplicador_nome: Optional[str] = None      # copia na hora (o cadastro pode mudar depois)
+    aplicador_crmv: Optional[str] = None
+    data_aplicacao: date
+    hora: Optional[str] = None                # "HH:MM"
+    produto: Optional[str] = None
+    unidade: Optional[str] = None
+    via: Optional[str] = None
+    dose_total: Optional[float] = None
+    # Frasco/lote usado (baixa de estoque) ...
+    estoque_id: Optional[int] = Field(default=None, foreign_key="estoque.id")
+    lote_id: Optional[int] = Field(default=None, foreign_key="lote_estoque.id")
+    lote_texto: Optional[str] = None
+    validade: Optional[date] = None
+    frasco_vencido_ciente: bool = False
+    # ... ou "desconsiderar estoque" (frasco do veterinario): nada e baixado.
+    estoque_desconsiderado: bool = False
+    estoque_motivo: Optional[str] = None
+    custo: Optional[float] = None
+    carencia_leite_ate: Optional[date] = None
+    carencia_carne_ate: Optional[date] = None
+    carencia_texto: Optional[str] = None
+    # Ciencia dos itens pendentes do checklist (aplicar nunca e bloqueado por
+    # eles; a ciencia fica gravada com quem e quando). JSON: [{chave, nome}].
+    ciencia_itens: Optional[str] = None
+    ciencia_motivo: Optional[str] = None
+    ciencia_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    ciencia_em: Optional[datetime] = None
+    retroativo: bool = False
+    # JSON: lista de textos de excecao (fora da janela, frasco do veterinario...).
+    excecoes: Optional[str] = None
+    observacao: Optional[str] = None
+    chave_idempotencia: Optional[str] = Field(default=None, index=True)
+    registrado_por_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    registrado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Estorno: "desfazer" (<= 10 s, sem motivo) | "estorno" (admin, com motivo).
+    tipo_estorno: Optional[str] = None
+    estornado_por_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    estornado_em: Optional[datetime] = None
+    motivo_estorno: Optional[str] = None
+
+
+class CronogramaSanitarioAplicacaoAnimal(SQLModel, table=True):
+    """Um animal de uma aplicacao — aplicado (com dose, peso e a linha de
+    Sanidade gerada) ou nao aplicado (com motivo e destino)."""
+
+    __tablename__ = "cronograma_sanitario_aplicacao_animal"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    aplicacao_id: int = Field(foreign_key="cronograma_sanitario_aplicacao.id", index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    numero_matriz: str = Field(index=True)
+    resultado: str = "aplicado"               # aplicado | nao_aplicado
+    origem: str = "janela"                    # janela | fora_janela (copia da linha do agendamento)
+    motivo_origem: Optional[str] = None
+    dose: Optional[float] = None
+    unidade: Optional[str] = None
+    peso_kg: Optional[float] = None
+    peso_estimado: bool = False
+    # Sem FK de proposito: estornar apaga a linha de Sanidade; o registro aqui fica.
+    sanidade_id: Optional[int] = None
+    motivo_nao: Optional[str] = None
+    destino_nao: Optional[str] = None         # espera | naoSeAplica
+
+
+class CronogramaSanitarioLog(SQLModel, table=True):
+    """Trilha imutavel do agendamento preventivo: quem, quando, canal, motivo."""
+
+    __tablename__ = "cronograma_sanitario_log"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    cronograma_id: int = Field(foreign_key="cronograma_sanitario.id", index=True)
+    aplicacao_id: Optional[int] = Field(default=None, foreign_key="cronograma_sanitario_aplicacao.id", index=True)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    usuario_nome: Optional[str] = None
+    acao: str                                 # ex.: "Aplicou", "Desfez", "Estornou", "Adiou", "Cancelou"
+    canal: Optional[str] = None
+    motivo: Optional[str] = None
+    detalhe: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Checklist da Ocorrência — Fase 0, passo 3 do redesenho do evento sanitário
 # (docs/redesenho-evento-sanitario.md, seção 7). `CronogramaSanitario` É a
 # "Ocorrência" do redesenho (entidade generalizada, ver seção 1 do
