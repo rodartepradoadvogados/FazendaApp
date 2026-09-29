@@ -152,9 +152,9 @@ export function ConcluidosPreventivo({ idInicial }: { idInicial?: number | null 
                     {i.estado === "cancelado" ? "—" : i.custo == null ? <span style={{ color: "var(--amber)", fontWeight: 700 }}>a informar</span> : brl(i.custo)}
                     {i.financeiro && i.financeiro.contas_ativas > 0 && (
                       <a href={i.financeiro.link_contas_a_pagar} onClick={(e) => e.stopPropagation()} className="lnk" title="Abrir Contas a pagar"
-                         style={{ ...notaStyle, display: "block", textDecoration: "underline", color: "var(--dourado-light)" }}>conta a pagar {brl(i.financeiro.conta_a_pagar_total)}</a>
+                         style={{ ...notaStyle, display: "block", textDecoration: "underline", color: "var(--dourado-light)", whiteSpace: "nowrap" }}>conta a pagar {brl(i.financeiro.conta_a_pagar_total)}</a>
                     )}
-                    {i.financeiro && i.financeiro.pagamento_vinculado_total > 0 && <span style={{ ...notaStyle, display: "block" }}>pagamento vinculado {brl(i.financeiro.pagamento_vinculado_total)}</span>}
+                    {i.financeiro && i.financeiro.pagamento_vinculado_total > 0 && <span style={{ ...notaStyle, display: "block", whiteSpace: "nowrap" }}>pagamento vinculado {brl(i.financeiro.pagamento_vinculado_total)}</span>}
                     {i.financeiro && i.financeiro.contas.some((c) => c.estado === "cancelado") && i.financeiro.contas_ativas === 0 && <span style={{ ...notaStyle, display: "block" }}>conta cancelada</span>}
                   </td>
                   <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: "nowrap" }}>

@@ -43,6 +43,9 @@ export function num(n: number | null | undefined, casas = 2): string {
   if (n == null) return "—";
   return n.toLocaleString("pt-BR", { maximumFractionDigits: casas });
 }
+/** "1 dose" / "7 doses": a unidade de estoque vem no singular. */
+export const unidadePl = (un: string | null | undefined, n: number): string =>
+  !un || n === 1 ? (un || "") : un === "dose" ? "doses" : un === "unidade" ? "unidades" : un;
 export function brl(n: number | null | undefined): string {
   return n == null ? "a informar" : n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }

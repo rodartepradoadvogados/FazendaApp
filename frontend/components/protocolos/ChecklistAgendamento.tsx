@@ -225,6 +225,7 @@ export function ChecklistMontagem({
             calendarioId={calendarioId} animais={animais || []} dataEvento={dataEvento}
             vetNome={veterinarios.find((v) => String(v.id) === draft.vet.pessoaId)?.nome || null}
             draft={draft.financeiro} onChange={(financeiro) => set({ financeiro })}
+            estoqueDesc={draft.estoque.estado === "desconsiderado" && textoMotivo(draft.estoque.motivo, draft.estoque.outro) ? { motivo: textoMotivo(draft.estoque.motivo, draft.estoque.outro) } : null}
           />
         </div>
       )}

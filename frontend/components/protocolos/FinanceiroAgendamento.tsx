@@ -21,7 +21,7 @@ import {
   type FinanceiroChecklistPayload, type NecessidadeInsumo, type PagamentoCandidato, type ResumoFinanceiroAg, type VinculoAg,
 } from "@/lib/api";
 import {
-  brl, Chips, dataCurta, inputStyle, labelStyle, maisDiasIso, notaStyle, num, Pill, plural, textoMotivo,
+  brl, Chips, dataCurta, inputStyle, labelStyle, maisDiasIso, notaStyle, num, Pill, plural, textoMotivo, unidadePl,
 } from "./preventivoComum";
 
 const CATEGORIA_COTACAO = "Medicamentos e produtos veterinários";
@@ -43,6 +43,19 @@ export function financeiroParaPayload(d: FinanceiroDraft): FinanceiroChecklistPa
   if (d.pagamento) p.pagamento = { pagamento_id: d.pagamento.pagamento_id, modo: d.pagamento.modo };
   if (d.contas.length) p.contas = d.contas.map(({ rotulo: _r, ...c }) => c);
   return Object.keys(p).length ? p : undefined;
+}
+
+
+/** No assistente o estoque desconsiderado ainda é só rascunho: aplica o efeito dele (compra "Não necessária"; frasco do veterinário = custo a informar). */
+export type EstoqueDescRascunho = { motivo: string } | null;
+export function comEstoqueDesconsiderado(nec: NecessidadeInsumo, d: EstoqueDescRascunho): NecessidadeInsumo {
+  if (!d) return nec;
+  const frascoVet = d.motivo.trim().toLowerCase() === "frasco do veterinário";
+  return {
+    ...nec, estoque_desconsiderado: true, estoque_motivo: d.motivo, cobre: false,
+    custo_previsto: frascoVet ? null : nec.custo_previsto, custo_a_informar: frascoVet ? true : nec.custo_a_informar,
+    custo_motivo: frascoVet ? "Frasco do veterinário: sem custo calculado" : nec.custo_motivo,
+  };
 }
 
 // ─────────────────────────── apresentação enxuta (Conferir, pós-aplicação, Concluídos) ───────────────────────────
@@ -165,8 +178,8 @@ function FormCompra({ nec, dataEvento, onSubmit, onCancelar, salvando, rotuloBot
     <div className="card" role="group" aria-label="Comunicar compra" style={{ display: "flex", flexDirection: "column", gap: "0.7rem", borderLeft: "4px solid var(--dourado)" }}>
       <h4 className="card-header" style={{ margin: 0 }}>Comunicar compra</h4>
       {nec.falta > 0
-        ? <Aviso>Precisa de {num(nec.precisa)} {un} · saldo {num(nec.saldo ?? 0)} · <b>faltam {num(nec.falta)} {un}</b>.</Aviso>
-        : <p style={{ ...notaStyle, margin: 0 }}>{nec.precisa ? `O estoque cobre (${num(nec.saldo ?? 0)} ${un}). Comunique só se quiser repor.` : "Sem animais no agendamento ainda."}</p>}
+        ? <Aviso>Precisa de {num(nec.precisa)} {unidadePl(un, nec.precisa)} · saldo {num(nec.saldo ?? 0)} · <b>faltam {num(nec.falta)} {unidadePl(un, nec.falta)}</b>.</Aviso>
+        : <p style={{ ...notaStyle, margin: 0 }}>{nec.precisa ? `O estoque cobre (${num(nec.saldo ?? 0)} ${unidadePl(un, nec.saldo ?? 0)}). Comunique só se quiser repor.` : "Sem animais no agendamento ainda."}</p>}
       {nec.aproximada && <p style={{ ...notaStyle, margin: 0 }}>Quantidade aproximada: parte das doses vem do peso estimado do lote.</p>}
       <Chips idBase="fc-modo" rotulo="O que fazer" opcoes={["Pedir cotação", "Fazer o pedido direto"]} valor={modo === "cotacao" ? "Pedir cotação" : "Fazer o pedido direto"}
              onChange={(v) => setModo(v === "Pedir cotação" ? "cotacao" : "pedido")} />
@@ -236,11 +249,11 @@ function FormPagamento({ nec, candidatos, carregando, onSubmit, onCancelar, onLa
       {!!candidatos?.length && (
         <div role="radiogroup" aria-label="Compras já pagas do mesmo produto" style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
           {candidatos.map((p) => (
-            <label key={p.id} style={{ display: "flex", gap: "0.6rem", alignItems: "flex-start", cursor: "pointer", padding: "0.5rem 0.7rem", border: `1px solid ${sel === p.id ? "var(--pill-active-border)" : "var(--border)"}`, borderRadius: "var(--r-sm)", background: sel === p.id ? "var(--pill-active-bg)" : "var(--surface-2)" }}>
+            <label key={p.id} style={{ display: "flex", gap: "0.6rem", alignItems: "flex-start", cursor: "pointer", padding: "0.5rem 0.7rem", border: `1px solid ${sel === p.id ? "var(--dourado)" : "var(--border)"}`, borderLeft: sel === p.id ? "4px solid var(--dourado)" : undefined, borderRadius: "var(--r-sm)", background: "var(--surface-2)" }}>
               <input type="radio" name="fp-pg" checked={sel === p.id} onChange={() => setSel(p.id)} style={{ marginTop: 3 }} />
               <span style={{ flex: 1, fontSize: "0.85rem" }}>
                 <b>{p.fornecedor || "Fornecedor"}</b> · {dataCurta(p.data_pagamento)} · {brl(p.valor)}{p.numero_lancamento ? ` · ${p.numero_lancamento}` : ""}
-                <span style={{ ...notaStyle, display: "block" }}>{p.descricao}{p.doses ? ` · cobre ${num(p.doses)} ${un}` : ""}</span>
+                <span style={{ ...notaStyle, display: "block" }}>{p.descricao}{p.doses ? ` · cobre ${num(p.doses)} ${unidadePl(un, p.doses)}` : ""}</span>
                 {p.usado > 0 && <span style={{ ...notaStyle, display: "block" }}>Já vinculado a outros agendamentos: {brl(p.usado)} ({Math.round((p.usado / p.valor) * 100)}%) · resta {brl(p.resta)}</span>}
               </span>
               <Pill cor="var(--green-light)"><Check size={11} />pago</Pill>
@@ -252,7 +265,7 @@ function FormPagamento({ nec, candidatos, carregando, onSubmit, onCancelar, onLa
         <div className="card" style={{ padding: "0.6rem 0.8rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
           <p style={{ margin: 0, fontSize: "0.85rem" }}>
             {proporcionalDisponivel
-              ? <>Este agendamento usa {num(nec.precisa)} {un} ({brl(prop)}, {Math.round(((prop || 0) / c.valor) * 100)}% do pagamento).</>
+              ? <>Este agendamento usa {num(nec.precisa)} {unidadePl(un, nec.precisa)} ({brl(prop)}, {Math.round(((prop || 0) / c.valor) * 100)}% do pagamento).</>
               : <>Não sei quantas doses este pagamento cobre: só dá para vincular o valor que resta.</>}
           </p>
           {proporcionalDisponivel && prop! > c.resta + 0.001 && <Aviso>O proporcional passa do que ainda resta neste pagamento ({brl(c.resta)}); vai vincular só o que resta.</Aviso>}
@@ -438,9 +451,9 @@ export function FinanceiroVivo({ cronogramaId, dataEvento, vetNome, readOnly, on
         )}>
         <p style={{ ...notaStyle, margin: 0 }}>
           {r.compra.estado === "nao_necessaria"
-            ? (nec.estoque_desconsiderado ? "Não necessária: o estoque foi desconsiderado (frasco de fora)." : `Não necessária: o estoque cobre (saldo ${num(nec.saldo ?? 0)} ${un} para ${num(nec.precisa)} ${un}).`)
+            ? (nec.estoque_desconsiderado ? "Não necessária: o estoque foi desconsiderado (frasco de fora)." : `Não necessária: o estoque cobre (saldo ${num(nec.saldo ?? 0)} ${unidadePl(un, nec.saldo ?? 0)} para ${num(nec.precisa)} ${unidadePl(un, nec.precisa)}).`)
             : r.compra.estado === "ok" && !compras.length ? "Marcado como já comprado, sem cotação nem pedido no sistema."
-            : <>Precisa de {num(nec.precisa)} {un} · saldo {nec.saldo == null ? "—" : `${num(nec.saldo)} ${un}`}{nec.falta > 0 ? <b style={{ color: "var(--amber)" }}> · faltam {num(nec.falta)} {un}</b> : ""}.</>}
+            : <>Precisa de {num(nec.precisa)} {unidadePl(un, nec.precisa)} · saldo {nec.saldo == null ? "—" : `${num(nec.saldo)} ${unidadePl(un, nec.saldo)}`}{nec.falta > 0 ? <b style={{ color: "var(--amber)" }}> · faltam {num(nec.falta)} {unidadePl(un, nec.falta)}</b> : ""}.</>}
         </p>
         {compras.map((v) => <VinculoLinha key={v.id} v={v} readOnly={!!readOnly} ocupado={ocupado} onEncerrar={v.tipo === "cotacao" ? encerrar : undefined} />)}
         {aberto === "compra" && (
@@ -492,8 +505,9 @@ export function FinanceiroVivo({ cronogramaId, dataEvento, vetNome, readOnly, on
 }
 
 // ─────────────────────────── modo RASCUNHO (assistente Criar agendamento) ───────────────────────────
-export function FinanceiroRascunho({ calendarioId, animais, dataEvento, vetNome, draft, onChange }: {
+export function FinanceiroRascunho({ calendarioId, animais, dataEvento, vetNome, draft, onChange, estoqueDesc = null }: {
   calendarioId: number; animais: string[]; dataEvento: string; vetNome: string | null; draft: FinanceiroDraft; onChange: (d: FinanceiroDraft) => void;
+  estoqueDesc?: EstoqueDescRascunho;
 }) {
   const [previa, setPrevia] = useState<{ necessidade: NecessidadeInsumo; pagamentos: PagamentoCandidato[] } | null>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -506,7 +520,7 @@ export function FinanceiroRascunho({ calendarioId, animais, dataEvento, vetNome,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [calendarioId, chave]);
   if (!previa) return erro ? <p role="alert" style={{ color: "var(--red)", fontSize: "0.85rem" }}>{erro}</p> : <p style={notaStyle}>Calculando a necessidade do insumo…</p>;
-  const nec = previa.necessidade;
+  const nec = comEstoqueDesconsiderado(previa.necessidade, estoqueDesc);
   const un = nec.unidade_estoque || nec.unidade || "";
   const set = (p: Partial<FinanceiroDraft>) => onChange({ ...draft, ...p });
   const compraEstado: EstadoItemFin = draft.compra ? "ok" : nec.cobre || nec.estoque_desconsiderado ? "nao_necessaria" : "pendente";
@@ -515,7 +529,7 @@ export function FinanceiroRascunho({ calendarioId, animais, dataEvento, vetNome,
       <div className="card" style={{ padding: "0.6rem 0.9rem", marginBottom: "0.4rem", fontSize: "0.84rem" }}>
         <b>Custo previsto:</b> {nec.custo_previsto != null ? <b>{brl(nec.custo_previsto)}</b> : <span style={{ color: "var(--amber)", fontWeight: 700 }}>a informar</span>}
         {nec.custo_previsto != null ? <span style={notaStyle}> · {num(nec.precisa)} {nec.unidade || ""} × {brl(nec.preco_unitario)}</span> : nec.custo_motivo ? <span style={notaStyle}> · {nec.custo_motivo}</span> : null}
-        <span style={{ ...notaStyle, display: "block" }}>{nec.animais} {plural(nec.animais, "animal", "animais")} · saldo {nec.saldo == null ? "—" : `${num(nec.saldo)} ${un}`}{nec.falta > 0 ? ` · faltam ${num(nec.falta)} ${un}` : ""}</span>
+        <span style={{ ...notaStyle, display: "block" }}>{nec.animais} {plural(nec.animais, "animal", "animais")} · saldo {nec.saldo == null ? "—" : `${num(nec.saldo)} ${unidadePl(un, nec.saldo)}`}{nec.falta > 0 ? ` · faltam ${num(nec.falta)} ${unidadePl(un, nec.falta)}` : ""}</span>
       </div>
 
       <Linha icone={<ShoppingCart size={16} />} titulo="Comunicação de compra/cotação" estado={compraEstado}
@@ -527,9 +541,9 @@ export function FinanceiroRascunho({ calendarioId, animais, dataEvento, vetNome,
           </>
         )}>
         <p style={{ ...notaStyle, margin: 0 }}>
-          {draft.compra ? <>Ao criar o agendamento: <b>{draft.compra.rotulo}</b>{draft.compra.quantidade ? ` · ${num(draft.compra.quantidade)} ${un}` : ""}.</>
-            : compraEstado === "nao_necessaria" ? (nec.estoque_desconsiderado ? "Não necessária: o estoque foi desconsiderado." : `Não necessária: o estoque cobre (saldo ${num(nec.saldo ?? 0)} ${un}).`)
-            : <>Precisa de {num(nec.precisa)} {un} · saldo {nec.saldo == null ? "—" : `${num(nec.saldo)} ${un}`}<b style={{ color: "var(--amber)" }}>{nec.falta > 0 ? ` · faltam ${num(nec.falta)} ${un}` : ""}</b>.</>}
+          {draft.compra ? <>Ao criar o agendamento: <b>{draft.compra.rotulo}</b>{draft.compra.quantidade ? ` · ${num(draft.compra.quantidade)} ${unidadePl(un, draft.compra.quantidade)}` : ""}.</>
+            : compraEstado === "nao_necessaria" ? (nec.estoque_desconsiderado ? "Não necessária: o estoque foi desconsiderado." : `Não necessária: o estoque cobre (saldo ${num(nec.saldo ?? 0)} ${unidadePl(un, nec.saldo ?? 0)}).`)
+            : <>Precisa de {num(nec.precisa)} {unidadePl(un, nec.precisa)} · saldo {nec.saldo == null ? "—" : `${num(nec.saldo)} ${unidadePl(un, nec.saldo)}`}<b style={{ color: "var(--amber)" }}>{nec.falta > 0 ? ` · faltam ${num(nec.falta)} ${unidadePl(un, nec.falta)}` : ""}</b>.</>}
         </p>
         {aberto === "compra" && (
           <FormCompra nec={nec} dataEvento={dataEvento} rotuloBotao="Usar esta compra" onCancelar={() => setAberto(null)}
@@ -572,8 +586,9 @@ export function FinanceiroRascunho({ calendarioId, animais, dataEvento, vetNome,
 
 // ─────────────────────────── Conferir (passo 4 do assistente) ───────────────────────────
 /** Custo previsto e o que vai acontecer no financeiro ao criar o agendamento. */
-export function ConferirFinanceiro({ calendarioId, animais, draft }: { calendarioId: number; animais: string[]; draft: FinanceiroDraft }) {
-  const [nec, setNec] = useState<NecessidadeInsumo | null>(null);
+export function ConferirFinanceiro({ calendarioId, animais, draft, estoqueDesc = null }: { calendarioId: number; animais: string[]; draft: FinanceiroDraft; estoqueDesc?: EstoqueDescRascunho }) {
+  const [necBase, setNec] = useState<NecessidadeInsumo | null>(null);
+  const nec = necBase ? comEstoqueDesconsiderado(necBase, estoqueDesc) : null;
   const chave = animais.join(",");
   useEffect(() => {
     let vivo = true;
@@ -591,7 +606,7 @@ export function ConferirFinanceiro({ calendarioId, animais, draft }: { calendari
           {!nec ? "calculando…" : nec.custo_previsto != null ? <><b>{brl(nec.custo_previsto)}</b> ({num(nec.precisa)} {nec.unidade || ""} × {brl(nec.preco_unitario)})</>
             : <><b style={{ color: "var(--amber)" }}>a informar</b>{nec.custo_motivo ? ` · ${nec.custo_motivo}` : ""}</>}
         </li>
-        {nec && <li>Estoque: saldo {nec.saldo == null ? "—" : `${num(nec.saldo)} ${un}`} para {num(nec.precisa)} {un}{nec.falta > 0 ? <b style={{ color: "var(--amber)" }}> · faltam {num(nec.falta)} {un}</b> : " · cobre"}.</li>}
+        {nec && <li>Estoque: saldo {nec.saldo == null ? "—" : `${num(nec.saldo)} ${unidadePl(un, nec.saldo)}`} para {num(nec.precisa)} {unidadePl(un, nec.precisa)}{nec.falta > 0 ? <b style={{ color: "var(--amber)" }}> · faltam {num(nec.falta)} {unidadePl(un, nec.falta)}</b> : " · cobre"}.</li>}
         <li>Compra: {draft.compra ? draft.compra.rotulo : nec && (nec.cobre || nec.estoque_desconsiderado) ? "não necessária" : "pendente (resolva no Acompanhamento)"}.</li>
         <li>Pagamento já realizado: {draft.pagamento ? `vincular ${draft.pagamento.rotulo}${draft.pagamento.valor != null ? ` (${brl(draft.pagamento.valor)})` : ""}` : "nenhum vinculado"}.</li>
         <li>Conta a pagar: {draft.contas.length ? draft.contas.map((c) => `${c.subtipo === "honorario" ? "honorário" : "produtos"} · ${c.rotulo}`).join("; ") : "nenhuma a lançar"}.</li>

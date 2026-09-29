@@ -20,6 +20,7 @@ import {
   ChecklistMontagem, checklistParaPayload, checklistVazio, resumoChecklistDraft, validarChecklist, type ChecklistDraft,
 } from "./ChecklistAgendamento";
 import { ConferirFinanceiro } from "./FinanceiroAgendamento";
+import { textoMotivo } from "./preventivoComum";
 import { Indicador, TelaSkeleton } from "@/components/ui";
 import type { AnimalRow } from "@/components/AnimalModal";
 
@@ -625,7 +626,8 @@ function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCria
               </ul>
             )}
           </div>
-          <ConferirFinanceiro calendarioId={grupo.calendario_id} animais={numerosAgendamento} draft={ck.financeiro} />
+          <ConferirFinanceiro calendarioId={grupo.calendario_id} animais={numerosAgendamento} draft={ck.financeiro}
+                              estoqueDesc={ck.estoque.estado === "desconsiderado" && textoMotivo(ck.estoque.motivo, ck.estoque.outro) ? { motivo: textoMotivo(ck.estoque.motivo, ck.estoque.outro) } : null} />
           <div className="card">
             <h3 className="card-header mb-2">O que acontece ao agendar</h3>
             <ul style={{ margin: 0, paddingLeft: "1.1rem", fontSize: "0.85rem", lineHeight: 1.6 }}>

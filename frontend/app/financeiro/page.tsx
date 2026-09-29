@@ -3948,7 +3948,7 @@ function TabelaContas({ rel, itens, planoContas, documentoInicial, onTratar, onE
                       {r.descricao || "—"}
                       {r.origem_preventivo && (
                         <a href="/protocolos?aba=acompanhamento" title={`Nasceu do agendamento de ${r.origem_preventivo.protocolo} (${formatDate(r.origem_preventivo.data_evento)})`}
-                           style={{ marginLeft: "0.4rem", fontSize: "0.65rem", fontWeight: 700, color: "var(--dourado-light)", border: "1px solid var(--dourado-light)", borderRadius: "999px", padding: "0.05rem 0.4rem", textDecoration: "none" }}>
+                           style={{ display: "inline-block", marginTop: "0.25rem", fontSize: "0.65rem", fontWeight: 700, color: "var(--dourado-light)", border: "1px solid var(--dourado-light)", borderRadius: "999px", padding: "0.05rem 0.4rem", textDecoration: "none" }}>
                           Protocolo preventivo · {r.origem_preventivo.protocolo}
                         </a>
                       )}
