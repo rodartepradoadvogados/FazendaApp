@@ -13,7 +13,9 @@ O que uma aplicacao faz, tudo ou nada (validacoes antes de gravar qualquer coisa
   * dose fixa do protocolo ou, quando a marca e por kg de peso vivo, dose
     individual pelo peso do animal (pesagem > estimativa pela media do lote);
   * ciencia dos itens pendentes do checklist (nunca bloqueia; fica gravada);
-  * carencia calculada, linha em Sanidade por animal e log com quem/quando/canal.
+  * carencia calculada, linha em Sanidade por animal e log com quem/quando/canal;
+  * EXAME (tuberculina/brucelose): inoculacao -> leitura (72 h) com resultado por animal, ou coleta —
+    ver `fazenda.rules.exame_preventivo` (mesmo endpoint, mesmo canal, mesmo desfazer/estornar).
 
 Desfazer (<= 10 s, sem motivo) e Estornar (admin, com motivo) revertem tudo e
 preservam o registro original como "estornada".
@@ -25,6 +27,7 @@ import re
 import unicodedata
 from datetime import date, datetime, timedelta
 
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from fazenda.models import (
@@ -41,9 +44,12 @@ from fazenda.rules.estoque_baixa import (
 from fazenda.rules.unidades import unidades_compativeis
 
 DESFAZER_SEGUNDOS = 10
-CANAIS = ("Protocolos", "Agenda")
+# Protocolos > Acompanhamento, Agenda (site e app) e Curral (app do peao: 1o toque simples, aplicador obrigatorio).
+CANAIS = ("Protocolos", "Agenda", "Curral")
 DESTINOS = ("espera", "naoSeAplica")
 _HORA_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+_B19_RE = re.compile(r"\bb19\b")
+B19_MESES_MIN, B19_MESES_MAX = 3, 8
 _PALAVRAS_VET = re.compile(r"(brucelose|\bb19\b|\brb51\b|tuberculose|tuberculina|\bppd\b|\btb\b)")
 
 
@@ -83,6 +89,30 @@ def exige_veterinario(evento: EventoSanitario | None, produto: str | None = None
     veterinario habilitado — regra sanitaria oficial (PNCEBT)."""
     texto = _norm(" ".join(filter(None, [evento.nome if evento else None, produto, doenca_nome])))
     return bool(_PALAVRAS_VET.search(texto))
+
+
+def eh_b19(evento: EventoSanitario | None, produto: str | None = None) -> bool:
+    return bool(_B19_RE.search(_norm(" ".join(filter(None, [evento.nome if evento else None, produto])))))
+
+
+def _idade_em_meses(nasc: date, hoje: date) -> int:
+    meses = (hoje.year - nasc.year) * 12 + hoje.month - nasc.month
+    return meses - (1 if hoje.day < nasc.day else 0)
+
+
+def restricao_b19(animal: Animal | None, hoje: date | None = None, *, so_sexo: bool = False) -> str | None:
+    """Brucelose B19: so femea de 3 a 8 meses. Devolve o motivo da restricao (ou None). `so_sexo=True` confere
+    apenas o sexo (a idade so trava na hora de aplicar)."""
+    if animal is None:
+        return None
+    if (animal.sexo or "").upper() == "M":
+        return "B19 só vale para fêmeas de 3 a 8 meses: este animal é macho"
+    if so_sexo or animal.data_nasc is None:
+        return None
+    meses = _idade_em_meses(animal.data_nasc, hoje or date.today())
+    if meses < B19_MESES_MIN or meses > B19_MESES_MAX:
+        return f"B19 só vale para fêmeas de 3 a 8 meses: este animal tem {meses} {'mês' if meses == 1 else 'meses'}"
+    return None
 
 
 def eh_veterinario(pessoa: Pessoa | None) -> bool:
@@ -463,6 +493,13 @@ def pode_desfazer(ap: CronogramaSanitarioAplicacao, agora: datetime | None = Non
     return ap.estado == "aplicada" and (agora - ap.registrado_em).total_seconds() <= DESFAZER_SEGUNDOS
 
 
+def _rotulo_estado(ap: CronogramaSanitarioAplicacao, *, exame: bool) -> str:
+    """"Exame realizado" para exame (nunca "Aplicado"), "Aplicado" para vacina/vermifugo, "Estornada" quando revertida."""
+    if ap.estado == "estornada":
+        return "Estornada"
+    return "Exame realizado" if exame else "Aplicado"
+
+
 def serializar_aplicacao(session: Session, ap: CronogramaSanitarioAplicacao, *, animais: bool = True) -> dict:
     d = ap.model_dump()
     for k, v in list(d.items()):
@@ -477,9 +514,13 @@ def serializar_aplicacao(session: Session, ap: CronogramaSanitarioAplicacao, *, 
         d["animais"] = [
             {"numero_matriz": a.numero_matriz, "resultado": a.resultado, "origem": a.origem, "motivo_origem": a.motivo_origem,
              "dose": a.dose, "unidade": a.unidade, "peso_kg": a.peso_kg, "peso_estimado": a.peso_estimado,
-             "motivo_nao": a.motivo_nao, "destino_nao": a.destino_nao}
+             "motivo_nao": a.motivo_nao, "destino_nao": a.destino_nao,
+             "exame_resultado": a.exame_resultado, "espessura_mm": a.espessura_mm, "reteste_em": _iso(a.reteste_em),
+             "notificado_em": a.notificado_em.isoformat() if a.notificado_em else None,
+             "notificado_por": a.notificado_por_nome, "notificacao_ref": a.notificacao_ref}
             for a in _animais_da_aplicacao(session, ap.id)
         ]
+    d["rotulo_estado"] = _rotulo_estado(ap, exame=ap.fase is not None)
     return d
 
 
@@ -506,7 +547,7 @@ def aplicar(session: Session, cron: CronogramaSanitario, dados: dict, *, user=No
 
     canal = dados.get("canal") or "Protocolos"
     if canal not in CANAIS:
-        raise AplicacaoError('Canal inválido — use "Protocolos" ou "Agenda"')
+        raise AplicacaoError('Canal inválido — use "Protocolos", "Agenda" ou "Curral"')
     if cron.status != "agendado":
         if cron.status == "concluido":
             raise AplicacaoError("Este agendamento já foi aplicado")
@@ -519,7 +560,10 @@ def aplicar(session: Session, cron: CronogramaSanitario, dados: dict, *, user=No
     if calendario is None or evento is None:
         raise AplicacaoError("Protocolo do agendamento não encontrado", 404)
     if evento.categoria_preventiva == "exame":
-        raise AplicacaoError("Exame: o resultado por animal ainda segue pelo fluxo de exames (fora desta etapa)")
+        from fazenda.rules import exame_preventivo
+        return exame_preventivo.aplicar_exame(
+            session, cron, calendario, evento, dados, user=user, fazenda_id=fazenda_id, canal=canal, chave=chave,
+        )
 
     # ── aplicador ──
     aplicador = _pessoa_da_fazenda(session, dados.get("aplicador_pessoa_id"), fazenda_id)
@@ -569,6 +613,19 @@ def aplicar(session: Session, cron: CronogramaSanitario, dados: dict, *, user=No
     for n in nao_in:
         if n not in restantes:
             raise AplicacaoError(f"Animal {n} não pode constar como não aplicado")
+    from fazenda.rules import exame_preventivo
+    exame_preventivo.recusar_reagentes(session, fazenda_id, aplicados, "vacina nem outro agendamento")
+    if eh_b19(evento, produto):
+        animais_b19 = {a.numero: a for a in session.exec(select(Animal).where(Animal.numero.in_(aplicados))).all()
+                       if fazenda_id is None or a.fazenda_id == fazenda_id}
+        proibidos = [(n, restricao_b19(animais_b19.get(n), hoje)) for n in aplicados]
+        proibidos = [(n, m) for n, m in proibidos if m]
+        if proibidos:
+            raise AplicacaoError(
+                "Brucelose B19: só fêmeas de 3 a 8 meses. "
+                + "; ".join(f"animal {n}: {m.split(': ', 1)[1]}" for n, m in proibidos)
+                + ". Desmarque esses animais (motivo: Outro)."
+            )
 
     # ── produto, frasco e dose ──
     desconsiderar = bool(dados.get("desconsiderar_estoque"))
@@ -764,6 +821,9 @@ def _financeiro_da_aplicacao(session: Session, cron: CronogramaSanitario, ap: Cr
 def _reverter(session: Session, ap: CronogramaSanitarioAplicacao, cron: CronogramaSanitario, user, agora: datetime) -> None:
     animais = _animais_da_aplicacao(session, ap.id)
     calendario = session.get(CalendarioSanitario, cron.calendario_sanitario_id)
+    if ap.fase is not None:
+        from fazenda.rules import exame_preventivo
+        exame_preventivo.reverter(session, ap, cron, user, agora)
     for a in animais:
         if a.resultado != "aplicado":
             continue
@@ -841,6 +901,8 @@ def desfazer(session: Session, aplicacao_id: int, *, user, fazenda_id: int | Non
     if not admin and _uid(user) != ap.registrado_por_usuario_id:
         raise AplicacaoError("Só quem aplicou (ou o administrador) pode desfazer", 403)
     agora = datetime.utcnow()
+    from fazenda.rules import exame_preventivo
+    exame_preventivo.validar_estorno(session, ap)
     if not pode_desfazer(ap, agora):
         raise AplicacaoError(
             f"Passaram mais de {DESFAZER_SEGUNDOS} segundos: agora só o administrador pode Estornar, informando o motivo", 409,
@@ -856,6 +918,8 @@ def estornar(session: Session, aplicacao_id: int, motivo: str | None, *, user, f
         raise AplicacaoError("Informe o motivo do estorno")
     if ap.estado != "aplicada":
         raise AplicacaoError("Esta aplicação já foi estornada")
+    from fazenda.rules import exame_preventivo
+    exame_preventivo.validar_estorno(session, ap)
     return _finalizar_estorno(session, ap, cron, user, datetime.utcnow(), tipo="estorno", motivo=motivo.strip())
 
 
@@ -928,6 +992,18 @@ def _responsavel(session: Session, cron: CronogramaSanitario) -> dict:
     return {"pessoa_id": None, "nome": "Equipe própria", "crmv": None, "modo": cron.modo_execucao or "propria"}
 
 
+def _fase_exame_do_agendamento(session: Session, cron: CronogramaSanitario, cal, ev) -> dict:
+    """`fase` (inoculacao | leitura | coleta) e `leitura_prevista_em` para exame; vazio para vacina/vermifugo."""
+    from fazenda.rules import exame_preventivo
+    if not exame_preventivo.eh_exame(ev):
+        return {"fase": None, "leitura_prevista_em": None}
+    _, _, tipo = exame_preventivo.contexto_do_evento(session, cal, ev)
+    fase = exame_preventivo.fase_atual(session, cron, tipo)
+    ino = exame_preventivo.inoculacao_ativa(session, cron.id) if fase == "leitura" else None
+    return {"fase": fase, "leitura_prevista_em": _iso(ino.leitura_prevista_em) if ino else None,
+            "leitura_limite_em": _iso(ino.leitura_limite_em) if ino else None}
+
+
 def acompanhamento(session: Session, fazenda_id: int | None, hoje: date | None = None) -> dict:
     """Protocolos > Acompanhamento (preventivo): so o que ja esta agendado (ou
     em montagem) — a lista de espera nunca entra aqui."""
@@ -969,6 +1045,7 @@ def acompanhamento(session: Session, fazenda_id: int | None, hoje: date | None =
             "lotes": lotes, "checklist": checklist_resumo(session, cron),
             "financeiro": fin.bloco_financeiro(vinculos_lote.get(cron.id, []), fin.necessidade(session, cron, fazenda_id, hoje)),
             "exige_veterinario": exige_veterinario(ev, produto),
+            **_fase_exame_do_agendamento(session, cron, cal, ev),
         })
     agendados = [i for i in saida if i["status"] == "agendado"]
     return {
@@ -987,7 +1064,9 @@ def concluidos(
 ) -> dict:
     """Protocolos > Concluidos (preventivo): aplicacoes (inclusive estornadas, com
     selo) e agendamentos cancelados, do mais recente para o mais antigo."""
-    query = select(CronogramaSanitarioAplicacao)
+    # A inoculacao do exame e so a 1a etapa: o registro concluido e a leitura (ou a coleta).
+    query = select(CronogramaSanitarioAplicacao).where(
+        or_(CronogramaSanitarioAplicacao.fase.is_(None), CronogramaSanitarioAplicacao.fase != "inoculacao"))
     if fazenda_id is not None:
         query = query.where(CronogramaSanitarioAplicacao.fazenda_id == fazenda_id)
     if de is not None:
@@ -1000,7 +1079,7 @@ def concluidos(
     usuarios = _nomes_usuarios(session, {a.registrado_por_usuario_id for a in aps} | {a.estornado_por_usuario_id for a in aps})
     busca = _norm((q or "").strip())
     itens: list[dict] = []
-    from fazenda.rules import financeiro_preventivo as fin
+    from fazenda.rules import exame_preventivo, financeiro_preventivo as fin
     vinculos_lote = fin.vinculos_por_cronogramas(session, list({a.cronograma_id for a in aps}), fazenda_id)
     for ap in aps:
         cron = session.get(CronogramaSanitario, ap.cronograma_id)
@@ -1037,6 +1116,8 @@ def concluidos(
             "estornado_por": usuarios.get(ap.estornado_por_usuario_id), "estornado_em": _iso(ap.estornado_em),
             "pode_desfazer": pode_desfazer(ap, agora),
             "desfazer_restante_s": max(0, DESFAZER_SEGUNDOS - int((agora - ap.registrado_em).total_seconds())) if pode_desfazer(ap, agora) else 0,
+            "rotulo_estado": _rotulo_estado(ap, exame=ap.fase is not None),
+            "exame": exame_preventivo.resumo_do_registro(session, ap, animais),
         })
     if incluir_cancelados and not fora_janela and not busca:
         qc = select(CronogramaSanitario).where(CronogramaSanitario.status == "cancelado")
@@ -1062,6 +1143,7 @@ def concluidos(
                 "carencia_carne_ate": None, "carencia_texto": None, "custo": None, "retroativo": False, "canal": None,
                 "excecoes": [], "com_excecao": False, "registrado_por": None, "registrado_em": cron.atualizado_em.isoformat(),
                 "financeiro": fin.bloco_financeiro(vinculos_canc.get(cron.id, [])),
+                "rotulo_estado": "Cancelado", "exame": None,
                 "motivo": cron.motivo_cancelamento, "motivo_estorno": None, "tipo_estorno": None, "estornado_por": None,
                 "estornado_em": None, "pode_desfazer": False, "desfazer_restante_s": 0,
             })
@@ -1095,16 +1177,20 @@ def detalhe_aplicacao(session: Session, aplicacao_id: int, fazenda_id: int | Non
     d.update(
         protocolo_nome=ev.nome if ev else "Protocolo", tipo=_tipo_do_evento(ev), registrado_por=usuarios.get(ap.registrado_por_usuario_id),
         estornado_por=usuarios.get(ap.estornado_por_usuario_id), ciencia_usuario=usuarios.get(ap.ciencia_usuario_id),
-        log=[l for l in log_do_agendamento(session, cron.id) if l["aplicacao_id"] in (None, ap.id)],
+        log=[l for l in log_do_agendamento(session, cron.id) if l["aplicacao_id"] in (None, ap.id, ap.inoculacao_aplicacao_id)],
         checklist=checklist_resumo(session, cron), agendamento_status=cron.status,
         financeiro=_financeiro_da_aplicacao(session, cron, ap, fazenda_id),
     )
+    from fazenda.rules import exame_preventivo
+    d["exame"] = exame_preventivo.resumo_do_registro(session, ap, _animais_da_aplicacao(session, ap.id))
+    ino = session.get(CronogramaSanitarioAplicacao, ap.inoculacao_aplicacao_id) if ap.inoculacao_aplicacao_id else None
+    d["inoculacao"] = exame_preventivo._resumo_inoculacao(ino)
     return d
 
 
 def contexto_aplicar(session: Session, cron: CronogramaSanitario, fazenda_id: int | None, hoje: date | None = None) -> dict:
     """Tudo o que a gaveta Aplicar precisa (a mesma em Protocolos e na Agenda)."""
-    from fazenda.rules import financeiro_preventivo as fin
+    from fazenda.rules import exame_preventivo, financeiro_preventivo as fin
     hoje = hoje or date.today()
     cal = session.get(CalendarioSanitario, cron.calendario_sanitario_id)
     ev = session.get(EventoSanitario, cal.evento_sanitario_id) if cal else None
@@ -1132,6 +1218,7 @@ def contexto_aplicar(session: Session, cron: CronogramaSanitario, fazenda_id: in
     animais = {a.numero: a for a in session.exec(select(Animal).where(Animal.numero.in_(numeros))).all()
                if fazenda_id is None or a.fazenda_id == fazenda_id} if numeros else {}
     doses = calcular_doses(session, numeros, modo, fazenda_id, hoje)
+    b19 = eh_b19(ev, produto)
     estoque = {"encontrado": item is not None, "estoque_id": item.id if item else None, "nome": item.nome if item else produto,
                "unidade": item.unidade if item else modo.get("unidade"), "saldo": item.quantidade if item else None, "lotes": []}
     if item is not None:
@@ -1167,10 +1254,12 @@ def contexto_aplicar(session: Session, cron: CronogramaSanitario, fazenda_id: in
             {"numero_matriz": n, "nome": animais[n].nome if n in animais else None,
              "lote": animais[n].grupo_primario if n in animais else None,
              "origem": l.origem, "motivo": l.motivo if l.origem == "fora_janela" else None, **doses[n],
-             "sem_peso": modo["por_peso"] and doses[n]["dose"] is None}
+             "sem_peso": modo["por_peso"] and doses[n]["dose"] is None,
+             "restricao": restricao_b19(animais.get(n), hoje) if b19 else None}
             for l, n in zip(linhas, numeros)
         ],
         "estoque": estoque, "pessoas": pessoas, "carencia": carencia, "checklist": checklist,
         "financeiro": fin.resumo(session, cron, fazenda_id, hoje),
         "log": log_do_agendamento(session, cron.id), "desfazer_segundos": DESFAZER_SEGUNDOS, "hoje": hoje.isoformat(),
+        "exame": exame_preventivo.contexto(session, cron, cal, ev),
     }

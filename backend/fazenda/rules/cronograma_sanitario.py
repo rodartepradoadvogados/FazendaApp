@@ -117,12 +117,19 @@ def _linhas_da_regra(
     return list(session.exec(query).all())
 
 
+def _reagentes(session: Session, calendario: CalendarioSanitario, numeros: list[str]) -> dict:
+    from fazenda.rules.exame_preventivo import animais_reagentes
+    return animais_reagentes(session, calendario.fazenda_id, numeros)
+
+
 def sugerir_animal(session: Session, calendario: CalendarioSanitario, numero_matriz: str, hoje: date) -> CronogramaSanitarioAnimal | None:
     """Garante uma linha "sugerido" para o animal no cronograma aberto da
     regra. Idempotente: devolve None (não gera pendência de novo) se o
     animal já tem linha nesse cronograma, em qualquer status."""
     if _linhas_da_regra(session, calendario.id, [numero_matriz]):
         return None  # R8: já está em alguma lista/agendamento ativo desta regra
+    if _reagentes(session, calendario, [numero_matriz]):
+        return None  # reagente em exame: sai de todo agendamento e nunca volta a ser sugerido
     cron = cronograma_aberto(session, calendario)
     linha = CronogramaSanitarioAnimal(
         cronograma_id=cron.id, numero_matriz=numero_matriz, data_sugestao=hoje, fazenda_id=calendario.fazenda_id,
@@ -146,6 +153,9 @@ def sugerir_animais_em_lote(session: Session, calendario: CalendarioSanitario, n
     # espera, agendamento, rascunho) não entra de novo.
     existentes = {l.numero_matriz for l, _ in _linhas_da_regra(session, calendario.id, list(numeros_matriz))}
     pendentes = [n for n in dict.fromkeys(numeros_matriz) if n not in existentes]  # preserva ordem, sem duplicata
+    if pendentes:
+        reagentes = _reagentes(session, calendario, pendentes)   # reagente em exame nunca volta a ser sugerido
+        pendentes = [n for n in pendentes if n not in reagentes]
     if not pendentes:
         return
     cron = cronograma_aberto(session, calendario)
@@ -389,9 +399,27 @@ def _ja_vacinados_no_ciclo(
 ) -> set[str]:
     """Animais (entre `numeros`) com aplicação do produto da regra dentro do
     ciclo da Ocorrência — não viram "sugerido" (dedupe da época)."""
-    if not produto or not numeros:
+    if not numeros:
         return set()
     desde = _inicio_do_ciclo(cron, calendario)
+    ev = session.get(EventoSanitario, calendario.evento_sanitario_id)
+    if ev is not None and ev.categoria_preventiva == "exame":
+        # Exame: quem ja fez o exame deste protocolo no ciclo (leitura/coleta nao estornada) nao volta para a lista de espera.
+        from fazenda.models import CronogramaSanitarioAplicacao, CronogramaSanitarioAplicacaoAnimal
+        feitos = session.exec(
+            select(CronogramaSanitarioAplicacaoAnimal.numero_matriz)
+            .join(CronogramaSanitarioAplicacao, CronogramaSanitarioAplicacao.id == CronogramaSanitarioAplicacaoAnimal.aplicacao_id)
+            .join(CronogramaSanitario, CronogramaSanitario.id == CronogramaSanitarioAplicacao.cronograma_id)
+            .where(CronogramaSanitario.calendario_sanitario_id == calendario.id)
+            .where(CronogramaSanitarioAplicacao.estado == "aplicada")
+            .where(CronogramaSanitarioAplicacao.fase.in_(("leitura", "coleta")))
+            .where(CronogramaSanitarioAplicacao.data_aplicacao >= desde)
+            .where(CronogramaSanitarioAplicacaoAnimal.exame_resultado.is_not(None))
+            .where(CronogramaSanitarioAplicacaoAnimal.numero_matriz.in_(numeros))
+        ).all()
+        return set(feitos)
+    if not produto:
+        return set()
     alvo = produto.strip().lower()
     query = (
         select(Sanidade.numero_matriz, Sanidade.produto)
@@ -420,11 +448,14 @@ def resumo_lista_espera(session: Session, fazenda_id: int | None = None) -> list
     if not pares:
         return []
     contagem: dict[int, int] = {}
+    hoje = date.today()
     for linha in session.exec(
         select(CronogramaSanitarioAnimal)
         .where(CronogramaSanitarioAnimal.cronograma_id.in_([c.id for c, _ in pares]))
         .where(CronogramaSanitarioAnimal.status == "sugerido")
     ).all():
+        if linha.reteste and linha.data_devida and linha.data_devida > hoje:
+            continue   # reteste de exame: so entra na lista de espera na data devida
         contagem[linha.cronograma_id] = contagem.get(linha.cronograma_id, 0) + 1
     from fazenda.models import EventoSanitario
     nomes = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
@@ -582,9 +613,18 @@ def eventos_agenda(
         incluidos = incluidos_por_cronograma.get(cron.id, [])
         vet = pessoas_por_id.get(cron.veterinario_pessoa_id) if cron.veterinario_pessoa_id else None
         quem = f"com {vet.nome}" if vet else "pela equipe própria"
+        fase_exame, leitura_prevista = None, None
+        if ev is not None and ev.categoria_preventiva == "exame":
+            from fazenda.rules import exame_preventivo
+            fase_exame = exame_preventivo.fase_do_agendamento(session, cron)
+            ino = exame_preventivo.inoculacao_ativa(session, cron.id) if fase_exame == "leitura" else None
+            leitura_prevista = ino.leitura_prevista_em.isoformat() if ino else None
+        verbo = "Registrar leitura de" if fase_exame == "leitura" else ("Coletar" if fase_exame == "coleta" else
+                                                                       "Inocular" if fase_exame == "inoculacao" else "Aplicar")
         saida.append({
             "id": eid, "data": cron.data_evento.isoformat(), "categoria": "sanidade",
-            "descricao": f"Aplicar {nome} hoje{f' às {cron.hora}' if cron.hora else ''} — {quem}",
+            "descricao": f"{verbo} {nome} hoje{f' às {cron.hora}' if cron.hora else ''} — {quem}",
+            "fase": fase_exame, "exame_leitura_prevista_em": leitura_prevista,
             "numero_animal": None,
             "observacao": f"{len(incluidos)} animal(is) incluído(s) — Aplicar abre a mesma gaveta de Protocolos.",
             "fonte": "auto", "cor": "var(--dourado)", "ref": None,
@@ -701,6 +741,8 @@ def lista_espera(
         a = animais.get(linha.numero_matriz)
         if a is None or not a.ativo:
             continue
+        if linha.reteste and linha.data_devida and linha.data_devida > hoje:
+            continue   # reteste de exame (60 dias): so aparece a partir da data devida
         por_regra.setdefault(cal.id, []).append((linha, cron))
         regras[cal.id] = cal
 
@@ -712,9 +754,12 @@ def lista_espera(
         itens: list[dict] = []
         for linha, cron in linhas:
             a = animais[linha.numero_matriz]
-            devida = abre.get(linha.numero_matriz) or _data_devida(cron)
+            devida = linha.data_devida or abre.get(linha.numero_matriz) or _data_devida(cron)
             fim = fecha.get(linha.numero_matriz)
             atraso = max(0, (hoje - devida).days)
+            rotulo = None
+            if linha.reteste:
+                rotulo = "Reteste atrasado" if atraso > 0 else "Reteste"
             itens.append({
                 "linha_id": linha.id, "cronograma_id": cron.id, "numero_matriz": linha.numero_matriz,
                 "nome": a.nome, "lote": a.grupo_primario, "sexo": a.sexo,
@@ -722,7 +767,8 @@ def lista_espera(
                 "devida": devida.isoformat(), "janela_fim": fim.isoformat() if fim else None,
                 "fecha_em": (fim - hoje).days if fim else None,
                 "desde": linha.data_sugestao.isoformat(),
-                "motivo_entrada": "Entrou na janela pela regra do protocolo",
+                "reteste": bool(linha.reteste), "situacao_rotulo": rotulo,
+                "motivo_entrada": linha.motivo_entrada or "Entrou na janela pela regra do protocolo",
             })
         itens.sort(key=lambda i: (-i["dias_atraso"], i["numero_matriz"]))
         fechamentos = [i["fecha_em"] for i in itens if i["fecha_em"] is not None]
@@ -814,6 +860,12 @@ def criar_agendamento(
     else:
         modo = None
 
+    from fazenda.rules.aplicacao_preventiva import eh_b19, restricao_b19
+    from fazenda.rules.exame_preventivo import recusar_reagentes
+    try:
+        recusar_reagentes(session, calendario.fazenda_id, janela + list(fora), "agendamento")
+    except Exception as e:   # AplicacaoError -> erro de uso do workflow
+        raise CronogramaError(str(e))
     animais_da_regra = _linhas_da_regra(session, calendario.id, janela + list(fora))
     espera = {l.numero_matriz: (l, c) for l, c in animais_da_regra if l.status == "sugerido"}
     ocupados = {l.numero_matriz: c for l, c in animais_da_regra if l.status in ("incluido", "aplicado")}
@@ -827,6 +879,12 @@ def criar_agendamento(
         a = ativos.get(numero)
         if a is None or not a.ativo:
             raise CronogramaError(f"Animal {numero} não está mais no rebanho (vendido/baixado)")
+    evento_b19 = session.get(EventoSanitario, calendario.evento_sanitario_id)
+    if eh_b19(evento_b19, calendario.produto):
+        for numero in janela + list(fora):
+            motivo_b19 = restricao_b19(ativos.get(numero), so_sexo=True)
+            if motivo_b19:
+                raise CronogramaError(f"Animal {numero}: brucelose B19 só vale para fêmeas de 3 a 8 meses — este animal é macho")
     for numero in fora:
         a = ativos.get(numero)
         if a is None:

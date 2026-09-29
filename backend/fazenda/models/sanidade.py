@@ -699,6 +699,12 @@ class CronogramaSanitarioAnimal(SQLModel, table=True):
     # Fora da janela: por que foi incluído. Desconsiderar (lista de espera):
     # por que foi tirado.
     motivo: Optional[str] = None
+    # Fatia 9b — exame: reteste de tuberculina (60 dias apos o inconclusivo)
+    # entra na lista de espera do proprio protocolo com a data devida do
+    # reteste e o motivo de entrada ("Reteste: inconclusivo em dd/mm/aaaa").
+    reteste: bool = False
+    data_devida: Optional[date] = None
+    motivo_entrada: Optional[str] = None
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
@@ -755,6 +761,21 @@ class CronogramaSanitarioAplicacao(SQLModel, table=True):
     chave_idempotencia: Optional[str] = Field(default=None, index=True)
     registrado_por_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     registrado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Fatia 9b — EXAME (tuberculina/brucelose). NULL para vacina/vermifugo.
+    # "inoculacao" (1a etapa da TB: nao vai para Concluidos) | "leitura" (2a
+    # etapa, resultado por animal: e o registro concluido) | "coleta" (exame
+    # sem leitura: uma etapa so).
+    fase: Optional[str] = Field(default=None, index=True)
+    inoculacao_aplicacao_id: Optional[int] = Field(default=None, index=True)   # na leitura: a inoculacao de origem
+    tipo_teste: Optional[str] = None
+    laudo: Optional[str] = None
+    leitura_prevista_em: Optional[datetime] = None     # inoculacao + 72 h
+    leitura_limite_em: Optional[datetime] = None       # inoculacao + 96 h (fim da janela)
+    data_evento_antes: Optional[date] = None           # data/hora agendadas antes da inoculacao (o estorno restaura)
+    hora_antes: Optional[str] = None
+    leitura_horas: Optional[float] = None              # horas entre a inoculacao e a leitura
+    leitura_fora_janela: bool = False                  # fora de 72-96 h
+    leitura_justificativa: Optional[str] = None
     # Estorno: "desfazer" (<= 10 s, sem motivo) | "estorno" (admin, com motivo).
     tipo_estorno: Optional[str] = None
     estornado_por_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
@@ -783,6 +804,16 @@ class CronogramaSanitarioAplicacaoAnimal(SQLModel, table=True):
     sanidade_id: Optional[int] = None
     motivo_nao: Optional[str] = None
     destino_nao: Optional[str] = None         # espera | naoSeAplica
+    # Fatia 9b — exame: negativo | reagente | inconclusivo | coletado.
+    exame_resultado: Optional[str] = Field(default=None, index=True)
+    espessura_mm: Optional[float] = None      # TB: espessura da pele (mm) na leitura
+    reteste_em: Optional[date] = None         # inconclusivo: leitura + 60 dias
+    exame_resultado_id: Optional[int] = None  # linha de ExameResultado gerada (relatorios; o estorno apaga)
+    # Reagente: registro da notificacao ao servico veterinario oficial.
+    notificado_em: Optional[datetime] = None
+    notificado_por_usuario_id: Optional[int] = None
+    notificado_por_nome: Optional[str] = None
+    notificacao_ref: Optional[str] = None     # orgao e/ou numero do protocolo/oficio
 
 
 class CronogramaSanitarioLog(SQLModel, table=True):

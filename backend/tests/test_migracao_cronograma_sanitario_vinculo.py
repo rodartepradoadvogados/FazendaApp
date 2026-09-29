@@ -77,7 +77,15 @@ def test_idempotente_quando_a_tabela_ja_existe(banco_anterior):
     assert not _tem_tabela(banco_anterior)
 
 
-def test_head_e_esta_revisao():
+def test_head_e_esta_revisao_ou_uma_filha_direta():
+    """Cabeca unica; esta revisao e a propria cabeca ou um ancestral dela (a 9b, e7b3a9d4c1f8, vem depois)."""
     sys.path.insert(0, str(BACKEND / "scripts"))
     from check_alembic_heads import heads
-    assert heads() == [REV]
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    atuais = heads()
+    assert len(atuais) == 1
+    cfg = Config(str(BACKEND / "alembic.ini"))
+    cfg.set_main_option("script_location", str(BACKEND / "alembic"))
+    ancestrais = {r.revision for r in ScriptDirectory.from_config(cfg).walk_revisions()}
+    assert REV in ancestrais

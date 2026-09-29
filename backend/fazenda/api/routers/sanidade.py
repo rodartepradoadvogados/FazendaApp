@@ -28,6 +28,7 @@ from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia, proxima_ocorrencia_a_partir_de
 from fazenda.rules.calendario_visao import montar_calendario_visual
 from fazenda.rules import aplicacao_preventiva as aplicacao_rules
+from fazenda.rules import exame_preventivo as exame_rules
 from fazenda.rules import financeiro_preventivo as fin_rules
 from fazenda.rules import cronograma_sanitario as cronograma_rules
 from fazenda.rules.aplicacao_preventiva import AplicacaoError
@@ -1420,7 +1421,7 @@ class NaoAplicadoIn(BaseModel):
 
 
 class AplicarAgendamentoIn(BaseModel):
-    canal: str = "Protocolos"                    # "Protocolos" | "Agenda"
+    canal: str = "Protocolos"                    # "Protocolos" | "Agenda" | "Curral" (app do peão)
     aplicador_pessoa_id: int                     # obrigatório (B19/TB: só veterinário)
     animais_aplicados: list[str] = []
     nao_aplicados: list[NaoAplicadoIn] = []
@@ -1439,6 +1440,13 @@ class AplicarAgendamentoIn(BaseModel):
     ciencia_motivo: str | None = None
     observacao: str | None = None
     chave_idempotencia: str | None = None
+    # EXAME (fatia 9b) — tuberculina: inoculação (tipo_teste opcional) e depois leitura (resultados + espessuras_mm +
+    # tipo_teste); brucelose/outros: coleta (laudo; resultados só se já forem conhecidos).
+    resultados: dict[str, str] | None = None     # {brinco: negativo | reagente | inconclusivo}
+    espessuras_mm: dict[str, float] | None = None  # {brinco: espessura da pele em mm}
+    tipo_teste: str | None = None                # Cervical simples | Cervical comparativo | Prega caudal
+    laudo: str | None = None
+    justificativa_leitura: str | None = None     # leitura antes de 72 h
 
 
 def _resposta_agendamento(session: Session, resultado: dict) -> dict:
@@ -1540,6 +1548,56 @@ def estornar_aplicacao_preventiva(
         session.rollback()
         raise _http(e)
     return _resposta_agendamento(session, resultado)
+
+
+# ---------------------------------------------------------------------------
+# Exame preventivo (fatia 9b) — reagente, notificação, comprovante e retestes.
+# Ver fazenda/rules/exame_preventivo.py
+# ---------------------------------------------------------------------------
+@router.get("/cronogramas/reagentes")
+def reagentes_preventivo(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Banner persistente de reagentes (TB/brucelose): quem ainda está no rebanho, com o registro da notificação
+    ao serviço veterinário oficial (quem/quando). Não some depois de notificar."""
+    return exame_rules.reagentes(session, fazenda_id_seguro(fazenda_id))
+
+
+@router.get("/cronogramas/retestes")
+def retestes_preventivo(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Inconclusivos com reteste (60 dias): aguardando, no dia ou "Reteste atrasado"."""
+    return exame_rules.retestes(session, fazenda_id_seguro(fazenda_id))
+
+
+class NotificarReagenteIn(BaseModel):
+    animais: list[str] | None = None      # vazio = todos os reagentes ainda não notificados da aplicação
+    referencia: str | None = None         # órgão e/ou nº do protocolo/ofício
+
+
+@router.post("/cronogramas/aplicacoes/{aplicacao_id}/notificar")
+def notificar_reagente_preventivo(
+    aplicacao_id: int, dados: NotificarReagenteIn, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Registra a notificação do(s) reagente(s) ao serviço veterinário oficial: quem e quando, no log do agendamento."""
+    try:
+        return exame_rules.notificar(session, aplicacao_id, dados.animais, dados.referencia, user=user, fazenda_id=fazenda_id)
+    except AplicacaoError as e:
+        session.rollback()
+        raise _http(e)
+
+
+@router.get("/cronogramas/aplicacoes/{aplicacao_id}/comprovante")
+def comprovante_preventivo(
+    aplicacao_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Dados do comprovante de aplicação/exame. Bloqueado só para animal reagente (negativos emitem); estornada não emite."""
+    try:
+        return exame_rules.comprovante(session, aplicacao_id, fazenda_id_seguro(fazenda_id))
+    except AplicacaoError as e:
+        raise _http(e)
 
 
 # ---------------------------------------------------------------------------
