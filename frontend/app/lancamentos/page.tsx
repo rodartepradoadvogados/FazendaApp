@@ -38,8 +38,6 @@ const FormDiagnostico = dynamic(() => import("@/components/lancamentos/FormDiagn
 const FormParto = dynamic(() => import("@/components/lancamentos/FormParto").then((m) => m.FormParto), { ssr: false });
 const FormControle = dynamic(() => import("@/components/lancamentos/FormControle").then((m) => m.FormControle), { ssr: false });
 const FormSanidade = dynamic(() => import("@/components/lancamentos/FormSanidade").then((m) => m.FormSanidade), { ssr: false });
-const FormAplicarCalendarioSanitario = dynamic(() => import("@/components/lancamentos/FormAplicarCalendarioSanitario").then((m) => m.FormAplicarCalendarioSanitario), { ssr: false });
-const FormPreventivoAplicacao = dynamic(() => import("@/components/lancamentos/FormPreventivoAplicacao").then((m) => m.FormPreventivoAplicacao), { ssr: false });
 const BstLancamentoView = dynamic(() => import("@/components/lancamentos/FormProtocoloSanitario").then((m) => m.BstLancamentoView), { ssr: false });
 const FormProtocoloSanitario = dynamic(() => import("@/components/lancamentos/FormProtocoloSanitario").then((m) => m.FormProtocoloSanitario), { ssr: false });
 // A dieta em si (CadastrarNovaDieta) mudou de casa para Insumos e sanidade >
@@ -70,7 +68,7 @@ const LACT = ["01", "02", "03"];
 // — continuam exatamente como eram, no card cheio abaixo.
 const GAVETA_LEAFS = new Set([
   "protocolo_iatf", "inseminacao", "diagnostico", "parto", "inducao_cio", "controle",
-  "sanidade_aplicacao", "preventivo_aplicacao", "calendario_sanitario", "bst", "protocolo_sanitario",
+  "sanidade_aplicacao", "bst", "protocolo_sanitario",
   "alimentacao_dieta", "estoque_entradas_saidas", "estoque_ajuste_saldo",
 ]);
 
@@ -138,7 +136,7 @@ const TIPOS_GRUPOS = [
   },
   {
     id: "sanidade", label: "Sanitário", icon: HeartPulse,
-    desc: "Tratamento curativo ou manejo preventivo.",
+    desc: "Tratamento curativo. Vacina e exame (preventivo) são aplicados em Protocolos.",
     grupos: [
       {
         id: "sanidade_curativa", label: "Curativa", icon: HeartPulse,
@@ -146,14 +144,6 @@ const TIPOS_GRUPOS = [
         subs: [
           { id: "sanidade_aplicacao", label: "Avulso", icon: Syringe, desc: "Aplicação avulsa de medicamento curativo — por animal, categoria, vários animais ou lote." },
           { id: "protocolo_sanitario", label: "Protocolo sanitário", icon: ClipboardList, desc: "Aplicar um protocolo cadastrado (mastite e outros) a um animal — gera um evento na Agenda por dia (D1, D2...)." },
-        ],
-      },
-      {
-        id: "sanidade_preventiva", label: "Preventiva", icon: Shield,
-        desc: "Manejo preventivo: aplicações preventivas e calendário sanitário.",
-        subs: [
-          { id: "preventivo_aplicacao", label: "Avulso", icon: Syringe, desc: "Aplicar um preventivo (vacina/exame) sem vínculo com um protocolo do calendário — por animal, categoria ou lote." },
-          { id: "calendario_sanitario", label: "Calendário sanitário", icon: CalendarClock, desc: "Aplicar um protocolo já cadastrado no calendário (vacina ou exame) — escolha o protocolo e lance para os animais." },
         ],
       },
     ],
@@ -238,6 +228,9 @@ export default function LancamentosPage() {
   // Atalho vindo da Agenda (ex.: "Ir para Inseminação" de um lembrete D11 de protocolo IATF).
   useEffect(() => {
     const ir = new URLSearchParams(window.location.search).get("ir");
+    // Vacina/exame (preventivo) não se lança mais aqui: links antigos
+    // (?ir=preventivo_aplicacao e ?ir=calendario_sanitario) levam a Protocolos.
+    if (ir === "preventivo_aplicacao" || ir === "calendario_sanitario") { window.location.replace("/protocolos?aba=aplicar"); return; }
     if (ir && TIPOS_LEAFS.some((t) => t.id === ir)) setSel(ir);
   }, []);
 
@@ -440,10 +433,6 @@ export default function LancamentosPage() {
             <><strong style={{ color: "var(--text)" }}>Consumo já grava de verdade.</strong> Dá baixa em estoque na hora. Só oferece os alimentos da dieta ativa do lote — fora da dieta ou sem saldo só entra se o cadastro do lote permitir.</>
           ) : sel === "sanidade_aplicacao" ? (
             <><strong style={{ color: "var(--text)" }}>Sanidade já grava de verdade.</strong> Aceita vários produtos por lançamento; a baixa de estoque só acontece quando a unidade escolhida bate com a do estoque.</>
-          ) : sel === "preventivo_aplicacao" ? (
-            <><strong style={{ color: "var(--text)" }}>Avulso já grava de verdade.</strong> Escolha o evento preventivo (vacina/exame), o lote/categoria e marque os animais — sem vínculo com um protocolo do calendário; se for vacina/tratamento, aplica com baixa de estoque. Exame não baixa estoque.</>
-          ) : sel === "calendario_sanitario" ? (
-            <><strong style={{ color: "var(--text)" }}>Calendário sanitário já grava de verdade.</strong> Aqui só se aplica um protocolo já cadastrado (Central de Protocolos &gt; Cadastro &gt; Sanitário &gt; Preventivo) — escolha-o, confira o resumo e lance para os animais.</>
           ) : sel === "bst" ? (
             <><strong style={{ color: "var(--text)" }}>BST — somatotropina bovina.</strong> Vacas aptas e excluídas do dia, com a próxima visita de BST.</>
           ) : sel === "protocolo_sanitario" ? (
@@ -467,6 +456,15 @@ export default function LancamentosPage() {
           ) : null}
         </p>
       </div>
+
+      {(sel === "sanidade_aplicacao" || sel === "protocolo_sanitario") && (
+        <div role="note" className="card mb-4" style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap", borderLeft: "3px solid var(--dourado)" }}>
+          <p style={{ flex: "1 1 280px", fontSize: "0.82rem", color: "var(--text-muted)", margin: 0 }}>
+            <strong style={{ color: "var(--text)" }}>Vacina e exame mudaram de lugar.</strong> O preventivo (vacina ou exame) agora é agendado e aplicado em Protocolos, com janela de aplicação e lista de espera. Aqui ficam o curativo, o BST e os demais lançamentos.
+          </p>
+          <a className="btn-primary" href="/protocolos?aba=aplicar" style={{ fontSize: "0.78rem", textDecoration: "none" }}>Aplicar vacina ou exame em Protocolos</a>
+        </div>
+      )}
 
       {ehGaveta ? (
         <div className="card">
@@ -578,8 +576,6 @@ export default function LancamentosPage() {
             {sel === "inducao_cio" && <FormInducaoCio key={formKey} animais={animais} estoque={estoque} motivosInaptidao={motivosInaptidao} onSalvo={aoSalvarNaGaveta} />}
             {sel === "controle" && <FormControle key={formKey} animais={animais} lotesLact={lotesLact} onSalvo={aoSalvarNaGaveta} />}
             {sel === "sanidade_aplicacao" && <FormSanidade key={formKey} animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} onSalvo={aoSalvarNaGaveta} />}
-            {sel === "preventivo_aplicacao" && <FormPreventivoAplicacao key={formKey} animais={animais} lotes={lotes} estoque={estoque} onSalvo={aoSalvarNaGaveta} />}
-            {sel === "calendario_sanitario" && <FormAplicarCalendarioSanitario key={formKey} animais={animais} lotes={lotes} estoque={estoque} onSalvo={aoSalvarNaGaveta} />}
             {sel === "bst" && <BstLancamentoView key={formKey} />}
             {sel === "protocolo_sanitario" && <FormProtocoloSanitario key={formKey} animais={animais} estoque={estoque} onSalvo={aoSalvarNaGaveta} />}
             {sel === "alimentacao_dieta" && <ConsumoAlimento key={formKey} onSalvo={aoSalvarNaGaveta} />}

@@ -449,7 +449,9 @@ function LancamentoTab({ animais, estoque, lotes }: { animais: AnimalRow[]; esto
       <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
         {tipo === "customizado" || tipo === "lida"
           ? `${TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label} só é lançado aqui — não existe em Lançamentos.`
-          : "Mesmo lançamento de Lançamentos — lance aqui ou lá, dá no mesmo registro."}
+          : tipo === "sanitario" && subSanitario === "preventivo"
+            ? "Vacina e exame só são aplicados aqui (e na Agenda, no dia) — não existem mais em Lançamentos nem em Sanidade."
+            : "Mesmo lançamento de Lançamentos — lance aqui ou lá, dá no mesmo registro."}
       </p>
     </div>
   );
