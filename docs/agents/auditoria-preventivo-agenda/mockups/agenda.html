@@ -700,6 +700,22 @@ a.btn{text-decoration:none}
   .num{padding:8px 8px}
 }
 
+/* ── rodada 4 ── */
+.lnk{color:var(--info-fg);text-decoration:underline;text-underline-offset:3px}
+@media (max-width:767px){
+  .toast{flex-wrap:wrap;padding:10px 12px;gap:8px}
+  .toast .m{flex:1 1 100%}
+  .toast button{flex:1 1 auto}
+  .toast button.xx{flex:0 0 44px}
+  .row{flex-wrap:wrap;padding:12px}
+  .row .rt{flex:1 1 100%;order:1}
+  .row .acts{flex:1 1 100%;order:2;margin-top:4px}
+  .row .btn-feito{flex:1}
+  .row .ck{order:0}
+  .sel .row .rt{flex:1 1 calc(100% - 56px)}
+  .fab{width:44px;height:44px;right:12px;bottom:12px}
+}
+
 </style>
 </head>
 <body>
@@ -814,7 +830,7 @@ const EST0={
   est:{nome:'Estron (cloprostenol)',un:'mL',fml:60,preco:1.1,min:120,fr:[{f:'ES-2607',val:'2027-11-30',s:120}]},
   scp:{nome:'SincroCP (cipionato)',un:'mL',fml:50,preco:1.6,min:100,fr:[{f:'CP-2606',val:'2027-10-31',s:50}]},
   cef:{nome:'Ceftiofur',un:'mL',fml:100,preco:1.2,dose:5,via:'IM',carL:4,carC:4,min:100,fr:[{f:'CF-5510',val:'2027-03-31',s:200}]},
-  tub:{nome:'Tuberculina PPD',un:'dose',preco:9,dose:0.1,via:'Intradérmica',min:20,fr:[{f:'TB-2608',val:'2027-01-31',s:60}]},
+  tub:{nome:'Tuberculina PPD',un:'dose',preco:9,dose:0.1,via:'Intradérmica',min:20,fr:[{f:'TU-2608',val:'2027-01-31',s:100}]},
   sem:{nome:'Sêmen (palhetas)',un:'palheta',preco:65,min:20,fr:[{f:'Botijão 2 · Jatobá',val:'',s:14}]},
   bst:{nome:'Somatotropina (BST)',un:'dose',preco:19.8,min:30,fr:[{f:'BS-2606',val:'2027-02-28',s:60}]}
 };
@@ -839,11 +855,11 @@ const GLOS_RE=[['IATF',/\bIATF\b/],['Scratch',/retorno ao cio/i],['PEV',/\bPEV\b
 /* ───────── tipos de tarefa ───────── */
 const S_INS=(id,q,txt)=>({id,q,txt});
 const KIND={
-  iatf0:{cat:'rep',t:(p,d)=>`IATF ${p} — Dia 0`,g:'confirmar',noun:'animais',crit:1,orig:'Protocolos › Em andamento › IATF',sub:'Colocar implante · 2 mL Sincrodiol · 2,5 mL Sincroforte por animal',
+  iatf0:{na:1,cat:'rep',t:(p,d)=>`Inseminação programada (IATF) · ${p} — Dia 0`,g:'confirmar',noun:'animais',crit:1,orig:'Protocolos › Em andamento › IATF',sub:'Colocar implante · 2 mL Sincrodiol · 2,5 mL Sincroforte por animal',
     ins:n=>[S_INS('imp',n,`Implante Sincrogest: ${n} un`),S_INS('sdi',2*n,`Sincrodiol: ${nfmt(2*n)} mL`),S_INS('sfo',2.5*n,`Sincroforte: ${nfmt(2.5*n)} mL`)]},
-  iatf7:{cat:'rep',t:p=>`IATF ${p} — Dia 7`,g:'confirmar',noun:'vacas',crit:1,orig:'Protocolos › Em andamento › IATF',sub:'2 mL Estron (cloprostenol) por animal',ins:n=>[S_INS('est',2*n,`Estron: ${nfmt(2*n)} mL`)]},
-  iatf9:{cat:'rep',t:p=>`IATF ${p} — Dia 9`,g:'confirmar',noun:'novilhas',crit:1,orig:'Protocolos › Em andamento › IATF',sub:'Retirar implante · 2 mL Estron · 1 mL SincroCP por animal',ins:n=>[S_INS('est',2*n,`Estron: ${nfmt(2*n)} mL`),S_INS('scp',n,`SincroCP: ${nfmt(n)} mL`)]},
-  iatf11:{cat:'rep',t:p=>`IATF ${p} — Dia 11: inseminar`,g:'inseminar',noun:'animais',crit:1,orig:'Protocolos › Em andamento › IATF',sub:'1 palheta de sêmen por animal',ins:n=>[S_INS('sem',n,`Sêmen: ${n} palhetas`)]},
+  iatf7:{na:1,cat:'rep',t:p=>`Inseminação programada (IATF) · ${p} — Dia 7`,g:'confirmar',noun:'vacas',crit:1,orig:'Protocolos › Em andamento › IATF',sub:'2 mL Estron (cloprostenol) por animal',ins:n=>[S_INS('est',2*n,`Estron: ${nfmt(2*n)} mL`)]},
+  iatf9:{na:1,cat:'rep',t:p=>`Inseminação programada (IATF) · ${p} — Dia 9`,g:'confirmar',noun:'novilhas',crit:1,orig:'Protocolos › Em andamento › IATF',sub:'Retirar implante · 2 mL Estron · 1 mL SincroCP por animal',ins:n=>[S_INS('est',2*n,`Estron: ${nfmt(2*n)} mL`),S_INS('scp',n,`SincroCP: ${nfmt(n)} mL`)]},
+  iatf11:{na:1,cat:'rep',t:p=>`Inseminação programada (IATF) · ${p} — Dia 11: inseminar`,g:'inseminar',noun:'animais',crit:1,orig:'Protocolos › Em andamento › IATF',sub:'1 palheta de sêmen por animal',ins:n=>[S_INS('sem',n,`Sêmen: ${n} palhetas`)]},
   bst:{cat:'pro',t:()=>'Somatotropina (BST) — aplicação do ciclo',g:'bst',noun:'vacas aptas',orig:'Reprodução › BST · ciclo de 14 dias · DEL a partir de 60',ins:n=>[S_INS('bst',n,`Somatotropina: ${n} doses`)]},
   rai:{cat:'san',t:()=>'Raiva — reforço',g:'registrar',noun:'animais',prod:'rai',orig:'Sanidade › Vacinas e exames › Raiva (anual)',ins:n=>[S_INS('rai',n,`Raiva: ${n} doses`)]},
   clo2:{cat:'san',t:()=>'Clostridioses — dose 2 (30 dias após a dose 1)',g:'registrar',noun:'animais',prod:'clo',orig:'Sanidade › Vacinas e exames › Clostridioses (dose 1 em 26/08/2026)',ins:n=>[S_INS('clo',n,`Clostridioses: ${n} doses`)]},
@@ -851,11 +867,11 @@ const KIND={
   b19:{cat:'san',t:()=>'Brucelose B19 — dose única',g:'registrar',noun:'bezerras elegíveis (3–8 meses)',prod:'b19',prog:1,vet:1,orig:'Sanidade › Vacinas e exames › B19 (fêmeas de 3 a 8 meses)',ins:n=>[S_INS('b19',n,`B19: ${n} doses`)]},
   afo:{cat:'san',t:()=>'Aftosa — data definida pela defesa sanitária estadual',g:'registrar',noun:'animais',prod:'afo',prog:1,orig:'Sanidade › Vacinas e exames › Aftosa (anual, data editável)',ins:n=>[S_INS('afo',n,`Aftosa: ${n} doses`)]},
   vermi:{cat:'san',t:()=>'Vermifugação (ivermectina 1%)',g:'registrar',noun:'novilhas',prod:'ive',peso:230,orig:'Sanidade › Vacinas e exames › Vermifugação (a cada 90 dias)',sub:'Dose por peso: peso médio 230 kg × 1 mL/50 kg = 4,6 mL por animal',ins:n=>[S_INS('ive',Math.round(n*4.6*10)/10,`Ivermectina 1%: ${nfmt(Math.round(n*4.6*10)/10)} mL`)]},
-  mast:{cat:'san',t:(p,d)=>`Tratamento de mastite clínica — Dia ${d}`,g:'registrar',noun:'vacas',prod:'cef',orig:'Protocolos › Em andamento › Tratamento de mastite clínica (início em 26/09/2026)',sub:'Ceftiofur 5 mL IM por vaca por dia · carência de leite e carne até 04/10/2026',ins:n=>[S_INS('cef',5*n,`Ceftiofur: ${5*n} mL`)]},
-  tb:{cat:'san',t:()=>'Exame TB — reteste (inconclusivo em 31/03/2026)',g:'exame',noun:'animais',prod:'tub',orig:'Sanidade › Vacinas e exames › Exame TB (tuberculina PPD)',sub:'Inocular hoje; leitura só a partir de 72 horas',ins:n=>[S_INS('tub',n,`Tuberculina PPD: ${n} doses`)]},
-  tbl:{cat:'san',t:()=>'Exame TB — ler o resultado (72 horas)',g:'exame',noun:'animais',orig:'Sanidade › Vacinas e exames › Exame TB'},
+  mast:{na:1,cat:'san',t:(p,d)=>`Tratamento de mastite clínica — Dia ${d}`,g:'registrar',noun:'vacas',prod:'cef',orig:'Protocolos › Em andamento › Tratamento de mastite clínica (início em 26/09/2026)',sub:'Ceftiofur 5 mL IM por vaca por dia · descarte o leite durante o tratamento · carência de leite e carne até 04/10/2026',ins:n=>[S_INS('cef',5*n,`Ceftiofur: ${5*n} mL`)]},
+  tb:{cat:'san',t:()=>'Exame TB — reteste (inconclusivo em 31/03/2026)',g:'exame',noun:'animais',prod:'tub',orig:'Sanidade › Vacinas e exames › Exame TB (tuberculina PPD)',sub:'Inocular hoje; leitura só a partir de 72 horas',ins:n=>[S_INS('tub',n,`Tuberculina PPD: ${n} exames`)]},
+  tbl:{na:1,cat:'san',t:()=>'Exame TB — ler o resultado (72 horas)',g:'exame',noun:'animais',orig:'Sanidade › Vacinas e exames › Exame TB'},
   secagem:{cat:'rep',t:()=>'Secagem — parar a ordenha (60 dias antes do parto)',noun:'vacas',bulk:1,orig:'Reprodução › Gestações'},
-  parto:{cat:'rep',t:()=>'Parto provável — preparar e observar',noun:'vacas',crit:1,bulk:1,orig:'Reprodução › Gestações · Girolando 287 dias',sub:'Previsão de parto: 30/09/2026'},
+  parto:{na:1,cat:'rep',t:()=>'Parto provável — preparar e observar',noun:'vacas',crit:1,bulk:1,orig:'Reprodução › Gestações · Girolando 287 dias',sub:'Previsão de parto: 30/09/2026'},
   cio14:{cat:'rep',t:()=>'Checar retorno ao cio (14 dias)',noun:'vacas',bulk:1,orig:'Reprodução › Inseminações',sub:'Parâmetro da fazenda: 14 dias após a inseminação'},
   pev:{cat:'rep',t:()=>'Fim do período de espera voluntário (PEV)',noun:'vacas',bulk:1,orig:'Reprodução › Parâmetros · PEV de 45 dias',sub:'Liberadas para inseminar'},
   diag:{cat:'rep',t:()=>'Diagnóstico de gestação (30 dias)',noun:'vacas',bulk:1,orig:'Reprodução › Inseminações'},
@@ -864,7 +880,7 @@ const KIND={
   desmama:{cat:'rec',t:()=>'Desmama (90 dias)',noun:'bezerros',bulk:1,orig:'Recria › Desmama · 90 dias de idade'},
   cmt:{cat:'san',t:()=>'Teste CMT — ordenha da tarde',bulk:1,orig:'Sanidade › Rotinas de ordenha'},
   adapt:{cat:'rep',t:(p,d)=>`Adaptação pré-parto — Dia ${d} (protocolo próprio)`,noun:'vacas',bulk:1,orig:'Protocolos › Em andamento › Adaptação pré-parto',sub:'Protocolo de 7 dias · Dia 0 em 25/09/2026'},
-  ind:{cat:'pro',t:(p,d)=>`Indução de lactação — Dia ${d}`,noun:'novilhas',bulk:1,orig:'Protocolos › Em andamento › Indução de lactação',sub:'Dia 0 em 22/09/2026 · Dia 20 em 12/10/2026'}
+  ind:{cat:'pro',t:(p,d)=>`Indução de lactação — Dia ${d}`,noun:'novilhas',bulk:1,orig:'Protocolos › Em andamento › Indução de lactação',sub:'Dias 0, 3, 7, 10, 14, 17 e 20 · Dia 0 em 22/09/2026'}
 };
 function refresh(t){
   const k=KIND[t.kind];if(!k||!t.animais)return;
@@ -877,7 +893,7 @@ function mk(id,kind,off,o={}){
   const k=KIND[kind];
   const t={id,kind,data:add(HOJE,off),cat:k.cat,titulo:o.titulo||k.t(o.proto||'',o.dia),trilho:'campo',res:'realizar',gaveta:k.g||'',
     lote:o.lote||null,animais:o.animais||[],bulk:k.bulk?1:0,crit:k.crit?1:0,origem:k.orig,sub:o.sub||k.sub||'',st:'p',
-    prod:k.prod,prog:k.prog?1:0,vet:k.vet?1:0,proto:o.proto||'',noun_ov:o.noun,quem_fix:o.quem_fix,peso:k.peso,dia:o.dia};
+    na:k.na?1:0,prod:k.prod,prog:k.prog?1:0,vet:k.vet?1:0,proto:o.proto||'',noun_ov:o.noun,quem_fix:o.quem_fix,peso:k.peso,dia:o.dia};
   refresh(t);
   if(kind==='cmt'){t.quem=o.lote+' · ordenha da tarde';t.animais=[]}
   return t;
@@ -916,13 +932,13 @@ function seedTasks(){
   /* próximos dias: etapas dos protocolos + rotina */
   let fs=0;const F=(off,kind,lote,ani,o={})=>{T.push(mk('f'+(++fs),kind,off,{animais:ani,lote,...o}))};
   const L02=['4210','4211','4212','4213','4214','4216','4217','4218'];
-  F(1,'mast',L1,['4105','4112','4131'],{dia:4});F(1,'adapt',LPP,RG(4301,4309),{dia:5});F(1,'ind',LR1,['5108','5117'],{dia:8});F(1,'parto',LPP,['4306']);F(1,'cio14',L3,['2120','2125','2130']);F(1,'pev',L3,['2145','2150']);
-  F(2,'iatf11',LR2,RG(5201,5212),{proto:'Recria 2'});F(2,'adapt',LPP,RG(4301,4309),{dia:6});F(2,'ind',LR1,['5108','5117'],{dia:9});F(2,'ibr',LSE,RG(4401,4414));F(2,'pesleite',L1,L1ANI,{quem_fix:`${L1} · 24 vacas`});
+  F(1,'mast',L1,['4105','4112','4131'],{dia:4});F(1,'adapt',LPP,RG(4301,4309),{dia:5});F(1,'parto',LPP,['4306']);F(1,'cio14',L3,['2120','2125','2130']);F(1,'pev',L3,['2145','2150']);
+  F(2,'iatf11',LR2,RG(5201,5212),{proto:'Recria 2'});F(2,'adapt',LPP,RG(4301,4309),{dia:6});F(2,'ibr',LSE,RG(4401,4414));F(2,'pesleite',L1,L1ANI,{quem_fix:`${L1} · 24 vacas`});
   F(3,'b19',LBZ,RG(6104,6109),{noun:'bezerras elegíveis (3–8 meses)'});F(3,'ind',LR1,['5108','5117'],{dia:10});F(3,'cio14',L3,['2158','2163','2171','2177']);
-  F(4,'ind',LR1,['5108','5117'],{dia:11});F(4,'desmama',LBZ,['6103','6110','6111']);F(4,'cmt',L1,[]);
-  F(5,'iatf7',L2,L02,{proto:'Lote 02 – Média'});F(5,'ind',LR1,['5108','5117'],{dia:12});
-  F(6,'ind',LR1,['5108','5117'],{dia:13});F(6,'secagem',L1,['4110','4111'],{quem_fix:'2 vacas · de Lote 01 – Alta produção para Secas'});
-  F(7,'iatf9',L2,L02,{proto:'Lote 02 – Média'});F(7,'ind',LR1,['5108','5117'],{dia:14});F(7,'pesagem',LBZ,RG(6101,6115));F(7,'parto',LPP,['4307']);
+  F(4,'desmama',LBZ,['6103','6110','6111']);F(4,'cmt',L1,[]);
+  F(5,'iatf7',L2,L02,{proto:'Lote 02 – Média'});
+  F(6,'secagem',L1,['4110','4111'],{quem_fix:'2 vacas · de Lote 01 – Alta produção para Secas'});
+  F(7,'iatf9',L2,L02,{proto:'Lote 02 – Média'});F(7,'ind',LR1,['5108','5117'],{dia:14});F(10,'ind',LR1,['5108','5117'],{dia:17});F(7,'pesagem',LBZ,RG(6101,6115));F(7,'parto',LPP,['4307']);
   F(9,'iatf11',L2,L02,{proto:'Lote 02 – Média'});F(9,'pesleite',L1,L1ANI,{quem_fix:`${L1} · 24 vacas`});
   F(11,'cio14',L3,['2183','2189','2195']);F(12,'cmt',L1,[]);F(13,'ind',LR1,['5108','5117'],{dia:20});
   F(14,'bst',L1,BST_APTAS);F(14,'pesagem',LBZ,RG(6101,6115));F(16,'pesleite',L1,L1ANI,{quem_fix:`${L1} · 24 vacas`});F(16,'parto',LPP,['4305']);
@@ -1027,7 +1043,7 @@ function buildHash(r){
   if(r.aba)p.set('aba',r.aba);
   const s=p.toString();return '#/agenda'+(s?'?'+s:'');
 }
-let ui={loading:true,erroRede:false,dispBanner:false,amanha:false,concl:false,sel:false,selIds:new Set(),run:null,updHora:'13:52',filtrosAberto:false,spin:false,opener:null,mini:'',D:{},dedup:0};
+let ui={loading:true,erroRede:false,dispBanner:false,amanha:false,concl:false,sel:false,selIds:new Set(),run:null,updHora:'14:05',filtrosAberto:false,spin:false,opener:null,mini:'',D:{},dedup:0};
 function go(patch,opt={}){
   const nr={...R,...patch};
   if(patch.visao&&patch.visao!==R.visao&&!('dia' in patch))nr.dia='';
@@ -1062,10 +1078,10 @@ function buildShell(){
     <div class="us"><div>${ic('circle-user',13)} Jairo Nasser</div><button data-a="stub" data-l="Trocar de conta">${ic('log-out',12)} Trocar de conta</button></div><p>v1.0.0 · Sprint 1</p></div>`;
   $('#mbar').innerHTML=`<button class="mb" id="sbOpen" aria-label="Abrir menu" aria-expanded="false" aria-controls="sb">${ic('menu',22)}</button>
    <span class="wm"><span class="c">Cow</span><span class="d">Data</span></span><span class="fz">· Fazenda Estreito Ponte de Pedra</span>
-   <div class="mt"><button data-a="tema" aria-label="Alternar tema">${ic('sun',16)}</button><button data-a="stub" data-l="Notificações" aria-label="Notificações: 23">${ic('bell',18)}<span class="n">23</span></button></div>`;
+   <div class="mt"><button data-a="tema" aria-label="Alternar tema">${ic('sun',16)}</button><button data-a="stub" data-l="Notificações" aria-label="Notificações: 3">${ic('bell',18)}<span class="n">3</span></button></div>`;
   $('#topact').innerHTML=`<a class="news" href="#/agenda" data-a="stub" data-l="News" title="News — notícias de pecuária leiteira">${ic('newspaper',15)}News</a>
    <button class="btn-ghost tema" data-a="tema" id="temaBtn" title="Alternar tema"></button>
-   <button class="bell" data-a="stub" data-l="Notificações" aria-label="Notificações de hoje">${ic('bell',19)}<span class="n">23</span></button>`;
+   <button class="bell" data-a="stub" data-l="Notificações" aria-label="Notificações de hoje">${ic('bell',19)}<span class="n">3</span></button>`;
   $('#fab').innerHTML=ic('sparkles',24);
   syncTema();
 }
@@ -1077,6 +1093,7 @@ function syncTema(){
 function setTema(t){document.documentElement.setAttribute('data-theme',t);try{localStorage.setItem('cd-tema',t)}catch(e){}syncTema()}
 
 /* ───────── cabeçalho e 3 números ───────── */
+const OFFHORA='13:52';
 function updLabel(){return `Atualizado às ${ui.updHora}`}
 function updHora(){return ui.updHora}
 function renderHdr(){
@@ -1133,9 +1150,9 @@ function renderReag(){
    ${r.notif?`<div class="okn">${ic('circle-check',16)}Notificação ao serviço veterinário oficial registrada por ${esc(r.notif.quem)} em ${fmtBR(r.notif.dia)} às ${r.notif.hora}.</div>`:`<label class="ck2"><input type="checkbox" data-a="reag-notif" data-i="${i}"> Notificação ao serviço veterinário oficial registrada</label>`}</div></div>`).join('');
 }
 function renderBanner(){
-  const st=$('#apist');if(st){st.innerHTML=ui.dispBanner?`<span class="pulse-dot off"></span>Sem conexão${S.fila.length?` · ${S.fila.length} na fila`:''}<br><span class="upd-s">Atualizado às ${ui.updHora}</span>`:'<span class="pulse-dot"></span>API conectada';st.classList.toggle('off',!!ui.dispBanner)}
+  const st=$('#apist');if(st){st.innerHTML=ui.dispBanner?`<span class="pulse-dot off"></span>Sem conexão${S.fila.length?` · ${S.fila.length} na fila`:''}<br><span class="upd-s">envia ao reconectar</span>`:'<span class="pulse-dot"></span>API conectada';st.classList.toggle('off',!!ui.dispBanner)}
   const el=$('#banner');
-  el.innerHTML=ui.dispBanner?`<div class="callout warn banner" role="alert">${ic('wifi-off',18)}<span><b>Sem conexão</b> · dados de ${updHora()} · você continua conectado. O que fizer fica guardado neste aparelho e envia ao reconectar${S.fila.length?` (${S.fila.length} na fila)`:''}.</span><button class="btn sm" data-a="retry" data-fk="retry">${ic('refresh-cw',14,ui.spin?'spin':'')}Tentar de novo</button></div>`:'';
+  el.innerHTML=ui.dispBanner?`<div class="callout warn banner" role="alert">${ic('wifi-off',18)}<span><b>Sem conexão</b> · dados de ${OFFHORA} · você continua conectado. O que fizer fica guardado neste aparelho e envia ao reconectar${S.fila.length?` (${S.fila.length} na fila)`:''}.</span><button class="btn sm" data-a="retry" data-fk="retry">${ic('refresh-cw',14,ui.spin?'spin':'')}Tentar de novo</button></div>`:'';
 }
 
 /* ───────── linha de tarefa ───────── */
@@ -1161,6 +1178,7 @@ function glBtn(t){
   return `<button class="glb" data-a="gl" data-k="${ks.join(',')}" aria-label="O que significa ${ks.join(', ')}?" aria-haspopup="true" aria-expanded="false">${ic('info',14)}</button>`;
 }
 const insTxt=t=>(t.insL||[]).map(i=>i.txt).join(' · ');
+function quemTxt(t,o){let q=t.quem||'';if(o.hideLote&&t.lote){const L=t.lote;q=q.split('de '+L+' para').join('para').split(L+' · ').join('').split(' · '+L).join('');if(q===L)q=''}return q}
 function rowHTML(t,o={}){
   const p=prim(t),c=CATS[t.cat]||CATS.ati;
   const dd=t.kind==='iatf11'&&t.iaFeitas&&t.iaFeitas.length?`${t.iaFeitas.length} de ${t.animais.length} inseminadas`:'';
@@ -1169,7 +1187,7 @@ function rowHTML(t,o={}){
    <label class="ck" style="${t.bulk?'':'visibility:hidden'}"><input type="checkbox" data-a="ck" data-id="${t.id}" ${t.bulk?'':'disabled'} ${ui.selIds.has(t.id)?'checked':''} aria-label="Selecionar ${esc(t.titulo)}"></label>
    <span class="cic cq" style="--ik:${INK[t.cat]||'#fff'}" title="${c.n}">${ic(c.i,18)}</span>
    <div class="rt"><div class="tt">${esc(t.titulo)}${glBtn(t)}</div>
-    <div class="mt"><span class="cat-m cq" style="--c:${catVar(t.cat)};--ik:${INK[t.cat]||'#fff'}" title="${c.n}">${ic(c.i,14)}<span class="sr">${c.n}</span></span>${t.quem?`<span>${esc(t.quem)}</span>`:''}${dd?`<span class="ins">${ic('syringe',13)}${dd}</span>`:''}${t.sub?`<span>${esc(t.sub)}</span>`:''}${t.obs?`<span>${esc(t.obs)}</span>`:''}</div>
+    <div class="mt"><span class="cat-m cq" style="--c:${catVar(t.cat)};--ik:${INK[t.cat]||'#fff'}" title="${c.n}">${ic(c.i,14)}<span class="sr">${c.n}</span></span>${quemTxt(t,o)?`<span>${esc(quemTxt(t,o))}</span>`:''}${dd?`<span class="ins">${ic('syringe',13)}${dd}</span>`:''}${t.sub?`<span>${esc(t.sub)}</span>`:''}${t.obs?`<span>${esc(t.obs)}</span>`:''}</div>
     ${ins?`<div class="mt"><span class="ins">${ic('package-open',13)}${esc(ins)}</span></div>`:''}
     <div class="mt">${pills(t)}</div></div>
    <div class="acts"><button class="btn btn-feito" data-a="prim" data-id="${t.id}" data-fk="p:${t.id}" aria-label="${p.l}${p.ch?' — abre a gaveta':''}: ${esc(t.titulo)}">${ic(p.i,16)}<span>${p.l}</span>${p.ch?ic('chevron-right',14):''}</button>
@@ -1188,7 +1206,7 @@ function groupBlock(list,by){
     const tot=by==='lote'?(LOTES.find(l=>l[0]===k)||[0,0])[1]:0;
     const head=by==='lote'?`<span class="cic" style="--c:var(--cat-recria)">${ic('users',16)}</span><b>${esc(k)}</b><span class="n">${tot?`${tot} animais no lote · `:''}${arr.length} ${arr.length===1?'tarefa':'tarefas'}${at?` · ${at} atrasada${at>1?'s':''}`:''}</span>`
       :`<span class="cic" style="--c:${catVar(k)}">${ic(CATS[k].i,16)}</span><b>${CATS[k].n}</b><span class="n">${arr.length} ${arr.length===1?'tarefa':'tarefas'}${at?` · ${at} atrasada${at>1?'s':''}`:''}</span>`;
-    return `<div class="gh" role="heading" aria-level="3">${head}</div>${arr.map(t=>rowHTML(t)).join('')}`;
+    return `<div class="gh" role="heading" aria-level="3">${head}</div>${arr.map(t=>rowHTML(t,{hideLote:by==='lote'})).join('')}`;
   }).join('');
 }
 
@@ -1395,7 +1413,7 @@ function desfazer(id){
   save();
 }
 function naoVou(id,motivo,obs){const t=byId(id);t.st='n';t.feitoEm=HOJE;t.hora=hm();t.motivo=motivo;t.obsNao=obs||'';t.porQuem=USER;ui.selIds.delete(id);lg({tid:id,titulo:t.titulo,lote:t.lote,acao:'Não vou fazer',motivo,obs:obs||''});save()}
-function adiar(id,nd,motivo,obs){const t=byId(id);t.adiadaDe=t.adiadaDe||t.data;t._antes=t.data;const de=t.data;t.data=nd;ui.selIds.delete(id);lg({tid:id,titulo:t.titulo,lote:t.lote,acao:'Adiada',motivo:motivo||'',obs:`De ${fmtBR(de)} para ${fmtBR(nd)}${obs?' · '+obs:''}`});save()}
+function adiar(id,nd,motivo,obs){const t=byId(id);t.adiadaDe=t.adiadaDe||t.data;t._antes=t.data;const de=t.data;t.data=nd;ui.selIds.delete(id);lg({tid:id,titulo:t.titulo,lote:t.lote,acao:'Adiada',motivo:motivo||'sem motivo informado',obs:`De ${fmtBR(de)} para ${fmtBR(nd)}${obs?' · '+obs:''}`});save()}
 function desfazerAdiar(id){const t=byId(id);if(!t)return;t.data=t._antes||t.adiadaDe;if(t.data===t.adiadaDe)delete t.adiadaDe;delete t._antes;lg({tid:id,titulo:t.titulo,lote:t.lote,acao:'Adiamento desfeito'});save()}
 
 /* ───────── toast único (nunca empilha) ───────── */
@@ -1456,7 +1474,7 @@ function renderOverlay(){
   }
   if(ui.Dkey!==key){if(!ui._keep)ui.D={};ui.Dkey=key}
   const t=R.t?byId(R.t):null;
-  const dialogs=['adiar','nao','fechardia','excluir'];
+  const dialogs=['adiar','nao','fechardia','excluir','compl'];
   let html='';
   try{html=dialogs.includes(g)?dlgHTML(g,t):drawerHTML(g,t)}catch(e){console.error(e);html=''}
   if(!html){R.gaveta='';history.replaceState(null,'',buildHash({...R,gaveta:'',t:''}));ov.innerHTML='';$('#shell').inert=false;return}
@@ -1573,17 +1591,18 @@ function drRegistrar(t){
   return dHead('Registrar aplicação',esc(t.titulo),esc(t.quem||''))+
   `<div class="db">
    <div class="fld"><span class="lb">Quem recebe</span><div class="callout">${ic('users',16)}<span><b>${t.animais.length} ${t.animais.length===1?'animal':'animais'}</b> · ${esc(t.lote||'')}<br><span class="mut">${t.animais.slice(0,10).map(aLbl).join(' · ')}${t.animais.length>10?` … +${t.animais.length-10}`:''}</span></span></div></div>
+   ${t.kind==='mast'?`<div class="callout warn">${ic('triangle-alert',16)}<span><b>Descarte o leite das vacas durante o tratamento.</b> Carência de carne de 4 dias após o último dia (até 04/10/2026).</span></div>`:''}
    ${vetTask?`<div class="callout warn">${ic('triangle-alert',16)}<span><b>Aplicação de veterinário cadastrado.</b> A B19 é exclusiva de veterinário, em fêmeas de 3 a 8 meses. Confira a idade das bezerras (aviso, não bloqueia).</span></div>`:''}
    <div class="fld"><label for="rg-f">Produto e frasco (estoque)</label><select id="rg-f" data-a="in-frasco" data-autofocus>${frOptsRg(e,D.fr,1)}</select><span class="hint">${e.dose?`${nfmt(e.dose)} mL ${e.via} por animal`:'Dose por peso'}</span></div>
    <div id="rg-av"></div>
    ${e.porPeso?`<div class="g2"><div class="fld"><label for="rg-p">Peso médio do lote (kg)</label><input id="rg-p" type="text" inputmode="decimal" value="${D.peso}"><span class="hint">1 mL a cada 50 kg</span></div>
     <div class="fld"><label for="rg-d">Dose por animal (mL)</label><input id="rg-d" type="text" inputmode="decimal" value="${nfmt(D.dose)}" readonly></div></div>`
    :`<div class="fld"><label for="rg-d">Dose por animal (mL)</label><input id="rg-d" type="text" inputmode="decimal" value="${nfmt(D.dose)}"></div>`}
-   <div class="fld"><label for="rg-v">Via de aplicação</label><select id="rg-v" data-a="in-via"><option ${D.via==='SC'?'selected':''}>SC</option><option ${D.via==='IM'?'selected':''}>IM</option><option ${D.via==='IV'?'selected':''}>IV</option><option>Oral</option><option ${D.via==='Intradérmica'?'selected':''}>Intradérmica</option></select><span class="err" id="rg-vw" hidden>${ic('triangle-alert',14)}A via padrão deste produto é ${esc(e.via)}. Confira a bula antes de trocar.</span></div>
+   <div class="fld"><label for="rg-v">Via de aplicação</label><input id="rg-v" type="text" value="${esc(e.via)}" readonly aria-describedby="rg-vh"><span class="hint" id="rg-vh">Via fixa para este produto, conforme a bula.</span></div>
    <div class="fld"><label for="rg-dt">Data real da aplicação</label>${dateField('rg-dt',D.dt)}<span class="err" id="rg-de" role="alert" hidden>${ic('circle-alert',14)}Use dd/mm/aaaa, até hoje.</span></div>
    <div class="g2"><div class="fld"><label for="rg-q">Quem aplicou</label><select id="rg-q" data-a="in-quem">${pessoaOpts(D.quem)}</select></div>
     <div class="fld"><label for="rg-rp">Registrado por</label><input id="rg-rp" type="text" value="${esc(REGPOR)}" readonly></div></div>
-   <div class="fld"><label for="rg-c">Custo realizado (opcional)</label><input id="rg-c" type="text" inputmode="decimal" placeholder="calculado pelo estoque" aria-describedby="rg-ch"><span class="hint" id="rg-ch">Deixe em branco para usar o custo médio do estoque.</span></div>
+   <div class="fld"><label for="rg-c">Custo (opcional)</label><input id="rg-c" type="text" inputmode="decimal" placeholder="calculado pelo estoque" aria-describedby="rg-ch"><span class="hint" id="rg-ch">Deixe em branco para usar o custo médio do estoque.</span></div>
    <div class="sumbox" id="sum" aria-live="polite"></div></div>
    <div class="df"><button class="btn ghost" data-a="ov-x">Cancelar</button><button class="btn gold" data-a="ok-registrar" id="okb">${ic('check',16)}Salvar registro</button></div>`;
 }
@@ -1600,7 +1619,7 @@ function updRegistrar(t){
   if(t.vet&&!pessoa(D.quem).vet)av.push(['warn','triangle-alert','<b>Aplicador sem registro de veterinário.</b> A B19 exige veterinário cadastrado. O registro não é bloqueado.']);
   D.needCiente=av.some(a=>a[3]);
   $('#rg-av').innerHTML=avHTML(av);
-  const via=$('#rg-v').value;D.via=via;$('#rg-vw').hidden=via===e.via;
+  D.via=e.via;
   const iso0=parseBR($('#rg-dt').value);D.dtIso=iso0;const dOk=!!iso0&&iso0<=HOJE;$('#rg-de').hidden=dOk;
   const base=dOk?iso0:HOJE;const parts=[`<b>${n} ${n===1?'animal':'animais'}</b>`,`Saída de estoque: ${cons.map(c=>`<b>${nfmt(c.q)} ${plu(c.q,e.un)}</b> do frasco ${esc(c.f)}`).join(' + ')} (saldo após: ${cons.map(c=>nfmt(e.fr.find(x=>x.f===c.f).s-c.q)).join(' / ')})`];
   if(t.kind==='clo2')parts.push(`dose 2 concluída; reforço anual previsto para <b>${fmtBR(add(base,365))}</b>`);
@@ -1646,7 +1665,7 @@ function updExame(t){
     D.needCiente=vencido(f2);
     $('#ex-av2').innerHTML=avHTML(avisosFrasco(e,f2,0));
     const cons=distribuir('tub',t.animais.length,D.fr);D.cons=cons;
-    $('#sum').innerHTML=`${t.animais.length} animais · tuberculina ${esc(D.fr)} (${t.animais.length} doses) · leitura prevista para <b>${fmtBR(add(iso0||HOJE,3))} às ${esc(D.hr)}</b> (72 horas) · <b>Custo previsto ${brl(custoDe(cons))}</b>`;
+    $('#sum').innerHTML=`${t.animais.length} animais · ${t.animais.length} exames com a tuberculina do frasco ${esc(D.fr)} · leitura prevista para <b>${fmtBR(add(iso0||HOJE,3))} às ${esc(D.hr)}</b> (72 horas) · <b>Custo previsto ${brl(custoDe(cons))}</b>`;
     $('#okb').disabled=!ok||!hOk||(D.needCiente&&!D.ciente);return}
   const pos=Object.keys(D.res).filter(a=>D.res[a]==='pos'),inc=Object.keys(D.res).filter(a=>D.res[a]==='inc'),vazio=Object.keys(D.res).filter(a=>!D.res[a]);
   const inoc=add(t.data,-3);const cedo=!!iso0&&((iso0+' '+D.hr)<(add(inoc,3)+' '+(t.hrInoc||'14:05')));
@@ -1706,7 +1725,7 @@ function updBst(t){
 /* ── Reprodução: Iniciar protocolo (abre Novo protocolo pré-preenchido) ── */
 function candidatas(){
   const mot=['Vazia · pós-PEV','Vazia · retorno ao cio','Repetidora (2 inseminações sem prenhez)','Vazia · pós-PEV'];
-  return CAND.map((n,i)=>({n,lote:L2,del:62+((i*17)%80),motivo:mot[i%4]}));
+  const DELS=[62,68,75,81,88,96,104,111,119,127,135];return CAND.map((n,i)=>({n,lote:L2,del:DELS[i],motivo:mot[i%4]}));
 }
 function protoLink(sel){return `vacinas-protocolos.html#/protocolos/novo?modelo=iatf&lote=lote02&animais=${sel.join(',')}`}
 function drRepro(){
@@ -1743,7 +1762,8 @@ function logDet(e){
 }
 const lgQuandoById=id=>{const e=S.log.find(x=>x.id===id);return e?lgQuando(e):'—'};
 function logRow(e){
-  return `<tr class="${e.estornada?'estorn':''}"><td>${lgQuando(e)}</td><td>${esc(e.quem)}</td><td>${e.acao==='Estornada'?'Estornada por '+esc(e.quem):esc(e.acao)} · ${esc(e.titulo||'')}${e.estornada?' <span class="pl man">estornada</span>':''}</td><td>${esc(e.quemFez||'—')}</td><td>${esc(logDet(e))}</td></tr>`;
+  const comp=e.acao==='Adiada'&&!e.motivo||e.acao==='Adiada'&&e.motivo==='sem motivo informado';
+  return `<tr class="${e.estornada?'estorn':''}"><td>${lgQuando(e)}</td><td>${esc(e.quem)}</td><td>${e.acao==='Estornada'?'Estornada por '+esc(e.quem):esc(e.acao)} · ${esc(e.titulo||'')}${e.estornada?' <span class="pl man">estornada</span>':''}</td><td>${esc(e.quemFez||'—')}</td><td>${esc(logDet(e))}${comp?` <button class="btn sm ghost" data-a="compl-motivo" data-lid="${e.id}">Informar motivo</button>`:''}</td></tr>`;
 }
 function drGestao(){
   const g=S.tasks.filter(t=>pend(t)&&t.trilho==='gestao');
@@ -1767,7 +1787,7 @@ function drDetalhes(t){
    <dt>Para quem</dt><dd>${esc(t.quem||'—')}</dd>${t.insL?`<dt>Insumo</dt><dd>${esc(insTxt(t))}</dd>`:''}${t.sub?`<dt>Nota</dt><dd>${esc(t.sub)}</dd>`:''}${t.obs?`<dt>Obs.</dt><dd>${esc(t.obs)}</dd>`:''}</dl>
    ${t.animais&&t.animais.length?`<div><div class="sect-t">${ic('users',14)}Animais (${t.animais.length})</div><div class="alist">${t.animais.map(a=>`<div class="ar"><b>${a}</b><span class="inf">${esc(t.lote||'')} · ${aniInfo(a,t)}</span></div>`).join('')}</div></div>`:''}
    <div><div class="sect-t">${ic('file-text',14)}Histórico (quem e quando)</div>${hist.length?`<div class="twrap"><table class="tbl"><tbody>${hist.map(logRow).join('')}</tbody></table></div>`:'<p class="mut">Sem registros ainda.</p>'}</div>
-   <div><div class="sect-t">${ic('arrow-right',14)}Origem</div><p>${esc(t.origem||'—')}</p>${origemBtn(t)}</div></div>
+   <div><div class="sect-t">${ic('arrow-right',14)}Origem</div><p>${origemHref(t)?`<a href="${origemHref(t)}" class="lnk">${esc(t.origem||'—')}</a>`:esc(t.origem||'—')}</p>${origemBtn(t)}</div></div>
    ${pend(t)?`<div class="df"><button class="btn ghost" data-a="dlg" data-g="nao" data-id="${t.id}">Não vou fazer</button><button class="btn" data-a="dlg" data-g="adiar" data-id="${t.id}">Adiar</button><button class="btn btn-feito" data-a="prim" data-id="${t.id}" data-autofocus>${ic(p.i,16)}${p.l}</button></div>`:`<div class="df"><button class="btn ghost" data-a="ov-x">Fechar</button></div>`}`;
 }
 /* Nova / editar tarefa manual */
@@ -1790,15 +1810,16 @@ const MOTIVOS=['Sem insumo','Animal fora do lote','Adiada por manejo','Decisão 
 function dlgShell(kk,titulo,body,foot){return `<div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dtitle">${dHead(kk,titulo)}<div class="db">${body}</div><div class="df">${foot}</div></div>`}
 function dlgHTML(g,t){
   const D=ui.D;
+  if(g==='compl'){const e=S.log.find(x=>x.id==R.t);if(!e)return '';return dlgShell('Adiada',esc(e.titulo),`<p class="mut">O adiamento foi registrado sem motivo. Você pode complementar agora; a entrada original continua no histórico.</p><div class="fld"><label for="cm-m">Motivo</label><select id="cm-m" data-a="in-cmmot" data-autofocus><option value="">Escolher…</option>${MOTIVOS.map(m=>`<option>${m}</option>`).join('')}</select></div>`,`<button class="btn ghost" data-a="ov-x">Cancelar</button><button class="btn gold" data-a="ok-compl" id="okb" disabled>Salvar motivo</button>`)}
   if(g==='adiar'){
-    if(!t)return '';const ja=t.data===HOJE;const atr=t.data<HOJE;if(!D.opt)D.opt=D.quick?'amanha':(atr?'hoje':'amanha');
+    if(!t)return '';const ja=t.data===HOJE;const atr=t.data<HOJE;if(!D.opt)D.opt=atr?'hoje':'amanha';
     return dlgShell('Adiar',esc(t.titulo),`<div class="opts" role="radiogroup" aria-label="Adiar para">
      <label class="opt"><input type="radio" name="ad" value="hoje" ${D.opt==='hoje'?'checked':''} ${ja?'disabled':''} data-a="in-ad"><span><span class="o1">Hoje</span><span class="o2" style="display:block">${ja?'A tarefa já é de hoje':atr?'Trazer a atrasada para hoje ('+fmtBR(HOJE)+')':'Trazer para hoje'}</span></span></label>
-     <label class="opt"><input type="radio" name="ad" value="amanha" ${D.opt==='amanha'?'checked':''} data-a="in-ad" ${D.quick?'':'data-autofocus'}><span><span class="o1">Amanhã</span><span class="o2" style="display:block">${fmtLong(add(HOJE,1))}</span></span></label>
+     <label class="opt"><input type="radio" name="ad" value="amanha" ${D.opt==='amanha'?'checked':''} data-a="in-ad" data-autofocus><span><span class="o1">Amanhã</span><span class="o2" style="display:block">${fmtLong(add(HOJE,1))}</span></span></label>
      <label class="opt"><input type="radio" name="ad" value="data" ${D.opt==='data'?'checked':''} data-a="in-ad"><span style="flex:1"><span class="o1">Escolher data</span><span class="fld" style="display:flex;margin-top:8px">${dateField('ad-d',D.dt||fmtBR(add(HOJE,3)))}</span><span class="err" id="ad-e" role="alert" hidden>${ic('circle-alert',14)}Use dd/mm/aaaa, a partir de hoje.</span></span></label></div>
-     <div class="fld"><label for="ad-m">Motivo (obrigatório)</label><select id="ad-m" data-a="in-admot" ${D.quick?'data-autofocus':''}><option value="">Escolher…</option>${MOTIVOS.map(m=>`<option ${D.mot===m?'selected':''}>${m}</option>`).join('')}</select></div>
+     <div class="fld"><label for="ad-m">Motivo (opcional)</label><select id="ad-m" data-a="in-admot"><option value="">Escolher…</option>${MOTIVOS.map(m=>`<option ${D.mot===m?'selected':''}>${m}</option>`).join('')}</select></div>
      <div class="fld" id="ad-o" ${D.mot==='Outro'?'':'hidden'}><label for="ad-t">Qual?</label><input id="ad-t" type="text" autocomplete="off"></div>`,
-     `<button class="btn ghost" data-a="ov-x">Cancelar</button><button class="btn gold" data-a="ok-adiar" data-id="${t.id}" id="okb" ${D.mot?'':'disabled'}>${ic('clock',16)}Adiar</button>`);
+     `<button class="btn ghost" data-a="ov-x">Cancelar</button><button class="btn gold" data-a="ok-adiar" data-id="${t.id}" id="okb">${ic('clock',16)}Adiar</button>`);
   }
   if(g==='nao'){
     if(!t)return '';
@@ -1810,10 +1831,14 @@ function dlgHTML(g,t){
      `<button class="btn ghost" data-a="ov-x">Cancelar</button><button class="btn danger" data-a="ok-nao" data-id="${t.id}" id="okb" ${D.mot?'':'disabled'}>Não vou fazer</button>`);
   }
   if(g==='fechardia'){
-    const c=counts();
+    const c=counts();const pend0=S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.data<=HOJE&&!t.hist);
+    const mov=pend0.filter(t=>!t.na),fixas=pend0.filter(t=>t.na);
     return dlgShell('Fechar o dia',c.restam?`Ainda restam ${c.restam} tarefa${c.restam===1?'':'s'} de campo`:'Fechar o dia',
-     c.restam?`<p>Hoje: <b>${c.N} de ${c.M}</b> feitas${c.at?` e ${c.at} atrasada${c.at===1?'':'s'}`:''}. O que fazer com o que sobrou?</p><ul style="margin:12px 0 0;padding-left:18px;color:var(--text-muted);font-size:.9375rem">${S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.data<=HOJE&&!t.hist).slice(0,5).map(t=>`<li>${esc(t.titulo)}</li>`).join('')}${c.restam>5?`<li>+ ${c.restam-5} outras</li>`:''}</ul>${fechadoExtra()}`:'<p>Não há tarefas de campo por fazer.</p>',
-     `<button class="btn ghost" data-a="ov-x">Voltar às tarefas</button>${c.restam?`<button class="btn gold" data-a="ok-fechar">${ic('clock',16)}Adiar tudo para amanhã e fechar</button>`:''}`);
+     c.restam?`<p>Hoje: <b>${c.N} de ${c.M}</b> feitas${c.at?` e ${c.at} atrasada${c.at===1?'':'s'}`:''}.</p>
+      <p style="margin-top:8px"><b>Podem ir para amanhã: ${mov.length}.</b> <span class="mut">${mov.slice(0,4).map(t=>esc(t.titulo)).join('; ')}${mov.length>4?`; + ${mov.length-4}`:''}</span></p>
+      <div class="callout warn" style="margin-top:12px">${ic('triangle-alert',16)}<span><b>Não adiáveis: ${fixas.length}.</b> Etapas de IATF, leitura de exame, parto provável e tratamento em curso ficam hoje e precisam ser resolvidas uma a uma.${fixas.length?'<br>'+fixas.slice(0,4).map(t=>esc(t.titulo)).join('; '):''}</span></div>
+      ${mov.length?`<div class="fld" style="margin-top:12px"><label for="fd-m">Motivo único (obrigatório) — vale para ${mov.length} ${mov.length===1?'tarefa':'tarefas'}</label><select id="fd-m" data-a="in-fdmot" data-autofocus><option value="">Escolher…</option>${MOTIVOS.map(m=>`<option ${D.mot===m?'selected':''}>${m}</option>`).join('')}</select></div><div class="fld" id="fd-o" ${D.mot==='Outro'?'':'hidden'}><label for="fd-t">Qual?</label><input id="fd-t" type="text" autocomplete="off"></div>`:''}${fechadoExtra()}`:'<p>Não há tarefas de campo por fazer.</p>',
+     `<button class="btn ghost" data-a="ov-x">Voltar às tarefas</button>${mov.length?`<button class="btn gold" data-a="ok-fechar" id="okb" ${D.mot?'':'disabled'}>${ic('clock',16)}Adiar ${mov.length} para amanhã</button>`:''}`);
   }
   if(g==='excluir'){
     if(!t)return '';
@@ -1967,11 +1992,11 @@ function escopoExport(){
       linhas.push({data:t.data,sit:d>0?`Atrasada há ${d} dias`:t.adiadaDe?`Adiada de ${fmtBR(t.adiadaDe)}`:'A fazer',cat:CATS[t.cat].n,tarefa:t.titulo,quem:t.quem||'',ins:insTxt(t),regpor:'',aplic:'',hora:'',motivo:'',frasco:'',dose:'',via:'',custo:''});
     }
   });
-  S.log.filter(e=>['Feito','Não vou fazer','Estornada','Adiada','Reagente identificado'].includes(e.acao)).forEach(e=>{
+  S.log.filter(e=>['Feito','Não vou fazer','Estornada','Adiada','Reagente identificado','Excluída','Motivo informado'].includes(e.acao)).forEach(e=>{
     const t=byId(e.tid);const tt=t||{};
     if(t&&!(match(t)))return;
     const dTask=t?t.data:e.dia;if(!(dTask>=ini&&dTask<=fim)&&!(v==='hoje'&&e.dia>=ini&&e.dia<=fim))return;
-    linhas.push({data:dTask,sit:e.acao==='Feito'?(e.estornada?'Feita (estornada depois)':e.fila?'Feita (na fila, envia ao reconectar)':'Feita'):e.acao==='Estornada'?'Estorno':e.acao==='Reagente identificado'?'REAGENTE — notificar serviço veterinário oficial':e.acao,cat:CATS[e.cat||(t&&t.cat)||'ati'].n,tarefa:e.titulo,quem:tt.quem||e.lote||'',ins:'',regpor:e.quem,aplic:e.quemFez||'',hora:`${fmtBR(e.dia)} ${e.hora}`,motivo:[e.motivo,e.obs].filter(Boolean).join(' · '),frasco:e.frasco||'',dose:e.dose||'',via:e.via||'',custo:c2(e.custo)});
+    linhas.push({data:dTask,sit:e.acao==='Feito'?(e.estornada?'Feita (estornada depois)':e.fila?'Feita (na fila, envia ao reconectar)':'Feita'):e.acao==='Estornada'?'Estorno':e.acao==='Reagente identificado'?'REAGENTE — notificar serviço veterinário oficial':e.acao==='Excluída'?'Tarefa excluída':e.acao,cat:CATS[e.cat||(t&&t.cat)||'ati'].n,tarefa:e.titulo,quem:tt.quem||e.lote||'',ins:'',regpor:e.quem,aplic:e.quemFez||'',hora:`${fmtBR(e.dia)} ${e.hora}`,motivo:[e.motivo,e.obs].filter(Boolean).join(' · '),frasco:e.frasco||'',dose:e.dose||'',via:e.via||'',custo:c2(e.custo)});
   });
   linhas.sort((a,b)=>a.data>b.data?1:a.data<b.data?-1:0);
   return {ini,fim,linhas};
@@ -2060,7 +2085,7 @@ document.addEventListener('click',e=>{
         const nid=feito(rid,{animais:sel,consumo:cons,reg:{quem:q,dataReal:dIso,ciente:cons.some(c=>vencido(S.est[c.id].fr.find(f=>f.f===c.f)))}});
         if(delta&&rep)sib.forEach(x=>{x.data=add(x.data,delta);lg({tid:x.id,titulo:x.titulo,acao:'Reprogramada',obs:`Deslocada ${delta>0?'+':''}${delta} dia(s) após a data real de ${t.titulo}`})});
         afterMut();feitoToast(nid,cons.map(c=>c.f).join(', '))});break}
-    case 'ok-registrar':{const t=byId(R.t),D=ui.D;const e=S.est[t.prod];const fr=D.fr;const rid=t.id;const reg={quem:D.quem,dataReal:D.dtIso,via:$('#rg-v').value,doseTxt:`${nfmt(D.dose)} mL/animal`,custo:D.custoV,ciente:D.needCiente&&D.ciente,obs:''};const cons=D.cons;
+    case 'ok-registrar':{const t=byId(R.t),D=ui.D;const e=S.est[t.prod];const fr=D.fr;const rid=t.id;const reg={quem:D.quem,dataReal:D.dtIso,via:e.via,doseTxt:`${nfmt(D.dose)} mL/animal`,custo:D.custoV,ciente:D.needCiente&&D.ciente,obs:''};const cons=D.cons;
       closeOvThen(()=>{const nid=feito(rid,{consumo:cons,reg});afterMut();feitoToast(nid,`frasco ${cons.map(c=>c.f).join(' + ')}`)});break}
     case 'ok-exame':{const t=byId(R.t),D=ui.D;const rid=t.id;const res={...D.res};const leitura=t.kind==='tbl';const q=D.quem;const lote=t.lote,an=t.animais.slice();const dIso=D.dtIso;const hr=D.hr;const cons=D.cons||[];const laudo=($('#ex-l')||{}).value||'';const just=($('#ex-j')||{}).value||'';
       closeOvThen(()=>{
@@ -2073,10 +2098,9 @@ document.addEventListener('click',e=>{
         }
         save();afterMut();renderReag();feitoToast(nid,leitura?'resultados registrados':`leitura em ${fmtBR(add(dIso||HOJE,3))} às ${hr}`)});break}
     case 'in-exfr':updExame(byId(R.t));break;
-    case 'in-via':updRegistrar(byId(R.t));break;
     case 'reag-notif':{const r=S.reagentes[+a.dataset.i];if(r&&a.checked){r.notif={quem:USER,dia:HOJE,hora:hm()};lg({tid:'reag',titulo:'Reagente '+aLbl(r.a),acao:'Notificação registrada',obs:'Serviço veterinário oficial notificado'});save();renderReag()}break}
     case 'ok-pesagem':{const t=byId(R.t),D=ui.D;const f=Object.keys(D.p).filter(x=>num(D.p[x])>0);const rid=t.id;const obs=f.map(x=>x+': '+nfmt(num(D.p[x]))+' kg').join('; ');
-      closeOvThen(()=>{const nid=feito(rid,{animais:f,reg:{quem:'ca',obs}});afterMut();feitoToast(nid,`${f.length} pesos registrados`)});break}
+      closeOvThen(()=>{const nid=feito(rid,{animais:f,reg:{quem:'ca',obs}});afterMut();feitoToast(nid,`${f.length} ${f.length===1?'peso registrado':'pesos registrados'}`)});break}
     case 'ok-bst':{const t=byId(R.t),D=ui.D;const sel=[...D.sel];const rid=t.id;
       closeOvThen(()=>{const nid=feito(rid,{animais:sel,consumo:distribuir('bst',sel.length,'BS-2606'),reg:{quem:'ca'}});afterMut();feitoToast(nid,`${sel.length} doses`)});break}
     case 'aba':abrirGav(R.gaveta,R.t,a.dataset.v);break;
@@ -2087,21 +2111,26 @@ document.addEventListener('click',e=>{
       else{renderOverlay();afterMut()}break}
     case 'ia-undo':{const t=byId(R.t);t.iaFeitas=t.iaFeitas.filter(x=>x!==a.dataset.v);S.est.sem.fr[0].s++;lg({tid:t.id,titulo:t.titulo,acao:'Estornada',obs:'Inseminação da vaca '+a.dataset.v+' estornada'});save();renderOverlay();afterMut();break}
     case 'gestao-ok':{const t=byId(id);t.st='n';t.feitoEm=HOJE;t.motivo=t.res==='informativo'?'Dispensado':'Aberto no módulo';t.hora=hm();lg({tid:id,titulo:t.titulo,acao:'Não vou fazer',motivo:t.motivo});save();afterMut();if(t.res!=='informativo')stub(t.destino);renderOverlay();break}
-    case 'mov-ok':{const t=byId(R.t);const lote=$('#mv-l').value;const rid=t.id;closeOvThen(()=>{const tt=byId(rid);tt.quem=`Recria 2 → ${lote}`;const nid=feito(rid,{reg:{},animais:[]});afterMut();feitoToast(nid,`novilha 4109 movida para ${lote}`)});break}
+    case 'mov-ok':{const t=byId(R.t);const lote=$('#mv-l').value;const rid=t.id;closeOvThen(()=>{const tt=byId(rid);tt.quem=`Recria 2 → ${lote}`;const nid=feito(rid,{reg:{obs:`Movimentação da novilha 5215: origem Recria 2, destino ${lote}`},animais:[]});afterMut();feitoToast(nid,`novilha 5215 movida de Recria 2 para ${lote}`)});break}
     case 'mov-nao':{const t=byId(R.t);const rid=t.id;closeOvThen(()=>{adiar(rid,add(HOJE,7),'Decisão adiada');afterMut();toast({msg:'Sem decisão agora: a sugestão volta em 7 dias',undo:()=>{desfazerAdiar(rid);afterMut();toast({msg:'Desfeito · adiamento cancelado'})}})});break}
     case 'in-ad':ui.D.opt=a.value;break;
-    case 'in-admot':{ui.D.mot=a.value;$('#ad-o').hidden=a.value!=='Outro';$('#okb').disabled=!a.value;break}
+    case 'in-admot':{ui.D.mot=a.value;$('#ad-o').hidden=a.value!=='Outro';break}
+    case 'in-fdmot':{ui.D.mot=a.value;$('#fd-o').hidden=a.value!=='Outro';$('#okb').disabled=!a.value;break}
+    case 'in-cmmot':{ui.D.mot=a.value;$('#okb').disabled=!a.value;break}
+    case 'compl-motivo':{abrirDlg('compl',a.dataset.lid);break}
+    case 'ok-compl':{const e=S.log.find(x=>x.id==R.t);const mo=ui.D.mot;closeOvThen(()=>{if(e){e.motivo=mo;e.complementado=1;lg({tid:e.tid,titulo:e.titulo,acao:'Motivo informado',motivo:mo,obs:'Complementa o adiamento de '+lgQuando(e)});save()}toast({msg:'Motivo registrado no histórico'})});break}
     case 'in-exmot':{ui.D.mot=a.value;$$('#ov [data-need]').forEach(b=>b.disabled=!a.value);break}
-    case 'ok-adiar':{const t=byId(id);const o=ui.D.opt||'amanha';let nd;const mot=ui.D.mot;if(!mot)break;
+    case 'ok-adiar':{const t=byId(id);const o=ui.D.opt||'amanha';let nd;const mot=ui.D.mot||'';
       if(o==='hoje')nd=HOJE;else if(o==='amanha')nd=add(HOJE,1);else{nd=parseBR($('#ad-d').value);if(!nd||nd<HOJE){$('#ad-e').hidden=false;$('#ad-d').focus();break}}
       const mt=mot==='Outro'?(($('#ad-t').value||'').trim()||'Outro'):mot;const rid=id;
       closeOvThen(()=>{const nx=nextRowId(rid);adiar(rid,nd,mt);afterMut();toast({msg:`Adiada para ${rel(nd)} (${fmtBR(nd)}) · ${t.titulo}`,undo:()=>{desfazerAdiar(rid);afterMut();toast({msg:`Desfeito · ${t.titulo} voltou para ${fmtBR(t.data)}`})}});focusRow(nx)});break}
     case 'in-mo':{ui.D.mot=a.value;$('#mo-o').hidden=a.value!=='Outro';$('#okb').disabled=false;break}
     case 'ok-nao':{const o=ui.D.mot;if(!o)break;const mt=o==='Outro'?($('#mo-t').value.trim()||'Outro'):o;const obs=$('#mo-obs').value.trim();const rid=id;
       closeOvThen(()=>{const nx=nextRowId(rid);const tt=byId(rid);naoVou(rid,mt,obs);afterMut();toast({msg:`Não vou fazer · ${tt.titulo}`,undo:()=>{desfazer(rid);afterMut()}});focusRow(nx)});break}
-    case 'ok-fechar':{const ids=S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.data<=HOJE&&!t.hist).map(t=>t.id);
-      closeOvThen(()=>{ids.forEach(i=>adiar(i,add(HOJE,1),'Adiada por manejo','Fechamento do dia'));afterMut();
-        const rs=resolvidasHoje();toast({msg:`Dia fechado — ${rs.n} resolvidas · ${ids.length} adiadas para amanhã`,undo:()=>{ids.forEach(desfazerAdiar);afterMut();toast({msg:'Desfeito · o dia foi reaberto'})}})});break}
+    case 'ok-fechar':{const mo=ui.D.mot;if(!mo)break;const mt=mo==='Outro'?(($('#fd-t').value||'').trim()||'Outro'):mo;
+      const ids=S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.data<=HOJE&&!t.hist&&!t.na).map(t=>t.id);const fixas=S.tasks.filter(t=>pend(t)&&isCampo(t)&&t.data<=HOJE&&!t.hist&&t.na).length;
+      closeOvThen(()=>{ids.forEach(i=>adiar(i,add(HOJE,1),mt,'Adiar tudo e fechar o dia'));afterMut();
+        toast({msg:fixas?`${ids.length} adiadas para amanhã · ${fixas} não adiáveis continuam hoje`:`Dia fechado · ${ids.length} adiadas para amanhã`,undo:()=>{ids.forEach(desfazerAdiar);afterMut();toast({msg:'Desfeito · as tarefas voltaram para hoje'})}})});break}
     case 'ok-excluir':{const t=byId(id);const v=a.dataset.v;const sr=t.serie;const mot=ui.D.mot;if(!mot)break;
       closeOvThen(()=>{const nx=nextRowId(id);S.tasks=S.tasks.filter(x=>v==='serie'&&sr?!(x.serie===sr&&x.data>=t.data):x.id!==id);lg({tid:id,titulo:t.titulo,acao:'Excluída',motivo:mot,obs:v==='serie'?'Esta e as próximas da série':''});save();afterMut();toast({msg:`Tarefa excluída${v==='serie'?' (e as próximas da série)':''}`});focusRow(nx)});break}
   }
@@ -2110,7 +2139,7 @@ function renderSelBarOnly(){const sb=$('.selbar');if(sb){const tmp=document.crea
 function menuItem(k,id){
   closeMenu();
   const t=byId(id);
-  if(k==='adiar1'){ui.opener='m:'+id;abrirDlg('adiar',id,{quick:1})}
+  if(k==='adiar1'){const nx=nextRowId(id);const nd=add(t.data>HOJE?t.data:HOJE,1);adiar(id,nd);afterMut();toast({msg:`Adiada para ${rel(nd)} (${fmtBR(nd)}) · ${t.titulo}`,undo:()=>{desfazerAdiar(id);afterMut();toast({msg:`Desfeito · ${t.titulo} voltou para ${fmtBR(t.data)}`})}});focusRow(nx)}
   else if(k==='adiar'){ui.opener='m:'+id;abrirDlg('adiar',id)}
   else if(k==='nao'){ui.opener='m:'+id;abrirDlg('nao',id)}
   else if(k==='ver'){ui.opener='m:'+id;abrirGav('detalhes',id,'')}
@@ -2138,7 +2167,7 @@ function renderBarKeep(){
 document.addEventListener('change',e=>{
   const el=e.target;
   if(el.id==='agr')go({agrupar:el.value});
-  if(el.id==='ex-f'||el.id==='rg-v'){el.dispatchEvent(new MouseEvent('click',{bubbles:true}))}
+  if(el.id==='ex-f'){el.dispatchEvent(new MouseEvent('click',{bubbles:true}))}
   if(el.tagName==='SELECT'&&el.dataset.a)el.dispatchEvent(new MouseEvent('click',{bubbles:true}));
   if(el.id==='cf-q'||el.id==='rg-q'||el.id==='ex-q'){ui.D.quem=el.value;if(R.gaveta==='registrar')updRegistrar(byId(R.t));if(R.gaveta==='exame')updExame(byId(R.t))}
 });
