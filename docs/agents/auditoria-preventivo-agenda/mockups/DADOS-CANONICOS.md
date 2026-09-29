@@ -85,3 +85,37 @@ Nomes de tela: "Dia 0", "Dia 7", "Dia 9", "Dia 11" (sem "1º/7º/9º/11º dia").
 - PEV: 45 dias; rótulo "Fim do período de espera voluntário (PEV)".
 - BST: aptas com **DEL ≥ 60**.
 - Gestação por raça: Holandês 280 d / Girolando 287 d / Gir-Zebu 295 d.
+
+---
+
+## Extensão (rodada 3) — animais, doses e dias nomeados (fonte única; nada pode divergir entre M1 e M2)
+
+**Numeração de brincos por lote:** Lote 01 → 41xx · Lote 02 → 42xx · Lote 03 → 21xx · Pré-parto → 43xx · Secas → 44xx · Recria 1 → 51xx · Recria 2 → 52xx · Bezerreiro → 61xx.
+
+**Contagem de dias dos protocolos:** *todos* os modelos contam **Dia 0 = início** e mostram "Dia N".
+| Protocolo | Início (Dia 0) | Hoje (29/09) | Última etapa |
+|---|---|---|---|
+| IATF Recria 2 (12 novilhas: 5201–5212) | 20/09 | **Dia 9** | Dia 11 = 01/10 |
+| IATF Lote 02 – Média (8 vacas: 4210–4214, 4216–4218) | 27/09 | Dia 2 (próxima etapa: Dia 7 = 04/10) | Dia 11 = 08/10 |
+| Mastite clínica — ceftiofur **5 mL IM por vaca por dia** (vacas 4105, 4112, 4131; Lote 01) | 26/09 | **Dia 3** (15 mL hoje no total; frasco CF-5510, saldo 200 mL) | Dia 4 = 30/09; carência leite/carne 4 d após = 04/10 |
+| Adaptação pré-parto (9 vacas, Pré-parto: 4301–4309) | 25/09 | **Dia 4** | Dia 6 = 01/10 |
+| Indução de lactação (2 novilhas: 5108, 5117) | 22/09 | **Dia 7** | Dia 20 = 12/10 |
+Portanto a Agenda de hoje tem **4 tarefas de protocolo**: IATF Recria 2 Dia 9; Mastite Dia 3; Adaptação pré-parto Dia 4; Indução Dia 7. (O IATF Lote 02 não tem etapa hoje.)
+
+**Vermifugação (ivermectina 1%)** Recria 1: 20 novilhas, **peso médio 230 kg → 4,6 mL por animal → 92 mL** no total, frasco IV-2610 (o IV-2605 está vencido e **nunca vem pré-selecionado**).
+
+**Aftosa (05/11):** 136 doses = 60 do frasco AF-2609 (vence 15/10 — aviso) + 76 do AF-2611; o resumo divide entre os dois frascos e **nunca mostra estoque negativo**.
+
+**Atrasadas sanitárias (animais):** Raiva reforço → 2101, 2117, 2133, 2140, 2152, 2166 (Lote 03 – Baixa). Clostridioses dose 2 → 5201–5222 (Recria 2). Reteste TB → **4201 Serena, 4207 Estrela, 4215 Bonita** (Lote 02 – Média).
+**Esta semana:** IBR/BVD → 14 vacas das Secas (4401–4414). B19 → 6 bezerras (6104–6109), todas entre 3 e 8 meses.
+**BST:** aptas com DEL ≥ 60; **4160 (DEL 40) e 4124 (DEL 48) excluídas**.
+**Candidatas IATF (gaveta Reprodução):** 11 vacas do Lote 02 – Média (4219–4229). "Iniciar protocolo" leva ao **Novo protocolo** com essas vacas e o lote pré-selecionados.
+
+**Carteira do animal (regras):** vacina **sem nenhuma dose registrada = "Sem registro" (conta como pendente)**, nunca "Em dia"; B19 fora da faixa de idade = "Não se aplica"; data prevista passada = "Atrasada". Ex.: 4101 Mimosa: IBR/BVD semestral, última 20/03 → previsto 20/09 → **Atrasada**; Clostridioses com reforço anual.
+**Cobertura:** os percentuais são **calculados pelo mesmo conjunto de dados** (não digitados); animal com qualquer pendência atrasada ou "sem registro" não conta como em dia.
+
+**Exame TB com resultado positivo (fluxo obrigatório nos dois mockups):** o reagente (ex.: 4207 Estrela) é gravado **por animal** com nº do laudo opcional; aparece **no Histórico, no CSV e na carteira** ("Reagente — notificar serviço veterinário oficial"); a cobertura sinaliza o animal; o comprovante "animal em dia" fica **bloqueado** para ele; o aviso é um **banner persistente** com checkbox "Notificação ao serviço veterinário oficial registrada" (com quem/quando), não um toast. O exame de TB exige **aplicador médico veterinário habilitado** (aviso igual ao da B19) e informa produto/frasco/validade da tuberculina. Leitura só a partir de 72 h após a inoculação (ou justificativa registrada).
+
+**Relógio fixo dos mockups:** terça 29/09/2026, **14:05** (mesmo em M1 e M2). **Formatos:** "há 8 dias" (por extenso), "Dia 4", dinheiro `R$ 1.234,56`, volumes `92 mL`, datas `dd/mm/aaaa`; CSV com 2 casas decimais.
+**Sidebar:** item **"Protocolos"** nos dois; sub-marca sob o logo: **Fazenda Estreito Ponte de Pedra**; usuário Jairo Nasser no rodapé. Corpo de texto 16 px (desktop e mobile); h1 28 px.
+**Ligação entre mockups:** os itens "Agenda" (no M1) e "Protocolos" / "Sanidade › Vacinas e exames" (no M2) são **links reais** entre `agenda.html` e `vacinas-protocolos.html` (mesma pasta), com as rotas corretas por hash. "Abrir origem"/"Iniciar protocolo" usam esses links.

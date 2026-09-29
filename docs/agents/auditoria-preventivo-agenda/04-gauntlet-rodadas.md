@@ -85,3 +85,52 @@ Leitura: a arquitetura de informação e a acessibilidade passaram (F1 de fideli
 
 ## Divergências que ficam como pendência (não bloqueiam)
 Visão multi-fazenda; fluxo regulatório completo de exame positivo (notificação/interdição/GTA); calendário oficial estadual; impressão/PDF reais; regime de aftosa por UF.
+
+---
+
+## Rodada 2 — resultado
+
+| Persona | M1 | M2 | P0 | Situação |
+|---|---|---|---|---|
+| Zootecnista | 87,5% (69) | 80% (70) | 0 | 10 resolvidas, 6 parciais; 4 P1 novos (coerência de dados) |
+| Veterinário | 87,5% (62,5) | 87,5% (87,5) | 0 | 7 resolvidas, 5 parciais; exame TB positivo e ceftiofur 5×10 mL |
+| Peão | 90% (80) | 83,3% (66,7) | 0 | 8 de 10 resolvidas; toast agregado quebra palavras a 390 px |
+| Produtor | 90% (80) | 83% (83) | 0 | 8 de 12 resolvidas; Hoje antes de Atrasadas no M1 mobile |
+| Cooperativa | 75% (58) | 87,5% (62,5) | **1** | 7 resolvidas; exame positivo só num toast |
+| Pesquisador | 86% (71) | 92% (75) | 0 | 10 de 19 resolvidas; cópia do drawer Registrar diverge |
+| **Média** | **86,0%** (era 70,1) | **85,6%** (era 74,1) | 1 | **Não passou** → rodada 3 |
+
+Causas remanescentes: (1) dados divergentes entre M1 e M2 (92×96 mL, brincos, dia dos protocolos); (2) exame positivo sem persistência auditável; (3) drawer "Registrar" com rótulos diferentes nos dois; (4) detalhes de mobile (toast, ordem Hoje×Atrasadas, folha de campo); (5) carteira/cobertura com casos de borda.
+
+## Lista única — Rodada 3
+
+**Decisão de síntese:** dados nomeados passam a vir de uma **fonte única** (`mockups/DADOS-CANONICOS.md`, seção "Extensão (rodada 3)"), e os dois mockups ficam **ligados por links reais**. Toda contagem (cobertura, Semana, Próximos 7 dias) é **calculada** a partir do conjunto de dados, nunca digitada.
+
+**Ambos (X)**
+- X1 Adotar integralmente a extensão canônica (brincos por lote, Dia 0 para todos os protocolos, doses, frascos, relógio 14:05, formatos, sidebar "Protocolos", 16 px, sub-marca).
+- X2 Toast agregado sem quebra de palavra (largura ≥ 280 px, ≤ 92 vw); "Desfazer" com rótulo verdadeiro (desfaz só a última) e mensagem de confirmação "Desfeito".
+- X3 **Drawer "Registrar aplicação" idêntico** em M1 e M2: mesmos campos e rótulos (**Quem aplicou**, **Registrado por**, **Custo**, CTA **Salvar registro** / **Salvar exame**), mesma ordem; frasco vencido nunca pré-selecionado; via padrão fixa com aviso ao trocar.
+- X4 **Exame TB positivo persistente** (Histórico, CSV, carteira, cobertura, comprovante bloqueado, banner persistente com checkbox de notificação), aplicador veterinário obrigatório com aviso, produto/frasco/validade da tuberculina, leitura ≥ 72 h.
+- X5 Carteira/cobertura: "Sem registro" ≠ "Em dia"; cobertura calculada; B19 fora da faixa = "Não se aplica".
+- X6 "Registrado por" e "Aplicador" separados na tela, no Concluído/Histórico e no CSV (2 casas decimais).
+- X7 Links: "Sanidade › Vacinas e exames" e "Protocolos › Em andamento" como links reais; chip de Gestão **só na Agenda**; um único "Histórico" por módulo ("Histórico do dia" → "Feito hoje").
+- X8 Mini-calendário com células ≥ 44 px; "Fechar o dia" sem quebra torta; Esc após F5 devolve foco a um elemento útil; atalho "F" documentado no menu ou removido; filete 3px por linha → ícone de categoria em quadrado colorido (sem borda lateral).
+- X9 Shell idêntico e igual ao real: item "Protocolos" nos dois, sino e FAB do assistente também a 390 px, mesma sub-marca.
+
+**Só M1**
+- M1a Corrigir: a entrada original vira **"Corrigida (substituída por #n)"**, não pode ser corrigida de novo, custo recalculado sem dupla contagem.
+- M1b Histórico: colunas **Aplicador** e **Registrado por**, **lote do frasco**, marca de exceção (B19 por não-veterinário; frasco vencido com ciência); filtros por aplicador e por lote do frasco (recall).
+- M1c Modelos: Editar/Duplicar/Ativar geram log e mantêm histórico de versões.
+- M1d Mobile 390: **Atrasadas antes de Hoje** (sem reordenar por CSS); "Cadastrar vacina" e "Imprimir folha de campo" alcançáveis na 1ª tela (menu ⋯ do cabeçalho); folha de campo em cards sem estouro horizontal.
+- M1e Drawer Registrar: resumo não cobre o Custo (resumo compacto no topo do formulário, expansível).
+- M1f Novo protocolo: legenda de elegibilidade por categoria (novilha: idade/peso; vaca: DEL/PEV/prenhez), passo na URL.
+- M1g Cobertura: lote 01 e demais recalculados; casos "sem a dose" contam como pendentes.
+
+**Só M2**
+- M2a "Próximos 7 dias" e visão Semana/Mês **fecham entre si**; etapas dos 4 protocolos de hoje/semana aparecem (IATF Dia 9, Mastite Dia 3, Adaptação Dia 4, Indução Dia 7).
+- M2b Erro de rede: o Feito offline **entra na fila** ("guardado neste aparelho, envia ao reconectar"), sidebar mostra "Sem conexão" (âmbar) e "Atualizado às 13:52".
+- M2c "Registrar exame" na Agenda usa o mesmo drawer do M1 (tuberculina com frasco/validade, veterinário habilitado).
+- M2d Adiar e Excluir tarefa pedem motivo (lista única).
+- M2e Gaveta Reprodução: seleção múltipla + "Iniciar protocolo com N vacas" → **link real** ao Novo protocolo do M1 com lote/vacas pré-selecionados; coluna Lote e Motivo.
+- M2f Secagem mostra o lote de origem; rótulo "Checar retorno ao cio (14 dias)" (Scratch só dentro do ⓘ).
+- M2g "Concluídos hoje" e "Dia fechado" com a mesma conta.
