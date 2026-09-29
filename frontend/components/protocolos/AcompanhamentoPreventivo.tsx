@@ -7,22 +7,23 @@
 // motivo em chips; cancelar exige motivo e diz o que fazer com os animais;
 // rascunho ("Em montagem") continua de onde parou.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, Ban, CalendarClock, CalendarPlus, Check, Clock, ListChecks, Pencil, Search, Syringe } from "lucide-react";
+import { AlertTriangle, ArrowRight, Ban, CalendarClock, CalendarPlus, Check, Clock, ListChecks, Pencil, Search, Syringe, Undo2 } from "lucide-react";
 import {
-  adiarAgendamentoPreventivo, cancelarAgendamentoPreventivo, confirmarRascunhoAgendamento, editarChecklistAgendamento,
-  fetchAcompanhamentoPreventivo, fetchContextoAplicar,
+  adiarAgendamentoPreventivo, cancelarAgendamentoPreventivo, confirmarRascunhoAgendamento, editarChecklistAgendamento, ehAdmin,
+  estornarAplicacaoPreventiva, fetchAcompanhamentoPreventivo, fetchContextoAplicar,
   type AcompanhamentoPreventivo as Dados, type AgendamentoAcompanhamento, type ContextoAplicar, type ItemChecklistAg,
 } from "@/lib/api";
 import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
 import { Indicador, TelaSkeleton } from "@/components/ui";
 import { GavetaAplicar } from "./GavetaAplicar";
+import { BannerReagentes, dataHoraLocal, FASE_ROTULO, VERBO_APLICAR } from "./exameComum";
 import { FinanceiroVivo } from "./FinanceiroAgendamento";
 import {
   ChecklistItensExistentes, ChecklistMontagem, checklistParaPayload, checklistVazio, validarChecklist, type ChecklistDraft,
 } from "./ChecklistAgendamento";
 import {
   brl, Chips, ChecklistSelo, dataCurta, diaSemana, EstadoAgPill, ForaJanelaBadge, hojeIso, inputStyle, labelStyle, maisDiasIso,
-  MOTIVOS_ADIAR, MOTIVOS_CANCELAR, notaStyle, plural, textoMotivo, dataHoraCurta,
+  MOTIVOS_ADIAR, MOTIVOS_CANCELAR, MOTIVOS_ESTORNO, notaStyle, Pill, plural, textoMotivo, dataHoraCurta,
 } from "./preventivoComum";
 
 type Painel = { tipo: "detalhe" | "aplicar" | "montar"; id: number } | null;
@@ -71,6 +72,8 @@ export function AcompanhamentoPreventivo({ onIrLista, onVerConcluidos }: { onIrL
         </div>
         <button type="button" className="btn-secondary" onClick={onIrLista}><ListChecks size={14} /> Lista de espera</button>
       </div>
+
+      <BannerReagentes />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
         <Indicador categoria="sanidade" icon={Clock} valor={dados.totais.hoje} rotulo="Hoje · para aplicar" cor={dados.totais.hoje ? "var(--amber)" : undefined}
@@ -123,6 +126,11 @@ export function AcompanhamentoPreventivo({ onIrLista, onVerConcluidos }: { onIrL
                   <td>
                     <b style={{ fontSize: "0.85rem" }}>{a.protocolo_nome}</b>
                     <span style={{ ...notaStyle, display: "block" }}>{a.lotes.length > 2 ? `${a.lotes.length} lotes` : a.lotes.join(", ") || "—"}</span>
+                    {a.fase && (
+                      <span style={{ display: "inline-flex", marginTop: 4 }} title={a.fase === "leitura" && a.leitura_prevista_em ? `Leitura a partir de ${dataHoraLocal(a.leitura_prevista_em)}` : undefined}>
+                        <Pill cor={a.fase === "leitura" ? "var(--dourado-light)" : "var(--text-muted)"}>{FASE_ROTULO[a.fase]}</Pill>
+                      </span>
+                    )}
                   </td>
                   <td style={{ fontSize: "0.82rem" }}>
                     {a.animais_total} {plural(a.animais_total, "animal", "animais")}
@@ -149,7 +157,7 @@ export function AcompanhamentoPreventivo({ onIrLista, onVerConcluidos }: { onIrL
                       <button type="button" className="btn-secondary" onClick={() => setPainel({ tipo: "montar", id: a.id })}><Pencil size={14} /> Continuar montando</button>
                     ) : (
                       <button type="button" className={a.data_evento > (dados.hoje || hojeIso()) ? "btn-secondary" : "btn-primary-gold"} onClick={() => setPainel({ tipo: "aplicar", id: a.id })}>
-                        <Syringe size={14} /> {a.data_evento > (dados.hoje || hojeIso()) ? "Aplicar antes" : "Aplicar"}
+                        <Syringe size={14} /> {a.fase ? `${VERBO_APLICAR[a.fase]}${a.data_evento > (dados.hoje || hojeIso()) ? " antes" : ""}` : a.data_evento > (dados.hoje || hojeIso()) ? "Aplicar antes" : "Aplicar"}
                       </button>
                     )}
                   </td>
@@ -179,7 +187,7 @@ export function AcompanhamentoPreventivo({ onIrLista, onVerConcluidos }: { onIrL
 }
 
 // ───────────────────────── detalhe / adiar / cancelar / continuar ─────────────────────────
-type Acao = "adiar" | "cancelar" | null;
+type Acao = "adiar" | "cancelar" | "estornarIno" | null;
 
 function GavetaAgendamento({ id, modoInicial, onFechar, onMudou, onAplicar }: {
   id: number; modoInicial: "detalhe" | "montar"; onFechar: () => void; onMudou: () => void; onAplicar: () => void;
@@ -222,6 +230,20 @@ function GavetaAgendamento({ id, modoInicial, onFechar, onMudou, onAplicar }: {
             )}
           </ul>
           <p style={notaStyle}>Dose: {ctx.dose_texto}{ctx.via ? ` · via ${ctx.via}` : ""}. {ctx.carencia.texto}.</p>
+          {ctx.exame?.inoculacao && (
+            <div className="card" data-testid="bloco-inoculacao" style={{ padding: "0.6rem 0.9rem", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+              <b style={{ fontSize: "0.9rem" }}>Inoculação registrada</b>
+              <span style={notaStyle}>
+                {dataCurta(ctx.exame.inoculacao.data)} {ctx.exame.inoculacao.hora || ""} · {ctx.exame.inoculacao.aplicador_nome || "—"}{ctx.exame.inoculacao.aplicador_crmv ? ` (${ctx.exame.inoculacao.aplicador_crmv})` : ""}
+                {ctx.exame.inoculacao.lote_texto ? ` · frasco ${ctx.exame.inoculacao.lote_texto}` : ""}
+              </span>
+              <span style={{ fontSize: "0.85rem" }}>Leitura a partir de <b>{dataHoraLocal(ctx.exame.leitura_prevista_em)}</b> (72 h), até {dataHoraLocal(ctx.exame.leitura_limite_em)}.</span>
+              {ehAdmin() && ctx.estado === "agendado" && <div><button type="button" className="btn-ghost" onClick={() => setAcao("estornarIno")}><Undo2 size={14} /> Estornar inoculação (administrador)</button></div>}
+            </div>
+          )}
+          {acao === "estornarIno" && ctx.exame?.inoculacao && (
+            <PainelEstornarInoculacao aplicacaoId={ctx.exame.inoculacao.aplicacao_id} onVoltar={() => setAcao(null)} onFeito={() => { onMudou(); onFechar(); }} />
+          )}
 
           {acao === "adiar" && <PainelAdiar ctx={ctx} onVoltar={() => setAcao(null)} onFeito={() => { onMudou(); onFechar(); }} />}
           {acao === "cancelar" && <PainelCancelar ctx={ctx} onVoltar={() => setAcao(null)} onFeito={() => { onMudou(); onFechar(); }} />}
@@ -260,7 +282,7 @@ function GavetaAgendamento({ id, modoInicial, onFechar, onMudou, onAplicar }: {
           )}
 
           <div style={{ position: "sticky", bottom: "-0.9rem", margin: "0 -0.9rem -0.9rem", padding: "0.75rem 0.9rem", background: "var(--surface)", borderTop: "1px solid var(--border)", display: "flex", gap: "0.6rem", flexWrap: "wrap", zIndex: 2 }}>
-            {ctx.estado === "agendado" && <button type="button" className="btn-primary-gold" onClick={onAplicar}><Syringe size={14} /> Aplicar</button>}
+            {ctx.estado === "agendado" && <button type="button" className="btn-primary-gold" onClick={onAplicar}><Syringe size={14} /> {ctx.exame ? VERBO_APLICAR[ctx.exame.fase] : "Aplicar"}</button>}
             {ctx.estado === "em_montagem" && <button type="button" className="btn-primary-gold" onClick={() => setMontando(true)}><Pencil size={14} /> Continuar montando</button>}
             {ctx.estado === "agendado" && <button type="button" className="btn-secondary" onClick={() => setAcao("adiar")}><Clock size={14} /> Adiar</button>}
             <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => setAcao("cancelar")}><Ban size={14} /> Cancelar…</button>
@@ -296,6 +318,35 @@ function AbaChecklist({ ctx, onMudou }: { ctx: ContextoAplicar; onMudou: () => v
                         readOnly={encerrado} onMudou={onMudou} />
       </div>
       <p style={notaStyle}>Nada aqui bloqueia a aplicação: o que ficar pendente pede só a ciência na hora de Aplicar.</p>
+    </div>
+  );
+}
+
+function PainelEstornarInoculacao({ aplicacaoId, onVoltar, onFeito }: { aplicacaoId: number; onVoltar: () => void; onFeito: () => void }) {
+  const [motivo, setMotivo] = useState("");
+  const [outro, setOutro] = useState("");
+  const [tentou, setTentou] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const texto = textoMotivo(motivo, outro);
+  async function estornar() {
+    setTentou(true);
+    if (!texto) return;
+    setSalvando(true); setErro(null);
+    try { await estornarAplicacaoPreventiva(aplicacaoId, texto); onFeito(); }
+    catch (e: any) { setErro(e.message || "Erro ao estornar"); } finally { setSalvando(false); }
+  }
+  return (
+    <div className="card" role="group" aria-label="Estornar inoculação" style={{ display: "flex", flexDirection: "column", gap: "0.8rem", borderLeft: "4px solid var(--red)" }}>
+      <h3 className="card-header">Estornar inoculação</h3>
+      <p style={{ ...notaStyle, color: "var(--amber)" }}>A tuberculina volta ao estoque e o agendamento volta à data anterior. A inoculação original fica preservada como “Estornada”, com quem estornou e por quê.</p>
+      <Chips idBase="ei-m" rotulo="Motivo (obrigatório)" opcoes={MOTIVOS_ESTORNO} valor={motivo} onChange={setMotivo} erro={tentou && !texto ? "Escolha o motivo." : null} />
+      {motivo === "Outro motivo" && <input style={inputStyle} aria-label="Descreva o motivo" placeholder="Descreva o motivo" value={outro} onChange={(e) => setOutro(e.target.value)} />}
+      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
+      <div style={{ display: "flex", gap: "0.5rem" }}>
+        <button type="button" className="btn-primary" style={{ background: "var(--red)" }} disabled={salvando} onClick={estornar}><Undo2 size={14} /> {salvando ? "Estornando…" : "Estornar"}</button>
+        <button type="button" className="btn-ghost" onClick={onVoltar}>Voltar</button>
+      </div>
     </div>
   );
 }

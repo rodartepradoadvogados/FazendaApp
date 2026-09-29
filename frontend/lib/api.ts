@@ -5001,6 +5001,8 @@ export type AnimalListaEspera = {
   linha_id: number; cronograma_id: number; numero_matriz: string; nome: string | null; lote: string | null;
   sexo: string | null; situacao: SituacaoEspera; dias_atraso: number; devida: string;
   janela_fim: string | null; fecha_em: number | null; desde: string; motivo_entrada: string;
+  /** Exame (fatia 9b): reteste 60 dias depois do inconclusivo; `situacao_rotulo` = "Reteste" | "Reteste atrasado". */
+  reteste?: boolean; situacao_rotulo?: string | null;
 };
 export type GrupoListaEspera = {
   calendario_id: number; evento_sanitario_id: number; protocolo_nome: string; categoria_alvo: string | null;
@@ -5137,6 +5139,8 @@ export const lancarContaPagarAgendamento = (id: number, p: ContaPagarPayload) =>
 export const encerrarVinculoAgendamento = (id: number, vinculoId: number, acao: "cancelar_conta" | "desvincular_pagamento" | "cancelar_cotacao", motivo: string) =>
   _postSanidade<{ vinculo: VinculoAg; resumo: ResumoFinanceiroAg }>(`/sanidade/cronogramas/${id}/financeiro/vinculos/${vinculoId}/encerrar`, { acao, motivo }, "Encerrar vínculo");
 export type ResponsavelAg = { pessoa_id: number | null; nome: string; crmv: string | null; modo: string };
+export type FaseExame = "inoculacao" | "leitura" | "coleta";
+export type ResultadoExame = "negativo" | "reagente" | "inconclusivo";
 export type EstadoVisualAg = "em_montagem" | "agendado" | "hoje" | "atrasado" | "adiado";
 export type AgendamentoAcompanhamento = {
   id: number; calendario_sanitario_id: number; protocolo_nome: string; tipo: "vacina" | "exame" | "tratamento";
@@ -5144,6 +5148,8 @@ export type AgendamentoAcompanhamento = {
   data_original: string | null; data_antes_do_adiamento: string | null; motivo_adiamento: string | null;
   observacao: string | null; responsavel: ResponsavelAg; animais_total: number; animais_fora_janela: number;
   lotes: string[]; checklist: ResumoChecklist; exige_veterinario: boolean; financeiro?: BlocoFinanceiro;
+  /** Exame: em que fase está (inoculacao | leitura | coleta) e quando a leitura de 72 h fica devida. */
+  fase?: FaseExame | null; leitura_prevista_em?: string | null; leitura_limite_em?: string | null;
 };
 export type AcompanhamentoPreventivo = {
   hoje: string; agendamentos: AgendamentoAcompanhamento[]; totais: { hoje: number; atrasados: number; agendados: number };
@@ -5157,6 +5163,18 @@ export async function fetchAcompanhamentoPreventivo(): Promise<AcompanhamentoPre
 export type AnimalAplicarCtx = {
   numero_matriz: string; nome: string | null; lote: string | null; origem: "janela" | "fora_janela"; motivo: string | null;
   dose: number | null; peso_kg: number | null; peso_estimado: boolean; sem_peso: boolean;
+  /** B19: só fêmea de 3 a 8 meses — texto do motivo quando o animal não pode receber. */
+  restricao?: string | null;
+};
+export type InoculacaoExame = {
+  aplicacao_id: number; data: string; hora: string | null; aplicador_nome: string | null; aplicador_crmv: string | null;
+  lote_texto: string | null; validade: string | null; estoque_desconsiderado: boolean; tipo_teste: string | null;
+  dose_total: number | null; unidade: string | null; custo: number | null; pode_desfazer: boolean; desfazer_restante_s: number;
+};
+export type ContextoExame = {
+  fase: FaseExame; tipo_exame: "tuberculina" | "brucelose" | "outro"; leitura_horas: number;
+  janela_leitura_horas: [number, number] | null; tipos_teste: string[]; resultados: ResultadoExame[]; reteste_dias: number | null;
+  inoculacao: InoculacaoExame | null; leitura_prevista_em: string | null; leitura_limite_em: string | null; notifica_reagente: boolean;
 };
 export type LoteAplicarCtx = { id: number; numero_lote: string | null; saldo: number; validade: string | null; vencido: boolean; vence_em_dias: number | null };
 export type PessoaAplicarCtx = { id: number; nome: string; tipo: string | null; crmv: string | null; veterinario: boolean };
@@ -5177,6 +5195,7 @@ export type ContextoAplicar = {
   pessoas: PessoaAplicarCtx[];
   carencia: { leite_dias: number | null; carne_dias: number | null; proibido_lactacao: boolean; texto: string };
   checklist: ResumoChecklist; financeiro?: ResumoFinanceiroAg; log: EntradaLogAg[]; desfazer_segundos: number; hoje: string;
+  exame?: ContextoExame | null;
 };
 export async function fetchContextoAplicar(cronogramaId: number): Promise<ContextoAplicar> {
   const res = await authFetch(`${API}/sanidade/cronogramas/${cronogramaId}/aplicar-contexto`, { cache: "no-store" });
@@ -5184,19 +5203,25 @@ export async function fetchContextoAplicar(cronogramaId: number): Promise<Contex
   return res.json();
 }
 
+export type CanalAplicacao = "Protocolos" | "Agenda" | "Curral";
 export type AplicarAgendamentoPayload = {
-  canal: "Protocolos" | "Agenda"; aplicador_pessoa_id: number; animais_aplicados: string[];
+  canal: CanalAplicacao; aplicador_pessoa_id: number; animais_aplicados: string[];
   nao_aplicados?: { numero_matriz: string; motivo: string; destino: "espera" | "naoSeAplica" }[];
   data_aplicacao?: string | null; hora?: string | null; estoque_id?: number | null; lote_id?: number | null;
   ciente_vencido?: boolean; desconsiderar_estoque?: boolean; motivo_desconsiderar_estoque?: string | null;
   lote_veterinario?: string | null; validade_veterinario?: string | null; pesos?: Record<string, number> | null;
   custo?: number | null; ciencia_pendentes?: boolean; ciencia_motivo?: string | null; observacao?: string | null;
   chave_idempotencia?: string | null;
+  // Exame (fatia 9b): leitura = resultados + espessuras_mm + tipo_teste; coleta = laudo.
+  resultados?: Record<string, ResultadoExame> | null; espessuras_mm?: Record<string, number> | null;
+  tipo_teste?: string | null; laudo?: string | null; justificativa_leitura?: string | null;
 };
 export type AnimalAplicacao = {
   numero_matriz: string; nome?: string | null; resultado: "aplicado" | "nao_aplicado"; origem: "janela" | "fora_janela";
   motivo_origem: string | null; dose: number | null; unidade: string | null; peso_kg: number | null; peso_estimado: boolean;
   motivo_nao: string | null; destino_nao: string | null;
+  exame_resultado?: ResultadoExame | "coletado" | null; espessura_mm?: number | null; reteste_em?: string | null;
+  notificado_em?: string | null; notificado_por?: string | null; notificacao_ref?: string | null;
 };
 export type AplicacaoPreventiva = {
   id: number; cronograma_id: number; estado: "aplicada" | "estornada"; canal: string; aplicador_nome: string | null;
@@ -5208,6 +5233,10 @@ export type AplicacaoPreventiva = {
   retroativo: boolean; excecoes: string[]; tipo_estorno: "desfazer" | "estorno" | null; motivo_estorno: string | null;
   estornado_em: string | null; registrado_em: string; pode_desfazer: boolean; desfazer_restante_s: number;
   animais: AnimalAplicacao[];
+  // Exame (fatia 9b)
+  fase?: FaseExame | null; tipo_teste?: string | null; laudo?: string | null; leitura_prevista_em?: string | null;
+  leitura_limite_em?: string | null; leitura_horas?: number | null; leitura_fora_janela?: boolean;
+  leitura_justificativa?: string | null; rotulo_estado?: string;
 };
 export type ResultadoAplicar = {
   aplicacao: AplicacaoPreventiva; agendamento: { id: number; status: string }; avisos: string[]; idempotente: boolean;
@@ -5237,6 +5266,15 @@ export type ItemConcluido = {
   com_excecao: boolean; registrado_por: string | null; registrado_em: string; motivo?: string | null; financeiro?: BlocoFinanceiro;
   motivo_estorno: string | null; tipo_estorno: string | null; estornado_por: string | null; estornado_em: string | null;
   pode_desfazer: boolean; desfazer_restante_s: number;
+  /** "Exame realizado" (exame) | "Aplicado" | "Estornada" | "Cancelado" — exame nunca mostra "Aplicado". */
+  rotulo_estado?: string; exame?: ResumoExameConcluido | null;
+};
+export type ResumoExameConcluido = {
+  fase: "leitura" | "coleta"; tipo_teste: string | null; laudo: string | null;
+  inoculacao_data: string | null; inoculacao_hora: string | null; leitura_data: string; leitura_hora: string | null;
+  leitura_horas: number | null; leitura_fora_janela: boolean; leitura_justificativa: string | null;
+  negativos: number; reagentes: number; inconclusivos: number; coletados: number;
+  reagentes_pendentes_notificacao: number; reagentes_notificados: number; reteste_em: string | null; espessura_max_mm: number | null;
 };
 export type ConcluidosPreventivo = {
   total: number; itens: ItemConcluido[]; resumo: { aplicados: number; animais: number; estornados: number };
@@ -5255,13 +5293,47 @@ export async function fetchConcluidosPreventivo(f?: { calendarioId?: number; de?
 export type DetalheAplicacao = AplicacaoPreventiva & {
   protocolo_nome: string; tipo: string; registrado_por: string | null; estornado_por: string | null;
   ciencia_usuario: string | null; log: EntradaLogAg[]; checklist: ResumoChecklist; agendamento_status: string;
-  financeiro?: BlocoFinanceiro;
+  financeiro?: BlocoFinanceiro; exame?: ResumoExameConcluido | null; inoculacao?: InoculacaoExame | null;
 };
 export async function fetchDetalheAplicacao(id: number): Promise<DetalheAplicacao> {
   const res = await authFetch(`${API}/sanidade/cronogramas/aplicacoes/${id}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Aplicação error: ${res.status}`);
   return res.json();
 }
+
+// ── Exame (fatia 9b): reagente + notificação, retestes e comprovante ──
+export type ReagenteItem = {
+  numero_matriz: string; nome: string | null; lote: string | null; aplicacao_id: number; cronograma_id: number;
+  protocolo_nome: string; data: string; hora: string | null; laudo: string | null; tipo_teste: string | null;
+  espessura_mm: number | null; aplicador_nome: string | null; notificado_em: string | null; notificado_por: string | null;
+  notificacao_ref: string | null; pendente_notificacao: boolean;
+};
+export type Reagentes = { total: number; pendentes_notificacao: number; itens: ReagenteItem[] };
+export const fetchReagentes = () => _getSanidade<Reagentes>("/sanidade/cronogramas/reagentes", "Reagentes");
+export const notificarReagente = (aplicacaoId: number, animais: string[] | null, referencia: string | null) =>
+  _postSanidade<{ notificados: string[] }>(`/sanidade/cronogramas/aplicacoes/${aplicacaoId}/notificar`, { animais, referencia }, "Notificar reagente");
+export type RetesteItem = {
+  numero_matriz: string; nome: string | null; lote: string | null; aplicacao_id: number; cronograma_id: number;
+  calendario_sanitario_id: number | null; protocolo_nome: string; data_leitura: string; reteste_em: string;
+  situacao: "aguardando" | "no_dia" | "atrasado"; dias_atraso: number; rotulo: string;
+};
+export const fetchRetestes = () => _getSanidade<{ total: number; atrasados: number; itens: RetesteItem[] }>("/sanidade/cronogramas/retestes", "Retestes");
+export type ComprovanteAplicacao = {
+  aplicacao_id: number; tipo: "vacina" | "exame"; fase: FaseExame | null; fazenda_nome: string | null; protocolo_nome: string;
+  produto: string | null; via: string | null; unidade: string | null; dose_total: number | null; data: string; hora: string | null;
+  aplicador_nome: string | null; aplicador_crmv: string | null; registrado_por: string | null; canal: string; retroativo: boolean;
+  agendamento: string; lote_texto: string | null; validade: string | null; estoque_desconsiderado: boolean;
+  fornecido_pelo_veterinario: boolean; custo: number | null; laudo: string | null; tipo_teste: string | null;
+  inoculacao: { data: string; hora: string | null; aplicador_nome: string | null; lote_texto: string | null; validade: string | null } | null;
+  leitura: { data: string; hora: string | null; horas: number | null; fora_janela: boolean; justificativa: string | null } | null;
+  carencia_leite_ate: string | null; carencia_carne_ate: string | null; excecoes: string[];
+  animais: { numero_matriz: string; nome: string | null; lote: string | null; resultado: string | null; espessura_mm: number | null;
+             dose: number | null; unidade: string | null; origem: string; reteste_em: string | null }[];
+  bloqueados: { numero_matriz: string; nome: string | null; lote: string | null; motivo: string }[];
+  bloqueado_total: boolean; emitido_em: string;
+};
+export const fetchComprovanteAplicacao = (aplicacaoId: number) =>
+  _getSanidade<ComprovanteAplicacao>(`/sanidade/cronogramas/aplicacoes/${aplicacaoId}/comprovante`, "Comprovante");
 
 export type JanelaCalendarioEvento = {
   calendario_sanitario_id: number; evento_sanitario_id: number; evento_sanitario_nome: string;

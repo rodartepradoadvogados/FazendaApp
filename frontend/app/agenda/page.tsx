@@ -25,6 +25,7 @@ import { PainelLancarBst } from "@/components/PainelLancarBst";
 import { casaBusca } from "@/lib/busca";
 import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
 import { GavetaAplicar } from "@/components/protocolos/GavetaAplicar";
+import { BannerReagentes } from "@/components/protocolos/exameComum";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
 // Mesmos dois formulários de components/lancamentos/* que a tela de Lançamentos
 // abre na gaveta (ver GAVETA_LEAFS em app/lancamentos/page.tsx) — aqui abrem
@@ -1633,7 +1634,7 @@ export default function AgendaPage() {
                           <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>agendamento</td>
                           <td onClick={(ev) => ev.stopPropagation()}>
                             <button className="btn-primary-gold" style={{ fontSize: "0.72rem" }} onClick={() => setGavetaAplicarId(e.cronograma_id)}>
-                              <Syringe size={12} /> Aplicar
+                              <Syringe size={12} /> {e.fase === "leitura" ? "Registrar leitura" : e.fase === "inoculacao" ? "Inocular" : e.fase === "coleta" ? "Registrar coleta" : "Aplicar"}
                             </button>
                           </td>
                         </tr>
@@ -2163,6 +2164,9 @@ export default function AgendaPage() {
           {feedback.erro ? <AlertTriangle size={15} /> : <CheckCircle2 size={15} />} {feedback.msg}
         </div>
       )}
+
+      {/* Reagente de exame (TB/brucelose): aviso persistente, com o registro da notificação — não some ao notificar. */}
+      <BannerReagentes />
 
       {/* Informações gerenciais — cada quadro clicável expande/recolhe uma
           lista logo abaixo (estado listaAtiva); "Alertas de estoque" rola até

@@ -21,6 +21,7 @@ import {
 } from "./ChecklistAgendamento";
 import { ConferirFinanceiro } from "./FinanceiroAgendamento";
 import { textoMotivo } from "./preventivoComum";
+import { BannerReagentes } from "./exameComum";
 import { Indicador, TelaSkeleton } from "@/components/ui";
 import type { AnimalRow } from "@/components/AnimalModal";
 
@@ -83,7 +84,13 @@ function Pill({ cor, children }: { cor: string; children: React.ReactNode }) {
   );
 }
 
-function SituacaoPill({ situacao, diasAtraso, fechaEm }: { situacao: "atrasada" | "na_janela"; diasAtraso: number; fechaEm: number | null }) {
+function SituacaoPill({ situacao, diasAtraso, fechaEm, reteste }: { situacao: "atrasada" | "na_janela"; diasAtraso: number; fechaEm: number | null; reteste?: boolean }) {
+  if (reteste) {
+    // Exame (TB): reteste 60 dias depois do inconclusivo.
+    return situacao === "atrasada"
+      ? <Pill cor="var(--red)"><AlertTriangle size={12} />Reteste atrasado há {diasAtraso} {plural(diasAtraso, "dia", "dias")}</Pill>
+      : <Pill cor="var(--dourado-light)"><Clock size={12} />Reteste hoje</Pill>;
+  }
   if (situacao === "atrasada") {
     return <Pill cor="var(--red)"><AlertTriangle size={12} />Atrasada há {diasAtraso} {plural(diasAtraso, "dia", "dias")}</Pill>;
   }
@@ -245,6 +252,8 @@ function ListaGrupos({ dados, outras, onOutras, avulsa, onAbrir, onCriar, onAbri
         </div>
       )}
 
+      <BannerReagentes />
+
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
         <Indicador categoria="sanidade" rotulo="Aguardando" valor={dados.total} onClick={() => setSituacao("")} title="Na lista de espera" />
         <Indicador categoria="sanidade" rotulo="Atrasadas" valor={dados.atrasadas} cor="var(--red)" onClick={() => setSituacao("atrasada")} title="Passou da data devida; a janela segue aberta" />
@@ -346,7 +355,7 @@ function DetalheEspera({ grupo, onVoltar, onCriar, onMudou }: {
                   <span style={{ ...notaStyle, display: "block" }}>{a.lote || "Sem lote"} · {a.motivo_entrada}</span>
                 </span>
               </label>
-              <SituacaoPill situacao={a.situacao} diasAtraso={a.dias_atraso} fechaEm={a.fecha_em} />
+              <SituacaoPill situacao={a.situacao} diasAtraso={a.dias_atraso} fechaEm={a.fecha_em} reteste={a.reteste} />
               <button type="button" className="btn-ghost" onClick={() => setDesconsiderando(a)} aria-label={`Desconsiderar ${a.numero_matriz}`}>
                 <Ban size={14} /> Desconsiderar…
               </button>

@@ -3,7 +3,7 @@
 // Fatia 8; mockup fluxo-completo (proto-concl.js). Nada se apaga: erro vira
 // "Estornada" (só o administrador, com motivo) e a original fica preservada.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Ban, Flag, History, Search, Undo2 } from "lucide-react";
+import { AlertTriangle, Ban, Flag, History, Printer, Search, Undo2 } from "lucide-react";
 import {
   ehAdmin, estornarAplicacaoPreventiva, fetchConcluidosPreventivo, fetchDetalheAplicacao,
   type ConcluidosPreventivo as Dados, type DetalheAplicacao, type ItemConcluido,
@@ -13,6 +13,7 @@ import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
 import { Indicador, TelaSkeleton } from "@/components/ui";
 import type { ColunaExport } from "@/lib/export";
 import { ResumoCustoFinanceiro } from "./FinanceiroAgendamento";
+import { BannerReagentes, ComprovanteAplicacaoView, dataHoraLocal, horasTxt, RESULTADOS_ROTULO } from "./exameComum";
 import {
   brl, Chips, dataCurta, dataHoraCurta, ForaJanelaBadge, inputStyle, MOTIVOS_ESTORNO, notaStyle, num, Pill, plural, textoMotivo,
 } from "./preventivoComum";
@@ -24,16 +25,26 @@ const COLUNAS: ColunaExport[] = [
   { header: "Validade", key: "validade" }, { header: "Carência carne até", key: "carne" }, { header: "Carência leite até", key: "leite" },
   { header: "Custo (R$)", key: "custo" }, { header: "Conta a pagar (R$)", key: "conta" }, { header: "Pagamento vinculado (R$)", key: "pagamento" }, { header: "Canal", key: "canal" }, { header: "Retroativo", key: "retro" },
   { header: "Exceções e ciências", key: "excecoes" }, { header: "Motivo do estorno", key: "motivoEstorno" },
+  // Exame (fatia 9b): campos gravados no registro concluído
+  { header: "Tipo de teste", key: "tipoTeste" }, { header: "Nº do laudo", key: "laudo" }, { header: "Inoculação", key: "inoculacao" },
+  { header: "Leitura", key: "leitura" }, { header: "Horas até a leitura", key: "horas" }, { header: "Leitura fora de 72–96 h", key: "foraJanela" },
+  { header: "Negativos", key: "negativos" }, { header: "Reagentes", key: "reagentes" }, { header: "Inconclusivos", key: "inconclusivos" },
+  { header: "Notificação dos reagentes", key: "notificacao" }, { header: "Reteste em", key: "reteste" },
 ];
 
 function EstadoPill({ i }: { i: ItemConcluido }) {
   if (i.estado === "estornada") return <Pill cor="var(--red)" title={i.motivo_estorno || undefined}><Undo2 size={12} />Estornada</Pill>;
   if (i.estado === "cancelado") return <Pill cor="var(--text-muted)"><Ban size={12} />Cancelado</Pill>;
-  return <Pill cor="var(--green-light)">Aplicado</Pill>;
+  // Exame nunca mostra "Aplicado": é "Exame realizado".
+  return <Pill cor="var(--green-light)">{i.rotulo_estado || (i.tipo === "exame" ? "Exame realizado" : "Aplicado")}</Pill>;
 }
+
+/** Todos os animais lidos são reagentes: o comprovante fica bloqueado (negativos emitem normalmente). */
+const todosReagentes = (i: ItemConcluido) => !!i.exame && i.animais_aplicados > 0 && i.exame.reagentes >= i.animais_aplicados;
 
 export function ConcluidosPreventivo({ idInicial }: { idInicial?: number | null }) {
   const admin = ehAdmin();
+  const [comprovanteId, setComprovanteId] = useState<number | null>(null);
   const [dados, setDados] = useState<Dados | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [recarga, setRecarga] = useState(0);
@@ -63,7 +74,7 @@ export function ConcluidosPreventivo({ idInicial }: { idInicial?: number | null 
   }, [dados]);
 
   const linhasExport = useMemo(() => (dados?.itens || []).filter((i) => i.estado !== "cancelado").map((i) => ({
-    data: dataCurta(i.data), hora: i.hora || "", protocolo: i.protocolo_nome, estado: i.estado === "estornada" ? "Estornada" : "Aplicado",
+    data: dataCurta(i.data), hora: i.hora || "", protocolo: i.protocolo_nome, estado: i.estado === "estornada" ? "Estornada" : (i.rotulo_estado || "Aplicado"),
     aplicados: i.animais_aplicados, naoAplicados: i.animais_nao_aplicados, fora: i.fora_janela, aplicador: i.aplicador_nome || "",
     frasco: i.frasco, validade: dataCurta(i.validade), carne: dataCurta(i.carencia_carne_ate), leite: dataCurta(i.carencia_leite_ate),
     custo: i.custo == null ? "a informar" : i.custo.toFixed(2).replace(".", ","),
@@ -71,6 +82,14 @@ export function ConcluidosPreventivo({ idInicial }: { idInicial?: number | null 
     pagamento: i.financeiro && i.financeiro.pagamento_vinculado_total > 0 ? i.financeiro.pagamento_vinculado_total.toFixed(2).replace(".", ",") : "",
     canal: i.canal || "", retro: i.retroativo ? "Sim" : "Não",
     excecoes: i.excecoes.join(" | "), motivoEstorno: i.motivo_estorno || "",
+    tipoTeste: i.exame?.tipo_teste || "", laudo: i.exame?.laudo || "",
+    inoculacao: i.exame?.inoculacao_data ? `${dataCurta(i.exame.inoculacao_data)} ${i.exame.inoculacao_hora || ""}`.trim() : "",
+    leitura: i.exame ? `${dataCurta(i.exame.leitura_data)} ${i.exame.leitura_hora || ""}`.trim() : "",
+    horas: i.exame?.leitura_horas != null ? String(Math.round(i.exame.leitura_horas)) : "",
+    foraJanela: i.exame ? (i.exame.leitura_fora_janela ? "Sim" : "Não") : "",
+    negativos: i.exame ? i.exame.negativos : "", reagentes: i.exame ? i.exame.reagentes : "", inconclusivos: i.exame ? i.exame.inconclusivos : "",
+    notificacao: i.exame && i.exame.reagentes ? (i.exame.reagentes_pendentes_notificacao ? `${i.exame.reagentes_pendentes_notificacao} pendente(s)` : "Registrada") : "",
+    reteste: i.exame?.reteste_em ? dataCurta(i.exame.reteste_em) : "",
   })), [dados]);
 
   if (erro) return <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>{erro}</span></div>;
@@ -85,6 +104,8 @@ export function ConcluidosPreventivo({ idInicial }: { idInicial?: number | null 
         </div>
         <ExportarBotoes titulo="Protocolos — Concluídos do preventivo" nomeArquivoBase="concluidos_preventivo" colunas={COLUNAS} linhas={linhasExport} />
       </div>
+
+      <BannerReagentes recarga={recarga} onMudou={recarregar} />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
         <Indicador categoria="sanidade" valor={dados.resumo.aplicados} rotulo="Aplicações registradas" />
@@ -135,12 +156,21 @@ export function ConcluidosPreventivo({ idInicial }: { idInicial?: number | null 
                       {i.retroativo && <Pill cor="var(--dourado-light)">Retroativo</Pill>}
                       {i.canal && <Pill cor="var(--text-muted)">{i.canal}</Pill>}
                       {i.com_excecao && <Pill cor="var(--amber)" title={i.excecoes.join("; ")}><AlertTriangle size={12} />Com exceção</Pill>}
+                      {i.exame && i.estado === "aplicada" && i.exame.reagentes > 0 && (
+                        <Pill cor={i.exame.reagentes_pendentes_notificacao ? "var(--red)" : "var(--amber)"}><AlertTriangle size={12} />{i.exame.reagentes} {plural(i.exame.reagentes, "reagente", "reagentes")}{i.exame.reagentes_pendentes_notificacao ? " · notificar" : " · notificado"}</Pill>
+                      )}
+                      {i.exame && i.estado === "aplicada" && i.exame.leitura_fora_janela && <Pill cor="var(--amber)" title="Leitura fora da janela de 72–96 h"><AlertTriangle size={12} />Fora de 72–96 h</Pill>}
                       {i.estado === "cancelado" && i.motivo && <span style={notaStyle}>{i.motivo}</span>}
                     </div>
                   </td>
                   <td style={{ fontSize: "0.82rem" }}>
                     {i.estado === "cancelado" ? `${i.animais_nao_aplicados} ${plural(i.animais_nao_aplicados, "animal", "animais")}` : `${i.animais_aplicados + i.animais_nao_aplicados} ${plural(i.animais_aplicados + i.animais_nao_aplicados, "animal", "animais")}`}
-                    {i.estado !== "cancelado" && <span style={{ ...notaStyle, display: "block" }}>{i.animais_aplicados} aplicados · {i.animais_nao_aplicados} não aplicados</span>}
+                    {i.estado !== "cancelado" && !i.exame && <span style={{ ...notaStyle, display: "block" }}>{i.animais_aplicados} aplicados · {i.animais_nao_aplicados} não aplicados</span>}
+                    {i.exame && i.estado !== "cancelado" && (
+                      <span style={{ ...notaStyle, display: "block" }}>
+                        {i.exame.fase === "coleta" && i.exame.coletados > 0 ? `${i.exame.coletados} coletados` : `${i.exame.negativos} neg · ${i.exame.reagentes} reag · ${i.exame.inconclusivos} inconcl.`}
+                      </span>
+                    )}
                     {i.fora_janela > 0 && <div><ForaJanelaBadge n={i.fora_janela} /></div>}
                   </td>
                   <td style={{ fontSize: "0.82rem" }}>{i.aplicador_nome || "—"}{i.aplicador_crmv && <span style={{ ...notaStyle, display: "block" }}>{i.aplicador_crmv}</span>}</td>
@@ -158,6 +188,12 @@ export function ConcluidosPreventivo({ idInicial }: { idInicial?: number | null 
                     {i.financeiro && i.financeiro.contas.some((c) => c.estado === "cancelado") && i.financeiro.contas_ativas === 0 && <span style={{ ...notaStyle, display: "block" }}>conta cancelada</span>}
                   </td>
                   <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: "nowrap" }}>
+                    {i.estado === "aplicada" && i.id != null && (
+                      <button type="button" className="btn-ghost" onClick={() => setComprovanteId(i.id)} disabled={todosReagentes(i)}
+                              title={todosReagentes(i) ? "Bloqueado: todos os animais são reagentes." : "Comprovante para imprimir"}>
+                        <Printer size={14} /> Comprovante
+                      </button>
+                    )}
                     {i.estado === "aplicada" && (
                       <button type="button" className="btn-ghost" disabled={!admin} onClick={() => setEstornando(i)}
                               title={admin ? "Estornar: a original fica preservada" : "Só o perfil Administrador estorna"}>
@@ -172,6 +208,7 @@ export function ConcluidosPreventivo({ idInicial }: { idInicial?: number | null 
         </div>
       )}
 
+      {comprovanteId != null && <ComprovanteAplicacaoView aplicacaoId={comprovanteId} onFechar={() => setComprovanteId(null)} />}
       {aberto != null && <GavetaDetalhe id={aberto} admin={admin} onFechar={() => setAberto(null)} onEstornar={(i) => { setAberto(null); setEstornando(i); }} lista={dados.itens} />}
       {estornando && <GavetaEstornar item={estornando} onFechar={() => setEstornando(null)} onFeito={() => { setEstornando(null); recarregar(); }} />}
     </div>
@@ -183,6 +220,7 @@ function GavetaDetalhe({ id, admin, lista, onFechar, onEstornar }: { id: number;
   const [d, setD] = useState<DetalheAplicacao | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [aba, setAba] = useState<"animais" | "checklist" | "historico">("animais");
+  const [comprovante, setComprovante] = useState(false);
   useEffect(() => { fetchDetalheAplicacao(id).then(setD).catch((e) => setErro(e.message)); }, [id]);
   const item = lista.find((i) => i.id === id);
   return (
@@ -194,7 +232,7 @@ function GavetaDetalhe({ id, admin, lista, onFechar, onEstornar }: { id: number;
           <div>
             <h2 style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--dourado-light)" }}>{d.protocolo_nome}</h2>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "0.3rem 0" }}>
-              {d.estado === "estornada" ? <Pill cor="var(--red)"><Undo2 size={12} />Estornada</Pill> : <Pill cor="var(--green-light)">Aplicado</Pill>}
+              {d.estado === "estornada" ? <Pill cor="var(--red)"><Undo2 size={12} />Estornada</Pill> : <Pill cor="var(--green-light)">{d.rotulo_estado || (d.exame ? "Exame realizado" : "Aplicado")}</Pill>}
               <Pill cor="var(--text-muted)">{d.canal}</Pill>
               {d.retroativo && <Pill cor="var(--dourado-light)">Retroativo</Pill>}
               <span style={notaStyle}>Registro imutável · {dataCurta(d.data_aplicacao)} {d.hora || ""}</span>
@@ -205,6 +243,21 @@ function GavetaDetalhe({ id, admin, lista, onFechar, onEstornar }: { id: number;
             <li className="card" style={{ padding: "0.5rem 0.7rem" }}><span style={notaStyle}>Frasco / lote</span><b style={{ display: "block", fontSize: "0.9rem" }}>{d.lote_texto || (d.estoque_desconsiderado ? "sem baixa" : "—")}{d.validade ? ` · val. ${dataCurta(d.validade)}` : ""}</b></li>
             <li className="card" style={{ padding: "0.5rem 0.7rem" }}><span style={notaStyle}>Custo</span><b style={{ display: "block", color: d.custo == null ? "var(--amber)" : undefined }}>{brl(d.custo)}</b></li>
           </ul>
+          {d.exame && (
+            <div className="card" data-testid="bloco-exame" style={{ padding: "0.6rem 0.9rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+              <h3 className="card-header" style={{ marginBottom: 0 }}>Exame</h3>
+              <ul style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "0.6rem", listStyle: "none", margin: 0, padding: 0 }}>
+                {d.exame.fase === "leitura" && <li><span style={notaStyle}>Inoculação</span><b style={{ display: "block", fontSize: "0.9rem" }}>{dataCurta(d.exame.inoculacao_data)} {d.exame.inoculacao_hora || ""}</b></li>}
+                <li><span style={notaStyle}>{d.exame.fase === "leitura" ? "Leitura" : "Coleta"}</span><b style={{ display: "block", fontSize: "0.9rem" }}>{dataCurta(d.exame.leitura_data)} {d.exame.leitura_hora || ""}{d.exame.leitura_horas != null ? ` · ${horasTxt(d.exame.leitura_horas)} depois` : ""}</b></li>
+                {d.exame.tipo_teste && <li><span style={notaStyle}>Tipo de teste</span><b style={{ display: "block", fontSize: "0.9rem" }}>{d.exame.tipo_teste}</b></li>}
+                <li><span style={notaStyle}>Nº do laudo</span><b style={{ display: "block", fontSize: "0.9rem" }}>{d.exame.laudo || "não informado"}</b></li>
+                {d.exame.fase === "leitura" && <li><span style={notaStyle}>Resultado</span><b style={{ display: "block", fontSize: "0.9rem" }}>{d.exame.negativos} neg · {d.exame.reagentes} reag · {d.exame.inconclusivos} inconcl.</b></li>}
+                {d.exame.reteste_em && <li><span style={notaStyle}>Reteste (inconclusivo)</span><b style={{ display: "block", fontSize: "0.9rem" }}>{dataCurta(d.exame.reteste_em)}</b></li>}
+              </ul>
+              {d.exame.leitura_fora_janela && <p style={{ color: "var(--amber)", fontSize: "0.84rem", display: "flex", gap: 6 }}><AlertTriangle size={14} style={{ marginTop: 2, flexShrink: 0 }} /><span>Leitura fora da janela de 72–96 h{d.exame.leitura_justificativa ? `: ${d.exame.leitura_justificativa}` : ""}.</span></p>}
+            </div>
+          )}
+          {d.exame && d.exame.reagentes > 0 && d.estado === "aplicada" && <BannerReagentes aplicacaoId={d.id} />}
           {d.financeiro && (
             <div className="card" style={{ padding: "0.6rem 0.9rem" }}>
               <h3 className="card-header" style={{ marginBottom: "0.4rem" }}>Financeiro deste agendamento</h3>
@@ -229,15 +282,31 @@ function GavetaDetalhe({ id, admin, lista, onFechar, onEstornar }: { id: number;
           {aba === "animais" && (
             <div className="overflow-x-auto">
               <table className="fazenda-table">
-                <thead><tr><th>Animal</th><th>Origem</th><th>Dose</th><th>Peso</th><th>Situação</th></tr></thead>
+                <thead><tr><th>Animal</th><th>Origem</th>{d.exame ? <><th>Resultado</th><th>Espessura</th></> : <><th>Dose</th><th>Peso</th></>}<th>Situação</th></tr></thead>
                 <tbody>
                   {d.animais.map((a) => (
                     <tr key={a.numero_matriz}>
                       <td><b>{a.numero_matriz}</b>{a.nome ? <span style={{ ...notaStyle, display: "block" }}>{a.nome}</span> : null}</td>
                       <td style={{ fontSize: "0.82rem" }}>{a.origem === "fora_janela" ? <><ForaJanelaBadge n={1} />{a.motivo_origem && <span style={{ ...notaStyle, display: "block" }}>{a.motivo_origem}</span>}</> : "Na janela"}</td>
-                      <td style={{ fontSize: "0.82rem" }}>{a.resultado === "aplicado" ? `${num(a.dose)} ${a.unidade || ""}` : "—"}</td>
-                      <td style={{ fontSize: "0.82rem" }}>{a.peso_kg ? `${num(a.peso_kg, 0)} kg${a.peso_estimado ? " (estimativa)" : ""}` : "—"}</td>
-                      <td style={{ fontSize: "0.82rem" }}>{a.resultado === "aplicado" ? "Aplicado" : `Não aplicado: ${a.motivo_nao} · ${a.destino_nao === "naoSeAplica" ? "desconsiderado" : "voltou à lista de espera"}`}</td>
+                      {d.exame ? (
+                        <>
+                          <td style={{ fontSize: "0.82rem", fontWeight: a.exame_resultado === "reagente" ? 700 : 400, color: a.exame_resultado === "reagente" ? "var(--red)" : undefined }}>
+                            {a.exame_resultado ? RESULTADOS_ROTULO[a.exame_resultado] || a.exame_resultado : "—"}
+                            {a.reteste_em && <span style={{ ...notaStyle, display: "block", fontWeight: 400 }}>reteste em {dataCurta(a.reteste_em)}</span>}
+                          </td>
+                          <td style={{ fontSize: "0.82rem" }}>{a.espessura_mm != null ? `${num(a.espessura_mm)} mm` : "—"}</td>
+                        </>
+                      ) : (
+                        <>
+                          <td style={{ fontSize: "0.82rem" }}>{a.resultado === "aplicado" ? `${num(a.dose)} ${a.unidade || ""}` : "—"}</td>
+                          <td style={{ fontSize: "0.82rem" }}>{a.peso_kg ? `${num(a.peso_kg, 0)} kg${a.peso_estimado ? " (estimativa)" : ""}` : "—"}</td>
+                        </>
+                      )}
+                      <td style={{ fontSize: "0.82rem" }}>
+                        {a.resultado === "aplicado"
+                          ? (d.exame ? (a.exame_resultado === "reagente" ? (a.notificado_em ? `Reagente · notificado por ${a.notificado_por || "—"} em ${dataHoraCurta(a.notificado_em)}` : "Reagente · notificação pendente") : "Exame realizado") : "Aplicado")
+                          : `Não aplicado: ${a.motivo_nao} · ${a.destino_nao === "naoSeAplica" ? "desconsiderado" : "voltou à lista de espera"}`}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -275,6 +344,13 @@ function GavetaDetalhe({ id, admin, lista, onFechar, onEstornar }: { id: number;
             </ul>
           )}
           <div style={{ position: "sticky", bottom: "-0.9rem", margin: "0 -0.9rem -0.9rem", padding: "0.75rem 0.9rem", background: "var(--surface)", borderTop: "1px solid var(--border)", display: "flex", gap: "0.6rem", zIndex: 2 }}>
+            {d.estado === "aplicada" && (
+              <button type="button" className="btn-secondary" data-testid="detalhe-comprovante" onClick={() => setComprovante(true)}
+                      disabled={!!d.exame && d.exame.reagentes > 0 && d.exame.reagentes >= d.animais.filter((a) => a.resultado === "aplicado").length}
+                      title={d.exame && d.exame.reagentes >= d.animais.filter((a) => a.resultado === "aplicado").length && d.exame.reagentes > 0 ? "Bloqueado: todos os animais são reagentes." : "Comprovante para imprimir"}>
+                <Printer size={14} /> Comprovante
+              </button>
+            )}
             {d.estado === "aplicada" && item && (
               <button type="button" className="btn-ghost" disabled={!admin} onClick={() => onEstornar(item)} title={admin ? undefined : "Só o perfil Administrador estorna"}>
                 <Undo2 size={14} /> Estornar (administrador)
@@ -284,6 +360,7 @@ function GavetaDetalhe({ id, admin, lista, onFechar, onEstornar }: { id: number;
           </div>
         </div>
       )}
+      {comprovante && <ComprovanteAplicacaoView aplicacaoId={id} onFechar={() => setComprovante(false)} />}
     </GavetaLancamento>
   );
 }
