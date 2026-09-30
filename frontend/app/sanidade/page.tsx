@@ -2384,11 +2384,14 @@ function DoencaMotivoView() {
 // ─────────────────────────── Protocolos sanitários (curativa) ───────────────────────────
 type EtapaProtocolo = { id: number; dia: number; produto: string; dosagem: number; unidade: string; via: string | null; observacao: string | null };
 type AplicacaoProtocolo = { id: number; data_prevista: string; produto: string | null; realizada: boolean; data_realizacao: string | null; etapa: EtapaProtocolo | null };
+type StatusProtocolo = "ativo" | "concluido" | "encerrado" | "cancelado";
 type LancamentoProtocolo = {
   id: number; protocolo_id: number; protocolo_nome: string; protocolo_dia_inicial?: number; numero_matriz: string; data_inicio: string;
   responsavel: string | null; observacao: string | null;
   classificacao_mastite: string | null; grau_mastite: number | null; agente: string | null;
   resultado_cmt: string | null; tetos_afetados: string | null; usuario_nome?: string | null;
+  // Estado do lote (cancelar/encerrar na Central) — vem do backend.
+  status?: StatusProtocolo; encerrado_em?: string | null; encerrado_motivo?: string | null;
   aplicacoes: AplicacaoProtocolo[];
 };
 
@@ -2397,7 +2400,7 @@ function ProtocolosSanitariosView() {
   const [aberto, setAberto] = useState<number | null>(null);
   const [buscaAnimal, setBuscaAnimal] = useState("");
   const [fProtocolo, setFProtocolo] = useState("");
-  const [fStatus, setFStatus] = useState<"" | "andamento" | "concluido">("");
+  const [fStatus, setFStatus] = useState<"" | "andamento" | "concluido" | "encerrado" | "cancelado">("");
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
 
@@ -2405,8 +2408,13 @@ function ProtocolosSanitariosView() {
 
   const protocolosOpc = useMemo(() => Array.from(new Set((lancs || []).map((l) => l.protocolo_nome))).sort(), [lancs]);
 
-  const statusDe = (l: LancamentoProtocolo): "andamento" | "concluido" =>
-    l.aplicacoes.length && l.aplicacoes.every((a) => a.realizada) ? "concluido" : "andamento";
+  // Cancelado/encerrado NUNCA é "em andamento" (o estado vem do lote no backend).
+  const statusDe = (l: LancamentoProtocolo): "andamento" | "concluido" | "encerrado" | "cancelado" => {
+    if (l.status === "cancelado" || l.status === "encerrado") return l.status;
+    return l.aplicacoes.length && l.aplicacoes.every((a) => a.realizada) ? "concluido" : "andamento";
+  };
+  const ROTULO_STATUS = { andamento: "Em andamento", concluido: "Concluído", encerrado: "Encerrado", cancelado: "Cancelado" } as const;
+  const COR_STATUS = { andamento: "var(--amber)", concluido: "var(--green-light)", encerrado: "var(--text-muted)", cancelado: "var(--red, #dc2626)" } as const;
 
   const filtrados = useMemo(() => (lancs || []).filter((l) =>
     casaBusca(l.numero_matriz, buscaAnimal) &&
@@ -2429,7 +2437,7 @@ function ProtocolosSanitariosView() {
             <select style={selStyle} value={fProtocolo} onChange={(e) => setFProtocolo(e.target.value)}><option value="">Todos</option>{protocolosOpc.map((p) => <option key={p} value={p}>{p}</option>)}</select></div>
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Status</label>
             <select style={selStyle} value={fStatus} onChange={(e) => setFStatus(e.target.value as typeof fStatus)}>
-              <option value="">Todos</option><option value="andamento">Em andamento</option><option value="concluido">Concluído</option>
+              <option value="">Todos</option><option value="andamento">Em andamento</option><option value="concluido">Concluído</option><option value="encerrado">Encerrado</option><option value="cancelado">Cancelado</option>
             </select></div>
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label>
             <input type="date" style={selStyle} value={ini} onChange={(e) => setIni(e.target.value)} /></div>
@@ -2459,8 +2467,8 @@ function ProtocolosSanitariosView() {
                     </span>
                     <span className="flex items-center gap-3" style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
                       {formatDate(l.data_inicio)}
-                      <span style={{ fontWeight: 700, color: status === "concluido" ? "var(--green-light)" : "var(--amber)" }}>
-                        {status === "concluido" ? "Concluído" : "Em andamento"}
+                      <span style={{ fontWeight: 700, color: COR_STATUS[status] }} title={l.encerrado_motivo || undefined}>
+                        {ROTULO_STATUS[status]}
                       </span>
                     </span>
                   </div>
