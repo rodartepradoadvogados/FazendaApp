@@ -17,7 +17,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.mktemp(suffix='.db')}"
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import event
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import (
@@ -281,6 +281,31 @@ class TestProjecao:
             s.commit()
         rep = c.get("/agenda/projecao", params={"dias": 30, "data": HOJE.isoformat()}).json()["cards"]["repasse"]
         assert rep["checagens"] == 0
+
+    def test_programacao_lista_o_repasse_mesmo_sem_aviso_no_dia_a_dia(self, ctx):
+        c, engine = ctx
+        with Session(engine) as s:
+            for n in ("101", "102"):
+                _animal(s, n)
+                _servico(s, n, 5)                                   # as duas caem em HOJE+9
+            _manual(s, "Lavar bebedouros", HOJE + timedelta(days=2))
+            s.add(RepasseConfig(fazenda_id=1, mostrar_na_agenda=False))
+            s.commit()
+        p = c.get("/agenda/projecao", params={"dias": 30, "data": HOJE.isoformat()}).json()
+        rep = [l for l in p["linhas"] if l["grupo"] == "repasse"]
+        assert rep == [{"data": (HOJE + timedelta(days=9)).isoformat(), "grupo": "repasse", "n": 2, "lote": None,
+                        "descricao": "Cio de repasse — aplicar adesivo detector"}]
+        # tarefa geral (sem animal) nao inventa "N animais"
+        geral = [l for l in p["linhas"] if l["descricao"] == "Lavar bebedouros"]
+        assert geral and geral[0]["n"] == 0
+        # com aviso na Agenda ligado, o motor tambem emite o evento: a linha do repasse nao duplica
+        with Session(engine) as s:
+            cfg = s.exec(select(RepasseConfig)).first()
+            cfg.mostrar_na_agenda = True
+            s.add(cfg)
+            s.commit()
+        p = c.get("/agenda/projecao", params={"dias": 30, "data": HOJE.isoformat()}).json()
+        assert len([l for l in p["linhas"] if l["grupo"] == "repasse"]) == 1
 
     def test_repasse_desligado_nao_projeta(self, ctx):
         c, engine = ctx

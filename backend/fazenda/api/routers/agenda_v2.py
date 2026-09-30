@@ -266,11 +266,13 @@ def agenda_projecao(
     modulos = _modulos(session, usuario, fazenda_id)
     q = fazenda_id
     cards: dict = {}
+    repasse_calc: dict | None = None
 
     # Repasse ───────────────────────────────────────────────────────────────
     if "reproducao" in liberados:
         cfg = repasse_rules.ler_config(session, q)
         calc = _checagens_repasse(session, q, cfg, hoje, ate)
+        repasse_calc = calc
         produto = repasse_rules.produto_da_config(session, cfg)
         demanda = calc["resumo"]["checagens"]
         cards["repasse"] = {
@@ -395,10 +397,24 @@ def agenda_projecao(
             continue
         if str(e.get("tipo") or "").startswith("cronograma_sanitario"):
             continue
-        chave = (e["data"], _grupo_do_evento(e), e.get("descricao") or "")
-        linha = contagem.setdefault(chave, {"data": e["data"], "grupo": chave[1], "descricao": chave[2], "n": 0, "lote": e.get("lote")})
-        linha["n"] += 1
+        grupo = _grupo_do_evento(e)
+        if grupo == "repasse":
+            continue  # o repasse entra abaixo, calculado pela regra (aparece mesmo sem aviso no Dia a dia)
+        chave = (e["data"], grupo, e.get("descricao") or "")
+        linha = contagem.setdefault(chave, {"data": e["data"], "grupo": grupo, "descricao": chave[2], "n": 0, "lote": e.get("lote")})
+        if e.get("numero_animal"):
+            linha["n"] += 1          # "para quem" só conta animal de verdade (tarefa geral fica sem número)
     linhas = sorted(contagem.values(), key=lambda l: (l["data"], l["grupo"]))
+    if repasse_calc:
+        por_data: dict[date, int] = defaultdict(int)
+        for d in repasse_calc["datas"] + repasse_calc["estimadas"]:
+            por_data[d] += 1
+        nome_prod = ((cards.get("repasse") or {}).get("produto") or {}).get("nome")
+        for d, n in por_data.items():
+            linhas.append({
+                "data": d.isoformat(), "grupo": "repasse", "n": n, "lote": None,
+                "descricao": f"Cio de repasse — aplicar {nome_prod}" if nome_prod else "Cio de repasse — aplicar adesivo detector",
+            })
     for grupo in ("vacinas", "exames"):
         for item in (cards.get(grupo) or {}).get("proximas", []):
             linhas.append({"data": item["data"], "grupo": grupo, "descricao": item["nome"], "n": item["n_animais"], "lote": None})
