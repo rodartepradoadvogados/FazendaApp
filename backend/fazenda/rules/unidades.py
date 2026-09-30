@@ -54,7 +54,15 @@ def pode_dar_baixa_direta(unidade_aplicacao: str, unidade_estoque: str | None) -
     exatamente a mesma do estoque — não há fator de conversão cadastrado
     entre unidades do mesmo grupo (ex.: quantos ml tem 1 "unidade").
     """
-    return bool(unidade_estoque) and unidade_aplicacao == unidade_estoque
+    return bool(unidade_estoque) and unidades_iguais(unidade_aplicacao, unidade_estoque)
+
+
+def unidades_iguais(a: str | None, b: str | None) -> bool:
+    """Mesma unidade, ignorando caixa/espacos e os sinonimos legados (un = unidade). NUNCA converte."""
+    def _n(u: str | None) -> str:
+        u = (u or "").strip().lower()
+        return _SINONIMOS_UNIDADE.get(u, u)
+    return bool(_n(a)) and _n(a) == _n(b)
 
 
 # ---------------------------------------------------------------------------

@@ -106,6 +106,8 @@ function FormAplicar({ ctx, canal, chave, onAplicado, onFechar }: {
   const [naoOutro, setNaoOutro] = useState<Record<string, string>>({});
   const [naoDestino, setNaoDestino] = useState<Record<string, "espera" | "naoSeAplica">>({});
   const [animAberto, setAnimAberto] = useState(false);
+  // Animal que JÁ recebeu o produto no ciclo (qualquer caminho): decisão por animal — aplicar mesmo assim (motivo) ou tirar.
+  const [jaDec, setJaDec] = useState<Record<string, { acao: "aplicar" | "tirar" | ""; motivo: string; obs: string }>>({});
   const [lote, setLote] = useState(loteInicial);
   const [ciente, setCiente] = useState(false);
   const [desconsiderar, setDesconsiderar] = useState(semProduto ? false : (desconsiderouNoChecklist || !ctx.estoque.encontrado));
@@ -149,7 +151,8 @@ function FormAplicar({ ctx, canal, chave, onAplicado, onFechar }: {
   const un = ctx.unidade || "";
   const custoNum = custo.trim() !== "" && !isNaN(Number(custo.replace(",", "."))) ? Number(custo.replace(",", ".")) : null;
   const semPeso = aplicados.filter((a) => ctx.por_peso && doseDe(a.numero_matriz) == null).map((a) => a.numero_matriz);
-  const saldoFrasco = desconsiderar ? null : (frasco ? frasco.saldo : ctx.estoque.saldo);
+  const unidadeDiverge = !!ctx.unidade_diverge;   // dose em unidade diferente da do estoque: nada é convertido nem baixado
+  const saldoFrasco = desconsiderar || unidadeDiverge ? null : (frasco ? frasco.saldo : ctx.estoque.saldo);
   const faltam = saldoFrasco != null ? Math.max(0, totalDose - saldoFrasco) : 0;
   const restante = saldoFrasco != null ? Math.max(0, saldoFrasco - totalDose) : null;
   const carenciaCarne = ctx.carencia.carne_dias != null ? somaDias(dataReal, ctx.carencia.carne_dias) : null;
@@ -159,6 +162,21 @@ function FormAplicar({ ctx, canal, chave, onAplicado, onFechar }: {
   const comResColeta = aplicados.filter((a) => resColeta[a.numero_matriz]);
 
   const motivoNao = (n: string) => textoMotivo(naoMotivo[n] || "", naoOutro[n] || "");
+  const decididoJa = (n: string) => { const d = jaDec[n]; return !!d && d.acao === "aplicar" && !!d.motivo && (d.motivo !== "Outro" || !!d.obs.trim()); };
+  const jaAplicados = ctx.animais.filter((a) => a.ja_aplicado);
+  // "Tirar do agendamento": desmarca o animal e já preenche o motivo ("Já aplicado em dd/mm/aaaa") com destino Desconsiderar.
+  const decidirJa = (a: (typeof ctx.animais)[number], acao: "aplicar" | "tirar") => {
+    const n = a.numero_matriz;
+    setJaDec((p) => ({ ...p, [n]: { acao, motivo: acao === "aplicar" ? (p[n]?.motivo || "") : "", obs: p[n]?.obs || "" } }));
+    if (acao === "tirar") {
+      setMarc((p) => { const x = new Set(p); x.delete(n); return x; });
+      setNaoMotivo((p) => ({ ...p, [n]: "Outro" }));
+      setNaoOutro((p) => ({ ...p, [n]: `Já aplicado em ${dataCurta(a.ja_aplicado!.data)}` }));
+      setNaoDestino((p) => ({ ...p, [n]: "naoSeAplica" }));
+    } else {
+      setMarc((p) => new Set(p).add(n));
+    }
+  };
   let erro = "";
   if (!aplicados.length) erro = "Marque pelo menos 1 animal aplicado.";
   else if (!aplicadorId) erro = "Escolha quem aplicou.";
@@ -169,6 +187,7 @@ function FormAplicar({ ctx, canal, chave, onAplicado, onFechar }: {
   else if (!desconsiderar && !semProduto && !ctx.estoque.encontrado) erro = "O produto não está no estoque: desconsidere o estoque com motivo.";
   else if (frascoVencido && !ciente) erro = "Frasco vencido: marque a ciência para usar assim mesmo.";
   else if (semPeso.length) erro = `Informe o peso de: ${semPeso.join(", ")}.`;
+  else if (aplicados.some((a) => a.ja_aplicado && !decididoJa(a.numero_matriz))) erro = `Decida sobre ${aplicados.filter((a) => a.ja_aplicado && !decididoJa(a.numero_matriz)).map((a) => a.numero_matriz).join(", ")}: já ${aplicados.filter((a) => a.ja_aplicado && !decididoJa(a.numero_matriz)).length === 1 ? "recebeu" : "receberam"} o produto neste ciclo.`;
   else if (nao.some((a) => !motivoNao(a.numero_matriz))) erro = "Escolha o motivo de cada animal não aplicado.";
   else if (exame?.fase === "coleta" && comResColeta.length > 0 && comResColeta.length < aplicados.length) erro = "Informe o resultado de todos os animais coletados (ou de nenhum).";
   else if (pend.length && !cientePend) erro = `Marque a ciência dos ${pend.length} ${plural(pend.length, "item pendente", "itens pendentes")} do checklist.`;
@@ -180,6 +199,7 @@ function FormAplicar({ ctx, canal, chave, onAplicado, onFechar }: {
     const corpo: AplicarAgendamentoPayload = {
       canal, aplicador_pessoa_id: Number(aplicadorId), animais_aplicados: aplicados.map((a) => a.numero_matriz),
       nao_aplicados: nao.map((a) => ({ numero_matriz: a.numero_matriz, motivo: motivoNao(a.numero_matriz), destino: naoDestino[a.numero_matriz] || "espera" })),
+      ja_aplicados: Object.fromEntries(aplicados.filter((a) => a.ja_aplicado).map((a) => [a.numero_matriz, { motivo: jaDec[a.numero_matriz].motivo, observacao: jaDec[a.numero_matriz].obs.trim() || null }])),
       data_aplicacao: dataReal, hora: hora || null, custo: custoNum,
       ciencia_pendentes: pend.length > 0 && cientePend, ciencia_motivo: cientePend ? (motCiencia || null) : null,
       chave_idempotencia: chave,
@@ -243,6 +263,7 @@ function FormAplicar({ ctx, canal, chave, onAplicado, onFechar }: {
         {restritos.length > 0 && boxAviso("var(--red)", <><b>Brucelose B19: só fêmeas de 3 a 8 meses.</b> {restritos.map((a) => `${a.numero_matriz} (${a.restricao?.split(": ")[1] || a.restricao})`).join("; ")}. Desmarque esses animais (motivo: Outro).</>)}
         {frascoVencido && boxAviso("var(--red)", <><b>Frasco vencido.</b> O frasco {frasco?.numero_lote || `#${frasco?.id}`} venceu em {dataCurta(frasco?.validade)}. É preciso ciência para usar assim mesmo; ela fica registrada com o seu nome e a hora.</>)}
         {!frascoVencido && frasco && frasco.vence_em_dias != null && frasco.vence_em_dias <= 30 && boxAviso("var(--amber)", <><b>Validade próxima.</b> O frasco {frasco.numero_lote || `#${frasco.id}`} vence em {frasco.vence_em_dias} {plural(frasco.vence_em_dias, "dia", "dias")} ({dataCurta(frasco.validade)}).</>)}
+        {unidadeDiverge && boxAviso("var(--amber)", <><b>Unidade da dose diferente da do estoque.</b> {ctx.aviso_unidade}</>, <Info size={15} />)}
         {faltam > 0 && boxAviso("var(--amber)", <><b>Estoque insuficiente.</b> Faltam {num(faltam)} {un}. A aplicação não é bloqueada: o estoque fica negativo e a divergência é avisada. Comunique a compra.</>)}
         {ctx.exige_veterinario && !pessoa?.veterinario && (semCrmv(pessoa)
           ? boxAviso("var(--red)", <><b>{textoCrmv(pessoa!.nome)}</b> {ctx.protocolo_nome} só é aplicado por veterinário com CRMV. <LinkCadastroPessoas /></>)
@@ -278,6 +299,48 @@ function FormAplicar({ ctx, canal, chave, onAplicado, onFechar }: {
           : <>{ctx.por_peso ? "Dose por peso: cada animal recebe pelo seu peso. " : ""}Cada animal vira uma linha em Sanidade e o registro vai para <b>Concluídos</b>.</>}</p>
       </details>
 
+      {/* animal que já recebeu o produto no ciclo: aviso destacado + decisão por animal */}
+      {jaAplicados.length > 0 && (
+        <section className="card" role="alert" aria-label="Animais que já receberam o produto" style={{ border: "1px solid var(--red)", borderLeft: "4px solid var(--red)" }}>
+          <p style={{ display: "flex", gap: "0.5rem", alignItems: "center", fontWeight: 700, fontSize: "0.92rem", margin: 0 }}>
+            <AlertTriangle size={16} style={{ color: "var(--red)" }} />
+            {jaAplicados.length === 1 ? "1 animal já recebeu" : `${jaAplicados.length} animais já receberam`} {ctx.produto || "este produto"} dentro do ciclo desta regra
+          </p>
+          <p style={{ ...notaStyle, margin: "0.3rem 0 0.6rem" }}>Foi encontrado registro em Sanidade (Lançamentos, histórico ou curral). Escolha, por animal, se aplica de novo ou se ele sai deste agendamento.</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.7rem" }}>
+            {jaAplicados.map((a) => {
+              const d = jaDec[a.numero_matriz] || { acao: "", motivo: "", obs: "" };
+              const j = a.ja_aplicado!;
+              return (
+                <div key={a.numero_matriz} style={{ borderTop: "1px solid var(--border)", paddingTop: "0.6rem" }}>
+                  <p style={{ margin: 0, fontSize: "0.86rem" }}>
+                    <b>{a.numero_matriz}{a.nome ? ` ${a.nome}` : ""}</b> · aplicado em <b>{dataCurta(j.data)}</b> ({j.dias === 0 ? "hoje" : `há ${j.dias} ${plural(j.dias, "dia", "dias")}`}) · {j.produto} · <span style={notaStyle}>{j.fonte}</span>
+                  </p>
+                  <div style={{ marginTop: "0.4rem" }}>
+                    <Chips rotulo="O que fazer com este animal?" idBase={`ja-${a.numero_matriz}`}
+                           opcoes={["Aplicar mesmo assim", "Tirar do agendamento"]}
+                           valor={d.acao === "aplicar" ? "Aplicar mesmo assim" : d.acao === "tirar" ? "Tirar do agendamento" : ""}
+                           onChange={(v) => decidirJa(a, v === "Aplicar mesmo assim" ? "aplicar" : "tirar")}
+                           erro={tentou && marc.has(a.numero_matriz) && !decididoJa(a.numero_matriz) ? "Escolha uma opção (e o motivo, se for aplicar de novo)." : null} />
+                  </div>
+                  {d.acao === "aplicar" && (
+                    <div style={{ marginTop: "0.5rem" }}>
+                      <Chips rotulo="Motivo (fica registrado)" idBase={`ja-mot-${a.numero_matriz}`} opcoes={ctx.motivos_ja_aplicado || ["Dose extra", "Reforço", "Outro"]}
+                             valor={d.motivo} onChange={(v) => setJaDec((p) => ({ ...p, [a.numero_matriz]: { ...d, motivo: v } }))} />
+                      {d.motivo === "Outro" && (
+                        <input style={{ ...inputStyle, marginTop: "0.4rem" }} aria-label={`Descreva o motivo de aplicar de novo em ${a.numero_matriz}`} placeholder="Descreva"
+                               value={d.obs} onChange={(e) => setJaDec((p) => ({ ...p, [a.numero_matriz]: { ...d, obs: e.target.value } }))} />
+                      )}
+                    </div>
+                  )}
+                  {d.acao === "tirar" && <p style={{ ...notaStyle, margin: "0.4rem 0 0" }}>Sai deste agendamento como “Desconsiderar” (motivo: já aplicado em {dataCurta(j.data)}).</p>}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       {/* animais */}
       <div>
         <span style={labelStyle}>Animais: marque quem foi aplicado</span>
@@ -297,7 +360,7 @@ function FormAplicar({ ctx, canal, chave, onAplicado, onFechar }: {
                       <span>
                         <b>{a.numero_matriz}{a.nome ? ` ${a.nome}` : ""}</b>
                         <span style={{ ...notaStyle, display: "block" }}>
-                          {a.lote || "Sem lote"} · {d != null ? `${num(d)} ${un}` : (semProduto ? "coleta" : "sem peso")}
+                          {a.lote || "Sem lote"} · {d != null ? `${num(d)} ${unPl(un, d)}` : (semProduto ? "coleta" : "sem peso")}
                           {ctx.por_peso && a.peso_kg ? ` (${num(a.peso_kg, 0)} kg${a.peso_estimado ? ", estimativa pelo lote" : ""})` : ""}
                         </span>
                       </span>
@@ -547,7 +610,7 @@ function Concluida({ ctx, r, canal, desfeito, onDesfeito, onFechar, onVerConclui
         {fase && <ListaExame ctx={ctx} r={r} />}
         {!fase && <ul style={{ margin: 0, paddingLeft: "1.1rem", fontSize: "0.86rem", lineHeight: 1.7 }}>
           <li>{aplicados.length} {plural(aplicados.length, "aplicação registrada", "aplicações registradas")} em Sanidade (natureza preventiva).</li>
-          <li>{ap.estoque_desconsiderado ? `Estoque desconsiderado (${ap.estoque_motivo}): nada foi baixado.` : `Estoque baixado: ${num(ap.dose_total)} ${unPl(ap.unidade || "", ap.dose_total || 0)}${ap.lote_texto ? ` do lote ${ap.lote_texto}` : ""}.`}</li>
+          <li>{ap.estoque_desconsiderado ? `Estoque desconsiderado (${ap.estoque_motivo}): nada foi baixado.` : ap.baixa_automatica === false ? `Estoque NÃO baixado: a dose foi registrada em ${ap.unidade} e o estoque é controlado em ${ap.unidade_estoque || "outra unidade"} (nada é convertido sozinho). Ajuste o estoque à mão.` : `Estoque baixado: ${num(ap.dose_total)} ${unPl(ap.unidade || "", ap.dose_total || 0)}${ap.lote_texto ? ` do lote ${ap.lote_texto}` : ""}.`}</li>
           {(ap.carencia_carne_ate || ap.carencia_leite_ate) && <li>Carência: {[ap.carencia_carne_ate ? `carne até ${dataCurta(ap.carencia_carne_ate)}` : "", ap.carencia_leite_ate ? `leite até ${dataCurta(ap.carencia_leite_ate)}` : ""].filter(Boolean).join(" · ")}.</li>}
           <li>Registrado por {ap.aplicador_nome ? `${ap.aplicador_nome} (aplicador)` : "—"} pelo canal {ap.canal}.</li>
           <li>

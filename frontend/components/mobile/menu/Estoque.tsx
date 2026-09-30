@@ -15,7 +15,7 @@ import { casaBusca } from "@/lib/busca";
 type ItemEstoque = {
   nome: string; categoria: string | null; finalidade: string | null; quantidade: number | null;
   estoque_minimo: number | null; unidade: string | null; valor_unitario: number | null; valor_total: number | null;
-  abaixo_minimo: boolean | null;
+  abaixo_minimo: boolean | null; ativo?: boolean | null;
 };
 type ItemSemen = {
   id: number; touro_nome: string; codigo?: string | null; naab?: string | null; central?: string | null;
@@ -67,7 +67,7 @@ export default function Estoque({ onVoltar }: { onVoltar: () => void }) {
     return base
       .filter((i) => casaBusca(i.nome, busca))
       .filter((i) => filtroSaldo === "todos" || (filtroSaldo === "positivo" ? (i.quantidade ?? 0) > 0 : (i.quantidade ?? 0) <= 0))
-      .filter((i) => !soAbaixo || i.abaixo_minimo === true);
+      .filter((i) => !soAbaixo || (i.abaixo_minimo === true && i.ativo !== false));
   }, [itens, aba, busca, filtroSaldo, soAbaixo]);
 
   if (!aba) {
@@ -127,7 +127,7 @@ export default function Estoque({ onVoltar }: { onVoltar: () => void }) {
                 </div>
                 <div style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginTop: "0.2rem" }}>{i.categoria || "(sem categoria)"}</div>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem", marginTop: "0.3rem" }}>
-                  <span>Saldo: <strong style={{ color: i.abaixo_minimo ? "var(--mob-vermelho)" : "var(--mob-verde)" }}>{i.quantidade ?? "—"} {i.unidade || ""}</strong></span>
+                  <span>Saldo: <strong style={{ color: i.abaixo_minimo && i.ativo !== false ? "var(--mob-vermelho)" : "var(--mob-verde)" }}>{i.quantidade ?? "—"} {i.unidade || ""}</strong></span>
                   <span style={{ color: "var(--mob-muted)" }}>Mín.: {i.estoque_minimo ?? "—"}</span>
                 </div>
               </MobCard>

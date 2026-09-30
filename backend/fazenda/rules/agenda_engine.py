@@ -788,6 +788,8 @@ class AgendaEngine:
         for item in estoque:
             if not item.get("exibir_necessidade_compra_agenda"):
                 continue
+            if item.get("ativo") is False or item.get("estocavel") is False:
+                continue   # item inativado = "não repor": nunca vira tarefa "Comprar"
             minimo = item.get("estoque_minimo")
             qtd = item.get("quantidade")
             if minimo is None or qtd is None or qtd >= minimo:

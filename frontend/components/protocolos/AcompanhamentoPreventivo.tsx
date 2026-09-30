@@ -148,6 +148,7 @@ export function AcompanhamentoPreventivo({ onIrLista, onVerConcluidos }: { onIrL
                   <td style={{ fontSize: "0.82rem" }}>
                     {a.animais_total} {plural(a.animais_total, "animal", "animais")}
                     {a.animais_fora_janela > 0 && <div><ForaJanelaBadge n={a.animais_fora_janela} /></div>}
+                    {!!a.animais_ja_aplicados && <div><Pill cor="var(--red)" title="Já têm o produto aplicado neste ciclo (Sanidade). A gaveta Aplicar pede a decisão de cada um.">{a.animais_ja_aplicados} {plural(a.animais_ja_aplicados, "animal já aplicado", "animais já aplicados")}</Pill></div>}
                   </td>
                   <td style={{ fontSize: "0.82rem" }}>
                     {diaSemana(a.data_evento)} {dataCurta(a.data_evento).slice(0, 5)}

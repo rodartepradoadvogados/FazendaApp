@@ -145,6 +145,13 @@ def _machos_b19(session: Session, calendario: CalendarioSanitario, numeros: list
     return set(session.exec(query).all())
 
 
+def _ja_aplicados_antes_de_sugerir(session: Session, calendario: CalendarioSanitario, numeros: list[str], hoje: date) -> set[str]:
+    """Quem entre `numeros` já recebeu o produto da regra no ciclo — sem criar cronograma."""
+    from fazenda.rules.ja_aplicado_preventivo import aplicacoes_no_ciclo
+    _, devida = _lista_de_espera_da_regra(session, calendario)
+    return set(aplicacoes_no_ciclo(session, calendario, list(numeros), hoje=hoje, devida=devida))
+
+
 def sugerir_animal(session: Session, calendario: CalendarioSanitario, numero_matriz: str, hoje: date) -> CronogramaSanitarioAnimal | None:
     """Garante uma linha "sugerido" para o animal no cronograma aberto da
     regra. Idempotente: devolve None (não gera pendência de novo) se o
@@ -155,6 +162,8 @@ def sugerir_animal(session: Session, calendario: CalendarioSanitario, numero_mat
         return None  # reagente em exame: sai de todo agendamento e nunca volta a ser sugerido
     if _machos_b19(session, calendario, [numero_matriz]):
         return None  # B19 so femea: macho nunca entra na lista de espera
+    if _ja_aplicados_antes_de_sugerir(session, calendario, [numero_matriz], hoje):
+        return None  # ja recebeu o produto no ciclo (qualquer caminho): nao entra na lista de espera
     cron = cronograma_aberto(session, calendario)
     linha = CronogramaSanitarioAnimal(
         cronograma_id=cron.id, numero_matriz=numero_matriz, data_sugestao=hoje, fazenda_id=calendario.fazenda_id,
@@ -182,6 +191,9 @@ def sugerir_animais_em_lote(session: Session, calendario: CalendarioSanitario, n
         reagentes = _reagentes(session, calendario, pendentes)   # reagente em exame nunca volta a ser sugerido
         machos = _machos_b19(session, calendario, pendentes)
         pendentes = [n for n in pendentes if n not in reagentes and n not in machos]
+    if pendentes:
+        ja = _ja_aplicados_antes_de_sugerir(session, calendario, pendentes, hoje)
+        pendentes = [n for n in pendentes if n not in ja]   # ja aplicado no ciclo: nao entra na lista de espera
     if not pendentes:
         return
     cron = cronograma_aberto(session, calendario)
@@ -444,18 +456,92 @@ def _ja_vacinados_no_ciclo(
             .where(CronogramaSanitarioAplicacaoAnimal.numero_matriz.in_(numeros))
         ).all()
         return set(feitos)
-    if not produto:
-        return set()
-    alvo = produto.strip().lower()
+    # Vacina/tratamento: qualquer registro de Sanidade do produto/protocolo na janela do ciclo (por qualquer caminho).
+    from fazenda.rules.ja_aplicado_preventivo import aplicacoes_no_ciclo
+    return set(aplicacoes_no_ciclo(
+        session, calendario, list(numeros), hoje=date.today(), devida=_data_devida(cron), evento=ev,
+    ))
+
+
+def _ja_aplicados_da_lista(
+    session: Session, pares: list[tuple[CronogramaSanitarioAnimal, CronogramaSanitario, CalendarioSanitario]], hoje: date,
+) -> dict[int, dict]:
+    """{linha.id: info} das linhas "sugerido" (não reteste) cujo animal já recebeu o produto da regra no ciclo."""
+    from fazenda.rules.ja_aplicado_preventivo import aplicacoes_no_ciclo
+    grupos: dict[tuple[int, int], list[CronogramaSanitarioAnimal]] = {}
+    cals: dict[int, CalendarioSanitario] = {}
+    crons: dict[int, CronogramaSanitario] = {}
+    for linha, cron, cal in pares:
+        if linha.reteste or linha.status != "sugerido":
+            continue
+        grupos.setdefault((cal.id, cron.id), []).append(linha)
+        cals[cal.id], crons[cron.id] = cal, cron
+    saida: dict[int, dict] = {}
+    for (cal_id, cron_id), linhas in grupos.items():
+        achados = aplicacoes_no_ciclo(
+            session, cals[cal_id], [l.numero_matriz for l in linhas], hoje=hoje, devida=_data_devida(crons[cron_id]),
+        )
+        for l in linhas:
+            if l.numero_matriz in achados:
+                saida[l.id] = achados[l.numero_matriz]
+    return saida
+
+
+def reconciliar_lista_espera(
+    session: Session, hoje: date, fazenda_id: int | None = None, calendario_id: int | None = None,
+    numeros: list[str] | None = None,
+) -> list[dict]:
+    """Tira da lista de espera quem JÁ recebeu o produto da regra no ciclo (por
+    qualquer caminho: Lançamentos, Sanidade legada, curral, aplicar do
+    agendamento). A linha vira "excluido" com o motivo "Já aplicado em
+    dd/mm/aaaa (...)" e o log do cronograma registra. Devolve o que saiu."""
+    from fazenda.rules.aplicacao_preventiva import registrar_log
+    from fazenda.rules.ja_aplicado_preventivo import fmt_data, texto_ja_aplicado
     query = (
-        select(Sanidade.numero_matriz, Sanidade.produto)
-        .where(Sanidade.numero_matriz.in_(numeros))
-        .where(Sanidade.data_aplicacao >= desde)
+        select(CronogramaSanitarioAnimal, CronogramaSanitario, CalendarioSanitario)
+        .join(CronogramaSanitario, CronogramaSanitario.id == CronogramaSanitarioAnimal.cronograma_id)
+        .join(CalendarioSanitario, CalendarioSanitario.id == CronogramaSanitario.calendario_sanitario_id)
+        .where(CronogramaSanitarioAnimal.status == "sugerido")
+        .where(CronogramaSanitario.status == "aberto")
+        .where(CalendarioSanitario.ativo == True)  # noqa: E712
     )
-    if calendario.fazenda_id is not None:
-        query = query.where(Sanidade.fazenda_id == calendario.fazenda_id)
-    linhas = session.exec(query).all()
-    return {n for n, prod in linhas if (prod or "").strip().lower() == alvo}
+    if fazenda_id is not None:
+        query = query.where(CronogramaSanitario.fazenda_id == fazenda_id)
+    if calendario_id is not None:
+        query = query.where(CalendarioSanitario.id == calendario_id)
+    if numeros is not None:
+        query = query.where(CronogramaSanitarioAnimal.numero_matriz.in_(numeros))
+    trios = session.exec(query).all()
+    if not trios:
+        return []
+    achados = _ja_aplicados_da_lista(session, trios, hoje)
+    if not achados:
+        return []
+    eventos = {e.id: e for e in session.exec(select(EventoSanitario)).all()}
+    saiu: list[dict] = []
+    por_cron: dict[int, list[str]] = {}
+    for linha, cron, cal in trios:
+        info = achados.get(linha.id)
+        if info is None:
+            continue
+        linha.status = "excluido"
+        linha.motivo = texto_ja_aplicado(info)[:250]
+        linha.data_decisao = hoje
+        session.add(linha)
+        ev = eventos.get(cal.evento_sanitario_id)
+        por_cron.setdefault(cron.id, []).append(f"{linha.numero_matriz} ({fmt_data(info['data'])})")
+        saiu.append({
+            "numero_matriz": linha.numero_matriz, "calendario_id": cal.id, "cronograma_id": cron.id,
+            "protocolo_nome": ev.nome if ev else "Protocolo", "data": info["data"].isoformat(), "produto": info["produto"],
+            "fonte": info["fonte"],
+        })
+    for cron_id, itens in por_cron.items():
+        registrar_log(
+            session, session.get(CronogramaSanitario, cron_id), "Já aplicado (reconciliação)", canal="rotina",
+            detalhe="Saíram da lista de espera por já terem o produto aplicado no ciclo: " + ", ".join(itens),
+        )
+    session.commit()
+    return saiu
 
 
 def resumo_lista_espera(session: Session, fazenda_id: int | None = None) -> list[dict]:
@@ -483,11 +569,18 @@ def resumo_lista_espera(session: Session, fazenda_id: int | None = None) -> list
         if eh_b19(evs.get(cal.evento_sanitario_id), cal.produto):
             machos_b19[c.id] = {a for a in session.exec(select(Animal.numero).where(Animal.sexo == "M")
                                                          .where(Animal.fazenda_id == cal.fazenda_id)).all()}
-    for linha in session.exec(
+    sugeridos = session.exec(
         select(CronogramaSanitarioAnimal)
         .where(CronogramaSanitarioAnimal.cronograma_id.in_([c.id for c, _ in pares]))
         .where(CronogramaSanitarioAnimal.status == "sugerido")
-    ).all():
+    ).all()
+    par_por_cron = {c.id: (c, cal) for c, cal in pares}
+    ja_aplicados = _ja_aplicados_da_lista(
+        session, [(l, par_por_cron[l.cronograma_id][0], par_por_cron[l.cronograma_id][1]) for l in sugeridos], hoje,
+    )
+    for linha in sugeridos:
+        if linha.id in ja_aplicados:
+            continue   # já aplicado no ciclo (por qualquer caminho): não conta (a Lista de espera o reconcilia ao abrir)
         if linha.reteste and linha.data_devida and linha.data_devida > hoje:
             continue   # reteste de exame: so entra na lista de espera na data devida
         if linha.numero_matriz in machos_b19.get(linha.cronograma_id, ()):
@@ -771,7 +864,9 @@ def lista_espera(
     if calendario_id is not None:
         query = query.where(CalendarioSanitario.id == calendario_id)
     trios = session.exec(query).all()
-    vazio = {"total": 0, "atrasadas": 0, "fecham_7d": 0, "agendamentos_ativos": 0, "grupos": []}
+    reconciliados = reconciliar_lista_espera(session, hoje, fazenda_id, calendario_id)
+    trios = session.exec(query).all()   # de novo: quem já tinha aplicação no ciclo acabou de sair da lista
+    vazio = {"total": 0, "atrasadas": 0, "fecham_7d": 0, "agendamentos_ativos": 0, "grupos": [], "reconciliados": reconciliados}
     query_ag = select(CronogramaSanitario).where(CronogramaSanitario.status.in_(("agendado", "em_montagem")))
     if fazenda_id is not None:
         query_ag = query_ag.where(CronogramaSanitario.fazenda_id == fazenda_id)
@@ -851,6 +946,7 @@ def lista_espera(
         "fecham_7d": sum(1 for i in todos if i["fecha_em"] is not None and 0 <= i["fecha_em"] <= 7),
         "agendamentos_ativos": vazio["agendamentos_ativos"],
         "grupos": grupos,
+        "reconciliados": reconciliados,
     }
 
 
@@ -924,6 +1020,20 @@ def criar_agendamento(
     ocupados = {l.numero_matriz: c for l, c in animais_da_regra if l.status in ("incluido", "aplicado")}
     ativos = _animais_da_fazenda(session, calendario.fazenda_id, janela + list(fora))
 
+    ja = _ja_aplicados_da_lista(
+        session, [(l, c, calendario) for n, (l, c) in espera.items() if n in janela], hoje,
+    )
+    if ja:
+        # Reconcilia (tira da lista) e recusa: quem já recebeu o produto no ciclo não deve ser agendado de novo.
+        numeros_ja = [n for n, (l, c) in espera.items() if l.id in ja]
+        reconciliar_lista_espera(session, hoje, calendario.fazenda_id, calendario.id, numeros_ja)
+        primeiro = espera[numeros_ja[0]][0]
+        raise CronogramaError(
+            f"Animal {numeros_ja[0]} já recebeu o produto no ciclo ({ja[primeiro.id]['produto']} em "
+            f"{ja[primeiro.id]['data'].strftime('%d/%m/%Y')}) e saiu da lista de espera"
+            + (f" — o mesmo vale para mais {len(numeros_ja) - 1}" if len(numeros_ja) > 1 else "")
+            + ". Atualize a lista e escolha os demais."
+        )
     for numero in janela:
         if numero not in espera:
             if numero in ocupados:

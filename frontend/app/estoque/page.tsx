@@ -95,7 +95,7 @@ function EstoqueInventario() {
     return itens.filter((i) =>
       (!fCat || i.categoria === fCat) &&
       casaBusca(i.nome, busca) &&
-      (!soAbaixo || i.abaixo_minimo === true)
+      (!soAbaixo || (i.abaixo_minimo === true && i.ativo !== false))
     );
   }, [itens, fCat, busca, soAbaixo]);
 
@@ -103,7 +103,7 @@ function EstoqueInventario() {
   const pagItens = usePaginacao(ordItens.linhasOrdenadas);
 
   const valorTotal = filtrados.reduce((a, i) => a + (i.valor_total || 0), 0);
-  const itensAbaixo = useMemo(() => filtrados.filter((i) => i.abaixo_minimo === true), [filtrados]);
+  const itensAbaixo = useMemo(() => filtrados.filter((i) => i.abaixo_minimo === true && i.ativo !== false), [filtrados]);
   const abaixo = itensAbaixo.length;
 
   const categoriasComContagem = useMemo(() => {
@@ -252,7 +252,7 @@ function EstoqueInventario() {
               <div className="flex items-center gap-3">
                 <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{filtrados.length} no filtro</span>
                 <ExportarBotoes titulo="Estoque" nomeArquivoBase="estoque" colunas={COLUNAS_ESTOQUE}
-                  linhas={filtrados.map((i) => ({ ...i, status: i.abaixo_minimo ? "ABAIXO DO MÍNIMO" : "OK" }))} />
+                  linhas={filtrados.map((i) => ({ ...i, status: i.abaixo_minimo && i.ativo !== false ? "ABAIXO DO MÍNIMO" : "OK" }))} />
               </div>
             </div>
             <div className="overflow-x-auto">
@@ -274,7 +274,7 @@ function EstoqueInventario() {
                       <td style={{ textAlign: "right" }}>{i.quantidade ?? "—"} {i.unidade || ""}</td>
                       <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{i.estoque_minimo ?? "—"}</td>
                       <td style={{ textAlign: "right", fontWeight: 600 }}>{i.valor_total != null ? formatBRL(i.valor_total) : "—"}</td>
-                      <td>{i.abaixo_minimo === true ? <span style={{ color: "var(--red)", fontWeight: 700, fontSize: "0.75rem" }}>ABAIXO</span> : <span style={{ color: "var(--green-light)", fontSize: "0.75rem" }}>OK</span>}</td>
+                      <td>{i.abaixo_minimo === true && i.ativo !== false ? <span style={{ color: "var(--red)", fontWeight: 700, fontSize: "0.75rem" }}>ABAIXO</span> : <span style={{ color: "var(--green-light)", fontSize: "0.75rem" }}>OK</span>}</td>
                       <td style={{ textAlign: "right" }}>
                         <button onClick={() => setEditando(i)} title="Editar cadastro do produto"
                           style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted)" }}>

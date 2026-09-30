@@ -41,12 +41,13 @@ from fazenda.rules.estoque_baixa import (
     baixar as _estoque_baixar, carencia_para_item, devolver as _estoque_devolver, lotes_disponiveis,
     resolver_item as _resolver_item, resolver_marca_comercial,
 )
-from fazenda.rules.unidades import unidades_compativeis
+from fazenda.rules.unidades import pode_dar_baixa_direta, unidades_compativeis, unidades_iguais
 
 DESFAZER_SEGUNDOS = 10
 # Protocolos > Acompanhamento, Agenda (site e app) e Curral (app do peao: 1o toque simples, aplicador obrigatorio).
 CANAIS = ("Protocolos", "Agenda", "Curral")
 DESTINOS = ("espera", "naoSeAplica")
+MOTIVOS_JA_APLICADO = ("Dose extra", "Reforço", "Outro")   # "aplicar mesmo assim" (animal que já recebeu o produto no ciclo)
 _HORA_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _B19_RE = re.compile(r"\bb19\b")
 B19_MESES_MIN, B19_MESES_MAX = 3, 8
@@ -513,6 +514,11 @@ def _rotulo_estado(ap: CronogramaSanitarioAplicacao, *, exame: bool) -> str:
     return "Exame realizado" if exame else "Aplicado"
 
 
+def _unidade_do_estoque(session: Session, ap: CronogramaSanitarioAplicacao) -> str | None:
+    item = session.get(Estoque, ap.estoque_id) if ap.estoque_id else None
+    return item.unidade if item else None
+
+
 def serializar_aplicacao(session: Session, ap: CronogramaSanitarioAplicacao, *, animais: bool = True) -> dict:
     d = ap.model_dump()
     for k, v in list(d.items()):
@@ -534,6 +540,10 @@ def serializar_aplicacao(session: Session, ap: CronogramaSanitarioAplicacao, *, 
             for a in _animais_da_aplicacao(session, ap.id)
         ]
     d["rotulo_estado"] = _rotulo_estado(ap, exame=ap.fase is not None)
+    # Unidade da dose x unidade do estoque: a baixa so e automatica quando sao iguais (nada e convertido em silencio).
+    item = session.get(Estoque, ap.estoque_id) if ap.estoque_id else None
+    d["unidade_estoque"] = item.unidade if item else None
+    d["baixa_automatica"] = bool(item is not None and not ap.estoque_desconsiderado and pode_dar_baixa_direta(ap.unidade or "", item.unidade))
     return d
 
 
@@ -625,6 +635,26 @@ def aplicar(session: Session, cron: CronogramaSanitario, dados: dict, *, user=No
     for n in nao_in:
         if n not in restantes:
             raise AplicacaoError(f"Animal {n} não pode constar como não aplicado")
+    # Animal que JÁ recebeu o produto no ciclo (por qualquer caminho): aplicar de novo exige decisão explícita por animal.
+    from fazenda.rules.cronograma_sanitario import _data_devida
+    from fazenda.rules.ja_aplicado_preventivo import aplicacoes_no_ciclo, fmt_data
+    ja_no_ciclo = aplicacoes_no_ciclo(session, calendario, aplicados, hoje=hoje, devida=_data_devida(cron), ate=data_ap, evento=evento)
+    decisoes = {(k or "").strip(): (v or {}) for k, v in (dados.get("ja_aplicados") or {}).items()}
+    for n in aplicados:
+        if n not in ja_no_ciclo:
+            continue
+        info = ja_no_ciclo[n]
+        d = decisoes.get(n) or {}
+        motivo_ja = (d.get("motivo") or "").strip()
+        if not motivo_ja:
+            raise AplicacaoError(
+                f"Animal {n} já recebeu {info['produto']} em {fmt_data(info['data'])} ({info['fonte']}), dentro do ciclo desta regra. "
+                "Escolha 'Aplicar mesmo assim' (dose extra ou reforço) ou desconsidere o animal do agendamento."
+            )
+        if motivo_ja not in MOTIVOS_JA_APLICADO:
+            raise AplicacaoError(f"Motivo inválido para o animal {n} — use {', '.join(MOTIVOS_JA_APLICADO)}")
+        if motivo_ja == "Outro" and not (d.get("observacao") or "").strip():
+            raise AplicacaoError(f"Descreva o motivo de aplicar de novo no animal {n}")
     from fazenda.rules import exame_preventivo
     exame_preventivo.recusar_reagentes(session, fazenda_id, aplicados, "vacina nem outro agendamento")
     if eh_b19(evento, produto):
@@ -709,6 +739,17 @@ def aplicar(session: Session, cron: CronogramaSanitario, dados: dict, *, user=No
         excecoes.append(f"Frasco vencido usado com ciência (lote {lote_texto or lote.id})")
     if pendentes:
         excecoes.append(f"Ciência de {len(pendentes)} {'item pendente' if len(pendentes) == 1 else 'itens pendentes'} do checklist")
+    if item is not None and not desconsiderar and not unidades_iguais(modo["unidade"], item.unidade):
+        excecoes.append(
+            f'Unidade da dose ({modo["unidade"]}) diferente da do estoque ({item.unidade or "sem unidade"}): sem baixa automática'
+        )
+    for n in aplicados:
+        if n in ja_no_ciclo:
+            d = decisoes[n]
+            extra = f": {d['observacao'].strip()}" if (d.get("motivo") == "Outro" and d.get("observacao")) else ""
+            excecoes.append(
+                f"Animal {n} aplicado mesmo já tendo recebido o produto em {fmt_data(ja_no_ciclo[n]['data'])} ({d['motivo']}{extra})"
+            )
     if data_ap < hoje:
         excecoes.append("Lançamento retroativo")
     if data_ap < cron.data_evento:
@@ -743,7 +784,9 @@ def aplicar(session: Session, cron: CronogramaSanitario, dados: dict, *, user=No
             san = Sanidade(
                 numero_matriz=n, data_aplicacao=data_ap, produto=produto or "", dose=d["dose"], unidade=modo["unidade"],
                 via=evento.via_padrao, responsavel=aplicador.nome, lote=lote_texto, natureza="preventivo",
-                obs=f"Preventivo: {evento.nome} (agendamento #{cron.id}, {canal})", usuario_id=_uid(user),
+                obs=f"Preventivo: {evento.nome} (agendamento #{cron.id}, {canal})"
+                    + (f" · {decisoes[n]['motivo']} (já aplicado em {fmt_data(ja_no_ciclo[n]['data'])})" if n in ja_no_ciclo else ""),
+                usuario_id=_uid(user),
                 fazenda_id=cron.fazenda_id,
             )
             session.add(san)
@@ -1045,7 +1088,11 @@ def acompanhamento(session: Session, fazenda_id: int | None, hoje: date | None =
             .where(CronogramaSanitarioLog.acao == "Adiou").order_by(CronogramaSanitarioLog.id.desc())
         ).first()
         produto = (cal.produto if cal else None) or (ev.produto_padrao if ev else None)
+        from fazenda.rules.cronograma_sanitario import _data_devida
+        from fazenda.rules.ja_aplicado_preventivo import aplicacoes_no_ciclo
+        n_ja = len(aplicacoes_no_ciclo(session, cal, numeros, hoje=hoje, devida=_data_devida(cron), evento=ev)) if cal and numeros else 0
         saida.append({
+            "animais_ja_aplicados": n_ja,   # já têm o produto no ciclo: a gaveta Aplicar pede a decisão de cada um
             "id": cron.id, "calendario_sanitario_id": cron.calendario_sanitario_id,
             "protocolo_nome": ev.nome if ev else "Protocolo", "tipo": _tipo_do_evento(ev), "produto": produto,
             "status": cron.status, "estado_visual": estado_visual(cron, hoje, adiado=adiou is not None),
@@ -1114,6 +1161,7 @@ def concluidos(
         itens.append({
             "id": ap.id, "cronograma_id": ap.cronograma_id, "calendario_sanitario_id": cron.calendario_sanitario_id,
             "protocolo_nome": ev.nome if ev else "Protocolo", "tipo": _tipo_do_evento(ev), "produto": ap.produto,
+            "dose_total": ap.dose_total, "unidade": ap.unidade, "unidade_estoque": _unidade_do_estoque(session, ap),
             "estado": ap.estado, "data": ap.data_aplicacao.isoformat(), "hora": ap.hora,
             "animais_aplicados": len(aplicados), "animais_nao_aplicados": len(animais) - len(aplicados), "fora_janela": n_fora,
             "aplicador_nome": ap.aplicador_nome, "aplicador_crmv": ap.aplicador_crmv,
@@ -1230,6 +1278,9 @@ def contexto_aplicar(session: Session, cron: CronogramaSanitario, fazenda_id: in
     animais = {a.numero: a for a in session.exec(select(Animal).where(Animal.numero.in_(numeros))).all()
                if fazenda_id is None or a.fazenda_id == fazenda_id} if numeros else {}
     doses = calcular_doses(session, numeros, modo, fazenda_id, hoje)
+    from fazenda.rules.cronograma_sanitario import _data_devida
+    from fazenda.rules.ja_aplicado_preventivo import aplicacoes_no_ciclo
+    ja_no_ciclo = aplicacoes_no_ciclo(session, cal, numeros, hoje=hoje, devida=_data_devida(cron), evento=ev) if cal else {}
     b19 = eh_b19(ev, produto)
     estoque = {"encontrado": item is not None, "estoque_id": item.id if item else None, "nome": item.nome if item else produto,
                "unidade": item.unidade if item else modo.get("unidade"), "saldo": item.quantidade if item else None, "lotes": []}
@@ -1249,6 +1300,13 @@ def contexto_aplicar(session: Session, cron: CronogramaSanitario, fazenda_id: in
         ck_estoque = {"estado": "desconsiderado", "motivo": item_ck["observacao"], **ref}
     estoque["checklist"] = ck_estoque
     carencia = carencia_para_item(item, marca)
+    unidade_estoque = item.unidade if item else None
+    diverge = bool(item is not None and modo.get("unidade") and not unidades_iguais(modo["unidade"], item.unidade))
+    aviso_unidade = (
+        f'A dose do protocolo está em "{modo["unidade"]}" e o estoque de "{item.nome}" é controlado em "{item.unidade or "sem unidade"}". '
+        "A unidade não é convertida sozinha: a baixa automática só acontece quando as duas são iguais; "
+        "caso contrário o sistema avisa e o estoque precisa ser ajustado à mão."
+    ) if diverge else None
     pessoas = [
         {"id": p.id, "nome": p.nome, "tipo": p.tipo, "crmv": getattr(p, "crmv", None), "veterinario": eh_veterinario(p)}
         for p in pessoas_da_fazenda(session, fazenda_id)
@@ -1259,6 +1317,7 @@ def contexto_aplicar(session: Session, cron: CronogramaSanitario, fazenda_id: in
         "cronograma_id": cron.id, "estado": cron.status, "protocolo_nome": ev.nome if ev else "Protocolo", "tipo": _tipo_do_evento(ev),
         "produto": produto, "via": ev.via_padrao if ev else None, "unidade": modo.get("unidade"),
         "por_peso": modo["por_peso"], "dose_ref": modo.get("dose_ref"), "kg_ref": modo.get("kg_ref"),
+        "unidade_estoque": unidade_estoque, "unidade_diverge": diverge, "aviso_unidade": aviso_unidade,
         "dose_texto": _dose_texto(modo), "exige_veterinario": exige_veterinario(ev, produto),
         "data_evento": cron.data_evento.isoformat(), "hora": cron.hora, "responsavel": _responsavel(session, cron),
         "aplicador_sugerido_id": aplicador_sugerido,
@@ -1267,9 +1326,13 @@ def contexto_aplicar(session: Session, cron: CronogramaSanitario, fazenda_id: in
              "lote": animais[n].grupo_primario if n in animais else None,
              "origem": l.origem, "motivo": l.motivo if l.origem == "fora_janela" else None, **doses[n],
              "sem_peso": modo["por_peso"] and doses[n]["dose"] is None,
+             "ja_aplicado": ({"data": ja_no_ciclo[n]["data"].isoformat(), "produto": ja_no_ciclo[n]["produto"],
+                              "fonte": ja_no_ciclo[n]["fonte"], "dias": (hoje - ja_no_ciclo[n]["data"]).days}
+                             if n in ja_no_ciclo else None),
              "restricao": restricao_b19(animais.get(n), hoje) if b19 else None}
             for l, n in zip(linhas, numeros)
         ],
+        "n_ja_aplicados": len(ja_no_ciclo), "motivos_ja_aplicado": list(MOTIVOS_JA_APLICADO),
         "estoque": estoque, "pessoas": pessoas, "carencia": carencia, "checklist": checklist,
         "financeiro": fin.resumo(session, cron, fazenda_id, hoje),
         "log": log_do_agendamento(session, cron.id), "desfazer_segundos": DESFAZER_SEGUNDOS, "hoje": hoje.isoformat(),

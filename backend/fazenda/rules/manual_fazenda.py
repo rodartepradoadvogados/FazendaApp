@@ -141,7 +141,7 @@ def _rotina_compras(session: Session, fazenda_id: int | None) -> list[dict]:
     query = select(Estoque).where(Estoque.estocavel != False)  # noqa: E712
     if fazenda_id is not None:
         query = query.where(Estoque.fazenda_id == fazenda_id)
-    itens = session.exec(query).all()
+    itens = [i for i in session.exec(query).all() if i.ativo is not False]   # inativo = não repor
     criticos = [
         i for i in itens
         if i.quantidade is not None and i.estoque_minimo is not None and i.quantidade < i.estoque_minimo

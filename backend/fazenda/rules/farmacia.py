@@ -610,19 +610,20 @@ def resumo_principios(session: Session, fazenda_id: int | None = None) -> list[d
                 ],
             })
         minimo_base = minimos_base.get(pa.id)
+        tem_ativo = any(it.ativo is not False for it in grupo)   # só item inativo no grupo = ninguém pede reposição
         if minimo_base is not None and base_ok:
             # Regra NOVA: mínimo em unidade de medida (ml/L/g/unidade) — só
             # entra em vigor depois que a fazenda concilia este princípio
             # específico no Painel de Conciliação (nunca automaticamente).
             minimo_modo = "base"
-            abaixo_minimo = bool(grupo) and total_base < minimo_base
+            abaixo_minimo = tem_ativo and total_base < minimo_base
         else:
             # Regra ANTIGA: mínimo em número de apresentações (frascos/
             # pacotes) — mantida intacta pra todo princípio ainda não
             # conciliado, ou quando a conversão de unidade falhou.
             minimo_modo = "apresentacoes"
             minimo_apres = pa.estoque_minimo_apresentacoes if pa.estoque_minimo_apresentacoes is not None else 1.0
-            abaixo_minimo = bool(grupo) and apresentacoes < minimo_apres
+            abaixo_minimo = tem_ativo and apresentacoes < minimo_apres
         saida.append({
             "id": pa.id, "nome": pa.nome, "ativo": pa.ativo, "categoria": pa.categoria, "categoria_software": pa.categoria_software,
             "uso_principal": pa.uso_principal, "justificativa": pa.justificativa,

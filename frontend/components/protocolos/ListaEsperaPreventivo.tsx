@@ -209,7 +209,8 @@ function ListaGrupos({ dados, outras, onOutras, avulsa, onAbrir, onCriar, onAbri
 }) {
   const [situacao, setSituacao] = useState<"" | "atrasada" | "fecham">("");
   const [lote, setLote] = useState("");
-  const [q, setQ] = useState("");
+  const [protocoloSel, setProtocoloSel] = useState("");   // calendario_id do protocolo escolhido ("" = todos)
+  const [qOpcoes, setQOpcoes] = useState("");             // busca opcional DENTRO da lista de protocolos
   const [aviso, setAviso] = useState(true);
   useEffect(() => {
     try { if (window.localStorage.getItem("cowdata-le-aviso") === "0") setAviso(false); } catch { /* sem storage: mostra o aviso */ }
@@ -221,9 +222,15 @@ function ListaGrupos({ dados, outras, onOutras, avulsa, onAbrir, onCriar, onAbri
     if (situacao === "atrasada" && !g.atrasadas) return false;
     if (situacao === "fecham" && !g.animais.some((a) => a.fecha_em != null && a.fecha_em >= 0 && a.fecha_em <= 7)) return false;
     if (lote && !g.lotes.includes(lote)) return false;
-    if (q && !tituloGrupo(g).toLowerCase().includes(q.toLowerCase())) return false;
+    if (protocoloSel && String(g.calendario_id) !== protocoloSel) return false;
     return true;
-  }), [dados, situacao, lote, q]);
+  }), [dados, situacao, lote, protocoloSel]);
+  // Protocolos disponíveis para escolher (um por regra na lista de espera), sem texto livre.
+  const opcoesProtocolo = useMemo(
+    () => dados.grupos.map((g) => ({ id: String(g.calendario_id), rotulo: tituloGrupo(g), n: g.animais.length })),
+    [dados],
+  );
+  const opcoesVisiveis = opcoesProtocolo.filter((o) => o.id === protocoloSel || !qOpcoes.trim() || o.rotulo.toLowerCase().includes(qOpcoes.trim().toLowerCase()));
 
   return (
     <div>
@@ -254,6 +261,20 @@ function ListaGrupos({ dados, outras, onOutras, avulsa, onAbrir, onCriar, onAbri
 
       <BannerReagentes />
 
+      {!!dados.reconciliados?.length && (
+        <div className="card mb-3" role="status" style={{ borderLeft: "4px solid var(--amber)", padding: "0.6rem 0.9rem" }}>
+          <p style={{ margin: 0, fontSize: "0.86rem", fontWeight: 700, display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <Info size={14} style={{ color: "var(--amber)" }} />
+            {dados.reconciliados.length} {plural(dados.reconciliados.length, "animal saiu", "animais saíram")} da lista: já {plural(dados.reconciliados.length, "recebeu", "receberam")} o produto neste ciclo
+          </p>
+          <ul style={{ margin: "0.3rem 0 0", paddingLeft: "1.1rem", fontSize: "0.82rem", lineHeight: 1.6 }}>
+            {dados.reconciliados.map((r) => (
+              <li key={`${r.cronograma_id}-${r.numero_matriz}`}><b>{r.numero_matriz}</b> · {r.protocolo_nome} · aplicado em {formatDate(r.data)} ({r.fonte})</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
         <Indicador categoria="sanidade" rotulo="Aguardando" valor={dados.total} onClick={() => setSituacao("")} title="Na lista de espera" />
         <Indicador categoria="sanidade" rotulo="Atrasadas" valor={dados.atrasadas} cor="var(--red)" onClick={() => setSituacao("atrasada")} title="Passou da data devida; a janela segue aberta" />
@@ -268,12 +289,18 @@ function ListaGrupos({ dados, outras, onOutras, avulsa, onAbrir, onCriar, onAbri
             {lotes.map((l) => <option key={l} value={l}>{l}</option>)}
           </select>
         </div>
-        <div style={{ flex: "1 1 200px", minWidth: 160 }}>
-          <label htmlFor="le-busca" style={labelStyle}>Buscar protocolo</label>
-          <div style={{ position: "relative" }}>
-            <Search size={14} style={{ position: "absolute", left: 8, top: 11, color: "var(--text-muted)" }} />
-            <input id="le-busca" type="search" style={{ ...inputStyle, paddingLeft: 28 }} placeholder="Buscar protocolo…" value={q} onChange={(e) => setQ(e.target.value)} />
-          </div>
+        <div style={{ flex: "1 1 240px", minWidth: 180 }}>
+          <label htmlFor="le-protocolo" style={labelStyle}>Protocolo</label>
+          {opcoesProtocolo.length > 8 && (
+            <div style={{ position: "relative", marginBottom: "0.3rem" }}>
+              <Search size={14} style={{ position: "absolute", left: 8, top: 11, color: "var(--text-muted)" }} />
+              <input type="search" aria-label="Filtrar a lista de protocolos" style={{ ...inputStyle, paddingLeft: 28 }} placeholder="Filtrar a lista…" value={qOpcoes} onChange={(e) => setQOpcoes(e.target.value)} />
+            </div>
+          )}
+          <select id="le-protocolo" style={inputStyle} value={protocoloSel} onChange={(e) => setProtocoloSel(e.target.value)}>
+            <option value="">Todos os protocolos</option>
+            {opcoesVisiveis.map((o) => <option key={o.id} value={o.id}>{o.rotulo} ({o.n})</option>)}
+          </select>
         </div>
         {situacao && <button type="button" className="btn-ghost" onClick={() => setSituacao("")}><X size={14} /> Limpar filtro</button>}
         {dados.agendamentos_ativos > 0 && onAbrirAcompanhamento && (
