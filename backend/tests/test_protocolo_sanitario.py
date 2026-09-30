@@ -677,3 +677,48 @@ class TestMedicamentosPorPrincipioAtivoOuDoencaComCatalogo:
 
         r = c.get("/estoque/medicamentos", params={"doenca": "Metrite"})
         assert [m["nome"] for m in r.json()] == ["Excenel"]
+
+
+class TestListagemStatusCancelado:
+    """Sanidade > Curativa > Protocolos lê /sanidade/protocolos/lancamentos.
+    Um lote cancelado/encerrado na Central não pode voltar como 'em andamento'."""
+
+    def _lancar(self, c, nome="Pneumonia"):
+        pid = c.post("/cadastro/protocolos-sanitarios", json={
+            "nome": nome, "etapas": [_etapa(1, produto="Draxxin"), _etapa(2, produto="Draxxin")],
+        }).json()["id"]
+        r = c.post("/sanidade/protocolos/lancamentos", json={
+            "protocolo_id": pid, "numeros_matriz": ["810"], "data_inicio": "2026-08-01",
+        })
+        assert r.status_code == 201, r.json()
+        return r.json()
+
+    def _lote_id(self, engine):
+        from fazenda.models import ProtocoloSanitarioLote
+        with Session(engine) as s:
+            return s.exec(select(ProtocoloSanitarioLote)).one().id
+
+    def _lista(self, c):
+        return c.get("/sanidade/protocolos/lancamentos").json()
+
+    def test_ativo_por_padrao(self, client):
+        c, engine = client
+        self._lancar(c)
+        item = self._lista(c)[0]
+        assert item["status"] == "ativo"
+
+    def test_cancelado_nao_e_andamento(self, client):
+        c, engine = client
+        self._lancar(c)
+        r = c.post(f"/central-protocolos/sanitario/{self._lote_id(engine)}/cancelar", json={"motivo": "teste"})
+        assert r.status_code == 200, r.json()
+        item = self._lista(c)[0]
+        assert item["status"] == "cancelado"
+        assert item["encerrado_motivo"] == "teste"
+
+    def test_encerrado_nao_e_andamento(self, client):
+        c, engine = client
+        self._lancar(c)
+        r = c.post(f"/central-protocolos/sanitario/{self._lote_id(engine)}/encerrar", json={"motivo": "melhorou"})
+        assert r.status_code == 200, r.json()
+        assert self._lista(c)[0]["status"] == "encerrado"

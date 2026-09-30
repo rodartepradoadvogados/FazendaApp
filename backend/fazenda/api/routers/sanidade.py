@@ -2364,8 +2364,22 @@ class ProtocoloLancamentoIn(BaseModel):
     escolhas_medicamento: dict[str, str] = {}
 
 
+def _status_lancamento_protocolo(lote: ProtocoloSanitarioLote | None, aplicacoes: list) -> str:
+    """Mesma regra de central_protocolos._linha: cancelado > encerrado >
+    concluido > ativo. O estado de cancelar/encerrar mora no LOTE — sem
+    ele, um protocolo cancelado (aplicações desfeitas) parecia 'em andamento'."""
+    if lote is not None and not lote.ativo:
+        return "cancelado"
+    if lote is not None and lote.encerrado_em is not None:
+        return "encerrado"
+    if aplicacoes and all(a.realizada for a in aplicacoes):
+        return "concluido"
+    return "ativo"
+
+
 def _serializar_lancamento_protocolo(
     session: Session, lanc: ProtocoloSanitarioLancamento, protocolos: dict[int, ProtocoloSanitario], nomes: dict[int, str] | None = None,
+    lotes: dict[int, ProtocoloSanitarioLote] | None = None,
 ) -> dict:
     aplicacoes = session.exec(
         select(ProtocoloSanitarioAplicacao)
@@ -2375,8 +2389,12 @@ def _serializar_lancamento_protocolo(
     etapas = {e.id: e for e in session.exec(select(ProtocoloSanitarioEtapa)).all()}
     nomes = nomes if nomes is not None else mapa_usuarios(session, {lanc.usuario_id})
     protocolo = protocolos.get(lanc.protocolo_id)
+    lote = (lotes or {}).get(lanc.lote_id) if lanc.lote_id else None
     return {
         **lanc.model_dump(),
+        "status": _status_lancamento_protocolo(lote, aplicacoes),
+        "encerrado_em": lote.encerrado_em if lote else None,
+        "encerrado_motivo": lote.encerrado_motivo if lote else None,
         "protocolo_nome": protocolo.nome if protocolo else "—",
         # Rótulo D exibido = etapa.dia - protocolo_dia_inicial (mesma convenção
         # de CadastroSanitario.tsx) — sem isso, a listagem de lançamentos
@@ -2402,7 +2420,8 @@ def listar_lancamentos_protocolo(
         query = query.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
     lancamentos = session.exec(query).all()
     nomes = mapa_usuarios(session, {l.usuario_id for l in lancamentos})
-    return [_serializar_lancamento_protocolo(session, l, protocolos, nomes) for l in lancamentos]
+    lotes = {lo.id: lo for lo in session.exec(select(ProtocoloSanitarioLote)).all()}
+    return [_serializar_lancamento_protocolo(session, l, protocolos, nomes, lotes) for l in lancamentos]
 
 
 @router.post("/protocolos/lancamentos", status_code=201)
