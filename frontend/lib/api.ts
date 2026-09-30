@@ -5068,6 +5068,8 @@ export type GrupoListaEspera = {
 };
 export type ListaEspera = {
   total: number; atrasadas: number; fecham_7d: number; agendamentos_ativos: number; grupos: GrupoListaEspera[];
+  /** Animais que SAÍRAM da lista ao abrir por já terem o produto aplicado no ciclo (qualquer caminho). */
+  reconciliados?: { numero_matriz: string; calendario_id: number; cronograma_id: number; protocolo_nome: string; data: string; produto: string; fonte: string }[];
 };
 export async function fetchListaEspera(): Promise<ListaEspera> {
   const res = await authFetch(`${API}/sanidade/cronogramas/lista-espera`, { cache: "no-store" });
@@ -5206,7 +5208,7 @@ export type AgendamentoAcompanhamento = {
   id: number; calendario_sanitario_id: number; protocolo_nome: string; tipo: "vacina" | "exame" | "tratamento";
   produto: string | null; status: string; estado_visual: EstadoVisualAg; data_evento: string; hora: string | null;
   data_original: string | null; data_antes_do_adiamento: string | null; motivo_adiamento: string | null;
-  observacao: string | null; responsavel: ResponsavelAg; animais_total: number; animais_fora_janela: number;
+  observacao: string | null; responsavel: ResponsavelAg; animais_total: number; animais_fora_janela: number; animais_ja_aplicados?: number;
   lotes: string[]; checklist: ResumoChecklist; exige_veterinario: boolean; financeiro?: BlocoFinanceiro;
   /** Exame: em que fase está (inoculacao | leitura | coleta) e quando a leitura de 72 h fica devida. */
   fase?: FaseExame | null; leitura_prevista_em?: string | null; leitura_limite_em?: string | null;
@@ -5225,6 +5227,8 @@ export type AnimalAplicarCtx = {
   dose: number | null; peso_kg: number | null; peso_estimado: boolean; sem_peso: boolean;
   /** B19: só fêmea de 3 a 8 meses — texto do motivo quando o animal não pode receber. */
   restricao?: string | null;
+  /** Já recebeu o produto/protocolo dentro do ciclo da regra (por qualquer caminho) — exige decisão ao aplicar. */
+  ja_aplicado?: { data: string; produto: string; fonte: string; dias: number } | null;
 };
 export type InoculacaoExame = {
   aplicacao_id: number; data: string; hora: string | null; aplicador_nome: string | null; aplicador_crmv: string | null;
@@ -5245,6 +5249,8 @@ export type EntradaLogAg = {
 export type ContextoAplicar = {
   cronograma_id: number; estado: string; protocolo_nome: string; tipo: "vacina" | "exame" | "tratamento";
   produto: string | null; via: string | null; unidade: string | null; por_peso: boolean; dose_ref: number | null; kg_ref: number | null; dose_texto: string;
+  unidade_estoque?: string | null; unidade_diverge?: boolean; aviso_unidade?: string | null;
+  n_ja_aplicados?: number; motivos_ja_aplicado?: string[];
   exige_veterinario: boolean; data_evento: string; hora: string | null; responsavel: ResponsavelAg;
   aplicador_sugerido_id: number | null; animais: AnimalAplicarCtx[];
   estoque: {
@@ -5267,6 +5273,8 @@ export type CanalAplicacao = "Protocolos" | "Agenda" | "Curral";
 export type AplicarAgendamentoPayload = {
   canal: CanalAplicacao; aplicador_pessoa_id: number; animais_aplicados: string[];
   nao_aplicados?: { numero_matriz: string; motivo: string; destino: "espera" | "naoSeAplica" }[];
+  /** Animais que já receberam o produto no ciclo e serão aplicados mesmo assim: {brinco: {motivo: Dose extra | Reforço | Outro}}. */
+  ja_aplicados?: Record<string, { motivo: string; observacao?: string | null }>;
   data_aplicacao?: string | null; hora?: string | null; estoque_id?: number | null; lote_id?: number | null;
   ciente_vencido?: boolean; desconsiderar_estoque?: boolean; motivo_desconsiderar_estoque?: string | null;
   lote_veterinario?: string | null; validade_veterinario?: string | null; pesos?: Record<string, number> | null;
@@ -5286,6 +5294,7 @@ export type AnimalAplicacao = {
 export type AplicacaoPreventiva = {
   id: number; cronograma_id: number; estado: "aplicada" | "estornada"; canal: string; aplicador_nome: string | null;
   aplicador_crmv: string | null; data_aplicacao: string; hora: string | null; produto: string | null; unidade: string | null;
+  unidade_estoque?: string | null; baixa_automatica?: boolean;
   via: string | null; dose_total: number | null; lote_texto: string | null; validade: string | null;
   estoque_desconsiderado: boolean; estoque_motivo: string | null; custo: number | null;
   carencia_leite_ate: string | null; carencia_carne_ate: string | null; carencia_texto: string | null;
@@ -5319,6 +5328,7 @@ export async function editarChecklistAgendamento(id: number, p: ChecklistAgendam
 export type ItemConcluido = {
   id: number | null; cronograma_id: number; calendario_sanitario_id: number; protocolo_nome: string;
   tipo: "vacina" | "exame" | "tratamento"; produto: string | null; estado: "aplicada" | "estornada" | "cancelado";
+  dose_total?: number | null; unidade?: string | null; unidade_estoque?: string | null;
   data: string; hora: string | null; animais_aplicados: number; animais_nao_aplicados: number; fora_janela: number;
   aplicador_nome: string | null; aplicador_crmv: string | null; frasco: string; validade: string | null;
   estoque_desconsiderado: boolean; carencia_leite_ate: string | null; carencia_carne_ate: string | null;

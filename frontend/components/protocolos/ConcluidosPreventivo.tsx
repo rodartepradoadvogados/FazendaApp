@@ -22,7 +22,7 @@ const COLUNAS: ColunaExport[] = [
   { header: "Data", key: "data" }, { header: "Hora", key: "hora" }, { header: "Protocolo", key: "protocolo" },
   { header: "Estado", key: "estado" }, { header: "Animais aplicados", key: "aplicados" }, { header: "Não aplicados", key: "naoAplicados" },
   { header: "Fora da janela", key: "fora" }, { header: "Aplicador", key: "aplicador" }, { header: "Frasco/lote", key: "frasco" },
-  { header: "Validade", key: "validade" }, { header: "Carência carne até", key: "carne" }, { header: "Carência leite até", key: "leite" },
+  { header: "Dose total", key: "doseTotal" }, { header: "Unidade da dose", key: "unidadeDose" }, { header: "Unidade do estoque", key: "unidadeEstoque" }, { header: "Validade", key: "validade" }, { header: "Carência carne até", key: "carne" }, { header: "Carência leite até", key: "leite" },
   { header: "Custo (R$)", key: "custo" }, { header: "Conta a pagar (R$)", key: "conta" }, { header: "Pagamento vinculado (R$)", key: "pagamento" }, { header: "Canal", key: "canal" }, { header: "Retroativo", key: "retro" },
   { header: "Exceções e ciências", key: "excecoes" }, { header: "Motivo do estorno", key: "motivoEstorno" },
   // Exame (fatia 9b): campos gravados no registro concluído
@@ -76,7 +76,7 @@ export function ConcluidosPreventivo({ idInicial }: { idInicial?: number | null 
   const linhasExport = useMemo(() => (dados?.itens || []).filter((i) => i.estado !== "cancelado").map((i) => ({
     data: dataCurta(i.data), hora: i.hora || "", protocolo: i.protocolo_nome, estado: i.estado === "estornada" ? "Estornada" : (i.rotulo_estado || "Aplicado"),
     aplicados: i.animais_aplicados, naoAplicados: i.animais_nao_aplicados, fora: i.fora_janela, aplicador: i.aplicador_nome || "",
-    frasco: i.frasco, validade: dataCurta(i.validade), carne: dataCurta(i.carencia_carne_ate), leite: dataCurta(i.carencia_leite_ate),
+    frasco: i.frasco, doseTotal: i.dose_total != null ? String(i.dose_total).replace(".", ",") : "", unidadeDose: i.unidade || "", unidadeEstoque: i.unidade_estoque || "", validade: dataCurta(i.validade), carne: dataCurta(i.carencia_carne_ate), leite: dataCurta(i.carencia_leite_ate),
     custo: i.custo == null ? "a informar" : i.custo.toFixed(2).replace(".", ","),
     conta: i.financeiro && i.financeiro.contas_ativas > 0 ? i.financeiro.conta_a_pagar_total.toFixed(2).replace(".", ",") : "",
     pagamento: i.financeiro && i.financeiro.pagamento_vinculado_total > 0 ? i.financeiro.pagamento_vinculado_total.toFixed(2).replace(".", ",") : "",

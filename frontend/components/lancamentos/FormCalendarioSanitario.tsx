@@ -49,6 +49,36 @@ const TIPOS_REGRA_FILTRO = [
   { v: "todos", l: "Todos" }, { v: "vacina", l: "Vacina" }, { v: "tratamento", l: "Vermífugo" },
   { v: "exame", l: "Exame" }, { v: "avulso", l: "Avulso/outro" },
 ] as const;
+// Unidade da dose padrão (Identificação): seletor ao lado do valor. Default = unidade do produto no estoque.
+const UNIDADES_DOSE = ["ml", "dose", "g", "mg", "comprimido", "aplicação"];
+const normalizarUn = (u: string) => (u || "").trim().toLowerCase();
+const rotuloUn = (u: string) => (normalizarUn(u) === "ml" ? "mL" : u);
+function UnidadeDose({ f, sf, unidadeEstoque }: { f: CalendarioForm; sf: (f: CalendarioForm) => void; unidadeEstoque: string | null }) {
+  const atual = f.unidadePadrao;
+  const base = [...UNIDADES_DOSE];
+  if (unidadeEstoque && !base.some((u) => normalizarUn(u) === normalizarUn(unidadeEstoque))) base.push(unidadeEstoque);
+  const custom = !!atual && !base.some((u) => normalizarUn(u) === normalizarUn(atual));
+  const [outra, setOutra] = React.useState(custom);
+  const valorSelect = outra || custom ? "__outra" : (base.find((u) => normalizarUn(u) === normalizarUn(atual)) || "");
+  return (
+    <div style={{ display: "flex", gap: "0.3rem", flex: "0 0 auto" }}>
+      <select aria-label="Unidade da dose padrão" style={{ ...inputStyle, width: "auto", minWidth: 96 }} value={valorSelect}
+        onChange={(e) => {
+          if (e.target.value === "__outra") { setOutra(true); sf({ ...f, unidadePadrao: "", unidadePadraoEscolhida: true }); return; }
+          setOutra(false); sf({ ...f, unidadePadrao: e.target.value, unidadePadraoEscolhida: true });
+        }}>
+        <option value="">Unidade…</option>
+        {base.map((u) => <option key={u} value={u}>{rotuloUn(u)}</option>)}
+        <option value="__outra">Outra…</option>
+      </select>
+      {(outra || custom) && (
+        <input aria-label="Outra unidade da dose" style={{ ...inputStyle, width: 90 }} placeholder="ex.: bolus" value={atual}
+          onChange={(e) => sf({ ...f, unidadePadrao: e.target.value, unidadePadraoEscolhida: true })} />
+      )}
+    </div>
+  );
+}
+
 export function tipoRegra(r: { categoria_preventiva: string | null }): "vacina" | "tratamento" | "exame" | "avulso" {
   if (r.categoria_preventiva === "exame") return "exame";
   if (r.categoria_preventiva === "tratamento") return "tratamento";
@@ -87,7 +117,7 @@ type CalendarioForm = {
   eventoId: string; // preenchido depois de criar, se modoEvento === "novo"
   nomeNovoEvento: string;
   doencaId: string;
-  produtoPadrao: string; dosePadrao: string; unidadePadrao: string; viaPadrao: string;
+  produtoPadrao: string; dosePadrao: string; unidadePadrao: string; unidadePadraoEscolhida: boolean; viaPadrao: string;
   modoExame: ModoEvento;
   exameDefinicaoId: string;
   novoExameNome: string; novoExameTipoResultado: "diagnostico" | "numerico";
@@ -115,7 +145,7 @@ type CalendarioForm = {
 const calendarioFormVazio = (): CalendarioForm => ({
   tipoBucket: "vacina_tratamento", categoriaPreventiva: "vacina", tipoRepasse: false,
   modoEvento: "existente", eventoId: "", nomeNovoEvento: "", doencaId: "",
-  produtoPadrao: "", dosePadrao: "", unidadePadrao: "", viaPadrao: "",
+  produtoPadrao: "", dosePadrao: "", unidadePadrao: "", unidadePadraoEscolhida: false, viaPadrao: "",
   modoExame: "existente", exameDefinicaoId: "", novoExameNome: "", novoExameTipoResultado: "diagnostico",
   novoExameFaixaMin: "", novoExameFaixaMax: "", novoExameAcaoAbaixo: "", novoExameAcaoDentro: "", novoExameAcaoAcima: "",
   decisaoConflito: null, categoriaAlvoSel: [],
@@ -218,7 +248,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
       modoEvento: "existente", eventoId: String(r.evento_sanitario_id),
       doencaId: r.doenca_id ? String(r.doenca_id) : "",
       produtoPadrao: ev?.produto_padrao || "", dosePadrao: ev?.dose_padrao != null ? String(ev.dose_padrao) : "",
-      unidadePadrao: ev?.unidade_padrao || "", viaPadrao: ev?.via_padrao || "",
+      unidadePadrao: ev?.unidade_padrao || "", unidadePadraoEscolhida: !!ev?.unidade_padrao, viaPadrao: ev?.via_padrao || "",
       modoExame: "existente", exameDefinicaoId: ev?.exame_definicao_id ? String(ev.exame_definicao_id) : "",
       decisaoConflito: "editar", // editando de verdade — não há banner a resolver
       categoriaAlvoSel: r.categoria_alvo ? r.categoria_alvo.split(SEP_CATEGORIAS).map((c) => c.trim()).filter(Boolean) : [],
@@ -467,8 +497,17 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3" style={{ paddingTop: "0.75rem", borderTop: "1px solid var(--border)" }}>
-              <Campo label="Produto padrão (opcional)"><EstoquePicker itens={estoque} value={f.produtoPadrao} onChange={(v) => sf({ ...f, produtoPadrao: v })} /></Campo>
-              <Campo label="Dose padrão (opcional)"><input type="number" style={inputStyle} value={f.dosePadrao} onChange={(e) => sf({ ...f, dosePadrao: e.target.value })} /></Campo>
+              <Campo label="Produto padrão (opcional)"><EstoquePicker itens={estoque} value={f.produtoPadrao} onChange={(v) => {
+                // A unidade da dose nasce igual à do produto do estoque (baixa direta); o usuário pode trocar ao lado.
+                const un = estoque.find((e) => e.nome === v)?.unidade || "";
+                sf({ ...f, produtoPadrao: v, unidadePadrao: un && !f.unidadePadraoEscolhida ? un : f.unidadePadrao });
+              }} /></Campo>
+              <Campo label="Dose padrão (opcional)">
+                <div style={{ display: "flex", gap: "0.4rem" }}>
+                  <input type="number" aria-label="Dose padrão" style={{ ...inputStyle, flex: "1 1 90px", minWidth: 0 }} value={f.dosePadrao} onChange={(e) => sf({ ...f, dosePadrao: e.target.value })} />
+                  <UnidadeDose f={f} sf={sf} unidadeEstoque={estoque.find((e) => e.nome === f.produtoPadrao)?.unidade || null} />
+                </div>
+              </Campo>
               <Campo label="Via padrão (opcional)">
                 <select style={inputStyle} value={f.viaPadrao} onChange={(e) => sf({ ...f, viaPadrao: e.target.value })}>
                   <option value="">—</option>
@@ -477,7 +516,16 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
                   {VIAS_APLICACAO.map((v) => <option key={v} value={v}>{v}</option>)}
                 </select>
               </Campo>
-              <p style={{ gridColumn: "1 / -1", fontSize: "0.7rem", color: "var(--text-muted)" }}>Opcionais — a regra (próximo passo) e a realização ainda podem sobrescrever.</p>
+              {(() => {
+                const ue = estoque.find((e) => e.nome === f.produtoPadrao)?.unidade || null;
+                const dif = !!f.unidadePadrao && !!ue && normalizarUn(f.unidadePadrao) !== normalizarUn(ue);
+                return dif ? (
+                  <p role="note" style={{ gridColumn: "1 / -1", fontSize: "0.74rem", color: "var(--amber)" }}>
+                    A dose está em <b>{rotuloUn(f.unidadePadrao)}</b> e o estoque de {f.produtoPadrao} é controlado em <b>{rotuloUn(ue!)}</b>. Nada é convertido sozinho: a baixa automática do estoque só acontece quando as duas unidades são iguais (senão o sistema avisa e a baixa é feita à mão).
+                  </p>
+                ) : null;
+              })()}
+              <p style={{ gridColumn: "1 / -1", fontSize: "0.7rem", color: "var(--text-muted)" }}>Opcionais — a regra (próximo passo) e a realização ainda podem sobrescrever. A unidade da dose começa igual à do produto no estoque.</p>
             </div>
           )}
         </div>

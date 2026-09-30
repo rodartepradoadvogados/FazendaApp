@@ -1088,7 +1088,11 @@ def acompanhamento(session: Session, fazenda_id: int | None, hoje: date | None =
             .where(CronogramaSanitarioLog.acao == "Adiou").order_by(CronogramaSanitarioLog.id.desc())
         ).first()
         produto = (cal.produto if cal else None) or (ev.produto_padrao if ev else None)
+        from fazenda.rules.cronograma_sanitario import _data_devida
+        from fazenda.rules.ja_aplicado_preventivo import aplicacoes_no_ciclo
+        n_ja = len(aplicacoes_no_ciclo(session, cal, numeros, hoje=hoje, devida=_data_devida(cron), evento=ev)) if cal and numeros else 0
         saida.append({
+            "animais_ja_aplicados": n_ja,   # já têm o produto no ciclo: a gaveta Aplicar pede a decisão de cada um
             "id": cron.id, "calendario_sanitario_id": cron.calendario_sanitario_id,
             "protocolo_nome": ev.nome if ev else "Protocolo", "tipo": _tipo_do_evento(ev), "produto": produto,
             "status": cron.status, "estado_visual": estado_visual(cron, hoje, adiado=adiou is not None),

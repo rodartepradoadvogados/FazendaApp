@@ -212,3 +212,10 @@ class TestAplicar:
         c, engine, cal, ag, vet, est = _agendado(ctx)
         r = _aplicar(c, ag, animais_aplicados=["1", "2", "3"], aplicador_pessoa_id=vet, estoque_id=est)
         assert r.status_code == 200 and _saldo(engine, est) == 97
+
+
+def test_acompanhamento_conta_animais_ja_aplicados_do_agendamento(ctx):
+    c, engine, cal, ag, vet, est = _agendado(ctx)
+    _san(engine, "2", "B19", 45)
+    itens = c.get("/sanidade/cronogramas/acompanhamento").json()["agendamentos"]
+    assert [i["animais_ja_aplicados"] for i in itens if i["id"] == ag] == [1]

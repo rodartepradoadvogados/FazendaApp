@@ -261,6 +261,20 @@ function ListaGrupos({ dados, outras, onOutras, avulsa, onAbrir, onCriar, onAbri
 
       <BannerReagentes />
 
+      {!!dados.reconciliados?.length && (
+        <div className="card mb-3" role="status" style={{ borderLeft: "4px solid var(--amber)", padding: "0.6rem 0.9rem" }}>
+          <p style={{ margin: 0, fontSize: "0.86rem", fontWeight: 700, display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <Info size={14} style={{ color: "var(--amber)" }} />
+            {dados.reconciliados.length} {plural(dados.reconciliados.length, "animal saiu", "animais saíram")} da lista: já {plural(dados.reconciliados.length, "recebeu", "receberam")} o produto neste ciclo
+          </p>
+          <ul style={{ margin: "0.3rem 0 0", paddingLeft: "1.1rem", fontSize: "0.82rem", lineHeight: 1.6 }}>
+            {dados.reconciliados.map((r) => (
+              <li key={`${r.cronograma_id}-${r.numero_matriz}`}><b>{r.numero_matriz}</b> · {r.protocolo_nome} · aplicado em {formatDate(r.data)} ({r.fonte})</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
         <Indicador categoria="sanidade" rotulo="Aguardando" valor={dados.total} onClick={() => setSituacao("")} title="Na lista de espera" />
         <Indicador categoria="sanidade" rotulo="Atrasadas" valor={dados.atrasadas} cor="var(--red)" onClick={() => setSituacao("atrasada")} title="Passou da data devida; a janela segue aberta" />
