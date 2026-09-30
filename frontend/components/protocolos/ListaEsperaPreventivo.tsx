@@ -432,6 +432,9 @@ function DesconsiderarModal({ grupo, animal, onFechar, onFeito }: {
 // ─────────────────────────── Assistente "Criar agendamento" ───────────────────────────
 const PASSOS = ["Animais", "Quando e com quem", "Checklist", "Conferir e agendar"];
 type ForaJanela = { numero: string; motivo: string };
+const ehB19Grupo = (g: GrupoListaEspera) => /\bb19\b/i.test(`${g.protocolo_nome || ""} ${g.produto || ""}`);
+const ehMacho = (sexo?: string | null) => (sexo || "").toUpperCase() === "M";
+const SELO_MACHO = "Macho — B19 só fêmea";
 
 function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCriado }: {
   grupo: GrupoListaEspera; preSelecionados: string[]; animais: AnimalRow[];
@@ -460,6 +463,12 @@ function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCria
 
   const daJanela = grupo.animais.filter((a) => sel.has(a.numero_matriz));
   const total = daJanela.length + fora.length;
+  const b19 = ehB19Grupo(grupo);
+  const machosB19 = b19
+    ? [...daJanela.filter((a) => ehMacho(a.sexo)).map((a) => a.numero_matriz),
+       ...fora.filter((f) => ehMacho(animais.find((x) => x.numero === f.numero)?.sexo)).map((f) => f.numero)]
+    : [];
+  const erroMacho = machosB19.length ? `Brucelose B19 só vale para fêmeas: tire ${machosB19.join(", ")} do agendamento.` : null;
   const lotesDoAgendamento = Array.from(new Set([
     ...daJanela.map((a) => a.lote).filter(Boolean) as string[],
     ...fora.map((f) => animais.find((a) => a.numero === f.numero)?.grupo_primario).filter(Boolean) as string[],
@@ -474,6 +483,7 @@ function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCria
   function avancar() {
     setErro(null);
     if (passo === 1 && total === 0) { setErro("Marque pelo menos 1 animal."); return; }
+    if (passo === 1 && erroMacho) { setErro(erroMacho); return; }
     if (passo === 2) {
       if (!data) { setErro("Escolha a data."); return; }
       if (quem === "veterinario" && !vetId) { setErro("Escolha o veterinário."); return; }
@@ -547,7 +557,7 @@ function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCria
                 <li key={a.numero_matriz} style={{ padding: "0.45rem 0", borderBottom: "1px solid var(--border)" }}>
                   <label style={{ display: "flex", gap: "0.6rem", alignItems: "center", cursor: "pointer" }}>
                     <input type="checkbox" checked={sel.has(a.numero_matriz)} onChange={() => alternar(a.numero_matriz)} aria-label={`Marcar ${a.numero_matriz}`} style={{ width: 18, height: 18 }} />
-                    <span><b>{a.numero_matriz}{a.nome ? ` ${a.nome}` : ""}</b><span style={{ ...notaStyle, display: "block" }}>{a.lote || "Sem lote"} · {a.motivo_entrada}</span></span>
+                    <span><b>{a.numero_matriz}{a.nome ? ` ${a.nome}` : ""}</b>{b19 && ehMacho(a.sexo) && <span style={{ marginLeft: 6 }}><Pill cor="var(--red)"><AlertTriangle size={12} />{SELO_MACHO}</Pill></span>}<span style={{ ...notaStyle, display: "block" }}>{a.lote || "Sem lote"} · {a.motivo_entrada}</span></span>
                   </label>
                 </li>
               ))}
@@ -559,7 +569,7 @@ function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCria
             <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
               {daJanela.map((a) => (
                 <li key={a.numero_matriz} style={{ display: "flex", gap: "0.5rem", alignItems: "center", padding: "0.45rem 0", borderBottom: "1px solid var(--border)" }}>
-                  <span style={{ flex: 1, minWidth: 0 }}><b>{a.numero_matriz}{a.nome ? ` ${a.nome}` : ""}</b><span style={{ ...notaStyle, display: "block" }}>{a.lote || "Sem lote"}</span></span>
+                  <span style={{ flex: 1, minWidth: 0 }}><b>{a.numero_matriz}{a.nome ? ` ${a.nome}` : ""}</b>{b19 && ehMacho(a.sexo) && <span style={{ marginLeft: 6 }}><Pill cor="var(--red)"><AlertTriangle size={12} />{SELO_MACHO}</Pill></span>}<span style={{ ...notaStyle, display: "block" }}>{a.lote || "Sem lote"}</span></span>
                   <span style={{ color: "var(--green-light)", fontSize: "0.75rem", fontWeight: 700, display: "inline-flex", gap: 3, alignItems: "center" }}><Check size={12} />Na janela</span>
                   <button type="button" className="btn-ghost" aria-label={`Tirar ${a.numero_matriz} do agendamento`} onClick={() => alternar(a.numero_matriz)}><X size={14} /></button>
                 </li>
@@ -568,7 +578,7 @@ function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCria
                 const an = animais.find((x) => x.numero === f.numero);
                 return (
                   <li key={f.numero} style={{ display: "flex", gap: "0.5rem", alignItems: "center", padding: "0.45rem 0", borderBottom: "1px solid var(--border)" }}>
-                    <span style={{ flex: 1, minWidth: 0 }}><b>{f.numero}{(an as any)?.nome ? ` ${(an as any).nome}` : ""}</b><span style={{ ...notaStyle, display: "block" }}>{an?.grupo_primario || "Sem lote"} · {f.motivo}</span></span>
+                    <span style={{ flex: 1, minWidth: 0 }}><b>{f.numero}{(an as any)?.nome ? ` ${(an as any).nome}` : ""}</b>{b19 && ehMacho(an?.sexo) && <span style={{ marginLeft: 6 }}><Pill cor="var(--red)"><AlertTriangle size={12} />{SELO_MACHO}</Pill></span>}<span style={{ ...notaStyle, display: "block" }}>{an?.grupo_primario || "Sem lote"} · {f.motivo}</span></span>
                     <span style={{ color: "var(--amber)", fontSize: "0.75rem", fontWeight: 700, display: "inline-flex", gap: 3, alignItems: "center" }}><Flag size={12} />Fora da janela</span>
                     <button type="button" className="btn-ghost" aria-label={`Tirar ${f.numero} do agendamento`} onClick={() => setFora((p) => p.filter((x) => x.numero !== f.numero))}><X size={14} /></button>
                   </li>
@@ -650,17 +660,16 @@ function AssistenteAgendamento({ grupo, preSelecionados, animais, onSair, onCria
         </div>
       )}
 
-      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.85rem", marginTop: "0.8rem" }}>{erro}</p>}
-
       <div className="card" style={{ marginTop: "0.8rem", display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap", position: "sticky", bottom: 8, zIndex: 5 }}>
+        {(erro || erroMacho) && <p role="alert" style={{ flex: "1 1 100%", margin: 0, color: "var(--red)", fontSize: "0.85rem", fontWeight: 600 }}>{erro || erroMacho}</p>}
         {passo > 1 && <button type="button" className="btn-ghost" onClick={() => { setErro(null); setPasso(passo - 1); }}><ArrowLeft size={14} /> Voltar</button>}
         <span style={{ flex: 1 }} />
         {passo === 1 && total === 0 && <span style={notaStyle}>Marque pelo menos 1 animal</span>}
         {passo < 4
-          ? <button type="button" className="btn-primary" onClick={avancar} disabled={passo === 1 && total === 0}>Continuar <ArrowRight size={14} /></button>
+          ? <button type="button" className="btn-primary" onClick={avancar} disabled={passo === 1 && (total === 0 || !!erroMacho)}>Continuar <ArrowRight size={14} /></button>
           : <>
-              <button type="button" className="btn-secondary" onClick={() => agendar(true)} disabled={salvando || total === 0} title="Guarda como Em montagem; só entra na Agenda depois de confirmado">Salvar como rascunho</button>
-              <button type="button" className="btn-primary-gold" onClick={() => agendar(false)} disabled={salvando || total === 0}><CalendarCheck size={14} /> {salvando ? "Agendando…" : "Criar agendamento"}</button>
+              <button type="button" className="btn-secondary" onClick={() => agendar(true)} disabled={salvando || total === 0 || !!erroMacho} title="Guarda como Em montagem; só entra na Agenda depois de confirmado">Salvar como rascunho</button>
+              <button type="button" className="btn-primary-gold" onClick={() => agendar(false)} disabled={salvando || total === 0 || !!erroMacho}><CalendarCheck size={14} /> {salvando ? "Agendando…" : "Criar agendamento"}</button>
             </>}
       </div>
 
@@ -717,6 +726,7 @@ function ForaDaJanelaModal({ animais, grupo, jaNoAgendamento, onFechar, onInclui
             <li key={a.numero} style={{ display: "flex", gap: "0.5rem", alignItems: "center", padding: "0.4rem 0", borderBottom: "1px solid var(--border)" }}>
               <span style={{ flex: 1, minWidth: 0 }}><b>{a.numero}{(a as any).nome ? ` ${(a as any).nome}` : ""}</b><span style={{ ...notaStyle, display: "block" }}>{a.grupo_primario || "Sem lote"}</span></span>
               {jaEsta ? <span style={notaStyle}>já está no agendamento</span>
+                : ehB19Grupo(grupo) && ehMacho(a.sexo) ? <Pill cor="var(--red)"><AlertTriangle size={12} />{SELO_MACHO}</Pill>
                 : espera ? <span style={notaStyle}>já está na lista de espera (na janela)</span>
                 : <button type="button" className="btn-secondary" onClick={() => { setEscolhido(a.numero); setMotivo(""); setTentou(false); }}>Escolher</button>}
             </li>

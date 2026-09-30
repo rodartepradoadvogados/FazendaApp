@@ -149,7 +149,7 @@ type Evento = {
   fase?: "inoculacao" | "leitura" | "coleta" | null;
   tipo_protocolo?: string | null;
   exige_veterinario?: boolean;
-  aplicadores?: { id: number; nome: string; crmv?: string | null; veterinario: boolean }[];
+  aplicadores?: { id: number; nome: string; tipo?: string | null; crmv?: string | null; veterinario: boolean }[];
   aplicador_sugerido_id?: number | null;
   checklist_total?: number;
   checklist_resolvidos?: number;

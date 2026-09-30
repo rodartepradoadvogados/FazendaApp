@@ -10,7 +10,7 @@ import React, { useState } from "react";
 import { AlertTriangle, Check, ChevronDown, Info } from "lucide-react";
 import { aplicarAgendamentoPreventivo, type AplicarAgendamentoPayload, type CanalAplicacao, type ContextoAplicar, type ResultadoAplicar, type ResultadoExame } from "@/lib/api";
 import { ResumoCustoFinanceiro } from "./FinanceiroAgendamento";
-import { dataHoraLocal, horasTxt, RESULTADOS_ROTULO } from "./exameComum";
+import { dataHoraLocal, horasTxt, LinkCadastroPessoas, RESULTADOS_ROTULO, semCrmv, textoCrmv } from "./exameComum";
 import { brl, dataCurta, diaSemana, hojeIso, inputStyle, labelStyle, notaStyle, plural } from "./preventivoComum";
 
 const horaAgora = () => {
@@ -58,7 +58,7 @@ export function FormLeitura({ ctx, canal, chave, onAplicado, onFechar }: {
   let erro = "";
   if (!aplicadorId) erro = "Escolha quem fez a leitura.";
   else if (data > hoje) erro = "A data real não pode ser futura.";
-  else if (ctx.exige_veterinario && !pessoa?.veterinario) erro = `Só veterinário habilitado (CRMV) faz a leitura de ${ctx.protocolo_nome}.`;
+  else if (ctx.exige_veterinario && !pessoa?.veterinario) erro = semCrmv(pessoa) ? textoCrmv(pessoa!.nome) : `Só veterinário habilitado (CRMV) faz a leitura de ${ctx.protocolo_nome}.`;
   else if (respondidos.length < numeros.length) erro = "Informe o resultado de cada animal.";
   else if (semMm.length) erro = "Informe a espessura da pele (mm) de cada animal.";
   else if (!tipoTeste) erro = "Escolha o tipo de teste da tuberculina.";
@@ -97,7 +97,9 @@ export function FormLeitura({ ctx, canal, chave, onAplicado, onFechar }: {
 
       <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
         {boxAviso("var(--dourado-light)", <>Inoculação em <b>{dataCurta(ino.data)} {ino.hora || ""}</b> · <b>leitura a partir de {dataHoraLocal(ex.leitura_prevista_em)}</b> (72 h) e até {dataHoraLocal(ex.leitura_limite_em)}. Tuberculina: frasco {ino.lote_texto || "—"}. Resultado reagente grava o reagente, mostra o aviso persistente e bloqueia o comprovante “animal em dia” só para ele.</>, <Info size={15} />)}
-        {ctx.exige_veterinario && !pessoa?.veterinario && boxAviso("var(--red)", <><b>{ctx.protocolo_nome}: só veterinário habilitado (CRMV) faz a leitura.</b> Escolha o veterinário em “Quem fez a leitura”.</>)}
+        {ctx.exige_veterinario && !pessoa?.veterinario && (semCrmv(pessoa)
+          ? boxAviso("var(--red)", <><b>{textoCrmv(pessoa!.nome)}</b> A leitura de {ctx.protocolo_nome} só é feita por veterinário com CRMV. <LinkCadastroPessoas /></>)
+          : boxAviso("var(--red)", <><b>{ctx.protocolo_nome}: só veterinário habilitado (CRMV) faz a leitura.</b> Escolha o veterinário em “Quem fez a leitura”.</>))}
         {depois96 && boxAviso("var(--amber)", <><b>Leitura fora da janela de 72–96 h</b> ({horasTxt(horas)} após a inoculação). Fica sinalizado no registro.</>)}
         {antes72 && boxAviso("var(--amber)", <><b>Leitura antes de 72 h da inoculação.</b> Escreva a justificativa; ela fica registrada.</>)}
         {anterior && boxAviso("var(--red)", "A data e a hora da leitura são anteriores à inoculação.")}
@@ -158,7 +160,7 @@ export function FormLeitura({ ctx, canal, chave, onAplicado, onFechar }: {
         <label htmlFor="ex-quem" style={labelStyle}>Quem fez a leitura</label>
         <select id="ex-quem" style={inputStyle} value={aplicadorId} onChange={(e) => setAplicadorId(e.target.value)}>
           <option value="">Escolha quem fez a leitura</option>
-          {ctx.pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.veterinario ? "veterinário" : (p.tipo || "pessoa").toLowerCase()}{p.crmv ? `, ${p.crmv}` : ""})</option>)}
+          {ctx.pessoas.filter((p) => !ctx.exige_veterinario || p.veterinario || semCrmv(p)).map((p) => <option key={p.id} value={p.id} disabled={ctx.exige_veterinario && !p.veterinario}>{p.nome} ({p.veterinario ? "veterinário" : semCrmv(p) ? "veterinário sem CRMV: cadastre" : (p.tipo || "pessoa").toLowerCase()}{p.crmv ? `, ${p.crmv}` : ""})</option>)}
         </select>
         {!aplicadorId && <span style={notaStyle}>Obrigatório: escolha quem fez a leitura para liberar o botão.</span>}
       </div>

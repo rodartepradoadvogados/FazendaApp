@@ -237,7 +237,7 @@ function CalendarioAcompanhamento({ agendamentos, hoje, onAbrir }: { agendamento
           return (
             <button key={iso} type="button" role="gridcell" aria-selected={ativo} aria-label={`${d} de ${MESES[ref.mes]}: ${ags.length} ${plural(ags.length, "agendamento", "agendamentos")}`} onClick={() => setSel(iso)}
                     style={{ minHeight: 56, padding: "0.25rem", textAlign: "left", cursor: "pointer", borderRadius: "var(--r-sm)", display: "flex", flexDirection: "column", gap: 2, overflow: "hidden",
-                             border: `1px solid ${ativo ? "var(--dourado)" : iso === hoje ? "var(--amber)" : "var(--border)"}`, background: ativo ? "var(--pill-active-bg)" : "var(--surface-2)", color: "var(--text)" }}>
+                             border: `1px solid ${ativo ? "var(--dourado)" : iso === hoje ? "var(--amber)" : "var(--border)"}`, background: ativo ? "var(--pill-active-bg)" : "var(--surface-2)", color: ativo ? "var(--pill-active-fg)" : "var(--text)" }}>
               <span style={{ fontSize: "0.75rem", fontWeight: iso === hoje ? 800 : 600 }}>{d}</span>
               {ags.slice(0, 2).map((a) => <span key={a.id} className="hidden sm:block" style={{ fontSize: "0.66rem", lineHeight: 1.2, borderLeft: `3px solid ${COR_ESTADO[a.estado_visual]}`, paddingLeft: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.protocolo_nome}</span>)}
               {ags.length > 2 && <span className="hidden sm:block" style={{ fontSize: "0.66rem", color: "var(--text-muted)" }}>+{ags.length - 2}</span>}

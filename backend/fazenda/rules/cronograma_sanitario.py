@@ -649,7 +649,7 @@ def eventos_agenda(
         if aplicadores is None:
             from fazenda.rules.aplicacao_preventiva import eh_veterinario, pessoas_da_fazenda
             aplicadores = [
-                {"id": p.id, "nome": p.nome, "crmv": getattr(p, "crmv", None), "veterinario": eh_veterinario(p)}
+                {"id": p.id, "nome": p.nome, "tipo": p.tipo, "crmv": getattr(p, "crmv", None), "veterinario": eh_veterinario(p)}
                 for p in pessoas_da_fazenda(session, fazenda_id) if "robo" not in (p.tipo or "").lower().replace("ô", "o")
             ]
         from fazenda.rules.aplicacao_preventiva import exige_veterinario as _exige_vet

@@ -343,7 +343,7 @@ function GavetaDetalhe({ id, admin, lista, onFechar, onEstornar }: { id: number;
               ))}
             </ul>
           )}
-          <div style={{ position: "sticky", bottom: "-0.9rem", margin: "0 -0.9rem -0.9rem", padding: "0.75rem 0.9rem", background: "var(--surface)", borderTop: "1px solid var(--border)", display: "flex", gap: "0.6rem", zIndex: 2 }}>
+          <div style={{ position: "sticky", bottom: "-0.9rem", margin: "0 -0.9rem -0.9rem", padding: "0.75rem 0.9rem", background: "var(--surface)", borderTop: "1px solid var(--border)", display: "flex", flexWrap: "wrap", gap: "0.6rem", zIndex: 2 }}>
             {d.estado === "aplicada" && (
               <button type="button" className="btn-secondary" data-testid="detalhe-comprovante" onClick={() => setComprovante(true)}
                       disabled={!!d.exame && d.exame.reagentes > 0 && d.exame.reagentes >= d.animais.filter((a) => a.resultado === "aplicado").length}
@@ -373,6 +373,8 @@ function GavetaEstornar({ item, onFechar, onFeito }: { item: ItemConcluido; onFe
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const texto = textoMotivo(motivo, outro);
+  const leitura = item.tipo === "exame" && item.exame?.fase === "leitura";
+  const devolveEstoque = !leitura;   // a leitura não mexe no estoque: só estornar a inoculação devolve a tuberculina
 
   async function estornar() {
     setTentou(true);
@@ -390,7 +392,7 @@ function GavetaEstornar({ item, onFechar, onFeito }: { item: ItemConcluido; onFe
         </div>
         <p style={{ display: "flex", gap: 6, color: "var(--amber)", fontSize: "0.85rem" }}>
           <AlertTriangle size={15} style={{ marginTop: 2, flexShrink: 0 }} />
-          O registro original fica preservado como “Estornada”, o estoque volta e o agendamento volta a “Agendado”. Fica gravado quem estornou e por quê.
+          O registro original fica preservado como “Estornada” e o agendamento volta a “Agendado”.{devolveEstoque ? " O estoque volta." : " A leitura não mexe no estoque; a tuberculina só volta ao estornar a inoculação."} Fica gravado quem estornou e por quê.
         </p>
         <Chips idBase="es-m" rotulo="Motivo (obrigatório)" opcoes={MOTIVOS_ESTORNO} valor={motivo} onChange={setMotivo} erro={tentou && !texto ? "Escolha o motivo." : null} />
         {motivo === "Outro motivo" && <input style={inputStyle} aria-label="Descreva o motivo" placeholder="Descreva o motivo" value={outro} onChange={(e) => setOutro(e.target.value)} />}

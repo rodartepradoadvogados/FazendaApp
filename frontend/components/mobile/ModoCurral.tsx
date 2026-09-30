@@ -36,7 +36,7 @@ import { fetchAgenda, today, fetchAnimais } from "@/lib/api";
 import { fetchComCache, enviarOuEnfileirar, useOnline } from "@/lib/offline";
 import { useCache, type Animal } from "@/components/mobile/lancar/comum";
 import { CurralSanitario } from "@/components/mobile/CurralSanitario";
-import { AplicarPreventivoMobile, type EventoAplicarMob } from "@/components/mobile/AplicarPreventivoMobile";
+import { AplicarPreventivoMobile, AvisoReagentesMobile, type EventoAplicarMob } from "@/components/mobile/AplicarPreventivoMobile";
 
 const FormReprodutivo = dynamic(() => import("@/components/mobile/lancar/FormReprodutivo").then((m) => m.FormReprodutivo), { ssr: false });
 const FormProducao = dynamic(() => import("@/components/mobile/lancar/FormProducao").then((m) => m.FormProducao), { ssr: false });
@@ -333,6 +333,8 @@ export function ModoCurral({ onVoltar }: { onVoltar: () => void }) {
       {!online && (
         <div className="curral-aviso curral-aviso-offline">Sem conexão agora — os toques abaixo ficam guardados e são enviados sozinhos depois.</div>
       )}
+
+      <AvisoReagentesMobile />
 
       <div className="curral-secao">Fazer agora</div>
       <button type="button" className="curral-fazer" data-estado={estadoFazer} onClick={() => setFazerAberto(true)}>

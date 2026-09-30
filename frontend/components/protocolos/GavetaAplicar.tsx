@@ -17,7 +17,7 @@ import {
 import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
 import { TelaSkeleton } from "@/components/ui";
 import { ResumoCustoFinanceiro } from "./FinanceiroAgendamento";
-import { BannerReagentes, ComprovanteAplicacaoView, dataHoraLocal, RESULTADOS_ROTULO } from "./exameComum";
+import { BannerReagentes, ComprovanteAplicacaoView, dataHoraLocal, LinkCadastroPessoas, RESULTADOS_ROTULO, semCrmv, textoCrmv } from "./exameComum";
 import { FormLeitura } from "./GavetaExame";
 import {
   brl, Chips, dataCurta, diaSemana, hojeIso, inputStyle, labelStyle, MOTIVOS_CIENCIA, MOTIVOS_ESTOQUE, MOTIVOS_NAO_APLICADO,
@@ -163,7 +163,7 @@ function FormAplicar({ ctx, canal, chave, onAplicado, onFechar }: {
   if (!aplicados.length) erro = "Marque pelo menos 1 animal aplicado.";
   else if (!aplicadorId) erro = "Escolha quem aplicou.";
   else if (dataReal > hoje) erro = "A data real não pode ser futura.";
-  else if (ctx.exige_veterinario && !pessoa?.veterinario) erro = `Só veterinário habilitado (CRMV) aplica ${ctx.protocolo_nome}.`;
+  else if (ctx.exige_veterinario && !pessoa?.veterinario) erro = semCrmv(pessoa) ? textoCrmv(pessoa!.nome) : `Só veterinário habilitado (CRMV) aplica ${ctx.protocolo_nome}.`;
   else if (restritos.length) erro = `Brucelose B19: só fêmeas de 3 a 8 meses. Desmarque ${restritos.map((a) => a.numero_matriz).join(", ")}.`;
   else if (desconsiderar && !textoMotivo(motEst, motEstOutro)) erro = "Escolha o motivo para desconsiderar o estoque.";
   else if (!desconsiderar && !semProduto && !ctx.estoque.encontrado) erro = "O produto não está no estoque: desconsidere o estoque com motivo.";
@@ -244,7 +244,9 @@ function FormAplicar({ ctx, canal, chave, onAplicado, onFechar }: {
         {frascoVencido && boxAviso("var(--red)", <><b>Frasco vencido.</b> O frasco {frasco?.numero_lote || `#${frasco?.id}`} venceu em {dataCurta(frasco?.validade)}. É preciso ciência para usar assim mesmo; ela fica registrada com o seu nome e a hora.</>)}
         {!frascoVencido && frasco && frasco.vence_em_dias != null && frasco.vence_em_dias <= 30 && boxAviso("var(--amber)", <><b>Validade próxima.</b> O frasco {frasco.numero_lote || `#${frasco.id}`} vence em {frasco.vence_em_dias} {plural(frasco.vence_em_dias, "dia", "dias")} ({dataCurta(frasco.validade)}).</>)}
         {faltam > 0 && boxAviso("var(--amber)", <><b>Estoque insuficiente.</b> Faltam {num(faltam)} {un}. A aplicação não é bloqueada: o estoque fica negativo e a divergência é avisada. Comunique a compra.</>)}
-        {ctx.exige_veterinario && !pessoa?.veterinario && boxAviso("var(--red)", <><b>{ctx.protocolo_nome}: só veterinário habilitado (CRMV) aplica.</b> Escolha o veterinário em “Quem aplicou”.</>)}
+        {ctx.exige_veterinario && !pessoa?.veterinario && (semCrmv(pessoa)
+          ? boxAviso("var(--red)", <><b>{textoCrmv(pessoa!.nome)}</b> {ctx.protocolo_nome} só é aplicado por veterinário com CRMV. <LinkCadastroPessoas /></>)
+          : boxAviso("var(--red)", <><b>{ctx.protocolo_nome}: só veterinário habilitado (CRMV) aplica.</b> Escolha o veterinário em “Quem aplicou”.</>))}
         {ctx.carencia.proibido_lactacao && boxAviso("var(--red)", <><b>Não usar em vaca em lactação.</b> Confira os animais antes de aplicar.</>)}
         {dataReal < hoje && boxAviso("var(--dourado-light)", "Aplicação já realizada: confira a data e a hora em que foi feita.", <Info size={15} />)}
         {ctx.data_evento > hoje && boxAviso("var(--dourado-light)", `Aplicando antes da data agendada (${dataCurta(ctx.data_evento)}). Tudo o que estava combinado continua valendo.`, <Info size={15} />)}
@@ -413,7 +415,7 @@ function FormAplicar({ ctx, canal, chave, onAplicado, onFechar }: {
         <label htmlFor="ap-quem" style={labelStyle}>Quem aplicou</label>
         <select id="ap-quem" style={inputStyle} value={aplicadorId} onChange={(e) => setAplicadorId(e.target.value)}>
           <option value="">Escolha quem aplicou</option>
-          {ctx.pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.veterinario ? "veterinário" : (p.tipo || "pessoa").toLowerCase()}{p.crmv ? `, ${p.crmv}` : ""})</option>)}
+          {ctx.pessoas.filter((p) => !ctx.exige_veterinario || p.veterinario || semCrmv(p)).map((p) => <option key={p.id} value={p.id} disabled={ctx.exige_veterinario && !p.veterinario}>{p.nome} ({p.veterinario ? "veterinário" : semCrmv(p) ? "veterinário sem CRMV: cadastre" : (p.tipo || "pessoa").toLowerCase()}{p.crmv ? `, ${p.crmv}` : ""})</option>)}
         </select>
         {!aplicadorId && <span style={notaStyle}>Obrigatório: escolha quem aplicou para liberar o botão.</span>}
       </div>

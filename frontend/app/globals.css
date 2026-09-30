@@ -946,6 +946,12 @@ textarea:focus-visible, [tabindex]:focus-visible {
     top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 3.2rem);
   }
 }
+/* 390 px: o botão flutuante do assistente (fixed, z 70) ficava por cima do rodapé/"Cancelar" das gavetas —
+   espaço inferior (com safe area) no corpo da gaveta para o conteúdo rolar até acima dele. */
+@media (max-width: 767px) {
+  .gaveta-lancamento-corpo { padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px)) !important; }
+}
+
 /* Os formulários de components/lancamentos/* usam grids Tailwind
    (grid-cols-2/3/4, md:/lg:grid-cols-N) que reagem à largura da JANELA, não
    à da gaveta. Enquanto a gaveta tinha ~330px fixos, isso espremia cada

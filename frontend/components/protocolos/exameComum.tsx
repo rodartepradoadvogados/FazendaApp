@@ -3,6 +3,7 @@
 // notificação: quem/quando), comprovante (bloqueado só para o reagente) e rótulos de fase.
 // Mockup: docs/agents/auditoria-preventivo-agenda/mockups/fluxo-completo.html (proto-aplicar-dr.js, proto-concl.js).
 import React, { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Bell, Check, ChevronDown, Lock, Printer, X } from "lucide-react";
 import {
@@ -15,6 +16,16 @@ export const RESULTADOS_ROTULO: Record<string, string> = {
 };
 export const FASE_ROTULO: Record<FaseExame, string> = { inoculacao: "Inoculação", leitura: "Leitura (72 h)", coleta: "Coleta" };
 export const VERBO_APLICAR: Record<FaseExame, string> = { inoculacao: "Inocular", leitura: "Registrar leitura", coleta: "Registrar coleta" };
+
+/** Pessoa do tipo Veterinário mas sem CRMV cadastrado: não pode aplicar B19/brucelose/TB até cadastrar. */
+export function semCrmv(p: { tipo?: string | null; veterinario?: boolean } | undefined | null): boolean {
+  return !!p && !p.veterinario && (p.tipo || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes("veterinario");
+}
+export const LINK_PESSOAS = "/configuracoes?aba=cadastro&sub=pessoas";
+export function textoCrmv(nome: string): string { return `Cadastre o CRMV de ${nome} em Pessoas.`; }
+export function LinkCadastroPessoas({ children = "Abrir cadastro de pessoas" }: { children?: React.ReactNode }) {
+  return <Link href={LINK_PESSOAS} style={{ color: "inherit", textDecoration: "underline", fontWeight: 700 }}>{children}</Link>;
+}
 
 /** Data e hora locais de um instante ISO sem fuso ("2026-10-02T08:30:00"). */
 export function dataHoraLocal(iso: string | null | undefined): string {

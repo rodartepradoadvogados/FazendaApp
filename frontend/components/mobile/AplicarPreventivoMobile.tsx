@@ -12,8 +12,9 @@ import Link from "next/link";
 import { AlertTriangle, Check, ShieldAlert, Undo2 } from "lucide-react";
 import { desfazerAplicacaoPreventiva, fetchReagentes, type CanalAplicacao, type FaseExame, type Reagentes } from "@/lib/api";
 import { enviarOuEnfileirar } from "@/lib/offline";
+import { LinkCadastroPessoas, semCrmv, textoCrmv } from "@/components/protocolos/exameComum";
 
-export type AplicadorMob = { id: number; nome: string; crmv?: string | null; veterinario: boolean };
+export type AplicadorMob = { id: number; nome: string; tipo?: string | null; crmv?: string | null; veterinario: boolean };
 export type EventoAplicarMob = {
   id: string; cronograma_id?: number | null; descricao: string; animais?: string[] | null;
   checklist_total?: number; checklist_resolvidos?: number; fase?: FaseExame | null; tipo_protocolo?: string | null;
@@ -34,6 +35,7 @@ export function AplicarPreventivoMobile({ e, canal, onFeito, onErro }: {
   const animais = e.animais || [];
   const todos = e.aplicadores || [];
   const lista = e.exige_veterinario ? todos.filter((p) => p.veterinario) : todos;
+  const semCrmvLista = e.exige_veterinario ? todos.filter((p) => semCrmv(p)) : [];
   const pend = Math.max(0, (e.checklist_total ?? 0) - (e.checklist_resolvidos ?? 0));
   const [quem, setQuem] = useState<number | null>(null);
   const [deFora, setDeFora] = useState(false);
@@ -151,6 +153,7 @@ export function AplicarPreventivoMobile({ e, canal, onFeito, onErro }: {
           })}
         </div>
         {e.exige_veterinario && <p style={{ fontSize: "0.85rem", color: "var(--mob-muted)", margin: "0.4rem 0 0" }}><ShieldAlert size={14} style={{ display: "inline", marginRight: 4 }} />Só veterinário habilitado (CRMV) aplica este protocolo.</p>}
+        {semCrmvLista.map((p) => <p key={p.id} role="note" style={{ fontSize: "0.85rem", color: "var(--mob-ambar)", margin: "0.3rem 0 0" }}>{textoCrmv(p.nome)} <LinkCadastroPessoas>Abrir cadastro</LinkCadastroPessoas></p>)}
       </div>
 
       {pend > 0 && <p style={{ fontSize: "0.88rem", color: "var(--mob-ambar)" }}>Checklist com {pend} {pend === 1 ? "item pendente" : "itens pendentes"}: aplicar não é bloqueado; a ciência fica registrada.</p>}
