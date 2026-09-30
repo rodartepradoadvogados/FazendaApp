@@ -1433,7 +1433,7 @@ export async function fetchAgenda(data?: string, dias?: number) {
 // ── Agenda v2 (fatia 10): leituras leves das duas sub-abas ───────────────────
 // /agenda/dia (Dia a dia) e /agenda/painel + /agenda/projecao (Painel) só LEEM.
 // A escrita (recorrências, cronogramas) continua em POST /agenda/materializar,
-// chamado à parte (ver materializarAgendaUmaVezPorDia) para não atrasar o
+// chamado à parte (ver materializarAgendaComIntervalo) para não atrasar o
 // primeiro desenho da tela.
 async function getAgendaV2(caminho: string, qs: Record<string, string | number | undefined>, sinal?: AbortSignal) {
   const p = new URLSearchParams();
@@ -1446,12 +1446,17 @@ export const fetchAgendaDia = (data?: string, ate?: string, sinal?: AbortSignal)
 export const fetchAgendaPainel = (data?: string, sinal?: AbortSignal) => getAgendaV2("painel", { data }, sinal);
 export const fetchAgendaProjecao = (dias: number, data?: string, sinal?: AbortSignal) => getAgendaV2("projecao", { dias, data }, sinal);
 
-/** Materializa (escreve) no máximo uma vez por dia por navegador; devolve true se rodou agora. */
-export async function materializarAgendaUmaVezPorDia(data: string): Promise<boolean> {
-  const chave = `agenda-materializada:${data}`;
-  try { if (window.localStorage.getItem(chave)) return false; } catch { /* sem storage: materializa sempre */ }
+/** Materializa (escreve) no máximo a cada 15 min por navegador (e sempre que o dia muda);
+ * devolve true se rodou agora. É idempotente: rodar de novo nunca duplica nada. */
+export async function materializarAgendaComIntervalo(data: string): Promise<boolean> {
+  const chave = "agenda-materializada";
+  const agora = Date.now();
+  try {
+    const [dia, quando] = (window.localStorage.getItem(chave) || "").split("|");
+    if (dia === data && agora - Number(quando) < 15 * 60 * 1000) return false;
+  } catch { /* sem storage: materializa sempre */ }
   await materializarAgenda(data);
-  try { window.localStorage.setItem(chave, "1"); } catch { /* ignora */ }
+  try { window.localStorage.setItem(chave, `${data}|${agora}`); } catch { /* ignora */ }
   return true;
 }
 

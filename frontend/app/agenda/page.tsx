@@ -3,9 +3,9 @@
 import React, { Suspense, useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Calendar, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Check, X, Syringe, Heart, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User, FileSpreadsheet, FileText, PackageSearch, Layers, Search, HeartPulse, Syringe as SyringeIco, Wallet as WalletIco, ListChecks, Repeat, ClipboardList, ClipboardCheck } from "lucide-react";
+import { Calendar, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Check, X, Syringe, Heart, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User, FileSpreadsheet, FileText, PackageSearch, Layers, Search, HeartPulse, Repeat, ClipboardList, ClipboardCheck } from "lucide-react";
 import {
-  fetchAgendaDia, fetchAgendaPainel, fetchAgendaProjecao, materializarAgendaUmaVezPorDia, adiarAgendamentoPreventivo,
+  fetchAgendaDia, fetchAgendaPainel, fetchAgendaProjecao, materializarAgendaComIntervalo, adiarAgendamentoPreventivo,
   addEventoManual, marcarEventoRealizado as marcarEventoRealizadoApi, desmarcarEventoRealizado,
   fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, fetchEstoque, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
   cadastrarPreventivo, marcarCuraAplicacao, marcarCuraProtocolo, confirmarLactacaoInducao, fetchProtocolosIatfAtivos,
@@ -514,11 +514,11 @@ function AgendaConteudo() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
-  // Recorrências/cronogramas (a parte que ESCREVE) rodam UMA vez por dia e por
+  // Recorrências/cronogramas (a parte que ESCREVE) rodam no máx. a cada 15 min por
   // navegador, depois do primeiro desenho; se rodaram agora, relê em silêncio.
   useEffect(() => {
     let vivo = true;
-    materializarAgendaUmaVezPorDia(data).then((rodou) => { if (vivo && rodou) carregar(); }).catch(() => undefined);
+    materializarAgendaComIntervalo(data).then((rodou) => { if (vivo && rodou) carregar(); }).catch(() => undefined);
     return () => { vivo = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
@@ -2310,6 +2310,14 @@ function AgendaConteudo() {
         <button type="button" className="ag2-link" onClick={() => { setModoDia("lista"); setTimeout(() => rolarParaId("ag2-hoje"), 30); }}><strong>{eventosHoje.length}</strong> de hoje</button>
         <span aria-hidden="true">·</span>
         <span><strong>{proximos7}</strong> nos próximos 7 dias</span>
+        {(agenda?.resumo?.avisos ?? 0) > 0 && (
+          <>
+            <span aria-hidden="true">·</span>
+            <button type="button" className="ag2-link" title="Avisos informativos (ex.: nova dieta) ficam no Painel" onClick={() => { mudarVisao("painel"); }}>
+              {agenda.resumo.avisos} {agenda.resumo.avisos === 1 ? "aviso" : "avisos"}
+            </button>
+          </>
+        )}
       </p>
       ) : <p className="ag2-linha-contagem" aria-hidden="true">&nbsp;</p>}
 
@@ -2471,16 +2479,16 @@ function AgendaConteudo() {
           </GrupoPainel>
 
           <GrupoPainel titulo="Sanidade" cor="var(--cat-sanidade)">
-            <CartaoPainel titulo="BST · vacas aptas" icon={SyringeIco} cor="var(--cat-sanidade)" valor={bstAptos.length}
+            <CartaoPainel titulo="BST · vacas aptas" icon={Syringe} cor="var(--cat-sanidade)" valor={bstAptos.length}
               detalhe={proxBST ? <>próxima aplicação {proxBST}</> : "sem aplicação prevista"}
               onClick={bstAptos.length > 0 ? () => toggleLista("bstAptos") : undefined} aberto={listaAtiva.has("bstAptos")} />
-            <CartaoPainel titulo="BST · excluídas" icon={SyringeIco} cor="var(--cat-sanidade)" valor={bstExcl.length}
+            <CartaoPainel titulo="BST · excluídas" icon={Syringe} cor="var(--cat-sanidade)" valor={bstExcl.length}
               detalhe="fora do ciclo agora (DEL ou marcação)"
               onClick={bstExcl.length > 0 ? () => toggleLista("bstExcl") : undefined} aberto={listaAtiva.has("bstExcl")} />
-            <CartaoPainel titulo="Incluir no próximo BST" icon={SyringeIco} cor="var(--cat-sanidade)" valor={bstNuncaAplicados.length}
+            <CartaoPainel titulo="Incluir no próximo BST" icon={Syringe} cor="var(--cat-sanidade)" valor={bstNuncaAplicados.length}
               detalhe="nunca receberam ou pedem reanálise"
               onClick={bstNuncaAplicados.length > 0 ? () => toggleLista("bstNunca") : undefined} aberto={listaAtiva.has("bstNunca")} />
-            <CartaoPainel titulo="Vacinas previstas" icon={SyringeIco} cor="var(--cat-sanidade)" href="/protocolos?aba=acompanhamento"
+            <CartaoPainel titulo="Vacinas previstas" icon={Syringe} cor="var(--cat-sanidade)" href="/protocolos?aba=acompanhamento"
               valor={aindaCalculando ? "…" : (cartoesProj.vacinas?.agendadas ?? 0)}
               detalhe={aindaCalculando ? "calculando…" : cartoesProj.vacinas?.proximas?.[0]
                 ? <>{cartoesProj.vacinas.n_animais} animais · próxima {fmtCurta(cartoesProj.vacinas.proximas[0].data)}</> : `nenhuma agendada em ${horizonte} dias`} />
@@ -2505,7 +2513,7 @@ function AgendaConteudo() {
             <CartaoPainel titulo="Alertas de estoque" icon={PackageSearch} cor="var(--cat-estoque)" valor={estoqueAlertasTotal} alerta={estoqueAlertasTotal > 0}
               detalhe={estoqueAlertasTotal > 0 ? `${estoqueNegativo.length} negativos · ${estoqueAbaixoMinimo.length} abaixo do mínimo` : "tudo dentro do mínimo"}
               onClick={estoqueAlertasTotal > 0 ? () => abrirAlertasEstoque() : undefined} aberto={paineis.has("estoqueAlertas")} />
-            <CartaoPainel titulo="Contas a pagar" icon={WalletIco} cor="var(--cat-financeiro)" valor={contasAgora.length}
+            <CartaoPainel titulo="Contas a pagar" icon={Wallet} cor="var(--cat-financeiro)" valor={contasAgora.length}
               detalhe={contasAgora.length > 0 ? `${fmtBR(valorContas)} em ${DIAS_PADRAO_FUTURO} dias` : `nada a vencer em ${DIAS_PADRAO_FUTURO} dias`} href={contasAgora.length > 0 ? "/financeiro" : undefined} />
             <CartaoPainel titulo="Concluídos no período" icon={CheckCircle2} cor="var(--cat-gestao)" valor={totalConcluidos}
               detalhe={<>{fmtCurta(concDe)} a {fmtCurta(concAte)}</>}
