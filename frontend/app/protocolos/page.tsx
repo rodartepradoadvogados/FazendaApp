@@ -36,7 +36,11 @@ const FormAplicarCalendarioSanitario = dynamic(() => import("@/components/lancam
 // Acompanhamento/Histórico do calendário sanitário — MESMOS componentes já
 // usados em Sanidade > Preventiva (Calendário/Cronogramas e Histórico
 // agrupado por vacina/exame). Nada de tabela ou endpoint paralelo.
+const AcompanhamentoPreventivo = dynamic(() => import("@/components/protocolos/AcompanhamentoPreventivo").then((m) => m.AcompanhamentoPreventivo), { ssr: false });
+const ConcluidosPreventivo = dynamic(() => import("@/components/protocolos/ConcluidosPreventivo").then((m) => m.ConcluidosPreventivo), { ssr: false });
 const CalendarioSanitarioAcompanhamento = dynamic(() => import("@/app/sanidade/page").then((m) => m.CalendarioSanitarioView), { ssr: false });
+// Lista de espera do preventivo + assistente "Criar agendamento" (fatia 7).
+const ListaEsperaPreventivo = dynamic(() => import("@/components/protocolos/ListaEsperaPreventivo").then((m) => m.ListaEsperaPreventivo), { ssr: false });
 const HistoricoPreventivoView = dynamic(() => import("@/components/sanidade/HistoricoPreventivoView").then((m) => m.HistoricoPreventivoView), { ssr: false });
 // Editores de cadastro reaproveitados de Configurações > Cadastro — MESMO
 // componente, mesmo endpoint, mesmos protocolos. Ver comentário em TIPOS_CADASTRO.
@@ -343,7 +347,7 @@ function SeletorTipoProtocolo<T extends string>({ titulo, tipos, tipo, onChange 
 // mesmo endpoint, mesmos protocolos já cadastrados. Não há cópia nem tabela
 // paralela: cadastrar aqui ou lá é indiferente.
 const TIPOS_CADASTRO = [
-  { id: "sanitario", label: "Sanitário", desc: "Curativo (cronograma de dias) ou Preventivo (calendário sanitário — regra recorrente)" },
+  { id: "sanitario", label: "Sanitário", desc: "Curativo (cronograma de dias) ou Preventivo (vacina, exame, vermífugo ou detecção de cio de repasse)" },
   { id: "iatf", label: "IATF", desc: "Hormônios em dias livres (D0/D7/D9 ou outro espaçamento)" },
   { id: "inducao", label: "Indução de lactação", desc: "Medicamento, implante e manejo por dia" },
   { id: "customizado", label: "Customizado", desc: "Roteiro livre de etapas, para qualquer rotina" },
@@ -358,7 +362,7 @@ type TipoCadastro = typeof TIPOS_CADASTRO[number]["id"];
 // campo a mais no mesmo formulário.
 const SUBS_SANITARIO = [
   { id: "curativo", label: "Curativo", desc: "Cronograma de etapas em dias fixos (D0/D1/D2…)" },
-  { id: "preventivo", label: "Preventivo", desc: "Calendário sanitário — regra recorrente (frequência ou evento de vida)" },
+  { id: "preventivo", label: "Preventivo", desc: "Vacina, exame, vermífugo ou detecção de cio de repasse, com janela de aplicação" },
 ] as const;
 type SubSanitario = typeof SUBS_SANITARIO[number]["id"];
 
@@ -421,35 +425,45 @@ type TipoLancamento = typeof TIPOS_LANCAMENTO[number]["id"];
 // sanitário).
 const SUBS_SANITARIO_LANCAMENTO = [
   { id: "curativo", label: "Curativo", desc: "Aplicar um protocolo cadastrado (cronograma de dias fixos)" },
-  { id: "preventivo", label: "Preventivo", desc: "Aplicar uma vacina/exame do calendário sanitário já cadastrado" },
+  { id: "preventivo", label: "Preventivo", desc: "Vacina ou exame de um protocolo já cadastrado (janela de aplicação)" },
 ] as const;
 
-function LancamentoTab({ animais, estoque, lotes }: { animais: AnimalRow[]; estoque: EstoqueItem[]; lotes: string[] }) {
+function LancamentoTab({ animais, estoque, lotes, onIrAcompanhamento }: { animais: AnimalRow[]; estoque: EstoqueItem[]; lotes: string[]; onIrAcompanhamento?: () => void }) {
   const [tipo, setTipo] = useState<TipoLancamento>("sanitario");
-  const [subSanitario, setSubSanitario] = useState<SubSanitario>("curativo");
+  const [subSanitario, setSubSanitario] = useState<SubSanitario>("preventivo");
 
   return (
     <div>
-      <SeletorTipoProtocolo titulo="Qual protocolo você quer lançar?" tipos={TIPOS_LANCAMENTO} tipo={tipo} onChange={setTipo} />
+      <SeletorTipoProtocolo titulo="O que você quer aplicar?" tipos={TIPOS_LANCAMENTO} tipo={tipo} onChange={setTipo} />
 
       {tipo === "sanitario" && (
         <SeletorTipoProtocolo titulo="Curativo ou preventivo?" tipos={SUBS_SANITARIO_LANCAMENTO} tipo={subSanitario} onChange={setSubSanitario} />
       )}
 
+      {tipo === "sanitario" && subSanitario === "preventivo" && (
+        <ListaEsperaPreventivo
+          animais={animais} onAbrirAcompanhamento={onIrAcompanhamento}
+          avulsa={<FormAplicarCalendarioSanitario animais={animais} lotes={lotes} estoque={estoque} />}
+        />
+      )}
+
+      {!(tipo === "sanitario" && subSanitario === "preventivo") && (
       <div className="card mb-3">
-        <div className="card-header mb-2">Lançar {TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label.toLowerCase()}</div>
+        <div className="card-header mb-2">Aplicar {TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label.toLowerCase()}</div>
         {tipo === "iatf" && <FormProtocoloIatf animais={animais} />}
         {tipo === "inducao" && <FormInducaoLactacao animais={animais} />}
         {tipo === "sanitario" && subSanitario === "curativo" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
-        {tipo === "sanitario" && subSanitario === "preventivo" && <FormAplicarCalendarioSanitario animais={animais} lotes={lotes} estoque={estoque} />}
         {tipo === "customizado" && <FormProtocoloCustomizado animais={animais as any} />}
         {tipo === "lida" && <FormLida animais={animais as any} />}
       </div>
+      )}
 
       <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
         {tipo === "customizado" || tipo === "lida"
           ? `${TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label} só é lançado aqui — não existe em Lançamentos.`
-          : "Mesmo lançamento de Lançamentos — lance aqui ou lá, dá no mesmo registro."}
+          : tipo === "sanitario" && subSanitario === "preventivo"
+            ? "Vacina e exame só são agendados e aplicados aqui (e na Agenda, no dia) — não existem mais em Lançamentos nem em Sanidade."
+            : "Mesmo lançamento de Lançamentos — lance aqui ou lá, dá no mesmo registro."}
       </p>
     </div>
   );
@@ -1114,8 +1128,36 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
 }
 
 // ─────────────────────────── Página ───────────────────────────
+// Vocabulário do fluxo aprovado (mockup fluxo-completo): Cadastro › Aplicar ›
+// Acompanhamento › Concluídos. "Aplicar" era "Lançamento" e "Concluídos" era
+// "Histórico"; os ids antigos (?aba=lancamento / ?aba=historico) continuam
+// valendo como atalho para não quebrar links já salvos.
+type AbaProtocolos = "cadastro" | "aplicar" | "acompanhamento" | "concluidos";
+const ABAS_LEGADO: Record<string, AbaProtocolos> = { lancamento: "aplicar", historico: "concluidos" };
+const ABAS_PROTOCOLOS: AbaProtocolos[] = ["cadastro", "aplicar", "acompanhamento", "concluidos"];
+
+// Acompanhamento e Concluídos: o sanitário preventivo (vacina/vermífugo) tem tela
+// própria (agendamentos, gaveta Aplicar, estorno); IATF, indução, curativo e
+// protocolo próprio seguem nas listas de sempre, escolhidas pelo chip.
+type TipoAbaLista = "preventivo" | "outros";
+function EscolhaTipoLista({ tipo, onChange }: { tipo: TipoAbaLista; onChange: (t: TipoAbaLista) => void }) {
+  return (
+    <TabBar<TipoAbaLista>
+      abas={[
+        { id: "preventivo", label: "Sanitário preventivo", title: "Vacina e vermífugo agendados" },
+        { id: "outros", label: "IATF, indução, curativo e próprio", title: "Os demais protocolos" },
+      ]}
+      ativa={tipo}
+      onChange={onChange}
+    />
+  );
+}
+
 export default function ProtocolosPage() {
-  const [aba, setAba] = useState<"cadastro" | "lancamento" | "acompanhamento" | "historico">("acompanhamento");
+  const [aba, setAba] = useState<AbaProtocolos>("acompanhamento");
+  const [tipoAcomp, setTipoAcomp] = useState<TipoAbaLista>("preventivo");
+  const [tipoConcl, setTipoConcl] = useState<TipoAbaLista>("preventivo");
+  const [concluidoInicial, setConcluidoInicial] = useState<number | null>(null);
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
   useEffect(() => {
@@ -1140,32 +1182,47 @@ export default function ProtocolosPage() {
   // padrão do "ir=" de Lançamentos.
   useEffect(() => {
     const abaQs = new URLSearchParams(window.location.search).get("aba");
-    if (abaQs && ["cadastro", "lancamento", "acompanhamento", "historico"].includes(abaQs)) setAba(abaQs as typeof aba);
+    const abaId = abaQs ? (ABAS_LEGADO[abaQs] ?? abaQs) : null;
+    if (abaId && (ABAS_PROTOCOLOS as string[]).includes(abaId)) setAba(abaId as AbaProtocolos);
+    const conc = new URLSearchParams(window.location.search).get("concluido");
+    if (conc && Number(conc) > 0) { setAba("concluidos"); setConcluidoInicial(Number(conc)); }
   }, []);
 
   return (
     <div className="p-6">
       <h1 className="text-xl font-bold mb-1" style={{ color: "var(--dourado-light)" }}>Central de Protocolos</h1>
       <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginBottom: "1.2rem" }}>
-        IATF, Sanitário, Indução de Lactação e Customizado — cadastro, lançamento, acompanhamento e histórico num só lugar.
-        Os 4 tipos podem ser lançados por aqui; IATF, Indução e Sanitário continuam também disponíveis em Lançamentos — é o mesmo lançamento, dois caminhos.
+        Cadastre o protocolo, aplique, acompanhe o que está agendado e consulte os concluídos — vacinas, exames, IATF, indução de lactação e protocolos próprios num só lugar.
+        Vacina e exame (preventivo) são aplicados só aqui; IATF, Indução e Sanitário curativo continuam também em Lançamentos — é o mesmo lançamento, dois caminhos.
       </p>
 
-      <TabBar<"cadastro" | "lancamento" | "acompanhamento" | "historico">
+      <TabBar<AbaProtocolos>
         abas={[
-          { id: "cadastro", label: "Cadastro", title: "Moldes de cada protocolo" },
-          { id: "lancamento", label: "Lançamento", title: "Lançar IATF, indução, sanitário ou customizado" },
-          { id: "acompanhamento", label: "Acompanhamento", title: "Protocolos em andamento, dos 4 tipos" },
-          { id: "historico", label: "Histórico", title: "Concluídos e cancelados, com exportação" },
+          { id: "cadastro", label: "Cadastro", title: "Moldes de cada protocolo, com a janela de aplicação" },
+          { id: "aplicar", label: "Aplicar", title: "Aplicar vacina, exame, IATF, indução, curativo ou protocolo próprio" },
+          { id: "acompanhamento", label: "Acompanhamento", title: "O que já está agendado ou em andamento" },
+          { id: "concluidos", label: "Concluídos", title: "Aplicados e cancelados, com exportação" },
         ]}
         ativa={aba}
         onChange={setAba}
       />
 
       {aba === "cadastro" && <CadastroTab estoque={estoque} />}
-      {aba === "lancamento" && <LancamentoTab animais={animais} estoque={estoque} lotes={lotes} />}
-      {aba === "acompanhamento" && <ListaProtocolos historico={false} />}
-      {aba === "historico" && <ListaProtocolos historico />}
+      {aba === "aplicar" && <LancamentoTab animais={animais} estoque={estoque} lotes={lotes} onIrAcompanhamento={() => setAba("acompanhamento")} />}
+      {aba === "acompanhamento" && (
+        <>
+          <EscolhaTipoLista tipo={tipoAcomp} onChange={setTipoAcomp} />
+          {tipoAcomp === "preventivo"
+            ? <AcompanhamentoPreventivo onIrLista={() => setAba("aplicar")} onVerConcluidos={() => { setTipoConcl("preventivo"); setAba("concluidos"); }} />
+            : <ListaProtocolos historico={false} />}
+        </>
+      )}
+      {aba === "concluidos" && (
+        <>
+          <EscolhaTipoLista tipo={tipoConcl} onChange={setTipoConcl} />
+          {tipoConcl === "preventivo" ? <ConcluidosPreventivo idInicial={concluidoInicial} /> : <ListaProtocolos historico />}
+        </>
+      )}
     </div>
   );
 }

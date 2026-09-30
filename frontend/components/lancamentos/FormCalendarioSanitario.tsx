@@ -15,6 +15,7 @@ import { Campo, inputStyle, nota, type EstoqueItem, unidadesCompativeis } from "
 import { FREQUENCIA_UNIDADES, type ExameDef } from "@/components/lancamentos/_shared";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { WizardProtocolo, type PassoWizard } from "@/components/protocolos/WizardProtocolo";
+import { CartaoRepasse } from "@/components/lancamentos/CartaoRepasse";
 
 type EventoSanitarioDTO = {
   id: number; nome: string; ativo: boolean; categoria_preventiva: string | null; tipo_agendamento: string;
@@ -45,7 +46,7 @@ type RegraCalendario = {
 
 // vacina | exame | tratamento | avulso/outro (nada marcado nos três primeiros) | todos.
 const TIPOS_REGRA_FILTRO = [
-  { v: "todos", l: "Todos" }, { v: "vacina", l: "Vacina" }, { v: "tratamento", l: "Tratamento" },
+  { v: "todos", l: "Todos" }, { v: "vacina", l: "Vacina" }, { v: "tratamento", l: "Vermífugo" },
   { v: "exame", l: "Exame" }, { v: "avulso", l: "Avulso/outro" },
 ] as const;
 export function tipoRegra(r: { categoria_preventiva: string | null }): "vacina" | "tratamento" | "exame" | "avulso" {
@@ -77,6 +78,9 @@ type CalendarioForm = {
   // Passo 1 — Tipo
   tipoBucket: TipoBucket;
   categoriaPreventiva: "vacina" | "tratamento";
+  // "Detecção de cio de repasse" escolhida no passo Tipo — não é regra do
+  // calendário: é a configuração única da fazenda (CartaoRepasse, salva de verdade).
+  tipoRepasse: boolean;
 
   // Passo 2 — Identificação
   modoEvento: ModoEvento;
@@ -109,7 +113,7 @@ type CalendarioForm = {
   checklistItens: ChecklistTemplateItemDTO[];
 };
 const calendarioFormVazio = (): CalendarioForm => ({
-  tipoBucket: "vacina_tratamento", categoriaPreventiva: "vacina",
+  tipoBucket: "vacina_tratamento", categoriaPreventiva: "vacina", tipoRepasse: false,
   modoEvento: "existente", eventoId: "", nomeNovoEvento: "", doencaId: "",
   produtoPadrao: "", dosePadrao: "", unidadePadrao: "", viaPadrao: "",
   modoExame: "existente", exameDefinicaoId: "", novoExameNome: "", novoExameTipoResultado: "diagnostico",
@@ -210,7 +214,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
     const bucket: TipoBucket = ev?.categoria_preventiva === "exame" ? "exame" : "vacina_tratamento";
     setForm((f) => ({
       ...f,
-      tipoBucket: bucket, categoriaPreventiva: ev?.categoria_preventiva === "tratamento" ? "tratamento" : "vacina",
+      tipoRepasse: false, tipoBucket: bucket, categoriaPreventiva: ev?.categoria_preventiva === "tratamento" ? "tratamento" : "vacina",
       modoEvento: "existente", eventoId: String(r.evento_sanitario_id),
       doencaId: r.doenca_id ? String(r.doenca_id) : "",
       produtoPadrao: ev?.produto_padrao || "", dosePadrao: ev?.dose_padrao != null ? String(ev.dose_padrao) : "",
@@ -343,27 +347,48 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
   const passos: PassoWizard<CalendarioForm>[] = [
     {
       id: "tipo", titulo: "Tipo",
-      render: ({ form: f, setForm: sf }) => (
-        <div>
-          <p style={nota}>Vacina e Tratamento usam exatamente os mesmos campos — só Exame é diferente (sem produto/dose/via, sem baixa de estoque).</p>
-          <div className="flex items-center gap-2 mt-3">
-            <button type="button" className={f.tipoBucket === "vacina_tratamento" ? "btn-primary" : "btn-secondary"}
-              onClick={() => sf({ ...f, tipoBucket: "vacina_tratamento" })}>Vacina / Tratamento</button>
-            <button type="button" className={f.tipoBucket === "exame" ? "btn-primary" : "btn-secondary"}
-              onClick={() => sf({ ...f, tipoBucket: "exame", modoEvento: "existente", eventoId: "" })}>Exame</button>
-          </div>
-          {f.tipoBucket === "vacina_tratamento" && (
-            <div className="flex items-center gap-4 mt-3" style={{ fontSize: "0.85rem" }}>
-              <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
-                <input type="radio" checked={f.categoriaPreventiva === "vacina"} onChange={() => sf({ ...f, categoriaPreventiva: "vacina" })} /> Vacina
-              </label>
-              <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
-                <input type="radio" checked={f.categoriaPreventiva === "tratamento"} onChange={() => sf({ ...f, categoriaPreventiva: "tratamento" })} /> Tratamento
-              </label>
+      // Vermífugo = categoria_preventiva "tratamento" (é o Vermífugo do seed do
+      // calendário fixo, antiparasitário aplicado por peso). Repasse não é uma
+      // regra do calendário: é uma configuração única da fazenda, gravada pelo
+      // CartaoRepasse (PUT /agenda/repasse/config).
+      validar: (f) => (f.tipoRepasse ? "A detecção de cio de repasse é uma configuração da fazenda: preencha e salve no cartão abaixo. Para cadastrar Vacina, Exame ou Vermífugo, escolha outro tipo." : null),
+      render: ({ form: f, setForm: sf }) => {
+        const opcoes: { id: "vacina" | "exame" | "vermifugo" | "repasse"; label: string; desc: string }[] = [
+          { id: "vacina", label: "Vacina", desc: "Produto aplicado por dose, em uma janela de aplicação." },
+          { id: "exame", label: "Exame", desc: "Coleta ou inoculação e resultado por animal (sem produto/dose/via, sem baixa de estoque)." },
+          { id: "vermifugo", label: "Vermífugo", desc: "Antiparasitário aplicado por peso, de tempos em tempos." },
+          { id: "repasse", label: "Detecção de cio de repasse", desc: "Checagem de retorno ao cio depois da inseminação." },
+        ];
+        const atual = f.tipoRepasse ? "repasse" : f.tipoBucket === "exame" ? "exame" : f.categoriaPreventiva === "tratamento" ? "vermifugo" : "vacina";
+        function escolher(id: typeof opcoes[number]["id"]) {
+          if (id === "exame") sf({ ...f, tipoRepasse: false, tipoBucket: "exame", modoEvento: "existente", eventoId: "" });
+          else if (id === "repasse") sf({ ...f, tipoRepasse: true });
+          else sf({ ...f, tipoRepasse: false, tipoBucket: "vacina_tratamento", categoriaPreventiva: id === "vermifugo" ? "tratamento" : "vacina" });
+        }
+        return (
+          <div>
+            <p style={nota}>O que é este protocolo preventivo? Só Exame é diferente dos demais (sem produto/dose/via, sem baixa de estoque).</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3" role="radiogroup" aria-label="Tipo do protocolo preventivo">
+              {opcoes.map((o) => {
+                const ativo = o.id === atual;
+                return (
+                  <button key={o.id} type="button" role="radio" aria-checked={ativo} onClick={() => escolher(o.id)} title={o.desc}
+                    style={{
+                      textAlign: "left", padding: "0.6rem 0.75rem", borderRadius: "var(--r-sm)", cursor: "pointer",
+                      border: `1px solid ${ativo ? "var(--dourado)" : "var(--border)"}`,
+                      background: ativo ? "var(--pill-active-bg)" : "transparent",
+                      color: ativo ? "var(--dourado-light)" : "var(--text)",
+                    }}>
+                    <span style={{ display: "block", fontWeight: 700, fontSize: "0.85rem" }}>{o.label}</span>
+                    <span style={{ display: "block", fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>{o.desc}</span>
+                  </button>
+                );
+              })}
             </div>
-          )}
-        </div>
-      ),
+            {f.tipoRepasse && <CartaoRepasse />}
+          </div>
+        );
+      },
     },
     {
       id: "identificacao", titulo: "Identificação",
@@ -640,7 +665,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
           <div>
             <p style={{ fontSize: "0.82rem", marginBottom: "0.6rem" }}><strong>{nomeEvento || "(sem evento)"}</strong></p>
             <ul style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.9, paddingLeft: "1.1rem" }}>
-              <li>Tipo: {ehExame ? "Exame" : f.categoriaPreventiva === "tratamento" ? "Tratamento" : "Vacina"}</li>
+              <li>Tipo: {ehExame ? "Exame" : f.categoriaPreventiva === "tratamento" ? "Vermífugo" : "Vacina"}</li>
               <li>Categoria(s) alvo: {f.categoriaAlvoSel.join(", ") || "—"}</li>
               <li>Doença: {doencas.find((d) => String(d.id) === f.doencaId)?.nome || "—"}</li>
               <li>Repete por: {f.modoFreq === "periodica" ? `a cada ${f.freqValor} ${FREQUENCIA_UNIDADES.find((u) => u.v === f.freqUnidade)?.l}` : `evento de vida (${gatilhosVida.find((g) => g.gatilho === f.gatilho)?.rotulo || f.gatilho})`}</li>
@@ -830,14 +855,14 @@ function ListaEntradaCadastroSanitario({
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <p style={nota}>Cadastro de vacina/tratamento/exame e das regras que geram o calendário sanitário.</p>
+        <p style={nota}>Cadastro de vacina/vermífugo/exame e das regras que geram o calendário sanitário.</p>
         <button type="button" className="btn-primary" style={{ fontSize: "0.8rem", whiteSpace: "nowrap" }} onClick={onNovo}>
           <Plus size={14} /> Nova regra do calendário sanitário
         </button>
       </div>
 
       <SecaoRecolhivel titulo="Eventos cadastrados" defaultAberta={false}
-        descricao="Vacinas, tratamentos e exames já cadastrados" badge={<span style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700 }}>{eventos.length}</span>}>
+        descricao="Vacinas, vermífugos e exames já cadastrados" badge={<span style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700 }}>{eventos.length}</span>}>
         <div className="overflow-x-auto" style={{ maxHeight: "320px" }}>
           <table className="fazenda-table" style={{ margin: 0 }}>
             <thead><tr>
@@ -853,7 +878,7 @@ function ListaEntradaCadastroSanitario({
                 <tr key={ev.id}>
                   <td style={{ fontWeight: 700 }}>{ev.nome}</td>
                   <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-                    {ev.categoria_preventiva === "exame" ? "Exame" : ev.categoria_preventiva === "tratamento" ? "Tratamento" : "Vacina"}
+                    {ev.categoria_preventiva === "exame" ? "Exame" : ev.categoria_preventiva === "tratamento" ? "Vermífugo" : "Vacina"}
                   </td>
                   <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{ev.doenca_nome || "—"}</td>
                   <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{ev.exame_definicao_nome || ev.produto_padrao || "—"}</td>

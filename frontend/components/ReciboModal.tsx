@@ -38,10 +38,14 @@ export function ReciboModal({ lanc, onClose }: { lanc: LancamentoRecibo; onClose
   }, [lanc.numero_lancamento]);
 
   async function salvar() {
-    setErro(null);
+    setErro(null); setSucesso(null);
     try {
       const doc = await gerarReciboPDF(lanc);
-      await salvarArquivo(doc.output("blob"), `recibo_${lanc.numero_lancamento || "lancamento"}.pdf`);
+      const gravado = await salvarArquivo(doc.output("blob"), `recibo_${lanc.numero_lancamento || "lancamento"}.pdf`);
+      // Dentro do app nativo, salvarArquivo não abre nem mostra nada sozinho
+      // (grava em Directory.Documents e só devolve o URI) — sem este aviso,
+      // "Salvar" gerava o PDF de verdade mas parecia não ter feito nada.
+      if (gravado) setSucesso("Recibo salvo.");
     } catch (e: any) {
       setErro(e.message || "Erro ao salvar o recibo");
     }

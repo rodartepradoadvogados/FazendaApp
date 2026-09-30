@@ -18,7 +18,7 @@ from fazenda.auth import exigir_admin, get_fazenda_atual_id, get_fazenda_id_escr
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, Animal, AplicacaoAgendada, BaixaAnimal, ColostragemBezerra, CompraAnimal, ControleLeiteiro,
-    CronogramaSanitarioAnimal, ExameResultado, FotoCampo, GrauSangue, Lactacao, LidaAplicacao, MotivoBaixa,
+    CronogramaSanitarioAnimal, CronogramaSanitarioAplicacaoAnimal, ExameResultado, FotoCampo, GrauSangue, Lactacao, LidaAplicacao, MotivoBaixa,
     MotivoVenda, MovimentoLote, OcorrenciaClinica, Parto, PesagemCorporal, ProtocoloCustomizadoAplicacao,
     ProtocoloIatfAplicacao, ProtocoloInducaoAplicacao, ProtocoloSanitarioAplicacao, ProtocoloSanitarioLancamento,
     QualidadeLeite, Raca, Sanidade, Secagem, SeedFlag, Servico, Usuario, VendaAnimal,
@@ -331,6 +331,7 @@ _TABELAS_NUMERO_ANIMAL: list[tuple[type, str]] = [
     (Servico, "numero_matriz"), (ProtocoloIatfAplicacao, "numero_matriz"), (Parto, "numero_matriz"),
     (ColostragemBezerra, "numero_animal"), (Sanidade, "numero_matriz"), (AplicacaoAgendada, "numero_matriz"),
     (ExameResultado, "numero_matriz"), (CronogramaSanitarioAnimal, "numero_matriz"),
+    (CronogramaSanitarioAplicacaoAnimal, "numero_matriz"),
     (ProtocoloSanitarioLancamento, "numero_matriz"), (ProtocoloSanitarioAplicacao, "numero_matriz"),
     (ProtocoloInducaoAplicacao, "numero_matriz"), (OcorrenciaClinica, "numero_matriz"),
     (ProtocoloCustomizadoAplicacao, "numero_matriz"), (LidaAplicacao, "numero_matriz"),

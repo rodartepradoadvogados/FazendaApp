@@ -102,14 +102,27 @@ def montar_calendario_visual(session: Session, fazenda_id: int | None, data_inic
         }
 
         if c.usa_cronograma:
-            cron = cronograma_aberto(session, c)
-            if not (data_inicio <= cron.data_evento <= data_fim):
-                continue
-            cron_info, animais = _cronograma_info(cron)
-            ocorrencias.append({
-                **base, "data": cron.data_evento.isoformat(), "animais": animais, "estimativa": False,
-                "estimativa_base": None, "cronograma": cron_info,
-            })
+            # Uma regra pode ter, ao mesmo tempo, a lista de espera ("aberto") e
+            # agendamentos já criados a partir dela (fatia 7); cada um é uma
+            # ocorrência. A lista de espera vazia só aparece se for a única.
+            ativos = session.exec(
+                select(CronogramaSanitario)
+                .where(CronogramaSanitario.calendario_sanitario_id == c.id)
+                .where(CronogramaSanitario.status.in_(("aberto", "agendado", "em_montagem")))
+                .order_by(CronogramaSanitario.data_evento)
+            ).all()
+            if not ativos:
+                ativos = [cronograma_aberto(session, c)]
+            for cron in ativos:
+                if not (data_inicio <= cron.data_evento <= data_fim):
+                    continue
+                cron_info, animais = _cronograma_info(cron)
+                if cron.status == "aberto" and animais == 0 and len(ativos) > 1:
+                    continue
+                ocorrencias.append({
+                    **base, "data": cron.data_evento.isoformat(), "animais": animais, "estimativa": False,
+                    "estimativa_base": None, "cronograma": cron_info,
+                })
             continue
 
         if ev.tipo_agendamento == "evento" and ev.gatilho:

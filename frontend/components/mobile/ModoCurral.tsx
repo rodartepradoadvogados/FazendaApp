@@ -36,6 +36,7 @@ import { fetchAgenda, today, fetchAnimais } from "@/lib/api";
 import { fetchComCache, enviarOuEnfileirar, useOnline } from "@/lib/offline";
 import { useCache, type Animal } from "@/components/mobile/lancar/comum";
 import { CurralSanitario } from "@/components/mobile/CurralSanitario";
+import { AplicarPreventivoMobile, AvisoReagentesMobile, type EventoAplicarMob } from "@/components/mobile/AplicarPreventivoMobile";
 
 const FormReprodutivo = dynamic(() => import("@/components/mobile/lancar/FormReprodutivo").then((m) => m.FormReprodutivo), { ssr: false });
 const FormProducao = dynamic(() => import("@/components/mobile/lancar/FormProducao").then((m) => m.FormProducao), { ssr: false });
@@ -46,7 +47,7 @@ type Evento = {
   id: string; data: string; categoria: string; descricao: string;
   numero_animal?: string | null; lote?: string | null; observacao?: string | null;
   tipo?: string | null;
-};
+} & Partial<Omit<EventoAplicarMob, "id" | "descricao">>;
 type Agenda = { eventos?: Evento[] };
 
 // Tipos que exigem um painel de confirmação rico (dose, produto, veterinário,
@@ -55,7 +56,7 @@ type Agenda = { eventos?: Evento[] };
 // direto aqui e vira "abrir na Agenda completa".
 const TIPOS_COMPLEXOS = new Set([
   "protocolo_iatf", "protocolo_inducao", "protocolo_sanitario", "protocolo_customizado",
-  "cronograma_sanitario_sugeridos", "cronograma_sanitario_modo", "cronograma_sanitario_urgente", "cronograma_sanitario_aplicar",
+  "cronograma_sanitario_sugeridos", "cronograma_sanitario_modo", "cronograma_sanitario_urgente",
   "bst_aplicacao", "sugestao_movimentacao", "colostragem_pendente", "igg_pendente",
   "evento_sanitario", "calendario_sanitario", "aplicacao_agendada",
   // Diária de diarista: 3 decisões (Confirmar/Meia diária/Não teve), não um
@@ -65,7 +66,12 @@ const TIPOS_COMPLEXOS = new Set([
   "diaria_trabalho",
 ]);
 function ehSimples(e: Evento): boolean {
-  return !e.tipo || !TIPOS_COMPLEXOS.has(e.tipo);
+  return !e.tipo || (!TIPOS_COMPLEXOS.has(e.tipo) && !ehAplicarPreventivo(e));
+}
+// Aplicar do preventivo (vacina/exame agendado): NÃO é um check simples — pede quem aplicou (um toque) e usa o endpoint
+// único com canal "Curral" (grava em Concluídos e no log). Fatia 9b, item B.
+function ehAplicarPreventivo(e: Evento): boolean {
+  return e.tipo === "cronograma_sanitario_aplicar";
 }
 
 function tituloEvento(e: Evento): string {
@@ -163,6 +169,29 @@ function CardCurral({ e, simples, atrasado, cor, Icon, transicao, onConcluir, on
   );
 }
 
+/** Cartão do aplicar do preventivo no Modo Curral: 1º toque abre; quem aplicou é um toque; "Aplicar" é um botão grande. */
+function CardCurralAplicar({ e, atrasado, cor, Icon, onConcluido }: { e: Evento; atrasado: boolean; cor: string; Icon: any; onConcluido: () => void }) {
+  const [aberto, setAberto] = useState(false);
+  return (
+    <div className="linha-colapsavel" data-testid="curral-aplicar">
+      <div className="curral-card" style={{ borderLeftColor: atrasado ? "var(--mob-vermelho)" : cor, flexDirection: "column", alignItems: "stretch", gap: "0.7rem" }}>
+        <button type="button" onClick={() => setAberto((v) => !v)} aria-expanded={aberto}
+                style={{ display: "flex", alignItems: "center", gap: "0.8rem", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", color: "inherit", minHeight: 56, width: "100%" }}>
+          <span className="curral-card-icone" style={{ background: `color-mix(in srgb, ${cor} 18%, transparent)`, color: cor }}><Icon size={26} /></span>
+          <span className="curral-card-texto">
+            <span className="curral-card-titulo">{e.descricao}</span>
+            <span className="curral-card-sub">{(e.animais || []).length} animal(is) · {atrasado ? "Atrasado" : "Hoje"} · toque para aplicar</span>
+          </span>
+          <ChevronRight size={26} style={{ transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+        </button>
+        {aberto && (
+          <AplicarPreventivoMobile e={e as EventoAplicarMob} canal="Curral" onFeito={() => { setTimeout(onConcluido, 11000); }} />
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ModoCurral({ onVoltar }: { onVoltar: () => void }) {
   const online = useOnline();
   const hoje = today();
@@ -252,7 +281,12 @@ export function ModoCurral({ onVoltar }: { onVoltar: () => void }) {
           </div>
         )}
         <div style={{ display: "grid", gap: "0.7rem" }}>
-          {pendentesHoje.map((e) => (
+          {pendentesHoje.map((e) => ehAplicarPreventivo(e) ? (
+            <CardCurralAplicar
+              key={e.id} e={e} atrasado={e.data < hoje} cor={corCategoria(e.categoria)} Icon={iconeCategoria(e.categoria)}
+              onConcluido={() => setFeitos((p) => new Set(p).add(e.id))}
+            />
+          ) : (
             <CardCurral
               key={e.id} e={e} simples={ehSimples(e)} atrasado={e.data < hoje}
               cor={corCategoria(e.categoria)} Icon={iconeCategoria(e.categoria)}
@@ -299,6 +333,8 @@ export function ModoCurral({ onVoltar }: { onVoltar: () => void }) {
       {!online && (
         <div className="curral-aviso curral-aviso-offline">Sem conexão agora — os toques abaixo ficam guardados e são enviados sozinhos depois.</div>
       )}
+
+      <AvisoReagentesMobile />
 
       <div className="curral-secao">Fazer agora</div>
       <button type="button" className="curral-fazer" data-estado={estadoFazer} onClick={() => setFazerAberto(true)}>

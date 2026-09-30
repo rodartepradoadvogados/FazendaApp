@@ -97,7 +97,9 @@ class TestRecorrencia:
             ))
             s.commit()
 
-        # A rota GET /agenda/ dispara a geração "lazy pull" das próximas ocorrências.
+        # POST /agenda/materializar dispara a geração "lazy pull" das próximas
+        # ocorrências (GET /agenda é somente leitura).
+        assert c.post("/agenda/materializar").status_code == 200
         r = c.get("/agenda/?dias=0")
         assert r.status_code == 200
 
@@ -123,7 +125,7 @@ class TestRecorrencia:
             ))
             s.commit()
 
-        c.get("/agenda/?dias=0")
+        c.post("/agenda/materializar")
         r1 = c.get("/agenda/?dias=0")
         assert r1.status_code == 200
 
@@ -132,7 +134,7 @@ class TestRecorrencia:
                 select(AgendaManual).where(AgendaManual.origem_recorrencia_id != None)  # noqa: E711
             ).all())
 
-        c.get("/agenda/?dias=0")
+        c.post("/agenda/materializar")
 
         with Session(engine) as s:
             total_segunda = len(s.exec(

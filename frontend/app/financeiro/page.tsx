@@ -85,6 +85,8 @@ type Lanc = {
   // Tem comprovante/anexo em arquivo — inclusive o comprovante único de um
   // pagamento em lote, que é o mesmo arquivo para todas as notas da remessa.
   tem_comprovante?: boolean;
+  // Conta nascida de um agendamento preventivo (Protocolos): link de volta ao agendamento.
+  origem_preventivo?: { cronograma_id: number; protocolo: string; subtipo: "honorario" | "produto" | null; data_evento: string } | null;
   conta_bancaria: string | null; forma_pagamento: string | null; data_vencimento_cartao: string | null; entregue: boolean | null;
   parcela_num: number | null; parcela_total: number | null;
   data_competencia: string | null; data_pagamento: string | null; data_vencimento: string | null; data_emissao: string | null;
@@ -3944,6 +3946,12 @@ function TabelaContas({ rel, itens, planoContas, documentoInicial, onTratar, onE
                     </td>
                     <td style={{ fontSize: "0.78rem" }}>
                       {r.descricao || "—"}
+                      {r.origem_preventivo && (
+                        <a href="/protocolos?aba=acompanhamento" title={`Nasceu do agendamento de ${r.origem_preventivo.protocolo} (${formatDate(r.origem_preventivo.data_evento)})`}
+                           style={{ display: "inline-block", marginTop: "0.25rem", fontSize: "0.65rem", fontWeight: 700, color: "var(--dourado-light)", border: "1px solid var(--dourado-light)", borderRadius: "999px", padding: "0.05rem 0.4rem", textDecoration: "none" }}>
+                          Protocolo preventivo · {r.origem_preventivo.protocolo}
+                        </a>
+                      )}
                       {(r.itens || []).some((it) => it.eh_vale) && (
                         <span title="Item lançado como vale — fora dos relatórios gerenciais"
                           style={{ marginLeft: "0.4rem", fontSize: "0.65rem", fontWeight: 700, color: "var(--dourado-light)",

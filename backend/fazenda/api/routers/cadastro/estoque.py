@@ -321,6 +321,9 @@ SEED_CATEGORIAS_ESTOQUE = [
     "Ração e insumos alimentares", "Sêmen e genética", "Medicamentos e produtos veterinários",
     "Equipamentos e manutenção", "Combustível e transporte", "Serviços veterinários/técnicos",
     "Energia e utilidades", "Embalagens e materiais", "Outros",
+    # Fatia 10: produto do repasse (adesivo/detector de cio) — vinculado em
+    # Protocolos > Cadastro > Sanitário > Preventivo > Detecção de cio de repasse.
+    "Detecção de cio de repasse",
 ]
 SEED_FINALIDADES_ESTOQUE = ["Medicamento", "Ração/Alimento", "Material/Insumo", "Equipamento", "Outro"]
 SEED_UNIDADES_ESTOQUE = ["ml", "kg", "L", "unidade", "dose", "metro", "saca 30kg", "saca 60kg"]

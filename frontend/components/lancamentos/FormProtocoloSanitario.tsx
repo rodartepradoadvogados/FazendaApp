@@ -3,8 +3,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { Plus } from "lucide-react";
 import {
-  fetchAgenda, fetchLotes, fetchMastiteContexto, fetchMastiteOpcoes, fetchMedicamentos, fetchProtocolosSanitarios,
-  lancarProtocoloSanitario, previewCriteriosLote,
+  fetchAgenda, fetchChecklistTemplate, fetchLotes, fetchMastiteContexto, fetchMastiteOpcoes, fetchMedicamentos, fetchProtocolosSanitarios,
+  lancarProtocoloSanitario, previewCriteriosLote, type ChecklistTemplateItemDTO,
 } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -20,6 +20,8 @@ const CadastroProtocolosSanitarios = dynamic(() => import("@/components/Cadastro
 
 type ProtocoloEtapaLocal = { id?: number; dia: number; criterio_tipo?: string; produto: string; dosagem: number; unidade: string; via?: string | null };
 type ProtocoloLocal = { id: number; nome: string; eh_mastite: boolean; ativo: boolean; etapas: ProtocoloEtapaLocal[] };
+// Bloco `carencia` de /estoque/medicamentos (rules.carencia.carencia_dict).
+type CarenciaCatalogo = { leite_dias: number | null; carne_dias: number | null; proibido_lactacao: boolean; texto: string };
 const TETOS = ["AE", "AD", "PD", "PE"] as const;
 const CLASSIFICACOES_MASTITE = [["clinica", "Clínica"], ["subclinica", "Subclínica"], ["ambiental", "Ambiental"]] as const;
 // ─────────────────────── BST — seleção nas tabelas (Aptas/Incluir no próximo BST/Inaptas) ───────────────────────
@@ -176,6 +178,29 @@ export function FormProtocoloSanitario({ animais, estoque, onSalvo }: { animais:
       ...e, data: addDias(dataInicio, e.dia - 1),
     }));
   }, [protocolo, dataInicio]);
+
+  // Checklist do Curativo — itens do template "curativo" (backend:
+  // rules.checklist_sanitario.TEMPLATE_PADRAO_CURATIVO). O item "carencia"
+  // mostra o prazo de leite/carne vindo do CATÁLOGO do medicamento
+  // (/estoque/medicamentos → `carencia`), nunca digitado. É só aviso: não
+  // bloqueia o lançamento e nada dele é gravado.
+  const [checklistTpl, setChecklistTpl] = useState<ChecklistTemplateItemDTO[]>([]);
+  const [carenciaPorProduto, setCarenciaPorProduto] = useState<Record<string, CarenciaCatalogo>>({});
+  useEffect(() => {
+    fetchChecklistTemplate("curativo").then(setChecklistTpl).catch(() => setChecklistTpl([]));
+    fetchMedicamentos({ incluir_sem_estoque: true })
+      .then((m: any[]) => setCarenciaPorProduto(Object.fromEntries(m.filter((x) => x.carencia).map((x) => [x.nome, x.carencia as CarenciaCatalogo]))))
+      .catch(() => setCarenciaPorProduto({}));
+  }, []);
+  const carenciasDoProtocolo = useMemo(() => {
+    const vistos = new Set<string>();
+    return (protocolo?.etapas || []).flatMap((e) => {
+      const nome = (e.id != null && escolhasMed[e.id]) || (((e.criterio_tipo || "medicamento") === "medicamento") ? e.produto : "");
+      if (!nome || vistos.has(nome)) return [];
+      vistos.add(nome);
+      return [{ nome, carencia: carenciaPorProduto[nome] || null }];
+    });
+  }, [protocolo, escolhasMed, carenciaPorProduto]);
 
   async function salvar() {
     setErro(null); setSucesso(null);
@@ -401,6 +426,38 @@ export function FormProtocoloSanitario({ animais, estoque, onSalvo }: { animais:
             </tbody>
           </table>
           <p style={nota}>Ao salvar, cria um evento na Agenda por dia — marcar "realizado" dá baixa automática do produto no Estoque.</p>
+        </div>
+      )}
+
+      {protocolo && checklistTpl.length > 0 && (
+        <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+          <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.4rem" }}>Checklist da aplicação</p>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: "0.5rem" }}>
+            {checklistTpl.map((it) => (
+              <li key={it.chave} style={{ fontSize: "0.8rem" }}>
+                <span style={{ fontWeight: 600 }}>{it.nome}</span>
+                {it.chave === "carencia" && (
+                  <div style={{ marginTop: "0.2rem", display: "grid", gap: "0.15rem" }}>
+                    {carenciasDoProtocolo.length === 0 && (
+                      <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Escolha o medicamento das etapas por critério para ver a carência.</span>
+                    )}
+                    {carenciasDoProtocolo.map(({ nome, carencia }) => (
+                      <span key={nome} style={{ fontSize: "0.75rem", color: carencia?.proibido_lactacao ? "var(--red)" : "var(--text-muted)" }}>
+                        {nome}: {carencia ? carencia.texto.replace(/^Carência:\s*/, "") : "carência não informada no catálogo"}
+                      </span>
+                    ))}
+                    <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                      {vinculo === "lote" && !protocolo.eh_mastite ? "Vale para todos os animais dos lotes escolhidos: confira quem está em lactação antes de aplicar." : "Prazos do catálogo do medicamento — não são digitados aqui."}
+                    </span>
+                  </div>
+                )}
+                {it.chave === "estoque" && etapasFixas.some((e) => estoqueBaixo(e.produto)) && (
+                  <div style={{ fontSize: "0.75rem", color: "var(--amber)" }}>Há produto com estoque zerado, negativo ou no mínimo (veja o cronograma acima).</div>
+                )}
+              </li>
+            ))}
+          </ul>
+          <p style={nota}>Só aviso: não bloqueia o lançamento.</p>
         </div>
       )}
 

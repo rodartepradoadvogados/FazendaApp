@@ -10,6 +10,7 @@ import { usePainelCowDataCor } from "@/lib/painelCowDataTema";
 import { registrarLeituraKpisCowData, calcularTendencia, type PontoHistoricoKpisCowData } from "@/lib/painelCowDataHistorico";
 import { Sparkline, SetaTendencia } from "@/components/painel-cowdata/KpiTendencia";
 import { ehAppDeCampo } from "@/lib/nativo";
+import RotinaListaEsperaResumo from "@/components/painel-cowdata/RotinaListaEsperaResumo";
 import InicioMobilePainelCowData from "@/components/painel-cowdata/mobile/InicioMobilePainelCowData";
 
 // Ordem de exibição do rodapé "Base de fazendas por plano" — nomes batem com
@@ -266,6 +267,8 @@ export default function CockpitCowData() {
           </div>
         </div>
       )}
+
+      <RotinaListaEsperaResumo />
 
       {/* Rodapé — base de fazendas por plano. */}
       <div style={{ borderTop: `1px solid ${COR.borda}`, paddingTop: "1rem" }}>

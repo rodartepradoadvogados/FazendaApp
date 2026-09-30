@@ -248,7 +248,7 @@ class TestCalendarioSanitarioCrud:
         # já usa a mesma data que `cronograma_aberto()` usaria ao criar o 1º.
         assert r.json()["proxima_ocorrencia"] == "2026-09-20"
 
-        c.get("/agenda/", params={"data": "2026-09-12"})  # materializa o 1º cronograma
+        c.post("/agenda/materializar", params={"data": "2026-09-12"})  # materializa o 1º cronograma
         regra = next(x for x in c.get("/sanidade/calendario").json() if x["id"] == calendario_id)
         assert regra["proxima_ocorrencia"] == "2026-09-20"
 
@@ -265,7 +265,7 @@ class TestCalendarioSanitarioCrud:
             "produto": "Ivermectina 4%", "dose": 1, "unidade": "ml", "via": "Subcutânea",
         })
         assert r.status_code == 200, r.text
-        c.get("/agenda/", params={"data": "2026-09-12"})  # materializa o 2º cronograma
+        c.post("/agenda/materializar", params={"data": "2026-09-12"})  # materializa o 2º cronograma
 
         regra = next(x for x in c.get("/sanidade/calendario").json() if x["id"] == calendario_id)
         assert regra["proxima_ocorrencia"] == "2026-11-19"
@@ -294,7 +294,7 @@ class TestExcluirCalendarioCascade:
         assert r.status_code == 200, r.text
         calendario_id = r.json()["id"]
 
-        c.get("/agenda/", params={"data": "2026-09-12"})  # materializa o 1º cronograma
+        c.post("/agenda/materializar", params={"data": "2026-09-12"})  # materializa o 1º cronograma
         cronograma_id = c.get("/sanidade/cronogramas", params={"calendario_id": calendario_id}).json()[0]["id"]
         with Session(engine) as s:
             s.add(CronogramaSanitarioAnimal(
@@ -326,7 +326,7 @@ class TestExcluirCalendarioCascade:
             "frequencia_valor": 60, "frequencia_unidade": "dias", "usa_cronograma": True,
         })
         calendario_id_1 = r1.json()["id"]
-        c.get("/agenda/", params={"data": "2026-09-12"})
+        c.post("/agenda/materializar", params={"data": "2026-09-12"})
         assert c.get("/sanidade/cronogramas", params={"calendario_id": calendario_id_1}).json()
 
         c.delete(f"/sanidade/calendario/{calendario_id_1}")

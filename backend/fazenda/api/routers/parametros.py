@@ -154,4 +154,15 @@ def atualizar_parametro(
     linha.atualizado_em = datetime.utcnow()
     session.add(linha)
     session.commit()
-    return {"ok": True, "chave": chave, "valor": dados.valor}
+    # Rotina da lista de espera: ao ativar/salvar os parâmetros dela, roda já
+    # (não espera a passada diária). Nunca faz a gravação do parâmetro falhar.
+    rotina = None
+    if fazenda_id is not None:
+        from fazenda.rules import rotina_lista_espera as _rotina
+        if chave in _rotina.CHAVES:
+            try:
+                rotina = _rotina.executar_fazenda(session, fazenda_id, "parametros")
+            except Exception:  # noqa: BLE001
+                session.rollback()
+                rotina = {"executou": False, "motivo": "erro", "entraram": 0}
+    return {"ok": True, "chave": chave, "valor": dados.valor, **({"rotina_lista_espera": rotina} if rotina else {})}

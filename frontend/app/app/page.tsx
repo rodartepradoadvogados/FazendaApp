@@ -14,6 +14,7 @@ import { MobCard, MobTitulo, MobCheck, MobAviso, RotuloCategoria, IconeCategoria
 import { fetchAgenda, fetchApresentacaoDieta, fetchPrincipiosAtivos, fetchEventosSanitarios, fetchLotes, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, today, type ApresentacaoDieta } from "@/lib/api";
 import { fetchComCache, cacheEm, enviarOuEnfileirar, useOnline } from "@/lib/offline";
 import { VIAS_APLICACAO } from "@/lib/constants";
+import { AplicarPreventivoMobile, AvisoReagentesMobile, type EventoAplicarMob } from "@/components/mobile/AplicarPreventivoMobile";
 
 // Carregado só quando o cartão "Aplicação de BST hoje" é aberto — mesmo
 // componente rico (com seleção/aplicar) já usado em Lançar > Produção > BST.
@@ -144,6 +145,14 @@ type Evento = {
   // Card-resumo "N animal(is) na janela" (tipo cronograma_sanitario_sugeridos)
   // — leva direto ao detalhe do cronograma em Sanidade, sem decidir aqui.
   cronograma_id?: number | null;
+  // Aplicar do preventivo pelo endpoint único (fatia 9b): quem pode aplicar, exigência de veterinário, exame e checklist.
+  fase?: "inoculacao" | "leitura" | "coleta" | null;
+  tipo_protocolo?: string | null;
+  exige_veterinario?: boolean;
+  aplicadores?: { id: number; nome: string; tipo?: string | null; crmv?: string | null; veterinario: boolean }[];
+  aplicador_sugerido_id?: number | null;
+  checklist_total?: number;
+  checklist_resolvidos?: number;
 };
 
 // Um grupo de aplicações do mesmo protocolo/dia/data (lote) — para oferecer
@@ -277,8 +286,6 @@ export default function AgendaMovel() {
   const [adiandoCron, setAdiandoCron] = useState<Set<string>>(new Set());
   // (3) "aplicar": mesmo padrão lote/individual do IATF.
   const [cronAplicarAberto, setCronAplicarAberto] = useState<Set<string>>(new Set());
-  const [cronAplicarModo, setCronAplicarModo] = useState<Record<string, "lote" | "individual">>({});
-  const [cronAplicarFeitos, setCronAplicarFeitos] = useState<Record<string, Set<string>>>({});
 
   // Alerta de nova dieta: cartão expansível que mostra a apresentação da dieta
   // (produtos, por cabeça, total/dia, total/trato e kg no vagão) para o funcionário.
@@ -657,28 +664,6 @@ export default function AgendaMovel() {
       setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
     } finally {
       setAdiandoCron((p) => { const n = new Set(p); n.delete(e.id); return n; });
-    }
-  }
-
-  // (3) Aplicar: em lote (sem `animais` = todos os incluídos) ou individual
-  // (1 número por vez — o backend só conclui o cronograma quando o último
-  // incluído for confirmado).
-  async function confirmarCronAplicar(e: Evento, animaisSel?: string[], individual = false) {
-    setAviso(null);
-    if (!individual) setFeitos((p) => new Set(p).add(e.id));
-    try {
-      const corpo: Record<string, unknown> = { evento_id: e.id };
-      if (animaisSel && animaisSel.length) corpo.animais = animaisSel;
-      const r = await enviarOuEnfileirar("/agenda/realizados", corpo,
-        `Aplicar ${e.descricao}${animaisSel ? ` — ${animaisSel.join(", ")}` : ""}`, "POST");
-      if (individual && animaisSel) {
-        setCronAplicarFeitos((p) => { const n = new Set(p[e.id] || []); animaisSel.forEach((a) => n.add(a)); return { ...p, [e.id]: n }; });
-      }
-      if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
-      else setAviso({ tipo: "ok", msg: individual ? "Confirmado." : "Aplicação confirmada." });
-    } catch (err) {
-      if (!individual) setFeitos((p) => { const n = new Set(p); n.delete(e.id); return n; });
-      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
     }
   }
 
@@ -1373,14 +1358,13 @@ export default function AgendaMovel() {
     // aplicar em lote (todos os incluídos de uma vez) ou individualizado
     // (mesmo padrão do protocolo IATF acima).
     if (e.tipo === "cronograma_sanitario_aplicar") {
+      // Aplicar pelo ENDPOINT ÚNICO (POST /sanidade/cronogramas/{id}/aplicar, canal "Agenda"): grava em Concluídos e no log,
+      // exige aplicador (um toque, sem digitar) e não usa mais POST /agenda/realizados (fatia 9b, item B).
       const aberto = cronAplicarAberto.has(e.id);
-      const modo = cronAplicarModo[e.id];
-      const animais = e.animais || [];
-      const feitosAnimal = cronAplicarFeitos[e.id] || new Set<string>();
-      const pendentes = animais.filter((n) => !feitosAnimal.has(n));
       return (
         <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }} estado={feito ? "feito" : atrasada ? "atrasado" : "normal"}>
           <button type="button" onClick={() => setCronAplicarAberto((p) => { const n = new Set(p); n.has(e.id) ? n.delete(e.id) : n.add(e.id); return n; })}
+            aria-expanded={aberto}
             style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
             <IconeCategoria chave={chave} />
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -1399,45 +1383,11 @@ export default function AgendaMovel() {
 
           {aberto && !feito && (
             <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
-              {!modo ? (
-                <>
-                  <p style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginBottom: "0.55rem" }}>Aplicar em lote ou individual?</p>
-                  <div style={{ display: "flex", gap: "0.6rem" }}>
-                    <button type="button" className="mob-btn" style={{ flex: 1 }} onClick={() => setCronAplicarModo((p) => ({ ...p, [e.id]: "lote" }))}>Em lote (todos)</button>
-                    <button type="button" className="mob-btn mob-btn-sec" style={{ flex: 1 }} onClick={() => setCronAplicarModo((p) => ({ ...p, [e.id]: "individual" }))}>Individual</button>
-                  </div>
-                </>
-              ) : modo === "lote" ? (
-                <>
-                  <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Animais incluídos:</p>
-                  {animais.map((n) => (
-                    <div key={n} style={{ padding: "0.45rem 0.2rem", borderBottom: "1px solid var(--mob-border)", fontWeight: 800, fontSize: "1.02rem" }}>{n}</div>
-                  ))}
-                  <button type="button" className="mob-btn" style={{ marginTop: "0.7rem" }} onClick={() => confirmarCronAplicar(e)}>
-                    Confirmar aplicação em todos
-                  </button>
-                </>
-              ) : (
-                <>
-                  <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Confirme animal por animal — aplicado?</p>
-                  {animais.map((numero) => {
-                    const jaFeito = feitosAnimal.has(numero);
-                    return (
-                      <div key={numero} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.2rem", borderBottom: "1px solid var(--mob-border)" }}>
-                        <span style={{ fontWeight: 800, fontSize: "1.05rem", flex: 1, color: jaFeito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: jaFeito ? "line-through" : "none" }}>{numero}</span>
-                        {jaFeito ? (
-                          <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Aplicado</span>
-                        ) : (
-                          <button type="button" className="mob-btn" style={{ width: "auto", padding: "0.4rem 1.1rem" }} onClick={() => confirmarCronAplicar(e, [numero], true)}>Sim</button>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {!pendentes.length && (
-                    <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)", marginTop: "0.6rem" }}>Todos os animais confirmados.</p>
-                  )}
-                </>
-              )}
+              <AplicarPreventivoMobile
+                e={e as EventoAplicarMob} canal="Agenda"
+                onFeito={(msg, offline) => { setAviso({ tipo: offline ? "offline" : "ok", msg }); }}
+                onErro={(msg) => setAviso({ tipo: "erro", msg })}
+              />
             </div>
           )}
         </MobCard>
@@ -1816,6 +1766,9 @@ export default function AgendaMovel() {
       )}
 
       {aviso && <MobAviso tipo={aviso.tipo}>{aviso.msg}</MobAviso>}
+
+      {/* Reagente de exame: aviso persistente (com o registro da notificação) também no app */}
+      <AvisoReagentesMobile />
 
       <div style={{ display: "flex", gap: "0.5rem", margin: "0 0 0.9rem" }}>
         <button type="button" className={`mob-pill${visualizacao === "lista" ? " ativa" : ""}`} style={{ flex: 1, textAlign: "center" }} onClick={() => setVisualizacao("lista")}>Lista</button>

@@ -222,6 +222,7 @@ class PessoaIn(BaseModel):
     cpf_cnpj: str | None = None
     cep: str | None = None
     observacoes: str | None = None
+    crmv: str | None = None   # registro do veterinário (aparece ao escolher quem aplica)
     ativo: bool = True
     salario_base: float | None = None
     data_admissao: date | None = None

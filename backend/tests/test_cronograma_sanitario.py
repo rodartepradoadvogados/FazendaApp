@@ -71,12 +71,28 @@ def _criar_evento_e_calendario(c, dias_ate_evento: int = 30, frequencia_valor: i
 
 
 def _agenda(c, tipo: str | None = None) -> list[dict]:
+    c.post("/agenda/materializar", params={"data": HOJE.isoformat()})
     r = c.get("/agenda/", params={"data": HOJE.isoformat()})
     assert r.status_code == 200, r.text
     eventos = r.json()["eventos"]
     if tipo:
         eventos = [e for e in eventos if e.get("tipo") == tipo]
     return eventos
+
+
+def _cron_id(c, engine) -> int:
+    """Materializa (POST /agenda/materializar) e devolve o id do 1º cronograma —
+    a Agenda não devolve mais card de "modo"/"sugeridos" (R1/R2), então o id sai
+    direto do banco."""
+    from sqlmodel import select as _select
+    c.post("/agenda/materializar", params={"data": HOJE.isoformat()})
+    with Session(engine) as s:
+        return s.exec(_select(CronogramaSanitario)).first().id
+
+
+def _lista_espera(c) -> int:
+    r = c.get("/agenda/", params={"data": HOJE.isoformat()})
+    return sum(x["quantidade"] for x in r.json()["lista_espera_sanitaria"])
 
 
 def _animal_cronograma(engine, numero_matriz: str) -> CronogramaSanitarioAnimal:
@@ -102,9 +118,10 @@ class TestTrilhaDoAnimal:
             s.add(Animal(numero="900", data_nasc=HOJE - timedelta(days=95), sexo="F", ativo=True))
             s.commit()
 
-        sugeridos = _agenda(c, "cronograma_sanitario_sugeridos")
-        assert len(sugeridos) == 1
-        assert sugeridos[0]["quantidade_sugeridos"] == 1
+        # Lista de espera NÃO é tarefa (R1): só resumo, fora de `eventos`.
+        _cron_id(c, engine)
+        assert not _agenda(c, "cronograma_sanitario_sugeridos")
+        assert _lista_espera(c) == 1
         linha = _animal_cronograma(engine, "900")
         assert linha.status == "sugerido"
         # Não deve mais gerar a pendência antiga de "aplicar agora".
@@ -126,8 +143,8 @@ class TestTrilhaDoAnimal:
             linha = s.get(CronogramaSanitarioAnimal, linha_id)
             assert linha.status == "incluido"
 
-        # A sugestão some da Agenda depois de decidida.
-        assert not _agenda(c, "cronograma_sanitario_sugeridos")
+        # A sugestão sai da lista de espera depois de decidida.
+        assert _lista_espera(c) == 0
 
     def test_excluir_animal_marca_status_excluido(self, client):
         c, engine = client
@@ -172,7 +189,7 @@ class TestIncluirAnimalForaDaJanela:
             from sqlmodel import select as _select
             assert s.exec(_select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.numero_matriz == "950")).first() is None
 
-        cronograma_id = _agenda(c, "cronograma_sanitario_modo")[0]["cronograma_id"]
+        cronograma_id = _cron_id(c, engine)
         r = c.post("/agenda/realizados", json={
             "evento_id": f"cronograma_sanitario_incluir_manual_{cronograma_id}", "numero_matriz": "950",
         })
@@ -190,7 +207,7 @@ class TestIncluirAnimalForaDaJanela:
     def test_animal_inexistente_da_404(self, client):
         c, engine = client
         _criar_evento_e_calendario(c)
-        cronograma_id = _agenda(c, "cronograma_sanitario_modo")[0]["cronograma_id"]
+        cronograma_id = _cron_id(c, engine)
         r = c.post("/agenda/realizados", json={
             "evento_id": f"cronograma_sanitario_incluir_manual_{cronograma_id}", "numero_matriz": "999999",
         })
@@ -215,7 +232,7 @@ class TestIncluirAnimalForaDaJanela:
     def test_sem_numero_matriz_da_400(self, client):
         c, engine = client
         _criar_evento_e_calendario(c)
-        cronograma_id = _agenda(c, "cronograma_sanitario_modo")[0]["cronograma_id"]
+        cronograma_id = _cron_id(c, engine)
         r = c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_incluir_manual_{cronograma_id}"})
         assert r.status_code == 400
 
@@ -232,7 +249,7 @@ class TestRemoverAnimal:
         with Session(engine) as s:
             s.add(Animal(numero="960", data_nasc=HOJE - timedelta(days=10), sexo="F", ativo=True))
             s.commit()
-        cronograma_id = _agenda(c, "cronograma_sanitario_modo")[0]["cronograma_id"]
+        cronograma_id = _cron_id(c, engine)
         c.post("/agenda/realizados", json={
             "evento_id": f"cronograma_sanitario_incluir_manual_{cronograma_id}", "numero_matriz": "960",
         })
@@ -292,27 +309,27 @@ class TestRemoverAnimal:
         assert r.status_code == 400
 
 class TestTrilhaDoAgendamento:
-    def test_cronograma_recem_criado_pede_decisao_de_modo(self, client):
+    def test_cronograma_recem_criado_nao_vira_tarefa(self, client):
         c, engine = client
         _criar_evento_e_calendario(c, dias_ate_evento=30)
-        eventos = _agenda(c, "cronograma_sanitario_modo")
-        assert len(eventos) == 1
-        assert "Como vai ser aplicado" in eventos[0]["observacao"]
+        _cron_id(c, engine)
+        assert not _agenda(c, "cronograma_sanitario_modo")
+        assert not _agenda(c, "cronograma_sanitario_urgente")
 
-    def test_perto_da_data_sem_decisao_fica_urgente(self, client):
+    def test_perto_da_data_sem_decisao_continua_fora_da_agenda(self, client):
         c, engine = client
-        # dias_aviso padrão = 5 — evento em 3 dias já cai na janela urgente.
+        # R2: só o agendamento entra na Agenda — cronograma "aberto" (sem modo
+        # decidido) fica na lista de espera mesmo dentro da janela de aviso.
         _criar_evento_e_calendario(c, dias_ate_evento=3)
-        urgentes = _agenda(c, "cronograma_sanitario_urgente")
-        assert len(urgentes) == 1
-        assert "obrigatório" in urgentes[0]["observacao"].lower() or "confirme" in urgentes[0]["observacao"].lower()
+        _cron_id(c, engine)
+        assert not _agenda(c, "cronograma_sanitario_urgente")
         assert not _agenda(c, "cronograma_sanitario_modo")
 
     def test_decidir_modo_propria(self, client):
         c, engine = client
         _, calendario_id = _criar_evento_e_calendario(c, dias_ate_evento=30)
-        eventos = _agenda(c, "cronograma_sanitario_modo")
-        r = c.post("/agenda/realizados", json={"evento_id": eventos[0]["id"], "modo": "propria"})
+        cid = _cron_id(c, engine)
+        r = c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_modo_{cid}", "modo": "propria"})
         assert r.status_code == 200, r.text
         with Session(engine) as s:
             cron = s.exec(
@@ -325,8 +342,8 @@ class TestTrilhaDoAgendamento:
     def test_decidir_modo_veterinario_exige_pessoa(self, client):
         c, engine = client
         _criar_evento_e_calendario(c, dias_ate_evento=30)
-        eventos = _agenda(c, "cronograma_sanitario_modo")
-        r = c.post("/agenda/realizados", json={"evento_id": eventos[0]["id"], "modo": "veterinario"})
+        cid = _cron_id(c, engine)
+        r = c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_modo_{cid}", "modo": "veterinario"})
         assert r.status_code == 400
 
     def test_decidir_modo_veterinario_com_pessoa_valida(self, client):
@@ -339,20 +356,21 @@ class TestTrilhaDoAgendamento:
             s.refresh(vet)
             vet_id = vet.id
 
-        eventos = _agenda(c, "cronograma_sanitario_modo")
-        r = c.post("/agenda/realizados", json={"evento_id": eventos[0]["id"], "modo": "veterinario", "veterinario_pessoa_id": vet_id})
+        cid = _cron_id(c, engine)
+        r = c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_modo_{cid}", "modo": "veterinario", "veterinario_pessoa_id": vet_id})
         assert r.status_code == 200, r.text
 
     def test_adiar_reabre_com_nova_data(self, client):
         c, engine = client
         _criar_evento_e_calendario(c, dias_ate_evento=3)
-        urgentes = _agenda(c, "cronograma_sanitario_urgente")
+        cid = _cron_id(c, engine)
         nova_data = (HOJE + timedelta(days=45)).isoformat()
-        r = c.post("/agenda/realizados", json={"evento_id": urgentes[0]["id"], "nova_data": nova_data, "motivo": "veterinário sem agenda"})
+        r = c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_modo_{cid}", "nova_data": nova_data, "motivo": "veterinário sem agenda"})
         assert r.status_code == 200, r.text
+        with Session(engine) as s:
+            assert s.get(CronogramaSanitario, cid).data_evento.isoformat() == nova_data
         assert not _agenda(c, "cronograma_sanitario_urgente")
-        # Reabriu longe o bastante da nova data — volta a ser a decisão normal (não urgente).
-        assert _agenda(c, "cronograma_sanitario_modo")
+        assert not _agenda(c, "cronograma_sanitario_modo")
 
 
 class TestAplicacao:
@@ -368,10 +386,10 @@ class TestAplicacao:
         linha_id = _animal_cronograma(engine, "910").id
         c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_animal_{linha_id}", "incluir": True})
 
-        # dias_ate_evento=0 cai dentro da janela de urgência (padrão 5 dias) —
-        # o card é "urgente", não o "modo" normal (ver TestTrilhaDoAgendamento).
-        alvo = (_agenda(c, "cronograma_sanitario_modo") or _agenda(c, "cronograma_sanitario_urgente"))[0]
-        c.post("/agenda/realizados", json={"evento_id": alvo["id"], "modo": "propria"})
+        # Decidir o modo (Protocolos) agenda o cronograma — só então entra na Agenda.
+        cid = _cron_id(c, engine)
+        assert not _agenda(c, "cronograma_sanitario_aplicar")
+        c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_modo_{cid}", "modo": "propria"})
 
         aplicar = _agenda(c, "cronograma_sanitario_aplicar")
         assert len(aplicar) == 1

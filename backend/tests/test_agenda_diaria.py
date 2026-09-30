@@ -210,7 +210,8 @@ class TestBugARegressaoAuditoriaRespondivel:
             s.commit()
 
         c1 = make_client(1)
-        r = c1.get("/agenda/")  # dispara _gerar_auditorias_diarias
+        c1.post("/agenda/materializar")  # dispara _gerar_auditorias_diarias (GET não escreve)
+        r = c1.get("/agenda/")
         assert r.status_code == 200
 
         with Session(engine) as s:

@@ -44,7 +44,7 @@ def client(monkeypatch):
 
 ENDPOINTS = [
     ("locais-armazenamento", None),
-    ("categorias-estoque", 9),
+    ("categorias-estoque", 10),
     ("finalidades-estoque", 5),
     ("unidades-estoque", 8),
     ("unidades-embalagem-estoque", 8),
@@ -70,7 +70,7 @@ class TestSeedIdempotente:
             seed_cadastros_estoque(s)
             seed_cadastros_estoque(s)
         r = c.get("/cadastro/categorias-estoque")
-        assert len(r.json()) == 9
+        assert len(r.json()) == 10
 
     def test_seed_local_armazenamento_a_partir_de_dados_existentes(self, client):
         c, engine = client

@@ -326,3 +326,38 @@ class ColostragemBezerra(SQLModel, table=True):
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+# ---------------------------------------------------------------------------
+# Detecção de cio de repasse — configuração POR FAZENDA (fatia 10, item C)
+# ---------------------------------------------------------------------------
+class RepasseConfig(SQLModel, table=True):
+    """Regra configurável da "Detecção de cio de repasse" (antigo Scratch/
+    adesivo). Uma linha por fazenda; SEM linha = comportamento legado (ligado,
+    14 dias, todas as inseminações, com aviso na Agenda), para nenhuma fazenda
+    mudar de comportamento sem ter configurado.
+
+    O produto vem do cadastro de estoque, na categoria de produto "Detecção de
+    cio de repasse" (`Estoque.categoria`, texto) — `estoque_id` só guarda qual
+    item dessa categoria a fazenda escolheu.
+    """
+
+    __tablename__ = "repasse_config"
+    __table_args__ = (UniqueConstraint("fazenda_id", name="uq_repasse_config_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    usar: bool = True
+    estoque_id: Optional[int] = Field(default=None, foreign_key="estoque.id")
+    # 1ª checagem: quantos dias após o serviço (padrão 14; validos 1..60).
+    dias_apos_servico: int = 14
+    # Repetição das checagens seguintes (ciclo estral: 18 a 24 dias sugerido).
+    repetir: bool = False
+    repetir_cada_dias: int = 21
+    repeticoes: int = 1
+    # Aparece como tarefa na Agenda (Dia a dia)? Não: só a projeção do Painel.
+    mostrar_na_agenda: bool = True
+    # todas | iatf | monta_natural
+    quem_entra: str = "todas"
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_por_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")

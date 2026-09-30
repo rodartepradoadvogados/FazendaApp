@@ -80,6 +80,7 @@ def _criar_evento_e_calendario(c, dias_ate_evento: int = 30) -> tuple[int, int]:
 
 
 def _agenda(c) -> list[dict]:
+    c.post("/agenda/materializar", params={"data": HOJE.isoformat()})
     r = c.get("/agenda/", params={"data": HOJE.isoformat()})
     assert r.status_code == 200, r.text
     return r.json()["eventos"]
@@ -233,3 +234,15 @@ class TestEndpointDesconsiderarCronograma:
 
         r = c.post("/agenda/realizados", json={"evento_id": f"cronograma_sanitario_desconsiderar_{cron_id}"})
         assert r.status_code == 400
+
+
+class TestTemplateCurativoEndpoint:
+    def test_template_curativo_traz_item_carencia(self, client):
+        c, _ = client
+        r = c.get("/cadastro/checklist-template", params={"tipo": "curativo"})
+        assert r.status_code == 200, r.text
+        assert "carencia" in [i["chave"] for i in r.json()]
+
+    def test_tipo_desconhecido_continua_400(self, client):
+        c, _ = client
+        assert c.get("/cadastro/checklist-template", params={"tipo": "xyz"}).status_code == 400

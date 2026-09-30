@@ -16,7 +16,7 @@ from fazenda.auth import (
 )
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ChecklistItem, ColostragemBezerra, ConsumoAlimento,
+    AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ChecklistItem, ColostragemBezerra, ConsumoAlimento, EventoSanitario,
     ConsumoSobra, ContaGerencial,
     CronogramaSanitario, CronogramaSanitarioAnimal, DietaLancamento, Diaria,
     DiariaAuditoria, DiariaDia, Empreitada, EmpreitadaEtapa, Estoque, EstoqueSemen, EventoRealizado, Lactacao, Lote, MedicamentoComercial, Parto,
@@ -60,6 +60,7 @@ from fazenda.rules.lida import (
 )
 from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoes
 from fazenda.rules import estoque_baixa
+from fazenda.rules import repasse as _repasse_rules
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
 from fazenda.rules.nomenclatura_protocolo import nome_curto
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
@@ -448,6 +449,23 @@ def seed_lembrete_touros(session: Session) -> None:
     session.commit()
 
 
+@router.post("/materializar")
+def materializar_agenda(
+    data: date = date.today(),
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Parte que ESCREVE da Agenda (idempotente): gera recorrências e
+    auditorias de diária e materializa cronogramas/checklist/lista de espera do
+    preventivo. Existe para que `GET /agenda` seja somente leitura."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    _gerar_agenda_recorrente(session)
+    _gerar_auditorias_diarias(session)
+    _cronograma_sanitario_rules.materializar(session, data, fazenda_id)
+    return {"ok": True}
+
+
 @router.get("/")
 def calcular_agenda(
     data: date = date.today(),
@@ -463,8 +481,10 @@ def calcular_agenda(
     Retorna candidatas IATF, checagem de hormônios, BST e todos os eventos.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    _gerar_agenda_recorrente(session)
-    _gerar_auditorias_diarias(session)
+    # SOMENTE LEITURA: nenhuma escrita neste endpoint. O que antes era
+    # gerado aqui (recorrências, auditorias de diária, cronogramas/checklist/
+    # lista de espera do preventivo) agora é feito por POST /agenda/materializar,
+    # que a tela chama antes de ler.
     # Toda a base da agenda é escopada pela fazenda atual — sem isso a tela
     # mais usada do sistema misturava animal, serviço, parto, estoque e
     # financeiro de fazendas diferentes no mesmo cálculo.
@@ -707,6 +727,10 @@ def calcular_agenda(
         while proxima_visita_bst_real < data:
             proxima_visita_bst_real += timedelta(days=intervalo_bst_dias)
 
+    # Detecção de cio de repasse: fazenda sem configuração salva segue o legado
+    # (repasse=None); com configuração, o motor usa dias/quem entra/aviso dela.
+    cfg_repasse = _repasse_rules.ler_config(session, fazenda_id)
+    prod_repasse = _repasse_rules.produto_da_config(session, cfg_repasse) if cfg_repasse["configurado"] else None
     engine = AgendaEngine()
     result = engine.calcular(
         data_referencia=data,
@@ -728,6 +752,8 @@ def calcular_agenda(
         peso_por_animal=peso_por_animal,
         inicio_lactacao_por_animal=inicio_lactacao_por_animal,
         servicos_historico=servicos_todos,
+        repasse=cfg_repasse if cfg_repasse["configurado"] else None,
+        repasse_produto=(prod_repasse or {}).get("nome"),
     )
 
     # Candidatas aptas que NUNCA receberam nenhuma aplicação de BST — vaca que
@@ -1772,6 +1798,8 @@ def calcular_agenda(
         "estoque_negativo": estoque_negativo,
         "estoque_abaixo_minimo": estoque_abaixo_minimo,
         "eventos": eventos_visiveis,
+        # Atalho para Protocolos (R1) — NÃO é tarefa, por isso fica fora de `eventos`.
+        "lista_espera_sanitaria": _cronograma_sanitario_rules.resumo_lista_espera(session, fazenda_id) if "sanidade" in modulos else [],
         "diaria_auditorias_pendentes": diaria_auditorias_pendentes,
         "totais": {
             "candidatas_iatf": len(result.candidatas_iatf) if tem_reproducao else 0,
@@ -1943,12 +1971,23 @@ def _aplicar_cronograma(
     usada por /sanidade/calendario/cadastrar-preventivo."""
     cronograma_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}aplicar_"))
     cronograma = _exigir_da_fazenda(session.get(CronogramaSanitario, cronograma_id), fazenda_id, "Cronograma")
+    # Caminho ANTIGO (mantido para dados e filas offline já existentes). O app do curral/mobile e a Agenda usam agora o
+    # endpoint único POST /sanidade/cronogramas/{id}/aplicar (grava em Concluídos e no log). Depois que o endpoint único
+    # aplicou, uma requisição antiga que ficou na fila não pode gravar de novo: 409, sem duplicar nada.
+    if cronograma.status == "concluido":
+        raise HTTPException(status_code=409, detail="Este agendamento já foi aplicado (veja em Protocolos › Concluídos)")
     if cronograma.status != "agendado":
         raise HTTPException(status_code=400, detail="Este cronograma ainda não tem veterinário/aplicação própria confirmado")
     calendario = _exigir_da_fazenda(
         session.get(CalendarioSanitario, cronograma.calendario_sanitario_id), fazenda_id,
         "Regra do calendário sanitário",
     )
+    _evento_do_caminho_antigo = session.get(EventoSanitario, calendario.evento_sanitario_id)
+    if _evento_do_caminho_antigo is not None and _evento_do_caminho_antigo.categoria_preventiva == "exame":
+        raise HTTPException(
+            status_code=400,
+            detail="Exame não se aplica por este caminho: use o aplicar único (Protocolos ou app) — inoculação, leitura e resultado por animal",
+        )
 
     incluidos = _cronograma_sanitario_rules.animais_por_status(session, cronograma.id, "incluido")
     alvo = set(animais) if animais else {l.numero_matriz for l in incluidos}

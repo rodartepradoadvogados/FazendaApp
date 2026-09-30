@@ -616,6 +616,11 @@ class CalendarioSanitario(SQLModel, table=True):
     # False (padrão) preserva 100% o comportamento antigo — nenhuma regra já
     # cadastrada muda de comportamento sozinha.
     usa_cronograma: bool = False
+    # Rotina da lista de espera (docs/agents/auditoria-preventivo-agenda/
+    # planejamento/11-rotina-lista-de-espera.md): quantos dias ANTES da janela
+    # desta regra o animal entra na lista de espera. NULL (padrão) = vale o
+    # valor único da fazenda (Parâmetros). Só sobrescreve quando preenchido.
+    dias_antecedencia_lista_espera: Optional[int] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
@@ -650,9 +655,18 @@ class CronogramaSanitario(SQLModel, table=True):
     #   decisão de modo) | "agendado" (modo definido, aguardando a data) |
     #   "aguardando_confirmacao" (passou o aviso de N dias antes sem decisão,
     #   Agenda cobrando confirmar/adiar) | "concluido" (aplicado) |
-    #   "cancelado".
+    #   "cancelado" | "em_montagem" (rascunho do assistente "Criar
+    #   agendamento" em Protocolos > Aplicar — ainda sem confirmar; não vira
+    #   tarefa da Agenda).
+    #   Lista de espera (R1) = animais "sugerido" do cronograma "aberto";
+    #   agendamento (R2) = cronograma "agendado" — só ele entra na Agenda.
     status: str = Field(default="aberto", index=True)
     observacao: Optional[str] = None
+    # Hora do agendamento ("HH:MM", opcional) — preenchida no assistente
+    # "Criar agendamento" (Protocolos > Aplicar) e ao adiar.
+    hora: Optional[str] = None
+    # Por que o agendamento foi cancelado (R9: cancelar devolve à lista de espera).
+    motivo_cancelamento: Optional[str] = None
     # "Desconsiderar cronograma" (redesenho do evento sanitário, seção 3.2.5)
     # — confirma a Ocorrência SEM passar pelo checklist, decisão por
     # Ocorrência (nunca muda a Regra). Independente de `status`/
@@ -684,7 +698,207 @@ class CronogramaSanitarioAnimal(SQLModel, table=True):
     data_sugestao: date
     data_decisao: Optional[date] = None
     data_aplicacao: Optional[date] = None
+    # "janela" (entrou pela lista de espera) | "fora_janela" (R6: incluído à
+    # mão fora da janela de aplicação, sempre com `motivo`).
+    origem: str = Field(default="janela")
+    # Fora da janela: por que foi incluído. Desconsiderar (lista de espera):
+    # por que foi tirado.
+    motivo: Optional[str] = None
+    # Fatia 9b — exame: reteste de tuberculina (60 dias apos o inconclusivo)
+    # entra na lista de espera do proprio protocolo com a data devida do
+    # reteste e o motivo de entrada ("Reteste: inconclusivo em dd/mm/aaaa").
+    reteste: bool = False
+    data_devida: Optional[date] = None
+    motivo_entrada: Optional[str] = None
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+# ---------------------------------------------------------------------------
+# Aplicação de um agendamento preventivo (fatia 8 do planejamento unificado —
+# docs/agents/auditoria-preventivo-agenda/planejamento/06-planejamento-unificado.md,
+# secao 7). UM registro por aplicar (Protocolos > Acompanhamento e Agenda usam o
+# mesmo endpoint), com quem/quando/canal, frasco/lote/validade, ciencia dos
+# itens pendentes do checklist, carencia e, se preciso, o estorno — a original
+# nunca e apagada: vira "estornada". Alimenta Protocolos > Concluidos.
+# ---------------------------------------------------------------------------
+class CronogramaSanitarioAplicacao(SQLModel, table=True):
+    __tablename__ = "cronograma_sanitario_aplicacao"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    cronograma_id: int = Field(foreign_key="cronograma_sanitario.id", index=True)
+    # "aplicada" | "estornada" (original preservada; ver tipo_estorno).
+    estado: str = Field(default="aplicada", index=True)
+    # Onde foi aplicada: "Protocolos" | "Agenda".
+    canal: str = "Protocolos"
+    aplicador_pessoa_id: Optional[int] = Field(default=None, foreign_key="pessoa.id")
+    aplicador_nome: Optional[str] = None      # copia na hora (o cadastro pode mudar depois)
+    aplicador_crmv: Optional[str] = None
+    data_aplicacao: date
+    hora: Optional[str] = None                # "HH:MM"
+    produto: Optional[str] = None
+    unidade: Optional[str] = None
+    via: Optional[str] = None
+    dose_total: Optional[float] = None
+    # Frasco/lote usado (baixa de estoque) ...
+    estoque_id: Optional[int] = Field(default=None, foreign_key="estoque.id")
+    lote_id: Optional[int] = Field(default=None, foreign_key="lote_estoque.id")
+    lote_texto: Optional[str] = None
+    validade: Optional[date] = None
+    frasco_vencido_ciente: bool = False
+    # ... ou "desconsiderar estoque" (frasco do veterinario): nada e baixado.
+    estoque_desconsiderado: bool = False
+    estoque_motivo: Optional[str] = None
+    custo: Optional[float] = None
+    carencia_leite_ate: Optional[date] = None
+    carencia_carne_ate: Optional[date] = None
+    carencia_texto: Optional[str] = None
+    # Ciencia dos itens pendentes do checklist (aplicar nunca e bloqueado por
+    # eles; a ciencia fica gravada com quem e quando). JSON: [{chave, nome}].
+    ciencia_itens: Optional[str] = None
+    ciencia_motivo: Optional[str] = None
+    ciencia_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    ciencia_em: Optional[datetime] = None
+    retroativo: bool = False
+    # JSON: lista de textos de excecao (fora da janela, frasco do veterinario...).
+    excecoes: Optional[str] = None
+    observacao: Optional[str] = None
+    chave_idempotencia: Optional[str] = Field(default=None, index=True)
+    registrado_por_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    registrado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Fatia 9b — EXAME (tuberculina/brucelose). NULL para vacina/vermifugo.
+    # "inoculacao" (1a etapa da TB: nao vai para Concluidos) | "leitura" (2a
+    # etapa, resultado por animal: e o registro concluido) | "coleta" (exame
+    # sem leitura: uma etapa so).
+    fase: Optional[str] = Field(default=None, index=True)
+    inoculacao_aplicacao_id: Optional[int] = Field(default=None, index=True)   # na leitura: a inoculacao de origem
+    tipo_teste: Optional[str] = None
+    laudo: Optional[str] = None
+    leitura_prevista_em: Optional[datetime] = None     # inoculacao + 72 h
+    leitura_limite_em: Optional[datetime] = None       # inoculacao + 96 h (fim da janela)
+    data_evento_antes: Optional[date] = None           # data/hora agendadas antes da inoculacao (o estorno restaura)
+    hora_antes: Optional[str] = None
+    leitura_horas: Optional[float] = None              # horas entre a inoculacao e a leitura
+    leitura_fora_janela: bool = False                  # fora de 72-96 h
+    leitura_justificativa: Optional[str] = None
+    # Estorno: "desfazer" (<= 10 s, sem motivo) | "estorno" (admin, com motivo).
+    tipo_estorno: Optional[str] = None
+    estornado_por_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    estornado_em: Optional[datetime] = None
+    motivo_estorno: Optional[str] = None
+
+
+class CronogramaSanitarioAplicacaoAnimal(SQLModel, table=True):
+    """Um animal de uma aplicacao — aplicado (com dose, peso e a linha de
+    Sanidade gerada) ou nao aplicado (com motivo e destino)."""
+
+    __tablename__ = "cronograma_sanitario_aplicacao_animal"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    aplicacao_id: int = Field(foreign_key="cronograma_sanitario_aplicacao.id", index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    numero_matriz: str = Field(index=True)
+    resultado: str = "aplicado"               # aplicado | nao_aplicado
+    origem: str = "janela"                    # janela | fora_janela (copia da linha do agendamento)
+    motivo_origem: Optional[str] = None
+    dose: Optional[float] = None
+    unidade: Optional[str] = None
+    peso_kg: Optional[float] = None
+    peso_estimado: bool = False
+    # Sem FK de proposito: estornar apaga a linha de Sanidade; o registro aqui fica.
+    sanidade_id: Optional[int] = None
+    motivo_nao: Optional[str] = None
+    destino_nao: Optional[str] = None         # espera | naoSeAplica
+    # Fatia 9b — exame: negativo | reagente | inconclusivo | coletado.
+    exame_resultado: Optional[str] = Field(default=None, index=True)
+    espessura_mm: Optional[float] = None      # TB: espessura da pele (mm) na leitura
+    reteste_em: Optional[date] = None         # inconclusivo: leitura + 60 dias
+    exame_resultado_id: Optional[int] = None  # linha de ExameResultado gerada (relatorios; o estorno apaga)
+    # Reagente: registro da notificacao ao servico veterinario oficial.
+    notificado_em: Optional[datetime] = None
+    notificado_por_usuario_id: Optional[int] = None
+    notificado_por_nome: Optional[str] = None
+    notificacao_ref: Optional[str] = None     # orgao e/ou numero do protocolo/oficio
+
+
+class CronogramaSanitarioLog(SQLModel, table=True):
+    """Trilha imutavel do agendamento preventivo: quem, quando, canal, motivo."""
+
+    __tablename__ = "cronograma_sanitario_log"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    cronograma_id: int = Field(foreign_key="cronograma_sanitario.id", index=True)
+    aplicacao_id: Optional[int] = Field(default=None, foreign_key="cronograma_sanitario_aplicacao.id", index=True)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    usuario_nome: Optional[str] = None
+    acao: str                                 # ex.: "Aplicou", "Desfez", "Estornou", "Adiou", "Cancelou"
+    canal: Optional[str] = None
+    motivo: Optional[str] = None
+    detalhe: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class RotinaListaEsperaEstado(SQLModel, table=True):
+    """Estado da rotina automática da lista de espera, UMA linha por fazenda.
+
+    Guarda (a) o resultado da última execução (mostrado em Parâmetros e no
+    Painel CowData), (b) o "último aviso" do card diário do Painel da Agenda
+    (no máximo 1x por dia por fazenda), e (c) o LOCK/idempotência entre
+    instâncias: `em_execucao_ate` é um arrendamento tomado por UPDATE atômico
+    e `ultima_diaria_em` impede uma 2ª execução diária no mesmo dia."""
+
+    __tablename__ = "rotina_lista_espera_estado"
+    __table_args__ = (UniqueConstraint("fazenda_id", name="uq_rotina_lista_espera_estado_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    ultima_execucao_em: Optional[datetime] = None
+    ultima_execucao_origem: Optional[str] = None      # diaria | parametros | manual
+    ultima_execucao_status: Optional[str] = None      # ok | sem_regras | erro
+    ultima_execucao_entraram: int = 0
+    ultima_execucao_regras: int = 0                    # regras de vacina/exame avaliadas
+    ultima_execucao_regras_na_janela: int = 0
+    ultimo_erro: Optional[str] = None
+    ultima_diaria_em: Optional[date] = None
+    ultimo_aviso_em: Optional[date] = None
+    em_execucao_ate: Optional[datetime] = None
+
+
+# ---------------------------------------------------------------------------
+# Vinculo financeiro/compras do agendamento preventivo (fatia 9 do planejamento
+# unificado, secao 7). Uma linha liga o agendamento a UM alvo ja existente no
+# Financeiro ou em Compras:
+#   pagamento -- lancamento ja pago (ContaGerencial com data_pagamento) que cobre
+#                o produto; `valor` e o quanto dele foi atribuido a este agendamento;
+#   conta     -- conta a pagar (ContaGerencial em aberto) nascida do protocolo
+#                (produto x dose ou honorario do veterinario);
+#   cotacao / pedido -- "Comunicar compra" do insumo que falta.
+# `alvo_id` nao tem FK de proposito: o alvo pode ser apagado/cancelado depois e
+# o vinculo guarda a foto (fornecedor, valor, vencimento) para o historico.
+# Nada e apagado: desvincular/cancelar so muda `estado` e grava quem/quando/por que.
+# ---------------------------------------------------------------------------
+class CronogramaSanitarioVinculo(SQLModel, table=True):
+    __tablename__ = "cronograma_sanitario_vinculo"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    cronograma_id: int = Field(foreign_key="cronograma_sanitario.id", index=True)
+    tipo: str = Field(index=True)                         # pagamento | conta | cotacao | pedido
+    alvo_id: int = Field(index=True)                      # id do lancamento / cotacao / pedido
+    numero_lancamento: Optional[str] = None               # LC-AAAA-NNNNN (pagamento/conta) ou numero da cotacao/pedido
+    estado: str = Field(default="ativo", index=True)      # ativo | desvinculado | cancelado
+    valor: Optional[float] = None                         # vinculado (pagamento) ou previsto (conta)
+    modo: Optional[str] = None                            # pagamento: proporcional | inteiro
+    subtipo: Optional[str] = None                         # conta: honorario | produto
+    rotulo: Optional[str] = None                          # fornecedor / servico (foto na hora)
+    descricao: Optional[str] = None
+    vencimento: Optional[date] = None
+    criado_por_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    encerrado_por_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    encerrado_em: Optional[datetime] = None
+    motivo_encerramento: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

@@ -707,7 +707,7 @@ def excluir_exame(
 # template em si (a tela separada da 3.7.3) fica para uma rodada futura, fora
 # de escopo desta (ver docs/redesenho-evento-sanitario.md, seção 6).
 # ---------------------------------------------------------------------------
-TIPOS_TEMPLATE_CHECKLIST = ["vacina", "exame"]
+TIPOS_TEMPLATE_CHECKLIST = ["vacina", "exame", "curativo"]
 
 
 @router.get("/checklist-template")

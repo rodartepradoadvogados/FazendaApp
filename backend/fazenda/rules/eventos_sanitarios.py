@@ -24,7 +24,9 @@ from fazenda.models import (
 )
 from fazenda.rules.calendario_sanitario import _somar_meses, proxima_ocorrencia
 from fazenda.rules.gestation import calcular_parto_provavel
-from fazenda.rules.parametros import janela_eventos_sanitarios_futuro, janela_eventos_sanitarios_passado, pre_parto_max
+from fazenda.rules.parametros import (
+    janela_eventos_sanitarios_futuro, janela_eventos_sanitarios_passado, pre_parto_max, usar_ocorrencia_universal,
+)
 
 # Eventos de vida (gatilhos) que o calendário sanitário e o cadastro de evento
 # sanitário podem usar em vez de uma frequência periódica — cada um corresponde
@@ -250,6 +252,11 @@ def _eventos_calendario_agenda(session: Session, hoje: date, realizados: set[str
     Exame (categoria_preventiva == "exame") não tem produto/baixa de estoque:
     a baixa apenas marca como realizado (e permite lançar o financeiro).
     """
+    # Com a flag usar_ocorrencia_universal TODA regra ativa é governada pelo
+    # cronograma (Ocorrência) — a pendência antiga aqui duplicaria a mesma
+    # regra (lista de espera + tarefa), então nenhuma sai por este caminho.
+    if usar_ocorrencia_universal():
+        return []
     query_regras = (
         # usa_cronograma=True fica de fora daqui — essas regras geram suas
         # próprias pendências pelo workflow do cronograma (ver
@@ -370,8 +377,14 @@ def _base(
     }
 
 
-def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_id: int | None = None) -> list[dict]:
-    """Todos os eventos da Agenda vindos dos eventos sanitários agendados."""
+def eventos_agenda(
+    session: Session, hoje: date, realizados: set[str], fazenda_id: int | None = None, escrever: bool = False,
+) -> list[dict]:
+    """Todos os eventos da Agenda vindos dos eventos sanitários agendados.
+
+    `escrever=False` (padrão, GET /agenda) só lê; `True` (só via
+    `cronograma_sanitario.materializar`) também coloca animais na lista de
+    espera do cronograma."""
     query_todos_eventos = select(EventoSanitario)
     if fazenda_id is not None:
         query_todos_eventos = query_todos_eventos.where(EventoSanitario.fazenda_id == fazenda_id)
@@ -388,7 +401,15 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
     # espera em vez de cobrar aplicação imediata (ver eventos_agenda_cronograma
     # em routers/agenda.py). Um evento sem regra vinculada (ou com regra
     # usa_cronograma=False) continua exatamente como sempre.
-    query_calendarios_cron = select(CalendarioSanitario).where(CalendarioSanitario.usa_cronograma == True)  # noqa: E712
+    # Decisão do dono (fatia 7): com a flag `usar_ocorrencia_universal` a regra
+    # por EVENTO DE VIDA também vai para a lista de espera (R1) e nunca gera a
+    # pendência antiga por animal — mesmo sem `usa_cronograma`, como já era
+    # para as regras por época. Evento sem regra ativa no calendário não tem
+    # cronograma onde esperar e segue o caminho antigo.
+    if usar_ocorrencia_universal():
+        query_calendarios_cron = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
+    else:
+        query_calendarios_cron = select(CalendarioSanitario).where(CalendarioSanitario.usa_cronograma == True)  # noqa: E712
     if fazenda_id is not None:
         query_calendarios_cron = query_calendarios_cron.where(CalendarioSanitario.fazenda_id == fazenda_id)
     calendarios_cronograma = {c.evento_sanitario_id: c for c in session.exec(query_calendarios_cron).all()}
@@ -556,7 +577,7 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
 
         # Um SELECT+INSERT em lote por evento sanitário em vez de um por
         # animal — ver fazenda.rules.cronograma_sanitario.sugerir_animais_em_lote.
-        if calendario_cron and numeros_para_cronograma:
+        if escrever and calendario_cron and numeros_para_cronograma:
             from fazenda.rules.cronograma_sanitario import sugerir_animais_em_lote
             sugerir_animais_em_lote(session, calendario_cron, numeros_para_cronograma, hoje)
 

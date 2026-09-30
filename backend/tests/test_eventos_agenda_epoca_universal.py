@@ -17,7 +17,7 @@ import fazenda.database as database
 from fazenda.models import (
     Animal, CalendarioSanitario, CategoriaManejo, CronogramaSanitarioAnimal, EventoSanitario, ParametroFazenda,
 )
-from fazenda.rules.cronograma_sanitario import eventos_agenda
+from fazenda.rules.cronograma_sanitario import eventos_agenda, materializar, resumo_lista_espera
 from fazenda.rules.parametros import fazenda_atual
 
 HOJE = date(2026, 9, 11)
@@ -68,17 +68,18 @@ class TestEventosAgendaEpocaUniversal:
         fazenda_atual.set(None)
 
         with Session(engine) as s:
+            assert eventos_agenda(s, HOJE, set()) == []  # leitura não cria nada
+            materializar(s, HOJE, None)
             saida = eventos_agenda(s, HOJE, set())
+            resumo = resumo_lista_espera(s, None)
 
-        # Card de decisão de modo (trilha 2) tem que existir — a regra ganhou
-        # cronograma mesmo sem usa_cronograma=True.
-        assert any(e["tipo"] in ("cronograma_sanitario_modo", "cronograma_sanitario_urgente") for e in saida)
+        # R1/R2: cronograma aberto e animal sugerido NÃO são tarefa da Agenda —
+        # só o resumo "N na lista de espera" (atalho para Protocolos).
+        assert saida == []
         # Animal 55 (Novilha, projeção só precisa da idade de hoje aqui) tem
-        # que ter entrado "sugerido" — card-resumo da trilha 1 (1 por
-        # cronograma desde 13/09/2026, não mais 1 por animal).
-        cards_sugeridos = [e for e in saida if e["tipo"] == "cronograma_sanitario_sugeridos"]
-        assert len(cards_sugeridos) == 1
-        assert cards_sugeridos[0]["quantidade_sugeridos"] == 1
+        # que ter entrado "sugerido" — a regra ganhou cronograma mesmo sem
+        # usa_cronograma=True.
+        assert [r["quantidade"] for r in resumo] == [1]
 
         with Session(engine) as s:
             linhas = s.exec(select(CronogramaSanitarioAnimal)).all()
@@ -86,13 +87,16 @@ class TestEventosAgendaEpocaUniversal:
 
     def test_flag_ligada_nao_toca_regra_por_evento_de_vida(self, cenario):
         """Regra por evento de vida (tipo_agendamento == "evento") não pode
-        ganhar sugestão pelo caminho novo — continua exclusiva de
-        fazenda.rules.eventos_sanitarios, mesmo com a flag ligada."""
+        ganhar sugestão pela PROJEÇÃO DE CATEGORIA (caminho da época) — só pelo
+        gatilho do próprio evento (fazenda.rules.eventos_sanitarios). Aqui o
+        gatilho (aptidão aos 24 meses) ainda não chegou para o animal 55, que
+        JÁ está na categoria "Novilha": nada de lista de espera. O caso em que
+        o gatilho chega está em test_lista_espera_agendamento.py."""
         engine, _ = cenario
         with Session(engine) as s:
             s.add(ParametroFazenda(chave="usar_ocorrencia_universal", fazenda_id=None, grupo="sanidade",
                                     label="Universalizar Ocorrência", valor="true", tipo="bool"))
-            evento_vida = EventoSanitario(nome="Brucelose B19", tipo_agendamento="evento", gatilho="nascimento")
+            evento_vida = EventoSanitario(nome="Brucelose B19", tipo_agendamento="evento", gatilho="novilha_apta", gatilho_idade_meses=24)
             s.add(evento_vida)
             s.commit()
             s.refresh(evento_vida)
@@ -105,14 +109,11 @@ class TestEventosAgendaEpocaUniversal:
 
         fazenda_atual.set(None)
         with Session(engine) as s:
-            saida = eventos_agenda(s, HOJE, set())
+            materializar(s, HOJE, None)
+            resumo = resumo_lista_espera(s, None)
 
-        # A regra por evento de vida ganha o card de decisão de modo (a
-        # generalização da flag vale pra ISSO), mas NENHUM animal sugerido
-        # pelo caminho de projeção por época — o animal 55 só pode ter
-        # entrado pela regra "Novilha" por época, não pela de Brucelose.
-        cards_sugeridos_brucelose = [
-            e for e in saida
-            if e["tipo"] == "cronograma_sanitario_sugeridos" and "Brucelose" in e["descricao"]
-        ]
-        assert cards_sugeridos_brucelose == []
+        # A regra por evento de vida ganha cronograma (a generalização da flag
+        # vale pra ISSO), mas NENHUM animal sugerido pelo caminho de projeção
+        # por época — o animal 55 só pode ter entrado pela regra "Novilha" por
+        # época, não pela de Brucelose.
+        assert [r for r in resumo if "Brucelose" in r["evento_nome"]] == []
