@@ -100,7 +100,7 @@ Acesse: http://localhost:3000
 | `SECRET_KEY` | `change-me` | Chave secreta para JWT (futuro) |
 | `ENVIRONMENT` | `development` | `development` ou `production` |
 | `FIRECRAWL_API_KEY` | (vazio) | Busca na web / leitura de páginas públicas (`fazenda/rules/firecrawl.py`). Vazio = desligado (fail-closed) |
-| `TYPESAFE_API_KEY` | (vazio) | API da TypeSafe (julgamentos tipados: classificação, pontuação, extração). Ainda sem uso no código; só no backend (Railway > Variables). Integração futura deve ser fail-closed sem ela |
+| `TYPESAFE_JEV_KEY` | (vazio) | API da TypeSafe/Jev (julgamentos tipados: classificação, pontuação, extração). Chave de console.typesafe.ai/keys, não do OpenRouter; passar explícita ao SDK (o padrão dele é TYPESAFE_API_KEY). Ainda sem uso no código; só no backend (Railway > Variables). Integração futura deve ser fail-closed sem ela |
 
 ## Endpoints principais
 
