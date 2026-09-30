@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { useRouter } from "next/navigation";
+import React, { Suspense, useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Check, X, Syringe, Heart, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User, FileSpreadsheet, FileText, PackageSearch, Layers, Search } from "lucide-react";
+import { Calendar, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Check, X, Syringe, Heart, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User, FileSpreadsheet, FileText, PackageSearch, Layers, Search, HeartPulse, Syringe as SyringeIco, Wallet as WalletIco, ListChecks, Repeat, ClipboardList, ClipboardCheck } from "lucide-react";
 import {
-  fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado,
+  fetchAgendaDia, fetchAgendaPainel, fetchAgendaProjecao, materializarAgendaUmaVezPorDia, adiarAgendamentoPreventivo,
+  addEventoManual, marcarEventoRealizado as marcarEventoRealizadoApi, desmarcarEventoRealizado,
   fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, fetchEstoque, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
   cadastrarPreventivo, marcarCuraAplicacao, marcarCuraProtocolo, confirmarLactacaoInducao, fetchProtocolosIatfAtivos,
   criarMovimentacao, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, salvarDiasDiaria, atualizarServico,
@@ -20,7 +21,14 @@ import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import { Indicador, SecaoRecolhivel, TelaSkeleton } from "@/components/ui";
+import { SecaoRecolhivel } from "@/components/ui";
+import { SubAbasAgenda, type VisaoAgenda } from "@/components/agenda/SubAbasAgenda";
+import { CartaoPainel, GrupoPainel } from "@/components/agenda/CartaoPainel";
+import { OQueVem } from "@/components/agenda/OQueVem";
+import { SemanaAgenda, inicioDaSemana } from "@/components/agenda/SemanaAgenda";
+import { AdiarComChips } from "@/components/agenda/AdiarComChips";
+import { ProjecaoAgenda, SeletorHorizonte, type ProjecaoDados } from "@/components/agenda/ProjecaoAgenda";
+import { lerCacheAgenda, gravarCacheAgenda } from "@/components/agenda/cacheAgenda";
 import { PainelLancarBst } from "@/components/PainelLancarBst";
 import { casaBusca } from "@/lib/busca";
 import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
@@ -92,12 +100,66 @@ function corCategoria(categoria: string): string {
 }
 const LEGENDA_CATEGORIAS = ["Reprodutivo", "Sanidade", "Produção", "Gestão/Financeiro"];
 
+// A página lê `?visao=` (useSearchParams), então precisa de um Suspense. O
+// fallback já desenha o topo (título e sub-abas) de forma síncrona — nada de
+// skeleton nem de atraso artificial na primeira renderização.
 export default function AgendaPage() {
+  return (
+    <Suspense fallback={<div className="p-6 ag2"><div className="ag2-topo"><div className="ag2-topo-esq"><h1><Calendar size={22} style={{ color: "var(--dourado)" }} /> Agenda</h1><SubAbasAgenda ativa="dia" onChange={() => {}} /></div></div></div>}>
+      <AgendaConteudo />
+    </Suspense>
+  );
+}
+
+function AgendaConteudo() {
   const router = useRouter();
   const [data, setData] = useState(today());
   const [agenda, setAgenda] = useState<any>(null);
+  // `loading` só vale para a PRIMEIRA carga sem nenhum dado (nem cache): a tela
+  // já está desenhada e mostra uma linha de status. Depois disso, atualizar é
+  // "atualizando" (sem esconder a lista, sem skeleton).
   const [loading, setLoading] = useState(true);
+  const [atualizando, setAtualizando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  // Sub-abas com URL: ?visao=dia|painel (padrão: dia). A troca é instantânea
+  // (estado local) e a URL acompanha via history.replaceState.
+  const parametrosUrl = useSearchParams();
+  const visaoDaUrl: VisaoAgenda = parametrosUrl.get("visao") === "painel" ? "painel" : "dia";
+  const [visao, setVisaoEstado] = useState<VisaoAgenda>(visaoDaUrl);
+  useEffect(() => { setVisaoEstado(visaoDaUrl); }, [visaoDaUrl]);
+  const mudarVisao = useCallback((v: VisaoAgenda) => {
+    setVisaoEstado(v);
+    const p = new URLSearchParams(window.location.search);
+    p.set("visao", v);
+    window.history.replaceState(null, "", `${window.location.pathname}?${p.toString()}`);
+  }, []);
+  // Visão do Dia a dia: Lista | Semana | Mês (lembra a última escolha, só por conveniência).
+  type ModoDia = "lista" | "semana" | "mes";
+  const [modoDia, setModoDiaEstado] = useState<ModoDia>("lista");
+  useEffect(() => {
+    try { const m = window.localStorage.getItem("agenda.modoDia"); if (m === "lista" || m === "semana" || m === "mes") setModoDiaEstado(m); } catch { /* sem storage */ }
+  }, []);
+  const setModoDia = (m: ModoDia) => { setModoDiaEstado(m); try { window.localStorage.setItem("agenda.modoDia", m); } catch { /* sem storage */ } };
+  const [semanaInicio, setSemanaInicio] = useState(() => inicioDaSemana(today()));
+  // Painel: horizonte da programação projetada (7/30/60/90 dias).
+  const [horizonte, setHorizonte] = useState(30);
+  const [projecao, setProjecao] = useState<Record<number, ProjecaoDados>>({});
+  const [projecaoCarregando, setProjecaoCarregando] = useState(false);
+  const [projecaoErro, setProjecaoErro] = useState<string | null>(null);
+  const [concluidosAberto, setConcluidosAberto] = useState(false);
+  // Toque duplo protegido: a mesma marcação (mesmo id e mesmos dados) que ainda
+  // está no ar devolve a MESMA promessa, em vez de disparar um 2º POST — o
+  // `disabled` dos botões só vale depois do próximo render, e o segundo toque
+  // do dedo chega antes.
+  const marcacoesEmVoo = useRef(new Map<string, Promise<any>>());
+  const marcarEventoRealizado = useCallback((id: string, ...resto: any[]) => {
+    const chave = `${id}|${JSON.stringify(resto)}`;
+    const emVoo = marcacoesEmVoo.current.get(chave);
+    if (emVoo) return emVoo;
+    const p = (marcarEventoRealizadoApi as (...a: any[]) => Promise<any>)(id, ...resto).finally(() => { marcacoesEmVoo.current.delete(chave); });
+    marcacoesEmVoo.current.set(chave, p);
+    return p;
+  }, []);
   // Mensagem transitória de sucesso/erro exibida sob o cabeçalho (substitui alert()).
   const [feedback, setFeedback] = useState<{ msg: string; erro?: boolean } | null>(null);
   const mostrarFeedback = (msg: string, erro = false) => {
@@ -114,7 +176,6 @@ export default function AgendaPage() {
   // dos indicadores (ver C3-C5 da sessão 1 — o card de baixo só mostra a
   // linha do tempo). Mês próprio (não usa "data"/referência) para navegar
   // livremente sem afetar o resto dos cálculos da agenda.
-  const [calendarioAberto, setCalendarioAberto] = useState(false);
   const [mesCalendario, setMesCalendario] = useState(() => { const d = new Date(); return { ano: d.getFullYear(), mes: d.getMonth() }; });
   // Começa com hoje já selecionado para que a lista de compromissos apareça
   // ao lado do calendário assim que a visão é aberta, sem precisar clicar
@@ -218,6 +279,21 @@ export default function AgendaPage() {
   // Aplicar um agendamento preventivo: gaveta única (a mesma de Protocolos ›
   // Acompanhamento), aberta pelo id do cronograma do evento da Agenda.
   const [gavetaAplicarId, setGavetaAplicarId] = useState<number | null>(null);
+  // Adiar o agendamento do dia com chips (data + motivo em poucos toques).
+  const [adiandoId, setAdiandoId] = useState<number | null>(null);
+  const [adiandoOcupado, setAdiandoOcupado] = useState(false);
+  const adiandoRef = useRef(false);
+  const adiarAgendamento = async (e: any, novaData: string, motivo: string) => {
+    if (adiandoRef.current) return; // toque duplo: o 2º é ignorado
+    adiandoRef.current = true; setAdiandoOcupado(true);
+    try {
+      await adiarAgendamentoPreventivo(e.cronograma_id, { nova_data: novaData, hora: e.hora ?? null, motivo });
+      setAdiandoId(null);
+      mostrarFeedback(`Adiado para ${new Date(novaData + "T00:00:00").toLocaleDateString("pt-BR")} (${motivo}).`);
+      await carregar();
+    } catch (err: any) { mostrarFeedback(err.message || "Não foi possível adiar.", true); }
+    finally { adiandoRef.current = false; setAdiandoOcupado(false); }
+  };
 
   // "Incluir animal fora da janela de aplicação" (bug relatado pelo usuário
   // em 12/09/2026: só entra na lista quem bate o critério automático da
@@ -360,24 +436,42 @@ export default function AgendaPage() {
   const pedirConfirmacao = (chave: string) => setConfirmando((p) => new Set(p).add(chave));
   const cancelarConfirmacao = (chave: string) => setConfirmando((p) => { const n = new Set(p); n.delete(chave); return n; });
 
-  // Janela de contas a pagar/receber que o backend calcula: 10 dias por padrão,
-  // ou até a data "Até" escolhida (se o usuário ampliar o período). Na visão
-  // de calendário, amplia também até o fim do mês exibido (senão eventos
-  // financeiros de um mês futuro não chegariam a tempo de aparecer nele).
+  // Janela que o Dia a dia pede ao backend: sempre hoje+10 (padrão) ou até a
+  // data "Até" escolhida; na Semana e no Mês, até o fim do período mostrado
+  // (senão tarefas financeiras/futuras do fim do mês não chegariam a tempo).
+  const calendarioAberto = modoDia === "mes";
   const ultimoDiaDoMesCalendario = new Date(mesCalendario.ano, mesCalendario.mes + 1, 0).getDate();
   const ultimoDiaMesCalendarioIso = isoLocal(mesCalendario.ano, mesCalendario.mes, ultimoDiaDoMesCalendario);
-  const diasParaCalendario = calendarioAberto ? Math.max(0, diasEntre(data, ultimoDiaMesCalendarioIso)) : 0;
-  const diasJanela = Math.max(
-    ate ? Math.max(DIAS_PADRAO_FUTURO, diasEntre(data, ate)) : DIAS_PADRAO_FUTURO,
-    diasParaCalendario,
-  );
+  const limiteBusca = (() => {
+    const padrao = ate && ate > addDias(data, DIAS_PADRAO_FUTURO) ? ate : addDias(data, DIAS_PADRAO_FUTURO);
+    if (modoDia === "mes" && ultimoDiaMesCalendarioIso > padrao) return ultimoDiaMesCalendarioIso;
+    if (modoDia === "semana" && addDias(semanaInicio, 6) > padrao) return addDias(semanaInicio, 6);
+    return padrao;
+  })();
 
+  // Leitura da visão ativa (só GET). Sem skeleton: atualizar mantém o que já
+  // está na tela (stale-while-revalidate) e só troca quando o dado novo chega.
   const carregar = useCallback(async () => {
-    setLoading(true);
-    try { setAgenda(await fetchAgenda(data, diasJanela)); setErro(null); }
-    catch (e: any) { setAgenda(null); setErro(e?.message || "erro desconhecido"); }
-    finally { setLoading(false); }
-  }, [data, diasJanela]);
+    setAtualizando(true);
+    try {
+      const novo = visao === "painel" ? await fetchAgendaPainel(data) : await fetchAgendaDia(data, limiteBusca);
+      setAgenda((prev: any) => ({ ...(prev || {}), ...novo }));
+      gravarCacheAgenda(visao, data, novo);
+      setErro(null);
+    } catch (e: any) {
+      // Erro de rede não apaga a lista que já está na tela.
+      setErro(e?.message || "erro desconhecido");
+    } finally { setLoading(false); setAtualizando(false); }
+  }, [data, limiteBusca, visao]);
+
+  // 1ª dobra sem espera: antes da primeira pintura, usa o que a última visita
+  // deixou (mesmo dia e mesma conta). Se não houver, a tela já está desenhada e
+  // só a lista mostra "Buscando as tarefas…".
+  useLayoutEffect(() => {
+    const guardado = lerCacheAgenda(visao, data);
+    if (guardado) { setAgenda((prev: any) => ({ ...guardado, ...(prev || {}) })); setLoading(false); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visao]);
 
   // Gaveta lateral (T2, mockup 1e) — Preventivo/Inseminação abertos direto
   // daqui, sem navegar pra /lancamentos (ver abrirGavetaPreventivo/
@@ -419,6 +513,32 @@ export default function AgendaPage() {
   const concluirGavetaAgenda = useCallback(() => { setMensagemSalvaGavetaAgenda(null); setGavetaAgenda(null); }, []);
 
   useEffect(() => { carregar(); }, [carregar]);
+
+  // Recorrências/cronogramas (a parte que ESCREVE) rodam UMA vez por dia e por
+  // navegador, depois do primeiro desenho; se rodaram agora, relê em silêncio.
+  useEffect(() => {
+    let vivo = true;
+    materializarAgendaUmaVezPorDia(data).then((rodou) => { if (vivo && rodou) carregar(); }).catch(() => undefined);
+    return () => { vivo = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  // Programação projetada do Painel: só depois do 1º desenho do Painel e uma vez
+  // por horizonte (o que já veio fica em memória ao trocar 30 -> 60 -> 90).
+  const carregarProjecao = useCallback(async (dias: number) => {
+    setProjecaoCarregando(true);
+    try {
+      const dadosProj = await fetchAgendaProjecao(dias, data);
+      setProjecao((p) => ({ ...p, [dias]: dadosProj }));
+      setProjecaoErro(null);
+    } catch (e: any) { setProjecaoErro(e?.message || "erro desconhecido"); }
+    finally { setProjecaoCarregando(false); }
+  }, [data]);
+  useEffect(() => {
+    if (visao !== "painel" || projecao[horizonte]) return;
+    carregarProjecao(horizonte);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visao, horizonte]);
 
   // Protocolos IATF ativos/concluídos (D0..D11) — alimenta os quadros "IATF
   // atual" (etapas ainda em aberto) e "Última IATF" (grupo mais recente já
@@ -508,7 +628,7 @@ export default function AgendaPage() {
   // baixa, e somem sozinhos no dia seguinte — por isso vivem numa seção
   // própria, sempre visível, sem passar pelos filtros da agenda cronológica.
   const comunicados = useMemo(
-    () => (agenda?.eventos || []).filter((e: any) => e.comunicado),
+    () => (agenda?.comunicados as any[] | undefined) || (agenda?.eventos || []).filter((e: any) => e.comunicado),
     [agenda],
   );
   // Estoque negativo/abaixo do mínimo — informação sempre visível (não é uma
@@ -572,6 +692,14 @@ export default function AgendaPage() {
     () => eventosBase.filter((e: any) => e.data < hoje),
     [eventosBase, hoje],
   );
+  // Dia a dia gerencial: os dias com tarefa ATRASADA já chegam abertos (quem abre
+  // a agenda quer ver o que ficou para trás sem clicar), uma vez por carga de dados.
+  const atrasadosAbertosRef = useRef(false);
+  useEffect(() => {
+    if (atrasadosAbertosRef.current || eventosPendentes.length === 0) return;
+    atrasadosAbertosRef.current = true;
+    setDatasAbertas((p) => { const n = new Set(p); eventosPendentes.forEach((e: any) => n.add(e.data)); return n; });
+  }, [eventosPendentes]);
   // Localiza um evento pelo id independente da seção (pendentes/futuros) em
   // que ele está renderizado — usado pela confirmação em lote por dia.
   const eventoPorId = useMemo(
@@ -1171,9 +1299,9 @@ export default function AgendaPage() {
                             }
                           >
                             {tdAccent(e.categoria)}
-                            <td style={{ fontWeight: e.numero_animal ? 700 : 400 }}>{e.numero_animal || (e.lote ? `Lote: ${e.lote}` : "—")}</td>
+                            <td style={{ fontWeight: e.numero_animal ? 700 : 400 }}>{e.numero_animal || (e.lote ? `Lote: ${e.lote}` : <span className="ag2-nada">—</span>)}</td>
                             <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>{e.descricao}{mostrarAtraso && pillAtraso(e.data)}</td>
-                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem", whiteSpace: "pre-line", maxWidth: "26rem" }}>{e.observacao || "—"}</td>
+                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem", whiteSpace: "pre-line", maxWidth: "26rem" }}>{e.observacao || <span className="ag2-nada">—</span>}</td>
                             <td style={{ fontSize: "0.7rem", color: e.fonte === "manual" ? "var(--amber)" : "var(--text-muted)" }}>{e.fonte === "manual" ? "manual" : "auto"}</td>
                             <td onClick={(ehSugestaoMov || ehBstAplicacao || ehDiariaTrabalho) ? (ev) => ev.stopPropagation() : undefined}>
                               {ehSugestaoMov ? (
@@ -1340,7 +1468,7 @@ export default function AgendaPage() {
                               {abertoIatf ? <ChevronDown size={12} style={{ display: "inline", marginRight: "0.3rem" }} /> : <ChevronRight size={12} style={{ display: "inline", marginRight: "0.3rem" }} />}
                               {e.descricao}{mostrarAtraso && pillAtraso(e.data)}
                             </td>
-                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
+                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || <span className="ag2-nada">—</span>}</td>
                             <td style={{ fontSize: "0.7rem", color: "var(--amber)" }}>manual</td>
                             <td onClick={(ev) => ev.stopPropagation()}>
                               {!ehD11 && <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id, undefined, e.hormonios)} />}
@@ -1439,7 +1567,7 @@ export default function AgendaPage() {
                               {aberto ? <ChevronDown size={12} style={{ display: "inline", marginRight: "0.3rem" }} /> : <ChevronRight size={12} style={{ display: "inline", marginRight: "0.3rem" }} />}
                               {e.descricao}{mostrarAtraso && pillAtraso(e.data)}
                             </td>
-                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
+                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || <span className="ag2-nada">—</span>}</td>
                             <td style={{ fontSize: "0.7rem", color: "var(--amber)" }}>manual</td>
                             <td onClick={(ev) => ev.stopPropagation()} />
                           </tr>
@@ -1481,7 +1609,7 @@ export default function AgendaPage() {
                           {tdAccent(e.categoria)}
                           <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>—</td>
                           <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>{e.descricao}{mostrarAtraso && pillAtraso(e.data)}</td>
-                          <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
+                          <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || <span className="ag2-nada">—</span>}</td>
                           <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>
                           <td><ChevronRight size={16} style={{ color: "var(--text-muted)" }} /></td>
                         </tr>
@@ -1506,7 +1634,7 @@ export default function AgendaPage() {
                                 </span>
                               )}
                             </td>
-                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
+                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || <span className="ag2-nada">—</span>}</td>
                             <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>
                             <td onClick={(ev) => ev.stopPropagation()} />
                           </tr>
@@ -1618,7 +1746,8 @@ export default function AgendaPage() {
                       const e = linha.e;
                       const pendCk = (e.checklist_total ?? 0) - (e.checklist_resolvidos ?? 0);
                       return (
-                        <tr key={`cron-aplicar-${i}`} style={{ cursor: "pointer" }} onClick={() => setGavetaAplicarId(e.cronograma_id)}>
+                        <React.Fragment key={`cron-aplicar-${i}`}>
+                        <tr style={{ cursor: "pointer" }} onClick={() => setGavetaAplicarId(e.cronograma_id)}>
                           {tdAccent(e.categoria)}
                           <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{e.animais.length} animal(is)</td>
                           <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>
@@ -1630,14 +1759,27 @@ export default function AgendaPage() {
                               </span>
                             )}
                           </td>
-                          <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
+                          <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || <span className="ag2-nada">—</span>}</td>
                           <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>agendamento</td>
                           <td onClick={(ev) => ev.stopPropagation()}>
                             <button className="btn-primary-gold" style={{ fontSize: "0.72rem" }} onClick={() => setGavetaAplicarId(e.cronograma_id)}>
                               <Syringe size={12} /> {e.fase === "leitura" ? "Registrar leitura" : e.fase === "inoculacao" ? "Inocular" : e.fase === "coleta" ? "Registrar coleta" : "Aplicar"}
                             </button>
+                            <button className="btn-ghost" style={{ fontSize: "0.72rem", marginLeft: "0.4rem" }} aria-expanded={adiandoId === e.cronograma_id}
+                              onClick={() => setAdiandoId((atual) => (atual === e.cronograma_id ? null : e.cronograma_id))}>
+                              Adiar
+                            </button>
                           </td>
                         </tr>
+                        {adiandoId === e.cronograma_id && (
+                          <tr style={{ background: "var(--surface-2)" }}>
+                            <td colSpan={6} style={{ padding: "0.5rem 0.75rem" }}>
+                              <AdiarComChips dataAtual={e.data} ocupado={adiandoOcupado} onCancelar={() => setAdiandoId(null)}
+                                onConfirmar={(novaData, motivo) => adiarAgendamento(e, novaData, motivo)} />
+                            </td>
+                          </tr>
+                        )}
+                        </React.Fragment>
                       );
                     }
                     if (linha.tipo === "inducao") {
@@ -1653,7 +1795,7 @@ export default function AgendaPage() {
                               {abertoInducao ? <ChevronDown size={12} style={{ display: "inline", marginRight: "0.3rem" }} /> : <ChevronRight size={12} style={{ display: "inline", marginRight: "0.3rem" }} />}
                               {e.descricao}{mostrarAtraso && pillAtraso(e.data)}
                             </td>
-                            <td style={{ color: "var(--amber)", fontSize: "0.78rem", fontWeight: e.observacao ? 700 : 400 }}>{e.observacao || "—"}</td>
+                            <td style={{ color: "var(--amber)", fontSize: "0.78rem", fontWeight: e.observacao ? 700 : 400 }}>{e.observacao || <span className="ag2-nada">—</span>}</td>
                             <td style={{ fontSize: "0.7rem", color: "var(--amber)" }}>manual</td>
                             <td onClick={(ev) => ev.stopPropagation()}>
                               <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id, undefined, e.medicamentos_opcoes)} />
@@ -1838,7 +1980,7 @@ export default function AgendaPage() {
     const eventosDoDiaSelecionado = diaSelecionado ? (eventosPorDiaCal.get(diaSelecionado) || []) : [];
 
     return (
-      <div style={{ display: "grid", gridTemplateColumns: diaSelecionado ? "1fr 320px" : "1fr", gap: "1.25rem", alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: "1.25rem", alignItems: "start" }}>
         <div>
           <div className="flex items-center justify-between mb-3">
             <button className="btn-ghost" onClick={() => mudarMes(-1)} title="Mês anterior"><ChevronLeft size={16} /></button>
@@ -1847,7 +1989,7 @@ export default function AgendaPage() {
             </button>
             <button className="btn-ghost" onClick={() => mudarMes(1)} title="Próximo mês"><ChevronRight size={16} /></button>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "4px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: "4px" }}>
             {DIAS_SEMANA_ABREV.map((d) => (
               <div key={d} style={{ textAlign: "center", fontSize: "0.68rem", fontWeight: 700, color: "var(--text-muted)", padding: "0.2rem 0" }}>{d}</div>
             ))}
@@ -1859,7 +2001,8 @@ export default function AgendaPage() {
               const ehHoje = iso === hoje;
               const ehSelecionado = iso === diaSelecionado;
               return (
-                <button key={iso} type="button" onClick={() => abrirDiaCalendario(iso)}
+                <button key={iso} type="button" onClick={() => abrirDiaCalendario(iso)} className="ag2-cel" aria-pressed={ehSelecionado}
+                  aria-label={`${Number(iso.slice(8, 10))}: ${evs.length} ${evs.length === 1 ? "tarefa" : "tarefas"}`}
                   title={evs.length ? `${evs.length} evento${evs.length !== 1 ? "s" : ""}` : undefined}
                   style={{
                     minHeight: "4.4rem", padding: "0.3rem 0.35rem", borderRadius: "var(--r-sm)", textAlign: "left", cursor: "pointer",
@@ -1877,7 +2020,8 @@ export default function AgendaPage() {
                           <span key={c} style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: corCategoria(c) }} />
                         ))}
                       </div>
-                      <span style={{ fontSize: "0.62rem", color: "var(--text-muted)" }}>{evs.length} evento{evs.length !== 1 ? "s" : ""}</span>
+                      <span className="ag2-cel-txt" style={{ fontSize: "0.62rem", color: "var(--text-muted)" }}>{evs.length} evento{evs.length !== 1 ? "s" : ""}</span>
+                      <span className="ag2-cel-num" aria-hidden="true">{evs.length}</span>
                     </>
                   )}
                 </button>
@@ -1888,7 +2032,7 @@ export default function AgendaPage() {
         {diaSelecionado && (
           <div className="card" style={{ background: "var(--surface-2)" }}>
             <div className="card-header mb-2 flex items-center justify-between" style={{ gap: "0.5rem" }}>
-              <span style={{ fontSize: "0.85rem", textTransform: "capitalize" }}>
+              <span className="ag2-cap1" style={{ fontSize: "0.85rem" }}>
                 {new Date(diaSelecionado + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" })}
               </span>
               <button className="btn-ghost" onClick={() => setDiaSelecionado(null)} title="Fechar"><X size={14} /></button>
@@ -1991,10 +2135,29 @@ export default function AgendaPage() {
   // página) quando o quadro "Alertas de estoque" das informações gerenciais
   // é clicado.
   const estoqueAlertasRef = useRef<HTMLDivElement>(null);
+  // Rolagem pendente para uma seção do Painel: quem clica de outra sub-aba (ex.:
+  // o evento "Aplicação de BST" no Dia a dia) troca de visão e rola depois que
+  // o Painel estiver desenhado.
+  const rolarPara = useRef<"bst" | "estoque" | "concluidos" | null>(null);
+  const concluidosRef = useRef<HTMLDivElement>(null);
+  const rolarAteSecao = (alvo: "bst" | "estoque" | "concluidos") => {
+    const el = alvo === "bst" ? bstIndicadoresRef.current : alvo === "estoque" ? estoqueAlertasRef.current : concluidosRef.current;
+    if (!el) return false;
+    const reduzMovimento = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollIntoView({ behavior: reduzMovimento ? "auto" : "smooth", block: "start" });
+    return true;
+  };
+  useEffect(() => {
+    if (visao !== "painel" || !rolarPara.current) return;
+    const alvo = rolarPara.current;
+    const id = requestAnimationFrame(() => { if (rolarAteSecao(alvo)) rolarPara.current = null; });
+    return () => cancelAnimationFrame(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visao, agenda]);
   const abrirAlertasEstoque = () => {
     setPaineis((p) => new Set(p).add("estoqueAlertas"));
-    const reduzMovimento = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    estoqueAlertasRef.current?.scrollIntoView({ behavior: reduzMovimento ? "auto" : "smooth", block: "start" });
+    rolarPara.current = "estoque";
+    if (visao !== "painel") mudarVisao("painel"); else rolarAteSecao("estoque");
   };
 
   // Compromisso "Aplicação de BST" na Agenda (aparece com antecedência, na
@@ -2005,8 +2168,8 @@ export default function AgendaPage() {
   const bstIndicadoresRef = useRef<HTMLDivElement>(null);
   const abrirListasBst = () => {
     setListaAtiva((p) => { const n = new Set(p); n.add("bstAptos"); n.add("bstNunca"); return n; });
-    const reduzMovimento = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    bstIndicadoresRef.current?.scrollIntoView({ behavior: reduzMovimento ? "auto" : "smooth", block: "start" });
+    rolarPara.current = "bst";
+    if (visao !== "painel") mudarVisao("painel"); else rolarAteSecao("bst");
   };
 
   const ordIatf = useOrdenacao(candidatas);
@@ -2095,201 +2258,267 @@ export default function AgendaPage() {
     );
   };
 
-  return (
-    <div className="p-6 animate-in">
-      {/* Filtros da agenda cronológica — primeiro elemento da página (C1):
-          "Data de referência" saiu (C2); o estado `data` continua existindo
-          por baixo (ancora `carregar()`), só o controle sumiu — a agenda
-          passa a ancorar sempre em hoje. */}
-      {/* Redesign T3 (mockup 1i): os mesmos 4 filtros (de/até/categoria/busca),
-          agora numa única linha compacta em vez do cartão empilhado — só
-          reestilizado, nenhum estado/handler mudou. */}
-      <div className="card mb-4 flex items-center flex-wrap" style={{ padding: "0.5rem 0.7rem", gap: "0.6rem" }}>
-        <label htmlFor="agenda-filtro-de" style={{ display: "flex", alignItems: "center", gap: "0.35rem", color: "var(--text-muted)", fontSize: "0.72rem", fontWeight: 600 }}><Filter size={13} /> Período</label>
-        <input id="agenda-filtro-de" type="date" aria-label="Data inicial do período" value={de} onChange={e => setDe(e.target.value)} style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", color: "var(--text)", fontSize: "0.78rem" }} />
-        <span style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>–</span>
-        <input id="agenda-filtro-ate" type="date" aria-label="Data final do período" value={ate} onChange={e => setAte(e.target.value)} style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", color: "var(--text)", fontSize: "0.78rem" }} />
-        <select id="agenda-filtro-categoria" aria-label="Categoria" value={fCat} onChange={e => setFCat(e.target.value)} style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", color: "var(--text)", fontSize: "0.78rem" }}>
-          <option value="">Categoria: todas</option>{CATEGORIAS.map(c => <option key={c}>{c}</option>)}
-        </select>
-        <div style={{ flex: 1, minWidth: "160px", display: "flex", alignItems: "center", gap: "0.4rem", border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem" }}>
-          <Search size={13} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-          <input id="agenda-filtro-busca" aria-label="Buscar por número do animal ou descrição" value={filtro} onChange={e => setFiltro(e.target.value)} placeholder="Nº do animal, descrição…"
-            style={{ border: "none", background: "none", outline: "none", color: "var(--text)", fontSize: "0.78rem", width: "100%" }} />
-        </div>
-        <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600 }}>{eventosHoje.length + eventosProximos.length + eventosPendentes.length} eventos</span>
-        {(de || ate || fCat || filtro) && <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => { setDe(""); setAte(""); setFCat(""); setFiltro(""); }}>Limpar</button>}
-      </div>
+  // ─────────────────────────── Sub-aba "Dia a dia" ───────────────────────────
+  // Só lista e calendário para a rotina: sem cartões, sem candidatas, sem lista
+  // de espera (animal na janela NUNCA é tarefa — R1). Tudo isso mora no Painel.
+  const rolarParaId = (id: string) => {
+    const reduz = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    document.getElementById(id)?.scrollIntoView({ behavior: reduz ? "auto" : "smooth", block: "start" });
+  };
+  const limite7 = addDias(hoje, 7);
+  const proximos7 = eventosProximos.filter((e: any) => e.data <= limite7).length;
+  const semanaFim = addDias(semanaInicio, 6);
+  const eventosDaSemana = eventosBase.filter((e: any) => e.data >= semanaInicio && e.data <= semanaFim);
+  const mudarSemana = (delta: number) => {
+    const novo = delta === 0 ? inicioDaSemana(hoje) : addDias(semanaInicio, delta * 7);
+    setSemanaInicio(novo);
+    setDiaSelecionado(delta === 0 ? hoje : novo);
+  };
+  const horaAtualizado = agenda?.gerado_em ? new Date(agenda.gerado_em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : null;
 
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Calendar size={22} style={{ color: "var(--dourado)" }} />
-            Agenda
-          </h1>
-          <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
-            Eventos preditivos gerados automaticamente pelas regras da fazenda
-          </p>
-        </div>
-        <div className="flex items-end gap-2">
-          <button onClick={carregar} className="btn-ghost" title="Recarregar">
-            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-          </button>
-          <button onClick={() => setCalendarioAberto((a) => !a)} className="btn-primary" title="Ver o calendário mensal por cima dos indicadores">
-            <Calendar size={16} /> {calendarioAberto ? "Fechar calendário" : "Calendário"}
-          </button>
-        </div>
-      </div>
-
-      {/* Erro de carregamento — distinto do estado "sem dados" */}
-      {erro && (
-        <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Não foi possível carregar a agenda: {erro}</span></div>
-      )}
-
-      {/* Lista de espera do preventivo: só atalho para Protocolos, NÃO é tarefa (R1). */}
-      {(agenda?.lista_espera_sanitaria || []).length > 0 && (
-        <div className="mb-4" style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-          {(agenda.lista_espera_sanitaria as any[]).reduce((s, r) => s + (r.quantidade || 0), 0)} animal(is) na lista de espera do preventivo —{" "}
-          <a href="/protocolos" onClick={(ev) => { ev.preventDefault(); router.push("/protocolos"); }} style={{ textDecoration: "underline" }}>abrir em Protocolos</a>
-        </div>
-      )}
-
-      {/* Feedback transitório de ações (sucesso em verde, erro em vermelho) */}
-      {feedback && (
-        <div className="mb-4" style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.82rem", padding: "0.5rem 0.9rem", borderRadius: "var(--r-sm)",
-          background: feedback.erro ? "rgba(192,57,43,0.15)" : "rgba(20,83,45,0.35)",
-          border: "1px solid " + (feedback.erro ? "var(--red)" : "var(--green-light)"),
-          color: feedback.erro ? "var(--red)" : "var(--green-light)" }}>
-          {feedback.erro ? <AlertTriangle size={15} /> : <CheckCircle2 size={15} />} {feedback.msg}
-        </div>
-      )}
-
+  const renderDiaADia = () => (
+    <div id="ag2-painel-dia" role="tabpanel" aria-labelledby="ag2-tab-dia">
       {/* Reagente de exame (TB/brucelose): aviso persistente, com o registro da notificação — não some ao notificar. */}
       <BannerReagentes />
 
-      {/* Informações gerenciais — cada quadro clicável expande/recolhe uma
-          lista logo abaixo (estado listaAtiva); "Alertas de estoque" rola até
-          a seção de Estoque, no final da página. */}
-      {loading && !agenda ? (
-        <TelaSkeleton />
-      ) : agenda && (
-        calendarioAberto ? (
-          // Calendário mensal por cima dos indicadores (C3-C4) — mesmo
-          // renderCalendario() reaproveitado da antiga visualização de baixo,
-          // só que agora sobrepondo este bloco em vez de trocar de aba.
-          <div className="card mb-2">
-            <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
-              <span className="flex items-center gap-2"><Calendar size={15} style={{ color: "var(--dourado)" }} /> Calendário</span>
-              <div className="flex items-center gap-2">
-                {/* O botão "Adicionar" saiu do cabeçalho da página (C3), mas o
-                    evento manual não podia sair com ele: o atalho "Agendar" de
-                    cada linha só cria evento de UM animal, com descrição fixa
-                    da linha. Sem este gatilho, evento livre ou vinculado a
-                    lote(s) ficaria sem nenhum caminho na tela — o modal e o
-                    POST /agenda/manual continuariam existindo, inalcançáveis.
-                    O calendário é onde faz sentido: quem está olhando o mês é
-                    quem quer marcar alguma coisa nele. */}
-                <button className="btn-ghost" onClick={() => setShowModal(true)} title="Criar evento manual — livre, por lote ou para vários animais">
-                  <Plus size={14} /> Novo evento
-                </button>
-                <button className="btn-ghost" onClick={() => setCalendarioAberto(false)} title="Fechar e voltar aos indicadores"><X size={14} /> Fechar</button>
-              </div>
-            </div>
-            {renderCalendario()}
-          </div>
-        ) : (
-        <div ref={bstIndicadoresRef} className="mb-2">
-          {/* Chunking por assunto (achado do lote 2: 8 indicadores numa faixa
-              só, sem hierarquia). Mesmos indicadores, agora com um rótulo de
-              grupo acima de cada bloco — a cor do círculo já indicava a
-              categoria, o rótulo deixa isso explícito também no texto. */}
-          <p style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "0.4rem" }}>Reprodução</p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-            <Indicador categoria="reprodutivo" cor="var(--blue)" valor={candidatas.length} rotulo="Candidatas à próxima IATF"
-              onClick={() => toggleLista("iatf")} podeClicar={candidatas.length > 0}
-              extra={candidatas.length > 0 && (listaAtiva.has("iatf") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
-
-            <Indicador categoria="reprodutivo" cor="var(--green-light)" valor={`${animaisIatfAtual.length} animal(is)`} rotulo="IATF atual"
-              onClick={() => toggleLista("iatfAtual")} podeClicar={animaisIatfAtual.length > 0}
-              title="Animais com alguma etapa (D0/D7/D9/D11) ainda em aberto — só passa de zero durante o protocolo, do D0 até a inseminação (D11)"
-              extra={animaisIatfAtual.length > 0 && (listaAtiva.has("iatfAtual") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
-
-            <Indicador categoria="reprodutivo" cor={grupoUltimaIatf ? undefined : "var(--text-muted)"} rotulo="Última IATF"
-              onClick={() => toggleLista("iatfUltima")} podeClicar={!!grupoUltimaIatf}
-              valor={grupoUltimaIatf ? (
-                <>
-                  <span style={{ display: "block", fontSize: "0.86rem", fontWeight: 700, color: "var(--dourado-light)", lineHeight: 1.35 }}>
-                    D0 {fmtCurtaAno(grupoUltimaIatf.data_d0)} · D11 {fmtCurtaAno(grupoUltimaIatf.data_d11)}
-                  </span>
-                  <span style={{ display: "block", fontSize: "1.15rem", fontWeight: 800, marginTop: "0.1rem", color: "var(--text)" }}>{grupoUltimaIatf.animais.length} animal(is)</span>
-                </>
-              ) : "—"}
-              extra={!!grupoUltimaIatf && (listaAtiva.has("iatfUltima") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
-          </div>
-
-          <p style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "0.4rem" }}>Sanidade</p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-            <Indicador categoria="sanidade" cor="var(--green-light)" rotulo="BST aptos"
-              onClick={() => toggleLista("bstAptos")} podeClicar={bstAptos.length > 0}
-              valor={<>
-                {bstAptos.length}
-                {proxBST && <span style={{ display: "block", fontSize: "0.7rem", fontWeight: 400, color: "var(--text-muted)" }}>Próx. aplicação: {proxBST}</span>}
-              </>}
-              extra={bstAptos.length > 0 && (listaAtiva.has("bstAptos") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
-
-            <Indicador categoria="sanidade" cor="var(--amber)" valor={bstExcl.length} rotulo="BST excluídos"
-              onClick={() => toggleLista("bstExcl")} podeClicar={bstExcl.length > 0}
-              extra={bstExcl.length > 0 && (listaAtiva.has("bstExcl") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
-
-            <Indicador categoria="sanidade" cor="var(--blue)" valor={bstNuncaAplicados.length} rotulo="Incluir no próximo BST"
-              onClick={() => toggleLista("bstNunca")} podeClicar={bstNuncaAplicados.length > 0}
-              extra={bstNuncaAplicados.length > 0 && (listaAtiva.has("bstNunca") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
-          </div>
-
-          <p style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "0.4rem" }}>Geral</p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Indicador categoria="geral" cor={eventosPendentes.length > 0 ? "var(--red)" : undefined}
-              corLabel={eventosPendentes.length > 0 ? "var(--red)" : undefined} borda={eventosPendentes.length > 0 ? "var(--red)" : undefined}
-              valor={eventosPendentes.length} rotulo="Pendências"
-              onClick={() => toggleLista("pendencias")} podeClicar={eventosPendentes.length > 0}
-              extra={eventosPendentes.length > 0 && (listaAtiva.has("pendencias") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
-
-            <Indicador categoria="geral" cor="var(--amber)" valor={estoqueAlertasTotal} rotulo="Alertas de estoque"
-              onClick={() => abrirAlertasEstoque()} podeClicar={estoqueAlertasTotal > 0}
-              title="Ver o detalhe dos alertas de estoque, no final da página"
-              extra={estoqueAlertasTotal > 0 && <PackageSearch size={11} />} />
-          </div>
+      <div className="ag2-controles">
+        <div className="ag2-visoes" role="group" aria-label="Como ver as tarefas">
+          {([["lista", "Lista"], ["semana", "Semana"], ["mes", "Mês"]] as const).map(([id, rotulo]) => (
+            <button key={id} type="button" aria-pressed={modoDia === id} onClick={() => { setModoDia(id); if (id === "semana") { setSemanaInicio(inicioDaSemana(hoje)); setDiaSelecionado(hoje); } }}>{rotulo}</button>
+          ))}
         </div>
-        )
-      )}
-      {eventosPendentes.length > 0 && (
-        <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginBottom: "0.5rem" }}>
-          Pendências: tudo que não foi realizado até o dia anterior a hoje.
-        </p>
-      )}
-
-      {/* Legenda de categorias — mesma cor usada na tira à esquerda de cada
-          linha da agenda mais abaixo. */}
-      <div className="flex items-center gap-3 mb-4" style={{ flexWrap: "wrap", fontSize: "0.75rem", color: "var(--text-muted)" }}>
-        {LEGENDA_CATEGORIAS.map((c) => (
-          <span key={c} className="flex items-center gap-1">
-            <span style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: corCategoria(c) }} />
-            {c}
-          </span>
-        ))}
-        {(proxVisita || proxBST) && (
-          <span style={{ marginLeft: "auto" }}>
-            {proxVisita && <>Próx. visita IATF: <strong style={{ color: "var(--text)" }}>{proxVisita}</strong></>}
-            {proxVisita && proxBST && " · "}
-            {proxBST && <>Próx. BST: <strong style={{ color: "var(--text)" }}>{proxBST}</strong></>}
-          </span>
+        <div className="ag2-busca">
+          <Search size={16} style={{ color: "var(--text-muted)", flexShrink: 0 }} aria-hidden="true" />
+          <input id="agenda-filtro-busca" aria-label="Buscar tarefa, lote ou número do animal" value={filtro} onChange={(e) => setFiltro(e.target.value)} placeholder="Buscar tarefa, lote, animal…" />
+        </div>
+        <select id="agenda-filtro-categoria" className="ag2-select" aria-label="Categoria" value={fCat} onChange={(e) => setFCat(e.target.value)}>
+          <option value="">Categoria</option>{CATEGORIAS.map((c) => <option key={c}>{c}</option>)}
+        </select>
+        {(de || ate || fCat || filtro) && (
+          <button className="btn-ghost" onClick={() => { setDe(""); setAte(""); setFCat(""); setFiltro(""); }}>Limpar filtros</button>
         )}
       </div>
 
+      {agenda?.eventos ? (
+      <p className="ag2-linha-contagem" aria-live="polite">
+        {eventosPendentes.length > 0 ? (
+          <button type="button" className="ag2-link ag2-atraso" onClick={() => { setModoDia("lista"); setTimeout(() => rolarParaId("ag2-atrasadas"), 30); }}>
+            <AlertTriangle size={14} style={{ display: "inline", verticalAlign: "-2px" }} aria-hidden="true" /> {eventosPendentes.length} {eventosPendentes.length === 1 ? "atrasada" : "atrasadas"}
+          </button>
+        ) : <span>Nada atrasado</span>}
+        <span aria-hidden="true">·</span>
+        <button type="button" className="ag2-link" onClick={() => { setModoDia("lista"); setTimeout(() => rolarParaId("ag2-hoje"), 30); }}><strong>{eventosHoje.length}</strong> de hoje</button>
+        <span aria-hidden="true">·</span>
+        <span><strong>{proximos7}</strong> nos próximos 7 dias</span>
+      </p>
+      ) : <p className="ag2-linha-contagem" aria-hidden="true">&nbsp;</p>}
+
+      <div className={"ag2-corpo" + (modoDia === "lista" ? "" : " ag2-corpo-um")}>
+        {modoDia === "lista" && (
+          <div className="card ag2-lista" style={{ padding: "0.75rem" }}>
+            <div className="card-header mb-1 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+              <span>Tarefas ({eventosPendentes.length + eventosFuturos.length})</span>
+              <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+                {!ate && <span className="ag2-dica-lista" style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>próximos {DIAS_PADRAO_FUTURO} dias — em Semana ou Mês você vê mais</span>}
+                <ExportarAgendaBotoes eventos={[...eventosPendentes, ...eventosFuturos]} />
+              </div>
+            </div>
+            {loading && !agenda ? (
+              <p className="ag2-carregando" role="status">Buscando as tarefas…</p>
+            ) : (
+              <div style={{ marginTop: "0.5rem" }}>
+                {eventosPendentes.length > 0 && (
+                  <section id="ag2-atrasadas" style={{ scrollMarginTop: "1rem" }}>
+                    <div className="flex items-center gap-2" style={{ color: "var(--alert-fg)", fontWeight: 700, fontSize: "0.85rem", margin: "0.4rem 0" }}>
+                      <AlertTriangle size={14} aria-hidden="true" /> Atrasadas ({eventosPendentes.length})
+                    </div>
+                    <div className="space-y-2 mb-3">{renderEventos(eventosPendentes, true)}</div>
+                  </section>
+                )}
+                <section id="ag2-hoje" style={{ scrollMarginTop: "1rem" }}>
+                  <div className="flex items-center gap-2" style={{ fontWeight: 700, fontSize: "0.85rem", margin: "0.4rem 0" }}>
+                    <Calendar size={14} style={{ color: "var(--dourado)" }} aria-hidden="true" /> Hoje · {new Date(hoje + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "long" })} ({eventosHoje.length})
+                  </div>
+                  {eventosHoje.length > 0 ? (
+                    <div className="space-y-2 mb-3">{renderEventos(eventosHoje)}</div>
+                  ) : (
+                    <p style={{ color: "var(--text-muted)", padding: "0.5rem", fontSize: "0.9rem" }}>Nada para hoje.</p>
+                  )}
+                </section>
+                {diaFechado && diaFechado.total > 0 && (
+                  <div className="animate-in mb-3" style={{ padding: "0.55rem 0.7rem", borderLeft: "3px solid var(--dourado)", background: "var(--surface-2)", fontSize: "0.9rem", fontVariantNumeric: "tabular-nums" }}>
+                    Dia fechado — {diaFechado.total} de {diaFechado.total} concluídas.
+                  </div>
+                )}
+                {eventosProximos.length > 0 && (
+                  <section>
+                    <div className="flex items-center gap-2" style={{ color: "var(--text-muted)", fontWeight: 700, fontSize: "0.85rem", margin: "0.4rem 0" }}>
+                      <Calendar size={14} aria-hidden="true" /> Próximos dias ({eventosProximos.length})
+                    </div>
+                    <div className="space-y-2 mb-1">{renderEventos(eventosProximos)}</div>
+                  </section>
+                )}
+                {eventosHoje.length === 0 && eventosProximos.length === 0 && eventosPendentes.length === 0 && (
+                  <p style={{ color: "var(--text-muted)", padding: "1rem", textAlign: "center" }}>{agenda ? "Nenhuma tarefa no filtro atual." : ""}</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {modoDia === "semana" && (
+          <div className="card ag2-lista" style={{ padding: "0.75rem" }}>
+            <SemanaAgenda eventos={eventosDaSemana} hoje={hoje} inicio={semanaInicio} selecionado={diaSelecionado}
+              cor={corCategoria} onMudarSemana={mudarSemana} onSelecionar={(iso) => setDiaSelecionado((atual) => (atual === iso ? null : iso))} />
+            {diaSelecionado && diaSelecionado >= semanaInicio && diaSelecionado <= semanaFim && (
+              <div style={{ marginTop: "0.75rem" }}>
+                <p className="ag2-cap1" style={{ marginBottom: "0.4rem" }}>
+                  {new Date(diaSelecionado + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" })}
+                </p>
+                {eventosDaSemana.filter((e: any) => e.data === diaSelecionado).length > 0
+                  ? <div className="space-y-2">{renderEventos(eventosDaSemana.filter((e: any) => e.data === diaSelecionado), diaSelecionado < hoje)}</div>
+                  : <p className="ag2-mudo">Nenhuma tarefa nesse dia.</p>}
+              </div>
+            )}
+          </div>
+        )}
+
+        {modoDia === "mes" && (
+          <div className="card ag2-lista" style={{ padding: "0.75rem" }}>{renderCalendario()}</div>
+        )}
+
+        {modoDia === "lista" && (
+          <div className="flex flex-col gap-3">
+            <OQueVem eventos={eventosBase} hoje={hoje} carregando={!agenda?.eventos} onVerSemana={() => { setModoDia("semana"); setSemanaInicio(inicioDaSemana(hoje)); setDiaSelecionado(hoje); }} />
+            {agenda?.hormonios_check && agenda.hormonios_check.length > 0 && (
+              <div className="card">
+                <div className="card-header mb-2" style={{ fontSize: "0.8rem" }}>Precisa de insumo</div>
+                <div className="flex flex-col gap-1">
+                  {agenda.hormonios_check.map((h: any) => (
+                    <div key={h.nome} className="flex items-center justify-between" style={{ fontSize: "0.85rem", gap: "0.5rem" }}>
+                      <span>{h.nome}</span>
+                      <strong style={{ color: h.suficiente ? "var(--text)" : "var(--alert-fg)" }}>
+                        {h.suficiente ? `${h.estoque_atual} ${h.unidade}` : `faltam ${Math.ceil(h.falta)}`}
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // ─────────────────────────── Sub-aba "Painel" ───────────────────────────
+  // Todos os cartões da Agenda antiga (agora em 3 grupos), concluídos no período
+  // e a programação projetada. Lê /agenda/painel (estado de agora) e
+  // /agenda/projecao (o futuro, só números por semana).
+  const projAtual: ProjecaoDados | null = projecao[horizonte] || null;
+  const cartoesProj = projAtual?.cards || {};
+  const fmtBR = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const repasse = agenda?.repasse || null;
+  const repasseProj = cartoesProj.repasse || null;
+  const contasAgora: any[] = agenda?.contas_a_pagar || [];
+  const valorContas = contasAgora.reduce((t: number, c: any) => t + Math.max(0, (c.valor_total || 0) - (c.valor_pago || 0)), 0);
+  const listaEsperaTotal: number = agenda?.lista_espera_total ?? 0;
+  const totalConcluidos = inducaoConcluidosPeriodo.length + realizadosGenericos.length;
+  const pendencias = agenda?.pendencias || { n: 0, mais_antiga_dias: null };
+  const aindaCalculando = !projAtual;
+  const linkConfigRepasse = "/protocolos?aba=cadastro&tipo=sanitario&sub=preventivo";
+
+  const renderPainel = () => (
+    <div id="ag2-painel-painel" role="tabpanel" aria-labelledby="ag2-tab-painel">
+      <div className="ag2-painel-topo">
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.5rem 0.9rem" }}>
+          <SeletorHorizonte valor={horizonte} onChange={setHorizonte} />
+          <span className="ag2-mudo">Próximos {horizonte} dias a partir de hoje</span>
+        </div>
+        <button type="button" className="ag2-link" onClick={() => mudarVisao("dia")}>Voltar ao dia a dia</button>
+      </div>
+
+      {loading && !agenda ? (
+        <p className="ag2-carregando" role="status">Buscando os números do painel…</p>
+      ) : (
+        <div ref={bstIndicadoresRef} style={{ scrollMarginTop: "1rem" }}>
+          <GrupoPainel titulo="Reprodução" cor="var(--cat-reproducao)">
+            <CartaoPainel titulo="Candidatas à próxima IATF" icon={HeartPulse} cor="var(--cat-reproducao)" valor={candidatas.length}
+              detalhe={proxVisita ? <>próxima visita {proxVisita}</> : "vacas aptas a entrar em protocolo"}
+              onClick={candidatas.length > 0 ? () => toggleLista("iatf") : undefined} aberto={listaAtiva.has("iatf")} />
+            <CartaoPainel titulo="IATF em andamento" icon={HeartPulse} cor="var(--cat-reproducao)" valor={animaisIatfAtual.length}
+              detalhe={gruposIatfAtivos.length > 0 ? `${gruposIatfAtivos.length} ${gruposIatfAtivos.length === 1 ? "protocolo" : "protocolos"} · etapas D0 a D11 em aberto` : "nenhum protocolo em andamento"}
+              onClick={animaisIatfAtual.length > 0 ? () => toggleLista("iatfAtual") : undefined} aberto={listaAtiva.has("iatfAtual")} />
+            <CartaoPainel titulo="Última IATF" icon={HeartPulse} cor="var(--cat-reproducao)"
+              valor={grupoUltimaIatf ? grupoUltimaIatf.animais.length : "—"}
+              detalhe={grupoUltimaIatf ? <>D0 {fmtCurtaAno(grupoUltimaIatf.data_d0)} · D11 {fmtCurtaAno(grupoUltimaIatf.data_d11)}</> : "nenhuma concluída ainda"}
+              onClick={grupoUltimaIatf ? () => toggleLista("iatfUltima") : undefined} aberto={listaAtiva.has("iatfUltima")} />
+            {repasse && (
+              repasse.usar ? (
+                <CartaoPainel titulo="Cio de repasse (adesivo)" icon={Repeat} cor="var(--cat-reproducao)" href={linkConfigRepasse}
+                  valor={repasseProj ? repasseProj.checagens : repasse.checagens}
+                  detalhe={<>
+                    {(repasseProj ? repasseProj.checagens : repasse.checagens)} {(repasseProj ? repasseProj.checagens : repasse.checagens) === 1 ? "checagem" : "checagens"} × {repasseProj ? repasseProj.vacas : repasse.vacas} {(repasseProj ? repasseProj.vacas : repasse.vacas) === 1 ? "vaca" : "vacas"}
+                    {(repasseProj?.proxima || repasse.proxima) ? <> · próxima {fmtCurta(repasseProj?.proxima || repasse.proxima)}</> : null}
+                    {!repasse.mostrar_na_agenda ? " · sem aviso no Dia a dia" : ""}
+                  </>}
+                  titleAttr="Checagens de retorno ao cio previstas (serviços × vacas). Toque para configurar a regra em Protocolos." />
+              ) : (
+                <CartaoPainel titulo="Cio de repasse (adesivo)" icon={Repeat} cor="var(--cat-reproducao)" href={linkConfigRepasse}
+                  valor="Desligado" desligado detalhe="Toque para configurar em Protocolos" />
+              )
+            )}
+          </GrupoPainel>
+
+          <GrupoPainel titulo="Sanidade" cor="var(--cat-sanidade)">
+            <CartaoPainel titulo="BST · vacas aptas" icon={SyringeIco} cor="var(--cat-sanidade)" valor={bstAptos.length}
+              detalhe={proxBST ? <>próxima aplicação {proxBST}</> : "sem aplicação prevista"}
+              onClick={bstAptos.length > 0 ? () => toggleLista("bstAptos") : undefined} aberto={listaAtiva.has("bstAptos")} />
+            <CartaoPainel titulo="BST · excluídas" icon={SyringeIco} cor="var(--cat-sanidade)" valor={bstExcl.length}
+              detalhe="fora do ciclo agora (DEL ou marcação)"
+              onClick={bstExcl.length > 0 ? () => toggleLista("bstExcl") : undefined} aberto={listaAtiva.has("bstExcl")} />
+            <CartaoPainel titulo="Incluir no próximo BST" icon={SyringeIco} cor="var(--cat-sanidade)" valor={bstNuncaAplicados.length}
+              detalhe="nunca receberam ou pedem reanálise"
+              onClick={bstNuncaAplicados.length > 0 ? () => toggleLista("bstNunca") : undefined} aberto={listaAtiva.has("bstNunca")} />
+            <CartaoPainel titulo="Vacinas previstas" icon={SyringeIco} cor="var(--cat-sanidade)" href="/protocolos?aba=acompanhamento"
+              valor={aindaCalculando ? "…" : (cartoesProj.vacinas?.agendadas ?? 0)}
+              detalhe={aindaCalculando ? "calculando…" : cartoesProj.vacinas?.proximas?.[0]
+                ? <>{cartoesProj.vacinas.n_animais} animais · próxima {fmtCurta(cartoesProj.vacinas.proximas[0].data)}</> : `nenhuma agendada em ${horizonte} dias`} />
+            <CartaoPainel titulo="Exames previstos" icon={ClipboardCheck} cor="var(--cat-sanidade)" href="/protocolos?aba=acompanhamento"
+              valor={aindaCalculando ? "…" : (cartoesProj.exames?.agendadas ?? 0)}
+              detalhe={aindaCalculando ? "calculando…" : cartoesProj.exames?.proximas?.[0]
+                ? <>{cartoesProj.exames.n_animais} animais · próximo {fmtCurta(cartoesProj.exames.proximas[0].data)}</> : `nenhum agendado em ${horizonte} dias`} />
+            {/* Animais na lista de espera: SÓ atalho/contagem para Protocolos › Aplicar (nunca lista de brincos, nunca
+                tarefa do Dia a dia — R1). TODO (fatia da rotina da lista de espera): mostrar este cartão apenas quando o
+                parâmetro "Aviso diário nos cards da 2ª aba da Agenda" estiver ligado (no máximo uma vez por dia). Enquanto
+                o parâmetro não existe, o cartão aparece sempre que houver lista de espera. */}
+            {listaEsperaTotal > 0 && (
+              <CartaoPainel titulo="Animais na lista de espera" icon={ClipboardList} cor="var(--cat-sanidade)" href="/protocolos?aba=aplicar"
+                valor={listaEsperaTotal} detalhe="atalho para Protocolos › Aplicar" />
+            )}
+          </GrupoPainel>
+
+          <GrupoPainel titulo="Estoque e gestão" cor="var(--cat-estoque)">
+            <CartaoPainel titulo="Pendências" icon={AlertTriangle} cor="var(--cat-financeiro)" valor={pendencias.n} alerta={pendencias.n > 0}
+              detalhe={pendencias.n > 0 ? (pendencias.mais_antiga_dias != null ? `a mais antiga há ${pendencias.mais_antiga_dias} ${pendencias.mais_antiga_dias === 1 ? "dia" : "dias"}` : "atrasadas") : "nada atrasado"}
+              onClick={pendencias.n > 0 ? () => { mudarVisao("dia"); setModoDia("lista"); setTimeout(() => rolarParaId("ag2-atrasadas"), 250); } : undefined} />
+            <CartaoPainel titulo="Alertas de estoque" icon={PackageSearch} cor="var(--cat-estoque)" valor={estoqueAlertasTotal} alerta={estoqueAlertasTotal > 0}
+              detalhe={estoqueAlertasTotal > 0 ? `${estoqueNegativo.length} negativos · ${estoqueAbaixoMinimo.length} abaixo do mínimo` : "tudo dentro do mínimo"}
+              onClick={estoqueAlertasTotal > 0 ? () => abrirAlertasEstoque() : undefined} aberto={paineis.has("estoqueAlertas")} />
+            <CartaoPainel titulo="Contas a pagar" icon={WalletIco} cor="var(--cat-financeiro)" valor={contasAgora.length}
+              detalhe={contasAgora.length > 0 ? `${fmtBR(valorContas)} em ${DIAS_PADRAO_FUTURO} dias` : `nada a vencer em ${DIAS_PADRAO_FUTURO} dias`} href={contasAgora.length > 0 ? "/financeiro" : undefined} />
+            <CartaoPainel titulo="Concluídos no período" icon={CheckCircle2} cor="var(--cat-gestao)" valor={totalConcluidos}
+              detalhe={<>{fmtCurta(concDe)} a {fmtCurta(concAte)}</>}
+              onClick={() => { setConcluidosAberto(true); setTimeout(() => rolarAteSecao("concluidos"), 50); }} aberto={concluidosAberto} />
+          </GrupoPainel>
+        </div>
+      )}
+
+      <ProjecaoAgenda dados={projAtual} carregando={projecaoCarregando} erro={projecaoErro} horizonte={horizonte} onTentar={() => carregarProjecao(horizonte)} />
+
       {/* Listas expansíveis — abrem/fecham a partir do clique nos quadros acima */}
       {(candidatas.length > 0 || animaisIatfAtual.length > 0 || (grupoUltimaIatf?.animais?.length ?? 0) > 0 ||
-        bstAptos.length > 0 || bstExcl.length > 0 || bstNuncaAplicados.length > 0 || eventosPendentes.length > 0) && (
+        bstAptos.length > 0 || bstExcl.length > 0 || bstNuncaAplicados.length > 0) && (
         <div className="mb-4">
           {listaAtiva.has("iatf") && (
             <div className="card mb-2" style={{ overflowX: "auto" }}>
@@ -2364,18 +2593,17 @@ export default function AgendaPage() {
             </div>
           )}
 
-          {listaAtiva.has("pendencias") && eventosPendentes.length > 0 && (
-            <div className="mb-2">{renderEventos(eventosPendentes, true)}</div>
-          )}
         </div>
       )}
 
+      <div ref={concluidosRef} style={{ scrollMarginTop: "1rem" }}>
       {/* "Concluídos no período" (C7-C10) — card genérico no lugar do antigo
           card fixo só de indução de lactação: cobre etapas e atividades de
           qualquer tipo, com filtro de/até (padrão últimos 7 dias). Pequeno e
           recolhível por padrão (SecaoRecolhivel) para não competir com os
           indicadores em destaque acima. */}
       <SecaoRecolhivel
+        aberta={concluidosAberto} onAlternar={() => setConcluidosAberto((a) => !a)}
         titulo="Concluídos no período"
         icon={CheckCircle2}
         descricao="Etapas e atividades marcadas como concluídas no período selecionado — inclui desfazer, se marcado por engano"
@@ -2430,6 +2658,7 @@ export default function AgendaPage() {
         )}
       </SecaoRecolhivel>
 
+      </div>
       {/* Comunicados — avisos informativos (ex.: nova dieta do lote). Diferente
           de uma atividade: não têm botão de excluir/realizado, ficam fixos
           enquanto vigoram e somem sozinhos quando a data passa. */}
@@ -2462,97 +2691,9 @@ export default function AgendaPage() {
         </div>
       )}
 
-      {/* Linha do tempo — Hoje / Próximos dias / Atrasados (redesign T3,
-          mockup 1i: antes "Futuros" misturava hoje com os próximos dias sob
-          o mesmo rótulo "Hoje"). A grade do mês agora só aparece como overlay
-          dos indicadores (botão "Calendário" do cabeçalho, C3-C5) — este card
-          não tem mais a pílula que trocava entre as duas visões. Painel
-          lateral novo (calendário do mês + insumos) ao lado, só leitura —
-          nenhum dos fluxos de confirmação abaixo foi tocado. */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_250px] gap-4 items-start">
-      <div className="card">
-        <div className="card-header mb-1 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
-          <span>Agenda ({eventosPendentes.length + eventosFuturos.length})</span>
-          <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-            {!ate && (
-              <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>próximos {DIAS_PADRAO_FUTURO} dias — defina "Até" para ampliar</span>
-            )}
-            <ExportarAgendaBotoes eventos={[...eventosPendentes, ...eventosFuturos]} />
-          </div>
-        </div>
-        {loading ? (
-          <TelaSkeleton kpis={0} />
-        ) : (
-          <div style={{ marginTop: "0.75rem" }}>
-            <div className="flex items-center gap-2" style={{ color: "var(--dourado-light)", fontWeight: 700, fontSize: "0.8rem", margin: "0.6rem 0" }}>
-              <Calendar size={14} /> Hoje · {new Date(hoje + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })} ({eventosHoje.length})
-            </div>
-            {eventosHoje.length > 0 ? (
-              <div className="space-y-2 mb-3">{renderEventos(eventosHoje)}</div>
-            ) : (
-              <p style={{ color: "var(--text-muted)", padding: "0.75rem", textAlign: "center", fontSize: "0.82rem" }}>Nada para hoje.</p>
-            )}
-            {diaFechado && diaFechado.total > 0 && (
-              // Delight (Etapa 2, lote 2) — só na ÚLTIMA pendência de hoje;
-              // cada check individual continua só com o flash já existente.
-              <div className="animate-in mb-3" style={{
-                padding: "0.55rem 0.7rem", borderLeft: "3px solid var(--dourado)", background: "var(--surface-2)",
-                fontSize: "0.85rem", fontVariantNumeric: "tabular-nums",
-              }}>
-                Dia fechado — {diaFechado.total} de {diaFechado.total} concluídas.
-              </div>
-            )}
-            {eventosProximos.length > 0 && (
-              <>
-                <div className="flex items-center gap-2" style={{ color: "var(--text-muted)", fontWeight: 700, fontSize: "0.8rem", margin: "0.6rem 0" }}>
-                  <Calendar size={14} /> Próximos dias ({eventosProximos.length})
-                </div>
-                <div className="space-y-2 mb-3">{renderEventos(eventosProximos)}</div>
-              </>
-            )}
-            {eventosHoje.length === 0 && eventosProximos.length === 0 && eventosPendentes.length === 0 && (
-              <p style={{ color: "var(--text-muted)", padding: "1rem", textAlign: "center" }}>Nenhum evento no filtro atual.</p>
-            )}
-            {eventosPendentes.length > 0 && (
-              <>
-                <div className="flex items-center gap-2" style={{ color: "var(--red)", fontWeight: 700, fontSize: "0.8rem", margin: "0.6rem 0" }}>
-                  <AlertTriangle size={14} /> Atrasados ({eventosPendentes.length})
-                </div>
-                <div className="space-y-2">{renderEventos(eventosPendentes, true)}</div>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-      <div className="flex flex-col gap-3">
-        {renderMiniCalendario()}
-        {agenda?.hormonios_check && agenda.hormonios_check.length > 0 && (
-          <div className="card">
-            <div className="card-header mb-2" style={{ fontSize: "0.72rem" }}>Precisa de insumo</div>
-            <div className="flex flex-col gap-1">
-              {agenda.hormonios_check.map((h: any) => (
-                <div key={h.nome} className="flex items-center justify-between" style={{ fontSize: "0.78rem" }}>
-                  <span>{h.nome}</span>
-                  <strong style={{ color: h.suficiente ? "var(--text)" : "var(--red)" }}>
-                    {h.suficiente ? `${h.estoque_atual} ${h.unidade}` : `faltam ${Math.ceil(h.falta)}`}
-                  </strong>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-      </div>
-
-      {/* Estoque — alertas de saldo negativo/abaixo do mínimo, no final da
-          página. Sempre visível (informação, não pendência a marcar como
-          feita) — some sozinho quando o saldo normalizar. Cada item vira um
-          quadro individual (mesmo estilo dos cartões da Capa): fundo ouro e
-          contorno amarelo para abaixo do mínimo (mas ainda positivo); fundo
-          vinho transparente e contorno vermelho para saldo zero/negativo. */}
-      <div ref={estoqueAlertasRef} />
+      <div ref={estoqueAlertasRef} style={{ scrollMarginTop: "1rem" }} />
       {(estoqueNegativo.length > 0 || estoqueAbaixoMinimo.length > 0) && (
-        <div className="card mt-4" style={{ border: "1px solid var(--red)" }}>
+        <div className="card mt-4" style={{ border: "1px solid var(--red)" }} id="ag2-estoque-alertas">
           <button onClick={() => togglePainel("estoqueAlertas")} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", background: "none", border: "none", color: "var(--red)", cursor: "pointer", textAlign: "left", padding: 0 }}>
             {paineis.has("estoqueAlertas") ? <ChevronDown size={15} style={{ color: "var(--text-muted)" }} /> : <ChevronRight size={15} style={{ color: "var(--text-muted)" }} />}
             <span className="card-header" style={{ margin: 0, color: "var(--red)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
@@ -2579,6 +2720,48 @@ export default function AgendaPage() {
           )}
         </div>
       )}
+    </div>
+  );
+
+  return (
+    <div className="p-6 animate-in ag2">
+      <div className="ag2-topo">
+        <div className="ag2-topo-esq">
+          <h1><Calendar size={22} style={{ color: "var(--dourado)" }} aria-hidden="true" /> Agenda</h1>
+          <SubAbasAgenda ativa={visao} onChange={mudarVisao}
+            atrasadas={agenda?.resumo?.atrasadas ?? agenda?.pendencias?.n ?? eventosPendentes.length}
+            alertasPainel={estoqueAlertasTotal || agenda?.resumo?.alertas_estoque || 0} />
+        </div>
+        <div className="ag2-topo-dir">
+          {horaAtualizado && <span className="ag2-atualizado">Atualizado {horaAtualizado}</span>}
+          <button onClick={carregar} className="btn-ghost ag2-icone-btn" title="Atualizar" aria-label="Atualizar a agenda">
+            <RefreshCw size={16} className={atualizando ? "animate-spin" : ""} />
+          </button>
+          <button onClick={() => setShowModal(true)} className="btn-primary" title="Criar uma tarefa manual — livre, por lote ou para vários animais">
+            <Plus size={16} aria-hidden="true" /> Nova tarefa
+          </button>
+        </div>
+      </div>
+
+      {/* Erro de carregamento — distinto do estado "sem dados"; a lista que já está na tela fica. */}
+      {erro && (
+        <div className="alert-critico mb-4" role="alert">
+          <AlertTriangle size={18} aria-hidden="true" /><span>Não foi possível atualizar a agenda: {erro}</span>
+          <button type="button" className="btn-ghost" onClick={carregar} style={{ marginLeft: "auto" }}>Tentar de novo</button>
+        </div>
+      )}
+
+      {/* Feedback transitório de ações (sucesso em verde, erro em vermelho) */}
+      {feedback && (
+        <div className="ag2-aviso-topo" role="status" style={{
+          background: feedback.erro ? "rgba(192,57,43,0.15)" : "rgba(20,83,45,0.35)",
+          border: "1px solid " + (feedback.erro ? "var(--red)" : "var(--green-light)"),
+          color: feedback.erro ? "var(--alert-fg)" : "var(--green-light)" }}>
+          {feedback.erro ? <AlertTriangle size={15} aria-hidden="true" /> : <CheckCircle2 size={15} aria-hidden="true" />} {feedback.msg}
+        </div>
+      )}
+
+      {visao === "painel" ? renderPainel() : renderDiaADia()}
 
       {/* Modal sugestão de movimentação entre lotes */}
       {sugestaoMovAberta && (

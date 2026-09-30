@@ -1430,6 +1430,56 @@ export async function fetchAgenda(data?: string, dias?: number) {
   return res.json();
 }
 
+// ── Agenda v2 (fatia 10): leituras leves das duas sub-abas ───────────────────
+// /agenda/dia (Dia a dia) e /agenda/painel + /agenda/projecao (Painel) só LEEM.
+// A escrita (recorrências, cronogramas) continua em POST /agenda/materializar,
+// chamado à parte (ver materializarAgendaUmaVezPorDia) para não atrasar o
+// primeiro desenho da tela.
+async function getAgendaV2(caminho: string, qs: Record<string, string | number | undefined>, sinal?: AbortSignal) {
+  const p = new URLSearchParams();
+  Object.entries(qs).forEach(([k, v]) => { if (v !== undefined && v !== "") p.set(k, String(v)); });
+  const res = await authFetch(`${API}/agenda/${caminho}${p.toString() ? `?${p}` : ""}`, { cache: "no-store", signal: sinal });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Agenda error: ${res.status}`); }
+  return res.json();
+}
+export const fetchAgendaDia = (data?: string, ate?: string, sinal?: AbortSignal) => getAgendaV2("dia", { data, ate }, sinal);
+export const fetchAgendaPainel = (data?: string, sinal?: AbortSignal) => getAgendaV2("painel", { data }, sinal);
+export const fetchAgendaProjecao = (dias: number, data?: string, sinal?: AbortSignal) => getAgendaV2("projecao", { dias, data }, sinal);
+
+/** Materializa (escreve) no máximo uma vez por dia por navegador; devolve true se rodou agora. */
+export async function materializarAgendaUmaVezPorDia(data: string): Promise<boolean> {
+  const chave = `agenda-materializada:${data}`;
+  try { if (window.localStorage.getItem(chave)) return false; } catch { /* sem storage: materializa sempre */ }
+  await materializarAgenda(data);
+  try { window.localStorage.setItem(chave, "1"); } catch { /* ignora */ }
+  return true;
+}
+
+// Detecção de cio de repasse — configuração por fazenda.
+export type RepasseConfig = {
+  configurado: boolean; usar: boolean; estoque_id: number | null; dias_apos_servico: number; repetir: boolean;
+  repetir_cada_dias: number; repeticoes: number; mostrar_na_agenda: boolean; quem_entra: "todas" | "iatf" | "monta_natural";
+  produto?: { id: number; nome: string; quantidade: number | null; unidade: string | null } | null;
+  categoria_produto?: string; ciclo_sugerido?: [number, number];
+  quem_entra_opcoes?: { valor: string; rotulo: string }[]; avisos?: string[];
+};
+export async function fetchRepasseConfig(): Promise<RepasseConfig> { return getAgendaV2("repasse/config", {}); }
+export async function salvarRepasseConfig(dados: Omit<RepasseConfig, "configurado" | "produto" | "categoria_produto" | "ciclo_sugerido" | "quem_entra_opcoes" | "avisos">): Promise<RepasseConfig> {
+  const res = await authFetch(`${API}/agenda/repasse/config`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar a configuração do repasse"); }
+  return res.json();
+}
+export async function fetchRepasseProdutos(): Promise<{ categoria: string; produtos: { id: number; nome: string; quantidade: number | null; unidade: string | null }[]; outros_itens: { id: number; nome: string; categoria: string | null }[] }> {
+  return getAgendaV2("repasse/produtos", {});
+}
+export async function classificarProdutoRepasse(estoqueId: number) {
+  const res = await authFetch(`${API}/agenda/repasse/produtos/${estoqueId}/classificar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao classificar o produto"); }
+  return res.json();
+}
+
 export type MedicamentoIatf = {
   produto: string; estoque_id?: number | null;
   // "de qual lote/frasco de COMPRA?" (Fase G) — só usado hoje pelo protocolo
