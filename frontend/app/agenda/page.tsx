@@ -2431,6 +2431,8 @@ function AgendaConteudo() {
   const contasAgora: any[] = agenda?.contas_a_pagar || [];
   const valorContas = contasAgora.reduce((t: number, c: any) => t + Math.max(0, (c.valor_total || 0) - (c.valor_pago || 0)), 0);
   const listaEsperaTotal: number = agenda?.lista_espera_total ?? 0;
+  // O cartão só existe com a rotina ativa E o aviso diário ligado (Parâmetros); o backend decide.
+  const mostrarCartaoListaEspera: boolean = agenda?.rotina_lista_espera?.mostrar_card === true;
   const totalConcluidos = inducaoConcluidosPeriodo.length + realizadosGenericos.length;
   const pendencias = agenda?.pendencias || { n: 0, mais_antiga_dias: null };
   const aindaCalculando = !projAtual;
@@ -2497,10 +2499,9 @@ function AgendaConteudo() {
               detalhe={aindaCalculando ? "calculando…" : cartoesProj.exames?.proximas?.[0]
                 ? <>{cartoesProj.exames.n_animais} animais · próximo {fmtCurta(cartoesProj.exames.proximas[0].data)}</> : `nenhum agendado em ${horizonte} dias`} />
             {/* Animais na lista de espera: SÓ atalho/contagem para Protocolos › Aplicar (nunca lista de brincos, nunca
-                tarefa do Dia a dia — R1). TODO (fatia da rotina da lista de espera): mostrar este cartão apenas quando o
-                parâmetro "Aviso diário nos cards da 2ª aba da Agenda" estiver ligado (no máximo uma vez por dia). Enquanto
-                o parâmetro não existe, o cartão aparece sempre que houver lista de espera. */}
-            {listaEsperaTotal > 0 && (
+                tarefa do Dia a dia — R1). Aparece apenas quando a rotina da lista de espera está ativa E o "Aviso diário
+                nos cards da 2ª aba da Agenda" está ligado em Parâmetros (o backend calcula `mostrar_card`). */}
+            {mostrarCartaoListaEspera && listaEsperaTotal > 0 && (
               <CartaoPainel titulo="Animais na lista de espera" icon={ClipboardList} cor="var(--cat-sanidade)" href="/protocolos?aba=aplicar"
                 valor={listaEsperaTotal} detalhe="atalho para Protocolos › Aplicar" />
             )}

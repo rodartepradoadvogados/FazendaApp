@@ -9858,3 +9858,36 @@ export async function configurarPrecosReferenciaCowData(mostrar: boolean): Promi
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro (${res.status})`); }
   return res.json();
 }
+
+// ---------------------------------------------------------------------------
+// Rotina automática da lista de espera (docs/agents/auditoria-preventivo-agenda/
+// planejamento/11-rotina-lista-de-espera.md). A rotina só coloca animais na lista
+// de espera das regras de vacina/exame já cadastradas; nunca aplica nem agenda.
+// ---------------------------------------------------------------------------
+export type StatusRotinaListaEspera = {
+  ativa: boolean; dias_antecedencia: number; aviso_diario: boolean; tem_regras: boolean;
+  ultima_execucao_em: string | null; ultima_execucao_origem: "diaria" | "parametros" | "manual" | null;
+  ultima_execucao_status: "ok" | "sem_regras" | "erro" | null;
+  entraram: number; regras_avaliadas: number; regras_na_janela: number; ultimo_erro: string | null;
+  ultimo_aviso_em: string | null; aviso_de_hoje: boolean; na_lista_de_espera: number;
+};
+export async function fetchStatusRotinaListaEspera(): Promise<StatusRotinaListaEspera> {
+  const res = await authFetch(`${API}/agenda/lista-espera-rotina/status`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Erro ao carregar a rotina da lista de espera: ${res.status}`);
+  return res.json();
+}
+export async function executarRotinaListaEsperaAgora(): Promise<{ resultado: { entraram: number; motivo: string }; status: StatusRotinaListaEspera }> {
+  const res = await authFetch(`${API}/agenda/lista-espera-rotina/executar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Não foi possível executar a rotina agora"); }
+  return res.json();
+}
+export type ResumoRotinaListaEsperaCowData = {
+  fazendas_ativas: number; fazendas_processadas_hoje: number; ultima_execucao_em: string | null; entraram_ultima_passada: number;
+  erros: { fazenda_id: number; fazenda_nome: string; ultimo_erro: string | null }[];
+  fazendas: { fazenda_id: number; fazenda_nome: string; ultima_execucao_em: string | null; status: string | null; entraram: number; ultimo_erro: string | null }[];
+};
+export async function fetchResumoRotinaListaEsperaCowData(): Promise<ResumoRotinaListaEsperaCowData> {
+  const res = await authFetch(`${API}/painel-cowdata/rotina-lista-espera`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Erro ao carregar a rotina da lista de espera: ${res.status}`);
+  return res.json();
+}
