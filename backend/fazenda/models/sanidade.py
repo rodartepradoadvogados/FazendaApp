@@ -616,6 +616,11 @@ class CalendarioSanitario(SQLModel, table=True):
     # False (padrão) preserva 100% o comportamento antigo — nenhuma regra já
     # cadastrada muda de comportamento sozinha.
     usa_cronograma: bool = False
+    # Rotina da lista de espera (docs/agents/auditoria-preventivo-agenda/
+    # planejamento/11-rotina-lista-de-espera.md): quantos dias ANTES da janela
+    # desta regra o animal entra na lista de espera. NULL (padrão) = vale o
+    # valor único da fazenda (Parâmetros). Só sobrescreve quando preenchido.
+    dias_antecedencia_lista_espera: Optional[int] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
@@ -832,6 +837,32 @@ class CronogramaSanitarioLog(SQLModel, table=True):
     motivo: Optional[str] = None
     detalhe: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class RotinaListaEsperaEstado(SQLModel, table=True):
+    """Estado da rotina automática da lista de espera, UMA linha por fazenda.
+
+    Guarda (a) o resultado da última execução (mostrado em Parâmetros e no
+    Painel CowData), (b) o "último aviso" do card diário do Painel da Agenda
+    (no máximo 1x por dia por fazenda), e (c) o LOCK/idempotência entre
+    instâncias: `em_execucao_ate` é um arrendamento tomado por UPDATE atômico
+    e `ultima_diaria_em` impede uma 2ª execução diária no mesmo dia."""
+
+    __tablename__ = "rotina_lista_espera_estado"
+    __table_args__ = (UniqueConstraint("fazenda_id", name="uq_rotina_lista_espera_estado_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    ultima_execucao_em: Optional[datetime] = None
+    ultima_execucao_origem: Optional[str] = None      # diaria | parametros | manual
+    ultima_execucao_status: Optional[str] = None      # ok | sem_regras | erro
+    ultima_execucao_entraram: int = 0
+    ultima_execucao_regras: int = 0                    # regras de vacina/exame avaliadas
+    ultima_execucao_regras_na_janela: int = 0
+    ultimo_erro: Optional[str] = None
+    ultima_diaria_em: Optional[date] = None
+    ultimo_aviso_em: Optional[date] = None
+    em_execucao_ate: Optional[datetime] = None
 
 
 # ---------------------------------------------------------------------------
