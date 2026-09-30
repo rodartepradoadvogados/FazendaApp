@@ -182,6 +182,15 @@ class TestDia:
         assert "So da fazenda 1" in d1 and "So da fazenda 2" not in d1
         assert "So da fazenda 2" in d2 and "So da fazenda 1" not in d2
 
+    def test_resumo_traz_o_selo_de_alertas_de_estoque_para_a_aba_painel(self, ctx):
+        c, engine = ctx
+        with Session(engine) as s:
+            s.add(Estoque(nome="Sincroforte", quantidade=1, estoque_minimo=3, unidade="frasco", fazenda_id=1))
+            s.add(Estoque(nome="Aftosa", quantidade=-2, estoque_minimo=5, unidade="dose", fazenda_id=1))
+            s.commit()
+        r = c.get("/agenda/dia", params={"data": HOJE.isoformat()}).json()
+        assert r["resumo"]["alertas_estoque"] == 2
+
     def test_nao_escreve_no_banco(self, ctx):
         c, engine = ctx
         with Session(engine) as s:

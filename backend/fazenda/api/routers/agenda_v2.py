@@ -124,6 +124,8 @@ def agenda_dia(
             "hoje_total": sum(1 for e in tarefas if e["data"] == iso_hoje),
             "proximos_7d": sum(1 for e in tarefas if iso_hoje < e["data"] <= sete),
             "avisos": sum(1 for e in base["eventos"] if _eh_comunicado(e)),
+            # selo da sub-aba Painel (estoque negativo/abaixo do mínimo) sem pedir o Painel inteiro
+            "alertas_estoque": len(base["estoque_negativo"]) + len(base["estoque_abaixo_minimo"]),
         },
         "eventos": tarefas,
         "hormonios_check": base["hormonios_check"],
