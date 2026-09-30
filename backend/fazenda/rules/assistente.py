@@ -372,7 +372,7 @@ def _tool_consultar_estoque(session: Session) -> dict:
     abaixo_minimo = [
         {"nome": i["nome"], "quantidade": i["quantidade"], "estoque_minimo": i.get("estoque_minimo"),
          "fornecedor": fornecedores.get(i.get("fornecedor_id"))}
-        for i in itens if i.get("abaixo_minimo")
+        for i in itens if i.get("abaixo_minimo") and i.get("ativo") is not False
     ]
     return {"total_itens": len(itens), "abaixo_do_minimo": abaixo_minimo, "qtd_abaixo_do_minimo": len(abaixo_minimo)}
 

@@ -254,7 +254,7 @@ function Capa() {
   const resultadoMes: number | null = d.resMes?.resultado ?? null;
   const mesLabel: string = d.resMes?.mes ?? "";
 
-  const abaixoMin = d.est ? d.est.filter((i: any) => i.abaixo_minimo === true).length : null;
+  const abaixoMin = d.est ? d.est.filter((i: any) => i.abaixo_minimo === true && i.ativo !== false).length : null;
   const implante = d.ag?.hormonios_check?.find((h: any) => h.nome?.toLowerCase().includes("implante") || h.nome?.toLowerCase().includes("sincrogest"));
   const implanteFalta = implante && !implante.suficiente;
   const contasPagar = d.ag?.totais?.contas_a_pagar ?? 0;
