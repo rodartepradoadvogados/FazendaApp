@@ -42,6 +42,7 @@ from fazenda.models import (
     ProtocoloIatfAplicacao, Servico,
 )
 from fazenda.rules import repasse as repasse_rules
+from fazenda.rules import rotina_lista_espera as _rotina_lista_espera
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
 
 router = APIRouter(prefix="/agenda", tags=["agenda-v2"])
@@ -220,6 +221,13 @@ def agenda_painel(
         "pendencias": _pendencias(base["eventos"], hoje),
         "lista_espera_sanitaria": lista_espera,
         "lista_espera_total": sum(r.get("quantidade") or 0 for r in lista_espera),
+        # Card "Animais na lista de espera" (rotina automática): só com a rotina
+        # ativa E o aviso diário ligado E lista não vazia. Nunca vai ao Dia a dia.
+        "rotina_lista_espera": {
+            "mostrar_card": _rotina_lista_espera.deve_mostrar_card_no_painel(
+                session, fazenda_id_, sum(r.get("quantidade") or 0 for r in lista_espera),
+            ),
+        },
         "repasse": resumo_rep,
         "totais": base["totais"],
         "modulos": sorted(m for m in modulos if m in ("reproducao", "sanidade", "estoque", "financeiro")),

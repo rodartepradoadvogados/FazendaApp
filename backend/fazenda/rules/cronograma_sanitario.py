@@ -55,11 +55,12 @@ class CronogramaError(Exception):
     """Erro de uso do workflow — o router converte em HTTP 400."""
 
 
-def cronograma_aberto(session: Session, calendario: CalendarioSanitario) -> CronogramaSanitario:
-    """Devolve o cronograma "aberto" da regra — a LISTA DE ESPERA (R1) — criando
-    um novo (com a próxima data projetada) se não houver nenhum. Agendamentos
-    (status "agendado"/"em_montagem") convivem com ele: montar um agendamento
-    parcial deixa o resto da lista de espera no cronograma aberto."""
+def _lista_de_espera_da_regra(
+    session: Session, calendario: CalendarioSanitario,
+) -> tuple[CronogramaSanitario | None, date]:
+    """Sem escrever nada: (cronograma "aberto" existente ou None, data devida
+    da lista de espera da regra). Quando não há cronograma aberto, a data é a
+    que `cronograma_aberto` daria ao criar um novo."""
     existente = session.exec(
         select(CronogramaSanitario)
         .where(CronogramaSanitario.calendario_sanitario_id == calendario.id)
@@ -67,7 +68,7 @@ def cronograma_aberto(session: Session, calendario: CalendarioSanitario) -> Cron
         .order_by(CronogramaSanitario.data_evento)
     ).first()
     if existente:
-        return existente
+        return existente, _data_devida(existente)
 
     # Ainda há agendamento em curso (mesmo ciclo): quem chega agora espera na
     # mesma data devida, não na próxima ocorrência.
@@ -91,6 +92,17 @@ def cronograma_aberto(session: Session, calendario: CalendarioSanitario) -> Cron
         proxima = proxima_ocorrencia(ultimo.data_evento, calendario.frequencia_valor, calendario.frequencia_unidade)
     else:
         proxima = calendario.data_evento
+    return None, proxima
+
+
+def cronograma_aberto(session: Session, calendario: CalendarioSanitario) -> CronogramaSanitario:
+    """Devolve o cronograma "aberto" da regra — a LISTA DE ESPERA (R1) — criando
+    um novo (com a próxima data projetada) se não houver nenhum. Agendamentos
+    (status "agendado"/"em_montagem") convivem com ele: montar um agendamento
+    parcial deixa o resto da lista de espera no cronograma aberto."""
+    existente, proxima = _lista_de_espera_da_regra(session, calendario)
+    if existente:
+        return existente
     novo = CronogramaSanitario(
         calendario_sanitario_id=calendario.id, data_evento=proxima, fazenda_id=calendario.fazenda_id,
     )

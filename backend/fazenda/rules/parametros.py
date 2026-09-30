@@ -34,6 +34,7 @@ GRUPO_TITULOS: dict[str, str] = {
     "estrutura_fazenda": "Estrutura da fazenda",
     "financeiro": "Financeiro",
     "alimentacao": "Alimentação",
+    "lista_espera": "Rotina da lista de espera",
 }
 
 # Sementes iniciais — só usadas por `seed_parametros()` na primeira vez que
@@ -111,6 +112,15 @@ DEFINICOES: list[dict] = [
     {"chave": "caixa_fundo_reserva", "grupo": "agenda_sistema", "label": "Caixa Real — fundo de reserva (colchão mínimo desejado em caixa; 0 = não definido)", "valor": 0, "tipo": "float", "unidade": "R$"},
     {"chave": "caixa_meses_folga_sugestao", "grupo": "agenda_sistema", "label": "Caixa Real — meses de custo que o fundo de reserva sugerido deve cobrir", "valor": 3, "tipo": "float", "unidade": "meses"},
     {"chave": "caixa_dias_projecao", "grupo": "agenda_sistema", "label": "Caixa Real — horizonte padrão da projeção de caixa", "valor": 90, "unidade": "dias"},
+
+    # ---- Rotina da lista de espera (docs/agents/auditoria-preventivo-agenda/
+    # planejamento/11-rotina-lista-de-espera.md). Padrão DESLIGADA: sem o dono
+    # da fazenda marcar, nada acontece. Só coloca animais na lista de espera
+    # das regras de vacina/exame já cadastradas — nunca aplica, baixa estoque
+    # nem agenda. Ver fazenda.rules.rotina_lista_espera.
+    {"chave": "lista_espera_rotina_ativa", "grupo": "lista_espera", "label": "Ativar a rotina automática da lista de espera?", "valor": "false", "tipo": "bool"},
+    {"chave": "lista_espera_dias_antecedencia", "grupo": "lista_espera", "label": "Dias de antecedência (antes da janela de aplicação da regra)", "valor": 15, "unidade": "dias"},
+    {"chave": "lista_espera_aviso_diario", "grupo": "lista_espera", "label": "Aviso diário nos cards do Painel da Agenda (no máximo 1 vez por dia)?", "valor": "false", "tipo": "bool"},
 
     # ---- Metas reprodutivas ----------------------------------------------------
     {"chave": "meta_del_max_1o_servico", "grupo": "metas_reproducao", "label": "DEL máximo para 1º serviço", "valor": 100, "unidade": "dias"},
