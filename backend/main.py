@@ -20,6 +20,7 @@ from fazenda.database import create_db_and_tables, engine, engine_manutencao, ge
 from fazenda.models import IdempotenciaChave
 from fazenda.api.routers import (
     agenda,
+    agenda_v2,
     alertas_indicador,
     alimentacao,
     animais,
@@ -879,6 +880,7 @@ app.include_router(upload.router, dependencies=[Depends(exigir_modulo("upload"))
 # Importar dados (Configurações) reaproveita a mesma permissão do Upload CSV.
 app.include_router(importar.router, dependencies=[Depends(exigir_modulo("upload"))] + _contrato_ativo + _fazenda_selecionada)
 app.include_router(agenda.router, dependencies=_protegido + _contrato_ativo)
+app.include_router(agenda_v2.router, dependencies=_protegido + _contrato_ativo)
 # Protocolos customizados: lançar/listar ativos/cancelar exige só acesso
 # normal ao sistema (mesma regra da Agenda) — editar o MOLDE do protocolo
 # exige o módulo "parametros", via cadastro.router.

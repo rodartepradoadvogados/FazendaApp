@@ -60,6 +60,7 @@ from fazenda.rules.lida import (
 )
 from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoes
 from fazenda.rules import estoque_baixa
+from fazenda.rules import repasse as _repasse_rules
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
 from fazenda.rules.nomenclatura_protocolo import nome_curto
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
@@ -726,6 +727,10 @@ def calcular_agenda(
         while proxima_visita_bst_real < data:
             proxima_visita_bst_real += timedelta(days=intervalo_bst_dias)
 
+    # Detecção de cio de repasse: fazenda sem configuração salva segue o legado
+    # (repasse=None); com configuração, o motor usa dias/quem entra/aviso dela.
+    cfg_repasse = _repasse_rules.ler_config(session, fazenda_id)
+    prod_repasse = _repasse_rules.produto_da_config(session, cfg_repasse) if cfg_repasse["configurado"] else None
     engine = AgendaEngine()
     result = engine.calcular(
         data_referencia=data,
@@ -747,6 +752,8 @@ def calcular_agenda(
         peso_por_animal=peso_por_animal,
         inicio_lactacao_por_animal=inicio_lactacao_por_animal,
         servicos_historico=servicos_todos,
+        repasse=cfg_repasse if cfg_repasse["configurado"] else None,
+        repasse_produto=(prod_repasse or {}).get("nome"),
     )
 
     # Candidatas aptas que NUNCA receberam nenhuma aplicação de BST — vaca que

@@ -117,7 +117,13 @@ def test_linhas_existentes_ganham_os_padroes(banco_anterior):
     assert linha == (0, None, None)
 
 
-def test_cabeca_unica_e_esta_revisao():
+def test_cabeca_unica_e_esta_revisao_no_historico():
+    """Cabeca unica; esta revisao e a cabeca ou um ancestral dela (a fatia 10, f1b6d2a8c904, vem depois)."""
     sys.path.insert(0, str(BACKEND / "scripts"))
     from check_alembic_heads import heads
-    assert heads() == [REV]
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    assert len(heads()) == 1
+    cfg = Config(str(BACKEND / "alembic.ini"))
+    cfg.set_main_option("script_location", str(BACKEND / "alembic"))
+    assert REV in {r.revision for r in ScriptDirectory.from_config(cfg).walk_revisions()}

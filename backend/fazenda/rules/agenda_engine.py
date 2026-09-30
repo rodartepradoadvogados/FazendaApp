@@ -46,6 +46,9 @@ from fazenda.rules.estado_reprodutivo import (
     estados_ao_vivo,
 )
 from fazenda.rules.perda_prenhez import retoque_esta_resolvido
+from fazenda.rules.repasse import (
+    datas_checagem as _repasse_datas, descricao_checagem as _repasse_descricao, servico_entra as _repasse_servico_entra,
+)
 from fazenda.rules.scratch_pev import calcular_pev, calcular_scratch
 
 
@@ -187,6 +190,11 @@ class AgendaEngine:
         # recorte "posterior ao último parto"; com só o registro marcado, o
         # vigente correto pode ficar de fora quando a marcação está velha.
         servicos_historico: list[dict] | None = None,
+        # Detecção de cio de repasse configurável por fazenda (rules/repasse.py).
+        # None = comportamento legado (14 dias, todas, com aviso). `repasse_produto`
+        # é só o NOME do item vinculado, para o texto da tarefa.
+        repasse: dict | None = None,
+        repasse_produto: str | None = None,
     ) -> AgendaResult:
         """
         Calcula toda a agenda para uma data de referência.
@@ -594,14 +602,28 @@ class AgendaEngine:
             # volta a precisar de detector de cio, mesmo com o diagnóstico
             # antigo ainda marcado POSITIVO no registro.
             if data_servico and not gestante_vigente:
-                res_scratch = calcular_scratch(numero, data_servico, servico.get("diagnostico"))
-                if res_scratch.ativo and res_scratch.data_scratch >= data_referencia:
-                    eventos.append(AgendaItem(
-                        data=res_scratch.data_scratch,
-                        categoria="Reprodutivo",
-                        descricao="Aplicar Scratch (0,5) — detector de cio, 14 dias pós-IA",
-                        numero_animal=numero,
-                    ))
+                if repasse is None:
+                    res_scratch = calcular_scratch(numero, data_servico, servico.get("diagnostico"))
+                    if res_scratch.ativo and res_scratch.data_scratch >= data_referencia:
+                        eventos.append(AgendaItem(
+                            data=res_scratch.data_scratch,
+                            categoria="Reprodutivo",
+                            descricao="Aplicar Scratch (0,5) — detector de cio, 14 dias pós-IA",
+                            numero_animal=numero,
+                        ))
+                elif (
+                    repasse.get("usar") and repasse.get("mostrar_na_agenda")
+                    and (servico.get("diagnostico") or "").upper().strip() != "NEGATIVO"
+                    and _repasse_servico_entra(servico, repasse.get("quem_entra") or "todas")
+                ):
+                    for i, data_chk in enumerate(_repasse_datas(data_servico, repasse)):
+                        if data_chk >= data_referencia:
+                            eventos.append(AgendaItem(
+                                data=data_chk,
+                                categoria="Reprodutivo",
+                                descricao=_repasse_descricao(repasse, repasse_produto, i),
+                                numero_animal=numero,
+                            ))
 
             # ── PEV (45 dias após parto)
             # A exclusão de gestante/inseminada sai do estado AO VIVO. Com o
