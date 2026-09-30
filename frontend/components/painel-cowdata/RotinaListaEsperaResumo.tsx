@@ -30,7 +30,7 @@ export default function RotinaListaEsperaResumo() {
             <span><strong>Última execução:</strong> {ultima}</span>
             <span><strong>Fazendas com a rotina ligada:</strong> {r.fazendas_ativas}</span>
             <span><strong>Processadas hoje:</strong> {r.fazendas_processadas_hoje}</span>
-            <span><strong>Animais que entraram na última passada:</strong> {r.entraram_ultima_passada}</span>
+            <span><strong>Animais que entraram hoje:</strong> {r.entraram_ultima_passada}</span>
             <span style={{ color: r.erros.length ? COR.vermelho : COR.mudo }}><strong>Erros:</strong> {r.erros.length}</span>
           </div>
           {r.erros.length > 0 && (

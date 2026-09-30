@@ -275,10 +275,15 @@ def executar_fazenda(
             status, erro = "erro", f"{type(exc).__name__}: {exc}"[:500]
 
         estado = _estado(session, fazenda_id)
+        # `ultima_execucao_entraram` é o total DO DIA: salvar os três parâmetros
+        # em sequência roda a rotina mais de uma vez, e a segunda passada (que
+        # não acha mais ninguém) não pode apagar o que a primeira colocou.
+        mesmo_dia = estado.ultima_execucao_em is not None and estado.ultima_execucao_em.date() == agora.date()
+        entraram_no_dia = (estado.ultima_execucao_entraram if mesmo_dia else 0) + resultado["entraram"]
         estado.ultima_execucao_em = agora
         estado.ultima_execucao_origem = origem
         estado.ultima_execucao_status = status
-        estado.ultima_execucao_entraram = resultado["entraram"]
+        estado.ultima_execucao_entraram = entraram_no_dia
         estado.ultima_execucao_regras = resultado["regras"]
         estado.ultima_execucao_regras_na_janela = resultado["regras_na_janela"]
         estado.ultimo_erro = erro

@@ -360,6 +360,20 @@ class TestConcorrenciaEAviso:
         with Session(engine) as s:
             assert s.exec(select(RotinaListaEsperaEstado)).one().ultimo_aviso_em is None
 
+    def test_entraram_e_o_total_do_dia_e_zera_no_dia_seguinte(self, ctx):
+        _, engine = ctx
+        with Session(engine) as s:
+            _animais(s, "55", "56")
+            _ligar(s)
+            _regra(s, data_evento=HOJE + timedelta(days=3))
+        assert _rodar(engine, "parametros")["entraram"] == 2
+        assert _rodar(engine, "parametros")["entraram"] == 0     # 2a passada nao apaga o que a 1a colocou
+        with Session(engine) as s:
+            assert s.exec(select(RotinaListaEsperaEstado)).one().ultima_execucao_entraram == 2
+        _rodar(engine, "manual", hoje=HOJE + timedelta(days=1), agora=datetime.now() + timedelta(days=1))
+        with Session(engine) as s:
+            assert s.exec(select(RotinaListaEsperaEstado)).one().ultima_execucao_entraram == 0
+
     def test_erro_de_uma_fazenda_nao_derruba_o_estado(self, ctx, monkeypatch):
         _, engine = ctx
         with Session(engine) as s:

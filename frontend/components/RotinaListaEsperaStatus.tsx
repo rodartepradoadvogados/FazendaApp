@@ -26,11 +26,10 @@ export default function RotinaListaEsperaStatus() {
 
   const carregar = () => fetchStatusRotinaListaEspera().then(setSt).catch((e) => setErro(e.message));
   useEffect(() => { carregar(); }, []);
-  // Quem salva os parâmetros na grade ao lado dispara a rotina no servidor; reler ao voltar o foco/clique.
+  // Salvar os parâmetros na grade ao lado dispara a rotina no servidor; reler o status quando isso acontece.
   useEffect(() => {
-    const aoClicar = () => setTimeout(carregar, 1200);
-    document.addEventListener("click", aoClicar);
-    return () => document.removeEventListener("click", aoClicar);
+    window.addEventListener("parametros-salvos", carregar);
+    return () => window.removeEventListener("parametros-salvos", carregar);
   }, []);
 
   const executar = async () => {
@@ -48,7 +47,7 @@ export default function RotinaListaEsperaStatus() {
   return (
     <div className="card" data-testid="rotina-lista-espera-status">
       <div className="card-header mb-3 flex items-center justify-between">
-        <span className="flex items-center gap-2"><ClipboardList size={15} style={{ color: "var(--dourado-light)" }} /> Rotina da lista de espera</span>
+        <span className="flex items-center gap-2"><ClipboardList size={15} style={{ color: "var(--dourado-light)" }} /> Rotina da lista de espera: situação</span>
         {podeExecutar && st?.ativa && (
           <button onClick={executar} disabled={rodando} className="btn-secondary"
             style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.75rem", minHeight: "2rem" }}>
@@ -69,7 +68,7 @@ export default function RotinaListaEsperaStatus() {
           <p><strong>Última execução:</strong> {quando(st.ultima_execucao_em)}
             {st.ultima_execucao_origem && ` (${ORIGEM[st.ultima_execucao_origem] ?? st.ultima_execucao_origem})`}</p>
           {st.ultima_execucao_em && (
-            <p><strong>Entraram na lista de espera:</strong> {st.entraram} · regras avaliadas: {st.regras_avaliadas} · na janela: {st.regras_na_janela}</p>
+            <p><strong>Entraram na lista de espera hoje:</strong> {st.entraram} · regras avaliadas: {st.regras_avaliadas} · na janela: {st.regras_na_janela}</p>
           )}
           <p><strong>Na lista de espera agora:</strong> {st.na_lista_de_espera} animal(is)</p>
           {st.ultimo_erro && <p style={{ color: "var(--vermelho, #c0392b)" }}>Erro na última execução: {st.ultimo_erro}</p>}
