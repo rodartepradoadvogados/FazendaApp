@@ -15,6 +15,7 @@ import { Campo, inputStyle, nota, type EstoqueItem, unidadesCompativeis } from "
 import { FREQUENCIA_UNIDADES, type ExameDef } from "@/components/lancamentos/_shared";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { WizardProtocolo, type PassoWizard } from "@/components/protocolos/WizardProtocolo";
+import { CartaoRepasse } from "@/components/lancamentos/CartaoRepasse";
 
 type EventoSanitarioDTO = {
   id: number; nome: string; ativo: boolean; categoria_preventiva: string | null; tipo_agendamento: string;
@@ -78,7 +79,7 @@ type CalendarioForm = {
   tipoBucket: TipoBucket;
   categoriaPreventiva: "vacina" | "tratamento";
   // "Detecção de cio de repasse" escolhida no passo Tipo — não é regra do
-  // calendário e não tem backend ainda; só mostra o cartão "em breve".
+  // calendário: é a configuração única da fazenda (CartaoRepasse, salva de verdade).
   tipoRepasse: boolean;
 
   // Passo 2 — Identificação
@@ -126,41 +127,6 @@ const calendarioFormVazio = (): CalendarioForm => ({
   observacao: "", realizado: false, servicoFinanceiro: "",
   checklistItens: [],
 });
-
-// Cartão da configuração de "Detecção de cio de repasse" (mockup fluxo-completo).
-// SEM backend ainda: a única coisa existente é o parâmetro booleano
-// `usa_adesivo_deteccao_cio` (Configurações > Parâmetros), que não guarda
-// produto vinculado, frequência nem indicação na Agenda. Por isso os campos
-// ficam desabilitados e nada é gravado — não simulamos persistência.
-function CartaoRepasseEmBreve() {
-  const desab: React.CSSProperties = { ...inputStyle, opacity: 0.6, cursor: "not-allowed" };
-  return (
-    <div className="card mt-3" aria-label="Detecção de cio de repasse (em breve)">
-      <div className="card-header mb-2" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
-        <span>Detecção de cio de repasse</span>
-        <span style={{ fontSize: "0.7rem", fontWeight: 700, padding: "0.15rem 0.55rem", borderRadius: 999, border: "1px solid var(--border)", color: "var(--text-muted)" }}>Em breve</span>
-      </div>
-      <p style={{ ...nota, marginBottom: "0.75rem" }}>
-        Em breve: uma regra por fazenda para checar o retorno ao cio depois da inseminação. Os campos abaixo mostram como vai ficar,
-        mas ainda não é possível configurar nem salvar por aqui.
-      </p>
-      <fieldset disabled style={{ border: 0, padding: 0, margin: 0, display: "grid", gap: "0.6rem", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-        <Campo label="Usar detecção de repasse?">
-          <select style={desab} value="" onChange={() => {}}><option value="">Sim / Não</option></select>
-        </Campo>
-        <Campo label="Produto vinculado">
-          <select style={desab} value="" onChange={() => {}}><option value="">Produto da categoria de repasse</option></select>
-        </Campo>
-        <Campo label="Frequência da checagem">
-          <input style={desab} value="" placeholder="Dias após a inseminação e repetição" onChange={() => {}} />
-        </Campo>
-        <Campo label="Indicação na Agenda">
-          <select style={desab} value="" onChange={() => {}}><option value="">Mostrar na Agenda? Aviso e prioridade</option></select>
-        </Campo>
-      </fieldset>
-    </div>
-  );
-}
 
 export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   const [eventos, setEventos] = useState<EventoSanitarioDTO[]>([]);
@@ -383,9 +349,9 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
       id: "tipo", titulo: "Tipo",
       // Vermífugo = categoria_preventiva "tratamento" (é o Vermífugo do seed do
       // calendário fixo, antiparasitário aplicado por peso). Repasse não é uma
-      // regra do calendário: é uma configuração única da fazenda, ainda sem
-      // backend — o cartão abaixo é só a prévia, desabilitada.
-      validar: (f) => (f.tipoRepasse ? "A detecção de cio de repasse ainda não pode ser cadastrada por aqui (em breve). Escolha Vacina, Exame ou Vermífugo." : null),
+      // regra do calendário: é uma configuração única da fazenda, gravada pelo
+      // CartaoRepasse (PUT /agenda/repasse/config).
+      validar: (f) => (f.tipoRepasse ? "A detecção de cio de repasse é uma configuração da fazenda: preencha e salve no cartão abaixo. Para cadastrar Vacina, Exame ou Vermífugo, escolha outro tipo." : null),
       render: ({ form: f, setForm: sf }) => {
         const opcoes: { id: "vacina" | "exame" | "vermifugo" | "repasse"; label: string; desc: string }[] = [
           { id: "vacina", label: "Vacina", desc: "Produto aplicado por dose, em uma janela de aplicação." },
@@ -419,7 +385,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
                 );
               })}
             </div>
-            {f.tipoRepasse && <CartaoRepasseEmBreve />}
+            {f.tipoRepasse && <CartaoRepasse />}
           </div>
         );
       },
