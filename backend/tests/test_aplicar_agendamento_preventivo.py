@@ -343,6 +343,47 @@ class TestAplicador:
         assert _saldo(engine, est) == 100
         assert _aplicar(c, ag, animais_aplicados=["1", "2", "3", "9"], aplicador_pessoa_id=cenario["vet"], estoque_id=est).status_code == 200
 
+    def test_veterinario_sem_crmv_nao_aplica_e_a_mensagem_diz_de_quem_cadastrar(self, cenario):
+        c, engine, ag, est = cenario["c"], cenario["engine"], cenario["ag"], cenario["est"]
+        with Session(engine) as s:
+            sem = Pessoa(nome="Dra. Sem CRMV", tipo="Veterinário", crmv=" ", fazenda_id=1)
+            s.add(sem)
+            s.commit()
+            s.refresh(sem)
+            sem_id = sem.id
+        r = _aplicar(c, ag, animais_aplicados=["1", "2", "3", "9"], aplicador_pessoa_id=sem_id, estoque_id=est)
+        assert r.status_code == 400 and "Cadastre o CRMV de Dra. Sem CRMV" in r.json()["detail"]
+        assert _saldo(engine, est) == 100
+        ctxo = c.get(f"/sanidade/cronogramas/{ag}/aplicar-contexto").json()
+        assert {p["nome"]: p["veterinario"] for p in ctxo["pessoas"]}["Dra. Sem CRMV"] is False
+
+    def test_macho_nao_fica_na_lista_de_espera_do_b19_nem_no_resumo(self, ctx):
+        from fazenda.rules import cronograma_sanitario as cs
+        c, engine = ctx
+        with Session(engine) as s:
+            _animal(s, "1")
+            s.add(Animal(numero="7", nome="Bezerro 7", sexo="M", ativo=True, grupo_primario="Bezerreiro",
+                         data_nasc=HOJE - timedelta(days=150), fazenda_id=1))
+            cal = _regra(s)
+            _espera(s, cal, ["1", "7"])   # o macho ja estava na lista (legado)
+            cs.sugerir_animais_em_lote(s, s.get(CalendarioSanitario, cal), ["7"], HOJE)
+            grupo = cs.lista_espera(s, HOJE, 1, cal)["grupos"][0]
+            assert [i["numero_matriz"] for i in grupo["animais"]] == ["1"]
+            assert cs.resumo_lista_espera(s, 1)[0]["quantidade"] == 1
+
+    def test_macho_novo_nao_entra_na_lista_do_b19(self, ctx):
+        from fazenda.rules import cronograma_sanitario as cs
+        c, engine = ctx
+        with Session(engine) as s:
+            s.add(Animal(numero="7", nome="Bezerro 7", sexo="M", ativo=True, grupo_primario="Bezerreiro",
+                         data_nasc=HOJE - timedelta(days=150), fazenda_id=1))
+            _animal(s, "1")
+            cal = _regra(s)
+            cs.sugerir_animais_em_lote(s, s.get(CalendarioSanitario, cal), ["1", "7"], HOJE)
+            assert cs.sugerir_animal(s, s.get(CalendarioSanitario, cal), "7", HOJE) is None
+            nums = {l.numero_matriz for l in s.exec(select(CronogramaSanitarioAnimal)).all()}
+            assert nums == {"1"}
+
     def test_tuberculose_tambem_exige_veterinario_mas_vermifugo_nao(self, ctx):
         c, engine = ctx
         with Session(engine) as s:

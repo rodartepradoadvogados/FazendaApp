@@ -115,8 +115,21 @@ def restricao_b19(animal: Animal | None, hoje: date | None = None, *, so_sexo: b
     return None
 
 
-def eh_veterinario(pessoa: Pessoa | None) -> bool:
+def _tipo_veterinario(pessoa: Pessoa | None) -> bool:
     return pessoa is not None and "veterinario" in _norm(pessoa.tipo)
+
+
+def eh_veterinario(pessoa: Pessoa | None) -> bool:
+    """So veterinario COM CRMV preenchido pode aplicar/inocular/ler B19, brucelose e tuberculose."""
+    return _tipo_veterinario(pessoa) and bool((getattr(pessoa, "crmv", None) or "").strip())
+
+
+def exigir_veterinario_habilitado(evento, produto: str | None, doenca_nome: str | None, aplicador: Pessoa) -> None:
+    if not exige_veterinario(evento, produto, doenca_nome) or eh_veterinario(aplicador):
+        return
+    if _tipo_veterinario(aplicador):
+        raise AplicacaoError(f"{evento.nome}: Cadastre o CRMV de {aplicador.nome} em Pessoas para ele(a) aplicar.")
+    raise AplicacaoError(f"{evento.nome}: só veterinário habilitado (CRMV) aplica. Escolha o veterinário em “Quem aplicou”.")
 
 
 def _pessoa_da_fazenda(session: Session, pessoa_id: int | None, fazenda_id: int | None) -> Pessoa | None:
@@ -575,8 +588,7 @@ def aplicar(session: Session, cron: CronogramaSanitario, dados: dict, *, user=No
         from fazenda.models import Doenca
         d = session.get(Doenca, evento.doenca_id)
         doenca_nome = d.nome if d else None
-    if exige_veterinario(evento, produto, doenca_nome) and not eh_veterinario(aplicador):
-        raise AplicacaoError(f"{evento.nome}: só veterinário habilitado (CRMV) aplica. Escolha o veterinário em “Quem aplicou”.")
+    exigir_veterinario_habilitado(evento, produto, doenca_nome, aplicador)
 
     # ── data e hora ──
     data_ap = dados.get("data_aplicacao") or hoje

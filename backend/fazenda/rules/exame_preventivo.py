@@ -383,8 +383,7 @@ def aplicar_exame(
     if aplicador is None:
         raise AplicacaoError("Escolha quem aplicou (aplicador não encontrado)")
     produto, doenca_nome, tipo = contexto_do_evento(session, calendario, evento)
-    if ap_rules.exige_veterinario(evento, produto, doenca_nome) and not ap_rules.eh_veterinario(aplicador):
-        raise AplicacaoError(f"{evento.nome}: só veterinário habilitado (CRMV) aplica. Escolha o veterinário em “Quem aplicou”.")
+    ap_rules.exigir_veterinario_habilitado(evento, produto, doenca_nome, aplicador)
 
     data_ap = dados.get("data_aplicacao") or hoje
     if isinstance(data_ap, str):

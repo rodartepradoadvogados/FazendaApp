@@ -392,6 +392,19 @@ class TestLeitura:
         r = _ler(tb, {n: "negativo" for n in "1234"}, data=HOJE, hora="09:00", justificativa_leitura="x")
         assert r.status_code == 400 and "anterior" in r.json()["detail"].lower()
 
+    def test_veterinario_sem_crmv_nao_inocula_nem_le(self, tb):
+        with Session(tb["engine"]) as s:
+            sem = Pessoa(nome="Dra. Sem CRMV", tipo="Veterinário", fazenda_id=1)
+            s.add(sem)
+            s.commit()
+            s.refresh(sem)
+            sem_id = sem.id
+        r = _inocular(tb, aplicador_pessoa_id=sem_id)
+        assert r.status_code == 400 and "Cadastre o CRMV de Dra. Sem CRMV" in r.json()["detail"]
+        _pronto_para_ler(tb)
+        r = _ler(tb, {n: "negativo" for n in "1234"}, aplicador_pessoa_id=sem_id)
+        assert r.status_code == 400 and "Cadastre o CRMV de Dra. Sem CRMV" in r.json()["detail"]
+
     def test_quem_le_precisa_ser_veterinario(self, tb):
         _pronto_para_ler(tb)
         r = _ler(tb, {n: "negativo" for n in "1234"}, aplicador_pessoa_id=tb["peao"])

@@ -122,6 +122,17 @@ def _reagentes(session: Session, calendario: CalendarioSanitario, numeros: list[
     return animais_reagentes(session, calendario.fazenda_id, numeros)
 
 
+def _machos_b19(session: Session, calendario: CalendarioSanitario, numeros: list[str]) -> set[str]:
+    """Brucelose B19 so vale para femea: devolve os machos de `numeros` quando a regra e B19 (senao, vazio)."""
+    from fazenda.rules.aplicacao_preventiva import eh_b19
+    if not numeros or not eh_b19(session.get(EventoSanitario, calendario.evento_sanitario_id), calendario.produto):
+        return set()
+    query = select(Animal.numero).where(Animal.numero.in_(numeros)).where(Animal.sexo == "M")
+    if calendario.fazenda_id is not None:
+        query = query.where(Animal.fazenda_id == calendario.fazenda_id)
+    return set(session.exec(query).all())
+
+
 def sugerir_animal(session: Session, calendario: CalendarioSanitario, numero_matriz: str, hoje: date) -> CronogramaSanitarioAnimal | None:
     """Garante uma linha "sugerido" para o animal no cronograma aberto da
     regra. Idempotente: devolve None (não gera pendência de novo) se o
@@ -130,6 +141,8 @@ def sugerir_animal(session: Session, calendario: CalendarioSanitario, numero_mat
         return None  # R8: já está em alguma lista/agendamento ativo desta regra
     if _reagentes(session, calendario, [numero_matriz]):
         return None  # reagente em exame: sai de todo agendamento e nunca volta a ser sugerido
+    if _machos_b19(session, calendario, [numero_matriz]):
+        return None  # B19 so femea: macho nunca entra na lista de espera
     cron = cronograma_aberto(session, calendario)
     linha = CronogramaSanitarioAnimal(
         cronograma_id=cron.id, numero_matriz=numero_matriz, data_sugestao=hoje, fazenda_id=calendario.fazenda_id,
@@ -155,7 +168,8 @@ def sugerir_animais_em_lote(session: Session, calendario: CalendarioSanitario, n
     pendentes = [n for n in dict.fromkeys(numeros_matriz) if n not in existentes]  # preserva ordem, sem duplicata
     if pendentes:
         reagentes = _reagentes(session, calendario, pendentes)   # reagente em exame nunca volta a ser sugerido
-        pendentes = [n for n in pendentes if n not in reagentes]
+        machos = _machos_b19(session, calendario, pendentes)
+        pendentes = [n for n in pendentes if n not in reagentes and n not in machos]
     if not pendentes:
         return
     cron = cronograma_aberto(session, calendario)
@@ -449,6 +463,14 @@ def resumo_lista_espera(session: Session, fazenda_id: int | None = None) -> list
         return []
     contagem: dict[int, int] = {}
     hoje = date.today()
+    from fazenda.rules.aplicacao_preventiva import eh_b19
+    from fazenda.models import EventoSanitario as _Ev
+    evs = {e.id: e for e in session.exec(select(_Ev)).all()}
+    machos_b19: dict[int, set[str]] = {}
+    for c, cal in pares:
+        if eh_b19(evs.get(cal.evento_sanitario_id), cal.produto):
+            machos_b19[c.id] = {a for a in session.exec(select(Animal.numero).where(Animal.sexo == "M")
+                                                         .where(Animal.fazenda_id == cal.fazenda_id)).all()}
     for linha in session.exec(
         select(CronogramaSanitarioAnimal)
         .where(CronogramaSanitarioAnimal.cronograma_id.in_([c.id for c, _ in pares]))
@@ -456,6 +478,8 @@ def resumo_lista_espera(session: Session, fazenda_id: int | None = None) -> list
     ).all():
         if linha.reteste and linha.data_devida and linha.data_devida > hoje:
             continue   # reteste de exame: so entra na lista de espera na data devida
+        if linha.numero_matriz in machos_b19.get(linha.cronograma_id, ()):
+            continue   # B19 so femea
         contagem[linha.cronograma_id] = contagem.get(linha.cronograma_id, 0) + 1
     from fazenda.models import EventoSanitario
     nomes = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
@@ -749,6 +773,7 @@ def lista_espera(
         query_ev = query_ev.where(EventoSanitario.fazenda_id == fazenda_id)
     eventos = {e.id: e for e in session.exec(query_ev).all()}
 
+    from fazenda.rules.aplicacao_preventiva import eh_b19
     por_regra: dict[int, list[tuple[CronogramaSanitarioAnimal, CronogramaSanitario]]] = {}
     regras: dict[int, CalendarioSanitario] = {}
     for linha, cron, cal in trios:
@@ -757,6 +782,8 @@ def lista_espera(
             continue
         if linha.reteste and linha.data_devida and linha.data_devida > hoje:
             continue   # reteste de exame (60 dias): so aparece a partir da data devida
+        if (a.sexo or "").upper() == "M" and eh_b19(eventos.get(cal.evento_sanitario_id), cal.produto):
+            continue   # B19 so femea: macho (legado) nao aparece na lista de espera
         por_regra.setdefault(cal.id, []).append((linha, cron))
         regras[cal.id] = cal
 
