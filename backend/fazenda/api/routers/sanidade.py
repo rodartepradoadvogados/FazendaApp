@@ -1469,11 +1469,18 @@ class NaoAplicadoIn(BaseModel):
     destino: str = "espera"                      # "espera" | "naoSeAplica"
 
 
+class JaAplicadoIn(BaseModel):
+    """"Aplicar mesmo assim" num animal que já recebeu o produto no ciclo."""
+    motivo: str                       # "Dose extra" | "Reforço" | "Outro"
+    observacao: str | None = None     # obrigatória quando motivo = "Outro"
+
+
 class AplicarAgendamentoIn(BaseModel):
     canal: str = "Protocolos"                    # "Protocolos" | "Agenda" | "Curral" (app do peão)
     aplicador_pessoa_id: int                     # obrigatório (B19/TB: só veterinário)
     animais_aplicados: list[str] = []
     nao_aplicados: list[NaoAplicadoIn] = []
+    ja_aplicados: dict[str, JaAplicadoIn] = {}   # {brinco: decisão} — animais que já receberam o produto no ciclo
     data_aplicacao: date | None = None           # padrão hoje; nunca futura
     hora: str | None = None
     estoque_id: int | None = None                # produto/frasco do estoque
