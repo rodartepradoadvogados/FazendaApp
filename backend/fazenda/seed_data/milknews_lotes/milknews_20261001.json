@@ -1,0 +1,24 @@
+[
+  {
+    "manchete": "Produção de leite do Brasil bate recorde histórico de 36,7 bilhões de litros em 2025, aponta IBGE",
+    "resumo": "A produção de leite de vaca no Brasil somou 36,7 bilhões de litros em 2025, alta de 2,7% sobre 2024 e terceiro recorde seguido, mesmo com queda no número de vacas ordenhadas, segundo a Pesquisa da Pecuária Municipal do IBGE, divulgada em 30 de setembro.",
+    "materia": "Segundo o IBGE, a produção brasileira de leite de vaca cresceu pelo terceiro ano seguido, com alta de 2,7% entre 2024 e 2025, o que levou o volume total a um novo recorde da série histórica. O resultado chama atenção por ter sido alcançado junto com uma queda de 2,7% no número de vacas ordenhadas no país, que caiu a 14,7 milhões de cabeças, a menor quantidade desde 1979. A combinação entre mais leite e menos vacas elevou a produtividade a um recorde de 2.498,7 litros por vaca ao ano, avanço de 5,6% sobre 2024 e terceira alta seguida nesse indicador.\n\nDe acordo com o instituto, o avanço da produtividade reflete condições climáticas favoráveis, investimento em melhoramento genético e manejo do rebanho, além de um processo de reorganização da base produtiva que tem concentrado a atividade em propriedades mais tecnificadas. O levantamento também mostrou mudança na distribuição regional da produção: a região Sul retomou a liderança nacional, com 12,5 bilhões de litros e participação de 34,0% no total do país, alta de 4,4% sobre o ano anterior. O Sudeste ficou em segundo lugar, com 12,3 bilhões de litros e 33,5% do total, seguido por Nordeste, Centro-Oeste e Norte.\n\nNo ranking por município, Castro (PR) manteve a primeira posição isolada, com 532,8 milhões de litros produzidos em 2025, crescimento de 10,0% em relação ao ano anterior. Carambeí (PR) e Patos de Minas (MG) completaram as duas posições seguintes. Os dados fazem parte da Pesquisa da Pecuária Municipal (PPM) 2025, divulgada pelo IBGE em 30 de setembro, que também registrou queda no rebanho bovino total do país pelo segundo ano consecutivo.",
+    "link": "/news#milknews-2026-10-01-01",
+    "data_publicacao": "2026-10-01",
+    "fontes": [
+      "https://agenciadenoticias.ibge.gov.br/agencia-noticias/2012-agencia-de-noticias/noticias/48159-rebanho-bovino-cai-para-234-3-milhoes-de-cabecas-em-2025-o-menor-em-tres-anos",
+      "https://www.canalrural.com.br/pecuaria/brasil-registra-recorde-na-producao-de-leite-pelo-segundo-ano-seguido/"
+    ]
+  },
+  {
+    "manchete": "Alga marinha na dieta de bovinos reduz emissão de metano em até 82% sem afetar desempenho, mostra estudo da UC Davis",
+    "resumo": "Pesquisadores da Universidade da Califórnia em Davis mostraram que a suplementação com pequena quantidade de alga marinha Asparagopsis taxiformis reduz em até 82% as emissões de metano de bovinos, sem alterar o ganho de peso dos animais, segundo artigo publicado na revista PLOS ONE.",
+    "materia": "Um estudo conduzido por pesquisadores da Universidade da Califórnia em Davis (UC Davis) e publicado na revista científica PLOS ONE mostrou que uma pequena quantidade de alga marinha na dieta de bovinos pode reduzir de forma expressiva as emissões de metano do animal, sem prejudicar seu desempenho. No experimento, conduzido ao longo de cinco meses, 21 bovinos de corte receberam cerca de 80 gramas diárias da alga vermelha Asparagopsis taxiformis misturada à ração, enquanto outro grupo manteve a alimentação convencional. Ao final do período, os animais suplementados ganharam peso equivalente ao grupo de controle, mas emitiram até 82% menos metano.\n\nSegundo os pesquisadores, o efeito está ligado à capacidade da Asparagopsis taxiformis de interferir em uma enzima envolvida na formação de metano durante a digestão dos ruminantes, sem alterar o desenvolvimento dos animais. A mesma equipe já havia testado a suplementação em vacas leiteiras em trabalho anterior, com redução nas emissões de metano e sem mudança perceptível nas características sensoriais do leite produzido.\n\nO principal obstáculo apontado pelos cientistas para a adoção em maior escala é a produção da alga em volume suficiente para abastecer a pecuária, já que a espécie não ocorre naturalmente em quantidade capaz de atender à demanda global. Por isso, equipes de pesquisa têm investido em sistemas de aquicultura, no mar e em ambientes terrestres, para ampliar a oferta do insumo e viabilizar seu uso também em sistemas de pastejo, nos quais incorporar suplementos à dieta dos animais é mais difícil do que em criações confinadas.",
+    "link": "/news#milknews-2026-10-01-02",
+    "data_publicacao": "2026-10-01",
+    "fontes": [
+      "https://www.ucdavis.edu/climate/news/feeding-cattle-seaweed-reduces-their-greenhouse-gas-emissions-82-percent",
+      "https://www.milkpoint.com.br/noticias-e-mercado/giro-noticias/alga-na-dieta-de-vacas-leiteiras-reduz-metano-sem-afetar-producao-de-leite-mostra-estudo-242272/"
+    ]
+  }
+]
