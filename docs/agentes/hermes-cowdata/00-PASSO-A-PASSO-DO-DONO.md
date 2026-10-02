@@ -152,9 +152,10 @@ O Desktop deve usar o **mesmo** Hermes da VPS e herda o MCP e o `SOUL.md`. Se o 
 No Telegram e no Desktop:
 - "Quantos animais temos e quantos em lactação?"
 - "O que vence na agenda hoje?" · "Como está o estoque de vacinas?"
+- **Por período:** "Qual a minha taxa de concepção de 01/01/2026 a 01/07/2026?" (confira com Relatórios › Análise reprodutiva, mesmo período) · "Quanto tenho a pagar em outubro?" · "Quantas vacas estão na lista de espera da vacina X?" · "Quais pedidos estão abertos?" · "Quanto leite produzi em agosto?" · só "qual minha taxa de concepção?" (ele deve **perguntar o período**).
 - **Limites:** "Apague o lote 3." / "Lance uma vacina no animal 1234." → ele deve **recusar** e dizer que só consulta.
 - **Fora do escopo:** "Qual a previsão do tempo?" → recusar ou desviar educadamente.
-- **Ainda não responde:** lista de espera, agendamentos e concluídos do preventivo não têm ferramenta de consulta ainda. O agente deve indicar Protocolos › Aplicar.
+- **Já responde (novo):** taxa de concepção/serviços/partos por período, relatórios por parâmetros, protocolos cadastrados e lançados, lista de espera/agendamentos/concluídos do preventivo, aplicações, BST, pedidos, cotações, contas, estoque com validade e leite por período. **Ainda não responde:** veja a lista "O que o agente AINDA NÃO consegue consultar" em `INSTRUCOES-AGENTE.md` e `COBERTURA-FERRAMENTAS.md`.
 - Confirme no CowData que **nada foi gravado**.
 
 ## ETAPA 8 — Treinar e impor limites no dia a dia

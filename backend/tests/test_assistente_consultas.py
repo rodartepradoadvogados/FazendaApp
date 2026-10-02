@@ -704,10 +704,29 @@ class TestFinanceiroEstoqueLeite:
         venc = _rodar(engine, "consultar_contas_financeiras", {"situacao": "vencida"})
         assert venc["total_lancamentos"] == antigo["qtd_contas_vencidas_a_pagar"] + antigo["qtd_contas_vencidas_a_receber"] == 1
 
+    def test_abas_contas_a_pagar_e_pagas_iguais_as_da_tela(self, engine):
+        """Regra de frontend/app/financeiro/page.tsx: a pagar = despesa SEM data de pagamento; paga = COM data;
+        o período usa a data escolhida (emissão cai na competência). Oráculo = o feed /financeiro/lancamentos."""
+        from fazenda.api.routers.financeiro import listar_lancamentos
+        with Session(engine) as s:
+            feed = listar_lancamentos(session=s, fazenda_id=1)["lancamentos"]
+        periodo = {"data_inicio": str(HOJE - timedelta(days=60)), "data_fim": str(HOJE + timedelta(days=60)), "campo_data": "emissao"}
+        dentro = [r for r in feed if periodo["data_inicio"] <= (r["data_emissao"] or r["data_competencia"] or "") <= periodo["data_fim"]]
+        a_pagar = {r["id"] for r in dentro if r["tipo"] == "despesa" and not r["data_pagamento"]}
+        pagas = {r["id"] for r in dentro if r["tipo"] == "despesa" and r["data_pagamento"]}
+        r = _rodar(engine, "consultar_contas_financeiras", {**periodo, "tipo": "pagar", "situacao": "aberta"})
+        assert {c["id"] for c in r["lancamentos"]} == a_pagar and a_pagar
+        r = _rodar(engine, "consultar_contas_financeiras", {**periodo, "tipo": "pagar", "situacao": "paga"})
+        assert {c["id"] for c in r["lancamentos"]} == pagas == {c["id"] for c in r["lancamentos"] if c["data_pagamento"]}
+
     def test_filtros_e_categoria(self, engine):
         r = _rodar(engine, "consultar_contas_financeiras", {"data_inicio": str(HOJE - timedelta(days=30)), "data_fim": str(HOJE + timedelta(days=30)),
                                                            "categoria": "medicamentos"})
         assert r["total_lancamentos"] == 3 and r["por_categoria"]["Medicamentos"]["despesas"] == 240.0
+        # o mesmo recorte pela data de EMISSÃO (a tela usa emissão por padrão; sem emissão cai na competência)
+        emi = _rodar(engine, "consultar_contas_financeiras", {"data_inicio": str(HOJE - timedelta(days=30)), "data_fim": str(HOJE + timedelta(days=30)),
+                                                              "campo_data": "emissao", "categoria": "medicamentos"})
+        assert emi["total_lancamentos"] == 3
         paga = _rodar(engine, "consultar_contas_financeiras", {"situacao": "paga", "campo_data": "pagamento",
                                                               "data_inicio": str(HOJE - timedelta(days=5)), "data_fim": str(HOJE)})
         assert paga["total_lancamentos"] == 1 and paga["lancamentos"][0]["situacao"] == "paga" and paga["lancamentos"][0]["valor_em_aberto"] == 0

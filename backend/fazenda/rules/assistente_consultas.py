@@ -752,7 +752,7 @@ def _contas(session: Session, usuario, entrada: dict, fazenda_id: int | None) ->
     ini, fim = _periodo(entrada, obrigatorio=False)
     tipo = _escolha(entrada, "tipo", ("pagar", "receber", "todas"), "todas")
     situacao = _escolha(entrada, "situacao", ("aberta", "paga", "vencida", "todas"), "todas")
-    campo = _escolha(entrada, "campo_data", ("vencimento", "pagamento", "competencia"), "vencimento")
+    campo = _escolha(entrada, "campo_data", ("vencimento", "emissao", "pagamento", "competencia"), "vencimento")
     fornecedor, categoria = _txt(entrada, "fornecedor"), _txt(entrada, "categoria")
     centro, texto = _txt(entrada, "centro_custo"), _txt(entrada, "texto")
     if not (ini or fim) and situacao in ("todas", "paga"):
@@ -760,21 +760,28 @@ def _contas(session: Session, usuario, entrada: dict, fazenda_id: int | None) ->
             "Informe o período (data_inicio e data_fim, AAAA-MM-DD) — ou use situacao='aberta' ou 'vencida' para ver "
             "só o que está pendente. Se o usuário não disse o período, pergunte."
         )
-    coluna = {"vencimento": ContaGerencial.data_vencimento, "pagamento": ContaGerencial.data_pagamento,
-              "competencia": ContaGerencial.data_competencia}[campo]
-    q = _escopo(select(ContaGerencial), ContaGerencial.fazenda_id, fazenda_id)
-    if ini:
-        q = q.where(coluna >= ini)
-    if fim:
-        q = q.where(coluna <= fim)
-    if tipo != "todas":
-        q = q.where(ContaGerencial.tipo == ("despesa" if tipo == "pagar" else "receita"))
     hoje = date.today()
-    contas = list(session.exec(q.order_by(coluna, ContaGerencial.id)).all())
+    contas = list(session.exec(_escopo(select(ContaGerencial), ContaGerencial.fazenda_id, fazenda_id)).all())
 
-    def _aberta(c) -> bool:  # mesma regra do site (contas-a-pagar / consultar_financeiro)
-        return (c.valor_pago or 0) < (c.valor_total or 0)
+    # Mesmas regras da tela Financeiro › Contas (frontend/app/financeiro/page.tsx):
+    #  - em aberto = SEM data de pagamento; paga/recebida = COM data de pagamento;
+    #  - a data do período é a escolhida: emissão (cai na competência se vazia), vencimento (idem) ou pagamento.
+    def _data_do_periodo(c) -> date | None:
+        if campo == "emissao":
+            return c.data_emissao or c.data_competencia
+        if campo == "vencimento":
+            return c.data_vencimento or c.data_competencia
+        if campo == "pagamento":
+            return c.data_pagamento
+        return c.data_competencia
 
+    def _aberta(c) -> bool:
+        return c.data_pagamento is None
+
+    if tipo != "todas":
+        contas = [c for c in contas if c.tipo == ("despesa" if tipo == "pagar" else "receita")]
+    if ini or fim:
+        contas = [c for c in contas if _no_periodo(_data_do_periodo(c), ini, fim)]
     if situacao == "aberta":
         contas = [c for c in contas if _aberta(c)]
     elif situacao == "paga":
@@ -789,6 +796,7 @@ def _contas(session: Session, usuario, entrada: dict, fazenda_id: int | None) ->
         contas = [c for c in contas if _contem(c.centro_custo, centro)]
     if texto:
         contas = [c for c in contas if _contem(c.descricao, texto) or _contem(c.numero_nota, texto)]
+    contas.sort(key=lambda c: (_data_do_periodo(c) or date.max, c.id or 0))
 
     def _soma(itens, f) -> float:
         return round(sum(f(c) for c in itens), 2)
@@ -799,8 +807,8 @@ def _contas(session: Session, usuario, entrada: dict, fazenda_id: int | None) ->
     por_cat: dict[str, dict] = {}
     for c in contas:
         d = por_cat.setdefault(c.classificacao or "(sem classificação)", {"despesas": 0.0, "receitas": 0.0, "lancamentos": 0})
-        d["despesas" if c.tipo == "despesa" else "receitas"] = round(
-            d["despesas" if c.tipo == "despesa" else "receitas"] + (c.valor_total or 0), 2)
+        chave = "despesas" if c.tipo == "despesa" else "receitas"
+        d[chave] = round(d[chave] + (c.valor_total or 0), 2)
         d["lancamentos"] += 1
     cortadas, cortou = _cortar(contas)
     return {
@@ -817,8 +825,9 @@ def _contas(session: Session, usuario, entrada: dict, fazenda_id: int | None) ->
                 "id": c.id, "numero_lancamento": c.numero_lancamento, "tipo": "pagar" if c.tipo == "despesa" else "receber",
                 "descricao": c.descricao, "fornecedor_cliente": c.fornecedor_cliente, "classificacao": c.classificacao,
                 "centro_custo": c.centro_custo, "valor_total": c.valor_total, "valor_pago": c.valor_pago,
-                "valor_em_aberto": round(em_aberto(c), 2), "data_vencimento": _iso(c.data_vencimento),
-                "data_pagamento": _iso(c.data_pagamento), "data_competencia": _iso(c.data_competencia),
+                "valor_em_aberto": round(em_aberto(c), 2), "data_emissao": _iso(c.data_emissao),
+                "data_vencimento": _iso(c.data_vencimento), "data_pagamento": _iso(c.data_pagamento),
+                "data_competencia": _iso(c.data_competencia),
                 "parcela": f"{c.parcela_num}/{c.parcela_total}" if c.parcela_num and c.parcela_total else None,
                 "situacao": ("vencida" if (_aberta(c) and c.data_vencimento and c.data_vencimento < hoje)
                              else "aberta" if _aberta(c) else "paga"),
@@ -827,7 +836,10 @@ def _contas(session: Session, usuario, entrada: dict, fazenda_id: int | None) ->
             for c in cortadas
         ],
         "limitado_pela_ferramenta": cortou,
-        "como_ler": "valor_total = valor da parcela; valor_em_aberto = o que ainda falta pagar/receber (total − pago).",
+        "como_ler": (
+            "Igual à tela Financeiro › Contas: 'aberta' = sem data de pagamento; 'paga' = com data de pagamento. "
+            "valor_total = valor da parcela; valor_em_aberto = o que ainda falta pagar/receber."
+        ),
     }
 
 
@@ -1471,7 +1483,7 @@ FERRAMENTAS: list[dict] = [
                 "totais por categoria e a lista de lançamentos. Use para 'quanto tenho a pagar em outubro?', 'quanto gastei com "
                 "medicamentos no 1º semestre?', 'quais contas estão vencidas?', 'quanto recebo do laticínio este mês?'. tipo: pagar, "
                 "receber ou todas; situacao: aberta, paga, vencida ou todas; campo_data: vencimento (padrão), pagamento ou competencia "
-                "(decide a que data o período se refere); filtros fornecedor, categoria (classificação), centro_custo, texto. "
+                "(decide a que data o período se refere; a tela usa emissão por padrão); 'aberta' = sem data de pagamento, como nas abas Contas a pagar/receber; filtros fornecedor, categoria (classificação), centro_custo, texto. "
                 "Para 'paga'/'todas' o período é obrigatório; 'aberta'/'vencida' funcionam sem período. Para resultado/DRE use "
                 "executar_relatorio('dre')."
             ),
@@ -1479,7 +1491,7 @@ FERRAMENTAS: list[dict] = [
                 "data_inicio": _DI, "data_fim": _DF,
                 "tipo": ("string", "Opcional. pagar, receber ou todas (padrão)."),
                 "situacao": ("string", "Opcional. aberta, paga, vencida ou todas (padrão)."),
-                "campo_data": ("string", "Opcional. A data a que o período se refere: vencimento (padrão), pagamento ou competencia."),
+                "campo_data": ("string", "Opcional. A data a que o período se refere: vencimento (padrão), emissao, pagamento ou competencia."),
                 "fornecedor": ("string", "Opcional. Parte do nome do fornecedor/cliente."),
                 "categoria": ("string", "Opcional. Parte da classificação do lançamento (ex.: 'Medicamentos')."),
                 "centro_custo": ("string", "Opcional. Parte do centro de custo."),
