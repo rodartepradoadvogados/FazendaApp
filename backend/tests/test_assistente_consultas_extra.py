@@ -99,10 +99,10 @@ def _popular_ficha(s: Session) -> None:
                                   (date(2026, 5, 11), "POSITIVO", "TouroSEGREDO", 2)):
         s.add(Servico(numero_matriz="500", data_servico=dia, tipo_servico="Inseminação", reprodutor=touro, diagnostico=diag,
                       data_diagnostico=dia + timedelta(days=30), ordem_tentativa=1, fazenda_id=fid))
-    for d, kg, fid in ((date(2026, 3, 20), 30.0, 1), (date(2026, 4, 20), 28.0, 1), (date(2026, 5, 20), 26.5, 1), (date(2026, 4, 20), 99.0, 2)):
+    for d, kg, fid in ((date(2026, 3, 20), 30.0, 1), (date(2026, 4, 20), 28.0, 1), (date(2026, 5, 20), 26.5, 1), (date(2026, 4, 20), 98765.4, 2)):
         s.add(ControleLeiteiro(numero_matriz="500", data_controle=d, producao_kg=kg, fazenda_id=fid))
     s.add(PesagemCorporal(numero_matriz="500", data_pesagem=date(2026, 2, 1), peso_kg=610.0, fazenda_id=1))
-    s.add(PesagemCorporal(numero_matriz="500", data_pesagem=date(2026, 2, 1), peso_kg=999.0, fazenda_id=2))
+    s.add(PesagemCorporal(numero_matriz="500", data_pesagem=date(2026, 2, 1), peso_kg=99999.5, fazenda_id=2))
     s.add(Sanidade(numero_matriz="500", data_aplicacao=date(2026, 3, 5), produto="Ivermectina", fazenda_id=1,
                    obs="contato fulano@exemplo.com CPF 123.456.789-09"))
     s.add(Sanidade(numero_matriz="500", data_aplicacao=date(2026, 3, 5), produto="Produto SEGREDO", fazenda_id=2))
@@ -472,7 +472,7 @@ class TestFichaAnimal:
         r2 = _rodar(engine, "consultar_ficha_animal", {"numero": "500", "secoes": "todas"}, fid=2)
         assert r2["cadastro"]["nome"] == "SEGREDO" and r2["totais"]["servicos"] == 1 and r2["totais"]["producao"] == 1
         r1 = json.dumps(_rodar(engine, "consultar_ficha_animal", {"numero": "500", "secoes": "todas"}, fid=1), default=str)
-        assert "SEGREDO" not in r1 and "999" not in r1 and "99.0" not in r1
+        assert "SEGREDO" not in r1 and "98765" not in r1 and "99999.5" not in r1
         assert "erro" in _rodar(engine, "consultar_ficha_animal", {"numero": "900"}, fid=1)  # animal da fazenda 2
 
     def test_animal_inexistente_e_numero_obrigatorio(self, engine):
