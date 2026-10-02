@@ -26,7 +26,8 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from fazenda.auth import MODULOS
 from fazenda.models import (
     Animal, BaixaAnimal, CompraAnimal, ControleLeiteiro, EventoSanitario, ExameResultado, Fazenda, Lactacao, Lote,
-    CompraSemen, EstoqueSemen, MovimentoLote, OcorrenciaClinica, Parto, PesagemCorporal, Sanidade, Secagem, Servico, Touro,
+    CompraSemen, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, EstoqueSemen, LancamentoItem, MovimentoEstoque, PlanoContaGerencial,
+     MovimentoLote, OcorrenciaClinica, Parto, PesagemCorporal, Sanidade, Secagem, Servico, Touro,
 )
 from fazenda.rules import agente_leitura as al
 from fazenda.rules import assistente_consultas_extra as ace
@@ -151,6 +152,54 @@ def _popular_semen(s: Session) -> None:
 _POPULADORES.append(_popular_semen)
 
 
+# ---------------------------------------------------------------------------
+# Financeiro: fluxo de caixa, caixa real e RMCA
+# ---------------------------------------------------------------------------
+ROTULO_CONTA = "Banco do Brasil · Agência 1234-5 · Conta corrente 99.999-9"
+
+
+def _conta(desc, tipo, valor, pgto=None, venc=None, centro="Pecuária Leiteira", cod="2.01.01", fid=1, banco=None):
+    return ContaGerencial(
+        descricao=desc, tipo=tipo, valor_total=valor, valor_pago=valor if pgto else None, data_pagamento=pgto,
+        data_vencimento=venc or pgto, data_competencia=pgto or venc, centro_custo=centro, codigo_conta=cod,
+        fornecedor_cliente="Laticínio" if tipo == "receita" else "Agrovet", fazenda_id=fid, conta_bancaria=banco,
+        numero_lancamento=f"LC-{desc}",
+    )
+
+
+def _popular_financeiro(s: Session) -> None:
+    s.add_all([
+        _conta("Venda leite mar", "receita", 10000.0, pgto=date(2026, 3, 10), cod="2.01.01", banco=ROTULO_CONTA),
+        _conta("Racao mar", "despesa", 4000.0, pgto=date(2026, 3, 20), cod="3.01.01.01"),
+        _conta("Adubo abr", "despesa", 1500.0, pgto=date(2026, 4, 5), centro="Agricultura", cod="3.02.01"),
+        _conta("Venda leite abr", "receita", 2000.0, pgto=date(2026, 4, 15), cod="2.01.02"),
+        _conta("Conta a pagar maio", "despesa", 700.0, venc=date(2026, 5, 10), cod="3.01.01.01"),
+        _conta("Conta a receber maio", "receita", 300.0, venc=date(2026, 5, 20), cod="2.01.01"),
+        _conta("Conta SEGREDO", "receita", 99999.0, pgto=date(2026, 3, 10), centro="SEGREDO", cod="2.01.01", fid=2),
+    ])
+    for cod, nome, fid in (("2", "Receitas", 1), ("2.01", "Receita leite", 1), ("2.01.01", "Venda de leite", 1), ("2.01.02", "Venda de bezerros", 1),
+                           ("3", "Despesas", 1), ("3.01", "Custos pecuaria", 1), ("3.01.01", "Alimentacao do rebanho", 1),
+                           ("3.01.01.01", "Racao", 1), ("2.01.01", "Conta SEGREDO", 2)):
+        s.add(PlanoContaGerencial(codigo=cod, nome=nome, fazenda_id=fid, rmca_receita_leite=cod == "2.01.01", rmca_custo_alimentacao=cod == "3.01.01.01"))
+    for num, prod, valor, d, cod, fid in (
+        ("L1", "Leite", 10000.0, date(2026, 3, 10), "2.01.01", 1), ("L2", "Racao", 4000.0, date(2026, 3, 20), "3.01.01.01", 1),
+        ("L3", "Leite", 12000.0, date(2026, 4, 15), "2.01.01", 1), ("L4", "Racao", 5000.0, date(2026, 4, 20), "3.01.01.01", 1),
+        ("L5", "SEGREDO", 777777.0, date(2026, 3, 10), "2.01.01", 2),
+    ):
+        s.add(LancamentoItem(numero_lancamento=num, produto=prod, valor_total=valor, data_competencia=d, codigo_conta_gerencial=cod,
+                             tipo_item="produto", fazenda_id=fid))
+    s.add(Estoque(nome="Silagem", quantidade=500, unidade="kg", valor_unitario=0.5, conta_gerencial_despesa_padrao="3.01.01.01", fazenda_id=1))
+    s.add(MovimentoEstoque(nome_item="Silagem", movimento="Saída de ajuste", quantidade=100.0, data_movimento=date(2026, 3, 15),
+                           valor_unitario=0.5, fazenda_id=1))
+    s.add(EntregaLeiteMensal(competencia="2026-03", quantidade_litros=10000.0, fazenda_id=1))
+    s.add(ContaCorrente(banco="Banco do Brasil", agencia="1234-5", numero_conta="99.999-9", fazenda_id=1))
+    s.add(ContaCorrente(banco="Banco SEGREDO", agencia="0000", numero_conta="SEGREDO", fazenda_id=2))
+    s.commit()
+
+
+_POPULADORES.append(_popular_financeiro)
+
+
 @pytest.fixture
 def engine():
     eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -182,6 +231,9 @@ TIPICOS: dict[str, dict] = {
     "consultar_estoque_semen": {"incluir_provas": "true"},
     "consultar_touros_catalogo": {},
     "consultar_uso_semen": {"data_inicio": "2026-01-01", "data_fim": "2026-07-01", "incluir_prova_ao_vivo": "true"},
+    "consultar_fluxo_caixa": {"data_inicio": "2026-03-01", "data_fim": "2026-04-30", "incluir_previsto": "true"},
+    "consultar_caixa_real": {"dias": "60"},
+    "consultar_rmca": {"data_inicio": "2026-03-01", "data_fim": "2026-04-30", "por_mes": "true", "incluir_itens_fisicos": "true"},
 }
 # Módulo(s) esperado(s) de cada ferramenta (qualquer um libera).
 MODULOS_ESPERADOS: dict[str, tuple[str, ...]] = {
@@ -190,6 +242,9 @@ MODULOS_ESPERADOS: dict[str, tuple[str, ...]] = {
     "consultar_estoque_semen": ("rebanho", "reproducao"),
     "consultar_touros_catalogo": ("rebanho", "reproducao"),
     "consultar_uso_semen": ("rebanho", "reproducao", "analise"),
+    "consultar_fluxo_caixa": ("financeiro",),
+    "consultar_caixa_real": ("financeiro",),
+    "consultar_rmca": ("financeiro",),
 }
 
 
@@ -481,6 +536,137 @@ class TestSemenETouros:
         assert "5 anos" in _rodar(engine, "consultar_uso_semen", {"data_inicio": "2019-01-01", "data_fim": "2026-01-01"})["erro"]
         assert "tipo" in _rodar(engine, "consultar_estoque_semen", {"tipo": "xyz"})["erro"]
         assert "ordenar_por" in _rodar(engine, "consultar_touros_catalogo", {"ordenar_por": "xyz"})["erro"]
+
+# ---------------------------------------------------------------------------
+# 4. Fluxo de caixa e Caixa Real
+# ---------------------------------------------------------------------------
+PER = {"data_inicio": "2026-03-01", "data_fim": "2026-04-30"}
+
+
+class TestFluxoCaixa:
+    def test_mensal_bate_com_a_conta_do_navegador(self, engine):
+        """Oráculo independente: reconstrói fluxoMensal de frontend/app/financeiro/page.tsx a partir de
+        GET /financeiro/lancamentos (soma por mes_caixa, acumulado com Math.round)."""
+        from fazenda.api.routers.financeiro import listar_lancamentos
+        with Session(engine) as s:
+            regs = listar_lancamentos(session=s, fazenda_id=1)["lancamentos"]
+        esperado: dict[str, list[float]] = {}
+        for r in regs:
+            if r["data_pagamento"] and "2026-03-01" <= r["data_pagamento"] <= "2026-04-30":
+                e = esperado.setdefault(r["mes_caixa"], [0.0, 0.0])
+                e[0 if r["tipo"] == "receita" else 1] += r["valor"]
+        acc, linhas = 0.0, []
+        for m in sorted(esperado):
+            acc += esperado[m][0] - esperado[m][1]
+            linhas.append((m, esperado[m][0], esperado[m][1], int(acc + 0.5)))
+        r = _rodar(engine, "consultar_fluxo_caixa", PER)
+        assert [(x["periodo"], x["entradas"], x["saidas"], x["acumulado"]) for x in r["meses"]] == linhas
+        assert linhas == [("2026-03", 10000.0, 4000.0, 6000), ("2026-04", 2000.0, 1500.0, 6500)]
+        assert r["totais"] == {"entradas": 12000.0, "saidas": 5500.0, "resultado": 6500.0, "lancamentos": 4}
+
+    def test_filtro_de_centro_como_a_tela_abre(self, engine):
+        r = _rodar(engine, "consultar_fluxo_caixa", {**PER, "centro_custo": "pecuaria leiteira"})
+        assert [(x["periodo"], x["saidas"], x["acumulado"]) for x in r["meses"]] == [("2026-03", 4000.0, 6000), ("2026-04", 0.0, 8000)]
+        assert r["por_centro_custo"].keys() == {"Agricultura", "Pecuária Leiteira"}  # os outros centros continuam visíveis
+        assert r["por_centro_custo"]["Agricultura"]["saidas"] == 1500.0
+
+    def test_diario_livro_e_por_conta(self, engine):
+        d = _rodar(engine, "consultar_fluxo_caixa", {**PER, "visao": "diario"})["dias"]
+        assert [(x["periodo"], x["saldo"]) for x in d] == [("2026-03-10", 10000.0), ("2026-03-20", -4000.0), ("2026-04-05", -1500.0), ("2026-04-15", 2000.0)]
+        assert d[-1]["acumulado"] == 6500
+        livro = _rodar(engine, "consultar_fluxo_caixa", {**PER, "visao": "livro"})["lancamentos"]
+        assert [l["saldo"] for l in livro] == [10000, 6000, 4500, 6500] and livro[0]["entrada"] == 10000.0 and livro[1]["saida"] == 4000.0
+        contas = {c["codigo"]: c for c in _rodar(engine, "consultar_fluxo_caixa", {**PER, "visao": "por_conta"})["contas"]}
+        assert contas["2.01.01"]["nome"] == "Venda de leite" and contas["2.01.01"]["por_mes"] == {"2026-03": 10000.0}
+        assert contas["2.01"]["total"] == 12000.0 and contas["2"]["nivel"] == 1  # propaga pela hierarquia, como a DRE
+        assert contas["3.01.01.01"]["nome"] == "Racao"
+
+    def test_filtros_tipo_fornecedor_e_conta(self, engine):
+        assert _rodar(engine, "consultar_fluxo_caixa", {**PER, "tipo": "saidas"})["totais"]["entradas"] == 0.0
+        assert _rodar(engine, "consultar_fluxo_caixa", {**PER, "tipo": "entradas"})["totais"]["saidas"] == 0.0
+        assert _rodar(engine, "consultar_fluxo_caixa", {**PER, "fornecedor": "laticinio"})["totais"]["entradas"] == 12000.0
+        r = _rodar(engine, "consultar_fluxo_caixa", {**PER, "conta": "3.01"})
+        assert r["totais"] == {"entradas": 0.0, "saidas": 4000.0, "resultado": -4000.0, "lancamentos": 1}  # 3.01 inclui 3.01.01.01, não 3.02
+        assert _rodar(engine, "consultar_fluxo_caixa", {**PER, "conta": "3.0"})["totais"]["lancamentos"] == 0  # "3.0" não é prefixo de conta
+
+    def test_previsto_x_realizado(self, engine):
+        r = _rodar(engine, "consultar_fluxo_caixa", {"data_inicio": "2026-05-01", "data_fim": "2026-05-31", "incluir_previsto": "true"})
+        assert r["totais"]["lancamentos"] == 0
+        assert r["previsto_em_aberto"]["a_pagar"] == 700.0 and r["previsto_em_aberto"]["a_receber"] == 300.0
+        assert r["previsto_x_realizado"] == {"realizado_entradas": 0.0, "previsto_a_receber": 300.0, "realizado_saidas": 0.0, "previsto_a_pagar": 700.0}
+        assert "previsto_em_aberto" not in _rodar(engine, "consultar_fluxo_caixa", PER)
+
+    def test_isolamento(self, engine):
+        r2 = _rodar(engine, "consultar_fluxo_caixa", PER, fid=2)
+        assert r2["totais"]["entradas"] == 99999.0 and list(r2["por_centro_custo"]) == ["SEGREDO"]
+        assert "99999" not in json.dumps(_rodar(engine, "consultar_fluxo_caixa", {**PER, "visao": "livro", "incluir_previsto": "true"}))
+
+    def test_validacao(self, engine):
+        assert "pergunte" in _rodar(engine, "consultar_fluxo_caixa", {"data_inicio": "2026-01-01"})["erro"].lower()
+        assert "Data inválida" in _rodar(engine, "consultar_fluxo_caixa", {"data_inicio": "2026-02-30", "data_fim": "2026-07-01"})["erro"]
+        assert "invertido" in _rodar(engine, "consultar_fluxo_caixa", {"data_inicio": "2026-07-01", "data_fim": "2026-01-01"})["erro"]
+        assert "5 anos" in _rodar(engine, "consultar_fluxo_caixa", {"data_inicio": "2019-01-01", "data_fim": "2026-01-01"})["erro"]
+        assert "visao" in _rodar(engine, "consultar_fluxo_caixa", {**PER, "visao": "xyz"})["erro"]
+
+
+class TestCaixaReal:
+    def test_bate_com_o_endpoint_e_nao_vaza_dados_bancarios(self, engine):
+        from fazenda.api.routers.financeiro import caixa_real
+        marca = fazenda_atual.set(1)
+        try:
+            with Session(engine) as s:
+                site = caixa_real(dias=60, session=s, fazenda_id=1, _=_Usuario())
+        finally:
+            fazenda_atual.reset(marca)
+        r = _rodar(engine, "consultar_caixa_real", {"dias": "60"})
+        for k in ("saldo_inicial", "saldo_final", "total_entradas", "total_saidas", "variacao", "folga_minima", "primeiro_dia_negativo", "dias"):
+            assert r[k] == site[k], k
+        assert r["saldo_inicial"] == 10000.0 and r["total_saidas"] == 700.0 and r["total_entradas"] == 300.0
+        assert [d["data"] for d in r["dias_com_movimento"]] == [d["data"] for d in site["serie"] if d["entradas"] or d["saidas"]]
+        texto = json.dumps(r, ensure_ascii=False)
+        assert "1234-5" not in texto and "99.999" not in texto
+        assert r["contas_correntes"] == [{"instituicao": "Banco do Brasil", "saldo": 10000.0}]
+
+    def test_so_administrador(self, engine):
+        u = _Usuario("operador", "financeiro")
+        assert "administradores" in _rodar(engine, "consultar_caixa_real", {}, usuario=u)["erro"]
+
+    def test_isolamento_e_validacao(self, engine):
+        r2 = _rodar(engine, "consultar_caixa_real", {}, fid=2)
+        assert r2["saldo_inicial"] == 0.0 and "SEGREDO" not in json.dumps(_rodar(engine, "consultar_caixa_real", {}))
+        assert "dias" in _rodar(engine, "consultar_caixa_real", {"dias": "0"})["erro"]
+
+
+# ---------------------------------------------------------------------------
+# 5. RMCA
+# ---------------------------------------------------------------------------
+class TestRmca:
+    def test_bate_com_o_endpoint(self, engine):
+        from fazenda.api.routers.financeiro import rmca
+        with Session(engine) as s:
+            site = rmca(data_inicio=date(2026, 3, 1), data_fim=date(2026, 4, 30), session=s, fazenda_id=1)
+        r = _rodar(engine, "consultar_rmca", {**PER, "incluir_itens_fisicos": "true"})
+        assert r["gerencial"] == site["gerencial"] == {"receita_leite": 22000.0, "custo_alimentacao": 9000.0, "rmca": 13000.0}
+        assert r["fisico"] == site["fisico"] and r["fisico"]["custo_alimentacao"] == 50.0  # 100 kg × R$ 0,50
+        assert r["configurado"] is True and r["meta_rmca"] == site["meta_rmca"] and r["contas_custo"] == ["Racao"]
+        assert r["preco_medio_litro_leite"] == site["preco_medio_litro_leite"]
+
+    def test_por_mes_soma_o_periodo(self, engine):
+        r = _rodar(engine, "consultar_rmca", {**PER, "por_mes": "true"})
+        assert [(m["mes"], m["gerencial"]["rmca"]) for m in r["por_mes"]] == [("2026-03", 6000.0), ("2026-04", 7000.0)]
+        assert sum(m["gerencial"]["rmca"] for m in r["por_mes"]) == r["gerencial"]["rmca"]
+        assert [m["fisico"]["custo_alimentacao"] for m in r["por_mes"]] == [50.0, 0.0]
+        # item físico resumido por padrão (sem preços por kg)
+        assert "preco_padrao_kg" not in _rodar(engine, "consultar_rmca", PER)["fisico"]["itens"][0]
+
+    def test_isolamento_e_validacao(self, engine):
+        r2 = _rodar(engine, "consultar_rmca", PER, fid=2)
+        assert r2["gerencial"]["receita_leite"] == 777777.0 and r2["configurado"] is False
+        assert "777777" not in json.dumps(_rodar(engine, "consultar_rmca", PER))
+        assert "pergunte" in _rodar(engine, "consultar_rmca", {"data_fim": "2026-01-01"})["erro"].lower()
+        assert "invertido" in _rodar(engine, "consultar_rmca", {"data_inicio": "2026-07-01", "data_fim": "2026-01-01"})["erro"]
+        assert "5 anos" in _rodar(engine, "consultar_rmca", {"data_inicio": "2019-01-01", "data_fim": "2026-01-01"})["erro"]
+        assert "24 meses" in _rodar(engine, "consultar_rmca", {"data_inicio": "2024-01-01", "data_fim": "2026-06-01", "por_mes": "true"})["erro"]
 
 
 # ---------------------------------------------------------------------------

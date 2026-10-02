@@ -437,6 +437,208 @@ def _uso_semen(session: Session, usuario, entrada: dict, fazenda_id: int | None)
 
 
 # ===========================================================================
+# 4. Fluxo de caixa (Financeiro › Fluxo de Caixa / Livro Caixa) e Caixa Real
+# ===========================================================================
+_VISOES_FLUXO = ("mensal", "diario", "livro", "por_conta")
+
+
+def _contem_exato(texto: str | None, alvo: str | None) -> bool:
+    return _sem_acento(texto) == _sem_acento(alvo)
+
+
+def _fluxo_caixa(session: Session, usuario, entrada: dict, fazenda_id: int | None) -> dict:
+    from fazenda.api.routers.financeiro import listar_lancamentos, plano_contas
+
+    ini, fim = _periodo(entrada, obrigatorio=True)
+    visao = _escolha(entrada, "visao", _VISOES_FLUXO, "mensal")
+    centro = _txt(entrada, "centro_custo")
+    tipo = _escolha(entrada, "tipo", ("entradas", "saidas", "todos"), "todos")
+    fornecedor, conta = _txt(entrada, "fornecedor"), _txt(entrada, "conta")
+    previsto = _bool(entrada, "incluir_previsto", False)
+
+    regs = _chamar(listar_lancamentos, session, fazenda_id)["lancamentos"]  # GET /financeiro/lancamentos (o que a tela baixa)
+
+    def _passa(r: dict, centro_ok: bool = True) -> bool:
+        # Mesmos filtros da tela (frontend/app/financeiro/page.tsx, `filtrados`): centro de custo, tipo, fornecedor, conta
+        # gerencial (a selecionada e todos os descendentes: "3.01" casa "3.01.02").
+        if centro_ok and centro and not _contem_exato(r.get("centro_custo"), centro):
+            return False
+        if tipo != "todos" and r["tipo"] != ("receita" if tipo == "entradas" else "despesa"):
+            return False
+        if fornecedor and not _contem(r.get("fornecedor"), fornecedor):
+            return False
+        if conta:
+            c = r.get("conta_completa") or r.get("codigo_conta") or ""
+            if not (c == conta or c.startswith(conta + ".")):
+                return False
+        return True
+
+    # Fluxo de Caixa e Livro Caixa = REGIME DE CAIXA: a data que vale é a do PAGAMENTO.
+    no_periodo = [r for r in regs if r.get("data_pagamento") and _no_periodo(r["data_pagamento"], ini, fim)]
+    filtrados = [r for r in no_periodo if _passa(r)]
+    entradas = sum(r["valor"] for r in filtrados if r["tipo"] == "receita")
+    saidas = sum(r["valor"] for r in filtrados if r["tipo"] == "despesa")
+
+    centros: dict[str, dict] = {}
+    for r in no_periodo:
+        if not _passa(r, centro_ok=False):
+            continue
+        c = centros.setdefault(r.get("centro_custo") or "Sem centro de custo", {"entradas": 0.0, "saidas": 0.0})
+        c["entradas" if r["tipo"] == "receita" else "saidas"] += r["valor"]
+
+    saida: dict[str, Any] = {
+        "periodo": {"data_inicio": ini.isoformat(), "data_fim": fim.isoformat()}, "regime": "caixa (data do pagamento)",
+        "filtros": {"centro_custo": centro, "tipo": tipo, "fornecedor": fornecedor, "conta": conta}, "visao": visao,
+        "totais": {"entradas": round(entradas, 2), "saidas": round(saidas, 2), "resultado": round(entradas - saidas, 2),
+                   "lancamentos": len(filtrados)},
+        "por_centro_custo": {
+            k: {"entradas": round(v["entradas"], 2), "saidas": round(v["saidas"], 2), "resultado": round(v["entradas"] - v["saidas"], 2)}
+            for k, v in sorted(centros.items())
+        },
+    }
+
+    def _serie(chave) -> list[dict]:
+        por: dict[str, dict] = {}
+        for r in filtrados:
+            k = chave(r)
+            if not k:
+                continue
+            e = por.setdefault(k, {"entradas": 0.0, "saidas": 0.0, "lancamentos": 0})
+            e["entradas" if r["tipo"] == "receita" else "saidas"] += r["valor"]
+            e["lancamentos"] += 1
+        acc, linhas = 0.0, []
+        for k in sorted(por):
+            e = por[k]
+            acc += e["entradas"] - e["saidas"]
+            linhas.append({"periodo": k, "entradas": round(e["entradas"], 2), "saidas": round(e["saidas"], 2),
+                           "saldo": round(e["entradas"] - e["saidas"], 2), "acumulado": _arred_js(acc), "lancamentos": e["lancamentos"]})
+        return linhas
+
+    if visao == "mensal":
+        saida["meses"], saida["limitado_pela_ferramenta"] = _cortar(_serie(lambda r: r.get("mes_caixa")))
+    elif visao == "diario":
+        saida["dias"], saida["limitado_pela_ferramenta"] = _cortar(_serie(lambda r: r.get("data_pagamento")))
+    elif visao == "livro":
+        acc, linhas = 0.0, []
+        for r in sorted(filtrados, key=lambda r: r["data_pagamento"]):
+            entrada_, saida_ = (r["valor"], 0.0) if r["tipo"] == "receita" else (0.0, r["valor"])
+            acc += entrada_ - saida_
+            linhas.append({"data": r["data_pagamento"], "descricao": r.get("descricao"), "fornecedor": r.get("fornecedor"),
+                           "entrada": round(entrada_, 2), "saida": round(saida_, 2), "saldo": _arred_js(acc)})
+        saida["lancamentos"], saida["limitado_pela_ferramenta"] = _cortar(linhas)
+    else:  # por_conta: mesma hierarquia da DRE, uma coluna por mês
+        nomes = {p["codigo"]: p["nome"] for p in _chamar(plano_contas, session, fazenda_id)}
+        por: dict[str, dict] = {}
+        for r in filtrados:
+            folha, mes = r.get("conta_completa") or r.get("codigo_conta") or "", r.get("mes_caixa")
+            if not folha or not mes:
+                continue
+            partes = folha.split(".")
+            for i in range(len(partes)):
+                codigo = ".".join(partes[: i + 1])
+                nome_conhecido = nomes.get(codigo)
+                if not nome_conhecido and i != len(partes) - 1:
+                    continue  # nível intermediário sem nome cadastrado não gera linha (como na tela)
+                e = por.setdefault(codigo, {"codigo": codigo, "nome": nome_conhecido or r.get("descricao") or codigo,
+                                            "nivel": i + 1, "por_mes": {}, "total": 0.0})
+                e["por_mes"][mes] = round(e["por_mes"].get(mes, 0.0) + r["valor"], 2)
+                e["total"] = round(e["total"] + r["valor"], 2)
+        saida["contas"], saida["limitado_pela_ferramenta"] = _cortar(sorted(por.values(), key=lambda e: e["codigo"]))
+
+    if previsto:
+        # Previsto = contas ainda EM ABERTO (sem data de pagamento) com vencimento no período, como na aba Contas a pagar/receber.
+        abertas = [r for r in regs if not r.get("data_pagamento") and _no_periodo(r.get("data_vencimento") or r.get("data_competencia"), ini, fim) and _passa(r)]
+        por_mes: dict[str, dict] = {}
+        for r in abertas:
+            m = (r.get("data_vencimento") or r.get("data_competencia") or "")[:7]
+            e = por_mes.setdefault(m, {"a_receber": 0.0, "a_pagar": 0.0})
+            e["a_receber" if r["tipo"] == "receita" else "a_pagar"] += r["valor"]
+        pr, pg = sum(e["a_receber"] for e in por_mes.values()), sum(e["a_pagar"] for e in por_mes.values())
+        saida["previsto_em_aberto"] = {
+            "a_receber": round(pr, 2), "a_pagar": round(pg, 2), "resultado_previsto": round(pr - pg, 2), "lancamentos": len(abertas),
+            "por_mes": [{"mes": m, "a_receber": round(e["a_receber"], 2), "a_pagar": round(e["a_pagar"], 2)} for m, e in sorted(por_mes.items())],
+            "origem": "Contas ainda não pagas com vencimento no período (abas Contas a pagar/receber). Não é uma tela de 'previsto' do Fluxo de Caixa.",
+        }
+        saida["previsto_x_realizado"] = {
+            "realizado_entradas": saida["totais"]["entradas"], "previsto_a_receber": round(pr, 2),
+            "realizado_saidas": saida["totais"]["saidas"], "previsto_a_pagar": round(pg, 2),
+        }
+    saida["como_ler"] = (
+        "Igual à tela Financeiro › Fluxo de Caixa (e Livro Caixa): REGIME DE CAIXA, só lançamentos PAGOS/RECEBIDOS, no mês/dia do pagamento; "
+        "entradas = receitas, saídas = despesas, acumulado = soma corrida do período. A tela abre filtrada em 'Pecuária Leiteira' — "
+        "sem centro_custo esta ferramenta soma todos os centros (veja por_centro_custo para citar cada um). Para regime de competência "
+        "use executar_relatorio('dre'); para contas ainda a pagar/receber use consultar_contas_financeiras; para o saldo projetado "
+        "futuro use consultar_caixa_real."
+    )
+    return saida
+
+
+def _caixa_real(session: Session, usuario, entrada: dict, fazenda_id: int | None) -> dict:
+    from fazenda.api.routers.financeiro import caixa_real
+
+    if getattr(usuario, "papel", None) != "admin":
+        raise ErroConsulta("O Caixa Real (saldo e projeção de liquidez) é restrito a administradores, como no site.")
+    dias = _inteiro(entrada, "dias", 1, 730)
+    r = _chamar(caixa_real, session, fazenda_id, dias=dias, _=usuario)  # GET /financeiro/caixa-real
+    serie = r.pop("serie", [])
+    com_movimento = [d for d in serie if d["entradas"] or d["saidas"]]
+    cortados, cortou = _cortar(com_movimento)
+    contas = [
+        {"instituicao": str(c["nome"]).split("·")[0].strip(), "saldo": c["saldo"]}  # sem agência/número da conta (dado bancário)
+        for c in r.pop("contas", [])
+    ]
+    for d in cortados:
+        d["itens"] = d.get("itens", [])[:10]
+    return {
+        **r, "contas_correntes": contas,
+        "dias_com_movimento": cortados, "limitado_pela_ferramenta": cortou,
+        "como_ler": (
+            "Mesma projeção da tela Financeiro › Caixa Real: saldo de partida = soma das contas correntes cadastradas; depois entram as contas "
+            "AINDA NÃO PAGAS no dia do vencimento (vencidas entram no 1º dia). Não é a DRE. 'dias_com_movimento' mostra só os dias com entrada/saída."
+        ),
+    }
+
+
+# ===========================================================================
+# 5. RMCA (Receita Menos Custo com Alimentação)
+# ===========================================================================
+def _rmca(session: Session, usuario, entrada: dict, fazenda_id: int | None) -> dict:
+    import calendar
+    from fazenda.api.routers.financeiro import rmca
+
+    ini, fim = _periodo(entrada, obrigatorio=True)
+    por_mes = _bool(entrada, "por_mes", False)
+    itens_fisicos = _bool(entrada, "incluir_itens_fisicos", False)
+
+    def _um(a: date, b: date) -> dict:
+        return _chamar(rmca, session, fazenda_id, data_inicio=a, data_fim=b)  # GET /financeiro/rmca
+
+    r = _um(ini, fim)
+    if not itens_fisicos:
+        r["fisico"] = {**r["fisico"], "itens": [
+            {k: it.get(k) for k in ("ingrediente", "quantidade", "unidade", "valor_unitario", "custo")} for it in r["fisico"]["itens"]
+        ]}
+    if por_mes:
+        meses, cursor = [], ini.replace(day=1)
+        if (fim.year - ini.year) * 12 + fim.month - ini.month >= 24:
+            raise ErroConsulta("Para por_mes=true use no máximo 24 meses de período.")
+        while cursor <= fim:
+            a, b = max(cursor, ini), min(cursor.replace(day=calendar.monthrange(cursor.year, cursor.month)[1]), fim)
+            m = _um(a, b)
+            meses.append({"mes": cursor.strftime("%Y-%m"), "gerencial": m["gerencial"],
+                          "fisico": {k: m["fisico"][k] for k in ("receita_leite", "custo_alimentacao", "rmca")}})
+            cursor = (cursor.replace(day=28) + timedelta(days=4)).replace(day=1)
+        r["por_mes"] = meses
+    r["como_ler"] = (
+        "RMCA = Receita do leite − Custo com alimentação, nas duas versões da tela Financeiro › RMCA: 'gerencial' (lançamentos financeiros, por "
+        "COMPETÊNCIA, nas contas marcadas em Parâmetros financeiros) e 'fisico' (receita igual; custo = consumo real da Alimentação × valor do "
+        "item). 'configurado'=false significa que as contas de receita/custo ainda não foram marcadas. O RMCA do site não é por centro de "
+        "custo; para resultado por centro use executar_relatorio('dre', centro_custo=...). meta_rmca é a meta configurada."
+    )
+    return r
+
+
+# ===========================================================================
 # Registro
 # ===========================================================================
 FERRAMENTAS: list[dict] = [
@@ -551,6 +753,66 @@ FERRAMENTAS: list[dict] = [
             }, ["data_inicio", "data_fim"]),
         },
         "executor": _com_erro(_uso_semen),
+    },
+    {
+        "modulo": "financeiro",
+        "spec": {
+            "name": "consultar_fluxo_caixa",
+            "description": (
+                "FLUXO DE CAIXA realizado (Financeiro › Fluxo de Caixa e Livro Caixa), por mês, por dia, em livro ou por conta/categoria: "
+                "entradas, saídas, saldo e acumulado, no regime de CAIXA (data do pagamento). Use para 'qual o fluxo de caixa de agosto?', "
+                "'quanto entrou e saiu em 2026 por mês?', 'quanto gastei com cada categoria mês a mês?', 'qual o saldo acumulado do livro caixa?'. "
+                "OBRIGATÓRIO data_inicio e data_fim (AAAA-MM-DD); se faltarem, pergunte. visao: mensal (padrão), diario, livro ou por_conta. "
+                "Filtros: centro_custo (a tela abre em 'Pecuária Leiteira'; sem filtro soma todos e mostra por_centro_custo), tipo "
+                "(entradas/saidas), fornecedor, conta (código da conta gerencial, ex.: '3.01'). incluir_previsto=true compara com as contas "
+                "ainda em aberto com vencimento no período. Para o resultado por competência (DRE) use executar_relatorio('dre'); para listar "
+                "contas a pagar/receber use consultar_contas_financeiras; para o saldo projetado para frente use consultar_caixa_real."
+            ),
+            "input_schema": _schema({
+                "data_inicio": _DI, "data_fim": _DF,
+                "visao": ("string", "Opcional. mensal (padrão), diario, livro ou por_conta."),
+                "centro_custo": ("string", "Opcional. Centro de custo exato (ex.: 'Pecuária Leiteira')."),
+                "tipo": ("string", "Opcional. entradas, saidas ou todos (padrão)."),
+                "fornecedor": ("string", "Opcional. Parte do nome do fornecedor/cliente."),
+                "conta": ("string", "Opcional. Código da conta gerencial (inclui as filhas), ex.: '3.01'."),
+                "incluir_previsto": ("boolean", "Opcional. true = acrescenta o previsto (contas em aberto com vencimento no período)."),
+            }, ["data_inicio", "data_fim"]),
+        },
+        "executor": _com_erro(_fluxo_caixa),
+    },
+    {
+        "modulo": "financeiro",
+        "spec": {
+            "name": "consultar_caixa_real",
+            "description": (
+                "CAIXA REAL — projeção de liquidez (Financeiro › Caixa Real): saldo das contas correntes hoje, como o saldo evolui dia a dia "
+                "com as contas a pagar/receber já lançadas, fundo de reserva, primeiro dia negativo e folga mínima. Use para 'quanto tenho em "
+                "caixa?', 'vou ficar sem dinheiro nos próximos 60 dias?', 'qual o saldo projetado?'. dias = horizonte (padrão do parâmetro da "
+                "fazenda, em geral 90). Restrito a administradores, como no site. Para o que JÁ entrou/saiu use consultar_fluxo_caixa."
+            ),
+            "input_schema": _schema({"dias": ("integer", "Opcional. Horizonte da projeção em dias (1 a 730).")}),
+        },
+        "executor": _com_erro(_caixa_real),
+    },
+    {
+        "modulo": "financeiro",
+        "spec": {
+            "name": "consultar_rmca",
+            "description": (
+                "RMCA — Receita Menos Custo com Alimentação (Financeiro › RMCA): receita do leite, custo com alimentação e o resultado, nas "
+                "versões gerencial (lançamentos) e física (consumo da Alimentação × valor do item), mais a meta e o preço médio do litro. Use "
+                "para 'qual o RMCA de agosto?', 'quanto gastei com alimentação versus receita do leite no semestre?', 'o RMCA está acima da "
+                "meta?'. OBRIGATÓRIO data_inicio e data_fim (AAAA-MM-DD, por competência); se faltarem, pergunte. por_mes=true devolve o "
+                "RMCA de cada mês do período (até 24 meses); incluir_itens_fisicos=true detalha preços por kg. Para custo por litro use "
+                "executar_relatorio('custo_litro_leite'); para o resultado geral (DRE) use executar_relatorio('dre')."
+            ),
+            "input_schema": _schema({
+                "data_inicio": _DI, "data_fim": _DF,
+                "por_mes": ("boolean", "Opcional. true = RMCA mês a mês dentro do período."),
+                "incluir_itens_fisicos": ("boolean", "Opcional. true = preço por kg padrão/última compra de cada ingrediente."),
+            }, ["data_inicio", "data_fim"]),
+        },
+        "executor": _com_erro(_rmca),
     },
 ]
 
