@@ -26,7 +26,8 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from fazenda.auth import MODULOS
 from fazenda.models import (
     Animal, BaixaAnimal, CompraAnimal, ControleLeiteiro, EventoSanitario, ExameResultado, Fazenda, Lactacao, Lote,
-    CompraSemen, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, EstoqueSemen, LancamentoItem, MovimentoEstoque, PlanoContaGerencial,
+    Alimento, CategoriaAlimento, CompraSemen, ConsumoAlimento, ConsumoSobra, ContaCorrente, Dieta, DietaItemProgramado, DietaLancamento,
+     ContaGerencial, EntregaLeiteMensal, Estoque, EstoqueSemen, LancamentoItem, MovimentoEstoque, PlanoContaGerencial,
      MovimentoLote, OcorrenciaClinica, Parto, PesagemCorporal, Sanidade, Secagem, Servico, Touro,
 )
 from fazenda.rules import agente_leitura as al
@@ -200,6 +201,48 @@ def _popular_financeiro(s: Session) -> None:
 _POPULADORES.append(_popular_financeiro)
 
 
+# ---------------------------------------------------------------------------
+# Alimentação / dietas
+# ---------------------------------------------------------------------------
+def _popular_dietas(s: Session) -> None:
+    for lote, abertura, enc, resp, fid, ativa_itens in (
+        (1, date(2026, 9, 1), None, "Nutricionista A", 1, (("Silagem", 60.0, "kg", None), ("Concentrado", 5.0, "kg", "animal"))),
+        (1, date(2026, 5, 1), date(2026, 8, 31), "Nutricionista A", 1, (("Silagem antiga", 50.0, "kg", None),)),
+        (1, date(2026, 9, 1), None, "Nutri SEGREDO", 2, (("Racao SEGREDO", 1.0, "kg", None),)),
+    ):
+        d = DietaLancamento(lote=lote, data_abertura=abertura, data_efetivo_encerramento=enc, responsavel=resp, fazenda_id=fid,
+                            data_prevista_encerramento=date(2026, 12, 1))
+        s.add(d)
+        s.commit()
+        for nome, qtd, un, base in ativa_itens:
+            s.add(DietaItemProgramado(dieta_lancamento_id=d.id, alimento=nome, quantidade=qtd, unidade=un, base_quantidade=base, fazenda_id=fid))
+    # lote 4 só tem a dieta do import antigo (kg por cabeça/dia)
+    s.add(Dieta(lote=4, categoria="Secas", ingrediente="Silagem", quantidade=20.0, unidade="kg", fazenda_id=1))
+    s.add(Dieta(lote=4, categoria="SEGREDO", ingrediente="Silagem SEGREDO", quantidade=99.0, unidade="kg", fazenda_id=2))
+    # consumo real e sobra do lote 1
+    for d, alim, qtd, fid in ((date(2026, 9, 10), "Silagem", 55.0, 1), (date(2026, 9, 10), "Concentrado", 9.0, 1),
+                              (date(2026, 9, 11), "Silagem", 60.0, 1), (date(2026, 9, 10), "Silagem SEGREDO", 500.0, 2)):
+        s.add(ConsumoAlimento(data=d, lote=1, alimento=alim, quantidade=qtd, unidade="kg", fazenda_id=fid, num_animais=2))
+    s.add(ConsumoSobra(data=date(2026, 9, 10), lote=1, kg_sobra=3.2, fazenda_id=1))
+    s.add(ConsumoSobra(data=date(2026, 9, 10), lote=1, kg_sobra=88.0, fazenda_id=2))
+    # cadastro de alimentos
+    vol = CategoriaAlimento(nome="Volumoso", fazenda_id=1)
+    s.add(vol)
+    s.add(CategoriaAlimento(nome="Categoria SEGREDO", fazenda_id=2))
+    s.commit()
+    sil = Alimento(nome="Silagem", categoria_alimento_id=vol.id, fazenda_id=1)
+    s.add(sil)
+    s.add(Alimento(nome="Feno sem estoque", fazenda_id=1))
+    s.add(Alimento(nome="Alimento SEGREDO", fazenda_id=2))
+    s.add(Alimento(nome="Alimento inativo", ativo=False, fazenda_id=1))
+    s.commit()
+    s.add(Estoque(nome="Silagem de milho", quantidade=1200.0, unidade="kg", valor_unitario=0.4, alimento_id=sil.id, fazenda_id=1))
+    s.commit()
+
+
+_POPULADORES.append(_popular_dietas)
+
+
 @pytest.fixture
 def engine():
     eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -234,6 +277,9 @@ TIPICOS: dict[str, dict] = {
     "consultar_fluxo_caixa": {"data_inicio": "2026-03-01", "data_fim": "2026-04-30", "incluir_previsto": "true"},
     "consultar_caixa_real": {"dias": "60"},
     "consultar_rmca": {"data_inicio": "2026-03-01", "data_fim": "2026-04-30", "por_mes": "true", "incluir_itens_fisicos": "true"},
+    "consultar_dietas_lotes": {"situacao": "todas", "incluir_necessidade_mensal": "true"},
+    "consultar_consumo_sobra_cocho": {"data_inicio": "2026-09-01", "data_fim": "2026-09-30"},
+    "consultar_alimentos_cadastrados": {},
 }
 # Módulo(s) esperado(s) de cada ferramenta (qualquer um libera).
 MODULOS_ESPERADOS: dict[str, tuple[str, ...]] = {
@@ -245,6 +291,9 @@ MODULOS_ESPERADOS: dict[str, tuple[str, ...]] = {
     "consultar_fluxo_caixa": ("financeiro",),
     "consultar_caixa_real": ("financeiro",),
     "consultar_rmca": ("financeiro",),
+    "consultar_dietas_lotes": ("alimentacao",),
+    "consultar_consumo_sobra_cocho": ("alimentacao",),
+    "consultar_alimentos_cadastrados": ("alimentacao",),
 }
 
 
@@ -283,8 +332,11 @@ class TestContrato:
         import inspect
         fonte = inspect.getsource(ace)
         for proibido in ("session.add(", "session.commit(", "session.flush(", "session.delete(", ".post(",
-                         "_dar_baixa_automatica", "reconciliar=True", "obter_alimentacao", "necessidade_mensal("):
+                         "_dar_baixa_automatica", "reconciliar=True", "obter_alimentacao("):
             assert proibido not in fonte, proibido
+        import re
+        # GET /alimentacao/necessidade-mensal dá baixa de estoque: só a regra pura (calcular_necessidade_mensal) pode ser usada
+        assert not re.search(r"(?<!calcular_)necessidade_mensal\(", fonte)
 
 
 # ---------------------------------------------------------------------------
@@ -667,6 +719,125 @@ class TestRmca:
         assert "invertido" in _rodar(engine, "consultar_rmca", {"data_inicio": "2026-07-01", "data_fim": "2026-01-01"})["erro"]
         assert "5 anos" in _rodar(engine, "consultar_rmca", {"data_inicio": "2019-01-01", "data_fim": "2026-01-01"})["erro"]
         assert "24 meses" in _rodar(engine, "consultar_rmca", {"data_inicio": "2024-01-01", "data_fim": "2026-06-01", "por_mes": "true"})["erro"]
+
+# ---------------------------------------------------------------------------
+# 6. Dietas
+# ---------------------------------------------------------------------------
+def _estado_do_banco(engine) -> dict:
+    """Tudo que a baixa automática de estoque da Alimentação gravaria — tem de ficar intacto."""
+    from fazenda.models import AlimentacaoEstado
+    with Session(engine) as s:
+        return {
+            "estoque": [(e.nome, e.quantidade) for e in s.exec(select(Estoque).order_by(Estoque.id)).all()],
+            "movimentos": len(s.exec(select(MovimentoEstoque)).all()),
+            "estado": [(a.fazenda_id, a.ultima_baixa_em) for a in s.exec(select(AlimentacaoEstado)).all()],
+        }
+
+
+class TestDietas:
+    def test_composicao_bate_com_a_apresentacao_do_site(self, engine):
+        from fazenda.api.routers.alimentacao import apresentacao_dieta, listar_dietas
+        with Session(engine) as s:
+            ativa = listar_dietas(lote=1, ativo=True, session=s, fazenda_id=1)[0]
+            site = apresentacao_dieta(dieta_id=ativa["id"], session=s, fazenda_id=1)
+        r = _rodar(engine, "consultar_dietas_lotes", {"lote": "1"})
+        d = r["dietas"][0]
+        assert (d["dieta_id"], d["itens"], d["vagao_kg_dia"], d["vagao_kg_trato"]) == (ativa["id"], site["itens"], site["vagao_kg_dia"], site["vagao_kg_trato"])
+        # lote 1 tem 2 vacas: silagem 60 kg/lote (30/cab.), concentrado 5 kg/cab. (10 no lote)
+        por = {i["alimento"]: i for i in d["itens"]}
+        assert (por["Silagem"]["total_dia"], por["Silagem"]["por_cabeca"]) == (60.0, 30.0)
+        assert (por["Concentrado"]["total_dia"], por["Concentrado"]["por_cabeca"]) == (10.0, 5.0)
+        assert d["vagao_kg_dia"] == 70.0 and d["ativa"] is True and d["nome_lote"] == "Lactação A" and d["responsavel"] == "Nutricionista A"
+
+    def test_situacao_e_filtro_de_lote(self, engine):
+        ids = lambda **kw: [(d["lote"], d["ativa"]) for d in _rodar(engine, "consultar_dietas_lotes", kw)["dietas"]]  # noqa: E731
+        assert ids() == [(1, True)]
+        assert sorted(ids(situacao="todas")) == [(1, False), (1, True)]
+        assert ids(situacao="encerradas") == [(1, False)] and ids(lote="2") == []
+
+    def test_plano_por_lote_funde_import_antigo_e_bate_com_o_calculo_da_tela(self, engine):
+        from fazenda.api.routers.alimentacao import _dietas_e_animais, _lotes_cadastro
+        from fazenda.rules.alimentacao import calcular_consumo
+        with Session(engine) as s:
+            dietas, animais = _dietas_e_animais(s, 1)
+            site = calcular_consumo(dietas, animais, _lotes_cadastro(s, 1))
+        r = _rodar(engine, "consultar_dietas_lotes", {})
+        assert r["plano_por_lote"] == site["por_lote"] and r["consumo_total_dia_rebanho"] == site["consumo_total"]
+        lote4 = next(l for l in r["plano_por_lote"] if l["lote"] == 4)  # só a dieta do import antigo (20 kg/cab. × 2 vacas)
+        assert lote4["efetivo"] == 2 and lote4["itens"][0]["consumo_dia"] == 40.0
+        assert _rodar(engine, "consultar_dietas_lotes", {"lote": "4"})["plano_por_lote"][0]["lote"] == 4
+        assert "plano_por_lote" not in _rodar(engine, "consultar_dietas_lotes", {"incluir_plano_consumo": "false"})
+
+    def test_necessidade_mensal_sem_gravar_nada(self, engine):
+        antes = _estado_do_banco(engine)
+        r = _rodar(engine, "consultar_dietas_lotes", {"incluir_necessidade_mensal": "true"})
+        assert {i["ingrediente"] for i in r["necessidade_mensal_30_dias"]} >= {"Silagem", "Concentrado"}
+        assert _estado_do_banco(engine) == antes  # a baixa automática de GET /alimentacao/ NÃO foi disparada
+
+    def test_isolamento(self, engine):
+        r2 = _rodar(engine, "consultar_dietas_lotes", {"situacao": "todas"}, fid=2)
+        assert [i["alimento"] for d in r2["dietas"] for i in d["itens"]] == ["Racao SEGREDO"]
+        assert "SEGREDO" not in json.dumps(_rodar(engine, "consultar_dietas_lotes", {"situacao": "todas", "incluir_necessidade_mensal": "true"}))
+
+    def test_validacao(self, engine):
+        assert "situacao" in _rodar(engine, "consultar_dietas_lotes", {"situacao": "xyz"})["erro"]
+        assert "inteiro" in _rodar(engine, "consultar_dietas_lotes", {"lote": "abc"})["erro"]
+        assert "lote" in _rodar(engine, "consultar_dietas_lotes", {"lote": "150"})["erro"]
+
+
+class TestConsumoSobra:
+    PER_SET = {"data_inicio": "2026-09-01", "data_fim": "2026-09-30"}
+
+    def test_dia_a_dia_bate_com_o_endpoint_de_consumo(self, engine):
+        from fazenda.api.routers.alimentacao import obter_consumo, relatorio_sobra
+        with Session(engine) as s:
+            site = obter_consumo(lote=1, data=date(2026, 9, 10), session=s, fazenda_id=1)
+            rel = relatorio_sobra(de=date(2026, 9, 1), ate=date(2026, 9, 30), lote=None, session=s, fazenda_id=1)
+        r = _rodar(engine, "consultar_consumo_sobra_cocho", self.PER_SET)
+        dia = next(d for d in r["dias"] if d["data"] == "2026-09-10")
+        assert dia == {k: site[k] for k in dia} and dia["kg_fornecido_total"] == 64.0 and dia["sobra_pct"] == 5.0 and dia["dentro_da_faixa"] is True
+        assert r["relatorio_sobra_do_site"] == rel
+        assert [d["data"] for d in r["dias"]] == ["2026-09-11", "2026-09-10"]  # mais recente primeiro
+        assert r["por_lote"] == [{"lote": 1, "dias_com_lancamento": 2, "kg_fornecido": 124.0, "kg_sobra": 3.2, "sobra_pct_media": 2.58}]
+        assert rel["total_kg_sobra"] == 3.2 and rel["total_kg_fornecido"] == 124.0
+
+    def test_filtro_de_lote_e_periodo(self, engine):
+        assert _rodar(engine, "consultar_consumo_sobra_cocho", {**self.PER_SET, "lote": "2"})["dias"] == []
+        r = _rodar(engine, "consultar_consumo_sobra_cocho", {"data_inicio": "2026-09-11", "data_fim": "2026-09-11"})
+        assert [d["data"] for d in r["dias"]] == ["2026-09-11"] and r["dias"][0]["sobra_kg"] is None
+
+    def test_isolamento(self, engine):
+        r2 = _rodar(engine, "consultar_consumo_sobra_cocho", self.PER_SET, fid=2)
+        assert r2["por_lote"][0]["kg_sobra"] == 88.0 and r2["por_lote"][0]["kg_fornecido"] == 500.0
+        assert "500.0" not in json.dumps(_rodar(engine, "consultar_consumo_sobra_cocho", self.PER_SET))
+
+    def test_validacao(self, engine):
+        assert "pergunte" in _rodar(engine, "consultar_consumo_sobra_cocho", {"data_inicio": "2026-09-01"})["erro"].lower()
+        assert "Data inválida" in _rodar(engine, "consultar_consumo_sobra_cocho", {"data_inicio": "2026-02-30", "data_fim": "2026-09-30"})["erro"]
+        assert "invertido" in _rodar(engine, "consultar_consumo_sobra_cocho", {"data_inicio": "2026-09-30", "data_fim": "2026-09-01"})["erro"]
+        assert "5 anos" in _rodar(engine, "consultar_consumo_sobra_cocho", {"data_inicio": "2019-01-01", "data_fim": "2026-01-01"})["erro"]
+
+    def test_limite_de_400_lote_dias(self, engine):
+        with Session(engine) as s:
+            for i in range(410):
+                s.add(ConsumoAlimento(data=date(2025, 1, 1) + timedelta(days=i), lote=1, alimento="Silagem", quantidade=1.0, unidade="kg", fazenda_id=1))
+            s.commit()
+        assert "máximo 400" in _rodar(engine, "consultar_consumo_sobra_cocho", {"data_inicio": "2025-01-01", "data_fim": "2026-03-01"})["erro"]
+
+
+class TestAlimentosCadastrados:
+    def test_lista_com_estoque_vinculado(self, engine):
+        r = _rodar(engine, "consultar_alimentos_cadastrados", {})
+        assert {a["alimento"] for a in r["alimentos"]} == {"Silagem", "Feno sem estoque"}  # inativo e outra fazenda de fora
+        sil = next(a for a in r["alimentos"] if a["alimento"] == "Silagem")
+        assert sil["categoria"] == "Volumoso" and sil["estoque_vinculado"] == [
+            {"item": "Silagem de milho", "saldo": 1200.0, "unidade": "kg", "valor_unitario": 0.4, "item_ativo": True}]
+
+    def test_filtros_e_isolamento(self, engine):
+        nomes = lambda **kw: {a["alimento"] for a in _rodar(engine, "consultar_alimentos_cadastrados", kw)["alimentos"]}  # noqa: E731
+        assert nomes(apenas_sem_estoque_vinculado="true") == {"Feno sem estoque"} and nomes(categoria="volum") == {"Silagem"}
+        assert nomes(nome="feno") == {"Feno sem estoque"} and "Alimento inativo" in nomes(incluir_inativos="true")
+        assert {a["alimento"] for a in _rodar(engine, "consultar_alimentos_cadastrados", {}, fid=2)["alimentos"]} == {"Alimento SEGREDO"}
 
 
 # ---------------------------------------------------------------------------

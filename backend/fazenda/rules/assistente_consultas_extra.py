@@ -639,6 +639,144 @@ def _rmca(session: Session, usuario, entrada: dict, fazenda_id: int | None) -> d
 
 
 # ===========================================================================
+# 6. Dietas (Alimentação): dietas por lote, consumo/sobra do cocho, alimentos
+# ---------------------------------------------------------------------------
+# NÃO chamamos GET /alimentacao/ nem /alimentacao/necessidade-mensal: os dois dão a
+# baixa automática de estoque ao abrir (escrevem). Usamos as mesmas funções de
+# leitura que eles usam (plano por lote fundido + calcular_consumo/necessidade).
+# A Formulação de Dietas (simulações, custo/dia da dieta formulada) é restrita ao dono e
+# aos consultores CowData no site e NÃO é exposta ao agente.
+# ===========================================================================
+def _dietas_lotes(session: Session, usuario, entrada: dict, fazenda_id: int | None) -> dict:
+    from fazenda.api.routers.alimentacao import (
+        _dietas_e_animais, _estoque_por_alimento, _lotes_cadastro, apresentacao_dieta, listar_dietas,
+    )
+    from fazenda.models import Estoque
+    from fazenda.rules.alimentacao import calcular_consumo, calcular_necessidade_mensal
+
+    lote = _inteiro(entrada, "lote", 0, 99)
+    situacao = _escolha(entrada, "situacao", ("ativas", "encerradas", "todas"), "ativas")
+    plano = _bool(entrada, "incluir_plano_consumo", True)
+    necessidade = _bool(entrada, "incluir_necessidade_mensal", False)
+
+    lancadas = _chamar(listar_dietas, session, fazenda_id, lote=lote, ativo={"ativas": True, "encerradas": False, "todas": None}[situacao])
+    cortadas, cortou = _cortar(lancadas, 60)
+    dietas = []
+    for d in cortadas:
+        ap = _chamar(apresentacao_dieta, session, fazenda_id, dieta_id=d["id"])  # GET /alimentacao/dietas/{id}/apresentacao
+        dietas.append({
+            "dieta_id": d["id"], "lote": d["lote"], "nome_lote": ap["nome"], "ativa": d["ativa"], "responsavel": d.get("responsavel"),
+            "data_abertura": _iso(d["data_abertura"]), "data_prevista_encerramento": _iso(d.get("data_prevista_encerramento")),
+            "data_encerramento": _iso(d.get("data_efetivo_encerramento")), "base_quantidade": d.get("base_quantidade") or "total",
+            "leite_bezerros_kg_dia": d.get("leite_bezerros_kg_dia"), "observacao": d.get("observacao"),
+            "qtd_animais_no_lote_hoje": ap["qtd_animais"], "itens": ap["itens"],
+            "vagao_kg_dia": ap["vagao_kg_dia"], "vagao_kg_trato": ap["vagao_kg_trato"], "num_tratos": ap["num_tratos"],
+        })
+    saida: dict[str, Any] = {
+        "filtros": {"lote": lote, "situacao": situacao}, "total_dietas": len(lancadas), "dietas": dietas,
+        "limitado_pela_ferramenta": cortou,
+    }
+    if plano or necessidade:
+        dietas_plano, animais = _dietas_e_animais(session, fazenda_id)  # mesma fusão (dieta lançada ativa × import antigo) da tela
+        consumo = calcular_consumo(dietas_plano, animais, _lotes_cadastro(session, fazenda_id))
+        if lote is not None:
+            consumo = {**consumo, "por_lote": [l for l in consumo["por_lote"] if l["lote"] == lote]}
+        if plano:
+            saida["plano_por_lote"] = consumo["por_lote"]
+            saida["consumo_total_dia_rebanho"] = consumo["consumo_total"]
+        if necessidade:
+            estoque_por_nome = {e.nome: e.model_dump() for e in session.exec(_escopo(select(Estoque), Estoque.fazenda_id, fazenda_id)).all()}
+            por_alimento, cadastrados = _estoque_por_alimento(session, fazenda_id)
+            saida["necessidade_mensal_30_dias"] = calcular_necessidade_mensal(consumo["consumo_total"], estoque_por_nome, por_alimento, cadastrados)
+    saida["como_ler"] = (
+        "Dietas lançadas em Lançamentos › Alimentação (uma ativa por lote). 'itens' = o que o funcionário vê para conferir no vagão: "
+        "por cabeça, total/dia do lote e por trato; vagao_kg_* soma só os itens em kg. 'plano_por_lote' é o consumo/dia por ingrediente da tela "
+        "Alimentação (efetivo atual × dieta, incluindo lotes que só têm a dieta do import antigo). O CUSTO por vaca/dia da dieta só existe no módulo "
+        "Formulação de Dietas (restrito) — o agente não o expõe; para custo realizado use consultar_rmca (custo físico por ingrediente) ou "
+        "executar_relatorio('custo_vaca_lote')."
+    )
+    return saida
+
+
+def _consumo_sobra(session: Session, usuario, entrada: dict, fazenda_id: int | None) -> dict:
+    from fazenda.api.routers.alimentacao import obter_consumo, relatorio_sobra
+    from fazenda.models import ConsumoAlimento, ConsumoSobra
+
+    ini, fim = _periodo(entrada, obrigatorio=True)
+    lote = _inteiro(entrada, "lote", 0, 99)
+
+    pares: set[tuple[int, date]] = set()
+    for modelo in (ConsumoAlimento, ConsumoSobra):
+        q = _escopo(select(modelo.lote, modelo.data).where(modelo.data >= ini, modelo.data <= fim), modelo.fazenda_id, fazenda_id)
+        if lote is not None:
+            q = q.where(modelo.lote == lote)
+        pares.update((l, d) for l, d in session.exec(q).all())
+    if len(pares) > 400:
+        raise ErroConsulta(f"O período tem {len(pares)} lote×dia com lançamentos (máximo 400). Reduza o período ou filtre por 'lote'.")
+
+    dias = []
+    for l, d in sorted(pares, key=lambda p: (p[1], p[0]), reverse=True):
+        c = _chamar(obter_consumo, session, fazenda_id, lote=l, data=d)  # GET /alimentacao/consumo (a tela de consumo do dia)
+        dias.append({k: c[k] for k in ("lote", "data", "num_animais", "itens", "kg_fornecido_total", "sobra_kg", "sobra_pct", "dentro_da_faixa")})
+    por_lote: dict[int, dict] = {}
+    for c in dias:
+        p = por_lote.setdefault(c["lote"], {"lote": c["lote"], "dias_com_lancamento": 0, "kg_fornecido": 0.0, "kg_sobra": 0.0})
+        p["dias_com_lancamento"] += 1
+        p["kg_fornecido"] = round(p["kg_fornecido"] + c["kg_fornecido_total"], 2)
+        p["kg_sobra"] = round(p["kg_sobra"] + (c["sobra_kg"] or 0), 2)
+    for p in por_lote.values():
+        p["sobra_pct_media"] = round(p["kg_sobra"] / p["kg_fornecido"] * 100, 2) if p["kg_fornecido"] > 0 else None
+    resumo = _chamar(relatorio_sobra, session, fazenda_id, de=ini, ate=fim, lote=lote)  # GET /alimentacao/sobra/relatorio
+    cortados, cortou = _cortar(dias)
+    return {
+        "periodo": {"data_inicio": ini.isoformat(), "data_fim": fim.isoformat()}, "filtros": {"lote": lote},
+        "relatorio_sobra_do_site": resumo, "por_lote": [por_lote[k] for k in sorted(por_lote)],
+        "dias": cortados, "limitado_pela_ferramenta": cortou,
+        "como_ler": (
+            "Consumo = o que foi FORNECIDO ao lote (lançamentos de Alimentação, somados por dia); sobra = kg medidos no cocho. 'relatorio_sobra_do_site' é o relatório "
+            "Alimentação › Sobra (total, % médio e rateio por alimento pela proporção da dieta ativa de cada lote); em 'dias', sobra_pct = sobra ÷ fornecido do dia e "
+            "dentro_da_faixa compara com a faixa dos Parâmetros. Itens em litro/dose não convertem para kg e ficam fora das somas em kg."
+        ),
+    }
+
+
+def _alimentos(session: Session, usuario, entrada: dict, fazenda_id: int | None) -> dict:
+    from fazenda.api.routers.alimentacao import listar_alimentos
+    from fazenda.models import CategoriaAlimento
+
+    nome, categoria = _txt(entrada, "nome"), _txt(entrada, "categoria")
+    incluir_inativos = _bool(entrada, "incluir_inativos", False)
+    sem_vinculo = _bool(entrada, "apenas_sem_estoque_vinculado", False)
+    cats = {c.id: c.nome for c in session.exec(_escopo(select(CategoriaAlimento), CategoriaAlimento.fazenda_id, fazenda_id)).all()}
+    itens = _chamar(listar_alimentos, session, fazenda_id)  # GET /alimentacao/alimentos
+    if not incluir_inativos:
+        itens = [a for a in itens if a.get("ativo") is not False]
+    if nome:
+        itens = [a for a in itens if _contem(a.get("nome"), nome)]
+    if categoria:
+        itens = [a for a in itens if _contem(cats.get(a.get("categoria_alimento_id")), categoria)]
+    if sem_vinculo:
+        itens = [a for a in itens if not a.get("estoque_vinculado")]
+    linhas = [{
+        "alimento": a["nome"], "categoria": cats.get(a.get("categoria_alimento_id")), "ativo": a.get("ativo") is not False,
+        "observacao": a.get("observacao"),
+        "estoque_vinculado": [
+            {"item": e["nome"], "saldo": e.get("quantidade"), "unidade": e.get("unidade"), "valor_unitario": e.get("valor_unitario"),
+             "item_ativo": e.get("ativo") is not False}
+            for e in a.get("estoque_vinculado", [])
+        ],
+    } for a in itens]
+    cortadas, cortou = _cortar(linhas)
+    return {
+        "total": len(linhas), "alimentos": cortadas, "limitado_pela_ferramenta": cortou,
+        "como_ler": (
+            "Cadastro de alimentos/ingredientes (Configurações › Cadastro › Alimentação) com o item de estoque de onde sai a baixa. Alimento sem estoque vinculado "
+            "aparece com lista vazia. Saldo e valor por unidade vêm do Estoque."
+        ),
+    }
+
+
+# ===========================================================================
 # Registro
 # ===========================================================================
 FERRAMENTAS: list[dict] = [
@@ -813,6 +951,61 @@ FERRAMENTAS: list[dict] = [
             }, ["data_inicio", "data_fim"]),
         },
         "executor": _com_erro(_rmca),
+    },
+    {
+        "modulo": "alimentacao",
+        "spec": {
+            "name": "consultar_dietas_lotes",
+            "description": (
+                "DIETAS por lote (Alimentação / Lançamentos › Alimentação): a dieta ativa (ou as encerradas) de cada lote com a composição — "
+                "alimento, quantidade por cabeça, total/dia do lote, por trato e kg no vagão —, responsável, datas e o plano de consumo/dia por "
+                "ingrediente do rebanho. Use para 'qual a dieta do lote 02?', 'quanto de silagem por vaca no lote 01?', 'quanto de ração o "
+                "rebanho consome por dia?', 'quanto preciso comprar para 30 dias?' (incluir_necessidade_mensal=true). Filtros: lote (número), "
+                "situacao (ativas padrão, encerradas, todas). Somente leitura: não formula nem altera dieta. Consumo/sobra realmente lançados: "
+                "consultar_consumo_sobra_cocho; cadastro de alimentos: consultar_alimentos_cadastrados; custo da alimentação: consultar_rmca."
+            ),
+            "input_schema": _schema({
+                "lote": ("integer", "Opcional. Número do lote (ex.: 2 para o lote 02)."),
+                "situacao": ("string", "Opcional. ativas (padrão), encerradas ou todas."),
+                "incluir_plano_consumo": ("boolean", "Opcional. Plano de consumo/dia por lote e ingrediente (padrão true)."),
+                "incluir_necessidade_mensal": ("boolean", "Opcional. true = projeção de 30 dias por ingrediente (sacos/estoque)."),
+            }),
+        },
+        "executor": _com_erro(_dietas_lotes),
+    },
+    {
+        "modulo": "alimentacao",
+        "spec": {
+            "name": "consultar_consumo_sobra_cocho",
+            "description": (
+                "CONSUMO REAL (o que foi fornecido) e SOBRA DO COCHO por lote e por dia (Lançamentos › Alimentação): kg fornecidos por alimento, "
+                "kg de sobra, % de sobra e se está dentro da faixa, mais o relatório de sobra do período. Use para 'quanto de sobra tive no lote "
+                "02 em setembro?', 'qual o consumo da semana?', 'a sobra está dentro da faixa?'. OBRIGATÓRIO data_inicio e data_fim (AAAA-MM-DD); se "
+                "faltarem, pergunte. Filtro: lote (número). Para a composição da dieta use consultar_dietas_lotes."
+            ),
+            "input_schema": _schema({
+                "data_inicio": _DI, "data_fim": _DF, "lote": ("integer", "Opcional. Número do lote (ex.: 2 para o lote 02)."),
+            }, ["data_inicio", "data_fim"]),
+        },
+        "executor": _com_erro(_consumo_sobra),
+    },
+    {
+        "modulo": "alimentacao",
+        "spec": {
+            "name": "consultar_alimentos_cadastrados",
+            "description": (
+                "ALIMENTOS/INGREDIENTES cadastrados (Configurações › Cadastro › Alimentação) com categoria e os itens de estoque vinculados "
+                "(saldo, unidade e valor unitário). Use para 'quais alimentos tenho cadastrados?', 'qual o saldo de silagem?', 'quais alimentos "
+                "estão sem estoque vinculado?'. Filtros: nome, categoria, apenas_sem_estoque_vinculado, incluir_inativos. Estoque de qualquer "
+                "insumo: consultar_estoque_itens; dietas: consultar_dietas_lotes."
+            ),
+            "input_schema": _schema({
+                "nome": ("string", "Opcional. Parte do nome do alimento."), "categoria": ("string", "Opcional. Categoria (ex.: Volumoso, Concentrado)."),
+                "apenas_sem_estoque_vinculado": ("boolean", "Opcional. true = só alimentos sem item de estoque."),
+                "incluir_inativos": ("boolean", "Opcional. true = inclui alimentos desativados."),
+            }),
+        },
+        "executor": _com_erro(_alimentos),
     },
 ]
 
