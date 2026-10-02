@@ -122,7 +122,9 @@ class TestPermissoesPorFerramenta:
     def test_usuario_so_com_financeiro_so_ve_as_ferramentas_de_financeiro(self):
         nomes = {t["name"] for t in _ferramentas_do_usuario(_Usuario(papel="operador", permissoes="financeiro"))}
         # consultar_contas_financeiras (por período) e os relatórios do catálogo (DRE, custos) também são do módulo
-        assert nomes == {"consultar_financeiro", "consultar_contas_financeiras", "listar_relatorios", "executar_relatorio"}
+        # + fluxo de caixa, caixa real e RMCA (2ª leva, rules/assistente_consultas_extra.py)
+        assert nomes == {"consultar_financeiro", "consultar_contas_financeiras", "listar_relatorios", "executar_relatorio",
+                         "consultar_fluxo_caixa", "consultar_caixa_real", "consultar_rmca"}
 
     def test_executar_tool_bloqueia_sem_permissao(self, client):
         c, engine = client

@@ -266,6 +266,9 @@ class TestFerramentas:
                 params = {"relatorio": "fluxo_lactacao", "meses": "2"}
             if nome in ("consultar_indicadores_reprodutivos", "consultar_producao_leite"):
                 params = {"data_inicio": "2026-01-01", "data_fim": "2026-07-01"}
+            # 2ª leva: preenche os parâmetros obrigatórios de cada ferramenta pelo próprio schema
+            for obrigatorio in t["spec"]["input_schema"].get("required", []):
+                params.setdefault(obrigatorio, {"numero": "500", "data_inicio": "2026-01-01", "data_fim": "2026-07-01"}.get(obrigatorio, "1"))
             r = client.get(f"/agente/consultar/{nome}", params=params, headers=AUTH)
             assert r.status_code == 200, (nome, r.text)
             assert "resultado" in r.json()
