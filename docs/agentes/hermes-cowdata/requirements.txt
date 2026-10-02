@@ -1,0 +1,5 @@
+# Dependencias da ponte MCP (mcp_cowdata_leitura.py) — instalar num venv da VPS.
+# mcp<2: a serie 2.x renomeou FastMCP para MCPServer (from mcp.server.mcpserver import MCPServer);
+# esta ponte usa a API FastMCP da serie 1.x (testada com mcp 1.30.0).
+mcp>=1.2,<2
+httpx>=0.27
