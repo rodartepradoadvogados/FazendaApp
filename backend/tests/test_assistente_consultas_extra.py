@@ -24,7 +24,10 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from fazenda.auth import MODULOS
-from fazenda.models import Animal, Fazenda, Lactacao, Lote
+from fazenda.models import (
+    Animal, BaixaAnimal, CompraAnimal, ControleLeiteiro, EventoSanitario, ExameResultado, Fazenda, Lactacao, Lote,
+    MovimentoLote, OcorrenciaClinica, Parto, PesagemCorporal, Sanidade, Secagem, Servico,
+)
 from fazenda.rules import agente_leitura as al
 from fazenda.rules import assistente_consultas_extra as ace
 from fazenda.rules.assistente import _TOOLS_DISPONIVEIS, _executar_tool, _ferramentas_do_usuario
@@ -77,6 +80,49 @@ def _preparar(s: Session) -> None:
 _POPULADORES: list = []  # cada área acrescenta o seu bloco de dados (ver mais abaixo)
 
 
+# ---------------------------------------------------------------------------
+# Dados da ficha do animal (a "500" existe nas duas fazendas: a da fazenda 2 é toda SEGREDO)
+# ---------------------------------------------------------------------------
+def _popular_ficha(s: Session) -> None:
+    s.add(Animal(numero="500", nome="SEGREDO", sexo="F", fazenda_id=2, grupo_primario="01 - SEGREDO", ativo=True, mae_numero="SEGREDO"))
+    a = s.exec(select(Animal).where(Animal.numero == "500", Animal.fazenda_id == 1)).one()
+    a.mae_numero, a.mae_nome, a.pai_nome, a.pai_naab = "100", "Vaca Mae", "TouroA", "7HO00001"
+    a.avo_paterno_nome = "AvoPat"
+    s.add(a)
+    s.add(Animal(numero="100", nome="Vaca Mae", sexo="F", fazenda_id=1, grupo_primario="04 - SECAS", ativo=True))
+    s.add(Parto(numero_matriz="500", data_parto=date(2026, 3, 1), tipo_parto="normal", ordem_parto=1, fazenda_id=1))
+    s.add(Parto(numero_matriz="500", data_parto=date(2025, 1, 10), tipo_parto="normal", ordem_parto=1, fazenda_id=1))
+    s.add(Parto(numero_matriz="500", data_parto=date(2026, 3, 1), tipo_parto="SEGREDO", fazenda_id=2))
+    for dia, diag, touro, fid in ((date(2026, 4, 10), "NEGATIVO", "TouroA", 1), (date(2026, 5, 10), "POSITIVO", "TouroB", 1),
+                                  (date(2026, 5, 11), "POSITIVO", "TouroSEGREDO", 2)):
+        s.add(Servico(numero_matriz="500", data_servico=dia, tipo_servico="Inseminação", reprodutor=touro, diagnostico=diag,
+                      data_diagnostico=dia + timedelta(days=30), ordem_tentativa=1, fazenda_id=fid))
+    for d, kg, fid in ((date(2026, 3, 20), 30.0, 1), (date(2026, 4, 20), 28.0, 1), (date(2026, 5, 20), 26.5, 1), (date(2026, 4, 20), 99.0, 2)):
+        s.add(ControleLeiteiro(numero_matriz="500", data_controle=d, producao_kg=kg, fazenda_id=fid))
+    s.add(PesagemCorporal(numero_matriz="500", data_pesagem=date(2026, 2, 1), peso_kg=610.0, fazenda_id=1))
+    s.add(PesagemCorporal(numero_matriz="500", data_pesagem=date(2026, 2, 1), peso_kg=999.0, fazenda_id=2))
+    s.add(Sanidade(numero_matriz="500", data_aplicacao=date(2026, 3, 5), produto="Ivermectina", fazenda_id=1,
+                   obs="contato fulano@exemplo.com CPF 123.456.789-09"))
+    s.add(Sanidade(numero_matriz="500", data_aplicacao=date(2026, 3, 5), produto="Produto SEGREDO", fazenda_id=2))
+    s.add(MovimentoLote(numero_matriz="500", lote_origem="04", lote_destino="01", data_movimento=date(2026, 3, 2), fazenda_id=1))
+    s.add(MovimentoLote(numero_matriz="500", lote_origem="04", lote_destino="SEGREDO", data_movimento=date(2026, 3, 2), fazenda_id=2))
+    s.add(Secagem(numero_matriz="500", data_secagem=date(2025, 11, 10), motivo="rotina", fazenda_id=1))
+    s.add(OcorrenciaClinica(numero_matriz="500", doenca="Mastite", data_ocorrencia=date(2026, 4, 2), fazenda_id=1))
+    s.add(OcorrenciaClinica(numero_matriz="500", doenca="Doenca SEGREDO", data_ocorrencia=date(2026, 4, 2), fazenda_id=2))
+    s.add(CompraAnimal(numero_animal="500", vendedor="Vendedor X", valor=9000.0, tipo_valor="por_animal", data_compra=date(2024, 5, 1),
+                       gta="GTA-1", fazenda_id=1))
+    s.add(CompraAnimal(numero_animal="500", vendedor="Vendedor SEGREDO", valor=1.0, tipo_valor="por_animal", data_compra=date(2024, 5, 1), fazenda_id=2))
+    ev = EventoSanitario(nome="Brucelose", fazenda_id=1)
+    s.add(ev)
+    s.commit()
+    s.add(ExameResultado(numero_matriz="500", evento_sanitario_id=ev.id, data_exame=date(2026, 2, 2), resultado="negativo",
+                         veterinario="Dr. A", fazenda_id=1))
+    s.commit()
+
+
+_POPULADORES.append(_popular_ficha)
+
+
 @pytest.fixture
 def engine():
     eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -104,10 +150,12 @@ NOVAS = sorted(ace.NOMES)
 # Parâmetros "típicos" para exercitar cada ferramenta de ponta a ponta.
 TIPICOS: dict[str, dict] = {
     "consultar_indicadores_na_data": {"data": "2026-06-30"},
+    "consultar_ficha_animal": {"numero": "500", "secoes": "todas"},
 }
 # Módulo(s) esperado(s) de cada ferramenta (qualquer um libera).
 MODULOS_ESPERADOS: dict[str, tuple[str, ...]] = {
     "consultar_indicadores_na_data": ("indicadores",),
+    "consultar_ficha_animal": ("rebanho",),
 }
 
 
@@ -226,6 +274,85 @@ class TestIndicadoresNaData:
         assert "Data inválida" in _rodar(engine, "consultar_indicadores_na_data", {"data": "2026-02-30"})["erro"]
         assert "5 anos" in _rodar(engine, "consultar_indicadores_na_data", {"data": "2015-01-01"})["erro"]
         assert "secao" in _rodar(engine, "consultar_indicadores_na_data", {"secao": "xyz"})["erro"]
+
+
+# ---------------------------------------------------------------------------
+# 2. Ficha completa do animal
+# ---------------------------------------------------------------------------
+class TestFichaAnimal:
+    def _ficha_site(self, engine, numero="500", fid=1):
+        from fazenda.api.routers.animais import ficha_animal
+        with Session(engine) as s:
+            return ficha_animal(numero=numero, session=s, fazenda_id=fid)
+
+    def test_secoes_batem_com_o_endpoint_da_ficha(self, engine):
+        site = self._ficha_site(engine)
+        r = _rodar(engine, "consultar_ficha_animal", {"numero": "500", "secoes": "todas"})
+        assert r["totais"]["partos"] == len(site["partos"]) == 2
+        assert r["totais"]["servicos"] == len(site["servicos"]) == 2
+        assert r["totais"]["producao"] == len(site["controles_leiteiros"]) == 3
+        assert [p["data_parto"] for p in r["partos"]] == ["2026-03-01", "2025-01-10"]  # mais recente primeiro
+        assert [p["ordem_parto"] for p in r["partos"]] == ["2 de 2", "1 de 2"]  # ordem cronológica, como a tela
+        assert r["cadastro"]["nome"] == "Estrela" and r["cadastro"]["del_dias"] == site["animal"]["del_dias"]
+        assert r["previsoes"]["previsao_parto"] == site["previsao_parto"].isoformat()
+        assert r["lactacoes"]["quadro_por_parto"] == site["resumo_partos"]
+        assert [(x["numero_lactacao"], x["aberta"]) for x in r["lactacoes"]["registros_de_lactacao"]] == [(1, False)]
+        assert r["genealogia"]["mae_numero"] == "100" and r["genealogia"]["pai_nome"] == "TouroA"
+        assert r["totais"]["sanidade"] == 1 and r["totais"]["exames"] == 1 and r["totais"]["ocorrencias"] == 1
+        assert r["comercial"]["gtas"] == ["GTA-1"] and r["comercial"]["compras"][0]["vendedor"] == "Vendedor X"
+        assert r["totais"]["movimentacoes"] == 1 and r["totais"]["secagens"] == 1 and r["totais"]["pesagens"] == 1
+
+    def test_estado_reprodutivo_ao_vivo_igual_ao_endpoint(self, engine):
+        from fazenda.api.routers.indicadores import estados_reprodutivos
+        with Session(engine) as s:
+            site = next(e for e in estados_reprodutivos(data=HOJE, fazenda_id=1, session=s)["animais"] if e["numero"] == "500")
+        r = _rodar(engine, "consultar_ficha_animal", {"numero": "500", "secoes": "estado_reprodutivo"})
+        assert r["estado_reprodutivo"] == site and list(r) == ["numero", "secoes_incluidas", "totais", "estado_reprodutivo", "como_ler"]
+
+    def test_diagnosticos_sao_a_visao_dos_servicos(self, engine):
+        r = _rodar(engine, "consultar_ficha_animal", {"numero": "500", "secoes": "diagnosticos"})
+        assert [(d["data_servico"], d["diagnostico"], d["reprodutor"]) for d in r["diagnosticos"]] == [
+            ("2026-05-10", "POSITIVO", "TouroB"), ("2026-04-10", "NEGATIVO", "TouroA")]
+
+    def test_padrao_e_compacto_e_secoes_selecionaveis(self, engine):
+        r = _rodar(engine, "consultar_ficha_animal", {"numero": "500"})
+        assert set(r) >= {"cadastro", "genealogia", "estado_reprodutivo", "previsoes", "lactacoes"} and "producao" not in r and "partos" not in r
+        r = _rodar(engine, "consultar_ficha_animal", {"numero": "500", "secoes": "pesagens, Produção"})
+        assert "pesagens" in r and "producao" in r and "cadastro" not in r
+        assert "curva_wood" in _rodar(engine, "consultar_ficha_animal", {"numero": "500", "secoes": "curvas"})["curvas"]
+
+    def test_periodo_e_max_itens(self, engine):
+        r = _rodar(engine, "consultar_ficha_animal", {"numero": "500", "secoes": "producao", "data_inicio": "2026-04-01", "data_fim": "2026-05-31"})
+        assert [c["data_controle"] for c in r["producao"]] == ["2026-05-20", "2026-04-20"] and r["totais"]["producao"] == 2
+        r = _rodar(engine, "consultar_ficha_animal", {"numero": "500", "secoes": "producao", "max_itens": "1"})
+        assert len(r["producao"]) == 1 and r["totais"]["producao"] == 3 and r["limitado_pelo_max_itens"] == ["producao"]
+
+    def test_isolamento_mesmo_numero_em_duas_fazendas(self, engine):
+        r2 = _rodar(engine, "consultar_ficha_animal", {"numero": "500", "secoes": "todas"}, fid=2)
+        assert r2["cadastro"]["nome"] == "SEGREDO" and r2["totais"]["servicos"] == 1 and r2["totais"]["producao"] == 1
+        r1 = json.dumps(_rodar(engine, "consultar_ficha_animal", {"numero": "500", "secoes": "todas"}, fid=1), default=str)
+        assert "SEGREDO" not in r1 and "999" not in r1 and "99.0" not in r1
+        assert "erro" in _rodar(engine, "consultar_ficha_animal", {"numero": "900"}, fid=1)  # animal da fazenda 2
+
+    def test_animal_inexistente_e_numero_obrigatorio(self, engine):
+        assert "não encontrado" in _rodar(engine, "consultar_ficha_animal", {"numero": "99999"})["erro"]
+        assert "numero" in _rodar(engine, "consultar_ficha_animal", {})["erro"]
+
+    def test_validacao(self, engine):
+        assert "inválida" in _rodar(engine, "consultar_ficha_animal", {"numero": "500", "secoes": "xyz"})["erro"]
+        assert "Data inválida" in _rodar(engine, "consultar_ficha_animal", {"numero": "500", "data_inicio": "2026-13-01", "data_fim": "2026-12-01"})["erro"]
+        assert "invertido" in _rodar(engine, "consultar_ficha_animal", {"numero": "500", "data_inicio": "2026-07-01", "data_fim": "2026-01-01"})["erro"]
+        assert "5 anos" in _rodar(engine, "consultar_ficha_animal", {"numero": "500", "data_inicio": "2019-01-01", "data_fim": "2026-01-01"})["erro"]
+        assert "max_itens" in _rodar(engine, "consultar_ficha_animal", {"numero": "500", "max_itens": "0"})["erro"]
+
+    def test_sanitizacao_na_saida_http(self, client):
+        r = client.get("/agente/consultar/consultar_ficha_animal", params={"numero": "500", "secoes": "sanidade"}, headers=AUTH)
+        assert "fulano@exemplo.com" not in r.text and "123.456.789-09" not in r.text
+        assert "[e-mail oculto]" in r.text and "***.***.***-09" in r.text
+
+    def test_listas_paginadas_no_agente(self, client):
+        r = client.get("/agente/consultar/consultar_ficha_animal", params={"numero": "500", "secoes": "producao", "limite": "1"}, headers=AUTH).json()
+        assert r["truncado"] is True and len(r["resultado"]["producao"]) == 1 and r["resultado"]["totais"]["producao"] == 3
 
 
 # ---------------------------------------------------------------------------

@@ -101,6 +101,135 @@ def _indicadores_na_data(session: Session, usuario, entrada: dict, fazenda_id: i
 
 
 # ===========================================================================
+# 2. Ficha completa do animal
+# ===========================================================================
+_SECOES_FICHA = (
+    "cadastro", "genealogia", "estado_reprodutivo", "previsoes", "lactacoes", "partos", "servicos", "diagnosticos",
+    "protocolos", "sanidade", "exames", "ocorrencias", "producao", "qualidade_leite", "pesagens", "movimentacoes",
+    "comercial", "secagens", "agenda", "colostragem", "linha_tempo_sanitaria", "curvas",
+)
+_SECOES_FICHA_PADRAO = ("cadastro", "genealogia", "estado_reprodutivo", "previsoes", "lactacoes")
+# seção -> (chave da ficha, campo de data usado para ordenar/filtrar)
+_LISTAS_FICHA = {
+    "partos": ("partos", "data_parto"),
+    "servicos": ("servicos", "data_servico"),
+    "sanidade": ("aplicacoes_sanitarias", "data_aplicacao"),
+    "exames": ("exames_resultados", "data_exame"),
+    "ocorrencias": ("ocorrencias_clinicas", "data_ocorrencia"),
+    "producao": ("controles_leiteiros", "data_controle"),
+    "qualidade_leite": ("qualidade_leite", "data_coleta"),
+    "pesagens": ("pesagens_corporais", "data_pesagem"),
+    "movimentacoes": ("movimentos_lote", "data_movimento"),
+    "secagens": ("secagens", "data_secagem"),
+    "agenda": ("eventos_agenda", "data_evento"),
+    "linha_tempo_sanitaria": ("linha_tempo_sanitaria", "data"),
+}
+_CAMPOS_DIAGNOSTICO = (
+    "data_servico", "reprodutor", "tipo_servico", "ordem_tentativa", "diagnostico", "data_diagnostico", "metodo_diagnostico",
+    "data_perda_prenhez", "motivo_perda_prenhez", "parto_resultante_data",
+)
+
+
+def _parse_secoes(entrada: dict) -> tuple[str, ...]:
+    bruto = _txt(entrada, "secoes")
+    if not bruto:
+        return _SECOES_FICHA_PADRAO
+    pedidas = [_sem_acento(x).replace(" ", "_").replace("-", "_") for x in bruto.split(",") if x.strip()]
+    if any(p in ("todas", "tudo") for p in pedidas):
+        return tuple(x for x in _SECOES_FICHA if x != "curvas")
+    invalidas = [p for p in pedidas if p not in _SECOES_FICHA]
+    if invalidas:
+        raise ErroConsulta(
+            f"Seção(ões) inválida(s) em 'secoes': {', '.join(invalidas)}. Use: {', '.join(_SECOES_FICHA)} (ou 'todas')."
+        )
+    return tuple(dict.fromkeys(pedidas))
+
+
+def _ficha_animal(session: Session, usuario, entrada: dict, fazenda_id: int | None) -> dict:
+    from fazenda.api.routers.animais import ficha_animal
+    from fazenda.api.routers.indicadores import estados_reprodutivos
+    from fazenda.rules.lactacao import lactacoes_da_matriz
+
+    numero = _txt(entrada, "numero")
+    if not numero:
+        raise ErroConsulta("Informe 'numero' do animal (brinco/matriz). Se o usuário não disse qual, pergunte.")
+    secoes = _parse_secoes(entrada)
+    ini, fim = _periodo(entrada, obrigatorio=False)
+    maximo = _inteiro(entrada, "max_itens", 1, 500) or 100
+
+    ficha = _chamar(ficha_animal, session, fazenda_id, numero=numero)  # MESMA ficha de GET /animais/{numero}/ficha
+    animal = ficha["animal"]
+    saida: dict[str, Any] = {"numero": numero, "secoes_incluidas": list(secoes), "totais": {}}
+    if ini or fim:
+        saida["periodo"] = {"data_inicio": _iso(ini), "data_fim": _iso(fim)}
+
+    if "cadastro" in secoes:
+        saida["cadastro"] = {k: _iso(v) for k, v in animal.items()}
+    if "genealogia" in secoes:
+        saida["genealogia"] = {
+            "pai": ficha.get("pai"),
+            "mae_numero": animal.get("mae_numero"), "mae_nome": animal.get("mae_nome"),
+            **{k: _iso(v) for k, v in animal.items() if k.startswith(("pai_", "avo_", "bisavo_"))},
+        }
+    if "estado_reprodutivo" in secoes:
+        vivo = _chamar(estados_reprodutivos, session, fazenda_id, data=date.today())  # GET /indicadores/estados-reprodutivos
+        saida["estado_reprodutivo"] = next((e for e in vivo["animais"] if str(e.get("numero")) == numero), None) or {
+            "aviso": "Estado reprodutivo ao vivo existe só para fêmeas ativas; este animal é macho, sêmen ou está inativo.",
+        }
+    if "previsoes" in secoes:
+        saida["previsoes"] = {
+            "previsao_parto": _iso(ficha.get("previsao_parto")), "previsao_secagem": _iso(ficha.get("previsao_secagem")),
+            "precisao_parto": {k: _iso(v) for k, v in (ficha.get("precisao_parto") or {}).items()} or None,
+        }
+    if "lactacoes" in secoes:
+        saida["lactacoes"] = {
+            "quadro_por_parto": ficha.get("resumo_partos"), "ultima_cria": ficha.get("ultima_cria"),
+            "registros_de_lactacao": [
+                {"numero_lactacao": l.numero_lactacao, "data_inicio": _iso(l.data_inicio), "data_fim": _iso(l.data_fim),
+                 "origem": l.origem, "aberta": l.data_fim is None}
+                for l in lactacoes_da_matriz(session, numero_matriz=numero, fazenda_id=fazenda_id)
+            ],
+        }
+    if "protocolos" in secoes:
+        saida["protocolos"] = {
+            "iatf": ficha.get("protocolos_iatf"), "sanitarios": ficha.get("protocolos_sanitarios"),
+            "inducao_lactacao": ficha.get("inducao_lactacao"), "customizados": ficha.get("protocolos_customizados"),
+        }
+    if "colostragem" in secoes:
+        saida["colostragem"] = ficha.get("colostragem")
+    if "comercial" in secoes:
+        saida["comercial"] = {k: ficha.get(k) for k in ("compras", "vendas", "baixa", "gtas")}
+    if "curvas" in secoes:
+        saida["curvas"] = {k: ficha.get(k) for k in ("curva_wood", "curva_referencia_rebanho", "curva_referencia_grupo_ordem_parto")}
+
+    def _lista(secao: str, linhas: list[dict], campo_data: str) -> None:
+        if ini or fim:
+            linhas = [r for r in linhas if _no_periodo(r.get(campo_data), ini, fim)]
+        linhas = sorted(linhas, key=lambda r: str(_iso(r.get(campo_data)) or ""), reverse=True)  # mais recentes primeiro
+        saida["totais"][secao] = len(linhas)
+        cortadas, cortou = _cortar(linhas, maximo)
+        saida[secao] = [{k: _iso(v) for k, v in r.items()} for r in cortadas]
+        if cortou:
+            saida.setdefault("limitado_pelo_max_itens", []).append(secao)
+
+    for secao, (chave, campo) in _LISTAS_FICHA.items():
+        if secao in secoes:
+            linhas = list(ficha.get(chave) or [])
+            if secao == "servicos":
+                linhas = [{k: v for k, v in r.items() if k != "touro"} for r in linhas]  # prova completa do touro: consultar_touros_catalogo
+            _lista(secao, linhas, campo)
+    if "diagnosticos" in secoes:
+        diag = [{c: r.get(c) for c in _CAMPOS_DIAGNOSTICO} for r in (ficha.get("servicos") or [])]
+        _lista("diagnosticos", diag, "data_servico")
+    saida["como_ler"] = (
+        "Mesma ficha da tela Rebanho › Ficha do animal (GET /animais/{numero}/ficha). Listas vêm das mais recentes para as mais "
+        "antigas e 'totais' diz quantos registros existem; use 'secoes' (e data_inicio/data_fim, max_itens) para pedir só o que "
+        "precisa. 'diagnosticos' é a visão dos serviços com o resultado do diagnóstico."
+    )
+    return saida
+
+
+# ===========================================================================
 # Registro
 # ===========================================================================
 FERRAMENTAS: list[dict] = [
@@ -125,6 +254,30 @@ FERRAMENTAS: list[dict] = [
             }),
         },
         "executor": _com_erro(_indicadores_na_data),
+    },
+    {
+        "modulo": "rebanho",
+        "spec": {
+            "name": "consultar_ficha_animal",
+            "description": (
+                "FICHA COMPLETA de UM animal (Rebanho › ficha): cadastro, genealogia (pai/mãe/avôs), estado reprodutivo ao vivo, "
+                "previsão de parto/secagem, lactações e quadro por parto, partos, serviços/inseminações, diagnósticos, protocolos "
+                "(IATF, indução, sanitários), aplicações sanitárias, exames, doenças, controle leiteiro, qualidade do leite, pesagens, "
+                "movimentações de lote, compra/venda/baixa e secagens. Use para 'me mostre a ficha da vaca 123', 'quando foi o último "
+                "parto da 123?', 'qual o histórico de inseminações da 123?', 'qual a mãe da bezerra 456?'. Informe 'numero' (obrigatório) "
+                "e escolha 'secoes' (separadas por vírgula; padrão = cadastro, genealogia, estado_reprodutivo, previsoes, lactacoes; "
+                "'todas' traz tudo menos as curvas) para não estourar o tamanho da resposta. Opcional: data_inicio/data_fim restringem as "
+                "listas por data; max_itens (padrão 100). Só cadastro básico: buscar_animal; só aplicações de medicamento de vários "
+                "animais: consultar_aplicacoes_sanitarias; lista de animais de um lote: consultar_lote."
+            ),
+            "input_schema": _schema({
+                "numero": ("string", "Número do animal (brinco/matriz), ex.: '123'."),
+                "secoes": ("string", "Opcional. Seções separadas por vírgula: " + ", ".join(_SECOES_FICHA) + ", ou 'todas'."),
+                "data_inicio": _DI, "data_fim": _DF,
+                "max_itens": ("integer", "Opcional. Máximo de registros por seção (1 a 500, padrão 100; os mais recentes primeiro)."),
+            }, ["numero"]),
+        },
+        "executor": _com_erro(_ficha_animal),
     },
 ]
 
