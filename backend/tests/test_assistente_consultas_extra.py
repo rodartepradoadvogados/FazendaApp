@@ -256,7 +256,7 @@ class TestIndicadoresNaData:
     def test_lactacao_isolada_por_fazenda(self, engine):
         r = _rodar(engine, "consultar_indicadores_na_data", {"data": "2026-06-30"}, fid=2)
         assert r["lactacao_na_data_pela_tabela_lactacao"]["vacas_em_lactacao"] == 1
-        assert r["rebanho"]["total"] == 1
+        assert r["rebanho"]["total"] == 2  # 900 e a 500 da fazenda 2
 
     def test_aviso_de_historico_so_quando_a_data_nao_e_hoje(self, engine):
         passado = _rodar(engine, "consultar_indicadores_na_data", {"data": "2026-06-30"})
