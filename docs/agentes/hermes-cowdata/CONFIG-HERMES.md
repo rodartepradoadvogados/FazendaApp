@@ -14,7 +14,7 @@ Legenda: **[doc]** = conferido na documentação oficial do Hermes (hermes-agent
 | `AGENTE_IPS_PERMITIDOS` | Opcional. IPs (separados por vírgula) que podem chamar. Ex.: o IP da VPS. |
 | `AGENTE_RATE_LIMIT_POR_MIN` | Opcional. Chamadas por minuto por token (padrão `60`). |
 | `AGENTE_MAX_BYTES` | Opcional. Teto de tamanho da resposta (padrão `100000`). |
-| `AGENTE_MODULOS` | Opcional. Restringe as ferramentas por módulo (ex.: `rebanho,estoque,agenda`). Vazio = todas. Módulos: indicadores, rebanho, agenda, financeiro, estoque, sanidade, reproducao. |
+| `AGENTE_MODULOS` | Opcional. Restringe as ferramentas por módulo (ex.: `rebanho,estoque,agenda`). Vazio = todas. Módulos: indicadores, rebanho, agenda, financeiro, estoque, sanidade, reproducao, analise, producao, pedidos. As ferramentas por período seguem o módulo da área (ex.: `consultar_contas_financeiras` = `financeiro`, `consultar_pedidos` = `pedidos`, `consultar_producao_leite` = `producao`, taxa de concepção por período = `reproducao` ou `analise`). |
 | `ASSISTENTE_PROVEDOR` / `OPENROUTER_API_KEY` / `ASSISTENTE_MODELO` | Chat do site/app via OpenRouter (independente da API de leitura). |
 
 **Na VPS (ponte MCP)**
@@ -71,7 +71,7 @@ Depois de editar, no chat do Hermes: `/reload-mcp` **[doc]** (ou reinicie o gate
 
 - Por que o wrapper `run-mcp-cowdata.sh`: a doc mostra o token escrito direto em `env:` do YAML; evitamos isso. Se você preferir `env:` no YAML, use `COWDATA_API_URL` e `COWDATA_AGENTE_TOKEN`. Se o Hermes aceita referência a variável (`${VAR}`) dentro do YAML: **[a confirmar]**.
 - Nome das ferramentas dentro do Hermes (se leva prefixo, ex. `mcp_cowdata_...`): **[a confirmar]** — rode `/reload-mcp` e liste as ferramentas.
-- Ferramentas que a ponte expõe **[testado]**: `instrucoes_cowdata`, `consultar_indicadores`, `buscar_animal`, `consultar_agenda_hoje`, `consultar_financeiro`, `consultar_estoque`, `consultar_calendario_sanitario`, `consultar_analise_reprodutiva`, `consultar_exames`, `listar_lotes`, `consultar_lote` (a lista vem da API na partida; ferramenta nova no CowData aparece após `/reload-mcp`).
+- Ferramentas que a ponte expõe **[testado]**: `instrucoes_cowdata` + as 10 de "foto de hoje" (`consultar_indicadores`, `buscar_animal`, `consultar_agenda_hoje`, `consultar_financeiro`, `consultar_estoque`, `consultar_calendario_sanitario`, `consultar_analise_reprodutiva`, `consultar_exames`, `listar_lotes`, `consultar_lote`) + as **18 com parâmetros de período/filtro** (`consultar_indicadores_reprodutivos`, `consultar_ciclos_21_dias`, `consultar_servicos_reprodutivos`, `consultar_partos_secagens`, `listar_relatorios`, `executar_relatorio`, `consultar_protocolos_lancados`, `consultar_bst`, `consultar_protocolos_cadastrados`, `consultar_regras_preventivo`, `consultar_lista_espera_preventivo`, `consultar_agendamentos_preventivo`, `consultar_aplicacoes_sanitarias`, `consultar_pedidos`, `consultar_cotacoes`, `consultar_contas_financeiras`, `consultar_estoque_itens`, `consultar_producao_leite`). A lista vem da API na partida; ferramenta nova no CowData aparece após `/reload-mcp` (**após cada deploy do backend, rode `/reload-mcp`**). Mapa completo: `COBERTURA-FERRAMENTAS.md`. Modelo gratuito escolhe pela descrição: se ele errar de ferramenta, ajuste o texto em `assistente_consultas.py`, não aqui.
 - Se a API estiver fora do ar na partida, a ponte sobe em modo degradado (`instrucoes_cowdata` + `consultar_cowdata`); rode `/reload-mcp` depois.
 
 ## 4. Carregar as instruções do agente
@@ -112,7 +112,7 @@ Aplicada a toda resposta de `/agente/*`, em qualquer nível do JSON, **depois** 
 - **Removidos** (chave contém): `senha`, `password`, `passwd`, `hash`, `token`, `secret`, `segredo`, `api_key`, `apikey`, `authorization`, `email`, `e_mail`, `conta_bancaria`, `cartao`, `agencia`, e as palavras `pix`, `banco`, `iban`, `cvv`, `cvc`, `swift`.
 - **Mascarados** (chave `cpf`/`cnpj`): `***.***.***-NN` e `**.***.***/****-NN` (só os 2 últimos dígitos).
 - **Em texto livre** (observações etc.): CPF e CNPJ formatados são mascarados; e-mails viram `[e-mail oculto]`.
-- Hoje as 10 ferramentas não devolvem esses campos; a sanitização é a rede de segurança para campos futuros e texto digitado.
+- As ferramentas listam campos explícitos (não despejam o registro inteiro); a sanitização é a rede de segurança para texto digitado (ex.: e-mail/CPF numa observação) e campos futuros.
 - **Não** são removidos (decisão: o dono vê no site): nome/proprietário/valor de animal, fornecedor, totais financeiros, nomes de veterinário. Se quiser esconder o financeiro do Telegram, defina `AGENTE_MODULOS` sem `financeiro`.
 - Limite conhecido: telefone digitado em texto livre **não** é mascarado; CPF/CNPJ sem pontuação em texto livre também não.
 

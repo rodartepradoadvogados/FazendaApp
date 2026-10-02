@@ -262,6 +262,10 @@ class TestFerramentas:
                 params = {"codigo": "04"}
             if nome == "consultar_exames":
                 params = {"evento": "bruc"}
+            if nome == "executar_relatorio":
+                params = {"relatorio": "fluxo_lactacao", "meses": "2"}
+            if nome in ("consultar_indicadores_reprodutivos", "consultar_producao_leite"):
+                params = {"data_inicio": "2026-01-01", "data_fim": "2026-07-01"}
             r = client.get(f"/agente/consultar/{nome}", params=params, headers=AUTH)
             assert r.status_code == 200, (nome, r.text)
             assert "resultado" in r.json()

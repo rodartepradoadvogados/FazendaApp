@@ -96,6 +96,25 @@ def test_schema_dos_parametros(backend):
     assert "Somente leitura" in tools["buscar_animal"].description or tools["buscar_animal"].description
 
 
+def test_ferramentas_com_periodo_viram_ferramentas_mcp_com_parametros(backend):
+    """As ferramentas com data_inicio/data_fim (ex.: taxa de concepcao do periodo) chegam ao Hermes com os
+    parametros, sem 'limite'/'offset' duplicados, e a consulta devolve o numero do periodo."""
+    servidor = ponte.construir_servidor()
+    tools = {t.name: t for t in asyncio.run(servidor.list_tools())}
+    esquema = tools["consultar_indicadores_reprodutivos"].inputSchema
+    for p in ("data_inicio", "data_fim", "touro", "agrupar_por", "limite", "offset"):
+        assert p in esquema["properties"], p
+    assert not esquema.get("required")
+    assert "relatorio" in tools["executar_relatorio"].inputSchema.get("required", [])
+    assert {"consultar_pedidos", "consultar_cotacoes", "consultar_contas_financeiras", "consultar_estoque_itens",
+            "consultar_producao_leite", "consultar_lista_espera_preventivo", "listar_relatorios"} <= set(tools)
+    dados = json.loads(_chamar(servidor, "consultar_indicadores_reprodutivos",
+                               {"data_inicio": "2026-01-01", "data_fim": "2026-07-01"}))
+    assert dados["ferramenta"] == "consultar_indicadores_reprodutivos" and dados["resultado"]["servicos_total"] == 0
+    erro = json.loads(_chamar(servidor, "consultar_indicadores_reprodutivos", {"data_inicio": "2026-13-01", "data_fim": "2026-07-01"}))
+    assert "Data inválida" in erro["resultado"]["erro"] or "Data invalida" in erro["resultado"]["erro"]
+
+
 def test_consulta_devolve_dados_reais(backend):
     servidor = ponte.construir_servidor()
     dados = json.loads(_chamar(servidor, "buscar_animal", {"numero": "500"}))

@@ -256,3 +256,51 @@ def agregar_mensal(
     janela_dg_completa = [_mes_completo(m) for m in meses_ordenados]
 
     return {"meses": meses_ordenados, "series": series, "janela_dg_completa": janela_dg_completa}
+
+
+# ---------------------------------------------------------------------------
+# Resumo de um recorte (período/filtros) — a MESMA conta que a tela Relatórios >
+# Análise reprodutiva faz no navegador (frontend/app/analise-reprodutiva/
+# page.tsx: `taxa()` e a "quebra" por dimensão). Existe aqui para o agente de IA
+# (ferramenta consultar_indicadores_reprodutivos) devolver o MESMO número da
+# tela: taxa de concepção = positivos / serviços DIAGNOSTICADOS (positivo ou
+# negativo), arredondada a 1 casa com Math.round do JavaScript (meio para cima).
+# É diferente do critério R7 da série mensal (agregar_mensal), que a tela usa só
+# no gráfico; as duas convivem no site e o agente informa qual é qual.
+# ---------------------------------------------------------------------------
+def _taxa_tela(regs: list[dict]) -> dict:
+    import math
+
+    diag = sum(1 for r in regs if r.get("diagnosticado"))
+    pos = sum(1 for r in regs if r.get("positivo"))
+    pct = math.floor(1000 * pos / diag + 0.5) / 10 if diag else None
+    return {"diag": diag, "pos": pos, "pct": pct}
+
+
+def resumo_periodo(registros: list[dict], agrupar_por: str | None = None) -> dict:
+    """`registros` = saída de `analisar_servicos` (já filtrada por período/dimensões)."""
+    t = _taxa_tela(registros)
+    saida = {
+        "servicos_total": len(registros),
+        "diagnosticados": t["diag"],
+        "positivos": t["pos"],
+        "negativos": t["diag"] - t["pos"],
+        "sem_diagnostico": sum(1 for r in registros if not r.get("diagnosticado")),
+        "taxa_concepcao_pct": t["pct"],
+        "perdas_prenhez": sum(1 for r in registros if r.get("perda")),
+    }
+    if agrupar_por:
+        grupos: dict[str, list[dict]] = defaultdict(list)
+        for r in registros:
+            v = r.get(agrupar_por)
+            grupos[str("—" if v is None else v)].append(r)
+        quebra = []
+        for k, regs in grupos.items():
+            tg = _taxa_tela(regs)
+            if tg["diag"] > 0:
+                quebra.append({"grupo": k, "servicos": len(regs), "diagnosticados": tg["diag"],
+                               "positivos": tg["pos"], "taxa_concepcao_pct": tg["pct"]})
+        quebra.sort(key=lambda x: -(x["taxa_concepcao_pct"] or 0))  # sort estável, como no JS
+        saida["agrupado_por"] = agrupar_por
+        saida["quebra"] = quebra
+    return saida

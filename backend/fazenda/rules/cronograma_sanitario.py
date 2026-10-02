@@ -845,6 +845,7 @@ def _datas_do_gatilho_por_animal(
 
 def lista_espera(
     session: Session, hoje: date, fazenda_id: int | None = None, calendario_id: int | None = None,
+    reconciliar: bool = True,
 ) -> dict:
     """Lista de espera por protocolo (regra): quem está "sugerido", com a
     situação de cada animal — "atrasada" (passou da data devida, a janela segue
@@ -864,8 +865,16 @@ def lista_espera(
     if calendario_id is not None:
         query = query.where(CalendarioSanitario.id == calendario_id)
     trios = session.exec(query).all()
-    reconciliados = reconciliar_lista_espera(session, hoje, fazenda_id, calendario_id)
-    trios = session.exec(query).all()   # de novo: quem já tinha aplicação no ciclo acabou de sair da lista
+    if reconciliar:
+        reconciliados = reconciliar_lista_espera(session, hoje, fazenda_id, calendario_id)
+        trios = session.exec(query).all()   # de novo: quem já tinha aplicação no ciclo acabou de sair da lista
+    else:
+        # Modo SOMENTE LEITURA (agente de IA, sessão read-only): não grava a
+        # reconciliação, mas devolve a MESMA lista que o site mostraria depois
+        # dela — tira, em memória, quem já recebeu o produto no ciclo.
+        reconciliados = []
+        achados = _ja_aplicados_da_lista(session, trios, hoje) if trios else {}
+        trios = [t for t in trios if t[0].id not in achados]
     vazio = {"total": 0, "atrasadas": 0, "fecham_7d": 0, "agendamentos_ativos": 0, "grupos": [], "reconciliados": reconciliados}
     query_ag = select(CronogramaSanitario).where(CronogramaSanitario.status.in_(("agendado", "em_montagem")))
     if fazenda_id is not None:

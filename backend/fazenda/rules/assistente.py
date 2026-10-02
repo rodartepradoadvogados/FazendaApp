@@ -26,6 +26,7 @@ from fazenda.models import (
     Animal, AssistenteEnsinamento, ContaGerencial, ControleLeiteiro, Estoque, EventoSanitario, ExameResultado,
     Fornecedor, Lote, Parto, PesagemCorporal, Secagem, Servico, Usuario,
 )
+from fazenda.rules import assistente_consultas as _consultas
 from fazenda.rules import assistente_llm
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.indicadores import calcular_indicadores
@@ -176,9 +177,22 @@ _TOOLS_DISPONIVEIS = [
 ]
 
 
+def modulo_liberado(usuario: Usuario, modulo) -> bool:
+    """`modulo` é um nome de módulo OU uma tupla (basta ter um deles) — as
+    ferramentas novas de relatórios/reprodução servem a mais de uma área."""
+    modulos = (modulo,) if isinstance(modulo, str) else tuple(modulo)
+    return any(tem_modulo(usuario, m) for m in modulos)
+
+
+def modulo_na_lista(modulo, liberados: set[str]) -> bool:
+    """Mesma regra de `modulo_liberado`, para a lista AGENTE_MODULOS."""
+    modulos = (modulo,) if isinstance(modulo, str) else tuple(modulo)
+    return any(m in liberados for m in modulos)
+
+
 def _ferramentas_do_usuario(usuario: Usuario) -> list[dict]:
     """Só oferece à Claude as ferramentas cujo módulo o usuário tem liberado."""
-    return [t["spec"] for t in _TOOLS_DISPONIVEIS if tem_modulo(usuario, t["modulo"])]
+    return [t["spec"] for t in _TOOLS_DISPONIVEIS if modulo_liberado(usuario, t["modulo"])]
 
 
 def _system_prompt(session: Session, fazenda_id: int | None) -> str:
@@ -430,6 +444,10 @@ _EXECUTORES = {
     "consultar_exames": lambda session, usuario, entrada, fazenda_id: _tool_consultar_exames(session, entrada.get("data"), entrada.get("evento"), fazenda_id),
 }
 
+# Ferramentas com PARÂMETROS (período, filtros) — ver rules/assistente_consultas.py.
+_TOOLS_DISPONIVEIS.extend({"modulo": f["modulo"], "spec": f["spec"]} for f in _consultas.FERRAMENTAS)
+_EXECUTORES.update({f["spec"]["name"]: f["executor"] for f in _consultas.FERRAMENTAS})
+
 _MODULO_DA_TOOL = {t["spec"]["name"]: t["modulo"] for t in _TOOLS_DISPONIVEIS}
 
 
@@ -444,10 +462,11 @@ def _executar_tool(nome: str, entrada: dict, session: Session, usuario: Usuario,
     modulo = _MODULO_DA_TOOL.get(nome)
     if modulo is None:
         return {"erro": f"Ferramenta desconhecida: {nome}"}
-    if not tem_modulo(usuario, modulo):
+    if not modulo_liberado(usuario, modulo):
         # Segunda barreira (a primeira é nem oferecer a ferramenta à Claude) —
         # cobre o caso do modelo tentar chamar algo fora da lista oferecida.
-        return {"erro": f"Usuário sem permissão para o módulo '{modulo}'."}
+        nome_modulo = modulo if isinstance(modulo, str) else " ou ".join(modulo)
+        return {"erro": f"Usuário sem permissão para o módulo '{nome_modulo}'."}
     return _EXECUTORES[nome](session, usuario, entrada, fazenda_id)
 
 
@@ -477,6 +496,9 @@ def responder(mensagem: str, historico: list[dict], session: Session, usuario: U
             return {"resposta": resposta.get("content") or "(sem resposta)", "historico": mensagens}
         for chamada in chamadas:
             resultado = _executar_tool(chamada["name"], chamada["arguments"], session, usuario, fazenda_id)
+            if chamada["name"] in _consultas.NOMES and "erro" not in resultado:
+                # Mesma sanitização/paginação do /agente (e `truncado`) para o modelo.
+                resultado = _consultas.formatar_para_chat(resultado, chamada["arguments"])
             mensagens.append({
                 "role": "tool", "tool_call_id": chamada["id"], "name": chamada["name"],
                 "content": _serializar(resultado),

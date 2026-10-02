@@ -119,7 +119,7 @@ def _ferramentas_expostas() -> dict[str, dict]:
     return {
         spec["name"]: spec
         for modulo, spec in assistente.todas_as_ferramentas()
-        if modulos is None or modulo in modulos
+        if modulos is None or assistente.modulo_na_lista(modulo, modulos)
     }
 
 
