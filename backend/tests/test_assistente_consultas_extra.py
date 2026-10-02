@@ -26,7 +26,8 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from fazenda.auth import MODULOS
 from fazenda.models import (
     Animal, BaixaAnimal, CompraAnimal, ControleLeiteiro, EventoSanitario, ExameResultado, Fazenda, Lactacao, Lote,
-    Alimento, CategoriaAlimento, CompraSemen, ConsumoAlimento, ConsumoSobra, ContaCorrente, Dieta, DietaItemProgramado, DietaLancamento,
+    Alimento, CategoriaAlimento, Doenca, IndicacaoTerapeutica, LoteEstoque, MedicamentoComercial, PrincipioAtivo,
+     CompraSemen, ConsumoAlimento, ConsumoSobra, ContaCorrente, Dieta, DietaItemProgramado, DietaLancamento,
      ContaGerencial, EntregaLeiteMensal, Estoque, EstoqueSemen, LancamentoItem, MovimentoEstoque, PlanoContaGerencial,
      MovimentoLote, OcorrenciaClinica, Parto, PesagemCorporal, Sanidade, Secagem, Servico, Touro,
 )
@@ -243,6 +244,49 @@ def _popular_dietas(s: Session) -> None:
 _POPULADORES.append(_popular_dietas)
 
 
+# ---------------------------------------------------------------------------
+# Remédios por doença (catálogo global de indicações + estoque de cada fazenda)
+# ---------------------------------------------------------------------------
+def _popular_farmacia(s: Session) -> None:
+    mastite = Doenca(nome="Mastite", tipo="doenca", descricao="Inflamação do úbere, leite com grumos", fazenda_id=None)
+    diarreia = Doenca(nome="Diarreia neonatal", tipo="doenca", descricao="Fezes líquidas em bezerros", fazenda_id=None)
+    sem_remedio = Doenca(nome="Doenca sem remedio", tipo="doenca", fazenda_id=None)
+    seg = Doenca(nome="Doenca SEGREDO", tipo="doenca", fazenda_id=2)
+    inativa = Doenca(nome="Mastite antiga inativa", tipo="doenca", ativo=False, fazenda_id=None)
+    ceft = PrincipioAtivo(nome="Ceftiofur", categoria_software="Antibiótico", unidade_base="ml", unidade_apresentacao="frasco", fazenda_id=None)
+    cefa = PrincipioAtivo(nome="Cefalexina", categoria_software="Antibiótico", unidade_base="ml", unidade_apresentacao="frasco", fazenda_id=None)
+    peni = PrincipioAtivo(nome="Penicilina", categoria_software="Antibiótico", unidade_base="ml", unidade_apresentacao="frasco", fazenda_id=None)
+    iver = PrincipioAtivo(nome="Ivermectina", categoria_software="Antiparasitário", unidade_base="ml", unidade_apresentacao="frasco", fazenda_id=None)
+    s.add_all([mastite, diarreia, sem_remedio, seg, inativa, ceft, cefa, peni, iver])
+    s.commit()
+    for pa, prio in ((ceft, 1), (cefa, 2), (peni, 3)):
+        s.add(IndicacaoTerapeutica(principio_ativo_id=pa.id, doenca_id=mastite.id, prioridade=prio, nota=f"nota {prio}", fazenda_id=None))
+    s.add(IndicacaoTerapeutica(principio_ativo_id=cefa.id, doenca_id=diarreia.id, prioridade=1, fazenda_id=None))
+    s.add(IndicacaoTerapeutica(principio_ativo_id=ceft.id, doenca_id=seg.id, prioridade=1, fazenda_id=2))
+    s.add(MedicamentoComercial(principio_ativo_id=ceft.id, nome_comercial="Excenel", laboratorio="Zoetis", dose_texto="1 ml/45 kg", via_padrao="IM",
+                               carencia_leite_dias=0, carencia_carne_dias=4, fazenda_id=None))
+    marca_peni = MedicamentoComercial(principio_ativo_id=peni.id, nome_comercial="Mastilac", laboratorio="Lab X", dose_texto="1 bisnaga",
+                                      via_padrao="intramamária", carencia_leite_dias=4, carencia_carne_dias=10, alerta="Descartar o leite", fazenda_id=None)
+    s.add(marca_peni)
+    s.commit()
+    # estoque da fazenda 1
+    e_ceft = Estoque(nome="Excenel 50ml", categoria="Medicamento", quantidade=10, unidade="ml", principio_ativo_id=ceft.id, ativo=False,
+                     laboratorio="Zoetis", fazenda_id=1)  # só tem item INATIVO: a tela ainda mostra estoque; o agente não
+    e_cefa = Estoque(nome="Cefalexina 100ml", quantidade=5, unidade="ml", principio_ativo_id=cefa.id, fazenda_id=1)  # lote vencido
+    e_peni = Estoque(nome="Mastilac bisnaga", quantidade=8, unidade="ml", principio_ativo_id=peni.id, laboratorio="Lab X",
+                    medicamento_comercial_id=marca_peni.id, fazenda_id=1)
+    e_iver = Estoque(nome="Ivermectina 500ml", quantidade=100, unidade="ml", principio_ativo_id=iver.id, fazenda_id=1)
+    e_seg = Estoque(nome="Ceftiofur SEGREDO", quantidade=99, unidade="ml", principio_ativo_id=ceft.id, fazenda_id=2)
+    s.add_all([e_ceft, e_cefa, e_peni, e_iver, e_seg])
+    s.commit()
+    s.add(LoteEstoque(estoque_id=e_cefa.id, numero_lote="V1", data_compra=HOJE - timedelta(days=400), quantidade_comprada=5, quantidade_restante=5, validade=HOJE - timedelta(days=30), fazenda_id=1))
+    s.add(LoteEstoque(estoque_id=e_peni.id, numero_lote="OK1", data_compra=HOJE - timedelta(days=30), quantidade_comprada=8, quantidade_restante=8, validade=HOJE + timedelta(days=90), fazenda_id=1))
+    s.commit()
+
+
+_POPULADORES.append(_popular_farmacia)
+
+
 @pytest.fixture
 def engine():
     eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -280,6 +324,7 @@ TIPICOS: dict[str, dict] = {
     "consultar_dietas_lotes": {"situacao": "todas", "incluir_necessidade_mensal": "true"},
     "consultar_consumo_sobra_cocho": {"data_inicio": "2026-09-01", "data_fim": "2026-09-30"},
     "consultar_alimentos_cadastrados": {},
+    "consultar_remedios_por_doenca": {"doenca": "mastite", "incluir_bula": "true"},
 }
 # Módulo(s) esperado(s) de cada ferramenta (qualquer um libera).
 MODULOS_ESPERADOS: dict[str, tuple[str, ...]] = {
@@ -294,6 +339,7 @@ MODULOS_ESPERADOS: dict[str, tuple[str, ...]] = {
     "consultar_dietas_lotes": ("alimentacao",),
     "consultar_consumo_sobra_cocho": ("alimentacao",),
     "consultar_alimentos_cadastrados": ("alimentacao",),
+    "consultar_remedios_por_doenca": ("sanidade",),
 }
 
 
@@ -838,6 +884,97 @@ class TestAlimentosCadastrados:
         assert nomes(apenas_sem_estoque_vinculado="true") == {"Feno sem estoque"} and nomes(categoria="volum") == {"Silagem"}
         assert nomes(nome="feno") == {"Feno sem estoque"} and "Alimento inativo" in nomes(incluir_inativos="true")
         assert {a["alimento"] for a in _rodar(engine, "consultar_alimentos_cadastrados", {}, fid=2)["alimentos"]} == {"Alimento SEGREDO"}
+
+# ---------------------------------------------------------------------------
+# 7. Remédios por doença
+# ---------------------------------------------------------------------------
+class TestRemediosPorDoenca:
+    def _opcoes(self, engine, **kw):
+        r = _rodar(engine, "consultar_remedios_por_doenca", {"doenca": "mastite", **kw})
+        return r, {o["principio_ativo"]: o for o in r["indicacoes"][0]["opcoes"]}
+
+    def test_ranking_igual_ao_da_tela(self, engine):
+        from fazenda.api.routers.sanidade import indicacoes_por_doenca
+        with Session(engine) as s:
+            doenca = s.exec(select(Doenca).where(Doenca.nome == "Mastite")).one()
+            site = indicacoes_por_doenca(doenca_id=doenca.id, session=s, fazenda_id=1)
+        r, por = self._opcoes(engine)
+        assert [(o["principio_ativo"], o["prioridade"]) for o in r["indicacoes"][0]["opcoes"]] == [(o["nome"], o["prioridade"]) for o in site["opcoes"]]
+        assert {o["principio_ativo"]: o["status_estoque_na_tela"] for o in r["indicacoes"][0]["opcoes"]} == {o["nome"]: o["status_estoque"] for o in site["opcoes"]}
+        assert r["indicacoes"][0]["indicacao"] == "Mastite" and len(r["indicacoes"]) == 1  # a 'inativa' não entra
+
+    def test_item_inativo_e_lote_vencido_nao_contam_como_disponiveis(self, engine):
+        r, por = self._opcoes(engine)
+        # a tela diria "ok" (soma o item inativo e o lote vencido); o agente diz "sem estoque utilizável"
+        assert por["Ceftiofur"]["status_estoque_na_tela"] == "ok" and por["Ceftiofur"]["status_estoque"] == "out"
+        assert por["Ceftiofur"]["disponivel_agora"] is False and "item inativo no estoque" in por["Ceftiofur"]["motivos_indisponivel"]
+        assert por["Cefalexina"]["status_estoque_na_tela"] == "ok" and por["Cefalexina"]["disponivel_agora"] is False
+        assert por["Cefalexina"]["itens_em_estoque"][0]["vencido"] is True and por["Cefalexina"]["itens_em_estoque"][0]["saldo_vencido"] == 5.0
+        assert "todos os lotes vencidos" in por["Cefalexina"]["motivos_indisponivel"]
+        assert por["Penicilina"]["disponivel_agora"] is True and por["Penicilina"]["saldo_utilizavel_total"] == 8.0
+
+    def test_substituto_quando_a_primeira_escolha_falta(self, engine):
+        r, _ = self._opcoes(engine)
+        ind = r["indicacoes"][0]
+        assert ind["primeira_escolha"] == "Ceftiofur" and ind["primeira_escolha_disponivel"] is False
+        assert ind["substituto_sugerido"]["principio_ativo"] == "Penicilina" and "item inativo" in ind["substituto_sugerido"]["motivo"]
+        assert ind["substitutos_disponiveis"] == ["Penicilina"]
+
+    def test_apenas_disponiveis(self, engine):
+        r, por = self._opcoes(engine, apenas_disponiveis="true")
+        assert list(por) == ["Penicilina"] and r["indicacoes"][0]["primeira_escolha"] == "Ceftiofur"
+
+    def test_carencia_e_bula(self, engine):
+        _, por = self._opcoes(engine, incluir_bula="true")
+        item = por["Penicilina"]["itens_em_estoque"][0]
+        assert item["carencia"]["texto"] == "Carência: leite — 4 dias / carne — 10 dias" and item["carencia"]["leite_dias"] == 4
+        assert por["Cefalexina"]["itens_em_estoque"][0]["carencia"]["texto"] == "Carência: não informada"  # nulo nunca vira zero
+        assert por["Ceftiofur"]["carencias_da_bula"][0]["marca"] == "Excenel" and por["Ceftiofur"]["carencias_da_bula"][0]["carne_dias"] == 4
+        assert por["Penicilina"]["bula"][0]["alerta"] == "Descartar o leite"
+        assert "bula" not in self._opcoes(engine)[1]["Penicilina"]
+
+    def test_busca_por_principio_ativo_e_por_marca(self, engine):
+        r = _rodar(engine, "consultar_remedios_por_doenca", {"principio_ativo": "cefalexina"})
+        assert sorted(i["indicacao"] for i in r["indicacoes"]) == ["Diarreia neonatal", "Mastite"] and r["principios_encontrados"] == ["Cefalexina"]
+        assert all(o["procurado"] for i in r["indicacoes"] for o in i["opcoes"] if o["principio_ativo"] == "Cefalexina")
+        por_marca = _rodar(engine, "consultar_remedios_por_doenca", {"principio_ativo": "mastilac"})
+        assert por_marca["principios_encontrados"] == ["Penicilina"] and [i["indicacao"] for i in por_marca["indicacoes"]] == ["Mastite"]
+        assert [i["indicacao"] for i in _rodar(engine, "consultar_remedios_por_doenca", {"principio_ativo": "cefalexina", "doenca": "diarreia"})["indicacoes"]] == ["Diarreia neonatal"]
+
+    def test_busca_por_sintoma_na_descricao(self, engine):
+        r = _rodar(engine, "consultar_remedios_por_doenca", {"doenca": "grumos"})
+        assert [i["indicacao"] for i in r["indicacoes"]] == ["Mastite"]
+        assert [i["indicacao"] for i in _rodar(engine, "consultar_remedios_por_doenca", {"doenca": "DIARRÉIA"})["indicacoes"]] == ["Diarreia neonatal"]
+
+    def test_indicacao_sem_medicamento_e_listagem_sem_parametros(self, engine):
+        r = _rodar(engine, "consultar_remedios_por_doenca", {"doenca": "sem remedio"})
+        assert r["indicacoes"][0]["opcoes"] == [] and "Nenhum medicamento" in r["indicacoes"][0]["aviso"]
+        lista = _rodar(engine, "consultar_remedios_por_doenca", {})
+        assert {i["nome"]: i["medicamentos_indicados"] for i in lista["indicacoes_cadastradas"]} == {
+            "Mastite": 3, "Diarreia neonatal": 1, "Doenca sem remedio": 0}  # global visível; inativa e a da fazenda 2 de fora
+        assert "indicacoes" not in lista
+
+    def test_isolamento_entre_fazendas(self, engine):
+        # na fazenda 2 o MESMO catálogo global aparece, mas só com o estoque dela
+        r2 = _rodar(engine, "consultar_remedios_por_doenca", {"doenca": "mastite"}, fid=2)
+        por2 = {o["principio_ativo"]: o for o in r2["indicacoes"][0]["opcoes"]}
+        assert por2["Ceftiofur"]["saldo_utilizavel_total"] == 99.0 and por2["Penicilina"]["disponivel_agora"] is False
+        assert por2["Ceftiofur"]["itens_em_estoque"][0]["item"] == "Ceftiofur SEGREDO"
+        assert "SEGREDO" not in json.dumps(_rodar(engine, "consultar_remedios_por_doenca", {"doenca": "mastite"}))
+        assert "SEGREDO" not in json.dumps(_rodar(engine, "consultar_remedios_por_doenca", {}))  # lista de indicações
+        assert "Doenca SEGREDO" in json.dumps(_rodar(engine, "consultar_remedios_por_doenca", {}, fid=2))
+
+    def test_validacao(self, engine):
+        assert "tipo" in _rodar(engine, "consultar_remedios_por_doenca", {"doenca": "x", "tipo": "xyz"})["erro"]
+        assert "Nenhuma doença" in _rodar(engine, "consultar_remedios_por_doenca", {"doenca": "zzzz"})["erro"]
+        assert "princípio ativo" in _rodar(engine, "consultar_remedios_por_doenca", {"principio_ativo": "zzzz"})["erro"]
+
+    def test_nao_escreve(self, engine):
+        with Session(engine) as s:
+            antes = [(e.nome, e.quantidade) for e in s.exec(select(Estoque).order_by(Estoque.id)).all()]
+        _rodar(engine, "consultar_remedios_por_doenca", {"doenca": "mastite"})
+        with Session(engine) as s:
+            assert [(e.nome, e.quantidade) for e in s.exec(select(Estoque).order_by(Estoque.id)).all()] == antes
 
 
 # ---------------------------------------------------------------------------

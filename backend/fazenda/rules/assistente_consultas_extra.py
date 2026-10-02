@@ -777,6 +777,219 @@ def _alimentos(session: Session, usuario, entrada: dict, fazenda_id: int | None)
 
 
 # ===========================================================================
+# 7. Remédios por doença / substitutos (Sanidade › Remédios por Doença)
+# ===========================================================================
+_TIPOS_INDICACAO = ("doenca", "reprodutivo", "produtivo", "preventivo", "suporte")
+_MAX_INDICACOES = 8
+
+
+def _itens_do_principio(session: Session, principios_ids: set[int], fazenda_id: int | None) -> dict[int, list]:
+    """Itens de ESTOQUE da fazenda (estritamente dela) por princípio ativo."""
+    from fazenda.models import Estoque
+    if not principios_ids:
+        return {}
+    q = _escopo(select(Estoque).where(Estoque.principio_ativo_id.in_(principios_ids)), Estoque.fazenda_id, fazenda_id)
+    por: dict[int, list] = defaultdict(list)
+    for it in session.exec(q).all():
+        por[it.principio_ativo_id].append(it)
+    return por
+
+
+def _situacao_do_item(item, lotes: list, hoje: date) -> dict:
+    """Saldo UTILIZÁVEL de um item: item inativo não conta; lote vencido não conta; item sem lotes
+    cadastrados usa o saldo do cadastro (sem controle de validade)."""
+    ativo = item.ativo is not False
+    com_saldo = [l for l in lotes if l.ativo and (l.quantidade_restante or 0) > 0]
+    validades = sorted(l.validade for l in com_saldo if l.validade)
+    if com_saldo:
+        utilizavel = sum(l.quantidade_restante or 0 for l in com_saldo if not (l.validade and l.validade < hoje))
+        vencido = sum(l.quantidade_restante or 0 for l in com_saldo if l.validade and l.validade < hoje)
+        controla_validade = True
+    else:
+        utilizavel = max(item.quantidade or 0, 0)
+        vencido, controla_validade = 0, False
+    if not ativo:
+        utilizavel = 0
+    motivos = []
+    if not ativo:
+        motivos.append("item inativo no estoque")
+    if (item.quantidade or 0) <= 0 and not com_saldo:
+        motivos.append("sem saldo")
+    if vencido and not utilizavel:
+        motivos.append("todos os lotes vencidos")
+    return {
+        "ativo": ativo, "saldo_cadastro": item.quantidade, "saldo_utilizavel": round(utilizavel, 2), "saldo_vencido": round(vencido, 2),
+        "validade_mais_proxima": _iso(validades[0]) if validades else None,
+        "vencido": bool(validades and validades[0] < hoje), "controla_validade": controla_validade, "motivos_indisponivel": motivos,
+    }
+
+
+def _opcao_remedio(session, pa, ind_prioridade: int, ind_nota, itens: list, resumo: dict, marcas: list, lotes_por_item: dict, hoje: date,
+                   com_bula: bool) -> dict:
+    from fazenda.rules.carencia import carencia_dict
+    from fazenda.rules.estoque_baixa import carencia_para_item, resolver_marca_comercial
+
+    linhas, utilizavel_total = [], 0.0
+    for it in itens:
+        sit = _situacao_do_item(it, lotes_por_item.get(it.id, []), hoje)
+        marca = resolver_marca_comercial(session, item=it, nome=it.nome, principio_ativo_id=pa.id, candidatos=marcas)
+        car = carencia_para_item(it, marca)
+        utilizavel_total += sit["saldo_utilizavel"]
+        linhas.append({
+            "item": it.nome, "marca": it.laboratorio or (marca.laboratorio if marca else None), "unidade": it.unidade, **sit,
+            "carencia": {"texto": car["texto"], "leite_dias": car["leite_dias"], "carne_dias": car["carne_dias"],
+                         "proibido_lactacao": car["proibido_lactacao"], "origem": car.get("carencia_origem")},
+        })
+    abaixo = bool(resumo.get("abaixo_minimo"))
+    status = "out" if utilizavel_total <= 0 else ("low" if abaixo else "ok")
+    motivos = sorted({m for l in linhas for m in l["motivos_indisponivel"]}) if status == "out" else []
+    if status == "out" and not linhas:
+        motivos = ["nenhum item no estoque desta fazenda"]
+    d = {
+        "principio_ativo": pa.nome, "classificacao": pa.categoria_software, "prioridade": ind_prioridade, "nota": ind_nota,
+        "status_estoque": status, "disponivel_agora": status != "out", "saldo_utilizavel_total": round(utilizavel_total, 2),
+        "unidade_base": pa.unidade_base, "abaixo_do_minimo": abaixo, "motivos_indisponivel": motivos,
+        "itens_em_estoque": linhas,
+        "carencias_da_bula": [
+            {"marca": m.nome_comercial, **{k: v for k, v in carencia_dict(m.carencia_leite_dias, m.carencia_carne_dias, m.proibido_lactacao).items()
+                                          if k in ("texto", "leite_dias", "carne_dias", "proibido_lactacao")}}
+            for m in marcas
+        ],
+    }
+    if com_bula:
+        d["bula"] = [{"marca": m.nome_comercial, "laboratorio": m.laboratorio, "dose": m.dose_texto, "via": m.via_padrao,
+                      "alerta": m.alerta, "alerta_gestacao": m.alerta_gestacao} for m in marcas]
+    return d
+
+
+def _remedios_por_doenca(session: Session, usuario, entrada: dict, fazenda_id: int | None) -> dict:
+    from fazenda.api.routers.farmacia import _sem_duplicata_do_padrao
+    from fazenda.api.routers.sanidade import indicacoes_por_doenca
+    from fazenda.models import Doenca, IndicacaoTerapeutica, LoteEstoque, MedicamentoComercial, PrincipioAtivo
+    from fazenda.rules.farmacia import resumo_principios
+    from fazenda.rules.visibilidade import visivel
+
+    doenca, principio = _txt(entrada, "doenca"), _txt(entrada, "principio_ativo")
+    tipo = _escolha(entrada, "tipo", _TIPOS_INDICACAO)
+    so_disponiveis = _bool(entrada, "apenas_disponiveis", False)
+    com_bula = _bool(entrada, "incluir_bula", False)
+    hoje = date.today()
+
+    doencas = list(session.exec(visivel(select(Doenca), Doenca, fazenda_id)).all())
+    doencas = [d for d in _sem_duplicata_do_padrao(doencas, fazenda_id) if d.ativo is not False]  # inativas não aparecem no seletor do site
+    if tipo:
+        doencas = [d for d in doencas if (d.tipo or "doenca") == tipo]
+    doencas.sort(key=lambda d: ((d.tipo or "doenca"), _sem_acento(d.nome)))
+
+    if not doenca and not principio:
+        indic = defaultdict(int)
+        for i in session.exec(visivel(select(IndicacaoTerapeutica), IndicacaoTerapeutica, fazenda_id)).all():
+            indic[i.doenca_id] += 1
+        cortadas, cortou = _cortar([{"nome": d.nome, "tipo": d.tipo or "doenca", "medicamentos_indicados": indic.get(d.id, 0)} for d in doencas])
+        return {
+            "aviso": "Informe 'doenca' (nome ou sintoma, ex.: 'mastite') ou 'principio_ativo' (ex.: 'ceftiofur'). Indicações cadastradas:",
+            "indicacoes_cadastradas": cortadas, "limitado_pela_ferramenta": cortou,
+        }
+
+    resumo_por_pa = {r["id"]: r for r in resumo_principios(session, fazenda_id)}
+    principios = {p.id: p for p in session.exec(visivel(select(PrincipioAtivo), PrincipioAtivo, fazenda_id)).all()}
+    marcas_todas = list(session.exec(visivel(select(MedicamentoComercial), MedicamentoComercial, fazenda_id)).all())
+    marcas_todas = _sem_duplicata_do_padrao(marcas_todas, fazenda_id)
+    marcas_por_pa: dict[int, list] = defaultdict(list)
+    for m in marcas_todas:
+        if m.ativo is not False:
+            marcas_por_pa[m.principio_ativo_id].append(m)
+
+    def _principios_por_texto(texto: str) -> list[int]:
+        achados = []
+        for pid, p in principios.items():
+            if p.ativo is False:
+                continue
+            if _contem(p.nome, texto) or any(_contem(m.nome_comercial, texto) for m in marcas_por_pa.get(pid, [])):
+                achados.append(pid)
+        return achados
+
+    # ---------------- seleção das indicações ----------------
+    pa_ids_busca: set[int] = set()
+    if principio:
+        pa_ids_busca = set(_principios_por_texto(principio))
+        if not pa_ids_busca:
+            return {"erro": f"Nenhum princípio ativo ou marca encontrado para '{principio}'. Tente outro nome (ex.: 'ceftiofur', 'ivermectina')."}
+    if doenca:
+        doencas = [d for d in doencas if _contem(d.nome, doenca) or _contem(d.descricao, doenca)]
+        if not doencas and not principio:
+            return {"erro": f"Nenhuma doença/indicação encontrada para '{doenca}'. Chame sem parâmetros para ver as indicações cadastradas."}
+    todas_ind = list(session.exec(visivel(select(IndicacaoTerapeutica), IndicacaoTerapeutica, fazenda_id)).all())
+    ind_por_doenca: dict[int, list] = defaultdict(list)
+    for i in todas_ind:
+        ind_por_doenca[i.doenca_id].append(i)
+    if principio:  # só as indicações em que o princípio procurado aparece (com 'doenca', cruza as duas buscas)
+        doencas = [d for d in doencas if any(i.principio_ativo_id in pa_ids_busca for i in ind_por_doenca.get(d.id, []))]
+    total_indicacoes = len(doencas)
+    doencas = doencas[:_MAX_INDICACOES]
+
+    itens_por_pa = _itens_do_principio(session, {i.principio_ativo_id for d in doencas for i in ind_por_doenca.get(d.id, [])} | pa_ids_busca, fazenda_id)
+    ids_itens = [it.id for lst in itens_por_pa.values() for it in lst]
+    lotes_por_item: dict[int, list] = defaultdict(list)
+    if ids_itens:
+        q = _escopo(select(LoteEstoque).where(LoteEstoque.estoque_id.in_(ids_itens)), LoteEstoque.fazenda_id, fazenda_id)
+        for l in session.exec(q).all():
+            lotes_por_item[l.estoque_id].append(l)
+
+    resultado = []
+    for d in doencas:
+        site = _chamar(indicacoes_por_doenca, session, fazenda_id, doenca_id=d.id)  # GET /sanidade/indicacoes-doenca/{id} (a tela)
+        status_tela = {o["principio_ativo_id"]: o["status_estoque"] for o in site["opcoes"]}
+        opcoes = []
+        for ind in sorted(ind_por_doenca.get(d.id, []), key=lambda i: i.prioridade):
+            pa = principios.get(ind.principio_ativo_id)
+            if pa is None or ind.principio_ativo_id not in status_tela:
+                continue  # mesmo recorte da tela: só princípios visíveis e com resumo de farmácia
+            o = _opcao_remedio(session, pa, ind.prioridade, ind.nota, itens_por_pa.get(pa.id, []), resumo_por_pa.get(pa.id, {}),
+                               marcas_por_pa.get(pa.id, []), lotes_por_item, hoje, com_bula)
+            o["status_estoque_na_tela"] = status_tela[pa.id]
+            o["procurado"] = pa.id in pa_ids_busca
+            opcoes.append(o)
+        opcoes.sort(key=lambda o: (o["prioridade"], {"ok": 0, "low": 1, "out": 2}[o["status_estoque"]]))
+        primeira = opcoes[0] if opcoes else None
+        disponiveis = [o for o in opcoes if o["disponivel_agora"]]
+        item = {
+            "indicacao": d.nome, "tipo": d.tipo or "doenca", "descricao": d.descricao,
+            "primeira_escolha": primeira["principio_ativo"] if primeira else None,
+            "primeira_escolha_disponivel": bool(primeira and primeira["disponivel_agora"]),
+            "opcoes": [o for o in opcoes if o["disponivel_agora"]] if so_disponiveis else opcoes,
+        }
+        if primeira and not primeira["disponivel_agora"]:
+            item["substituto_sugerido"] = (
+                {"principio_ativo": disponiveis[0]["principio_ativo"], "prioridade": disponiveis[0]["prioridade"],
+                 "saldo_utilizavel_total": disponiveis[0]["saldo_utilizavel_total"],
+                 "motivo": f"1ª escolha ({primeira['principio_ativo']}) indisponível: {', '.join(primeira['motivos_indisponivel']) or 'sem estoque'}"}
+                if disponiveis else None
+            )
+            item["substitutos_disponiveis"] = [o["principio_ativo"] for o in disponiveis]
+        if not opcoes:
+            item["aviso"] = "Nenhum medicamento indicado ainda para esta indicação (cadastrar em Configurações › Cadastro › Sanitário › Princípio ativo)."
+        resultado.append(item)
+
+    saida: dict[str, Any] = {
+        "filtros": {"doenca": doenca, "principio_ativo": principio, "tipo": tipo, "apenas_disponiveis": so_disponiveis},
+        "total_indicacoes_encontradas": total_indicacoes, "indicacoes": resultado,
+    }
+    if total_indicacoes > _MAX_INDICACOES:
+        saida["aviso"] = f"{total_indicacoes} indicações encontradas; mostrando as {_MAX_INDICACOES} primeiras. Refine 'doenca'."
+    if principio:
+        saida["principios_encontrados"] = [principios[i].nome for i in sorted(pa_ids_busca, key=lambda i: _sem_acento(principios[i].nome))]
+    saida["como_ler"] = (
+        "Mesmo ranking da tela Sanidade › Remédios por Doença (1ª escolha, 2ª opção…) cruzado com o estoque desta fazenda. DIFERENÇA para a tela: aqui "
+        "'disponivel_agora' só conta itens ATIVOS e lotes NÃO vencidos (a tela soma também itens inativos/vencidos — veja status_estoque_na_tela). "
+        "Sem lotes cadastrados o item usa o saldo do cadastro (controla_validade=false). Quando a 1ª escolha está indisponível, "
+        "substituto_sugerido é a próxima opção disponível por prioridade. 'carencia' (item) e 'carencias_da_bula' (marcas) vêm do cadastro: carência não "
+        "informada NÃO é zero. Informação do cadastro do sistema, não receita veterinária."
+    )
+    return saida
+
+
+# ===========================================================================
 # Registro
 # ===========================================================================
 FERRAMENTAS: list[dict] = [
@@ -1006,6 +1219,31 @@ FERRAMENTAS: list[dict] = [
             }),
         },
         "executor": _com_erro(_alimentos),
+    },
+    {
+        "modulo": "sanidade",
+        "spec": {
+            "name": "consultar_remedios_por_doenca",
+            "description": (
+                "REMÉDIOS POR DOENÇA (Sanidade › Remédios por Doença): dada uma doença/sintoma/indicação, os medicamentos indicados em ordem de "
+                "prioridade (1ª escolha, 2ª opção…) com estoque atual, validade, carência de leite/carne e os SUBSTITUTOS quando a 1ª escolha está "
+                "em falta, inativa ou vencida. Também busca por PRINCÍPIO ATIVO ou nome comercial (ex.: para que serve o ceftiofur e se tenho). "
+                "Use para 'que remédio uso para mastite?', 'tenho algo para pneumonia em estoque?', 'o que posso usar no lugar do X?', "
+                "'qual a carência do remédio indicado para diarreia?'. Parâmetros: doenca (nome ou parte, ex.: 'mastite', 'diarreia'), "
+                "principio_ativo (ex.: 'ceftiofur'), tipo (doenca, reprodutivo, produtivo, preventivo, suporte), apenas_disponiveis=true "
+                "(esconde as opções sem estoque utilizável), incluir_bula=true (dose, via, alertas). Sem parâmetros lista as indicações "
+                "cadastradas. Itens inativos e lotes vencidos NÃO contam como disponíveis. Saldo geral de estoque: consultar_estoque_itens; "
+                "histórico do que foi aplicado: consultar_aplicacoes_sanitarias; protocolos: consultar_protocolos_cadastrados."
+            ),
+            "input_schema": _schema({
+                "doenca": ("string", "Opcional. Doença, sintoma ou indicação (nome ou parte), ex.: 'mastite'."),
+                "principio_ativo": ("string", "Opcional. Princípio ativo ou nome comercial (ou parte), ex.: 'ceftiofur'."),
+                "tipo": ("string", "Opcional. doenca, reprodutivo, produtivo, preventivo ou suporte."),
+                "apenas_disponiveis": ("boolean", "Opcional. true = só opções com estoque utilizável (ativo e dentro da validade)."),
+                "incluir_bula": ("boolean", "Opcional. true = dose, via e alertas de cada marca."),
+            }),
+        },
+        "executor": _com_erro(_remedios_por_doenca),
     },
 ]
 
