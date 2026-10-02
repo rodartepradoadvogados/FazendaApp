@@ -219,10 +219,13 @@ def opcoes_medicamento(
 
     opcoes = []
     for e in todos_estoque:
+        # Item inativado ("não usar mais") não pode ser oferecido para novo lançamento.
+        if e.ativo is False:
+            continue
         if pa_id is not None and e.principio_ativo_id == pa_id:
             opcoes.append(_opcao_de_estoque(e))
     # Se o próprio produto é um item de estoque (sem princípio), ele é a opção.
-    if not opcoes and item is not None:
+    if not opcoes and item is not None and item.ativo is not False:
         opcoes.append(_opcao_de_estoque(item))
     if incluir_sem_estoque and pa_id is not None:
         ja_listados = {(o["nome"] or "").strip().lower() for o in opcoes}

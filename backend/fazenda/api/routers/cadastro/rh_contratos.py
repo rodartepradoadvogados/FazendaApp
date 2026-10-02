@@ -1831,6 +1831,10 @@ def salvar_dias_diaria(
     ).all()
     for e in existentes:
         session.delete(e)
+    # Os DELETEs precisam chegar ao banco ANTES dos INSERTs abaixo: o unit of
+    # work do SQLAlchemy emite INSERT antes de DELETE na mesma flush, e o
+    # índice único (diaria_id, data) estourava (500 sem CORS = "Sem conexão").
+    session.flush()
     for dia in sorted(dias_informados):
         session.add(DiariaDia(
             diaria_id=diaria_id, data=dia, trabalhado=False, fracao=0.0, usuario_id=user.id, fazenda_id=fazenda_id,

@@ -182,6 +182,23 @@ class TestCalendarioDiaria:
         with Session(engine) as s:
             assert s.exec(select(DiariaDia).where(DiariaDia.diaria_id == diaria_id)).all() == []
 
+    def test_resubmeter_mesmas_folgas_nao_viola_unicidade(self, client):
+        """Regressão (02/10/2026): salvar de novo o mesmo conjunto de dias
+        apagava e reinseria a mesma (diaria_id, data) na mesma flush e o
+        Postgres devolvia 500 por `uq_diaria_dia_diaria_data`."""
+        c, engine = client
+        pessoa_id = _diarista(c)
+        inicio = date.today() - timedelta(days=4)
+        diaria_id = _criar_diaria(c, pessoa_id, 4)
+        folgas = [(date.today() - timedelta(days=2)).isoformat(), (date.today() - timedelta(days=3)).isoformat()]
+        corpo = {"periodo_inicio": inicio.isoformat(), "periodo_fim": date.today().isoformat(),
+                 "dias_nao_trabalhados": folgas}
+        for _ in range(3):
+            r = c.put(f"/cadastro/diarias/{diaria_id}/dias", json=corpo)
+            assert r.status_code == 200, r.text
+        with Session(engine) as s:
+            assert len(s.exec(select(DiariaDia).where(DiariaDia.diaria_id == diaria_id)).all()) == 2
+
     def test_rejeita_data_fora_do_periodo(self, client):
         c, engine = client
         pessoa_id = _diarista(c)
