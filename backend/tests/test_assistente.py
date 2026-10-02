@@ -85,6 +85,8 @@ def test_rejeita_mensagem_vazia(client):
 def test_sem_api_key_retorna_503(client, monkeypatch):
     c, engine = client
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("ASSISTENTE_PROVEDOR", raising=False)
     r = c.post("/assistente/perguntar", json={"mensagem": "oi"})
     assert r.status_code == 503
     assert "ANTHROPIC_API_KEY" in r.json()["detail"]
@@ -100,6 +102,8 @@ def test_usuario_comum_tambem_acessa_o_endpoint(client, monkeypatch):
     from fazenda.auth import get_current_user
     main.app.dependency_overrides[get_current_user] = lambda: _Usuario(papel="operador", permissoes="")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("ASSISTENTE_PROVEDOR", raising=False)
     r = c.post("/assistente/perguntar", json={"mensagem": "oi"})
     # Ainda dá 503 (sem chave), não 403 — ou seja, passou pelo gate de acesso normalmente.
     assert r.status_code == 503

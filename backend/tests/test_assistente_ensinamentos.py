@@ -91,6 +91,7 @@ class TestGateAcesso:
         c, engine = client
         _como(2, 1, papel="operador")
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         r = c.post("/assistente/perguntar", json={"mensagem": "oi"})
         # Passou do gate — só falta a chave (503), não 403.
         assert r.status_code == 503
@@ -139,6 +140,8 @@ class TestSystemPromptComEnsinamentos:
     def test_ensinamento_ativo_entra_no_system_prompt(self, client, monkeypatch):
         c, engine = client
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.setenv("ASSISTENTE_PROVEDOR", "anthropic")
         with Session(engine) as s:
             s.add(AssistenteEnsinamento(
                 fazenda_id=1, usuario_id=1, titulo="Nome da fazenda",
@@ -159,6 +162,8 @@ class TestSystemPromptComEnsinamentos:
     def test_ensinamento_inativo_nao_entra_no_system_prompt(self, client, monkeypatch):
         c, engine = client
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.setenv("ASSISTENTE_PROVEDOR", "anthropic")
         with Session(engine) as s:
             s.add(AssistenteEnsinamento(
                 fazenda_id=1, usuario_id=1, titulo="Regra desativada",

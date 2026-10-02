@@ -21,6 +21,7 @@ from fazenda.models import IdempotenciaChave
 from fazenda.api.routers import (
     agenda,
     agenda_v2,
+    agente_leitura,
     alertas_indicador,
     alimentacao,
     animais,
@@ -1067,6 +1068,11 @@ app.include_router(fotos_news.router)
 # de contrato aqui é redundante hoje, mas evita reabrir um buraco se essa
 # restrição for removida antes do assistente virar um módulo comercial.
 app.include_router(assistente.router, dependencies=_protegido + _contrato_ativo)
+# API de LEITURA para agentes externos (Hermes): só GET, desativada (404) sem
+# AGENTE_API_TOKEN, auth por Bearer próprio em vez do JWT de usuário — por isso
+# SEM `_protegido` aqui; o porteiro está no próprio router. Ver o docstring de
+# fazenda/api/routers/agente_leitura.py.
+app.include_router(agente_leitura.router)
 
 
 @app.get("/")

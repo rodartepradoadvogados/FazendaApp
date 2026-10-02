@@ -10,13 +10,13 @@ permissões dele (mesma checagem usada para esconder abas no menu — ver
 nunca vê a ferramenta `consultar_financeiro` na lista oferecida à Claude, e o
 próprio Assistente explica que não tem essa permissão se for perguntado.
 
-Requer a variável de ambiente ANTHROPIC_API_KEY (mesmo padrão de
-`fazenda.rules.leitura_documento`). Sem ela, `responder` levanta RuntimeError
-com uma mensagem clara para o administrador configurar.
+O provedor de LLM é escolhido por `fazenda.rules.assistente_llm` (OpenRouter
+ou Anthropic — variáveis ASSISTENTE_PROVEDOR, OPENROUTER_API_KEY,
+ANTHROPIC_API_KEY, ASSISTENTE_MODELO). Falhas viram `ErroAssistente`
+(RuntimeError) com mensagem clara, tratada em routers/assistente.py.
 """
 from __future__ import annotations
 
-import os
 from datetime import date
 
 from sqlmodel import Session, select
@@ -26,10 +26,11 @@ from fazenda.models import (
     Animal, AssistenteEnsinamento, ContaGerencial, ControleLeiteiro, Estoque, EventoSanitario, ExameResultado,
     Fornecedor, Lote, Parto, PesagemCorporal, Secagem, Servico, Usuario,
 )
+from fazenda.rules import assistente_llm
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.indicadores import calcular_indicadores
 
-MODEL = "claude-sonnet-5"
+MODEL = assistente_llm.MODELO_PADRAO[assistente_llm.PROVEDOR_ANTHROPIC]  # compatibilidade
 MAX_RODADAS_TOOL_USE = 4
 
 SYSTEM_PROMPT = """Você é o assistente virtual do sistema de gestão da Fazenda Estreito Ponte de Pedra \
@@ -173,17 +174,6 @@ _TOOLS_DISPONIVEIS = [
         },
     },
 ]
-
-
-def _client():
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "Assistente Claude não está configurado — falta a variável de ambiente ANTHROPIC_API_KEY. "
-            "Configure-a nas variáveis do serviço (Railway > Variables) para habilitar."
-        )
-    import anthropic
-    return anthropic.Anthropic(api_key=api_key)
 
 
 def _ferramentas_do_usuario(usuario: Usuario) -> list[dict]:
@@ -364,11 +354,17 @@ def _tool_consultar_financeiro(session: Session, fazenda_id: int | None = None) 
     }
 
 
-def _tool_consultar_estoque(session: Session) -> dict:
-    # Estoque/Fornecedor ainda não têm fazenda_id — ver proposta de separação
-    # fazenda/empresa, Parte 1.6; sem filtro por enquanto.
-    fornecedores = {f.id: f.nome for f in session.exec(select(Fornecedor)).all()}
-    itens = [e.model_dump() for e in session.exec(select(Estoque)).all()]
+def _tool_consultar_estoque(session: Session, fazenda_id: int | None = None) -> dict:
+    # FURO DE MULTI-TENANT CORRIGIDO: Estoque/Fornecedor já têm fazenda_id (o
+    # comentário antigo, "ainda não têm", estava desatualizado) — sem o filtro,
+    # o Assistente listava itens de OUTRAS fazendas.
+    query_fornecedor = select(Fornecedor)
+    query_estoque = select(Estoque)
+    if fazenda_id is not None:
+        query_fornecedor = query_fornecedor.where(Fornecedor.fazenda_id == fazenda_id)
+        query_estoque = query_estoque.where(Estoque.fazenda_id == fazenda_id)
+    fornecedores = {f.id: f.nome for f in session.exec(query_fornecedor).all()}
+    itens = [e.model_dump() for e in session.exec(query_estoque).all()]
     abaixo_minimo = [
         {"nome": i["nome"], "quantidade": i["quantidade"], "estoque_minimo": i.get("estoque_minimo"),
          "fornecedor": fornecedores.get(i.get("fornecedor_id"))}
@@ -399,10 +395,14 @@ def _tool_consultar_analise_reprodutiva(session: Session, fazenda_id: int | None
         query_servico = query_servico.where(Servico.fazenda_id == fazenda_id)
     servicos = [s.model_dump() for s in session.exec(query_servico).all()]
     registros = analisar_servicos(servicos)
-    # Secagem/ControleLeiteiro (Produção) ainda não têm fazenda_id — ver
-    # proposta de separação fazenda/empresa, Parte 1.6; sem filtro por enquanto.
-    secagens = [s.model_dump() for s in session.exec(select(Secagem)).all()]
-    controles = [c.model_dump() for c in session.exec(select(ControleLeiteiro)).all()]
+    # FURO DE MULTI-TENANT CORRIGIDO: Secagem/ControleLeiteiro já têm fazenda_id.
+    query_secagem = select(Secagem)
+    query_controle = select(ControleLeiteiro)
+    if fazenda_id is not None:
+        query_secagem = query_secagem.where(Secagem.fazenda_id == fazenda_id)
+        query_controle = query_controle.where(ControleLeiteiro.fazenda_id == fazenda_id)
+    secagens = [s.model_dump() for s in session.exec(query_secagem).all()]
+    controles = [c.model_dump() for c in session.exec(query_controle).all()]
     from fazenda.rules.parametros import dias_resultado_conhecido
 
     agregado = agregar_mensal(registros, secagens, controles, dias_resultado=dias_resultado_conhecido())
@@ -422,7 +422,7 @@ _EXECUTORES = {
     "buscar_animal": lambda session, usuario, entrada, fazenda_id: _tool_buscar_animal(session, entrada.get("numero", ""), fazenda_id),
     "consultar_agenda_hoje": lambda session, usuario, entrada, fazenda_id: _tool_consultar_agenda_hoje(session, usuario, fazenda_id),
     "consultar_financeiro": lambda session, usuario, entrada, fazenda_id: _tool_consultar_financeiro(session, fazenda_id),
-    "consultar_estoque": lambda session, usuario, entrada, fazenda_id: _tool_consultar_estoque(session),
+    "consultar_estoque": lambda session, usuario, entrada, fazenda_id: _tool_consultar_estoque(session, fazenda_id),
     "consultar_calendario_sanitario": lambda session, usuario, entrada, fazenda_id: _tool_consultar_calendario_sanitario(session, fazenda_id),
     "consultar_analise_reprodutiva": lambda session, usuario, entrada, fazenda_id: _tool_consultar_analise_reprodutiva(session, fazenda_id),
     "listar_lotes": lambda session, usuario, entrada, fazenda_id: _tool_listar_lotes(session, fazenda_id),
@@ -431,6 +431,13 @@ _EXECUTORES = {
 }
 
 _MODULO_DA_TOOL = {t["spec"]["name"]: t["modulo"] for t in _TOOLS_DISPONIVEIS}
+
+
+def todas_as_ferramentas() -> list[tuple[str, dict]]:
+    """[(módulo, spec)] de TODAS as ferramentas — mesma fonte que
+    `_ferramentas_do_usuario`; usada pela API de leitura para agentes
+    externos (routers/agente_leitura.py), que as expõe sem duplicar nada."""
+    return [(t["modulo"], t["spec"]) for t in _TOOLS_DISPONIVEIS]
 
 
 def _executar_tool(nome: str, entrada: dict, session: Session, usuario: Usuario, fazenda_id: int | None = None) -> dict:
@@ -446,50 +453,34 @@ def _executar_tool(nome: str, entrada: dict, session: Session, usuario: Usuario,
 
 def responder(mensagem: str, historico: list[dict], session: Session, usuario: Usuario, fazenda_id: int | None = None) -> dict:
     """
-    Manda a mensagem do usuário (mais o histórico da conversa) para o Claude,
-    executa as ferramentas que ele pedir — só as que o usuário tem permissão
-    de usar — e devolve a resposta final em texto, junto do histórico
-    atualizado, para o front reenviar na próxima pergunta.
+    Manda a mensagem do usuário (mais o histórico da conversa) para o LLM do
+    provedor configurado, executa as ferramentas que ele pedir — só as que o
+    usuário tem permissão de usar — e devolve a resposta final em texto, junto
+    do histórico atualizado (formato neutro de provedor, ver assistente_llm),
+    para o front reenviar na próxima pergunta. Histórico em formato antigo/
+    incompatível é descartado. Falhas do provedor levantam ErroAssistente.
 
     `fazenda_id` filtra as ferramentas que já suportam isolamento por
     fazenda (ver notas nos `_tool_*` acima) — None (chamada direta fora do
     ciclo de requisição, ou token legado) mantém o comportamento de sempre.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    client = _client()
     ferramentas = _ferramentas_do_usuario(usuario)
     system = _system_prompt(session, fazenda_id)
-    mensagens: list[dict] = [*historico, {"role": "user", "content": mensagem}]
+    mensagens: list[dict] = [*assistente_llm.limpar_historico(historico), {"role": "user", "content": mensagem}]
 
     for _ in range(MAX_RODADAS_TOOL_USE):
-        resposta = client.messages.create(
-            model=MODEL,
-            max_tokens=1536,
-            system=system,
-            tools=ferramentas,
-            messages=mensagens,
-        )
-        # Serializa os blocos (texto/tool_use) para dict puro — tanto para o
-        # histórico ir e voltar do front em JSON quanto para reenviar à API
-        # na próxima rodada deste laço.
-        conteudo = [bloco.model_dump() for bloco in resposta.content]
-        mensagens.append({"role": "assistant", "content": conteudo})
-
-        if resposta.stop_reason != "tool_use":
-            texto = "".join(b.text for b in resposta.content if b.type == "text")
-            return {"resposta": texto or "(sem resposta)", "historico": mensagens}
-
-        blocos_resultado = []
-        for bloco in resposta.content:
-            if bloco.type != "tool_use":
-                continue
-            resultado = _executar_tool(bloco.name, bloco.input, session, usuario, fazenda_id)
-            blocos_resultado.append({
-                "type": "tool_result",
-                "tool_use_id": bloco.id,
-                "content": [{"type": "text", "text": _serializar(resultado)}],
+        resposta = assistente_llm.completar(system, mensagens, ferramentas)
+        mensagens.append(resposta)
+        chamadas = resposta.get("tool_calls") or []
+        if not chamadas:
+            return {"resposta": resposta.get("content") or "(sem resposta)", "historico": mensagens}
+        for chamada in chamadas:
+            resultado = _executar_tool(chamada["name"], chamada["arguments"], session, usuario, fazenda_id)
+            mensagens.append({
+                "role": "tool", "tool_call_id": chamada["id"], "name": chamada["name"],
+                "content": _serializar(resultado),
             })
-        mensagens.append({"role": "user", "content": blocos_resultado})
 
     return {
         "resposta": "Não consegui concluir a resposta dentro do limite de consultas deste protótipo — tente reformular a pergunta.",

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Sparkles, X, Send, BookOpen, MessageCircle, Plus, Pencil, Trash2, Check } from "lucide-react";
 import {
   perguntarAssistente, fetchAssistenteAcesso, fetchEnsinamentos, criarEnsinamento, atualizarEnsinamento,
-  excluirEnsinamento, type AssistenteEnsinamento,
+  excluirEnsinamento, fetchAssistenteStatus, type AssistenteEnsinamento, type AssistenteStatus,
 } from "@/lib/api";
 
 type Mensagem = { autor: "usuario" | "assistente" | "erro"; texto: string };
@@ -239,6 +239,7 @@ function EnsinamentosPainel() {
 
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: "0.75rem" }}>
+      <StatusProvedor />
       <p style={{ color: "var(--text-muted)", fontSize: "0.76rem", marginBottom: "0.7rem" }}>
         Texto livre que o Assistente sempre considera antes de responder — não é treinamento de IA, é só uma
         base de conhecimento sobre esta fazenda que você mantém.
@@ -294,5 +295,26 @@ function EnsinamentosPainel() {
         ))
       )}
     </div>
+  );
+}
+
+const ROTULO_ERRO: Record<string, string> = {
+  configuracao: "não configurado", saldo: "saldo/limite do provedor", chave: "chave inválida", limite: "limite de requisições",
+  modelo: "modelo inexistente", indisponivel: "provedor fora do ar", timeout: "tempo esgotado", rede: "falha de rede",
+  resposta_invalida: "resposta inválida", requisicao: "requisição recusada",
+};
+
+/** Linha discreta (só admin, aba Ensinamentos): provedor/modelo em uso e o
+ *  último erro do provedor de IA — GET /assistente/status, sem segredos. */
+function StatusProvedor() {
+  const [st, setSt] = useState<AssistenteStatus | null>(null);
+  useEffect(() => { fetchAssistenteStatus().then(setSt).catch(() => setSt(null)); }, []);
+  if (!st) return null;
+  const quando = (iso: string) => new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const problema = !st.configurado ? (st.motivo || "não configurado") : st.ultimo_erro ? `último erro: ${ROTULO_ERRO[st.ultimo_erro.tipo] || st.ultimo_erro.tipo} (${quando(st.ultimo_erro.em)})` : null;
+  return (
+    <p style={{ fontSize: "0.68rem", marginBottom: "0.6rem", color: problema ? "var(--red)" : "var(--text-muted)" }}>
+      Motor de IA: {st.provedor ? `${st.provedor} · ${st.modelo}` : "—"}{problema ? ` — ${problema}` : " — sem erros recentes"}
+    </p>
   );
 }

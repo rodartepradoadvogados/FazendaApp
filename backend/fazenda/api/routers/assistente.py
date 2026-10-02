@@ -20,6 +20,7 @@ esse vínculo) deixava o dono original sem acesso nenhum, chat incluído.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -29,8 +30,11 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import AssistenteEnsinamento, Usuario
+from fazenda.rules import assistente_llm
 from fazenda.rules.assistente import responder
 from fazenda.rules.auditoria import fazenda_id_seguro
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/assistente", tags=["assistente"])
 
@@ -82,8 +86,20 @@ def perguntar(
         raise HTTPException(status_code=400, detail="Mensagem vazia")
     try:
         return responder(dados.mensagem.strip(), dados.historico, session, usuario, fazenda_id)
+    except assistente_llm.ErroAssistente as e:
+        # Usuário comum: só "temporariamente indisponível". Administrador:
+        # também a dica técnica curta (sem segredo). O detalhe já foi pro log.
+        raise HTTPException(status_code=503, detail=e.mensagem(admin=usuario.papel == "admin"))
     except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        logger.warning("assistente: RuntimeError inesperado: %s", assistente_llm._sem_segredos(str(e))[:300])
+        raise HTTPException(status_code=503, detail=assistente_llm.MSG_INDISPONIVEL)
+
+
+@router.get("/status")
+def status_assistente(usuario: Usuario = Depends(_exigir_admin)) -> dict:
+    """Só administrador: provedor/modelo em uso, se está configurado e o
+    último erro (tipo e hora, em memória — zera no deploy). Sem segredos."""
+    return assistente_llm.status_assistente()
 
 
 @router.get("/acesso")

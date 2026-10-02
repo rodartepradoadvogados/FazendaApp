@@ -9058,6 +9058,14 @@ export async function perguntarAssistente(mensagem: string, historico: any[] = [
 export const fetchAssistenteAcesso = (): Promise<{ liberado: boolean; pode_treinar: boolean }> =>
   _rGet(`/assistente/acesso`);
 
+// Só admin (403 para os demais): provedor/modelo em uso, se está configurado e
+// o último erro (tipo + hora, em memória no servidor). Nunca traz segredos.
+export type AssistenteStatus = {
+  provedor: string | null; modelo: string | null; configurado: boolean; motivo: string | null;
+  ultimo_erro: { tipo: string; em: string } | null; ultimo_sucesso_em: string | null;
+};
+export const fetchAssistenteStatus = (): Promise<AssistenteStatus> => _rGet(`/assistente/status`);
+
 export type AssistenteEnsinamento = {
   id: number; titulo: string; texto: string; ativo: boolean; criado_em: string; atualizado_em: string;
 };
