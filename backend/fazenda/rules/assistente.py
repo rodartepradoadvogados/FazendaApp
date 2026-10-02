@@ -354,11 +354,17 @@ def _tool_consultar_financeiro(session: Session, fazenda_id: int | None = None) 
     }
 
 
-def _tool_consultar_estoque(session: Session) -> dict:
-    # Estoque/Fornecedor ainda não têm fazenda_id — ver proposta de separação
-    # fazenda/empresa, Parte 1.6; sem filtro por enquanto.
-    fornecedores = {f.id: f.nome for f in session.exec(select(Fornecedor)).all()}
-    itens = [e.model_dump() for e in session.exec(select(Estoque)).all()]
+def _tool_consultar_estoque(session: Session, fazenda_id: int | None = None) -> dict:
+    # FURO DE MULTI-TENANT CORRIGIDO: Estoque/Fornecedor já têm fazenda_id (o
+    # comentário antigo, "ainda não têm", estava desatualizado) — sem o filtro,
+    # o Assistente listava itens de OUTRAS fazendas.
+    query_fornecedor = select(Fornecedor)
+    query_estoque = select(Estoque)
+    if fazenda_id is not None:
+        query_fornecedor = query_fornecedor.where(Fornecedor.fazenda_id == fazenda_id)
+        query_estoque = query_estoque.where(Estoque.fazenda_id == fazenda_id)
+    fornecedores = {f.id: f.nome for f in session.exec(query_fornecedor).all()}
+    itens = [e.model_dump() for e in session.exec(query_estoque).all()]
     abaixo_minimo = [
         {"nome": i["nome"], "quantidade": i["quantidade"], "estoque_minimo": i.get("estoque_minimo"),
          "fornecedor": fornecedores.get(i.get("fornecedor_id"))}
@@ -389,10 +395,14 @@ def _tool_consultar_analise_reprodutiva(session: Session, fazenda_id: int | None
         query_servico = query_servico.where(Servico.fazenda_id == fazenda_id)
     servicos = [s.model_dump() for s in session.exec(query_servico).all()]
     registros = analisar_servicos(servicos)
-    # Secagem/ControleLeiteiro (Produção) ainda não têm fazenda_id — ver
-    # proposta de separação fazenda/empresa, Parte 1.6; sem filtro por enquanto.
-    secagens = [s.model_dump() for s in session.exec(select(Secagem)).all()]
-    controles = [c.model_dump() for c in session.exec(select(ControleLeiteiro)).all()]
+    # FURO DE MULTI-TENANT CORRIGIDO: Secagem/ControleLeiteiro já têm fazenda_id.
+    query_secagem = select(Secagem)
+    query_controle = select(ControleLeiteiro)
+    if fazenda_id is not None:
+        query_secagem = query_secagem.where(Secagem.fazenda_id == fazenda_id)
+        query_controle = query_controle.where(ControleLeiteiro.fazenda_id == fazenda_id)
+    secagens = [s.model_dump() for s in session.exec(query_secagem).all()]
+    controles = [c.model_dump() for c in session.exec(query_controle).all()]
     from fazenda.rules.parametros import dias_resultado_conhecido
 
     agregado = agregar_mensal(registros, secagens, controles, dias_resultado=dias_resultado_conhecido())
@@ -412,7 +422,7 @@ _EXECUTORES = {
     "buscar_animal": lambda session, usuario, entrada, fazenda_id: _tool_buscar_animal(session, entrada.get("numero", ""), fazenda_id),
     "consultar_agenda_hoje": lambda session, usuario, entrada, fazenda_id: _tool_consultar_agenda_hoje(session, usuario, fazenda_id),
     "consultar_financeiro": lambda session, usuario, entrada, fazenda_id: _tool_consultar_financeiro(session, fazenda_id),
-    "consultar_estoque": lambda session, usuario, entrada, fazenda_id: _tool_consultar_estoque(session),
+    "consultar_estoque": lambda session, usuario, entrada, fazenda_id: _tool_consultar_estoque(session, fazenda_id),
     "consultar_calendario_sanitario": lambda session, usuario, entrada, fazenda_id: _tool_consultar_calendario_sanitario(session, fazenda_id),
     "consultar_analise_reprodutiva": lambda session, usuario, entrada, fazenda_id: _tool_consultar_analise_reprodutiva(session, fazenda_id),
     "listar_lotes": lambda session, usuario, entrada, fazenda_id: _tool_listar_lotes(session, fazenda_id),
@@ -421,6 +431,13 @@ _EXECUTORES = {
 }
 
 _MODULO_DA_TOOL = {t["spec"]["name"]: t["modulo"] for t in _TOOLS_DISPONIVEIS}
+
+
+def todas_as_ferramentas() -> list[tuple[str, dict]]:
+    """[(módulo, spec)] de TODAS as ferramentas — mesma fonte que
+    `_ferramentas_do_usuario`; usada pela API de leitura para agentes
+    externos (routers/agente_leitura.py), que as expõe sem duplicar nada."""
+    return [(t["modulo"], t["spec"]) for t in _TOOLS_DISPONIVEIS]
 
 
 def _executar_tool(nome: str, entrada: dict, session: Session, usuario: Usuario, fazenda_id: int | None = None) -> dict:
