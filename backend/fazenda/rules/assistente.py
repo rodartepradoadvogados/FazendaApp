@@ -27,6 +27,7 @@ from fazenda.models import (
     Fornecedor, Lote, Parto, PesagemCorporal, Secagem, Servico, Usuario,
 )
 from fazenda.rules import assistente_consultas as _consultas
+from fazenda.rules import assistente_consultas_extra as _consultas_extra
 from fazenda.rules import assistente_llm
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.indicadores import calcular_indicadores
@@ -447,6 +448,9 @@ _EXECUTORES = {
 # Ferramentas com PARÂMETROS (período, filtros) — ver rules/assistente_consultas.py.
 _TOOLS_DISPONIVEIS.extend({"modulo": f["modulo"], "spec": f["spec"]} for f in _consultas.FERRAMENTAS)
 _EXECUTORES.update({f["spec"]["name"]: f["executor"] for f in _consultas.FERRAMENTAS})
+# Segunda leva (indicadores por data, ficha do animal, sêmen, caixa, RMCA, dietas, remédios) — rules/assistente_consultas_extra.py.
+_TOOLS_DISPONIVEIS.extend({"modulo": f["modulo"], "spec": f["spec"]} for f in _consultas_extra.FERRAMENTAS)
+_EXECUTORES.update({f["spec"]["name"]: f["executor"] for f in _consultas_extra.FERRAMENTAS})
 
 _MODULO_DA_TOOL = {t["spec"]["name"]: t["modulo"] for t in _TOOLS_DISPONIVEIS}
 
@@ -496,7 +500,7 @@ def responder(mensagem: str, historico: list[dict], session: Session, usuario: U
             return {"resposta": resposta.get("content") or "(sem resposta)", "historico": mensagens}
         for chamada in chamadas:
             resultado = _executar_tool(chamada["name"], chamada["arguments"], session, usuario, fazenda_id)
-            if chamada["name"] in _consultas.NOMES and "erro" not in resultado:
+            if (chamada["name"] in _consultas.NOMES or chamada["name"] in _consultas_extra.NOMES) and "erro" not in resultado:
                 # Mesma sanitização/paginação do /agente (e `truncado`) para o modelo.
                 resultado = _consultas.formatar_para_chat(resultado, chamada["arguments"])
             mensagens.append({
