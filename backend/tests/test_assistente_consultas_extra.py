@@ -26,7 +26,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from fazenda.auth import MODULOS
 from fazenda.models import (
     Animal, BaixaAnimal, CompraAnimal, ControleLeiteiro, EventoSanitario, ExameResultado, Fazenda, Lactacao, Lote,
-    MovimentoLote, OcorrenciaClinica, Parto, PesagemCorporal, Sanidade, Secagem, Servico,
+    CompraSemen, EstoqueSemen, MovimentoLote, OcorrenciaClinica, Parto, PesagemCorporal, Sanidade, Secagem, Servico, Touro,
 )
 from fazenda.rules import agente_leitura as al
 from fazenda.rules import assistente_consultas_extra as ace
@@ -123,6 +123,34 @@ def _popular_ficha(s: Session) -> None:
 _POPULADORES.append(_popular_ficha)
 
 
+# ---------------------------------------------------------------------------
+# Sêmen e touros
+# ---------------------------------------------------------------------------
+def _popular_semen(s: Session) -> None:
+    s.add(Touro(naab="7HO00001", nome="TouroA", central="ABS", raca="Holandês", tpi=2800.0, nm_dolar=700.0, leite_kg=900.0,
+                dados_extra=json.dumps([["Prodigens", "123"]])))
+    s.add(Touro(naab="7HO00002", nome="TouroB", central="Alta", raca="Holandês", tpi=2950.0, nm_dolar=650.0))
+    s.add(Touro(naab="7JE00003", nome="TouroJersey", central="ABS", raca="Jersey", tpi=None, nm_dolar=None))
+    ea = EstoqueSemen(touro_nome="TouroA", naab="7HO00001", central="ABS", tipo="convencional", doses=5, valor_unitario=50.0,
+                      local_armazenamento="Caneca 1", fazenda_id=1)
+    eb = EstoqueSemen(touro_nome="TouroB", naab="7HO00002", tipo="sexado", doses=0, valor_unitario=120.0, fazenda_id=1)
+    ec = EstoqueSemen(touro_nome="Sevaverde", tipo="fazenda", doses=0, fazenda_id=1)
+    ed = EstoqueSemen(touro_nome="TouroInativo", tipo="convencional", doses=9, ativo=False, fazenda_id=1)
+    es = EstoqueSemen(touro_nome="TouroSEGREDO", naab="7HO00001", tipo="convencional", doses=77, fazenda_id=2)
+    s.add_all([ea, eb, ec, ed, es])
+    s.commit()
+    s.add(CompraSemen(estoque_semen_id=ea.id, touro_nome="TouroA", naab="7HO00001", origem="estoque", tipo="convencional", doses=10,
+                      valor_unitario=50.0, vendedor="Central ABS", data_compra=date(2026, 2, 1), fazenda_id=1))
+    s.add(CompraSemen(estoque_semen_id=es.id, touro_nome="TouroSEGREDO", origem="estoque", tipo="convencional", doses=99,
+                      valor_unitario=1.0, vendedor="SEGREDO", data_compra=date(2026, 2, 1), fazenda_id=2))
+    s.add(Servico(numero_matriz="501", data_servico=date(2026, 2, 10), tipo_servico="Inseminação", reprodutor="TouroA", diagnostico="POSITIVO",
+                  data_diagnostico=date(2026, 3, 10), fazenda_id=1))
+    s.commit()
+
+
+_POPULADORES.append(_popular_semen)
+
+
 @pytest.fixture
 def engine():
     eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -151,11 +179,17 @@ NOVAS = sorted(ace.NOMES)
 TIPICOS: dict[str, dict] = {
     "consultar_indicadores_na_data": {"data": "2026-06-30"},
     "consultar_ficha_animal": {"numero": "500", "secoes": "todas"},
+    "consultar_estoque_semen": {"incluir_provas": "true"},
+    "consultar_touros_catalogo": {},
+    "consultar_uso_semen": {"data_inicio": "2026-01-01", "data_fim": "2026-07-01", "incluir_prova_ao_vivo": "true"},
 }
 # Módulo(s) esperado(s) de cada ferramenta (qualquer um libera).
 MODULOS_ESPERADOS: dict[str, tuple[str, ...]] = {
     "consultar_indicadores_na_data": ("indicadores",),
     "consultar_ficha_animal": ("rebanho",),
+    "consultar_estoque_semen": ("rebanho", "reproducao"),
+    "consultar_touros_catalogo": ("rebanho", "reproducao"),
+    "consultar_uso_semen": ("rebanho", "reproducao", "analise"),
 }
 
 
@@ -353,6 +387,100 @@ class TestFichaAnimal:
     def test_listas_paginadas_no_agente(self, client):
         r = client.get("/agente/consultar/consultar_ficha_animal", params={"numero": "500", "secoes": "producao", "limite": "1"}, headers=AUTH).json()
         assert r["truncado"] is True and len(r["resultado"]["producao"]) == 1 and r["resultado"]["totais"]["producao"] == 3
+
+# ---------------------------------------------------------------------------
+# 3. Sêmen e touros
+# ---------------------------------------------------------------------------
+class TestSemenETouros:
+    def test_estoque_bate_com_o_endpoint_do_site(self, engine):
+        from fazenda.api.routers.cadastro.genetica import listar_estoque_semen, semen_disponivel
+        with Session(engine) as s:
+            site = [i for i in listar_estoque_semen(session=s, fazenda_id=1) if i["ativo"]]
+            painel = semen_disponivel(session=s, fazenda_id=1)
+        r = _rodar(engine, "consultar_estoque_semen", {})
+        assert {i["touro"]: i["doses"] for i in r["itens"]} == {i["touro_nome"]: i["doses"] for i in site}
+        assert r["total_doses"] == sum(i["doses"] for i in site) == 5
+        assert r["painel_do_site"]["totais_convencional_sexado"] == painel["totais"]
+        assert r["painel_do_site"]["minimos"] == painel["minimos"]
+        a = next(i for i in r["itens"] if i["touro"] == "TouroA")
+        assert a["valor_total_em_estoque"] == 250.0 and a["local_armazenamento"] == "Caneca 1" and a["naab"] == "7HO00001"
+
+    def test_estoque_filtros(self, engine):
+        nomes = lambda **kw: {i["touro"] for i in _rodar(engine, "consultar_estoque_semen", kw)["itens"]}  # noqa: E731
+        assert nomes(situacao="disponivel") == {"TouroA"}
+        assert nomes(situacao="zerado") == {"TouroB", "Sevaverde"}
+        assert nomes(tipo="sexado") == {"TouroB"} and nomes(tipo="fazenda") == {"Sevaverde"}
+        assert nomes(touro="7ho0000") == {"TouroA", "TouroB"} and nomes(local="caneca 1") == {"TouroA"}
+        assert "TouroInativo" in nomes(incluir_inativos="true") and "TouroInativo" not in nomes()
+
+    def test_estoque_provas_e_prova_media_do_site(self, engine):
+        from fazenda.api.routers.cadastro.genetica import prova_media_semen
+        r = _rodar(engine, "consultar_estoque_semen", {"incluir_provas": "true"})
+        assert next(i for i in r["itens"] if i["touro"] == "TouroA")["prova"]["tpi"] == 2800.0
+        with Session(engine) as s:
+            assert r["prova_media_do_estoque"] == prova_media_semen(session=s, fazenda_id=1)
+        assert "prova" not in _rodar(engine, "consultar_estoque_semen", {})["itens"][0]
+
+    def test_estoque_isolado(self, engine):
+        r2 = _rodar(engine, "consultar_estoque_semen", {}, fid=2)
+        assert [i["touro"] for i in r2["itens"]] == ["TouroSEGREDO"] and r2["total_doses"] == 77
+        assert "SEGREDO" not in json.dumps(_rodar(engine, "consultar_estoque_semen", {"incluir_provas": "true"}))
+
+    def test_catalogo_ordenacao_e_filtros(self, engine):
+        from fazenda.api.routers.cadastro.genetica import listar_touros
+        with Session(engine) as s:
+            site = listar_touros(session=s)
+        r = _rodar(engine, "consultar_touros_catalogo", {})
+        assert [t["naab"] for t in r["touros"]] == [t["naab"] for t in site] == ["7HO00002", "7HO00001", "7JE00003"]  # TPI desc, sem prova por último
+        assert r["total_no_catalogo"] == 3 and "dados_extra" not in r["touros"][0]
+        assert [t["naab"] for t in _rodar(engine, "consultar_touros_catalogo", {"ordenar_por": "nm_dolar"})["touros"]][:2] == ["7HO00001", "7HO00002"]
+        assert [t["nome"] for t in _rodar(engine, "consultar_touros_catalogo", {"central": "abs"})["touros"]] == ["TouroA", "TouroJersey"]
+        assert [t["nome"] for t in _rodar(engine, "consultar_touros_catalogo", {"raca": "jersey"})["touros"]] == ["TouroJersey"]
+        assert [t["nome"] for t in _rodar(engine, "consultar_touros_catalogo", {"busca": "touroa"})["touros"]] == ["TouroA"]
+
+    def test_catalogo_estoque_da_fazenda_e_dados_extra(self, engine):
+        r = _rodar(engine, "consultar_touros_catalogo", {"apenas_no_estoque": "true", "incluir_dados_extra": "true"})
+        assert [(t["nome"], t["doses_em_estoque_na_fazenda"]) for t in r["touros"]] == [("TouroA", 5)]
+        assert r["touros"][0]["dados_extra_da_planilha"] == [["Prodigens", "123"]]
+        # a fazenda 2 tem 77 doses cadastradas sob o NAAB do TouroA: não pode somar na fazenda 1
+        todos = _rodar(engine, "consultar_touros_catalogo", {}, fid=1)["touros"]
+        assert next(t for t in todos if t["naab"] == "7HO00001")["doses_em_estoque_na_fazenda"] == 5
+        todos2 = _rodar(engine, "consultar_touros_catalogo", {}, fid=2)["touros"]
+        assert next(t for t in todos2 if t["naab"] == "7HO00001")["doses_em_estoque_na_fazenda"] == 77
+
+    def test_uso_por_touro_bate_com_a_analise_reprodutiva(self, engine):
+        r = _rodar(engine, "consultar_uso_semen", {"data_inicio": "2026-01-01", "data_fim": "2026-07-01"})
+        por = {t["touro"]: t for t in r["por_touro"]}
+        # TouroA: 501 (02/10 POSITIVO) + 500 (04/10 NEGATIVO) => 2 serviços, 2 diagnosticados, 1 positivo => 50%
+        assert (por["TouroA"]["servicos"], por["TouroA"]["diagnosticados"], por["TouroA"]["positivos"], por["TouroA"]["taxa_concepcao_pct"]) == (2, 2, 1, 50.0)
+        assert por["TouroB"]["taxa_concepcao_pct"] == 100.0 and por["TouroA"]["doses_em_estoque_hoje"] == 5
+        # a MESMA quebra que consultar_indicadores_reprodutivos(agrupar_por='touro') devolve
+        q = _rodar(engine, "consultar_indicadores_reprodutivos", {"data_inicio": "2026-01-01", "data_fim": "2026-07-01", "agrupar_por": "touro"})["quebra"]
+        assert {x["grupo"]: (x["servicos"], x["positivos"], x["taxa_concepcao_pct"]) for x in q} == {
+            k: (v["servicos"], v["positivos"], v["taxa_concepcao_pct"]) for k, v in por.items() if v["diagnosticados"]}
+        assert r["total_servicos"] == sum(t["servicos"] for t in r["por_touro"])
+
+    def test_uso_compras_e_filtros(self, engine):
+        r = _rodar(engine, "consultar_uso_semen", {"data_inicio": "2026-01-01", "data_fim": "2026-07-01"})
+        assert r["compras_no_periodo"] == {"total_doses": 10, "valor_total": 500.0, "por_touro": [{"touro": "TouroA", "doses": 10, "valor_total": 500.0}]}
+        r = _rodar(engine, "consultar_uso_semen", {"data_inicio": "2026-01-01", "data_fim": "2026-07-01", "touro": "touroB"})
+        assert [t["touro"] for t in r["por_touro"]] == ["TouroB"] and r["compras_no_periodo"]["total_doses"] == 0
+        r = _rodar(engine, "consultar_uso_semen", {"data_inicio": "2027-01-01", "data_fim": "2027-02-01"})
+        assert r["por_touro"] == [] and r["total_servicos"] == 0
+
+    def test_uso_isolado_e_prova_ao_vivo(self, engine):
+        r2 = _rodar(engine, "consultar_uso_semen", {"data_inicio": "2026-01-01", "data_fim": "2026-07-01"}, fid=2)
+        assert [t["touro"] for t in r2["por_touro"]] == ["TouroSEGREDO"] and r2["compras_no_periodo"]["total_doses"] == 99
+        r = _rodar(engine, "consultar_uso_semen", {"data_inicio": "2026-01-01", "data_fim": "2026-07-01", "incluir_prova_ao_vivo": "true"})
+        assert r["prova_ao_vivo"]["touros_considerados"] == 2 and r["prova_ao_vivo"]["total_servicos"] == 3
+
+    def test_validacao(self, engine):
+        assert "pergunte" in _rodar(engine, "consultar_uso_semen", {"data_inicio": "2026-01-01"})["erro"].lower()
+        assert "Data inválida" in _rodar(engine, "consultar_uso_semen", {"data_inicio": "2026-02-30", "data_fim": "2026-07-01"})["erro"]
+        assert "invertido" in _rodar(engine, "consultar_uso_semen", {"data_inicio": "2026-07-01", "data_fim": "2026-01-01"})["erro"]
+        assert "5 anos" in _rodar(engine, "consultar_uso_semen", {"data_inicio": "2019-01-01", "data_fim": "2026-01-01"})["erro"]
+        assert "tipo" in _rodar(engine, "consultar_estoque_semen", {"tipo": "xyz"})["erro"]
+        assert "ordenar_por" in _rodar(engine, "consultar_touros_catalogo", {"ordenar_por": "xyz"})["erro"]
 
 
 # ---------------------------------------------------------------------------

@@ -230,6 +230,213 @@ def _ficha_animal(session: Session, usuario, entrada: dict, fazenda_id: int | No
 
 
 # ===========================================================================
+# 3. Sêmen e touros
+# ===========================================================================
+_TIPOS_SEMEN = ("convencional", "sexado", "fazenda", "todos")
+_ORDEM_TOUROS = ("tpi", "nm_dolar", "leite_kg", "gordura_kg", "proteina_kg", "tipo_composto", "ubere_composto",
+                 "pernas_composto", "fertilidade_filhas", "facilidade_parto", "nome")
+
+
+def _semen_ns(d: dict):
+    from types import SimpleNamespace
+    return SimpleNamespace(**d)
+
+
+def _mapas_touros(session: Session) -> tuple[dict, dict, list]:
+    from fazenda.models import Touro
+    touros = session.exec(select(Touro)).all()  # catálogo GLOBAL (sem fazenda_id) — o mesmo do site
+    return (
+        {(t.naab or "").strip().upper(): t for t in touros},
+        {(t.nome or "").strip().lower(): t for t in touros if t.nome},
+        touros,
+    )
+
+
+def _estoque_semen(session: Session, usuario, entrada: dict, fazenda_id: int | None) -> dict:
+    from fazenda.api.routers.cadastro.genetica import listar_estoque_semen, prova_media_semen, semen_disponivel
+    from fazenda.rules.touros import casar_touro
+
+    busca, local = _txt(entrada, "touro"), _txt(entrada, "local")
+    tipo = _escolha(entrada, "tipo", _TIPOS_SEMEN, "todos")
+    situacao = _escolha(entrada, "situacao", ("disponivel", "zerado", "todos"), "todos")
+    incluir_inativos = _bool(entrada, "incluir_inativos", False)
+    com_prova = _bool(entrada, "incluir_provas", False)
+
+    itens = _chamar(listar_estoque_semen, session, fazenda_id)  # GET /cadastro/estoque-semen (Rebanho › Touros › Sêmen)
+    painel = _chamar(semen_disponivel, session, fazenda_id)  # GET /cadastro/estoque-semen/disponivel (totais e mínimos)
+    por_naab, por_nome, _todos = _mapas_touros(session)
+
+    if not incluir_inativos:
+        itens = [i for i in itens if i.get("ativo") is not False]
+    if busca:
+        itens = [i for i in itens if _contem(i.get("touro_nome"), busca) or _contem(i.get("naab"), busca) or _contem(i.get("codigo"), busca)]
+    if tipo != "todos":
+        itens = [i for i in itens if (i.get("tipo") or "convencional") == tipo]
+    if local:
+        itens = [i for i in itens if _contem(i.get("local_armazenamento"), local)]
+    if situacao == "disponivel":
+        itens = [i for i in itens if (i.get("doses") or 0) > 0]
+    elif situacao == "zerado":
+        itens = [i for i in itens if (i.get("doses") or 0) <= 0]
+
+    linhas = []
+    for i in itens:
+        d = {
+            "touro": i.get("touro_nome"), "naab": i.get("naab") or i.get("codigo"), "central": i.get("central"),
+            "tipo": i.get("tipo"), "doses": i.get("doses") or 0, "valor_unitario": i.get("valor_unitario"),
+            "valor_total_em_estoque": round((i.get("doses") or 0) * i["valor_unitario"], 2) if i.get("valor_unitario") is not None else None,
+            "local_armazenamento": i.get("local_armazenamento"), "ativo": i.get("ativo") is not False,
+            "observacao": i.get("observacao"),
+        }
+        if com_prova:
+            t = casar_touro(_semen_ns(i), por_naab, por_nome)
+            d["prova"] = {k: getattr(t, k) for k in ("tpi", "nm_dolar", "leite_kg", "gordura_kg", "proteina_kg", "fertilidade_filhas", "facilidade_parto")} if t else None
+        linhas.append(d)
+    por_tipo: dict[str, dict] = defaultdict(lambda: {"touros": 0, "doses": 0})
+    for d in linhas:
+        por_tipo[d["tipo"] or "convencional"]["touros"] += 1
+        por_tipo[d["tipo"] or "convencional"]["doses"] += d["doses"]
+    cortadas, cortou = _cortar(sorted(linhas, key=lambda d: (str(d["touro"] or "").lower())))
+    saida: dict[str, Any] = {
+        "total_touros": len(linhas), "total_doses": sum(d["doses"] for d in linhas), "por_tipo": dict(por_tipo),
+        "painel_do_site": {
+            "totais_convencional_sexado": painel["totais"], "minimos": painel["minimos"], "abaixo_minimo": painel["abaixo_minimo"],
+        },
+        "itens": cortadas, "limitado_pela_ferramenta": cortou,
+        "como_ler": (
+            "Estoque de sêmen da tela Rebanho › Touros › Sêmen (doses por touro). 'painel_do_site' = totais e estoque mínimo por categoria "
+            "como a inseminação mostra (convencional e sexado; touro 'fazenda' = monta natural, sem dose). Itens inativos ficam de fora "
+            "(incluir_inativos=true para ver). Não há controle de botijão/partida além de 'local_armazenamento' (ex.: Caneca 1)."
+        ),
+    }
+    if com_prova:
+        saida["prova_media_do_estoque"] = _chamar(prova_media_semen, session, fazenda_id)  # GET /cadastro/estoque-semen/prova-media
+    return saida
+
+
+def _touros_catalogo(session: Session, usuario, entrada: dict, fazenda_id: int | None) -> dict:
+    import json as _json
+    from fazenda.api.routers.cadastro.genetica import listar_touros
+    from fazenda.models import EstoqueSemen
+    from fazenda.rules.touros import casar_touro
+
+    busca, central, raca = _txt(entrada, "busca"), _txt(entrada, "central"), _txt(entrada, "raca")
+    no_estoque = _bool(entrada, "apenas_no_estoque", False)
+    ordem = _escolha(entrada, "ordenar_por", _ORDEM_TOUROS, "tpi")
+    extra = _bool(entrada, "incluir_dados_extra", False)
+
+    touros = _chamar(listar_touros, session, fazenda_id)  # GET /cadastro/touros (catálogo global NAAB/provas)
+    total_catalogo = len(touros)
+    if busca:
+        touros = [t for t in touros if any(_contem(t.get(c), busca) for c in ("nome", "nome_completo", "naab"))]
+    if central:
+        touros = [t for t in touros if _contem(t.get("central"), central) or _contem(t.get("fonte"), central)]
+    if raca:
+        touros = [t for t in touros if _contem(t.get("raca"), raca)]
+    estoque: dict[str, int] = {}  # NAAB do catálogo -> doses desta fazenda
+    por_naab, por_nome, _ = _mapas_touros(session)
+    for e in session.exec(_escopo(select(EstoqueSemen), EstoqueSemen.fazenda_id, fazenda_id)).all():
+        if e.ativo is False:
+            continue
+        t = casar_touro(e, por_naab, por_nome)
+        if t is not None:
+            estoque[t.naab] = estoque.get(t.naab, 0) + (e.doses or 0)
+    if no_estoque:
+        touros = [t for t in touros if estoque.get(t["naab"], 0) > 0]
+    if ordem == "nome":
+        touros.sort(key=lambda t: _sem_acento(t.get("nome") or t.get("naab")))
+    else:
+        touros.sort(key=lambda t: (t.get(ordem) is None, -(t.get(ordem) or 0)))  # maior primeiro; sem prova por último
+    cortados, cortou = _cortar(touros)
+    linhas = []
+    for t in cortados:
+        d = {k: _iso(v) for k, v in t.items() if k not in ("dados_extra", "id")}
+        d["doses_em_estoque_na_fazenda"] = estoque.get(t["naab"], 0)
+        if extra and t.get("dados_extra"):
+            try:
+                d["dados_extra_da_planilha"] = _json.loads(t["dados_extra"])
+            except (ValueError, TypeError):
+                d["dados_extra_da_planilha"] = None
+        linhas.append(d)
+    return {
+        "total_encontrados": len(touros), "total_no_catalogo": total_catalogo, "ordenado_por": ordem,
+        "touros": linhas, "limitado_pela_ferramenta": cortou,
+        "como_ler": (
+            "Catálogo genético GLOBAL de touros (NAAB/provas do fornecedor, igual à tela Rebanho › Touros) — não é só o que a fazenda tem. "
+            "tpi/nm_dolar/leite_kg etc. são as provas; 'doses_em_estoque_na_fazenda' mostra se há sêmen dele no estoque desta fazenda. "
+            "O sistema não tem uma coluna PRODIGENS própria: colunas extras da planilha do fornecedor ficam em dados_extra (incluir_dados_extra=true)."
+        ),
+    }
+
+
+def _uso_semen(session: Session, usuario, entrada: dict, fazenda_id: int | None) -> dict:
+    from fazenda.api.routers.cadastro.genetica import listar_estoque_semen, prova_ao_vivo_semen
+    from fazenda.api.routers.relatorio_compra_semen import relatorio as relatorio_compras
+    from fazenda.rules.reproducao_analise import resumo_periodo
+
+    ini, fim = _periodo(entrada, obrigatorio=True)
+    touro = _txt(entrada, "touro")
+    tipo = _escolha(entrada, "tipo", _TIPOS_SEMEN, "todos")
+    com_prova = _bool(entrada, "incluir_prova_ao_vivo", False)
+
+    from fazenda.rules.assistente_consultas import _servicos_do_site
+    regs = [r for r in _servicos_do_site(session, fazenda_id) if _no_periodo(r.get("data"), ini, fim)]
+    if touro:
+        regs = [r for r in regs if _contem(r.get("touro"), touro)]
+    if tipo != "todos":
+        regs = [r for r in regs if (r.get("tipo_semen") or "") == tipo]
+    estoque = {str(e.get("touro_nome") or "").strip().lower(): e for e in _chamar(listar_estoque_semen, session, fazenda_id)}
+
+    grupos: dict[str, list[dict]] = defaultdict(list)
+    for r in regs:
+        grupos[r.get("touro") or "(sem touro)"].append(r)
+    por_touro = []
+    for nome, g in grupos.items():
+        resumo = resumo_periodo(g)  # MESMA conta da tela Análise reprodutiva, recortada neste touro
+        est = estoque.get(nome.strip().lower())
+        por_touro.append({
+            "touro": nome, "naab": (est or {}).get("naab"), "tipo_semen": next((r["tipo_semen"] for r in g if r.get("tipo_semen")), (est or {}).get("tipo")),
+            "servicos": resumo["servicos_total"], "diagnosticados": resumo["diagnosticados"], "positivos": resumo["positivos"],
+            "negativos": resumo["negativos"], "sem_diagnostico": resumo["sem_diagnostico"],
+            "taxa_concepcao_pct": resumo["taxa_concepcao_pct"], "perdas_prenhez": resumo["perdas_prenhez"],
+            "doses_em_estoque_hoje": (est or {}).get("doses"),
+        })
+    por_touro.sort(key=lambda x: (-x["servicos"], x["touro"]))
+    t = resumo_periodo(regs)
+
+    compras = _chamar(
+        relatorio_compras, session, fazenda_id, touro=touro, naab=None, vendedor=None, data_de=ini, data_ate=fim, numero_documento=None,
+    )
+    if tipo != "todos":
+        compras = [c for c in compras if (c.get("tipo") or "") == tipo]
+    comp_touro: dict[str, dict] = defaultdict(lambda: {"doses": 0, "valor_total": 0.0})
+    for c in compras:
+        comp_touro[c["touro_nome"]]["doses"] += c["doses"] or 0
+        comp_touro[c["touro_nome"]]["valor_total"] = round(comp_touro[c["touro_nome"]]["valor_total"] + (c["valor_total"] or 0), 2)
+    cortados, cortou = _cortar(por_touro)
+    saida: dict[str, Any] = {
+        "periodo": {"data_inicio": ini.isoformat(), "data_fim": fim.isoformat()},
+        "filtros": {"touro": touro, "tipo": tipo},
+        "total_servicos": t["servicos_total"], "taxa_concepcao_pct_geral": t["taxa_concepcao_pct"],
+        "por_touro": cortados, "limitado_pela_ferramenta": cortou,
+        "compras_no_periodo": {
+            "total_doses": sum(v["doses"] for v in comp_touro.values()),
+            "valor_total": round(sum(v["valor_total"] for v in comp_touro.values()), 2),
+            "por_touro": [{"touro": k, **v} for k, v in sorted(comp_touro.items())],
+        },
+        "como_ler": (
+            "Uso = serviços (IA/IATF/monta) lançados no período; 1 serviço de IA = 1 dose (monta natural/tipo 'fazenda' não usa dose). "
+            "taxa_concepcao_pct = positivos ÷ diagnosticados (a mesma da tela Relatórios › Análise reprodutiva) — serviços recentes ainda sem "
+            "diagnóstico não entram na taxa. Compras: relatório de compra de sêmen. Para comparar touros com mais filtros use "
+            "consultar_indicadores_reprodutivos(agrupar_por='touro')."
+        ),
+    }
+    if com_prova:
+        saida["prova_ao_vivo"] = _chamar(prova_ao_vivo_semen, session, fazenda_id, de=ini.isoformat(), ate=fim.isoformat())
+    return saida
+
+
+# ===========================================================================
 # Registro
 # ===========================================================================
 FERRAMENTAS: list[dict] = [
@@ -278,6 +485,72 @@ FERRAMENTAS: list[dict] = [
             }, ["numero"]),
         },
         "executor": _com_erro(_ficha_animal),
+    },
+    {
+        "modulo": ("rebanho", "reproducao"),
+        "spec": {
+            "name": "consultar_estoque_semen",
+            "description": (
+                "ESTOQUE DE SÊMEN da fazenda (Rebanho › Touros › Sêmen): doses por touro, NAAB, central, tipo (convencional, sexado, fazenda), "
+                "valor por dose, local (caneca/botijão) e o painel de estoque mínimo por categoria. Use para 'quantas doses de sêmen tenho?', "
+                "'tenho sêmen do touro X?', 'quantas doses sexadas tenho?', 'o sêmen está abaixo do mínimo?'. Filtros: touro (nome/NAAB), "
+                "tipo, situacao (disponivel, zerado ou todos), local, incluir_provas=true (TPI, NM$ e prova média ponderada pelas doses). "
+                "Compras de sêmen: executar_relatorio('compra_semen'); uso por touro no período: consultar_uso_semen; provas do catálogo "
+                "inteiro: consultar_touros_catalogo; saldo de insumos comuns: consultar_estoque_itens."
+            ),
+            "input_schema": _schema({
+                "touro": ("string", "Opcional. Parte do nome do touro ou do NAAB."),
+                "tipo": ("string", "Opcional. convencional, sexado, fazenda ou todos (padrão)."),
+                "situacao": ("string", "Opcional. disponivel (com dose), zerado ou todos (padrão)."),
+                "local": ("string", "Opcional. Parte do local de armazenamento (ex.: 'Caneca 1')."),
+                "incluir_provas": ("boolean", "Opcional. true = TPI/NM$ de cada touro e a prova média do estoque."),
+                "incluir_inativos": ("boolean", "Opcional. true = inclui touros desativados."),
+            }),
+        },
+        "executor": _com_erro(_estoque_semen),
+    },
+    {
+        "modulo": ("rebanho", "reproducao"),
+        "spec": {
+            "name": "consultar_touros_catalogo",
+            "description": (
+                "CATÁLOGO GENÉTICO DE TOUROS (Rebanho › Touros, NAAB/provas do fornecedor): nome, central, raça e as provas (TPI, NM$, leite, "
+                "gordura, proteína, tipo, úbere, pernas, CCS, fertilidade das filhas, facilidade de parto). Use para 'qual o TPI do touro X?', "
+                "'quais os melhores touros em NM$ que tenho em estoque?' (apenas_no_estoque=true), 'touros da central ABS'. Filtros: busca "
+                "(nome/NAAB), central, raca, apenas_no_estoque; ordenar_por: tpi (padrão), nm_dolar, leite_kg, gordura_kg, proteina_kg, "
+                "tipo_composto, ubere_composto, pernas_composto, fertilidade_filhas, facilidade_parto ou nome. É o catálogo global, não o "
+                "estoque (doses): para doses use consultar_estoque_semen; para resultado de uso (concepção) use consultar_uso_semen."
+            ),
+            "input_schema": _schema({
+                "busca": ("string", "Opcional. Parte do nome ou do NAAB."), "central": ("string", "Opcional. Central/fonte (ex.: ABS, Alta, Semex)."),
+                "raca": ("string", "Opcional. Raça (ex.: Holandês, Jersey, Gir)."),
+                "apenas_no_estoque": ("boolean", "Opcional. true = só touros com dose em estoque na fazenda."),
+                "ordenar_por": ("string", "Opcional. " + ", ".join(_ORDEM_TOUROS) + " (padrão tpi, maior primeiro)."),
+                "incluir_dados_extra": ("boolean", "Opcional. true = colunas extras da planilha do fornecedor."),
+            }),
+        },
+        "executor": _com_erro(_touros_catalogo),
+    },
+    {
+        "modulo": ("rebanho", "reproducao", "analise"),
+        "spec": {
+            "name": "consultar_uso_semen",
+            "description": (
+                "USO DE SÊMEN POR TOURO em um período e o RESULTADO: serviços (doses usadas), diagnósticos positivos/negativos, taxa de "
+                "concepção por touro (a mesma da Análise reprodutiva), perdas, doses restantes e compras do período. Use para 'quais touros mais "
+                "usei em 2026?', 'qual a concepção do touro X de janeiro a junho?', 'quanto sêmen usei e comprei no semestre?'. OBRIGATÓRIO "
+                "data_inicio e data_fim (AAAA-MM-DD); se faltarem, pergunte. Filtros: touro, tipo (convencional, sexado, fazenda); "
+                "incluir_prova_ao_vivo=true traz a prova genética ponderada pelo uso. Para doses em estoque hoje use consultar_estoque_semen; "
+                "para concepção com outros filtros (inseminador, ordem de parto) use consultar_indicadores_reprodutivos."
+            ),
+            "input_schema": _schema({
+                "data_inicio": _DI, "data_fim": _DF,
+                "touro": ("string", "Opcional. Parte do nome do touro."),
+                "tipo": ("string", "Opcional. convencional, sexado, fazenda ou todos (padrão)."),
+                "incluir_prova_ao_vivo": ("boolean", "Opcional. true = provas genéticas ponderadas pelo uso no período."),
+            }, ["data_inicio", "data_fim"]),
+        },
+        "executor": _com_erro(_uso_semen),
     },
 ]
 
