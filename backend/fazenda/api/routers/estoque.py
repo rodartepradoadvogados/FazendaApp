@@ -585,6 +585,21 @@ def excluir_item_estoque(
                 f'alimento(s) ({nomes}). Desative o item em vez de excluir.'
             ),
         )
+    mesclagens = session.exec(
+        select(EstoqueAliasMesclado).where(
+            (EstoqueAliasMesclado.estoque_perdedor_id == item_id)
+            | (EstoqueAliasMesclado.estoque_sobrevivente_id == item_id)
+        )
+    ).all()
+    if mesclagens:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f'Não é possível excluir "{item.nome}" — ele participou de uma mesclagem de itens e o registro '
+                "guarda a carência do nome antigo para o histórico. Mantenha-o inativo: ele não aparece "
+                "nas listas nem aceita novos lançamentos."
+            ),
+        )
     for vinculo in session.exec(select(EstoquePrincipioAtivo).where(EstoquePrincipioAtivo.estoque_id == item_id)).all():
         session.delete(vinculo)
     # Zera as referências opcionais antes de excluir — mesmo padrão já usado
