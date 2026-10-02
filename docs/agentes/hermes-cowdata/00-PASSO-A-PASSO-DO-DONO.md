@@ -1,4 +1,4 @@
-# Hermes Agent + CowData — passo a passo do dono (versão 2, atualizada em 02/10/2026)
+# Hermes Agent + CowData — passo a passo do dono (versão 3, atualizada em 02/10/2026)
 
 **Objetivo:** o mesmo agente (Hermes, na sua VPS, com OpenRouter) responde no **Telegram**, no **Hermes Desktop** e o chat do **CowData** volta a funcionar — sempre **somente consultando** os dados, nunca escrevendo.
 
@@ -107,55 +107,76 @@ Todos os itens têm que dar **OK**: token aceito, rotas de consulta respondendo 
 | 403 | checagem de IP; apague `AGENTE_IPS_PERMITIDOS` no Railway, aplique e teste de novo |
 | 429 | passou de 60 consultas por minuto; espere um pouco |
 
-## ETAPA 4 — Configurar o Hermes (na VPS)
+## ETAPA 4 — Perfil `cowdata` do Hermes (na VPS)
 
-1. **Registrar a ponte.** Edite `~/.hermes/config.yaml` e acrescente (se já existir `mcp_servers`, só inclua o bloco `cowdata` dentro dele):
-   ```yaml
+**Por que um perfil separado:** o seu Hermes principal tem acesso a GitHub, Neon, Railway, Supabase, Vercel e outros. O bot compartilhado do Telegram **nunca** pode usar esse Hermes. Um *perfil* é um Hermes à parte, com configuração, chaves, memória e bot próprios. O perfil `cowdata` só enxerga o CowData.
+
+1. **Criar o perfil limpo** (sem `--clone`, para não copiar as chaves dos outros servidores):
+   ```
+   hermes profile create cowdata
+   cowdata setup
+   ```
+   No assistente: backend de terminal → **Keep current (local)**; provedor **OpenRouter** (cole a chave só ali; prefira uma chave nova com limite de gasto); modelo à sua escolha; navegador e demais ferramentas extras → **Skip**; aplicativos de mensagem → marque nenhum e aperte **ENTER** (o Telegram entra na Etapa 5).
+2. **Registrar só a ponte do CowData no perfil:**
+   ```
+   grep -n "mcp_servers" ~/.hermes/profiles/cowdata/config.yaml
+   ```
+   Se não aparecer nada, rode:
+   ```
+   cat >> ~/.hermes/profiles/cowdata/config.yaml <<'E'
+
    mcp_servers:
      cowdata:
        command: "/opt/cowdata-mcp/run-mcp-cowdata.sh"
        args: []
        timeout: 60
        connect_timeout: 30
+   E
    ```
-   O script lê o token do arquivo do passo 3.4, então não há segredo no YAML.
-2. **Instruções do agente.** Faça backup do arquivo atual e copie as instruções novas:
+3. **Instruções do agente** (responda `y` se perguntar se pode substituir o `SOUL.md` padrão):
    ```
-   cp ~/.hermes/SOUL.md ~/.hermes/SOUL.md.bak 2>/dev/null
-   cp /opt/cowdata-mcp/INSTRUCOES-AGENTE.md ~/.hermes/SOUL.md
+   cp /opt/cowdata-mcp/INSTRUCOES-AGENTE.md ~/.hermes/profiles/cowdata/SOUL.md
    ```
-   Se esse Hermes também faz outras coisas para você, **mescle** o conteúdo em vez de substituir.
-3. **Recarregar.** No chat do Hermes digite `/reload-mcp` (ou reinicie o gateway).
-4. Confira que o Hermes lista as ferramentas do CowData (`consultar_indicadores`, `buscar_animal`, `consultar_estoque`, `listar_lotes` e outras, mais `instrucoes_cowdata`).
+4. **Desligar as ferramentas próprias do Hermes neste perfil:** `cowdata tools` › **Configure CLI**. Deixe marcadas **só** *Clarifying Questions* e *Task Planning*. Desmarque o resto (terminal, arquivos, código, navegador, web, delegação, cron, memória, busca de sessões, skills, computer use, imagem, voz, conexões). As ferramentas do CowData vêm pela ponte MCP e não aparecem nessa lista.
+5. **Testar:** `cowdata chat`
+   - "Liste as ferramentas que você tem." → só as do CowData (41 ferramentas), nada de terminal ou arquivos.
+   - "Quantos animais em lactação temos?" → dado real.
+   - "Execute o comando ls." → deve recusar.
 
-## ETAPA 5 — Bot do Telegram
+## ETAPA 5 — Bot do Telegram (no perfil `cowdata`)
 
-1. No Telegram, abra **@BotFather** › `/newbot` › escolha nome e username (terminando em `bot`). Guarde o token.
-   - **Crie um bot novo.** O CowData já usa outro bot nos fluxos dele (variável `TELEGRAM_BOT_TOKEN` no Railway). Não troque o valor dessa variável.
-2. Converse com **@userinfobot** e anote o seu `Id` numérico. Faça o mesmo para cada pessoa que for usar.
-3. Na VPS, edite `~/.hermes/.env` e acrescente:
+1. No Telegram, **@BotFather** › `/newbot` (nome e username terminando em `bot`). Guarde o token. **Crie um bot novo**: o CowData já usa outro (variável `TELEGRAM_BOT_TOKEN` no Railway, que você não deve alterar).
+2. Com **@userinfobot**, anote o seu `Id` numérico e o de cada pessoa que vai usar.
+3. **Mantenha o gateway parado enquanto configura:** `cowdata gateway stop` (se ele já estiver rodando como serviço).
+4. Configure o Telegram: `cowdata gateway setup` › marque **Telegram** (barra de espaço) › **ENTER** › cole o token do bot **só no assistente** › informe os IDs permitidos, separados por vírgula. A lista é obrigatória: o link do bot é público.
+5. **Desligue as ferramentas também no Telegram:** `cowdata tools` › **Configure Telegram**. Deixe marcadas só *Clarifying Questions* e *Task Planning*; o contador deve ficar em 2. Saia em **Done**.
+6. **Ligue e confira:**
    ```
-   TELEGRAM_BOT_TOKEN=<token do BotFather>
-   TELEGRAM_ALLOWED_USERS=<seu id>,<id de outra pessoa>
+   cowdata gateway start
+   cowdata gateway status
    ```
-   A lista de usuários permitidos é **obrigatória na prática**: o link do bot é público, e sem a lista qualquer pessoa poderia conversar com ele.
-4. Configure e inicie o gateway: `hermes gateway setup` (escolha Telegram) e depois `hermes gateway`.
-5. Mande "oi" ao bot. Quem não estiver na lista deve ser ignorado.
-6. Para o gateway continuar rodando depois que você fechar o terminal, ele precisa virar um serviço. Peça-me os comandos quando chegar aqui.
+   Se aparecer "já está rodando como serviço", use `cowdata gateway restart`. **Nunca use `--force`** (dois gateways podem corromper o banco do Hermes).
+7. **Teste no Telegram:** `/start` › "Quantos animais em lactação temos?" › "execute o comando ls" (recusa). Com uma segunda conta **fora da lista**, o bot deve ignorar.
 
 ## ETAPA 6 — Hermes Desktop
 
-O Desktop deve usar o **mesmo** Hermes da VPS e herda o MCP e o `SOUL.md`. Se o seu Desktop rodar um Hermes local, repita as Etapas 3 e 4 nele. Pergunte algo do CowData e confira que a resposta vem com dados reais.
+Para o seu uso pessoal, o Desktop pode usar o perfil `cowdata` ou o Hermes principal (com o MCP do CowData acrescentado). O bot compartilhado do Telegram fica **sempre** no perfil `cowdata`. Pergunte algo do CowData e confira que a resposta vem com dados reais.
 
 ## ETAPA 7 — Testes de aceitação (10 minutos)
 
+Depois de cada deploy do CowData que acrescente ferramentas, rode `/reload-mcp` no chat (ou `cowdata gateway restart`) para o Hermes enxergar as novas.
+
 No Telegram e no Desktop:
-- "Quantos animais temos e quantos em lactação?"
-- "O que vence na agenda hoje?" · "Como está o estoque de vacinas?"
-- **Por período:** "Qual a minha taxa de concepção de 01/01/2026 a 01/07/2026?" (confira com Relatórios › Análise reprodutiva, mesmo período) · "Quanto tenho a pagar em outubro?" · "Quantas vacas estão na lista de espera da vacina X?" · "Quais pedidos estão abertos?" · "Quanto leite produzi em agosto?" · só "qual minha taxa de concepção?" (ele deve **perguntar o período**).
+- "Quantos animais temos e quantos em lactação?" · "O que vence na agenda hoje?" · "Como está o estoque de vacinas?"
+- **Por período:** "Qual a minha taxa de concepção de 01/01/2026 a 01/07/2026?" (confira com Relatórios › Análise reprodutiva, mesmo período) · "Quanto tenho a pagar em outubro?" · "Quais pedidos estão abertos?" · "Quanto leite produzi em agosto?" · só "qual minha taxa de concepção?" (ele deve **perguntar o período**).
+- **Ficha e reprodução:** "Mostre a ficha do animal 1234." · "Qual o estado reprodutivo do 1234?" · "Como foi a concepção por touro em 2026?"
+- **Sêmen e touros:** "Quanto sêmen do touro X temos?" · "Quais touros estão no catálogo?"
+- **Financeiro:** "Fluxo de caixa de agosto." · "Qual o RMCA de agosto?" (só dono/admin)
+- **Dietas:** "Qual a dieta do lote 02?" · "Quanto foi o consumo e a sobra no cocho em setembro?"
+- **Sanidade:** "Qual o remédio para mastite e quais os substitutos?" · "Quantas vacas estão na lista de espera da vacina X?" · "O que foi aplicado no animal 1234?"
 - **Limites:** "Apague o lote 3." / "Lance uma vacina no animal 1234." → ele deve **recusar** e dizer que só consulta.
-- **Fora do escopo:** "Qual a previsão do tempo?" → recusar ou desviar educadamente.
-- **Já responde (novo):** taxa de concepção/serviços/partos por período, relatórios por parâmetros, protocolos cadastrados e lançados, lista de espera/agendamentos/concluídos do preventivo, aplicações, BST, pedidos, cotações, contas, estoque com validade e leite por período. **Ainda não responde:** veja a lista "O que o agente AINDA NÃO consegue consultar" em `INSTRUCOES-AGENTE.md` e `COBERTURA-FERRAMENTAS.md`.
+- **Fora do escopo:** "Qual a previsão do tempo?" → recusar ou desviar.
+- **Ainda não responde:** agenda de outros dias, movimentos de estoque, qualidade do leite, pesagem, orçamento, patrimônio, cartão, recria, safra, folha/RH, formulação de dietas e custo/vaca/dia da dieta. A lista completa está em `COBERTURA-FERRAMENTAS.md`.
 - Confirme no CowData que **nada foi gravado**.
 
 ## ETAPA 8 — Treinar e impor limites no dia a dia
@@ -183,6 +204,6 @@ O chat do site responder **pelo próprio Hermes** exige expor o servidor de API 
 
 ## Onde você está agora
 
-- ✅ Etapas 1 e 2 (variáveis no Railway).
-- ✅ Etapa 3 até o item 3.3 (Python 3.11 e dependências instaladas).
-- ➡️ **Próximo:** itens 3.4 (guardar o token) e 3.5 (`./testar.sh`).
+- ✅ Etapas 1 a 3 (OpenRouter, token e ponte na VPS, `testar.sh` com TUDO OK).
+- ✅ Perfil `cowdata` criado, ponte registrada, instruções copiadas.
+- ➡️ **Próximo:** desligar as ferramentas do **Telegram** (`cowdata tools`), ligar o gateway e fazer os testes da Etapa 7.
