@@ -8,6 +8,8 @@ Variáveis de ambiente (nomes exatos):
                         ANTHROPIC_API_KEY existe, senão erro de configuração.
   OPENROUTER_API_KEY    chave do OpenRouter (API compatível com OpenAI).
   ANTHROPIC_API_KEY     chave da Anthropic.
+  ASSISTENTE_MODELOS_RESERVA  (opcional) modelos do OpenRouter, separados por vírgula, usados
+                        quando o principal está sobrecarregado/indisponível.
   ASSISTENTE_MODELO     modelo. Padrão: 'anthropic/claude-sonnet-4.5'
                         (openrouter) ou 'claude-sonnet-5' (anthropic).
 
@@ -437,6 +439,46 @@ def _completar_anthropic(system: str, mensagens: list[dict], ferramentas: list[d
     return out
 
 
+
+ERROS_QUE_VALEM_TENTAR_DE_NOVO = ("indisponivel", "limite", "timeout", "rede")
+
+
+def _modelos_reserva() -> list[str]:
+    """ASSISTENTE_MODELOS_RESERVA: modelos do OpenRouter (separados por vírgula) usados
+    quando o principal está sobrecarregado/indisponível (típico de modelos gratuitos)."""
+    bruto = os.environ.get("ASSISTENTE_MODELOS_RESERVA") or ""
+    return [m.strip() for m in bruto.split(",") if m.strip()]
+
+
+def _completar_openrouter_com_reserva(system: str, mensagens: list[dict], ferramentas: list[dict], modelo: str) -> dict:
+    """Tenta o modelo principal (com 1 nova tentativa curta se estiver sobrecarregado)
+    e, se continuar falhando por indisponibilidade/limite, passa pelos modelos reserva.
+    Erros de chave, saldo, modelo inexistente ou configuração NÃO são repetidos."""
+    modelos = [modelo] + [m for m in _modelos_reserva() if m != modelo]
+    ultimo: ErroAssistente | None = None
+    for i, m in enumerate(modelos):
+        tentativas = 2 if i == 0 else 1
+        for t in range(tentativas):
+            try:
+                return _completar_openrouter(system, mensagens, ferramentas, m)
+            except ErroAssistente as e:
+                ultimo = e
+                if e.tipo not in ERROS_QUE_VALEM_TENTAR_DE_NOVO:
+                    raise
+                if t + 1 < tentativas:
+                    _pausar(PAUSA_ENTRE_TENTATIVAS_S)
+    assert ultimo is not None
+    raise ultimo
+
+
+PAUSA_ENTRE_TENTATIVAS_S = 2.0
+
+
+def _pausar(segundos: float) -> None:
+    import time
+    time.sleep(segundos)
+
+
 # ---------------------------------------------------------------------------
 # Entrada única
 # ---------------------------------------------------------------------------
@@ -450,7 +492,7 @@ def completar(system: str, mensagens: list[dict], ferramentas: list[dict]) -> di
         raise e
     try:
         if cfg["provedor"] == PROVEDOR_OPENROUTER:
-            out = _completar_openrouter(system, mensagens, ferramentas, cfg["modelo"])
+            out = _completar_openrouter_com_reserva(system, mensagens, ferramentas, cfg["modelo"])
         else:
             out = _completar_anthropic(system, mensagens, ferramentas, cfg["modelo"])
     except ErroAssistente as e:
