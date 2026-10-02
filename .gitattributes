@@ -1,0 +1,5 @@
+
+# Ponte do Hermes roda em Linux: sempre fim de linha LF
+docs/agentes/hermes-cowdata/*.sh text eol=lf
+docs/agentes/hermes-cowdata/*.py text eol=lf
+docs/agentes/hermes-cowdata/*.txt text eol=lf
