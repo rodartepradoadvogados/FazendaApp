@@ -325,6 +325,7 @@ TIPICOS: dict[str, dict] = {
     "consultar_consumo_sobra_cocho": {"data_inicio": "2026-09-01", "data_fim": "2026-09-30"},
     "consultar_alimentos_cadastrados": {},
     "consultar_remedios_por_doenca": {"doenca": "mastite", "incluir_bula": "true"},
+    "consultar_estados_reprodutivos": {},
 }
 # Módulo(s) esperado(s) de cada ferramenta (qualquer um libera).
 MODULOS_ESPERADOS: dict[str, tuple[str, ...]] = {
@@ -340,6 +341,7 @@ MODULOS_ESPERADOS: dict[str, tuple[str, ...]] = {
     "consultar_consumo_sobra_cocho": ("alimentacao",),
     "consultar_alimentos_cadastrados": ("alimentacao",),
     "consultar_remedios_por_doenca": ("sanidade",),
+    "consultar_estados_reprodutivos": ("rebanho", "reproducao", "indicadores"),
 }
 
 
@@ -975,6 +977,33 @@ class TestRemediosPorDoenca:
         _rodar(engine, "consultar_remedios_por_doenca", {"doenca": "mastite"})
         with Session(engine) as s:
             assert [(e.nome, e.quantidade) for e in s.exec(select(Estoque).order_by(Estoque.id)).all()] == antes
+
+# ---------------------------------------------------------------------------
+# Bônus: estados reprodutivos ao vivo
+# ---------------------------------------------------------------------------
+class TestEstadosReprodutivos:
+    def test_bate_com_o_endpoint_do_site(self, engine):
+        from fazenda.api.routers.indicadores import estados_reprodutivos
+        with Session(engine) as s:
+            site = estados_reprodutivos(data=HOJE, fazenda_id=1, session=s)
+        r = _rodar(engine, "consultar_estados_reprodutivos", {})
+        assert r["contagem_por_estado"] == site["contagem"] and r["animais"] == site["animais"] and r["parametros"] == site["parametros"]
+        assert sum(r["contagem_por_estado"].values()) == 4  # 500, 501, 502 e 100 (900 é da fazenda 2)
+
+    def test_filtros_e_isolamento(self, engine):
+        todos = _rodar(engine, "consultar_estados_reprodutivos", {})
+        um = todos["animais"][0]
+        r = _rodar(engine, "consultar_estados_reprodutivos", {"estado": um["estado"].upper(), "numero": um["numero"]})
+        assert [a["numero"] for a in r["animais"]] == [um["numero"]] and r["total_filtrado"] == 1
+        assert [a["numero"] for a in _rodar(engine, "consultar_estados_reprodutivos", {"lote": "secas"})["animais"]] == ["100", "502"]
+        r2 = _rodar(engine, "consultar_estados_reprodutivos", {}, fid=2)
+        assert [a["numero"] for a in r2["animais"]] == ["500", "900"]  # a 500 da fazenda 2 é outra vaca
+        assert "SEGREDO" not in json.dumps(todos)
+
+    def test_validacao(self, engine):
+        assert "não existe" in _rodar(engine, "consultar_estados_reprodutivos", {"estado": "xyz"})["erro"]
+        assert "Data inválida" in _rodar(engine, "consultar_estados_reprodutivos", {"data": "2026-02-30"})["erro"]
+        assert "5 anos" in _rodar(engine, "consultar_estados_reprodutivos", {"data": "2015-01-01"})["erro"]
 
 
 # ---------------------------------------------------------------------------

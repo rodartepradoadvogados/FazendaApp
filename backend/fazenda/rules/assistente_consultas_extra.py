@@ -990,6 +990,39 @@ def _remedios_por_doenca(session: Session, usuario, entrada: dict, fazenda_id: i
 
 
 # ===========================================================================
+# Bônus: situação reprodutiva ao vivo de todas as fêmeas (lacuna do mapa de cobertura)
+# ===========================================================================
+def _estados_reprodutivos(session: Session, usuario, entrada: dict, fazenda_id: int | None) -> dict:
+    from fazenda.api.routers.indicadores import estados_reprodutivos
+
+    data = _data(entrada, "data") or date.today()
+    if abs((data - date.today()).days) > LIMITE_ANOS * 366:
+        raise ErroConsulta(f"'data' a mais de {LIMITE_ANOS} anos de hoje. Informe uma data mais próxima (AAAA-MM-DD).")
+    estado, lote, numero = _txt(entrada, "estado"), _txt(entrada, "lote"), _txt(entrada, "numero")
+    r = _chamar(estados_reprodutivos, session, fazenda_id, data=data)  # GET /indicadores/estados-reprodutivos
+    if estado:
+        validos = sorted(r["contagem"])
+        casado = next((e for e in validos if _sem_acento(e) == _sem_acento(estado)), None)
+        if casado is None:
+            raise ErroConsulta(f"Estado '{estado}' não existe nesta fazenda hoje. Estados com animais: {', '.join(validos) or '(nenhum)'}.")
+        estado = casado
+    animais = [
+        a for a in r["animais"]
+        if (not estado or a["estado"] == estado) and (not lote or _contem(a.get("lote"), lote)) and (not numero or str(a["numero"]) == numero)
+    ]
+    cortados, cortou = _cortar(animais)
+    return {
+        "data_referencia": data.isoformat(), "contagem_por_estado": r["contagem"], "parametros": r["parametros"],
+        "filtros": {"estado": estado, "lote": lote, "numero": numero}, "total_filtrado": len(animais),
+        "animais": cortados, "limitado_pela_ferramenta": cortou,
+        "como_ler": (
+            "Situação reprodutiva AO VIVO (recalculada dos partos, serviços e protocolos — não o texto congelado do cadastro), a mesma das listas de "
+            "Rebanho. 'contagem_por_estado' cobre todas as fêmeas ativas; 'animais' respeita os filtros. Para a ficha de um animal use consultar_ficha_animal."
+        ),
+    }
+
+
+# ===========================================================================
 # Registro
 # ===========================================================================
 FERRAMENTAS: list[dict] = [
@@ -1244,6 +1277,25 @@ FERRAMENTAS: list[dict] = [
             }),
         },
         "executor": _com_erro(_remedios_por_doenca),
+    },
+    {
+        "modulo": ("rebanho", "reproducao", "indicadores"),
+        "spec": {
+            "name": "consultar_estados_reprodutivos",
+            "description": (
+                "SITUAÇÃO REPRODUTIVA AO VIVO de cada fêmea ativa (gestante, inseminada, vazia/apta, em protocolo, PEV, não apta...) com contagem por estado, "
+                "como nas listas de Rebanho. Use para 'quantas vacas estão gestantes hoje?', 'quais vacas estão aptas a inseminar?', 'qual a situação da vaca "
+                "123?'. Filtros: estado (nome exato como aparece em contagem_por_estado), lote (código ou parte do nome), numero (animal), data (AAAA-MM-DD; "
+                "padrão hoje). Sem 'estado' a resposta traz só a contagem e os primeiros animais. Para um animal inteiro use consultar_ficha_animal; para "
+                "taxas de concepção/prenhez use consultar_indicadores_reprodutivos ou consultar_indicadores_na_data."
+            ),
+            "input_schema": _schema({
+                "estado": ("string", "Opcional. Estado reprodutivo (ex.: gestante, inseminada). Veja contagem_por_estado."),
+                "lote": ("string", "Opcional. Lote (ex.: '01' ou parte do nome)."), "numero": ("string", "Opcional. Número do animal."),
+                "data": ("string", "Data de referência, formato AAAA-MM-DD. Opcional; padrão hoje."),
+            }),
+        },
+        "executor": _com_erro(_estados_reprodutivos),
     },
 ]
 
