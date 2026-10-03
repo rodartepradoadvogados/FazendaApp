@@ -1,20 +1,4 @@
-"""
-API de LEITURA para agentes externos (Hermes Agent: Telegram + Desktop) —
-prefixo /agente. SOMENTE GET.
-
-- Desativada por padrão: sem AGENTE_API_TOKEN (>= 32 caracteres) toda rota
-  responde 404, como se não existisse.
-- Auth: `Authorization: Bearer <AGENTE_API_TOKEN>` (comparação em tempo
-  constante). Opcional: AGENTE_IPS_PERMITIDOS, AGENTE_RATE_LIMIT_POR_MIN.
-- Fazenda alvo fixa por AGENTE_FAZENDA_ID (padrão 1); o agente não escolhe.
-- Executa as MESMAS ferramentas `_tool_*` do Assistente do site
-  (fazenda.rules.assistente), numa sessão de banco SOMENTE LEITURA, com a
-  saída sanitizada (sem segredos/dados bancários/e-mails; CPF/CNPJ mascarados)
-  e paginada. Cada chamada é auditada (log `fazenda.agente_auditoria`).
-
-Endpoints: GET /agente/saude · /agente/ferramentas · /agente/instrucoes ·
-/agente/consultar/{ferramenta}?param=...&limite=50&offset=0
-"""
+"""\nAPI de LEITURA para agentes externos (Hermes Agent: Telegram + Desktop) —\nprefixo /agente. SOMENTE GET... exceto POST /agente/ensinamentos.\n\n- Desativada por padrão: sem AGENTE_API_TOKEN (>= 32 caracteres) toda rota\n  responde 404, como se não existisse.\n- Auth: `Authorization: Bearer <AGENTE_API_TOKEN>` (comparação em tempo\n  constante). Opcional: AGENTE_IPS_PERMITIDOS, AGENTE_RATE_LIMIT_POR_MIN.\n- Fazenda alvo fixa por AGENTE_FAZENDA_ID (padrão 1); o agente não escolhe.\n- Executa as MESMAS ferramentas `_tool_*` do Assistente do site\n  (fazenda.rules.assistente), numa sessão de banco SOMENTE LEITURA, com a\n  saída sanitizada (sem segredos/dados bancários/e-mails; CPF/CNPJ mascarados)\n  e paginada. Cada chamada é auditada (log `fazenda.agente_auditoria`).\n\nEndpoints: GET /agente/saude · /agente/ferramentas · /agente/instrucoes ·\n/agente/consultar/{ferramenta}?param=...&limite=50&offset=0\nPOST /agente/ensinamentos  (cria ensinamento — ESCRITA)\n"""
 from __future__ import annotations
 
 import logging
@@ -24,10 +8,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from sqlmodel import Session
 
 from fazenda.database import get_session
-from fazenda.models import Fazenda, Usuario
+from fazenda.models import AssistenteEnsinamento, Fazenda, Usuario
 from fazenda.rules import agente_leitura as al
 from fazenda.rules import assistente
 from fazenda.rules.parametros import fazenda_atual
@@ -84,6 +69,12 @@ def _sessao_somente_leitura(session: Session = Depends(get_session)):
     yield from al.sessao_somente_leitura(session)
 
 
+def _sessao_escrita(session: Session = Depends(get_session)):
+    """Sessão COM ESCRITA para endpoints que criam/atualizam (ex.: ensinamentos)."""
+    session.info["fazenda_id"] = al.fazenda_alvo_id()
+    yield session
+
+
 @contextmanager
 def _auditado(ctx: _Contexto, nome: str, params: dict):
     """Registra a chamada (ferramenta, parâmetros resumidos, IP, status,
@@ -102,9 +93,7 @@ def _auditado(ctx: _Contexto, nome: str, params: dict):
 
 
 def _usuario_do_agente() -> Usuario:
-    """Usuário sintético (NÃO persistido) que as ferramentas esperam. Sem
-    AGENTE_MODULOS ele é "admin" (todas as ferramentas, como o dono vê no
-    site); com AGENTE_MODULOS vira operador só com esses módulos."""
+    """Usuário sintético (NÃO persistido) que as ferramentas esperam. Sem\n    AGENTE_MODULOS ele é "admin" (todas as ferramentas, como o dono vê no\n    site); com AGENTE_MODULOS vira operador só com esses módulos."""
     modulos = al.modulos_permitidos()
     if modulos is None:
         return Usuario(id=0, username="agente-externo", senha_hash="", papel="admin", ativo=True)
@@ -113,8 +102,7 @@ def _usuario_do_agente() -> Usuario:
 
 
 def _ferramentas_expostas() -> dict[str, dict]:
-    """nome -> spec, das MESMAS ferramentas do assistente, filtradas por
-    AGENTE_MODULOS quando definido."""
+    """nome -> spec, das MESMAS ferramentas do assistente, filtradas por\n    AGENTE_MODULOS quando definido."""
     modulos = al.modulos_permitidos()
     return {
         spec["name"]: spec
@@ -142,6 +130,15 @@ def _inteiro(params: dict, nome: str, padrao: int) -> int:
     if valor < 0:
         raise HTTPException(status_code=400, detail=f"Parâmetro '{nome}' não pode ser negativo.")
     return valor
+
+
+# ---------------------------------------------------------------------------
+# Schemas para escrita de ensinamentos (apenas o necessário)
+# ---------------------------------------------------------------------------
+class EnsinamentoCriarIn(BaseModel):
+    titulo: str
+    texto: str
+    ativo: bool = True
 
 
 @router.get("/saude")
@@ -174,8 +171,7 @@ def ferramentas(request: Request, ctx: _Contexto = Depends(_contexto)) -> dict:
 
 @router.get("/instrucoes")
 def instrucoes(request: Request, ctx: _Contexto = Depends(_contexto), session: Session = Depends(_sessao_somente_leitura)) -> dict:
-    """System prompt base do Assistente + Ensinamentos ATIVOS da fazenda alvo
-    — o treino fica centralizado no CowData (aba Ensinamentos)."""
+    """System prompt base do Assistente + Ensinamentos ATIVOS da fazenda alvo\n    — o treino fica centralizado no CowData (aba Ensinamentos)."""
     with _auditado(ctx, "instrucoes", {}):
         fid = _fazenda_alvo(session)
         texto = assistente._system_prompt(session, fid)
@@ -208,8 +204,7 @@ def consultar(
             raise HTTPException(status_code=400, detail=f"Parâmetro(s) obrigatório(s) ausente(s): {', '.join(faltando)}")
 
         fid = _fazenda_alvo(session)
-        # `get_param` (regras que leem parâmetros da fazenda) lê esta variável
-        # de contexto — no site vem do token; aqui, da fazenda alvo fixa.
+        # `get_param` (regras que leem parâmetros da fazenda) lê esta variável\n        # de contexto — no site vem do token; aqui, da fazenda alvo fixa.
         marca = fazenda_atual.set(fid)
         try:
             resultado = assistente._executar_tool(ferramenta, entrada, session, _usuario_do_agente(), fid)
@@ -226,3 +221,36 @@ def consultar(
         envelope = al.paginar(al.sanitizar(resultado), limite, offset, al.max_bytes())
         envelope["ferramenta"] = ferramenta
         return envelope
+
+
+# ---------------------------------------------------------------------------
+# POST /agente/ensinamentos — cria ensinamento (ESCRITA) via AGENTE_API_TOKEN
+# ---------------------------------------------------------------------------
+@router.post("/ensinamentos")
+def criar_ensinamento_agente(
+    dados: EnsinamentoCriarIn,
+    request: Request,
+    ctx: _Contexto = Depends(_contexto),
+    session: Session = Depends(_sessao_escrita),
+) -> dict:
+    """Cria um Ensinamento ativo na fazenda alvo (AGENTE_FAZENDA_ID).
+    
+    Usa a MESMA autenticação das rotas de leitura (AGENTE_API_TOKEN).
+    Requer AGENTE_API_TOKEN válido + IP permitido + rate limit OK.
+    Retorna o ID criado para o agente gravar no vault local."""
+    with _auditado(ctx, "criar_ensinamento", {"titulo": dados.titulo[:50]}):
+        if not dados.titulo.strip() or not dados.texto.strip():
+            raise HTTPException(status_code=400, detail="Título e texto são obrigatórios")
+
+        fid = _fazenda_alvo(session)
+        e = AssistenteEnsinamento(
+            fazenda_id=fid,
+            usuario_id=0,  # usuário sintético "agente-externo"\n            titulo=dados.titulo.strip(),
+            texto=dados.texto.strip(),
+            ativo=dados.ativo,
+        )
+        session.add(e)
+        session.commit()
+        session.refresh(e)
+        logger.info("agente_leitura: ensinamento criado id=%s fazenda=%s titulo=%s", e.id, fid, dados.titulo[:50])
+        return {"id": e.id, "titulo": e.titulo, "ativo": e.ativo, "criado_em": e.criado_em.isoformat()}
