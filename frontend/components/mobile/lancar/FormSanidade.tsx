@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Syringe, ClipboardList, Bandage, ShieldCheck, CalendarClock, Droplets } from "lucide-react";
 import { MobCampo, MobAviso, MobVoltar, MobCard } from "@/components/mobile/ui";
-import { fetchEstoque, fetchProtocolosSanitarios, fetchMedicamentos, fetchPrincipiosAtivos, fetchDoencas, fetchEventosSanitarios, fetchAgenda, fetchCategoriasManejo, fetchPessoas, fetchRelatorioEventosVida, formatDate, fetchIndicacoesDoenca, type OpcaoIndicacaoDoenca } from "@/lib/api";
+import { fetchEstoqueAtivos, fetchProtocolosSanitarios, fetchMedicamentos, fetchPrincipiosAtivos, fetchDoencas, fetchEventosSanitarios, fetchAgenda, fetchCategoriasManejo, fetchPessoas, fetchRelatorioEventosVida, formatDate, fetchIndicacoesDoenca, type OpcaoIndicacaoDoenca } from "@/lib/api";
 import { fetchComCache } from "@/lib/offline";
 import { EstoquePicker } from "@/components/EstoquePicker";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -59,7 +59,7 @@ export function FormSanidade({ animais, animalFixado, deepLinkEventoId }: {
    *  (Preventiva > Aplicação) e escolher o evento de novo. */
   deepLinkEventoId?: string | null;
 }) {
-  const estoque = useCache<EstoqueItem[]>("estoque_itens", () => fetchEstoque().then((d) => d.itens as EstoqueItem[]), []);
+  const estoque = useCache<EstoqueItem[]>("estoque_itens", () => fetchEstoqueAtivos().then((d) => d.itens as EstoqueItem[]), []);
 
   const [modalidade, setModalidade] = useState<Modalidade | null>(deepLinkEventoId ? "preventiva" : null);
   const [tipo, setTipo] = useState<TipoCurativa | null>(null);

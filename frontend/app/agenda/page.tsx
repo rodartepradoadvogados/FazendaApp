@@ -7,7 +7,7 @@ import { Calendar, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, Aler
 import {
   fetchAgendaDia, fetchAgendaPainel, fetchAgendaProjecao, materializarAgendaComIntervalo, adiarAgendamentoPreventivo,
   addEventoManual, marcarEventoRealizado as marcarEventoRealizadoApi, desmarcarEventoRealizado,
-  fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, fetchEstoque, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
+  fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, fetchEstoqueAtivos, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
   cadastrarPreventivo, marcarCuraAplicacao, marcarCuraProtocolo, confirmarLactacaoInducao, fetchProtocolosIatfAtivos,
   criarMovimentacao, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, salvarDiasDiaria, atualizarServico,
   authFetch, API, mensagemErroApi,
@@ -483,7 +483,7 @@ function AgendaConteudo() {
   const [estoqueGaveta, setEstoqueGaveta] = useState<EstoqueItem[]>([]);
   useEffect(() => {
     fetchAnimais().then(setAnimaisGaveta).catch(() => {});
-    fetchEstoque().then((d) => setEstoqueGaveta(d.itens || [])).catch(() => {});
+    fetchEstoqueAtivos().then((d) => setEstoqueGaveta(d.itens || [])).catch(() => {});
   }, []);
   const lotesGaveta = useMemo(
     () => Array.from(new Set(animaisGaveta.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort(),

@@ -12,7 +12,7 @@ import { Milk, Scale, Moon, Pill, TestTube, Truck, Zap } from "lucide-react";
 import { MobCampo, MobAviso, MobVoltar } from "@/components/mobile/ui";
 import { BotoesEscolha, GradeAcoes, type Animal, useEnvio, useRascunho, hoje, SeletorAnimal, RascunhoAviso } from "./comum";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
-import { fetchAgenda, fetchEstoque, fetchLotes, fetchSanidade } from "@/lib/api";
+import { fetchAgenda, fetchEstoqueAtivos, fetchLotes, fetchSanidade } from "@/lib/api";
 import { fetchComCache, enviarOuEnfileirar } from "@/lib/offline";
 
 // Wrappers que trocam o authFetch direto dos formulários (compartilhados com
@@ -85,7 +85,7 @@ export function FormProducao({ animais, animalFixado, restringirA }: { animais: 
   useEffect(() => {
     if (sub !== "secagem" || estoqueCarregado) return;
     setEstoqueCarregado(true);
-    fetchComCache<{ itens: EstoqueItem[] }>("estoque_itens_completo", () => fetchEstoque())
+    fetchComCache<{ itens: EstoqueItem[] }>("estoque_itens_completo", () => fetchEstoqueAtivos())
       .then(({ dados }) => setEstoque(dados?.itens || []));
     fetchComCache<string[]>("producao_secagem_produtos_sanidade", () =>
       fetchSanidade().then((d) => Array.from(new Set((d.aplicacoes || d.registros || []).map((r: any) => r.produto).filter(Boolean))).sort() as string[])

@@ -2,7 +2,7 @@
 import { Fragment, cloneElement, isValidElement, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2, Camera, ChevronDown, ChevronRight } from "lucide-react";
 import {
-  fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, fetchPlanoContas, criarLancamentoFinanceiro, importarXmlFinanceiro,
+  fetchOpcoesFinanceiro, fetchEstoqueAtivos, fetchServicosCadastro, fetchFornecedores, fetchPlanoContas, criarLancamentoFinanceiro, importarXmlFinanceiro,
   lerDocumentoFinanceiro, formatBRL, fetchPedidos, fetchPossiveisDuplicados, anexarArquivoLancamento, type LancamentoParecido,
   type SugestoesCadastro, type SugestaoCadastroItem, criarTipoDocumento, criarFornecedorApelido, criarClassificacao,
   fetchContextoFornecedor, type ContextoFornecedor as ContextoFornecedorTipo,
@@ -189,7 +189,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     fornecedor_nome: string | null;
     conta_gerencial_despesa_padrao: string | null; conta_gerencial_receita_padrao: string | null;
   })[]>([]);
-  const carregarEstoque = () => fetchEstoque().then((d) => setProdutosEstoque((d.itens || []).map((i: any) => ({
+  const carregarEstoque = () => fetchEstoqueAtivos().then((d) => setProdutosEstoque((d.itens || []).map((i: any) => ({
     nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
     estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
     fornecedor_nome: i.fornecedor_nome ?? null,

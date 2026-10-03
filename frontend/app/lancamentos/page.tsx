@@ -5,7 +5,7 @@ import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
   Trash2, Droplet, CalendarClock, Wheat, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Dna, Gauge, Zap,
 } from "lucide-react";
-import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, fetchParametros, fetchLotes } from "@/lib/api";
+import { fetchAnimais, fetchEstoqueAtivos, fetchServicosAnalise, fetchSanidade, fetchParametros, fetchLotes } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
 // Formulários grandes de cada sub-aba: dynamic() para que o navegador só baixe
@@ -314,7 +314,7 @@ export default function LancamentosPage() {
   const [lotesCadastro, setLotesCadastro] = useState<{ codigo: string; rotulo: string; status_lactacao: string }[]>([]);
   const recarregarListasBase = useCallback(() => {
     fetchAnimais().then(setAnimais).catch(() => {});
-    fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
+    fetchEstoqueAtivos().then((d) => setEstoque(d.itens || [])).catch(() => {});
     fetchServicosAnalise().then((d) => setServicos(d.servicos || [])).catch(() => {});
     fetchSanidade().then((d) => setProdutosSanidade(Array.from(new Set((d.aplicacoes || d.registros || []).map((r: any) => r.produto).filter(Boolean))).sort() as string[])).catch(() => {});
     fetchLotes().then(setLotesCadastro).catch(() => {});

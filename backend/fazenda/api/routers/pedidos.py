@@ -490,6 +490,7 @@ def marcar_entrega_item_pedido(
     avisos_estoque: list[str] = []
     if item.tipo_item == "produto" and delta > 0:
         estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=item.produto_servico)
+        estoque_baixa.exigir_item_ativo(estoque_item)
         avisos_estoque = estoque_baixa.movimentar(
             session, item=estoque_item, quantidade=delta,
             unidade=estoque_item.unidade if estoque_item else None,

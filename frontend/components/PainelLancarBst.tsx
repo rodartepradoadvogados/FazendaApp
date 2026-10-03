@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { Droplets, AlertTriangle, Check, Ban, X as XIcon } from "lucide-react";
-import { aplicarBstLote, marcarInaptaBst, fetchEstoque, formatDate } from "@/lib/api";
+import { aplicarBstLote, marcarInaptaBst, fetchEstoqueAtivos, formatDate } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { Modal } from "@/components/Modal";
 import { MultiFiltro } from "@/components/ui";
@@ -188,7 +188,7 @@ export function PainelLancarBst({
   const { pessoas: pessoasAtivas } = usePessoasAtivas();
 
   useEffect(() => {
-    fetchEstoque().then((d) => setEstoqueItens(d.itens || [])).catch(() => setEstoqueItens([]));
+    fetchEstoqueAtivos().then((d) => setEstoqueItens(d.itens || [])).catch(() => setEstoqueItens([]));
   }, []);
 
   // Itens de estoque reconhecidos como BST (mesmo critério do backend) —

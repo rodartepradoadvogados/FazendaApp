@@ -2836,6 +2836,15 @@ def criar_lancamento(
     for item in dados.itens:
         if item.tipo_item is not None and item.tipo_item not in ("produto", "servico"):
             raise HTTPException(status_code=400, detail="tipo_item deve ser 'produto' ou 'servico'")
+    # Compra de produto de estoque INATIVO não passa — validado AQUI, antes de
+    # gravar qualquer coisa (a entrada no estoque só acontece depois do commit
+    # da nota; recusar lá deixaria a nota salva com erro na tela).
+    if dados.tipo == "despesa" and dados.pedido_id is None:
+        for item in dados.itens:
+            if item.tipo_item == "produto":
+                estoque_baixa.exigir_item_ativo(
+                    estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=item.produto)
+                )
 
     itens_com_vale = [item for item in dados.itens if item.vale]
     if itens_com_vale:
@@ -3086,6 +3095,7 @@ def criar_lancamento(
             if item_in.tipo_item != "produto" or not quantidade_entrada or quantidade_entrada <= 0:
                 continue
             estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=item_in.produto)
+            estoque_baixa.exigir_item_ativo(estoque_item)
             if estoque_item is not None and estoque_item.estocavel is False:
                 continue
             # Compra de uma embalagem cadastrada (ApresentacaoEmbalagemEstoque)
@@ -3748,6 +3758,7 @@ def vincular_produto_item(
         conta = session.exec(query_conta).first()
         if conta is not None and conta.tipo == "despesa" and conta.pedido_id is None:
             estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=nome)
+            estoque_baixa.exigir_item_ativo(estoque_item)
             if estoque_item is not None and estoque_item.estocavel is not False:
                 data_movimento = conta.data_emissao or conta.data_competencia or date.today()
                 avisos_estoque += estoque_baixa.movimentar(

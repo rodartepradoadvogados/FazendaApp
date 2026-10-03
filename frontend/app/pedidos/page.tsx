@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ShoppingCart, Filter, Plus, Pencil, Trash2, ChevronDown, ChevronRight, Receipt, Package, AlertTriangle, Truck, CreditCard, FileText, Upload, X, XCircle, CircleDollarSign, PackageCheck, Send } from "lucide-react";
 import {
   fetchPedidos, fetchPedido, criarPedido, atualizarPedido, atualizarStatusPedido, excluirPedido, fetchOpcoesPedidos,
-  fetchCentrosCusto, fetchPlanoContas, fetchEstoque, fetchFornecedores, formatBRL, formatDate,
+  fetchCentrosCusto, fetchPlanoContas, fetchEstoqueAtivos, fetchFornecedores, formatBRL, formatDate,
   CATEGORIAS_PEDIDO_ANEXO, anexarArquivoPedido, listarAnexosPedido, excluirAnexoPedido, urlAnexoPedido, type AnexoPedido,
   marcarEntregaItemPedido, type EntregaItemPedidoResultado,
   dispararPedidoFormal,
@@ -118,7 +118,7 @@ export default function PedidosPage() {
     fetchOpcoesPedidos().then(setOpcoes).catch(() => {});
     fetchCentrosCusto().then((d) => setCentros(d.filter((c: any) => c.ativo).map((c: any) => c.nome))).catch(() => {});
     fetchPlanoContas().then(setPlanoContas).catch(() => {});
-    fetchEstoque().then((d: any) => {
+    fetchEstoqueAtivos().then((d: any) => {
       const mapa: Record<string, { quantidade: number; estoque_minimo: number | null; unidade: string | null }> = {};
       (d.itens || []).forEach((i: any) => { mapa[i.nome] = { quantidade: i.quantidade ?? 0, estoque_minimo: i.estoque_minimo ?? null, unidade: i.unidade ?? null }; });
       setEstoquePorNome(mapa);
@@ -591,7 +591,7 @@ function FormPedido({ pedido, opcoes, centros, planoContas, onSalvo, onCancelar 
   // cima em PedidosPage; sem isto, cadastrar um fornecedor novo aqui dentro
   // não aparecia no seletor até recarregar a página inteira).
   const [produtosEstoque, setProdutosEstoque] = useState<EstoqueItemPicker[]>([]);
-  const carregarEstoque = () => fetchEstoque().then((d: any) => setProdutosEstoque((d.itens || []).map((i: any) => ({
+  const carregarEstoque = () => fetchEstoqueAtivos().then((d: any) => setProdutosEstoque((d.itens || []).map((i: any) => ({
     nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
     estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
   })))).catch(() => {});

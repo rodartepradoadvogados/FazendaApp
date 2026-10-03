@@ -8,7 +8,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Check, Plus, RotateCcw, SkipForward, X } from "lucide-react";
 import {
-  fetchEstoque, fetchLotesEstoque, type ChecklistAgendamentoPayload, type ItemChecklistAg, type LoteEstoque, type VeterinarioChecklist,
+  fetchEstoqueAtivos, fetchLotesEstoque, type ChecklistAgendamentoPayload, type ItemChecklistAg, type LoteEstoque, type VeterinarioChecklist,
 } from "@/lib/api";
 import { Chips, dataCurta, dataHoraCurta, inputStyle, labelStyle, MOTIVOS_ESTOQUE, MOTIVOS_VET, notaStyle, textoMotivo } from "./preventivoComum";
 import { financeiroParaPayload, financeiroVazio, FinanceiroRascunho, type FinanceiroDraft } from "./FinanceiroAgendamento";
@@ -103,7 +103,7 @@ export function ChecklistMontagem({
   const [itens, setItens] = useState<any[]>([]);
   const [lotes, setLotes] = useState<LoteEstoque[]>([]);
   const [novo, setNovo] = useState("");
-  useEffect(() => { fetchEstoque().then((d) => setItens((d.itens || []).filter((i: any) => i.id != null))).catch(() => setItens([])); }, []);
+  useEffect(() => { fetchEstoqueAtivos().then((d) => setItens((d.itens || []).filter((i: any) => i.id != null))).catch(() => setItens([])); }, []);
   // Sugere o produto do protocolo assim que o estoque carrega (nunca vem marcado sozinho).
   const sugerido = itens.find((i) => i.nome === produto);
   useEffect(() => {
