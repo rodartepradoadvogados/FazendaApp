@@ -2,7 +2,7 @@
 import { cloneElement, isValidElement, useEffect, useId, useMemo, useState } from "react";
 import { AlertTriangle, Check, Plus, Trash2, X } from "lucide-react";
 import {
-  fetchOpcoesFinanceiro, fetchEstoque, fetchFornecedores, fetchPlanoContas, fetchContasCorrentes, fetchCentrosCusto,
+  fetchOpcoesFinanceiro, fetchEstoqueAtivos, fetchFornecedores, fetchPlanoContas, fetchContasCorrentes, fetchCentrosCusto,
   criarLancamentoFinanceiro, fetchPossiveisDuplicados, formatBRL, type LancamentoParecido, type ContaCorrenteCadastro,
 } from "@/lib/api";
 import { CampoMoeda } from "@/components/CampoMoeda";
@@ -82,7 +82,7 @@ export function FormFinanceiroSimplificado({ tipo, onSujo, onSalvo }: {
     conta_gerencial_despesa_padrao: string | null; conta_gerencial_receita_padrao: string | null;
   })[]>([]);
   useEffect(() => {
-    fetchEstoque().then((d) => setProdutosEstoque((d.itens || []).map((i: any) => ({
+    fetchEstoqueAtivos().then((d) => setProdutosEstoque((d.itens || []).map((i: any) => ({
       nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
       estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
       conta_gerencial_despesa_padrao: i.conta_gerencial_despesa_padrao ?? null,

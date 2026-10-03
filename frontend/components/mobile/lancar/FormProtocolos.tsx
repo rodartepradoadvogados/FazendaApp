@@ -14,7 +14,7 @@ import dynamic from "next/dynamic";
 import { CalendarClock, Pill, Bandage, ListChecks } from "lucide-react";
 import { MobCampo, MobVoltar, MobAviso } from "@/components/mobile/ui";
 import {
-  fetchEstoque, fetchProtocolosCustomizadosParaLancar,
+  fetchEstoqueAtivos, fetchProtocolosCustomizadosParaLancar,
   type ProtocoloCustomizado,
 } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
@@ -39,7 +39,7 @@ const TITULOS: Record<Tipo, string> = {
 };
 
 export function FormProtocolos({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
-  const estoque = useCache<EstoqueItem[]>("estoque_itens", () => fetchEstoque().then((d) => d.itens as EstoqueItem[]), []);
+  const estoque = useCache<EstoqueItem[]>("estoque_itens", () => fetchEstoqueAtivos().then((d) => d.itens as EstoqueItem[]), []);
   const [tipo, setTipo] = useState<Tipo | null>(null);
 
   if (!tipo) {

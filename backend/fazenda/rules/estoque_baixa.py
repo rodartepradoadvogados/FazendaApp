@@ -129,6 +129,22 @@ def incrementar_quantidade_atomico(session: Session, tabela: str, item_id: int, 
     )
 
 
+def exigir_item_ativo(item: Estoque | None) -> None:
+    """Item INATIVO não pode ser usado em nenhum lançamento novo (compra,
+    entrada de pedido, aplicação/baixa). Consultas, relatórios e estornos de
+    lançamentos antigos continuam enxergando-o. Para voltar a lançar com ele:
+    reativar em Configurações > Cadastro > Estoque."""
+    if item is not None and item.ativo is False:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f'O item "{item.nome}" está inativo e não pode ser usado em lançamentos. '
+                "Para usá-lo, ative-o em Configurações > Cadastro > Estoque."
+            ),
+        )
+
+
 def resolver_item(
     session: Session, *, fazenda_id: int | None, produto: str | None = None, estoque_id: int | None = None,
 ) -> Estoque | None:
@@ -467,6 +483,7 @@ def baixar(
     origem_tipo: str | None = None, origem_id: int | None = None, produto: str | None = None,
     lote_id: int | None = None,
 ) -> list[str]:
+    exigir_item_ativo(item)
     return movimentar(
         session, item=item, quantidade=quantidade, unidade=unidade, data=data, fazenda_id=fazenda_id,
         movimento="Aplicação", observacao=observacao, usuario_id=usuario_id,

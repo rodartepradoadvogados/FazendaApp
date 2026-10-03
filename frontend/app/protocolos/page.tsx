@@ -3,7 +3,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { Plus, Trash2, FileText, FileSpreadsheet } from "lucide-react";
 import {
-  fetchAnimais, fetchEstoque,
+  fetchAnimais, fetchEstoqueAtivos,
   fetchProtocolosIatfCadastrados, criarProtocoloIatfCadastrado, atualizarProtocoloIatfCadastrado, excluirProtocoloIatfCadastrado,
   fetchCentralProtocolosAcompanhamento, fetchCentralProtocolosHistorico,
   fetchDetalheProtocolo, darBaixaProtocolo, encerrarProtocolo, reabrirProtocolo, cancelarProtocolo,
@@ -1162,7 +1162,7 @@ export default function ProtocolosPage() {
   const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
   useEffect(() => {
     fetchAnimais().then(setAnimais).catch(() => {});
-    fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
+    fetchEstoqueAtivos().then((d) => setEstoque(d.itens || [])).catch(() => {});
   }, []);
   // Lotes existentes (para o lançamento de Calendário sanitário, que aplica
   // por animal/lote/categoria) — mesma dedução de maiúsculas/minúsculas de

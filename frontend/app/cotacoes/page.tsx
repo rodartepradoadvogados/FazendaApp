@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import {
   fetchCotacoes, fetchCotacao, criarCotacao, dispararCotacao, marcarVencedoresCotacao, gerarPedidosCotacao,
-  cancelarCotacao, fetchFornecedoresSugeridos, fetchFornecedores, fetchEstoque, formatBRL,
+  cancelarCotacao, fetchFornecedoresSugeridos, fetchFornecedores, fetchEstoqueAtivos, formatBRL,
   type CotacaoResumo, type CotacaoDetalhe, type CotacaoItemPayload, type CotacaoFornecedorPayload,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
@@ -136,7 +136,7 @@ function FormNovaCotacao({ onSalvo, onCancelar }: { onSalvo: (id: number) => voi
   const [erro, setErro] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchEstoque().then((d: any) => setProdutosEstoque((d.itens || []).map((i: any) => ({
+    fetchEstoqueAtivos().then((d: any) => setProdutosEstoque((d.itens || []).map((i: any) => ({
       nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
       estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
     })))).catch(() => {});

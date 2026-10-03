@@ -13,7 +13,7 @@ import dynamic from "next/dynamic";
 import { Syringe, ClipboardList } from "lucide-react";
 import { MobVoltar } from "@/components/mobile/ui";
 import { useCache, type Animal, type EstoqueItem, GradeAcoes } from "@/components/mobile/lancar/comum";
-import { fetchEstoque } from "@/lib/api";
+import { fetchEstoqueAtivos } from "@/lib/api";
 
 const CurativaForm = dynamic(() => import("@/components/mobile/lancar/FormSanidade").then((m) => m.CurativaForm), { ssr: false });
 
@@ -23,7 +23,7 @@ const TITULOS: Record<TipoCurativa, string> = { aplicacao: "Aplicação de remé
 export function CurralSanitario({ animais }: { animais: Animal[] }) {
   // MESMA chave de cache que FormSanidade.tsx usa (`estoque_itens`) — evita
   // uma 2ª requisição se a tela Lançar completa já foi aberta na sessão.
-  const estoque = useCache<EstoqueItem[]>("estoque_itens", () => fetchEstoque().then((d) => d.itens as EstoqueItem[]), []);
+  const estoque = useCache<EstoqueItem[]>("estoque_itens", () => fetchEstoqueAtivos().then((d) => d.itens as EstoqueItem[]), []);
   const [tipo, setTipo] = useState<TipoCurativa | null>(null);
 
   if (!tipo) {

@@ -5483,6 +5483,16 @@ export async function fetchEstoque() {
   return res.json();
 }
 
+// Itens que podem ser usados em LANÇAMENTOS (compra, aplicação, baixa, pedido):
+// só os ativos. Item inativo continua aparecendo no Cadastro de Estoque, em
+// relatórios e consultas (use `fetchEstoque`); para voltar a lançar com ele,
+// é preciso reativá-lo em Configurações > Cadastro > Estoque. O servidor
+// também recusa (409) — ver estoque_baixa.exigir_item_ativo.
+export async function fetchEstoqueAtivos() {
+  const d = await fetchEstoque();
+  return { ...d, itens: (d.itens || []).filter((i: any) => i.ativo !== false) };
+}
+
 export async function movimentarEstoque(dados: {
   nome: string; movimento: string; quantidade: number; unidade?: string; data_movimento: string; observacao?: string;
   pedido_id?: number | null; pedido_item_id?: number | null;

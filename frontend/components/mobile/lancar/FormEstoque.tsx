@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Dna } from "lucide-react";
 import { MobCampo, MobAviso } from "@/components/mobile/ui";
 import { CampoMoeda } from "@/components/CampoMoeda";
-import { fetchEstoque, fetchPlanoContas, FINALIDADES_ESTOQUE } from "@/lib/api";
+import { fetchEstoqueAtivos, fetchPlanoContas, FINALIDADES_ESTOQUE } from "@/lib/api";
 import { pedirLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
 import { EstoquePicker } from "@/components/EstoquePicker";
 import { type EstoqueItem, useCache, useEnvio, hoje, MobPill, LinhaPills } from "./comum";
@@ -22,7 +22,7 @@ const SOMENTE_ESTOCAVEL = new Set(["Doação", "Entrada de cortesia"]);
 
 export function FormEstoque({ onIrParaFinanceiro }: { onIrParaFinanceiro?: (tipo: "despesa" | "receita") => void }) {
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
-  const estoque = useCache<EstoqueItem[]>("estoque_itens", () => fetchEstoque().then((d) => d.itens as EstoqueItem[]), []);
+  const estoque = useCache<EstoqueItem[]>("estoque_itens", () => fetchEstoqueAtivos().then((d) => d.itens as EstoqueItem[]), []);
 
   const [somenteEstocaveis, setSomenteEstocaveis] = useState(true);
   const [fCategoria, setFCategoria] = useState("");
