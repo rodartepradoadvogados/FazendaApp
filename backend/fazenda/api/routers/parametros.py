@@ -30,7 +30,7 @@ from fazenda.auth import exigir_admin, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import ParametroFazenda, Usuario
 from fazenda.rules.auditoria import fazenda_id_seguro
-from fazenda.rules.parametros import GRUPO_TITULOS
+from fazenda.rules.parametros import GRUPO_TITULOS, OPCOES_SELECT
 
 router = APIRouter(prefix="/parametros", tags=["parametros"])
 
@@ -87,6 +87,8 @@ def obter_parametros(
                 valor = float(linha.valor)
             except (TypeError, ValueError):
                 valor = None
+        elif linha.tipo == "select":
+            valor = linha.valor or ""
         elif linha.tipo == "texto":
             # Sem este ramo o texto caía no `else` abaixo, que tenta
             # `int(float(...))` e devolve None em silêncio. Não é hipótese: o
@@ -101,10 +103,13 @@ def obter_parametros(
                 valor = int(float(linha.valor))
             except (TypeError, ValueError):
                 valor = None
-        grupo["itens"].append({
+        item_api = {
             "chave": linha.chave, "label": linha.label, "valor": valor,
             "unidade": linha.unidade, "tipo": linha.tipo,
-        })
+        }
+        if linha.tipo == "select":
+            item_api["opcoes"] = [{"valor": v, "label": t} for v, t in OPCOES_SELECT.get(linha.chave, [])]
+        grupo["itens"].append(item_api)
     # Remove grupos sem nenhum item (não deveria acontecer após o seed, mas
     # evita cards vazios antes do primeiro startup rodar o seed).
     grupos = {k: v for k, v in grupos.items() if v["itens"]}
@@ -147,7 +152,12 @@ def atualizar_parametro(
             chave=linha.chave, fazenda_id=fazenda_id, grupo=linha.grupo, label=linha.label,
             valor=linha.valor, tipo=linha.tipo, unidade=linha.unidade,
         )
-    if linha.tipo == "bool":
+    if linha.tipo == "select":
+        validos = {v for v, _ in OPCOES_SELECT.get(chave, [])}
+        if str(dados.valor) not in validos:
+            raise HTTPException(status_code=400, detail="Opção inválida para este parâmetro")
+        linha.valor = str(dados.valor)
+    elif linha.tipo == "bool":
         linha.valor = "true" if dados.valor in (True, "true", "sim", "1", 1) else "false"
     else:
         linha.valor = str(dados.valor)

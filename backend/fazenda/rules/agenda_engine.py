@@ -18,7 +18,7 @@ from typing import Any
 from fazenda.api.routers.animais import _del_dias_ao_vivo
 from fazenda.rules.bst import GRUPOS_LACTACAO, ResultadoBST, avaliar_bst
 from fazenda.rules.dry_off import calcular_secagem
-from fazenda.rules.gestation import calcular_parto_provavel
+from fazenda.rules.gestation import calcular_parto_provavel, dias_gestacao_secagem_pre_parto
 from fazenda.rules.iatf import (
     CandidataIATF,
     NecessidadeHormonios,
@@ -554,6 +554,7 @@ class AgendaEngine:
                 for p in partos_por_animal.get(numero, [])
             )
             data_parto_provavel = None
+            data_parto_base = None  # base p/ secagem e pré-parto (ver abaixo)
             if gestante_vigente and data_servico and not ja_pariu_deste_servico:
                 res_gest = calcular_parto_provavel(data_servico, raca)
                 data_parto_provavel = res_gest.data_parto_provavel
@@ -573,7 +574,11 @@ class AgendaEngine:
                 # aparecendo (e cair em "Atrasados" no front) até o animal
                 # ser realmente movido — antes, a data passar simplesmente
                 # apagava o alerta da Agenda, como se tivesse sido resolvido.
-                data_pre_parto = data_parto_provavel - timedelta(days=pre_parto_max())
+                # Secagem e pré-parto partem da BASE escolhida em Parâmetros
+                # (mínimo/máximo/média, com ou sem prioridade da raça) e não
+                # do "Parto provável" por raça exibido acima.
+                data_parto_base = data_servico + timedelta(days=dias_gestacao_secagem_pre_parto(raca))
+                data_pre_parto = data_parto_base - timedelta(days=pre_parto_max())
                 if grupo not in grupos_ja_pre_parto:
                     eventos.append(AgendaItem(
                         data=data_pre_parto,
@@ -586,7 +591,7 @@ class AgendaEngine:
                 # pariu e está em lactação: novilha de 1ª cria nunca seca, e
                 # quem não está em lactação não tem o que secar; ver dry_off.py).
                 em_lactacao = bool(del_dias and del_dias > 0)
-                res_sec = calcular_secagem(numero, data_parto_provavel, ordem_parto, em_lactacao)
+                res_sec = calcular_secagem(numero, data_parto_base, ordem_parto, em_lactacao)
                 # Sem piso de data (mesmo racional do Pré-parto acima) — uma
                 # secagem vencida precisa continuar aparecendo até ser feita.
                 if res_sec.deve_secar:
@@ -675,7 +680,7 @@ class AgendaEngine:
                         numero_matriz=numero,
                         grupo_primario=grupo,
                         del_dias=del_dias,
-                        data_secagem=data_parto_provavel - timedelta(days=60) if data_parto_provavel else None,
+                        data_secagem=data_parto_base - timedelta(days=periodo_seco_dias()) if data_parto_base else None,
                         data_referencia=data_referencia,
                         del_atual=del_dias,
                         del_projetado=_del_projetado_bst(del_dias, result.proxima_visita_bst, data_referencia),
@@ -701,7 +706,7 @@ class AgendaEngine:
                     numero_matriz=numero,
                     grupo_primario=grupo,
                     del_dias=del_dias_bst,
-                    data_secagem=data_parto_provavel - timedelta(days=60) if data_parto_provavel else None,
+                    data_secagem=data_parto_base - timedelta(days=periodo_seco_dias()) if data_parto_base else None,
                     data_referencia=data_referencia,
                     del_atual=del_dias,
                     del_projetado=_del_projetado_bst(del_dias, result.proxima_visita_bst, data_referencia),

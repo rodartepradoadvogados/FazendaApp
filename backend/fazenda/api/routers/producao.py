@@ -1461,7 +1461,10 @@ def info_secagem(
     if ultimo_servico and ultimo_servico.data_servico:
         res_gest = calcular_parto_provavel(ultimo_servico.data_servico, animal.raca)
         em_lactacao = bool(animal.del_dias and animal.del_dias > 0)
-        res_sec = calcular_secagem(numero_matriz, res_gest.data_parto_provavel, ultimo_servico.ordem_parto, em_lactacao)
+        from fazenda.rules.gestation import dias_gestacao_secagem_pre_parto
+        # Secagem parte da base escolhida em Parâmetros, não do parto provável por raça.
+        parto_base = ultimo_servico.data_servico + timedelta(days=dias_gestacao_secagem_pre_parto(animal.raca))
+        res_sec = calcular_secagem(numero_matriz, parto_base, ultimo_servico.ordem_parto, em_lactacao)
         data_prevista = res_sec.data_secagem.isoformat()
         deve_secar = res_sec.deve_secar
         motivo_exclusao = res_sec.motivo_exclusao

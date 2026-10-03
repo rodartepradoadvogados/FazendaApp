@@ -33,7 +33,7 @@ from datetime import date, timedelta
 
 from fazenda.api.routers.recria import _contexto_categoria, classificar_categoria, situacao_reprodutiva_casa
 from fazenda.rules.estado_reprodutivo import GESTANTE
-from fazenda.rules.gestation import dias_gestacao
+from fazenda.rules.gestation import dias_gestacao_secagem_pre_parto
 from fazenda.rules.parametros import pre_parto_max
 
 EM_TRATAMENTO_DIAS = 15
@@ -98,7 +98,7 @@ def dias_para_parto(
     if not servico:
         return None
     dias_decorridos = (hoje - servico["data_servico"]).days
-    return round(dias_gestacao(raca) - dias_decorridos)
+    return round(dias_gestacao_secagem_pre_parto(raca) - dias_decorridos)
 
 
 def esta_em_tratamento(numero: str, sanidades_por_animal: dict[str, list[dict]], hoje: date) -> bool:

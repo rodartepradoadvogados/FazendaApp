@@ -46,6 +46,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from fazenda.rules.gestation import dias_gestacao_secagem_pre_parto
 from fazenda.rules.parametros import (
     dias_adesivo_cio_max,
     dias_adesivo_cio_min,
@@ -178,14 +179,17 @@ def classificar_rebanho(
         secou_rotina_depois = diag_positivo_vigente and secou_de_rotina_depois_do_servico(
             data_servico=data_servico, ultima_secagem_rotina=ultima_secagem_rotina,
         )
-        # Janela calculada (média configurável) OU já fisicamente no lote de
+        # Dias de gestação-base de secagem/pré-parto deste animal (Parâmetros >
+        # Gestação e parto: base mínimo/máximo/média + prioridade da raça).
+        gestacao_dias_animal = dias_gestacao_secagem_pre_parto(animal.get("raca"))
+        # Janela calculada (base configurável) OU já fisicamente no lote de
         # pré-parto (critério race-aware, ver lote_criterios.dias_para_parto)
         # — as duas podem divergir alguns dias para raças fora do Holandês,
         # então valem como alternativas, não como E lógico.
         entrou_pre_parto = diag_positivo_vigente and (
             dentro_da_janela_pre_parto(
                 data_servico=data_servico, hoje=hoje,
-                dias_gestacao_referencia=gestacao_dias, pre_parto_max_dias=pre_parto_ate,
+                dias_gestacao_referencia=gestacao_dias_animal, pre_parto_max_dias=pre_parto_ate,
             )
             or (animal.get("grupo_primario") or "") in grupos_pre_parto
         )
@@ -197,7 +201,7 @@ def classificar_rebanho(
 
         dpp = None
         if diag_positivo_vigente and not pariu_depois and data_servico:
-            dpp = round(gestacao_dias - (hoje - data_servico).days)
+            dpp = round(gestacao_dias_animal - (hoje - data_servico).days)
 
         data_diagnostico = (servico or {}).get("data_diagnostico")
         data_reconfirmacao_evt = (servico or {}).get("data_reconfirmacao")

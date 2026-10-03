@@ -82,6 +82,11 @@ def listar_parametros(
     todas = session.exec(select(ParametroFazenda).order_by(ParametroFazenda.id)).all()
     por_chave: dict[str, dict] = {}
     for linha in todas:
+        # Parâmetros de escolha (tipo "select") são decisão de cada fazenda,
+        # feita em Configurações > Parâmetros — este painel só edita número,
+        # sim/não e data em lote.
+        if linha.tipo == "select":
+            continue
         item = por_chave.setdefault(linha.chave, {
             "chave": linha.chave, "label": linha.label, "grupo": linha.grupo, "tipo": linha.tipo,
             "unidade": linha.unidade, "valor_global": None, "personalizado_em": [],
