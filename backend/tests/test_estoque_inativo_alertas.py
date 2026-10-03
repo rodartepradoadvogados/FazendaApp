@@ -62,5 +62,10 @@ def test_baixa_de_item_inativo_nao_avisa_abaixo_do_minimo():
     with Session(engine) as s:
         it = Estoque(nome="Banamine 100ml", quantidade=5.0, estoque_minimo=10.0, unidade="ml", ativo=False)
         s.add(it); s.commit(); s.refresh(it)
-        avisos = estoque_baixa.baixar(s, item=it, quantidade=1, unidade="ml", data=date(2026, 7, 7), fazenda_id=None, observacao="t")
+        # `baixar` agora recusa item inativo (lançamento novo); o aviso de mínimo
+        # continua valendo para movimentos que chegam por `movimentar` (estornos).
+        avisos = estoque_baixa.movimentar(
+            s, item=it, quantidade=1, unidade="ml", data=date(2026, 7, 7), fazenda_id=None,
+            movimento="Aplicação", observacao="t", sinal=-1,
+        )
         assert not any("abaixo do mínimo" in a for a in avisos)
