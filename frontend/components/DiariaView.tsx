@@ -9,6 +9,7 @@ import {
 } from "@/lib/api";
 import { SecaoRecolhivel, type ModoSecaoCategoria } from "@/components/ui";
 import { Modal } from "@/components/Modal";
+import { Dropzone } from "@/components/Dropzone";
 import ValeAvulsoSection from "@/components/ValeAvulsoSection";
 import CalendarioDiasTrabalhados from "@/components/CalendarioDiasTrabalhados";
 import { lbl, inputSm } from "@/components/estiloCampoAvulso";
@@ -16,7 +17,12 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
 
 type Pessoa = { id: number; nome: string; tipos: string[] };
-type Pagamento = { id: number; data_pagamento: string; valor: number; observacao: string | null; numero_lancamento_gerado: string | null };
+type Pagamento = { id: number; data_pagamento: string; valor: number; observacao: string | null; numero_lancamento_gerado: string | null; forma_pagamento?: string | null; numero_documento_pagamento?: string | null };
+
+const FORMAS_PAGAMENTO_DIARIA = [
+  { value: "pix", label: "Pix" }, { value: "debito", label: "Débito" }, { value: "credito", label: "Crédito" },
+  { value: "dinheiro", label: "Dinheiro" }, { value: "transferencia", label: "Transferência" }, { value: "boleto", label: "Boleto" },
+];
 type ValeAvulso = { id: number; valor: number; forma_pagamento: string; data_pagamento: string; observacao: string | null };
 type AuditoriaPendente = { id: number; diaria_id: number; periodo_inicio: string; periodo_fim: string };
 type Diaria = {
@@ -109,6 +115,8 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo, mostrar = "
   const [contasCorrentes, setContasCorrentes] = useState<ContaCorrenteCadastro[]>([]);
   const [pagamentoContaCorrenteId, setPagamentoContaCorrenteId] = useState("");
   const [comprovantePagamento, setComprovantePagamento] = useState<File | null>(null);
+  const [formaPagamentoDiaria, setFormaPagamentoDiaria] = useState("");
+  const [numeroComprovante, setNumeroComprovante] = useState("");
   const [enviandoPagamento, setEnviandoPagamento] = useState(false);
   const [enviandoComprovanteId, setEnviandoComprovanteId] = useState<number | null>(null);
 
@@ -278,6 +286,8 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo, mostrar = "
       const resultado = await registrarPagamentoDiaria(diariaId, {
         data_pagamento: dataPagamento, valor: parseFloat(valorPagamento),
         conta_corrente_id: pagamentoContaCorrenteId ? Number(pagamentoContaCorrenteId) : undefined,
+        forma_pagamento: formaPagamentoDiaria || undefined,
+        numero_documento_pagamento: numeroComprovante.trim() || undefined,
       });
       // O pagamento já foi salvo aqui — se o anexo do comprovante falhar
       // (ex.: arquivo grande numa conexão ruim), o pagamento não pode
@@ -287,13 +297,13 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo, mostrar = "
         try {
           await anexarArquivoLancamento(resultado.numero_lancamento_gerado, comprovantePagamento);
         } catch (e: any) {
-          setPagandoId(null); setValorPagamento(""); setPagamentoContaCorrenteId(""); setComprovantePagamento(null);
+          setPagandoId(null); setValorPagamento(""); setPagamentoContaCorrenteId(""); setComprovantePagamento(null); setFormaPagamentoDiaria(""); setNumeroComprovante("");
           carregar();
           setAvisoPagamento(`Pagamento registrado, mas o comprovante não foi anexado: ${e.message || "erro desconhecido"}. Anexe de novo pela lista de pagamentos lançados.`);
           return;
         }
       }
-      setPagandoId(null); setValorPagamento(""); setPagamentoContaCorrenteId(""); setComprovantePagamento(null);
+      setPagandoId(null); setValorPagamento(""); setPagamentoContaCorrenteId(""); setComprovantePagamento(null); setFormaPagamentoDiaria(""); setNumeroComprovante("");
       carregar();
     } catch (e: any) {
       setPagoErro(e.message || "Erro ao registrar pagamento");
@@ -839,7 +849,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo, mostrar = "
                           <Pencil size={13} />
                         </button>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
-                          onClick={() => { setPagandoId(d.id); setValorPagamento(d.saldo_devedor > 0 ? d.saldo_devedor.toFixed(2) : ""); setPagamentoContaCorrenteId(""); setComprovantePagamento(null); setPagoErro(null); }}>
+                          onClick={() => { setPagandoId(d.id); setValorPagamento(d.saldo_devedor > 0 ? d.saldo_devedor.toFixed(2) : ""); setPagamentoContaCorrenteId(""); setComprovantePagamento(null); setFormaPagamentoDiaria(""); setNumeroComprovante(""); setPagoErro(null); }}>
                           <DollarSign size={13} /> Pagar
                         </button>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem" }} title="Ver pagamentos lançados"
@@ -895,13 +905,15 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo, mostrar = "
                         {d.pagamentos?.length > 0 && (
                           <table className="fazenda-table" style={{ fontSize: "0.78rem" }}>
                             <thead>
-                              <tr><th>Data</th><th>Valor</th><th>Observação</th><th></th></tr>
+                              <tr><th>Data</th><th>Valor</th><th>Forma</th><th>Nº comprovante</th><th>Observação</th><th></th></tr>
                             </thead>
                             <tbody>
                               {d.pagamentos.map((p) => (
                                 <tr key={p.id}>
                                   <td>{fmtDataBR(p.data_pagamento)}</td>
                                   <td>{formatBRL(p.valor)}</td>
+                                  <td>{FORMAS_PAGAMENTO_DIARIA.find((f) => f.value === p.forma_pagamento)?.label || p.forma_pagamento || "—"}</td>
+                                  <td>{p.numero_documento_pagamento || "—"}</td>
                                   <td>{p.observacao || "—"}</td>
                                   <td>
                                     <label className="btn-ghost" style={{ fontSize: "0.7rem", display: "inline-flex", alignItems: "center", gap: "0.25rem", cursor: "pointer" }}
@@ -960,7 +972,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo, mostrar = "
       </>)}
 
       {pagandoId !== null && (
-        <Modal title="Registrar pagamento de diária" onClose={() => setPagandoId(null)} width="380px">
+        <Modal title="Registrar pagamento de diária" onClose={() => setPagandoId(null)} width="440px">
           <div>
             <label style={lbl}>Data do pagamento</label>
             <input type="date" style={inputSm} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} />
@@ -977,12 +989,33 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo, mostrar = "
             </select>
           </div>
           <div style={{ marginTop: "0.6rem" }}>
+            <label style={lbl}>Forma de pagamento</label>
+            <select style={inputSm} value={formaPagamentoDiaria} onChange={(e) => setFormaPagamentoDiaria(e.target.value)}>
+              <option value="">Não informar</option>
+              {FORMAS_PAGAMENTO_DIARIA.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+            </select>
+          </div>
+          <div style={{ marginTop: "0.6rem" }}>
+            <label style={lbl}>Nº do comprovante (opcional)</label>
+            <input style={inputSm} value={numeroComprovante} onChange={(e) => setNumeroComprovante(e.target.value)} placeholder="Ex.: código da transação Pix" />
+          </div>
+          <div style={{ marginTop: "0.6rem" }}>
             <label style={lbl}>Comprovante de pagamento (opcional)</label>
-            <input
-              type="file" accept="application/pdf,image/jpeg,image/png,image/webp"
-              onChange={(e) => setComprovantePagamento(e.target.files?.[0] || null)}
-              style={{ fontSize: "0.78rem" }}
-            />
+            {comprovantePagamento ? (
+              <div className="card" style={{ border: "1px solid var(--border)", padding: "0.55rem", display: "flex", alignItems: "center", gap: "0.5rem", justifyContent: "space-between" }}>
+                <span style={{ fontSize: "0.78rem", wordBreak: "break-all" }}><Receipt size={13} style={{ display: "inline", marginRight: 4 }} />{comprovantePagamento.name}</span>
+                <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => setComprovantePagamento(null)}>
+                  <X size={12} /> Remover
+                </button>
+              </div>
+            ) : (
+              <Dropzone
+                accept="application/pdf,image/jpeg,image/png,image/webp"
+                label="Arraste o comprovante aqui ou clique para selecionar"
+                hint="PDF, JPG, PNG ou WEBP"
+                onFiles={(fs) => setComprovantePagamento(fs[0] || null)}
+              />
+            )}
           </div>
           {pagoErro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.5rem" }}>{pagoErro}</p>}
           <button className="btn-primary" style={{ fontSize: "0.8rem", marginTop: "1rem" }} disabled={enviandoPagamento} onClick={() => registrarPagamento(pagandoId)}>

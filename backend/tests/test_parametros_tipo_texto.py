@@ -87,3 +87,31 @@ class TestParametroTexto:
             s.add(linha)
             s.commit()
         assert _valores(engine_com_tipos)["laticinio_nome"] == ""
+
+
+def test_select_volta_com_opcoes_e_rejeita_valor_invalido(engine_com_tipos):
+    """Parâmetro `select` (base de cálculo de secagem/pré-parto): a listagem
+    traz as opções e o PUT só aceita um dos valores válidos."""
+    from fastapi import HTTPException
+
+    from fazenda.api.routers.parametros import AtualizarParametroIn, atualizar_parametro, obter_parametros
+
+    with Session(engine_com_tipos) as s:
+        s.add(ParametroFazenda(chave="gestacao_base_calculo", fazenda_id=None, grupo="gestacao_parto",
+                               label="Base", valor="minimo", tipo="select"))
+        s.commit()
+        resposta = obter_parametros(session=s, fazenda_id=None)
+        item = next(i for g in resposta["grupos"].values() for i in g["itens"] if i["chave"] == "gestacao_base_calculo")
+        assert item["valor"] == "minimo"
+        assert [o["valor"] for o in item["opcoes"]] == ["minimo", "maximo", "media"]
+
+        with pytest.raises(HTTPException) as exc:
+            atualizar_parametro("gestacao_base_calculo", AtualizarParametroIn(valor="qualquer"),
+                                session=s, _=None, fazenda_id=None)
+        assert exc.value.status_code == 400
+
+        atualizar_parametro("gestacao_base_calculo", AtualizarParametroIn(valor="media"),
+                            session=s, _=None, fazenda_id=None)
+        item = next(i for g in obter_parametros(session=s, fazenda_id=None)["grupos"].values()
+                    for i in g["itens"] if i["chave"] == "gestacao_base_calculo")
+        assert item["valor"] == "media"

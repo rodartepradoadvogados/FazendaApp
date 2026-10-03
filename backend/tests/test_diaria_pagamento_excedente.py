@@ -147,3 +147,35 @@ class TestPagamentoDiariaExcedente:
             "conta_corrente_id": conta_corrente_id,
         })
         assert r.status_code == 400
+
+
+class TestPagamentoDiariaFormaEComprovante:
+    def test_forma_e_numero_do_comprovante_sao_gravados_e_devolvidos(self, client):
+        c, engine = client
+        diaria, conta_corrente_id = _diaria_com_vale(c, engine, valor_vale=0)
+        r = c.post(f"/cadastro/diarias/{diaria['id']}/pagamentos", json={
+            "data_pagamento": date.today().isoformat(), "valor": 100.0,
+            "conta_corrente_id": conta_corrente_id,
+            "forma_pagamento": "Pix", "numero_documento_pagamento": " E123456 ",
+        })
+        assert r.status_code == 200, r.text
+        pg = r.json()["pagamentos"][0]
+        assert pg["forma_pagamento"] == "pix"
+        assert pg["numero_documento_pagamento"] == "E123456"
+        with Session(engine) as s:
+            conta = s.exec(select(ContaGerencial).where(ContaGerencial.tipo_documento == "Diária")).one()
+            assert conta.forma_pagamento == "pix"
+            assert conta.numero_documento_pagamento == "E123456"
+        listagem = c.get("/cadastro/diarias").json()[0]["pagamentos"][0]
+        assert listagem["forma_pagamento"] == "pix"
+
+    def test_sem_forma_e_sem_numero_continua_funcionando(self, client):
+        c, engine = client
+        diaria, _ = _diaria_com_vale(c, engine, valor_vale=0)
+        r = c.post(f"/cadastro/diarias/{diaria['id']}/pagamentos", json={
+            "data_pagamento": date.today().isoformat(), "valor": 100.0,
+        })
+        assert r.status_code == 200, r.text
+        pg = r.json()["pagamentos"][0]
+        assert pg["forma_pagamento"] is None
+        assert pg["numero_documento_pagamento"] is None

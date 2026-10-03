@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Optional
 
-from fazenda.rules.parametros import gestacao_dias_referencia
+from fazenda.rules.parametros import gestacao_base_dias, gestacao_dias_referencia, gestacao_raca_prevalece
 
 # Dias de gestação por raça (mapeamento normalizado → chave lowercase sem acento)
 GESTACAO_DIAS: dict[str, int] = {
@@ -40,6 +40,21 @@ def dias_gestacao(raca: str | None) -> float:
             if chave in raca_norm:
                 return dias
     return gestacao_dias_referencia()
+
+
+def dias_gestacao_secagem_pre_parto(raca: str | None) -> int:
+    """Dias de gestação para calcular SECAGEM e PRÉ-PARTO.
+
+    Parâmetros > Gestação e parto: "Base de cálculo" (mínimo/máximo/média) e
+    "Animais com raça cadastrada" (respeitar a raça ou usar a base para
+    todos). Raça cadastrada que não consta na tabela de raças cai na base.
+    O "Parto provável" mostrado continua por `dias_gestacao(raca)`."""
+    if raca and gestacao_raca_prevalece():
+        raca_norm = raca.strip().lower()
+        for chave, dias in GESTACAO_DIAS.items():
+            if chave in raca_norm:
+                return dias
+    return gestacao_base_dias()
 
 
 def dias_gestacao_da_raca(raca: str | None, padrao: int) -> int:

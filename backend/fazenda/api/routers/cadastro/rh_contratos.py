@@ -1022,6 +1022,12 @@ class DiariaPagamentoIn(BaseModel):
     # que já foi pago menos os vales já adiantados). Ver
     # `registrar_pagamento_diaria`.
     confirmar_excedente: bool = False
+    # Forma de pagamento (pix, debito, credito, dinheiro, transferencia,
+    # boleto...) e nº do comprovante — OPCIONAIS; gravados no lançamento
+    # (ContaGerencial.forma_pagamento / numero_documento_pagamento), o mesmo
+    # lugar dos demais pagamentos.
+    forma_pagamento: str | None = None
+    numero_documento_pagamento: str | None = None
 
 
 def _dias_confirmados_diaria(session: Session, diaria_id: int, ate: date | None = None) -> tuple[int, date | None]:
@@ -1093,6 +1099,25 @@ def _dias_por_dia(session: Session, d: Diaria, desde: date, ate: date) -> tuple[
     perdido = sum(1 - _fracao_dia(e) for e in excecoes)
     dias_efetivos = max(round(corridos - perdido, 2), 0)
     return dias_efetivos, dias_folga, dias_meia
+
+
+def _pagamentos_diaria_com_forma(session: Session, pagamentos: list) -> list[dict]:
+    """Pagamentos da diária + forma de pagamento e nº do comprovante, que
+    vivem no lançamento (ContaGerencial) gerado no pagamento."""
+    numeros = [p.numero_lancamento_gerado for p in pagamentos if p.numero_lancamento_gerado]
+    por_numero: dict[str, ContaGerencial] = {}
+    if numeros:
+        for c in session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros))).all():
+            por_numero.setdefault(c.numero_lancamento, c)
+    saida = []
+    for p in pagamentos:
+        c = por_numero.get(p.numero_lancamento_gerado or "")
+        saida.append({
+            **p.model_dump(),
+            "forma_pagamento": c.forma_pagamento if c else None,
+            "numero_documento_pagamento": c.numero_documento_pagamento if c else None,
+        })
+    return saida
 
 
 def _pago_ate_diaria(session: Session, diaria_id: int) -> date | None:
@@ -1283,7 +1308,7 @@ def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
         "valor_pago": valor_pago,
         "valor_vale": valor_vale,
         "saldo_devedor": saldo_devedor,
-        "pagamentos": [p.model_dump() for p in pagamentos],
+        "pagamentos": _pagamentos_diaria_com_forma(session, pagamentos),
         "vales": vales,
         "auditorias_pendentes": [a.model_dump() for a in auditorias_pendentes],
         "dias_folga": dias_folga,
@@ -1687,6 +1712,8 @@ def registrar_pagamento_diaria(
         data_pagamento=dados.data_pagamento,
         valor_pago=dados.valor,
         conta_bancaria=rotulo_conta_corrente(conta_corrente) if conta_corrente else None,
+        forma_pagamento=(dados.forma_pagamento or "").strip().lower() or None,
+        numero_documento_pagamento=(dados.numero_documento_pagamento or "").strip() or None,
         fazenda_id=fazenda_id,
     ))
     session.commit()

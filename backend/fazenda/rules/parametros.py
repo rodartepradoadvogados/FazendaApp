@@ -64,6 +64,11 @@ DEFINICOES: list[dict] = [
     # ---- Gestação e parto ---------------------------------------------------
     {"chave": "gestacao_dias_min", "grupo": "gestacao_parto", "label": "Gestação — dias mínimo", "valor": 280, "unidade": "dias"},
     {"chave": "gestacao_dias_max", "grupo": "gestacao_parto", "label": "Gestação — dias máximo", "valor": 295, "unidade": "dias"},
+    # Base dos dias de gestação usada para calcular as datas de SECAGEM e de
+    # PRÉ-PARTO (não muda o "Parto provável" exibido, que segue a raça).
+    {"chave": "gestacao_base_calculo", "grupo": "gestacao_parto", "label": "Base de cálculo da gestação (secagem e pré-parto)", "valor": "minimo", "tipo": "select"},
+    # Se a raça cadastrada do animal tem prioridade sobre a base acima.
+    {"chave": "gestacao_considerar_raca", "grupo": "gestacao_parto", "label": "Animais com raça cadastrada", "valor": "respeitar_raca", "tipo": "select"},
     # Pré-parto: últimos pre_parto_max dias antes do parto (padrão 30, até o
     # parto). Vem DEPOIS do período seco/Secagem (periodo_seco_dias, acima —
     # 60 dias antes do parto até o início do pré-parto) — não confundir as
@@ -423,6 +428,22 @@ def dias_atraso_apos_aptidao_novilha() -> int:
     return int(get_param("dias_atraso_apos_aptidao_novilha", 30) or 30)
 
 
+# Opções dos parâmetros de tipo "select": (valor gravado, texto na tela). A
+# lista mora aqui (não no banco) para a API validar o valor e a tela montar o
+# seletor a partir da mesma fonte.
+OPCOES_SELECT: dict[str, list[tuple[str, str]]] = {
+    "gestacao_base_calculo": [
+        ("minimo", "Gestação – dias mínimo"),
+        ("maximo", "Gestação – dias máximo"),
+        ("media", "Média (dias mínimo + dias máximo) ÷ 2"),
+    ],
+    "gestacao_considerar_raca": [
+        ("respeitar_raca", "Respeitar a raça: animais com raça cadastrada usam os dias de gestação da raça; animais sem raça usam a base escolhida acima"),
+        ("base_para_todos", "Ignorar a raça: todos os animais usam a base escolhida acima"),
+    ],
+}
+
+
 def gestacao_dias_min() -> int:
     return int(get_param("gestacao_dias_min", 280) or 280)
 
@@ -438,6 +459,23 @@ def gestacao_dias_referencia() -> int:
     lote_criterios, 280 em relatorios_gerenciais/indicadores, dict por raça
     em gestation.py)."""
     return round((gestacao_dias_min() + gestacao_dias_max()) / 2)
+
+
+def gestacao_base_dias() -> int:
+    """Dias de gestação da BASE escolhida em Parâmetros (mínimo — padrão —,
+    máximo ou média) para calcular secagem e pré-parto."""
+    escolha = get_param_texto("gestacao_base_calculo", "minimo").strip().lower()
+    if escolha == "maximo":
+        return gestacao_dias_max()
+    if escolha == "media":
+        return gestacao_dias_referencia()
+    return gestacao_dias_min()
+
+
+def gestacao_raca_prevalece() -> bool:
+    """True (padrão): animal com raça cadastrada e conhecida usa os dias da
+    raça; False: todos usam a base escolhida."""
+    return get_param_texto("gestacao_considerar_raca", "respeitar_raca").strip().lower() != "base_para_todos"
 
 
 def pre_parto_min() -> int:

@@ -195,8 +195,10 @@ class TestParaJaResolvePreParto(object):
     def test_sem_parto_o_pre_parto_continua_batendo_normalmente(self, client):
         c, engine = client
         hoje = date.today()
-        from fazenda.rules.gestation import dias_gestacao
-        gestacao = round(dias_gestacao(None))
+        # O critério de pré-parto parte da base de Parâmetros (padrão: gestação
+        # mínima), não da média — mesma base da Agenda.
+        from fazenda.rules.gestation import dias_gestacao_secagem_pre_parto
+        gestacao = round(dias_gestacao_secagem_pre_parto(None))
         with Session(engine) as s:
             s.add(Animal(numero="3335", categoria_completa="Vaca em lactação", categoria_abrev="Vaca",
                          sit_rep="Ges.", diagnostico="POSITIVO", data_nasc=hoje - timedelta(days=1500), ativo=True))

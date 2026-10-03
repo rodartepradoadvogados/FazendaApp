@@ -19,7 +19,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from fazenda.rules.estado_reprodutivo import APTA, ATRASADA, GESTANTE, INSEMINADA, ROTULOS, estados_ao_vivo
-from fazenda.rules.gestation import dias_gestacao
+from fazenda.rules.gestation import dias_gestacao, dias_gestacao_secagem_pre_parto
 from fazenda.rules.parametros import (
     dias_reinseminacao_max,
     dias_reinseminacao_min,
@@ -355,7 +355,7 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
             ult_secagem = _ultima_secagem(num, secagem_idx)
             em_lactacao_viva = ult_secagem is None or (dparto is not None and ult_secagem < dparto)
             if eh_vaca and em_lactacao_viva and concep:
-                prev_secagem = concep + timedelta(days=dias_gest_raca - seco)
+                prev_secagem = concep + timedelta(days=dias_gestacao_secagem_pre_parto(a.get("raca")) - seco)
                 d_secar = _dias(hoje, prev_secagem)
                 if d_secar is not None and d_secar < -LIMITE_SECAGEM_RETROATIVA_DIAS:
                     pass  # atraso implausível — considerada secada 60 dias antes do último parto, sai da pendência
@@ -659,7 +659,7 @@ def fluxo_lactacao(animais: list[dict], servicos: list[dict], partos: list[dict]
         reconf = bool(ups.get("data_reconfirmacao"))
         dias_gest_raca = dias_gestacao(a.get("raca"))
         prev_parto = concep + timedelta(days=dias_gest_raca)
-        prev_secagem = concep + timedelta(days=dias_gest_raca - seco)
+        prev_secagem = concep + timedelta(days=dias_gestacao_secagem_pre_parto(a.get("raca")) - seco)
         dparto = _ultimo_parto(num, parto_idx)
         eh_vaca = _eh_vaca(num, parto_idx)
         if eh_vaca and _em_lactacao_viva(num, dparto) and prev_secagem >= hoje:

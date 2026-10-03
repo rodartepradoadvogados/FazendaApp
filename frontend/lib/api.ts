@@ -3200,6 +3200,8 @@ export async function registrarPagamentoDiaria(diariaId: number, dados: {
   // Conta bancária de onde sai o pagamento — OPCIONAL (ver _resolver_conta_corrente no backend).
   conta_corrente_id?: number | null;
   confirmar_excedente?: boolean;
+  forma_pagamento?: string | null;
+  numero_documento_pagamento?: string | null;
 }): Promise<{ numero_lancamento_gerado: string } & Record<string, any>> {
   const res = await authFetch(`${API}/cadastro/diarias/${diariaId}/pagamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

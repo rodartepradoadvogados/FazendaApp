@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, Pencil, Check, Loader2 } from "lucide-react";
 import { atualizarParametro, ehAdmin, fetchParametros } from "@/lib/api";
 
-type Item = { chave: string; label: string; valor: number | string | boolean | null; unidade: string | null; tipo?: string };
+type Item = { chave: string; label: string; valor: number | string | boolean | null; unidade: string | null; tipo?: string; opcoes?: { valor: string; label: string }[] };
 type Grupo = { titulo: string; itens: Item[] };
 
 // Grade de cards editáveis de parâmetros (tabela `parametro_fazenda`,
@@ -88,6 +88,11 @@ export function GruposParametrosCards({ filtro }: { filtro: (idGrupo: string) =>
                         <option value="true">Sim</option>
                         <option value="false">Não</option>
                       </select>
+                    ) : edit && it.tipo === "select" ? (
+                      <select value={String(valorAtual ?? "")} onChange={(e) => setValores((p) => ({ ...p, [it.chave]: e.target.value }))}
+                        style={{ ...inputStyle, width: "min(34rem, 100%)", whiteSpace: "normal", textAlign: "left" }}>
+                        {(it.opcoes || []).map((o) => <option key={o.valor} value={o.valor}>{o.label}</option>)}
+                      </select>
                     ) : edit && it.tipo === "date" ? (
                       <input type="date" defaultValue={String(valorAtual ?? "")}
                         onChange={(e) => setValores((p) => ({ ...p, [it.chave]: e.target.value }))}
@@ -102,6 +107,10 @@ export function GruposParametrosCards({ filtro }: { filtro: (idGrupo: string) =>
                         style={inputStyle} />
                     ) : it.tipo === "bool" ? (
                       <>{valorAtual ? "Sim" : "Não"}</>
+                    ) : it.tipo === "select" ? (
+                      <span style={{ whiteSpace: "normal", display: "inline-block", maxWidth: "34rem", textAlign: "right" }}>
+                        {(it.opcoes || []).find((o) => o.valor === String(valorAtual))?.label ?? String(valorAtual)}
+                      </span>
                     ) : (
                       <>{String(valorAtual)}</>
                     )}
