@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import AssistenteEnsinamento, Fazenda, Usuario
@@ -93,7 +93,9 @@ def _auditado(ctx: _Contexto, nome: str, params: dict):
 
 
 def _usuario_do_agente() -> Usuario:
-    """Usuário sintético (NÃO persistido) que as ferramentas esperam. Sem\n    AGENTE_MODULOS ele é "admin" (todas as ferramentas, como o dono vê no\n    site); com AGENTE_MODULOS vira operador só com esses módulos."""
+    """Usuário sintético (NÃO persistido) que as ferramentas esperam. Sem
+    AGENTE_MODULOS ele é "admin" (todas as ferramentas, como o dono vê no
+    site); com AGENTE_MODULOS vira operador só com esses módulos."""
     modulos = al.modulos_permitidos()
     if modulos is None:
         return Usuario(id=0, username="agente-externo", senha_hash="", papel="admin", ativo=True)
@@ -102,7 +104,8 @@ def _usuario_do_agente() -> Usuario:
 
 
 def _ferramentas_expostas() -> dict[str, dict]:
-    """nome -> spec, das MESMAS ferramentas do assistente, filtradas por\n    AGENTE_MODULOS quando definido."""
+    """nome -> spec, das MESMAS ferramentas do assistente, filtradas por
+    AGENTE_MODULOS quando definido."""
     modulos = al.modulos_permitidos()
     return {
         spec["name"]: spec
@@ -130,6 +133,30 @@ def _inteiro(params: dict, nome: str, padrao: int) -> int:
     if valor < 0:
         raise HTTPException(status_code=400, detail=f"Parâmetro '{nome}' não pode ser negativo.")
     return valor
+
+
+def _usuario_admin_da_fazenda(session: Session, fazenda_id: int) -> int:
+    """Retorna o ID do primeiro usuário admin ativo da fazenda (para FK usuario_id)."""
+    # Busca usuários que têm vínculo com a fazenda via UsuarioFazenda e são admin
+    from fazenda.models import UsuarioFazenda
+    stmt = (
+        select(Usuario.id)
+        .join(UsuarioFazenda, UsuarioFazenda.usuario_id == Usuario.id)
+        .where(
+            UsuarioFazenda.fazenda_id == fazenda_id,
+            Usuario.papel == "admin",
+            Usuario.ativo == True,
+        )
+        .limit(1)
+    )
+    resultado = session.exec(stmt).first()
+    if resultado is None:
+        # Fallback: qualquer admin ativo do sistema
+        fallback = session.exec(select(Usuario.id).where(Usuario.papel == "admin", Usuario.ativo == True).limit(1)).first()
+        if fallback is None:
+            raise HTTPException(status_code=503, detail="Nenhum usuário admin ativo encontrado para atribuir o ensinamento.")
+        return fallback
+    return resultado
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +198,8 @@ def ferramentas(request: Request, ctx: _Contexto = Depends(_contexto)) -> dict:
 
 @router.get("/instrucoes")
 def instrucoes(request: Request, ctx: _Contexto = Depends(_contexto), session: Session = Depends(_sessao_somente_leitura)) -> dict:
-    """System prompt base do Assistente + Ensinamentos ATIVOS da fazenda alvo\n    — o treino fica centralizado no CowData (aba Ensinamentos)."""
+    """System prompt base do Assistente + Ensinamentos ATIVOS da fazenda alvo
+    — o treino fica centralizado no CowData (aba Ensinamentos)."""
     with _auditado(ctx, "instrucoes", {}):
         fid = _fazenda_alvo(session)
         texto = assistente._system_prompt(session, fid)
@@ -204,7 +232,8 @@ def consultar(
             raise HTTPException(status_code=400, detail=f"Parâmetro(s) obrigatório(s) ausente(s): {', '.join(faltando)}")
 
         fid = _fazenda_alvo(session)
-        # `get_param` (regras que leem parâmetros da fazenda) lê esta variável\n        # de contexto — no site vem do token; aqui, da fazenda alvo fixa.
+        # `get_param` (regras que leem parâmetros da fazenda) lê esta variável
+        # de contexto — no site vem do token; aqui, da fazenda alvo fixa.
         marca = fazenda_atual.set(fid)
         try:
             resultado = assistente._executar_tool(ferramenta, entrada, session, _usuario_do_agente(), fid)
@@ -243,14 +272,16 @@ def criar_ensinamento_agente(
             raise HTTPException(status_code=400, detail="Título e texto são obrigatórios")
 
         fid = _fazenda_alvo(session)
+        usuario_id = _usuario_admin_da_fazenda(session, fid)
         e = AssistenteEnsinamento(
             fazenda_id=fid,
-            usuario_id=0,  # usuário sintético "agente-externo"\n            titulo=dados.titulo.strip(),
+            usuario_id=usuario_id,
+            titulo=dados.titulo.strip(),
             texto=dados.texto.strip(),
             ativo=dados.ativo,
         )
         session.add(e)
         session.commit()
         session.refresh(e)
-        logger.info("agente_leitura: ensinamento criado id=%s fazenda=%s titulo=%s", e.id, fid, dados.titulo[:50])
+        logger.info("agente_leitura: ensinamento criado id=%s fazenda=%s usuario_id=%s titulo=%s", e.id, fid, usuario_id, dados.titulo[:50])
         return {"id": e.id, "titulo": e.titulo, "ativo": e.ativo, "criado_em": e.criado_em.isoformat()}
