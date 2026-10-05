@@ -45,6 +45,12 @@ import { formatBRL } from "@/lib/api";
 //    corrobora os mesmos quatro números lidos no texto oficial do MAPA.
 // Nenhuma divergência de conteúdo entre as fontes lidas; a troca de link é
 // só para manter as duas fontes realmente acessíveis e lidas.
+// Checagem de 05/10/2026: MAPA IN 76/2018 (espelho SISLEGIS, texto lido pelo
+// Firecrawl: CCS 500.000 CS/mL, CPP/CBT 300.000 UFC/mL) e MilkPoint (resumão
+// das INs 76 e 77, lido pelo Firecrawl: CCS 500 mil, CBT 300 mil) seguem se
+// corroborando. Nenhuma norma posterior revogando a IN 76 foi encontrada. A
+// página da Embrapa Ageitec sobre CCS ainda cita a IN 51/2002 (limite de
+// 1.000.000), norma antiga já superada — não serve como segunda fonte.
 const FONTES_BONIFICACAO = [
   {
     nome: "MAPA — Instrução Normativa nº 76/2018 (SISLEGIS)",
@@ -55,7 +61,7 @@ const FONTES_BONIFICACAO = [
     url: "https://www.milkpoint.com.br/colunas/rafael-fagnani/resumao-das-ins-76-e-77-elas-estao-chegando-212785/",
   },
 ] as const;
-const FONTES_ATUALIZADO_EM = "28/09/2026";
+const FONTES_ATUALIZADO_EM = "05/10/2026";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Simulador ILUSTRATIVO de preço do leite — para a página pública de login.
