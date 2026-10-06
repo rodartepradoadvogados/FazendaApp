@@ -70,6 +70,8 @@ def _del_projetado_bst(del_atual: int | None, proxima_visita_bst: date | None, h
 # venda. Trinta dias dá tempo de arranjar isso sem encher a agenda de hoje com
 # coisa de dois meses adiante.
 DIAS_HORIZONTE_DESCARTE = 30
+# Conta a pagar vencida e ainda em aberto continua na Agenda por até este tanto de dias.
+DIAS_CONTAS_VENCIDAS_NA_AGENDA = 30
 
 
 @dataclass
@@ -775,7 +777,7 @@ class AgendaEngine:
         contas_proximas = [
             c for c in contas
             if c.get("data_vencimento")
-            and data_referencia <= c["data_vencimento"] <= limite_contas
+            and data_referencia - timedelta(days=DIAS_CONTAS_VENCIDAS_NA_AGENDA) <= c["data_vencimento"] <= limite_contas
             and (c.get("valor_pago") or 0) < (c.get("valor_total") or 0)
         ]
         result.contas_a_pagar = sorted(contas_proximas, key=lambda c: c["data_vencimento"])

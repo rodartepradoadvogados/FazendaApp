@@ -55,6 +55,7 @@ import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import FolhaPagamentoView from "@/components/FolhaPagamentoView";
+import CaixaFuncionariosView from "@/components/CaixaFuncionariosView";
 import RelatorioFolhaPagamentoView from "@/components/RelatorioFolhaPagamentoView";
 import { DocumentosFiscais } from "@/components/DocumentosFiscais";
 import LancamentosRecorrentesView from "@/components/LancamentosRecorrentesView";
@@ -98,7 +99,7 @@ type Lanc = {
   patrimonio_id?: number | null;
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "caixa_real", label: "Caixa Real", icon: TrendingUp, desc: "Projeção de liquidez: quanto tem hoje e como o saldo evolui com os compromissos já lançados" },
@@ -140,6 +141,7 @@ const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "recebimento", label: "Recebimento", icon: Wallet, desc: "Lançar/quitar uma nota de receita" },
   { id: "lote", label: "Pagamento/recebimento em lote", icon: Layers, desc: "Dar baixa em várias notas de uma vez" },
   { id: "folha", label: "Fechamento da folha", icon: Users, desc: "Lançar, conferir e pagar a folha do mês — para só consultar/imprimir, use Contas > Holerites e recibos" },
+  { id: "caixa_funcionarios", label: "Caixa dos funcionários", icon: Wallet, desc: "Saldo a favor de cada colaborador: entradas, retiradas com recibo e estornos" },
   { id: "recorrentes", label: "Lançamentos recorrentes", icon: Repeat, desc: "Contas que se repetem todo mês (energia, internet, aluguel...) — cadastre uma vez, gere só com o valor do período" },
 ];
 // Views de AÇÃO (lançar) não dependem de já existir lançamento nenhum no
@@ -751,7 +753,7 @@ export default function FinanceiroPage() {
           : rel === "recorrentes" ? <LancamentosRecorrentesView onFeito={recarregar} />
           : rel === "pagamento" ? <PagamentoIndividualView key="despesa" tipo="despesa" contasBancarias={contasBancarias} notaAlvoRef={notaAlvoRef} onNotaTratada={() => setNotaAlvoRef(null)} onFeito={recarregar} />
           : rel === "recebimento" ? <PagamentoIndividualView key="receita" tipo="receita" contasBancarias={contasBancarias} notaAlvoRef={notaAlvoRef} onNotaTratada={() => setNotaAlvoRef(null)} onFeito={recarregar} />
-          : rel === "lote" ? <PagamentoLoteView contasBancarias={contasBancarias} onFeito={recarregar} /> : rel === "folha" ? <FolhaPagamentoView />
+          : rel === "lote" ? <PagamentoLoteView contasBancarias={contasBancarias} onFeito={recarregar} /> : rel === "folha" ? <FolhaPagamentoView /> : rel === "caixa_funcionarios" ? <CaixaFuncionariosView />
           : rel === "folha_relatorio" ? <RelatorioFolhaPagamentoView /> : rel === "rmca" ? <RmcaView />
           : rel === "custo_litro_leite" ? <CustoLitroLeiteView />
           : rel === "custo_hectare" ? <CustoHectareView />
@@ -4067,6 +4069,18 @@ function dividirDiferenca(valorTotal: number, qtd: number, primeiraData: string)
  * e número do comprovante. Substitui a antiga baixa direto na lista de
  * Contas a pagar/receber — "Tratar" leva para cá em vez de abrir um modal.
  */
+// Origem de uma conta a pagar, deduzida do `tipo_documento` que cada módulo grava.
+// "folha" reúne tudo o que nasce no Fechamento da folha.
+const ORIGENS_PAGAMENTO: { id: string; label: string; docs: string[] }[] = [
+  { id: "folha", label: "Fechamento da folha (todos)", docs: ["Folha de pagamento", "Empreitada", "Contrato", "Acerto de diária", "Diária", "Vale avulso", "Férias", "13º salário", "Rescisão"] },
+  { id: "contrato", label: "Contrato", docs: ["Contrato"] },
+  { id: "empreita", label: "Empreita", docs: ["Empreitada"] },
+  { id: "diaria", label: "Diária", docs: ["Acerto de diária", "Diária"] },
+  { id: "clt", label: "Folha CLT", docs: ["Folha de pagamento"] },
+  { id: "ferias", label: "Férias / 13º", docs: ["Férias", "13º salário"] },
+  { id: "rescisao", label: "Rescisão", docs: ["Rescisão"] },
+];
+
 export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTratada, onFeito }: {
   tipo: "despesa" | "receita"; contasBancarias: string[]; notaAlvoRef: string | null;
   onNotaTratada?: () => void; onFeito?: () => void;
@@ -4081,6 +4095,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   const [fornecedor, setFornecedor] = useState("");
   const [produto, setProduto] = useState("");
   const [centroCusto, setCentroCusto] = useState("");
+  const [origemFiltro, setOrigemFiltro] = useState("");
   const [vencimentoDe, setVencimentoDe] = useState("");
   const [vencimentoAte, setVencimentoAte] = useState("");
 
@@ -4126,8 +4141,9 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
     (!fornecedor || r.fornecedor === fornecedor) &&
     (!produto || (r.itens || []).some((it) => it.produto === produto)) &&
     (!centroCusto || r.centro_custo === centroCusto) &&
+    (!origemFiltro || (ORIGENS_PAGAMENTO.find((o) => o.id === origemFiltro)?.docs || []).includes(r.tipo_documento || "")) &&
     (!vencimentoDe || (r.data_vencimento || "") >= vencimentoDe) && (!vencimentoAte || (r.data_vencimento || "") <= vencimentoAte)
-  ), [abertas, numeroDocumento, fornecedor, produto, centroCusto, vencimentoDe, vencimentoAte]);
+  ), [abertas, numeroDocumento, fornecedor, produto, centroCusto, origemFiltro, vencimentoDe, vencimentoAte]);
   const totalFiltrado = useMemo(() => filtradas.reduce((a, r) => a + r.valor, 0), [filtradas]);
 
   // Ordenação clicável sobre o resultado JÁ filtrado.
@@ -4262,6 +4278,13 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
             <select style={selStyleLote} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
               <option value="">Todos</option>{centrosCusto.map((c) => <option key={c} value={c}>{c}</option>)}
             </select></div>
+          {tipo === "despesa" && (
+            <div><label style={labelStyleLote}>Origem</label>
+              <select style={selStyleLote} value={origemFiltro} onChange={(e) => setOrigemFiltro(e.target.value)}>
+                <option value="">Todas as origens</option>
+                {ORIGENS_PAGAMENTO.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+              </select></div>
+          )}
           <div><label style={labelStyleLote}>Vencimento — de</label><input type="date" style={selStyleLote} value={vencimentoDe} onChange={(e) => setVencimentoDe(e.target.value)} /></div>
           <div><label style={labelStyleLote}>Vencimento — até</label><input type="date" style={selStyleLote} value={vencimentoAte} onChange={(e) => setVencimentoAte(e.target.value)} /></div>
         </div>

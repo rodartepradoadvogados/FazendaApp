@@ -10,8 +10,9 @@ import {
   fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, fetchEstoqueAtivos, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
   cadastrarPreventivo, marcarCuraAplicacao, marcarCuraProtocolo, confirmarLactacaoInducao, fetchProtocolosIatfAtivos,
   criarMovimentacao, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, salvarDiasDiaria, atualizarServico,
-  authFetch, API, mensagemErroApi,
+  authFetch, API, mensagemErroApi, fetchLancamentos,
 } from "@/lib/api";
+import { PagarContaModal, type ContaParaPagar } from "@/components/PagarContaModal";
 import { exportarExcel, exportarPDF } from "@/lib/export";
 import { VIAS_APLICACAO } from "@/lib/constants";
 
@@ -212,6 +213,23 @@ function AgendaConteudo() {
   const toggleData = (d: string) => setDatasAbertas(p => { const n = new Set(p); n.has(d) ? n.delete(d) : n.add(d); return n; });
   // Painéis recolhíveis (candidatas IATF, BST aptos, BST excluídos) — começam recolhidos.
   const [paineis, setPaineis] = useState<Set<string>>(new Set());
+  // "Pagar" direto na linha de Contas a pagar da Agenda — mesma janela de
+  // Ações > Pagamento e do Fechamento da folha.
+  const [pagandoConta, setPagandoConta] = useState<ContaParaPagar | null>(null);
+  const [resolvendoPagamento, setResolvendoPagamento] = useState<string | null>(null);
+  const abrirPagamento = async (ref: string) => {
+    setResolvendoPagamento(ref);
+    try {
+      const d = await fetchLancamentos();
+      const conta = (d.lancamentos || []).find((l: any) => l.numero_lancamento === ref && l.tipo === "despesa" && !l.data_pagamento);
+      if (!conta) { mostrarFeedback("Esta conta já foi paga ou não foi encontrada em Contas a pagar.", true); return; }
+      setPagandoConta({
+        lancamentoId: conta.id, titulo: conta.descricao || `Lançamento ${ref}`, detalhe: conta.fornecedor || undefined,
+        valorPrevisto: conta.valor, dataVencimento: conta.data_vencimento,
+      });
+    } catch (e: any) { mostrarFeedback(e.message || "Não foi possível abrir o pagamento.", true); }
+    finally { setResolvendoPagamento(null); }
+  };
   const togglePainel = (k: string) => setPaineis(p => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n; });
   // Protocolo IATF: grupo (lançamento+dia) expandido mostra os animais + hormônio do dia.
   const [iatfAbertos, setIatfAbertos] = useState<Set<string>>(new Set());
@@ -1886,6 +1904,12 @@ function AgendaConteudo() {
                           <td>—</td>
                           <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>
                           <td onClick={(ev) => ev.stopPropagation()}>
+                            <button type="button" className="btn-primary" disabled={resolvendoPagamento === ref}
+                              style={{ fontSize: "0.68rem", padding: "0.15rem 0.6rem", marginRight: "0.3rem" }}
+                              title="Pagar esta conta aqui mesmo (data, forma, conta bancária, comprovante)"
+                              onClick={() => abrirPagamento(ref)}>
+                              {resolvendoPagamento === ref ? "Abrindo…" : "Pagar"}
+                            </button>
                             <a href={`/financeiro?ir=a_pagar&ref=${encodeURIComponent(ref)}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
                               <Wallet size={12} /> Ir para Financeiro
                             </a>
@@ -2752,6 +2776,10 @@ function AgendaConteudo() {
         </div>
       </div>
 
+      {pagandoConta && (
+        <PagarContaModal conta={pagandoConta} onClose={() => setPagandoConta(null)}
+          onPago={() => { setPagandoConta(null); mostrarFeedback("Pagamento registrado."); carregar(); }} />
+      )}
       {/* Erro de carregamento — distinto do estado "sem dados"; a lista que já está na tela fica. */}
       {erro && (
         <div className="alert-critico mb-4" role="alert">

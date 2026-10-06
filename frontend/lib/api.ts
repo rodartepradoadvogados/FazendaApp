@@ -2752,6 +2752,9 @@ export type LinhaFolhaUnificada = {
   status: "pendente" | "pago" | "cancelado_rescisao";
   pode_excluir: boolean;
   vencido: boolean;
+  /** Conta a pagar por trás da linha (contrato, empreita, diária): habilita o botão Pagar. */
+  lancamento_id?: number | null;
+  numero_lancamento?: string | null;
   /** Discriminado do documento — presente em funcionário (holerite completo) e
    *  em férias/13º (recibo com referência própria). O ledger já calculava isso
    *  e descartava ao montar a linha: era por isso que a tela de Contas não
@@ -9920,4 +9923,66 @@ export async function fetchResumoRotinaListaEsperaCowData(): Promise<ResumoRotin
   const res = await authFetch(`${API}/painel-cowdata/rotina-lista-espera`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Erro ao carregar a rotina da lista de espera: ${res.status}`);
   return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Caixa dos funcionários (Fase 1: caixa individual). Só administrador.
+// ---------------------------------------------------------------------------
+export type CaixaGrupo = "clt" | "empreita" | "contrato" | "diaria";
+export type CaixaPessoaLinha = {
+  pessoa_id: number; nome: string; tipo: string; grupos: CaixaGrupo[];
+  saldo: number; movimentos: number; ultimo_movimento: string | null;
+};
+export type CaixaMovimentoItem = {
+  id: number; pessoa_id: number; tipo: string; valor: number; data: string; motivo: string;
+  base_valor: number | null; percentual: number | null; numero_lancamento: string | null;
+  forma_pagamento: string | null; conta_bancaria: string | null; numero_documento_pagamento: string | null;
+  numero_recibo: string | null; estorna_id: number | null; saldo_depois: number;
+  estornado: boolean; eh_estorno: boolean; pode_estornar: boolean; pode_excluir: boolean;
+};
+export type CaixaDetalhe = {
+  pessoa: { id: number; nome: string; tipo: string; grupos: CaixaGrupo[] };
+  saldo: number; movimentos: CaixaMovimentoItem[];
+};
+export type CaixaRecibo = {
+  movimento: CaixaMovimentoItem; pessoa: { id: number; nome: string; tipo: string };
+  saldo_anterior: number; saldo_depois: number;
+};
+
+async function caixaJson(res: Response, padrao: string) {
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || padrao); }
+  return res.json();
+}
+
+export async function fetchCaixasFuncionarios(): Promise<{ pessoas: CaixaPessoaLinha[]; total_devido: number; tipos_entrada: Record<string, string> }> {
+  return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios`, { cache: "no-store" }), "Erro ao carregar os caixas");
+}
+export async function fetchCaixaFuncionario(pessoaId: number): Promise<CaixaDetalhe> {
+  return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/${pessoaId}`, { cache: "no-store" }), "Erro ao carregar o caixa");
+}
+export async function lancarEntradaCaixa(dados: {
+  pessoa_ids: number[]; tipo: string; data: string; motivo: string; valor?: number | null;
+  base_valor?: number | null; percentual?: number | null;
+}): Promise<{ criados: { pessoa_id: number; nome: string; numero_lancamento: string }[]; total: number; valor_por_pessoa: number }> {
+  return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/entradas`, {
+    method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": gerarChaveIdempotencia() }, body: JSON.stringify(dados),
+  }), "Erro ao lançar a entrada");
+}
+export async function registrarRetiradaCaixa(pessoaId: number, dados: {
+  valor: number; data: string; forma_pagamento: string; conta_bancaria?: string; numero_documento_pagamento?: string; motivo?: string;
+}): Promise<CaixaRecibo> {
+  return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/${pessoaId}/retiradas`, {
+    method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": gerarChaveIdempotencia() }, body: JSON.stringify(dados),
+  }), "Erro ao registrar a retirada");
+}
+export async function fetchReciboCaixa(pessoaId: number, movimentoId: number): Promise<CaixaRecibo> {
+  return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/${pessoaId}/movimentos/${movimentoId}/recibo`, { cache: "no-store" }), "Erro ao carregar o recibo");
+}
+export async function estornarMovimentoCaixa(pessoaId: number, movimentoId: number, motivo: string) {
+  return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/${pessoaId}/movimentos/${movimentoId}/estornar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ motivo }),
+  }), "Erro ao estornar");
+}
+export async function excluirMovimentoCaixa(pessoaId: number, movimentoId: number) {
+  return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/${pessoaId}/movimentos/${movimentoId}`, { method: "DELETE" }), "Erro ao excluir");
 }

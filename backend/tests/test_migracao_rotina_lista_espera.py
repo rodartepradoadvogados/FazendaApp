@@ -94,4 +94,6 @@ def test_upgrade_idempotente_com_tabela_ja_criada(banco_anterior):
 def test_uma_cabeca_so():
     sys.path.insert(0, str(BACKEND / "scripts"))
     from check_alembic_heads import heads
-    assert heads() == [REV]
+    # Uma cabeça só. Não fixa em REV: toda migração nova passa a ser a cabeça, e fixar aqui
+    # quebrava este teste a cada migração (mesmo padrão dos outros test_migracao_*).
+    assert len(heads()) == 1

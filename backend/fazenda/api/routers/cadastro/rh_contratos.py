@@ -125,6 +125,16 @@ def _detalhe_decimo_terceiro(d: DecimoTerceiro) -> list[dict]:
     return linhas
 
 
+def _ref_conta(conta: ContaGerencial | None) -> dict:
+    """Referência da conta a pagar (ContaGerencial) por trás de uma linha do
+    Fechamento da folha: é o que permite à tela dar baixa (Pagar) pelo mesmo
+    endpoint de Ações > Pagamento. `None` quando a linha ainda não tem conta
+    (ex.: etapa de empreitada não concluída) — a tela então não oferece Pagar."""
+    if conta is None:
+        return {"lancamento_id": None, "numero_lancamento": None}
+    return {"lancamento_id": conta.id, "numero_lancamento": conta.numero_lancamento}
+
+
 @router.get("/folha-pagamento-unificada")
 def listar_folha_pagamento_unificada(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -192,7 +202,12 @@ def listar_folha_pagamento_unificada(
     ]
     contas_empreita = {
         c.numero_lancamento: c
-        for c in session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros_empreita))).all()
+        for c in session.exec(
+            select(ContaGerencial).where(
+                ContaGerencial.numero_lancamento.in_(numeros_empreita),
+                *([ContaGerencial.fazenda_id == fazenda_id] if fazenda_id is not None else []),
+            )
+        ).all()
     } if numeros_empreita else {}
     for p in parcelas_empreita:
         e = empreitadas.get(p.empreitada_id)
@@ -209,6 +224,7 @@ def listar_folha_pagamento_unificada(
             "data_pagamento": conta.data_pagamento if conta else None,
             "status": "pago" if pago else "pendente",
             "pode_excluir": not pago,
+            **_ref_conta(conta),
         })
     for et in etapas_empreita:
         e = empreitadas.get(et.empreitada_id)
@@ -225,6 +241,7 @@ def listar_folha_pagamento_unificada(
             "data_pagamento": conta.data_pagamento if conta else None,
             "status": "pago" if pago else "pendente",
             "pode_excluir": False,
+            **_ref_conta(conta),
         })
 
     query_contratos = select(Contrato)
@@ -237,7 +254,12 @@ def listar_folha_pagamento_unificada(
     numeros_contrato = [p.numero_lancamento_gerado for p in parcelas_contrato if p.numero_lancamento_gerado]
     contas_contrato = {
         c.numero_lancamento: c
-        for c in session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros_contrato))).all()
+        for c in session.exec(
+            select(ContaGerencial).where(
+                ContaGerencial.numero_lancamento.in_(numeros_contrato),
+                *([ContaGerencial.fazenda_id == fazenda_id] if fazenda_id is not None else []),
+            )
+        ).all()
     } if numeros_contrato else {}
     for p in parcelas_contrato:
         c = contratos.get(p.contrato_id)
@@ -254,6 +276,7 @@ def listar_folha_pagamento_unificada(
             "data_pagamento": conta.data_pagamento if conta else None,
             "status": "pago" if pago else "pendente",
             "pode_excluir": not pago,
+            **_ref_conta(conta),
         })
 
     query_diarias = select(Diaria)
@@ -295,6 +318,7 @@ def listar_folha_pagamento_unificada(
             # apontando para um lançamento que não existe mais — o caminho
             # é reabrir o período (que apaga a cobrança junto).
             "pode_excluir": False,
+            **_ref_conta(conta),
         })
 
     for pg in session.exec(query_pagamentos_diaria).all():
@@ -471,8 +495,16 @@ def _serializar_empreitada(session: Session, e: Empreitada) -> dict:
     ).all()
     numeros = [n for n in [p.numero_lancamento_gerado for p in parcelas] + [et.numero_lancamento_gerado for et in etapas] if n]
     pagos = set()
+    conta_por_numero: dict[str, ContaGerencial] = {}
     if numeros:
-        contas = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros))).all()
+        query_contas = select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros))
+        if e.fazenda_id is not None:
+            # numero_lancamento é sequencial por ano, não global: sem o recorte,
+            # o id devolvido para "Pagar" podia ser o de uma conta homônima de
+            # outra fazenda.
+            query_contas = query_contas.where(ContaGerencial.fazenda_id == e.fazenda_id)
+        contas = session.exec(query_contas).all()
+        conta_por_numero = {c.numero_lancamento: c for c in contas}
         pagos = {c.numero_lancamento for c in contas if c.valor_pago is not None}
     abatido_parcela = _abatimentos_de_vale_por_item(session, "empreitada_parcela", [p.id for p in parcelas], e.fazenda_id)
     abatido_etapa = _abatimentos_de_vale_por_item(session, "empreitada_etapa", [et.id for et in etapas], e.fazenda_id)
@@ -488,6 +520,8 @@ def _serializar_empreitada(session: Session, e: Empreitada) -> dict:
                 **p.model_dump(),
                 "status": "pago" if p.numero_lancamento_gerado in pagos else "pendente",
                 "valor_abatido_vales": abatido_parcela.get(p.id, 0.0),
+                **_ref_conta(conta_por_numero.get(p.numero_lancamento_gerado)),
+                "data_pagamento": getattr(conta_por_numero.get(p.numero_lancamento_gerado), "data_pagamento", None),
             }
             for p in parcelas
         ],
@@ -496,6 +530,7 @@ def _serializar_empreitada(session: Session, e: Empreitada) -> dict:
                 **et.model_dump(),
                 "status_pagamento": "pago" if et.numero_lancamento_gerado in pagos else "pendente",
                 "valor_abatido_vales": abatido_etapa.get(et.id, 0.0),
+                **_ref_conta(conta_por_numero.get(et.numero_lancamento_gerado)),
             }
             for et in etapas
         ],
@@ -795,8 +830,13 @@ def _serializar_contrato(session: Session, c: Contrato) -> dict:
     ).all()
     numeros = [p.numero_lancamento_gerado for p in parcelas if p.numero_lancamento_gerado]
     pagos = set()
+    conta_por_numero: dict[str, ContaGerencial] = {}
     if numeros:
-        contas = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros))).all()
+        query_contas = select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros))
+        if c.fazenda_id is not None:
+            query_contas = query_contas.where(ContaGerencial.fazenda_id == c.fazenda_id)
+        contas = session.exec(query_contas).all()
+        conta_por_numero = {conta.numero_lancamento: conta for conta in contas}
         pagos = {conta.numero_lancamento for conta in contas if conta.valor_pago is not None}
     abatido = _abatimentos_de_vale_por_item(session, "contrato_parcela", [p.id for p in parcelas], c.fazenda_id)
     return {
@@ -808,6 +848,8 @@ def _serializar_contrato(session: Session, c: Contrato) -> dict:
                 **p.model_dump(),
                 "status": "pago" if p.numero_lancamento_gerado in pagos else "pendente",
                 "valor_abatido_vales": abatido.get(p.id, 0.0),
+                **_ref_conta(conta_por_numero.get(p.numero_lancamento_gerado)),
+                "data_pagamento": getattr(conta_por_numero.get(p.numero_lancamento_gerado), "data_pagamento", None),
             }
             for p in parcelas
         ],
