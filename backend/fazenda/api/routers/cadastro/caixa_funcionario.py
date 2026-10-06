@@ -16,7 +16,7 @@ Regras (combinadas com o dono):
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -25,7 +25,8 @@ from sqlmodel import Session, select
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
 from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
-from fazenda.models import CaixaMovimento, ContaGerencial, Pessoa
+from fazenda.models import CaixaMovimento, CaixaRetencao, ContaGerencial, Pessoa
+from fazenda.rules import caixa_funcionario as regras
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
 
 router = APIRouter(prefix="/caixa-funcionarios", tags=["Caixa dos funcionários"])
@@ -148,6 +149,139 @@ def listar_caixas(
         "total_devido": round(sum(l["saldo"] for l in linhas), 2),
         "tipos_entrada": TIPOS_ENTRADA,
     }
+
+
+# ---------------------------------------------------------------------------
+# Retenção em folha (Fase 2)
+# ---------------------------------------------------------------------------
+def _dados_retencao(session: Session, pessoa: Pessoa, fazenda_id: int | None) -> dict:
+    cfg = regras.retencao_da_pessoa(session, pessoa.id, fazenda_id)
+    anexado = regras.termo_anexado(session, pessoa.id, fazenda_id)
+    return {
+        "pessoa": {"id": pessoa.id, "nome": pessoa.nome, "tipo": pessoa.tipo, "grupos": _grupos_da_pessoa(pessoa),
+                   "salario_base": pessoa.salario_base},
+        "config": cfg.model_dump() if cfg else None,
+        "acumulado": regras.acumulado_retido(session, pessoa.id, fazenda_id),
+        "termo_anexado": anexado,
+        "termo_pendente": regras.termo_pendente(cfg, anexado),
+    }
+
+
+@router.get("/retencoes")
+def listar_retencoes(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: object = Depends(exigir_admin),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(CaixaRetencao)
+    if fazenda_id is not None:
+        query = query.where(CaixaRetencao.fazenda_id == fazenda_id)
+    linhas = []
+    for cfg in session.exec(query).all():
+        pessoa = session.get(Pessoa, cfg.pessoa_id)
+        if pessoa is None:
+            continue
+        linhas.append(_dados_retencao(session, pessoa, fazenda_id))
+    return {"retencoes": linhas}
+
+
+@router.get("/pendencias")
+def pendencias_do_caixa(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: object = Depends(exigir_admin),
+) -> dict:
+    """O que o caixa está devendo de documento: alimenta o aviso do Fechamento da folha."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    return {"termos_pendentes": regras.termos_pendentes(session, fazenda_id)}
+
+
+@router.get("/{pessoa_id}/retencao")
+def obter_retencao(
+    pessoa_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), _: object = Depends(exigir_admin),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    return _dados_retencao(session, _pessoa_ou_404(session, pessoa_id, fazenda_id), fazenda_id)
+
+
+class RetencaoIn(BaseModel):
+    forma: str  # fixo | percentual
+    valor: float
+    inicio: date
+    fim: date | None = None
+    teto: float | None = None
+    autorizada: bool = False
+
+
+@router.put("/{pessoa_id}/retencao")
+def salvar_retencao(
+    pessoa_id: int, dados: RetencaoIn, session: Session = Depends(get_session), user=Depends(get_current_user),
+    fazenda_id: int = Depends(get_fazenda_id_escrita), _: object = Depends(exigir_admin),
+) -> dict:
+    """Cria ou atualiza o combinado de retenção (um por pessoa)."""
+    pessoa = _pessoa_ou_404(session, pessoa_id, fazenda_id)
+    if dados.forma not in ("fixo", "percentual"):
+        raise HTTPException(status_code=400, detail="Forma inválida: use valor fixo ou percentual")
+    if dados.valor <= 0:
+        raise HTTPException(status_code=400, detail="Informe um valor maior que zero")
+    if dados.forma == "percentual" and dados.valor > 100:
+        raise HTTPException(status_code=400, detail="O percentual não pode passar de 100%")
+    if dados.teto is not None and dados.teto <= 0:
+        raise HTTPException(status_code=400, detail="O teto precisa ser maior que zero (ou fique em branco)")
+    if dados.fim is not None and dados.fim < dados.inicio:
+        raise HTTPException(status_code=400, detail="O fim da vigência não pode ser antes do início")
+    cfg = regras.retencao_da_pessoa(session, pessoa_id, fazenda_id)
+    if cfg is None:
+        cfg = CaixaRetencao(fazenda_id=fazenda_id, pessoa_id=pessoa_id, inicio=dados.inicio)
+    cfg.forma, cfg.valor, cfg.inicio, cfg.fim, cfg.teto = dados.forma, round(dados.valor, 2), dados.inicio, dados.fim, dados.teto
+    if dados.autorizada and not cfg.autorizada:
+        cfg.autorizada_em = date.today()
+        cfg.revogada_em = None  # nova autorização reabre a vigência
+    cfg.autorizada = dados.autorizada
+    cfg.atualizado_em = datetime.utcnow()
+    cfg.usuario_id = usuario_id_seguro(user)
+    session.add(cfg)
+    session.commit()
+    return _dados_retencao(session, pessoa, fazenda_id)
+
+
+class PausaIn(BaseModel):
+    pausada: bool
+
+
+@router.post("/{pessoa_id}/retencao/pausar")
+def pausar_retencao(
+    pessoa_id: int, dados: PausaIn, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita), _: object = Depends(exigir_admin),
+) -> dict:
+    pessoa = _pessoa_ou_404(session, pessoa_id, fazenda_id)
+    cfg = regras.retencao_da_pessoa(session, pessoa_id, fazenda_id)
+    if cfg is None:
+        raise HTTPException(status_code=404, detail="Esta pessoa não tem retenção combinada")
+    cfg.pausada = dados.pausada
+    cfg.atualizado_em = datetime.utcnow()
+    session.add(cfg)
+    session.commit()
+    return _dados_retencao(session, pessoa, fazenda_id)
+
+
+@router.post("/{pessoa_id}/retencao/revogar")
+def revogar_retencao(
+    pessoa_id: int, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita), _: object = Depends(exigir_admin),
+) -> dict:
+    """O funcionário revogou a autorização: vale a partir do MÊS SEGUINTE (a vigência
+    termina no último dia do mês corrente). O que já foi retido continua no caixa."""
+    pessoa = _pessoa_ou_404(session, pessoa_id, fazenda_id)
+    cfg = regras.retencao_da_pessoa(session, pessoa_id, fazenda_id)
+    if cfg is None:
+        raise HTTPException(status_code=404, detail="Esta pessoa não tem retenção combinada")
+    hoje = date.today()
+    cfg.revogada_em = (date(hoje.year + (hoje.month == 12), hoje.month % 12 + 1, 1) - timedelta(days=1))
+    cfg.atualizado_em = datetime.utcnow()
+    session.add(cfg)
+    session.commit()
+    return _dados_retencao(session, pessoa, fazenda_id)
 
 
 @router.get("/{pessoa_id}")
@@ -315,44 +449,12 @@ def estornar_movimento(
     motivo = (dados.motivo or "").strip()
     if not motivo:
         raise HTTPException(status_code=400, detail="Informe o motivo do estorno")
-    if original.tipo == "estorno":
-        raise HTTPException(status_code=409, detail="Um estorno não pode ser estornado")
-    movs = _movimentos_da_pessoa(session, pessoa_id, fazenda_id)
-    if any(m.estorna_id == original.id for m in movs):
-        raise HTTPException(status_code=409, detail="Este movimento já foi estornado")
-    # Estornar uma ENTRADA tira dinheiro do caixa: não pode deixar o saldo negativo.
-    if original.valor > 0 and _saldo(movs) - original.valor < 0:
+    if original.tipo == "retencao" and original.folha_id:
         raise HTTPException(
             status_code=409,
-            detail="O saldo desta entrada já foi usado em retirada(s). Estorne a retirada primeiro.",
+            detail="Esta retenção veio de uma folha paga. Para desfazê-la, estorne o pagamento da folha em Fechamento da folha.",
         )
-    hoje = date.today()
-    novo = CaixaMovimento(
-        fazenda_id=fazenda_id, pessoa_id=pessoa_id, tipo="estorno", valor=-original.valor, data=hoje,
-        motivo=f"Estorno de {original.numero_lancamento or original.numero_recibo or f'#{original.id}'}: {motivo}",
-        estorna_id=original.id, usuario_id=usuario_id_seguro(user),
-    )
-    # Entrada da fazenda: o Financeiro recebe o lançamento contrário (receita), para o gasto não ficar de pé.
-    if original.lancamento_id:
-        conta_original = session.get(ContaGerencial, original.lancamento_id)
-        if conta_original is not None:
-            numero = _proximo_numero_lancamento(session, hoje.year)
-            contra = ContaGerencial(
-                numero_lancamento=numero,
-                descricao=f"Estorno de {conta_original.numero_lancamento} · {conta_original.fornecedor_cliente or ''} · {motivo}"[:500],
-                data_vencimento=hoje, data_competencia=hoje.replace(day=1),
-                fornecedor_cliente=conta_original.fornecedor_cliente, tipo_documento=TIPO_DOC_ESTORNO,
-                centro_custo=conta_original.centro_custo, valor_total=conta_original.valor_total,
-                parcela_num=1, parcela_total=1, tipo="receita", origem="auto",
-                data_pagamento=hoje, valor_pago=conta_original.valor_total,
-                conta_bancaria=conta_original.conta_bancaria, forma_pagamento="caixa_funcionario",
-                fazenda_id=fazenda_id,
-            )
-            session.add(contra)
-            session.flush()
-            novo.lancamento_id = contra.id
-            novo.numero_lancamento = numero
-    session.add(novo)
+    novo = regras.estornar_movimento(session, original, motivo, usuario_id_seguro(user), fazenda_id)
     session.commit()
     session.refresh(novo)
     return {"estorno": novo.model_dump()}
@@ -369,6 +471,8 @@ def excluir_movimento(
     movs = _movimentos_da_pessoa(session, pessoa_id, fazenda_id)
     if mov.tipo == "estorno":
         raise HTTPException(status_code=409, detail="Estorno não se exclui: ele é o rastro da correção")
+    if mov.tipo == "retencao" and mov.folha_id:
+        raise HTTPException(status_code=409, detail="Retenção de folha não se exclui: estorne o pagamento da folha.")
     if any(m.estorna_id == mov.id for m in movs):
         raise HTTPException(status_code=409, detail="Este movimento já foi estornado e não pode ser excluído")
     if mov.id != max(m.id for m in movs):

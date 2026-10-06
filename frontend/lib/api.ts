@@ -2361,7 +2361,7 @@ export async function excluirPessoa(id: number) {
 export const CATEGORIAS_PESSOA_ANEXO = [
   "RG", "CPF", "Carteira de trabalho", "Ficha de registro",
   "Contrato de trabalho por prazo indeterminado", "Contrato de trabalho por prazo determinado",
-  "Contrato de empreita", "Holerite", "Comprovante de pagamento", "Comprovante de vale",
+  "Contrato de empreita", "Holerite", "Comprovante de pagamento", "Comprovante de vale", "Termo de retenção do caixa",
 ];
 export type AnexoPessoa = {
   id: number; nome_arquivo: string; mime_type: string; tamanho_bytes: number; categoria: string;
@@ -9985,4 +9985,38 @@ export async function estornarMovimentoCaixa(pessoaId: number, movimentoId: numb
 }
 export async function excluirMovimentoCaixa(pessoaId: number, movimentoId: number) {
   return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/${pessoaId}/movimentos/${movimentoId}`, { method: "DELETE" }), "Erro ao excluir");
+}
+
+// Caixa dos funcionários — Fase 2: retenção na folha (autorização interna + termo anexado).
+export type CaixaRetencaoConfig = {
+  forma: "fixo" | "percentual"; valor: number; teto: number | null; inicio: string; fim: string | null;
+  pausada: boolean; autorizada: boolean; autorizada_em: string | null; revogada_em: string | null;
+};
+export type CaixaRetencaoDados = {
+  pessoa: { id: number; nome: string; tipo: string; grupos: CaixaGrupo[]; salario_base: number | null };
+  config: CaixaRetencaoConfig | null; acumulado: number; termo_anexado: boolean; termo_pendente: boolean;
+};
+export async function fetchRetencaoCaixa(pessoaId: number): Promise<CaixaRetencaoDados> {
+  return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/${pessoaId}/retencao`, { cache: "no-store" }), "Erro ao carregar a retenção");
+}
+export async function fetchRetencoesCaixa(): Promise<{ retencoes: CaixaRetencaoDados[] }> {
+  return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/retencoes`, { cache: "no-store" }), "Erro ao carregar as retenções");
+}
+export async function salvarRetencaoCaixa(pessoaId: number, dados: {
+  forma: string; valor: number; inicio: string; fim?: string | null; teto?: number | null; autorizada: boolean;
+}): Promise<CaixaRetencaoDados> {
+  return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/${pessoaId}/retencao`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  }), "Erro ao salvar a retenção");
+}
+export async function pausarRetencaoCaixa(pessoaId: number, pausada: boolean): Promise<CaixaRetencaoDados> {
+  return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/${pessoaId}/retencao/pausar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pausada }),
+  }), "Erro ao pausar a retenção");
+}
+export async function revogarRetencaoCaixa(pessoaId: number): Promise<CaixaRetencaoDados> {
+  return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/${pessoaId}/retencao/revogar`, { method: "POST" }), "Erro ao revogar a retenção");
+}
+export async function fetchPendenciasCaixa(): Promise<{ termos_pendentes: { pessoa_id: number; nome: string }[] }> {
+  return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/pendencias`, { cache: "no-store" }), "Erro ao carregar as pendências do caixa");
 }

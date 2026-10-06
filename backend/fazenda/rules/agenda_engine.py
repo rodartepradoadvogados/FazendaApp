@@ -172,6 +172,7 @@ class AgendaEngine:
         pedidos_documentos_vencendo: list[dict] | None = None,
         pedidos_entrega_prevista: list[dict] | None = None,
         pessoas_documentos_vencendo: list[dict] | None = None,
+        caixa_termos_pendentes: list[dict] | None = None,
         inducoes_cio: list[dict] | None = None,
         # Entram para o estado reprodutivo AO VIVO decidir candidatas a IATF e
         # "PEV encerra" — antes os dois liam `sit_rep`, o texto congelado do
@@ -870,6 +871,18 @@ class AgendaEngine:
                 descricao=f"{doc.get('categoria', 'Documento')} de {doc.get('pessoa_nome', '')} vence em {validade.strftime('%d/%m/%Y')}",
                 ref=str(doc.get("pessoa_id")) if doc.get("pessoa_id") else None,
                 link="/configuracoes?aba=cadastro&sub=pessoas",
+            ))
+
+        # 5d-bis. CAIXA DOS FUNCIONÁRIOS — retenção em folha autorizada e rodando
+        # sem o termo anexado. Aparece HOJE e continua até o documento ser anexado
+        # (sem piso de data, como os demais alertas que não podem sumir sozinhos).
+        for pend in (caixa_termos_pendentes or []):
+            eventos.append(AgendaItem(
+                data=data_referencia,
+                categoria="Gestão/Financeiro",
+                descricao=f"Anexar termo de autorização de retenção — {pend.get('nome', '')}",
+                observacao="Retenção em folha rodando sem o termo anexado (Caixa dos funcionários)",
+                link="/financeiro?ir=caixa_funcionarios",
             ))
 
         # 5e. DESCARTE PREVISTO — animal marcado "a descartar" com data de

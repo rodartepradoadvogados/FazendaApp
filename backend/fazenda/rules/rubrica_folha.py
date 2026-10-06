@@ -280,6 +280,17 @@ CATALOGO_DESCONTOS: dict[str, dict] = {
         "alteracao": ALTERACAO_CONTRATUAL,
         "fundamento": "Ressarcimento de compra feita pela fazenda — CLT, art. 462, caput",
     },
+    # GERADO PELO CADASTRO (Caixa dos funcionários > Retenção): ninguém lança à mão.
+    # A folha cria/ajusta/remove a linha a partir do combinado da pessoa
+    # (`CaixaRetencao`) enquanto a competência está aberta. O valor retido vira saldo
+    # no caixa dela no pagamento da folha.
+    "retencao_caixa": {
+        "rotulo": "Retenção — caixa do funcionário",
+        "exige_compra": False,
+        "alteracao": ALTERACAO_CONTRATUAL,
+        "gerado_por_cadastro": True,
+        "fundamento": "Retenção autorizada pelo empregado, guardada em caixa a favor dele — CLT, art. 462, caput",
+    },
     "desconto_vale_transporte": {
         "rotulo": "Vale-transporte — participação do empregado",
         "exige_compra": False,

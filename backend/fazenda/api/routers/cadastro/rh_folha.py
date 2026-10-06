@@ -29,7 +29,7 @@ from fazenda.models import (
 from fazenda.api.routers.financeiro import TAMANHO_MAXIMO_ANEXO, _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
-from fazenda.rules import holerite, media_verbas_habituais, rubrica_folha, vale_alimentacao
+from fazenda.rules import caixa_funcionario, holerite, media_verbas_habituais, rubrica_folha, vale_alimentacao
 from fazenda.rules.folha_rh import (
     PARCELAS_DECIMO_TERCEIRO,
     calcular_decimo_terceiro,
@@ -558,6 +558,74 @@ def _sincronizar_vale_alimentacao(
     return True
 
 
+def _sincronizar_retencao_caixa(
+    session: Session, folha: FolhaPagamento, pessoa: Pessoa | None = None,
+    *, recem_criada: bool = False,
+) -> bool:
+    """
+    Põe a linha "Retenção — caixa do funcionário" desta folha igual ao combinado da
+    pessoa (`CaixaRetencao`): cria, corrige ou remove. Devolve True quando mexeu em
+    algo (o chamador então roda `_recalcular_folha`).
+
+    Mesmas travas do vale-alimentação: folha PAGA/congelada não é tocada (o holerite
+    é prova) e a exceção `recem_criada` é só para a folha que já nasce paga.
+    A retenção só existe com a autorização marcada, fora de pausa e dentro da
+    vigência (ver `rules/caixa_funcionario.retencao_vigente`). NÃO COMMITA."""
+    if folha.discriminacao_congelada_em is not None:
+        return False
+    if folha.status == "pago" and not recem_criada:
+        return False
+    if pessoa is not None and pessoa.fazenda_id != folha.fazenda_id:
+        pessoa = None
+    if pessoa is None:
+        pessoa = _pessoa_da_folha(session, folha)
+    if pessoa is None:
+        return False
+
+    cfg = caixa_funcionario.retencao_da_pessoa(session, pessoa.id, folha.fazenda_id)
+    existente = session.exec(
+        select(FolhaRubrica).where(
+            FolhaRubrica.folha_id == folha.id, FolhaRubrica.codigo == caixa_funcionario.CODIGO_RUBRICA,
+        )
+    ).first()
+    # O acumulado só importa com teto: evita 2 consultas por folha na listagem inteira.
+    acumulado = (
+        caixa_funcionario.acumulado_retido(session, pessoa.id, folha.fazenda_id)
+        if cfg is not None and cfg.teto is not None and caixa_funcionario.retencao_vigente(cfg, folha.competencia)
+        else 0.0
+    )
+    valor = caixa_funcionario.valor_da_retencao(cfg, pessoa, folha.competencia, acumulado)
+    if valor <= 0:
+        if existente is None:
+            return False
+        session.delete(existente)
+        session.flush()
+        return True
+    descricao = (
+        f"{cfg.valor:g}% do salário-base" if cfg.forma == "percentual" else f"R$ {cfg.valor:,.2f} por mês"
+    ) + (f" · teto R$ {cfg.teto:,.2f}" if cfg.teto is not None else "")
+    if existente is not None:
+        if (
+            existente.competencia == folha.competencia and existente.pessoa_id == folha.pessoa_id
+            and abs(existente.valor - valor) <= 0.001 and (existente.descricao or "") == descricao
+        ):
+            return False
+        existente.competencia, existente.pessoa_id = folha.competencia, folha.pessoa_id
+        existente.valor, existente.descricao = valor, descricao
+        session.add(existente)
+        session.flush()
+        return True
+    session.add(FolhaRubrica(
+        fazenda_id=folha.fazenda_id, folha_id=folha.id, pessoa_id=folha.pessoa_id, competencia=folha.competencia,
+        especie=rubrica_folha.ESPECIE_DESCONTO, codigo=caixa_funcionario.CODIGO_RUBRICA, descricao=descricao,
+        valor=valor, natureza=rubrica_folha.NATUREZA_SALARIAL,
+        incide_inss=False, incide_irrf=False, incide_fgts=False, incorpora_base=False,
+        # `usuario_id` nulo: a linha veio do combinado cadastrado, ninguém a lançou na folha.
+    ))
+    session.flush()
+    return True
+
+
 def _aplicar_vale_alimentacao(
     session: Session, folha: FolhaPagamento, pessoa: Pessoa | None = None,
     *, recem_criada: bool = False, politica: dict | None = None,
@@ -568,9 +636,12 @@ def _aplicar_vale_alimentacao(
 
     `politica` é repassada tal como veio (ver `_politica_vale_alimentacao`):
     quem sincroniza em lote lê os parâmetros da fazenda uma vez e passa aqui."""
-    if not _sincronizar_vale_alimentacao(
+    # Mesmo passo para as duas verbas geradas pelo cadastro: vale-alimentação e a
+    # retenção do caixa. `|` (e não `or`) para as DUAS rodarem sempre.
+    mudou = _sincronizar_vale_alimentacao(
         session, folha, pessoa, recem_criada=recem_criada, politica=politica,
-    ):
+    ) | _sincronizar_retencao_caixa(session, folha, pessoa, recem_criada=recem_criada)
+    if not mudou:
         return False
     _recalcular_folha(session, folha)
     return True
@@ -1135,6 +1206,8 @@ def _congelar_discriminacao(session: Session, registro: FolhaPagamento) -> None:
     )
     registro.discriminacao_congelada_em = datetime.utcnow()
     session.add(registro)
+    # A folha virou recibo: o que ela reteve entra no caixa da pessoa (idempotente).
+    caixa_funcionario.lancar_retencao_da_folha(session, registro)
 
 
 def _descongelar_discriminacao(registro: FolhaPagamento) -> None:
@@ -1707,6 +1780,10 @@ def estornar_pagamento_folha(
             status_code=400,
             detail="Esta folha não está paga — não há pagamento a estornar.",
         )
+
+    # A retenção que esta folha mandou para o caixa volta junto — e se o dinheiro
+    # já foi retirado, o estorno é recusado (409) antes de mexer em qualquer coisa.
+    caixa_funcionario.reverter_retencao_da_folha(session, registro)
 
     conta = _conta_da_folha(session, registro, fazenda_id)
     if conta is not None:

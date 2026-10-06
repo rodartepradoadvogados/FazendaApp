@@ -178,6 +178,7 @@ CATEGORIAS_PESSOA_ANEXO = [
     "RG", "CPF", "Carteira de trabalho", "Ficha de registro",
     "Contrato de trabalho por prazo indeterminado", "Contrato de trabalho por prazo determinado",
     "Contrato de empreita", "Holerite", "Comprovante de pagamento", "Comprovante de vale",
+    "Termo de retenção do caixa",
 ]
 
 
