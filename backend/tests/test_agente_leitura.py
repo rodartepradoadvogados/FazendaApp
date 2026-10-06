@@ -217,18 +217,27 @@ class TestSomenteLeitura:
         with Session(engine) as s:
             assert s.get(Fazenda, 60) is None
 
+    # ÚNICA rota de escrita permitida sob /agente: cria um Ensinamento do assistente
+    # (adicionada de propósito em feadb976, "para agentes externos"). Qualquer outra
+    # rota de escrita continua barrada por este teste — acrescentar aqui é decisão consciente.
+    ESCRITA_PERMITIDA = {("/agente/ensinamentos", "POST")}
+
     def test_nenhuma_rota_agente_aceita_escrita(self):
         from fazenda.api.routers import agente_leitura as router_mod
         rotas = list(router_mod.router.routes)
-        assert len(rotas) == 4
+        assert len(rotas) == 5
         for r in rotas:
-            assert set(r.methods) <= {"GET", "HEAD"}, (r.path, r.methods)
-        # e o que o app realmente publica (openapi): só GET sob /agente
+            escritas = {m for m in r.methods if m not in {"GET", "HEAD"}}
+            for m in escritas:
+                assert (r.path, m) in self.ESCRITA_PERMITIDA, (r.path, m)
+        # e o que o app realmente publica (openapi): só GET sob /agente, fora a exceção acima
         import main
         caminhos = {c: m for c, m in main.app.openapi()["paths"].items() if c.startswith("/agente")}
-        assert len(caminhos) == 4
+        assert len(caminhos) == 5
         for c, metodos in caminhos.items():
-            assert set(metodos) == {"get"}, (c, metodos)
+            for m in metodos:
+                if m != "get":
+                    assert (c, m.upper()) in self.ESCRITA_PERMITIDA, (c, m)
 
     @pytest.mark.parametrize("metodo", ["post", "put", "patch", "delete"])
     def test_metodos_de_escrita_sao_recusados(self, client, metodo):
