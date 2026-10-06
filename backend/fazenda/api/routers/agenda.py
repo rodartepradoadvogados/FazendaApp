@@ -454,7 +454,7 @@ def materializar_agenda(
     data: date = date.today(),
     session: Session = Depends(get_session),
     usuario: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int | None = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Parte que ESCREVE da Agenda (idempotente): gera recorrências e
     auditorias de diária e materializa cronogramas/checklist/lista de espera do
