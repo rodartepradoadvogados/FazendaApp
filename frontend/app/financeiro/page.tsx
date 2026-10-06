@@ -4067,6 +4067,18 @@ function dividirDiferenca(valorTotal: number, qtd: number, primeiraData: string)
  * e número do comprovante. Substitui a antiga baixa direto na lista de
  * Contas a pagar/receber — "Tratar" leva para cá em vez de abrir um modal.
  */
+// Origem de uma conta a pagar, deduzida do `tipo_documento` que cada módulo grava.
+// "folha" reúne tudo o que nasce no Fechamento da folha.
+const ORIGENS_PAGAMENTO: { id: string; label: string; docs: string[] }[] = [
+  { id: "folha", label: "Fechamento da folha (todos)", docs: ["Folha de pagamento", "Empreitada", "Contrato", "Acerto de diária", "Diária", "Vale avulso", "Férias", "13º salário", "Rescisão"] },
+  { id: "contrato", label: "Contrato", docs: ["Contrato"] },
+  { id: "empreita", label: "Empreita", docs: ["Empreitada"] },
+  { id: "diaria", label: "Diária", docs: ["Acerto de diária", "Diária"] },
+  { id: "clt", label: "Folha CLT", docs: ["Folha de pagamento"] },
+  { id: "ferias", label: "Férias / 13º", docs: ["Férias", "13º salário"] },
+  { id: "rescisao", label: "Rescisão", docs: ["Rescisão"] },
+];
+
 export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTratada, onFeito }: {
   tipo: "despesa" | "receita"; contasBancarias: string[]; notaAlvoRef: string | null;
   onNotaTratada?: () => void; onFeito?: () => void;
@@ -4081,6 +4093,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   const [fornecedor, setFornecedor] = useState("");
   const [produto, setProduto] = useState("");
   const [centroCusto, setCentroCusto] = useState("");
+  const [origemFiltro, setOrigemFiltro] = useState("");
   const [vencimentoDe, setVencimentoDe] = useState("");
   const [vencimentoAte, setVencimentoAte] = useState("");
 
@@ -4126,8 +4139,9 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
     (!fornecedor || r.fornecedor === fornecedor) &&
     (!produto || (r.itens || []).some((it) => it.produto === produto)) &&
     (!centroCusto || r.centro_custo === centroCusto) &&
+    (!origemFiltro || (ORIGENS_PAGAMENTO.find((o) => o.id === origemFiltro)?.docs || []).includes(r.tipo_documento || "")) &&
     (!vencimentoDe || (r.data_vencimento || "") >= vencimentoDe) && (!vencimentoAte || (r.data_vencimento || "") <= vencimentoAte)
-  ), [abertas, numeroDocumento, fornecedor, produto, centroCusto, vencimentoDe, vencimentoAte]);
+  ), [abertas, numeroDocumento, fornecedor, produto, centroCusto, origemFiltro, vencimentoDe, vencimentoAte]);
   const totalFiltrado = useMemo(() => filtradas.reduce((a, r) => a + r.valor, 0), [filtradas]);
 
   // Ordenação clicável sobre o resultado JÁ filtrado.
@@ -4262,6 +4276,13 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
             <select style={selStyleLote} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
               <option value="">Todos</option>{centrosCusto.map((c) => <option key={c} value={c}>{c}</option>)}
             </select></div>
+          {tipo === "despesa" && (
+            <div><label style={labelStyleLote}>Origem</label>
+              <select style={selStyleLote} value={origemFiltro} onChange={(e) => setOrigemFiltro(e.target.value)}>
+                <option value="">Todas as origens</option>
+                {ORIGENS_PAGAMENTO.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+              </select></div>
+          )}
           <div><label style={labelStyleLote}>Vencimento — de</label><input type="date" style={selStyleLote} value={vencimentoDe} onChange={(e) => setVencimentoDe(e.target.value)} /></div>
           <div><label style={labelStyleLote}>Vencimento — até</label><input type="date" style={selStyleLote} value={vencimentoAte} onChange={(e) => setVencimentoAte(e.target.value)} /></div>
         </div>

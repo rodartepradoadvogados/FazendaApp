@@ -1,6 +1,7 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Plus, Paperclip, Check, ChevronDown, ChevronRight, RefreshCw, Filter, Pencil, Trash2, Printer, History, Search, RotateCcw } from "lucide-react";
+import { PagarContaModal, type ContaParaPagar } from "@/components/PagarContaModal";
 import {
   fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, excluirFolhaPagamento,
   estornarPagamentoFolha,
@@ -1288,6 +1289,8 @@ export default function FolhaPagamentoView() {
   // Imprimir recibo de pagamento (empreitada/contrato/diária) — reaproveita o
   // ReciboModal já usado no financeiro.
   const [reciboLinha, setReciboLinha] = useState<LancamentoRecibo | null>(null);
+  // Janela única de pagamento (contrato, empreita, diária) — mesma de Ações > Pagamento e da Agenda.
+  const [pagandoConta, setPagandoConta] = useState<ContaParaPagar | null>(null);
 
   // Quantas formas de lançar existem NESTA categoria — o número do card
   // "Lançar". A tela própria da categoria (empreita, contrato, diária,
@@ -1683,6 +1686,18 @@ export default function FolhaPagamentoView() {
                             onClick={() => setFichaPessoaId(l.pessoa_id)}>
                             <History size={13} />
                           </button>
+                          {l.status === "pendente" && l.lancamento_id != null && (l.tipo === "empreita" || l.tipo === "contrato" || l.tipo === "diaria") && (
+                            <button className="btn-primary" title="Pagar (data, forma, conta bancária, nº e anexo do comprovante)"
+                              style={{ fontSize: "0.72rem", padding: "0.15rem 0.6rem" }}
+                              onClick={() => setPagandoConta({
+                                lancamentoId: l.lancamento_id as number,
+                                titulo: `${l.pessoa_nome} · ${l.descricao}`,
+                                detalhe: l.tipo === "empreita" ? "Empreita" : l.tipo === "contrato" ? "Contrato" : "Diária",
+                                valorPrevisto: l.valor, dataVencimento: l.data_vencimento,
+                              })}>
+                              Pagar
+                            </button>
+                          )}
                           <button className="btn-ghost" title="Imprimir recibo de pagamento" style={{ fontSize: "0.72rem" }}
                             onClick={() => setReciboLinha({
                               numero_lancamento: `${l.tipo}-${l.origem_id}`,
@@ -2662,6 +2677,10 @@ export default function FolhaPagamentoView() {
         </Modal>
       )}
       {reciboLinha && <ReciboModal lanc={reciboLinha} onClose={() => setReciboLinha(null)} />}
+      {pagandoConta && (
+        <PagarContaModal conta={pagandoConta} onClose={() => setPagandoConta(null)}
+          onPago={() => { setPagandoConta(null); carregarUnificada(); }} />
+      )}
 
       {/* A ficha da pessoa lê o ledger INTEIRO (`unificada`), não o mês
           filtrado: a pergunta que ela responde é justamente a que atravessa

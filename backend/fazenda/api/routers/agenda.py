@@ -36,7 +36,7 @@ from fazenda.api.routers.movimentacoes import ler_parametro_sugestao_movimentaca
 from fazenda.api.routers.portal import usuarios_da_fazenda
 from fazenda.api.routers.reproducao import ATIVIDADE_INDUCAO_CIO
 from fazenda.ordenacao import chave_numero
-from fazenda.rules.agenda_engine import AgendaEngine, AgendaItem
+from fazenda.rules.agenda_engine import DIAS_CONTAS_VENCIDAS_NA_AGENDA, AgendaEngine, AgendaItem
 from fazenda.rules.eventos_sanitarios import eventos_agenda as _eventos_sanitarios_agenda
 from fazenda.rules import cronograma_sanitario as _cronograma_sanitario_rules
 from fazenda.rules.cronograma_sanitario import PREFIXO_CRONOGRAMA as _PREFIXO_CRONOGRAMA, CronogramaError
@@ -575,7 +575,10 @@ def calcular_agenda(
         _model_to_dict(c) for c in session.exec(
             _da_fazenda(
                 select(ContaGerencial).where(
-                    ContaGerencial.data_vencimento >= data,
+                    # Também as VENCIDAS ainda em aberto (até 30 dias atrás): antes a
+                    # conta sumia da Agenda no dia seguinte ao vencimento, justo
+                    # quando mais precisava de atenção (cai em "Atrasados" no front).
+                    ContaGerencial.data_vencimento >= data - timedelta(days=DIAS_CONTAS_VENCIDAS_NA_AGENDA),
                     ContaGerencial.data_vencimento <= data + timedelta(days=dias),
                     ContaGerencial.tipo == "despesa",
                 ),

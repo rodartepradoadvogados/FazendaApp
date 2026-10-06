@@ -10,7 +10,8 @@
 // wrappers continuam chamando os mesmos endpoints de sempre.
 import { Fragment, useState } from "react";
 import { Plus, Pencil, Shuffle } from "lucide-react";
-import { formatBRL } from "@/lib/api";
+import { formatBRL, formatDate } from "@/lib/api";
+import { PagarContaModal } from "@/components/PagarContaModal";
 import { SecaoRecolhivel, type ModoSecaoCategoria } from "@/components/ui";
 import { ParcelamentoEditor, type Parcela } from "@/components/ParcelamentoEditor";
 import ValeAvulsoSection from "@/components/ValeAvulsoSection";
@@ -19,6 +20,9 @@ import { CampoMoeda } from "@/components/CampoMoeda";
 
 export type ParcelaAvulsa = {
   id: number; data_vencimento: string; valor: number; status: string; numero_lancamento_gerado?: string | null;
+  /** id da conta a pagar por trás da parcela — habilita o botão Pagar. */
+  lancamento_id?: number | null;
+  data_pagamento?: string | null;
   // "Parcela k de n" congelado na criação (ver models/pessoal.py::
   // EmpreitadaParcela). Antes a tela numerava pela posição na lista, então
   // excluir a parcela 3 de 5 fazia a 4 virar "3" — e o recibo já impresso
@@ -48,7 +52,7 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
   tituloNovo, descricaoNovo, labelSalvar, salvar,
   tituloVale, descricaoVale, valeOrigemTipo, valeStatusExcluido,
   tituloListagem, textoVazioListagem, statusLabel = (s: string) => s, acaoItem, renderItemExtra,
-  onEditarParcela, onRedistribuirParcelas, mostrar = "tudo",
+  onEditarParcela, onRedistribuirParcelas, rotuloPagamento, mostrar = "tudo",
 }: {
   itens: T[] | null;
   error: string | null;
@@ -98,6 +102,8 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
   onEditarParcela?: (parcelaId: number, dados: { data_vencimento: string; valor: number }) => Promise<any>;
   /** Redivide igualmente o valor pendente entre as parcelas ainda não pagas do item. */
   onRedistribuirParcelas?: (itemId: number) => Promise<any>;
+  /** Quando definido ("Contrato", "Empreita"…), cada parcela pendente com conta ganha o botão Pagar. */
+  rotuloPagamento?: string;
   /** Formulários, listagem, ou os dois — ver ModoSecaoCategoria. */
   mostrar?: ModoSecaoCategoria;
 }) {
@@ -117,6 +123,8 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
   const [parcelaMsg, setParcelaMsg] = useState<string | null>(null);
   const [salvandoParcela, setSalvandoParcela] = useState(false);
   const [redistribuindoId, setRedistribuindoId] = useState<number | null>(null);
+  const [pagando, setPagando] = useState<{ item: T; parcela: ParcelaAvulsa } | null>(null);
+  const temAcoes = Boolean(onEditarParcela || rotuloPagamento);
 
   function iniciarEdicaoParcela(p: ParcelaAvulsa) {
     setEditandoParcelaId(p.id);
@@ -294,7 +302,7 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
                   <thead>
                     <tr>
                       <th>Parcela</th><th>Vencimento</th><th>Contratado</th><th>Vale abatido</th><th>A pagar</th><th>Status</th>
-                      {onEditarParcela && <th>Ações</th>}
+                      {temAcoes && <th>Ações</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -316,9 +324,19 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
                           </td>
                           <td style={{ fontWeight: 700 }}>{formatBRL(p.valor)}</td>
                           <td>{p.status}</td>
-                          {onEditarParcela && (
-                            <td>
-                              {p.status !== "pago" && (
+                          {temAcoes && (
+                            <td style={{ whiteSpace: "nowrap" }}>
+                              {rotuloPagamento && p.status !== "pago" && p.lancamento_id != null && (
+                                <button className="btn-primary" title="Pagar esta parcela (data, forma, conta, comprovante)"
+                                  style={{ fontSize: "0.72rem", padding: "0.15rem 0.6rem", marginRight: "0.3rem" }}
+                                  onClick={() => setPagando({ item, parcela: p })}>
+                                  Pagar
+                                </button>
+                              )}
+                              {rotuloPagamento && p.status === "pago" && p.data_pagamento && (
+                                <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginRight: "0.3rem" }}>pago em {formatDate(p.data_pagamento)}</span>
+                              )}
+                              {onEditarParcela && p.status !== "pago" && (
                                 <button className="btn-ghost" title="Editar esta parcela" style={{ fontSize: "0.72rem" }}
                                   onClick={() => iniciarEdicaoParcela(p)}>
                                   <Pencil size={12} />
@@ -329,7 +347,7 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
                         </tr>
                         {editandoParcelaId === p.id && (
                           <tr>
-                            <td colSpan={onEditarParcela ? 7 : 6} style={{ background: "var(--surface-2)", padding: "0.6rem" }}>
+                            <td colSpan={temAcoes ? 7 : 6} style={{ background: "var(--surface-2)", padding: "0.6rem" }}>
                               <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-2">
                                 <div><label style={lbl}>Vencimento</label>
                                   <input type="date" style={inputSm} value={editParcelaData} onChange={(e) => setEditParcelaData(e.target.value)} /></div>
@@ -369,10 +387,23 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
                       </td>
                       <td>{formatBRL(item.parcelas.reduce((soma, p) => soma + p.valor, 0))}</td>
                       <td></td>
-                      {onEditarParcela && <td></td>}
+                      {temAcoes && <td></td>}
                     </tr>
                   </tfoot>
                 </table>
+                {pagando && pagando.item.id === item.id && pagando.parcela.lancamento_id != null && (
+                  <PagarContaModal
+                    conta={{
+                      lancamentoId: pagando.parcela.lancamento_id,
+                      titulo: `${rotuloPagamento} · ${item.pessoa_nome}${pagando.parcela.numero != null ? ` · parcela ${pagando.parcela.numero}${pagando.parcela.numero_total ? `/${pagando.parcela.numero_total}` : ""}` : ""}`,
+                      detalhe: item.descricao,
+                      valorPrevisto: pagando.parcela.valor,
+                      dataVencimento: pagando.parcela.data_vencimento,
+                    }}
+                    onClose={() => setPagando(null)}
+                    onPago={() => { setPagando(null); recarregar(); }}
+                  />
+                )}
               </>
             )}
             {renderItemExtra?.(item)}

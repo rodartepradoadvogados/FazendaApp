@@ -2752,6 +2752,9 @@ export type LinhaFolhaUnificada = {
   status: "pendente" | "pago" | "cancelado_rescisao";
   pode_excluir: boolean;
   vencido: boolean;
+  /** Conta a pagar por trás da linha (contrato, empreita, diária): habilita o botão Pagar. */
+  lancamento_id?: number | null;
+  numero_lancamento?: string | null;
   /** Discriminado do documento — presente em funcionário (holerite completo) e
    *  em férias/13º (recibo com referência própria). O ledger já calculava isso
    *  e descartava ao montar a linha: era por isso que a tela de Contas não

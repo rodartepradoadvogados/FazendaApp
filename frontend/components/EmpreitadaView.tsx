@@ -15,11 +15,13 @@ import { type ModoSecaoCategoria } from "@/components/ui";
 import CadastroAvulsoParceladoGenerico, { type ParcelaAvulsa, type ValeItemAvulso } from "@/components/CadastroAvulsoParceladoGenerico";
 import { inputSm } from "@/components/estiloCampoAvulso";
 import { CampoMoeda } from "@/components/CampoMoeda";
+import { PagarContaModal } from "@/components/PagarContaModal";
 
 type Pessoa = { id: number; nome: string; tipos: string[] };
 type Etapa = {
   id: number; nome: string; valor: number; ordem: number; concluida: boolean;
   data_conclusao: string | null; numero_lancamento_gerado: string | null; status_pagamento: string;
+  lancamento_id?: number | null;
 };
 type Empreitada = {
   id: number; pessoa_id: number; pessoa_nome: string; descricao: string; valor_total: number;
@@ -48,6 +50,7 @@ export default function EmpreitadaView({ mostrar = "tudo" }: { mostrar?: ModoSec
   const [itens, setItens] = useState<Empreitada[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [etapasForm, setEtapasForm] = useState<EtapaForm[]>(etapaFormVazia);
+  const [pagandoEtapa, setPagandoEtapa] = useState<{ empreitada: Empreitada; etapa: Etapa } | null>(null);
   const [msgEtapa, setMsgEtapa] = useState<string | null>(null);
   // Anexo opcional do contrato de empreita — guardado na Pessoa (empreiteiro),
   // igual aos demais documentos dela (ver PessoaAnexo / categoria "Contrato de empreita").
@@ -180,6 +183,7 @@ export default function EmpreitadaView({ mostrar = "tudo" }: { mostrar?: ModoSec
       tituloVale="Vale de empreita" descricaoVale="Adiantamento abatido da próxima parcela/etapa pendente"
       valeOrigemTipo="empreitada" valeStatusExcluido="concluida"
       onEditarParcela={atualizarParcelaEmpreitada}
+      rotuloPagamento="Empreita"
       onRedistribuirParcelas={redistribuirParcelasEmpreitada}
       tituloListagem="Empreitas lançadas" textoVazioListagem="Nenhuma empreita lançada ainda."
       statusLabel={(status) => (status === "concluida" ? "concluída" : "em andamento")}
@@ -208,11 +212,30 @@ export default function EmpreitadaView({ mostrar = "tudo" }: { mostrar?: ModoSec
                           <CheckCircle2 size={13} /> Concluir
                         </button>
                       )}
+                      {et.concluida && et.status_pagamento !== "pago" && et.lancamento_id != null && (
+                        <button className="btn-primary" title="Pagar esta etapa (data, forma, conta, comprovante)"
+                          style={{ fontSize: "0.72rem", padding: "0.15rem 0.6rem" }}
+                          onClick={() => setPagandoEtapa({ empreitada: item, etapa: et })}>
+                          Pagar
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          )}
+          {pagandoEtapa && pagandoEtapa.empreitada.id === item.id && pagandoEtapa.etapa.lancamento_id != null && (
+            <PagarContaModal
+              conta={{
+                lancamentoId: pagandoEtapa.etapa.lancamento_id,
+                titulo: `Empreita · ${item.pessoa_nome} · etapa ${pagandoEtapa.etapa.nome}`,
+                detalhe: item.descricao,
+                valorPrevisto: pagandoEtapa.etapa.valor,
+              }}
+              onClose={() => setPagandoEtapa(null)}
+              onPago={() => { setPagandoEtapa(null); carregar(); }}
+            />
           )}
         </>
       )}

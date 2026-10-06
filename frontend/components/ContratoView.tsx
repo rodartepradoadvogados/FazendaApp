@@ -94,6 +94,7 @@ export default function ContratoView({ mostrar = "tudo" }: { mostrar?: ModoSecao
       tituloVale="Vale de contrato" descricaoVale="Adiantamento abatido da próxima parcela pendente"
       valeOrigemTipo="contrato" valeStatusExcluido="encerrado"
       onEditarParcela={atualizarParcelaContrato}
+      rotuloPagamento="Contrato"
       onRedistribuirParcelas={redistribuirParcelasContrato}
       tituloListagem="Contratos lançados" textoVazioListagem="Nenhum contrato lançado ainda."
       acaoItem={(item) => (
@@ -114,8 +115,10 @@ export default function ContratoView({ mostrar = "tudo" }: { mostrar?: ModoSecao
           {msgEncerrar && <p style={{ color: "var(--red)", fontSize: "0.75rem", marginTop: "0.5rem" }}>{msgEncerrar}</p>}
           {msgExclusao?.id === item.id && <p style={{ color: "var(--red)", fontSize: "0.75rem", marginTop: "0.5rem" }}>{msgExclusao.texto}</p>}
           {item.parcelas.length === 0 && (
-            <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.3rem" }}>
-              Sem frequência definida — alerta mensal na Agenda todo dia 1º.
+            <p style={{ color: "var(--amber)", fontSize: "0.75rem", marginTop: "0.3rem" }}>
+              Sem frequência definida: este contrato não tem parcelas, então não gera conta a pagar nem botão Pagar.
+              Há só um alerta mensal na Agenda todo dia 1º. Para pagar por aqui, lance o contrato de novo com frequência
+              (mensal, quinzenal ou semanal) e exclua este.
             </p>
           )}
         </>
