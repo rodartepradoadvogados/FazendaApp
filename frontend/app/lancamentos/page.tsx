@@ -12,6 +12,7 @@ import { AnimalRow } from "@/components/AnimalModal";
 // o código da sub-aba realmente aberta, em vez de tudo de uma vez com a página.
 const FormFinanceiro = dynamic(() => import("@/components/FormFinanceiro").then((m) => m.FormFinanceiro), { ssr: false });
 const FormFinanceiroSimplificado = dynamic(() => import("@/components/FormFinanceiroSimplificado").then((m) => m.FormFinanceiroSimplificado), { ssr: false });
+const FaturasView = dynamic(() => import("@/components/FaturasView").then((m) => m.FaturasView), { ssr: false });
 const FormLancamentoLote = dynamic(() => import("@/components/FormLancamentoLote").then((m) => m.FormLancamentoLote), { ssr: false });
 const FormExclusao = dynamic(() => import("@/components/FormExclusao").then((m) => m.FormExclusao), { ssr: false });
 const FormPesagemCorporal = dynamic(() => import("@/components/FormPesagemCorporal").then((m) => m.FormPesagemCorporal), { ssr: false });
@@ -213,7 +214,7 @@ export default function LancamentosPage() {
   // "Lançamento simplificado" (despesa e receita): fornecedor/cliente + itens
   // + data única + conta bancária, sem os campos avançados do formulário
   // completo (ver FormFinanceiroSimplificado.tsx).
-  const [modoDespesa, setModoDespesa] = useState<"generico" | "compra_semen" | "simplificado" | "lote">("generico");
+  const [modoDespesa, setModoDespesa] = useState<"generico" | "compra_semen" | "simplificado" | "lote" | "faturas">("generico");
   const [modoReceita, setModoReceita] = useState<"generico" | "simplificado">("generico");
   // "Finalizar pedido" (card "Pedidos em aberto") força o modo de volta pra
   // "genérico" — só ele aceita a prop `prefillPedido` — antes de guardar o
@@ -500,6 +501,10 @@ export default function LancamentosPage() {
                   onClick={() => setModoDespesa("lote")}>
                   Lançamento em lote
                 </button>
+                <button type="button" className={modoDespesa === "faturas" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
+                  onClick={() => setModoDespesa("faturas")}>
+                  Faturas
+                </button>
                 <button type="button" className={modoDespesa === "compra_semen" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
                   onClick={() => setModoDespesa("compra_semen")}>
                   Compra de sêmen
@@ -513,6 +518,8 @@ export default function LancamentosPage() {
                   </p>
                   <FormLancamentoLote onSujo={setSujo} />
                 </>
+              ) : modoDespesa === "faturas" ? (
+                <FaturasView />
               ) : modoDespesa === "compra_semen" ? (
                 <>
                   <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "1rem" }}>
