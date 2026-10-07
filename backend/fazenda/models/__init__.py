@@ -104,7 +104,9 @@ from .agricultura import (
 from .folha_rubrica import (
     FolhaRubrica,
 )
-from .caixa_funcionario import CaixaMovimento, CaixaRetencao
+from .caixa_funcionario import (
+    CaixaMovimento, CaixaRateio, CaixaRateioLinha, CaixaRetencao, CaixaTime, CaixaTimeMembro, CaixaTimeMovimento,
+)
 from .pessoal import (
     TipoPessoa,
     Pessoa,
@@ -447,6 +449,11 @@ __all__ = [
     "ValeParcela",
     "CaixaMovimento",
     "CaixaRetencao",
+    "CaixaTime",
+    "CaixaTimeMembro",
+    "CaixaTimeMovimento",
+    "CaixaRateio",
+    "CaixaRateioLinha",
     "ValeAvulso",
     "Empreitada",
     "EmpreitadaParcela",
