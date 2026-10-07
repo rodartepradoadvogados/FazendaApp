@@ -91,7 +91,7 @@ export default function ContasListaView(p: Props) {
   const [origemChip, setOrigemChip] = useState<string | null>(null);
 
   const filtrosAtuais = () => ({ campoPeriodoContas: campoPeriodo, inicio: de, fim: ate, centro, contaBanco: banco, fornecedor: forn, documento, produto, conta, contaNome, origem });
-  function aplicarSalvos(f: Record<string, any>) {
+  function aplicarSalvos(f: Record<string, string | undefined>) {
     setCampoPeriodo(f.campoPeriodoContas === "emissao" ? "emissao" : "vencimento");
     setDe(f.inicio || ""); setAte(f.fim || ""); setCentro(f.centro || ""); setBanco(f.contaBanco || "");
     setForn(f.fornecedor || ""); setDocumento(f.documento || ""); setProduto(f.produto || "");
@@ -170,7 +170,7 @@ export default function ContasListaView(p: Props) {
   const [sel, setSel] = useState<Set<number>>(new Set());
   const selecionaveis = (r: Lanc) => !r.fatura_id;
   const selecionadas = ordenadas.filter((r) => sel.has(r.id));
-  const alternar = (id: number) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const alternar = (id: number) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const paginaSel = pag.linhasPagina.filter(selecionaveis);
   const todasDaPagina = paginaSel.length > 0 && paginaSel.every((r) => sel.has(r.id));
   useEffect(() => { setSel((s) => new Set([...s].filter((id) => p.regs.some((r) => r.id === id && !r.data_pagamento)))); }, [p.regs]);
@@ -251,7 +251,7 @@ export default function ContasListaView(p: Props) {
             <div className="mb-3"><FiltrosSalvos tela={telaSalva} valor={filtrosAtuais()} aoAplicar={aplicarSalvos} /></div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div><label style={lbl} htmlFor="cl-per">Período por</label>
-                <select id="cl-per" style={camp} value={campoPeriodo} onChange={(e) => setCampoPeriodo(e.target.value as any)}>
+                <select id="cl-per" style={camp} value={campoPeriodo} onChange={(e) => setCampoPeriodo(e.target.value as "emissao" | "vencimento")}>
                   <option value="vencimento">Vencimento</option><option value="emissao">Emissão</option>
                 </select></div>
               <div><label style={lbl} htmlFor="cl-de">De</label><input id="cl-de" type="date" style={camp} value={de} onChange={(e) => setDe(e.target.value)} /></div>
@@ -292,7 +292,7 @@ export default function ContasListaView(p: Props) {
           <div className="s">{venc.length ? `${venc.length} · clique para listar` : "nenhuma vencida"}</div>
         </button>
         <div className={`st-kpi logo${noHorizonte.length ? "" : " zero"}`}>
-          <div className="l"><Clock size={13} aria-hidden /><label htmlFor="cl-dias">Vencem em até</label>
+          <div className="l"><Clock size={13} aria-hidden /><label htmlFor="cl-dias">Vencem em</label>
             <input id="cl-dias" type="number" min={1} max={365} inputMode="numeric" value={diasAdiante}
               onChange={(e) => { const n = Math.round(Number(e.target.value)); if (n >= 1 && n <= 365) setDiasAdiante(n); }}
               style={{ width: 52, textAlign: "right", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 4, padding: "1px 4px", fontSize: "0.78rem" }} /> dias</div>
@@ -468,19 +468,16 @@ function MenuLinha({ r, onEditar, onRecibo, onInserirEmFatura, podeInserir }: { 
 
 /** Painel lateral: à direita no desktop, tela cheia no celular. Esc fecha; o foco volta ao botão que abriu. */
 function PainelLateral({ titulo, onFechar, children }: { titulo: string; onFechar: () => void; children: ReactNode }) {
-  const [montado, setMontado] = useState(false);
   const caixa = useRef<HTMLDivElement>(null);
   const gatilho = useRef<HTMLElement | null>(null);
   useEffect(() => {
     gatilho.current = document.activeElement as HTMLElement | null;
-    setMontado(true);
     caixa.current?.focus();
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onFechar(); };
     document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("keydown", esc); gatilho.current?.focus?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  if (!montado) return null;
   return createPortal(
     <div style={{ position: "fixed", inset: 0, zIndex: 80, display: "flex", justifyContent: "flex-end", background: "rgba(0,0,0,0.5)" }} onMouseDown={(e) => { if (e.target === e.currentTarget) onFechar(); }}>
       <div ref={caixa} tabIndex={-1} role="dialog" aria-modal="true" aria-label={titulo}

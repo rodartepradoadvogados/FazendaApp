@@ -73,8 +73,8 @@ const CSS = `
 .cq-nota{display:flex;align-items:flex-start;gap:.35rem;font-size:.8rem;color:var(--text-muted);margin:.15rem 0 0}
 .cq-nota svg{flex-shrink:0;margin-top:2px}
 .cq-acoes{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem}
-.cq-seg{display:inline-flex;border:1px solid var(--border-strong,var(--border));border-radius:var(--r-sm);overflow:hidden;max-width:100%;background:var(--surface)}
-.cq-seg button{border:0;background:transparent;color:var(--text-muted);font:inherit;font-size:.8rem;font-weight:600;padding:0 .75rem;min-height:34px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:.35rem}
+.cq-seg{display:inline-flex;border:1px solid var(--border-strong,var(--border));border-radius:var(--r-sm);flex-wrap:wrap;max-width:100%;background:var(--surface)}
+.cq-seg button{border:0;background:transparent;color:var(--text-muted);font:inherit;font-size:.8rem;font-weight:600;padding:0 .55rem;min-height:34px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:.35rem}
 .cq-seg button+button{border-left:1px solid var(--border-strong,var(--border))}
 .cq-seg button:hover{color:var(--text);background:var(--surface-2)}
 .cq-seg button[aria-pressed="true"]{background:var(--pill-active-bg);color:var(--pill-active-fg);box-shadow:inset 0 0 0 1px var(--pill-active-border)}
@@ -382,7 +382,6 @@ export default function ConsultasView(props: Props): React.JSX.Element {
   const tiposConta: ("despesa" | "receita")[] =
     f.movimento === "pagamento" ? ["despesa"] : f.movimento === "recebimento" ? ["receita"] : ["despesa", "receita"];
   const maxTop = resumo.topContas[0]?.valor || 1;
-  const nCols = 7 + (admin ? 1 : 0);
 
   const vazio = (
     <div className="cq-vazio" role="status">

@@ -205,6 +205,7 @@ function ThOrd({ rotulo, chave, sortKey, sortDir, onSort, style }: {
 
 import { contaDoLanc, casaContaGerencial, FiltroContaGerencial } from "@/components/financeiro/filtroContaGerencial";
 import ContasListaView from "@/components/financeiro/ContasListaView";
+import ConsultasView from "@/components/financeiro/ConsultasView";
 import { hojeLocal } from "@/lib/financeiroSituacao";
 
 export default function FinanceiroPage() {
@@ -736,6 +737,11 @@ export default function FinanceiroPage() {
               onNovoLancamento={() => setNovoLancAberto(rel === "a_pagar" ? "despesa" : "receita")}
               onRecorrentes={() => setRel("recorrentes")}
               onBaixarSelecionadas={(ids) => { setIdsLote(ids); setRel("lote"); }} />
+          )
+          : rel === "consultas" ? (
+            <ConsultasView key={JSON.stringify(consultaInicial)} regs={regs} planoContas={planoContas} contasBancarias={contasBancarias} centros={centros}
+              fornecedores={opcoesRel.fornecedores} produtos={opcoesProdutoRel} filtroInicial={consultaInicial || undefined}
+              onRecibo={(l) => setRecibo({ ...l, reparcelamento: reparcelamentoDoRecibo(l) })} onEstornado={recarregar} onEditar={(l) => setEditando(l)} />
           )
           : rel === "custos" ? <CustosView base={custosBase} onBase={setCustosBase} />
           : rel === "caixa_real" ? <CaixaRealView />
