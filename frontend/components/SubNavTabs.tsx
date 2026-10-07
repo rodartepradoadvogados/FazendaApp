@@ -89,7 +89,8 @@ function SubNavTabsLinha({ nos, primaria, subNav, pathname, caminho }: {
       const btn = el?.querySelector<HTMLElement>('[aria-selected="true"]');
       if (!el || !btn) return;
       const fim = btn.offsetLeft + btn.offsetWidth;
-      if (fim > el.scrollLeft + el.clientWidth) el.scrollLeft = fim - el.clientWidth + 8;
+      // +48: folga para a seta de "mais abas" (2,4rem) não cobrir o fim do nome quando ainda há abas à direita.
+      if (fim + 48 > el.scrollLeft + el.clientWidth) el.scrollLeft = fim - el.clientWidth + 48;
       else if (btn.offsetLeft < el.scrollLeft) el.scrollLeft = Math.max(btn.offsetLeft - 8, 0);
     };
     // O layout (fonte, ícones) ainda muda logo depois de montar: rola e mede de novo quando assentar.
