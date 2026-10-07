@@ -42,6 +42,8 @@ import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { Dropzone } from "@/components/Dropzone";
 import { ReciboModal } from "@/components/ReciboModal";
 import { Modal } from "@/components/Modal";
+import { FaturasView } from "@/components/FaturasView";
+import { ModalInserirEmFatura } from "@/components/ModalInserirEmFatura";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { ModalDivididoDocumento } from "@/components/ModalDivididoDocumento";
 import { AvisoSalvo } from "@/components/AvisoSalvo";
@@ -97,9 +99,10 @@ type Lanc = {
             vale_pessoa_id: number | null; vale_pessoa_nome: string | null }[];
   usuario_nome?: string | null;
   patrimonio_id?: number | null;
+  fatura_id?: number | null;
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "caixa_real", label: "Caixa Real", icon: TrendingUp, desc: "Projeção de liquidez: quanto tem hoje e como o saldo evolui com os compromissos já lançados" },
@@ -140,6 +143,7 @@ const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "pagamento", label: "Pagamento", icon: Wallet, desc: "Lançar/quitar uma nota de despesa" },
   { id: "recebimento", label: "Recebimento", icon: Wallet, desc: "Lançar/quitar uma nota de receita" },
   { id: "lote", label: "Pagamento/recebimento em lote", icon: Layers, desc: "Dar baixa em várias notas de uma vez" },
+  { id: "faturas_gestao", label: "Gestão de faturas", icon: Layers, desc: "Abrir, fechar, reabrir e pagar por parcela as faturas de fornecedor" },
   { id: "folha", label: "Fechamento da folha", icon: Users, desc: "Lançar, conferir e pagar a folha do mês — para só consultar/imprimir, use Contas > Holerites e recibos" },
   { id: "caixa_funcionarios", label: "Caixa dos funcionários", icon: Wallet, desc: "Saldo a favor de cada colaborador: entradas, retiradas com recibo e estornos" },
   { id: "recorrentes", label: "Lançamentos recorrentes", icon: Repeat, desc: "Contas que se repetem todo mês (energia, internet, aluguel...) — cadastre uma vez, gere só com o valor do período" },
@@ -152,7 +156,8 @@ const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
 // como lançar a primeira nota pela UI. Views de RELATÓRIO/CONSULTA
 // continuam exigindo dado existente, o que faz sentido (não tem o que
 // mostrar de fato).
-const ACOES_IDS = new Set<Rel>(ACOES.map((a) => a.id));
+// "faturas" (Contas > Faturas de fornecedor) também dispensa lançamento prévio no banco.
+const ACOES_IDS = new Set<Rel>([...ACOES.map((a) => a.id), "faturas"]);
 const PLANEJAMENTO: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "orcamento", label: "Orçamento", icon: Target, desc: "Planilha orçamentária por conta gerencial/centro de custo/mês, comparada ao realizado" },
   { id: "planejamento_financeiro", label: "Planejamento financeiro", icon: TrendingUp, desc: "Cenários (otimista/realista/pessimista) com projeção de fluxo de caixa" },
@@ -378,7 +383,7 @@ export default function FinanceiroPage() {
   // Árvore de sub-navegação — a Sidebar desenha isto no lugar da lista de
   // módulos enquanto Financeiro estiver aberto (mesmo padrão de Lançamentos).
   const subNavTree: SubNavNode[] = useMemo(() => [
-    { id: "contas-grupo", label: "Contas", icon: Wallet, children: CONTAS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
+    { id: "contas-grupo", label: "Contas", icon: Wallet, children: [...CONTAS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })), { id: "faturas", label: "Faturas de fornecedor", icon: Layers }] },
     { id: "acoes-grupo", label: "Ações", icon: Layers, children: ACOES.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "relatorios-grupo", label: "Relatórios", icon: FileText, children: RELATORIOS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "planejamento-grupo", label: "Planejamento", icon: Compass, children: PLANEJAMENTO.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
@@ -747,6 +752,7 @@ export default function FinanceiroPage() {
 
       {regs && (regs.length > 0 || ACOES_IDS.has(rel)) && <>
         {rel === "caixa_real" ? <CaixaRealView />
+          : rel === "faturas" || rel === "faturas_gestao" ? <FaturasView />
           : rel === "patrimonio" ? <PatrimonioView />
           : rel === "cartao_credito" ? <CartaoCreditoView />
           : rel === "documentos" ? <DocumentosFiscais />
@@ -808,7 +814,7 @@ export default function FinanceiroPage() {
                 onTratar={(l) => { setRel(l.tipo === "receita" ? "recebimento" : "pagamento"); setNotaAlvoRef(l.numero_lancamento || l.numero_documento || null); }}
                 onEditar={(l) => setEditando(l)}
                 onRecibo={(l) => setRecibo({ ...l, reparcelamento: reparcelamentoDoRecibo(l) })}
-                onEstornado={recarregar} />
+                onEstornado={recarregar} onAbrirFaturas={() => setRel("faturas")} />
             </div>
           </div>
         ) : <>
@@ -3795,9 +3801,10 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   );
 }
 
-function TabelaContas({ rel, itens, planoContas, documentoInicial, onTratar, onEditar, onRecibo, onEstornado }: { rel: Rel; itens: Lanc[]; planoContas: ContaPlano[]; documentoInicial?: string | null; onTratar: (l: Lanc) => void; onEditar: (l: Lanc) => void; onRecibo: (l: Lanc) => void; onEstornado: () => void }) {
+function TabelaContas({ rel, itens, planoContas, documentoInicial, onTratar, onEditar, onRecibo, onEstornado, onAbrirFaturas }: { rel: Rel; itens: Lanc[]; planoContas: ContaPlano[]; documentoInicial?: string | null; onTratar: (l: Lanc) => void; onEditar: (l: Lanc) => void; onRecibo: (l: Lanc) => void; onEstornado: () => void; onAbrirFaturas?: () => void }) {
   const admin = ehAdmin();
   const emAberto = rel === "a_pagar" || rel === "a_receber";
+  const [inserindo, setInserindo] = useState<Lanc | null>(null);
 
   // G2 — reverte a baixa (o lançamento volta para "em aberto"); não exclui o
   // lançamento. Se a baixa criou parcela(s) para cobrir a diferença de valor
@@ -3942,7 +3949,9 @@ function TabelaContas({ rel, itens, planoContas, documentoInicial, onTratar, onE
                 const vencido = emAberto && r.data_vencimento && r.data_vencimento < hoje;
                 return (
                   <tr key={r.id}>
-                    <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{r.numero_lancamento}{r.parcela_total && r.parcela_total > 1 ? ` (${r.parcela_num}/${r.parcela_total})` : ""}</td>
+                    <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{r.numero_lancamento}{r.parcela_total && r.parcela_total > 1 ? ` (${r.parcela_num}/${r.parcela_total})` : ""}
+                      {r.fatura_id ? <span title="Esta nota faz parte de uma fatura de fornecedor" style={{ marginLeft: "0.35rem", fontSize: "0.62rem", fontWeight: 700, color: "var(--dourado-light)", border: "1px solid var(--dourado-light)", borderRadius: "999px", padding: "0.03rem 0.35rem" }}>fatura</span> : null}
+                    </td>
                     <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem", color: vencido ? "var(--red)" : undefined, fontWeight: vencido ? 700 : undefined }}>
                       {formatDate((emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || "")}{vencido ? " ⚠" : ""}
                     </td>
@@ -3987,6 +3996,9 @@ function TabelaContas({ rel, itens, planoContas, documentoInicial, onTratar, onE
                     {admin && <td>{r.usuario_nome ?? "—"}</td>}
                     <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
                       <button className="btn-ghost" title="Editar este lançamento (valor, datas, fornecedor, conta…)" style={{ fontSize: "0.72rem" }} onClick={() => onEditar(r)}><Pencil size={12} /> Editar</button>
+                      {rel === "a_pagar" && r.tipo === "despesa" && r.fornecedor && !r.fatura_id && !r.data_pagamento && (
+                        <button className="btn-ghost" title="Colocar esta nota numa fatura aberta do fornecedor" style={{ fontSize: "0.72rem", marginLeft: "0.3rem" }} onClick={() => setInserindo(r)}>Inserir em fatura…</button>
+                      )}
                       {emAberto && <button className="btn-ghost" title="Tratar a baixa desta nota (data, conta, forma e comprovante)" style={{ fontSize: "0.72rem", marginLeft: "0.3rem" }} onClick={() => onTratar(r)}>Tratar</button>}
                       {!emAberto && (
                         <button className="btn-ghost" title="Estornar a baixa — o lançamento volta para contas a pagar/receber"
@@ -4013,6 +4025,11 @@ function TabelaContas({ rel, itens, planoContas, documentoInicial, onTratar, onE
 
       {erroEstorno && (
         <div className="alert-critico mt-3"><AlertTriangle size={18} /><span>{erroEstorno}</span></div>
+      )}
+
+      {inserindo && (
+        <ModalInserirEmFatura nota={inserindo as any} candidatas={itens as any} onClose={() => setInserindo(null)}
+          onFeito={onEstornado} onAbrirFaturas={onAbrirFaturas} />
       )}
 
       {confirmarParcelas && (
