@@ -79,11 +79,46 @@ class ContaGerencial(SQLModel, table=True):
     # /financeiro/patrimonio, campo `criar_patrimonio` na criação do
     # lançamento, ou vínculo posterior via PUT /financeiro/patrimonio/{id}).
     patrimonio_id: Optional[int] = Field(default=None, foreign_key="patrimonio.id", index=True)
+    # Fatura de fornecedor (FaturaFornecedor) a que esta nota pertence. Sem FK de
+    # propósito (mesmo desenho de numero_lancamento): a ligação é de agrupamento.
+    fatura_id: Optional[int] = Field(default=None, index=True)
 
 
 # ---------------------------------------------------------------------------
 # Item de lançamento financeiro (produto/serviço) — uma nota pode ter vários
 # ---------------------------------------------------------------------------
+class FaturaFornecedor(SQLModel, table=True):
+    """Fatura de fornecedor: reúne notas (cada uma uma conta completa, com itens, estoque e DRE)
+    de UM fornecedor. É a fatura que se vence, se parcela e se paga. O Lançamento em lote cria a
+    fatura já FECHADA (ou paga); o modo Faturas (próxima entrega) cria ABERTA e vai recebendo notas.
+
+    Situação: aberta → fechada → paga. `valor_total` só é congelado no fechamento; aberta, o total
+    é a soma das notas ao vivo. Diferente de FaturaCartao (compras "leves" do cartão)."""
+
+    __tablename__ = "fatura_fornecedor"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    fornecedor: str = Field(index=True)
+    rotulo: str
+    data_abertura: date
+    data_fechamento_prevista: Optional[date] = None
+    data_vencimento: Optional[date] = None
+    conta_bancaria: Optional[str] = None
+    centro_custo: Optional[str] = None
+    # Parcelamento da FATURA (não da nota): None = à vista no vencimento (ou ainda a decidir, se aberta).
+    parcelas_n: Optional[int] = None
+    total_fornecedor: Optional[float] = None  # total que o fornecedor informou, para conferência
+    valor_total: Optional[float] = None  # congelado no fechamento
+    status: str = "aberta"  # aberta | fechada | paga
+    origem: str = "fatura"  # fatura | lote (nasceu fechada pelo Lançamento em lote)
+    fechada_em: Optional[datetime] = None
+    paga_em: Optional[date] = None
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 class LancamentoItem(SQLModel, table=True):
     """Um produto/serviço de um lançamento financeiro manual (várias linhas por nota)."""
 

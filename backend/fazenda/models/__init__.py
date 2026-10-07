@@ -78,6 +78,7 @@ from .financeiro import (
     LancamentoRecorrente,
     CartaoCredito,
     FaturaCartao,
+    FaturaFornecedor,
     LancamentoCartao,
 )
 from .estoque import (
@@ -419,6 +420,7 @@ __all__ = [
     "LancamentoRecorrente",
     "CartaoCredito",
     "FaturaCartao",
+    "FaturaFornecedor",
     "LancamentoCartao",
     "Estoque",
     "Fornecedor",

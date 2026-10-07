@@ -12,6 +12,7 @@ import { AnimalRow } from "@/components/AnimalModal";
 // o código da sub-aba realmente aberta, em vez de tudo de uma vez com a página.
 const FormFinanceiro = dynamic(() => import("@/components/FormFinanceiro").then((m) => m.FormFinanceiro), { ssr: false });
 const FormFinanceiroSimplificado = dynamic(() => import("@/components/FormFinanceiroSimplificado").then((m) => m.FormFinanceiroSimplificado), { ssr: false });
+const FormLancamentoLote = dynamic(() => import("@/components/FormLancamentoLote").then((m) => m.FormLancamentoLote), { ssr: false });
 const FormExclusao = dynamic(() => import("@/components/FormExclusao").then((m) => m.FormExclusao), { ssr: false });
 const FormPesagemCorporal = dynamic(() => import("@/components/FormPesagemCorporal").then((m) => m.FormPesagemCorporal), { ssr: false });
 const MovimentarAnimais = dynamic(() => import("@/components/MovimentarAnimais"), { ssr: false });
@@ -212,7 +213,7 @@ export default function LancamentosPage() {
   // "Lançamento simplificado" (despesa e receita): fornecedor/cliente + itens
   // + data única + conta bancária, sem os campos avançados do formulário
   // completo (ver FormFinanceiroSimplificado.tsx).
-  const [modoDespesa, setModoDespesa] = useState<"generico" | "compra_semen" | "simplificado">("generico");
+  const [modoDespesa, setModoDespesa] = useState<"generico" | "compra_semen" | "simplificado" | "lote">("generico");
   const [modoReceita, setModoReceita] = useState<"generico" | "simplificado">("generico");
   // "Finalizar pedido" (card "Pedidos em aberto") força o modo de volta pra
   // "genérico" — só ele aceita a prop `prefillPedido` — antes de guardar o
@@ -489,18 +490,30 @@ export default function LancamentosPage() {
               <div className="flex flex-wrap gap-2 mb-4">
                 <button type="button" className={modoDespesa === "generico" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
                   onClick={() => setModoDespesa("generico")}>
-                  Lançamento genérico
+                  Lançamento
                 </button>
                 <button type="button" className={modoDespesa === "simplificado" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
                   onClick={() => setModoDespesa("simplificado")}>
                   Lançamento simplificado
+                </button>
+                <button type="button" className={modoDespesa === "lote" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
+                  onClick={() => setModoDespesa("lote")}>
+                  Lançamento em lote
                 </button>
                 <button type="button" className={modoDespesa === "compra_semen" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
                   onClick={() => setModoDespesa("compra_semen")}>
                   Compra de sêmen
                 </button>
               </div>
-              {modoDespesa === "compra_semen" ? (
+              {modoDespesa === "lote" ? (
+                <>
+                  <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "1rem" }}>
+                    Um fornecedor, várias notas (cada nota com seus produtos e serviços), um vencimento único, parcelamento da fatura ou já pago.
+                    Cada nota vira uma conta completa e o lote entra numa fatura já fechada. Grava tudo ou nada.
+                  </p>
+                  <FormLancamentoLote onSujo={setSujo} />
+                </>
+              ) : modoDespesa === "compra_semen" ? (
                 <>
                   <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "1rem" }}>
                     Mesmo formulário de Lançamentos &gt; Animais &gt; Compra/Venda &gt; Comprar sêmen — a compra soma as
@@ -528,7 +541,7 @@ export default function LancamentosPage() {
               <div className="flex flex-wrap gap-2 mb-4">
                 <button type="button" className={modoReceita === "generico" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
                   onClick={() => setModoReceita("generico")}>
-                  Lançamento genérico
+                  Lançamento
                 </button>
                 <button type="button" className={modoReceita === "simplificado" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
                   onClick={() => setModoReceita("simplificado")}>
