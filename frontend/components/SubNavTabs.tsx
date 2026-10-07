@@ -84,12 +84,13 @@ function SubNavTabsLinha({ nos, primaria, subNav, pathname, caminho }: {
   }, []);
   useEffect(() => {
     const el = listaRef.current;
-    el?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ inline: "nearest", block: "nearest" });
-    medir();
-    // scrollIntoView termina depois; mede de novo para a seta sumir quando a última aba já está inteira à vista.
-    const t = setTimeout(medir, 250);
+    const mostrarAtiva = () => el?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ inline: "nearest", block: "nearest" });
+    // O layout (fonte, ícones) ainda muda logo depois de montar: rola e mede de novo quando assentar.
+    mostrarAtiva(); medir();
+    const t1 = setTimeout(() => { mostrarAtiva(); medir(); }, 250);
+    const t2 = setTimeout(() => { mostrarAtiva(); medir(); }, 900);
     window.addEventListener("resize", medir);
-    return () => { clearTimeout(t); window.removeEventListener("resize", medir); };
+    return () => { clearTimeout(t1); clearTimeout(t2); window.removeEventListener("resize", medir); };
   }, [caminho.join("/"), nos.length, medir]);
 
   return (
