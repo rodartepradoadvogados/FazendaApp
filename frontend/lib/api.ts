@@ -2361,7 +2361,7 @@ export async function excluirPessoa(id: number) {
 export const CATEGORIAS_PESSOA_ANEXO = [
   "RG", "CPF", "Carteira de trabalho", "Ficha de registro",
   "Contrato de trabalho por prazo indeterminado", "Contrato de trabalho por prazo determinado",
-  "Contrato de empreita", "Holerite", "Comprovante de pagamento", "Comprovante de vale", "Termo de retenção do caixa",
+  "Contrato de empreita", "Holerite", "Comprovante de pagamento", "Comprovante de vale", "Termo de retenção do caixa", "Documento de ciência de penalidade",
 ];
 export type AnexoPessoa = {
   id: number; nome_arquivo: string; mime_type: string; tamanho_bytes: number; categoria: string;

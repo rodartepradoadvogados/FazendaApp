@@ -15,7 +15,13 @@ const inputStyle: React.CSSProperties = {
  * Salvar (baixa o PDF gerado no navegador) / Enviar (envia o mesmo PDF por
  * e-mail) / Cancelar. O destinatário é sugerido pelo contexto do lançamento
  * (fornecedor/cliente/funcionário já cadastrado), mas sempre editável. */
-export function ReciboModal({ lanc, onClose }: { lanc: LancamentoRecibo; onClose: () => void }) {
+export function ReciboModal({ lanc, onClose, nota, semEmail = false }: {
+  lanc: LancamentoRecibo; onClose: () => void;
+  /** Texto de apoio mostrado no modal (ex.: saldo antes e depois, no recibo do caixa do funcionário). */
+  nota?: string;
+  /** Recibo que não é de um lançamento do Financeiro (ex.: CX-…): não há e-mail cadastrado nem envio. */
+  semEmail?: boolean;
+}) {
   const [destinatario, setDestinatario] = useState("");
   const [carregandoDestinatario, setCarregandoDestinatario] = useState(true);
   const [enviando, setEnviando] = useState(false);
@@ -30,12 +36,12 @@ export function ReciboModal({ lanc, onClose }: { lanc: LancamentoRecibo; onClose
 
   useEffect(() => {
     let ativo = true;
-    if (!lanc.numero_lancamento) { setCarregandoDestinatario(false); return; }
+    if (!lanc.numero_lancamento || semEmail) { setCarregandoDestinatario(false); return; }
     fetchDestinatarioRecibo(lanc.numero_lancamento)
       .then((d) => { if (ativo) setDestinatario(d.email || ""); })
       .finally(() => { if (ativo) setCarregandoDestinatario(false); });
     return () => { ativo = false; };
-  }, [lanc.numero_lancamento]);
+  }, [lanc.numero_lancamento, semEmail]);
 
   async function salvar() {
     setErro(null); setSucesso(null);
@@ -91,6 +97,8 @@ export function ReciboModal({ lanc, onClose }: { lanc: LancamentoRecibo; onClose
             <> (conta original de {lanc.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} — pagamento parcial)</>
           )}
         </p>
+        {nota && <p style={{ fontSize: "0.8rem", margin: 0, padding: "0.45rem 0.6rem", border: "1px dashed var(--border)", borderRadius: "var(--r-sm)" }}>{nota}</p>}
+        {!semEmail && (
         <div>
           <label style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" }}>
             E-mail do destinatário
@@ -101,19 +109,22 @@ export function ReciboModal({ lanc, onClose }: { lanc: LancamentoRecibo; onClose
             onChange={(e) => setDestinatario(e.target.value)}
           />
         </div>
+        )}
         {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
         {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem" }}>{sucesso}</p>}
         <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end", marginTop: "0.4rem" }}>
           <button className="btn-ghost" onClick={onClose}><X size={14} /> Cancelar</button>
-          <button className="btn-ghost" onClick={salvar}><Save size={14} /> Salvar</button>
+          <button className={semEmail ? "btn-primary" : "btn-ghost"} onClick={salvar}><Save size={14} /> Salvar</button>
           {mostrarCompartilhar && (
             <button className="btn-ghost" onClick={compartilhar} disabled={compartilhando}>
               <Share2 size={14} /> {compartilhando ? "Abrindo…" : "Compartilhar"}
             </button>
           )}
-          <button className="btn-primary" onClick={enviar} disabled={enviando}>
-            <Mail size={14} /> {enviando ? "Enviando…" : "Enviar"}
-          </button>
+          {!semEmail && (
+            <button className="btn-primary" onClick={enviar} disabled={enviando}>
+              <Mail size={14} /> {enviando ? "Enviando…" : "Enviar"}
+            </button>
+          )}
         </div>
       </div>
     </Modal>

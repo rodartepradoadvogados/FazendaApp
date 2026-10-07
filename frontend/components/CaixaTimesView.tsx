@@ -358,7 +358,7 @@ function RateioTela({ rateioId, onVoltar }: { rateioId: number; onVoltar: () => 
       </div>
       <div className="flex gap-2" style={{ marginTop: "0.9rem", flexWrap: "wrap" }}>
         {editavel && <>
-          <button type="button" className="btn-primary" disabled={ocupado || !r.pode_confirmar}
+          <button type="button" className="btn-primary" style={{ opacity: r.pode_confirmar ? 1 : 0.45 }} disabled={ocupado || !r.pode_confirmar}
             title={r.pode_confirmar ? "" : "Anexe os documentos de ciência pendentes"}
             onClick={() => window.confirm("Confirmar o rateio? Cada parte vira crédito no caixa individual (ou pagamento direto).") && agir(() => confirmarRateioTime(r.id), "Rateio confirmado: os créditos foram lançados nos caixas individuais.")}>Confirmar rateio</button>
           <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} disabled={ocupado}
