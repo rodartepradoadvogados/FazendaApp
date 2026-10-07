@@ -259,7 +259,7 @@ export async function exportarPDF(
   });
 }
 
-export type SecaoFicha = { titulo: string; colunas: ColunaExport[]; linhas: Record<string, unknown>[] };
+export type SecaoFicha = { titulo: string; colunas: ColunaExport[]; linhas: Record<string, unknown>[]; /** Começa numa página nova (ex.: um extrato por pessoa). */ novaPagina?: boolean };
 
 /**
  * Excel com várias abas (uma planilha por seção/categoria) — usado quando um
@@ -369,8 +369,9 @@ export async function exportarFichaPDF(
   let alguma = false;
   for (const secao of secoes) {
     if (!secao.linhas.length) continue;
+    const jaTinhaSecao = alguma;
     alguma = true;
-    if (cursorY > pageHeight - 40) {
+    if (cursorY > pageHeight - 40 || (secao.novaPagina && jaTinhaSecao)) {
       doc.addPage();
       cabecalho();
       cursorY = 32;

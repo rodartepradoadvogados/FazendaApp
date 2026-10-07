@@ -11,6 +11,8 @@
 // Não implementa busca nem recolhimento manual de submenu — descontinuados
 // neste modelo (a árvore inteira cabe no topo, com rolagem horizontal por
 // linha quando necessário).
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronRight } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useSubNav } from "@/components/SubNavContext";
 import { useCliqueOuDuploClique, abrirNovaAba } from "@/lib/tabs";
@@ -72,19 +74,63 @@ function SubNavTabsLinha({ nos, primaria, subNav, pathname, caminho }: {
   subNav: { tree: SubNavNode[]; activeId: string; onSelect: (id: string) => void };
   pathname: string; caminho: string[];
 }) {
+  // Linha longa (ex.: Financeiro › Ações) rola na horizontal: sem um sinal, as últimas abas ficam escondidas
+  // e parecem não existir. A aba ativa entra sempre na vista e uma seta à direita avisa que há mais abas.
+  const listaRef = useRef<HTMLDivElement>(null);
+  const [maisAdireita, setMaisAdireita] = useState(false);
+  const medir = useCallback(() => {
+    const el = listaRef.current;
+    if (el) setMaisAdireita(el.scrollWidth - el.clientWidth - el.scrollLeft > 16);
+  }, []);
+  useEffect(() => {
+    const el = listaRef.current;
+    // Rolagem explícita (scrollIntoView deixava a última aba cortada): põe a aba ativa inteira na vista.
+    const mostrarAtiva = () => {
+      const btn = el?.querySelector<HTMLElement>('[aria-selected="true"]');
+      if (!el || !btn) return;
+      const fim = btn.offsetLeft + btn.offsetWidth;
+      // +48: folga para a seta de "mais abas" (2,4rem) não cobrir o fim do nome quando ainda há abas à direita.
+      if (fim + 48 > el.scrollLeft + el.clientWidth) el.scrollLeft = fim - el.clientWidth + 48;
+      else if (btn.offsetLeft < el.scrollLeft) el.scrollLeft = Math.max(btn.offsetLeft - 8, 0);
+    };
+    // O layout (fonte, ícones) ainda muda logo depois de montar: rola e mede de novo quando assentar.
+    mostrarAtiva(); medir();
+    const t1 = setTimeout(() => { mostrarAtiva(); medir(); }, 250);
+    const t2 = setTimeout(() => { mostrarAtiva(); medir(); }, 900);
+    window.addEventListener("resize", medir);
+    return () => { clearTimeout(t1); clearTimeout(t2); window.removeEventListener("resize", medir); };
+  }, [caminho.join("/"), nos.length, medir]);
+
   return (
-    <div
-      role="tablist"
-      style={{
-        display: "flex", gap: primaria ? "0.15rem" : "0.15rem", overflowX: "auto", whiteSpace: "nowrap",
-        background: primaria ? undefined : "var(--surface-2)",
-        borderTop: primaria ? undefined : "1px solid var(--border)",
-      }}
-    >
-      {nos.map((n) => (
-        <SubNavTabButton key={n.id} node={n} primaria={primaria}
-          ativo={caminho.includes(n.id)} subNav={subNav} pathname={pathname} />
-      ))}
+    <div style={{ position: "relative" }}>
+      <div
+        ref={listaRef}
+        onScroll={medir}
+        role="tablist"
+        style={{
+          position: "relative", display: "flex", gap: primaria ? "0.15rem" : "0.15rem", overflowX: "auto", whiteSpace: "nowrap", scrollbarWidth: "thin", paddingRight: "0.6rem",
+          background: primaria ? undefined : "var(--surface-2)",
+          borderTop: primaria ? undefined : "1px solid var(--border)",
+        }}
+      >
+        {nos.map((n) => (
+          <SubNavTabButton key={n.id} node={n} primaria={primaria}
+            ativo={caminho.includes(n.id)} subNav={subNav} pathname={pathname} />
+        ))}
+      </div>
+      {maisAdireita && (
+        <button
+          type="button" aria-label="Mostrar mais abas" title="Há mais abas à direita"
+          onClick={() => listaRef.current?.scrollBy({ left: 240, behavior: "smooth" })}
+          style={{
+            position: "absolute", top: 0, right: 0, bottom: 0, width: "2.4rem", border: "none", cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: "0.3rem", color: "var(--text-muted)",
+            background: `linear-gradient(to right, transparent, ${primaria ? "var(--surface)" : "var(--surface-2)"} 60%)`,
+          }}
+        >
+          <ChevronRight size={16} />
+        </button>
+      )}
     </div>
   );
 }
@@ -126,6 +172,7 @@ function SubNavTabButton({ node, primaria, ativo, subNav, pathname }: {
         color: ativo ? (primaria ? "var(--vinho)" : "var(--text)") : "var(--text-muted)",
         display: "flex",
         alignItems: "center",
+        flexShrink: 0,
         gap: primaria ? undefined : "0.35rem",
       }}
     >
