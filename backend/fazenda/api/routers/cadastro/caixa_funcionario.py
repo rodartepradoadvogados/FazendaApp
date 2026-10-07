@@ -243,6 +243,9 @@ class RetencaoIn(BaseModel):
     fim: date | None = None
     teto: float | None = None
     autorizada: bool = False
+    destino: str = "individual"  # individual | time | dividir
+    time_id: int | None = None
+    pct_time: float = 50.0
 
 
 @router.put("/{pessoa_id}/retencao")
@@ -262,9 +265,21 @@ def salvar_retencao(
         raise HTTPException(status_code=400, detail="O teto precisa ser maior que zero (ou fique em branco)")
     if dados.fim is not None and dados.fim < dados.inicio:
         raise HTTPException(status_code=400, detail="O fim da vigência não pode ser antes do início")
+    if dados.destino not in ("individual", "time", "dividir"):
+        raise HTTPException(status_code=400, detail="Destino inválido")
+    time_id = None
+    if dados.destino != "individual":
+        from fazenda.models import CaixaTime
+        t = session.get(CaixaTime, dados.time_id) if dados.time_id else None
+        if t is None or t.fazenda_id != fazenda_id or not t.ativo:
+            raise HTTPException(status_code=400, detail="Escolha um caixa do time ativo para receber a retenção")
+        time_id = t.id
+    if dados.destino == "dividir" and not 0 < dados.pct_time < 100:
+        raise HTTPException(status_code=400, detail="A parte do time deve ficar entre 0 e 100%")
     cfg = regras.retencao_da_pessoa(session, pessoa_id, fazenda_id)
     if cfg is None:
         cfg = CaixaRetencao(fazenda_id=fazenda_id, pessoa_id=pessoa_id, inicio=dados.inicio)
+    cfg.destino, cfg.time_id, cfg.pct_time = dados.destino, time_id, dados.pct_time
     cfg.forma, cfg.valor, cfg.inicio, cfg.fim, cfg.teto = dados.forma, round(dados.valor, 2), dados.inicio, dados.fim, dados.teto
     if dados.autorizada and not cfg.autorizada:
         cfg.autorizada_em = date.today()

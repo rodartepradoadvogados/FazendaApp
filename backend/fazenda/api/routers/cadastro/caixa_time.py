@@ -162,7 +162,7 @@ def obter_time(
         **base, "membros_lista": membros,
         "movimentos": [
             {**m.model_dump(), "saldo_depois": saldo_depois[m.id], "estornado": m.id in estornados,
-             "pode_estornar": m.tipo not in ("estorno", "rateio") and m.id not in estornados}
+             "pode_estornar": m.tipo not in ("estorno", "rateio") and not m.folha_id and m.id not in estornados}
             for m in sorted(movs, key=lambda x: (x.data, x.id), reverse=True)
         ],
         "rateios": [r.model_dump() for r in rateios],
@@ -295,6 +295,11 @@ def estornar_entrada_time(
     motivo = (dados.motivo or "").strip()
     if not motivo:
         raise HTTPException(status_code=400, detail="Informe o motivo do estorno")
+    if original.folha_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Esta retenção veio de uma folha paga. Para desfazê-la, estorne o pagamento da folha.",
+        )
     if original.tipo in ("estorno", "rateio"):
         raise HTTPException(status_code=409, detail="Este movimento não se estorna aqui (rateio: use 'Desfazer rateio')")
     if session.exec(select(CaixaTimeMovimento).where(CaixaTimeMovimento.estorna_id == original.id)).first():

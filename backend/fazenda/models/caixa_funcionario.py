@@ -65,7 +65,10 @@ class CaixaRetencao(SQLModel, table=True):
     forma: str = "fixo"  # fixo (R$ por mês) | percentual (% do salário-base)
     valor: float = 0.0
     teto: Optional[float] = None  # saldo retido máximo; a retenção para ao alcançá-lo
-    destino: str = "individual"  # individual (o caixa do time entra na Fase 3)
+    # individual | time | dividir (parte para o caixa do time, o resto no individual)
+    destino: str = "individual"
+    time_id: Optional[int] = None
+    pct_time: float = 50.0  # só em "dividir": % do retido que vai para o caixa do time
     inicio: date
     fim: Optional[date] = None  # None = sem fim de vigência
     pausada: bool = False
@@ -123,6 +126,7 @@ class CaixaTimeMovimento(SQLModel, table=True):
     lancamento_id: Optional[int] = Field(default=None, foreign_key="conta_gerencial.id")
     numero_lancamento: Optional[str] = None
     rateio_id: Optional[int] = Field(default=None, index=True)
+    folha_id: Optional[int] = Field(default=None, index=True)  # retenção de folha com destino time
     estorna_id: Optional[int] = Field(default=None, foreign_key="caixa_time_movimento.id", index=True)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)

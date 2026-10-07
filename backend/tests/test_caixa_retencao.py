@@ -264,3 +264,77 @@ class TestIsolamento:
         assert _cfg(c, ids["pessoa1"], fid=2).status_code == 404
         assert c.get("/cadastro/caixa-funcionarios/pendencias", headers=_cab(2)).json()["termos_pendentes"] == []
         assert _linha(_ver(c, _folha(c, ids["pessoa2"], fid=2), fid=2)) is None
+
+
+class TestDestinoTime:
+    def _time(self, c, fid=1):
+        r = c.post("/cadastro/caixa-time", json={"nome": "Turma", "auto_tipos": []}, headers=_cab(fid))
+        assert r.status_code == 200, r.text
+        return r.json()["id"]
+
+    def _saldo_time(self, c, tid):
+        return c.get(f"/cadastro/caixa-time/{tid}", headers=_cab()).json()["saldo"]
+
+    def test_validacoes_do_destino(self, ambiente):
+        c, _, ids = ambiente
+        p = ids["pessoa1"]
+        assert _cfg(c, p, destino="time").status_code == 400  # sem caixa
+        assert _cfg(c, p, destino="xx").status_code == 400
+        tid = self._time(c)
+        assert _cfg(c, p, destino="dividir", time_id=tid, pct_time=100).status_code == 400
+        assert _cfg(c, p, destino="time", time_id=tid).status_code == 200
+        tid2 = self._time(c, fid=2)
+        assert _cfg(c, p, destino="time", time_id=tid2).status_code == 400  # caixa de outra fazenda
+
+    def test_destino_time_leva_tudo_para_o_time(self, ambiente):
+        c, _, ids = ambiente
+        p = ids["pessoa1"]
+        tid = self._time(c)
+        _cfg(c, p, valor=100, destino="time", time_id=tid)
+        assert _pagar(c, _folha(c, p)).status_code == 200
+        assert _saldo(c, p) == 0.0 and self._saldo_time(c, tid) == 100.0
+
+    def test_dividir_reparte_e_estorno_reverte_os_dois(self, ambiente):
+        c, _, ids = ambiente
+        p = ids["pessoa1"]
+        tid = self._time(c)
+        _cfg(c, p, valor=100, destino="dividir", time_id=tid, pct_time=30)
+        fo = _folha(c, p)
+        assert _pagar(c, fo).status_code == 200
+        assert _saldo(c, p) == 70.0 and self._saldo_time(c, tid) == 30.0
+        assert c.post(f"/cadastro/folha-pagamento/{fo}/estornar", json={}, headers=_cab()).status_code == 200
+        assert _saldo(c, p) == 0.0 and self._saldo_time(c, tid) == 0.0
+
+    def test_estorno_bloqueado_se_o_time_ja_repartiu(self, ambiente):
+        c, _, ids = ambiente
+        p = ids["pessoa1"]
+        tid = self._time(c)
+        c.post(f"/cadastro/caixa-time/{tid}/membros", json={"pessoa_ids": [p], "entrada": "2020-01-01"}, headers=_cab())
+        _cfg(c, p, valor=100, destino="time", time_id=tid)
+        fo = _folha(c, p)
+        _pagar(c, fo)
+        r = c.post(f"/cadastro/caixa-time/{tid}/rateios", json={
+            "periodo_inicio": "2026-01-01", "periodo_fim": "2026-06-30", "data_entrega": "2026-07-01"}, headers=_cab())
+        assert r.status_code == 200, r.text
+        assert c.post(f"/cadastro/caixa-time/rateios/{r.json()['id']}/confirmar", headers=_cab()).status_code == 200
+        r = c.post(f"/cadastro/folha-pagamento/{fo}/estornar", json={}, headers=_cab())
+        assert r.status_code == 409 and "rateio" in r.text
+
+    def test_retencao_do_time_nao_se_estorna_pelo_caixa_do_time(self, ambiente):
+        c, _, ids = ambiente
+        p = ids["pessoa1"]
+        tid = self._time(c)
+        _cfg(c, p, valor=100, destino="time", time_id=tid)
+        _pagar(c, _folha(c, p))
+        mid = c.get(f"/cadastro/caixa-time/{tid}", headers=_cab()).json()["movimentos"][0]["id"]
+        assert c.post(f"/cadastro/caixa-time/{tid}/movimentos/{mid}/estornar", json={"motivo": "x"}, headers=_cab()).status_code == 409
+
+    def test_teto_conta_a_parte_do_time(self, ambiente):
+        c, _, ids = ambiente
+        p = ids["pessoa1"]
+        tid = self._time(c)
+        _cfg(c, p, valor=100, teto=130, destino="time", time_id=tid)
+        f1 = _folha(c, p, competencia="2026-01")
+        _pagar(c, f1)
+        f2 = _folha(c, p, competencia="2026-02")
+        assert round(abs(_linha(_ver(c, f2))["valor"]), 2) == 30.0

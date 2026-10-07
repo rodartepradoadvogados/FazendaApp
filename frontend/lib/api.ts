@@ -9991,6 +9991,7 @@ export async function excluirMovimentoCaixa(pessoaId: number, movimentoId: numbe
 export type CaixaRetencaoConfig = {
   forma: "fixo" | "percentual"; valor: number; teto: number | null; inicio: string; fim: string | null;
   pausada: boolean; autorizada: boolean; autorizada_em: string | null; revogada_em: string | null;
+  destino?: "individual" | "time" | "dividir"; time_id?: number | null; pct_time?: number;
 };
 export type CaixaRetencaoDados = {
   pessoa: { id: number; nome: string; tipo: string; grupos: CaixaGrupo[]; salario_base: number | null };
@@ -10004,6 +10005,7 @@ export async function fetchRetencoesCaixa(): Promise<{ retencoes: CaixaRetencaoD
 }
 export async function salvarRetencaoCaixa(pessoaId: number, dados: {
   forma: string; valor: number; inicio: string; fim?: string | null; teto?: number | null; autorizada: boolean;
+  destino?: string; time_id?: number | null; pct_time?: number;
 }): Promise<CaixaRetencaoDados> {
   return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/${pessoaId}/retencao`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

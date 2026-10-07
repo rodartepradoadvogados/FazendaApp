@@ -18,7 +18,7 @@ const CATEGORIA_PENALIDADE = "Documento de ciência de penalidade";
 const GRUPOS = [{ id: "clt", label: "CLT" }, { id: "empreita", label: "Empreita" }, { id: "contrato", label: "Contrato" }, { id: "diaria", label: "Diária" }];
 const ROTULO_GRUPO: Record<string, string> = { clt: "CLT", empreita: "Empreita", contrato: "Contrato", diaria: "Diária" };
 const TIPOS = [{ id: "deposito", label: "Depósito da fazenda" }, { id: "bonificacao", label: "Bonificação por produtividade" }, { id: "comissao", label: "Comissão" }, { id: "outro", label: "Outro tipo (sem especificar)" }];
-const ROTULO_MOV: Record<string, string> = { deposito: "Depósito", bonificacao: "Bonificação", comissao: "Comissão", outro: "Outro", rateio: "Rateio do PL", estorno: "Estorno" };
+const ROTULO_MOV: Record<string, string> = { deposito: "Depósito", bonificacao: "Bonificação", comissao: "Comissão", outro: "Outro", rateio: "Rateio do PL", estorno: "Estorno", retencao: "Retenção em folha" };
 const FORMAS = [{ id: "pix", label: "Pix" }, { id: "dinheiro", label: "Dinheiro" }, { id: "transferencia", label: "Transferência" }];
 
 const lbl = { display: "block", fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.2rem" } as const;
