@@ -108,6 +108,12 @@ class FaturaFornecedor(SQLModel, table=True):
     centro_custo: Optional[str] = None
     # Parcelamento da FATURA (não da nota): None = à vista no vencimento (ou ainda a decidir, se aberta).
     parcelas_n: Optional[int] = None
+    # Cronograma do parcelamento da fatura (com parcelas_n): primeiro vencimento e intervalo
+    # ("mensal" | "30dias"). `parcelamento_origem` diz quem definiu: "cadastro" (travado até
+    # editar a fatura), "fechamento" (some ao reabrir) ou "lote" (lote lançado já parcelado).
+    parcelas_primeiro: Optional[date] = None
+    parcelas_intervalo: Optional[str] = None
+    parcelamento_origem: Optional[str] = None
     total_fornecedor: Optional[float] = None  # total que o fornecedor informou, para conferência
     valor_total: Optional[float] = None  # congelado no fechamento
     status: str = "aberta"  # aberta | fechada | paga
@@ -117,6 +123,21 @@ class FaturaFornecedor(SQLModel, table=True):
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FaturaFornecedorEvento(SQLModel, table=True):
+    """Histórico da fatura: quem fez o quê, quando e por quê (abertura, notas, fechamento,
+    reabertura com motivo, pagamento e estorno de parcela...)."""
+
+    __tablename__ = "fatura_fornecedor_evento"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    fatura_id: int = Field(index=True)
+    acao: str
+    detalhe: Optional[str] = None
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
 class LancamentoItem(SQLModel, table=True):

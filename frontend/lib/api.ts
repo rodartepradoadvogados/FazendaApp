@@ -10127,3 +10127,63 @@ export async function criarLoteFatura(dados: LoteIn): Promise<LoteResultado> {
   }
   return res.json();
 }
+
+// ── Faturas de fornecedor — modo Faturas (Entrega 2) ──
+export type FaturaStatus = "aberta" | "fechada" | "paga";
+export type FaturaResumo = {
+  id: number; fornecedor: string; rotulo: string; status: FaturaStatus; origem: "fatura" | "lote";
+  data_abertura: string; data_fechamento_prevista: string | null; data_vencimento: string | null;
+  parcelas_n: number | null; parcelas_primeiro: string | null; parcelas_intervalo: "mensal" | "30dias" | null;
+  parcelamento_origem: "cadastro" | "fechamento" | "lote" | null; conta_bancaria: string | null; centro_custo: string | null;
+  total_fornecedor: number | null; valor_total: number; notas: number; paga_em: string | null;
+};
+export type FaturaNota = {
+  numero_lancamento: string | null; tipo_documento: string | null; numero_documento: string | null; data_emissao: string | null;
+  descricao: string | null; valor: number; desconto: number | null; acrescimo: number | null;
+  parcelas: { parcela: number | null; vencimento: string | null; valor: number | null; pago: boolean }[];
+};
+export type FaturaParcela = {
+  parcela: number; vencimento: string | null; valor: number; pago: boolean; valor_pago: number; data_pagamento: string | null; forma_pagamento: string | null;
+};
+export type FaturaDetalhe = FaturaResumo & {
+  lista_notas: FaturaNota[]; parcelas: FaturaParcela[]; eventos: { acao: string; detalhe: string | null; em: string; usuario: string | null }[];
+};
+export type FaturaCadastroIn = {
+  fornecedor: string; rotulo?: string | null; data_abertura: string; data_fechamento_prevista?: string | null;
+  data_vencimento?: string | null; conta_bancaria?: string | null; centro_custo?: string | null;
+  parcelamento?: { n: number; primeiro_vencimento: string; intervalo: "mensal" | "30dias" } | null;
+};
+async function faturaJson(res: Response, padrao: string) {
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(mensagemErroApi(d.detail) || (typeof d.detail === "object" ? d.detail?.mensagem : null) || padrao);
+    err.detail = d.detail; err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+const _fj = (url: string, init: RequestInit | undefined, padrao: string) => authFetch(`${API}/financeiro/faturas${url}`, init).then((r) => faturaJson(r, padrao));
+const _fbody = (method: string, body?: unknown): RequestInit => ({ method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+export const fetchFaturas = (status?: string): Promise<FaturaResumo[]> => _fj(status ? `?status=${status}` : "", { cache: "no-store" }, "Erro ao carregar as faturas");
+export const fetchFatura = (id: number): Promise<FaturaDetalhe> => _fj(`/${id}`, { cache: "no-store" }, "Erro ao carregar a fatura");
+export const abrirFatura = (d: FaturaCadastroIn): Promise<FaturaDetalhe> => _fj("", _fbody("POST", d), "Erro ao abrir a fatura");
+export const editarFatura = (id: number, d: FaturaCadastroIn): Promise<FaturaDetalhe> => _fj(`/${id}`, _fbody("PUT", d), "Erro ao salvar a fatura");
+export async function lancarNotasNaFatura(id: number, d: { notas: LoteNotaIn[]; confirmar_duplicados?: boolean; confirmar_fora_periodo?: boolean }): Promise<{ fatura_id: number; notas: LoteResultado["notas"]; ids_contas: number[]; valor: number }> {
+  const chave = gerarChaveIdempotencia();
+  const res = await fetchComRetry(() => authFetch(`${API}/financeiro/faturas/${id}/notas`, {
+    method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": chave }, body: JSON.stringify(d),
+  }));
+  return faturaJson(res, "Erro ao lançar as notas na fatura");
+}
+export const lancarNotasAvulsas = (d: { fornecedor: string; conta_bancaria: string | null; centro_custo: string | null; notas: LoteNotaIn[]; data_vencimento: string; confirmar_duplicados?: boolean }): Promise<{ notas: LoteResultado["notas"]; ids_contas: number[] }> =>
+  _fj("/notas-avulsas", _fbody("POST", d), "Erro ao lançar as notas");
+export const fecharFatura = (id: number, d: { total_fornecedor?: number | null; confirmar_divergencia?: boolean; modo: "vista" | "parcelar"; parcelamento?: FaturaCadastroIn["parcelamento"]; data_vencimento?: string | null }): Promise<FaturaDetalhe> =>
+  _fj(`/${id}/fechar`, _fbody("POST", d), "Erro ao fechar a fatura");
+export const reabrirFatura = (id: number, motivo: string): Promise<FaturaDetalhe> => _fj(`/${id}/reabrir`, _fbody("POST", { motivo }), "Erro ao reabrir a fatura");
+export const pagarParcelaFatura = (id: number, d: { parcela: number; data_pagamento: string; forma_pagamento: string; conta_bancaria?: string | null; numero_documento_pagamento?: string | null; valor_pago?: number | null; data_vencimento_cartao?: string | null }): Promise<FaturaDetalhe & { ids_contas_pagas: number[]; diferenca: number }> =>
+  _fj(`/${id}/pagar`, _fbody("POST", d), "Erro ao pagar a parcela");
+export const estornarParcelaFatura = (id: number, parcela: number, motivo: string): Promise<FaturaDetalhe> => _fj(`/${id}/parcelas/${parcela}/estornar`, _fbody("POST", { motivo }), "Erro ao estornar o pagamento");
+export const tirarNotaDaFatura = (id: number, numero: string): Promise<FaturaDetalhe> => _fj(`/${id}/notas/${encodeURIComponent(numero)}/tirar`, { method: "POST" }, "Erro ao tirar a nota da fatura");
+export const excluirFatura = (id: number, soltarNotas = false): Promise<{ excluida: boolean; notas_soltas: number }> => _fj(`/${id}${soltarNotas ? "?soltar_notas=true" : ""}`, { method: "DELETE" }, "Erro ao excluir a fatura");
+export const previaInserirNotasNaFatura = (id: number, numeros: string[]) => _fj(`/${id}/notas/inserir/previa`, _fbody("POST", { numeros_lancamento: numeros }), "Erro ao conferir as notas");
+export const inserirNotasNaFatura = (id: number, numeros: string[]): Promise<FaturaDetalhe> => _fj(`/${id}/notas/inserir`, _fbody("POST", { numeros_lancamento: numeros }), "Erro ao inserir as notas na fatura");

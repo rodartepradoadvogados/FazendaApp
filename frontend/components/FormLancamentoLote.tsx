@@ -5,9 +5,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Check, Copy, Plus, Trash2, X } from "lucide-react";
 import {
-  anexarArquivoLancamentoPorId, anexarComprovanteEmLote, criarLoteFatura, fetchCentrosCusto, fetchContasCorrentes,
+  abrirFatura, anexarArquivoLancamentoPorId, anexarComprovanteEmLote, criarLoteFatura, fetchCentrosCusto, lancarNotasAvulsas, lancarNotasNaFatura, fetchContasCorrentes,
   fetchEstoqueAtivos, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, formatBRL, getUsuario,
-  type ContaCorrenteCadastro, type LoteIn, type LoteResultado,
+  type ContaCorrenteCadastro, type FaturaDetalhe, type LoteIn, type LoteResultado,
 } from "@/lib/api";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { Dropzone } from "@/components/Dropzone";
@@ -41,7 +41,13 @@ const notaVazia = (tipoDoc: string, data: string): Nota => ({
 const totalItem = (i: Item) => Math.round((Number(i.qtd.replace(",", ".")) || 0) * i.unit * 100) / 100;
 const liquidoNota = (n: Nota) => Math.round((n.itens.reduce((s, i) => s + totalItem(i), 0) - n.desconto + n.acrescimo) * 100) / 100;
 
-export function FormLancamentoLote({ onSujo }: { onSujo?: (sujo: boolean) => void }) {
+export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
+  onSujo?: (sujo: boolean) => void;
+  /** Modo fatura: as notas entram numa fatura ABERTA; fornecedor, conta e centro de custo vêm dela e não há vencimento/pagamento aqui. */
+  fatura?: FaturaDetalhe;
+  onLancado?: () => void;
+}) {
+  const modoFatura = !!fatura;
   const [fornecedores, setFornecedores] = useState<string[]>([]);
   const [tiposDoc, setTiposDoc] = useState<string[]>(TIPOS_DOC_PADRAO);
   const [contas, setContas] = useState<ContaCorrenteCadastro[]>([]);
@@ -65,10 +71,13 @@ export function FormLancamentoLote({ onSujo }: { onSujo?: (sujo: boolean) => voi
   }, []);
   const contasAtivas = useMemo(() => contas.filter((c) => c.ativo), [contas]);
 
-  const [fornecedor, setFornecedor] = useState("");
-  const [contaBancaria, setContaBancaria] = useState("");
-  const [centroCusto, setCentroCusto] = useState("");
-  useEffect(() => { if (!centroCusto) { const p = centros.find((c) => c.padrao); if (p) setCentroCusto(p.nome); } }, [centros]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [fornecedorLivre, setFornecedor] = useState("");
+  const [contaLivre, setContaBancaria] = useState("");
+  const [centroLivre, setCentroCusto] = useState("");
+  const fornecedor = fatura ? fatura.fornecedor : fornecedorLivre;
+  const contaBancaria = fatura ? fatura.conta_bancaria || "" : contaLivre;
+  const centroCusto = fatura ? fatura.centro_custo || "" : centroLivre;
+  useEffect(() => { if (!fatura && !centroLivre) { const p = centros.find((c) => c.padrao); if (p) setCentroCusto(p.nome); } }, [centros]); // eslint-disable-line react-hooks/exhaustive-deps
   const [notas, setNotas] = useState<Nota[]>(() => [notaVazia("Nota fiscal", hoje())]);
   const [modo, setModo] = useState<"venc" | "parc" | "pago">("venc");
   const [vencimento, setVencimento] = useState("");
@@ -133,15 +142,16 @@ export function FormLancamentoLote({ onSujo }: { onSujo?: (sujo: boolean) => voi
   useEffect(() => { onSujo?.(sujo); }, [sujo, onSujo]);
 
   // ── Rascunho no navegador (texto; arquivos não são guardados) ──
+  const chaveRascunho = fatura ? `${CHAVE_RASCUNHO}_fatura_${fatura.id}` : CHAVE_RASCUNHO;
   const [rascunhoSalvo, setRascunhoSalvo] = useState<{ em: string; dados: any } | null>(null);
   useEffect(() => {
-    try { const r = localStorage.getItem(CHAVE_RASCUNHO); if (r) setRascunhoSalvo(JSON.parse(r)); } catch { /* sem storage: segue sem rascunho */ }
+    try { const r = localStorage.getItem(chaveRascunho); if (r) setRascunhoSalvo(JSON.parse(r)); } catch { /* sem storage: segue sem rascunho */ }
   }, []);
   useEffect(() => {
     if (!sujo) return;
     const t = setTimeout(() => {
       try {
-        localStorage.setItem(CHAVE_RASCUNHO, JSON.stringify({
+        localStorage.setItem(chaveRascunho, JSON.stringify({
           em: new Date().toISOString(),
           dados: { fornecedor, contaBancaria, centroCusto, modo, vencimento, parcN, parcPrimeiro, parcIntervalo, pagData, pagForma, pagComp, totalForn,
             notas: notas.map((n) => ({ ...n, anexo: null })) },
@@ -158,7 +168,7 @@ export function FormLancamentoLote({ onSujo }: { onSujo?: (sujo: boolean) => voi
     if (Array.isArray(d.notas) && d.notas.length) setNotas(d.notas.map((n: Nota) => ({ ...n, uid: novoUid(), anexo: null, itens: n.itens.map((i) => ({ ...i, uid: novoUid() })) })));
     setRascunhoSalvo(null);
   }
-  function descartarRascunho() { try { localStorage.removeItem(CHAVE_RASCUNHO); } catch { /* ignora */ } setRascunhoSalvo(null); }
+  function descartarRascunho() { try { localStorage.removeItem(chaveRascunho); } catch { /* ignora */ } setRascunhoSalvo(null); }
 
   // ── Edição ──
   const raiz = useRef<HTMLDivElement>(null);
@@ -188,7 +198,7 @@ export function FormLancamentoLote({ onSujo }: { onSujo?: (sujo: boolean) => voi
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [sucesso, setSucesso] = useState<string | null>(null);
-  const [pendencia, setPendencia] = useState<{ tipo: "divergencia" | "duplicadas"; mensagem: string; itens?: any[] } | null>(null);
+  const [pendencia, setPendencia] = useState<{ tipo: "divergencia" | "duplicadas" | "fora_periodo"; mensagem: string; itens?: any[]; fora?: { nota: number; data_emissao: string; motivo: string }[] } | null>(null);
 
   function montar(conf: { divergencia?: boolean; duplicados?: boolean }): LoteIn {
     const parcelas = Number(parcN) || 0;
@@ -212,7 +222,7 @@ export function FormLancamentoLote({ onSujo }: { onSujo?: (sujo: boolean) => voi
 
   function validar(): string | null {
     if (!fornecedor) return "Escolha o fornecedor do lote.";
-    if (!contaBancaria && modo === "pago") return "Escolha a conta bancária do pagamento.";
+    if (!modoFatura && !contaBancaria && modo === "pago") return "Escolha a conta bancária do pagamento.";
     if (duplicadasNoLote.size) return "Há notas repetidas neste lote (mesmo tipo e número). Corrija antes de lançar.";
     for (let k = 0; k < notas.length; k++) {
       const n = notas[k];
@@ -222,40 +232,124 @@ export function FormLancamentoLote({ onSujo }: { onSujo?: (sujo: boolean) => voi
       if (n.itens.some((i) => i.tipoItem === "produto" && !(Number(i.qtd.replace(",", ".")) > 0))) return `Nota ${k + 1}: informe a quantidade de cada produto.`;
       if (liquidoNota(n) <= 0) return `Nota ${k + 1}: o valor líquido deve ser positivo.`;
     }
+    if (modoFatura) return null;
     if (modo === "venc" && !vencimento) return "Informe o vencimento do lote.";
     if (modo === "parc" && (!(Number(parcN) >= 2) || !parcPrimeiro)) return "Informe o número de parcelas (2 ou mais) e o primeiro vencimento.";
     if (modo === "pago" && !pagData) return "Informe a data do pagamento.";
     return null;
   }
 
-  async function lancar(conf: { divergencia?: boolean; duplicados?: boolean } = {}) {
+  const escolhaFora = useRef<Conf["foraPeriodo"]>(undefined);
+  type Conf = { divergencia?: boolean; duplicados?: boolean; foraPeriodo?: "nesta" | "nova" | "avulsa" };
+
+  async function anexarDepois(porNota: { idx: number; ids: number[] }[], idsPagos?: number[]): Promise<string[]> {
+    const falhas: string[] = [];
+    for (const { idx, ids } of porNota) {
+      const n = notas[idx];
+      if (!n?.anexo) continue;
+      try { await anexarArquivoLancamentoPorId(ids[0], n.anexo, n.tipoDoc, n.semNumero ? null : n.numero.trim() || null, n.data); }
+      catch (e: any) { falhas.push(`nota ${idx + 1} (${e.message || "erro"})`); }
+    }
+    if (idsPagos && comprovante) {
+      try { await anexarComprovanteEmLote(idsPagos, [comprovante], "Comprovante de pagamento"); }
+      catch (e: any) { falhas.push(`comprovante (${e.message || "erro"})`); }
+    }
+    return falhas;
+  }
+
+  function encerrar(texto: string) {
+    escolhaFora.current = undefined;
+    setSucesso(texto);
+    descartarRascunho();
+    if (!fatura) setFornecedor("");
+    setNotas([notaVazia("Nota fiscal", hoje())]); setTotalForn(0); setComprovante(null); setPagComp("");
+    onSujo?.(false);
+    onLancado?.();
+  }
+
+  // Modo fatura: lança as notas na fatura aberta. Nota fora do período pergunta o que fazer (abre `pendencia`).
+  async function lancarNaFatura(conf: Conf) {
+    if (!fatura) return;
+    if (conf.foraPeriodo) escolhaFora.current = conf.foraPeriodo;
+    else conf = { ...conf, foraPeriodo: escolhaFora.current };
+    const todas = montar({}).notas;
+    const dentro: number[] = [];
+    const fora: number[] = [];
+    todas.forEach((n, i) => {
+      const antes = n.data_emissao < fatura.data_abertura;
+      const depois = !!fatura.data_fechamento_prevista && n.data_emissao > fatura.data_fechamento_prevista;
+      (antes || depois ? fora : dentro).push(i);
+    });
+    const escolha = conf.foraPeriodo;
+    if (fora.length && !escolha) {
+      setPendencia({
+        tipo: "fora_periodo", mensagem: "", fora: fora.map((i) => ({ nota: i + 1, data_emissao: todas[i].data_emissao,
+          motivo: todas[i].data_emissao < fatura.data_abertura ? "anterior à abertura da fatura" : "posterior ao fechamento previsto da fatura" })),
+      });
+      return;
+    }
+    const porNota: { idx: number; ids: number[] }[] = [];
+    const avisos: string[] = [];
+    const resumo: string[] = [];
+    const pegar = (idxs: number[]) => idxs.map((i) => todas[i]);
+    const registrar = (idxs: number[], notasFeitas: { ids: number[]; avisos_estoque: string[] }[]) => {
+      notasFeitas.forEach((r, k) => { porNota.push({ idx: idxs[k], ids: r.ids }); avisos.push(...r.avisos_estoque); });
+    };
+    const dentroEnviar = escolha === "nesta" ? [...dentro, ...fora] : dentro;
+    let novaFaturaId: number | null = null;
+    try {
+      if (fora.length && escolha === "nova") {
+        const datas = fora.map((i) => todas[i].data_emissao).sort();
+        const [ai, mi] = datas[0].split("-").map(Number);
+        const [af, mf] = datas[datas.length - 1].split("-").map(Number);
+        const nova = await abrirFatura({
+          fornecedor: fatura.fornecedor, data_abertura: `${ai}-${String(mi).padStart(2, "0")}-01`,
+          data_fechamento_prevista: `${af}-${String(mf).padStart(2, "0")}-${String(new Date(af, mf, 0).getDate()).padStart(2, "0")}`,
+          data_vencimento: fatura.data_vencimento, conta_bancaria: fatura.conta_bancaria, centro_custo: fatura.centro_custo,
+        });
+        novaFaturaId = nova.id;
+        const r = await lancarNotasNaFatura(nova.id, { notas: pegar(fora), confirmar_duplicados: !!conf.duplicados, confirmar_fora_periodo: true });
+        registrar(fora, r.notas);
+        resumo.push(`${fora.length} nota(s) na nova fatura "${nova.rotulo}"`);
+      } else if (fora.length && escolha === "avulsa") {
+        const r = await lancarNotasAvulsas({
+          fornecedor: fatura.fornecedor, conta_bancaria: fatura.conta_bancaria, centro_custo: fatura.centro_custo,
+          notas: pegar(fora), data_vencimento: fatura.data_vencimento || hoje(), confirmar_duplicados: !!conf.duplicados,
+        });
+        registrar(fora, r.notas);
+        resumo.push(`${fora.length} nota(s) sem fatura`);
+      }
+      if (dentroEnviar.length) {
+        const r = await lancarNotasNaFatura(fatura.id, { notas: pegar(dentroEnviar), confirmar_duplicados: !!conf.duplicados, confirmar_fora_periodo: true });
+        registrar(dentroEnviar, r.notas);
+        resumo.unshift(`${dentroEnviar.length} nota(s) na fatura "${fatura.rotulo}"`);
+      }
+    } catch (e) {
+      if (novaFaturaId !== null && porNota.length === 0) { /* a fatura nova ficou vazia: o usuário a exclui na lista, se quiser */ }
+      throw e;
+    }
+    const falhas = await anexarDepois(porNota);
+    setPendencia(null);
+    encerrar(`Lançado: ${resumo.join("; ")}.` + (avisos.length ? ` ${avisos.join(" ")}` : "") +
+      (falhas.length ? ` Atenção: as notas foram gravadas, mas faltou anexar: ${falhas.join("; ")}. Anexe pelo lançamento.` : ""));
+  }
+
+  async function lancar(conf: Conf = {}) {
     setErro(null); setSucesso(null);
     const problema = validar();
     if (problema) { setErro(problema); return; }
     setSalvando(true);
     try {
-      const r: LoteResultado = await criarLoteFatura(montar(conf));
+      if (modoFatura) { await lancarNaFatura(conf); return; }
+      const r: LoteResultado = await criarLoteFatura(montar({ divergencia: conf.divergencia, duplicados: conf.duplicados }));
       setPendencia(null);
-      const falhas: string[] = [];
-      for (const [i, n] of notas.entries()) {
-        if (!n.anexo) continue;
-        const feita = r.notas[i];
-        try { await anexarArquivoLancamentoPorId(feita.ids[0], n.anexo, n.tipoDoc, n.semNumero ? null : n.numero.trim() || null, n.data); }
-        catch (e: any) { falhas.push(`nota ${i + 1} (${e.message || "erro"})`); }
-      }
-      if (modo === "pago" && comprovante) {
-        try { await anexarComprovanteEmLote(r.ids_contas, [comprovante], "Comprovante de pagamento"); }
-        catch (e: any) { falhas.push(`comprovante (${e.message || "erro"})`); }
-      }
+      const falhas = await anexarDepois(r.notas.map((x, i) => ({ idx: i, ids: x.ids })), modo === "pago" ? r.ids_contas : undefined);
       const avisos = r.notas.flatMap((x) => x.avisos_estoque);
-      setSucesso(
+      encerrar(
         `Lote lançado: ${r.notas.length} nota(s), ${formatBRL(r.valor_total)}, fatura "${r.rotulo}" (${r.status === "paga" ? "paga" : "fechada"}).` +
         (avisos.length ? ` ${avisos.join(" ")}` : "") +
         (falhas.length ? ` Atenção: o lote foi gravado, mas faltou anexar: ${falhas.join("; ")}. Anexe pelo lançamento.` : ""),
       );
-      descartarRascunho();
-      setFornecedor(""); setNotas([notaVazia("Nota fiscal", hoje())]); setTotalForn(0); setComprovante(null); setPagComp("");
-      onSujo?.(false);
     } catch (e: any) {
       const d = e.detail;
       if (e.status === 409 && d?.codigo === "divergencia_total") {
@@ -263,7 +357,7 @@ export function FormLancamentoLote({ onSujo }: { onSujo?: (sujo: boolean) => voi
         setPendencia({ tipo: "divergencia", mensagem: `O total das notas (${formatBRL(d.soma_notas)}) difere do total informado pelo fornecedor (${formatBRL(d.total_fornecedor)}) em ${formatBRL(dif)}.` });
       }
       else if (e.status === 409 && d?.codigo === "duplicadas") setPendencia({ tipo: "duplicadas", mensagem: d.mensagem, itens: d.duplicadas });
-      else setErro(e.message || "Erro ao lançar o lote. Nada foi gravado.");
+      else setErro(e.message || (modoFatura ? "Erro ao lançar as notas." : "Erro ao lançar o lote. Nada foi gravado."));
     } finally { setSalvando(false); }
   }
 
@@ -284,7 +378,16 @@ export function FormLancamentoLote({ onSujo }: { onSujo?: (sujo: boolean) => voi
       )}
 
       <div className="card">
-        <p className="card-header mb-2">Dados do lote</p>
+        <p className="card-header mb-2">{modoFatura ? `Fatura: ${fatura!.rotulo}` : "Dados do lote"}</p>
+        {modoFatura ? (
+          <div className="flex flex-wrap gap-x-8 gap-y-1" style={{ fontSize: "0.84rem" }}>
+            <span>Fornecedor: <strong>{fatura!.fornecedor}</strong></span>
+            <span>Conta: <strong>{fatura!.conta_bancaria || "—"}</strong></span>
+            <span>Centro de custo: <strong>{fatura!.centro_custo || "—"}</strong></span>
+            <span>Período: <strong>{fatura!.data_abertura.split("-").reverse().join("/")}{fatura!.data_fechamento_prevista ? ` a ${fatura!.data_fechamento_prevista.split("-").reverse().join("/")}` : " (sem fechamento previsto)"}</strong></span>
+            <span>Responsável: <strong>{responsavel} (você)</strong></span>
+          </div>
+        ) : (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div><label style={lbl} htmlFor="lote-forn">Fornecedor (único)</label>
             <select id="lote-forn" style={inputStyle} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)}>
@@ -298,6 +401,7 @@ export function FormLancamentoLote({ onSujo }: { onSujo?: (sujo: boolean) => voi
           <div><label style={lbl} htmlFor="lote-resp">Responsável</label>
             <input id="lote-resp" style={{ ...inputStyle, background: "transparent", borderStyle: "dashed" }} value={`${responsavel} (você)`} readOnly /></div>
         </div>
+        )}
       </div>
 
       <div className="grid gap-3 mt-3" style={{ gridTemplateColumns: "minmax(0,1fr)" }}>
@@ -387,6 +491,7 @@ export function FormLancamentoLote({ onSujo }: { onSujo?: (sujo: boolean) => voi
           <span style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginLeft: "0.6rem" }}>A nova nota herda tipo de documento e data da anterior.</span>
         </div>
 
+        {!modoFatura && (
         <div className="card">
           <p className="card-header mb-2">Vencimento e pagamento do lote</p>
           <div className="flex flex-wrap gap-2">
@@ -435,27 +540,34 @@ export function FormLancamentoLote({ onSujo }: { onSujo?: (sujo: boolean) => voi
             </div>
           )}
         </div>
+        )}
 
         <div className="card">
-          <p className="card-header mb-2">Resumo do lote</p>
+          <p className="card-header mb-2">{modoFatura ? "Resumo das notas" : "Resumo do lote"}</p>
           <div className="flex flex-wrap gap-x-8 gap-y-1" style={{ fontSize: "0.85rem" }}>
             <span>Notas: <strong>{notas.length}</strong></span><span>Itens: <strong>{totalItens}</strong></span>
             <span>Total das notas: <strong style={{ fontVariantNumeric: "tabular-nums" }}>{formatBRL(totalNotas)}</strong></span>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+          {!modoFatura && <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
             <div><label style={lbl} htmlFor="lote-tf">Total da fatura informado pelo fornecedor (opcional)</label>
               <CampoMoeda id="lote-tf" style={{ ...inputStyle, textAlign: "right" }} value={totalForn} onChange={setTotalForn} /></div>
-          </div>
-          {diferenca !== null && (
+          </div>}
+          {!modoFatura && diferenca !== null && (
             <div style={aviso(diferenca === 0 ? "var(--green-light)" : "var(--red)")}>
               {diferenca === 0 ? "Confere com a fatura do fornecedor." : `Diferença de ${formatBRL(Math.abs(diferenca))}${diferenca > 0 ? " a menos nas notas" : " a mais nas notas"}. Revise antes de lançar.`}
             </div>
           )}
           {estocaveis.length > 0 && <div style={aviso("var(--amber)")}>{estocaveis.length} item(ns) estocável(is) darão entrada no estoque: {estocaveis.join(", ")}.</div>}
+          {modoFatura ? (
+            <div style={aviso("var(--border)")}>
+              As notas entram na fatura <strong>{fatura!.rotulo}</strong>. {fatura!.parcelas_n ? `O parcelamento da fatura (${fatura!.parcelas_n}x) é aplicado a cada nota.` : "O vencimento e o parcelamento são definidos na fatura."}
+            </div>
+          ) : (
           <div style={aviso("var(--border)")}>
             Será criada a fatura <strong>{fornecedor ? `${fornecedor} — ${(notas.map((n) => n.data).filter(Boolean).sort()[0] || hoje()).slice(5, 7)}/${(notas.map((n) => n.data).filter(Boolean).sort()[0] || hoje()).slice(0, 4)}` : "do fornecedor"}</strong>,
             já {modo === "pago" ? "paga" : "fechada"}.
           </div>
+          )}
         </div>
       </div>
 
@@ -463,7 +575,7 @@ export function FormLancamentoLote({ onSujo }: { onSujo?: (sujo: boolean) => voi
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.84rem", marginTop: "0.7rem" }}>{sucesso}</p>}
 
       <div className="mt-3 flex items-center gap-3 flex-wrap">
-        <button type="button" className="btn-primary" disabled={salvando} onClick={() => lancar()}><Check size={14} /> {salvando ? "Lançando…" : "Lançar lote (tudo ou nada)"}</button>
+        <button type="button" className="btn-primary" disabled={salvando} onClick={() => lancar()}><Check size={14} /> {salvando ? "Lançando…" : modoFatura ? "Lançar notas na fatura" : "Lançar lote (tudo ou nada)"}</button>
         <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>Se qualquer nota falhar, nada é gravado.</span>
       </div>
 
@@ -471,17 +583,33 @@ export function FormLancamentoLote({ onSujo }: { onSujo?: (sujo: boolean) => voi
         <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
           <div className="card" style={{ width: "560px", maxWidth: "95vw" }}>
             <div className="flex items-center gap-2 mb-2"><AlertTriangle size={18} style={{ color: "var(--amber)" }} />
-              <strong>{pendencia.tipo === "divergencia" ? "O total não confere com o fornecedor" : "Notas que parecem já lançadas"}</strong></div>
-            <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "0.7rem" }}>{pendencia.mensagem}</p>
+              <strong>{pendencia.tipo === "divergencia" ? "O total não confere com o fornecedor" : pendencia.tipo === "fora_periodo" ? "Nota fora do período da fatura" : "Notas que parecem já lançadas"}</strong></div>
+            {pendencia.mensagem && <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "0.7rem" }}>{pendencia.mensagem}</p>}
+            {pendencia.fora && (
+              <>
+                <ul style={{ fontSize: "0.8rem", paddingLeft: "1rem", marginBottom: "0.7rem" }}>
+                  {pendencia.fora.map((d) => <li key={d.nota}>Nota {d.nota} ({d.data_emissao.split("-").reverse().join("/")}): {d.motivo}.</li>)}
+                </ul>
+                <p style={{ fontSize: "0.82rem", marginBottom: "0.7rem" }}>O que fazer com {pendencia.fora.length === 1 ? "essa nota" : "essas notas"}?</p>
+              </>
+            )}
             {pendencia.itens && (
               <ul style={{ fontSize: "0.8rem", paddingLeft: "1rem", marginBottom: "0.7rem" }}>
                 {pendencia.itens.map((d) => <li key={d.nota}>Nota {d.nota} (nº {d.numero_documento}) já existe como {d.numero_lancamento}{d.data_emissao ? `, de ${d.data_emissao.split("-").reverse().join("/")}` : ""}, {formatBRL(d.valor_total || 0)}.</li>)}
               </ul>
             )}
-            <div className="flex gap-3">
-              <button type="button" className="btn-primary" disabled={salvando}
-                onClick={() => lancar(pendencia.tipo === "divergencia" ? { divergencia: true } : { duplicados: true, divergencia: true })}><Check size={14} /> Lançar mesmo assim</button>
-              <button type="button" className="btn-ghost" onClick={() => setPendencia(null)}><X size={14} /> Voltar e revisar</button>
+            <div className="flex gap-3 flex-wrap">
+              {pendencia.tipo === "fora_periodo" ? (
+                <>
+                  <button type="button" className="btn-primary" disabled={salvando} onClick={() => lancar({ foraPeriodo: "nesta" })}><Check size={14} /> Lançar nesta fatura</button>
+                  <button type="button" className="btn-ghost" disabled={salvando} onClick={() => lancar({ foraPeriodo: "nova" })}>Abrir nova fatura</button>
+                  <button type="button" className="btn-ghost" disabled={salvando} onClick={() => lancar({ foraPeriodo: "avulsa" })}>Lançar sem fatura</button>
+                </>
+              ) : (
+                <button type="button" className="btn-primary" disabled={salvando}
+                  onClick={() => lancar({ ...(pendencia.tipo === "divergencia" ? { divergencia: true } : { duplicados: true, divergencia: true }), foraPeriodo: escolhaFora.current })}><Check size={14} /> Lançar mesmo assim</button>
+              )}
+              <button type="button" className="btn-ghost" onClick={() => { escolhaFora.current = undefined; setPendencia(null); }}><X size={14} /> Voltar e revisar</button>
             </div>
           </div>
         </div>
