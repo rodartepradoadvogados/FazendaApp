@@ -13,10 +13,10 @@ import { ReciboModal } from "@/components/ReciboModal";
 import {
   fetchCaixasFuncionarios, fetchCaixaFuncionario, lancarEntradaCaixa, registrarRetiradaCaixa, fetchReciboCaixa,
   estornarMovimentoCaixa, excluirMovimentoCaixa, fetchOpcoesFinanceiro,
-  fetchExtratoCaixa, fetchRetencaoCaixa, fetchRetencoesCaixa, salvarRetencaoCaixa, pausarRetencaoCaixa, revogarRetencaoCaixa, anexarArquivoPessoa,
+  fetchCaixasTime, fetchExtratoCaixa, fetchRetencaoCaixa, fetchRetencoesCaixa, salvarRetencaoCaixa, pausarRetencaoCaixa, revogarRetencaoCaixa, anexarArquivoPessoa,
   formatBRL, formatDate, ehAdmin,
   type CaixaPessoaLinha, type CaixaDetalhe, type CaixaMovimentoItem, type CaixaGrupo, type CaixaRecibo,
-  type CaixaRetencaoDados,
+  type CaixaRetencaoDados, type CaixaTimeResumo,
 } from "@/lib/api";
 import { exportarFichaPDF, type LancamentoRecibo } from "@/lib/export";
 
@@ -308,6 +308,11 @@ function RetencaoPainel({ pessoaId, onMudou }: { pessoaId: number; onMudou: () =
   const [inicio, setInicio] = useState(hojeISO().slice(0, 7) + "-01");
   const [fim, setFim] = useState("");
   const [autorizada, setAutorizada] = useState(false);
+  const [destino, setDestino] = useState<"individual" | "time" | "dividir">("individual");
+  const [timeId, setTimeId] = useState("");
+  const [pctTime, setPctTime] = useState("50");
+  const [times, setTimes] = useState<CaixaTimeResumo[]>([]);
+  useEffect(() => { fetchCaixasTime().then((d) => setTimes(d.times)).catch(() => {}); }, []);
 
   const carregar = () => fetchRetencaoCaixa(pessoaId).then((d) => { setDados(d); setErro(null); }).catch((e) => setErro(e.message));
   useEffect(() => { carregar(); }, [pessoaId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -316,6 +321,7 @@ function RetencaoPainel({ pessoaId, onMudou }: { pessoaId: number; onMudou: () =
     const c = dados?.config;
     setForma(c?.forma || "fixo"); setValor(c ? String(c.valor) : ""); setTeto(c?.teto != null ? String(c.teto) : "");
     setInicio(c?.inicio || hojeISO().slice(0, 7) + "-01"); setFim(c?.fim || ""); setAutorizada(!!c?.autorizada);
+    setDestino(c?.destino || "individual"); setTimeId(c?.time_id ? String(c.time_id) : ""); setPctTime(String(c?.pct_time ?? 50));
     setEditando(true);
   }
   async function executar(fn: () => Promise<CaixaRetencaoDados>) {
@@ -325,8 +331,10 @@ function RetencaoPainel({ pessoaId, onMudou }: { pessoaId: number; onMudou: () =
   }
   async function salvar() {
     if (!(Number(valor) > 0)) { setErro("Informe o valor da retenção."); return; }
+    if (destino !== "individual" && !timeId) { setErro("Escolha o caixa do time que recebe a retenção."); return; }
     await executar(() => salvarRetencaoCaixa(pessoaId, {
       forma, valor: Number(valor), inicio, fim: fim || null, teto: teto ? Number(teto) : null, autorizada,
+      destino, time_id: destino === "individual" ? null : Number(timeId), pct_time: Number(pctTime) || 50,
     }));
     setEditando(false);
   }
@@ -363,6 +371,7 @@ function RetencaoPainel({ pessoaId, onMudou }: { pessoaId: number; onMudou: () =
       ) : (
         <p style={{ fontSize: "0.8rem", margin: "0.4rem 0 0" }}>
           {c.forma === "percentual" ? `${c.valor}% do salário-base` : `${formatBRL(c.valor)} por mês`}
+          {c.destino === "time" ? " · vai para o caixa do time" : c.destino === "dividir" ? ` · ${c.pct_time ?? 50}% para o caixa do time` : ""}
           {c.teto != null ? ` · teto ${formatBRL(c.teto)}` : ""} · desde {formatDate(c.inicio)}{c.fim ? ` até ${formatDate(c.fim)}` : ""}
           {" · "}<b style={{ color: vigente ? "var(--green-light, #3ecf8e)" : "var(--amber)" }}>
             {!c.autorizada ? "sem autorização" : c.revogada_em ? `revogada (vale até ${formatDate(c.revogada_em)})` : c.pausada ? "pausada" : "ativa"}
@@ -397,6 +406,20 @@ function RetencaoPainel({ pessoaId, onMudou }: { pessoaId: number; onMudou: () =
                 : <CampoMoeda style={campo} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} />}</div>
             <div><label style={lbl} htmlFor="rn-ini">Início da vigência</label><input id="rn-ini" type="date" style={campo} value={inicio} onChange={(e) => setInicio(e.target.value)} /></div>
             <div><label style={lbl} htmlFor="rn-fim">Fim (opcional)</label><input id="rn-fim" type="date" style={campo} value={fim} onChange={(e) => setFim(e.target.value)} /></div>
+            <div><label style={lbl} htmlFor="rn-dest">Para onde vai o retido</label>
+              <select id="rn-dest" style={campo} value={destino} onChange={(e) => setDestino(e.target.value as "individual" | "time" | "dividir")}>
+                <option value="individual">Caixa individual</option><option value="time">Caixa do time</option><option value="dividir">Dividir entre os dois</option>
+              </select></div>
+            {destino !== "individual" && (
+              <div><label style={lbl} htmlFor="rn-time">Caixa do time</label>
+                <select id="rn-time" style={campo} value={timeId} onChange={(e) => setTimeId(e.target.value)}>
+                  <option value="">Escolha…</option>{times.map((t) => <option key={t.id} value={t.id}>{t.nome}</option>)}
+                </select></div>
+            )}
+            {destino === "dividir" && (
+              <div><label style={lbl} htmlFor="rn-pct">Parte do time (%)</label>
+                <input id="rn-pct" type="number" min="1" max="99" step="1" style={campo} value={pctTime} onChange={(e) => setPctTime(e.target.value)} /></div>
+            )}
             <div style={{ gridColumn: "1 / -1" }}><label style={lbl}>Teto acumulado (opcional)</label>
               <CampoMoeda style={campo} value={Number(teto) || 0} onChange={(v) => setTeto(v ? String(v) : "")} /></div>
           </div>

@@ -79,7 +79,17 @@ def acumulado_retido(session: Session, pessoa_id: int, fazenda_id: int | None) -
             select(CaixaMovimento).where(CaixaMovimento.pessoa_id == pessoa_id, CaixaMovimento.tipo == "estorno")
         ).all() if m.estorna_id
     }
-    return round(sum(m.valor for m in movs if m.id not in estornados), 2)
+    total = sum(m.valor for m in movs if m.id not in estornados)
+    # A parte que foi para um caixa do time também conta no teto do combinado.
+    from fazenda.models import CaixaTimeMovimento, FolhaPagamento
+
+    folhas = list(session.exec(select(FolhaPagamento.id).where(FolhaPagamento.pessoa_id == pessoa_id)).all())
+    if folhas:
+        tm = session.exec(select(CaixaTimeMovimento).where(
+            CaixaTimeMovimento.folha_id.in_(folhas), CaixaTimeMovimento.tipo.in_(("retencao", "estorno")))).all()
+        revertidos = {m.estorna_id for m in tm if m.tipo == "estorno" and m.estorna_id}
+        total += sum(m.valor for m in tm if m.tipo == "retencao" and m.id not in revertidos)
+    return round(total, 2)
 
 
 def valor_da_retencao(
@@ -179,9 +189,45 @@ def estornar_movimento(
     return novo
 
 
-def lancar_retencao_da_folha(session: Session, folha) -> None:
-    """No pagamento da folha: o que foi retido entra no caixa da pessoa. Idempotente."""
+def _partes_da_retencao(session: Session, folha, valor: float) -> tuple[float, float, int | None]:
+    """(parte no caixa individual, parte no caixa do time, time_id). Destino "time"/"dividir"
+    sem um caixa do time válido e ativo da fazenda volta ao individual — dinheiro retido
+    nunca fica sem dono por causa de um combinado desatualizado."""
+    from fazenda.models import CaixaTime
+
+    cfg = retencao_da_pessoa(session, folha.pessoa_id, folha.fazenda_id)
+    if cfg is None or cfg.destino not in ("time", "dividir") or not cfg.time_id:
+        return valor, 0.0, None
+    t = session.get(CaixaTime, cfg.time_id)
+    if t is None or not t.ativo or t.fazenda_id != folha.fazenda_id:
+        return valor, 0.0, None
+    parte_time = valor if cfg.destino == "time" else round(valor * min(max(cfg.pct_time, 0.0), 100.0) / 100, 2)
+    return round(valor - parte_time, 2), parte_time, t.id
+
+
+def _conta_da_retencao(session: Session, folha, pessoa, valor: float, data: date, rotulo: str) -> tuple[ContaGerencial, str]:
     from fazenda.api.routers.financeiro import _proximo_numero_lancamento
+
+    numero = _proximo_numero_lancamento(session, data.year)
+    nome = pessoa.nome if pessoa else "—"
+    conta = ContaGerencial(
+        numero_lancamento=numero,
+        descricao=f"Retenção em folha{rotulo} · {nome} · competência {folha.competencia}"[:500],
+        data_vencimento=data, data_competencia=data.replace(day=1),
+        fornecedor_cliente=nome, tipo_documento=TIPO_DOC_ENTRADA, centro_custo="Pecuária Leiteira",
+        valor_total=valor, parcela_num=1, parcela_total=1, tipo="despesa", origem="auto",
+        data_pagamento=data, valor_pago=valor, forma_pagamento="caixa_funcionario",
+        fazenda_id=folha.fazenda_id,
+    )
+    session.add(conta)
+    session.flush()
+    return conta, numero
+
+
+def lancar_retencao_da_folha(session: Session, folha) -> None:
+    """No pagamento da folha: o que foi retido entra no caixa da pessoa (e/ou do time, conforme
+    o combinado). Cada parte vira uma despesa baixada. Idempotente."""
+    from fazenda.models import CaixaTimeMovimento
 
     if folha.id is None:
         session.flush()
@@ -198,33 +244,40 @@ def lancar_retencao_da_folha(session: Session, folha) -> None:
     ).all() if m.estorna_id}
     if any(m.id not in estornados for m in existentes):
         return
+    time_existentes = session.exec(
+        select(CaixaTimeMovimento).where(CaixaTimeMovimento.folha_id == folha.id, CaixaTimeMovimento.tipo == "retencao")
+    ).all()
+    time_estornados = {m.estorna_id for m in session.exec(
+        select(CaixaTimeMovimento).where(CaixaTimeMovimento.tipo == "estorno", CaixaTimeMovimento.folha_id == folha.id)
+    ).all() if m.estorna_id}
+    if any(m.id not in time_estornados for m in time_existentes):
+        return
     pessoa = session.get(Pessoa, folha.pessoa_id)
     data = folha.data_pagamento or date.today()
-    valor = round(rubrica.valor, 2)
-    numero = _proximo_numero_lancamento(session, data.year)
-    nome = pessoa.nome if pessoa else "—"
-    conta = ContaGerencial(
-        numero_lancamento=numero,
-        descricao=f"Retenção em folha · {nome} · competência {folha.competencia}"[:500],
-        data_vencimento=data, data_competencia=data.replace(day=1),
-        fornecedor_cliente=nome, tipo_documento=TIPO_DOC_ENTRADA, centro_custo="Pecuária Leiteira",
-        valor_total=valor, parcela_num=1, parcela_total=1, tipo="despesa", origem="auto",
-        data_pagamento=data, valor_pago=valor, forma_pagamento="caixa_funcionario",
-        fazenda_id=folha.fazenda_id,
-    )
-    session.add(conta)
-    session.flush()
-    session.add(CaixaMovimento(
-        fazenda_id=folha.fazenda_id, pessoa_id=folha.pessoa_id, tipo="retencao", valor=valor, data=data,
-        motivo=f"Retenção em folha · competência {folha.competencia}",
-        lancamento_id=conta.id, numero_lancamento=numero, folha_id=folha.id,
-    ))
+    ind, para_time, time_id = _partes_da_retencao(session, folha, round(rubrica.valor, 2))
+    if ind > 0:
+        conta, numero = _conta_da_retencao(session, folha, pessoa, ind, data, "")
+        session.add(CaixaMovimento(
+            fazenda_id=folha.fazenda_id, pessoa_id=folha.pessoa_id, tipo="retencao", valor=ind, data=data,
+            motivo=f"Retenção em folha · competência {folha.competencia}",
+            lancamento_id=conta.id, numero_lancamento=numero, folha_id=folha.id,
+        ))
+    if para_time > 0:
+        conta, numero = _conta_da_retencao(session, folha, pessoa, para_time, data, " (caixa do time)")
+        session.add(CaixaTimeMovimento(
+            fazenda_id=folha.fazenda_id, time_id=time_id, tipo="retencao", valor=para_time, data=data,
+            motivo=f"Retenção em folha · {pessoa.nome if pessoa else '—'} · competência {folha.competencia}",
+            lancamento_id=conta.id, numero_lancamento=numero, folha_id=folha.id,
+        ))
     session.flush()
 
 
 def reverter_retencao_da_folha(session: Session, folha, usuario_id: int | None = None) -> None:
-    """No estorno do pagamento da folha: estorna a retenção que ela gerou. Recusa (409)
-    se esse dinheiro já foi retirado do caixa — a retirada precisa ser estornada antes."""
+    """No estorno do pagamento da folha: estorna o que ela reteve (caixa da pessoa e do time).
+    Recusa (409) se esse dinheiro já foi retirado do caixa individual ou repartido em rateio —
+    quem usou o dinheiro precisa desfazer isso antes."""
+    from fazenda.rules import caixa_time as regras_time
+
     estornados = {m.estorna_id for m in session.exec(
         select(CaixaMovimento).where(CaixaMovimento.pessoa_id == folha.pessoa_id, CaixaMovimento.tipo == "estorno")
     ).all() if m.estorna_id}
@@ -243,6 +296,7 @@ def reverter_retencao_da_folha(session: Session, folha, usuario_id: int | None =
                            "Estorne a retirada antes de estornar o pagamento da folha.",
                 ) from None
             raise
+    regras_time.estornar_retencoes_do_time(session, folha, usuario_id)
 
 
 def termos_pendentes(session: Session, fazenda_id: int | None) -> list[dict]:
