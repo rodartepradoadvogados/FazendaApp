@@ -3,7 +3,7 @@
 // combustível pagas na virada do mês). Cada nota é um lançamento completo; o lote as agrupa numa fatura
 // já fechada (ou paga). Grava TUDO OU NADA. Rascunho automático no navegador.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Check, Copy, Plus, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, Copy, FileSpreadsheet, Plus, Trash2, X } from "lucide-react";
 import {
   abrirFatura, anexarArquivoLancamentoPorId, anexarComprovanteEmLote, criarLoteFatura, fetchCentrosCusto, lancarNotasAvulsas, lancarNotasNaFatura, fetchContasCorrentes,
   fetchEstoqueAtivos, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, formatBRL, getUsuario,
@@ -11,6 +11,8 @@ import {
 } from "@/lib/api";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { Dropzone } from "@/components/Dropzone";
+import { ImportarPlanilhaLote } from "@/components/ImportarPlanilhaLote";
+import type { ResultadoImportacao } from "@/lib/planilhaLote";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
 import type { ContaPlano } from "@/lib/contaGerencial";
@@ -191,6 +193,18 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
   }
   function duplicar(n: Nota) {
     setNotas((a) => [...a, { ...n, uid: novoUid(), numero: "", anexo: null, itens: n.itens.map((i) => ({ ...i, uid: novoUid() })) }]);
+  }
+  const [importando, setImportando] = useState(false);
+  const formularioVazio = notas.length === 1 && !notas[0].numero && notas[0].itens.every((i) => !i.produto && !i.unit);
+  function carregarImportacao(r: ResultadoImportacao, substituir: boolean) {
+    const novas: Nota[] = r.notas.map((n) => ({
+      uid: novoUid(), tipoDoc: n.tipoDoc, numero: n.numero, semNumero: n.semNumero, data: n.data, desconto: n.desconto, acrescimo: n.acrescimo, anexo: null,
+      itens: n.itens.map((i) => ({ uid: novoUid(), tipoItem: i.tipoItem, produto: i.produto, codigo: i.codigo, nome: i.nome, qtd: i.qtd, unit: i.unit })),
+    }));
+    setNotas((a) => (substituir || formularioVazio ? novas : [...a, ...novas]));
+    setImportando(false); setErro(null);
+    setSucesso(`${novas.length} nota(s) carregada(s) da planilha. Revise, anexe os cupons e lance.${r.avisos.length ? ` ${r.avisos.length} item(ns) pedem ajuste (conta ou produto).` : ""}`);
+    onSujo?.(true);
   }
   function excluirNota(uid: number) { setNotas((a) => (a.length > 1 ? a.filter((n) => n.uid !== uid) : a)); }
 
@@ -488,6 +502,7 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
             </div>
           ))}
           <button type="button" className="btn-primary" onClick={novaNota}><Plus size={14} /> Nova nota</button>
+          <button type="button" className="btn-secondary" style={{ marginLeft: "0.5rem" }} onClick={() => setImportando(true)}><FileSpreadsheet size={14} /> Importar planilha</button>
           <span style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginLeft: "0.6rem" }}>A nova nota herda tipo de documento e data da anterior.</span>
         </div>
 
@@ -578,6 +593,11 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
         <button type="button" className="btn-primary" disabled={salvando} onClick={() => lancar()}><Check size={14} /> {salvando ? "Lançando…" : modoFatura ? "Lançar notas na fatura" : "Lançar lote (tudo ou nada)"}</button>
         <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>Se qualquer nota falhar, nada é gravado.</span>
       </div>
+
+      {importando && (
+        <ImportarPlanilhaLote contas={plano} produtos={produtos.map((p) => p.nome)} formularioVazio={formularioVazio}
+          onClose={() => setImportando(false)} onCarregar={carregarImportacao} />
+      )}
 
       {pendencia && (
         <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
