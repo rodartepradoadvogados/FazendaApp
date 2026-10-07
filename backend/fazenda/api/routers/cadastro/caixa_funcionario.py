@@ -482,6 +482,44 @@ def registrar_retirada(
             "saldo_anterior": saldo_antes, "saldo_depois": round(saldo_antes - valor, 2)}
 
 
+class ComprovanteIn(BaseModel):
+    numero_documento_pagamento: str | None = None
+    anexo_id: int | None = None
+
+
+@router.put("/{pessoa_id}/movimentos/{movimento_id}/comprovante")
+def registrar_comprovante_da_retirada(
+    pessoa_id: int, movimento_id: int, dados: ComprovanteIn, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita), _: object = Depends(exigir_admin),
+) -> dict:
+    """Anexa (ou troca) o comprovante de uma retirada — inclusive a do pagamento direto do rateio, mesmo
+    depois de confirmada: o nº do comprovante e/ou o arquivo (PessoaAnexo da própria pessoa)."""
+    from fazenda.models import PessoaAnexo
+
+    _pessoa_ou_404(session, pessoa_id, fazenda_id)
+    mov = _movimento_ou_404(session, pessoa_id, movimento_id, fazenda_id)
+    if mov.tipo != "retirada":
+        raise HTTPException(status_code=400, detail="Só retirada tem comprovante")
+    if dados.anexo_id is not None:
+        a = session.get(PessoaAnexo, dados.anexo_id)
+        if not a or a.pessoa_id != pessoa_id or a.fazenda_id != fazenda_id:
+            raise HTTPException(status_code=404, detail="Arquivo não encontrado nesta pessoa")
+        mov.comprovante_anexo_id = a.id
+    if dados.numero_documento_pagamento is not None:
+        mov.numero_documento_pagamento = dados.numero_documento_pagamento.strip() or None
+    session.add(mov)
+    # A retirada do pagamento direto de um rateio: a linha do rateio mostra o mesmo comprovante.
+    from fazenda.models import CaixaRateioLinha
+
+    for linha in session.exec(select(CaixaRateioLinha).where(CaixaRateioLinha.retirada_id == mov.id)).all():
+        linha.comprovante_anexo_id = mov.comprovante_anexo_id
+        linha.numero_documento_pagamento = mov.numero_documento_pagamento
+        session.add(linha)
+    session.commit()
+    session.refresh(mov)
+    return {"movimento": mov.model_dump()}
+
+
 @router.get("/{pessoa_id}/movimentos/{movimento_id}/recibo")
 def recibo_movimento(
     pessoa_id: int, movimento_id: int, session: Session = Depends(get_session),

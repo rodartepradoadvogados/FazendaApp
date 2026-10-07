@@ -462,6 +462,9 @@ class LinhaIn(BaseModel):
     documento_anexo_id: int | None = None
     destino: str = "individual"
     forma_pagamento: str | None = None
+    # Pagamento direto: nº e arquivo do comprovante (opcionais; também dá para anexar depois de confirmado).
+    numero_documento_pagamento: str | None = None
+    comprovante_anexo_id: int | None = None
 
 
 @router.put("/rateios/{rateio_id}/linhas/{pessoa_id}")
@@ -489,6 +492,13 @@ def ajustar_linha(
         a = session.get(PessoaAnexo, anexo_id)
         if not a or a.pessoa_id != pessoa_id or a.fazenda_id != fazenda_id:
             raise HTTPException(status_code=404, detail="Documento não encontrado nesta pessoa")
+    comprovante_id = dados.comprovante_anexo_id if dados.destino == "direto" else None
+    if comprovante_id is not None:
+        c = session.get(PessoaAnexo, comprovante_id)
+        if not c or c.pessoa_id != pessoa_id or c.fazenda_id != fazenda_id:
+            raise HTTPException(status_code=404, detail="Comprovante não encontrado nesta pessoa")
+    l.numero_documento_pagamento = (dados.numero_documento_pagamento or "").strip() or None if dados.destino == "direto" else None
+    l.comprovante_anexo_id = comprovante_id
     l.penalidade_pct = dados.penalidade_pct
     l.penalidade_motivo = (dados.penalidade_motivo or "").strip() or None if dados.penalidade_pct > 0 else None
     l.documento_anexo_id = anexo_id
@@ -557,6 +567,7 @@ def confirmar_rateio(
             ret = CaixaMovimento(
                 fazenda_id=fazenda_id, pessoa_id=l.pessoa_id, tipo="retirada", valor=-l.parte_final, data=r.data_entrega,
                 motivo=f"Pagamento direto do rateio do PL · {t.nome}", forma_pagamento=l.forma_pagamento or "pix",
+                numero_documento_pagamento=l.numero_documento_pagamento, comprovante_anexo_id=l.comprovante_anexo_id,
                 rateio_id=r.id, usuario_id=usuario_id,
             )
             session.add(ret)
