@@ -12,18 +12,35 @@ import CaixaTimesView from "@/components/CaixaTimesView";
 import { ReciboModal } from "@/components/ReciboModal";
 import {
   fetchCaixasFuncionarios, fetchCaixaFuncionario, lancarEntradaCaixa, registrarRetiradaCaixa, fetchReciboCaixa,
-  estornarMovimentoCaixa, excluirMovimentoCaixa, fetchOpcoesFinanceiro, registrarComprovanteRetirada, urlAnexoPessoa,
+  estornarMovimentoCaixa, excluirMovimentoCaixa, fetchOpcoesFinanceiro, registrarComprovanteRetirada, urlAnexoPessoa, fetchExtratosCaixa,
   fetchCaixasTime, fetchExtratoCaixa, fetchRetencaoCaixa, fetchRetencoesCaixa, salvarRetencaoCaixa, pausarRetencaoCaixa, revogarRetencaoCaixa, anexarArquivoPessoa,
   formatBRL, formatDate, ehAdmin,
   type CaixaPessoaLinha, type CaixaDetalhe, type CaixaMovimentoItem, type CaixaGrupo, type CaixaRecibo,
-  type CaixaRetencaoDados, type CaixaTimeResumo,
+  type CaixaRetencaoDados, type CaixaTimeResumo, type CaixaExtrato,
 } from "@/lib/api";
-import { exportarFichaPDF, type LancamentoRecibo } from "@/lib/export";
+import { exportarFichaPDF, type LancamentoRecibo, type SecaoFicha } from "@/lib/export";
 
 const GRUPOS: { id: CaixaGrupo | "todos"; label: string }[] = [
   { id: "todos", label: "Todos" }, { id: "clt", label: "CLT" }, { id: "empreita", label: "Empreita" },
   { id: "contrato", label: "Contrato" }, { id: "diaria", label: "Diária" },
 ];
+/** Uma pessoa → a seção do PDF do extrato mensal (a mesma no extrato individual e no em lote). */
+function secaoDoExtrato(e: CaixaExtrato, novaPagina = false): SecaoFicha {
+  const linhas: Record<string, unknown>[] = [{ data: "", descricao: "Saldo anterior", valor: "", saldo: formatBRL(e.saldo_anterior) }];
+  let corrente = e.saldo_anterior;
+  for (const m of e.movimentos) {
+    corrente = Math.round((corrente + m.valor) * 100) / 100;
+    linhas.push({ data: formatDate(m.data), descricao: `${ROTULO_TIPO[m.tipo] || m.tipo} · ${m.motivo}${m.estornado ? " (estornado)" : ""}`,
+      valor: `${m.valor >= 0 ? "+" : "−"} ${formatBRL(Math.abs(m.valor))}`, saldo: formatBRL(corrente) });
+  }
+  linhas.push({ data: "", descricao: "Saldo final do mês", valor: "", saldo: formatBRL(e.saldo_final) });
+  for (const t of e.times) linhas.push({ data: "", descricao: `Caixa do time ${t.time}: sua parte estimada (de ${formatBRL(t.saldo)} no caixa)`, valor: "", saldo: formatBRL(t.parte_estimada) });
+  return {
+    titulo: `${e.pessoa.nome} — ${e.mes}`, novaPagina,
+    colunas: [{ header: "Data", key: "data" }, { header: "Movimento", key: "descricao" }, { header: "Valor", key: "valor" }, { header: "Saldo", key: "saldo" }],
+    linhas,
+  };
+}
 const ROTULO_GRUPO: Record<string, string> = { clt: "CLT", empreita: "Empreita", contrato: "Contrato", diaria: "Diária" };
 const TIPOS_ENTRADA: { id: string; label: string }[] = [
   { id: "deposito", label: "Depósito da fazenda" }, { id: "bonificacao", label: "Bonificação por produtividade" },
@@ -67,6 +84,7 @@ export default function CaixaFuncionariosView() {
   const [entrada, setEntrada] = useState<{ pessoaIds: number[] } | null>(null);
   const [versao, setVersao] = useState(0); // recarrega o caixa aberto depois de uma entrada
   const [aba, setAba] = useState<"individual" | "time">("individual");
+  const [extratosAberto, setExtratosAberto] = useState(false);
   const [retencoes, setRetencoes] = useState<Record<number, CaixaRetencaoDados>>({});
 
   const carregar = () => {
@@ -105,9 +123,12 @@ export default function CaixaFuncionariosView() {
           <h2 style={{ margin: 0, fontSize: "1.05rem" }}>Caixa dos funcionários</h2>
         </div>
         {aba === "individual" && (
-          <button type="button" className="btn-primary" onClick={() => setEntrada({ pessoaIds: Array.from(selecionados) })}>
-            <Plus size={14} /> Lançar entrada
-          </button>
+          <div className="flex" style={{ gap: "0.5rem", flexWrap: "wrap" }}>
+            <button type="button" className="btn-secondary" onClick={() => setExtratosAberto(true)}><Receipt size={14} /> Extratos do mês (PDF)</button>
+            <button type="button" className="btn-primary" onClick={() => setEntrada({ pessoaIds: Array.from(selecionados) })}>
+              <Plus size={14} /> Lançar entrada
+            </button>
+          </div>
         )}
       </div>
       <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", maxWidth: "75ch", marginBottom: "0.8rem" }}>
@@ -187,6 +208,7 @@ export default function CaixaFuncionariosView() {
           pessoas={linhas || []} inicial={entrada.pessoaIds} onClose={() => setEntrada(null)}
           onFeito={() => { setEntrada(null); setSelecionados(new Set()); carregar(); }} />
       )}
+      {extratosAberto && <ExtratosLoteModal grupo={grupo} selecionados={Array.from(selecionados)} onClose={() => setExtratosAberto(false)} />}
       </>)}
     </div>
   );
@@ -225,20 +247,8 @@ function CaixaIndividual({ pessoaId, onVoltar, onEntrada }: { pessoaId: number; 
     if (!mes) return;
     try {
       const e = await fetchExtratoCaixa(pessoaId, mes.trim());
-      const linhas: Record<string, unknown>[] = [{ data: "", descricao: "Saldo anterior", valor: "", saldo: formatBRL(e.saldo_anterior) }];
-      let corrente = e.saldo_anterior;
-      for (const m of e.movimentos) {
-        corrente = Math.round((corrente + m.valor) * 100) / 100;
-        linhas.push({ data: formatDate(m.data), descricao: `${ROTULO_TIPO[m.tipo] || m.tipo} · ${m.motivo}${m.estornado ? " (estornado)" : ""}`,
-          valor: `${m.valor >= 0 ? "+" : "−"} ${formatBRL(Math.abs(m.valor))}`, saldo: formatBRL(corrente) });
-      }
-      linhas.push({ data: "", descricao: "Saldo final do mês", valor: "", saldo: formatBRL(e.saldo_final) });
-      for (const t of e.times) linhas.push({ data: "", descricao: `Caixa do time ${t.time}: sua parte estimada (de ${formatBRL(t.saldo)} no caixa)`, valor: "", saldo: formatBRL(t.parte_estimada) });
-      await exportarFichaPDF("Extrato do caixa do funcionário", `${e.pessoa.nome} — ${e.mes}`, [{
-        titulo: `${e.pessoa.nome} — ${e.mes}`,
-        colunas: [{ header: "Data", key: "data" }, { header: "Movimento", key: "descricao" }, { header: "Valor", key: "valor" }, { header: "Saldo", key: "saldo" }],
-        linhas,
-      }], `extrato_caixa_${e.pessoa.nome}_${e.mes}`.replace(/[^\w-]+/g, "_").toLowerCase());
+      await exportarFichaPDF("Extrato do caixa do funcionário", `${e.pessoa.nome} — ${e.mes}`, [secaoDoExtrato(e)],
+        `extrato_caixa_${e.pessoa.nome}_${e.mes}`.replace(/[^\w-]+/g, "_").toLowerCase());
     } catch (err: any) { setErro(err.message); }
   }
   async function excluir(m: CaixaMovimentoItem) {
@@ -568,6 +578,44 @@ function EntradaModal({ pessoas, inicial, onClose, onFeito }: {
       <div className="flex gap-2" style={{ justifyContent: "flex-end", marginTop: "0.8rem" }}>
         <button type="button" className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
         <button type="button" className="btn-primary" onClick={lancar} disabled={salvando}>{salvando ? "Lançando…" : `Lançar ${escolhidos.size || ""} entrada${escolhidos.size === 1 ? "" : "s"}`}</button>
+      </div>
+    </Modal>
+  );
+}
+
+// Extratos do mês de vários colaboradores num PDF só, um por página (para imprimir e entregar).
+function ExtratosLoteModal({ grupo, selecionados, onClose }: { grupo: CaixaGrupo | "todos"; selecionados: number[]; onClose: () => void }) {
+  const mesAnterior = (() => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; })();
+  const [mes, setMes] = useState(mesAnterior);
+  const [soComMov, setSoComMov] = useState(true);
+  const [gerando, setGerando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const escopo = selecionados.length ? `${selecionados.length} colaborador${selecionados.length > 1 ? "es" : ""} selecionado${selecionados.length > 1 ? "s" : ""}`
+    : grupo === "todos" ? "todos os colaboradores" : `colaboradores do grupo ${ROTULO_GRUPO[grupo] || grupo}`;
+  async function gerar() {
+    setErro(null);
+    if (!/^\d{4}-\d{2}$/.test(mes)) { setErro("Escolha o mês."); return; }
+    setGerando(true);
+    try {
+      const d = await fetchExtratosCaixa({ mes, pessoaIds: selecionados, grupos: !selecionados.length && grupo !== "todos" ? [grupo] : undefined, soComMovimento: soComMov });
+      if (!d.extratos.length) { setErro("Ninguém teve movimento nem saldo neste mês, para este filtro."); setGerando(false); return; }
+      await exportarFichaPDF("Extratos do caixa dos funcionários", `${mes.slice(5)}/${mes.slice(0, 4)} · ${d.total} extrato${d.total > 1 ? "s" : ""}`,
+        d.extratos.map((e, i) => secaoDoExtrato(e, i > 0)), `extratos_caixa_${mes}`);
+      onClose();
+    } catch (e: any) { setErro(e.message); setGerando(false); }
+  }
+  return (
+    <Modal title="Extratos do mês" onClose={onClose} width="460px">
+      <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginTop: 0 }}>Um PDF com o extrato de <b style={{ color: "var(--text)" }}>{escopo}</b>, um por página, para imprimir e entregar.</p>
+      <label style={lbl} htmlFor="ex-mes">Mês</label>
+      <input id="ex-mes" type="month" style={{ ...campo, maxWidth: 200 }} value={mes} onChange={(e) => setMes(e.target.value)} />
+      <label style={{ display: "flex", gap: "0.4rem", alignItems: "center", fontSize: "0.8rem", marginTop: "0.7rem" }}>
+        <input type="checkbox" checked={soComMov} onChange={(e) => setSoComMov(e.target.checked)} /> Só quem teve movimento no mês ou tem saldo
+      </label>
+      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      <div className="flex gap-2" style={{ justifyContent: "flex-end", marginTop: "1rem" }}>
+        <button type="button" className="btn-ghost" onClick={onClose} disabled={gerando}>Cancelar</button>
+        <button type="button" className="btn-primary" onClick={gerar} disabled={gerando}>{gerando ? "Gerando…" : "Gerar PDF"}</button>
       </div>
     </Modal>
   );

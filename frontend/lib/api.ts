@@ -10144,6 +10144,14 @@ export async function fetchExtratoCaixa(pessoaId: number, mes: string): Promise<
   return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/${pessoaId}/extrato?mes=${encodeURIComponent(mes)}`, { cache: "no-store" }), "Erro ao carregar o extrato");
 }
 
+/** Extratos do mês de VÁRIAS pessoas (para imprimir): por ids, ou todo o caixa filtrado por grupos. */
+export async function fetchExtratosCaixa(p: { mes: string; pessoaIds?: number[]; grupos?: string[]; soComMovimento?: boolean }): Promise<{ mes: string; total: number; extratos: CaixaExtrato[] }> {
+  const q = new URLSearchParams({ mes: p.mes, so_com_movimento: String(p.soComMovimento ?? true) });
+  if (p.pessoaIds?.length) q.set("pessoa_ids", p.pessoaIds.join(","));
+  if (p.grupos?.length) q.set("grupos", p.grupos.join(","));
+  return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/extratos?${q}`, { cache: "no-store" }), "Erro ao carregar os extratos");
+}
+
 // ── Faturas de fornecedor — Lançamento em lote (grava várias notas de uma vez, tudo ou nada) ──
 export type LoteItemIn = {
   codigo_conta_gerencial: string | null; nome_conta_gerencial: string | null; produto: string;

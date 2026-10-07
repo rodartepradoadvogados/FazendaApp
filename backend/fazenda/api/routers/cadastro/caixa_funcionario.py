@@ -103,6 +103,67 @@ def _serializar_movimentos(movimentos: list[CaixaMovimento]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Leitura
 # ---------------------------------------------------------------------------
+def _limites_do_mes(mes: str) -> tuple[date, date]:
+    try:
+        ano, m = (int(x) for x in mes.split("-"))
+        inicio = date(ano, m, 1)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Mês inválido: use AAAA-MM") from None
+    return inicio, date(ano + (m == 12), m % 12 + 1, 1) - timedelta(days=1)
+
+
+def _extrato_da_pessoa(pessoa: Pessoa, mes: str, inicio: date, fim: date, movs: list[CaixaMovimento], times: list) -> dict:
+    anterior = round(sum(x.valor for x in movs if x.data < inicio), 2)
+    do_mes = [x for x in movs if inicio <= x.data <= fim]
+    return {
+        "pessoa": {"id": pessoa.id, "nome": pessoa.nome, "tipo": pessoa.tipo},
+        "mes": mes, "saldo_anterior": anterior,
+        "movimentos": [{**x.model_dump(), "estornado": any(y.estorna_id == x.id for y in movs)} for x in do_mes],
+        "saldo_final": round(anterior + sum(x.valor for x in do_mes), 2),
+        "times": times,
+    }
+
+
+@router.get("/extratos")
+def extratos_do_mes(
+    mes: str, pessoa_ids: str | None = None, grupos: str | None = None, so_com_movimento: bool = True,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: object = Depends(exigir_admin),
+) -> dict:
+    """Extratos do mês (AAAA-MM) de VÁRIAS pessoas de uma vez, para imprimir/entregar. `pessoa_ids` (CSV)
+    escolhe quem; senão vale todo o caixa, filtrado por `grupos` (CSV de clt|empreita|contrato|diaria).
+    Com `so_com_movimento` (padrão) só entra quem teve movimento no mês ou tem saldo (anterior ou final)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    inicio, fim = _limites_do_mes(mes)
+    try:
+        ids = {int(x) for x in pessoa_ids.split(",") if x.strip()} if pessoa_ids else None
+    except ValueError:
+        raise HTTPException(status_code=400, detail="pessoa_ids inválido") from None
+    filtro_grupos = {g.strip() for g in grupos.split(",") if g.strip()} if grupos else None
+    query = select(Pessoa).where(Pessoa.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(Pessoa.fazenda_id == fazenda_id)
+    pessoas = [
+        p for p in session.exec(query.order_by(Pessoa.nome)).all()
+        if _grupos_da_pessoa(p) and (ids is None or p.id in ids)
+        and (filtro_grupos is None or filtro_grupos & set(_grupos_da_pessoa(p)))
+    ]
+    query_mov = select(CaixaMovimento).order_by(CaixaMovimento.data, CaixaMovimento.id)
+    if fazenda_id is not None:
+        query_mov = query_mov.where(CaixaMovimento.fazenda_id == fazenda_id)
+    por_pessoa: dict[int, list[CaixaMovimento]] = {}
+    for m in session.exec(query_mov).all():
+        por_pessoa.setdefault(m.pessoa_id, []).append(m)
+    times = regras_time.resumos_para_recibo(session, fazenda_id, [p.id for p in pessoas]) if pessoas else {}
+    extratos = []
+    for p in pessoas:
+        e = _extrato_da_pessoa(p, mes, inicio, fim, por_pessoa.get(p.id, []), times.get(p.id, {}).get("times", []))
+        if so_com_movimento and not e["movimentos"] and e["saldo_anterior"] == 0 and e["saldo_final"] == 0:
+            continue
+        extratos.append(e)
+    return {"mes": mes, "total": len(extratos), "extratos": extratos}
+
+
 @router.get("/retencao-opcoes")
 def opcoes_de_retencao_no_pagamento(
     valor: float, pessoa_id: int | None = None, lancamento_id: int | None = None, data: date | None = None,
@@ -232,22 +293,10 @@ def extrato_mensal(
     estimada nos caixas do time. Base do PDF mensal."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = _pessoa_ou_404(session, pessoa_id, fazenda_id)
-    try:
-        ano, m = (int(x) for x in mes.split("-"))
-        inicio = date(ano, m, 1)
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=400, detail="Mês inválido: use AAAA-MM") from None
-    fim = date(ano + (m == 12), m % 12 + 1, 1) - timedelta(days=1)
+    inicio, fim = _limites_do_mes(mes)
     movs = _movimentos_da_pessoa(session, pessoa_id, fazenda_id)
-    anterior = round(sum(x.valor for x in movs if x.data < inicio), 2)
-    do_mes = [x for x in movs if inicio <= x.data <= fim]
-    return {
-        "pessoa": {"id": pessoa.id, "nome": pessoa.nome, "tipo": pessoa.tipo},
-        "mes": mes, "saldo_anterior": anterior,
-        "movimentos": [{**x.model_dump(), "estornado": any(y.estorna_id == x.id for y in movs)} for x in do_mes],
-        "saldo_final": round(anterior + sum(x.valor for x in do_mes), 2),
-        "times": regras_time.resumos_para_recibo(session, fazenda_id, [pessoa_id]).get(pessoa_id, {}).get("times", []),
-    }
+    times = regras_time.resumos_para_recibo(session, fazenda_id, [pessoa_id]).get(pessoa_id, {}).get("times", [])
+    return _extrato_da_pessoa(pessoa, mes, inicio, fim, movs, times)
 
 
 @router.get("/{pessoa_id}/retencao")
