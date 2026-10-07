@@ -80,7 +80,7 @@ function SubNavTabsLinha({ nos, primaria, subNav, pathname, caminho }: {
   const [maisAdireita, setMaisAdireita] = useState(false);
   const medir = useCallback(() => {
     const el = listaRef.current;
-    if (el) setMaisAdireita(el.scrollWidth - el.clientWidth - el.scrollLeft > 6);
+    if (el) setMaisAdireita(el.scrollWidth - el.clientWidth - el.scrollLeft > 16);
   }, []);
   useEffect(() => {
     const el = listaRef.current;
