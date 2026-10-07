@@ -90,13 +90,15 @@ def test_anexar_comprovante_depois_de_confirmado(ambiente, monkeypatch):
 
 def test_comprovante_so_em_retirada_e_isolado_por_fazenda(ambiente, monkeypatch):
     c, engine, ids = ambiente
-    c.post(f"/cadastro/caixa-funcionarios/{ids['a']}/depositos", headers=_h(), json={
-        "tipo": "deposito", "valor": 100.0, "data": date.today().isoformat(), "motivo": "teste"})
+    r = c.post("/cadastro/caixa-funcionarios/entradas", headers=_h(), json={
+        "pessoa_ids": [ids["a"]], "tipo": "deposito", "valor": 100.0, "data": date.today().isoformat(), "motivo": "teste"})
+    assert r.status_code == 200, r.text
     with Session(engine) as s:
         dep = s.exec(select(CaixaMovimento).where(CaixaMovimento.pessoa_id == ids["a"])).first()
-    if dep is not None:
-        aid = _anexo(c, monkeypatch, ids["a"])
-        assert c.put(f"/cadastro/caixa-funcionarios/{ids['a']}/movimentos/{dep.id}/comprovante", headers=_h(),
-                     json={"anexo_id": aid}).status_code == 400
+    assert dep is not None and dep.tipo == "deposito"
+    aid = _anexo(c, monkeypatch, ids["a"])
+    assert c.put(f"/cadastro/caixa-funcionarios/{ids['a']}/movimentos/{dep.id}/comprovante", headers=_h(),
+                 json={"anexo_id": aid}).status_code == 400  # entrada não tem comprovante
     # outra fazenda não enxerga a pessoa
-    assert c.put(f"/cadastro/caixa-funcionarios/{ids['a']}/movimentos/1/comprovante", headers=_h(2), json={"numero_documento_pagamento": "x"}).status_code == 404
+    assert c.put(f"/cadastro/caixa-funcionarios/{ids['a']}/movimentos/{dep.id}/comprovante", headers=_h(2),
+                 json={"numero_documento_pagamento": "x"}).status_code == 404
