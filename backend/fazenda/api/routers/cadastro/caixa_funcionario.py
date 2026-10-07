@@ -41,22 +41,7 @@ FORMAS_RETIRADA = ["pix", "dinheiro", "transferencia", "debito", "credito", "bol
 TIPO_DOC_ENTRADA = "Caixa do funcionário"
 TIPO_DOC_ESTORNO = "Estorno caixa do funcionário"
 
-# Tipo de pessoa (CSV em Pessoa.tipo) → grupo mostrado nos filtros da tela.
-_GRUPO_POR_TIPO = {
-    "funcionário": "clt", "funcionario": "clt",
-    "empreiteiro": "empreita",
-    "prestador de serviços": "contrato", "prestador de servicos": "contrato",
-    "diarista": "diaria",
-}
-
-
-def _grupos_da_pessoa(pessoa: Pessoa) -> list[str]:
-    grupos: list[str] = []
-    for parte in (pessoa.tipo or "").split(","):
-        g = _GRUPO_POR_TIPO.get(parte.strip().lower())
-        if g and g not in grupos:
-            grupos.append(g)
-    return grupos
+_grupos_da_pessoa = regras.grupos_da_pessoa
 
 
 def _movimentos_da_pessoa(session: Session, pessoa_id: int, fazenda_id: int | None) -> list[CaixaMovimento]:
@@ -454,6 +439,11 @@ def estornar_movimento(
             status_code=409,
             detail="Esta retenção veio de uma folha paga. Para desfazê-la, estorne o pagamento da folha em Fechamento da folha.",
         )
+    if original.tipo == "rateio" and original.rateio_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Este crédito veio de um rateio do PL. Para desfazê-lo, use 'Desfazer rateio' no caixa do time.",
+        )
     novo = regras.estornar_movimento(session, original, motivo, usuario_id_seguro(user), fazenda_id)
     session.commit()
     session.refresh(novo)
@@ -473,6 +463,8 @@ def excluir_movimento(
         raise HTTPException(status_code=409, detail="Estorno não se exclui: ele é o rastro da correção")
     if mov.tipo == "retencao" and mov.folha_id:
         raise HTTPException(status_code=409, detail="Retenção de folha não se exclui: estorne o pagamento da folha.")
+    if mov.tipo == "rateio" and mov.rateio_id:
+        raise HTTPException(status_code=409, detail="Crédito de rateio não se exclui: desfaça o rateio no caixa do time.")
     if any(m.estorna_id == mov.id for m in movs):
         raise HTTPException(status_code=409, detail="Este movimento já foi estornado e não pode ser excluído")
     if mov.id != max(m.id for m in movs):

@@ -30,6 +30,7 @@ from . import (
     protocolos_customizados,
     protocolos_sanitarios,
     caixa_funcionario,
+    caixa_time,
     rh_contratos,
     rh_folha,
     rh_folha_pagar,
@@ -105,6 +106,7 @@ _exige_financeiro = [
 router.include_router(rh_folha.router, dependencies=_exige_financeiro)
 router.include_router(rh_contratos.router, dependencies=_exige_financeiro)
 router.include_router(caixa_funcionario.router, dependencies=_exige_financeiro)
+router.include_router(caixa_time.router, dependencies=_exige_financeiro)
 # Rubricas do holerite — vencimentos e descontos acrescentados a uma
 # competência (ver rh_folha_rubricas.py). Montado DEPOIS de rh_folha
 # porque os dois moram sob /folha-pagamento: nenhum caminho colide (aqui

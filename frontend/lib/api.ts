@@ -10020,3 +10020,49 @@ export async function revogarRetencaoCaixa(pessoaId: number): Promise<CaixaReten
 export async function fetchPendenciasCaixa(): Promise<{ termos_pendentes: { pessoa_id: number; nome: string }[] }> {
   return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/pendencias`, { cache: "no-store" }), "Erro ao carregar as pendências do caixa");
 }
+
+// Caixa do time (PL) e rateio — Fase 3.
+export type CaixaTimeResumo = {
+  id: number; nome: string; auto_tipos: string[]; ativo: boolean; saldo: number; membros: number;
+  periodo_inicio: string; periodo_fim: string; proxima_entrega: string;
+};
+export type CaixaTimeMembroItem = {
+  pessoa_id: number; nome: string; tipo: string; grupos: CaixaGrupo[]; entrada: string | null; saida: string | null;
+  origem: "nome" | "tipo"; dias: number;
+};
+export type CaixaTimeMovimentoItem = {
+  id: number; tipo: string; valor: number; data: string; motivo: string; numero_lancamento: string | null;
+  saldo_depois: number; estornado: boolean; pode_estornar: boolean;
+};
+export type CaixaRateioLinhaItem = {
+  pessoa_id: number; nome: string; tipo: string; grupos: CaixaGrupo[]; dias: number; parte_calculada: number;
+  penalidade_pct: number; penalidade_motivo: string | null; documento_anexo_id: number | null; parte_final: number;
+  destino: "individual" | "direto"; forma_pagamento: string | null;
+};
+export type CaixaRateio = {
+  id: number; time_id: number; time_nome: string; periodo_inicio: string; periodo_fim: string; data_entrega: string;
+  total: number; situacao: "rascunho" | "confirmado" | "desfeito"; linhas: CaixaRateioLinhaItem[];
+  documentos_pendentes: string[]; retirado_por_penalidade: number; saldo_atual_do_time: number; pode_confirmar: boolean;
+};
+export type CaixaTimeDetalhe = CaixaTimeResumo & {
+  membros_lista: CaixaTimeMembroItem[]; movimentos: CaixaTimeMovimentoItem[]; rateios: { id: number; situacao: string; data_entrega: string; total: number }[];
+};
+const _tj = (url: string, init: RequestInit | undefined, padrao: string) => authFetch(`${API}/cadastro/caixa-time${url}`, init).then((r) => caixaJson(r, padrao));
+const _json = (method: string, body?: unknown): RequestInit => ({ method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+export const fetchCaixasTime = (): Promise<{ times: CaixaTimeResumo[]; total_pl: number }> => _tj("", { cache: "no-store" }, "Erro ao carregar os caixas do time");
+export const fetchCaixaTime = (id: number): Promise<CaixaTimeDetalhe> => _tj(`/${id}`, { cache: "no-store" }, "Erro ao carregar o caixa do time");
+export const criarCaixaTime = (d: { nome: string; auto_tipos: string[] }): Promise<CaixaTimeResumo> => _tj("", _json("POST", d), "Erro ao criar o caixa do time");
+export const editarCaixaTime = (id: number, d: { nome: string; auto_tipos: string[]; ativo: boolean }): Promise<CaixaTimeResumo> => _tj(`/${id}`, _json("PUT", d), "Erro ao salvar o caixa do time");
+export const adicionarMembrosTime = (id: number, pessoa_ids: number[], entrada?: string) => _tj(`/${id}/membros`, _json("POST", { pessoa_ids, entrada }), "Erro ao adicionar membros");
+export const removerMembroTime = (id: number, pessoaId: number) => _tj(`/${id}/membros/${pessoaId}`, { method: "DELETE" }, "Erro ao remover o membro");
+export const lancarEntradaTime = (id: number, d: { tipo: string; data: string; motivo: string; valor?: number; base_valor?: number; percentual?: number }) =>
+  _tj(`/${id}/entradas`, { ..._json("POST", d), headers: { "Content-Type": "application/json", "Idempotency-Key": gerarChaveIdempotencia() } }, "Erro ao lançar a entrada");
+export const estornarMovimentoTime = (id: number, movId: number, motivo: string) => _tj(`/${id}/movimentos/${movId}/estornar`, _json("POST", { motivo }), "Erro ao estornar");
+export const criarRateioTime = (id: number, d: { periodo_inicio?: string; periodo_fim?: string; data_entrega?: string } = {}): Promise<CaixaRateio> => _tj(`/${id}/rateios`, _json("POST", d), "Erro ao criar o rateio");
+export const fetchRateioTime = (rateioId: number): Promise<CaixaRateio> => _tj(`/rateios/${rateioId}`, { cache: "no-store" }, "Erro ao carregar o rateio");
+export const ajustarLinhaRateio = (rateioId: number, pessoaId: number, d: {
+  penalidade_pct: number; penalidade_motivo?: string | null; documento_anexo_id?: number | null; destino: string; forma_pagamento?: string | null;
+}): Promise<CaixaRateio> => _tj(`/rateios/${rateioId}/linhas/${pessoaId}`, _json("PUT", d), "Erro ao ajustar a parte");
+export const excluirRascunhoRateio = (rateioId: number) => _tj(`/rateios/${rateioId}`, { method: "DELETE" }, "Erro ao excluir o rascunho");
+export const confirmarRateioTime = (rateioId: number): Promise<CaixaRateio> => _tj(`/rateios/${rateioId}/confirmar`, { method: "POST" }, "Erro ao confirmar o rateio");
+export const desfazerRateioTime = (rateioId: number): Promise<CaixaRateio> => _tj(`/rateios/${rateioId}/desfazer`, { method: "POST" }, "Erro ao desfazer o rateio");

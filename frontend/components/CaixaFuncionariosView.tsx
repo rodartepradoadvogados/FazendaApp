@@ -8,6 +8,7 @@ import { ArrowLeft, Receipt, Undo2, Trash2, Plus, Wallet, ShieldCheck, Pause, Pl
 import { Modal } from "@/components/Modal";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { Dropzone } from "@/components/Dropzone";
+import CaixaTimesView from "@/components/CaixaTimesView";
 import { ReciboModal } from "@/components/ReciboModal";
 import {
   fetchCaixasFuncionarios, fetchCaixaFuncionario, lancarEntradaCaixa, registrarRetiradaCaixa, fetchReciboCaixa,
@@ -29,7 +30,7 @@ const TIPOS_ENTRADA: { id: string; label: string }[] = [
   { id: "comissao", label: "Comissão" }, { id: "outro", label: "Outro tipo (sem especificar)" },
 ];
 const ROTULO_TIPO: Record<string, string> = {
-  deposito: "Depósito", bonificacao: "Bonificação", comissao: "Comissão", outro: "Outro", retirada: "Retirada", estorno: "Estorno", retencao: "Retenção na folha",
+  deposito: "Depósito", bonificacao: "Bonificação", comissao: "Comissão", outro: "Outro", retirada: "Retirada", estorno: "Estorno", retencao: "Retenção na folha", rateio: "Rateio do PL",
 };
 const FORMAS = [
   { id: "pix", label: "Pix" }, { id: "dinheiro", label: "Dinheiro" }, { id: "transferencia", label: "Transferência" },
@@ -64,6 +65,7 @@ export default function CaixaFuncionariosView() {
   const [selecionados, setSelecionados] = useState<Set<number>>(new Set());
   const [pessoaAberta, setPessoaAberta] = useState<number | null>(null);
   const [entrada, setEntrada] = useState<{ pessoaIds: number[] } | null>(null);
+  const [aba, setAba] = useState<"individual" | "time">("individual");
   const [retencoes, setRetencoes] = useState<Record<number, CaixaRetencaoDados>>({});
 
   const carregar = () => {
@@ -103,6 +105,15 @@ export default function CaixaFuncionariosView() {
       </p>
       {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
 
+      <div className="flex" style={{ gap: "0.4rem", marginBottom: "0.8rem" }} role="tablist">
+        {([["individual", "Caixas individuais"], ["time", "Caixas do time (PL)"]] as const).map(([id, rot]) => (
+          <button key={id} type="button" role="tab" aria-selected={aba === id} onClick={() => setAba(id)}
+            style={{ padding: "0.25rem 0.9rem", borderRadius: 999, fontSize: "0.8rem", cursor: "pointer",
+              border: `1px solid ${aba === id ? "var(--dourado)" : "var(--border)"}`, background: aba === id ? "var(--dourado)" : "var(--surface)",
+              color: aba === id ? "var(--vinho-dark, #0A1F36)" : "var(--text-muted)" }}>{rot}</button>
+        ))}
+      </div>
+      {aba === "time" ? <CaixaTimesView /> : (<>
       <div className="card" style={{ display: "inline-block", marginBottom: "0.8rem", padding: "0.6rem 0.9rem" }}>
         <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Devido aos funcionários</div>
         <strong style={{ fontSize: "1.15rem" }}>{formatBRL(totalDevido)}</strong>
@@ -165,6 +176,7 @@ export default function CaixaFuncionariosView() {
           pessoas={linhas || []} inicial={entrada.pessoaIds} onClose={() => setEntrada(null)}
           onFeito={() => { setEntrada(null); setSelecionados(new Set()); carregar(); }} />
       )}
+      </>)}
     </div>
   );
 }

@@ -28,6 +28,24 @@ TIPO_DOC_ENTRADA = "Caixa do funcionário"
 TIPO_DOC_ESTORNO = "Estorno caixa do funcionário"
 
 
+# Tipo de pessoa (CSV em Pessoa.tipo) → grupo mostrado nos filtros da tela.
+_GRUPO_POR_TIPO = {
+    "funcionário": "clt", "funcionario": "clt",
+    "empreiteiro": "empreita",
+    "prestador de serviços": "contrato", "prestador de servicos": "contrato",
+    "diarista": "diaria",
+}
+
+
+def grupos_da_pessoa(pessoa: Pessoa) -> list[str]:
+    grupos: list[str] = []
+    for parte in (pessoa.tipo or "").split(","):
+        g = _GRUPO_POR_TIPO.get(parte.strip().lower())
+        if g and g not in grupos:
+            grupos.append(g)
+    return grupos
+
+
 def _mes(d: date) -> int:
     return d.year * 12 + d.month - 1
 
