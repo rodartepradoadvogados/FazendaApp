@@ -18,7 +18,7 @@
 // (`Cod.`, rubrica do sistema da contabilidade, que não existe em tabela
 // nenhuma deste projeto: numerar as linhas seria inventar um código que
 // ninguém consegue conferir contra nada).
-import { formatBRL } from "./api";
+import { ehAdmin, fetchRodapesCaixa, formatBRL, type CaixaRodape } from "./api";
 import { exportarFichaPDF, exportarMultiExcel, type SecaoFicha } from "./export";
 import { linhasDoCorpo, podeEmitir, type Holerite } from "./holeriteRegras";
 
@@ -51,7 +51,20 @@ const COLUNAS_HOLERITE = [
  * referência simplesmente não tinha onde entrar e o dono recebia sete linhas
  * escritas "Vale" também no papel.
  */
-export function secaoDoHolerite(h: Holerite): SecaoFicha {
+/** Rodapé do caixa deste documento: a fotografia do pagamento (folha paga) ou o saldo de hoje. */
+export function rodapeDoDocumento(h: Holerite, r: { por_folha: Record<string, CaixaRodape>; por_pessoa: Record<string, CaixaRodape> } | null): CaixaRodape | null {
+  if (!r) return null;
+  if (h.folhaId != null && r.por_folha[String(h.folhaId)]) return r.por_folha[String(h.folhaId)];
+  return r.por_pessoa[String(h.pessoaId)] ?? null;
+}
+
+/** Só administrador vê o caixa; falha de rede não pode travar a impressão do holerite. */
+async function carregarRodape(): Promise<{ por_folha: Record<string, CaixaRodape>; por_pessoa: Record<string, CaixaRodape> } | null> {
+  if (!ehAdmin()) return null;
+  try { return await fetchRodapesCaixa(); } catch { return null; }
+}
+
+export function secaoDoHolerite(h: Holerite, caixa: CaixaRodape | null = null): SecaoFicha {
   const linhas: Record<string, unknown>[] = linhasDoCorpo(h.linhas).map((l) => ({
     descricao: l.descricao,
     referencia: l.referencia,
@@ -86,6 +99,12 @@ export function secaoDoHolerite(h: Holerite): SecaoFicha {
       });
     }
   }
+  if (caixa) {
+    linhas.push({ descricao: "Caixa do funcionário — saldo individual", referencia: caixa.congelado_em ? "no pagamento" : "hoje", vencimentos: formatBRL(caixa.saldo_individual), descontos: "" });
+    for (const t of caixa.times) {
+      linhas.push({ descricao: `Caixa do time ${t.time} — sua parte estimada`, referencia: `de ${formatBRL(t.saldo)} no caixa`, vencimentos: formatBRL(t.parte_estimada), descontos: "" });
+    }
+  }
   return { titulo: `${h.pessoaNome} — ${h.competenciaLabel}`, colunas: COLUNAS_HOLERITE, linhas };
 }
 
@@ -107,15 +126,17 @@ export async function imprimirHolerite(h: Holerite, formato: "pdf" | "excel"): P
   const titulo = h.especie === "holerite" ? "Recibo de pagamento mensal" : "Recibo de pagamento";
   const subtitulo = `${h.pessoaNome} — ${h.competenciaLabel} · ${NOTA_DE_ESCOPO}`;
   const base = nomeArquivo(`holerite_${h.pessoaNome}_${h.competencia || h.chave}`);
-  if (formato === "pdf") await exportarFichaPDF(titulo, subtitulo, [secaoDoHolerite(h)], base);
-  else await exportarMultiExcel(titulo, [secaoDoHolerite(h)], base);
+  const rodape = rodapeDoDocumento(h, await carregarRodape());
+  if (formato === "pdf") await exportarFichaPDF(titulo, subtitulo, [secaoDoHolerite(h, rodape)], base);
+  else await exportarMultiExcel(titulo, [secaoDoHolerite(h, rodape)], base);
 }
 
 /** Impressão em LOTE — uma seção por pessoa, mesma folha de estilo. */
 export async function imprimirHolerites(
   lista: Holerite[], subtitulo: string, base: string, formato: "pdf" | "excel",
 ): Promise<void> {
-  const secoes = lista.map(secaoDoHolerite);
+  const rodapes = await carregarRodape();
+  const secoes = lista.map((h) => secaoDoHolerite(h, rodapeDoDocumento(h, rodapes)));
   const titulo = "Recibos de pagamento";
   const legenda = `${subtitulo} · ${NOTA_DE_ESCOPO}`;
   if (formato === "pdf") await exportarFichaPDF(titulo, legenda, secoes, nomeArquivo(base));

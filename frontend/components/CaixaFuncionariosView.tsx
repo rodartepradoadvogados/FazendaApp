@@ -13,12 +13,12 @@ import { ReciboModal } from "@/components/ReciboModal";
 import {
   fetchCaixasFuncionarios, fetchCaixaFuncionario, lancarEntradaCaixa, registrarRetiradaCaixa, fetchReciboCaixa,
   estornarMovimentoCaixa, excluirMovimentoCaixa, fetchOpcoesFinanceiro,
-  fetchRetencaoCaixa, fetchRetencoesCaixa, salvarRetencaoCaixa, pausarRetencaoCaixa, revogarRetencaoCaixa, anexarArquivoPessoa,
+  fetchExtratoCaixa, fetchRetencaoCaixa, fetchRetencoesCaixa, salvarRetencaoCaixa, pausarRetencaoCaixa, revogarRetencaoCaixa, anexarArquivoPessoa,
   formatBRL, formatDate, ehAdmin,
   type CaixaPessoaLinha, type CaixaDetalhe, type CaixaMovimentoItem, type CaixaGrupo, type CaixaRecibo,
   type CaixaRetencaoDados,
 } from "@/lib/api";
-import type { LancamentoRecibo } from "@/lib/export";
+import { exportarFichaPDF, type LancamentoRecibo } from "@/lib/export";
 
 const GRUPOS: { id: CaixaGrupo | "todos"; label: string }[] = [
   { id: "todos", label: "Todos" }, { id: "clt", label: "CLT" }, { id: "empreita", label: "Empreita" },
@@ -199,6 +199,27 @@ function CaixaIndividual({ pessoaId, onVoltar, onEntrada }: { pessoaId: number; 
     try { setRecibo(reciboDe(await fetchReciboCaixa(pessoaId, m.id))); }
     catch (e: any) { setErro(e.message); }
   }
+  async function extratoPdf() {
+    const mes = window.prompt("Mês do extrato (AAAA-MM):", hojeISO().slice(0, 7));
+    if (!mes) return;
+    try {
+      const e = await fetchExtratoCaixa(pessoaId, mes.trim());
+      const linhas: Record<string, unknown>[] = [{ data: "", descricao: "Saldo anterior", valor: "", saldo: formatBRL(e.saldo_anterior) }];
+      let corrente = e.saldo_anterior;
+      for (const m of e.movimentos) {
+        corrente = Math.round((corrente + m.valor) * 100) / 100;
+        linhas.push({ data: formatDate(m.data), descricao: `${ROTULO_TIPO[m.tipo] || m.tipo} · ${m.motivo}${m.estornado ? " (estornado)" : ""}`,
+          valor: `${m.valor >= 0 ? "+" : "−"} ${formatBRL(Math.abs(m.valor))}`, saldo: formatBRL(corrente) });
+      }
+      linhas.push({ data: "", descricao: "Saldo final do mês", valor: "", saldo: formatBRL(e.saldo_final) });
+      for (const t of e.times) linhas.push({ data: "", descricao: `Caixa do time ${t.time}: sua parte estimada (de ${formatBRL(t.saldo)} no caixa)`, valor: "", saldo: formatBRL(t.parte_estimada) });
+      await exportarFichaPDF("Extrato do caixa do funcionário", `${e.pessoa.nome} — ${e.mes}`, [{
+        titulo: `${e.pessoa.nome} — ${e.mes}`,
+        colunas: [{ header: "Data", key: "data" }, { header: "Movimento", key: "descricao" }, { header: "Valor", key: "valor" }, { header: "Saldo", key: "saldo" }],
+        linhas,
+      }], `extrato_caixa_${e.pessoa.nome}_${e.mes}`.replace(/[^\w-]+/g, "_").toLowerCase());
+    } catch (err: any) { setErro(err.message); }
+  }
   async function excluir(m: CaixaMovimentoItem) {
     if (!window.confirm("Excluir este movimento? Só é possível por ser o último e não ter sido usado. Isto não pode ser desfeito.")) return;
     try { await excluirMovimentoCaixa(pessoaId, m.id); await carregar(); }
@@ -218,6 +239,7 @@ function CaixaIndividual({ pessoaId, onVoltar, onEntrada }: { pessoaId: number; 
         <div className="flex gap-2">
           <button type="button" className="btn-primary" onClick={onEntrada}><Plus size={14} /> Entrada</button>
           <button type="button" className="btn-ghost" onClick={() => setRetirando(true)} disabled={det.saldo <= 0}><Wallet size={14} /> Retirada</button>
+          <button type="button" className="btn-ghost" onClick={extratoPdf}><Receipt size={14} /> Extrato PDF</button>
         </div>
       </div>
       <div className="card" style={{ display: "inline-block", padding: "0.6rem 0.9rem", marginBottom: "0.8rem" }}>

@@ -1,10 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
 import { ExternalLink, Printer } from "lucide-react";
-import { formatBRL, type LinhaHolerite } from "@/lib/api";
+import { ehAdmin, fetchRodapesCaixa, formatBRL, type CaixaRodape, type LinhaHolerite } from "@/lib/api";
 import {
   FORMA_PAGAMENTO_VALE, bloqueioDeImpressao, dataBR, ehOrigemRetencao, ehOrigemRubrica, ehOrigemVale,
-  imprimirHolerite, linhasDoCorpo, seloDocumento, type Holerite as DocHolerite,
+  imprimirHolerite, linhasDoCorpo, rodapeDoDocumento, seloDocumento, type Holerite as DocHolerite,
 } from "@/lib/holerite";
 
 /*
@@ -185,6 +185,29 @@ function CartaoOrigem({ linha }: { linha: LinhaHolerite }) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Saldo do caixa do funcionário e parte estimada no time — só administrador. */
+function RodapeCaixa({ documento }: { documento: DocHolerite }) {
+  const [rodape, setRodape] = useState<CaixaRodape | null>(null);
+  useEffect(() => {
+    if (!ehAdmin()) return;
+    let vivo = true;
+    fetchRodapesCaixa().then((r) => { if (vivo) setRodape(rodapeDoDocumento(documento, r)); }).catch(() => {});
+    return () => { vivo = false; };
+  }, [documento.chave, documento.folhaId, documento.pessoaId]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!rodape) return null;
+  return (
+    <div style={{ marginTop: "0.6rem", padding: "0.5rem 0.65rem", border: "1px dashed var(--border)", borderRadius: "var(--r-sm)", fontSize: "0.78rem", fontVariantNumeric: "tabular-nums" }}>
+      <div style={{ fontWeight: 700, fontSize: "0.7rem", textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--text-muted)", marginBottom: "0.2rem" }}>
+        Caixa do funcionário {rodape.congelado_em ? "· no pagamento" : "· hoje"}
+      </div>
+      <div className="flex justify-between"><span>Saldo individual</span><b>{formatBRL(rodape.saldo_individual)}</b></div>
+      {rodape.times.map((t) => (
+        <div key={t.time} className="flex justify-between"><span>Caixa do time {t.time} · sua parte estimada (de {formatBRL(t.saldo)})</span><b>{formatBRL(t.parte_estimada)}</b></div>
+      ))}
     </div>
   );
 }
@@ -442,6 +465,8 @@ export function Holerite({
         {documento.observacao && (
           <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Obs.: {documento.observacao}</p>
         )}
+
+        <RodapeCaixa documento={documento} />
 
         {!compacto && (
           <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", lineHeight: 1.5, marginTop: "0.7rem", paddingTop: "0.55rem", borderTop: "1px dotted var(--border)" }}>

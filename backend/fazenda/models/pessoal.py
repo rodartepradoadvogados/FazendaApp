@@ -305,6 +305,10 @@ class FolhaPagamento(SQLModel, table=True):
     # NULL numa folha "paga" = pagamento anterior a esta feature ou já
     # estornado, e aí o recibo volta a ser calculado ao vivo, como sempre foi.
     discriminacao_congelada_em: Optional[datetime] = None
+    # Caixa dos funcionários: saldo individual e parte estimada no caixa do time NO
+    # MOMENTO do pagamento (JSON). É o rodapé do holerite — fotografia do ato, como a
+    # discriminação: não muda depois, e some só quando o pagamento é estornado.
+    caixa_congelado: Optional[str] = None
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 

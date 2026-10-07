@@ -173,6 +173,7 @@ class AgendaEngine:
         pedidos_entrega_prevista: list[dict] | None = None,
         pessoas_documentos_vencendo: list[dict] | None = None,
         caixa_termos_pendentes: list[dict] | None = None,
+        caixa_rateios_proximos: list[dict] | None = None,
         inducoes_cio: list[dict] | None = None,
         # Entram para o estado reprodutivo AO VIVO decidir candidatas a IATF e
         # "PEV encerra" — antes os dois liam `sit_rep`, o texto congelado do
@@ -882,6 +883,17 @@ class AgendaEngine:
                 categoria="Gestão/Financeiro",
                 descricao=f"Anexar termo de autorização de retenção — {pend.get('nome', '')}",
                 observacao="Retenção em folha rodando sem o termo anexado (Caixa dos funcionários)",
+                link="/financeiro?ir=caixa_funcionarios",
+            ))
+
+        # 5d-ter. CAIXA DO TIME — rateio do PL chegando (e ainda sem rascunho).
+        for rat in (caixa_rateios_proximos or []):
+            quando = "hoje" if rat["faltam"] == 0 else f"em {rat['faltam']} dia{'s' if rat['faltam'] != 1 else ''}"
+            eventos.append(AgendaItem(
+                data=data_referencia,
+                categoria="Gestão/Financeiro",
+                descricao=f"Preparar o rateio do PL — {rat['nome']} (entrega {quando})",
+                observacao=f"Saldo do caixa do time: R$ {rat['saldo']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
                 link="/financeiro?ir=caixa_funcionarios",
             ))
 

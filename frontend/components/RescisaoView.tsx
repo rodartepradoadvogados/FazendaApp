@@ -3,10 +3,10 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Pencil, Trash2, Printer, X } from "lucide-react";
 import {
   simularRescisao, fetchRescisoesFuncionario, criarSimulacaoRescisao, atualizarSimulacaoRescisao,
-  excluirSimulacaoRescisao, fecharRescisao, formatBRL, fetchContasCorrentes, fetchPessoas,
+  excluirSimulacaoRescisao, fecharRescisao, formatBRL, fetchContasCorrentes, fetchPessoas, ehAdmin, fetchRodapesCaixa,
   type TipoRescisao, type CalculoRescisao, type RegistroRescisaoFuncionario,
   type RescisaoSimulacaoDados, type FormaLancamentoRescisao, type ContaCorrenteCadastro,
-  type SaldoValeEmAberto, type MediasVariaveisComposicao,
+  type SaldoValeEmAberto, type MediasVariaveisComposicao, type CaixaRodape,
 } from "@/lib/api";
 import { MediaVerbasVariaveis } from "@/components/MediaVerbasVariaveis";
 import { ReciboModal } from "@/components/ReciboModal";
@@ -60,6 +60,29 @@ const LABEL_TIPO_RESCISAO: Record<TipoRescisao, string> = {
   justa_causa: "Dispensa por justa causa",
   acordo_mutuo: "Acordo mútuo (distrato)",
 };
+
+/** Caixa do funcionário na rescisão (só administrador): informativo, fora do total. O saldo individual
+ *  é dinheiro da pessoa a quitar em Caixa dos funcionários > Retirada; a parte no time segue o rateio,
+ *  só pelos dias até o desligamento. */
+function CaixaNaRescisao({ pessoaId }: { pessoaId: number | null }) {
+  const [rodape, setRodape] = useState<CaixaRodape | null>(null);
+  useEffect(() => {
+    if (pessoaId == null || !ehAdmin()) return;
+    let vivo = true;
+    fetchRodapesCaixa().then((r) => { if (vivo) setRodape(r.por_pessoa[String(pessoaId)] ?? null); }).catch(() => {});
+    return () => { vivo = false; };
+  }, [pessoaId]);
+  if (!rodape) return null;
+  return (
+    <div style={{ marginTop: "0.5rem", maxWidth: 520, padding: "0.5rem 0.65rem", border: "1px dashed var(--amber)", borderRadius: "var(--r-sm)", fontSize: "0.78rem" }}>
+      <b>Caixa do funcionário (fora do total da rescisão)</b>
+      <div>Saldo individual a quitar: <b>{formatBRL(rodape.saldo_individual)}</b>{rodape.saldo_individual > 0 ? " — pague em Caixa dos funcionários > Retirada, com recibo." : ""}</div>
+      {rodape.times.map((t) => (
+        <div key={t.time}>Caixa do time {t.time}: parte estimada <b>{formatBRL(t.parte_estimada)}</b> — ao fechar a rescisão a pessoa sai do time na data do desligamento e continua no rateio pelos dias até lá.</div>
+      ))}
+    </div>
+  );
+}
 
 function StatusBadgeRescisao({ status }: { status: string }) {
   return (
@@ -736,6 +759,7 @@ export default function RescisaoView({ mostrar = "tudo" }: { mostrar?: ModoSecao
                                 <MediaVerbasVariaveis composicao={r.medias_variaveis_composicao.aviso_previo} titulo="Aviso prévio indenizado" compacto />
                               </div>
                             )}
+                            <CaixaNaRescisao pessoaId={r.pessoa_id} />
                             {r.observacao && <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Obs.: {r.observacao}</p>}
                           </div>
                         </td></tr>

@@ -447,14 +447,14 @@ OPCOES_SELECT: dict[str, list[tuple[str, str]]] = {
 }
 
 
-def caixa_time_datas_entrega() -> list[tuple[int, int]]:
-    """As datas (mês, dia) de rateio do caixa do time, em ordem. Valor inválido é
-    ignorado; sem nenhuma válida, volta ao padrão 01/06 e 01/12."""
+def interpretar_datas_entrega(brutos: list[str]) -> list[tuple[int, int]]:
+    """"dd/mm" → (mês, dia), em ordem. Valor inválido é ignorado; sem nenhuma válida,
+    volta ao padrão 01/06 e 01/12."""
     from datetime import date as _date
 
     saida: list[tuple[int, int]] = []
-    for chave, padrao in (("caixa_time_entrega_1", "01/06"), ("caixa_time_entrega_2", "01/12")):
-        bruto = get_param_texto(chave, padrao).strip()
+    for bruto in brutos:
+        bruto = (bruto or "").strip()
         if not bruto:
             continue
         try:
@@ -465,6 +465,13 @@ def caixa_time_datas_entrega() -> list[tuple[int, int]]:
         if (mes, dia) not in saida:
             saida.append((mes, dia))
     return sorted(saida) or [(6, 1), (12, 1)]
+
+
+def caixa_time_datas_entrega() -> list[tuple[int, int]]:
+    """As datas (mês, dia) de rateio do caixa do time (parâmetros financeiros)."""
+    return interpretar_datas_entrega([
+        get_param_texto("caixa_time_entrega_1", "01/06"), get_param_texto("caixa_time_entrega_2", "01/12"),
+    ])
 
 
 def gestacao_dias_min() -> int:
