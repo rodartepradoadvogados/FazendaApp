@@ -79,6 +79,9 @@ def test_anexar_comprovante_depois_de_confirmado(ambiente, monkeypatch):
     assert r.status_code == 200, r.text
     m = r.json()["movimento"]
     assert m["comprovante_anexo_id"] == aid and m["numero_documento_pagamento"] == "E999"
+    # a linha do rateio confirmado mostra o mesmo comprovante
+    linha = next(l for l in c.get(f"/cadastro/caixa-time/rateios/{rid}", headers=_h()).json()["linhas"] if l["pessoa_id"] == ids["a"])
+    assert linha["comprovante_anexo_id"] == aid and linha["numero_documento_pagamento"] == "E999"
     # aparece no extrato do caixa
     ext = c.get(f"/cadastro/caixa-funcionarios/{ids['a']}", headers=_h()).json()
     mov = next(x for x in ext["movimentos"] if x["id"] == ret.id)

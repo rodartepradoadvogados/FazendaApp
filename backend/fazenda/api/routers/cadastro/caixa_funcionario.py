@@ -508,6 +508,13 @@ def registrar_comprovante_da_retirada(
     if dados.numero_documento_pagamento is not None:
         mov.numero_documento_pagamento = dados.numero_documento_pagamento.strip() or None
     session.add(mov)
+    # A retirada do pagamento direto de um rateio: a linha do rateio mostra o mesmo comprovante.
+    from fazenda.models import CaixaRateioLinha
+
+    for linha in session.exec(select(CaixaRateioLinha).where(CaixaRateioLinha.retirada_id == mov.id)).all():
+        linha.comprovante_anexo_id = mov.comprovante_anexo_id
+        linha.numero_documento_pagamento = mov.numero_documento_pagamento
+        session.add(linha)
     session.commit()
     session.refresh(mov)
     return {"movimento": mov.model_dump()}
