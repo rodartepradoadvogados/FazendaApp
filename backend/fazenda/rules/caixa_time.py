@@ -241,15 +241,54 @@ def rateios_proximos(session: Session, fazenda_id: int | None, hoje: date | None
     return saida
 
 
-def estornar_retencoes_do_time(session: Session, folha, usuario_id: int | None) -> None:
-    """Estorno do pagamento da folha: devolve o que ela retenha para o caixa do time (movimento
-    contrário + receita contrária no Financeiro). 409 se esse valor já foi repartido em rateio."""
+def estornar_movimento_time(
+    session: Session, m: CaixaTimeMovimento, motivo: str, usuario_id: int | None, fazenda_id: int | None,
+    folha_id: int | None = None,
+) -> CaixaTimeMovimento:
+    """Estorna UMA retenção que foi para o caixa do time (movimento contrário + receita contrária no
+    Financeiro). 409 se o valor já foi repartido em rateio."""
     from fastapi import HTTPException
 
     from fazenda.api.routers.financeiro import _proximo_numero_lancamento
     from fazenda.models import ContaGerencial
 
     hoje = date.today()
+    if saldo_do_time(session, m.time_id) - m.valor < 0:
+        raise HTTPException(
+            status_code=409,
+            detail="O valor retido para o caixa do time já foi repartido em rateio. "
+                   "Desfaça o rateio antes de estornar o pagamento.",
+        )
+    novo = CaixaTimeMovimento(
+        fazenda_id=m.fazenda_id, time_id=m.time_id, tipo="estorno", valor=-m.valor, data=hoje,
+        motivo=f"Estorno de {m.numero_lancamento or f'#{m.id}'}: {motivo}",
+        estorna_id=m.id, folha_id=folha_id, usuario_id=usuario_id,
+    )
+    conta = session.get(ContaGerencial, m.lancamento_id) if m.lancamento_id else None
+    if conta is not None:
+        numero = _proximo_numero_lancamento(session, hoje.year)
+        contra = ContaGerencial(
+            numero_lancamento=numero,
+            descricao=f"Estorno de {conta.numero_lancamento} · {conta.fornecedor_cliente or ''}"[:500],
+            data_vencimento=hoje, data_competencia=hoje.replace(day=1), fornecedor_cliente=conta.fornecedor_cliente,
+            tipo_documento="Estorno caixa do funcionário", centro_custo=conta.centro_custo,
+            valor_total=conta.valor_total, parcela_num=1, parcela_total=1, tipo="receita", origem="auto",
+            data_pagamento=hoje, valor_pago=conta.valor_total, forma_pagamento="caixa_funcionario",
+            fazenda_id=m.fazenda_id,
+        )
+        session.add(contra)
+        session.flush()
+        novo.lancamento_id, novo.numero_lancamento = contra.id, numero
+    session.add(novo)
+    session.flush()
+    return novo
+
+
+def estornar_retencoes_do_time(session: Session, folha, usuario_id: int | None) -> None:
+    """Estorno do pagamento da folha: devolve o que ela retenha para o caixa do time (movimento
+    contrário + receita contrária no Financeiro). 409 se esse valor já foi repartido em rateio."""
+    from fastapi import HTTPException
+
     ja = {m.estorna_id for m in session.exec(
         select(CaixaTimeMovimento).where(CaixaTimeMovimento.tipo == "estorno", CaixaTimeMovimento.folha_id == folha.id)
     ).all() if m.estorna_id}
@@ -257,31 +296,13 @@ def estornar_retencoes_do_time(session: Session, folha, usuario_id: int | None) 
             CaixaTimeMovimento.folha_id == folha.id, CaixaTimeMovimento.tipo == "retencao")).all():
         if m.id in ja:
             continue
-        if saldo_do_time(session, m.time_id) - m.valor < 0:
-            raise HTTPException(
-                status_code=409,
-                detail="O valor retido nesta folha para o caixa do time já foi repartido em rateio. "
-                       "Desfaça o rateio antes de estornar o pagamento da folha.",
-            )
-        novo = CaixaTimeMovimento(
-            fazenda_id=m.fazenda_id, time_id=m.time_id, tipo="estorno", valor=-m.valor, data=hoje,
-            motivo=f"Estorno de {m.numero_lancamento or f'#{m.id}'}: pagamento da folha {folha.competencia} estornado",
-            estorna_id=m.id, folha_id=folha.id, usuario_id=usuario_id,
-        )
-        conta = session.get(ContaGerencial, m.lancamento_id) if m.lancamento_id else None
-        if conta is not None:
-            numero = _proximo_numero_lancamento(session, hoje.year)
-            contra = ContaGerencial(
-                numero_lancamento=numero,
-                descricao=f"Estorno de {conta.numero_lancamento} · {conta.fornecedor_cliente or ''}"[:500],
-                data_vencimento=hoje, data_competencia=hoje.replace(day=1), fornecedor_cliente=conta.fornecedor_cliente,
-                tipo_documento="Estorno caixa do funcionário", centro_custo=conta.centro_custo,
-                valor_total=conta.valor_total, parcela_num=1, parcela_total=1, tipo="receita", origem="auto",
-                data_pagamento=hoje, valor_pago=conta.valor_total, forma_pagamento="caixa_funcionario",
-                fazenda_id=m.fazenda_id,
-            )
-            session.add(contra)
-            session.flush()
-            novo.lancamento_id, novo.numero_lancamento = contra.id, numero
-        session.add(novo)
-        session.flush()
+        try:
+            estornar_movimento_time(session, m, f"pagamento da folha {folha.competencia} estornado", usuario_id, folha.fazenda_id, folha.id)
+        except HTTPException as exc:
+            if exc.status_code == 409 and "repartido" in str(exc.detail):
+                raise HTTPException(
+                    status_code=409,
+                    detail="O valor retido nesta folha para o caixa do time já foi repartido em rateio. "
+                           "Desfaça o rateio antes de estornar o pagamento da folha.",
+                ) from None
+            raise

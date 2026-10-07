@@ -9,8 +9,9 @@ import { Receipt, X } from "lucide-react";
 import { Modal } from "@/components/Modal";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { Dropzone } from "@/components/Dropzone";
+import { RetencaoCaixaCampos } from "@/components/RetencaoCaixaCampos";
 import {
-  anexarArquivoLancamentoPorId, fetchOpcoesFinanceiro, formatBRL, formatDate, marcarPagoFinanceiro,
+  anexarArquivoLancamentoPorId, fetchOpcoesFinanceiro, formatBRL, formatDate, marcarPagoFinanceiro, type RetencaoCaixaIn,
 } from "@/lib/api";
 
 const FORMAS = [
@@ -48,6 +49,7 @@ export function PagarContaModal({ conta, onClose, onPago }: {
   const [contas, setContas] = useState<string[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [retencao, setRetencao] = useState<RetencaoCaixaIn | null>(null);
 
   useEffect(() => {
     fetchOpcoesFinanceiro().then((d) => setContas(d.contas_bancarias || [])).catch(() => {});
@@ -62,12 +64,20 @@ export function PagarContaModal({ conta, onClose, onPago }: {
     if (forma === "credito" && !vencCartao) { setErro("Informe o vencimento do cartão."); return; }
     setSalvando(true);
     try {
-      await marcarPagoFinanceiro(conta.lancamentoId, {
+      const corpo = {
         data_pagamento: data, valor_pago: Number(valor),
         conta_bancaria: contaBancaria || undefined, forma_pagamento: forma || undefined,
         numero_documento_pagamento: numero.trim() || undefined,
         data_vencimento_cartao: forma === "credito" ? vencCartao : undefined,
-      });
+      };
+      try {
+        await marcarPagoFinanceiro(conta.lancamentoId, { ...corpo, retencao_caixa: retencao || undefined });
+      } catch (e: any) {
+        // Retenção acima do teto combinado: pergunta e, se confirmado, repete (a baixa ainda não foi gravada).
+        if (e.status === 409 && e.detail?.codigo === "acima_do_teto" && retencao && window.confirm(`${e.detail.mensagem}`)) {
+          await marcarPagoFinanceiro(conta.lancamentoId, { ...corpo, retencao_caixa: { ...retencao, confirmar_acima_teto: true } });
+        } else throw e;
+      }
     } catch (e: any) {
       setErro(e.message || "Não foi possível registrar o pagamento.");
       setSalvando(false);
@@ -133,6 +143,8 @@ export function PagarContaModal({ conta, onClose, onPago }: {
           />
         )}
       </div>
+
+      <RetencaoCaixaCampos lancamentoId={conta.lancamentoId} bruto={Number(valor) || 0} data={data} onChange={setRetencao} />
 
       {diferenca !== 0 && (
         <p style={{ marginTop: "0.7rem", fontSize: "0.78rem", color: diferenca < 0 ? "var(--green-light)" : "var(--amber)" }}>

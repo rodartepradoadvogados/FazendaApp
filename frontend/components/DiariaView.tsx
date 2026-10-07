@@ -15,6 +15,7 @@ import CalendarioDiasTrabalhados from "@/components/CalendarioDiasTrabalhados";
 import { lbl, inputSm } from "@/components/estiloCampoAvulso";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
+import { RetencaoCaixaCampos } from "@/components/RetencaoCaixaCampos";
 
 type Pessoa = { id: number; nome: string; tipos: string[] };
 type Pagamento = { id: number; data_pagamento: string; valor: number; observacao: string | null; numero_lancamento_gerado: string | null; forma_pagamento?: string | null; numero_documento_pagamento?: string | null };
@@ -110,6 +111,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo, mostrar = "
 
   const [pagandoId, setPagandoId] = useState<number | null>(null);
   const [valorPagamento, setValorPagamento] = useState("");
+  const [retencaoCaixa, setRetencaoCaixa] = useState<import("@/lib/api").RetencaoCaixaIn | null>(null);
   const [dataPagamento, setDataPagamento] = useState(() => new Date().toISOString().slice(0, 10));
   const [pagoErro, setPagoErro] = useState<string | null>(null);
   const [contasCorrentes, setContasCorrentes] = useState<ContaCorrenteCadastro[]>([]);
@@ -288,6 +290,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo, mostrar = "
         conta_corrente_id: pagamentoContaCorrenteId ? Number(pagamentoContaCorrenteId) : undefined,
         forma_pagamento: formaPagamentoDiaria || undefined,
         numero_documento_pagamento: numeroComprovante.trim() || undefined,
+        retencao_caixa: retencaoCaixa || undefined,
       });
       // O pagamento já foi salvo aqui — se o anexo do comprovante falhar
       // (ex.: arquivo grande numa conexão ruim), o pagamento não pode
@@ -1017,6 +1020,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo, mostrar = "
               />
             )}
           </div>
+          <RetencaoCaixaCampos pessoaId={itens?.find((d) => d.id === pagandoId)?.pessoa_id} bruto={parseFloat(valorPagamento) || 0} data={dataPagamento} onChange={setRetencaoCaixa} />
           {pagoErro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.5rem" }}>{pagoErro}</p>}
           <button className="btn-primary" style={{ fontSize: "0.8rem", marginTop: "1rem" }} disabled={enviandoPagamento} onClick={() => registrarPagamento(pagandoId)}>
             {enviandoPagamento ? "Enviando…" : "Confirmar pagamento"}

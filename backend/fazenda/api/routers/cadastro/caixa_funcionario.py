@@ -103,6 +103,29 @@ def _serializar_movimentos(movimentos: list[CaixaMovimento]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Leitura
 # ---------------------------------------------------------------------------
+@router.get("/retencao-opcoes")
+def opcoes_de_retencao_no_pagamento(
+    valor: float, pessoa_id: int | None = None, lancamento_id: int | None = None, data: date | None = None,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: object = Depends(exigir_admin),
+) -> dict:
+    """Para a janela de pagamento de quem não é CLT: dá para reter? qual a sugestão? Passe `pessoa_id`
+    (diária) ou `lancamento_id` (parcela de contrato/empreita — a pessoa vem do contrato)."""
+    from fazenda.models import ContaGerencial
+
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if pessoa_id is None and lancamento_id is not None:
+        conta = session.get(ContaGerencial, lancamento_id)
+        if conta is None or (fazenda_id is not None and conta.fazenda_id != fazenda_id):
+            raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+        pessoa_id = regras.pessoa_da_conta_paga(session, conta)
+        if pessoa_id is None:
+            return {"disponivel": False, "motivo": None, "pessoa": None}
+    if pessoa_id is None:
+        raise HTTPException(status_code=400, detail="Informe a pessoa ou o lançamento.")
+    return regras.opcoes_retencao_pagamento(session, pessoa_id, fazenda_id, valor, data)
+
+
 @router.get("")
 def listar_caixas(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
