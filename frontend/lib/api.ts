@@ -9967,7 +9967,7 @@ export type CaixaMovimentoItem = {
   id: number; pessoa_id: number; tipo: string; valor: number; data: string; motivo: string;
   base_valor: number | null; percentual: number | null; numero_lancamento: string | null;
   forma_pagamento: string | null; conta_bancaria: string | null; numero_documento_pagamento: string | null;
-  numero_recibo: string | null; estorna_id: number | null; saldo_depois: number;
+  numero_recibo: string | null; comprovante_anexo_id?: number | null; estorna_id: number | null; saldo_depois: number;
   estornado: boolean; eh_estorno: boolean; pode_estornar: boolean; pode_excluir: boolean;
 };
 export type CaixaDetalhe = {
@@ -10070,6 +10070,7 @@ export type CaixaRateioLinhaItem = {
   pessoa_id: number; nome: string; tipo: string; grupos: CaixaGrupo[]; dias: number; parte_calculada: number;
   penalidade_pct: number; penalidade_motivo: string | null; documento_anexo_id: number | null; parte_final: number;
   destino: "individual" | "direto"; forma_pagamento: string | null;
+  numero_documento_pagamento?: string | null; comprovante_anexo_id?: number | null; retirada_id?: number | null;
 };
 export type CaixaRateio = {
   id: number; time_id: number; time_nome: string; periodo_inicio: string; periodo_fim: string; data_entrega: string;
@@ -10104,7 +10105,16 @@ export const criarRateioTime = (id: number, d: { periodo_inicio?: string; period
 export const fetchRateioTime = (rateioId: number): Promise<CaixaRateio> => _tj(`/rateios/${rateioId}`, { cache: "no-store" }, "Erro ao carregar o rateio");
 export const ajustarLinhaRateio = (rateioId: number, pessoaId: number, d: {
   penalidade_pct: number; penalidade_motivo?: string | null; documento_anexo_id?: number | null; destino: string; forma_pagamento?: string | null;
+  numero_documento_pagamento?: string | null; comprovante_anexo_id?: number | null;
 }): Promise<CaixaRateio> => _tj(`/rateios/${rateioId}/linhas/${pessoaId}`, _json("PUT", d), "Erro ao ajustar a parte");
+/** Anexa/troca o comprovante (nº e/ou arquivo já enviado à pessoa) de uma retirada do caixa — inclusive a do pagamento direto do rateio. */
+export async function registrarComprovanteRetirada(pessoaId: number, movimentoId: number, d: { numero_documento_pagamento?: string | null; anexo_id?: number | null }) {
+  const res = await authFetch(`${API}/cadastro/caixa-funcionarios/${pessoaId}/movimentos/${movimentoId}/comprovante`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(d),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(e.detail) || "Erro ao anexar o comprovante"); }
+  return res.json();
+}
 export const excluirRascunhoRateio = (rateioId: number) => _tj(`/rateios/${rateioId}`, { method: "DELETE" }, "Erro ao excluir o rascunho");
 export const confirmarRateioTime = (rateioId: number): Promise<CaixaRateio> => _tj(`/rateios/${rateioId}/confirmar`, { method: "POST" }, "Erro ao confirmar o rateio");
 export const desfazerRateioTime = (rateioId: number): Promise<CaixaRateio> => _tj(`/rateios/${rateioId}/desfazer`, { method: "POST" }, "Erro ao desfazer o rateio");

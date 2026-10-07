@@ -12,7 +12,7 @@ import CaixaTimesView from "@/components/CaixaTimesView";
 import { ReciboModal } from "@/components/ReciboModal";
 import {
   fetchCaixasFuncionarios, fetchCaixaFuncionario, lancarEntradaCaixa, registrarRetiradaCaixa, fetchReciboCaixa,
-  estornarMovimentoCaixa, excluirMovimentoCaixa, fetchOpcoesFinanceiro,
+  estornarMovimentoCaixa, excluirMovimentoCaixa, fetchOpcoesFinanceiro, registrarComprovanteRetirada, urlAnexoPessoa,
   fetchCaixasTime, fetchExtratoCaixa, fetchRetencaoCaixa, fetchRetencoesCaixa, salvarRetencaoCaixa, pausarRetencaoCaixa, revogarRetencaoCaixa, anexarArquivoPessoa,
   formatBRL, formatDate, ehAdmin,
   type CaixaPessoaLinha, type CaixaDetalhe, type CaixaMovimentoItem, type CaixaGrupo, type CaixaRecibo,
@@ -207,6 +207,15 @@ function CaixaIndividual({ pessoaId, onVoltar, onEntrada }: { pessoaId: number; 
   const carregar = () => fetchCaixaFuncionario(pessoaId).then((d) => { setDet(d); setErro(null); }).catch((e) => setErro(e.message));
   useEffect(() => { carregar(); }, [pessoaId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  async function anexarComprovante(m: CaixaMovimentoItem, file: File) {
+    setErro(null);
+    try {
+      const a = await anexarArquivoPessoa(pessoaId, file, "Comprovante de pagamento");
+      await registrarComprovanteRetirada(pessoaId, m.id, { anexo_id: a.id });
+      setAviso("Comprovante anexado à retirada.");
+      carregar();
+    } catch (e: any) { setErro(e.message); }
+  }
   async function abrirRecibo(m: CaixaMovimentoItem) {
     try { const r = await fetchReciboCaixa(pessoaId, m.id); setNotaRecibo(notaDeSaldo(r)); setRecibo(reciboDe(r)); }
     catch (e: any) { setErro(e.message); }
@@ -280,6 +289,11 @@ function CaixaIndividual({ pessoaId, onVoltar, onEntrada }: { pessoaId: number; 
                   <td style={{ color: "var(--text-muted)", fontSize: "0.74rem" }}>{m.numero_lancamento || m.numero_recibo || "—"}</td>
                   <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
                     {m.tipo === "retirada" && <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => abrirRecibo(m)}><Receipt size={12} /> Recibo</button>}
+                    {m.tipo === "retirada" && !m.estornado && (m.comprovante_anexo_id
+                      ? <a href={urlAnexoPessoa(m.comprovante_anexo_id)} target="_blank" rel="noreferrer" className="btn-ghost" style={{ fontSize: "0.72rem", textDecoration: "none" }}>Comprovante</a>
+                      : <label className="btn-ghost" style={{ fontSize: "0.72rem", cursor: "pointer", margin: 0 }} title="Anexar o comprovante desta retirada">Anexar comprovante
+                          <input type="file" accept="application/pdf,image/jpeg,image/png" aria-label={`Anexar comprovante da retirada ${m.numero_recibo || m.id}`} style={{ display: "none" }}
+                            onChange={(e) => { const f = e.target.files?.[0]; if (f) anexarComprovante(m, f); e.target.value = ""; }} /></label>)}
                     {m.pode_estornar && <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setEstornando(m)}><Undo2 size={12} /> Estornar</button>}
                     {m.pode_excluir && <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} title="Excluir o último movimento" onClick={() => excluir(m)}><Trash2 size={12} /></button>}
                   </td>
@@ -567,6 +581,7 @@ function RetiradaModal({ pessoaId, pessoaNome, grupos, saldo, onClose, onFeita }
   const [forma, setForma] = useState("pix");
   const [conta, setConta] = useState("");
   const [numero, setNumero] = useState("");
+  const [comprovante, setComprovante] = useState<File | null>(null);
   const [contas, setContas] = useState<string[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -583,6 +598,15 @@ function RetiradaModal({ pessoaId, pessoaNome, grupos, saldo, onClose, onFeita }
         valor: Number(valor), data, forma_pagamento: forma, conta_bancaria: conta || undefined,
         numero_documento_pagamento: numero.trim() || undefined,
       });
+      // A retirada já está gravada: falha no arquivo NUNCA a desfaz, só avisa (dá para anexar depois no extrato).
+      if (comprovante) {
+        try {
+          const a = await anexarArquivoPessoa(pessoaId, comprovante, "Comprovante de pagamento");
+          await registrarComprovanteRetirada(pessoaId, r.movimento.id, { anexo_id: a.id });
+        } catch (e: any) {
+          window.alert(`Retirada registrada, mas o comprovante não foi anexado (${e.message || "erro"}). Anexe pelo extrato do caixa.`);
+        }
+      }
       onFeita(r);
     } catch (e: any) { setErro(e.message); setSalvando(false); }
   }
@@ -602,6 +626,14 @@ function RetiradaModal({ pessoaId, pessoaNome, grupos, saldo, onClose, onFeita }
           <select id="rt-conta" style={campo} value={conta} onChange={(e) => setConta(e.target.value)}><option value="">Não informar</option>{contas.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
         <div style={{ gridColumn: "1 / -1" }}><label style={lbl} htmlFor="rt-num">Nº do comprovante (opcional)</label>
           <input id="rt-num" style={campo} value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="Ex.: código da transação Pix" /></div>
+        <div style={{ gridColumn: "1 / -1" }}><label style={lbl}>Comprovante em arquivo (opcional)</label>
+          {comprovante ? (
+            <div className="card" style={{ border: "1px solid var(--border)", padding: "0.45rem 0.6rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
+              <span style={{ fontSize: "0.78rem", wordBreak: "break-all" }}>{comprovante.name}</span>
+              <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => setComprovante(null)}>Remover</button>
+            </div>
+          ) : <Dropzone accept="application/pdf,image/jpeg,image/png" label="Arraste o comprovante ou clique para selecionar" hint="PDF, JPG ou PNG" onFiles={(f) => setComprovante(f[0] || null)} />}
+        </div>
       </div>
       <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", margin: "0.5rem 0 0" }}>Ao confirmar, o recibo é gerado para o colaborador assinar, com o saldo antes e depois da retirada.</p>
       {acima && <p role="alert" style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.5rem" }}>Valor acima do saldo de {formatBRL(saldo)}. Para adiantar, use o Vale.</p>}

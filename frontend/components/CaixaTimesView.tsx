@@ -11,6 +11,7 @@ import {
   fetchCaixasTime, fetchCaixaTime, criarCaixaTime, adicionarMembrosTime, removerMembroTime, lancarEntradaTime,
   estornarMovimentoTime, criarRateioTime, fetchRateioTime, ajustarLinhaRateio, excluirRascunhoRateio,
   confirmarRateioTime, desfazerRateioTime, fetchCaixasFuncionarios, anexarArquivoPessoa, formatBRL, formatDate, fetchSugestaoResultadoTime,
+  registrarComprovanteRetirada, urlAnexoPessoa,
   type SugestaoResultadoTime,
   type CaixaTimeResumo, type CaixaTimeDetalhe, type CaixaRateio, type CaixaPessoaLinha, type CaixaRateioLinhaItem,
 } from "@/lib/api";
@@ -424,9 +425,25 @@ function LinhaRateio({ rateioId, linha, editavel, onResultado, onErro }: {
 }) {
   const [pct, setPct] = useState(String(linha.penalidade_pct || ""));
   const [motivo, setMotivo] = useState(linha.penalidade_motivo || "");
+  const [numComp, setNumComp] = useState(linha.numero_documento_pagamento || "");
   useEffect(() => { setPct(String(linha.penalidade_pct || "")); setMotivo(linha.penalidade_motivo || ""); }, [linha.penalidade_pct, linha.penalidade_motivo]);
+  useEffect(() => { setNumComp(linha.numero_documento_pagamento || ""); }, [linha.numero_documento_pagamento]);
+  async function anexarComprovanteDireto(file: File) {
+    try { const a = await anexarArquivoPessoa(linha.pessoa_id, file, "Comprovante de pagamento"); await salvar({ comprovante_anexo_id: a.id }); }
+    catch (e: any) { onErro(e.message); }
+  }
+  // Rateio já confirmado: o pagamento direto virou uma retirada; o comprovante entra nela.
+  async function anexarComprovanteDepois(file: File) {
+    if (!linha.retirada_id) return;
+    onErro(null);
+    try {
+      const a = await anexarArquivoPessoa(linha.pessoa_id, file, "Comprovante de pagamento");
+      await registrarComprovanteRetirada(linha.pessoa_id, linha.retirada_id, { anexo_id: a.id });
+      onResultado(await fetchRateioTime(rateioId));
+    } catch (e: any) { onErro(e.message); }
+  }
 
-  async function salvar(extra: Partial<{ penalidade_pct: number; penalidade_motivo: string; documento_anexo_id: number | null; destino: string; forma_pagamento: string | null }> = {}) {
+  async function salvar(extra: Partial<{ penalidade_pct: number; penalidade_motivo: string; documento_anexo_id: number | null; destino: string; forma_pagamento: string | null; numero_documento_pagamento: string | null; comprovante_anexo_id: number | null }> = {}) {
     onErro(null);
     const penal = extra.penalidade_pct ?? (Number(pct) || 0);
     try {
@@ -434,6 +451,8 @@ function LinhaRateio({ rateioId, linha, editavel, onResultado, onErro }: {
         penalidade_pct: penal, penalidade_motivo: penal > 0 ? (extra.penalidade_motivo ?? motivo) : null,
         documento_anexo_id: penal > 0 ? (extra.documento_anexo_id !== undefined ? extra.documento_anexo_id : linha.documento_anexo_id) : null,
         destino: extra.destino ?? linha.destino, forma_pagamento: (extra.destino ?? linha.destino) === "direto" ? (extra.forma_pagamento ?? linha.forma_pagamento ?? "pix") : null,
+        numero_documento_pagamento: (extra.destino ?? linha.destino) === "direto" ? (extra.numero_documento_pagamento !== undefined ? extra.numero_documento_pagamento : (numComp.trim() || linha.numero_documento_pagamento || null)) : null,
+        comprovante_anexo_id: (extra.destino ?? linha.destino) === "direto" ? (extra.comprovante_anexo_id !== undefined ? extra.comprovante_anexo_id : (linha.comprovante_anexo_id ?? null)) : null,
       }));
     } catch (e: any) { onErro(e.message); }
   }
@@ -473,8 +492,29 @@ function LinhaRateio({ rateioId, linha, editavel, onResultado, onErro }: {
                 {FORMAS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
               </select>
             )}
+            {linha.destino === "direto" && (
+              <div style={{ width: "100%" }}>
+                <input aria-label={`Nº do comprovante de ${linha.nome}`} style={campo} placeholder="Nº do comprovante (opcional)" value={numComp}
+                  onChange={(e) => setNumComp(e.target.value)} onBlur={() => numComp.trim() !== (linha.numero_documento_pagamento || "") && salvar({ numero_documento_pagamento: numComp.trim() || null })} />
+                {linha.comprovante_anexo_id
+                  ? <a href={urlAnexoPessoa(linha.comprovante_anexo_id)} target="_blank" rel="noreferrer" style={{ fontSize: "0.74rem", color: "var(--green-light, #3ecf8e)" }}>Comprovante anexado (abrir)</a>
+                  : <div style={{ marginTop: "0.3rem" }}><Dropzone accept="application/pdf,image/jpeg,image/png" label="Anexar comprovante (opcional)" hint="PDF, JPG ou PNG" onFiles={(f) => f[0] && anexarComprovanteDireto(f[0])} /></div>}
+              </div>
+            )}
           </div>
-        ) : <span style={{ fontSize: "0.78rem" }}>{linha.destino === "direto" ? "Pagamento direto" : "Crédito no caixa"}</span>}
+        ) : linha.destino === "direto" ? (
+          <div style={{ fontSize: "0.78rem" }}>
+            Pagamento direto{linha.numero_documento_pagamento ? ` · comprovante ${linha.numero_documento_pagamento}` : ""}
+            <div>
+              {linha.comprovante_anexo_id
+                ? <a href={urlAnexoPessoa(linha.comprovante_anexo_id)} target="_blank" rel="noreferrer" style={{ color: "var(--green-light, #3ecf8e)" }}>Comprovante anexado (abrir)</a>
+                : linha.retirada_id
+                  ? <label style={{ color: "var(--dourado-light)", cursor: "pointer", textDecoration: "underline" }}>Anexar comprovante
+                      <input type="file" accept="application/pdf,image/jpeg,image/png" aria-label={`Anexar comprovante de ${linha.nome}`} style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) anexarComprovanteDepois(f); e.target.value = ""; }} /></label>
+                  : null}
+            </div>
+          </div>
+        ) : <span style={{ fontSize: "0.78rem" }}>Crédito no caixa</span>}
       </td>
     </tr>
   );

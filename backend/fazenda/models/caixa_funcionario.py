@@ -36,6 +36,8 @@ class CaixaMovimento(SQLModel, table=True):
     forma_pagamento: Optional[str] = None
     conta_bancaria: Optional[str] = None
     numero_documento_pagamento: Optional[str] = None
+    # Comprovante em arquivo da retirada (PessoaAnexo, categoria "Comprovante de pagamento").
+    comprovante_anexo_id: Optional[int] = None
     numero_recibo: Optional[str] = None
     # Retenção em folha: a folha (FolhaPagamento.id) cujo pagamento gerou este movimento.
     folha_id: Optional[int] = Field(default=None, index=True)
@@ -167,5 +169,7 @@ class CaixaRateioLinha(SQLModel, table=True):
     parte_final: float = 0.0
     destino: str = "individual"  # individual (crédito no caixa) | direto (crédito + retirada imediata)
     forma_pagamento: Optional[str] = None  # só no pagamento direto
+    numero_documento_pagamento: Optional[str] = None  # nº do comprovante do pagamento direto
+    comprovante_anexo_id: Optional[int] = None  # PessoaAnexo do comprovante do pagamento direto
     movimento_id: Optional[int] = None  # CaixaMovimento do crédito
     retirada_id: Optional[int] = None  # CaixaMovimento da retirada (pagamento direto)
