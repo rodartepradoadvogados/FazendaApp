@@ -96,6 +96,48 @@ class TimeIn(BaseModel):
     ativo: bool = True
 
 
+@router.get("/sugestao-resultado")
+def sugestao_do_resultado(
+    mes: str | None = None, percentual: float | None = None,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: object = Depends(exigir_admin),
+) -> dict:
+    """"X% do resultado do mês = R$ Y": a base é o RESULTADO LÍQUIDO da DRE Gerencial do mês (competência).
+    Só sugere — quem lança a entrada aceita, ajusta ou ignora. `mes` AAAA-MM (padrão: o mês anterior);
+    `percentual` (padrão: o parâmetro financeiro do caixa do time)."""
+    import calendar
+
+    from fazenda.api.routers.financeiro import dre as dre_gerencial
+    from fazenda.rules.dre import RESULTADO_LIQUIDO
+
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    hoje = date.today()
+    if mes:
+        try:
+            ano, m = (int(x) for x in mes.split("-"))
+            date(ano, m, 1)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Mês inválido. Use AAAA-MM.") from None
+    else:
+        ano, m = (hoje.year, hoje.month - 1) if hoje.month > 1 else (hoje.year - 1, 12)
+    pct = parametros.caixa_time_pct_resultado() if percentual is None else percentual
+    if not (0 <= pct <= 100):
+        raise HTTPException(status_code=400, detail="O percentual deve estar entre 0 e 100.")
+    d = dre_gerencial(
+        data_inicio=date(ano, m, 1), data_fim=date(ano, m, calendar.monthrange(ano, m)[1]), centro_custo=None,
+        regime="competencia", session=session, fazenda_id=fazenda_id,
+    )
+    linha = next((l for l in d["cascata"] if l["chave"] == RESULTADO_LIQUIDO), None)
+    resultado = float(linha["valor"]) if linha else 0.0
+    return {
+        "mes": f"{ano}-{m:02d}", "regime": "competencia", "percentual": pct,
+        "resultado_liquido": round(resultado, 2),
+        # Resultado negativo ou zero não gera sugestão: o time não participa de prejuízo.
+        "valor_sugerido": round(max(resultado, 0.0) * pct / 100, 2),
+        "nao_classificado": d["nao_classificado"]["total"],
+    }
+
+
 @router.get("")
 def listar_times(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),

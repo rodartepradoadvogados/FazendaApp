@@ -10089,6 +10089,16 @@ export const adicionarMembrosTime = (id: number, pessoa_ids: number[], entrada?:
 export const removerMembroTime = (id: number, pessoaId: number) => _tj(`/${id}/membros/${pessoaId}`, { method: "DELETE" }, "Erro ao remover o membro");
 export const lancarEntradaTime = (id: number, d: { tipo: string; data: string; motivo: string; valor?: number; base_valor?: number; percentual?: number }) =>
   _tj(`/${id}/entradas`, { ..._json("POST", d), headers: { "Content-Type": "application/json", "Idempotency-Key": gerarChaveIdempotencia() } }, "Erro ao lançar a entrada");
+export type SugestaoResultadoTime = {
+  mes: string; regime: string; percentual: number; resultado_liquido: number; valor_sugerido: number; nao_classificado: number;
+};
+/** "X% do resultado líquido do mês (DRE, competência) = R$ Y": só sugere; quem lança aceita, ajusta ou ignora. */
+export const fetchSugestaoResultadoTime = (mes?: string, percentual?: number): Promise<SugestaoResultadoTime> => {
+  const q = new URLSearchParams();
+  if (mes) q.set("mes", mes);
+  if (percentual !== undefined) q.set("percentual", String(percentual));
+  return _tj(`/sugestao-resultado${q.toString() ? `?${q}` : ""}`, { cache: "no-store" }, "Erro ao calcular a sugestão");
+};
 export const estornarMovimentoTime = (id: number, movId: number, motivo: string) => _tj(`/${id}/movimentos/${movId}/estornar`, _json("POST", { motivo }), "Erro ao estornar");
 export const criarRateioTime = (id: number, d: { periodo_inicio?: string; periodo_fim?: string; data_entrega?: string } = {}): Promise<CaixaRateio> => _tj(`/${id}/rateios`, _json("POST", d), "Erro ao criar o rateio");
 export const fetchRateioTime = (rateioId: number): Promise<CaixaRateio> => _tj(`/rateios/${rateioId}`, { cache: "no-store" }, "Erro ao carregar o rateio");

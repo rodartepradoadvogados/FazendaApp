@@ -253,6 +253,8 @@ DEFINICOES: list[dict] = [
     # Caixa dos funcionários — datas (dia/mês) em que o caixa do time (PL) é repartido.
     {"chave": "caixa_time_entrega_1", "grupo": "financeiro", "label": "Caixa do time (PL) — 1ª data de rateio (dia/mês)", "valor": "01/06", "tipo": "texto"},
     {"chave": "caixa_time_entrega_2", "grupo": "financeiro", "label": "Caixa do time (PL) — 2ª data de rateio (dia/mês; em branco = só uma por ano)", "valor": "01/12", "tipo": "texto"},
+    # Sugestão do valor a colocar no caixa do time: "X% do resultado líquido do mês (DRE)". 0 = sem percentual padrão.
+    {"chave": "caixa_time_pct_resultado", "grupo": "financeiro", "label": "Caixa do time (PL) — % do resultado líquido do mês sugerido nas entradas (0 = sem sugestão)", "valor": 0, "tipo": "float", "unidade": "%"},
     {"chave": "laticinio_nome", "grupo": "financeiro", "label": "Nome do laticínio (reconhece a receita de leite no RMCA)", "valor": "italac", "tipo": "texto"},
     # ---- Alimentação: sobra de cocho ---------------------------------------
     # A sobra é o termômetro do trato. Sobra de menos significa cocho vazio
@@ -472,6 +474,14 @@ def caixa_time_datas_entrega() -> list[tuple[int, int]]:
     return interpretar_datas_entrega([
         get_param_texto("caixa_time_entrega_1", "01/06"), get_param_texto("caixa_time_entrega_2", "01/12"),
     ])
+
+
+def caixa_time_pct_resultado() -> float:
+    """Percentual padrão do resultado líquido do mês sugerido nas entradas do caixa do time (0 = nenhum)."""
+    try:
+        return max(0.0, min(100.0, float(get_param("caixa_time_pct_resultado", 0) or 0)))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def gestacao_dias_min() -> int:

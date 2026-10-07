@@ -10,7 +10,8 @@ import { Dropzone } from "@/components/Dropzone";
 import {
   fetchCaixasTime, fetchCaixaTime, criarCaixaTime, adicionarMembrosTime, removerMembroTime, lancarEntradaTime,
   estornarMovimentoTime, criarRateioTime, fetchRateioTime, ajustarLinhaRateio, excluirRascunhoRateio,
-  confirmarRateioTime, desfazerRateioTime, fetchCaixasFuncionarios, anexarArquivoPessoa, formatBRL, formatDate,
+  confirmarRateioTime, desfazerRateioTime, fetchCaixasFuncionarios, anexarArquivoPessoa, formatBRL, formatDate, fetchSugestaoResultadoTime,
+  type SugestaoResultadoTime,
   type CaixaTimeResumo, type CaixaTimeDetalhe, type CaixaRateio, type CaixaPessoaLinha, type CaixaRateioLinhaItem,
 } from "@/lib/api";
 
@@ -219,6 +220,30 @@ function EntradaTimeModal({ timeId, onClose, onFeito }: { timeId: number; onClos
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   const calculado = tipo === "comissao" && Number(base) > 0 && Number(pct) > 0 ? Math.round(Number(base) * Number(pct)) / 100 : null;
+  // Sugestão "X% do resultado do mês": resultado líquido da DRE (competência). Só sugere; o usuário aceita, ajusta ou ignora.
+  const mesAnterior = (() => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; })();
+  const [mesSug, setMesSug] = useState(mesAnterior);
+  const [pctSug, setPctSug] = useState("");
+  const [sug, setSug] = useState<SugestaoResultadoTime | null>(null);
+  useEffect(() => {
+    if (tipo !== "deposito") return;
+    let vivo = true;
+    const t = setTimeout(() => {
+      const p = pctSug === "" ? undefined : Math.max(0, Math.min(100, Number(pctSug.replace(",", ".")) || 0));
+      fetchSugestaoResultadoTime(mesSug || undefined, p).then((s) => {
+        if (!vivo) return;
+        setSug(s);
+        if (pctSug === "" && s.percentual > 0) setPctSug(String(s.percentual).replace(".", ","));  // traz o padrão dos Parâmetros
+      }).catch(() => { if (vivo) setSug(null); });
+    }, 300);
+    return () => { vivo = false; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipo, mesSug, pctSug]);
+  function usarSugestao() {
+    if (!sug || sug.valor_sugerido <= 0) return;
+    setValor(String(sug.valor_sugerido));
+    if (!motivo.trim()) setMotivo(`${String(sug.percentual).replace(".", ",")}% do resultado de ${sug.mes.slice(5)}/${sug.mes.slice(0, 4)}`);
+  }
   async function lancar() {
     setErro(null);
     if (!motivo.trim()) { setErro("Informe o motivo."); return; }
@@ -241,7 +266,28 @@ function EntradaTimeModal({ timeId, onClose, onFeito }: { timeId: number; onClos
         {tipo === "comissao" ? (<>
           <div><label style={lbl}>Base (R$)</label><input type="number" min="0" step="0.01" style={campo} value={base} onChange={(e) => setBase(e.target.value)} /></div>
           <div><label style={lbl}>Percentual (%)</label><input type="number" min="0" step="0.01" style={campo} value={pct} onChange={(e) => setPct(e.target.value)} /></div>
-        </>) : <div style={{ gridColumn: "1 / -1" }}><label style={lbl}>Valor (R$) para o caixa do time</label><CampoMoeda style={campo} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>}
+        </>) : <>
+          {tipo === "deposito" && (
+            <div style={{ gridColumn: "1 / -1", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.75rem" }}>
+              <p style={{ margin: "0 0 0.4rem", fontWeight: 600, fontSize: "0.8rem" }}>Sugestão pelo resultado do mês</p>
+              <div className="grid grid-cols-2 gap-3" style={{ maxWidth: "340px" }}>
+                <div><label style={lbl} htmlFor="sg-mes">Mês (competência)</label><input id="sg-mes" type="month" style={campo} value={mesSug} onChange={(e) => setMesSug(e.target.value)} /></div>
+                <div><label style={lbl} htmlFor="sg-pct">Percentual (%)</label><input id="sg-pct" inputMode="decimal" style={{ ...campo, textAlign: "right" }} value={pctSug} onChange={(e) => setPctSug(e.target.value)} placeholder="ex.: 5" /></div>
+              </div>
+              {sug && (
+                <p style={{ margin: "0.5rem 0 0", fontSize: "0.78rem" }}>
+                  Resultado líquido de {sug.mes.slice(5)}/{sug.mes.slice(0, 4)} (DRE): <strong>{formatBRL(sug.resultado_liquido)}</strong>
+                  {sug.resultado_liquido <= 0 ? " — sem resultado positivo, nada a sugerir."
+                    : sug.percentual > 0 ? <> · {sug.percentual.toLocaleString("pt-BR")}% = <strong>{formatBRL(sug.valor_sugerido)}</strong></> : " — informe o percentual."}
+                </p>
+              )}
+              {sug && sug.nao_classificado > 0 && <p style={{ margin: "0.3rem 0 0", fontSize: "0.74rem", color: "var(--amber)" }}>Há {formatBRL(sug.nao_classificado)} sem linha na DRE, fora deste resultado. Classifique as contas para a sugestão ficar completa.</p>}
+              <button type="button" className="btn-secondary" style={{ marginTop: "0.5rem", fontSize: "0.78rem" }} disabled={!sug || sug.valor_sugerido <= 0} onClick={usarSugestao}>Usar este valor</button>
+              <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginLeft: "0.6rem" }}>É só uma sugestão: você pode ajustar o valor abaixo.</span>
+            </div>
+          )}
+          <div style={{ gridColumn: "1 / -1" }}><label style={lbl}>Valor (R$) para o caixa do time</label><CampoMoeda style={campo} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
+        </>}
         <div style={{ gridColumn: "1 / -1" }}><label style={lbl} htmlFor="et-motivo">Motivo (obrigatório)</label><input id="et-motivo" style={campo} value={motivo} onChange={(e) => setMotivo(e.target.value)} /></div>
       </div>
       <p style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>Vira despesa de pessoal já baixada no Financeiro, com número de lançamento. O valor pertence ao time e só chega às pessoas no rateio.</p>
