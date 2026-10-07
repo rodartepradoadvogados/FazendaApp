@@ -1832,3 +1832,50 @@ html, body { max-width: 100%; overflow-x: hidden; }
   .ag2 .ag2-tabela-prog td::before { content: attr(data-rotulo) ": "; color: var(--text-muted); font-weight: 400; }
 }
 @media (max-width: 1100px) { .ag2-corpo { grid-template-columns: minmax(0, 1fr); } }
+
+/* ───────── Financeiro: situação das contas (tokens + peças reutilizáveis) ─────────
+   Status SEMPRE com ícone + texto (nunca só cor). Dourado nunca vira cor de texto
+   sobre fundo claro (contraste ~2,2:1): aqui o texto usa os tons -fg abaixo. */
+:root, :root[data-theme="escuro"] {
+  --st-venc-fg:#FF9E91;  --st-venc-bg:#3B1C1E;  --st-venc-line:#8A4640;  --st-venc-row:#251416;
+  --st-logo-fg:#F3BD63;  --st-logo-bg:#36260F;  --st-logo-line:#86622A;
+  --st-aberto-fg:#A9C6E5; --st-aberto-bg:#16263A; --st-aberto-line:#4A6B8E;
+  --st-fat-fg:#EDCD82;   --st-fat-bg:#33280F;   --st-fat-line:#8A7234;
+  --st-pago-fg:#7CD4A1;  --st-pago-bg:#11301F;  --st-pago-line:#3E7A58;
+  --st-parc-fg:#C9B4F2;  --st-parc-bg:#271D3A;  --st-parc-line:#6A579A;
+  --st-neutro-fg:#BDB2A9; --st-neutro-bg:#262022; --st-neutro-line:#5E5257;
+  --text-accent: var(--dourado-light);
+  --sel-row: rgba(142,43,72,0.30);
+}
+:root[data-theme="claro"], :root[data-theme="misto"] {
+  --st-venc-fg:#A3261B;  --st-venc-bg:#FBEBE8;  --st-venc-line:#D9978E;  --st-venc-row:#FDF6F4;
+  --st-logo-fg:#8A4600;  --st-logo-bg:#FCF0DC;  --st-logo-line:#D9A65A;
+  --st-aberto-fg:#2C4A69; --st-aberto-bg:#EAF0F6; --st-aberto-line:#9AB3CC;
+  --st-fat-fg:#6A4C0E;   --st-fat-bg:#F8EED6;   --st-fat-line:#C99A3A;
+  --st-pago-fg:#1D6A40;  --st-pago-bg:#E6F2EA;  --st-pago-line:#86BE9E;
+  --st-parc-fg:#58398A;  --st-parc-bg:#F1ECF8;  --st-parc-line:#B19DD6;
+  --st-neutro-fg:#5A534C; --st-neutro-bg:#F1EEEA; --st-neutro-line:#BDB5AC;
+  --text-accent:#5E1A2E;
+  --sel-row:#F7E9ED;
+}
+.st-pill{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--st-neutro-line);background:var(--st-neutro-bg);color:var(--st-neutro-fg);border-radius:999px;padding:1px 9px 1px 7px;font-size:.74rem;font-weight:600;line-height:1.5;white-space:nowrap}
+.st-pill.venc{background:var(--st-venc-bg);color:var(--st-venc-fg);border-color:var(--st-venc-line)}
+.st-pill.logo{background:var(--st-logo-bg);color:var(--st-logo-fg);border-color:var(--st-logo-line)}
+.st-pill.aberto{background:var(--st-aberto-bg);color:var(--st-aberto-fg);border-color:var(--st-aberto-line)}
+.st-pill.fat{background:var(--st-fat-bg);color:var(--st-fat-fg);border-color:var(--st-fat-line)}
+.st-pill.pago{background:var(--st-pago-bg);color:var(--st-pago-fg);border-color:var(--st-pago-line)}
+.st-pill.parc{background:var(--st-parc-bg);color:var(--st-parc-fg);border-color:var(--st-parc-line)}
+.st-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);border-radius:999px;padding:1px 10px;font-size:.76rem}
+/* cards de resumo da lista (faixa inferior de 3px é o filete documentado no DESIGN.md) */
+.st-kpi{background:var(--surface);border:1px solid var(--border);border-bottom:3px solid var(--st-neutro-line);border-radius:var(--r-sm);padding:.6rem .75rem;text-align:left;color:var(--text);min-width:0;font:inherit}
+button.st-kpi{cursor:pointer}button.st-kpi:hover{background:var(--surface-2)}
+.st-kpi[aria-pressed="true"]{outline:2px solid var(--text-accent);outline-offset:-2px}
+.st-kpi .l{font-size:.72rem;font-weight:600;color:var(--text-muted);display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:20px}
+.st-kpi .v{font-size:1.25rem;font-weight:700;letter-spacing:-.01em;margin-top:2px;font-variant-numeric:tabular-nums}
+.st-kpi .s{font-size:.72rem;color:var(--text-muted);margin-top:2px}
+.st-kpi.venc{border-bottom-color:var(--st-venc-line);background:var(--st-venc-bg)}.st-kpi.venc .l{color:var(--st-venc-fg)}
+.st-kpi.logo{border-bottom-color:var(--st-logo-line)}.st-kpi.aberto{border-bottom-color:var(--st-aberto-line)}
+.st-kpi.pago{border-bottom-color:var(--st-pago-line)}
+.st-kpi.zero .v{color:var(--text-muted);font-weight:500}
+tr.st-row-venc td{background:var(--st-venc-row)}
+tr.st-row-sel td{background:var(--sel-row)}

@@ -79,31 +79,9 @@ const COLUNAS_LIVRO = [
   { header: "Entrada", key: "entrada" }, { header: "Saída", key: "saida" }, { header: "Saldo", key: "saldo" },
 ];
 
-type Lanc = {
-  id: number; numero_lancamento: string | null;
-  tipo: string; valor: number; valor_pago: number | null; desconto_acrescimo: number | null;
-  centro_custo: string; classificacao?: string | null; codigo_conta: string; conta_completa: string;
-  descricao: string; fornecedor: string; responsavel: string | null;
-  tipo_documento: string | null; numero_documento: string | null; numero_os_orcamento: string | null; numero_documento_pagamento: string | null;
-  numero_boleto?: string | null;
-  // Tem comprovante/anexo em arquivo — inclusive o comprovante único de um
-  // pagamento em lote, que é o mesmo arquivo para todas as notas da remessa.
-  tem_comprovante?: boolean;
-  // Conta nascida de um agendamento preventivo (Protocolos): link de volta ao agendamento.
-  origem_preventivo?: { cronograma_id: number; protocolo: string; subtipo: "honorario" | "produto" | null; data_evento: string } | null;
-  conta_bancaria: string | null; forma_pagamento: string | null; data_vencimento_cartao: string | null; entregue: boolean | null;
-  parcela_num: number | null; parcela_total: number | null;
-  data_competencia: string | null; data_pagamento: string | null; data_vencimento: string | null; data_emissao: string | null;
-  mes_competencia: string | null; mes_caixa: string | null;
-  itens?: { id: number; produto: string; tipo_item?: string | null; valor_total: number; descricao?: string | null;
-            eh_vale: boolean; vale_tipo: "funcionario" | "avulso" | null; vale_id: number | null;
-            vale_pessoa_id: number | null; vale_pessoa_nome: string | null }[];
-  usuario_nome?: string | null;
-  patrimonio_id?: number | null;
-  fatura_id?: number | null;
-};
+import type { Lanc } from "@/lib/financeiroTipos";
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "caixa_real", label: "Caixa Real", icon: TrendingUp, desc: "Projeção de liquidez: quanto tem hoje e como o saldo evolui com os compromissos já lançados" },
@@ -158,7 +136,7 @@ const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
 // continuam exigindo dado existente, o que faz sentido (não tem o que
 // mostrar de fato).
 // "faturas" (Contas > Faturas de fornecedor) também dispensa lançamento prévio no banco.
-const ACOES_IDS = new Set<Rel>([...ACOES.map((a) => a.id), "faturas"]);
+const ACOES_IDS = new Set<Rel>([...ACOES.map((a) => a.id), "faturas", "a_pagar", "a_receber", "consultas", "custos"]);
 const PLANEJAMENTO: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "orcamento", label: "Orçamento", icon: Target, desc: "Planilha orçamentária por conta gerencial/centro de custo/mês, comparada ao realizado" },
   { id: "planejamento_financeiro", label: "Planejamento financeiro", icon: TrendingUp, desc: "Cenários (otimista/realista/pessimista) com projeção de fluxo de caixa" },
@@ -225,48 +203,9 @@ function ThOrd({ rotulo, chave, sortKey, sortDir, onSort, style }: {
   );
 }
 
-// Código da conta gerencial de um lançamento (folha, ou o resumo por nível 1).
-const contaDoLanc = (r: Lanc) => r.conta_completa || r.codigo_conta || "";
-// Uma conta selecionada casa com o próprio código e com todos os descendentes
-// ("3.01" casa "3.01", "3.01.02"…) — filtro por conta e toda a subárvore.
-const casaContaGerencial = (r: Lanc, sel: string) => {
-  if (!sel) return true;
-  const c = contaDoLanc(r);
-  return c === sel || c.startsWith(sel + ".");
-};
-
-/**
- * Filtro por CONTA GERENCIAL em árvore — reusa o mesmo SeletorContaGerencial
- * dos Lançamentos (árvore, só folha selecionável, estilo por nível). Quando o
- * contexto mistura receita e despesa (extrato, DRE, fluxo), mostra as duas
- * árvores; quando é só um tipo, mostra uma. "Limpar" volta para "Todas".
- */
-function FiltroContaGerencial({ contas, tipos, codigo, nome, onChange }: {
-  contas: ContaPlano[]; tipos: ("despesa" | "receita")[];
-  codigo: string; nome: string; onChange: (codigo: string, nome: string) => void;
-}) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", minWidth: "220px" }}>
-      {tipos.map((t) => (
-        <SeletorContaGerencial
-          key={t}
-          contas={contas}
-          tipo={t}
-          codigo={codigo}
-          nome={nome}
-          onSelect={onChange}
-          placeholder={tipos.length > 1 ? `Conta de ${t === "receita" ? "receita" : "despesa"}…` : "Todas as contas…"}
-        />
-      ))}
-      {codigo && (
-        <button type="button" className="btn-ghost" style={{ fontSize: "0.7rem", alignSelf: "flex-start" }}
-          title="Voltar a considerar todas as contas gerenciais" onClick={() => onChange("", "")}>
-          Limpar conta
-        </button>
-      )}
-    </div>
-  );
-}
+import { contaDoLanc, casaContaGerencial, FiltroContaGerencial } from "@/components/financeiro/filtroContaGerencial";
+import ContasListaView from "@/components/financeiro/ContasListaView";
+import { hojeLocal } from "@/lib/financeiroSituacao";
 
 export default function FinanceiroPage() {
   const [regs, setRegs] = useState<Lanc[] | null>(null);
@@ -359,34 +298,63 @@ export default function FinanceiroPage() {
     fetchPlanoContas().then(setPlanoContas).catch(() => {});
   }, []);
 
+  // Telas antigas que deixaram de existir viram atalhos para o destino novo — assim
+  // links profundos (?ir=…), a Agenda, o sino e os holerites continuam funcionando.
+  const [consultaInicial, setConsultaInicial] = useState<{ documento?: string; modo?: "lista" | "livro"; banco?: string } | null>(null);
+  const [idsLote, setIdsLote] = useState<number[]>([]);
+  const [folhaModo, setFolhaModo] = useState<"fechamento" | "holerites">("fechamento");
+  function irPara(destino: Rel, ref?: string | null) {
+    setNotaAlvoRef(ref || null);
+    switch (destino) {
+      case "pagamento": setRel("a_pagar"); break;
+      case "recebimento": setRel("a_receber"); break;
+      case "pagas": case "recebidas": setConsultaInicial(null); setRel("consultas"); break;
+      case "extrato": case "todas_contas": setConsultaInicial(ref ? { documento: ref } : null); setRel("consultas"); break;
+      case "livro": setConsultaInicial({ modo: "livro" }); setRel("consultas"); break;
+      case "faturas": setRel("faturas_gestao"); break;
+      case "folha_relatorio": setFolhaModo("holerites"); setRel("folha"); break;
+      case "folha": setFolhaModo("fechamento"); setRel("folha"); break;
+      case "custo_litro_leite": case "custo_hectare": case "custo_vaca_lote": case "custo_safra": setCustosBase(destino); setRel("custos"); break;
+      case "consultas": setConsultaInicial(null); setRel("consultas"); break;
+      default: setRel(destino);
+    }
+  }
+  const [custosBase, setCustosBase] = useState<"custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra">("custo_litro_leite");
+  const [inserirFatura, setInserirFatura] = useState<Lanc | null>(null);
+  const [novoLancAberto, setNovoLancAberto] = useState<"despesa" | "receita" | null>(null);
+  const [novoLancArquivo, setNovoLancArquivo] = useState<File | null>(null);
+  const { nomes: nomesResponsaveisNovo } = usePessoasAtivas();
+
   // Vindo da Agenda (link "Ir para Financeiro" de uma conta a pagar/receber
   // vencendo) — abre a sub-aba de Pagamento/Recebimento certa e já pré-seleciona
   // a nota informada, em vez de dar baixa direto na lista.
   useEffect(() => {
     const qs = new URLSearchParams(window.location.search);
     const ir = qs.get("ir");
-    if (ir === "a_pagar") setRel("pagamento");
-    else if (ir === "a_receber") setRel("recebimento");
-    // "folha" — vem do card de diária da Agenda ("Contar diária"/"Descartar
-    // diária" clicam no card, não nos botões, pra abrir direto em Financeiro
-    // > Ações > Folha de pagamento; a sub-aba/diária específica dentro dela é
-    // lida pelo próprio FolhaPagamentoView a partir de categoria/diaria/
-    // calendario, ver useEffect lá).
-    else if (ir === "folha") setRel("folha");
-    // "folha_relatorio" entra na lista porque as duas telas de folha agora se
-    // apontam uma à outra na própria interface (só consulta × onde se fecha),
-    // e o link precisa de um endereço.
-    else if (ir && ["pagas", "recebidas", "extrato", "todas_contas", "folha_relatorio", "caixa_funcionarios"].includes(ir)) setRel(ir as Rel);
     const ref = qs.get("ref");
-    if (ref) setNotaAlvoRef(ref);
+    if (ir) irPara(ir as Rel, ref);
+    else if (ref) setNotaAlvoRef(ref);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Árvore de sub-navegação — a Sidebar desenha isto no lugar da lista de
   // módulos enquanto Financeiro estiver aberto (mesmo padrão de Lançamentos).
+  const admin = ehAdmin();
   const subNavTree: SubNavNode[] = useMemo(() => [
-    { id: "contas-grupo", label: "Contas", icon: Wallet, children: [...CONTAS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })), { id: "faturas", label: "Faturas de fornecedor", icon: Layers }] },
-    { id: "acoes-grupo", label: "Ações", icon: Layers, children: ACOES.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
-    { id: "relatorios-grupo", label: "Relatórios", icon: FileText, children: RELATORIOS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
+    // Uma aba só para consultar E dar baixa: seis sub-abas na ordem do dono.
+    { id: "contas-grupo", label: "Contas", icon: Wallet, children: [
+      { id: "a_pagar", label: "Contas a pagar", icon: Clock },
+      { id: "a_receber", label: "Contas a receber", icon: Clock },
+      { id: "lote", label: "Pagamento/recebimento em lote", icon: Layers },
+      { id: "folha", label: "Folha de pagamento", icon: Users },
+      { id: "faturas_gestao", label: "Gestão de faturas", icon: Layers },
+      ...(admin ? [{ id: "caixa_funcionarios", label: "Caixa dos funcionários", icon: Wallet }] : []),
+    ] },
+    // Só o que já foi pago ou recebido (substitui Pagas, Recebidas, Todas, Extrato e Livro Caixa).
+    { id: "consultas", label: "Consultas", icon: Search },
+    { id: "relatorios-grupo", label: "Relatórios", icon: FileText, children: RELATORIOS.filter((r) => !["livro", "extrato", "custo_litro_leite", "custo_hectare", "custo_vaca_lote", "custo_safra"].includes(r.id))
+      .map((r) => ({ id: r.id, label: r.label, icon: r.icon }))
+      .concat([{ id: "custos", label: "Custos", icon: BarChart3 }]) },
     { id: "planejamento-grupo", label: "Planejamento", icon: Compass, children: PLANEJAMENTO.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     // Patrimônio, Cartão de crédito e Documentos são destinos únicos — viram
     // folha direta (sem grupo "guarda-chuva" de 1 item só), economizando um
@@ -394,8 +362,9 @@ export default function FinanceiroPage() {
     { id: "patrimonio", label: "Patrimônio", icon: Building2 },
     { id: "cartao_credito", label: "Cartão de crédito", icon: CreditCard },
     { id: "documentos", label: "Documentos", icon: Paperclip },
-  ], []);
-  useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: rel, onSelect: (id: string) => setRel(id as Rel) }), [subNavTree, rel]));
+  ], [admin]);
+  useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: rel === "folha_relatorio" ? "folha" : rel, onSelect: (id: string) => irPara(id as Rel) }), [subNavTree, rel]));
+
 
   // Nome real de cada código do plano de contas — usado para dar nome à
   // hierarquia no DRE e no detalhamento por conta do Fluxo de Caixa, em vez
@@ -730,7 +699,7 @@ export default function FinanceiroPage() {
           {/* A tela de folha traz o próprio texto de papel logo abaixo (é ela
               que precisa dizer "aqui se fecha" × "lá só se consulta"); repetir
               a frase de relatório em cima dele confundia as duas coisas. */}
-          {rel !== "folha" && (
+          {!["folha", "a_pagar", "a_receber", "consultas", "lote", "faturas_gestao", "caixa_funcionarios"].includes(rel) && (
             <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Escolha o relatório, o período e o centro de custo — indicadores, consolidado e gráfico.</p>
           )}
         </div>
@@ -752,7 +721,24 @@ export default function FinanceiroPage() {
       )}
 
       {regs && (regs.length > 0 || ACOES_IDS.has(rel)) && <>
-        {rel === "caixa_real" ? <CaixaRealView />
+        {rel === "a_pagar" || rel === "a_receber" ? (
+            <ContasListaView key={rel} tipo={rel === "a_pagar" ? "despesa" : "receita"} regs={regs} planoContas={planoContas}
+              contasBancarias={contasBancarias} centros={centros} fornecedores={opcoesRel.fornecedores} produtos={opcoesProdutoRel}
+              documentoInicial={notaAlvoRef}
+              renderBaixa={(nota, fechar) => (
+                <PagamentoIndividualView key={nota.id} tipo={nota.tipo === "receita" ? "receita" : "despesa"} contasBancarias={contasBancarias}
+                  notaAlvoRef={null} onFeito={recarregar} painel={{ nota, regs, onFechar: fechar }} />
+              )}
+              onEditar={(l) => setEditando(l)}
+              onRecibo={(l) => setRecibo({ ...l, reparcelamento: reparcelamentoDoRecibo(l) })}
+              onInserirEmFatura={(l) => setInserirFatura(l)}
+              onAbrirFatura={() => setRel("faturas_gestao")}
+              onNovoLancamento={() => setNovoLancAberto(rel === "a_pagar" ? "despesa" : "receita")}
+              onRecorrentes={() => setRel("recorrentes")}
+              onBaixarSelecionadas={(ids) => { setIdsLote(ids); setRel("lote"); }} />
+          )
+          : rel === "custos" ? <CustosView base={custosBase} onBase={setCustosBase} />
+          : rel === "caixa_real" ? <CaixaRealView />
           : rel === "faturas" || rel === "faturas_gestao" ? <FaturasView />
           : rel === "patrimonio" ? <PatrimonioView />
           : rel === "cartao_credito" ? <CartaoCreditoView />
@@ -760,12 +746,14 @@ export default function FinanceiroPage() {
           : rel === "recorrentes" ? <LancamentosRecorrentesView onFeito={recarregar} />
           : rel === "pagamento" ? <PagamentoIndividualView key="despesa" tipo="despesa" contasBancarias={contasBancarias} notaAlvoRef={notaAlvoRef} onNotaTratada={() => setNotaAlvoRef(null)} onFeito={recarregar} />
           : rel === "recebimento" ? <PagamentoIndividualView key="receita" tipo="receita" contasBancarias={contasBancarias} notaAlvoRef={notaAlvoRef} onNotaTratada={() => setNotaAlvoRef(null)} onFeito={recarregar} />
-          : rel === "lote" ? <PagamentoLoteView contasBancarias={contasBancarias} onFeito={recarregar} /> : rel === "folha" ? <FolhaPagamentoView /> : rel === "caixa_funcionarios" ? <CaixaFuncionariosView />
-          : rel === "folha_relatorio" ? <RelatorioFolhaPagamentoView /> : rel === "rmca" ? <RmcaView />
-          : rel === "custo_litro_leite" ? <CustoLitroLeiteView />
-          : rel === "custo_hectare" ? <CustoHectareView />
-          : rel === "custo_vaca_lote" ? <CustoVacaLoteView />
-          : rel === "custo_safra" ? <CustoSafraView />
+          : rel === "lote" ? <PagamentoLoteView contasBancarias={contasBancarias} onFeito={recarregar} idsIniciais={idsLote} /> : rel === "folha" || rel === "folha_relatorio" ? (
+              <div>
+                <TabBar abas={[{ id: "fechamento", label: "Fechamento da folha", title: "Lançar, conferir e pagar a folha do mês" }, { id: "holerites", label: "Holerites e recibos", title: "Consultar e imprimir o recibo de cada pessoa" }] as const}
+                  ativa={folhaModo} onChange={setFolhaModo} />
+                {folhaModo === "holerites" ? <RelatorioFolhaPagamentoView /> : <FolhaPagamentoView />}
+              </div>
+            ) : rel === "caixa_funcionarios" ? <CaixaFuncionariosView />
+          : rel === "rmca" ? <RmcaView />
           : rel === "compra_venda_animais" ? <RelatorioCompraVendaAnimaisView />
           : rel === "compra_semen" ? <RelatorioCompraSemenView />
           : rel === "orcamento" ? <OrcamentoView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} />
@@ -780,7 +768,7 @@ export default function FinanceiroPage() {
                   // "vence em 7 dias" continuam os mesmos dados, só menores.
                   <div className="card" style={{ padding: "1.1rem 1.3rem" }}>
                     <div style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.13em", textTransform: "uppercase", color: "var(--text-muted)" }}>
-                      {rel === "a_pagar" ? "Total em aberto" : "Total a receber"}
+                      {(rel as string) === "a_pagar" ? "Total em aberto" : "Total a receber"}
                     </div>
                     <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--dourado-light)", marginTop: "0.25rem", fontVariantNumeric: "tabular-nums" }}>
                       {formatBRL(kpisContas.total)}
@@ -1115,6 +1103,33 @@ export default function FinanceiroPage() {
         </Modal>
       )}
       {recibo && <ReciboModal lanc={recibo} onClose={() => setRecibo(null)} />}
+      {inserirFatura && (
+        <ModalInserirEmFatura nota={inserirFatura as any} candidatas={(regs ?? []) as any} onClose={() => setInserirFatura(null)}
+          onFeito={() => { setInserirFatura(null); recarregar(); }} onAbrirFaturas={() => { setInserirFatura(null); setRel("faturas_gestao"); }} />
+      )}
+      {novoLancAberto && (
+        <ModalDivididoDocumento title={`Novo lançamento — leitura automática (${novoLancAberto === "receita" ? "recebimento" : "pagamento"})`}
+          onClose={() => { setNovoLancAberto(null); setNovoLancArquivo(null); }} arquivo={novoLancArquivo}>
+          <FormFinanceiro tipo={novoLancAberto} responsaveis={nomesResponsaveisNovo}
+            onArquivoParaLeitura={setNovoLancArquivo}
+            onSalvo={() => { setNovoLancAberto(null); setNovoLancArquivo(null); recarregar(); }} />
+        </ModalDivididoDocumento>
+      )}
+    </div>
+  );
+}
+
+/** Custos: uma tela só, com seletor de base (litro de leite, hectare, vaca/lote, safra). */
+function CustosView({ base, onBase }: { base: "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra"; onBase: (b: "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra") => void }) {
+  return (
+    <div>
+      <TabBar abas={[
+        { id: "custo_litro_leite", label: "Por litro de leite", title: "Custo de alimentação do período dividido pelos litros entregues" },
+        { id: "custo_hectare", label: "Por hectare", title: "Despesas do período divididas pela área total da fazenda" },
+        { id: "custo_vaca_lote", label: "Por vaca/lote", title: "Despesas do período divididas pelo nº de vacas em lactação, por lote" },
+        { id: "custo_safra", label: "Por safra", title: "Despesas do centro de custo e período da safra divididas por hectare/tonelada" },
+      ] as const} ativa={base} onChange={onBase} />
+      {base === "custo_litro_leite" ? <CustoLitroLeiteView /> : base === "custo_hectare" ? <CustoHectareView /> : base === "custo_vaca_lote" ? <CustoVacaLoteView /> : <CustoSafraView />}
     </div>
   );
 }
@@ -1136,7 +1151,7 @@ const theadStickyStyle: React.CSSProperties = { position: "sticky", top: 0, zInd
  * seleciona quais notas EM ABERTO quer baixar de uma vez, com um único
  * pagamento (data, conta corrente, forma de pagamento, comprovante).
  */
-export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: string[]; onFeito?: () => void }) {
+export function PagamentoLoteView({ contasBancarias, onFeito, idsIniciais }: { contasBancarias: string[]; onFeito?: () => void; idsIniciais?: number[] }) {
   const admin = ehAdmin();
   const [regs, setRegs] = useState<Lanc[] | null>(null);
   const { nomes: nomesResponsaveis } = usePessoasAtivas();
@@ -1153,7 +1168,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
   const [vencimentoDe, setVencimentoDe] = useState("");
   const [vencimentoAte, setVencimentoAte] = useState("");
 
-  const [selecionados, setSelecionados] = useState<Set<number>>(new Set());
+  const [selecionados, setSelecionados] = useState<Set<number>>(new Set(idsIniciais || []));
   const [dataPagamento, setDataPagamento] = useState(new Date().toISOString().slice(0, 10));
   const [contaBancaria, setContaBancaria] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("");
@@ -4099,12 +4114,14 @@ const ORIGENS_PAGAMENTO: { id: string; label: string; docs: string[] }[] = [
   { id: "rescisao", label: "Rescisão", docs: ["Rescisão"] },
 ];
 
-export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTratada, onFeito }: {
+export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTratada, onFeito, painel }: {
   tipo: "despesa" | "receita"; contasBancarias: string[]; notaAlvoRef: string | null;
   onNotaTratada?: () => void; onFeito?: () => void;
+  /** Modo painel lateral (Contas a pagar/receber): mostra só o formulário de baixa da `nota`, sem filtros nem lista. */
+  painel?: { nota: Lanc; regs: Lanc[]; onFechar: () => void };
 }) {
   const admin = ehAdmin();
-  const [regs, setRegs] = useState<Lanc[] | null>(null);
+  const [regs, setRegs] = useState<Lanc[] | null>(painel ? painel.regs : null);
   const [error, setError] = useState<string | null>(null);
   const [opcoes, setOpcoes] = useState<{ fornecedores: string[]; produtos: string[] }>({ fornecedores: [], produtos: [] });
   const { nomes: nomesResponsaveis } = usePessoasAtivas();
@@ -4141,7 +4158,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
 
   const carregar = () => fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message));
   useEffect(() => {
-    carregar();
+    if (!painel) carregar();
     fetchOpcoesFinanceiro().then((d) => setOpcoes({ fornecedores: d.fornecedores || [], produtos: d.produtos || [] })).catch(() => {});
   }, []);
 
@@ -4193,6 +4210,14 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
     onNotaTratada?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notaAlvoRef, regs]);
+
+  // Modo painel: a nota já vem escolhida pela lista de Contas.
+  useEffect(() => {
+    if (!painel) return;
+    const alvo = (regs ?? []).find((r) => r.id === painel.nota.id && !r.data_pagamento);
+    if (alvo) selecionar(alvo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [painel?.nota.id]);
 
   const notaSelecionada = useMemo(() => abertas.find((r) => r.id === notaId) || null, [abertas, notaId]);
   const diferenca = notaSelecionada ? Math.round((Number(valorPago) - notaSelecionada.valor) * 100) / 100 : 0;
@@ -4265,8 +4290,9 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
       }
       setMsg({ tipo: "sucesso", texto: `${tipo === "receita" ? "Recebimento" : "Pagamento"} registrado com sucesso.` });
       setNotaId(null);
-      carregar();
+      if (!painel) carregar();
       onFeito?.();
+      painel?.onFechar();
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao tratar a nota" });
     } finally {
@@ -4277,110 +4303,12 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   if (error) return <div className="alert-critico"><span>Sem dados: {error}.</span></div>;
   if (!regs) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
 
-  return (
-    <div>
-      <AvisoSalvo texto={msg?.tipo === "sucesso" ? msg.texto : null} />
-      <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center justify-between">
-          <span className="flex items-center gap-2"><Filter size={14} /> Filtrar notas em aberto</span>
-          <button className="btn-ghost" title="Abre um lançamento NOVO a partir de um documento (nota fiscal, boleto ou recibo) — leitura automática, não anexa a nenhuma nota já existente" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
-            <Paperclip size={13} /> Lançar por nota fiscal, boleto ou recibo…
-          </button>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div><label style={labelStyleLote}>Nota fiscal / nº do documento</label>
-            <div style={{ position: "relative" }}>
-              <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
-              <input style={{ ...selStyleLote, paddingLeft: "1.6rem" }} value={numeroDocumento} onChange={(e) => setNumeroDocumento(e.target.value)} placeholder="ex.: 4521 ou LC-2026-00012" />
-            </div></div>
-          <div><label style={labelStyleLote}>{tipo === "receita" ? "Cliente" : "Fornecedor"}</label>
-            <select style={selStyleLote} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)}>
-              <option value="">Todos</option>{opcoes.fornecedores.map((f) => <option key={f} value={f}>{f}</option>)}
-            </select></div>
-          <div><label style={labelStyleLote}>Produto / serviço</label>
-            <select style={selStyleLote} value={produto} onChange={(e) => setProduto(e.target.value)}>
-              <option value="">Todos</option>{opcoesProdutoServico.map((p) => <option key={p} value={p}>{p}</option>)}
-            </select></div>
-          <div><label style={labelStyleLote}>Centro de custo</label>
-            <select style={selStyleLote} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
-              <option value="">Todos</option>{centrosCusto.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select></div>
-          {tipo === "despesa" && (
-            <div><label style={labelStyleLote}>Origem</label>
-              <select style={selStyleLote} value={origemFiltro} onChange={(e) => setOrigemFiltro(e.target.value)}>
-                <option value="">Todas as origens</option>
-                {ORIGENS_PAGAMENTO.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-              </select></div>
-          )}
-          <div><label style={labelStyleLote}>Vencimento — de</label><input type="date" style={selStyleLote} value={vencimentoDe} onChange={(e) => setVencimentoDe(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Vencimento — até</label><input type="date" style={selStyleLote} value={vencimentoAte} onChange={(e) => setVencimentoAte(e.target.value)} /></div>
-        </div>
-      </div>
-
-      {anexarAberto && (
-        <ModalDivididoDocumento title={`Novo lançamento — leitura automática (${tipo === "receita" ? "recebimento" : "pagamento"})`}
-          onClose={() => { setAnexarAberto(false); setArquivoPreview(null); }} arquivo={arquivoPreview}>
-          <FormFinanceiro tipo={tipo} responsaveis={nomesResponsaveis}
-            onArquivoParaLeitura={setArquivoPreview}
-            onSalvo={(mensagem) => { setAnexarAberto(false); setArquivoPreview(null); setMsg({ tipo: "sucesso", texto: mensagem }); carregar(); }} />
-        </ModalDivididoDocumento>
-      )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
-      <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden", marginBottom: "1rem" }}>
-        <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem" }}>
-          <span style={{ fontSize: "0.85rem" }}>{filtradas.length} nota(s) em aberto no filtro — total {formatBRL(totalFiltrado)}</span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="fazenda-table" style={{ margin: 0 }}>
-            <thead style={theadStickyStyle}><tr>
-              <ThOrd rotulo="Nota / lançamento" chave="numero" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
-              <ThOrd rotulo="Vencimento" chave="vencimento" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
-              <ThOrd rotulo={tipo === "receita" ? "Cliente" : "Fornecedor"} chave="fornecedor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
-              <ThOrd rotulo="Produto/Serviços" chave="produto" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
-              <ThOrd rotulo="Valor" chave="valor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ ...theadStickyStyle, textAlign: "right" }} />
-              {admin && <th style={{ ...theadStickyStyle, textAlign: "left" }}>Usuário</th>}
-              <th style={theadStickyStyle}></th>
-            </tr></thead>
-            <tbody>
-              {pagNotas.linhasPagina.map((r) => {
-                const produtos = (r.itens || []).map((it) => it.produto).filter(Boolean).join(", ");
-                const ativa = r.id === notaId;
-                return (
-                  <tr key={r.id} className="row-clickable" title="Clique para selecionar esta nota" style={{ background: ativa ? "rgba(94,26,46,0.35)" : undefined }} onClick={() => selecionar(r)}>
-                    <td style={{ fontSize: "0.78rem" }}>
-                      <strong>{r.numero_documento || r.numero_lancamento || "—"}</strong>
-                      {r.numero_documento && r.numero_lancamento && <span style={{ color: "var(--text-muted)" }}> · {r.numero_lancamento}</span>}
-                      <br /><span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>{r.descricao}</span>
-                    </td>
-                    <td style={{ fontSize: "0.75rem", whiteSpace: "nowrap" }}>{r.data_vencimento ? formatDate(r.data_vencimento) : "—"}</td>
-                    <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{r.fornecedor || "—"}</td>
-                    <td style={{ fontSize: "0.72rem", color: "var(--text-muted)", maxWidth: "220px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{produtos || "—"}</td>
-                    <td style={{ textAlign: "right", fontWeight: 600, color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{formatBRL(r.valor)}</td>
-                    {admin && <td>{r.usuario_nome ?? "—"}</td>}
-                    <td>{ativa ? <CheckCircle2 size={14} style={{ color: "var(--dourado-light)" }} /> : <Circle size={14} style={{ color: "var(--text-muted)", opacity: 0.4 }} />}</td>
-                  </tr>
-                );
-              })}
-              {!filtradas.length && <tr><td colSpan={admin ? 7 : 6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma nota em aberto no filtro.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-        {filtradas.length > 0 && (
-          <div style={{ padding: "0 0.9rem 0.6rem" }}>
-            <Paginacao pagina={pagNotas.pagina} totalPaginas={pagNotas.totalPaginas} totalLinhas={pagNotas.totalLinhas}
-              tamanhoPagina={pagNotas.tamanhoPagina} onMudarPagina={pagNotas.setPagina} onMudarTamanho={pagNotas.setTamanhoPagina} />
-          </div>
-        )}
-      </div>
-      </div>
-
-      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+  const blocoBaixa = (
+    <>
       {notaSelecionada ? (
         <div className="card">
           <div className="card-header mb-3">
-            Tratar {tipo === "receita" ? "recebimento" : "pagamento"} — {notaSelecionada.descricao} · {formatBRL(notaSelecionada.valor)}
+            Dar baixa — {notaSelecionada.descricao} · {formatBRL(notaSelecionada.valor)}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div><label style={labelStyleLote}>Data de {tipo === "receita" ? "recebimento" : "pagamento"}</label>
@@ -4493,7 +4421,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
               disabled={salvando || (diferenca !== 0 && modoDiferenca === "parcelar" && !parcelasDiferencaBatem)}>
               <Check size={14} /> {salvando ? "Salvando…" : "Confirmar baixa"}
             </button>
-            <button className="btn-ghost" title="Cancelar e voltar à seleção de nota" onClick={() => setNotaId(null)}>Cancelar</button>
+            <button className="btn-ghost" title="Cancelar sem registrar a baixa" onClick={() => { setNotaId(null); painel?.onFechar(); }}>Cancelar</button>
           </div>
         </div>
       ) : (
@@ -4502,6 +4430,111 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
           <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione uma nota à esquerda para tratar {tipo === "receita" ? "o recebimento" : "o pagamento"}.</p>
         </div>
       )}
+    </>
+  );
+  if (painel) return <div>{blocoBaixa}</div>;
+
+  return (
+    <div>
+      <AvisoSalvo texto={msg?.tipo === "sucesso" ? msg.texto : null} />
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center justify-between">
+          <span className="flex items-center gap-2"><Filter size={14} /> Filtrar notas em aberto</span>
+          <button className="btn-ghost" title="Abre um lançamento NOVO a partir de um documento (nota fiscal, boleto ou recibo) — leitura automática, não anexa a nenhuma nota já existente" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
+            <Paperclip size={13} /> Lançar por nota fiscal, boleto ou recibo…
+          </button>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div><label style={labelStyleLote}>Nota fiscal / nº do documento</label>
+            <div style={{ position: "relative" }}>
+              <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
+              <input style={{ ...selStyleLote, paddingLeft: "1.6rem" }} value={numeroDocumento} onChange={(e) => setNumeroDocumento(e.target.value)} placeholder="ex.: 4521 ou LC-2026-00012" />
+            </div></div>
+          <div><label style={labelStyleLote}>{tipo === "receita" ? "Cliente" : "Fornecedor"}</label>
+            <select style={selStyleLote} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)}>
+              <option value="">Todos</option>{opcoes.fornecedores.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select></div>
+          <div><label style={labelStyleLote}>Produto / serviço</label>
+            <select style={selStyleLote} value={produto} onChange={(e) => setProduto(e.target.value)}>
+              <option value="">Todos</option>{opcoesProdutoServico.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select></div>
+          <div><label style={labelStyleLote}>Centro de custo</label>
+            <select style={selStyleLote} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
+              <option value="">Todos</option>{centrosCusto.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select></div>
+          {tipo === "despesa" && (
+            <div><label style={labelStyleLote}>Origem</label>
+              <select style={selStyleLote} value={origemFiltro} onChange={(e) => setOrigemFiltro(e.target.value)}>
+                <option value="">Todas as origens</option>
+                {ORIGENS_PAGAMENTO.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+              </select></div>
+          )}
+          <div><label style={labelStyleLote}>Vencimento — de</label><input type="date" style={selStyleLote} value={vencimentoDe} onChange={(e) => setVencimentoDe(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Vencimento — até</label><input type="date" style={selStyleLote} value={vencimentoAte} onChange={(e) => setVencimentoAte(e.target.value)} /></div>
+        </div>
+      </div>
+
+      {anexarAberto && (
+        <ModalDivididoDocumento title={`Novo lançamento — leitura automática (${tipo === "receita" ? "recebimento" : "pagamento"})`}
+          onClose={() => { setAnexarAberto(false); setArquivoPreview(null); }} arquivo={arquivoPreview}>
+          <FormFinanceiro tipo={tipo} responsaveis={nomesResponsaveis}
+            onArquivoParaLeitura={setArquivoPreview}
+            onSalvo={(mensagem) => { setAnexarAberto(false); setArquivoPreview(null); setMsg({ tipo: "sucesso", texto: mensagem }); carregar(); }} />
+        </ModalDivididoDocumento>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden", marginBottom: "1rem" }}>
+        <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem" }}>
+          <span style={{ fontSize: "0.85rem" }}>{filtradas.length} nota(s) em aberto no filtro — total {formatBRL(totalFiltrado)}</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="fazenda-table" style={{ margin: 0 }}>
+            <thead style={theadStickyStyle}><tr>
+              <ThOrd rotulo="Nota / lançamento" chave="numero" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
+              <ThOrd rotulo="Vencimento" chave="vencimento" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
+              <ThOrd rotulo={tipo === "receita" ? "Cliente" : "Fornecedor"} chave="fornecedor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
+              <ThOrd rotulo="Produto/Serviços" chave="produto" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
+              <ThOrd rotulo="Valor" chave="valor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ ...theadStickyStyle, textAlign: "right" }} />
+              {admin && <th style={{ ...theadStickyStyle, textAlign: "left" }}>Usuário</th>}
+              <th style={theadStickyStyle}></th>
+            </tr></thead>
+            <tbody>
+              {pagNotas.linhasPagina.map((r) => {
+                const produtos = (r.itens || []).map((it) => it.produto).filter(Boolean).join(", ");
+                const ativa = r.id === notaId;
+                return (
+                  <tr key={r.id} className="row-clickable" title="Clique para selecionar esta nota" style={{ background: ativa ? "rgba(94,26,46,0.35)" : undefined }} onClick={() => selecionar(r)}>
+                    <td style={{ fontSize: "0.78rem" }}>
+                      <strong>{r.numero_documento || r.numero_lancamento || "—"}</strong>
+                      {r.numero_documento && r.numero_lancamento && <span style={{ color: "var(--text-muted)" }}> · {r.numero_lancamento}</span>}
+                      <br /><span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>{r.descricao}</span>
+                    </td>
+                    <td style={{ fontSize: "0.75rem", whiteSpace: "nowrap" }}>{r.data_vencimento ? formatDate(r.data_vencimento) : "—"}</td>
+                    <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{r.fornecedor || "—"}</td>
+                    <td style={{ fontSize: "0.72rem", color: "var(--text-muted)", maxWidth: "220px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{produtos || "—"}</td>
+                    <td style={{ textAlign: "right", fontWeight: 600, color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{formatBRL(r.valor)}</td>
+                    {admin && <td>{r.usuario_nome ?? "—"}</td>}
+                    <td>{ativa ? <CheckCircle2 size={14} style={{ color: "var(--dourado-light)" }} /> : <Circle size={14} style={{ color: "var(--text-muted)", opacity: 0.4 }} />}</td>
+                  </tr>
+                );
+              })}
+              {!filtradas.length && <tr><td colSpan={admin ? 7 : 6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma nota em aberto no filtro.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        {filtradas.length > 0 && (
+          <div style={{ padding: "0 0.9rem 0.6rem" }}>
+            <Paginacao pagina={pagNotas.pagina} totalPaginas={pagNotas.totalPaginas} totalLinhas={pagNotas.totalLinhas}
+              tamanhoPagina={pagNotas.tamanhoPagina} onMudarPagina={pagNotas.setPagina} onMudarTamanho={pagNotas.setTamanhoPagina} />
+          </div>
+        )}
+      </div>
+      </div>
+
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      {blocoBaixa}
       </div>
       </div>
     </div>
