@@ -37,6 +37,7 @@ from fazenda.api.routers.portal import usuarios_da_fazenda
 from fazenda.api.routers.reproducao import ATIVIDADE_INDUCAO_CIO
 from fazenda.ordenacao import chave_numero
 from fazenda.rules import caixa_funcionario as caixa_funcionario_rules
+from fazenda.rules import caixa_time as caixa_time_rules
 from fazenda.rules.agenda_engine import DIAS_CONTAS_VENCIDAS_NA_AGENDA, AgendaEngine, AgendaItem
 from fazenda.rules.eventos_sanitarios import eventos_agenda as _eventos_sanitarios_agenda
 from fazenda.rules import cronograma_sanitario as _cronograma_sanitario_rules
@@ -752,6 +753,7 @@ def calcular_agenda(
         pedidos_entrega_prevista=pedidos_entrega_prevista,
         pessoas_documentos_vencendo=pessoas_documentos_vencendo,
         caixa_termos_pendentes=caixa_funcionario_rules.termos_pendentes(session, fazenda_id),
+        caixa_rateios_proximos=caixa_time_rules.rateios_proximos(session, fazenda_id, hoje=data),
         inducoes_cio=inducoes_cio,
         aplicacoes_iatf=aplicacoes_iatf_todas,
         peso_por_animal=peso_por_animal,

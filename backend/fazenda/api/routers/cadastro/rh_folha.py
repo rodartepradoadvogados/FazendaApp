@@ -29,7 +29,7 @@ from fazenda.models import (
 from fazenda.api.routers.financeiro import TAMANHO_MAXIMO_ANEXO, _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
-from fazenda.rules import caixa_funcionario, holerite, media_verbas_habituais, rubrica_folha, vale_alimentacao
+from fazenda.rules import caixa_time, caixa_funcionario, holerite, media_verbas_habituais, rubrica_folha, vale_alimentacao
 from fazenda.rules.folha_rh import (
     PARCELAS_DECIMO_TERCEIRO,
     calcular_decimo_terceiro,
@@ -1208,6 +1208,9 @@ def _congelar_discriminacao(session: Session, registro: FolhaPagamento) -> None:
     session.add(registro)
     # A folha virou recibo: o que ela reteve entra no caixa da pessoa (idempotente).
     caixa_funcionario.lancar_retencao_da_folha(session, registro)
+    # Rodapé do holerite: saldos do caixa NO ato do pagamento (já com a retenção desta folha).
+    resumo = caixa_time.resumos_para_recibo(session, registro.fazenda_id, [registro.pessoa_id]).get(registro.pessoa_id)
+    registro.caixa_congelado = json.dumps({**resumo, "congelado_em": datetime.utcnow().isoformat()}, ensure_ascii=False) if resumo else None
 
 
 def _descongelar_discriminacao(registro: FolhaPagamento) -> None:
@@ -1215,6 +1218,7 @@ def _descongelar_discriminacao(registro: FolhaPagamento) -> None:
     ver `estornar_pagamento_folha` (e `reabrir_diaria`, o mesmo padrão)."""
     registro.discriminacao_congelada = None
     registro.discriminacao_congelada_em = None
+    registro.caixa_congelado = None
 
 
 def _folha_resposta(registro: FolhaPagamento) -> dict:
@@ -1227,6 +1231,7 @@ def _folha_resposta(registro: FolhaPagamento) -> dict:
     """
     dados = registro.model_dump()
     dados.pop("discriminacao_congelada", None)
+    dados.pop("caixa_congelado", None)  # rodapé do caixa: só admin, por endpoint próprio
     congelado_em = dados.pop("discriminacao_congelada_em", None)
     dados["recibo_congelado"] = congelado_em is not None
     dados["recibo_congelado_em"] = congelado_em
@@ -3647,6 +3652,8 @@ def fechar_rescisao(
     registro.data_pagamento = dados.data_pagamento
     registro.centro_custo = centro_custo
     registro.conta_corrente_id = conta_corrente.id if conta_corrente else None
+    # Sai dos caixas do time na data do desligamento (continua contando os dias até lá).
+    caixa_time.registrar_saida_dos_times(session, pessoa, registro.data_desligamento, fazenda_id)
     if dados.inativar_pessoa:
         pessoa.ativo = False
         session.add(pessoa)

@@ -102,5 +102,7 @@ def downgrade() -> None:
         if insp.has_table(nome):
             op.drop_table(nome)
     if 'rateio_id' in {c['name'] for c in insp.get_columns('caixa_movimento')}:
+        if 'ix_caixa_movimento_rateio_id' in {i['name'] for i in insp.get_indexes('caixa_movimento')}:
+            op.drop_index('ix_caixa_movimento_rateio_id', table_name='caixa_movimento')
         with op.batch_alter_table('caixa_movimento') as batch:
             batch.drop_column('rateio_id')

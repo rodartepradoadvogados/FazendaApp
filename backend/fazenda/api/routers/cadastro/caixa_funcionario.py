@@ -27,6 +27,7 @@ from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id, g
 from fazenda.database import get_session
 from fazenda.models import CaixaMovimento, CaixaRetencao, ContaGerencial, Pessoa
 from fazenda.rules import caixa_funcionario as regras
+from fazenda.rules import caixa_time as regras_time
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
 
 router = APIRouter(prefix="/caixa-funcionarios", tags=["Caixa dos funcionários"])
@@ -178,6 +179,52 @@ def pendencias_do_caixa(
     """O que o caixa está devendo de documento: alimenta o aviso do Fechamento da folha."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     return {"termos_pendentes": regras.termos_pendentes(session, fazenda_id)}
+
+
+@router.get("/rodape-recibos")
+def rodape_dos_recibos(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: object = Depends(exigir_admin),
+) -> dict:
+    """Rodapé do holerite/recibo (SÓ administrador): o saldo individual e a parte estimada
+    no caixa do time. `por_folha` traz a fotografia de cada folha já paga (o que valia no
+    ato do pagamento); `por_pessoa` é o saldo de hoje, para folha/recibo ainda em aberto."""
+    import json as _json
+    from fazenda.models import FolhaPagamento
+
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(FolhaPagamento).where(FolhaPagamento.caixa_congelado != None)  # noqa: E711
+    if fazenda_id is not None:
+        query = query.where(FolhaPagamento.fazenda_id == fazenda_id)
+    por_folha = {f.id: _json.loads(f.caixa_congelado) for f in session.exec(query).all()}
+    return {"por_folha": por_folha, "por_pessoa": regras_time.resumos_para_recibo(session, fazenda_id)}
+
+
+@router.get("/{pessoa_id}/extrato")
+def extrato_mensal(
+    pessoa_id: int, mes: str, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), _: object = Depends(exigir_admin),
+) -> dict:
+    """Extrato do mês (AAAA-MM): saldo anterior, movimentos, saldo final e a parte
+    estimada nos caixas do time. Base do PDF mensal."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    pessoa = _pessoa_ou_404(session, pessoa_id, fazenda_id)
+    try:
+        ano, m = (int(x) for x in mes.split("-"))
+        inicio = date(ano, m, 1)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Mês inválido: use AAAA-MM") from None
+    fim = date(ano + (m == 12), m % 12 + 1, 1) - timedelta(days=1)
+    movs = _movimentos_da_pessoa(session, pessoa_id, fazenda_id)
+    anterior = round(sum(x.valor for x in movs if x.data < inicio), 2)
+    do_mes = [x for x in movs if inicio <= x.data <= fim]
+    return {
+        "pessoa": {"id": pessoa.id, "nome": pessoa.nome, "tipo": pessoa.tipo},
+        "mes": mes, "saldo_anterior": anterior,
+        "movimentos": [{**x.model_dump(), "estornado": any(y.estorna_id == x.id for y in movs)} for x in do_mes],
+        "saldo_final": round(anterior + sum(x.valor for x in do_mes), 2),
+        "times": regras_time.resumos_para_recibo(session, fazenda_id, [pessoa_id]).get(pessoa_id, {}).get("times", []),
+    }
 
 
 @router.get("/{pessoa_id}/retencao")

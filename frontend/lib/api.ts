@@ -10066,3 +10066,28 @@ export const ajustarLinhaRateio = (rateioId: number, pessoaId: number, d: {
 export const excluirRascunhoRateio = (rateioId: number) => _tj(`/rateios/${rateioId}`, { method: "DELETE" }, "Erro ao excluir o rascunho");
 export const confirmarRateioTime = (rateioId: number): Promise<CaixaRateio> => _tj(`/rateios/${rateioId}/confirmar`, { method: "POST" }, "Erro ao confirmar o rateio");
 export const desfazerRateioTime = (rateioId: number): Promise<CaixaRateio> => _tj(`/rateios/${rateioId}/desfazer`, { method: "POST" }, "Erro ao desfazer o rateio");
+
+// Caixa dos funcionários — Fase 4: rodapé do holerite/recibo, extrato mensal. Só administrador.
+export type CaixaRodape = {
+  saldo_individual: number;
+  times: { time: string; saldo: number; parte_estimada: number }[];
+  congelado_em?: string;
+};
+export type CaixaRodapes = { por_folha: Record<string, CaixaRodape>; por_pessoa: Record<string, CaixaRodape> };
+let _rodapeCache: { em: number; dados: Promise<CaixaRodapes> } | null = null;
+/** Rodapés do caixa (cache de 30 s: o holerite pede para cada documento aberto). */
+export function fetchRodapesCaixa(forcar = false): Promise<CaixaRodapes> {
+  if (!forcar && _rodapeCache && Date.now() - _rodapeCache.em < 30_000) return _rodapeCache.dados;
+  const dados = authFetch(`${API}/cadastro/caixa-funcionarios/rodape-recibos`, { cache: "no-store" })
+    .then((r) => caixaJson(r, "Erro ao carregar o caixa do funcionário")) as Promise<CaixaRodapes>;
+  dados.catch(() => { _rodapeCache = null; });
+  _rodapeCache = { em: Date.now(), dados };
+  return dados;
+}
+export type CaixaExtrato = {
+  pessoa: { id: number; nome: string; tipo: string }; mes: string; saldo_anterior: number; saldo_final: number;
+  movimentos: CaixaMovimentoItem[]; times: { time: string; saldo: number; parte_estimada: number }[];
+};
+export async function fetchExtratoCaixa(pessoaId: number, mes: string): Promise<CaixaExtrato> {
+  return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/${pessoaId}/extrato?mes=${encodeURIComponent(mes)}`, { cache: "no-store" }), "Erro ao carregar o extrato");
+}

@@ -125,3 +125,117 @@ def saldo_do_time(session: Session, time_id: int) -> float:
     return round(sum(m.valor for m in session.exec(
         select(CaixaTimeMovimento).where(CaixaTimeMovimento.time_id == time_id)
     ).all()), 2)
+
+
+def datas_entrega_da_sessao(session: Session, fazenda_id: int | None) -> list[tuple[int, int]]:
+    """Mesmas datas de `parametros.caixa_time_datas_entrega`, lidas pela PRÓPRIA sessão do
+    chamador (sem abrir outra): é o que o pagamento da folha precisa, que está no meio de
+    uma transação e não pode ter uma segunda sessão lendo parâmetros ao lado."""
+    from fazenda.models import ParametroFazenda
+    from fazenda.rules import parametros
+
+    valores = []
+    for chave, padrao in (("caixa_time_entrega_1", "01/06"), ("caixa_time_entrega_2", "01/12")):
+        linha = None
+        if fazenda_id is not None:
+            linha = session.exec(select(ParametroFazenda).where(
+                ParametroFazenda.chave == chave, ParametroFazenda.fazenda_id == fazenda_id)).first()
+        if linha is None:
+            linha = session.exec(select(ParametroFazenda).where(
+                ParametroFazenda.chave == chave, ParametroFazenda.fazenda_id == None)).first()  # noqa: E711
+        valores.append(linha.valor if linha is not None and linha.valor is not None else padrao)
+    return parametros.interpretar_datas_entrega(valores)
+
+
+def resumos_para_recibo(session: Session, fazenda_id: int | None, pessoa_ids: list[int] | None = None) -> dict[int, dict]:
+    """Rodapé do holerite/recibo: por pessoa, o saldo do caixa individual e a parte
+    ESTIMADA em cada caixa do time (proporcional aos dias do período em apuração, sem
+    penalidades — estimativa, não promessa). Só entra quem tem saldo ou participa de
+    algum time com saldo. Lê tudo em lote (movimentos e times da fazenda uma vez)."""
+    from fazenda.models import CaixaMovimento
+
+    query = select(CaixaMovimento)
+    if fazenda_id is not None:
+        query = query.where(CaixaMovimento.fazenda_id == fazenda_id)
+    saldos: dict[int, float] = {}
+    for m in session.exec(query).all():
+        saldos[m.pessoa_id] = round(saldos.get(m.pessoa_id, 0.0) + m.valor, 2)
+
+    inicio, fim, _ = periodo_em_apuracao(date.today(), datas_entrega_da_sessao(session, fazenda_id))
+    query_t = select(CaixaTime).where(CaixaTime.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query_t = query_t.where(CaixaTime.fazenda_id == fazenda_id)
+    partes: dict[int, list[dict]] = {}
+    for t in session.exec(query_t).all():
+        saldo_t = saldo_do_time(session, t.id)
+        if saldo_t <= 0:
+            continue
+        membros = [m for m in membros_do_periodo(session, t, inicio, fim) if m["dias"] > 0]
+        if not membros:
+            continue
+        calc = calcular_partes(saldo_t, [{"pessoa_id": m["pessoa_id"], "dias": m["dias"], "penalidade_pct": 0} for m in membros])
+        for c in calc:
+            partes.setdefault(c["pessoa_id"], []).append({"time": t.nome, "saldo": saldo_t, "parte_estimada": c["parte_final"]})
+
+    alvo = set(pessoa_ids) if pessoa_ids is not None else set(saldos) | set(partes)
+    saida: dict[int, dict] = {}
+    for pid in alvo:
+        saldo = saldos.get(pid, 0.0)
+        times = partes.get(pid, [])
+        if saldo == 0 and not times:
+            continue
+        saida[pid] = {"saldo_individual": saldo, "times": times}
+    return saida
+
+
+def registrar_saida_dos_times(session: Session, pessoa: Pessoa, data_saida: date, fazenda_id: int | None) -> None:
+    """Rescisão: a pessoa deixa os caixas do time na data do desligamento, mas CONTA os
+    dias em que participou (continua no rateio do período, só até a saída). Quem entrava
+    por tipo vira membro por nome já encerrado, para não sumir do rateio ao ser inativado."""
+    query = select(CaixaTime).where(CaixaTime.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(CaixaTime.fazenda_id == fazenda_id)
+    grupos = set(grupos_da_pessoa(pessoa))
+    for t in session.exec(query).all():
+        m = session.exec(select(CaixaTimeMembro).where(
+            CaixaTimeMembro.time_id == t.id, CaixaTimeMembro.pessoa_id == pessoa.id)).first()
+        por_tipo = bool(grupos & {x for x in (t.auto_tipos or "").split(",") if x})
+        if m is None and not por_tipo:
+            continue
+        if m is None:
+            m = CaixaTimeMembro(fazenda_id=fazenda_id, time_id=t.id, pessoa_id=pessoa.id,
+                                entrada=pessoa.data_admissao or data_saida)
+        if m.saida is None or m.saida > data_saida:
+            m.saida = data_saida
+        session.add(m)
+
+
+DIAS_AVISO_RATEIO = 15
+
+
+def rateios_proximos(session: Session, fazenda_id: int | None, hoje: date | None = None,
+                     dias: int = DIAS_AVISO_RATEIO) -> list[dict]:
+    """Caixas do time com saldo cuja próxima data de rateio cai nos próximos `dias` dias
+    e que ainda não têm rascunho aberto — é o que a Agenda lembra de preparar."""
+    from fazenda.models import CaixaRateio
+    from fazenda.rules import parametros
+
+    hoje = hoje or date.today()
+    entrega = proxima_entrega(hoje, parametros.caixa_time_datas_entrega())
+    faltam = (entrega - hoje).days
+    if faltam > dias:
+        return []
+    query = select(CaixaTime).where(CaixaTime.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(CaixaTime.fazenda_id == fazenda_id)
+    saida = []
+    for t in session.exec(query).all():
+        saldo = saldo_do_time(session, t.id)
+        if saldo <= 0:
+            continue
+        rascunho = session.exec(select(CaixaRateio).where(
+            CaixaRateio.time_id == t.id, CaixaRateio.situacao == "rascunho")).first()
+        if rascunho is not None:
+            continue
+        saida.append({"time_id": t.id, "nome": t.nome, "saldo": saldo, "entrega": entrega, "faltam": faltam})
+    return saida
