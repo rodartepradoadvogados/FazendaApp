@@ -86,8 +86,10 @@ function SubNavTabsLinha({ nos, primaria, subNav, pathname, caminho }: {
     const el = listaRef.current;
     el?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ inline: "nearest", block: "nearest" });
     medir();
+    // scrollIntoView termina depois; mede de novo para a seta sumir quando a última aba já está inteira à vista.
+    const t = setTimeout(medir, 250);
     window.addEventListener("resize", medir);
-    return () => window.removeEventListener("resize", medir);
+    return () => { clearTimeout(t); window.removeEventListener("resize", medir); };
   }, [caminho.join("/"), nos.length, medir]);
 
   return (
@@ -97,7 +99,7 @@ function SubNavTabsLinha({ nos, primaria, subNav, pathname, caminho }: {
         onScroll={medir}
         role="tablist"
         style={{
-          display: "flex", gap: primaria ? "0.15rem" : "0.15rem", overflowX: "auto", whiteSpace: "nowrap", scrollbarWidth: "thin",
+          display: "flex", gap: primaria ? "0.15rem" : "0.15rem", overflowX: "auto", whiteSpace: "nowrap", scrollbarWidth: "thin", paddingRight: "0.6rem",
           background: primaria ? undefined : "var(--surface-2)",
           borderTop: primaria ? undefined : "1px solid var(--border)",
         }}
