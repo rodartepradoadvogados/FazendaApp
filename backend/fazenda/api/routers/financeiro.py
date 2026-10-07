@@ -851,6 +851,7 @@ def listar_lancamentos(
             "entregue": c.entregue,
             "parcela_num": c.parcela_num,
             "parcela_total": c.parcela_total,
+            "fatura_id": c.fatura_id,
             "origem": c.origem,
             "itens": itens_por_lancamento.get(c.numero_lancamento or "", []),
             "data_competencia": dc.isoformat() if dc else None,
@@ -3407,6 +3408,17 @@ def _criar_parcelas_diferenca(session: Session, registro: ContaGerencial, parcel
     return novas
 
 
+def _recusar_se_em_fatura(registro: ContaGerencial) -> None:
+    """Nota de fatura de fornecedor só é paga/estornada pela PARCELA da fatura (baixa todas as notas de uma vez);
+    baixar uma nota isolada deixaria a parcela da fatura meio paga."""
+    if getattr(registro, "fatura_id", None):
+        raise HTTPException(
+            status_code=409,
+            detail=f"A nota {registro.numero_lancamento or registro.id} faz parte de uma fatura de fornecedor. "
+            "Pague ou estorne pela parcela da fatura (Contas › Faturas de fornecedor), ou tire a nota da fatura antes.",
+        )
+
+
 @router.put("/lancamentos/{lancamento_id}/pagar")
 def pagar_lancamento(
     lancamento_id: int, dados: PagamentoIn, session: Session = Depends(get_session),
@@ -3417,6 +3429,7 @@ def pagar_lancamento(
     registro = session.get(ContaGerencial, lancamento_id)
     if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+    _recusar_se_em_fatura(registro)
 
     if dados.forma_pagamento == "credito" and not dados.data_vencimento_cartao:
         raise HTTPException(status_code=400, detail="Informe a data de vencimento do cartão")
@@ -3471,6 +3484,11 @@ def baixa_lote(
     if dados.forma_pagamento == "credito" and not dados.data_vencimento_cartao:
         raise HTTPException(status_code=400, detail="Informe a data de vencimento do cartão")
 
+    for lancamento_id in dados.lancamento_ids:
+        _r = session.get(ContaGerencial, lancamento_id)
+        if _r and (fazenda_id is None or _r.fazenda_id == fazenda_id):
+            _recusar_se_em_fatura(_r)
+
     baixados = []
     nao_encontrados = []
     for lancamento_id in dados.lancamento_ids:
@@ -3512,6 +3530,11 @@ def baixa_lote_detalhada(
     for it in dados.itens:
         if it.forma_pagamento == "credito" and not it.data_vencimento_cartao:
             raise HTTPException(status_code=400, detail=f"Informe o vencimento do cartão do lançamento {it.lancamento_id}")
+
+    for it in dados.itens:
+        _r = session.get(ContaGerencial, it.lancamento_id)
+        if _r and (fazenda_id is None or _r.fazenda_id == fazenda_id):
+            _recusar_se_em_fatura(_r)
 
     # Validação de parcelas_diferenca ANTES de mexer em qualquer registro —
     # mesmo espírito da validação de cartão acima: um item inválido não pode
@@ -3807,6 +3830,7 @@ def estornar_lancamento(
     if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Lançamento não encontrado")
 
+    _recusar_se_em_fatura(registro)
     if registro.data_pagamento is None and registro.valor_pago is None:
         raise HTTPException(status_code=400, detail="Este lançamento não está baixado — não há pagamento a estornar.")
 

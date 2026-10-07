@@ -401,3 +401,19 @@ class TestIsolamento:
         assert c2.post(f"/financeiro/faturas/{fid}/pagar", json={"parcela": 1, "data_pagamento": "2026-11-10", "forma_pagamento": "pix"}).status_code == 404
         assert c2.delete(f"/financeiro/faturas/{fid}").status_code == 404
         assert c2.get("/financeiro/faturas").json() == []
+
+
+
+class TestNotaDeFaturaNaoEBaixadaSozinha:
+    def test_pagar_baixa_lote_e_estornar_isolados_sao_recusados(self, ambiente):
+        c, engine = ambiente
+        f = _abrir(c)
+        r = _notas(c, f["id"], _nota("9001", 5, 100.0))
+        assert r.status_code == 201, r.text
+        cid = r.json()["ids_contas"][0]
+        corpo = {"data_pagamento": "2026-10-20", "valor_pago": 100.0, "forma_pagamento": "pix", "conta_bancaria": "BB"}
+        assert c.put(f"/financeiro/lancamentos/{cid}/pagar", json=corpo).status_code == 409
+        assert c.put("/financeiro/lancamentos/baixa-lote", json={
+            "lancamento_ids": [cid], "data_pagamento": "2026-10-20", "forma_pagamento": "pix", "conta_bancaria": "BB"}).status_code == 409
+        assert c.post(f"/financeiro/lancamentos/{cid}/estornar", json={}).status_code == 409
+        assert all(l.data_pagamento is None for l in _linhas(engine, fatura_id=f["id"]))
