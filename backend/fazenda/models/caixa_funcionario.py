@@ -39,6 +39,8 @@ class CaixaMovimento(SQLModel, table=True):
     numero_recibo: Optional[str] = None
     # Retenção em folha: a folha (FolhaPagamento.id) cujo pagamento gerou este movimento.
     folha_id: Optional[int] = Field(default=None, index=True)
+    # Retenção no pagamento de quem não é CLT (parcela de contrato/empreita, diária): a conta paga que a gerou.
+    origem_conta_id: Optional[int] = Field(default=None, index=True)
     # Rateio do PL: o rateio (CaixaRateio.id) cujo crédito gerou este movimento.
     rateio_id: Optional[int] = Field(default=None, index=True)
     # Estorno: aponta o movimento estornado.
@@ -127,6 +129,7 @@ class CaixaTimeMovimento(SQLModel, table=True):
     numero_lancamento: Optional[str] = None
     rateio_id: Optional[int] = Field(default=None, index=True)
     folha_id: Optional[int] = Field(default=None, index=True)  # retenção de folha com destino time
+    origem_conta_id: Optional[int] = Field(default=None, index=True)  # retenção de pagamento (não-CLT) com destino time
     estorna_id: Optional[int] = Field(default=None, foreign_key="caixa_time_movimento.id", index=True)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)

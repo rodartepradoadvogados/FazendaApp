@@ -25,7 +25,7 @@ from fazenda.models import (
     LancamentoAnexo, LancamentoItem, LancamentoRecorrente, LoteEstoque, ManutencaoPatrimonio, MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, Sanidade,
     SeedFlag, Servico, TipoDocumento, TransferenciaContas, Usuario, ValeAvulso, ValeFuncionario,
 )
-from fazenda.rules import estoque_baixa
+from fazenda.rules import caixa_funcionario, estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.vale_item import ajuste_vale_por_conta, eh_item_de_vale, sem_itens_de_vale
 from fazenda.rules.email import enviar_email
@@ -406,9 +406,18 @@ class ParcelaDiferencaIn(BaseModel):
     valor: float
 
 
+class RetencaoCaixaIn(BaseModel):
+    """Retenção do caixa do funcionário NESTE pagamento (quem não é CLT). `modo`: "percentual" (livre,
+    % do valor pago) ou "valor" (nominal, R$). Só administrador; exige o combinado de retenção autorizado."""
+    modo: str
+    valor: float
+    confirmar_acima_teto: bool = False
+
+
 class PagamentoIn(BaseModel):
     data_pagamento: date
     valor_pago: float
+    retencao_caixa: Optional[RetencaoCaixaIn] = None
     conta_bancaria: Optional[str] = None
     numero_documento_pagamento: Optional[str] = None
     forma_pagamento: Optional[str] = None
@@ -3422,7 +3431,7 @@ def _recusar_se_em_fatura(registro: ContaGerencial) -> None:
 @router.put("/lancamentos/{lancamento_id}/pagar")
 def pagar_lancamento(
     lancamento_id: int, dados: PagamentoIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), user: Usuario = Depends(get_current_user),
 ) -> dict:
     """Dá baixa (marca como pago/recebido) numa conta a pagar/a receber."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
@@ -3459,6 +3468,19 @@ def pagar_lancamento(
     novas: list[ContaGerencial] = []
     if dados.parcelas_diferenca:
         novas = _criar_parcelas_diferenca(session, registro, dados.parcelas_diferenca)
+
+    if dados.retencao_caixa is not None and dados.retencao_caixa.valor > 0:
+        # Retenção do caixa do funcionário (parcela de contrato/empreita): ver rules/caixa_funcionario.
+        if user.papel != "admin":
+            raise HTTPException(status_code=403, detail="Só o administrador retém no pagamento.")
+        pessoa_id = caixa_funcionario.pessoa_da_conta_paga(session, registro)
+        if pessoa_id is None:
+            raise HTTPException(status_code=400, detail="Só parcela de contrato ou empreita aceita retenção do caixa.")
+        retido = caixa_funcionario.valor_retido_do_pagamento(
+            session, pessoa_id, registro.fazenda_id, dados.valor_pago, dados.retencao_caixa.modo, dados.retencao_caixa.valor,
+            dados.data_pagamento, dados.retencao_caixa.confirmar_acima_teto)
+        caixa_funcionario.aplicar_retencao_no_pagamento(
+            session, pessoa_id, registro, retido, dados.data_pagamento, user.id, registro.descricao or "parcela")
 
     session.commit()
     session.refresh(registro)
@@ -3817,7 +3839,7 @@ class EstornoIn(BaseModel):
 @router.post("/lancamentos/{lancamento_id}/estornar")
 def estornar_lancamento(
     lancamento_id: int, dados: EstornoIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), user: Usuario = Depends(get_current_user),
 ) -> dict:
     """
     Reverte a baixa (pagamento/recebimento) de um lançamento — o lançamento
@@ -3898,6 +3920,10 @@ def estornar_lancamento(
         for r in remanescentes:
             r.parcela_total = novo_total
             session.add(r)
+
+    # Retenção do caixa feita neste pagamento (quem não é CLT): estorna e devolve o valor à conta.
+    # Recusa (409) se o dinheiro retido já foi sacado ou repartido.
+    caixa_funcionario.reverter_retencao_do_pagamento(session, registro, getattr(user, "id", None))
 
     # Reversão do que a baixa fez (`pagar_lancamento`/`baixa_lote`/
     # `baixa_lote_detalhada`), ao contrário.

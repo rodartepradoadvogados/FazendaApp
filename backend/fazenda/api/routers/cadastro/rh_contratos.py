@@ -23,8 +23,8 @@ from fazenda.models import (
     DiariaDia, DiariaPagamento, Empreitada, EmpreitadaEtapa, EmpreitadaParcela, FeriasFuncionario, LancamentoAnexo,
     ParametroDiariaPadrao, Pessoa, Usuario, ValeAvulso, ValeAvulsoAbatimento,
 )
-from fazenda.api.routers.financeiro import _proximo_numero_lancamento, rotulo_conta_corrente
-from fazenda.rules import holerite
+from fazenda.api.routers.financeiro import RetencaoCaixaIn, _proximo_numero_lancamento, rotulo_conta_corrente
+from fazenda.rules import caixa_funcionario, holerite
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
 
@@ -1056,6 +1056,8 @@ class DiariaEditIn(BaseModel):
 class DiariaPagamentoIn(BaseModel):
     data_pagamento: date
     valor: float
+    # Retenção do caixa do funcionário neste pagamento (percentual livre ou valor nominal). Só administrador.
+    retencao_caixa: RetencaoCaixaIn | None = None
     observacao: str | None = None
     # Conta bancária de onde sai o pagamento — OPCIONAL (ver
     # _resolver_conta_corrente em rh_folha.py).
@@ -1734,13 +1736,20 @@ def registrar_pagamento_diaria(
 
     conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
     numero_lancamento = _proximo_numero_lancamento(session, dados.data_pagamento.year)
+    retido = 0.0
+    if dados.retencao_caixa is not None and dados.retencao_caixa.valor > 0:
+        if user.papel != "admin":
+            raise HTTPException(status_code=403, detail="Só o administrador retém no pagamento.")
+        retido = caixa_funcionario.valor_retido_do_pagamento(
+            session, diaria.pessoa_id, fazenda_id, dados.valor, dados.retencao_caixa.modo, dados.retencao_caixa.valor,
+            dados.data_pagamento, dados.retencao_caixa.confirmar_acima_teto)
     session.add(DiariaPagamento(
         diaria_id=diaria_id, data_pagamento=dados.data_pagamento, valor=dados.valor,
         observacao=dados.observacao, numero_lancamento_gerado=numero_lancamento,
         conta_corrente_id=conta_corrente.id if conta_corrente else None, fazenda_id=fazenda_id,
     ))
     # Pagamento de diária já nasce quitado — reflete direto em Contas Pagas/relatórios.
-    session.add(ContaGerencial(
+    conta_diaria = ContaGerencial(
         numero_lancamento=numero_lancamento,
         descricao=f"Diária — {pessoa.nome}",
         data_vencimento=dados.data_pagamento,
@@ -1757,7 +1766,12 @@ def registrar_pagamento_diaria(
         forma_pagamento=(dados.forma_pagamento or "").strip().lower() or None,
         numero_documento_pagamento=(dados.numero_documento_pagamento or "").strip() or None,
         fazenda_id=fazenda_id,
-    ))
+    )
+    session.add(conta_diaria)
+    if retido > 0:
+        # O pagamento da diária continua abatendo o saldo devedor pelo BRUTO; a conta paga vale o líquido.
+        caixa_funcionario.aplicar_retencao_no_pagamento(
+            session, diaria.pessoa_id, conta_diaria, retido, dados.data_pagamento, user.id, "diária")
     session.commit()
     # `numero_lancamento_gerado` no topo (fora do resumo) — é o que a tela
     # usa pra anexar o comprovante logo em seguida via o mecanismo genérico

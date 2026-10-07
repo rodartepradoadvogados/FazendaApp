@@ -3205,11 +3205,17 @@ export async function registrarPagamentoDiaria(diariaId: number, dados: {
   confirmar_excedente?: boolean;
   forma_pagamento?: string | null;
   numero_documento_pagamento?: string | null;
+  retencao_caixa?: RetencaoCaixaIn;
 }): Promise<{ numero_lancamento_gerado: string } & Record<string, any>> {
   const res = await authFetch(`${API}/cadastro/diarias/${diariaId}/pagamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar pagamento"); }
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(mensagemErroApi(d.detail) || (typeof d.detail === "object" ? d.detail?.mensagem : null) || "Erro ao registrar pagamento");
+    err.detail = d.detail; err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 
@@ -7782,9 +7788,28 @@ export async function gerarLancamentoRecorrente(modeloId: number, dados: GerarLa
   return res.json();
 }
 
+/** Retenção do caixa do funcionário NESTE pagamento (quem não é CLT): percentual livre ou valor nominal. */
+export type RetencaoCaixaIn = { modo: "percentual" | "valor"; valor: number; confirmar_acima_teto?: boolean };
+export type RetencaoPagamentoOpcoes = {
+  disponivel: boolean; motivo: string | null; pessoa: string | null;
+  forma_combinada?: "fixo" | "percentual"; valor_combinado?: number;
+  percentual_sugerido?: number; valor_sugerido?: number;
+  teto?: number | null; acumulado?: number; teto_restante?: number | null;
+  destino?: string; termo_pendente?: boolean;
+};
+export async function fetchOpcoesRetencaoPagamento(p: { pessoaId?: number; lancamentoId?: number; valor: number; data?: string }): Promise<RetencaoPagamentoOpcoes> {
+  const q = new URLSearchParams({ valor: String(p.valor) });
+  if (p.pessoaId) q.set("pessoa_id", String(p.pessoaId));
+  if (p.lancamentoId) q.set("lancamento_id", String(p.lancamentoId));
+  if (p.data) q.set("data", p.data);
+  const res = await authFetch(`${API}/cadastro/caixa-funcionarios/retencao-opcoes?${q}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`retencao-opcoes ${res.status}`);
+  return res.json();
+}
 export async function marcarPagoFinanceiro(id: number, dados: {
   data_pagamento: string; valor_pago: number; conta_bancaria?: string; numero_documento_pagamento?: string;
   forma_pagamento?: string; data_vencimento_cartao?: string;
+  retencao_caixa?: RetencaoCaixaIn;
   // Diferença entre valor_pago e o valor do lançamento dividida em novas
   // parcelas do mesmo lançamento, em vez de virar desconto/acréscimo — ver
   // PUT /financeiro/lancamentos/{id}/pagar.
@@ -7803,7 +7828,12 @@ export async function marcarPagoFinanceiro(id: number, dados: {
     headers: { "Content-Type": "application/json", "Idempotency-Key": chave },
     body: JSON.stringify(dados),
   }));
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa"); }
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(mensagemErroApi(d.detail) || (typeof d.detail === "object" ? d.detail?.mensagem : null) || "Erro ao dar baixa");
+    err.detail = d.detail; err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 

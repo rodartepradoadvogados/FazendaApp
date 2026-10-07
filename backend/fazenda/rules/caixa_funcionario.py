@@ -205,14 +205,16 @@ def _partes_da_retencao(session: Session, folha, valor: float) -> tuple[float, f
     return round(valor - parte_time, 2), parte_time, t.id
 
 
-def _conta_da_retencao(session: Session, folha, pessoa, valor: float, data: date, rotulo: str) -> tuple[ContaGerencial, str]:
+def _conta_da_retencao(
+    session: Session, folha, pessoa, valor: float, data: date, rotulo: str, titulo: str = "Retenção em folha",
+) -> tuple[ContaGerencial, str]:
     from fazenda.api.routers.financeiro import _proximo_numero_lancamento
 
     numero = _proximo_numero_lancamento(session, data.year)
     nome = pessoa.nome if pessoa else "—"
     conta = ContaGerencial(
         numero_lancamento=numero,
-        descricao=f"Retenção em folha{rotulo} · {nome} · competência {folha.competencia}"[:500],
+        descricao=f"{titulo}{rotulo} · {nome} · competência {folha.competencia}"[:500],
         data_vencimento=data, data_competencia=data.replace(day=1),
         fornecedor_cliente=nome, tipo_documento=TIPO_DOC_ENTRADA, centro_custo="Pecuária Leiteira",
         valor_total=valor, parcela_num=1, parcela_total=1, tipo="despesa", origem="auto",
@@ -322,3 +324,174 @@ def termos_pendentes(session: Session, fazenda_id: int | None) -> list[dict]:
         if termo_pendente(cfg, cfg.pessoa_id in com_termo):
             saida.append({"pessoa_id": pessoa.id, "nome": pessoa.nome, "desde": cfg.autorizada_em or cfg.inicio})
     return sorted(saida, key=lambda x: x["nome"])
+
+
+# ---------------------------------------------------------------------------
+# Retenção no PAGAMENTO de quem não é CLT (parcela de contrato/empreita, diária)
+#
+# Quem não tem folha não tem desconto automático: a retenção é decidida na janela do próprio
+# pagamento, a partir do combinado da pessoa (`CaixaRetencao`, que continua exigindo a marca de
+# autorização e a vigência). O combinado só SUGERE: o administrador pode trocar por um percentual
+# livre ou por um valor nominal. Contabilidade igual à da folha: a conta paga passa a valer o LÍQUIDO
+# que sai do caixa e o retido vira despesa baixada ("Caixa do funcionário") — o gasto total não muda.
+# ---------------------------------------------------------------------------
+from dataclasses import dataclass
+
+
+@dataclass
+class _RefPagamento:
+    """O que `_partes_da_retencao`/`_conta_da_retencao` pedem de uma folha, para um pagamento avulso."""
+    pessoa_id: int
+    fazenda_id: int | None
+    competencia: str
+    id: int | None = None
+
+
+def pessoa_da_conta_paga(session: Session, conta: ContaGerencial) -> int | None:
+    """A pessoa dona de uma parcela de contrato/empreita (pelo número do lançamento gerado)."""
+    from fazenda.models import Contrato, ContratoParcela, Empreitada, EmpreitadaParcela
+
+    if not conta.numero_lancamento:
+        return None
+    for Parcela, Pai, fk in ((ContratoParcela, Contrato, "contrato_id"), (EmpreitadaParcela, Empreitada, "empreitada_id")):
+        q = select(Parcela).where(Parcela.numero_lancamento_gerado == conta.numero_lancamento)
+        if conta.fazenda_id is not None:
+            q = q.where(Parcela.fazenda_id == conta.fazenda_id)
+        for parcela in session.exec(q).all():
+            pai = session.get(Pai, getattr(parcela, fk))
+            if pai is not None:
+                return pai.pessoa_id
+    return None
+
+
+def opcoes_retencao_pagamento(
+    session: Session, pessoa_id: int, fazenda_id: int | None, valor: float, data: date | None = None,
+) -> dict:
+    """Para a janela de pagamento: se dá para reter, a sugestão (% do combinado) e o que falta do teto."""
+    data = data or date.today()
+    pessoa = session.get(Pessoa, pessoa_id)
+    cfg = retencao_da_pessoa(session, pessoa_id, fazenda_id)
+    base = {"disponivel": False, "pessoa": pessoa.nome if pessoa else None, "motivo": None}
+    if pessoa is None or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
+        return {**base, "motivo": "Pessoa não encontrada."}
+    if cfg is None or not cfg.autorizada:
+        return {**base, "motivo": "Esta pessoa não tem retenção autorizada. Cadastre o combinado no Caixa dos funcionários."}
+    if not retencao_vigente(cfg, data.strftime("%Y-%m")):
+        return {**base, "motivo": "O combinado de retenção está pausado ou fora da vigência."}
+    pct = float(cfg.valor or 0) if cfg.forma == "percentual" else (round(float(cfg.valor or 0) / valor * 100, 2) if valor > 0 else 0.0)
+    acumulado = acumulado_retido(session, pessoa_id, fazenda_id)
+    return {
+        "disponivel": True, "pessoa": pessoa.nome, "motivo": None,
+        "forma_combinada": cfg.forma, "valor_combinado": float(cfg.valor or 0),
+        # O percentual SUGERIDO é o do combinado (ou o equivalente do valor fixo sobre este pagamento).
+        "percentual_sugerido": round(min(pct, 100.0), 2),
+        "valor_sugerido": round(valor * min(pct, 100.0) / 100, 2) if cfg.forma == "percentual" else round(float(cfg.valor or 0), 2),
+        "teto": cfg.teto, "acumulado": acumulado,
+        "teto_restante": round(cfg.teto - acumulado, 2) if cfg.teto is not None else None,
+        "destino": cfg.destino, "termo_pendente": termo_pendente(cfg, termo_anexado(session, pessoa_id, fazenda_id)),
+    }
+
+
+def valor_retido_do_pagamento(
+    session: Session, pessoa_id: int, fazenda_id: int | None, bruto: float, modo: str, valor: float,
+    data: date, confirmar_acima_teto: bool = False,
+) -> float:
+    """Valida e calcula o retido: `modo` "percentual" (livre, % do pago) ou "valor" (nominal em R$).
+    Exige combinado autorizado e em vigor; nunca retém tudo; acima do teto combinado só com confirmação."""
+    if modo not in ("percentual", "valor"):
+        raise HTTPException(status_code=400, detail="Escolha retenção por percentual ou por valor.")
+    if valor <= 0:
+        return 0.0
+    op = opcoes_retencao_pagamento(session, pessoa_id, fazenda_id, bruto, data)
+    if not op["disponivel"]:
+        raise HTTPException(status_code=409, detail=op["motivo"] or "Retenção indisponível para esta pessoa.")
+    if modo == "percentual" and valor > 100:
+        raise HTTPException(status_code=400, detail="O percentual da retenção não pode passar de 100%.")
+    retido = round(bruto * valor / 100, 2) if modo == "percentual" else round(valor, 2)
+    if retido >= bruto:
+        raise HTTPException(status_code=400, detail="A retenção precisa ser menor que o valor pago.")
+    teto_restante = op["teto_restante"]
+    if teto_restante is not None and retido > teto_restante + 0.001 and not confirmar_acima_teto:
+        raise HTTPException(status_code=409, detail={
+            "codigo": "acima_do_teto",
+            "mensagem": f"A retenção de R$ {retido:.2f} passa do teto combinado (restam R$ {max(teto_restante, 0):.2f}). Confirme para reter assim mesmo.",
+            "retido": retido, "teto_restante": teto_restante,
+        })
+    return retido
+
+
+def aplicar_retencao_no_pagamento(
+    session: Session, pessoa_id: int, conta: ContaGerencial, retido: float, data: date, usuario_id: int | None,
+    titulo: str,
+) -> None:
+    """Grava no caixa da pessoa (e/ou do time, conforme o combinado) o que foi retido deste pagamento e
+    deixa a `conta` valendo o líquido. Não commita. `conta` já deve estar com data_pagamento/valor_pago."""
+    from fazenda.models import CaixaTimeMovimento
+
+    if retido <= 0:
+        return
+    if conta.id is None:
+        session.flush()
+    pessoa = session.get(Pessoa, pessoa_id)
+    ref = _RefPagamento(pessoa_id=pessoa_id, fazenda_id=conta.fazenda_id, competencia=data.strftime("%Y-%m"))
+    ind, para_time, time_id = _partes_da_retencao(session, ref, retido)
+    motivo = f"Retenção no pagamento · {titulo} {conta.numero_lancamento or ''}".strip()
+    if ind > 0:
+        c, numero = _conta_da_retencao(session, ref, pessoa, ind, data, "", "Retenção no pagamento")
+        session.add(CaixaMovimento(
+            fazenda_id=conta.fazenda_id, pessoa_id=pessoa_id, tipo="retencao", valor=ind, data=data, motivo=motivo,
+            lancamento_id=c.id, numero_lancamento=numero, origem_conta_id=conta.id, usuario_id=usuario_id,
+        ))
+    if para_time > 0:
+        c, numero = _conta_da_retencao(session, ref, pessoa, para_time, data, " (caixa do time)", "Retenção no pagamento")
+        session.add(CaixaTimeMovimento(
+            fazenda_id=conta.fazenda_id, time_id=time_id, tipo="retencao", valor=para_time, data=data,
+            motivo=f"{motivo} · {pessoa.nome if pessoa else '—'}", lancamento_id=c.id, numero_lancamento=numero,
+            origem_conta_id=conta.id, usuario_id=usuario_id,
+        ))
+    # A conta paga passa a valer o líquido (o retido virou despesa própria acima): o gasto total é o mesmo.
+    conta.valor_total = round((conta.valor_total or 0) - retido, 2)
+    conta.valor_pago = round((conta.valor_pago or 0) - retido, 2)
+    session.add(conta)
+    session.flush()
+
+
+def reverter_retencao_do_pagamento(session: Session, conta: ContaGerencial, usuario_id: int | None) -> float:
+    """No estorno do pagamento: estorna o que ele reteve e devolve o valor à conta. Recusa (409) se o
+    dinheiro retido já foi sacado ou repartido. Devolve o total devolvido à conta."""
+    from fazenda.models import CaixaTimeMovimento
+    from fazenda.rules import caixa_time as regras_time
+
+    if conta.id is None:
+        return 0.0
+    devolvido = 0.0
+    movs = session.exec(select(CaixaMovimento).where(
+        CaixaMovimento.origem_conta_id == conta.id, CaixaMovimento.tipo == "retencao")).all()
+    if movs:
+        estornados = {m.estorna_id for m in session.exec(select(CaixaMovimento).where(
+            CaixaMovimento.pessoa_id == movs[0].pessoa_id, CaixaMovimento.tipo == "estorno")).all() if m.estorna_id}
+        for m in movs:
+            if m.id in estornados:
+                continue
+            try:
+                estornar_movimento(session, m, "pagamento estornado", usuario_id, conta.fazenda_id)
+            except HTTPException as exc:
+                if exc.status_code == 409 and "retirada" in str(exc.detail):
+                    raise HTTPException(status_code=409, detail="O valor retido neste pagamento já foi retirado do caixa do "
+                                        "funcionário. Estorne a retirada antes de estornar o pagamento.") from None
+                raise
+            devolvido += m.valor
+    tmovs = session.exec(select(CaixaTimeMovimento).where(
+        CaixaTimeMovimento.origem_conta_id == conta.id, CaixaTimeMovimento.tipo == "retencao")).all()
+    if tmovs:
+        tj = {m.estorna_id for m in session.exec(select(CaixaTimeMovimento).where(
+            CaixaTimeMovimento.tipo == "estorno", CaixaTimeMovimento.time_id.in_({m.time_id for m in tmovs}))).all() if m.estorna_id}
+        for m in tmovs:
+            if m.id in tj:
+                continue
+            regras_time.estornar_movimento_time(session, m, "pagamento estornado", usuario_id, conta.fazenda_id)
+            devolvido += m.valor
+    if devolvido:
+        conta.valor_total = round((conta.valor_total or 0) + devolvido, 2)
+        session.add(conta)
+    return round(devolvido, 2)

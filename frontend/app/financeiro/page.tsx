@@ -44,6 +44,7 @@ import { ReciboModal } from "@/components/ReciboModal";
 import { Modal } from "@/components/Modal";
 import { FaturasView } from "@/components/FaturasView";
 import { ModalInserirEmFatura } from "@/components/ModalInserirEmFatura";
+import { RetencaoCaixaCampos } from "@/components/RetencaoCaixaCampos";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { ModalDivididoDocumento } from "@/components/ModalDivididoDocumento";
 import { AvisoSalvo } from "@/components/AvisoSalvo";
@@ -4119,6 +4120,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   const [notaId, setNotaId] = useState<number | null>(null);
   const [dataPagamento, setDataPagamento] = useState(new Date().toISOString().slice(0, 10));
   const [valorPago, setValorPago] = useState("");
+  const [retencaoCaixa, setRetencaoCaixa] = useState<import("@/lib/api").RetencaoCaixaIn | null>(null);
   const [contaBancaria, setContaBancaria] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("");
   const [dataVencimentoCartao, setDataVencimentoCartao] = useState("");
@@ -4245,14 +4247,22 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
     }
     setSalvando(true); setMsg(null);
     try {
-      await marcarPagoFinanceiro(notaSelecionada.id, {
+      const corpo = {
         data_pagamento: dataPagamento, valor_pago: Number(valorPago) || 0,
         conta_bancaria: contaBancaria || undefined, numero_documento_pagamento: numeroDocPagamento || undefined,
         forma_pagamento: formaPagamento || undefined, data_vencimento_cartao: formaPagamento === "credito" ? dataVencimentoCartao : undefined,
         parcelas_diferenca: diferenca !== 0 && modoDiferenca === "parcelar"
           ? parcelasDiferenca.map((p) => ({ data_vencimento: p.data_vencimento, valor: Number(p.valor) || 0 }))
           : undefined,
-      });
+      };
+      try {
+        await marcarPagoFinanceiro(notaSelecionada.id, { ...corpo, retencao_caixa: retencaoCaixa || undefined });
+      } catch (e: any) {
+        // Retenção acima do teto combinado: pergunta e, se confirmado, repete (a baixa ainda não foi gravada).
+        if (e.status === 409 && e.detail?.codigo === "acima_do_teto" && retencaoCaixa && window.confirm(String(e.detail.mensagem))) {
+          await marcarPagoFinanceiro(notaSelecionada.id, { ...corpo, retencao_caixa: { ...retencaoCaixa, confirmar_acima_teto: true } });
+        } else throw e;
+      }
       setMsg({ tipo: "sucesso", texto: `${tipo === "receita" ? "Recebimento" : "Pagamento"} registrado com sucesso.` });
       setNotaId(null);
       carregar();
@@ -4397,6 +4407,9 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
                 <input style={selStyleLote} value={numeroDocPagamento} onChange={(e) => setNumeroDocPagamento(e.target.value)} /></div>
             )}
           </div>
+          {tipo === "despesa" && (
+            <RetencaoCaixaCampos key={notaSelecionada.id} lancamentoId={notaSelecionada.id} bruto={Number(valorPago) || 0} data={dataPagamento} onChange={setRetencaoCaixa} />
+          )}
           {diferenca !== 0 && (
             <div style={{ marginTop: "0.7rem", padding: "0.7rem 0.8rem", borderRadius: "var(--r-sm)", background: "var(--surface-2)", border: "1px solid var(--border)" }}>
               <p style={{ fontSize: "0.78rem", margin: "0 0 0.5rem", color: diferenca < 0 ? "var(--green-light)" : "var(--amber)" }}>
