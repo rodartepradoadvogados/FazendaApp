@@ -65,6 +65,7 @@ export default function CaixaFuncionariosView() {
   const [selecionados, setSelecionados] = useState<Set<number>>(new Set());
   const [pessoaAberta, setPessoaAberta] = useState<number | null>(null);
   const [entrada, setEntrada] = useState<{ pessoaIds: number[] } | null>(null);
+  const [versao, setVersao] = useState(0); // recarrega o caixa aberto depois de uma entrada
   const [aba, setAba] = useState<"individual" | "time">("individual");
   const [retencoes, setRetencoes] = useState<Record<number, CaixaRetencaoDados>>({});
 
@@ -82,7 +83,15 @@ export default function CaixaFuncionariosView() {
   if (!admin) return <p style={{ color: "var(--text-muted)" }}>O caixa dos funcionários é restrito ao administrador.</p>;
 
   if (pessoaAberta != null) {
-    return <CaixaIndividual pessoaId={pessoaAberta} onVoltar={() => { setPessoaAberta(null); carregar(); }} onEntrada={() => setEntrada({ pessoaIds: [pessoaAberta] })} />;
+    return (
+      <>
+        <CaixaIndividual key={versao} pessoaId={pessoaAberta} onVoltar={() => { setPessoaAberta(null); carregar(); }} onEntrada={() => setEntrada({ pessoaIds: [pessoaAberta] })} />
+        {entrada && (
+          <EntradaModal pessoas={linhas || []} inicial={entrada.pessoaIds} onClose={() => setEntrada(null)}
+            onFeito={() => { setEntrada(null); setVersao((v) => v + 1); carregar(); }} />
+        )}
+      </>
+    );
   }
 
   const alternar = (id: number) => setSelecionados((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -95,9 +104,11 @@ export default function CaixaFuncionariosView() {
           <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Controle Financeiro · Ações</div>
           <h2 style={{ margin: 0, fontSize: "1.05rem" }}>Caixa dos funcionários</h2>
         </div>
-        <button type="button" className="btn-primary" onClick={() => setEntrada({ pessoaIds: Array.from(selecionados) })}>
-          <Plus size={14} /> Lançar entrada
-        </button>
+        {aba === "individual" && (
+          <button type="button" className="btn-primary" onClick={() => setEntrada({ pessoaIds: Array.from(selecionados) })}>
+            <Plus size={14} /> Lançar entrada
+          </button>
+        )}
       </div>
       <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", maxWidth: "75ch", marginBottom: "0.8rem" }}>
         Saldo a favor de cada colaborador, que a fazenda guarda para ele. A entrada vira despesa de pessoal no Financeiro; a retirada
@@ -191,12 +202,13 @@ function CaixaIndividual({ pessoaId, onVoltar, onEntrada }: { pessoaId: number; 
   const [estornando, setEstornando] = useState<CaixaMovimentoItem | null>(null);
   const [recibo, setRecibo] = useState<LancamentoRecibo | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
+  const [notaRecibo, setNotaRecibo] = useState<string | undefined>(undefined);
 
   const carregar = () => fetchCaixaFuncionario(pessoaId).then((d) => { setDet(d); setErro(null); }).catch((e) => setErro(e.message));
   useEffect(() => { carregar(); }, [pessoaId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function abrirRecibo(m: CaixaMovimentoItem) {
-    try { setRecibo(reciboDe(await fetchReciboCaixa(pessoaId, m.id))); }
+    try { const r = await fetchReciboCaixa(pessoaId, m.id); setNotaRecibo(notaDeSaldo(r)); setRecibo(reciboDe(r)); }
     catch (e: any) { setErro(e.message); }
   }
   async function extratoPdf() {
@@ -283,13 +295,13 @@ function CaixaIndividual({ pessoaId, onVoltar, onEntrada }: { pessoaId: number; 
       {retirando && (
         <RetiradaModal pessoaNome={det.pessoa.nome} grupos={det.pessoa.grupos} saldo={det.saldo} pessoaId={pessoaId}
           onClose={() => setRetirando(false)}
-          onFeita={(r) => { setRetirando(false); setAviso(`Retirada registrada · recibo ${r.movimento.numero_recibo}`); setRecibo(reciboDe(r)); carregar(); }} />
+          onFeita={(r) => { setRetirando(false); setAviso(`Retirada registrada · recibo ${r.movimento.numero_recibo}`); setNotaRecibo(notaDeSaldo(r)); setRecibo(reciboDe(r)); carregar(); }} />
       )}
       {estornando && (
         <EstornoModal movimento={estornando} onClose={() => setEstornando(null)}
           onFeito={() => { setEstornando(null); setAviso("Estorno registrado."); carregar(); }} pessoaId={pessoaId} />
       )}
-      {recibo && <ReciboModal lanc={recibo} onClose={() => setRecibo(null)} />}
+      {recibo && <ReciboModal lanc={recibo} nota={notaRecibo} semEmail onClose={() => setRecibo(null)} />}
     </div>
   );
 }
@@ -437,6 +449,8 @@ function RetencaoPainel({ pessoaId, onMudou }: { pessoaId: number; onMudou: () =
     </div>
   );
 }
+
+const notaDeSaldo = (r: CaixaRecibo) => `Saldo anterior ${formatBRL(r.saldo_anterior)} · saldo após a retirada ${formatBRL(r.saldo_depois)}.`;
 
 /** Recibo de retirada no formato do ReciboModal (PDF/e-mail), com o saldo antes e depois na descrição. */
 function reciboDe(r: CaixaRecibo): LancamentoRecibo {

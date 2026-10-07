@@ -33,6 +33,7 @@ from fazenda.api.routers import (
     baixas,
     cadastro,
     cartao_credito,
+    faturas_fornecedor,
     central_documentos,
     central_protocolos,
     chamados,
@@ -939,6 +940,7 @@ app.include_router(filtros_salvos.router, dependencies=_protegido)
 # — sem essa trava adicional, ele conseguiria escrever em qualquer endpoint
 # destes 4 routers, não só ler (ver fazenda/auth.py::bloquear_escrita_contador).
 app.include_router(financeiro.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
+app.include_router(faturas_fornecedor.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 app.include_router(cartao_credito.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 app.include_router(relatorio_custo_hectare.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 app.include_router(relatorio_custo_producao.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)

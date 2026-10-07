@@ -2361,7 +2361,7 @@ export async function excluirPessoa(id: number) {
 export const CATEGORIAS_PESSOA_ANEXO = [
   "RG", "CPF", "Carteira de trabalho", "Ficha de registro",
   "Contrato de trabalho por prazo indeterminado", "Contrato de trabalho por prazo determinado",
-  "Contrato de empreita", "Holerite", "Comprovante de pagamento", "Comprovante de vale", "Termo de retenção do caixa",
+  "Contrato de empreita", "Holerite", "Comprovante de pagamento", "Comprovante de vale", "Termo de retenção do caixa", "Documento de ciência de penalidade",
 ];
 export type AnexoPessoa = {
   id: number; nome_arquivo: string; mime_type: string; tamanho_bytes: number; categoria: string;
@@ -10092,4 +10092,38 @@ export type CaixaExtrato = {
 };
 export async function fetchExtratoCaixa(pessoaId: number, mes: string): Promise<CaixaExtrato> {
   return caixaJson(await authFetch(`${API}/cadastro/caixa-funcionarios/${pessoaId}/extrato?mes=${encodeURIComponent(mes)}`, { cache: "no-store" }), "Erro ao carregar o extrato");
+}
+
+// ── Faturas de fornecedor — Lançamento em lote (grava várias notas de uma vez, tudo ou nada) ──
+export type LoteItemIn = {
+  codigo_conta_gerencial: string | null; nome_conta_gerencial: string | null; produto: string;
+  tipo_item: "produto" | "servico"; quantidade: number | null; valor_unitario: number | null; valor_total: number;
+};
+export type LoteNotaIn = {
+  tipo_documento: string; numero_documento: string | null; sem_numero: boolean; data_emissao: string;
+  itens: LoteItemIn[]; desconto: number; acrescimo: number;
+};
+export type LoteIn = {
+  fornecedor: string; conta_bancaria: string | null; centro_custo: string | null; notas: LoteNotaIn[];
+  modo: "venc" | "parc" | "pago"; data_vencimento: string | null;
+  parcelamento: { n: number; primeiro_vencimento: string; intervalo: "mensal" | "30dias" } | null;
+  pagamento: { data_pagamento: string; forma_pagamento: string; conta_bancaria: string | null; numero_documento_pagamento: string | null } | null;
+  total_fornecedor: number | null; rotulo?: string | null; confirmar_divergencia?: boolean; confirmar_duplicados?: boolean;
+};
+export type LoteResultado = {
+  fatura_id: number; rotulo: string; status: string; valor_total: number; ids_contas: number[];
+  notas: { nota: number; numero_lancamento: string; valor_liquido: number; ids: number[]; avisos_estoque: string[] }[];
+};
+export async function criarLoteFatura(dados: LoteIn): Promise<LoteResultado> {
+  const chave = gerarChaveIdempotencia();  // mesma chave nas retentativas: nunca grava o lote duas vezes
+  const res = await fetchComRetry(() => authFetch(`${API}/financeiro/faturas/lote`, {
+    method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": chave }, body: JSON.stringify(dados),
+  }));
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(mensagemErroApi(d.detail) || (typeof d.detail === "object" ? d.detail?.mensagem : null) || "Erro ao lançar o lote");
+    err.detail = d.detail; err.status = res.status;
+    throw err;
+  }
+  return res.json();
 }

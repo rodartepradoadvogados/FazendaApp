@@ -262,3 +262,22 @@ class TestIsolamento:
         assert c.get("/cadastro/caixa-time", headers=_h(2)).json()["times"] == []
         # membro de outra fazenda não entra
         assert c.post(f"/cadastro/caixa-time/{tid}/membros", json={"pessoa_ids": [ids["x"]]}, headers=_h(1)).status_code == 404
+
+
+class TestUploadDoDocumento:
+    def test_endpoint_de_anexo_aceita_a_categoria_do_documento_de_penalidade(self, ambiente, monkeypatch):
+        """O upload real (não o INSERT direto) tem de aceitar a categoria que a tela do rateio usa."""
+        from fazenda.api.routers.cadastro import pessoas as rota_pessoas
+        monkeypatch.setattr(rota_pessoas, "enviar_arquivo", lambda *a, **k: None)  # sem Supabase nos testes
+        c, _, ids = ambiente
+        r = c.post(f"/cadastro/pessoas/{ids['a']}/anexos", headers=_h(),
+                   data={"categoria": regras.CATEGORIA_PENALIDADE},
+                   files={"file": ("ciencia.pdf", b"%PDF-1.4 teste", "application/pdf")})
+        assert r.status_code in (200, 201), r.text
+        aid = r.json()["id"]
+        tid = _time(c)
+        _entrada(c, tid)
+        rid = _rateio(c, tid).json()["id"]
+        r = c.put(f"/cadastro/caixa-time/rateios/{rid}/linhas/{ids['a']}", json={
+            "penalidade_pct": 50, "penalidade_motivo": "Art. 482 CLT", "documento_anexo_id": aid}, headers=_h())
+        assert r.status_code == 200 and r.json()["documentos_pendentes"] == []
