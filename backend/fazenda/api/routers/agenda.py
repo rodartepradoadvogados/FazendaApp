@@ -36,6 +36,7 @@ from fazenda.api.routers.movimentacoes import ler_parametro_sugestao_movimentaca
 from fazenda.api.routers.portal import usuarios_da_fazenda
 from fazenda.api.routers.reproducao import ATIVIDADE_INDUCAO_CIO
 from fazenda.ordenacao import chave_numero
+from fazenda.rules import caixa_funcionario as caixa_funcionario_rules
 from fazenda.rules.agenda_engine import DIAS_CONTAS_VENCIDAS_NA_AGENDA, AgendaEngine, AgendaItem
 from fazenda.rules.eventos_sanitarios import eventos_agenda as _eventos_sanitarios_agenda
 from fazenda.rules import cronograma_sanitario as _cronograma_sanitario_rules
@@ -454,7 +455,7 @@ def materializar_agenda(
     data: date = date.today(),
     session: Session = Depends(get_session),
     usuario: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int | None = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Parte que ESCREVE da Agenda (idempotente): gera recorrências e
     auditorias de diária e materializa cronogramas/checklist/lista de espera do
@@ -750,6 +751,7 @@ def calcular_agenda(
         pedidos_documentos_vencendo=pedidos_documentos_vencendo,
         pedidos_entrega_prevista=pedidos_entrega_prevista,
         pessoas_documentos_vencendo=pessoas_documentos_vencendo,
+        caixa_termos_pendentes=caixa_funcionario_rules.termos_pendentes(session, fazenda_id),
         inducoes_cio=inducoes_cio,
         aplicacoes_iatf=aplicacoes_iatf_todas,
         peso_por_animal=peso_por_animal,

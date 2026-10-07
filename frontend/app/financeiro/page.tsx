@@ -370,7 +370,7 @@ export default function FinanceiroPage() {
     // "folha_relatorio" entra na lista porque as duas telas de folha agora se
     // apontam uma à outra na própria interface (só consulta × onde se fecha),
     // e o link precisa de um endereço.
-    else if (ir && ["pagas", "recebidas", "extrato", "todas_contas", "folha_relatorio"].includes(ir)) setRel(ir as Rel);
+    else if (ir && ["pagas", "recebidas", "extrato", "todas_contas", "folha_relatorio", "caixa_funcionarios"].includes(ir)) setRel(ir as Rel);
     const ref = qs.get("ref");
     if (ref) setNotaAlvoRef(ref);
   }, []);

@@ -161,7 +161,7 @@ def adicionar_categoria_fornecedor(
 @router.delete("/fornecedores/{fornecedor_id}/categorias/{categoria_id}", status_code=204)
 def remover_categoria_fornecedor(
     fornecedor_id: int, categoria_id: int,
-    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
 ) -> None:
     f = _fornecedor_da_fazenda(session, fornecedor_id, fazenda_id)
     linha = session.get(FornecedorCategoria, categoria_id)

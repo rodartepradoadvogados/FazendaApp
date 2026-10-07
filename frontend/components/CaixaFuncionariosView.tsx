@@ -4,15 +4,18 @@
 // lança entradas (depósito, bonificação, comissão, outro), registra retiradas com
 // recibo e corrige por estorno. Só administrador.
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Receipt, Undo2, Trash2, Plus, Wallet } from "lucide-react";
+import { ArrowLeft, Receipt, Undo2, Trash2, Plus, Wallet, ShieldCheck, Pause, Play, Ban } from "lucide-react";
 import { Modal } from "@/components/Modal";
 import { CampoMoeda } from "@/components/CampoMoeda";
+import { Dropzone } from "@/components/Dropzone";
 import { ReciboModal } from "@/components/ReciboModal";
 import {
   fetchCaixasFuncionarios, fetchCaixaFuncionario, lancarEntradaCaixa, registrarRetiradaCaixa, fetchReciboCaixa,
   estornarMovimentoCaixa, excluirMovimentoCaixa, fetchOpcoesFinanceiro,
+  fetchRetencaoCaixa, fetchRetencoesCaixa, salvarRetencaoCaixa, pausarRetencaoCaixa, revogarRetencaoCaixa, anexarArquivoPessoa,
   formatBRL, formatDate, ehAdmin,
   type CaixaPessoaLinha, type CaixaDetalhe, type CaixaMovimentoItem, type CaixaGrupo, type CaixaRecibo,
+  type CaixaRetencaoDados,
 } from "@/lib/api";
 import type { LancamentoRecibo } from "@/lib/export";
 
@@ -26,7 +29,7 @@ const TIPOS_ENTRADA: { id: string; label: string }[] = [
   { id: "comissao", label: "Comissão" }, { id: "outro", label: "Outro tipo (sem especificar)" },
 ];
 const ROTULO_TIPO: Record<string, string> = {
-  deposito: "Depósito", bonificacao: "Bonificação", comissao: "Comissão", outro: "Outro", retirada: "Retirada", estorno: "Estorno",
+  deposito: "Depósito", bonificacao: "Bonificação", comissao: "Comissão", outro: "Outro", retirada: "Retirada", estorno: "Estorno", retencao: "Retenção na folha",
 };
 const FORMAS = [
   { id: "pix", label: "Pix" }, { id: "dinheiro", label: "Dinheiro" }, { id: "transferencia", label: "Transferência" },
@@ -39,6 +42,15 @@ const campo = {
   borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.82rem",
 } as const;
 const hojeISO = () => new Date().toISOString().slice(0, 10);
+const CATEGORIA_TERMO = "Termo de retenção do caixa";
+
+function resumoRetencao(d?: CaixaRetencaoDados) {
+  const c = d?.config;
+  if (!c) return "—";
+  const v = c.forma === "percentual" ? `${c.valor}%` : formatBRL(c.valor);
+  const estado = !c.autorizada ? "sem autorização" : c.revogada_em ? "revogada" : c.pausada ? "pausada" : "ativa";
+  return `${v}/mês · ${estado}`;
+}
 
 function rotuloGrupos(grupos: string[]) { return grupos.map((g) => ROTULO_GRUPO[g] || g).join(", ") || "—"; }
 
@@ -52,10 +64,14 @@ export default function CaixaFuncionariosView() {
   const [selecionados, setSelecionados] = useState<Set<number>>(new Set());
   const [pessoaAberta, setPessoaAberta] = useState<number | null>(null);
   const [entrada, setEntrada] = useState<{ pessoaIds: number[] } | null>(null);
+  const [retencoes, setRetencoes] = useState<Record<number, CaixaRetencaoDados>>({});
 
-  const carregar = () => fetchCaixasFuncionarios()
-    .then((d) => { setLinhas(d.pessoas); setTotalDevido(d.total_devido); setErro(null); })
-    .catch((e) => setErro(e.message));
+  const carregar = () => {
+    fetchRetencoesCaixa().then((d) => setRetencoes(Object.fromEntries(d.retencoes.map((r) => [r.pessoa.id, r])))).catch(() => {});
+    return fetchCaixasFuncionarios()
+      .then((d) => { setLinhas(d.pessoas); setTotalDevido(d.total_devido); setErro(null); })
+      .catch((e) => setErro(e.message));
+  };
   useEffect(() => { carregar(); }, []);
 
   const visiveis = useMemo(() => (linhas || []).filter((l) =>
@@ -120,7 +136,7 @@ export default function CaixaFuncionariosView() {
               <tr>
                 <th style={{ width: 28 }}><input type="checkbox" aria-label="Selecionar todos os visíveis" checked={todosVisiveisMarcados}
                   onChange={() => setSelecionados(todosVisiveisMarcados ? new Set() : new Set(visiveis.map((l) => l.pessoa_id)))} /></th>
-                <th>Pessoa</th><th>Tipo</th><th style={{ textAlign: "right" }}>Saldo</th><th>Último movimento</th><th></th>
+                <th>Pessoa</th><th>Tipo</th><th style={{ textAlign: "right" }}>Saldo</th><th>Retenção na folha</th><th>Termo</th><th>Último movimento</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -130,11 +146,15 @@ export default function CaixaFuncionariosView() {
                   <td>{l.nome}</td>
                   <td style={{ color: "var(--text-muted)" }}>{rotuloGrupos(l.grupos)}</td>
                   <td style={{ textAlign: "right", fontWeight: 700 }}>{formatBRL(l.saldo)}</td>
+                  <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{resumoRetencao(retencoes[l.pessoa_id])}</td>
+                  <td style={{ fontSize: "0.78rem", color: retencoes[l.pessoa_id]?.termo_pendente ? "var(--amber)" : "var(--text-muted)" }}>
+                    {!retencoes[l.pessoa_id]?.config ? "—" : retencoes[l.pessoa_id].termo_anexado ? "anexado" : retencoes[l.pessoa_id].termo_pendente ? "pendente" : "—"}
+                  </td>
                   <td style={{ color: "var(--text-muted)" }}>{l.ultimo_movimento ? formatDate(l.ultimo_movimento) : "—"}</td>
                   <td style={{ textAlign: "right" }}><button type="button" className="btn-primary" style={{ fontSize: "0.72rem", padding: "0.15rem 0.6rem" }} onClick={() => setPessoaAberta(l.pessoa_id)}>Abrir caixa</button></td>
                 </tr>
               ))}
-              {!visiveis.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)" }}>Nenhum colaborador neste filtro. O caixa vale para CLT, empreita, contrato e diária cadastrados em Pessoas.</td></tr>}
+              {!visiveis.length && <tr><td colSpan={8} style={{ color: "var(--text-muted)" }}>Nenhum colaborador neste filtro. O caixa vale para CLT, empreita, contrato e diária cadastrados em Pessoas.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -195,6 +215,8 @@ function CaixaIndividual({ pessoaId, onVoltar, onEntrada }: { pessoaId: number; 
       {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
       {aviso && <p style={{ color: "var(--green-light, #3ecf8e)", fontSize: "0.82rem" }}>{aviso}</p>}
 
+      <RetencaoPainel pessoaId={pessoaId} onMudou={carregar} />
+
       <div style={{ overflowX: "auto" }}>
         <table className="fazenda-table" style={{ minWidth: 720 }}>
           <thead><tr><th>Data</th><th>Tipo</th><th>Motivo</th><th style={{ textAlign: "right" }}>Valor</th><th style={{ textAlign: "right" }}>Saldo</th><th>Lançamento</th><th></th></tr></thead>
@@ -234,6 +256,127 @@ function CaixaIndividual({ pessoaId, onVoltar, onEntrada }: { pessoaId: number; 
           onFeito={() => { setEstornando(null); setAviso("Estorno registrado."); carregar(); }} pessoaId={pessoaId} />
       )}
       {recibo && <ReciboModal lanc={recibo} onClose={() => setRecibo(null)} />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Retenção na folha: combinado por pessoa, autorização interna e termo anexado.
+// ---------------------------------------------------------------------------
+function RetencaoPainel({ pessoaId, onMudou }: { pessoaId: number; onMudou: () => void }) {
+  const [dados, setDados] = useState<CaixaRetencaoDados | null>(null);
+  const [editando, setEditando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [ocupado, setOcupado] = useState(false);
+  const [forma, setForma] = useState<"fixo" | "percentual">("fixo");
+  const [valor, setValor] = useState("");
+  const [teto, setTeto] = useState("");
+  const [inicio, setInicio] = useState(hojeISO().slice(0, 7) + "-01");
+  const [fim, setFim] = useState("");
+  const [autorizada, setAutorizada] = useState(false);
+
+  const carregar = () => fetchRetencaoCaixa(pessoaId).then((d) => { setDados(d); setErro(null); }).catch((e) => setErro(e.message));
+  useEffect(() => { carregar(); }, [pessoaId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function abrirEdicao() {
+    const c = dados?.config;
+    setForma(c?.forma || "fixo"); setValor(c ? String(c.valor) : ""); setTeto(c?.teto != null ? String(c.teto) : "");
+    setInicio(c?.inicio || hojeISO().slice(0, 7) + "-01"); setFim(c?.fim || ""); setAutorizada(!!c?.autorizada);
+    setEditando(true);
+  }
+  async function executar(fn: () => Promise<CaixaRetencaoDados>) {
+    setOcupado(true); setErro(null);
+    try { setDados(await fn()); onMudou(); } catch (e: any) { setErro(e.message); }
+    setOcupado(false);
+  }
+  async function salvar() {
+    if (!(Number(valor) > 0)) { setErro("Informe o valor da retenção."); return; }
+    await executar(() => salvarRetencaoCaixa(pessoaId, {
+      forma, valor: Number(valor), inicio, fim: fim || null, teto: teto ? Number(teto) : null, autorizada,
+    }));
+    setEditando(false);
+  }
+  async function anexarTermo(file: File) {
+    setOcupado(true); setErro(null);
+    try { await anexarArquivoPessoa(pessoaId, file, CATEGORIA_TERMO); await carregar(); onMudou(); }
+    catch (e: any) { setErro(e.message); }
+    setOcupado(false);
+  }
+
+  const c = dados?.config;
+  const vigente = !!c && c.autorizada && !c.pausada && !c.revogada_em;
+  return (
+    <div className="card" style={{ padding: "0.7rem 0.9rem", marginBottom: "0.9rem" }}>
+      <div className="flex items-center justify-between" style={{ gap: "0.5rem", flexWrap: "wrap" }}>
+        <strong style={{ fontSize: "0.88rem" }}><ShieldCheck size={14} style={{ display: "inline", marginRight: 5 }} />Retenção na folha</strong>
+        <div className="flex gap-2" style={{ flexWrap: "wrap" }}>
+          <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem" }} onClick={abrirEdicao} disabled={ocupado}>{c ? "Editar combinado" : "Combinar retenção"}</button>
+          {c && c.autorizada && !c.revogada_em && (
+            <>
+              <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem" }} disabled={ocupado} onClick={() => executar(() => pausarRetencaoCaixa(pessoaId, !c.pausada))}>
+                {c.pausada ? <><Play size={12} /> Retomar</> : <><Pause size={12} /> Pausar</>}
+              </button>
+              <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem", color: "var(--red)" }} disabled={ocupado}
+                onClick={() => { if (window.confirm("Revogar a autorização? Vale a partir do mês seguinte; o que já foi retido continua no caixa.")) executar(() => revogarRetencaoCaixa(pessoaId)); }}>
+                <Ban size={12} /> Revogar
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      {!c ? (
+        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: "0.4rem 0 0" }}>Sem retenção combinada. A folha só retém com valor combinado, autorização marcada e vigência aberta.</p>
+      ) : (
+        <p style={{ fontSize: "0.8rem", margin: "0.4rem 0 0" }}>
+          {c.forma === "percentual" ? `${c.valor}% do salário-base` : `${formatBRL(c.valor)} por mês`}
+          {c.teto != null ? ` · teto ${formatBRL(c.teto)}` : ""} · desde {formatDate(c.inicio)}{c.fim ? ` até ${formatDate(c.fim)}` : ""}
+          {" · "}<b style={{ color: vigente ? "var(--green-light, #3ecf8e)" : "var(--amber)" }}>
+            {!c.autorizada ? "sem autorização" : c.revogada_em ? `revogada (vale até ${formatDate(c.revogada_em)})` : c.pausada ? "pausada" : "ativa"}
+          </b>
+          {" · "}já retido {formatBRL(dados?.acumulado || 0)}
+        </p>
+      )}
+      {c && c.autorizada && (
+        <div style={{ marginTop: "0.5rem" }}>
+          {dados?.termo_anexado ? (
+            <p style={{ fontSize: "0.78rem", color: "var(--green-light, #3ecf8e)", margin: 0 }}>Termo de autorização anexado (documentos da pessoa).</p>
+          ) : (
+            <>
+              <p style={{ fontSize: "0.78rem", color: "var(--amber)", margin: "0 0 0.35rem" }}>Termo pendente: anexe o documento assinado. Enquanto isso, a pendência aparece na Agenda e no Fechamento da folha.</p>
+              <Dropzone accept="application/pdf,image/jpeg,image/png" label="Arraste o termo assinado ou clique para selecionar" hint="PDF, JPG ou PNG" onFiles={(f) => f[0] && anexarTermo(f[0])} />
+            </>
+          )}
+        </div>
+      )}
+      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.78rem", margin: "0.4rem 0 0" }}>{erro}</p>}
+
+      {editando && (
+        <Modal title="Combinado de retenção na folha" onClose={() => setEditando(false)} width="520px">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div><label style={lbl} htmlFor="rn-forma">Forma</label>
+              <select id="rn-forma" style={campo} value={forma} onChange={(e) => setForma(e.target.value as "fixo" | "percentual")}>
+                <option value="fixo">Valor fixo por mês</option><option value="percentual">Percentual do salário-base</option>
+              </select></div>
+            <div><label style={lbl}>{forma === "percentual" ? "Percentual (%)" : "Valor por mês (R$)"}</label>
+              {forma === "percentual"
+                ? <input type="number" min="0" max="100" step="0.01" style={campo} value={valor} onChange={(e) => setValor(e.target.value)} />
+                : <CampoMoeda style={campo} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} />}</div>
+            <div><label style={lbl} htmlFor="rn-ini">Início da vigência</label><input id="rn-ini" type="date" style={campo} value={inicio} onChange={(e) => setInicio(e.target.value)} /></div>
+            <div><label style={lbl} htmlFor="rn-fim">Fim (opcional)</label><input id="rn-fim" type="date" style={campo} value={fim} onChange={(e) => setFim(e.target.value)} /></div>
+            <div style={{ gridColumn: "1 / -1" }}><label style={lbl}>Teto acumulado (opcional)</label>
+              <CampoMoeda style={campo} value={Number(teto) || 0} onChange={(v) => setTeto(v ? String(v) : "")} /></div>
+          </div>
+          <label style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", fontSize: "0.8rem", marginTop: "0.8rem", color: "var(--text)" }}>
+            <input type="checkbox" checked={autorizada} onChange={(e) => setAutorizada(e.target.checked)} style={{ marginTop: 3 }} />
+            <span>O colaborador autorizou esta retenção (CLT art. 462). Sem esta marca a folha não retém. O termo assinado deve ser anexado depois.</span>
+          </label>
+          {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+          <div className="flex gap-2" style={{ justifyContent: "flex-end", marginTop: "0.9rem" }}>
+            <button type="button" className="btn-ghost" onClick={() => setEditando(false)} disabled={ocupado}>Cancelar</button>
+            <button type="button" className="btn-primary" onClick={salvar} disabled={ocupado}>{ocupado ? "Salvando…" : "Salvar combinado"}</button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

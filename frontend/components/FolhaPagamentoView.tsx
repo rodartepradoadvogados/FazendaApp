@@ -50,6 +50,7 @@ import ContratoView from "@/components/ContratoView";
 import DiariaView from "@/components/DiariaView";
 import FeriasDecimoTerceiroView from "@/components/FeriasDecimoTerceiroView";
 import RescisaoView from "@/components/RescisaoView";
+import AvisoTermosCaixa from "@/components/AvisoTermosCaixa";
 
 const LABEL_TIPO: Record<string, string> = {
   funcionario: "Funcionário", empreita: "Empreita", contrato: "Contrato", diaria: "Diária", ferias_decimo: "Férias / 13º",
@@ -1330,6 +1331,8 @@ export default function FolhaPagamentoView() {
         <a href="/financeiro?ir=folha_relatorio" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}
           title="Abrir Contas > Holerites e recibos (só consulta)">Contas › Holerites e recibos</a>.
       </p>
+
+      <AvisoTermosCaixa />
 
       {/* Os três cards — o MODO da tela. Acento por borda esquerda, como o
           resto da casa; o card ativo troca o fundo, não só a borda. */}
