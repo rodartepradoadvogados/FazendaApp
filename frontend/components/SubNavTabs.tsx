@@ -84,7 +84,14 @@ function SubNavTabsLinha({ nos, primaria, subNav, pathname, caminho }: {
   }, []);
   useEffect(() => {
     const el = listaRef.current;
-    const mostrarAtiva = () => el?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ inline: "nearest", block: "nearest" });
+    // Rolagem explícita (scrollIntoView deixava a última aba cortada): põe a aba ativa inteira na vista.
+    const mostrarAtiva = () => {
+      const btn = el?.querySelector<HTMLElement>('[aria-selected="true"]');
+      if (!el || !btn) return;
+      const fim = btn.offsetLeft + btn.offsetWidth;
+      if (fim > el.scrollLeft + el.clientWidth) el.scrollLeft = fim - el.clientWidth + 8;
+      else if (btn.offsetLeft < el.scrollLeft) el.scrollLeft = Math.max(btn.offsetLeft - 8, 0);
+    };
     // O layout (fonte, ícones) ainda muda logo depois de montar: rola e mede de novo quando assentar.
     mostrarAtiva(); medir();
     const t1 = setTimeout(() => { mostrarAtiva(); medir(); }, 250);
@@ -100,7 +107,7 @@ function SubNavTabsLinha({ nos, primaria, subNav, pathname, caminho }: {
         onScroll={medir}
         role="tablist"
         style={{
-          display: "flex", gap: primaria ? "0.15rem" : "0.15rem", overflowX: "auto", whiteSpace: "nowrap", scrollbarWidth: "thin", paddingRight: "0.6rem",
+          position: "relative", display: "flex", gap: primaria ? "0.15rem" : "0.15rem", overflowX: "auto", whiteSpace: "nowrap", scrollbarWidth: "thin", paddingRight: "0.6rem",
           background: primaria ? undefined : "var(--surface-2)",
           borderTop: primaria ? undefined : "1px solid var(--border)",
         }}
