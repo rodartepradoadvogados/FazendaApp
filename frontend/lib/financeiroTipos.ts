@@ -40,4 +40,6 @@ export type Lanc = {
   gerado_por?: string | null;
   // Só com as regras v2: data em que o dinheiro sai do banco (cartão avulso = vencimento do cartão).
   data_caixa?: string | null;
+  // Fase A, PR 5: nota de uma compra no cartão — só se paga pela fatura do cartão.
+  fatura_cartao_id?: number | null;
 };

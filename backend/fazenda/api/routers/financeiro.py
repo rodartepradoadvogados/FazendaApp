@@ -1528,6 +1528,7 @@ def listar_lancamentos(
             "natureza_resolvida": _natureza_resolvida(c),
             "conta_corrente_id": c.conta_corrente_id,
             "gerado_por": c.gerado_por,
+            "fatura_cartao_id": c.fatura_cartao_id,
             "mes_competencia": f"{dc.year}-{dc.month:02d}" if dc else None,
             "ano_competencia": dc.year if dc else None,
             "mes_caixa": f"{dp.year}-{dp.month:02d}" if dp else None,
@@ -3086,7 +3087,7 @@ def _caixa_real_v2(session: Session, fazenda_id: int | None, dias: int | None, h
             continue
         compromisso = {"data": c.data_vencimento, "valor": valor, "tipo": c.tipo,
                        "descricao": c.descricao or c.numero_lancamento}
-        if getattr(c, "fatura_cartao_id", None) is not None:
+        if c.fatura_cartao_id is not None:
             compromisso["fatura_cartao"] = True
         compromissos.append(compromisso)
 
@@ -4551,6 +4552,14 @@ def _criar_parcelas_diferenca(session: Session, registro: ContaGerencial, parcel
 def _recusar_se_em_fatura(registro: ContaGerencial) -> None:
     """Nota de fatura de fornecedor só é paga/estornada pela PARCELA da fatura (baixa todas as notas de uma vez);
     baixar uma nota isolada deixaria a parcela da fatura meio paga."""
+    if getattr(registro, "fatura_cartao_id", None):
+        # Fase A, PR 5: a nota de uma compra no cartão só se paga (e se estorna)
+        # pela fatura do cartão — baixar uma isolada deixaria a fatura meio paga.
+        raise HTTPException(
+            status_code=409,
+            detail=f"A nota {registro.numero_lancamento or registro.id} é uma compra no cartão de crédito. "
+            "Pague ou estorne pela fatura do cartão (Financeiro › Cartão de crédito).",
+        )
     if getattr(registro, "fatura_id", None):
         raise HTTPException(
             status_code=409,

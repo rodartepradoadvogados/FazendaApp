@@ -189,7 +189,7 @@ import ContasListaView, { PilulaSituacao } from "@/components/financeiro/ContasL
 import ConsultasView from "@/components/financeiro/ConsultasView";
 import OndeFoiParar from "@/components/financeiro/OndeFoiParar";
 import ResumoView from "@/components/financeiro/ResumoView";
-import { hojeLocal, perguntaAgendamento, situacaoDe, valorCompetencia, valorRealizado } from "@/lib/financeiroSituacao";
+import { ehNotaSoDeClassificacao, hojeLocal, perguntaAgendamento, situacaoDe, valorCompetencia, valorRealizado } from "@/lib/financeiroSituacao";
 import { useRegrasV2 } from "@/lib/useRegrasV2";
 import { migrarFiltrosSalvosAntigos } from "@/lib/financeiroFiltrosMigracao";
 
@@ -274,7 +274,8 @@ export default function FinanceiroPage() {
     return candidatas.map((s) => ({ valor: s.valor, data_vencimento: s.data_vencimento, parcela_num: s.parcela_num }));
   }
 
-  const recarregar = () => fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message));
+  // Nota que só classifica a DRE (backfill do cartão já pago) fica fora das somas do cliente.
+  const recarregar = () => fetchLancamentos().then((d) => setRegs(d.lancamentos.filter((l: Lanc) => !ehNotaSoDeClassificacao(l)))).catch((e) => setError(e.message));
   useEffect(() => {
     recarregar();
     fetchOpcoesFinanceiro().then((d) => {
@@ -1203,7 +1204,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito, idsIniciais }: { c
 
   // Nota de fatura só se paga pela PARCELA da fatura (o servidor recusa o lote inteiro com 409):
   // fica visível, mas desabilitada, e nunca entra em "Selecionar todas".
-  const selecionaveisLote = useMemo(() => filtrados.filter((r) => !r.fatura_id), [filtrados]);
+  const selecionaveisLote = useMemo(() => filtrados.filter((r) => !r.fatura_id && !r.fatura_cartao_id), [filtrados]);
   const toggle = (id: number) => setSelecionados((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const toggleTodos = () => setSelecionados((p) =>
     p.size === selecionaveisLote.length && selecionaveisLote.length ? new Set() : new Set(selecionaveisLote.map((r) => r.id))
@@ -1397,8 +1398,8 @@ export function PagamentoLoteView({ contasBancarias, onFeito, idsIniciais }: { c
               {ordenados.map((r) => {
                 const produtos = (r.itens || []).map((it) => it.produto).filter(Boolean).join(", ");
                 return (
-                  <tr key={r.id} className={r.fatura_id ? undefined : "row-clickable"} title={r.fatura_id ? "Nota de fatura: só se paga pela parcela da fatura" : "Clique para selecionar esta nota"} onClick={() => { if (!r.fatura_id) toggle(r.id); }}>
-                    <td><input type="checkbox" disabled={!!r.fatura_id} aria-label={r.fatura_id ? "Nota de fatura: pague pela fatura" : `Selecionar ${r.numero_lancamento || r.descricao}`} checked={selecionados.has(r.id)} onChange={() => toggle(r.id)} onClick={(e) => e.stopPropagation()} /></td>
+                  <tr key={r.id} className={r.fatura_id || r.fatura_cartao_id ? undefined : "row-clickable"} title={r.fatura_cartao_id ? "Compra no cartão: só se paga pela fatura do cartão" : r.fatura_id ? "Nota de fatura: só se paga pela parcela da fatura" : "Clique para selecionar esta nota"} onClick={() => { if (!r.fatura_id && !r.fatura_cartao_id) toggle(r.id); }}>
+                    <td><input type="checkbox" disabled={!!r.fatura_id || !!r.fatura_cartao_id} aria-label={r.fatura_id || r.fatura_cartao_id ? "Nota de fatura: pague pela fatura" : `Selecionar ${r.numero_lancamento || r.descricao}`} checked={selecionados.has(r.id)} onChange={() => toggle(r.id)} onClick={(e) => e.stopPropagation()} /></td>
                     <td style={{ fontSize: "0.78rem" }}>
                       <strong>{r.numero_documento || r.numero_lancamento || "—"}</strong>
                       {r.numero_documento && r.numero_lancamento && <span style={{ color: "var(--text-muted)" }}> · {r.numero_lancamento}</span>}
@@ -2800,13 +2801,21 @@ function ModalPagarFatura({ fatura, cartao, onClose, onSalvo }: { fatura: Fatura
   const [dataPagamento, setDataPagamento] = useState(hojeLocal());
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
+  // Regras v2 (Fase A, PR 5): a fatura baixa as notas de cada compra; pago
+  // diferente do total = diferença rateada entre as notas.
+  const regrasV2 = useRegrasV2();
+  const [valorPago, setValorPago] = useState<number>(fatura.valor_total ?? 0);
+  const diferenca = Math.round((valorPago - (fatura.valor_total ?? 0)) * 100) / 100;
 
   const pagar = async () => {
+    const pergunta = perguntaAgendamento([dataPagamento], regrasV2);
+    if (pergunta && !window.confirm(pergunta)) return;
+    if (regrasV2 && !(valorPago > 0)) { setErro("Informe o valor pago."); return; }
     setSalvando(true); setErro("");
     try {
-      await pagarFaturaCartao(fatura.id, { data_pagamento: dataPagamento });
+      await pagarFaturaCartao(fatura.id, { data_pagamento: dataPagamento, ...(regrasV2 ? { valor_pago: valorPago } : {}) });
       onSalvo();
-    } catch (e: any) { setErro(e.message); setSalvando(false); }
+    } catch (e: unknown) { setErro(e instanceof Error ? e.message : "Erro ao pagar a fatura"); setSalvando(false); }
   };
 
   return (
@@ -2815,12 +2824,29 @@ function ModalPagarFatura({ fatura, cartao, onClose, onSalvo }: { fatura: Fatura
         <p style={{ fontSize: "0.85rem" }}>
           Valor da fatura: <strong>{fatura.valor_total != null ? formatBRL(fatura.valor_total) : "—"}</strong>
         </p>
-        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-          Gera uma Conta a Pagar de verdade em Financeiro (mesmo fluxo de baixa de qualquer outro lançamento) — dá pra editar
-          conta gerencial e centro de custo depois, em Contas a pagar.
-        </p>
+        {regrasV2 ? (
+          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+            Baixa de uma vez as notas de todas as compras desta fatura (cada uma já está na conta e no mês da compra).
+            Se o valor pago for diferente do total, a diferença é dividida entre as notas como juros ou desconto.
+          </p>
+        ) : (
+          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+            Gera uma Conta a Pagar de verdade em Financeiro (mesmo fluxo de baixa de qualquer outro lançamento) — dá pra editar
+            conta gerencial e centro de custo depois, em Contas a pagar.
+          </p>
+        )}
         <div><label style={cartaoLabelStyle}>Data do pagamento</label>
           <input type="date" style={cartaoInputStyle} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
+        {regrasV2 && (
+          <div><label style={cartaoLabelStyle}>Valor pago (R$)</label>
+            <CampoMoeda style={cartaoInputStyle} value={valorPago} onChange={(v) => setValorPago(v || 0)} />
+            {diferenca !== 0 && (
+              <p style={{ fontSize: "0.74rem", color: "var(--amber)", marginTop: 4 }}>
+                {diferenca > 0 ? "Acréscimo" : "Desconto"} de {formatBRL(Math.abs(diferenca))}, dividido entre as notas da fatura.
+              </p>
+            )}
+          </div>
+        )}
         {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
         <div className="flex gap-2 justify-end">
           <button className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>

@@ -107,6 +107,10 @@ class ContaGerencial(SQLModel, table=True):
     # Caixa Real e Fluxo), "backfill_cartao_aberta" (nota de compra de fatura
     # ainda não paga, PR 5). NULL = lançamento comum.
     gerado_por: Optional[str] = None
+    # Fatura de CARTÃO a que esta nota de compra pertence (Fase A, PR 5 — cartão
+    # por item): uma nota por compra, competência = data da compra, vencimento =
+    # o da fatura. Só se paga PELA FATURA (a baixa individual/lote recusa 409).
+    fatura_cartao_id: Optional[int] = Field(default=None, foreign_key="fatura_cartao.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -842,6 +846,12 @@ class FaturaCartao(SQLModel, table=True):
     numero_lancamento: Optional[str] = None  # → ContaGerencial, só quando paga
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Fase A, PR 5 (cartão por item, flag financeiro_regras_v2): o que foi pago
+    # na fatura e a diferença para o total (rateada entre as notas das compras,
+    # como na fatura de fornecedor). Sem a flag, a fatura paga continua gerando
+    # a nota genérica de `numero_lancamento`.
+    valor_pago: Optional[float] = None
+    desconto_acrescimo: Optional[float] = None
 
 
 class LancamentoCartao(SQLModel, table=True):
@@ -866,6 +876,8 @@ class LancamentoCartao(SQLModel, table=True):
     observacao: Optional[str] = None
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Nota (ContaGerencial) desta compra — Fase A, PR 5 (cartão por item).
+    numero_lancamento: Optional[str] = Field(default=None, index=True)
 
 
 # ---------------------------------------------------------------------------

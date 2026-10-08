@@ -3,8 +3,8 @@
 Correção dos números dos Relatórios do Financeiro em PRs pequenos, cada um ligado
 **fazenda a fazenda** por uma flag. Este arquivo cobre o PR 0 (rede de segurança),
 o PR 1 (natureza do lançamento), o PR 7 (juros e descontos da baixa), o PR 4
-(receita do leite), o PR 2 (contas automáticas), o PR 3 (folha pelo bruto) e o PR 6
-(saldo de abertura e Caixa Real). A auditoria completa, com causa-raiz e a ordem
+(receita do leite), o PR 2 (contas automáticas), o PR 3 (folha pelo bruto), o PR 6
+(saldo de abertura e Caixa Real) e o PR 5 (cartão de crédito por item). A auditoria completa, com causa-raiz e a ordem
 dos PRs seguintes, ficou no relatório da Fase A (`SOLUCOES.md`, fora do repositório).
 
 ## 1. A flag `financeiro_regras_v2`
@@ -332,13 +332,56 @@ com o relógio parado; `tests/dados/gerar_golden_caixa_cartao.py`).
 - Migração `a7c4e2d9b351` (aditiva, idempotente, reversível): as colunas
   acima e `conta_gerencial.gerado_por`.
 
-## 10. O que fica para os próximos PRs
+## 10. Cartão de crédito por item (PR 5)
+
+Regras em `fazenda/rules/cartao_por_item.py`; rotas em `cartao_credito.py`.
+Com a flag desligada, compra, fechamento e pagamento da fatura funcionam como
+antes (nota genérica "Fatura X"), com as mesmas chaves de resposta (golden).
+
+- **Uma nota por compra**, na hora da compra: `ContaGerencial` + item com a
+  conta e o centro da compra, competência = data da compra, vencimento = o da
+  fatura, `fatura_cartao_id` = a fatura (`lancamento_cartao.numero_lancamento`
+  aponta a nota). IOF, anuidade e juros do rotativo são **compras próprias**
+  (Q14), lançadas numa conta própria.
+- **Contas a pagar e Caixa Real**: a nota em aberto entra no total a pagar
+  (decisão a do dono) e na projeção, no vencimento da fatura (`fatura_cartao`
+  no item do Caixa Real). A lista mostra "Em fatura do cartão" e o botão
+  "Pagar pela fatura do cartão".
+- **Só se paga pela fatura**: baixa individual, lote, lote detalhado e estorno
+  de uma nota de cartão → 409. `POST /financeiro/cartoes/faturas/{id}/pagar`
+  (fatura fechada) baixa TODAS as notas de uma vez (data, conta do cartão,
+  comprovante); `valor_pago` diferente do total → a diferença é rateada em
+  centavos entre as notas (a sobra na última), como na fatura de fornecedor, e
+  vira juros/desconto em Outras (PR 7). A fatura guarda `valor_pago` e
+  `desconto_acrescimo`; nenhuma nota genérica é criada. Compra lançada antes da
+  flag ganha a nota no pagamento. `POST .../estornar-pagamento` desfaz (as
+  notas voltam a aberto juntas).
+- **DRE**: competência no mês da compra; caixa no mês do pagamento da fatura.
+- **Histórico**: `python -m scripts.backfill_cartao_por_item --fazenda N
+  [--csv x.csv] [--aplicar] [--reverter LOTE]` (exige a flag ligada). Compra
+  de fatura aberta/fechada ganha a nota em aberto; compra de fatura já paga
+  ganha a nota já paga na data da genérica, SEM conta bancária
+  (`gerado_por="backfill_cartao"`: só classifica a DRE — saldo, Caixa Real,
+  fundo de reserva e as somas do front a ignoram), e a genérica vira
+  `OBRIGACAO` (fora da DRE; continua sendo o único movimento de dinheiro). O
+  resto vai para revisão. A reversão apaga as notas criadas, salvo as que
+  mudaram depois (conflito).
+- Migração `b9d3f5a1c864` (aditiva, idempotente, reversível).
+
+## 11. O que fica para os próximos PRs
+
+Com tudo o que já entrou ligado (PRs 1, 7, 4, 2, 3, 6 e 5: contas automáticas,
+os backfills da folha e do cartão, a natureza do plano e a flag), o cenário da
+auditoria em março/2031 fecha como o relatório previa: receita líquida 9.850,
+CMV 8.300, pessoal 4.840, EBITDA −3.290, resultado −4.290, numerador de custos
+13.140 (COT 14.140) e custo por litro 0,8276
+(`test_pr2_pr3_pr5_pr6_cenario_com_tudo_ligado`). Os campos legados da DRE
+(e-mail do Portal) ainda mostram o número antigo: é o PR 8.
 
 O teste do cenário marca cada número ainda errado com `xfail(strict=True)` e o
 nome do PR que o corrige; o PR que acertar o número é obrigado a tirar o xfail.
 
 | PR | O que resolve |
 |---|---|
-| 5 | cartão por item (CMV com a compra do cartão; fatura em Contas a pagar e no Caixa Real) |
 | 8 | DRE única (campos legados, Portal, Capa) e orçamento com totais separados |
 | 9 | COE/COT com rateio: "Todos" sem filtro, depreciação por centro |

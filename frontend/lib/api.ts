@@ -7320,11 +7320,15 @@ export type FaturaCartao = {
   id: number; cartao_id: number; competencia: string; data_fechamento: string; data_vencimento: string;
   valor_total: number | null; milhas_acumuladas: number | null; status: "aberta" | "fechada" | "paga";
   numero_lancamento: string | null;
+  // Regras v2 (Fase A, PR 5): pago e diferença rateada entre as notas das compras.
+  valor_pago?: number | null; desconto_acrescimo?: number | null;
 };
 export type LancamentoCartao = {
   id: number; cartao_id: number; fatura_id: number; data_compra: string; descricao: string;
   codigo_conta_gerencial: string | null; nome_conta_gerencial: string | null; centro_custo: string | null;
   valor: number; parcela_num: number | null; parcela_total: number | null; observacao: string | null;
+  // Regras v2 (Fase A, PR 5): a nota (lançamento) desta compra.
+  numero_lancamento?: string | null;
 };
 export type LancamentoCartaoPayload = {
   data_compra: string; descricao: string; codigo_conta_gerencial?: string | null;
@@ -7389,7 +7393,9 @@ export async function fecharFaturaCartao(faturaId: number): Promise<FaturaCartao
 
 export async function pagarFaturaCartao(faturaId: number, dados: {
   data_pagamento?: string | null; codigo_conta_gerencial?: string | null; nome_conta_gerencial?: string | null; centro_custo?: string | null;
-} = {}): Promise<FaturaCartao & { lancamento: any }> {
+  // Regras v2 (PR 5): o que foi pago (padrão = total; a diferença é rateada entre as notas).
+  valor_pago?: number | null; numero_documento_pagamento?: string | null;
+} = {}): Promise<FaturaCartao & { lancamento: Record<string, unknown> | null; notas_pagas?: string[]; diferenca?: number }> {
   const res = await authFetch(`${API}/financeiro/cartoes/faturas/${faturaId}/pagar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });

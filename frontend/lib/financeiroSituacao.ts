@@ -56,6 +56,7 @@ export function situacaoDe(l: Lanc, hoje = hojeLocal()): Situacao {
   }
   const venc = l.data_vencimento;
   if (l.fatura_id) return { id: "fatura", classe: "fat", rotulo: "Em fatura" };
+  if (l.fatura_cartao_id) return { id: "fatura", classe: "fat", rotulo: "Em fatura do cartão" };
   if (!venc) return { id: "aberto", classe: "aberto", rotulo: "Em aberto" };
   const d = diasAte(venc, hoje);
   if (d < 0) return { id: "vencida", classe: "venc", rotulo: `Vencida há ${plural(-d, "dia", "dias")}` };
@@ -78,6 +79,17 @@ export function faixaDe(l: Lanc, hoje = hojeLocal()): FaixaId {
   if (!l.data_vencimento) return "mais";
   const d = diasAte(l.data_vencimento, hoje);
   return (FAIXAS.find((f) => f.ok(d)) || FAIXAS[4]).id;
+}
+
+/**
+ * Nota que só CLASSIFICA a DRE (Fase A, PR 5): o backfill do cartão cria uma nota
+ * por compra de fatura já paga pela nota genérica antiga, sem conta bancária,
+ * para a DRE do servidor ler conta e competência da compra. O dinheiro já está
+ * na nota genérica — as telas que somam no cliente (Fluxo, Contas, Consultas,
+ * Resumo) a ignoram para não contar a fatura duas vezes.
+ */
+export function ehNotaSoDeClassificacao(l: Pick<Lanc, "gerado_por">): boolean {
+  return l.gerado_por === "backfill_cartao";
 }
 
 /** Soma em centavos exatos (evita 0,1 + 0,2). */

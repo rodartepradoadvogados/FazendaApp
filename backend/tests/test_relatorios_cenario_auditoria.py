@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 import fazenda.models  # noqa: F401  (registra todas as tabelas no metadata)
@@ -197,6 +197,32 @@ def cenario_dia_fixo(tmp_path_factory, tmp_path, relogio_parado):
     engine.dispose()
 
 
+@pytest.fixture
+def cenario_v2_desde_o_inicio(tmp_path_factory, tmp_path):
+    """O cenário montado com a flag financeiro_regras_v2 JÁ LIGADA na fazenda 1."""
+    if "db_v2" not in _CACHE:
+        destino = tmp_path_factory.mktemp("cenario_v2") / "cenario.db"
+        engine = create_engine(f"sqlite:///{destino}", connect_args={"check_same_thread": False})
+        SQLModel.metadata.create_all(engine)
+        preparar_fazendas(engine)
+        with Session(engine) as s:
+            s.add(ParametroFazenda(chave="financeiro_regras_v2", fazenda_id=1, grupo="financeiro",
+                                   label="regras v2", valor="true", tipo="bool"))
+            s.commit()
+        with _cliente(engine, {"fazenda_id": 1}) as c:
+            ids = montar_cenario(c, engine, 1)
+        engine.dispose()
+        _CACHE["db_v2"] = (destino, ids)
+    origem, ids = _CACHE["db_v2"]
+    copia = tmp_path / "cenario_v2.db"
+    shutil.copyfile(origem, copia)
+    engine = create_engine(f"sqlite:///{copia}", connect_args={"check_same_thread": False})
+    estado = {"fazenda_id": 1}
+    with _cliente(engine, estado) as c:
+        yield Cenario(c, engine, ids, estado)
+    engine.dispose()
+
+
 # Colunas novas (nulas) dos PRs 5 e 6 que o dump cru do lançamento passa a ter —
 # como natureza_fin/diferenca_tipo nos PRs 1 e 7. Com a flag desligada elas
 # vêm sempre vazias; o resto do registro tem de ser idêntico.
@@ -326,7 +352,7 @@ def test_v2_custos_por_hectare_e_vaca_ignoram_investimento_e_principal(cenario):
     ch = cenario.get("/financeiro/custo-hectare", **q)
     cv = cenario.get("/financeiro/custo-vaca-lote", **q)
     # 136.660 − 120.000 (trator) − 5.000 (principal) = 11.660 no estado do PR 1
-    # (13.140 com folha bruta e cartão: ver o xfail dos PRs 3 e 5 abaixo).
+    # (13.140 com folha bruta e cartão: ver test_pr2_pr3_pr5_pr6_cenario_com_tudo_ligado).
     assert ch["despesas_total"] == 11660 and cv["despesas_total"] == 11660
     assert ch["depreciacao_periodo"] == 1000 and ch["cot"] == 12660
     assert ch["fora_por_natureza"] == {"INVESTIMENTO": 120000.0, "FINANCIAMENTO": 5000.0}
@@ -773,6 +799,127 @@ def test_pr6_nao_vaza_para_outra_fazenda(cenario):
 
 
 # =============================================================================
+# 3c. PR 5 (cartão por item: erro 3) — flag ligada.
+# =============================================================================
+def _backfill_cartao(cenario, fazenda_id: int = 1) -> dict:
+    from scripts.backfill_cartao_por_item import executar
+
+    with Session(cenario.engine) as s:
+        return executar(s, fazenda_id, aplicar=True, saida=lambda *_: None)
+
+
+def _numeros_cartao(cenario):
+    dm, dc = cenario.dre(), cenario.dre(*ABR, "caixa")
+    cl = cenario.get("/financeiro/custo-litro-leite", **MAR_Q)
+    return {
+        "cmv_mar": cenario.linha(dm, "CUSTO_VARIAVEL"),
+        "cmv_abr_caixa": cenario.linha(dc, "CUSTO_VARIAVEL"),
+        "nao_classificado_abr_caixa": dc["nao_classificado"]["total"],
+        "custo_alimentacao_mar": cl["custo_total"],
+        "custo_litro_mar": cl["custo_por_litro"],
+        "rmca_custo_mar": cenario.get("/financeiro/rmca", **MAR_Q)["gerencial"]["custo_alimentacao"],
+    }
+
+
+def test_pr5_cartao_no_cmv_da_competencia_e_no_caixa_do_pagamento(cenario):
+    """Ex-xfail do PR 5. A ração de 800 comprada no cartão em 03/03 (fatura paga
+    em 15/04 pela nota genérica, antes da flag): ligada a flag e rodado o
+    backfill, ela entra no CMV de MARÇO (competência) e no de ABRIL no caixa;
+    a nota genérica sai da DRE (OBRIGACAO) e o não classificado zera."""
+    antes = _numeros_cartao(cenario)
+    cenario.ligar_regras_v2()
+    sem_backfill = _numeros_cartao(cenario)
+    resumo = _backfill_cartao(cenario)
+    assert (resumo["notas_criadas"], resumo["genericas_marcadas"]) == (2, 1)  # a ração (paga) e a peça (aberta)
+    depois = _numeros_cartao(cenario)
+    assert {k: (antes[k], sem_backfill[k], depois[k]) for k in antes} == {
+        "cmv_mar": (7500, 7500, 8300),
+        "cmv_abr_caixa": (5900, 5900, 6700),
+        "nao_classificado_abr_caixa": (800, 800, 0),
+        "custo_alimentacao_mar": (7800, 7500, 8300),
+        # 8.300 ÷ 10.029,15 L (kg→L do PR 4).
+        "custo_litro_mar": (0.7558, 0.7478, 0.8276),
+        "rmca_custo_mar": (7800, 7500, 8300),
+    }
+    fora = cenario.dre(*ABR, "caixa")["fora_da_dre"]["por_natureza"]
+    assert fora.get("OBRIGACAO") == 800
+
+
+def test_pr5_backfill_nao_duplica_saldo_nem_caixa_e_reverte(cenario):
+    from scripts.backfill_cartao_por_item import executar
+
+    cenario.ligar_regras_v2()
+    cc = cenario.ids["conta_corrente_id"]
+
+    def caixa():
+        contas = cenario.get("/financeiro/contas-correntes", hoje="2031-12-31")
+        regs = cenario.get("/financeiro/lancamentos")["lancamentos"]
+        return (next(x["saldo"] for x in contas if x["id"] == cc),
+                round(sum(r["valor_pago"] or r["valor"] for r in regs if r["data_pagamento"] and r["gerado_por"] != "backfill_cartao"), 2))
+    antes = caixa()
+    lote = _backfill_cartao(cenario)["lote"]
+    assert caixa() == antes
+    with Session(cenario.engine) as s:
+        resultado = executar(s, 1, aplicar=True, reverter=lote, saida=lambda *_: None)["reversao"]
+        assert resultado.revertidas == 7 and resultado.conflitos == []  # 2 notas + 2 itens + 2 vínculos + 1 natureza
+    assert cenario.linha(cenario.dre(), "CUSTO_VARIAVEL") == 7500
+    assert cenario.dre(*ABR, "caixa")["nao_classificado"]["total"] == 800
+    assert caixa() == antes
+
+
+def test_pr5_backfill_exige_a_flag(cenario):
+    from scripts.backfill_cartao_por_item import executar
+
+    with Session(cenario.engine) as s:
+        r = executar(s, 1, aplicar=True, saida=lambda *_: None)
+    assert r["recusado"] is True and r["lote"] is None
+    assert cenario.linha(cenario.dre(), "CUSTO_VARIAVEL") == 7500
+
+
+def test_pr5_fatura_aberta_em_contas_a_pagar_e_no_caixa_real(cenario_dia_fixo):
+    """Ex-xfail do PR 5 (decisão a do dono): a compra de 500 de hoje (08/10)
+    cai na fatura que vence em 15/11/2026 — aparece em Contas a pagar e no
+    Caixa Real nesse dia."""
+    c = cenario_dia_fixo
+    def peca_a_pagar():
+        return [x for x in c.get("/financeiro/contas-a-pagar", dias=90) if "Peça" in (x.get("descricao") or "")]
+    def peca_no_caixa():
+        cr = c.get("/financeiro/caixa-real", dias=90)
+        return [(p["data"], i["valor"], i.get("fatura_cartao")) for p in cr["serie"] for i in p["itens"] if "Peça" in (i["descricao"] or "")]
+    assert peca_a_pagar() == [] and peca_no_caixa() == []
+    c.ligar_regras_v2()
+    _backfill_cartao(c)
+    a_pagar = peca_a_pagar()
+    assert [(x["valor_total"], x["data_vencimento"], x["data_competencia"]) for x in a_pagar] == [(500, "2026-11-15", "2026-10-08")]
+    assert a_pagar[0]["fatura_cartao_id"] is not None
+    assert peca_no_caixa() == [("2026-11-15", 500, True)]
+    # Só se paga pela fatura.
+    r = c.c.put(f"/financeiro/lancamentos/{a_pagar[0]['id']}/pagar", json={"data_pagamento": "2026-10-08", "valor_pago": 500})
+    assert r.status_code == 409
+
+
+def test_pr5_cenario_com_a_flag_desde_o_inicio(cenario_v2_desde_o_inicio):
+    """O cenário inteiro montado com a flag JÁ LIGADA: a compra no cartão vira
+    nota na hora, pagar a fatura baixa a nota (nenhuma nota genérica), o L6
+    nasce com valor_pago — sem backfill nenhum."""
+    c = cenario_v2_desde_o_inicio
+    n = _numeros_cartao(c)
+    assert (n["cmv_mar"], n["cmv_abr_caixa"], n["nao_classificado_abr_caixa"], n["custo_litro_mar"]) == (8300, 6700, 0, 0.8276)
+    with Session(c.engine) as s:
+        l6 = s.get(ContaGerencial, c.ids["L"]["L6"]["ids"][0])
+        assert (l6.valor_pago, l6.desconto_acrescimo) == (700, 0)
+        notas_cartao = s.exec(select(ContaGerencial).where(ContaGerencial.fatura_cartao_id != None)).all()  # noqa: E711
+        assert sorted((x.descricao, x.valor_total, x.valor_pago) for x in notas_cartao) == [
+            ("Peça (fatura aberta)", 500, None), ("Ração no cartão", 800, 800)]
+        assert not s.exec(select(ContaGerencial).where(ContaGerencial.descricao.like("Fatura %"))).all()
+    a_pagar = c.get("/financeiro/contas-a-pagar", dias=90)
+    assert any("Peça" in (x.get("descricao") or "") for x in a_pagar)
+    # Saldo de 2031: o L6 por 700 e a fatura do cartão sem conta bancária.
+    contas = c.get("/financeiro/contas-correntes", hoje="2031-12-31")
+    assert next(x["saldo"] for x in contas if x["id"] == c.ids["conta_corrente_id"]) == -102300
+
+
+# =============================================================================
 # 4. PR 2 (contas automáticas) e PR 3 (folha pelo bruto e encargos) — a folha
 #    da Ana (bruto 3.000, INSS 240, FGTS projetado 240, vale de item 200;
 #    líquido 2.560) nasceu com a flag desligada: o histórico ganha os itens
@@ -964,30 +1111,48 @@ def test_pr2_pr3_nao_vazam_para_outra_fazenda(cenario):
 
 
 # =============================================================================
+# 4b. Tudo ligado: PR 1, 7, 4, 2, 3, 6 e 5 (contas automáticas, os dois
+#     backfills, a natureza do plano e a flag).
+# =============================================================================
+def test_pr2_pr3_pr5_pr6_cenario_com_tudo_ligado(cenario):
+    """Ex-xfail `test_pendente_pr3_pr5_numerador_dos_custos_final`: com a folha
+    pelo bruto (PR 2/3) e o cartão por item (PR 5) — contas automáticas, os dois
+    backfills e a flag —, o numerador dos custos de março fecha em 13.140 e o
+    COT em 14.140, como o SOLUCOES previa (12.340 do PR 2/3 + 800 do cartão)."""
+    q = {"data_inicio": "2031-03-01", "data_fim": "2031-03-31"}
+    cenario.ligar_pr2_pr3()
+    cenario.classificar_plano_por_natureza()
+    _backfill_cartao(cenario)
+    dm = cenario.dre()
+    ch = cenario.get("/financeiro/custo-hectare", **q)
+    cl = cenario.get("/financeiro/custo-litro-leite", **q)
+    numeros = {
+        "receita_liquida": cenario.linha(dm, "RECEITA_LIQUIDA"),
+        "cmv": cenario.linha(dm, "CUSTO_VARIAVEL"),
+        "pessoal": cenario.linha(dm, "GASTOS_PESSOAL"),
+        "despesas_operacionais": cenario.linha(dm, "DESPESAS_OPERACIONAIS"),
+        "ebitda": cenario.linha(dm, "EBITDA"),
+        "resultado": cenario.linha(dm, "RESULTADO_LIQUIDO"),
+        "nao_classificado": dm["nao_classificado"]["total"],
+        "custo_ha_numerador": ch["despesas_total"], "cot": ch["cot"],
+        "custo_litro": cl["custo_por_litro"],
+        "saldo_hoje": next(x["saldo"] for x in cenario.get("/financeiro/contas-correntes") if x["id"] == cenario.ids["conta_corrente_id"]),
+    }
+    assert numeros == {
+        "receita_liquida": 9850, "cmv": 8300, "pessoal": 4840, "despesas_operacionais": 0,
+        # 9.850 − 8.300 − 4.840 = −3.290; − 1.000 de depreciação = −4.290 (SOLUCOES §P0-2/§P0-5).
+        "ebitda": -3290, "resultado": -4290, "nao_classificado": 0,
+        # COE = 8.300 (CMV, com o cartão) + 4.840 (pessoal); COT + 1.000 de depreciação.
+        "custo_ha_numerador": 13140, "cot": 14140,
+        "custo_litro": 0.8276,  # 8.300 ÷ 10.029,15 L
+        "saldo_hoje": 0,  # tudo do cenário é de 2031: agendado, fora do saldo de hoje
+    }
+
+
+# =============================================================================
 # 5. O que os PRs seguintes resolvem — xfail ESTRITO, com o PR no motivo.
 #    Todos rodam com a flag LIGADA (as regras novas só valem com ela).
 # =============================================================================
-@pytest.mark.xfail(strict=True, reason="PR 5 (cartão por item): falta só a ração do cartão (+800) — 12.340 → 13.140")
-def test_pendente_pr3_pr5_numerador_dos_custos_final(cenario):
-    cenario.ligar_pr2_pr3()
-    cenario.classificar_plano_por_natureza()
-    ch = cenario.get("/financeiro/custo-hectare", data_inicio="2031-03-01", data_fim="2031-03-31")
-    assert (ch["despesas_total"], ch["cot"]) == (13140, 14140)
-
-
-@pytest.mark.xfail(strict=True, reason="PR 5 (cartão por item): a ração do cartão entra no CMV de março")
-def test_pendente_pr5_cartao_no_cmv_da_competencia(cenario):
-    cenario.ligar_regras_v2()
-    assert cenario.linha(cenario.dre(), "CUSTO_VARIAVEL") == 8300
-
-
-@pytest.mark.xfail(strict=True, reason="PR 5 (cartão por item): fatura aberta aparece em Contas a pagar (decisão a do dono)")
-def test_pendente_pr5_fatura_aberta_em_contas_a_pagar(cenario):
-    cenario.ligar_regras_v2()
-    contas = cenario.get("/financeiro/contas-a-pagar", dias=90)
-    assert any("Peça" in (x.get("descricao") or "") for x in contas)
-
-
 @pytest.mark.xfail(strict=True, reason="PR 8 (DRE única): campos legados (CSV/e-mail do Portal) iguais à cascata")
 def test_pendente_pr8_legado_igual_a_cascata(cenario):
     cenario.ligar_regras_v2()
