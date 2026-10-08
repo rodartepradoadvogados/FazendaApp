@@ -2,9 +2,9 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  AlertTriangle, CheckCircle2, Clock, Circle, Layers, Pencil, Receipt, Plus, Repeat, Search, X, Filter, ChevronUp, ChevronDown, MoreHorizontal, Wallet,
+  AlertTriangle, CheckCircle2, Clock, Circle, Layers, Pencil, Receipt, Plus, Repeat, Search, X, Filter, ChevronUp, ChevronDown, MoreHorizontal, Wallet, Undo2,
 } from "lucide-react";
-import { formatBRL, formatDate, ehAdmin } from "@/lib/api";
+import { formatBRL, formatDate, ehAdmin, estornarPagamentoLancamento, fetchCartoesCredito, fetchFaturasCartao, type FaturaCartao } from "@/lib/api";
 import type { Lanc } from "@/lib/financeiroTipos";
 import { FAIXAS, diasAte, faixaDe, hojeLocal, situacaoDe, somaDias, somaValores, type FaixaId, type Situacao } from "@/lib/financeiroSituacao";
 import type { ContaPlano } from "@/lib/contaGerencial";
@@ -23,7 +23,9 @@ type Props = {
   fornecedores: string[];
   produtos: string[];
   /** Formulário de baixa (o painel lateral só o hospeda). */
-  renderBaixa: (nota: Lanc, fechar: () => void) => ReactNode;
+  renderBaixa: (nota: Lanc, fechar: (feito?: boolean) => void) => ReactNode;
+  /** Depois de "Desfazer" (estorno da baixa): a página recarrega os lançamentos. */
+  onDesfeito: () => void;
   onEditar: (l: Lanc) => void;
   onRecibo: (l: Lanc) => void;
   onInserirEmFatura: (l: Lanc) => void;
@@ -33,6 +35,10 @@ type Props = {
   onBaixarSelecionadas: (ids: number[]) => void;
   /** Nº de lançamento/documento vindo de link (Agenda, sino, busca): abre a lista já filtrada por ele. */
   documentoInicial?: string | null;
+  /** Vindo do Resumo: vencimento de/até já aplicado, com o rótulo que aparece no chip. */
+  filtroInicial?: { de?: string; ate?: string; rotulo?: string } | null;
+  /** Abre a aba Cartão de crédito (fatura de cartão fechada se paga inteira, não por aqui). */
+  onAbrirCartao?: () => void;
 };
 
 const ORIGENS: { id: string; label: string; docs: string[] }[] = [
@@ -73,8 +79,8 @@ export default function ContasListaView(p: Props) {
 
   // ── filtros ─────────────────────────────────────────────────────────
   const [campoPeriodo, setCampoPeriodo] = useState<"emissao" | "vencimento">("vencimento");
-  const [de, setDe] = useState("");
-  const [ate, setAte] = useState("");
+  const [de, setDe] = useState(p.filtroInicial?.de || "");
+  const [ate, setAte] = useState(p.filtroInicial?.ate || "");
   const [centro, setCentro] = useState("");
   const [banco, setBanco] = useState("");
   const [documento, setDocumento] = useState(p.documentoInicial || "");
@@ -88,7 +94,21 @@ export default function ContasListaView(p: Props) {
   const [diasAdiante, setDiasAdiante] = useState(7);
   const [ord, setOrd] = useState<Ord>(null);
   const [filtrosAbertos, setFiltrosAbertos] = useState(true);
-  const [origemChip, setOrigemChip] = useState<string | null>(null);
+  const [origemChip, setOrigemChip] = useState<string | null>(p.filtroInicial?.rotulo ?? null);
+  // Faturas de cartão já fechadas: aparecem como referência (fora do total) — são pagas inteiras, em Cartão de crédito.
+  const [cartoes, setCartoes] = useState<{ rotulo: string; venc: string; valor: number }[]>([]);
+  useEffect(() => {
+    if (receber) return;
+    let vivo = true;
+    (async () => {
+      try {
+        const cs = await fetchCartoesCredito();
+        const fs = await Promise.all(cs.filter((c) => c.ativo).map(async (c) => (await fetchFaturasCartao(c.id)).map((f: FaturaCartao) => ({ f, c }))));
+        if (vivo) setCartoes(fs.flat().filter(({ f }) => f.status === "fechada" && (f.valor_total || 0) > 0).map(({ f, c }) => ({ rotulo: c.apelido, venc: f.data_vencimento, valor: f.valor_total || 0 })));
+      } catch { /* sem cartões: nada a mostrar */ }
+    })();
+    return () => { vivo = false; };
+  }, [receber]);
 
   const filtrosAtuais = () => ({ campoPeriodoContas: campoPeriodo, inicio: de, fim: ate, centro, contaBanco: banco, fornecedor: forn, documento, produto, conta, contaNome, origem });
   function aplicarSalvos(f: Record<string, string | undefined>) {
@@ -177,6 +197,23 @@ export default function ContasListaView(p: Props) {
 
   // ── painel lateral de baixa ─────────────────────────────────────────
   const [baixa, setBaixa] = useState<Lanc | null>(null);
+  // "Desfazer" logo após a baixa (= estorno): some sozinho em 12 s.
+  const [desfazer, setDesfazer] = useState<{ id: number; rotulo: string; erro?: string } | null>(null);
+  useEffect(() => {
+    if (!desfazer || desfazer.erro) return;
+    const t = setTimeout(() => setDesfazer(null), 12000);
+    return () => clearTimeout(t);
+  }, [desfazer]);
+  async function desfazerBaixa() {
+    if (!desfazer) return;
+    try {
+      await estornarPagamentoLancamento(desfazer.id, { confirmar_parcelas_diferenca: true });
+      setDesfazer(null);
+      p.onDesfeito();
+    } catch (e) {
+      setDesfazer({ ...desfazer, erro: e instanceof Error ? e.message : "Não foi possível desfazer." });
+    }
+  }
   useEffect(() => { if (baixa && !abertas.some((r) => r.id === baixa.id)) setBaixa(null); }, [abertas, baixa]);
   // Chegou por link (Agenda, sino, busca) com um nº de nota: se só uma conta casa, já abre a baixa dela.
   const abriuAlvo = useRef(false);
@@ -312,6 +349,14 @@ export default function ContasListaView(p: Props) {
         </div>
       </div>
 
+      {cartoes.length > 0 && (
+        <div className="card mb-2" style={{ padding: "0.5rem 0.8rem", display: "flex", alignItems: "center", gap: "0.7rem", flexWrap: "wrap", fontSize: "0.8rem" }}>
+          <span className="st-pill fat"><Layers size={13} aria-hidden /> Cartão de crédito</span>
+          <span>{cartoes.map((c) => `${c.rotulo}: ${formatBRL(c.valor)} (vence ${formatDate(c.venc)})`).join(" · ")}</span>
+          <span style={{ color: "var(--text-muted)" }}>Fatura fechada, paga inteira como uma conta só; <strong>fora do total acima</strong>.</span>
+          {p.onAbrirCartao && <button className="btn-ghost" style={{ fontSize: "0.76rem" }} onClick={p.onAbrirCartao}>Pagar pelo cartão →</button>}
+        </div>
+      )}
       <div className="flex items-center justify-between gap-2 mb-2" style={{ flexWrap: "wrap", fontSize: "0.8rem", color: "var(--text-muted)" }}>
         <span className="flex gap-2" style={{ flexWrap: "wrap" }}>
           <span className="st-chip">Status: não {receber ? "recebido" : "pago"}</span>
@@ -422,8 +467,17 @@ export default function ContasListaView(p: Props) {
       {baixa && (
         <PainelLateral titulo={`Dar baixa · ${baixa.fornecedor || baixa.descricao}`} onFechar={() => setBaixa(null)}>
           <ResumoNota r={baixa} hoje={hoje} />
-          {p.renderBaixa(baixa, () => setBaixa(null))}
+          {p.renderBaixa(baixa, (feito) => { setBaixa(null); if (feito) setDesfazer({ id: baixa.id, rotulo: `${receber ? "Recebimento" : "Pagamento"} de ${baixa.fornecedor || baixa.descricao} registrado` }); })}
         </PainelLateral>
+      )}
+
+      {desfazer && (
+        <div role="status" aria-live="polite" style={{ position: "fixed", left: "50%", transform: "translateX(-50%)", bottom: 18, zIndex: 95, background: "var(--text-accent)", color: "var(--bg)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.9rem", display: "flex", alignItems: "center", gap: "0.8rem", boxShadow: "0 6px 20px rgba(0,0,0,0.3)", maxWidth: "92vw" }}>
+          <CheckCircle2 size={16} aria-hidden />
+          <span style={{ fontSize: "0.85rem" }}>{desfazer.erro ? desfazer.erro : desfazer.rotulo}</span>
+          {!desfazer.erro && <button className="btn-ghost" style={{ background: "var(--surface)", color: "var(--text)", minHeight: 32 }} onClick={desfazerBaixa}><Undo2 size={13} /> Desfazer</button>}
+          <button className="btn-ghost" aria-label="Fechar aviso" style={{ color: "inherit", minHeight: 32 }} onClick={() => setDesfazer(null)}><X size={14} /></button>
+        </div>
       )}
     </div>
   );
