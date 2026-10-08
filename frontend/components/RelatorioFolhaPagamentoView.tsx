@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Filter, Printer, Search } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, FileText, Filter, MinusCircle, Printer, Search } from "lucide-react";
 import {
   fetchFolhaPagamentoUnificada, fetchPessoas, formatBRL, formatDate, type LinhaFolhaUnificada,
 } from "@/lib/api";
-import { Indicador, TabBar } from "@/components/ui";
-import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { TabBar } from "@/components/ui";
+import { useOrdenacao } from "@/components/Ordenavel";
+import { ThOrdem, estiloAlternador, propsLinhaAcao, EstilosFinV2 } from "@/components/financeiro/folhaUi";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { Holerite } from "@/components/Holerite";
 import {
@@ -17,7 +18,6 @@ import type { ColunaExport } from "@/lib/export";
 const LABEL_TIPO: Record<string, string> = {
   funcionario: "Funcionário", empreita: "Empreita", contrato: "Contrato", diaria: "Diária", ferias_decimo: "Férias / 13º",
 };
-const VENCIDO_BG = "rgba(94, 26, 46, 0.18)";
 
 // "A pagar" é tudo o que ainda não foi pago, vencido ou não: a pergunta aqui
 // é de caixa. O atraso continua sendo dito pelo selo VENCIDO do documento e
@@ -34,8 +34,14 @@ const selStyle: React.CSSProperties = {
 };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 
-function KPI({ v, l, c }: { v: string; l: string; c?: string }) {
-  return <Indicador categoria="financeiro" valor={v} rotulo={l} cor={c || "var(--dourado-light)"} />;
+/** Cartão de resumo no visual v2 (`.st-kpi`): rótulo com ícone, valor, faixa inferior de 3px. */
+function KPI({ v, l, tom, icone }: { v: string; l: string; tom?: "logo" | "pago" | "venc"; icone: React.ReactNode }) {
+  return (
+    <div className={`st-kpi${tom ? ` ${tom}` : ""}`}>
+      <div className="l">{icone}{l}</div>
+      <div className="v">{v}</div>
+    </div>
+  );
 }
 
 const COLUNAS_EXPORT: ColunaExport[] = [
@@ -160,29 +166,30 @@ export default function RelatorioFolhaPagamentoView() {
   if (!linhas) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
 
   return (
-    <div>
+    <div className="fin-v2">
+      <EstilosFinV2 />
       {/* As duas telas de folha diziam o que fazem só no texto do menu, que
           some assim que se entra. Aqui o papel é dito na própria tela, com o
           caminho para a outra: esta CONSULTA e IMPRIME; em Ações se lança, se
           corrigem as rubricas e se paga. */}
-      <div className="card mb-4" style={{ borderLeft: "3px solid var(--dourado)" }}>
+      <div className="card mb-4" style={{ borderLeft: "3px solid var(--text-accent)" }}>
         <div className="flex items-baseline gap-2" style={{ flexWrap: "wrap" }}>
           <strong style={{ fontSize: "0.85rem" }}>Esta tela é só consulta.</strong>
           <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
             O recibo de cada pessoa, para conferir e imprimir — nada aqui altera a folha.
             Para lançar, acrescentar vencimento/desconto, marcar como pago ou estornar, use{" "}
-            <a href="/financeiro?ir=folha" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}
-              title="Abrir Ações > Fechamento da folha">Ações › Fechamento da folha</a>.
+            <a href="/financeiro?ir=folha" style={{ color: "var(--text-accent)", textDecoration: "underline", fontWeight: 600 }}
+              title="Abrir Contas > Folha de pagamento > Fechamento da folha">Contas › Folha de pagamento › Fechamento</a>.
           </span>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-        <KPI v={String(filtradas.length)} l="Lançamentos" />
-        <KPI v={formatBRL(somaPendente)} l="A vencer" c="var(--amber)" />
-        <KPI v={formatBRL(somaPaga)} l="Pago" c="var(--green-light)" />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <KPI v={String(filtradas.length)} l="Lançamentos" icone={<FileText size={13} aria-hidden />} />
+        <KPI v={formatBRL(somaPendente)} l="A vencer" tom="logo" icone={<Clock size={13} aria-hidden />} />
+        <KPI v={formatBRL(somaPaga)} l="Pago" tom="pago" icone={<CheckCircle2 size={13} aria-hidden />} />
         {bloqueadas.length > 0 && (
-          <KPI v={formatBRL(somaBloqueada)} l={`Fora da conta (${bloqueadas.length})`} c="var(--red)" />
+          <KPI v={formatBRL(somaBloqueada)} l={`Fora da conta (${bloqueadas.length})`} tom="venc" icone={<AlertTriangle size={13} aria-hidden />} />
         )}
       </div>
       {bloqueadas.length > 0 && (
@@ -199,21 +206,14 @@ export default function RelatorioFolhaPagamentoView() {
           mesma regra podiam se contradizer e esvaziar a tela sem explicação
           (ver `filtrarPorSituacao` em lib/holeriteRegras.ts). */}
       <div className="card mb-4">
-        <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-          <span style={{ ...labelStyle, marginRight: "0.2rem" }}>Situação do pagamento</span>
+        <div className="flex items-center gap-2" role="group" aria-labelledby="rf-situacao" style={{ flexWrap: "wrap" }}>
+          <span id="rf-situacao" style={{ ...labelStyle, marginRight: "0.2rem" }}>Situação do pagamento</span>
           {SITUACOES.map((s) => (
             <button
               key={s.id} type="button" className="btn-ghost"
-              title={s.dica}
+              title={s.dica} aria-pressed={situacao === s.id}
               onClick={() => setSituacao(s.id)}
-              style={{
-                fontSize: "0.76rem",
-                borderColor: situacao === s.id ? "var(--dourado)" : undefined,
-                color: situacao === s.id ? "var(--dourado-light)" : undefined,
-                fontWeight: situacao === s.id ? 700 : undefined,
-                background: situacao === s.id
-                  ? "color-mix(in srgb, var(--dourado-light) 12%, transparent)" : undefined,
-              }}
+              style={{ fontSize: "0.76rem", ...estiloAlternador(situacao === s.id) }}
             >{s.label}</button>
           ))}
         </div>
@@ -222,16 +222,16 @@ export default function RelatorioFolhaPagamentoView() {
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar</div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
-          <div><label style={labelStyle}>Vencimento de</label>
-            <input type="date" style={selStyle} value={vencDe} onChange={(e) => setVencDe(e.target.value)} /></div>
-          <div><label style={labelStyle}>Vencimento até</label>
-            <input type="date" style={selStyle} value={vencAte} onChange={(e) => setVencAte(e.target.value)} /></div>
-          <div><label style={labelStyle}>Pessoa</label>
-            <select style={selStyle} value={pessoaId} onChange={(e) => setPessoaId(e.target.value)}>
+          <div><label htmlFor="rf-1" style={labelStyle}>Vencimento de</label>
+            <input id="rf-1" type="date" style={selStyle} value={vencDe} onChange={(e) => setVencDe(e.target.value)} /></div>
+          <div><label htmlFor="rf-2" style={labelStyle}>Vencimento até</label>
+            <input id="rf-2" type="date" style={selStyle} value={vencAte} onChange={(e) => setVencAte(e.target.value)} /></div>
+          <div><label htmlFor="rf-3" style={labelStyle}>Pessoa</label>
+            <select id="rf-3" style={selStyle} value={pessoaId} onChange={(e) => setPessoaId(e.target.value)}>
               <option value="">Todas</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
             </select></div>
-          <div><label style={labelStyle}>Tipo</label>
-            <select style={selStyle} value={tipo} onChange={(e) => setTipo(e.target.value as typeof tipo)}>
+          <div><label htmlFor="rf-4" style={labelStyle}>Tipo</label>
+            <select id="rf-4" style={selStyle} value={tipo} onChange={(e) => setTipo(e.target.value as typeof tipo)}>
               <option value="">Todos</option>
               {Object.entries(LABEL_TIPO).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select></div>
@@ -253,8 +253,9 @@ export default function RelatorioFolhaPagamentoView() {
           <div className="card" style={{ padding: 0, overflow: "hidden", alignSelf: "start" }}>
             <div style={{ padding: "0.75rem 0.9rem", borderBottom: "1px solid var(--border)" }}>
               <div className="flex items-center gap-2" style={{ marginBottom: "0.5rem" }}>
-                <Search size={13} style={{ color: "var(--text-muted)" }} />
+                <Search size={13} aria-hidden style={{ color: "var(--text-muted)" }} />
                 <input
+                  aria-label="Buscar pessoa"
                   style={{ ...selStyle, padding: "0.3rem 0.5rem" }}
                   placeholder="Buscar pessoa…"
                   value={busca}
@@ -273,10 +274,12 @@ export default function RelatorioFolhaPagamentoView() {
                     key={d.chave}
                     className="row-clickable"
                     onClick={() => setSelecionada(d.chave)}
+                    {...propsLinhaAcao(() => setSelecionada(d.chave), `Abrir o recibo de ${d.pessoaNome} — ${d.competenciaLabel}`)}
+                    aria-pressed={ativo}
                     style={{
                       padding: "0.6rem 0.9rem", borderBottom: "1px solid var(--border)", cursor: "pointer",
-                      borderLeft: `3px solid ${ativo ? "var(--dourado)" : "transparent"}`,
-                      background: ativo ? "color-mix(in srgb, var(--dourado-light) 9%, transparent)" : undefined,
+                      borderLeft: `3px solid ${ativo ? "var(--text-accent)" : "transparent"}`,
+                      background: ativo ? "var(--sel-row)" : undefined,
                     }}
                   >
                     <div className="flex items-baseline gap-2">
@@ -284,7 +287,7 @@ export default function RelatorioFolhaPagamentoView() {
                       <span style={{ flexGrow: 1 }} />
                       <span style={{
                         fontSize: "0.8rem", fontWeight: 600, fontVariantNumeric: "tabular-nums",
-                        color: d.totais.liquido_negativo ? "var(--red)" : undefined,
+                        color: d.totais.liquido_negativo ? "var(--st-venc-fg)" : undefined,
                       }}>
                         {formatBRL(d.totais.liquido_negativo ? d.totais.excedente : d.totais.liquido)}
                       </span>
@@ -295,10 +298,7 @@ export default function RelatorioFolhaPagamentoView() {
                         {d.status === "pago" ? ` · pago em ${formatDate(d.dataPagamento || "")}` : ""}
                       </span>
                       {d.totais.liquido_negativo && (
-                        <span style={{
-                          padding: "0.05rem 0.35rem", borderRadius: "var(--r-sm)", fontSize: "0.64rem", fontWeight: 700,
-                          background: "color-mix(in srgb, var(--red) 12%, transparent)", color: "var(--red)",
-                        }}>estourada</span>
+                        <span className="st-pill venc"><AlertTriangle size={11} aria-hidden />estourada</span>
                       )}
                     </div>
                   </div>
@@ -365,13 +365,13 @@ export default function RelatorioFolhaPagamentoView() {
             <table className="fazenda-table">
               <thead>
                 <tr>
-                  <ThOrdenavel label="Tipo" campo="tipo" coluna={coluna} dir={dir} ordenar={ordenar} />
-                  <ThOrdenavel label="Pessoa" campo="pessoa_nome" coluna={coluna} dir={dir} ordenar={ordenar} />
+                  <ThOrdem label="Tipo" campo="tipo" coluna={coluna} dir={dir} ordenar={ordenar} />
+                  <ThOrdem label="Pessoa" campo="pessoa_nome" coluna={coluna} dir={dir} ordenar={ordenar} />
                   <th>Descrição</th>
-                  <ThOrdenavel label="Vencimento" campo="data_vencimento" coluna={coluna} dir={dir} ordenar={ordenar} />
-                  <ThOrdenavel label="Valor" campo="valor" coluna={coluna} dir={dir} ordenar={ordenar} alinhar="right" />
+                  <ThOrdem label="Vencimento" campo="data_vencimento" coluna={coluna} dir={dir} ordenar={ordenar} />
+                  <ThOrdem label="Valor" campo="valor" coluna={coluna} dir={dir} ordenar={ordenar} alinhar="right" />
                   <th>Pagamento</th>
-                  <ThOrdenavel label="Status" campo="status" coluna={coluna} dir={dir} ordenar={ordenar} />
+                  <ThOrdem label="Status" campo="status" coluna={coluna} dir={dir} ordenar={ordenar} />
                   <th></th>
                 </tr>
               </thead>
@@ -381,26 +381,27 @@ export default function RelatorioFolhaPagamentoView() {
                   return (
                     <tr
                       key={`${l.tipo}-${l.origem_id}-${i}`}
-                      className={doc ? "row-clickable" : undefined}
+                      className={`${doc ? "row-clickable linha-selecionavel" : ""}${l.vencido ? " st-row-venc" : ""}` || undefined}
                       title={doc ? `Ver o recibo de ${l.pessoa_nome}` : undefined}
                       onClick={doc ? () => { setSelecionada(doc.chave); setAba("documentos"); } : undefined}
-                      style={{ background: l.vencido ? VENCIDO_BG : undefined, cursor: doc ? "pointer" : undefined }}
+                      {...(doc ? propsLinhaAcao(() => { setSelecionada(doc.chave); setAba("documentos"); }, `Ver o recibo de ${l.pessoa_nome}`) : {})}
+                      style={{ cursor: doc ? "pointer" : undefined }}
                     >
                       <td style={{ fontSize: "0.78rem" }}>{LABEL_TIPO[l.tipo] || l.tipo}</td>
                       <td style={{ fontWeight: 600, fontSize: "0.82rem" }}>{l.pessoa_nome}</td>
                       <td style={{ fontSize: "0.78rem" }}>{l.descricao}</td>
                       <td style={{ fontSize: "0.78rem" }}>{l.data_vencimento ? formatDate(l.data_vencimento) : "—"}</td>
-                      <td style={{ textAlign: "right", fontSize: "0.82rem", color: l.valor < 0 ? "var(--red)" : undefined }}>{formatBRL(l.valor)}</td>
+                      <td style={{ textAlign: "right", fontSize: "0.82rem", color: l.valor < 0 ? "var(--st-venc-fg)" : undefined }}>{formatBRL(l.valor)}</td>
                       <td style={{ fontSize: "0.78rem" }}>{l.data_pagamento ? formatDate(l.data_pagamento) : "—"}</td>
                       <td style={{ fontSize: "0.78rem" }}>
-                        {l.status === "pago" ? <span style={{ color: "var(--green-light)" }}>Pago</span>
+                        {l.status === "pago" ? <span className="st-pill pago"><CheckCircle2 size={12} aria-hidden />Pago</span>
                           : l.status === "cancelado_rescisao"
-                            ? <span style={{ color: "var(--text-muted)" }} title={rotuloStatusLinha(l.status).titulo}>Na rescisão</span>
-                          : l.vencido ? <span style={{ color: "var(--red)" }}>Vencido</span>
-                          : <span style={{ color: "var(--text-muted)" }}>A vencer</span>}
+                            ? <span className="st-pill" title={rotuloStatusLinha(l.status).titulo}><MinusCircle size={12} aria-hidden />Na rescisão</span>
+                          : l.vencido ? <span className="st-pill venc"><AlertTriangle size={12} aria-hidden />Vencido</span>
+                          : <span className="st-pill logo"><Clock size={12} aria-hidden />A vencer</span>}
                       </td>
                       <td style={{ textAlign: "right" }}>
-                        {doc && <Printer size={13} style={{ color: "var(--text-muted)" }} />}
+                        {doc && <Printer size={13} aria-hidden style={{ color: "var(--text-muted)" }} />}
                       </td>
                     </tr>
                   );

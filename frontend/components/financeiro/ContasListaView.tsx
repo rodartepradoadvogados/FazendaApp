@@ -93,7 +93,8 @@ export default function ContasListaView(p: Props) {
   const [agrupar, setAgrupar] = useState<"venc" | "forn">("venc");
   const [diasAdiante, setDiasAdiante] = useState(7);
   const [ord, setOrd] = useState<Ord>(null);
-  const [filtrosAbertos, setFiltrosAbertos] = useState(true);
+  // No celular os filtros começam recolhidos (a lista é o que importa); no computador, abertos acima dos cards.
+  const [filtrosAbertos, setFiltrosAbertos] = useState(() => (typeof window === "undefined" ? true : window.matchMedia("(min-width: 721px)").matches));
   const [origemChip, setOrigemChip] = useState<string | null>(p.filtroInicial?.rotulo ?? null);
   // Faturas de cartão já fechadas: aparecem como referência (fora do total) — são pagas inteiras, em Cartão de crédito.
   const [cartoes, setCartoes] = useState<{ rotulo: string; venc: string; valor: number }[]>([]);
@@ -249,6 +250,29 @@ export default function ContasListaView(p: Props) {
 
   return (
     <div>
+      <style>{`
+        @media (max-width: 720px) {
+          .cl-tab, .cl-tab tbody { display: block; }
+          .cl-tab thead { display: none; }
+          .cl-tab tr { display: grid; grid-template-columns: auto 1fr auto; gap: .3rem .65rem; padding: .75rem .8rem; border-bottom: 1px solid var(--border); align-items: center; }
+          .cl-tab td { display: block; padding: 0 !important; border: 0 !important; background: transparent; min-width: 0; }
+          .cl-tab td.c-grp { grid-column: 1 / -1; background: var(--surface-2) !important; padding: .4rem .8rem !important; margin: 0 -.8rem; }
+          .cl-tab tr:has(td.c-grp) { padding: 0; display: block; }
+          .cl-tab td.c-chk { grid-column: 1; grid-row: 1; }
+          .cl-tab td.c-sit { grid-column: 2; grid-row: 1; }
+          .cl-tab td.c-val { grid-column: 3; grid-row: 1; font-size: 1rem; }
+          .cl-tab td.c-desc { grid-column: 1 / -1; }
+          .cl-tab td.c-venc { grid-column: 1 / 3; }
+          .cl-tab td.c-forn { grid-column: 1 / -1; }
+          .cl-tab td.c-usr { grid-column: 1 / -1; }
+          .cl-tab td.c-act { grid-column: 1 / 3; text-align: left !important; }
+          .cl-tab td.c-menu { grid-column: 3; justify-self: end; }
+          .cl-tab .btn-ghost, .cl-tab .btn-primary { min-height: 44px; }
+          .cl-tab input[type=checkbox] { width: 22px; height: 22px; }
+          .cl-tab tr.st-row-venc, .cl-tab tr.st-row-sel { background: var(--st-venc-row); }
+          .cl-tab tr.st-row-sel { background: var(--sel-row); }
+        }
+      `}</style>
       {/* cabeçalho + ações */}
       <div className="flex items-start justify-between gap-3 mb-3" style={{ flexWrap: "wrap" }}>
         <div>
@@ -370,7 +394,7 @@ export default function ContasListaView(p: Props) {
       {/* lista */}
       <div className="card" style={{ padding: 0 }}>
         <div className="overflow-x-auto" style={{ maxHeight: "calc(100vh - 360px)", minHeight: 240 }}>
-          <table className="fazenda-table" style={{ margin: 0 }}>
+          <table className="fazenda-table cl-tab" style={{ margin: 0 }}>
             <thead style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--thead-bg)" }}>
               <tr>
                 <th style={{ width: 34 }}>
@@ -398,19 +422,19 @@ export default function ContasListaView(p: Props) {
                   <RowFragment key={r.id}>
                     {mostraGrupo && g && (
                       <tr>
-                        <td colSpan={colunas + 1} style={{ background: "var(--surface-2)", fontSize: "0.78rem", fontWeight: 700, padding: "0.35rem 0.7rem" }}>
+                        <td className="c-grp" colSpan={colunas + 1} style={{ background: "var(--surface-2)", fontSize: "0.78rem", fontWeight: 700, padding: "0.35rem 0.7rem" }}>
                           {nomeGrupo(r)} <span style={{ color: "var(--text-muted)", fontWeight: 500 }}>· {g.n} {g.n === 1 ? "lançamento" : "lançamentos"}</span>
                           <span style={{ float: "right", fontVariantNumeric: "tabular-nums" }}>{formatBRL(g.v)}</span>
                         </td>
                       </tr>
                     )}
                     <tr className={`${s.id === "vencida" ? "st-row-venc" : ""} ${sel.has(r.id) ? "st-row-sel" : ""}`}>
-                      <td>{selecionaveis(r)
+                      <td className="c-chk">{selecionaveis(r)
                         ? <input type="checkbox" aria-label={`Selecionar ${r.numero_lancamento || r.descricao}`} checked={sel.has(r.id)} onChange={() => alternar(r.id)} />
                         : <input type="checkbox" disabled title="Nota de fatura só se paga pela parcela da fatura" aria-label="Nota de fatura: pague pela fatura" />}</td>
-                      <td><PilulaSituacao s={s} /></td>
-                      <td style={{ whiteSpace: "nowrap", fontSize: "0.8rem", fontVariantNumeric: "tabular-nums" }}>{r.data_vencimento ? formatDate(r.data_vencimento) : "—"}</td>
-                      <td style={{ fontSize: "0.8rem" }}>
+                      <td className="c-sit"><PilulaSituacao s={s} /></td>
+                      <td className="c-venc" style={{ whiteSpace: "nowrap", fontSize: "0.8rem", fontVariantNumeric: "tabular-nums" }}>{r.data_vencimento ? formatDate(r.data_vencimento) : "—"}</td>
+                      <td className="c-desc" style={{ fontSize: "0.8rem" }}>
                         <div>{r.descricao || "—"}</div>
                         <div className="flex" style={{ flexWrap: "wrap", gap: "0.3rem", marginTop: 3, fontSize: "0.7rem", color: "var(--text-muted)" }}>
                           <span>{r.numero_lancamento}{r.parcela_total && r.parcela_total > 1 ? ` · parcela ${r.parcela_num}/${r.parcela_total}` : ""}</span>
@@ -421,16 +445,16 @@ export default function ContasListaView(p: Props) {
                           {(r.itens || []).some((it) => it.eh_vale) && <span className="st-chip" style={{ fontSize: "0.68rem", padding: "0 8px" }} title="Item lançado como vale — fora dos relatórios gerenciais">vale</span>}
                         </div>
                       </td>
-                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.fornecedor || "—"}</td>
-                      <td style={{ textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{formatBRL(r.valor)}</td>
-                      {admin && <td style={{ fontSize: "0.75rem" }}>{r.usuario_nome ?? "—"}</td>}
-                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                      <td className="c-forn" style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.fornecedor || "—"}</td>
+                      <td className="c-val" style={{ textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{formatBRL(r.valor)}</td>
+                      {admin && <td className="c-usr" style={{ fontSize: "0.75rem" }}>{r.usuario_nome ?? "—"}</td>}
+                      <td className="c-act" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                         {fat
                           ? <button className="btn-ghost" style={{ fontSize: "0.74rem" }} onClick={() => p.onAbrirFatura(r)} title="Nota de fatura só se paga pela parcela da fatura"><Layers size={12} /> Pagar pela fatura →</button>
                           : <button className={s.id === "vencida" ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.74rem", minHeight: 32 }} onClick={() => setBaixa(r)}
                               title={`Registrar ${receber ? "o recebimento" : "o pagamento"} desta conta (data, conta, forma, comprovante)`}><Wallet size={12} /> Dar baixa</button>}
                       </td>
-                      <td><MenuLinha r={r} onEditar={p.onEditar} onRecibo={p.onRecibo} onInserirEmFatura={p.onInserirEmFatura} podeInserir={!receber && !!r.fornecedor && !fat} /></td>
+                      <td className="c-menu"><MenuLinha r={r} onEditar={p.onEditar} onRecibo={p.onRecibo} onInserirEmFatura={p.onInserirEmFatura} podeInserir={!receber && !!r.fornecedor && !fat} /></td>
                     </tr>
                   </RowFragment>
                 );

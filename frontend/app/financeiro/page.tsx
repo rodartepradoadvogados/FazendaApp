@@ -26,7 +26,6 @@ import {
   criarLancamentoCartao, fecharFaturaCartao, pagarFaturaCartao,
   type CartaoCredito, type CartaoCreditoPayload, type FaturaCartao, type LancamentoCartao,
   marcarItemComoVale, desmarcarItemComoVale,
-  estornarPagamentoLancamento, type EstornoLancamentoOut,
   fetchEstoque, fetchServicosCadastro,
   vincularProdutoItem, fetchClassificacoesCadastro, criarClassificacao,
 } from "@/lib/api";
@@ -64,16 +63,6 @@ import { DocumentosFiscais } from "@/components/DocumentosFiscais";
 import LancamentosRecorrentesView from "@/components/LancamentosRecorrentesView";
 import { casaBusca } from "@/lib/busca";
 
-const COLUNAS_LANCAMENTOS = [
-  { header: "Nº lanç.", key: "numero_lancamento" }, { header: "Data", key: "data" },
-  { header: "Descrição", key: "descricao" }, { header: "Fornecedor/Cliente", key: "fornecedor" },
-  { header: "Centro custo", key: "centro_custo" }, { header: "Documento", key: "documento" },
-  { header: "Valor", key: "valor" }, { header: "Pago", key: "valor_pago" }, { header: "Conta bancária", key: "conta_bancaria" },
-  // Comprovante em arquivo (inclusive o comprovante único de um pagamento em
-  // lote, compartilhado por todas as notas da remessa) — ver
-  // `tem_comprovante` em listar_lancamentos no backend.
-  { header: "Comprovante", key: "comprovante_txt" },
-];
 const COLUNAS_LIVRO = [
   { header: "Data", key: "dataFmt" }, { header: "Descrição", key: "descricao" }, { header: "Fornecedor/Cliente", key: "fornecedor" },
   { header: "Entrada", key: "entrada" }, { header: "Saída", key: "saida" }, { header: "Saldo", key: "saldo" },
@@ -106,18 +95,9 @@ const CONTAS: { id: Rel; label: string; icon: any; desc: string }[] = [
   // que faz: aqui se CONSULTA e IMPRIME o documento; em Ações se FECHA o mês.
   // (O id não muda: navegação salva e links profundos continuam valendo.)
   { id: "folha_relatorio", label: "Holerites e recibos", icon: Users, desc: "O recibo de cada pessoa, linha a linha — com impressão individual e em lote" },
-  // id PRÓPRIO ("todas_contas"), distinto do "extrato" de Relatórios > Extrato
-  // completo — mesma tela/mesmo destino visual (ver EXTRATO_IDS abaixo), mas
-  // um id diferente evita reintroduzir o bug de destaque duplicado (clicar em
-  // "Extrato completo" acendendo "Contas > Todas" por engano) que motivou
-  // tirar esta aba da árvore antes. Ver comentário em `subNavTree`.
+  // "todas_contas" e "extrato" já não têm tela: viram atalho para Consultas (ver `irPara`).
   { id: "todas_contas", label: "Todas", icon: Receipt, desc: "Todos os lançamentos, com ou sem baixa" },
 ];
-// "extrato" (Relatórios > Extrato completo) e "todas_contas" (Contas > Todas)
-// são o MESMO destino/tela — só o id da árvore de navegação é diferente
-// (ver acima). Toda decisão de CONTEÚDO (não de navegação) que hoje testa
-// `rel === "extrato"` precisa também aceitar "todas_contas".
-const EXTRATO_IDS = new Set<Rel>(["extrato", "todas_contas"]);
 const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "pagamento", label: "Pagamento", icon: Wallet, desc: "Lançar/quitar uma nota de despesa" },
   { id: "recebimento", label: "Recebimento", icon: Wallet, desc: "Lançar/quitar uma nota de receita" },
@@ -203,7 +183,7 @@ function ThOrd({ rotulo, chave, sortKey, sortDir, onSort, style }: {
   );
 }
 
-import { contaDoLanc, casaContaGerencial, FiltroContaGerencial } from "@/components/financeiro/filtroContaGerencial";
+import { casaContaGerencial, FiltroContaGerencial } from "@/components/financeiro/filtroContaGerencial";
 import ContasListaView, { PilulaSituacao } from "@/components/financeiro/ContasListaView";
 import ConsultasView from "@/components/financeiro/ConsultasView";
 import OndeFoiParar from "@/components/financeiro/OndeFoiParar";
@@ -326,6 +306,19 @@ export default function FinanceiroPage() {
   }
   const [custosBase, setCustosBase] = useState<"custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra">("custo_litro_leite");
   const [contasFiltro, setContasFiltro] = useState<{ de?: string; ate?: string; rotulo?: string } | null>(null);
+  // Busca global: acha a nota pelo nº do documento/lançamento e abre onde ela está (em aberto → Contas; realizada → Consultas).
+  const [buscaGlobal, setBuscaGlobal] = useState("");
+  const [buscaMsg, setBuscaMsg] = useState<string | null>(null);
+  function buscarDocumento() {
+    const q = buscaGlobal.trim();
+    if (!q) return;
+    const achadas = (regs ?? []).filter((r) => casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""} ${r.numero_boleto || ""}`, q));
+    if (!achadas.length) { setBuscaMsg("Nenhuma nota com esse número."); return; }
+    const aberta = achadas.find((r) => !r.data_pagamento);
+    if (aberta) { irPara(aberta.tipo === "receita" ? "a_receber" : "a_pagar", aberta.numero_lancamento || aberta.numero_documento || q); }
+    else { irPara("extrato", achadas[0].numero_lancamento || achadas[0].numero_documento || q); }
+    setBuscaGlobal(""); setBuscaMsg(null);
+  }
   const [inserirFatura, setInserirFatura] = useState<Lanc | null>(null);
   const [novoLancAberto, setNovoLancAberto] = useState<"despesa" | "receita" | null>(null);
   const [novoLancArquivo, setNovoLancArquivo] = useState<File | null>(null);
@@ -502,22 +495,6 @@ export default function FinanceiroPage() {
   const receitas = filtrados.filter((r) => r.tipo === "receita").reduce((a, r) => a + valorDoRel(r), 0);
   const despesas = filtrados.filter((r) => r.tipo === "despesa").reduce((a, r) => a + valorDoRel(r), 0);
   const resultado = receitas - despesas;
-
-  // Panorama da coluna esquerda de Contas a pagar/a receber (ver tela
-  // "Consultar" do plano de duas colunas) — só faz sentido "vencido"/"a
-  // vencer" nessas duas abas (contas ainda em aberto); pagas/recebidas/
-  // extrato mostram só o total do período filtrado.
-  const kpisContas = useMemo(() => {
-    if (!CONTAS_IDS.has(rel)) return null;
-    const total = filtrados.reduce((s, r) => s + (r.valor || 0), 0);
-    if (rel !== "a_pagar" && rel !== "a_receber") return { total, vencido: null as number | null, aVencer: null as number | null };
-    const hoje = hojeLocal();
-    const em7dias = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
-    const abertos = filtrados.filter((r) => r.valor_pago == null);
-    const vencido = abertos.filter((r) => r.data_vencimento && r.data_vencimento < hoje).reduce((s, r) => s + (r.valor || 0), 0);
-    const aVencer = abertos.filter((r) => r.data_vencimento && r.data_vencimento >= hoje && r.data_vencimento <= em7dias).reduce((s, r) => s + (r.valor || 0), 0);
-    return { total, vencido, aVencer };
-  }, [filtrados, rel]);
 
   // Fluxo de caixa mensal (com saldo acumulado)
   const fluxoMensal = useMemo(() => {
@@ -713,7 +690,17 @@ export default function FinanceiroPage() {
             <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Escolha o relatório, o período e o centro de custo — indicadores, consolidado e gráfico.</p>
           )}
         </div>
-        <OndeFoiParar onIr={(d) => irPara(d)} />
+        <div className="flex items-start gap-2" style={{ flexWrap: "wrap" }}>
+          <form role="search" onSubmit={(e) => { e.preventDefault(); buscarDocumento(); }} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <div style={{ position: "relative" }}>
+              <Search size={14} aria-hidden style={{ position: "absolute", left: 9, top: 11, color: "var(--text-muted)" }} />
+              <input aria-label="Buscar por nº do documento ou do lançamento" value={buscaGlobal} onChange={(e) => { setBuscaGlobal(e.target.value); setBuscaMsg(null); }}
+                placeholder="Nº do documento ou LC-…" style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem 0.45rem 1.9rem", fontSize: "0.82rem", width: 230, minHeight: 38 }} />
+            </div>
+            {buscaMsg && <span role="status" style={{ fontSize: "0.72rem", color: "var(--st-venc-fg)" }}>{buscaMsg}</span>}
+          </form>
+          <OndeFoiParar onIr={(d) => irPara(d)} />
+        </div>
       </div>
 
       {error && <div className="alert-critico mb-4"><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os lançamentos financeiros</a>.</span></div>}
@@ -783,55 +770,7 @@ export default function FinanceiroPage() {
           : rel === "compra_semen" ? <RelatorioCompraSemenView />
           : rel === "orcamento" ? <OrcamentoView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} />
           : rel === "planejamento_financeiro" ? <PlanejamentoFinanceiroView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} /> : <>
-        {CONTAS_IDS.has(rel) ? (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
-              <div className="mb-4">
-                {kpisContas?.vencido != null ? (
-                  // Um número dominante (o que decide se precisa agir agora) em vez
-                  // de 3 cartões do mesmo peso competindo pelo olhar — vencido e
-                  // "vence em 7 dias" continuam os mesmos dados, só menores.
-                  <div className="card" style={{ padding: "1.1rem 1.3rem" }}>
-                    <div style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.13em", textTransform: "uppercase", color: "var(--text-muted)" }}>
-                      {(rel as string) === "a_pagar" ? "Total em aberto" : "Total a receber"}
-                    </div>
-                    <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--dourado-light)", marginTop: "0.25rem", fontVariantNumeric: "tabular-nums" }}>
-                      {formatBRL(kpisContas.total)}
-                    </div>
-                    <div style={{ display: "flex", gap: "1.6rem", marginTop: "0.9rem", paddingTop: "0.8rem", borderTop: "1px solid var(--border)" }}>
-                      <div>
-                        <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--red)", fontVariantNumeric: "tabular-nums" }}>{formatBRL(kpisContas.vencido)}</div>
-                        <div style={{ fontSize: "0.62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginTop: "0.1rem" }}>Vencido</div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--amber)", fontVariantNumeric: "tabular-nums" }}>{formatBRL(kpisContas.aVencer ?? 0)}</div>
-                        <div style={{ fontSize: "0.62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginTop: "0.1rem" }}>Vence em 7 dias</div>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 gap-2">
-                    <KPI v={formatBRL(kpisContas?.total ?? 0)} l="Total do período" c="var(--dourado-light)" />
-                  </div>
-                )}
-              </div>
-              {filtrosCard}
-            </div>
-            <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto" }}>
-              {/* `documentoInicial`: quando se chega aqui por um link
-                  "?ir=extrato&ref=LC-…" (o "No extrato" do holerite, a Agenda,
-                  o sino), o nº já entra no filtro de documento — sem isso o
-                  link abria a lista inteira e o usuário tinha que digitar o
-                  número que acabou de clicar. */}
-              <TabelaContas key={rel} rel={rel} itens={filtrados} planoContas={planoContas}
-                documentoInicial={EXTRATO_IDS.has(rel) ? notaAlvoRef : null}
-                onTratar={(l) => { setRel(l.tipo === "receita" ? "recebimento" : "pagamento"); setNotaAlvoRef(l.numero_lancamento || l.numero_documento || null); }}
-                onEditar={(l) => setEditando(l)}
-                onRecibo={(l) => setRecibo({ ...l, reparcelamento: reparcelamentoDoRecibo(l) })}
-                onEstornado={recarregar} onAbrirFaturas={() => setRel("faturas")} />
-            </div>
-          </div>
-        ) : <>
+        <>
         {filtrosCard}
         {/* Indicadores consolidados */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
@@ -1115,7 +1054,7 @@ export default function FinanceiroPage() {
             </div>
           </SecaoRecolhivel>
         )}
-        </>}
+        </>
         </>}
       </>}
       {editando && (
@@ -3844,266 +3783,6 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
         </Modal>
       )}
     </div>
-  );
-}
-
-function TabelaContas({ rel, itens, planoContas, documentoInicial, onTratar, onEditar, onRecibo, onEstornado, onAbrirFaturas }: { rel: Rel; itens: Lanc[]; planoContas: ContaPlano[]; documentoInicial?: string | null; onTratar: (l: Lanc) => void; onEditar: (l: Lanc) => void; onRecibo: (l: Lanc) => void; onEstornado: () => void; onAbrirFaturas?: () => void }) {
-  const admin = ehAdmin();
-  const emAberto = rel === "a_pagar" || rel === "a_receber";
-  const [inserindo, setInserindo] = useState<Lanc | null>(null);
-
-  // G2 — reverte a baixa (o lançamento volta para "em aberto"); não exclui o
-  // lançamento. Se a baixa criou parcela(s) para cobrir a diferença de valor
-  // pago, a API responde 409 com as parcelas — pedimos confirmação numa
-  // segunda etapa antes de apagá-las junto.
-  const [estornando, setEstornando] = useState<number | null>(null);
-  const [confirmarParcelas, setConfirmarParcelas] = useState<{ lanc: Lanc; mensagem: string; parcelas: any[] } | null>(null);
-  const [erroEstorno, setErroEstorno] = useState<string | null>(null);
-
-  const estornar = async (l: Lanc, confirmarParcelasDiferenca = false) => {
-    if (!confirmarParcelasDiferenca) {
-      if (!window.confirm("Estornar a baixa deste lançamento? Ele volta para contas a pagar/receber.")) return;
-    }
-    setEstornando(l.id); setErroEstorno(null);
-    try {
-      const r: EstornoLancamentoOut = await estornarPagamentoLancamento(l.id, { confirmar_parcelas_diferenca: confirmarParcelasDiferenca });
-      setConfirmarParcelas(null);
-      if (r.avisos?.length) window.alert(r.avisos.join("\n"));
-      onEstornado();
-    } catch (e: any) {
-      if (e.status === 409 && e.detail?.parcelas) {
-        setConfirmarParcelas({ lanc: l, mensagem: e.detail.mensagem, parcelas: e.detail.parcelas });
-      } else {
-        setErroEstorno(e.message);
-      }
-    } finally {
-      setEstornando(null);
-    }
-  };
-  const hoje = hojeLocal();
-  const rotuloContraparte = rel === "a_receber" || rel === "recebidas" ? "Cliente" : EXTRATO_IDS.has(rel) ? "Fornecedor/Cliente" : "Fornecedor";
-  // Tipo desta aba (para a árvore de conta gerencial). Extrato mistura os dois.
-  const tiposConta: ("despesa" | "receita")[] =
-    rel === "a_receber" || rel === "recebidas" ? ["receita"]
-    : EXTRATO_IDS.has(rel) ? ["despesa", "receita"] : ["despesa"];
-
-  // Filtros próprios da lista (além do período/centro globais, já filtrados
-  // pelo período único de Contas antes de chegar em `itens`): produto/serviço,
-  // fornecedor/cliente, nº do documento, conta gerencial e tipo (extrato).
-  // Todos client-side.
-  const [fProduto, setFProduto] = useState("");
-  const [fContraparte, setFContraparte] = useState("");
-  const [fDocumento, setFDocumento] = useState(documentoInicial || "");
-  const [fConta, setFConta] = useState("");
-  const [fContaNome, setFContaNome] = useState("");
-  const [fTipo, setFTipo] = useState<"" | "receita" | "despesa">("");
-
-  const opcoesProdutoServico = useMemo(() => {
-    const s = new Set<string>();
-    itens.forEach((r) => (r.itens || []).forEach((it) => { if (it.produto) s.add(it.produto); }));
-    return Array.from(s).sort((a, b) => a.localeCompare(b, "pt-BR"));
-  }, [itens]);
-  const opcoesContraparte = useMemo(() => {
-    const s = new Set<string>();
-    itens.forEach((r) => { if (r.fornecedor) s.add(r.fornecedor); });
-    return Array.from(s).sort((a, b) => a.localeCompare(b, "pt-BR"));
-  }, [itens]);
-
-  const filtradosLocal = useMemo(() => itens.filter((r) =>
-    (!fProduto || (r.itens || []).some((it) => it.produto === fProduto)) &&
-    (!fContraparte || r.fornecedor === fContraparte) &&
-    casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""}`, fDocumento) &&
-    casaContaGerencial(r, fConta) &&
-    (!EXTRATO_IDS.has(rel) || !fTipo || r.tipo === fTipo)
-  ), [itens, fProduto, fContraparte, fDocumento, fConta, fTipo, rel]);
-
-  const { ordenados, sortKey, sortDir, ordenar } = useOrdenacao(filtradosLocal, {
-    numero: (r) => (r.numero_lancamento || "").toLowerCase(),
-    data: (r) => (emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || "",
-    descricao: (r) => (r.descricao || "").toLowerCase(),
-    fornecedor: (r) => (r.fornecedor || "").toLowerCase(),
-    valor: (r) => r.valor,
-    pago: (r) => r.valor_pago ?? 0,
-  });
-  const pagContas = usePaginacao(ordenados);
-
-  // Somatórios refletem a lista já filtrada (o que está visível na tabela,
-  // antes de paginar) — não devem cair para a soma só da página atual.
-  const total = filtradosLocal.reduce((a, r) => a + r.valor, 0);
-  const totalPago = filtradosLocal.reduce((a, r) => a + (r.valor_pago ?? 0), 0);
-  const totalDesconto = filtradosLocal.reduce((a, r) => a + (r.desconto_acrescimo ?? 0), 0);
-
-  return (
-    <>
-      <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar a lista</div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div><label style={labelStyleLote}>Nº do documento</label>
-            <div style={{ position: "relative" }}>
-              <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
-              <input style={{ ...selStyleLote, paddingLeft: "1.6rem" }} value={fDocumento} onChange={(e) => setFDocumento(e.target.value)} placeholder="ex.: 4521 ou LC-2026-00012" />
-            </div></div>
-          <div><label style={labelStyleLote}>Produto / serviço</label>
-            <select style={selStyleLote} value={fProduto} onChange={(e) => setFProduto(e.target.value)}>
-              <option value="">Todos</option>{opcoesProdutoServico.map((p) => <option key={p} value={p}>{p}</option>)}
-            </select></div>
-          <div><label style={labelStyleLote}>{rotuloContraparte}</label>
-            <select style={selStyleLote} value={fContraparte} onChange={(e) => setFContraparte(e.target.value)}>
-              <option value="">Todos</option>{opcoesContraparte.map((f) => <option key={f} value={f}>{f}</option>)}
-            </select></div>
-          {EXTRATO_IDS.has(rel) && (
-            <div><label style={labelStyleLote}>Tipo</label>
-              <select style={selStyleLote} value={fTipo} onChange={(e) => setFTipo(e.target.value as any)}>
-                <option value="">Receitas e despesas</option><option value="receita">Só receitas</option><option value="despesa">Só despesas</option>
-              </select></div>
-          )}
-          <div><label style={labelStyleLote}>Conta gerencial</label>
-            <FiltroContaGerencial contas={planoContas} tipos={tiposConta}
-              codigo={fConta} nome={fContaNome} onChange={(c, n) => { setFConta(c); setFContaNome(n); }} /></div>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-        <KPI v={String(filtradosLocal.length)} l="Lançamentos" />
-        <KPI v={formatBRL(total)} l={emAberto ? "Valor em aberto" : "Valor total"} c={rel === "a_pagar" || rel === "pagas" ? "var(--red)" : EXTRATO_IDS.has(rel) ? undefined : "var(--green-light)"} />
-        {!emAberto && !EXTRATO_IDS.has(rel) && <KPI v={formatBRL(totalPago)} l="Valor pago/recebido" c="var(--dourado-light)" />}
-        {!emAberto && !EXTRATO_IDS.has(rel) && <KPI v={formatBRL(totalDesconto)} l="Desconto/acréscimo" c={totalDesconto <= 0 ? "var(--green-light)" : "var(--amber)"} />}
-      </div>
-      <div className="card">
-        <div className="card-header mb-3 flex items-center justify-between">
-          <span>Lançamentos</span>
-          <ExportarBotoes titulo={CONTAS.find((c) => c.id === rel)?.label || RELATORIOS.find((r) => r.id === rel)?.label || "Lançamentos"} nomeArquivoBase={`financeiro_${rel}`}
-            colunas={COLUNAS_LANCAMENTOS}
-            linhas={ordenados.map((r) => ({ ...r, data: formatDate((emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || ""), documento: `${r.tipo_documento ? `${r.tipo_documento} ` : ""}${r.numero_documento || ""}`, comprovante_txt: r.tem_comprovante ? "Sim" : "" }))} />
-        </div>
-        <div className="overflow-x-auto" style={{ maxHeight: "520px" }}>
-          <table className="fazenda-table">
-            <thead style={theadStickyStyle}>
-              <tr>
-                <ThOrd rotulo="Nº lanç." chave="numero" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
-                <ThOrd rotulo={emAberto ? "Vencimento" : "Data"} chave="data" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
-                <ThOrd rotulo="Descrição" chave="descricao" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
-                <ThOrd rotulo="Fornecedor/Cliente" chave="fornecedor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
-                <ThOrd rotulo="Valor" chave="valor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ ...theadStickyStyle, textAlign: "right" }} />
-                {!emAberto && <ThOrd rotulo="Pago" chave="pago" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ ...theadStickyStyle, textAlign: "right" }} />}
-                {!emAberto && <th style={theadStickyStyle}>Conta bancária</th>}
-                {admin && <th style={{ ...theadStickyStyle, textAlign: "left" }}>Usuário</th>}
-                <th style={{ ...theadStickyStyle, textAlign: "right" }}>Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pagContas.linhasPagina.map((r) => {
-                const vencido = emAberto && r.data_vencimento && r.data_vencimento < hoje;
-                return (
-                  <tr key={r.id}>
-                    <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{r.numero_lancamento}{r.parcela_total && r.parcela_total > 1 ? ` (${r.parcela_num}/${r.parcela_total})` : ""}
-                      {r.fatura_id ? <span title="Esta nota faz parte de uma fatura de fornecedor" style={{ marginLeft: "0.35rem", fontSize: "0.62rem", fontWeight: 700, color: "var(--dourado-light)", border: "1px solid var(--dourado-light)", borderRadius: "999px", padding: "0.03rem 0.35rem" }}>fatura</span> : null}
-                    </td>
-                    <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem", color: vencido ? "var(--red)" : undefined, fontWeight: vencido ? 700 : undefined }}>
-                      {formatDate((emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || "")}{vencido ? " ⚠" : ""}
-                    </td>
-                    <td style={{ fontSize: "0.78rem" }}>
-                      {r.descricao || "—"}
-                      {r.origem_preventivo && (
-                        <a href="/protocolos?aba=acompanhamento" title={`Nasceu do agendamento de ${r.origem_preventivo.protocolo} (${formatDate(r.origem_preventivo.data_evento)})`}
-                           style={{ display: "inline-block", marginTop: "0.25rem", fontSize: "0.65rem", fontWeight: 700, color: "var(--dourado-light)", border: "1px solid var(--dourado-light)", borderRadius: "999px", padding: "0.05rem 0.4rem", textDecoration: "none" }}>
-                          Protocolo preventivo · {r.origem_preventivo.protocolo}
-                        </a>
-                      )}
-                      {(r.itens || []).some((it) => it.eh_vale) && (
-                        <span title="Item lançado como vale — fora dos relatórios gerenciais"
-                          style={{ marginLeft: "0.4rem", fontSize: "0.65rem", fontWeight: 700, color: "var(--dourado-light)",
-                            border: "1px solid var(--dourado-light)", borderRadius: "999px", padding: "0.05rem 0.4rem" }}>
-                          vale
-                        </span>
-                      )}
-                      {/* Centro de custo e documento não são ordenáveis nem filtrados
-                          por coluna própria (o filtro de documento já busca aqui
-                          também) — viram apoio dentro da célula em vez de coluna
-                          fixa, pra reduzir a rolagem horizontal em notebook. */}
-                      {(r.centro_custo || r.tipo_documento || r.numero_documento) && (
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", marginTop: "0.25rem" }}>
-                          {r.centro_custo && (
-                            <span style={{ fontSize: "0.64rem", padding: "0.08rem 0.42rem", borderRadius: "999px", background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-                              {r.centro_custo}
-                            </span>
-                          )}
-                          {(r.tipo_documento || r.numero_documento) && (
-                            <span style={{ fontSize: "0.64rem", padding: "0.08rem 0.42rem", borderRadius: "999px", background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-                              {r.tipo_documento ? `${r.tipo_documento} ` : ""}{r.numero_documento || ""}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{r.fornecedor || "—"}</td>
-                    <td style={{ textAlign: "right", fontWeight: 600, color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{formatBRL(r.valor)}</td>
-                    {!emAberto && <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{r.valor_pago != null ? formatBRL(r.valor_pago) : "—"}</td>}
-                    {!emAberto && <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{r.conta_bancaria || "—"}</td>}
-                    {admin && <td>{r.usuario_nome ?? "—"}</td>}
-                    <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
-                      <button className="btn-ghost" title="Editar este lançamento (valor, datas, fornecedor, conta…)" style={{ fontSize: "0.72rem" }} onClick={() => onEditar(r)}><Pencil size={12} /> Editar</button>
-                      {rel === "a_pagar" && r.tipo === "despesa" && r.fornecedor && !r.fatura_id && !r.data_pagamento && (
-                        <button className="btn-ghost" title="Colocar esta nota numa fatura aberta do fornecedor" style={{ fontSize: "0.72rem", marginLeft: "0.3rem" }} onClick={() => setInserindo(r)}>Inserir em fatura…</button>
-                      )}
-                      {emAberto && <button className="btn-ghost" title="Tratar a baixa desta nota (data, conta, forma e comprovante)" style={{ fontSize: "0.72rem", marginLeft: "0.3rem" }} onClick={() => onTratar(r)}>Tratar</button>}
-                      {!emAberto && (
-                        <button className="btn-ghost" title="Estornar a baixa — o lançamento volta para contas a pagar/receber"
-                          style={{ fontSize: "0.72rem", marginLeft: "0.3rem" }} disabled={estornando === r.id} onClick={() => estornar(r)}>
-                          <Undo2 size={12} /> Estornar
-                        </button>
-                      )}
-                      <button className="btn-ghost" title="Emitir recibo deste lançamento (salvar PDF ou enviar por e-mail)" style={{ fontSize: "0.72rem", marginLeft: "0.3rem" }} onClick={() => onRecibo(r)}><Receipt size={12} /> Recibo</button>
-                    </td>
-                  </tr>
-                );
-              })}
-              {!ordenados.length && <tr><td colSpan={admin ? 9 : 8} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1.5rem" }}>Nenhum lançamento nesta aba.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-        {ordenados.length > 0 && (
-          <div style={{ padding: "0 0.9rem 0.6rem" }}>
-            <Paginacao pagina={pagContas.pagina} totalPaginas={pagContas.totalPaginas} totalLinhas={pagContas.totalLinhas}
-              tamanhoPagina={pagContas.tamanhoPagina} onMudarPagina={pagContas.setPagina} onMudarTamanho={pagContas.setTamanhoPagina} />
-          </div>
-        )}
-      </div>
-
-      {erroEstorno && (
-        <div className="alert-critico mt-3"><AlertTriangle size={18} /><span>{erroEstorno}</span></div>
-      )}
-
-      {inserindo && (
-        <ModalInserirEmFatura nota={inserindo as any} candidatas={itens as any} onClose={() => setInserindo(null)}
-          onFeito={onEstornado} onAbrirFaturas={onAbrirFaturas} />
-      )}
-
-      {confirmarParcelas && (
-        <Modal title="Estornar com parcelas de diferença" onClose={() => setConfirmarParcelas(null)} width="560px">
-          <p style={{ fontSize: "0.85rem" }}>{confirmarParcelas.mensagem}</p>
-          <div className="overflow-x-auto" style={{ maxHeight: "40vh", margin: "0.75rem 0" }}>
-            <table className="fazenda-table" style={{ margin: 0 }}>
-              <thead><tr><th>Parcela</th><th>Vencimento</th><th style={{ textAlign: "right" }}>Valor</th></tr></thead>
-              <tbody>
-                {confirmarParcelas.parcelas.map((p: any) => (
-                  <tr key={p.id}>
-                    <td style={{ fontSize: "0.8rem" }}>{p.parcela_num}/{p.parcela_total}</td>
-                    <td style={{ fontSize: "0.8rem" }}>{formatDate(p.data_vencimento)}</td>
-                    <td style={{ textAlign: "right", fontSize: "0.8rem" }}>{formatBRL(p.valor_total)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex justify-end gap-2">
-            <button className="btn-ghost" onClick={() => setConfirmarParcelas(null)} disabled={estornando !== null}>Cancelar</button>
-            <button className="btn-primary" onClick={() => estornar(confirmarParcelas.lanc, true)} disabled={estornando !== null}>
-              Estornar e remover as parcelas
-            </button>
-          </div>
-        </Modal>
-      )}
-    </>
   );
 }
 

@@ -2,9 +2,10 @@
 // "Inserir em fatura…": notas JÁ lançadas (despesa em aberto, sem parcela paga) entram numa fatura ABERTA do mesmo
 // fornecedor. O vencimento/parcelas próprios das notas são substituídos pelo cronograma da fatura.
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, X } from "lucide-react";
+import { AlertTriangle, Check, Info, Layers, X } from "lucide-react";
 import { fetchFaturas, formatBRL, inserirNotasNaFatura, previaInserirNotasNaFatura, type FaturaResumo } from "@/lib/api";
 import { Modal } from "@/components/Modal";
+import { EstiloFatura } from "@/components/financeiro/faturaVisual";
 
 export type NotaParaFatura = {
   id: number; numero_lancamento: string | null; fornecedor: string; tipo: string; valor: number;
@@ -12,7 +13,6 @@ export type NotaParaFatura = {
 };
 
 const br = (d: string | null | undefined) => (d ? d.split("-").reverse().join("/") : "—");
-const lbl = { display: "block", fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.2rem" } as const;
 
 export function ModalInserirEmFatura({ nota, candidatas, onClose, onFeito, onAbrirFaturas }: {
   nota: NotaParaFatura; candidatas: NotaParaFatura[]; onClose: () => void; onFeito: () => void; onAbrirFaturas?: () => void;
@@ -66,45 +66,53 @@ export function ModalInserirEmFatura({ nota, candidatas, onClose, onFeito, onAbr
 
   return (
     <Modal title={`Inserir em fatura — ${nota.fornecedor}`} onClose={onClose} width="680px">
-      {faturas === null ? <p style={{ fontSize: "0.82rem" }}>Carregando…</p> : faturas.length === 0 ? (
-        <div>
-          <p style={{ fontSize: "0.84rem", marginBottom: "0.8rem" }}>Não há fatura aberta de <strong>{nota.fornecedor}</strong>. Abra uma em Contas › Faturas de fornecedor e volte aqui.</p>
-          {onAbrirFaturas && <button type="button" className="btn-primary" onClick={() => { onClose(); onAbrirFaturas(); }}>Ir para Faturas</button>}
-        </div>
-      ) : (
-        <>
-          <label style={lbl} htmlFor="ins-fat">Fatura</label>
-          <select id="ins-fat" className="input" style={{ width: "100%", padding: "0.35rem 0.5rem", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)" }}
-            value={faturaId ?? ""} onChange={(e) => setFaturaId(e.target.value ? Number(e.target.value) : null)}>
-            <option value="">Selecione…</option>
-            {faturas.map((f) => <option key={f.id} value={f.id}>{f.rotulo} — {br(f.data_abertura)} a {br(f.data_fechamento_prevista)} ({f.notas} nota(s))</option>)}
-          </select>
-          <p style={{ ...lbl, marginTop: "0.9rem" }}>Notas deste fornecedor, em aberto e fora de fatura</p>
-          <div style={{ maxHeight: "180px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.6rem" }}>
-            {notas.map((n) => (
-              <label key={n.numero} style={{ display: "flex", gap: "0.5rem", alignItems: "center", fontSize: "0.8rem", margin: "0.25rem 0" }}>
-                <input type="checkbox" checked={marcadas.has(n.numero)} onChange={() => alternar(n.numero)} />
-                <span>{n.numero}</span><span style={{ color: "var(--text-muted)" }}>{n.documento}</span>
-                <span style={{ marginLeft: "auto", fontVariantNumeric: "tabular-nums" }}>{formatBRL(n.valor)}</span>
-              </label>))}
+      <EstiloFatura />
+      <div className="fv-modal">
+        {faturas === null ? <p className="fv-msg" role="status">Carregando…</p> : faturas.length === 0 ? (
+          <div className="fv-vazio">
+            <Layers size={22} aria-hidden />
+            <span>Não há fatura aberta de <strong>{nota.fornecedor}</strong>. Abra uma em Contas › Faturas de fornecedor e volte aqui.</span>
+            {onAbrirFaturas && <button type="button" className="btn-primary" style={{ marginTop: "0.4rem" }} onClick={() => { onClose(); onAbrirFaturas(); }}>Ir para Faturas</button>}
           </div>
-          {previa && (
-            <div style={{ marginTop: "0.8rem", fontSize: "0.8rem" }}>
-              <p style={{ marginBottom: "0.3rem" }}>Depois de inserir, cada nota segue o cronograma da fatura: {(previa.vencimentos_da_fatura as (string | null)[]).map((v, i, a) => `${a.length > 1 ? `${i + 1}ª ` : ""}${br(v)}`).join(" · ")}.</p>
-              <ul style={{ paddingLeft: "1rem", color: "var(--text-muted)" }}>
-                {previa.notas.map((n: any) => <li key={n.numero_lancamento}>{n.numero_lancamento}: hoje {n.parcelas_atuais.map((p: any) => `${br(p.vencimento)} ${formatBRL(p.valor)}`).join(", ")}</li>)}
-              </ul>
-            </div>
-          )}
-        </>
-      )}
-      {erro && <div className="alert-critico mt-3"><AlertTriangle size={16} /><span>{erro}</span></div>}
-      {faturas && faturas.length > 0 && (
-        <div className="flex gap-3 mt-4">
-          <button type="button" className="btn-primary" disabled={salvando || !faturaId || !numeros.length} onClick={inserir}><Check size={14} /> {salvando ? "Inserindo…" : `Inserir ${numeros.length} nota(s)`}</button>
-          <button type="button" className="btn-ghost" onClick={onClose}><X size={14} /> Cancelar</button>
-        </div>
-      )}
+        ) : (
+          <>
+            <label className="fv-lbl" htmlFor="ins-fat">Fatura</label>
+            <select id="ins-fat" className="fv-in" value={faturaId ?? ""} onChange={(e) => setFaturaId(e.target.value ? Number(e.target.value) : null)}>
+              <option value="">Selecione…</option>
+              {faturas.map((f) => <option key={f.id} value={f.id}>{f.rotulo} — {br(f.data_abertura)} a {br(f.data_fechamento_prevista)} ({f.notas} nota(s))</option>)}
+            </select>
+            <fieldset style={{ border: 0, padding: 0, margin: "0.9rem 0 0", minWidth: 0 }}>
+              <legend className="fv-lbl">Notas deste fornecedor, em aberto e fora de fatura</legend>
+              <div className="fv-checks">
+                {notas.map((n) => (
+                  <label key={n.numero} className="fv-check">
+                    <input type="checkbox" checked={marcadas.has(n.numero)} onChange={() => alternar(n.numero)} />
+                    <span style={{ minWidth: 0 }}><span className="fv-num">{n.numero}</span><span className="fv-t2">{n.documento}</span></span>
+                    <span className="fv-num fv-forte">{formatBRL(n.valor)}</span>
+                  </label>))}
+              </div>
+            </fieldset>
+            {previa && (
+              <div className="fv-aviso" aria-live="polite">
+                <Info size={16} aria-hidden />
+                <div>
+                  <b>Depois de inserir, cada nota segue o cronograma da fatura: {(previa.vencimentos_da_fatura as (string | null)[]).map((v, i, a) => `${a.length > 1 ? `${i + 1}ª ` : ""}${br(v)}`).join(" · ")}.</b>
+                  <ul>
+                    {previa.notas.map((n: any) => <li key={n.numero_lancamento}>{n.numero_lancamento}: hoje {n.parcelas_atuais.map((p: any) => `${br(p.vencimento)} ${formatBRL(p.valor)}`).join(", ")}</li>)}
+                  </ul>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+        {erro && <div className="alert-critico mt-3" role="alert"><AlertTriangle size={16} aria-hidden /><span>{erro}</span></div>}
+        {faturas && faturas.length > 0 && (
+          <div className="fv-rodape">
+            <button type="button" className="btn-primary" disabled={salvando || !faturaId || !numeros.length} onClick={inserir}><Check size={14} aria-hidden /> {salvando ? "Inserindo…" : `Inserir ${numeros.length} nota(s)`}</button>
+            <button type="button" className="btn-ghost fv-btn" onClick={onClose}><X size={14} aria-hidden /> Cancelar</button>
+          </div>
+        )}
+      </div>
     </Modal>
   );
 }

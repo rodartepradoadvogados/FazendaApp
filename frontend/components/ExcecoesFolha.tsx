@@ -26,9 +26,11 @@ import type { Excecao } from "@/lib/folhaCompetencia";
  * sustenta cada uma.
  */
 
-const CORES: Record<Excecao["gravidade"], { cor: string; titulo: string }> = {
-  bloqueia: { cor: "var(--red)", titulo: "Impede o fechamento" },
-  conferir: { cor: "var(--amber)", titulo: "Confira antes de pagar" },
+// Tokens de situação (--st-*): texto legível nas 3 paletas e nos 3 temas;
+// a linha (filete/borda) usa o tom -line, o texto o tom -fg.
+const CORES: Record<Excecao["gravidade"], { cor: string; linha: string; classe: string; titulo: string }> = {
+  bloqueia: { cor: "var(--st-venc-fg)", linha: "var(--st-venc-line)", classe: "venc", titulo: "Impede o fechamento" },
+  conferir: { cor: "var(--st-logo-fg)", linha: "var(--st-logo-line)", classe: "logo", titulo: "Confira antes de pagar" },
 };
 
 export function ExcecoesFolha({ excecoes, onResolver }: {
@@ -65,17 +67,15 @@ export function ExcecoesFolha({ excecoes, onResolver }: {
         }}>
           Resolver antes de fechar
         </span>
-        <span style={{
-          padding: "0.05rem 0.45rem", borderRadius: "999px", fontSize: "0.68rem", fontWeight: 700,
-          background: bloqueios ? "var(--red)" : "var(--amber)", color: "#fff",
-        }}>
+        <span className={`st-pill ${bloqueios ? "venc" : "logo"}`}>
+          {bloqueios ? <CircleAlert size={12} aria-hidden /> : <AlertTriangle size={12} aria-hidden />}
           {excecoes.length}
         </span>
       </div>
 
       <div className="flex flex-col gap-2">
         {excecoes.map((e) => {
-          const { cor, titulo } = CORES[e.gravidade];
+          const { cor, linha, classe, titulo } = CORES[e.gravidade];
           const Icone = e.gravidade === "bloqueia" ? CircleAlert : AlertTriangle;
           return (
             <div
@@ -87,16 +87,16 @@ export function ExcecoesFolha({ excecoes, onResolver }: {
                   className="flex items-start gap-3"
                   style={{
                     background: "var(--surface)", border: "1px solid var(--border)",
-                    borderLeft: `3px solid ${cor}`, borderRadius: "var(--r-sm)",
+                    borderLeft: `3px solid ${linha}`, borderRadius: "var(--r-sm)",
                     padding: "0.7rem 0.85rem", flexWrap: "wrap",
                   }}
                 >
-                  <Icone size={16} style={{ color: cor, flexShrink: 0, marginTop: "0.1rem" }} />
-                  <div style={{ flexGrow: 1, minWidth: "16rem" }}>
+                  <Icone size={16} aria-hidden style={{ color: cor, flexShrink: 0, marginTop: "0.1rem" }} />
+                  <div style={{ flexGrow: 1, minWidth: "min(16rem, 100%)" }}>
                     <div className="flex items-baseline gap-2" style={{ flexWrap: "wrap" }}>
                       <span style={{ fontSize: "0.84rem", fontWeight: 600 }}>{e.titulo}</span>
-                      <span style={{ fontSize: "0.7rem", fontWeight: 700, color: cor, letterSpacing: "0.03em", textTransform: "uppercase" }}>
-                        {titulo}
+                      <span className={`st-pill ${classe}`}>
+                        <Icone size={12} aria-hidden />{titulo}
                       </span>
                     </div>
                     <div style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.15rem", lineHeight: 1.45 }}>
@@ -110,7 +110,7 @@ export function ExcecoesFolha({ excecoes, onResolver }: {
                     <button
                       type="button" className="btn-ghost"
                       title="Abrir o lançamento envolvido, com a discriminação à vista"
-                      style={{ fontSize: "0.75rem", borderColor: cor, color: cor, whiteSpace: "nowrap" }}
+                      style={{ fontSize: "0.75rem", borderColor: linha, color: cor, whiteSpace: "nowrap", minHeight: 36 }}
                       onClick={() => onResolver(e)}
                     >
                       {e.acao}
