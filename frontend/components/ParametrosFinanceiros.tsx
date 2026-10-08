@@ -1,6 +1,6 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
-import { Wallet, Landmark, Tags, BookOpen, FileText, CreditCard, Plus, Pencil, AlertTriangle, Check, X, ChevronRight, ChevronDown, Stethoscope, SlidersHorizontal, ArrowLeftRight, Star } from "lucide-react";
+import { Wallet, Landmark, Tags, BookOpen, FileText, CreditCard, Plus, Pencil, AlertTriangle, Check, X, ChevronRight, ChevronDown, Stethoscope, SlidersHorizontal, ArrowLeftRight, Star, Workflow } from "lucide-react";
 import {
   fetchContasCorrentes, criarContaCorrente, atualizarContaCorrente,
   criarTransferenciaContas,
@@ -13,12 +13,14 @@ import {
 import { nivelDaConta, estiloNivel, filhosDiretos } from "@/lib/contaGerencial";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { GruposParametrosCards } from "@/components/GruposParametrosCards";
+import ContasAutomaticasView from "@/components/financeiro/ContasAutomaticasView";
 
 const ABAS = [
   ["parametros", "Parâmetros", SlidersHorizontal],
   ["contas", "Conta corrente", Landmark],
   ["centros", "Centro de custo", Tags],
   ["gerenciais", "Conta gerencial", BookOpen],
+  ["automaticas", "Contas automáticas", Workflow],
   ["tipos-documento", "Tipo de documento", FileText],
   ["formas-pagamento", "Forma de pagamento", CreditCard],
   ["classificacoes", "Classificação", Stethoscope],
@@ -62,6 +64,7 @@ export default function ParametrosFinanceiros() {
       {aba === "contas" && <ContasCorrentes />}
       {aba === "centros" && <CentrosCusto />}
       {aba === "gerenciais" && <ContasGerenciais />}
+      {aba === "automaticas" && <ContasAutomaticasView />}
       {aba === "tipos-documento" && <TiposDocumento />}
       {aba === "formas-pagamento" && <FormasPagamento />}
       {aba === "classificacoes" && <Classificacoes />}

@@ -37,7 +37,9 @@ def _modelos() -> dict[str, Any]:
 # Campos que um backfill pode alterar. valor_total/valor_pago NUNCA entram aqui.
 CAMPOS_PERMITIDOS: dict[str, frozenset[str]] = {
     "conta_gerencial": frozenset({"natureza_fin"}),
-    "lancamento_item": frozenset({"natureza_fin"}),
+    # PR 2/3 (backfill dos itens automáticos): a conta de um item GERADO que
+    # nasceu sem conta configurada. Item de gente nunca passa por aqui.
+    "lancamento_item": frozenset({"natureza_fin", "codigo_conta_gerencial", "nome_conta_gerencial"}),
     "plano_conta_gerencial": frozenset({"natureza_fin"}),
     "patrimonio": frozenset({"centro_custo"}),
 }
@@ -70,6 +72,35 @@ def registrar_mudanca(
         fazenda_id=fazenda_id, lote=lote, migracao=migracao, tabela=tabela,
         registro_id=registro.id, campo=campo,
         valor_antes=_json(antes), valor_depois=_json(valor_depois), motivo=motivo,
+    )
+    session.add(linha)
+    return linha
+
+
+# Pseudocampo de uma linha de log que registra um REGISTRO NOVO criado pelo
+# backfill (ex.: o item gerado de uma folha antiga). Reverter = apagar a linha
+# criada, e só se ela ainda for o que o backfill criou (`gerado_por` igual).
+CAMPO_CRIADO = "__criado__"
+TABELAS_CRIAVEIS = frozenset({"lancamento_item"})
+
+
+def registrar_criacao(
+    session: Session, *, fazenda_id: int | None, lote: str, migracao: str,
+    tabela: str, registro, marca: str, motivo: str | None = None,
+):
+    """Grava a linha de log de um registro NOVO (já com id: quem chama dá o
+    flush). `marca` é o que identifica a linha como do backfill (para itens,
+    o `gerado_por`). Não faz commit."""
+    from fazenda.models import MigracaoLogFinanceiro
+
+    if tabela not in TABELAS_CRIAVEIS:
+        raise ValueError(f"backfill não pode criar linhas em {tabela}")
+    if getattr(registro, "fazenda_id", fazenda_id) != fazenda_id:
+        raise ValueError(f"{tabela}#{registro.id} não pertence à fazenda {fazenda_id}")
+    linha = MigracaoLogFinanceiro(
+        fazenda_id=fazenda_id, lote=lote, migracao=migracao, tabela=tabela,
+        registro_id=registro.id, campo=CAMPO_CRIADO,
+        valor_antes=_json(None), valor_depois=_json(marca), motivo=motivo,
     )
     session.add(linha)
     return linha
@@ -108,6 +139,21 @@ def reverter_lote(session: Session, lote: str, *, fazenda_id: int | None, aplica
         registro = session.get(modelo, linha.registro_id) if modelo else None
         if registro is None or getattr(registro, "fazenda_id", None) != fazenda_id:
             resultado.nao_encontradas.append({"tabela": linha.tabela, "id": linha.registro_id})
+            continue
+        if linha.campo == CAMPO_CRIADO:
+            # Registro criado pelo backfill: reverter = apagar, se ainda é o dele.
+            if _json(getattr(registro, "gerado_por", None)) != linha.valor_depois:
+                resultado.conflitos.append({
+                    "tabela": linha.tabela, "id": linha.registro_id, "campo": linha.campo,
+                    "valor_atual": getattr(registro, "gerado_por", None),
+                    "valor_gravado_pelo_backfill": json.loads(linha.valor_depois or "null"),
+                })
+                continue
+            resultado.revertidas += 1
+            if aplicar:
+                session.delete(registro)
+                linha.revertido_em = agora
+                session.add(linha)
             continue
         atual = getattr(registro, linha.campo)
         if _json(atual) != linha.valor_depois:

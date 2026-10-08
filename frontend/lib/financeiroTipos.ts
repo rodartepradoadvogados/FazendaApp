@@ -19,7 +19,13 @@ export type Lanc = {
             eh_vale: boolean; vale_tipo: "funcionario" | "avulso" | null; vale_id: number | null;
             vale_pessoa_id: number | null; vale_pessoa_nome: string | null;
             // Natureza econômica só deste item (null = a da nota). Ver lib/naturezaFin.ts.
-            natureza_fin?: string | null }[];
+            natureza_fin?: string | null;
+            // Item criado pelo sistema numa nota automática (folha pelo bruto,
+            // contrato, vale...; Fase A, PR 2/3) — o papel dele na nota. null = lançado por gente.
+            gerado_por?: string | null;
+            codigo_conta_gerencial?: string | null; nome_conta_gerencial?: string | null }[];
+  // "auto" = criado pelo sistema (folha, férias, contrato, diária, vale, caixa do funcionário).
+  origem?: string | null;
   usuario_nome?: string | null;
   patrimonio_id?: number | null;
   fatura_id?: number | null;

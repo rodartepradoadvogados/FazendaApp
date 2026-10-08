@@ -4478,12 +4478,30 @@ function DreCascataView({ dataInicio, dataFim }: { dataInicio: string; dataFim: 
             </p>
           </div>
         )}
+        {/* Fase A, PR 2: folha/contrato/diária gerados sem conta automática. */}
+        {(dados.pendencias_contas_automaticas?.length ?? 0) > 0 && (
+          <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
+            <div className="card-header mb-2" style={{ color: "var(--amber)" }}>Configure as contas automáticas</div>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+              Lançamentos que o sistema cria sozinho estão sem conta e caíram em “não classificado”. Escolha a conta de
+              cada origem em Configurações › Parâmetros financeiros › Contas automáticas.
+            </p>
+            <ul style={{ fontSize: "0.76rem", margin: 0 }}>
+              {dados.pendencias_contas_automaticas!.map((p) => (
+                <li key={p.origem}>• {p.rotulo}: {formatBRL(p.valor)} ({p.lancamentos} item(ns))</li>
+              ))}
+            </ul>
+          </div>
+        )}
         {/* Contas ainda sem classificação — a DRE nunca finge que fecha, então
             elas ficam FORA de todos os subtotais até serem classificadas. */}
         {naoClassificado.total !== 0 && (
           <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
             <div className="card-header mb-2" style={{ color: "var(--amber)" }}>
-              Falta classificar {formatBRL(Math.abs(naoClassificado.total))} em {naoClassificado.contas.length} conta(s)
+              {naoClassificado.total_receita !== undefined && naoClassificado.total_despesa !== undefined
+                // Regras novas (Fase A, PR 2): receita e despesa separadas, nunca somadas.
+                ? `Sem classificação: ${formatBRL(naoClassificado.total_receita)} de receita e ${formatBRL(naoClassificado.total_despesa)} de despesa em ${naoClassificado.contas.length} conta(s)`
+                : `Falta classificar ${formatBRL(Math.abs(naoClassificado.total))} em ${naoClassificado.contas.length} conta(s)`}
             </div>
             <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
               Estes valores <strong>não entram em nenhuma linha</strong> da cascata abaixo — nem nos subtotais.
@@ -4501,7 +4519,7 @@ function DreCascataView({ dataInicio, dataFim }: { dataInicio: string; dataFim: 
                       </td>
                       <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{formatBRL(c.valor)}</td>
                       <td>
-                        {c.codigo ? (
+                        {c.codigo && !c.codigo.startsWith("(") ? (
                           <select
                             style={{ ...selStyleLote, width: "100%" }}
                             disabled={salvando === c.codigo}
@@ -4513,7 +4531,9 @@ function DreCascataView({ dataInicio, dataFim }: { dataInicio: string; dataFim: 
                           </select>
                         ) : (
                           <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                            Sem código de conta — classifique pelo plano de contas.
+                            {c.codigo?.startsWith("(sem conta")
+                              ? "Lançamento automático sem conta — configure em Parâmetros financeiros › Contas automáticas."
+                              : "Sem código de conta — classifique pelo plano de contas."}
                           </span>
                         )}
                       </td>

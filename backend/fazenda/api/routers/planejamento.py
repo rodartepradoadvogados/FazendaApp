@@ -31,7 +31,7 @@ from fazenda.models import (
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.centro_custo import mapear_centro_custo
-from fazenda.rules.vale_item import sem_itens_de_vale
+from fazenda.rules.vale_item import sem_itens_automaticos, sem_itens_de_vale
 from fazenda.api.routers.pedidos import _proximo_numero_pedido
 
 router = APIRouter(prefix="/planejamento", tags=["planejamento"])
@@ -176,9 +176,9 @@ def comparativo_orcado_realizado(
         return _comparativo_v2(session, fazenda_id, ano, mes_inicio, mes_fim, data_ini, data_fim,
                                centro_custo or None, linhas, nomes)
 
-    query_itens = sem_itens_de_vale(
+    query_itens = sem_itens_automaticos(sem_itens_de_vale(
         select(LancamentoItem).where(LancamentoItem.data_competencia >= data_ini, LancamentoItem.data_competencia <= data_fim)
-    )
+    ))
     if fazenda_id is not None:
         query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
     itens = session.exec(query_itens).all()
@@ -237,9 +237,13 @@ def _comparativo_v2(
         chave = r.get("codigo_conta") or "(sem conta)"
         l = linhas.setdefault(chave, {
             "codigo_conta_gerencial": chave, "nome_conta_gerencial": nomes.get(chave, r.get("descricao") or chave),
-            "tipo": r.get("tipo") or r.get("tipo_nota"), "orcado": 0.0, "realizado": 0.0,
+            "tipo": (r.get("tipo_nota") if r.get("redutor") else r.get("tipo")) or r.get("tipo_nota"),
+            "orcado": 0.0, "realizado": 0.0,
         })
-        l["realizado"] = round(l["realizado"] + (r.get("valor") or 0.0), 2)
+        # Item redutor da folha pelo bruto (PR 3: "(−) outros descontos",
+        # retidos, vale) abate a conta em vez de somar.
+        valor = r.get("valor") or 0.0
+        l["realizado"] = round(l["realizado"] + (-valor if r.get("redutor") else valor), 2)
 
     resultado = []
     for l in linhas.values():

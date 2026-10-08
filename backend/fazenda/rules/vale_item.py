@@ -31,6 +31,14 @@ def sem_itens_de_vale(query):
     )
 
 
+def sem_itens_automaticos(query):
+    """Regras ANTIGAS dos relatórios (flag financeiro_regras_v2 desligada):
+    tira os itens que o sistema gerou nas notas automáticas (PR 2/3,
+    `LancamentoItem.gerado_por`). Eles só existem com a flag ligada ou depois
+    do backfill, e o motor antigo tem de ler a nota como sempre leu."""
+    return query.where(LancamentoItem.gerado_por.is_(None))
+
+
 def eh_item_de_vale(item: LancamentoItem) -> bool:
     """Mesma regra de `sem_itens_de_vale`, para filtrar listas já carregadas."""
     return item.vale_funcionario_id is not None or item.vale_avulso_id is not None

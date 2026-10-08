@@ -177,3 +177,23 @@ test("ordenação: valor e data, asc/desc, sem mutar a lista", () => {
   assert.deepEqual(ordenarLinhas(xs, { chave: "data", dir: "desc" }).map((x) => x.l.data_pagamento), ["2026-10-03", "2026-10-02", "2026-10-01"]);
   assert.deepEqual(xs.map((x) => x.valor), antes);
 });
+
+test("folha gerada pelo sistema aparece em Consultas e a soma por conta fecha com o realizado (Fase A, PR 2/3)", () => {
+  // A nota da folha (líquido 2.560 pago) com os itens da folha pelo bruto: a
+  // tela lista a NOTA pelo realizado; os itens (bruto e redutores) somam o líquido.
+  const folha = lanc({
+    tipo_documento: "Folha de pagamento", origem: "auto", conta_completa: "3.03.01.01", codigo_conta: "3",
+    valor: 2560, valor_pago: 2560, fornecedor: "Ana Teste",
+    itens: [
+      { ...item("Salário e verbas", 3000), gerado_por: "folha_salario", codigo_conta_gerencial: "3.03.01.01" },
+      { ...item("(−) INSS e IRRF retidos", -240), gerado_por: "folha_retidos", natureza_fin: "OBRIGACAO" },
+      { ...item("(−) Vale descontado", -200), gerado_por: "folha_vale", natureza_fin: "ADIANTAMENTO" },
+    ],
+  });
+  const xs = filtrarRealizados([folha, lanc({})], base({ conta: "3.03.01.01" }), casaBusca);
+  assert.equal(xs.length, 1);
+  assert.equal(xs[0].l.origem, "auto");
+  assert.equal(xs[0].valor, 2560);
+  assert.equal((folha.itens || []).reduce((s, it) => s + it.valor_total, 0), 2560);
+  assert.deepEqual(resumir(xs, "pagamento").topContas, [{ codigo: "3.03.01.01", valor: 2560 }]);
+});

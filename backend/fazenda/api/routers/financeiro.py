@@ -27,8 +27,9 @@ from fazenda.models import (
 )
 from fazenda.rules import caixa_funcionario, estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
-from fazenda.rules.vale_item import ajuste_vale_por_conta, eh_item_de_vale, sem_itens_de_vale, valor_gerencial
+from fazenda.rules.vale_item import ajuste_vale_por_conta, eh_item_de_vale, sem_itens_automaticos, sem_itens_de_vale, valor_gerencial
 from fazenda.rules import juros_descontos
+from fazenda.rules import lancamento_automatico  # registra os listeners dos itens automáticos (PR 2/3)
 from fazenda.rules.email import enviar_email
 from fazenda.rules.centro_custo import CENTROS_CANONICOS, MAPA_CENTRO_CUSTO, mapear_centro_custo, valor_gerencial_por_centro_custo
 from fazenda.rules.leitura_documento import MIME_ACEITOS, ler_documento
@@ -624,7 +625,17 @@ def _registros_dre_para_cascata(
     `codigo_origem` = conta do item — é por ele que o RMCA acha a receita
     líquida do leite). Itens − deduções = o mesmo valor gerencial de antes:
     a receita líquida não muda. Nota de despesa: inalterada (o desconto
-    continua rateado nos itens)."""
+    continua rateado nos itens).
+
+    Itens gerados pelo sistema (PR 2/3, `LancamentoItem.gerado_por`, ver
+    rules/lancamento_automatico.py): com as regras v2 entram como qualquer
+    item — a folha pelo bruto, com os redutores (retidos, vale, FGTS a
+    recolher) somando o líquido. Fatia NEGATIVA (item redutor) vira registro
+    de MAGNITUDE com o `tipo` invertido e `redutor=True` (quem soma
+    magnitudes — custos, orçado × realizado — subtrai). Item gerado sem conta
+    configurada ganha um pseudocódigo ("(sem conta: ...)" vira pendência
+    "Configure as contas automáticas"). Sem as regras v2 esses itens são
+    IGNORADOS: a nota é lida exatamente como antes do PR 2."""
     regras_v2 = contexto_natureza is not None
     numeros = {c.numero_lancamento for c in filtradas if c.numero_lancamento}
     itens_por_numero: dict[str, list[LancamentoItem]] = {}
@@ -636,6 +647,8 @@ def _registros_dre_para_cascata(
         if fazenda_id is not None:
             query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
         for it in session.exec(query_itens).all():
+            if it.gerado_por and not regras_v2:
+                continue
             bruto_por_numero[it.numero_lancamento] = round(
                 bruto_por_numero.get(it.numero_lancamento, 0.0) + (it.valor_total or 0), 2)
             if eh_item_de_vale(it):
@@ -715,7 +728,7 @@ def _registros_dre_para_cascata(
                 _deducao(c, fatia_deducao, it.codigo_conta_gerencial, it)
             if fatia == 0:
                 continue
-            registros.append({
+            registro = {
                 "codigo_conta": it.codigo_conta_gerencial,
                 "tipo": it.tipo or c.tipo,
                 "valor": fatia,
@@ -726,9 +739,57 @@ def _registros_dre_para_cascata(
                     contexto_natureza.natureza(item=it, conta=c, codigo_conta=it.codigo_conta_gerencial)
                     if contexto_natureza is not None else None
                 ),
-            })
+            }
+            if regras_v2 and it.gerado_por:
+                _ajustar_registro_automatico(registro, it)
+            registros.append(registro)
 
     return registros, fallback_notas
+
+
+def _ajustar_registro_automatico(registro: dict, item: LancamentoItem) -> None:
+    """Regras v2, PR 2/3: item gerado pelo sistema (ver rules/lancamento_automatico.py).
+    - sem conta configurada: pseudocódigo (custo → "(sem conta: ...)", que
+      cai em "não classificado" e vira pendência; obrigação/adiantamento →
+      só o nome, já que a natureza explícita o tira da DRE);
+    - multa e juros da guia: linha forçada em Outras receitas e despesas;
+    - fatia negativa (redutor: retidos, vale, FGTS a recolher, outros
+      descontos): magnitude com o tipo invertido e `redutor=True`."""
+    papel = lancamento_automatico.PAPEIS.get(item.gerado_por)
+    registro["papel"] = item.gerado_por
+    registro["origem_automatica"] = lancamento_automatico.origem_do_papel(item.gerado_por)
+    if papel is not None and papel.linha_forcada:
+        registro.update({"codigo_conta": "(multa e juros de guias)", "descricao": "Multa e juros de guias de encargos",
+                         "linha_forcada": papel.linha_forcada, "natureza": OPERACIONAL})
+    elif not registro.get("codigo_conta"):
+        registro["codigo_conta"] = lancamento_automatico.rotulo_sem_conta(item.gerado_por)
+        registro["descricao"] = item.produto
+    if (registro.get("valor") or 0) < 0:
+        registro["valor"] = round(-registro["valor"], 2)
+        registro["tipo"] = "receita" if registro["tipo"] == "despesa" else "despesa"
+        registro["redutor"] = True
+
+
+def _pendencias_contas_automaticas(registros: list[dict]) -> list[dict]:
+    """Origens automáticas com item de CUSTO sem conta configurada no período:
+    a folha (ou o contrato, a diária...) caiu em "não classificado". A saída é
+    configurar a conta em Parâmetros financeiros > Contas automáticas (e
+    rodar o backfill para o que já foi gerado)."""
+    pendentes: dict[str, dict] = {}
+    for r in registros:
+        codigo = r.get("codigo_conta") or ""
+        if not r.get("papel") or not codigo.startswith("(sem conta"):
+            continue
+        origem = r.get("origem_automatica") or "?"
+        info = lancamento_automatico.ORIGENS.get(origem)
+        entrada = pendentes.setdefault(origem, {
+            "origem": origem, "rotulo": info.rotulo if info else origem, "valor": 0.0, "lancamentos": 0,
+            "motivo": "Configure a conta automática desta origem em Parâmetros financeiros > Contas automáticas.",
+        })
+        sinal = -1 if r.get("redutor") else 1
+        entrada["valor"] = round(entrada["valor"] + sinal * (r.get("valor") or 0.0), 2)
+        entrada["lancamentos"] += 1
+    return sorted(pendentes.values(), key=lambda x: -abs(x["valor"]))
 
 
 def _registros_diferenca_baixa(
@@ -976,6 +1037,8 @@ def calcular_dre(
         resposta["regras_v2"] = True
         resposta["resultado_baixas_periodo"] = baixas
         resposta["pendencias_natureza"] = _pendencias_natureza(registros, filtradas)
+        # PR 2: folha/contrato/diária... gerados sem conta automática configurada.
+        resposta["pendencias_contas_automaticas"] = _pendencias_contas_automaticas(registros)
         # Rastreio das linhas novas (PR 7): de onde veio cada juro/desconto.
         resposta["diferencas_baixa"] = [
             {k: r[k] for k in ("numero_lancamento", "conta_id", "data_pagamento", "codigo_conta", "tipo", "valor", "natureza")}
@@ -1099,6 +1162,10 @@ def custos_operacionais_periodo(
         if r.get("tipo_nota") != "despesa":
             continue
         valor = r.get("valor") or 0.0
+        if r.get("redutor"):
+            # Item redutor da folha pelo bruto (PR 3): retido/vale/FGTS a
+            # recolher saem do fora; "(−) outros descontos" abate pessoal.
+            valor = -valor
         natureza = r.get("natureza") or OPERACIONAL
         if not entra_nos_custos(natureza):
             fora[natureza] = round(fora.get(natureza, 0.0) + valor, 2)
@@ -1155,12 +1222,20 @@ def dre_conferencia(
     /financeiro/dre parar de jogar essas contas no balde `nao_classificado`.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    regras_v2 = regras_v2_ativas(session, fazenda_id)
     filtradas, valores = _periodo_filtradas_dre(session, data_inicio, data_fim, centro_custo, regime, fazenda_id)
-    registros, _fallback_notas = _registros_dre_para_cascata(session, filtradas, valores, centro_custo, fazenda_id)
+    # Regras v2 (PR 2): a conferência enxerga o que a DRE enxerga — natureza
+    # resolvida (obrigação/adiantamento da folha não é "falta classificar") e
+    # receita/despesa separadas no não classificado.
+    contexto = _contexto_natureza(session, fazenda_id) if regras_v2 else None
+    registros, _fallback_notas = _registros_dre_para_cascata(
+        session, filtradas, _valores_com_abatimento(filtradas, valores) if regras_v2 else valores,
+        centro_custo, fazenda_id, contexto,
+    )
     mapa_linha = _mapa_linha_por_codigo(session, fazenda_id)
     # Depreciação não é conta do plano — não participa da conferência de
     # classificação, só entra na cascata em si (GET /financeiro/dre).
-    resultado = montar_cascata_dre(registros, mapa_linha)
+    resultado = montar_cascata_dre(registros, mapa_linha, regras_v2=regras_v2)
 
     resposta = {
         "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
@@ -1169,7 +1244,10 @@ def dre_conferencia(
         "total": resultado["nao_classificado"]["total"],
         "contas": resultado["nao_classificado"]["contas"],
     }
-    if regras_v2_ativas(session, fazenda_id):
+    if regras_v2:
+        resposta["total_receita"] = resultado["nao_classificado"]["total_receita"]
+        resposta["total_despesa"] = resultado["nao_classificado"]["total_despesa"]
+        resposta["contas_automaticas_pendentes"] = _pendencias_contas_automaticas(registros)
         # Regras v2: contas do plano cujo NOME sugere outra natureza (ex.:
         # "Máquinas e equipamentos", "Principal do financiamento") e que ainda
         # não têm natureza própria. Só SUGESTÃO — nada é aplicado sozinho.
@@ -1249,6 +1327,9 @@ def listar_lancamentos(
             "vale_pessoa_id": vale_pessoa_id,
             "vale_pessoa_nome": nomes_pessoa.get(vale_pessoa_id) if vale_pessoa_id else None,
             "natureza_fin": it.natureza_fin,
+            # Item criado pelo sistema numa nota automática (folha, contrato,
+            # vale...; PR 2/3) — o papel dele na nota. NULL = lançado por gente.
+            "gerado_por": it.gerado_por,
         })
 
     contas = session.exec(query_contas).all()
@@ -2147,6 +2228,100 @@ def atualizar_natureza_plano(
 
 
 # ---------------------------------------------------------------------------
+# Contas automáticas (Fase A, PR 2) — a conta gerencial padrão de cada origem
+# de lançamento automático (folha, férias, 13º, rescisão, encargos, contrato,
+# empreita, diária, vale, caixa do funcionário). Ver
+# rules/lancamento_automatico.py. Valem só com a flag financeiro_regras_v2.
+# ---------------------------------------------------------------------------
+class ContaAutomaticaIn(BaseModel):
+    # None = sem conta (a origem vira pendência, ou usa a conta de reserva).
+    codigo_conta_gerencial: Optional[str] = None
+    # None = a natureza padrão da origem (ex.: vale = adiantamento).
+    natureza_fin: Optional[str] = None
+
+
+def _contas_automaticas_resposta(session: Session, fazenda_id: int | None) -> dict:
+    from fazenda.models import ContaPadraoOrigem
+
+    query_plano = select(PlanoContaGerencial)
+    if fazenda_id is not None:
+        query_plano = query_plano.where(PlanoContaGerencial.fazenda_id == fazenda_id)
+    plano = session.exec(query_plano).all()
+    nomes = {p.codigo: p.nome for p in plano}
+    linhas = {
+        cfg_linha.origem: cfg_linha for cfg_linha in session.exec(
+            select(ContaPadraoOrigem).where(ContaPadraoOrigem.fazenda_id == fazenda_id)
+        ).all()
+    } if fazenda_id is not None else {}
+    cfg = lancamento_automatico.carregar_configuracao(session, fazenda_id)
+    origens = []
+    for origem in lancamento_automatico.ORIGENS.values():
+        linha = linhas.get(origem.chave)
+        resolvida = cfg.conta(origem.chave)
+        origens.append({
+            "origem": origem.chave, "rotulo": origem.rotulo, "ajuda": origem.ajuda,
+            "natureza_padrao": origem.natureza,
+            "codigo_conta_gerencial": linha.codigo_conta_gerencial if linha else None,
+            "nome_conta": nomes.get(linha.codigo_conta_gerencial) if linha and linha.codigo_conta_gerencial else None,
+            "natureza_fin": linha.natureza_fin if linha else None,
+            "reserva": origem.reserva,
+            # Conta que vale HOJE (a própria ou a da reserva) — None = pendência.
+            "conta_efetiva": resolvida.codigo,
+            "conta_efetiva_de": resolvida.origem_usada,
+            "sugestao": None if (linha and linha.codigo_conta_gerencial) else lancamento_automatico.sugerir_conta(origem.chave, plano),
+        })
+    return {"regras_v2": regras_v2_ativas(session, fazenda_id), "origens": origens}
+
+
+@router.get("/contas-automaticas")
+def listar_contas_automaticas(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """As origens de lançamento automático, a conta padrão de cada uma (e a
+    sugestão pelo nome do plano de contas, que NUNCA é aplicada sozinha)."""
+    return _contas_automaticas_resposta(session, fazenda_id_seguro(fazenda_id))
+
+
+@router.put("/contas-automaticas/{origem}")
+def atualizar_conta_automatica(
+    origem: str, dados: ContaAutomaticaIn, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Define a conta padrão de uma origem. Só administrador (decisão
+    gerencial, como a linha da DRE). Vale para as notas automáticas criadas
+    daqui em diante e para os itens que ainda estavam sem conta (que ganham a
+    conta nova na próxima mudança da nota ou pelo backfill); não reescreve a
+    conta de item que o usuário já classificou."""
+    from fazenda.models import ContaPadraoOrigem
+
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if origem not in lancamento_automatico.ORIGENS:
+        raise HTTPException(status_code=404, detail="Origem de lançamento automático desconhecida")
+    try:
+        natureza = normalizar_natureza(dados.natureza_fin)
+    except ValueError as erro:
+        raise HTTPException(status_code=400, detail=str(erro)) from None
+    codigo = (dados.codigo_conta_gerencial or "").strip() or None
+    if codigo is not None:
+        existe = session.exec(select(PlanoContaGerencial).where(
+            PlanoContaGerencial.codigo == codigo, PlanoContaGerencial.fazenda_id == fazenda_id,
+        )).first()
+        if not existe:
+            raise HTTPException(status_code=404, detail="Conta gerencial não encontrada no plano desta fazenda")
+    linha = session.exec(select(ContaPadraoOrigem).where(
+        ContaPadraoOrigem.fazenda_id == fazenda_id, ContaPadraoOrigem.origem == origem,
+    )).first()
+    if linha is None:
+        linha = ContaPadraoOrigem(fazenda_id=fazenda_id, origem=origem)
+    linha.codigo_conta_gerencial = codigo
+    linha.natureza_fin = natureza
+    linha.atualizado_em = datetime.utcnow()
+    session.add(linha)
+    session.commit()
+    return _contas_automaticas_resposta(session, fazenda_id)
+
+
+# ---------------------------------------------------------------------------
 # Vínculo financeiro ↔ sanitário/reprodutivo — despesas em contas gerenciais
 # marcadas (ex.: "3.03.02.11 - Veterinário/zootecnista", ver
 # PlanoContaGerencial.pede_vinculo_sanitario_reprodutivo) podem ser associadas
@@ -2407,7 +2582,7 @@ def rmca_gerencial(
         return leite_e_alimentacao_por_registros(
             registros_competencia_v2(session, fazenda_id, data_inicio, data_fim), codigos_receita, codigos_custo,
         )
-    query_itens = sem_itens_de_vale(select(LancamentoItem))
+    query_itens = sem_itens_automaticos(sem_itens_de_vale(select(LancamentoItem)))
     if fazenda_id is not None:
         query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
     itens = [
@@ -2540,7 +2715,7 @@ def calcular_custo_litro_leite(
     if regras_v2:
         return _custo_litro_leite_v2(session, fazenda_id, data_inicio, data_fim, plano, codigos_custo)
 
-    query_itens = sem_itens_de_vale(select(LancamentoItem))
+    query_itens = sem_itens_automaticos(sem_itens_de_vale(select(LancamentoItem)))
     if fazenda_id is not None:
         query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
     itens = [

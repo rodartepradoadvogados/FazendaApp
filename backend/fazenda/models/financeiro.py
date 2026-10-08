@@ -195,6 +195,14 @@ class LancamentoItem(SQLModel, table=True):
     # Natureza econômica SÓ deste item (sobrepõe a da nota — ver
     # ContaGerencial.natureza_fin e rules/natureza.py). NULL = a da nota.
     natureza_fin: Optional[str] = None
+    # Item criado pelo SISTEMA para um lançamento automático (folha, férias,
+    # 13º, rescisão, guia, contrato, empreita, diária, vale, caixa do
+    # funcionário) — Fase A, PR 2/3, ver rules/lancamento_automatico.py. O
+    # valor é o PAPEL do item na nota ("folha_salario", "folha_retidos", ...).
+    # NULL = item lançado por gente (a esmagadora maioria). Só existe com a
+    # flag financeiro_regras_v2 ligada ou depois do backfill; as regras antigas
+    # dos relatórios ignoram estes itens (a nota volta a ser lida como antes).
+    gerado_por: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -861,6 +869,25 @@ class CurvaABC(SQLModel, table=True):
     valor_acumulado: Optional[float] = None
     perc_acumulado: Optional[float] = None
     perc_total: Optional[float] = None
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Conta gerencial padrão de cada ORIGEM de lançamento automático (Fase A,
+# PR 2) — Configurações > Parâmetros financeiros > Contas automáticas. Ex.:
+# origem "folha_salario" → conta "3.03.01.01 Salários". Uma linha por
+# (fazenda, origem). `natureza_fin` sobrepõe a natureza padrão da origem
+# (ex.: vale = ADIANTAMENTO). Ver rules/lancamento_automatico.py::ORIGENS.
+# ---------------------------------------------------------------------------
+class ContaPadraoOrigem(SQLModel, table=True):
+    __tablename__ = "conta_padrao_origem"
+    __table_args__ = (UniqueConstraint("fazenda_id", "origem", name="uq_conta_padrao_origem_fazenda_origem"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    origem: str = Field(index=True)
+    codigo_conta_gerencial: Optional[str] = None
+    natureza_fin: Optional[str] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
 

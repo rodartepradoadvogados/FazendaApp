@@ -7112,26 +7112,34 @@ export type LinhaDre = {
   valor: number; contas?: { codigo: string | null; nome: string | null; valor: number }[];
 };
 
-export type ContaDre = { codigo: string | null; nome: string | null; valor: number };
+export type ContaDre = {
+  codigo: string | null; nome: string | null; valor: number;
+  // Só com as regras novas (Fase A, PR 2): os dois lados separados.
+  receita?: number; despesa?: number; liquido?: number;
+};
+
+// Fase A, PR 2: origem automática (folha, contrato...) com custo sem conta configurada.
+export type PendenciaContaAutomatica = { origem: string; rotulo: string; valor: number; lancamentos: number; motivo: string };
 
 export type DreResposta = {
   periodo: { inicio: string; fim: string };
   regime: string; centro_custo: string | null;
   receitas_total: number; despesas_total: number; resultado: number;
   cascata: LinhaDre[];
-  nao_classificado: { total: number; contas: ContaDre[] };
+  nao_classificado: { total: number; contas: ContaDre[]; total_receita?: number; total_despesa?: number; liquido?: number };
   fora_da_dre: {
     total: number; contas: ContaDre[];
     // Só com as regras novas (Fase A) ligadas na fazenda: o "fora da DRE"
     // agrupado por natureza (investimento, financiamento, capital...).
     por_natureza?: Record<string, number>;
-    grupos?: { natureza: string; rotulo: string; total: number; contas: ContaDre[] }[];
+    grupos?: { natureza: string; rotulo: string; total: number; contas: ContaDre[]; liquido?: number }[];
   };
   depreciacao_periodo: { total: number; inconsistencias: { item: string; numero: string | null; motivo: string }[] };
   // Presentes só quando a fazenda usa as regras novas (financeiro_regras_v2).
   regras_v2?: boolean;
   resultado_baixas_periodo?: { total: number; itens: { patrimonio_id: number; nome: string; data_baixa: string; resultado: number }[] };
   pendencias_natureza?: { numero_lancamento: string | null; descricao: string | null; fornecedor: string | null; valor: number; motivo: string }[];
+  pendencias_contas_automaticas?: PendenciaContaAutomatica[];
 };
 
 export async function fetchDreCascata(params: {
@@ -7164,6 +7172,29 @@ export async function classificarContaDre(codigo: string, linhaDre: string | nul
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao classificar a conta"); }
   return res.json();
+}
+
+// --- Fase A, PR 2: contas automáticas (conta padrão de cada origem de lançamento automático)
+export type OrigemContaAutomatica = {
+  origem: string; rotulo: string; ajuda: string; natureza_padrao: string;
+  codigo_conta_gerencial: string | null; nome_conta: string | null; natureza_fin: string | null;
+  reserva: string | null; conta_efetiva: string | null; conta_efetiva_de: string | null;
+  sugestao: { codigo: string; nome: string } | null;
+};
+
+export async function fetchContasAutomaticas(): Promise<{ regras_v2: boolean; origens: OrigemContaAutomatica[] }> {
+  const res = await authFetch(`${API}/financeiro/contas-automaticas`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Contas automáticas: ${res.status}`);
+  return res.json();
+}
+
+export async function salvarContaAutomatica(origem: string, codigo: string | null, naturezaFin: string | null = null) {
+  const res = await authFetch(`${API}/financeiro/contas-automaticas/${encodeURIComponent(origem)}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ codigo_conta_gerencial: codigo, natureza_fin: naturezaFin }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar a conta automática"); }
+  return res.json() as Promise<{ regras_v2: boolean; origens: OrigemContaAutomatica[] }>;
 }
 
 // --- Fase A: natureza do lançamento e regras novas dos relatórios -------------

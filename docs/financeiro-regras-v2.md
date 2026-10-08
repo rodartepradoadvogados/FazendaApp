@@ -2,8 +2,8 @@
 
 Correção dos números dos Relatórios do Financeiro em PRs pequenos, cada um ligado
 **fazenda a fazenda** por uma flag. Este arquivo cobre o PR 0 (rede de segurança),
-o PR 1 (natureza do lançamento), o PR 7 (juros e descontos da baixa) e o PR 4
-(receita do leite). A auditoria completa, com causa-raiz e a ordem
+o PR 1 (natureza do lançamento), o PR 7 (juros e descontos da baixa), o PR 4
+(receita do leite), o PR 2 (contas automáticas) e o PR 3 (folha pelo bruto). A auditoria completa, com causa-raiz e a ordem
 dos PRs seguintes, ficou no relatório da Fase A (`SOLUCOES.md`, fora do repositório).
 
 ## 1. A flag `financeiro_regras_v2`
@@ -193,15 +193,92 @@ pago − valor da conta) passa a ter destino na DRE. Regras em
   inteiros que toca (`periodo` = o efetivo, `periodo_solicitado`,
   `periodo_ajustado_para_mes_fechado`, `avisos`).
 
-## 8. O que fica para os próximos PRs
+## 8. Contas automáticas e folha pelo bruto (PR 2 e PR 3)
+
+Folha, férias, 13º, rescisão, guias de FGTS/DCTF, contratos, empreitas,
+diárias (pagamento e acerto), vales (em dinheiro, avulso, devolução, assumido
+pela fazenda) e o caixa do funcionário/do time (entrada, retenção, estorno)
+nasciam sem conta e sem item: caíam em "não classificado" e a folha entrava
+pelo líquido. Regras em `fazenda/rules/lancamento_automatico.py`.
+
+- **Contas automáticas** (tabela `conta_padrao_origem`, migração aditiva
+  `a7c4e2d9f1b3`; tela *Configurações > Parâmetros financeiros > Contas
+  automáticas*, `GET/PUT /financeiro/contas-automaticas[/{origem}]`, só
+  administrador): uma conta gerencial por origem (`folha_salario`,
+  `folha_ferias`, `folha_13`, `rescisao`, `encargo_fgts`,
+  `encargo_inss_patronal`, `obrigacao_inss_irrf_retidos`, `contrato`,
+  `empreita`, `diaria`, `vale`, `caixa_entrada`, `caixa_retencao`). Férias, 13º,
+  rescisão, encargos, prêmios e vale assumido sem conta própria usam a de
+  salários; empreita e diária, a de contratos. A tela mostra uma **sugestão**
+  pelo nome do plano ("Salários"...), que nunca é aplicada sozinha.
+- **Com a flag ligada**, toda nota automática NOVA nasce com `codigo_conta` e um
+  `LancamentoItem` por linha econômica (`gerado_por` = o papel), somando o
+  `valor_total` (o que se paga). Quem cria e mantém os itens são os listeners
+  de sessão do módulo (ponto único para os 15 pontos de criação e para os
+  caminhos que reescrevem o líquido: edição, self-heals, rubricas, retenção no
+  pagamento, estorno). Nota com item de gente (reclassificada no Financeiro) não
+  é tocada; nota apagada leva os itens gerados.
+- **Folha pelo bruto** (decisões do dono): `Salário e verbas` (bruto + verbas)
+  em pessoal; `(−) Outros descontos` (cota de VT, coparticipação) abate o
+  pessoal; `(−) INSS e IRRF retidos`, `(−) Vale descontado`, `(−) Retenção do
+  caixa` e `(−) FGTS/DCTF a recolher` ficam fora da DRE (obrigação/adiantamento);
+  `FGTS (provisão)` e `Encargos da DCTF (provisão)` entram em pessoal (encargo
+  sem guia usa a provisão). Na DRE de caixa a folha inteira entra na data do
+  pagamento do líquido. 13º e rescisão: bruto − retidos (− vale); o 13º cai na
+  competência dele (sem provisão mensal, Q5).
+- **Guias**: FGTS = provisionado nas folhas da competência (obrigação) +
+  excedente (encargo) + multa/juros (*Outras*); DCTF = retidos de folha, 13º e
+  rescisão do mês + provisionado (obrigação) + excedente patronal (encargo) +
+  multa/juros. Nenhum real conta duas vezes.
+- **Contrato, empreita, diária**: o custo é o valor **contratado**; o vale
+  avulso abatido da parcela é adiantamento e a retenção do caixa no pagamento é
+  obrigação (regras de domínio inalteradas: só administrador, só parcela de
+  contrato/empreita/diária). Vale em dinheiro/avulso e devolução = adiantamento;
+  entrada no caixa = pessoal; estorno espelha o original.
+- **DRE (flag ligada)**: item redutor vira registro de magnitude com o tipo
+  invertido (`redutor`); custos por ha/vaca/safra e orçado × realizado subtraem.
+  Item gerado sem conta vai para *não classificado* como "(sem conta: …)" e a
+  DRE/conferência listam `pendencias_contas_automaticas` /
+  `contas_automaticas_pendentes`. **Não classificado e fora da DRE** passam a
+  trazer `total_receita`, `total_despesa`, `liquido` (e por conta), em vez de
+  só somar receita com despesa.
+- **Flag desligada**: nada é criado e os relatórios antigos **ignoram** itens
+  com `gerado_por` (RMCA, custo por litro, orçado × realizado e a DRE leem a
+  nota como antes) — por isso o backfill pode rodar antes de ligar a flag sem
+  mudar número.
+- **Consultas** (decisão do dono): os lançamentos da folha aparecem, com
+  `origem: "auto"`, o tipo de documento e os itens (`gerado_por`).
+
+**Backfill do histórico** (`fazenda/rules/backfill_itens_automaticos.py`):
+
+```
+python -m scripts.backfill_itens_automaticos --fazenda N                      # simulação
+python -m scripts.backfill_itens_automaticos --fazenda N --csv plano.csv
+python -m scripts.backfill_itens_automaticos --fazenda N --aplicar            # imprime o LOTE
+python -m scripts.backfill_itens_automaticos --fazenda N --reverter LOTE --aplicar
+```
+
+Só nota automática reconhecida, sem item e sem conta (a classificada à mão é
+preservada e listada); cria os mesmos itens que a nota teria hoje e preenche a
+conta de item gerado que nasceu sem conta. Nunca muda `valor_total`,
+`valor_pago` nem a conta da nota. Cada item criado é uma linha
+`__criado__` no `migracao_log_financeiro`; reverter apaga só o que ainda é do
+lote. O `downgrade` da migração apaga todos os itens com `gerado_por`.
+
+**Limites conscientes**: o vale de ITEM de nota continua fora do CMV do
+fornecedor (não vira registro de adiantamento próprio; a folha mostra o
+desconto); reembolso/indenização lançados como rubrica entram em "Salário e
+verbas"; a guia é recomposta quando ela ou uma folha da competência muda, mas
+não quando muda um 13º/rescisão; desligar a flag depois de ligada mantém os
+itens (os relatórios antigos os ignoram).
+
+## 9. O que fica para os próximos PRs
 
 O teste do cenário marca cada número ainda errado com `xfail(strict=True)` e o
 nome do PR que o corrige; o PR que acertar o número é obrigado a tirar o xfail.
 
 | PR | O que resolve |
 |---|---|
-| 2 | folha, contratos, diárias e vales nascem com conta (não classificado = 0) |
-| 3 | folha pelo bruto e encargos (pessoal de março = 4.840) |
 | 5 | cartão por item (CMV com a compra do cartão; fatura em Contas a pagar e no Caixa Real) |
 | 6 | saldo de abertura, pagamento futuro como agendado, `valor_pago` obrigatório, Caixa Real sem desconto de vale |
 | 8 | DRE única (campos legados, Portal, Capa) e orçamento com totais separados |

@@ -14,6 +14,9 @@ Este arquivo trava três coisas:
    LIGADA): juros e descontos da baixa em Outras (com a opção abatimento),
    receita do leite bruta com o Funrural/Senar em Deduções, kg→litro e mês
    fechado no custo por litro, RMCA/custo/orçamento pelos registros da DRE.
+   PR 2 e PR 3 (contas → backfill → flag): a folha ganha conta e itens, entra
+   pelo bruto (pessoal 4.840) e não classificado zera; retidos, vale e FGTS a
+   recolher ficam fora da DRE; o backfill com a flag desligada não muda nada.
 3. O QUE FALTA: cada erro ainda aberto é um `xfail(strict=True)` com o nome do
    PR que o resolve (numeração do SOLUCOES.md, §4). Strict de propósito: o PR
    que corrigir o número faz o teste PASSAR, o xfail estrito vira falha, e o
@@ -108,6 +111,28 @@ class Cenario:
     @staticmethod
     def linha(d, chave):
         return next(x["valor"] for x in d["cascata"] if x["chave"] == chave)
+
+    def configurar_contas_automaticas(self):
+        """PR 2: a conta de salários do cenário (8.9, Gastos com pessoal) como
+        conta automática da folha; os encargos usam a mesma (reserva)."""
+        r = self.c.post("/financeiro/plano-contas", json={"codigo": "8.9", "nome": "AUD Salários e encargos", "ativa": True})
+        assert r.status_code == 200, r.text
+        self.put("/financeiro/plano-contas/8.9/linha-dre", {"linha_dre": "GASTOS_PESSOAL"})
+        self.put("/financeiro/contas-automaticas/folha_salario", {"codigo_conta_gerencial": "8.9"})
+
+    def backfill_itens_automaticos(self, aplicar: bool = True) -> dict:
+        """O comando do PR 2/3 sobre o histórico (a folha da Ana nasceu antes
+        das contas automáticas, com a flag desligada)."""
+        from scripts.backfill_itens_automaticos import executar
+
+        with Session(self.engine) as s:
+            return executar(s, self.estado["fazenda_id"], aplicar=aplicar, saida=lambda *_: None)
+
+    def ligar_pr2_pr3(self):
+        """A ordem de rollout: contas configuradas → backfill → flag."""
+        self.configurar_contas_automaticas()
+        self.backfill_itens_automaticos()
+        self.ligar_regras_v2()
 
     def classificar_plano_por_natureza(self):
         """O que o backfill (regra C) aplica neste plano: 8.4 e 8.5 já estão
@@ -539,24 +564,203 @@ def test_v2_pr4_pr7_nao_vazam_para_outra_fazenda(cenario):
 
 
 # =============================================================================
-# 4. O que os PRs seguintes resolvem — xfail ESTRITO, com o PR no motivo.
-#    Todos rodam com a flag LIGADA (as regras novas só valem com ela).
+# 4. PR 2 (contas automáticas) e PR 3 (folha pelo bruto e encargos) — a folha
+#    da Ana (bruto 3.000, INSS 240, FGTS projetado 240, vale de item 200;
+#    líquido 2.560) nasceu com a flag desligada: o histórico ganha os itens
+#    pelo backfill, na ordem de rollout (contas → backfill → flag).
 # =============================================================================
-@pytest.mark.xfail(strict=True, reason="PR 2 (contas automáticas): a folha nasce com conta e item")
-def test_pendente_pr2_folha_nao_cai_em_nao_classificado(cenario):
-    cenario.ligar_regras_v2()
-    assert cenario.dre()["nao_classificado"]["total"] == 0
+def _nota_da_folha(cenario):
+    from fazenda.models import FolhaPagamento, LancamentoItem
+    from sqlmodel import select
+
+    with Session(cenario.engine) as s:
+        folha = s.exec(select(FolhaPagamento).where(FolhaPagamento.fazenda_id == 1)).one()
+        itens = s.exec(select(LancamentoItem).where(
+            LancamentoItem.numero_lancamento == folha.numero_lancamento_gerado, LancamentoItem.fazenda_id == 1,
+        )).all()
+        conta = s.exec(select(ContaGerencial).where(
+            ContaGerencial.numero_lancamento == folha.numero_lancamento_gerado, ContaGerencial.fazenda_id == 1,
+        )).one()
+        return conta, {it.gerado_por: (it.valor_total, it.codigo_conta_gerencial, it.natureza_fin) for it in itens}
 
 
-@pytest.mark.xfail(strict=True, reason="PR 3 (folha pelo bruto e encargos): pessoal = 900 + 700 + 3.000 + 240")
-def test_pendente_pr3_gastos_com_pessoal_pelo_bruto(cenario):
+def test_pr2_folha_nao_cai_em_nao_classificado(cenario):
+    """Ex-xfail do PR 2: a folha ganha conta e itens; não classificado = 0."""
+    cenario.ligar_pr2_pr3()
+    dm = cenario.dre()
+    assert dm["nao_classificado"]["total"] == 0
+    assert dm["pendencias_contas_automaticas"] == []
+
+
+def test_pr3_gastos_com_pessoal_pelo_bruto(cenario):
+    """Ex-xfail do PR 3: pessoal = 900 (frete do L2) + 700 (diarista) + 3.000
+    (bruto) + 240 (FGTS provisionado)."""
+    cenario.ligar_pr2_pr3()
+    dm = cenario.dre()
+    assert cenario.linha(dm, "GASTOS_PESSOAL") == 4840
+    assert _contas_da_linha(dm, "GASTOS_PESSOAL") == {"8.7": 1600.0, "8.9": 3240.0}
+
+
+def test_pr3_itens_da_folha_somam_o_liquido_e_o_valor_nao_muda(cenario):
+    antes, _ = _nota_da_folha(cenario)
+    cenario.ligar_pr2_pr3()
+    conta, itens = _nota_da_folha(cenario)
+    assert itens == {
+        "folha_salario": (3000.0, "8.9", None),
+        "folha_retidos": (-240.0, None, "OBRIGACAO"),
+        "folha_vale": (-200.0, None, "ADIANTAMENTO"),
+        "folha_fgts_provisao": (240.0, "8.9", None),
+        "folha_fgts_a_recolher": (-240.0, None, "OBRIGACAO"),
+    }
+    assert round(sum(v for v, _c, _n in itens.values()), 2) == conta.valor_total == 2560
+    # Backfill nunca mexe no valor nem na conta da nota.
+    assert (conta.valor_total, conta.valor_pago, conta.codigo_conta) == (antes.valor_total, antes.valor_pago, antes.codigo_conta)
+
+
+def test_pr3_retidos_vale_e_fgts_a_recolher_ficam_fora_da_dre(cenario):
+    cenario.ligar_pr2_pr3()
+    fora = cenario.dre()["fora_da_dre"]
+    grupos = {g["natureza"]: g for g in fora["grupos"]}
+    # Redutores entram no lado "receita" da obrigação/adiantamento: é o que a
+    # fazenda ficou devendo (INSS 240 + FGTS 240) e o que recuperou do vale (200).
+    assert (grupos["OBRIGACAO"]["total_receita"], grupos["OBRIGACAO"]["total_despesa"]) == (480.0, 0.0)
+    assert (grupos["ADIANTAMENTO"]["total_receita"], grupos["ADIANTAMENTO"]["total_despesa"]) == (200.0, 0.0)
+    assert fora["por_natureza"]["INVESTIMENTO"] == 120000
+
+
+def test_pr2_pr3_cenario_antes_e_depois_marco_2031(cenario):
+    """A tabela antes (flag desligada) → depois (contas + backfill + flag),
+    no estado dos PRs 1, 7, 4, 2 e 3 (sem o cartão do PR 5)."""
+    q = {"data_inicio": "2031-03-01", "data_fim": "2031-03-31"}
+
+    def numeros():
+        dm = cenario.dre()
+        ch = cenario.get("/financeiro/custo-hectare", **q)
+        return {
+            "pessoal": cenario.linha(dm, "GASTOS_PESSOAL"),
+            "despesas_operacionais": cenario.linha(dm, "DESPESAS_OPERACIONAIS"),
+            "nao_classificado": dm["nao_classificado"]["total"],
+            "ebitda": cenario.linha(dm, "EBITDA"),
+            "resultado": cenario.linha(dm, "RESULTADO_LIQUIDO"),
+            "numerador_custos": ch["despesas_total"],
+        }
+    antes = numeros()
+    cenario.ligar_pr2_pr3()
+    cenario.classificar_plano_por_natureza()
+    depois = numeros()
+    assert {k: (antes[k], depois[k]) for k in antes} == {
+        "pessoal": (1600, 4840),
+        "despesas_operacionais": (120000, 0),
+        "nao_classificado": (2560, 0),
+        # 9.850 − 7.500 − 4.840 (−4.290 de resultado com o cartão do PR 5).
+        "ebitda": (-119250, -2490),
+        "resultado": (-120250, -3490),
+        # 136.660 − 120.000 − 5.000 − 2.560 (líquido) + 3.240 (bruto + FGTS).
+        "numerador_custos": (136660, 12340),
+    }
+
+
+def test_pr2_backfill_com_flag_desligada_nao_muda_nenhum_relatorio(cenario):
+    """Ordem de rollout: o backfill roda ANTES da flag — e não pode mudar
+    número nenhum enquanto ela estiver desligada (o motor antigo ignora os
+    itens gerados)."""
+    cenario.configurar_contas_automaticas()
+    resultado = cenario.backfill_itens_automaticos()
+    assert resultado["lote"] and resultado["linhas"] == 5
+    golden = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    atual = _normalizar(ler_relatorios_estaveis(cenario.c))
+    for chave in golden:
+        assert atual[chave] == golden[chave], f"{chave} mudou com a flag desligada depois do backfill"
+
+
+def test_pr2_backfill_simula_por_padrao_e_reverte_pelo_lote(cenario):
+    cenario.configurar_contas_automaticas()
+    simulado = cenario.backfill_itens_automaticos(aplicar=False)
+    assert simulado["lote"] is None and len(simulado["plano"].criar) == 1
+    assert _nota_da_folha(cenario)[1] == {}
+    aplicado = cenario.backfill_itens_automaticos()
+    assert len(_nota_da_folha(cenario)[1]) == 5
+    # Idempotente: rodar de novo não acha mais nada para criar.
+    assert cenario.backfill_itens_automaticos(aplicar=False)["plano"].criar == []
+    from scripts.backfill_itens_automaticos import executar
+    with Session(cenario.engine) as s:
+        executar(s, 1, aplicar=True, reverter=aplicado["lote"], saida=lambda *_: None)
+    assert _nota_da_folha(cenario)[1] == {}
     cenario.ligar_regras_v2()
+    assert cenario.dre()["nao_classificado"]["total"] == 2560
+
+
+def test_pr2_backfill_preserva_classificacao_manual(cenario):
+    """Nota automática que o usuário já classificou à mão (conta preenchida)
+    não ganha itens: o backfill a lista como preservada."""
+    conta, _ = _nota_da_folha(cenario)
+    with Session(cenario.engine) as s:
+        manual = s.get(ContaGerencial, conta.id)
+        manual.codigo_conta = "8.7"
+        s.add(manual)
+        s.commit()
+    cenario.configurar_contas_automaticas()
+    resultado = cenario.backfill_itens_automaticos()
+    assert resultado["plano"].criar == []
+    assert [p["numero_lancamento"] for p in resultado["plano"].preservadas] == [conta.numero_lancamento]
+    assert _nota_da_folha(cenario)[1] == {}
+    cenario.ligar_regras_v2()
+    assert _contas_da_linha(cenario.dre(), "GASTOS_PESSOAL")["8.7"] == 1600 + 2560
+
+
+def test_pr2_sem_conta_configurada_vira_pendencia_e_nao_quebra(cenario):
+    """Sem conta automática: os itens nascem (obrigação/adiantamento já ficam
+    fora da DRE pela natureza), o custo cai em não classificado com o nome da
+    origem e a DRE/conferência apontam a pendência."""
+    cenario.backfill_itens_automaticos()
+    cenario.ligar_regras_v2()
+    dm = cenario.dre()
+    assert dm["nao_classificado"]["total"] == 3240
+    assert (dm["nao_classificado"]["total_receita"], dm["nao_classificado"]["total_despesa"]) == (0.0, 3240.0)
+    assert {c["codigo"]: c["valor"] for c in dm["nao_classificado"]["contas"]} == {
+        "(sem conta: Salários e verbas da folha)": 3000.0, "(sem conta: FGTS (encargo do empregador))": 240.0}
+    assert [(p["origem"], p["valor"]) for p in dm["pendencias_contas_automaticas"]] == [
+        ("folha_salario", 3000.0), ("encargo_fgts", 240.0)]
+    conf = cenario.get("/financeiro/dre/conferencia", data_inicio="2031-03-01", data_fim="2031-03-31")
+    assert conf["total"] == 3240 and conf["contas_automaticas_pendentes"][0]["origem"] == "folha_salario"
+
+
+def test_pr2_consultas_lista_a_folha_com_a_origem(cenario):
+    """Decisão do dono: os lançamentos da folha aparecem em Consultas, com a
+    origem identificada e os itens visíveis (somando o líquido)."""
+    cenario.ligar_pr2_pr3()
+    conta, _ = _nota_da_folha(cenario)
+    lanc = next(l for l in cenario.get("/financeiro/lancamentos")["lancamentos"] if l["id"] == conta.id)
+    assert (lanc["origem"], lanc["tipo_documento"], lanc["valor"]) == ("auto", "Folha de pagamento", 2560)
+    assert sorted(i["gerado_por"] for i in lanc["itens"]) == sorted([
+        "folha_salario", "folha_retidos", "folha_vale", "folha_fgts_provisao", "folha_fgts_a_recolher"])
+    assert round(sum(i["valor_total"] for i in lanc["itens"]), 2) == 2560
+    assert lanc["natureza_resolvida"] == "MISTA"
+
+
+def test_pr2_pr3_nao_vazam_para_outra_fazenda(cenario):
+    """Multi-tenant: a conta automática, os itens e o backfill de uma fazenda
+    não alcançam a outra; a fazenda 2 não usa conta do plano da 1."""
+    cenario.ligar_pr2_pr3()
+    cenario.estado["fazenda_id"] = 2
+    r = cenario.c.put("/financeiro/contas-automaticas/folha_salario", json={"codigo_conta_gerencial": "8.9"})
+    assert r.status_code == 404
+    origens = {o["origem"]: o for o in cenario.get("/financeiro/contas-automaticas")["origens"]}
+    assert origens["folha_salario"]["codigo_conta_gerencial"] is None
+    assert cenario.backfill_itens_automaticos(aplicar=False)["plano"].criar == []
+    d2 = cenario.dre()
+    assert "regras_v2" not in d2 and cenario.linha(d2, "GASTOS_PESSOAL") == 0
+    cenario.estado["fazenda_id"] = 1
     assert cenario.linha(cenario.dre(), "GASTOS_PESSOAL") == 4840
 
 
-@pytest.mark.xfail(strict=True, reason="PR 3 + PR 5 (folha bruta e cartão por item): o último dos dois a entrar tira este xfail")
+# =============================================================================
+# 5. O que os PRs seguintes resolvem — xfail ESTRITO, com o PR no motivo.
+#    Todos rodam com a flag LIGADA (as regras novas só valem com ela).
+# =============================================================================
+@pytest.mark.xfail(strict=True, reason="PR 5 (cartão por item): falta só a ração do cartão (+800) — 12.340 → 13.140")
 def test_pendente_pr3_pr5_numerador_dos_custos_final(cenario):
-    cenario.ligar_regras_v2()
+    cenario.ligar_pr2_pr3()
     cenario.classificar_plano_por_natureza()
     ch = cenario.get("/financeiro/custo-hectare", data_inicio="2031-03-01", data_fim="2031-03-31")
     assert (ch["despesas_total"], ch["cot"]) == (13140, 14140)
