@@ -104,9 +104,25 @@ def ajuste_vale_por_conta(
     return ajustes
 
 
+def _base_gerencial(conta: ContaGerencial) -> float:
+    """Valor-base da conta/parcela para os relatórios gerenciais.
+
+    Baixa PARCIAL com reparcelamento: a parcela paga guarda `valor_total` = valor
+    original, `valor_pago` menor e `desconto_acrescimo` zerado, e o restante nasce como
+    OUTRA parcela (mesmo numero_lancamento). Somar o `valor_total` da parcela paga mais
+    o da nova contaria o restante duas vezes (nota de R$ 1.000 paga em R$ 600 + parcela
+    de R$ 400 = R$ 1.400 na DRE). Nesse caso a parcela vale o que foi pago. Desconto e
+    acréscimo (diferença absorvida) continuam como antes."""
+    total = conta.valor_total or 0
+    pago = getattr(conta, "valor_pago", None)
+    if pago is not None and round(total - pago, 2) > 0 and round(getattr(conta, "desconto_acrescimo", None) or 0, 2) == 0:
+        return pago
+    return total
+
+
 def valor_gerencial(conta: ContaGerencial, ajustes: dict[int, float]) -> float:
-    """(conta.valor_total or 0) - ajustes.get(conta.id, 0.0), arredondado a 2."""
-    return round((conta.valor_total or 0) - ajustes.get(conta.id, 0.0), 2)
+    """Valor-base (ver `_base_gerencial`) - ajustes.get(conta.id, 0.0), arredondado a 2."""
+    return round(_base_gerencial(conta) - ajustes.get(conta.id, 0.0), 2)
 
 
 # ── Coluna "Origem" do relatório de vales (§3.7) ────────────────────────────

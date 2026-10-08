@@ -81,7 +81,7 @@ const COLUNAS_LIVRO = [
 
 import type { Lanc } from "@/lib/financeiroTipos";
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos" | "resumo";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "caixa_real", label: "Caixa Real", icon: TrendingUp, desc: "Projeção de liquidez: quanto tem hoje e como o saldo evolui com os compromissos já lançados" },
@@ -136,7 +136,7 @@ const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
 // continuam exigindo dado existente, o que faz sentido (não tem o que
 // mostrar de fato).
 // "faturas" (Contas > Faturas de fornecedor) também dispensa lançamento prévio no banco.
-const ACOES_IDS = new Set<Rel>([...ACOES.map((a) => a.id), "faturas", "a_pagar", "a_receber", "consultas", "custos"]);
+const ACOES_IDS = new Set<Rel>([...ACOES.map((a) => a.id), "faturas", "a_pagar", "a_receber", "consultas", "custos", "resumo"]);
 const PLANEJAMENTO: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "orcamento", label: "Orçamento", icon: Target, desc: "Planilha orçamentária por conta gerencial/centro de custo/mês, comparada ao realizado" },
   { id: "planejamento_financeiro", label: "Planejamento financeiro", icon: TrendingUp, desc: "Cenários (otimista/realista/pessimista) com projeção de fluxo de caixa" },
@@ -204,14 +204,17 @@ function ThOrd({ rotulo, chave, sortKey, sortDir, onSort, style }: {
 }
 
 import { contaDoLanc, casaContaGerencial, FiltroContaGerencial } from "@/components/financeiro/filtroContaGerencial";
-import ContasListaView from "@/components/financeiro/ContasListaView";
+import ContasListaView, { PilulaSituacao } from "@/components/financeiro/ContasListaView";
 import ConsultasView from "@/components/financeiro/ConsultasView";
-import { hojeLocal } from "@/lib/financeiroSituacao";
+import OndeFoiParar from "@/components/financeiro/OndeFoiParar";
+import ResumoView from "@/components/financeiro/ResumoView";
+import { hojeLocal, situacaoDe, valorCompetencia, valorRealizado } from "@/lib/financeiroSituacao";
+import { migrarFiltrosSalvosAntigos } from "@/lib/financeiroFiltrosMigracao";
 
 export default function FinanceiroPage() {
   const [regs, setRegs] = useState<Lanc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [rel, setRel] = useState<Rel>("a_pagar");
+  const [rel, setRel] = useState<Rel>("resumo");
   const [inicio, setInicio] = useState("");
   const [fim, setFim] = useState("");
   // Único filtro de período das sub-abas de Contas (a pagar/receber/pagas/
@@ -306,6 +309,7 @@ export default function FinanceiroPage() {
   const [folhaModo, setFolhaModo] = useState<"fechamento" | "holerites">("fechamento");
   function irPara(destino: Rel, ref?: string | null) {
     setNotaAlvoRef(ref || null);
+    setContasFiltro(null);
     switch (destino) {
       case "pagamento": setRel("a_pagar"); break;
       case "recebimento": setRel("a_receber"); break;
@@ -321,6 +325,7 @@ export default function FinanceiroPage() {
     }
   }
   const [custosBase, setCustosBase] = useState<"custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra">("custo_litro_leite");
+  const [contasFiltro, setContasFiltro] = useState<{ de?: string; ate?: string; rotulo?: string } | null>(null);
   const [inserirFatura, setInserirFatura] = useState<Lanc | null>(null);
   const [novoLancAberto, setNovoLancAberto] = useState<"despesa" | "receita" | null>(null);
   const [novoLancArquivo, setNovoLancArquivo] = useState<File | null>(null);
@@ -333,6 +338,7 @@ export default function FinanceiroPage() {
     const qs = new URLSearchParams(window.location.search);
     const ir = qs.get("ir");
     const ref = qs.get("ref");
+    migrarFiltrosSalvosAntigos();
     if (ir) irPara(ir as Rel, ref);
     else if (ref) setNotaAlvoRef(ref);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -342,6 +348,7 @@ export default function FinanceiroPage() {
   // módulos enquanto Financeiro estiver aberto (mesmo padrão de Lançamentos).
   const admin = ehAdmin();
   const subNavTree: SubNavNode[] = useMemo(() => [
+    { id: "resumo", label: "Resumo", icon: BarChart3 },
     // Uma aba só para consultar E dar baixa: seis sub-abas na ordem do dono.
     { id: "contas-grupo", label: "Contas", icon: Wallet, children: [
       { id: "a_pagar", label: "Contas a pagar", icon: Clock },
@@ -490,8 +497,10 @@ export default function FinanceiroPage() {
     });
   }, [regs, contasBase, rel, inicio, fim, centro, contaBanco, relTipo, relFornecedor, relProduto, relDocumento, relConta, campoPeriodoContas]);
 
-  const receitas = filtrados.filter((r) => r.tipo === "receita").reduce((a, r) => a + r.valor, 0);
-  const despesas = filtrados.filter((r) => r.tipo === "despesa").reduce((a, r) => a + r.valor, 0);
+  // Valor que cada relatório soma: caixa = o efetivamente pago/recebido; DRE (competência) = o valor da parte, sem contar duas vezes o restante reparcelado.
+  const valorDoRel = (r: Lanc) => (rel === "dre" ? valorCompetencia(r) : valorRealizado(r));
+  const receitas = filtrados.filter((r) => r.tipo === "receita").reduce((a, r) => a + valorDoRel(r), 0);
+  const despesas = filtrados.filter((r) => r.tipo === "despesa").reduce((a, r) => a + valorDoRel(r), 0);
   const resultado = receitas - despesas;
 
   // Panorama da coluna esquerda de Contas a pagar/a receber (ver tela
@@ -502,7 +511,7 @@ export default function FinanceiroPage() {
     if (!CONTAS_IDS.has(rel)) return null;
     const total = filtrados.reduce((s, r) => s + (r.valor || 0), 0);
     if (rel !== "a_pagar" && rel !== "a_receber") return { total, vencido: null as number | null, aVencer: null as number | null };
-    const hoje = new Date().toISOString().slice(0, 10);
+    const hoje = hojeLocal();
     const em7dias = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
     const abertos = filtrados.filter((r) => r.valor_pago == null);
     const vencido = abertos.filter((r) => r.data_vencimento && r.data_vencimento < hoje).reduce((s, r) => s + (r.valor || 0), 0);
@@ -516,7 +525,7 @@ export default function FinanceiroPage() {
     filtrados.forEach((r) => {
       const m = campoMes(r); if (!m) return;
       const e = by.get(m) ?? { mes: m, entradas: 0, saidas: 0 };
-      if (r.tipo === "receita") e.entradas += r.valor; else e.saidas += r.valor;
+      if (r.tipo === "receita") e.entradas += valorDoRel(r); else e.saidas += valorDoRel(r);
       by.set(m, e);
     });
     let acc = 0;
@@ -533,7 +542,7 @@ export default function FinanceiroPage() {
     filtrados.forEach((r) => {
       const d = campoData(r); if (!d) return;
       const e = by.get(d) ?? { dia: d, entradas: 0, saidas: 0 };
-      if (r.tipo === "receita") e.entradas += r.valor; else e.saidas += r.valor;
+      if (r.tipo === "receita") e.entradas += valorDoRel(r); else e.saidas += valorDoRel(r);
       by.set(d, e);
     });
     let acc = 0;
@@ -561,7 +570,7 @@ export default function FinanceiroPage() {
       if (!codigoFolha) {
         const k = r.descricao || "(sem conta)";
         const e = by.get(k) ?? { conta: k, nome: k, codigo: "", nivel: 0, receitas: 0, despesas: 0 };
-        if (r.tipo === "receita") e.receitas += r.valor; else e.despesas += r.valor;
+        if (r.tipo === "receita") e.receitas += valorDoRel(r); else e.despesas += valorDoRel(r);
         by.set(k, e);
         return;
       }
@@ -572,7 +581,7 @@ export default function FinanceiroPage() {
         if (!nomeConhecido && !ehFolha) return; // nível intermediário sem nome cadastrado — não gera linha "só número"
         const nome = nomeConhecido || (r.descricao || codigo);
         const e = by.get(codigo) ?? { conta: codigo, nome, codigo, nivel: i + 1, receitas: 0, despesas: 0 };
-        if (r.tipo === "receita") e.receitas += r.valor; else e.despesas += r.valor;
+        if (r.tipo === "receita") e.receitas += valorDoRel(r); else e.despesas += valorDoRel(r);
         by.set(codigo, e);
       });
     });
@@ -597,8 +606,8 @@ export default function FinanceiroPage() {
         if (!nomeConhecido && !ehFolha) return; // nível intermediário sem nome cadastrado — não gera linha "só número"
         const nome = nomeConhecido || (r.descricao || codigo);
         const e = by.get(codigo) ?? { codigo, nome, nivel: i + 1, porMes: {}, total: 0 };
-        e.porMes[mes] = Math.round(((e.porMes[mes] || 0) + r.valor) * 100) / 100;
-        e.total = Math.round((e.total + r.valor) * 100) / 100;
+        e.porMes[mes] = Math.round(((e.porMes[mes] || 0) + valorDoRel(r)) * 100) / 100;
+        e.total = Math.round((e.total + valorDoRel(r)) * 100) / 100;
         by.set(codigo, e);
       });
     });
@@ -609,8 +618,8 @@ export default function FinanceiroPage() {
   const livro = useMemo(() => {
     let acc = 0;
     return [...filtrados].filter((r) => r.data_pagamento).sort((a, b) => (a.data_pagamento! < b.data_pagamento! ? -1 : 1)).map((r) => {
-      const entrada = r.tipo === "receita" ? r.valor : 0;
-      const saida = r.tipo === "despesa" ? r.valor : 0;
+      const entrada = r.tipo === "receita" ? valorRealizado(r) : 0;
+      const saida = r.tipo === "despesa" ? valorRealizado(r) : 0;
       acc += entrada - saida;
       return { data: r.data_pagamento, descricao: r.descricao, fornecedor: r.fornecedor, entrada, saida, saldo: Math.round(acc) };
     });
@@ -700,10 +709,11 @@ export default function FinanceiroPage() {
           {/* A tela de folha traz o próprio texto de papel logo abaixo (é ela
               que precisa dizer "aqui se fecha" × "lá só se consulta"); repetir
               a frase de relatório em cima dele confundia as duas coisas. */}
-          {!["folha", "a_pagar", "a_receber", "consultas", "lote", "faturas_gestao", "caixa_funcionarios"].includes(rel) && (
+          {!["resumo", "folha", "a_pagar", "a_receber", "consultas", "lote", "faturas_gestao", "caixa_funcionarios"].includes(rel) && (
             <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Escolha o relatório, o período e o centro de custo — indicadores, consolidado e gráfico.</p>
           )}
         </div>
+        <OndeFoiParar onIr={(d) => irPara(d)} />
       </div>
 
       {error && <div className="alert-critico mb-4"><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os lançamentos financeiros</a>.</span></div>}
@@ -722,10 +732,19 @@ export default function FinanceiroPage() {
       )}
 
       {regs && (regs.length > 0 || ACOES_IDS.has(rel)) && <>
-        {rel === "a_pagar" || rel === "a_receber" ? (
-            <ContasListaView key={rel} tipo={rel === "a_pagar" ? "despesa" : "receita"} regs={regs} planoContas={planoContas}
+        {rel === "resumo" ? (
+            <ResumoView regs={regs}
+              onDrill={(d) => { setNotaAlvoRef(null); setContasFiltro({ de: d.de, ate: d.ate, rotulo: d.rotulo }); setRel("a_pagar"); }}
+              onAbrirLivro={(rotulo) => { setNotaAlvoRef(null); setConsultaInicial({ modo: "livro", banco: rotulo }); setRel("consultas"); }}
+              onAbrirFaturas={() => setRel("faturas_gestao")} onAbrirCartao={() => setRel("cartao_credito")}
+              onBaixar={(l) => { setContasFiltro(null); setNotaAlvoRef(l.numero_lancamento || l.numero_documento || null); setRel("a_pagar"); }}
+              onIrParaContas={() => irPara("a_pagar")} />
+          )
+          : rel === "a_pagar" || rel === "a_receber" ? (
+            <ContasListaView key={`${rel}-${JSON.stringify(contasFiltro)}`} tipo={rel === "a_pagar" ? "despesa" : "receita"} regs={regs} planoContas={planoContas}
               contasBancarias={contasBancarias} centros={centros} fornecedores={opcoesRel.fornecedores} produtos={opcoesProdutoRel}
-              documentoInicial={notaAlvoRef}
+              documentoInicial={notaAlvoRef} filtroInicial={contasFiltro} onAbrirCartao={() => setRel("cartao_credito")}
+              onDesfeito={recarregar}
               renderBaixa={(nota, fechar) => (
                 <PagamentoIndividualView key={nota.id} tipo={nota.tipo === "receita" ? "receita" : "despesa"} contasBancarias={contasBancarias}
                   notaAlvoRef={null} onFeito={recarregar} painel={{ nota, regs, onFechar: fechar }} />
@@ -1175,7 +1194,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito, idsIniciais }: { c
   const [vencimentoAte, setVencimentoAte] = useState("");
 
   const [selecionados, setSelecionados] = useState<Set<number>>(new Set(idsIniciais || []));
-  const [dataPagamento, setDataPagamento] = useState(new Date().toISOString().slice(0, 10));
+  const [dataPagamento, setDataPagamento] = useState(hojeLocal());
   const [contaBancaria, setContaBancaria] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("");
   const [dataVencimentoCartao, setDataVencimentoCartao] = useState("");
@@ -1240,9 +1259,12 @@ export function PagamentoLoteView({ contasBancarias, onFeito, idsIniciais }: { c
     );
   }, [regs, tipoFiltro, numeroDocumento, fornecedor, produto, centroCusto, emissaoDe, emissaoAte, vencimentoDe, vencimentoAte]);
 
-  const toggle = (id: number) => setSelecionados((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  // Nota de fatura só se paga pela PARCELA da fatura (o servidor recusa o lote inteiro com 409):
+  // fica visível, mas desabilitada, e nunca entra em "Selecionar todas".
+  const selecionaveisLote = useMemo(() => filtrados.filter((r) => !r.fatura_id), [filtrados]);
+  const toggle = (id: number) => setSelecionados((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const toggleTodos = () => setSelecionados((p) =>
-    p.size === filtrados.length && filtrados.length ? new Set() : new Set(filtrados.map((r) => r.id))
+    p.size === selecionaveisLote.length && selecionaveisLote.length ? new Set() : new Set(selecionaveisLote.map((r) => r.id))
   );
   const totalSelecionado = useMemo(() => filtrados.filter((r) => selecionados.has(r.id)).reduce((a, r) => a + r.valor, 0), [filtrados, selecionados]);
   const totalFiltrado = useMemo(() => filtrados.reduce((a, r) => a + r.valor, 0), [filtrados]);
@@ -1409,8 +1431,8 @@ export function PagamentoLoteView({ contasBancarias, onFeito, idsIniciais }: { c
             {filtrados.length} nota(s) em aberto no filtro — total {formatBRL(totalFiltrado)}
             {selecionados.size > 0 && <> · {selecionados.size} selecionada(s) — {formatBRL(totalSelecionado)}</>}
           </span>
-          <button className="btn-ghost" title="Selecionar ou limpar todas as notas do filtro" style={{ fontSize: "0.72rem" }} onClick={toggleTodos} disabled={!filtrados.length}>
-            {selecionados.size === filtrados.length && filtrados.length ? "Limpar seleção" : `Selecionar todas (${filtrados.length})`}
+          <button className="btn-ghost" title="Selecionar ou limpar todas as notas do filtro (notas de fatura ficam de fora: pague pela fatura)" style={{ fontSize: "0.72rem" }} onClick={toggleTodos} disabled={!selecionaveisLote.length}>
+            {selecionados.size === selecionaveisLote.length && selecionaveisLote.length ? "Limpar seleção" : `Selecionar todas (${selecionaveisLote.length})`}
           </button>
         </div>
         <div className="overflow-x-auto">
@@ -1429,8 +1451,8 @@ export function PagamentoLoteView({ contasBancarias, onFeito, idsIniciais }: { c
               {ordenados.map((r) => {
                 const produtos = (r.itens || []).map((it) => it.produto).filter(Boolean).join(", ");
                 return (
-                  <tr key={r.id} className="row-clickable" title="Clique para selecionar esta nota" onClick={() => toggle(r.id)}>
-                    <td><input type="checkbox" checked={selecionados.has(r.id)} onChange={() => toggle(r.id)} onClick={(e) => e.stopPropagation()} /></td>
+                  <tr key={r.id} className={r.fatura_id ? undefined : "row-clickable"} title={r.fatura_id ? "Nota de fatura: só se paga pela parcela da fatura" : "Clique para selecionar esta nota"} onClick={() => { if (!r.fatura_id) toggle(r.id); }}>
+                    <td><input type="checkbox" disabled={!!r.fatura_id} aria-label={r.fatura_id ? "Nota de fatura: pague pela fatura" : `Selecionar ${r.numero_lancamento || r.descricao}`} checked={selecionados.has(r.id)} onChange={() => toggle(r.id)} onClick={(e) => e.stopPropagation()} /></td>
                     <td style={{ fontSize: "0.78rem" }}>
                       <strong>{r.numero_documento || r.numero_lancamento || "—"}</strong>
                       {r.numero_documento && r.numero_lancamento && <span style={{ color: "var(--text-muted)" }}> · {r.numero_lancamento}</span>}
@@ -1438,11 +1460,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito, idsIniciais }: { c
                     </td>
                     <td style={{ fontSize: "0.75rem", whiteSpace: "nowrap" }}>{r.data_emissao ? formatDate(r.data_emissao) : "—"}</td>
                     <td style={{ fontSize: "0.75rem", whiteSpace: "nowrap" }}>{r.data_vencimento ? formatDate(r.data_vencimento) : "—"}</td>
-                    <td>
-                      <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--amber)" }}>
-                        {r.tipo === "receita" ? "A receber" : "A pagar"}
-                      </span>
-                    </td>
+                    <td><PilulaSituacao s={situacaoDe(r)} /></td>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)", maxWidth: "220px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{produtos || "—"}</td>
                     <td style={{ textAlign: "right", fontWeight: 600, color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{formatBRL(r.valor)}</td>
                     {admin && <td>{r.usuario_nome ?? "—"}</td>}
@@ -1467,6 +1485,12 @@ export function PagamentoLoteView({ contasBancarias, onFeito, idsIniciais }: { c
             </div>
           </div>
 
+          {notasSelecionadas.some((r) => r.tipo === "despesa" && ["Contrato", "Empreitada"].includes(r.tipo_documento || "")) && (
+            <div className="alert-critico mb-3" style={{ alignItems: "flex-start" }}>
+              <AlertTriangle size={16} aria-hidden />
+              <span style={{ fontSize: "0.8rem" }}>O pagamento em lote <strong>não aplica a retenção do caixa dos funcionários</strong>. Há contas de contrato/empreita na seleção: se alguma deve reter, dê a baixa dela individualmente em Contas a pagar.</span>
+            </div>
+          )}
           {modoLote === "unico" ? (
             <>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
@@ -2157,7 +2181,7 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
  *  Antes, dar baixa era preencher `data_baixa` na tela de edição: o bem sumia
  *  dos totais e o resultado da operação não era apurado em lugar nenhum. */
 function ModalBaixaPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio; onClose: () => void; onSalvo: () => void }) {
-  const [dataBaixa, setDataBaixa] = useState(new Date().toISOString().slice(0, 10));
+  const [dataBaixa, setDataBaixa] = useState(hojeLocal());
   const [motivo, setMotivo] = useState("VENDA");
   const [valorRecebido, setValorRecebido] = useState("");
   const [observacao, setObservacao] = useState("");
@@ -2257,7 +2281,7 @@ function ModalBaixaPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio
  * depreciável (ver ItemPatrimonio.depreciavel). */
 function ModalValorMercadoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio; onClose: () => void; onSalvo: () => void }) {
   const [valor, setValor] = useState(item.valor_mercado_atual != null ? String(item.valor_mercado_atual) : "");
-  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
+  const [data, setData] = useState(hojeLocal());
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
 
@@ -2321,12 +2345,12 @@ function ModalManutencaoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatri
   });
 
   const [mostrarRegistro, setMostrarRegistro] = useState(false);
-  const [dataRealizacao, setDataRealizacao] = useState(new Date().toISOString().slice(0, 10));
+  const [dataRealizacao, setDataRealizacao] = useState(hojeLocal());
   const [descricaoServico, setDescricaoServico] = useState("");
   const [fornecedor, setFornecedor] = useState("");
   const [valor, setValor] = useState("");
   const [statusManut, setStatusManut] = useState<"pago" | "pendente">("pago");
-  const [dataPagamento, setDataPagamento] = useState(new Date().toISOString().slice(0, 10));
+  const [dataPagamento, setDataPagamento] = useState(hojeLocal());
   const [gerarConta, setGerarConta] = useState(true);
   const [salvandoRegistro, setSalvandoRegistro] = useState(false);
   const [erroRegistro, setErroRegistro] = useState("");
@@ -2772,7 +2796,7 @@ function DetalheCartaoView({ cartao, onVoltar, onAtualizado }: { cartao: CartaoC
 }
 
 function ModalNovaCompraCartao({ cartaoId, onClose, onSalvo }: { cartaoId: number; onClose: () => void; onSalvo: () => void }) {
-  const [dataCompra, setDataCompra] = useState(new Date().toISOString().slice(0, 10));
+  const [dataCompra, setDataCompra] = useState(hojeLocal());
   const [descricao, setDescricao] = useState("");
   const [categoria, setCategoria] = useState("");
   const [valor, setValor] = useState("");
@@ -2827,7 +2851,7 @@ function ModalNovaCompraCartao({ cartaoId, onClose, onSalvo }: { cartaoId: numbe
 }
 
 function ModalPagarFatura({ fatura, cartao, onClose, onSalvo }: { fatura: FaturaCartao; cartao: CartaoCredito; onClose: () => void; onSalvo: () => void }) {
-  const [dataPagamento, setDataPagamento] = useState(new Date().toISOString().slice(0, 10));
+  const [dataPagamento, setDataPagamento] = useState(hojeLocal());
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
 
@@ -3856,7 +3880,7 @@ function TabelaContas({ rel, itens, planoContas, documentoInicial, onTratar, onE
       setEstornando(null);
     }
   };
-  const hoje = new Date().toISOString().slice(0, 10);
+  const hoje = hojeLocal();
   const rotuloContraparte = rel === "a_receber" || rel === "recebidas" ? "Cliente" : EXTRATO_IDS.has(rel) ? "Fornecedor/Cliente" : "Fornecedor";
   // Tipo desta aba (para a árvore de conta gerencial). Extrato mistura os dois.
   const tiposConta: ("despesa" | "receita")[] =
@@ -4124,7 +4148,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   tipo: "despesa" | "receita"; contasBancarias: string[]; notaAlvoRef: string | null;
   onNotaTratada?: () => void; onFeito?: () => void;
   /** Modo painel lateral (Contas a pagar/receber): mostra só o formulário de baixa da `nota`, sem filtros nem lista. */
-  painel?: { nota: Lanc; regs: Lanc[]; onFechar: () => void };
+  painel?: { nota: Lanc; regs: Lanc[]; onFechar: (feito?: boolean) => void };
 }) {
   const admin = ehAdmin();
   const [regs, setRegs] = useState<Lanc[] | null>(painel ? painel.regs : null);
@@ -4141,7 +4165,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   const [vencimentoAte, setVencimentoAte] = useState("");
 
   const [notaId, setNotaId] = useState<number | null>(null);
-  const [dataPagamento, setDataPagamento] = useState(new Date().toISOString().slice(0, 10));
+  const [dataPagamento, setDataPagamento] = useState(hojeLocal());
   const [valorPago, setValorPago] = useState("");
   const [retencaoCaixa, setRetencaoCaixa] = useState<import("@/lib/api").RetencaoCaixaIn | null>(null);
   const [contaBancaria, setContaBancaria] = useState("");
@@ -4201,7 +4225,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   function selecionar(nota: Lanc) {
     setNotaId(nota.id);
     setValorPago(String(nota.valor));
-    setDataPagamento(new Date().toISOString().slice(0, 10));
+    setDataPagamento(hojeLocal());
     setContaBancaria(""); setFormaPagamento(""); setDataVencimentoCartao(""); setNumeroDocPagamento("");
     setModoDiferenca("desconto"); setQtdParcelasDiferenca(2); setParcelasDiferenca([]);
     setAnexosPagamento(null);
@@ -4298,7 +4322,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
       setNotaId(null);
       if (!painel) carregar();
       onFeito?.();
-      painel?.onFechar();
+      painel?.onFechar(true);
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao tratar a nota" });
     } finally {
@@ -4425,9 +4449,9 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
           <div className="flex items-center gap-3 mt-4">
             <button className="btn-primary" title="Registrar a baixa desta nota" onClick={confirmar}
               disabled={salvando || (diferenca !== 0 && modoDiferenca === "parcelar" && !parcelasDiferencaBatem)}>
-              <Check size={14} /> {salvando ? "Salvando…" : "Confirmar baixa"}
+              <Check size={14} /> {salvando ? "Salvando…" : `Confirmar ${tipo === "receita" ? "recebimento" : "baixa"} de ${formatBRL(Number(valorPago) || 0)}`}
             </button>
-            <button className="btn-ghost" title="Cancelar sem registrar a baixa" onClick={() => { setNotaId(null); painel?.onFechar(); }}>Cancelar</button>
+            <button className="btn-ghost" title="Cancelar sem registrar a baixa" onClick={() => { setNotaId(null); painel?.onFechar(false); }}>Cancelar</button>
           </div>
         </div>
       ) : (
@@ -5062,7 +5086,7 @@ function CaixaRealView() {
 
 function RmcaView() {
   const [dataInicio, setDataInicio] = useState(() => primeiroDiaDoMes());
-  const [dataFim, setDataFim] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dataFim, setDataFim] = useState(() => hojeLocal());
   const [dados, setDados] = useState<RmcaResp | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [roteiroAberto, setRoteiroAberto] = useState(false);
@@ -5417,7 +5441,7 @@ type CustoLitroLeiteResp = {
 
 function CustoLitroLeiteView() {
   const [dataInicio, setDataInicio] = useState(() => primeiroDiaDoMes());
-  const [dataFim, setDataFim] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dataFim, setDataFim] = useState(() => hojeLocal());
   const [dados, setDados] = useState<CustoLitroLeiteResp | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -5487,7 +5511,7 @@ type CustoHectareResp = {
 
 function CustoHectareView() {
   const [dataInicio, setDataInicio] = useState(() => primeiroDiaDoMes());
-  const [dataFim, setDataFim] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dataFim, setDataFim] = useState(() => hojeLocal());
   const [centroCusto, setCentroCusto] = useState("");
   const [centros, setCentros] = useState<string[]>([]);
   const [dados, setDados] = useState<CustoHectareResp | null>(null);
@@ -5551,7 +5575,7 @@ type CustoVacaLoteResp = {
 
 function CustoVacaLoteView() {
   const [dataInicio, setDataInicio] = useState(() => primeiroDiaDoMes());
-  const [dataFim, setDataFim] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dataFim, setDataFim] = useState(() => hojeLocal());
   const [centroCusto, setCentroCusto] = useState("");
   const [centros, setCentros] = useState<string[]>([]);
   const [dados, setDados] = useState<CustoVacaLoteResp | null>(null);
@@ -5972,7 +5996,7 @@ function FormImportarPedido({ origemTipo, origemItemId, valorEstimado, nomeItem,
 }) {
   const [tipoPedido, setTipoPedido] = useState<"compra" | "venda">("compra");
   const [fornecedorCliente, setFornecedorCliente] = useState("");
-  const [dataPedido, setDataPedido] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dataPedido, setDataPedido] = useState(() => hojeLocal());
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [resultado, setResultado] = useState<{ numero_pedido: string } | null>(null);

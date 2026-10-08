@@ -64,3 +64,22 @@ export function faixaDe(l: Lanc, hoje = hojeLocal()): FaixaId {
 export function somaValores(xs: Lanc[]): number {
   return Math.round(xs.reduce((a, l) => a + l.valor, 0) * 100) / 100;
 }
+
+/**
+ * Valor REALIZADO de um lançamento (regime de caixa): o que de fato saiu/entrou.
+ * Em baixa parcial com reparcelamento a parcela mantém `valor` = valor original e o
+ * restante vira OUTRA parcela; somar `valor` contaria o restante duas vezes.
+ */
+export function valorRealizado(l: Pick<Lanc, "valor" | "valor_pago">): number {
+  return l.valor_pago ?? l.valor;
+}
+
+/** Baixa parcial: pagou menos que o valor e a diferença NÃO virou desconto (virou outra parcela). */
+export function ehBaixaParcial(l: Pick<Lanc, "valor" | "valor_pago" | "desconto_acrescimo">): boolean {
+  return l.valor_pago != null && Math.round((l.valor - l.valor_pago) * 100) > 0 && Math.round((l.desconto_acrescimo ?? 0) * 100) === 0;
+}
+
+/** Valor para o regime de COMPETÊNCIA: a parte paga numa baixa parcial (o restante já é outra parcela). */
+export function valorCompetencia(l: Pick<Lanc, "valor" | "valor_pago" | "desconto_acrescimo">): number {
+  return ehBaixaParcial(l) ? (l.valor_pago as number) : l.valor;
+}
