@@ -1,0 +1,10 @@
+{
+  "extraKnownMarketplaces": {
+    "context-mode": { "source": { "source": "github", "repo": "mksglu/context-mode" } },
+    "caveman": { "source": { "source": "github", "repo": "JuliusBrussee/caveman" } }
+  },
+  "enabledPlugins": {
+    "context-mode@context-mode": true,
+    "caveman@caveman": true
+  }
+}
