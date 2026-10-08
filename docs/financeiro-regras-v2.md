@@ -1,8 +1,9 @@
 # Financeiro — regras novas dos relatórios (Fase A)
 
 Correção dos números dos Relatórios do Financeiro em PRs pequenos, cada um ligado
-**fazenda a fazenda** por uma flag. Este arquivo cobre o PR 0 (rede de segurança)
-e o PR 1 (natureza do lançamento). A auditoria completa, com causa-raiz e a ordem
+**fazenda a fazenda** por uma flag. Este arquivo cobre o PR 0 (rede de segurança),
+o PR 1 (natureza do lançamento), o PR 7 (juros e descontos da baixa) e o PR 4
+(receita do leite). A auditoria completa, com causa-raiz e a ordem
 dos PRs seguintes, ficou no relatório da Fase A (`SOLUCOES.md`, fora do repositório).
 
 ## 1. A flag `financeiro_regras_v2`
@@ -135,7 +136,64 @@ de `financeiro.py` e `cartao_credito.py`. O resto do sistema não mudou. Na suí
 de testes, `FAZENDA_HOJE_LOCAL_RELOGIO=relogio_local` (ligado no `conftest.py`)
 faz o relógio seguir o da máquina, como o `date.today()` dos testes antigos.
 
-## 6. O que fica para os próximos PRs
+## 6. Juros e descontos da baixa (PR 7)
+
+A diferença apurada na baixa (`conta_gerencial.desconto_acrescimo` = valor
+pago − valor da conta) passa a ter destino na DRE. Regras em
+`fazenda/rules/juros_descontos.py`; registros em
+`financeiro._registros_diferenca_baixa`.
+
+- **Padrão "financeiro"** (decisão do dono, Q1): a linha da conta continua com
+  o valor **contratado** e a diferença vira um registro em *Outras receitas e
+  despesas*, datado na **data do pagamento**, nos **dois regimes**. Nota de
+  despesa: pagou a mais = "(juros e multas pagos)", a menos = "(descontos
+  obtidos)". Nota de receita: o inverso ("(juros recebidos)", "(descontos
+  concedidos)"). Na DRE de caixa, linha + Outras = `valor_pago` (fecha com o
+  Fluxo). A resposta da DRE ganha `diferencas_baixa` (de onde veio cada um).
+- **"Abatimento"** (opção no painel de baixa e na baixa em lote detalhada,
+  campo `natureza_diferenca` de `PUT /financeiro/lancamentos/{id}/pagar`): o
+  desconto reduz o valor da **própria conta** (a parcela passa a valer o pago),
+  em DRE, custos, RMCA, custo por litro e orçamento; nada vai para Outras. Só
+  para desconto resolvido na baixa (acréscimo ou diferença reparcelada → 400).
+  Grava `conta_gerencial.diferenca_tipo` (NULL = financeiro; migração aditiva
+  `f3b8d1c6a9e2`). O estorno limpa o campo.
+- **Não geram nada**: baixa parcial reparcelada (a diferença virou parcela
+  nova, `desconto_acrescimo = 0`), e pago sem `valor_pago` (dado legado; o
+  `valor_pago` obrigatório é o PR 6).
+- **Natureza**: o juro/desconto é resultado financeiro mesmo quando a nota
+  está fora da DRE (juros pagos com o principal do financiamento, multa de
+  guia) — exceto aporte/retirada de sócio e transferência, que continuam fora.
+- Fatura de fornecedor paga com diferença: o rateio por nota (já existente)
+  chega a Outras por nota. A baixa pela fatura não oferece "abatimento" (fica
+  financeiro).
+- **Fonte única (R4)**: com a flag, RMCA, custo por litro e **orçado ×
+  realizado** somam os registros da DRE de competência
+  (`financeiro.registros_competencia_v2`), não mais `LancamentoItem.valor_total`
+  cru: o desconto da nota de despesa sai rateado nos itens. Juros/descontos da
+  baixa não entram em custo nenhum (são resultado financeiro).
+- Os campos legados da DRE (`receitas_total`/`despesas_total`/`resultado`) não
+  mudam, nem com abatimento: são o PR 8.
+
+## 7. Receita do leite (PR 4)
+
+- **kg → litro**: `fazenda/rules/unidades.py::leite_em_litros` é o helper único
+  (`leite_para_kg ÷ 1,029`). Com a flag, o custo por litro converte a entrega
+  lançada em kg (antes, 10.320 kg entravam como 10.320 L) e responde
+  `unidade_origem` e `litros_convertidos_de_kg`. O RMCA já convertia (o preço
+  médio do litro passa pelo mesmo helper, sem mudar número). Produção ›
+  Controle × Entregue compara em kg e não muda.
+- **Funrural/Senar na nota de venda = dedução** (Q6): na nota de **receita**
+  com desconto, o item entra **bruto** em *Receita de vendas* e o desconto vai
+  para *Deduções* como "(descontos na nota de venda)", rateado por item. A
+  receita líquida não muda. Na nota de despesa, nada muda.
+- **RMCA sobre a receita bruta** (Q7), com a líquida ao lado: `gerencial` ganha
+  `deducoes_receita_leite`, `receita_leite_liquida` e `rmca_sobre_liquida`;
+  `fisico` ganha `receita_leite_liquida` e `rmca_sobre_liquida`.
+- **Custo por litro em mês fechado**: período parcial é estendido aos meses
+  inteiros que toca (`periodo` = o efetivo, `periodo_solicitado`,
+  `periodo_ajustado_para_mes_fechado`, `avisos`).
+
+## 8. O que fica para os próximos PRs
 
 O teste do cenário marca cada número ainda errado com `xfail(strict=True)` e o
 nome do PR que o corrige; o PR que acertar o número é obrigado a tirar o xfail.
@@ -144,9 +202,7 @@ nome do PR que o corrige; o PR que acertar o número é obrigado a tirar o xfail
 |---|---|
 | 2 | folha, contratos, diárias e vales nascem com conta (não classificado = 0) |
 | 3 | folha pelo bruto e encargos (pessoal de março = 4.840) |
-| 4 | leite em kg convertido para litro; Funrural como dedução |
 | 5 | cartão por item (CMV com a compra do cartão; fatura em Contas a pagar e no Caixa Real) |
 | 6 | saldo de abertura, pagamento futuro como agendado, `valor_pago` obrigatório, Caixa Real sem desconto de vale |
-| 7 | juros e descontos da baixa em Outras receitas e despesas |
 | 8 | DRE única (campos legados, Portal, Capa) e orçamento com totais separados |
 | 9 | COE/COT com rateio: "Todos" sem filtro, depreciação por centro |

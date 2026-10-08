@@ -1354,7 +1354,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             <input type="checkbox" checked={entregue} onChange={(e) => { entregueTocadoRef.current = true; setEntregue(e.target.checked); }} /> Já entregue / recebido
           </label>
         </Campo>
-        <Campo label="Desconto (R$)"><CampoMoeda style={inputStyle} value={Number(desconto) || 0} onChange={(v) => setDesconto(v ? String(v) : "")} /></Campo>
+        {/* Na nota de receita (ex.: leite), o Funrural/Senar retido pelo
+            comprador entra aqui; com as regras novas dos relatórios ele vai
+            para Deduções da receita na DRE (PR 4, docs/financeiro-regras-v2.md). */}
+        <Campo label={tipo === "receita" ? "Desconto ou Funrural/Senar retido (R$)" : "Desconto (R$)"}><CampoMoeda style={inputStyle} value={Number(desconto) || 0} onChange={(v) => setDesconto(v ? String(v) : "")} /></Campo>
         <Campo label="Acréscimo (R$)"><CampoMoeda style={inputStyle} value={Number(acrescimo) || 0} onChange={(v) => setAcrescimo(v ? String(v) : "")} /></Campo>
       </div>
       )}

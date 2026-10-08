@@ -25,6 +25,18 @@ def leite_para_kg(quantidade: float, unidade: str | None) -> float:
     return quantidade
 
 
+def leite_em_litros(quantidade: float, unidade: str | None) -> float:
+    """Volume de leite em LITROS de verdade, qualquer que seja a unidade em
+    que a entrega foi lançada (`kg`, o padrão, ou `L`). Helper ÚNICO dos
+    relatórios que dividem por litro (RMCA, custo por litro, futuro COE/L):
+    ninguém divide por `EntregaLeiteMensal.quantidade_litros` cru — o nome do
+    campo é histórico, ele guarda o número na unidade escolhida (Fase A, PR 4).
+
+    Mesma conta que o RMCA já fazia (`leite_para_kg(q, u) / densidade`), de
+    propósito: o número do RMCA não muda ao passar por aqui."""
+    return leite_para_kg(quantidade, unidade) / DENSIDADE_LEITE_KG_POR_L
+
+
 # Grupos de unidades intercompatíveis para fins de SELEÇÃO na aplicação.
 GRUPOS_UNIDADE: list[set[str]] = [
     {"ml", "unidade", "dose"},
