@@ -179,7 +179,7 @@ export default function RelatorioFolhaPagamentoView() {
             O recibo de cada pessoa, para conferir e imprimir — nada aqui altera a folha.
             Para lançar, acrescentar vencimento/desconto, marcar como pago ou estornar, use{" "}
             <a href="/financeiro?ir=folha" style={{ color: "var(--text-accent)", textDecoration: "underline", fontWeight: 600 }}
-              title="Abrir Ações > Fechamento da folha">Ações › Fechamento da folha</a>.
+              title="Abrir Contas > Folha de pagamento > Fechamento da folha">Contas › Folha de pagamento › Fechamento</a>.
           </span>
         </div>
       </div>

@@ -133,7 +133,6 @@ export default function CaixaFuncionariosView() {
       <EstilosFinV2 />
       <div className="flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.6rem", marginBottom: "0.8rem" }}>
         <div>
-          <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Controle Financeiro · Ações</div>
           <h2 style={{ margin: 0, fontSize: "1.05rem" }}>Caixa dos funcionários</h2>
         </div>
         {aba === "individual" && (

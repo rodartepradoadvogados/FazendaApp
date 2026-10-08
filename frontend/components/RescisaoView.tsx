@@ -623,8 +623,8 @@ export default function RescisaoView({ mostrar = "tudo" }: { mostrar?: ModoSecao
             </div>
             <div style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: "-0.4rem", marginBottom: "0.8rem" }}>
               {statusPagamentoFechar === "pendente"
-                ? "Pendente: entra em Financeiro › Contas › Contas a pagar. Só aparece em Contas pagas depois de dar baixa no pagamento."
-                : "Já pago: entra direto em Financeiro › Contas › Contas pagas, com a data de pagamento informada."}
+                ? "Pendente: entra em Financeiro › Contas › Contas a pagar. Só aparece em Consultas depois de dar baixa no pagamento."
+                : "Já pago: entra direto em Financeiro › Consultas, com a data de pagamento informada."}
             </div>
 
             <div className="mb-3" style={{ maxWidth: 320 }}>

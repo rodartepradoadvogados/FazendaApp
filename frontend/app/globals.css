@@ -1855,7 +1855,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --st-pago-fg:#1D6A40;  --st-pago-bg:#E6F2EA;  --st-pago-line:#86BE9E;
   --st-parc-fg:#58398A;  --st-parc-bg:#F1ECF8;  --st-parc-line:#B19DD6;
   --st-neutro-fg:#5A534C; --st-neutro-bg:#F1EEEA; --st-neutro-line:#BDB5AC;
-  --text-accent:#5E1A2E;
+  --text-accent: var(--vinho); /* acompanha a paleta (vinho/verde/azul), com contraste AA sobre o fundo claro */
   --sel-row:#F7E9ED;
 }
 .st-pill{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--st-neutro-line);background:var(--st-neutro-bg);color:var(--st-neutro-fg);border-radius:999px;padding:1px 9px 1px 7px;font-size:.74rem;font-weight:600;line-height:1.5;white-space:nowrap}

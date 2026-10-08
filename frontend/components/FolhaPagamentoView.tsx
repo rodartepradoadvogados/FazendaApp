@@ -1332,7 +1332,7 @@ export default function FolhaPagamentoView() {
         <strong style={{ color: "var(--text)" }}>Aqui se fecha a folha</strong> — lançar, conferir,
         acrescentar vencimento/desconto e pagar. Para só consultar e imprimir o recibo, use{" "}
         <a href="/financeiro?ir=folha_relatorio" style={{ color: "var(--text-accent)", textDecoration: "underline" }}
-          title="Abrir Contas > Holerites e recibos (só consulta)">Contas › Holerites e recibos</a>.
+          title="Abrir Holerites e recibos (só consulta)">Holerites e recibos</a>.
       </p>
 
       <AvisoTermosCaixa />

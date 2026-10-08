@@ -168,7 +168,8 @@ export function BotaoArquivo({ accept, onArquivo, rotulo, className = "btn-ghost
 const CSS_FIN_V2 = `
 @media (max-width: 767px) {
   .fin-v2 button:not(.st-pill), .fin-v2 select, .fin-v2 a.btn-ghost,
-  .fin-v2 input:not([type="checkbox"]):not([type="radio"]):not([type="file"]) { min-height: 44px; }
+  .fin-v2 input:not([type="checkbox"]):not([type="radio"]):not([type="file"]) { min-height: 44px !important; }
+  .fin-v2 label:has(> input[type="checkbox"]), .fin-v2 label:has(> input[type="radio"]) { min-height: 44px !important; }
   .fin-v2 select, .fin-v2 input:not([type="checkbox"]):not([type="radio"]), .fin-v2 textarea { font-size: 16px !important; }
   .fin-v2 input[type="checkbox"], .fin-v2 input[type="radio"] { width: 20px; height: 20px; }
 }
