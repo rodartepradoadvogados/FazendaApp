@@ -34,6 +34,7 @@ export const FATURA_CSS = `
 .fv-forte{font-weight:700}
 .fv-lk{background:none;border:0;padding:0;font:inherit;font-weight:700;color:var(--text);cursor:pointer;text-align:left;text-decoration:underline;text-decoration-color:var(--border-strong,var(--border));text-underline-offset:3px;overflow-wrap:anywhere}
 .fv-lk:hover{text-decoration-color:currentColor}
+.fv-tw td.fv-col-fat{min-width:180px}
 .fv-t2{display:block;font-size:.74rem;color:var(--text-muted);margin-top:1px}
 .fv-mini{font-size:.76rem;padding:.3rem .7rem;white-space:nowrap}
 .fv-ciclo{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}

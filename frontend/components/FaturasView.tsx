@@ -679,7 +679,7 @@ export function FaturasView() {
             <tbody>{lista.map((x) => (
               <tr key={x.id} className="row-clickable" onClick={() => setAberta(x.id)}>
                 <td><PilulaFatura s={x.status} /></td>
-                <td><button type="button" className="fv-lk" onClick={(e) => { e.stopPropagation(); setAberta(x.id); }}>{x.rotulo}</button>
+                <td className="fv-col-fat"><button type="button" className="fv-lk" onClick={(e) => { e.stopPropagation(); setAberta(x.id); }}>{x.rotulo}</button>
                   <span className="fv-t2">{x.fornecedor}</span></td>
                 <td className="fv-num">{br(x.data_abertura)} → {br(x.data_fechamento_prevista)}</td>
                 <td className="r fv-num">{x.notas}</td>

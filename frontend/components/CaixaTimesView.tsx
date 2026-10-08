@@ -3,10 +3,11 @@
 // O dinheiro é do coletivo; em datas fixas (Parâmetros financeiros) é repartido pelos
 // dias de cada membro, com penalidade documentada (art. 482 CLT) e destino por pessoa.
 import { useEffect, useState } from "react";
-import { ArrowLeft, Plus, Undo2, Users } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CalendarClock, CheckCircle2, Clock, Minus, Paperclip, Plus, Undo2, Users, Wallet } from "lucide-react";
 import { Modal } from "@/components/Modal";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { Dropzone } from "@/components/Dropzone";
+import { useConfirmacao, BotaoArquivo } from "@/components/financeiro/folhaUi";
 import {
   fetchCaixasTime, fetchCaixaTime, criarCaixaTime, adicionarMembrosTime, removerMembroTime, lancarEntradaTime,
   estornarMovimentoTime, criarRateioTime, fetchRateioTime, ajustarLinhaRateio, excluirRascunhoRateio,
@@ -30,6 +31,7 @@ const campo = {
 } as const;
 const hojeISO = () => new Date().toISOString().slice(0, 10);
 const rotuloTipos = (t: string[]) => t.map((x) => ROTULO_GRUPO[x] || x).join(", ");
+const kpiLinha = { display: "inline-block", minWidth: "min(13rem, 100%)" } as const;
 
 export default function CaixaTimesView() {
   const [times, setTimes] = useState<CaixaTimeResumo[] | null>(null);
@@ -44,24 +46,25 @@ export default function CaixaTimesView() {
   return (
     <div>
       <div className="flex items-center justify-between" style={{ gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.7rem" }}>
-        <div className="card" style={{ padding: "0.6rem 0.9rem" }}>
-          <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Nos caixas do time (PL)</div>
-          <strong style={{ fontSize: "1.15rem" }}>{formatBRL(totalPl)}</strong>
+        <div className="st-kpi aberto" style={kpiLinha}>
+          <div className="l" style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}><Users size={13} aria-hidden />Nos caixas do time (PL)</div>
+          <div className="v">{formatBRL(totalPl)}</div>
         </div>
         <button type="button" className="btn-primary" onClick={() => setNovo(true)}><Plus size={14} /> Novo caixa do time</button>
       </div>
       <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", maxWidth: "75ch" }}>
         Dinheiro do coletivo, repartido nas datas dos Parâmetros financeiros (padrão 01/06 e 01/12), em partes proporcionais aos dias de cada membro.
       </p>
-      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
+      {erro && <p role="alert" style={{ color: "var(--st-venc-fg)", fontSize: "0.82rem" }}>{erro}</p>}
       {times === null ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : (
+        <div style={{ overflowX: "auto" }}>
         <table className="fazenda-table" style={{ minWidth: 560 }}>
           <thead><tr><th>Caixa</th><th>Membros</th><th style={{ textAlign: "right" }}>Saldo</th><th>Próxima entrega</th><th></th></tr></thead>
           <tbody>
             {times.map((t) => (
               <tr key={t.id}>
-                <td>{t.nome}{t.auto_tipos.length > 0 && <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}> · todos: {rotuloTipos(t.auto_tipos)} (automático)</span>}</td>
-                <td>{t.membros}</td><td style={{ textAlign: "right", fontWeight: 700 }}>{formatBRL(t.saldo)}</td>
+                <td style={{ fontWeight: 600 }}>{t.nome}{t.auto_tipos.length > 0 && <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}> · todos: {rotuloTipos(t.auto_tipos)} (automático)</span>}</td>
+                <td>{t.membros}</td><td style={{ textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: t.saldo > 0 ? "var(--text)" : "var(--text-muted)" }}>{formatBRL(t.saldo)}</td>
                 <td style={{ color: "var(--text-muted)" }}>{formatDate(t.proxima_entrega)}</td>
                 <td style={{ textAlign: "right" }}><button type="button" className="btn-primary" style={{ fontSize: "0.72rem", padding: "0.15rem 0.6rem" }} onClick={() => setAberto(t.id)}>Abrir</button></td>
               </tr>
@@ -69,6 +72,7 @@ export default function CaixaTimesView() {
             {!times.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)" }}>Nenhum caixa do time ainda. Crie um para guardar a participação nos lucros do grupo.</td></tr>}
           </tbody>
         </table>
+        </div>
       )}
       {novo && <NovoTimeModal onClose={() => setNovo(false)} onFeito={(t) => { setNovo(false); carregar(); setAberto(t.id); }} />}
     </div>
@@ -90,16 +94,16 @@ function NovoTimeModal({ onClose, onFeito }: { onClose: () => void; onFeito: (t:
     <Modal title="Novo caixa do time" onClose={onClose} width="460px">
       <label style={lbl} htmlFor="nt-nome">Nome</label>
       <input id="nt-nome" style={campo} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex.: Turma da ordenha" />
-      <label style={{ ...lbl, marginTop: "0.7rem" }}>Entram automaticamente (todos os ativos do tipo, atualiza sozinho)</label>
-      <div className="flex" style={{ gap: "0.8rem", flexWrap: "wrap" }}>
+      <div id="nt-auto" style={{ ...lbl, marginTop: "0.7rem" }}>Entram automaticamente (todos os ativos do tipo, atualiza sozinho)</div>
+      <div className="flex" role="group" aria-labelledby="nt-auto" style={{ gap: "0.8rem", flexWrap: "wrap" }}>
         {GRUPOS.map((g) => (
-          <label key={g.id} style={{ display: "flex", gap: "0.3rem", alignItems: "center", fontSize: "0.82rem", color: "var(--text)" }}>
+          <label key={g.id} style={{ display: "flex", gap: "0.3rem", alignItems: "center", fontSize: "0.82rem", color: "var(--text)", minHeight: 30, cursor: "pointer" }}>
             <input type="checkbox" checked={tipos.has(g.id)} onChange={() => setTipos((s) => { const n = new Set(s); n.has(g.id) ? n.delete(g.id) : n.add(g.id); return n; })} /> {g.label}
           </label>
         ))}
       </div>
       <p style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>Depois você pode acrescentar pessoas por nome.</p>
-      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+      {erro && <p role="alert" style={{ color: "var(--st-venc-fg)", fontSize: "0.8rem" }}>{erro}</p>}
       <div className="flex gap-2" style={{ justifyContent: "flex-end", marginTop: "0.8rem" }}>
         <button type="button" className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
         <button type="button" className="btn-primary" onClick={criar} disabled={salvando}>Criar caixa</button>
@@ -116,11 +120,12 @@ function TimeDetalhe({ id, onVoltar }: { id: number; onVoltar: () => void }) {
   const [rateioId, setRateioId] = useState<number | null>(null);
   const [estornando, setEstornando] = useState<number | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  const { confirmar: pedirConfirmacao, dialogo: dialogoConfirmacao } = useConfirmacao();
   const carregar = () => fetchCaixaTime(id).then((d) => { setT(d); setErro(null); }).catch((e) => setErro(e.message));
   useEffect(() => { carregar(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (rateioId != null) return <RateioTela rateioId={rateioId} onVoltar={() => { setRateioId(null); carregar(); }} />;
-  if (!t) return <div>{erro ? <p role="alert" style={{ color: "var(--red)" }}>{erro}</p> : <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}<button type="button" className="btn-ghost" onClick={onVoltar}>Voltar</button></div>;
+  if (!t) return <div>{erro ? <p role="alert" style={{ color: "var(--st-venc-fg)" }}>{erro}</p> : <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}<button type="button" className="btn-ghost" onClick={onVoltar}>Voltar</button></div>;
 
   const rascunho = t.rateios.find((r) => r.situacao === "rascunho");
   async function novoRateio() {
@@ -129,7 +134,7 @@ function TimeDetalhe({ id, onVoltar }: { id: number; onVoltar: () => void }) {
     setOcupado(false);
   }
   async function remover(pessoaId: number, nome: string) {
-    if (!window.confirm(`Dar saída de ${nome} deste caixa hoje? Ele continua contando os dias em que participou.`)) return;
+    if (!(await pedirConfirmacao(`Dar saída de ${nome} deste caixa hoje? Ele continua contando os dias em que participou.`, { titulo: "Dar saída do caixa", confirmar: "Dar saída" }))) return;
     try { await removerMembroTime(id, pessoaId); await carregar(); } catch (e: any) { setErro(e.message); }
   }
   return (
@@ -148,14 +153,14 @@ function TimeDetalhe({ id, onVoltar }: { id: number; onVoltar: () => void }) {
         </div>
       </div>
       <div className="flex" style={{ gap: "0.7rem", flexWrap: "wrap", marginBottom: "0.8rem" }}>
-        <div className="card" style={{ padding: "0.6rem 0.9rem" }}><div style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Saldo do caixa</div><strong style={{ fontSize: "1.15rem" }}>{formatBRL(t.saldo)}</strong></div>
-        <div className="card" style={{ padding: "0.6rem 0.9rem" }}><div style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Período em apuração</div><strong>{formatDate(t.periodo_inicio)} a {formatDate(t.periodo_fim)}</strong></div>
-        <div className="card" style={{ padding: "0.6rem 0.9rem" }}><div style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Próxima entrega</div><strong>{formatDate(t.proxima_entrega)}</strong></div>
+        <div className={`st-kpi ${t.saldo > 0 ? "pago" : "zero"}`} style={kpiLinha}><div className="l" style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}><Wallet size={13} aria-hidden />Saldo do caixa</div><div className="v">{formatBRL(t.saldo)}</div></div>
+        <div className="st-kpi" style={kpiLinha}><div className="l" style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}><Clock size={13} aria-hidden />Período em apuração</div><div className="v" style={{ fontSize: "0.95rem" }}>{formatDate(t.periodo_inicio)} a {formatDate(t.periodo_fim)}</div></div>
+        <div className="st-kpi logo" style={kpiLinha}><div className="l" style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}><CalendarClock size={13} aria-hidden />Próxima entrega</div><div className="v" style={{ fontSize: "0.95rem" }}>{formatDate(t.proxima_entrega)}</div></div>
       </div>
-      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
+      {erro && <p role="alert" style={{ color: "var(--st-venc-fg)", fontSize: "0.82rem" }}>{erro}</p>}
 
       <div className="flex items-center justify-between" style={{ marginBottom: "0.3rem" }}>
-        <strong style={{ fontSize: "0.88rem" }}><Users size={14} style={{ display: "inline", marginRight: 5 }} />Membros no período</strong>
+        <strong style={{ fontSize: "0.88rem" }}><Users size={14} aria-hidden style={{ display: "inline", marginRight: 5, verticalAlign: "-2px" }} />Membros no período</strong>
         <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem" }} onClick={() => setAddMembro(true)}>Adicionar por nome</button>
       </div>
       <div style={{ overflowX: "auto", marginBottom: "1rem" }}>
@@ -186,7 +191,12 @@ function TimeDetalhe({ id, onVoltar }: { id: number; onVoltar: () => void }) {
               return (
                 <tr key={m.id}>
                   <td style={riscado}>{formatDate(m.data)}</td><td style={riscado}>{ROTULO_MOV[m.tipo] || m.tipo}</td><td style={{ ...riscado, maxWidth: 320 }}>{m.motivo}</td>
-                  <td style={{ textAlign: "right", fontWeight: 700, color: m.valor >= 0 ? "var(--green-light, #3ecf8e)" : "var(--red)", ...riscado }}>{m.valor >= 0 ? "+ " : "− "}{formatBRL(Math.abs(m.valor))}</td>
+                  <td style={{ textAlign: "right" }}>
+                    <span className={`st-pill ${m.estornado ? "" : m.valor >= 0 ? "pago" : "venc"}`} style={m.estornado ? { textDecoration: "line-through" } : undefined}>
+                      {m.valor >= 0 ? <Plus size={11} aria-hidden /> : <Minus size={11} aria-hidden />}
+                      <span style={{ fontVariantNumeric: "tabular-nums" }}>{m.valor >= 0 ? "+ " : "− "}{formatBRL(Math.abs(m.valor))}</span>
+                    </span>
+                  </td>
                   <td style={{ textAlign: "right" }}>{formatBRL(m.saldo_depois)}</td>
                   <td style={{ color: "var(--text-muted)", fontSize: "0.74rem" }}>{m.numero_lancamento || "—"}</td>
                   <td style={{ textAlign: "right" }}>{m.pode_estornar && <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setEstornando(m.id)}><Undo2 size={12} /> Estornar</button>}</td>
@@ -207,6 +217,7 @@ function TimeDetalhe({ id, onVoltar }: { id: number; onVoltar: () => void }) {
       {entrada && <EntradaTimeModal timeId={id} onClose={() => setEntrada(false)} onFeito={() => { setEntrada(false); carregar(); }} />}
       {addMembro && <AddMembrosModal timeId={id} onClose={() => setAddMembro(false)} onFeito={() => { setAddMembro(false); carregar(); }} />}
       {estornando != null && <EstornoTimeModal timeId={id} movId={estornando} onClose={() => setEstornando(null)} onFeito={() => { setEstornando(null); carregar(); }} />}
+      {dialogoConfirmacao}
     </div>
   );
 }
@@ -265,8 +276,8 @@ function EntradaTimeModal({ timeId, onClose, onFeito }: { timeId: number; onClos
           <select id="et-tipo" style={campo} value={tipo} onChange={(e) => setTipo(e.target.value)}>{TIPOS.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}</select></div>
         <div><label style={lbl} htmlFor="et-data">Data</label><input id="et-data" type="date" style={campo} value={data} onChange={(e) => setData(e.target.value)} /></div>
         {tipo === "comissao" ? (<>
-          <div><label style={lbl}>Base (R$)</label><input type="number" min="0" step="0.01" style={campo} value={base} onChange={(e) => setBase(e.target.value)} /></div>
-          <div><label style={lbl}>Percentual (%)</label><input type="number" min="0" step="0.01" style={campo} value={pct} onChange={(e) => setPct(e.target.value)} /></div>
+          <div><label style={lbl} htmlFor="et-base">Base (R$)</label><input id="et-base" type="number" min="0" step="0.01" style={campo} value={base} onChange={(e) => setBase(e.target.value)} /></div>
+          <div><label style={lbl} htmlFor="et-pct">Percentual (%)</label><input id="et-pct" type="number" min="0" step="0.01" style={campo} value={pct} onChange={(e) => setPct(e.target.value)} /></div>
         </>) : <>
           {tipo === "deposito" && (
             <div style={{ gridColumn: "1 / -1", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.75rem" }}>
@@ -282,17 +293,17 @@ function EntradaTimeModal({ timeId, onClose, onFeito }: { timeId: number; onClos
                     : sug.percentual > 0 ? <> · {sug.percentual.toLocaleString("pt-BR")}% = <strong>{formatBRL(sug.valor_sugerido)}</strong></> : " — informe o percentual."}
                 </p>
               )}
-              {sug && sug.nao_classificado > 0 && <p style={{ margin: "0.3rem 0 0", fontSize: "0.74rem", color: "var(--amber)" }}>Há {formatBRL(sug.nao_classificado)} sem linha na DRE, fora deste resultado. Classifique as contas para a sugestão ficar completa.</p>}
+              {sug && sug.nao_classificado > 0 && <p style={{ margin: "0.3rem 0 0", fontSize: "0.74rem", color: "var(--st-logo-fg)" }}><AlertTriangle size={12} aria-hidden style={{ display: "inline", marginRight: 4, verticalAlign: "-2px" }} />Há {formatBRL(sug.nao_classificado)} sem linha na DRE, fora deste resultado. Classifique as contas para a sugestão ficar completa.</p>}
               <button type="button" className="btn-secondary" style={{ marginTop: "0.5rem", fontSize: "0.78rem" }} disabled={!sug || sug.valor_sugerido <= 0} onClick={usarSugestao}>Usar este valor</button>
               <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginLeft: "0.6rem" }}>É só uma sugestão: você pode ajustar o valor abaixo.</span>
             </div>
           )}
-          <div style={{ gridColumn: "1 / -1" }}><label style={lbl}>Valor (R$) para o caixa do time</label><CampoMoeda style={campo} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
+          <div style={{ gridColumn: "1 / -1" }}><label style={lbl} htmlFor="et-valor">Valor (R$) para o caixa do time</label><CampoMoeda id="et-valor" style={campo} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
         </>}
         <div style={{ gridColumn: "1 / -1" }}><label style={lbl} htmlFor="et-motivo">Motivo (obrigatório)</label><input id="et-motivo" style={campo} value={motivo} onChange={(e) => setMotivo(e.target.value)} /></div>
       </div>
       <p style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>Vira despesa de pessoal já baixada no Financeiro, com número de lançamento. O valor pertence ao time e só chega às pessoas no rateio.</p>
-      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+      {erro && <p role="alert" style={{ color: "var(--st-venc-fg)", fontSize: "0.8rem" }}>{erro}</p>}
       <div className="flex gap-2" style={{ justifyContent: "flex-end", marginTop: "0.8rem" }}>
         <button type="button" className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
         <button type="button" className="btn-primary" onClick={lancar} disabled={salvando}>{salvando ? "Lançando…" : "Lançar entrada"}</button>
@@ -317,13 +328,13 @@ function AddMembrosModal({ timeId, onClose, onFeito }: { timeId: number; onClose
       <input id="am-ent" type="date" style={{ ...campo, marginBottom: "0.6rem" }} value={entrada} onChange={(e) => setEntrada(e.target.value)} />
       <div style={{ maxHeight: 240, overflowY: "auto", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem" }}>
         {pessoas.map((p) => (
-          <label key={p.pessoa_id} style={{ display: "flex", gap: "0.5rem", alignItems: "center", fontSize: "0.82rem", margin: "0.15rem 0", color: "var(--text)" }}>
+          <label key={p.pessoa_id} style={{ display: "flex", gap: "0.5rem", alignItems: "center", fontSize: "0.82rem", margin: "0.15rem 0", color: "var(--text)", minHeight: 30, cursor: "pointer" }}>
             <input type="checkbox" checked={escolhidos.has(p.pessoa_id)} onChange={() => setEscolhidos((s) => { const n = new Set(s); n.has(p.pessoa_id) ? n.delete(p.pessoa_id) : n.add(p.pessoa_id); return n; })} />
             {p.nome} <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>{rotuloTipos(p.grupos)}</span>
           </label>
         ))}
       </div>
-      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+      {erro && <p role="alert" style={{ color: "var(--st-venc-fg)", fontSize: "0.8rem" }}>{erro}</p>}
       <div className="flex gap-2" style={{ justifyContent: "flex-end", marginTop: "0.8rem" }}>
         <button type="button" className="btn-ghost" onClick={onClose}>Cancelar</button>
         <button type="button" className="btn-primary" onClick={salvar}>Adicionar</button>
@@ -344,10 +355,10 @@ function EstornoTimeModal({ timeId, movId, onClose, onFeito }: { timeId: number;
       <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginTop: 0 }}>Cria o movimento contrário com a data de hoje; o Financeiro recebe o lançamento contrário. Só é possível enquanto o valor não foi repartido.</p>
       <label style={lbl} htmlFor="est-m">Motivo (obrigatório)</label>
       <input id="est-m" style={campo} value={motivo} onChange={(e) => setMotivo(e.target.value)} />
-      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+      {erro && <p role="alert" style={{ color: "var(--st-venc-fg)", fontSize: "0.8rem" }}>{erro}</p>}
       <div className="flex gap-2" style={{ justifyContent: "flex-end", marginTop: "0.8rem" }}>
         <button type="button" className="btn-ghost" onClick={onClose}>Cancelar</button>
-        <button type="button" className="btn-primary" style={{ background: "var(--red)" }} onClick={ok}>Confirmar estorno</button>
+        <button type="button" className="btn-primary" style={{ background: "var(--st-venc-fg)", borderColor: "var(--st-venc-fg)", color: "var(--surface)" }} onClick={ok}>Confirmar estorno</button>
       </div>
     </Modal>
   );
@@ -361,6 +372,7 @@ function RateioTela({ rateioId, onVoltar }: { rateioId: number; onVoltar: () => 
   const [erro, setErro] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  const { confirmar: pedirConfirmacao, dialogo: dialogoConfirmacao } = useConfirmacao();
   useEffect(() => { fetchRateioTime(rateioId).then(setR).catch((e) => setErro(e.message)); }, [rateioId]);
 
   async function agir(fn: () => Promise<CaixaRateio | unknown>, msg?: string, sair = false) {
@@ -369,7 +381,7 @@ function RateioTela({ rateioId, onVoltar }: { rateioId: number; onVoltar: () => 
     catch (e: any) { setErro(e.message); }
     setOcupado(false);
   }
-  if (!r) return <div>{erro ? <p role="alert" style={{ color: "var(--red)" }}>{erro}</p> : <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}<button type="button" className="btn-ghost" onClick={onVoltar}>Voltar</button></div>;
+  if (!r) return <div>{erro ? <p role="alert" style={{ color: "var(--st-venc-fg)" }}>{erro}</p> : <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}<button type="button" className="btn-ghost" onClick={onVoltar}>Voltar</button></div>;
   const editavel = r.situacao === "rascunho";
   const somaFinal = r.linhas.reduce((s, l) => s + l.parte_final, 0);
   return (
@@ -379,19 +391,21 @@ function RateioTela({ rateioId, onVoltar }: { rateioId: number; onVoltar: () => 
         <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Caixa do time · {r.time_nome}</div>
         <h2 style={{ margin: 0, fontSize: "1.05rem" }}>Rateio do PL · {formatDate(r.data_entrega)} · período {formatDate(r.periodo_inicio)} a {formatDate(r.periodo_fim)}</h2>
         <p style={{ margin: "0.2rem 0 0", fontSize: "0.8rem" }}>
-          <b style={{ color: r.situacao === "confirmado" ? "var(--green-light, #3ecf8e)" : r.situacao === "desfeito" ? "var(--text-muted)" : "var(--amber)" }}>
+          <span className={`st-pill ${r.situacao === "confirmado" ? "pago" : r.situacao === "desfeito" ? "" : "logo"}`}>
+            {r.situacao === "confirmado" ? <CheckCircle2 size={12} aria-hidden /> : r.situacao === "desfeito" ? <Undo2 size={12} aria-hidden /> : <Clock size={12} aria-hidden />}
             {r.situacao === "rascunho" ? "Rascunho" : r.situacao === "confirmado" ? "Confirmado" : "Desfeito"}
-          </b> · total {formatBRL(r.total)}
+          </span> · total {formatBRL(r.total)}
         </p>
       </div>
       {editavel && r.documentos_pendentes.length > 0 && (
-        <p role="alert" style={{ color: "var(--amber)", fontSize: "0.82rem" }}>
+        <p role="alert" style={{ color: "var(--st-logo-fg)", fontSize: "0.82rem", background: "var(--st-logo-bg)", border: "1px solid var(--st-logo-line)", borderLeft: "3px solid var(--st-logo-line)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.7rem" }}>
+          <AlertTriangle size={13} aria-hidden style={{ display: "inline", marginRight: 5, verticalAlign: "-2px" }} />
           <b>{r.documentos_pendentes.length} documento{r.documentos_pendentes.length > 1 ? "s" : ""} pendente{r.documentos_pendentes.length > 1 ? "s" : ""}:</b>{" "}
           {r.documentos_pendentes.join(", ")} {r.documentos_pendentes.length > 1 ? "têm" : "tem"} penalidade. O rateio só confirma com o documento de ciência anexado.
         </p>
       )}
-      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
-      {aviso && <p style={{ color: "var(--green-light, #3ecf8e)", fontSize: "0.82rem" }}>{aviso}</p>}
+      {erro && <p role="alert" style={{ color: "var(--st-venc-fg)", fontSize: "0.82rem" }}>{erro}</p>}
+      {aviso && <p role="status" style={{ color: "var(--st-pago-fg)", fontSize: "0.82rem", display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={14} aria-hidden />{aviso}</p>}
       <div style={{ overflowX: "auto" }}>
         <table className="fazenda-table" style={{ minWidth: 900 }}>
           <thead><tr><th>Pessoa</th><th style={{ textAlign: "right" }}>Dias</th><th style={{ textAlign: "right" }}>Parte calculada</th><th>Penalidade</th><th style={{ textAlign: "right" }}>Parte final</th><th>Destino</th></tr></thead>
@@ -407,15 +421,16 @@ function RateioTela({ rateioId, onVoltar }: { rateioId: number; onVoltar: () => 
         {editavel && <>
           <button type="button" className="btn-primary" style={{ opacity: r.pode_confirmar ? 1 : 0.45 }} disabled={ocupado || !r.pode_confirmar}
             title={r.pode_confirmar ? "" : "Anexe os documentos de ciência pendentes"}
-            onClick={() => window.confirm("Confirmar o rateio? Cada parte vira crédito no caixa individual (ou pagamento direto).") && agir(() => confirmarRateioTime(r.id), "Rateio confirmado: os créditos foram lançados nos caixas individuais.")}>Confirmar rateio</button>
-          <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} disabled={ocupado}
-            onClick={() => window.confirm("Excluir este rascunho?") && agir(() => excluirRascunhoRateio(r.id), undefined, true)}>Excluir rascunho</button>
+            onClick={async () => { if (await pedirConfirmacao("Confirmar o rateio? Cada parte vira crédito no caixa individual (ou pagamento direto).", { titulo: "Confirmar rateio", confirmar: "Confirmar rateio" })) agir(() => confirmarRateioTime(r.id), "Rateio confirmado: os créditos foram lançados nos caixas individuais."); }}>Confirmar rateio</button>
+          <button type="button" className="btn-ghost" style={{ color: "var(--st-venc-fg)" }} disabled={ocupado}
+            onClick={async () => { if (await pedirConfirmacao("Excluir este rascunho?", { titulo: "Excluir rascunho", confirmar: "Excluir", perigo: true })) agir(() => excluirRascunhoRateio(r.id), undefined, true); }}>Excluir rascunho</button>
         </>}
         {r.situacao === "confirmado" && (
-          <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} disabled={ocupado}
-            onClick={() => window.confirm("Desfazer o rateio? Só é possível se nenhuma parte foi sacada.") && agir(() => desfazerRateioTime(r.id), "Rateio desfeito: o valor voltou ao caixa do time.")}>Desfazer rateio</button>
+          <button type="button" className="btn-ghost" style={{ color: "var(--st-venc-fg)" }} disabled={ocupado}
+            onClick={async () => { if (await pedirConfirmacao("Desfazer o rateio? Só é possível se nenhuma parte foi sacada.", { titulo: "Desfazer rateio", confirmar: "Desfazer", perigo: true })) agir(() => desfazerRateioTime(r.id), "Rateio desfeito: o valor voltou ao caixa do time."); }}>Desfazer rateio</button>
         )}
       </div>
+      {dialogoConfirmacao}
     </div>
   );
 }
@@ -463,19 +478,19 @@ function LinhaRateio({ rateioId, linha, editavel, onResultado, onErro }: {
   const penal = linha.penalidade_pct > 0;
   return (
     <tr>
-      <td>{linha.nome}<div style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>{rotuloTipos(linha.grupos)}</div></td>
+      <td style={{ fontWeight: 600 }}>{linha.nome}<div style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>{rotuloTipos(linha.grupos)}</div></td>
       <td style={{ textAlign: "right" }}>{linha.dias}</td>
       <td style={{ textAlign: "right" }}>{formatBRL(linha.parte_calculada)}</td>
       <td style={{ minWidth: 260 }}>
         {editavel ? (
           <div>
             <div className="flex" style={{ gap: "0.3rem", alignItems: "center" }}>
-              <input type="number" min="0" max="100" step="1" aria-label={`Penalidade de ${linha.nome} (%)`} style={{ ...campo, width: 70 }} value={pct}
+              <input type="number" min="0" max="100" step="1" aria-label={`Penalidade de ${linha.nome} (%)`} style={{ ...campo, width: 70, flexShrink: 0 }} value={pct}
                 onChange={(e) => setPct(e.target.value)} onBlur={() => (Number(pct) || 0) !== linha.penalidade_pct && (Number(pct) > 0 ? motivo.trim() ? salvar() : undefined : salvar())} /> <span style={{ fontSize: "0.78rem" }}>%</span>
               {Number(pct) > 0 && <input style={campo} placeholder="Motivo (ex.: art. 482 CLT)" value={motivo} onChange={(e) => setMotivo(e.target.value)} onBlur={() => motivo.trim() && salvar()} />}
             </div>
             {Number(pct) > 0 && (linha.documento_anexo_id
-              ? <span style={{ fontSize: "0.74rem", color: "var(--green-light, #3ecf8e)" }}>Documento de ciência anexado</span>
+              ? <span className="st-pill pago" style={{ marginTop: "0.3rem" }}><CheckCircle2 size={12} aria-hidden />Documento de ciência anexado</span>
               : <div style={{ marginTop: "0.3rem" }}><Dropzone accept="application/pdf,image/jpeg,image/png" label="Anexar documento de ciência" hint="PDF, JPG ou PNG" onFiles={(f) => f[0] && anexar(f[0])} /></div>)}
           </div>
         ) : penal ? <span style={{ fontSize: "0.78rem" }}>{linha.penalidade_pct}% · {linha.penalidade_motivo}</span> : <span style={{ color: "var(--text-muted)" }}>—</span>}
@@ -488,7 +503,7 @@ function LinhaRateio({ rateioId, linha, editavel, onResultado, onErro }: {
               <option value="individual">Crédito no caixa</option><option value="direto">Pagar direto</option>
             </select>
             {linha.destino === "direto" && (
-              <select aria-label="Forma de pagamento" style={{ ...campo, width: "auto" }} value={linha.forma_pagamento || "pix"} onChange={(e) => salvar({ destino: "direto", forma_pagamento: e.target.value })}>
+              <select aria-label={`Forma de pagamento de ${linha.nome}`} style={{ ...campo, width: "auto" }} value={linha.forma_pagamento || "pix"} onChange={(e) => salvar({ destino: "direto", forma_pagamento: e.target.value })}>
                 {FORMAS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
               </select>
             )}
@@ -497,7 +512,7 @@ function LinhaRateio({ rateioId, linha, editavel, onResultado, onErro }: {
                 <input aria-label={`Nº do comprovante de ${linha.nome}`} style={campo} placeholder="Nº do comprovante (opcional)" value={numComp}
                   onChange={(e) => setNumComp(e.target.value)} onBlur={() => numComp.trim() !== (linha.numero_documento_pagamento || "") && salvar({ numero_documento_pagamento: numComp.trim() || null })} />
                 {linha.comprovante_anexo_id
-                  ? <a href={urlAnexoPessoa(linha.comprovante_anexo_id)} target="_blank" rel="noreferrer" style={{ fontSize: "0.74rem", color: "var(--green-light, #3ecf8e)" }}>Comprovante anexado (abrir)</a>
+                  ? <a href={urlAnexoPessoa(linha.comprovante_anexo_id)} target="_blank" rel="noreferrer" style={{ fontSize: "0.74rem", color: "var(--st-pago-fg)", textDecoration: "underline" }}>Comprovante anexado (abrir)</a>
                   : <div style={{ marginTop: "0.3rem" }}><Dropzone accept="application/pdf,image/jpeg,image/png" label="Anexar comprovante (opcional)" hint="PDF, JPG ou PNG" onFiles={(f) => f[0] && anexarComprovanteDireto(f[0])} /></div>}
               </div>
             )}
@@ -507,10 +522,12 @@ function LinhaRateio({ rateioId, linha, editavel, onResultado, onErro }: {
             Pagamento direto{linha.numero_documento_pagamento ? ` · comprovante ${linha.numero_documento_pagamento}` : ""}
             <div>
               {linha.comprovante_anexo_id
-                ? <a href={urlAnexoPessoa(linha.comprovante_anexo_id)} target="_blank" rel="noreferrer" style={{ color: "var(--green-light, #3ecf8e)" }}>Comprovante anexado (abrir)</a>
+                ? <a href={urlAnexoPessoa(linha.comprovante_anexo_id)} target="_blank" rel="noreferrer" style={{ color: "var(--st-pago-fg)", textDecoration: "underline" }}>Comprovante anexado (abrir)</a>
                 : linha.retirada_id
-                  ? <label style={{ color: "var(--dourado-light)", cursor: "pointer", textDecoration: "underline" }}>Anexar comprovante
-                      <input type="file" accept="application/pdf,image/jpeg,image/png" aria-label={`Anexar comprovante de ${linha.nome}`} style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) anexarComprovanteDepois(f); e.target.value = ""; }} /></label>
+                  ? <BotaoArquivo accept="application/pdf,image/jpeg,image/png" rotulo={`Anexar comprovante de ${linha.nome}`}
+                      style={{ fontSize: "0.74rem", marginTop: "0.2rem" }} onArquivo={(f) => anexarComprovanteDepois(f)}>
+                      <Paperclip size={12} aria-hidden /> Anexar comprovante
+                    </BotaoArquivo>
                   : null}
             </div>
           </div>

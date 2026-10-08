@@ -4,12 +4,13 @@
 // lança entradas (depósito, bonificação, comissão, outro), registra retiradas com
 // recibo e corrige por estorno. Só administrador.
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Receipt, Undo2, Trash2, Plus, Wallet, ShieldCheck, Pause, Play, Ban } from "lucide-react";
+import { ArrowLeft, Receipt, Undo2, Trash2, Plus, Wallet, ShieldCheck, Pause, Play, Ban, CheckCircle2, Clock, Minus, Paperclip, Users } from "lucide-react";
 import { Modal } from "@/components/Modal";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { Dropzone } from "@/components/Dropzone";
 import CaixaTimesView from "@/components/CaixaTimesView";
 import { ReciboModal } from "@/components/ReciboModal";
+import { useConfirmacao, estiloChip, BotaoArquivo, EstilosFinV2 } from "@/components/financeiro/folhaUi";
 import {
   fetchCaixasFuncionarios, fetchCaixaFuncionario, lancarEntradaCaixa, registrarRetiradaCaixa, fetchReciboCaixa,
   estornarMovimentoCaixa, excluirMovimentoCaixa, fetchOpcoesFinanceiro, registrarComprovanteRetirada, urlAnexoPessoa, fetchExtratosCaixa,
@@ -72,6 +73,17 @@ function resumoRetencao(d?: CaixaRetencaoDados) {
 
 function rotuloGrupos(grupos: string[]) { return grupos.map((g) => ROTULO_GRUPO[g] || g).join(", ") || "—"; }
 
+/** Valor de movimento como pílula: entrada (+) verde, saída (−) vermelha, estornado neutro — sinal e ícone, nunca só a cor. */
+function ValorMovimento({ valor, estornado }: { valor: number; estornado: boolean }) {
+  const classe = estornado ? "" : valor >= 0 ? "pago" : "venc";
+  return (
+    <span className={`st-pill ${classe}`} style={estornado ? { textDecoration: "line-through" } : undefined}>
+      {valor >= 0 ? <Plus size={11} aria-hidden /> : <Minus size={11} aria-hidden />}
+      <span style={{ fontVariantNumeric: "tabular-nums" }}>{valor >= 0 ? "+ " : "− "}{formatBRL(Math.abs(valor))}</span>
+    </span>
+  );
+}
+
 export default function CaixaFuncionariosView() {
   const admin = ehAdmin();
   const [linhas, setLinhas] = useState<CaixaPessoaLinha[] | null>(null);
@@ -102,13 +114,14 @@ export default function CaixaFuncionariosView() {
 
   if (pessoaAberta != null) {
     return (
-      <>
+      <div className="fin-v2">
+        <EstilosFinV2 />
         <CaixaIndividual key={versao} pessoaId={pessoaAberta} onVoltar={() => { setPessoaAberta(null); carregar(); }} onEntrada={() => setEntrada({ pessoaIds: [pessoaAberta] })} />
         {entrada && (
           <EntradaModal pessoas={linhas || []} inicial={entrada.pessoaIds} onClose={() => setEntrada(null)}
             onFeito={() => { setEntrada(null); setVersao((v) => v + 1); carregar(); }} />
         )}
-      </>
+      </div>
     );
   }
 
@@ -116,7 +129,8 @@ export default function CaixaFuncionariosView() {
   const todosVisiveisMarcados = visiveis.length > 0 && visiveis.every((l) => selecionados.has(l.pessoa_id));
 
   return (
-    <div>
+    <div className="fin-v2">
+      <EstilosFinV2 />
       <div className="flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.6rem", marginBottom: "0.8rem" }}>
         <div>
           <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Controle Financeiro · Ações</div>
@@ -135,37 +149,32 @@ export default function CaixaFuncionariosView() {
         Saldo a favor de cada colaborador, que a fazenda guarda para ele. A entrada vira despesa de pessoal no Financeiro; a retirada
         gera recibo. Erro se corrige por estorno.
       </p>
-      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
+      {erro && <p role="alert" style={{ color: "var(--st-venc-fg)", fontSize: "0.82rem" }}>{erro}</p>}
 
-      <div className="flex" style={{ gap: "0.4rem", marginBottom: "0.8rem" }} role="tablist">
+      <div className="flex" style={{ gap: "0.4rem", marginBottom: "0.8rem", flexWrap: "wrap" }} role="tablist" aria-label="Tipo de caixa">
         {([["individual", "Caixas individuais"], ["time", "Caixas do time (PL)"]] as const).map(([id, rot]) => (
           <button key={id} type="button" role="tab" aria-selected={aba === id} onClick={() => setAba(id)}
-            style={{ padding: "0.25rem 0.9rem", borderRadius: 999, fontSize: "0.8rem", cursor: "pointer",
-              border: `1px solid ${aba === id ? "var(--dourado)" : "var(--border)"}`, background: aba === id ? "var(--dourado)" : "var(--surface)",
-              color: aba === id ? "var(--vinho-dark, #0A1F36)" : "var(--text-muted)" }}>{rot}</button>
+            style={{ ...estiloChip(aba === id), fontSize: "0.8rem", padding: "0.2rem 0.9rem" }}>{rot}</button>
         ))}
       </div>
       {aba === "time" ? <CaixaTimesView /> : (<>
-      <div className="card" style={{ display: "inline-block", marginBottom: "0.8rem", padding: "0.6rem 0.9rem" }}>
-        <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Devido aos funcionários</div>
-        <strong style={{ fontSize: "1.15rem" }}>{formatBRL(totalDevido)}</strong>
+      <div className="st-kpi aberto" style={{ display: "inline-block", marginBottom: "0.8rem", minWidth: "min(16rem, 100%)" }}>
+        <div className="l" style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}><Users size={13} aria-hidden />Devido aos funcionários</div>
+        <div className="v">{formatBRL(totalDevido)}</div>
       </div>
 
-      <div className="flex" style={{ gap: "0.4rem", flexWrap: "wrap", marginBottom: "0.7rem", alignItems: "center" }}>
+      <div className="flex" role="group" aria-label="Filtrar por tipo de colaborador" style={{ gap: "0.35rem", flexWrap: "wrap", marginBottom: "0.7rem", alignItems: "center" }}>
         {GRUPOS.map((g) => (
           <button key={g.id} type="button" aria-pressed={grupo === g.id} onClick={() => setGrupo(g.id)}
-            style={{ padding: "0.2rem 0.75rem", borderRadius: 999, fontSize: "0.78rem", cursor: "pointer",
-              border: `1px solid ${grupo === g.id ? "var(--dourado)" : "var(--border)"}`,
-              background: grupo === g.id ? "var(--dourado)" : "var(--surface)",
-              color: grupo === g.id ? "var(--vinho-dark, #0A1F36)" : "var(--text-muted)" }}>{g.label}</button>
+            style={estiloChip(grupo === g.id)}>{g.label}</button>
         ))}
-        <label style={{ display: "flex", gap: "0.3rem", alignItems: "center", fontSize: "0.78rem", color: "var(--text-muted)", margin: 0 }}>
+        <label style={{ display: "flex", gap: "0.35rem", alignItems: "center", fontSize: "0.78rem", color: "var(--text)", margin: "0 0 0 0.3rem", minHeight: 30, cursor: "pointer" }}>
           <input type="checkbox" checked={soComSaldo} onChange={(e) => setSoComSaldo(e.target.checked)} /> Só com saldo
         </label>
       </div>
 
       {selecionados.size > 0 && (
-        <div className="card" style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap", padding: "0.5rem 0.8rem", marginBottom: "0.7rem", border: "1px solid var(--dourado)" }}>
+        <div className="card" role="region" aria-label="Seleção" style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap", padding: "0.5rem 0.8rem", marginBottom: "0.7rem", border: "1px solid var(--text-accent)", borderLeft: "3px solid var(--text-accent)", background: "var(--sel-row)" }}>
           <span style={{ fontSize: "0.82rem" }}><b>{selecionados.size}</b> selecionado{selecionados.size > 1 ? "s" : ""}</span>
           <button type="button" className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={() => setEntrada({ pessoaIds: Array.from(selecionados) })}>Depositar para selecionados</button>
           <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setSelecionados(new Set())}>Limpar seleção</button>
@@ -184,14 +193,16 @@ export default function CaixaFuncionariosView() {
             </thead>
             <tbody>
               {visiveis.map((l) => (
-                <tr key={l.pessoa_id}>
+                <tr key={l.pessoa_id} className={selecionados.has(l.pessoa_id) ? "st-row-sel" : undefined}>
                   <td><input type="checkbox" aria-label={`Selecionar ${l.nome}`} checked={selecionados.has(l.pessoa_id)} onChange={() => alternar(l.pessoa_id)} /></td>
-                  <td>{l.nome}</td>
+                  <td style={{ fontWeight: 600 }}>{l.nome}</td>
                   <td style={{ color: "var(--text-muted)" }}>{rotuloGrupos(l.grupos)}</td>
-                  <td style={{ textAlign: "right", fontWeight: 700 }}>{formatBRL(l.saldo)}</td>
+                  <td style={{ textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: l.saldo > 0 ? "var(--text)" : "var(--text-muted)" }}>{formatBRL(l.saldo)}</td>
                   <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{resumoRetencao(retencoes[l.pessoa_id])}</td>
-                  <td style={{ fontSize: "0.78rem", color: retencoes[l.pessoa_id]?.termo_pendente ? "var(--amber)" : "var(--text-muted)" }}>
-                    {!retencoes[l.pessoa_id]?.config ? "—" : retencoes[l.pessoa_id].termo_anexado ? "anexado" : retencoes[l.pessoa_id].termo_pendente ? "pendente" : "—"}
+                  <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                    {!retencoes[l.pessoa_id]?.config ? "—"
+                      : retencoes[l.pessoa_id].termo_anexado ? <span className="st-pill pago"><CheckCircle2 size={12} aria-hidden />anexado</span>
+                      : retencoes[l.pessoa_id].termo_pendente ? <span className="st-pill logo"><Clock size={12} aria-hidden />pendente</span> : "—"}
                   </td>
                   <td style={{ color: "var(--text-muted)" }}>{l.ultimo_movimento ? formatDate(l.ultimo_movimento) : "—"}</td>
                   <td style={{ textAlign: "right" }}><button type="button" className="btn-primary" style={{ fontSize: "0.72rem", padding: "0.15rem 0.6rem" }} onClick={() => setPessoaAberta(l.pessoa_id)}>Abrir caixa</button></td>
@@ -225,6 +236,7 @@ function CaixaIndividual({ pessoaId, onVoltar, onEntrada }: { pessoaId: number; 
   const [recibo, setRecibo] = useState<LancamentoRecibo | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [notaRecibo, setNotaRecibo] = useState<string | undefined>(undefined);
+  const { confirmar: pedirConfirmacao, dialogo: dialogoConfirmacao } = useConfirmacao();
 
   const carregar = () => fetchCaixaFuncionario(pessoaId).then((d) => { setDet(d); setErro(null); }).catch((e) => setErro(e.message));
   useEffect(() => { carregar(); }, [pessoaId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -252,12 +264,12 @@ function CaixaIndividual({ pessoaId, onVoltar, onEntrada }: { pessoaId: number; 
     } catch (err: any) { setErro(err.message); }
   }
   async function excluir(m: CaixaMovimentoItem) {
-    if (!window.confirm("Excluir este movimento? Só é possível por ser o último e não ter sido usado. Isto não pode ser desfeito.")) return;
+    if (!(await pedirConfirmacao("Excluir este movimento? Só é possível por ser o último e não ter sido usado. Isto não pode ser desfeito.", { titulo: "Excluir movimento", confirmar: "Excluir", perigo: true }))) return;
     try { await excluirMovimentoCaixa(pessoaId, m.id); await carregar(); }
     catch (e: any) { setErro(e.message); }
   }
 
-  if (!det) return <div>{erro ? <p role="alert" style={{ color: "var(--red)" }}>{erro}</p> : <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}<button type="button" className="btn-ghost" onClick={onVoltar}>Voltar</button></div>;
+  if (!det) return <div>{erro ? <p role="alert" style={{ color: "var(--st-venc-fg)" }}>{erro}</p> : <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}<button type="button" className="btn-ghost" onClick={onVoltar}>Voltar</button></div>;
 
   return (
     <div>
@@ -267,18 +279,18 @@ function CaixaIndividual({ pessoaId, onVoltar, onEntrada }: { pessoaId: number; 
           <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Caixa dos funcionários · {rotuloGrupos(det.pessoa.grupos)}</div>
           <h2 style={{ margin: 0, fontSize: "1.05rem" }}>{det.pessoa.nome}</h2>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2" style={{ flexWrap: "wrap" }}>
           <button type="button" className="btn-primary" onClick={onEntrada}><Plus size={14} /> Entrada</button>
           <button type="button" className="btn-ghost" onClick={() => setRetirando(true)} disabled={det.saldo <= 0}><Wallet size={14} /> Retirada</button>
           <button type="button" className="btn-ghost" onClick={extratoPdf}><Receipt size={14} /> Extrato PDF</button>
         </div>
       </div>
-      <div className="card" style={{ display: "inline-block", padding: "0.6rem 0.9rem", marginBottom: "0.8rem" }}>
-        <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Saldo individual ({rotuloGrupos(det.pessoa.grupos)})</div>
-        <strong style={{ fontSize: "1.15rem" }}>{formatBRL(det.saldo)}</strong>
+      <div className={`st-kpi ${det.saldo > 0 ? "pago" : "zero"}`} style={{ display: "inline-block", marginBottom: "0.8rem", minWidth: "min(16rem, 100%)" }}>
+        <div className="l" style={{ textTransform: "uppercase", letterSpacing: "0.06em" }}><Wallet size={13} aria-hidden />Saldo individual ({rotuloGrupos(det.pessoa.grupos)})</div>
+        <div className="v">{formatBRL(det.saldo)}</div>
       </div>
-      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
-      {aviso && <p style={{ color: "var(--green-light, #3ecf8e)", fontSize: "0.82rem" }}>{aviso}</p>}
+      {erro && <p role="alert" style={{ color: "var(--st-venc-fg)", fontSize: "0.82rem" }}>{erro}</p>}
+      {aviso && <p role="status" style={{ color: "var(--st-pago-fg)", fontSize: "0.82rem", display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={14} aria-hidden />{aviso}</p>}
 
       <RetencaoPainel pessoaId={pessoaId} onMudou={carregar} />
 
@@ -287,25 +299,25 @@ function CaixaIndividual({ pessoaId, onVoltar, onEntrada }: { pessoaId: number; 
           <thead><tr><th>Data</th><th>Tipo</th><th>Motivo</th><th style={{ textAlign: "right" }}>Valor</th><th style={{ textAlign: "right" }}>Saldo</th><th>Lançamento</th><th></th></tr></thead>
           <tbody>
             {det.movimentos.map((m) => {
-              const cor = m.estornado ? "var(--text-muted)" : m.valor >= 0 ? "var(--green-light, #3ecf8e)" : "var(--red)";
               const riscado = m.estornado ? { textDecoration: "line-through", color: "var(--text-muted)" } : {};
               return (
                 <tr key={m.id}>
                   <td style={riscado}>{formatDate(m.data)}</td>
-                  <td style={riscado}>{ROTULO_TIPO[m.tipo] || m.tipo}{m.estornado && <span style={{ marginLeft: 6, fontSize: "0.68rem", color: "var(--amber)", textDecoration: "none", display: "inline-block" }}>estornada</span>}</td>
+                  <td><span style={riscado}>{ROTULO_TIPO[m.tipo] || m.tipo}</span>{m.estornado && <span className="st-pill" style={{ marginLeft: 6 }}><Undo2 size={11} aria-hidden />estornada</span>}</td>
                   <td style={{ ...riscado, maxWidth: 320 }}>{m.motivo}{m.forma_pagamento ? ` · ${FORMAS.find((f) => f.id === m.forma_pagamento)?.label || m.forma_pagamento}` : ""}{m.numero_documento_pagamento ? ` · comprovante ${m.numero_documento_pagamento}` : ""}</td>
-                  <td style={{ textAlign: "right", color: cor, ...riscado, fontWeight: 700 }}>{m.valor >= 0 ? "+ " : "− "}{formatBRL(Math.abs(m.valor))}</td>
+                  <td style={{ textAlign: "right" }}><ValorMovimento valor={m.valor} estornado={!!m.estornado} /></td>
                   <td style={{ textAlign: "right" }}>{formatBRL(m.saldo_depois)}</td>
                   <td style={{ color: "var(--text-muted)", fontSize: "0.74rem" }}>{m.numero_lancamento || m.numero_recibo || "—"}</td>
                   <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
                     {m.tipo === "retirada" && <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => abrirRecibo(m)}><Receipt size={12} /> Recibo</button>}
                     {m.tipo === "retirada" && !m.estornado && (m.comprovante_anexo_id
                       ? <a href={urlAnexoPessoa(m.comprovante_anexo_id)} target="_blank" rel="noreferrer" className="btn-ghost" style={{ fontSize: "0.72rem", textDecoration: "none" }}>Comprovante</a>
-                      : <label className="btn-ghost" style={{ fontSize: "0.72rem", cursor: "pointer", margin: 0 }} title="Anexar o comprovante desta retirada">Anexar comprovante
-                          <input type="file" accept="application/pdf,image/jpeg,image/png" aria-label={`Anexar comprovante da retirada ${m.numero_recibo || m.id}`} style={{ display: "none" }}
-                            onChange={(e) => { const f = e.target.files?.[0]; if (f) anexarComprovante(m, f); e.target.value = ""; }} /></label>)}
+                      : <BotaoArquivo accept="application/pdf,image/jpeg,image/png" rotulo={`Anexar comprovante da retirada ${m.numero_recibo || m.id}`}
+                          title="Anexar o comprovante desta retirada" style={{ fontSize: "0.72rem" }} onArquivo={(f) => anexarComprovante(m, f)}>
+                          <Paperclip size={12} aria-hidden /> Anexar comprovante
+                        </BotaoArquivo>)}
                     {m.pode_estornar && <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setEstornando(m)}><Undo2 size={12} /> Estornar</button>}
-                    {m.pode_excluir && <button aria-label="Excluir o último movimento" type="button" className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} title="Excluir o último movimento" onClick={() => excluir(m)}><Trash2 size={12} /></button>}
+                    {m.pode_excluir && <button aria-label="Excluir o último movimento" type="button" className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--st-venc-fg)" }} title="Excluir o último movimento" onClick={() => excluir(m)}><Trash2 size={12} /></button>}
                   </td>
                 </tr>
               );
@@ -326,6 +338,7 @@ function CaixaIndividual({ pessoaId, onVoltar, onEntrada }: { pessoaId: number; 
           onFeito={() => { setEstornando(null); setAviso("Estorno registrado."); carregar(); }} pessoaId={pessoaId} />
       )}
       {recibo && <ReciboModal lanc={recibo} nota={notaRecibo} semEmail onClose={() => setRecibo(null)} />}
+      {dialogoConfirmacao}
     </div>
   );
 }
@@ -348,6 +361,7 @@ function RetencaoPainel({ pessoaId, onMudou }: { pessoaId: number; onMudou: () =
   const [timeId, setTimeId] = useState("");
   const [pctTime, setPctTime] = useState("50");
   const [times, setTimes] = useState<CaixaTimeResumo[]>([]);
+  const { confirmar: pedirConfirmacao, dialogo: dialogoConfirmacao } = useConfirmacao();
   useEffect(() => { fetchCaixasTime().then((d) => setTimes(d.times)).catch(() => {}); }, []);
 
   const carregar = () => fetchRetencaoCaixa(pessoaId).then((d) => { setDados(d); setErro(null); }).catch((e) => setErro(e.message));
@@ -386,7 +400,7 @@ function RetencaoPainel({ pessoaId, onMudou }: { pessoaId: number; onMudou: () =
   return (
     <div className="card" style={{ padding: "0.7rem 0.9rem", marginBottom: "0.9rem" }}>
       <div className="flex items-center justify-between" style={{ gap: "0.5rem", flexWrap: "wrap" }}>
-        <strong style={{ fontSize: "0.88rem" }}><ShieldCheck size={14} style={{ display: "inline", marginRight: 5 }} />Retenção na folha</strong>
+        <strong style={{ fontSize: "0.88rem" }}><ShieldCheck size={14} aria-hidden style={{ display: "inline", marginRight: 5, verticalAlign: "-2px" }} />Retenção na folha</strong>
         <div className="flex gap-2" style={{ flexWrap: "wrap" }}>
           <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem" }} onClick={abrirEdicao} disabled={ocupado}>{c ? "Editar combinado" : "Combinar retenção"}</button>
           {c && c.autorizada && !c.revogada_em && (
@@ -394,8 +408,8 @@ function RetencaoPainel({ pessoaId, onMudou }: { pessoaId: number; onMudou: () =
               <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem" }} disabled={ocupado} onClick={() => executar(() => pausarRetencaoCaixa(pessoaId, !c.pausada))}>
                 {c.pausada ? <><Play size={12} /> Retomar</> : <><Pause size={12} /> Pausar</>}
               </button>
-              <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem", color: "var(--red)" }} disabled={ocupado}
-                onClick={() => { if (window.confirm("Revogar a autorização? Vale a partir do mês seguinte; o que já foi retido continua no caixa.")) executar(() => revogarRetencaoCaixa(pessoaId)); }}>
+              <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem", color: "var(--st-venc-fg)" }} disabled={ocupado}
+                onClick={async () => { if (await pedirConfirmacao("Revogar a autorização? Vale a partir do mês seguinte; o que já foi retido continua no caixa.", { titulo: "Revogar autorização", confirmar: "Revogar", perigo: true })) executar(() => revogarRetencaoCaixa(pessoaId)); }}>
                 <Ban size={12} /> Revogar
               </button>
             </>
@@ -409,25 +423,27 @@ function RetencaoPainel({ pessoaId, onMudou }: { pessoaId: number; onMudou: () =
           {c.forma === "percentual" ? `${c.valor}% do salário-base` : `${formatBRL(c.valor)} por mês`}
           {c.destino === "time" ? " · vai para o caixa do time" : c.destino === "dividir" ? ` · ${c.pct_time ?? 50}% para o caixa do time` : ""}
           {c.teto != null ? ` · teto ${formatBRL(c.teto)}` : ""} · desde {formatDate(c.inicio)}{c.fim ? ` até ${formatDate(c.fim)}` : ""}
-          {" · "}<b style={{ color: vigente ? "var(--green-light, #3ecf8e)" : "var(--amber)" }}>
+          {" · "}<span className={`st-pill ${vigente ? "pago" : "logo"}`}>
+            {vigente ? <CheckCircle2 size={12} aria-hidden /> : <Clock size={12} aria-hidden />}
             {!c.autorizada ? "sem autorização" : c.revogada_em ? `revogada (vale até ${formatDate(c.revogada_em)})` : c.pausada ? "pausada" : "ativa"}
-          </b>
+          </span>
           {" · "}já retido {formatBRL(dados?.acumulado || 0)}
         </p>
       )}
       {c && c.autorizada && (
         <div style={{ marginTop: "0.5rem" }}>
           {dados?.termo_anexado ? (
-            <p style={{ fontSize: "0.78rem", color: "var(--green-light, #3ecf8e)", margin: 0 }}>Termo de autorização anexado (documentos da pessoa).</p>
+            <p style={{ fontSize: "0.78rem", color: "var(--st-pago-fg)", margin: 0, display: "flex", alignItems: "center", gap: 6 }}><CheckCircle2 size={13} aria-hidden />Termo de autorização anexado (documentos da pessoa).</p>
           ) : (
             <>
-              <p style={{ fontSize: "0.78rem", color: "var(--amber)", margin: "0 0 0.35rem" }}>Termo pendente: anexe o documento assinado. Enquanto isso, a pendência aparece na Agenda e no Fechamento da folha.</p>
+              <p style={{ fontSize: "0.78rem", color: "var(--st-logo-fg)", margin: "0 0 0.35rem" }}><Clock size={13} aria-hidden style={{ display: "inline", marginRight: 5, verticalAlign: "-2px" }} />Termo pendente: anexe o documento assinado. Enquanto isso, a pendência aparece na Agenda e no Fechamento da folha.</p>
               <Dropzone accept="application/pdf,image/jpeg,image/png" label="Arraste o termo assinado ou clique para selecionar" hint="PDF, JPG ou PNG" onFiles={(f) => f[0] && anexarTermo(f[0])} />
             </>
           )}
         </div>
       )}
-      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.78rem", margin: "0.4rem 0 0" }}>{erro}</p>}
+      {erro && <p role="alert" style={{ color: "var(--st-venc-fg)", fontSize: "0.78rem", margin: "0.4rem 0 0" }}>{erro}</p>}
+      {dialogoConfirmacao}
 
       {editando && (
         <Modal title="Combinado de retenção na folha" onClose={() => setEditando(false)} width="520px">
@@ -436,10 +452,10 @@ function RetencaoPainel({ pessoaId, onMudou }: { pessoaId: number; onMudou: () =
               <select id="rn-forma" style={campo} value={forma} onChange={(e) => setForma(e.target.value as "fixo" | "percentual")}>
                 <option value="fixo">Valor fixo por mês</option><option value="percentual">Percentual do salário-base</option>
               </select></div>
-            <div><label style={lbl}>{forma === "percentual" ? "Percentual (%)" : "Valor por mês (R$)"}</label>
+            <div><label style={lbl} htmlFor="rn-valor">{forma === "percentual" ? "Percentual (%)" : "Valor por mês (R$)"}</label>
               {forma === "percentual"
-                ? <input type="number" min="0" max="100" step="0.01" style={campo} value={valor} onChange={(e) => setValor(e.target.value)} />
-                : <CampoMoeda style={campo} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} />}</div>
+                ? <input id="rn-valor" type="number" min="0" max="100" step="0.01" style={campo} value={valor} onChange={(e) => setValor(e.target.value)} />
+                : <CampoMoeda id="rn-valor" style={campo} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} />}</div>
             <div><label style={lbl} htmlFor="rn-ini">Início da vigência</label><input id="rn-ini" type="date" style={campo} value={inicio} onChange={(e) => setInicio(e.target.value)} /></div>
             <div><label style={lbl} htmlFor="rn-fim">Fim (opcional)</label><input id="rn-fim" type="date" style={campo} value={fim} onChange={(e) => setFim(e.target.value)} /></div>
             <div><label style={lbl} htmlFor="rn-dest">Para onde vai o retido</label>
@@ -456,14 +472,14 @@ function RetencaoPainel({ pessoaId, onMudou }: { pessoaId: number; onMudou: () =
               <div><label style={lbl} htmlFor="rn-pct">Parte do time (%)</label>
                 <input id="rn-pct" type="number" min="1" max="99" step="1" style={campo} value={pctTime} onChange={(e) => setPctTime(e.target.value)} /></div>
             )}
-            <div style={{ gridColumn: "1 / -1" }}><label style={lbl}>Teto acumulado (opcional)</label>
-              <CampoMoeda style={campo} value={Number(teto) || 0} onChange={(v) => setTeto(v ? String(v) : "")} /></div>
+            <div style={{ gridColumn: "1 / -1" }}><label htmlFor="cx-1" style={lbl}>Teto acumulado (opcional)</label>
+              <CampoMoeda id="cx-1" style={campo} value={Number(teto) || 0} onChange={(v) => setTeto(v ? String(v) : "")} /></div>
           </div>
           <label style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", fontSize: "0.8rem", marginTop: "0.8rem", color: "var(--text)" }}>
-            <input type="checkbox" checked={autorizada} onChange={(e) => setAutorizada(e.target.checked)} style={{ marginTop: 3 }} />
+            <input type="checkbox" checked={autorizada} onChange={(e) => setAutorizada(e.target.checked)} style={{ marginTop: 3, flexShrink: 0 }} />
             <span>O colaborador autorizou esta retenção (CLT art. 462). Sem esta marca a folha não retém. O termo assinado deve ser anexado depois.</span>
           </label>
-          {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+          {erro && <p role="alert" style={{ color: "var(--st-venc-fg)", fontSize: "0.8rem" }}>{erro}</p>}
           <div className="flex gap-2" style={{ justifyContent: "flex-end", marginTop: "0.9rem" }}>
             <button type="button" className="btn-ghost" onClick={() => setEditando(false)} disabled={ocupado}>Cancelar</button>
             <button type="button" className="btn-primary" onClick={salvar} disabled={ocupado}>{ocupado ? "Salvando…" : "Salvar combinado"}</button>
@@ -540,7 +556,7 @@ function EntradaModal({ pessoas, inicial, onClose, onFeito }: {
             <div><label style={lbl} htmlFor="ce-pct">Percentual (%)</label><input id="ce-pct" type="number" min="0" step="0.01" style={campo} value={percentual} onChange={(e) => setPercentual(e.target.value)} placeholder="Ex.: 1" /></div>
           </>
         ) : (
-          <div><label style={lbl}>Valor por pessoa (R$)</label><CampoMoeda style={campo} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
+          <div><label htmlFor="cx-2" style={lbl}>Valor por pessoa (R$)</label><CampoMoeda id="cx-2" style={campo} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
         )}
         <div style={{ gridColumn: "1 / -1" }}><label style={lbl} htmlFor="ce-motivo">Motivo{tipo === "comissao" ? " / base (ex.: venda do lote 14)" : ""} (obrigatório)</label>
           <input id="ce-motivo" style={campo} value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder={tipo === "outro" ? "Ex.: ajuda de custo" : ""} /></div>
@@ -548,17 +564,16 @@ function EntradaModal({ pessoas, inicial, onClose, onFeito }: {
       {tipo === "outro" && <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", margin: "0.4rem 0 0" }}>Em "Outro tipo" só o motivo é obrigatório: não há base nem percentual.</p>}
 
       <div style={{ marginTop: "0.8rem" }}>
-        <label style={lbl}>Quem recebe</label>
-        <div className="flex" style={{ gap: "0.35rem", flexWrap: "wrap", marginBottom: "0.4rem" }}>
+        <div id="ce-quem" style={lbl}>Quem recebe</div>
+        <div className="flex" role="group" aria-labelledby="ce-quem" style={{ gap: "0.35rem", flexWrap: "wrap", marginBottom: "0.4rem" }}>
           {GRUPOS.map((g) => (
             <button key={g.id} type="button" aria-pressed={filtro === g.id} onClick={() => setFiltro(g.id)}
-              style={{ padding: "0.15rem 0.65rem", borderRadius: 999, fontSize: "0.75rem", cursor: "pointer", border: `1px solid ${filtro === g.id ? "var(--dourado)" : "var(--border)"}`,
-                background: filtro === g.id ? "var(--dourado)" : "var(--surface)", color: filtro === g.id ? "var(--vinho-dark, #0A1F36)" : "var(--text-muted)" }}>{g.label}</button>
+              style={{ ...estiloChip(filtro === g.id), fontSize: "0.75rem" }}>{g.label}</button>
           ))}
           <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={marcarFiltro}>Marcar todos deste filtro</button>
           <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setEscolhidos(new Set())}>Limpar</button>
         </div>
-        <div style={{ maxHeight: 190, overflowY: "auto", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem" }}>
+        <div role="group" aria-labelledby="ce-quem" style={{ maxHeight: 190, overflowY: "auto", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem" }}>
           {lista.map((p) => (
             <label key={p.pessoa_id} style={{ display: "flex", gap: "0.5rem", alignItems: "center", fontSize: "0.82rem", margin: "0.15rem 0", color: "var(--text)" }}>
               <input type="checkbox" checked={escolhidos.has(p.pessoa_id)}
@@ -574,7 +589,7 @@ function EntradaModal({ pessoas, inicial, onClose, onFeito }: {
         <b>{escolhidos.size}</b> pessoa{escolhidos.size === 1 ? "" : "s"} × {formatBRL(valorPorPessoa)} = <b>{formatBRL(total)}</b>.
         <span style={{ color: "var(--text-muted)" }}> Cada entrada vira uma despesa de pessoal já baixada no Financeiro, com número de lançamento.</span>
       </p>
-      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+      {erro && <p role="alert" style={{ color: "var(--st-venc-fg)", fontSize: "0.8rem" }}>{erro}</p>}
       <div className="flex gap-2" style={{ justifyContent: "flex-end", marginTop: "0.8rem" }}>
         <button type="button" className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
         <button type="button" className="btn-primary" onClick={lancar} disabled={salvando}>{salvando ? "Lançando…" : `Lançar ${escolhidos.size || ""} entrada${escolhidos.size === 1 ? "" : "s"}`}</button>
@@ -612,7 +627,7 @@ function ExtratosLoteModal({ grupo, selecionados, onClose }: { grupo: CaixaGrupo
       <label style={{ display: "flex", gap: "0.4rem", alignItems: "center", fontSize: "0.8rem", marginTop: "0.7rem" }}>
         <input type="checkbox" checked={soComMov} onChange={(e) => setSoComMov(e.target.checked)} /> Só quem teve movimento no mês ou tem saldo
       </label>
-      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      {erro && <p role="alert" style={{ color: "var(--st-venc-fg)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       <div className="flex gap-2" style={{ justifyContent: "flex-end", marginTop: "1rem" }}>
         <button type="button" className="btn-ghost" onClick={onClose} disabled={gerando}>Cancelar</button>
         <button type="button" className="btn-primary" onClick={gerar} disabled={gerando}>{gerando ? "Gerando…" : "Gerar PDF"}</button>
@@ -635,6 +650,7 @@ function RetiradaModal({ pessoaId, pessoaNome, grupos, saldo, onClose, onFeita }
   const [erro, setErro] = useState<string | null>(null);
   useEffect(() => { fetchOpcoesFinanceiro().then((d) => setContas(d.contas_bancarias || [])).catch(() => {}); }, []);
   const acima = Number(valor) > saldo;
+  const { avisar, dialogo: dialogoAviso } = useConfirmacao();
 
   async function confirmar() {
     setErro(null);
@@ -652,7 +668,7 @@ function RetiradaModal({ pessoaId, pessoaNome, grupos, saldo, onClose, onFeita }
           const a = await anexarArquivoPessoa(pessoaId, comprovante, "Comprovante de pagamento");
           await registrarComprovanteRetirada(pessoaId, r.movimento.id, { anexo_id: a.id });
         } catch (e: any) {
-          window.alert(`Retirada registrada, mas o comprovante não foi anexado (${e.message || "erro"}). Anexe pelo extrato do caixa.`);
+          await avisar(`Retirada registrada, mas o comprovante não foi anexado (${e.message || "erro"}). Anexe pelo extrato do caixa.`, "Comprovante não anexado");
         }
       }
       onFeita(r);
@@ -666,7 +682,7 @@ function RetiradaModal({ pessoaId, pessoaNome, grupos, saldo, onClose, onFeita }
         Colaborador: {rotuloGrupos(grupos)} · saldo individual disponível: <b style={{ color: "var(--text)" }}>{formatBRL(saldo)}</b>
       </p>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div><label style={lbl}>Valor (R$)</label><CampoMoeda style={campo} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
+        <div><label htmlFor="cx-3" style={lbl}>Valor (R$)</label><CampoMoeda id="cx-3" style={campo} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
         <div><label style={lbl} htmlFor="rt-data">Data</label><input id="rt-data" type="date" style={campo} value={data} onChange={(e) => setData(e.target.value)} /></div>
         <div><label style={lbl} htmlFor="rt-forma">Forma de pagamento</label>
           <select id="rt-forma" style={campo} value={forma} onChange={(e) => setForma(e.target.value)}>{FORMAS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}</select></div>
@@ -674,22 +690,23 @@ function RetiradaModal({ pessoaId, pessoaNome, grupos, saldo, onClose, onFeita }
           <select id="rt-conta" style={campo} value={conta} onChange={(e) => setConta(e.target.value)}><option value="">Não informar</option>{contas.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
         <div style={{ gridColumn: "1 / -1" }}><label style={lbl} htmlFor="rt-num">Nº do comprovante (opcional)</label>
           <input id="rt-num" style={campo} value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="Ex.: código da transação Pix" /></div>
-        <div style={{ gridColumn: "1 / -1" }}><label style={lbl}>Comprovante em arquivo (opcional)</label>
+        <div style={{ gridColumn: "1 / -1" }}><div style={lbl}>Comprovante em arquivo (opcional)</div>
           {comprovante ? (
             <div className="card" style={{ border: "1px solid var(--border)", padding: "0.45rem 0.6rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
               <span style={{ fontSize: "0.78rem", wordBreak: "break-all" }}>{comprovante.name}</span>
-              <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => setComprovante(null)}>Remover</button>
+              <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--st-venc-fg)" }} onClick={() => setComprovante(null)}>Remover</button>
             </div>
           ) : <Dropzone accept="application/pdf,image/jpeg,image/png" label="Arraste o comprovante ou clique para selecionar" hint="PDF, JPG ou PNG" onFiles={(f) => setComprovante(f[0] || null)} />}
         </div>
       </div>
       <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", margin: "0.5rem 0 0" }}>Ao confirmar, o recibo é gerado para o colaborador assinar, com o saldo antes e depois da retirada.</p>
-      {acima && <p role="alert" style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.5rem" }}>Valor acima do saldo de {formatBRL(saldo)}. Para adiantar, use o Vale.</p>}
-      {erro && !acima && <p role="alert" style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.5rem" }}>{erro}</p>}
+      {acima && <p role="alert" style={{ color: "var(--st-venc-fg)", fontSize: "0.8rem", marginTop: "0.5rem" }}>Valor acima do saldo de {formatBRL(saldo)}. Para adiantar, use o Vale.</p>}
+      {erro && !acima && <p role="alert" style={{ color: "var(--st-venc-fg)", fontSize: "0.8rem", marginTop: "0.5rem" }}>{erro}</p>}
       <div className="flex gap-2" style={{ justifyContent: "flex-end", marginTop: "0.9rem" }}>
         <button type="button" className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
         <button type="button" className="btn-primary" onClick={confirmar} disabled={salvando || acima}>{salvando ? "Registrando…" : "Confirmar retirada"}</button>
       </div>
+      {dialogoAviso}
     </Modal>
   );
 }
@@ -714,10 +731,10 @@ function EstornoModal({ pessoaId, movimento, onClose, onFeito }: {
       </p>
       <label style={lbl} htmlFor="es-motivo">Motivo do estorno (obrigatório)</label>
       <input id="es-motivo" style={campo} value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ex.: valor lançado em duplicidade" />
-      {erro && <p role="alert" style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.5rem" }}>{erro}</p>}
+      {erro && <p role="alert" style={{ color: "var(--st-venc-fg)", fontSize: "0.8rem", marginTop: "0.5rem" }}>{erro}</p>}
       <div className="flex gap-2" style={{ justifyContent: "flex-end", marginTop: "0.9rem" }}>
         <button type="button" className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
-        <button type="button" className="btn-primary" style={{ background: "var(--red)" }} onClick={confirmar} disabled={salvando}>{salvando ? "Estornando…" : "Confirmar estorno"}</button>
+        <button type="button" className="btn-primary" style={{ background: "var(--st-venc-fg)", borderColor: "var(--st-venc-fg)", color: "var(--surface)" }} onClick={confirmar} disabled={salvando}>{salvando ? "Estornando…" : "Confirmar estorno"}</button>
       </div>
     </Modal>
   );
