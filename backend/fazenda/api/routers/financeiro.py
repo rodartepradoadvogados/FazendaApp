@@ -27,7 +27,8 @@ from fazenda.models import (
 )
 from fazenda.rules import caixa_funcionario, estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
-from fazenda.rules.vale_item import ajuste_vale_por_conta, eh_item_de_vale, sem_itens_de_vale
+from fazenda.rules.vale_item import ajuste_vale_por_conta, eh_item_de_vale, sem_itens_de_vale, valor_gerencial
+from fazenda.rules import juros_descontos
 from fazenda.rules.email import enviar_email
 from fazenda.rules.centro_custo import CENTROS_CANONICOS, MAPA_CENTRO_CUSTO, mapear_centro_custo, valor_gerencial_por_centro_custo
 from fazenda.rules.leitura_documento import MIME_ACEITOS, ler_documento
@@ -37,7 +38,7 @@ from fazenda.rules.sugestao_documento import resolver_apelido_fornecedor, sugest
 from fazenda.rules.rmca import calcular_custo_fisico, calcular_rmca_gerencial
 from fazenda.rules.custo_leite import calcular_custo_por_litro, litros_leite_no_periodo
 from fazenda.rules.alimentacao import resolver_kg_por_unidade
-from fazenda.rules.unidades import DENSIDADE_LEITE_KG_POR_L, leite_para_kg
+from fazenda.rules.unidades import leite_em_litros
 from fazenda.rules.patrimonio import (
     METODOS_DEPRECIACAO, METODOS_VALIDOS, MOTIVOS_BAIXA, MOTIVOS_BAIXA_COM_VENDA,
     MOTIVOS_BAIXA_VALIDOS, TIPOS_PATRIMONIO, UNIDADES_PATRIMONIO,
@@ -47,10 +48,10 @@ from fazenda.rules.patrimonio import (
     vida_util_em_anos,
 )
 from fazenda.rules.depreciacao_periodo import calcular_depreciacao_periodo
-from fazenda.rules.dre import LINHAS_DRE_VALIDAS, montar_cascata_dre
+from fazenda.rules.dre import DEDUCAO_IMPOSTOS, LINHAS_DRE_VALIDAS, OUTRAS_REC_DESP, montar_cascata_dre
 from fazenda.rules.datas import hoje_local
 from fazenda.rules.natureza import (
-    INVESTIMENTO, NATUREZAS, OPERACIONAL, ROTULOS as ROTULOS_NATUREZA, ContextoNatureza,
+    CAPITAL, INVESTIMENTO, NATUREZAS, OPERACIONAL, ROTULOS as ROTULOS_NATUREZA, TRANSFERENCIA, ContextoNatureza,
     entra_nos_custos, normalizar_natureza,
 )
 from fazenda.rules.caixa_real import projetar_caixa, sugerir_fundo_reserva
@@ -443,6 +444,11 @@ class PagamentoIn(BaseModel):
     # — a baixa desta parcela grava desconto_acrescimo=0 (a diferença toda
     # vai para as novas parcelas, nada é perdoado nesta).
     parcelas_diferenca: Optional[list[ParcelaDiferencaIn]] = None
+    # O que é a diferença para os relatórios (Fase A, PR 7 — ver
+    # rules/juros_descontos.py): None/"financeiro" (padrão: juros ou desconto
+    # em Outras receitas e despesas) ou "abatimento" (só para desconto: reduz
+    # o valor da própria conta). Grava conta_gerencial.diferenca_tipo.
+    natureza_diferenca: Optional[str] = None
 
 
 class BaixaLoteIn(BaseModel):
@@ -470,6 +476,26 @@ class BaixaLoteItemIn(BaseModel):
     # a diferença migra inteira para nova(s) parcela(s) do MESMO
     # numero_lancamento — esta linha grava desconto_acrescimo=0.
     parcelas_diferenca: Optional[list[ParcelaDiferencaIn]] = None
+    # Mesmo campo de PagamentoIn.natureza_diferenca (financeiro | abatimento).
+    natureza_diferenca: Optional[str] = None
+
+
+def _tipo_diferenca_da_baixa(natureza_diferenca: Optional[str], diferenca: float, reparcelada: bool,
+                             rotulo: str = "") -> Optional[str]:
+    """Valida `natureza_diferenca` da baixa e devolve o que vai para
+    `conta_gerencial.diferenca_tipo` (None = financeiro). Abatimento só vale
+    para DESCONTO resolvido na baixa (pago menor, sem reparcelar): acréscimo
+    é sempre juro/multa, e diferença reparcelada não é desconto."""
+    try:
+        tipo = juros_descontos.normalizar_tipo_diferenca(natureza_diferenca)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"{rotulo}{e}")
+    if tipo == juros_descontos.DIFERENCA_ABATIMENTO and (reparcelada or round(diferenca, 2) >= 0):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{rotulo}Abatimento só vale para desconto na baixa (valor pago menor que o da conta, sem parcelar a diferença).",
+        )
+    return tipo
 
 
 class BaixaLoteDetalhadaIn(BaseModel):
@@ -516,7 +542,9 @@ def _periodo_filtradas_dre(
     regimes) e, quando há filtro de centro de custo, já rateado pelos itens
     com override (ver rules/centro_custo.py). Base compartilhada por GET
     /financeiro/dre e GET /financeiro/dre/conferencia — a MESMA lista/valores
-    que sustentam `receitas_total`/`despesas_total` sustentam a cascata."""
+    que sustentam `receitas_total`/`despesas_total` sustentam a cascata.
+    Com as regras v2, quem monta registros passa os valores ainda por
+    `_valores_com_abatimento`."""
     query = select(ContaGerencial)
     if fazenda_id is not None:
         query = query.where(ContaGerencial.fazenda_id == fazenda_id)
@@ -532,6 +560,23 @@ def _periodo_filtradas_dre(
     valores = valor_gerencial_por_centro_custo(session, periodo, centro_custo, ajustes)
     filtradas = periodo if centro_custo is None else [c for c in periodo if valores.get(c.id, 0.0) != 0]
     return filtradas, valores
+
+
+def _valores_com_abatimento(filtradas: list[ContaGerencial], valores: dict[int, float]) -> dict[int, float]:
+    """Regras v2, PR 7: desconto da baixa marcado como ABATIMENTO
+    (rules/juros_descontos.py) reduz o valor da própria parcela — na fatia
+    que o relatório enxerga dela (vale e centro de custo já aplicados): a
+    parcela passa a valer o pago. Devolve um dict NOVO (os campos legados da
+    DRE continuam no valor de antes até o PR 8)."""
+    novos = dict(valores)
+    for c in filtradas:
+        abatido = juros_descontos.diferenca_abatida(c)
+        if not abatido or c.id not in novos:
+            continue
+        base = valor_gerencial(c, {})
+        if base > 0:
+            novos[c.id] = round(novos[c.id] + abatido * novos[c.id] / base, 2)
+    return novos
 
 
 def _registros_dre_para_cascata(
@@ -570,20 +615,46 @@ def _registros_dre_para_cascata(
     `natureza` resolvida (rules/natureza.py) — item > nota > plano. Sem ele
     (flag desligada), `natureza` vai None e o motor ignora. Todo registro
     carrega `conta_id`/`numero_lancamento`/`tipo_nota` para quem precisa
-    rastrear a origem (custos, script de impacto)."""
+    rastrear a origem (custos, script de impacto).
+
+    Regras v2, PR 4 (receita bruta): nota de RECEITA com `desconto_nota`
+    (Funrural/Senar retido, desconto comercial do laticínio) entra BRUTA nos
+    itens, e o desconto vira registro próprio na linha DEDUCAO_IMPOSTOS
+    (pseudoconta "(descontos na nota de venda)", um por item, com
+    `codigo_origem` = conta do item — é por ele que o RMCA acha a receita
+    líquida do leite). Itens − deduções = o mesmo valor gerencial de antes:
+    a receita líquida não muda. Nota de despesa: inalterada (o desconto
+    continua rateado nos itens)."""
+    regras_v2 = contexto_natureza is not None
     numeros = {c.numero_lancamento for c in filtradas if c.numero_lancamento}
     itens_por_numero: dict[str, list[LancamentoItem]] = {}
+    # Soma de TODOS os itens da nota (vale incluído): é sobre ela que o
+    # desconto da nota foi calculado em criar_lancamento (só regras v2 usa).
+    bruto_por_numero: dict[str, float] = {}
     if numeros:
         query_itens = select(LancamentoItem).where(LancamentoItem.numero_lancamento.in_(numeros))
         if fazenda_id is not None:
             query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
         for it in session.exec(query_itens).all():
+            bruto_por_numero[it.numero_lancamento] = round(
+                bruto_por_numero.get(it.numero_lancamento, 0.0) + (it.valor_total or 0), 2)
             if eh_item_de_vale(it):
                 continue
             itens_por_numero.setdefault(it.numero_lancamento, []).append(it)
 
     registros: list[dict] = []
     fallback_notas: list[dict] = []
+
+    def _deducao(c: ContaGerencial, valor: float, codigo_origem: str | None, item=None) -> None:
+        codigo, rotulo = juros_descontos.DEDUCAO_NOTA_RECEITA
+        registros.append({
+            "codigo_conta": codigo, "tipo": "despesa", "valor": valor, "descricao": rotulo,
+            "origem": juros_descontos.ORIGEM_DEDUCAO_NOTA, "linha_forcada": DEDUCAO_IMPOSTOS,
+            "codigo_origem": codigo_origem,
+            "conta_id": c.id, "numero_lancamento": c.numero_lancamento, "tipo_nota": c.tipo,
+            "item_id": item.id if item is not None else None,
+            "natureza": contexto_natureza.natureza(item=item, conta=c, codigo_conta=codigo_origem),
+        })
 
     for c in filtradas:
         valor_c = valores.get(c.id, 0.0)
@@ -594,6 +665,16 @@ def _registros_dre_para_cascata(
             # Mesmo critério de "centro efetivo" de valor_gerencial_por_centro_custo:
             # override do item, senão o da nota inteira.
             itens_da_nota = [it for it in itens_da_nota if (it.centro_custo or c.centro_custo) == centro_custo]
+
+        # PR 4: receita com desconto da nota → itens pelo bruto + dedução.
+        deducao_c = 0.0
+        if regras_v2 and c.tipo == "receita" and valor_c > 0 and c.numero_lancamento in bruto_por_numero:
+            fator = juros_descontos.fator_bruto_da_receita(
+                bruto_por_numero[c.numero_lancamento], c.desconto_nota, c.acrescimo_nota)
+            if fator is not None:
+                bruto_c = round(valor_c * fator, 2)
+                deducao_c = round(bruto_c - valor_c, 2)
+                valor_c = bruto_c
 
         total_itens = round(sum(it.valor_total or 0 for it in itens_da_nota), 2) if itens_da_nota else 0.0
         if not itens_da_nota or total_itens <= 0:
@@ -614,16 +695,24 @@ def _registros_dre_para_cascata(
             fallback_notas.append({
                 "numero_lancamento": c.numero_lancamento, "codigo_conta": c.codigo_conta, "valor": valor_c,
             })
+            if deducao_c:
+                _deducao(c, deducao_c, c.codigo_conta)
             continue
 
         itens_ordenados = sorted(itens_da_nota, key=lambda it: it.id or 0)
         acumulado = 0.0
+        acumulado_deducao = 0.0
         for i, it in enumerate(itens_ordenados):
             if i < len(itens_ordenados) - 1:
                 fatia = round(valor_c * (it.valor_total or 0) / total_itens, 2)
+                fatia_deducao = round(deducao_c * (it.valor_total or 0) / total_itens, 2) if deducao_c else 0.0
             else:
                 fatia = round(valor_c - acumulado, 2)
+                fatia_deducao = round(deducao_c - acumulado_deducao, 2) if deducao_c else 0.0
             acumulado = round(acumulado + fatia, 2)
+            if fatia_deducao:
+                acumulado_deducao = round(acumulado_deducao + fatia_deducao, 2)
+                _deducao(c, fatia_deducao, it.codigo_conta_gerencial, it)
             if fatia == 0:
                 continue
             registros.append({
@@ -640,6 +729,67 @@ def _registros_dre_para_cascata(
             })
 
     return registros, fallback_notas
+
+
+def _registros_diferenca_baixa(
+    session: Session, fazenda_id: int | None, data_inicio: date, data_fim: date,
+    centro_custo: Optional[str], contexto_natureza: ContextoNatureza,
+) -> list[dict]:
+    """Regras v2, PR 7: um registro em OUTRAS_REC_DESP para cada parcela PAGA
+    no período (`data_pagamento`, nos DOIS regimes — o fato gerador do juro ou
+    do desconto é a baixa) cuja diferença da baixa é FINANCEIRA (ver
+    rules/juros_descontos.py: abatimento, baixa parcial reparcelada e pago sem
+    `valor_pago` não geram nada). A linha da conta continua com o valor
+    contratado; no caixa, linha + Outras = valor_pago.
+
+    Com filtro de centro de custo, a diferença entra na mesma fração da nota
+    que o centro enxerga. Natureza: o juro/desconto é resultado financeiro
+    (OPERACIONAL) mesmo quando a nota está fora da DRE (principal de
+    financiamento pago com juros, guia paga com multa) — exceto aporte/
+    retirada de sócio e transferência, que continuam fora com a nota."""
+    query = select(ContaGerencial).where(
+        ContaGerencial.data_pagamento.is_not(None),
+        ContaGerencial.data_pagamento >= data_inicio,
+        ContaGerencial.data_pagamento <= data_fim,
+        ContaGerencial.desconto_acrescimo.is_not(None),
+        ContaGerencial.desconto_acrescimo != 0,
+    )
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    contas = [c for c in session.exec(query).all() if juros_descontos.diferenca_financeira(c)]
+    if not contas:
+        return []
+    fatia_centro = valor_gerencial_por_centro_custo(session, contas, centro_custo, {}) if centro_custo else {}
+
+    codigo_unico: dict[str, str] = {}
+    numeros = {c.numero_lancamento for c in contas if c.numero_lancamento and not c.codigo_conta}
+    if numeros:
+        query_itens = select(LancamentoItem).where(LancamentoItem.numero_lancamento.in_(numeros))
+        if fazenda_id is not None:
+            query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
+        for it in session.exec(query_itens).all():
+            codigo_unico.setdefault(it.numero_lancamento, it.codigo_conta_gerencial)
+
+    registros: list[dict] = []
+    for c in sorted(contas, key=lambda x: (x.data_pagamento, x.id or 0)):
+        diferenca = juros_descontos.diferenca_financeira(c)
+        if centro_custo is not None:
+            base = valor_gerencial(c, {})
+            fracao = (fatia_centro.get(c.id, 0.0) / base) if base > 0 else 0.0
+            diferenca = round(diferenca * fracao, 2)
+        if not diferenca:
+            continue
+        codigo, rotulo, tipo = juros_descontos.pseudoconta_da_diferenca(c.tipo, diferenca)
+        natureza_nota = contexto_natureza.natureza(
+            conta=c, codigo_conta=c.codigo_conta or codigo_unico.get(c.numero_lancamento))
+        registros.append({
+            "codigo_conta": codigo, "tipo": tipo, "valor": round(abs(diferenca), 2), "descricao": rotulo,
+            "origem": juros_descontos.ORIGEM_DIFERENCA_BAIXA, "linha_forcada": OUTRAS_REC_DESP,
+            "conta_id": c.id, "numero_lancamento": c.numero_lancamento, "tipo_nota": c.tipo, "item_id": None,
+            "data_pagamento": c.data_pagamento.isoformat(),
+            "natureza": natureza_nota if natureza_nota in (CAPITAL, TRANSFERENCIA) else OPERACIONAL,
+        })
+    return registros
 
 
 def _mapa_linha_por_codigo(session: Session, fazenda_id: int | None) -> dict[str, str]:
@@ -790,8 +940,14 @@ def calcular_dre(
         if regras_v2 else None
     )
     registros, fallback_notas = _registros_dre_para_cascata(
-        session, filtradas, valores, centro_custo, fazenda_id, contexto,
+        session, filtradas, _valores_com_abatimento(filtradas, valores) if regras_v2 else valores,
+        centro_custo, fazenda_id, contexto,
     )
+    diferencas_baixa: list[dict] = []
+    if regras_v2:
+        # PR 7: juros e descontos da baixa em Outras receitas e despesas.
+        diferencas_baixa = _registros_diferenca_baixa(session, fazenda_id, data_inicio, data_fim, centro_custo, contexto)
+        registros = registros + diferencas_baixa
     mapa_linha = contexto.mapa_linha_dre if contexto is not None else _mapa_linha_por_codigo(session, fazenda_id)
     depreciacao = _depreciacao_periodo_fazenda(session, fazenda_id, data_inicio, data_fim)
     baixas = _resultado_baixas_periodo(session, fazenda_id, data_inicio, data_fim) if regras_v2 else None
@@ -820,6 +976,11 @@ def calcular_dre(
         resposta["regras_v2"] = True
         resposta["resultado_baixas_periodo"] = baixas
         resposta["pendencias_natureza"] = _pendencias_natureza(registros, filtradas)
+        # Rastreio das linhas novas (PR 7): de onde veio cada juro/desconto.
+        resposta["diferencas_baixa"] = [
+            {k: r[k] for k in ("numero_lancamento", "conta_id", "data_pagamento", "codigo_conta", "tipo", "valor", "natureza")}
+            for r in diferencas_baixa
+        ]
     resposta["_registros"] = registros  # interno (script de impacto); a rota remove
     return resposta
 
@@ -859,6 +1020,58 @@ def dre(
     return resposta
 
 
+def registros_competencia_v2(
+    session: Session, fazenda_id: int | None, data_inicio: date, data_fim: date,
+    centro_custo: Optional[str] = None, *,
+    sobrepor_conta: dict[int, str] | None = None, sobrepor_item: dict[int, str] | None = None,
+    sobrepor_plano: dict[str, str] | None = None,
+) -> list[dict]:
+    """Os registros da DRE de COMPETÊNCIA com as regras v2 (R4, fonte única):
+    vale descontado, rateio do centro de custo, desconto da nota rateado nos
+    itens da despesa, receita bruta + dedução, abatimento da baixa e natureza
+    resolvida. É o que custos, RMCA, custo por litro e orçado × realizado
+    somam quando a fazenda tem a flag — em vez de `LancamentoItem.valor_total`
+    cru (que ignorava o desconto da nota). Juros e descontos da baixa (PR 7)
+    NÃO entram aqui: são resultado financeiro, não custo de nenhuma conta."""
+    filtradas, valores = _periodo_filtradas_dre(session, data_inicio, data_fim, centro_custo, "competencia", fazenda_id)
+    contexto = _contexto_natureza(session, fazenda_id, sobrepor_conta, sobrepor_item, sobrepor_plano)
+    registros, _fallback = _registros_dre_para_cascata(
+        session, filtradas, _valores_com_abatimento(filtradas, valores), centro_custo, fazenda_id, contexto,
+    )
+    return registros
+
+
+def leite_e_alimentacao_por_registros(
+    registros: list[dict], codigos_receita: set[str], codigos_custo: set[str],
+) -> dict:
+    """Receita do leite e custo com alimentação a partir dos registros da DRE
+    (regras v2) — mesmas contas marcadas para o RMCA, só natureza operacional.
+    Receita BRUTA (decisão Q7: é a convenção do indicador) e, ao lado, as
+    deduções da nota de venda dessas contas (Funrural/Senar, desconto) e a
+    receita líquida. Sinal pelo tipo: devolução numa conta de custo abate."""
+    receita = deducoes = custo = 0.0
+    for r in registros:
+        if not entra_nos_custos(r.get("natureza")):
+            continue
+        valor = r.get("valor") or 0.0
+        if r.get("origem") == juros_descontos.ORIGEM_DEDUCAO_NOTA:
+            if r.get("codigo_origem") in codigos_receita:
+                deducoes += valor
+            continue
+        codigo = r.get("codigo_conta")
+        if codigo in codigos_receita:
+            receita += valor if r.get("tipo") == "receita" else -valor
+        if codigo in codigos_custo:
+            custo += valor if r.get("tipo") != "receita" else -valor
+    receita, deducoes, custo = round(receita, 2), round(deducoes, 2), round(custo, 2)
+    return {
+        "receita_leite": receita, "custo_alimentacao": custo, "rmca": round(receita - custo, 2),
+        "deducoes_receita_leite": deducoes,
+        "receita_leite_liquida": round(receita - deducoes, 2),
+        "rmca_sobre_liquida": round(receita - deducoes - custo, 2),
+    }
+
+
 def custos_operacionais_periodo(
     session: Session, fazenda_id: int | None, data_inicio: date, data_fim: date,
     centro_custo: Optional[str],
@@ -875,9 +1088,10 @@ def custos_operacionais_periodo(
 
     Sem nada fora do operacional, `despesas_total` é idêntico ao numerador
     antigo (os registros redistribuem exatamente o valor de cada nota)."""
-    filtradas, valores = _periodo_filtradas_dre(session, data_inicio, data_fim, centro_custo, "competencia", fazenda_id)
-    contexto = _contexto_natureza(session, fazenda_id, sobrepor_conta, sobrepor_item, sobrepor_plano)
-    registros, _fallback = _registros_dre_para_cascata(session, filtradas, valores, centro_custo, fazenda_id, contexto)
+    registros = registros_competencia_v2(
+        session, fazenda_id, data_inicio, data_fim, centro_custo,
+        sobrepor_conta=sobrepor_conta, sobrepor_item=sobrepor_item, sobrepor_plano=sobrepor_plano,
+    )
     operacional = 0.0
     fora: dict[str, float] = {}
     por_categoria: dict[str, dict] = {}
@@ -2157,7 +2371,7 @@ def _preco_medio_litro_leite(session: Session, fazenda_id: int | None, codigos_r
     # pela densidade pra ter sempre litros de verdade, igual ao resto do
     # RMCA (mesmo padrão de Produção > Controle × Entregue).
     litros = sum(
-        leite_para_kg(e.quantidade_litros, e.unidade) / DENSIDADE_LEITE_KG_POR_L
+        leite_em_litros(e.quantidade_litros, e.unidade)
         for e in entregas if e.competencia == competencia
     )
     if not litros:
@@ -2178,6 +2392,29 @@ def _preco_medio_litro_leite(session: Session, fazenda_id: int | None, codigos_r
         "competencia": competencia, "litros": round(litros, 1), "receita": round(receita, 2),
         "preco_por_litro": round(receita / litros, 4),
     }
+
+
+def rmca_gerencial(
+    session: Session, fazenda_id: int | None, data_inicio: date, data_fim: date,
+    codigos_receita: set[str], codigos_custo: set[str], *, regras_v2: bool,
+) -> dict:
+    """RMCA gerencial (GET /financeiro/rmca, e o script de impacto).
+    `regras_v2=False`: soma `LancamentoItem.valor_total` cru, como sempre.
+    Regras v2 (PR 7 + PR 4): os registros da DRE de competência — custo com o
+    desconto da nota rateado, receita BRUTA do leite com a líquida
+    (Funrural/Senar deduzido) ao lado."""
+    if regras_v2:
+        return leite_e_alimentacao_por_registros(
+            registros_competencia_v2(session, fazenda_id, data_inicio, data_fim), codigos_receita, codigos_custo,
+        )
+    query_itens = sem_itens_de_vale(select(LancamentoItem))
+    if fazenda_id is not None:
+        query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
+    itens = [
+        it.model_dump() for it in session.exec(query_itens).all()
+        if it.data_competencia and data_inicio <= it.data_competencia <= data_fim
+    ]
+    return calcular_rmca_gerencial(itens, codigos_receita, codigos_custo)
 
 
 @router.get("/rmca")
@@ -2202,14 +2439,10 @@ def rmca(
     codigos_receita = {c.codigo for c in plano if c.rmca_receita_leite}
     codigos_custo = {c.codigo for c in plano if c.rmca_custo_alimentacao}
 
-    query_itens = sem_itens_de_vale(select(LancamentoItem))
-    if fazenda_id is not None:
-        query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
-    itens = [
-        it.model_dump() for it in session.exec(query_itens).all()
-        if it.data_competencia and data_inicio <= it.data_competencia <= data_fim
-    ]
-    gerencial = calcular_rmca_gerencial(itens, codigos_receita, codigos_custo)
+    regras_v2 = regras_v2_ativas(session, fazenda_id)
+    gerencial = rmca_gerencial(
+        session, fazenda_id, data_inicio, data_fim, codigos_receita, codigos_custo, regras_v2=regras_v2,
+    )
 
     query_movimentos = select(MovimentoEstoque)
     if fazenda_id is not None:
@@ -2239,7 +2472,7 @@ def rmca(
         it["preco_ultima_compra_kg"] = _preco_por_kg(estoque_item, ultima_compra.get(it.get("estoque_id")))
         it["quantidade_kg"] = round(it["quantidade"] * kg_por_unidade, 2) if kg_por_unidade else it["quantidade"]
 
-    return {
+    resposta = {
         "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
         "configurado": bool(codigos_receita) and bool(codigos_custo),
         "contas_receita": sorted(c.nome for c in plano if c.codigo in codigos_receita),
@@ -2254,6 +2487,17 @@ def rmca(
         "meta_rmca": meta_rmca(),
         "preco_medio_litro_leite": _preco_medio_litro_leite(session, fazenda_id, codigos_receita),
     }
+    if regras_v2:
+        # Chaves novas SÓ com a flag ligada (com ela desligada, a resposta é a de antes).
+        resposta["regras_v2"] = True
+        resposta["fisico"]["receita_leite_liquida"] = gerencial["receita_leite_liquida"]
+        resposta["fisico"]["rmca_sobre_liquida"] = round(gerencial["receita_leite_liquida"] - fisico["custo_total"], 2)
+        resposta["notas_metodo"] = [
+            "RMCA sobre a receita BRUTA do leite (convenção do indicador); a receita líquida de "
+            "Funrural/Senar e descontos da nota de venda aparece ao lado.",
+            "Custo com alimentação com o desconto da nota rateado nos itens (mesmo valor da DRE).",
+        ]
+    return resposta
 
 
 @router.get("/custo-litro-leite")
@@ -2269,13 +2513,32 @@ def custo_litro_leite(
     custo do RMCA) dividido pelos litros de leite entregues no período
     (Entrega mensal do leite), projetados proporcionalmente por dia quando o
     período não cobre o mês inteiro.
+
+    Regras v2 (flag `financeiro_regras_v2`, PR 4 + PR 7): os litros passam por
+    `leite_em_litros` (a entrega em kg é convertida — antes, kg entrava como
+    litro), o custo vem dos registros da DRE (desconto da nota rateado) e o
+    período é sempre MÊS FECHADO: um período parcial é estendido aos meses
+    inteiros que ele toca, com aviso (custo por data da nota ÷ litros
+    proporcionais aos dias não fecha).
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    return calcular_custo_litro_leite(
+        session, fazenda_id, data_inicio, data_fim, regras_v2=regras_v2_ativas(session, fazenda_id),
+    )
+
+
+def calcular_custo_litro_leite(
+    session: Session, fazenda_id: int | None, data_inicio: date, data_fim: date, *, regras_v2: bool,
+) -> dict:
+    """Motor de GET /financeiro/custo-litro-leite (separado para o script de
+    impacto rodar as duas regras). `regras_v2=False` = o cálculo de antes."""
     query_plano = select(PlanoContaGerencial)
     if fazenda_id is not None:
         query_plano = query_plano.where(PlanoContaGerencial.fazenda_id == fazenda_id)
     plano = session.exec(query_plano).all()
     codigos_custo = {c.codigo for c in plano if c.rmca_custo_alimentacao}
+    if regras_v2:
+        return _custo_litro_leite_v2(session, fazenda_id, data_inicio, data_fim, plano, codigos_custo)
 
     query_itens = sem_itens_de_vale(select(LancamentoItem))
     if fazenda_id is not None:
@@ -2302,6 +2565,54 @@ def custo_litro_leite(
         "contas_custo": sorted(c.nome for c in plano if c.codigo in codigos_custo),
         **calcular_custo_por_litro(custo_total, litros),
     }
+
+
+def _custo_litro_leite_v2(
+    session: Session, fazenda_id: int | None, data_inicio: date, data_fim: date,
+    plano: list[PlanoContaGerencial], codigos_custo: set[str],
+) -> dict:
+    """Custo por litro com as regras v2 — ver docstring de `custo_litro_leite`."""
+    inicio = data_inicio.replace(day=1)
+    fim = data_fim.replace(day=calendar.monthrange(data_fim.year, data_fim.month)[1])
+    ajustado = (inicio, fim) != (data_inicio, data_fim)
+
+    registros = registros_competencia_v2(session, fazenda_id, inicio, fim)
+    custo_total = leite_e_alimentacao_por_registros(registros, set(), codigos_custo)["custo_alimentacao"]
+
+    query_entregas = select(EntregaLeiteMensal)
+    if fazenda_id is not None:
+        query_entregas = query_entregas.where(EntregaLeiteMensal.fazenda_id == fazenda_id)
+    todas = session.exec(query_entregas).all()
+    entregas: dict[str, float] = {}
+    unidades: set[str] = set()
+    comp_ini, comp_fim = f"{inicio:%Y-%m}", f"{fim:%Y-%m}"
+    for e in todas:
+        entregas[e.competencia] = entregas.get(e.competencia, 0.0) + leite_em_litros(e.quantidade_litros, e.unidade)
+        if comp_ini <= e.competencia <= comp_fim:
+            unidades.add("L" if (e.unidade or "kg").strip().upper() == "L" else "kg")
+    litros = litros_leite_no_periodo(entregas, inicio, fim)
+
+    resposta = {
+        "periodo": {"inicio": inicio.isoformat(), "fim": fim.isoformat()},
+        "configurado": bool(codigos_custo),
+        "tem_entrega": bool(entregas),
+        "contas_custo": sorted(c.nome for c in plano if c.codigo in codigos_custo),
+        **calcular_custo_por_litro(custo_total, litros),
+        "regras_v2": True,
+        "periodo_solicitado": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
+        "periodo_ajustado_para_mes_fechado": ajustado,
+        "unidade_origem": "misto" if len(unidades) > 1 else (next(iter(unidades)) if unidades else None),
+        "litros_convertidos_de_kg": "kg" in unidades,
+        "avisos": [],
+    }
+    if ajustado:
+        resposta["avisos"].append(
+            f"O custo por litro é calculado por mês fechado: o período foi estendido para "
+            f"{inicio:%d/%m/%Y} a {fim:%d/%m/%Y}."
+        )
+    if "kg" in unidades:
+        resposta["avisos"].append("A entrega de leite lançada em kg foi convertida para litros (1 L = 1,029 kg).")
+    return resposta
 
 
 
@@ -3810,6 +4121,7 @@ def pagar_lancamento(
         soma_parcelas = round(sum(p.valor for p in dados.parcelas_diferenca), 2)
         if round(soma_parcelas - abs(diferenca), 2) != 0:
             raise HTTPException(status_code=400, detail="A soma das parcelas precisa bater com a diferença a parcelar")
+    tipo_diferenca = _tipo_diferenca_da_baixa(dados.natureza_diferenca, diferenca, bool(dados.parcelas_diferenca))
 
     registro.data_pagamento = dados.data_pagamento
     registro.valor_pago = dados.valor_pago
@@ -3820,6 +4132,7 @@ def pagar_lancamento(
     # Com parcelas_diferenca, a diferença inteira migra para as novas
     # parcelas abaixo — esta baixa não perdoa nem cobra nada sozinha.
     registro.desconto_acrescimo = 0 if dados.parcelas_diferenca else diferenca
+    registro.diferenca_tipo = tipo_diferenca
     session.add(registro)
 
     novas: list[ContaGerencial] = []
@@ -3878,6 +4191,7 @@ def baixa_lote(
         registro.data_pagamento = dados.data_pagamento
         registro.valor_pago = registro.valor_total
         registro.desconto_acrescimo = 0.0
+        registro.diferenca_tipo = None
         registro.conta_bancaria = dados.conta_bancaria
         registro.forma_pagamento = dados.forma_pagamento
         registro.data_vencimento_cartao = dados.data_vencimento_cartao if dados.forma_pagamento == "credito" else None
@@ -3938,6 +4252,18 @@ def baixa_lote_detalhada(
                 detail=f"A soma das parcelas do lançamento {it.lancamento_id} precisa bater com a diferença a parcelar",
             )
 
+    # Tipo da diferença (financeiro | abatimento) — também validado antes de
+    # mexer em qualquer registro.
+    tipos_diferenca: dict[int, Optional[str]] = {}
+    for it in dados.itens:
+        registro = session.get(ContaGerencial, it.lancamento_id)
+        if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
+            continue
+        tipos_diferenca[it.lancamento_id] = _tipo_diferenca_da_baixa(
+            it.natureza_diferenca, round(it.valor_pago - (registro.valor_total or 0), 2), bool(it.parcelas_diferenca),
+            rotulo=f"Lançamento {it.lancamento_id}: ",
+        )
+
     baixados = []
     nao_encontrados = []
     todas_novas: list[ContaGerencial] = []
@@ -3952,6 +4278,7 @@ def baixa_lote_detalhada(
         # parcelas abaixo — esta baixa não perdoa nem cobra nada sozinha
         # (mesma regra de pagar_lancamento).
         registro.desconto_acrescimo = 0 if it.parcelas_diferenca else round(it.valor_pago - (registro.valor_total or 0), 2)
+        registro.diferenca_tipo = tipos_diferenca.get(it.lancamento_id)
         registro.conta_bancaria = it.conta_bancaria
         registro.forma_pagamento = it.forma_pagamento
         registro.data_vencimento_cartao = it.data_vencimento_cartao if it.forma_pagamento == "credito" else None
@@ -4291,6 +4618,7 @@ def estornar_lancamento(
     registro.forma_pagamento = None
     registro.data_vencimento_cartao = None
     registro.desconto_acrescimo = None
+    registro.diferenca_tipo = None
     registro.atualizado_em = datetime.utcnow()
     session.add(registro)
 

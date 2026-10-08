@@ -11,9 +11,12 @@ grava um CSV com antes / depois / Δ:
   - `depois_com_backfill`: regras novas SIMULANDO o backfill de natureza
     (scripts/backfill_natureza_fin.py) — sem gravá-lo.
 
-Métricas desta versão (PR 1): as 15 linhas da DRE (competência e caixa), o
-total fora da DRE (e por natureza), o não classificado, e os numeradores dos
-custos por hectare, por vaca/lote e por safra (mais a depreciação e o COT).
+Métricas desta versão (PR 1, 7 e 4): as 15 linhas da DRE (competência e
+caixa), o total fora da DRE (e por natureza), o não classificado, os
+numeradores dos custos por hectare, por vaca/lote e por safra (mais a
+depreciação e o COT) e, na seção `leite`, custo por litro (litros, custo,
+R$/L) e RMCA (receita bruta, custo, RMCA, receita líquida). Juros/descontos da
+baixa e deduções da nota de venda aparecem no CSV de lançamentos.
 Saldo e Caixa Real entram quando as regras deles existirem (PR 6) — o
 registro de métricas fica em `METRICAS` para os PRs seguintes estenderem.
 
@@ -53,6 +56,19 @@ COLUNAS_LANC = [
     "periodo", "regime", "numero_lancamento", "conta_id", "item_id", "codigo_conta", "descricao", "valor",
     "linha_antes", "destino_depois", "motivo",
 ]
+
+
+# Registros que só existem nas regras novas: (linha antes, destino depois, motivo).
+ORIGENS_NOVAS = {
+    "diferenca_baixa": (
+        "(fora da DRE: a conta ficava no valor contratado)", "OUTRAS_REC_DESP",
+        "juro/multa ou desconto apurado na baixa (PR 7)",
+    ),
+    "deducao_nota": (
+        "(rateado na receita: entrava líquida)", "DEDUCAO_IMPOSTOS",
+        "Funrural/Senar ou desconto da nota de venda (PR 4)",
+    ),
+}
 
 
 def _meses(de: str, ate: str) -> list[tuple[date, date]]:
@@ -118,11 +134,11 @@ def _motivo(registro: dict, contexto, plano_backfill, contas_por_id: dict, itens
 def gerar(session: Session, fazenda_id: int, de: str, ate: str, *, centro_custo_vaca: str | None = "Pecuária Leiteira") -> dict:
     """Calcula tudo e devolve {"linhas": [...], "lancamentos": [...]}. Não grava."""
     from fazenda.api.routers.financeiro import (
-        _contexto_natureza, _mapa_linha_por_codigo, _periodo_filtradas_dre, calcular_dre,
-        custos_operacionais_periodo,
+        _contexto_natureza, _mapa_linha_por_codigo, _periodo_filtradas_dre, calcular_custo_litro_leite, calcular_dre,
+        custos_operacionais_periodo, rmca_gerencial,
     )
     from fazenda.api.routers.relatorio_custo_producao import _despesas_periodo
-    from fazenda.models import ContaGerencial, LancamentoItem, Safra
+    from fazenda.models import ContaGerencial, LancamentoItem, PlanoContaGerencial, Safra
     from fazenda.rules import backfill_natureza
     from fazenda.rules import parametros
     from fazenda.rules.natureza import OPERACIONAL
@@ -136,6 +152,9 @@ def gerar(session: Session, fazenda_id: int, de: str, ate: str, *, centro_custo_
     contexto_sim = _contexto_natureza(session, fazenda_id, sim["sobrepor_conta"], None, sim["sobrepor_plano"])
     contas_por_id = {c.id: c for c in session.exec(select(ContaGerencial).where(ContaGerencial.fazenda_id == fazenda_id)).all()}
     itens_por_id = {i.id: i for i in session.exec(select(LancamentoItem).where(LancamentoItem.fazenda_id == fazenda_id)).all()}
+    plano = session.exec(select(PlanoContaGerencial).where(PlanoContaGerencial.fazenda_id == fazenda_id)).all()
+    cod_receita = {p.codigo for p in plano if p.rmca_receita_leite}
+    cod_custo = {p.codigo for p in plano if p.rmca_custo_alimentacao}
 
     linhas: list[dict] = []
     lancamentos: list[dict] = []
@@ -159,6 +178,18 @@ def gerar(session: Session, fazenda_id: int, de: str, ate: str, *, centro_custo_
             for chave in sorted(set(va) | set(vd) | set(vb)):
                 _linha(f"dre_{regime}", periodo, chave, va.get(chave), vd.get(chave), vb.get(chave))
             for registro in depois_bf["_registros"]:
+                origem_nova = ORIGENS_NOVAS.get(registro.get("origem"))
+                if origem_nova is not None:
+                    # PR 7 / PR 4: registros que só existem nas regras novas.
+                    linha_antes, destino, motivo = origem_nova
+                    lancamentos.append({
+                        "periodo": periodo, "regime": regime,
+                        "numero_lancamento": registro.get("numero_lancamento"), "conta_id": registro.get("conta_id"),
+                        "item_id": registro.get("item_id"), "codigo_conta": registro.get("codigo_conta"),
+                        "descricao": registro.get("descricao"), "valor": registro.get("valor"),
+                        "linha_antes": linha_antes, "destino_depois": destino, "motivo": motivo,
+                    })
+                    continue
                 natureza = registro.get("natureza") or OPERACIONAL
                 if natureza == OPERACIONAL:
                     continue
@@ -186,6 +217,19 @@ def gerar(session: Session, fazenda_id: int, de: str, ate: str, *, centro_custo_
         _linha("custos", periodo, f"custo_vaca.numerador[{centro_custo_vaca or 'todos'}]",
                vaca_antes, vaca_dep["despesas_total"], vaca_bf["despesas_total"])
         _linha("custos", periodo, "depreciacao_periodo", 0.0, ha_dep["depreciacao_periodo"], ha_bf["depreciacao_periodo"])
+
+        # Leite (PR 4 + PR 7): custo por litro (kg→L, desconto da nota rateado)
+        # e RMCA (receita bruta; a líquida ao lado). Mês fechado nos dois.
+        cl_antes = calcular_custo_litro_leite(session, fazenda_id, inicio, fim, regras_v2=False)
+        cl_dep = calcular_custo_litro_leite(session, fazenda_id, inicio, fim, regras_v2=True)
+        for chave in ("litros", "custo_total", "custo_por_litro"):
+            _linha("leite", periodo, f"custo_litro.{chave}", cl_antes[chave], cl_dep[chave], cl_dep[chave])
+        rm_antes = rmca_gerencial(session, fazenda_id, inicio, fim, cod_receita, cod_custo, regras_v2=False)
+        rm_dep = rmca_gerencial(session, fazenda_id, inicio, fim, cod_receita, cod_custo, regras_v2=True)
+        for chave in ("receita_leite", "custo_alimentacao", "rmca"):
+            _linha("leite", periodo, f"rmca.{chave}", rm_antes[chave], rm_dep[chave], rm_dep[chave])
+        _linha("leite", periodo, "rmca.receita_leite_liquida", rm_antes["receita_leite"],
+               rm_dep["receita_leite_liquida"], rm_dep["receita_leite_liquida"])
 
     # Safras que tocam o intervalo (uma linha por safra, período da própria safra).
     inicio_total, fim_total = _meses(de, ate)[0][0], _meses(de, ate)[-1][1]

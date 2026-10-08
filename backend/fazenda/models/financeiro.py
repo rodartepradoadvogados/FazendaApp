@@ -89,6 +89,12 @@ class ContaGerencial(SQLModel, table=True):
     # número de relatório na fazenda com a flag `financeiro_regras_v2` ligada.
     # NÃO confundir com PlanoContaGerencial.natureza (serviço x produto).
     natureza_fin: Optional[str] = None
+    # O que é a diferença da BAIXA (`desconto_acrescimo`) para os relatórios
+    # (Fase A, PR 7 — rules/juros_descontos.py): NULL = "financeiro" (padrão:
+    # juros/desconto vão para Outras receitas e despesas na data do pagamento)
+    # | "abatimento" (o desconto reduz o valor da própria conta). Só desconto
+    # aceita abatimento. Só muda número com a flag `financeiro_regras_v2`.
+    diferenca_tipo: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

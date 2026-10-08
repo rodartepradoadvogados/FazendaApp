@@ -11,7 +11,7 @@ import {
   // Onda 2 — listas fechadas, código PAT e baixa do patrimônio
   fetchOpcoesPatrimonio, gerarCodigosPatrimonio, baixarPatrimonio, estornarBaixaPatrimonio, type OpcoesPatrimonio,
   // Onda 3b — DRE em cascata / Onda 4 — Caixa Real
-  fetchDreCascata, classificarContaDre, type DreResposta, atualizarNaturezaLancamento, fetchRegrasV2,
+  fetchDreCascata, classificarContaDre, type DreResposta, atualizarNaturezaLancamento, fetchRegrasV2, type NaturezaDiferenca,
   fetchCaixaReal, fetchFundoReservaSugerido, type CaixaReal,
   fetchPessoas, fetchRmca, fetchCustoLitroLeite, fetchCustoHectare, fetchCustoVacaLote, fetchCustoSafra, fetchSafras, formatBRL, formatDate,
   atualizarLancamentoFinanceiro, ehAdmin, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
@@ -3884,6 +3884,12 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   // Diferença entre valor pago e valor do lançamento (item 4 do pedido do
   // usuário): em vez de sempre virar desconto/acréscimo, o usuário escolhe.
   const [modoDiferenca, setModoDiferenca] = useState<"desconto" | "parcelar">("desconto");
+  // Regras v2 (PR 7): o DESCONTO lançado na baixa é financeiro (padrão, vai
+  // para Outras receitas e despesas) ou abatimento (reduz a própria conta).
+  // Só aparece com as regras novas ligadas na fazenda.
+  const [naturezaDiferenca, setNaturezaDiferenca] = useState<NaturezaDiferenca>("financeiro");
+  const [regrasV2Baixa, setRegrasV2Baixa] = useState(false);
+  useEffect(() => { fetchRegrasV2().then((r) => setRegrasV2Baixa(r.ativa)).catch(() => setRegrasV2Baixa(false)); }, []);
   const [qtdParcelasDiferenca, setQtdParcelasDiferenca] = useState(2);
   const [parcelasDiferenca, setParcelasDiferenca] = useState<{ data_vencimento: string; valor: string }[]>([]);
   // Comprovante de pagamento anexado à PRÓPRIA nota selecionada (não abre um
@@ -3932,7 +3938,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
     setValorPago(String(nota.valor));
     setDataPagamento(hojeLocal());
     setContaBancaria(""); setFormaPagamento(""); setDataVencimentoCartao(""); setNumeroDocPagamento("");
-    setModoDiferenca("desconto"); setQtdParcelasDiferenca(2); setParcelasDiferenca([]);
+    setModoDiferenca("desconto"); setNaturezaDiferenca("financeiro"); setQtdParcelasDiferenca(2); setParcelasDiferenca([]);
     setAnexosPagamento(null);
     setMsg(null);
   }
@@ -4014,6 +4020,8 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
         parcelas_diferenca: diferenca !== 0 && modoDiferenca === "parcelar"
           ? parcelasDiferenca.map((p) => ({ data_vencimento: p.data_vencimento, valor: Number(p.valor) || 0 }))
           : undefined,
+        natureza_diferenca: regrasV2Baixa && diferenca < 0 && modoDiferenca === "desconto" && naturezaDiferenca === "abatimento"
+          ? naturezaDiferenca : undefined,
       };
       try {
         await marcarPagoFinanceiro(notaSelecionada.id, { ...corpo, retencao_caixa: retencaoCaixa || undefined });
@@ -4088,6 +4096,29 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
                   Parcelar a diferença de {formatBRL(Math.abs(diferenca))}
                 </label>
               </div>
+              {regrasV2Baixa && diferenca < 0 && modoDiferenca === "desconto" && (
+                <fieldset style={{ marginTop: "0.6rem", border: 0, padding: 0 }}>
+                  <legend style={{ ...labelStyleLote, marginBottom: "0.3rem" }}>Nos relatórios, este desconto é</legend>
+                  <div className="flex items-start gap-4" style={{ flexWrap: "wrap" }}>
+                    <label className="flex items-start gap-2" style={{ fontSize: "0.8rem", cursor: "pointer", maxWidth: "20rem" }}>
+                      <input type="radio" name="natureza-diferenca" style={{ marginTop: "0.2rem" }} checked={naturezaDiferenca === "financeiro"} onChange={() => setNaturezaDiferenca("financeiro")} />
+                      <span>Desconto financeiro
+                        <span style={{ display: "block", color: "var(--text-muted)", fontSize: "0.74rem" }}>
+                          {tipo === "receita" ? "Desconto concedido" : "Desconto obtido"} em Outras receitas e despesas, na data {tipo === "receita" ? "do recebimento" : "do pagamento"}.
+                        </span>
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2" style={{ fontSize: "0.8rem", cursor: "pointer", maxWidth: "20rem" }}>
+                      <input type="radio" name="natureza-diferenca" style={{ marginTop: "0.2rem" }} checked={naturezaDiferenca === "abatimento"} onChange={() => setNaturezaDiferenca("abatimento")} />
+                      <span>Abatimento
+                        <span style={{ display: "block", color: "var(--text-muted)", fontSize: "0.74rem" }}>
+                          Reduz o {tipo === "receita" ? "valor da receita" : "custo"} da própria conta: ela passa a valer {formatBRL(Number(valorPago) || 0)}.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                </fieldset>
+              )}
               {modoDiferenca === "parcelar" && (
                 <div style={{ marginTop: "0.7rem" }}>
                   <div className="flex items-center gap-2 mb-2">
@@ -4293,8 +4324,18 @@ type RmcaResp = {
   configurado: boolean;
   contas_receita: string[];
   contas_custo: string[];
-  gerencial: { receita_leite: number; custo_alimentacao: number; rmca: number };
-  fisico: { receita_leite: number; custo_alimentacao: number; rmca: number; itens: ItemFisicoRmca[] };
+  // `receita_leite_liquida`/`rmca_sobre_liquida`/`deducoes_receita_leite`: só
+  // com as regras v2 (PR 4) — o RMCA fica sobre a receita BRUTA e a líquida
+  // de Funrural/Senar aparece ao lado.
+  gerencial: {
+    receita_leite: number; custo_alimentacao: number; rmca: number;
+    deducoes_receita_leite?: number; receita_leite_liquida?: number; rmca_sobre_liquida?: number;
+  };
+  fisico: {
+    receita_leite: number; custo_alimentacao: number; rmca: number; itens: ItemFisicoRmca[];
+    receita_leite_liquida?: number; rmca_sobre_liquida?: number;
+  };
+  regras_v2?: boolean;
   meta_rmca: number;
   preco_medio_litro_leite: PrecoMedioLitroLeite;
 };
@@ -4885,6 +4926,13 @@ function RmcaView() {
                 <KPI v={formatBRL(dados.gerencial.custo_alimentacao)} l="Custo de alimentação" c="var(--red)" />
                 <KPI v={formatBRL(dados.gerencial.rmca)} l="RMCA" c={dados.gerencial.rmca >= dados.meta_rmca ? "var(--green-light)" : "var(--amber)"} />
               </div>
+              {dados.gerencial.receita_leite_liquida != null && (
+                <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+                  Receita bruta, que é a convenção do indicador. Sobre a receita líquida de Funrural/Senar e descontos da nota
+                  ({formatBRL(dados.gerencial.receita_leite_liquida)}, após {formatBRL(dados.gerencial.deducoes_receita_leite ?? 0)} de deduções),
+                  o RMCA é <strong style={{ color: "var(--text)" }}>{formatBRL(dados.gerencial.rmca_sobre_liquida ?? 0)}</strong>.
+                </p>
+              )}
               {dados.contas_receita.length > 0 && <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Receita: {dados.contas_receita.join(", ")}</p>}
               {dados.contas_custo.length > 0 && <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Custo: {dados.contas_custo.join(", ")}</p>}
             </div>
@@ -5176,6 +5224,9 @@ function RmcaSimulador({ dados }: { dados: RmcaResp }) {
 type CustoLitroLeiteResp = {
   periodo: { inicio: string; fim: string }; configurado: boolean; tem_entrega: boolean;
   contas_custo: string[]; litros: number; custo_total: number; custo_por_litro: number | null;
+  // Só com as regras v2 (PR 4): mês fechado e kg convertido para litro.
+  regras_v2?: boolean; periodo_ajustado_para_mes_fechado?: boolean; litros_convertidos_de_kg?: boolean;
+  avisos?: string[];
 };
 
 function CustoLitroLeiteView() {
@@ -5227,9 +5278,17 @@ function CustoLitroLeiteView() {
           <div className="card">
             <div className="card-header mb-3">Custo por litro de leite</div>
             <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-              Custo de alimentação do período (mesmas contas marcadas para o RMCA) dividido pelos litros de leite entregues
-              no período (Venda mensal do leite), projetados proporcionalmente por dia quando o período não cobre o mês inteiro.
+              {dados.regras_v2
+                ? <>Custo de alimentação do período (mesmas contas marcadas para o RMCA, com o desconto da nota rateado) dividido pelos
+                  litros de leite entregues (Venda mensal do leite), sempre por mês fechado ({formatDate(dados.periodo.inicio)} a {formatDate(dados.periodo.fim)}).</>
+                : <>Custo de alimentação do período (mesmas contas marcadas para o RMCA) dividido pelos litros de leite entregues
+                  no período (Venda mensal do leite), projetados proporcionalmente por dia quando o período não cobre o mês inteiro.</>}
             </p>
+            {(dados.avisos?.length ?? 0) > 0 && (
+              <ul className="mb-3" style={{ listStyle: "none", padding: 0, margin: "0 0 0.75rem", fontSize: "0.76rem", color: "var(--amber)" }}>
+                {dados.avisos!.map((a) => <li key={a}>{a}</li>)}
+              </ul>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
               <KPI v={formatBRL(dados.custo_total)} l="Custo de alimentação" c="var(--red)" />
               <KPI v={`${dados.litros.toLocaleString("pt-BR")} L`} l="Litros entregues" c="var(--dourado-light)" />

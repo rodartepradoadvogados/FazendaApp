@@ -632,4 +632,6 @@ def test_migracao_natureza_fin_sobe_desce_e_e_idempotente(tmp_path):
     conn.close()
     _alembic(db2, "upgrade", "head")
     assert "natureza_fin" in _colunas(db2, "lancamento_item")
-    assert REVISAO in _alembic(db2, "current")
+    # A cabeça avança com os PRs seguintes (PR 7: f3b8d1c6a9e2); o que importa
+    # aqui é o upgrade ter passado por esta revisão sem abortar.
+    assert "(head)" in _alembic(db2, "current")

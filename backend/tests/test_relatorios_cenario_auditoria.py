@@ -10,7 +10,10 @@ Este arquivo trava três coisas:
    tests/dados/cenario_auditoria_golden_main.json — inclusive o formato da
    resposta (nenhuma chave nova com a flag desligada).
 2. PR 1 (flag LIGADA): compra de bem, principal e aporte saem da DRE e dos
-   custos, agrupados por natureza; a depreciação continua.
+   custos, agrupados por natureza; a depreciação continua. PR 7 e PR 4 (flag
+   LIGADA): juros e descontos da baixa em Outras (com a opção abatimento),
+   receita do leite bruta com o Funrural/Senar em Deduções, kg→litro e mês
+   fechado no custo por litro, RMCA/custo/orçamento pelos registros da DRE.
 3. O QUE FALTA: cada erro ainda aberto é um `xfail(strict=True)` com o nome do
    PR que o resolve (numeração do SOLUCOES.md, §4). Strict de propósito: o PR
    que corrigir o número faz o teste PASSAR, o xfail estrito vira falha, e o
@@ -282,7 +285,261 @@ def test_v2_flag_de_uma_fazenda_nao_vaza_para_a_outra(cenario):
 
 
 # =============================================================================
-# 3. O que os PRs seguintes resolvem — xfail ESTRITO, com o PR no motivo.
+# 3. PR 7 (juros e descontos da baixa) e PR 4 (receita do leite) — flag ligada.
+# =============================================================================
+ABR = ("2031-04-01", "2031-04-30")
+MAR_Q = {"data_inicio": "2031-03-01", "data_fim": "2031-03-31"}
+
+
+def _contas_da_linha(d, chave):
+    return {c["codigo"]: c["valor"] for c in next(x for x in d["cascata"] if x["chave"] == chave)["contas"]}
+
+
+def _repagar_l7_com_abatimento(cenario):
+    l7 = cenario.ids["L"]["L7"]["ids"][0]
+    r = cenario.c.post(f"/financeiro/lancamentos/{l7}/estornar", json={"motivo": "teste abatimento"})
+    assert r.status_code == 200, r.text
+    cenario.put(f"/financeiro/lancamentos/{l7}/pagar", {
+        "data_pagamento": "2031-04-20", "valor_pago": 600, "forma_pagamento": "pix",
+        "natureza_diferenca": "abatimento",
+    })
+    return l7
+
+
+def test_pr7_juros_e_desconto_da_baixa_em_outras_no_caixa(cenario):
+    """L3 pago com 50 de juros e L7 com 400 de desconto: Outras = −50 + 400."""
+    cenario.ligar_regras_v2()
+    dc = cenario.dre(*ABR, "caixa")
+    assert cenario.linha(dc, "OUTRAS_REC_DESP") == 350
+    assert _contas_da_linha(dc, "OUTRAS_REC_DESP") == {"(descontos obtidos)": 400.0, "(juros e multas pagos)": -50.0}
+    # A linha da conta continua no valor CONTRATADO (L3 1.000, L7 1.000).
+    assert cenario.linha(dc, "CUSTO_VARIAVEL") == 5900
+    L = cenario.ids["L"]
+    assert sorted((d["numero_lancamento"], d["valor"], d["tipo"]) for d in dc["diferencas_baixa"]) == sorted([
+        (L["L3"]["numero_lancamento"], 50.0, "despesa"), (L["L7"]["numero_lancamento"], 400.0, "receita"),
+    ])
+
+
+def test_pr7_dre_de_caixa_fecha_com_o_pago(cenario):
+    """Linha + Outras = valor_pago: as saídas operacionais de abril na DRE de
+    caixa batem com o que saiu do banco (L2 3.600 + L3 1.050 + L7 600 + L10
+    1.200 = 6.450), e a receita líquida com o recebido do L1 (9.850). A nota
+    genérica da fatura do cartão (800, sem conta) é o PR 5."""
+    cenario.ligar_regras_v2()
+    dc = cenario.dre(*ABR, "caixa")
+    saidas = cenario.linha(dc, "CUSTO_VARIAVEL") + cenario.linha(dc, "GASTOS_PESSOAL") - cenario.linha(dc, "OUTRAS_REC_DESP")
+    L = cenario.ids["L"]
+    with Session(cenario.engine) as s:
+        pago = sum(s.get(ContaGerencial, L[n]["ids"][0]).valor_pago for n in ("L2", "L3", "L7", "L10"))
+    assert round(saidas, 2) == pago == 6450
+    assert cenario.linha(dc, "RECEITA_LIQUIDA") == 9850
+    assert dc["nao_classificado"]["total"] == 800
+
+
+def test_pr7_competencia_juros_na_data_do_pagamento(cenario):
+    """O fato gerador do juro/desconto é a baixa: na competência, março fica
+    com o contratado (sem Outras) e abril recebe os +350."""
+    cenario.ligar_regras_v2()
+    mar = cenario.dre()
+    assert cenario.linha(mar, "OUTRAS_REC_DESP") == 0 and cenario.linha(mar, "CUSTO_VARIAVEL") == 7500
+    assert cenario.linha(cenario.dre(*ABR), "OUTRAS_REC_DESP") == 350
+
+
+def test_pr7_baixa_parcial_e_pago_sem_valor_pago_nao_geram_outras(cenario):
+    """L10 (baixa parcial reparcelada: desconto_acrescimo 0) e L6 (pago sem
+    valor_pago, desconto_acrescimo −700 por bug que o PR 6 corrige) não são
+    desconto: nada em Outras."""
+    cenario.ligar_regras_v2()
+    L = cenario.ids["L"]
+    with Session(cenario.engine) as s:
+        l6 = s.get(ContaGerencial, L["L6"]["ids"][0])
+        assert (l6.valor_pago, l6.desconto_acrescimo) == (None, -700)
+    numeros = {d["numero_lancamento"] for d in cenario.dre(*ABR, "caixa")["diferencas_baixa"]}
+    assert L["L10"]["numero_lancamento"] not in numeros
+    marco_caixa = cenario.dre(regime="caixa")
+    assert cenario.linha(marco_caixa, "OUTRAS_REC_DESP") == 0 and marco_caixa["diferencas_baixa"] == []
+
+
+def test_pr7_abatimento_reduz_a_propria_conta(cenario):
+    """Decisão do dono: o desconto na baixa pode ser marcado como abatimento —
+    reduz o custo da própria conta e não vai para Outras (SOLUCOES §P0-4:
+    CMV de março −400 e Outras de abril −50)."""
+    cenario.ligar_regras_v2()
+    antes_legado = cenario.dre()["despesas_total"]
+    l7 = _repagar_l7_com_abatimento(cenario)
+    with Session(cenario.engine) as s:
+        conta = s.get(ContaGerencial, l7)
+        assert (conta.valor_total, conta.valor_pago, conta.desconto_acrescimo, conta.diferenca_tipo) == (1000, 600, -400, "abatimento")
+    mar = cenario.dre()
+    assert cenario.linha(mar, "CUSTO_VARIAVEL") == 7100
+    assert mar["despesas_total"] == antes_legado  # campos legados só mudam no PR 8
+    dc = cenario.dre(*ABR, "caixa")
+    assert cenario.linha(dc, "CUSTO_VARIAVEL") == 5500 and cenario.linha(dc, "OUTRAS_REC_DESP") == -50
+    assert cenario.linha(cenario.dre(*ABR), "OUTRAS_REC_DESP") == -50
+    # Custo por litro, RMCA e custos também enxergam o abatimento.
+    assert cenario.get("/financeiro/custo-litro-leite", **MAR_Q)["custo_total"] == 7100
+    assert cenario.get("/financeiro/rmca", **MAR_Q)["gerencial"]["custo_alimentacao"] == 7100
+
+
+def test_pr7_abatimento_com_flag_desligada_nao_muda_numero(cenario):
+    _repagar_l7_com_abatimento(cenario)
+    dc = cenario.dre(*ABR, "caixa")
+    assert "regras_v2" not in dc and "diferencas_baixa" not in dc
+    assert cenario.linha(dc, "CUSTO_VARIAVEL") == 5900 and cenario.linha(dc, "OUTRAS_REC_DESP") == 0
+    assert cenario.linha(cenario.dre(), "CUSTO_VARIAVEL") == 7500
+
+
+def test_pr7_abatimento_so_para_desconto_e_valida_antes_de_gravar(cenario):
+    l9 = cenario.ids["L"]["L9"]["ids"][0]  # em aberto, 1.000
+    base = {"data_pagamento": "2031-04-30", "forma_pagamento": "pix"}
+    casos = [
+        {**base, "valor_pago": 1100, "natureza_diferenca": "abatimento"},  # acréscimo
+        {**base, "valor_pago": 1000, "natureza_diferenca": "abatimento"},  # sem diferença
+        {**base, "valor_pago": 900, "natureza_diferenca": "qualquer"},
+        {**base, "valor_pago": 900, "natureza_diferenca": "abatimento",
+         "parcelas_diferenca": [{"data_vencimento": "2031-05-30", "valor": 100}]},
+    ]
+    for corpo in casos:
+        r = cenario.c.put(f"/financeiro/lancamentos/{l9}/pagar", json=corpo)
+        assert r.status_code == 400, (corpo, r.text)
+    with Session(cenario.engine) as s:
+        conta = s.get(ContaGerencial, l9)
+        assert (conta.data_pagamento, conta.valor_pago, conta.diferenca_tipo) == (None, None, None)
+    # "financeiro" explícito = padrão (grava NULL).
+    cenario.put(f"/financeiro/lancamentos/{l9}/pagar", {**base, "valor_pago": 950, "natureza_diferenca": "financeiro"})
+    with Session(cenario.engine) as s:
+        assert s.get(ContaGerencial, l9).diferenca_tipo is None
+
+
+def test_pr7_orcamento_realizado_com_o_desconto_da_nota_rateado(cenario):
+    """Orçado × realizado pela mesma função de registros da DRE: a ração (8.2)
+    sai com o desconto do L2 rateado (7.500, antes 7.800 do item bruto)."""
+    q = {"ano": 2031, "mes_inicio": 3, "mes_fim": 3}
+    antes = {l["codigo_conta_gerencial"]: l["realizado"] for l in cenario.get("/planejamento/orcamento/comparativo", **q)["linhas"]}
+    cenario.ligar_regras_v2()
+    o = cenario.get("/planejamento/orcamento/comparativo", **q)
+    depois = {l["codigo_conta_gerencial"]: l["realizado"] for l in o["linhas"]}
+    assert (antes["8.2"], depois["8.2"]) == (7800, 7500)
+    assert (antes["8.7"], depois["8.7"]) == (1700, 1600)
+    assert (antes["8.1"], depois["8.1"]) == (10000, 10000)
+    assert depois["(descontos na nota de venda)"] == 150
+    assert o["regras_v2"] is True
+
+
+def test_pr4_custo_litro_converte_kg(cenario):
+    """Ex-xfail do PR 4: 10.320 kg ÷ 1,029 = 10.029,15 L, e o custo com o
+    desconto da nota rateado (7.500; o cartão é o PR 5)."""
+    cenario.ligar_regras_v2()
+    cl = cenario.get("/financeiro/custo-litro-leite", **MAR_Q)
+    assert cl["litros"] == pytest.approx(10029.15, abs=0.1)
+    assert cl["custo_total"] == 7500 and cl["custo_por_litro"] == pytest.approx(0.7478, abs=1e-4)
+    assert cl["litros_convertidos_de_kg"] is True and cl["unidade_origem"] == "kg"
+    assert cl["periodo_ajustado_para_mes_fechado"] is False
+
+
+def test_pr4_receita_bruta_e_deducao(cenario):
+    """Ex-xfail do PR 4: o desconto da nota do leite (Funrural/Senar) vira
+    dedução; a receita líquida e o resultado não mudam."""
+    cenario.ligar_regras_v2()
+    dm = cenario.dre()
+    assert (cenario.linha(dm, "RECEITA_VENDAS"), cenario.linha(dm, "DEDUCAO_IMPOSTOS")) == (10000, 150)
+    assert _contas_da_linha(dm, "DEDUCAO_IMPOSTOS") == {"(descontos na nota de venda)": 150.0}
+    assert cenario.linha(dm, "RECEITA_LIQUIDA") == 9850
+    assert (cenario.linha(dm, "EBITDA"), cenario.linha(dm, "RESULTADO_LIQUIDO")) == (750, -250)
+    # No caixa (L1 recebido em abril) a mesma abertura.
+    dc = cenario.dre(*ABR, "caixa")
+    assert (cenario.linha(dc, "RECEITA_VENDAS"), cenario.linha(dc, "DEDUCAO_IMPOSTOS")) == (10000, 150)
+
+
+def test_pr4_custo_litro_e_rmca_usam_o_mesmo_litro_e_rmca_bruta_com_liquida(cenario):
+    cenario.ligar_regras_v2()
+    cl = cenario.get("/financeiro/custo-litro-leite", **MAR_Q)
+    rm = cenario.get("/financeiro/rmca", **MAR_Q)
+    assert rm["preco_medio_litro_leite"]["litros"] == cl["litros"] == 10029.2
+    assert rm["gerencial"] == {
+        "receita_leite": 10000.0, "custo_alimentacao": 7500.0, "rmca": 2500.0,
+        "deducoes_receita_leite": 150.0, "receita_leite_liquida": 9850.0, "rmca_sobre_liquida": 2350.0,
+    }
+    assert rm["regras_v2"] is True and rm["fisico"]["receita_leite_liquida"] == 9850
+
+
+def test_pr4_custo_litro_periodo_parcial_vira_mes_fechado(cenario):
+    cenario.ligar_regras_v2()
+    cl = cenario.get("/financeiro/custo-litro-leite", data_inicio="2031-03-01", data_fim="2031-03-15")
+    assert cl["periodo"] == {"inicio": "2031-03-01", "fim": "2031-03-31"}
+    assert cl["periodo_solicitado"] == {"inicio": "2031-03-01", "fim": "2031-03-15"}
+    assert cl["periodo_ajustado_para_mes_fechado"] is True and "mês fechado" in cl["avisos"][0]
+    assert (cl["custo_total"], cl["litros"]) == (7500, 10029.2)
+
+
+def test_pr4_pr7_cenario_antes_e_depois(cenario):
+    """A tabela antes → depois deste PR (flag desligada → ligada), no estado
+    sem os PRs 2, 3, 5 e 6."""
+    def numeros():
+        dm, dc = cenario.dre(), cenario.dre(*ABR, "caixa")
+        cl = cenario.get("/financeiro/custo-litro-leite", **MAR_Q)
+        rm = cenario.get("/financeiro/rmca", **MAR_Q)["gerencial"]
+        return {
+            "receita_vendas_mar": cenario.linha(dm, "RECEITA_VENDAS"),
+            "deducoes_mar": cenario.linha(dm, "DEDUCAO_IMPOSTOS"),
+            "receita_liquida_mar": cenario.linha(dm, "RECEITA_LIQUIDA"),
+            "outras_abr_caixa": cenario.linha(dc, "OUTRAS_REC_DESP"),
+            "cmv_abr_caixa": cenario.linha(dc, "CUSTO_VARIAVEL"),
+            "resultado_abr_caixa": cenario.linha(dc, "RESULTADO_LIQUIDO"),
+            "litros_mar": cl["litros"], "custo_alimentacao_mar": cl["custo_total"], "custo_litro_mar": cl["custo_por_litro"],
+            "rmca_mar": rm["rmca"], "rmca_liquida_mar": rm.get("rmca_sobre_liquida"),
+        }
+    antes = numeros()
+    cenario.ligar_regras_v2()
+    depois = numeros()
+    assert {k: (antes[k], depois[k]) for k in antes} == {
+        "receita_vendas_mar": (9850, 10000),
+        "deducoes_mar": (0, 150),
+        "receita_liquida_mar": (9850, 9850),
+        "outras_abr_caixa": (0, 350),
+        "cmv_abr_caixa": (5900, 5900),
+        # 9.850 − 5.900 − 900 − 1.000 de depreciação (+350 de Outras).
+        "resultado_abr_caixa": (2050, 2400),
+        "litros_mar": (10320.0, 10029.2),
+        "custo_alimentacao_mar": (7800, 7500),
+        "custo_litro_mar": (0.7558, 0.7478),
+        "rmca_mar": (2200, 2500),
+        "rmca_liquida_mar": (None, 2350),
+    }
+
+
+def test_v2_pr4_pr7_nao_vazam_para_outra_fazenda(cenario):
+    """Multi-tenant: na fazenda 2 (sem flag) nota de receita com desconto e
+    baixa com juros seguem as regras antigas, e nada da 2 aparece na 1."""
+    cenario.ligar_regras_v2(fazenda_id=1)
+    cenario.estado["fazenda_id"] = 2
+    for cod, linha in (("9.1", "RECEITA_VENDAS"), ("9.2", "CUSTO_VARIAVEL")):
+        assert cenario.c.post("/financeiro/plano-contas", json={"codigo": cod, "nome": f"F2 {cod}", "ativa": True}).status_code == 200
+        cenario.put(f"/financeiro/plano-contas/{cod}/linha-dre", {"linha_dre": linha})
+    base = {"centro_custo": "Pecuária Leiteira", "fornecedor_cliente": "F2", "data_emissao": "2031-04-02",
+            "data_competencia": "2031-04-02", "data_vencimento": "2031-04-10"}
+    rec = cenario.c.post("/financeiro/lancamentos", json={**base, "tipo": "receita", "desconto": 50, "itens": [
+        {"produto": "Leite F2", "codigo_conta_gerencial": "9.1", "valor_total": 1000, "tipo_item": "servico"}]})
+    desp = cenario.c.post("/financeiro/lancamentos", json={**base, "tipo": "despesa", "itens": [
+        {"produto": "Ração F2", "codigo_conta_gerencial": "9.2", "valor_total": 500, "tipo_item": "servico"}]})
+    assert rec.status_code == desp.status_code == 201
+    cenario.put(f"/financeiro/lancamentos/{desp.json()['ids'][0]}/pagar",
+                {"data_pagamento": "2031-04-20", "valor_pago": 530, "forma_pagamento": "pix"})
+    d2 = cenario.dre(*ABR)
+    assert "regras_v2" not in d2
+    assert (cenario.linha(d2, "RECEITA_VENDAS"), cenario.linha(d2, "DEDUCAO_IMPOSTOS"), cenario.linha(d2, "OUTRAS_REC_DESP")) == (950, 0, 0)
+    # A 2 não paga nem estorna a nota da 1.
+    l3 = cenario.ids["L"]["L3"]["ids"][0]
+    assert cenario.c.post(f"/financeiro/lancamentos/{l3}/estornar", json={}).status_code == 404
+    cenario.estado["fazenda_id"] = 1
+    d1 = cenario.dre(*ABR, "caixa")
+    assert cenario.linha(d1, "OUTRAS_REC_DESP") == 350
+    assert all(x["numero_lancamento"] != desp.json()["numero_lancamento"] for x in d1["diferencas_baixa"])
+    assert cenario.linha(cenario.dre(*ABR), "RECEITA_VENDAS") == 0
+
+
+# =============================================================================
+# 4. O que os PRs seguintes resolvem — xfail ESTRITO, com o PR no motivo.
 #    Todos rodam com a flag LIGADA (as regras novas só valem com ela).
 # =============================================================================
 @pytest.mark.xfail(strict=True, reason="PR 2 (contas automáticas): a folha nasce com conta e item")
@@ -303,20 +560,6 @@ def test_pendente_pr3_pr5_numerador_dos_custos_final(cenario):
     cenario.classificar_plano_por_natureza()
     ch = cenario.get("/financeiro/custo-hectare", data_inicio="2031-03-01", data_fim="2031-03-31")
     assert (ch["despesas_total"], ch["cot"]) == (13140, 14140)
-
-
-@pytest.mark.xfail(strict=True, reason="PR 4 (leite kg→L): custo/litro usa os mesmos 10.029,2 L do RMCA")
-def test_pendente_pr4_custo_litro_converte_kg(cenario):
-    cenario.ligar_regras_v2()
-    cl = cenario.get("/financeiro/custo-litro-leite", data_inicio="2031-03-01", data_fim="2031-03-31")
-    assert cl["litros"] == pytest.approx(10029.15, abs=0.1)
-
-
-@pytest.mark.xfail(strict=True, reason="PR 4 (Funrural): desconto da nota de receita vira dedução")
-def test_pendente_pr4_receita_bruta_e_deducao(cenario):
-    cenario.ligar_regras_v2()
-    dm = cenario.dre()
-    assert (cenario.linha(dm, "RECEITA_VENDAS"), cenario.linha(dm, "DEDUCAO_IMPOSTOS")) == (10000, 150)
 
 
 @pytest.mark.xfail(strict=True, reason="PR 5 (cartão por item): a ração do cartão entra no CMV de março")
@@ -354,12 +597,6 @@ def test_pendente_pr6_caixa_real_boleto_inteiro(cenario):
     cr = cenario.get("/financeiro/caixa-real", dias=90)
     itens = [i for p in cr["serie"] for i in p["itens"] if "Ração fazenda" in (i["descricao"] or "")]
     assert itens and itens[0]["valor"] == 1000
-
-
-@pytest.mark.xfail(strict=True, reason="PR 7 (juros e descontos): −50 de juros do L3 e +400 de desconto do L7 em Outras")
-def test_pendente_pr7_outras_receitas_e_despesas_da_baixa(cenario):
-    cenario.ligar_regras_v2()
-    assert cenario.linha(cenario.dre("2031-04-01", "2031-04-30", "caixa"), "OUTRAS_REC_DESP") == 350
 
 
 @pytest.mark.xfail(strict=True, reason="PR 8 (DRE única): campos legados (CSV/e-mail do Portal) iguais à cascata")

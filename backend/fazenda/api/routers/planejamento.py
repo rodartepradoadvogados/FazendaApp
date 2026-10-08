@@ -171,6 +171,11 @@ def comparativo_orcado_realizado(
     # Último dia real do mes_fim (evita cortar lançamentos do dia 29-31).
     data_fim = date(ano, mes_fim, calendar.monthrange(ano, mes_fim)[1])
 
+    from fazenda.rules.parametros import regras_v2_ativas
+    if regras_v2_ativas(session, fazenda_id):
+        return _comparativo_v2(session, fazenda_id, ano, mes_inicio, mes_fim, data_ini, data_fim,
+                               centro_custo or None, linhas, nomes)
+
     query_itens = sem_itens_de_vale(
         select(LancamentoItem).where(LancamentoItem.data_competencia >= data_ini, LancamentoItem.data_competencia <= data_fim)
     )
@@ -209,6 +214,45 @@ def comparativo_orcado_realizado(
         "linhas": resultado,
         "total_orcado": round(sum(l["orcado"] for l in resultado), 2),
         "total_realizado": round(sum(l["realizado"] for l in resultado), 2),
+    }
+
+
+def _comparativo_v2(
+    session: Session, fazenda_id: int | None, ano: int, mes_inicio: int, mes_fim: int,
+    data_ini: date, data_fim: date, centro_custo: Optional[str], linhas: dict[str, dict], nomes: dict[str, str],
+) -> dict:
+    """Realizado com as regras v2 (Fase A, PR 7 — R4, fonte única): os
+    MESMOS registros da DRE de competência (financeiro.registros_competencia_v2),
+    em vez de `LancamentoItem.valor_total` cru. Muda: o desconto da nota de
+    despesa sai rateado nos itens (antes, o item bruto), a receita entra bruta
+    com o Funrural/Senar e descontos da nota numa linha de dedução própria, e o
+    filtro de centro de custo respeita o centro de cada item. A conta continua
+    pela correspondência exata do código (rollup de grupo e totais separados
+    por receita/despesa ficam para o PR 8)."""
+    from fazenda.api.routers.financeiro import registros_competencia_v2
+
+    for r in registros_competencia_v2(session, fazenda_id, data_ini, data_fim, centro_custo):
+        # Magnitude, como sempre foi (o realizado de cada linha é positivo; o
+        # tipo da linha diz se é receita ou despesa).
+        chave = r.get("codigo_conta") or "(sem conta)"
+        l = linhas.setdefault(chave, {
+            "codigo_conta_gerencial": chave, "nome_conta_gerencial": nomes.get(chave, r.get("descricao") or chave),
+            "tipo": r.get("tipo") or r.get("tipo_nota"), "orcado": 0.0, "realizado": 0.0,
+        })
+        l["realizado"] = round(l["realizado"] + (r.get("valor") or 0.0), 2)
+
+    resultado = []
+    for l in linhas.values():
+        desvio = round(l["realizado"] - l["orcado"], 2)
+        desvio_pct = round((desvio / l["orcado"]) * 100, 1) if l["orcado"] else None
+        resultado.append({**l, "desvio": desvio, "desvio_pct": desvio_pct})
+    resultado.sort(key=lambda x: x["codigo_conta_gerencial"])
+    return {
+        "periodo": {"ano": ano, "mes_inicio": mes_inicio, "mes_fim": mes_fim},
+        "linhas": resultado,
+        "total_orcado": round(sum(l["orcado"] for l in resultado), 2),
+        "total_realizado": round(sum(l["realizado"] for l in resultado), 2),
+        "regras_v2": True,
     }
 
 

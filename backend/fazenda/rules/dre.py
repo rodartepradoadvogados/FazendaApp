@@ -218,7 +218,11 @@ def montar_cascata_dre(
         NAO_INFORMADA. A depreciação continua entrando;
       • `resultado_baixas` (ganho > 0 / perda < 0 de capital na baixa de bem,
         ver rules/patrimonio.py::resultado_baixa) entra em OUTRAS_REC_DESP
-        como a pseudoconta "(resultado de baixa de patrimônio)".
+        como a pseudoconta "(resultado de baixa de patrimônio)";
+      • registro com `linha_forcada` (uma das 9 linhas atribuíveis) entra
+        nessa linha, sem passar pelo plano de contas: são as pseudocontas de
+        rules/juros_descontos.py — juros/desconto da baixa em OUTRAS_REC_DESP
+        (PR 7) e desconto da nota de receita em DEDUCAO_IMPOSTOS (PR 4).
     """
     por_linha: dict[str, dict] = {
         chave: {"receita": 0.0, "despesa": 0.0, "contas": {}} for chave in CODIGOS_ATRIBUIVEIS
@@ -242,6 +246,11 @@ def montar_cascata_dre(
         codigo = registro.get("codigo_conta")
         nome = registro.get("descricao")
         linha = resolver_linha_dre(codigo, mapa_linha_por_codigo)
+        if regras_v2 and registro.get("linha_forcada") in por_linha:
+            # Pseudoconta das regras v2 (juros/desconto da baixa → Outras;
+            # desconto da nota de receita → Deduções): não existe no plano,
+            # a linha vem pronta de quem montou o registro.
+            linha = registro["linha_forcada"]
 
         if regras_v2:
             natureza = registro.get("natureza") or OPERACIONAL

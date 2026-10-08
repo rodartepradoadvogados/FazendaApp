@@ -7834,6 +7834,9 @@ export async function fetchOpcoesRetencaoPagamento(p: { pessoaId?: number; lanca
   if (!res.ok) throw new Error(`retencao-opcoes ${res.status}`);
   return res.json();
 }
+/** Destino do desconto da baixa nos relatórios (regras v2, PR 7). */
+export type NaturezaDiferenca = "financeiro" | "abatimento";
+
 export async function marcarPagoFinanceiro(id: number, dados: {
   data_pagamento: string; valor_pago: number; conta_bancaria?: string; numero_documento_pagamento?: string;
   forma_pagamento?: string; data_vencimento_cartao?: string;
@@ -7842,6 +7845,10 @@ export async function marcarPagoFinanceiro(id: number, dados: {
   // parcelas do mesmo lançamento, em vez de virar desconto/acréscimo — ver
   // PUT /financeiro/lancamentos/{id}/pagar.
   parcelas_diferenca?: { data_vencimento: string; valor: number }[];
+  // O que o DESCONTO da baixa é para os relatórios (regras v2, PR 7):
+  // "financeiro" (padrão: Outras receitas e despesas) ou "abatimento" (reduz
+  // o valor da própria conta). Acréscimo é sempre juro/multa.
+  natureza_diferenca?: NaturezaDiferenca;
 }) {
   // Mesma chave em todas as tentativas: se uma delas chegou a gravar a baixa
   // no servidor mas a resposta se perdeu no caminho de volta (o "Failed to
@@ -7889,6 +7896,7 @@ export type BaixaLoteItem = {
   // sempre). Preenchido, a diferença migra inteira para nova(s) parcela(s)
   // do mesmo lançamento — ver PUT /financeiro/lancamentos/baixa-lote-detalhada.
   parcelas_diferenca?: { data_vencimento: string; valor: number }[];
+  natureza_diferenca?: NaturezaDiferenca;
 };
 export async function criarBaixaLoteDetalhada(itens: BaixaLoteItem[]) {
   const chave = gerarChaveIdempotencia();
