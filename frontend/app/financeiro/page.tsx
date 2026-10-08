@@ -206,7 +206,9 @@ function ThOrd({ rotulo, chave, sortKey, sortDir, onSort, style }: {
 import { contaDoLanc, casaContaGerencial, FiltroContaGerencial } from "@/components/financeiro/filtroContaGerencial";
 import ContasListaView, { PilulaSituacao } from "@/components/financeiro/ContasListaView";
 import ConsultasView from "@/components/financeiro/ConsultasView";
-import { hojeLocal, situacaoDe } from "@/lib/financeiroSituacao";
+import OndeFoiParar from "@/components/financeiro/OndeFoiParar";
+import { hojeLocal, situacaoDe, valorCompetencia, valorRealizado } from "@/lib/financeiroSituacao";
+import { migrarFiltrosSalvosAntigos } from "@/lib/financeiroFiltrosMigracao";
 
 export default function FinanceiroPage() {
   const [regs, setRegs] = useState<Lanc[] | null>(null);
@@ -335,6 +337,7 @@ export default function FinanceiroPage() {
     const qs = new URLSearchParams(window.location.search);
     const ir = qs.get("ir");
     const ref = qs.get("ref");
+    migrarFiltrosSalvosAntigos();
     if (ir) irPara(ir as Rel, ref);
     else if (ref) setNotaAlvoRef(ref);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -492,8 +495,10 @@ export default function FinanceiroPage() {
     });
   }, [regs, contasBase, rel, inicio, fim, centro, contaBanco, relTipo, relFornecedor, relProduto, relDocumento, relConta, campoPeriodoContas]);
 
-  const receitas = filtrados.filter((r) => r.tipo === "receita").reduce((a, r) => a + r.valor, 0);
-  const despesas = filtrados.filter((r) => r.tipo === "despesa").reduce((a, r) => a + r.valor, 0);
+  // Valor que cada relatório soma: caixa = o efetivamente pago/recebido; DRE (competência) = o valor da parte, sem contar duas vezes o restante reparcelado.
+  const valorDoRel = (r: Lanc) => (rel === "dre" ? valorCompetencia(r) : valorRealizado(r));
+  const receitas = filtrados.filter((r) => r.tipo === "receita").reduce((a, r) => a + valorDoRel(r), 0);
+  const despesas = filtrados.filter((r) => r.tipo === "despesa").reduce((a, r) => a + valorDoRel(r), 0);
   const resultado = receitas - despesas;
 
   // Panorama da coluna esquerda de Contas a pagar/a receber (ver tela
@@ -518,7 +523,7 @@ export default function FinanceiroPage() {
     filtrados.forEach((r) => {
       const m = campoMes(r); if (!m) return;
       const e = by.get(m) ?? { mes: m, entradas: 0, saidas: 0 };
-      if (r.tipo === "receita") e.entradas += r.valor; else e.saidas += r.valor;
+      if (r.tipo === "receita") e.entradas += valorDoRel(r); else e.saidas += valorDoRel(r);
       by.set(m, e);
     });
     let acc = 0;
@@ -535,7 +540,7 @@ export default function FinanceiroPage() {
     filtrados.forEach((r) => {
       const d = campoData(r); if (!d) return;
       const e = by.get(d) ?? { dia: d, entradas: 0, saidas: 0 };
-      if (r.tipo === "receita") e.entradas += r.valor; else e.saidas += r.valor;
+      if (r.tipo === "receita") e.entradas += valorDoRel(r); else e.saidas += valorDoRel(r);
       by.set(d, e);
     });
     let acc = 0;
@@ -563,7 +568,7 @@ export default function FinanceiroPage() {
       if (!codigoFolha) {
         const k = r.descricao || "(sem conta)";
         const e = by.get(k) ?? { conta: k, nome: k, codigo: "", nivel: 0, receitas: 0, despesas: 0 };
-        if (r.tipo === "receita") e.receitas += r.valor; else e.despesas += r.valor;
+        if (r.tipo === "receita") e.receitas += valorDoRel(r); else e.despesas += valorDoRel(r);
         by.set(k, e);
         return;
       }
@@ -574,7 +579,7 @@ export default function FinanceiroPage() {
         if (!nomeConhecido && !ehFolha) return; // nível intermediário sem nome cadastrado — não gera linha "só número"
         const nome = nomeConhecido || (r.descricao || codigo);
         const e = by.get(codigo) ?? { conta: codigo, nome, codigo, nivel: i + 1, receitas: 0, despesas: 0 };
-        if (r.tipo === "receita") e.receitas += r.valor; else e.despesas += r.valor;
+        if (r.tipo === "receita") e.receitas += valorDoRel(r); else e.despesas += valorDoRel(r);
         by.set(codigo, e);
       });
     });
@@ -599,8 +604,8 @@ export default function FinanceiroPage() {
         if (!nomeConhecido && !ehFolha) return; // nível intermediário sem nome cadastrado — não gera linha "só número"
         const nome = nomeConhecido || (r.descricao || codigo);
         const e = by.get(codigo) ?? { codigo, nome, nivel: i + 1, porMes: {}, total: 0 };
-        e.porMes[mes] = Math.round(((e.porMes[mes] || 0) + r.valor) * 100) / 100;
-        e.total = Math.round((e.total + r.valor) * 100) / 100;
+        e.porMes[mes] = Math.round(((e.porMes[mes] || 0) + valorDoRel(r)) * 100) / 100;
+        e.total = Math.round((e.total + valorDoRel(r)) * 100) / 100;
         by.set(codigo, e);
       });
     });
@@ -611,8 +616,8 @@ export default function FinanceiroPage() {
   const livro = useMemo(() => {
     let acc = 0;
     return [...filtrados].filter((r) => r.data_pagamento).sort((a, b) => (a.data_pagamento! < b.data_pagamento! ? -1 : 1)).map((r) => {
-      const entrada = r.tipo === "receita" ? r.valor : 0;
-      const saida = r.tipo === "despesa" ? r.valor : 0;
+      const entrada = r.tipo === "receita" ? valorRealizado(r) : 0;
+      const saida = r.tipo === "despesa" ? valorRealizado(r) : 0;
       acc += entrada - saida;
       return { data: r.data_pagamento, descricao: r.descricao, fornecedor: r.fornecedor, entrada, saida, saldo: Math.round(acc) };
     });
@@ -706,6 +711,7 @@ export default function FinanceiroPage() {
             <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Escolha o relatório, o período e o centro de custo — indicadores, consolidado e gráfico.</p>
           )}
         </div>
+        <OndeFoiParar onIr={(d) => irPara(d)} />
       </div>
 
       {error && <div className="alert-critico mb-4"><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os lançamentos financeiros</a>.</span></div>}
