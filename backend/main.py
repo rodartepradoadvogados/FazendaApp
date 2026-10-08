@@ -84,6 +84,7 @@ from fazenda.api.routers import (
     relatorio_compra_semen,
     relatorio_compra_venda_animal,
     relatorio_custo_hectare,
+    reguas_referencia,
     relatorio_custo_producao,
     relatorio_custo_safra,
     relatorio_rastreabilidade_sanitaria,
@@ -944,6 +945,7 @@ app.include_router(faturas_fornecedor.router, dependencies=[Depends(exigir_modul
 app.include_router(cartao_credito.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 app.include_router(relatorio_custo_hectare.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 app.include_router(relatorio_custo_producao.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
+app.include_router(reguas_referencia.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 app.include_router(relatorio_custo_safra.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 # Planejamento (Orçamento/Planejamento financeiro) é uma sub-aba de Financeiro
 # na permissão do usuário, mas um módulo comercial PRÓPRIO no contrato (Silver
