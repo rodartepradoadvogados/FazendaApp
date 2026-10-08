@@ -75,7 +75,7 @@ test("gráfico semanal acima de 21 dias: uma barra por semana, a última mais cu
   // 31 dias (0..30) = 5 semanas: 0-6, 7-13, 14-20, 21-27, 28-30
   assert.equal(cols.length, 1 + 5);
   assert.deepEqual(cols.slice(1).map((c) => c.valor), [3, 4, 0, 0, 8]);
-  assert.deepEqual([cols[1].sub, cols[1].st, cols[2].st, cols[3].st], ["sem. 1", "logo", "logo", "aberto"]);
+  assert.deepEqual([cols[1].sub, cols[1].st, cols[2].st, cols[3].st], ["sem. 1", "logo", "aberto", "aberto"]);
   assert.deepEqual([cols[5].de, cols[5].ate], [em(28), em(30)]);
   assert.equal(cols[5].dica, "04/11 a 06/11");
   assert.equal(colunasGrafico([], HOJE, 21).length, 1 + 22); // 21 ainda é diário

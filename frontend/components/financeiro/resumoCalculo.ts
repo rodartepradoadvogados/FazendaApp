@@ -87,7 +87,8 @@ const dowDe = (iso: string) => { const [a, m, d] = iso.split("-").map(Number); r
 /**
  * Barras do gráfico: "Vencidas" (acumulado até ontem) + uma por dia de hoje a
  * hoje+N; acima de 21 dias, uma por semana (a última pode ser mais curta).
- * Até o 7º dia a barra é "logo"; a partir do 8º, "aberto".
+ * Por dia: até o 7º dia a barra é "logo"; a partir do 8º, "aberto". Por semana:
+ * só a 1ª semana (hoje a hoje+6) é "logo" — a 2ª já é quase toda do 8º dia em diante.
  */
 export function colunasGrafico(abertas: Lanc[], hoje: string, dias: number): Coluna[] {
   const venc = abertas.filter((l) => l.data_vencimento && diasAte(l.data_vencimento, hoje) < 0);
@@ -113,7 +114,7 @@ export function colunasGrafico(abertas: Lanc[], hoje: string, dias: number): Col
       const xs = naJanela(abertas, hoje, a, z);
       cols.push({
         chave: de, rotulo: dm(de), sub: `sem. ${k + 1}`, dica: `${dm(de)} a ${dm(ate)}`, de, ate,
-        valor: soma(xs), n: xs.length, st: a <= 7 ? "logo" : "aberto", hoje: k === 0,
+        valor: soma(xs), n: xs.length, st: k === 0 ? "logo" : "aberto", hoje: k === 0,
       });
     }
   }
