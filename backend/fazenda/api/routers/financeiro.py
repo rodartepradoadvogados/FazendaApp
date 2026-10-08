@@ -48,10 +48,15 @@ from fazenda.rules.patrimonio import (
 )
 from fazenda.rules.depreciacao_periodo import calcular_depreciacao_periodo
 from fazenda.rules.dre import LINHAS_DRE_VALIDAS, montar_cascata_dre
+from fazenda.rules.datas import hoje_local
+from fazenda.rules.natureza import (
+    INVESTIMENTO, NATUREZAS, OPERACIONAL, ROTULOS as ROTULOS_NATUREZA, ContextoNatureza,
+    entra_nos_custos, normalizar_natureza,
+)
 from fazenda.rules.caixa_real import projetar_caixa, sugerir_fundo_reserva
 from fazenda.rules.parametros import (
     caixa_dias_projecao, caixa_fundo_reserva, caixa_meses_folga_sugestao,
-    meta_rmca, patrimonio_atualizacao_valor_mercado_meses,
+    meta_rmca, patrimonio_atualizacao_valor_mercado_meses, regras_v2_ativas,
 )
 from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo, nome_seguro_storage
 from fazenda.config import settings
@@ -319,6 +324,8 @@ class ItemIn(BaseModel):
     # 6 frascos), e a entrada abre um lote de compra em vez de só somar no
     # agregado — ver o loop de entrada automática abaixo.
     apresentacao_id: Optional[int] = None
+    # Natureza econômica SÓ deste item (rules/natureza.py) — None = a da nota.
+    natureza_fin: Optional[str] = None
 
 
 class PatrimonioIn(BaseModel):
@@ -355,6 +362,8 @@ class PatrimonioIn(BaseModel):
     valor_residual: Optional[float] = None
     valor_mercado_atual: Optional[float] = None
     atualizacao_valor_mercado_frequencia_meses: Optional[int] = None
+    # Centro de custo do bem (depreciação por centro — rateio no PR 9).
+    centro_custo: Optional[str] = None
 
 
 class LancamentoIn(BaseModel):
@@ -396,6 +405,10 @@ class LancamentoIn(BaseModel):
     # flag "Patrimônio", e Controle Financeiro > Patrimônio > "+ Novo
     # patrimônio" > "É uma compra agora?"). None = lançamento comum, sem vínculo.
     criar_patrimonio: Optional[PatrimonioIn] = None
+    # Natureza econômica da nota (rules/natureza.py): None = automática (pela
+    # conta). Com `criar_patrimonio` numa despesa, nasce INVESTIMENTO quando não
+    # vier outra explícita. Só muda relatório com a flag financeiro_regras_v2.
+    natureza_fin: Optional[str] = None
 
 
 FORMAS_PAGAMENTO = ["pix", "transferencia", "boleto", "credito", "debito"]
@@ -524,6 +537,7 @@ def _periodo_filtradas_dre(
 def _registros_dre_para_cascata(
     session: Session, filtradas: list[ContaGerencial], valores: dict[int, float],
     centro_custo: Optional[str], fazenda_id: int | None,
+    contexto_natureza: ContextoNatureza | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Achata `filtradas` em registros por CONTA GERENCIAL DO ITEM
     (LancamentoItem), não pelo código resumido da nota
@@ -550,7 +564,13 @@ def _registros_dre_para_cascata(
     de retorno (`fallback_notas`) para transparência: a classificação por
     item não pôde ser aplicada ali. Sem este fallback, esse valor sumiria da
     cascata inteira (nem classificado, nem em `nao_classificado`) — violando
-    a garantia de que a DRE nunca finge que fecha (ver `montar_cascata_dre`)."""
+    a garantia de que a DRE nunca finge que fecha (ver `montar_cascata_dre`).
+
+    Regras v2 (Fase A): com `contexto_natureza`, cada registro leva também a
+    `natureza` resolvida (rules/natureza.py) — item > nota > plano. Sem ele
+    (flag desligada), `natureza` vai None e o motor ignora. Todo registro
+    carrega `conta_id`/`numero_lancamento`/`tipo_nota` para quem precisa
+    rastrear a origem (custos, script de impacto)."""
     numeros = {c.numero_lancamento for c in filtradas if c.numero_lancamento}
     itens_por_numero: dict[str, list[LancamentoItem]] = {}
     if numeros:
@@ -585,6 +605,11 @@ def _registros_dre_para_cascata(
             registros.append({
                 "codigo_conta": c.codigo_conta, "tipo": c.tipo, "valor": valor_c,
                 "descricao": c.descricao, "origem": "fallback_conta",
+                "conta_id": c.id, "numero_lancamento": c.numero_lancamento, "tipo_nota": c.tipo, "item_id": None,
+                "natureza": (
+                    contexto_natureza.natureza(conta=c, codigo_conta=c.codigo_conta)
+                    if contexto_natureza is not None else None
+                ),
             })
             fallback_notas.append({
                 "numero_lancamento": c.numero_lancamento, "codigo_conta": c.codigo_conta, "valor": valor_c,
@@ -607,6 +632,11 @@ def _registros_dre_para_cascata(
                 "valor": fatia,
                 "descricao": it.nome_conta_gerencial or it.produto,
                 "origem": "item",
+                "conta_id": c.id, "numero_lancamento": c.numero_lancamento, "tipo_nota": c.tipo, "item_id": it.id,
+                "natureza": (
+                    contexto_natureza.natureza(item=it, conta=c, codigo_conta=it.codigo_conta_gerencial)
+                    if contexto_natureza is not None else None
+                ),
             })
 
     return registros, fallback_notas
@@ -639,6 +669,161 @@ def _depreciacao_periodo_fazenda(
     return calcular_depreciacao_periodo(itens, data_inicio, data_fim)
 
 
+def _mapa_natureza_plano(session: Session, fazenda_id: int | None) -> dict[str, str]:
+    """{codigo: natureza_fin} só das contas do plano com natureza própria — a
+    herança por prefixo é resolvida em rules.natureza.resolver_natureza_plano."""
+    query = select(PlanoContaGerencial.codigo, PlanoContaGerencial.natureza_fin).where(
+        PlanoContaGerencial.natureza_fin.is_not(None)
+    )
+    if fazenda_id is not None:
+        query = query.where(PlanoContaGerencial.fazenda_id == fazenda_id)
+    return {codigo: natureza for codigo, natureza in session.exec(query).all() if natureza}
+
+
+def _patrimonios_vendidos(session: Session, fazenda_id: int | None) -> frozenset[int]:
+    """Bens baixados com venda — receita ligada a eles é desinvestimento (ver
+    rules/natureza.py, passo 3), e o resultado entra pela baixa."""
+    query = select(Patrimonio.id).where(Patrimonio.data_baixa.is_not(None))
+    if fazenda_id is not None:
+        query = query.where(Patrimonio.fazenda_id == fazenda_id)
+    query = query.where(Patrimonio.motivo_baixa.in_(sorted(MOTIVOS_BAIXA_COM_VENDA)))
+    return frozenset(session.exec(query).all())
+
+
+def _contexto_natureza(
+    session: Session, fazenda_id: int | None,
+    sobrepor_conta: dict[int, str] | None = None, sobrepor_item: dict[int, str] | None = None,
+    sobrepor_plano: dict[str, str] | None = None,
+) -> ContextoNatureza:
+    """`sobrepor_*`: naturezas SIMULADAS (script de impacto, backfill ainda não
+    gravado) — nada é escrito no banco."""
+    return ContextoNatureza(
+        mapa_natureza_plano={**_mapa_natureza_plano(session, fazenda_id), **(sobrepor_plano or {})},
+        mapa_linha_dre=_mapa_linha_por_codigo(session, fazenda_id),
+        patrimonios_vendidos=_patrimonios_vendidos(session, fazenda_id),
+        sobrepor_conta=dict(sobrepor_conta or {}),
+        sobrepor_item=dict(sobrepor_item or {}),
+    )
+
+
+def _resultado_baixas_periodo(
+    session: Session, fazenda_id: int | None, data_inicio: date, data_fim: date,
+) -> dict:
+    """Ganho (+) ou perda (−) de capital dos bens baixados NO PERÍODO — irmã de
+    `_depreciacao_periodo_fazenda`. Fato gerador = data da baixa, nos dois
+    regimes (como a depreciação, não é saída de caixa). Vai para OUTRAS_REC_DESP
+    (rules/patrimonio.py::resultado_baixa) — só com as regras v2."""
+    query = select(Patrimonio).where(Patrimonio.data_baixa.is_not(None))
+    if fazenda_id is not None:
+        query = query.where(Patrimonio.fazenda_id == fazenda_id)
+    total = 0.0
+    itens: list[dict] = []
+    for p in session.exec(query).all():
+        if not (data_inicio <= p.data_baixa <= data_fim):
+            continue
+        r = resultado_baixa(p.model_dump(), hoje_local())
+        if not r or not r["resultado"]:
+            continue
+        total = round(total + r["resultado"], 2)
+        itens.append({
+            "patrimonio_id": p.id, "codigo": p.codigo, "nome": p.nome,
+            "data_baixa": p.data_baixa.isoformat(), "motivo": r["motivo"],
+            "valor_recebido": r["valor_recebido"], "valor_contabil": r["valor_contabil"],
+            "resultado": r["resultado"], "estimado": r["estimado"],
+        })
+    return {"total": total, "itens": itens}
+
+
+def _pendencias_natureza(registros: list[dict], filtradas: list[ContaGerencial]) -> list[dict]:
+    """Despesa classificada como INVESTIMENTO sem bem no Patrimônio: sai da DRE
+    mas NÃO vai depreciar — o custo some do resultado de vez. Vira pendência
+    nas notas de método (e aviso no formulário)."""
+    por_id = {c.id: c for c in filtradas}
+    pendentes: dict[str, dict] = {}
+    for r in registros:
+        if r.get("natureza") != INVESTIMENTO or r.get("tipo_nota") != "despesa":
+            continue
+        conta = por_id.get(r.get("conta_id"))
+        if conta is None or conta.patrimonio_id is not None:
+            continue
+        chave = conta.numero_lancamento or f"id-{conta.id}"
+        entrada = pendentes.setdefault(chave, {
+            "numero_lancamento": conta.numero_lancamento, "descricao": conta.descricao,
+            "fornecedor": conta.fornecedor_cliente, "valor": 0.0,
+            "motivo": "Investimento sem bem no Patrimônio: não vai depreciar.",
+        })
+        entrada["valor"] = round(entrada["valor"] + (r.get("valor") or 0.0), 2)
+    return sorted(pendentes.values(), key=lambda x: -x["valor"])
+
+
+def calcular_dre(
+    session: Session, fazenda_id: int | None, data_inicio: date, data_fim: date,
+    centro_custo: Optional[str], regime: str, *, regras_v2: bool,
+    sobrepor_conta: dict[int, str] | None = None, sobrepor_item: dict[int, str] | None = None,
+    sobrepor_plano: dict[str, str] | None = None,
+) -> dict:
+    """Motor da DRE (GET /financeiro/dre) — separado da rota para o script de
+    impacto (scripts/impacto_relatorios_v2.py) rodar o motor antigo e o novo
+    sobre os mesmos dados. `regras_v2=False` reproduz exatamente a DRE de
+    antes da Fase A; `sobrepor_*` simula naturezas sem gravar nada."""
+    filtradas, valores = _periodo_filtradas_dre(session, data_inicio, data_fim, centro_custo, regime, fazenda_id)
+
+    receitas = sum(valores.get(c.id, 0.0) for c in filtradas if c.tipo == "receita")
+    despesas = sum(valores.get(c.id, 0.0) for c in filtradas if c.tipo == "despesa")
+    resultado = receitas - despesas
+
+    # Agrupa por código de conta (legado — mantido tal qual para não quebrar
+    # nenhum consumidor que ainda olhe este campo, ver docstring de `dre`).
+    por_conta: dict[str, dict] = {}
+    for c in filtradas:
+        codigo = c.codigo_conta or "Sem classificação"
+        nivel1 = codigo.split(".")[0] if "." in codigo else codigo
+        if nivel1 not in por_conta:
+            por_conta[nivel1] = {"descricao": c.descricao or "", "receitas": 0.0, "despesas": 0.0}
+        if c.tipo == "receita":
+            por_conta[nivel1]["receitas"] += valores.get(c.id, 0.0)
+        else:
+            por_conta[nivel1]["despesas"] += valores.get(c.id, 0.0)
+
+    contexto = (
+        _contexto_natureza(session, fazenda_id, sobrepor_conta, sobrepor_item, sobrepor_plano)
+        if regras_v2 else None
+    )
+    registros, fallback_notas = _registros_dre_para_cascata(
+        session, filtradas, valores, centro_custo, fazenda_id, contexto,
+    )
+    mapa_linha = contexto.mapa_linha_dre if contexto is not None else _mapa_linha_por_codigo(session, fazenda_id)
+    depreciacao = _depreciacao_periodo_fazenda(session, fazenda_id, data_inicio, data_fim)
+    baixas = _resultado_baixas_periodo(session, fazenda_id, data_inicio, data_fim) if regras_v2 else None
+    cascata = montar_cascata_dre(
+        registros, mapa_linha, depreciacao["total"],
+        regras_v2=regras_v2, resultado_baixas=(baixas or {}).get("total", 0.0),
+    )
+
+    resposta = {
+        "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
+        "regime": regime,
+        "centro_custo": centro_custo,
+        "receitas_total": round(receitas, 2),
+        "despesas_total": round(despesas, 2),
+        "resultado": round(resultado, 2),
+        "por_conta": por_conta,
+        "cascata": cascata["linhas"],
+        "nao_classificado": cascata["nao_classificado"],
+        "fora_da_dre": cascata["fora_da_dre"],
+        "depreciacao_periodo": {"total": depreciacao["total"], "inconsistencias": depreciacao["inconsistencias"]},
+        "fallback_notas_sem_item": fallback_notas,
+    }
+    if regras_v2:
+        # Chaves novas SÓ com a flag ligada: com ela desligada a resposta é
+        # byte a byte a de antes (o CSV do Portal imprime todas as chaves).
+        resposta["regras_v2"] = True
+        resposta["resultado_baixas_periodo"] = baixas
+        resposta["pendencias_natureza"] = _pendencias_natureza(registros, filtradas)
+    resposta["_registros"] = registros  # interno (script de impacto); a rota remove
+    return resposta
+
+
 @router.get("/dre")
 def dre(
     data_inicio: date = Query(..., description="Data inicial (competência)"),
@@ -659,45 +844,82 @@ def dre(
     quebrar); a cascata (`cascata`, `nao_classificado`, `fora_da_dre`,
     `depreciacao_periodo`, `fallback_notas_sem_item`) é a novidade desta
     onda — ver contrato completo na docstring do módulo fazenda/rules/dre.py.
+
+    `regras_v2` diz se esta fazenda usa as regras novas da Fase A (flag
+    `financeiro_regras_v2`, ver docs/financeiro-regras-v2.md). Ligada, a
+    resposta ganha `fora_da_dre.por_natureza`/`grupos`,
+    `resultado_baixas_periodo` e `pendencias_natureza`.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    filtradas, valores = _periodo_filtradas_dre(session, data_inicio, data_fim, centro_custo, regime, fazenda_id)
+    resposta = calcular_dre(
+        session, fazenda_id, data_inicio, data_fim, centro_custo, regime,
+        regras_v2=regras_v2_ativas(session, fazenda_id),
+    )
+    resposta.pop("_registros", None)
+    return resposta
 
-    receitas = sum(valores.get(c.id, 0.0) for c in filtradas if c.tipo == "receita")
-    despesas = sum(valores.get(c.id, 0.0) for c in filtradas if c.tipo == "despesa")
-    resultado = receitas - despesas
 
-    # Agrupa por código de conta (legado — mantido tal qual para não quebrar
-    # nenhum consumidor que ainda olhe este campo, ver docstring acima).
-    por_conta: dict[str, dict] = {}
-    for c in filtradas:
-        codigo = c.codigo_conta or "Sem classificação"
+def custos_operacionais_periodo(
+    session: Session, fazenda_id: int | None, data_inicio: date, data_fim: date,
+    centro_custo: Optional[str],
+    sobrepor_conta: dict[int, str] | None = None, sobrepor_item: dict[int, str] | None = None,
+    sobrepor_plano: dict[str, str] | None = None,
+) -> dict:
+    """Numerador ÚNICO dos custos por hectare, por vaca/lote e por safra com as
+    regras v2 (Fase A, R1/R4): as mesmas notas e valores da DRE de competência
+    (vale descontado, rateio de centro de custo), achatadas por item, e só o
+    que tem natureza OPERACIONAL. Investimento, financiamento, capital,
+    adiantamento, obrigação e NAO_ENTRA_NA_DRE ficam fora (`fora_por_natureza`).
+    O COT soma a depreciação do período — a MESMA da DRE (sem filtro de centro
+    por enquanto: o rateio por centro é o PR 9).
+
+    Sem nada fora do operacional, `despesas_total` é idêntico ao numerador
+    antigo (os registros redistribuem exatamente o valor de cada nota)."""
+    filtradas, valores = _periodo_filtradas_dre(session, data_inicio, data_fim, centro_custo, "competencia", fazenda_id)
+    contexto = _contexto_natureza(session, fazenda_id, sobrepor_conta, sobrepor_item, sobrepor_plano)
+    registros, _fallback = _registros_dre_para_cascata(session, filtradas, valores, centro_custo, fazenda_id, contexto)
+    operacional = 0.0
+    fora: dict[str, float] = {}
+    por_categoria: dict[str, dict] = {}
+    for r in registros:
+        if r.get("tipo_nota") != "despesa":
+            continue
+        valor = r.get("valor") or 0.0
+        natureza = r.get("natureza") or OPERACIONAL
+        if not entra_nos_custos(natureza):
+            fora[natureza] = round(fora.get(natureza, 0.0) + valor, 2)
+            continue
+        operacional += valor
+        codigo = r.get("codigo_conta") or "Sem classificação"
         nivel1 = codigo.split(".")[0] if "." in codigo else codigo
-        if nivel1 not in por_conta:
-            por_conta[nivel1] = {"descricao": c.descricao or "", "receitas": 0.0, "despesas": 0.0}
-        if c.tipo == "receita":
-            por_conta[nivel1]["receitas"] += valores.get(c.id, 0.0)
-        else:
-            por_conta[nivel1]["despesas"] += valores.get(c.id, 0.0)
-
-    registros, fallback_notas = _registros_dre_para_cascata(session, filtradas, valores, centro_custo, fazenda_id)
-    mapa_linha = _mapa_linha_por_codigo(session, fazenda_id)
+        cat = por_categoria.setdefault(nivel1, {"descricao": r.get("descricao") or "", "valor": 0.0})
+        cat["valor"] += valor
     depreciacao = _depreciacao_periodo_fazenda(session, fazenda_id, data_inicio, data_fim)
-    cascata = montar_cascata_dre(registros, mapa_linha, depreciacao["total"])
-
+    operacional = round(operacional, 2)
     return {
-        "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
-        "regime": regime,
-        "centro_custo": centro_custo,
-        "receitas_total": round(receitas, 2),
-        "despesas_total": round(despesas, 2),
-        "resultado": round(resultado, 2),
-        "por_conta": por_conta,
-        "cascata": cascata["linhas"],
-        "nao_classificado": cascata["nao_classificado"],
-        "fora_da_dre": cascata["fora_da_dre"],
-        "depreciacao_periodo": {"total": depreciacao["total"], "inconsistencias": depreciacao["inconsistencias"]},
-        "fallback_notas_sem_item": fallback_notas,
+        "despesas_total": operacional,
+        "depreciacao_periodo": depreciacao["total"],
+        "cot": round(operacional + depreciacao["total"], 2),
+        "fora_por_natureza": fora,
+        "por_categoria": [
+            {"codigo": k, "descricao": v["descricao"], "valor": round(v["valor"], 2)}
+            for k, v in sorted(por_categoria.items(), key=lambda kv: -kv[1]["valor"])
+        ],
+    }
+
+
+@router.get("/regras-v2")
+def status_regras_v2(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """A fazenda atual usa as regras novas dos relatórios (Fase A)? Liga e
+    desliga em Configurações > Parâmetros financeiros (chave
+    `financeiro_regras_v2`, só administrador)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    return {
+        "ativa": regras_v2_ativas(session, fazenda_id),
+        "chave": "financeiro_regras_v2",
+        "naturezas": [{"valor": n, "rotulo": ROTULOS_NATUREZA[n]} for n in NATUREZAS],
     }
 
 
@@ -726,13 +948,20 @@ def dre_conferencia(
     # classificação, só entra na cascata em si (GET /financeiro/dre).
     resultado = montar_cascata_dre(registros, mapa_linha)
 
-    return {
+    resposta = {
         "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
         "regime": regime,
         "centro_custo": centro_custo,
         "total": resultado["nao_classificado"]["total"],
         "contas": resultado["nao_classificado"]["contas"],
     }
+    if regras_v2_ativas(session, fazenda_id):
+        # Regras v2: contas do plano cujo NOME sugere outra natureza (ex.:
+        # "Máquinas e equipamentos", "Principal do financiamento") e que ainda
+        # não têm natureza própria. Só SUGESTÃO — nada é aplicado sozinho.
+        from fazenda.rules.backfill_natureza import sugestoes_natureza_plano
+        resposta["sugestoes_natureza"] = sugestoes_natureza_plano(session, fazenda_id)
+    return resposta
 
 
 @router.get("/lancamentos")
@@ -805,9 +1034,29 @@ def listar_lancamentos(
             "vale_id": vale_id,
             "vale_pessoa_id": vale_pessoa_id,
             "vale_pessoa_nome": nomes_pessoa.get(vale_pessoa_id) if vale_pessoa_id else None,
+            "natureza_fin": it.natureza_fin,
         })
 
     contas = session.exec(query_contas).all()
+    # Natureza econômica resolvida (Fase A, R1) — o que a nota é para a DRE e
+    # os custos quando a flag financeiro_regras_v2 estiver ligada. Itens com
+    # naturezas diferentes = "MISTA" (cada item segue a sua).
+    contexto_natureza = _contexto_natureza(session, fazenda_id)
+    itens_obj_por_numero: dict[str, list[LancamentoItem]] = {}
+    for it in itens_carregados:
+        if not eh_item_de_vale(it):
+            itens_obj_por_numero.setdefault(it.numero_lancamento, []).append(it)
+
+    def _natureza_resolvida(conta: ContaGerencial) -> str:
+        itens_nota = itens_obj_por_numero.get(conta.numero_lancamento or "") or []
+        if not itens_nota:
+            return contexto_natureza.natureza(conta=conta, codigo_conta=conta.codigo_conta)
+        naturezas = {
+            contexto_natureza.natureza(item=it, conta=conta, codigo_conta=it.codigo_conta_gerencial)
+            for it in itens_nota
+        }
+        return naturezas.pop() if len(naturezas) == 1 else "MISTA"
+
     nomes_usuarios = mapa_usuarios(session, {c.usuario_id for c in contas})
 
     # Quais lançamentos têm comprovante/anexo — UMA query, não uma por linha
@@ -870,6 +1119,8 @@ def listar_lancamentos(
             "data_prevista_entrada": c.data_prevista_entrada.isoformat() if c.data_prevista_entrada else None,
             "data_pedido": c.data_pedido.isoformat() if c.data_pedido else None,
             "patrimonio_id": c.patrimonio_id,
+            "natureza_fin": c.natureza_fin,
+            "natureza_resolvida": _natureza_resolvida(c),
             "mes_competencia": f"{dc.year}-{dc.month:02d}" if dc else None,
             "ano_competencia": dc.year if dc else None,
             "mes_caixa": f"{dp.year}-{dp.month:02d}" if dp else None,
@@ -1209,6 +1460,9 @@ def plano_contas(
                 # resolver_linha_dre); quem precisar do valor JÁ RESOLVIDO
                 # usa GET /financeiro/dre ou GET /financeiro/dre/conferencia.
                 "linha_dre": c.linha_dre,
+                # Natureza econômica padrão própria (rules/natureza.py) — None
+                # pode estar herdando do ancestral, como linha_dre.
+                "natureza_fin": c.natureza_fin,
             }
             for c in plano
         ],
@@ -1646,6 +1900,38 @@ def atualizar_linha_dre(
     return conta.model_dump()
 
 
+class NaturezaFinIn(BaseModel):
+    # None = volta a "automática" (herda do ancestral / da linha da DRE).
+    natureza_fin: Optional[str] = None
+
+
+@router.put("/plano-contas/{codigo}/natureza-fin")
+def atualizar_natureza_plano(
+    codigo: str, dados: NaturezaFinIn, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Natureza econômica PADRÃO de uma conta do plano (Fase A, R1 — ver
+    rules/natureza.py): todo lançamento nesta conta (e nas filhas sem natureza
+    própria) herda esta natureza, salvo natureza explícita no lançamento.
+    Endpoint dedicado e só admin, como a linha da DRE: é decisão gerencial."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    try:
+        natureza = normalizar_natureza(dados.natureza_fin)
+    except ValueError as erro:
+        raise HTTPException(status_code=400, detail=str(erro)) from None
+    # Recorte por fazenda DENTRO da consulta (dependência estrita de escrita).
+    conta = session.exec(select(PlanoContaGerencial).where(
+        PlanoContaGerencial.codigo == codigo, PlanoContaGerencial.fazenda_id == fazenda_id,
+    )).first()
+    if not conta:
+        raise HTTPException(status_code=404, detail="Conta gerencial não encontrada")
+    conta.natureza_fin = natureza
+    session.add(conta)
+    session.commit()
+    session.refresh(conta)
+    return conta.model_dump()
+
+
 # ---------------------------------------------------------------------------
 # Vínculo financeiro ↔ sanitário/reprodutivo — despesas em contas gerenciais
 # marcadas (ex.: "3.03.02.11 - Veterinário/zootecnista", ver
@@ -2043,7 +2329,7 @@ def caixa_real(
     vencimento; conta vencida e não paga entra no primeiro dia (ver o motor).
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    hoje = date.today()
+    hoje = hoje_local()
     horizonte = dias if dias and dias > 0 else caixa_dias_projecao()
 
     query_contas = select(ContaCorrente)
@@ -2113,7 +2399,7 @@ def fundo_reserva_sugerido(
     sazonalidade forte e uma média de poucos meses erra para os dois lados,
     então aplicar sozinho seria fingir uma precisão que o número não tem."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    hoje = date.today()
+    hoje = hoje_local()
     primeiro_do_mes = hoje.replace(day=1)
 
     query = select(ContaGerencial).where(
@@ -2178,7 +2464,7 @@ def listar_patrimonio(
     ex.: terra), o valor de mercado mais recente. Só administradores da
     fazenda têm acesso a esta aba."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    hoje = date.today()
+    hoje = hoje_local()
     frequencia_padrao = patrimonio_atualizacao_valor_mercado_meses()
     query = select(Patrimonio)
     if fazenda_id is not None:
@@ -2613,7 +2899,7 @@ def atualizar_valor_mercado(
     if item.depreciavel:
         raise HTTPException(status_code=400, detail="Este item deprecia normalmente — não usa valor de mercado")
     item.valor_mercado_atual = dados.valor_mercado_atual
-    item.data_ultima_atualizacao_valor_mercado = dados.data or date.today()
+    item.data_ultima_atualizacao_valor_mercado = dados.data or hoje_local()
     session.add(item)
     session.commit()
     session.refresh(item)
@@ -2649,6 +2935,62 @@ def vincular_lancamento_patrimonio(
         session.add(conta)
     session.commit()
     return {"numero_lancamento": numero_lancamento, "patrimonio_id": dados.patrimonio_id}
+
+
+class NaturezaLancamentoIn(BaseModel):
+    # None = automática (pela conta do plano / linha da DRE).
+    natureza_fin: Optional[str] = None
+    # Preenchido = muda só a natureza DESTE item da nota (sobrepõe a da nota).
+    item_id: Optional[int] = None
+
+
+@router.put("/lancamentos/{numero_lancamento}/natureza")
+def atualizar_natureza_lancamento(
+    numero_lancamento: str, dados: NaturezaLancamentoIn, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Natureza econômica de uma nota (todas as parcelas do mesmo
+    numero_lancamento) ou de um item dela (Fase A, R1). Não mexe em valor,
+    data nem pagamento — só diz se aquilo é custo da atividade ou outra coisa
+    (investimento, financiamento, capital...). Só muda relatório na fazenda
+    com a flag financeiro_regras_v2 ligada."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    try:
+        natureza = normalizar_natureza(dados.natureza_fin)
+    except ValueError as erro:
+        raise HTTPException(status_code=400, detail=str(erro)) from None
+    contas = session.exec(select(ContaGerencial).where(
+        ContaGerencial.numero_lancamento == numero_lancamento, ContaGerencial.fazenda_id == fazenda_id,
+    )).all()
+    if not contas:
+        raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+    if dados.item_id is not None:
+        item = session.exec(select(LancamentoItem).where(
+            LancamentoItem.id == dados.item_id, LancamentoItem.numero_lancamento == numero_lancamento,
+            LancamentoItem.fazenda_id == fazenda_id,
+        )).first()
+        if item is None:
+            raise HTTPException(status_code=404, detail="Item não encontrado neste lançamento")
+        item.natureza_fin = natureza
+        item.atualizado_em = datetime.utcnow()
+        session.add(item)
+    else:
+        for conta in contas:
+            conta.natureza_fin = natureza
+            conta.atualizado_em = datetime.utcnow()
+            session.add(conta)
+    session.commit()
+    sem_patrimonio = (
+        natureza == INVESTIMENTO and dados.item_id is None
+        and all(c.tipo == "despesa" for c in contas) and not any(c.patrimonio_id for c in contas)
+    )
+    return {
+        "numero_lancamento": numero_lancamento, "item_id": dados.item_id, "natureza_fin": natureza,
+        "aviso": (
+            "Investimento sem bem no Patrimônio: sai da DRE e dos custos, mas não vai depreciar. "
+            "Vincule ou cadastre o bem em Patrimônio."
+        ) if sem_patrimonio else None,
+    }
 
 
 class PlanoManutencaoIn(BaseModel):
@@ -2846,6 +3188,16 @@ def criar_lancamento(
     for item in dados.itens:
         if item.tipo_item is not None and item.tipo_item not in ("produto", "servico"):
             raise HTTPException(status_code=400, detail="tipo_item deve ser 'produto' ou 'servico'")
+    try:
+        natureza_nota = normalizar_natureza(dados.natureza_fin)
+        naturezas_itens = [normalizar_natureza(item.natureza_fin) for item in dados.itens]
+    except ValueError as erro:
+        raise HTTPException(status_code=400, detail=str(erro)) from None
+    # Compra de bem do imobilizado (criar_patrimonio) é INVESTIMENTO: sai da DRE
+    # e dos custos e entra só pela depreciação (regras v2, P0-1). Gravado
+    # sempre — com a flag desligada nenhum relatório lê este campo.
+    if natureza_nota is None and dados.criar_patrimonio is not None and dados.tipo == "despesa":
+        natureza_nota = INVESTIMENTO
     # Compra de produto de estoque INATIVO não passa — validado AQUI, antes de
     # gravar qualquer coisa (a entrada no estoque só acontece depois do commit
     # da nota; recusar lá deixaria a nota salva com erro na tela).
@@ -2865,7 +3217,7 @@ def criar_lancamento(
         # Valida TODOS os itens marcados ANTES de gravar qualquer coisa —
         # qualquer erro aqui aborta o lançamento inteiro sem criar nada.
         from fazenda.api.routers.cadastro.rh_vale_item import validar_vale_item
-        item_data_vale = dados.data_emissao or dados.data_competencia or date.today()
+        item_data_vale = dados.data_emissao or dados.data_competencia or hoje_local()
         for item in itens_com_vale:
             validar_vale_item(session, item.valor_total, item_data_vale, item.vale, fazenda_id)
 
@@ -2874,7 +3226,7 @@ def criar_lancamento(
     if valor_liquido <= 0:
         raise HTTPException(status_code=400, detail="O valor líquido do lançamento deve ser positivo")
 
-    ano = (dados.data_emissao or dados.data_competencia or date.today()).year
+    ano = (dados.data_emissao or dados.data_competencia or hoje_local()).year
     numero_lancamento = _proximo_numero_lancamento(session, ano)
     data_competencia = dados.data_competencia or dados.data_emissao
 
@@ -2893,8 +3245,9 @@ def criar_lancamento(
             valor_unitario=item.valor_unitario,
             valor_total=item.valor_total,
             fazenda_id=fazenda_id,
+            natureza_fin=natureza_item,
         )
-        for item in dados.itens
+        for item, natureza_item in zip(dados.itens, naturezas_itens)
     ]
 
     # Resumo p/ os relatórios legados que só olham 1 conta/descrição por linha.
@@ -2926,6 +3279,7 @@ def criar_lancamento(
         desconto_nota=dados.desconto or None,
         acrescimo_nota=dados.acrescimo or None,
         pedido_id=dados.pedido_id,
+        natureza_fin=natureza_nota,
         # Alguns fluxos (importação de CSV, lançamento via Telegram) chamam esta
         # função diretamente, fora do ciclo de requisição do FastAPI — nesses
         # casos `user` não é resolvido pela injeção de dependência e chega aqui
@@ -3086,7 +3440,7 @@ def criar_lancamento(
     # "não está no estoque desta fazenda" quando `item` vem None.
     avisos_estoque: list[str] = []
     if dados.tipo == "despesa" and dados.pedido_id is None:
-        data_movimento = dados.data_emissao or data_competencia or date.today()
+        data_movimento = dados.data_emissao or data_competencia or hoje_local()
         usuario_id = user.id if isinstance(user, Usuario) else None
         for indice, (item_in, item_criado) in enumerate(zip(dados.itens, itens_criados)):
             quantidade_entrada = item_in.quantidade
@@ -3148,6 +3502,7 @@ def criar_lancamento(
         "valor_liquido": valor_liquido,
         "avisos_estoque": avisos_estoque,
         "vales_criados": vales_criados,
+        "natureza_fin": natureza_nota,
     }
 
 
@@ -3299,7 +3654,7 @@ def gerar_lancamento_recorrente(
     if dados.valor <= 0:
         raise HTTPException(status_code=400, detail="O valor deve ser positivo")
 
-    data_emissao = dados.data_emissao or date.today()
+    data_emissao = dados.data_emissao or hoje_local()
     data_vencimento = dados.data_vencimento or _vencimento_do_periodo(modelo.dia_vencimento, data_emissao)
 
     item = ItemIn(
@@ -3331,7 +3686,7 @@ def gerar_lancamento_recorrente(
     resultado = criar_lancamento(dados=lanc, session=session, user=user, fazenda_id=fazenda_id)
 
     modelo.ultimo_numero_lancamento = resultado["numero_lancamento"]
-    modelo.ultima_geracao_em = date.today()
+    modelo.ultima_geracao_em = hoje_local()
     modelo.atualizado_em = datetime.utcnow()
     session.add(modelo)
     session.commit()
@@ -3411,6 +3766,8 @@ def _criar_parcelas_diferenca(session: Session, registro: ContaGerencial, parcel
             tipo=registro.tipo,
             origem="manual",
             usuario_id=registro.usuario_id,
+            # A parcela nova é o mesmo lançamento: mesma natureza econômica.
+            natureza_fin=registro.natureza_fin,
         )
         novas.append(nova)
         session.add(nova)
@@ -3702,13 +4059,13 @@ def editar_lancamento(
                         unidade_item = estoque_item.unidade if estoque_item else entrada_existente.unidade
                         estoque_baixa.movimentar(
                             session, item=estoque_item, quantidade=quantidade_antiga or 0, unidade=unidade_item,
-                            data=date.today(), fazenda_id=fazenda_id, movimento="Saída de ajuste",
+                            data=hoje_local(), fazenda_id=fazenda_id, movimento="Saída de ajuste",
                             observacao=f"Estorno por edição de quantidade — lançamento {registro.numero_lancamento}",
                             origem_tipo="compra_financeiro", origem_id=item.id, sinal=-1, produto=item.produto,
                         )
                         estoque_baixa.movimentar(
                             session, item=estoque_item, quantidade=registro.quantidade or 0, unidade=unidade_item,
-                            data=date.today(), fazenda_id=fazenda_id, movimento="Entrada de ajuste",
+                            data=hoje_local(), fazenda_id=fazenda_id, movimento="Entrada de ajuste",
                             observacao=f"Ajuste de quantidade editada — lançamento {registro.numero_lancamento}",
                             origem_tipo="compra_financeiro", origem_id=item.id, sinal=+1, produto=item.produto,
                         )
@@ -3805,7 +4162,7 @@ def vincular_produto_item(
             estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=nome)
             estoque_baixa.exigir_item_ativo(estoque_item)
             if estoque_item is not None and estoque_item.estocavel is not False:
-                data_movimento = conta.data_emissao or conta.data_competencia or date.today()
+                data_movimento = conta.data_emissao or conta.data_competencia or hoje_local()
                 avisos_estoque += estoque_baixa.movimentar(
                     session, item=estoque_item, quantidade=item.quantidade,
                     unidade=estoque_item.unidade, data=data_movimento, fazenda_id=fazenda_id,
@@ -4163,7 +4520,7 @@ def _garantir_numero_lancamento(session: Session, fazenda_id: int | None, lancam
     if not conta or (fazenda_id is not None and conta.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Lançamento não encontrado")
     if not conta.numero_lancamento:
-        base = conta.data_competencia or conta.data_vencimento or conta.data_emissao or date.today()
+        base = conta.data_competencia or conta.data_vencimento or conta.data_emissao or hoje_local()
         conta.numero_lancamento = _proximo_numero_lancamento(session, base.year)
         session.add(conta)
         session.commit()
@@ -4507,7 +4864,7 @@ def contas_a_pagar(
     roda — mesmo defeito que já quebrou 7 testes deste repositório (ver
     PR #492): asserção com data absoluta escrita à mão, comparada contra
     `date.today()` real, passa em alguns dias do mês e falha em outros."""
-    hoje = data_referencia or date.today()
+    hoje = data_referencia or hoje_local()
     limite = hoje + __import__("datetime").timedelta(days=dias)
 
     query = select(ContaGerencial)
@@ -4554,7 +4911,7 @@ class CalculoJurosIn(BaseModel):
 
 @router.post("/calcular-juros")
 def calcular_juros(dados: CalculoJurosIn) -> dict:
-    referencia = dados.data_referencia or date.today()
+    referencia = dados.data_referencia or hoje_local()
     dias_atraso = max(0, (referencia - dados.data_vencimento).days)
     if dias_atraso == 0:
         return {

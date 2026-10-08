@@ -17,8 +17,15 @@ export type Lanc = {
   mes_competencia: string | null; mes_caixa: string | null;
   itens?: { id: number; produto: string; tipo_item?: string | null; valor_total: number; descricao?: string | null;
             eh_vale: boolean; vale_tipo: "funcionario" | "avulso" | null; vale_id: number | null;
-            vale_pessoa_id: number | null; vale_pessoa_nome: string | null }[];
+            vale_pessoa_id: number | null; vale_pessoa_nome: string | null;
+            // Natureza econômica só deste item (null = a da nota). Ver lib/naturezaFin.ts.
+            natureza_fin?: string | null }[];
   usuario_nome?: string | null;
   patrimonio_id?: number | null;
   fatura_id?: number | null;
+  // Natureza econômica (Fase A, lib/naturezaFin.ts): `natureza_fin` é a
+  // informada na nota (null = automática); `natureza_resolvida` é a que os
+  // relatórios usam com as regras novas ligadas (pode vir "MISTA").
+  natureza_fin?: string | null;
+  natureza_resolvida?: string | null;
 };

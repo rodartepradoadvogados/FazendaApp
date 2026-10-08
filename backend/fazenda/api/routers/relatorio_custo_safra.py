@@ -20,6 +20,7 @@ from fazenda.models import ContaGerencial, Safra
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.centro_custo import valor_gerencial_por_centro_custo
 from fazenda.rules.custo_safra import calcular_custo_safra
+from fazenda.rules.parametros import regras_v2_ativas
 from fazenda.rules.vale_item import ajuste_vale_por_conta
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
@@ -35,6 +36,23 @@ def custo_por_safra(
     safra = session.get(Safra, safra_id)
     if not safra or (fazenda_id is not None and safra.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Safra não encontrada")
+
+    if regras_v2_ativas(session, fazenda_id):
+        # Regras v2 (Fase A): mesmo numerador da DRE, só natureza OPERACIONAL,
+        # categorias pela conta de cada ITEM (nota com vários itens deixa de
+        # cair em "Sem classificação"). Ver custos_operacionais_periodo.
+        from fazenda.api.routers.financeiro import custos_operacionais_periodo
+
+        custos = custos_operacionais_periodo(session, fazenda_id, safra.data_inicio, safra.data_fim, safra.centro_custo)
+        return {
+            "safra": safra.model_dump(),
+            "por_categoria": custos["por_categoria"],
+            **calcular_custo_safra(custos["despesas_total"], safra.hectares, safra.toneladas_produzidas),
+            "regras_v2": True,
+            "depreciacao_periodo": custos["depreciacao_periodo"],
+            "cot": custos["cot"],
+            "fora_por_natureza": custos["fora_por_natureza"],
+        }
 
     query_contas = select(ContaGerencial)
     if fazenda_id is not None:

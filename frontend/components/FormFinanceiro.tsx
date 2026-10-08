@@ -20,6 +20,7 @@ import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
 import { ServicoPicker } from "@/components/ServicoPicker";
 import type { ContaPlano } from "@/lib/contaGerencial";
+import { NATUREZAS_FIN } from "@/lib/naturezaFin";
 import { onPedidoLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
 import { onPedidoLancamentoFinanceiroDeEvento, type OrigemVinculoSanitarioReprodutivo } from "@/lib/vinculoSanitarioFinanceiroBridge";
 
@@ -314,6 +315,9 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   // vez de testar "é não-vazio" (ver CENTRO_CUSTO_PADRAO).
   const [centroCusto, setCentroCusto] = useState(CENTRO_CUSTO_PADRAO);
   const [classificacao, setClassificacao] = useState("");
+  // Natureza econômica (Fase A): "" = automática pela conta. Compra com
+  // "criar patrimônio" nasce Investimento no backend quando fica automática.
+  const [naturezaFin, setNaturezaFin] = useState("");
   const [novaClassificacaoAberta, setNovaClassificacaoAberta] = useState(false);
   // Progressive disclosure (achado do lote 2: 20+ campos expostos de uma vez em
   // "Dados da nota") — os campos menos usados ficam atrás deste toggle,
@@ -612,7 +616,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
 
   function limpar() {
     setItens([itemVazio()]);
-    setCentroCusto(CENTRO_CUSTO_PADRAO); setClassificacao(""); setFornecedor(""); setResponsavel(""); setTipoDocumento("");
+    setCentroCusto(CENTRO_CUSTO_PADRAO); setClassificacao(""); setNaturezaFin(""); setFornecedor(""); setResponsavel(""); setTipoDocumento("");
     setNumeroDocumento(""); setNumeroOsOrcamento(""); setNumeroBoleto("");
     setDataEmissao(""); setDataVencimento(""); setDataPrevistaEntrada(""); setDataPedido(""); setEntregue(false);
     entregueTocadoRef.current = false;
@@ -1045,6 +1049,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         })),
       centro_custo: centroCusto || null,
       classificacao: classificacao || null,
+      natureza_fin: naturezaFin || null,
       fornecedor_cliente: fornecedor || null,
       responsavel: responsavel || null,
       tipo_documento: tipoDocumento || null,
@@ -1263,6 +1268,18 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
               }}>{salvandoClassificacao ? "Salvando…" : "Salvar"}</button>
               <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => { setNovaClassificacaoAberta(false); setNovaClassificacaoNome(""); }}>Cancelar</button>
             </div>
+          )}
+        </Campo>
+        <Campo label="Natureza do lançamento">
+          <select style={inputStyle} value={naturezaFin} onChange={(e) => setNaturezaFin(e.target.value)}
+            title={NATUREZAS_FIN.find((n) => n.valor === naturezaFin)?.ajuda || "Automática: segue a conta do plano e a linha da DRE"}>
+            <option value="">{criarPatrimonio && tipo === "despesa" ? "Automática (Investimento: compra de bem)" : "Automática (pela conta)"}</option>
+            {NATUREZAS_FIN.map((n) => <option key={n.valor} value={n.valor}>{n.rotulo}</option>)}
+          </select>
+          {naturezaFin === "INVESTIMENTO" && tipo === "despesa" && !criarPatrimonio && (
+            <p style={{ fontSize: "0.7rem", color: "var(--amber)", marginTop: "0.25rem" }}>
+              Sem bem no Patrimônio, este valor sai da DRE e não vai depreciar. Cadastre ou vincule o bem depois.
+            </p>
           )}
         </Campo>
         <Campo label="Data de emissão"><input type="date" style={inputStyle} value={dataEmissao} onChange={(e) => handleDataEmissaoChange(e.target.value)} /></Campo>

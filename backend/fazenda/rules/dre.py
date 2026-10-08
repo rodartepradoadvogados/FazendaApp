@@ -33,6 +33,10 @@ explícito do dono do produto: nunca confundir os dois).
 """
 from __future__ import annotations
 
+from fazenda.rules.natureza import NAO_INFORMADA, OPERACIONAL
+from fazenda.rules.natureza import ORDEM_EXIBICAO as ORDEM_NATUREZAS
+from fazenda.rules.natureza import ROTULOS as ROTULOS_NATUREZA
+
 # ---------------------------------------------------------------------------
 # As 15 linhas da DRE Gerencial em cascata (estrutura definida pelo dono do
 # produto) — 9 ATRIBUÍVEIS (uma conta gerencial pode apontar pra elas, ver
@@ -155,6 +159,9 @@ def montar_cascata_dre(
     registros: list[dict],
     mapa_linha_por_codigo: dict[str, str],
     depreciacao_periodo: float = 0.0,
+    *,
+    regras_v2: bool = False,
+    resultado_baixas: float = 0.0,
 ) -> dict:
     """
     Motor puro da DRE Gerencial em cascata.
@@ -198,12 +205,28 @@ def montar_cascata_dre(
     `fora_da_dre` (classificada como NAO_ENTRA_NA_DRE de propósito) NUNCA
     entram em nenhum subtotal — são devolvidos à parte, cada um com seu
     total e a lista de contas, para o usuário decidir o que fazer.
+
+    REGRAS V2 (Fase A, flag `financeiro_regras_v2` da fazenda — ver
+    rules/natureza.py). Com `regras_v2=False` (padrão) TUDO acima vale tal
+    qual e as chaves novas abaixo não aparecem — os números são idênticos aos
+    de antes (teste de regressão em tests/test_relatorios_cenario_auditoria.py).
+    Com `regras_v2=True`:
+      • registro com `natureza` ≠ OPERACIONAL vai para `fora_da_dre`, agrupado
+        por natureza (`fora_da_dre["por_natureza"]` = {natureza: total} e
+        `fora_da_dre["grupos"]` = lista para a tela), qualquer que seja a
+        linha da conta. NAO_ENTRA_NA_DRE sem natureza vira o grupo
+        NAO_INFORMADA. A depreciação continua entrando;
+      • `resultado_baixas` (ganho > 0 / perda < 0 de capital na baixa de bem,
+        ver rules/patrimonio.py::resultado_baixa) entra em OUTRAS_REC_DESP
+        como a pseudoconta "(resultado de baixa de patrimônio)".
     """
     por_linha: dict[str, dict] = {
         chave: {"receita": 0.0, "despesa": 0.0, "contas": {}} for chave in CODIGOS_ATRIBUIVEIS
     }
     nao_classificado_contas: dict[str, dict] = {}
     fora_da_dre_contas: dict[str, dict] = {}
+    # Só com regras_v2: {natureza: {codigo: {...}}} para o agrupamento.
+    fora_por_natureza: dict[str, dict[str, dict]] = {}
 
     def _acumular(bucket_contas: dict, codigo: str | None, nome: str | None, tipo: str, valor: float) -> None:
         chave_conta = codigo or "(sem código)"
@@ -219,6 +242,15 @@ def montar_cascata_dre(
         codigo = registro.get("codigo_conta")
         nome = registro.get("descricao")
         linha = resolver_linha_dre(codigo, mapa_linha_por_codigo)
+
+        if regras_v2:
+            natureza = registro.get("natureza") or OPERACIONAL
+            if natureza == OPERACIONAL and linha == NAO_ENTRA_NA_DRE:
+                natureza = NAO_INFORMADA
+            if natureza != OPERACIONAL:
+                _acumular(fora_da_dre_contas, codigo, nome, tipo, valor)
+                _acumular(fora_por_natureza.setdefault(natureza, {}), codigo, nome, tipo, valor)
+                continue
 
         if linha == NAO_ENTRA_NA_DRE:
             _acumular(fora_da_dre_contas, codigo, nome, tipo, valor)
@@ -245,6 +277,18 @@ def montar_cascata_dre(
         _acumular(
             bucket["contas"], "(depreciação do patrimônio)",
             "Depreciação do período (patrimônio)", "despesa", depreciacao_periodo,
+        )
+
+    # Ganho/perda de capital na baixa de bem (só regras v2): resultado do
+    # exercício, linha OUTRAS_REC_DESP — nunca receita de vendas.
+    if regras_v2 and resultado_baixas:
+        bucket = por_linha[OUTRAS_REC_DESP]
+        tipo_baixa = "receita" if resultado_baixas > 0 else "despesa"
+        magnitude = round(abs(resultado_baixas), 2)
+        bucket[tipo_baixa] = round(bucket[tipo_baixa] + magnitude, 2)
+        _acumular(
+            bucket["contas"], "(resultado de baixa de patrimônio)",
+            "Ganho ou perda na baixa de patrimônio", tipo_baixa, magnitude,
         )
 
     linhas_resultado: list[dict] = []
@@ -290,8 +334,19 @@ def montar_cascata_dre(
         )
         return {"total": round(sum(c["valor"] for c in contas), 2), "contas": contas}
 
+    fora_da_dre = _bucket_a_parte(fora_da_dre_contas)
+    if regras_v2:
+        grupos = []
+        for natureza in ORDEM_NATUREZAS:
+            if natureza not in fora_por_natureza:
+                continue
+            bucket_nat = _bucket_a_parte(fora_por_natureza[natureza])
+            grupos.append({"natureza": natureza, "rotulo": ROTULOS_NATUREZA[natureza], **bucket_nat})
+        fora_da_dre["por_natureza"] = {g["natureza"]: g["total"] for g in grupos}
+        fora_da_dre["grupos"] = grupos
+
     return {
         "linhas": linhas_resultado,
         "nao_classificado": _bucket_a_parte(nao_classificado_contas),
-        "fora_da_dre": _bucket_a_parte(fora_da_dre_contas),
+        "fora_da_dre": fora_da_dre,
     }

@@ -256,6 +256,17 @@ DEFINICOES: list[dict] = [
     # Sugestão do valor a colocar no caixa do time: "X% do resultado líquido do mês (DRE)". 0 = sem percentual padrão.
     {"chave": "caixa_time_pct_resultado", "grupo": "financeiro", "label": "Caixa do time (PL) — % do resultado líquido do mês sugerido nas entradas (0 = sem sugestão)", "valor": 0, "tipo": "float", "unidade": "%"},
     {"chave": "laticinio_nome", "grupo": "financeiro", "label": "Nome do laticínio (reconhece a receita de leite no RMCA)", "valor": "italac", "tipo": "texto"},
+    # Fase A dos Relatórios do Financeiro — liga, NESTA fazenda, as regras novas
+    # de número (natureza do lançamento: compra de bem, principal, aporte saem
+    # da DRE e dos custos; ganho/perda na baixa de bem entra em Outras). PADRÃO
+    # DESLIGADO: sem alguém ligar, todo relatório sai exatamente como antes.
+    # Liga-se fazenda a fazenda, depois de revisar o relatório de impacto
+    # (scripts/impacto_relatorios_v2.py). Só a linha DA FAZENDA vale: a linha
+    # global (fazenda_id NULL) é só o modelo que aparece na tela e é ignorada
+    # pela leitura — ver `regras_v2_ativas` e docs/financeiro-regras-v2.md.
+    {"chave": "financeiro_regras_v2", "grupo": "financeiro",
+     "label": "Relatórios do Financeiro — usar as regras novas (Fase A: natureza do lançamento; compra de bem, principal e aporte fora da DRE e dos custos)",
+     "valor": "false", "tipo": "bool"},
     # ---- Alimentação: sobra de cocho ---------------------------------------
     # A sobra é o termômetro do trato. Sobra de menos significa cocho vazio
     # antes da hora — vaca que comeu menos do que a dieta previa, e produção
@@ -364,6 +375,38 @@ def _linha(chave: str):
             ).first()
     except (OperationalError, ProgrammingError):
         return None
+
+
+CHAVE_FINANCEIRO_REGRAS_V2 = "financeiro_regras_v2"
+
+
+def regras_v2_ativas(session: Session, fazenda_id: int | None) -> bool:
+    """A fazenda `fazenda_id` liga as regras novas dos relatórios do
+    Financeiro (Fase A)? Lida pela sessão DA REQUISIÇÃO (não pelo engine
+    global de `_linha`), para valer igual em teste, em script e sob RLS.
+
+    Fazenda a fazenda de propósito (decisão do dono): só a linha da própria
+    fazenda conta. A linha global (fazenda_id NULL, semeada como "false") é o
+    modelo que a tela de Parâmetros mostra — se alguém a editar pelo Painel
+    CowData, NENHUMA fazenda liga por tabela. Sem fazenda (token legado),
+    sempre desligado."""
+    if not isinstance(fazenda_id, int):
+        return False
+    from sqlalchemy.exc import OperationalError, ProgrammingError
+
+    from fazenda.models import ParametroFazenda
+    try:
+        linha = session.exec(
+            select(ParametroFazenda).where(
+                ParametroFazenda.chave == CHAVE_FINANCEIRO_REGRAS_V2,
+                ParametroFazenda.fazenda_id == fazenda_id,
+            )
+        ).first()
+    except (OperationalError, ProgrammingError):  # pragma: no cover - tabela ausente
+        return False
+    if linha is None:
+        return False
+    return (linha.valor or "").strip().lower() in ("1", "true", "sim", "yes")
 
 
 def get_param(chave: str, padrao: float | int | None = None) -> float | int | None:

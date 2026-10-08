@@ -23,6 +23,7 @@ from fazenda.models import Animal, ContaGerencial, ControleLeiteiro
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.centro_custo import valor_gerencial_por_centro_custo
 from fazenda.rules.custo_producao import calcular_custo_por_lote, calcular_custo_por_vaca
+from fazenda.rules.parametros import regras_v2_ativas
 from fazenda.rules.vale_item import ajuste_vale_por_conta
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
@@ -83,14 +84,33 @@ def custo_por_vaca_e_lote(
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    despesas_total = _despesas_periodo(session, data_inicio, data_fim, centro_custo, fazenda_id=fazenda_id)
+    regras_v2 = regras_v2_ativas(session, fazenda_id)
+    custos = None
+    if regras_v2:
+        # Regras v2 (Fase A): mesmo numerador da DRE, só natureza OPERACIONAL
+        # (ver financeiro.custos_operacionais_periodo).
+        from fazenda.api.routers.financeiro import custos_operacionais_periodo
+
+        custos = custos_operacionais_periodo(session, fazenda_id, data_inicio, data_fim, centro_custo)
+        despesas_total = custos["despesas_total"]
+    else:
+        despesas_total = _despesas_periodo(session, data_inicio, data_fim, centro_custo, fazenda_id=fazenda_id)
     vacas_por_lote = _vacas_por_lote_no_periodo(session, data_inicio, data_fim, fazenda_id=fazenda_id)
     total_vacas = sum(vacas_por_lote.values())
 
-    return {
+    resposta = {
         "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
         "centro_custo": centro_custo,
         "tem_vacas_no_periodo": bool(total_vacas),
         "por_lote": calcular_custo_por_lote(despesas_total, vacas_por_lote),
         **calcular_custo_por_vaca(despesas_total, total_vacas),
     }
+    if custos is not None:
+        resposta.update({
+            "regras_v2": True,
+            "depreciacao_periodo": custos["depreciacao_periodo"],
+            "cot": custos["cot"],
+            "cot_por_vaca": round(custos["cot"] / total_vacas, 2) if total_vacas else None,
+            "fora_por_natureza": custos["fora_por_natureza"],
+        })
+    return resposta

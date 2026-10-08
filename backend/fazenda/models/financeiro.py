@@ -82,6 +82,13 @@ class ContaGerencial(SQLModel, table=True):
     # Fatura de fornecedor (FaturaFornecedor) a que esta nota pertence. Sem FK de
     # propósito (mesmo desenho de numero_lancamento): a ligação é de agrupamento.
     fatura_id: Optional[int] = Field(default=None, index=True)
+    # Natureza econômica do lançamento (Fase A, R1 — ver rules/natureza.py e
+    # docs/financeiro-regras-v2.md): OPERACIONAL | INVESTIMENTO |
+    # FINANCIAMENTO | CAPITAL | TRANSFERENCIA | ADIANTAMENTO | OBRIGACAO.
+    # NULL = automática (herda do plano de contas / da linha da DRE). Só muda
+    # número de relatório na fazenda com a flag `financeiro_regras_v2` ligada.
+    # NÃO confundir com PlanoContaGerencial.natureza (serviço x produto).
+    natureza_fin: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +186,9 @@ class LancamentoItem(SQLModel, table=True):
     vale_funcionario_id: Optional[int] = Field(default=None, foreign_key="vale_funcionario.id", index=True)
     vale_avulso_id: Optional[int] = Field(default=None, foreign_key="vale_avulso.id", index=True)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Natureza econômica SÓ deste item (sobrepõe a da nota — ver
+    # ContaGerencial.natureza_fin e rules/natureza.py). NULL = a da nota.
+    natureza_fin: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +298,12 @@ class PlanoContaGerencial(SQLModel, table=True):
     # NUNCA é despesa (só o juros é) e por isso nunca pode cair na linha de
     # depreciação nem em nenhuma outra linha de despesa.
     linha_dre: Optional[str] = None
+
+    # Natureza econômica PADRÃO dos lançamentos desta conta (Fase A, R1 — ver
+    # rules/natureza.py), herdada por prefixo como `linha_dre`. NULL = sem
+    # padrão próprio. Gravada só por PUT /financeiro/plano-contas/{codigo}/
+    # natureza-fin (admin) ou pelo backfill com log — nunca pelo PUT genérico.
+    natureza_fin: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -657,6 +673,10 @@ class Patrimonio(SQLModel, table=True):
     # ainda, ou de o usuário querer antecipar/adiar a próxima data.
     data_proxima_manutencao: Optional[date] = None
     observacao_manutencao: Optional[str] = None
+    # Centro de custo do bem (Fase A, migração do PR 1) — usado pela
+    # depreciação com filtro de centro: com filtro, só entra a depreciação dos
+    # bens daquele centro. Bem sem centro fica para o rateio do PR 9 (Q9).
+    centro_custo: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -836,3 +856,33 @@ class CurvaABC(SQLModel, table=True):
     perc_acumulado: Optional[float] = None
     perc_total: Optional[float] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Log de backfills do Financeiro (Fase A, R6) — toda correção de dado
+# histórico feita por comando (nunca pela migração sozinha) grava aqui O QUE
+# mudou, antes e depois, por fazenda e por lote. É por este log que um lote é
+# revertido (`rules/migracao_log.py::reverter_lote`). Nenhum valor_total/
+# valor_pago histórico passa por aqui: os backfills só preenchem colunas
+# novas (natureza_fin, ...) ou criam itens novos marcados com gerado_por.
+# ---------------------------------------------------------------------------
+class MigracaoLogFinanceiro(SQLModel, table=True):
+    __tablename__ = "migracao_log_financeiro"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    # Identificador do lote (uma execução do comando com --aplicar).
+    lote: str = Field(index=True)
+    # Nome do backfill (ex.: "backfill_natureza_fin_v1").
+    migracao: str = Field(index=True)
+    tabela: str
+    registro_id: int
+    campo: str
+    # Valores serializados em JSON (None vira "null"), para caber qualquer tipo.
+    valor_antes: Optional[str] = None
+    valor_depois: Optional[str] = None
+    # Por que esta linha mudou (ex.: "compra com patrimônio: valor 98% do bem").
+    motivo: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Preenchido quando o lote é revertido (a linha fica, para a auditoria).
+    revertido_em: Optional[datetime] = None

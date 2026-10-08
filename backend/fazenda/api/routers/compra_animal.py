@@ -18,10 +18,11 @@ from sqlmodel import Session, select
 
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
-from fazenda.models import Animal, CompraAnimal, ContaGerencial, Usuario
+from fazenda.models import Animal, CompraAnimal, ContaGerencial, PlanoContaGerencial, Usuario
 from fazenda.api.routers.financeiro import ParcelaIn, _proximo_numero_lancamento
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules.comissao import FORMAS_COMISSAO, criar_comissao
+from fazenda.rules.natureza import INVESTIMENTO, eh_matriz_ou_reprodutor, normalizar_natureza
 
 router = APIRouter(prefix="/compras-animais", tags=["compras-animais"])
 
@@ -72,6 +73,13 @@ class CompraIn(BaseModel):
     data_vencimento_comissao: date | None = None
     parcelas_comissao: list[ParcelaIn] = []
 
+    # Natureza econômica da compra (Fase A, R1/Q10): matriz e reprodutor são
+    # INVESTIMENTO (ativo biológico — fora da DRE e dos custos com a flag
+    # financeiro_regras_v2); animal para recria/venda é OPERACIONAL. None =
+    # automática: INVESTIMENTO quando a conta ou a descrição falam em matriz/
+    # reprodutor/touro, senão a da conta do plano.
+    natureza_fin: str | None = None
+
 
 @router.get("/")
 def listar_compras(
@@ -121,6 +129,18 @@ def registrar_compra(
         valor_unitario = round(valor_total_bruto / quantidade, 2)
     valor_liquido = round(valor_total_bruto - (dados.desconto or 0) + (dados.acrescimo or 0), 2)
 
+    try:
+        natureza_fin = normalizar_natureza(dados.natureza_fin)
+    except ValueError as erro:
+        raise HTTPException(status_code=400, detail=str(erro)) from None
+    if natureza_fin is None:
+        query_plano = select(PlanoContaGerencial.nome).where(PlanoContaGerencial.codigo == dados.codigo_conta_gerencial)
+        if fazenda_id is not None:
+            query_plano = query_plano.where(PlanoContaGerencial.fazenda_id == fazenda_id)
+        nome_conta = session.exec(query_plano).first()
+        if eh_matriz_ou_reprodutor(nome_conta, dados.descricao):
+            natureza_fin = INVESTIMENTO
+
     numero_lancamento = _proximo_numero_lancamento(session, dados.data_compra.year)
     descricao = dados.descricao or f"Compra de {quantidade} animal(is) — {dados.vendedor}"
     campos_comuns = dict(
@@ -143,6 +163,7 @@ def registrar_compra(
         tipo="despesa", origem="manual",
         usuario_id=usuario_id_seguro(user),
         fazenda_id=fazenda_id,
+        natureza_fin=natureza_fin,
     )
 
     paga_agora = bool(dados.data_pagamento) and not dados.parcelas
@@ -212,4 +233,7 @@ def registrar_compra(
         comprados.append(numero)
 
     session.commit()
-    return {"comprados": len(comprados), "animais": comprados, "numero_lancamento": numero_lancamento}
+    return {
+        "comprados": len(comprados), "animais": comprados, "numero_lancamento": numero_lancamento,
+        "natureza_fin": natureza_fin,
+    }

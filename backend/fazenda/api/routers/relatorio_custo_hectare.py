@@ -24,7 +24,7 @@ from fazenda.models import ContaGerencial
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.centro_custo import valor_gerencial_por_centro_custo
 from fazenda.rules.custo_hectare import calcular_custo_por_hectare
-from fazenda.rules.parametros import area_total_hectares
+from fazenda.rules.parametros import area_total_hectares, regras_v2_ativas
 from fazenda.rules.vale_item import ajuste_vale_por_conta
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
@@ -47,6 +47,26 @@ def custo_por_hectare(
     # as fazendas (o custo/hectare do cliente saía com a despesa dos outros
     # clientes dentro) — ver tests/test_isolamento_relatorios_fornecedor.py (G2).
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    if regras_v2_ativas(session, fazenda_id):
+        # Regras v2 (Fase A): numerador único com a DRE, só natureza
+        # OPERACIONAL — compra de bem, principal, aporte etc. ficam fora; o
+        # COT soma a depreciação do período. Ver custos_operacionais_periodo.
+        from fazenda.api.routers.financeiro import custos_operacionais_periodo
+
+        custos = custos_operacionais_periodo(session, fazenda_id, data_inicio, data_fim, centro_custo)
+        area = area_total_hectares()
+        base = calcular_custo_por_hectare(custos["despesas_total"], area)
+        return {
+            "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
+            "centro_custo": centro_custo,
+            "area_configurada": bool(area and area > 0),
+            **base,
+            "regras_v2": True,
+            "depreciacao_periodo": custos["depreciacao_periodo"],
+            "cot": custos["cot"],
+            "cot_por_hectare": round(custos["cot"] / area, 2) if area else None,
+            "fora_por_natureza": custos["fora_por_natureza"],
+        }
     query = select(ContaGerencial)
     if fazenda_id is not None:
         query = query.where(ContaGerencial.fazenda_id == fazenda_id)
