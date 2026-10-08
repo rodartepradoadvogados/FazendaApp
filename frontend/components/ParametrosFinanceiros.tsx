@@ -2,8 +2,8 @@
 import { Fragment, useEffect, useState } from "react";
 import { Wallet, Landmark, Tags, BookOpen, FileText, CreditCard, Plus, Pencil, AlertTriangle, Check, X, ChevronRight, ChevronDown, Stethoscope, SlidersHorizontal, ArrowLeftRight, Star, Workflow } from "lucide-react";
 import {
-  fetchContasCorrentes, criarContaCorrente, atualizarContaCorrente,
-  criarTransferenciaContas,
+  fetchContasCorrentes, criarContaCorrente, atualizarContaCorrente, definirSaldoAbertura, ehAdmin,
+  criarTransferenciaContas, type ContaCorrenteCadastro,
   fetchCentrosCusto, criarCentroCusto, atualizarCentroCusto,
   fetchPlanoContas, criarContaGerencial, atualizarContaGerencial,
   fetchTiposDocumentoCadastro, criarTipoDocumento, atualizarTipoDocumento,
@@ -14,6 +14,7 @@ import { nivelDaConta, estiloNivel, filhosDiretos } from "@/lib/contaGerencial";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { GruposParametrosCards } from "@/components/GruposParametrosCards";
 import ContasAutomaticasView from "@/components/financeiro/ContasAutomaticasView";
+import { hojeLocal } from "@/lib/financeiroSituacao";
 
 const ABAS = [
   ["parametros", "Parâmetros", SlidersHorizontal],
@@ -73,7 +74,7 @@ export default function ParametrosFinanceiros() {
 }
 
 // ---------------------------------------------------------------------------
-type ContaCorrente = { id: number; banco: string; agencia: string; numero_conta: string; ativo: boolean; rotulo: string; saldo: number };
+type ContaCorrente = ContaCorrenteCadastro;
 type FormConta = { banco: string; agencia: string; numero_conta: string; ativo: boolean };
 const formContaVazio: FormConta = { banco: "", agencia: "", numero_conta: "", ativo: true };
 
@@ -82,7 +83,8 @@ function fmtSaldo(v: number): string {
 }
 
 type FormTransferencia = { conta_origem_id: string; conta_destino_id: string; valor: string; data: string; observacao: string };
-const hoje = () => new Date().toISOString().slice(0, 10);
+// Data local, nunca toISOString (em UTC, depois das 21h em Brasília já seria amanhã).
+const hoje = () => hojeLocal();
 const formTransferenciaVazio = (): FormTransferencia => ({ conta_origem_id: "", conta_destino_id: "", valor: "", data: hoje(), observacao: "" });
 
 function ContasCorrentes() {
@@ -98,12 +100,31 @@ function ContasCorrentes() {
   const [salvandoTransf, setSalvandoTransf] = useState(false);
   const [msgTransf, setMsgTransf] = useState<string | null>(null);
 
-  const carregar = () => fetchContasCorrentes().then(setItens).catch((e) => setError(e.message));
+  const carregar = () => fetchContasCorrentes(hojeLocal()).then(setItens).catch((e) => setError(e.message));
+  // Regras v2 (Fase A, PR 6): o servidor só manda a pendência de abertura com as regras novas ligadas.
+  const regrasV2 = (itens ?? []).some((c) => c.pendente_saldo_abertura !== undefined);
+  const [formAbertura, setFormAbertura] = useState<{ saldo: string; data: string }>({ saldo: "", data: "" });
+  const [msgAbertura, setMsgAbertura] = useState<string | null>(null);
+  const salvarAbertura = async (id: number, remover = false) => {
+    setMsgAbertura(null);
+    const saldo = parseFloat(formAbertura.saldo.replace(",", "."));
+    if (!remover && (Number.isNaN(saldo) || !formAbertura.data)) { setMsgAbertura("Informe o saldo do extrato e a data dele."); return; }
+    if (!remover && formAbertura.data > hojeLocal()) { setMsgAbertura("A data do saldo não pode ser futura."); return; }
+    try {
+      await definirSaldoAbertura(id, remover ? { saldo_abertura: null, data_saldo_abertura: null } : { saldo_abertura: saldo, data_saldo_abertura: formAbertura.data });
+      await carregar();
+    } catch (e) {
+      setMsgAbertura((e instanceof Error && e.message) || "Erro ao salvar o saldo de abertura");
+    }
+  };
   useEffect(() => { carregar(); }, []);
   const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(itens ?? []);
 
   const abrirNovo = () => { setForm(formContaVazio); setEditando("novo"); setMsg(null); };
-  const abrirEdicao = (c: ContaCorrente) => { setForm({ banco: c.banco, agencia: c.agencia, numero_conta: c.numero_conta, ativo: c.ativo }); setEditando(c.id); setMsg(null); };
+  const abrirEdicao = (c: ContaCorrente) => {
+    setForm({ banco: c.banco, agencia: c.agencia, numero_conta: c.numero_conta, ativo: c.ativo }); setEditando(c.id); setMsg(null);
+    setFormAbertura({ saldo: c.saldo_abertura != null ? String(c.saldo_abertura) : "", data: c.data_saldo_abertura || "" }); setMsgAbertura(null);
+  };
   const cancelar = () => { setEditando(null); setMsg(null); };
 
   const salvar = async () => {
@@ -235,7 +256,17 @@ function ContasCorrentes() {
                     <td style={{ fontWeight: 700 }}>{c.banco}{!c.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativa)</span>}</td>
                     <td style={{ fontSize: "0.78rem" }}>{c.agencia}</td>
                     <td style={{ fontSize: "0.78rem" }}>{c.numero_conta}</td>
-                    <td style={{ fontSize: "0.78rem", color: c.saldo < 0 ? "var(--red)" : "var(--text)" }}>{fmtSaldo(c.saldo)}</td>
+                    <td style={{ fontSize: "0.78rem", color: c.saldo < 0 ? "var(--red)" : "var(--text)" }}>
+                      {fmtSaldo(c.saldo)}
+                      {regrasV2 && (
+                        <div style={{ fontSize: "0.68rem", color: c.pendente_saldo_abertura ? "var(--amber)" : "var(--text-muted)" }}>
+                          {c.pendente_saldo_abertura || c.saldo_abertura == null || !c.data_saldo_abertura
+                            ? "Informe o saldo de abertura"
+                            : `Saldo em ${new Date(c.data_saldo_abertura + "T12:00:00").toLocaleDateString("pt-BR")}: ${fmtSaldo(c.saldo_abertura)}`}
+                          {!!c.agendados_quantidade && ` · ${c.agendados_quantidade} agendado(s): ${fmtSaldo(c.agendado_liquido ?? 0)}`}
+                        </div>
+                      )}
+                    </td>
                     <td style={{ textAlign: "right" }}>
                       <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(c)}><Pencil size={13} /> Editar</button>
                     </td>
@@ -255,6 +286,25 @@ function ContasCorrentes() {
                           <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={salvar} disabled={salvando}><Check size={14} /> {salvando ? "Salvando…" : "Salvar"}</button>
                           <button className="btn-ghost" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={cancelar}><X size={14} /> Cancelar</button>
                         </div>
+                        {regrasV2 && ehAdmin() && (
+                          <div style={{ borderTop: "1px solid var(--border)", marginTop: "1rem", paddingTop: "0.75rem" }}>
+                            <p style={{ fontSize: "0.78rem", fontWeight: 700, marginBottom: "0.25rem" }}>Saldo de abertura</p>
+                            <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+                              O saldo do extrato no fim de um dia. O saldo de hoje passa a ser este valor mais o que foi pago e recebido depois dessa data.
+                            </p>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
+                              <div><label style={labelStyle}>Saldo do extrato (R$)</label>
+                                <input style={inputStyle} type="number" step="0.01" value={formAbertura.saldo} onChange={(e) => setFormAbertura({ ...formAbertura, saldo: e.target.value })} /></div>
+                              <div><label style={labelStyle}>Saldo em</label>
+                                <input style={inputStyle} type="date" max={hojeLocal()} value={formAbertura.data} onChange={(e) => setFormAbertura({ ...formAbertura, data: e.target.value })} /></div>
+                            </div>
+                            {msgAbertura && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msgAbertura}</p>}
+                            <div className="flex items-center gap-2">
+                              <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={() => salvarAbertura(c.id)}><Check size={14} /> Salvar saldo de abertura</button>
+                              {c.saldo_abertura != null && <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => salvarAbertura(c.id, true)}>Remover</button>}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </td></tr>
                   )}

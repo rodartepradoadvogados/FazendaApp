@@ -243,6 +243,30 @@ def gerar(session: Session, fazenda_id: int, de: str, ate: str, *, centro_custo_
         _linha("custos", f"{safra.data_inicio:%Y-%m}..{safra.data_fim:%Y-%m}", f"custo_safra[{safra.nome}].numerador",
                s_antes, s_dep["despesas_total"], s_bf["despesas_total"])
 
+    # Saldo de hoje por conta corrente (PR 6): antes = soma de tudo pelo rótulo;
+    # depois = abertura + movimentos até hoje (agendados à parte). A coluna
+    # "com backfill" repete o depois: o vínculo por FK não muda o número de
+    # quem já casava pelo rótulo exato — o que muda está em revisao_vinculo.
+    from fazenda.api.routers.financeiro import calcular_saldos_contas_correntes, rotulo_conta_corrente, saldos_contas_v2
+    from fazenda.models import ContaCorrente
+    from fazenda.rules import backfill_conta_corrente
+    from fazenda.rules.datas import hoje_local
+
+    hoje = hoje_local()
+    contas_cc = session.exec(select(ContaCorrente).where(ContaCorrente.fazenda_id == fazenda_id)).all()
+    saldo_antes = calcular_saldos_contas_correntes(session, contas_cc, fazenda_id)
+    saldo_dep = saldos_contas_v2(session, contas_cc, fazenda_id, hoje)
+    for c in contas_cc:
+        rotulo = rotulo_conta_corrente(c)
+        _linha("saldo", f"{hoje:%Y-%m-%d}", f"saldo_hoje[{rotulo}]", saldo_antes.get(c.id), saldo_dep[c.id].saldo, saldo_dep[c.id].saldo)
+        _linha("saldo", f"{hoje:%Y-%m-%d}", f"agendado_liquido[{rotulo}]", 0.0, saldo_dep[c.id].agendado_liquido,
+               saldo_dep[c.id].agendado_liquido)
+        _linha("saldo", f"{hoje:%Y-%m-%d}", f"sem_saldo_abertura[{rotulo}]", 0.0,
+               1.0 if saldo_dep[c.id].pendente_abertura else 0.0, 1.0 if saldo_dep[c.id].pendente_abertura else 0.0)
+    plano_cc = backfill_conta_corrente.planejar(session, fazenda_id)
+    _linha("saldo", f"{hoje:%Y-%m-%d}", "vinculo.ligaveis_pelo_backfill", 0.0, len(plano_cc.mudancas), len(plano_cc.mudancas))
+    _linha("saldo", f"{hoje:%Y-%m-%d}", "vinculo.lista_de_revisao", 0.0, len(plano_cc.revisao), len(plano_cc.revisao))
+
     return {"linhas": linhas, "lancamentos": lancamentos, "plano_backfill": plano_bf}
 
 

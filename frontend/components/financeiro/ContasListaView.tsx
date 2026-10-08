@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  AlertTriangle, CheckCircle2, Clock, Circle, Layers, Pencil, Receipt, Plus, Repeat, Search, X, Filter, ChevronUp, ChevronDown, MoreHorizontal, Wallet, Undo2,
+  AlertTriangle, CalendarClock, CheckCircle2, Clock, Circle, Layers, Pencil, Receipt, Plus, Repeat, Search, X, Filter, ChevronUp, ChevronDown, MoreHorizontal, Wallet, Undo2,
 } from "lucide-react";
 import { formatBRL, formatDate, ehAdmin, estornarPagamentoLancamento, fetchCartoesCredito, fetchFaturasCartao, type FaturaCartao } from "@/lib/api";
 import type { Lanc } from "@/lib/financeiroTipos";
@@ -59,6 +59,7 @@ const ICONE_SITUACAO: Record<Situacao["id"], ReactNode> = {
   fatura: <Layers size={13} aria-hidden />,
   parcial: <Circle size={13} aria-hidden />,
   paga: <CheckCircle2 size={13} aria-hidden />,
+  agendada: <CalendarClock size={13} aria-hidden />,
 };
 
 export function PilulaSituacao({ s }: { s: Situacao }) {

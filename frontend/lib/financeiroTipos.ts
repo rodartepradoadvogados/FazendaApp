@@ -34,4 +34,10 @@ export type Lanc = {
   // relatórios usam com as regras novas ligadas (pode vir "MISTA").
   natureza_fin?: string | null;
   natureza_resolvida?: string | null;
+  // Fase A, PR 6: conta corrente do pagamento (FK) e linha criada pelo sistema
+  // ("caixa_retirada", "backfill_cartao" = só classifica a DRE, não move dinheiro).
+  conta_corrente_id?: number | null;
+  gerado_por?: string | null;
+  // Só com as regras v2: data em que o dinheiro sai do banco (cartão avulso = vencimento do cartão).
+  data_caixa?: string | null;
 };

@@ -36,9 +36,15 @@ from sqlmodel import Session, SQLModel, create_engine
 import fazenda.database as database
 import fazenda.models  # noqa: F401  (registra todas as tabelas no metadata)
 from fazenda.models import ContaGerencial, ParametroFazenda
-from tests.cenario_auditoria_financeiro import ler_relatorios_estaveis, montar_cenario, preparar_fazendas
+from tests.cenario_auditoria_financeiro import (
+    HOJE_GOLDEN_CAIXA, ler_caixa_e_cartao, ler_relatorios_estaveis, montar_cenario, preparar_fazendas,
+)
 
 GOLDEN = Path(__file__).parent / "dados" / "cenario_auditoria_golden_main.json"
+# Saldo, Caixa Real, Contas a pagar e fluxo do cartão pelo código de antes dos
+# PRs 5 e 6 (62880163), com o relógio parado em HOJE_GOLDEN_CAIXA — gerado por
+# tests/dados/gerar_golden_caixa_cartao.py.
+GOLDEN_CAIXA = Path(__file__).parent / "dados" / "caixa_cartao_golden_pre_pr56.json"
 _CACHE: dict = {}
 
 
@@ -157,6 +163,53 @@ def _normalizar(dados):
     return json.loads(json.dumps(dados, sort_keys=True))
 
 
+@pytest.fixture
+def relogio_parado(monkeypatch):
+    """`hoje` do servidor parado em HOJE_GOLDEN_CAIXA (meio-dia em Brasília)."""
+    import fazenda.rules.datas as datas
+    from datetime import datetime
+
+    meio_dia = datetime(HOJE_GOLDEN_CAIXA.year, HOJE_GOLDEN_CAIXA.month, HOJE_GOLDEN_CAIXA.day, 12, 0)
+    monkeypatch.setattr(datas, "agora_local", lambda agora=None: meio_dia)
+    return HOJE_GOLDEN_CAIXA
+
+
+@pytest.fixture
+def cenario_dia_fixo(tmp_path_factory, tmp_path, relogio_parado):
+    """O mesmo cenário, montado e lido com o relógio parado (as leituras de
+    saldo/Caixa Real/cartão dependem de hoje)."""
+    if "db_dia_fixo" not in _CACHE:
+        destino = tmp_path_factory.mktemp("cenario_dia_fixo") / "cenario.db"
+        engine = create_engine(f"sqlite:///{destino}", connect_args={"check_same_thread": False})
+        SQLModel.metadata.create_all(engine)
+        preparar_fazendas(engine)
+        with _cliente(engine, {"fazenda_id": 1}) as c:
+            ids = montar_cenario(c, engine, 1, hoje=relogio_parado)
+        engine.dispose()
+        _CACHE["db_dia_fixo"] = (destino, ids)
+    origem, ids = _CACHE["db_dia_fixo"]
+    copia = tmp_path / "cenario_dia_fixo.db"
+    shutil.copyfile(origem, copia)
+    engine = create_engine(f"sqlite:///{copia}", connect_args={"check_same_thread": False})
+    estado = {"fazenda_id": 1}
+    with _cliente(engine, estado) as c:
+        yield Cenario(c, engine, ids, estado)
+    engine.dispose()
+
+
+# Colunas novas (nulas) dos PRs 5 e 6 que o dump cru do lançamento passa a ter —
+# como natureza_fin/diferenca_tipo nos PRs 1 e 7. Com a flag desligada elas
+# vêm sempre vazias; o resto do registro tem de ser idêntico.
+_COLUNAS_NOVAS_PR56 = {"conta_corrente_id", "gerado_por", "fatura_cartao_id"}
+
+
+def _sem_colunas_novas(lista):
+    for x in lista:
+        for k in _COLUNAS_NOVAS_PR56 & set(x):
+            assert x[k] is None, (k, x)
+    return [{k: v for k, v in x.items() if k not in _COLUNAS_NOVAS_PR56} for x in lista]
+
+
 # =============================================================================
 # 1. Regressão: flag desligada = main original, byte a byte (no JSON).
 # =============================================================================
@@ -166,6 +219,18 @@ def test_flag_desligada_relatorios_identicos_ao_golden_da_main(cenario):
     for chave in golden:
         assert atual[chave] == golden[chave], f"{chave} mudou com a flag desligada"
     assert set(atual) == set(golden)
+
+
+def test_flag_desligada_caixa_real_saldo_e_cartao_identicos_ao_golden(cenario_dia_fixo):
+    """PR 5 e PR 6 com a flag DESLIGADA: saldo das contas, Caixa Real, fundo de
+    reserva, Contas a pagar e o fluxo inteiro do cartão (compra, fechar,
+    pagar — ainda pela nota genérica) saem como no código de antes."""
+    golden = json.loads(GOLDEN_CAIXA.read_text(encoding="utf-8"))
+    atual = _normalizar(ler_caixa_e_cartao(cenario_dia_fixo.c, cenario_dia_fixo.ids, HOJE_GOLDEN_CAIXA))
+    atual["contas_a_pagar_90"] = _sem_colunas_novas(atual["contas_a_pagar_90"])
+    assert set(atual) == set(golden)
+    for chave in golden:
+        assert atual[chave] == golden[chave], f"{chave} mudou com a flag desligada"
 
 
 def test_flag_desligada_numeros_de_hoje(cenario):
@@ -564,6 +629,150 @@ def test_v2_pr4_pr7_nao_vazam_para_outra_fazenda(cenario):
 
 
 # =============================================================================
+# 3b. PR 6 (saldo de abertura e Caixa Real: erros 6 e 7) — flag ligada.
+# =============================================================================
+def _saldo_aud(cenario, **q):
+    contas = cenario.get("/financeiro/contas-correntes", **q)
+    return next(x for x in contas if x["id"] == cenario.ids["conta_corrente_id"])
+
+
+def _itens_caixa(cr, texto):
+    return [i for p in cr["serie"] for i in p["itens"] if texto in (i["descricao"] or "")]
+
+
+def test_pr6_saldo_hoje_sem_pagamento_futuro_e_com_aviso(cenario):
+    """Ex-xfail do PR 6. Hoje (2026) a conta AUD só tem pagamentos datados em
+    2031: o saldo antigo somava todos (−101.600); com a flag eles são
+    AGENDADOS, o saldo de hoje é 0 e a tela pede o saldo de abertura."""
+    antes = _saldo_aud(cenario)
+    assert antes["saldo"] == -101600 and "aviso" not in antes and "saldo_abertura" not in antes
+    cenario.ligar_regras_v2()
+    depois = _saldo_aud(cenario)
+    assert depois["saldo"] == 0
+    assert depois["pendente_saldo_abertura"] is True and "saldo de abertura" in depois["aviso"]
+    # Os 2031 continuam lá, como agendados (o L6 sem valor_pago agora vale 700).
+    assert depois["agendado_liquido"] == -102300 and depois["agendados_quantidade"] == 9
+
+
+def test_pr6_back_e_livro_do_front_dao_o_mesmo_saldo_em_2031(cenario):
+    """Em 31/12/2031 tudo já aconteceu: back = Livro do front (−102.300 — o
+    Livro sempre contou o L6 pelo valor; o back antigo o ignorava)."""
+    cenario.ligar_regras_v2()
+    fim_2031 = _saldo_aud(cenario, hoje="2031-12-31")
+    assert fim_2031["saldo"] == -102300 and fim_2031["agendado_liquido"] == 0
+    # Antes de 25/03/2031: L8 (−120.000) e L5 (+20.000) já pagos.
+    assert _saldo_aud(cenario, hoje="2031-03-02")["saldo"] == -100000
+
+
+def test_pr6_saldo_parte_do_saldo_de_abertura(cenario):
+    cenario.ligar_regras_v2()
+    cc = cenario.ids["conta_corrente_id"]
+    cenario.put(f"/financeiro/contas-correntes/{cc}/saldo-abertura",
+                {"saldo_abertura": 150000, "data_saldo_abertura": "2026-09-30"})
+    hoje = _saldo_aud(cenario)
+    assert hoje["saldo"] == 150000 and hoje["pendente_saldo_abertura"] is False and hoje["aviso"] is None
+    assert (hoje["saldo_abertura"], hoje["data_saldo_abertura"]) == (150000, "2026-09-30")
+    assert _saldo_aud(cenario, hoje="2031-12-31")["saldo"] == 150000 - 102300
+    cr = cenario.get("/financeiro/caixa-real", dias=90)
+    assert cr["saldo_inicial"] == 150000 and cr["saldo_abertura_pendente"] == [] and cr["avisos"] == []
+    conta = next(x for x in cr["contas"] if x["id"] == cc)
+    assert (conta["saldo_abertura"], conta["data_saldo_abertura"]) == (150000, "2026-09-30")
+
+
+def test_pr6_caixa_real_saldo_de_hoje_e_pendencia(cenario):
+    antes = cenario.get("/financeiro/caixa-real", dias=90)
+    assert antes["saldo_inicial"] == -101600 and "regras_v2" not in antes
+    cenario.ligar_regras_v2()
+    cr = cenario.get("/financeiro/caixa-real", dias=90)
+    assert cr["saldo_inicial"] == 0 and cr["regras_v2"] is True
+    assert [x["id"] for x in cr["saldo_abertura_pendente"]] == [cenario.ids["conta_corrente_id"]]
+    assert "saldo de abertura" in cr["avisos"][0]
+    # Os pagamentos de 2031 ficam fora da janela de 90 dias (agendados).
+    assert cr["agendados_fora_da_janela"]["quantidade"] == 9
+    assert not [i for p in cr["serie"] for i in p["itens"] if i.get("agendado")]
+
+
+def test_pr6_caixa_real_boleto_inteiro_sem_desconto_do_vale(cenario):
+    """Ex-xfail do PR 6 (P0-7): o L9 tem R$ 200 de vale de item (ração do
+    cachorro da Ana), mas o boleto do fornecedor é de R$ 1.000."""
+    antes = _itens_caixa(cenario.get("/financeiro/caixa-real", dias=90), "Ração fazenda")
+    assert [i["valor"] for i in antes] == [800]
+    cenario.ligar_regras_v2()
+    depois = _itens_caixa(cenario.get("/financeiro/caixa-real", dias=90), "Ração fazenda")
+    assert [i["valor"] for i in depois] == [1000]
+    # O vale continua fora da DRE (a ração do cachorro não é CMV).
+    assert cenario.linha(cenario.dre(), "CUSTO_VARIAVEL") == 7500
+
+
+def test_pr6_pago_sem_valor_pago(cenario):
+    """Ex-xfail do PR 6, com a decisão de nunca reescrever valor_pago
+    histórico: o L6 (criado antes da flag) continua (None, −700) no banco e o
+    saldo o lê pelo valor da parcela (700); lançamento NOVO que nasce pago sem
+    valor_pago, com a flag, grava (700, 0)."""
+    cenario.ligar_regras_v2()
+    with Session(cenario.engine) as s:
+        l6 = s.get(ContaGerencial, cenario.ids["L"]["L6"]["ids"][0])
+        assert (l6.valor_pago, l6.desconto_acrescimo) == (None, -700)
+    r = cenario.c.post("/financeiro/lancamentos", json={
+        "tipo": "despesa", "centro_custo": "Pecuária Leiteira", "fornecedor_cliente": "AUD-L6b",
+        "itens": [{"produto": "Diarista", "codigo_conta_gerencial": "8.7", "valor_total": 700, "tipo_item": "servico"}],
+        "data_emissao": "2031-03-28", "data_competencia": "2031-03-28", "data_pagamento": "2031-03-28",
+        "conta_bancaria": "AUD Banco · Agência 0000 · Conta corrente 0000-0",
+    })
+    assert r.status_code == 201, r.text
+    with Session(cenario.engine) as s:
+        novo = s.get(ContaGerencial, r.json()["ids"][0])
+        assert (novo.valor_pago, novo.desconto_acrescimo) == (700, 0)
+        assert novo.conta_corrente_id == cenario.ids["conta_corrente_id"]
+    assert _saldo_aud(cenario, hoje="2031-12-31")["saldo"] == -103000
+
+
+def test_pr6_cenario_antes_e_depois(cenario):
+    """A tabela §P0-6/§P0-7 (3) do SOLUCOES.md, flag desligada → ligada."""
+    def numeros():
+        conta = _saldo_aud(cenario)
+        cr = cenario.get("/financeiro/caixa-real", dias=90)
+        return {
+            "saldo_hoje": conta["saldo"],
+            "saldo_fim_2031": _saldo_aud(cenario, hoje="2031-12-31")["saldo"],
+            "caixa_real_saldo_inicial": cr["saldo_inicial"],
+            "boleto_l9": _itens_caixa(cr, "Ração fazenda")[0]["valor"],
+        }
+    antes = numeros()
+    cenario.ligar_regras_v2()
+    depois = numeros()
+    assert {k: (antes[k], depois[k]) for k in antes} == {
+        "saldo_hoje": (-101600, 0),
+        # Sem a flag, `hoje` é ignorado (o saldo antigo não tem data).
+        "saldo_fim_2031": (-101600, -102300),
+        "caixa_real_saldo_inicial": (-101600, 0),
+        "boleto_l9": (800, 1000),
+    }
+
+
+def test_pr6_nao_vaza_para_outra_fazenda(cenario):
+    """Multi-tenant: a fazenda 2 não define a abertura nem liga lançamentos
+    na conta da 1; o saldo e o Caixa Real da 2 não enxergam a 1."""
+    cenario.ligar_regras_v2(fazenda_id=1)
+    cc1 = cenario.ids["conta_corrente_id"]
+    cenario.estado["fazenda_id"] = 2
+    r = cenario.c.put(f"/financeiro/contas-correntes/{cc1}/saldo-abertura",
+                      json={"saldo_abertura": 1, "data_saldo_abertura": "2026-01-01"})
+    assert r.status_code == 404
+    l3 = cenario.ids["L"]["L3"]["ids"][0]
+    cc2 = cenario.c.post("/financeiro/contas-correntes", json={"banco": "F2", "agencia": "1", "numero_conta": "2"}).json()["id"]
+    r = cenario.c.put("/financeiro/lancamentos/conta-corrente-lote", json={"lancamento_ids": [l3], "conta_corrente_id": cc2})
+    assert r.status_code == 200 and r.json()["nao_encontrados"] == [l3]
+    r = cenario.c.put("/financeiro/lancamentos/conta-corrente-lote", json={"lancamento_ids": [l3], "conta_corrente_id": cc1})
+    assert r.status_code == 404
+    assert [x["id"] for x in cenario.get("/financeiro/contas-correntes")] == [cc2]
+    assert "regras_v2" not in cenario.get("/financeiro/caixa-real", dias=90)
+    cenario.estado["fazenda_id"] = 1
+    with Session(cenario.engine) as s:
+        assert s.get(ContaGerencial, l3).conta_corrente_id == cc1
+
+
+# =============================================================================
 # 4. PR 2 (contas automáticas) e PR 3 (folha pelo bruto e encargos) — a folha
 #    da Ana (bruto 3.000, INSS 240, FGTS projetado 240, vale de item 200;
 #    líquido 2.560) nasceu com a flag desligada: o histórico ganha os itens
@@ -777,30 +986,6 @@ def test_pendente_pr5_fatura_aberta_em_contas_a_pagar(cenario):
     cenario.ligar_regras_v2()
     contas = cenario.get("/financeiro/contas-a-pagar", dias=90)
     assert any("Peça" in (x.get("descricao") or "") for x in contas)
-
-
-@pytest.mark.xfail(strict=True, reason="PR 6 (saldo de abertura): saldo de hoje não soma pagamentos datados no futuro")
-def test_pendente_pr6_saldo_hoje_sem_pagamento_futuro(cenario):
-    cenario.ligar_regras_v2()
-    contas = cenario.get("/financeiro/contas-correntes")
-    saldo = next(x["saldo"] for x in contas if x["id"] == cenario.ids["conta_corrente_id"])
-    assert saldo == 0
-
-
-@pytest.mark.xfail(strict=True, reason="PR 6 (valor_pago obrigatório): pago sem valor_pago nasce com o valor da parcela")
-def test_pendente_pr6_pago_sem_valor_pago(cenario):
-    cenario.ligar_regras_v2()
-    with Session(cenario.engine) as s:
-        l6 = s.get(ContaGerencial, cenario.ids["L"]["L6"]["ids"][0])
-        assert (l6.valor_pago, l6.desconto_acrescimo) == (700, 0)
-
-
-@pytest.mark.xfail(strict=True, reason="PR 6 (Caixa Real sem ajuste de vale, P0-7): o boleto do L9 é 1.000")
-def test_pendente_pr6_caixa_real_boleto_inteiro(cenario):
-    cenario.ligar_regras_v2()
-    cr = cenario.get("/financeiro/caixa-real", dias=90)
-    itens = [i for p in cr["serie"] for i in p["itens"] if "Ração fazenda" in (i["descricao"] or "")]
-    assert itens and itens[0]["valor"] == 1000
 
 
 @pytest.mark.xfail(strict=True, reason="PR 8 (DRE única): campos legados (CSV/e-mail do Portal) iguais à cascata")

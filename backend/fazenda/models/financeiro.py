@@ -95,6 +95,18 @@ class ContaGerencial(SQLModel, table=True):
     # | "abatimento" (o desconto reduz o valor da própria conta). Só desconto
     # aceita abatimento. Só muda número com a flag `financeiro_regras_v2`.
     diferenca_tipo: Optional[str] = None
+    # Conta corrente do pagamento/recebimento (Fase A, PR 6 — saldo por FK, não
+    # mais pelo texto livre de `conta_bancaria`, que continua como rótulo de
+    # exibição). Preenchida na baixa quando o rótulo casa com uma conta da
+    # fazenda; o histórico é ligado pelo comando `scripts.backfill_conta_corrente`.
+    conta_corrente_id: Optional[int] = Field(default=None, foreign_key="conta_corrente.id", index=True)
+    # Quem gerou esta linha automaticamente (Fase A): "caixa_retirada" (saque do
+    # caixa do funcionário pelo banco, PR 6), "backfill_cartao" (nota por compra
+    # de fatura de cartão JÁ PAGA pela nota genérica — só classifica a DRE, o
+    # dinheiro continua contado uma vez, pela genérica: fica fora de saldo,
+    # Caixa Real e Fluxo), "backfill_cartao_aberta" (nota de compra de fatura
+    # ainda não paga, PR 5). NULL = lançamento comum.
+    gerado_por: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +350,13 @@ class ContaCorrente(SQLModel, table=True):
     numero_conta: str
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Saldo conferido com o extrato no fim do dia `data_saldo_abertura` (Fase A,
+    # PR 6). O saldo calculado parte dele e soma só os pagamentos DEPOIS dessa
+    # data, até hoje. Campo na conta (decisão Q12), não lançamento: não polui
+    # Fluxo, DRE nem Consultas. Os dois vêm juntos ou nenhum. Só é lido com a
+    # flag `financeiro_regras_v2`.
+    saldo_abertura: Optional[float] = None
+    data_saldo_abertura: Optional[date] = None
 
 
 # ---------------------------------------------------------------------------

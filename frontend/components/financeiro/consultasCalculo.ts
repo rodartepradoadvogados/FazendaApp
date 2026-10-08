@@ -220,8 +220,16 @@ const ordemLivro = (a: Lanc, b: Lanc) =>
  * e o De/Até pela data de pagamento (ignora os demais filtros, senão o saldo
  * fica "furado") e parte do saldo do movimento realizado antes do período.
  * Sem conta, mostra as linhas já filtradas da lista, sem saldo.
+ *
+ * Regras v2 (Fase A, PR 6): com `abertura` (o saldo do extrato conferido numa
+ * data, cadastrado na conta corrente), o livro parte dele e só soma o que foi
+ * pago DEPOIS dessa data — o mesmo saldo do servidor. Nota que só classifica a
+ * DRE (`gerado_por = "backfill_cartao"`: o dinheiro já está na nota genérica
+ * da fatura) nunca entra no livro.
  */
-export function montarLivro(regs: Lanc[], filtradas: LinhaConsulta[], f: FiltrosConsulta): LivroCaixa {
+export function montarLivro(
+  regs: Lanc[], filtradas: LinhaConsulta[], f: FiltrosConsulta, abertura?: { saldo: number; data: string } | null,
+): LivroCaixa {
   if (!f.banco) {
     const linhas = [...filtradas].sort((a, b) => ordemLivro(a.l, b.l)).map(({ l, valor }) => ({
       l, entrada: l.tipo === "receita" ? valor : 0, saida: l.tipo === "receita" ? 0 : valor, saldo: null,
@@ -231,9 +239,11 @@ export function montarLivro(regs: Lanc[], filtradas: LinhaConsulta[], f: Filtros
       totalEntradas: r2(linhas.reduce((s, x) => s + x.entrada, 0)), totalSaidas: r2(linhas.reduce((s, x) => s + x.saida, 0)),
     };
   }
-  const daConta = regs.filter((l) => l.data_pagamento && (l.conta_bancaria || "") === f.banco).sort(ordemLivro);
+  const daConta = regs.filter((l) =>
+    l.data_pagamento && (l.conta_bancaria || "") === f.banco && l.gerado_por !== "backfill_cartao"
+    && !(abertura && l.data_pagamento <= abertura.data)).sort(ordemLivro);
   const liquido = (l: Lanc) => (l.tipo === "receita" ? realizado(l) : -realizado(l));
-  let saldo = 0;
+  let saldo = abertura ? abertura.saldo : 0;
   for (const l of daConta) if (f.de && l.data_pagamento! < f.de) saldo += liquido(l);
   const saldoAnterior = r2(saldo);
   let entradas = 0, saidas = 0;

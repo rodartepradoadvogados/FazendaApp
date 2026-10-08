@@ -168,6 +168,22 @@ test("livro caixa: saldo acumulado SÓ com conta bancária escolhida", () => {
   assert.equal(com.totalSaidas, 200);
 });
 
+test("livro caixa (regras v2): parte do saldo de abertura e ignora a nota que só classifica o cartão", () => {
+  const regs = [
+    lanc({ tipo: "despesa", valor_pago: 300, conta_bancaria: "BB", data_pagamento: "2026-09-25" }), // antes da abertura: já está nela
+    lanc({ tipo: "despesa", valor_pago: 200, conta_bancaria: "BB", data_pagamento: "2026-10-03" }),
+    lanc({ tipo: "despesa", valor: 700, valor_pago: null, conta_bancaria: "BB", data_pagamento: "2026-10-04" }), // L6: vale o valor
+    lanc({ tipo: "despesa", valor_pago: 800, conta_bancaria: "BB", data_pagamento: "2026-10-05", gerado_por: "backfill_cartao" }),
+  ];
+  const fBB = base({ banco: "BB" });
+  const livro = montarLivro(regs, filtrarRealizados(regs, fBB, casaBusca), fBB, { saldo: 5000, data: "2026-09-30" });
+  assert.equal(livro.saldoAnterior, 5000);
+  assert.deepEqual(livro.linhas.map((x) => x.saida), [200, 700]);
+  assert.equal(livro.saldoFinal, 4100);
+  // Sem abertura (regras antigas): como antes, desde o primeiro lançamento.
+  assert.equal(montarLivro(regs, filtrarRealizados(regs, fBB, casaBusca), fBB).saldoFinal, -1200);
+});
+
 test("ordenação: valor e data, asc/desc, sem mutar a lista", () => {
   const xs = filtrarRealizados([
     lanc({ valor_pago: 30, data_pagamento: "2026-10-03" }), lanc({ valor_pago: 10, data_pagamento: "2026-10-01" }), lanc({ valor_pago: 20, data_pagamento: "2026-10-02" }),

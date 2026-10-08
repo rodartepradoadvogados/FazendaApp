@@ -29,6 +29,8 @@ from fazenda.models import CaixaMovimento, CaixaRetencao, ContaGerencial, Pessoa
 from fazenda.rules import caixa_funcionario as regras
 from fazenda.rules import caixa_time as regras_time
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
+from fazenda.rules import caixa_retirada_banco
+from fazenda.rules.parametros import regras_v2_ativas
 
 router = APIRouter(prefix="/caixa-funcionarios", tags=["Caixa dos funcionários"])
 
@@ -525,6 +527,9 @@ def registrar_retirada(
     session.flush()
     mov.numero_recibo = f"CX-{dados.data.year}-{mov.id:05d}"
     session.add(mov)
+    if regras_v2_ativas(session, fazenda_id):
+        # Fase A, PR 6: a retirada pelo banco baixa o saldo da conta (OBRIGACAO, fora da DRE).
+        caixa_retirada_banco.lancar_retirada_no_banco(session, mov, pessoa.nome)
     session.commit()
     session.refresh(mov)
     return {"movimento": mov.model_dump(), "pessoa": {"id": pessoa.id, "nome": pessoa.nome, "tipo": pessoa.tipo},
@@ -617,6 +622,8 @@ def estornar_movimento(
             detail="Este crédito veio de um rateio do PL. Para desfazê-lo, use 'Desfazer rateio' no caixa do time.",
         )
     novo = regras.estornar_movimento(session, original, motivo, usuario_id_seguro(user), fazenda_id)
+    if original.tipo == "retirada":
+        caixa_retirada_banco.estornar_retirada_no_banco(session, original, novo)
     session.commit()
     session.refresh(novo)
     return {"estorno": novo.model_dump()}
@@ -645,6 +652,8 @@ def excluir_movimento(
             detail="Só o último movimento pode ser excluído. Há movimentos depois dele: use o estorno.",
         )
     lancamento_id = mov.lancamento_id
+    if mov.tipo == "retirada":
+        caixa_retirada_banco.excluir_retirada_no_banco(session, mov)
     session.delete(mov)
     session.flush()
     if lancamento_id:

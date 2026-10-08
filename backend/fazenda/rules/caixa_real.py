@@ -42,6 +42,8 @@ from datetime import date, timedelta
 # alerta de reserva, é falta de dinheiro para honrar o compromisso.
 SALDO_CRITICO = 0.0
 
+MARCAS_DE_COMPROMISSO = ("agendado", "fatura_cartao")
+
 
 def _dia(valor) -> date | None:
     """Aceita date ou ISO string — o router passa o que vier do banco."""
@@ -95,13 +97,20 @@ def projetar_caixa(
             bucket["entradas"] += abs(valor)
         else:
             bucket["saidas"] += abs(valor)
-        bucket["itens"].append({
+        item = {
             "descricao": c.get("descricao"),
             "valor": abs(valor),
             "tipo": c.get("tipo"),
             "vencido": data < inicio,
             "data_original": data.isoformat(),
-        })
+        }
+        # Marcas opcionais (regras v2): pagamento já baixado com data futura
+        # ("agendado") e nota de compra no cartão ("fatura_cartao"). Só
+        # aparecem quando o compromisso as traz — sem a flag, item igual.
+        for marca in MARCAS_DE_COMPROMISSO:
+            if c.get(marca):
+                item[marca] = True
+        bucket["itens"].append(item)
 
     serie: list[dict] = []
     saldo = round(saldo_inicial, 2)

@@ -3,7 +3,8 @@
 Correção dos números dos Relatórios do Financeiro em PRs pequenos, cada um ligado
 **fazenda a fazenda** por uma flag. Este arquivo cobre o PR 0 (rede de segurança),
 o PR 1 (natureza do lançamento), o PR 7 (juros e descontos da baixa), o PR 4
-(receita do leite), o PR 2 (contas automáticas) e o PR 3 (folha pelo bruto). A auditoria completa, com causa-raiz e a ordem
+(receita do leite), o PR 2 (contas automáticas), o PR 3 (folha pelo bruto) e o PR 6
+(saldo de abertura e Caixa Real). A auditoria completa, com causa-raiz e a ordem
 dos PRs seguintes, ficou no relatório da Fase A (`SOLUCOES.md`, fora do repositório).
 
 ## 1. A flag `financeiro_regras_v2`
@@ -123,7 +124,9 @@ Para cada mês: as 15 linhas da DRE (competência e caixa), fora da DRE (total e
 por natureza), não classificado, numeradores de custo por hectare e por vaca,
 depreciação e, por safra, o numerador do custo da safra. Colunas: `antes`
 (regras antigas), `depois` (regras novas com os dados de hoje), `depois_com_backfill`
-(simulando o backfill sem gravá-lo) e os Δ. O CSV de lançamentos lista cada
+(simulando o backfill sem gravá-lo) e os Δ. A seção `saldo` (PR 6) traz, por
+conta corrente, o saldo de hoje antigo × novo, os agendados, a falta de saldo
+de abertura e quantos lançamentos o backfill do vínculo liga ou manda para revisão. O CSV de lançamentos lista cada
 registro que muda de lugar, com o motivo. A conexão abre em modo só leitura
 (`PRAGMA query_only` / `SET TRANSACTION READ ONLY`) e termina em `rollback()`.
 Mesmo assim: rode num dump restaurado, nunca na produção.
@@ -272,7 +275,64 @@ verbas"; a guia é recomposta quando ela ou uma folha da competência muda, mas
 não quando muda um 13º/rescisão; desligar a flag depois de ligada mantém os
 itens (os relatórios antigos os ignoram).
 
-## 9. O que fica para os próximos PRs
+## 9. Saldo de abertura e Caixa Real (PR 6)
+
+Regras em `fazenda/rules/saldo_conta.py`; Caixa Real em `financeiro._caixa_real_v2`.
+Com a flag desligada, saldo, Caixa Real, fundo de reserva, Contas a pagar e o
+fluxo do cartão saem como antes — travado por
+`tests/dados/caixa_cartao_golden_pre_pr56.json` (gerado pelo código de antes,
+com o relógio parado; `tests/dados/gerar_golden_caixa_cartao.py`).
+
+- **Saldo de abertura** (decisão Q12: campo na conta, não lançamento):
+  `conta_corrente.saldo_abertura` + `data_saldo_abertura`, gravados em
+  `PUT /financeiro/contas-correntes/{id}/saldo-abertura` (só admin; os dois
+  juntos; data não pode ser futura). Tela: Parâmetros financeiros › Conta
+  corrente › Editar.
+- **Saldo de hoje** = abertura + pagamentos/recebimentos com
+  `data_saldo_abertura < data de caixa ≤ hoje` ± transferências no mesmo
+  intervalo. Sem abertura, é a soma dos movimentos e a resposta traz
+  `pendente_saldo_abertura` e o aviso "Informe o saldo de abertura" (o Caixa
+  Real mostra a pendência no lugar do número). `GET /financeiro/contas-correntes`,
+  `/caixa-real` e `/caixa-real/fundo-reserva-sugerido` aceitam `?hoje=` (o
+  `hojeLocal()` do front); sem ele, `hoje_local()` (Brasília).
+- **Vínculo por FK**: `conta_gerencial.conta_corrente_id`, gravado em toda
+  baixa (individual, lote, lote detalhado, criação já paga, compra/venda de
+  animal, compra de sêmen) quando o rótulo casa exatamente com uma conta da
+  fazenda, ou pelo `conta_corrente_id` explícito (404 se for de outra
+  fazenda). Linha sem FK ainda casa pelo rótulo exato (histórico).
+  O histórico se liga pelo comando
+  `python -m scripts.backfill_conta_corrente --fazenda N [--csv revisao.csv] [--aplicar] [--reverter LOTE]`
+  (exato → normalizado: banco + dígitos da agência seguidos dos da conta →
+  banco único: só o nome do banco e uma conta nele); o que sobra vai para a
+  lista de revisão (`GET /financeiro/conta-corrente/revisao`) e se liga em lote
+  (`PUT /financeiro/lancamentos/conta-corrente-lote`, admin). Log em
+  `migracao_log_financeiro`, reversível por lote.
+- **`valor_pago` obrigatório**: com a flag, lançamento que já nasce pago sem
+  `valor_pago` grava o valor da parcela (antes: `None` e `desconto_acrescimo
+  = −valor`, o L6); valor pago ≤ 0 → 400 (criação, baixa, lote detalhado). O
+  histórico NÃO é reescrito: o saldo lê pago sem `valor_pago` pelo valor da
+  parcela (igual ao Livro do front).
+- **Pagamento com data futura = agendado** (Q13): não entra no saldo de hoje;
+  aparece no Caixa Real na data dele com `agendado: true` (os que passam da
+  janela ficam em `agendados_fora_da_janela`). A baixa responde `agendado`;
+  a tela confirma antes ("Agendar pagamento para dd/mm?") e a lista mostra
+  "Agendada para dd/mm" (`data_caixa`, só com a flag, em `GET /lancamentos`).
+- **Cartão avulso** (`forma_pagamento="credito"`): a data de caixa é o
+  vencimento do cartão — saldo, Caixa Real, DRE de caixa e `mes_caixa` da lista.
+- **Retirada do caixa do funcionário pelo banco** (pix/transferência/débito
+  com conta; dinheiro não): gera `ContaGerencial` despesa paga, natureza
+  `OBRIGACAO` (fora da DRE e dos custos), `gerado_por="caixa_retirada"`,
+  ligada ao movimento pelo `numero_lancamento`. Estorno = receita contrária na
+  data do estorno; exclusão da retirada apaga o lançamento.
+- **Caixa Real sem o desconto do vale** (P0-7): compromisso em aberto vale o
+  que vai sair do banco (`vale_item.valor_caixa_parcela`): o boleto inteiro,
+  com o vale de item dentro (o acerto é com o funcionário). O fundo de reserva
+  sugerido soma o valor pago, na data de caixa, também sem o ajuste do vale.
+- O Livro caixa (Consultas, com conta escolhida) parte do saldo de abertura.
+- Migração `a7c4e2d9b351` (aditiva, idempotente, reversível): as colunas
+  acima e `conta_gerencial.gerado_por`.
+
+## 10. O que fica para os próximos PRs
 
 O teste do cenário marca cada número ainda errado com `xfail(strict=True)` e o
 nome do PR que o corrige; o PR que acertar o número é obrigado a tirar o xfail.
@@ -280,6 +340,5 @@ nome do PR que o corrige; o PR que acertar o número é obrigado a tirar o xfail
 | PR | O que resolve |
 |---|---|
 | 5 | cartão por item (CMV com a compra do cartão; fatura em Contas a pagar e no Caixa Real) |
-| 6 | saldo de abertura, pagamento futuro como agendado, `valor_pago` obrigatório, Caixa Real sem desconto de vale |
 | 8 | DRE única (campos legados, Portal, Capa) e orçamento com totais separados |
 | 9 | COE/COT com rateio: "Todos" sem filtro, depreciação por centro |

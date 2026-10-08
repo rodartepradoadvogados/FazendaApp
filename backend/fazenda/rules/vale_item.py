@@ -133,6 +133,22 @@ def valor_gerencial(conta: ContaGerencial, ajustes: dict[int, float]) -> float:
     return round(_base_gerencial(conta) - ajustes.get(conta.id, 0.0), 2)
 
 
+def valor_caixa_parcela(conta: ContaGerencial) -> float:
+    """Valor de CAIXA da parcela (Fase A, PR 6 — P0-7): o que vai sair/entrar do
+    banco. Em aberto = `valor_total` da parcela; paga = `valor_pago` (pago sem
+    `valor_pago`, dado legado = o valor da parcela).
+
+    O caixa NUNCA desconta vale de item (nem `ajuste_vale_por_conta`, nem
+    `sem_itens_de_vale`): a ração do cachorro do funcionário comprada no boleto
+    da fazenda sai INTEIRA para o fornecedor; o acerto do vale é com o
+    funcionário e já aparece no caixa porque a folha sai com o líquido menor.
+    Descontar aqui projetava R$ 800 para um boleto de R$ 1.000. Usado pelo Caixa
+    Real e pelo fundo de reserva sugerido com a flag `financeiro_regras_v2`."""
+    if getattr(conta, "data_pagamento", None) is not None and getattr(conta, "valor_pago", None) is not None:
+        return round(float(conta.valor_pago), 2)
+    return round(float(conta.valor_total or 0), 2)
+
+
 # ── Coluna "Origem" do relatório de vales (§3.7) ────────────────────────────
 def origens_lancamento_por_vale(session: Session, vale_ids: set[int] | list[int], campo: str) -> dict[int, dict]:
     """{vale_id: origem_lancamento} para os relatórios de vale (`GET

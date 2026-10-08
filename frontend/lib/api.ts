@@ -7221,22 +7221,41 @@ export type CaixaReal = {
   variacao: number; fundo_reserva: number; folga_minima: number; dias: number;
   primeiro_dia_negativo: string | null; primeiro_dia_abaixo_da_reserva: string | null;
   compromissos_sem_vencimento: number;
-  contas: { id: number; nome: string; saldo: number }[];
+  contas: {
+    id: number; nome: string; saldo: number;
+    // Regras v2 (Fase A, PR 6): o saldo parte do saldo de abertura conferido com o extrato.
+    saldo_abertura?: number | null; data_saldo_abertura?: string | null; pendente_saldo_abertura?: boolean;
+  }[];
   serie: {
     data: string; entradas: number; saidas: number; saldo: number;
-    itens: { descricao: string | null; valor: number; tipo: string; vencido: boolean; data_original: string }[];
+    itens: {
+      descricao: string | null; valor: number; tipo: string; vencido: boolean; data_original: string;
+      // Regras v2: pagamento já baixado com data futura; nota de compra no cartão (fatura aberta).
+      agendado?: boolean; fatura_cartao?: boolean;
+    }[];
   }[];
+  // Só com as regras v2 (Fase A, PR 6).
+  regras_v2?: boolean;
+  hoje?: string;
+  saldo_abertura_pendente?: { id: number; nome: string }[];
+  agendados_fora_da_janela?: { quantidade: number; total_saidas: number; total_entradas: number };
+  avisos?: string[];
 };
 
-export async function fetchCaixaReal(dias?: number): Promise<CaixaReal> {
-  const q = dias ? `?dias=${dias}` : "";
+/** `hoje` = hojeLocal() do front (o servidor usa Brasília; só vale com as regras v2). */
+export async function fetchCaixaReal(dias?: number, hoje?: string): Promise<CaixaReal> {
+  const p = new URLSearchParams();
+  if (dias) p.set("dias", String(dias));
+  if (hoje) p.set("hoje", hoje);
+  const q = p.toString() ? `?${p.toString()}` : "";
   const res = await authFetch(`${API}/financeiro/caixa-real${q}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Caixa Real: ${res.status}`);
   return res.json();
 }
 
-export async function fetchFundoReservaSugerido(mesesHistorico = 6) {
-  const res = await authFetch(`${API}/financeiro/caixa-real/fundo-reserva-sugerido?meses_historico=${mesesHistorico}`, { cache: "no-store" });
+export async function fetchFundoReservaSugerido(mesesHistorico = 6, hoje?: string) {
+  const h = hoje ? `&hoje=${encodeURIComponent(hoje)}` : "";
+  const res = await authFetch(`${API}/financeiro/caixa-real/fundo-reserva-sugerido?meses_historico=${mesesHistorico}${h}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Fundo de reserva sugerido: ${res.status}`);
   return res.json();
 }
@@ -7512,10 +7531,25 @@ export type ContaCorrenteCadastro = {
   // calcular_saldos_contas_correntes no backend. Soma lançamentos pagos
   // vinculados à conta + transferências entre contas.
   saldo: number;
+  // Regras v2 (Fase A, PR 6): saldo de abertura conferido com o extrato; o
+  // saldo acima é o de HOJE (pagamento com data futura fica em agendado).
+  saldo_abertura?: number | null; data_saldo_abertura?: string | null;
+  saldo_ate?: string; agendado_liquido?: number; agendados_quantidade?: number;
+  pendente_saldo_abertura?: boolean; aviso?: string | null;
 };
-export async function fetchContasCorrentes(): Promise<ContaCorrenteCadastro[]> {
-  const res = await authFetch(`${API}/financeiro/contas-correntes`, { cache: "no-store" });
+/** `hoje` = hojeLocal() do front (só vale com as regras v2). */
+export async function fetchContasCorrentes(hoje?: string): Promise<ContaCorrenteCadastro[]> {
+  const q = hoje ? `?hoje=${encodeURIComponent(hoje)}` : "";
+  const res = await authFetch(`${API}/financeiro/contas-correntes${q}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Contas correntes error: ${res.status}`);
+  return res.json();
+}
+/** Saldo do extrato no fim do dia `data_saldo_abertura` (os dois juntos; null nos dois remove). Só admin. */
+export async function definirSaldoAbertura(id: number, dados: { saldo_abertura: number | null; data_saldo_abertura: string | null }): Promise<ContaCorrenteCadastro> {
+  const res = await authFetch(`${API}/financeiro/contas-correntes/${id}/saldo-abertura`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar o saldo de abertura"); }
   return res.json();
 }
 export async function criarContaCorrente(dados: { banco: string; agencia: string; numero_conta: string; ativo?: boolean }) {

@@ -20,13 +20,33 @@ export function diasAte(iso: string, hoje = hojeLocal()): number {
   return Math.round((Date.UTC(a, m - 1, d) - Date.UTC(a2, m2 - 1, d2)) / 86400000);
 }
 
-export type SituacaoId = "vencida" | "hoje" | "logo" | "aberto" | "fatura" | "parcial" | "paga";
+export type SituacaoId = "vencida" | "hoje" | "logo" | "aberto" | "fatura" | "parcial" | "paga" | "agendada";
 export type Situacao = { id: SituacaoId; classe: "venc" | "logo" | "aberto" | "fat" | "pago" | "parc"; rotulo: string };
 
 const plural = (n: number, a: string, b: string) => `${n} ${n === 1 ? a : b}`;
+const diaMes = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+
+/**
+ * Pagamento com data futura (regras v2, Fase A PR 6): vira AGENDADO — não sai do
+ * saldo de hoje, aparece no Caixa Real na data dele. Devolve a pergunta de
+ * confirmação para a tela mostrar antes de enviar a baixa, ou null quando
+ * nenhuma data é futura (ou a fazenda ainda usa as regras antigas).
+ */
+export function perguntaAgendamento(datas: (string | null | undefined)[], regrasV2: boolean, hoje = hojeLocal()): string | null {
+  if (!regrasV2) return null;
+  const futuras = [...new Set(datas.filter((d): d is string => !!d && d > hoje))].sort();
+  if (!futuras.length) return null;
+  const quando = futuras.length === 1 ? diaMes(futuras[0]) : `${diaMes(futuras[0])} a ${diaMes(futuras[futuras.length - 1])}`;
+  return `Agendar pagamento para ${quando}? Ele só sai do saldo nessa data e aparece no Caixa Real como agendado.`;
+}
 
 /** Situação de um lançamento, sempre com texto (o ícone é escolhido pela tela a partir do `id`). */
 export function situacaoDe(l: Lanc, hoje = hojeLocal()): Situacao {
+  // Regras v2 (Fase A, PR 6): baixa com data FUTURA é agendada — ainda não saiu
+  // do saldo de hoje. `data_caixa` só vem do servidor com as regras novas.
+  if (l.data_pagamento && l.data_caixa && l.data_caixa > hoje) {
+    return { id: "agendada", classe: "aberto", rotulo: `Agendada para ${diaMes(l.data_caixa)}` };
+  }
   if (l.data_pagamento) {
     const dm = l.data_pagamento.slice(8, 10) + "/" + l.data_pagamento.slice(5, 7);
     const parcial = l.valor_pago != null && Math.round((l.valor - l.valor_pago) * 100) > 0 && (l.desconto_acrescimo ?? 0) === 0;

@@ -189,7 +189,8 @@ import ContasListaView, { PilulaSituacao } from "@/components/financeiro/ContasL
 import ConsultasView from "@/components/financeiro/ConsultasView";
 import OndeFoiParar from "@/components/financeiro/OndeFoiParar";
 import ResumoView from "@/components/financeiro/ResumoView";
-import { hojeLocal, situacaoDe, valorCompetencia, valorRealizado } from "@/lib/financeiroSituacao";
+import { hojeLocal, perguntaAgendamento, situacaoDe, valorCompetencia, valorRealizado } from "@/lib/financeiroSituacao";
+import { useRegrasV2 } from "@/lib/useRegrasV2";
 import { migrarFiltrosSalvosAntigos } from "@/lib/financeiroFiltrosMigracao";
 
 export default function FinanceiroPage() {
@@ -1118,6 +1119,7 @@ const theadStickyStyle: React.CSSProperties = { position: "sticky", top: 0, zInd
  */
 export function PagamentoLoteView({ contasBancarias, onFeito, idsIniciais }: { contasBancarias: string[]; onFeito?: () => void; idsIniciais?: number[] }) {
   const admin = ehAdmin();
+  const regrasV2Lote = useRegrasV2();
   const [regs, setRegs] = useState<Lanc[] | null>(null);
   const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [error, setError] = useState<string | null>(null);
@@ -1236,6 +1238,10 @@ export function PagamentoLoteView({ contasBancarias, onFeito, idsIniciais }: { c
   async function darBaixaEmLote() {
     setMsg(null);
     if (!selecionados.size) { setMsg({ tipo: "erro", texto: "Selecione ao menos uma nota em aberto." }); return; }
+    // Regras v2 (Fase A, PR 6): data futura = pagamento agendado; confirma antes.
+    const pergunta = perguntaAgendamento(
+      modoLote === "linha" ? notasSelecionadas.map((n) => porLinha[n.id]?.data || dataPagamento) : [dataPagamento], regrasV2Lote);
+    if (pergunta && !window.confirm(pergunta)) return;
     setSalvando(true);
     try {
       let r;
@@ -4011,6 +4017,9 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
       setMsg({ tipo: "erro", texto: "A soma das parcelas precisa bater com a diferença a parcelar." });
       return;
     }
+    // Regras v2 (Fase A, PR 6): data futura = pagamento agendado; confirma antes.
+    const pergunta = perguntaAgendamento([dataPagamento], regrasV2Baixa);
+    if (pergunta && !window.confirm(pergunta)) return;
     setSalvando(true); setMsg(null);
     try {
       const corpo = {
@@ -4698,15 +4707,21 @@ function CaixaRealView() {
 
   useEffect(() => {
     setErro(null);
-    fetchCaixaReal(dias).then(setDados).catch((e) => setErro(e.message));
+    // `hoje` local (nunca toISOString): o servidor usa Brasília, mas o front manda o dia que a pessoa vê.
+    fetchCaixaReal(dias, hojeLocal()).then(setDados).catch((e) => setErro(e.message));
   }, [dias]);
-  useEffect(() => { fetchFundoReservaSugerido().then(setSugestao).catch(() => {}); }, []);
+  useEffect(() => { fetchFundoReservaSugerido(6, hojeLocal()).then(setSugestao).catch(() => {}); }, []);
 
   // Só os dias com movimento — a série vem completa (365 pontos num ano) e
   // listar dia vazio afogaria o que importa. O `|| []` também protege a tela
   // quando a API ainda está na versão anterior (ver o comentário na DRE).
   const diasComMovimento = (dados?.serie || []).filter((d) => d.entradas || d.saidas);
   const contasDoCaixa = dados?.contas || [];
+  // Regras v2 (Fase A, PR 6): sem saldo de abertura o "saldo hoje" é só a soma
+  // dos lançamentos — mostra a pendência em vez de fingir um número.
+  const semAbertura = dados?.saldo_abertura_pendente || [];
+  const saldoPendente = !!dados?.regras_v2 && (semAbertura.length > 0 || contasDoCaixa.length === 0);
+  const foraDaJanela = dados?.agendados_fora_da_janela;
 
   const formatarDia = (iso: string) => new Date(iso + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 
@@ -4742,11 +4757,30 @@ function CaixaRealView() {
 
       {dados && <>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-          <KPI v={formatBRL(dados.saldo_inicial)} l="Saldo hoje" c="var(--dourado-light)" />
+          <KPI v={saldoPendente ? "Pendente" : formatBRL(dados.saldo_inicial)} l={saldoPendente ? "Saldo hoje · informe o saldo de abertura" : "Saldo hoje"} c={saldoPendente ? "var(--amber)" : "var(--dourado-light)"} />
           <KPI v={formatBRL(dados.saldo_final)} l={`Saldo projetado em ${dados.dias} dias`} c={dados.saldo_final >= 0 ? "var(--green-light)" : "var(--red)"} />
           <KPI v={formatBRL(dados.total_entradas)} l="Entradas previstas" c="var(--green-light)" />
           <KPI v={formatBRL(dados.total_saidas)} l="Saídas previstas" c="var(--red)" />
         </div>
+
+        {saldoPendente && (
+          <div className="card mb-3" style={{ borderColor: "var(--amber)" }}>
+            <p style={{ fontSize: "0.8rem", color: "var(--amber)", margin: 0 }}>
+              <strong>Informe o saldo de abertura</strong>{semAbertura.length ? ` de ${semAbertura.map((c) => c.nome).join(", ")}` : ""}:
+              {" "}o saldo do extrato numa data. Sem ele, o “saldo hoje” é só a soma dos lançamentos
+              ({formatBRL(dados.saldo_inicial)}) e não bate com o banco. Grave em{" "}
+              <a href="/parametros" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>
+                Parâmetros financeiros → Conta corrente
+              </a>.
+            </p>
+          </div>
+        )}
+        {!!foraDaJanela?.quantidade && (
+          <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+            {foraDaJanela.quantidade} pagamento(s) já baixado(s) com data depois desta janela (agendados:{" "}
+            {formatBRL(foraDaJanela.total_saidas)} de saída, {formatBRL(foraDaJanela.total_entradas)} de entrada) não entram no saldo de hoje.
+          </p>
+        )}
 
         {/* Os dois alertas são distintos: furar a reserva é aviso; ficar
             negativo é falta de dinheiro. */}
@@ -4820,7 +4854,16 @@ function CaixaRealView() {
                 <tbody>
                   {contasDoCaixa.map((c) => (
                     <tr key={c.id}>
-                      <td style={{ fontSize: "0.8rem" }}>{c.nome}</td>
+                      <td style={{ fontSize: "0.8rem" }}>
+                        {c.nome}
+                        {dados.regras_v2 && (
+                          <div style={{ fontSize: "0.7rem", color: c.pendente_saldo_abertura ? "var(--amber)" : "var(--text-muted)" }}>
+                            {c.pendente_saldo_abertura || c.saldo_abertura == null || !c.data_saldo_abertura
+                              ? "Informe o saldo de abertura"
+                              : `Inclui saldo de abertura de ${formatBRL(c.saldo_abertura)} em ${new Date(c.data_saldo_abertura + "T12:00:00").toLocaleDateString("pt-BR")}`}
+                          </div>
+                        )}
+                      </td>
                       <td style={{ textAlign: "right", fontSize: "0.8rem", fontWeight: 600, color: c.saldo < 0 ? "var(--red)" : undefined }}>
                         {formatBRL(c.saldo)}
                       </td>
@@ -4855,6 +4898,8 @@ function CaixaRealView() {
                             {i > 0 && " · "}
                             {it.vencido && <span style={{ color: "var(--amber)" }} title={`Venceu em ${new Date(it.data_original + "T12:00:00").toLocaleDateString("pt-BR")} e não foi pago`}>⚠ </span>}
                             {it.descricao}
+                            {it.agendado && <span style={{ color: "var(--dourado-light)" }} title="Pagamento já baixado com esta data: sai do saldo neste dia"> (agendado)</span>}
+                            {it.fatura_cartao && <span title="Compra no cartão: sai no vencimento da fatura"> (cartão)</span>}
                           </span>
                         ))}
                         {d.itens.length > 3 && <span> · +{d.itens.length - 3}</span>}
