@@ -1,6 +1,6 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Plus, Paperclip, Check, ChevronDown, ChevronRight, RefreshCw, Filter, Pencil, Trash2, Printer, History, Search, RotateCcw } from "lucide-react";
+import { Plus, Paperclip, Check, ChevronDown, ChevronRight, RefreshCw, Filter, Pencil, Trash2, Printer, History, Search, RotateCcw, AlertTriangle } from "lucide-react";
 import { PagarContaModal, type ContaParaPagar } from "@/components/PagarContaModal";
 import {
   fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, excluirFolhaPagamento,
@@ -34,7 +34,8 @@ import { AvisoSalvo } from "@/components/AvisoSalvo";
 import { Dropzone } from "@/components/Dropzone";
 import { SecaoRecolhivel } from "@/components/ui";
 import { RubricasHolerite } from "@/components/RubricasHolerite";
-import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { useOrdenacao } from "@/components/Ordenavel";
+import { ThOrdem, PilulaStatusFolha, propsLinhaExpansivel, estiloChip, estiloAlternador, useConfirmacao } from "@/components/financeiro/folhaUi";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { BarraCompetencia } from "@/components/BarraCompetencia";
 import { EquacaoFolha, OutrosPagamentosDoMes } from "@/components/EquacaoFolha";
@@ -164,12 +165,9 @@ const CARDS: { id: CardFolha; titulo: string; descricao: string }[] = [
   { id: "lancar", titulo: "Lançar", descricao: "formas de lançamento desta categoria" },
   { id: "resolver", titulo: "Resolver antes de fechar", descricao: "pendências que travam o fechamento" },
 ];
-// Acentos emprestados da paleta CowData (navy+dourado+verde+vermelho do
-// painel do dono do software) — usados só nos 3 cards de "Lançar" desta
-// tela, não como fundo/base (que continua o tema normal da fazenda).
-const COR_LANCAR = { folha: "#E8C256", vale: "#3ECF8E", guia: "#E05C5C" };
-// Fundo vinho translúcido para destacar lançamentos vencidos e não pagos.
-const VENCIDO_BG = "rgba(94, 26, 46, 0.18)";
+// Filete (3px, DESIGN.md) dos 3 formulários de "Lançar" — tokens de situação
+// (--st-*-line), que trocam com a paleta e o tema; antes eram hex fixos.
+const COR_LANCAR = { folha: "var(--st-fat-line)", vale: "var(--st-pago-line)", guia: "var(--st-venc-line)" };
 
 // "2026-07" → "jul/2026" (rótulo legível do mês de competência)
 const MESES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
@@ -1328,7 +1326,7 @@ export default function FolhaPagamentoView() {
       <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", margin: "0 0 1rem" }}>
         <strong style={{ color: "var(--text)" }}>Aqui se fecha a folha</strong> — lançar, conferir,
         acrescentar vencimento/desconto e pagar. Para só consultar e imprimir o recibo, use{" "}
-        <a href="/financeiro?ir=folha_relatorio" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}
+        <a href="/financeiro?ir=folha_relatorio" style={{ color: "var(--text-accent)", textDecoration: "underline" }}
           title="Abrir Contas > Holerites e recibos (só consulta)">Contas › Holerites e recibos</a>.
       </p>
 
@@ -1461,7 +1459,7 @@ export default function FolhaPagamentoView() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-start">
       {/* 1) Novo lançamento de folha — acento dourado */}
       {capacidades.folhaFuncionario && (
-      <div style={{ borderLeft: `4px solid ${COR_LANCAR.folha}`, borderRadius: "var(--r-sm)", marginBottom: "0.9rem" }}>
+      <div style={{ borderLeft: `3px solid ${COR_LANCAR.folha}`, borderRadius: "var(--r-sm)", marginBottom: "0.9rem" }}>
       <SecaoRecolhivel titulo="Nova folha — Funcionário" icon={Plus} defaultAberta={false} descricao="Lance a folha de uma pessoa em uma competência">
         <div className="mb-3" style={{ textAlign: "right" }}>
           <button className="btn-ghost" title="Anexar recibo ou comprovante e preencher por leitura automática" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
@@ -1499,7 +1497,7 @@ export default function FolhaPagamentoView() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
           <div><label style={labelStyleLote}>Observação</label>
             <input style={selStyleLote} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
-          <div className="flex items-end"><span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Valor líquido: <strong style={{ color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</strong></span></div>
+          <div className="flex items-end"><span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Valor líquido: <strong style={{ color: "var(--text-accent)" }}>{formatBRL(valorLiquido)}</strong></span></div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
           <div><label style={labelStyleLote}>Conta bancária (opcional)</label>
@@ -1524,7 +1522,7 @@ export default function FolhaPagamentoView() {
           </p>
         )}
         {/* Sucesso já aparece no topo (AvisoSalvo) — aqui só o erro, contextual. */}
-        {msg?.tipo === "erro" && <p style={{ color: "var(--red)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
+        {msg?.tipo === "erro" && <p style={{ color: "var(--st-venc-fg)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
         <button className="btn-primary" title="Salvar o lançamento de folha" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={salvar} disabled={salvando}>
           <Check size={14} /> {salvando ? "Salvando…" : "Lançar"}
         </button>
@@ -1534,7 +1532,7 @@ export default function FolhaPagamentoView() {
 
       {/* 2) Vale de funcionário — acento verde */}
       {capacidades.valeFuncionario && (
-      <div style={{ borderLeft: `4px solid ${COR_LANCAR.vale}`, borderRadius: "var(--r-sm)", marginBottom: "0.9rem" }}>
+      <div style={{ borderLeft: `3px solid ${COR_LANCAR.vale}`, borderRadius: "var(--r-sm)", marginBottom: "0.9rem" }}>
       <SecaoRecolhivel titulo="Novo vale" icon={Plus} defaultAberta={false} descricao="Adiantamento pago à parte, descontado da folha">
         <ValeFuncionarioSection pessoas={pessoas} contasCorrentes={contasCorrentes} onLancado={() => { carregar(); carregarUnificada(); carregarVales(); }} />
       </SecaoRecolhivel>
@@ -1546,7 +1544,7 @@ export default function FolhaPagamentoView() {
           FGTS/DCTF são encargos de CLT, e o empreiteiro não é CLT (decisão do
           dono, e a razão de a guia sumir das outras categorias). */}
       {capacidades.guias && (
-      <div style={{ borderLeft: `4px solid ${COR_LANCAR.guia}`, borderRadius: "var(--r-sm)", marginBottom: "0.9rem" }}>
+      <div style={{ borderLeft: `3px solid ${COR_LANCAR.guia}`, borderRadius: "var(--r-sm)", marginBottom: "0.9rem" }}>
       <SecaoRecolhivel
         titulo="Lançar guia de FGTS/DCTF" icon={Plus} defaultAberta={false}
         descricao="Manual ou por leitura automática do PDF/foto da guia — cria a conta a pagar e guarda os dados para relatório"
@@ -1632,15 +1630,15 @@ export default function FolhaPagamentoView() {
         <div className="overflow-x-auto" id="folha-tabela">
           <table className="fazenda-table">
             <thead><tr>
-              <ThOrdenavel label="Tipo" campo="tipo" coluna={uniColuna} dir={uniDir} ordenar={uniOrdenar} />
+              <ThOrdem label="Tipo" campo="tipo" coluna={uniColuna} dir={uniDir} ordenar={uniOrdenar} />
               <th title="Mês de pagamento (quando pago) ou de vencimento (quando pendente)">Mês</th>
-              <ThOrdenavel label="Pessoa" campo="pessoa_nome" coluna={uniColuna} dir={uniDir} ordenar={uniOrdenar} />
+              <ThOrdem label="Pessoa" campo="pessoa_nome" coluna={uniColuna} dir={uniDir} ordenar={uniOrdenar} />
               <th title="Mês de referência do salário (só funcionário)">Competência</th>
-              <ThOrdenavel label="Vencimento" campo="data_vencimento" coluna={uniColuna} dir={uniDir} ordenar={uniOrdenar} />
-              <ThOrdenavel label="Valor" campo="valor" coluna={uniColuna} dir={uniDir} ordenar={uniOrdenar} alinhar="right" />
+              <ThOrdem label="Vencimento" campo="data_vencimento" coluna={uniColuna} dir={uniDir} ordenar={uniOrdenar} />
+              <ThOrdem label="Valor" campo="valor" coluna={uniColuna} dir={uniDir} ordenar={uniOrdenar} alinhar="right" />
               <th style={{ textAlign: "right" }}>Descontos de folha</th>
               <th style={{ textAlign: "right" }}>Descontos de vale</th>
-              <ThOrdenavel label="Status" campo="status" coluna={uniColuna} dir={uniDir} ordenar={uniOrdenar} />
+              <ThOrdem label="Status" campo="status" coluna={uniColuna} dir={uniDir} ordenar={uniOrdenar} />
               <th style={{ textAlign: "right" }}>Valor pago</th>
               {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
               <th></th>
@@ -1720,7 +1718,7 @@ export default function FolhaPagamentoView() {
                             </button>
                           )}
                           {l.pode_excluir && (
-                            <button className="btn-ghost" title="Excluir este lançamento pendente" style={{ fontSize: "0.72rem", color: "var(--red)" }}
+                            <button className="btn-ghost" title="Excluir este lançamento pendente" style={{ fontSize: "0.72rem", color: "var(--st-venc-fg)" }}
                               disabled={excluindoChave === chave}
                               onClick={() => { if (window.confirm("Excluir este lançamento de folha pendente?")) excluirLinha(l); }}>
                               <Trash2 size={13} />
@@ -1764,7 +1762,7 @@ export default function FolhaPagamentoView() {
                             <div><label style={labelStyleLote}>Valor (R$)</label>
                               <CampoMoeda style={selStyleLote} value={Number(editLinhaValor) || 0} onChange={(v) => setEditLinhaValor(v ? String(v) : "")} /></div>
                           </div>
-                          {editLinhaMsg && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{editLinhaMsg}</p>}
+                          {editLinhaMsg && <p style={{ color: "var(--st-venc-fg)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{editLinhaMsg}</p>}
                           <div style={{ display: "flex", gap: "0.5rem" }}>
                             <button className="btn-primary" disabled={salvandoLinha} onClick={() => salvarEdicaoLinha(l)}>
                               <Check size={14} /> {salvandoLinha ? "Salvando…" : "Salvar"}
@@ -1823,7 +1821,7 @@ export default function FolhaPagamentoView() {
                           {r.pessoa_nome}
                         </button>
                         {(r.recorrente || r.origem_recorrencia_id) && (
-                          <span title={r.recorrente ? "Modelo recorrente — gera Contas a Pagar todo mês" : "Gerado automaticamente pela recorrência"} style={{ marginLeft: "0.4rem", display: "inline-flex", verticalAlign: "middle", color: "var(--dourado-light)" }}>
+                          <span title={r.recorrente ? "Modelo recorrente — gera Contas a Pagar todo mês" : "Gerado automaticamente pela recorrência"} style={{ marginLeft: "0.4rem", display: "inline-flex", verticalAlign: "middle", color: "var(--text-accent)" }}>
                             <RefreshCw size={12} />
                           </span>
                         )}
@@ -1831,7 +1829,7 @@ export default function FolhaPagamentoView() {
                       <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{r.competencia}</td>
                       <td style={{ fontSize: "0.78rem" }}>{r.data_vencimento ? r.data_vencimento.split("-").reverse().join("/") : "—"}{l.vencido && " ⚠"}</td>
                       <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(r.valor_bruto)}</td>
-                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: descFolha ? "var(--red)" : "var(--text-muted)", cursor: "pointer", textDecoration: descFolha ? "underline dotted" : undefined }}
+                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: descFolha ? "var(--st-venc-fg)" : "var(--text-muted)", cursor: "pointer", textDecoration: descFolha ? "underline dotted" : undefined }}
                         title="Clique para ver o detalhe dos descontos de folha (INSS, IR, outros)"
                         onClick={(e) => { e.stopPropagation(); setExpandDesc(descAberto && expandDesc!.tipo === "folha" ? null : { id: r.id, tipo: "folha" }); }}>
                         {formatBRL(descFolha)}
@@ -1841,7 +1839,7 @@ export default function FolhaPagamentoView() {
                           muda com a parcela assumida é a porta: sem o pontilhado
                           a célula zerada não parecia clicável, e era ali dentro
                           que morava o único acesso ao desfazer. */}
-                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: descVale ? "var(--amber)" : "var(--text-muted)", cursor: "pointer", textDecoration: temPainelVale ? "underline dotted" : undefined }}
+                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: descVale ? "var(--st-logo-fg)" : "var(--text-muted)", cursor: "pointer", textDecoration: temPainelVale ? "underline dotted" : undefined }}
                         title={descVale
                           ? "Clique para ver as parcelas de vale descontadas nesta folha"
                           : valeAssumido.length
@@ -1878,7 +1876,7 @@ export default function FolhaPagamentoView() {
                           {r.status === "pendente" && (
                             <>
                               <button className="btn-ghost" title="Pagar — dá para lançar valor distinto do previsto no vale e decidir o destino da diferença" style={{ fontSize: "0.72rem" }} onClick={() => setPagandoId(r.id)}>Pagar</button>
-                              <button className="btn-ghost" title="Excluir este lançamento pendente" style={{ fontSize: "0.72rem", color: "var(--red)" }}
+                              <button className="btn-ghost" title="Excluir este lançamento pendente" style={{ fontSize: "0.72rem", color: "var(--st-venc-fg)" }}
                                 disabled={excluindoChave === chave}
                                 onClick={() => { if (window.confirm("Excluir este lançamento de folha pendente?")) excluirLinha(l); }}>
                                 <Trash2 size={13} />
@@ -1918,7 +1916,7 @@ export default function FolhaPagamentoView() {
                                       {d.descricao}
                                       <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{d.referencia}</div>
                                     </td>
-                                    <td style={{ textAlign: "right", color: "var(--red)", verticalAlign: "top" }}>− {formatBRL(d.desconto || 0)}</td>
+                                    <td style={{ textAlign: "right", color: "var(--st-venc-fg)", verticalAlign: "top" }}>− {formatBRL(d.desconto || 0)}</td>
                                   </tr>
                                 ))
                               ) : (
@@ -1933,7 +1931,7 @@ export default function FolhaPagamentoView() {
                                       {d.descricao}
                                       <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{d.referencia}</div>
                                     </td>
-                                    <td style={{ textAlign: "right", color: "var(--amber)", verticalAlign: "top" }}>− {formatBRL(d.desconto || 0)}</td>
+                                    <td style={{ textAlign: "right", color: "var(--st-logo-fg)", verticalAlign: "top" }}>− {formatBRL(d.desconto || 0)}</td>
                                     <td style={{ textAlign: "right", verticalAlign: "top", paddingLeft: "0.5rem" }}>
                                       {/* O vale só é editável enquanto a folha não virou recibo:
                                           folha paga tem a discriminação congelada e nenhuma ação
@@ -2012,7 +2010,7 @@ export default function FolhaPagamentoView() {
                               Lançamento já pago — não pode mais ser editado. {admin ? "Use \u201cEstornar\u201d na linha para reabri-lo." : "Peça a um administrador para estornar o pagamento."}
                             </p>
                           )}
-                          {estornoErro && <p style={{ color: "var(--red)", fontSize: "0.78rem", marginTop: "0.4rem" }}>{estornoErro}</p>}
+                          {estornoErro && <p style={{ color: "var(--st-venc-fg)", fontSize: "0.78rem", marginTop: "0.4rem" }}>{estornoErro}</p>}
 
                           {/* O PAINEL DE RUBRICAS — acrescentar vencimento e
                               desconto ao holerite. Ele morava em Contas >
@@ -2076,7 +2074,7 @@ export default function FolhaPagamentoView() {
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
                             <div><label style={labelStyleLote}>Observação</label>
                               <input style={selStyleLote} value={editObservacao} onChange={(e) => setEditObservacao(e.target.value)} /></div>
-                            <div className="flex items-end"><span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Valor líquido: <strong style={{ color: "var(--dourado-light)" }}>{formatBRL(editValorLiquido)}</strong></span></div>
+                            <div className="flex items-end"><span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Valor líquido: <strong style={{ color: "var(--text-accent)" }}>{formatBRL(editValorLiquido)}</strong></span></div>
                           </div>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                             <div><label style={labelStyleLote}>Conta bancária (opcional)</label>
@@ -2100,7 +2098,7 @@ export default function FolhaPagamentoView() {
                                 <input type="number" min={1} max={28} style={selStyleLote} value={editDiaVencimento} onChange={(e) => setEditDiaVencimento(e.target.value)} /></div>
                             )}
                           </div>
-                          {editMsg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{editMsg}</p>}
+                          {editMsg && <p style={{ color: "var(--st-venc-fg)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{editMsg}</p>}
                           <div className="flex items-center gap-2">
                             <button className="btn-primary" title="Salvar as alterações deste lançamento" style={{ fontSize: "0.78rem" }} onClick={() => pedirSalvarEdicao(r)} disabled={editSalvando}>
                               <Check size={13} /> {editSalvando ? "Salvando…" : "Salvar"}
@@ -2113,7 +2111,7 @@ export default function FolhaPagamentoView() {
                   </Fragment>
                 );
               })}
-              {excluirErro && <tr><td colSpan={admin ? 12 : 11} style={{ color: "var(--red)", fontSize: "0.8rem" }}>{excluirErro}</td></tr>}
+              {excluirErro && <tr><td colSpan={admin ? 12 : 11} style={{ color: "var(--st-venc-fg)", fontSize: "0.8rem" }}>{excluirErro}</td></tr>}
               {unificada && !unificadaOrdenada.length && <tr><td colSpan={admin ? 12 : 11} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{unificada.length ? "Nenhum lançamento de folha para os filtros escolhidos." : "Nenhum lançamento de folha ainda."}</td></tr>}
             </tbody>
           </table>
@@ -2131,22 +2129,22 @@ export default function FolhaPagamentoView() {
         aberta={grupoAberto("guias")} onAlternar={() => alternarGrupo("guias")}
         badge={guias ? <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>{guias.length}</span> : null}
         descricao="Competência, valores e origem (manual ou leitura automática) de cada guia">
-        {excluirGuiaErro && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{excluirGuiaErro}</p>}
+        {excluirGuiaErro && <p style={{ color: "var(--st-venc-fg)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{excluirGuiaErro}</p>}
         {!guias || !guias.length ? (
           <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma guia lançada ainda.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="fazenda-table">
               <thead><tr>
-                <ThOrdenavel label="Tipo" campo="tipo" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
-                <ThOrdenavel label="Competência" campo="competencia" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
-                <ThOrdenavel label="Cód. receita" campo="codigo_receita" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
-                <ThOrdenavel label="Principal" campo="valor_principal" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
-                <ThOrdenavel label="Multa" campo="valor_multa" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
-                <ThOrdenavel label="Juros" campo="valor_juros" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
-                <ThOrdenavel label="Total" campo="valor_total" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
-                <ThOrdenavel label="Vencimento" campo="data_vencimento" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
-                <ThOrdenavel label="Origem" campo="origem" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <ThOrdem label="Tipo" campo="tipo" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <ThOrdem label="Competência" campo="competencia" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <ThOrdem label="Cód. receita" campo="codigo_receita" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <ThOrdem label="Principal" campo="valor_principal" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
+                <ThOrdem label="Multa" campo="valor_multa" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
+                <ThOrdem label="Juros" campo="valor_juros" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
+                <ThOrdem label="Total" campo="valor_total" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
+                <ThOrdem label="Vencimento" campo="data_vencimento" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <ThOrdem label="Origem" campo="origem" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
                 <th>Ações</th>
               </tr></thead>
               <tbody>
@@ -2168,7 +2166,7 @@ export default function FolhaPagamentoView() {
                           onClick={() => (editingGuiaId === g.id ? setEditingGuiaId(null) : iniciarEdicaoGuia(g))}>
                           <Pencil size={13} />
                         </button>
-                        <button className="btn-ghost" title="Excluir esta guia" style={{ fontSize: "0.72rem", color: "var(--red)" }}
+                        <button className="btn-ghost" title="Excluir esta guia" style={{ fontSize: "0.72rem", color: "var(--st-venc-fg)" }}
                           disabled={excluindoGuiaId === g.id}
                           onClick={() => excluirGuiaHandler(g)}>
                           <Trash2 size={13} />
@@ -2204,7 +2202,7 @@ export default function FolhaPagamentoView() {
                           <div><label style={labelStyleLote}>Linha digitável</label>
                             <input style={selStyleLote} value={editGuiaLinhaDigitavel} onChange={(e) => setEditGuiaLinhaDigitavel(e.target.value)} /></div>
                         </div>
-                        {editGuiaMsg && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{editGuiaMsg}</p>}
+                        {editGuiaMsg && <p style={{ color: "var(--st-venc-fg)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{editGuiaMsg}</p>}
                         <div style={{ display: "flex", gap: "0.5rem" }}>
                           <button className="btn-primary" disabled={editGuiaSalvando} onClick={() => salvarEdicaoGuia(g.id)}>
                             <Check size={14} /> {editGuiaSalvando ? "Salvando…" : "Salvar"}
@@ -2244,18 +2242,18 @@ export default function FolhaPagamentoView() {
               <option value="">Todos</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
             </select></div>
         </div>
-        {excluirValeErro && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{excluirValeErro}</p>}
+        {excluirValeErro && <p style={{ color: "var(--st-venc-fg)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{excluirValeErro}</p>}
         <div className="overflow-x-auto">
           <table className="fazenda-table">
             <thead><tr>
               <th style={{ width: "1.5rem" }} />
-              <ThOrdenavel label="Data" campo="data_pagamento" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} />
-              <ThOrdenavel label="Pessoa" campo="pessoa_nome" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} />
-              <ThOrdenavel label="Valor bruto" campo="valor_total" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} alinhar="right" />
-              <ThOrdenavel label="Nº parcelas" campo="parcelas" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} alinhar="right" />
-              <ThOrdenavel label="Valor da parcela" campo="valor_parcela" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} alinhar="right" />
-              <ThOrdenavel label="Status" campo="status_desconto" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} />
-              <ThOrdenavel label="Valor pago" campo="valor_pago" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} alinhar="right" />
+              <ThOrdem label="Data" campo="data_pagamento" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} />
+              <ThOrdem label="Pessoa" campo="pessoa_nome" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} />
+              <ThOrdem label="Valor bruto" campo="valor_total" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} alinhar="right" />
+              <ThOrdem label="Nº parcelas" campo="parcelas" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} alinhar="right" />
+              <ThOrdem label="Valor da parcela" campo="valor_parcela" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} alinhar="right" />
+              <ThOrdem label="Status" campo="status_desconto" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} />
+              <ThOrdem label="Valor pago" campo="valor_pago" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} alinhar="right" />
               <th>Documento</th>
               <th>Conta bancária</th>
               <th>Origem</th>
@@ -2299,7 +2297,7 @@ export default function FolhaPagamentoView() {
                         onClick={(e) => { e.stopPropagation(); setAcoesVale({ valeId: v.id, pessoaNome: v.pessoa_nome }); }}>
                         <Pencil size={13} /> Ações
                       </button>
-                      <button className="btn-ghost" title="Excluir este vale" style={{ fontSize: "0.72rem", color: "var(--red)" }}
+                      <button className="btn-ghost" title="Excluir este vale" style={{ fontSize: "0.72rem", color: "var(--st-venc-fg)" }}
                         disabled={excluindoValeId === v.id}
                         onClick={(e) => { e.stopPropagation(); excluirValeHandler(v); }}>
                         <Trash2 size={13} />
@@ -2345,7 +2343,7 @@ export default function FolhaPagamentoView() {
                                 </select></div>
                             </div>
                           )}
-                          {editValeMsg && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{editValeMsg}</p>}
+                          {editValeMsg && <p style={{ color: "var(--st-venc-fg)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{editValeMsg}</p>}
                           <div style={{ display: "flex", gap: "0.5rem" }}>
                             <button className="btn-primary" disabled={editValeSalvando} onClick={() => salvarEdicaoVale(v.id)}>
                               <Check size={14} /> {editValeSalvando ? "Salvando…" : "Salvar"}
@@ -2399,10 +2397,10 @@ export default function FolhaPagamentoView() {
                             </tbody>
                           </table>
                           {parcelaErro && editandoParcela?.valeId === v.id && (
-                            <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{parcelaErro}</p>
+                            <p style={{ color: "var(--st-venc-fg)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{parcelaErro}</p>
                           )}
                           {excluirParcelaErro && excluindoParcela === null && (
-                            <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{excluirParcelaErro}</p>
+                            <p style={{ color: "var(--st-venc-fg)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{excluirParcelaErro}</p>
                           )}
                           {v.observacao && <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>Observação: {v.observacao}</p>}
                           <button className="btn-ghost" onClick={() => iniciarEdicaoVale(v)}>
@@ -2438,17 +2436,17 @@ export default function FolhaPagamentoView() {
               <option value="">Todos</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
             </select></div>
         </div>
-        {excluirValeAvulsoErro && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{excluirValeAvulsoErro}</p>}
+        {excluirValeAvulsoErro && <p style={{ color: "var(--st-venc-fg)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{excluirValeAvulsoErro}</p>}
         <div className="overflow-x-auto">
           <table className="fazenda-table">
             <thead><tr>
               <th style={{ width: "1.5rem" }} />
-              <ThOrdenavel label="Data" campo="data_pagamento" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
-              <ThOrdenavel label="Pessoa" campo="pessoa_nome" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
-              <ThOrdenavel label="Abatido de" campo="origem_descricao" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
+              <ThOrdem label="Data" campo="data_pagamento" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
+              <ThOrdem label="Pessoa" campo="pessoa_nome" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
+              <ThOrdem label="Abatido de" campo="origem_descricao" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
               <th>Parcela</th>
-              <ThOrdenavel label="Valor" campo="valor" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} alinhar="right" />
-              <ThOrdenavel label="Forma de pagamento" campo="forma_pagamento" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
+              <ThOrdem label="Valor" campo="valor" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} alinhar="right" />
+              <ThOrdem label="Forma de pagamento" campo="forma_pagamento" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
               <th>Conta bancária</th>
               <th>Origem</th>
               <th>Ações</th>
@@ -2477,7 +2475,7 @@ export default function FolhaPagamentoView() {
                       : "Lançamento avulso"}
                   </td>
                   <td>
-                    <button className="btn-ghost" title="Excluir este vale" style={{ fontSize: "0.72rem", color: "var(--red)" }}
+                    <button className="btn-ghost" title="Excluir este vale" style={{ fontSize: "0.72rem", color: "var(--st-venc-fg)" }}
                       disabled={excluindoValeAvulsoId === v.id}
                       onClick={(e) => { e.stopPropagation(); excluirValeAvulsoHandler(v); }}>
                       <Trash2 size={13} />
@@ -2514,7 +2512,7 @@ export default function FolhaPagamentoView() {
                             <div><label style={labelStyleLote}>Observação</label>
                               <input style={selStyleLote} value={editValeAvulsoObservacao} onChange={(e) => setEditValeAvulsoObservacao(e.target.value)} /></div>
                           </div>
-                          {editValeAvulsoMsg && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{editValeAvulsoMsg}</p>}
+                          {editValeAvulsoMsg && <p style={{ color: "var(--st-venc-fg)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{editValeAvulsoMsg}</p>}
                           <div style={{ display: "flex", gap: "0.5rem" }}>
                             <button className="btn-primary" disabled={editValeAvulsoSalvando} onClick={() => salvarEdicaoValeAvulso(v)}>
                               <Check size={14} /> {editValeAvulsoSalvando ? "Salvando…" : "Salvar"}
@@ -2637,7 +2635,7 @@ export default function FolhaPagamentoView() {
               <p>Valor do vale: <b>{formatBRL(excluindoParcela.valor_vale)}</b></p>
               <p>Soma das parcelas após excluir (concedendo): <b>{formatBRL(excluindoParcela.soma_apos)}</b></p>
             </div>
-            {excluirParcelaErro && <p style={{ color: "var(--red)" }}>{excluirParcelaErro}</p>}
+            {excluirParcelaErro && <p style={{ color: "var(--st-venc-fg)" }}>{excluirParcelaErro}</p>}
             <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.3rem" }}>
               <button className="btn-ghost" style={{ textAlign: "left", padding: "0.6rem 0.8rem" }}
                 disabled={excluirParcelaSalvando} onClick={() => confirmarExcluirParcela("conceder")}>
@@ -2666,7 +2664,7 @@ export default function FolhaPagamentoView() {
             <p>O valor líquido editado é diferente do que estava lançado. Confirma a alteração ou volta para editar?</p>
             <p>Valor líquido anterior: <b>{formatBRL(editValorLiquidoOriginal)}</b></p>
             <p>Valor líquido novo: <b>{formatBRL(editValorLiquido)}</b></p>
-            <p>Diferença: <b style={{ color: editValorLiquido - editValorLiquidoOriginal >= 0 ? "var(--green-light)" : "var(--red)" }}>
+            <p>Diferença: <b style={{ color: editValorLiquido - editValorLiquidoOriginal >= 0 ? "var(--st-pago-fg)" : "var(--st-venc-fg)" }}>
               {formatBRL(editValorLiquido - editValorLiquidoOriginal)}
             </b></p>
             <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.3rem" }}>
@@ -2777,7 +2775,7 @@ function ComprovanteVale({ tipo, valeId }: { tipo: "funcionario" | "avulso"; val
         label={enviando ? "Enviando…" : "Arraste o comprovante aqui, ou"}
         onFiles={(files) => enviar(files[0])}
       />
-      {erro && <p style={{ color: "var(--red)", fontSize: "0.78rem", margin: "0.3rem 0" }}>{erro}</p>}
+      {erro && <p style={{ color: "var(--st-venc-fg)", fontSize: "0.78rem", margin: "0.3rem 0" }}>{erro}</p>}
       {comprovantes === null ? (
         <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Carregando comprovantes…</p>
       ) : comprovantes.length === 0 ? (
@@ -2786,7 +2784,7 @@ function ComprovanteVale({ tipo, valeId }: { tipo: "funcionario" | "avulso"; val
         <ul style={{ listStyle: "none", padding: 0, margin: "0.3rem 0 0" }}>
           {comprovantes.map((a) => (
             <li key={a.id} className="flex items-center gap-2" style={{ padding: "0.2rem 0", fontSize: "0.78rem" }}>
-              <a href={urlComprovanteVale(a.id)} target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)", flex: 1 }}
+              <a href={urlComprovanteVale(a.id)} target="_blank" rel="noreferrer" style={{ color: "var(--text-accent)", flex: 1 }}
                 title="Abrir este comprovante numa aba nova">
                 {a.nome_arquivo}
               </a>
@@ -2901,7 +2899,7 @@ function ValeFuncionarioSection({
         </div>
       )}
       {msg?.tipo === "erro" ? (
-        <p style={{ color: "var(--red)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>
+        <p style={{ color: "var(--st-venc-fg)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>
       ) : (
         <AvisoSalvo texto={msg?.texto ?? null} aviso2="Pronto para lançar outro vale." />
       )}
@@ -3053,9 +3051,9 @@ function LancarGuiaFgtsDctfSection({ onLancado }: { onLancado: () => void }) {
         <div><label style={labelStyleLote}>Vencimento</label>
           <input type="date" style={selStyleLote} value={dataVencimento} onChange={(e) => setDataVencimento(e.target.value)} /></div>
       </div>
-      <p style={{ fontSize: "0.8rem", marginBottom: "0.75rem" }}>Valor total: <strong style={{ color: "var(--dourado-light)" }}>{formatBRL(valorTotal)}</strong></p>
+      <p style={{ fontSize: "0.8rem", marginBottom: "0.75rem" }}>Valor total: <strong style={{ color: "var(--text-accent)" }}>{formatBRL(valorTotal)}</strong></p>
       {msg?.tipo === "erro" ? (
-        <p style={{ color: "var(--red)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>
+        <p style={{ color: "var(--st-venc-fg)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>
       ) : (
         <AvisoSalvo texto={msg?.texto ?? null} aviso2="Pronto para lançar outra guia." />
       )}
