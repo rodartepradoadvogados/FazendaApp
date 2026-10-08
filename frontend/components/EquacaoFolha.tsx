@@ -1,4 +1,5 @@
 "use client";
+import { AlertTriangle, CheckCircle2, Clock } from "lucide-react";
 import { formatBRL } from "@/lib/api";
 import type { EquacaoFolha as Equacao, ResumoTipo } from "@/lib/folhaCompetencia";
 
@@ -45,7 +46,7 @@ function Operador({ sinal }: { sinal: string }) {
       aria-hidden
       style={{
         display: "flex", alignItems: "center", padding: "0 0.7rem",
-        fontSize: "1.1rem", color: "var(--border-strong, var(--border))",
+        fontSize: "1.1rem", color: "var(--text-muted)",
       }}
     >
       {sinal}
@@ -74,18 +75,20 @@ export function EquacaoFolha({ eq }: { eq: Equacao }) {
     );
   }
 
+  // Situação das folhas do mês em pílulas (ícone + texto, nunca só cor) —
+  // mesmas palavras de antes.
   const situacao = [
-    eq.pagas ? `${eq.pagas} paga${eq.pagas > 1 ? "s" : ""}` : "",
-    eq.aVencer ? `${eq.aVencer} a vencer` : "",
-    eq.vencidas ? `${eq.vencidas} vencida${eq.vencidas > 1 ? "s" : ""}` : "",
-  ].filter(Boolean).join(" · ");
+    eq.pagas ? <span key="p" className="st-pill pago"><CheckCircle2 size={12} aria-hidden />{eq.pagas} paga{eq.pagas > 1 ? "s" : ""}</span> : null,
+    eq.aVencer ? <span key="a" className="st-pill logo"><Clock size={12} aria-hidden />{eq.aVencer} a vencer</span> : null,
+    eq.vencidas ? <span key="v" className="st-pill venc"><AlertTriangle size={12} aria-hidden />{eq.vencidas} vencida{eq.vencidas > 1 ? "s" : ""}</span> : null,
+  ].filter(Boolean);
 
   return (
     <div
-      className="flex items-stretch mb-3"
+      className="flex items-stretch mb-3" role="group" aria-label="Equação do mês"
       style={{
         background: "var(--surface)", border: "1px solid var(--border)",
-        borderRadius: "var(--r-md, 8px)", padding: "0.85rem 1rem", flexWrap: "wrap", rowGap: "0.75rem",
+        borderRadius: "var(--r-md)", padding: "0.85rem 1rem", flexWrap: "wrap", rowGap: "0.75rem",
       }}
     >
       <Parcela
@@ -106,10 +109,13 @@ export function EquacaoFolha({ eq }: { eq: Equacao }) {
         </>
       )}
       <Operador sinal="=" />
-      <div style={{ flexGrow: 1.2, minWidth: "9rem", paddingLeft: "0.8rem", borderLeft: "3px solid var(--dourado)" }}>
-        <div style={rotulo}>A pagar</div>
-        <div style={{ ...numero, color: "var(--vinho)" }}>{formatBRL(eq.aPagar)}</div>
-        <div style={nota}>{situacao || "—"}</div>
+      <div style={{
+        flexGrow: 1.2, minWidth: "9rem", padding: "0.45rem 0.7rem", borderRadius: "var(--r-sm)",
+        border: "1px solid var(--text-accent)", borderLeft: "3px solid var(--text-accent)", background: "var(--sel-row)",
+      }}>
+        <div style={{ ...rotulo, color: "var(--text-accent)" }}>A pagar</div>
+        <div style={{ ...numero, color: "var(--text)" }}>{formatBRL(eq.aPagar)}</div>
+        <div className="flex" style={{ ...nota, gap: "0.3rem", flexWrap: "wrap", marginTop: "0.25rem" }}>{situacao.length ? situacao : "—"}</div>
       </div>
 
       {eq.foraDaConta > 0 && (
@@ -119,9 +125,9 @@ export function EquacaoFolha({ eq }: { eq: Equacao }) {
             borderLeft: "1px dashed var(--border-strong, var(--border))",
           }}
         >
-          <div style={{ ...rotulo, color: "var(--red)" }}>Fora da conta</div>
-          <div style={{ ...numero, color: "var(--red)" }}>{formatBRL(eq.foraDaConta)}</div>
-          <div style={{ ...nota, color: "var(--red)" }}>
+          <div style={{ ...rotulo, color: "var(--st-venc-fg)", display: "flex", alignItems: "center", gap: 4 }}><AlertTriangle size={12} aria-hidden />Fora da conta</div>
+          <div style={{ ...numero, color: "var(--st-venc-fg)" }}>{formatBRL(eq.foraDaConta)}</div>
+          <div style={{ ...nota, color: "var(--st-venc-fg)" }}>
             {eq.folhasForaDaConta} folha{eq.folhasForaDaConta > 1 ? "s" : ""} em que os descontos passam os vencimentos
           </div>
         </div>
@@ -154,15 +160,16 @@ export function OutrosPagamentosDoMes({ resumo }: { resumo: ResumoTipo[] }) {
           <div
             key={r.tipo}
             style={{
-              background: "var(--surface-2)", border: "1px solid var(--border)",
-              borderRadius: "var(--r-sm)", padding: "0.65rem 0.8rem",
+              background: "var(--surface)", border: "1px solid var(--border)",
+              borderBottom: `3px solid ${r.vencidos ? "var(--st-venc-line)" : r.pagos === r.quantidade ? "var(--st-pago-line)" : "var(--st-logo-line)"}`,
+              borderRadius: "var(--r-sm)", padding: "0.6rem 0.75rem",
             }}
           >
             <div style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>{LABEL_TIPO[r.tipo] || r.tipo}</div>
             <div style={{ fontSize: "1rem", fontWeight: 700, fontVariantNumeric: "tabular-nums", marginTop: "0.1rem" }}>
               {formatBRL(r.total)}
             </div>
-            <div style={{ fontSize: "0.7rem", color: r.vencidos ? "var(--red)" : "var(--text-muted)", marginTop: "0.05rem" }}>
+            <div style={{ fontSize: "0.7rem", color: r.vencidos ? "var(--st-venc-fg)" : "var(--text-muted)", marginTop: "0.05rem" }}>
               {r.quantidade} lançamento{r.quantidade > 1 ? "s" : ""}
               {r.pagos === r.quantidade ? " · todos pagos" : ` · ${r.quantidade - r.pagos} a pagar`}
               {r.vencidos ? ` · ${r.vencidos} vencido${r.vencidos > 1 ? "s" : ""}` : ""}

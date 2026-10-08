@@ -13,11 +13,14 @@ export default function AvisoTermosCaixa() {
   }, []);
   if (!nomes.length) return null;
   return (
-    <div role="status" className="card" style={{ border: "1px solid var(--amber)", padding: "0.6rem 0.8rem", marginBottom: "0.9rem", fontSize: "0.8rem" }}>
-      <AlertTriangle size={14} style={{ display: "inline", marginRight: 6, color: "var(--amber)" }} />
+    <div role="status" className="card" style={{
+      border: "1px solid var(--st-logo-line)", borderLeft: "3px solid var(--st-logo-line)", background: "var(--st-logo-bg)",
+      padding: "0.6rem 0.8rem", marginBottom: "0.9rem", fontSize: "0.8rem", color: "var(--text)",
+    }}>
+      <AlertTriangle size={14} aria-hidden style={{ display: "inline", marginRight: 6, verticalAlign: "-2px", color: "var(--st-logo-fg)" }} />
       <b>Pendência no fechamento:</b> {nomes.length === 1 ? "1 retenção" : `${nomes.length} retenções`} do caixa dos funcionários
       {" "}sem o termo de autorização anexado ({nomes.join(", ")}). Anexe em{" "}
-      <a href="/financeiro?ir=caixa_funcionarios" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Caixa dos funcionários</a>.
+      <a href="/financeiro?ir=caixa_funcionarios" style={{ color: "var(--text-accent)", textDecoration: "underline", fontWeight: 600 }}>Caixa dos funcionários</a>.
     </div>
   );
 }

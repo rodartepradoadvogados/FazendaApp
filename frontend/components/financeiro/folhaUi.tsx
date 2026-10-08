@@ -73,6 +73,19 @@ export function propsLinhaExpansivel(aberta: boolean, alternar: () => void, rotu
   };
 }
 
+/** Linha (ou item de lista) que executa uma ação ao clicar: foco + Enter/Espaço. */
+export function propsLinhaAcao(acao: () => void, rotulo: string) {
+  return {
+    tabIndex: 0,
+    role: "button" as const,
+    "aria-label": rotulo,
+    onKeyDown: (e: KeyboardEvent<HTMLElement>) => {
+      if (e.target !== e.currentTarget) return;
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); acao(); }
+    },
+  };
+}
+
 /* ── chip de filtro compacto (categoria/grupo) ─────────────────────────── */
 export function estiloChip(ativo: boolean): CSSProperties {
   return {
@@ -147,4 +160,20 @@ export function BotaoArquivo({ accept, onArquivo, rotulo, className = "btn-ghost
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onArquivo(f); e.target.value = ""; }} />
     </>
   );
+}
+
+/* ── ajustes de toque no celular, escopados em .fin-v2 ─────────────────
+   Alvos ≥44px e campos com fonte ≥16px (sem zoom automático no iOS) só
+   abaixo de 768px; no desktop a densidade de relatório continua igual. */
+const CSS_FIN_V2 = `
+@media (max-width: 767px) {
+  .fin-v2 button:not(.st-pill), .fin-v2 select, .fin-v2 a.btn-ghost,
+  .fin-v2 input:not([type="checkbox"]):not([type="radio"]):not([type="file"]) { min-height: 44px; }
+  .fin-v2 select, .fin-v2 input:not([type="checkbox"]):not([type="radio"]), .fin-v2 textarea { font-size: 16px !important; }
+  .fin-v2 input[type="checkbox"], .fin-v2 input[type="radio"] { width: 20px; height: 20px; }
+}
+.fin-v2 .fazenda-table tbody tr.linha-selecionavel { cursor: pointer; }
+`;
+export function EstilosFinV2() {
+  return <style>{CSS_FIN_V2}</style>;
 }

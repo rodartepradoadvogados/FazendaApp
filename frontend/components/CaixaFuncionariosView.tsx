@@ -305,7 +305,7 @@ function CaixaIndividual({ pessoaId, onVoltar, onEntrada }: { pessoaId: number; 
                           <input type="file" accept="application/pdf,image/jpeg,image/png" aria-label={`Anexar comprovante da retirada ${m.numero_recibo || m.id}`} style={{ display: "none" }}
                             onChange={(e) => { const f = e.target.files?.[0]; if (f) anexarComprovante(m, f); e.target.value = ""; }} /></label>)}
                     {m.pode_estornar && <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setEstornando(m)}><Undo2 size={12} /> Estornar</button>}
-                    {m.pode_excluir && <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} title="Excluir o último movimento" onClick={() => excluir(m)}><Trash2 size={12} /></button>}
+                    {m.pode_excluir && <button aria-label="Excluir o último movimento" type="button" className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} title="Excluir o último movimento" onClick={() => excluir(m)}><Trash2 size={12} /></button>}
                   </td>
                 </tr>
               );

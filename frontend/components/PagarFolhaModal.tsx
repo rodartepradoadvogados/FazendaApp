@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { AlertTriangle, Check, Lock, Pencil, X } from "lucide-react";
 import { Modal } from "@/components/Modal";
+import { useConfirmacao } from "@/components/financeiro/folhaUi";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { formatBRL, pagarFolhaComVerbas, type LinhaHolerite, type PagarFolhaResultado } from "@/lib/api";
 import { passoMes } from "@/lib/folhaCompetencia";
@@ -123,6 +124,8 @@ export default function PagarFolhaModal({
   const [avisoCadeado, setAvisoCadeado] = useState<VerbaDaFolha | null>(null);
   const [avisoSalario, setAvisoSalario] = useState<{ verba: VerbaDaFolha; valor: number } | null>(null);
   const [recusaSalario, setRecusaSalario] = useState(false);
+  // window.confirm → Modal acima deste (zIndex maior), mesma pergunta sim/não.
+  const { confirmar: pedirConfirmacao, dialogo: dialogoConfirmacao } = useConfirmacao(97);
   const [decisao, setDecisao] = useState<DecisaoDiferenca | null>(null);
   const [contaCorrenteId, setContaCorrenteId] = useState("");
   const [parcelas, setParcelas] = useState("2");
@@ -209,7 +212,7 @@ export default function PagarFolhaModal({
       if (err?.status === 409 && err?.detail?.competencias_excedidas) {
         const lista = err.detail.competencias_excedidas
           .map((c: any) => `${c.competencia} (${formatBRL(c.total)})`).join(", ");
-        if (window.confirm(`${err.detail.mensagem}\n\nCompetências afetadas: ${lista}\n\nDeseja reparcelar mesmo assim?`)) {
+        if (await pedirConfirmacao(`${err.detail.mensagem}\n\nCompetências afetadas: ${lista}\n\nDeseja reparcelar mesmo assim?`, { titulo: "Desconto de vale acima do limite", confirmar: "Reparcelar mesmo assim" })) {
           setSalvando(false);
           await confirmar(true);
           return;
@@ -227,8 +230,8 @@ export default function PagarFolhaModal({
     <Modal title={`Pagar — ${registro.pessoa_nome} · ${registro.competencia}`} onClose={onFechar} width="820px">
       <div className="space-y-3">
         <div style={{ maxWidth: 220 }}>
-          <label style={lbl}>Data do pagamento</label>
-          <input type="date" style={inputStyle} value={dataPagamento}
+          <label htmlFor="pgf-1" style={lbl}>Data do pagamento</label>
+          <input id="pgf-1" type="date" style={inputStyle} value={dataPagamento}
             onChange={(e) => { setDataPagamento(e.target.value); setErro(null); }} />
         </div>
 
@@ -274,7 +277,7 @@ export default function PagarFolhaModal({
                           <Pencil size={12} /> Editar
                         </span>
                       ) : liberada ? (
-                        <span style={{ ...botaoEdicao, color: "var(--amber)" }} title="Alteração confirmada">
+                        <span style={{ ...botaoEdicao, color: "var(--st-logo-fg)" }} title="Alteração confirmada">
                           <Pencil size={12} /> Editar
                         </span>
                       ) : (
@@ -286,15 +289,18 @@ export default function PagarFolhaModal({
                       )}
                     </td>
                     <td style={{ ...td, textAlign: "right" }}>
-                      {verba ? (
-                        <CampoMoeda
+                      {verba ? (<>
+                        <label htmlFor={`pgf-verba-${i}`} style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }}>
+                          Pago agora — {d.descricao || d.label}
+                        </label>
+                        <CampoMoeda id={`pgf-verba-${i}`}
                           value={valores[verba.chave] ?? verba.previsto}
                           disabled={!liberada}
                           onChange={(v) => { setValores((a) => ({ ...a, [verba.chave]: v })); setErro(null); }}
                           onBlur={verba.classe === "salario" ? (v) => conferirSalario(verba, v) : undefined}
                           style={{ ...inputStyle, textAlign: "right", opacity: liberada ? 1 : 0.55 }}
                         />
-                      ) : (
+                      </>) : (
                         <span style={{ color: "var(--text-muted)" }}>—</span>
                       )}
                     </td>
@@ -316,11 +322,11 @@ export default function PagarFolhaModal({
 
         {ha && (
           <div style={{
-            border: "1px solid var(--amber)", background: "rgba(217,119,6,0.1)",
+            border: "1px solid var(--st-logo-line)", borderLeft: "3px solid var(--st-logo-line)", background: "var(--st-logo-bg)",
             borderRadius: "var(--r-sm)", padding: "0.7rem 0.85rem",
           }}>
             <p style={{ fontWeight: 700, fontSize: "0.85rem" }}>
-              <AlertTriangle size={14} style={{ display: "inline", marginRight: "0.3rem", verticalAlign: "-2px" }} />
+              <AlertTriangle size={14} aria-hidden style={{ display: "inline", marginRight: "0.3rem", verticalAlign: "-2px", color: "var(--st-logo-fg)" }} />
               Diferença de {formatBRL(Math.abs(diferenca))}
             </p>
             <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
@@ -334,8 +340,8 @@ export default function PagarFolhaModal({
                 <button key={o.tipo} type="button" className="btn-ghost" aria-pressed={decisao === o.tipo}
                   style={{
                     textAlign: "left", padding: "0.5rem 0.7rem",
-                    borderLeft: decisao === o.tipo ? "3px solid var(--dourado)" : "3px solid transparent",
-                    background: decisao === o.tipo ? "var(--surface-2)" : undefined,
+                    borderLeft: decisao === o.tipo ? "3px solid var(--text-accent)" : "3px solid transparent",
+                    background: decisao === o.tipo ? "var(--surface)" : undefined, color: "var(--text)", minHeight: 44,
                   }}
                   onClick={() => escolher(o.tipo)}>
                   <b style={{ fontSize: "0.82rem" }}>{o.titulo}</b>
@@ -346,8 +352,8 @@ export default function PagarFolhaModal({
 
             {decisao === "abater" && (
               <div style={{ marginTop: "0.6rem", maxWidth: 340 }}>
-                <label style={lbl}>Devolveu em dinheiro? Conta que recebeu</label>
-                <select style={inputStyle} value={contaCorrenteId} onChange={(e) => setContaCorrenteId(e.target.value)}>
+                <label htmlFor="pgf-2" style={lbl}>Devolveu em dinheiro? Conta que recebeu</label>
+                <select id="pgf-2" style={inputStyle} value={contaCorrenteId} onChange={(e) => setContaCorrenteId(e.target.value)}>
                   <option value="">Não houve devolução (perdão/concessão)</option>
                   {contasCorrentes.map((cc) => <option key={cc.id} value={cc.id}>{cc.rotulo}</option>)}
                 </select>
@@ -357,13 +363,13 @@ export default function PagarFolhaModal({
             {decisao === "reparcelar" && (
               <div className="flex items-end gap-3" style={{ marginTop: "0.6rem", flexWrap: "wrap" }}>
                 <div style={{ width: 150 }}>
-                  <label style={lbl}>Em quantas parcelas</label>
-                  <input type="number" min={1} style={inputStyle} value={parcelas}
+                  <label htmlFor="pgf-3" style={lbl}>Em quantas parcelas</label>
+                  <input id="pgf-3" type="number" min={1} style={inputStyle} value={parcelas}
                     onChange={(e) => { setParcelas(e.target.value); setErro(null); }} />
                 </div>
                 <div style={{ width: 180 }}>
-                  <label style={lbl}>A partir da competência</label>
-                  <input type="month" style={inputStyle} value={competenciaInicio}
+                  <label htmlFor="pgf-4" style={lbl}>A partir da competência</label>
+                  <input id="pgf-4" type="month" style={inputStyle} value={competenciaInicio}
                     onChange={(e) => setCompetenciaInicio(e.target.value)} />
                 </div>
                 {nParcelas >= 1 && (
@@ -381,8 +387,8 @@ export default function PagarFolhaModal({
                   — desconto autorizado pelo empregado). O vale de {registro.competencia} continua com o mesmo
                   saldo e o mesmo prazo.
                 </p>
-                <label style={lbl}>Do que se trata (opcional, vai na linha do recibo)</label>
-                <input style={{ ...inputStyle, maxWidth: 420 }} value={motivo} onChange={(e) => setMotivo(e.target.value)} />
+                <label htmlFor="pgf-5" style={lbl}>Do que se trata (opcional, vai na linha do recibo)</label>
+                <input id="pgf-5" style={{ ...inputStyle, maxWidth: 420 }} value={motivo} onChange={(e) => setMotivo(e.target.value)} />
               </div>
             )}
 
@@ -392,14 +398,14 @@ export default function PagarFolhaModal({
                   {formatBRL(Math.abs(diferenca))} deixam de ser cobrados de {registro.pessoa_nome} e viram despesa da
                   fazenda no Financeiro. Não se desfaz sozinho depois.
                 </p>
-                <label style={lbl}>Motivo (opcional, fica no histórico)</label>
-                <input style={{ ...inputStyle, maxWidth: 420 }} value={motivo} onChange={(e) => setMotivo(e.target.value)} />
+                <label htmlFor="pgf-6" style={lbl}>Motivo (opcional, fica no histórico)</label>
+                <input id="pgf-6" style={{ ...inputStyle, maxWidth: 420 }} value={motivo} onChange={(e) => setMotivo(e.target.value)} />
               </div>
             )}
           </div>
         )}
 
-        {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+        {erro && <p role="alert" style={{ color: "var(--st-venc-fg)", fontSize: "0.8rem" }}>{erro}</p>}
 
         <div className="flex items-center gap-3">
           <button type="button" className="btn-primary" disabled={salvando} onClick={() => confirmar()}>
@@ -469,6 +475,7 @@ export default function PagarFolhaModal({
         um ato que a lei não reconhece. A nota em itálico e letra menor diz onde
         a redução PODE ser feita quando ela é legítima.
       */}
+      {dialogoConfirmacao}
       {recusaSalario && (
         <Modal title="Alteração não permitida" onClose={() => setRecusaSalario(false)} width="520px" zIndex={95}>
           <div className="space-y-3">

@@ -66,10 +66,10 @@ export function RetencaoCaixaCampos({ pessoaId, lancamentoId, bruto, data, onCha
   ];
   return (
     <div style={{ marginTop: "0.9rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.75rem" }}>
-      <p style={{ margin: "0 0 0.4rem", fontWeight: 600, fontSize: "0.82rem" }}>Reter no caixa de {op.pessoa}</p>
-      <div style={{ display: "grid", gap: "0.25rem" }}>
+      <p id="ret-titulo" style={{ margin: "0 0 0.4rem", fontWeight: 600, fontSize: "0.82rem" }}>Reter no caixa de {op.pessoa}</p>
+      <div role="radiogroup" aria-labelledby="ret-titulo" style={{ display: "grid", gap: "0.25rem" }}>
         {opcoes.map(([v, r]) => (
-          <label key={v} style={{ display: "flex", gap: "0.4rem", alignItems: "center", fontSize: "0.8rem", margin: 0, cursor: "pointer" }}>
+          <label key={v} style={{ display: "flex", gap: "0.4rem", alignItems: "center", fontSize: "0.8rem", margin: 0, cursor: "pointer", minHeight: 28 }}>
             <input type="radio" name="ret-escolha" checked={escolha === v} onChange={() => setEscolha(v)} /> {r}
           </label>
         ))}
@@ -92,7 +92,7 @@ export function RetencaoCaixaCampos({ pessoaId, lancamentoId, bruto, data, onCha
           Retido <strong>{formatBRL(retido)}</strong> · sai da conta <strong>{formatBRL(Math.max(bruto - retido, 0))}</strong> · o gasto total continua {formatBRL(bruto)}.
         </p>
       )}
-      {acimaTeto && <p style={{ margin: "0.35rem 0 0", fontSize: "0.76rem", color: "var(--amber)" }}>Passa do teto combinado (restam {formatBRL(Math.max(op.teto_restante ?? 0, 0))}). Vai pedir confirmação.</p>}
+      {acimaTeto && <p style={{ margin: "0.35rem 0 0", fontSize: "0.76rem", color: "var(--st-logo-fg)" }}>Passa do teto combinado (restam {formatBRL(Math.max(op.teto_restante ?? 0, 0))}). Vai pedir confirmação.</p>}
       {op.termo_pendente && <p style={{ margin: "0.35rem 0 0", fontSize: "0.74rem", color: "var(--text-muted)" }}>O termo de autorização ainda não foi anexado (pendência na Agenda).</p>}
     </div>
   );
