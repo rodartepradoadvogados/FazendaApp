@@ -81,7 +81,7 @@ const COLUNAS_LIVRO = [
 
 import type { Lanc } from "@/lib/financeiroTipos";
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos" | "resumo";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "caixa_real", label: "Caixa Real", icon: TrendingUp, desc: "Projeção de liquidez: quanto tem hoje e como o saldo evolui com os compromissos já lançados" },
@@ -136,7 +136,7 @@ const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
 // continuam exigindo dado existente, o que faz sentido (não tem o que
 // mostrar de fato).
 // "faturas" (Contas > Faturas de fornecedor) também dispensa lançamento prévio no banco.
-const ACOES_IDS = new Set<Rel>([...ACOES.map((a) => a.id), "faturas", "a_pagar", "a_receber", "consultas", "custos"]);
+const ACOES_IDS = new Set<Rel>([...ACOES.map((a) => a.id), "faturas", "a_pagar", "a_receber", "consultas", "custos", "resumo"]);
 const PLANEJAMENTO: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "orcamento", label: "Orçamento", icon: Target, desc: "Planilha orçamentária por conta gerencial/centro de custo/mês, comparada ao realizado" },
   { id: "planejamento_financeiro", label: "Planejamento financeiro", icon: TrendingUp, desc: "Cenários (otimista/realista/pessimista) com projeção de fluxo de caixa" },
@@ -207,13 +207,14 @@ import { contaDoLanc, casaContaGerencial, FiltroContaGerencial } from "@/compone
 import ContasListaView, { PilulaSituacao } from "@/components/financeiro/ContasListaView";
 import ConsultasView from "@/components/financeiro/ConsultasView";
 import OndeFoiParar from "@/components/financeiro/OndeFoiParar";
+import ResumoView from "@/components/financeiro/ResumoView";
 import { hojeLocal, situacaoDe, valorCompetencia, valorRealizado } from "@/lib/financeiroSituacao";
 import { migrarFiltrosSalvosAntigos } from "@/lib/financeiroFiltrosMigracao";
 
 export default function FinanceiroPage() {
   const [regs, setRegs] = useState<Lanc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [rel, setRel] = useState<Rel>("a_pagar");
+  const [rel, setRel] = useState<Rel>("resumo");
   const [inicio, setInicio] = useState("");
   const [fim, setFim] = useState("");
   // Único filtro de período das sub-abas de Contas (a pagar/receber/pagas/
@@ -347,6 +348,7 @@ export default function FinanceiroPage() {
   // módulos enquanto Financeiro estiver aberto (mesmo padrão de Lançamentos).
   const admin = ehAdmin();
   const subNavTree: SubNavNode[] = useMemo(() => [
+    { id: "resumo", label: "Resumo", icon: BarChart3 },
     // Uma aba só para consultar E dar baixa: seis sub-abas na ordem do dono.
     { id: "contas-grupo", label: "Contas", icon: Wallet, children: [
       { id: "a_pagar", label: "Contas a pagar", icon: Clock },
@@ -707,7 +709,7 @@ export default function FinanceiroPage() {
           {/* A tela de folha traz o próprio texto de papel logo abaixo (é ela
               que precisa dizer "aqui se fecha" × "lá só se consulta"); repetir
               a frase de relatório em cima dele confundia as duas coisas. */}
-          {!["folha", "a_pagar", "a_receber", "consultas", "lote", "faturas_gestao", "caixa_funcionarios"].includes(rel) && (
+          {!["resumo", "folha", "a_pagar", "a_receber", "consultas", "lote", "faturas_gestao", "caixa_funcionarios"].includes(rel) && (
             <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Escolha o relatório, o período e o centro de custo — indicadores, consolidado e gráfico.</p>
           )}
         </div>
@@ -730,7 +732,15 @@ export default function FinanceiroPage() {
       )}
 
       {regs && (regs.length > 0 || ACOES_IDS.has(rel)) && <>
-        {rel === "a_pagar" || rel === "a_receber" ? (
+        {rel === "resumo" ? (
+            <ResumoView regs={regs}
+              onDrill={(d) => { setNotaAlvoRef(null); setContasFiltro({ de: d.de, ate: d.ate, rotulo: d.rotulo }); setRel("a_pagar"); }}
+              onAbrirLivro={(rotulo) => { setNotaAlvoRef(null); setConsultaInicial({ modo: "livro", banco: rotulo }); setRel("consultas"); }}
+              onAbrirFaturas={() => setRel("faturas_gestao")} onAbrirCartao={() => setRel("cartao_credito")}
+              onBaixar={(l) => { setContasFiltro(null); setNotaAlvoRef(l.numero_lancamento || l.numero_documento || null); setRel("a_pagar"); }}
+              onIrParaContas={() => irPara("a_pagar")} />
+          )
+          : rel === "a_pagar" || rel === "a_receber" ? (
             <ContasListaView key={`${rel}-${JSON.stringify(contasFiltro)}`} tipo={rel === "a_pagar" ? "despesa" : "receita"} regs={regs} planoContas={planoContas}
               contasBancarias={contasBancarias} centros={centros} fornecedores={opcoesRel.fornecedores} produtos={opcoesProdutoRel}
               documentoInicial={notaAlvoRef} filtroInicial={contasFiltro} onAbrirCartao={() => setRel("cartao_credito")}
