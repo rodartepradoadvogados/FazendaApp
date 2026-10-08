@@ -42,6 +42,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.api.routers.financeiro import ItemIn, LancamentoIn, criar_lancamento, rotulo_conta_corrente
+from fazenda.rules.datas import hoje_local
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import CartaoCredito, ContaCorrente, FaturaCartao, LancamentoCartao, Usuario
@@ -252,7 +253,7 @@ def extrato_cartao(
     uma fatura específica do histórico — 404 se nunca existiu."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     cartao = _cartao_ou_404(session, cartao_id, fazenda_id)
-    hoje = date.today()
+    hoje = hoje_local()
     if competencia:
         fatura = session.exec(
             select(FaturaCartao).where(FaturaCartao.cartao_id == cartao.id).where(FaturaCartao.competencia == competencia)
@@ -274,7 +275,7 @@ def listar_faturas_cartao(
 ) -> list[dict]:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     cartao = _cartao_ou_404(session, cartao_id, fazenda_id)
-    hoje = date.today()
+    hoje = hoje_local()
     faturas = session.exec(
         select(FaturaCartao).where(FaturaCartao.cartao_id == cartao.id).order_by(FaturaCartao.competencia.desc())
     ).all()
@@ -331,7 +332,7 @@ def criar_lancamento_cartao(
     if dados.valor <= 0:
         raise HTTPException(status_code=400, detail="O valor deve ser positivo")
     fatura = _obter_ou_criar_fatura(session, cartao, _competencia_da_compra(cartao, dados.data_compra))
-    fatura = _fechar_se_vencida(session, fatura, cartao, date.today())
+    fatura = _fechar_se_vencida(session, fatura, cartao, hoje_local())
     if fatura.status != "aberta":
         raise HTTPException(status_code=400, detail="A fatura desta competência já foi fechada — não é mais possível lançar nela")
     lanc = LancamentoCartao(
@@ -363,7 +364,7 @@ def pagar_fatura_cartao(
 ) -> dict:
     fatura = _fatura_ou_404(session, fatura_id, fazenda_id)
     cartao = _cartao_ou_404(session, fatura.cartao_id, fazenda_id)
-    fatura = _fechar_se_vencida(session, fatura, cartao, date.today())
+    fatura = _fechar_se_vencida(session, fatura, cartao, hoje_local())
     if fatura.status == "aberta":
         raise HTTPException(status_code=400, detail="Feche a fatura antes de pagar (ou aguarde o dia de fechamento)")
     if fatura.status == "paga":
@@ -377,7 +378,7 @@ def pagar_fatura_cartao(
         if conta:
             conta_bancaria_str = rotulo_conta_corrente(conta)
 
-    data_pagamento = dados.data_pagamento or date.today()
+    data_pagamento = dados.data_pagamento or hoje_local()
     item = ItemIn(
         codigo_conta_gerencial=dados.codigo_conta_gerencial, nome_conta_gerencial=dados.nome_conta_gerencial,
         produto=f"Fatura {cartao.apelido} — {fatura.competencia}", valor_total=fatura.valor_total,

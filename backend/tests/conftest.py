@@ -281,3 +281,9 @@ os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.mktemp(suffix='.db')}"
 # que constroem seu próprio engine isolado já semeiam só o que usam. Ver o
 # comentário em main.py::lifespan para o que exatamente isso desliga.
 os.environ["FAZENDA_TESTING"] = "1"
+# `hoje_local()` (fazenda/rules/datas.py) segue o relógio da máquina na suíte,
+# como o `date.today()` com que os testes montam as datas esperadas — senão
+# rodar no CI entre 00h e 03h UTC daria "hoje" diferente nos dois lados. O
+# fuso de Brasília em si é testado com `agora` explícito
+# (tests/test_relatorios_regras_v2.py::test_hoje_local_sao_paulo).
+os.environ.setdefault("FAZENDA_HOJE_LOCAL_RELOGIO", "relogio_local")

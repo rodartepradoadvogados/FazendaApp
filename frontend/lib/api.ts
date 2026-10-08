@@ -7120,8 +7120,18 @@ export type DreResposta = {
   receitas_total: number; despesas_total: number; resultado: number;
   cascata: LinhaDre[];
   nao_classificado: { total: number; contas: ContaDre[] };
-  fora_da_dre: { total: number; contas: ContaDre[] };
+  fora_da_dre: {
+    total: number; contas: ContaDre[];
+    // Só com as regras novas (Fase A) ligadas na fazenda: o "fora da DRE"
+    // agrupado por natureza (investimento, financiamento, capital...).
+    por_natureza?: Record<string, number>;
+    grupos?: { natureza: string; rotulo: string; total: number; contas: ContaDre[] }[];
+  };
   depreciacao_periodo: { total: number; inconsistencias: { item: string; numero: string | null; motivo: string }[] };
+  // Presentes só quando a fazenda usa as regras novas (financeiro_regras_v2).
+  regras_v2?: boolean;
+  resultado_baixas_periodo?: { total: number; itens: { patrimonio_id: number; nome: string; data_baixa: string; resultado: number }[] };
+  pendencias_natureza?: { numero_lancamento: string | null; descricao: string | null; fornecedor: string | null; valor: number; motivo: string }[];
 };
 
 export async function fetchDreCascata(params: {
@@ -7153,6 +7163,24 @@ export async function classificarContaDre(codigo: string, linhaDre: string | nul
     body: JSON.stringify({ linha_dre: linhaDre }),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao classificar a conta"); }
+  return res.json();
+}
+
+// --- Fase A: natureza do lançamento e regras novas dos relatórios -------------
+export async function fetchRegrasV2(): Promise<{ ativa: boolean; chave: string }> {
+  const res = await authFetch(`${API}/financeiro/regras-v2`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Regras dos relatórios: ${res.status}`);
+  return res.json();
+}
+
+export async function atualizarNaturezaLancamento(
+  numeroLancamento: string, naturezaFin: string | null, itemId?: number | null,
+): Promise<{ natureza_fin: string | null; aviso: string | null }> {
+  const res = await fetchComRetry(() => authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/natureza`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ natureza_fin: naturezaFin, item_id: itemId ?? null }),
+  }));
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar a natureza do lançamento"); }
   return res.json();
 }
 

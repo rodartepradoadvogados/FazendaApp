@@ -1,0 +1,877 @@
+{
+ "custo_hectare_mar": {
+  "area_configurada": false,
+  "area_hectares": null,
+  "centro_custo": null,
+  "custo_por_hectare": null,
+  "despesas_total": 136660.0,
+  "periodo": {
+   "fim": "2031-03-31",
+   "inicio": "2031-03-01"
+  }
+ },
+ "custo_litro_mar": {
+  "configurado": true,
+  "contas_custo": [
+   "AUD Ração concentrado"
+  ],
+  "custo_por_litro": 0.7558,
+  "custo_total": 7800.0,
+  "litros": 10320.0,
+  "periodo": {
+   "fim": "2031-03-31",
+   "inicio": "2031-03-01"
+  },
+  "tem_entrega": true
+ },
+ "custo_vaca_lote_mar": {
+  "centro_custo": "Pecuária Leiteira",
+  "custo_por_vaca": null,
+  "despesas_total": 136660.0,
+  "num_vacas": 0,
+  "periodo": {
+   "fim": "2031-03-31",
+   "inicio": "2031-03-01"
+  },
+  "por_lote": [],
+  "tem_vacas_no_periodo": false
+ },
+ "dre_abr_agricultura": {
+  "cascata": [
+   {
+    "chave": "RECEITA_VENDAS",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "+",
+    "rotulo": "Receita de vendas",
+    "valor": 0.0
+   },
+   {
+    "chave": "DEDUCAO_IMPOSTOS",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Deduções de impostos",
+    "valor": 0.0
+   },
+   {
+    "chave": "RECEITA_LIQUIDA",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Receita líquida",
+    "valor": 0.0
+   },
+   {
+    "chave": "CUSTO_VARIAVEL",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Custo variável (CPV/CMV)",
+    "valor": 0.0
+   },
+   {
+    "chave": "MARGEM_BRUTA",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Margem bruta",
+    "valor": 0.0
+   },
+   {
+    "chave": "DESPESA_VARIAVEL",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Despesas variáveis",
+    "valor": 0.0
+   },
+   {
+    "chave": "MARGEM_CONTRIBUICAO",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Margem de contribuição",
+    "valor": 0.0
+   },
+   {
+    "chave": "GASTOS_PESSOAL",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Gastos com pessoal",
+    "valor": 0.0
+   },
+   {
+    "chave": "DESPESAS_OPERACIONAIS",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Despesas operacionais",
+    "valor": 0.0
+   },
+   {
+    "chave": "EBITDA",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "EBITDA",
+    "valor": 0.0
+   },
+   {
+    "chave": "DEPRECIACAO_AMORT_EXAUSTAO",
+    "contas": [
+     {
+      "codigo": "(depreciação do patrimônio)",
+      "nome": "Depreciação do período (patrimônio)",
+      "valor": 1000.0
+     }
+    ],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Depreciação, amortização e exaustão",
+    "valor": 1000.0
+   },
+   {
+    "chave": "OUTRAS_REC_DESP",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "±",
+    "rotulo": "Outras receitas e despesas",
+    "valor": 0.0
+   },
+   {
+    "chave": "RESULTADO_OPERACIONAL",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Resultado operacional (EBIT)",
+    "valor": -1000.0
+   },
+   {
+    "chave": "TRIBUTOS_IR_CSLL",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Tributos (IRPJ e CSLL)",
+    "valor": 0.0
+   },
+   {
+    "chave": "RESULTADO_LIQUIDO",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Resultado líquido",
+    "valor": -1000.0
+   }
+  ],
+  "centro_custo": "Agricultura",
+  "depreciacao_periodo": {
+   "inconsistencias": [],
+   "total": 1000.0
+  },
+  "despesas_total": 0,
+  "fallback_notas_sem_item": [],
+  "fora_da_dre": {
+   "contas": [],
+   "total": 0
+  },
+  "nao_classificado": {
+   "contas": [],
+   "total": 0
+  },
+  "periodo": {
+   "fim": "2031-04-30",
+   "inicio": "2031-04-01"
+  },
+  "por_conta": {},
+  "receitas_total": 0,
+  "regime": "competencia",
+  "resultado": 0
+ },
+ "dre_abr_caixa": {
+  "cascata": [
+   {
+    "chave": "RECEITA_VENDAS",
+    "contas": [
+     {
+      "codigo": "8.1",
+      "nome": "Leite mar/31",
+      "valor": 9850.0
+     }
+    ],
+    "eh_subtotal": false,
+    "operador": "+",
+    "rotulo": "Receita de vendas",
+    "valor": 9850.0
+   },
+   {
+    "chave": "DEDUCAO_IMPOSTOS",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Deduções de impostos",
+    "valor": 0.0
+   },
+   {
+    "chave": "RECEITA_LIQUIDA",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Receita líquida",
+    "valor": 9850.0
+   },
+   {
+    "chave": "CUSTO_VARIAVEL",
+    "contas": [
+     {
+      "codigo": "8.2",
+      "nome": "Ração",
+      "valor": 5900.0
+     }
+    ],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Custo variável (CPV/CMV)",
+    "valor": 5900.0
+   },
+   {
+    "chave": "MARGEM_BRUTA",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Margem bruta",
+    "valor": 3950.0
+   },
+   {
+    "chave": "DESPESA_VARIAVEL",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Despesas variáveis",
+    "valor": 0.0
+   },
+   {
+    "chave": "MARGEM_CONTRIBUICAO",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Margem de contribuição",
+    "valor": 3950.0
+   },
+   {
+    "chave": "GASTOS_PESSOAL",
+    "contas": [
+     {
+      "codigo": "8.7",
+      "nome": "Frete",
+      "valor": 900.0
+     }
+    ],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Gastos com pessoal",
+    "valor": 900.0
+   },
+   {
+    "chave": "DESPESAS_OPERACIONAIS",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Despesas operacionais",
+    "valor": 0.0
+   },
+   {
+    "chave": "EBITDA",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "EBITDA",
+    "valor": 3050.0
+   },
+   {
+    "chave": "DEPRECIACAO_AMORT_EXAUSTAO",
+    "contas": [
+     {
+      "codigo": "(depreciação do patrimônio)",
+      "nome": "Depreciação do período (patrimônio)",
+      "valor": 1000.0
+     }
+    ],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Depreciação, amortização e exaustão",
+    "valor": 1000.0
+   },
+   {
+    "chave": "OUTRAS_REC_DESP",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "±",
+    "rotulo": "Outras receitas e despesas",
+    "valor": 0.0
+   },
+   {
+    "chave": "RESULTADO_OPERACIONAL",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Resultado operacional (EBIT)",
+    "valor": 2050.0
+   },
+   {
+    "chave": "TRIBUTOS_IR_CSLL",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Tributos (IRPJ e CSLL)",
+    "valor": 0.0
+   },
+   {
+    "chave": "RESULTADO_LIQUIDO",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Resultado líquido",
+    "valor": 2050.0
+   }
+  ],
+  "centro_custo": null,
+  "depreciacao_periodo": {
+   "inconsistencias": [],
+   "total": 1000.0
+  },
+  "despesas_total": 7600.0,
+  "fallback_notas_sem_item": [],
+  "fora_da_dre": {
+   "contas": [],
+   "total": 0
+  },
+  "nao_classificado": {
+   "contas": [
+    {
+     "codigo": "(sem código)",
+     "nome": "Fatura AUD Cartão — 2031-03",
+     "valor": 800.0
+    }
+   ],
+   "total": 800.0
+  },
+  "periodo": {
+   "fim": "2031-04-30",
+   "inicio": "2031-04-01"
+  },
+  "por_conta": {
+   "8": {
+    "descricao": "Leite mar/31",
+    "despesas": 3200.0,
+    "receitas": 9850.0
+   },
+   "Sem classificação": {
+    "descricao": "Ração, Frete",
+    "despesas": 4400.0,
+    "receitas": 0.0
+   }
+  },
+  "receitas_total": 9850.0,
+  "regime": "caixa",
+  "resultado": 2250.0
+ },
+ "dre_abr_competencia": {
+  "cascata": [
+   {
+    "chave": "RECEITA_VENDAS",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "+",
+    "rotulo": "Receita de vendas",
+    "valor": 0.0
+   },
+   {
+    "chave": "DEDUCAO_IMPOSTOS",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Deduções de impostos",
+    "valor": 0.0
+   },
+   {
+    "chave": "RECEITA_LIQUIDA",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Receita líquida",
+    "valor": 0.0
+   },
+   {
+    "chave": "CUSTO_VARIAVEL",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Custo variável (CPV/CMV)",
+    "valor": 0.0
+   },
+   {
+    "chave": "MARGEM_BRUTA",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Margem bruta",
+    "valor": 0.0
+   },
+   {
+    "chave": "DESPESA_VARIAVEL",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Despesas variáveis",
+    "valor": 0.0
+   },
+   {
+    "chave": "MARGEM_CONTRIBUICAO",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Margem de contribuição",
+    "valor": 0.0
+   },
+   {
+    "chave": "GASTOS_PESSOAL",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Gastos com pessoal",
+    "valor": 0.0
+   },
+   {
+    "chave": "DESPESAS_OPERACIONAIS",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Despesas operacionais",
+    "valor": 0.0
+   },
+   {
+    "chave": "EBITDA",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "EBITDA",
+    "valor": 0.0
+   },
+   {
+    "chave": "DEPRECIACAO_AMORT_EXAUSTAO",
+    "contas": [
+     {
+      "codigo": "(depreciação do patrimônio)",
+      "nome": "Depreciação do período (patrimônio)",
+      "valor": 1000.0
+     }
+    ],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Depreciação, amortização e exaustão",
+    "valor": 1000.0
+   },
+   {
+    "chave": "OUTRAS_REC_DESP",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "±",
+    "rotulo": "Outras receitas e despesas",
+    "valor": 0.0
+   },
+   {
+    "chave": "RESULTADO_OPERACIONAL",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Resultado operacional (EBIT)",
+    "valor": -1000.0
+   },
+   {
+    "chave": "TRIBUTOS_IR_CSLL",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Tributos (IRPJ e CSLL)",
+    "valor": 0.0
+   },
+   {
+    "chave": "RESULTADO_LIQUIDO",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Resultado líquido",
+    "valor": -1000.0
+   }
+  ],
+  "centro_custo": null,
+  "depreciacao_periodo": {
+   "inconsistencias": [],
+   "total": 1000.0
+  },
+  "despesas_total": 800.0,
+  "fallback_notas_sem_item": [],
+  "fora_da_dre": {
+   "contas": [],
+   "total": 0
+  },
+  "nao_classificado": {
+   "contas": [
+    {
+     "codigo": "(sem código)",
+     "nome": "Fatura AUD Cartão — 2031-03",
+     "valor": 800.0
+    }
+   ],
+   "total": 800.0
+  },
+  "periodo": {
+   "fim": "2031-04-30",
+   "inicio": "2031-04-01"
+  },
+  "por_conta": {
+   "Sem classificação": {
+    "descricao": "Fatura AUD Cartão — 2031-03",
+    "despesas": 800.0,
+    "receitas": 0.0
+   }
+  },
+  "receitas_total": 0,
+  "regime": "competencia",
+  "resultado": -800.0
+ },
+ "dre_conferencia_mar": {
+  "centro_custo": null,
+  "contas": [
+   {
+    "codigo": "(sem código)",
+    "nome": "Folha de pagamento — Ana Teste (2031-03)",
+    "valor": 2560.0
+   }
+  ],
+  "periodo": {
+   "fim": "2031-03-31",
+   "inicio": "2031-03-01"
+  },
+  "regime": "competencia",
+  "total": 2560.0
+ },
+ "dre_mar_competencia": {
+  "cascata": [
+   {
+    "chave": "RECEITA_VENDAS",
+    "contas": [
+     {
+      "codigo": "8.1",
+      "nome": "Leite mar/31",
+      "valor": 9850.0
+     }
+    ],
+    "eh_subtotal": false,
+    "operador": "+",
+    "rotulo": "Receita de vendas",
+    "valor": 9850.0
+   },
+   {
+    "chave": "DEDUCAO_IMPOSTOS",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Deduções de impostos",
+    "valor": 0.0
+   },
+   {
+    "chave": "RECEITA_LIQUIDA",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Receita líquida",
+    "valor": 9850.0
+   },
+   {
+    "chave": "CUSTO_VARIAVEL",
+    "contas": [
+     {
+      "codigo": "8.2",
+      "nome": "Ração",
+      "valor": 7500.0
+     }
+    ],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Custo variável (CPV/CMV)",
+    "valor": 7500.0
+   },
+   {
+    "chave": "MARGEM_BRUTA",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Margem bruta",
+    "valor": 2350.0
+   },
+   {
+    "chave": "DESPESA_VARIAVEL",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Despesas variáveis",
+    "valor": 0.0
+   },
+   {
+    "chave": "MARGEM_CONTRIBUICAO",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Margem de contribuição",
+    "valor": 2350.0
+   },
+   {
+    "chave": "GASTOS_PESSOAL",
+    "contas": [
+     {
+      "codigo": "8.7",
+      "nome": "Frete",
+      "valor": 1600.0
+     }
+    ],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Gastos com pessoal",
+    "valor": 1600.0
+   },
+   {
+    "chave": "DESPESAS_OPERACIONAIS",
+    "contas": [
+     {
+      "codigo": "8.6",
+      "nome": "Trator",
+      "valor": 120000.0
+     }
+    ],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Despesas operacionais",
+    "valor": 120000.0
+   },
+   {
+    "chave": "EBITDA",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "EBITDA",
+    "valor": -119250.0
+   },
+   {
+    "chave": "DEPRECIACAO_AMORT_EXAUSTAO",
+    "contas": [
+     {
+      "codigo": "(depreciação do patrimônio)",
+      "nome": "Depreciação do período (patrimônio)",
+      "valor": 1000.0
+     }
+    ],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Depreciação, amortização e exaustão",
+    "valor": 1000.0
+   },
+   {
+    "chave": "OUTRAS_REC_DESP",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "±",
+    "rotulo": "Outras receitas e despesas",
+    "valor": 0.0
+   },
+   {
+    "chave": "RESULTADO_OPERACIONAL",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Resultado operacional (EBIT)",
+    "valor": -120250.0
+   },
+   {
+    "chave": "TRIBUTOS_IR_CSLL",
+    "contas": [],
+    "eh_subtotal": false,
+    "operador": "-",
+    "rotulo": "Tributos (IRPJ e CSLL)",
+    "valor": 0.0
+   },
+   {
+    "chave": "RESULTADO_LIQUIDO",
+    "contas": [],
+    "eh_subtotal": true,
+    "operador": "=",
+    "rotulo": "Resultado líquido",
+    "valor": -120250.0
+   }
+  ],
+  "centro_custo": null,
+  "depreciacao_periodo": {
+   "inconsistencias": [],
+   "total": 1000.0
+  },
+  "despesas_total": 136660.0,
+  "fallback_notas_sem_item": [
+   {
+    "codigo_conta": null,
+    "numero_lancamento": "LC-2031-00012",
+    "valor": 2560.0
+   }
+  ],
+  "fora_da_dre": {
+   "contas": [
+    {
+     "codigo": "8.5",
+     "nome": "Aporte",
+     "valor": 20000.0
+    },
+    {
+     "codigo": "8.4",
+     "nome": "Parcela principal",
+     "valor": 5000.0
+    }
+   ],
+   "total": 25000.0
+  },
+  "nao_classificado": {
+   "contas": [
+    {
+     "codigo": "(sem código)",
+     "nome": "Folha de pagamento — Ana Teste (2031-03)",
+     "valor": 2560.0
+    }
+   ],
+   "total": 2560.0
+  },
+  "periodo": {
+   "fim": "2031-03-31",
+   "inicio": "2031-03-01"
+  },
+  "por_conta": {
+   "8": {
+    "descricao": "Leite mar/31",
+    "despesas": 129700.0,
+    "receitas": 29850.0
+   },
+   "Sem classificação": {
+    "descricao": "Ração, Frete",
+    "despesas": 6960.0,
+    "receitas": 0.0
+   }
+  },
+  "receitas_total": 29850.0,
+  "regime": "competencia",
+  "resultado": -106810.0
+ },
+ "orcamento_mar": {
+  "linhas": [
+   {
+    "codigo_conta_gerencial": "8",
+    "desvio": -2000.0,
+    "desvio_pct": -100.0,
+    "nome_conta_gerencial": "AUD grupo",
+    "orcado": 2000.0,
+    "realizado": 0.0,
+    "tipo": "despesa"
+   },
+   {
+    "codigo_conta_gerencial": "8.1",
+    "desvio": 0.0,
+    "desvio_pct": 0.0,
+    "nome_conta_gerencial": "AUD Venda de leite",
+    "orcado": 10000.0,
+    "realizado": 10000.0,
+    "tipo": "receita"
+   },
+   {
+    "codigo_conta_gerencial": "8.2",
+    "desvio": 2800.0,
+    "desvio_pct": 56.0,
+    "nome_conta_gerencial": "AUD Ração concentrado",
+    "orcado": 5000.0,
+    "realizado": 7800.0,
+    "tipo": "despesa"
+   },
+   {
+    "codigo_conta_gerencial": "8.4",
+    "desvio": 5000.0,
+    "desvio_pct": null,
+    "nome_conta_gerencial": "AUD Principal financiamento",
+    "orcado": 0.0,
+    "realizado": 5000.0,
+    "tipo": "despesa"
+   },
+   {
+    "codigo_conta_gerencial": "8.5",
+    "desvio": 20000.0,
+    "desvio_pct": null,
+    "nome_conta_gerencial": "AUD Aporte sócio",
+    "orcado": 0.0,
+    "realizado": 20000.0,
+    "tipo": "receita"
+   },
+   {
+    "codigo_conta_gerencial": "8.6",
+    "desvio": 120000.0,
+    "desvio_pct": null,
+    "nome_conta_gerencial": "AUD Máquinas (investimento)",
+    "orcado": 0.0,
+    "realizado": 120000.0,
+    "tipo": "despesa"
+   },
+   {
+    "codigo_conta_gerencial": "8.7",
+    "desvio": 1700.0,
+    "desvio_pct": null,
+    "nome_conta_gerencial": "AUD Mão de obra terceirizada",
+    "orcado": 0.0,
+    "realizado": 1700.0,
+    "tipo": "despesa"
+   }
+  ],
+  "periodo": {
+   "ano": 2031,
+   "mes_fim": 3,
+   "mes_inicio": 3
+  },
+  "total_orcado": 17000.0,
+  "total_realizado": 164500.0
+ },
+ "rmca_mar": {
+  "configurado": true,
+  "contas_custo": [
+   "AUD Ração concentrado"
+  ],
+  "contas_receita": [
+   "AUD Venda de leite"
+  ],
+  "fisico": {
+   "custo_alimentacao": 0,
+   "itens": [],
+   "receita_leite": 10000.0,
+   "rmca": 10000.0
+  },
+  "gerencial": {
+   "custo_alimentacao": 7800.0,
+   "receita_leite": 10000.0,
+   "rmca": 2200.0
+  },
+  "meta_rmca": 0.0,
+  "periodo": {
+   "fim": "2031-03-31",
+   "inicio": "2031-03-01"
+  },
+  "preco_medio_litro_leite": {
+   "competencia": "2031-03",
+   "litros": 10029.2,
+   "preco_por_litro": 0.9971,
+   "receita": 10000.0
+  }
+ }
+}

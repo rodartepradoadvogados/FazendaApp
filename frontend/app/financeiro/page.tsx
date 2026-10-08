@@ -11,7 +11,7 @@ import {
   // Onda 2 — listas fechadas, código PAT e baixa do patrimônio
   fetchOpcoesPatrimonio, gerarCodigosPatrimonio, baixarPatrimonio, estornarBaixaPatrimonio, type OpcoesPatrimonio,
   // Onda 3b — DRE em cascata / Onda 4 — Caixa Real
-  fetchDreCascata, classificarContaDre, type DreResposta,
+  fetchDreCascata, classificarContaDre, type DreResposta, atualizarNaturezaLancamento, fetchRegrasV2,
   fetchCaixaReal, fetchFundoReservaSugerido, type CaixaReal,
   fetchPessoas, fetchRmca, fetchCustoLitroLeite, fetchCustoHectare, fetchCustoVacaLote, fetchCustoSafra, fetchSafras, formatBRL, formatDate,
   atualizarLancamentoFinanceiro, ehAdmin, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
@@ -69,6 +69,7 @@ const COLUNAS_LIVRO = [
 ];
 
 import type { Lanc } from "@/lib/financeiroTipos";
+import { NATUREZAS_FIN, rotuloNatureza } from "@/lib/naturezaFin";
 
 type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos" | "resumo";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
@@ -3230,6 +3231,11 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   const [patrimonioId, setPatrimonioId] = useState(lanc.patrimonio_id ? String(lanc.patrimonio_id) : "");
   const [patrimonios, setPatrimonios] = useState<{ id: number; nome: string; tipo: string | null }[]>([]);
   useEffect(() => { fetchPatrimonioListaSimples().then(setPatrimonios).catch(() => {}); }, []);
+  // Natureza econômica da nota (Fase A): "" = automática (pela conta). Vale
+  // para todas as parcelas do mesmo numero_lancamento.
+  const [natureza, setNatureza] = useState(lanc.natureza_fin || "");
+  const [regrasV2, setRegrasV2] = useState<boolean | null>(null);
+  useEffect(() => { fetchRegrasV2().then((r) => setRegrasV2(r.ativa)).catch(() => setRegrasV2(null)); }, []);
   const tipoConta = lanc.tipo === "receita" ? "receita" : "despesa";
   const fornecedoresDisponiveis = useMemo(
     () => Array.from(new Set([...(fornecedor ? [fornecedor] : []), ...fornecedores])).sort(),
@@ -3324,6 +3330,9 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
       const novoPatrimonioId = patrimonioId ? Number(patrimonioId) : null;
       if (novoPatrimonioId !== (lanc.patrimonio_id ?? null) && lanc.numero_lancamento) {
         await vincularLancamentoPatrimonio(lanc.numero_lancamento, novoPatrimonioId);
+      }
+      if ((natureza || null) !== (lanc.natureza_fin || null) && lanc.numero_lancamento) {
+        await atualizarNaturezaLancamento(lanc.numero_lancamento, natureza || null);
       }
       onSalvo();
     } catch (e: any) { setErro(e.message); setSalvando(false); }
@@ -3545,6 +3554,23 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
             )}
             {patrimonios.map((p) => <option key={p.id} value={p.id}>{p.nome}{p.tipo ? ` — ${p.tipo}` : ""}</option>)}
           </select></div>
+        <div><label style={labelStyleLote} htmlFor="natureza-lancamento">Natureza do lançamento</label>
+          <select id="natureza-lancamento" style={selStyleLote} value={natureza} disabled={!lanc.numero_lancamento}
+            onChange={(e) => setNatureza(e.target.value)}
+            title={NATUREZAS_FIN.find((n) => n.valor === natureza)?.ajuda || "Automática: segue a conta do plano e a linha da DRE"}>
+            <option value="">Automática ({rotuloNatureza(lanc.natureza_resolvida || "OPERACIONAL")})</option>
+            {NATUREZAS_FIN.map((n) => <option key={n.valor} value={n.valor}>{n.rotulo}</option>)}
+          </select>
+          <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>
+            {NATUREZAS_FIN.find((n) => n.valor === natureza)?.ajuda || "Segue a conta do plano. Mude só se o lançamento não for custo nem receita da atividade."}
+            {regrasV2 === false && " Os relatórios desta fazenda ainda usam as regras antigas: a natureza fica gravada e passa a valer quando as regras novas forem ligadas em Parâmetros financeiros."}
+          </p>
+          {natureza === "INVESTIMENTO" && tipoConta === "despesa" && !patrimonioId && (
+            <p style={{ fontSize: "0.7rem", color: "var(--amber)", marginTop: "0.25rem" }}>
+              Sem bem no Patrimônio, este valor sai da DRE e não vai depreciar. Vincule ou cadastre o bem.
+            </p>
+          )}
+        </div>
       </div>
       {/* Sempre visível: antes o bloco inteiro sumia quando o lançamento não
           tinha `numero_lancamento` (todo lançamento importado da planilha),
@@ -4551,12 +4577,46 @@ function DreCascataView({ dataInicio, dataFim }: { dataInicio: string; dataFim: 
               <strong>não é despesa</strong>; só o juro é despesa, e vai em Outras receitas e despesas.
             </p>
             <KPI v={formatBRL(foraDaDre.total)} l={`${foraDaDre.contas.length} conta(s)`} />
-            {foraDaDre.contas.length > 0 && (
+            {foraDaDre.grupos && foraDaDre.grupos.length > 0 ? (
+              // Regras novas (Fase A): o que ficou fora, agrupado pelo motivo.
+              <div style={{ marginTop: "0.75rem" }}>
+                {foraDaDre.grupos.map((g) => (
+                  <div key={g.natureza} style={{ marginBottom: "0.6rem" }}>
+                    <div className="flex items-center justify-between" style={{ fontSize: "0.74rem", fontWeight: 600, color: "var(--text)" }}>
+                      <span>{g.rotulo}</span><span style={{ whiteSpace: "nowrap" }}>{formatBRL(g.total)}</span>
+                    </div>
+                    <ul style={{ fontSize: "0.72rem", color: "var(--text-muted)", margin: "0.2rem 0 0 0.6rem" }}>
+                      {g.contas.slice(0, 4).map((c) => (
+                        <li key={c.codigo || c.nome}>• {c.nome} — {formatBRL(c.valor)}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            ) : foraDaDre.contas.length > 0 && (
               <ul style={{ marginTop: "0.75rem", fontSize: "0.72rem", color: "var(--text-muted)" }}>
                 {foraDaDre.contas.slice(0, 6).map((c) => (
                   <li key={c.codigo || c.nome}>• {c.nome} — {formatBRL(c.valor)}</li>
                 ))}
               </ul>
+            )}
+            {dados.regras_v2 && (
+              <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>
+                Regras novas ligadas: compra de bem, financiamento, aporte e adiantamento ficam fora pelo tipo
+                do lançamento (a natureza), qualquer que seja a conta. A depreciação continua entrando.
+              </p>
+            )}
+            {(dados.pendencias_natureza?.length ?? 0) > 0 && (
+              <div style={{ marginTop: "0.6rem", fontSize: "0.72rem", color: "var(--amber)" }}>
+                <strong>Investimento sem bem no Patrimônio (não vai depreciar):</strong>
+                <ul style={{ margin: "0.2rem 0 0 0.6rem" }}>
+                  {dados.pendencias_natureza!.slice(0, 5).map((p) => (
+                    <li key={p.numero_lancamento || p.descricao || String(p.valor)}>
+                      • {p.numero_lancamento ? `${p.numero_lancamento} — ` : ""}{p.descricao || p.fornecedor} — {formatBRL(p.valor)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
           </div>
         </div>
