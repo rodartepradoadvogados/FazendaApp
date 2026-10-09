@@ -1434,6 +1434,72 @@ def _estornar_estoque_dos_alvos(session: Session, alvos: list, fazenda_id: int |
     return avisos
 
 
+def _descrever_reversoes(session: Session, alvos: list, fazenda_id: int | None) -> tuple[list[Linha], list[Linha]]:
+    """Descreve, SEM aplicar, o que a exclusão vai reverter/ajustar (e os avisos).
+    Espelha as MESMAS condições dos helpers de aplicação — serve para o bloco
+    `reverter`/`avisos` do impacto e para o risco ("tem reversão → médio").
+    Somente-leitura: não toca nada na sessão."""
+    reverter: list[Linha] = []
+    avisos: list[Linha] = []
+
+    # 1. Estoque baixado por estes objetos volta (mesmas guardas de _estornar_estoque_dos_alvos).
+    n_movs = 0
+    for obj in alvos:
+        origens = _ORIGENS_POR_CLASSE.get(type(obj))
+        if not origens or getattr(obj, "id", None) is None:
+            continue
+        if getattr(obj, "ativo", True) is False:
+            continue
+        q = select(MovimentoEstoque).where(
+            MovimentoEstoque.origem_tipo.in_(origens),
+            MovimentoEstoque.origem_id == obj.id,
+            MovimentoEstoque.movimento.in_(["Aplicação", "Entrada de compra"]),
+        )
+        if fazenda_id is not None:
+            q = q.where(MovimentoEstoque.fazenda_id == fazenda_id)
+        n_movs += len(session.exec(q).all())
+    if n_movs:
+        reverter.append(Linha(
+            titulo="Estoque",
+            consequencia=f"{n_movs} movimentação(ões) de estoque será(ão) desfeita(s) — o que saiu volta.",
+            qtd=n_movs,
+            chip="Mexe no estoque",
+        ))
+
+    servicos = [o for o in alvos if isinstance(o, Servico)]
+
+    # 2. A IA/cobertura vigente sai → a anterior volta a valer.
+    if any(getattr(s, "ult_ocorrencia", 0) == 1 for s in servicos):
+        reverter.append(Linha(titulo="Inseminação anterior volta a valer", consequencia="A inseminação de antes volta a ser a atual.", chip="Mexe na reprodução"))
+
+    # 3. Perda de prenhez disparada por este serviço é desfeita.
+    ids_servico = {s.id for s in servicos if s.id is not None}
+    if ids_servico:
+        q = select(Servico).where(Servico.perda_causada_por_servico_id.in_(ids_servico))
+        if fazenda_id is not None:
+            q = q.where(Servico.fazenda_id == fazenda_id)
+        if session.exec(q).first() is not None:
+            reverter.append(Linha(titulo="Perda de prenhez desfeita", consequencia="A perda marcada por esta inseminação some."))
+
+    partos = [o for o in alvos if isinstance(o, Parto)]
+    if partos:
+        reverter.append(Linha(
+            titulo="Lactação",
+            consequencia="A lactação aberta pelo parto é removida e a anterior é reaberta.",
+            chip="Mexe na lactação",
+        ))
+        reverter.append(Linha(titulo="Dias em leite (DEL)", consequencia="O DEL da matriz é recalculado."))
+
+    if any(isinstance(o, Secagem) for o in alvos):
+        reverter.append(Linha(titulo="Lactação reaberta", consequencia="A secagem tinha fechado a lactação; ela volta a ficar aberta.", chip="Mexe na lactação"))
+
+    # 4. Vale gerado por item da nota é desfeito.
+    if any(isinstance(o, LancamentoItem) and eh_item_de_vale(o) for o in alvos):
+        reverter.append(Linha(titulo="Vale desfeito", consequencia="O desconto do vale some e o abatimento volta à empreita/parcela."))
+
+    return reverter, avisos
+
+
 def _excluir_alvos_em_ordem(session: Session, alvos: list) -> None:
     """Apaga cada objeto de `alvos` com um flush logo em seguida, na ordem
     INVERSA à que `_alvos()` devolve (que é sempre [raiz, *dependentes] — ex.:
@@ -1477,12 +1543,15 @@ def _montar_impacto(tipo: str, id_: str, session: Session, fazenda_id: int | Non
     devolve no bloco `bloqueia` em vez de estourar 400."""
     item = {"tipo": tipo, "id": id_, "titulo": f"{tipo} #{id_}"}
     try:
-        itens, _objetos = _alvos(tipo, id_, session, fazenda_id=fazenda_id)
+        itens, objetos = _alvos(tipo, id_, session, fazenda_id=fazenda_id)
     except ExclusaoBloqueada as e:
         return Impacto(item=item, bloqueia=[e.bloqueio])
     if itens:
         item["titulo"] = itens[0]
     impacto = Impacto(item=item, apagar=[Linha(titulo=s, consequencia="") for s in itens])
+    reverter, avisos = _descrever_reversoes(session, objetos, fazenda_id)
+    impacto.reverter = reverter
+    impacto.avisos = avisos
     _forcar_risco_do_tipo(impacto, tipo)
     impacto.risco = exclusao_risco.calcular(impacto)
     impacto.porque = exclusao_risco.porque(impacto)
@@ -1622,6 +1691,9 @@ def confirmar(
         item={"tipo": dados.tipo, "id": dados.id, "titulo": titulo},
         apagar=[Linha(titulo=s, consequencia="") for s in itens],
     )
+    reverter_d, avisos_d = _descrever_reversoes(session, alvos, fazenda_id)
+    impacto.reverter = reverter_d
+    impacto.avisos = avisos_d
     _forcar_risco_do_tipo(impacto, dados.tipo)
     risco = exclusao_risco.calcular(impacto)
     impacto.risco = risco
@@ -1755,6 +1827,9 @@ def aprovar_pendente(
         item={"tipo": sol.tipo, "id": sol.id_alvo, "titulo": titulo},
         apagar=[Linha(titulo=s, consequencia="") for s in itens],
     )
+    reverter_d, avisos_d = _descrever_reversoes(session, alvos, fazenda_id)
+    impacto.reverter = reverter_d
+    impacto.avisos = avisos_d
     _forcar_risco_do_tipo(impacto, sol.tipo)
     risco = exclusao_risco.calcular(impacto)
     impacto.risco = risco

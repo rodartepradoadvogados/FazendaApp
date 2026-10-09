@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from fazenda.models import Animal, ContratoFazenda, ContratoFazendaModulo, ExclusaoRegistro, Fazenda, SolicitacaoExclusao, Usuario
+from fazenda.models import Animal, ContratoFazenda, ContratoFazendaModulo, ExclusaoRegistro, Fazenda, Parto, SolicitacaoExclusao, Usuario
 from fazenda.models.planos import MODULOS_COMERCIAIS
 
 
@@ -169,3 +169,23 @@ class TestTrilhaEEndpoints:
         cp = c.get(f"/exclusoes/comprovante/{comprovante}")
         assert cp.status_code == 200
         assert cp.json()["codigo"] == comprovante
+
+
+class TestReversoesDescritas:
+    def test_descrever_reversoes_de_parto(self, client):
+        from fazenda.api.routers.exclusoes import _descrever_reversoes
+
+        _c, engine, _h = client
+        with Session(engine) as s:
+            reverter, _ = _descrever_reversoes(s, [Parto(numero_matriz="100")], 1)
+        titulos = [linha.titulo for linha in reverter]
+        assert any("Lactação" in t for t in titulos)
+        assert any("DEL" in t for t in titulos)
+
+    def test_descrever_reversoes_vazio_para_alvo_sem_reversao(self, client):
+        from fazenda.api.routers.exclusoes import _descrever_reversoes
+
+        _c, engine, _h = client
+        with Session(engine) as s:
+            reverter, avisos = _descrever_reversoes(s, [Animal(numero="100", nome="Vaca", fazenda_id=1)], 1)
+        assert reverter == []
