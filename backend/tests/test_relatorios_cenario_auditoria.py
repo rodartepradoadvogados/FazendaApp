@@ -17,10 +17,12 @@ Este arquivo trava três coisas:
    PR 2 e PR 3 (contas → backfill → flag): a folha ganha conta e itens, entra
    pelo bruto (pessoal 4.840) e não classificado zera; retidos, vale e FGTS a
    recolher ficam fora da DRE; o backfill com a flag desligada não muda nada.
-3. O QUE FALTA: cada erro ainda aberto é um `xfail(strict=True)` com o nome do
-   PR que o resolve (numeração do SOLUCOES.md, §4). Strict de propósito: o PR
-   que corrigir o número faz o teste PASSAR, o xfail estrito vira falha, e o
-   PR é obrigado a tirar a marcação — o número certo vira asserção normal.
+3. O QUE FALTAVA: cada erro aberto era um `xfail(strict=True)` com o nome do
+   PR que o resolvia (numeração do SOLUCOES.md, §4); o PR que acertou o número
+   tirou a marcação e o número certo virou asserção normal. Com o PR 8 (DRE
+   única: legado, Capa, CSV do Portal e orçamento pela cascata) e o PR 9
+   (custos com "Todos" e depreciação por centro, com rateio do bem sem
+   centro) não sobra nenhum xfail da Fase A.
 """
 from __future__ import annotations
 
@@ -334,8 +336,8 @@ def test_v2_cenario_antes_e_depois_marco_2031(cenario):
         "RESULTADO_LIQUIDO": (-120250, -250),
     }
     assert (antes["fora_da_dre"]["total"], depois["fora_da_dre"]["total"]) == (25000, 145000)
-    # Os campos legados (e-mail do Portal) só mudam no PR 8 (DRE única).
-    assert depois["resultado"] == antes["resultado"] == -106810
+    # PR 8 (DRE única): os campos legados (e-mail do Portal) passam a ser a cascata.
+    assert (antes["resultado"], depois["resultado"]) == (-106810, -250)
 
 
 def test_v2_regime_de_caixa_tambem_tira_o_investimento(cenario):
@@ -488,7 +490,7 @@ def test_pr7_abatimento_reduz_a_propria_conta(cenario):
         assert (conta.valor_total, conta.valor_pago, conta.desconto_acrescimo, conta.diferenca_tipo) == (1000, 600, -400, "abatimento")
     mar = cenario.dre()
     assert cenario.linha(mar, "CUSTO_VARIAVEL") == 7100
-    assert mar["despesas_total"] == antes_legado  # campos legados só mudam no PR 8
+    assert mar["despesas_total"] == antes_legado - 400  # PR 8: o legado é a cascata (CMV −400)
     dc = cenario.dre(*ABR, "caixa")
     assert cenario.linha(dc, "CUSTO_VARIAVEL") == 5500 and cenario.linha(dc, "OUTRAS_REC_DESP") == -50
     assert cenario.linha(cenario.dre(*ABR), "OUTRAS_REC_DESP") == -50
@@ -1150,32 +1152,274 @@ def test_pr2_pr3_pr5_pr6_cenario_com_tudo_ligado(cenario):
 
 
 # =============================================================================
-# 5. O que os PRs seguintes resolvem — xfail ESTRITO, com o PR no motivo.
-#    Todos rodam com a flag LIGADA (as regras novas só valem com ela).
+# 5. PR 8 (DRE única: um resultado em todas as telas) e PR 9 (custos com
+#    rateio correto por centro) — os ex-xfail estritos viraram asserções.
 # =============================================================================
-@pytest.mark.xfail(strict=True, reason="PR 8 (DRE única): campos legados (CSV/e-mail do Portal) iguais à cascata")
-def test_pendente_pr8_legado_igual_a_cascata(cenario):
+def test_pr8_legado_igual_a_cascata(cenario):
+    """Ex-xfail `test_pendente_pr8_legado_igual_a_cascata`. No estado do PR 1
+    (só a flag): o resultado da cascata é −250 (9.850 − 7.500 − 1.600 − 1.000
+    de depreciação; a folha ainda em não classificado). Os campos legados — que
+    o CSV/e-mail do Portal imprime — passam a ser ESSE número (antes: 29.850 −
+    136.660 = −106.810, somando trator, aporte, principal e a folha)."""
     cenario.ligar_regras_v2()
+    for regime, ini, fim in (("competencia", "2031-03-01", "2031-03-31"), ("caixa", "2031-04-01", "2031-04-30")):
+        dm = cenario.dre(ini, fim, regime)
+        resultado = cenario.linha(dm, "RESULTADO_LIQUIDO")
+        assert dm["resultado"] == resultado == dm["resumo"]["resultado_liquido"]
+        assert dm["receitas_total"] == cenario.linha(dm, "RECEITA_LIQUIDA") == dm["resumo"]["receita_liquida"]
+        assert round(dm["receitas_total"] - dm["despesas_total"], 2) == dm["resultado"]
+        # por_conta: só o que entrou nas linhas (Σ receitas − Σ despesas = resultado).
+        liquido = sum(v["receitas"] - v["despesas"] for v in dm["por_conta"].values())
+        assert round(liquido, 2) == resultado
     dm = cenario.dre()
-    assert dm["resultado"] == cenario.linha(dm, "RESULTADO_LIQUIDO")
+    assert (dm["receitas_total"], dm["despesas_total"], dm["resultado"]) == (9850, 10100, -250)
+    assert dm["resumo"] == {
+        "receita_bruta": 10000.0, "receita_liquida": 9850.0, "despesas": 10100.0, "ebitda": 750.0,
+        "resultado_operacional": -250.0, "resultado_liquido": -250.0, "margem_liquida_pct": -2.5,
+        "fora_da_dre_total": 145000.0, "nao_classificado": 2560.0,
+        "nao_classificado_receita": 0.0, "nao_classificado_despesa": 2560.0,
+    }
+    # 8.6 (trator), 8.4 e 8.5 estão fora: o grupo "8" do por_conta só tem o operacional.
+    assert dm["por_conta"]["8"] == {"descricao": "Leite mar/31", "receitas": 10000.0, "despesas": 9100.0}
+    assert dm["por_conta"]["(depreciação do patrimônio)"]["despesas"] == 1000
 
 
-@pytest.mark.xfail(strict=True, reason="PR 8 (orçamento): totais separados por receita, despesa e fora do resultado")
-def test_pendente_pr8_orcamento_totais_separados(cenario):
+def test_pr8_flag_desligada_campos_legados_capa_e_csv_como_antes(cenario):
+    from fazenda.api.routers import portal
+
+    dm = cenario.dre()
+    assert "resumo" not in dm and (dm["receitas_total"], dm["despesas_total"], dm["resultado"]) == (29850, 136660, -106810)
+    capa = cenario.get("/financeiro/resultado-mes-recente")
+    assert set(capa) == {"mes", "resultado"}
+    anexos = portal._anexos_dre(dm, "dre", "Fazenda AUD 1")
+    assert anexos == [("dre.csv", portal._dict_para_csv(dm).encode("utf-8-sig"))]
+
+
+def test_pr8_um_resultado_em_todas_as_telas_com_tudo_ligado(cenario):
+    """O cenário inteiro (PRs 1 a 7 ligados): −4.290 na cascata, no resumo
+    (KPIs/gráfico do front), nos campos legados e nos dois CSVs do Portal; a
+    Capa mostra o resultado da DRE do mês dela (abril: −650 = +350 de Outras −
+    1.000 de depreciação)."""
+    from datetime import timedelta
+
+    from fazenda.api.routers import portal
+
+    cenario.ligar_pr2_pr3()
+    cenario.classificar_plano_por_natureza()
+    _backfill_cartao(cenario)
+    dm = cenario.dre()
+    assert cenario.linha(dm, "RESULTADO_LIQUIDO") == dm["resumo"]["resultado_liquido"] == dm["resultado"] == -4290
+    assert (dm["receitas_total"], dm["despesas_total"]) == (9850, 14140)
+    assert dm["resumo"]["margem_liquida_pct"] == -43.6 and dm["resumo"]["ebitda"] == -3290
+    legado, novo = portal._anexos_dre(dm, "dre_2031-03-01_2031-03-31", "Fazenda AUD 1", hoje=portal.CSV_DRE_LEGADO_ATE)
+    assert legado[0] == "dre_2031-03-01_2031-03-31.csv" and novo[0] == "dre_2031-03-01_2031-03-31_cascata.csv"
+    texto_legado = legado[1].decode("utf-8-sig")
+    assert "resultado,-4290.0" in texto_legado and "receitas_total,9850.0" in texto_legado
+    linhas_novo = novo[1].decode("utf-8-sig").splitlines()
+    assert "Resultado líquido,RESULTADO_LIQUIDO,=,sim,-4290.00" in linhas_novo
+    assert "Fazenda,Fazenda AUD 1" in linhas_novo and "Regime,competencia" in linhas_novo
+    inicio = linhas_novo.index("Linha,Chave,Operador,Subtotal,Valor")
+    assert linhas_novo[inicio + 16] == ""  # as 15 linhas da cascata, e só elas
+    assert "Total fora da DRE,,,,145680.00" in linhas_novo  # magnitudes: 145.000 + retidos, vale e FGTS a recolher (680)
+    # Passada a janela de 60 dias, só o CSV novo.
+    so_novo = portal._anexos_dre(dm, "dre", None, hoje=portal.CSV_DRE_LEGADO_ATE + timedelta(days=1))
+    assert [n for n, _ in so_novo] == ["dre_cascata.csv"]
+    # Capa: o mês mais recente com lançamento é abril/2031 (juros/descontos da baixa).
+    capa = cenario.get("/financeiro/resultado-mes-recente")
+    abril = cenario.dre(*ABR)
+    assert capa["mes"] == "2031-04" and capa["resultado"] == abril["resumo"]["resultado_liquido"] == -650
+    assert capa["regras_v2"] is True and capa["fonte"] == "dre_competencia"
+
+
+def test_pr8_email_do_portal_anexa_o_csv_antigo_e_o_novo(cenario, monkeypatch):
+    from fazenda.api.routers import portal
+    from fazenda.models import Usuario, UsuarioFazenda
+
+    cenario.ligar_regras_v2()
+    with Session(cenario.engine) as s:
+        u = Usuario(username="dono-aud", nome="Dono", senha_hash="x", papel="admin", ativo=True, email="dono@aud.test")
+        s.add(u)
+        s.commit()
+        s.refresh(u)
+        s.add(UsuarioFazenda(usuario_id=u.id, fazenda_id=1))
+        s.commit()
+        dono_id = u.id
+    enviados = []
+
+    def _enviar(dest, assunto, corpo, nome=None, conteudo=None, **kw):
+        enviados.append((dest, nome, [n for n, _ in kw.get("anexos_extras") or []], corpo))
+
+    monkeypatch.setattr(portal, "enviar_email", _enviar)
+    monkeypatch.setattr(portal, "hoje_local", lambda: portal.CSV_DRE_LEGADO_ATE)
+    r = cenario.c.post("/portal/email", json={"destinatarios_usuario_id": [dono_id], "assunto": "DRE", "relatorio": "dre",
+                                              "data_inicio": "2031-03-01", "data_fim": "2031-03-31"})
+    assert r.status_code == 200, r.text
+    (dest, nome, extras, corpo), = enviados
+    assert (dest, nome, extras) == ("dono@aud.test", "dre_2031-03-01_2031-03-31.csv", ["dre_2031-03-01_2031-03-31_cascata.csv"])
+    assert "mesmo resultado" in corpo
+
+
+def test_pr8_orcamento_totais_separados(cenario):
+    """Ex-xfail `test_pendente_pr8_orcamento_totais_separados` (estado do PR
+    1). Antes: um total só (17.000 orçado × 164.500 realizado, misturando
+    receita, despesa e o que nem é resultado). Agora: receita 10.000 × 10.000;
+    deduções 0 × 150 (Funrural); despesa operacional 7.000 × 11.660 (8.2 7.500
+    + grupo 8 1.600 + a folha sem conta 2.560); fora do resultado 145.000
+    (trator, principal e aporte), sem desvio. O orçamento do grupo "8" (2.000)
+    cobre o 8.7 (sem orçamento próprio): 1.600 × 2.000, favorável; o 8.2 tem o
+    dele (5.000) e não sobe para o grupo."""
     cenario.ligar_regras_v2()
     o = cenario.get("/planejamento/orcamento/comparativo", ano=2031, mes_inicio=3, mes_fim=3)
+    totais = {g: (t["orcado"], t["realizado"], t["situacao"]) for g, t in o["totais"].items()}
+    assert totais == {
+        "receita": (10000, 10000, "no_orcado"),
+        "deducao": (0, 150, "sem_orcamento"),
+        "despesa_operacional": (7000, 11660, "desfavoravel"),
+        "fora_do_resultado": (0, 145000, "fora_do_resultado"),
+    }
     assert o["totais"]["receita"]["realizado"] == 10000
+    linhas = {l["codigo_conta_gerencial"]: l for l in o["linhas"]}
+    assert (linhas["8"]["orcado"], linhas["8"]["realizado"], linhas["8"]["cobre"], linhas["8"]["situacao"]) == (2000, 1600, ["8.7"], "favoravel")
+    assert (linhas["8.7"]["coberta_por"], linhas["8.7"]["desvio"], linhas["8.7"]["situacao"]) == ("8", None, "coberta_pelo_grupo")
+    assert (linhas["8.2"]["realizado"], linhas["8.2"]["desvio"], linhas["8.2"]["situacao"]) == (7500, 2500, "desfavoravel")
+    assert {c: linhas[c]["grupo"] for c in ("8.4", "8.5", "8.6")} == dict.fromkeys(("8.4", "8.5", "8.6"), "fora_do_resultado")
+    assert linhas["(sem conta)"]["desvio"] is None and linhas["(sem conta)"]["situacao"] == "sem_orcamento"
+    # Compatibilidade: os totais antigos passam a ser só os de despesa operacional.
+    assert (o["total_orcado"], o["total_realizado"]) == (7000, 11660)
 
 
-@pytest.mark.xfail(strict=True, reason="PR 9 (COE/COT): 'Todos' no custo por vaca não filtra centro de custo")
-def test_pendente_pr9_custo_vaca_todos(cenario):
+def test_pr8_orcamento_com_tudo_ligado(cenario):
+    """Com a folha pelo bruto (8.9) e o cartão por item: despesa operacional
+    7.000 × 13.140 (= o numerador dos custos); o grupo "8" cobre 8.7 e 8.9
+    (1.600 + 3.240 = 4.840)."""
+    cenario.ligar_pr2_pr3()
+    cenario.classificar_plano_por_natureza()
+    _backfill_cartao(cenario)
+    o = cenario.get("/planejamento/orcamento/comparativo", ano=2031, mes_inicio=3, mes_fim=3)
+    linhas = {l["codigo_conta_gerencial"]: l for l in o["linhas"]}
+    assert (o["totais"]["despesa_operacional"]["orcado"], o["totais"]["despesa_operacional"]["realizado"]) == (7000, 13140)
+    assert (linhas["8"]["realizado"], linhas["8"]["cobre"]) == (4840, ["8.7", "8.9"])
+    assert linhas["8.2"]["realizado"] == 8300
+    assert o["totais"]["despesa_operacional"]["realizado"] == cenario.get("/financeiro/custo-hectare", **MAR_Q)["despesas_total"]
+
+
+def test_pr9_custo_vaca_todos(cenario):
+    """Ex-xfail `test_pendente_pr9_custo_vaca_todos`: com a flag, "Todos" (sem
+    centro na URL) é TODOS os centros; antes virava "Pecuária Leiteira"."""
+    antes = cenario.get("/financeiro/custo-vaca-lote", **MAR_Q)
+    assert antes["centro_custo"] == "Pecuária Leiteira"
     cenario.ligar_regras_v2()
-    cv = cenario.get("/financeiro/custo-vaca-lote", data_inicio="2031-03-01", data_fim="2031-03-31")
-    assert cv["centro_custo"] is None
+    cv = cenario.get("/financeiro/custo-vaca-lote", **MAR_Q)
+    assert cv["centro_custo"] is None and cv["despesas_total"] == 11660 and cv["depreciacao_rateio"] is None
+    pl = cenario.get("/financeiro/custo-vaca-lote", centro_custo="Pecuária Leiteira", **MAR_Q)
+    assert pl["centro_custo"] == "Pecuária Leiteira" and pl["despesas_total"] == 11660
+    # Num centro sem despesa nenhuma, nada (antes do PR 9 a depreciação inteira entrava no COT).
+    agri = cenario.get("/financeiro/custo-vaca-lote", centro_custo="Agricultura", **MAR_Q)
+    assert (agri["despesas_total"], agri["depreciacao_periodo"], agri["cot"]) == (0, 0, 0)
 
 
-@pytest.mark.xfail(strict=True, reason="PR 9 (depreciação por centro): filtro 'Agricultura' sem bem desse centro não deprecia o trator")
-def test_pendente_pr9_depreciacao_com_filtro_de_centro(cenario):
+def test_pr9_depreciacao_com_filtro_de_centro(cenario):
+    """Ex-xfail `test_pendente_pr9_depreciacao_com_filtro_de_centro`: o trator
+    (sem centro no bem: nasceu antes da flag) é rateado pela participação do
+    centro nas despesas operacionais; a Agricultura não tem despesa em abril,
+    então não recebe depreciação (antes: os 1.000 inteiros)."""
+    assert cenario.linha(cenario.dre("2031-04-01", "2031-04-30", centro_custo="Agricultura"), "DEPRECIACAO_AMORT_EXAUSTAO") == 1000
     cenario.ligar_regras_v2()
     d = cenario.dre("2031-04-01", "2031-04-30", centro_custo="Agricultura")
     assert cenario.linha(d, "DEPRECIACAO_AMORT_EXAUSTAO") == 0
+    rateio = d["depreciacao_periodo"]["rateio"]
+    assert (rateio["depreciacao_bens_sem_centro"], rateio["participacao"], rateio["depreciacao_rateada"]) == (1000, 0, 0)
+
+
+def _cenario_dois_centros(cenario):
+    """Agricultura com despesa e com bem próprio: uma compra de 2.915 de ração
+    (8.2) no centro Agricultura em março e uma ensiladeira de 12.000 (10 anos,
+    linear: 100/mês) cadastrada no Patrimônio com centro Agricultura."""
+    r = cenario.c.post("/financeiro/lancamentos", json={
+        "tipo": "despesa", "centro_custo": "Agricultura", "fornecedor_cliente": "AUD-AGRI",
+        "itens": [{"produto": "Insumo milho", "codigo_conta_gerencial": "8.2", "valor_total": 2915, "tipo_item": "servico"}],
+        "data_emissao": "2031-03-12", "data_competencia": "2031-03-12", "data_vencimento": "2031-04-12",
+    })
+    assert r.status_code == 201, r.text
+    r = cenario.c.post("/financeiro/patrimonio", json={
+        "nome": "AUD Ensiladeira", "data_imobilizacao": "2031-03-01", "valor_total": 12000, "depreciavel": True,
+        "metodo_depreciacao": "LINEAR", "vida_util_anos": 10, "valor_residual": 0, "centro_custo": "Agricultura",
+    })
+    assert r.status_code == 201, r.text
+
+
+def test_pr9_depreciacao_rateada_entre_os_centros(cenario):
+    """Março, só a flag (despesa operacional: Pecuária 11.660 + Agricultura
+    2.915 = 14.575 → participações 80% e 20%). O trator (1.000, sem centro) é
+    rateado 800/200; a ensiladeira (100) vai inteira para a Agricultura. Os
+    pedaços somam a depreciação da fazenda: 800 + 300 = 1.100."""
+    cenario.ligar_regras_v2()
+    _cenario_dois_centros(cenario)
+    dep = {centro: cenario.dre(centro_custo=centro)["depreciacao_periodo"] for centro in ("Pecuária Leiteira", "Agricultura")}
+    todos = cenario.dre()["depreciacao_periodo"]
+    assert todos["total"] == 1100 and "rateio" not in todos
+    assert {c: d["total"] for c, d in dep.items()} == {"Pecuária Leiteira": 800, "Agricultura": 300}
+    agri = dep["Agricultura"]["rateio"]
+    assert (agri["depreciacao_bens_do_centro"], agri["depreciacao_bens_sem_centro"], agri["participacao"],
+            agri["depreciacao_rateada"]) == (100, 1000, 0.2, 200)
+    assert (agri["despesa_operacional_centro"], agri["despesa_operacional_total"]) == (2915, 14575)
+    assert dep["Pecuária Leiteira"]["rateio"]["depreciacao_bens_de_outros_centros"] == 100
+    # O mesmo número no COT dos custos (por hectare e por vaca) e na DRE de caixa.
+    for centro, cot in (("Pecuária Leiteira", 11660 + 800), ("Agricultura", 2915 + 300)):
+        ch = cenario.get("/financeiro/custo-hectare", centro_custo=centro, **MAR_Q)
+        cv = cenario.get("/financeiro/custo-vaca-lote", centro_custo=centro, **MAR_Q)
+        assert ch["cot"] == cv["cot"] == cot and ch["depreciacao_periodo"] == dep[centro]["total"]
+    dc = cenario.dre(regime="caixa", centro_custo="Agricultura")
+    assert cenario.linha(dc, "DEPRECIACAO_AMORT_EXAUSTAO") == 300
+    # Sem filtro, o COT tem a depreciação inteira.
+    assert cenario.get("/financeiro/custo-hectare", **MAR_Q)["cot"] == 11660 + 2915 + 1100
+
+
+def test_pr9_flag_desligada_depreciacao_inteira_em_qualquer_centro(cenario):
+    _cenario_dois_centros(cenario)
+    for centro in ("Pecuária Leiteira", "Agricultura"):
+        d = cenario.dre(centro_custo=centro)
+        assert cenario.linha(d, "DEPRECIACAO_AMORT_EXAUSTAO") == 1100 and "rateio" not in d["depreciacao_periodo"]
+
+
+def test_pr9_bem_comprado_nasce_no_centro_da_nota(cenario):
+    from fazenda.models import Patrimonio
+
+    cenario.ligar_regras_v2()
+    r = cenario.c.post("/financeiro/lancamentos", json={
+        "tipo": "despesa", "centro_custo": "Agricultura", "fornecedor_cliente": "AUD-Plantadeira",
+        "itens": [{"produto": "Plantadeira", "codigo_conta_gerencial": "8.6", "valor_total": 60000, "tipo_item": "servico"}],
+        "data_emissao": "2031-03-05", "data_competencia": "2031-03-05",
+        "criar_patrimonio": {"nome": "AUD Plantadeira", "data_imobilizacao": "2031-03-05", "valor_total": 60000,
+                             "depreciavel": True, "metodo_depreciacao": "linear", "vida_util_anos": 10},
+    })
+    assert r.status_code == 201, r.text
+    with Session(cenario.engine) as s:
+        bem = s.exec(select(Patrimonio).where(Patrimonio.nome == "AUD Plantadeira")).one()
+        assert bem.centro_custo == "Agricultura"
+
+
+def test_pr8_pr9_nao_vazam_para_outra_fazenda(cenario):
+    """Multi-tenant: a fazenda 2 (sem flag) segue com a Capa crua, o custo por
+    vaca em Pecuária Leiteira e sem rateio; o bem e o orçamento da 2 não
+    entram na depreciação nem no comparativo da 1."""
+    cenario.ligar_regras_v2(fazenda_id=1)
+    cenario.estado["fazenda_id"] = 2
+    r = cenario.c.post("/financeiro/patrimonio", json={
+        "nome": "F2 Trator", "data_imobilizacao": "2031-03-01", "valor_total": 240000, "depreciavel": True,
+        "metodo_depreciacao": "LINEAR", "vida_util_anos": 10, "valor_residual": 0, "centro_custo": "Agricultura",
+    })
+    assert r.status_code == 201, r.text
+    assert cenario.get("/financeiro/resultado-mes-recente") == {"mes": None, "resultado": None}
+    assert cenario.get("/financeiro/custo-vaca-lote", **MAR_Q)["centro_custo"] == "Pecuária Leiteira"
+    d2 = cenario.dre(centro_custo="Agricultura")
+    assert "resumo" not in d2 and "rateio" not in d2["depreciacao_periodo"]
+    assert cenario.linha(d2, "DEPRECIACAO_AMORT_EXAUSTAO") == 2000
+    o2 = cenario.get("/planejamento/orcamento/comparativo", ano=2031, mes_inicio=3, mes_fim=3)
+    assert "totais" not in o2 and o2["linhas"] == []
+    cenario.estado["fazenda_id"] = 1
+    d1 = cenario.dre(centro_custo="Agricultura")
+    assert cenario.linha(d1, "DEPRECIACAO_AMORT_EXAUSTAO") == 0  # o trator da 2 não aparece
+    assert cenario.linha(cenario.dre(), "DEPRECIACAO_AMORT_EXAUSTAO") == 1000
+    o1 = cenario.get("/planejamento/orcamento/comparativo", ano=2031, mes_inicio=3, mes_fim=3)
+    assert o1["totais"]["receita"]["orcado"] == 10000

@@ -17,10 +17,15 @@ from fazenda.config import settings
 RESEND_API = "https://api.resend.com/emails"
 
 
-def enviar_email(destinatario: str, assunto: str, corpo_html: str, anexo_nome: str | None = None, anexo_bytes: bytes | None = None) -> None:
-    """Envia um e-mail via Resend — com um único anexo (ex.: PDF do recibo)
+def enviar_email(
+    destinatario: str, assunto: str, corpo_html: str, anexo_nome: str | None = None, anexo_bytes: bytes | None = None,
+    *, anexos_extras: list[tuple[str, bytes]] | None = None,
+) -> None:
+    """Envia um e-mail via Resend — com um anexo (ex.: PDF do recibo)
     quando anexo_nome/anexo_bytes são informados, ou só o corpo HTML (ex.:
-    resumo do diagnóstico de gestação) quando não são."""
+    resumo do diagnóstico de gestação) quando não são. `anexos_extras`
+    ([(nome, bytes)]) acrescenta outros anexos depois do primeiro (ex.: a DRE
+    no CSV antigo e no novo, Fase A PR 8)."""
     if not settings.resend_api_key:
         raise RuntimeError(
             "Envio de e-mail não está configurado — falta a variável de ambiente "
@@ -32,11 +37,12 @@ def enviar_email(destinatario: str, assunto: str, corpo_html: str, anexo_nome: s
         "subject": assunto,
         "html": corpo_html,
     }
-    if anexo_nome and anexo_bytes:
+    anexos = ([(anexo_nome, anexo_bytes)] if anexo_nome and anexo_bytes else []) + list(anexos_extras or [])
+    if anexos:
         payload["attachments"] = [{
-            "filename": anexo_nome,
-            "content": base64.standard_b64encode(anexo_bytes).decode("utf-8"),
-        }]
+            "filename": nome,
+            "content": base64.standard_b64encode(conteudo).decode("utf-8"),
+        } for nome, conteudo in anexos if nome and conteudo]
     resposta = httpx.post(
         RESEND_API,
         json=payload,

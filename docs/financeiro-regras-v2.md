@@ -4,8 +4,9 @@ Correção dos números dos Relatórios do Financeiro em PRs pequenos, cada um l
 **fazenda a fazenda** por uma flag. Este arquivo cobre o PR 0 (rede de segurança),
 o PR 1 (natureza do lançamento), o PR 7 (juros e descontos da baixa), o PR 4
 (receita do leite), o PR 2 (contas automáticas), o PR 3 (folha pelo bruto), o PR 6
-(saldo de abertura e Caixa Real) e o PR 5 (cartão de crédito por item). A auditoria completa, com causa-raiz e a ordem
-dos PRs seguintes, ficou no relatório da Fase A (`SOLUCOES.md`, fora do repositório).
+(saldo de abertura e Caixa Real), o PR 5 (cartão de crédito por item), o PR 8
+(DRE única) e o PR 9 (custos com rateio por centro). A auditoria completa, com causa-raiz e a ordem dos PRs, ficou no
+relatório da Fase A (`SOLUCOES.md`, fora do repositório).
 
 ## 1. A flag `financeiro_regras_v2`
 
@@ -75,8 +76,7 @@ Com a flag ligada:
   depreciar") na DRE e aviso no formulário.
 
 `patrimonio.centro_custo` também foi criado (aceito na API do patrimônio). A
-depreciação **ainda não** é filtrada por centro: isso, com o rateio do bem sem
-centro, é o PR 9.
+depreciação por centro, com o rateio do bem sem centro, é o PR 9 (§12).
 
 ## 3. Backfill (dry-run por padrão) e como reverter
 
@@ -174,8 +174,8 @@ pago − valor da conta) passa a ter destino na DRE. Regras em
   (`financeiro.registros_competencia_v2`), não mais `LancamentoItem.valor_total`
   cru: o desconto da nota de despesa sai rateado nos itens. Juros/descontos da
   baixa não entram em custo nenhum (são resultado financeiro).
-- Os campos legados da DRE (`receitas_total`/`despesas_total`/`resultado`) não
-  mudam, nem com abatimento: são o PR 8.
+- Os campos legados da DRE (`receitas_total`/`despesas_total`/`resultado`)
+  passaram a vir da cascata no PR 8 (§11) — com o abatimento dentro.
 
 ## 7. Receita do leite (PR 4)
 
@@ -368,20 +368,109 @@ antes (nota genérica "Fatura X"), com as mesmas chaves de resposta (golden).
   mudaram depois (conflito).
 - Migração `b9d3f5a1c864` (aditiva, idempotente, reversível).
 
-## 11. O que fica para os próximos PRs
+## 11. DRE única (PR 8)
 
-Com tudo o que já entrou ligado (PRs 1, 7, 4, 2, 3, 6 e 5: contas automáticas,
-os backfills da folha e do cartão, a natureza do plano e a flag), o cenário da
-auditoria em março/2031 fecha como o relatório previa: receita líquida 9.850,
-CMV 8.300, pessoal 4.840, EBITDA −3.290, resultado −4.290, numerador de custos
-13.140 (COT 14.140) e custo por litro 0,8276
-(`test_pr2_pr3_pr5_pr6_cenario_com_tudo_ligado`). Os campos legados da DRE
-(e-mail do Portal) ainda mostram o número antigo: é o PR 8.
+Um número de resultado em todas as telas (R4). Com a flag desligada, nada
+muda (golden: DRE, campos legados, Capa e o CSV do Portal byte a byte).
 
-O teste do cenário marca cada número ainda errado com `xfail(strict=True)` e o
-nome do PR que o corrige; o PR que acertar o número é obrigado a tirar o xfail.
+- **`resumo` da DRE** (`rules/dre.py::resumo_da_cascata`, só com a flag):
+  `receita_bruta`, `receita_liquida`, `despesas` (= receita líquida −
+  resultado), `ebitda`, `resultado_operacional`, `resultado_liquido`,
+  `margem_liquida_pct` (só com receita líquida > 0), `fora_da_dre_total` e
+  `nao_classificado` (com `_receita`/`_despesa`) — tudo tirado da cascata.
+- **Campos legados derivados da cascata** (flag ligada): `receitas_total` =
+  receita líquida, `resultado` = resultado líquido, `despesas_total` = a
+  diferença, `por_conta` = só o que entrou nas linhas, por nível 1 do código
+  (depreciação e baixa de bem como pseudocontas; Σ receitas − Σ despesas =
+  resultado). Antes era a soma de todas as notas (trator, aporte, principal,
+  vale e não classificado dentro; sem depreciação).
+- **Capa** (`GET /financeiro/resultado-mes-recente`, flag ligada): o
+  `resultado_liquido` da DRE de competência do mês mais recente com
+  lançamento (`fonte: "dre_competencia"`), não mais a soma crua de
+  `valor_total`.
+- **CSV do Portal** (e-mail e Exportar): decisão do dono (Q16) — há cliente
+  que importa o CSV numa planilha, então o arquivo antigo
+  (`dre_<de>_<até>.csv`, mesmo formato `_dict_para_csv`, agora com os números
+  da cascata) continua saindo **até 07/12/2026** (`portal.CSV_DRE_LEGADO_ATE`,
+  60 dias) ao lado do novo `dre_<de>_<até>_cascata.csv`
+  (`portal._dre_para_csv`: cabeçalho com fazenda, período, regime e centro;
+  as 15 linhas; o detalhe por conta; o resumo; fora da DRE por natureza; não
+  classificado com receita e despesa separadas). Depois da data, só o novo.
+  O e-mail leva os dois anexos (`rules/email.py::enviar_email(...,
+  anexos_extras=...)`) e explica no corpo; o ZIP do Exportar leva
+  `dre.csv` + `dre_cascata.csv`.
+- **Front (aba DRE)**: **um** seletor de regime no filtro do topo (também na
+  URL, `?regime=caixa`) vale para indicadores, gráfico, cascata e
+  detalhamento; a DRE é buscada uma vez pela página
+  (`DreCascataView` não tem mais seletor próprio). Com o `resumo`, os KPIs
+  (Receita líquida, Despesa, Resultado líquido, Margem) e o gráfico
+  "Receita × Despesa × Resultado" leem o servidor (`lib/dreUnica.ts::kpisDre`)
+  — natureza aplicada, depreciação dentro — e o "Detalhamento por conta
+  gerencial" sai das contas de cada linha da cascata. Sem o `resumo` (flag
+  desligada), a tela soma no cliente como antes. Com a flag, o centro de
+  custo do filtro também filtra a cascata.
+- **Orçado × realizado** (`rules/orcamento.py`, flag ligada): realizado pelos
+  registros da DRE de competência; totais SEPARADOS em `totais.receita`,
+  `totais.deducao`, `totais.despesa_operacional` e `totais.fora_do_resultado`
+  (nunca receita somada com despesa); herança por prefixo (Q8): o orçamento de
+  um grupo cobre as filhas **do mesmo tipo** sem orçamento próprio (`cobre`; a
+  filha aparece como linha informativa com `coberta_por`, sem desvio e fora
+  dos totais) e a filha com orçamento fica na dela; fora do resultado e
+  deduções nunca sobem para um orçamento. Desvio só com orçado (`situacao`:
+  `favoravel`/`desfavoravel`/`no_orcado`/`sem_orcamento`/
+  `coberta_pelo_grupo`/`fora_do_resultado`): receita acima do orçado é
+  favorável, despesa acima é desfavorável. `total_orcado`/`total_realizado`
+  ficam como os de despesa operacional (compatibilidade). A tela mostra um
+  quadro por grupo e pinta o desvio pela situação.
+- Script de impacto: a seção da DRE ganha `dre.legado.receitas_total`,
+  `dre.legado.despesas_total` e `dre.legado.resultado` (antes × depois).
 
-| PR | O que resolve |
-|---|---|
-| 8 | DRE única (campos legados, Portal, Capa) e orçamento com totais separados |
-| 9 | COE/COT com rateio: "Todos" sem filtro, depreciação por centro |
+## 12. Custos com rateio correto por centro (PR 9)
+
+Com a flag desligada, nada muda (custo por vaca sem centro = Pecuária
+Leiteira; depreciação inteira em qualquer filtro).
+
+- **"Todos" no custo por vaca** (`GET /financeiro/custo-vaca-lote`): sem
+  `centro_custo` na URL (é o que o "Todos" da tela manda) = todos os centros,
+  como no custo por hectare e na DRE. Antes caía em "Pecuária Leiteira".
+- **Depreciação por centro de custo** (`financeiro.depreciacao_periodo_v2`),
+  na DRE (os dois regimes), no COT e nos custos por hectare, vaca/lote e
+  safra. Sem filtro: a do patrimônio inteiro (igual a antes). Com o centro C:
+  bem com `patrimonio.centro_custo` = C entra inteiro; bem de outro centro não
+  entra; bem **sem centro é rateado** (decisão do contador, Q9) pela
+  participação de C nas despesas operacionais do período (competência,
+  natureza operacional, vale descontado, item redutor da folha abatendo —
+  a mesma base do numerador dos custos). Os pedaços dos centros somam a
+  depreciação da fazenda. Sem despesa operacional no período, a participação
+  é 0 e a resposta avisa ("informe o centro no cadastro do bem").
+  A DRE responde `depreciacao_periodo.rateio` e os custos
+  `depreciacao_rateio` (bens do centro, sem centro, de outros centros,
+  participação, base e o valor rateado).
+- **Centro do bem**: campo "Centro de custo" no cadastro de Patrimônio (vazio =
+  rateado). Com a flag, o bem criado junto com a compra (`criar_patrimonio`)
+  nasce no centro da nota, salvo centro explícito. Bens antigos ficam sem
+  centro (rateados) até alguém informar.
+- **Front**: a cascata mostra como a depreciação foi repartida no filtro de
+  centro; custos por hectare, vaca e safra mostram depreciação, COT (e COT por
+  hectare/vaca) com as regras novas.
+- Cenário (março/2031, só a flag, mais 2.915 de insumo e uma ensiladeira de
+  12.000 no centro Agricultura): Pecuária 11.660 e Agricultura 2.915 de
+  despesa operacional (80%/20%); trator (1.000, sem centro) rateado 800/200;
+  ensiladeira (100) inteira na Agricultura → Pecuária 800, Agricultura 300,
+  fazenda 1.100 (`test_pr9_depreciacao_rateada_entre_os_centros`).
+
+## 13. O que fica
+
+Com os PRs 0 a 9 ligados (contas automáticas, os backfills da folha e do
+cartão, a natureza do plano e a flag), o cenário da auditoria em março/2031
+fecha como o relatório previa: receita líquida 9.850, CMV 8.300, pessoal 4.840,
+EBITDA −3.290, resultado −4.290 — o mesmo na cascata, no resumo (KPIs), nos
+campos legados, nos dois CSVs do Portal (`test_pr8_um_resultado_em_todas_as_telas_com_tudo_ligado`)
+—, numerador de custos 13.140 (COT 14.140) e custo por litro 0,8276. Não sobra
+nenhum `xfail` da Fase A no teste do cenário.
+
+Fora da Fase A (registrado para depois): fechamento/conciliação e LCDPR; 13º
+e férias com provisão mensal (Q5); vale de ITEM como adiantamento próprio na
+nota do fornecedor; "Detalhamento por conta" da DRE com drill para Consultas
+filtrada por conta; data de corte do CSV antigo do Portal (07/12/2026) — depois
+dela, remover `_dict_para_csv` da DRE.

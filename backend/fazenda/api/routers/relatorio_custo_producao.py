@@ -79,14 +79,23 @@ def _vacas_por_lote_no_periodo(
 def custo_por_vaca_e_lote(
     data_inicio: date = Query(..., description="Data inicial (competência)"),
     data_fim: date = Query(..., description="Data final (competência)"),
-    centro_custo: str | None = Query(CENTRO_CUSTO_PADRAO),
+    centro_custo: str | None = Query(
+        None, description="Centro de custo; sem ele = Todos (regras v2) ou Pecuária Leiteira (regras antigas)",
+    ),
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     regras_v2 = regras_v2_ativas(session, fazenda_id)
     custos = None
+    if not regras_v2 and centro_custo is None:
+        # Regras antigas, inalteradas: sem centro na URL (é o que o "Todos" da
+        # tela manda) o custo por vaca caía em Pecuária Leiteira. Com as
+        # regras v2 (PR 9), sem centro = TODOS os centros, como no custo por
+        # hectare e na DRE.
+        centro_custo = CENTRO_CUSTO_PADRAO
     if regras_v2:
+        centro_custo = centro_custo or None
         # Regras v2 (Fase A): mesmo numerador da DRE, só natureza OPERACIONAL
         # (ver financeiro.custos_operacionais_periodo).
         from fazenda.api.routers.financeiro import custos_operacionais_periodo
@@ -112,5 +121,6 @@ def custo_por_vaca_e_lote(
             "cot": custos["cot"],
             "cot_por_vaca": round(custos["cot"] / total_vacas, 2) if total_vacas else None,
             "fora_por_natureza": custos["fora_por_natureza"],
+            "depreciacao_rateio": custos["depreciacao_rateio"],
         })
     return resposta

@@ -66,6 +66,7 @@ def custo_por_hectare(
             "cot": custos["cot"],
             "cot_por_hectare": round(custos["cot"] / area, 2) if area else None,
             "fora_por_natureza": custos["fora_por_natureza"],
+            "depreciacao_rateio": custos["depreciacao_rateio"],
         }
     query = select(ContaGerencial)
     if fazenda_id is not None:

@@ -226,7 +226,10 @@ def montar_cascata_dre(
         multa/juros da guia de FGTS/DCTF (PR 3);
       • `nao_classificado` e `fora_da_dre` (e cada grupo) trazem também
         `total_receita`, `total_despesa`, `liquido` e, por conta, `receita`,
-        `despesa` e `liquido` (PR 2).
+        `despesa` e `liquido` (PR 2);
+      • `por_conta` (PR 8): o campo legado da DRE derivado só do que entrou
+        nas linhas (depreciação e baixa como pseudocontas) — Σ receitas −
+        Σ despesas = resultado líquido. Ver `resumo_da_cascata`.
     O `valor` continua sendo MAGNITUDE (>= 0) também com as regras v2: o
     item redutor de uma nota (ex.: "(−) INSS retido" da folha pelo bruto,
     PR 3) chega aqui com o `tipo` INVERTIDO (despesa → receita), nunca com
@@ -242,11 +245,23 @@ def montar_cascata_dre(
     fora_da_dre_contas: dict[str, dict] = {}
     # Só com regras_v2: {natureza: {codigo: {...}}} para o agrupamento.
     fora_por_natureza: dict[str, dict[str, dict]] = {}
+    # Só com regras_v2 (PR 8): o legado `por_conta` derivado do que ENTROU na
+    # cascata — {nível 1 do código: {descricao, receitas, despesas}}.
+    por_conta: dict[str, dict] = {}
 
     def _acumular(bucket_contas: dict, codigo: str | None, nome: str | None, tipo: str, valor: float) -> None:
         chave_conta = codigo or "(sem código)"
         entrada = bucket_contas.setdefault(chave_conta, {"nome": nome or chave_conta, "receita": 0.0, "despesa": 0.0})
         campo = "receita" if tipo == "receita" else "despesa"
+        entrada[campo] = round(entrada[campo] + valor, 2)
+
+    def _acumular_por_conta(codigo: str | None, nome: str | None, tipo: str, valor: float) -> None:
+        if not regras_v2:
+            return
+        chave_conta = codigo or "Sem classificação"
+        nivel1 = chave_conta.split(".")[0] if "." in chave_conta and not chave_conta.startswith("(") else chave_conta
+        entrada = por_conta.setdefault(nivel1, {"descricao": nome or "", "receitas": 0.0, "despesas": 0.0})
+        campo = "receitas" if tipo == "receita" else "despesas"
         entrada[campo] = round(entrada[campo] + valor, 2)
 
     for registro in registros:
@@ -286,6 +301,7 @@ def montar_cascata_dre(
         campo = "receita" if tipo == "receita" else "despesa"
         bucket[campo] = round(bucket[campo] + valor, 2)
         _acumular(bucket["contas"], codigo, nome, tipo, valor)
+        _acumular_por_conta(codigo, nome, tipo, valor)
 
     # Depreciação do período entra como despesa "extra" da sua linha, com
     # pseudoconta própria de detalhamento — ver ADR no topo do módulo sobre
@@ -298,6 +314,8 @@ def montar_cascata_dre(
             bucket["contas"], "(depreciação do patrimônio)",
             "Depreciação do período (patrimônio)", "despesa", depreciacao_periodo,
         )
+        _acumular_por_conta("(depreciação do patrimônio)", "Depreciação do período (patrimônio)",
+                            "despesa", depreciacao_periodo)
 
     # Ganho/perda de capital na baixa de bem (só regras v2): resultado do
     # exercício, linha OUTRAS_REC_DESP — nunca receita de vendas.
@@ -310,6 +328,8 @@ def montar_cascata_dre(
             bucket["contas"], "(resultado de baixa de patrimônio)",
             "Ganho ou perda na baixa de patrimônio", tipo_baixa, magnitude,
         )
+        _acumular_por_conta("(resultado de baixa de patrimônio)", "Ganho ou perda na baixa de patrimônio",
+                            tipo_baixa, magnitude)
 
     linhas_resultado: list[dict] = []
     saldo = 0.0
@@ -376,8 +396,47 @@ def montar_cascata_dre(
         fora_da_dre["por_natureza"] = {g["natureza"]: g["total"] for g in grupos}
         fora_da_dre["grupos"] = grupos
 
-    return {
+    resultado_final = {
         "linhas": linhas_resultado,
         "nao_classificado": _bucket_a_parte(nao_classificado_contas),
         "fora_da_dre": fora_da_dre,
+    }
+    if regras_v2:
+        resultado_final["por_conta"] = {
+            k: {"descricao": v["descricao"], "receitas": round(v["receitas"], 2), "despesas": round(v["despesas"], 2)}
+            for k, v in por_conta.items()
+        }
+    return resultado_final
+
+
+def resumo_da_cascata(cascata: dict) -> dict:
+    """Regras v2, PR 8 (DRE única — R4): o resumo que TODA tela mostra
+    (KPIs da aba DRE, gráfico, card da Capa, CSV/e-mail do Portal), tirado da
+    cascata e de mais nada. `cascata` é o retorno de `montar_cascata_dre`.
+
+    - `receita_liquida`, `ebitda`, `resultado_operacional` e
+      `resultado_liquido` são as linhas-subtotal da cascata;
+    - `despesas` = receita líquida − resultado líquido (tudo o que a cascata
+      subtraiu depois das deduções, depreciação e Outras inclusas): é o par
+      que os KPIs "Receita × Despesa × Resultado" mostram, e fecha por
+      construção (receita − despesa = resultado);
+    - `margem_liquida_pct` só com receita líquida positiva;
+    - `fora_da_dre_total` e `nao_classificado` NUNCA entram no resultado —
+      vêm à parte, para a tela avisar."""
+    linhas = {linha["chave"]: linha["valor"] for linha in cascata["linhas"]}
+    receita_liquida = round(linhas.get(RECEITA_LIQUIDA, 0.0), 2)
+    resultado_liquido = round(linhas.get(RESULTADO_LIQUIDO, 0.0), 2)
+    nao = cascata["nao_classificado"]
+    return {
+        "receita_bruta": round(linhas.get(RECEITA_VENDAS, 0.0), 2),
+        "receita_liquida": receita_liquida,
+        "despesas": round(receita_liquida - resultado_liquido, 2) + 0.0,
+        "ebitda": round(linhas.get(EBITDA, 0.0), 2),
+        "resultado_operacional": round(linhas.get(RESULTADO_OPERACIONAL, 0.0), 2),
+        "resultado_liquido": resultado_liquido,
+        "margem_liquida_pct": round(100 * resultado_liquido / receita_liquida, 1) if receita_liquida > 0 else None,
+        "fora_da_dre_total": cascata["fora_da_dre"]["total"],
+        "nao_classificado": nao["total"],
+        "nao_classificado_receita": nao.get("total_receita", 0.0),
+        "nao_classificado_despesa": nao.get("total_despesa", 0.0),
     }
